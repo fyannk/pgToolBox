@@ -1,0 +1,16 @@
+apiVersion: v2
+name: pgtoolbox
+description: pgToolBox operator — per-CNPG-cluster console, auth proxy, embedded pgAdmin, and declarative user provisioning.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - postgresql
+  - cloudnativepg
+  - console
+  - pgadmin
+  - oidc
+  - openshift
+home: https://github.com/fyannk/pgtoolbox
+maintainers:
+  - name: fyannk

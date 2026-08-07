@@ -1,0 +1,94 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Build, vet, test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check out objectstoreviewer API (go.mod replace)
+        run: git clone --depth 1 https://github.com/fyannk/object-store-viewer.git ../object-store-viewer
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - run: go build ./...
+      - run: go vet ./...
+      - run: go test ./... -race -count=1
+
+  lint:
+    name: golangci-lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check out objectstoreviewer API (go.mod replace)
+        run: git clone --depth 1 https://github.com/fyannk/object-store-viewer.git ../object-store-viewer
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.6.2
+          args: --config .golangci.yml --timeout 5m
+
+  helm:
+    name: Helm chart
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+
+      - run: helm lint deploy/helm/pgtoolbox
+      - run: helm template pgtoolbox deploy/helm/pgtoolbox --namespace pgtoolbox > /dev/null
+
+      - name: Validate rendered YAML
+        run: |
+          helm template pgtoolbox deploy/helm/pgtoolbox --namespace pgtoolbox | \
+            python3 -c "import sys, yaml; list(yaml.safe_load_all(sys.stdin))"
+
+  olm:
+    name: OLM bundle & catalog
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build bundle image
+        run: docker build -f deploy/olm/bundle.Dockerfile -t pgtoolbox-bundle:ci deploy/olm/bundle
+
+      - name: Build catalog image (validates the catalog via opm)
+        run: docker build -f deploy/olm/catalog.Dockerfile -t pgtoolbox-catalog:ci deploy/olm/catalog
+
+  docs:
+    name: Documentation site
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - run: npm ci
+        working-directory: web
+      - run: npm run typecheck
+        working-directory: web
+      - run: npm run build
+        working-directory: web

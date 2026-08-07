@@ -1,0 +1,995 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.19.0
+  name: pgconsoles.pgtoolbox.fyannk.dev
+spec:
+  group: pgtoolbox.fyannk.dev
+  names:
+    kind: PgConsole
+    listKind: PgConsoleList
+    plural: pgconsoles
+    shortNames:
+    - pgc
+    singular: pgconsole
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.conditions[?(@.type=="Ready")].status
+      name: Ready
+      type: string
+    - jsonPath: .spec.cnpgClusterRef.name
+      name: Cluster
+      type: string
+    - jsonPath: .status.url
+      name: URL
+      type: string
+    - jsonPath: .status.configRevision
+      name: Revision
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: PgConsole describes one pgToolBox console managed by the operator.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              PgConsoleSpec is the desired state of a pgToolBox console: one access
+              stack — authentication proxy, observation console, embedded pgAdmin, and
+              an optional evidence sidecar — attached to exactly one CloudNativePG
+              Cluster in the same namespace.
+            properties:
+              cnpgClusterRef:
+                description: |-
+                  The CloudNativePG Cluster this console serves, in the same namespace.
+                  Immutable: a console is dedicated to one cluster for its whole life.
+                properties:
+                  name:
+                    description: The name of the referenced resource.
+                    maxLength: 253
+                    minLength: 1
+                    type: string
+                required:
+                - name
+                type: object
+                x-kubernetes-validations:
+                - message: cnpgClusterRef is immutable
+                  rule: self == oldSelf
+              evidence:
+                description: |-
+                  The ObjectStoreViewer evidence sidecar, publishing repository
+                  evidence to the console over a pod-private Unix socket.
+                properties:
+                  enabled:
+                    default: false
+                    description: Whether the sidecar is composed into the console
+                      Pod.
+                    type: boolean
+                  image:
+                    description: |-
+                      The viewer container image. A pointer so that an omitted image is
+                      genuinely absent rather than an empty object failing ImageSpec's
+                      required fields. Defaults to the operator's configured image
+                      (--default-objectstoreviewer-image); without either, no sidecar is
+                      composed.
+                    properties:
+                      digest:
+                        description: Optional image digest; when set it takes precedence
+                          over Tag.
+                        pattern: ^(sha256:[a-f0-9]{64})?$
+                        type: string
+                      pullPolicy:
+                        default: IfNotPresent
+                        description: Image pull policy.
+                        type: string
+                      pullSecrets:
+                        description: Pull secrets for the image registry.
+                        items:
+                          description: LocalObjectReference is a reference to a resource
+                            in the same namespace.
+                          properties:
+                            name:
+                              description: The name of the referenced resource.
+                              maxLength: 253
+                              minLength: 1
+                              type: string
+                          required:
+                          - name
+                          type: object
+                        type: array
+                      repository:
+                        description: Image repository, without tag or digest.
+                        minLength: 1
+                        type: string
+                      tag:
+                        description: Image tag.
+                        minLength: 1
+                        type: string
+                    required:
+                    - repository
+                    - tag
+                    type: object
+                  resources:
+                    description: Viewer container resources.
+                    properties:
+                      claims:
+                        description: |-
+                          Claims lists the names of resources, defined in spec.resourceClaims,
+                          that are used by this container.
+
+                          This field depends on the
+                          DynamicResourceAllocation feature gate.
+
+                          This field is immutable. It can only be set for containers.
+                        items:
+                          description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                          properties:
+                            name:
+                              description: |-
+                                Name must match the name of one entry in pod.spec.resourceClaims of
+                                the Pod where this field is used. It makes that resource available
+                                inside a container.
+                              type: string
+                            request:
+                              description: |-
+                                Request is the name chosen for a request in the referenced claim.
+                                If empty, everything from the claim is made available, otherwise
+                                only the result of this request.
+                              type: string
+                          required:
+                          - name
+                          type: object
+                        type: array
+                        x-kubernetes-list-map-keys:
+                        - name
+                        x-kubernetes-list-type: map
+                      limits:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: |-
+                          Limits describes the maximum amount of compute resources allowed.
+                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                        type: object
+                      requests:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: |-
+                          Requests describes the minimum amount of compute resources required.
+                          If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                          otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                        type: object
+                    type: object
+                type: object
+              exposure:
+                description: How the console is reached from outside the cluster.
+                properties:
+                  annotations:
+                    additionalProperties:
+                      type: string
+                    description: |-
+                      Annotations copied onto the exposure resource after allowlist
+                      filtering.
+                    type: object
+                  gateway:
+                    description: Gateway API attachment, for gateway exposure only.
+                    properties:
+                      parentRef:
+                        description: The Gateway to attach to.
+                        properties:
+                          name:
+                            description: Gateway name.
+                            minLength: 1
+                            type: string
+                          namespace:
+                            description: |-
+                              Gateway namespace; defaults to the PgConsole namespace. Cross-namespace
+                              attachment requires a ReferenceGrant in the Gateway namespace, owned
+                              by the platform.
+                            type: string
+                          sectionName:
+                            description: Listener (section) name on the Gateway.
+                            type: string
+                        required:
+                        - name
+                        type: object
+                    required:
+                    - parentRef
+                    type: object
+                  hostname:
+                    description: The external hostname. Required for route, ingress
+                      and gateway.
+                    type: string
+                  ingressClassName:
+                    description: IngressClass name, for ingress exposure only.
+                    type: string
+                  tls:
+                    description: |-
+                      TLS settings for route/ingress exposure. For gateway exposure TLS
+                      terminates at the Gateway listener and this section must be empty.
+                    properties:
+                      certificateSecretRef:
+                        description: TLS certificate Secret (kubernetes.io/tls), for
+                          ingress exposure.
+                        properties:
+                          name:
+                            description: The name of the referenced resource.
+                            maxLength: 253
+                            minLength: 1
+                            type: string
+                        required:
+                        - name
+                        type: object
+                      termination:
+                        description: Route termination mode.
+                        enum:
+                        - edge
+                        - reencrypt
+                        type: string
+                    type: object
+                  type:
+                    default: clusterIP
+                    description: The exposure mechanism.
+                    enum:
+                    - clusterIP
+                    - route
+                    - ingress
+                    - gateway
+                    type: string
+                type: object
+                x-kubernetes-validations:
+                - message: hostname is required for route, ingress and gateway exposure
+                  rule: self.type == 'clusterIP' || size(self.hostname) > 0
+                - message: gateway configuration is required exactly when type is
+                    gateway
+                  rule: 'self.type == ''gateway'' ? has(self.gateway) : !has(self.gateway)'
+              image:
+                description: |-
+                  The pgconsole container image to run. Defaults to the operator's
+                  configured image (--default-pgconsole-image).
+                properties:
+                  digest:
+                    description: Optional image digest; when set it takes precedence
+                      over Tag.
+                    pattern: ^(sha256:[a-f0-9]{64})?$
+                    type: string
+                  pullPolicy:
+                    default: IfNotPresent
+                    description: Image pull policy.
+                    type: string
+                  pullSecrets:
+                    description: Pull secrets for the image registry.
+                    items:
+                      description: LocalObjectReference is a reference to a resource
+                        in the same namespace.
+                      properties:
+                        name:
+                          description: The name of the referenced resource.
+                          maxLength: 253
+                          minLength: 1
+                          type: string
+                      required:
+                      - name
+                      type: object
+                    type: array
+                  repository:
+                    description: Image repository, without tag or digest.
+                    minLength: 1
+                    type: string
+                  tag:
+                    description: Image tag.
+                    minLength: 1
+                    type: string
+                required:
+                - repository
+                - tag
+                type: object
+              networkPolicy:
+                description: NetworkPolicySpec configures NetworkPolicy generation.
+                properties:
+                  enabled:
+                    default: true
+                    description: |-
+                      Whether the operator generates a NetworkPolicy. Identity-provider
+                      egress is added automatically when enabled.
+                    type: boolean
+                  extraEgress:
+                    description: |-
+                      Additional egress rules appended to the generated policy. Generated
+                      rules cannot be removed. Only accepted with policyTypes "full".
+                    items:
+                      description: |-
+                        NetworkPolicyEgressRule describes a particular set of traffic that is allowed out of pods
+                        matched by a NetworkPolicySpec's podSelector. The traffic must match both ports and to.
+                        This type is beta-level in 1.8
+                      properties:
+                        ports:
+                          description: |-
+                            ports is a list of destination ports for outgoing traffic.
+                            Each item in this list is combined using a logical OR. If this field is
+                            empty or missing, this rule matches all ports (traffic not restricted by port).
+                            If this field is present and contains at least one item, then this rule allows
+                            traffic only if the traffic matches at least one port in the list.
+                          items:
+                            description: NetworkPolicyPort describes a port to allow
+                              traffic on
+                            properties:
+                              endPort:
+                                description: |-
+                                  endPort indicates that the range of ports from port to endPort if set, inclusive,
+                                  should be allowed by the policy. This field cannot be defined if the port field
+                                  is not defined or if the port field is defined as a named (string) port.
+                                  The endPort must be equal or greater than port.
+                                format: int32
+                                type: integer
+                              port:
+                                anyOf:
+                                - type: integer
+                                - type: string
+                                description: |-
+                                  port represents the port on the given protocol. This can either be a numerical or named
+                                  port on a pod. If this field is not provided, this matches all port names and
+                                  numbers.
+                                  If present, only traffic on the specified protocol AND port will be matched.
+                                x-kubernetes-int-or-string: true
+                              protocol:
+                                description: |-
+                                  protocol represents the protocol (TCP, UDP, or SCTP) which traffic must match.
+                                  If not specified, this field defaults to TCP.
+                                type: string
+                            type: object
+                          type: array
+                          x-kubernetes-list-type: atomic
+                        to:
+                          description: |-
+                            to is a list of destinations for outgoing traffic of pods selected for this rule.
+                            Items in this list are combined using a logical OR operation. If this field is
+                            empty or missing, this rule matches all destinations (traffic not restricted by
+                            destination). If this field is present and contains at least one item, this rule
+                            allows traffic only if the traffic matches at least one item in the to list.
+                          items:
+                            description: |-
+                              NetworkPolicyPeer describes a peer to allow traffic to/from. Only certain combinations of
+                              fields are allowed
+                            properties:
+                              ipBlock:
+                                description: |-
+                                  ipBlock defines policy on a particular IPBlock. If this field is set then
+                                  neither of the other fields can be.
+                                properties:
+                                  cidr:
+                                    description: |-
+                                      cidr is a string representing the IPBlock
+                                      Valid examples are "192.168.1.0/24" or "2001:db8::/64"
+                                    type: string
+                                  except:
+                                    description: |-
+                                      except is a slice of CIDRs that should not be included within an IPBlock
+                                      Valid examples are "192.168.1.0/24" or "2001:db8::/64"
+                                      Except values will be rejected if they are outside the cidr range
+                                    items:
+                                      type: string
+                                    type: array
+                                    x-kubernetes-list-type: atomic
+                                required:
+                                - cidr
+                                type: object
+                              namespaceSelector:
+                                description: |-
+                                  namespaceSelector selects namespaces using cluster-scoped labels. This field follows
+                                  standard label selector semantics; if present but empty, it selects all namespaces.
+
+                                  If podSelector is also set, then the NetworkPolicyPeer as a whole selects
+                                  the pods matching podSelector in the namespaces selected by namespaceSelector.
+                                  Otherwise it selects all pods in the namespaces selected by namespaceSelector.
+                                properties:
+                                  matchExpressions:
+                                    description: matchExpressions is a list of label
+                                      selector requirements. The requirements are
+                                      ANDed.
+                                    items:
+                                      description: |-
+                                        A label selector requirement is a selector that contains values, a key, and an operator that
+                                        relates the key and values.
+                                      properties:
+                                        key:
+                                          description: key is the label key that the
+                                            selector applies to.
+                                          type: string
+                                        operator:
+                                          description: |-
+                                            operator represents a key's relationship to a set of values.
+                                            Valid operators are In, NotIn, Exists and DoesNotExist.
+                                          type: string
+                                        values:
+                                          description: |-
+                                            values is an array of string values. If the operator is In or NotIn,
+                                            the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                                            the values array must be empty. This array is replaced during a strategic
+                                            merge patch.
+                                          items:
+                                            type: string
+                                          type: array
+                                          x-kubernetes-list-type: atomic
+                                      required:
+                                      - key
+                                      - operator
+                                      type: object
+                                    type: array
+                                    x-kubernetes-list-type: atomic
+                                  matchLabels:
+                                    additionalProperties:
+                                      type: string
+                                    description: |-
+                                      matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                                      map is equivalent to an element of matchExpressions, whose key field is "key", the
+                                      operator is "In", and the values array contains only "value". The requirements are ANDed.
+                                    type: object
+                                type: object
+                                x-kubernetes-map-type: atomic
+                              podSelector:
+                                description: |-
+                                  podSelector is a label selector which selects pods. This field follows standard label
+                                  selector semantics; if present but empty, it selects all pods.
+
+                                  If namespaceSelector is also set, then the NetworkPolicyPeer as a whole selects
+                                  the pods matching podSelector in the Namespaces selected by NamespaceSelector.
+                                  Otherwise it selects the pods matching podSelector in the policy's own namespace.
+                                properties:
+                                  matchExpressions:
+                                    description: matchExpressions is a list of label
+                                      selector requirements. The requirements are
+                                      ANDed.
+                                    items:
+                                      description: |-
+                                        A label selector requirement is a selector that contains values, a key, and an operator that
+                                        relates the key and values.
+                                      properties:
+                                        key:
+                                          description: key is the label key that the
+                                            selector applies to.
+                                          type: string
+                                        operator:
+                                          description: |-
+                                            operator represents a key's relationship to a set of values.
+                                            Valid operators are In, NotIn, Exists and DoesNotExist.
+                                          type: string
+                                        values:
+                                          description: |-
+                                            values is an array of string values. If the operator is In or NotIn,
+                                            the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                                            the values array must be empty. This array is replaced during a strategic
+                                            merge patch.
+                                          items:
+                                            type: string
+                                          type: array
+                                          x-kubernetes-list-type: atomic
+                                      required:
+                                      - key
+                                      - operator
+                                      type: object
+                                    type: array
+                                    x-kubernetes-list-type: atomic
+                                  matchLabels:
+                                    additionalProperties:
+                                      type: string
+                                    description: |-
+                                      matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                                      map is equivalent to an element of matchExpressions, whose key field is "key", the
+                                      operator is "In", and the values array contains only "value". The requirements are ANDed.
+                                    type: object
+                                type: object
+                                x-kubernetes-map-type: atomic
+                            type: object
+                          type: array
+                          x-kubernetes-list-type: atomic
+                      type: object
+                    type: array
+                  policyTypes:
+                    default: full
+                    description: |-
+                      Which directions the generated policy restricts. "full" (the
+                      default) generates ingress and egress rules; "ingress" restricts
+                      only incoming traffic and leaves egress unconstrained, for clusters
+                      whose CNI or platform policy does not support egress rules.
+                    enum:
+                    - full
+                    - ingress
+                    type: string
+                type: object
+                x-kubernetes-validations:
+                - message: extraEgress requires policyTypes full
+                  rule: 'self.policyTypes == ''ingress'' ? !has(self.extraEgress)
+                    || size(self.extraEgress) == 0 : true'
+              pgAdmin:
+                description: The embedded pgAdmin, dedicated to this cluster.
+                properties:
+                  accessMinLevel:
+                    default: dba
+                    description: The minimum role level allowed to reach pgAdmin through
+                      the proxy.
+                    enum:
+                    - dba
+                    - poweruser
+                    type: string
+                  enabled:
+                    default: true
+                    description: Whether pgAdmin is composed into the console Pod.
+                    type: boolean
+                  image:
+                    description: |-
+                      The pgAdmin container image. Defaults to the operator's configured
+                      image (--default-pgadmin-image).
+                    properties:
+                      digest:
+                        description: Optional image digest; when set it takes precedence
+                          over Tag.
+                        pattern: ^(sha256:[a-f0-9]{64})?$
+                        type: string
+                      pullPolicy:
+                        default: IfNotPresent
+                        description: Image pull policy.
+                        type: string
+                      pullSecrets:
+                        description: Pull secrets for the image registry.
+                        items:
+                          description: LocalObjectReference is a reference to a resource
+                            in the same namespace.
+                          properties:
+                            name:
+                              description: The name of the referenced resource.
+                              maxLength: 253
+                              minLength: 1
+                              type: string
+                          required:
+                          - name
+                          type: object
+                        type: array
+                      repository:
+                        description: Image repository, without tag or digest.
+                        minLength: 1
+                        type: string
+                      tag:
+                        description: Image tag.
+                        minLength: 1
+                        type: string
+                    required:
+                    - repository
+                    - tag
+                    type: object
+                  resources:
+                    description: pgAdmin container resources.
+                    properties:
+                      claims:
+                        description: |-
+                          Claims lists the names of resources, defined in spec.resourceClaims,
+                          that are used by this container.
+
+                          This field depends on the
+                          DynamicResourceAllocation feature gate.
+
+                          This field is immutable. It can only be set for containers.
+                        items:
+                          description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                          properties:
+                            name:
+                              description: |-
+                                Name must match the name of one entry in pod.spec.resourceClaims of
+                                the Pod where this field is used. It makes that resource available
+                                inside a container.
+                              type: string
+                            request:
+                              description: |-
+                                Request is the name chosen for a request in the referenced claim.
+                                If empty, everything from the claim is made available, otherwise
+                                only the result of this request.
+                              type: string
+                          required:
+                          - name
+                          type: object
+                        type: array
+                        x-kubernetes-list-map-keys:
+                        - name
+                        x-kubernetes-list-type: map
+                      limits:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: |-
+                          Limits describes the maximum amount of compute resources allowed.
+                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                        type: object
+                      requests:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: |-
+                          Requests describes the minimum amount of compute resources required.
+                          If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                          otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                        type: object
+                    type: object
+                  storage:
+                    description: The settings database storage.
+                    properties:
+                      size:
+                        anyOf:
+                        - type: integer
+                        - type: string
+                        description: |-
+                          Requested PVC size. Expansion-only: shrinking is rejected.
+                          Defaults to the operator's configured default settings size.
+                        pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                        x-kubernetes-int-or-string: true
+                      storageClass:
+                        description: StorageClass for the PVC; cluster default when
+                          empty.
+                        type: string
+                    type: object
+                type: object
+              proxy:
+                description: |-
+                  The pgtoolbox-proxy authentication proxy, the single authentication
+                  and coarse authorization boundary of the console.
+                properties:
+                  authentication:
+                    description: How users authenticate.
+                    properties:
+                      mode:
+                        description: The authentication mode.
+                        enum:
+                        - openshift
+                        - oidc
+                        - local
+                        type: string
+                      oidc:
+                        description: Configuration for the oidc mode.
+                        properties:
+                          clientID:
+                            description: The OAuth2 client ID.
+                            minLength: 1
+                            type: string
+                          clientSecretRef:
+                            description: |-
+                              Reference to the Secret holding the client secret. Default key:
+                              "clientSecret".
+                            properties:
+                              key:
+                                description: The key inside the Secret.
+                                type: string
+                              name:
+                                description: The name of the referenced Secret.
+                                maxLength: 253
+                                minLength: 1
+                                type: string
+                            required:
+                            - name
+                            type: object
+                          issuerURL:
+                            description: The OIDC issuer URL. Must use the https scheme.
+                            pattern: ^https://.+$
+                            type: string
+                        required:
+                        - clientID
+                        - clientSecretRef
+                        - issuerURL
+                        type: object
+                    required:
+                    - mode
+                    type: object
+                    x-kubernetes-validations:
+                    - message: oidc is required when mode is oidc
+                      rule: 'self.mode == ''oidc'' ? has(self.oidc) : true'
+                    - message: oidc may only be set when mode is oidc
+                      rule: self.mode == 'oidc' || !has(self.oidc)
+                  image:
+                    description: |-
+                      The proxy container image. Defaults to the operator's configured
+                      image (--default-pgtoolbox-proxy-image).
+                    properties:
+                      digest:
+                        description: Optional image digest; when set it takes precedence
+                          over Tag.
+                        pattern: ^(sha256:[a-f0-9]{64})?$
+                        type: string
+                      pullPolicy:
+                        default: IfNotPresent
+                        description: Image pull policy.
+                        type: string
+                      pullSecrets:
+                        description: Pull secrets for the image registry.
+                        items:
+                          description: LocalObjectReference is a reference to a resource
+                            in the same namespace.
+                          properties:
+                            name:
+                              description: The name of the referenced resource.
+                              maxLength: 253
+                              minLength: 1
+                              type: string
+                          required:
+                          - name
+                          type: object
+                        type: array
+                      repository:
+                        description: Image repository, without tag or digest.
+                        minLength: 1
+                        type: string
+                      tag:
+                        description: Image tag.
+                        minLength: 1
+                        type: string
+                    required:
+                    - repository
+                    - tag
+                    type: object
+                  resources:
+                    description: Proxy container resources.
+                    properties:
+                      claims:
+                        description: |-
+                          Claims lists the names of resources, defined in spec.resourceClaims,
+                          that are used by this container.
+
+                          This field depends on the
+                          DynamicResourceAllocation feature gate.
+
+                          This field is immutable. It can only be set for containers.
+                        items:
+                          description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                          properties:
+                            name:
+                              description: |-
+                                Name must match the name of one entry in pod.spec.resourceClaims of
+                                the Pod where this field is used. It makes that resource available
+                                inside a container.
+                              type: string
+                            request:
+                              description: |-
+                                Request is the name chosen for a request in the referenced claim.
+                                If empty, everything from the claim is made available, otherwise
+                                only the result of this request.
+                              type: string
+                          required:
+                          - name
+                          type: object
+                        type: array
+                        x-kubernetes-list-map-keys:
+                        - name
+                        x-kubernetes-list-type: map
+                      limits:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: |-
+                          Limits describes the maximum amount of compute resources allowed.
+                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                        type: object
+                      requests:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: |-
+                          Requests describes the minimum amount of compute resources required.
+                          If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                          otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                        type: object
+                    type: object
+                required:
+                - authentication
+                type: object
+              resources:
+                description: Resource budget shared by the pgconsole container.
+                properties:
+                  claims:
+                    description: |-
+                      Claims lists the names of resources, defined in spec.resourceClaims,
+                      that are used by this container.
+
+                      This field depends on the
+                      DynamicResourceAllocation feature gate.
+
+                      This field is immutable. It can only be set for containers.
+                    items:
+                      description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                      properties:
+                        name:
+                          description: |-
+                            Name must match the name of one entry in pod.spec.resourceClaims of
+                            the Pod where this field is used. It makes that resource available
+                            inside a container.
+                          type: string
+                        request:
+                          description: |-
+                            Request is the name chosen for a request in the referenced claim.
+                            If empty, everything from the claim is made available, otherwise
+                            only the result of this request.
+                          type: string
+                      required:
+                      - name
+                      type: object
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - name
+                    x-kubernetes-list-type: map
+                  limits:
+                    additionalProperties:
+                      anyOf:
+                      - type: integer
+                      - type: string
+                      pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                      x-kubernetes-int-or-string: true
+                    description: |-
+                      Limits describes the maximum amount of compute resources allowed.
+                      More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                    type: object
+                  requests:
+                    additionalProperties:
+                      anyOf:
+                      - type: integer
+                      - type: string
+                      pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                      x-kubernetes-int-or-string: true
+                    description: |-
+                      Requests describes the minimum amount of compute resources required.
+                      If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                      otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                      More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                    type: object
+                type: object
+            required:
+            - cnpgClusterRef
+            - proxy
+            type: object
+          status:
+            description: PgConsoleStatus is the observed state of a PgConsole.
+            properties:
+              conditions:
+                description: |-
+                  Standard conditions: Ready, Progressing, ConfigurationValid,
+                  RouteReady, ProxyConfigReady, RepositoryEvidenceReady.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              configRevision:
+                description: |-
+                  The checksum of the rendered proxy configuration, reported so a
+                  pending rollout is visible without reading the configuration Secret.
+                type: string
+              evidence:
+                description: The evidence sidecar's resolved state.
+                properties:
+                  enabled:
+                    description: Whether the sidecar is composed into the console
+                      Pod.
+                    type: boolean
+                  tokenSecretName:
+                    description: |-
+                      The active pod-local token Secret. Rotation creates a successor
+                      under a new name and updates this field.
+                    type: string
+                type: object
+              observedGeneration:
+                description: The generation observed by the controller.
+                format: int64
+                type: integer
+              url:
+                description: The external URL of the console, when exposed.
+                type: string
+              userSync:
+                description: User provisioning counters across the PgToolBoxUser set.
+                properties:
+                  degraded:
+                    format: int32
+                    type: integer
+                  desired:
+                    format: int32
+                    type: integer
+                  synced:
+                    format: int32
+                    type: integer
+                type: object
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

@@ -1,0 +1,90 @@
+{{define "base-head"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}} — pgToolBox</title>
+<style>{{.CSS}}</style>
+</head>
+<body>
+<main class="card">
+<header class="brand"><span class="logo">pg</span>ToolBox</header>
+{{end}}
+
+{{define "base-foot"}}
+</main>
+<footer class="foot">pgtoolbox-proxy</footer>
+</body>
+</html>
+{{end}}
+
+{{define "login"}}
+{{template "base-head" .}}
+{{with .Content}}
+<h1>Sign in</h1>
+{{if .Error}}<p class="alert">{{.Error}}</p>{{end}}
+<form method="post" action="/auth/local/login">
+<input type="hidden" name="rd" value="{{.RedirectTo}}">
+<label for="user">Identity</label>
+<input id="user" name="username" type="text" autocomplete="username" required autofocus>
+<label for="pass">Password</label>
+<input id="pass" name="password" type="password" autocomplete="current-password" required>
+<button type="submit">Sign in</button>
+</form>
+{{end}}
+{{template "base-foot" .}}
+{{end}}
+
+{{define "denied-unknown"}}
+{{template "base-head" .}}
+{{with .Content}}
+<h1>Access required</h1>
+<p>You are signed in as <strong>{{.Subject}}</strong>, but this identity does
+not have access to this console yet.</p>
+{{if .ShowForm}}
+<form method="post" action="/auth/access-request">
+<input type="hidden" name="csrf" value="{{.CSRFToken}}">
+<label for="msg">Tell the administrators why you need access</label>
+<textarea id="msg" name="message" rows="4" maxlength="1024" placeholder="need dba for incident…"></textarea>
+<button type="submit">Request access</button>
+</form>
+{{else}}
+<p>Access requests are not enabled on this console. Please contact your
+administrator and ask for access for <strong>{{.Subject}}</strong>.</p>
+{{end}}
+{{end}}
+{{template "base-foot" .}}
+{{end}}
+
+{{define "denied-known"}}
+{{template "base-head" .}}
+{{with .Content}}
+<h1>Insufficient privileges</h1>
+<p>You are signed in as <strong>{{.Subject}}</strong> with level
+<strong>{{.Level}}</strong>, but <code>{{.Path}}</code> requires level
+<strong>{{.MinLevel}}</strong> or higher.</p>
+<p><a href="/">Back to the console</a></p>
+{{end}}
+{{template "base-foot" .}}
+{{end}}
+
+{{define "confirmation"}}
+{{template "base-head" .}}
+{{with .Content}}
+<h1>Request sent</h1>
+<p>Your access request for <strong>{{.Subject}}</strong> has been recorded.
+An administrator will review it.</p>
+<p><a href="/">Back to the console</a></p>
+{{end}}
+{{template "base-foot" .}}
+{{end}}
+
+{{define "error"}}
+{{template "base-head" .}}
+{{with .Content}}
+<h1>{{.Title}}</h1>
+<p>{{.Message}}</p>
+<p><a href="/">Back to the console</a></p>
+{{end}}
+{{template "base-foot" .}}
+{{end}}

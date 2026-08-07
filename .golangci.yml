@@ -1,0 +1,22 @@
+version: "2"
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - unused
+    - gosec
+
+issues:
+  exclude-rules:
+    # controller-runtime v0.24 deprecates GetEventRecorderFor in favor of the
+    # new events API (GetEventRecorder). Migrating shared.Runtime to the new
+    # recorder type is deferred; the old API is still functional.
+    - path: cmd/manager/main.go
+      text: "SA1019"
+    # Tests exercise the same cryptographic and error paths; per-line #nosec
+    # annotations document the intentional ones.
+    - path: _test\.go
+      linters:
+        - gosec

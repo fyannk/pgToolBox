@@ -1,0 +1,322 @@
+/*
+Copyright © contributors to the pgtoolbox project.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
+*/
+
+package pgconsole
+
+import (
+	"context"
+	"fmt"
+	"sort"
+	"strings"
+
+	cnpgv1 "github.com/cloudnative-pg/api/pkg/api/v1"
+	pgtoolboxv1alpha1 "github.com/fyannk/pgtoolbox/api/v1alpha1"
+	"github.com/fyannk/pgtoolbox/internal/conditions"
+	"github.com/fyannk/pgtoolbox/internal/controller/shared"
+	proxyconfig "github.com/fyannk/pgtoolbox/internal/proxy/config"
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+)
+
+// resolvedConsoleUser holds the per-user state resolved once per reconcile and
+// shared between the proxy config render, pgAdmin sync, and status patching.
+type resolvedConsoleUser struct {
+	user                 pgtoolboxv1alpha1.PgToolBoxUser
+	role                 *pgtoolboxv1alpha1.PgToolBoxRole
+	databaseRole         *cnpgv1.DatabaseRole
+	proxyUser            proxyconfig.User
+	proxyExcluded        bool
+	proxyExcludeReason   string
+	credential           roleCredential
+	pgAdminExcluded      bool
+	pgAdminExcludeReason string
+}
+
+// proxyIncluded reports whether this user is rendered into the proxy config.
+func (u resolvedConsoleUser) proxyIncluded() bool { return !u.proxyExcluded }
+
+// pgAdminIncluded reports whether this user is sent to the admin-sync sidecar.
+func (u resolvedConsoleUser) pgAdminIncluded() bool { return !u.pgAdminExcluded }
+
+// resolveConsoleUsers lists every PgToolBoxUser attached to this console,
+// resolves its role, local password, and postgres credential, and returns the
+// result ordered by user name for deterministic rendering. Per-user resolution
+// failures degrade that user instead of failing the whole reconcile.
+func (r *Reconciler) resolveConsoleUsers(
+	ctx context.Context,
+	console *pgtoolboxv1alpha1.PgConsole,
+) ([]resolvedConsoleUser, error) {
+	var list pgtoolboxv1alpha1.PgToolBoxUserList
+	if err := r.List(ctx, &list, client.InNamespace(console.Namespace)); err != nil {
+		return nil, err
+	}
+
+	var result []resolvedConsoleUser
+	for i := range list.Items {
+		if list.Items[i].Spec.PgConsoleRef.Name != console.Name {
+			continue
+		}
+		resolved, err := r.resolveConsoleUser(ctx, console, &list.Items[i])
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, resolved)
+	}
+
+	sort.Slice(result, func(i, j int) bool { return result[i].user.Name < result[j].user.Name })
+
+	// Reject duplicate subjects deterministically: the second user is excluded.
+	seen := map[string]struct{}{}
+	for i := range result {
+		if result[i].proxyExcluded {
+			continue
+		}
+		key := strings.ToLower(result[i].proxyUser.Subject)
+		if _, dup := seen[key]; dup {
+			result[i].proxyExcluded = true
+			result[i].proxyExcludeReason = fmt.Sprintf("duplicate subject %q", result[i].proxyUser.Subject)
+			continue
+		}
+		seen[key] = struct{}{}
+	}
+
+	return result, nil
+}
+
+// resolveConsoleUser resolves one PgToolBoxUser. Missing references are treated
+// as degradation; unexpected API errors are returned so the reconcile can
+// retry.
+func (r *Reconciler) resolveConsoleUser(
+	ctx context.Context,
+	console *pgtoolboxv1alpha1.PgConsole,
+	user *pgtoolboxv1alpha1.PgToolBoxUser,
+) (resolvedConsoleUser, error) {
+	resolved := resolvedConsoleUser{user: *user}
+
+	var role pgtoolboxv1alpha1.PgToolBoxRole
+	roleKey := client.ObjectKey{Namespace: console.Namespace, Name: user.Spec.RoleRef.Name}
+	if err := r.Get(ctx, roleKey, &role); err != nil {
+		if apierrors.IsNotFound(err) {
+			resolved.proxyExcluded = true
+			resolved.proxyExcludeReason = fmt.Sprintf("role %s was not found", roleKey.Name)
+			resolved.pgAdminExcluded = true
+			resolved.pgAdminExcludeReason = resolved.proxyExcludeReason
+			return resolved, nil
+		}
+		return resolved, err
+	}
+	if role.Spec.PgConsoleRef.Name != console.Name {
+		reason := fmt.Sprintf("role %s belongs to a different console", role.Name)
+		resolved.proxyExcluded = true
+		resolved.proxyExcludeReason = reason
+		resolved.pgAdminExcluded = true
+		resolved.pgAdminExcludeReason = reason
+		return resolved, nil
+	}
+	resolved.role = &role
+
+	level := proxyconfig.Level(role.Spec.Level)
+	if !level.Valid() {
+		reason := fmt.Sprintf("role %s has invalid level %q", role.Name, role.Spec.Level)
+		resolved.proxyExcluded = true
+		resolved.proxyExcludeReason = reason
+		resolved.pgAdminExcluded = true
+		resolved.pgAdminExcludeReason = reason
+		return resolved, nil
+	}
+
+	proxyUser := proxyconfig.User{
+		Subject: user.Spec.Subject,
+		Level:   level,
+	}
+
+	if console.Spec.Proxy.Authentication.Mode == pgtoolboxv1alpha1.ProxyAuthenticationModeLocal {
+		ref := user.Spec.LocalPasswordSecretRef
+		if ref == nil || ref.Name == "" {
+			resolved.proxyExcluded = true
+			resolved.proxyExcludeReason = "localPasswordSecretRef is required in local authentication mode"
+			return resolved, nil
+		}
+		hash, _, err := shared.ReadLocalPasswordHash(
+			ctx, r.APIReader,
+			client.ObjectKey{Namespace: console.Namespace, Name: ref.Name},
+			ref.Key,
+		)
+		if err != nil {
+			resolved.proxyExcluded = true
+			if apierrors.IsNotFound(err) {
+				resolved.proxyExcludeReason = fmt.Sprintf("local password secret %s was not found", ref.Name)
+			} else {
+				resolved.proxyExcludeReason = fmt.Sprintf("local password secret %s is invalid", ref.Name)
+			}
+			return resolved, nil
+		}
+		proxyUser.LocalPasswordBcrypt = hash
+	}
+	resolved.proxyUser = proxyUser
+
+	// pgAdmin path: resolve the DatabaseRole and its password Secret.
+	dbRoleName := databaseRoleNameForRole(&role)
+	if dbRoleName == "" {
+		resolved.pgAdminExcluded = true
+		resolved.pgAdminExcludeReason = fmt.Sprintf("role %s has no resolved DatabaseRole", role.Name)
+		return resolved, nil
+	}
+	var databaseRole cnpgv1.DatabaseRole
+	if err := r.APIReader.Get(ctx, client.ObjectKey{Namespace: console.Namespace, Name: dbRoleName}, &databaseRole); err != nil {
+		resolved.pgAdminExcluded = true
+		if apierrors.IsNotFound(err) {
+			resolved.pgAdminExcludeReason = fmt.Sprintf("DatabaseRole %s was not found", dbRoleName)
+		} else {
+			resolved.pgAdminExcludeReason = fmt.Sprintf("DatabaseRole %s could not be read", dbRoleName)
+		}
+		return resolved, nil
+	}
+	resolved.databaseRole = &databaseRole
+
+	if databaseRole.Spec.PasswordSecret == nil || databaseRole.Spec.PasswordSecret.Name == "" {
+		resolved.pgAdminExcluded = true
+		resolved.pgAdminExcludeReason = fmt.Sprintf("DatabaseRole %s has no password secret", dbRoleName)
+		return resolved, nil
+	}
+
+	if databaseRole.Status.Applied == nil || !*databaseRole.Status.Applied ||
+		databaseRole.Status.ObservedGeneration < databaseRole.Generation {
+		resolved.pgAdminExcluded = true
+		resolved.pgAdminExcludeReason = fmt.Sprintf("DatabaseRole %s is not yet applied by CloudNativePG", dbRoleName)
+		return resolved, nil
+	}
+
+	var secret corev1.Secret
+	secretKey := client.ObjectKey{Namespace: console.Namespace, Name: databaseRole.Spec.PasswordSecret.Name}
+	if err := r.APIReader.Get(ctx, secretKey, &secret); err != nil {
+		resolved.pgAdminExcluded = true
+		if apierrors.IsNotFound(err) {
+			resolved.pgAdminExcludeReason = fmt.Sprintf("password secret %s was not found", secretKey.Name)
+		} else {
+			resolved.pgAdminExcludeReason = fmt.Sprintf("password secret %s could not be read", secretKey.Name)
+		}
+		return resolved, nil
+	}
+
+	if databaseRole.Status.SecretResourceVersion != "" &&
+		databaseRole.Status.SecretResourceVersion != secret.ResourceVersion {
+		resolved.pgAdminExcluded = true
+		resolved.pgAdminExcludeReason = fmt.Sprintf("password secret %s has rotated and is not yet applied", secretKey.Name)
+		return resolved, nil
+	}
+
+	username := string(secret.Data[corev1.BasicAuthUsernameKey])
+	password := string(secret.Data[corev1.BasicAuthPasswordKey])
+	if username == "" {
+		username = databaseRole.Spec.Name
+	}
+	if username == "" || password == "" {
+		resolved.pgAdminExcluded = true
+		resolved.pgAdminExcludeReason = fmt.Sprintf("password secret %s is incomplete", secretKey.Name)
+		return resolved, nil
+	}
+	resolved.credential = roleCredential{username: username, password: password}
+	return resolved, nil
+}
+
+// proxyUsers returns the slice of proxy config users from the resolved set.
+func proxyUsers(resolved []resolvedConsoleUser) []proxyconfig.User {
+	var users []proxyconfig.User
+	for _, u := range resolved {
+		if u.proxyIncluded() {
+			users = append(users, u.proxyUser)
+		}
+	}
+	return users
+}
+
+// applyUserStatuses patches each PgToolBoxUser status with the outcome of this
+// reconcile. It is called after both proxy rendering and pgAdmin sync have run.
+func (r *Reconciler) applyUserStatuses(ctx context.Context, resolved []resolvedConsoleUser) error {
+	for i := range resolved {
+		u := &resolved[i]
+		before := u.user.DeepCopy()
+		u.user.Status.ObservedGeneration = u.user.GetGeneration()
+
+		if u.role == nil {
+			conditions.MarkFalse(
+				&u.user,
+				pgtoolboxv1alpha1.UserConditionRoleReady,
+				pgtoolboxv1alpha1.ReasonRoleNotFound,
+				"%s", u.proxyExcludeReason,
+			)
+		} else if u.role.Spec.PgConsoleRef.Name != u.user.Spec.PgConsoleRef.Name {
+			conditions.MarkFalse(
+				&u.user,
+				pgtoolboxv1alpha1.UserConditionRoleReady,
+				pgtoolboxv1alpha1.ReasonConfigurationInvalid,
+				"role %s belongs to a different console", u.role.Name,
+			)
+		} else {
+			conditions.MarkTrue(
+				&u.user,
+				pgtoolboxv1alpha1.UserConditionRoleReady,
+				pgtoolboxv1alpha1.ReasonAsExpected,
+				"role %s is ready", u.role.Name,
+			)
+		}
+
+		if u.proxyExcluded {
+			conditions.MarkFalse(
+				&u.user,
+				pgtoolboxv1alpha1.UserConditionProxySynced,
+				pgtoolboxv1alpha1.ReasonSomeDegraded,
+				"%s", u.proxyExcludeReason,
+			)
+			u.user.Status.ProxySynced = false
+		} else {
+			conditions.MarkTrue(
+				&u.user,
+				pgtoolboxv1alpha1.UserConditionProxySynced,
+				pgtoolboxv1alpha1.ReasonAsExpected,
+				"user rendered into proxy configuration",
+			)
+			u.user.Status.ProxySynced = true
+		}
+
+		if u.pgAdminExcluded {
+			conditions.MarkFalse(
+				&u.user,
+				pgtoolboxv1alpha1.UserConditionPgAdminSynced,
+				pgtoolboxv1alpha1.ReasonSomeDegraded,
+				"%s", u.pgAdminExcludeReason,
+			)
+			u.user.Status.PgAdminSynced = false
+		} else {
+			conditions.MarkTrue(
+				&u.user,
+				pgtoolboxv1alpha1.UserConditionPgAdminSynced,
+				pgtoolboxv1alpha1.ReasonAsExpected,
+				"pgAdmin account and server synced",
+			)
+			u.user.Status.PgAdminSynced = true
+		}
+
+		if err := r.Status().Patch(ctx, &u.user, client.MergeFrom(before)); err != nil {
+			return fmt.Errorf("patch PgToolBoxUser %s/%s status: %w", u.user.Namespace, u.user.Name, err)
+		}
+	}
+	return nil
+}

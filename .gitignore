@@ -1,0 +1,23 @@
+# Binaries and build outputs
+/bin/
+/manager
+/proxy
+/dist/
+
+# Test coverage
+cover.out
+*.coverprofile
+
+# Editor and OS files
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Local environment files
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template

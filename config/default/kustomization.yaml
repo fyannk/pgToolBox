@@ -1,0 +1,19 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Development deployment: CRDs + RBAC + manager in the pgtoolbox namespace.
+# Production installs are expected to come from the platform packaging
+# (Helm/OLM), not from this overlay.
+namespace: pgtoolbox
+namePrefix: ""
+
+resources:
+- namespace.yaml
+- ../crd
+- ../rbac
+- ../manager
+
+images:
+- name: controller
+  newName: pgtoolbox
+  newTag: latest
