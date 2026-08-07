@@ -1,0 +1,15 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: pgtoolbox-leader-election
+  namespace: system
+  labels:
+    app.kubernetes.io/name: pgtoolbox
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: pgtoolbox-leader-election
+subjects:
+- kind: ServiceAccount
+  name: pgtoolbox
+  namespace: system

@@ -1,0 +1,81 @@
+# Default values for pgtoolbox.
+
+# nameOverride replaces the chart name in resource names.
+nameOverride: ""
+# fullnameOverride replaces the fully-qualified app name in resource names.
+fullnameOverride: ""
+
+# namespace controls where the operator is installed. When create is true the
+# chart creates the namespace; otherwise the release namespace is used.
+namespace:
+  name: pgtoolbox
+  create: false
+
+# replicaCount is the number of manager replicas.
+replicaCount: 2
+
+# image is the operator (manager) image.
+image:
+  repository: pgtoolbox
+  tag: latest
+  pullPolicy: IfNotPresent
+
+# proxyImage is the default pgtoolbox-proxy image used for consoles that do
+# not name one. Leave empty to let each PgConsole specify its own.
+proxyImage: ""
+
+# Default application images used when a PgConsole spec omits them.
+defaultImages:
+  pgConsole: ""
+  pgAdmin: ""
+  objectStoreViewer: ""
+
+# leaderElection enables controller-runtime leader election.
+leaderElection: true
+
+metricsBindAddress: ":8080"
+healthProbeBindAddress: ":8081"
+
+# resources for the manager container.
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+# podSecurityContext for the manager pod.
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+
+# securityContext for the manager container.
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+# livenessProbe and readinessProbe.
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: 8081
+  initialDelaySeconds: 15
+  periodSeconds: 20
+readinessProbe:
+  httpGet:
+    path: /readyz
+    port: 8081
+  initialDelaySeconds: 5
+  periodSeconds: 10
+
+# commonLabels are added to every resource.
+commonLabels: {}
+# podLabels are added to the manager pod template.
+podLabels: {}
+# podAnnotations are added to the manager pod template.
+podAnnotations: {}

@@ -1,0 +1,65 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "pgtoolbox.fullname" . }}
+  namespace: {{ include "pgtoolbox.namespace" . }}
+  labels:
+    {{- include "pgtoolbox.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "pgtoolbox.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "pgtoolbox.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "pgtoolbox.fullname" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+      - name: manager
+        image: {{ include "pgtoolbox.image" . | quote }}
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        args:
+        {{- if .Values.leaderElection }}
+        - --leader-elect
+        {{- end }}
+        - --metrics-bind-address={{ .Values.metricsBindAddress }}
+        - --health-probe-bind-address={{ .Values.healthProbeBindAddress }}
+        - --operator-image={{ include "pgtoolbox.image" . }}
+        {{- if .Values.proxyImage }}
+        - --default-pgtoolbox-proxy-image={{ .Values.proxyImage }}
+        {{- end }}
+        {{- if .Values.defaultImages.pgConsole }}
+        - --default-pgconsole-image={{ .Values.defaultImages.pgConsole }}
+        {{- end }}
+        {{- if .Values.defaultImages.pgAdmin }}
+        - --default-pgadmin-image={{ .Values.defaultImages.pgAdmin }}
+        {{- end }}
+        {{- if .Values.defaultImages.objectStoreViewer }}
+        - --default-objectstoreviewer-image={{ .Values.defaultImages.objectStoreViewer }}
+        {{- end }}
+        ports:
+        - containerPort: 8080
+          name: metrics
+          protocol: TCP
+        - containerPort: 8081
+          name: probes
+          protocol: TCP
+        securityContext:
+          {{- toYaml .Values.securityContext | nindent 10 }}
+        livenessProbe:
+          {{- toYaml .Values.livenessProbe | nindent 10 }}
+        readinessProbe:
+          {{- toYaml .Values.readinessProbe | nindent 10 }}
+        resources:
+          {{- toYaml .Values.resources | nindent 10 }}

@@ -1,0 +1,28 @@
+# Leader-election permissions, namespaced to the operator's own namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: pgtoolbox-leader-election
+  namespace: system
+  labels:
+    app.kubernetes.io/name: pgtoolbox
+rules:
+- apiGroups:
+  - coordination.k8s.io
+  resources:
+  - leases
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - patch

@@ -1,0 +1,15 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "pgtoolbox.fullname" . }}-leader-election
+  namespace: {{ include "pgtoolbox.namespace" . }}
+  labels:
+    {{- include "pgtoolbox.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "pgtoolbox.fullname" . }}-leader-election
+subjects:
+- kind: ServiceAccount
+  name: {{ include "pgtoolbox.fullname" . }}
+  namespace: {{ include "pgtoolbox.namespace" . }}

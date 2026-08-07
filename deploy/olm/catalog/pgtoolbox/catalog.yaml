@@ -1,0 +1,43 @@
+---
+schema: olm.package
+name: pgtoolbox
+defaultChannel: alpha
+description: >-
+  pgToolBox operator — per-CNPG-cluster console, auth proxy, embedded
+  pgAdmin, and declarative user provisioning.
+---
+schema: olm.channel
+package: pgtoolbox
+name: alpha
+entries:
+- name: pgtoolbox.v0.1.0
+---
+schema: olm.bundle
+package: pgtoolbox
+name: pgtoolbox.v0.1.0
+image: pgtoolbox-bundle:v0.1.0
+properties:
+- type: olm.package
+  value:
+    packageName: pgtoolbox
+    version: 0.1.0
+- type: olm.gvk
+  value:
+    group: pgtoolbox.fyannk.dev
+    kind: PgConsole
+    version: v1alpha1
+- type: olm.gvk
+  value:
+    group: pgtoolbox.fyannk.dev
+    kind: PgToolBoxRole
+    version: v1alpha1
+- type: olm.gvk
+  value:
+    group: pgtoolbox.fyannk.dev
+    kind: PgToolBoxUser
+    version: v1alpha1
+- type: olm.gvk
+  value:
+    group: pgtoolbox.fyannk.dev
+    kind: PgToolBoxAccessRequest
+    version: v1alpha1

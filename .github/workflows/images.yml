@@ -1,0 +1,79 @@
+name: Images
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-push:
+    name: Build and push container images
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check out objectstoreviewer API (go.mod replace)
+        run: git clone --depth 1 https://github.com/fyannk/object-store-viewer.git ../object-store-viewer
+
+      - name: Compute image tag
+        id: imgtag
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=latest" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push manager image
+        uses: docker/build-push-action@v6
+        with:
+          context: ..
+          file: ./${{ github.event.repository.name }}/Dockerfile
+          target: manager
+          push: true
+          build-args: |
+            REPO_DIR=${{ github.event.repository.name }}
+            VERSION=${{ steps.imgtag.outputs.tag }}
+            IMG=ghcr.io/${{ github.repository_owner }}/pgtoolbox:${{ steps.imgtag.outputs.tag }}
+          tags: ghcr.io/${{ github.repository_owner }}/pgtoolbox:${{ steps.imgtag.outputs.tag }}
+
+      - name: Build and push proxy image
+        uses: docker/build-push-action@v6
+        with:
+          context: ..
+          file: ./${{ github.event.repository.name }}/Dockerfile
+          target: proxy
+          push: true
+          build-args: |
+            REPO_DIR=${{ github.event.repository.name }}
+          tags: ghcr.io/${{ github.repository_owner }}/pgtoolbox-proxy:${{ steps.imgtag.outputs.tag }}
+
+      - name: Build and push OLM bundle image
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: docker/build-push-action@v6
+        with:
+          context: deploy/olm/bundle
+          file: deploy/olm/bundle.Dockerfile
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/pgtoolbox-bundle:${{ steps.imgtag.outputs.tag }}
+
+      - name: Build and push OLM catalog image
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: docker/build-push-action@v6
+        with:
+          context: deploy/olm/catalog
+          file: deploy/olm/catalog.Dockerfile
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/pgtoolbox-catalog:${{ steps.imgtag.outputs.tag }}

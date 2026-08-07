@@ -1,0 +1,19 @@
+# Development binding: the manager ClusterRole is bound cluster-wide. The
+# operator only reconciles namespaced resources it owns; the ClusterRole is
+# required because generated console Roles must not exceed the operator's own
+# authority (escalation prevention), and the console watches several kinds
+# cluster-wide.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: pgtoolbox-manager
+  labels:
+    app.kubernetes.io/name: pgtoolbox
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: manager-role
+subjects:
+- kind: ServiceAccount
+  name: pgtoolbox
+  namespace: system
