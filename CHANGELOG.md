@@ -119,6 +119,16 @@ until a version is cut.
   This raises the pgConsole floor to **0.2.0**, which accepts
   root-relative link-outs for same-origin siblings; 0.1.x validates them
   as absolute URLs only and refuses to start on this value.
+- **pgAdmin asked for credentials a second time.** The admin-sync sidecar
+  has always created webserver-auth accounts — accounts with no password of
+  their own — but pgAdmin was left on its default internal authentication,
+  so it offered a login form that none of those accounts could satisfy. It
+  now trusts the `X-Forwarded-User` the proxy already established, which is
+  trustworthy for the same reason the console's copy is: the proxy strips
+  any client-supplied one before setting its own, and the generated
+  NetworkPolicy confines ingress to the proxy. Reaching pgAdmin still
+  requires a session at or above `pgAdmin.accessMinLevel`; a request with a
+  forged header and no session is redirected to sign in as before.
 - **The embedded pgAdmin was unreachable through the proxy.** The proxy
   routes `/pgadmin` to it but forwards the path as-is, so pgAdmin — which
   serves at the root — answered 404 to every request under that prefix.

@@ -49,3 +49,19 @@ console's job (its operate Role grants read and status update). A `dba`
 reviews in the console;
 the operator's `PgToolBoxAccessRequest` controller materializes the
 `PgToolBoxUser`, and the next proxy-config render lets the user in.
+
+## pgAdmin
+
+pgAdmin is reached at `/pgadmin` on the console's own origin, so it
+crosses the same boundary as every other request: the proxy admits it
+only with a session at or above `spec.pgAdmin.accessMinLevel`.
+
+It does not ask for credentials again. The accounts the admin-sync
+sidecar provisions are webserver-auth accounts with no password of their
+own, and pgAdmin is configured to take the identity from the
+`X-Forwarded-User` the proxy sets. That header is trustworthy for exactly
+the reason the console's copy is, and for no other: the proxy strips any
+client-supplied copy before setting its own, and the generated
+NetworkPolicy leaves no route to pgAdmin that bypasses the proxy. A
+request carrying a forged header but no session reaches the sign-in page,
+not pgAdmin.
