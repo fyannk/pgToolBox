@@ -131,6 +131,16 @@ func BuildRuntime(cfg *config.Config) (*Runtime, error) {
 		rp := &httputil.ReverseProxy{
 			Rewrite: func(pr *httputil.ProxyRequest) {
 				pr.SetURL(target)
+				// SetURL points the outbound request at the loopback
+				// upstream, which also makes it the Host the upstream sees.
+				// An upstream that builds absolute URLs then builds them
+				// from 127.0.0.1:<port> and hands the browser an address
+				// inside the Pod — pgAdmin's trailing-slash redirect did
+				// exactly that. Preserve the client's Host, and state the
+				// forwarding explicitly; SetXForwarded overwrites any
+				// client-supplied X-Forwarded-* rather than appending to it.
+				pr.Out.Host = pr.In.Host
+				pr.SetXForwarded()
 				// Strip any client-forged identity headers, then set
 				// them exclusively from the verified session.
 				for _, h := range strippedHeaders {

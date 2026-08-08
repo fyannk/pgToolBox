@@ -235,6 +235,11 @@ spec:
     allowOperations: true
     allowLogs: true
     allowAccessReview: true
+    # No allowInsecureLinks, and so no pgAdmin link-out in the UI. A
+    # clusterIP console has no external hostname, so the only absolute URL
+    # the operator could build is the proxy's own loopback one — which is
+    # not the address a port-forward puts the browser on. pgAdmin is still
+    # reachable at /pgadmin; only the rendered link is missing.
   # kind defaults no fsGroup, and both the pgAdmin settings volume and the
   # evidence socket directory need one. OpenShift allocates it from the
   # namespace range instead, which is why this is not a default.
@@ -330,10 +335,15 @@ cat <<EOF
     operator@$SUBJECT_DOMAIN / operator   + every other read screen, the log tails
     dba@$SUBJECT_DOMAIN      / dba        + the four day-2 operations, the
                                           access-request review panel, and
-                                          pgAdmin at /pgadmin
+                                          pgAdmin (browse to /pgadmin)
 
   The subjects are email addresses because pgAdmin keys its accounts on
   one; a subject that is not an address cannot be provisioned there.
+
+  pgAdmin: browse to http://localhost:$PORT/pgadmin directly. The console
+  renders an in-UI link only when the PgConsole has an exposure hostname —
+  a clusterIP console reached by port-forward has no absolute URL the
+  operator could put there.
 
   Sign in as 'stranger@$SUBJECT_DOMAIN' with any password to see the proxy reject an
   unknown identity — the 403 page's form files a real

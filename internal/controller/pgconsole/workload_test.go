@@ -140,6 +140,13 @@ func TestDeploymentContainersAndEnv(t *testing.T) {
 	}
 
 	pgAdmin := containerByName(t, pod, "pgadmin")
+	// The proxy forwards /pgadmin without stripping the prefix — stripping
+	// would send pgAdmin's own absolute links to the console instead — so
+	// pgAdmin has to be told the prefix it is mounted under. Without it
+	// every request under /pgadmin is a 404 from pgAdmin itself.
+	if value, _ := envValue(pgAdmin, "SCRIPT_NAME"); value != "/pgadmin" {
+		t.Fatalf("pgAdmin SCRIPT_NAME = %q, want the proxy route prefix", value)
+	}
 	if value, _ := envValue(pgAdmin, "PGADMIN_LISTEN_PORT"); value != "8081" {
 		t.Fatalf("pgAdmin listen port = %q", value)
 	}
