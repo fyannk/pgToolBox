@@ -27,16 +27,17 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
 
 // SyncRequest is the only payload of the sidecar API: the complete desired
-// state. It carries one entry per PgToolBoxUser, including the postgres
-// password; the password is never logged and only travels over the in-pod
-// mTLS API.
+// state. It carries the connections pgAdmin should offer, each with the
+// password of a credential the CloudNativePG cluster publishes. Passwords
+// are never logged and travel only over the in-pod mTLS API.
 type SyncRequest struct {
-	Users []User `json:"users"`
+	Servers []Server `json:"servers"`
 }
 
 // SidecarOptions configures RunSidecar.
@@ -54,6 +55,9 @@ type SidecarOptions struct {
 	// PassFile is the path where the sidecar writes the combined pgpass
 	// file; it defaults to DefaultPassFilePath.
 	PassFile string
+	// SettingsDB is pgAdmin's settings database, read to discover which
+	// accounts exist. It defaults to DefaultSettingsDBPath.
+	SettingsDB string
 }
 
 // RunSidecar serves the admin-sync API until the context ends. pgAdmin
@@ -71,6 +75,9 @@ func (o SidecarOptions) RunSidecar(ctx context.Context) error {
 	}
 	if o.PassFile == "" {
 		o.PassFile = DefaultPassFilePath
+	}
+	if o.SettingsDB == "" {
+		o.SettingsDB = DefaultSettingsDBPath
 	}
 
 	token, err := os.ReadFile(o.TokenFile)
@@ -130,66 +137,74 @@ func (o SidecarOptions) RunSidecar(ctx context.Context) error {
 	}
 }
 
-// apply converges pgAdmin state: it writes the combined passfile, then for
-// each user ensures the external account exists with the right role and the
-// shared server definition is loaded. It stops at the first failure and the
-// operator retries the whole request; the mapping is absolute, so replays
-// converge instead of compounding.
-func (o SidecarOptions) apply(ctx context.Context, request SyncRequest) error {
-	if err := o.writePassfile(request.Users); err != nil {
-		return fmt.Errorf("write pgpass file: %w", err)
-	}
-	for _, user := range request.Users {
-		if err := o.addUser(ctx, user.Subject, user.PgAdminRole); err != nil {
-			return err
-		}
-		if err := o.updateRole(ctx, user.Subject, user.PgAdminRole); err != nil {
-			return err
-		}
-		if err := o.loadServers(ctx, user.Subject, user.Server); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// addUser creates the webserver-authenticated external user. setup.py keeps
-// creation and modification in separate subcommands: update-external-user
-// only updates, so without this the account never existed and load-servers
-// failed with "The specified user ID could not be found".
+// apply converges pgAdmin state: every account gets the same connections,
+// because the credentials belong to the cluster rather than to whoever
+// signed in, and the proxy has already refused anyone below
+// spec.pgAdmin.accessMinLevel.
 //
-// It is idempotent by tolerance rather than by flag — pgAdmin has no
-// create-or-update — so an "already exists" outcome is success. Any other
-// failure surfaces, and the following updateRole is what converges the role
-// of a user that already existed.
-func (o SidecarOptions) addUser(ctx context.Context, username, role string) error {
-	command := exec.CommandContext(ctx, o.PythonPath, o.SetupPath, // #nosec G204
-		"add-external-user", username,
-		"--auth-source", "webserver",
-		"--role", role,
-		"--email", username,
-	)
-	output, err := command.CombinedOutput()
-	if err == nil || strings.Contains(string(output), "already exists") {
-		return nil
+// pgAdmin does not offer a way to share one list. Its shared-server feature
+// strips passfile and the TLS file paths out of a server the moment it
+// materializes it for anyone but the owner — deliberately, so that "each
+// user should configure their own" — so a genuinely shared entry can carry
+// visibility but never credentials. What it does support is a server per
+// account, so that is what this writes: the same list, once per account,
+// each pointing at that account's own copy of the credential file.
+//
+// Accounts arrive on their own. pgAdmin creates one on first sight of the
+// proxy's identity header, so the set is whatever has signed in so far and
+// is read back from pgAdmin rather than supplied by the operator; an
+// account that appears later is served by the next sync.
+func (o SidecarOptions) apply(ctx context.Context, request SyncRequest) error {
+	accounts, err := o.accounts(ctx)
+	if err != nil {
+		return err
 	}
-	return fmt.Errorf("add user %q: %w: %s", username, err, string(output))
+	for _, account := range accounts {
+		if err := o.writePassfile(account, request.Servers); err != nil {
+			return err
+		}
+		if err := o.loadServers(ctx, account, request.Servers); err != nil {
+			return err
+		}
+	}
+	// One combined file outside anyone's storage, for connections made
+	// without pgAdmin's own resolution — PGPASSFILE names it, so a psql in
+	// the Pod finds the same credentials.
+	return o.writeLegacyPassfile(request.Servers)
 }
 
-// updateRole assigns a pgAdmin role to one webserver-authenticated external
-// user through the supported setup.py CLI, the only sanctioned way to change
-// roles without touching pgAdmin's database directly. The returned error
-// embeds the CLI output, which carries no credential material.
-func (o SidecarOptions) updateRole(ctx context.Context, username, role string) error {
-	command := exec.CommandContext(ctx, o.PythonPath, o.SetupPath, // #nosec G204
-		"update-external-user", username,
-		"--auth-source", "webserver",
-		"--role", role,
-	)
-	if output, err := command.CombinedOutput(); err != nil {
-		return fmt.Errorf("update role of %q: %w: %s", username, err, string(output))
+// accounts lists the pgAdmin accounts to provision, straight from its
+// settings database. The bootstrap account is skipped: it exists only to
+// initialize that database and nobody signs in with it.
+func (o SidecarOptions) accounts(ctx context.Context) ([]string, error) {
+	const query = `SELECT email FROM user WHERE auth_source = 'webserver'`
+	output, err := o.querySettingsDB(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("list pgAdmin accounts: %w", err)
 	}
-	return nil
+	var accounts []string
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		if account := strings.TrimSpace(line); account != "" {
+			accounts = append(accounts, account)
+		}
+	}
+	return accounts, nil
+}
+
+// querySettingsDB runs one read-only query against pgAdmin's settings
+// database. It goes through the interpreter pgAdmin itself ships rather
+// than a Go driver: the sidecar runs in the pgAdmin image, so sqlite3 is
+// already there, and the build stays free of cgo.
+func (o SidecarOptions) querySettingsDB(ctx context.Context, query string) (string, error) {
+	script := "import sqlite3,sys\n" +
+		"c=sqlite3.connect(sys.argv[1])\n" +
+		"print('\\n'.join(str(r[0]) for r in c.execute(sys.argv[2])))\n"
+	command := exec.CommandContext(ctx, o.PythonPath, "-c", script, o.SettingsDB, query) // #nosec G204
+	output, err := command.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("%w: %s", err, string(output))
+	}
+	return string(output), nil
 }
 
 // serverDocument is the JSON shape consumed by setup.py load-servers.
@@ -207,61 +222,58 @@ type serverEntry struct {
 	ConnectionParameters map[string]string `json:"ConnectionParameters"`
 }
 
-// loadServers imports one shared server definition for a single user,
-// replacing any existing servers owned by that user so the operation is
-// idempotent.
-func (o SidecarOptions) loadServers(ctx context.Context, username string, server Server) error {
-	document := serverDocument{
-		Servers: map[string]serverEntry{
-			"1": {
-				Name:          server.Name,
-				Group:         server.Group,
-				Host:          server.Host,
-				Port:          server.Port,
-				MaintenanceDB: server.MaintenanceDB,
-				Username:      server.Username,
-				// The passfile parameter has to be present and has to
-				// resolve, and pgAdmin treats those two failures very
-				// differently: absent, it prompts the user for a password;
-				// present but unresolvable, it connects with none and the
-				// server reports "no password supplied". It resolves the
-				// value through its file manager, which joins it onto the
-				// signed-in user's storage directory — so the path is
-				// storage-relative, and writePassfile puts the file exactly
-				// where that resolution lands.
-				ConnectionParameters: map[string]string{
-					"sslmode":  server.SSLMode,
-					"passfile": storageRelativePassFile,
-				},
+// loadServers imports the whole connection list for one account, replacing
+// whatever that account had so the operation is idempotent.
+//
+// The passfile parameter has to be present and has to resolve, and pgAdmin
+// treats those two failures very differently: absent, it prompts for a
+// password; present but unresolvable, it connects with none and the server
+// answers "no password supplied". It resolves the value through its file
+// manager, which joins it onto the signed-in account's storage directory —
+// so the path is storage-relative, and writePassfile puts the file exactly
+// where that resolution lands.
+func (o SidecarOptions) loadServers(ctx context.Context, account string, servers []Server) error {
+	document := serverDocument{Servers: map[string]serverEntry{}}
+	for i, server := range servers {
+		document.Servers[strconv.Itoa(i+1)] = serverEntry{
+			Name:          server.Name,
+			Group:         server.Group,
+			Host:          server.Host,
+			Port:          server.Port,
+			MaintenanceDB: server.MaintenanceDB,
+			Username:      server.Username,
+			ConnectionParameters: map[string]string{
+				"sslmode":  server.SSLMode,
+				"passfile": storageRelativePassFile,
 			},
-		},
+		}
 	}
 	payload, err := json.Marshal(document)
 	if err != nil {
-		return fmt.Errorf("marshal server JSON for %q: %w", username, err)
+		return fmt.Errorf("marshal server JSON for %q: %w", account, err)
 	}
 
 	file, err := os.CreateTemp("", "pgadmin-servers-*.json")
 	if err != nil {
-		return fmt.Errorf("create server JSON temp file for %q: %w", username, err)
+		return fmt.Errorf("create server JSON temp file for %q: %w", account, err)
 	}
 	defer func() { _ = os.Remove(file.Name()) }()
 	if _, err := file.Write(payload); err != nil {
 		_ = file.Close()
-		return fmt.Errorf("write server JSON temp file for %q: %w", username, err)
+		return fmt.Errorf("write server JSON temp file for %q: %w", account, err)
 	}
 	if err := file.Close(); err != nil {
-		return fmt.Errorf("close server JSON temp file for %q: %w", username, err)
+		return fmt.Errorf("close server JSON temp file for %q: %w", account, err)
 	}
 
 	command := exec.CommandContext(ctx, o.PythonPath, o.SetupPath, // #nosec G204
 		"load-servers", file.Name(),
-		"--user", username,
+		"--user", account,
 		"--auth-source", "webserver",
 		"--replace",
 	)
 	if output, err := command.CombinedOutput(); err != nil {
-		return fmt.Errorf("load servers for %q: %w: %s", username, err, string(output))
+		return fmt.Errorf("load servers for %q: %w: %s", account, err, string(output))
 	}
 	return nil
 }
@@ -279,47 +291,58 @@ func (o SidecarOptions) loadServers(ctx context.Context, username string, server
 // here, because this file is pod-private, is mounted only by pgAdmin and
 // the sidecar that writes it, and holds none but this console's roles for
 // this one cluster.
-// It writes one file per user, inside that user's own pgAdmin storage
-// directory, because that is the only place pgAdmin will resolve a passfile
-// to. One consequence is worth keeping: a user's file holds their line and
-// nobody else's, so no account can read another's credential.
-func (o SidecarOptions) writePassfile(users []User) error {
-	for _, user := range users {
-		directory := userStorageDirectory(user.Subject)
-		if err := os.MkdirAll(directory, 0o700); err != nil {
-			return fmt.Errorf("create storage directory for %q: %w", user.Subject, err)
-		}
-		line := pgpassLine(
-			pgpassAnyHost,
-			user.Server.Port,
-			user.Server.MaintenanceDB,
-			user.Server.Username,
-			user.Password,
-		)
-		target := filepath.Join(directory, "pgpass")
-		temporary := target + ".tmp"
-		if err := os.WriteFile(temporary, []byte(line+"\n"), 0o600); err != nil {
-			return fmt.Errorf("write passfile for %q: %w", user.Subject, err)
-		}
-		if err := os.Rename(temporary, target); err != nil {
-			return fmt.Errorf("replace passfile for %q: %w", user.Subject, err)
-		}
+// writePassfile writes one account's credential file, inside that
+// account's own pgAdmin storage directory, because that is the only place
+// pgAdmin resolves a server's passfile to. Every account gets the same
+// credentials: they are the cluster's, not the reader's.
+//
+// The host field is the wildcard. libpq matches a line against the host
+// string it was given rather than the host it resolved, so a line naming
+// the Service fails for a connection made by address, and reports it as no
+// password rather than as a file it declined to use.
+func (o SidecarOptions) writePassfile(account string, servers []Server) error {
+	directory := userStorageDirectory(account)
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		return fmt.Errorf("create storage directory for %q: %w", account, err)
 	}
-	return o.writeLegacyPassfile(users)
+	var lines []string
+	for _, server := range servers {
+		lines = append(lines, pgpassLine(
+			pgpassAnyHost,
+			server.Port,
+			server.MaintenanceDB,
+			server.Username,
+			server.Password,
+		))
+	}
+	content := []byte(strings.Join(lines, "\n"))
+	if len(content) > 0 {
+		content = append(content, '\n')
+	}
+
+	target := filepath.Join(directory, "pgpass")
+	temporary := target + ".tmp"
+	if err := os.WriteFile(temporary, content, 0o600); err != nil {
+		return fmt.Errorf("write passfile for %q: %w", account, err)
+	}
+	if err := os.Rename(temporary, target); err != nil {
+		return fmt.Errorf("replace passfile for %q: %w", account, err)
+	}
+	return nil
 }
 
 // writeLegacyPassfile keeps the combined file the pgAdmin container still
 // points PGPASSFILE at, so a connection made outside pgAdmin's own
 // resolution — a psql in the Pod, a probe — still finds credentials.
-func (o SidecarOptions) writeLegacyPassfile(users []User) error {
+func (o SidecarOptions) writeLegacyPassfile(servers []Server) error {
 	var lines []string
-	for _, user := range users {
+	for _, server := range servers {
 		lines = append(lines, pgpassLine(
 			pgpassAnyHost,
-			user.Server.Port,
-			user.Server.MaintenanceDB,
-			user.Server.Username,
-			user.Password,
+			server.Port,
+			server.MaintenanceDB,
+			server.Username,
+			server.Password,
 		))
 	}
 	content := []byte(strings.Join(lines, "\n"))

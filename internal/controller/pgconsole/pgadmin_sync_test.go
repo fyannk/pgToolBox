@@ -55,24 +55,24 @@ func TestPgAdminRoleForLevel(t *testing.T) {
 }
 
 func TestSyncRevision(t *testing.T) {
-	a := adminsync.SyncRequest{Users: []adminsync.User{{
-		Subject:     "alice@example.com",
-		PgAdminRole: "User",
-		Password:    "secret",
-		Server: adminsync.Server{
-			Name:     "cluster-1",
-			Host:     "cluster-1-rw.test.svc",
-			Port:     5432,
-			Username: "app_owner",
-		},
-	}}}
-	b := adminsync.SyncRequest{Users: []adminsync.User{a.Users[0]}}
+	server := adminsync.Server{
+		Name:          "application (app)",
+		Host:          "cluster-1-rw.test.svc",
+		Port:          5432,
+		MaintenanceDB: "app",
+		Username:      "app",
+		Password:      "secret",
+	}
+	a := adminsync.SyncRequest{Servers: []adminsync.Server{server}}
+	b := adminsync.SyncRequest{Servers: []adminsync.Server{server}}
 
 	if syncRevision(a) != syncRevision(b) {
 		t.Fatalf("identical payloads produced different revisions")
 	}
 
-	b.Users[0].Password = "different"
+	// A rotated password must roll the revision, or the sidecar keeps
+	// serving a credential the cluster has already replaced.
+	b.Servers[0].Password = "different"
 	if syncRevision(a) == syncRevision(b) {
 		t.Fatalf("changed password must change revision")
 	}
