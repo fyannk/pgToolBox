@@ -220,9 +220,13 @@ func (o SidecarOptions) loadServers(ctx context.Context, username string, server
 				Port:          server.Port,
 				MaintenanceDB: server.MaintenanceDB,
 				Username:      server.Username,
+				// No passfile parameter: pgAdmin resolves that one through
+				// its file manager, which rewrites an absolute path into the
+				// signed-in user's storage directory and so resolves it to
+				// nothing. The credentials reach libpq through PGPASSFILE in
+				// the container environment, which pgAdmin does not touch.
 				ConnectionParameters: map[string]string{
-					"sslmode":  server.SSLMode,
-					"passfile": server.PassFile,
+					"sslmode": server.SSLMode,
 				},
 			},
 		},

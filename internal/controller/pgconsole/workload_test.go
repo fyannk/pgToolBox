@@ -160,6 +160,14 @@ func TestDeploymentContainersAndEnv(t *testing.T) {
 			t.Fatalf("pgAdmin %s = %q, want %q", name, value, want)
 		}
 	}
+	// The credentials must arrive as PGPASSFILE, not as the server
+	// definition's passfile parameter: in server mode pgAdmin resolves that
+	// parameter through its file manager, which rewrites an absolute path
+	// into the signed-in user's storage directory, resolves it to nothing,
+	// and hands libpq no passfile at all.
+	if value, _ := envValue(pgAdmin, "PGPASSFILE"); value != "/run/pgadmin/passfile/pgpass" {
+		t.Fatalf("pgAdmin PGPASSFILE = %q, want the sidecar's passfile path", value)
+	}
 	// The header pgAdmin trusts must be the one the proxy sets, or it
 	// admits nobody — and it is only trustworthy because the proxy strips
 	// any client copy and the NetworkPolicy confines ingress to it.
