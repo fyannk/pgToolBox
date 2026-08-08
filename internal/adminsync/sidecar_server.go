@@ -260,11 +260,21 @@ func (o SidecarOptions) loadServers(ctx context.Context, username string, server
 // writePassfile renders the combined pgpass file from the current desired
 // state. Each user gets one line; removed users disappear on the next sync.
 // The file is created with restricted permissions and atomically replaced.
+//
+// The host field is the wildcard rather than the server's hostname. libpq
+// matches a pgpass line against the host string it was given, not against
+// the host it resolved: a connection made by address, or through any alias
+// of the same Service, matches no line spelled with the name and fails with
+// "fe_sendauth: no password supplied" — the credential is right there and
+// simply never consulted. Matching on the username instead costs nothing
+// here, because this file is pod-private, is mounted only by pgAdmin and
+// the sidecar that writes it, and holds none but this console's roles for
+// this one cluster.
 func (o SidecarOptions) writePassfile(users []User) error {
 	var lines []string
 	for _, user := range users {
 		lines = append(lines, pgpassLine(
-			user.Server.Host,
+			pgpassAnyHost,
 			user.Server.Port,
 			user.Server.MaintenanceDB,
 			user.Server.Username,
@@ -286,6 +296,10 @@ func (o SidecarOptions) writePassfile(users []User) error {
 	}
 	return os.Rename(tempFile, o.PassFile)
 }
+
+// pgpassAnyHost is pgpass's wildcard: it matches whatever host string the
+// client connected with, by name or by address.
+const pgpassAnyHost = "*"
 
 // pgpassLine renders one pgpass line, escaping colon and backslash in each
 // field so the file round-trips through libpq.
