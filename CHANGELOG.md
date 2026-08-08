@@ -88,6 +88,28 @@ until a version is cut.
   `repository` and `tag` — which made the operator's `--default-*-image`
   flags unreachable and the documented quick start invalid. They are
   pointers now, as `evidence.image` already was.
+- **The embedded pgAdmin could never start, and its user sync could never
+  run.** Five independent defects, each of which alone was enough to break
+  the feature, all found by the new e2e smoke test:
+  - the operator never rendered `PGADMIN_DEFAULT_EMAIL` /
+    `PGADMIN_DEFAULT_PASSWORD_FILE`, so pgAdmin refused to start and its
+    settings database was never initialized. A per-console bootstrap
+    credential is now generated once and mounted as a file; nobody signs in
+    with it, it exists only to unlock the settings database.
+  - `Reconciler.AdminSync` was never wired in `main.go`, so the controller
+    reported pgAdmin sync as "not configured" and provisioned nothing.
+  - the sync gate compared the configuration checksum against the
+    Deployment's own annotations, where nothing writes it, instead of the
+    Pod template's — so it was permanently "not at the current revision".
+  - the admin-sync sidecar never mounted the pgAdmin settings volume, so
+    every `setup.py` call failed on a SQLite path it could not see.
+  - the sidecar called `update-external-user` without ever calling
+    `add-external-user`, so the account did not exist and loading its server
+    definition failed. The client timeout was also raised from 30s: one sync
+    is a batch of `setup.py` invocations, each booting Flask and running
+    migrations.
+- The pgAdmin container mounted the admin-sync passfile volume even when no
+  sidecar was composed, naming a volume the Pod never declared.
 - `spec.podSecurityContext.fsGroup` makes the evidence sidecar deployable on
   clusters that do not default an fsGroup. pgObjectStoreViewer requires the
   shared socket directory to be setgid with group rwx, which on an `emptyDir`

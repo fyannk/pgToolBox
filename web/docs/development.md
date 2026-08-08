@@ -36,11 +36,30 @@ because the unit tests run against a fake client:
 Both matter when you touch `readRole`, `operateRules`, or `consoleEnv`.
 Run it before changing any of them.
 
+Two tests run:
+
+- **`TestConsoleSmoke`** — the fast path, pgAdmin off. Console reaches
+  `Ready`, the generated Roles survived escalation prevention, and
+  switching the write capabilities off withdraws the operate Role.
+- **`TestFullComposition`** — every optional component on, against a real
+  CloudNativePG cluster archiving into an in-cluster object store: the
+  pgAdmin container and its PVC, the admin-sync init container and
+  sidecar, the evidence sidecar, and the whole provisioning chain through
+  to `PgAdminSynced`.
+
+It runs the **family images** — `ghcr.io/fyannk/pgconsole`,
+`ghcr.io/fyannk/pgadmin` and `ghcr.io/fyannk/pgobjectstoreviewer` — not
+substitutes. CloudNativePG, cert-manager, the Barman Cloud Plugin and
+MinIO are test infrastructure around them.
+
 :::note
-The test found a real defect on its first run: a `PgConsole` naming no
-images was rejected by the API server, because the image fields serialized
-as `image: {}` against a schema requiring `repository` and `tag`. Nothing
-in the unit suite could see it — a fake client does not run CRD validation.
+The test earns its runtime. Its first runs found six defects nothing in
+the unit suite could see: a `PgConsole` naming no images was rejected by
+the API server; and the embedded pgAdmin could never start or provision a
+user, for five independent reasons — missing bootstrap credentials, an
+unwired `AdminSync`, a revision gate reading an annotation nothing writes,
+a settings volume the sidecar never mounted, and a user that was updated
+without ever being created.
 :::
 
 The full contribution guide — repository invariants, layout, git workflow —

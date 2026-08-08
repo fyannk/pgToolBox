@@ -67,7 +67,12 @@ func (r *Reconciler) reconcilePgAdminSync(
 		return nil
 	}
 
-	if deployment.Annotations[pgtoolboxv1alpha1.ConfigChecksumAnnotation] != checksum {
+	// The checksum lives on the Pod template, not on the Deployment: it is
+	// what makes a configuration change roll the pods. Reading it from the
+	// Deployment's own annotations, where nothing ever writes it, made this
+	// gate permanently true and pgAdmin sync unreachable. rolloutComplete
+	// above is what makes the desired template the running one.
+	if deployment.Spec.Template.Annotations[pgtoolboxv1alpha1.ConfigChecksumAnnotation] != checksum {
 		conditions.MarkFalse(
 			console,
 			pgtoolboxv1alpha1.PgConsoleConditionPgAdminSynced,

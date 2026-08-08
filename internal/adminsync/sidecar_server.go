@@ -140,6 +140,9 @@ func (o SidecarOptions) apply(ctx context.Context, request SyncRequest) error {
 		return fmt.Errorf("write pgpass file: %w", err)
 	}
 	for _, user := range request.Users {
+		if err := o.addUser(ctx, user.Subject, user.PgAdminRole); err != nil {
+			return err
+		}
 		if err := o.updateRole(ctx, user.Subject, user.PgAdminRole); err != nil {
 			return err
 		}
@@ -148,6 +151,29 @@ func (o SidecarOptions) apply(ctx context.Context, request SyncRequest) error {
 		}
 	}
 	return nil
+}
+
+// addUser creates the webserver-authenticated external user. setup.py keeps
+// creation and modification in separate subcommands: update-external-user
+// only updates, so without this the account never existed and load-servers
+// failed with "The specified user ID could not be found".
+//
+// It is idempotent by tolerance rather than by flag — pgAdmin has no
+// create-or-update — so an "already exists" outcome is success. Any other
+// failure surfaces, and the following updateRole is what converges the role
+// of a user that already existed.
+func (o SidecarOptions) addUser(ctx context.Context, username, role string) error {
+	command := exec.CommandContext(ctx, o.PythonPath, o.SetupPath, // #nosec G204
+		"add-external-user", username,
+		"--auth-source", "webserver",
+		"--role", role,
+		"--email", username,
+	)
+	output, err := command.CombinedOutput()
+	if err == nil || strings.Contains(string(output), "already exists") {
+		return nil
+	}
+	return fmt.Errorf("add user %q: %w: %s", username, err, string(output))
 }
 
 // updateRole assigns a pgAdmin role to one webserver-authenticated external

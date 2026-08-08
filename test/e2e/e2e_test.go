@@ -1,3 +1,5 @@
+//go:build e2e
+
 /*
 Copyright © contributors to the pgtoolbox project.
 
@@ -15,8 +17,6 @@ limitations under the License.
 
 SPDX-License-Identifier: Apache-2.0
 */
-
-//go:build e2e
 
 // Package e2e is the smoke test that runs against a real cluster, provisioned
 // by hack/e2e.sh.
@@ -55,7 +55,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 )
 
-var pgConsoleImage = flag.String("pgconsole-image", "", "pgConsole image the console should run")
+var (
+	pgConsoleImage = flag.String("pgconsole-image", "", "pgConsole image the console should run")
+	pgAdminImage   = flag.String("pgadmin-image", "", "pgAdmin image the console should run")
+	viewerImage    = flag.String("viewer-image", "", "pgObjectStoreViewer image the evidence sidecar should run")
+)
 
 const (
 	testNamespace = "pgtoolbox-e2e"
@@ -94,7 +98,45 @@ func TestMain(m *testing.M) {
 		fmt.Fprintf(os.Stderr, "build client: %v\n", err)
 		os.Exit(1)
 	}
-	os.Exit(m.Run())
+
+	if err := setupNamespace(); err != nil {
+		fmt.Fprintf(os.Stderr, "prepare namespace: %v\n", err)
+		os.Exit(1)
+	}
+	code := m.Run()
+	if os.Getenv("KEEP_CLUSTER") != "1" {
+		_ = k8s.Delete(context.Background(), &corev1.Namespace{
+			ObjectMeta: metav1.ObjectMeta{Name: testNamespace},
+		})
+	}
+	os.Exit(code)
+}
+
+// setupNamespace makes the test namespace exist and be Active. It waits out a
+// namespace still terminating from a previous run rather than creating into
+// it, which succeeds and then has everything swept away underneath the test.
+func setupNamespace() error {
+	deadline := time.Now().Add(3 * time.Minute)
+	for {
+		var live corev1.Namespace
+		err := k8s.Get(context.Background(), client.ObjectKey{Name: testNamespace}, &live)
+		switch {
+		case apierrors.IsNotFound(err):
+			created := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testNamespace}}
+			if err := k8s.Create(context.Background(), created); err != nil &&
+				!apierrors.IsAlreadyExists(err) {
+				return err
+			}
+		case err != nil:
+			return err
+		case live.Status.Phase == corev1.NamespaceActive:
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("namespace %s did not become active", testNamespace)
+		}
+		time.Sleep(pollInterval)
+	}
 }
 
 // eventually polls until check passes or the deadline expires, reporting the
@@ -121,7 +163,6 @@ func TestConsoleSmoke(t *testing.T) {
 		t.Fatal("-pgconsole-image is required")
 	}
 
-	setupNamespace(t)
 	createCluster(t)
 	console := createConsole(t)
 
@@ -129,20 +170,6 @@ func TestConsoleSmoke(t *testing.T) {
 	t.Run("RolesWereGranted", func(t *testing.T) { assertRolesGranted(t) })
 	t.Run("ContainersAcceptTheirConfig", func(t *testing.T) { assertContainersReady(t) })
 	t.Run("CapabilitiesWithdrawAuthority", func(t *testing.T) { assertCapabilityWithdrawal(t, console) })
-}
-
-func setupNamespace(t *testing.T) {
-	t.Helper()
-	namespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testNamespace}}
-	if err := k8s.Create(ctx(), namespace); err != nil && !apierrors.IsAlreadyExists(err) {
-		t.Fatalf("create namespace: %v", err)
-	}
-	t.Cleanup(func() {
-		if os.Getenv("KEEP_CLUSTER") == "1" {
-			return
-		}
-		_ = k8s.Delete(context.Background(), namespace)
-	})
 }
 
 // createCluster creates the CNPG Cluster the console attaches to. The test

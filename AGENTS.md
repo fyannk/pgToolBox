@@ -36,6 +36,13 @@ code does, never a design spec. When code and docs disagree, fix the docs
   liveness command, and the sidecar-mode rules that PROVIDER be `s3`,
   REPOSITORY_FORMAT `barman-cloud`, exactly one BARMAN_SERVER_NAMES entry,
   and LISTEN_ADDR/TRUSTED_USER_HEADER unset.
+- `../pgAdmin` — the family's own repackaging of pgadmin4 (image
+  `ghcr.io/fyannk/pgadmin`), not the upstream `dpage/pgadmin4`. Runs as uid
+  5050 in group root, listens per `PGADMIN_LISTEN_ADDRESS`/`_PORT`, and
+  refuses to start without `PGADMIN_DEFAULT_EMAIL` plus a password (the
+  operator generates a bootstrap credential per console). Its `setup.py` is
+  the only sanctioned way to change users, so the admin-sync sidecar runs
+  that image and mounts the settings volume.
 - `../oauth2-proxy` — pristine upstream clone; the fork plan was ABANDONED in
   favor of our own `pgtoolbox-proxy` (see architecture doc for rationale).
 
