@@ -282,12 +282,21 @@ func (r *Reconciler) deployment(
 	var initContainers []corev1.Container
 	if pgAdminEnabled(console) {
 		containers = append(containers, r.pgAdminContainer(console, inputs.PgAdminImage))
-		volumes = append(volumes, corev1.Volume{
-			Name: pgAdminSettingsVolume,
-			VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-				ClaimName: application.ResourceName(console.Name, pgAdminSettingsSuffix),
-			}},
-		})
+		volumes = append(volumes,
+			corev1.Volume{
+				Name: pgAdminSettingsVolume,
+				VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+					ClaimName: application.ResourceName(console.Name, pgAdminSettingsSuffix),
+				}},
+			},
+			corev1.Volume{
+				Name: pgAdminBootstrapVolume,
+				VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{
+					SecretName:  pgAdminBootstrapSecretName(console.Name),
+					DefaultMode: ptrTo(int32(0o440)),
+				}},
+			},
+		)
 		if r.OperatorImage != "" {
 			volumes = append(volumes,
 				corev1.Volume{Name: adminSyncBinVolume, VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
@@ -445,6 +454,19 @@ func (r *Reconciler) consoleContainer(console *pgtoolboxv1alpha1.PgConsole, imag
 // subset (no privilege escalation, all capabilities dropped, non-root pod)
 // is what this step needs; user and server sync lands in a later step.
 func (r *Reconciler) pgAdminContainer(console *pgtoolboxv1alpha1.PgConsole, image string) corev1.Container {
+	mounts := []corev1.VolumeMount{
+		{Name: pgAdminSettingsVolume, MountPath: pgAdminSettingsMountPath},
+		{Name: pgAdminBootstrapVolume, MountPath: pgAdminBootstrapMountPath, ReadOnly: true},
+	}
+	// The .pgpass the sidecar writes exists only when the sidecar does; a
+	// mount naming a volume the Pod never declared is rejected outright.
+	if r.OperatorImage != "" {
+		mounts = append(mounts, corev1.VolumeMount{
+			Name: adminSyncPassfileVolume, MountPath: adminSyncPassfileMountPath,
+		})
+	}
+	mounts = append(mounts, corev1.VolumeMount{Name: "tmp", MountPath: "/tmp"})
+
 	return corev1.Container{
 		Name:            "pgadmin",
 		Image:           image,
@@ -452,6 +474,15 @@ func (r *Reconciler) pgAdminContainer(console *pgtoolboxv1alpha1.PgConsole, imag
 		Env: []corev1.EnvVar{
 			{Name: "PGADMIN_LISTEN_ADDRESS", Value: "127.0.0.1"},
 			{Name: "PGADMIN_LISTEN_PORT", Value: portString(pgAdminPort)},
+			// Without an initial account pgAdmin refuses to start, and its
+			// settings database is never initialized — which is what makes
+			// setup.py, and so the whole admin-sync path, work at all. The
+			// password arrives as a file so it never appears in the Pod spec.
+			{Name: "PGADMIN_DEFAULT_EMAIL", Value: pgAdminBootstrapEmail},
+			{
+				Name:  "PGADMIN_DEFAULT_PASSWORD_FILE",
+				Value: pgAdminBootstrapMountPath + "/" + pgAdminBootstrapPasswordKey,
+			},
 		},
 		Ports: []corev1.ContainerPort{{
 			Name:          "http",
@@ -463,11 +494,7 @@ func (r *Reconciler) pgAdminContainer(console *pgtoolboxv1alpha1.PgConsole, imag
 			AllowPrivilegeEscalation: ptrTo(false),
 			Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
 		},
-		VolumeMounts: []corev1.VolumeMount{
-			{Name: pgAdminSettingsVolume, MountPath: pgAdminSettingsMountPath},
-			{Name: adminSyncPassfileVolume, MountPath: adminSyncPassfileMountPath},
-			{Name: "tmp", MountPath: "/tmp"},
-		},
+		VolumeMounts: mounts,
 	}
 }
 
@@ -525,6 +552,11 @@ func (r *Reconciler) adminSyncSidecarContainer(console *pgtoolboxv1alpha1.PgCons
 			{Name: adminSyncBinVolume, MountPath: adminSyncBinMountPath, ReadOnly: true},
 			{Name: adminSyncTLSVolume, MountPath: adminSyncTLSMountPath, ReadOnly: true},
 			{Name: adminSyncPassfileVolume, MountPath: adminSyncPassfileMountPath},
+			// setup.py is the only sanctioned way to change a pgAdmin user,
+			// and it operates on the settings database itself. Without this
+			// mount every sync fails with a FileNotFoundError for a SQLite
+			// path the sidecar cannot see.
+			{Name: pgAdminSettingsVolume, MountPath: pgAdminSettingsMountPath},
 			{Name: "tmp", MountPath: "/tmp"},
 		},
 	}

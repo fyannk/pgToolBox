@@ -346,6 +346,14 @@ func (r *Reconciler) reconcileResources(
 		return nil, err
 	}
 
+	if pgAdminEnabled(console) {
+		// Before the Deployment: pgAdmin mounts this Secret, and without the
+		// account it holds the container refuses to start at all.
+		if err := r.reconcilePgAdminBootstrapSecret(ctx, console); err != nil {
+			return nil, err
+		}
+	}
+
 	if pgAdminEnabled(console) && r.OperatorImage != "" {
 		adminSyncSecretVersion, err := r.reconcileAdminSyncSecret(ctx, console)
 		if err != nil {

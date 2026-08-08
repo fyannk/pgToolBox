@@ -1,0 +1,85 @@
+# Copyright © contributors to the pgtoolbox project.
+# SPDX-License-Identifier: Apache-2.0
+#
+# An object store for the e2e test to archive into.
+#
+# It exists so the CloudNativePG cluster can actually archive: a cluster
+# pointed at an unreachable endpoint may never reach a running primary,
+# and the admin-sync assertions need one. With a real store the whole
+# chain is genuine — archive, ObjectStore resolution, evidence scan —
+# rather than a composition that merely looks right.
+#
+# This is test infrastructure, not a shipped component. The pgtoolbox
+# family images (pgConsole, pgAdmin, pgObjectStoreViewer) are the ones
+# under test; MinIO here plays the same role CloudNativePG does.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: minio
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: minio-credentials
+  namespace: minio
+stringData:
+  # Fixed and non-secret: this store exists for the length of one test run
+  # in a throwaway cluster and is never reachable from outside it.
+  ACCESS_KEY_ID: e2eaccesskey
+  ACCESS_SECRET_KEY: e2esecretkey
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: minio
+  namespace: minio
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: minio
+  template:
+    metadata:
+      labels:
+        app: minio
+    spec:
+      containers:
+        - name: minio
+          image: quay.io/minio/minio:latest
+          # MinIO serves a top-level directory of its data dir as a bucket,
+          # so creating the directory is the whole bucket setup.
+          command:
+            - /bin/sh
+            - -c
+            - mkdir -p /data/e2e-backups && exec minio server /data --address :9000
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef: { name: minio-credentials, key: ACCESS_KEY_ID }
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: minio-credentials, key: ACCESS_SECRET_KEY }
+          ports:
+            - containerPort: 9000
+          readinessProbe:
+            httpGet: { path: /minio/health/ready, port: 9000 }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio
+  namespace: minio
+spec:
+  selector:
+    app: minio
+  ports:
+    - port: 9000
+      targetPort: 9000

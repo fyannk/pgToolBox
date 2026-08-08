@@ -180,7 +180,7 @@ func TestDeploymentUsesOperatorDefaultImages(t *testing.T) {
 	r.DefaultImages = DefaultImages{
 		PgConsole: "ghcr.io/example/pgconsole:0.1.0",
 		Proxy:     "ghcr.io/example/pgtoolbox-proxy:0.1.0",
-		PgAdmin:   "docker.io/dpage/pgadmin4:8",
+		PgAdmin:   "ghcr.io/fyannk/pgadmin:0.1.0",
 	}
 
 	inputs := workloadInputs{ConfigChecksum: "deadbeef"}
@@ -199,7 +199,7 @@ func TestDeploymentUsesOperatorDefaultImages(t *testing.T) {
 	for name, want := range map[string]string{
 		"proxy":     "ghcr.io/example/pgtoolbox-proxy:0.1.0",
 		"pgconsole": "ghcr.io/example/pgconsole:0.1.0",
-		"pgadmin":   "docker.io/dpage/pgadmin4:8",
+		"pgadmin":   "ghcr.io/fyannk/pgadmin:0.1.0",
 	} {
 		if got := containerByName(t, pod, name).Image; got != want {
 			t.Errorf("%s image = %q, want the operator default %q", name, got, want)
