@@ -105,19 +105,20 @@ code does, never a design spec. When code and docs disagree, fix the docs
    `pgtoolboxusers`, `pgtoolboxroles`, and CNPG `databaseroles`.
    `databaseRoleNameForRole` has a deterministic placeholder for profile-based
    roles until Step 5 formalizes the role controller's naming convention.
-5. ✅ **Role/User provisioning end-to-end**: new `PgToolBoxRole` controller
-   (`internal/controller/pgtoolboxrole/`) materializes a CNPG `DatabaseRole` +
-   password Secret for profile-based roles (`monitor` → `pg_monitor`;
-   `database-readonly` → `pg_read_all_data`; `database-owner` → `createdb` +
-   `createrole`) and validates `databaseRoleRef` bring-your-own roles. It sets
-   `status.databaseRoleName`, waits for CloudNativePG to apply the credential,
-   and deletes managed objects on role deletion. The `PgConsole` controller now
-   resolves the console's `PgToolBoxUser` set once per reconcile, renders known
-   users into the proxy configuration (with bcrypt hashes in local mode),
-   degrades individual users with missing roles/passwords instead of failing
-   the whole reconcile, and patches each user's `RoleReady`, `ProxySynced` and
-   `PgAdminSynced` conditions. pgAdmin sync only proceeds after the backing
-   `DatabaseRole` is applied and the password Secret resourceVersion matches.
+5. ✅ **Role/User provisioning for the proxy**: `PgToolBoxRole` and
+   `PgToolBoxUser` configure the pgtoolbox-proxy and nothing else. A role
+   names a console and a level; it is NOT a postgres role and has no
+   relationship with the CNPG cluster. The `PgToolBoxRole` controller
+   therefore creates nothing — it resolves the referenced console and
+   publishes status. The `PgConsole` controller resolves the user set once
+   per reconcile, renders known users into the proxy configuration (with
+   bcrypt hashes in local mode), and patches each user's `RoleReady` and
+   `ProxySynced` conditions. The postgres backing this step used to
+   materialize (CNPG `DatabaseRole` + password Secret per role, per-user
+   credentials for pgAdmin) was removed: pgAdmin connects with the
+   cluster's own credentials, never with anything derived from who signed
+   in.
+
 6. ✅ **OpenShift provider** for the proxy (`internal/proxy/openshift/`):
    OAuth2 authorization-code flow with PKCE S256 against OpenShift's
    integrated OAuth server, using the workload service account as the OAuth

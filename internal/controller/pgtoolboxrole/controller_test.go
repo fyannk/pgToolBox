@@ -22,178 +22,107 @@ import (
 	"context"
 	"testing"
 
-	cnpgv1 "github.com/cloudnative-pg/api/pkg/api/v1"
 	pgtoolboxv1alpha1 "github.com/fyannk/pgtoolbox/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-func reconcileToSteadyState(t *testing.T, r *Reconciler) {
+// A role is proxy configuration: it names a console and a level, and the
+// controller creates nothing. These tests hold that — both that the status
+// reports the resolution, and that no CloudNativePG object is ever written,
+// which is the property the old postgres-backed design could not offer.
+
+func roleKey(name string) client.ObjectKey {
+	return client.ObjectKey{Namespace: "test", Name: name}
+}
+
+func reconcileRole(t *testing.T, r *Reconciler, name string) {
 	t.Helper()
-	req := ctrl.Request{NamespacedName: client.ObjectKey{Namespace: "test", Name: "monitor-role"}}
-	if _, err := r.Reconcile(context.Background(), req); err != nil {
-		t.Fatalf("finalizer reconcile: %v", err)
-	}
-	if _, err := r.Reconcile(context.Background(), req); err != nil {
-		t.Fatalf("full reconcile: %v", err)
+	if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: roleKey(name)}); err != nil {
+		t.Fatalf("reconcile: %v", err)
 	}
 }
 
-func TestReconcileManagedRole(t *testing.T) {
-	role := testRoleProfile()
-	console := testConsole()
-	r, c := newTestReconciler(t, console, role)
-	reconcileToSteadyState(t, r)
-
-	var secret corev1.Secret
-	secretKey := client.ObjectKey{Namespace: "test", Name: "monitor-role-pgrole-credentials"}
-	if err := c.Get(context.Background(), secretKey, &secret); err != nil {
-		t.Fatalf("credential secret was not created: %v", err)
-	}
-	if len(secret.Data[corev1.BasicAuthPasswordKey]) == 0 {
-		t.Fatalf("credential secret has no password")
-	}
-	owner := metav1.GetControllerOf(&secret)
-	if owner == nil || owner.UID != role.UID {
-		t.Fatalf("credential secret owner = %+v", owner)
-	}
-
-	var databaseRole cnpgv1.DatabaseRole
-	dbRoleKey := client.ObjectKey{Namespace: "test", Name: "monitor-role-pgrole"}
-	if err := c.Get(context.Background(), dbRoleKey, &databaseRole); err != nil {
-		t.Fatalf("DatabaseRole was not created: %v", err)
-	}
-	if databaseRole.Spec.Name != "monitor-role-pgrole" {
-		t.Fatalf("postgres role name = %q", databaseRole.Spec.Name)
-	}
-	if len(databaseRole.Spec.InRoles) != 1 || databaseRole.Spec.InRoles[0] != "pg_monitor" {
-		t.Fatalf("monitor inRoles = %v", databaseRole.Spec.InRoles)
-	}
-	owner = metav1.GetControllerOf(&databaseRole)
-	if owner == nil || owner.UID != role.UID {
-		t.Fatalf("DatabaseRole owner = %+v", owner)
-	}
+func TestReconcilePublishesReady(t *testing.T) {
+	role := testRole("readonly", pgtoolboxv1alpha1.RoleLevelView)
+	r, c := newTestReconciler(t, role, testConsole())
+	reconcileRole(t, r, "readonly")
 
 	var live pgtoolboxv1alpha1.PgToolBoxRole
-	if err := c.Get(context.Background(), client.ObjectKeyFromObject(role), &live); err != nil {
-		t.Fatalf("read role: %v", err)
+	if err := c.Get(context.Background(), roleKey("readonly"), &live); err != nil {
+		t.Fatalf("get role: %v", err)
 	}
-	if live.Status.DatabaseRoleName != "monitor-role-pgrole" {
-		t.Fatalf("status.databaseRoleName = %q", live.Status.DatabaseRoleName)
+	for _, want := range []string{
+		pgtoolboxv1alpha1.RoleConditionPgConsoleReady,
+		pgtoolboxv1alpha1.RoleConditionReady,
+	} {
+		condition := conditionOf(&live, want)
+		if condition == nil || condition.Status != metav1.ConditionTrue {
+			t.Fatalf("condition %s = %+v", want, condition)
+		}
 	}
-	if conditionOf(&live, pgtoolboxv1alpha1.RoleConditionPgConsoleReady).Status != metav1.ConditionTrue {
-		t.Fatalf("PgConsoleReady not true")
-	}
-	if conditionOf(&live, pgtoolboxv1alpha1.RoleConditionDatabaseRoleReady).Status != metav1.ConditionFalse {
-		t.Fatalf("DatabaseRoleReady should be pending before CNPG applies")
-	}
-
-	// Simulate CloudNativePG applying the DatabaseRole.
-	databaseRole.Status.Applied = boolPtr(true)
-	databaseRole.Status.ObservedGeneration = databaseRole.Generation
-	databaseRole.Status.SecretResourceVersion = secret.ResourceVersion
-	if err := c.Status().Update(context.Background(), &databaseRole); err != nil {
-		t.Fatalf("update databaserole status: %v", err)
-	}
-
-	if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(role)}); err != nil {
-		t.Fatalf("reconcile after applied: %v", err)
-	}
-	if err := c.Get(context.Background(), client.ObjectKeyFromObject(role), &live); err != nil {
-		t.Fatalf("read role: %v", err)
-	}
-	if conditionOf(&live, pgtoolboxv1alpha1.RoleConditionDatabaseRoleReady).Status != metav1.ConditionTrue {
-		t.Fatalf("DatabaseRoleReady should be true after CNPG applies: %+v", conditionOf(&live, pgtoolboxv1alpha1.RoleConditionDatabaseRoleReady))
-	}
-	if conditionOf(&live, pgtoolboxv1alpha1.RoleConditionCredentialReady).Status != metav1.ConditionTrue {
-		t.Fatalf("CredentialReady should be true after CNPG applies")
-	}
-	if conditionOf(&live, pgtoolboxv1alpha1.RoleConditionReady).Status != metav1.ConditionTrue {
-		t.Fatalf("Ready should be true")
-	}
-}
-
-func TestReconcileDatabaseRoleRef(t *testing.T) {
-	role := testRoleRef()
-	console := testConsole()
-	existing := &cnpgv1.DatabaseRole{
-		ObjectMeta: metav1.ObjectMeta{Name: "existing-role", Namespace: "test"},
-		Spec: cnpgv1.DatabaseRoleSpec{
-			RoleConfiguration: cnpgv1.RoleConfiguration{
-				Name:           "existing-role",
-				PasswordSecret: &cnpgv1.LocalObjectReference{Name: "existing-password"},
-			},
-		},
-	}
-	r, c := newTestReconciler(t, console, role, existing)
-
-	if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(role)}); err != nil {
-		t.Fatalf("finalizer reconcile: %v", err)
-	}
-	if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(role)}); err != nil {
-		t.Fatalf("full reconcile: %v", err)
-	}
-
-	var live pgtoolboxv1alpha1.PgToolBoxRole
-	if err := c.Get(context.Background(), client.ObjectKeyFromObject(role), &live); err != nil {
-		t.Fatalf("read role: %v", err)
-	}
-	if live.Status.DatabaseRoleName != "existing-role" {
-		t.Fatalf("status.databaseRoleName = %q", live.Status.DatabaseRoleName)
-	}
-	if conditionOf(&live, pgtoolboxv1alpha1.RoleConditionDatabaseRoleReady).Status != metav1.ConditionTrue {
-		t.Fatalf("DatabaseRoleReady = %+v", conditionOf(&live, pgtoolboxv1alpha1.RoleConditionDatabaseRoleReady))
-	}
-	if conditionOf(&live, pgtoolboxv1alpha1.RoleConditionCredentialReady).Status != metav1.ConditionTrue {
-		t.Fatalf("CredentialReady = %+v", conditionOf(&live, pgtoolboxv1alpha1.RoleConditionCredentialReady))
-	}
-
-	secretKey := client.ObjectKey{Namespace: "test", Name: "byoref-role-pgrole-credentials"}
-	if err := c.Get(context.Background(), secretKey, &corev1.Secret{}); !apierrors.IsNotFound(err) {
-		t.Fatalf("managed credential secret must not be created for databaseRoleRef path: %v", err)
+	if live.Status.ObservedGeneration != live.Generation {
+		t.Fatalf("observedGeneration = %d, want %d", live.Status.ObservedGeneration, live.Generation)
 	}
 }
 
 func TestReconcileConsoleNotFound(t *testing.T) {
-	role := testRoleProfile()
+	role := testRole("orphan", pgtoolboxv1alpha1.RoleLevelDBA)
 	r, c := newTestReconciler(t, role)
-
-	reconcileToSteadyState(t, r)
+	reconcileRole(t, r, "orphan")
 
 	var live pgtoolboxv1alpha1.PgToolBoxRole
-	if err := c.Get(context.Background(), client.ObjectKeyFromObject(role), &live); err != nil {
-		t.Fatalf("read role: %v", err)
+	if err := c.Get(context.Background(), roleKey("orphan"), &live); err != nil {
+		t.Fatalf("get role: %v", err)
 	}
-	cond := conditionOf(&live, pgtoolboxv1alpha1.RoleConditionPgConsoleReady)
-	if cond == nil || cond.Status != metav1.ConditionFalse || cond.Reason != pgtoolboxv1alpha1.ReasonPgConsoleNotFound {
-		t.Fatalf("PgConsoleReady = %+v", cond)
+	condition := conditionOf(&live, pgtoolboxv1alpha1.RoleConditionPgConsoleReady)
+	if condition == nil || condition.Status != metav1.ConditionFalse {
+		t.Fatalf("PgConsoleReady = %+v", condition)
 	}
-}
-
-func TestReconcileDeletionCleanup(t *testing.T) {
-	role := testRoleProfile()
-	console := testConsole()
-	r, c := newTestReconciler(t, console, role)
-	reconcileToSteadyState(t, r)
-
-	// Simulate the user deleting the role while the finalizer is present.
-	if err := c.Delete(context.Background(), role); err != nil {
-		t.Fatalf("delete role: %v", err)
-	}
-
-	if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(role)}); err != nil {
-		t.Fatalf("deletion reconcile: %v", err)
-	}
-
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: "test", Name: "monitor-role-pgrole"}, &cnpgv1.DatabaseRole{}); !apierrors.IsNotFound(err) {
-		t.Fatalf("managed DatabaseRole should be deleted: %v", err)
-	}
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: "test", Name: "monitor-role-pgrole-credentials"}, &corev1.Secret{}); !apierrors.IsNotFound(err) {
-		t.Fatalf("managed Secret should be deleted: %v", err)
+	if ready := conditionOf(&live, pgtoolboxv1alpha1.RoleConditionReady); ready == nil ||
+		ready.Status != metav1.ConditionFalse {
+		t.Fatalf("Ready = %+v", ready)
 	}
 }
 
-func boolPtr(b bool) *bool { return &b }
+// TestReconcileCreatesNothing is the point of the rewrite. A role used to
+// materialize a CloudNativePG DatabaseRole and a password Secret; it has no
+// postgres backing at all now, so a reconcile must leave the cluster alone.
+func TestReconcileCreatesNothing(t *testing.T) {
+	role := testRole("readonly", pgtoolboxv1alpha1.RoleLevelView)
+	r, c := newTestReconciler(t, role, testConsole())
+	reconcileRole(t, r, "readonly")
+
+	var secrets corev1.SecretList
+	if err := c.List(context.Background(), &secrets, client.InNamespace("test")); err != nil {
+		t.Fatalf("list secrets: %v", err)
+	}
+	if len(secrets.Items) != 0 {
+		t.Fatalf("reconcile created %d Secret(s); a role has no credentials", len(secrets.Items))
+	}
+}
+
+// TestReconcileIsDeterministic holds the repository-wide rule that a no-op
+// reconcile writes nothing: the second pass must not change the status.
+func TestReconcileIsDeterministic(t *testing.T) {
+	role := testRole("readonly", pgtoolboxv1alpha1.RoleLevelView)
+	r, c := newTestReconciler(t, role, testConsole())
+	reconcileRole(t, r, "readonly")
+
+	var first pgtoolboxv1alpha1.PgToolBoxRole
+	if err := c.Get(context.Background(), roleKey("readonly"), &first); err != nil {
+		t.Fatalf("get role: %v", err)
+	}
+	reconcileRole(t, r, "readonly")
+
+	var second pgtoolboxv1alpha1.PgToolBoxRole
+	if err := c.Get(context.Background(), roleKey("readonly"), &second); err != nil {
+		t.Fatalf("get role: %v", err)
+	}
+	if first.ResourceVersion != second.ResourceVersion {
+		t.Fatalf("a no-op reconcile rewrote the role: %s -> %s",
+			first.ResourceVersion, second.ResourceVersion)
+	}
+}

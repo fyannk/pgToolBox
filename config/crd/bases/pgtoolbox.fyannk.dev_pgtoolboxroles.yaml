@@ -57,7 +57,13 @@ spec:
           spec:
             description: |-
               PgToolBoxRoleSpec is the desired state of a role: one level of access to
-              one PgConsole, backed by one postgres role.
+              one PgConsole.
+
+              A role configures the pgtoolbox-proxy and nothing else. It is not a
+              postgres role and has no relationship with the CloudNativePG cluster: the
+              level it carries decides which console screens the proxy admits a session
+              to, and the credentials pgAdmin connects to the database with come from
+              the cluster itself, never from who signed in.
             properties:
               level:
                 description: The console authorization level granted by this role.
@@ -77,47 +83,15 @@ spec:
                 required:
                 - name
                 type: object
-              postgresRole:
-                description: The postgres backing of the role.
-                properties:
-                  databaseRoleRef:
-                    description: |-
-                      Reference to an existing CNPG DatabaseRole (bring-your-own), in the
-                      same namespace.
-                    properties:
-                      name:
-                        description: The name of the referenced resource.
-                        maxLength: 253
-                        minLength: 1
-                        type: string
-                    required:
-                    - name
-                    type: object
-                  profile:
-                    description: |-
-                      The operator-managed profile to materialize as a CNPG DatabaseRole
-                      plus password Secret.
-                    enum:
-                    - monitor
-                    - database-readonly
-                    - database-owner
-                    type: string
-                type: object
-                x-kubernetes-validations:
-                - message: exactly one of profile or databaseRoleRef must be set
-                  rule: has(self.profile) != has(self.databaseRoleRef)
             required:
             - level
             - pgConsoleRef
-            - postgresRole
             type: object
           status:
             description: PgToolBoxRoleStatus is the observed state of a PgToolBoxRole.
             properties:
               conditions:
-                description: |-
-                  Standard conditions: Ready, PgConsoleReady, DatabaseRoleReady,
-                  CredentialReady.
+                description: 'Standard conditions: Ready, PgConsoleReady.'
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
@@ -173,11 +147,6 @@ spec:
                   - type
                   type: object
                 type: array
-              databaseRoleName:
-                description: |-
-                  The name of the CNPG DatabaseRole backing this role, whether
-                  materialized from a profile or resolved from databaseRoleRef.
-                type: string
               observedGeneration:
                 description: The generation observed by the controller.
                 format: int64

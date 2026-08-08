@@ -129,12 +129,6 @@ func testPgToolBoxRole(name string, level pgtoolboxv1alpha1.RoleLevel) *pgtoolbo
 		Spec: pgtoolboxv1alpha1.PgToolBoxRoleSpec{
 			PgConsoleRef: pgtoolboxv1alpha1.LocalObjectReference{Name: "console"},
 			Level:        level,
-			PostgresRole: pgtoolboxv1alpha1.PostgresRoleSpec{
-				Profile: pgtoolboxv1alpha1.PostgresRoleProfileMonitor,
-			},
-		},
-		Status: pgtoolboxv1alpha1.PgToolBoxRoleStatus{
-			DatabaseRoleName: name + "-pgrole",
 		},
 	}
 }
@@ -161,42 +155,6 @@ func testPgToolBoxUser(name, roleName, passwordSecretName string) *pgtoolboxv1al
 
 // testDatabaseRole returns a DatabaseRole with the password secret already
 // applied.
-func testDatabaseRole(name, secretName, secretResourceVersion string) *cnpgv1.DatabaseRole {
-	return &cnpgv1.DatabaseRole{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:       name,
-			Namespace:  "test",
-			UID:        types.UID("uid-" + name),
-			Generation: 1,
-		},
-		Spec: cnpgv1.DatabaseRoleSpec{
-			RoleConfiguration: cnpgv1.RoleConfiguration{
-				Name:           name,
-				PasswordSecret: &cnpgv1.LocalObjectReference{Name: secretName},
-			},
-		},
-		Status: cnpgv1.DatabaseRoleStatus{
-			Applied:               boolPtr(true),
-			ObservedGeneration:    1,
-			SecretResourceVersion: secretResourceVersion,
-		},
-	}
-}
-
-// testPasswordSecret returns a basic-auth Secret for a DatabaseRole.
-func testPasswordSecret(name, resourceVersion string) *corev1.Secret {
-	return &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:            name,
-			Namespace:       "test",
-			ResourceVersion: resourceVersion,
-		},
-		Data: map[string][]byte{
-			corev1.BasicAuthUsernameKey: []byte(name + "-user"),
-			corev1.BasicAuthPasswordKey: []byte(name + "-password"),
-		},
-	}
-}
 
 // testLocalPasswordSecret returns a Secret holding a bcrypt hash.
 func testLocalPasswordSecret(name, hash string) *corev1.Secret {
@@ -205,5 +163,3 @@ func testLocalPasswordSecret(name, hash string) *corev1.Secret {
 		Data:       map[string][]byte{"password": []byte(hash)},
 	}
 }
-
-func boolPtr(b bool) *bool { return &b }

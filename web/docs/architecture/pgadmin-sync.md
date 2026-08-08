@@ -1,43 +1,28 @@
-# Embedded pgAdmin user/server sync
+# pgAdmin
 
-## The pattern
+The embedded pgAdmin is composed into the console Pod and reached at
+`/pgadmin` on the console's own origin, so it crosses the same boundary as
+every other request: the proxy admits it only with a session at or above
+`spec.pgAdmin.accessMinLevel`.
 
-The operator never execs into the console pod. Instead, the manager binary
-itself is injected into the pod:
+It does not ask for credentials again. The proxy has already established
+who the user is, and pgAdmin takes that identity from the
+`X-Forwarded-User` header it sets — trustworthy for exactly the reason the
+console's copy is, and no other: the proxy strips any client-supplied copy
+before setting its own, and the generated NetworkPolicy leaves no route to
+pgAdmin that bypasses the proxy.
 
-1. An `admin-sync-init` init container copies the operator binary out of
-   the operator image into a shared emptyDir.
-2. The `admin-sync` sidecar runs that binary as an HTTPS+mTLS API inside
-   the pod, next to pgAdmin.
-3. The operator posts the complete desired state — one entry per
-   `PgToolBoxUser`, including the postgres password — over the in-pod mTLS
-   API. The sidecar writes the combined pgpass file itself and calls
-   pgAdmin's supported `setup.py` CLI (`update-external-user`,
-   `load-servers --replace`).
+## Server provisioning is being rebuilt
 
-The connection pins a per-console self-signed CA and a shared bearer token,
-both generated once into the `<console>-pgconsole-pgadmin-sync` Secret. The
-Secret's resourceVersion rides on the pod template, so regeneration rolls
-the pod exactly once.
+The operator used to provision a pgAdmin account and a server definition
+per `PgToolBoxUser`, each carrying a postgres role materialized for that
+user. That was built on a premise that does not hold: a `PgToolBoxRole`
+and a `PgToolBoxUser` configure the proxy and have no postgres backing, so
+there was never a per-user database identity for pgAdmin to use.
 
-## What gets synced
-
-Per `PgToolBoxUser` whose backing `DatabaseRole` is applied:
-
-- the pgAdmin account (`dba` level → Administrator, anything else → User);
-- one shared server definition for the console's cluster, pointing at the
-  read-write Service, authenticated with the saved password of the user's
-  postgres role.
-
-pgAdmin sync waits for the console rollout to reach the current config
-revision and for CloudNativePG to report the `DatabaseRole` applied with
-the current password Secret resourceVersion — a password is never stored
-before it works.
-
-## Idempotency
-
-The desired-state payload is hashed (`pgadmin-sync-revision` annotation on
-the Deployment); the operator skips re-applying an unchanged state, and
-`load-servers --replace` plus the rewritten pgpass make replays converge
-instead of compound. Removing a user removes them from the payload, the
-pgpass, and the rendered proxy configuration on the next reconcile.
+What replaces it is a shared server list built from the cluster's own
+credentials — the application user, the superuser where one is enabled,
+and the owners of any declared databases — visible to every session the
+proxy admits. Until that lands, the console reports `PgAdminSynced` as
+unknown with the reason, rather than claiming a sync it is not doing, and
+a dba can add a connection by hand in the meantime.

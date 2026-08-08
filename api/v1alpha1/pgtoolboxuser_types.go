@@ -59,9 +59,8 @@ type PgToolBoxUserStatus struct {
 	// Whether the pgAdmin account and shared server definition are
 	// provisioned for this user.
 	// +optional
-	PgAdminSynced bool `json:"pgAdminSynced,omitempty"`
 
-	// Standard conditions: Ready, RoleReady, ProxySynced, PgAdminSynced.
+	// Standard conditions: Ready, RoleReady, ProxySynced.
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }

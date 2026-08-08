@@ -37,47 +37,20 @@ const (
 )
 
 // PgToolBoxRoleSpec is the desired state of a role: one level of access to
-// one PgConsole, backed by one postgres role.
+// one PgConsole.
+//
+// A role configures the pgtoolbox-proxy and nothing else. It is not a
+// postgres role and has no relationship with the CloudNativePG cluster: the
+// level it carries decides which console screens the proxy admits a session
+// to, and the credentials pgAdmin connects to the database with come from
+// the cluster itself, never from who signed in.
 type PgToolBoxRoleSpec struct {
 	// The PgConsole this role is attached to, in the same namespace.
 	PgConsoleRef LocalObjectReference `json:"pgConsoleRef"`
 
 	// The console authorization level granted by this role.
 	Level RoleLevel `json:"level"`
-
-	// The postgres backing of the role.
-	PostgresRole PostgresRoleSpec `json:"postgresRole"`
 }
-
-// PostgresRoleSpec selects the postgres role backing a PgToolBoxRole as an
-// exactly-one union: either a profile the operator materializes as a CNPG
-// DatabaseRole, or a reference to an existing DatabaseRole.
-// +kubebuilder:validation:XValidation:rule="has(self.profile) != has(self.databaseRoleRef)",message="exactly one of profile or databaseRoleRef must be set"
-type PostgresRoleSpec struct {
-	// The operator-managed profile to materialize as a CNPG DatabaseRole
-	// plus password Secret.
-	// +optional
-	Profile PostgresRoleProfile `json:"profile,omitempty"`
-
-	// Reference to an existing CNPG DatabaseRole (bring-your-own), in the
-	// same namespace.
-	// +optional
-	DatabaseRoleRef *LocalObjectReference `json:"databaseRoleRef,omitempty"`
-}
-
-// PostgresRoleProfile selects a predefined DatabaseRole shape.
-// +kubebuilder:validation:Enum=monitor;database-readonly;database-owner
-type PostgresRoleProfile string
-
-const (
-	// PostgresRoleProfileMonitor is a read-only monitoring role.
-	PostgresRoleProfileMonitor PostgresRoleProfile = "monitor"
-	// PostgresRoleProfileDatabaseReadonly is a read-only role on the
-	// application database.
-	PostgresRoleProfileDatabaseReadonly PostgresRoleProfile = "database-readonly"
-	// PostgresRoleProfileDatabaseOwner owns the application database.
-	PostgresRoleProfileDatabaseOwner PostgresRoleProfile = "database-owner"
-)
 
 // PgToolBoxRoleStatus is the observed state of a PgToolBoxRole.
 type PgToolBoxRoleStatus struct {
@@ -85,13 +58,7 @@ type PgToolBoxRoleStatus struct {
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 
-	// The name of the CNPG DatabaseRole backing this role, whether
-	// materialized from a profile or resolved from databaseRoleRef.
-	// +optional
-	DatabaseRoleName string `json:"databaseRoleName,omitempty"`
-
-	// Standard conditions: Ready, PgConsoleReady, DatabaseRoleReady,
-	// CredentialReady.
+	// Standard conditions: Ready, PgConsoleReady.
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
