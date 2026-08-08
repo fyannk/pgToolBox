@@ -25,6 +25,13 @@ The pgAdmin settings PVC is deleted with the console. Back it up first if
 you need pgAdmin's settings database; there is no operator-managed backup.
 :::
 
+One object is not collected that way. With `console.allowClusterCatalogs`
+enabled the console also has a `ClusterRole` and `ClusterRoleBinding`,
+and a cluster-scoped object cannot carry an owner reference to a
+namespaced one. The console's finalizer deletes them instead, so removing
+the operator before deleting its consoles would strand them — delete the
+`PgConsole` resources first, which the steps above already do.
+
 `PgToolBoxRole` deletion removes its managed `DatabaseRole` and credential
 Secret. `PgToolBoxUser` deletion removes the user from the proxy
 configuration and pgAdmin on the next reconcile — there is nothing else to

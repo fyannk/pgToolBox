@@ -25,9 +25,19 @@ all: build
 ##@ Development
 
 .PHONY: manifests
-manifests: ## Generate CRDs into config/crd/bases.
+manifests: ## Generate CRDs and the manager ClusterRole, then sync the packaging.
 	$(CONTROLLER_GEN) crd paths="./api/..." \
 		output:crd:artifacts:config=config/crd/bases
+	$(CONTROLLER_GEN) rbac:roleName=manager-role paths="./internal/..." \
+		output:rbac:artifacts:config=config/rbac
+	./hack/sync-manifests.sh
+
+.PHONY: verify-manifests
+verify-manifests: manifests ## Fail when the checked-in manifests are stale.
+	@git diff --exit-code -- config deploy || { \
+		echo "generated manifests are stale; run 'make manifests' and commit the result"; \
+		exit 1; \
+	}
 
 .PHONY: generate
 generate: ## Generate deepcopy code.

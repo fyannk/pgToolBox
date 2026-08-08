@@ -31,6 +31,12 @@ spec:
     enabled: true
     accessMinLevel: dba                  # dba | poweruser
     storage: { size: 1Gi, storageClass: "" }
+  console:
+    allowOperations: true                # day-2 operations
+    allowLogs: true                      # bounded instance log tail
+    allowAccessReview: true              # dba review panel
+    allowClusterCatalogs: false          # opt-in ClusterRole
+    monitoringURL: https://grafana.example.com/d/pg
   evidence:
     enabled: false
     image: { ... }
@@ -56,6 +62,23 @@ spec:
 `X-PgToolBox-Level` is set from the user's `PgToolBoxRole.level`:
 `view` < `poweruser` < `dba`. Unknown authenticated users get `none` and
 can only file an access request.
+
+The proxy strips any inbound copy of the identity and level headers before
+setting its own, and the console reads them because the generated
+NetworkPolicy confines its ingress to the proxy. There is no ungated
+baseline in the console: `view` reaches the overviews and the metrics
+screens, `poweruser` adds the remaining read screens, and `dba` adds the
+day-2 operations, the access-request review panel and the pgAdmin
+link-out.
+
+### Console capabilities
+
+The `console` block decides which of those screens exist at all. Each
+capability moves the flag *and* the authority: switching one off removes
+the matching rules from the generated Roles, so RBAC denies the operation
+whatever the application is told. See
+[the PgConsole reference](../reference/pgconsole.md#the-console-block)
+for the full field set and its bounds.
 
 ## PgToolBoxRole profiles
 
