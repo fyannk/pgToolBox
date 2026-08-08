@@ -213,10 +213,15 @@ func TestConsolePgAdminURL(t *testing.T) {
 		t.Fatalf("PGADMIN_URL rendered for a console with no https base URL")
 	}
 
+	// allowInsecureLinks does not substitute for a hostname. Without one the
+	// only absolute URL available is consoleBaseURL's loopback fallback,
+	// which is where the proxy listens inside the Pod, not where any
+	// browser is — rendering it produced a link to localhost:8080 that
+	// resolved to nothing.
 	lab := testConsole()
 	lab.Spec.Console.AllowInsecureLinks = ptrTo(true)
-	if got := consolePgAdminURL(lab); got != "http://localhost:8080/pgadmin" {
-		t.Fatalf("lab pgAdmin URL = %q", got)
+	if got := consolePgAdminURL(lab); got != "" {
+		t.Fatalf("lab pgAdmin URL = %q, want none without an exposure hostname", got)
 	}
 
 	noPgAdmin := testConsole()
