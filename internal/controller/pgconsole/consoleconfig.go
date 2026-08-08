@@ -122,28 +122,28 @@ func consoleMetricsEnabled(console *pgtoolboxv1alpha1.PgConsole) bool {
 	return console.Spec.Console.Metrics.Enabled == nil || *console.Spec.Console.Metrics.Enabled
 }
 
-// consolePgAdminURL is the console's pgAdmin link-out: the console's own
-// external base URL plus the proxy route prefix that reaches the embedded
-// pgAdmin, so the link traverses the same authentication boundary as every
-// other request and is subject to spec.pgAdmin.accessMinLevel.
+// consolePgAdminURL is the console's pgAdmin link-out: the proxy route
+// prefix that reaches the embedded pgAdmin, so the link traverses the same
+// authentication boundary as every other request and is subject to
+// spec.pgAdmin.accessMinLevel.
 //
-// It requires an exposure hostname, and allowInsecureLinks does not
-// substitute for one. The link is same-origin — the proxy serves both the
-// console and pgAdmin — so the honest value is a relative path, but the
-// application only accepts an absolute URL for a link-out. Without a
-// hostname the only absolute URL the operator can build is
-// consoleBaseURL's loopback fallback, which exists for the OIDC redirect
-// and is not where any browser is: rendering it produced a link to
+// It is root-relative, and that is the whole point. The console and pgAdmin
+// are served by the same proxy on the same origin, so the browser resolves
+// "/pgadmin" correctly whatever the console was reached on — an ingress
+// hostname, a Route, or a port-forward. An absolute URL cannot manage that:
+// without an exposure hostname the only one the operator could build is
+// consoleBaseURL's loopback fallback, which is where the proxy listens
+// inside the Pod, and rendering it produced a link to
 // http://localhost:8080/pgadmin that resolved to nothing.
 //
-// So a console with no hostname renders no link. pgAdmin is still reached
-// at the same path on whatever origin the console was reached on; only the
-// rendered link is missing, and a missing link beats a broken one.
+// This requires pgConsole 0.2.0 or newer, which accepts root-relative
+// link-outs for same-origin siblings. Older consoles validate link-outs as
+// absolute URLs only and refuse to start on this value.
 func consolePgAdminURL(console *pgtoolboxv1alpha1.PgConsole) string {
-	if !pgAdminEnabled(console) || console.Spec.Exposure.Hostname == "" {
+	if !pgAdminEnabled(console) {
 		return ""
 	}
-	return consoleBaseURL(console) + pgAdminLinkPath
+	return pgAdminLinkPath
 }
 
 // consoleEnv renders the pgconsole container's environment in a fixed
