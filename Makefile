@@ -68,6 +68,10 @@ helm-lint: ## Lint and template-render the Helm chart.
 docs: ## Build the documentation site.
 	cd web && npm ci && npm run typecheck && npm run build
 
+.PHONY: dev-up
+dev-up: ## Stand up a browsable pgToolBox on kind and forward it to localhost:3000.
+	./hack/dev-up.sh
+
 .PHONY: test-e2e
 test-e2e: ## Provision a kind cluster with CNPG and run the e2e smoke test.
 	./hack/e2e.sh

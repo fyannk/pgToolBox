@@ -131,6 +131,30 @@ func imagePullPolicy(image *pgtoolboxv1alpha1.ImageSpec) corev1.PullPolicy {
 	return corev1.PullIfNotPresent
 }
 
+// adminSyncResources budgets the admin-sync sidecar. It cannot share the
+// console-wide default: every sync shells out to pgAdmin's setup.py, which
+// boots a Flask application and runs the settings-database migrations, and
+// 256Mi is not enough to do that — the sidecar was OOMKilled mid-sync and
+// the console reported a sync failure with no hint of the cause.
+//
+// A spec budget still wins, so an operator who has measured their own can
+// set one on spec.pgAdmin.resources.
+func adminSyncResources(resources corev1.ResourceRequirements) corev1.ResourceRequirements {
+	if len(resources.Requests) > 0 || len(resources.Limits) > 0 {
+		return *resources.DeepCopy()
+	}
+	return corev1.ResourceRequirements{
+		Requests: corev1.ResourceList{
+			corev1.ResourceCPU:    resource.MustParse("50m"),
+			corev1.ResourceMemory: resource.MustParse("256Mi"),
+		},
+		Limits: corev1.ResourceList{
+			corev1.ResourceCPU:    resource.MustParse("1"),
+			corev1.ResourceMemory: resource.MustParse("1Gi"),
+		},
+	}
+}
+
 // containerResources applies the spec budget, falling back to the published
 // provisional default: 25m/64Mi requests, 500m/256Mi limits.
 func containerResources(resources corev1.ResourceRequirements) corev1.ResourceRequirements {
@@ -542,7 +566,7 @@ func (r *Reconciler) adminSyncSidecarContainer(console *pgtoolboxv1alpha1.PgCons
 			InitialDelaySeconds: 2,
 			PeriodSeconds:       10,
 		},
-		Resources: containerResources(console.Spec.PgAdmin.Resources),
+		Resources: adminSyncResources(console.Spec.PgAdmin.Resources),
 		SecurityContext: &corev1.SecurityContext{
 			AllowPrivilegeEscalation: ptrTo(false),
 			ReadOnlyRootFilesystem:   ptrTo(true),

@@ -15,6 +15,9 @@ until a version is cut.
 
 ### Added
 
+- **`make dev-up`** — a browsable console on kind: the operator, one
+  `PgConsole` with pgAdmin and the evidence sidecar, a user seeded at each
+  authorization level, and the real proxy forwarded to localhost.
 - **`PgConsole`** — one access stack per CloudNativePG cluster: the
   `pgtoolbox-proxy` authentication proxy, the pgConsole observation UI, an
   embedded pgAdmin dedicated to that cluster, and an optional
@@ -108,6 +111,10 @@ until a version is cut.
     definition failed. The client timeout was also raised from 30s: one sync
     is a batch of `setup.py` invocations, each booting Flask and running
     migrations.
+- The admin-sync sidecar shared the console-wide 256Mi memory limit and was
+  OOMKilled mid-sync, which surfaced only as a sync failure with no hint of
+  the cause. It now has its own budget, because every sync shells out to
+  pgAdmin's `setup.py`, which boots a Flask application.
 - The pgAdmin container mounted the admin-sync passfile volume even when no
   sidecar was composed, naming a volume the Pod never declared.
 - `spec.podSecurityContext.fsGroup` makes the evidence sidecar deployable on

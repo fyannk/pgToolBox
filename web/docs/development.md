@@ -9,6 +9,41 @@ make test
 make lint
 ```
 
+## A browsable dev console
+
+```bash
+make dev-up
+```
+
+Stands up kind + CloudNativePG + the operator, declares one `PgConsole`
+with pgAdmin and the evidence sidecar, seeds a user at each authorization
+level, and forwards the console's own proxy to
+[localhost:3000](http://localhost:3000). First run ~6 minutes; re-running
+against a live cluster just relaunches the forward. `RECREATE=true` starts
+clean, `SKIP_BACKUP=true` drops the object store, `NO_FORWARD=true` sets
+up and exits.
+
+| Sign in as | Password | Reaches |
+|---|---|---|
+| `viewer@pgtoolbox.dev` | `viewer` | the overviews and the metrics screens |
+| `operator@pgtoolbox.dev` | `operator` | + every other read screen and the log tails |
+| `dba@pgtoolbox.dev` | `dba` | + day-2 operations, the review panel, pgAdmin |
+
+Signing in as an unknown identity shows the proxy's 403 page, whose form
+files a real `PgToolBoxAccessRequest` for the `dba` to approve.
+
+Unlike pgConsole's `dev-up.sh`, this does not fake the trusted proxy on
+several ports. pgConsole has no authentication of its own, so its script
+injects the forwarded headers itself; pgToolBox **is** that proxy, so
+there is one port, a real login, and real sessions — the level ladder
+comes from the seeded `PgToolBoxRole` and `PgToolBoxUser` objects.
+
+:::note
+The subjects are email addresses on purpose. pgAdmin keys its accounts on
+one, so a `PgToolBoxUser` whose subject is not an email address cannot be
+provisioned in pgAdmin — its sync fails for that user.
+:::
+
 ## The e2e smoke test
 
 ```bash
