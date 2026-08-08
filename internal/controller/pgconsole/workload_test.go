@@ -147,6 +147,25 @@ func TestDeploymentContainersAndEnv(t *testing.T) {
 	if value, _ := envValue(pgAdmin, "SCRIPT_NAME"); value != "/pgadmin" {
 		t.Fatalf("pgAdmin SCRIPT_NAME = %q, want the proxy route prefix", value)
 	}
+	// pgAdmin trusts the identity the proxy already established, so a user
+	// who reached /pgadmin is not asked for credentials a second time. The
+	// admin-sync sidecar creates webserver-auth accounts with no password
+	// of their own, so an internal login form could never admit them.
+	for name, want := range map[string]string{
+		"PGADMIN_CONFIG_AUTHENTICATION_SOURCES":   "['webserver']",
+		"PGADMIN_CONFIG_WEBSERVER_REMOTE_USER":    "'X-Forwarded-User'",
+		"PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED": "False",
+	} {
+		if value, _ := envValue(pgAdmin, name); value != want {
+			t.Fatalf("pgAdmin %s = %q, want %q", name, value, want)
+		}
+	}
+	// The header pgAdmin trusts must be the one the proxy sets, or it
+	// admits nobody — and it is only trustworthy because the proxy strips
+	// any client copy and the NetworkPolicy confines ingress to it.
+	if value, _ := envValue(pgAdmin, "PGADMIN_CONFIG_WEBSERVER_REMOTE_USER"); value != "'"+consoleTrustedUserHeader+"'" {
+		t.Fatalf("pgAdmin trusts %s, not the header the proxy sets", value)
+	}
 	if value, _ := envValue(pgAdmin, "PGADMIN_LISTEN_PORT"); value != "8081" {
 		t.Fatalf("pgAdmin listen port = %q", value)
 	}

@@ -516,6 +516,27 @@ func (r *Reconciler) pgAdminContainer(console *pgtoolboxv1alpha1.PgConsole, imag
 				Name:  "PGADMIN_DEFAULT_PASSWORD_FILE",
 				Value: pgAdminBootstrapMountPath + "/" + pgAdminBootstrapPasswordKey,
 			},
+			// Trust the identity the proxy already established rather than
+			// asking for it a second time. Anyone reaching /pgadmin has been
+			// authenticated by pgtoolbox-proxy and carries the same
+			// X-Forwarded-User the console reads, and the accounts the
+			// admin-sync sidecar creates are webserver-auth accounts with no
+			// password of their own — so without this pgAdmin offers a login
+			// form that none of them could ever satisfy.
+			//
+			// The header is trustworthy here for the same reason it is for
+			// the console: the proxy strips any client-supplied copy before
+			// setting its own, and the generated NetworkPolicy confines
+			// ingress to the proxy. pgAdmin falls back to reading it from
+			// the request headers when it is absent from the WSGI environ.
+			{Name: "PGADMIN_CONFIG_AUTHENTICATION_SOURCES", Value: "['webserver']"},
+			{Name: "PGADMIN_CONFIG_WEBSERVER_REMOTE_USER", Value: "'" + consoleTrustedUserHeader + "'"},
+			// With an external authentication source pgAdmin would still
+			// demand a master password to unlock its own credential store.
+			// There is nothing in it to unlock: server passwords reach
+			// PostgreSQL through the .pgpass file the admin-sync sidecar
+			// writes, never through pgAdmin's saved-password store.
+			{Name: "PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED", Value: "False"},
 		},
 		Ports: []corev1.ContainerPort{{
 			Name:          "http",
