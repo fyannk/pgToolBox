@@ -49,6 +49,12 @@ code does, never a design spec. When code and docs disagree, fix the docs
   ensures nothing bypasses it.
 - License boilerplate (`hack/boilerplate.go.txt`) on all new Go files.
 - Verify with: `go build ./...`, `go vet ./...`, `go test ./... -race -count=1`.
+  Before changing the generated Roles or anything the component containers
+  read, also run `make test-e2e` (kind + CNPG + the published component
+  images). The unit tests use a fake client, which cannot fail the two ways a
+  real cluster can: RBAC escalation prevention refusing a Role rule the
+  operator does not itself hold, and a component container rejecting the
+  environment rendered for it.
 - The agent does NOT run git mutations; the user commits themselves.
 
 ## Build order & current state

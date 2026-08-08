@@ -161,6 +161,58 @@ func TestDeploymentContainersAndEnv(t *testing.T) {
 	}
 }
 
+// TestDeploymentUsesOperatorDefaultImages covers the spec the quick start
+// actually shows: one that names no images at all and expects the operator's
+// --default-*-image flags to supply them.
+//
+// The image fields are pointers for this reason. Go does not omit an empty
+// struct, so a value field serialized as `image: {}` and the API server
+// rejected it against ImageSpec's required repository and tag — making the
+// operator defaults unreachable and the documented quick start invalid. Only
+// a real API server enforces that; the e2e smoke test caught it.
+func TestDeploymentUsesOperatorDefaultImages(t *testing.T) {
+	console := testConsole()
+	console.Spec.Image = nil
+	console.Spec.Proxy.Image = nil
+	console.Spec.PgAdmin.Image = nil
+
+	r, _ := newTestReconciler(t)
+	r.DefaultImages = DefaultImages{
+		PgConsole: "ghcr.io/example/pgconsole:0.1.0",
+		Proxy:     "ghcr.io/example/pgtoolbox-proxy:0.1.0",
+		PgAdmin:   "docker.io/dpage/pgadmin4:8",
+	}
+
+	inputs := workloadInputs{ConfigChecksum: "deadbeef"}
+	var err error
+	if inputs.ProxyImage, err = resolveImage(console.Spec.Proxy.Image, r.DefaultImages.Proxy); err != nil {
+		t.Fatalf("resolve proxy image: %v", err)
+	}
+	if inputs.ConsoleImage, err = resolveImage(console.Spec.Image, r.DefaultImages.PgConsole); err != nil {
+		t.Fatalf("resolve console image: %v", err)
+	}
+	if inputs.PgAdminImage, err = resolveImage(console.Spec.PgAdmin.Image, r.DefaultImages.PgAdmin); err != nil {
+		t.Fatalf("resolve pgAdmin image: %v", err)
+	}
+
+	pod := &buildDeployment(t, console, inputs).Spec.Template.Spec
+	for name, want := range map[string]string{
+		"proxy":     "ghcr.io/example/pgtoolbox-proxy:0.1.0",
+		"pgconsole": "ghcr.io/example/pgconsole:0.1.0",
+		"pgadmin":   "docker.io/dpage/pgadmin4:8",
+	} {
+		if got := containerByName(t, pod, name).Image; got != want {
+			t.Errorf("%s image = %q, want the operator default %q", name, got, want)
+		}
+	}
+
+	// With neither a spec image nor an operator default, the container
+	// cannot be composed and that must be an error, not an empty reference.
+	if _, err := resolveImage(nil, ""); err == nil {
+		t.Error("expected an error when both the spec image and the default are absent")
+	}
+}
+
 // TestDeploymentFSGroup covers the one pod-level security setting the
 // operator does not decide. pgObjectStoreViewer refuses to serve unless the
 // shared socket directory is setgid with group rwx, and on an emptyDir that

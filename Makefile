@@ -68,6 +68,10 @@ helm-lint: ## Lint and template-render the Helm chart.
 docs: ## Build the documentation site.
 	cd web && npm ci && npm run typecheck && npm run build
 
+.PHONY: test-e2e
+test-e2e: ## Provision a kind cluster with CNPG and run the e2e smoke test.
+	./hack/e2e.sh
+
 ##@ Build
 
 .PHONY: build
@@ -81,12 +85,12 @@ run: manifests generate fmt vet ## Run the operator against the current kubeconf
 .PHONY: docker-build
 docker-build: ## Build the operator container image.
 	docker build --build-arg VERSION=$(VERSION) --build-arg IMG=$(IMG) \
-		-f Dockerfile --target manager -t $(IMG) ..
+		-f Dockerfile --target manager -t $(IMG) .
 
 .PHONY: docker-build-proxy
 docker-build-proxy: ## Build the pgtoolbox-proxy container image.
 	docker build --build-arg VERSION=$(VERSION) --build-arg IMG=$(IMG) \
-		-f Dockerfile --target proxy -t $(PROXY_IMG) ..
+		-f Dockerfile --target proxy -t $(PROXY_IMG) .
 
 .PHONY: docker-build-all
 docker-build-all: docker-build docker-build-proxy ## Build all container images.

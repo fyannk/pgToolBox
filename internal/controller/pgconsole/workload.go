@@ -104,9 +104,9 @@ func pgAdminEnabled(console *pgtoolboxv1alpha1.PgConsole) bool {
 
 // resolveImage picks the spec image, falling back to the operator's
 // configured default; with neither, the container cannot be composed.
-func resolveImage(spec pgtoolboxv1alpha1.ImageSpec, fallback string) (string, error) {
-	if spec.Repository != "" {
-		return imageReference(spec), nil
+func resolveImage(spec *pgtoolboxv1alpha1.ImageSpec, fallback string) (string, error) {
+	if spec != nil && spec.Repository != "" {
+		return imageReference(*spec), nil
 	}
 	if fallback != "" {
 		return fallback, nil
@@ -124,8 +124,8 @@ func imageReference(image pgtoolboxv1alpha1.ImageSpec) string {
 }
 
 // imagePullPolicy applies the spec pull policy, defaulting to IfNotPresent.
-func imagePullPolicy(image pgtoolboxv1alpha1.ImageSpec) corev1.PullPolicy {
-	if image.PullPolicy != "" {
+func imagePullPolicy(image *pgtoolboxv1alpha1.ImageSpec) corev1.PullPolicy {
+	if image != nil && image.PullPolicy != "" {
 		return image.PullPolicy
 	}
 	return corev1.PullIfNotPresent

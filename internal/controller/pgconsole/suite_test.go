@@ -84,12 +84,12 @@ func testConsole() *pgtoolboxv1alpha1.PgConsole {
 		},
 		Spec: pgtoolboxv1alpha1.PgConsoleSpec{
 			CNPGClusterRef: pgtoolboxv1alpha1.LocalObjectReference{Name: "cluster-1"},
-			Image: pgtoolboxv1alpha1.ImageSpec{
+			Image: &pgtoolboxv1alpha1.ImageSpec{
 				Repository: "example.com/pgconsole",
 				Tag:        "1.0.0",
 			},
 			Proxy: pgtoolboxv1alpha1.ProxySpec{
-				Image: pgtoolboxv1alpha1.ImageSpec{
+				Image: &pgtoolboxv1alpha1.ImageSpec{
 					Repository: "example.com/proxy",
 					Tag:        "1.0.0",
 				},
@@ -98,7 +98,7 @@ func testConsole() *pgtoolboxv1alpha1.PgConsole {
 				},
 			},
 			PgAdmin: pgtoolboxv1alpha1.PgAdminSpec{
-				Image: pgtoolboxv1alpha1.ImageSpec{
+				Image: &pgtoolboxv1alpha1.ImageSpec{
 					Repository: "example.com/pgadmin",
 					Tag:        "8.0",
 				},

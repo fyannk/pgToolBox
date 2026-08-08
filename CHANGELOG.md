@@ -82,6 +82,12 @@ until a version is cut.
   hand-maintained copies that a new controller rule could silently miss.
 - Lint exclusions were declared under the golangci-lint v1 `issues` key,
   which v2 parses and ignores; `make lint` was passing only on a warm cache.
+- A `PgConsole` that named no images was rejected by the API server. The
+  image fields were value structs, and Go does not omit an empty struct, so
+  they serialized as `image: {}` and failed `ImageSpec`'s required
+  `repository` and `tag` — which made the operator's `--default-*-image`
+  flags unreachable and the documented quick start invalid. They are
+  pointers now, as `evidence.image` already was.
 - `spec.podSecurityContext.fsGroup` makes the evidence sidecar deployable on
   clusters that do not default an fsGroup. pgObjectStoreViewer requires the
   shared socket directory to be setgid with group rwx, which on an `emptyDir`
