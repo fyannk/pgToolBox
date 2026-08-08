@@ -131,7 +131,8 @@ func imagePullPolicy(image *pgtoolboxv1alpha1.ImageSpec) corev1.PullPolicy {
 	return corev1.PullIfNotPresent
 }
 
-// adminSyncResources budgets the admin-sync sidecar. It cannot share the
+// adminSyncResources budgets the two containers that run pgAdmin's Python
+// stack — pgAdmin itself and the admin-sync sidecar. Neither can share the
 // console-wide default: every sync shells out to pgAdmin's setup.py, which
 // boots a Flask application and runs the settings-database migrations, and
 // 256Mi is not enough to do that — the sidecar was OOMKilled mid-sync and
@@ -502,6 +503,14 @@ func (r *Reconciler) pgAdminContainer(console *pgtoolboxv1alpha1.PgConsole, imag
 			// settings database is never initialized — which is what makes
 			// setup.py, and so the whole admin-sync path, work at all. The
 			// password arrives as a file so it never appears in the Pod spec.
+			// pgAdmin is reached through the proxy under a path prefix, and
+			// the proxy forwards the path as-is rather than stripping it —
+			// stripping would make pgAdmin's own absolute links (/static,
+			// /login) escape the prefix and land on the console. SCRIPT_NAME
+			// is how a WSGI application is told the prefix it is mounted
+			// under, so it both serves and generates URLs there. Without it
+			// every request under /pgadmin is a 404 from pgAdmin itself.
+			{Name: "SCRIPT_NAME", Value: pgAdminLinkPath},
 			{Name: "PGADMIN_DEFAULT_EMAIL", Value: pgAdminBootstrapEmail},
 			{
 				Name:  "PGADMIN_DEFAULT_PASSWORD_FILE",
@@ -513,7 +522,7 @@ func (r *Reconciler) pgAdminContainer(console *pgtoolboxv1alpha1.PgConsole, imag
 			ContainerPort: pgAdminPort,
 			Protocol:      corev1.ProtocolTCP,
 		}},
-		Resources: containerResources(console.Spec.PgAdmin.Resources),
+		Resources: adminSyncResources(console.Spec.PgAdmin.Resources),
 		SecurityContext: &corev1.SecurityContext{
 			AllowPrivilegeEscalation: ptrTo(false),
 			Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},

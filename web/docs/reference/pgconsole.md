@@ -104,9 +104,16 @@ absent.
 `monitoringURL` must use `https` unless `allowInsecureLinks: true`. The
 pgAdmin link-out follows the same rule and is derived, not configured:
 it is `https://<exposure.hostname>/pgadmin`, so it traverses the proxy
-like every other request and obeys `pgAdmin.accessMinLevel`. A console
-with no exposure hostname has no `https` base URL, so it renders no
-pgAdmin link rather than one the application would refuse to start on.
+like every other request and obeys `pgAdmin.accessMinLevel`.
+
+:::note
+A console with no exposure hostname — `type: clusterIP`, reached by
+`kubectl port-forward` — renders **no pgAdmin link**. The console
+requires an absolute URL for a link-out, and the only one the operator
+could build without a hostname is the proxy's own loopback address,
+which is not where the browser is. pgAdmin is still reachable: browse to
+`/pgadmin` on the same origin.
+:::
 
 Deliberately absent: the application's history and metrics journals.
 Both imply a PersistentVolumeClaim and pin the console to a single

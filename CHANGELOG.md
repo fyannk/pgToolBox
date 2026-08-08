@@ -111,6 +111,20 @@ until a version is cut.
     definition failed. The client timeout was also raised from 30s: one sync
     is a batch of `setup.py` invocations, each booting Flask and running
     migrations.
+- **The embedded pgAdmin was unreachable through the proxy.** The proxy
+  routes `/pgadmin` to it but forwards the path as-is, so pgAdmin — which
+  serves at the root — answered 404 to every request under that prefix.
+  It is now told its mount point with `SCRIPT_NAME`, which is also what
+  makes it generate URLs under the prefix; stripping the prefix instead
+  would send its `/static` and `/login` links to the console.
+- The proxy replaced the client's `Host` with the loopback upstream's, so
+  an upstream building an absolute URL handed the browser an address
+  inside the Pod — pgAdmin's trailing-slash redirect pointed at
+  `127.0.0.1:8081`. The client `Host` is preserved and the forwarding is
+  stated in `X-Forwarded-*`, overwriting anything a client sent.
+- pgAdmin's own container shared the console-wide 256Mi limit, like the
+  sidecar did; both run the same Python stack and now share a budget
+  sized for it.
 - The admin-sync sidecar shared the console-wide 256Mi memory limit and was
   OOMKilled mid-sync, which surfaced only as a sync failure with no hint of
   the cause. It now has its own budget, because every sync shells out to
