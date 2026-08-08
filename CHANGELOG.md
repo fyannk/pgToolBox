@@ -111,6 +111,14 @@ until a version is cut.
     definition failed. The client timeout was also raised from 30s: one sync
     is a batch of `setup.py` invocations, each booting Flask and running
     migrations.
+- The pgAdmin link-out now requires an exposure hostname, and
+  `allowInsecureLinks` no longer substitutes for one. Without a hostname
+  the operator was building the link from `consoleBaseURL`'s loopback
+  fallback — which exists for the OIDC redirect and is where the proxy
+  listens *inside* the Pod — so the console rendered a link to
+  `http://localhost:8080/pgadmin` that resolved to nothing. A missing link
+  beats a broken one; pgAdmin is still reached at the same path on
+  whatever origin the console was reached on.
 - **The embedded pgAdmin was unreachable through the proxy.** The proxy
   routes `/pgadmin` to it but forwards the path as-is, so pgAdmin — which
   serves at the root — answered 404 to every request under that prefix.

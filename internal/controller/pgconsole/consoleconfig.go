@@ -127,19 +127,23 @@ func consoleMetricsEnabled(console *pgtoolboxv1alpha1.PgConsole) bool {
 // pgAdmin, so the link traverses the same authentication boundary as every
 // other request and is subject to spec.pgAdmin.accessMinLevel.
 //
-// The application requires an absolute https URL unless insecure links are
-// allowed, so a console with no exposure hostname renders no link rather
-// than an http one the application would refuse to start on. The link is
-// then simply absent, which is what a port-forward user sees today.
+// It requires an exposure hostname, and allowInsecureLinks does not
+// substitute for one. The link is same-origin — the proxy serves both the
+// console and pgAdmin — so the honest value is a relative path, but the
+// application only accepts an absolute URL for a link-out. Without a
+// hostname the only absolute URL the operator can build is
+// consoleBaseURL's loopback fallback, which exists for the OIDC redirect
+// and is not where any browser is: rendering it produced a link to
+// http://localhost:8080/pgadmin that resolved to nothing.
+//
+// So a console with no hostname renders no link. pgAdmin is still reached
+// at the same path on whatever origin the console was reached on; only the
+// rendered link is missing, and a missing link beats a broken one.
 func consolePgAdminURL(console *pgtoolboxv1alpha1.PgConsole) string {
-	if !pgAdminEnabled(console) {
+	if !pgAdminEnabled(console) || console.Spec.Exposure.Hostname == "" {
 		return ""
 	}
-	base := consoleBaseURL(console)
-	if strings.HasPrefix(base, "http://") && !consoleAllowInsecureLinks(console) {
-		return ""
-	}
-	return base + pgAdminLinkPath
+	return consoleBaseURL(console) + pgAdminLinkPath
 }
 
 // consoleEnv renders the pgconsole container's environment in a fixed
