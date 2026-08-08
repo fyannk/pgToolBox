@@ -30,6 +30,7 @@ import (
 	pgtoolboxv1alpha1 "github.com/fyannk/pgtoolbox/api/v1alpha1"
 	"github.com/fyannk/pgtoolbox/internal/adminsync"
 	"github.com/fyannk/pgtoolbox/internal/conditions"
+	proxyconfig "github.com/fyannk/pgtoolbox/internal/proxy/config"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -99,7 +100,7 @@ func (r *Reconciler) reconcilePgAdminSync(
 		return err
 	}
 
-	syncRequest, degraded := buildSyncRequest(resolved, &cluster)
+	syncRequest, degraded := buildSyncRequest(console, resolved, &cluster)
 
 	console.Status.UserSync = pgtoolboxv1alpha1.UserSyncStatus{
 		Desired:  int32Count(len(resolved)),
@@ -197,6 +198,7 @@ func (r *Reconciler) reconcilePgAdminSync(
 // users that are eligible for pgAdmin provisioning. It returns the payload and
 // the list of degraded user subjects.
 func buildSyncRequest(
+	console *pgtoolboxv1alpha1.PgConsole,
 	resolved []resolvedConsoleUser,
 	cluster *cnpgv1.Cluster,
 ) (adminsync.SyncRequest, []string) {
@@ -204,8 +206,18 @@ func buildSyncRequest(
 	var degraded []string
 
 	host := clusterServiceHost(cluster, cluster.Name)
+	minimum := pgAdminMinimumLevel(console)
 
 	for _, u := range resolved {
+		// Provision only the users who can actually open pgAdmin. The proxy
+		// refuses everyone below spec.pgAdmin.accessMinLevel at the route,
+		// so an account for them is not merely unused: it writes their
+		// postgres credential into the Pod for a screen they can never
+		// reach. They are not degraded — nothing about them is wrong — so
+		// they are skipped silently rather than reported as failures.
+		if proxyconfig.Rank(proxyconfig.Level(u.role.Spec.Level)) < minimum {
+			continue
+		}
 		if !u.pgAdminIncluded() {
 			degraded = append(degraded, u.user.Spec.Subject)
 			continue
@@ -255,6 +267,17 @@ func databaseRoleNameForRole(role *pgtoolboxv1alpha1.PgToolBoxRole) string {
 		return role.Spec.PostgresRole.DatabaseRoleRef.Name
 	}
 	return ""
+}
+
+// pgAdminMinimumLevel is the rank a user must reach for the proxy to let
+// them through to pgAdmin at all, from spec.pgAdmin.accessMinLevel. The
+// field defaults to dba in the API; an empty value here means the same.
+func pgAdminMinimumLevel(console *pgtoolboxv1alpha1.PgConsole) int {
+	level := console.Spec.PgAdmin.AccessMinLevel
+	if level == "" {
+		return proxyconfig.Rank(proxyconfig.LevelDBA)
+	}
+	return proxyconfig.Rank(proxyconfig.Level(level))
 }
 
 // pgAdminRoleForLevel maps a PgToolBox level to a pgAdmin role.

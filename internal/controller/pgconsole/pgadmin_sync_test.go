@@ -43,20 +43,35 @@ func TestBuildSyncRequest(t *testing.T) {
 			credential: roleCredential{username: "app_owner", password: "hunter2"},
 		},
 		{
+			// At the level pgAdmin admits, but not provisionable: reported.
 			user: pgtoolboxv1alpha1.PgToolBoxUser{
 				ObjectMeta: metav1.ObjectMeta{Name: "bob", Namespace: "test"},
 				Spec:       pgtoolboxv1alpha1.PgToolBoxUserSpec{Subject: "bob@example.com"},
 			},
 			role: &pgtoolboxv1alpha1.PgToolBoxRole{
-				Spec: pgtoolboxv1alpha1.PgToolBoxRoleSpec{Level: pgtoolboxv1alpha1.RoleLevelView},
+				Spec: pgtoolboxv1alpha1.PgToolBoxRoleSpec{Level: pgtoolboxv1alpha1.RoleLevelDBA},
 			},
-			credential:           roleCredential{username: "viewer", password: "secret"},
+			credential:           roleCredential{username: "owner2", password: "secret"},
 			pgAdminExcluded:      true,
 			pgAdminExcludeReason: "DatabaseRole not applied",
 		},
+		{
+			// Below accessMinLevel: the proxy refuses them at the route, so
+			// provisioning an account would write their postgres credential
+			// into the Pod for a screen they cannot open. Skipped silently —
+			// nothing about this user is wrong.
+			user: pgtoolboxv1alpha1.PgToolBoxUser{
+				ObjectMeta: metav1.ObjectMeta{Name: "carol", Namespace: "test"},
+				Spec:       pgtoolboxv1alpha1.PgToolBoxUserSpec{Subject: "carol@example.com"},
+			},
+			role: &pgtoolboxv1alpha1.PgToolBoxRole{
+				Spec: pgtoolboxv1alpha1.PgToolBoxRoleSpec{Level: pgtoolboxv1alpha1.RoleLevelView},
+			},
+			credential: roleCredential{username: "viewer", password: "secret"},
+		},
 	}
 
-	request, degraded := buildSyncRequest(resolved, cluster)
+	request, degraded := buildSyncRequest(testConsole(), resolved, cluster)
 	if len(request.Users) != 1 {
 		t.Fatalf("users = %v, want 1", request.Users)
 	}
@@ -86,7 +101,7 @@ func TestBuildSyncRequestNoCluster(t *testing.T) {
 		credential: roleCredential{username: "app_owner", password: "hunter2"},
 	}}
 
-	request, degraded := buildSyncRequest(resolved, cluster)
+	request, degraded := buildSyncRequest(testConsole(), resolved, cluster)
 	if len(request.Users) != 1 {
 		t.Fatalf("users = %v", request.Users)
 	}
