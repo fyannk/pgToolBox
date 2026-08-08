@@ -23,51 +23,170 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 
 	cnpgv1 "github.com/cloudnative-pg/api/pkg/api/v1"
 	pgtoolboxv1alpha1 "github.com/fyannk/pgtoolbox/api/v1alpha1"
 	"github.com/fyannk/pgtoolbox/internal/adminsync"
 	"github.com/fyannk/pgtoolbox/internal/conditions"
 	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// reconcilePgAdminSync provisions pgAdmin's server list.
-//
-// It provisions nothing today, and says so. The per-user provisioning it
-// used to do was built on a premise that turned out to be wrong:
-// PgToolBoxRole and PgToolBoxUser configure the pgtoolbox-proxy and have no
-// postgres backing, so there was never a per-user database identity to give
-// pgAdmin. That machinery is gone rather than left running on a fiction.
-//
-// What replaces it is a shared server list built from the cluster's own
-// credentials — the application user, the superuser where one is enabled,
-// and the owners of any declared databases — visible to every session the
-// proxy admits to pgAdmin. Until that lands, the console reports the state
-// plainly instead of claiming a sync it is not doing.
+// reconcilePgAdminSync provisions the connections pgAdmin offers, from the
+// credentials the CloudNativePG cluster publishes rather than from whoever
+// signed into the console.
 func (r *Reconciler) reconcilePgAdminSync(
-	_ context.Context,
+	ctx context.Context,
 	console *pgtoolboxv1alpha1.PgConsole,
-	_ *appsv1.Deployment,
-	_ string,
-	_ []resolvedConsoleUser,
+	deployment *appsv1.Deployment,
+	checksum string,
 ) error {
-	if !pgAdminEnabled(console) {
+	if !pgAdminEnabled(console) || r.OperatorImage == "" || r.AdminSync == nil {
 		conditions.MarkUnknown(
 			console,
 			pgtoolboxv1alpha1.PgConsoleConditionPgAdminSynced,
 			pgtoolboxv1alpha1.ReasonNoneConfigured,
-			"pgAdmin is not composed into this console",
+			"pgAdmin sync is not configured for this console",
 		)
 		return nil
 	}
-	console.Status.UserSync = pgtoolboxv1alpha1.UserSyncStatus{}
-	conditions.MarkUnknown(
+
+	if !rolloutComplete(deployment) {
+		conditions.MarkFalse(
+			console,
+			pgtoolboxv1alpha1.PgConsoleConditionPgAdminSynced,
+			pgtoolboxv1alpha1.ReasonPendingRollout,
+			"waiting for console rollout to complete before syncing pgAdmin",
+		)
+		return nil
+	}
+
+	// The checksum lives on the Pod template, not on the Deployment: it is
+	// what makes a configuration change roll the pods.
+	if deployment.Spec.Template.Annotations[pgtoolboxv1alpha1.ConfigChecksumAnnotation] != checksum {
+		conditions.MarkFalse(
+			console,
+			pgtoolboxv1alpha1.PgConsoleConditionPgAdminSynced,
+			pgtoolboxv1alpha1.ReasonPendingRollout,
+			"deployment is not at the current configuration revision",
+		)
+		return nil
+	}
+
+	var cluster cnpgv1.Cluster
+	clusterKey := client.ObjectKey{Namespace: console.Namespace, Name: console.Spec.CNPGClusterRef.Name}
+	if err := r.APIReader.Get(ctx, clusterKey, &cluster); err != nil {
+		if apierrors.IsNotFound(err) {
+			conditions.MarkFalse(
+				console,
+				pgtoolboxv1alpha1.PgConsoleConditionPgAdminSynced,
+				pgtoolboxv1alpha1.ReasonClusterNotFound,
+				"CNPG Cluster %s was not found",
+				clusterKey.Name,
+			)
+			return nil
+		}
+		return err
+	}
+
+	servers, err := r.clusterCredentials(ctx, console, &cluster)
+	if err != nil {
+		return err
+	}
+	if len(servers) == 0 {
+		conditions.MarkFalse(
+			console,
+			pgtoolboxv1alpha1.PgConsoleConditionPgAdminSynced,
+			pgtoolboxv1alpha1.ReasonSomeDegraded,
+			"cluster %s publishes no credential pgAdmin could connect with",
+			cluster.Name,
+		)
+		return nil
+	}
+
+	// The recorded revision names the Pod it was applied to, not just the
+	// desired state: the credential files the sidecar writes live with the
+	// Pod, so a replaced Pod has none of them while a Deployment annotation
+	// would happily still match.
+	podIdentity, err := r.syncedPodIdentity(ctx, console)
+	if err != nil {
+		return err
+	}
+	revision := syncRevision(adminsync.SyncRequest{Servers: servers}) + "@" + podIdentity
+	if deployment.Annotations[pgtoolboxv1alpha1.PgAdminSyncRevisionAnnotation] == revision {
+		conditions.MarkTrue(
+			console,
+			pgtoolboxv1alpha1.PgConsoleConditionPgAdminSynced,
+			pgtoolboxv1alpha1.ReasonAsExpected,
+			"pgAdmin sync is up to date",
+		)
+		return nil
+	}
+
+	if err := r.AdminSync.Sync(ctx, adminsync.Request{
+		Namespace:   console.Namespace,
+		ConsoleName: console.Name,
+		Selector:    application.SelectorLabels(console.Name),
+		Checksum:    checksum,
+		Servers:     servers,
+	}); err != nil {
+		conditions.MarkFalse(
+			console,
+			pgtoolboxv1alpha1.PgConsoleConditionPgAdminSynced,
+			pgtoolboxv1alpha1.ReasonSyncFailed,
+			"pgAdmin sync failed: %v",
+			err,
+		)
+		return nil
+	}
+
+	before := deployment.DeepCopy()
+	if deployment.Annotations == nil {
+		deployment.Annotations = map[string]string{}
+	}
+	deployment.Annotations[pgtoolboxv1alpha1.PgAdminSyncRevisionAnnotation] = revision
+	if err := r.Patch(ctx, deployment, client.MergeFrom(before)); err != nil {
+		return fmt.Errorf("record pgAdmin sync revision: %w", err)
+	}
+
+	conditions.MarkTrue(
 		console,
 		pgtoolboxv1alpha1.PgConsoleConditionPgAdminSynced,
-		pgtoolboxv1alpha1.ReasonNoneConfigured,
-		"pgAdmin server provisioning is being rebuilt on the cluster's own credentials",
+		pgtoolboxv1alpha1.ReasonAsExpected,
+		"pgAdmin offers %d connection(s) from the cluster's credentials",
+		len(servers),
 	)
 	return nil
+}
+
+// syncedPodIdentity returns a value that changes whenever the console Pod
+// holding the synced state is replaced, so a rollout, an eviction or a
+// crash-restart all invalidate a recorded revision.
+func (r *Reconciler) syncedPodIdentity(
+	ctx context.Context,
+	console *pgtoolboxv1alpha1.PgConsole,
+) (string, error) {
+	var pods corev1.PodList
+	if err := r.List(ctx, &pods,
+		client.InNamespace(console.Namespace),
+		client.MatchingLabels(application.CommonLabels(console.Name)),
+	); err != nil {
+		return "", fmt.Errorf("list console pods: %w", err)
+	}
+	identity := ""
+	for i := range pods.Items {
+		pod := &pods.Items[i]
+		if !pod.DeletionTimestamp.IsZero() {
+			continue
+		}
+		if uid := string(pod.UID); uid > identity {
+			identity = uid
+		}
+	}
+	return identity, nil
 }
 
 // clusterServiceHost resolves the read-write Service host for the cluster.

@@ -57,24 +57,25 @@ const SidecarServerName = "pgadmin-admin-sync"
 // #nosec G101 -- filesystem path; no credential material.
 const DefaultPassFilePath = "/run/pgadmin/passfile/pgpass"
 
+// DefaultSettingsDBPath is pgAdmin's settings database on the settings
+// volume. The sidecar reads it to discover which accounts exist; it never
+// writes it, leaving every mutation to pgAdmin's own setup.py.
+const DefaultSettingsDBPath = "/var/lib/pgadmin/pgadmin4.db"
+
 // Request carries the complete desired pgAdmin state for one PgConsole.
 type Request struct {
 	Namespace   string
 	ConsoleName string
 	Selector    map[string]string
 	Checksum    string
-	Users       []User
+	Servers     []Server
 }
 
-// User is one PgToolBoxUser's desired pgAdmin state.
-type User struct {
-	Subject     string `json:"subject"`
-	PgAdminRole string `json:"pgAdminRole"`
-	Server      Server `json:"server"`
-	Password    string `json:"password"`
-}
-
-// Server is the shared cluster server definition for one user.
+// Server is one connection pgAdmin should offer, built from a credential
+// the CloudNativePG cluster itself publishes. Every pgAdmin account gets
+// the same list: the credentials belong to the cluster, not to whoever
+// signed in, and everyone who reaches pgAdmin has already been admitted at
+// the dba level the proxy enforces.
 type Server struct {
 	Name          string `json:"name"`
 	Group         string `json:"group"`
@@ -84,6 +85,9 @@ type Server struct {
 	Username      string `json:"username"`
 	PassFile      string `json:"passFile"`
 	SSLMode       string `json:"sslMode"`
+	// Password is written into the pgpass file, never into the server
+	// definition, so it stays out of pgAdmin's settings database.
+	Password string `json:"password"`
 }
 
 // Syncer applies the requested state to pgAdmin.

@@ -290,7 +290,7 @@ func (r *Reconciler) Reconcile(
 		return ctrl.Result{}, err
 	}
 
-	if err := r.reconcilePgAdminSync(ctx, &console, deployment, checksum, resolvedUsers); err != nil {
+	if err := r.reconcilePgAdminSync(ctx, &console, deployment, checksum); err != nil {
 		return ctrl.Result{}, err
 	}
 

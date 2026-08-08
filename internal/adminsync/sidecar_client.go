@@ -96,7 +96,7 @@ func (c *SidecarClient) Sync(ctx context.Context, request Request) error {
 	}
 	token := strings.TrimSpace(string(secret.Data[SidecarSecretTokenKey]))
 
-	body, err := json.Marshal(SyncRequest{Users: request.Users})
+	body, err := json.Marshal(SyncRequest{Servers: request.Servers})
 	if err != nil {
 		return fmt.Errorf("encode admin-sync request: %w", err)
 	}
