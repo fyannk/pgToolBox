@@ -804,6 +804,29 @@ spec:
                         type: string
                     type: object
                 type: object
+              podSecurityContext:
+                description: Pod-level security settings the operator deliberately
+                  does not decide.
+                properties:
+                  fsGroup:
+                    description: |-
+                      The supplemental group applied to every volume the Pod mounts.
+
+                      It exists for the evidence sidecar. pgObjectStoreViewer refuses to
+                      serve unless the shared socket directory is setgid with group rwx,
+                      and on a Pod's emptyDir that mode comes from the kubelet applying
+                      fsGroup — without one the directory is 0777 with no setgid and the
+                      viewer reports an invalid socket path.
+
+                      Leave it unset on OpenShift: the restricted-v2 SCC allocates an
+                      fsGroup from the namespace's range, and a value outside that range
+                      is rejected outright. Set it on a cluster that does not default one,
+                      which otherwise cannot run the evidence sidecar at all.
+                    format: int64
+                    maximum: 2147483647
+                    minimum: 1
+                    type: integer
+                type: object
               proxy:
                 description: |-
                   The pgtoolbox-proxy authentication proxy, the single authentication

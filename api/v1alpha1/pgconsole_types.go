@@ -64,6 +64,10 @@ type PgConsoleSpec struct {
 	// +optional
 	NetworkPolicy NetworkPolicySpec `json:"networkPolicy,omitempty"`
 
+	// Pod-level security settings the operator deliberately does not decide.
+	// +optional
+	PodSecurityContext PodSecurityContextSpec `json:"podSecurityContext,omitempty"`
+
 	// Resource budget shared by the pgconsole container.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
@@ -172,6 +176,30 @@ type PgAdminStorageSpec struct {
 	// StorageClass for the PVC; cluster default when empty.
 	// +optional
 	StorageClass string `json:"storageClass,omitempty"`
+}
+
+// PodSecurityContextSpec carries the pod-level security settings the
+// operator cannot decide on your behalf. It is deliberately narrow: the
+// console Pod's hardening — non-root, dropped capabilities, read-only root
+// filesystem, the runtime-default seccomp profile — is the operator's to
+// set and is not configurable here.
+type PodSecurityContextSpec struct {
+	// The supplemental group applied to every volume the Pod mounts.
+	//
+	// It exists for the evidence sidecar. pgObjectStoreViewer refuses to
+	// serve unless the shared socket directory is setgid with group rwx,
+	// and on a Pod's emptyDir that mode comes from the kubelet applying
+	// fsGroup — without one the directory is 0777 with no setgid and the
+	// viewer reports an invalid socket path.
+	//
+	// Leave it unset on OpenShift: the restricted-v2 SCC allocates an
+	// fsGroup from the namespace's range, and a value outside that range
+	// is rejected outright. Set it on a cluster that does not default one,
+	// which otherwise cannot run the evidence sidecar at all.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=2147483647
+	// +optional
+	FSGroup *int64 `json:"fsGroup,omitempty"`
 }
 
 // ConsoleSpec configures the pgconsole container itself. Every field maps

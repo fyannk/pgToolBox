@@ -326,9 +326,14 @@ func (r *Reconciler) deployment(
 					AutomountServiceAccountToken: ptrTo(false),
 					RestartPolicy:                corev1.RestartPolicyAlways,
 					DNSPolicy:                    corev1.DNSClusterFirst,
+					// The hardening is the operator's and is not configurable.
+					// fsGroup is the exception: only the platform knows what
+					// value is admissible, and the evidence sidecar needs one
+					// on any cluster that does not default it.
 					SecurityContext: &corev1.PodSecurityContext{
 						RunAsNonRoot:   ptrTo(true),
 						SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
+						FSGroup:        console.Spec.PodSecurityContext.FSGroup,
 					},
 					InitContainers: initContainers,
 					Containers:     containers,
