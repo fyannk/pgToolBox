@@ -529,40 +529,61 @@ func assertPgAdminReachesPostgres(t *testing.T) {
 		t.Fatalf("console pod: %v", err)
 	}
 
-	// One .pgpass entry per provisioned user, naming the cluster's service.
+	// One .pgpass entry per provisioned user, keyed on the role rather than
+	// on a host spelling. The host field is the wildcard on purpose: libpq
+	// matches a line against the host string it was given, so a line naming
+	// the Service fails for a connection made by address.
 	eventually(t, compositionTimeout, "the sidecar to write the .pgpass", func() error {
 		out, err := execInPod(pod, "pgadmin", "sh", "-c",
 			"cut -d: -f1-4 "+pgAdminPassFilePath+" 2>&1")
 		if err != nil {
 			return fmt.Errorf("%v: %s", err, out)
 		}
-		if !strings.Contains(out, fullClusterName+"-rw."+testNamespace+".svc:5432") {
-			return fmt.Errorf("no entry for the cluster service: %q", out)
+		if !strings.Contains(out, "*:5432:postgres:"+roleName+"-pgrole") {
+			return fmt.Errorf("no wildcard-host entry for the role: %q", out)
 		}
 		return nil
 	})
 
-	// A PostgreSQL SSLRequest is the smallest exchange that proves both
-	// reachability and that a PostgreSQL server is on the other end: it
-	// answers with a single byte, 'S' or 'N'. A NetworkPolicy that drops the
-	// connection instead hangs until the dial timeout.
+	// Authenticate for real, and do it twice: once by the name the server
+	// definition carries and once by the address it resolves to. libpq
+	// matches a pgpass line against the host string it was given rather than
+	// the host it resolved, so a file spelled with the name fails by address
+	// with "no password supplied" — the credential present and never
+	// consulted. Connecting both ways is what holds the wildcard host field
+	// in place.
+	address, err := clusterServiceAddress(t)
+	if err != nil {
+		t.Fatalf("resolve cluster service address: %v", err)
+	}
 	probe := fmt.Sprintf(`
-import socket,sys
-try:
-    s=socket.create_connection(("%s-rw.%s.svc",5432),timeout=15)
-    s.sendall(b"\x00\x00\x00\x08\x04\xd2\x16\x2f")
-    reply=s.recv(1)
-    s.close()
-    print("REPLY=" + reply.decode("ascii","replace"))
-except Exception as error:
-    print("FAILED=" + repr(error)); sys.exit(1)
-`, fullClusterName, testNamespace)
+import psycopg, sys
+for host in [%q, %q]:
+    with psycopg.connect(host=host, port=5432, dbname="postgres", user=%q,
+                         passfile=%q, sslmode="prefer", connect_timeout=15) as c:
+        who = c.execute("select current_user").fetchone()[0]
+        print("AUTHENTICATED " + host + " as " + who)
+`, fullClusterName+"-rw."+testNamespace+".svc", address, roleName+"-pgrole", pgAdminPassFilePath)
 
 	out, err := execInPod(pod, "pgadmin", "/venv/bin/python3", "-c", probe)
 	if err != nil {
-		t.Fatalf("console pod cannot reach PostgreSQL: %v: %s", err, out)
+		t.Fatalf("pgAdmin cannot authenticate to PostgreSQL: %v: %s", err, out)
 	}
-	if !strings.Contains(out, "REPLY=S") && !strings.Contains(out, "REPLY=N") {
-		t.Fatalf("no PostgreSQL handshake from the console pod: %s", out)
+	if strings.Count(out, "AUTHENTICATED") != 2 {
+		t.Fatalf("expected an authenticated connection by name and by address: %s", out)
 	}
+}
+
+// clusterServiceAddress returns the ClusterIP of the cluster's read-write
+// Service, so the test can connect the way that used to fail.
+func clusterServiceAddress(t *testing.T) (string, error) {
+	t.Helper()
+	var service corev1.Service
+	if err := k8s.Get(ctx(), key(fullClusterName+"-rw"), &service); err != nil {
+		return "", err
+	}
+	if service.Spec.ClusterIP == "" {
+		return "", fmt.Errorf("service %s-rw has no ClusterIP", fullClusterName)
+	}
+	return service.Spec.ClusterIP, nil
 }

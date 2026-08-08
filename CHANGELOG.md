@@ -119,6 +119,14 @@ until a version is cut.
   This raises the pgConsole floor to **0.2.0**, which accepts
   root-relative link-outs for same-origin siblings; 0.1.x validates them
   as absolute URLs only and refuses to start on this value.
+- **pgAdmin had the password and never used it.** The `.pgpass` named the
+  cluster's Service, but libpq matches a line against the host string it was
+  given rather than the host it resolves, so a connection made by address
+  matched nothing and failed with `fe_sendauth: no password supplied` — the
+  credential present in the file and never consulted. The host field is now
+  the wildcard, which matches however pgAdmin connects. It costs nothing:
+  the file is pod-private, mounted only by pgAdmin and the sidecar that
+  writes it, and holds none but this console's roles for this one cluster.
 - **The generated NetworkPolicy forbade the one connection pgAdmin exists
   to make.** Egress allowed DNS and the Kubernetes API and nothing else, so
   "connect to server" hung on a dropped connection until the proxy's
