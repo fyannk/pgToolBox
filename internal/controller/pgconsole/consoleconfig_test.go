@@ -187,48 +187,40 @@ func TestConsoleEnvIsDeterministic(t *testing.T) {
 	}
 }
 
-// TestConsolePgAdminURL covers the link-out the application will accept.
-// It insists on an absolute https URL, so a console with no exposure
-// hostname renders no link rather than one the console refuses to start on.
+// TestConsolePgAdminURL: the link is root-relative, so it is correct on
+// every origin the console can be reached on — an ingress hostname, a
+// Route, or a port-forward. It used to be built from the console's base
+// URL, which without an exposure hostname falls back to the proxy's own
+// in-Pod loopback address; that rendered a link to localhost:8080 that
+// resolved to nothing.
 func TestConsolePgAdminURL(t *testing.T) {
 	exposed := testConsole()
 	exposed.Spec.Exposure = pgtoolboxv1alpha1.ExposureSpec{
 		Type:     pgtoolboxv1alpha1.ExposureTypeIngress,
 		Hostname: "pgconsole.apps.example.com",
 	}
-	if got := consolePgAdminURL(exposed); got != "https://pgconsole.apps.example.com/pgadmin" {
-		t.Fatalf("exposed pgAdmin URL = %q", got)
+	if got := consolePgAdminURL(exposed); got != "/pgadmin" {
+		t.Fatalf("exposed pgAdmin URL = %q, want the same-origin path", got)
 	}
-	if got := envMap(exposed)["PGADMIN_URL"]; got != "https://pgconsole.apps.example.com/pgadmin" {
+
+	// The case that used to render nothing, and before that rendered a
+	// broken absolute URL: a clusterIP console reached by port-forward.
+	unexposed := testConsole()
+	if got := consolePgAdminURL(unexposed); got != "/pgadmin" {
+		t.Fatalf("unexposed pgAdmin URL = %q, want the same-origin path", got)
+	}
+	if got := envMap(unexposed)["PGADMIN_URL"]; got != "/pgadmin" {
 		t.Fatalf("PGADMIN_URL = %q", got)
 	}
 
-	// No hostname and no opt-in: the base URL is http, which the console
-	// rejects, so the link is absent rather than fatal.
-	unexposed := testConsole()
-	if got := consolePgAdminURL(unexposed); got != "" {
-		t.Fatalf("unexposed pgAdmin URL = %q, want empty", got)
-	}
-	if _, present := envMap(unexposed)["PGADMIN_URL"]; present {
-		t.Fatalf("PGADMIN_URL rendered for a console with no https base URL")
-	}
-
-	// allowInsecureLinks does not substitute for a hostname. Without one the
-	// only absolute URL available is consoleBaseURL's loopback fallback,
-	// which is where the proxy listens inside the Pod, not where any
-	// browser is — rendering it produced a link to localhost:8080 that
-	// resolved to nothing.
-	lab := testConsole()
-	lab.Spec.Console.AllowInsecureLinks = ptrTo(true)
-	if got := consolePgAdminURL(lab); got != "" {
-		t.Fatalf("lab pgAdmin URL = %q, want none without an exposure hostname", got)
-	}
-
+	// Nothing to link to when pgAdmin is not composed.
 	noPgAdmin := testConsole()
 	noPgAdmin.Spec.PgAdmin.Enabled = ptrTo(false)
-	noPgAdmin.Spec.Exposure = exposed.Spec.Exposure
 	if got := consolePgAdminURL(noPgAdmin); got != "" {
 		t.Fatalf("pgAdmin URL = %q with pgAdmin disabled", got)
+	}
+	if _, present := envMap(noPgAdmin)["PGADMIN_URL"]; present {
+		t.Fatalf("PGADMIN_URL rendered with pgAdmin disabled")
 	}
 }
 

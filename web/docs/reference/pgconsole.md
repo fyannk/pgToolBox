@@ -101,18 +101,19 @@ and from the console's finalizer when you delete it. Declining the grant
 costs a panel that reports the catalog content as unread, never as
 absent.
 
-`monitoringURL` must use `https` unless `allowInsecureLinks: true`. The
-pgAdmin link-out follows the same rule and is derived, not configured:
-it is `https://<exposure.hostname>/pgadmin`, so it traverses the proxy
-like every other request and obeys `pgAdmin.accessMinLevel`.
+`monitoringURL` must use `https` unless `allowInsecureLinks: true`.
+
+The pgAdmin link-out is derived, not configured: it is the root-relative
+`/pgadmin`, so it traverses the proxy like every other request and obeys
+`pgAdmin.accessMinLevel`. Being same-origin, it resolves correctly
+however the console was reached — an ingress hostname, a Route, or a
+`kubectl port-forward` — which an absolute URL cannot do, since a
+`clusterIP` console has no external address the operator could name.
 
 :::note
-A console with no exposure hostname — `type: clusterIP`, reached by
-`kubectl port-forward` — renders **no pgAdmin link**. The console
-requires an absolute URL for a link-out, and the only one the operator
-could build without a hostname is the proxy's own loopback address,
-which is not where the browser is. pgAdmin is still reachable: browse to
-`/pgadmin` on the same origin.
+This needs pgConsole **0.2.0 or newer**, which accepts root-relative
+link-outs for same-origin siblings. Against 0.1.x the console validates
+link-outs as absolute URLs only and refuses to start.
 :::
 
 Deliberately absent: the application's history and metrics journals.

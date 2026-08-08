@@ -24,6 +24,9 @@ code does, never a design spec. When code and docs disagree, fix the docs
   Role matching `../pgconsole/deploy/kubernetes-example.yaml` rule for rule,
   and `patch` (not just `update`) on `pgtoolboxaccessrequests/status`. When
   that manifest changes there, `readRole` changes here.
+  **pgConsole 0.2.0 is the floor.** The operator renders `PGADMIN_URL` as
+  the root-relative `/pgadmin`, which only 0.2.0+ accepts; 0.1.x validates
+  link-outs as absolute URLs only and refuses to start on it.
 - `../object-store-viewer` — backup repository evidence tool, published as
   `github.com/fyannk/pgObjectStoreViewer`. Its `api/` module IS imported, at
   its published version (`.../api v0.1.1`) — NOT through a `replace` to the
