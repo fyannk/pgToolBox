@@ -35,6 +35,7 @@ SPDX-License-Identifier: Apache-2.0
 package e2e
 
 import (
+	"bytes"
 	"context"
 	"flag"
 	"fmt"
@@ -50,7 +51,10 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/remotecommand"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 )
@@ -72,7 +76,36 @@ const (
 	pollInterval = 3 * time.Second
 )
 
-var k8s client.Client
+var (
+	k8s        client.Client
+	clientset  *kubernetes.Clientset
+	restConfig *rest.Config
+)
+
+// execInPod runs a command in one container and returns its combined output.
+// It exists so a test can make a network call *from the console Pod*: the
+// generated NetworkPolicy selects that Pod, so a connection made anywhere
+// else proves nothing about it.
+func execInPod(pod *corev1.Pod, container string, command ...string) (string, error) {
+	request := clientset.CoreV1().RESTClient().Post().
+		Resource("pods").Name(pod.Name).Namespace(pod.Namespace).SubResource("exec").
+		VersionedParams(&corev1.PodExecOptions{
+			Container: container,
+			Command:   command,
+			Stdout:    true,
+			Stderr:    true,
+		}, clientgoscheme.ParameterCodec)
+
+	executor, err := remotecommand.NewSPDYExecutor(restConfig, "POST", request.URL())
+	if err != nil {
+		return "", err
+	}
+	var stdout, stderr bytes.Buffer
+	err = executor.StreamWithContext(ctx(), remotecommand.StreamOptions{
+		Stdout: &stdout, Stderr: &stderr,
+	})
+	return stdout.String() + stderr.String(), err
+}
 
 func TestMain(m *testing.M) {
 	flag.Parse()
@@ -89,13 +122,17 @@ func TestMain(m *testing.M) {
 		}
 	}
 
-	restConfig, err := config.GetConfig()
-	if err != nil {
+	var err error
+	if restConfig, err = config.GetConfig(); err != nil {
 		fmt.Fprintf(os.Stderr, "load kubeconfig: %v\n", err)
 		os.Exit(1)
 	}
 	if k8s, err = client.New(restConfig, client.Options{Scheme: scheme}); err != nil {
 		fmt.Fprintf(os.Stderr, "build client: %v\n", err)
+		os.Exit(1)
+	}
+	if clientset, err = kubernetes.NewForConfig(restConfig); err != nil {
+		fmt.Fprintf(os.Stderr, "build clientset: %v\n", err)
 		os.Exit(1)
 	}
 

@@ -80,7 +80,16 @@ Two tests run:
   CloudNativePG cluster archiving into an in-cluster object store: the
   pgAdmin container and its PVC, the admin-sync init container and
   sidecar, the evidence sidecar, and the whole provisioning chain through
-  to `PgAdminSynced`.
+  to `PgAdminSynced` — and then past it, to a PostgreSQL protocol
+  handshake made **from the console Pod**, because the NetworkPolicy
+  selects that Pod and a connection from anywhere else would prove
+  nothing about it.
+
+  That last step exists because `PgAdminSynced=True` means the operator
+  posted the desired state and the sidecar accepted it, not that pgAdmin
+  can do anything with it. Two defects hid in that gap — an egress policy
+  that dropped the connection, and a credential file lost on every Pod
+  restart — and both reported success throughout.
 
 It runs the **family images** — `ghcr.io/fyannk/pgconsole`,
 `ghcr.io/fyannk/pgadmin` and `ghcr.io/fyannk/pgobjectstoreviewer` — not

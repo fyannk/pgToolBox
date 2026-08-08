@@ -22,6 +22,7 @@ package e2e
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -56,6 +57,12 @@ const (
 	roleName        = "readonly"
 	userName        = "jane"
 
+	// Where the admin-sync sidecar writes the credential file both it and
+	// pgAdmin mount. Spelled out rather than imported: the test asserts the
+	// path the running Pod actually uses, so sharing the constant would make
+	// a rename agree with itself and prove nothing.
+	pgAdminPassFilePath = "/run/pgadmin/passfile/pgpass"
+
 	// The pgAdmin image is large and the CNPG cluster has to reach a running
 	// primary before the operator will sync anything, so these are generous.
 	compositionTimeout = 8 * time.Minute
@@ -82,6 +89,7 @@ func TestFullComposition(t *testing.T) {
 	t.Run("EveryContainerComposedAndReady", func(t *testing.T) { assertFullPod(t) })
 	t.Run("EvidenceComposed", func(t *testing.T) { assertEvidenceComposed(t) })
 	t.Run("PgAdminSyncsTheUser", func(t *testing.T) { assertPgAdminSync(t) })
+	t.Run("PgAdminCanReachPostgres", func(t *testing.T) { assertPgAdminReachesPostgres(t) })
 }
 
 // createStoreCredentials writes the S3 credential Secret the ObjectStore
@@ -495,4 +503,66 @@ func userConditionOf(user *pgtoolboxv1alpha1.PgToolBoxUser, conditionType string
 		}
 	}
 	return nil
+}
+
+// assertPgAdminReachesPostgres is the assertion the whole pgAdmin path was
+// missing. PgAdminSynced reports that the operator posted the desired state
+// and the sidecar accepted it — not that pgAdmin can do anything with it,
+// and two separate defects hid behind exactly that gap:
+//
+//   - the generated NetworkPolicy allowed egress to DNS and the Kubernetes
+//     API only, so the connection to PostgreSQL was dropped and surfaced as
+//     a bare 502 from the proxy's upstream timeout;
+//   - the sync revision was recorded on the Deployment while the .pgpass it
+//     tracked lived in an emptyDir, so a restarted console kept a matching
+//     annotation, skipped the sync, and reported success over a pgAdmin with
+//     no credentials at all.
+//
+// Both reported PgAdminSynced=True throughout. So this checks the two things
+// that actually have to be true — the credential file exists in the Pod, and
+// the Pod can complete a PostgreSQL protocol exchange with the server — and
+// it makes the connection *from the console Pod*, because the NetworkPolicy
+// selects that Pod and a connection from anywhere else proves nothing.
+func assertPgAdminReachesPostgres(t *testing.T) {
+	pod, err := consolePod(fullConsoleName)
+	if err != nil {
+		t.Fatalf("console pod: %v", err)
+	}
+
+	// One .pgpass entry per provisioned user, naming the cluster's service.
+	eventually(t, compositionTimeout, "the sidecar to write the .pgpass", func() error {
+		out, err := execInPod(pod, "pgadmin", "sh", "-c",
+			"cut -d: -f1-4 "+pgAdminPassFilePath+" 2>&1")
+		if err != nil {
+			return fmt.Errorf("%v: %s", err, out)
+		}
+		if !strings.Contains(out, fullClusterName+"-rw."+testNamespace+".svc:5432") {
+			return fmt.Errorf("no entry for the cluster service: %q", out)
+		}
+		return nil
+	})
+
+	// A PostgreSQL SSLRequest is the smallest exchange that proves both
+	// reachability and that a PostgreSQL server is on the other end: it
+	// answers with a single byte, 'S' or 'N'. A NetworkPolicy that drops the
+	// connection instead hangs until the dial timeout.
+	probe := fmt.Sprintf(`
+import socket,sys
+try:
+    s=socket.create_connection(("%s-rw.%s.svc",5432),timeout=15)
+    s.sendall(b"\x00\x00\x00\x08\x04\xd2\x16\x2f")
+    reply=s.recv(1)
+    s.close()
+    print("REPLY=" + reply.decode("ascii","replace"))
+except Exception as error:
+    print("FAILED=" + repr(error)); sys.exit(1)
+`, fullClusterName, testNamespace)
+
+	out, err := execInPod(pod, "pgadmin", "/venv/bin/python3", "-c", probe)
+	if err != nil {
+		t.Fatalf("console pod cannot reach PostgreSQL: %v: %s", err, out)
+	}
+	if !strings.Contains(out, "REPLY=S") && !strings.Contains(out, "REPLY=N") {
+		t.Fatalf("no PostgreSQL handshake from the console pod: %s", out)
+	}
 }
