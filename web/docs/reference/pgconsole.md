@@ -56,6 +56,8 @@ spec:
     enabled: true
     policyTypes: full                   # full | ingress
     extraEgress: [ ... ]
+  podSecurityContext:
+    fsGroup: 65532                      # leave unset on OpenShift
   resources: { ... }
 ```
 
@@ -110,6 +112,29 @@ Deliberately absent: the application's history and metrics journals.
 Both imply a PersistentVolumeClaim and pin the console to a single
 replica, which is a storage decision this API does not yet make. History
 and metrics are retained in memory and live with the process.
+
+## `podSecurityContext.fsGroup`
+
+The console Pod's hardening — non-root, dropped capabilities, read-only
+root filesystem, the runtime-default seccomp profile — is the operator's
+to set and is not configurable. `fsGroup` is the one exception, because
+only the platform knows what value is admissible.
+
+It matters for the **evidence sidecar**. pgObjectStoreViewer refuses to
+serve unless the shared socket directory is setgid with group rwx, and on
+a Pod's `emptyDir` that mode comes from the kubelet applying `fsGroup`.
+With none applied the directory is `0777` with no setgid, and the viewer
+reports an invalid socket path instead of serving evidence.
+
+| Platform | What to do |
+|---|---|
+| OpenShift | Leave it unset. The `restricted-v2` SCC allocates an fsGroup from the namespace's range, and a value outside that range is rejected outright. |
+| Kubernetes that defaults an fsGroup | Leave it unset. |
+| Kubernetes that does not | Set it. Without it the evidence sidecar cannot come up; nothing else in the console is affected. |
+
+:::note
+This only bites with `evidence.enabled: true`, which is not the default.
+:::
 
 ## Notes
 

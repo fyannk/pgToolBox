@@ -161,6 +161,34 @@ func TestDeploymentContainersAndEnv(t *testing.T) {
 	}
 }
 
+// TestDeploymentFSGroup covers the one pod-level security setting the
+// operator does not decide. pgObjectStoreViewer refuses to serve unless the
+// shared socket directory is setgid with group rwx, and on an emptyDir that
+// mode comes from the kubelet applying fsGroup — so on a cluster that does
+// not default one, an unset fsGroup is why evidence never comes up.
+func TestDeploymentFSGroup(t *testing.T) {
+	// Unset by default: OpenShift's SCC allocates one from the namespace
+	// range, and a value outside that range is rejected outright.
+	unset := buildDeployment(t, testConsole(), testInputs())
+	if group := unset.Spec.Template.Spec.SecurityContext.FSGroup; group != nil {
+		t.Fatalf("fsGroup = %d, want unset so the platform may allocate it", *group)
+	}
+
+	console := testConsole()
+	console.Spec.PodSecurityContext.FSGroup = ptrTo(int64(65532))
+	set := buildDeployment(t, console, testInputs())
+
+	pod := set.Spec.Template.Spec.SecurityContext
+	if pod.FSGroup == nil || *pod.FSGroup != 65532 {
+		t.Fatalf("fsGroup = %v, want 65532", pod.FSGroup)
+	}
+	// The hardening is not configurable and must survive alongside it.
+	if pod.RunAsNonRoot == nil || !*pod.RunAsNonRoot ||
+		pod.SeccompProfile == nil || pod.SeccompProfile.Type != corev1.SeccompProfileTypeRuntimeDefault {
+		t.Fatalf("pod hardening weakened by setting fsGroup: %+v", pod)
+	}
+}
+
 func TestDeploymentFrame(t *testing.T) {
 	console := testConsole()
 	deployment := buildDeployment(t, console, testInputs())

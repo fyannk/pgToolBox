@@ -82,3 +82,9 @@ until a version is cut.
   hand-maintained copies that a new controller rule could silently miss.
 - Lint exclusions were declared under the golangci-lint v1 `issues` key,
   which v2 parses and ignores; `make lint` was passing only on a warm cache.
+- `spec.podSecurityContext.fsGroup` makes the evidence sidecar deployable on
+  clusters that do not default an fsGroup. pgObjectStoreViewer requires the
+  shared socket directory to be setgid with group rwx, which on an `emptyDir`
+  comes from the kubelet applying fsGroup; the Pod set none, so evidence
+  could only come up where the platform supplied one (OpenShift's
+  `restricted-v2` SCC does).
