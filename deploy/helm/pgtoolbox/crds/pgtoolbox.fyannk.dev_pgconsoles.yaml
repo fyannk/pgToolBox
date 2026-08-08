@@ -417,6 +417,11 @@ spec:
                 description: |-
                   The pgconsole container image to run. Defaults to the operator's
                   configured image (--default-pgconsole-image).
+
+                  A pointer so that an omitted image is genuinely absent. Go does not
+                  omit an empty struct, so a value field would serialize as `image: {}`
+                  and be rejected by ImageSpec's required repository and tag — which
+                  would make the operator's default images unreachable.
                 properties:
                   digest:
                     description: Optional image digest; when set it takes precedence
@@ -689,7 +694,8 @@ spec:
                   image:
                     description: |-
                       The pgAdmin container image. Defaults to the operator's configured
-                      image (--default-pgadmin-image).
+                      image (--default-pgadmin-image). A pointer for the same reason as
+                      PgConsoleSpec.Image.
                     properties:
                       digest:
                         description: Optional image digest; when set it takes precedence
@@ -885,7 +891,8 @@ spec:
                   image:
                     description: |-
                       The proxy container image. Defaults to the operator's configured
-                      image (--default-pgtoolbox-proxy-image).
+                      image (--default-pgtoolbox-proxy-image). A pointer for the same
+                      reason as PgConsoleSpec.Image.
                     properties:
                       digest:
                         description: Optional image digest; when set it takes precedence

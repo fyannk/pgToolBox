@@ -36,8 +36,13 @@ type PgConsoleSpec struct {
 
 	// The pgconsole container image to run. Defaults to the operator's
 	// configured image (--default-pgconsole-image).
+	//
+	// A pointer so that an omitted image is genuinely absent. Go does not
+	// omit an empty struct, so a value field would serialize as `image: {}`
+	// and be rejected by ImageSpec's required repository and tag — which
+	// would make the operator's default images unreachable.
 	// +optional
-	Image ImageSpec `json:"image,omitempty"`
+	Image *ImageSpec `json:"image,omitempty"`
 
 	// The pgtoolbox-proxy authentication proxy, the single authentication
 	// and coarse authorization boundary of the console.
@@ -76,9 +81,10 @@ type PgConsoleSpec struct {
 // ProxySpec configures the pgtoolbox-proxy container.
 type ProxySpec struct {
 	// The proxy container image. Defaults to the operator's configured
-	// image (--default-pgtoolbox-proxy-image).
+	// image (--default-pgtoolbox-proxy-image). A pointer for the same
+	// reason as PgConsoleSpec.Image.
 	// +optional
-	Image ImageSpec `json:"image,omitempty"`
+	Image *ImageSpec `json:"image,omitempty"`
 
 	// How users authenticate.
 	Authentication ProxyAuthenticationSpec `json:"authentication"`
@@ -145,9 +151,10 @@ type PgAdminSpec struct {
 	Enabled *bool `json:"enabled,omitempty"`
 
 	// The pgAdmin container image. Defaults to the operator's configured
-	// image (--default-pgadmin-image).
+	// image (--default-pgadmin-image). A pointer for the same reason as
+	// PgConsoleSpec.Image.
 	// +optional
-	Image ImageSpec `json:"image,omitempty"`
+	Image *ImageSpec `json:"image,omitempty"`
 
 	// The minimum role level allowed to reach pgAdmin through the proxy.
 	// +kubebuilder:validation:Enum=dba;poweruser
