@@ -28,7 +28,6 @@ RBAC and NetworkPolicy. Security isolation beats resource sharing.
   and bounded logs — Kubernetes API only, never SQL.
 - **A ready-to-use pgAdmin**: per `PgToolBoxUser`, the operator syncs a
   pgAdmin account and a shared server definition authenticated with the
-  saved password of the user's postgres role.
 - **Repository evidence** (optional): the `objectstoreviewer` sidecar
   publishes backup/WAL destination fingerprints to the console over a
   pod-private Unix socket.

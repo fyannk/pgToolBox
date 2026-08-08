@@ -51,8 +51,6 @@ metadata:
 spec:
   pgConsoleRef: { name: main }
   level: dba
-  postgresRole:
-    profile: database-owner
 ---
 apiVersion: pgtoolbox.fyannk.dev/v1alpha1
 kind: PgToolBoxUser

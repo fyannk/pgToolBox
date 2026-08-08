@@ -80,31 +80,21 @@ func testConsole() *pgtoolboxv1alpha1.PgConsole {
 	}
 }
 
-func testRoleProfile() *pgtoolboxv1alpha1.PgToolBoxRole {
+// testRole returns a role attached to testConsole at the given level. A
+// role carries nothing else: it is proxy configuration.
+func testRole(name string, level pgtoolboxv1alpha1.RoleLevel) *pgtoolboxv1alpha1.PgToolBoxRole {
 	return &pgtoolboxv1alpha1.PgToolBoxRole{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "monitor-role",
-			Namespace: "test",
-			UID:       types.UID("uid-role"),
+			Name:       name,
+			Namespace:  "test",
+			UID:        types.UID("uid-" + name),
+			Generation: 1,
 		},
 		Spec: pgtoolboxv1alpha1.PgToolBoxRoleSpec{
 			PgConsoleRef: pgtoolboxv1alpha1.LocalObjectReference{Name: "console"},
-			Level:        pgtoolboxv1alpha1.RoleLevelView,
-			PostgresRole: pgtoolboxv1alpha1.PostgresRoleSpec{
-				Profile: pgtoolboxv1alpha1.PostgresRoleProfileMonitor,
-			},
+			Level:        level,
 		},
 	}
-}
-
-func testRoleRef() *pgtoolboxv1alpha1.PgToolBoxRole {
-	role := testRoleProfile()
-	role.Name = "byoref-role"
-	role.UID = types.UID("uid-role-ref")
-	role.Spec.PostgresRole = pgtoolboxv1alpha1.PostgresRoleSpec{
-		DatabaseRoleRef: &pgtoolboxv1alpha1.LocalObjectReference{Name: "existing-role"},
-	}
-	return role
 }
 
 func conditionOf(role *pgtoolboxv1alpha1.PgToolBoxRole, conditionType string) *metav1.Condition {

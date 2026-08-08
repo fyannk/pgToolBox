@@ -56,6 +56,19 @@ until a version is cut.
 
 ### Changed
 
+- **`PgToolBoxRole` and `PgToolBoxUser` configure the proxy and nothing
+  else.** A role is a console authorization level; it is not a postgres
+  role and has no relationship with the CloudNativePG cluster. The
+  postgres backing removed with this: `spec.postgresRole` and its
+  profiles, `status.databaseRoleName`, the `DatabaseRoleReady` and
+  `CredentialReady` conditions, the per-user `PgAdminSynced` condition and
+  status field, and the `DatabaseRole` + password Secret machinery in the
+  `PgToolBoxRole` controller, which now creates nothing. This is a
+  breaking CRD change: `spec.postgresRole` was required.
+- pgAdmin server provisioning is inert while it is rebuilt on the
+  cluster's own credentials. `PgAdminSynced` reports that plainly rather
+  than claiming a sync; a dba can add a connection by hand meanwhile.
+
 - The console's generated read Role now carries the whole read surface
   pgConsole's own deploy manifest grants — poolers, declared database
   objects, services, persistent volume claims, image catalogs, failover

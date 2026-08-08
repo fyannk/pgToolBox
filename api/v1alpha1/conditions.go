@@ -42,18 +42,15 @@ const (
 
 // PgToolBoxRole condition types.
 const (
-	RoleConditionReady             = "Ready"
-	RoleConditionPgConsoleReady    = "PgConsoleReady"
-	RoleConditionDatabaseRoleReady = "DatabaseRoleReady"
-	RoleConditionCredentialReady   = "CredentialReady"
+	RoleConditionReady          = "Ready"
+	RoleConditionPgConsoleReady = "PgConsoleReady"
 )
 
 // PgToolBoxUser condition types.
 const (
-	UserConditionReady         = "Ready"
-	UserConditionRoleReady     = "RoleReady"
-	UserConditionProxySynced   = "ProxySynced"
-	UserConditionPgAdminSynced = "PgAdminSynced"
+	UserConditionReady       = "Ready"
+	UserConditionRoleReady   = "RoleReady"
+	UserConditionProxySynced = "ProxySynced"
 )
 
 // PgToolBoxAccessRequest condition types.

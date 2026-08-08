@@ -117,8 +117,7 @@ spec:
             description: PgToolBoxUserStatus is the observed state of a PgToolBoxUser.
             properties:
               conditions:
-                description: 'Standard conditions: Ready, RoleReady, ProxySynced,
-                  PgAdminSynced.'
+                description: 'Standard conditions: Ready, RoleReady, ProxySynced.'
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
@@ -178,11 +177,6 @@ spec:
                 description: The generation observed by the controller.
                 format: int64
                 type: integer
-              pgAdminSynced:
-                description: |-
-                  Whether the pgAdmin account and shared server definition are
-                  provisioned for this user.
-                type: boolean
               proxySynced:
                 description: Whether the rendered proxy configuration includes this
                   user.

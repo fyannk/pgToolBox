@@ -26,13 +26,9 @@ users get a `none`-level session that can only file an access request.
 
 ## Postgres roles
 
-A `PgToolBoxRole` maps a level to a postgres role, either:
-
-- **profile** — the operator materializes a CNPG `DatabaseRole` and a
-  generated password Secret (`monitor`, `database-readonly`,
-  `database-owner`), or
-- **databaseRoleRef** — a bring-your-own `DatabaseRole`; the operator only
-  validates it.
+A `PgToolBoxRole` names a console authorization level. It is proxy
+configuration and nothing more: it is not a postgres role, and nothing
+about it reaches the CloudNativePG cluster.
 
 The password reaches pgAdmin over the in-pod admin-sync mTLS API and lands
 in a pod-private pgpass file; it is never logged and never put in status.

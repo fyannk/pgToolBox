@@ -19,9 +19,8 @@ declare, it composes a dedicated pod next to one
 └────────────────────────────────────────────────────────────┘
 ```
 
-Users and roles are plain Kubernetes objects too: a `PgToolBoxRole` maps a
-console authorization level (`view` / `poweruser` / `dba`) to a postgres
-role (operator-managed `DatabaseRole` or bring-your-own), a
+Users and roles are plain Kubernetes objects too: a `PgToolBoxRole` names a
+console authorization level (`view` / `poweruser` / `dba`), a
 `PgToolBoxUser` binds an identity to a role, and a
 `PgToolBoxAccessRequest` lets an unknown authenticated user ask a `dba`
 for access from the proxy's 403 page.
@@ -33,10 +32,8 @@ for access from the proxy's 403 page.
 - **pgtoolbox-proxy** as the single authentication and coarse authorization
   boundary: OIDC (PKCE S256), OpenShift service-account OAuth, or local
   bcrypt accounts rendered from `PgToolBoxUser`.
-- **pgAdmin lands pre-configured**: per `PgToolBoxUser`, the operator syncs
-  a pgAdmin account and a shared server definition carrying the saved
-  password of the user's postgres role — no server forms, no passwords to
-  type.
+- **pgAdmin is embedded** behind the same proxy, reachable at `/pgadmin`
+  by sessions at or above `pgAdmin.accessMinLevel`.
 - **Embedded pgAdmin user/server sync** through an in-pod mTLS admin-sync
   API; the operator never execs into the pod.
 - **Every exposure type**: OpenShift `Route`, `Ingress`, Gateway API
@@ -89,8 +86,6 @@ metadata:
 spec:
   pgConsoleRef: { name: main }
   level: dba
-  postgresRole:
-    profile: database-owner
 ---
 apiVersion: pgtoolbox.fyannk.dev/v1alpha1
 kind: PgToolBoxUser
@@ -102,9 +97,9 @@ spec:
   roleRef: { name: dba }
 ```
 
-Jane signs in through the proxy, sees the console sized to her `dba` level,
-and opens `/pgadmin` on a ready-to-use connection authenticated as the
-postgres role the operator created for `dba`.
+Jane signs in through the proxy and sees the console sized to her `dba`
+level, including `/pgadmin`. Roles and users configure the proxy only —
+they are not postgres roles, and nothing about them reaches the database.
 
 ## Documentation
 

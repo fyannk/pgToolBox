@@ -292,19 +292,16 @@ func TestReconcileNeverWritesTheCluster(t *testing.T) {
 	}
 }
 
-func TestReconcileRendersProxyUsersAndSyncsPgAdmin(t *testing.T) {
+func TestReconcileRendersProxyUsers(t *testing.T) {
 	console := testConsole()
 	cluster := testCluster()
 	role := testPgToolBoxRole("viewer", pgtoolboxv1alpha1.RoleLevelView)
-
-	passwordSecret := testPasswordSecret("viewer-pgrole-credentials", "v1")
-	databaseRole := testDatabaseRole("viewer-pgrole", "viewer-pgrole-credentials", "v1")
 
 	hash := "$2a$04$1MkEYTirgqR9o.t6dMEyzOoRST1ueBQEAgrb3x8I9RRUD3XwpTBDG"
 	localSecret := testLocalPasswordSecret("alice-local-password", hash)
 	user := testPgToolBoxUser("alice", "viewer", "alice-local-password")
 
-	r, c := newTestReconciler(t, console, cluster, role, databaseRole, passwordSecret, localSecret, user)
+	r, c := newTestReconciler(t, console, cluster, role, localSecret, user)
 	reconcileToSteadyState(t, r)
 
 	// The proxy config Secret must contain the rendered user with the bcrypt hash.
@@ -328,16 +325,15 @@ func TestReconcileRendersProxyUsersAndSyncsPgAdmin(t *testing.T) {
 		t.Fatalf("proxy user bcrypt not rendered")
 	}
 
-	// The PgToolBoxUser status must reflect both proxy and pgAdmin success.
+	// A user's status is now about the proxy alone. There is no per-user
+	// pgAdmin state to report: roles and users configure the proxy, and
+	// pgAdmin connects with the cluster's own credentials.
 	var liveUser pgtoolboxv1alpha1.PgToolBoxUser
 	getObject(t, c, client.ObjectKeyFromObject(user), &liveUser)
-	if !liveUser.Status.ProxySynced || !liveUser.Status.PgAdminSynced {
+	if !liveUser.Status.ProxySynced {
 		t.Fatalf("user status = %+v", liveUser.Status)
 	}
 	if userConditionOf(&liveUser, pgtoolboxv1alpha1.UserConditionProxySynced).Status != metav1.ConditionTrue {
 		t.Fatalf("ProxySynced condition = %+v", userConditionOf(&liveUser, pgtoolboxv1alpha1.UserConditionProxySynced))
-	}
-	if userConditionOf(&liveUser, pgtoolboxv1alpha1.UserConditionPgAdminSynced).Status != metav1.ConditionTrue {
-		t.Fatalf("PgAdminSynced condition = %+v", userConditionOf(&liveUser, pgtoolboxv1alpha1.UserConditionPgAdminSynced))
 	}
 }

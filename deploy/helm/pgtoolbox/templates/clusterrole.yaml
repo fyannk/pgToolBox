@@ -126,7 +126,6 @@ rules:
   - pgtoolbox.fyannk.dev
   resources:
   - pgconsoles/finalizers
-  - pgtoolboxroles/finalizers
   verbs:
   - update
 - apiGroups:
@@ -199,17 +198,6 @@ rules:
   - postgresql.cnpg.io
   resources:
   - databaseroles
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - postgresql.cnpg.io
-  resources:
   - databases
   - failoverquorums
   - imagecatalogs
