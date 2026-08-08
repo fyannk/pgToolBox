@@ -31,6 +31,7 @@ import (
 	"github.com/fyannk/pgtoolbox/internal/adminsync"
 	"github.com/fyannk/pgtoolbox/internal/conditions"
 	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -129,7 +130,23 @@ func (r *Reconciler) reconcilePgAdminSync(
 		return nil
 	}
 
-	revision := syncRevision(syncRequest)
+	// The recorded revision has to name the Pod it was applied to, not just
+	// the desired state. The .pgpass the sidecar writes lives in an
+	// emptyDir, so it is destroyed with every Pod — while the annotation
+	// recording it sits on the Deployment, which survives. Keyed on the
+	// desired state alone, a restarted console kept a matching annotation,
+	// the sync was skipped as "up to date", and pgAdmin was left with no
+	// credentials at all while the condition reported success.
+	//
+	// A Pod that cannot be identified is not an error: the sync itself
+	// resolves the ready Pod and will report the real reason. It only means
+	// this reconcile cannot claim the state is current, so it re-syncs,
+	// which is idempotent.
+	podIdentity, err := r.syncedPodIdentity(ctx, console)
+	if err != nil {
+		return err
+	}
+	revision := syncRevision(syncRequest) + "@" + podIdentity
 	if deployment.Annotations[pgtoolboxv1alpha1.PgAdminSyncRevisionAnnotation] == revision {
 		conditions.MarkTrue(
 			console,
@@ -262,4 +279,35 @@ func int32Count(n int) int32 {
 		return math.MaxInt32
 	}
 	return int32(n) // #nosec G115 -- clamped above
+}
+
+// syncedPodIdentity returns a value that changes whenever the console Pod
+// holding the synced state is replaced. It is the UID of the current Pod,
+// so a rollout, an eviction or a crash-restart all invalidate a recorded
+// sync revision, and an absent Pod yields an empty identity that can never
+// match one already recorded.
+func (r *Reconciler) syncedPodIdentity(
+	ctx context.Context,
+	console *pgtoolboxv1alpha1.PgConsole,
+) (string, error) {
+	var pods corev1.PodList
+	if err := r.List(ctx, &pods,
+		client.InNamespace(console.Namespace),
+		client.MatchingLabels(application.CommonLabels(console.Name)),
+	); err != nil {
+		return "", fmt.Errorf("list console pods: %w", err)
+	}
+	identity := ""
+	for i := range pods.Items {
+		pod := &pods.Items[i]
+		if !pod.DeletionTimestamp.IsZero() {
+			continue
+		}
+		// Deterministic across reconciles when more than one Pod briefly
+		// exists mid-rollout: the highest UID wins rather than list order.
+		if uid := string(pod.UID); uid > identity {
+			identity = uid
+		}
+	}
+	return identity, nil
 }
