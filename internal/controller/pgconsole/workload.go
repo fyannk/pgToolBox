@@ -537,6 +537,17 @@ func (r *Reconciler) pgAdminContainer(console *pgtoolboxv1alpha1.PgConsole, imag
 			// PostgreSQL through the .pgpass file the admin-sync sidecar
 			// writes, never through pgAdmin's saved-password store.
 			{Name: "PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED", Value: "False"},
+			// Where libpq finds the credentials the admin-sync sidecar
+			// writes. It has to arrive as an environment variable rather
+			// than as the server definition's passfile parameter: in server
+			// mode pgAdmin resolves that parameter through its file manager,
+			// which joins it onto the signed-in user's storage directory. An
+			// absolute path is rewritten to one under /var/lib/pgadmin
+			// /storage that does not exist, resolves to nothing, and libpq
+			// is handed no passfile at all — reported as
+			// "fe_sendauth: no password supplied", with the credential
+			// sitting unread in the file the whole time.
+			{Name: "PGPASSFILE", Value: adminSyncPassfileMountPath + "/pgpass"},
 		},
 		Ports: []corev1.ContainerPort{{
 			Name:          "http",

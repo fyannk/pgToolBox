@@ -556,14 +556,22 @@ func assertPgAdminReachesPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve cluster service address: %v", err)
 	}
+	// No passfile argument: libpq has to find it through PGPASSFILE in the
+	// container environment, which is the only route that works. Passing it
+	// explicitly here would bypass the defect entirely — pgAdmin resolves
+	// the server definition's passfile parameter through its file manager,
+	// which rewrites an absolute path into the signed-in user's storage
+	// directory and hands libpq nothing.
 	probe := fmt.Sprintf(`
-import psycopg, sys
+import psycopg, os, sys
+if not os.environ.get("PGPASSFILE"):
+    print("PGPASSFILE is not set in the pgAdmin container"); sys.exit(1)
 for host in [%q, %q]:
     with psycopg.connect(host=host, port=5432, dbname="postgres", user=%q,
-                         passfile=%q, sslmode="prefer", connect_timeout=15) as c:
+                         sslmode="prefer", connect_timeout=15) as c:
         who = c.execute("select current_user").fetchone()[0]
         print("AUTHENTICATED " + host + " as " + who)
-`, fullClusterName+"-rw."+testNamespace+".svc", address, roleName+"-pgrole", pgAdminPassFilePath)
+`, fullClusterName+"-rw."+testNamespace+".svc", address, roleName+"-pgrole")
 
 	out, err := execInPod(pod, "pgadmin", "/venv/bin/python3", "-c", probe)
 	if err != nil {
