@@ -7,7 +7,7 @@ require (
 	github.com/cloudnative-pg/barman-cloud v0.5.1
 	github.com/coreos/go-oidc/v3 v3.20.0
 	github.com/fsnotify/fsnotify v1.9.0
-	github.com/fyannk/objectstoreviewer/api v0.0.0-00010101000000-000000000000
+	github.com/fyannk/pgObjectStoreViewer/api v0.1.1
 	github.com/openshift/api v0.0.0-20260715165912-72066cc9718b
 	golang.org/x/crypto v0.54.0
 	golang.org/x/oauth2 v0.36.0
@@ -83,4 +83,3 @@ require (
 
 // The evidence fingerprint is the shared canonicalization the ObjectStoreViewer
 // also consumes; it ships as the viewer's types-only module (contract C2).
-replace github.com/fyannk/objectstoreviewer/api => ../objectstoreviewer/api

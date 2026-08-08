@@ -1,29 +1,24 @@
 # pgToolBox operator and proxy image build.
 #
-# The build context must be the parent directory containing this repository
-# and the object-store-viewer repository (as object-store-viewer/). The
-# objectstoreviewer API module is vendored in via the go.mod replace to
-# ../objectstoreviewer/api. REPO_DIR names the checked-out repository
-# directory inside the context (pgToolBox locally, the repository name in CI).
+# The build context is this repository. It used to have to be the parent
+# directory, because the pgObjectStoreViewer API module was reached through
+# a go.mod replace to a sibling checkout; that module is published now, so
+# the build resolves it like any other dependency.
 #
-#   docker build -f pgToolBox/Dockerfile --target manager -t pgtoolbox:latest ..
-#   docker build -f pgToolBox/Dockerfile --target proxy   -t pgtoolbox-proxy:latest ..
+#   docker build --target manager -t pgtoolbox:latest .
+#   docker build --target proxy   -t pgtoolbox-proxy:latest .
 
 FROM golang:1.26 AS builder
-ARG REPO_DIR=pgToolBox
 WORKDIR /workspace
 
 # Module files first for dependency caching.
-COPY ${REPO_DIR}/go.mod ${REPO_DIR}/go.sum ${REPO_DIR}/
-COPY object-store-viewer/api objectstoreviewer/api
-
-WORKDIR /workspace/${REPO_DIR}
+COPY go.mod go.sum ./
 RUN go mod download
 
-COPY ${REPO_DIR}/api api
-COPY ${REPO_DIR}/cmd cmd
-COPY ${REPO_DIR}/internal internal
-COPY ${REPO_DIR}/hack hack
+COPY api api
+COPY cmd cmd
+COPY internal internal
+COPY hack hack
 
 ARG VERSION=development
 ARG IMG=pgtoolbox:latest

@@ -16,9 +16,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Check out objectstoreviewer API (go.mod replace)
-        run: git clone --depth 1 https://github.com/fyannk/object-store-viewer.git ../object-store-viewer
-
       - name: Compute image tag
         id: imgtag
         run: |
@@ -39,12 +36,11 @@ jobs:
       - name: Build and push manager image
         uses: docker/build-push-action@v6
         with:
-          context: ..
-          file: ./${{ github.event.repository.name }}/Dockerfile
+          context: .
+          file: ./Dockerfile
           target: manager
           push: true
           build-args: |
-            REPO_DIR=${{ github.event.repository.name }}
             VERSION=${{ steps.imgtag.outputs.tag }}
             IMG=ghcr.io/${{ github.repository_owner }}/pgtoolbox:${{ steps.imgtag.outputs.tag }}
           tags: ghcr.io/${{ github.repository_owner }}/pgtoolbox:${{ steps.imgtag.outputs.tag }}
@@ -52,12 +48,10 @@ jobs:
       - name: Build and push proxy image
         uses: docker/build-push-action@v6
         with:
-          context: ..
-          file: ./${{ github.event.repository.name }}/Dockerfile
+          context: .
+          file: ./Dockerfile
           target: proxy
           push: true
-          build-args: |
-            REPO_DIR=${{ github.event.repository.name }}
           tags: ghcr.io/${{ github.repository_owner }}/pgtoolbox-proxy:${{ steps.imgtag.outputs.tag }}
 
       - name: Build and push OLM bundle image
