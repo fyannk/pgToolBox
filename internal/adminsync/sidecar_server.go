@@ -220,13 +220,18 @@ func (o SidecarOptions) loadServers(ctx context.Context, username string, server
 				Port:          server.Port,
 				MaintenanceDB: server.MaintenanceDB,
 				Username:      server.Username,
-				// No passfile parameter: pgAdmin resolves that one through
-				// its file manager, which rewrites an absolute path into the
-				// signed-in user's storage directory and so resolves it to
-				// nothing. The credentials reach libpq through PGPASSFILE in
-				// the container environment, which pgAdmin does not touch.
+				// The passfile parameter has to be present and has to
+				// resolve, and pgAdmin treats those two failures very
+				// differently: absent, it prompts the user for a password;
+				// present but unresolvable, it connects with none and the
+				// server reports "no password supplied". It resolves the
+				// value through its file manager, which joins it onto the
+				// signed-in user's storage directory — so the path is
+				// storage-relative, and writePassfile puts the file exactly
+				// where that resolution lands.
 				ConnectionParameters: map[string]string{
-					"sslmode": server.SSLMode,
+					"sslmode":  server.SSLMode,
+					"passfile": storageRelativePassFile,
 				},
 			},
 		},
@@ -274,7 +279,39 @@ func (o SidecarOptions) loadServers(ctx context.Context, username string, server
 // here, because this file is pod-private, is mounted only by pgAdmin and
 // the sidecar that writes it, and holds none but this console's roles for
 // this one cluster.
+// It writes one file per user, inside that user's own pgAdmin storage
+// directory, because that is the only place pgAdmin will resolve a passfile
+// to. One consequence is worth keeping: a user's file holds their line and
+// nobody else's, so no account can read another's credential.
 func (o SidecarOptions) writePassfile(users []User) error {
+	for _, user := range users {
+		directory := userStorageDirectory(user.Subject)
+		if err := os.MkdirAll(directory, 0o700); err != nil {
+			return fmt.Errorf("create storage directory for %q: %w", user.Subject, err)
+		}
+		line := pgpassLine(
+			pgpassAnyHost,
+			user.Server.Port,
+			user.Server.MaintenanceDB,
+			user.Server.Username,
+			user.Password,
+		)
+		target := filepath.Join(directory, "pgpass")
+		temporary := target + ".tmp"
+		if err := os.WriteFile(temporary, []byte(line+"\n"), 0o600); err != nil {
+			return fmt.Errorf("write passfile for %q: %w", user.Subject, err)
+		}
+		if err := os.Rename(temporary, target); err != nil {
+			return fmt.Errorf("replace passfile for %q: %w", user.Subject, err)
+		}
+	}
+	return o.writeLegacyPassfile(users)
+}
+
+// writeLegacyPassfile keeps the combined file the pgAdmin container still
+// points PGPASSFILE at, so a connection made outside pgAdmin's own
+// resolution — a psql in the Pod, a probe — still finds credentials.
+func (o SidecarOptions) writeLegacyPassfile(users []User) error {
 	var lines []string
 	for _, user := range users {
 		lines = append(lines, pgpassLine(
@@ -304,6 +341,22 @@ func (o SidecarOptions) writePassfile(users []User) error {
 // pgpassAnyHost is pgpass's wildcard: it matches whatever host string the
 // client connected with, by name or by address.
 const pgpassAnyHost = "*"
+
+// storageRelativePassFile is the passfile as pgAdmin's file manager sees
+// it: paths are relative to the signed-in user's own storage directory.
+const storageRelativePassFile = "/pgpass"
+
+// pgAdminStorageRoot is where pgAdmin keeps those per-user directories. It
+// is on the settings volume, so the file survives a restart with the rest
+// of pgAdmin's state rather than living in an emptyDir.
+const pgAdminStorageRoot = "/var/lib/pgadmin/storage"
+
+// userStorageDirectory is the storage directory pgAdmin resolves for one
+// account. pgAdmin derives it from the username with '@' replaced, which is
+// why the subject must be an email address for pgAdmin to accept it at all.
+func userStorageDirectory(subject string) string {
+	return filepath.Join(pgAdminStorageRoot, strings.ReplaceAll(subject, "@", "_"))
+}
 
 // pgpassLine renders one pgpass line, escaping colon and backslash in each
 // field so the file round-trips through libpq.
