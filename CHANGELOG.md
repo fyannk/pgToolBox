@@ -119,6 +119,20 @@ until a version is cut.
   This raises the pgConsole floor to **0.2.0**, which accepts
   root-relative link-outs for same-origin siblings; 0.1.x validates them
   as absolute URLs only and refuses to start on this value.
+- **The generated NetworkPolicy forbade the one connection pgAdmin exists
+  to make.** Egress allowed DNS and the Kubernetes API and nothing else, so
+  "connect to server" hung on a dropped connection until the proxy's
+  upstream timeout and surfaced as a bare `502 Bad Gateway` with nothing in
+  any log to explain it. Egress to PostgreSQL is now granted when pgAdmin
+  is composed, scoped by CloudNativePG's own `cnpg.io/cluster` label to
+  this console's cluster rather than to PostgreSQL at large.
+- **A restarted console lost its pgAdmin credentials and reported success.**
+  The sync revision was recorded on the Deployment, which survives a
+  rollout, while the `.pgpass` it tracks lives in an `emptyDir`, which does
+  not. After any restart the annotation still matched, the sync was skipped
+  as "up to date", and pgAdmin was left with no credentials while
+  `PgAdminSynced` stayed True. The recorded revision now names the Pod it
+  was applied to, so replacing the Pod invalidates it.
 - **pgAdmin asked for credentials a second time.** The admin-sync sidecar
   has always created webserver-auth accounts — accounts with no password of
   their own — but pgAdmin was left on its default internal authentication,

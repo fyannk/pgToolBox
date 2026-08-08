@@ -501,3 +501,49 @@ func TestDeploymentAdminSyncSkippedWithoutOperatorImage(t *testing.T) {
 		t.Fatalf("admin-sync secret version annotation must not be present without operator image")
 	}
 }
+
+// TestNetworkPolicyAllowsPostgres holds the rule that made "connect to
+// server" fail as a bare 502: the embedded pgAdmin exists to reach this one
+// cluster, and a default-deny egress policy that omits PostgreSQL forbids
+// the only thing it is for. libpq waits on the dropped connection until the
+// proxy's upstream timeout, so nothing in any log names the cause.
+func TestNetworkPolicyAllowsPostgres(t *testing.T) {
+	r, _ := newTestReconciler(t)
+
+	policy, err := r.networkPolicy(testConsole())
+	if err != nil {
+		t.Fatalf("build network policy: %v", err)
+	}
+	found := false
+	for _, rule := range policy.Spec.Egress {
+		for _, port := range rule.Ports {
+			if port.Port == nil || port.Port.IntVal != 5432 {
+				continue
+			}
+			found = true
+			// Scoped to this cluster's instances, not PostgreSQL at large.
+			if len(rule.To) != 1 || rule.To[0].PodSelector == nil ||
+				rule.To[0].PodSelector.MatchLabels["cnpg.io/cluster"] != "cluster-1" {
+				t.Fatalf("postgres egress is not scoped to the target cluster: %+v", rule.To)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("no egress rule to PostgreSQL; pgAdmin cannot reach its cluster")
+	}
+
+	// With pgAdmin off there is nothing in the Pod that speaks to PostgreSQL.
+	noPgAdmin := testConsole()
+	noPgAdmin.Spec.PgAdmin.Enabled = ptrTo(false)
+	policy, err = r.networkPolicy(noPgAdmin)
+	if err != nil {
+		t.Fatalf("build network policy: %v", err)
+	}
+	for _, rule := range policy.Spec.Egress {
+		for _, port := range rule.Ports {
+			if port.Port != nil && port.Port.IntVal == 5432 {
+				t.Fatalf("postgres egress granted with pgAdmin disabled")
+			}
+		}
+	}
+}

@@ -50,8 +50,8 @@ func TestBuildSyncRequest(t *testing.T) {
 			role: &pgtoolboxv1alpha1.PgToolBoxRole{
 				Spec: pgtoolboxv1alpha1.PgToolBoxRoleSpec{Level: pgtoolboxv1alpha1.RoleLevelView},
 			},
-			credential:      roleCredential{username: "viewer", password: "secret"},
-			pgAdminExcluded: true,
+			credential:           roleCredential{username: "viewer", password: "secret"},
+			pgAdminExcluded:      true,
 			pgAdminExcludeReason: "DatabaseRole not applied",
 		},
 	}
@@ -150,4 +150,3 @@ func TestSyncRevision(t *testing.T) {
 		t.Fatalf("changed password must change revision")
 	}
 }
-
