@@ -24,10 +24,18 @@ code does, never a design spec. When code and docs disagree, fix the docs
   Role matching `../pgconsole/deploy/kubernetes-example.yaml` rule for rule,
   and `patch` (not just `update`) on `pgtoolboxaccessrequests/status`. When
   that manifest changes there, `readRole` changes here.
-- `../object-store-viewer` (aka `../objectstoreviewer`, symlinked) — backup
-  repository evidence tool. Its `api/` module IS imported via
-  `replace github.com/fyannk/objectstoreviewer/api => ../objectstoreviewer/api`
-  in go.mod (evidence fingerprint must be its canonicalization).
+- `../object-store-viewer` — backup repository evidence tool, published as
+  `github.com/fyannk/pgObjectStoreViewer`. Its `api/` module IS imported, at
+  its published version (`.../api v0.1.1`) — NOT through a `replace` to the
+  sibling checkout, which used to make the build depend on a local symlink
+  and broke CI. The evidence fingerprint must be that module's
+  canonicalization (`FingerprintS3`), never a local reimplementation. The
+  runtime contract with the sidecar image is separate and unversioned: the
+  `pgconsole-sidecar` RUNTIME_MODE, the fixed socket
+  `/var/run/objectstoreviewer/evidence.sock`, the `/objectstoreviewer probe`
+  liveness command, and the sidecar-mode rules that PROVIDER be `s3`,
+  REPOSITORY_FORMAT `barman-cloud`, exactly one BARMAN_SERVER_NAMES entry,
+  and LISTEN_ADDR/TRUSTED_USER_HEADER unset.
 - `../oauth2-proxy` — pristine upstream clone; the fork plan was ABANDONED in
   favor of our own `pgtoolbox-proxy` (see architecture doc for rationale).
 
@@ -155,9 +163,9 @@ code does, never a design spec. When code and docs disagree, fix the docs
 - Dep versions pinned to the predecessor's: controller-runtime v0.24.1,
   k8s.io/* v0.36.2, gateway-api v1.6.1, cloudnative-pg/api v1.30.0.
 - Packaging: one multi-target `Dockerfile` builds the manager (`--target
-  manager`) and proxy (`--target proxy`) images; the build context must be
-  the parent directory (the go.mod replace reaches
-  `object-store-viewer/api`). The operator image reference is baked into the
+  manager`) and proxy (`--target proxy`) images; the build context is this
+  repository (it had to be the parent directory while the go.mod replace
+  reached a sibling checkout). The operator image reference is baked into the
   manager binary via `-X main.defaultOperatorImage=$(IMG)` so
   `--operator-image` only overrides it. `config/default` is a development
   overlay (CRDs + RBAC + manager in the `pgtoolbox` namespace) — production
@@ -175,6 +183,9 @@ code does, never a design spec. When code and docs disagree, fix the docs
   (manager/proxy to ghcr.io on main and tags; bundle/catalog on tags),
   `docs.yml` (GitHub Pages), `release.yml` (Helm chart release on tags).
   `make lint` (golangci-lint incl. gosec, config `.golangci.yml`) must stay
-  at 0 issues. Workflows clone `fyannk/object-store-viewer` as a sibling for
-  the go.mod replace, and image builds pass `REPO_DIR` (repo directory name)
-  plus the baked `IMG` reference.
+  at 0 issues — the lint job runs `make lint` rather than
+  golangci-lint-action, because the action's prebuilt binary is built with an
+  older Go than go.mod targets and refuses to load the config at all; `go
+  run` compiles the pinned version with the repo toolchain. Image builds pass
+  the baked `IMG` reference. `make verify-manifests` runs in CI and fails when
+  the Helm/OLM copies of the CRDs or the manager ClusterRole are stale.

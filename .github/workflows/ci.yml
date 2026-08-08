@@ -16,9 +16,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Check out objectstoreviewer API (go.mod replace)
-        run: git clone --depth 1 https://github.com/fyannk/object-store-viewer.git ../object-store-viewer
-
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -41,18 +38,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Check out objectstoreviewer API (go.mod replace)
-        run: git clone --depth 1 https://github.com/fyannk/object-store-viewer.git ../object-store-viewer
-
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
 
-      - uses: golangci/golangci-lint-action@v8
-        with:
-          version: v2.6.2
-          args: --config .golangci.yml --timeout 5m
+      # `make lint` rather than golangci-lint-action: the action installs a
+      # prebuilt binary, and a binary built with an older Go than the one
+      # go.mod targets refuses to load the config at all ("the Go language
+      # version used to build golangci-lint is lower than the targeted Go
+      # version"). `go run` compiles the same pinned version with the
+      # toolchain from go.mod, so CI and a developer's machine run the same
+      # linter against the same language version.
+      - run: make lint
 
   helm:
     name: Helm chart
