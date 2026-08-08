@@ -137,8 +137,12 @@ else
 
   log "loading images into the cluster"
   kind load docker-image "$MANAGER_IMG" "$PROXY_IMG" --name "$CLUSTER"
+  # Always pull, never "pull only if absent". A tag is a moving pointer, so
+  # a local copy of it can be older than the tag now resolves to, and
+  # side-loading that silently runs a stale component with no sign of it.
+  # Pulling a tag that is already current costs one HEAD request.
   for image in "$PGCONSOLE_IMAGE" "$PGADMIN_IMAGE" "$VIEWER_IMAGE"; do
-    docker image inspect "$image" > /dev/null 2>&1 || docker pull --quiet "$image"
+    docker pull --quiet "$image"
     kind load docker-image "$image" --name "$CLUSTER"
   done
 
