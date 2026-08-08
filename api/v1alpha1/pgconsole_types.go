@@ -47,6 +47,11 @@ type PgConsoleSpec struct {
 	// +optional
 	PgAdmin PgAdminSpec `json:"pgAdmin,omitempty"`
 
+	// The pgconsole application's own behaviour: which screens and day-2
+	// operations it serves, what it retains, and the link-outs it offers.
+	// +optional
+	Console ConsoleSpec `json:"console,omitempty"`
+
 	// The ObjectStoreViewer evidence sidecar, publishing repository
 	// evidence to the console over a pod-private Unix socket.
 	// +optional
@@ -167,6 +172,163 @@ type PgAdminStorageSpec struct {
 	// StorageClass for the PVC; cluster default when empty.
 	// +optional
 	StorageClass string `json:"storageClass,omitempty"`
+}
+
+// ConsoleSpec configures the pgconsole container itself. Every field maps
+// to one of the application's configuration variables, and every default
+// here reproduces the application's own, so an omitted block deploys the
+// console the application ships.
+//
+// Two properties are load-bearing. First, the application validates its
+// configuration at startup and refuses to serve on a value it rejects, so
+// the bounds this API accepts are exactly the bounds the application
+// accepts — a PgConsole that admission accepts cannot produce a Pod that
+// crash-loops on its own configuration. Second, enabling a capability
+// grants the matching rules in the generated Roles and nothing more: the
+// console never widens its own authority, and a disabled capability is
+// denied by RBAC as well as by the flag.
+//
+// Deliberately absent: the application's HISTORY_PATH and METRICS_PATH
+// journals. Both imply a PersistentVolumeClaim and pin the console to a
+// single replica, which is a storage decision this API does not yet make;
+// history and metrics are retained in memory and live with the process.
+// +kubebuilder:validation:XValidation:rule="!has(self.monitoringURL) || self.monitoringURL.startsWith('https://') || (has(self.allowInsecureLinks) && self.allowInsecureLinks)",message="monitoringURL must use https unless allowInsecureLinks is true"
+type ConsoleSpec struct {
+	// Whether the four enumerated day-2 operations — request backup,
+	// reload, rolling restart and promote — are served. Disabling both
+	// removes the write surface from the application and drops the
+	// operate Role from the deployment, so RBAC denies the mutation
+	// independently of the flag.
+	// +kubebuilder:default=true
+	// +optional
+	AllowOperations *bool `json:"allowOperations,omitempty"`
+
+	// Whether the bounded instance log tail is served. Instance logs can
+	// contain query text; disabling removes the screen and the pods/log
+	// rule from the generated read Role.
+	// +kubebuilder:default=true
+	// +optional
+	AllowLogs *bool `json:"allowLogs,omitempty"`
+
+	// Whether the dba access-request review panel is served. With it
+	// disabled the PgToolBoxAccessRequests the proxy's 403 page creates
+	// have no reviewer UI, and the console holds no authority over them.
+	// +kubebuilder:default=true
+	// +optional
+	AllowAccessReview *bool `json:"allowAccessReview,omitempty"`
+
+	// Whether the console may read the one cluster-scoped
+	// ClusterImageCatalog its Cluster references. This is the only
+	// authority a console holds outside its own namespace, so it is
+	// opt-in and generates a separate ClusterRole granting exactly get —
+	// never list, never watch. Declining costs nothing but a panel that
+	// reports the catalog content as unread, never as absent.
+	// +kubebuilder:default=false
+	// +optional
+	AllowClusterCatalogs *bool `json:"allowClusterCatalogs,omitempty"`
+
+	// Whether http link-out URLs are accepted. For lab use: the console
+	// rejects an http monitoringURL without it, and a console with no
+	// exposure hostname has no https base URL from which to build the
+	// pgAdmin link-out.
+	// +kubebuilder:default=false
+	// +optional
+	AllowInsecureLinks *bool `json:"allowInsecureLinks,omitempty"`
+
+	// Link-out base URL to the monitoring dashboard for this cluster.
+	// Must use https unless allowInsecureLinks is true.
+	// +kubebuilder:validation:Pattern=`^https?://.+$`
+	// +optional
+	MonitoringURL string `json:"monitoringURL,omitempty"`
+
+	// Timeout applied to every Kubernetes API request the console makes.
+	// Between 1s and 1m; defaults to 10s.
+	// +optional
+	APIRequestTimeout *metav1.Duration `json:"apiRequestTimeout,omitempty"`
+
+	// How far back the cluster's Events are shown. Between 1m and 24h;
+	// defaults to 1h.
+	// +optional
+	EventsMaxAge *metav1.Duration `json:"eventsMaxAge,omitempty"`
+
+	// Bounds applied to a single log tail request.
+	// +optional
+	LogTail ConsoleLogTailSpec `json:"logTail,omitempty"`
+
+	// The bounded in-memory metrics window behind the metrics screens.
+	// +optional
+	Metrics ConsoleMetricsSpec `json:"metrics,omitempty"`
+
+	// The bounded in-memory revision history of the watched object
+	// definitions.
+	// +optional
+	History ConsoleHistorySpec `json:"history,omitempty"`
+}
+
+// ConsoleLogTailSpec bounds one log tail request. Tails are fetched on
+// demand and never persisted; these bounds cap a single response.
+type ConsoleLogTailSpec struct {
+	// Maximum lines returned per request. Defaults to 200.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=2000
+	// +optional
+	Lines *int32 `json:"lines,omitempty"`
+
+	// Maximum bytes returned per request. Defaults to 1048576 (1Mi).
+	// +kubebuilder:validation:Minimum=4096
+	// +kubebuilder:validation:Maximum=8388608
+	// +optional
+	MaxBytes *int32 `json:"maxBytes,omitempty"`
+}
+
+// ConsoleMetricsSpec configures the console's in-memory metrics window.
+type ConsoleMetricsSpec struct {
+	// Whether the metrics screens are served.
+	// +kubebuilder:default=true
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// Sampling interval. Between 5s and 5m; defaults to 10s.
+	// +optional
+	Interval *metav1.Duration `json:"interval,omitempty"`
+
+	// How long samples are retained. Between 1h and 720h (30d); defaults
+	// to 168h (7d).
+	// +optional
+	Retention *metav1.Duration `json:"retention,omitempty"`
+}
+
+// ConsoleHistorySpec configures the console's in-memory object definition
+// history. Retention is bounded on three axes so a busy namespace cannot
+// grow the console's memory without limit.
+type ConsoleHistorySpec struct {
+	// Whether history is recorded at all.
+	// +kubebuilder:default=true
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// Global cap on retained revisions. Defaults to 2000.
+	// +kubebuilder:validation:Minimum=100
+	// +kubebuilder:validation:Maximum=20000
+	// +optional
+	MaxRevisions *int32 `json:"maxRevisions,omitempty"`
+
+	// Global cap on retained manifest bytes. Defaults to 16777216 (16Mi).
+	// +kubebuilder:validation:Minimum=1048576
+	// +kubebuilder:validation:Maximum=67108864
+	// +optional
+	MaxBytes *int32 `json:"maxBytes,omitempty"`
+
+	// Cap on retained revisions of any one object. Defaults to 20.
+	// +kubebuilder:validation:Minimum=2
+	// +kubebuilder:validation:Maximum=200
+	// +optional
+	PerObjectRevisions *int32 `json:"perObjectRevisions,omitempty"`
+
+	// Window within which repeated changes to one object collapse into a
+	// single revision. Between 1s and 1h; defaults to 1m.
+	// +optional
+	CoalesceWindow *metav1.Duration `json:"coalesceWindow,omitempty"`
 }
 
 // EvidenceSpec configures the ObjectStoreViewer evidence sidecar.

@@ -59,7 +59,8 @@ spec:
             description: |-
               PgToolBoxAccessRequestSpec is the desired state of an access request,
               created by the proxy when an authenticated identity is unknown to the
-              console. The proxy service account holds only create permission.
+              console. The proxy only ever creates these objects; reading and deciding
+              them is the console's job (its operate Role grants read + status update).
             properties:
               message:
                 description: Free-form justification from the requester, shown to

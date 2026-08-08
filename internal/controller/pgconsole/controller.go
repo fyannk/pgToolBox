@@ -96,6 +96,7 @@ type Reconciler struct {
 // +kubebuilder:rbac:groups=pgtoolbox.fyannk.dev,resources=pgconsoles/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=pgtoolbox.fyannk.dev,resources=pgconsoles/finalizers,verbs=update
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=roles;rolebindings,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles;clusterrolebindings,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=serviceaccounts;services;persistentvolumeclaims,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
@@ -121,6 +122,13 @@ type Reconciler struct {
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=pods/log,verbs=get
 // +kubebuilder:rbac:groups="",resources=events,verbs=list;watch
+// +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
+// +kubebuilder:rbac:groups=policy,resources=poddisruptionbudgets,verbs=get;list;watch
+// +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch
+// +kubebuilder:rbac:groups=apps,resources=replicasets,verbs=get
+// +kubebuilder:rbac:groups=postgresql.cnpg.io,resources=poolers;databases;publications;subscriptions,verbs=get;list;watch
+// +kubebuilder:rbac:groups=postgresql.cnpg.io,resources=failoverquorums;imagecatalogs,verbs=get;list;watch
+// +kubebuilder:rbac:groups=postgresql.cnpg.io,resources=clusterimagecatalogs,verbs=get
 // +kubebuilder:rbac:groups=postgresql.cnpg.io,resources=backups;scheduledbackups,verbs=get;list;watch
 // +kubebuilder:rbac:groups=postgresql.cnpg.io,resources=backups,verbs=create
 // +kubebuilder:rbac:groups=postgresql.cnpg.io,resources=clusters,verbs=patch
@@ -147,6 +155,13 @@ func (r *Reconciler) Reconcile(
 	if !console.DeletionTimestamp.IsZero() {
 		if !controllerutil.ContainsFinalizer(&console, application.Finalizer) {
 			return ctrl.Result{}, nil
+		}
+		// Everything else this console owns carries an owner reference and
+		// is collected by Kubernetes. The catalog ClusterRole pair cannot:
+		// a cluster-scoped object may not be owned by a namespaced one, so
+		// the finalizer is what stops it outliving the console.
+		if err := r.deleteCatalogClusterRBAC(ctx, &console); err != nil {
+			return ctrl.Result{}, err
 		}
 		controllerutil.RemoveFinalizer(&console, application.Finalizer)
 		return ctrl.Result{}, r.Update(ctx, &console)
@@ -183,6 +198,20 @@ func (r *Reconciler) Reconcile(
 			pgtoolboxv1alpha1.PgConsoleConditionConfigurationValid,
 			pgtoolboxv1alpha1.ReasonConfigurationInvalid,
 			"invalid exposure configuration: %v",
+			err,
+		)
+		return ctrl.Result{}, r.updateStatus(ctx, statusBefore, &console)
+	}
+
+	// The console validates its own configuration at startup and refuses to
+	// serve on a value it rejects. Catching that here reports the bad field
+	// on the resource instead of rolling out a Pod that crash-loops.
+	if err := validateConsoleSpec(&console); err != nil {
+		conditions.MarkFalse(
+			&console,
+			pgtoolboxv1alpha1.PgConsoleConditionConfigurationValid,
+			pgtoolboxv1alpha1.ReasonConfigurationInvalid,
+			"invalid console configuration: %v",
 			err,
 		)
 		return ctrl.Result{}, r.updateStatus(ctx, statusBefore, &console)

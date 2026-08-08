@@ -28,6 +28,13 @@ jobs:
       - run: go vet ./...
       - run: go test ./... -race -count=1
 
+      # The Helm chart and the OLM bundle carry their own copies of the CRDs
+      # and the manager ClusterRole. Regenerating here catches the copy a
+      # change forgot, which no other job would notice: a stale bundle
+      # installs an operator whose RBAC does not match its controllers.
+      - name: Verify generated manifests are in sync
+        run: make verify-manifests
+
   lint:
     name: golangci-lint
     runs-on: ubuntu-latest

@@ -77,6 +77,146 @@ spec:
                 x-kubernetes-validations:
                 - message: cnpgClusterRef is immutable
                   rule: self == oldSelf
+              console:
+                description: |-
+                  The pgconsole application's own behaviour: which screens and day-2
+                  operations it serves, what it retains, and the link-outs it offers.
+                properties:
+                  allowAccessReview:
+                    default: true
+                    description: |-
+                      Whether the dba access-request review panel is served. With it
+                      disabled the PgToolBoxAccessRequests the proxy's 403 page creates
+                      have no reviewer UI, and the console holds no authority over them.
+                    type: boolean
+                  allowClusterCatalogs:
+                    default: false
+                    description: |-
+                      Whether the console may read the one cluster-scoped
+                      ClusterImageCatalog its Cluster references. This is the only
+                      authority a console holds outside its own namespace, so it is
+                      opt-in and generates a separate ClusterRole granting exactly get —
+                      never list, never watch. Declining costs nothing but a panel that
+                      reports the catalog content as unread, never as absent.
+                    type: boolean
+                  allowInsecureLinks:
+                    default: false
+                    description: |-
+                      Whether http link-out URLs are accepted. For lab use: the console
+                      rejects an http monitoringURL without it, and a console with no
+                      exposure hostname has no https base URL from which to build the
+                      pgAdmin link-out.
+                    type: boolean
+                  allowLogs:
+                    default: true
+                    description: |-
+                      Whether the bounded instance log tail is served. Instance logs can
+                      contain query text; disabling removes the screen and the pods/log
+                      rule from the generated read Role.
+                    type: boolean
+                  allowOperations:
+                    default: true
+                    description: |-
+                      Whether the four enumerated day-2 operations — request backup,
+                      reload, rolling restart and promote — are served. Disabling both
+                      removes the write surface from the application and drops the
+                      operate Role from the deployment, so RBAC denies the mutation
+                      independently of the flag.
+                    type: boolean
+                  apiRequestTimeout:
+                    description: |-
+                      Timeout applied to every Kubernetes API request the console makes.
+                      Between 1s and 1m; defaults to 10s.
+                    type: string
+                  eventsMaxAge:
+                    description: |-
+                      How far back the cluster's Events are shown. Between 1m and 24h;
+                      defaults to 1h.
+                    type: string
+                  history:
+                    description: |-
+                      The bounded in-memory revision history of the watched object
+                      definitions.
+                    properties:
+                      coalesceWindow:
+                        description: |-
+                          Window within which repeated changes to one object collapse into a
+                          single revision. Between 1s and 1h; defaults to 1m.
+                        type: string
+                      enabled:
+                        default: true
+                        description: Whether history is recorded at all.
+                        type: boolean
+                      maxBytes:
+                        description: Global cap on retained manifest bytes. Defaults
+                          to 16777216 (16Mi).
+                        format: int32
+                        maximum: 67108864
+                        minimum: 1048576
+                        type: integer
+                      maxRevisions:
+                        description: Global cap on retained revisions. Defaults to
+                          2000.
+                        format: int32
+                        maximum: 20000
+                        minimum: 100
+                        type: integer
+                      perObjectRevisions:
+                        description: Cap on retained revisions of any one object.
+                          Defaults to 20.
+                        format: int32
+                        maximum: 200
+                        minimum: 2
+                        type: integer
+                    type: object
+                  logTail:
+                    description: Bounds applied to a single log tail request.
+                    properties:
+                      lines:
+                        description: Maximum lines returned per request. Defaults
+                          to 200.
+                        format: int32
+                        maximum: 2000
+                        minimum: 1
+                        type: integer
+                      maxBytes:
+                        description: Maximum bytes returned per request. Defaults
+                          to 1048576 (1Mi).
+                        format: int32
+                        maximum: 8388608
+                        minimum: 4096
+                        type: integer
+                    type: object
+                  metrics:
+                    description: The bounded in-memory metrics window behind the metrics
+                      screens.
+                    properties:
+                      enabled:
+                        default: true
+                        description: Whether the metrics screens are served.
+                        type: boolean
+                      interval:
+                        description: Sampling interval. Between 5s and 5m; defaults
+                          to 10s.
+                        type: string
+                      retention:
+                        description: |-
+                          How long samples are retained. Between 1h and 720h (30d); defaults
+                          to 168h (7d).
+                        type: string
+                    type: object
+                  monitoringURL:
+                    description: |-
+                      Link-out base URL to the monitoring dashboard for this cluster.
+                      Must use https unless allowInsecureLinks is true.
+                    pattern: ^https?://.+$
+                    type: string
+                type: object
+                x-kubernetes-validations:
+                - message: monitoringURL must use https unless allowInsecureLinks
+                    is true
+                  rule: '!has(self.monitoringURL) || self.monitoringURL.startsWith(''https://'')
+                    || (has(self.allowInsecureLinks) && self.allowInsecureLinks)'
               evidence:
                 description: |-
                   The ObjectStoreViewer evidence sidecar, publishing repository

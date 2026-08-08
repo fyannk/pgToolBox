@@ -9,6 +9,15 @@ rules:
 - apiGroups:
   - ""
   resources:
+  - configmaps
+  - pods
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
   - events
   verbs:
   - list
@@ -31,14 +40,6 @@ rules:
 - apiGroups:
   - ""
   resources:
-  - pods
-  verbs:
-  - get
-  - list
-  - watch
-- apiGroups:
-  - ""
-  resources:
   - pods/log
   verbs:
   - get
@@ -55,11 +56,25 @@ rules:
   - update
   - watch
 - apiGroups:
+  - apps
+  resources:
+  - replicasets
+  verbs:
+  - get
+- apiGroups:
   - barmancloud.cnpg.io
   resources:
   - objectstores
   verbs:
   - get
+- apiGroups:
+  - batch
+  resources:
+  - jobs
+  verbs:
+  - get
+  - list
+  - watch
 - apiGroups:
   - gateway.networking.k8s.io
   resources:
@@ -143,6 +158,14 @@ rules:
   - patch
   - update
 - apiGroups:
+  - policy
+  resources:
+  - poddisruptionbudgets
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
   - postgresql.cnpg.io
   resources:
   - backups
@@ -151,6 +174,12 @@ rules:
   - get
   - list
   - watch
+- apiGroups:
+  - postgresql.cnpg.io
+  resources:
+  - clusterimagecatalogs
+  verbs:
+  - get
 - apiGroups:
   - postgresql.cnpg.io
   resources:
@@ -181,7 +210,13 @@ rules:
 - apiGroups:
   - postgresql.cnpg.io
   resources:
+  - databases
+  - failoverquorums
+  - imagecatalogs
+  - poolers
+  - publications
   - scheduledbackups
+  - subscriptions
   verbs:
   - get
   - list
@@ -189,6 +224,8 @@ rules:
 - apiGroups:
   - rbac.authorization.k8s.io
   resources:
+  - clusterrolebindings
+  - clusterroles
   - rolebindings
   - roles
   verbs:

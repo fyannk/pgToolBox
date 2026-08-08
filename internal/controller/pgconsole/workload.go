@@ -403,16 +403,7 @@ func (r *Reconciler) consoleContainer(console *pgtoolboxv1alpha1.PgConsole, imag
 		Name:            "pgconsole",
 		Image:           image,
 		ImagePullPolicy: imagePullPolicy(console.Spec.Image),
-		Env: []corev1.EnvVar{
-			{Name: "CLUSTER_NAME", Value: console.Spec.CNPGClusterRef.Name},
-			{Name: "NAMESPACE", Value: console.Namespace},
-			// Identity and level arrive from the proxy as trusted headers;
-			// they are only trustworthy because the NetworkPolicy confines
-			// ingress to the proxy.
-			{Name: "TRUSTED_USER_HEADER", Value: "X-Forwarded-User"},
-			{Name: "ALLOW_OPERATIONS", Value: "true"},
-			{Name: "ALLOW_LOGS", Value: "true"},
-		},
+		Env:             consoleEnv(console),
 		Ports: []corev1.ContainerPort{{
 			Name:          "http",
 			ContainerPort: consolePort,

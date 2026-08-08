@@ -24,7 +24,11 @@ code path to read or decide the requests it files.
 
 A user with a `dba` role opens the console's access-request panel, sees the
 pending request (subject, message, age), and approves with a chosen
-`PgToolBoxRole` or denies. The panel writes only the request's **status**:
+`PgToolBoxRole` or denies. The panel is served when
+`spec.console.allowAccessReview` is true, which is the default; with it
+false the console serves no panel and holds no authority over requests at
+all, so a request filed by the proxy waits until someone decides it with
+`kubectl`. The panel writes only the request's **status**:
 
 ```yaml
 status:

@@ -16,9 +16,14 @@ code does, never a design spec. When code and docs disagree, fix the docs
   its tests. Do not resurrect its standalone `PgAdmin`/`PgAdminRegistration`
   kinds, CNPG-I enrollment, or multi-operator provider seam.
 - `../pgconsole` — the console app (Go, K8s-API-only, no auth by design).
-  Consumed as a container image; NOT imported. Pending changes there (separate
-  repo work): `X-PgToolBox-Level` header authz replacing SAR gating, dba
-  review panel for access requests.
+  Consumed as a container image; NOT imported. Both changes once pending
+  there have shipped: `X-PgToolBox-Level` header authz replaced SAR gating
+  (`internal/authz`), and the dba review panel exists (`internal/review`,
+  behind `ALLOW_ACCESS_REVIEW`). The contract with it is four things, all
+  covered by tests here: the header names, the listen port (3000), the read
+  Role matching `../pgconsole/deploy/kubernetes-example.yaml` rule for rule,
+  and `patch` (not just `update`) on `pgtoolboxaccessrequests/status`. When
+  that manifest changes there, `readRole` changes here.
 - `../object-store-viewer` (aka `../objectstoreviewer`, symlinked) — backup
   repository evidence tool. Its `api/` module IS imported via
   `replace github.com/fyannk/objectstoreviewer/api => ../objectstoreviewer/api`
@@ -113,14 +118,38 @@ code does, never a design spec. When code and docs disagree, fix the docs
    grants `get;list;watch` on `pgtoolboxaccessrequests` and
    `update;patch` on `pgtoolboxaccessrequests/status` so the pgconsole dba
    review panel can decide requests; the panel itself lives in the
-   `pgconsole` repo (see `../pgconsole/docs/change-brief.md`).
+   `pgconsole` repo.
+8. ✅ **pgconsole alignment** (`internal/controller/pgconsole/consoleconfig.go`,
+   `rbac.go`): the generated read Role now carries the console's whole read
+   manifest (poolers, declared database objects, services, PVCs, image
+   catalogs, failover quorums, the children-inventory kinds) instead of the
+   six rules it had, and still grants nothing on `secrets`. New
+   `spec.console` block makes the application's behaviour declarative —
+   `allowOperations`, `allowLogs`, `allowAccessReview`,
+   `allowClusterCatalogs`, `allowInsecureLinks`, `monitoringURL`, and the
+   log-tail / metrics / history tunables — replacing the hardcoded
+   `ALLOW_OPERATIONS=true` / `ALLOW_LOGS=true` pair. Two rules govern the
+   rendering: capabilities are always emitted and also decide the Role
+   rules (an off capability loses its authority, and the operate Role is
+   deleted when it would be empty), while tunables are emitted only when
+   set, so the application keeps ownership of every numeric default.
+   `ALLOW_ACCESS_REVIEW` and `TRUSTED_LEVEL_HEADER` are now rendered — the
+   review panel was previously dead despite the RBAC and the controller in
+   step 7 — and `PGADMIN_URL` is derived from the exposure hostname.
+   `allowClusterCatalogs` generates a ClusterRole/ClusterRoleBinding pair
+   that no owner reference can collect, so the finalizer deletes it.
 
 ## Conventions
 
 - kubebuilder v4 layout, group `pgtoolbox.fyannk.dev/v1alpha1`, module
   `github.com/fyannk/pgtoolbox`, Go 1.26.4.
 - controller-gen via `go run sigs.k8s.io/controller-tools/cmd/controller-gen@v0.19.0`
-  (see Makefile `generate`/`manifests`).
+  (see Makefile `generate`/`manifests`). `make manifests` generates the CRDs
+  *and* `config/rbac/role.yaml`, then runs `hack/sync-manifests.sh` to copy
+  both into the Helm chart and the OLM bundle — those carry their own copies,
+  and hand-maintaining them meant a new controller rule reached the kustomize
+  overlay while silently missing the two install paths most users take.
+  `make verify-manifests` fails when the checked-in copies are stale.
 - Condition types/reasons and label keys in `api/v1alpha1/conditions.go` and
   `common_types.go` are frozen API surface — extend, never rename.
 - Dep versions pinned to the predecessor's: controller-runtime v0.24.1,
