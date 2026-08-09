@@ -33,7 +33,13 @@ jobs:
       - run: npm run build
         working-directory: web
 
+      # enablement turns Pages on when it is not configured yet, which is
+      # every fresh clone and was this repository until the first deploy.
+      # Without it the action fails with "Get Pages site failed" and the
+      # site never ships, which is a worse default than configuring it.
       - uses: actions/configure-pages@v5
+        with:
+          enablement: true
       - uses: actions/upload-pages-artifact@v3
         with:
           path: web/build

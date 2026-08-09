@@ -14,21 +14,28 @@ namespace:
 # replicaCount is the number of manager replicas.
 replicaCount: 2
 
-# image is the operator (manager) image.
+# image is the operator (manager) image. An empty tag means the chart's
+# appVersion: a chart installed at 0.1.0 runs 0.1.0, rather than whatever a
+# floating tag resolves to on the day it is installed.
 image:
-  repository: pgtoolbox
-  tag: latest
+  repository: ghcr.io/fyannk/pgtoolbox
+  tag: ""
   pullPolicy: IfNotPresent
 
-# proxyImage is the default pgtoolbox-proxy image used for consoles that do
-# not name one. Leave empty to let each PgConsole specify its own.
+# proxyImage is the default pgtoolbox-proxy image for consoles that name
+# none. Empty means proxyImageRepository at the operator's own version: the
+# proxy is released from this repository alongside the operator, and running
+# a mismatched pair is not a supported combination.
 proxyImage: ""
+proxyImageRepository: ghcr.io/fyannk/pgtoolbox-proxy
 
-# Default application images used when a PgConsole spec omits them.
+# Default application images used when a PgConsole spec omits them. These
+# are separate projects on their own release cadence, so they are pinned to
+# the versions this operator was tested against.
 defaultImages:
-  pgConsole: ""
-  pgAdmin: ""
-  objectStoreViewer: ""
+  pgConsole: ghcr.io/fyannk/pgconsole:0.3.0
+  pgAdmin: ghcr.io/fyannk/pgadmin:9.17-hardened
+  objectStoreViewer: ghcr.io/fyannk/pgobjectstoreviewer:0.1.1
 
 # leaderElection enables controller-runtime leader election.
 leaderElection: true

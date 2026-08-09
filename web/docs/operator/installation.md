@@ -5,36 +5,40 @@
 - Kubernetes ≥ 1.28 or OpenShift ≥ 4.14.
 - [CloudNativePG](https://cloudnative-pg.io) ≥ 1.30 — the `DatabaseRole`
   CRD must exist.
-- Operator and proxy images built from this repository:
+Optional, for the evidence sidecar: the Barman Cloud Plugin's
+`ObjectStore` API (`barmancloud.cnpg.io/v1`) served on the cluster.
+
+Every image the operator deploys is published, and the chart and the OLM
+bundle default to the versions this release was tested against — there is
+nothing to supply. To run your own instead:
 
 ```bash
 make docker-build IMG=<registry>/pgtoolbox:<tag>
 make docker-build-proxy PROXY_IMG=<registry>/pgtoolbox-proxy:<tag>
 ```
 
-Optional, for the evidence sidecar: the Barman Cloud Plugin's
-`ObjectStore` API (`barmancloud.cnpg.io/v1`) served on the cluster and an
-`objectstoreviewer` image.
-
 ## Install with Helm (recommended)
 
 ```bash
 helm install pgtoolbox deploy/helm/pgtoolbox \
-  --namespace pgtoolbox --create-namespace \
-  --set image.repository=<registry>/pgtoolbox \
-  --set image.tag=<tag> \
-  --set proxyImage=<registry>/pgtoolbox-proxy:<tag>
+  --namespace pgtoolbox --create-namespace
 ```
+
+The operator and proxy default to this chart's own version, and pgConsole,
+pgAdmin and the evidence sidecar to the versions it was tested against.
+Override any of them with `--set`; an empty `image.tag` means the chart's
+`appVersion`, so an installed chart runs the operator it shipped with.
 
 Useful values:
 
 | Value | Default | Meaning |
 |---|---|---|
-| `image.repository` / `image.tag` | `pgtoolbox:latest` | operator image |
-| `proxyImage` | `""` | default pgtoolbox-proxy image for consoles |
-| `defaultImages.pgConsole` | `""` | default pgconsole image |
-| `defaultImages.pgAdmin` | `""` | default pgAdmin image |
-| `defaultImages.objectStoreViewer` | `""` | default evidence sidecar image |
+| `image.repository` | `ghcr.io/fyannk/pgtoolbox` | operator image |
+| `image.tag` | `""` → chart `appVersion` | operator version |
+| `proxyImage` | `""` → `proxyImageRepository` at `image.tag` | proxy for consoles that name none |
+| `defaultImages.pgConsole` | `ghcr.io/fyannk/pgconsole:0.3.0` | default pgconsole image |
+| `defaultImages.pgAdmin` | `ghcr.io/fyannk/pgadmin:9.17-hardened` | default pgAdmin image |
+| `defaultImages.objectStoreViewer` | `ghcr.io/fyannk/pgobjectstoreviewer:0.1.1` | default evidence sidecar image |
 | `replicaCount` | `2` | manager replicas |
 | `leaderElection` | `true` | controller-runtime leader election |
 
@@ -46,14 +50,32 @@ image.
 
 ## Install from the OLM catalog
 
-```bash
-make bundle-build  BUNDLE_IMG=<registry>/pgtoolbox-bundle:v0.1.0
-make catalog-build CATALOG_IMG=<registry>/pgtoolbox-catalog:v0.1.0
+A release publishes the bundle and catalog images, so a `CatalogSource`
+pointing at the published catalog is enough:
+
+```yaml
+apiVersion: operators.coreos.com/v1alpha1
+kind: CatalogSource
+metadata:
+  name: pgtoolbox
+  namespace: openshift-marketplace
+spec:
+  sourceType: grpc
+  image: ghcr.io/fyannk/pgtoolbox-catalog:0.1.0
+  displayName: pgToolBox
 ```
 
-Push both images, create a `CatalogSource` for the catalog image, and a
-`Subscription` for package `pgtoolbox`, channel `alpha`. OLM installs the
-CSV (CRDs + Deployment) and binds the generated ClusterRole.
+Then a `Subscription` for package `pgtoolbox`, channel `alpha`. OLM
+installs the CSV (CRDs + Deployment) and binds the generated ClusterRole.
+The CSV carries `relatedImages`, so a disconnected mirror can resolve
+every image the operator deploys.
+
+To build them yourself instead:
+
+```bash
+make bundle-build  BUNDLE_IMG=<registry>/pgtoolbox-bundle:0.1.0
+make catalog-build CATALOG_IMG=<registry>/pgtoolbox-catalog:0.1.0
+```
 
 ## Development install (kustomize)
 
@@ -61,8 +83,9 @@ CSV (CRDs + Deployment) and binds the generated ClusterRole.
 make deploy    # kubectl apply -k config/default
 ```
 
-This installs into the `pgtoolbox` namespace with image `pgtoolbox:latest`
-and is intended for development.
+This installs into the `pgtoolbox` namespace and is intended for
+development; edit `config/default/kustomization.yaml` to point it at an
+image you built.
 
 ## Verify
 
