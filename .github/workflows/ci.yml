@@ -32,6 +32,29 @@ jobs:
       - name: Verify generated manifests are in sync
         run: make verify-manifests
 
+  vuln:
+    name: Vulnerability scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: make vuln
+
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # No install: npm audit resolves the advisory set from the lockfile,
+      # so this reads the tree without building it.
+      - run: make audit
+
   lint:
     name: golangci-lint
     runs-on: ubuntu-latest
