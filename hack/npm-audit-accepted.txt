@@ -14,11 +14,11 @@
 
 GHSA-w3rx-r6r6-pgpr   image-size ICNS parser DoS; docs-build only, no fix published
 GHSA-5p2g-fcmc-qvqq   image-size JXL/HEIF parser DoS; docs-build only, no fix published
-GHSA-5c6j-r48x-rmvq   serialize-javascript RCE via RegExp.flags; docs-build only, no fix published
 
-# All three reach the tree through @docusaurus/core's bundler and run at
-# build time on this repository's own Markdown and images, never on input
-# from anyone else, and nothing from them ships in the published site.
-# Delete each entry when Docusaurus ships a bundler that no longer depends
-# on the vulnerable version — npm reports no fix available today. Re-check
-# on every Docusaurus bump.
+# Both reach the tree through @docusaurus/core's bundler and run at build
+# time on this repository's own images, never on input from anyone else,
+# and nothing from them ships in the published site. image-size has no
+# patched release at all — an npm override cannot reach a version that does
+# not exist, which is why these are accepted where serialize-javascript and
+# uuid were overridden instead. Delete each entry the moment a fixed
+# image-size ships; re-check on every Docusaurus bump.
