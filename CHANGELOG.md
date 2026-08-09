@@ -88,9 +88,6 @@ none of it changed anything anyone had installed.
   provider's groups do not select a level.
 - **One subject per user.** A person whose identity-provider subject differs
   from their local username needs one object per subject.
-- **pgAdmin has no released version.** `spec.pgAdmin.image` (or
-  `--default-pgadmin-image`) has to be set explicitly; the chart ships no
-  default for it.
 
 [Unreleased]: https://github.com/fyannk/pgToolBox/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/fyannk/pgToolBox/releases/tag/v0.1.0

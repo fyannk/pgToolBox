@@ -106,8 +106,6 @@ they are not postgres roles, and nothing about them reaches the database.
   page. An identity provider's groups do not select a level.
 - **One subject per user.** Somebody whose identity-provider subject differs
   from their local username needs one object per subject.
-- **pgAdmin has no released version**, so no image defaults for it: set
-  `spec.pgAdmin.image` or the operator's `--default-pgadmin-image`.
 
 ## Documentation
 

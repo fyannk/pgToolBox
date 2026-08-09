@@ -32,14 +32,9 @@ proxyImageRepository: ghcr.io/fyannk/pgtoolbox-proxy
 # Default application images used when a PgConsole spec omits them. These
 # are separate projects on their own release cadence, so they are pinned to
 # the versions this operator was tested against.
-#
-# pgAdmin has no released version yet, so it has no default here: set
-# spec.pgAdmin.image on each PgConsole, or defaultImages.pgAdmin once. A
-# console with pgAdmin enabled and no image reports the failure in its
-# conditions rather than starting half-composed.
 defaultImages:
   pgConsole: ghcr.io/fyannk/pgconsole:0.3.0
-  pgAdmin: ""
+  pgAdmin: ghcr.io/fyannk/pgadmin:9.17-hardened
   objectStoreViewer: ghcr.io/fyannk/pgobjectstoreviewer:0.1.1
 
 # leaderElection enables controller-runtime leader election.
