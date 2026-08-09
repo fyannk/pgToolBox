@@ -20,18 +20,45 @@ sequenceDiagram
     proxy->>app: X-Forwarded-User, X-PgToolBox-Level
 ```
 
-## Modes
+## Providers
 
-| Mode | Flow | Client identity |
+Each block under `spec.proxy.authentication` enables one provider, and any
+combination may be enabled at once.
+
+| Provider | Flow | Client identity |
 |---|---|---|
 | `oidc` | Authorization code + PKCE S256, state and nonce in a sealed transient cookie | rendered `clientID` + mounted client Secret |
 | `openshift` | Authorization code + PKCE S256 against the integrated OAuth server | the console ServiceAccount (`system:serviceaccount:<ns>:<sa>`); its token doubles as the client secret and is read at redemption time |
 | `local` | bcrypt accounts rendered from `PgToolBoxUser` | the proxy config itself |
 
+With more than one enabled the login page is the local form with a button
+per external provider beside it, and the session records which provider
+authenticated the user — with one provider that was answerable from the
+configuration alone, and with several it is not.
+
+Building an external provider reaches out to it, so an unreachable issuer
+or a rejected client secret is a startup error. It is logged and that
+provider is skipped rather than failing the process: an outage at the
+identity provider would otherwise also be an outage of the local form that
+exists to survive one. The login page offers only the providers that
+actually started, so no button leads to a handler nobody registered. A
+proxy with no provider left does refuse to start.
+
+## The first administrator
+
+A console starts with no users, and granting access needs a `dba` to
+approve a request — so a console with none could never admit anybody.
+`spec.proxy.authentication.bootstrapAdmin` names that identity, and the
+operator materializes it as a `dba` `PgToolBoxUser` it owns and re-creates
+if deleted. Its subject is reserved even when the user cannot be rendered,
+so a missing password Secret is a fault to repair rather than an invitation
+for another object to inherit the identity.
+
 ## Levels
 
-The proxy looks the identity up in the operator-rendered user list and
-issues a session carrying one of `view`, `poweruser`, `dba`. An
+The proxy looks the identity up in the operator-rendered user list — the
+same list whichever provider vouched for the identity — and issues a
+session carrying one of `view`, `poweruser`, `dba`. An
 unknown-but-authenticated identity gets a `none`-level session that can
 reach nothing — except the 403 page's access-request form, whose CSRF token
 is bound to that session.
