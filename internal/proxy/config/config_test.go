@@ -41,7 +41,7 @@ session:
 server:
   listen: ":8080"
 provider:
-  mode: oidc
+  modes: [oidc]
   oidc:
     issuerURL: "https://idp.corp.example"
     clientID: "pgtoolbox"
@@ -61,7 +61,7 @@ func validLocal(t *testing.T) string {
 session:
   cookieSecrets: ["secret-one-abcdefghij"]
 provider:
-  mode: local
+  modes: [local]
 users:
   - {subject: "jane@corp.example", level: dba, localPasswordBcrypt: "` + testHash(t) + `"}
 routes:
@@ -119,7 +119,7 @@ func TestValidationMatrix(t *testing.T) {
 		{"missing issuer", mutate(validOIDC, `issuerURL: "https://idp.corp.example"`, ""), "issuerURL"},
 		{"http issuer", mutate(validOIDC, "https://idp.corp.example", "http://idp.corp.example"), "issuerURL"},
 		{"missing clientID", mutate(validOIDC, `clientID: "pgtoolbox"`, ""), "clientID"},
-		{"missing redirectURL", mutate(validOIDC, `redirectURL: "https://pgconsole.corp.example/auth/oidc/callback"`, ""), "redirectURL"},
+		{"bad redirectURL", mutate(validOIDC, "https://pgconsole.corp.example/auth/oidc/callback", "not-a-url"), "redirectURL"},
 		{"bad level", mutate(validOIDC, "level: dba", "level: root"), "level"},
 		{"bad minLevel", mutate(validOIDC, "minLevel: dba", "minLevel: admin"), "minLevel"},
 		{"route collides with /auth", mutate(validOIDC, `pathPrefix: "/pgadmin"`, `pathPrefix: "/auth/evil"`), "reserved"},
@@ -134,8 +134,8 @@ func TestValidationMatrix(t *testing.T) {
 		{"no cookie secrets", mutate(validOIDC, `cookieSecrets: ["secret-one-abcdefghij"]`, "cookieSecrets: []"), "at least one secret"},
 		{"short cookie secret", mutate(validOIDC, "secret-one-abcdefghij", "short"), "too short"},
 		{"accessRequest without console", mutate(validOIDC, "consoleName: my-console, ", ""), "consoleName"},
-		{"openshift mode", mutate(validOIDC, "mode: oidc", "mode: openshift"), "openshift"},
-		{"oidc block in local mode", mutate(validOIDC, "mode: oidc", "mode: local"), "oidc"},
+		{"openshift mode", mutate(validOIDC, "modes: [oidc]", "modes: [openshift]"), "openshift"},
+		{"oidc block in local mode", mutate(validOIDC, "modes: [oidc]", "modes: [local]"), "oidc"},
 		{"duplicate route prefix", strings.Replace(validOIDC,
 			`{pathPrefix: "/", upstream: "http://127.0.0.1:8082", minLevel: view}`,
 			"{pathPrefix: \"/\", upstream: \"http://127.0.0.1:8082\", minLevel: view}\n  - {pathPrefix: \"/pgadmin\", upstream: \"http://127.0.0.1:8083\"}", 1), "duplicate"},
@@ -160,7 +160,7 @@ func TestLocalModeBcryptValidation(t *testing.T) {
 session:
   cookieSecrets: ["secret-one-abcdefghij"]
 provider:
-  mode: local
+  modes: [local]
 users:
   - {subject: "jane@corp.example", level: dba, localPasswordBcrypt: "` + hash + `"}
 routes:
@@ -169,10 +169,12 @@ routes:
 	if _, _, err := Parse([]byte(base)); err != nil {
 		t.Fatalf("valid local config: %v", err)
 	}
-	// Missing hash.
+	// A user with no hash is not an error: with an identity provider enabled
+	// alongside, that is how a federated-only account looks, and a local-only
+	// deployment must still start before its first password exists.
 	missing := strings.Replace(base, `, localPasswordBcrypt: "`+hash+`"`, "", 1)
-	if _, _, err := Parse([]byte(missing)); err == nil || !strings.Contains(err.Error(), "localPasswordBcrypt") {
-		t.Fatalf("missing hash: err = %v", err)
+	if _, _, err := Parse([]byte(missing)); err != nil {
+		t.Fatalf("user without a hash must parse: %v", err)
 	}
 	// Malformed hash.
 	malformed := strings.Replace(base, hash, "not-a-bcrypt-hash", 1)

@@ -12,9 +12,10 @@ spec:
   image: { repository, tag, digest?, pullPolicy?, pullSecrets? }
   proxy:
     image: { ... }
-    authentication:
-      mode: openshift | oidc | local
+    authentication:                   # one block per provider, any mix
+      local: {}
       oidc: { issuerURL, clientID, clientSecretRef: { name, key? } }
+      openshift: {}
   pgAdmin:
     enabled: true
     image: { ... }
@@ -148,7 +149,10 @@ This only bites with `evidence.enabled: true`, which is not the default.
 
 - `cnpgClusterRef` is immutable; a console is dedicated to one cluster for
   its whole life.
-- `proxy.authentication.oidc` is required exactly when `mode: oidc`.
+- `proxy.authentication` must enable at least one provider, and may
+  enable several: the login page then shows the local form with the others
+  as buttons beside it. A local account is how the first administrator
+  gets in, and how anyone gets in when the identity provider is down.
 - `evidence.image` is a pointer: omitting it genuinely means "no image"
   rather than an invalid empty object.
 - Omitting the whole `console` block deploys the console the application

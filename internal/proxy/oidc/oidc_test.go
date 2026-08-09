@@ -182,7 +182,7 @@ func testEnv(t *testing.T, idp *fakeIdP, users []config.User) *server.Env {
 			MaxAge:        config.Duration(time.Hour),
 		},
 		Provider: config.ProviderConfig{
-			Mode: config.ModeOIDC,
+			Modes: []string{config.ModeOIDC},
 			OIDC: &config.OIDCConfig{
 				IssuerURL:    idp.srv.URL,
 				ClientID:     testClientID,

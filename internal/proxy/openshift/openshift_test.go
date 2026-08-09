@@ -44,7 +44,7 @@ func testEnv(t *testing.T, users []config.User) *server.Env {
 			CookieSecrets: []string{"secret-one-abcdefghij"},
 			MaxAge:        config.Duration(time.Hour),
 		},
-		Provider: config.ProviderConfig{Mode: config.ModeOpenShift},
+		Provider: config.ProviderConfig{Modes: []string{config.ModeOpenShift}},
 		Users:    users,
 	}
 	rt, err := server.BuildRuntime(cfg)

@@ -24,9 +24,10 @@ reflects the deployed operator image.
 spec:
   cnpgClusterRef: { name: pg-main }      # immutable, same namespace
   proxy:
-    authentication:
-      mode: openshift | oidc | local
-      oidc: { issuerURL, clientID, clientSecretRef }   # mode=oidc only
+    authentication:                    # any mix of the three
+      local: {}
+      oidc: { issuerURL, clientID, clientSecretRef }
+      openshift: {}
   pgAdmin:
     enabled: true
     accessMinLevel: dba                  # dba | poweruser
@@ -48,14 +49,23 @@ spec:
     policyTypes: full                    # full | ingress
 ```
 
-### Authentication modes
+### Authentication providers
 
-- **oidc** — authorization-code flow with PKCE against any OIDC provider;
-  the client Secret is mounted from `clientSecretRef`.
-- **openshift** — the console ServiceAccount is the OAuth client; the
-  operator adds the `oauth-redirecturi` annotation from `exposure.hostname`.
 - **local** — bcrypt accounts rendered from `PgToolBoxUser`
-  `localPasswordSecretRef` Secrets (key `password`).
+  `localPasswordSecretRef` Secrets (key `password`). A user without one
+  simply does not participate in local sign-in.
+- **oidc** — authorization-code flow with PKCE against any OIDC provider;
+  the client Secret is mounted from `clientSecretRef`. The redirect URI is
+  `https://<exposure.hostname>/auth/oidc/callback`, or — with no hostname —
+  whatever origin the request arrived on, which is what makes a
+  port-forwarded dev console work on any port.
+- **openshift** — the console ServiceAccount is the OAuth client; the
+  operator adds the `oauth-redirecturi` annotation from `exposure.hostname`,
+  so this one does require a hostname.
+
+Enabling more than one is a supported deployment, not a migration step.
+The login page renders the local form with a button per external provider,
+and the session records which of them authenticated the user.
 
 ### Levels
 

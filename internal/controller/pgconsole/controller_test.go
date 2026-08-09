@@ -225,7 +225,9 @@ func TestReconcileClusterNotFound(t *testing.T) {
 
 func TestReconcileOpenShiftAuthAccepted(t *testing.T) {
 	console := testConsole()
-	console.Spec.Proxy.Authentication.Mode = pgtoolboxv1alpha1.ProxyAuthenticationModeOpenShift
+	console.Spec.Proxy.Authentication = pgtoolboxv1alpha1.ProxyAuthenticationSpec{
+		OpenShift: &pgtoolboxv1alpha1.ProxyOpenShiftSpec{},
+	}
 	console.Spec.Exposure = pgtoolboxv1alpha1.ExposureSpec{
 		Type:     pgtoolboxv1alpha1.ExposureTypeRoute,
 		Hostname: "pgconsole.apps.example.com",

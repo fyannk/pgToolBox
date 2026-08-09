@@ -371,7 +371,7 @@ func TestDeploymentEvidenceComposition(t *testing.T) {
 func TestDeploymentOIDCModeMountsClientSecret(t *testing.T) {
 	console := testConsole()
 	console.Spec.Proxy.Authentication = pgtoolboxv1alpha1.ProxyAuthenticationSpec{
-		Mode: pgtoolboxv1alpha1.ProxyAuthenticationModeOIDC,
+
 		OIDC: &pgtoolboxv1alpha1.ProxyOIDCSpec{
 			IssuerURL:       "https://idp.example.com",
 			ClientID:        "pgconsole",

@@ -195,7 +195,7 @@ func networkPolicyEnabled(console *pgtoolboxv1alpha1.PgConsole) bool {
 func authenticationEgressPorts(console *pgtoolboxv1alpha1.PgConsole) []networkingv1.NetworkPolicyPort {
 	ports := []networkingv1.NetworkPolicyPort{tcpPort(kubeAPIServerPort)}
 	auth := console.Spec.Proxy.Authentication
-	if auth.Mode == pgtoolboxv1alpha1.ProxyAuthenticationModeOIDC && auth.OIDC != nil {
+	if auth.OIDC != nil {
 		if identityPort := issuerPort(auth.OIDC.IssuerURL); identityPort != kubeAPIServerPort {
 			ports = append(ports, tcpPort(identityPort))
 		}

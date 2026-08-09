@@ -114,13 +114,13 @@ func (r *Reconciler) resolveConsoleUser(
 		Level:   level,
 	}
 
-	if console.Spec.Proxy.Authentication.Mode == pgtoolboxv1alpha1.ProxyAuthenticationModeLocal {
-		ref := user.Spec.LocalPasswordSecretRef
-		if ref == nil || ref.Name == "" {
-			resolved.proxyExcluded = true
-			resolved.proxyExcludeReason = "localPasswordSecretRef is required in local authentication mode"
-			return resolved, nil
-		}
+	// A password is what makes a user usable at the local form, and it is
+	// optional: with an identity provider enabled alongside, most users
+	// authenticate there and carry none. A user with neither a password nor
+	// a federated identity simply never signs in, which is a statement the
+	// operator has no business second-guessing.
+	if ref := user.Spec.LocalPasswordSecretRef; console.Spec.Proxy.Authentication.Local != nil &&
+		ref != nil && ref.Name != "" {
 		hash, _, err := shared.ReadLocalPasswordHash(
 			ctx, r.APIReader,
 			client.ObjectKey{Namespace: console.Namespace, Name: ref.Name},

@@ -32,7 +32,7 @@ import (
 )
 
 // The connections pgAdmin offers come from the CloudNativePG cluster, not
-// from whoever signed into the console. A PgToolBoxRole is a proxy
+// from whoever signed into the console. A PgToolBoxUser is a proxy
 // authorization level with no postgres backing, so there is no per-person
 // database identity to hand out; what there is, is the set of credentials
 // the cluster itself publishes as Secrets.

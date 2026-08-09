@@ -183,16 +183,38 @@ func New(env *Env) *http.ServeMux {
 	return mux
 }
 
-// LoginPath returns the login-start path of the configured provider.
+// LoginPath returns where an unauthenticated request is sent to sign in.
+//
+// With local accounts enabled that is the local page, because it is the one
+// with a form, and it offers the other enabled providers as buttons beside
+// it. With no local accounts there is nothing to type, so the single
+// external provider's start path is the whole of the login flow and the
+// browser goes straight there.
 func LoginPath(rt *Runtime) string {
-	switch rt.Config.Provider.Mode {
-	case config.ModeLocal:
+	if rt.Config.LocalEnabled() {
 		return "/auth/local/login"
-	case config.ModeOpenShift:
-		return "/auth/openshift/login"
-	default:
-		return "/auth/oidc/login"
 	}
+	for _, mode := range rt.Config.Provider.Modes {
+		if mode == config.ModeOpenShift {
+			return "/auth/openshift/login"
+		}
+	}
+	return "/auth/oidc/login"
+}
+
+// ExternalLogins lists the providers the login page offers as buttons,
+// which is every enabled provider that is not the local form itself.
+func ExternalLogins(rt *Runtime) []pages.ExternalLogin {
+	var logins []pages.ExternalLogin
+	for _, mode := range rt.Config.Provider.Modes {
+		switch mode {
+		case config.ModeOIDC:
+			logins = append(logins, pages.ExternalLogin{Label: "Sign in with SSO", Path: "/auth/oidc/login"})
+		case config.ModeOpenShift:
+			logins = append(logins, pages.ExternalLogin{Label: "Sign in with OpenShift", Path: "/auth/openshift/login"})
+		}
+	}
+	return logins
 }
 
 // SafeRedirect validates a post-login redirect target: only relative
@@ -208,11 +230,14 @@ func SafeRedirect(p string) string {
 
 // IssueSession mints a session cookie for subject at level using the
 // current runtime. Level may be config.LevelNone for authenticated
-// identities unknown to the console.
-func (e *Env) IssueSession(w http.ResponseWriter, subject string, level config.Level) error {
+// identities unknown to the console. Mode names the provider that
+// authenticated the subject, which the session records: with several
+// providers enabled, "who let this person in" is no longer answerable
+// from the configuration alone.
+func (e *Env) IssueSession(w http.ResponseWriter, subject string, level config.Level, mode string) error {
 	rt := e.Runtime()
 	cfg := rt.Config
-	d := rt.Codec.NewData(subject, string(level), cfg.Provider.Mode, cfg.Session.MaxAge.D())
+	d := rt.Codec.NewData(subject, string(level), mode, cfg.Session.MaxAge.D())
 	return rt.Codec.SetCookie(w, cfg.Session.CookieName, cfg.Session.CookieSecure(), cfg.Session.MaxAge.D(), d)
 }
 

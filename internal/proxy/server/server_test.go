@@ -70,7 +70,7 @@ func testRuntime(t *testing.T, upstreamURL string, users []config.User) *Runtime
 			CookieSecrets: []string{"secret-one-abcdefghij"},
 			MaxAge:        config.Duration(time.Hour),
 		},
-		Provider: config.ProviderConfig{Mode: config.ModeLocal},
+		Provider: config.ProviderConfig{Modes: []string{config.ModeLocal}},
 		Users:    users,
 		Routes: []config.RouteConfig{
 			{PathPrefix: "/pgadmin", Upstream: upstreamURL, MinLevel: config.LevelDBA},

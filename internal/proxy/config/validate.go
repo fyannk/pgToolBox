@@ -82,36 +82,58 @@ func (c *Config) validateServer() []error {
 
 func (c *Config) validateProvider() []error {
 	var errs []error
-	switch c.Provider.Mode {
-	case ModeOIDC:
+	if len(c.Provider.Modes) == 0 {
+		return append(errs, fmt.Errorf("provider.modes must enable at least one provider"))
+	}
+
+	seen := map[string]bool{}
+	for _, mode := range c.Provider.Modes {
+		switch mode {
+		case ModeOIDC, ModeLocal, ModeOpenShift:
+		default:
+			errs = append(errs, fmt.Errorf(
+				"provider.modes %q is invalid (want %q, %q or %q)", mode, ModeOIDC, ModeLocal, ModeOpenShift))
+			continue
+		}
+		if seen[mode] {
+			errs = append(errs, fmt.Errorf("provider.modes lists %q twice", mode))
+		}
+		seen[mode] = true
+	}
+
+	// A provider's settings block belongs to that provider: present when it
+	// is enabled, absent when it is not, so a configuration cannot carry
+	// credentials for something it never consults.
+	if seen[ModeOIDC] {
 		if c.Provider.OIDC == nil {
-			errs = append(errs, fmt.Errorf("provider.oidc is required when provider.mode is oidc"))
-			return errs
+			errs = append(errs, fmt.Errorf("provider.oidc is required when provider.modes includes oidc"))
+		} else {
+			errs = append(errs, c.Provider.OIDC.validate()...)
 		}
-		errs = append(errs, c.Provider.OIDC.validate()...)
-		if c.Provider.OpenShift != nil {
-			errs = append(errs, fmt.Errorf("provider.openshift may only be set when provider.mode is openshift"))
-		}
-	case ModeLocal:
-		if c.Provider.OIDC != nil {
-			errs = append(errs, fmt.Errorf("provider.oidc may only be set when provider.mode is oidc"))
-		}
-		if c.Provider.OpenShift != nil {
-			errs = append(errs, fmt.Errorf("provider.openshift may only be set when provider.mode is openshift"))
-		}
-	case ModeOpenShift:
-		if c.Provider.OIDC != nil {
-			errs = append(errs, fmt.Errorf("provider.oidc may only be set when provider.mode is oidc"))
-		}
+	} else if c.Provider.OIDC != nil {
+		errs = append(errs, fmt.Errorf("provider.oidc may only be set when provider.modes includes oidc"))
+	}
+
+	if seen[ModeOpenShift] {
 		if c.Provider.OpenShift == nil {
-			errs = append(errs, fmt.Errorf("provider.openshift is required when provider.mode is openshift"))
-			return errs
+			errs = append(errs, fmt.Errorf("provider.openshift is required when provider.modes includes openshift"))
+		} else {
+			errs = append(errs, c.Provider.OpenShift.validate()...)
 		}
-		errs = append(errs, c.Provider.OpenShift.validate()...)
-	default:
-		errs = append(errs, fmt.Errorf("provider.mode %q is invalid (want %q, %q or %q)", c.Provider.Mode, ModeOIDC, ModeLocal, ModeOpenShift))
+	} else if c.Provider.OpenShift != nil {
+		errs = append(errs, fmt.Errorf("provider.openshift may only be set when provider.modes includes openshift"))
 	}
 	return errs
+}
+
+// LocalEnabled reports whether local accounts are one of the ways in.
+func (c *Config) LocalEnabled() bool {
+	for _, mode := range c.Provider.Modes {
+		if mode == ModeLocal {
+			return true
+		}
+	}
+	return false
 }
 
 func (o *OIDCConfig) validate() []error {
@@ -127,10 +149,16 @@ func (o *OIDCConfig) validate() []error {
 	if o.ClientSecretFile == "" {
 		errs = append(errs, fmt.Errorf("provider.oidc.clientSecretFile is required"))
 	}
-	if o.RedirectURL == "" {
-		errs = append(errs, fmt.Errorf("provider.oidc.redirectURL is required"))
-	} else if u, err := url.Parse(o.RedirectURL); err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
-		errs = append(errs, fmt.Errorf("provider.oidc.redirectURL must be an absolute URL"))
+	// An empty redirect URL is not a gap. It means the proxy resolves one
+	// against the origin each request arrived on, which is the only correct
+	// answer when the deployment has no external hostname to state — the
+	// provider sends the browser there, so the only address that can work
+	// is the one the browser used.
+	if o.RedirectURL != "" {
+		if u, err := url.Parse(o.RedirectURL); err != nil ||
+			(u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+			errs = append(errs, fmt.Errorf("provider.oidc.redirectURL must be an absolute URL"))
+		}
 	}
 	if len(o.Scopes) == 0 {
 		errs = append(errs, fmt.Errorf("provider.oidc.scopes must not be empty"))
@@ -190,9 +218,12 @@ func (c *Config) validateUsers() []error {
 		if !u.Level.Valid() {
 			errs = append(errs, fmt.Errorf("%s.level %q is invalid (want view, poweruser or dba)", field, u.Level))
 		}
-		if c.Provider.Mode == ModeLocal {
-			if u.LocalPasswordBcrypt == "" {
-				errs = append(errs, fmt.Errorf("%s.localPasswordBcrypt is required in local mode", field))
+		// A hash is only meaningful where local accounts are offered, and
+		// only required for the users that have one: with an identity
+		// provider alongside, most users authenticate there and carry none.
+		if u.LocalPasswordBcrypt != "" {
+			if !c.LocalEnabled() {
+				errs = append(errs, fmt.Errorf("%s.localPasswordBcrypt is set but local is not enabled", field))
 			} else if _, err := bcrypt.Cost([]byte(u.LocalPasswordBcrypt)); err != nil {
 				errs = append(errs, fmt.Errorf("%s.localPasswordBcrypt is not a valid bcrypt hash", field))
 			}

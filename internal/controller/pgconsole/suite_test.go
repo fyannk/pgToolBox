@@ -94,7 +94,7 @@ func testConsole() *pgtoolboxv1alpha1.PgConsole {
 					Tag:        "1.0.0",
 				},
 				Authentication: pgtoolboxv1alpha1.ProxyAuthenticationSpec{
-					Mode: pgtoolboxv1alpha1.ProxyAuthenticationModeLocal,
+					Local: &pgtoolboxv1alpha1.ProxyLocalSpec{},
 				},
 			},
 			PgAdmin: pgtoolboxv1alpha1.PgAdminSpec{

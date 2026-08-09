@@ -30,6 +30,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -72,7 +73,7 @@ func run() error {
 		logger.Warn("config warning", "warning", w)
 	}
 	logger.Info("configuration loaded",
-		"mode", cfg.Provider.Mode,
+		"modes", cfg.Provider.Modes,
 		"cookieSecrets", len(cfg.Session.CookieSecrets),
 		"users", len(cfg.Users),
 		"routes", len(cfg.Routes))
@@ -87,11 +88,13 @@ func run() error {
 	defer stop()
 
 	mux := server.New(env)
-	provider, err := setupProvider(ctx, env, cfg)
+	providers, err := setupProviders(ctx, env, cfg)
 	if err != nil {
 		return err
 	}
-	provider.Register(mux)
+	for _, provider := range providers {
+		provider.Register(mux)
+	}
 
 	if cfg.AccessRequest.Enabled {
 		creator, err := server.NewInClusterAccessRequestCreator()
@@ -108,8 +111,8 @@ func run() error {
 			logger.Error("config reload failed, keeping previous configuration", "error", err)
 			return
 		}
-		if newCfg.Provider.Mode != cfg.Provider.Mode {
-			logger.Warn("provider mode change requires a restart; keeping mode", "mode", cfg.Provider.Mode)
+		if !slices.Equal(newCfg.Provider.Modes, cfg.Provider.Modes) {
+			logger.Warn("provider change requires a restart; keeping providers", "modes", cfg.Provider.Modes)
 		}
 		env.Swap(newRt)
 	})
@@ -149,21 +152,37 @@ func run() error {
 // setupProvider builds the configured authentication provider. Provider
 // settings are fixed at startup; changing them on reload requires a
 // restart.
-func setupProvider(ctx context.Context, env *server.Env, cfg *config.Config) (server.Provider, error) {
-	switch cfg.Provider.Mode {
-	case config.ModeOIDC:
-		secret, err := readSecretFile(cfg.Provider.OIDC.ClientSecretFile)
-		if err != nil {
-			return nil, fmt.Errorf("reading OIDC client secret: %w", err)
+func setupProviders(ctx context.Context, env *server.Env, cfg *config.Config) ([]server.Provider, error) {
+	var providers []server.Provider
+	for _, mode := range cfg.Provider.Modes {
+		switch mode {
+		case config.ModeOIDC:
+			secret, err := readSecretFile(cfg.Provider.OIDC.ClientSecretFile)
+			if err != nil {
+				return nil, fmt.Errorf("reading OIDC client secret: %w", err)
+			}
+			provider, err := oidc.New(ctx, env, cfg.Provider.OIDC, secret)
+			if err != nil {
+				return nil, err
+			}
+			providers = append(providers, provider)
+		case config.ModeLocal:
+			provider, err := local.New(env)
+			if err != nil {
+				return nil, err
+			}
+			providers = append(providers, provider)
+		case config.ModeOpenShift:
+			provider, err := openshift.New(ctx, env, cfg.Provider.OpenShift)
+			if err != nil {
+				return nil, err
+			}
+			providers = append(providers, provider)
+		default:
+			return nil, fmt.Errorf("provider %q is not supported by this build", mode)
 		}
-		return oidc.New(ctx, env, cfg.Provider.OIDC, secret)
-	case config.ModeLocal:
-		return local.New(env)
-	case config.ModeOpenShift:
-		return openshift.New(ctx, env, cfg.Provider.OpenShift)
-	default:
-		return nil, fmt.Errorf("provider mode %q is not supported by this build", cfg.Provider.Mode)
 	}
+	return providers, nil
 }
 
 // readSecretFile reads a secret file; the contents are returned but never

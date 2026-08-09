@@ -70,7 +70,7 @@ spec:
   cnpgClusterRef: { name: pg-main }
   proxy:
     authentication:
-      mode: oidc
+      local: {}                        # keeps a way in when the IdP is down
       oidc:
         issuerURL: https://idp.example.com
         clientID: pgconsole
