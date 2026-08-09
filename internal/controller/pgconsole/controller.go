@@ -456,8 +456,8 @@ func (r *Reconciler) updateStatus(ctx context.Context, before, after *pgtoolboxv
 	return r.Status().Patch(ctx, after, client.MergeFrom(before))
 }
 
-// mapToolBoxResourceToConsole turns a PgToolBoxUser or PgToolBoxRole event
-// into a reconcile request for the PgConsole named by its spec.pgConsoleRef.
+// mapToolBoxResourceToConsole turns a PgToolBoxUser event into a reconcile
+// request for the PgConsole named by its spec.pgConsoleRef.
 func (r *Reconciler) mapToolBoxResourceToConsole(_ context.Context, obj client.Object) []reconcile.Request {
 	switch resource := obj.(type) {
 	case *pgtoolboxv1alpha1.PgToolBoxUser:
