@@ -107,7 +107,7 @@ without ever being created.
 :::
 
 The full contribution guide — repository invariants, layout, git workflow —
-lives in [`CONTRIBUTING.md`](https://github.com/fyannk/pgtoolbox/blob/main/CONTRIBUTING.md)
+lives in [`CONTRIBUTING.md`](https://github.com/fyannk/pgToolBox/blob/main/CONTRIBUTING.md)
 in the repository.
 
 Build this site locally:

@@ -11,6 +11,12 @@ keywords:
   - pgadmin
   - oidc
   - openshift
-home: https://github.com/fyannk/pgtoolbox
+home: https://github.com/fyannk/pgToolBox
+sources:
+  - https://github.com/fyannk/pgToolBox
 maintainers:
   - name: fyannk
+annotations:
+  artifacthub.io/license: Apache-2.0
+  artifacthub.io/operator: "true"
+  artifacthub.io/prerelease: "true"

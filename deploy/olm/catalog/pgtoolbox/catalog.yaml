@@ -15,7 +15,7 @@ entries:
 schema: olm.bundle
 package: pgtoolbox
 name: pgtoolbox.v0.1.0
-image: pgtoolbox-bundle:v0.1.0
+image: ghcr.io/fyannk/pgtoolbox-bundle:0.1.0
 properties:
 - type: olm.package
   value:
@@ -25,10 +25,6 @@ properties:
   value:
     group: pgtoolbox.fyannk.dev
     kind: PgConsole
-    version: v1alpha1
-- type: olm.gvk
-  value:
-    group: pgtoolbox.fyannk.dev
     version: v1alpha1
 - type: olm.gvk
   value:

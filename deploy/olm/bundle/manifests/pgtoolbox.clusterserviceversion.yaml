@@ -5,6 +5,80 @@ metadata:
   namespace: placeholder
   annotations:
     operators.operatorframework.io/project_layout: go.kubebuilder.io/v4
+    capabilities: Basic Install
+    categories: Database
+    containerImage: ghcr.io/fyannk/pgtoolbox:0.1.0
+    createdAt: "2026-08-09T00:00:00Z"
+    repository: https://github.com/fyannk/pgToolBox
+    support: https://github.com/fyannk/pgToolBox/issues
+    description: One declarative access stack per CloudNativePG cluster —
+      authentication proxy, observation console, and embedded pgAdmin.
+    alm-examples: |-
+      [
+        {
+          "apiVersion": "pgtoolbox.fyannk.dev/v1alpha1",
+          "kind": "PgConsole",
+          "metadata": {
+            "name": "main"
+          },
+          "spec": {
+            "cnpgClusterRef": {
+              "name": "pg-main"
+            },
+            "proxy": {
+              "authentication": {
+                "bootstrapAdmin": {
+                  "subject": "jane@corp.example",
+                  "passwordSecretRef": {
+                    "name": "jane-password"
+                  }
+                },
+                "local": {}
+              }
+            },
+            "pgAdmin": {
+              "enabled": true,
+              "accessMinLevel": "dba",
+              "image": {
+                "repository": "ghcr.io/fyannk/pgadmin",
+                "tag": "latest"
+              }
+            },
+            "exposure": {
+              "type": "route",
+              "hostname": "pgconsole.apps.example.com"
+            }
+          }
+        },
+        {
+          "apiVersion": "pgtoolbox.fyannk.dev/v1alpha1",
+          "kind": "PgToolBoxUser",
+          "metadata": {
+            "name": "sam"
+          },
+          "spec": {
+            "pgConsoleRef": {
+              "name": "main"
+            },
+            "subject": "sam@corp.example",
+            "level": "view"
+          }
+        },
+        {
+          "apiVersion": "pgtoolbox.fyannk.dev/v1alpha1",
+          "kind": "PgToolBoxAccessRequest",
+          "metadata": {
+            "name": "sam-request"
+          },
+          "spec": {
+            "pgConsoleRef": {
+              "name": "main"
+            },
+            "subject": "sam@corp.example",
+            "message": "Read access for the on-call rotation."
+          }
+        }
+      ]
 spec:
   displayName: pgToolBox
   description: >-
@@ -25,7 +99,7 @@ spec:
     name: fyannk
   links:
   - name: Source
-    url: https://github.com/fyannk/pgtoolbox
+    url: https://github.com/fyannk/pgToolBox
   installModes:
   - type: OwnNamespace
     supported: true
@@ -350,12 +424,15 @@ spec:
                   type: RuntimeDefault
               containers:
               - name: manager
-                image: pgtoolbox:v0.1.0
+                image: ghcr.io/fyannk/pgtoolbox:0.1.0
                 args:
                 - --leader-elect
                 - --metrics-bind-address=:8080
                 - --health-probe-bind-address=:8081
-                - --operator-image=pgtoolbox:v0.1.0
+                - --operator-image=ghcr.io/fyannk/pgtoolbox:0.1.0
+                - --default-pgtoolbox-proxy-image=ghcr.io/fyannk/pgtoolbox-proxy:0.1.0
+                - --default-pgconsole-image=ghcr.io/fyannk/pgconsole:0.3.0
+                - --default-objectstoreviewer-image=ghcr.io/fyannk/pgobjectstoreviewer:0.1.1
                 ports:
                 - containerPort: 8080
                   name: metrics
@@ -388,3 +465,12 @@ spec:
                   limits:
                     cpu: 500m
                     memory: 256Mi
+  relatedImages:
+  - name: manager
+    image: ghcr.io/fyannk/pgtoolbox:0.1.0
+  - name: proxy
+    image: ghcr.io/fyannk/pgtoolbox-proxy:0.1.0
+  - name: pgconsole
+    image: ghcr.io/fyannk/pgconsole:0.3.0
+  - name: objectstoreviewer
+    image: ghcr.io/fyannk/pgobjectstoreviewer:0.1.1

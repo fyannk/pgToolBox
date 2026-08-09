@@ -57,6 +57,24 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{/*
 Manager image reference.
 */}}
+{{/*
+The manager image. An empty tag means the chart's appVersion, so a chart
+installed at 0.1.0 runs 0.1.0 rather than whatever a floating tag points at
+on the day. Set image.tag explicitly to pin something else.
+*/}}
 {{- define "pgtoolbox.image" -}}
-{{- printf "%s:%s" .Values.image.repository .Values.image.tag -}}
+{{- printf "%s:%s" .Values.image.repository (.Values.image.tag | default .Chart.AppVersion) -}}
+{{- end -}}
+
+{{/*
+The default pgtoolbox-proxy image for consoles that name none. The proxy is
+built and released from this repository alongside the operator, so it
+follows the same version unless overridden.
+*/}}
+{{- define "pgtoolbox.proxyImage" -}}
+{{- if .Values.proxyImage -}}
+{{- .Values.proxyImage -}}
+{{- else -}}
+{{- printf "%s:%s" .Values.proxyImageRepository (.Values.image.tag | default .Chart.AppVersion) -}}
+{{- end -}}
 {{- end -}}

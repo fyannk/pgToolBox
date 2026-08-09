@@ -16,11 +16,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The git tag is v0.1.0; the image tag is 0.1.0. They have to agree
+      # with the Helm chart's appVersion and the OLM CSV's version, both of
+      # which are plain semver — a chart installed at 0.1.0 must resolve an
+      # image that exists.
       - name: Compute image tag
         id: imgtag
         run: |
           if [[ "${{ github.ref }}" == refs/tags/* ]]; then
-            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+            tag="${GITHUB_REF#refs/tags/}"
+            echo "tag=${tag#v}" >> "$GITHUB_OUTPUT"
           else
             echo "tag=latest" >> "$GITHUB_OUTPUT"
           fi

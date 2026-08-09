@@ -99,6 +99,16 @@ Jane signs in through the proxy and sees the console sized to her `dba`
 level, including `/pgadmin`. Roles and users configure the proxy only —
 they are not postgres roles, and nothing about them reaches the database.
 
+## Limitations
+
+- **No group or claim mapping.** Access is granted per identity — declare a
+  `PgToolBoxUser`, or let a `dba` approve a request from the proxy's 403
+  page. An identity provider's groups do not select a level.
+- **One subject per user.** Somebody whose identity-provider subject differs
+  from their local username needs one object per subject.
+- **pgAdmin has no released version**, so no image defaults for it: set
+  `spec.pgAdmin.image` or the operator's `--default-pgadmin-image`.
+
 ## Documentation
 
 - [Full documentation site](web/) (Docusaurus) — install, operations,
