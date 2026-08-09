@@ -7,16 +7,19 @@ linters:
     - staticcheck
     - unused
     - gosec
-
-issues:
-  exclude-rules:
-    # controller-runtime v0.24 deprecates GetEventRecorderFor in favor of the
-    # new events API (GetEventRecorder). Migrating shared.Runtime to the new
-    # recorder type is deferred; the old API is still functional.
-    - path: cmd/manager/main.go
-      text: "SA1019"
-    # Tests exercise the same cryptographic and error paths; per-line #nosec
-    # annotations document the intentional ones.
-    - path: _test\.go
-      linters:
-        - gosec
+  # Exclusions live under linters in the v2 schema. They were written as a
+  # top-level `issues.exclude-rules` block, which v2 parses without
+  # complaint and then ignores, so the two rules below stopped applying and
+  # only a warm lint cache hid it.
+  exclusions:
+    rules:
+      # controller-runtime v0.24 deprecates GetEventRecorderFor in favor of
+      # the new events API (GetEventRecorder). Migrating shared.Runtime to
+      # the new recorder type is deferred; the old API is still functional.
+      - path: cmd/manager/main.go
+        text: "SA1019"
+      # Tests exercise the same cryptographic and error paths; per-line
+      # #nosec annotations document the intentional ones.
+      - path: _test\.go
+        linters:
+          - gosec

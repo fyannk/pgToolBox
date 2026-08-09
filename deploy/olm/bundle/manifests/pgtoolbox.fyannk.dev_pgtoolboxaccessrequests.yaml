@@ -26,8 +26,8 @@ spec:
     - jsonPath: .spec.subject
       name: Subject
       type: string
-    - jsonPath: .status.requestedRoleRef.name
-      name: Role
+    - jsonPath: .status.requestedLevel
+      name: Level
       type: string
     - jsonPath: .metadata.creationTimestamp
       name: Age
@@ -59,7 +59,8 @@ spec:
             description: |-
               PgToolBoxAccessRequestSpec is the desired state of an access request,
               created by the proxy when an authenticated identity is unknown to the
-              console. The proxy service account holds only create permission.
+              console. The proxy only ever creates these objects; reading and deciding
+              them is the console's job (its operate Role grants read + status update).
             properties:
               message:
                 description: Free-form justification from the requester, shown to
@@ -95,7 +96,7 @@ spec:
           status:
             description: |-
               PgToolBoxAccessRequestStatus is the observed state of an access request.
-              The review decision — state, requestedRoleRef, decidedBy, decidedAt — is
+              The review decision — state, requestedLevel, decidedBy, decidedAt — is
               written by a dba-level user through the console, and only the status
               subresource, so the create-only proxy cannot self-approve.
             properties:
@@ -167,19 +168,14 @@ spec:
                 description: The generation observed by the controller.
                 format: int64
                 type: integer
-              requestedRoleRef:
-                description: |-
-                  The PgToolBoxRole the reviewer granted, required when state is
-                  approved. The operator materializes the PgToolBoxUser from it.
-                properties:
-                  name:
-                    description: The name of the referenced resource.
-                    maxLength: 253
-                    minLength: 1
-                    type: string
-                required:
-                - name
-                type: object
+              requestedLevel:
+                description: The level the reviewer granted, required when state is
+                  approved.
+                enum:
+                - view
+                - poweruser
+                - dba
+                type: string
               state:
                 default: pending
                 description: The decision state.

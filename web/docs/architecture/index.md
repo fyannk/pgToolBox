@@ -49,5 +49,30 @@ flowchart TB
 - Apps stay auth-free; the proxy is the only auth boundary and the
   generated NetworkPolicy ensures nothing bypasses it.
 
+## The console's authority
+
+The Roles the operator generates are the console pod's entire authority —
+its ServiceAccount holds no other credential — and their shape is the
+console application's own deploy manifest, rule for rule. That
+correspondence is load-bearing in an unobvious direction: a missing grant
+does not fail the console, it makes the affected screen report "not
+granted" forever, which reads as a broken console rather than as a
+missing rule.
+
+Three Roles, in decreasing scope:
+
+| Object | Contents | Present when |
+|---|---|---|
+| read `Role` | the namespaced reads behind every screen: the Cluster and its backups, poolers, declared database objects, pods, services, claims, events, and the further objects the Cluster owns | always |
+| operate `Role` | the four day-2 mutations, and the access-request read plus status patch | either capability is on |
+| catalog `ClusterRole` | `get` on `clusterimagecatalogs`, never `list`, never `watch` | `console.allowClusterCatalogs` |
+
+Two rules hold across all three. Nothing is granted on `secrets` — RBAC
+cannot express "metadata only", so the console's children drawing states
+Secrets as not granted rather than reading them. And the reads pinned to
+one object (`clusters`, `failoverquorums`) carry `get` by
+`resourceNames` plus an unpinnable `watch`, and never a `list`, so
+nothing namespace-wide is enumerated through them.
+
 Deep dives: [Authentication](authentication.md),
 [pgAdmin sync](pgadmin-sync.md).

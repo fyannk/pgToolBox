@@ -23,8 +23,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
-	"math"
+	"time"
 
 	cnpgv1 "github.com/cloudnative-pg/api/pkg/api/v1"
 	pgtoolboxv1alpha1 "github.com/fyannk/pgtoolbox/api/v1alpha1"
@@ -35,17 +34,14 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// reconcilePgAdminSync drives the in-pod admin-sync sidecar to provision
-// pgAdmin accounts and shared server definitions from the already-resolved
-// console users. A missing role or credential marks that user degraded but
-// does not fail the whole reconcile, so a partially provisioned console still
-// reports status.
+// reconcilePgAdminSync provisions the connections pgAdmin offers, from the
+// credentials the CloudNativePG cluster publishes rather than from whoever
+// signed into the console.
 func (r *Reconciler) reconcilePgAdminSync(
 	ctx context.Context,
 	console *pgtoolboxv1alpha1.PgConsole,
 	deployment *appsv1.Deployment,
 	checksum string,
-	resolved []resolvedConsoleUser,
 ) error {
 	if !pgAdminEnabled(console) || r.OperatorImage == "" || r.AdminSync == nil {
 		conditions.MarkUnknown(
@@ -67,7 +63,9 @@ func (r *Reconciler) reconcilePgAdminSync(
 		return nil
 	}
 
-	if deployment.Annotations[pgtoolboxv1alpha1.ConfigChecksumAnnotation] != checksum {
+	// The checksum lives on the Pod template, not on the Deployment: it is
+	// what makes a configuration change roll the pods.
+	if deployment.Spec.Template.Annotations[pgtoolboxv1alpha1.ConfigChecksumAnnotation] != checksum {
 		conditions.MarkFalse(
 			console,
 			pgtoolboxv1alpha1.PgConsoleConditionPgAdminSynced,
@@ -93,54 +91,34 @@ func (r *Reconciler) reconcilePgAdminSync(
 		return err
 	}
 
-	syncRequest, degraded := buildSyncRequest(resolved, &cluster)
-
-	console.Status.UserSync = pgtoolboxv1alpha1.UserSyncStatus{
-		Desired:  int32Count(len(resolved)),
-		Synced:   int32Count(len(resolved) - len(degraded)),
-		Degraded: int32Count(len(degraded)),
+	servers, err := r.clusterCredentials(ctx, console, &cluster)
+	if err != nil {
+		return err
 	}
-
-	if len(degraded) > 0 {
+	if len(servers) == 0 {
 		conditions.MarkFalse(
 			console,
 			pgtoolboxv1alpha1.PgConsoleConditionPgAdminSynced,
 			pgtoolboxv1alpha1.ReasonSomeDegraded,
-			"%d user(s) could not be synced: %v",
-			len(degraded), degraded,
-		)
-		// Continue only with the users we can provision.
-	}
-
-	if len(syncRequest.Users) == 0 {
-		if len(degraded) == 0 {
-			conditions.MarkTrue(
-				console,
-				pgtoolboxv1alpha1.PgConsoleConditionPgAdminSynced,
-				pgtoolboxv1alpha1.ReasonAsExpected,
-				"no pgAdmin users configured",
-			)
-		}
-		return nil
-	}
-
-	revision := syncRevision(syncRequest)
-	if deployment.Annotations[pgtoolboxv1alpha1.PgAdminSyncRevisionAnnotation] == revision {
-		conditions.MarkTrue(
-			console,
-			pgtoolboxv1alpha1.PgConsoleConditionPgAdminSynced,
-			pgtoolboxv1alpha1.ReasonAsExpected,
-			"pgAdmin sync is up to date",
+			"cluster %s publishes no credential pgAdmin could connect with",
+			cluster.Name,
 		)
 		return nil
 	}
 
+	// No short-circuit here. Whether the desired state is already present is
+	// something only the sidecar can answer: it lives in files and rows that
+	// belong to each pgAdmin account, and accounts appear on their own as
+	// people sign in. An operator-side revision could not see a new account
+	// arrive, so it would leave that reader with an empty server list until
+	// something unrelated changed. The sidecar skips the expensive work
+	// per account instead.
 	if err := r.AdminSync.Sync(ctx, adminsync.Request{
 		Namespace:   console.Namespace,
 		ConsoleName: console.Name,
 		Selector:    application.SelectorLabels(console.Name),
 		Checksum:    checksum,
-		Users:       syncRequest.Users,
+		Servers:     servers,
 	}); err != nil {
 		conditions.MarkFalse(
 			console,
@@ -152,60 +130,26 @@ func (r *Reconciler) reconcilePgAdminSync(
 		return nil
 	}
 
-	before := deployment.DeepCopy()
-	if deployment.Annotations == nil {
-		deployment.Annotations = map[string]string{}
-	}
-	deployment.Annotations[pgtoolboxv1alpha1.PgAdminSyncRevisionAnnotation] = revision
-	if err := r.Patch(ctx, deployment, client.MergeFrom(before)); err != nil {
-		return fmt.Errorf("record pgAdmin sync revision: %w", err)
-	}
-
 	conditions.MarkTrue(
 		console,
 		pgtoolboxv1alpha1.PgConsoleConditionPgAdminSynced,
 		pgtoolboxv1alpha1.ReasonAsExpected,
-		"pgAdmin synced for %d user(s)",
-		len(syncRequest.Users),
+		"pgAdmin offers %d connection(s) from the cluster's credentials",
+		len(servers),
 	)
 	return nil
 }
 
-// buildSyncRequest builds the admin-sync payload from the resolved console
-// users that are eligible for pgAdmin provisioning. It returns the payload and
-// the list of degraded user subjects.
-func buildSyncRequest(
-	resolved []resolvedConsoleUser,
-	cluster *cnpgv1.Cluster,
-) (adminsync.SyncRequest, []string) {
-	var request adminsync.SyncRequest
-	var degraded []string
-
-	host := clusterServiceHost(cluster, cluster.Name)
-
-	for _, u := range resolved {
-		if !u.pgAdminIncluded() {
-			degraded = append(degraded, u.user.Spec.Subject)
-			continue
-		}
-		request.Users = append(request.Users, adminsync.User{
-			Subject:     u.user.Spec.Subject,
-			PgAdminRole: pgAdminRoleForLevel(u.role.Spec.Level),
-			Server: adminsync.Server{
-				Name:          cluster.Name,
-				Group:         "PgToolBox",
-				Host:          host,
-				Port:          5432,
-				MaintenanceDB: "postgres",
-				Username:      u.credential.username,
-				PassFile:      adminsync.DefaultPassFilePath,
-				SSLMode:       "prefer",
-			},
-			Password: u.credential.password,
-		})
-	}
-	return request, degraded
-}
+// pgAdminResyncInterval is how often a console with pgAdmin re-syncs when
+// nothing has changed.
+//
+// It is not a safety net for a lost write; it exists because pgAdmin
+// accounts appear without anything in Kubernetes changing. An account is
+// created the first time the proxy forwards an identity pgAdmin has not
+// seen, which is a sign-in, not an API event — so no watch fires and no
+// reconcile is queued. Without a periodic pass, that reader would sit in
+// front of an empty server list until something unrelated moved.
+const pgAdminResyncInterval = 2 * time.Minute
 
 // clusterServiceHost resolves the read-write Service host for the cluster.
 // It prefers the Cluster status and falls back to the CNPG naming convention.
@@ -214,25 +158,6 @@ func clusterServiceHost(cluster *cnpgv1.Cluster, clusterName string) string {
 		return cluster.Status.WriteService + "." + cluster.Namespace + ".svc"
 	}
 	return clusterName + "-rw." + cluster.Namespace + ".svc"
-}
-
-type roleCredential struct {
-	username string
-	password string
-}
-
-// databaseRoleNameForRole returns the name of the CNPG DatabaseRole backing
-// the PgToolBoxRole. It prefers the status set by the role controller, then
-// an explicit databaseRoleRef. An empty return means the role has not been
-// resolved yet.
-func databaseRoleNameForRole(role *pgtoolboxv1alpha1.PgToolBoxRole) string {
-	if role.Status.DatabaseRoleName != "" {
-		return role.Status.DatabaseRoleName
-	}
-	if role.Spec.PostgresRole.DatabaseRoleRef != nil {
-		return role.Spec.PostgresRole.DatabaseRoleRef.Name
-	}
-	return ""
 }
 
 // pgAdminRoleForLevel maps a PgToolBox level to a pgAdmin role.
@@ -249,12 +174,4 @@ func syncRevision(request adminsync.SyncRequest) string {
 	payload, _ := json.Marshal(request)
 	digest := sha256.Sum256(payload)
 	return hex.EncodeToString(digest[:])
-}
-
-// int32Count clamps a count into the int32 status fields.
-func int32Count(n int) int32 {
-	if n > math.MaxInt32 {
-		return math.MaxInt32
-	}
-	return int32(n) // #nosec G115 -- clamped above
 }

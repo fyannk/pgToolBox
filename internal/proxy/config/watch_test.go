@@ -66,7 +66,7 @@ func TestWatcherReloadsValidAndKeepsOldOnInvalid(t *testing.T) {
 	}
 
 	// An invalid rewrite must not be applied; the old config stays.
-	writeFile("provider:\n  mode: bogus\n")
+	writeFile("provider:\n  modes: [bogus]\n")
 	select {
 	case c := <-applied:
 		t.Fatalf("invalid config was applied: %d users", len(c.Users))

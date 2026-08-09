@@ -140,6 +140,43 @@ func TestDeploymentContainersAndEnv(t *testing.T) {
 	}
 
 	pgAdmin := containerByName(t, pod, "pgadmin")
+	// The proxy forwards /pgadmin without stripping the prefix — stripping
+	// would send pgAdmin's own absolute links to the console instead — so
+	// pgAdmin has to be told the prefix it is mounted under. Without it
+	// every request under /pgadmin is a 404 from pgAdmin itself.
+	if value, _ := envValue(pgAdmin, "SCRIPT_NAME"); value != "/pgadmin" {
+		t.Fatalf("pgAdmin SCRIPT_NAME = %q, want the proxy route prefix", value)
+	}
+	// pgAdmin trusts the identity the proxy already established, so a user
+	// who reached /pgadmin is not asked for credentials a second time.
+	// pgAdmin itself creates the account on that first request and the
+	// admin-sync sidecar discovers it there, so auto-creation is asserted
+	// rather than inherited: without it every user reaches an empty
+	// pgAdmin, and an internal login form could never admit them either.
+	for name, want := range map[string]string{
+		"PGADMIN_CONFIG_AUTHENTICATION_SOURCES":     "['webserver']",
+		"PGADMIN_CONFIG_WEBSERVER_REMOTE_USER":      "'X-Forwarded-User'",
+		"PGADMIN_CONFIG_WEBSERVER_AUTO_CREATE_USER": "True",
+		"PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED":   "False",
+	} {
+		if value, _ := envValue(pgAdmin, name); value != want {
+			t.Fatalf("pgAdmin %s = %q, want %q", name, value, want)
+		}
+	}
+	// The credentials must arrive as PGPASSFILE, not as the server
+	// definition's passfile parameter: in server mode pgAdmin resolves that
+	// parameter through its file manager, which rewrites an absolute path
+	// into the signed-in user's storage directory, resolves it to nothing,
+	// and hands libpq no passfile at all.
+	if value, _ := envValue(pgAdmin, "PGPASSFILE"); value != "/run/pgadmin/passfile/pgpass" {
+		t.Fatalf("pgAdmin PGPASSFILE = %q, want the sidecar's passfile path", value)
+	}
+	// The header pgAdmin trusts must be the one the proxy sets, or it
+	// admits nobody — and it is only trustworthy because the proxy strips
+	// any client copy and the NetworkPolicy confines ingress to it.
+	if value, _ := envValue(pgAdmin, "PGADMIN_CONFIG_WEBSERVER_REMOTE_USER"); value != "'"+consoleTrustedUserHeader+"'" {
+		t.Fatalf("pgAdmin trusts %s, not the header the proxy sets", value)
+	}
 	if value, _ := envValue(pgAdmin, "PGADMIN_LISTEN_PORT"); value != "8081" {
 		t.Fatalf("pgAdmin listen port = %q", value)
 	}
@@ -158,6 +195,86 @@ func TestDeploymentContainersAndEnv(t *testing.T) {
 	config := volumeByName(pod, proxyConfigVolume)
 	if config == nil || config.Secret == nil || config.Secret.SecretName != "console-pgconsole-proxy" {
 		t.Fatalf("proxy config volume = %+v", config)
+	}
+}
+
+// TestDeploymentUsesOperatorDefaultImages covers the spec the quick start
+// actually shows: one that names no images at all and expects the operator's
+// --default-*-image flags to supply them.
+//
+// The image fields are pointers for this reason. Go does not omit an empty
+// struct, so a value field serialized as `image: {}` and the API server
+// rejected it against ImageSpec's required repository and tag — making the
+// operator defaults unreachable and the documented quick start invalid. Only
+// a real API server enforces that; the e2e smoke test caught it.
+func TestDeploymentUsesOperatorDefaultImages(t *testing.T) {
+	console := testConsole()
+	console.Spec.Image = nil
+	console.Spec.Proxy.Image = nil
+	console.Spec.PgAdmin.Image = nil
+
+	r, _ := newTestReconciler(t)
+	r.DefaultImages = DefaultImages{
+		PgConsole: "ghcr.io/example/pgconsole:0.1.0",
+		Proxy:     "ghcr.io/example/pgtoolbox-proxy:0.1.0",
+		PgAdmin:   "ghcr.io/fyannk/pgadmin:0.1.0",
+	}
+
+	inputs := workloadInputs{ConfigChecksum: "deadbeef"}
+	var err error
+	if inputs.ProxyImage, err = resolveImage(console.Spec.Proxy.Image, r.DefaultImages.Proxy); err != nil {
+		t.Fatalf("resolve proxy image: %v", err)
+	}
+	if inputs.ConsoleImage, err = resolveImage(console.Spec.Image, r.DefaultImages.PgConsole); err != nil {
+		t.Fatalf("resolve console image: %v", err)
+	}
+	if inputs.PgAdminImage, err = resolveImage(console.Spec.PgAdmin.Image, r.DefaultImages.PgAdmin); err != nil {
+		t.Fatalf("resolve pgAdmin image: %v", err)
+	}
+
+	pod := &buildDeployment(t, console, inputs).Spec.Template.Spec
+	for name, want := range map[string]string{
+		"proxy":     "ghcr.io/example/pgtoolbox-proxy:0.1.0",
+		"pgconsole": "ghcr.io/example/pgconsole:0.1.0",
+		"pgadmin":   "ghcr.io/fyannk/pgadmin:0.1.0",
+	} {
+		if got := containerByName(t, pod, name).Image; got != want {
+			t.Errorf("%s image = %q, want the operator default %q", name, got, want)
+		}
+	}
+
+	// With neither a spec image nor an operator default, the container
+	// cannot be composed and that must be an error, not an empty reference.
+	if _, err := resolveImage(nil, ""); err == nil {
+		t.Error("expected an error when both the spec image and the default are absent")
+	}
+}
+
+// TestDeploymentFSGroup covers the one pod-level security setting the
+// operator does not decide. pgObjectStoreViewer refuses to serve unless the
+// shared socket directory is setgid with group rwx, and on an emptyDir that
+// mode comes from the kubelet applying fsGroup — so on a cluster that does
+// not default one, an unset fsGroup is why evidence never comes up.
+func TestDeploymentFSGroup(t *testing.T) {
+	// Unset by default: OpenShift's SCC allocates one from the namespace
+	// range, and a value outside that range is rejected outright.
+	unset := buildDeployment(t, testConsole(), testInputs())
+	if group := unset.Spec.Template.Spec.SecurityContext.FSGroup; group != nil {
+		t.Fatalf("fsGroup = %d, want unset so the platform may allocate it", *group)
+	}
+
+	console := testConsole()
+	console.Spec.PodSecurityContext.FSGroup = ptrTo(int64(65532))
+	set := buildDeployment(t, console, testInputs())
+
+	pod := set.Spec.Template.Spec.SecurityContext
+	if pod.FSGroup == nil || *pod.FSGroup != 65532 {
+		t.Fatalf("fsGroup = %v, want 65532", pod.FSGroup)
+	}
+	// The hardening is not configurable and must survive alongside it.
+	if pod.RunAsNonRoot == nil || !*pod.RunAsNonRoot ||
+		pod.SeccompProfile == nil || pod.SeccompProfile.Type != corev1.SeccompProfileTypeRuntimeDefault {
+		t.Fatalf("pod hardening weakened by setting fsGroup: %+v", pod)
 	}
 }
 
@@ -257,7 +374,7 @@ func TestDeploymentEvidenceComposition(t *testing.T) {
 func TestDeploymentOIDCModeMountsClientSecret(t *testing.T) {
 	console := testConsole()
 	console.Spec.Proxy.Authentication = pgtoolboxv1alpha1.ProxyAuthenticationSpec{
-		Mode: pgtoolboxv1alpha1.ProxyAuthenticationModeOIDC,
+
 		OIDC: &pgtoolboxv1alpha1.ProxyOIDCSpec{
 			IssuerURL:       "https://idp.example.com",
 			ClientID:        "pgconsole",
@@ -393,5 +510,51 @@ func TestDeploymentAdminSyncSkippedWithoutOperatorImage(t *testing.T) {
 	}
 	if _, ok := deployment.Spec.Template.Annotations[pgtoolboxv1alpha1.AdminSyncSecretVersionAnnotation]; ok {
 		t.Fatalf("admin-sync secret version annotation must not be present without operator image")
+	}
+}
+
+// TestNetworkPolicyAllowsPostgres holds the rule that made "connect to
+// server" fail as a bare 502: the embedded pgAdmin exists to reach this one
+// cluster, and a default-deny egress policy that omits PostgreSQL forbids
+// the only thing it is for. libpq waits on the dropped connection until the
+// proxy's upstream timeout, so nothing in any log names the cause.
+func TestNetworkPolicyAllowsPostgres(t *testing.T) {
+	r, _ := newTestReconciler(t)
+
+	policy, err := r.networkPolicy(testConsole())
+	if err != nil {
+		t.Fatalf("build network policy: %v", err)
+	}
+	found := false
+	for _, rule := range policy.Spec.Egress {
+		for _, port := range rule.Ports {
+			if port.Port == nil || port.Port.IntVal != 5432 {
+				continue
+			}
+			found = true
+			// Scoped to this cluster's instances, not PostgreSQL at large.
+			if len(rule.To) != 1 || rule.To[0].PodSelector == nil ||
+				rule.To[0].PodSelector.MatchLabels["cnpg.io/cluster"] != "cluster-1" {
+				t.Fatalf("postgres egress is not scoped to the target cluster: %+v", rule.To)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("no egress rule to PostgreSQL; pgAdmin cannot reach its cluster")
+	}
+
+	// With pgAdmin off there is nothing in the Pod that speaks to PostgreSQL.
+	noPgAdmin := testConsole()
+	noPgAdmin.Spec.PgAdmin.Enabled = ptrTo(false)
+	policy, err = r.networkPolicy(noPgAdmin)
+	if err != nil {
+		t.Fatalf("build network policy: %v", err)
+	}
+	for _, rule := range policy.Spec.Egress {
+		for _, port := range rule.Ports {
+			if port.Port != nil && port.Port.IntVal == 5432 {
+				t.Fatalf("postgres egress granted with pgAdmin disabled")
+			}
+		}
 	}
 }

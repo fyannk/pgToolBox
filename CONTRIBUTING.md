@@ -59,7 +59,6 @@ These are hard rules — a change that violates one is a bug:
 - `cmd/manager/` — operator binary (also the admin-sync init/sidecar image).
 - `cmd/proxy/` — pgtoolbox-proxy binary.
 - `internal/controller/pgconsole/` — PgConsole reconciler.
-- `internal/controller/pgtoolboxrole/` — PgToolBoxRole reconciler.
 - `internal/controller/pgtoolboxaccessrequest/` — review-decision reconciler.
 - `internal/adminsync/` — in-pod pgAdmin sync client and sidecar server.
 - `internal/proxy/` — proxy config, session, providers, pages.

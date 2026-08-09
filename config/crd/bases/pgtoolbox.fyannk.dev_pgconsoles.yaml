@@ -77,6 +77,146 @@ spec:
                 x-kubernetes-validations:
                 - message: cnpgClusterRef is immutable
                   rule: self == oldSelf
+              console:
+                description: |-
+                  The pgconsole application's own behaviour: which screens and day-2
+                  operations it serves, what it retains, and the link-outs it offers.
+                properties:
+                  allowAccessReview:
+                    default: true
+                    description: |-
+                      Whether the dba access-request review panel is served. With it
+                      disabled the PgToolBoxAccessRequests the proxy's 403 page creates
+                      have no reviewer UI, and the console holds no authority over them.
+                    type: boolean
+                  allowClusterCatalogs:
+                    default: false
+                    description: |-
+                      Whether the console may read the one cluster-scoped
+                      ClusterImageCatalog its Cluster references. This is the only
+                      authority a console holds outside its own namespace, so it is
+                      opt-in and generates a separate ClusterRole granting exactly get —
+                      never list, never watch. Declining costs nothing but a panel that
+                      reports the catalog content as unread, never as absent.
+                    type: boolean
+                  allowInsecureLinks:
+                    default: false
+                    description: |-
+                      Whether http link-out URLs are accepted. For lab use: the console
+                      rejects an http monitoringURL without it, and a console with no
+                      exposure hostname has no https base URL from which to build the
+                      pgAdmin link-out.
+                    type: boolean
+                  allowLogs:
+                    default: true
+                    description: |-
+                      Whether the bounded instance log tail is served. Instance logs can
+                      contain query text; disabling removes the screen and the pods/log
+                      rule from the generated read Role.
+                    type: boolean
+                  allowOperations:
+                    default: true
+                    description: |-
+                      Whether the four enumerated day-2 operations — request backup,
+                      reload, rolling restart and promote — are served. Disabling both
+                      removes the write surface from the application and drops the
+                      operate Role from the deployment, so RBAC denies the mutation
+                      independently of the flag.
+                    type: boolean
+                  apiRequestTimeout:
+                    description: |-
+                      Timeout applied to every Kubernetes API request the console makes.
+                      Between 1s and 1m; defaults to 10s.
+                    type: string
+                  eventsMaxAge:
+                    description: |-
+                      How far back the cluster's Events are shown. Between 1m and 24h;
+                      defaults to 1h.
+                    type: string
+                  history:
+                    description: |-
+                      The bounded in-memory revision history of the watched object
+                      definitions.
+                    properties:
+                      coalesceWindow:
+                        description: |-
+                          Window within which repeated changes to one object collapse into a
+                          single revision. Between 1s and 1h; defaults to 1m.
+                        type: string
+                      enabled:
+                        default: true
+                        description: Whether history is recorded at all.
+                        type: boolean
+                      maxBytes:
+                        description: Global cap on retained manifest bytes. Defaults
+                          to 16777216 (16Mi).
+                        format: int32
+                        maximum: 67108864
+                        minimum: 1048576
+                        type: integer
+                      maxRevisions:
+                        description: Global cap on retained revisions. Defaults to
+                          2000.
+                        format: int32
+                        maximum: 20000
+                        minimum: 100
+                        type: integer
+                      perObjectRevisions:
+                        description: Cap on retained revisions of any one object.
+                          Defaults to 20.
+                        format: int32
+                        maximum: 200
+                        minimum: 2
+                        type: integer
+                    type: object
+                  logTail:
+                    description: Bounds applied to a single log tail request.
+                    properties:
+                      lines:
+                        description: Maximum lines returned per request. Defaults
+                          to 200.
+                        format: int32
+                        maximum: 2000
+                        minimum: 1
+                        type: integer
+                      maxBytes:
+                        description: Maximum bytes returned per request. Defaults
+                          to 1048576 (1Mi).
+                        format: int32
+                        maximum: 8388608
+                        minimum: 4096
+                        type: integer
+                    type: object
+                  metrics:
+                    description: The bounded in-memory metrics window behind the metrics
+                      screens.
+                    properties:
+                      enabled:
+                        default: true
+                        description: Whether the metrics screens are served.
+                        type: boolean
+                      interval:
+                        description: Sampling interval. Between 5s and 5m; defaults
+                          to 10s.
+                        type: string
+                      retention:
+                        description: |-
+                          How long samples are retained. Between 1h and 720h (30d); defaults
+                          to 168h (7d).
+                        type: string
+                    type: object
+                  monitoringURL:
+                    description: |-
+                      Link-out base URL to the monitoring dashboard for this cluster.
+                      Must use https unless allowInsecureLinks is true.
+                    pattern: ^https?://.+$
+                    type: string
+                type: object
+                x-kubernetes-validations:
+                - message: monitoringURL must use https unless allowInsecureLinks
+                    is true
+                  rule: '!has(self.monitoringURL) || self.monitoringURL.startsWith(''https://'')
+                    || (has(self.allowInsecureLinks) && self.allowInsecureLinks)'
               evidence:
                 description: |-
                   The ObjectStoreViewer evidence sidecar, publishing repository
@@ -277,6 +417,11 @@ spec:
                 description: |-
                   The pgconsole container image to run. Defaults to the operator's
                   configured image (--default-pgconsole-image).
+
+                  A pointer so that an omitted image is genuinely absent. Go does not
+                  omit an empty struct, so a value field would serialize as `image: {}`
+                  and be rejected by ImageSpec's required repository and tag — which
+                  would make the operator's default images unreachable.
                 properties:
                   digest:
                     description: Optional image digest; when set it takes precedence
@@ -549,7 +694,8 @@ spec:
                   image:
                     description: |-
                       The pgAdmin container image. Defaults to the operator's configured
-                      image (--default-pgadmin-image).
+                      image (--default-pgadmin-image). A pointer for the same reason as
+                      PgConsoleSpec.Image.
                     properties:
                       digest:
                         description: Optional image digest; when set it takes precedence
@@ -664,6 +810,29 @@ spec:
                         type: string
                     type: object
                 type: object
+              podSecurityContext:
+                description: Pod-level security settings the operator deliberately
+                  does not decide.
+                properties:
+                  fsGroup:
+                    description: |-
+                      The supplemental group applied to every volume the Pod mounts.
+
+                      It exists for the evidence sidecar. pgObjectStoreViewer refuses to
+                      serve unless the shared socket directory is setgid with group rwx,
+                      and on a Pod's emptyDir that mode comes from the kubelet applying
+                      fsGroup — without one the directory is 0777 with no setgid and the
+                      viewer reports an invalid socket path.
+
+                      Leave it unset on OpenShift: the restricted-v2 SCC allocates an
+                      fsGroup from the namespace's range, and a value outside that range
+                      is rejected outright. Set it on a cluster that does not default one,
+                      which otherwise cannot run the evidence sidecar at all.
+                    format: int64
+                    maximum: 2147483647
+                    minimum: 1
+                    type: integer
+                type: object
               proxy:
                 description: |-
                   The pgtoolbox-proxy authentication proxy, the single authentication
@@ -672,15 +841,54 @@ spec:
                   authentication:
                     description: How users authenticate.
                     properties:
-                      mode:
-                        description: The authentication mode.
-                        enum:
-                        - openshift
-                        - oidc
-                        - local
-                        type: string
+                      bootstrapAdmin:
+                        description: |-
+                          The first administrator, and the answer to how anyone gets in at
+                          all. A console starts with no users; granting access needs a dba to
+                          approve a PgToolBoxAccessRequest, so without a declared one nobody
+                          can ever sign in to approve anything.
+
+                          The operator materializes this as a PgToolBoxUser it owns, at dba
+                          level, and puts it back if it is deleted — it is derived from this
+                          field rather than an object anyone maintains. Handing the role to
+                          somebody else means editing it here, which leaves a record.
+                        properties:
+                          passwordSecretRef:
+                            description: |-
+                              Reference to the Secret holding this identity's local-mode password
+                              (bcrypt). Optional, because with an identity provider enabled the
+                              first administrator authenticates there like everyone else. Required
+                              only when local is the sole provider, since otherwise the console
+                              would ship with no way in at all. Default key: "password".
+                            properties:
+                              key:
+                                description: The key inside the Secret.
+                                type: string
+                              name:
+                                description: The name of the referenced Secret.
+                                maxLength: 253
+                                minLength: 1
+                                type: string
+                            required:
+                            - name
+                            type: object
+                          subject:
+                            description: |-
+                              The identity the authentication provider vouches for, matched the
+                              same way as any other user's subject.
+                            maxLength: 253
+                            minLength: 1
+                            type: string
+                        required:
+                        - subject
+                        type: object
+                      local:
+                        description: |-
+                          Local accounts, rendered from the console's PgToolBoxUser set. A user
+                          participates in local sign-in only if it carries a password.
+                        type: object
                       oidc:
-                        description: Configuration for the oidc mode.
+                        description: Plain OIDC against an external identity provider.
                         properties:
                           clientID:
                             description: The OAuth2 client ID.
@@ -711,18 +919,26 @@ spec:
                         - clientSecretRef
                         - issuerURL
                         type: object
+                      openshift:
+                        description: |-
+                          The integrated OpenShift OAuth stack, auto-discovered from the
+                          cluster.
+                        type: object
                     required:
-                    - mode
+                    - bootstrapAdmin
                     type: object
                     x-kubernetes-validations:
-                    - message: oidc is required when mode is oidc
-                      rule: 'self.mode == ''oidc'' ? has(self.oidc) : true'
-                    - message: oidc may only be set when mode is oidc
-                      rule: self.mode == 'oidc' || !has(self.oidc)
+                    - message: at least one authentication provider must be enabled
+                      rule: has(self.local) || has(self.oidc) || has(self.openshift)
+                    - message: bootstrapAdmin.passwordSecretRef is required when local
+                        is the only authentication provider
+                      rule: '!(has(self.local) && !has(self.oidc) && !has(self.openshift))
+                        || has(self.bootstrapAdmin.passwordSecretRef)'
                   image:
                     description: |-
                       The proxy container image. Defaults to the operator's configured
-                      image (--default-pgtoolbox-proxy-image).
+                      image (--default-pgtoolbox-proxy-image). A pointer for the same
+                      reason as PgConsoleSpec.Image.
                     properties:
                       digest:
                         description: Optional image digest; when set it takes precedence

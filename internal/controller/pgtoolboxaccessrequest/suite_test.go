@@ -79,21 +79,7 @@ func testConsole() *pgtoolboxv1alpha1.PgConsole {
 	}
 }
 
-func testRole() *pgtoolboxv1alpha1.PgToolBoxRole {
-	return &pgtoolboxv1alpha1.PgToolBoxRole{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "viewer-role",
-			Namespace: "test",
-			UID:       types.UID("uid-role"),
-		},
-		Spec: pgtoolboxv1alpha1.PgToolBoxRoleSpec{
-			PgConsoleRef: pgtoolboxv1alpha1.LocalObjectReference{Name: "console"},
-			Level:        pgtoolboxv1alpha1.RoleLevelView,
-		},
-	}
-}
-
-func testAccessRequest(state pgtoolboxv1alpha1.AccessRequestState, roleName string) *pgtoolboxv1alpha1.PgToolBoxAccessRequest {
+func testAccessRequest(state pgtoolboxv1alpha1.AccessRequestState, level pgtoolboxv1alpha1.RoleLevel) *pgtoolboxv1alpha1.PgToolBoxAccessRequest {
 	req := &pgtoolboxv1alpha1.PgToolBoxAccessRequest{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "req-1",
@@ -108,9 +94,7 @@ func testAccessRequest(state pgtoolboxv1alpha1.AccessRequestState, roleName stri
 			State: state,
 		},
 	}
-	if roleName != "" {
-		req.Status.RequestedRoleRef = &pgtoolboxv1alpha1.LocalObjectReference{Name: roleName}
-	}
+	req.Status.RequestedLevel = level
 	return req
 }
 

@@ -104,9 +104,9 @@ func pgAdminEnabled(console *pgtoolboxv1alpha1.PgConsole) bool {
 
 // resolveImage picks the spec image, falling back to the operator's
 // configured default; with neither, the container cannot be composed.
-func resolveImage(spec pgtoolboxv1alpha1.ImageSpec, fallback string) (string, error) {
-	if spec.Repository != "" {
-		return imageReference(spec), nil
+func resolveImage(spec *pgtoolboxv1alpha1.ImageSpec, fallback string) (string, error) {
+	if spec != nil && spec.Repository != "" {
+		return imageReference(*spec), nil
 	}
 	if fallback != "" {
 		return fallback, nil
@@ -124,11 +124,36 @@ func imageReference(image pgtoolboxv1alpha1.ImageSpec) string {
 }
 
 // imagePullPolicy applies the spec pull policy, defaulting to IfNotPresent.
-func imagePullPolicy(image pgtoolboxv1alpha1.ImageSpec) corev1.PullPolicy {
-	if image.PullPolicy != "" {
+func imagePullPolicy(image *pgtoolboxv1alpha1.ImageSpec) corev1.PullPolicy {
+	if image != nil && image.PullPolicy != "" {
 		return image.PullPolicy
 	}
 	return corev1.PullIfNotPresent
+}
+
+// adminSyncResources budgets the two containers that run pgAdmin's Python
+// stack — pgAdmin itself and the admin-sync sidecar. Neither can share the
+// console-wide default: every sync shells out to pgAdmin's setup.py, which
+// boots a Flask application and runs the settings-database migrations, and
+// 256Mi is not enough to do that — the sidecar was OOMKilled mid-sync and
+// the console reported a sync failure with no hint of the cause.
+//
+// A spec budget still wins, so an operator who has measured their own can
+// set one on spec.pgAdmin.resources.
+func adminSyncResources(resources corev1.ResourceRequirements) corev1.ResourceRequirements {
+	if len(resources.Requests) > 0 || len(resources.Limits) > 0 {
+		return *resources.DeepCopy()
+	}
+	return corev1.ResourceRequirements{
+		Requests: corev1.ResourceList{
+			corev1.ResourceCPU:    resource.MustParse("50m"),
+			corev1.ResourceMemory: resource.MustParse("256Mi"),
+		},
+		Limits: corev1.ResourceList{
+			corev1.ResourceCPU:    resource.MustParse("1"),
+			corev1.ResourceMemory: resource.MustParse("1Gi"),
+		},
+	}
 }
 
 // containerResources applies the spec budget, falling back to the published
@@ -155,7 +180,7 @@ func containerResources(resources corev1.ResourceRequirements) corev1.ResourceRe
 // authority.
 func (r *Reconciler) serviceAccount(console *pgtoolboxv1alpha1.PgConsole) (*corev1.ServiceAccount, error) {
 	var annotations map[string]string
-	if console.Spec.Proxy.Authentication.Mode == pgtoolboxv1alpha1.ProxyAuthenticationModeOpenShift &&
+	if console.Spec.Proxy.Authentication.OpenShift != nil &&
 		console.Spec.Exposure.Hostname != "" {
 		annotations = map[string]string{
 			oauthRedirectAnnotation: "https://" + console.Spec.Exposure.Hostname,
@@ -265,7 +290,7 @@ func (r *Reconciler) deployment(
 		r.consoleContainer(console, inputs.ConsoleImage),
 	}
 
-	if auth := console.Spec.Proxy.Authentication; auth.Mode == pgtoolboxv1alpha1.ProxyAuthenticationModeOIDC {
+	if auth := console.Spec.Proxy.Authentication; auth.OIDC != nil {
 		volumes = append(volumes, corev1.Volume{
 			Name: oidcClientVolume,
 			VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{
@@ -282,12 +307,21 @@ func (r *Reconciler) deployment(
 	var initContainers []corev1.Container
 	if pgAdminEnabled(console) {
 		containers = append(containers, r.pgAdminContainer(console, inputs.PgAdminImage))
-		volumes = append(volumes, corev1.Volume{
-			Name: pgAdminSettingsVolume,
-			VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-				ClaimName: application.ResourceName(console.Name, pgAdminSettingsSuffix),
-			}},
-		})
+		volumes = append(volumes,
+			corev1.Volume{
+				Name: pgAdminSettingsVolume,
+				VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+					ClaimName: application.ResourceName(console.Name, pgAdminSettingsSuffix),
+				}},
+			},
+			corev1.Volume{
+				Name: pgAdminBootstrapVolume,
+				VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{
+					SecretName:  pgAdminBootstrapSecretName(console.Name),
+					DefaultMode: ptrTo(int32(0o440)),
+				}},
+			},
+		)
 		if r.OperatorImage != "" {
 			volumes = append(volumes,
 				corev1.Volume{Name: adminSyncBinVolume, VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
@@ -326,9 +360,14 @@ func (r *Reconciler) deployment(
 					AutomountServiceAccountToken: ptrTo(false),
 					RestartPolicy:                corev1.RestartPolicyAlways,
 					DNSPolicy:                    corev1.DNSClusterFirst,
+					// The hardening is the operator's and is not configurable.
+					// fsGroup is the exception: only the platform knows what
+					// value is admissible, and the evidence sidecar needs one
+					// on any cluster that does not default it.
 					SecurityContext: &corev1.PodSecurityContext{
 						RunAsNonRoot:   ptrTo(true),
 						SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
+						FSGroup:        console.Spec.PodSecurityContext.FSGroup,
 					},
 					InitContainers: initContainers,
 					Containers:     containers,
@@ -356,7 +395,7 @@ func (r *Reconciler) proxyContainer(console *pgtoolboxv1alpha1.PgConsole, image 
 		{Name: proxyConfigVolume, MountPath: proxyConfigMountPath, ReadOnly: true},
 		{Name: kubeAPIAccessVolume, MountPath: serviceAccountRoot, ReadOnly: true},
 	}
-	if console.Spec.Proxy.Authentication.Mode == pgtoolboxv1alpha1.ProxyAuthenticationModeOIDC {
+	if console.Spec.Proxy.Authentication.OIDC != nil {
 		mounts = append(mounts, corev1.VolumeMount{
 			Name: oidcClientVolume, MountPath: oidcClientSecretMountPath, ReadOnly: true,
 		})
@@ -403,16 +442,7 @@ func (r *Reconciler) consoleContainer(console *pgtoolboxv1alpha1.PgConsole, imag
 		Name:            "pgconsole",
 		Image:           image,
 		ImagePullPolicy: imagePullPolicy(console.Spec.Image),
-		Env: []corev1.EnvVar{
-			{Name: "CLUSTER_NAME", Value: console.Spec.CNPGClusterRef.Name},
-			{Name: "NAMESPACE", Value: console.Namespace},
-			// Identity and level arrive from the proxy as trusted headers;
-			// they are only trustworthy because the NetworkPolicy confines
-			// ingress to the proxy.
-			{Name: "TRUSTED_USER_HEADER", Value: "X-Forwarded-User"},
-			{Name: "ALLOW_OPERATIONS", Value: "true"},
-			{Name: "ALLOW_LOGS", Value: "true"},
-		},
+		Env:             consoleEnv(console),
 		Ports: []corev1.ContainerPort{{
 			Name:          "http",
 			ContainerPort: consolePort,
@@ -449,6 +479,19 @@ func (r *Reconciler) consoleContainer(console *pgtoolboxv1alpha1.PgConsole, imag
 // subset (no privilege escalation, all capabilities dropped, non-root pod)
 // is what this step needs; user and server sync lands in a later step.
 func (r *Reconciler) pgAdminContainer(console *pgtoolboxv1alpha1.PgConsole, image string) corev1.Container {
+	mounts := []corev1.VolumeMount{
+		{Name: pgAdminSettingsVolume, MountPath: pgAdminSettingsMountPath},
+		{Name: pgAdminBootstrapVolume, MountPath: pgAdminBootstrapMountPath, ReadOnly: true},
+	}
+	// The .pgpass the sidecar writes exists only when the sidecar does; a
+	// mount naming a volume the Pod never declared is rejected outright.
+	if r.OperatorImage != "" {
+		mounts = append(mounts, corev1.VolumeMount{
+			Name: adminSyncPassfileVolume, MountPath: adminSyncPassfileMountPath,
+		})
+	}
+	mounts = append(mounts, corev1.VolumeMount{Name: "tmp", MountPath: "/tmp"})
+
 	return corev1.Container{
 		Name:            "pgadmin",
 		Image:           image,
@@ -456,22 +499,73 @@ func (r *Reconciler) pgAdminContainer(console *pgtoolboxv1alpha1.PgConsole, imag
 		Env: []corev1.EnvVar{
 			{Name: "PGADMIN_LISTEN_ADDRESS", Value: "127.0.0.1"},
 			{Name: "PGADMIN_LISTEN_PORT", Value: portString(pgAdminPort)},
+			// Without an initial account pgAdmin refuses to start, and its
+			// settings database is never initialized — which is what makes
+			// setup.py, and so the whole admin-sync path, work at all. The
+			// password arrives as a file so it never appears in the Pod spec.
+			// pgAdmin is reached through the proxy under a path prefix, and
+			// the proxy forwards the path as-is rather than stripping it —
+			// stripping would make pgAdmin's own absolute links (/static,
+			// /login) escape the prefix and land on the console. SCRIPT_NAME
+			// is how a WSGI application is told the prefix it is mounted
+			// under, so it both serves and generates URLs there. Without it
+			// every request under /pgadmin is a 404 from pgAdmin itself.
+			{Name: "SCRIPT_NAME", Value: pgAdminLinkPath},
+			{Name: "PGADMIN_DEFAULT_EMAIL", Value: pgAdminBootstrapEmail},
+			{
+				Name:  "PGADMIN_DEFAULT_PASSWORD_FILE",
+				Value: pgAdminBootstrapMountPath + "/" + pgAdminBootstrapPasswordKey,
+			},
+			// Trust the identity the proxy already established rather than
+			// asking for it a second time. Anyone reaching /pgadmin has been
+			// authenticated by pgtoolbox-proxy and carries the same
+			// X-Forwarded-User the console reads, and the accounts the
+			// admin-sync sidecar creates are webserver-auth accounts with no
+			// password of their own — so without this pgAdmin offers a login
+			// form that none of them could ever satisfy.
+			//
+			// The header is trustworthy here for the same reason it is for
+			// the console: the proxy strips any client-supplied copy before
+			// setting its own, and the generated NetworkPolicy confines
+			// ingress to the proxy. pgAdmin falls back to reading it from
+			// the request headers when it is absent from the WSGI environ.
+			{Name: "PGADMIN_CONFIG_AUTHENTICATION_SOURCES", Value: "['webserver']"},
+			{Name: "PGADMIN_CONFIG_WEBSERVER_REMOTE_USER", Value: "'" + consoleTrustedUserHeader + "'"},
+			// Load-bearing, and set rather than inherited from pgAdmin's
+			// default: an account exists only because pgAdmin created it on
+			// that person's first request, and the admin-sync sidecar then
+			// discovers it there. Nothing else creates one, so switching
+			// this off would leave every user at an empty pgAdmin.
+			{Name: "PGADMIN_CONFIG_WEBSERVER_AUTO_CREATE_USER", Value: "True"},
+			// With an external authentication source pgAdmin would still
+			// demand a master password to unlock its own credential store.
+			// There is nothing in it to unlock: server passwords reach
+			// PostgreSQL through the .pgpass file the admin-sync sidecar
+			// writes, never through pgAdmin's saved-password store.
+			{Name: "PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED", Value: "False"},
+			// Where libpq finds the credentials the admin-sync sidecar
+			// writes. It has to arrive as an environment variable rather
+			// than as the server definition's passfile parameter: in server
+			// mode pgAdmin resolves that parameter through its file manager,
+			// which joins it onto the signed-in user's storage directory. An
+			// absolute path is rewritten to one under /var/lib/pgadmin
+			// /storage that does not exist, resolves to nothing, and libpq
+			// is handed no passfile at all — reported as
+			// "fe_sendauth: no password supplied", with the credential
+			// sitting unread in the file the whole time.
+			{Name: "PGPASSFILE", Value: adminSyncPassfileMountPath + "/pgpass"},
 		},
 		Ports: []corev1.ContainerPort{{
 			Name:          "http",
 			ContainerPort: pgAdminPort,
 			Protocol:      corev1.ProtocolTCP,
 		}},
-		Resources: containerResources(console.Spec.PgAdmin.Resources),
+		Resources: adminSyncResources(console.Spec.PgAdmin.Resources),
 		SecurityContext: &corev1.SecurityContext{
 			AllowPrivilegeEscalation: ptrTo(false),
 			Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
 		},
-		VolumeMounts: []corev1.VolumeMount{
-			{Name: pgAdminSettingsVolume, MountPath: pgAdminSettingsMountPath},
-			{Name: adminSyncPassfileVolume, MountPath: adminSyncPassfileMountPath},
-			{Name: "tmp", MountPath: "/tmp"},
-		},
+		VolumeMounts: mounts,
 	}
 }
 
@@ -519,7 +613,7 @@ func (r *Reconciler) adminSyncSidecarContainer(console *pgtoolboxv1alpha1.PgCons
 			InitialDelaySeconds: 2,
 			PeriodSeconds:       10,
 		},
-		Resources: containerResources(console.Spec.PgAdmin.Resources),
+		Resources: adminSyncResources(console.Spec.PgAdmin.Resources),
 		SecurityContext: &corev1.SecurityContext{
 			AllowPrivilegeEscalation: ptrTo(false),
 			ReadOnlyRootFilesystem:   ptrTo(true),
@@ -529,6 +623,11 @@ func (r *Reconciler) adminSyncSidecarContainer(console *pgtoolboxv1alpha1.PgCons
 			{Name: adminSyncBinVolume, MountPath: adminSyncBinMountPath, ReadOnly: true},
 			{Name: adminSyncTLSVolume, MountPath: adminSyncTLSMountPath, ReadOnly: true},
 			{Name: adminSyncPassfileVolume, MountPath: adminSyncPassfileMountPath},
+			// setup.py is the only sanctioned way to change a pgAdmin user,
+			// and it operates on the settings database itself. Without this
+			// mount every sync fails with a FileNotFoundError for a SQLite
+			// path the sidecar cannot see.
+			{Name: pgAdminSettingsVolume, MountPath: pgAdminSettingsMountPath},
 			{Name: "tmp", MountPath: "/tmp"},
 		},
 	}

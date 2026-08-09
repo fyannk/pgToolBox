@@ -23,6 +23,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -32,6 +33,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"golang.org/x/oauth2"
 
 	"github.com/fyannk/pgtoolbox/internal/proxy/config"
 	"github.com/fyannk/pgtoolbox/internal/proxy/pages"
@@ -60,6 +63,8 @@ type sessionContextKey struct{}
 type Provider interface {
 	// Register installs the provider's endpoints on mux.
 	Register(mux *http.ServeMux)
+	// Mode is the config.Mode* constant this provider implements.
+	Mode() string
 }
 
 // Runtime is one immutable configuration snapshot: everything derived
@@ -88,6 +93,12 @@ type Env struct {
 	// AccessRequests creates PgToolBoxAccessRequest objects; nil when the
 	// flow is disabled or in-cluster configuration is unavailable.
 	AccessRequests AccessRequestCreator
+	// Available names the providers that actually started, which is not
+	// always every provider the configuration enables: an unreachable
+	// identity provider is skipped so the rest keep working. The login
+	// page offers these and only these, so no button leads to a handler
+	// that was never registered.
+	Available []string
 }
 
 // NewEnv builds an Env around the initial runtime.
@@ -131,6 +142,16 @@ func BuildRuntime(cfg *config.Config) (*Runtime, error) {
 		rp := &httputil.ReverseProxy{
 			Rewrite: func(pr *httputil.ProxyRequest) {
 				pr.SetURL(target)
+				// SetURL points the outbound request at the loopback
+				// upstream, which also makes it the Host the upstream sees.
+				// An upstream that builds absolute URLs then builds them
+				// from 127.0.0.1:<port> and hands the browser an address
+				// inside the Pod — pgAdmin's trailing-slash redirect did
+				// exactly that. Preserve the client's Host, and state the
+				// forwarding explicitly; SetXForwarded overwrites any
+				// client-supplied X-Forwarded-* rather than appending to it.
+				pr.Out.Host = pr.In.Host
+				pr.SetXForwarded()
 				// Strip any client-forged identity headers, then set
 				// them exclusively from the verified session.
 				for _, h := range strippedHeaders {
@@ -173,16 +194,49 @@ func New(env *Env) *http.ServeMux {
 	return mux
 }
 
-// LoginPath returns the login-start path of the configured provider.
-func LoginPath(rt *Runtime) string {
-	switch rt.Config.Provider.Mode {
-	case config.ModeLocal:
-		return "/auth/local/login"
-	case config.ModeOpenShift:
-		return "/auth/openshift/login"
-	default:
-		return "/auth/oidc/login"
+// LoginPath returns where an unauthenticated request is sent to sign in.
+//
+// With local accounts enabled that is the local page, because it is the one
+// with a form, and it offers the other enabled providers as buttons beside
+// it. With no local accounts there is nothing to type, so the single
+// external provider's start path is the whole of the login flow and the
+// browser goes straight there.
+func LoginPath(e *Env) string {
+	for _, mode := range e.available() {
+		if mode == config.ModeLocal {
+			return "/auth/local/login"
+		}
 	}
+	for _, mode := range e.available() {
+		if mode == config.ModeOpenShift {
+			return "/auth/openshift/login"
+		}
+	}
+	return "/auth/oidc/login"
+}
+
+// available falls back to the configured set, which is what tests and any
+// caller that never recorded a startup result see.
+func (e *Env) available() []string {
+	if len(e.Available) > 0 {
+		return e.Available
+	}
+	return e.Runtime().Config.Provider.Modes
+}
+
+// ExternalLogins lists the providers the login page offers as buttons,
+// which is every enabled provider that is not the local form itself.
+func ExternalLogins(e *Env) []pages.ExternalLogin {
+	var logins []pages.ExternalLogin
+	for _, mode := range e.available() {
+		switch mode {
+		case config.ModeOIDC:
+			logins = append(logins, pages.ExternalLogin{Label: "Sign in with SSO", Path: "/auth/oidc/login"})
+		case config.ModeOpenShift:
+			logins = append(logins, pages.ExternalLogin{Label: "Sign in with OpenShift", Path: "/auth/openshift/login"})
+		}
+	}
+	return logins
 }
 
 // SafeRedirect validates a post-login redirect target: only relative
@@ -198,11 +252,14 @@ func SafeRedirect(p string) string {
 
 // IssueSession mints a session cookie for subject at level using the
 // current runtime. Level may be config.LevelNone for authenticated
-// identities unknown to the console.
-func (e *Env) IssueSession(w http.ResponseWriter, subject string, level config.Level) error {
+// identities unknown to the console. Mode names the provider that
+// authenticated the subject, which the session records: with several
+// providers enabled, "who let this person in" is no longer answerable
+// from the configuration alone.
+func (e *Env) IssueSession(w http.ResponseWriter, subject string, level config.Level, mode string) error {
 	rt := e.Runtime()
 	cfg := rt.Config
-	d := rt.Codec.NewData(subject, string(level), cfg.Provider.Mode, cfg.Session.MaxAge.D())
+	d := rt.Codec.NewData(subject, string(level), mode, cfg.Session.MaxAge.D())
 	return rt.Codec.SetCookie(w, cfg.Session.CookieName, cfg.Session.CookieSecure(), cfg.Session.MaxAge.D(), d)
 }
 
@@ -217,7 +274,7 @@ func (e *Env) LookupUser(subject string) (config.User, bool) {
 func (e *Env) handleLogout(w http.ResponseWriter, r *http.Request) {
 	rt := e.Runtime()
 	session.ClearCookie(w, rt.Config.Session.CookieName, rt.Config.Session.CookieSecure())
-	http.Redirect(w, r, LoginPath(rt), http.StatusFound)
+	http.Redirect(w, r, LoginPath(e), http.StatusFound)
 }
 
 // handleProxied authenticates, authorizes, and proxies one request.
@@ -231,7 +288,7 @@ func (e *Env) handleProxied(w http.ResponseWriter, r *http.Request) {
 	sess, err := rt.Codec.ReadCookie(r, rt.Config.Session.CookieName)
 	if err != nil {
 		if r.Method == http.MethodGet {
-			login := LoginPath(rt) + "?rd=" + url.QueryEscape(r.URL.RequestURI())
+			login := LoginPath(e) + "?rd=" + url.QueryEscape(r.URL.RequestURI())
 			http.Redirect(w, r, login, http.StatusFound)
 			return
 		}
@@ -285,4 +342,34 @@ func pathMatchesPrefix(path, prefix string) bool {
 		return true
 	}
 	return path == prefix || strings.HasPrefix(path, prefix+"/")
+}
+
+// ExchangeFailure turns a token-endpoint failure into a status and a
+// message that says who has to do something about it. "Bad Gateway" is
+// only right when the provider could not be reached: a provider that
+// answers and refuses this console's credentials is a configuration fault
+// here, and telling the person signing in that a gateway is bad sends
+// them to retry something that will never work.
+func ExchangeFailure(err error) (int, string) {
+	var retrieve *oauth2.RetrieveError
+	if !errors.As(err, &retrieve) {
+		// No HTTP response at all: DNS, TLS, timeout, refused.
+		return http.StatusBadGateway, "The identity provider could not be reached."
+	}
+	switch retrieve.ErrorCode {
+	case "invalid_client", "unauthorized_client":
+		return http.StatusInternalServerError, "This console was rejected by the identity provider " +
+			"(" + retrieve.ErrorCode + "). Its client ID or client secret is wrong; " +
+			"an administrator has to correct the PgConsole's oidc settings."
+	case "invalid_grant":
+		return http.StatusBadRequest, "The login could not be completed; please try again."
+	case "invalid_request", "unsupported_grant_type":
+		return http.StatusInternalServerError, "The identity provider rejected this console's request " +
+			"(" + retrieve.ErrorCode + "). The registered redirect URI most likely does not match " +
+			"the address this console is reached on."
+	}
+	if retrieve.Response != nil && retrieve.Response.StatusCode >= 500 {
+		return http.StatusBadGateway, "The identity provider failed to complete the login."
+	}
+	return http.StatusInternalServerError, "The identity provider refused to complete the login."
 }

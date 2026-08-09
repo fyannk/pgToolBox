@@ -24,7 +24,9 @@ spec:
   cnpgClusterRef: { name: pg-main }
   proxy:
     authentication:
-      mode: oidc
+      bootstrapAdmin:
+        subject: jane@corp.example
+      local: {}
       oidc:
         issuerURL: https://idp.example.com
         clientID: pgconsole
@@ -40,41 +42,42 @@ Wait for `Ready=True`:
 kubectl get pgc -n app-db main -w
 ```
 
-## 3. Grant access
+## 3. Sign in
+
+Jane needs nothing declared: she is the console's `bootstrapAdmin`, so the
+operator already materialized her as a `dba`. She opens
+`https://pgconsole.apps.example.com`, picks the SSO button, signs in at the
+IdP, and lands on the console. `/pgadmin` opens with the cluster's own
+credentials already configured.
+
+## 4. Grant access to everyone else
 
 ```yaml
 apiVersion: pgtoolbox.fyannk.dev/v1alpha1
-kind: PgToolBoxRole
-metadata:
-  name: dba
-  namespace: app-db
-spec:
-  pgConsoleRef: { name: main }
-  level: dba
-  postgresRole:
-    profile: database-owner
----
-apiVersion: pgtoolbox.fyannk.dev/v1alpha1
 kind: PgToolBoxUser
 metadata:
-  name: jane
+  name: sam
   namespace: app-db
 spec:
   pgConsoleRef: { name: main }
-  subject: jane@corp.example
-  roleRef: { name: dba }
+  subject: sam@corp.example
+  level: view
 ```
 
-Jane opens `https://pgconsole.apps.example.com`, signs in at the IdP, and
-lands on the console at `dba` level. `/pgadmin` opens a ready-to-use
-connection as the postgres role the operator created.
+Sam authenticates at the IdP because this object carries no
+`localPasswordSecretRef`. Add one and he can also use the form on the same
+page — which is how a break-glass account gets in when the IdP is down.
 
-## 4. Verify
+Sam could instead sign in first, land on the 403 page, and file a
+`PgToolBoxAccessRequest`; Jane approves it in the review panel and the
+operator materializes the same object.
+
+## 5. Verify
 
 ```bash
-kubectl get pgrole dba -n app-db -o yaml | yq '.status.conditions'
-kubectl get pguser jane -n app-db -o yaml | yq '.status'
+kubectl get pguser -n app-db
+kubectl get pguser main-bootstrap-admin -n app-db -o yaml | yq '.status'
 ```
 
-`CredentialReady=True` on the role, and `ProxySynced`/`PgAdminSynced` true
-on the user.
+`ProxySynced` and `PgAdminSynced` true on the user. The bootstrap admin is
+owned by the console: deleting it just gets it back.

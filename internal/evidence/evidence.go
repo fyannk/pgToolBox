@@ -30,7 +30,7 @@ import (
 	"fmt"
 	"strings"
 
-	evidencev1alpha1 "github.com/fyannk/objectstoreviewer/api/evidence/v1alpha1"
+	evidencev1alpha1 "github.com/fyannk/pgObjectStoreViewer/api/evidence/v1alpha1"
 )
 
 // Destination is the credential-free identity of one S3 repository root,

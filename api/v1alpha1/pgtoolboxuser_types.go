@@ -35,9 +35,7 @@ type PgToolBoxUserSpec struct {
 	// +kubebuilder:validation:MaxLength=253
 	Subject string `json:"subject"`
 
-	// The PgToolBoxRole granting this user its level and postgres role,
-	// in the same namespace.
-	RoleRef LocalObjectReference `json:"roleRef"`
+	Level RoleLevel `json:"level"`
 
 	// Reference to the Secret holding this user's local-mode password
 	// (bcrypt). Only meaningful when the console's proxy authentication
@@ -59,9 +57,8 @@ type PgToolBoxUserStatus struct {
 	// Whether the pgAdmin account and shared server definition are
 	// provisioned for this user.
 	// +optional
-	PgAdminSynced bool `json:"pgAdminSynced,omitempty"`
 
-	// Standard conditions: Ready, RoleReady, ProxySynced, PgAdminSynced.
+	// Standard conditions: Ready, RoleReady, ProxySynced.
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
