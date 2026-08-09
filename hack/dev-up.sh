@@ -282,14 +282,25 @@ if [ "$AUTH_LOCAL" = true ]; then
   auth_block="      local: {}"
 fi
 if [ "$AUTH_OIDC" = true ]; then
-  for required in OIDC_ISSUER_URL OIDC_CLIENT_ID OIDC_CLIENT_SECRET; do
+  for required in OIDC_ISSUER_URL OIDC_CLIENT_ID; do
     eval "value=\$$required"
     [ -n "$value" ] || { echo "AUTH_MODE with oidc needs $required" >&2; exit 1; }
   done
-  log "storing the OIDC client secret"
-  kc -n "$NAMESPACE" create secret generic pgconsole-oidc \
-    --from-literal=clientSecret="$OIDC_CLIENT_SECRET" \
-    --dry-run=client -o yaml | kc apply --server-side --force-conflicts -f - > /dev/null
+  # The secret is only stored when one is supplied. A re-run without it
+  # keeps what is already in the cluster, so repeating the command from
+  # shell history cannot overwrite a working credential with a blank or a
+  # placeholder — and asks for the real one only when there is none.
+  if [ -n "$OIDC_CLIENT_SECRET" ]; then
+    log "storing the OIDC client secret"
+    kc -n "$NAMESPACE" create secret generic pgconsole-oidc \
+      --from-literal=clientSecret="$OIDC_CLIENT_SECRET" \
+      --dry-run=client -o yaml | kc apply --server-side --force-conflicts -f - > /dev/null
+  elif kc -n "$NAMESPACE" get secret pgconsole-oidc > /dev/null 2>&1; then
+    log "keeping the OIDC client secret already in the cluster"
+  else
+    echo "AUTH_MODE with oidc needs OIDC_CLIENT_SECRET the first time" >&2
+    exit 1
+  fi
   auth_block="${auth_block:+$auth_block
 }      oidc:
         issuerURL: $OIDC_ISSUER_URL
