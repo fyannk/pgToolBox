@@ -94,39 +94,39 @@ type ProxySpec struct {
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
 }
 
-// ProxyAuthenticationMode selects how humans authenticate to the proxy.
-// +kubebuilder:validation:Enum=openshift;oidc;local
-type ProxyAuthenticationMode string
-
-const (
-	// ProxyAuthenticationModeOpenShift uses the integrated OpenShift OAuth
-	// stack, auto-discovered from the cluster.
-	ProxyAuthenticationModeOpenShift ProxyAuthenticationMode = "openshift"
-
-	// ProxyAuthenticationModeOIDC speaks plain OIDC to an external identity
-	// provider.
-	ProxyAuthenticationModeOIDC ProxyAuthenticationMode = "oidc"
-
-	// ProxyAuthenticationModeLocal authenticates against bcrypt credentials
-	// rendered by the operator from the console's PgToolBoxUser set.
-	ProxyAuthenticationModeLocal ProxyAuthenticationMode = "local"
-)
-
-// ProxyAuthenticationSpec configures proxy authentication as a discriminated
-// union on mode: the oidc block is required exactly when mode is oidc.
-// The openshift and local modes take no configuration: openshift is
-// auto-discovered from the cluster, and local users come only from the
-// console's PgToolBoxUser resources.
-// +kubebuilder:validation:XValidation:rule="self.mode == 'oidc' ? has(self.oidc) : true",message="oidc is required when mode is oidc"
-// +kubebuilder:validation:XValidation:rule="self.mode == 'oidc' || !has(self.oidc)",message="oidc may only be set when mode is oidc"
+// ProxyAuthenticationSpec configures how humans authenticate. Each block
+// enables one provider, and more than one may be enabled at once: the login
+// page then offers the local form with the others as buttons beside it.
+//
+// Mixed authentication is a supported deployment rather than a stepping
+// stone. A local account is how the first administrator gets in before any
+// identity is federated, and how anyone gets in when the identity provider
+// is the thing that is down.
+// +kubebuilder:validation:XValidation:rule="has(self.local) || has(self.oidc) || has(self.openshift)",message="at least one authentication provider must be enabled"
 type ProxyAuthenticationSpec struct {
-	// The authentication mode.
-	Mode ProxyAuthenticationMode `json:"mode"`
+	// Local accounts, rendered from the console's PgToolBoxUser set. A user
+	// participates in local sign-in only if it carries a password.
+	// +optional
+	Local *ProxyLocalSpec `json:"local,omitempty"`
 
-	// Configuration for the oidc mode.
+	// Plain OIDC against an external identity provider.
 	// +optional
 	OIDC *ProxyOIDCSpec `json:"oidc,omitempty"`
+
+	// The integrated OpenShift OAuth stack, auto-discovered from the
+	// cluster.
+	// +optional
+	OpenShift *ProxyOpenShiftSpec `json:"openshift,omitempty"`
 }
+
+// ProxyLocalSpec enables local accounts. It carries no settings: the users
+// are the console's own PgToolBoxUser objects.
+type ProxyLocalSpec struct{}
+
+// ProxyOpenShiftSpec enables the integrated OpenShift OAuth stack. It
+// carries no settings: the endpoints are discovered from the cluster and
+// the workload ServiceAccount is the OAuth client.
+type ProxyOpenShiftSpec struct{}
 
 // ProxyOIDCSpec configures the oidc authentication mode.
 type ProxyOIDCSpec struct {

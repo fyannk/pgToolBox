@@ -4,7 +4,7 @@ Read conditions first; the vocabulary below is the operator's contract.
 
 ```bash
 kubectl get pgc -n <ns> <name> -o yaml | yq '.status.conditions'
-kubectl get pgrole,pguser,pgreq -n <ns>
+kubectl get pguser,pgreq -n <ns>
 ```
 
 ## PgConsole

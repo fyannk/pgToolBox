@@ -137,7 +137,7 @@ set -e
 
 if [[ ${status} -ne 0 ]]; then
   log "test failed — dumping state"
-  kubectl get pgconsole,pgtoolboxrole,pgtoolboxuser,deploy,pod -A -l app.kubernetes.io/managed-by=pgtoolbox || true
+  kubectl get pgconsole,pgtoolboxuser,deploy,pod -A -l app.kubernetes.io/managed-by=pgtoolbox || true
   kubectl get pgconsole -A -o yaml | grep -A40 'conditions:' | head -60 || true
   kubectl get cluster -A || true
   kubectl -n pgtoolbox logs deployment/pgtoolbox --tail=100 || true

@@ -37,26 +37,25 @@
 # evidence sidecar); SKIP_EVIDENCE=true keeps the store but leaves the
 # sidecar out.
 #
-# AUTH_MODE=oidc points the proxy at a real identity provider instead:
+# AUTH_MODE adds a real identity provider beside the seeded local accounts:
 #
-#   AUTH_MODE=oidc \
+#   AUTH_MODE=local,oidc \
 #   OIDC_ISSUER_URL=https://idp.example \
 #   OIDC_CLIENT_ID=pgtoolboxdev \
 #   OIDC_CLIENT_SECRET=... \
 #   OIDC_SUBJECTS="me@example=dba" ./hack/dev-up.sh
 #
-# The secret is read from the environment into a Kubernetes Secret and is
-# never written to a file here.
+# The login page then shows the local form with an SSO button beside it.
+# AUTH_MODE=oidc alone drops the local form. The secret is read from the
+# environment into a Kubernetes Secret and is never written to a file here.
 #
 # Register this redirect URI with the provider first:
 #
-#     http://localhost:8080/auth/oidc/callback
+#     http://localhost:$PORT/auth/oidc/callback
 #
-# The port is not a choice. A console with no exposure hostname advertises
-# the proxy's own loopback URL, which is localhost:8080, and the provider
-# redirects the *browser* there — so the forward has to land on the same
-# port for the round trip to close. AUTH_MODE=oidc therefore pins PORT to
-# 8080 unless you set one explicitly.
+# with $PORT being whatever this script forwards (3000 by default). The
+# proxy builds the redirect URI from the origin the request arrived on, so
+# the port is yours to pick — it just has to match what you registered.
 #
 # Environment overrides: CLUSTER, KIND_NODE_IMAGE, CNPG_MANIFEST,
 # CERT_MANAGER_MANIFEST, BARMAN_MANIFEST, PGCONSOLE_IMAGE, PGADMIN_IMAGE,
@@ -89,19 +88,24 @@ SUBJECT_DOMAIN="${SUBJECT_DOMAIN:-pgtoolbox.dev}"
 # it. The secret is read from the environment and written straight into a
 # Kubernetes Secret; it is never echoed and never written to a file here.
 #
-# The provider must accept the redirect URI the console advertises, which
-# with no exposure hostname is http://localhost:$PORT/oauth2/callback.
+# The provider must accept http://localhost:$PORT/auth/oidc/callback.
 AUTH_MODE="${AUTH_MODE:-local}"
 OIDC_ISSUER_URL="${OIDC_ISSUER_URL:-}"
 OIDC_CLIENT_ID="${OIDC_CLIENT_ID:-}"
 OIDC_CLIENT_SECRET="${OIDC_CLIENT_SECRET:-}"
 OIDC_SUBJECTS="${OIDC_SUBJECTS:-}"
 
-# The redirect URI the console advertises is built from the proxy's own
-# loopback URL when no exposure hostname is set, so the forward must land
-# on that port or the provider sends the browser somewhere nothing listens.
-if [ "$AUTH_MODE" = "oidc" ] && [ -z "${PORT_EXPLICIT:-}" ] && [ "${PORT}" = "3000" ]; then
-  PORT=8080
+case ",$AUTH_MODE," in
+  *,local,*) AUTH_LOCAL=true ;;
+  *) AUTH_LOCAL=false ;;
+esac
+case ",$AUTH_MODE," in
+  *,oidc,*) AUTH_OIDC=true ;;
+  *) AUTH_OIDC=false ;;
+esac
+if [ "$AUTH_LOCAL" = false ] && [ "$AUTH_OIDC" = false ]; then
+  echo "AUTH_MODE must name local, oidc, or both (got: $AUTH_MODE)" >&2
+  exit 1
 fi
 
 KIND_NODE_IMAGE="${KIND_NODE_IMAGE:-kindest/node:v1.34.0}"
@@ -265,22 +269,24 @@ EOF
     evidence_enabled=false
   fi
 
-  if [ "$AUTH_MODE" = "oidc" ]; then
+  auth_block=""
+  if [ "$AUTH_LOCAL" = true ]; then
+    auth_block="      local: {}"
+  fi
+  if [ "$AUTH_OIDC" = true ]; then
     for required in OIDC_ISSUER_URL OIDC_CLIENT_ID OIDC_CLIENT_SECRET; do
       eval "value=\$$required"
-      [ -n "$value" ] || { echo "AUTH_MODE=oidc needs $required" >&2; exit 1; }
+      [ -n "$value" ] || { echo "AUTH_MODE with oidc needs $required" >&2; exit 1; }
     done
     log "storing the OIDC client secret"
     kc -n "$NAMESPACE" create secret generic pgconsole-oidc \
       --from-literal=clientSecret="$OIDC_CLIENT_SECRET" \
       --dry-run=client -o yaml | kc apply -f - > /dev/null
-    auth_block="      mode: oidc
-      oidc:
+    auth_block="${auth_block:+$auth_block
+}      oidc:
         issuerURL: $OIDC_ISSUER_URL
         clientID: $OIDC_CLIENT_ID
         clientSecretRef: { name: pgconsole-oidc }"
-  else
-    auth_block="      mode: local"
   fi
 
   log "declaring the console"
@@ -319,7 +325,7 @@ EOF
   # one cannot be provisioned there. Real identities from an OIDC provider
   # are email addresses; the seeded ones are too, so the pgAdmin half of the
   # stack works rather than half-failing.
-  if [ "$AUTH_MODE" = "oidc" ]; then
+  if [ "$AUTH_OIDC" = true ]; then
     # No passwords: the identity provider holds those. A user here only
     # says what level an already-authenticated identity gets, and a level
     # has to be granted per identity because no group mapping exists.
@@ -341,7 +347,9 @@ spec:
   level: $level
 EOF
     done
-  else
+  fi
+
+  if [ "$AUTH_LOCAL" = true ]; then
     log "seeding one user per level"
     for entry in "viewer:view" "operator:poweruser" "dba:dba"; do
       name=${entry%%:*}
@@ -404,6 +412,10 @@ cat <<EOF
 
     http://localhost:$PORT
 
+EOF
+
+if [ "$AUTH_LOCAL" = true ]; then
+cat <<EOF
   Sign in as any of these — the level is asserted by the proxy from the
   PgToolBoxUser's role, exactly as in production:
 
@@ -416,19 +428,37 @@ cat <<EOF
   The subjects are email addresses because pgAdmin keys its accounts on
   one; a subject that is not an address cannot be provisioned there.
 
+EOF
+fi
+
+if [ "$AUTH_OIDC" = true ]; then
+cat <<EOF
+  $OIDC_ISSUER_URL is enabled too. With local accounts alongside, the
+  login page shows the form with an SSO button beside it; sign-in through
+  the provider lands back on http://localhost:$PORT/auth/oidc/callback,
+  which is the URI to register there.
+
+  These identities have a level; anyone else reaches the 403 page:
+
+    ${OIDC_SUBJECTS:-(none — set OIDC_SUBJECTS)}
+
+EOF
+fi
+
+cat <<EOF
   pgAdmin: browse to http://localhost:$PORT/pgadmin directly. The console
   renders an in-UI link only when the PgConsole has an exposure hostname —
   a clusterIP console reached by port-forward has no absolute URL the
   operator could put there.
 
-  Sign in as 'stranger@$SUBJECT_DOMAIN' with any password to see the proxy reject an
-  unknown identity — the 403 page's form files a real
+  Sign in as an identity with no PgToolBoxUser to see the proxy reject an
+  unknown one — the 403 page's form files a real
   PgToolBoxAccessRequest, which 'dba' can then approve in the review panel.
   Approving it makes the operator materialize the PgToolBoxUser, and the
   next reconcile lets that identity in.
 
   Inspect the objects with:
-    kubectl --context $CONTEXT -n $NAMESPACE get pgconsole,pgrole,pguser,pgreq
+    kubectl --context $CONTEXT -n $NAMESPACE get pgconsole,pguser,pgreq
 
   Ctrl-C stops the forward; the kind cluster stays up, so re-running this
   script relaunches it fast.

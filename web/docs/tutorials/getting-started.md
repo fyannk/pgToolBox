@@ -24,7 +24,7 @@ spec:
   cnpgClusterRef: { name: pg-main }
   proxy:
     authentication:
-      mode: oidc
+      local: {}
       oidc:
         issuerURL: https://idp.example.com
         clientID: pgconsole
@@ -44,15 +44,6 @@ kubectl get pgc -n app-db main -w
 
 ```yaml
 apiVersion: pgtoolbox.fyannk.dev/v1alpha1
-kind: PgToolBoxRole
-metadata:
-  name: dba
-  namespace: app-db
-spec:
-  pgConsoleRef: { name: main }
-  level: dba
----
-apiVersion: pgtoolbox.fyannk.dev/v1alpha1
 kind: PgToolBoxUser
 metadata:
   name: jane
@@ -63,16 +54,18 @@ spec:
   level: dba
 ```
 
-Jane opens `https://pgconsole.apps.example.com`, signs in at the IdP, and
-lands on the console at `dba` level. `/pgadmin` opens a ready-to-use
-connection as the postgres role the operator created.
+Jane opens `https://pgconsole.apps.example.com`, picks the SSO button,
+signs in at the IdP, and lands on the console at `dba` level. `/pgadmin`
+opens with the cluster's own credentials already configured.
+
+Jane authenticates at the IdP because her `PgToolBoxUser` carries no
+`localPasswordSecretRef`. Give one to a break-glass account and it can
+sign in at the form on the same page, IdP or no IdP.
 
 ## 4. Verify
 
 ```bash
-kubectl get pgrole dba -n app-db -o yaml | yq '.status.conditions'
 kubectl get pguser jane -n app-db -o yaml | yq '.status'
 ```
 
-`CredentialReady=True` on the role, and `ProxySynced`/`PgAdminSynced` true
-on the user.
+`ProxySynced` and `PgAdminSynced` true on the user.

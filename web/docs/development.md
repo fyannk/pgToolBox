@@ -36,7 +36,7 @@ Unlike pgConsole's `dev-up.sh`, this does not fake the trusted proxy on
 several ports. pgConsole has no authentication of its own, so its script
 injects the forwarded headers itself; pgToolBox **is** that proxy, so
 there is one port, a real login, and real sessions — the level ladder
-comes from the seeded `PgToolBoxRole` and `PgToolBoxUser` objects.
+comes from the seeded `PgToolBoxUser` objects.
 
 :::note
 The subjects are email addresses on purpose. pgAdmin keys its accounts on

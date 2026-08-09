@@ -240,7 +240,7 @@ func createConsole(t *testing.T) *pgtoolboxv1alpha1.PgConsole {
 			CNPGClusterRef: pgtoolboxv1alpha1.LocalObjectReference{Name: clusterName},
 			Proxy: pgtoolboxv1alpha1.ProxySpec{
 				Authentication: pgtoolboxv1alpha1.ProxyAuthenticationSpec{
-					Mode: pgtoolboxv1alpha1.ProxyAuthenticationModeLocal,
+					Local: &pgtoolboxv1alpha1.ProxyLocalSpec{},
 				},
 			},
 			PgAdmin: pgtoolboxv1alpha1.PgAdminSpec{Enabled: ptr(false)},

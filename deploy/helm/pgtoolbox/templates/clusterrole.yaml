@@ -139,14 +139,6 @@ rules:
 - apiGroups:
   - pgtoolbox.fyannk.dev
   resources:
-  - pgtoolboxroles
-  verbs:
-  - get
-  - list
-  - watch
-- apiGroups:
-  - pgtoolbox.fyannk.dev
-  resources:
   - pgtoolboxusers
   verbs:
   - create

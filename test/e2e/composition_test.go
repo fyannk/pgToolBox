@@ -178,7 +178,7 @@ func createFullConsole(t *testing.T) {
 			CNPGClusterRef: pgtoolboxv1alpha1.LocalObjectReference{Name: fullClusterName},
 			Proxy: pgtoolboxv1alpha1.ProxySpec{
 				Authentication: pgtoolboxv1alpha1.ProxyAuthenticationSpec{
-					Mode: pgtoolboxv1alpha1.ProxyAuthenticationModeLocal,
+					Local: &pgtoolboxv1alpha1.ProxyLocalSpec{},
 				},
 			},
 			PgAdmin:  pgtoolboxv1alpha1.PgAdminSpec{Enabled: ptr(true)},
@@ -580,4 +580,23 @@ func mountsVolume(container *corev1.Container, name string) bool {
 		}
 	}
 	return false
+}
+
+// The "at least one provider" rule is a CEL expression on the CRD, so only
+// a real API server enforces it — no unit test can stand in for this.
+func TestAuthenticationRequiresAProvider(t *testing.T) {
+	console := &pgtoolboxv1alpha1.PgConsole{
+		ObjectMeta: metav1.ObjectMeta{Name: "no-provider", Namespace: testNamespace},
+		Spec: pgtoolboxv1alpha1.PgConsoleSpec{
+			CNPGClusterRef: pgtoolboxv1alpha1.LocalObjectReference{Name: fullClusterName},
+		},
+	}
+	err := k8s.Create(ctx(), console)
+	if err == nil {
+		_ = k8s.Delete(ctx(), console)
+		t.Fatal("a console enabling no authentication provider was accepted")
+	}
+	if !apierrors.IsInvalid(err) {
+		t.Fatalf("create error = %v, want Invalid", err)
+	}
 }

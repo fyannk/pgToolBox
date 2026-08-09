@@ -180,7 +180,7 @@ func containerResources(resources corev1.ResourceRequirements) corev1.ResourceRe
 // authority.
 func (r *Reconciler) serviceAccount(console *pgtoolboxv1alpha1.PgConsole) (*corev1.ServiceAccount, error) {
 	var annotations map[string]string
-	if console.Spec.Proxy.Authentication.Mode == pgtoolboxv1alpha1.ProxyAuthenticationModeOpenShift &&
+	if console.Spec.Proxy.Authentication.OpenShift != nil &&
 		console.Spec.Exposure.Hostname != "" {
 		annotations = map[string]string{
 			oauthRedirectAnnotation: "https://" + console.Spec.Exposure.Hostname,
@@ -290,7 +290,7 @@ func (r *Reconciler) deployment(
 		r.consoleContainer(console, inputs.ConsoleImage),
 	}
 
-	if auth := console.Spec.Proxy.Authentication; auth.Mode == pgtoolboxv1alpha1.ProxyAuthenticationModeOIDC {
+	if auth := console.Spec.Proxy.Authentication; auth.OIDC != nil {
 		volumes = append(volumes, corev1.Volume{
 			Name: oidcClientVolume,
 			VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{
@@ -395,7 +395,7 @@ func (r *Reconciler) proxyContainer(console *pgtoolboxv1alpha1.PgConsole, image 
 		{Name: proxyConfigVolume, MountPath: proxyConfigMountPath, ReadOnly: true},
 		{Name: kubeAPIAccessVolume, MountPath: serviceAccountRoot, ReadOnly: true},
 	}
-	if console.Spec.Proxy.Authentication.Mode == pgtoolboxv1alpha1.ProxyAuthenticationModeOIDC {
+	if console.Spec.Proxy.Authentication.OIDC != nil {
 		mounts = append(mounts, corev1.VolumeMount{
 			Name: oidcClientVolume, MountPath: oidcClientSecretMountPath, ReadOnly: true,
 		})

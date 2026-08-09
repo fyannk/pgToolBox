@@ -113,35 +113,38 @@ func renderProxyConfig(
 		},
 	}
 
-	switch mode := console.Spec.Proxy.Authentication.Mode; mode {
-	case pgtoolboxv1alpha1.ProxyAuthenticationModeOIDC:
-		oidc := console.Spec.Proxy.Authentication.OIDC
-		if oidc == nil {
-			return nil, fmt.Errorf("spec.proxy.authentication.oidc is required when mode is oidc")
+	// Every enabled provider is rendered, in a fixed order so a no-op
+	// reconcile produces the same configuration and the login page offers
+	// them the same way each time.
+	auth := console.Spec.Proxy.Authentication
+	if auth.Local != nil {
+		cfg.Provider.Modes = append(cfg.Provider.Modes, proxyconfig.ModeLocal)
+	}
+	if auth.OIDC != nil {
+		cfg.Provider.Modes = append(cfg.Provider.Modes, proxyconfig.ModeOIDC)
+		cfg.Provider.OIDC = &proxyconfig.OIDCConfig{
+			IssuerURL:        auth.OIDC.IssuerURL,
+			ClientID:         auth.OIDC.ClientID,
+			ClientSecretFile: oidcClientSecretMountPath + "/" + oidcClientSecretFile,
+			// Pinned only when the console has an external hostname to build
+			// it from. Without one the proxy resolves it against the origin
+			// each request arrived on: the provider sends the browser to this
+			// URI, so the in-Pod listen address a fallback would name is
+			// never the right answer.
+			RedirectURL: externalCallbackURL(console, proxyCallbackPath),
 		}
-		cfg.Provider = proxyconfig.ProviderConfig{
-			Mode: proxyconfig.ModeOIDC,
-			OIDC: &proxyconfig.OIDCConfig{
-				IssuerURL:        oidc.IssuerURL,
-				ClientID:         oidc.ClientID,
-				ClientSecretFile: oidcClientSecretMountPath + "/" + oidcClientSecretFile,
-				RedirectURL:      consoleBaseURL(console) + proxyCallbackPath,
-			},
+	}
+	if auth.OpenShift != nil {
+		cfg.Provider.Modes = append(cfg.Provider.Modes, proxyconfig.ModeOpenShift)
+		cfg.Provider.OpenShift = &proxyconfig.OpenShiftConfig{
+			ClientID:         serviceAccountClientID(console),
+			ClientSecretFile: serviceAccountRoot + "/token",
+			RedirectURL:      externalCallbackURL(console, openshiftCallbackPath),
+			CAFile:           serviceAccountRoot + "/ca.crt",
 		}
-	case pgtoolboxv1alpha1.ProxyAuthenticationModeLocal:
-		cfg.Provider = proxyconfig.ProviderConfig{Mode: proxyconfig.ModeLocal}
-	case pgtoolboxv1alpha1.ProxyAuthenticationModeOpenShift:
-		cfg.Provider = proxyconfig.ProviderConfig{
-			Mode: proxyconfig.ModeOpenShift,
-			OpenShift: &proxyconfig.OpenShiftConfig{
-				ClientID:         serviceAccountClientID(console),
-				ClientSecretFile: serviceAccountRoot + "/token",
-				RedirectURL:      consoleBaseURL(console) + openshiftCallbackPath,
-				CAFile:           serviceAccountRoot + "/ca.crt",
-			},
-		}
-	default:
-		return nil, fmt.Errorf("proxy authentication mode %q is not supported by this build", mode)
+	}
+	if len(cfg.Provider.Modes) == 0 {
+		return nil, fmt.Errorf("spec.proxy.authentication enables no provider")
 	}
 
 	if pgAdminEnabled {
@@ -190,6 +193,16 @@ func consoleBaseURL(console *pgtoolboxv1alpha1.PgConsole) string {
 		return "https://" + hostname
 	}
 	return "http://localhost:" + portString(proxyPort)
+}
+
+// externalCallbackURL is the absolute callback the provider should return
+// the browser to, or empty when the console has no external hostname and
+// the proxy must resolve it per request.
+func externalCallbackURL(console *pgtoolboxv1alpha1.PgConsole, path string) string {
+	if console.Spec.Exposure.Hostname == "" {
+		return ""
+	}
+	return consoleBaseURL(console) + path
 }
 
 // serviceAccountClientID returns the OpenShift OAuth client ID of the
@@ -299,7 +312,7 @@ func (r *Reconciler) checkOIDCClientSecret(
 	console *pgtoolboxv1alpha1.PgConsole,
 ) *configIssue {
 	auth := console.Spec.Proxy.Authentication
-	if auth.Mode != pgtoolboxv1alpha1.ProxyAuthenticationModeOIDC || auth.OIDC == nil {
+	if auth.OIDC == nil {
 		return nil
 	}
 	ref := auth.OIDC.ClientSecretRef

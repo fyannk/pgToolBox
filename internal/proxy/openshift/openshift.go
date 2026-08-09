@@ -263,7 +263,7 @@ func (p *Provider) handleCallback(w http.ResponseWriter, r *http.Request) {
 	if u, ok := p.env.LookupUser(subject); ok {
 		level = u.Level
 	}
-	if err := p.env.IssueSession(w, subject, level); err != nil {
+	if err := p.env.IssueSession(w, subject, level, config.ModeOpenShift); err != nil {
 		p.env.Logger.Error("issuing session failed", "error", err)
 		fail(http.StatusInternalServerError, "The session could not be created.")
 		return

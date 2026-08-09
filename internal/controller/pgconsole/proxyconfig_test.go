@@ -20,6 +20,7 @@ package pgconsole
 
 import (
 	"context"
+	"slices"
 	"testing"
 
 	pgtoolboxv1alpha1 "github.com/fyannk/pgtoolbox/api/v1alpha1"
@@ -52,8 +53,8 @@ func renderAndParseWithUsers(t *testing.T, console *pgtoolboxv1alpha1.PgConsole,
 func TestRenderProxyConfigLocalMode(t *testing.T) {
 	cfg := renderAndParse(t, testConsole(), true)
 
-	if cfg.Provider.Mode != proxyconfig.ModeLocal {
-		t.Fatalf("provider mode = %q, want local", cfg.Provider.Mode)
+	if !slices.Equal(cfg.Provider.Modes, []string{proxyconfig.ModeLocal}) {
+		t.Fatalf("provider modes = %q, want [local]", cfg.Provider.Modes)
 	}
 	if cfg.Provider.OIDC != nil {
 		t.Fatalf("local mode must not carry an oidc block")
@@ -113,7 +114,6 @@ func TestRenderProxyConfigPgAdminDefaultMinLevel(t *testing.T) {
 func TestRenderProxyConfigOIDCMode(t *testing.T) {
 	console := testConsole()
 	console.Spec.Proxy.Authentication = pgtoolboxv1alpha1.ProxyAuthenticationSpec{
-		Mode: pgtoolboxv1alpha1.ProxyAuthenticationModeOIDC,
 		OIDC: &pgtoolboxv1alpha1.ProxyOIDCSpec{
 			IssuerURL: "https://idp.example.com",
 			ClientID:  "pgconsole",
@@ -128,7 +128,7 @@ func TestRenderProxyConfigOIDCMode(t *testing.T) {
 	}
 	cfg := renderAndParse(t, console, true)
 
-	if cfg.Provider.Mode != proxyconfig.ModeOIDC || cfg.Provider.OIDC == nil {
+	if !slices.Contains(cfg.Provider.Modes, proxyconfig.ModeOIDC) || cfg.Provider.OIDC == nil {
 		t.Fatalf("provider = %+v, want oidc", cfg.Provider)
 	}
 	oidc := cfg.Provider.OIDC
@@ -145,14 +145,16 @@ func TestRenderProxyConfigOIDCMode(t *testing.T) {
 
 func TestRenderProxyConfigOpenShift(t *testing.T) {
 	console := testConsole()
-	console.Spec.Proxy.Authentication.Mode = pgtoolboxv1alpha1.ProxyAuthenticationModeOpenShift
+	console.Spec.Proxy.Authentication = pgtoolboxv1alpha1.ProxyAuthenticationSpec{
+		OpenShift: &pgtoolboxv1alpha1.ProxyOpenShiftSpec{},
+	}
 	console.Spec.Exposure = pgtoolboxv1alpha1.ExposureSpec{
 		Type:     pgtoolboxv1alpha1.ExposureTypeRoute,
 		Hostname: "pgconsole.apps.example.com",
 	}
 	cfg := renderAndParse(t, console, true)
 
-	if cfg.Provider.Mode != proxyconfig.ModeOpenShift || cfg.Provider.OpenShift == nil {
+	if !slices.Contains(cfg.Provider.Modes, proxyconfig.ModeOpenShift) || cfg.Provider.OpenShift == nil {
 		t.Fatalf("provider = %+v, want openshift", cfg.Provider)
 	}
 	oc := cfg.Provider.OpenShift
@@ -239,7 +241,15 @@ func TestReconcileProxyConfigSecretSessionKeyStability(t *testing.T) {
 
 func TestReconcileProxyConfigSecretOpenShiftRenders(t *testing.T) {
 	console := testConsole()
-	console.Spec.Proxy.Authentication.Mode = pgtoolboxv1alpha1.ProxyAuthenticationModeOpenShift
+	console.Spec.Proxy.Authentication = pgtoolboxv1alpha1.ProxyAuthenticationSpec{
+		OpenShift: &pgtoolboxv1alpha1.ProxyOpenShiftSpec{},
+	}
+	// OpenShift pins its redirect URI on the ServiceAccount annotation, so
+	// it only renders once the console has an external hostname.
+	console.Spec.Exposure = pgtoolboxv1alpha1.ExposureSpec{
+		Type:     pgtoolboxv1alpha1.ExposureTypeRoute,
+		Hostname: "console.apps.example.com",
+	}
 	r, _ := newTestReconciler(t, console)
 
 	_, issue, err := r.reconcileProxyConfigSecret(context.Background(), console, nil)
@@ -251,7 +261,6 @@ func TestReconcileProxyConfigSecretOpenShiftRenders(t *testing.T) {
 func TestReconcileProxyConfigSecretOIDCMissingClientSecret(t *testing.T) {
 	console := testConsole()
 	console.Spec.Proxy.Authentication = pgtoolboxv1alpha1.ProxyAuthenticationSpec{
-		Mode: pgtoolboxv1alpha1.ProxyAuthenticationModeOIDC,
 		OIDC: &pgtoolboxv1alpha1.ProxyOIDCSpec{
 			IssuerURL:       "https://idp.example.com",
 			ClientID:        "pgconsole",
@@ -271,7 +280,6 @@ func TestReconcileProxyConfigSecretOIDCMissingClientSecret(t *testing.T) {
 
 func TestRenderProxyConfigUsers(t *testing.T) {
 	console := testConsole()
-	console.Spec.Proxy.Authentication.Mode = pgtoolboxv1alpha1.ProxyAuthenticationModeOIDC
 	console.Spec.Proxy.Authentication.OIDC = &pgtoolboxv1alpha1.ProxyOIDCSpec{
 		IssuerURL:       "https://idp.example.com",
 		ClientID:        "pgconsole",
@@ -304,5 +312,39 @@ func TestRenderProxyConfigLocalUserHasBcrypt(t *testing.T) {
 	_, err := renderProxyConfig(console, testSessionKey, true, users)
 	if err != nil {
 		t.Fatalf("render with local user: %v", err)
+	}
+}
+
+func TestRenderProxyConfigMixedProviders(t *testing.T) {
+	console := testConsole()
+	console.Spec.Proxy.Authentication = pgtoolboxv1alpha1.ProxyAuthenticationSpec{
+		Local: &pgtoolboxv1alpha1.ProxyLocalSpec{},
+		OIDC: &pgtoolboxv1alpha1.ProxyOIDCSpec{
+			IssuerURL:       "https://idp.example.com",
+			ClientID:        "pgconsole",
+			ClientSecretRef: pgtoolboxv1alpha1.SecretKeyReference{Name: "oidc-client"},
+		},
+	}
+
+	raw, err := renderProxyConfig(console, "secret-one-abcdefghij", false, nil)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	cfg, _, err := proxyconfig.Parse(raw)
+	if err != nil {
+		t.Fatalf("rendered config must parse: %v", err)
+	}
+	// Local first: the login page is the local form, and the identity
+	// provider is the button beside it.
+	if !slices.Equal(cfg.Provider.Modes, []string{proxyconfig.ModeLocal, proxyconfig.ModeOIDC}) {
+		t.Fatalf("provider modes = %q, want [local oidc]", cfg.Provider.Modes)
+	}
+	if cfg.Provider.OIDC == nil {
+		t.Fatal("oidc block missing")
+	}
+	// No exposure hostname: the proxy resolves the redirect URI against the
+	// origin each request arrived on rather than guessing an in-Pod address.
+	if cfg.Provider.OIDC.RedirectURL != "" {
+		t.Fatalf("redirectURL = %q, want empty", cfg.Provider.OIDC.RedirectURL)
 	}
 }

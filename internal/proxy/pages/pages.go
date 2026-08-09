@@ -45,6 +45,14 @@ type base struct {
 type LoginData struct {
 	RedirectTo string
 	Error      string
+	// External are the other enabled providers, offered beside the form.
+	External []ExternalLogin
+}
+
+// ExternalLogin is one provider the login page offers as a button.
+type ExternalLogin struct {
+	Label string
+	Path  string
 }
 
 // DeniedUnknownData feeds the 403 page of an authenticated identity that

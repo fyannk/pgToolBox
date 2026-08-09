@@ -841,15 +841,13 @@ spec:
                   authentication:
                     description: How users authenticate.
                     properties:
-                      mode:
-                        description: The authentication mode.
-                        enum:
-                        - openshift
-                        - oidc
-                        - local
-                        type: string
+                      local:
+                        description: |-
+                          Local accounts, rendered from the console's PgToolBoxUser set. A user
+                          participates in local sign-in only if it carries a password.
+                        type: object
                       oidc:
-                        description: Configuration for the oidc mode.
+                        description: Plain OIDC against an external identity provider.
                         properties:
                           clientID:
                             description: The OAuth2 client ID.
@@ -880,14 +878,15 @@ spec:
                         - clientSecretRef
                         - issuerURL
                         type: object
-                    required:
-                    - mode
+                      openshift:
+                        description: |-
+                          The integrated OpenShift OAuth stack, auto-discovered from the
+                          cluster.
+                        type: object
                     type: object
                     x-kubernetes-validations:
-                    - message: oidc is required when mode is oidc
-                      rule: 'self.mode == ''oidc'' ? has(self.oidc) : true'
-                    - message: oidc may only be set when mode is oidc
-                      rule: self.mode == 'oidc' || !has(self.oidc)
+                    - message: at least one authentication provider must be enabled
+                      rule: has(self.local) || has(self.oidc) || has(self.openshift)
                   image:
                     description: |-
                       The proxy container image. Defaults to the operator's configured

@@ -22,20 +22,23 @@ onto its own ladder. There is nothing an operator could add, so it is a
 field here rather than a reference to an object that would only ever
 carry the same word back.
 
-## Identity, in every authentication mode
+## Identity, whichever provider authenticated
 
 `subject` is matched case-insensitively against whatever identity the
-proxy established, and the matching is the same in all three modes:
+proxy established, and the matching is the same for every provider:
 
-| Mode | Where `subject` comes from |
+| Provider | Where `subject` comes from |
 |---|---|
 | `local` | the username typed into the proxy's own form; `localPasswordSecretRef` holds a **bcrypt hash** |
 | `oidc` | the subject the identity provider returns |
 | `openshift` | the OpenShift username |
 
-So an OIDC deployment declares one `PgToolBoxUser` per person, with no
-`localPasswordSecretRef` — the identity provider holds the credential,
-and this object only says what level that identity gets.
+`localPasswordSecretRef` is optional, and its presence is what decides
+whether this user can use the local form. A federated user carries none:
+the identity provider holds the credential, and this object only says what
+level that identity gets. With `local` enabled alongside an identity
+provider, giving one to a break-glass account is how somebody still gets
+in when the provider is down.
 
 :::note
 There is no mapping from provider groups or claims to levels yet. Access

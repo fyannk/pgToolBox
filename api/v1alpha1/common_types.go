@@ -35,9 +35,6 @@ const (
 	// PgConsole name.
 	PgConsoleLabelKey = "pgtoolbox.fyannk.dev/pgconsole"
 
-	// PgToolBoxRoleLabelKey labels every generated resource with the owning
-	// PgToolBoxRole name.
-	PgToolBoxRoleLabelKey = "pgtoolbox.fyannk.dev/pgtoolboxrole"
 
 	// PgToolBoxUserLabelKey labels every generated resource with the owning
 	// PgToolBoxUser name.
@@ -75,11 +72,6 @@ const (
 	// PgConsole instance down. Finalizers are per-kind by design, so each
 	// kind in the family gets its own.
 	PgConsoleFinalizer = "pgtoolbox.fyannk.dev/pgconsole"
-
-	// PgToolBoxRoleFinalizer marks the controller responsible for tearing a
-	// PgToolBoxRole down: it owns a managed DatabaseRole and credential
-	// Secret.
-	PgToolBoxRoleFinalizer = "pgtoolbox.fyannk.dev/pgtoolboxrole"
 
 	// PgToolBoxUserFinalizer marks the controller responsible for
 	// de-provisioning a PgToolBoxUser from proxy configuration and pgAdmin.

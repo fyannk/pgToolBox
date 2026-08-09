@@ -46,7 +46,6 @@ type Reconciler struct {
 // +kubebuilder:rbac:groups=pgtoolbox.fyannk.dev,resources=pgtoolboxaccessrequests,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=pgtoolbox.fyannk.dev,resources=pgtoolboxaccessrequests/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=pgtoolbox.fyannk.dev,resources=pgconsoles,verbs=get;list;watch
-// +kubebuilder:rbac:groups=pgtoolbox.fyannk.dev,resources=pgtoolboxroles,verbs=get;list;watch
 // +kubebuilder:rbac:groups=pgtoolbox.fyannk.dev,resources=pgtoolboxusers,verbs=get;list;watch;create;update;patch
 
 // Reconcile reads the review decision and materializes the PgToolBoxUser for

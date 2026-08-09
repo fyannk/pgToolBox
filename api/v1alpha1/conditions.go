@@ -29,7 +29,7 @@ const (
 	// degrades to unknown, it does not take the console down.
 	PgConsoleConditionRepositoryEvidenceReady = "RepositoryEvidenceReady"
 	// PgConsoleConditionProxyConfigReady reports the rendered proxy
-	// configuration Secret from the PgToolBoxUser/PgToolBoxRole set.
+	// configuration Secret rendered from the PgToolBoxUser set.
 	PgConsoleConditionProxyConfigReady = "ProxyConfigReady"
 	// PgConsoleConditionClusterReady reports the resolution of the CNPG
 	// Cluster the console is attached to. False never fails the object
@@ -38,12 +38,6 @@ const (
 	// PgConsoleConditionPgAdminSynced reports whether pgAdmin accounts and
 	// shared server definitions are synced for the console's users.
 	PgConsoleConditionPgAdminSynced = "PgAdminSynced"
-)
-
-// PgToolBoxRole condition types.
-const (
-	RoleConditionReady          = "Ready"
-	RoleConditionPgConsoleReady = "PgConsoleReady"
 )
 
 // PgToolBoxUser condition types.
