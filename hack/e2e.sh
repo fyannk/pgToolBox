@@ -30,7 +30,7 @@ CNPG_MANIFEST="${CNPG_MANIFEST:-https://raw.githubusercontent.com/cloudnative-pg
 # binaries accept what the operator renders, so these are not substitutable —
 # and every one of them is a pgtoolbox family image, including pgAdmin, which
 # is our own repackaging rather than the upstream one.
-PGCONSOLE_IMAGE="${PGCONSOLE_IMAGE:-ghcr.io/fyannk/pgconsole:0.2.0}"
+PGCONSOLE_IMAGE="${PGCONSOLE_IMAGE:-ghcr.io/fyannk/pgconsole:0.3.0}"
 PGADMIN_IMAGE="${PGADMIN_IMAGE:-ghcr.io/fyannk/pgadmin:latest}"
 VIEWER_IMAGE="${VIEWER_IMAGE:-ghcr.io/fyannk/pgobjectstoreviewer:0.1.1}"
 
