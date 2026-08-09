@@ -94,7 +94,7 @@ type PgToolBoxAccessRequestStatus struct {
 // +kubebuilder:printcolumn:name="State",type=string,JSONPath=`.status.state`
 // +kubebuilder:printcolumn:name="Console",type=string,JSONPath=`.spec.pgConsoleRef.name`
 // +kubebuilder:printcolumn:name="Subject",type=string,JSONPath=`.spec.subject`
-// +kubebuilder:printcolumn:name="Role",type=string,JSONPath=`.status.requestedLevel`
+// +kubebuilder:printcolumn:name="Level",type=string,JSONPath=`.status.requestedLevel`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
 // PgToolBoxAccessRequest describes one request for access to a PgConsole.
