@@ -236,8 +236,9 @@ func (p *Provider) handleCallback(w http.ResponseWriter, r *http.Request) {
 
 	secret, err := readSecretFile(p.clientSecretFile)
 	if err != nil {
-		p.env.Logger.Warn("reading OpenShift OAuth client secret failed", "error", err)
-		fail(http.StatusBadGateway, "The OAuth client secret could not be read.")
+		p.env.Logger.Error("reading OpenShift OAuth client secret failed", "error", err)
+		fail(http.StatusInternalServerError, "This console's OAuth client secret could not be read; "+
+			"an administrator has to check the ServiceAccount token mount.")
 		return
 	}
 
@@ -246,8 +247,9 @@ func (p *Provider) handleCallback(w http.ResponseWriter, r *http.Request) {
 	ctx := context.WithValue(r.Context(), oauth2.HTTPClient, p.httpClient)
 	token, err := exchange.Exchange(ctx, code, oauth2.VerifierOption(t.Verifier))
 	if err != nil {
-		p.env.Logger.Warn("OpenShift code exchange failed", "error", err)
-		fail(http.StatusBadGateway, "The identity provider could not complete the login.")
+		status, message := server.ExchangeFailure(err)
+		p.env.Logger.Error("OpenShift code exchange failed", "error", err, "status", status)
+		fail(status, message)
 		return
 	}
 	if token.AccessToken == "" {

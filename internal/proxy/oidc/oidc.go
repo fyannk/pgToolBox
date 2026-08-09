@@ -164,8 +164,9 @@ func (p *Provider) handleCallback(w http.ResponseWriter, r *http.Request) {
 	token, err := exchange.Exchange(r.Context(), r.URL.Query().Get("code"),
 		oauth2.VerifierOption(t.Verifier))
 	if err != nil {
-		p.env.Logger.Warn("OIDC code exchange failed", "error", err)
-		fail(http.StatusBadGateway, "The identity provider could not complete the login.")
+		status, message := server.ExchangeFailure(err)
+		p.env.Logger.Error("OIDC code exchange failed", "error", err, "status", status)
+		fail(status, message)
 		return
 	}
 	rawIDToken, ok := token.Extra("id_token").(string)

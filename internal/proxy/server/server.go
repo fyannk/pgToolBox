@@ -23,6 +23,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -32,6 +33,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"golang.org/x/oauth2"
 
 	"github.com/fyannk/pgtoolbox/internal/proxy/config"
 	"github.com/fyannk/pgtoolbox/internal/proxy/pages"
@@ -339,4 +342,34 @@ func pathMatchesPrefix(path, prefix string) bool {
 		return true
 	}
 	return path == prefix || strings.HasPrefix(path, prefix+"/")
+}
+
+// ExchangeFailure turns a token-endpoint failure into a status and a
+// message that says who has to do something about it. "Bad Gateway" is
+// only right when the provider could not be reached: a provider that
+// answers and refuses this console's credentials is a configuration fault
+// here, and telling the person signing in that a gateway is bad sends
+// them to retry something that will never work.
+func ExchangeFailure(err error) (int, string) {
+	var retrieve *oauth2.RetrieveError
+	if !errors.As(err, &retrieve) {
+		// No HTTP response at all: DNS, TLS, timeout, refused.
+		return http.StatusBadGateway, "The identity provider could not be reached."
+	}
+	switch retrieve.ErrorCode {
+	case "invalid_client", "unauthorized_client":
+		return http.StatusInternalServerError, "This console was rejected by the identity provider " +
+			"(" + retrieve.ErrorCode + "). Its client ID or client secret is wrong; " +
+			"an administrator has to correct the PgConsole's oidc settings."
+	case "invalid_grant":
+		return http.StatusBadRequest, "The login could not be completed; please try again."
+	case "invalid_request", "unsupported_grant_type":
+		return http.StatusInternalServerError, "The identity provider rejected this console's request " +
+			"(" + retrieve.ErrorCode + "). The registered redirect URI most likely does not match " +
+			"the address this console is reached on."
+	}
+	if retrieve.Response != nil && retrieve.Response.StatusCode >= 500 {
+		return http.StatusBadGateway, "The identity provider failed to complete the login."
+	}
+	return http.StatusInternalServerError, "The identity provider refused to complete the login."
 }

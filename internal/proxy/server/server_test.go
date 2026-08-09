@@ -20,6 +20,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -29,6 +30,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"golang.org/x/oauth2"
 
 	"github.com/fyannk/pgtoolbox/internal/proxy/config"
 	"github.com/fyannk/pgtoolbox/internal/proxy/session"
@@ -493,5 +496,53 @@ func TestSafeRedirect(t *testing.T) {
 		if got := SafeRedirect(in); got != want {
 			t.Errorf("SafeRedirect(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// A provider that answers and refuses this console's credentials is a
+// configuration fault here, not a bad gateway. Telling the person signing
+// in that a gateway is bad sends them to retry something that can never
+// work, and hides the one thing an administrator needs to know.
+func TestExchangeFailureClassification(t *testing.T) {
+	for name, tc := range map[string]struct {
+		err        error
+		wantStatus int
+		wantIn     string
+	}{
+		"rejected credentials": {
+			err:        &oauth2.RetrieveError{ErrorCode: "invalid_client", Response: &http.Response{StatusCode: 401}},
+			wantStatus: http.StatusInternalServerError,
+			wantIn:     "client secret",
+		},
+		"stale code": {
+			err:        &oauth2.RetrieveError{ErrorCode: "invalid_grant", Response: &http.Response{StatusCode: 400}},
+			wantStatus: http.StatusBadRequest,
+			wantIn:     "try again",
+		},
+		"redirect mismatch": {
+			err:        &oauth2.RetrieveError{ErrorCode: "invalid_request", Response: &http.Response{StatusCode: 400}},
+			wantStatus: http.StatusInternalServerError,
+			wantIn:     "redirect URI",
+		},
+		"provider broken": {
+			err:        &oauth2.RetrieveError{Response: &http.Response{StatusCode: 503}},
+			wantStatus: http.StatusBadGateway,
+			wantIn:     "identity provider",
+		},
+		"unreachable": {
+			err:        errors.New("dial tcp: connection refused"),
+			wantStatus: http.StatusBadGateway,
+			wantIn:     "could not be reached",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			status, message := ExchangeFailure(tc.err)
+			if status != tc.wantStatus {
+				t.Fatalf("status = %d, want %d (message %q)", status, tc.wantStatus, message)
+			}
+			if !strings.Contains(message, tc.wantIn) {
+				t.Fatalf("message %q does not mention %q", message, tc.wantIn)
+			}
+		})
 	}
 }
