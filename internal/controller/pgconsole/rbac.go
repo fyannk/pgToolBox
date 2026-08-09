@@ -268,12 +268,6 @@ func operateRules(console *pgtoolboxv1alpha1.PgConsole) []rbacv1.PolicyRule {
 				Resources: []string{"pgtoolboxaccessrequests/status"},
 				Verbs:     []string{"update", "patch"},
 			},
-			// The role names behind the approval picker.
-			rbacv1.PolicyRule{
-				APIGroups: []string{"pgtoolbox.fyannk.dev"},
-				Resources: []string{"pgtoolboxroles"},
-				Verbs:     []string{"get", "list", "watch"},
-			},
 		)
 	}
 	return rules

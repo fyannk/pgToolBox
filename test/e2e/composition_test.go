@@ -54,7 +54,6 @@ const (
 	fullConsoleName = "full"
 	fullClusterName = "pg-full"
 	storeName       = "backups"
-	roleName        = "readonly"
 	userName        = "jane"
 
 	// Where the admin-sync sidecar writes the credential file both it and
@@ -197,19 +196,6 @@ func createFullConsole(t *testing.T) {
 		t.Fatalf("create full PgConsole: %v", err)
 	}
 
-	role := &pgtoolboxv1alpha1.PgToolBoxRole{
-		ObjectMeta: metav1.ObjectMeta{Name: roleName, Namespace: testNamespace},
-		Spec: pgtoolboxv1alpha1.PgToolBoxRoleSpec{
-			PgConsoleRef: pgtoolboxv1alpha1.LocalObjectReference{Name: fullConsoleName},
-			// dba, because only a dba reaches pgAdmin — and a role is a
-			// proxy level with no postgres backing at all.
-			Level: pgtoolboxv1alpha1.RoleLevelDBA,
-		},
-	}
-	if err := k8s.Create(ctx(), role); err != nil && !apierrors.IsAlreadyExists(err) {
-		t.Fatalf("create PgToolBoxRole: %v", err)
-	}
-
 	// The Secret carries a bcrypt hash, not a plaintext password: the
 	// operator copies it into the proxy configuration and never hashes
 	// anything itself, so a plaintext value is rejected as invalid.
@@ -230,7 +216,7 @@ func createFullConsole(t *testing.T) {
 		Spec: pgtoolboxv1alpha1.PgToolBoxUserSpec{
 			PgConsoleRef: pgtoolboxv1alpha1.LocalObjectReference{Name: fullConsoleName},
 			Subject:      "jane@corp.example",
-			RoleRef:      pgtoolboxv1alpha1.LocalObjectReference{Name: roleName},
+			Level:        pgtoolboxv1alpha1.RoleLevelDBA,
 			LocalPasswordSecretRef: &pgtoolboxv1alpha1.SecretKeyReference{
 				Name: "jane-password",
 			},

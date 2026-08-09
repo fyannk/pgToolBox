@@ -9,7 +9,6 @@ surface: extended, never renamed.
 |---|---|
 | `app.kubernetes.io/managed-by=pgtoolbox` | every generated resource |
 | `pgtoolbox.fyannk.dev/pgconsole` | owning PgConsole |
-| `pgtoolbox.fyannk.dev/pgtoolboxrole` | owning PgToolBoxRole |
 | `pgtoolbox.fyannk.dev/pgtoolboxuser` | owning PgToolBoxUser |
 | `pgtoolbox.fyannk.dev/evidence-token` | evidence token Secrets (for GC) |
 
@@ -28,7 +27,6 @@ surface: extended, never renamed.
 | Key | Controller |
 |---|---|
 | `pgtoolbox.fyannk.dev/pgconsole` | PgConsole |
-| `pgtoolbox.fyannk.dev/pgtoolboxrole` | PgToolBoxRole |
 
 ## OpenShift
 

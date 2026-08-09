@@ -295,13 +295,12 @@ func TestReconcileNeverWritesTheCluster(t *testing.T) {
 func TestReconcileRendersProxyUsers(t *testing.T) {
 	console := testConsole()
 	cluster := testCluster()
-	role := testPgToolBoxRole("viewer", pgtoolboxv1alpha1.RoleLevelView)
 
 	hash := "$2a$04$1MkEYTirgqR9o.t6dMEyzOoRST1ueBQEAgrb3x8I9RRUD3XwpTBDG"
 	localSecret := testLocalPasswordSecret("alice-local-password", hash)
-	user := testPgToolBoxUser("alice", "viewer", "alice-local-password")
+	user := testPgToolBoxUser("alice", pgtoolboxv1alpha1.RoleLevelView, "alice-local-password")
 
-	r, c := newTestReconciler(t, console, cluster, role, localSecret, user)
+	r, c := newTestReconciler(t, console, cluster, localSecret, user)
 	reconcileToSteadyState(t, r)
 
 	// The proxy config Secret must contain the rendered user with the bcrypt hash.

@@ -60,7 +60,7 @@ metadata:
 spec:
   pgConsoleRef: { name: main }
   subject: jane@corp.example
-  roleRef: { name: dba }
+  level: dba
 ```
 
 Jane opens `https://pgconsole.apps.example.com`, signs in at the IdP, and

@@ -118,24 +118,9 @@ func testCluster() *cnpgv1.Cluster {
 	}
 }
 
-// testPgToolBoxRole returns a role already resolved to a managed DatabaseRole.
-func testPgToolBoxRole(name string, level pgtoolboxv1alpha1.RoleLevel) *pgtoolboxv1alpha1.PgToolBoxRole {
-	return &pgtoolboxv1alpha1.PgToolBoxRole{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: "test",
-			UID:       types.UID("uid-" + name),
-		},
-		Spec: pgtoolboxv1alpha1.PgToolBoxRoleSpec{
-			PgConsoleRef: pgtoolboxv1alpha1.LocalObjectReference{Name: "console"},
-			Level:        level,
-		},
-	}
-}
-
 // testPgToolBoxUser returns a user referencing the given role with a local
 // password secret.
-func testPgToolBoxUser(name, roleName, passwordSecretName string) *pgtoolboxv1alpha1.PgToolBoxUser {
+func testPgToolBoxUser(name string, level pgtoolboxv1alpha1.RoleLevel, passwordSecretName string) *pgtoolboxv1alpha1.PgToolBoxUser {
 	return &pgtoolboxv1alpha1.PgToolBoxUser{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
@@ -145,7 +130,7 @@ func testPgToolBoxUser(name, roleName, passwordSecretName string) *pgtoolboxv1al
 		Spec: pgtoolboxv1alpha1.PgToolBoxUserSpec{
 			PgConsoleRef: pgtoolboxv1alpha1.LocalObjectReference{Name: "console"},
 			Subject:      name + "@example.com",
-			RoleRef:      pgtoolboxv1alpha1.LocalObjectReference{Name: roleName},
+			Level:        level,
 			LocalPasswordSecretRef: &pgtoolboxv1alpha1.SecretKeyReference{
 				Name: passwordSecretName,
 			},

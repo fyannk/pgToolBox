@@ -18,14 +18,6 @@ Common reasons: `AsExpected`, `Reconciling`, `ReconciliationSkipped`,
 `PendingRollout`, `SyncFailed`, `UnsupportedCredentialMode`,
 `ObjectStoreNotFound`, `ImageRequired`, `EvidenceDisabled`.
 
-## PgToolBoxRole
-
-`Ready`, `PgConsoleReady`, `DatabaseRoleReady`, `CredentialReady`.
-
-Reasons additionally: `PgConsoleNotFound`,
-`DatabaseRolePending`, `DatabaseRoleFailed`,
-`SecretFormatInvalid`.
-
 ## PgToolBoxUser
 
 `RoleReady`, `ProxySynced`, `PgAdminSynced`.

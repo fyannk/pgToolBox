@@ -19,9 +19,9 @@ declare, it composes a dedicated pod next to one
 └────────────────────────────────────────────────────────────┘
 ```
 
-Users and roles are plain Kubernetes objects too: a `PgToolBoxRole` names a
-console authorization level (`view` / `poweruser` / `dba`), a
-`PgToolBoxUser` binds an identity to a role, and a
+Users are plain Kubernetes objects too: a `PgToolBoxUser` binds an
+identity to one of the three console authorization levels (`view` /
+`poweruser` / `dba`), and a
 `PgToolBoxAccessRequest` lets an unknown authenticated user ask a `dba`
 for access from the proxy's 403 page.
 
@@ -80,21 +80,13 @@ spec:
     hostname: pgconsole.apps.example.com
 ---
 apiVersion: pgtoolbox.fyannk.dev/v1alpha1
-kind: PgToolBoxRole
-metadata:
-  name: dba
-spec:
-  pgConsoleRef: { name: main }
-  level: dba
----
-apiVersion: pgtoolbox.fyannk.dev/v1alpha1
 kind: PgToolBoxUser
 metadata:
   name: jane
 spec:
   pgConsoleRef: { name: main }
   subject: jane@corp.example
-  roleRef: { name: dba }
+  level: dba
 ```
 
 Jane signs in through the proxy and sees the console sized to her `dba`

@@ -187,7 +187,6 @@ func TestOperateRoleFollowsItsCapabilities(t *testing.T) {
 	review := []string{
 		"pgtoolbox.fyannk.dev pgtoolboxaccessrequests get,list,watch",
 		"pgtoolbox.fyannk.dev pgtoolboxaccessrequests/status update,patch",
-		"pgtoolbox.fyannk.dev pgtoolboxroles get,list,watch",
 	}
 
 	tests := []struct {

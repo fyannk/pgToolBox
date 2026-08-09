@@ -111,7 +111,6 @@ rules:
   resources:
   - pgconsoles
   - pgtoolboxaccessrequests
-  - pgtoolboxroles
   verbs:
   - create
   - delete
@@ -131,11 +130,18 @@ rules:
   resources:
   - pgconsoles/status
   - pgtoolboxaccessrequests/status
-  - pgtoolboxroles/status
   verbs:
   - get
   - patch
   - update
+- apiGroups:
+  - pgtoolbox.fyannk.dev
+  resources:
+  - pgtoolboxroles
+  verbs:
+  - get
+  - list
+  - watch
 - apiGroups:
   - pgtoolbox.fyannk.dev
   resources:

@@ -32,7 +32,6 @@ namespaced one. The console's finalizer deletes them instead, so removing
 the operator before deleting its consoles would strand them — delete the
 `PgConsole` resources first, which the steps above already do.
 
-`PgToolBoxRole` deletion removes its managed `DatabaseRole` and credential
-Secret. `PgToolBoxUser` deletion removes the user from the proxy
+`PgToolBoxUser` deletion removes the user from the proxy
 configuration and pgAdmin on the next reconcile — there is nothing else to
 tear down.

@@ -27,7 +27,6 @@ import (
 	"github.com/fyannk/pgtoolbox/internal/adminsync"
 	"github.com/fyannk/pgtoolbox/internal/controller/pgconsole"
 	"github.com/fyannk/pgtoolbox/internal/controller/pgtoolboxaccessrequest"
-	"github.com/fyannk/pgtoolbox/internal/controller/pgtoolboxrole"
 	"github.com/fyannk/pgtoolbox/internal/controller/shared"
 	configv1 "github.com/openshift/api/config/v1"
 	routev1 "github.com/openshift/api/route/v1"
@@ -151,20 +150,6 @@ func main() {
 		AdminSync:                  adminSyncer,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "PgConsole")
-		os.Exit(1)
-	}
-
-	if err := (&pgtoolboxrole.Reconciler{
-		Runtime: shared.Runtime{
-			Client:              mgr.GetClient(),
-			APIReader:           mgr.GetAPIReader(),
-			Scheme:              mgr.GetScheme(),
-			Recorder:            mgr.GetEventRecorderFor("pgtoolboxrole"),
-			RouteAPIAvailable:   availability.RouteAPIAvailable,
-			GatewayAPIAvailable: availability.GatewayAPIAvailable,
-		},
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "PgToolBoxRole")
 		os.Exit(1)
 	}
 

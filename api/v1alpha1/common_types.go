@@ -245,3 +245,22 @@ type NetworkPolicySpec struct {
 	// +optional
 	ExtraEgress []networkingv1.NetworkPolicyEgressRule `json:"extraEgress,omitempty"`
 }
+
+// RoleLevel is the coarse authorization level the proxy asserts in the
+// X-PgToolBox-Level header, and the console maps onto its own ladder.
+//
+// The set is closed and hardcoded on both sides — there is nothing an
+// operator could add — so a level is chosen on a PgToolBoxUser rather than
+// declared as an object of its own.
+// +kubebuilder:validation:Enum=view;poweruser;dba
+type RoleLevel string
+
+const (
+	// RoleLevelView grants the overviews and the metrics screens.
+	RoleLevelView RoleLevel = "view"
+	// RoleLevelPowerUser adds the remaining read screens and the log tails.
+	RoleLevelPowerUser RoleLevel = "poweruser"
+	// RoleLevelDBA adds the day-2 operations, the access-request review
+	// panel and pgAdmin. It is the default pgAdmin gate.
+	RoleLevelDBA RoleLevel = "dba"
+)
