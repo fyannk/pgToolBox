@@ -20,23 +20,26 @@ package adminsync
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
 
 // SyncRequest is the only payload of the sidecar API: the complete desired
-// state. It carries one entry per PgToolBoxUser, including the postgres
-// password; the password is never logged and only travels over the in-pod
-// mTLS API.
+// state. It carries the connections pgAdmin should offer, each with the
+// password of a credential the CloudNativePG cluster publishes. Passwords
+// are never logged and travel only over the in-pod mTLS API.
 type SyncRequest struct {
-	Users []User `json:"users"`
+	Servers []Server `json:"servers"`
 }
 
 // SidecarOptions configures RunSidecar.
@@ -54,6 +57,9 @@ type SidecarOptions struct {
 	// PassFile is the path where the sidecar writes the combined pgpass
 	// file; it defaults to DefaultPassFilePath.
 	PassFile string
+	// SettingsDB is pgAdmin's settings database, read to discover which
+	// accounts exist. It defaults to DefaultSettingsDBPath.
+	SettingsDB string
 }
 
 // RunSidecar serves the admin-sync API until the context ends. pgAdmin
@@ -71,6 +77,9 @@ func (o SidecarOptions) RunSidecar(ctx context.Context) error {
 	}
 	if o.PassFile == "" {
 		o.PassFile = DefaultPassFilePath
+	}
+	if o.SettingsDB == "" {
+		o.SettingsDB = DefaultSettingsDBPath
 	}
 
 	token, err := os.ReadFile(o.TokenFile)
@@ -130,40 +139,105 @@ func (o SidecarOptions) RunSidecar(ctx context.Context) error {
 	}
 }
 
-// apply converges pgAdmin state: it writes the combined passfile, then for
-// each user ensures the external account exists with the right role and the
-// shared server definition is loaded. It stops at the first failure and the
-// operator retries the whole request; the mapping is absolute, so replays
-// converge instead of compounding.
+// apply converges pgAdmin state: every account gets the same connections,
+// because the credentials belong to the cluster rather than to whoever
+// signed in, and the proxy has already refused anyone below
+// spec.pgAdmin.accessMinLevel.
+//
+// pgAdmin does not offer a way to share one list. Its shared-server feature
+// strips passfile and the TLS file paths out of a server the moment it
+// materializes it for anyone but the owner — deliberately, so that "each
+// user should configure their own" — so a genuinely shared entry can carry
+// visibility but never credentials. What it does support is a server per
+// account, so that is what this writes: the same list, once per account,
+// each pointing at that account's own copy of the credential file.
+//
+// Accounts arrive on their own. pgAdmin creates one on first sight of the
+// proxy's identity header, so the set is whatever has signed in so far and
+// is read back from pgAdmin rather than supplied by the operator; an
+// account that appears later is served by the next sync.
 func (o SidecarOptions) apply(ctx context.Context, request SyncRequest) error {
-	if err := o.writePassfile(request.Users); err != nil {
-		return fmt.Errorf("write pgpass file: %w", err)
+	accounts, err := o.accounts(ctx)
+	if err != nil {
+		return err
 	}
-	for _, user := range request.Users {
-		if err := o.updateRole(ctx, user.Subject, user.PgAdminRole); err != nil {
+	desired, err := serversRevision(request.Servers)
+	if err != nil {
+		return err
+	}
+	for _, account := range accounts {
+		// Change detection belongs here rather than in the operator. The
+		// state lives with the account — files in its storage directory,
+		// rows in pgAdmin's database — so only this side can tell whether
+		// it is already present. An account that appears later is caught
+		// by the next sync, which is why the operator no longer decides
+		// that a sync can be skipped.
+		if applied, err := o.appliedRevision(account); err == nil && applied == desired {
+			continue
+		}
+		if err := o.writePassfile(account, request.Servers); err != nil {
 			return err
 		}
-		if err := o.loadServers(ctx, user.Subject, user.Server); err != nil {
+		if err := o.loadServers(ctx, account, request.Servers); err != nil {
+			return err
+		}
+		if err := o.recordRevision(account, desired); err != nil {
 			return err
 		}
 	}
-	return nil
+	// One combined file outside anyone's storage, for connections made
+	// without pgAdmin's own resolution — PGPASSFILE names it, so a psql in
+	// the Pod finds the same credentials.
+	return o.writeLegacyPassfile(request.Servers)
 }
 
-// updateRole assigns a pgAdmin role to one webserver-authenticated external
-// user through the supported setup.py CLI, the only sanctioned way to change
-// roles without touching pgAdmin's database directly. The returned error
-// embeds the CLI output, which carries no credential material.
-func (o SidecarOptions) updateRole(ctx context.Context, username, role string) error {
-	command := exec.CommandContext(ctx, o.PythonPath, o.SetupPath, // #nosec G204
-		"update-external-user", username,
-		"--auth-source", "webserver",
-		"--role", role,
-	)
-	if output, err := command.CombinedOutput(); err != nil {
-		return fmt.Errorf("update role of %q: %w: %s", username, err, string(output))
+// accounts lists the pgAdmin accounts to provision, straight from its
+// settings database. The bootstrap account is skipped: it exists only to
+// initialize that database and nobody signs in with it.
+func (o SidecarOptions) accounts(ctx context.Context) ([]string, error) {
+	// An uninitialized settings database is not a failure: pgAdmin creates
+	// it at first start, and the sidecar can be asked to sync before that
+	// has happened. It means there are no accounts yet, and the next sync
+	// finds them.
+	// username, not email. pgAdmin creates a webserver account from the
+	// REMOTE_USER header and leaves email NULL, and it is username that
+	// setup.py --user matches and that the per-account storage directory
+	// is derived from. Selecting email yielded the string "None" for such
+	// an account, and every sync then failed on a user that cannot exist.
+	const query = `SELECT username FROM user WHERE auth_source = 'webserver'`
+	output, err := o.querySettingsDB(ctx, query)
+	if err != nil {
+		if strings.Contains(output+err.Error(), "no such table") {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("list pgAdmin accounts: %w", err)
 	}
-	return nil
+	var accounts []string
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		if account := strings.TrimSpace(line); account != "" {
+			accounts = append(accounts, account)
+		}
+	}
+	return accounts, nil
+}
+
+// querySettingsDB runs one read-only query against pgAdmin's settings
+// database. It goes through the interpreter pgAdmin itself ships rather
+// than a Go driver: the sidecar runs in the pgAdmin image, so sqlite3 is
+// already there, and the build stays free of cgo.
+func (o SidecarOptions) querySettingsDB(ctx context.Context, query string) (string, error) {
+	// NULL rows are dropped rather than stringified: str(None) is "None",
+	// a name no account can have, and passing it on turns a missing value
+	// into a user the rest of the sync then fails to find.
+	script := "import sqlite3,sys\n" +
+		"c=sqlite3.connect(sys.argv[1])\n" +
+		"print('\\n'.join(str(r[0]) for r in c.execute(sys.argv[2]) if r[0] is not None))\n"
+	command := exec.CommandContext(ctx, o.PythonPath, "-c", script, o.SettingsDB, query) // #nosec G204
+	output, err := command.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("%w: %s", err, string(output))
+	}
+	return string(output), nil
 }
 
 // serverDocument is the JSON shape consumed by setup.py load-servers.
@@ -181,52 +255,58 @@ type serverEntry struct {
 	ConnectionParameters map[string]string `json:"ConnectionParameters"`
 }
 
-// loadServers imports one shared server definition for a single user,
-// replacing any existing servers owned by that user so the operation is
-// idempotent.
-func (o SidecarOptions) loadServers(ctx context.Context, username string, server Server) error {
-	document := serverDocument{
-		Servers: map[string]serverEntry{
-			"1": {
-				Name:          server.Name,
-				Group:         server.Group,
-				Host:          server.Host,
-				Port:          server.Port,
-				MaintenanceDB: server.MaintenanceDB,
-				Username:      server.Username,
-				ConnectionParameters: map[string]string{
-					"sslmode":  server.SSLMode,
-					"passfile": server.PassFile,
-				},
+// loadServers imports the whole connection list for one account, replacing
+// whatever that account had so the operation is idempotent.
+//
+// The passfile parameter has to be present and has to resolve, and pgAdmin
+// treats those two failures very differently: absent, it prompts for a
+// password; present but unresolvable, it connects with none and the server
+// answers "no password supplied". It resolves the value through its file
+// manager, which joins it onto the signed-in account's storage directory —
+// so the path is storage-relative, and writePassfile puts the file exactly
+// where that resolution lands.
+func (o SidecarOptions) loadServers(ctx context.Context, account string, servers []Server) error {
+	document := serverDocument{Servers: map[string]serverEntry{}}
+	for i, server := range servers {
+		document.Servers[strconv.Itoa(i+1)] = serverEntry{
+			Name:          server.Name,
+			Group:         server.Group,
+			Host:          server.Host,
+			Port:          server.Port,
+			MaintenanceDB: server.MaintenanceDB,
+			Username:      server.Username,
+			ConnectionParameters: map[string]string{
+				"sslmode":  server.SSLMode,
+				"passfile": storageRelativePassFile,
 			},
-		},
+		}
 	}
 	payload, err := json.Marshal(document)
 	if err != nil {
-		return fmt.Errorf("marshal server JSON for %q: %w", username, err)
+		return fmt.Errorf("marshal server JSON for %q: %w", account, err)
 	}
 
 	file, err := os.CreateTemp("", "pgadmin-servers-*.json")
 	if err != nil {
-		return fmt.Errorf("create server JSON temp file for %q: %w", username, err)
+		return fmt.Errorf("create server JSON temp file for %q: %w", account, err)
 	}
 	defer func() { _ = os.Remove(file.Name()) }()
 	if _, err := file.Write(payload); err != nil {
 		_ = file.Close()
-		return fmt.Errorf("write server JSON temp file for %q: %w", username, err)
+		return fmt.Errorf("write server JSON temp file for %q: %w", account, err)
 	}
 	if err := file.Close(); err != nil {
-		return fmt.Errorf("close server JSON temp file for %q: %w", username, err)
+		return fmt.Errorf("close server JSON temp file for %q: %w", account, err)
 	}
 
 	command := exec.CommandContext(ctx, o.PythonPath, o.SetupPath, // #nosec G204
 		"load-servers", file.Name(),
-		"--user", username,
+		"--user", account,
 		"--auth-source", "webserver",
 		"--replace",
 	)
 	if output, err := command.CombinedOutput(); err != nil {
-		return fmt.Errorf("load servers for %q: %w: %s", username, err, string(output))
+		return fmt.Errorf("load servers for %q: %w: %s", account, err, string(output))
 	}
 	return nil
 }
@@ -234,15 +314,68 @@ func (o SidecarOptions) loadServers(ctx context.Context, username string, server
 // writePassfile renders the combined pgpass file from the current desired
 // state. Each user gets one line; removed users disappear on the next sync.
 // The file is created with restricted permissions and atomically replaced.
-func (o SidecarOptions) writePassfile(users []User) error {
+//
+// The host field is the wildcard rather than the server's hostname. libpq
+// matches a pgpass line against the host string it was given, not against
+// the host it resolved: a connection made by address, or through any alias
+// of the same Service, matches no line spelled with the name and fails with
+// "fe_sendauth: no password supplied" — the credential is right there and
+// simply never consulted. Matching on the username instead costs nothing
+// here, because this file is pod-private, is mounted only by pgAdmin and
+// the sidecar that writes it, and holds none but this console's roles for
+// this one cluster.
+// writePassfile writes one account's credential file, inside that
+// account's own pgAdmin storage directory, because that is the only place
+// pgAdmin resolves a server's passfile to. Every account gets the same
+// credentials: they are the cluster's, not the reader's.
+//
+// The host field is the wildcard. libpq matches a line against the host
+// string it was given rather than the host it resolved, so a line naming
+// the Service fails for a connection made by address, and reports it as no
+// password rather than as a file it declined to use.
+func (o SidecarOptions) writePassfile(account string, servers []Server) error {
+	directory := userStorageDirectory(account)
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		return fmt.Errorf("create storage directory for %q: %w", account, err)
+	}
 	var lines []string
-	for _, user := range users {
+	for _, server := range servers {
 		lines = append(lines, pgpassLine(
-			user.Server.Host,
-			user.Server.Port,
-			user.Server.MaintenanceDB,
-			user.Server.Username,
-			user.Password,
+			pgpassAnyHost,
+			server.Port,
+			server.MaintenanceDB,
+			server.Username,
+			server.Password,
+		))
+	}
+	content := []byte(strings.Join(lines, "\n"))
+	if len(content) > 0 {
+		content = append(content, '\n')
+	}
+
+	target := filepath.Join(directory, "pgpass")
+	temporary := target + ".tmp"
+	if err := os.WriteFile(temporary, content, 0o600); err != nil {
+		return fmt.Errorf("write passfile for %q: %w", account, err)
+	}
+	if err := os.Rename(temporary, target); err != nil {
+		return fmt.Errorf("replace passfile for %q: %w", account, err)
+	}
+	return nil
+}
+
+// writeLegacyPassfile keeps the combined file the pgAdmin container still
+// points PGPASSFILE at, so a connection made outside pgAdmin's own
+// resolution — a psql in the Pod, a probe — still finds credentials.
+func (o SidecarOptions) writeLegacyPassfile(servers []Server) error {
+	var lines []string
+	for _, server := range servers {
+		lines = append(lines, pgpassLine(
+			pgpassAnyHost,
+			server.Port,
+			server.MaintenanceDB,
+			server.Username,
+			server.Password,
 		))
 	}
 	content := []byte(strings.Join(lines, "\n"))
@@ -261,6 +394,26 @@ func (o SidecarOptions) writePassfile(users []User) error {
 	return os.Rename(tempFile, o.PassFile)
 }
 
+// pgpassAnyHost is pgpass's wildcard: it matches whatever host string the
+// client connected with, by name or by address.
+const pgpassAnyHost = "*"
+
+// storageRelativePassFile is the passfile as pgAdmin's file manager sees
+// it: paths are relative to the signed-in user's own storage directory.
+const storageRelativePassFile = "/pgpass"
+
+// pgAdminStorageRoot is where pgAdmin keeps those per-user directories. It
+// is on the settings volume, so the file survives a restart with the rest
+// of pgAdmin's state rather than living in an emptyDir.
+const pgAdminStorageRoot = "/var/lib/pgadmin/storage"
+
+// userStorageDirectory is the storage directory pgAdmin resolves for one
+// account. pgAdmin derives it from the username with '@' replaced, which is
+// why the subject must be an email address for pgAdmin to accept it at all.
+func userStorageDirectory(subject string) string {
+	return filepath.Join(pgAdminStorageRoot, strings.ReplaceAll(subject, "@", "_"))
+}
+
 // pgpassLine renders one pgpass line, escaping colon and backslash in each
 // field so the file round-trips through libpq.
 func pgpassLine(host string, port int32, database, username, password string) string {
@@ -277,4 +430,41 @@ func pgpassEscape(s string) string {
 	s = strings.ReplaceAll(s, `\`, `\\`)
 	s = strings.ReplaceAll(s, `:`, `\:`)
 	return s
+}
+
+// revisionFileName holds the state an account was last provisioned with.
+// It sits beside that account's credential file, so losing one loses the
+// other and the next sync rewrites both.
+const revisionFileName = ".pgtoolbox-revision"
+
+// serversRevision fingerprints the desired connections, credentials
+// included: a rotated password has to count as a change, or the sidecar
+// keeps serving one the cluster has already replaced.
+func serversRevision(servers []Server) (string, error) {
+	payload, err := json.Marshal(servers)
+	if err != nil {
+		return "", fmt.Errorf("fingerprint desired servers: %w", err)
+	}
+	sum := sha256.Sum256(payload)
+	return hex.EncodeToString(sum[:]), nil
+}
+
+// appliedRevision reads what an account was last provisioned with.
+func (o SidecarOptions) appliedRevision(account string) (string, error) {
+	raw, err := os.ReadFile(filepath.Join(userStorageDirectory(account), revisionFileName))
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(raw)), nil
+}
+
+// recordRevision notes what an account now holds, written last so a failure
+// part-way through leaves the account looking unprovisioned rather than
+// current.
+func (o SidecarOptions) recordRevision(account, revision string) error {
+	target := filepath.Join(userStorageDirectory(account), revisionFileName)
+	if err := os.WriteFile(target, []byte(revision+"\n"), 0o600); err != nil {
+		return fmt.Errorf("record revision for %q: %w", account, err)
+	}
+	return nil
 }

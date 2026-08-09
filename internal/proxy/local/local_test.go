@@ -48,7 +48,7 @@ func testEnv(t *testing.T) *server.Env {
 			CookieSecrets: []string{"secret-one-abcdefghij"},
 			MaxAge:        config.Duration(time.Hour),
 		},
-		Provider: config.ProviderConfig{Mode: config.ModeLocal},
+		Provider: config.ProviderConfig{Modes: []string{config.ModeLocal}},
 		Users: []config.User{
 			{Subject: "jane@corp.example", Level: config.LevelDBA, LocalPasswordBcrypt: string(hash)},
 		},
@@ -219,5 +219,54 @@ func TestRedirectPoisoningRejected(t *testing.T) {
 		if loc := w.Header().Get("Location"); loc != "/" {
 			t.Fatalf("rd=%q: Location = %q, want /", rd, loc)
 		}
+	}
+}
+
+// With an identity provider enabled alongside, the login page is still the
+// local form — the provider is a button on it, not a redirect past it.
+func TestLoginFormOffersExternalProviders(t *testing.T) {
+	env := testEnv(t)
+	rt := env.Runtime()
+	rt.Config.Provider.Modes = []string{config.ModeLocal, config.ModeOIDC}
+
+	mux := testMux(t, env)
+	r := httptest.NewRequest(http.MethodGet, "/auth/local/login", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+
+	body := w.Body.String()
+	if !strings.Contains(body, `name="password"`) {
+		t.Fatalf("local form missing: %s", body)
+	}
+	// The whole anchor, closing tag and label included. A truncated render
+	// still contains the opening of the href, so matching a prefix passes
+	// on a page that reaches the browser as a dangling tag.
+	if !strings.Contains(body, `<a class="button-link" href="/auth/oidc/login?rd=%2f">Sign in with SSO</a>`) {
+		t.Fatalf("SSO button missing or incomplete: %s", body)
+	}
+	if !strings.HasSuffix(strings.TrimSpace(body), "</html>") {
+		t.Fatalf("page did not render to completion: %s", body)
+	}
+	if server.LoginPath(env) != "/auth/local/login" {
+		t.Fatalf("LoginPath = %q, want the local form", server.LoginPath(env))
+	}
+}
+
+// A provider that failed to start is not offered. The button would lead to
+// a handler nobody registered, and the whole point of keeping local
+// sign-in alive through an identity provider outage is that the page still
+// works.
+func TestFailedProviderIsNotOffered(t *testing.T) {
+	env := testEnv(t)
+	env.Runtime().Config.Provider.Modes = []string{config.ModeLocal, config.ModeOIDC}
+	env.Available = []string{config.ModeLocal}
+
+	mux := testMux(t, env)
+	r := httptest.NewRequest(http.MethodGet, "/auth/local/login", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+
+	if body := w.Body.String(); strings.Contains(body, "/auth/oidc/login") {
+		t.Fatalf("a provider that did not start is offered: %s", body)
 	}
 }

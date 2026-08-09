@@ -62,7 +62,13 @@ func NewSidecarClient(config *rest.Config, reader client.Reader) (*SidecarClient
 	if err != nil {
 		return nil, fmt.Errorf("construct admin sync client: %w", err)
 	}
-	return &SidecarClient{client: clientset, reader: reader, timeout: 30 * time.Second}, nil
+	// One sync is a batch of setup.py invocations, and each one boots a
+	// Flask application and runs the settings-database migrations before it
+	// does any work. Thirty seconds was a network-call timeout applied to
+	// something that is not a network call: on a loaded node a single sync
+	// exceeded it and every user stayed unprovisioned. This bounds a
+	// pod-local request, so it can afford to wait.
+	return &SidecarClient{client: clientset, reader: reader, timeout: 5 * time.Minute}, nil
 }
 
 // Sync selects the ready pgAdmin Pod at the requested checksum and posts
@@ -90,7 +96,7 @@ func (c *SidecarClient) Sync(ctx context.Context, request Request) error {
 	}
 	token := strings.TrimSpace(string(secret.Data[SidecarSecretTokenKey]))
 
-	body, err := json.Marshal(SyncRequest{Users: request.Users})
+	body, err := json.Marshal(SyncRequest{Servers: request.Servers})
 	if err != nil {
 		return fmt.Errorf("encode admin-sync request: %w", err)
 	}

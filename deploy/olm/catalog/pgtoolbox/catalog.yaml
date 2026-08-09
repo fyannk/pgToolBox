@@ -29,7 +29,6 @@ properties:
 - type: olm.gvk
   value:
     group: pgtoolbox.fyannk.dev
-    kind: PgToolBoxRole
     version: v1alpha1
 - type: olm.gvk
   value:

@@ -142,7 +142,11 @@ type ServerConfig struct {
 // ProviderConfig selects and configures the authentication provider.
 type ProviderConfig struct {
 	// Mode is "oidc", "local" or "openshift".
-	Mode string `json:"mode"`
+	// Modes are the authentication providers to enable, in the order the
+	// login page offers them. More than one is a supported deployment: a
+	// local account is how the first administrator gets in, and how anyone
+	// gets in when the identity provider is the thing that is down.
+	Modes []string `json:"modes"`
 	// OIDC configures the oidc mode; required exactly when mode is oidc.
 	OIDC *OIDCConfig `json:"oidc,omitempty"`
 	// OpenShift configures the openshift mode; required exactly when mode is

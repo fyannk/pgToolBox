@@ -96,6 +96,7 @@ type Reconciler struct {
 // +kubebuilder:rbac:groups=pgtoolbox.fyannk.dev,resources=pgconsoles/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=pgtoolbox.fyannk.dev,resources=pgconsoles/finalizers,verbs=update
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=roles;rolebindings,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles;clusterrolebindings,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=serviceaccounts;services;persistentvolumeclaims,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
@@ -107,7 +108,6 @@ type Reconciler struct {
 // +kubebuilder:rbac:groups=postgresql.cnpg.io,resources=databaseroles,verbs=get;list;watch
 // +kubebuilder:rbac:groups=pgtoolbox.fyannk.dev,resources=pgtoolboxusers,verbs=get;list;watch
 // +kubebuilder:rbac:groups=pgtoolbox.fyannk.dev,resources=pgtoolboxusers/status,verbs=update;patch
-// +kubebuilder:rbac:groups=pgtoolbox.fyannk.dev,resources=pgtoolboxroles,verbs=get;list;watch
 
 // The rules below are never exercised by this operator. They exist only
 // because Kubernetes escalation prevention refuses to let a controller create
@@ -121,6 +121,13 @@ type Reconciler struct {
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=pods/log,verbs=get
 // +kubebuilder:rbac:groups="",resources=events,verbs=list;watch
+// +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
+// +kubebuilder:rbac:groups=policy,resources=poddisruptionbudgets,verbs=get;list;watch
+// +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch
+// +kubebuilder:rbac:groups=apps,resources=replicasets,verbs=get
+// +kubebuilder:rbac:groups=postgresql.cnpg.io,resources=poolers;databases;publications;subscriptions,verbs=get;list;watch
+// +kubebuilder:rbac:groups=postgresql.cnpg.io,resources=failoverquorums;imagecatalogs,verbs=get;list;watch
+// +kubebuilder:rbac:groups=postgresql.cnpg.io,resources=clusterimagecatalogs,verbs=get
 // +kubebuilder:rbac:groups=postgresql.cnpg.io,resources=backups;scheduledbackups,verbs=get;list;watch
 // +kubebuilder:rbac:groups=postgresql.cnpg.io,resources=backups,verbs=create
 // +kubebuilder:rbac:groups=postgresql.cnpg.io,resources=clusters,verbs=patch
@@ -147,6 +154,13 @@ func (r *Reconciler) Reconcile(
 	if !console.DeletionTimestamp.IsZero() {
 		if !controllerutil.ContainsFinalizer(&console, application.Finalizer) {
 			return ctrl.Result{}, nil
+		}
+		// Everything else this console owns carries an owner reference and
+		// is collected by Kubernetes. The catalog ClusterRole pair cannot:
+		// a cluster-scoped object may not be owned by a namespaced one, so
+		// the finalizer is what stops it outliving the console.
+		if err := r.deleteCatalogClusterRBAC(ctx, &console); err != nil {
+			return ctrl.Result{}, err
 		}
 		controllerutil.RemoveFinalizer(&console, application.Finalizer)
 		return ctrl.Result{}, r.Update(ctx, &console)
@@ -188,6 +202,20 @@ func (r *Reconciler) Reconcile(
 		return ctrl.Result{}, r.updateStatus(ctx, statusBefore, &console)
 	}
 
+	// The console validates its own configuration at startup and refuses to
+	// serve on a value it rejects. Catching that here reports the bad field
+	// on the resource instead of rolling out a Pod that crash-loops.
+	if err := validateConsoleSpec(&console); err != nil {
+		conditions.MarkFalse(
+			&console,
+			pgtoolboxv1alpha1.PgConsoleConditionConfigurationValid,
+			pgtoolboxv1alpha1.ReasonConfigurationInvalid,
+			"invalid console configuration: %v",
+			err,
+		)
+		return ctrl.Result{}, r.updateStatus(ctx, statusBefore, &console)
+	}
+
 	// The console serves exactly one CNPG Cluster. A missing Cluster is an
 	// expected state — the console may have been applied first — so it is
 	// reported on ClusterReady and retried, never failed hard. The Cluster
@@ -219,6 +247,13 @@ func (r *Reconciler) Reconcile(
 		"CNPG Cluster %s exists",
 		cluster.Name,
 	)
+
+	// Before resolving the users: the console's first administrator is
+	// derived from the spec, so it has to exist as an object before the set
+	// is read or the first reconcile renders a console nobody can sign in to.
+	if err := r.reconcileBootstrapAdmin(ctx, &console); err != nil {
+		return ctrl.Result{}, err
+	}
 
 	// Resolve the console's users once per reconcile: the same role, password
 	// and credential information feeds the proxy config, pgAdmin sync, and the
@@ -261,8 +296,15 @@ func (r *Reconciler) Reconcile(
 		return ctrl.Result{}, err
 	}
 
-	if err := r.reconcilePgAdminSync(ctx, &console, deployment, checksum, resolvedUsers); err != nil {
+	if err := r.reconcilePgAdminSync(ctx, &console, deployment, checksum); err != nil {
 		return ctrl.Result{}, err
+	}
+	// pgAdmin accounts appear on sign-in, which no watch can observe, so a
+	// console with pgAdmin is revisited on a timer rather than only on
+	// change.
+	requeue := ctrl.Result{}
+	if pgAdminEnabled(&console) {
+		requeue.RequeueAfter = pgAdminResyncInterval
 	}
 
 	if err := r.applyUserStatuses(ctx, resolvedUsers); err != nil {
@@ -276,7 +318,7 @@ func (r *Reconciler) Reconcile(
 		"configuration is valid",
 	)
 	r.publishWorkloadStatus(&console, deployment)
-	return ctrl.Result{}, r.updateStatus(ctx, statusBefore, &console)
+	return requeue, r.updateStatus(ctx, statusBefore, &console)
 }
 
 // reconcileResources converges every owned object, ordered so authority and
@@ -315,6 +357,14 @@ func (r *Reconciler) reconcileResources(
 
 	if err := r.reconcilePgAdminSettingsPVC(ctx, console); err != nil {
 		return nil, err
+	}
+
+	if pgAdminEnabled(console) {
+		// Before the Deployment: pgAdmin mounts this Secret, and without the
+		// account it holds the container refuses to start at all.
+		if err := r.reconcilePgAdminBootstrapSecret(ctx, console); err != nil {
+			return nil, err
+		}
 	}
 
 	if pgAdminEnabled(console) && r.OperatorImage != "" {
@@ -415,11 +465,6 @@ func (r *Reconciler) mapToolBoxResourceToConsole(_ context.Context, obj client.O
 			Namespace: resource.Namespace,
 			Name:      resource.Spec.PgConsoleRef.Name,
 		}}}
-	case *pgtoolboxv1alpha1.PgToolBoxRole:
-		return []reconcile.Request{{NamespacedName: client.ObjectKey{
-			Namespace: resource.Namespace,
-			Name:      resource.Spec.PgConsoleRef.Name,
-		}}}
 	default:
 		return nil
 	}
@@ -449,10 +494,6 @@ func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 	controllerBuilder = controllerBuilder.
 		Watches(
 			&pgtoolboxv1alpha1.PgToolBoxUser{},
-			handler.EnqueueRequestsFromMapFunc(r.mapToolBoxResourceToConsole),
-		).
-		Watches(
-			&pgtoolboxv1alpha1.PgToolBoxRole{},
 			handler.EnqueueRequestsFromMapFunc(r.mapToolBoxResourceToConsole),
 		)
 	return controllerBuilder.

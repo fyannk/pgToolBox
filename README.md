@@ -19,10 +19,9 @@ declare, it composes a dedicated pod next to one
 └────────────────────────────────────────────────────────────┘
 ```
 
-Users and roles are plain Kubernetes objects too: a `PgToolBoxRole` maps a
-console authorization level (`view` / `poweruser` / `dba`) to a postgres
-role (operator-managed `DatabaseRole` or bring-your-own), a
-`PgToolBoxUser` binds an identity to a role, and a
+Users are plain Kubernetes objects too: a `PgToolBoxUser` binds an
+identity to one of the three console authorization levels (`view` /
+`poweruser` / `dba`), and a
 `PgToolBoxAccessRequest` lets an unknown authenticated user ask a `dba`
 for access from the proxy's 403 page.
 
@@ -31,12 +30,14 @@ for access from the proxy's 403 page.
 - **One console per cluster**, never mutualized: dedicated proxy, dedicated
   pgAdmin, dedicated pgpass — security isolation beats resource sharing.
 - **pgtoolbox-proxy** as the single authentication and coarse authorization
-  boundary: OIDC (PKCE S256), OpenShift service-account OAuth, or local
-  bcrypt accounts rendered from `PgToolBoxUser`.
-- **pgAdmin lands pre-configured**: per `PgToolBoxUser`, the operator syncs
-  a pgAdmin account and a shared server definition carrying the saved
-  password of the user's postgres role — no server forms, no passwords to
-  type.
+  boundary: OIDC (PKCE S256), OpenShift service-account OAuth, and local
+  bcrypt accounts rendered from `PgToolBoxUser` — any mix at once, so a
+  local account is still the way in when the identity provider is down.
+- **A declared first administrator**: `bootstrapAdmin` is required on every
+  console and materialized as a `dba` the operator puts back if deleted, so
+  a console can never be deployed with nobody able to approve access.
+- **pgAdmin is embedded** behind the same proxy, reachable at `/pgadmin`
+  by sessions at or above `pgAdmin.accessMinLevel`.
 - **Embedded pgAdmin user/server sync** through an in-pod mTLS admin-sync
   API; the operator never execs into the pod.
 - **Every exposure type**: OpenShift `Route`, `Ingress`, Gateway API
@@ -73,7 +74,9 @@ spec:
   cnpgClusterRef: { name: pg-main }
   proxy:
     authentication:
-      mode: oidc
+      bootstrapAdmin:
+        subject: jane@corp.example
+      local: {}                        # keeps a way in when the IdP is down
       oidc:
         issuerURL: https://idp.example.com
         clientID: pgconsole
@@ -83,28 +86,18 @@ spec:
     hostname: pgconsole.apps.example.com
 ---
 apiVersion: pgtoolbox.fyannk.dev/v1alpha1
-kind: PgToolBoxRole
-metadata:
-  name: dba
-spec:
-  pgConsoleRef: { name: main }
-  level: dba
-  postgresRole:
-    profile: database-owner
----
-apiVersion: pgtoolbox.fyannk.dev/v1alpha1
 kind: PgToolBoxUser
 metadata:
   name: jane
 spec:
   pgConsoleRef: { name: main }
   subject: jane@corp.example
-  roleRef: { name: dba }
+  level: dba
 ```
 
-Jane signs in through the proxy, sees the console sized to her `dba` level,
-and opens `/pgadmin` on a ready-to-use connection authenticated as the
-postgres role the operator created for `dba`.
+Jane signs in through the proxy and sees the console sized to her `dba`
+level, including `/pgadmin`. Roles and users configure the proxy only —
+they are not postgres roles, and nothing about them reaches the database.
 
 ## Documentation
 

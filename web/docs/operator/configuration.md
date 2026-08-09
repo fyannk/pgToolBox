@@ -24,13 +24,23 @@ reflects the deployed operator image.
 spec:
   cnpgClusterRef: { name: pg-main }      # immutable, same namespace
   proxy:
-    authentication:
-      mode: openshift | oidc | local
-      oidc: { issuerURL, clientID, clientSecretRef }   # mode=oidc only
+    authentication:                    # any mix of the three
+      bootstrapAdmin:                  # required
+        subject: root@corp.example
+        passwordSecretRef: { name: root-password }
+      local: {}
+      oidc: { issuerURL, clientID, clientSecretRef }
+      openshift: {}
   pgAdmin:
     enabled: true
     accessMinLevel: dba                  # dba | poweruser
     storage: { size: 1Gi, storageClass: "" }
+  console:
+    allowOperations: true                # day-2 operations
+    allowLogs: true                      # bounded instance log tail
+    allowAccessReview: true              # dba review panel
+    allowClusterCatalogs: false          # opt-in ClusterRole
+    monitoringURL: https://grafana.example.com/d/pg
   evidence:
     enabled: false
     image: { ... }
@@ -42,27 +52,65 @@ spec:
     policyTypes: full                    # full | ingress
 ```
 
-### Authentication modes
+### Authentication providers
 
-- **oidc** — authorization-code flow with PKCE against any OIDC provider;
-  the client Secret is mounted from `clientSecretRef`.
-- **openshift** — the console ServiceAccount is the OAuth client; the
-  operator adds the `oauth-redirecturi` annotation from `exposure.hostname`.
 - **local** — bcrypt accounts rendered from `PgToolBoxUser`
-  `localPasswordSecretRef` Secrets (key `password`).
+  `localPasswordSecretRef` Secrets (key `password`). A user without one
+  simply does not participate in local sign-in.
+- **oidc** — authorization-code flow with PKCE against any OIDC provider;
+  the client Secret is mounted from `clientSecretRef`. The redirect URI is
+  `https://<exposure.hostname>/auth/oidc/callback`, or — with no hostname —
+  whatever origin the request arrived on, which is what makes a
+  port-forwarded dev console work on any port.
+- **openshift** — the console ServiceAccount is the OAuth client; the
+  operator adds the `oauth-redirecturi` annotation from `exposure.hostname`,
+  so this one does require a hostname.
+
+### The first administrator
+
+A console starts with no users. Granting access needs a `dba` to approve a
+`PgToolBoxAccessRequest`, so a console with none can never let anybody in —
+including the person who would have approved the first request.
+
+`proxy.authentication.bootstrapAdmin` closes that loop and is required. The
+operator materializes it as a `PgToolBoxUser` named
+`<console>-bootstrap-admin` at `dba` level, owned by the console:
+
+- It is derived from the spec, not maintained by hand. Deleting the object
+  gets it back on the next reconcile; handing the role to somebody else
+  means editing the console, which leaves a record in its history.
+- Its subject is reserved even when the user cannot be rendered. A missing
+  password Secret is a fault to repair, not an invitation for another
+  `PgToolBoxUser` to inherit that identity at whatever level it names.
+- `passwordSecretRef` is optional, and required only when `local` is the
+  only provider — otherwise the console would ship with no way in at all.
+  With an identity provider enabled the first administrator authenticates
+  there like everyone else.
+
+Enabling more than one is a supported deployment, not a migration step.
+The login page renders the local form with a button per external provider,
+and the session records which of them authenticated the user.
 
 ### Levels
 
-`X-PgToolBox-Level` is set from the user's `PgToolBoxRole.level`:
+`X-PgToolBox-Level` is set from the user's `level`:
 `view` < `poweruser` < `dba`. Unknown authenticated users get `none` and
 can only file an access request.
 
-## PgToolBoxRole profiles
+The proxy strips any inbound copy of the identity and level headers before
+setting its own, and the console reads them because the generated
+NetworkPolicy confines its ingress to the proxy. There is no ungated
+baseline in the console: `view` reaches the overviews and the metrics
+screens, `poweruser` adds the remaining read screens, and `dba` adds the
+day-2 operations, the access-request review panel and the pgAdmin
+link-out.
 
-| Profile | DatabaseRole shape |
-|---|---|
-| `monitor` | `inRoles: [pg_monitor]` |
-| `database-readonly` | `inRoles: [pg_read_all_data]` |
-| `database-owner` | `createdb` + `createrole` |
+### Console capabilities
 
-`databaseRoleRef` selects an existing `DatabaseRole` instead.
+The `console` block decides which of those screens exist at all. Each
+capability moves the flag *and* the authority: switching one off removes
+the matching rules from the generated Roles, so RBAC denies the operation
+whatever the application is told. See
+[the PgConsole reference](../reference/pgconsole.md#the-console-block)
+for the full field set and its bounds.
+

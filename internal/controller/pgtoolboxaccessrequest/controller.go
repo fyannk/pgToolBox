@@ -35,9 +35,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
 // Reconciler reconciles a PgToolBoxAccessRequest resource.
@@ -48,7 +46,6 @@ type Reconciler struct {
 // +kubebuilder:rbac:groups=pgtoolbox.fyannk.dev,resources=pgtoolboxaccessrequests,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=pgtoolbox.fyannk.dev,resources=pgtoolboxaccessrequests/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=pgtoolbox.fyannk.dev,resources=pgconsoles,verbs=get;list;watch
-// +kubebuilder:rbac:groups=pgtoolbox.fyannk.dev,resources=pgtoolboxroles,verbs=get;list;watch
 // +kubebuilder:rbac:groups=pgtoolbox.fyannk.dev,resources=pgtoolboxusers,verbs=get;list;watch;create;update;patch
 
 // Reconcile reads the review decision and materializes the PgToolBoxUser for
@@ -114,17 +111,17 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	return ctrl.Result{}, r.updateStatus(ctx, before, &request)
 }
 
-// reconcileApprovedUser validates the requested role and ensures the
-// PgToolBoxUser exists. Missing console or role marks the request not ready
+// reconcileApprovedUser validates the granted level and ensures the
+// PgToolBoxUser exists. A missing console marks the request not ready
 // without failing the reconcile.
 func (r *Reconciler) reconcileApprovedUser(ctx context.Context, request *pgtoolboxv1alpha1.PgToolBoxAccessRequest) error {
-	ref := request.Status.RequestedRoleRef
-	if ref == nil || ref.Name == "" {
+	level := request.Status.RequestedLevel
+	if level == "" {
 		conditions.MarkFalse(
 			request,
 			pgtoolboxv1alpha1.AccessRequestConditionUserReady,
 			pgtoolboxv1alpha1.ReasonConfigurationInvalid,
-			"approved access request has no requestedRoleRef",
+			"approved access request grants no level",
 		)
 		return nil
 	}
@@ -140,31 +137,6 @@ func (r *Reconciler) reconcileApprovedUser(ctx context.Context, request *pgtoolb
 			pgtoolboxv1alpha1.ReasonPgConsoleNotFound,
 			"referenced PgConsole %s was not found",
 			request.Spec.PgConsoleRef.Name,
-		)
-		return nil
-	}
-
-	role, err := r.resolvePgToolBoxRole(ctx, request, ref.Name)
-	if err != nil {
-		return err
-	}
-	if role == nil {
-		conditions.MarkFalse(
-			request,
-			pgtoolboxv1alpha1.AccessRequestConditionUserReady,
-			pgtoolboxv1alpha1.ReasonRoleNotFound,
-			"requested PgToolBoxRole %s was not found",
-			ref.Name,
-		)
-		return nil
-	}
-	if role.Spec.PgConsoleRef.Name != console.Name {
-		conditions.MarkFalse(
-			request,
-			pgtoolboxv1alpha1.AccessRequestConditionUserReady,
-			pgtoolboxv1alpha1.ReasonConfigurationInvalid,
-			"requested PgToolBoxRole %s belongs to a different console",
-			ref.Name,
 		)
 		return nil
 	}
@@ -186,7 +158,7 @@ func (r *Reconciler) reconcileApprovedUser(ctx context.Context, request *pgtoolb
 			Spec: pgtoolboxv1alpha1.PgToolBoxUserSpec{
 				PgConsoleRef: pgtoolboxv1alpha1.LocalObjectReference{Name: console.Name},
 				Subject:      request.Spec.Subject,
-				RoleRef:      pgtoolboxv1alpha1.LocalObjectReference{Name: role.Name},
+				Level:        level,
 			},
 		}
 		if err := r.Create(ctx, &user); err != nil {
@@ -197,10 +169,10 @@ func (r *Reconciler) reconcileApprovedUser(ctx context.Context, request *pgtoolb
 			}
 			return fmt.Errorf("create PgToolBoxUser %s/%s: %w", key.Namespace, key.Name, err)
 		}
-	} else if user.Spec.RoleRef.Name != role.Name || user.Spec.PgConsoleRef.Name != console.Name {
+	} else if user.Spec.Level != level || user.Spec.PgConsoleRef.Name != console.Name {
 		before := user.DeepCopy()
 		user.Spec.PgConsoleRef = pgtoolboxv1alpha1.LocalObjectReference{Name: console.Name}
-		user.Spec.RoleRef = pgtoolboxv1alpha1.LocalObjectReference{Name: role.Name}
+		user.Spec.Level = level
 		if err := r.Patch(ctx, &user, client.MergeFrom(before)); err != nil {
 			return fmt.Errorf("update PgToolBoxUser %s/%s: %w", key.Namespace, key.Name, err)
 		}
@@ -230,52 +202,11 @@ func (r *Reconciler) resolvePgConsole(ctx context.Context, request *pgtoolboxv1a
 	return &console, nil
 }
 
-// resolvePgToolBoxRole fetches the requested role. A nil result with nil
-// error means the role does not exist.
-func (r *Reconciler) resolvePgToolBoxRole(ctx context.Context, request *pgtoolboxv1alpha1.PgToolBoxAccessRequest, name string) (*pgtoolboxv1alpha1.PgToolBoxRole, error) {
-	var role pgtoolboxv1alpha1.PgToolBoxRole
-	key := client.ObjectKey{Namespace: request.Namespace, Name: name}
-	if err := r.Get(ctx, key, &role); err != nil {
-		if apierrors.IsNotFound(err) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	return &role, nil
-}
-
 // userNameFor derives a deterministic PgToolBoxUser name from the console and
 // subject, so repeated approvals of the same identity converge on one user.
 func userNameFor(console *pgtoolboxv1alpha1.PgConsole, subject string) string {
 	digest := sha256.Sum256([]byte(console.Name + "\x00" + subject))
 	return shared.BoundedName(console.Name, "-pguser-"+hex.EncodeToString(digest[:8]))
-}
-
-// mapRoleToAccessRequests enqueues every approved access request that
-// references the given role, so a role created after the approval still lets
-// the user materialize.
-func (r *Reconciler) mapRoleToAccessRequests(ctx context.Context, obj client.Object) []reconcile.Request {
-	role, ok := obj.(*pgtoolboxv1alpha1.PgToolBoxRole)
-	if !ok {
-		return nil
-	}
-	var list pgtoolboxv1alpha1.PgToolBoxAccessRequestList
-	if err := r.List(ctx, &list, client.InNamespace(role.Namespace)); err != nil {
-		return nil
-	}
-	var requests []reconcile.Request
-	for i := range list.Items {
-		if list.Items[i].Status.State != pgtoolboxv1alpha1.AccessRequestStateApproved {
-			continue
-		}
-		if list.Items[i].Status.RequestedRoleRef == nil || list.Items[i].Status.RequestedRoleRef.Name != role.Name {
-			continue
-		}
-		requests = append(requests, reconcile.Request{
-			NamespacedName: client.ObjectKeyFromObject(&list.Items[i]),
-		})
-	}
-	return requests
 }
 
 // updateStatus patches status only when it semantically changed.
@@ -290,10 +221,6 @@ func (r *Reconciler) updateStatus(ctx context.Context, before, after *pgtoolboxv
 func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&pgtoolboxv1alpha1.PgToolBoxAccessRequest{}).
-		Watches(
-			&pgtoolboxv1alpha1.PgToolBoxRole{},
-			handler.EnqueueRequestsFromMapFunc(r.mapRoleToAccessRequests),
-		).
 		Named("pgtoolboxaccessrequest").
 		Complete(r)
 }

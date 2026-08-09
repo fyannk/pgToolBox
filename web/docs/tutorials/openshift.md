@@ -14,7 +14,9 @@ spec:
   cnpgClusterRef: { name: pg-main }
   proxy:
     authentication:
-      mode: openshift
+      bootstrapAdmin:
+        subject: jane@corp.example
+      openshift: {}
   exposure:
     type: route
     hostname: pgconsole-apps.example.com

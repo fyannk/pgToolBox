@@ -60,6 +60,19 @@ spec:
               console. Deleting a PgToolBoxUser de-provisions it from the proxy
               configuration and from pgAdmin.
             properties:
+              level:
+                description: |-
+                  RoleLevel is the coarse authorization level the proxy asserts in the
+                  X-PgToolBox-Level header, and the console maps onto its own ladder.
+
+                  The set is closed and hardcoded on both sides — there is nothing an
+                  operator could add — so a level is chosen on a PgToolBoxUser rather than
+                  declared as an object of its own.
+                enum:
+                - view
+                - poweruser
+                - dba
+                type: string
               localPasswordSecretRef:
                 description: |-
                   Reference to the Secret holding this user's local-mode password
@@ -88,19 +101,6 @@ spec:
                 required:
                 - name
                 type: object
-              roleRef:
-                description: |-
-                  The PgToolBoxRole granting this user its level and postgres role,
-                  in the same namespace.
-                properties:
-                  name:
-                    description: The name of the referenced resource.
-                    maxLength: 253
-                    minLength: 1
-                    type: string
-                required:
-                - name
-                type: object
               subject:
                 description: |-
                   The identity the authentication provider vouches for: email, sub or
@@ -109,16 +109,15 @@ spec:
                 minLength: 1
                 type: string
             required:
+            - level
             - pgConsoleRef
-            - roleRef
             - subject
             type: object
           status:
             description: PgToolBoxUserStatus is the observed state of a PgToolBoxUser.
             properties:
               conditions:
-                description: 'Standard conditions: Ready, RoleReady, ProxySynced,
-                  PgAdminSynced.'
+                description: 'Standard conditions: Ready, RoleReady, ProxySynced.'
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
@@ -178,11 +177,6 @@ spec:
                 description: The generation observed by the controller.
                 format: int64
                 type: integer
-              pgAdminSynced:
-                description: |-
-                  Whether the pgAdmin account and shared server definition are
-                  provisioned for this user.
-                type: boolean
               proxySynced:
                 description: Whether the rendered proxy configuration includes this
                   user.

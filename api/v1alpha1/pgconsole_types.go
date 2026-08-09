@@ -36,8 +36,13 @@ type PgConsoleSpec struct {
 
 	// The pgconsole container image to run. Defaults to the operator's
 	// configured image (--default-pgconsole-image).
+	//
+	// A pointer so that an omitted image is genuinely absent. Go does not
+	// omit an empty struct, so a value field would serialize as `image: {}`
+	// and be rejected by ImageSpec's required repository and tag — which
+	// would make the operator's default images unreachable.
 	// +optional
-	Image ImageSpec `json:"image,omitempty"`
+	Image *ImageSpec `json:"image,omitempty"`
 
 	// The pgtoolbox-proxy authentication proxy, the single authentication
 	// and coarse authorization boundary of the console.
@@ -46,6 +51,11 @@ type PgConsoleSpec struct {
 	// The embedded pgAdmin, dedicated to this cluster.
 	// +optional
 	PgAdmin PgAdminSpec `json:"pgAdmin,omitempty"`
+
+	// The pgconsole application's own behaviour: which screens and day-2
+	// operations it serves, what it retains, and the link-outs it offers.
+	// +optional
+	Console ConsoleSpec `json:"console,omitempty"`
 
 	// The ObjectStoreViewer evidence sidecar, publishing repository
 	// evidence to the console over a pod-private Unix socket.
@@ -59,6 +69,10 @@ type PgConsoleSpec struct {
 	// +optional
 	NetworkPolicy NetworkPolicySpec `json:"networkPolicy,omitempty"`
 
+	// Pod-level security settings the operator deliberately does not decide.
+	// +optional
+	PodSecurityContext PodSecurityContextSpec `json:"podSecurityContext,omitempty"`
+
 	// Resource budget shared by the pgconsole container.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
@@ -67,9 +81,10 @@ type PgConsoleSpec struct {
 // ProxySpec configures the pgtoolbox-proxy container.
 type ProxySpec struct {
 	// The proxy container image. Defaults to the operator's configured
-	// image (--default-pgtoolbox-proxy-image).
+	// image (--default-pgtoolbox-proxy-image). A pointer for the same
+	// reason as PgConsoleSpec.Image.
 	// +optional
-	Image ImageSpec `json:"image,omitempty"`
+	Image *ImageSpec `json:"image,omitempty"`
 
 	// How users authenticate.
 	Authentication ProxyAuthenticationSpec `json:"authentication"`
@@ -79,39 +94,68 @@ type ProxySpec struct {
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
 }
 
-// ProxyAuthenticationMode selects how humans authenticate to the proxy.
-// +kubebuilder:validation:Enum=openshift;oidc;local
-type ProxyAuthenticationMode string
-
-const (
-	// ProxyAuthenticationModeOpenShift uses the integrated OpenShift OAuth
-	// stack, auto-discovered from the cluster.
-	ProxyAuthenticationModeOpenShift ProxyAuthenticationMode = "openshift"
-
-	// ProxyAuthenticationModeOIDC speaks plain OIDC to an external identity
-	// provider.
-	ProxyAuthenticationModeOIDC ProxyAuthenticationMode = "oidc"
-
-	// ProxyAuthenticationModeLocal authenticates against bcrypt credentials
-	// rendered by the operator from the console's PgToolBoxUser set.
-	ProxyAuthenticationModeLocal ProxyAuthenticationMode = "local"
-)
-
-// ProxyAuthenticationSpec configures proxy authentication as a discriminated
-// union on mode: the oidc block is required exactly when mode is oidc.
-// The openshift and local modes take no configuration: openshift is
-// auto-discovered from the cluster, and local users come only from the
-// console's PgToolBoxUser resources.
-// +kubebuilder:validation:XValidation:rule="self.mode == 'oidc' ? has(self.oidc) : true",message="oidc is required when mode is oidc"
-// +kubebuilder:validation:XValidation:rule="self.mode == 'oidc' || !has(self.oidc)",message="oidc may only be set when mode is oidc"
+// ProxyAuthenticationSpec configures how humans authenticate. Each block
+// enables one provider, and more than one may be enabled at once: the login
+// page then offers the local form with the others as buttons beside it.
+//
+// Mixed authentication is a supported deployment rather than a stepping
+// stone. A local account is how the first administrator gets in before any
+// identity is federated, and how anyone gets in when the identity provider
+// is the thing that is down.
+// +kubebuilder:validation:XValidation:rule="has(self.local) || has(self.oidc) || has(self.openshift)",message="at least one authentication provider must be enabled"
+// +kubebuilder:validation:XValidation:rule="!(has(self.local) && !has(self.oidc) && !has(self.openshift)) || has(self.bootstrapAdmin.passwordSecretRef)",message="bootstrapAdmin.passwordSecretRef is required when local is the only authentication provider"
 type ProxyAuthenticationSpec struct {
-	// The authentication mode.
-	Mode ProxyAuthenticationMode `json:"mode"`
+	// The first administrator, and the answer to how anyone gets in at
+	// all. A console starts with no users; granting access needs a dba to
+	// approve a PgToolBoxAccessRequest, so without a declared one nobody
+	// can ever sign in to approve anything.
+	//
+	// The operator materializes this as a PgToolBoxUser it owns, at dba
+	// level, and puts it back if it is deleted — it is derived from this
+	// field rather than an object anyone maintains. Handing the role to
+	// somebody else means editing it here, which leaves a record.
+	BootstrapAdmin BootstrapAdminSpec `json:"bootstrapAdmin"`
 
-	// Configuration for the oidc mode.
+	// Local accounts, rendered from the console's PgToolBoxUser set. A user
+	// participates in local sign-in only if it carries a password.
+	// +optional
+	Local *ProxyLocalSpec `json:"local,omitempty"`
+
+	// Plain OIDC against an external identity provider.
 	// +optional
 	OIDC *ProxyOIDCSpec `json:"oidc,omitempty"`
+
+	// The integrated OpenShift OAuth stack, auto-discovered from the
+	// cluster.
+	// +optional
+	OpenShift *ProxyOpenShiftSpec `json:"openshift,omitempty"`
 }
+
+// BootstrapAdminSpec names the console's first dba.
+type BootstrapAdminSpec struct {
+	// The identity the authentication provider vouches for, matched the
+	// same way as any other user's subject.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	Subject string `json:"subject"`
+
+	// Reference to the Secret holding this identity's local-mode password
+	// (bcrypt). Optional, because with an identity provider enabled the
+	// first administrator authenticates there like everyone else. Required
+	// only when local is the sole provider, since otherwise the console
+	// would ship with no way in at all. Default key: "password".
+	// +optional
+	PasswordSecretRef *SecretKeyReference `json:"passwordSecretRef,omitempty"`
+}
+
+// ProxyLocalSpec enables local accounts. It carries no settings: the users
+// are the console's own PgToolBoxUser objects.
+type ProxyLocalSpec struct{}
+
+// ProxyOpenShiftSpec enables the integrated OpenShift OAuth stack. It
+// carries no settings: the endpoints are discovered from the cluster and
+// the workload ServiceAccount is the OAuth client.
+type ProxyOpenShiftSpec struct{}
 
 // ProxyOIDCSpec configures the oidc authentication mode.
 type ProxyOIDCSpec struct {
@@ -136,9 +180,10 @@ type PgAdminSpec struct {
 	Enabled *bool `json:"enabled,omitempty"`
 
 	// The pgAdmin container image. Defaults to the operator's configured
-	// image (--default-pgadmin-image).
+	// image (--default-pgadmin-image). A pointer for the same reason as
+	// PgConsoleSpec.Image.
 	// +optional
-	Image ImageSpec `json:"image,omitempty"`
+	Image *ImageSpec `json:"image,omitempty"`
 
 	// The minimum role level allowed to reach pgAdmin through the proxy.
 	// +kubebuilder:validation:Enum=dba;poweruser
@@ -167,6 +212,187 @@ type PgAdminStorageSpec struct {
 	// StorageClass for the PVC; cluster default when empty.
 	// +optional
 	StorageClass string `json:"storageClass,omitempty"`
+}
+
+// PodSecurityContextSpec carries the pod-level security settings the
+// operator cannot decide on your behalf. It is deliberately narrow: the
+// console Pod's hardening — non-root, dropped capabilities, read-only root
+// filesystem, the runtime-default seccomp profile — is the operator's to
+// set and is not configurable here.
+type PodSecurityContextSpec struct {
+	// The supplemental group applied to every volume the Pod mounts.
+	//
+	// It exists for the evidence sidecar. pgObjectStoreViewer refuses to
+	// serve unless the shared socket directory is setgid with group rwx,
+	// and on a Pod's emptyDir that mode comes from the kubelet applying
+	// fsGroup — without one the directory is 0777 with no setgid and the
+	// viewer reports an invalid socket path.
+	//
+	// Leave it unset on OpenShift: the restricted-v2 SCC allocates an
+	// fsGroup from the namespace's range, and a value outside that range
+	// is rejected outright. Set it on a cluster that does not default one,
+	// which otherwise cannot run the evidence sidecar at all.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=2147483647
+	// +optional
+	FSGroup *int64 `json:"fsGroup,omitempty"`
+}
+
+// ConsoleSpec configures the pgconsole container itself. Every field maps
+// to one of the application's configuration variables, and every default
+// here reproduces the application's own, so an omitted block deploys the
+// console the application ships.
+//
+// Two properties are load-bearing. First, the application validates its
+// configuration at startup and refuses to serve on a value it rejects, so
+// the bounds this API accepts are exactly the bounds the application
+// accepts — a PgConsole that admission accepts cannot produce a Pod that
+// crash-loops on its own configuration. Second, enabling a capability
+// grants the matching rules in the generated Roles and nothing more: the
+// console never widens its own authority, and a disabled capability is
+// denied by RBAC as well as by the flag.
+//
+// Deliberately absent: the application's HISTORY_PATH and METRICS_PATH
+// journals. Both imply a PersistentVolumeClaim and pin the console to a
+// single replica, which is a storage decision this API does not yet make;
+// history and metrics are retained in memory and live with the process.
+// +kubebuilder:validation:XValidation:rule="!has(self.monitoringURL) || self.monitoringURL.startsWith('https://') || (has(self.allowInsecureLinks) && self.allowInsecureLinks)",message="monitoringURL must use https unless allowInsecureLinks is true"
+type ConsoleSpec struct {
+	// Whether the four enumerated day-2 operations — request backup,
+	// reload, rolling restart and promote — are served. Disabling both
+	// removes the write surface from the application and drops the
+	// operate Role from the deployment, so RBAC denies the mutation
+	// independently of the flag.
+	// +kubebuilder:default=true
+	// +optional
+	AllowOperations *bool `json:"allowOperations,omitempty"`
+
+	// Whether the bounded instance log tail is served. Instance logs can
+	// contain query text; disabling removes the screen and the pods/log
+	// rule from the generated read Role.
+	// +kubebuilder:default=true
+	// +optional
+	AllowLogs *bool `json:"allowLogs,omitempty"`
+
+	// Whether the dba access-request review panel is served. With it
+	// disabled the PgToolBoxAccessRequests the proxy's 403 page creates
+	// have no reviewer UI, and the console holds no authority over them.
+	// +kubebuilder:default=true
+	// +optional
+	AllowAccessReview *bool `json:"allowAccessReview,omitempty"`
+
+	// Whether the console may read the one cluster-scoped
+	// ClusterImageCatalog its Cluster references. This is the only
+	// authority a console holds outside its own namespace, so it is
+	// opt-in and generates a separate ClusterRole granting exactly get —
+	// never list, never watch. Declining costs nothing but a panel that
+	// reports the catalog content as unread, never as absent.
+	// +kubebuilder:default=false
+	// +optional
+	AllowClusterCatalogs *bool `json:"allowClusterCatalogs,omitempty"`
+
+	// Whether http link-out URLs are accepted. For lab use: the console
+	// rejects an http monitoringURL without it, and a console with no
+	// exposure hostname has no https base URL from which to build the
+	// pgAdmin link-out.
+	// +kubebuilder:default=false
+	// +optional
+	AllowInsecureLinks *bool `json:"allowInsecureLinks,omitempty"`
+
+	// Link-out base URL to the monitoring dashboard for this cluster.
+	// Must use https unless allowInsecureLinks is true.
+	// +kubebuilder:validation:Pattern=`^https?://.+$`
+	// +optional
+	MonitoringURL string `json:"monitoringURL,omitempty"`
+
+	// Timeout applied to every Kubernetes API request the console makes.
+	// Between 1s and 1m; defaults to 10s.
+	// +optional
+	APIRequestTimeout *metav1.Duration `json:"apiRequestTimeout,omitempty"`
+
+	// How far back the cluster's Events are shown. Between 1m and 24h;
+	// defaults to 1h.
+	// +optional
+	EventsMaxAge *metav1.Duration `json:"eventsMaxAge,omitempty"`
+
+	// Bounds applied to a single log tail request.
+	// +optional
+	LogTail ConsoleLogTailSpec `json:"logTail,omitempty"`
+
+	// The bounded in-memory metrics window behind the metrics screens.
+	// +optional
+	Metrics ConsoleMetricsSpec `json:"metrics,omitempty"`
+
+	// The bounded in-memory revision history of the watched object
+	// definitions.
+	// +optional
+	History ConsoleHistorySpec `json:"history,omitempty"`
+}
+
+// ConsoleLogTailSpec bounds one log tail request. Tails are fetched on
+// demand and never persisted; these bounds cap a single response.
+type ConsoleLogTailSpec struct {
+	// Maximum lines returned per request. Defaults to 200.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=2000
+	// +optional
+	Lines *int32 `json:"lines,omitempty"`
+
+	// Maximum bytes returned per request. Defaults to 1048576 (1Mi).
+	// +kubebuilder:validation:Minimum=4096
+	// +kubebuilder:validation:Maximum=8388608
+	// +optional
+	MaxBytes *int32 `json:"maxBytes,omitempty"`
+}
+
+// ConsoleMetricsSpec configures the console's in-memory metrics window.
+type ConsoleMetricsSpec struct {
+	// Whether the metrics screens are served.
+	// +kubebuilder:default=true
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// Sampling interval. Between 5s and 5m; defaults to 10s.
+	// +optional
+	Interval *metav1.Duration `json:"interval,omitempty"`
+
+	// How long samples are retained. Between 1h and 720h (30d); defaults
+	// to 168h (7d).
+	// +optional
+	Retention *metav1.Duration `json:"retention,omitempty"`
+}
+
+// ConsoleHistorySpec configures the console's in-memory object definition
+// history. Retention is bounded on three axes so a busy namespace cannot
+// grow the console's memory without limit.
+type ConsoleHistorySpec struct {
+	// Whether history is recorded at all.
+	// +kubebuilder:default=true
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// Global cap on retained revisions. Defaults to 2000.
+	// +kubebuilder:validation:Minimum=100
+	// +kubebuilder:validation:Maximum=20000
+	// +optional
+	MaxRevisions *int32 `json:"maxRevisions,omitempty"`
+
+	// Global cap on retained manifest bytes. Defaults to 16777216 (16Mi).
+	// +kubebuilder:validation:Minimum=1048576
+	// +kubebuilder:validation:Maximum=67108864
+	// +optional
+	MaxBytes *int32 `json:"maxBytes,omitempty"`
+
+	// Cap on retained revisions of any one object. Defaults to 20.
+	// +kubebuilder:validation:Minimum=2
+	// +kubebuilder:validation:Maximum=200
+	// +optional
+	PerObjectRevisions *int32 `json:"perObjectRevisions,omitempty"`
+
+	// Window within which repeated changes to one object collapse into a
+	// single revision. Between 1s and 1h; defaults to 1m.
+	// +optional
+	CoalesceWindow *metav1.Duration `json:"coalesceWindow,omitempty"`
 }
 
 // EvidenceSpec configures the ObjectStoreViewer evidence sidecar.

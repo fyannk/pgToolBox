@@ -197,7 +197,7 @@ func viewerContainer(
 ) corev1.Container {
 	pullPolicy := corev1.PullIfNotPresent
 	if console.Spec.Evidence.Image != nil {
-		pullPolicy = imagePullPolicy(*console.Spec.Evidence.Image)
+		pullPolicy = imagePullPolicy(console.Spec.Evidence.Image)
 	}
 
 	environment := []corev1.EnvVar{

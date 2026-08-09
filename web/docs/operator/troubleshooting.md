@@ -4,7 +4,7 @@ Read conditions first; the vocabulary below is the operator's contract.
 
 ```bash
 kubectl get pgc -n <ns> <name> -o yaml | yq '.status.conditions'
-kubectl get pgrole,pguser,pgreq -n <ns>
+kubectl get pguser,pgreq -n <ns>
 ```
 
 ## PgConsole
@@ -20,21 +20,10 @@ kubectl get pgrole,pguser,pgreq -n <ns>
 | `PgAdminSynced=False` | `SyncFailed` | The admin-sync sidecar call failed; check the `admin-sync` container logs and the admin-sync Secret. |
 | `RepositoryEvidenceReady=False` | `ObjectStoreNotFound` | Evidence is enabled but no Barman `ObjectStore` is served/resolved. Disable evidence or install the Barman Cloud Plugin. |
 
-## PgToolBoxRole
-
-| Condition | Reason | Fix |
-|---|---|---|
-| `PgConsoleReady=False` | `PgConsoleNotFound` | Create the PgConsole first. |
-| `DatabaseRoleReady=False` | `DatabaseRolePending` | Wait for CNPG; check the `DatabaseRole` status. |
-| `DatabaseRoleReady=False` | `DatabaseRoleFailed` | CNPG rejected the role; inspect `databaseroles.postgresql.cnpg.io`. |
-| `CredentialReady=False` | `SecretFormatInvalid` | Delete the managed credential Secret; the operator regenerates it. |
-
 ## PgToolBoxUser
 
 | Condition | Reason | Fix |
 |---|---|---|
-| `RoleReady=False` | `RoleNotFound` | The `roleRef` names a `PgToolBoxRole` that does not exist. |
-| `RoleReady=False` | `ConfigurationInvalid` | The named role belongs to another console. |
 | `ProxySynced=False` | `SomeDegraded` | Local mode: missing/invalid bcrypt Secret, or a duplicate subject. |
 | `PgAdminSynced=False` | `SomeDegraded` | Backing `DatabaseRole` not applied, or password Secret incomplete. |
 
@@ -44,7 +33,7 @@ kubectl get pgrole,pguser,pgreq -n <ns>
 |---|---|---|
 | `Decided=False` | `Pending` | Awaiting a dba reviewer. |
 | `UserReady=False` | `PgConsoleNotFound` | The referenced PgConsole does not exist. |
-| `UserReady=False` | `ConfigurationInvalid` | Approved without `requestedRoleRef`, or the role belongs to another console. |
+| `UserReady=False` | `ConfigurationInvalid` | Approved without a `requestedLevel`. |
 | `UserReady=False` | `RoleNotFound` | Re-approve with a valid role. |
 
 ## Runtime issues

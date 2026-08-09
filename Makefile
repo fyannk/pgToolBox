@@ -25,9 +25,19 @@ all: build
 ##@ Development
 
 .PHONY: manifests
-manifests: ## Generate CRDs into config/crd/bases.
+manifests: ## Generate CRDs and the manager ClusterRole, then sync the packaging.
 	$(CONTROLLER_GEN) crd paths="./api/..." \
 		output:crd:artifacts:config=config/crd/bases
+	$(CONTROLLER_GEN) rbac:roleName=manager-role paths="./internal/..." \
+		output:rbac:artifacts:config=config/rbac
+	./hack/sync-manifests.sh
+
+.PHONY: verify-manifests
+verify-manifests: manifests ## Fail when the checked-in manifests are stale.
+	@git diff --exit-code -- config deploy || { \
+		echo "generated manifests are stale; run 'make manifests' and commit the result"; \
+		exit 1; \
+	}
 
 .PHONY: generate
 generate: ## Generate deepcopy code.
@@ -58,6 +68,14 @@ helm-lint: ## Lint and template-render the Helm chart.
 docs: ## Build the documentation site.
 	cd web && npm ci && npm run typecheck && npm run build
 
+.PHONY: dev-up
+dev-up: ## Stand up a browsable pgToolBox on kind and forward it to localhost:3000.
+	./hack/dev-up.sh
+
+.PHONY: test-e2e
+test-e2e: ## Provision a kind cluster with CNPG and run the e2e smoke test.
+	./hack/e2e.sh
+
 ##@ Build
 
 .PHONY: build
@@ -71,12 +89,12 @@ run: manifests generate fmt vet ## Run the operator against the current kubeconf
 .PHONY: docker-build
 docker-build: ## Build the operator container image.
 	docker build --build-arg VERSION=$(VERSION) --build-arg IMG=$(IMG) \
-		-f Dockerfile --target manager -t $(IMG) ..
+		-f Dockerfile --target manager -t $(IMG) .
 
 .PHONY: docker-build-proxy
 docker-build-proxy: ## Build the pgtoolbox-proxy container image.
 	docker build --build-arg VERSION=$(VERSION) --build-arg IMG=$(IMG) \
-		-f Dockerfile --target proxy -t $(PROXY_IMG) ..
+		-f Dockerfile --target proxy -t $(PROXY_IMG) .
 
 .PHONY: docker-build-all
 docker-build-all: docker-build docker-build-proxy ## Build all container images.

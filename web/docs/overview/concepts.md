@@ -21,18 +21,11 @@ except through the proxy.
 | `poweruser` | day-2 operations (backup, reload, restart, promote) | admitted when `accessMinLevel: poweruser` |
 | `dba` | operations + access-request review | admitted (default minimum) |
 
-Levels come from the user's `PgToolBoxRole`. Unknown-but-authenticated
+Levels come from the user's own `level` field. Unknown-but-authenticated
 users get a `none`-level session that can only file an access request.
 
 ## Postgres roles
 
-A `PgToolBoxRole` maps a level to a postgres role, either:
-
-- **profile** — the operator materializes a CNPG `DatabaseRole` and a
-  generated password Secret (`monitor`, `database-readonly`,
-  `database-owner`), or
-- **databaseRoleRef** — a bring-your-own `DatabaseRole`; the operator only
-  validates it.
 
 The password reaches pgAdmin over the in-pod admin-sync mTLS API and lands
 in a pod-private pgpass file; it is never logged and never put in status.

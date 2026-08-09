@@ -84,21 +84,27 @@ func testConsole() *pgtoolboxv1alpha1.PgConsole {
 		},
 		Spec: pgtoolboxv1alpha1.PgConsoleSpec{
 			CNPGClusterRef: pgtoolboxv1alpha1.LocalObjectReference{Name: "cluster-1"},
-			Image: pgtoolboxv1alpha1.ImageSpec{
+			Image: &pgtoolboxv1alpha1.ImageSpec{
 				Repository: "example.com/pgconsole",
 				Tag:        "1.0.0",
 			},
 			Proxy: pgtoolboxv1alpha1.ProxySpec{
-				Image: pgtoolboxv1alpha1.ImageSpec{
+				Image: &pgtoolboxv1alpha1.ImageSpec{
 					Repository: "example.com/proxy",
 					Tag:        "1.0.0",
 				},
 				Authentication: pgtoolboxv1alpha1.ProxyAuthenticationSpec{
-					Mode: pgtoolboxv1alpha1.ProxyAuthenticationModeLocal,
+					BootstrapAdmin: pgtoolboxv1alpha1.BootstrapAdminSpec{
+						Subject: "root@corp.example",
+						PasswordSecretRef: &pgtoolboxv1alpha1.SecretKeyReference{
+							Name: "root-password",
+						},
+					},
+					Local: &pgtoolboxv1alpha1.ProxyLocalSpec{},
 				},
 			},
 			PgAdmin: pgtoolboxv1alpha1.PgAdminSpec{
-				Image: pgtoolboxv1alpha1.ImageSpec{
+				Image: &pgtoolboxv1alpha1.ImageSpec{
 					Repository: "example.com/pgadmin",
 					Tag:        "8.0",
 				},
@@ -118,30 +124,9 @@ func testCluster() *cnpgv1.Cluster {
 	}
 }
 
-// testPgToolBoxRole returns a role already resolved to a managed DatabaseRole.
-func testPgToolBoxRole(name string, level pgtoolboxv1alpha1.RoleLevel) *pgtoolboxv1alpha1.PgToolBoxRole {
-	return &pgtoolboxv1alpha1.PgToolBoxRole{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: "test",
-			UID:       types.UID("uid-" + name),
-		},
-		Spec: pgtoolboxv1alpha1.PgToolBoxRoleSpec{
-			PgConsoleRef: pgtoolboxv1alpha1.LocalObjectReference{Name: "console"},
-			Level:        level,
-			PostgresRole: pgtoolboxv1alpha1.PostgresRoleSpec{
-				Profile: pgtoolboxv1alpha1.PostgresRoleProfileMonitor,
-			},
-		},
-		Status: pgtoolboxv1alpha1.PgToolBoxRoleStatus{
-			DatabaseRoleName: name + "-pgrole",
-		},
-	}
-}
-
 // testPgToolBoxUser returns a user referencing the given role with a local
 // password secret.
-func testPgToolBoxUser(name, roleName, passwordSecretName string) *pgtoolboxv1alpha1.PgToolBoxUser {
+func testPgToolBoxUser(name string, level pgtoolboxv1alpha1.RoleLevel, passwordSecretName string) *pgtoolboxv1alpha1.PgToolBoxUser {
 	return &pgtoolboxv1alpha1.PgToolBoxUser{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
@@ -151,7 +136,7 @@ func testPgToolBoxUser(name, roleName, passwordSecretName string) *pgtoolboxv1al
 		Spec: pgtoolboxv1alpha1.PgToolBoxUserSpec{
 			PgConsoleRef: pgtoolboxv1alpha1.LocalObjectReference{Name: "console"},
 			Subject:      name + "@example.com",
-			RoleRef:      pgtoolboxv1alpha1.LocalObjectReference{Name: roleName},
+			Level:        level,
 			LocalPasswordSecretRef: &pgtoolboxv1alpha1.SecretKeyReference{
 				Name: passwordSecretName,
 			},
@@ -161,42 +146,6 @@ func testPgToolBoxUser(name, roleName, passwordSecretName string) *pgtoolboxv1al
 
 // testDatabaseRole returns a DatabaseRole with the password secret already
 // applied.
-func testDatabaseRole(name, secretName, secretResourceVersion string) *cnpgv1.DatabaseRole {
-	return &cnpgv1.DatabaseRole{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:       name,
-			Namespace:  "test",
-			UID:        types.UID("uid-" + name),
-			Generation: 1,
-		},
-		Spec: cnpgv1.DatabaseRoleSpec{
-			RoleConfiguration: cnpgv1.RoleConfiguration{
-				Name:           name,
-				PasswordSecret: &cnpgv1.LocalObjectReference{Name: secretName},
-			},
-		},
-		Status: cnpgv1.DatabaseRoleStatus{
-			Applied:               boolPtr(true),
-			ObservedGeneration:    1,
-			SecretResourceVersion: secretResourceVersion,
-		},
-	}
-}
-
-// testPasswordSecret returns a basic-auth Secret for a DatabaseRole.
-func testPasswordSecret(name, resourceVersion string) *corev1.Secret {
-	return &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:            name,
-			Namespace:       "test",
-			ResourceVersion: resourceVersion,
-		},
-		Data: map[string][]byte{
-			corev1.BasicAuthUsernameKey: []byte(name + "-user"),
-			corev1.BasicAuthPasswordKey: []byte(name + "-password"),
-		},
-	}
-}
 
 // testLocalPasswordSecret returns a Secret holding a bcrypt hash.
 func testLocalPasswordSecret(name, hash string) *corev1.Secret {
@@ -205,5 +154,3 @@ func testLocalPasswordSecret(name, hash string) *corev1.Secret {
 		Data:       map[string][]byte{"password": []byte(hash)},
 	}
 }
-
-func boolPtr(b bool) *bool { return &b }

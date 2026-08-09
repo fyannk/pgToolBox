@@ -157,6 +157,9 @@ func buildHTTPClient(cfg *config.OpenShiftConfig) (*http.Client, error) {
 	return &http.Client{Transport: transport, Timeout: discoveryTimeout}, nil
 }
 
+// Mode implements server.Provider.
+func (p *Provider) Mode() string { return config.ModeOpenShift }
+
 // Register implements server.Provider.
 func (p *Provider) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /auth/openshift/login", p.handleLogin)
@@ -233,8 +236,9 @@ func (p *Provider) handleCallback(w http.ResponseWriter, r *http.Request) {
 
 	secret, err := readSecretFile(p.clientSecretFile)
 	if err != nil {
-		p.env.Logger.Warn("reading OpenShift OAuth client secret failed", "error", err)
-		fail(http.StatusBadGateway, "The OAuth client secret could not be read.")
+		p.env.Logger.Error("reading OpenShift OAuth client secret failed", "error", err)
+		fail(http.StatusInternalServerError, "This console's OAuth client secret could not be read; "+
+			"an administrator has to check the ServiceAccount token mount.")
 		return
 	}
 
@@ -243,8 +247,9 @@ func (p *Provider) handleCallback(w http.ResponseWriter, r *http.Request) {
 	ctx := context.WithValue(r.Context(), oauth2.HTTPClient, p.httpClient)
 	token, err := exchange.Exchange(ctx, code, oauth2.VerifierOption(t.Verifier))
 	if err != nil {
-		p.env.Logger.Warn("OpenShift code exchange failed", "error", err)
-		fail(http.StatusBadGateway, "The identity provider could not complete the login.")
+		status, message := server.ExchangeFailure(err)
+		p.env.Logger.Error("OpenShift code exchange failed", "error", err, "status", status)
+		fail(status, message)
 		return
 	}
 	if token.AccessToken == "" {
@@ -263,7 +268,7 @@ func (p *Provider) handleCallback(w http.ResponseWriter, r *http.Request) {
 	if u, ok := p.env.LookupUser(subject); ok {
 		level = u.Level
 	}
-	if err := p.env.IssueSession(w, subject, level); err != nil {
+	if err := p.env.IssueSession(w, subject, level, config.ModeOpenShift); err != nil {
 		p.env.Logger.Error("issuing session failed", "error", err)
 		fail(http.StatusInternalServerError, "The session could not be created.")
 		return

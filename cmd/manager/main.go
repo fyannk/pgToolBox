@@ -24,9 +24,9 @@ import (
 
 	cnpgv1 "github.com/cloudnative-pg/api/pkg/api/v1"
 	pgtoolboxv1alpha1 "github.com/fyannk/pgtoolbox/api/v1alpha1"
+	"github.com/fyannk/pgtoolbox/internal/adminsync"
 	"github.com/fyannk/pgtoolbox/internal/controller/pgconsole"
 	"github.com/fyannk/pgtoolbox/internal/controller/pgtoolboxaccessrequest"
-	"github.com/fyannk/pgtoolbox/internal/controller/pgtoolboxrole"
 	"github.com/fyannk/pgtoolbox/internal/controller/shared"
 	configv1 "github.com/openshift/api/config/v1"
 	routev1 "github.com/openshift/api/route/v1"
@@ -125,6 +125,16 @@ func main() {
 		"gatewayAPI", availability.GatewayAPIAvailable,
 		"barmanObjectStores", availability.BarmanObjectStoreAvailable)
 
+	// The Syncer is what actually posts users to the in-pod admin-sync
+	// sidecar. Without one the PgConsole controller reports pgAdmin sync as
+	// not configured and provisions nothing, so this is the wiring that
+	// makes the embedded pgAdmin usable rather than merely present.
+	adminSyncer, err := adminsync.NewSidecarClient(mgr.GetConfig(), mgr.GetAPIReader())
+	if err != nil {
+		setupLog.Error(err, "unable to build the pgAdmin admin-sync client")
+		os.Exit(1)
+	}
+
 	if err := (&pgconsole.Reconciler{
 		Runtime: shared.Runtime{
 			Client:              mgr.GetClient(),
@@ -137,22 +147,9 @@ func main() {
 		DefaultImages:              defaultImages,
 		BarmanObjectStoreAvailable: availability.BarmanObjectStoreAvailable,
 		OperatorImage:              operatorImage,
+		AdminSync:                  adminSyncer,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "PgConsole")
-		os.Exit(1)
-	}
-
-	if err := (&pgtoolboxrole.Reconciler{
-		Runtime: shared.Runtime{
-			Client:              mgr.GetClient(),
-			APIReader:           mgr.GetAPIReader(),
-			Scheme:              mgr.GetScheme(),
-			Recorder:            mgr.GetEventRecorderFor("pgtoolboxrole"),
-			RouteAPIAvailable:   availability.RouteAPIAvailable,
-			GatewayAPIAvailable: availability.GatewayAPIAvailable,
-		},
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "PgToolBoxRole")
 		os.Exit(1)
 	}
 

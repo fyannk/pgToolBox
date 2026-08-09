@@ -41,7 +41,14 @@ const (
 	openshiftDNSPort  int32 = 5353
 	httpsPort         int32 = 443
 	kubeAPIServerPort int32 = 6443
+	// postgresPort is where the embedded pgAdmin reaches the cluster.
+	postgresPort int32 = 5432
 )
+
+// cnpgClusterLabel is the label CloudNativePG stamps on the instance pods
+// of one cluster. It scopes the PostgreSQL egress rule to this console's
+// own cluster rather than to PostgreSQL in general.
+const cnpgClusterLabel = "cnpg.io/cluster"
 
 // reconcileNetworkPolicy converges the generated NetworkPolicy: it deletes
 // the policy when the feature is disabled and otherwise writes only when
@@ -121,6 +128,24 @@ func (r *Reconciler) networkPolicy(console *pgtoolboxv1alpha1.PgConsole) (*netwo
 	policy.Spec.Egress = append(policy.Spec.Egress, networkingv1.NetworkPolicyEgressRule{
 		Ports: authenticationEgressPorts(console),
 	})
+	// The embedded pgAdmin exists to reach this one PostgreSQL cluster, and
+	// a default-deny policy that omits it forbids the only thing it is for.
+	// The symptom is not an error page: libpq waits on a dropped connection
+	// until the proxy's upstream timeout, so "connect to server" surfaces as
+	// a 502 with nothing in any log to explain it.
+	//
+	// Scoped to this cluster's instance pods by CloudNativePG's own label,
+	// so it is not egress to "PostgreSQL anywhere".
+	if pgAdminEnabled(console) {
+		policy.Spec.Egress = append(policy.Spec.Egress, networkingv1.NetworkPolicyEgressRule{
+			Ports: []networkingv1.NetworkPolicyPort{tcpPort(postgresPort)},
+			To: []networkingv1.NetworkPolicyPeer{{
+				PodSelector: &metav1.LabelSelector{
+					MatchLabels: map[string]string{cnpgClusterLabel: console.Spec.CNPGClusterRef.Name},
+				},
+			}},
+		})
+	}
 
 	for i := range spec.ExtraEgress {
 		rule := spec.ExtraEgress[i].DeepCopy()
@@ -170,7 +195,7 @@ func networkPolicyEnabled(console *pgtoolboxv1alpha1.PgConsole) bool {
 func authenticationEgressPorts(console *pgtoolboxv1alpha1.PgConsole) []networkingv1.NetworkPolicyPort {
 	ports := []networkingv1.NetworkPolicyPort{tcpPort(kubeAPIServerPort)}
 	auth := console.Spec.Proxy.Authentication
-	if auth.Mode == pgtoolboxv1alpha1.ProxyAuthenticationModeOIDC && auth.OIDC != nil {
+	if auth.OIDC != nil {
 		if identityPort := issuerPort(auth.OIDC.IssuerURL); identityPort != kubeAPIServerPort {
 			ports = append(ports, tcpPort(identityPort))
 		}
