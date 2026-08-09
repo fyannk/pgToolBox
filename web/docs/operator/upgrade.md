@@ -20,10 +20,12 @@ manually:
 kubectl apply -k config/crd
 ```
 
-## Breaking changes before 0.1.0
+## If you tracked main before 0.1.0
 
-The API is `v1alpha1` and pre-release, so these are replacements rather
-than deprecations.
+Nothing below applies to a fresh 0.1.0 install — there is no earlier
+release to come from. It applies only if you ran a build from `main`
+before 0.1.0 was cut. The API is `v1alpha1`, so these were replacements
+rather than deprecations.
 
 ### `PgToolBoxRole` is gone
 

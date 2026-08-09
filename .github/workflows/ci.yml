@@ -97,6 +97,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Building the images proves the YAML parses. This proves the two
+      # install paths say the same thing as the generated manifests and as
+      # each other, which is the failure these copies actually have.
+      - name: Validate packaging consistency
+        run: make validate-packaging
+
       - name: Build bundle image
         run: docker build -f deploy/olm/bundle.Dockerfile -t pgtoolbox-bundle:ci deploy/olm/bundle
 
