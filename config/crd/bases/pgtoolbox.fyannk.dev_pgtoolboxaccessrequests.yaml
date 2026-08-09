@@ -27,7 +27,7 @@ spec:
       name: Subject
       type: string
     - jsonPath: .status.requestedLevel
-      name: Role
+      name: Level
       type: string
     - jsonPath: .metadata.creationTimestamp
       name: Age
