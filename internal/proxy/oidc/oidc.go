@@ -84,6 +84,9 @@ func New(ctx context.Context, env *server.Env, cfg *config.OIDCConfig, clientSec
 // callbackPath is where the provider returns the browser.
 const callbackPath = "/auth/oidc/callback"
 
+// Mode implements server.Provider.
+func (p *Provider) Mode() string { return config.ModeOIDC }
+
 // Register implements server.Provider.
 func (p *Provider) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /auth/oidc/login", p.handleLogin)

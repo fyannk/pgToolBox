@@ -241,7 +241,26 @@ func TestLoginFormOffersExternalProviders(t *testing.T) {
 	if !strings.Contains(body, `href="/auth/oidc/login`) {
 		t.Fatalf("SSO button missing: %s", body)
 	}
-	if server.LoginPath(rt) != "/auth/local/login" {
-		t.Fatalf("LoginPath = %q, want the local form", server.LoginPath(rt))
+	if server.LoginPath(env) != "/auth/local/login" {
+		t.Fatalf("LoginPath = %q, want the local form", server.LoginPath(env))
+	}
+}
+
+// A provider that failed to start is not offered. The button would lead to
+// a handler nobody registered, and the whole point of keeping local
+// sign-in alive through an identity provider outage is that the page still
+// works.
+func TestFailedProviderIsNotOffered(t *testing.T) {
+	env := testEnv(t)
+	env.Runtime().Config.Provider.Modes = []string{config.ModeLocal, config.ModeOIDC}
+	env.Available = []string{config.ModeLocal}
+
+	mux := testMux(t, env)
+	r := httptest.NewRequest(http.MethodGet, "/auth/local/login", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+
+	if body := w.Body.String(); strings.Contains(body, "/auth/oidc/login") {
+		t.Fatalf("a provider that did not start is offered: %s", body)
 	}
 }

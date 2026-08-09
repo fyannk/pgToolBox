@@ -61,6 +61,9 @@ func New(env *server.Env) (*Provider, error) {
 	return &Provider{env: env, limiter: newRateLimiter(), dummyHash: dummy}, nil
 }
 
+// Mode implements server.Provider.
+func (p *Provider) Mode() string { return config.ModeLocal }
+
 // Register implements server.Provider.
 func (p *Provider) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /auth/local/login", p.handleForm)
@@ -71,7 +74,7 @@ func (p *Provider) Register(mux *http.ServeMux) {
 func (p *Provider) handleForm(w http.ResponseWriter, r *http.Request) {
 	pages.Login(w, http.StatusOK, pages.LoginData{
 		RedirectTo: server.SafeRedirect(r.URL.Query().Get("rd")),
-		External:   server.ExternalLogins(p.env.Runtime()),
+		External:   server.ExternalLogins(p.env),
 	})
 }
 
@@ -102,7 +105,7 @@ func (p *Provider) handleSubmit(w http.ResponseWriter, r *http.Request) {
 		pages.Login(w, http.StatusUnauthorized, pages.LoginData{
 			RedirectTo: rd,
 			Error:      "Invalid identity or password.",
-			External:   server.ExternalLogins(p.env.Runtime()),
+			External:   server.ExternalLogins(p.env),
 		})
 		return
 	}

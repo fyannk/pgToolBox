@@ -60,6 +60,8 @@ type sessionContextKey struct{}
 type Provider interface {
 	// Register installs the provider's endpoints on mux.
 	Register(mux *http.ServeMux)
+	// Mode is the config.Mode* constant this provider implements.
+	Mode() string
 }
 
 // Runtime is one immutable configuration snapshot: everything derived
@@ -88,6 +90,12 @@ type Env struct {
 	// AccessRequests creates PgToolBoxAccessRequest objects; nil when the
 	// flow is disabled or in-cluster configuration is unavailable.
 	AccessRequests AccessRequestCreator
+	// Available names the providers that actually started, which is not
+	// always every provider the configuration enables: an unreachable
+	// identity provider is skipped so the rest keep working. The login
+	// page offers these and only these, so no button leads to a handler
+	// that was never registered.
+	Available []string
 }
 
 // NewEnv builds an Env around the initial runtime.
@@ -190,11 +198,13 @@ func New(env *Env) *http.ServeMux {
 // it. With no local accounts there is nothing to type, so the single
 // external provider's start path is the whole of the login flow and the
 // browser goes straight there.
-func LoginPath(rt *Runtime) string {
-	if rt.Config.LocalEnabled() {
-		return "/auth/local/login"
+func LoginPath(e *Env) string {
+	for _, mode := range e.available() {
+		if mode == config.ModeLocal {
+			return "/auth/local/login"
+		}
 	}
-	for _, mode := range rt.Config.Provider.Modes {
+	for _, mode := range e.available() {
 		if mode == config.ModeOpenShift {
 			return "/auth/openshift/login"
 		}
@@ -202,11 +212,20 @@ func LoginPath(rt *Runtime) string {
 	return "/auth/oidc/login"
 }
 
+// available falls back to the configured set, which is what tests and any
+// caller that never recorded a startup result see.
+func (e *Env) available() []string {
+	if len(e.Available) > 0 {
+		return e.Available
+	}
+	return e.Runtime().Config.Provider.Modes
+}
+
 // ExternalLogins lists the providers the login page offers as buttons,
 // which is every enabled provider that is not the local form itself.
-func ExternalLogins(rt *Runtime) []pages.ExternalLogin {
+func ExternalLogins(e *Env) []pages.ExternalLogin {
 	var logins []pages.ExternalLogin
-	for _, mode := range rt.Config.Provider.Modes {
+	for _, mode := range e.available() {
 		switch mode {
 		case config.ModeOIDC:
 			logins = append(logins, pages.ExternalLogin{Label: "Sign in with SSO", Path: "/auth/oidc/login"})
@@ -252,7 +271,7 @@ func (e *Env) LookupUser(subject string) (config.User, bool) {
 func (e *Env) handleLogout(w http.ResponseWriter, r *http.Request) {
 	rt := e.Runtime()
 	session.ClearCookie(w, rt.Config.Session.CookieName, rt.Config.Session.CookieSecure())
-	http.Redirect(w, r, LoginPath(rt), http.StatusFound)
+	http.Redirect(w, r, LoginPath(e), http.StatusFound)
 }
 
 // handleProxied authenticates, authorizes, and proxies one request.
@@ -266,7 +285,7 @@ func (e *Env) handleProxied(w http.ResponseWriter, r *http.Request) {
 	sess, err := rt.Codec.ReadCookie(r, rt.Config.Session.CookieName)
 	if err != nil {
 		if r.Method == http.MethodGet {
-			login := LoginPath(rt) + "?rd=" + url.QueryEscape(r.URL.RequestURI())
+			login := LoginPath(e) + "?rd=" + url.QueryEscape(r.URL.RequestURI())
 			http.Redirect(w, r, login, http.StatusFound)
 			return
 		}
