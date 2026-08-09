@@ -21,14 +21,6 @@ resources:
     namespaced: true
   domain: fyannk.dev
   group: pgtoolbox
-  kind: PgToolBoxRole
-  path: github.com/fyannk/pgtoolbox/api/v1alpha1
-  version: v1alpha1
-- api:
-    crdVersion: v1
-    namespaced: true
-  domain: fyannk.dev
-  group: pgtoolbox
   kind: PgToolBoxUser
   path: github.com/fyannk/pgtoolbox/api/v1alpha1
   version: v1alpha1
