@@ -33,8 +33,9 @@
 </form>
 {{if .External}}
 <p class="or">or</p>
+{{$rd := .RedirectTo}}
 {{range .External}}
-<a class="button-link" href="{{.Path}}{{if $.RedirectTo}}?rd={{$.RedirectTo}}{{end}}">{{.Label}}</a>
+<a class="button-link" href="{{.Path}}{{if $rd}}?rd={{$rd}}{{end}}">{{.Label}}</a>
 {{end}}
 {{end}}
 {{end}}

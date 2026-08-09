@@ -104,3 +104,43 @@ button:hover {
   font-size: 0.75rem;
   color: #64748b;
 }
+/* The separator between the local form and the identity providers beside
+   it. A rule on each side rather than a bare word, so the two ways in read
+   as alternatives rather than as a caption on the button below. */
+.or {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 1.25rem 0 1rem;
+  font-size: 0.8rem;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.or::before,
+.or::after {
+  content: "";
+  flex: 1;
+  border-top: 1px solid #334155;
+}
+/* One per external provider. Outlined rather than filled: the local form
+   keeps the single filled button, so the page still says which way in is
+   the primary one without hiding the other. */
+.button-link {
+  display: block;
+  padding: 0.6rem 1rem;
+  border: 1px solid #475569;
+  border-radius: 0.45rem;
+  background: #0f172a;
+  color: #e2e8f0;
+  font-weight: 600;
+  text-align: center;
+  text-decoration: none;
+}
+.button-link + .button-link {
+  margin-top: 0.5rem;
+}
+.button-link:hover {
+  border-color: #2563eb;
+  background: #1e293b;
+}
