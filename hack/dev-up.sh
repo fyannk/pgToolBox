@@ -134,15 +134,13 @@ need helm
 
 kc() { kubectl --context "$CONTEXT" "$@"; }
 
-# already_up reports whether this cluster already runs a ready console, so a
-# re-run can skip the expensive build/create/deploy and just relaunch the
-# forward.
-already_up() {
+# deps_installed reports whether the third-party stack is already in the
+# cluster. Only that half is skippable on a re-run: everything this repo
+# owns is rebuilt and re-applied every time, because skipping it is how a
+# re-run silently serves the previous build.
+deps_installed() {
   kind get clusters 2> /dev/null | grep -qx "$CLUSTER" || return 1
-  kc -n "$NAMESPACE" get "deploy/$CONSOLE-pgconsole" > /dev/null 2>&1 || return 1
-  ready=$(kc -n "$NAMESPACE" get "deploy/$CONSOLE-pgconsole" \
-    -o jsonpath='{.status.readyReplicas}' 2> /dev/null || echo 0)
-  [ "${ready:-0}" -ge 1 ] 2> /dev/null
+  kc -n cnpg-system get deployment/cnpg-controller-manager > /dev/null 2>&1
 }
 
 if [ "${RECREATE:-}" = "true" ]; then
@@ -150,9 +148,7 @@ if [ "${RECREATE:-}" = "true" ]; then
   kind delete cluster --name "$CLUSTER" > /dev/null 2>&1 || true
 fi
 
-if already_up; then
-  log "cluster $CLUSTER already serves a ready console — skipping setup"
-else
+if ! deps_installed; then
   if ! kind get clusters 2> /dev/null | grep -qx "$CLUSTER"; then
     log "creating kind cluster $CLUSTER ($KIND_NODE_IMAGE)"
     # Generous: on a loaded machine the control plane can take well over two
@@ -179,42 +175,54 @@ else
     kc apply --server-side -f test/e2e/testdata/minio.yaml > /dev/null
     kc -n minio rollout status deployment/minio --timeout=300s > /dev/null
   fi
+fi
 
-  if [ "${SKIP_BUILD:-}" != "true" ]; then
-    log "building the operator and proxy images"
-    make docker-build docker-build-proxy IMG="$MANAGER_IMG" PROXY_IMG="$PROXY_IMG" VERSION=dev
-  fi
+if [ "${SKIP_BUILD:-}" != "true" ]; then
+  log "building the operator and proxy images"
+  make docker-build docker-build-proxy IMG="$MANAGER_IMG" PROXY_IMG="$PROXY_IMG" VERSION=dev
+fi
 
-  log "loading images into the cluster"
-  kind load docker-image "$MANAGER_IMG" "$PROXY_IMG" --name "$CLUSTER"
-  # Always pull, never "pull only if absent". A tag is a moving pointer, so
-  # a local copy of it can be older than the tag now resolves to, and
-  # side-loading that silently runs a stale component with no sign of it.
-  # Pulling a tag that is already current costs one HEAD request.
-  for image in "$PGCONSOLE_IMAGE" "$PGADMIN_IMAGE" "$VIEWER_IMAGE"; do
-    docker pull --quiet "$image"
-    kind load docker-image "$image" --name "$CLUSTER"
-  done
+log "loading images into the cluster"
+kind load docker-image "$MANAGER_IMG" "$PROXY_IMG" --name "$CLUSTER"
+# Always pull, never "pull only if absent". A tag is a moving pointer, so
+# a local copy of it can be older than the tag now resolves to, and
+# side-loading that silently runs a stale component with no sign of it.
+# Pulling a tag that is already current costs one HEAD request.
+for image in "$PGCONSOLE_IMAGE" "$PGADMIN_IMAGE" "$VIEWER_IMAGE"; do
+  docker pull --quiet "$image"
+  kind load docker-image "$image" --name "$CLUSTER"
+done
 
-  log "installing the operator (Helm chart)"
-  helm --kube-context "$CONTEXT" upgrade --install pgtoolbox deploy/helm/pgtoolbox \
-    --namespace pgtoolbox --create-namespace \
-    --set image.repository="${MANAGER_IMG%%:*}" \
-    --set image.tag="${MANAGER_IMG##*:}" \
-    --set image.pullPolicy=Never \
-    --set proxyImage="$PROXY_IMG" \
-    --set defaultImages.pgConsole="$PGCONSOLE_IMAGE" \
-    --set defaultImages.pgAdmin="$PGADMIN_IMAGE" \
-    --set defaultImages.objectStoreViewer="$VIEWER_IMAGE" \
-    --set replicaCount=1 \
-    --wait --timeout 300s > /dev/null
+# Helm installs CRDs on first install and never touches them again, so on
+# a re-run the API server would still validate against the previous shape
+# of the API this build was just compiled from.
+log "applying the CRDs"
+kc apply --server-side --force-conflicts -f deploy/helm/pgtoolbox/crds > /dev/null
 
-  log "seeding namespace $NAMESPACE"
-  kc create namespace "$NAMESPACE" --dry-run=client -o yaml | kc apply -f - > /dev/null
+log "installing the operator (Helm chart)"
+helm --kube-context "$CONTEXT" upgrade --install pgtoolbox deploy/helm/pgtoolbox \
+  --namespace pgtoolbox --create-namespace \
+  --set image.repository="${MANAGER_IMG%%:*}" \
+  --set image.tag="${MANAGER_IMG##*:}" \
+  --set image.pullPolicy=Never \
+  --set proxyImage="$PROXY_IMG" \
+  --set defaultImages.pgConsole="$PGCONSOLE_IMAGE" \
+  --set defaultImages.pgAdmin="$PGADMIN_IMAGE" \
+  --set defaultImages.objectStoreViewer="$VIEWER_IMAGE" \
+  --set replicaCount=1 \
+  --wait --timeout 300s > /dev/null
 
-  if [ "${SKIP_BACKUP:-}" != "true" ]; then
-    log "declaring the object store"
-    kc apply -f - > /dev/null <<EOF
+# The image tag does not change between runs, so nothing in the Deployment
+# differs and Helm leaves the old Pod running the previous build.
+kc -n pgtoolbox rollout restart deployment/pgtoolbox > /dev/null
+kc -n pgtoolbox rollout status deployment/pgtoolbox --timeout=300s > /dev/null
+
+log "seeding namespace $NAMESPACE"
+kc create namespace "$NAMESPACE" --dry-run=client -o yaml | kc apply --server-side --force-conflicts -f - > /dev/null
+
+if [ "${SKIP_BACKUP:-}" != "true" ]; then
+  log "declaring the object store"
+  kc apply --server-side --force-conflicts -f - > /dev/null <<EOF
 apiVersion: v1
 kind: Secret
 metadata:
@@ -237,19 +245,19 @@ spec:
       accessKeyId: { name: store-credentials, key: ACCESS_KEY_ID }
       secretAccessKey: { name: store-credentials, key: ACCESS_SECRET_KEY }
 EOF
-  fi
+fi
 
-  log "declaring the CloudNativePG cluster"
-  if [ "${SKIP_BACKUP:-}" != "true" ]; then
-    plugins="  plugins:
+log "declaring the CloudNativePG cluster"
+if [ "${SKIP_BACKUP:-}" != "true" ]; then
+  plugins="  plugins:
     - name: barman-cloud.cloudnative-pg.io
       enabled: true
       parameters:
         barmanObjectName: backups"
-  else
-    plugins=""
-  fi
-  kc apply -f - > /dev/null <<EOF
+else
+  plugins=""
+fi
+kc apply --server-side --force-conflicts -f - > /dev/null <<EOF
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
@@ -262,35 +270,35 @@ spec:
 $plugins
 EOF
 
-  # The evidence sidecar needs the store; without one there is nothing to
-  # read and the console reports the repository panel as unavailable.
-  evidence_enabled=true
-  if [ "${SKIP_BACKUP:-}" = "true" ] || [ "${SKIP_EVIDENCE:-}" = "true" ]; then
-    evidence_enabled=false
-  fi
+# The evidence sidecar needs the store; without one there is nothing to
+# read and the console reports the repository panel as unavailable.
+evidence_enabled=true
+if [ "${SKIP_BACKUP:-}" = "true" ] || [ "${SKIP_EVIDENCE:-}" = "true" ]; then
+  evidence_enabled=false
+fi
 
-  auth_block=""
-  if [ "$AUTH_LOCAL" = true ]; then
-    auth_block="      local: {}"
-  fi
-  if [ "$AUTH_OIDC" = true ]; then
-    for required in OIDC_ISSUER_URL OIDC_CLIENT_ID OIDC_CLIENT_SECRET; do
-      eval "value=\$$required"
-      [ -n "$value" ] || { echo "AUTH_MODE with oidc needs $required" >&2; exit 1; }
-    done
-    log "storing the OIDC client secret"
-    kc -n "$NAMESPACE" create secret generic pgconsole-oidc \
-      --from-literal=clientSecret="$OIDC_CLIENT_SECRET" \
-      --dry-run=client -o yaml | kc apply -f - > /dev/null
-    auth_block="${auth_block:+$auth_block
+auth_block=""
+if [ "$AUTH_LOCAL" = true ]; then
+  auth_block="      local: {}"
+fi
+if [ "$AUTH_OIDC" = true ]; then
+  for required in OIDC_ISSUER_URL OIDC_CLIENT_ID OIDC_CLIENT_SECRET; do
+    eval "value=\$$required"
+    [ -n "$value" ] || { echo "AUTH_MODE with oidc needs $required" >&2; exit 1; }
+  done
+  log "storing the OIDC client secret"
+  kc -n "$NAMESPACE" create secret generic pgconsole-oidc \
+    --from-literal=clientSecret="$OIDC_CLIENT_SECRET" \
+    --dry-run=client -o yaml | kc apply --server-side --force-conflicts -f - > /dev/null
+  auth_block="${auth_block:+$auth_block
 }      oidc:
         issuerURL: $OIDC_ISSUER_URL
         clientID: $OIDC_CLIENT_ID
         clientSecretRef: { name: pgconsole-oidc }"
-  fi
+fi
 
-  log "declaring the console"
-  kc apply -f - > /dev/null <<EOF
+log "declaring the console"
+kc apply --server-side --force-conflicts -f - > /dev/null <<EOF
 apiVersion: pgtoolbox.fyannk.dev/v1alpha1
 kind: PgConsole
 metadata:
@@ -321,21 +329,21 @@ $auth_block
     fsGroup: 5050
 EOF
 
-  # pgAdmin identifies accounts by email address, so a subject that is not
-  # one cannot be provisioned there. Real identities from an OIDC provider
-  # are email addresses; the seeded ones are too, so the pgAdmin half of the
-  # stack works rather than half-failing.
-  if [ "$AUTH_OIDC" = true ]; then
-    # No passwords: the identity provider holds those. A user here only
-    # says what level an already-authenticated identity gets, and a level
-    # has to be granted per identity because no group mapping exists.
-    [ -n "$OIDC_SUBJECTS" ] || log "warning: OIDC_SUBJECTS is empty, so every sign-in will land on the 403 page"
-    for entry in $OIDC_SUBJECTS; do
-      subject=${entry%%=*}
-      level=${entry##*=}
-      name=$(printf '%s' "$subject" | tr -c 'a-z0-9' '-' | sed 's/^-*//;s/-*$//' | cut -c1-40)
-      log "granting $level to $subject"
-      kc apply -f - > /dev/null <<EOF
+# pgAdmin identifies accounts by email address, so a subject that is not
+# one cannot be provisioned there. Real identities from an OIDC provider
+# are email addresses; the seeded ones are too, so the pgAdmin half of the
+# stack works rather than half-failing.
+if [ "$AUTH_OIDC" = true ]; then
+  # No passwords: the identity provider holds those. A user here only
+  # says what level an already-authenticated identity gets, and a level
+  # has to be granted per identity because no group mapping exists.
+  [ -n "$OIDC_SUBJECTS" ] || log "warning: OIDC_SUBJECTS is empty, so every sign-in will land on the 403 page"
+  for entry in $OIDC_SUBJECTS; do
+    subject=${entry%%=*}
+    level=${entry##*=}
+    name=$(printf '%s' "$subject" | tr -c 'a-z0-9' '-' | sed 's/^-*//;s/-*$//' | cut -c1-40)
+    log "granting $level to $subject"
+    kc apply --server-side --force-conflicts -f - > /dev/null <<EOF
 apiVersion: pgtoolbox.fyannk.dev/v1alpha1
 kind: PgToolBoxUser
 metadata:
@@ -346,19 +354,19 @@ spec:
   subject: $subject
   level: $level
 EOF
-    done
-  fi
+  done
+fi
 
-  if [ "$AUTH_LOCAL" = true ]; then
-    log "seeding one user per level"
-    for entry in "viewer:view" "operator:poweruser" "dba:dba"; do
-      name=${entry%%:*}
-      level=${entry##*:}
-      subject="$name@$SUBJECT_DOMAIN"
-      # Local authentication compares against a bcrypt hash; the operator
-      # copies it into the proxy configuration and hashes nothing itself.
-      hash=$(go run ./hack/devtools/bcrypt "$name")
-      kc apply -f - > /dev/null <<EOF
+if [ "$AUTH_LOCAL" = true ]; then
+  log "seeding one user per level"
+  for entry in "viewer:view" "operator:poweruser" "dba:dba"; do
+    name=${entry%%:*}
+    level=${entry##*:}
+    subject="$name@$SUBJECT_DOMAIN"
+    # Local authentication compares against a bcrypt hash; the operator
+    # copies it into the proxy configuration and hashes nothing itself.
+    hash=$(go run ./hack/devtools/bcrypt "$name")
+    kc apply --server-side --force-conflicts -f - > /dev/null <<EOF
 apiVersion: v1
 kind: Secret
 metadata:
@@ -378,12 +386,15 @@ spec:
   level: $level
   localPasswordSecretRef: { name: $name-password }
 EOF
-    done
-  fi
-
-  log "waiting for the console to become ready (pulls nothing; images are side-loaded)"
-  kc -n "$NAMESPACE" wait --for=condition=Available "deploy/$CONSOLE-pgconsole" --timeout=600s > /dev/null
+  done
 fi
+
+log "waiting for the console to become ready (pulls nothing; images are side-loaded)"
+kc -n "$NAMESPACE" wait --for=condition=Available "deploy/$CONSOLE-pgconsole" --timeout=600s > /dev/null
+# Same reason as the operator: the console Pod holds the previous proxy and
+# console images behind an unchanged tag.
+kc -n "$NAMESPACE" rollout restart "deploy/$CONSOLE-pgconsole" > /dev/null
+kc -n "$NAMESPACE" rollout status "deploy/$CONSOLE-pgconsole" --timeout=600s > /dev/null
 
 log "console conditions:"
 kc -n "$NAMESPACE" get pgconsole "$CONSOLE" \
@@ -461,7 +472,7 @@ cat <<EOF
     kubectl --context $CONTEXT -n $NAMESPACE get pgconsole,pguser,pgreq
 
   Ctrl-C stops the forward; the kind cluster stays up, so re-running this
-  script relaunches it fast.
+  script rebuilds and redeploys only what this repo owns.
   Full teardown:  kind delete cluster --name $CLUSTER
 
 EOF

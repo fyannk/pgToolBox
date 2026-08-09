@@ -157,6 +157,9 @@ func buildHTTPClient(cfg *config.OpenShiftConfig) (*http.Client, error) {
 	return &http.Client{Transport: transport, Timeout: discoveryTimeout}, nil
 }
 
+// Mode implements server.Provider.
+func (p *Provider) Mode() string { return config.ModeOpenShift }
+
 // Register implements server.Provider.
 func (p *Provider) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /auth/openshift/login", p.handleLogin)

@@ -94,6 +94,7 @@ func run() error {
 	}
 	for _, provider := range providers {
 		provider.Register(mux)
+		env.Available = append(env.Available, provider.Mode())
 	}
 
 	if cfg.AccessRequest.Enabled {
@@ -152,37 +153,47 @@ func run() error {
 // setupProvider builds the configured authentication provider. Provider
 // settings are fixed at startup; changing them on reload requires a
 // restart.
+// setupProviders builds one provider per enabled mode.
+//
+// A provider that cannot start does not take the others with it. Building
+// an external provider reaches out to it — discovery, endpoints, a client
+// secret — so "the identity provider is unreachable" is a startup error,
+// and failing the process on it would mean an outage at the IdP is also an
+// outage of the local form that exists precisely to survive one. The
+// failure is logged at error level and the proxy serves what is left; only
+// when nothing is left does it refuse to start.
 func setupProviders(ctx context.Context, env *server.Env, cfg *config.Config) ([]server.Provider, error) {
 	var providers []server.Provider
 	for _, mode := range cfg.Provider.Modes {
-		switch mode {
-		case config.ModeOIDC:
-			secret, err := readSecretFile(cfg.Provider.OIDC.ClientSecretFile)
-			if err != nil {
-				return nil, fmt.Errorf("reading OIDC client secret: %w", err)
-			}
-			provider, err := oidc.New(ctx, env, cfg.Provider.OIDC, secret)
-			if err != nil {
-				return nil, err
-			}
-			providers = append(providers, provider)
-		case config.ModeLocal:
-			provider, err := local.New(env)
-			if err != nil {
-				return nil, err
-			}
-			providers = append(providers, provider)
-		case config.ModeOpenShift:
-			provider, err := openshift.New(ctx, env, cfg.Provider.OpenShift)
-			if err != nil {
-				return nil, err
-			}
-			providers = append(providers, provider)
-		default:
-			return nil, fmt.Errorf("provider %q is not supported by this build", mode)
+		provider, err := setupProvider(ctx, env, cfg, mode)
+		if err != nil {
+			env.Logger.Error("authentication provider is unavailable and will not be offered",
+				"provider", mode, "error", err)
+			continue
 		}
+		providers = append(providers, provider)
+	}
+	if len(providers) == 0 {
+		return nil, fmt.Errorf("no authentication provider could be started")
 	}
 	return providers, nil
+}
+
+func setupProvider(ctx context.Context, env *server.Env, cfg *config.Config, mode string) (server.Provider, error) {
+	switch mode {
+	case config.ModeOIDC:
+		secret, err := readSecretFile(cfg.Provider.OIDC.ClientSecretFile)
+		if err != nil {
+			return nil, fmt.Errorf("reading OIDC client secret: %w", err)
+		}
+		return oidc.New(ctx, env, cfg.Provider.OIDC, secret)
+	case config.ModeLocal:
+		return local.New(env)
+	case config.ModeOpenShift:
+		return openshift.New(ctx, env, cfg.Provider.OpenShift)
+	default:
+		return nil, fmt.Errorf("provider %q is not supported by this build", mode)
+	}
 }
 
 // readSecretFile reads a secret file; the contents are returned but never
