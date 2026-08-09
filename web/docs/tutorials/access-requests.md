@@ -41,9 +41,12 @@ status:
 ## 4. The operator grants access
 
 The `PgToolBoxAccessRequest` controller materializes the `PgToolBoxUser`
-(deterministic name, idempotent), the PgConsole controller renders them
-into the proxy configuration, and pgAdmin sync provisions their account
-once the backing `DatabaseRole` is applied.
+(deterministic name, idempotent), and the PgConsole controller renders it
+into the proxy configuration. If the granted level reaches
+`spec.pgAdmin.accessMinLevel`, pgAdmin admits that identity too — there is
+no postgres role to create first, because the connections pgAdmin offers
+are the cluster's own credentials rather than anything derived from who
+signed in.
 
 ```bash
 kubectl get pgreq pgreq-abcde -n app-db -o yaml | yq '.status.conditions'
