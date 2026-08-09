@@ -238,8 +238,14 @@ func TestLoginFormOffersExternalProviders(t *testing.T) {
 	if !strings.Contains(body, `name="password"`) {
 		t.Fatalf("local form missing: %s", body)
 	}
-	if !strings.Contains(body, `href="/auth/oidc/login`) {
-		t.Fatalf("SSO button missing: %s", body)
+	// The whole anchor, closing tag and label included. A truncated render
+	// still contains the opening of the href, so matching a prefix passes
+	// on a page that reaches the browser as a dangling tag.
+	if !strings.Contains(body, `<a class="button-link" href="/auth/oidc/login?rd=%2f">Sign in with SSO</a>`) {
+		t.Fatalf("SSO button missing or incomplete: %s", body)
+	}
+	if !strings.HasSuffix(strings.TrimSpace(body), "</html>") {
+		t.Fatalf("page did not render to completion: %s", body)
 	}
 	if server.LoginPath(env) != "/auth/local/login" {
 		t.Fatalf("LoginPath = %q, want the local form", server.LoginPath(env))

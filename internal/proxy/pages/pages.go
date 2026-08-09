@@ -22,8 +22,10 @@ SPDX-License-Identifier: Apache-2.0
 package pages
 
 import (
+	"bytes"
 	_ "embed"
 	"html/template"
+	"io"
 	"net/http"
 )
 
@@ -84,12 +86,31 @@ type ErrorData struct {
 	Message string
 }
 
+// fallback is served when a template fails. It is a literal rather than a
+// template so that the failure path cannot fail the same way.
+const fallback = `<!doctype html><meta charset="utf-8"><title>Error</title>` +
+	`<p>This page could not be rendered.</p>`
+
+// render executes a template into memory and writes it only once it is
+// whole. html/template writes as it goes and stops at the first error, so
+// executing straight into the ResponseWriter sends a page truncated at the
+// point of failure — with the status already committed, the browser has no
+// way to tell that from a complete one, and it renders as a form with its
+// buttons missing.
 func render(w http.ResponseWriter, status int, templateName, title string, content any) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.WriteHeader(status)
+	var buf bytes.Buffer
 	// The CSS is a compile-time constant, never user input; marking it safe
 	// is what allows embedding it inline.
-	_ = tmpl.ExecuteTemplate(w, templateName, base{Title: title, CSS: template.CSS(css), Content: content}) // #nosec G203 -- constant CSS, not user input
+	data := base{Title: title, CSS: template.CSS(css), Content: content} // #nosec G203 -- constant CSS, not user input
+	if err := tmpl.ExecuteTemplate(&buf, templateName, data); err != nil {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = io.WriteString(w, fallback)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(status)
+	_, _ = w.Write(buf.Bytes())
 }
 
 // Login renders the local-mode login form.
