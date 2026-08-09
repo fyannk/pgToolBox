@@ -7,21 +7,25 @@ import type * as Preset from '@docusaurus/preset-classic';
 const config: Config = {
   title: 'pgToolBox',
   tagline: 'One declarative access stack per CloudNativePG cluster',
-  favicon: 'img/favicon.svg',
+  favicon: 'img/favicon.ico',
 
-  // GitHub Pages for fyannk/pgtoolbox.
+  // GitHub Pages for fyannk/pgToolBox. Both are case-sensitive: served
+  // under /pgtoolbox/ every stylesheet and script 404s, which renders as
+  // an unstyled page rather than as an error.
   url: 'https://fyannk.github.io',
-  baseUrl: '/pgtoolbox/',
+  baseUrl: '/pgToolBox/',
   trailingSlash: true,
 
   organizationName: 'fyannk',
-  projectName: 'pgtoolbox',
+  projectName: 'pgToolBox',
 
   onBrokenLinks: 'throw',
-  onBrokenMarkdownLinks: 'throw',
 
   markdown: {
     mermaid: true,
+    hooks: {
+      onBrokenMarkdownLinks: 'throw',
+    },
   },
 
   i18n: {
@@ -38,10 +42,13 @@ const config: Config = {
           sidebarPath: './sidebars.ts',
           includeCurrentVersion: true,
           versions: {
+            // There is no versioned_docs snapshot yet, so "current" is the
+            // released documentation. It must not carry the "unreleased"
+            // banner, which would put that warning on every published page.
             current: {
-              label: 'Dev',
+              label: '0.1.0',
               badge: true,
-              banner: 'unreleased',
+              banner: 'none',
             },
           },
         },
@@ -68,8 +75,30 @@ const config: Config = {
     ],
   ],
   themeConfig: {
+    // The card unfurled by chat clients and social previews: the same
+    // lockup the navbar shows, so a link to the docs is recognisably the
+    // project.
+    image: 'img/social-card.png',
+    metadata: [
+      {
+        name: 'description',
+        content:
+          'pgToolBox is a Kubernetes operator that gives one CloudNativePG cluster a complete access stack: authentication proxy, observation console, and embedded pgAdmin.',
+      },
+    ],
+    colorMode: {
+      respectPrefersColorScheme: true,
+    },
     navbar: {
       title: 'pgToolBox',
+      logo: {
+        alt: 'pgToolBox',
+        src: 'img/logo.png',
+        // The navbar is navy in both themes, so the mark is the same file.
+        // Without srcDark, Docusaurus renders only a light-themed image and
+        // the logo disappears entirely in dark mode.
+        srcDark: 'img/logo.png',
+      },
       items: [
         {
           type: 'docSidebar',
@@ -81,11 +110,42 @@ const config: Config = {
           type: 'docsVersionDropdown',
           position: 'right',
         },
+        {
+          href: 'https://github.com/fyannk/pgToolBox',
+          position: 'right',
+          className: 'navbar-github',
+          'aria-label': 'pgToolBox on GitHub',
+        },
       ],
     },
     footer: {
       style: 'dark',
+      logo: {
+        alt: 'pgToolBox',
+        src: 'img/logo.png',
+        srcDark: 'img/logo.png',
+        href: 'https://github.com/fyannk/pgToolBox',
+        width: 84,
+      },
+      copyright: `Copyright © ${new Date().getFullYear()} pgToolBox contributors. Apache-2.0 licensed.`,
       links: [
+        {
+          title: 'Project',
+          items: [
+            {
+              label: 'GitHub',
+              href: 'https://github.com/fyannk/pgToolBox',
+            },
+            {
+              label: 'Releases',
+              href: 'https://github.com/fyannk/pgToolBox/releases',
+            },
+            {
+              label: 'Report a vulnerability',
+              href: 'https://github.com/fyannk/pgToolBox/security/policy',
+            },
+          ],
+        },
         {
           title: 'CloudNativePG',
           items: [

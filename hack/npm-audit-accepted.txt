@@ -1,0 +1,24 @@
+# Advisories this repository has reviewed and accepted, one GHSA per line.
+#
+# An entry here is a decision, not a mute: it says the advisory was read,
+# the exposure was traced, and the risk was accepted with a reason. Anything
+# not listed still fails `make audit`, so a new advisory in the same package
+# is a build failure rather than something an existing line absorbs.
+#
+# Every entry must carry: what the package does here, why the exposure does
+# not apply, and what would let the entry be deleted. Delete entries the
+# moment a fix is available — an accepted advisory that could have been
+# fixed is just an unpatched one.
+#
+# Format: GHSA-xxxx-xxxx-xxxx  <one-line reason, then a re-check note>
+
+GHSA-w3rx-r6r6-pgpr   image-size ICNS parser DoS; docs-build only, no fix published
+GHSA-5p2g-fcmc-qvqq   image-size JXL/HEIF parser DoS; docs-build only, no fix published
+GHSA-5c6j-r48x-rmvq   serialize-javascript RCE via RegExp.flags; docs-build only, no fix published
+
+# All three reach the tree through @docusaurus/core's bundler and run at
+# build time on this repository's own Markdown and images, never on input
+# from anyone else, and nothing from them ships in the published site.
+# Delete each entry when Docusaurus ships a bundler that no longer depends
+# on the vulnerable version — npm reports no fix available today. Re-check
+# on every Docusaurus bump.

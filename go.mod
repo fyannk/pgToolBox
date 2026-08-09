@@ -2,6 +2,8 @@ module github.com/fyannk/pgtoolbox
 
 go 1.26.4
 
+toolchain go1.26.5
+
 require (
 	github.com/cloudnative-pg/api v1.30.0
 	github.com/cloudnative-pg/barman-cloud v0.5.1
