@@ -14,7 +14,7 @@ jobs:
     name: Build and push container images
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       # The git tag is v0.1.0; the image tag is 0.1.0. They have to agree
       # with the Helm chart's appVersion and the OLM CSV's version, both of
@@ -30,16 +30,16 @@ jobs:
             echo "tag=latest" >> "$GITHUB_OUTPUT"
           fi
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
 
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push manager image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
           file: ./Dockerfile
@@ -51,7 +51,7 @@ jobs:
           tags: ghcr.io/${{ github.repository_owner }}/pgtoolbox:${{ steps.imgtag.outputs.tag }}
 
       - name: Build and push proxy image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
           file: ./Dockerfile
@@ -61,7 +61,7 @@ jobs:
 
       - name: Build and push OLM bundle image
         if: startsWith(github.ref, 'refs/tags/')
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: deploy/olm/bundle
           file: deploy/olm/bundle.Dockerfile
@@ -70,7 +70,7 @@ jobs:
 
       - name: Build and push OLM catalog image
         if: startsWith(github.ref, 'refs/tags/')
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: deploy/olm/catalog
           file: deploy/olm/catalog.Dockerfile
