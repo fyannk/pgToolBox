@@ -531,6 +531,12 @@ func (r *Reconciler) pgAdminContainer(console *pgtoolboxv1alpha1.PgConsole, imag
 			// the request headers when it is absent from the WSGI environ.
 			{Name: "PGADMIN_CONFIG_AUTHENTICATION_SOURCES", Value: "['webserver']"},
 			{Name: "PGADMIN_CONFIG_WEBSERVER_REMOTE_USER", Value: "'" + consoleTrustedUserHeader + "'"},
+			// Load-bearing, and set rather than inherited from pgAdmin's
+			// default: an account exists only because pgAdmin created it on
+			// that person's first request, and the admin-sync sidecar then
+			// discovers it there. Nothing else creates one, so switching
+			// this off would leave every user at an empty pgAdmin.
+			{Name: "PGADMIN_CONFIG_WEBSERVER_AUTO_CREATE_USER", Value: "True"},
 			// With an external authentication source pgAdmin would still
 			// demand a master password to unlock its own credential store.
 			// There is nothing in it to unlock: server passwords reach

@@ -199,7 +199,12 @@ func (o SidecarOptions) accounts(ctx context.Context) ([]string, error) {
 	// it at first start, and the sidecar can be asked to sync before that
 	// has happened. It means there are no accounts yet, and the next sync
 	// finds them.
-	const query = `SELECT email FROM user WHERE auth_source = 'webserver'`
+	// username, not email. pgAdmin creates a webserver account from the
+	// REMOTE_USER header and leaves email NULL, and it is username that
+	// setup.py --user matches and that the per-account storage directory
+	// is derived from. Selecting email yielded the string "None" for such
+	// an account, and every sync then failed on a user that cannot exist.
+	const query = `SELECT username FROM user WHERE auth_source = 'webserver'`
 	output, err := o.querySettingsDB(ctx, query)
 	if err != nil {
 		if strings.Contains(output+err.Error(), "no such table") {
@@ -221,9 +226,12 @@ func (o SidecarOptions) accounts(ctx context.Context) ([]string, error) {
 // than a Go driver: the sidecar runs in the pgAdmin image, so sqlite3 is
 // already there, and the build stays free of cgo.
 func (o SidecarOptions) querySettingsDB(ctx context.Context, query string) (string, error) {
+	// NULL rows are dropped rather than stringified: str(None) is "None",
+	// a name no account can have, and passing it on turns a missing value
+	// into a user the rest of the sync then fails to find.
 	script := "import sqlite3,sys\n" +
 		"c=sqlite3.connect(sys.argv[1])\n" +
-		"print('\\n'.join(str(r[0]) for r in c.execute(sys.argv[2])))\n"
+		"print('\\n'.join(str(r[0]) for r in c.execute(sys.argv[2]) if r[0] is not None))\n"
 	command := exec.CommandContext(ctx, o.PythonPath, "-c", script, o.SettingsDB, query) // #nosec G204
 	output, err := command.CombinedOutput()
 	if err != nil {
