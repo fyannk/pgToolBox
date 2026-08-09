@@ -5,15 +5,12 @@
 - Kubernetes ≥ 1.28 or OpenShift ≥ 4.14.
 - [CloudNativePG](https://cloudnative-pg.io) ≥ 1.30 — the `DatabaseRole`
   CRD must exist.
-- A pgAdmin image. This is the one component with no released version, so
-  nothing defaults it: set `defaultImages.pgAdmin` here or
-  `spec.pgAdmin.image` on each console.
-
 Optional, for the evidence sidecar: the Barman Cloud Plugin's
 `ObjectStore` API (`barmancloud.cnpg.io/v1`) served on the cluster.
 
-The operator, proxy, pgConsole and evidence images are published and are
-what the chart and the OLM bundle default to. To run your own instead:
+Every image the operator deploys is published, and the chart and the OLM
+bundle default to the versions this release was tested against — there is
+nothing to supply. To run your own instead:
 
 ```bash
 make docker-build IMG=<registry>/pgtoolbox:<tag>
@@ -24,13 +21,12 @@ make docker-build-proxy PROXY_IMG=<registry>/pgtoolbox-proxy:<tag>
 
 ```bash
 helm install pgtoolbox deploy/helm/pgtoolbox \
-  --namespace pgtoolbox --create-namespace \
-  --set defaultImages.pgAdmin=<registry>/pgadmin:<tag>
+  --namespace pgtoolbox --create-namespace
 ```
 
-The operator and proxy default to this chart's own version, and pgConsole
-and the evidence sidecar to the versions it was tested against. Override
-any of them with `--set`; an empty `image.tag` means the chart's
+The operator and proxy default to this chart's own version, and pgConsole,
+pgAdmin and the evidence sidecar to the versions it was tested against.
+Override any of them with `--set`; an empty `image.tag` means the chart's
 `appVersion`, so an installed chart runs the operator it shipped with.
 
 Useful values:
@@ -41,7 +37,7 @@ Useful values:
 | `image.tag` | `""` → chart `appVersion` | operator version |
 | `proxyImage` | `""` → `proxyImageRepository` at `image.tag` | proxy for consoles that name none |
 | `defaultImages.pgConsole` | `ghcr.io/fyannk/pgconsole:0.3.0` | default pgconsole image |
-| `defaultImages.pgAdmin` | `""` | default pgAdmin image — **has to be set** |
+| `defaultImages.pgAdmin` | `ghcr.io/fyannk/pgadmin:9.17-hardened` | default pgAdmin image |
 | `defaultImages.objectStoreViewer` | `ghcr.io/fyannk/pgobjectstoreviewer:0.1.1` | default evidence sidecar image |
 | `replicaCount` | `2` | manager replicas |
 | `leaderElection` | `true` | controller-runtime leader election |
@@ -72,8 +68,7 @@ spec:
 Then a `Subscription` for package `pgtoolbox`, channel `alpha`. OLM
 installs the CSV (CRDs + Deployment) and binds the generated ClusterRole.
 The CSV carries `relatedImages`, so a disconnected mirror can resolve
-everything the operator deploys — except pgAdmin, which has no release to
-name; mirror your own and set `spec.pgAdmin.image`.
+every image the operator deploys.
 
 To build them yourself instead:
 

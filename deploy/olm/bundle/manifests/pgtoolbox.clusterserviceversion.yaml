@@ -38,11 +38,7 @@ metadata:
             },
             "pgAdmin": {
               "enabled": true,
-              "accessMinLevel": "dba",
-              "image": {
-                "repository": "ghcr.io/fyannk/pgadmin",
-                "tag": "latest"
-              }
+              "accessMinLevel": "dba"
             },
             "exposure": {
               "type": "route",
@@ -432,6 +428,7 @@ spec:
                 - --operator-image=ghcr.io/fyannk/pgtoolbox:0.1.0
                 - --default-pgtoolbox-proxy-image=ghcr.io/fyannk/pgtoolbox-proxy:0.1.0
                 - --default-pgconsole-image=ghcr.io/fyannk/pgconsole:0.3.0
+                - --default-pgadmin-image=ghcr.io/fyannk/pgadmin:9.17-hardened
                 - --default-objectstoreviewer-image=ghcr.io/fyannk/pgobjectstoreviewer:0.1.1
                 ports:
                 - containerPort: 8080
@@ -472,5 +469,7 @@ spec:
     image: ghcr.io/fyannk/pgtoolbox-proxy:0.1.0
   - name: pgconsole
     image: ghcr.io/fyannk/pgconsole:0.3.0
+  - name: pgadmin
+    image: ghcr.io/fyannk/pgadmin:9.17-hardened
   - name: objectstoreviewer
     image: ghcr.io/fyannk/pgobjectstoreviewer:0.1.1
