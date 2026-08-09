@@ -1,0 +1,34 @@
+# Every pull request gets @fyannk as a reviewer automatically.
+#
+# The repository rule on main requires zero approvals, so this does not
+# gate merging; it exists so review is requested without anyone having to
+# remember to ask, and so the owner of each area is written down rather
+# than known.
+*                           @fyannk
+
+# The trust boundary. The proxy is the only thing standing between the
+# internet and a console that trusts its forwarded headers, so a wrong
+# change here is a security change rather than a bug. The generated RBAC
+# and NetworkPolicy are what make that trust legitimate.
+/internal/proxy/            @fyannk
+/internal/controller/pgconsole/rbac.go          @fyannk
+/internal/controller/pgconsole/networkpolicy.go @fyannk
+/internal/controller/pgconsole/users.go         @fyannk
+/internal/controller/pgconsole/bootstrapadmin.go @fyannk
+/api/                       @fyannk
+/deploy/                    @fyannk
+/config/rbac/               @fyannk
+/SECURITY.md                @fyannk
+
+# Credentials in flight: the admin-sync API carries the cluster's own
+# passwords into pgAdmin over an in-pod mTLS channel.
+/internal/adminsync/        @fyannk
+
+# Publishing and supply chain: anything here decides what gets built and
+# pushed under the project's name.
+/.github/workflows/         @fyannk
+/Dockerfile                 @fyannk
+/Makefile                   @fyannk
+/hack/                      @fyannk
+/NOTICE                     @fyannk
+/LICENSE                    @fyannk

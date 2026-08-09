@@ -1,0 +1,117 @@
+name: Bug report
+description: Something pgToolBox renders or does is wrong or unexpected.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. pgToolBox is an observer of reported state: a
+        panel it cannot observe is meant to render `unknown`, and a source
+        that lost contact is meant to render **stale**. Please note the panel
+        state you saw so we can tell an honest degradation from a real bug.
+
+        **Never paste ServiceAccount tokens, `Authorization` headers, or other
+        secrets.** For a suspected vulnerability, use private reporting instead
+        of this form.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you saw, and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Deploy with ...
+        2. Open the ... panel
+        3. Observe ...
+    validations:
+      required: true
+  - type: dropdown
+    id: component
+    attributes:
+      label: Where it went wrong
+      description: Which part of the stack showed the problem?
+      options:
+        - The operator (a PgConsole condition, or an object never created)
+        - Sign-in (the proxy's login page, OIDC, OpenShift, or local)
+        - Authorization (a level admitted or refused wrongly)
+        - The console UI behind the proxy
+        - Embedded pgAdmin (accounts, connections, credentials)
+        - Backup evidence sidecar
+        - Packaging (Helm chart, OLM bundle or catalog)
+        - Something else
+    validations:
+      required: true
+  - type: textarea
+    id: conditions
+    attributes:
+      label: PgConsole status conditions
+      description: >
+        `kubectl get pgconsole <name> -n <ns> -o yaml | yq '.status.conditions'`.
+        The operator states what it could not do there before anything else.
+      render: yaml
+  - type: input
+    id: pgconsole-version
+    attributes:
+      label: pgToolBox version or commit
+      placeholder: "e.g. v0.1.0, ghcr.io digest, or a commit SHA"
+    validations:
+      required: true
+  - type: input
+    id: cnpg-version
+    attributes:
+      label: CloudNativePG version
+      placeholder: "e.g. 1.30.0"
+    validations:
+      required: true
+  - type: input
+    id: k8s-version
+    attributes:
+      label: Kubernetes / OpenShift version
+      placeholder: "e.g. Kubernetes 1.34.1, OpenShift 4.16"
+    validations:
+      required: true
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: How it was installed
+      options:
+        - Helm chart
+        - OLM bundle / catalog
+        - kustomize (config/default)
+        - Local dev (hack/dev-up.sh / kind)
+    validations:
+      required: true
+  - type: dropdown
+    id: authentication
+    attributes:
+      label: Authentication providers enabled
+      description: More than one may be enabled at once.
+      multiple: true
+      options:
+        - local
+        - oidc
+        - openshift
+  - type: checkboxes
+    id: capabilities
+    attributes:
+      label: Enabled capabilities
+      options:
+        - label: "console.allowOperations: true"
+        - label: "console.allowAccessReview: true"
+        - label: "console.allowLogs: true (default)"
+        - label: "pgAdmin.enabled: true (default)"
+        - label: "evidence.enabled: true"
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant redacted logs
+      description: >
+        Operator and proxy logs are structured. Paste the relevant lines
+        from the operator and from the console Pod's containers, and
+        double-check for secrets first.
+      render: shell
