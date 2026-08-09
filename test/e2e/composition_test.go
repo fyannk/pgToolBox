@@ -88,7 +88,7 @@ func TestFullComposition(t *testing.T) {
 
 	t.Run("EveryContainerComposedAndReady", func(t *testing.T) { assertFullPod(t) })
 	t.Run("EvidenceComposed", func(t *testing.T) { assertEvidenceComposed(t) })
-	t.Run("PgAdminSyncsTheUser", func(t *testing.T) { assertPgAdminSync(t) })
+	t.Run("PgAdminOffersClusterCredentials", func(t *testing.T) { assertPgAdminSync(t) })
 	t.Run("PgAdminCanReachPostgres", func(t *testing.T) { assertPgAdminReachesPostgres(t) })
 }
 
@@ -201,8 +201,9 @@ func createFullConsole(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: roleName, Namespace: testNamespace},
 		Spec: pgtoolboxv1alpha1.PgToolBoxRoleSpec{
 			PgConsoleRef: pgtoolboxv1alpha1.LocalObjectReference{Name: fullConsoleName},
-			Level:        pgtoolboxv1alpha1.RoleLevelView,
-			PostgresRole: pgtoolboxv1alpha1.PostgresRoleSpec{Profile: "database-readonly"},
+			// dba, because only a dba reaches pgAdmin — and a role is a
+			// proxy level with no postgres backing at all.
+			Level: pgtoolboxv1alpha1.RoleLevelDBA,
 		},
 	}
 	if err := k8s.Create(ctx(), role); err != nil && !apierrors.IsAlreadyExists(err) {
@@ -399,11 +400,9 @@ func assertEvidenceComposed(t *testing.T) {
 	}
 }
 
-// assertPgAdminSync waits for the whole provisioning chain: CloudNativePG
-// brings the primary up, applies the DatabaseRole the PgToolBoxRole
-// materialized, and only then does the operator post the user to the
-// admin-sync sidecar. It is the slowest assertion here and the one that
-// proves the sidecar API actually works in a pod.
+// assertPgAdminSync waits for the connections pgAdmin should offer to be
+// provisioned from the cluster's own credentials, and holds that they are
+// the cluster's rather than anything derived from who signed in.
 func assertPgAdminSync(t *testing.T) {
 	eventually(t, clusterTimeout, "the CNPG cluster to have a running primary", func() error {
 		var cluster cnpgv1.Cluster
@@ -412,17 +411,6 @@ func assertPgAdminSync(t *testing.T) {
 		}
 		if cluster.Status.ReadyInstances < 1 {
 			return fmt.Errorf("readyInstances=%d, phase=%q", cluster.Status.ReadyInstances, cluster.Status.Phase)
-		}
-		return nil
-	})
-
-	eventually(t, clusterTimeout, "the role's DatabaseRole to be applied", func() error {
-		var role pgtoolboxv1alpha1.PgToolBoxRole
-		if err := k8s.Get(ctx(), key(roleName), &role); err != nil {
-			return err
-		}
-		if role.Status.DatabaseRoleName == "" {
-			return fmt.Errorf("no databaseRoleName published yet")
 		}
 		return nil
 	})
@@ -439,70 +427,46 @@ func assertPgAdminSync(t *testing.T) {
 		if condition.Status != metav1.ConditionTrue {
 			return fmt.Errorf("PgAdminSynced is %s: %s", condition.Status, condition.Message)
 		}
-		if live.Status.UserSync.Synced < 1 {
-			return fmt.Errorf("userSync = %+v", live.Status.UserSync)
-		}
 		return nil
 	})
 
-	// And the user itself carries the three per-user conditions.
-	var user pgtoolboxv1alpha1.PgToolBoxUser
-	if err := k8s.Get(ctx(), key(userName), &user); err != nil {
-		t.Fatalf("get user: %v", err)
+	pod, err := consolePod(fullConsoleName)
+	if err != nil {
+		t.Fatalf("console pod: %v", err)
 	}
-	for _, want := range []string{
-		pgtoolboxv1alpha1.UserConditionRoleReady,
-		pgtoolboxv1alpha1.UserConditionProxySynced,
-		pgtoolboxv1alpha1.UserConditionPgAdminSynced,
-	} {
-		condition := userConditionOf(&user, want)
-		if condition == nil {
-			t.Errorf("user condition %s not published", want)
-			continue
-		}
-		if condition.Status != metav1.ConditionTrue {
-			t.Errorf("user condition %s is %s: %s", want, condition.Status, condition.Message)
-		}
-	}
-}
 
-// consolePod returns the single pod of one console.
-func consolePod(instance string) (*corev1.Pod, error) {
-	var pods corev1.PodList
-	if err := k8s.List(ctx(), &pods,
-		client.InNamespace(testNamespace),
-		client.MatchingLabels{"app.kubernetes.io/instance": instance},
-	); err != nil {
-		return nil, err
+	// Connections exist per pgAdmin account, and an account exists only
+	// once someone has signed in — pgAdmin creates it the first time the
+	// proxy forwards an identity it has not seen. Nobody signs in during a
+	// test, so one is created here the way an arrival would, and the point
+	// of the assertion is that the operator then finds it on its own.
+	if out, err := execInPod(pod, "admin-sync", "/venv/bin/python3", "/pgadmin4/setup.py",
+		"add-external-user", "e2e-dba@pgtoolbox.dev",
+		"--auth-source", "webserver", "--role", "Administrator",
+		"--email", "e2e-dba@pgtoolbox.dev",
+	); err != nil && !strings.Contains(out, "already exists") {
+		t.Fatalf("simulate a pgAdmin sign-in: %v: %s", err, out)
 	}
-	running := make([]corev1.Pod, 0, len(pods.Items))
-	for _, pod := range pods.Items {
-		if pod.DeletionTimestamp.IsZero() {
-			running = append(running, pod)
-		}
-	}
-	if len(running) != 1 {
-		return nil, fmt.Errorf("expected exactly one console pod, got %d", len(running))
-	}
-	return &running[0], nil
-}
 
-func mountsVolume(container *corev1.Container, name string) bool {
-	for _, mount := range container.VolumeMounts {
-		if mount.Name == name {
-			return true
+	// The application user is what a cluster always publishes, so it must
+	// be among the offered connections whatever else is. The wait is the
+	// operator's own resync: nothing in Kubernetes changed when the account
+	// appeared, so only the periodic pass can notice it.
+	eventually(t, compositionTimeout, "the new account to be given the cluster's connections", func() error {
+		out, err := execInPod(pod, "pgadmin", "/venv/bin/python3", "-c", `
+import sqlite3
+c = sqlite3.connect("/var/lib/pgadmin/pgadmin4.db")
+for row in c.execute("SELECT u.email, s.name, s.username FROM server s JOIN user u ON u.id = s.user_id"):
+    print("SERVER %s|%s|%s" % row)
+`)
+		if err != nil {
+			return fmt.Errorf("%v: %s", err, out)
 		}
-	}
-	return false
-}
-
-func userConditionOf(user *pgtoolboxv1alpha1.PgToolBoxUser, conditionType string) *metav1.Condition {
-	for i := range user.Status.Conditions {
-		if user.Status.Conditions[i].Type == conditionType {
-			return &user.Status.Conditions[i]
+		if !strings.Contains(out, "e2e-dba@pgtoolbox.dev|application (app)|app") {
+			return fmt.Errorf("not provisioned yet:\n%s", out)
 		}
-	}
-	return nil
+		return nil
+	})
 }
 
 // assertPgAdminReachesPostgres is the assertion the whole pgAdmin path was
@@ -529,18 +493,19 @@ func assertPgAdminReachesPostgres(t *testing.T) {
 		t.Fatalf("console pod: %v", err)
 	}
 
-	// One .pgpass entry per provisioned user, keyed on the role rather than
-	// on a host spelling. The host field is the wildcard on purpose: libpq
-	// matches a line against the host string it was given, so a line naming
-	// the Service fails for a connection made by address.
-	eventually(t, compositionTimeout, "the sidecar to write the .pgpass", func() error {
+	// The credential file lives in each account's own pgAdmin storage,
+	// because that is the only place pgAdmin resolves a server's passfile
+	// to. The host field is the wildcard on purpose: libpq matches a line
+	// against the host string it was given, so a line naming the Service
+	// fails for a connection made by address.
+	eventually(t, compositionTimeout, "the sidecar to write an account's pgpass", func() error {
 		out, err := execInPod(pod, "pgadmin", "sh", "-c",
-			"cut -d: -f1-4 "+pgAdminPassFilePath+" 2>&1")
+			"cut -d: -f1-4 /var/lib/pgadmin/storage/*/pgpass 2>&1")
 		if err != nil {
 			return fmt.Errorf("%v: %s", err, out)
 		}
-		if !strings.Contains(out, "*:5432:postgres:"+roleName+"-pgrole") {
-			return fmt.Errorf("no wildcard-host entry for the role: %q", out)
+		if !strings.Contains(out, "*:5432:app:app") {
+			return fmt.Errorf("no wildcard-host entry for the application user: %q", out)
 		}
 		return nil
 	})
@@ -556,22 +521,26 @@ func assertPgAdminReachesPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve cluster service address: %v", err)
 	}
-	// No passfile argument: libpq has to find it through PGPASSFILE in the
-	// container environment, which is the only route that works. Passing it
-	// explicitly here would bypass the defect entirely — pgAdmin resolves
-	// the server definition's passfile parameter through its file manager,
-	// which rewrites an absolute path into the signed-in user's storage
-	// directory and hands libpq nothing.
+	// Authenticate through an account's own credential file, which is the
+	// file pgAdmin resolves a server's passfile to — not through PGPASSFILE,
+	// and not with a password passed in. Both shortcuts pass while pgAdmin
+	// itself still cannot connect, which is exactly how two defects here
+	// survived being "verified".
+	//
+	// Twice, by name and by address: libpq matches a pgpass line against the
+	// host string it was given rather than the host it resolved, so only the
+	// second spelling exercises the wildcard host field.
 	probe := fmt.Sprintf(`
-import psycopg, os, sys
-if not os.environ.get("PGPASSFILE"):
-    print("PGPASSFILE is not set in the pgAdmin container"); sys.exit(1)
+import glob, psycopg, sys
+files = glob.glob("/var/lib/pgadmin/storage/*/pgpass")
+if not files:
+    print("no account has a credential file"); sys.exit(1)
 for host in [%q, %q]:
-    with psycopg.connect(host=host, port=5432, dbname="postgres", user=%q,
-                         sslmode="prefer", connect_timeout=15) as c:
+    with psycopg.connect(host=host, port=5432, dbname="app", user="app",
+                         passfile=files[0], sslmode="prefer", connect_timeout=15) as c:
         who = c.execute("select current_user").fetchone()[0]
         print("AUTHENTICATED " + host + " as " + who)
-`, fullClusterName+"-rw."+testNamespace+".svc", address, roleName+"-pgrole")
+`, fullClusterName+"-rw."+testNamespace+".svc", address)
 
 	out, err := execInPod(pod, "pgadmin", "/venv/bin/python3", "-c", probe)
 	if err != nil {
@@ -594,4 +563,35 @@ func clusterServiceAddress(t *testing.T) (string, error) {
 		return "", fmt.Errorf("service %s-rw has no ClusterIP", fullClusterName)
 	}
 	return service.Spec.ClusterIP, nil
+}
+
+// consolePod returns the single running pod of one console.
+func consolePod(instance string) (*corev1.Pod, error) {
+	var pods corev1.PodList
+	if err := k8s.List(ctx(), &pods,
+		client.InNamespace(testNamespace),
+		client.MatchingLabels{"app.kubernetes.io/instance": instance},
+	); err != nil {
+		return nil, err
+	}
+	running := make([]corev1.Pod, 0, len(pods.Items))
+	for _, pod := range pods.Items {
+		if pod.DeletionTimestamp.IsZero() {
+			running = append(running, pod)
+		}
+	}
+	if len(running) != 1 {
+		return nil, fmt.Errorf("expected exactly one console pod, got %d", len(running))
+	}
+	return &running[0], nil
+}
+
+// mountsVolume reports whether a container mounts a named volume.
+func mountsVolume(container *corev1.Container, name string) bool {
+	for _, mount := range container.VolumeMounts {
+		if mount.Name == name {
+			return true
+		}
+	}
+	return false
 }
