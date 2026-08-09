@@ -1,0 +1,29 @@
+name: Feature request
+description: Suggest a capability or improvement.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        pgToolBox has deliberate non-goals: it is not a Kubernetes dashboard,
+        not a CloudNativePG installer, not a fleet manager, and it never speaks
+        SQL, reads Secrets, or parses object storage (those are sibling tools).
+        Requests that cross those boundaries are out of scope by design.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What can't you do today? What are you trying to observe or operate?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: What should pgToolBox show or do, and for which authorization level?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered

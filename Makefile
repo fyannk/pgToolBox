@@ -12,6 +12,8 @@ GO_LDFLAGS ?= -X main.operatorVersion=$(VERSION) -X main.defaultOperatorImage=$(
 
 CONTROLLER_GEN_VERSION ?= v0.19.0
 GOLANGCI_LINT_VERSION ?= v2.6.2
+GOVULNCHECK_VERSION ?= v1.6.0
+NPM_AUDIT_LEVEL ?= high
 
 LOCALBIN ?= $(shell pwd)/bin
 $(LOCALBIN):
@@ -63,6 +65,17 @@ test: manifests generate fmt vet ## Run unit tests.
 helm-lint: ## Lint and template-render the Helm chart.
 	helm lint deploy/helm/pgtoolbox
 	helm template pgtoolbox deploy/helm/pgtoolbox --namespace pgtoolbox > /dev/null
+
+.PHONY: vuln
+vuln: ## Scan the Go dependency graph for known vulnerabilities.
+	go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
+
+# govulncheck reads the Go tree; the docs site is the other dependency tree
+# that ships. It resolves from the lockfile alone, so this installs nothing.
+# NPM_AUDIT_LEVEL=moderate tightens it when you want the fuller picture.
+.PHONY: audit
+audit: ## Check the npm dependency tree against accepted advisories.
+	./hack/check-npm-audit.sh web $(NPM_AUDIT_LEVEL)
 
 .PHONY: validate-packaging
 validate-packaging: ## Check that the Helm chart, OLM bundle and catalog agree.
