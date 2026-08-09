@@ -178,6 +178,10 @@ func createFullConsole(t *testing.T) {
 			CNPGClusterRef: pgtoolboxv1alpha1.LocalObjectReference{Name: fullClusterName},
 			Proxy: pgtoolboxv1alpha1.ProxySpec{
 				Authentication: pgtoolboxv1alpha1.ProxyAuthenticationSpec{
+					BootstrapAdmin: pgtoolboxv1alpha1.BootstrapAdminSpec{
+						Subject:           "root@corp.example",
+						PasswordSecretRef: &pgtoolboxv1alpha1.SecretKeyReference{Name: "jane-password"},
+					},
 					Local: &pgtoolboxv1alpha1.ProxyLocalSpec{},
 				},
 			},
@@ -589,6 +593,11 @@ func TestAuthenticationRequiresAProvider(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "no-provider", Namespace: testNamespace},
 		Spec: pgtoolboxv1alpha1.PgConsoleSpec{
 			CNPGClusterRef: pgtoolboxv1alpha1.LocalObjectReference{Name: fullClusterName},
+			Proxy: pgtoolboxv1alpha1.ProxySpec{
+				Authentication: pgtoolboxv1alpha1.ProxyAuthenticationSpec{
+					BootstrapAdmin: pgtoolboxv1alpha1.BootstrapAdminSpec{Subject: "root@corp.example"},
+				},
+			},
 		},
 	}
 	err := k8s.Create(ctx(), console)
@@ -599,4 +608,49 @@ func TestAuthenticationRequiresAProvider(t *testing.T) {
 	if !apierrors.IsInvalid(err) {
 		t.Fatalf("create error = %v, want Invalid", err)
 	}
+}
+
+// Local-only with no bootstrap password is a console nobody can ever sign
+// in to. The rule is CEL on the CRD, so only a real API server enforces it.
+func TestLocalOnlyRequiresABootstrapPassword(t *testing.T) {
+	console := &pgtoolboxv1alpha1.PgConsole{
+		ObjectMeta: metav1.ObjectMeta{Name: "no-way-in", Namespace: testNamespace},
+		Spec: pgtoolboxv1alpha1.PgConsoleSpec{
+			CNPGClusterRef: pgtoolboxv1alpha1.LocalObjectReference{Name: fullClusterName},
+			Proxy: pgtoolboxv1alpha1.ProxySpec{
+				Authentication: pgtoolboxv1alpha1.ProxyAuthenticationSpec{
+					BootstrapAdmin: pgtoolboxv1alpha1.BootstrapAdminSpec{Subject: "root@corp.example"},
+					Local:          &pgtoolboxv1alpha1.ProxyLocalSpec{},
+				},
+			},
+		},
+	}
+	err := k8s.Create(ctx(), console)
+	if err == nil {
+		_ = k8s.Delete(ctx(), console)
+		t.Fatal("a local-only console with no bootstrap password was accepted")
+	}
+	if !apierrors.IsInvalid(err) {
+		t.Fatalf("create error = %v, want Invalid", err)
+	}
+}
+
+// The first administrator is derived from the console, not maintained by
+// hand: deleting the object gets it back.
+func TestBootstrapAdminIsRestored(t *testing.T) {
+	key := client.ObjectKey{Namespace: testNamespace, Name: fullConsoleName + "-bootstrap-admin"}
+	var user pgtoolboxv1alpha1.PgToolBoxUser
+	if err := k8s.Get(ctx(), key, &user); err != nil {
+		t.Fatalf("the console has no bootstrap admin: %v", err)
+	}
+	if user.Spec.Level != pgtoolboxv1alpha1.RoleLevelDBA {
+		t.Fatalf("bootstrap admin level = %q, want dba", user.Spec.Level)
+	}
+	if err := k8s.Delete(ctx(), &user); err != nil {
+		t.Fatalf("delete bootstrap admin: %v", err)
+	}
+	eventually(t, 2*time.Minute, "the operator restores the bootstrap admin", func() error {
+		var back pgtoolboxv1alpha1.PgToolBoxUser
+		return k8s.Get(ctx(), key, &back)
+	})
 }

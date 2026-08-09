@@ -103,7 +103,19 @@ type ProxySpec struct {
 // identity is federated, and how anyone gets in when the identity provider
 // is the thing that is down.
 // +kubebuilder:validation:XValidation:rule="has(self.local) || has(self.oidc) || has(self.openshift)",message="at least one authentication provider must be enabled"
+// +kubebuilder:validation:XValidation:rule="!(has(self.local) && !has(self.oidc) && !has(self.openshift)) || has(self.bootstrapAdmin.passwordSecretRef)",message="bootstrapAdmin.passwordSecretRef is required when local is the only authentication provider"
 type ProxyAuthenticationSpec struct {
+	// The first administrator, and the answer to how anyone gets in at
+	// all. A console starts with no users; granting access needs a dba to
+	// approve a PgToolBoxAccessRequest, so without a declared one nobody
+	// can ever sign in to approve anything.
+	//
+	// The operator materializes this as a PgToolBoxUser it owns, at dba
+	// level, and puts it back if it is deleted — it is derived from this
+	// field rather than an object anyone maintains. Handing the role to
+	// somebody else means editing it here, which leaves a record.
+	BootstrapAdmin BootstrapAdminSpec `json:"bootstrapAdmin"`
+
 	// Local accounts, rendered from the console's PgToolBoxUser set. A user
 	// participates in local sign-in only if it carries a password.
 	// +optional
@@ -117,6 +129,23 @@ type ProxyAuthenticationSpec struct {
 	// cluster.
 	// +optional
 	OpenShift *ProxyOpenShiftSpec `json:"openshift,omitempty"`
+}
+
+// BootstrapAdminSpec names the console's first dba.
+type BootstrapAdminSpec struct {
+	// The identity the authentication provider vouches for, matched the
+	// same way as any other user's subject.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	Subject string `json:"subject"`
+
+	// Reference to the Secret holding this identity's local-mode password
+	// (bcrypt). Optional, because with an identity provider enabled the
+	// first administrator authenticates there like everyone else. Required
+	// only when local is the sole provider, since otherwise the console
+	// would ship with no way in at all. Default key: "password".
+	// +optional
+	PasswordSecretRef *SecretKeyReference `json:"passwordSecretRef,omitempty"`
 }
 
 // ProxyLocalSpec enables local accounts. It carries no settings: the users

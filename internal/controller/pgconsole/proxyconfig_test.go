@@ -114,6 +114,7 @@ func TestRenderProxyConfigPgAdminDefaultMinLevel(t *testing.T) {
 func TestRenderProxyConfigOIDCMode(t *testing.T) {
 	console := testConsole()
 	console.Spec.Proxy.Authentication = pgtoolboxv1alpha1.ProxyAuthenticationSpec{
+		BootstrapAdmin: console.Spec.Proxy.Authentication.BootstrapAdmin,
 		OIDC: &pgtoolboxv1alpha1.ProxyOIDCSpec{
 			IssuerURL: "https://idp.example.com",
 			ClientID:  "pgconsole",
@@ -146,7 +147,8 @@ func TestRenderProxyConfigOIDCMode(t *testing.T) {
 func TestRenderProxyConfigOpenShift(t *testing.T) {
 	console := testConsole()
 	console.Spec.Proxy.Authentication = pgtoolboxv1alpha1.ProxyAuthenticationSpec{
-		OpenShift: &pgtoolboxv1alpha1.ProxyOpenShiftSpec{},
+		BootstrapAdmin: console.Spec.Proxy.Authentication.BootstrapAdmin,
+		OpenShift:      &pgtoolboxv1alpha1.ProxyOpenShiftSpec{},
 	}
 	console.Spec.Exposure = pgtoolboxv1alpha1.ExposureSpec{
 		Type:     pgtoolboxv1alpha1.ExposureTypeRoute,
@@ -242,7 +244,8 @@ func TestReconcileProxyConfigSecretSessionKeyStability(t *testing.T) {
 func TestReconcileProxyConfigSecretOpenShiftRenders(t *testing.T) {
 	console := testConsole()
 	console.Spec.Proxy.Authentication = pgtoolboxv1alpha1.ProxyAuthenticationSpec{
-		OpenShift: &pgtoolboxv1alpha1.ProxyOpenShiftSpec{},
+		BootstrapAdmin: console.Spec.Proxy.Authentication.BootstrapAdmin,
+		OpenShift:      &pgtoolboxv1alpha1.ProxyOpenShiftSpec{},
 	}
 	// OpenShift pins its redirect URI on the ServiceAccount annotation, so
 	// it only renders once the console has an external hostname.
@@ -261,6 +264,7 @@ func TestReconcileProxyConfigSecretOpenShiftRenders(t *testing.T) {
 func TestReconcileProxyConfigSecretOIDCMissingClientSecret(t *testing.T) {
 	console := testConsole()
 	console.Spec.Proxy.Authentication = pgtoolboxv1alpha1.ProxyAuthenticationSpec{
+		BootstrapAdmin: console.Spec.Proxy.Authentication.BootstrapAdmin,
 		OIDC: &pgtoolboxv1alpha1.ProxyOIDCSpec{
 			IssuerURL:       "https://idp.example.com",
 			ClientID:        "pgconsole",
@@ -318,7 +322,8 @@ func TestRenderProxyConfigLocalUserHasBcrypt(t *testing.T) {
 func TestRenderProxyConfigMixedProviders(t *testing.T) {
 	console := testConsole()
 	console.Spec.Proxy.Authentication = pgtoolboxv1alpha1.ProxyAuthenticationSpec{
-		Local: &pgtoolboxv1alpha1.ProxyLocalSpec{},
+		BootstrapAdmin: console.Spec.Proxy.Authentication.BootstrapAdmin,
+		Local:          &pgtoolboxv1alpha1.ProxyLocalSpec{},
 		OIDC: &pgtoolboxv1alpha1.ProxyOIDCSpec{
 			IssuerURL:       "https://idp.example.com",
 			ClientID:        "pgconsole",

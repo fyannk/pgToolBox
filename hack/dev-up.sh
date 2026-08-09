@@ -77,6 +77,11 @@ PGCLUSTER="${PGCLUSTER:-pg-orders}"
 PORT="${PORT:-3000}"
 # pgAdmin keys accounts on the email address, so subjects are email-shaped.
 SUBJECT_DOMAIN="${SUBJECT_DOMAIN:-pgtoolbox.dev}"
+# The console's first administrator, declared on the PgConsole rather than
+# applied as an object: the operator materializes it and puts it back if it
+# is deleted, so the dev stack always has somebody who can approve the first
+# access request.
+BOOTSTRAP_SUBJECT="${BOOTSTRAP_SUBJECT:-dba@$SUBJECT_DOMAIN}"
 
 # Authentication. "local" needs no identity provider and seeds three users
 # with passwords; "oidc" points the proxy at a real one.
@@ -278,8 +283,22 @@ if [ "${SKIP_BACKUP:-}" = "true" ] || [ "${SKIP_EVIDENCE:-}" = "true" ]; then
 fi
 
 auth_block=""
+bootstrap_password=""
 if [ "$AUTH_LOCAL" = true ]; then
   auth_block="      local: {}"
+  bootstrap_password="        passwordSecretRef: { name: dba-password }"
+  # Before the console: the operator resolves this Secret the moment the
+  # bootstrapAdmin field names it.
+  log "seeding the bootstrap administrator's password"
+  kc apply --server-side --force-conflicts -f - > /dev/null <<EOF
+apiVersion: v1
+kind: Secret
+metadata:
+  name: dba-password
+  namespace: $NAMESPACE
+stringData:
+  password: "$(go run ./hack/devtools/bcrypt dba)"
+EOF
 fi
 if [ "$AUTH_OIDC" = true ]; then
   for required in OIDC_ISSUER_URL OIDC_CLIENT_ID; do
@@ -319,6 +338,9 @@ spec:
   cnpgClusterRef: { name: $PGCLUSTER }
   proxy:
     authentication:
+      bootstrapAdmin:
+        subject: $BOOTSTRAP_SUBJECT
+$bootstrap_password
 $auth_block
   pgAdmin:
     enabled: true
@@ -370,7 +392,10 @@ fi
 
 if [ "$AUTH_LOCAL" = true ]; then
   log "seeding one user per level"
-  for entry in "viewer:view" "operator:poweruser" "dba:dba"; do
+  # No dba here: it is the console's bootstrapAdmin, materialized by the
+  # operator. Seeding one would only be a duplicate subject the operator
+  # drops. Its password Secret is still created below.
+  for entry in "viewer:view" "operator:poweruser"; do
     name=${entry%%:*}
     level=${entry##*:}
     subject="$name@$SUBJECT_DOMAIN"

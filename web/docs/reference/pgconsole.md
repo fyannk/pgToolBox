@@ -13,6 +13,9 @@ spec:
   proxy:
     image: { ... }
     authentication:                   # one block per provider, any mix
+      bootstrapAdmin:                 # required: the console's first dba
+        subject: root@corp.example
+        passwordSecretRef: { name: root-password }
       local: {}
       oidc: { issuerURL, clientID, clientSecretRef: { name, key? } }
       openshift: {}
@@ -153,6 +156,13 @@ This only bites with `evidence.enabled: true`, which is not the default.
   enable several: the login page then shows the local form with the others
   as buttons beside it. A local account is how the first administrator
   gets in, and how anyone gets in when the identity provider is down.
+- `proxy.authentication.bootstrapAdmin` is required. The operator
+  materializes it as a `PgToolBoxUser` named `<console>-bootstrap-admin`
+  at `dba`, owned by the console, and re-creates it if deleted — see
+  [Configuration](../operator/configuration.md#the-first-administrator).
+- `bootstrapAdmin.passwordSecretRef` is required only when `local` is the
+  only provider; otherwise the first administrator authenticates at the
+  identity provider like everyone else.
 - `evidence.image` is a pointer: omitting it genuinely means "no image"
   rather than an invalid empty object.
 - Omitting the whole `console` block deploys the console the application

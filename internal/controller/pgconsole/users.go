@@ -69,12 +69,29 @@ func (r *Reconciler) resolveConsoleUsers(
 		result = append(result, resolved)
 	}
 
-	sort.Slice(result, func(i, j int) bool { return result[i].user.Name < result[j].user.Name })
+	// The bootstrap admin sorts first, so a hand-declared user claiming the
+	// same subject is the one dropped below. The console's own field is the
+	// authority on who its first administrator is; letting an ordinary
+	// object shadow it would be a way to demote the account by name order.
+	bootstrap := bootstrapAdminUserName(console)
+	sort.Slice(result, func(i, j int) bool {
+		if (result[i].user.Name == bootstrap) != (result[j].user.Name == bootstrap) {
+			return result[i].user.Name == bootstrap
+		}
+		return result[i].user.Name < result[j].user.Name
+	})
 
 	// Reject duplicate subjects deterministically: the second user is excluded.
 	seen := map[string]struct{}{}
 	for i := range result {
 		if result[i].proxyExcluded {
+			// The bootstrap admin claims its subject even when it cannot be
+			// rendered — a missing password Secret is a fault to repair, not
+			// an invitation for another object to inherit the identity the
+			// console spec assigned, at whatever level that object names.
+			if result[i].user.Name == bootstrap {
+				seen[strings.ToLower(result[i].user.Spec.Subject)] = struct{}{}
+			}
 			continue
 		}
 		key := strings.ToLower(result[i].proxyUser.Subject)

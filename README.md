@@ -30,8 +30,12 @@ for access from the proxy's 403 page.
 - **One console per cluster**, never mutualized: dedicated proxy, dedicated
   pgAdmin, dedicated pgpass — security isolation beats resource sharing.
 - **pgtoolbox-proxy** as the single authentication and coarse authorization
-  boundary: OIDC (PKCE S256), OpenShift service-account OAuth, or local
-  bcrypt accounts rendered from `PgToolBoxUser`.
+  boundary: OIDC (PKCE S256), OpenShift service-account OAuth, and local
+  bcrypt accounts rendered from `PgToolBoxUser` — any mix at once, so a
+  local account is still the way in when the identity provider is down.
+- **A declared first administrator**: `bootstrapAdmin` is required on every
+  console and materialized as a `dba` the operator puts back if deleted, so
+  a console can never be deployed with nobody able to approve access.
 - **pgAdmin is embedded** behind the same proxy, reachable at `/pgadmin`
   by sessions at or above `pgAdmin.accessMinLevel`.
 - **Embedded pgAdmin user/server sync** through an in-pod mTLS admin-sync
@@ -70,6 +74,8 @@ spec:
   cnpgClusterRef: { name: pg-main }
   proxy:
     authentication:
+      bootstrapAdmin:
+        subject: jane@corp.example
       local: {}                        # keeps a way in when the IdP is down
       oidc:
         issuerURL: https://idp.example.com

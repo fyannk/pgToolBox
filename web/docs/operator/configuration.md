@@ -25,6 +25,9 @@ spec:
   cnpgClusterRef: { name: pg-main }      # immutable, same namespace
   proxy:
     authentication:                    # any mix of the three
+      bootstrapAdmin:                  # required
+        subject: root@corp.example
+        passwordSecretRef: { name: root-password }
       local: {}
       oidc: { issuerURL, clientID, clientSecretRef }
       openshift: {}
@@ -62,6 +65,27 @@ spec:
 - **openshift** — the console ServiceAccount is the OAuth client; the
   operator adds the `oauth-redirecturi` annotation from `exposure.hostname`,
   so this one does require a hostname.
+
+### The first administrator
+
+A console starts with no users. Granting access needs a `dba` to approve a
+`PgToolBoxAccessRequest`, so a console with none can never let anybody in —
+including the person who would have approved the first request.
+
+`proxy.authentication.bootstrapAdmin` closes that loop and is required. The
+operator materializes it as a `PgToolBoxUser` named
+`<console>-bootstrap-admin` at `dba` level, owned by the console:
+
+- It is derived from the spec, not maintained by hand. Deleting the object
+  gets it back on the next reconcile; handing the role to somebody else
+  means editing the console, which leaves a record in its history.
+- Its subject is reserved even when the user cannot be rendered. A missing
+  password Secret is a fault to repair, not an invitation for another
+  `PgToolBoxUser` to inherit that identity at whatever level it names.
+- `passwordSecretRef` is optional, and required only when `local` is the
+  only provider — otherwise the console would ship with no way in at all.
+  With an identity provider enabled the first administrator authenticates
+  there like everyone else.
 
 Enabling more than one is a supported deployment, not a migration step.
 The login page renders the local form with a button per external provider,

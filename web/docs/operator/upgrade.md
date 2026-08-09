@@ -60,6 +60,23 @@ CRD, and a console left with no provider fails validation, so update the
 More than one may now be enabled at once — see
 [Configuration](configuration.md#authentication-providers).
 
+### `proxy.authentication.bootstrapAdmin` is new and required
+
+Every `PgConsole` needs one before the new CRD will accept it. Name the
+identity that is already your `dba`, and point `passwordSecretRef` at the
+Secret that user already uses — the operator adopts the object rather than
+creating a second account:
+
+```yaml
+bootstrapAdmin:
+  subject: jane@corp.example
+  passwordSecretRef: { name: jane-password }   # omit unless local-only
+```
+
+The existing hand-declared `PgToolBoxUser` for that subject becomes a
+duplicate and is dropped from the proxy configuration, with the reason on
+its status. Delete it once the console reports `Ready`.
+
 ## OLM
 
 Publish a new bundle at a higher version and add it to the catalog's
