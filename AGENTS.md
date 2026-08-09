@@ -70,7 +70,7 @@ code does, never a design spec. When code and docs disagree, fix the docs
 ## Build order & current state
 
 1. ✅ **Scaffolding + 4 CRDs** (`api/v1alpha1/`): `PgConsole` (pgc),
-   `PgToolBoxRole` (pgrole), `PgToolBoxUser` (pguser),
+   `PgToolBoxUser` (pguser),
    `PgToolBoxAccessRequest` (pgreq). CEL: immutable `cnpgClusterRef`, oidc
    block required iff `mode=oidc`, postgresRole profile XOR databaseRoleRef,
    immutable access-request subject. Generated CRDs in `config/crd/bases/`.
@@ -101,23 +101,22 @@ code does, never a design spec. When code and docs disagree, fix the docs
    drives sync only after the rollout reaches the target config revision.
    New API surface: `PgConsoleConditionPgAdminSynced`,
    `AdminSyncSecretVersionAnnotation`, `PgAdminSyncRevisionAnnotation`. Added
-   watches for `PgToolBoxUser`/`PgToolBoxRole` and RBAC rules for
-   `pgtoolboxusers`, `pgtoolboxroles`, and CNPG `databaseroles`.
+   watches for `PgToolBoxUser` and RBAC rules for
+   `pgtoolboxusers` and CNPG `databaseroles`.
    `databaseRoleNameForRole` has a deterministic placeholder for profile-based
    roles until Step 5 formalizes the role controller's naming convention.
-5. ✅ **Role/User provisioning for the proxy**: `PgToolBoxRole` and
-   `PgToolBoxUser` configure the pgtoolbox-proxy and nothing else. A role
-   names a console and a level; it is NOT a postgres role and has no
-   relationship with the CNPG cluster. The `PgToolBoxRole` controller
-   therefore creates nothing — it resolves the referenced console and
-   publishes status. The `PgConsole` controller resolves the user set once
-   per reconcile, renders known users into the proxy configuration (with
-   bcrypt hashes in local mode), and patches each user's `RoleReady` and
-   `ProxySynced` conditions. The postgres backing this step used to
-   materialize (CNPG `DatabaseRole` + password Secret per role, per-user
-   credentials for pgAdmin) was removed: pgAdmin connects with the
-   cluster's own credentials, never with anything derived from who signed
-   in.
+5. ✅ **Users configure the proxy, and nothing else**: `PgToolBoxUser`
+   binds an identity to one of three hardcoded levels (`view`,
+   `poweruser`, `dba`) on one console. There is no `PgToolBoxRole` — the
+   level set is closed and shared with pgConsole, so a level is a field
+   rather than an object. There is no postgres backing either: pgAdmin
+   connects with the cluster's own credentials, never with anything
+   derived from who signed in. Matching is by subject in every
+   authentication mode, so an OIDC deployment declares one user per
+   identity with no local password; group/claim mapping does not exist
+   yet. The `PgConsole` controller resolves the user set once per
+   reconcile, renders it into the proxy configuration (bcrypt hashes in
+   local mode), and patches each user's `ProxySynced` condition.
 
 6. ✅ **OpenShift provider** for the proxy (`internal/proxy/openshift/`):
    OAuth2 authorization-code flow with PKCE S256 against OpenShift's

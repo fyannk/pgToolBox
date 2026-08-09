@@ -70,8 +70,6 @@ func statusConditions(obj any) (*[]metav1.Condition, int64) {
 	switch o := obj.(type) {
 	case *pgtoolboxv1alpha1.PgConsole:
 		return &o.Status.Conditions, o.GetGeneration()
-	case *pgtoolboxv1alpha1.PgToolBoxRole:
-		return &o.Status.Conditions, o.GetGeneration()
 	case *pgtoolboxv1alpha1.PgToolBoxUser:
 		return &o.Status.Conditions, o.GetGeneration()
 	case *pgtoolboxv1alpha1.PgToolBoxAccessRequest:

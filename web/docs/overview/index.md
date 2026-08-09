@@ -35,7 +35,6 @@ RBAC and NetworkPolicy. Security isolation beats resource sharing.
 ## Declarative access
 
 ```yaml
-kind: PgToolBoxRole   # level + postgres backing
 kind: PgToolBoxUser   # identity + roleRef
 kind: PgToolBoxAccessRequest  # unknown user asks a dba for access
 ```

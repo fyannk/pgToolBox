@@ -36,7 +36,6 @@ import (
 // shared between the proxy config render, pgAdmin sync, and status patching.
 type resolvedConsoleUser struct {
 	user               pgtoolboxv1alpha1.PgToolBoxUser
-	role               *pgtoolboxv1alpha1.PgToolBoxRole
 	proxyUser          proxyconfig.User
 	proxyExcluded      bool
 	proxyExcludeReason string
@@ -100,27 +99,13 @@ func (r *Reconciler) resolveConsoleUser(
 ) (resolvedConsoleUser, error) {
 	resolved := resolvedConsoleUser{user: *user}
 
-	var role pgtoolboxv1alpha1.PgToolBoxRole
-	roleKey := client.ObjectKey{Namespace: console.Namespace, Name: user.Spec.RoleRef.Name}
-	if err := r.Get(ctx, roleKey, &role); err != nil {
-		if apierrors.IsNotFound(err) {
-			resolved.proxyExcluded = true
-			resolved.proxyExcludeReason = fmt.Sprintf("role %s was not found", roleKey.Name)
-			return resolved, nil
-		}
-		return resolved, err
-	}
-	if role.Spec.PgConsoleRef.Name != console.Name {
-		resolved.proxyExcluded = true
-		resolved.proxyExcludeReason = fmt.Sprintf("role %s belongs to a different console", role.Name)
-		return resolved, nil
-	}
-	resolved.role = &role
-
-	level := proxyconfig.Level(role.Spec.Level)
+	// The level is on the user. Admission pins it to the closed set, so a
+	// value that fails here predates the schema rather than being a
+	// configuration mistake someone can still make.
+	level := proxyconfig.Level(user.Spec.Level)
 	if !level.Valid() {
 		resolved.proxyExcluded = true
-		resolved.proxyExcludeReason = fmt.Sprintf("role %s has invalid level %q", role.Name, role.Spec.Level)
+		resolved.proxyExcludeReason = fmt.Sprintf("user has invalid level %q", user.Spec.Level)
 		return resolved, nil
 	}
 
@@ -174,29 +159,6 @@ func (r *Reconciler) applyUserStatuses(ctx context.Context, resolved []resolvedC
 		u := &resolved[i]
 		before := u.user.DeepCopy()
 		u.user.Status.ObservedGeneration = u.user.GetGeneration()
-
-		if u.role == nil {
-			conditions.MarkFalse(
-				&u.user,
-				pgtoolboxv1alpha1.UserConditionRoleReady,
-				pgtoolboxv1alpha1.ReasonRoleNotFound,
-				"%s", u.proxyExcludeReason,
-			)
-		} else if u.role.Spec.PgConsoleRef.Name != u.user.Spec.PgConsoleRef.Name {
-			conditions.MarkFalse(
-				&u.user,
-				pgtoolboxv1alpha1.UserConditionRoleReady,
-				pgtoolboxv1alpha1.ReasonConfigurationInvalid,
-				"role %s belongs to a different console", u.role.Name,
-			)
-		} else {
-			conditions.MarkTrue(
-				&u.user,
-				pgtoolboxv1alpha1.UserConditionRoleReady,
-				pgtoolboxv1alpha1.ReasonAsExpected,
-				"role %s is ready", u.role.Name,
-			)
-		}
 
 		if u.proxyExcluded {
 			conditions.MarkFalse(

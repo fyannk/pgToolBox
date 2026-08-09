@@ -59,7 +59,7 @@ spec:
 
 ### Levels
 
-`X-PgToolBox-Level` is set from the user's `PgToolBoxRole.level`:
+`X-PgToolBox-Level` is set from the user's `level`:
 `view` < `poweruser` < `dba`. Unknown authenticated users get `none` and
 can only file an access request.
 
@@ -80,12 +80,3 @@ whatever the application is told. See
 [the PgConsole reference](../reference/pgconsole.md#the-console-block)
 for the full field set and its bounds.
 
-## PgToolBoxRole profiles
-
-| Profile | DatabaseRole shape |
-|---|---|
-| `monitor` | `inRoles: [pg_monitor]` |
-| `database-readonly` | `inRoles: [pg_read_all_data]` |
-| `database-owner` | `createdb` + `createrole` |
-
-`databaseRoleRef` selects an existing `DatabaseRole` instead.

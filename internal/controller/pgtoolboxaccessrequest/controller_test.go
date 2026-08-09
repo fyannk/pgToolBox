@@ -34,9 +34,8 @@ func requestKey() client.ObjectKey {
 
 func TestReconcileApprovedCreatesUser(t *testing.T) {
 	console := testConsole()
-	role := testRole()
-	req := testAccessRequest(pgtoolboxv1alpha1.AccessRequestStateApproved, role.Name)
-	r, c := newTestReconciler(t, console, role, req)
+	req := testAccessRequest(pgtoolboxv1alpha1.AccessRequestStateApproved, pgtoolboxv1alpha1.RoleLevelView)
+	r, c := newTestReconciler(t, console, req)
 
 	if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: requestKey()}); err != nil {
 		t.Fatalf("reconcile: %v", err)
@@ -47,7 +46,9 @@ func TestReconcileApprovedCreatesUser(t *testing.T) {
 	if err := c.Get(context.Background(), userKey, &user); err != nil {
 		t.Fatalf("PgToolBoxUser was not created: %v", err)
 	}
-	if user.Spec.Subject != req.Spec.Subject || user.Spec.RoleRef.Name != role.Name || user.Spec.PgConsoleRef.Name != console.Name {
+	if user.Spec.Subject != req.Spec.Subject ||
+		user.Spec.Level != pgtoolboxv1alpha1.RoleLevelView ||
+		user.Spec.PgConsoleRef.Name != console.Name {
 		t.Fatalf("user spec = %+v", user.Spec)
 	}
 
@@ -65,9 +66,8 @@ func TestReconcileApprovedCreatesUser(t *testing.T) {
 
 func TestReconcileApprovedIsIdempotent(t *testing.T) {
 	console := testConsole()
-	role := testRole()
-	req := testAccessRequest(pgtoolboxv1alpha1.AccessRequestStateApproved, role.Name)
-	r, c := newTestReconciler(t, console, role, req)
+	req := testAccessRequest(pgtoolboxv1alpha1.AccessRequestStateApproved, pgtoolboxv1alpha1.RoleLevelView)
+	r, c := newTestReconciler(t, console, req)
 
 	if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: requestKey()}); err != nil {
 		t.Fatalf("first reconcile: %v", err)
@@ -87,9 +87,8 @@ func TestReconcileApprovedIsIdempotent(t *testing.T) {
 
 func TestReconcilePending(t *testing.T) {
 	console := testConsole()
-	role := testRole()
-	req := testAccessRequest(pgtoolboxv1alpha1.AccessRequestStatePending, role.Name)
-	r, c := newTestReconciler(t, console, role, req)
+	req := testAccessRequest(pgtoolboxv1alpha1.AccessRequestStatePending, pgtoolboxv1alpha1.RoleLevelView)
+	r, c := newTestReconciler(t, console, req)
 
 	if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: requestKey()}); err != nil {
 		t.Fatalf("reconcile: %v", err)
@@ -119,9 +118,8 @@ func TestReconcilePending(t *testing.T) {
 
 func TestReconcileDenied(t *testing.T) {
 	console := testConsole()
-	role := testRole()
-	req := testAccessRequest(pgtoolboxv1alpha1.AccessRequestStateDenied, role.Name)
-	r, c := newTestReconciler(t, console, role, req)
+	req := testAccessRequest(pgtoolboxv1alpha1.AccessRequestStateDenied, pgtoolboxv1alpha1.RoleLevelView)
+	r, c := newTestReconciler(t, console, req)
 
 	if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: requestKey()}); err != nil {
 		t.Fatalf("reconcile: %v", err)
@@ -160,9 +158,11 @@ func TestReconcileApprovedMissingRoleRef(t *testing.T) {
 	}
 }
 
-func TestReconcileApprovedMissingRole(t *testing.T) {
+// An approval has to say what it grants. There is no role object to look
+// up any more, so an empty level is the whole of the invalid case.
+func TestReconcileApprovedWithoutLevel(t *testing.T) {
 	console := testConsole()
-	req := testAccessRequest(pgtoolboxv1alpha1.AccessRequestStateApproved, "missing-role")
+	req := testAccessRequest(pgtoolboxv1alpha1.AccessRequestStateApproved, "")
 	r, c := newTestReconciler(t, console, req)
 
 	if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: requestKey()}); err != nil {
@@ -174,24 +174,33 @@ func TestReconcileApprovedMissingRole(t *testing.T) {
 		t.Fatalf("read request: %v", err)
 	}
 	userCond := conditionOf(&live, pgtoolboxv1alpha1.AccessRequestConditionUserReady)
-	if userCond == nil || userCond.Status != metav1.ConditionFalse || userCond.Reason != pgtoolboxv1alpha1.ReasonRoleNotFound {
+	if userCond == nil || userCond.Status != metav1.ConditionFalse ||
+		userCond.Reason != pgtoolboxv1alpha1.ReasonConfigurationInvalid {
 		t.Fatalf("UserReady = %+v", userCond)
+	}
+
+	// And nothing was created on the strength of an empty grant.
+	var users pgtoolboxv1alpha1.PgToolBoxUserList
+	if err := c.List(context.Background(), &users); err != nil {
+		t.Fatalf("list users: %v", err)
+	}
+	if len(users.Items) != 0 {
+		t.Fatalf("an approval with no level created %d user(s)", len(users.Items))
 	}
 }
 
 func TestReconcileApprovedUpdatesExistingUser(t *testing.T) {
 	console := testConsole()
-	role := testRole()
-	req := testAccessRequest(pgtoolboxv1alpha1.AccessRequestStateApproved, role.Name)
+	req := testAccessRequest(pgtoolboxv1alpha1.AccessRequestStateApproved, pgtoolboxv1alpha1.RoleLevelView)
 	existing := &pgtoolboxv1alpha1.PgToolBoxUser{
 		ObjectMeta: metav1.ObjectMeta{Name: userNameFor(console, req.Spec.Subject), Namespace: "test"},
 		Spec: pgtoolboxv1alpha1.PgToolBoxUserSpec{
 			PgConsoleRef: pgtoolboxv1alpha1.LocalObjectReference{Name: console.Name},
 			Subject:      req.Spec.Subject,
-			RoleRef:      pgtoolboxv1alpha1.LocalObjectReference{Name: "old-role"},
+			Level:        pgtoolboxv1alpha1.RoleLevelView,
 		},
 	}
-	r, c := newTestReconciler(t, console, role, req, existing)
+	r, c := newTestReconciler(t, console, req, existing)
 
 	if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: requestKey()}); err != nil {
 		t.Fatalf("reconcile: %v", err)
@@ -201,7 +210,7 @@ func TestReconcileApprovedUpdatesExistingUser(t *testing.T) {
 	if err := c.Get(context.Background(), client.ObjectKeyFromObject(existing), &user); err != nil {
 		t.Fatalf("read user: %v", err)
 	}
-	if user.Spec.RoleRef.Name != role.Name {
-		t.Fatalf("user roleRef = %q, want %q", user.Spec.RoleRef.Name, role.Name)
+	if user.Spec.Level != pgtoolboxv1alpha1.RoleLevelView {
+		t.Fatalf("user level = %q, want the granted level", user.Spec.Level)
 	}
 }

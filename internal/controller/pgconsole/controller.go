@@ -108,7 +108,6 @@ type Reconciler struct {
 // +kubebuilder:rbac:groups=postgresql.cnpg.io,resources=databaseroles,verbs=get;list;watch
 // +kubebuilder:rbac:groups=pgtoolbox.fyannk.dev,resources=pgtoolboxusers,verbs=get;list;watch
 // +kubebuilder:rbac:groups=pgtoolbox.fyannk.dev,resources=pgtoolboxusers/status,verbs=update;patch
-// +kubebuilder:rbac:groups=pgtoolbox.fyannk.dev,resources=pgtoolboxroles,verbs=get;list;watch
 
 // The rules below are never exercised by this operator. They exist only
 // because Kubernetes escalation prevention refuses to let a controller create
@@ -459,11 +458,6 @@ func (r *Reconciler) mapToolBoxResourceToConsole(_ context.Context, obj client.O
 			Namespace: resource.Namespace,
 			Name:      resource.Spec.PgConsoleRef.Name,
 		}}}
-	case *pgtoolboxv1alpha1.PgToolBoxRole:
-		return []reconcile.Request{{NamespacedName: client.ObjectKey{
-			Namespace: resource.Namespace,
-			Name:      resource.Spec.PgConsoleRef.Name,
-		}}}
 	default:
 		return nil
 	}
@@ -493,10 +487,6 @@ func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 	controllerBuilder = controllerBuilder.
 		Watches(
 			&pgtoolboxv1alpha1.PgToolBoxUser{},
-			handler.EnqueueRequestsFromMapFunc(r.mapToolBoxResourceToConsole),
-		).
-		Watches(
-			&pgtoolboxv1alpha1.PgToolBoxRole{},
 			handler.EnqueueRequestsFromMapFunc(r.mapToolBoxResourceToConsole),
 		)
 	return controllerBuilder.

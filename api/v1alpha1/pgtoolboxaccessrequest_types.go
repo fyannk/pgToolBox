@@ -59,7 +59,7 @@ type PgToolBoxAccessRequestSpec struct {
 }
 
 // PgToolBoxAccessRequestStatus is the observed state of an access request.
-// The review decision — state, requestedRoleRef, decidedBy, decidedAt — is
+// The review decision — state, requestedLevel, decidedBy, decidedAt — is
 // written by a dba-level user through the console, and only the status
 // subresource, so the create-only proxy cannot self-approve.
 type PgToolBoxAccessRequestStatus struct {
@@ -72,10 +72,8 @@ type PgToolBoxAccessRequestStatus struct {
 	// +optional
 	State AccessRequestState `json:"state,omitempty"`
 
-	// The PgToolBoxRole the reviewer granted, required when state is
-	// approved. The operator materializes the PgToolBoxUser from it.
-	// +optional
-	RequestedRoleRef *LocalObjectReference `json:"requestedRoleRef,omitempty"`
+	// The level the reviewer granted, required when state is approved.
+	RequestedLevel RoleLevel `json:"requestedLevel,omitempty"`
 
 	// The identity of the reviewer who took the decision.
 	// +optional
@@ -96,7 +94,7 @@ type PgToolBoxAccessRequestStatus struct {
 // +kubebuilder:printcolumn:name="State",type=string,JSONPath=`.status.state`
 // +kubebuilder:printcolumn:name="Console",type=string,JSONPath=`.spec.pgConsoleRef.name`
 // +kubebuilder:printcolumn:name="Subject",type=string,JSONPath=`.spec.subject`
-// +kubebuilder:printcolumn:name="Role",type=string,JSONPath=`.status.requestedRoleRef.name`
+// +kubebuilder:printcolumn:name="Role",type=string,JSONPath=`.status.requestedLevel`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
 // PgToolBoxAccessRequest describes one request for access to a PgConsole.

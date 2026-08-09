@@ -49,7 +49,6 @@ const (
 // PgToolBoxUser condition types.
 const (
 	UserConditionReady       = "Ready"
-	UserConditionRoleReady   = "RoleReady"
 	UserConditionProxySynced = "ProxySynced"
 )
 
