@@ -841,6 +841,47 @@ spec:
                   authentication:
                     description: How users authenticate.
                     properties:
+                      bootstrapAdmin:
+                        description: |-
+                          The first administrator, and the answer to how anyone gets in at
+                          all. A console starts with no users; granting access needs a dba to
+                          approve a PgToolBoxAccessRequest, so without a declared one nobody
+                          can ever sign in to approve anything.
+
+                          The operator materializes this as a PgToolBoxUser it owns, at dba
+                          level, and puts it back if it is deleted — it is derived from this
+                          field rather than an object anyone maintains. Handing the role to
+                          somebody else means editing it here, which leaves a record.
+                        properties:
+                          passwordSecretRef:
+                            description: |-
+                              Reference to the Secret holding this identity's local-mode password
+                              (bcrypt). Optional, because with an identity provider enabled the
+                              first administrator authenticates there like everyone else. Required
+                              only when local is the sole provider, since otherwise the console
+                              would ship with no way in at all. Default key: "password".
+                            properties:
+                              key:
+                                description: The key inside the Secret.
+                                type: string
+                              name:
+                                description: The name of the referenced Secret.
+                                maxLength: 253
+                                minLength: 1
+                                type: string
+                            required:
+                            - name
+                            type: object
+                          subject:
+                            description: |-
+                              The identity the authentication provider vouches for, matched the
+                              same way as any other user's subject.
+                            maxLength: 253
+                            minLength: 1
+                            type: string
+                        required:
+                        - subject
+                        type: object
                       local:
                         description: |-
                           Local accounts, rendered from the console's PgToolBoxUser set. A user
@@ -883,10 +924,16 @@ spec:
                           The integrated OpenShift OAuth stack, auto-discovered from the
                           cluster.
                         type: object
+                    required:
+                    - bootstrapAdmin
                     type: object
                     x-kubernetes-validations:
                     - message: at least one authentication provider must be enabled
                       rule: has(self.local) || has(self.oidc) || has(self.openshift)
+                    - message: bootstrapAdmin.passwordSecretRef is required when local
+                        is the only authentication provider
+                      rule: '!(has(self.local) && !has(self.oidc) && !has(self.openshift))
+                        || has(self.bootstrapAdmin.passwordSecretRef)'
                   image:
                     description: |-
                       The proxy container image. Defaults to the operator's configured

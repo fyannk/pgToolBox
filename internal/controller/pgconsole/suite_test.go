@@ -94,6 +94,12 @@ func testConsole() *pgtoolboxv1alpha1.PgConsole {
 					Tag:        "1.0.0",
 				},
 				Authentication: pgtoolboxv1alpha1.ProxyAuthenticationSpec{
+					BootstrapAdmin: pgtoolboxv1alpha1.BootstrapAdminSpec{
+						Subject: "root@corp.example",
+						PasswordSecretRef: &pgtoolboxv1alpha1.SecretKeyReference{
+							Name: "root-password",
+						},
+					},
 					Local: &pgtoolboxv1alpha1.ProxyLocalSpec{},
 				},
 			},

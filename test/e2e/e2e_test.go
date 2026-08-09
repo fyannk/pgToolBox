@@ -240,6 +240,10 @@ func createConsole(t *testing.T) *pgtoolboxv1alpha1.PgConsole {
 			CNPGClusterRef: pgtoolboxv1alpha1.LocalObjectReference{Name: clusterName},
 			Proxy: pgtoolboxv1alpha1.ProxySpec{
 				Authentication: pgtoolboxv1alpha1.ProxyAuthenticationSpec{
+					BootstrapAdmin: pgtoolboxv1alpha1.BootstrapAdminSpec{
+						Subject:           "root@corp.example",
+						PasswordSecretRef: &pgtoolboxv1alpha1.SecretKeyReference{Name: "jane-password"},
+					},
 					Local: &pgtoolboxv1alpha1.ProxyLocalSpec{},
 				},
 			},

@@ -248,6 +248,13 @@ func (r *Reconciler) Reconcile(
 		cluster.Name,
 	)
 
+	// Before resolving the users: the console's first administrator is
+	// derived from the spec, so it has to exist as an object before the set
+	// is read or the first reconcile renders a console nobody can sign in to.
+	if err := r.reconcileBootstrapAdmin(ctx, &console); err != nil {
+		return ctrl.Result{}, err
+	}
+
 	// Resolve the console's users once per reconcile: the same role, password
 	// and credential information feeds the proxy config, pgAdmin sync, and the
 	// per-user status conditions.
