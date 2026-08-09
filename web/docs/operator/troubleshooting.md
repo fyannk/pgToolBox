@@ -24,8 +24,7 @@ kubectl get pguser,pgreq -n <ns>
 
 | Condition | Reason | Fix |
 |---|---|---|
-| `ProxySynced=False` | `SomeDegraded` | Local mode: missing/invalid bcrypt Secret, or a duplicate subject. |
-| `PgAdminSynced=False` | `SomeDegraded` | Backing `DatabaseRole` not applied, or password Secret incomplete. |
+| `ProxySynced=False` | `SomeDegraded` | A `localPasswordSecretRef` that is missing or is not a bcrypt hash, or a subject already claimed by another user. The console's `bootstrapAdmin` holds its subject even when its own Secret is missing, so a second user naming it is the one dropped. |
 
 ## PgToolBoxAccessRequest
 
