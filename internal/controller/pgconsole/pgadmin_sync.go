@@ -23,14 +23,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
+	"time"
 
 	cnpgv1 "github.com/cloudnative-pg/api/pkg/api/v1"
 	pgtoolboxv1alpha1 "github.com/fyannk/pgtoolbox/api/v1alpha1"
 	"github.com/fyannk/pgtoolbox/internal/adminsync"
 	"github.com/fyannk/pgtoolbox/internal/conditions"
 	appsv1 "k8s.io/api/apps/v1"
-	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -107,25 +106,13 @@ func (r *Reconciler) reconcilePgAdminSync(
 		return nil
 	}
 
-	// The recorded revision names the Pod it was applied to, not just the
-	// desired state: the credential files the sidecar writes live with the
-	// Pod, so a replaced Pod has none of them while a Deployment annotation
-	// would happily still match.
-	podIdentity, err := r.syncedPodIdentity(ctx, console)
-	if err != nil {
-		return err
-	}
-	revision := syncRevision(adminsync.SyncRequest{Servers: servers}) + "@" + podIdentity
-	if deployment.Annotations[pgtoolboxv1alpha1.PgAdminSyncRevisionAnnotation] == revision {
-		conditions.MarkTrue(
-			console,
-			pgtoolboxv1alpha1.PgConsoleConditionPgAdminSynced,
-			pgtoolboxv1alpha1.ReasonAsExpected,
-			"pgAdmin sync is up to date",
-		)
-		return nil
-	}
-
+	// No short-circuit here. Whether the desired state is already present is
+	// something only the sidecar can answer: it lives in files and rows that
+	// belong to each pgAdmin account, and accounts appear on their own as
+	// people sign in. An operator-side revision could not see a new account
+	// arrive, so it would leave that reader with an empty server list until
+	// something unrelated changed. The sidecar skips the expensive work
+	// per account instead.
 	if err := r.AdminSync.Sync(ctx, adminsync.Request{
 		Namespace:   console.Namespace,
 		ConsoleName: console.Name,
@@ -143,15 +130,6 @@ func (r *Reconciler) reconcilePgAdminSync(
 		return nil
 	}
 
-	before := deployment.DeepCopy()
-	if deployment.Annotations == nil {
-		deployment.Annotations = map[string]string{}
-	}
-	deployment.Annotations[pgtoolboxv1alpha1.PgAdminSyncRevisionAnnotation] = revision
-	if err := r.Patch(ctx, deployment, client.MergeFrom(before)); err != nil {
-		return fmt.Errorf("record pgAdmin sync revision: %w", err)
-	}
-
 	conditions.MarkTrue(
 		console,
 		pgtoolboxv1alpha1.PgConsoleConditionPgAdminSynced,
@@ -162,32 +140,16 @@ func (r *Reconciler) reconcilePgAdminSync(
 	return nil
 }
 
-// syncedPodIdentity returns a value that changes whenever the console Pod
-// holding the synced state is replaced, so a rollout, an eviction or a
-// crash-restart all invalidate a recorded revision.
-func (r *Reconciler) syncedPodIdentity(
-	ctx context.Context,
-	console *pgtoolboxv1alpha1.PgConsole,
-) (string, error) {
-	var pods corev1.PodList
-	if err := r.List(ctx, &pods,
-		client.InNamespace(console.Namespace),
-		client.MatchingLabels(application.CommonLabels(console.Name)),
-	); err != nil {
-		return "", fmt.Errorf("list console pods: %w", err)
-	}
-	identity := ""
-	for i := range pods.Items {
-		pod := &pods.Items[i]
-		if !pod.DeletionTimestamp.IsZero() {
-			continue
-		}
-		if uid := string(pod.UID); uid > identity {
-			identity = uid
-		}
-	}
-	return identity, nil
-}
+// pgAdminResyncInterval is how often a console with pgAdmin re-syncs when
+// nothing has changed.
+//
+// It is not a safety net for a lost write; it exists because pgAdmin
+// accounts appear without anything in Kubernetes changing. An account is
+// created the first time the proxy forwards an identity pgAdmin has not
+// seen, which is a sign-in, not an API event — so no watch fires and no
+// reconcile is queued. Without a periodic pass, that reader would sit in
+// front of an empty server list until something unrelated moved.
+const pgAdminResyncInterval = 2 * time.Minute
 
 // clusterServiceHost resolves the read-write Service host for the cluster.
 // It prefers the Cluster status and falls back to the CNPG naming convention.

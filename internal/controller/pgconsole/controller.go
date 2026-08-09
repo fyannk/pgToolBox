@@ -293,6 +293,13 @@ func (r *Reconciler) Reconcile(
 	if err := r.reconcilePgAdminSync(ctx, &console, deployment, checksum); err != nil {
 		return ctrl.Result{}, err
 	}
+	// pgAdmin accounts appear on sign-in, which no watch can observe, so a
+	// console with pgAdmin is revisited on a timer rather than only on
+	// change.
+	requeue := ctrl.Result{}
+	if pgAdminEnabled(&console) {
+		requeue.RequeueAfter = pgAdminResyncInterval
+	}
 
 	if err := r.applyUserStatuses(ctx, resolvedUsers); err != nil {
 		return ctrl.Result{}, err
@@ -305,7 +312,7 @@ func (r *Reconciler) Reconcile(
 		"configuration is valid",
 	)
 	r.publishWorkloadStatus(&console, deployment)
-	return ctrl.Result{}, r.updateStatus(ctx, statusBefore, &console)
+	return requeue, r.updateStatus(ctx, statusBefore, &console)
 }
 
 // reconcileResources converges every owned object, ordered so authority and

@@ -20,7 +20,9 @@ package adminsync
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -159,11 +161,27 @@ func (o SidecarOptions) apply(ctx context.Context, request SyncRequest) error {
 	if err != nil {
 		return err
 	}
+	desired, err := serversRevision(request.Servers)
+	if err != nil {
+		return err
+	}
 	for _, account := range accounts {
+		// Change detection belongs here rather than in the operator. The
+		// state lives with the account — files in its storage directory,
+		// rows in pgAdmin's database — so only this side can tell whether
+		// it is already present. An account that appears later is caught
+		// by the next sync, which is why the operator no longer decides
+		// that a sync can be skipped.
+		if applied, err := o.appliedRevision(account); err == nil && applied == desired {
+			continue
+		}
 		if err := o.writePassfile(account, request.Servers); err != nil {
 			return err
 		}
 		if err := o.loadServers(ctx, account, request.Servers); err != nil {
+			return err
+		}
+		if err := o.recordRevision(account, desired); err != nil {
 			return err
 		}
 	}
@@ -177,9 +195,16 @@ func (o SidecarOptions) apply(ctx context.Context, request SyncRequest) error {
 // settings database. The bootstrap account is skipped: it exists only to
 // initialize that database and nobody signs in with it.
 func (o SidecarOptions) accounts(ctx context.Context) ([]string, error) {
+	// An uninitialized settings database is not a failure: pgAdmin creates
+	// it at first start, and the sidecar can be asked to sync before that
+	// has happened. It means there are no accounts yet, and the next sync
+	// finds them.
 	const query = `SELECT email FROM user WHERE auth_source = 'webserver'`
 	output, err := o.querySettingsDB(ctx, query)
 	if err != nil {
+		if strings.Contains(output+err.Error(), "no such table") {
+			return nil, nil
+		}
 		return nil, fmt.Errorf("list pgAdmin accounts: %w", err)
 	}
 	var accounts []string
@@ -397,4 +422,41 @@ func pgpassEscape(s string) string {
 	s = strings.ReplaceAll(s, `\`, `\\`)
 	s = strings.ReplaceAll(s, `:`, `\:`)
 	return s
+}
+
+// revisionFileName holds the state an account was last provisioned with.
+// It sits beside that account's credential file, so losing one loses the
+// other and the next sync rewrites both.
+const revisionFileName = ".pgtoolbox-revision"
+
+// serversRevision fingerprints the desired connections, credentials
+// included: a rotated password has to count as a change, or the sidecar
+// keeps serving one the cluster has already replaced.
+func serversRevision(servers []Server) (string, error) {
+	payload, err := json.Marshal(servers)
+	if err != nil {
+		return "", fmt.Errorf("fingerprint desired servers: %w", err)
+	}
+	sum := sha256.Sum256(payload)
+	return hex.EncodeToString(sum[:]), nil
+}
+
+// appliedRevision reads what an account was last provisioned with.
+func (o SidecarOptions) appliedRevision(account string) (string, error) {
+	raw, err := os.ReadFile(filepath.Join(userStorageDirectory(account), revisionFileName))
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(raw)), nil
+}
+
+// recordRevision notes what an account now holds, written last so a failure
+// part-way through leaves the account looking unprovisioned rather than
+// current.
+func (o SidecarOptions) recordRevision(account, revision string) error {
+	target := filepath.Join(userStorageDirectory(account), revisionFileName)
+	if err := os.WriteFile(target, []byte(revision+"\n"), 0o600); err != nil {
+		return fmt.Errorf("record revision for %q: %w", account, err)
+	}
+	return nil
 }

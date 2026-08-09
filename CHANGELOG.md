@@ -56,6 +56,19 @@ until a version is cut.
 
 ### Changed
 
+- pgAdmin offers the connections the CloudNativePG cluster publishes — the
+  application user, the superuser where one is enabled, and every
+  `DatabaseRole` carrying a password — instead of anything derived from who
+  signed in. Every account gets the same list.
+- A console with pgAdmin is revisited every two minutes. pgAdmin accounts
+  appear on sign-in, which is not an API event, so no watch fires and no
+  reconcile is queued; without the periodic pass a new reader would sit in
+  front of an empty server list until something unrelated changed.
+- Whether the desired state is already present is now decided by the
+  sidecar rather than by an annotation on the Deployment. Only that side can
+  see it: the state is files in each account's storage and rows in pgAdmin's
+  database, and accounts arrive without the operator being told.
+
 - **`PgToolBoxRole` and `PgToolBoxUser` configure the proxy and nothing
   else.** A role is a console authorization level; it is not a postgres
   role and has no relationship with the CloudNativePG cluster. The
