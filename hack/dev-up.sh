@@ -23,7 +23,7 @@
 # otherwise be unreachable above the denial page. pgToolBox *is* that proxy.
 # Faking it here would test nothing and hide the part this repository owns,
 # so there is one port, the real login, and real sessions; the level ladder
-# comes from the seeded PgToolBoxRole/PgToolBoxUser objects, and the unknown
+# comes from the seeded PgToolBoxUser objects, and the unknown
 # user exercises the access-request flow end to end rather than a mock of it.
 #
 # First run does the full setup (~6 min). While the kind cluster is still
@@ -36,6 +36,27 @@
 # SKIP_BACKUP=true drops the object store and the plugin (and with them the
 # evidence sidecar); SKIP_EVIDENCE=true keeps the store but leaves the
 # sidecar out.
+#
+# AUTH_MODE=oidc points the proxy at a real identity provider instead:
+#
+#   AUTH_MODE=oidc \
+#   OIDC_ISSUER_URL=https://idp.example \
+#   OIDC_CLIENT_ID=pgtoolboxdev \
+#   OIDC_CLIENT_SECRET=... \
+#   OIDC_SUBJECTS="me@example=dba" ./hack/dev-up.sh
+#
+# The secret is read from the environment into a Kubernetes Secret and is
+# never written to a file here.
+#
+# Register this redirect URI with the provider first:
+#
+#     http://localhost:8080/auth/oidc/callback
+#
+# The port is not a choice. A console with no exposure hostname advertises
+# the proxy's own loopback URL, which is localhost:8080, and the provider
+# redirects the *browser* there — so the forward has to land on the same
+# port for the round trip to close. AUTH_MODE=oidc therefore pins PORT to
+# 8080 unless you set one explicitly.
 #
 # Environment overrides: CLUSTER, KIND_NODE_IMAGE, CNPG_MANIFEST,
 # CERT_MANAGER_MANIFEST, BARMAN_MANIFEST, PGCONSOLE_IMAGE, PGADMIN_IMAGE,
@@ -57,6 +78,31 @@ PGCLUSTER="${PGCLUSTER:-pg-orders}"
 PORT="${PORT:-3000}"
 # pgAdmin keys accounts on the email address, so subjects are email-shaped.
 SUBJECT_DOMAIN="${SUBJECT_DOMAIN:-pgtoolbox.dev}"
+
+# Authentication. "local" needs no identity provider and seeds three users
+# with passwords; "oidc" points the proxy at a real one.
+#
+# OIDC needs OIDC_ISSUER_URL, OIDC_CLIENT_ID and OIDC_CLIENT_SECRET, and at
+# least one OIDC_SUBJECTS entry — a space-separated list of "subject=level"
+# — because a level is granted per identity and there is no group mapping.
+# Without one, every sign-in lands on the 403 page with nothing to approve
+# it. The secret is read from the environment and written straight into a
+# Kubernetes Secret; it is never echoed and never written to a file here.
+#
+# The provider must accept the redirect URI the console advertises, which
+# with no exposure hostname is http://localhost:$PORT/oauth2/callback.
+AUTH_MODE="${AUTH_MODE:-local}"
+OIDC_ISSUER_URL="${OIDC_ISSUER_URL:-}"
+OIDC_CLIENT_ID="${OIDC_CLIENT_ID:-}"
+OIDC_CLIENT_SECRET="${OIDC_CLIENT_SECRET:-}"
+OIDC_SUBJECTS="${OIDC_SUBJECTS:-}"
+
+# The redirect URI the console advertises is built from the proxy's own
+# loopback URL when no exposure hostname is set, so the forward must land
+# on that port or the provider sends the browser somewhere nothing listens.
+if [ "$AUTH_MODE" = "oidc" ] && [ -z "${PORT_EXPLICIT:-}" ] && [ "${PORT}" = "3000" ]; then
+  PORT=8080
+fi
 
 KIND_NODE_IMAGE="${KIND_NODE_IMAGE:-kindest/node:v1.34.0}"
 CNPG_MANIFEST="${CNPG_MANIFEST:-https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-1.30/releases/cnpg-1.30.0.yaml}"
@@ -219,6 +265,24 @@ EOF
     evidence_enabled=false
   fi
 
+  if [ "$AUTH_MODE" = "oidc" ]; then
+    for required in OIDC_ISSUER_URL OIDC_CLIENT_ID OIDC_CLIENT_SECRET; do
+      eval "value=\$$required"
+      [ -n "$value" ] || { echo "AUTH_MODE=oidc needs $required" >&2; exit 1; }
+    done
+    log "storing the OIDC client secret"
+    kc -n "$NAMESPACE" create secret generic pgconsole-oidc \
+      --from-literal=clientSecret="$OIDC_CLIENT_SECRET" \
+      --dry-run=client -o yaml | kc apply -f - > /dev/null
+    auth_block="      mode: oidc
+      oidc:
+        issuerURL: $OIDC_ISSUER_URL
+        clientID: $OIDC_CLIENT_ID
+        clientSecretRef: { name: pgconsole-oidc }"
+  else
+    auth_block="      mode: local"
+  fi
+
   log "declaring the console"
   kc apply -f - > /dev/null <<EOF
 apiVersion: pgtoolbox.fyannk.dev/v1alpha1
@@ -230,7 +294,7 @@ spec:
   cnpgClusterRef: { name: $PGCLUSTER }
   proxy:
     authentication:
-      mode: local
+$auth_block
   pgAdmin:
     enabled: true
   evidence:
@@ -255,20 +319,38 @@ EOF
   # one cannot be provisioned there. Real identities from an OIDC provider
   # are email addresses; the seeded ones are too, so the pgAdmin half of the
   # stack works rather than half-failing.
-  log "seeding the three levels and their users"
-  for entry in "viewer:view" "operator:poweruser" "dba:dba"; do
-    name=${entry%%:*}
-    level=${entry##*:}
-    subject="$name@$SUBJECT_DOMAIN"
-    case "$level" in
-      view) profile=monitor ;;
-      poweruser) profile=database-readonly ;;
-      *) profile=database-owner ;;
-    esac
-    # Local authentication compares against a bcrypt hash; the operator
-    # copies it into the proxy configuration and hashes nothing itself.
-    hash=$(go run ./hack/devtools/bcrypt "$name")
-    kc apply -f - > /dev/null <<EOF
+  if [ "$AUTH_MODE" = "oidc" ]; then
+    # No passwords: the identity provider holds those. A user here only
+    # says what level an already-authenticated identity gets, and a level
+    # has to be granted per identity because no group mapping exists.
+    [ -n "$OIDC_SUBJECTS" ] || log "warning: OIDC_SUBJECTS is empty, so every sign-in will land on the 403 page"
+    for entry in $OIDC_SUBJECTS; do
+      subject=${entry%%=*}
+      level=${entry##*=}
+      name=$(printf '%s' "$subject" | tr -c 'a-z0-9' '-' | sed 's/^-*//;s/-*$//' | cut -c1-40)
+      log "granting $level to $subject"
+      kc apply -f - > /dev/null <<EOF
+apiVersion: pgtoolbox.fyannk.dev/v1alpha1
+kind: PgToolBoxUser
+metadata:
+  name: $name
+  namespace: $NAMESPACE
+spec:
+  pgConsoleRef: { name: $CONSOLE }
+  subject: $subject
+  level: $level
+EOF
+    done
+  else
+    log "seeding one user per level"
+    for entry in "viewer:view" "operator:poweruser" "dba:dba"; do
+      name=${entry%%:*}
+      level=${entry##*:}
+      subject="$name@$SUBJECT_DOMAIN"
+      # Local authentication compares against a bcrypt hash; the operator
+      # copies it into the proxy configuration and hashes nothing itself.
+      hash=$(go run ./hack/devtools/bcrypt "$name")
+      kc apply -f - > /dev/null <<EOF
 apiVersion: v1
 kind: Secret
 metadata:
@@ -278,17 +360,6 @@ stringData:
   password: "$hash"
 ---
 apiVersion: pgtoolbox.fyannk.dev/v1alpha1
-kind: PgToolBoxRole
-metadata:
-  name: $name
-  namespace: $NAMESPACE
-spec:
-  pgConsoleRef: { name: $CONSOLE }
-  level: $level
-  postgresRole:
-    profile: $profile
----
-apiVersion: pgtoolbox.fyannk.dev/v1alpha1
 kind: PgToolBoxUser
 metadata:
   name: $name
@@ -296,10 +367,11 @@ metadata:
 spec:
   pgConsoleRef: { name: $CONSOLE }
   subject: $subject
-  roleRef: { name: $name }
+  level: $level
   localPasswordSecretRef: { name: $name-password }
 EOF
-  done
+    done
+  fi
 
   log "waiting for the console to become ready (pulls nothing; images are side-loaded)"
   kc -n "$NAMESPACE" wait --for=condition=Available "deploy/$CONSOLE-pgconsole" --timeout=600s > /dev/null
