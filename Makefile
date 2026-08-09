@@ -6,8 +6,8 @@ IMG ?= pgtoolbox:latest
 PROXY_IMG ?= pgtoolbox-proxy:latest
 VERSION ?= development
 OLM_VERSION ?= 0.1.0
-BUNDLE_IMG ?= pgtoolbox-bundle:v$(OLM_VERSION)
-CATALOG_IMG ?= pgtoolbox-catalog:v$(OLM_VERSION)
+BUNDLE_IMG ?= pgtoolbox-bundle:$(OLM_VERSION)
+CATALOG_IMG ?= pgtoolbox-catalog:$(OLM_VERSION)
 GO_LDFLAGS ?= -X main.operatorVersion=$(VERSION) -X main.defaultOperatorImage=$(IMG)
 
 CONTROLLER_GEN_VERSION ?= v0.19.0
@@ -63,6 +63,10 @@ test: manifests generate fmt vet ## Run unit tests.
 helm-lint: ## Lint and template-render the Helm chart.
 	helm lint deploy/helm/pgtoolbox
 	helm template pgtoolbox deploy/helm/pgtoolbox --namespace pgtoolbox > /dev/null
+
+.PHONY: validate-packaging
+validate-packaging: ## Check that the Helm chart, OLM bundle and catalog agree.
+	./hack/validate-packaging.sh
 
 .PHONY: docs
 docs: ## Build the documentation site.
