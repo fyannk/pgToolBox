@@ -555,21 +555,21 @@ func TestExchangeFailureClassification(t *testing.T) {
 func TestSafeRedirectRejectsOffOrigin(t *testing.T) {
 	stripped := strings.NewReplacer("\t", "", "\r", "", "\n", "")
 	for _, p := range []string{
-		"/\t/evil.example",           // the bypass: tab stripped by the browser
-		"/\t\t/evil.example",         // more than one
-		"/\v/evil.example",           // any other C0 control
-		"/\x00/evil.example",         // NUL
-		"/\x7f/evil.example",         // DEL
-		"/\r/evil.example",           // already rejected, kept as a guard
-		"/\n/evil.example",           //
-		"//evil.example",             // scheme-relative
-		"///evil.example",            //
-		"/\\evil.example",            // backslash as a separator
-		"\\\\evil.example",           //
-		"https://evil.example",       // absolute
-		"http:/evil.example",         // opaque-ish
-		"",                           // empty
-		"evil.example",               // not a path at all
+		"/\t/evil.example",     // the bypass: tab stripped by the browser
+		"/\t\t/evil.example",   // more than one
+		"/\v/evil.example",     // any other C0 control
+		"/\x00/evil.example",   // NUL
+		"/\x7f/evil.example",   // DEL
+		"/\r/evil.example",     // already rejected, kept as a guard
+		"/\n/evil.example",     //
+		"//evil.example",       // scheme-relative
+		"///evil.example",      //
+		"/\\evil.example",      // backslash as a separator
+		"\\\\evil.example",     //
+		"https://evil.example", // absolute
+		"http:/evil.example",   // opaque-ish
+		"",                     // empty
+		"evil.example",         // not a path at all
 	} {
 		got := SafeRedirect(p)
 		if got != "/" {

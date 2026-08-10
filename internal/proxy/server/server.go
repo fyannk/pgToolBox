@@ -250,9 +250,17 @@ func ExternalLogins(e *Env) []pages.ExternalLogin {
 // the parse talking about the same string. A backslash is excluded for a
 // related reason: some browsers treat it as a separator.
 func SafeRedirect(p string) string {
-	if !strings.HasPrefix(p, "/") || strings.HasPrefix(p, "//") {
+	// One leading slash, and the second character must not make it
+	// scheme-relative: "//host" and "/\host" are both another origin.
+	if len(p) == 0 || p[0] != '/' {
 		return "/"
 	}
+	if len(p) > 1 && (p[1] == '/' || p[1] == '\\') {
+		return "/"
+	}
+	// No control character anywhere, and no backslash later in the string
+	// either — both can move a separator into second position once the
+	// browser has stripped what it strips.
 	if strings.ContainsFunc(p, func(r rune) bool {
 		return r == '\\' || r < 0x20 || r == 0x7f
 	}) {
