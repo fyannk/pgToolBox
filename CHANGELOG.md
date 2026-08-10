@@ -10,6 +10,8 @@ upgrading.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-08-10
+
 ### Security
 
 - **Open redirect in the post-login target (`?rd=`).** `SafeRedirect`
@@ -105,5 +107,6 @@ none of it changed anything anyone had installed.
 - **One subject per user.** A person whose identity-provider subject differs
   from their local username needs one object per subject.
 
-[Unreleased]: https://github.com/fyannk/pgToolBox/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/fyannk/pgToolBox/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/fyannk/pgToolBox/releases/tag/v0.1.1
 [0.1.0]: https://github.com/fyannk/pgToolBox/releases/tag/v0.1.0

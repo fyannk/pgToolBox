@@ -5,7 +5,7 @@
 IMG ?= pgtoolbox:latest
 PROXY_IMG ?= pgtoolbox-proxy:latest
 VERSION ?= development
-OLM_VERSION ?= 0.1.0
+OLM_VERSION ?= 0.1.1
 BUNDLE_IMG ?= pgtoolbox-bundle:$(OLM_VERSION)
 CATALOG_IMG ?= pgtoolbox-catalog:$(OLM_VERSION)
 GO_LDFLAGS ?= -X main.operatorVersion=$(VERSION) -X main.defaultOperatorImage=$(IMG)
