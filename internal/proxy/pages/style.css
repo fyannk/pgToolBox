@@ -1,5 +1,17 @@
 :root {
-  color-scheme: light dark;
+  color-scheme: dark;
+
+  /* Shared with the documentation site and the mark itself: navy field,
+     the mark's light blue for the second half of the wordmark, and the
+     console's accent blue for anything actionable. */
+  --ptb-navy: #0c3164;
+  --ptb-navy-deep: #081f42;
+  --ptb-navy-border: #072754;
+  --ptb-logo-blue: #60bdeb;
+  --ptb-accent: #0064b5;
+  --ptb-accent-hover: #0052a1;
+  --ptb-on-navy: #f7fafd;
+  --ptb-on-navy-muted: #a8c4e0;
 }
 * {
   box-sizing: border-box;
@@ -12,31 +24,37 @@ body {
   align-items: center;
   justify-content: center;
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
-  background: #0f172a;
-  color: #e2e8f0;
+  background: linear-gradient(180deg, var(--ptb-navy-deep) 0%, var(--ptb-navy) 100%);
+  color: var(--ptb-on-navy);
 }
 .card {
   width: min(26rem, 92vw);
-  background: #1e293b;
-  border: 1px solid #334155;
+  background: rgb(255 255 255 / 6%);
+  border: 1px solid var(--ptb-navy-border);
   border-radius: 0.75rem;
   padding: 2rem;
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
 }
+/* The same lockup as the navbar and the landing hero: the mark, then the
+   two-tone wordmark. */
 .brand {
-  font-size: 1.1rem;
-  font-weight: 700;
-  letter-spacing: 0.02em;
+  align-items: center;
+  display: flex;
+  gap: 0.6rem;
   margin-bottom: 1.5rem;
-  color: #93c5fd;
 }
-.brand .logo {
-  display: inline-block;
-  background: #2563eb;
-  color: #fff;
-  border-radius: 0.4rem;
-  padding: 0.1rem 0.45rem;
-  margin-right: 0.15rem;
+.brand .mark {
+  height: 2.4rem;
+  width: auto;
+}
+.brand .wordmark {
+  color: var(--ptb-on-navy);
+  font-size: 1.3rem;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+.brand .wordmark span {
+  color: var(--ptb-logo-blue);
 }
 h1 {
   font-size: 1.25rem;
@@ -46,10 +64,10 @@ p {
   line-height: 1.5;
 }
 a {
-  color: #93c5fd;
+  color: var(--ptb-logo-blue);
 }
 code {
-  background: #0f172a;
+  background: rgb(0 0 0 / 30%);
   border-radius: 0.3rem;
   padding: 0.1rem 0.35rem;
 }
@@ -60,22 +78,22 @@ form {
 }
 label {
   font-size: 0.85rem;
-  color: #cbd5e1;
+  color: var(--ptb-on-navy-muted);
 }
 input[type="text"],
 input[type="password"],
 textarea {
   width: 100%;
   padding: 0.55rem 0.7rem;
-  border: 1px solid #475569;
+  border: 1px solid #2b537f;
   border-radius: 0.45rem;
-  background: #0f172a;
-  color: #e2e8f0;
+  background: rgb(0 0 0 / 25%);
+  color: var(--ptb-on-navy);
   font: inherit;
 }
 input:focus,
 textarea:focus {
-  outline: 2px solid #2563eb;
+  outline: 2px solid var(--ptb-logo-blue);
   outline-offset: 1px;
 }
 button {
@@ -83,14 +101,14 @@ button {
   padding: 0.6rem 1rem;
   border: 0;
   border-radius: 0.45rem;
-  background: #2563eb;
+  background: var(--ptb-accent);
   color: #fff;
   font: inherit;
   font-weight: 600;
   cursor: pointer;
 }
 button:hover {
-  background: #1d4ed8;
+  background: var(--ptb-accent-hover);
 }
 .alert {
   background: #7f1d1d;
@@ -102,7 +120,8 @@ button:hover {
 .foot {
   margin-top: 1.25rem;
   font-size: 0.75rem;
-  color: #64748b;
+  color: var(--ptb-on-navy-muted);
+  opacity: 0.75;
 }
 /* The separator between the local form and the identity providers beside
    it. A rule on each side rather than a bare word, so the two ways in read
@@ -113,7 +132,7 @@ button:hover {
   gap: 0.75rem;
   margin: 1.25rem 0 1rem;
   font-size: 0.8rem;
-  color: #64748b;
+  color: var(--ptb-on-navy-muted);
   text-transform: uppercase;
   letter-spacing: 0.08em;
 }
@@ -121,7 +140,7 @@ button:hover {
 .or::after {
   content: "";
   flex: 1;
-  border-top: 1px solid #334155;
+  border-top: 1px solid var(--ptb-navy-border);
 }
 /* One per external provider. Outlined rather than filled: the local form
    keeps the single filled button, so the page still says which way in is
@@ -129,10 +148,10 @@ button:hover {
 .button-link {
   display: block;
   padding: 0.6rem 1rem;
-  border: 1px solid #475569;
+  border: 1px solid rgb(255 255 255 / 30%);
   border-radius: 0.45rem;
-  background: #0f172a;
-  color: #e2e8f0;
+  background: transparent;
+  color: var(--ptb-on-navy);
   font-weight: 600;
   text-align: center;
   text-decoration: none;
@@ -141,6 +160,6 @@ button:hover {
   margin-top: 0.5rem;
 }
 .button-link:hover {
-  border-color: #2563eb;
-  background: #1e293b;
+  border-color: var(--ptb-logo-blue);
+  background: rgb(255 255 255 / 10%);
 }

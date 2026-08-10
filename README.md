@@ -1,10 +1,20 @@
-# pgToolBox
+<p align="center">
+  <img src="web/static/img/logo.png" alt="" width="150">
+</p>
 
-**One declarative access stack per CloudNativePG cluster** — an
-authentication proxy, an observation console, and embedded pgAdmin — with
-declarative user and role provisioning.
+<h1 align="center">pgToolBox</h1>
 
-[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+<p align="center">
+  <strong>One declarative access stack per CloudNativePG cluster</strong><br>
+  an authentication proxy, an observation console, and embedded pgAdmin —
+  with declarative user provisioning.
+</p>
+
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License"></a>
+  <a href="https://github.com/fyannk/pgToolBox/releases/latest"><img src="https://img.shields.io/github/v/release/fyannk/pgToolBox?color=0064b5" alt="Release"></a>
+  <a href="https://fyannk.github.io/pgToolBox/"><img src="https://img.shields.io/badge/docs-fyannk.github.io-0064b5" alt="Documentation"></a>
+</p>
 
 pgToolBox is a Kubernetes/OpenShift operator. For each `PgConsole` you
 declare, it composes a dedicated pod next to one
