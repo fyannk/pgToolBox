@@ -546,3 +546,45 @@ func TestExchangeFailureClassification(t *testing.T) {
 		})
 	}
 }
+
+// The string SafeRedirect inspects is not the string the browser resolves:
+// browsers strip TAB, CR and LF from a URL before parsing it. "/<TAB>/evil"
+// therefore passed a "does it start with //" check and was resolved as
+// "//evil" — another origin. Every control character is rejected now, and
+// each case below is a payload that reached another origin or nearly did.
+func TestSafeRedirectRejectsOffOrigin(t *testing.T) {
+	stripped := strings.NewReplacer("\t", "", "\r", "", "\n", "")
+	for _, p := range []string{
+		"/\t/evil.example",           // the bypass: tab stripped by the browser
+		"/\t\t/evil.example",         // more than one
+		"/\v/evil.example",           // any other C0 control
+		"/\x00/evil.example",         // NUL
+		"/\x7f/evil.example",         // DEL
+		"/\r/evil.example",           // already rejected, kept as a guard
+		"/\n/evil.example",           //
+		"//evil.example",             // scheme-relative
+		"///evil.example",            //
+		"/\\evil.example",            // backslash as a separator
+		"\\\\evil.example",           //
+		"https://evil.example",       // absolute
+		"http:/evil.example",         // opaque-ish
+		"",                           // empty
+		"evil.example",               // not a path at all
+	} {
+		got := SafeRedirect(p)
+		if got != "/" {
+			t.Errorf("SafeRedirect(%q) = %q, want %q", p, got, "/")
+			continue
+		}
+		if asResolved := stripped.Replace(got); strings.HasPrefix(asResolved, "//") {
+			t.Errorf("SafeRedirect(%q) = %q, which a browser resolves as %q", p, got, asResolved)
+		}
+	}
+
+	// Ordinary targets still work, or signing in would always land at "/".
+	for _, p := range []string{"/", "/pgadmin", "/pgadmin/browser/", "/x?y=1&z=2", "/a#b"} {
+		if got := SafeRedirect(p); got != p {
+			t.Errorf("SafeRedirect(%q) = %q, want it unchanged", p, got)
+		}
+	}
+}
