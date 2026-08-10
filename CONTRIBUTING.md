@@ -45,6 +45,35 @@ These are hard rules — a change that violates one is a bug:
 6. **License boilerplate** (`hack/boilerplate.go.txt`) on all new Go files.
 7. **Condition types/reasons and label keys** in `api/v1alpha1/conditions.go`
    and `common_types.go` are frozen API surface — extend, never rename.
+8. **One version, said everywhere.** `make validate-packaging` is the
+   arbiter; see below.
+
+## Cutting a release
+
+A release is a tag: `git tag -a vX.Y.Z -m "pgToolBox X.Y.Z" && git push
+origin vX.Y.Z`. That fires the Images workflow (operator, proxy, OLM bundle
+and catalog — the leading `v` is stripped, so image tags are plain semver)
+and the Release workflow (packages the chart, creates the GitHub release).
+
+Before tagging, the version has to agree in five places:
+
+| Where | What |
+|---|---|
+| `CHANGELOG.md` | a dated `## [X.Y.Z]` section |
+| `deploy/helm/pgtoolbox/Chart.yaml` | `version`, `appVersion`, and the tag inside `icon:` |
+| `deploy/olm/bundle/manifests/*.clusterserviceversion.yaml` | `spec.version`, `metadata.name`, the image tags in the manager args and `relatedImages` |
+| `deploy/olm/catalog/pgtoolbox/catalog.yaml` | the channel entry and the bundle image |
+| `Makefile` | `OLM_VERSION` |
+
+`make validate-packaging` checks all five and runs in CI, so a mismatch is
+a failed build rather than a bad release. The icon URL is the subtle one:
+it names a tag on purpose — a chart pinned to a version must not have its
+artwork change underneath it — which means it goes stale unless bumped.
+
+One ordering constraint follows from this: the chart renders image
+references at its own `appVersion`, and those images do not exist until the
+tag is pushed. A checkout of `main` cannot `helm install` a version that has
+not been released. Tag first, then every reference resolves.
 
 ## Git workflow
 

@@ -39,7 +39,7 @@ for copy in deploy/helm/pgtoolbox/crds/*.yaml deploy/olm/bundle/manifests/pgtool
 done
 
 python3 - <<'PY' || fail=1
-import json, sys, pathlib, yaml
+import json, re, sys, pathlib, yaml
 
 problems = []
 
@@ -106,7 +106,30 @@ else:
     except (ValueError, KeyError) as err:
         problems.append(f"alm-examples is not usable: {err}")
 
-# 6. A disconnected mirror carries relatedImages. If the operator's own
+# 6. The chart's icon URL names a release tag on purpose: a chart pinned to
+#    a version must not have its artwork change underneath it. The cost is
+#    that the reference goes stale silently — helm lint only checks that an
+#    icon exists, so a release that forgets it ships the previous release's
+#    logo and nothing complains.
+icon = chart.get("icon", "")
+if not icon:
+    problems.append("chart has no icon: registries that render one show a placeholder")
+else:
+    match = re.search(r"/fyannk/pgToolBox/(v[^/]+)/", icon)
+    if not match:
+        problems.append(f"chart icon URL names no release tag, so it can drift: {icon}")
+    elif match.group(1) != f"v{chart['appVersion']}":
+        problems.append(
+            f"chart icon URL points at {match.group(1)} but the chart is "
+            f"v{chart['appVersion']} — bump the tag in Chart.yaml's icon:")
+
+# 7. The changelog is the one release artifact no tool generates, so it is
+#    the one most easily left describing the previous version.
+changelog = pathlib.Path("CHANGELOG.md").read_text()
+if f"## [{csv_version}]" not in changelog:
+    problems.append(f"CHANGELOG.md has no '## [{csv_version}]' section for the version being shipped")
+
+# 8. A disconnected mirror carries relatedImages. If the operator's own
 #    image is not among them, the mirror is incomplete by construction.
 related = {r["image"] for r in csv["spec"].get("relatedImages", [])}
 manager = None
