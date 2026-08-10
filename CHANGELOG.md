@@ -28,11 +28,18 @@ upgrading.
   browser declining to replace the original. They now match, as the
   session cookie already did.
 
-## [0.1.0] - 2026-08-09
+## [0.1.0] - 2026-08-09 — withdrawn
 
-First release. Everything below is what it contains; the development
-history that led here is in the git log rather than in this file, because
-none of it changed anything anyone had installed.
+**This release was withdrawn.** It shipped the open redirect fixed in
+0.1.1, and its artifacts — the GitHub release, the git tag, and the
+`0.1.0` container images — have been deleted. It had no downloads and was
+public for less than a day, so removing it was possible in a way it will
+not be for later versions; a future release with a defect gets an
+advisory and a fix, not a deletion.
+
+The section is kept because the record should be accurate about what was
+published and why it was taken back. Everything below describes what
+0.1.0 contained, and 0.1.1 contains all of it.
 
 ### Added
 
@@ -109,4 +116,4 @@ none of it changed anything anyone had installed.
 
 [Unreleased]: https://github.com/fyannk/pgToolBox/compare/v0.1.1...HEAD
 [0.1.1]: https://github.com/fyannk/pgToolBox/releases/tag/v0.1.1
-[0.1.0]: https://github.com/fyannk/pgToolBox/releases/tag/v0.1.0
+[0.1.0]: https://github.com/fyannk/pgToolBox/blob/main/CHANGELOG.md#010---2026-08-09--withdrawn
