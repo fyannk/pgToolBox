@@ -203,11 +203,18 @@ func (p *Provider) handleLogin(w http.ResponseWriter, r *http.Request) {
 func (p *Provider) handleCallback(w http.ResponseWriter, r *http.Request) {
 	rt := p.env.Runtime()
 	clear := func() {
+		// Same attributes the cookie was set with, and the same ones
+		// session.ClearCookie uses: an expiry that does not match the
+		// original's flags is a cookie a browser may decline to replace,
+		// and it advertises a laxer policy than the value ever had.
 		http.SetCookie(w, &http.Cookie{
-			Name:   transientCookieName(rt),
-			Value:  "",
-			Path:   "/",
-			MaxAge: -1,
+			Name:     transientCookieName(rt),
+			Value:    "",
+			Path:     "/",
+			MaxAge:   -1,
+			HttpOnly: true,
+			Secure:   rt.Config.Session.CookieSecure(),
+			SameSite: http.SameSiteLaxMode,
 		})
 	}
 	fail := func(status int, msg string) {

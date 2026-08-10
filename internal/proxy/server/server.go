@@ -239,15 +239,32 @@ func ExternalLogins(e *Env) []pages.ExternalLogin {
 	return logins
 }
 
-// SafeRedirect validates a post-login redirect target: only relative
-// paths starting with exactly one slash and containing no backslash
-// (some browsers treat "\" as "/") or control characters are honored;
-// everything else falls back to "/".
+// SafeRedirect validates a post-login redirect target. Only a relative
+// path is honored; everything else falls back to "/".
+//
+// The subtle case is that the string this function inspects is not the
+// string the browser resolves. Browsers strip TAB, CR and LF from a URL
+// before parsing it, so "/\t/evil.example" passes a "does it start with
+// //" check here and is resolved by the browser as "//evil.example" —
+// another origin. Rejecting every control character keeps the check and
+// the parse talking about the same string. A backslash is excluded for a
+// related reason: some browsers treat it as a separator.
 func SafeRedirect(p string) string {
-	if strings.HasPrefix(p, "/") && !strings.HasPrefix(p, "//") && !strings.ContainsAny(p, "\\\r\n") {
-		return p
+	if !strings.HasPrefix(p, "/") || strings.HasPrefix(p, "//") {
+		return "/"
 	}
-	return "/"
+	if strings.ContainsFunc(p, func(r rune) bool {
+		return r == '\\' || r < 0x20 || r == 0x7f
+	}) {
+		return "/"
+	}
+	// Belt and braces: anything the URL parser still reads as absolute or
+	// scheme-relative is not a path, whatever it looked like above.
+	u, err := url.Parse(p)
+	if err != nil || u.Scheme != "" || u.Host != "" || u.Opaque != "" {
+		return "/"
+	}
+	return p
 }
 
 // IssueSession mints a session cookie for subject at level using the
