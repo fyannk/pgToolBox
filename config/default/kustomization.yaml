@@ -16,4 +16,4 @@ resources:
 images:
 - name: controller
   newName: ghcr.io/fyannk/pgtoolbox
-  newTag: 0.1.0
+  newTag: 0.1.1

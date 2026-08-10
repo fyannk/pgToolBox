@@ -10,6 +10,24 @@ upgrading.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-08-10
+
+### Security
+
+- **Open redirect in the post-login target (`?rd=`).** `SafeRedirect`
+  rejected `\r` and `\n` but not TAB, and browsers strip TAB from a URL
+  before parsing it — so `/<TAB>/evil.example` passed the "does it start
+  with `//`" check and the browser resolved it as `//evil.example`. An
+  attacker could send a signed-in user to another origin through a link to
+  the console's own login page. Every control character and backslash is
+  rejected now, and the result is re-checked with the URL parser. Found by
+  CodeQL (`go/bad-redirect-check`) and confirmed against a payload set.
+- The OIDC and OpenShift transient cookies were cleared without the
+  `HttpOnly`, `Secure` and `SameSite` attributes they were set with, which
+  advertises a laxer policy than the value ever had and can leave a
+  browser declining to replace the original. They now match, as the
+  session cookie already did.
+
 ## [0.1.0] - 2026-08-09
 
 First release. Everything below is what it contains; the development
@@ -89,5 +107,6 @@ none of it changed anything anyone had installed.
 - **One subject per user.** A person whose identity-provider subject differs
   from their local username needs one object per subject.
 
-[Unreleased]: https://github.com/fyannk/pgToolBox/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/fyannk/pgToolBox/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/fyannk/pgToolBox/releases/tag/v0.1.1
 [0.1.0]: https://github.com/fyannk/pgToolBox/releases/tag/v0.1.0
