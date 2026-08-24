@@ -5,6 +5,14 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # A Dependabot bump that auto-merges lands on main as a push made with
+  # GITHUB_TOKEN, and a push made with that token starts no workflow run.
+  # The push trigger above therefore misses exactly the merges no human
+  # watched. Branches need not be up to date with main to merge, so the
+  # case this catches is two changes that pass apart and break together;
+  # daily is the interval at which that is worth hearing about.
+  schedule:
+    - cron: '17 4 * * *'
 
 permissions:
   contents: read

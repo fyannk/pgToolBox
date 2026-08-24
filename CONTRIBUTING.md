@@ -101,8 +101,12 @@ together, but nothing rebases a stale branch on its own: auto-merge only
 waits and merges, and Dependabot refreshes a branch when its manifest
 conflicts, not when `main` moves. The requirement would therefore trade a
 rare class of conflict for a queue that stalls on every merge. `ci.yml`
-runs on pushes to `main` as well, so a conflict that slips through
-surfaces there within minutes.
+runs on pushes to `main` as well — but an auto-merge armed with
+`GITHUB_TOKEN` lands as a push made by that token, and such a push starts
+no workflow run, so the merges no human watched are the ones the push
+trigger misses. `ci.yml` therefore also runs on a daily schedule, which
+is what surfaces a pair of changes that passed apart and break
+together.
 
 Dependabot's patch and minor bumps queue themselves through
 [`automerge.yml`](.github/workflows/automerge.yml) and land the moment
