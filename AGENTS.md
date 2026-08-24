@@ -197,7 +197,10 @@ code does, never a design spec. When code and docs disagree, fix the docs
 - CI targets GitHub (`.github/workflows/`): `ci.yml` (build/vet/test,
   golangci-lint, Helm, OLM bundle/catalog build, docs build), `images.yml`
   (manager/proxy to ghcr.io on main and tags; bundle/catalog on tags),
-  `docs.yml` (GitHub Pages), `release.yml` (Helm chart release on tags).
+  `docs.yml` (GitHub Pages), `release.yml` (Helm chart release on tags),
+  `codeql.yml` (Go and JavaScript analysis), `automerge.yml` (arms
+  auto-merge on Dependabot's patch and minor bumps; majors are left for a
+  person, and the ruleset's required checks still gate the merge).
   `make lint` (golangci-lint incl. gosec, config `.golangci.yml`) must stay
   at 0 issues — the lint job runs `make lint` rather than
   golangci-lint-action, because the action's prebuilt binary is built with an

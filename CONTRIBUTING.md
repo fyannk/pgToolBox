@@ -80,7 +80,35 @@ not been released. Tag first, then every reference resolves.
 - One focused change per commit; keep generated files with their source
   changes.
 - The agent does not run git mutations for you: you commit yourself.
-- Open a merge request against `main` on the project GitLab.
+- Open a pull request against `main` on GitHub.
+
+## Merging
+
+The ruleset on `main` requires every job
+[`ci.yml`](.github/workflows/ci.yml) runs on a pull request — the image
+build and the docs deploy are push-only and are not among them — plus
+both [`codeql.yml`](.github/workflows/codeql.yml) analyses and the
+code-scanning result, and requires that review threads be resolved. It
+requires no approvals: the gate is the pipeline and the reading, not a
+rubber stamp. Copilot is requested on every pull request automatically;
+its review is always a comment, never an approval, so it cannot approve a
+change — but an unresolved thread it opens does hold the merge until
+someone answers it.
+
+Branches need not be up to date with `main` to merge. Requiring that
+would catch the case where two pull requests pass alone and break
+together, but nothing rebases a stale branch on its own: auto-merge only
+waits and merges, and Dependabot refreshes a branch when its manifest
+conflicts, not when `main` moves. The requirement would therefore trade a
+rare class of conflict for a queue that stalls on every merge. `ci.yml`
+runs on pushes to `main` as well, so a conflict that slips through
+surfaces there within minutes.
+
+Dependabot's patch and minor bumps queue themselves through
+[`automerge.yml`](.github/workflows/automerge.yml) and land the moment
+the required checks go green. Majors are left for a person: the workflow
+arms auto-merge from an allowlist, so an update type it does not
+recognize is left alone rather than merged.
 
 ## Layout
 

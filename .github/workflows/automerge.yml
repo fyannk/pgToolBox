@@ -1,0 +1,58 @@
+name: Dependabot auto-merge
+
+# Routine dependency bumps are reviewed by the pipeline, not by hand: every
+# required check in ci.yml must pass before anything lands. This workflow only
+# arms GitHub's auto-merge, so the merge still happens under the same ruleset a
+# human merge would face — including the Copilot review the ruleset requests on
+# every pull request, whose unresolved threads hold the merge. Major upgrades
+# are deliberately excluded: those carry behavior changes that deserve a person.
+#
+# The trigger is pull_request, not pull_request_target, and no step checks out
+# the pull request. Dependabot-triggered runs receive a token scoped by the
+# permissions block below, which is enough to arm auto-merge without ever
+# executing contributor-controlled code with write access.
+on: pull_request
+
+permissions:
+  contents: read
+
+concurrency:
+  group: automerge-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  automerge:
+    name: Arm auto-merge for routine bumps
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: >-
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
+      github.event.pull_request.base.ref == 'main'
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Read Dependabot metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # An allowlist rather than "not major": if update-type is ever empty or
+      # carries a value this workflow has not seen, the gate closes instead of
+      # arming a merge nobody chose.
+      - name: Arm auto-merge
+        if: >-
+          steps.metadata.outputs.update-type == 'version-update:semver-patch' ||
+          steps.metadata.outputs.update-type == 'version-update:semver-minor'
+        run: gh pr merge --auto --merge "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Explain why the bump was left alone
+        if: >-
+          steps.metadata.outputs.update-type != 'version-update:semver-patch' &&
+          steps.metadata.outputs.update-type != 'version-update:semver-minor'
+        run: |
+          echo "::notice::${{ steps.metadata.outputs.dependency-names }} has update-type '${{ steps.metadata.outputs.update-type }}', which is outside the auto-merge allowlist. Left for manual review."
