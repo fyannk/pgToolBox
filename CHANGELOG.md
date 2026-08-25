@@ -10,6 +10,15 @@ upgrading.
 
 ## [Unreleased]
 
+### Changed
+
+- **Go toolchain moved to 1.27.0.** The 1.26 line is still supported, but
+  the builder image Dependabot proposes tracks 1.27, and a `toolchain`
+  directive behind the image makes every container build download a second
+  toolchain before it compiles. The language version in `go.mod` stays at
+  1.26.4: this buys the compiler and its standard library, not new syntax
+  the code cannot fall back from.
+
 ### Security
 
 - **Go toolchain moved to 1.26.7.** govulncheck found six standard-library
