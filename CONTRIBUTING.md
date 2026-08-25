@@ -101,12 +101,12 @@ together, but nothing rebases a stale branch on its own: auto-merge only
 waits and merges, and Dependabot refreshes a branch when its manifest
 conflicts, not when `main` moves. The requirement would therefore trade a
 rare class of conflict for a queue that stalls on every merge. `ci.yml`
-runs on pushes to `main` as well — but an auto-merge armed with
-`GITHUB_TOKEN` lands as a push made by that token, and such a push starts
-no workflow run, so the merges no human watched are the ones the push
-trigger misses. `ci.yml` therefore also runs on a daily schedule, which
-is what surfaces a pair of changes that passed apart and break
-together.
+runs on pushes to `main` as well, and an auto-merge now lands as an
+ordinary push because the merge is made with `AUTOMERGE_TOKEN` rather
+than `GITHUB_TOKEN` — a push made with the latter starts no workflow run,
+which used to mean the merges no human watched were exactly the ones the
+push trigger missed. The daily schedule stays as a backstop rather than
+as the only cover.
 
 Dependabot's patch and minor bumps queue themselves through
 [`automerge.yml`](.github/workflows/automerge.yml) and land the moment
@@ -114,6 +114,25 @@ the required checks go green. Majors are left for a person: the workflow
 arms auto-merge from an allowlist, so an update type it does not
 recognize is left alone rather than merged.
 
+That workflow merges with `AUTOMERGE_TOKEN`, which **must be registered
+as a Dependabot secret, not an Actions one** — it runs on
+`pull_request`, and a Dependabot-triggered run sees only Dependabot
+secrets. `tool-pins.yml` needs the same token as an ordinary Actions
+secret, because it runs on a schedule. If either is missing the workflow
+fails loudly and the bump waits for a person, rather than merging
+unobserved.
+
+Every `actions/checkout` sets `persist-credentials: false`. The default
+leaves the job's token in `.git/config` for every later step to reach,
+and nothing here pushes with it. Write scopes are granted on the job
+that uses them rather than at the top of a workflow, so a job added
+later inherits nothing it was not given.
+
+[`scorecard.yml`](.github/workflows/scorecard.yml) runs OpenSSF
+Scorecard weekly and on pushes to `main`, auditing what this repository
+does to itself — pinned actions, token permissions, release signing,
+dangerous workflow patterns — and files findings in code scanning beside
+CodeQL's.
 
 ## Version pins
 

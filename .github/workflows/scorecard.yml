@@ -1,0 +1,62 @@
+name: Scorecard
+
+# OpenSSF Scorecard audits the repository's own supply-chain posture — pinned
+# actions, token permissions, branch protection, release signing, dangerous
+# workflow patterns — and files what it finds as code-scanning alerts. It is
+# the check that notices when a later change quietly undoes one of them.
+on:
+  # No branch_protection_rule trigger. It fires for classic branch protection
+  # only, and this repository's protection is a ruleset — editing the ruleset
+  # starts nothing, so the trigger would be dead config claiming a coverage it
+  # does not have. There is no repository_ruleset workflow event to use
+  # instead; the weekly run and the push runs are what catch posture drift.
+  schedule:
+    - cron: '45 5 * * 2'
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions: read-all
+
+concurrency:
+  # The event is part of the key because the schedule and a push to main run
+  # on the same ref. Without it they share a group and cancel-in-progress
+  # lets one kill the other.
+  group: scorecard-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+jobs:
+  analysis:
+    name: Analyze repository posture
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      security-events: write # upload the SARIF to code scanning
+      id-token: write # publish the result to the OpenSSF API
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Run analysis
+        uses: ossf/scorecard-action@2d1146689b8cda280b9bc96326124645441f03bc # v2.4.4
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          # Publishes to the OpenSSF REST API, which is what makes the badge
+          # and the public score work. It uploads the score only — no source.
+          publish_results: true
+
+      - name: Retain the raw result
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: scorecard-results
+          path: results.sarif
+          retention-days: 5
+
+      - name: Upload to code scanning
+        uses: github/codeql-action/upload-sarif@db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28 # v4
+        with:
+          sarif_file: results.sarif
