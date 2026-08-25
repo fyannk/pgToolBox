@@ -156,7 +156,10 @@ func (c *Codec) SetCookie(w http.ResponseWriter, name string, secure bool, maxAg
 	if err != nil {
 		return err
 	}
-	http.SetCookie(w, &http.Cookie{
+	// Secure follows the deployment's TLS setting rather than a literal,
+	// which is the only attribute G124 cannot see; HttpOnly and SameSite
+	// are set below.
+	http.SetCookie(w, &http.Cookie{ // #nosec G124
 		Name:     name,
 		Value:    v,
 		Path:     "/",
@@ -186,7 +189,10 @@ func (c *Codec) ReadCookie(r *http.Request, name string) (Data, error) {
 
 // ClearCookie expires the named cookie.
 func ClearCookie(w http.ResponseWriter, name string, secure bool) {
-	http.SetCookie(w, &http.Cookie{
+	// Secure follows the deployment's TLS setting rather than a literal,
+	// which is the only attribute G124 cannot see; HttpOnly and SameSite
+	// are set below.
+	http.SetCookie(w, &http.Cookie{ // #nosec G124
 		Name:     name,
 		Value:    "",
 		Path:     "/",

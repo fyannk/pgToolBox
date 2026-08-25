@@ -11,7 +11,7 @@ CATALOG_IMG ?= pgtoolbox-catalog:$(OLM_VERSION)
 GO_LDFLAGS ?= -X main.operatorVersion=$(VERSION) -X main.defaultOperatorImage=$(IMG)
 
 CONTROLLER_GEN_VERSION ?= v0.19.0
-GOLANGCI_LINT_VERSION ?= v2.6.2
+GOLANGCI_LINT_VERSION ?= v2.13.1
 GOVULNCHECK_VERSION ?= v1.6.0
 NPM_AUDIT_LEVEL ?= high
 

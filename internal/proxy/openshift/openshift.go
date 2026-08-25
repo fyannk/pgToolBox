@@ -184,7 +184,10 @@ func (p *Provider) handleLogin(w http.ResponseWriter, r *http.Request) {
 		pages.Error(w, http.StatusInternalServerError, "The login flow could not be started.")
 		return
 	}
-	http.SetCookie(w, &http.Cookie{
+	// Secure follows the deployment's TLS setting rather than a literal,
+	// which is the only attribute G124 cannot see; HttpOnly and SameSite
+	// are set below.
+	http.SetCookie(w, &http.Cookie{ // #nosec G124
 		Name:     transientCookieName(rt),
 		Value:    v,
 		Path:     "/",
@@ -207,7 +210,10 @@ func (p *Provider) handleCallback(w http.ResponseWriter, r *http.Request) {
 		// session.ClearCookie uses: an expiry that does not match the
 		// original's flags is a cookie a browser may decline to replace,
 		// and it advertises a laxer policy than the value ever had.
-		http.SetCookie(w, &http.Cookie{
+		// Secure follows the deployment's TLS setting rather than a literal,
+		// which is the only attribute G124 cannot see; HttpOnly and SameSite
+		// are set below.
+		http.SetCookie(w, &http.Cookie{ // #nosec G124
 			Name:     transientCookieName(rt),
 			Value:    "",
 			Path:     "/",

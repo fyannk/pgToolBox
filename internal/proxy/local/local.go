@@ -115,7 +115,9 @@ func (p *Provider) handleSubmit(w http.ResponseWriter, r *http.Request) {
 		pages.Error(w, http.StatusInternalServerError, "The session could not be created.")
 		return
 	}
-	http.Redirect(w, r, rd, http.StatusFound)
+	// rd was sanitised by server.SafeRedirect above, which is the check the
+	// 0.1.1 open redirect turned on; G710 does not recognise it as one.
+	http.Redirect(w, r, rd, http.StatusFound) // #nosec G710
 }
 
 // clientIP extracts the client IP for rate limiting. The proxy is the
