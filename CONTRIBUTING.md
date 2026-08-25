@@ -114,6 +114,40 @@ the required checks go green. Majors are left for a person: the workflow
 arms auto-merge from an allowlist, so an update type it does not
 recognize is left alone rather than merged.
 
+
+## Version pins
+
+The Go version lives in `go.mod`. CI reads it with setup-go's
+`go-version-file`, but the builder image in the `Dockerfile` has to
+carry it a second time — an image tag cannot be read from a module file
+— and Dependabot moves that tag on its own schedule.
+[`hack/check-go-version.sh`](hack/check-go-version.sh) fails `make lint`
+when the two disagree, because a release whose binaries and container
+were built by different toolchains is not one the packaging can honestly
+call a single build.
+
+The language floor is held at 1.26.6, above the 1.26.4 the module graph
+derives, because 1.26.4 and 1.26.5 carry standard-library
+vulnerabilities that a `GOTOOLCHAIN=local` build would compile against.
+CI never sees that, because CI builds at the pinned toolchain and never
+at the floor; the reason sits beside the directive in `go.mod`.
+
+`GOLANGCI_LINT_VERSION` and `GOVULNCHECK_VERSION` live in the `Makefile`
+and are invisible to Dependabot, which reads manifests and not
+`Makefile` variables.
+[`hack/check-tool-pins.sh`](hack/check-tool-pins.sh) compares them
+against the module proxy and
+[`tool-pins.yml`](.github/workflows/tool-pins.yml) runs it weekly and
+opens a pull request when one is behind. It proposes only; the required
+checks decide. The script is deliberately not part of `make lint`: it
+needs the network, and it would turn CI red the day upstream tags a
+release.
+
+It opens that pull request with `AUTOMERGE_TOKEN` as an ordinary Actions
+secret. No document restates a tool version — the script rewrites the
+`Makefile` and nothing else, so prose naming a version would be
+falsified by the bump's own commit.
+
 ## Layout
 
 - `api/v1alpha1/` — CRD types and CEL validation.
