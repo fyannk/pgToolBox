@@ -5,16 +5,20 @@ on:
     branches: [main]
     tags: ["v*"]
 
+# Restrictive at the top; the one job that pushes asks for the scope.
 permissions:
   contents: read
-  packages: write
 
 jobs:
   build-push:
     name: Build and push container images
+    permissions:
+      packages: write # push the image to ghcr
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       # The git tag is v0.1.0; the image tag is 0.1.0. They have to agree
       # with the Helm chart's appVersion and the OLM CSV's version, both of
