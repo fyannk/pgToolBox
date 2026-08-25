@@ -2,7 +2,7 @@ module github.com/fyannk/pgtoolbox
 
 go 1.26.4
 
-toolchain go1.26.7
+toolchain go1.27.0
 
 require (
 	github.com/cloudnative-pg/api v1.30.0

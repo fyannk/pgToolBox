@@ -12,13 +12,18 @@ upgrading.
 
 ### Security
 
-- **Go toolchain moved to 1.26.7.** govulncheck found six standard-library
-  advisories reachable from this code on 1.26.5, all fixed in 1.26.6:
-  `net/url` (GO-2026-6218), `html/template` (GO-2026-6091), `crypto/tls`
-  (GO-2026-6090), `net/http` (GO-2026-6089 and GO-2026-5026), and
-  `encoding/asn1` (GO-2026-5972). The traces run through the proxy's
-  reverse-proxy path and the admin-sync client's TLS and HTTP calls, so
-  they are reachable in a running deployment rather than only in tests.
+- **Go toolchain moved to 1.27.0.** govulncheck found six standard-library
+  advisories reachable from this code on 1.26.5, all fixed in 1.26.6 and
+  carried into 1.27: `net/url` (GO-2026-6218), `html/template`
+  (GO-2026-6091), `crypto/tls` (GO-2026-6090), `net/http` (GO-2026-6089
+  and GO-2026-5026), and `encoding/asn1` (GO-2026-5972). The traces run
+  through the proxy's reverse-proxy path and the admin-sync client's TLS
+  and HTTP calls, so they are reachable in a deployment rather than only
+  under test. 1.27.0 rather than 1.26.7 because the builder image tracks
+  1.27, and a `toolchain` directive behind the image makes every container
+  build download a second toolchain before it compiles. The language
+  version in `go.mod` stays at 1.26.4: this buys the compiler and its
+  standard library, not syntax the code cannot fall back from.
 
 ## [0.1.1] - 2026-08-10
 
