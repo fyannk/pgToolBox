@@ -8,7 +8,7 @@
 #   docker build --target manager -t pgtoolbox:latest .
 #   docker build --target proxy   -t pgtoolbox-proxy:latest .
 
-FROM golang:1.27 AS builder
+FROM golang:1.27.0@sha256:0ecdc2a9f6156af6451080bfe3d8382a662fcc4e209608c6f919e643453514c1 AS builder
 WORKDIR /workspace
 
 # Module files first for dependency caching.
@@ -31,13 +31,13 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
 # The operator image. The admin-sync init container copies this same binary
 # out of this image into console pods, so the image reference is baked in at
 # build time and can be overridden with --operator-image.
-FROM gcr.io/distroless/static:nonroot AS manager
+FROM gcr.io/distroless/static:nonroot@sha256:1c2c046bc09ed40fad370b599a0b1ae7987f55b01e247cf27a7c27cd97e5bbc7 AS manager
 COPY --from=builder /workspace/manager /
 USER 65532:65532
 ENTRYPOINT ["/manager"]
 
 # The pgtoolbox-proxy image used as the console's authentication proxy.
-FROM gcr.io/distroless/static:nonroot AS proxy
+FROM gcr.io/distroless/static:nonroot@sha256:1c2c046bc09ed40fad370b599a0b1ae7987f55b01e247cf27a7c27cd97e5bbc7 AS proxy
 COPY --from=builder /workspace/proxy /
 USER 65532:65532
 ENTRYPOINT ["/proxy"]

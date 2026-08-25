@@ -1,0 +1,124 @@
+name: Tool pins
+
+# Dependabot reads manifests and nothing else, so a tool version pinned in a
+# Makefile variable has nobody watching it. This is that watcher: weekly, it
+# compares each pin against the module proxy and opens a pull request when
+# one is behind. The pull request is the point — the bump still goes through
+# the same required checks as any other change, because a linter that moved
+# a major can fail the build and a scanner that moved can report something
+# new. Nothing here merges anything.
+
+on:
+  schedule:
+    # Monday, after Dependabot's last ecosystem at 06:45 Europe/Paris, so a
+    # week's dependency churn is already proposed when the tools are checked.
+    - cron: '30 5 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # Never cancel: a cancelled run leaves the branch half-written.
+  group: tool-pins
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    name: Open a bump when a pin is behind
+    runs-on: ubuntu-latest
+    steps:
+      # AUTOMERGE_TOKEN, not GITHUB_TOKEN: a pull request opened with the
+      # workflow's own token starts no checks, and a bump nobody tested is
+      # worse than a bump nobody made.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          token: ${{ secrets.AUTOMERGE_TOKEN }}
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Compare each pin against the module proxy
+        id: pins
+        run: |
+          # Redirect rather than pipe to tee: PIPESTATUS is a bash array, and
+          # this step would silently start reading the wrong exit code if the
+          # runner's default shell ever changed.
+          set +e
+          ./hack/check-tool-pins.sh --bump > report.txt 2>&1
+          rc=$?
+          set -e
+          cat report.txt
+          # 0 is everything current, 1 is drift, anything else is the script
+          # failing to answer — which must not be read as "no drift".
+          case "$rc" in
+            0) echo "drift=false" >> "$GITHUB_OUTPUT" ;;
+            1) echo "drift=true"  >> "$GITHUB_OUTPUT" ;;
+            *) echo "::error::check-tool-pins.sh exited $rc"; exit 1 ;;
+          esac
+
+      - name: Open or update the pull request
+        if: steps.pins.outputs.drift == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.AUTOMERGE_TOKEN }}
+          BRANCH: ci/tool-pins
+        run: |
+          test -n "$GH_TOKEN" || {
+            echo "::error::AUTOMERGE_TOKEN is unset; cannot open the bump." >&2
+            exit 1
+          }
+
+          # Author the commit as the token's owner so it matches the pusher.
+          # The ruleset requires an extra approval for unattributed changes,
+          # and a commit authored by someone other than the pusher is exactly
+          # that — it would open a pull request that blocks on itself.
+          login=$(gh api user --jq .login)
+          uid=$(gh api user --jq .id)
+          git config user.name "$login"
+          git config user.email "${uid}+${login}@users.noreply.github.com"
+
+          # actions/checkout fetches one branch, so origin/$BRANCH does not
+          # exist locally and --force-with-lease has no baseline to compare
+          # against: it rejects with "stale info" from the second run on.
+          # Fetch the branch when it exists and lease against exactly what
+          # was fetched; when it does not, there is nothing to force.
+          if git fetch -q origin \
+               "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH" 2>/dev/null
+          then
+            lease="--force-with-lease=$BRANCH:$(git rev-parse "refs/remotes/origin/$BRANCH")"
+          else
+            lease=""
+          fi
+
+          git checkout -B "$BRANCH"
+          git add Makefile
+          git commit -F - <<EOF
+          build(tools): bump the pins Dependabot cannot see
+
+          $(cat report.txt)
+
+          Opened by .github/workflows/tool-pins.yml. These versions live in
+          Makefile variables, which no manifest scanner reads.
+          EOF
+
+          # The lease is what keeps a hand commit made on this branch from
+          # being discarded: if the remote moved since the fetch above, the
+          # push is rejected rather than clobbering it.
+          git push $lease origin "$BRANCH"
+
+          # An open pull request just took the new commit; only open one when
+          # there is none.
+          if gh pr view "$BRANCH" --json state --jq .state 2>/dev/null | grep -q OPEN; then
+            echo "updated the open pull request on $BRANCH"
+          else
+            gh pr create \
+              --base main \
+              --head "$BRANCH" \
+              --title "build(tools): bump the pins Dependabot cannot see" \
+              --body "$(printf '%s\n\n```\n%s\n```\n\n%s\n' \
+                'These tool versions live in `Makefile` variables. Dependabot reads manifests — `go.mod`, lockfiles, the `Dockerfile`, action refs — so nothing was watching these, and they rot silently until something breaks.' \
+                "$(cat report.txt)" \
+                'Opened by [`tool-pins.yml`](.github/workflows/tool-pins.yml). It proposes only; the required checks decide. A linter bump can fail the build and a scanner bump can report something new, which is the whole reason this is a pull request rather than a commit.')"
+          fi
