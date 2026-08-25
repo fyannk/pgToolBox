@@ -58,8 +58,9 @@ vet: ## Run go vet.
 	go vet ./...
 
 .PHONY: lint
-lint: ## Run golangci-lint.
+lint: ## Run golangci-lint and the repository checks.
 	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) run
+	./hack/check-go-version.sh
 
 .PHONY: test
 test: manifests generate fmt vet ## Run unit tests.

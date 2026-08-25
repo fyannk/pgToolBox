@@ -127,18 +127,71 @@ together, but nothing rebases a stale branch on its own: auto-merge only
 waits and merges, and Dependabot refreshes a branch when its manifest
 conflicts, not when `main` moves. The requirement would therefore trade a
 rare class of conflict for a queue that stalls on every merge. `ci.yml`
-runs on pushes to `main` as well — but an auto-merge armed with
-`GITHUB_TOKEN` lands as a push made by that token, and such a push starts
-no workflow run, so the merges no human watched are the ones the push
-trigger misses. `ci.yml` therefore also runs on a daily schedule, which
-is what surfaces a pair of changes that passed apart and break
-together.
+runs on pushes to `main` as well, and an auto-merge now lands as an
+ordinary push because the merge is made with `AUTOMERGE_TOKEN` rather
+than `GITHUB_TOKEN` — a push made with the latter starts no workflow run,
+which used to mean the merges no human watched were exactly the ones the
+push trigger missed. The daily schedule stays as a backstop rather than
+as the only cover.
 
 Dependabot's patch and minor bumps queue themselves through
 [`automerge.yml`](.github/workflows/automerge.yml) and land the moment
 the required checks go green. Majors are left for a person: the workflow
 arms auto-merge from an allowlist, so an update type it does not
 recognize is left alone rather than merged.
+
+That workflow merges with `AUTOMERGE_TOKEN`, which **must be registered
+as a Dependabot secret, not an Actions one** — it runs on
+`pull_request`, and a Dependabot-triggered run sees only Dependabot
+secrets. `tool-pins.yml` needs the same token as an ordinary Actions
+secret, because it runs on a schedule. If either is missing the workflow
+fails loudly and the bump waits for a person, rather than merging
+unobserved.
+
+Every `actions/checkout` sets `persist-credentials: false`. The default
+leaves the job's token in `.git/config` for every later step to reach,
+and nothing here pushes with it. Write scopes are granted on the job
+that uses them rather than at the top of a workflow, so a job added
+later inherits nothing it was not given.
+
+[`scorecard.yml`](.github/workflows/scorecard.yml) runs OpenSSF
+Scorecard weekly and on pushes to `main`, auditing what this repository
+does to itself — pinned actions, token permissions, release signing,
+dangerous workflow patterns — and files findings in code scanning beside
+CodeQL's.
+
+## Version pins
+
+The Go version lives in `go.mod`. CI reads it with setup-go's
+`go-version-file`, but the builder image in the `Dockerfile` has to
+carry it a second time — an image tag cannot be read from a module file
+— and Dependabot moves that tag on its own schedule.
+[`hack/check-go-version.sh`](hack/check-go-version.sh) fails `make lint`
+when the two disagree, because a release whose binaries and container
+were built by different toolchains is not one the packaging can honestly
+call a single build.
+
+The language floor is held at 1.26.6, above the 1.26.4 the module graph
+derives, because 1.26.4 and 1.26.5 carry standard-library
+vulnerabilities that a `GOTOOLCHAIN=local` build would compile against.
+CI never sees that, because CI builds at the pinned toolchain and never
+at the floor; the reason sits beside the directive in `go.mod`.
+
+`GOLANGCI_LINT_VERSION` and `GOVULNCHECK_VERSION` live in the `Makefile`
+and are invisible to Dependabot, which reads manifests and not
+`Makefile` variables.
+[`hack/check-tool-pins.sh`](hack/check-tool-pins.sh) compares them
+against the module proxy and
+[`tool-pins.yml`](.github/workflows/tool-pins.yml) runs it weekly and
+opens a pull request when one is behind. It proposes only; the required
+checks decide. The script is deliberately not part of `make lint`: it
+needs the network, and it would turn CI red the day upstream tags a
+release.
+
+It opens that pull request with `AUTOMERGE_TOKEN` as an ordinary Actions
+secret. No document restates a tool version — the script rewrites the
+`Makefile` and nothing else, so prose naming a version would be
+falsified by the bump's own commit.
 
 ## Layout
 

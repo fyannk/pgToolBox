@@ -51,6 +51,10 @@ code does, never a design spec. When code and docs disagree, fix the docs
 
 ## Hard rules (inherited from the predecessor, enforced by tests)
 
+The numbered list in [`CONTRIBUTING.md`](CONTRIBUTING.md#repository-invariants)
+is canonical and is what a finding should cite; these are the same rules in
+the order an agent meets them, plus build guidance.
+
 - CNPG 1.30+ only (`DatabaseRole` CRD always exists; no fallback paths).
 - Never write to the CNPG `Cluster` object (tests assert resourceVersion).
 - No secret material in status, logs, or events. CEL rules ASCII-only.
@@ -58,6 +62,9 @@ code does, never a design spec. When code and docs disagree, fix the docs
 - Apps stay auth-free; the proxy is the only auth boundary. NetworkPolicy
   ensures nothing bypasses it.
 - License boilerplate (`hack/boilerplate.go.txt`) on all new Go files.
+- Condition types/reasons (`api/v1alpha1/conditions.go`) and label keys
+  (`common_types.go`) are frozen API surface: extend, never rename.
+- One version, said everywhere; `make validate-packaging` is the arbiter.
 - Verify with: `go build ./...`, `go vet ./...`, `go test ./... -race -count=1`.
   Before changing the generated Roles or anything the component containers
   read, also run `make test-e2e` (kind + CNPG + the published component

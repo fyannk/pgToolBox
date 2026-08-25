@@ -1,6 +1,12 @@
 module github.com/fyannk/pgtoolbox
 
-go 1.26.4
+// The module graph derives 1.26.4 (cloudnative-pg/api requires it). The
+// floor is held above that deliberately: 1.26.4 and 1.26.5 carry the
+// standard-library vulnerabilities fixed in 1.26.6 — net/url, html/template,
+// crypto/tls, net/http, encoding/asn1 — and a GOTOOLCHAIN=local build
+// against them produces a binary govulncheck rejects. CI never sees that,
+// because CI builds at the pinned toolchain and never at the floor.
+go 1.26.6
 
 toolchain go1.27.0
 

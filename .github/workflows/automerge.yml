@@ -29,8 +29,11 @@ jobs:
       github.event.pull_request.user.login == 'dependabot[bot]' &&
       github.event.pull_request.base.ref == 'main'
     permissions:
-      contents: write
-      pull-requests: write
+      # Read-only. The merge runs on AUTOMERGE_TOKEN instead, so the
+      # workflow's own token needs no more than reading the pull request
+      # that dependabot/fetch-metadata inspects.
+      contents: read
+      pull-requests: read
     steps:
       - name: Read Dependabot metadata
         id: metadata
@@ -45,10 +48,22 @@ jobs:
         if: >-
           steps.metadata.outputs.update-type == 'version-update:semver-patch' ||
           steps.metadata.outputs.update-type == 'version-update:semver-minor'
-        run: gh pr merge --auto --merge "$PR_URL"
+        run: |
+          test -n "$GH_TOKEN" || {
+            echo "::error::AUTOMERGE_TOKEN is unset. It must be a Dependabot" \
+                 "secret, not an Actions one: this workflow runs on" \
+                 "pull_request, and a Dependabot-triggered run sees only" \
+                 "Dependabot secrets. See CONTRIBUTING.md." >&2
+            exit 1
+          }
+          gh pr merge --auto --merge "$PR_URL"
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # AUTOMERGE_TOKEN, not GITHUB_TOKEN: a push made with GITHUB_TOKEN
+          # starts no workflow run, so an auto-merged bump lands on main with
+          # ci.yml never running against the merged result. The daily
+          # schedule was the workaround; this removes the need for one.
+          GH_TOKEN: ${{ secrets.AUTOMERGE_TOKEN }}
 
       - name: Explain why the bump was left alone
         if: >-
