@@ -1,5 +1,13 @@
 version: "2"
 
+# Report every finding, not a sample of each kind. The defaults cap a
+# repeated issue at three occurrences per linter, which is how six
+# identical gosec cookie findings first read as three: the annotations
+# cleared the visible ones and the rest appeared only afterwards.
+issues:
+  max-same-issues: 0
+  max-issues-per-linter: 0
+
 linters:
   enable:
     - errcheck

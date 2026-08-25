@@ -232,7 +232,10 @@ func (o SidecarOptions) querySettingsDB(ctx context.Context, query string) (stri
 	script := "import sqlite3,sys\n" +
 		"c=sqlite3.connect(sys.argv[1])\n" +
 		"print('\\n'.join(str(r[0]) for r in c.execute(sys.argv[2]) if r[0] is not None))\n"
-	command := exec.CommandContext(ctx, o.PythonPath, "-c", script, o.SettingsDB, query) // #nosec G204
+	// G702 reads the same way G204 does here: every argument is the
+	// sidecar's own configuration or a constant, argv carries the query as
+	// data rather than shell text, and no request reaches this call.
+	command := exec.CommandContext(ctx, o.PythonPath, "-c", script, o.SettingsDB, query) // #nosec G204 G702
 	output, err := command.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("%w: %s", err, string(output))
@@ -299,7 +302,10 @@ func (o SidecarOptions) loadServers(ctx context.Context, account string, servers
 		return fmt.Errorf("close server JSON temp file for %q: %w", account, err)
 	}
 
-	command := exec.CommandContext(ctx, o.PythonPath, o.SetupPath, // #nosec G204
+	// The account name is the tainted argument G702 follows. It arrives as
+	// its own argv entry, never interpolated into a command line, and the
+	// caller has already matched it against the cluster's user list.
+	command := exec.CommandContext(ctx, o.PythonPath, o.SetupPath, // #nosec G204 G702
 		"load-servers", file.Name(),
 		"--user", account,
 		"--auth-source", "webserver",
@@ -441,7 +447,10 @@ const revisionFileName = ".pgtoolbox-revision"
 // included: a rotated password has to count as a change, or the sidecar
 // keeps serving one the cluster has already replaced.
 func serversRevision(servers []Server) (string, error) {
-	payload, err := json.Marshal(servers)
+	// The password is in the fingerprint on purpose, which is what G117
+	// sees. These bytes are hashed on the next line and discarded; they
+	// are never written, logged, or returned.
+	payload, err := json.Marshal(servers) // #nosec G117
 	if err != nil {
 		return "", fmt.Errorf("fingerprint desired servers: %w", err)
 	}
