@@ -19,6 +19,7 @@ SPDX-License-Identifier: Apache-2.0
 package evidence
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -43,20 +44,20 @@ func FuzzParseDestination(f *testing.F) {
 		if err != nil {
 			// A rejected path yields nothing a caller could act on.
 			if destination != (Destination{}) {
-				t.Fatalf("ParseDestination(%q) failed but returned %+v", raw, destination)
+				t.Fatalf("ParseDestination(%s) failed but returned %+v", brief(raw), destination)
 			}
 			return
 		}
 
 		// Accepting means the path was an s3:// URL naming a bucket.
 		if !strings.HasPrefix(raw, "s3://") {
-			t.Fatalf("ParseDestination(%q) accepted a path that is not an s3:// URL", raw)
+			t.Fatalf("ParseDestination(%s) accepted a path that is not an s3:// URL", brief(raw))
 		}
 		if destination.Bucket == "" {
-			t.Fatalf("ParseDestination(%q) accepted a path naming no bucket", raw)
+			t.Fatalf("ParseDestination(%s) accepted a path naming no bucket", brief(raw))
 		}
 		if strings.Contains(destination.Bucket, "/") {
-			t.Fatalf("ParseDestination(%q) put a separator inside the bucket: %q", raw, destination.Bucket)
+			t.Fatalf("ParseDestination(%s) put a separator inside the bucket: %s", brief(raw), brief(destination.Bucket))
 		}
 
 		// The parse is a pure split, so it has to round-trip: anything
@@ -68,11 +69,22 @@ func FuzzParseDestination(f *testing.F) {
 			rebuilt += "/" + destination.Prefix
 		}
 		if rebuilt != raw {
-			t.Fatalf("ParseDestination(%q) does not round-trip: rebuilt %q", raw, rebuilt)
+			t.Fatalf("ParseDestination(%s) does not round-trip: rebuilt %s", brief(raw), brief(rebuilt))
 		}
 
 		if again, againErr := ParseDestination(raw); againErr != nil || again != destination {
-			t.Fatalf("ParseDestination(%q) is not deterministic", raw)
+			t.Fatalf("ParseDestination(%s) is not deterministic", brief(raw))
 		}
 	})
+}
+
+// brief renders a fuzzed input for a failure message without pasting the
+// whole thing into the log. The exact input is already persisted under
+// testdata/fuzz/ by the fuzzing engine.
+func brief(s string) string {
+	const max = 48
+	if len(s) <= max {
+		return fmt.Sprintf("%q", s)
+	}
+	return fmt.Sprintf("%q… (%d bytes)", s[:max], len(s))
 }

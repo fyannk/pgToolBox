@@ -19,6 +19,7 @@ SPDX-License-Identifier: Apache-2.0
 package session
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -48,7 +49,7 @@ func FuzzOpen(f *testing.F) {
 			// The only way this is legitimate is if the fuzzer happened to
 			// produce a genuine sealing, which it cannot: it does not have
 			// the key. Anything else is forgery that succeeded.
-			t.Fatalf("Open accepted an unsealed cookie %q as %+v", cookie, data)
+			t.Fatalf("Open accepted an unsealed cookie (%s) as %+v", brief(cookie), data)
 		}
 		if data != (Data{}) {
 			t.Fatalf("Open failed but wrote into the destination: %+v", data)
@@ -79,18 +80,23 @@ func FuzzValidCSRF(f *testing.F) {
 	f.Fuzz(func(t *testing.T, subject string, expiry int64, token string) {
 		data := Data{Subject: subject, Expiry: expiry}
 
-		if codec.ValidCSRF(data, token) && token != codec.CSRFToken(data) {
-			t.Fatalf("ValidCSRF accepted %q for subject %q, which is not its token", token, subject)
+		// EqualFold, not ==: ValidCSRF compares the decoded bytes, and
+		// hex.DecodeString accepts either case, so an uppercase spelling
+		// of the genuine token verifies correctly. Comparing the strings
+		// raw would flag that as a forgery the moment the fuzzer found
+		// one.
+		if codec.ValidCSRF(data, token) && !strings.EqualFold(token, codec.CSRFToken(data)) {
+			t.Fatalf("ValidCSRF accepted a token that is not its own for subject %s", brief(subject))
 		}
 
 		// The genuine token always verifies, and it is deterministic:
 		// a CSRF check that drifted per call would lock every user out.
 		genuine := codec.CSRFToken(data)
 		if !codec.ValidCSRF(data, genuine) {
-			t.Fatalf("ValidCSRF rejected the token it just minted for subject %q", subject)
+			t.Fatalf("ValidCSRF rejected the token it just minted for subject %s", brief(subject))
 		}
 		if again := codec.CSRFToken(data); again != genuine {
-			t.Fatalf("CSRFToken is not deterministic for subject %q", subject)
+			t.Fatalf("CSRFToken is not deterministic for subject %s", brief(subject))
 		}
 
 		// A token for a different expiry must not verify: the expiry is
@@ -100,4 +106,16 @@ func FuzzValidCSRF(f *testing.F) {
 			t.Fatalf("a token minted for expiry %d verified for %d", expiry, other.Expiry)
 		}
 	})
+}
+
+// brief renders a fuzzed input for a failure message without pasting the
+// whole thing into the log. The exact input is already persisted under
+// testdata/fuzz/ by the fuzzing engine, so the message only has to say
+// enough to recognise it.
+func brief(s string) string {
+	const max = 48
+	if len(s) <= max {
+		return fmt.Sprintf("%q", s)
+	}
+	return fmt.Sprintf("%q… (%d bytes)", s[:max], len(s))
 }
