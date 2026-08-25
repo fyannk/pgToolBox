@@ -32,6 +32,7 @@ jobs:
       - run: go build ./...
       - run: go vet ./...
       - run: go test ./... -race -count=1
+      - run: make test-fuzz
 
       # The Helm chart and the OLM bundle carry their own copies of the CRDs
       # and the manager ClusterRole. Regenerating here catches the copy a

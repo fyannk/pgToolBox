@@ -27,6 +27,32 @@ make catalog-build        # OLM catalog index image (also validates the catalog)
 before you consider a change done. If `make generate manifests` changes
 generated files, commit them in the same change.
 
+
+## Fuzzing
+
+`make test-fuzz` fuzzes the parsers on the trust boundary, each against
+the invariant it owns rather than against "does not panic" — in this
+codebase the dangerous failure is accepting something, not crashing on
+it.
+
+`session.Codec.Open` takes the most untrusted input the proxy sees: a
+sealed cookie from a browser. Invariant 5 makes the proxy the only
+authorization boundary, so a forged cookie that opens is a complete
+authentication bypass; the target asserts that nothing the codec did not
+seal ever opens, and that a rejected cookie leaves the destination
+untouched so a caller ignoring the error still gets nothing usable.
+`ValidCSRF` asserts the same for a token the codec did not mint,
+including that a token minted for one expiry does not verify for
+another. `evidence.ParseDestination` asserts that an accepted `s3://`
+path round-trips exactly, because the bucket and prefix it returns feed
+a fingerprint that identifies a backup repository.
+
+It runs in the `Build, vet, test` job at `FUZZ_TIME` (5s per target) — a
+smoke run, not a campaign. Raise it when chasing something:
+`FUZZ_TIME=10m make test-fuzz`. A failing input is written to
+`testdata/fuzz/` beside the target and becomes a regression case; commit
+it with the fix.
+
 ## Repository invariants
 
 These are hard rules — a change that violates one is a bug:
