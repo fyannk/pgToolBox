@@ -10,7 +10,12 @@ schema: olm.channel
 package: pgtoolbox
 name: alpha
 entries:
+# The channel carries only its head, so there is no bundle blob for the
+# previous release to point a `replaces` edge at. skipRange covers every
+# version that shipped before this one, which is what lets an OLM
+# subscription on 0.1.1 see 0.1.2 as an upgrade at all.
 - name: pgtoolbox.v0.1.2
+  skipRange: ">=0.1.0 <0.1.2"
 ---
 schema: olm.bundle
 package: pgtoolbox
