@@ -10,6 +10,38 @@ upgrading.
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-08-27
+
+### Security
+
+- **The components it deploys are current.** pgConsole moves 0.3.0 → 0.6.1
+  and pgObjectStoreViewer 0.1.1 → 0.1.2. Both of those are the same fix
+  0.1.2 made to this operator's own binaries: 0.6.1 is pgConsole's Go 1.27
+  rebuild, and pgObjectStoreViewer 0.1.2 is a security release its notes
+  recommend for every 0.1.1 and 0.1.0 deployment. An operator that repaired
+  its own standard library while deploying components carrying the
+  equivalent problem had not repaired much. pgAdmin stays at
+  `9.17-hardened`, the only hardened tag published. The
+  `pgObjectStoreViewer/api` module the evidence fingerprint comes from
+  moves to v0.1.2 with it, so build and runtime agree on which release
+  defines the canonicalization.
+
+### Added
+
+- **The console's Role grants `resourcequotas` `list`/`watch`.** pgConsole
+  0.6.0 reads namespace quota for its quota-exhausted diagnostic; without
+  the grant the check reports "could not run" and the quota diagnostics
+  stay dark. The manager ClusterRole gains the same grant, because RBAC
+  escalation prevention refuses to create a Role carrying a permission the
+  creator does not hold.
+
+### Upgrading
+
+Nothing to do by hand. The chart and the CSV carry the new component
+images and the new grant; a `helm upgrade` or an OLM upgrade applies both.
+An existing `PgConsole` picks up the quota diagnostics when its Role is
+reconciled, which happens on the operator's next pass over the object.
+
 ## [0.1.2] - 2026-08-27
 
 ### Security
@@ -138,7 +170,8 @@ published and why it was taken back. Everything below describes what
 - **One subject per user.** A person whose identity-provider subject differs
   from their local username needs one object per subject.
 
-[Unreleased]: https://github.com/fyannk/pgToolBox/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/fyannk/pgToolBox/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/fyannk/pgToolBox/releases/tag/v0.1.3
 [0.1.2]: https://github.com/fyannk/pgToolBox/releases/tag/v0.1.2
 [0.1.1]: https://github.com/fyannk/pgToolBox/releases/tag/v0.1.1
 [0.1.0]: https://github.com/fyannk/pgToolBox/blob/main/CHANGELOG.md#010---2026-08-09--withdrawn

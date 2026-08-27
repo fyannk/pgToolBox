@@ -13,19 +13,19 @@ entries:
 # The channel carries only its head, so there is no bundle blob for the
 # previous release to point a `replaces` edge at. skipRange covers every
 # version that shipped before this one, which is what lets an OLM
-# subscription on 0.1.1 see 0.1.2 as an upgrade at all.
-- name: pgtoolbox.v0.1.2
-  skipRange: ">=0.1.0 <0.1.2"
+# subscription on an earlier release see this one as an upgrade at all.
+- name: pgtoolbox.v0.1.3
+  skipRange: ">=0.1.0 <0.1.3"
 ---
 schema: olm.bundle
 package: pgtoolbox
-name: pgtoolbox.v0.1.2
-image: ghcr.io/fyannk/pgtoolbox-bundle:0.1.2
+name: pgtoolbox.v0.1.3
+image: ghcr.io/fyannk/pgtoolbox-bundle:0.1.3
 properties:
 - type: olm.package
   value:
     packageName: pgtoolbox
-    version: 0.1.2
+    version: 0.1.3
 - type: olm.gvk
   value:
     group: pgtoolbox.fyannk.dev
