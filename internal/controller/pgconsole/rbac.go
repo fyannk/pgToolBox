@@ -137,6 +137,17 @@ func (r *Reconciler) readRole(console *pgtoolboxv1alpha1.PgConsole) (*rbacv1.Rol
 			Resources: []string{"events"},
 			Verbs:     []string{"list", "watch"},
 		},
+		// Namespace quota, read by the console's quota-exhausted
+		// diagnostic since pgConsole 0.6.0. Without it the check reports
+		// "could not run" rather than failing, which is the honest
+		// degradation the application was written for — but a console
+		// that cannot see the quota cannot tell a stuck pod caused by one
+		// from a stuck pod caused by anything else.
+		{
+			APIGroups: []string{""},
+			Resources: []string{"resourcequotas"},
+			Verbs:     []string{"list", "watch"},
+		},
 	}
 
 	// Instance logs can carry query text. With the tail switched off the

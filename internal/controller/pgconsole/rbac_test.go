@@ -82,6 +82,7 @@ func TestReadRoleCoversTheConsoleManifest(t *testing.T) {
 		" persistentvolumeclaims get,list,watch",
 		" pods/log get",
 		" events list,watch",
+		" resourcequotas list,watch",
 		" configmaps,serviceaccounts get,list,watch",
 		"policy poddisruptionbudgets get,list,watch",
 		"rbac.authorization.k8s.io roles,rolebindings get,list,watch",

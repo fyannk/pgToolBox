@@ -190,6 +190,7 @@ spec:
           - ""
           resources:
           - events
+          - resourcequotas
           verbs:
           - list
           - watch
@@ -431,9 +432,9 @@ spec:
                 - --health-probe-bind-address=:8081
                 - --operator-image=ghcr.io/fyannk/pgtoolbox:0.1.2
                 - --default-pgtoolbox-proxy-image=ghcr.io/fyannk/pgtoolbox-proxy:0.1.2
-                - --default-pgconsole-image=ghcr.io/fyannk/pgconsole:0.3.0
+                - --default-pgconsole-image=ghcr.io/fyannk/pgconsole:0.6.1
                 - --default-pgadmin-image=ghcr.io/fyannk/pgadmin:9.17-hardened
-                - --default-objectstoreviewer-image=ghcr.io/fyannk/pgobjectstoreviewer:0.1.1
+                - --default-objectstoreviewer-image=ghcr.io/fyannk/pgobjectstoreviewer:0.1.2
                 ports:
                 - containerPort: 8080
                   name: metrics
@@ -472,8 +473,8 @@ spec:
   - name: proxy
     image: ghcr.io/fyannk/pgtoolbox-proxy:0.1.2
   - name: pgconsole
-    image: ghcr.io/fyannk/pgconsole:0.3.0
+    image: ghcr.io/fyannk/pgconsole:0.6.1
   - name: pgadmin
     image: ghcr.io/fyannk/pgadmin:9.17-hardened
   - name: objectstoreviewer
-    image: ghcr.io/fyannk/pgobjectstoreviewer:0.1.1
+    image: ghcr.io/fyannk/pgobjectstoreviewer:0.1.2
