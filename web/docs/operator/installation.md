@@ -29,10 +29,13 @@ helm install pgtoolbox oci://ghcr.io/fyannk/charts/pgtoolbox \
   --namespace pgtoolbox --create-namespace
 ```
 
-Helm 3.8 or newer reads OCI charts without configuration. `helm show chart
-oci://ghcr.io/fyannk/charts/pgtoolbox --version 0.1.3` reads the metadata
-without installing, and Argo CD and Flux both take the same reference as a
-chart source.
+Helm 3.8 or newer reads OCI charts without configuration. Argo CD and Flux
+both take the same reference as a chart source. To read a release's
+metadata without installing it:
+
+```bash
+helm show chart oci://ghcr.io/fyannk/charts/pgtoolbox --version 0.1.3
+```
 
 To install from a checkout instead — for development, or to run a chart you
 have modified:

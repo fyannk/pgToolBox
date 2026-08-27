@@ -82,7 +82,8 @@ and catalog — the leading `v` is stripped, so image tags are plain semver)
 and the Release workflow (packages the chart, pushes it to
 `oci://ghcr.io/fyannk/charts`, and creates the GitHub release). The chart
 is published as an OCI artifact rather than through a repository index, so
-`helm install oci://ghcr.io/fyannk/charts/pgtoolbox --version X.Y.Z` needs
+`helm install pgtoolbox oci://ghcr.io/fyannk/charts/pgtoolbox --version
+X.Y.Z` needs
 no `helm repo add` and nothing hosts an `index.yaml`. To publish the chart
 for a tag that already shipped, run the Release workflow by hand with the
 tag as its input: the release step is push-only, so a dispatch republishes

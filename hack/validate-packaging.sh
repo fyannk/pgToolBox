@@ -138,11 +138,22 @@ if not published:
     problems.append(
         "web/docs/operator/installation.md names no --version for the OCI chart, "
         "so the documented install cannot be pinned")
+#    Helm's --version selects the chart version, which is the field this
+#    compares against; appVersion is the operator it carries.
 for version in set(published):
-    if version != str(chart["appVersion"]):
+    if version != str(chart["version"]):
         problems.append(
             f"web/docs/operator/installation.md installs chart version {version} "
-            f"but the chart is {chart['appVersion']}")
+            f"but Chart.yaml's version is {chart['version']}")
+
+#    And the two Chart.yaml versions move together here, which the checks
+#    above assume: the icon tag and the CSV are compared against appVersion
+#    while the documented install is compared against version, so a chart
+#    whose fields diverged would be checked against two different releases.
+if str(chart["version"]) != str(chart["appVersion"]):
+    problems.append(
+        f"chart version {chart['version']} != appVersion {chart['appVersion']} — "
+        "this repository releases them as one version")
 
 # 9. A disconnected mirror carries relatedImages. If the operator's own
 #    image is not among them, the mirror is incomplete by construction.
