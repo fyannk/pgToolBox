@@ -10,6 +10,8 @@ upgrading.
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-08-27
+
 ### Security
 
 - **Go toolchain moved to 1.27.0.** govulncheck found six standard-library
@@ -22,8 +24,15 @@ upgrading.
   under test. 1.27.0 rather than 1.26.7 because the builder image tracks
   1.27, and a `toolchain` directive behind the image makes every container
   build download a second toolchain before it compiles. The language
-  version in `go.mod` stays at 1.26.4: this buys the compiler and its
-  standard library, not syntax the code cannot fall back from.
+  version in `go.mod` was raised to 1.26.6 for the same reason: it is the
+  floor below which a `GOTOOLCHAIN=local` build could still compile against
+  a vulnerable standard library.
+
+### Changed
+
+- `golang.org/x/crypto` 0.54.0 → 0.55.0 and `k8s.io/api`, `k8s.io/apimachinery`
+  and `k8s.io/client-go` 0.36.3 → 0.36.4, picked up by the routine dependency
+  updates that now merge themselves once the pipeline is green.
 
 ## [0.1.1] - 2026-08-10
 
@@ -129,6 +138,7 @@ published and why it was taken back. Everything below describes what
 - **One subject per user.** A person whose identity-provider subject differs
   from their local username needs one object per subject.
 
-[Unreleased]: https://github.com/fyannk/pgToolBox/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/fyannk/pgToolBox/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/fyannk/pgToolBox/releases/tag/v0.1.2
 [0.1.1]: https://github.com/fyannk/pgToolBox/releases/tag/v0.1.1
 [0.1.0]: https://github.com/fyannk/pgToolBox/blob/main/CHANGELOG.md#010---2026-08-09--withdrawn
