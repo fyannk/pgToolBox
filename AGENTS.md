@@ -29,7 +29,7 @@ code does, never a design spec. When code and docs disagree, fix the docs
   link-outs as absolute URLs only and refuses to start on it.
 - `../object-store-viewer` — backup repository evidence tool, published as
   `github.com/fyannk/pgObjectStoreViewer`. Its `api/` module IS imported, at
-  its published version (`.../api v0.1.1`) — NOT through a `replace` to the
+  its published version (`.../api v0.1.2`) — NOT through a `replace` to the
   sibling checkout, which used to make the build depend on a local symlink
   and broke CI. The evidence fingerprint must be that module's
   canonicalization (`FingerprintS3`), never a local reimplementation. The

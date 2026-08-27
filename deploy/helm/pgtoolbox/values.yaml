@@ -33,9 +33,9 @@ proxyImageRepository: ghcr.io/fyannk/pgtoolbox-proxy
 # are separate projects on their own release cadence, so they are pinned to
 # the versions this operator was tested against.
 defaultImages:
-  pgConsole: ghcr.io/fyannk/pgconsole:0.3.0
+  pgConsole: ghcr.io/fyannk/pgconsole:0.6.1
   pgAdmin: ghcr.io/fyannk/pgadmin:9.17-hardened
-  objectStoreViewer: ghcr.io/fyannk/pgobjectstoreviewer:0.1.1
+  objectStoreViewer: ghcr.io/fyannk/pgobjectstoreviewer:0.1.2
 
 # leaderElection enables controller-runtime leader election.
 leaderElection: true

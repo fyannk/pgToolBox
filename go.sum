@@ -28,8 +28,8 @@ github.com/fsnotify/fsnotify v1.10.1 h1:b0/UzAf9yR5rhf3RPm9gf3ehBPpf0oZKIjtpKrx5
 github.com/fsnotify/fsnotify v1.10.1/go.mod h1:TLheqan6HD6GBK6PrDWyDPBaEV8LspOxvPSjC+bVfgo=
 github.com/fxamacker/cbor/v2 v2.9.2 h1:X4Ksno9+x3cz0TZv69ec1hxP/+tymuR8PXQJyDwfh78=
 github.com/fxamacker/cbor/v2 v2.9.2/go.mod h1:vM4b+DJCtHn+zz7h3FFp/hDAI9WNWCsZj23V5ytsSxQ=
-github.com/fyannk/pgObjectStoreViewer/api v0.1.1 h1:VLvo516OHnA5WfurFDlOlsi2TdgRLIWwaPXx/6BY220=
-github.com/fyannk/pgObjectStoreViewer/api v0.1.1/go.mod h1:desWfVIxdbyDBe/O/PhdVCef8EMPbiTm2VuXFvkH6jo=
+github.com/fyannk/pgObjectStoreViewer/api v0.1.2 h1:DwlHvUtuMnHQjhGp7OVKb8WmjSweUWGN5F8zoOWKR8Q=
+github.com/fyannk/pgObjectStoreViewer/api v0.1.2/go.mod h1:fcl//9FsiBF8xyWk3RogH6Z5Jzknh53g8n0T91hq1A8=
 github.com/go-jose/go-jose/v4 v4.1.4 h1:moDMcTHmvE6Groj34emNPLs/qtYXRVcd6S7NHbHz3kA=
 github.com/go-jose/go-jose/v4 v4.1.4/go.mod h1:x4oUasVrzR7071A4TnHLGSPpNOm2a21K9Kf04k1rs08=
 github.com/go-logr/logr v1.4.3 h1:CjnDlHq8ikf6E492q6eKboGOC0T8CDaOvkHCIg8idEI=

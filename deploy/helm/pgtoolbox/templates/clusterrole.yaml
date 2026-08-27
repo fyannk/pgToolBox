@@ -19,6 +19,7 @@ rules:
   - ""
   resources:
   - events
+  - resourcequotas
   verbs:
   - list
   - watch

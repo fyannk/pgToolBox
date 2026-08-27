@@ -30,9 +30,9 @@ CNPG_MANIFEST="${CNPG_MANIFEST:-https://raw.githubusercontent.com/cloudnative-pg
 # binaries accept what the operator renders, so these are not substitutable —
 # and every one of them is a pgtoolbox family image, including pgAdmin, which
 # is our own repackaging rather than the upstream one.
-PGCONSOLE_IMAGE="${PGCONSOLE_IMAGE:-ghcr.io/fyannk/pgconsole:0.3.0}"
+PGCONSOLE_IMAGE="${PGCONSOLE_IMAGE:-ghcr.io/fyannk/pgconsole:0.6.1}"
 PGADMIN_IMAGE="${PGADMIN_IMAGE:-ghcr.io/fyannk/pgadmin:9.17-hardened}"
-VIEWER_IMAGE="${VIEWER_IMAGE:-ghcr.io/fyannk/pgobjectstoreviewer:0.1.1}"
+VIEWER_IMAGE="${VIEWER_IMAGE:-ghcr.io/fyannk/pgobjectstoreviewer:0.1.2}"
 
 # The Barman Cloud Plugin serves the ObjectStore API the evidence composition
 # resolves against. The operator discovers it once at startup, so it has to be
