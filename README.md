@@ -56,14 +56,26 @@ for access from the proxy's 403 page.
 - **Deterministic and safe**: byte-stable rendering, rollouts keyed on a
   config checksum, hardened pods, Secret contents never in the operator's
   cache and never logged.
-- **Packaging for every install path**: Helm chart (`deploy/helm/pgtoolbox`),
-  OLM bundle and file-based catalog (`deploy/olm`), and a kustomize
-  development overlay (`config/default`).
+- **Packaging for every install path**: Helm chart, published to
+  `oci://ghcr.io/fyannk/charts/pgtoolbox` and built from
+  `deploy/helm/pgtoolbox`; OLM bundle and file-based catalog (`deploy/olm`),
+  published as `pgtoolbox-bundle` and `pgtoolbox-catalog` images; and a
+  kustomize development overlay (`config/default`).
 
 ## Quick start
 
 Prerequisites: Kubernetes ≥ 1.28 or OpenShift ≥ 4.14, and
 [CloudNativePG](https://cloudnative-pg.io) ≥ 1.30.
+
+```bash
+helm install pgtoolbox oci://ghcr.io/fyannk/charts/pgtoolbox \
+  --version <version> \
+  --namespace pgtoolbox --create-namespace
+```
+
+Every image defaults to the version the chart was tested against, so there
+is nothing to supply. To run images you built yourself, install from a
+checkout and name them:
 
 ```bash
 helm install pgtoolbox deploy/helm/pgtoolbox \

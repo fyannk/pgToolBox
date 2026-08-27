@@ -129,7 +129,33 @@ changelog = pathlib.Path("CHANGELOG.md").read_text()
 if f"## [{csv_version}]" not in changelog:
     problems.append(f"CHANGELOG.md has no '## [{csv_version}]' section for the version being shipped")
 
-# 8. A disconnected mirror carries relatedImages. If the operator's own
+# 8. The installation page prints a copy-pasteable `helm install ... --version`
+#    for the published chart. A command that names the previous release is
+#    worse than no command: it installs, and it installs the wrong thing.
+install_doc = pathlib.Path("web/docs/operator/installation.md").read_text()
+published = re.findall(r"charts/pgtoolbox.*?--version ([0-9][0-9A-Za-z.+-]*)", install_doc, re.S)
+if not published:
+    problems.append(
+        "web/docs/operator/installation.md names no --version for the OCI chart, "
+        "so the documented install cannot be pinned")
+#    Helm's --version selects the chart version, which is the field this
+#    compares against; appVersion is the operator it carries.
+for version in set(published):
+    if version != str(chart["version"]):
+        problems.append(
+            f"web/docs/operator/installation.md installs chart version {version} "
+            f"but Chart.yaml's version is {chart['version']}")
+
+#    And the two Chart.yaml versions move together here, which the checks
+#    above assume: the icon tag and the CSV are compared against appVersion
+#    while the documented install is compared against version, so a chart
+#    whose fields diverged would be checked against two different releases.
+if str(chart["version"]) != str(chart["appVersion"]):
+    problems.append(
+        f"chart version {chart['version']} != appVersion {chart['appVersion']} — "
+        "this repository releases them as one version")
+
+# 9. A disconnected mirror carries relatedImages. If the operator's own
 #    image is not among them, the mirror is incomplete by construction.
 related = {r["image"] for r in csv["spec"].get("relatedImages", [])}
 manager = None
