@@ -1,13 +1,13 @@
 apiVersion: operators.coreos.com/v1alpha1
 kind: ClusterServiceVersion
 metadata:
-  name: pgtoolbox.v0.1.1
+  name: pgtoolbox.v0.1.2
   namespace: placeholder
   annotations:
     operators.operatorframework.io/project_layout: go.kubebuilder.io/v4
     capabilities: Basic Install
     categories: Database
-    containerImage: ghcr.io/fyannk/pgtoolbox:0.1.1
+    containerImage: ghcr.io/fyannk/pgtoolbox:0.1.2
     createdAt: "2026-08-09T00:00:00Z"
     repository: https://github.com/fyannk/pgToolBox
     support: https://github.com/fyannk/pgToolBox/issues
@@ -88,7 +88,7 @@ spec:
   - pgadmin
   - oidc
   - openshift
-  version: 0.1.1
+  version: 0.1.2
   maturity: alpha
   minKubeVersion: 1.28.0
   icon:
@@ -423,13 +423,13 @@ spec:
                   type: RuntimeDefault
               containers:
               - name: manager
-                image: ghcr.io/fyannk/pgtoolbox:0.1.1
+                image: ghcr.io/fyannk/pgtoolbox:0.1.2
                 args:
                 - --leader-elect
                 - --metrics-bind-address=:8080
                 - --health-probe-bind-address=:8081
-                - --operator-image=ghcr.io/fyannk/pgtoolbox:0.1.1
-                - --default-pgtoolbox-proxy-image=ghcr.io/fyannk/pgtoolbox-proxy:0.1.1
+                - --operator-image=ghcr.io/fyannk/pgtoolbox:0.1.2
+                - --default-pgtoolbox-proxy-image=ghcr.io/fyannk/pgtoolbox-proxy:0.1.2
                 - --default-pgconsole-image=ghcr.io/fyannk/pgconsole:0.3.0
                 - --default-pgadmin-image=ghcr.io/fyannk/pgadmin:9.17-hardened
                 - --default-objectstoreviewer-image=ghcr.io/fyannk/pgobjectstoreviewer:0.1.1
@@ -467,9 +467,9 @@ spec:
                     memory: 256Mi
   relatedImages:
   - name: manager
-    image: ghcr.io/fyannk/pgtoolbox:0.1.1
+    image: ghcr.io/fyannk/pgtoolbox:0.1.2
   - name: proxy
-    image: ghcr.io/fyannk/pgtoolbox-proxy:0.1.1
+    image: ghcr.io/fyannk/pgtoolbox-proxy:0.1.2
   - name: pgconsole
     image: ghcr.io/fyannk/pgconsole:0.3.0
   - name: pgadmin
