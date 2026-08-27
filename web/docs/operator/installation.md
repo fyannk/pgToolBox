@@ -19,10 +19,33 @@ make docker-build-proxy PROXY_IMG=<registry>/pgtoolbox-proxy:<tag>
 
 ## Install with Helm (recommended)
 
+The chart is published to the registry the images live in, as an OCI
+artifact. There is no `helm repo add`: an OCI reference names the chart
+directly, and `--version` names the release.
+
+```bash
+helm install pgtoolbox oci://ghcr.io/fyannk/charts/pgtoolbox \
+  --version 0.1.3 \
+  --namespace pgtoolbox --create-namespace
+```
+
+Helm 3.8 or newer reads OCI charts without configuration. `helm show chart
+oci://ghcr.io/fyannk/charts/pgtoolbox --version 0.1.3` reads the metadata
+without installing, and Argo CD and Flux both take the same reference as a
+chart source.
+
+To install from a checkout instead — for development, or to run a chart you
+have modified:
+
 ```bash
 helm install pgtoolbox deploy/helm/pgtoolbox \
   --namespace pgtoolbox --create-namespace
 ```
+
+That path renders image references at the chart's own `appVersion`, and
+those images exist only once their version is tagged. A checkout of `main`
+between a version bump and its tag therefore installs references to images
+that have not been published yet; a checkout of the tag never does.
 
 The operator and proxy default to this chart's own version, and pgConsole,
 pgAdmin and the evidence sidecar to the versions it was tested against.

@@ -79,9 +79,16 @@ These are hard rules — a change that violates one is a bug:
 A release is a tag: `git tag -a vX.Y.Z -m "pgToolBox X.Y.Z" && git push
 origin vX.Y.Z`. That fires the Images workflow (operator, proxy, OLM bundle
 and catalog — the leading `v` is stripped, so image tags are plain semver)
-and the Release workflow (packages the chart, creates the GitHub release).
+and the Release workflow (packages the chart, pushes it to
+`oci://ghcr.io/fyannk/charts`, and creates the GitHub release). The chart
+is published as an OCI artifact rather than through a repository index, so
+`helm install oci://ghcr.io/fyannk/charts/pgtoolbox --version X.Y.Z` needs
+no `helm repo add` and nothing hosts an `index.yaml`. To publish the chart
+for a tag that already shipped, run the Release workflow by hand with the
+tag as its input: the release step is push-only, so a dispatch republishes
+the chart and touches nothing else.
 
-Before tagging, the version has to agree in five places:
+Before tagging, the version has to agree in six places:
 
 | Where | What |
 |---|---|
@@ -90,8 +97,9 @@ Before tagging, the version has to agree in five places:
 | `deploy/olm/bundle/manifests/*.clusterserviceversion.yaml` | `spec.version`, `metadata.name`, the image tags in the manager args and `relatedImages` |
 | `deploy/olm/catalog/pgtoolbox/catalog.yaml` | the channel entry and the bundle image |
 | `Makefile` | `OLM_VERSION` |
+| `web/docs/operator/installation.md` | the `--version` in the published `helm install` |
 
-`make validate-packaging` checks all five and runs in CI, so a mismatch is
+`make validate-packaging` checks all six and runs in CI, so a mismatch is
 a failed build rather than a bad release. The icon URL is the subtle one:
 it names a tag on purpose — a chart pinned to a version must not have its
 artwork change underneath it — which means it goes stale unless bumped.
