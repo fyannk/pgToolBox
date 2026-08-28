@@ -177,7 +177,7 @@ func (r *Reconciler) ingress(console *pgtoolboxv1alpha1.PgConsole) (*networkingv
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        name,
 			Namespace:   console.Namespace,
-			Labels:      application.CommonLabels(console.Name),
+			Labels:      exposureLabels(console),
 			Annotations: exposureAnnotations(exposure),
 		},
 		Spec: networkingv1.IngressSpec{
@@ -284,7 +284,7 @@ func (r *Reconciler) route(console *pgtoolboxv1alpha1.PgConsole) (*routev1.Route
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        name,
 			Namespace:   console.Namespace,
-			Labels:      application.CommonLabels(console.Name),
+			Labels:      exposureLabels(console),
 			Annotations: exposureAnnotations(exposure),
 		},
 		Spec: routev1.RouteSpec{
@@ -419,7 +419,7 @@ func (r *Reconciler) httpRoute(console *pgtoolboxv1alpha1.PgConsole) (*gatewayv1
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        name,
 			Namespace:   console.Namespace,
-			Labels:      application.CommonLabels(console.Name),
+			Labels:      exposureLabels(console),
 			Annotations: exposureAnnotations(exposure),
 		},
 		Spec: gatewayv1.HTTPRouteSpec{
@@ -708,6 +708,18 @@ func exposureAnnotations(exposure *pgtoolboxv1alpha1.ExposureSpec) map[string]st
 		return nil
 	}
 	return filtered
+}
+
+// exposureLabels merges the user-supplied exposure labels, stripped of
+// operator-reserved keys, under the common identity labels. The identity
+// labels are written last so a spec cannot override how the object is
+// selected and traced back to its owner.
+func exposureLabels(console *pgtoolboxv1alpha1.PgConsole) map[string]string {
+	merged := shared.FilteredOverlay(console.Spec.Exposure.Labels)
+	for key, value := range application.CommonLabels(console.Name) {
+		merged[key] = value
+	}
+	return merged
 }
 
 // deleteOtherExposures enforces the single-exposure invariant by deleting

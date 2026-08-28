@@ -22,6 +22,18 @@ spec:
     hostname: pgconsole-apps.example.com
 ```
 
+On a cluster whose router shards select routes by label
+(`routeSelector` on the IngressController), add the labels the target
+shard expects:
+
+```yaml
+  exposure:
+    type: route
+    hostname: pgconsole-apps.example.com
+    labels:
+      network: internal
+```
+
 In `openshift` mode:
 
 - The console ServiceAccount is the OAuth client
