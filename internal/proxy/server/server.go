@@ -152,6 +152,18 @@ func BuildRuntime(cfg *config.Config) (*Runtime, error) {
 				// client-supplied X-Forwarded-* rather than appending to it.
 				pr.Out.Host = pr.In.Host
 				pr.SetXForwarded()
+				// SetXForwarded derives X-Forwarded-Proto from this
+				// proxy's own listener, which is plaintext when TLS
+				// terminates at the edge — the upstream would then build
+				// http:// absolute URLs for an https deployment, with the
+				// edge's forwarded port still attached: pgAdmin's
+				// trailing-slash redirect sent browsers to
+				// http://<host>:443/. As in the providers' requestOrigin,
+				// the edge ingress is the only thing that can know TLS
+				// terminated there, so its X-Forwarded-Proto wins.
+				if proto := pr.In.Header.Get("X-Forwarded-Proto"); proto != "" {
+					pr.Out.Header.Set("X-Forwarded-Proto", proto)
+				}
 				// Strip any client-forged identity headers, then set
 				// them exclusively from the verified session.
 				for _, h := range strippedHeaders {

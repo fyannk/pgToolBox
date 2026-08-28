@@ -10,6 +10,17 @@ upgrading.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The proxy preserves the edge's `X-Forwarded-Proto`.** `SetXForwarded`
+  reported the proxy's own plaintext listener to upstreams, overwriting
+  the terminating ingress's `https` while its `X-Forwarded-Port: 443`
+  passed through — so pgAdmin's trailing-slash redirect sent browsers to
+  `http://<host>:443/pgadmin/`. The edge ingress is the only thing that
+  can know TLS terminated there (the rationale `requestOrigin` already
+  followed for the login redirect), so its header now wins on the
+  proxied path too.
+
 ## [0.1.3] - 2026-08-27
 
 ### Security

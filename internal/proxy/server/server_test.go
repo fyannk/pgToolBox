@@ -588,3 +588,44 @@ func TestSafeRedirectRejectsOffOrigin(t *testing.T) {
 		}
 	}
 }
+
+// TestForwardedProtoPreserved pins the scheme the upstream is told about
+// when TLS terminates at an edge ingress in front of the proxy: the edge's
+// X-Forwarded-Proto must survive SetXForwarded, which would otherwise
+// report this proxy's own plaintext listener and make upstreams build
+// http:// URLs (pgAdmin's trailing-slash redirect sent browsers to
+// http://<host>:443/). Without an edge header the listener's scheme is
+// reported as before.
+func TestForwardedProtoPreserved(t *testing.T) {
+	up := newUpstreamRecorder(t)
+	rt := testRuntime(t, up.srv.URL, nil)
+	mux := New(testEnv(t, rt))
+
+	r := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
+	r.Host = "pgconsole.apps.example.com"
+	r.AddCookie(sessionCookie(t, rt, "jane@corp.example", "view"))
+	r.Header.Set("X-Forwarded-Proto", "https")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+	got := up.lastHeaders()
+	if v := got.Get("X-Forwarded-Proto"); v != "https" {
+		t.Fatalf("X-Forwarded-Proto = %q, want the edge's %q", v, "https")
+	}
+	if v := got.Get("X-Forwarded-Host"); v != "pgconsole.apps.example.com" {
+		t.Fatalf("X-Forwarded-Host = %q, want the client host", v)
+	}
+
+	r = httptest.NewRequest(http.MethodGet, "/dashboard", nil)
+	r.AddCookie(sessionCookie(t, rt, "jane@corp.example", "view"))
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+	if v := up.lastHeaders().Get("X-Forwarded-Proto"); v != "http" {
+		t.Fatalf("X-Forwarded-Proto = %q, want the listener's %q", v, "http")
+	}
+}
