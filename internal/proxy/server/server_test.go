@@ -629,3 +629,33 @@ func TestForwardedProtoPreserved(t *testing.T) {
 		t.Fatalf("X-Forwarded-Proto = %q, want the listener's %q", v, "http")
 	}
 }
+
+// TestForwardedProtoNormalized pins the reduction of the inbound header to
+// a scheme this proxy would state itself: the outermost edge's element of
+// a multi-hop list wins case-insensitively, and anything that is not a
+// scheme keeps the listener's derived value instead of reaching the
+// upstream verbatim.
+func TestForwardedProtoNormalized(t *testing.T) {
+	up := newUpstreamRecorder(t)
+	rt := testRuntime(t, up.srv.URL, nil)
+	mux := New(testEnv(t, rt))
+
+	for header, want := range map[string]string{
+		"https, http": "https",
+		" HTTPS ":     "https",
+		"gopher":      "http",
+		",https":      "http",
+	} {
+		r := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
+		r.AddCookie(sessionCookie(t, rt, "jane@corp.example", "view"))
+		r.Header.Set("X-Forwarded-Proto", header)
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, r)
+		if w.Code != http.StatusOK {
+			t.Fatalf("header %q: status = %d", header, w.Code)
+		}
+		if v := up.lastHeaders().Get("X-Forwarded-Proto"); v != want {
+			t.Fatalf("header %q: X-Forwarded-Proto = %q, want %q", header, v, want)
+		}
+	}
+}

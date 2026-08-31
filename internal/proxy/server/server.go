@@ -160,8 +160,10 @@ func BuildRuntime(cfg *config.Config) (*Runtime, error) {
 				// trailing-slash redirect sent browsers to
 				// http://<host>:443/. As in the providers' requestOrigin,
 				// the edge ingress is the only thing that can know TLS
-				// terminated there, so its X-Forwarded-Proto wins.
-				if proto := pr.In.Header.Get("X-Forwarded-Proto"); proto != "" {
+				// terminated there, so its X-Forwarded-Proto wins — but
+				// only once reduced to a scheme this proxy would state
+				// itself; anything else keeps the derived value.
+				if proto := forwardedProto(pr.In.Header.Get("X-Forwarded-Proto")); proto != "" {
 					pr.Out.Header.Set("X-Forwarded-Proto", proto)
 				}
 				// Strip any client-forged identity headers, then set
@@ -190,6 +192,22 @@ func BuildRuntime(cfg *config.Config) (*Runtime, error) {
 		}
 	}
 	return rt, nil
+}
+
+// forwardedProto reduces an inbound X-Forwarded-Proto to the scheme this
+// proxy would state itself. The header may cross several hops, some of
+// which append rather than replace, so only the first element — the one
+// the outermost edge wrote — is considered, case-insensitively. Anything
+// but http or https returns "", keeping SetXForwarded's derived value.
+func forwardedProto(header string) string {
+	proto, _, _ := strings.Cut(header, ",")
+	switch strings.ToLower(strings.TrimSpace(proto)) {
+	case "http":
+		return "http"
+	case "https":
+		return "https"
+	}
+	return ""
 }
 
 // New builds the root handler: reserved endpoints plus the proxied
