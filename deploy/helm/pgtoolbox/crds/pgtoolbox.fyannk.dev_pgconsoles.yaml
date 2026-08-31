@@ -373,6 +373,15 @@ spec:
                   ingressClassName:
                     description: IngressClass name, for ingress exposure only.
                     type: string
+                  labels:
+                    additionalProperties:
+                      type: string
+                    description: |-
+                      Labels copied onto the exposure resource after allowlist filtering,
+                      under the operator's own identity labels, which always win. Ingress
+                      controllers and OpenShift router shards select routes by label
+                      (routeSelector), which annotations cannot satisfy.
+                    type: object
                   tls:
                     description: |-
                       TLS settings for route/ingress exposure. For gateway exposure TLS

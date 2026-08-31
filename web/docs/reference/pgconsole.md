@@ -56,6 +56,7 @@ spec:
     ingressClassName: ""
     gateway: { parentRef: { name, namespace?, sectionName? } }
     annotations: { ... }
+    labels: { ... }
   networkPolicy:
     enabled: true
     policyTypes: full                   # full | ingress
@@ -163,6 +164,12 @@ This only bites with `evidence.enabled: true`, which is not the default.
 - `bootstrapAdmin.passwordSecretRef` is required only when `local` is the
   only provider; otherwise the first administrator authenticates at the
   identity provider like everyone else.
+- `exposure.annotations` and `exposure.labels` are copied onto the
+  generated Ingress, Route or HTTPRoute. Keys under `pgtoolbox.fyannk.dev/`
+  are dropped, and the operator's own identity labels always win, so a
+  spec cannot detach the object from its owner. Labels matter where the
+  platform selects routes by label — an OpenShift router shard's
+  `routeSelector`, for instance — which annotations cannot satisfy.
 - `evidence.image` is a pointer: omitting it genuinely means "no image"
   rather than an invalid empty object.
 - Omitting the whole `console` block deploys the console the application

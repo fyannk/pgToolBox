@@ -169,6 +169,13 @@ type ExposureSpec struct {
 	// filtering.
 	// +optional
 	Annotations map[string]string `json:"annotations,omitempty"`
+
+	// Labels copied onto the exposure resource after allowlist filtering,
+	// under the operator's own identity labels, which always win. Ingress
+	// controllers and OpenShift router shards select routes by label
+	// (routeSelector), which annotations cannot satisfy.
+	// +optional
+	Labels map[string]string `json:"labels,omitempty"`
 }
 
 // ExposureTLSSpec configures TLS for Route/Ingress exposure.
