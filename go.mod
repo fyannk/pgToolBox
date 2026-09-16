@@ -8,7 +8,7 @@ module github.com/fyannk/pgtoolbox
 // because CI builds at the pinned toolchain and never at the floor.
 go 1.26.6
 
-toolchain go1.27.0
+toolchain go1.27.1
 
 require (
 	github.com/cloudnative-pg/api v1.30.0
