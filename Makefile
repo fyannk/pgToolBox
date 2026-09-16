@@ -12,7 +12,7 @@ GO_LDFLAGS ?= -X main.operatorVersion=$(VERSION) -X main.defaultOperatorImage=$(
 
 CONTROLLER_GEN_VERSION ?= v0.19.0
 GOLANGCI_LINT_VERSION ?= v2.13.2
-GOVULNCHECK_VERSION ?= v1.7.0
+GOVULNCHECK_VERSION ?= v1.8.0
 # Per target, and matching the sibling repositories. Short on purpose: this
 # is a smoke run on every pull request, not a fuzzing campaign. Raise it
 # locally when chasing something — FUZZ_TIME=10m make test-fuzz.
