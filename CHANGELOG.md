@@ -12,6 +12,14 @@ upgrading.
 
 ### Fixed
 
+- **The default pgAdmin image moves to `9.18-hardened`.** The `9.17-hardened`
+  tag the chart, the CSV and the dev/e2e scripts pinned no longer resolves:
+  the pgAdmin repository's registry prune deleted the platform and
+  attestation manifests behind that tag once the 9.18 build displaced them,
+  so a fresh `PgConsole` and the e2e smoke test both failed to pull. The
+  prune is fixed upstream so `9.18-hardened` stays pullable; this bump is
+  what makes the operator work again today.
+
 - **The proxy preserves the edge's `X-Forwarded-Proto`.** `SetXForwarded`
   reported the proxy's own plaintext listener to upstreams, overwriting
   the terminating ingress's `https` while its `X-Forwarded-Port: 443`

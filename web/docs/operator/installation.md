@@ -63,7 +63,7 @@ Useful values:
 | `image.tag` | `""` → chart `appVersion` | operator version |
 | `proxyImage` | `""` → `proxyImageRepository` at `image.tag` | proxy for consoles that name none |
 | `defaultImages.pgConsole` | `ghcr.io/fyannk/pgconsole:0.6.1` | default pgconsole image |
-| `defaultImages.pgAdmin` | `ghcr.io/fyannk/pgadmin:9.17-hardened` | default pgAdmin image |
+| `defaultImages.pgAdmin` | `ghcr.io/fyannk/pgadmin:9.18-hardened` | default pgAdmin image |
 | `defaultImages.objectStoreViewer` | `ghcr.io/fyannk/pgobjectstoreviewer:0.1.2` | default evidence sidecar image |
 | `replicaCount` | `2` | manager replicas |
 | `leaderElection` | `true` | controller-runtime leader election |
