@@ -91,7 +91,14 @@ if [[ "${REUSE_CLUSTER:-}" != "1" ]]; then
   # admin-sync assertions need one.
   log "deploying the object store the cluster archives into"
   kubectl apply --server-side -f test/e2e/testdata/minio.yaml
-  kubectl -n minio rollout status deployment/minio --timeout=300s
+  # Say why when it does not come up: this rollout once timed out for five
+  # minutes with nothing in the log, over an image pull that had started
+  # returning "unauthorized" that afternoon.
+  kubectl -n minio rollout status deployment/minio --timeout=300s || {
+    kubectl -n minio get pods -o wide || true
+    kubectl -n minio describe pods -l app=minio | tail -40 || true
+    exit 1
+  }
 
   log "building operator images"
   make docker-build docker-build-proxy IMG="${MANAGER_IMG}" PROXY_IMG="${PROXY_IMG}" VERSION=e2e

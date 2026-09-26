@@ -45,11 +45,19 @@ spec:
     spec:
       containers:
         - name: minio
-          image: quay.io/minio/minio:latest
+          # Chainguard's build of MinIO from source, pinned by digest. MinIO
+          # deleted its Docker Hub repositories in September 2026 and on
+          # 2026-09-24 quay.io/minio/minio stopped serving anonymous pulls,
+          # which is what turned this rollout into a five-minute timeout.
+          # Docker Hub mirror of cgr.dev/chainguard/minio; the digest is the
+          # multi-arch index (amd64 + arm64). Runs as uid 65532 and ships
+          # /usr/bin/sh, mc and minio, so the bucket-directory trick below
+          # still works; emptyDir is world-writable so no fsGroup is needed.
+          image: docker.io/chainguard/minio@sha256:bd014394a80898e68c149f2311fdf8d5a2c2f3bb2c33b9327ae6d02b4b065ae1
           # MinIO serves a top-level directory of its data dir as a bucket,
           # so creating the directory is the whole bucket setup.
           command:
-            - /bin/sh
+            - /usr/bin/sh
             - -c
             - mkdir -p /data/e2e-backups && exec minio server /data --address :9000
           env:
