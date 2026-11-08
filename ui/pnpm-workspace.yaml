@@ -1,0 +1,13 @@
+# The console SPA is the workspace root; the design tokens are a member so the
+# SPA consumes tokens.css as a package.
+packages:
+  - tokens
+
+# A release must be a week old before it can be installed, and no
+# dependency runs an install script unless it is listed here.
+minimumReleaseAge: 10080
+strictDepBuilds: true
+# esbuild's postinstall only re-verifies the platform binary that its optional
+# dependency already installed; denied, nothing else runs at install time.
+allowBuilds:
+  esbuild: false

@@ -1,0 +1,26 @@
+{
+  "profile": "barman-v1-recovery-v3",
+  "format": "barman-cloud",
+  "metadata_authority": "Barman 3.19.1 generated golden backup.info",
+  "wal_context": {"postgresql_version": 170005, "segment_size": 16777216},
+  "scenarios": [
+    {"name": "completed", "expected_state": "healthy"},
+    {"name": "started", "expected_state": "warning"},
+    {"name": "failed", "expected_state": "unhealthy"},
+    {"name": "malformed", "expected_state": "unknown"},
+    {"name": "missing-artifact", "expected_state": "unhealthy"},
+    {"name": "missing-info", "expected_state": "unknown"}
+  ],
+  "normalized_fields": [
+    "repository_format",
+    "scope_kind",
+    "scopes",
+    "completeness",
+    "overall_state",
+    "backup_states",
+    "capabilities",
+    "recovery",
+    "rendered_states"
+  ],
+  "excluded_provider_facts": ["provider", "etag", "generation_timestamp", "fixture_object_size", "dynamic_backup_id"]
+}

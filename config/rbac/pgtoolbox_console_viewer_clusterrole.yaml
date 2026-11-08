@@ -1,0 +1,82 @@
+# The role a person is bound to, per namespace, with a RoleBinding that references
+# this ClusterRole: read what the console shows. The product renders
+# no ClusterRoleBinding for it; a cluster-wide binding would grant nothing beyond a
+# console's watched namespaces anyway. A viewer may ask for more through the console:
+# create (and read) PgAccessRequests in the namespace.
+#
+# Hand-written source of truth: hack/sync-manifests.sh copies the rules into the
+# Helm chart and the OLM bundle, and hack/validate-packaging.sh compares them.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: pgtoolbox-console-viewer
+  labels:
+    app.kubernetes.io/part-of: pgtoolbox
+rules:
+- apiGroups:
+  - postgresql.cnpg.io
+  resources:
+  - backups
+  - clusters
+  - databaseroles
+  - databases
+  - failoverquorums
+  - imagecatalogs
+  - poolers
+  - publications
+  - scheduledbackups
+  - subscriptions
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - pgtoolbox.fyannk.dev
+  resources:
+  - pgaccessrequests
+  verbs:
+  - create
+  - get
+  - list
+  - watch
+- apiGroups:
+  - barmancloud.cnpg.io
+  resources:
+  - objectstores
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - pgbackrest.dalibo.com
+  resources:
+  - stanzas
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - pgbackrest.cnpg.opera.com
+  resources:
+  - archives
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - events
+  - persistentvolumeclaims
+  - pods
+  - services
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - pods/log
+  verbs:
+  - get

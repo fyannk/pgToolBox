@@ -1,0 +1,2379 @@
+{
+  "ref": {
+    "namespace": "team-a",
+    "name": "orders",
+    "uid": "0b6a2c1e-8f0d-4a55-9a3e-7c1f2b3d4e5f"
+  },
+  "generatedAt": "2026-10-29T12:00:00Z",
+  "pack": {
+    "state": "enabled",
+    "health": "warning",
+    "text": "The insight pack version 1 is enabled. Some of its queries fail on the exporter: see the query errors and the instance's log.",
+    "expected": "1",
+    "referenced": true,
+    "configMap": "pgtoolbox-insight-pack",
+    "key": "queries",
+    "specChange": "spec.monitoring.customQueriesConfigMap: [{name: pgtoolbox-insight-pack, key: queries}]",
+    "instances": [
+      {
+        "instance": "orders-1",
+        "primary": true,
+        "version": "1",
+        "exporterUpdatedAt": "2026-11-03T22:41:19Z",
+        "serverVersionNum": 180006,
+        "provenance": {
+          "origin": "instance",
+          "source": "cnpg_pgtoolbox_pack_info, orders-1:9187/metrics",
+          "observedAt": "2026-10-29T12:00:00Z"
+        }
+      },
+      {
+        "instance": "orders-2",
+        "primary": false,
+        "provenance": {
+          "origin": "instance",
+          "source": "cnpg_pgtoolbox_pack_info, orders-2:9187/metrics",
+          "observedAt": "2026-10-29T12:00:00Z"
+        }
+      }
+    ],
+    "queryErrors": [
+      {
+        "instance": "orders-1",
+        "query": "pgtoolbox_tables",
+        "count": 1,
+        "databases": [
+          "billing"
+        ]
+      },
+      {
+        "instance": "orders-1",
+        "query": "pgtoolbox_vacuum_progress",
+        "count": 1,
+        "databases": [
+          "billing"
+        ]
+      }
+    ]
+  },
+  "wraparound": {
+    "available": true,
+    "instance": "orders-1",
+    "limits": [
+      {
+        "name": "autovacuum_freeze_max_age",
+        "value": 200000000,
+        "source": "instance"
+      },
+      {
+        "name": "vacuum_failsafe_age",
+        "value": 1600000000,
+        "source": "instance"
+      },
+      {
+        "name": "autovacuum_multixact_freeze_max_age",
+        "value": 400000000,
+        "source": "instance"
+      },
+      {
+        "name": "vacuum_multixact_failsafe_age",
+        "value": 1600000000,
+        "source": "instance"
+      }
+    ],
+    "assumed": [],
+    "databases": [
+      {
+        "name": "app",
+        "allowConnections": true,
+        "xid": {
+          "age": 141,
+          "autovacuum": {
+            "threshold": 200000000,
+            "remaining": 199999859,
+            "past": false
+          },
+          "failsafe": {
+            "threshold": 1600000000,
+            "remaining": 1599999859,
+            "past": false
+          },
+          "stop": {
+            "threshold": 2144483647,
+            "remaining": 2144483506,
+            "past": false
+          },
+          "health": "ok"
+        },
+        "mxid": {
+          "age": 0,
+          "autovacuum": {
+            "threshold": 400000000,
+            "remaining": 400000000,
+            "past": false
+          },
+          "failsafe": {
+            "threshold": 1600000000,
+            "remaining": 1600000000,
+            "past": false
+          },
+          "stop": {
+            "threshold": 2144483647,
+            "remaining": 2144483647,
+            "past": false
+          },
+          "health": "ok"
+        }
+      },
+      {
+        "name": "billing",
+        "allowConnections": true,
+        "xid": {
+          "age": 141,
+          "autovacuum": {
+            "threshold": 200000000,
+            "remaining": 199999859,
+            "past": false
+          },
+          "failsafe": {
+            "threshold": 1600000000,
+            "remaining": 1599999859,
+            "past": false
+          },
+          "stop": {
+            "threshold": 2144483647,
+            "remaining": 2144483506,
+            "past": false
+          },
+          "health": "ok"
+        },
+        "mxid": {
+          "age": 0,
+          "autovacuum": {
+            "threshold": 400000000,
+            "remaining": 400000000,
+            "past": false
+          },
+          "failsafe": {
+            "threshold": 1600000000,
+            "remaining": 1600000000,
+            "past": false
+          },
+          "stop": {
+            "threshold": 2144483647,
+            "remaining": 2144483647,
+            "past": false
+          },
+          "health": "ok"
+        }
+      },
+      {
+        "name": "many",
+        "allowConnections": true,
+        "xid": {
+          "age": 141,
+          "autovacuum": {
+            "threshold": 200000000,
+            "remaining": 199999859,
+            "past": false
+          },
+          "failsafe": {
+            "threshold": 1600000000,
+            "remaining": 1599999859,
+            "past": false
+          },
+          "stop": {
+            "threshold": 2144483647,
+            "remaining": 2144483506,
+            "past": false
+          },
+          "health": "ok"
+        },
+        "mxid": {
+          "age": 0,
+          "autovacuum": {
+            "threshold": 400000000,
+            "remaining": 400000000,
+            "past": false
+          },
+          "failsafe": {
+            "threshold": 1600000000,
+            "remaining": 1600000000,
+            "past": false
+          },
+          "stop": {
+            "threshold": 2144483647,
+            "remaining": 2144483647,
+            "past": false
+          },
+          "health": "ok"
+        }
+      },
+      {
+        "name": "postgres",
+        "allowConnections": true,
+        "xid": {
+          "age": 141,
+          "autovacuum": {
+            "threshold": 200000000,
+            "remaining": 199999859,
+            "past": false
+          },
+          "failsafe": {
+            "threshold": 1600000000,
+            "remaining": 1599999859,
+            "past": false
+          },
+          "stop": {
+            "threshold": 2144483647,
+            "remaining": 2144483506,
+            "past": false
+          },
+          "health": "ok"
+        },
+        "mxid": {
+          "age": 0,
+          "autovacuum": {
+            "threshold": 400000000,
+            "remaining": 400000000,
+            "past": false
+          },
+          "failsafe": {
+            "threshold": 1600000000,
+            "remaining": 1600000000,
+            "past": false
+          },
+          "stop": {
+            "threshold": 2144483647,
+            "remaining": 2144483647,
+            "past": false
+          },
+          "health": "ok"
+        }
+      },
+      {
+        "name": "template0",
+        "allowConnections": false,
+        "xid": {
+          "age": 141,
+          "autovacuum": {
+            "threshold": 200000000,
+            "remaining": 199999859,
+            "past": false
+          },
+          "failsafe": {
+            "threshold": 1600000000,
+            "remaining": 1599999859,
+            "past": false
+          },
+          "stop": {
+            "threshold": 2144483647,
+            "remaining": 2144483506,
+            "past": false
+          },
+          "health": "ok"
+        },
+        "mxid": {
+          "age": 0,
+          "autovacuum": {
+            "threshold": 400000000,
+            "remaining": 400000000,
+            "past": false
+          },
+          "failsafe": {
+            "threshold": 1600000000,
+            "remaining": 1600000000,
+            "past": false
+          },
+          "stop": {
+            "threshold": 2144483647,
+            "remaining": 2144483647,
+            "past": false
+          },
+          "health": "ok"
+        }
+      },
+      {
+        "name": "template1",
+        "allowConnections": true,
+        "xid": {
+          "age": 141,
+          "autovacuum": {
+            "threshold": 200000000,
+            "remaining": 199999859,
+            "past": false
+          },
+          "failsafe": {
+            "threshold": 1600000000,
+            "remaining": 1599999859,
+            "past": false
+          },
+          "stop": {
+            "threshold": 2144483647,
+            "remaining": 2144483506,
+            "past": false
+          },
+          "health": "ok"
+        },
+        "mxid": {
+          "age": 0,
+          "autovacuum": {
+            "threshold": 400000000,
+            "remaining": 400000000,
+            "past": false
+          },
+          "failsafe": {
+            "threshold": 1600000000,
+            "remaining": 1600000000,
+            "past": false
+          },
+          "stop": {
+            "threshold": 2144483647,
+            "remaining": 2144483647,
+            "past": false
+          },
+          "health": "ok"
+        }
+      }
+    ],
+    "tables": [
+      {
+        "database": "app",
+        "schema": "pg_catalog",
+        "name": "pg_attribute",
+        "kind": "table",
+        "reltuples": 3440,
+        "xid": {
+          "age": 141,
+          "autovacuum": {
+            "threshold": 200000000,
+            "remaining": 199999859,
+            "past": false
+          },
+          "failsafe": {
+            "threshold": 1600000000,
+            "remaining": 1599999859,
+            "past": false
+          },
+          "stop": {
+            "threshold": 2144483647,
+            "remaining": 2144483506,
+            "past": false
+          },
+          "health": "ok"
+        },
+        "mxidAge": 0,
+        "liveTuples": 3460,
+        "deadTuples": 180,
+        "autovacuumThreshold": 738,
+        "sinceAnalyzeSeconds": 1649.189968,
+        "autovacuumEnabled": true,
+        "keepUp": "unknown",
+        "keepUpText": "Not enough samples yet: the console needs three over a quarter of an hour.",
+        "health": "ok"
+      },
+      {
+        "database": "app",
+        "schema": "pg_catalog",
+        "name": "pg_auth_members",
+        "kind": "table",
+        "reltuples": 3,
+        "xid": {
+          "age": 141,
+          "autovacuum": {
+            "threshold": 200000000,
+            "remaining": 199999859,
+            "past": false
+          },
+          "failsafe": {
+            "threshold": 1600000000,
+            "remaining": 1599999859,
+            "past": false
+          },
+          "stop": {
+            "threshold": 2144483647,
+            "remaining": 2144483506,
+            "past": false
+          },
+          "health": "ok"
+        },
+        "mxidAge": 0,
+        "liveTuples": 4,
+        "deadTuples": 0,
+        "autovacuumThreshold": 50.6,
+        "sinceVacuumSeconds": 1750.456468,
+        "sinceAnalyzeSeconds": 1750.911565,
+        "autovacuumEnabled": true,
+        "keepUp": "unknown",
+        "keepUpText": "Not enough samples yet: the console needs three over a quarter of an hour.",
+        "health": "ok"
+      },
+      {
+        "database": "app",
+        "schema": "pg_catalog",
+        "name": "pg_authid",
+        "kind": "table",
+        "reltuples": 17,
+        "xid": {
+          "age": 141,
+          "autovacuum": {
+            "threshold": 200000000,
+            "remaining": 199999859,
+            "past": false
+          },
+          "failsafe": {
+            "threshold": 1600000000,
+            "remaining": 1599999859,
+            "past": false
+          },
+          "stop": {
+            "threshold": 2144483647,
+            "remaining": 2144483506,
+            "past": false
+          },
+          "health": "ok"
+        },
+        "mxidAge": 0,
+        "liveTuples": 18,
+        "deadTuples": 0,
+        "autovacuumThreshold": 53.4,
+        "sinceVacuumSeconds": 1750.861934,
+        "sinceAnalyzeSeconds": 1751.073267,
+        "autovacuumEnabled": true,
+        "keepUp": "unknown",
+        "keepUpText": "Not enough samples yet: the console needs three over a quarter of an hour.",
+        "health": "ok"
+      },
+      {
+        "database": "app",
+        "schema": "pg_catalog",
+        "name": "pg_class",
+        "kind": "table",
+        "reltuples": 478,
+        "xid": {
+          "age": 141,
+          "autovacuum": {
+            "threshold": 200000000,
+            "remaining": 199999859,
+            "past": false
+          },
+          "failsafe": {
+            "threshold": 1600000000,
+            "remaining": 1599999859,
+            "past": false
+          },
+          "stop": {
+            "threshold": 2144483647,
+            "remaining": 2144483506,
+            "past": false
+          },
+          "health": "ok"
+        },
+        "mxidAge": 0,
+        "liveTuples": 483,
+        "deadTuples": 9,
+        "autovacuumThreshold": 145.60000000000002,
+        "sinceAnalyzeSeconds": 1648.996186,
+        "autovacuumEnabled": true,
+        "keepUp": "unknown",
+        "keepUpText": "Not enough samples yet: the console needs three over a quarter of an hour.",
+        "health": "ok"
+      },
+      {
+        "database": "app",
+        "schema": "pg_catalog",
+        "name": "pg_default_acl",
+        "kind": "table",
+        "reltuples": 0,
+        "xid": {
+          "age": 141,
+          "autovacuum": {
+            "threshold": 200000000,
+            "remaining": 199999859,
+            "past": false
+          },
+          "failsafe": {
+            "threshold": 1600000000,
+            "remaining": 1599999859,
+            "past": false
+          },
+          "stop": {
+            "threshold": 2144483647,
+            "remaining": 2144483506,
+            "past": false
+          },
+          "health": "ok"
+        },
+        "mxidAge": 0,
+        "liveTuples": 0,
+        "deadTuples": 0,
+        "autovacuumThreshold": 50,
+        "autovacuumEnabled": true,
+        "keepUp": "unknown",
+        "keepUpText": "Not enough samples yet: the console needs three over a quarter of an hour.",
+        "health": "ok"
+      },
+      {
+        "database": "app",
+        "schema": "pg_catalog",
+        "name": "pg_depend",
+        "kind": "table",
+        "reltuples": 1886,
+        "xid": {
+          "age": 129,
+          "autovacuum": {
+            "threshold": 200000000,
+            "remaining": 199999871,
+            "past": false
+          },
+          "failsafe": {
+            "threshold": 1600000000,
+            "remaining": 1599999871,
+            "past": false
+          },
+          "stop": {
+            "threshold": 2144483647,
+            "remaining": 2144483518,
+            "past": false
+          },
+          "health": "ok"
+        },
+        "mxidAge": 0,
+        "liveTuples": 1896,
+        "deadTuples": 54,
+        "autovacuumThreshold": 427.20000000000005,
+        "sinceAnalyzeSeconds": 1648.773994,
+        "autovacuumEnabled": true,
+        "keepUp": "unknown",
+        "keepUpText": "Not enough samples yet: the console needs three over a quarter of an hour.",
+        "health": "ok"
+      },
+      {
+        "database": "app",
+        "schema": "pg_catalog",
+        "name": "pg_foreign_server",
+        "kind": "table",
+        "reltuples": 0,
+        "xid": {
+          "age": 141,
+          "autovacuum": {
+            "threshold": 200000000,
+            "remaining": 199999859,
+            "past": false
+          },
+          "failsafe": {
+            "threshold": 1600000000,
+            "remaining": 1599999859,
+            "past": false
+          },
+          "stop": {
+            "threshold": 2144483647,
+            "remaining": 2144483506,
+            "past": false
+          },
+          "health": "ok"
+        },
+        "mxidAge": 0,
+        "liveTuples": 0,
+        "deadTuples": 0,
+        "autovacuumThreshold": 50,
+        "autovacuumEnabled": true,
+        "keepUp": "unknown",
+        "keepUpText": "Not enough samples yet: the console needs three over a quarter of an hour.",
+        "health": "ok"
+      },
+      {
+        "database": "app",
+        "schema": "pg_catalog",
+        "name": "pg_proc",
+        "kind": "table",
+        "reltuples": 3413,
+        "xid": {
+          "age": 141,
+          "autovacuum": {
+            "threshold": 200000000,
+            "remaining": 199999859,
+            "past": false
+          },
+          "failsafe": {
+            "threshold": 1600000000,
+            "remaining": 1599999859,
+            "past": false
+          },
+          "stop": {
+            "threshold": 2144483647,
+            "remaining": 2144483506,
+            "past": false
+          },
+          "health": "ok"
+        },
+        "mxidAge": 0,
+        "liveTuples": 3,
+        "deadTuples": 10,
+        "autovacuumThreshold": 732.6,
+        "autovacuumEnabled": true,
+        "keepUp": "unknown",
+        "keepUpText": "Not enough samples yet: the console needs three over a quarter of an hour.",
+        "health": "ok"
+      },
+      {
+        "database": "app",
+        "schema": "pg_catalog",
+        "name": "pg_shdepend",
+        "kind": "table",
+        "reltuples": 0,
+        "xid": {
+          "age": 141,
+          "autovacuum": {
+            "threshold": 200000000,
+            "remaining": 199999859,
+            "past": false
+          },
+          "failsafe": {
+            "threshold": 1600000000,
+            "remaining": 1599999859,
+            "past": false
+          },
+          "stop": {
+            "threshold": 2144483647,
+            "remaining": 2144483506,
+            "past": false
+          },
+          "health": "ok"
+        },
+        "mxidAge": 0,
+        "liveTuples": 0,
+        "deadTuples": 0,
+        "autovacuumThreshold": 50,
+        "sinceVacuumSeconds": 1750.456202,
+        "sinceAnalyzeSeconds": 1750.911177,
+        "autovacuumEnabled": true,
+        "keepUp": "unknown",
+        "keepUpText": "Not enough samples yet: the console needs three over a quarter of an hour.",
+        "health": "ok"
+      },
+      {
+        "database": "app",
+        "schema": "pg_catalog",
+        "name": "pg_statistic",
+        "kind": "table",
+        "reltuples": 412,
+        "xid": {
+          "age": 141,
+          "autovacuum": {
+            "threshold": 200000000,
+            "remaining": 199999859,
+            "past": false
+          },
+          "failsafe": {
+            "threshold": 1600000000,
+            "remaining": 1599999859,
+            "past": false
+          },
+          "stop": {
+            "threshold": 2144483647,
+            "remaining": 2144483506,
+            "past": false
+          },
+          "health": "ok"
+        },
+        "mxidAge": 0,
+        "liveTuples": 4,
+        "deadTuples": 63,
+        "autovacuumThreshold": 132.4,
+        "autovacuumEnabled": true,
+        "keepUp": "unknown",
+        "keepUpText": "Not enough samples yet: the console needs three over a quarter of an hour.",
+        "health": "ok"
+      },
+      {
+        "database": "app",
+        "schema": "pg_catalog",
+        "name": "pg_tablespace",
+        "kind": "table",
+        "reltuples": 2,
+        "xid": {
+          "age": 141,
+          "autovacuum": {
+            "threshold": 200000000,
+            "remaining": 199999859,
+            "past": false
+          },
+          "failsafe": {
+            "threshold": 1600000000,
+            "remaining": 1599999859,
+            "past": false
+          },
+          "stop": {
+            "threshold": 2144483647,
+            "remaining": 2144483506,
+            "past": false
+          },
+          "health": "ok"
+        },
+        "mxidAge": 0,
+        "liveTuples": 2,
+        "deadTuples": 0,
+        "autovacuumThreshold": 50.4,
+        "sinceVacuumSeconds": 1750.464961,
+        "sinceAnalyzeSeconds": 1750.911901,
+        "autovacuumEnabled": true,
+        "keepUp": "unknown",
+        "keepUpText": "Not enough samples yet: the console needs three over a quarter of an hour.",
+        "health": "ok"
+      },
+      {
+        "database": "app",
+        "schema": "pg_catalog",
+        "name": "pg_type",
+        "kind": "table",
+        "reltuples": 621,
+        "xid": {
+          "age": 141,
+          "autovacuum": {
+            "threshold": 200000000,
+            "remaining": 199999859,
+            "past": false
+          },
+          "failsafe": {
+            "threshold": 1600000000,
+            "remaining": 1599999859,
+            "past": false
+          },
+          "stop": {
+            "threshold": 2144483647,
+            "remaining": 2144483506,
+            "past": false
+          },
+          "health": "ok"
+        },
+        "mxidAge": 0,
+        "liveTuples": 36,
+        "deadTuples": 10,
+        "autovacuumThreshold": 174.2,
+        "autovacuumEnabled": true,
+        "keepUp": "unknown",
+        "keepUpText": "Not enough samples yet: the console needs three over a quarter of an hour.",
+        "health": "ok"
+      },
+      {
+        "database": "app",
+        "schema": "public",
+        "name": "accounts",
+        "kind": "table",
+        "reltuples": 10000,
+        "xid": {
+          "age": 124,
+          "autovacuum": {
+            "threshold": 200000000,
+            "remaining": 199999876,
+            "past": false
+          },
+          "failsafe": {
+            "threshold": 1600000000,
+            "remaining": 1599999876,
+            "past": false
+          },
+          "stop": {
+            "threshold": 2144483647,
+            "remaining": 2144483523,
+            "past": false
+          },
+          "health": "ok"
+        },
+        "mxidAge": 0,
+        "liveTuples": 20000,
+        "deadTuples": 3005,
+        "autovacuumThreshold": 2050,
+        "sinceAnalyzeSeconds": 1705.488412,
+        "autovacuumEnabled": false,
+        "keepUp": "disabled",
+        "keepUpText": "autovacuum_enabled is off on this table and it is past its threshold: only an anti-wraparound autovacuum will visit it.",
+        "health": "warning"
+      },
+      {
+        "database": "app",
+        "schema": "public",
+        "name": "capped",
+        "kind": "table",
+        "reltuples": 10000,
+        "xid": {
+          "age": 120,
+          "autovacuum": {
+            "threshold": 200000000,
+            "remaining": 199999880,
+            "past": false
+          },
+          "failsafe": {
+            "threshold": 1600000000,
+            "remaining": 1599999880,
+            "past": false
+          },
+          "stop": {
+            "threshold": 2144483647,
+            "remaining": 2144483527,
+            "past": false
+          },
+          "health": "ok"
+        },
+        "mxidAge": 0,
+        "liveTuples": 20000,
+        "deadTuples": 2500,
+        "autovacuumThreshold": 500,
+        "sinceAnalyzeSeconds": 1705.422485,
+        "autovacuumEnabled": false,
+        "keepUp": "disabled",
+        "keepUpText": "autovacuum_enabled is off on this table and it is past its threshold: only an anti-wraparound autovacuum will visit it.",
+        "health": "warning"
+      },
+      {
+        "database": "app",
+        "schema": "public",
+        "name": "documents",
+        "kind": "table",
+        "xid": {
+          "age": 112,
+          "autovacuum": {
+            "threshold": 200000000,
+            "remaining": 199999888,
+            "past": false
+          },
+          "failsafe": {
+            "threshold": 1600000000,
+            "remaining": 1599999888,
+            "past": false
+          },
+          "stop": {
+            "threshold": 2144483647,
+            "remaining": 2144483535,
+            "past": false
+          },
+          "health": "ok"
+        },
+        "mxidAge": 0,
+        "liveTuples": 100,
+        "deadTuples": 300,
+        "autovacuumEnabled": false,
+        "keepUp": "unknown",
+        "keepUpText": "Not enough samples yet: the console needs three over a quarter of an hour.",
+        "health": "ok"
+      },
+      {
+        "database": "app",
+        "schema": "public",
+        "name": "fresh",
+        "kind": "table",
+        "xid": {
+          "age": 115,
+          "autovacuum": {
+            "threshold": 200000000,
+            "remaining": 199999885,
+            "past": false
+          },
+          "failsafe": {
+            "threshold": 1600000000,
+            "remaining": 1599999885,
+            "past": false
+          },
+          "stop": {
+            "threshold": 2144483647,
+            "remaining": 2144483532,
+            "past": false
+          },
+          "health": "ok"
+        },
+        "mxidAge": 0,
+        "liveTuples": 200,
+        "deadTuples": 2400,
+        "autovacuumEnabled": false,
+        "keepUp": "unknown",
+        "keepUpText": "Not enough samples yet: the console needs three over a quarter of an hour.",
+        "health": "ok"
+      },
+      {
+        "database": "app",
+        "schema": "pg_toast",
+        "name": "pg_toast_16447",
+        "kind": "toast",
+        "parentSchema": "public",
+        "parentTable": "documents",
+        "xid": {
+          "age": 112,
+          "autovacuum": {
+            "threshold": 200000000,
+            "remaining": 199999888,
+            "past": false
+          },
+          "failsafe": {
+            "threshold": 1600000000,
+            "remaining": 1599999888,
+            "past": false
+          },
+          "stop": {
+            "threshold": 2144483647,
+            "remaining": 2144483535,
+            "past": false
+          },
+          "health": "ok"
+        },
+        "mxidAge": 0,
+        "liveTuples": 400,
+        "deadTuples": 1200,
+        "autovacuumEnabled": false,
+        "keepUp": "unknown",
+        "keepUpText": "Not enough samples yet: the console needs three over a quarter of an hour.",
+        "health": "ok"
+      },
+      {
+        "database": "postgres",
+        "schema": "pg_catalog",
+        "name": "pg_attribute",
+        "kind": "table",
+        "reltuples": 3161,
+        "xid": {
+          "age": 141,
+          "autovacuum": {
+            "threshold": 200000000,
+            "remaining": 199999859,
+            "past": false
+          },
+          "failsafe": {
+            "threshold": 1600000000,
+            "remaining": 1599999859,
+            "past": false
+          },
+          "stop": {
+            "threshold": 2144483647,
+            "remaining": 2144483506,
+            "past": false
+          },
+          "health": "ok"
+        },
+        "mxidAge": 0,
+        "liveTuples": 0,
+        "deadTuples": 0,
+        "autovacuumThreshold": 682.2,
+        "autovacuumEnabled": true,
+        "keepUp": "unknown",
+        "keepUpText": "Not enough samples yet: the console needs three over a quarter of an hour.",
+        "health": "ok"
+      },
+      {
+        "database": "postgres",
+        "schema": "pg_catalog",
+        "name": "pg_auth_members",
+        "kind": "table",
+        "reltuples": 3,
+        "xid": {
+          "age": 141,
+          "autovacuum": {
+            "threshold": 200000000,
+            "remaining": 199999859,
+            "past": false
+          },
+          "failsafe": {
+            "threshold": 1600000000,
+            "remaining": 1599999859,
+            "past": false
+          },
+          "stop": {
+            "threshold": 2144483647,
+            "remaining": 2144483506,
+            "past": false
+          },
+          "health": "ok"
+        },
+        "mxidAge": 0,
+        "liveTuples": 4,
+        "deadTuples": 0,
+        "autovacuumThreshold": 50.6,
+        "sinceVacuumSeconds": 1750.587098,
+        "sinceAnalyzeSeconds": 1751.042195,
+        "autovacuumEnabled": true,
+        "keepUp": "unknown",
+        "keepUpText": "Not enough samples yet: the console needs three over a quarter of an hour.",
+        "health": "ok"
+      },
+      {
+        "database": "postgres",
+        "schema": "pg_catalog",
+        "name": "pg_authid",
+        "kind": "table",
+        "reltuples": 17,
+        "xid": {
+          "age": 141,
+          "autovacuum": {
+            "threshold": 200000000,
+            "remaining": 199999859,
+            "past": false
+          },
+          "failsafe": {
+            "threshold": 1600000000,
+            "remaining": 1599999859,
+            "past": false
+          },
+          "stop": {
+            "threshold": 2144483647,
+            "remaining": 2144483506,
+            "past": false
+          },
+          "health": "ok"
+        },
+        "mxidAge": 0,
+        "liveTuples": 18,
+        "deadTuples": 0,
+        "autovacuumThreshold": 53.4,
+        "sinceVacuumSeconds": 1750.992549,
+        "sinceAnalyzeSeconds": 1751.203883,
+        "autovacuumEnabled": true,
+        "keepUp": "unknown",
+        "keepUpText": "Not enough samples yet: the console needs three over a quarter of an hour.",
+        "health": "ok"
+      },
+      {
+        "database": "postgres",
+        "schema": "pg_catalog",
+        "name": "pg_class",
+        "kind": "table",
+        "reltuples": 415,
+        "xid": {
+          "age": 141,
+          "autovacuum": {
+            "threshold": 200000000,
+            "remaining": 199999859,
+            "past": false
+          },
+          "failsafe": {
+            "threshold": 1600000000,
+            "remaining": 1599999859,
+            "past": false
+          },
+          "stop": {
+            "threshold": 2144483647,
+            "remaining": 2144483506,
+            "past": false
+          },
+          "health": "ok"
+        },
+        "mxidAge": 0,
+        "liveTuples": 0,
+        "deadTuples": 0,
+        "autovacuumThreshold": 133,
+        "autovacuumEnabled": true,
+        "keepUp": "unknown",
+        "keepUpText": "Not enough samples yet: the console needs three over a quarter of an hour.",
+        "health": "ok"
+      },
+      {
+        "database": "postgres",
+        "schema": "pg_catalog",
+        "name": "pg_database",
+        "kind": "table",
+        "reltuples": 2,
+        "xid": {
+          "age": 138,
+          "autovacuum": {
+            "threshold": 200000000,
+            "remaining": 199999862,
+            "past": false
+          },
+          "failsafe": {
+            "threshold": 1600000000,
+            "remaining": 1599999862,
+            "past": false
+          },
+          "stop": {
+            "threshold": 2144483647,
+            "remaining": 2144483509,
+            "past": false
+          },
+          "health": "ok"
+        },
+        "mxidAge": 0,
+        "liveTuples": 7,
+        "deadTuples": 7,
+        "autovacuumThreshold": 50.4,
+        "sinceVacuumSeconds": 1749.935675,
+        "sinceAnalyzeSeconds": 1751.046811,
+        "autovacuumEnabled": true,
+        "keepUp": "unknown",
+        "keepUpText": "Not enough samples yet: the console needs three over a quarter of an hour.",
+        "health": "ok"
+      },
+      {
+        "database": "postgres",
+        "schema": "pg_catalog",
+        "name": "pg_default_acl",
+        "kind": "table",
+        "reltuples": 0,
+        "xid": {
+          "age": 141,
+          "autovacuum": {
+            "threshold": 200000000,
+            "remaining": 199999859,
+            "past": false
+          },
+          "failsafe": {
+            "threshold": 1600000000,
+            "remaining": 1599999859,
+            "past": false
+          },
+          "stop": {
+            "threshold": 2144483647,
+            "remaining": 2144483506,
+            "past": false
+          },
+          "health": "ok"
+        },
+        "mxidAge": 0,
+        "liveTuples": 0,
+        "deadTuples": 0,
+        "autovacuumThreshold": 50,
+        "autovacuumEnabled": true,
+        "keepUp": "unknown",
+        "keepUpText": "Not enough samples yet: the console needs three over a quarter of an hour.",
+        "health": "ok"
+      },
+      {
+        "database": "postgres",
+        "schema": "pg_catalog",
+        "name": "pg_foreign_server",
+        "kind": "table",
+        "reltuples": 0,
+        "xid": {
+          "age": 141,
+          "autovacuum": {
+            "threshold": 200000000,
+            "remaining": 199999859,
+            "past": false
+          },
+          "failsafe": {
+            "threshold": 1600000000,
+            "remaining": 1599999859,
+            "past": false
+          },
+          "stop": {
+            "threshold": 2144483647,
+            "remaining": 2144483506,
+            "past": false
+          },
+          "health": "ok"
+        },
+        "mxidAge": 0,
+        "liveTuples": 0,
+        "deadTuples": 0,
+        "autovacuumThreshold": 50,
+        "autovacuumEnabled": true,
+        "keepUp": "unknown",
+        "keepUpText": "Not enough samples yet: the console needs three over a quarter of an hour.",
+        "health": "ok"
+      },
+      {
+        "database": "postgres",
+        "schema": "pg_catalog",
+        "name": "pg_proc",
+        "kind": "table",
+        "reltuples": 3413,
+        "xid": {
+          "age": 141,
+          "autovacuum": {
+            "threshold": 200000000,
+            "remaining": 199999859,
+            "past": false
+          },
+          "failsafe": {
+            "threshold": 1600000000,
+            "remaining": 1599999859,
+            "past": false
+          },
+          "stop": {
+            "threshold": 2144483647,
+            "remaining": 2144483506,
+            "past": false
+          },
+          "health": "ok"
+        },
+        "mxidAge": 0,
+        "liveTuples": 0,
+        "deadTuples": 0,
+        "autovacuumThreshold": 732.6,
+        "autovacuumEnabled": true,
+        "keepUp": "unknown",
+        "keepUpText": "Not enough samples yet: the console needs three over a quarter of an hour.",
+        "health": "ok"
+      },
+      {
+        "database": "postgres",
+        "schema": "pg_catalog",
+        "name": "pg_shdepend",
+        "kind": "table",
+        "reltuples": 0,
+        "xid": {
+          "age": 141,
+          "autovacuum": {
+            "threshold": 200000000,
+            "remaining": 199999859,
+            "past": false
+          },
+          "failsafe": {
+            "threshold": 1600000000,
+            "remaining": 1599999859,
+            "past": false
+          },
+          "stop": {
+            "threshold": 2144483647,
+            "remaining": 2144483506,
+            "past": false
+          },
+          "health": "ok"
+        },
+        "mxidAge": 0,
+        "liveTuples": 0,
+        "deadTuples": 0,
+        "autovacuumThreshold": 50,
+        "sinceVacuumSeconds": 1750.586821,
+        "sinceAnalyzeSeconds": 1751.041795,
+        "autovacuumEnabled": true,
+        "keepUp": "unknown",
+        "keepUpText": "Not enough samples yet: the console needs three over a quarter of an hour.",
+        "health": "ok"
+      },
+      {
+        "database": "postgres",
+        "schema": "pg_catalog",
+        "name": "pg_tablespace",
+        "kind": "table",
+        "reltuples": 2,
+        "xid": {
+          "age": 141,
+          "autovacuum": {
+            "threshold": 200000000,
+            "remaining": 199999859,
+            "past": false
+          },
+          "failsafe": {
+            "threshold": 1600000000,
+            "remaining": 1599999859,
+            "past": false
+          },
+          "stop": {
+            "threshold": 2144483647,
+            "remaining": 2144483506,
+            "past": false
+          },
+          "health": "ok"
+        },
+        "mxidAge": 0,
+        "liveTuples": 2,
+        "deadTuples": 0,
+        "autovacuumThreshold": 50.4,
+        "sinceVacuumSeconds": 1750.595582,
+        "sinceAnalyzeSeconds": 1751.04252,
+        "autovacuumEnabled": true,
+        "keepUp": "unknown",
+        "keepUpText": "Not enough samples yet: the console needs three over a quarter of an hour.",
+        "health": "ok"
+      },
+      {
+        "database": "postgres",
+        "schema": "pg_catalog",
+        "name": "pg_type",
+        "kind": "table",
+        "reltuples": 621,
+        "xid": {
+          "age": 141,
+          "autovacuum": {
+            "threshold": 200000000,
+            "remaining": 199999859,
+            "past": false
+          },
+          "failsafe": {
+            "threshold": 1600000000,
+            "remaining": 1599999859,
+            "past": false
+          },
+          "stop": {
+            "threshold": 2144483647,
+            "remaining": 2144483506,
+            "past": false
+          },
+          "health": "ok"
+        },
+        "mxidAge": 0,
+        "liveTuples": 0,
+        "deadTuples": 0,
+        "autovacuumThreshold": 174.2,
+        "autovacuumEnabled": true,
+        "keepUp": "unknown",
+        "keepUpText": "Not enough samples yet: the console needs three over a quarter of an hour.",
+        "health": "ok"
+      }
+    ],
+    "vacuums": [],
+    "preparedXacts": [
+      {
+        "database": "app",
+        "count": 1,
+        "oldestSeconds": 605.147601,
+        "oldestXidAge": 6
+      }
+    ],
+    "horizons": {
+      "slotCatalogXminAge": 70,
+      "backendXminAge": 5,
+      "backendXidAge": 4,
+      "preparedXidAge": 6,
+      "holder": "catalogSlot"
+    },
+    "partial": true,
+    "partialText": "pgtoolbox_tables failed on database billing on orders-1: its rows are missing; pgtoolbox_vacuum_progress failed on database billing on orders-1: its rows are missing (see the exporter's log).",
+    "provenance": {
+      "origin": "instance",
+      "source": "insight pack, orders-1:9187/metrics",
+      "observedAt": "2026-10-29T12:00:00Z"
+    }
+  },
+  "statements": {
+    "available": true,
+    "instance": "orders-1",
+    "top": [
+      {
+        "queryId": "-5189169349750812801",
+        "database": "app",
+        "role": "postgres",
+        "calls": 3,
+        "totalMillis": 773919.511256,
+        "meanMillis": 257973.17041866668,
+        "rows": 0,
+        "sharedBlksHit": 39,
+        "sharedBlksRead": 0,
+        "hitRatio": 1
+      },
+      {
+        "queryId": "-353120423515768679",
+        "database": "many",
+        "role": "postgres",
+        "calls": 1,
+        "totalMillis": 161927.488459,
+        "meanMillis": 161927.488459,
+        "rows": 0,
+        "sharedBlksHit": 15192581,
+        "sharedBlksRead": 81,
+        "hitRatio": 0.9999946684787695
+      },
+      {
+        "queryId": "-2241898439360258569",
+        "database": "many",
+        "role": "cnpg_metrics_exporter",
+        "calls": 3,
+        "totalMillis": 26068.434734000002,
+        "meanMillis": 8689.478244666667,
+        "rows": 3,
+        "sharedBlksHit": 2094615,
+        "sharedBlksRead": 0,
+        "hitRatio": 1
+      },
+      {
+        "queryId": "8265599554238890362",
+        "database": "app",
+        "role": "cnpg_metrics_exporter",
+        "calls": 5,
+        "totalMillis": 20313.522774999998,
+        "meanMillis": 4062.7045549999993,
+        "rows": 23,
+        "sharedBlksHit": 111,
+        "sharedBlksRead": 0,
+        "hitRatio": 1
+      },
+      {
+        "queryId": "7108655650514479191",
+        "database": "many",
+        "role": "cnpg_metrics_exporter",
+        "calls": 6,
+        "totalMillis": 4708.1176430000005,
+        "meanMillis": 784.6862738333334,
+        "rows": 6,
+        "sharedBlksHit": 51672,
+        "sharedBlksRead": 0,
+        "hitRatio": 1
+      },
+      {
+        "queryId": "519751488986518701",
+        "database": "many",
+        "role": "cnpg_metrics_exporter",
+        "calls": 1,
+        "totalMillis": 4022.579941,
+        "meanMillis": 4022.579941,
+        "rows": 0,
+        "sharedBlksHit": 19185,
+        "sharedBlksRead": 1051,
+        "hitRatio": 0.9480628582723859
+      },
+      {
+        "queryId": "8122541219436247455",
+        "database": "many",
+        "role": "cnpg_metrics_exporter",
+        "calls": 3,
+        "totalMillis": 3635.591138,
+        "meanMillis": 1211.8637126666665,
+        "rows": 3,
+        "sharedBlksHit": 58667,
+        "sharedBlksRead": 0,
+        "hitRatio": 1
+      },
+      {
+        "queryId": "-5415073438411906986",
+        "database": "many",
+        "role": "cnpg_metrics_exporter",
+        "calls": 1,
+        "totalMillis": 2704.017078,
+        "meanMillis": 2704.017078,
+        "rows": 0,
+        "sharedBlksHit": 11727,
+        "sharedBlksRead": 0,
+        "hitRatio": 1
+      },
+      {
+        "queryId": "1938081247458001206",
+        "database": "many",
+        "role": "cnpg_metrics_exporter",
+        "calls": 3,
+        "totalMillis": 2066.682919,
+        "meanMillis": 688.8943063333332,
+        "rows": 3,
+        "sharedBlksHit": 42783,
+        "sharedBlksRead": 0,
+        "hitRatio": 1
+      },
+      {
+        "queryId": "6506866387010743917",
+        "database": "app",
+        "role": "postgres",
+        "calls": 5,
+        "totalMillis": 1986.8814959999997,
+        "meanMillis": 397.37629919999995,
+        "rows": 0,
+        "sharedBlksHit": 0,
+        "sharedBlksRead": 0
+      },
+      {
+        "queryId": "6372379697777361202",
+        "database": "many",
+        "role": "cnpg_metrics_exporter",
+        "calls": 1,
+        "totalMillis": 1929.464426,
+        "meanMillis": 1929.464426,
+        "rows": 0,
+        "sharedBlksHit": 9112,
+        "sharedBlksRead": 0,
+        "hitRatio": 1
+      },
+      {
+        "queryId": "5880267909236852833",
+        "database": "many",
+        "role": "cnpg_metrics_exporter",
+        "calls": 3,
+        "totalMillis": 1590.276053,
+        "meanMillis": 530.0920176666667,
+        "rows": 3,
+        "sharedBlksHit": 33051,
+        "sharedBlksRead": 0,
+        "hitRatio": 1
+      },
+      {
+        "queryId": "-8023287904071049906",
+        "database": "many",
+        "role": "cnpg_metrics_exporter",
+        "calls": 1,
+        "totalMillis": 1435.031711,
+        "meanMillis": 1435.031711,
+        "rows": 0,
+        "sharedBlksHit": 14850,
+        "sharedBlksRead": 0,
+        "hitRatio": 1
+      },
+      {
+        "queryId": "-8949183411391532826",
+        "database": "many",
+        "role": "cnpg_metrics_exporter",
+        "calls": 4,
+        "totalMillis": 892.502394,
+        "meanMillis": 223.1255985,
+        "rows": 4,
+        "sharedBlksHit": 86761,
+        "sharedBlksRead": 149,
+        "hitRatio": 0.9982855827867909
+      },
+      {
+        "queryId": "9152721819296420752",
+        "database": "postgres",
+        "role": "postgres",
+        "calls": 1,
+        "totalMillis": 829.873497,
+        "meanMillis": 829.873497,
+        "rows": 0,
+        "sharedBlksHit": 1038,
+        "sharedBlksRead": 0,
+        "hitRatio": 1
+      },
+      {
+        "queryId": "3710414940099807119",
+        "database": "many",
+        "role": "cnpg_metrics_exporter",
+        "calls": 4,
+        "totalMillis": 704.836587,
+        "meanMillis": 176.20914675,
+        "rows": 4,
+        "sharedBlksHit": 34325,
+        "sharedBlksRead": 0,
+        "hitRatio": 1
+      },
+      {
+        "queryId": "-3909686466419326529",
+        "database": "many",
+        "role": "cnpg_metrics_exporter",
+        "calls": 2,
+        "totalMillis": 360.459944,
+        "meanMillis": 180.229972,
+        "rows": 2,
+        "sharedBlksHit": 8168,
+        "sharedBlksRead": 0,
+        "hitRatio": 1
+      },
+      {
+        "queryId": "2342631845636786032",
+        "database": "many",
+        "role": "cnpg_metrics_exporter",
+        "calls": 4,
+        "totalMillis": 293.218258,
+        "meanMillis": 73.3045645,
+        "rows": 4,
+        "sharedBlksHit": 30640,
+        "sharedBlksRead": 0,
+        "hitRatio": 1
+      },
+      {
+        "queryId": "-6770023142295724926",
+        "database": "many",
+        "role": "postgres",
+        "calls": 2,
+        "totalMillis": 254.29245600000002,
+        "meanMillis": 127.14622800000001,
+        "rows": 2,
+        "sharedBlksHit": 5921,
+        "sharedBlksRead": 2247,
+        "hitRatio": 0.7249020568070519
+      },
+      {
+        "queryId": "-6271415109046463647",
+        "database": "many",
+        "role": "cnpg_metrics_exporter",
+        "calls": 3,
+        "totalMillis": 242.162618,
+        "meanMillis": 80.72087266666666,
+        "rows": 3,
+        "sharedBlksHit": 21615,
+        "sharedBlksRead": 0,
+        "hitRatio": 1
+      },
+      {
+        "queryId": "-5483399772726669645",
+        "database": "billing",
+        "role": "cnpg_metrics_exporter",
+        "calls": 5,
+        "totalMillis": 219.65277500000002,
+        "meanMillis": 43.930555000000005,
+        "rows": 10,
+        "sharedBlksHit": 4,
+        "sharedBlksRead": 1,
+        "hitRatio": 0.8
+      },
+      {
+        "queryId": "2629278929057018822",
+        "database": "many",
+        "role": "cnpg_metrics_exporter",
+        "calls": 2,
+        "totalMillis": 199.651451,
+        "meanMillis": 99.8257255,
+        "rows": 2,
+        "sharedBlksHit": 8174,
+        "sharedBlksRead": 0,
+        "hitRatio": 1
+      },
+      {
+        "queryId": "-7188368892800232682",
+        "database": "postgres",
+        "role": "postgres",
+        "calls": 1,
+        "totalMillis": 187.132962,
+        "meanMillis": 187.132962,
+        "rows": 0,
+        "sharedBlksHit": 282,
+        "sharedBlksRead": 733,
+        "hitRatio": 0.27783251231527095
+      },
+      {
+        "queryId": "-5144790355923075464",
+        "database": "many",
+        "role": "cnpg_metrics_exporter",
+        "calls": 4,
+        "totalMillis": 182.000515,
+        "meanMillis": 45.50012875,
+        "rows": 4,
+        "sharedBlksHit": 16336,
+        "sharedBlksRead": 0,
+        "hitRatio": 1
+      },
+      {
+        "queryId": "-5483399772726669645",
+        "database": "app",
+        "role": "cnpg_metrics_exporter",
+        "calls": 5,
+        "totalMillis": 110.490644,
+        "meanMillis": 22.0981288,
+        "rows": 10,
+        "sharedBlksHit": 5,
+        "sharedBlksRead": 0,
+        "hitRatio": 1
+      },
+      {
+        "queryId": "-6856386675344785619",
+        "database": "app",
+        "role": "cnpg_metrics_exporter",
+        "calls": 5,
+        "totalMillis": 108.271434,
+        "meanMillis": 21.6542868,
+        "rows": 1440,
+        "sharedBlksHit": 55,
+        "sharedBlksRead": 0,
+        "hitRatio": 1
+      },
+      {
+        "queryId": "-2530022682202112970",
+        "database": "app",
+        "role": "cnpg_metrics_exporter",
+        "calls": 5,
+        "totalMillis": 101.551894,
+        "meanMillis": 20.310378800000002,
+        "rows": 75,
+        "sharedBlksHit": 55,
+        "sharedBlksRead": 0,
+        "hitRatio": 1
+      },
+      {
+        "queryId": "-3215843564156331710",
+        "database": "app",
+        "role": "postgres",
+        "calls": 1,
+        "totalMillis": 95.588087,
+        "meanMillis": 95.588087,
+        "rows": 1,
+        "sharedBlksHit": 3,
+        "sharedBlksRead": 0,
+        "hitRatio": 1
+      },
+      {
+        "queryId": "1615086128416691618",
+        "database": "app",
+        "role": "cnpg_metrics_exporter",
+        "calls": 2,
+        "totalMillis": 66.21668,
+        "meanMillis": 33.10834,
+        "rows": 46,
+        "sharedBlksHit": 756,
+        "sharedBlksRead": 0,
+        "hitRatio": 1
+      },
+      {
+        "queryId": "-5483399772726669645",
+        "database": "postgres",
+        "role": "cnpg_metrics_exporter",
+        "calls": 5,
+        "totalMillis": 62.305496,
+        "meanMillis": 12.4610992,
+        "rows": 5,
+        "sharedBlksHit": 3,
+        "sharedBlksRead": 2,
+        "hitRatio": 0.6
+      },
+      {
+        "queryId": "2669376225148175049",
+        "database": "app",
+        "role": "postgres",
+        "calls": 6,
+        "totalMillis": 49.533010999999995,
+        "meanMillis": 8.255501833333332,
+        "rows": 6,
+        "sharedBlksHit": 82,
+        "sharedBlksRead": 6,
+        "hitRatio": 0.9318181818181818
+      },
+      {
+        "queryId": "4077320186128675737",
+        "database": "postgres",
+        "role": "postgres",
+        "calls": 1,
+        "totalMillis": 48.005015,
+        "meanMillis": 48.005015,
+        "rows": 0,
+        "sharedBlksHit": 961,
+        "sharedBlksRead": 8,
+        "hitRatio": 0.9917440660474717
+      },
+      {
+        "queryId": "8002682334184838721",
+        "database": "app",
+        "role": "postgres",
+        "calls": 30,
+        "totalMillis": 46.787524000000005,
+        "meanMillis": 1.5595841333333336,
+        "rows": 30,
+        "sharedBlksHit": 65150,
+        "sharedBlksRead": 0,
+        "hitRatio": 1
+      },
+      {
+        "queryId": "3646700873791771801",
+        "database": "billing",
+        "role": "postgres",
+        "calls": 1,
+        "totalMillis": 37.214552,
+        "meanMillis": 37.214552,
+        "rows": 0,
+        "sharedBlksHit": 4318,
+        "sharedBlksRead": 0,
+        "hitRatio": 1
+      },
+      {
+        "queryId": "4677759879394730639",
+        "database": "app",
+        "role": "cnpg_metrics_exporter",
+        "calls": 5,
+        "totalMillis": 32.968109,
+        "meanMillis": 6.593621799999999,
+        "rows": 15,
+        "sharedBlksHit": 103,
+        "sharedBlksRead": 3,
+        "hitRatio": 0.9716981132075472
+      },
+      {
+        "queryId": "749854708690436522",
+        "database": "app",
+        "role": "postgres",
+        "calls": 1,
+        "totalMillis": 29.838977,
+        "meanMillis": 29.838977,
+        "rows": 1,
+        "sharedBlksHit": 42,
+        "sharedBlksRead": 3,
+        "hitRatio": 0.9333333333333333
+      },
+      {
+        "queryId": "-6275965042966935963",
+        "database": "postgres",
+        "role": "postgres",
+        "calls": 3,
+        "totalMillis": 28.744760999999997,
+        "meanMillis": 9.581586999999999,
+        "rows": 0,
+        "sharedBlksHit": 59,
+        "sharedBlksRead": 4,
+        "hitRatio": 0.9365079365079365
+      },
+      {
+        "queryId": "-1395485376456424005",
+        "database": "app",
+        "role": "cnpg_metrics_exporter",
+        "calls": 4,
+        "totalMillis": 23.239504999999998,
+        "meanMillis": 5.809876249999999,
+        "rows": 4,
+        "sharedBlksHit": 0,
+        "sharedBlksRead": 0
+      },
+      {
+        "queryId": "5101709062240780526",
+        "database": "app",
+        "role": "postgres",
+        "calls": 1,
+        "totalMillis": 22.833066,
+        "meanMillis": 22.833066,
+        "rows": 10000,
+        "sharedBlksHit": 29721,
+        "sharedBlksRead": 1,
+        "hitRatio": 0.9999663548886347
+      },
+      {
+        "queryId": "3144960672493226879",
+        "database": "billing",
+        "role": "postgres",
+        "calls": 1,
+        "totalMillis": 22.522038000000002,
+        "meanMillis": 22.522038000000002,
+        "rows": 5000,
+        "sharedBlksHit": 24264,
+        "sharedBlksRead": 2,
+        "hitRatio": 0.9999175801533009
+      }
+    ],
+    "comparable": false,
+    "comparisonText": "No regression comparison yet: needs 25 hours of retained samples on the same primary; the console has kept none (samples live in memory and restart empty).",
+    "coveredSeconds": 0,
+    "needsSeconds": 90000,
+    "regressions": [],
+    "deallocations": 0,
+    "maxStatements": 5000,
+    "statsResetAt": "2026-11-03T22:12:18Z",
+    "textQuery": "SELECT query FROM pg_stat_statements WHERE queryid = QUERYID LIMIT 1;",
+    "provenance": {
+      "origin": "instance",
+      "source": "insight pack, orders-1:9187/metrics",
+      "observedAt": "2026-10-29T12:00:00Z"
+    },
+    "regressionRatio": 2,
+    "noBaseline": 0,
+    "restarted": 0,
+    "partial": false
+  },
+  "indexes": {
+    "available": true,
+    "instance": "orders-1",
+    "unused": [
+      {
+        "database": "billing",
+        "schema": "public",
+        "table": "invoices",
+        "name": "invoices_issued",
+        "sizeBytes": 73728,
+        "scans": 0,
+        "unique": false,
+        "backsConstraint": false,
+        "fkSupport": false
+      },
+      {
+        "database": "app",
+        "schema": "public",
+        "table": "events_2026",
+        "name": "events_2026_at_idx",
+        "sizeBytes": 8192,
+        "scans": 0,
+        "unique": false,
+        "backsConstraint": false,
+        "fkSupport": false
+      },
+      {
+        "database": "app",
+        "schema": "public",
+        "table": "orders",
+        "name": "orders_closed",
+        "sizeBytes": 8192,
+        "scans": 0,
+        "unique": false,
+        "backsConstraint": false,
+        "fkSupport": false
+      },
+      {
+        "database": "app",
+        "schema": "public",
+        "table": "orders",
+        "name": "orders_created",
+        "sizeBytes": 8192,
+        "scans": 0,
+        "unique": false,
+        "backsConstraint": false,
+        "fkSupport": false
+      },
+      {
+        "database": "app",
+        "schema": "public",
+        "table": "orders",
+        "name": "orders_created_desc",
+        "sizeBytes": 8192,
+        "scans": 0,
+        "unique": false,
+        "backsConstraint": false,
+        "fkSupport": false
+      },
+      {
+        "database": "app",
+        "schema": "public",
+        "table": "orders",
+        "name": "orders_customer_idx",
+        "sizeBytes": 8192,
+        "scans": 0,
+        "unique": false,
+        "backsConstraint": false,
+        "fkSupport": true
+      },
+      {
+        "database": "app",
+        "schema": "public",
+        "table": "orders",
+        "name": "orders_customer_idx2",
+        "sizeBytes": 8192,
+        "scans": 0,
+        "unique": false,
+        "backsConstraint": false,
+        "fkSupport": true
+      },
+      {
+        "database": "app",
+        "schema": "public",
+        "table": "orders",
+        "name": "orders_lower_note",
+        "sizeBytes": 8192,
+        "scans": 0,
+        "unique": false,
+        "backsConstraint": false,
+        "fkSupport": false
+      },
+      {
+        "database": "app",
+        "schema": "public",
+        "table": "orders",
+        "name": "orders_lower_note2",
+        "sizeBytes": 8192,
+        "scans": 0,
+        "unique": false,
+        "backsConstraint": false,
+        "fkSupport": false
+      },
+      {
+        "database": "app",
+        "schema": "public",
+        "table": "orders",
+        "name": "orders_note_c",
+        "sizeBytes": 8192,
+        "scans": 0,
+        "unique": false,
+        "backsConstraint": false,
+        "fkSupport": false
+      },
+      {
+        "database": "app",
+        "schema": "public",
+        "table": "orders",
+        "name": "orders_note_pattern",
+        "sizeBytes": 8192,
+        "scans": 0,
+        "unique": false,
+        "backsConstraint": false,
+        "fkSupport": false
+      },
+      {
+        "database": "app",
+        "schema": "public",
+        "table": "orders",
+        "name": "orders_open",
+        "sizeBytes": 8192,
+        "scans": 0,
+        "unique": false,
+        "backsConstraint": false,
+        "fkSupport": false
+      },
+      {
+        "database": "app",
+        "schema": "public",
+        "table": "orders",
+        "name": "orders_open2",
+        "sizeBytes": 8192,
+        "scans": 0,
+        "unique": false,
+        "backsConstraint": false,
+        "fkSupport": false
+      },
+      {
+        "database": "app",
+        "schema": "public",
+        "table": "orders",
+        "name": "orders_upper_note",
+        "sizeBytes": 8192,
+        "scans": 0,
+        "unique": false,
+        "backsConstraint": false,
+        "fkSupport": false
+      },
+      {
+        "database": "app",
+        "schema": "public",
+        "table": "rooms",
+        "name": "rooms_r",
+        "sizeBytes": 8192,
+        "scans": 0,
+        "unique": false,
+        "backsConstraint": false,
+        "fkSupport": false
+      }
+    ],
+    "invalid": [
+      {
+        "database": "app",
+        "schema": "public",
+        "table": "broken",
+        "name": "broken_a",
+        "sizeBytes": 0,
+        "scans": 0,
+        "unique": true,
+        "backsConstraint": false,
+        "fkSupport": false
+      }
+    ],
+    "duplicate": [
+      {
+        "database": "app",
+        "schema": "public",
+        "table": "customers",
+        "name": "customers_email_key2",
+        "duplicateOf": "customers_email_key",
+        "sizeBytes": 8192,
+        "scans": 0,
+        "unique": true,
+        "backsConstraint": true,
+        "droppable": false
+      },
+      {
+        "database": "app",
+        "schema": "public",
+        "table": "customers",
+        "name": "customers_id_copy",
+        "duplicateOf": "customers_pkey",
+        "sizeBytes": 8192,
+        "scans": 0,
+        "unique": true,
+        "backsConstraint": false,
+        "droppable": true
+      },
+      {
+        "database": "app",
+        "schema": "public",
+        "table": "orders",
+        "name": "orders_customer_idx2",
+        "duplicateOf": "orders_customer_idx",
+        "sizeBytes": 8192,
+        "scans": 0,
+        "unique": false,
+        "backsConstraint": false,
+        "droppable": true
+      },
+      {
+        "database": "app",
+        "schema": "public",
+        "table": "orders",
+        "name": "orders_lower_note2",
+        "duplicateOf": "orders_lower_note",
+        "sizeBytes": 8192,
+        "scans": 0,
+        "unique": false,
+        "backsConstraint": false,
+        "droppable": true
+      },
+      {
+        "database": "app",
+        "schema": "public",
+        "table": "orders",
+        "name": "orders_open2",
+        "duplicateOf": "orders_open",
+        "sizeBytes": 8192,
+        "scans": 0,
+        "unique": false,
+        "backsConstraint": false,
+        "droppable": true
+      },
+      {
+        "database": "app",
+        "schema": "public",
+        "table": "products",
+        "name": "products_sku_b",
+        "duplicateOf": "products_sku_a",
+        "sizeBytes": 8192,
+        "scans": 0,
+        "unique": true,
+        "backsConstraint": false,
+        "droppable": true
+      },
+      {
+        "database": "app",
+        "schema": "public",
+        "table": "replid",
+        "name": "replid_id",
+        "duplicateOf": "replid_id2",
+        "sizeBytes": 8192,
+        "scans": 0,
+        "unique": true,
+        "backsConstraint": false,
+        "droppable": true
+      },
+      {
+        "database": "app",
+        "schema": "public",
+        "table": "rooms",
+        "name": "rooms_r",
+        "duplicateOf": "rooms_r_excl",
+        "sizeBytes": 8192,
+        "scans": 0,
+        "unique": false,
+        "backsConstraint": false,
+        "droppable": true
+      },
+      {
+        "database": "app",
+        "schema": "public",
+        "table": "vouchers",
+        "name": "vouchers_code_first",
+        "duplicateOf": "vouchers_code_key",
+        "sizeBytes": 8192,
+        "scans": 0,
+        "unique": true,
+        "backsConstraint": false,
+        "droppable": true
+      }
+    ],
+    "partial": false,
+    "provenance": {
+      "origin": "instance",
+      "source": "insight pack, orders-1:9187/metrics",
+      "observedAt": "2026-10-29T12:00:00Z"
+    }
+  },
+  "connections": {
+    "available": true,
+    "instances": [
+      {
+        "instance": "orders-1",
+        "primary": true,
+        "client": 10,
+        "maxConnections": 100,
+        "reserved": 3,
+        "usable": 97,
+        "share": 0.10309278350515463,
+        "active": 3,
+        "idleInTransaction": 2,
+        "idleInTransactionMaxSeconds": 6.368643,
+        "lockWaiting": 3,
+        "maxXactAgeSeconds": 6.36917,
+        "idleInTransactionSessionTimeoutSeconds": 0,
+        "groups": [
+          {
+            "database": "app",
+            "application": "cnpg_metrics_exporter",
+            "state": "idle",
+            "sessions": 10,
+            "maxStateAgeSeconds": 0.453238
+          },
+          {
+            "database": "billing",
+            "application": "cnpg_metrics_exporter",
+            "state": "idle",
+            "sessions": 2,
+            "maxStateAgeSeconds": 0.303967
+          },
+          {
+            "database": "postgres",
+            "application": "cnpg_metrics_exporter",
+            "state": "idle",
+            "sessions": 2,
+            "maxStateAgeSeconds": 0.286848
+          },
+          {
+            "database": "app",
+            "application": "billing-batch",
+            "state": "idle in transaction",
+            "sessions": 1,
+            "maxStateAgeSeconds": 6.642466
+          },
+          {
+            "database": "app",
+            "application": "checkout",
+            "state": "active",
+            "sessions": 1,
+            "maxStateAgeSeconds": 5.610541
+          },
+          {
+            "database": "billing",
+            "application": "ddl",
+            "state": "idle in transaction",
+            "sessions": 1,
+            "maxStateAgeSeconds": 2.599319
+          },
+          {
+            "database": "app",
+            "application": "migrate",
+            "state": "active",
+            "sessions": 1,
+            "maxStateAgeSeconds": 4.589765
+          },
+          {
+            "database": "app",
+            "application": "psql",
+            "state": "active",
+            "sessions": 1,
+            "maxStateAgeSeconds": 6.636933
+          }
+        ],
+        "health": "ok",
+        "provenance": {
+          "origin": "instance",
+          "source": "insight pack, orders-1:9187/metrics",
+          "observedAt": "2026-10-29T12:00:00Z"
+        }
+      }
+    ],
+    "partial": false
+  },
+  "blocking": {
+    "available": true,
+    "minRefreshSeconds": 1,
+    "instances": [
+      {
+        "instance": "orders-1",
+        "primary": true,
+        "waiting": 3,
+        "roots": [
+          {
+            "pid": 917,
+            "database": "app",
+            "user": "postgres",
+            "application": "billing-batch",
+            "state": "idle in transaction",
+            "waitEventType": "Client",
+            "waitEvent": "ClientRead",
+            "backendType": "client backend",
+            "queryId": "2157304985117728361",
+            "xactAgeSeconds": 6.407462,
+            "stateAgeSeconds": 6.406939,
+            "blocked": 3,
+            "waiters": [
+              {
+                "pid": 925,
+                "database": "app",
+                "user": "postgres",
+                "application": "checkout",
+                "state": "active",
+                "waitEventType": "Lock",
+                "waitEvent": "relation",
+                "backendType": "client backend",
+                "waitSeconds": 5.374856,
+                "xactAgeSeconds": 5.374964,
+                "stateAgeSeconds": 5.374963,
+                "blocked": 1,
+                "waiters": [
+                  {
+                    "pid": 932,
+                    "database": "app",
+                    "user": "postgres",
+                    "application": "migrate",
+                    "state": "active",
+                    "waitEventType": "Lock",
+                    "waitEvent": "relation",
+                    "backendType": "client backend",
+                    "queryId": "-5189169349750812801",
+                    "waitSeconds": 4.353812,
+                    "xactAgeSeconds": 4.354276,
+                    "stateAgeSeconds": 4.354098,
+                    "blocked": 0,
+                    "waiters": []
+                  }
+                ]
+              },
+              {
+                "pid": 932,
+                "database": "app",
+                "user": "postgres",
+                "application": "migrate",
+                "state": "active",
+                "waitEventType": "Lock",
+                "waitEvent": "relation",
+                "backendType": "client backend",
+                "queryId": "-5189169349750812801",
+                "waitSeconds": 4.353812,
+                "xactAgeSeconds": 4.354276,
+                "stateAgeSeconds": 4.354098,
+                "blocked": 0,
+                "waiters": []
+              }
+            ]
+          },
+          {
+            "pid": 0,
+            "prepared": true,
+            "backendType": "prepared transaction",
+            "blocked": 1,
+            "waiters": [
+              {
+                "pid": 918,
+                "database": "app",
+                "user": "postgres",
+                "application": "psql",
+                "state": "active",
+                "waitEventType": "Lock",
+                "waitEvent": "transactionid",
+                "backendType": "client backend",
+                "queryId": "2669376225148175049",
+                "waitSeconds": 6.400425,
+                "xactAgeSeconds": 6.401301,
+                "stateAgeSeconds": 6.4013,
+                "blocked": 0,
+                "waiters": []
+              }
+            ]
+          }
+        ],
+        "dataAgeSeconds": 0,
+        "provenance": {
+          "origin": "instance",
+          "source": "insight pack, orders-1:9187/metrics",
+          "observedAt": "2026-10-29T12:00:00Z"
+        }
+      }
+    ],
+    "partial": false
+  },
+  "sources": [],
+  "blindSpots": [
+    {
+      "id": "insight.primaryOnly",
+      "panel": "insight",
+      "text": "Wraparound, tables, indexes and statements are read on the primary only: an index read as unused counts primary scans, and the replicas' pg_stat_statements are not shown."
+    },
+    {
+      "id": "insight.noStatementText",
+      "panel": "insight",
+      "text": "Statement text never leaves the database: the console shows the queryid, and pgAdmin shows the text."
+    },
+    {
+      "id": "insight.inMemoryHistory",
+      "panel": "insight",
+      "text": "Consumption rates, autovacuum verdicts and regressions rest on samples the console keeps in memory: they start again when the console restarts."
+    },
+    {
+      "id": "insight.topStatementsOnly",
+      "panel": "insight",
+      "text": "The console keeps each hour's costliest statements only: a statement that entered them lately has no baseline a day earlier and is not compared."
+    },
+    {
+      "id": "insight.exporterCache",
+      "panel": "insight",
+      "text": "The exporter caches its custom queries for the Cluster's metricsQueriesTTL (30 s by default): a refreshed lock graph can be that old."
+    },
+    {
+      "id": "insight.multixactMembers",
+      "panel": "insight",
+      "text": "Multixact member space is not read: it can run out before multixact ids do, and autovacuum then freezes multixacts earlier than autovacuum_multixact_freeze_max_age says."
+    },
+    {
+      "id": "insight.dynamicFreezeAge",
+      "panel": "insight",
+      "text": "The forecasts use the configured freeze ages: PostgreSQL lowers the effective multixact freeze age on its own when member space runs short, which they do not show."
+    },
+    {
+      "id": "insight.countersReset",
+      "panel": "insight",
+      "text": "A failover or a crash recovery resets the scan and vacuum counters without setting stats_reset: an index read as unused may have been scanned before it."
+    },
+    {
+      "id": "insight.fkIndexScans",
+      "panel": "insight",
+      "text": "An index that serves a foreign key's checks often shows no scans: it is used when referenced rows are deleted or updated, which may be rare and still need it."
+    }
+  ]
+}

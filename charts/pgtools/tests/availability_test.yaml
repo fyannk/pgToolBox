@@ -1,0 +1,157 @@
+# The one availability rule: two replicas rolling by default, with or without
+# persistent history; persistent history is a StatefulSet with one volume per
+# replica.
+suite: console availability rule
+templates:
+  - templates/console/deployment.yaml
+  - templates/console/poddisruptionbudget.yaml
+release:
+  name: pgc
+  namespace: team-a
+tests:
+  - it: runs two replicas with a rolling update by default
+    template: templates/console/deployment.yaml
+    asserts:
+      - equal: {path: spec.replicas, value: 2}
+      - equal: {path: spec.strategy.type, value: RollingUpdate}
+      - equal: {path: spec.strategy.rollingUpdate.maxUnavailable, value: 0}
+      - equal: {path: spec.strategy.rollingUpdate.maxSurge, value: 1}
+
+  - it: honours console.replicas without persistent history
+    template: templates/console/deployment.yaml
+    set: {console.replicas: 3}
+    asserts:
+      - equal: {path: spec.replicas, value: 3}
+
+  - it: is a Deployment without persistent history
+    template: templates/console/deployment.yaml
+    asserts:
+      - isKind: {of: Deployment}
+      - notExists: {path: spec.volumeClaimTemplates}
+
+  - it: is a StatefulSet with a volume per replica with persistent history, keeping the replicas
+    template: templates/console/deployment.yaml
+    set:
+      console.replicas: 3
+      console.history.persistent: true
+    asserts:
+      - isKind: {of: StatefulSet}
+      - equal: {path: metadata.name, value: pgc-console}
+      - equal: {path: spec.replicas, value: 3}
+      - equal: {path: spec.serviceName, value: pgc-console}
+      - equal: {path: spec.podManagementPolicy, value: Parallel}
+      - equal: {path: spec.updateStrategy.type, value: RollingUpdate}
+      - equal: {path: spec.persistentVolumeClaimRetentionPolicy, value: {whenDeleted: Delete, whenScaled: Retain}}
+      - notExists: {path: spec.strategy}
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: HISTORY_PATH, value: /var/lib/console/history.db}
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content: {name: history, mountPath: /var/lib/console}
+      # The claim comes from the template, not from a volume of the pod.
+      - notContains:
+          path: spec.template.spec.volumes
+          content: {name: history}
+          any: true
+      - equal: {path: 'spec.volumeClaimTemplates[0].metadata.name', value: history}
+      - equal: {path: 'spec.volumeClaimTemplates[0].spec.accessModes', value: [ReadWriteOnce]}
+      - equal: {path: 'spec.volumeClaimTemplates[0].spec.resources.requests.storage', value: 1Gi}
+      - notExists: {path: 'spec.volumeClaimTemplates[0].spec.storageClassName'}
+      # Only stable labels: a claim template cannot change after creation,
+      # so the chart version or app version must not be in it.
+      - equal:
+          path: spec.volumeClaimTemplates[0].metadata.labels
+          value:
+            app.kubernetes.io/name: pgtoolbox-console
+            app.kubernetes.io/instance: pgc
+            app.kubernetes.io/component: console
+
+  - it: sizes and classes the claim template from the values
+    template: templates/console/deployment.yaml
+    set:
+      console.history.persistent: true
+      console.history.size: 4Gi
+      console.history.storageClassName: fast
+    asserts:
+      - equal: {path: 'spec.volumeClaimTemplates[0].spec.resources.requests.storage', value: 4Gi}
+      - equal: {path: 'spec.volumeClaimTemplates[0].spec.storageClassName', value: fast}
+
+  - it: refuses a name too long for a StatefulSet
+    template: templates/console/deployment.yaml
+    set:
+      console.history.persistent: true
+      console.fullnameOverride: a-console-name-that-is-much-too-long-for-a-statefulset-x
+    asserts:
+      - failedTemplate:
+          errorPattern: at most 52 characters
+
+  - it: has no history volume by default
+    template: templates/console/deployment.yaml
+    asserts:
+      - notContains:
+          path: spec.template.spec.volumes
+          content: {name: history}
+          any: true
+
+  - it: renders a PodDisruptionBudget with more than one replica
+    template: templates/console/poddisruptionbudget.yaml
+    asserts:
+      - isKind: {of: PodDisruptionBudget}
+      - equal: {path: spec.minAvailable, value: 1}
+
+  - it: renders no PodDisruptionBudget for a single replica (it would block every drain)
+    template: templates/console/poddisruptionbudget.yaml
+    set: {console.replicas: 1}
+    asserts:
+      - hasDocuments: {count: 0}
+
+  - it: renders the PodDisruptionBudget with persistent history too
+    template: templates/console/poddisruptionbudget.yaml
+    set: {console.history.persistent: true}
+    asserts:
+      - isKind: {of: PodDisruptionBudget}
+      - equal:
+          path: spec.selector.matchLabels
+          value:
+            app.kubernetes.io/name: pgtoolbox-console
+            app.kubernetes.io/instance: pgc
+            app.kubernetes.io/component: console
+
+  - it: renders nothing when the console is disabled
+    set: {console.enabled: false, console.history.persistent: true}
+    asserts:
+      - hasDocuments: {count: 0}
+
+  - it: prefers different nodes for the replicas with a soft anti-affinity
+    template: templates/console/deployment.yaml
+    asserts:
+      - equal:
+          path: spec.template.spec.affinity.podAntiAffinity.preferredDuringSchedulingIgnoredDuringExecution[0].podAffinityTerm.topologyKey
+          value: kubernetes.io/hostname
+
+  - it: keeps the anti-affinity for a persistent StatefulSet
+    template: templates/console/deployment.yaml
+    set: {console.history.persistent: true}
+    asserts:
+      - equal:
+          path: spec.template.spec.affinity.podAntiAffinity.preferredDuringSchedulingIgnoredDuringExecution[0].podAffinityTerm.topologyKey
+          value: kubernetes.io/hostname
+
+  - it: adds no anti-affinity for a single replica
+    template: templates/console/deployment.yaml
+    set: {console.replicas: 1}
+    asserts:
+      - notExists: {path: spec.template.spec.affinity}
+
+  - it: lets an explicit affinity replace the default
+    template: templates/console/deployment.yaml
+    set:
+      console.affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions: [{key: pool, operator: In, values: [db]}]
+    asserts:
+      - notExists: {path: spec.template.spec.affinity.podAntiAffinity}
+      - exists: {path: spec.template.spec.affinity.nodeAffinity}

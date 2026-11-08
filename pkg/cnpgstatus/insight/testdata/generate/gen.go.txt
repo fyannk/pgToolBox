@@ -1,0 +1,70 @@
+package metrics
+
+// Added to CloudNativePG's metrics package by build.sh (not CNPG code): runs the user queries the way
+// createMetricsFromUserQueries does, with a plain *sql.DB opener instead of
+// a *postgres.Instance, so the exposition comes from CNPG's own QueryRunner,
+// mappings and client_golang.
+
+import (
+	"database/sql"
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+
+	"github.com/Masterminds/semver/v3"
+)
+
+// Opener returns a connection pool to a database.
+type Opener func(db string) (*sql.DB, error)
+
+// Generate runs every query once and records the last-update timestamp.
+func (q *QueriesCollector) Generate(open Opener, databases []string, isPrimary bool, version *semver.Version, now time.Time) {
+	q.metricsMutex.Lock()
+	defer q.metricsMutex.Unlock()
+	q.errorUserQueriesGauge.Set(0)
+	q.errorUserQueries.Reset()
+	q.cacheHits.Set(0)
+	q.cacheMiss.Set(1)
+	var generated []prometheus.Metric
+	for name, userQuery := range q.userQueries {
+		runner := QueryRunner{
+			namespace:      name,
+			userQuery:      userQuery,
+			columnMapping:  q.mappings[name],
+			variableLabels: q.variableLabels[name],
+		}
+		if (userQuery.Primary || userQuery.Master) && !isPrimary { // wokeignore:rule=master
+			continue
+		}
+		if userQuery.RunOnServer != "" {
+			c, err := semver.NewConstraint(userQuery.RunOnServer)
+			if err != nil {
+				q.reportUserQueryErrorMetric(name)
+				continue
+			}
+			if !c.Check(version) {
+				continue
+			}
+		}
+		targets := userQuery.TargetDatabases
+		if len(targets) == 0 {
+			targets = []string{q.defaultDBName}
+		}
+		all := q.expandTargetDatabases(targets, databases)
+		for target := range all {
+			db, err := open(target)
+			if err != nil {
+				q.reportUserQueryErrorMetric(name + ": " + err.Error())
+				continue
+			}
+			computed, err := runner.computeMetrics(db)
+			if err != nil {
+				q.reportUserQueryErrorMetric(name + " on db " + target + ": " + err.Error())
+			}
+			generated = append(generated, computed...)
+		}
+	}
+	q.computedMetrics = generated
+	q.timeLastUpdated = now
+	q.lastUpdateTimestamp.Set(float64(now.Unix()))
+}

@@ -1,0 +1,18 @@
+# The daily digest delivered to chat and mail: persistent history (the replica
+# holding the digest Lease delivers), the URL and the password mounted from Secrets as files.
+console:
+  publicURL: https://console.example.com
+  history:
+    persistent: true
+  digest:
+    hour: 6
+    retention: 336h
+    delivery:
+      timeout: 15s
+      chat: {existingSecret: pgtoolbox-console-digest-chat, key: url}
+      smtp:
+        address: smtp.example.com:587
+        username: pgtoolbox-console
+        password: {existingSecret: pgtoolbox-console-digest-smtp, key: password}
+        from: pgtoolbox-console@example.com
+        to: [dba@example.com]

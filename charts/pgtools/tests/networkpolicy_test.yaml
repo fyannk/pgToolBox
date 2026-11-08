@@ -1,0 +1,179 @@
+# The NetworkPolicy is the installing admin's choice and never a default.
+suite: console NetworkPolicy
+templates:
+  - templates/console/networkpolicy.yaml
+release:
+  name: pgc
+  namespace: team-a
+tests:
+  - it: renders nothing by default
+    asserts:
+      - hasDocuments: {count: 0}
+
+  - it: renders nothing when only the console is switched off
+    set: {console.enabled: false, console.networkPolicy.enabled: true}
+    asserts:
+      - hasDocuments: {count: 0}
+
+  - it: refuses to render an API-server rule it cannot fill in rather than opening it
+    set: {console.networkPolicy.enabled: true}
+    asserts:
+      - failedTemplate:
+          errorPattern: "console.networkPolicy.apiServer.mode=addresses has no API server address to allow.*console.networkPolicy.apiServer.lookup=true"
+
+  - it: selects the console pods and isolates both directions
+    set:
+      console.networkPolicy.enabled: true
+      console.networkPolicy.apiServer.addresses: [10.96.0.1]
+    asserts:
+      - isKind: {of: NetworkPolicy}
+      - equal: {path: spec.policyTypes, value: [Ingress, Egress]}
+      - equal:
+          path: spec.podSelector.matchLabels
+          value:
+            app.kubernetes.io/name: pgtoolbox-console
+            app.kubernetes.io/instance: pgc
+            app.kubernetes.io/component: console
+
+  - it: admits no ingress at all when nothing is exposed and no peer is given (an empty `from` would admit everyone)
+    set:
+      console.networkPolicy.enabled: true
+      console.networkPolicy.apiServer.addresses: [10.96.0.1]
+    asserts:
+      - notExists: {path: spec.ingress}
+
+  - it: admits ingress from the router namespace only, on the console port
+    set:
+      console.networkPolicy.enabled: true
+      console.networkPolicy.apiServer.addresses: [10.96.0.1]
+      console.exposure.type: route
+    asserts:
+      - equal:
+          path: spec.ingress
+          value:
+            - from:
+                - namespaceSelector:
+                    matchLabels: {kubernetes.io/metadata.name: openshift-ingress}
+              ports:
+                - {port: http, protocol: TCP}
+
+  - it: derives the instance, pooler and agent egress from the watched namespaces
+    set:
+      console.networkPolicy.enabled: true
+      console.networkPolicy.apiServer.addresses: [10.96.0.1]
+      console.watchNamespaces: [team-a, team-b]
+    asserts:
+      - contains:
+          path: spec.egress
+          content:
+            to:
+              - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: team-a}}
+                podSelector: {matchLabels: {cnpg.io/podRole: instance}}
+              - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: team-b}}
+                podSelector: {matchLabels: {cnpg.io/podRole: instance}}
+            ports:
+              - {port: 8000, protocol: TCP}
+              - {port: 9187, protocol: TCP}
+      - contains:
+          path: spec.egress
+          content:
+            to:
+              - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: team-a}}
+                podSelector: {matchLabels: {cnpg.io/podRole: pooler}}
+              - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: team-b}}
+                podSelector: {matchLabels: {cnpg.io/podRole: pooler}}
+            ports:
+              - {port: 9127, protocol: TCP}
+
+  - it: pins API-server egress to the given addresses
+    set:
+      console.networkPolicy.enabled: true
+      console.networkPolicy.apiServer.addresses: [10.96.0.1, "fd00::1"]
+    asserts:
+      - contains:
+          path: spec.egress
+          content:
+            to:
+              - ipBlock: {cidr: 10.96.0.1/32}
+              - ipBlock: {cidr: "fd00::1/128"}
+            ports:
+              - {port: 443, protocol: TCP}
+              - {port: 6443, protocol: TCP}
+
+  - it: opens API-server egress to any address on the API ports in mode any (the documented fallback)
+    set:
+      console.networkPolicy.enabled: true
+      console.networkPolicy.apiServer.mode: any
+    asserts:
+      - contains:
+          path: spec.egress
+          content:
+            ports:
+              - {port: 443, protocol: TCP}
+              - {port: 6443, protocol: TCP}
+
+  - it: leaves out the EvidenceAgent egress when disabled
+    set:
+      console.networkPolicy.enabled: true
+      console.networkPolicy.apiServer.mode: any
+      console.networkPolicy.evidenceAgent.enabled: false
+    asserts:
+      - lengthEqual: {path: spec.egress, count: 4}
+
+  - it: includes the EvidenceAgent egress by default
+    set:
+      console.networkPolicy.enabled: true
+      console.networkPolicy.apiServer.mode: any
+    asserts:
+      - lengthEqual: {path: spec.egress, count: 5}
+
+  - it: selects the agent pods by the labels the operator puts on them, on the agent's port
+    set:
+      console.networkPolicy.enabled: true
+      console.networkPolicy.apiServer.mode: any
+    asserts:
+      - contains:
+          path: spec.egress
+          content:
+            to:
+              - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: team-a}}
+                podSelector: {matchLabels: {app.kubernetes.io/name: evidence-agent}}
+            ports:
+              - {port: 8443, protocol: TCP}
+
+  - it: admits scrapers of /metrics on the probe port only when listed
+    set:
+      console.networkPolicy.enabled: true
+      console.networkPolicy.apiServer.mode: any
+      console.networkPolicy.ingress.metricsFrom:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: monitoring}}
+    asserts:
+      - equal:
+          path: spec.ingress
+          value:
+            - from:
+                - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: monitoring}}
+              ports:
+                - {port: probes, protocol: TCP}
+
+  - it: with lookup off and no addresses, refuses and names the three ways out
+    set: {console.networkPolicy.enabled: true, console.networkPolicy.apiServer.lookup: false}
+    asserts:
+      - failedTemplate:
+          errorPattern: "(?s)console.networkPolicy.apiServer.addresses.*console.networkPolicy.apiServer.lookup=true.*console.networkPolicy.apiServer.mode: any"
+
+  - it: looks up by default (this minor), so without a cluster it still asks for addresses
+    set: {console.networkPolicy.enabled: true}
+    asserts:
+      - failedTemplate:
+          errorPattern: "has no API server address to allow"
+
+  - it: with lookup off and addresses, renders them without any lookup
+    set: {console.networkPolicy.enabled: true, console.networkPolicy.apiServer.lookup: false, console.networkPolicy.apiServer.addresses: [10.96.0.1]}
+    asserts:
+      - isKind: {of: NetworkPolicy}
+
+  - it: uses the addresses given when lookup is on
+    set: {console.networkPolicy.enabled: true, console.networkPolicy.apiServer.addresses: [10.96.0.1]}
+    asserts:
+      - isKind: {of: NetworkPolicy}

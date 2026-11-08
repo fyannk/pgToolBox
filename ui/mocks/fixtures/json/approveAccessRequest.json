@@ -1,0 +1,42 @@
+{
+  "namespace": "team-a",
+  "name": "operator-k2x9p",
+  "subject": {
+    "kind": "User",
+    "name": "oidc:victor@corp.example"
+  },
+  "capability": "operator",
+  "clusterRole": "pgtoolbox-console-operator",
+  "cluster": "orders",
+  "justification": "INC-4211: replica lag on orders, need to restart the standby",
+  "createdAt": "2026-10-29T11:50:00Z",
+  "expiresAt": "2026-10-29T20:00:00Z",
+  "phase": "Approved",
+  "health": "progressing",
+  "scope": "every Cluster of namespace team-a, not only orders: a RoleBinding cannot be narrowed to one Cluster",
+  "decidedBy": "oidc:jane@corp.example",
+  "decidedAt": "2026-10-29T12:00:00Z",
+  "note": "for INC-4211 only",
+  "roleBinding": "pgaccess-operator-k2x9p",
+  "mine": false,
+  "condition": {
+    "status": "True",
+    "reason": "AwaitingDecision",
+    "message": "waiting for a decision; nothing is bound",
+    "observed": true
+  },
+  "actions": {
+    "approve": {
+      "allowed": false,
+      "why": "the request is Approved, not Pending"
+    },
+    "deny": {
+      "allowed": false,
+      "why": "the request is Approved, not Pending"
+    },
+    "revoke": {
+      "allowed": true
+    }
+  }
+}
+

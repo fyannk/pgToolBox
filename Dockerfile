@@ -1,0 +1,155 @@
+# syntax=docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e
+# Every image this repository builds, one stage per image, one build context.
+#
+#   docker buildx build --target operator       -t pgtoolbox-operator:dev .
+#   docker buildx build --target console        -t pgtoolbox-console:dev .
+#   docker buildx build --target evidence-agent -t pgtoolbox-evidence-agent:dev .
+#
+# The builder runs on the build host's own architecture and cross-compiles
+# (CGO is off), so a linux/arm64 image is built natively fast, with no QEMU:
+#   docker buildx build --platform linux/amd64,linux/arm64 --target console .
+#
+# Published as ghcr.io/fyannk/pgtoolbox-operator, pgtoolbox-console and
+# pgtoolbox-evidence-agent.
+#
+# Nothing in the module graph is private: the evidence module is in this tree
+# and reached through the replace in go.mod (GOWORK=off), so the build needs no
+# git and no credentials.
+
+# The console SPA. Built once on the build host's
+# platform: the output is architecture-independent. Node and pnpm are the
+# versions mise.toml pins; the lockfile is frozen and the workspace's
+# allowBuilds/minimumReleaseAge rules apply, so no dependency script runs.
+# ui/dist: index.html, content-hashed assets/ and their .br/.gz siblings.
+FROM --platform=$BUILDPLATFORM node:24.22.1-bookworm-slim@sha256:be8204d4bd327363357f532187b752ff62759c31bedf98e9e18fc08c9cbd605c AS ui
+WORKDIR /ui
+ENV CI=1
+RUN npm install --global --no-fund --no-audit pnpm@12.16.1
+COPY ui/package.json ui/pnpm-lock.yaml ui/pnpm-workspace.yaml ./
+COPY ui/tokens/package.json tokens/package.json
+RUN pnpm install --frozen-lockfile
+COPY ui/ ./
+RUN pnpm i18n && pnpm build
+
+# The documentation of the console's own version, embedded in the console
+# binary for the MCP docs tools. It is generated, not
+# committed: the site is built here, with the same steps as `make docs-bundle`
+# (docs/site's `npm run build` copies the tour's screenshots from the UI
+# baselines first), then hack/docsbundle writes the Markdown pages and the BM25
+# index. Build host platform: the output is architecture-independent. A failure
+# fails the image build, so a release image never ships without it.
+FROM --platform=$BUILDPLATFORM node:24.22.1-bookworm-slim@sha256:be8204d4bd327363357f532187b752ff62759c31bedf98e9e18fc08c9cbd605c AS docs-site
+WORKDIR /repo/docs/site
+ENV CI=1 DO_NOT_TRACK=1
+COPY docs/site/package.json docs/site/package-lock.json ./
+RUN npm ci --no-audit --no-fund
+COPY docs/site/ ./
+# The site reads the chart version and the tour's baselines from outside docs/site.
+COPY charts/pgtoolbox/Chart.yaml /repo/charts/pgtoolbox/Chart.yaml
+COPY ui/e2e/__screenshots__/screens.spec.ts /repo/ui/e2e/__screenshots__/screens.spec.ts
+RUN npm run build
+
+FROM --platform=$BUILDPLATFORM golang:1.27.3@sha256:2920bb124f1a2e12a1d39f0cab756ae0068441ee1da7655dec7f5e374944095b AS docs-bundle
+WORKDIR /workspace
+ENV GOWORK=off
+COPY go.mod go.sum ./
+COPY pkg/evidence/go.mod pkg/evidence/go.mod
+RUN go mod download
+COPY internal/console/docsbundle internal/console/docsbundle
+COPY hack/docsbundle hack/docsbundle
+COPY charts/pgtoolbox/Chart.yaml charts/pgtoolbox/Chart.yaml
+COPY --from=docs-site /repo/docs/site/build docs/site/build
+RUN go run ./hack/docsbundle -site docs/site/build -out internal/console/docsbundle/data \
+    -version "$(awk '/^version:/ {print $2; exit}' charts/pgtoolbox/Chart.yaml)"
+
+FROM --platform=$BUILDPLATFORM golang:1.27.3@sha256:2920bb124f1a2e12a1d39f0cab756ae0068441ee1da7655dec7f5e374944095b AS builder
+ARG TARGETOS
+ARG TARGETARCH
+WORKDIR /workspace
+ENV GOWORK=off
+
+# Module files first for dependency caching.
+COPY go.mod go.sum ./
+COPY pkg/evidence/go.mod pkg/evidence/go.mod
+RUN go mod download
+
+COPY api api
+COPY cmd cmd
+COPY internal internal
+COPY pkg pkg
+
+# -trimpath drops the build host's paths from the binary; -s -w strip the
+# symbol table and DWARF, which a distroless runtime has no debugger for.
+ARG VERSION=development
+ARG IMG=pgtoolbox-operator:latest
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -trimpath \
+    -ldflags "-s -w -X main.operatorVersion=${VERSION} -X main.defaultOperatorImage=${IMG}" \
+    -o /workspace/operator ./cmd/operator
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -trimpath \
+    -ldflags "-s -w -X main.version=${VERSION}" \
+    -o /workspace/evidence-agent ./cmd/evidence-agent
+# The SPA last, so a UI change rebuilds the console binary only. go:embed
+# cannot reach outside its package: internal/console/uiassets embeds dist/.
+COPY --from=ui /ui/dist internal/console/uiassets/dist
+# The documentation bundle, for the same reason (internal/console/docsbundle
+# embeds data/); .dockerignore keeps a locally generated copy out of the context.
+COPY --from=docs-bundle /workspace/internal/console/docsbundle/data internal/console/docsbundle/data
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -trimpath \
+    -ldflags "-s -w -X main.version=${VERSION}" \
+    -o /workspace/console ./cmd/console
+
+# The operator image. The install init container of every pgAdmin Pod copies
+# this same binary out of this image (its credential sidecar and Jobs run it),
+# so the image reference is baked in at build time and can be overridden with
+# --operator-image.
+#
+# The labels are the ones a plain `docker build` can know. The release
+# workflow overrides them through hack/release.sh, which also supplies the
+# revision; a local build has no commit to claim.
+FROM gcr.io/distroless/static-debian13:nonroot@sha256:25ac8f0c3b2334a9eb05452266bd4697864a8c8ef0ef71e5e6480d7f92868329 AS operator
+ARG VERSION=development
+LABEL org.opencontainers.image.title="pgToolBox operator" \
+      org.opencontainers.image.description="Kubernetes operator that deploys the pgToolBox access stack for CloudNativePG clusters" \
+      org.opencontainers.image.source="https://github.com/fyannk/pgToolBox" \
+      org.opencontainers.image.documentation="https://fyannk.github.io/pgToolBox/" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.version="${VERSION}"
+COPY --from=builder /workspace/operator /manager
+COPY LICENSE /licenses/pgtoolbox/LICENSE
+USER 65532:65532
+ENTRYPOINT ["/manager"]
+
+# The console: Go API and the embedded SPA, one per team namespace.
+FROM gcr.io/distroless/static-debian13:nonroot@sha256:25ac8f0c3b2334a9eb05452266bd4697864a8c8ef0ef71e5e6480d7f92868329 AS console
+ARG VERSION=development
+LABEL org.opencontainers.image.title="pgToolBox console" \
+      org.opencontainers.image.description="Operational console for one CloudNativePG cluster" \
+      org.opencontainers.image.source="https://github.com/fyannk/pgToolBox" \
+      org.opencontainers.image.documentation="https://fyannk.github.io/pgToolBox/" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.version="${VERSION}"
+COPY --from=builder /workspace/console /console
+COPY LICENSE /licenses/console/LICENSE
+# The front-end assets are embedded in the binary above, so the licence of the
+# library they bundle (MIT, which asks for its text to travel with copies)
+# comes from the exact npm package the build used.
+COPY --from=ui /ui/node_modules/uplot/LICENSE /licenses/console/uplot/LICENSE
+USER 65532:65532
+EXPOSE 3000
+ENTRYPOINT ["/console"]
+
+# The evidence agent: standalone, or as the agent an
+# EvidenceAgent (or the pgtools chart) runs.
+FROM gcr.io/distroless/static-debian13:nonroot@sha256:25ac8f0c3b2334a9eb05452266bd4697864a8c8ef0ef71e5e6480d7f92868329 AS evidence-agent
+ARG VERSION=development
+LABEL org.opencontainers.image.title="pgToolBox evidence agent" \
+      org.opencontainers.image.description="Read-only viewer and evidence producer for a PostgreSQL backup repository" \
+      org.opencontainers.image.source="https://github.com/fyannk/pgToolBox" \
+      org.opencontainers.image.documentation="https://fyannk.github.io/pgToolBox/" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.version="${VERSION}"
+COPY --from=builder /workspace/evidence-agent /evidence-agent
+COPY LICENSE /licenses/evidence-agent/LICENSE
+USER 65532:65532
+EXPOSE 3000
+ENTRYPOINT ["/evidence-agent"]

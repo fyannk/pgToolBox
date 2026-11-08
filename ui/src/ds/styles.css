@@ -1,0 +1,730 @@
+/* The SPA stylesheet: Tailwind 4 mapped onto tokens.css, which
+   maps the console's semantic tokens onto the maintainer's design system
+   fyannk/design (fyannk.css, imported first so tokens.css can reference it).
+   Tailwind's default palette, type scale, radii and shadows are switched off
+   so that only semantic utilities exist: `bg-surface`, `text-health-ok-fg`,
+   `rounded-chip`. A raw colour cannot be written because no utility for it
+   exists, and scripts/check-semantic.mjs rejects arbitrary values. */
+@import "tailwindcss";
+@import "./fonts/fonts.css";
+@import "@pgtoolbox/ui-tokens/fyannk.css";
+@import "@pgtoolbox/ui-tokens/tokens.css";
+
+@theme {
+  --color-*: initial;
+  --text-*: initial;
+  --radius-*: initial;
+  --shadow-*: initial;
+  --font-*: initial;
+  --animate-*: initial;
+}
+
+@theme inline {
+  --font-sans: var(--font-ui);
+  --font-code: var(--font-mono);
+
+  --text-caption: var(--text-xs);
+  --text-label: var(--text-sm);
+  --text-body: var(--text-base);
+  --text-title: var(--text-lg);
+  --text-heading: var(--text-xl);
+  --text-display: var(--text-2xl);
+
+  --radius-chip: var(--radius-sm);
+  --radius-control: var(--radius);
+  --radius-panel: var(--radius-md);
+  --radius-dialog: var(--radius-lg);
+  --radius-pill: var(--radius-round);
+
+  --shadow-overlay: var(--shadow-popover);
+  --container-measure: var(--measure);
+
+  --color-canvas: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-fg: var(--text);
+  --color-muted: var(--text-muted);
+  --color-faint: var(--text-faint);
+  --color-line: var(--border);
+  --color-line-strong: var(--border-strong);
+  --color-accent: var(--accent);
+  --color-accent-weak: var(--accent-weak);
+  --color-accent-ink: var(--accent-ink);
+  --color-topbar: var(--topbar-bg);
+  --color-topbar-line: var(--topbar-border);
+  --color-topbar-fg: var(--topbar-text);
+  --color-topbar-muted: var(--topbar-muted);
+  --color-overlay: var(--overlay);
+  --color-focus: var(--focus-ring);
+  --color-stale-bg: var(--stale-bg);
+  --color-stale-line: var(--stale-border);
+
+  --color-health-ok-fg: var(--health-ok-fg);
+  --color-health-ok-bg: var(--health-ok-bg);
+  --color-health-ok-line: var(--health-ok-border);
+  --color-health-ok-icon: var(--health-ok-icon);
+  --color-health-progressing-fg: var(--health-progressing-fg);
+  --color-health-progressing-bg: var(--health-progressing-bg);
+  --color-health-progressing-line: var(--health-progressing-border);
+  --color-health-progressing-icon: var(--health-progressing-icon);
+  --color-health-warning-fg: var(--health-warning-fg);
+  --color-health-warning-bg: var(--health-warning-bg);
+  --color-health-warning-line: var(--health-warning-border);
+  --color-health-warning-icon: var(--health-warning-icon);
+  --color-health-critical-fg: var(--health-critical-fg);
+  --color-health-critical-bg: var(--health-critical-bg);
+  --color-health-critical-line: var(--health-critical-border);
+  --color-health-critical-icon: var(--health-critical-icon);
+  --color-health-inactive-fg: var(--health-inactive-fg);
+  --color-health-inactive-bg: var(--health-inactive-bg);
+  --color-health-inactive-line: var(--health-inactive-border);
+  --color-health-inactive-icon: var(--health-inactive-icon);
+  --color-health-unknown-fg: var(--health-unknown-fg);
+  --color-health-unknown-bg: var(--health-unknown-bg);
+  --color-health-unknown-line: var(--health-unknown-border);
+  --color-health-unknown-icon: var(--health-unknown-icon);
+  --color-health-info-fg: var(--health-info-fg);
+  --color-health-info-bg: var(--health-info-bg);
+  --color-health-info-line: var(--health-info-border);
+  --color-health-info-icon: var(--health-info-icon);
+
+
+  --color-storage: var(--storage);
+  --color-series-1: var(--series-1);
+  --color-series-2: var(--series-2);
+  --color-series-3: var(--series-3);
+  --color-series-4: var(--series-4);
+  --color-series-5: var(--series-5);
+  --color-series-6: var(--series-6);
+  --color-series-7: var(--series-7);
+  --color-series-8: var(--series-8);
+
+  --spacing-row: var(--row-h);
+  --duration-fast: var(--motion-fast);
+  --duration-base: var(--motion-base);
+}
+
+/* Density: one variable drives every data row. */
+:root {
+  --row-h: var(--row-comfortable);
+}
+:root[data-density="compact"] {
+  --row-h: var(--row-compact);
+}
+:root {
+  --log-chunk-lines: 200;
+}
+
+@layer base {
+  html {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-ui);
+    font-size: 100%;
+  }
+  body {
+    margin: 0;
+    font-size: var(--text-base);
+    line-height: 1.5;
+  }
+  /* fyannk/design: monospace speaks, sans explains. Headings, numbers and
+     identifiers are set in Plex Mono; running text in Plex Sans. */
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-family: var(--font-mono);
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+  code,
+  kbd,
+  samp,
+  pre,
+  .num {
+    font-family: var(--font-mono);
+  }
+  :focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+  /* Every number a DBA compares is aligned. */
+  td,
+  .num {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* The health chip. Glyph, word and hue come together; staleness keeps the
+   state and word, removes the tint and dashes the border. */
+@layer components {
+  .health {
+    --h-fg: var(--text);
+    --h-bg: var(--surface);
+    --h-line: var(--border);
+    --h-icon: var(--text-muted);
+    color: var(--h-fg);
+    background: var(--h-bg);
+    border: 1px solid var(--h-line);
+  }
+  .health-glyph {
+    color: var(--h-icon);
+  }
+  .health[data-health="ok"] {
+    --h-fg: var(--health-ok-fg);
+    --h-bg: var(--health-ok-bg);
+    --h-line: var(--health-ok-border);
+    --h-icon: var(--health-ok-icon);
+  }
+  .health[data-health="progressing"] {
+    --h-fg: var(--health-progressing-fg);
+    --h-bg: var(--health-progressing-bg);
+    --h-line: var(--health-progressing-border);
+    --h-icon: var(--health-progressing-icon);
+  }
+  .health[data-health="warning"] {
+    --h-fg: var(--health-warning-fg);
+    --h-bg: var(--health-warning-bg);
+    --h-line: var(--health-warning-border);
+    --h-icon: var(--health-warning-icon);
+  }
+  .health[data-health="critical"] {
+    --h-fg: var(--health-critical-fg);
+    --h-bg: var(--health-critical-bg);
+    --h-line: var(--health-critical-border);
+    --h-icon: var(--health-critical-icon);
+  }
+  .health[data-health="inactive"] {
+    --h-fg: var(--health-inactive-fg);
+    --h-bg: var(--health-inactive-bg);
+    --h-line: var(--health-inactive-border);
+    --h-icon: var(--health-inactive-icon);
+  }
+  .health[data-health="unknown"] {
+    --h-fg: var(--health-unknown-fg);
+    --h-bg: var(--health-unknown-bg);
+    --h-line: var(--health-unknown-border);
+    --h-icon: var(--health-unknown-icon);
+    border-style: dashed;
+  }
+  .health[data-health="info"] {
+    --h-fg: var(--health-info-fg);
+    --h-bg: var(--health-info-bg);
+    --h-line: var(--health-info-border);
+    --h-icon: var(--health-info-icon);
+  }
+  .health[data-stale] {
+    --h-bg: var(--stale-bg);
+    --h-line: var(--stale-border);
+    border-style: dashed;
+  }
+  /* Rows that are not fine (DataTable rows, the verdict's contributors):
+     the whole row takes the state's row tint, strong enough to be seen at a
+     glance, and a 4 px bar in its colour on the leading edge. Its links and
+     labels take the state's colour too, and an "ok" chip inside it is drawn
+     neutral, so nothing green in the row contradicts its verdict. */
+  .health-row:not(tr),
+  .health-row > td {
+    background: var(--r-bg);
+  }
+  .health-row:not(tr),
+  .health-row > td:first-child {
+    box-shadow: inset 4px 0 0 var(--r-bar);
+  }
+  .health-row[data-row-health="warning"] {
+    --r-bg: var(--row-warning-bg);
+    --r-fg: var(--health-warning-fg);
+    --r-bar: var(--health-warning-icon);
+  }
+  .health-row[data-row-health="critical"] {
+    --r-bg: var(--row-critical-bg);
+    --r-fg: var(--health-critical-fg);
+    --r-bar: var(--health-critical-icon);
+  }
+  .health-row[data-row-health="progressing"] {
+    --r-bg: var(--row-progressing-bg);
+    --r-fg: var(--health-progressing-fg);
+    --r-bar: var(--health-progressing-icon);
+  }
+  .health-row[data-row-health="unknown"] {
+    --r-bg: var(--row-unknown-bg);
+    --r-fg: var(--text);
+    --r-bar: var(--health-unknown-icon);
+  }
+  .health-row .health[data-health="ok"] {
+    --h-fg: var(--text);
+    --h-bg: transparent;
+    --h-line: var(--border);
+    --h-icon: var(--text-muted);
+  }
+  /* A table whose rows each lead somewhere: the whole row follows its link. */
+  [data-row-link] {
+    cursor: pointer;
+  }
+  tr[data-row-link]:not(.health-row):hover > td,
+  li[data-row-link]:not(.health-row):hover {
+    background: var(--surface-2);
+  }
+  tr.health-row[data-row-link]:hover > td,
+  li.health-row[data-row-link]:hover {
+    background: color-mix(in srgb, var(--r-bar) 8%, var(--r-bg));
+  }
+  /* ScrollStrip: a one-line strip that scrolls without a scrollbar; the ‹ ›
+     buttons fade the edge they sit on. */
+  .scroll-strip-track {
+    scrollbar-width: none;
+  }
+  .scroll-strip-track::-webkit-scrollbar {
+    display: none;
+  }
+  .scroll-strip-btn {
+    position: absolute;
+    top: 0;
+    bottom: 1px;
+    width: 2.25rem;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: 1.25rem;
+    line-height: 1;
+    cursor: pointer;
+  }
+  .scroll-strip-btn[data-end="start"] {
+    background: linear-gradient(to right, var(--bg) 55%, transparent);
+    text-align: left;
+    padding-left: 0.25rem;
+  }
+  .scroll-strip-btn[data-end="end"] {
+    background: linear-gradient(to left, var(--bg) 55%, transparent);
+    text-align: right;
+    padding-right: 0.25rem;
+  }
+  .scroll-strip-btn:hover {
+    color: var(--text);
+  }
+  /* Cluster list: a state as its colour alone. Not a .health element, so the
+     tinted-row rule does not neutralise it: "2/2" stays green. */
+  .state-text {
+    color: var(--text);
+  }
+  .state-text[data-health="ok"] {
+    color: var(--health-ok-fg);
+  }
+  .state-text[data-health="progressing"] {
+    color: var(--health-progressing-fg);
+  }
+  .state-text[data-health="warning"] {
+    color: var(--health-warning-fg);
+  }
+  .state-text[data-health="critical"] {
+    color: var(--health-critical-fg);
+  }
+  .state-text[data-health="inactive"],
+  .state-text[data-health="unknown"],
+  .state-text[data-health="info"] {
+    color: var(--text-muted);
+  }
+  .state-text[data-stale] {
+    text-decoration: underline dashed var(--stale-border);
+    text-underline-offset: 3px;
+  }
+  /* Finding count squares, one fixed slot per severity. */
+  .sev-squares {
+    display: inline-flex;
+    gap: 2px;
+  }
+  .sev-sq {
+    --s: var(--text-muted);
+    --s-bg: var(--surface-2);
+    display: inline-grid;
+    place-items: center;
+    min-width: 1.25rem;
+    height: 1.25rem;
+    padding: 0 2px;
+    border: 1px solid var(--s);
+    border-radius: 2px;
+    background: var(--s-bg);
+    color: var(--s);
+    font-family: var(--font-mono);
+    font-size: var(--text-caption, 0.75rem);
+    font-weight: 600;
+  }
+  .sev-sq[data-sev="critical"] {
+    --s: var(--sev-critical);
+    --s-bg: var(--sev-critical-bg);
+  }
+  .sev-sq[data-sev="high"] {
+    --s: var(--health-critical-fg);
+    --s-bg: var(--health-critical-bg);
+  }
+  .sev-sq[data-sev="warning"] {
+    --s: var(--health-warning-fg);
+    --s-bg: var(--health-warning-bg);
+  }
+  .sev-sq[data-sev="note"] {
+    --s: var(--sev-note);
+    --s-bg: var(--sev-note-bg);
+  }
+  .sev-sq[data-sev="empty"] {
+    visibility: hidden;
+  }
+  /* SeverityChip: the health chip's shape in the severity's colour. */
+  .health[data-sev="critical"] {
+    --h-fg: var(--sev-critical);
+    --h-bg: var(--sev-critical-bg);
+    --h-line: var(--sev-critical);
+    --h-icon: var(--sev-critical);
+  }
+  .health[data-sev="high"] {
+    --h-fg: var(--health-critical-fg);
+    --h-bg: var(--health-critical-bg);
+    --h-line: var(--health-critical-border);
+    --h-icon: var(--health-critical-icon);
+  }
+  .health[data-sev="warning"] {
+    --h-fg: var(--health-warning-fg);
+    --h-bg: var(--health-warning-bg);
+    --h-line: var(--health-warning-border);
+    --h-icon: var(--health-warning-icon);
+  }
+  .health[data-sev="note"] {
+    --h-fg: var(--sev-note);
+    --h-bg: var(--sev-note-bg);
+    --h-line: var(--sev-note);
+    --h-icon: var(--sev-note);
+  }
+  /* Plain-surface variant: the word in its state colour, no tint. */
+  .health-text {
+    background: transparent;
+    border-color: transparent;
+  }
+  /* LogViewer: lines are rendered in fixed-size chunks the browser skips
+     laying out while off screen (CSS virtualisation: no inline style, no
+     script measuring rows). The intrinsic size is the chunk's line count
+     times one line, so the scrollbar stays honest before a chunk is shown. */
+  .log-chunk {
+    content-visibility: auto;
+    contain-intrinsic-block-size: auto calc(var(--log-chunk-lines) * 1lh);
+  }
+  /* DiffViewer lines: the sign carries the meaning, the tint reinforces it.
+     Neutral tints, not health colours: a change is not a verdict. */
+  .diff-line[data-kind="added"] {
+    background: var(--accent-weak);
+  }
+  .diff-line[data-kind="removed"] {
+    background: var(--surface-2);
+    color: var(--text-muted);
+  }
+  .skeleton {
+    background: var(--surface-2);
+    animation: skeleton-pulse calc(var(--motion-base) * 8) ease-in-out infinite;
+  }
+  @keyframes skeleton-pulse {
+    50% {
+      opacity: 0.55;
+    }
+  }
+}
+
+/* TopologyView: the wiring drawing Go lays out, in fyannk/design:
+   Plex Mono labels, 4 px boxes, 1 px dotted frames, flows keyed by colour and
+   dash. Treatments are keyed by the view model's kinds through data
+   attributes. Kinds are matched loosely ([data-kind*="backup" i] covers
+   "backup", "basebackup", "scheduledBackup"), so a kind the Go side adds is
+   drawn by family; a kind no rule knows falls back to the neutral treatment
+   (a muted solid wire, a plain box, a muted frame). Servers take their health
+   state's colour on the border and the glyph in the box's corner. */
+@layer components {
+  .topo text {
+    font-family: var(--font-mono);
+  }
+  .topo-label {
+    fill: var(--text);
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .topo-sub {
+    fill: var(--text-muted);
+    font-size: 11px;
+  }
+  .topo-disk {
+    fill: var(--text-muted);
+    font-size: 10px;
+  }
+
+  /* Frames: a 1 px dotted outline and an uppercase mono caption. */
+  .topo-frame rect {
+    --topo-frame: var(--border-strong);
+    fill: none;
+    stroke: var(--topo-frame);
+    stroke-dasharray: 1 3;
+    stroke-linecap: round;
+    stroke-width: 1;
+  }
+  .topo-frame text {
+    fill: var(--text-muted);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  /* A frame's note (an endpoint URL) is data: as written, not uppercased. */
+  .topo-frame .topo-disk {
+    letter-spacing: 0;
+    text-transform: none;
+    font-weight: 400;
+  }
+  .topo-frame[data-kind="cluster"] rect {
+    --topo-frame: var(--flow-replicate);
+  }
+  .topo-frame:is([data-kind*="pool" i], [data-kind*="client" i]) rect {
+    --topo-frame: var(--flow-write);
+  }
+  .topo-frame:is([data-kind*="backup" i], [data-kind*="schedule" i]) rect {
+    --topo-frame: var(--flow-write);
+  }
+  .topo-frame:is([data-kind*="store" i], [data-kind*="storage" i], [data-kind*="object" i], [data-kind*="volume" i])
+    rect {
+    --topo-frame: var(--storage);
+  }
+  .topo-frame:is([data-kind*="store" i], [data-kind*="storage" i], [data-kind*="object" i], [data-kind*="volume" i])
+    text {
+    fill: var(--storage);
+  }
+
+  /* Boxes: 4 px corners, 1 px border; the primary's is 2 px. */
+  .topo-node rect {
+    fill: var(--surface);
+    stroke: var(--border-strong);
+    stroke-width: 1;
+  }
+  .topo-node:is([data-kind="app"], [data-kind="service"], [data-kind="pooler"], [data-kind="snapshot"]) rect {
+    fill: var(--surface-2);
+  }
+  .topo-node[data-kind="primary"] rect {
+    stroke-width: 2;
+  }
+  .topo-node[data-health="ok"] rect {
+    stroke: var(--health-ok-border);
+  }
+  .topo-node[data-health="progressing"] rect {
+    stroke: var(--health-progressing-border);
+  }
+  /* Storage and scheduled-backup boxes keep their domain colour while their
+     state is ok or in progress (the glyph and the word carry it); an
+     inactive, warning, failing or unknown state still takes the border. */
+  .topo-node:is([data-kind*="store" i], [data-kind*="storage" i], [data-kind*="object" i], [data-kind*="volume" i], [data-kind*="pvc" i])
+    rect {
+    fill: var(--surface-2);
+    stroke: var(--storage);
+  }
+  .topo-node:is([data-kind*="backup" i], [data-kind*="schedule" i]) rect {
+    fill: var(--accent-weak);
+    stroke: var(--flow-write);
+  }
+  .topo-node[data-health="warning"] rect {
+    fill: var(--health-warning-bg);
+    stroke: var(--health-warning-border);
+  }
+  .topo-node[data-health="critical"] rect {
+    fill: var(--health-critical-bg);
+    stroke: var(--health-critical-border);
+  }
+  .topo-node[data-health="inactive"] rect {
+    stroke: var(--health-inactive-icon);
+  }
+  .topo-node[data-health="unknown"] rect {
+    stroke: var(--health-unknown-border);
+    stroke-dasharray: 4 3;
+  }
+  .topo-node[data-stale] rect {
+    fill: var(--stale-bg);
+    stroke-dasharray: 4 3;
+  }
+  .topo-glyph {
+    fill: var(--text-muted);
+    font-size: 12px;
+  }
+  .topo-node[data-health="ok"] .topo-glyph {
+    fill: var(--health-ok-icon);
+  }
+  .topo-node[data-health="progressing"] .topo-glyph {
+    fill: var(--health-progressing-icon);
+  }
+  .topo-node[data-health="warning"] .topo-glyph {
+    fill: var(--health-warning-icon);
+  }
+  .topo-node[data-health="critical"] .topo-glyph {
+    fill: var(--health-critical-icon);
+  }
+  /* A box with a link is a link: pointer, accent border on hover and focus. */
+  /* The wiring drawing's zoom bar and its region: grab to move once zoomed. */
+  .topo-zoom {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.375rem;
+  }
+  .topo-zoom button {
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-control, 4px);
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: var(--text-label, 0.8125rem);
+    min-width: 2rem;
+    padding: 0.125rem 0.5rem;
+  }
+  .topo-zoom button:hover:not(:disabled) {
+    background: var(--surface-2);
+  }
+  .topo-zoom button:disabled {
+    color: var(--text-muted);
+    cursor: default;
+    opacity: 0.6;
+  }
+  /* Fold and renderer switches: toggle buttons in the drawing's toolbar. */
+  .topo-fold {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.375rem;
+  }
+  .topo-zoom button[aria-pressed="true"] {
+    background: var(--accent-weak);
+    border-color: var(--accent);
+  }
+  .topo-fold-toggle {
+    cursor: pointer;
+  }
+  .topo-fold-toggle:hover {
+    fill: var(--text);
+  }
+  .topo-frame[data-folded] rect {
+    stroke-dasharray: 4 3;
+  }
+
+  /* React Flow's own chrome in the design's tokens. */
+  .topo-flow {
+    --xy-background-color: var(--surface);
+    --xy-background-pattern-color: var(--border);
+    --xy-minimap-background-color: var(--surface-2);
+    --xy-minimap-mask-background-color: color-mix(in srgb, var(--bg) 60%, transparent);
+    --xy-minimap-node-background-color: var(--border-strong);
+    --xy-controls-button-background-color: var(--surface);
+    --xy-controls-button-background-color-hover: var(--surface-2);
+    --xy-controls-button-color: var(--text);
+    --xy-controls-button-border-color: var(--border);
+    height: clamp(24rem, 70vh, 64rem);
+  }
+  .topo-flow-wires {
+    left: 0;
+    overflow: visible;
+    pointer-events: none;
+    position: absolute;
+    top: 0;
+  }
+  .topo-flow-box[data-link] {
+    cursor: pointer;
+  }
+  .topo-flow-box[data-link]:hover .topo-node rect {
+    stroke-width: 2;
+  }
+  .topo-mini.health-warning {
+    fill: var(--health-warning-icon);
+  }
+  .topo-mini.health-critical {
+    fill: var(--health-critical-icon);
+  }
+  .topo-mini.health-ok {
+    fill: var(--health-ok-icon);
+  }
+  .topo-mini-frame {
+    fill: none;
+  }
+
+  .topo-region {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-panel, 6px);
+    overflow: hidden;
+  }
+  /* A box with a link: focus shows on the box React Flow wraps it in. */
+  .react-flow__node:focus-visible .topo-node rect {
+    stroke: var(--focus-ring);
+    stroke-width: 2;
+  }
+
+  /* Flows. --topo-flow is set per kind family; wires, tee dots, arrow heads
+     and legend keys all read it. */
+  .topo-edge,
+  .topo-dot,
+  .topo-arrow {
+    --topo-flow: var(--flow-read);
+  }
+  :is(.topo-edge, .topo-dot, .topo-arrow):is([data-kind*="write" i], [data-kind*="primary" i]) {
+    --topo-flow: var(--flow-write);
+  }
+  :is(.topo-edge, .topo-dot, .topo-arrow):is([data-kind*="replica" i], [data-kind*="stream" i]) {
+    --topo-flow: var(--flow-replicate);
+  }
+  /* Everything bound for the backup store (WAL archiving solid, base backups
+     dash-dot) takes the storage colour. */
+  :is(.topo-edge, .topo-dot, .topo-arrow):is([data-kind*="wal" i], [data-kind*="archive" i], [data-kind*="backup" i]) {
+    --topo-flow: var(--flow-archive);
+  }
+  :is(.topo-edge, .topo-dot, .topo-arrow):is([data-kind*="disk" i], [data-kind*="volume" i], [data-kind*="pvc" i]) {
+    --topo-flow: var(--flow-volume);
+  }
+  .topo-edge {
+    fill: none;
+    stroke: var(--topo-flow);
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-width: 1.5;
+  }
+  .topo-edge[data-kind*="replica" i] {
+    stroke-dasharray: 5 4;
+  }
+  .topo-edge[data-kind*="archive" i] {
+    stroke-dasharray: 2 4;
+  }
+  .topo-edge[data-kind*="backup" i] {
+    stroke-dasharray: 6 3 1.5 3;
+  }
+  .topo-edge:is([data-kind*="disk" i], [data-kind*="volume" i], [data-kind*="pvc" i]) {
+    stroke-dasharray: 0.5 3.5;
+    stroke-width: 1.75;
+  }
+  .topo-elabel {
+    fill: var(--text-muted);
+    font-size: 10px;
+    paint-order: stroke;
+    stroke: var(--surface);
+    stroke-linejoin: round;
+    stroke-width: 3px;
+  }
+  .topo-dot {
+    fill: var(--topo-flow);
+    stroke: var(--surface);
+    stroke-width: 1;
+  }
+  .topo-arrow {
+    fill: var(--topo-flow);
+  }
+  /* Legend swatches draw the same strokes as the wires they key. */
+  .topo-key line {
+    stroke-width: 2;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton {
+    animation: none;
+  }
+}
+
+/* Unlayered on purpose: a link in a tinted row takes the row's state colour
+   over its text-accent utility (utilities outrank every @layer components
+   rule, unlayered styles outrank utilities). */
+.health-row a,
+.health-row .row-label {
+  color: var(--r-fg);
+}

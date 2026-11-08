@@ -1,0 +1,6 @@
+# The MCP alerts as a PrometheusRule and the "MCP / AI assistants" dashboard as a ConfigMap.
+console:
+  metrics:
+    serviceMonitor: {enabled: true}
+    prometheusRule: {enabled: true, labels: {release: kube-prometheus-stack}}
+    grafanaDashboard: {enabled: true}

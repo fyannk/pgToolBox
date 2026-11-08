@@ -1,0 +1,815 @@
+{
+  "minor": "1.30",
+  "rules": [
+    {
+      "type": "Ready",
+      "status": "True",
+      "reason": "*",
+      "class": "ok",
+      "since": "1.30",
+      "source": "api/v1/cluster_types.go ConditionClusterReady (v1.30.0:1178, main:1189); set True/ClusterIsReady iff phase is healthy, else False/ClusterIsNotReady (pkg/resources/status/transactions.go SetClusterReadyCondition v1.30.0:34-56)"
+    },
+    {
+      "type": "Ready",
+      "status": "False",
+      "reason": "*",
+      "class": "warning",
+      "since": "1.30",
+      "source": "api/v1/cluster_types.go ConditionClusterReady (v1.30.0:1178, main:1189); set True/ClusterIsReady iff phase is healthy, else False/ClusterIsNotReady (pkg/resources/status/transactions.go SetClusterReadyCondition v1.30.0:34-56)"
+    },
+    {
+      "type": "ContinuousArchiving",
+      "status": "True",
+      "reason": "*",
+      "class": "ok",
+      "since": "1.30",
+      "source": "api/v1/cluster_types.go ConditionContinuousArchiving (v1.30.0:1174, main:1185); written by the instance on every archive_command (pkg/management/postgres/webserver/local.go v1.30.0:247-263)"
+    },
+    {
+      "type": "ContinuousArchiving",
+      "status": "False",
+      "reason": "*",
+      "class": "critical",
+      "since": "1.30",
+      "source": "api/v1/cluster_types.go ConditionContinuousArchiving (v1.30.0:1174, main:1185); written by the instance on every archive_command (pkg/management/postgres/webserver/local.go v1.30.0:247-263)"
+    },
+    {
+      "type": "LastBackupSucceeded",
+      "status": "True",
+      "reason": "*",
+      "class": "ok",
+      "since": "1.30",
+      "source": "api/v1/cluster_types.go ConditionBackup (v1.30.0:1176, main:1187); api/v1/cluster_conditions.go v1.30.0:28-53 (BackupSucceededCondition, BackupStartingCondition, BuildClusterBackupFailedCondition)"
+    },
+    {
+      "type": "LastBackupSucceeded",
+      "status": "False",
+      "reason": "BackupStarted",
+      "class": "progressing",
+      "since": "1.30",
+      "source": "api/v1/cluster_types.go ConditionBackup (v1.30.0:1176, main:1187); api/v1/cluster_conditions.go v1.30.0:28-53 (BackupSucceededCondition, BackupStartingCondition, BuildClusterBackupFailedCondition)"
+    },
+    {
+      "type": "LastBackupSucceeded",
+      "status": "False",
+      "reason": "*",
+      "class": "warning",
+      "since": "1.30",
+      "source": "api/v1/cluster_types.go ConditionBackup (v1.30.0:1176, main:1187); api/v1/cluster_conditions.go v1.30.0:28-53 (BackupSucceededCondition, BackupStartingCondition, BuildClusterBackupFailedCondition)"
+    },
+    {
+      "type": "ConsistentSystemID",
+      "status": "True",
+      "reason": "*",
+      "class": "ok",
+      "since": "1.30",
+      "source": "api/v1/cluster_types.go ConditionConsistentSystemID (v1.30.0:1181, main:1192); reasons NotFound/Unique/Mismatch (internal/controller/cluster_status.go v1.30.0:791-810, main:55-61)"
+    },
+    {
+      "type": "ConsistentSystemID",
+      "status": "False",
+      "reason": "Mismatch",
+      "class": "critical",
+      "since": "1.30",
+      "source": "api/v1/cluster_types.go ConditionConsistentSystemID (v1.30.0:1181, main:1192); reasons NotFound/Unique/Mismatch (internal/controller/cluster_status.go v1.30.0:791-810, main:55-61)"
+    },
+    {
+      "type": "ConsistentSystemID",
+      "status": "False",
+      "reason": "*",
+      "class": "warning",
+      "since": "1.30",
+      "source": "api/v1/cluster_types.go ConditionConsistentSystemID (v1.30.0:1181, main:1192); reasons NotFound/Unique/Mismatch (internal/controller/cluster_status.go v1.30.0:791-810, main:55-61)"
+    },
+    {
+      "type": "Initialized",
+      "status": "True",
+      "reason": "*",
+      "class": "ok",
+      "since": "1.30",
+      "source": "api/v1/cluster_types.go ConditionInitialized, BootstrapCompleted, BootstrapPending (v1.30.0:1185/1237/1241, main:1196/1255/1259)"
+    },
+    {
+      "type": "Initialized",
+      "status": "False",
+      "reason": "*",
+      "class": "progressing",
+      "since": "1.30",
+      "source": "api/v1/cluster_types.go ConditionInitialized, BootstrapCompleted, BootstrapPending (v1.30.0:1185/1237/1241, main:1196/1255/1259)"
+    },
+    {
+      "type": "cnpg.io/hibernation",
+      "status": "True",
+      "reason": "*",
+      "class": "inactive",
+      "since": "1.30",
+      "source": "pkg/reconciler/hibernation/status.go HibernationConditionType and reasons (v1.30.0:45-68, main:45-68); EnrichStatus v1.30.0:83-134, isHibernationEnabled v1.30.0:136 (WrongAnnotationValue is declared but never set at v1.30.0)"
+    },
+    {
+      "type": "cnpg.io/hibernation",
+      "status": "False",
+      "reason": "DeletingPods",
+      "class": "progressing",
+      "since": "1.30",
+      "source": "pkg/reconciler/hibernation/status.go HibernationConditionType and reasons (v1.30.0:45-68, main:45-68); EnrichStatus v1.30.0:83-134, isHibernationEnabled v1.30.0:136 (WrongAnnotationValue is declared but never set at v1.30.0)"
+    },
+    {
+      "type": "cnpg.io/hibernation",
+      "status": "False",
+      "reason": "WaitingPodsDeletion",
+      "class": "progressing",
+      "since": "1.30",
+      "source": "pkg/reconciler/hibernation/status.go HibernationConditionType and reasons (v1.30.0:45-68, main:45-68); EnrichStatus v1.30.0:83-134, isHibernationEnabled v1.30.0:136 (WrongAnnotationValue is declared but never set at v1.30.0)"
+    },
+    {
+      "type": "cnpg.io/hibernation",
+      "status": "False",
+      "reason": "WaitingForHealthy",
+      "class": "warning",
+      "since": "1.30",
+      "source": "pkg/reconciler/hibernation/status.go HibernationConditionType and reasons (v1.30.0:45-68, main:45-68); EnrichStatus v1.30.0:83-134, isHibernationEnabled v1.30.0:136 (WrongAnnotationValue is declared but never set at v1.30.0)"
+    },
+    {
+      "type": "cnpg.io/hibernation",
+      "status": "False",
+      "reason": "*",
+      "class": "warning",
+      "since": "1.30",
+      "source": "pkg/reconciler/hibernation/status.go HibernationConditionType and reasons (v1.30.0:45-68, main:45-68); EnrichStatus v1.30.0:83-134, isHibernationEnabled v1.30.0:136 (WrongAnnotationValue is declared but never set at v1.30.0)"
+    },
+    {
+      "type": "TopologyUnavailable",
+      "status": "True",
+      "reason": "*",
+      "class": "warning",
+      "fork": "origin/dev/46",
+      "source": "FORK origin/dev/46 (bc754ecfb) api/v1/cluster_types.go:1201 ConditionTopologyUnavailable; True = topology needs Node labels the operator does not read"
+    },
+    {
+      "type": "TopologyUnavailable",
+      "status": "False",
+      "reason": "*",
+      "class": "ok",
+      "fork": "origin/dev/46",
+      "source": "FORK origin/dev/46 (bc754ecfb) api/v1/cluster_types.go:1201 ConditionTopologyUnavailable; True = topology needs Node labels the operator does not read"
+    },
+    {
+      "type": "VolumeExpansionRefused",
+      "status": "True",
+      "reason": "*",
+      "class": "warning",
+      "fork": "origin/dev/64",
+      "source": "FORK origin/dev/64 (931cda924) api/v1/cluster_types.go:1208 ConditionVolumeExpansionRefused; True while the API server refuses a PVC expansion"
+    },
+    {
+      "type": "VolumeExpansionRefused",
+      "status": "False",
+      "reason": "*",
+      "class": "ok",
+      "fork": "origin/dev/64",
+      "source": "FORK origin/dev/64 (931cda924) api/v1/cluster_types.go:1208 ConditionVolumeExpansionRefused; True while the API server refuses a PVC expansion"
+    },
+    {
+      "type": "VolumeAutoGrowStopped",
+      "status": "True",
+      "reason": "*",
+      "class": "warning",
+      "fork": "origin/dev/64",
+      "source": "FORK origin/dev/64 (931cda924) api/v1/cluster_types.go:1214 ConditionVolumeAutoGrowStopped; True while an autoGrow volume above threshold is not grown"
+    },
+    {
+      "type": "VolumeAutoGrowStopped",
+      "status": "False",
+      "reason": "*",
+      "class": "ok",
+      "fork": "origin/dev/64",
+      "source": "FORK origin/dev/64 (931cda924) api/v1/cluster_types.go:1214 ConditionVolumeAutoGrowStopped; True while an autoGrow volume above threshold is not grown"
+    }
+  ],
+  "probes": [
+    {
+      "type": "Ready",
+      "status": "True",
+      "reason": "",
+      "upstream": {
+        "class": "ok",
+        "known": true
+      },
+      "forkPinned": {
+        "class": "ok",
+        "known": true
+      }
+    },
+    {
+      "type": "Ready",
+      "status": "False",
+      "reason": "",
+      "upstream": {
+        "class": "warning",
+        "known": true
+      },
+      "forkPinned": {
+        "class": "warning",
+        "known": true
+      }
+    },
+    {
+      "type": "Ready",
+      "status": "Unknown",
+      "reason": "",
+      "upstream": {
+        "class": "unknown",
+        "known": true
+      },
+      "forkPinned": {
+        "class": "unknown",
+        "known": true
+      }
+    },
+    {
+      "type": "Ready",
+      "status": "Maybe",
+      "reason": "",
+      "upstream": {
+        "class": "unknown",
+        "known": false
+      },
+      "forkPinned": {
+        "class": "unknown",
+        "known": false
+      }
+    },
+    {
+      "type": "ContinuousArchiving",
+      "status": "True",
+      "reason": "",
+      "upstream": {
+        "class": "ok",
+        "known": true
+      },
+      "forkPinned": {
+        "class": "ok",
+        "known": true
+      }
+    },
+    {
+      "type": "ContinuousArchiving",
+      "status": "False",
+      "reason": "",
+      "upstream": {
+        "class": "critical",
+        "known": true
+      },
+      "forkPinned": {
+        "class": "critical",
+        "known": true
+      }
+    },
+    {
+      "type": "ContinuousArchiving",
+      "status": "Unknown",
+      "reason": "",
+      "upstream": {
+        "class": "unknown",
+        "known": true
+      },
+      "forkPinned": {
+        "class": "unknown",
+        "known": true
+      }
+    },
+    {
+      "type": "ContinuousArchiving",
+      "status": "Maybe",
+      "reason": "",
+      "upstream": {
+        "class": "unknown",
+        "known": false
+      },
+      "forkPinned": {
+        "class": "unknown",
+        "known": false
+      }
+    },
+    {
+      "type": "LastBackupSucceeded",
+      "status": "True",
+      "reason": "",
+      "upstream": {
+        "class": "ok",
+        "known": true
+      },
+      "forkPinned": {
+        "class": "ok",
+        "known": true
+      }
+    },
+    {
+      "type": "LastBackupSucceeded",
+      "status": "False",
+      "reason": "",
+      "upstream": {
+        "class": "warning",
+        "known": true
+      },
+      "forkPinned": {
+        "class": "warning",
+        "known": true
+      }
+    },
+    {
+      "type": "LastBackupSucceeded",
+      "status": "Unknown",
+      "reason": "",
+      "upstream": {
+        "class": "unknown",
+        "known": true
+      },
+      "forkPinned": {
+        "class": "unknown",
+        "known": true
+      }
+    },
+    {
+      "type": "LastBackupSucceeded",
+      "status": "Maybe",
+      "reason": "",
+      "upstream": {
+        "class": "unknown",
+        "known": false
+      },
+      "forkPinned": {
+        "class": "unknown",
+        "known": false
+      }
+    },
+    {
+      "type": "ConsistentSystemID",
+      "status": "True",
+      "reason": "",
+      "upstream": {
+        "class": "ok",
+        "known": true
+      },
+      "forkPinned": {
+        "class": "ok",
+        "known": true
+      }
+    },
+    {
+      "type": "ConsistentSystemID",
+      "status": "False",
+      "reason": "",
+      "upstream": {
+        "class": "warning",
+        "known": true
+      },
+      "forkPinned": {
+        "class": "warning",
+        "known": true
+      }
+    },
+    {
+      "type": "ConsistentSystemID",
+      "status": "Unknown",
+      "reason": "",
+      "upstream": {
+        "class": "unknown",
+        "known": true
+      },
+      "forkPinned": {
+        "class": "unknown",
+        "known": true
+      }
+    },
+    {
+      "type": "ConsistentSystemID",
+      "status": "Maybe",
+      "reason": "",
+      "upstream": {
+        "class": "unknown",
+        "known": false
+      },
+      "forkPinned": {
+        "class": "unknown",
+        "known": false
+      }
+    },
+    {
+      "type": "Initialized",
+      "status": "True",
+      "reason": "",
+      "upstream": {
+        "class": "ok",
+        "known": true
+      },
+      "forkPinned": {
+        "class": "ok",
+        "known": true
+      }
+    },
+    {
+      "type": "Initialized",
+      "status": "False",
+      "reason": "",
+      "upstream": {
+        "class": "progressing",
+        "known": true
+      },
+      "forkPinned": {
+        "class": "progressing",
+        "known": true
+      }
+    },
+    {
+      "type": "Initialized",
+      "status": "Unknown",
+      "reason": "",
+      "upstream": {
+        "class": "unknown",
+        "known": true
+      },
+      "forkPinned": {
+        "class": "unknown",
+        "known": true
+      }
+    },
+    {
+      "type": "Initialized",
+      "status": "Maybe",
+      "reason": "",
+      "upstream": {
+        "class": "unknown",
+        "known": false
+      },
+      "forkPinned": {
+        "class": "unknown",
+        "known": false
+      }
+    },
+    {
+      "type": "SyncReplicationTopologySatisfied",
+      "status": "True",
+      "reason": "",
+      "upstream": {
+        "class": "info",
+        "known": false
+      },
+      "forkPinned": {
+        "class": "info",
+        "known": false
+      }
+    },
+    {
+      "type": "SyncReplicationTopologySatisfied",
+      "status": "False",
+      "reason": "",
+      "upstream": {
+        "class": "info",
+        "known": false
+      },
+      "forkPinned": {
+        "class": "info",
+        "known": false
+      }
+    },
+    {
+      "type": "SyncReplicationTopologySatisfied",
+      "status": "Unknown",
+      "reason": "",
+      "upstream": {
+        "class": "info",
+        "known": false
+      },
+      "forkPinned": {
+        "class": "info",
+        "known": false
+      }
+    },
+    {
+      "type": "SyncReplicationTopologySatisfied",
+      "status": "Maybe",
+      "reason": "",
+      "upstream": {
+        "class": "info",
+        "known": false
+      },
+      "forkPinned": {
+        "class": "info",
+        "known": false
+      }
+    },
+    {
+      "type": "cnpg.io/hibernation",
+      "status": "True",
+      "reason": "",
+      "upstream": {
+        "class": "inactive",
+        "known": true
+      },
+      "forkPinned": {
+        "class": "inactive",
+        "known": true
+      }
+    },
+    {
+      "type": "cnpg.io/hibernation",
+      "status": "False",
+      "reason": "",
+      "upstream": {
+        "class": "warning",
+        "known": true
+      },
+      "forkPinned": {
+        "class": "warning",
+        "known": true
+      }
+    },
+    {
+      "type": "cnpg.io/hibernation",
+      "status": "Unknown",
+      "reason": "",
+      "upstream": {
+        "class": "unknown",
+        "known": true
+      },
+      "forkPinned": {
+        "class": "unknown",
+        "known": true
+      }
+    },
+    {
+      "type": "cnpg.io/hibernation",
+      "status": "Maybe",
+      "reason": "",
+      "upstream": {
+        "class": "unknown",
+        "known": false
+      },
+      "forkPinned": {
+        "class": "unknown",
+        "known": false
+      }
+    },
+    {
+      "type": "TopologyUnavailable",
+      "status": "True",
+      "reason": "",
+      "upstream": {
+        "class": "warning",
+        "known": false
+      },
+      "forkPinned": {
+        "class": "warning",
+        "known": true
+      }
+    },
+    {
+      "type": "TopologyUnavailable",
+      "status": "False",
+      "reason": "",
+      "upstream": {
+        "class": "ok",
+        "known": false
+      },
+      "forkPinned": {
+        "class": "ok",
+        "known": true
+      }
+    },
+    {
+      "type": "TopologyUnavailable",
+      "status": "Unknown",
+      "reason": "",
+      "upstream": {
+        "class": "unknown",
+        "known": false
+      },
+      "forkPinned": {
+        "class": "unknown",
+        "known": true
+      }
+    },
+    {
+      "type": "TopologyUnavailable",
+      "status": "Maybe",
+      "reason": "",
+      "upstream": {
+        "class": "unknown",
+        "known": false
+      },
+      "forkPinned": {
+        "class": "unknown",
+        "known": false
+      }
+    },
+    {
+      "type": "VolumeExpansionRefused",
+      "status": "True",
+      "reason": "",
+      "upstream": {
+        "class": "warning",
+        "known": false
+      },
+      "forkPinned": {
+        "class": "warning",
+        "known": true
+      }
+    },
+    {
+      "type": "VolumeExpansionRefused",
+      "status": "False",
+      "reason": "",
+      "upstream": {
+        "class": "ok",
+        "known": false
+      },
+      "forkPinned": {
+        "class": "ok",
+        "known": true
+      }
+    },
+    {
+      "type": "VolumeExpansionRefused",
+      "status": "Unknown",
+      "reason": "",
+      "upstream": {
+        "class": "unknown",
+        "known": false
+      },
+      "forkPinned": {
+        "class": "unknown",
+        "known": true
+      }
+    },
+    {
+      "type": "VolumeExpansionRefused",
+      "status": "Maybe",
+      "reason": "",
+      "upstream": {
+        "class": "unknown",
+        "known": false
+      },
+      "forkPinned": {
+        "class": "unknown",
+        "known": false
+      }
+    },
+    {
+      "type": "VolumeAutoGrowStopped",
+      "status": "True",
+      "reason": "",
+      "upstream": {
+        "class": "warning",
+        "known": false
+      },
+      "forkPinned": {
+        "class": "warning",
+        "known": true
+      }
+    },
+    {
+      "type": "VolumeAutoGrowStopped",
+      "status": "False",
+      "reason": "",
+      "upstream": {
+        "class": "ok",
+        "known": false
+      },
+      "forkPinned": {
+        "class": "ok",
+        "known": true
+      }
+    },
+    {
+      "type": "VolumeAutoGrowStopped",
+      "status": "Unknown",
+      "reason": "",
+      "upstream": {
+        "class": "unknown",
+        "known": false
+      },
+      "forkPinned": {
+        "class": "unknown",
+        "known": true
+      }
+    },
+    {
+      "type": "VolumeAutoGrowStopped",
+      "status": "Maybe",
+      "reason": "",
+      "upstream": {
+        "class": "unknown",
+        "known": false
+      },
+      "forkPinned": {
+        "class": "unknown",
+        "known": false
+      }
+    },
+    {
+      "type": "SomethingNew",
+      "status": "True",
+      "reason": "",
+      "upstream": {
+        "class": "info",
+        "known": false
+      },
+      "forkPinned": {
+        "class": "info",
+        "known": false
+      }
+    },
+    {
+      "type": "SomethingNew",
+      "status": "False",
+      "reason": "",
+      "upstream": {
+        "class": "info",
+        "known": false
+      },
+      "forkPinned": {
+        "class": "info",
+        "known": false
+      }
+    },
+    {
+      "type": "SomethingNew",
+      "status": "Unknown",
+      "reason": "",
+      "upstream": {
+        "class": "info",
+        "known": false
+      },
+      "forkPinned": {
+        "class": "info",
+        "known": false
+      }
+    },
+    {
+      "type": "SomethingNew",
+      "status": "Maybe",
+      "reason": "",
+      "upstream": {
+        "class": "info",
+        "known": false
+      },
+      "forkPinned": {
+        "class": "info",
+        "known": false
+      }
+    },
+    {
+      "type": "LastBackupSucceeded",
+      "status": "False",
+      "reason": "BackupStarted",
+      "upstream": {
+        "class": "progressing",
+        "known": true
+      },
+      "forkPinned": {
+        "class": "progressing",
+        "known": true
+      }
+    },
+    {
+      "type": "ConsistentSystemID",
+      "status": "False",
+      "reason": "Mismatch",
+      "upstream": {
+        "class": "critical",
+        "known": true
+      },
+      "forkPinned": {
+        "class": "critical",
+        "known": true
+      }
+    },
+    {
+      "type": "cnpg.io/hibernation",
+      "status": "False",
+      "reason": "DeletingPods",
+      "upstream": {
+        "class": "progressing",
+        "known": true
+      },
+      "forkPinned": {
+        "class": "progressing",
+        "known": true
+      }
+    },
+    {
+      "type": "cnpg.io/hibernation",
+      "status": "False",
+      "reason": "WaitingForHealthy",
+      "upstream": {
+        "class": "warning",
+        "known": true
+      },
+      "forkPinned": {
+        "class": "warning",
+        "known": true
+      }
+    }
+  ]
+}

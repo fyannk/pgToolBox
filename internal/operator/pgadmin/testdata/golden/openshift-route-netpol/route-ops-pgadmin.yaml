@@ -1,0 +1,37 @@
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  annotations:
+    pgtoolbox.fyannk.dev/spec-hash: e461f88fde91033f
+  labels:
+    app.kubernetes.io/component: pgadmin
+    app.kubernetes.io/instance: ops
+    app.kubernetes.io/managed-by: pgtoolbox
+    app.kubernetes.io/name: pgadmin
+    app.kubernetes.io/part-of: pgtoolbox
+    cost-center: db
+    pgtoolbox.fyannk.dev/pgadmin: ops
+    pgtoolbox.fyannk.dev/reconcile: "true"
+    router: internal
+  name: ops-pgadmin
+  namespace: team-a
+  ownerReferences:
+  - apiVersion: pgtoolbox.fyannk.dev/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: PgAdmin
+    name: ops
+    uid: pga-uid
+spec:
+  host: pgadmin.apps.example.com
+  port:
+    targetPort: https
+  tls:
+    insecureEdgeTerminationPolicy: Redirect
+    termination: reencrypt
+  to:
+    kind: Service
+    name: ops-pgadmin
+    weight: 100
+  wildcardPolicy: None
+status: {}

@@ -1,0 +1,162 @@
+{
+  "ref": {
+    "namespace": "team-a",
+    "name": "billing",
+    "uid": "4d2f1e0a-1b2c-4d3e-8f90-a1b2c3d4e5f6"
+  },
+  "generatedAt": "2026-10-29T12:00:00Z",
+  "primary": {
+    "current": "billing-1",
+    "target": "billing-2",
+    "state": "failover",
+    "since": "2026-10-29T11:58:25Z",
+    "failingSince": "2026-10-29T11:58:20Z",
+    "labelPrimaries": [
+      "billing-1"
+    ],
+    "provenance": {
+      "origin": "operator",
+      "source": "Cluster.status.currentPrimary",
+      "observedAt": "2026-10-29T12:00:00Z"
+    }
+  },
+  "synchronous": {
+    "mode": "none",
+    "provenance": {
+      "origin": "operator",
+      "source": "Cluster.spec.postgresql.synchronous",
+      "observedAt": "2026-10-29T12:00:00Z"
+    }
+  },
+  "standbys": [],
+  "receivers": [
+    {
+      "name": "billing-2",
+      "health": "unknown",
+      "statusRead": {
+        "state": "noTLS",
+        "reason": "status port without TLS (Pod created before CNPG 1.24): restart the instance",
+        "at": "2026-10-29T11:59:52Z",
+        "since": "2026-10-29T09:00:00Z"
+      },
+      "provenance": {
+        "origin": "instance",
+        "source": "/pg/status",
+        "stale": true,
+        "staleReason": "status port without TLS (Pod created before CNPG 1.24): restart the instance"
+      }
+    }
+  ],
+  "failover": {
+    "outcome": "unknown",
+    "health": "unknown",
+    "text": "No replica's status could be read, so the console cannot tell which one the operator would promote.",
+    "dataLoss": "unknown",
+    "dataLossText": "not known",
+    "certain": false,
+    "ranking": [
+      {
+        "name": "billing-2",
+        "eligible": false,
+        "reason": "its status could not be read by the console",
+        "podReady": true,
+        "node": "node-2",
+        "provenance": {
+          "origin": "instance",
+          "source": "/pg/status",
+          "stale": true,
+          "staleReason": "status port without TLS (Pod created before CNPG 1.24): restart the instance"
+        }
+      },
+      {
+        "name": "billing-3",
+        "eligible": false,
+        "reason": "its status could not be read by the console",
+        "provenance": {
+          "origin": "instance",
+          "source": "/pg/status"
+        }
+      }
+    ],
+    "synchronous": "none",
+    "fencing": "none",
+    "primaryNode": "node-1",
+    "notes": [
+      "Not read by the console: billing-2, billing-3. The operator reads the instances itself and would rank one of them first if it is further ahead."
+    ],
+    "provenance": {
+      "origin": "console",
+      "source": "CloudNativePG's election rule over /pg/status, Cluster.spec, FailoverQuorum and Pods",
+      "observedAt": "2026-10-29T11:59:52Z",
+      "stale": true,
+      "staleReason": "billing-1: not reachable from this console: timed out"
+    },
+    "blindSpots": [
+      {
+        "id": "failover.zones",
+        "panel": "failover",
+        "text": "The console reads no Node, so it cannot tell whether replicas share the primary's zone (topology.kubernetes.io/zone); only same-node placement is shown."
+      },
+      {
+        "id": "failover.synchronousCommit",
+        "panel": "failover",
+        "text": "synchronous_commit is read from the Cluster's parameters only: a role, a database, a session or a transaction can lower it (local, off), and those commits do not wait for any standby whatever sync_state says."
+      },
+      {
+        "id": "failover.consoleSweep",
+        "panel": "failover",
+        "text": "Positions are the console's last sweep of /pg/status; at a real failure the operator reads the instances itself, and the distance will have moved."
+      }
+    ]
+  },
+  "slots": [],
+  "sources": [
+    {
+      "source": "clusters",
+      "state": "live",
+      "since": "2026-10-29T09:00:00Z",
+      "health": "ok"
+    },
+    {
+      "source": "pods",
+      "state": "live",
+      "since": "2026-10-29T09:00:00Z",
+      "health": "ok"
+    },
+    {
+      "source": "instanceStatus",
+      "state": "live",
+      "since": "2026-10-29T09:00:00Z",
+      "health": "ok"
+    },
+    {
+      "source": "failoverQuorums",
+      "state": "live",
+      "since": "2026-10-29T09:00:00Z",
+      "health": "ok"
+    },
+    {
+      "source": "leases",
+      "state": "live",
+      "since": "2026-10-29T09:00:00Z",
+      "health": "ok"
+    }
+  ],
+  "blindSpots": [
+    {
+      "id": "replication.streamingReplicaOnly",
+      "panel": "replication",
+      "text": "Only this cluster's own standbys (\u003ccluster\u003e-N connected as streaming_replica) are listed. Replica clusters, logical replication walsenders and external base backups are not reported by the instance. The \"received\" LSN of each standby is the primary's sent_lsn."
+    },
+    {
+      "id": "replication.syncStandbyNamesNotReported",
+      "panel": "replication",
+      "text": "The synchronous_standby_names PostgreSQL actually applies is not reported by the instance; sync_state per standby and FailoverQuorum.status (when quorum failover is enabled) are the evidence."
+    },
+    {
+      "id": "topology.noSyncTopologyCondition",
+      "panel": "topology",
+      "text": "CloudNativePG 1.30 does not report whether synchronous standbys sit in another failure domain."
+    }
+  ]
+}

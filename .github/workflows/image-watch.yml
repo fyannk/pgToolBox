@@ -1,0 +1,102 @@
+name: Published image watch
+
+# The pull request gate only fails on fixable criticals a change introduces.
+# One that reaches a published image because an advisory was filed after the
+# fact is tracked here instead: a single issue that opens when a fixable
+# critical appears in the latest release, is updated in place while it remains,
+# and closes once a new release has cleared it. Editing an issue sends no
+# notification, so a finding that persists for a week costs one email, not
+# seven.
+#
+# Before the first stable release there is no `latest` image; the job says so
+# and does nothing.
+on:
+  schedule:
+    - cron: "23 4 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: image-watch
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    name: Fixable criticals in ${{ matrix.image }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read # check out the repository for the pinned grype
+      packages: read # pull the published image
+      issues: write # open, update and close the tracking issue
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [operator, console, evidence-agent]
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the pinned tools
+        uses: ./.github/actions/toolchain
+        with:
+          tools: aqua:anchore/grype
+      - name: Log in to GHCR
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Open, update or close the tracking issue
+        env:
+          IMAGE: ghcr.io/${{ github.repository_owner }}/pgtoolbox-${{ matrix.image }}:latest
+          NAME: pgtoolbox-${{ matrix.image }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          title="Published image ${NAME} has fixable critical vulnerabilities"
+
+          if ! digest="$(docker buildx imagetools inspect "${IMAGE}" --format '{{json .Manifest.Digest}}' 2>/dev/null | tr -d '"')" || [[ -z "${digest}" ]]; then
+            echo "No published ${IMAGE} yet; nothing to watch."
+            exit 0
+          fi
+
+          grype -q -o json "registry:${IMAGE%:latest}@${digest}" > scan.json
+          findings="$(jq -r '[.matches[]
+            | select(.vulnerability.severity == "Critical" and .vulnerability.fix.state == "fixed")
+            | "| \(.vulnerability.id) | \(.artifact.name) | \(.artifact.version) | \(.vulnerability.fix.versions | join(", ")) |"]
+            | unique | .[]' scan.json)"
+
+          number="$(gh issue list --state open --search "in:title \"${title}\"" \
+            --json number,title --jq ".[] | select(.title == \"${title}\") | .number" | head -n 1)"
+
+          if [[ -z "${findings}" ]]; then
+            if [[ -n "${number}" ]]; then
+              gh issue close "${number}" --comment "Cleared: [this scan](${RUN_URL}) of \`${IMAGE}\` (\`${digest}\`) finds no fixable critical."
+            fi
+            echo "No fixable critical in ${IMAGE} (${digest})."
+            exit 0
+          fi
+
+          body="$(cat <<EOF2
+          [The nightly scan](${RUN_URL}) of \`${IMAGE}\` (\`${digest}\`) found fixable critical vulnerabilities.
+
+          | Advisory | Package | Installed | Fixed in |
+          | --- | --- | --- | --- |
+          ${findings}
+
+          A fix is available for every row, so the next release should carry it:
+          update the dependency or the base image and tag a patch release. This
+          issue closes itself once a scan of the latest image comes back clean.
+          EOF2
+          )"
+
+          if [[ -n "${number}" ]]; then
+            gh issue edit "${number}" --body "${body}"
+          else
+            gh issue create --title "${title}" --body "${body}"
+          fi

@@ -1,0 +1,355 @@
+suite: console auth options, metrics and OpenShift
+templates:
+  - templates/console/deployment.yaml
+  - templates/console/serviceaccount.yaml
+  - templates/console/rbac.yaml
+  - templates/console/monitors.yaml
+  - templates/console/prometheusrule.yaml
+  - templates/console/dashboard.yaml
+  - templates/console/service.yaml
+release:
+  name: pgc
+  namespace: team-a
+tests:
+  - it: sets no optional env by default (the console's own defaults apply)
+    template: templates/console/deployment.yaml
+    asserts:
+      - notContains: {path: "spec.template.spec.containers[0].env", content: {name: AUTH_TOKEN_LOGIN, value: "false"}}
+      - notExists: {path: "spec.template.spec.containers[0].env[?(@.name=='PUBLIC_URL')]"}
+      - notContains: {path: "spec.template.spec.containers[0].env", content: {name: OIDC_GROUPS_CLAIM}, any: true}
+
+  - it: passes the optional env when set
+    template: templates/console/deployment.yaml
+    set:
+      console.publicURL: https://pgc.example.org
+      console.cookieSecure: "true"
+      console.trustedProxyHops: 2
+      console.auth.sessionMaxAge: 12h
+      console.auth.tokenLogin: false
+      console.auth.idpTimeout: 10s
+    asserts:
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: PUBLIC_URL, value: "https://pgc.example.org"}}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: COOKIE_SECURE, value: "true"}}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: TRUSTED_PROXY_HOPS, value: "2"}}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: SESSION_MAX_AGE, value: 12h}}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: AUTH_TOKEN_LOGIN, value: "false"}}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: IDP_TIMEOUT, value: 10s}}
+
+  - it: derives PUBLIC_URL from the exposure host
+    template: templates/console/deployment.yaml
+    set: {console.exposure.type: route, console.exposure.host: pgc.apps.example.org}
+    asserts:
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: PUBLIC_URL, value: "https://pgc.apps.example.org"}}
+
+  - it: mounts the IdP CA and the serving certificate as files
+    template: templates/console/deployment.yaml
+    set:
+      console.auth.provider: oidc
+      console.auth.oidc.issuerURL: https://idp.example.org
+      console.auth.oidc.clientID: c
+      console.auth.oidc.clientSecret.existingSecret: s
+      console.auth.oidc.caConfigMap: idp-ca
+      console.auth.oidc.requireEmailVerified: false
+      console.tls.secretName: pgc-tls
+    asserts:
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: OIDC_CA_FILE, value: /var/run/console/oidc-ca/ca.crt}}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: OIDC_REQUIRE_EMAIL_VERIFIED, value: "false"}}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: TLS_CERT_FILE, value: /var/run/console/tls/tls.crt}}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: TLS_KEY_FILE, value: /var/run/console/tls/tls.key}}
+
+  - it: defaults to the binary's idle timeout and OIDC scopes
+    template: templates/console/deployment.yaml
+    set:
+      console.auth.provider: oidc
+      console.auth.oidc.issuerURL: https://idp.example.org
+      console.auth.oidc.clientID: c
+      console.auth.oidc.clientSecret.existingSecret: s
+    asserts:
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: SESSION_IDLE_TIMEOUT, value: 1h}}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: OIDC_SCOPES, value: "openid,email,profile,offline_access"}}
+
+  - it: renders the OpenShift env the binary reads, with its scopes, and projects the service CA
+    template: templates/console/deployment.yaml
+    set:
+      console.auth.provider: openshift
+      console.auth.openshift.redirectURI: https://pgc.apps.example.org/auth/callback
+    asserts:
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: AUTH_PROVIDER, value: openshift}}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: OPENSHIFT_SCOPES, value: "user:info,user:check-access,user:full"}}
+      # Defaults the console resolves itself: nothing is rendered for them.
+      - notExists: {path: "spec.template.spec.containers[0].env[?(@.name=='OPENSHIFT_CLIENT_ID')]"}
+      - notExists: {path: "spec.template.spec.containers[0].env[?(@.name=='OPENSHIFT_CLIENT_SECRET_FILE')]"}
+      - notExists: {path: "spec.template.spec.containers[0].env[?(@.name=='OPENSHIFT_DISCOVERY_URL')]"}
+      - notExists: {path: "spec.template.spec.containers[0].env[?(@.name=='OPENSHIFT_CA_FILE')]"}
+      - contains:
+          path: "spec.template.spec.volumes[1].projected.sources"
+          content: {configMap: {name: openshift-service-ca.crt, optional: true, items: [{key: service-ca.crt, path: service-ca.crt}]}}
+
+  - it: projects the service CA into the API-access volume only on OpenShift
+    template: templates/console/deployment.yaml
+    set:
+      console.auth.provider: openshift
+      console.auth.openshift.redirectURI: https://pgc.apps.example.org/auth/callback
+    asserts:
+      - equal: {path: "spec.template.spec.volumes[1].name", value: kube-api-access}
+      - lengthEqual: {path: "spec.template.spec.volumes[1].projected.sources", count: 4}
+
+  - it: has no service CA projection off OpenShift
+    template: templates/console/deployment.yaml
+    asserts:
+      - lengthEqual: {path: "spec.template.spec.volumes[1].projected.sources", count: 3}
+
+  - it: passes every OpenShift override as env and mounts the files
+    template: templates/console/deployment.yaml
+    set:
+      console.auth.provider: openshift
+      console.auth.openshift.redirectURI: https://pgc.apps.example.org/auth/callback
+      console.auth.openshift.clientID: system:serviceaccount:team-a:pgc-console
+      console.auth.openshift.clientSecret.existingSecret: pgc-oauth-token
+      console.auth.openshift.discoveryURL: https://oauth.example.org/.well-known/oauth-authorization-server
+      console.auth.openshift.scopes: [user:info, user:check-access]
+      console.auth.openshift.caConfigMap: oauth-ca
+    asserts:
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: OPENSHIFT_CLIENT_ID, value: "system:serviceaccount:team-a:pgc-console"}}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: OPENSHIFT_CLIENT_SECRET_FILE, value: /var/run/console/openshift/token}}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: OPENSHIFT_DISCOVERY_URL, value: "https://oauth.example.org/.well-known/oauth-authorization-server"}}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: OPENSHIFT_SCOPES, value: "user:info,user:check-access"}}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: OPENSHIFT_CA_FILE, value: /var/run/console/openshift-ca/ca.crt}}
+      - contains: {path: "spec.template.spec.volumes", content: {name: openshift, secret: {secretName: pgc-oauth-token, items: [{key: token, path: token}]}}}
+      - contains: {path: "spec.template.spec.volumes", content: {name: openshift-ca, configMap: {name: oauth-ca, items: [{key: ca.crt, path: ca.crt}]}}}
+      # A CA of its own replaces the projected service CA.
+      - lengthEqual: {path: "spec.template.spec.volumes[1].projected.sources", count: 3}
+
+  - it: rejects an OpenShift client id that is not a ServiceAccount
+    template: templates/console/deployment.yaml
+    set:
+      console.auth.provider: openshift
+      console.auth.openshift.redirectURI: https://pgc.apps.example.org/auth/callback
+      console.auth.openshift.clientID: some-client
+    asserts:
+      - failedTemplate: {}
+
+  - it: projects a bound token for the evidence agent audience, by default
+    template: templates/console/deployment.yaml
+    asserts:
+      - contains:
+          path: "spec.template.spec.volumes"
+          content:
+            name: evidence-agent-token
+            projected:
+              sources:
+                - serviceAccountToken: {audience: pgtoolbox-evidence-agent/team-a, expirationSeconds: 3600, path: team-a/token}
+      - contains:
+          path: "spec.template.spec.containers[0].volumeMounts"
+          content: {name: evidence-agent-token, mountPath: /var/run/secrets/pgtoolbox.fyannk.dev/evidence-agent, readOnly: true}
+
+  - it: tells the console where the projected token is
+    template: templates/console/deployment.yaml
+    asserts:
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: EVIDENCE_TOKEN_DIR, value: /var/run/secrets/pgtoolbox.fyannk.dev/evidence-agent}}
+      - notExists: {path: "spec.template.spec.containers[0].env[?(@.name=='EVIDENCE_TOKEN_PATH')]"}
+      - notExists: {path: "spec.template.spec.containers[0].env[?(@.name=='EVIDENCE_ENABLED')]"}
+      - notExists: {path: "spec.template.spec.containers[0].env[?(@.name=='OPERATIONS_ENABLED')]"}
+      - notExists: {path: "spec.template.spec.containers[0].env[?(@.name=='MONITORING_URL')]"}
+      - notExists: {path: "spec.template.spec.containers[0].env[?(@.name=='EVIDENCE_INTERVAL')]"}
+
+  - it: switches evidence and operations off, sets the interval and the monitoring link
+    template: templates/console/deployment.yaml
+    set:
+      console.evidence.enabled: false
+      console.evidence.interval: 2m
+      console.operations.enabled: false
+      console.monitoringURL: https://grafana.example.org/d/cnpg
+    asserts:
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: EVIDENCE_ENABLED, value: "false"}}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: EVIDENCE_INTERVAL, value: 2m}}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: OPERATIONS_ENABLED, value: "false"}}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: MONITORING_URL, value: "https://grafana.example.org/d/cnpg"}}
+      - notExists: {path: "spec.template.spec.containers[0].env[?(@.name=='EVIDENCE_TOKEN_PATH')]"}
+
+  - it: rejects a plain-http monitoring link
+    template: templates/console/deployment.yaml
+    set: {console.monitoringURL: "http://grafana.example.org"}
+    asserts:
+      - failedTemplate: {}
+
+  - it: omits the evidence token when disabled
+    template: templates/console/deployment.yaml
+    set: {console.evidenceToken.enabled: false}
+    asserts:
+      - notContains: {path: "spec.template.spec.volumes", content: {name: evidence-agent-token}, any: true}
+
+  - it: renders no env the binary ignores (OIDC_GROUPS_CLAIM) with oidc either
+    template: templates/console/deployment.yaml
+    set:
+      console.auth.provider: oidc
+      console.auth.oidc.issuerURL: https://idp.example.org
+      console.auth.oidc.clientID: c
+      console.auth.oidc.clientSecret.existingSecret: s
+    asserts:
+      - notContains: {path: "spec.template.spec.containers[0].env", content: {name: OIDC_GROUPS_CLAIM}, any: true}
+
+  - it: annotates the ServiceAccount for the OpenShift OAuth client
+    template: templates/console/serviceaccount.yaml
+    set:
+      console.auth.provider: openshift
+      console.auth.openshift.redirectURI: https://pgc.apps.example.org/auth/callback
+    asserts:
+      - equal:
+          path: 'metadata.annotations["serviceaccounts.openshift.io/oauth-redirecturi.console"]'
+          value: https://pgc.apps.example.org/auth/callback
+
+  - it: requires the OpenShift callback URL
+    template: templates/console/serviceaccount.yaml
+    set: {console.auth.provider: openshift}
+    asserts:
+      - failedTemplate: {}
+
+  - it: annotates nothing off OpenShift
+    template: templates/console/serviceaccount.yaml
+    asserts:
+      - notExists: {path: metadata.annotations}
+
+  - it: renders the metrics-reader ClusterRole only on opt-in, as a non-resource URL
+    template: templates/console/rbac.yaml
+    set:
+      console.metrics.readerClusterRole: true
+      console.metrics.readerSubjects: [{name: prometheus-k8s, namespace: monitoring}]
+    documentIndex: 4
+    asserts:
+      - isKind: {of: ClusterRole}
+      - equal: {path: rules, value: [{nonResourceURLs: [/metrics], verbs: [get]}]}
+
+  - it: binds the metrics-reader to the scraper, never to the console
+    template: templates/console/rbac.yaml
+    set:
+      console.metrics.readerClusterRole: true
+      console.metrics.readerSubjects: [{name: prometheus-k8s, namespace: monitoring}]
+    documentIndex: 5
+    asserts:
+      - isKind: {of: ClusterRoleBinding}
+      - equal: {path: subjects, value: [{kind: ServiceAccount, name: prometheus-k8s, namespace: monitoring}]}
+
+  - it: has no metrics-reader by default
+    template: templates/console/rbac.yaml
+    asserts:
+      - hasDocuments: {count: 4}
+
+  - it: renders a ServiceMonitor on the probe port with the scraper's token
+    template: templates/console/monitors.yaml
+    set: {console.metrics.serviceMonitor.enabled: true}
+    asserts:
+      - isKind: {of: ServiceMonitor}
+      - equal: {path: "spec.endpoints[0].port", value: metrics}
+      - equal: {path: "spec.endpoints[0].path", value: /metrics}
+
+  - it: renders the MCP alerts as a PrometheusRule, each with a severity and a runbook
+    template: templates/console/prometheusrule.yaml
+    set: {console.metrics.prometheusRule.enabled: true, console.metrics.prometheusRule.labels: {release: prom}}
+    asserts:
+      - isKind: {of: PrometheusRule}
+      - equal: {path: metadata.labels.release, value: prom}
+      - equal: {path: "spec.groups[0].name", value: pgtoolbox-console-mcp}
+      - equal: {path: "spec.groups[0].rules[0].alert", value: PgToolBoxConsoleMCPHighErrorRatio}
+      - equal: {path: "spec.groups[1].rules[0].alert", value: PgToolBoxConsoleMCPOAuthTokenFailures}
+      - matchRegex: {path: "spec.groups[0].rules[0].annotations.runbook_url", pattern: "console/alerts.md#pgtoolboxconsolemcphigherrorratio$"}
+      - matchRegex: {path: "spec.groups[0].rules[0].labels.severity", pattern: "^(info|warning|critical)$"}
+
+  - it: renders the MCP dashboard for the Grafana sidecar
+    template: templates/console/dashboard.yaml
+    set: {console.metrics.grafanaDashboard.enabled: true}
+    asserts:
+      - isKind: {of: ConfigMap}
+      - equal: {path: 'metadata.labels.grafana_dashboard', value: "1"}
+      - matchRegex: {path: 'data["pgtoolbox-mcp.json"]', pattern: "pgtoolbox_console_mcp_calls_total"}
+      - matchRegex: {path: 'data["pgtoolbox-mcp.json"]', pattern: "pgtoolbox_console_mcp_oauth_requests_total"}
+
+  - it: renders no alerts by default
+    template: templates/console/prometheusrule.yaml
+    asserts:
+      - hasDocuments: {count: 0}
+
+  - it: renders no dashboard by default
+    template: templates/console/dashboard.yaml
+    asserts:
+      - hasDocuments: {count: 0}
+
+  - it: exposes the metrics Service port only for a ServiceMonitor
+    template: templates/console/service.yaml
+    set: {console.metrics.serviceMonitor.enabled: true}
+    asserts:
+      - equal: {path: "spec.ports[1]", value: {name: metrics, port: 3001, targetPort: probes, protocol: TCP}}
+
+  - it: renders no monitors by default
+    template: templates/console/monitors.yaml
+    asserts:
+      - hasDocuments: {count: 0}
+
+  - it: projects one token per watched namespace, each with its own audience and path
+    template: templates/console/deployment.yaml
+    set: {console.watchNamespaces: [team-a, team-b]}
+    asserts:
+      - contains:
+          path: "spec.template.spec.volumes"
+          content:
+            name: evidence-agent-token
+            projected:
+              sources:
+                - serviceAccountToken: {audience: pgtoolbox-evidence-agent/team-a, expirationSeconds: 3600, path: team-a/token}
+                - serviceAccountToken: {audience: pgtoolbox-evidence-agent/team-b, expirationSeconds: 3600, path: team-b/token}
+
+  - it: renders no token volume or variable when the evidence token is off
+    template: templates/console/deployment.yaml
+    set: {console.evidenceToken.enabled: false}
+    asserts:
+      - notExists: {path: "spec.template.spec.containers[0].env[?(@.name=='EVIDENCE_TOKEN_DIR')]"}
+
+  - it: probes the console over plain HTTP when it serves no TLS
+    template: templates/console/deployment.yaml
+    asserts:
+      - notExists: {path: "spec.template.spec.containers[0].livenessProbe.httpGet.scheme"}
+      - notExists: {path: "spec.template.spec.containers[0].readinessProbe.httpGet.scheme"}
+
+  - it: probes the console over HTTPS when console.tls.secretName is set
+    template: templates/console/deployment.yaml
+    set: {console.tls.secretName: pgtoolbox-console-tls}
+    asserts:
+      - equal: {path: "spec.template.spec.containers[0].livenessProbe.httpGet.scheme", value: HTTPS}
+      - equal: {path: "spec.template.spec.containers[0].readinessProbe.httpGet.scheme", value: HTTPS}
+
+  - it: scrapes plain HTTP without TLS
+    template: templates/console/monitors.yaml
+    set: {console.metrics.serviceMonitor.enabled: true, console.metrics.podMonitor.enabled: true}
+    asserts:
+      - notExists: {path: "spec.endpoints[0].scheme"}
+        documentIndex: 0
+      - notExists: {path: "spec.podMetricsEndpoints[0].scheme"}
+        documentIndex: 1
+
+  - it: scrapes https, verifying the console certificate, with TLS and a CA
+    template: templates/console/monitors.yaml
+    release: {name: pgc, namespace: team-a}
+    set:
+      console.tls.secretName: pgtoolbox-console-tls
+      console.metrics.serviceMonitor.enabled: true
+      console.metrics.podMonitor.enabled: true
+      console.metrics.tls.caSecret.name: console-ca
+    asserts:
+      - equal: {path: "spec.endpoints[0].scheme", value: https}
+        documentIndex: 0
+      - equal: {path: "spec.endpoints[0].tlsConfig", value: {serverName: pgc-console.team-a.svc, ca: {secret: {name: console-ca, key: ca.crt}}}}
+        documentIndex: 0
+      - equal: {path: "spec.podMetricsEndpoints[0].scheme", value: https}
+        documentIndex: 1
+      - equal: {path: "spec.podMetricsEndpoints[0].tlsConfig", value: {serverName: pgc-console.team-a.svc, ca: {secret: {name: console-ca, key: ca.crt}}}}
+        documentIndex: 1
+
+  - it: skips verification only on explicit opt-in
+    template: templates/console/monitors.yaml
+    set:
+      console.tls.secretName: pgtoolbox-console-tls
+      console.metrics.serviceMonitor.enabled: true
+      console.metrics.tls.insecureSkipVerify: true
+      console.metrics.tls.serverName: console.example.org
+    asserts:
+      - equal: {path: "spec.endpoints[0].tlsConfig", value: {serverName: console.example.org, insecureSkipVerify: true}}

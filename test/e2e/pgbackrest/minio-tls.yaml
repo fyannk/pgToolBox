@@ -1,0 +1,126 @@
+# Copyright 2026 The pgToolBox Authors.
+# SPDX-License-Identifier: Apache-2.0
+#
+# MinIO over TLS for the pgBackRest scenario (test/e2e/pgbackrest/run.sh): the
+# serving certificate is issued by a CA that cert-manager creates for the test
+# (a self-signed root, then a CA issuer), so the evidence agent can be given
+# that CA (AGENT_PGBACKREST_ENDPOINT_CA_SECRET / _KEY) and nothing else trusts
+# it. The buckets are the top-level directories of MinIO's data directory, one
+# per plugin. Test infrastructure for a throwaway cluster, not a shipped
+# component; the credentials are fixed and non-secret.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: minio
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: minio-credentials
+  namespace: minio
+stringData:
+  ACCESS_KEY_ID: e2eaccesskey
+  ACCESS_SECRET_KEY: e2esecretkey
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: minio-root
+  namespace: minio
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: minio-ca
+  namespace: minio
+spec:
+  isCA: true
+  commonName: pgbackrest-e2e-minio-ca
+  secretName: minio-ca
+  duration: 24h
+  privateKey: {algorithm: ECDSA, size: 256}
+  issuerRef: {name: minio-root, kind: Issuer, group: cert-manager.io}
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: minio-ca
+  namespace: minio
+spec:
+  ca:
+    secretName: minio-ca
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: minio-tls
+  namespace: minio
+spec:
+  commonName: minio.minio.svc
+  dnsNames: [minio.minio.svc, minio.minio.svc.cluster.local]
+  secretName: minio-tls
+  duration: 24h
+  privateKey: {algorithm: ECDSA, size: 256}
+  issuerRef: {name: minio-ca, kind: Issuer, group: cert-manager.io}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: minio
+  namespace: minio
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: minio}
+  template:
+    metadata:
+      labels: {app: minio}
+    spec:
+      containers:
+        - name: minio
+          # The image of test/e2e/testdata/minio.yaml, pinned by digest; see the
+          # comment there.
+          image: docker.io/chainguard/minio@sha256:bd014394a80898e68c149f2311fdf8d5a2c2f3bb2c33b9327ae6d02b4b065ae1
+          command:
+            - /usr/bin/sh
+            - -c
+            - mkdir -p /data/pgbr-dalibo /data/pgbr-opera && exec minio server /data --address :9000 --certs-dir /certs
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef: {name: minio-credentials, key: ACCESS_KEY_ID}
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef: {name: minio-credentials, key: ACCESS_SECRET_KEY}
+          ports:
+            - containerPort: 9000
+          readinessProbe:
+            httpGet: {path: /minio/health/ready, port: 9000, scheme: HTTPS}
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          volumeMounts:
+            - {name: data, mountPath: /data}
+            - {name: certs, mountPath: /certs, readOnly: true}
+      volumes:
+        - name: data
+          emptyDir: {}
+        - name: certs
+          secret:
+            secretName: minio-tls
+            # MinIO reads public.crt and private.key from its certs directory.
+            items:
+              - {key: tls.crt, path: public.crt}
+              - {key: tls.key, path: private.key}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio
+  namespace: minio
+spec:
+  selector: {app: minio}
+  ports:
+    - port: 9000
+      targetPort: 9000

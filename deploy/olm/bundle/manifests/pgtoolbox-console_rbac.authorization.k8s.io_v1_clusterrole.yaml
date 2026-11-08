@@ -1,0 +1,123 @@
+# The console's own read authority, for consoles the operator runs (PgToolBoxConsole):
+# the operator binds these to each console's ServiceAccount with a RoleBinding
+# in the console's namespace. The operator may bind them (the `bind` verb, by
+# name) but not write them, so no PgToolBoxConsole can obtain more than this. The
+# rules are the chart's console Role (charts/pgtools/templates/console/rbac.yaml),
+# rule for rule; a test in internal/operator/console compares the two.
+#
+# Hand-written source of truth: hack/sync-manifests.sh copies the rules into the
+# Helm chart and the OLM bundle, and hack/validate-packaging.sh compares them.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: pgtoolbox-console
+  labels:
+    app.kubernetes.io/part-of: pgtoolbox
+rules:
+# CloudNativePG kinds the read model watches.
+- apiGroups:
+  - postgresql.cnpg.io
+  resources:
+  - clusters
+  - backups
+  - scheduledbackups
+  - poolers
+  - databases
+  - databaseroles
+  - publications
+  - subscriptions
+  - failoverquorums
+  - imagecatalogs
+  verbs:
+  - get
+  - list
+  - watch
+# Where plugin-based backups report their recovery window (barman-cloud
+# ObjectStores, and the pgBackRest plugins' Stanzas and Archives).
+- apiGroups:
+  - barmancloud.cnpg.io
+  resources:
+  - objectstores
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - pgbackrest.dalibo.com
+  resources:
+  - stanzas
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - pgbackrest.cnpg.opera.com
+  resources:
+  - archives
+  verbs:
+  - get
+  - list
+  - watch
+# Link-outs to the objects the operator owns.
+- apiGroups:
+  - pgtoolbox.fyannk.dev
+  resources:
+  - pgadmins
+  - evidenceagents
+  - pgaccessrequests
+  verbs:
+  - get
+  - list
+  - watch
+# Instance and pooler pods, their claims, the Services clients dial.
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  - persistentvolumeclaims
+  - services
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - events
+  - resourcequotas
+  verbs:
+  - list
+  - watch
+- apiGroups:
+  - policy
+  resources:
+  - poddisruptionbudgets
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - coordination.k8s.io
+  resources:
+  - leases
+  verbs:
+  - get
+  - list
+  - watch
+# Major-upgrade Jobs.
+- apiGroups:
+  - batch
+  resources:
+  - jobs
+  verbs:
+  - get
+  - list
+  - watch
+# Pooler pods are owned through Pod -> ReplicaSet -> Deployment -> Pooler.
+- apiGroups:
+  - apps
+  resources:
+  - replicasets
+  - deployments
+  verbs:
+  - get

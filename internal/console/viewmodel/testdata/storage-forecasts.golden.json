@@ -1,0 +1,2362 @@
+{
+  "ref": {
+    "namespace": "team-a",
+    "name": "billing",
+    "uid": "4d2f1e0a-1b2c-4d3e-8f90-a1b2c3d4e5f6"
+  },
+  "generatedAt": "2026-10-29T12:00:00Z",
+  "requests": [
+    {
+      "role": "PG_DATA",
+      "size": "40Gi",
+      "storageClass": "fast-ssd",
+      "resizeInUseVolumes": true,
+      "autoGrow": {
+        "maxSize": "100Gi",
+        "threshold": 80,
+        "step": "20%"
+      },
+      "provenance": {
+        "origin": "operator",
+        "source": "Cluster.spec.storage",
+        "observedAt": "2026-10-29T11:59:58Z"
+      }
+    },
+    {
+      "role": "PG_WAL",
+      "size": "10Gi",
+      "storageClass": "fast-ssd",
+      "provenance": {
+        "origin": "operator",
+        "source": "Cluster.spec.storage",
+        "observedAt": "2026-10-29T11:59:58Z"
+      }
+    }
+  ],
+  "volumes": [
+    {
+      "name": "billing-1",
+      "instance": "billing-1",
+      "role": "PG_DATA",
+      "group": "healthy",
+      "health": "ok",
+      "phase": "Bound",
+      "capacity": "40Gi",
+      "requested": "40Gi",
+      "storageClass": "fast-ssd",
+      "usage": {
+        "totalBytes": 42949672960,
+        "usedBytes": 33285996544,
+        "availableBytes": 9663676416,
+        "inodes": 2621440,
+        "inodesFree": 2580000,
+        "provenance": {
+          "origin": "instance",
+          "source": "/pg/status volumeUsages",
+          "observedAt": "2026-10-29T11:59:40Z"
+        }
+      },
+      "provenance": {
+        "origin": "kubernetes",
+        "source": "PersistentVolumeClaim; group: Cluster.status.healthyPVC",
+        "observedAt": "2026-10-29T11:59:58Z"
+      }
+    },
+    {
+      "name": "billing-1-wal",
+      "instance": "billing-1",
+      "role": "PG_WAL",
+      "group": "healthy",
+      "health": "ok",
+      "phase": "Bound",
+      "capacity": "40Gi",
+      "requested": "40Gi",
+      "storageClass": "fast-ssd",
+      "usage": {
+        "totalBytes": 10737418240,
+        "usedBytes": 8589934592,
+        "availableBytes": 2147483648,
+        "provenance": {
+          "origin": "instance",
+          "source": "/pg/status volumeUsages",
+          "observedAt": "2026-10-29T11:59:40Z"
+        }
+      },
+      "provenance": {
+        "origin": "kubernetes",
+        "source": "PersistentVolumeClaim; group: Cluster.status.healthyPVC",
+        "observedAt": "2026-10-29T11:59:58Z"
+      }
+    },
+    {
+      "name": "billing-2",
+      "instance": "billing-2",
+      "role": "PG_DATA",
+      "group": "healthy",
+      "health": "ok",
+      "phase": "Bound",
+      "capacity": "40Gi",
+      "requested": "40Gi",
+      "storageClass": "fast-ssd",
+      "usage": {
+        "totalBytes": 42949672960,
+        "usedBytes": 19327352832,
+        "availableBytes": 23622320128,
+        "inodes": 2621440,
+        "inodesFree": 2580000,
+        "provenance": {
+          "origin": "instance",
+          "source": "/pg/status volumeUsages",
+          "observedAt": "2026-10-29T11:59:40Z"
+        }
+      },
+      "provenance": {
+        "origin": "kubernetes",
+        "source": "PersistentVolumeClaim; group: Cluster.status.healthyPVC",
+        "observedAt": "2026-10-29T11:59:58Z"
+      }
+    },
+    {
+      "name": "billing-3",
+      "instance": "billing-3",
+      "role": "PG_DATA",
+      "group": "healthy",
+      "health": "ok",
+      "phase": "Bound",
+      "capacity": "40Gi",
+      "requested": "40Gi",
+      "storageClass": "fast-ssd",
+      "usage": {
+        "totalBytes": 42949672960,
+        "usedBytes": 20401094656,
+        "availableBytes": 22548578304,
+        "provenance": {
+          "origin": "instance",
+          "source": "/pg/status volumeUsages",
+          "observedAt": "2026-10-29T11:59:40Z"
+        }
+      },
+      "provenance": {
+        "origin": "kubernetes",
+        "source": "PersistentVolumeClaim; group: Cluster.status.healthyPVC",
+        "observedAt": "2026-10-29T11:59:58Z"
+      }
+    }
+  ],
+  "forecasts": {
+    "state": "available",
+    "intervalSeconds": 900,
+    "retentionSeconds": 2592000,
+    "persistent": true,
+    "volumes": [
+      {
+        "instance": "billing-1",
+        "volume": "pgdata",
+        "primary": true,
+        "totalBytes": 42949672960,
+        "availableBytes": 9663676416,
+        "usedBytes": 33285996544,
+        "inodes": 2621440,
+        "inodesFree": 2580000,
+        "asOf": "2026-10-29T11:59:40Z",
+        "since": "2026-09-29T12:00:00Z",
+        "samples": 2875,
+        "bytesForecast": {
+          "measure": "bytes",
+          "state": "forecast",
+          "consumed": 33285996544,
+          "capacity": 42949672960,
+          "headroom": 9663676416,
+          "target": "filesystem",
+          "autoGrowSteps": true,
+          "ratePerDay": 1610612736,
+          "windowStart": "2026-10-22T12:00:00Z",
+          "windowEnd": "2026-10-29T11:45:00Z",
+          "windowHours": 168,
+          "fullAt": "2026-11-04T12:00:00Z",
+          "earliestAt": "2026-11-03T12:00:00Z",
+          "latestAt": "2026-11-05T12:00:00Z",
+          "confidence": "high",
+          "firstHalfRatePerDay": 1503238553.6,
+          "recentRatePerDay": 1717986918.4,
+          "minimumGrowth": 21474836,
+          "minimumHours": 24,
+          "hoursFound": 168
+        },
+        "autoGrowForecast": {
+          "measure": "bytes",
+          "state": "forecast",
+          "consumed": 33285996544,
+          "capacity": 97710505984,
+          "headroom": 74088185856,
+          "target": "autoGrowMaxSize",
+          "autoGrowSteps": true,
+          "ratePerDay": 1610612736,
+          "windowStart": "2026-10-22T12:00:00Z",
+          "windowEnd": "2026-10-29T11:45:00Z",
+          "windowHours": 168,
+          "fullAt": "2026-12-14T12:00:00Z",
+          "earliestAt": "2026-12-09T12:00:00Z",
+          "latestAt": "2026-12-21T12:00:00Z",
+          "confidence": "high",
+          "firstHalfRatePerDay": 1503238553.6,
+          "recentRatePerDay": 1717986918.4,
+          "minimumGrowth": 48855187,
+          "minimumHours": 24,
+          "hoursFound": 168
+        },
+        "inodesForecast": {
+          "measure": "inodes",
+          "state": "notGrowing",
+          "consumed": 41440,
+          "capacity": 2621440,
+          "headroom": 2580000,
+          "target": "filesystem",
+          "ratePerDay": 18,
+          "windowStart": "2026-10-22T12:00:00Z",
+          "windowEnd": "2026-10-29T11:45:00Z",
+          "windowHours": 168,
+          "firstHalfRatePerDay": 17,
+          "recentRatePerDay": 19,
+          "minimumGrowth": 1310.72,
+          "minimumHours": 24,
+          "hoursFound": 168
+        },
+        "autoGrow": {
+          "maxSize": "100Gi",
+          "threshold": 80,
+          "step": "20%"
+        },
+        "trend": [
+          {
+            "at": "2026-09-29T12:00:00Z",
+            "bytes": 22548578304,
+            "inodes": 40000
+          },
+          {
+            "at": "2026-09-29T16:00:00Z",
+            "bytes": 22607634104.32,
+            "inodes": 40003
+          },
+          {
+            "at": "2026-09-29T20:00:00Z",
+            "bytes": 22666689904.64,
+            "inodes": 40006
+          },
+          {
+            "at": "2026-09-30T00:00:00Z",
+            "bytes": 22725745704.96,
+            "inodes": 40009
+          },
+          {
+            "at": "2026-09-30T04:00:00Z",
+            "bytes": 22784801505.28,
+            "inodes": 40012
+          },
+          {
+            "at": "2026-09-30T08:00:00Z",
+            "bytes": 22843857305.6,
+            "inodes": 40015
+          },
+          {
+            "at": "2026-09-30T12:00:00Z",
+            "bytes": 22902913105.92,
+            "inodes": 40018
+          },
+          {
+            "at": "2026-09-30T16:00:00Z",
+            "bytes": 22961968906.24,
+            "inodes": 40021
+          },
+          {
+            "at": "2026-09-30T20:00:00Z",
+            "bytes": 23021024706.56,
+            "inodes": 40024
+          },
+          {
+            "at": "2026-10-01T00:00:00Z",
+            "bytes": 23080080506.88,
+            "inodes": 40027
+          },
+          {
+            "at": "2026-10-01T04:00:00Z",
+            "bytes": 23139136307.2,
+            "inodes": 40030
+          },
+          {
+            "at": "2026-10-01T08:00:00Z",
+            "bytes": 23198192107.52,
+            "inodes": 40033
+          },
+          {
+            "at": "2026-10-01T12:00:00Z",
+            "bytes": 23257247907.84,
+            "inodes": 40036
+          },
+          {
+            "at": "2026-10-01T16:00:00Z",
+            "bytes": 23316303708.16,
+            "inodes": 40039
+          },
+          {
+            "at": "2026-10-01T20:00:00Z",
+            "bytes": 23375359508.48,
+            "inodes": 40042
+          },
+          {
+            "at": "2026-10-02T00:00:00Z",
+            "bytes": 23434415308.8,
+            "inodes": 40045
+          },
+          {
+            "at": "2026-10-02T04:00:00Z",
+            "bytes": 23493471109.12,
+            "inodes": 40048
+          },
+          {
+            "at": "2026-10-02T08:00:00Z",
+            "bytes": 23552526909.44,
+            "inodes": 40051
+          },
+          {
+            "at": "2026-10-02T12:00:00Z",
+            "bytes": 23611582709.76,
+            "inodes": 40054
+          },
+          {
+            "at": "2026-10-02T16:00:00Z",
+            "bytes": 23670638510.08,
+            "inodes": 40057
+          },
+          {
+            "at": "2026-10-02T20:00:00Z",
+            "bytes": 23729694310.4,
+            "inodes": 40060
+          },
+          {
+            "at": "2026-10-03T00:00:00Z",
+            "bytes": 23788750110.72,
+            "inodes": 40063
+          },
+          {
+            "at": "2026-10-03T04:00:00Z",
+            "bytes": 23847805911.04,
+            "inodes": 40066
+          },
+          {
+            "at": "2026-10-03T08:00:00Z",
+            "bytes": 23906861711.36,
+            "inodes": 40069
+          },
+          {
+            "at": "2026-10-03T12:00:00Z",
+            "bytes": 23965917511.68,
+            "inodes": 40072
+          },
+          {
+            "at": "2026-10-03T16:00:00Z",
+            "bytes": 24024973312,
+            "inodes": 40075
+          },
+          {
+            "at": "2026-10-03T20:00:00Z",
+            "bytes": 24084029112.32,
+            "inodes": 40078
+          },
+          {
+            "at": "2026-10-04T00:00:00Z",
+            "bytes": 24143084912.64,
+            "inodes": 40081
+          },
+          {
+            "at": "2026-10-04T04:00:00Z",
+            "bytes": 24202140712.96,
+            "inodes": 40084
+          },
+          {
+            "at": "2026-10-04T08:00:00Z",
+            "bytes": 24261196513.28,
+            "inodes": 40087
+          },
+          {
+            "at": "2026-10-04T12:00:00Z",
+            "bytes": 24320252313.6,
+            "inodes": 40090
+          },
+          {
+            "at": "2026-10-04T16:00:00Z",
+            "bytes": 24379308113.92,
+            "inodes": 40093
+          },
+          {
+            "at": "2026-10-04T20:00:00Z",
+            "bytes": 24438363914.24,
+            "inodes": 40096
+          },
+          {
+            "at": "2026-10-05T00:00:00Z",
+            "bytes": 24497419714.56,
+            "inodes": 40099
+          },
+          {
+            "at": "2026-10-05T04:00:00Z",
+            "bytes": 24556475514.88,
+            "inodes": 40102
+          },
+          {
+            "at": "2026-10-05T08:00:00Z",
+            "bytes": 24615531315.2,
+            "inodes": 40105
+          },
+          {
+            "at": "2026-10-05T12:00:00Z",
+            "bytes": 24674587115.52,
+            "inodes": 40108
+          },
+          {
+            "at": "2026-10-05T16:00:00Z",
+            "bytes": 24733642915.84,
+            "inodes": 40111
+          },
+          {
+            "at": "2026-10-05T20:00:00Z",
+            "bytes": 24792698716.16,
+            "inodes": 40114
+          },
+          {
+            "at": "2026-10-06T00:00:00Z",
+            "bytes": 24851754516.48,
+            "inodes": 40117
+          },
+          {
+            "at": "2026-10-06T04:00:00Z"
+          },
+          {
+            "at": "2026-10-06T08:00:00Z",
+            "bytes": 24969866117.12,
+            "inodes": 40123
+          },
+          {
+            "at": "2026-10-06T12:00:00Z",
+            "bytes": 25028921917.44,
+            "inodes": 40126
+          },
+          {
+            "at": "2026-10-06T16:00:00Z",
+            "bytes": 25087977717.760002,
+            "inodes": 40129
+          },
+          {
+            "at": "2026-10-06T20:00:00Z",
+            "bytes": 25147033518.08,
+            "inodes": 40132
+          },
+          {
+            "at": "2026-10-07T00:00:00Z",
+            "bytes": 25206089318.4,
+            "inodes": 40135
+          },
+          {
+            "at": "2026-10-07T04:00:00Z",
+            "bytes": 25265145118.72,
+            "inodes": 40138
+          },
+          {
+            "at": "2026-10-07T08:00:00Z",
+            "bytes": 25324200919.04,
+            "inodes": 40141
+          },
+          {
+            "at": "2026-10-07T12:00:00Z",
+            "bytes": 25383256719.36,
+            "inodes": 40144
+          },
+          {
+            "at": "2026-10-07T16:00:00Z",
+            "bytes": 25442312519.68,
+            "inodes": 40147
+          },
+          {
+            "at": "2026-10-07T20:00:00Z",
+            "bytes": 25501368320,
+            "inodes": 40150
+          },
+          {
+            "at": "2026-10-08T00:00:00Z",
+            "bytes": 25560424120.32,
+            "inodes": 40153
+          },
+          {
+            "at": "2026-10-08T04:00:00Z",
+            "bytes": 25619479920.64,
+            "inodes": 40156
+          },
+          {
+            "at": "2026-10-08T08:00:00Z",
+            "bytes": 25678535720.96,
+            "inodes": 40159
+          },
+          {
+            "at": "2026-10-08T12:00:00Z",
+            "bytes": 25737591521.28,
+            "inodes": 40162
+          },
+          {
+            "at": "2026-10-08T16:00:00Z",
+            "bytes": 25796647321.6,
+            "inodes": 40165
+          },
+          {
+            "at": "2026-10-08T20:00:00Z",
+            "bytes": 25855703121.92,
+            "inodes": 40168
+          },
+          {
+            "at": "2026-10-09T00:00:00Z",
+            "bytes": 25914758922.24,
+            "inodes": 40171
+          },
+          {
+            "at": "2026-10-09T04:00:00Z",
+            "bytes": 25973814722.56,
+            "inodes": 40174
+          },
+          {
+            "at": "2026-10-09T08:00:00Z",
+            "bytes": 26032870522.88,
+            "inodes": 40177
+          },
+          {
+            "at": "2026-10-09T12:00:00Z",
+            "bytes": 26091926323.2,
+            "inodes": 40180
+          },
+          {
+            "at": "2026-10-09T16:00:00Z",
+            "bytes": 26150982123.52,
+            "inodes": 40183
+          },
+          {
+            "at": "2026-10-09T20:00:00Z",
+            "bytes": 26210037923.84,
+            "inodes": 40186
+          },
+          {
+            "at": "2026-10-10T00:00:00Z",
+            "bytes": 26269093724.16,
+            "inodes": 40189
+          },
+          {
+            "at": "2026-10-10T04:00:00Z",
+            "bytes": 26328149524.48,
+            "inodes": 40192
+          },
+          {
+            "at": "2026-10-10T08:00:00Z",
+            "bytes": 26387205324.8,
+            "inodes": 40195
+          },
+          {
+            "at": "2026-10-10T12:00:00Z",
+            "bytes": 26446261125.12,
+            "inodes": 40198
+          },
+          {
+            "at": "2026-10-10T16:00:00Z",
+            "bytes": 26505316925.44,
+            "inodes": 40201
+          },
+          {
+            "at": "2026-10-10T20:00:00Z",
+            "bytes": 26564372725.760002,
+            "inodes": 40204
+          },
+          {
+            "at": "2026-10-11T00:00:00Z",
+            "bytes": 26623428526.08,
+            "inodes": 40207
+          },
+          {
+            "at": "2026-10-11T04:00:00Z",
+            "bytes": 26682484326.4,
+            "inodes": 40210
+          },
+          {
+            "at": "2026-10-11T08:00:00Z",
+            "bytes": 26741540126.72,
+            "inodes": 40213
+          },
+          {
+            "at": "2026-10-11T12:00:00Z",
+            "bytes": 26800595927.04,
+            "inodes": 40216
+          },
+          {
+            "at": "2026-10-11T16:00:00Z",
+            "bytes": 26859651727.36,
+            "inodes": 40219
+          },
+          {
+            "at": "2026-10-11T20:00:00Z",
+            "bytes": 26918707527.68,
+            "inodes": 40222
+          },
+          {
+            "at": "2026-10-12T00:00:00Z",
+            "bytes": 26977763328,
+            "inodes": 40225
+          },
+          {
+            "at": "2026-10-12T04:00:00Z",
+            "bytes": 27036819128.32,
+            "inodes": 40228
+          },
+          {
+            "at": "2026-10-12T08:00:00Z",
+            "bytes": 27095874928.64,
+            "inodes": 40231
+          },
+          {
+            "at": "2026-10-12T12:00:00Z",
+            "bytes": 27154930728.96,
+            "inodes": 40234
+          },
+          {
+            "at": "2026-10-12T16:00:00Z",
+            "bytes": 27213986529.28,
+            "inodes": 40237
+          },
+          {
+            "at": "2026-10-12T20:00:00Z",
+            "bytes": 27273042329.6,
+            "inodes": 40240
+          },
+          {
+            "at": "2026-10-13T00:00:00Z",
+            "bytes": 27332098129.92,
+            "inodes": 40243
+          },
+          {
+            "at": "2026-10-13T04:00:00Z",
+            "bytes": 27391153930.24,
+            "inodes": 40246
+          },
+          {
+            "at": "2026-10-13T08:00:00Z",
+            "bytes": 27450209730.56,
+            "inodes": 40249
+          },
+          {
+            "at": "2026-10-13T12:00:00Z",
+            "bytes": 27509265530.88,
+            "inodes": 40252
+          },
+          {
+            "at": "2026-10-13T16:00:00Z",
+            "bytes": 27568321331.2,
+            "inodes": 40255
+          },
+          {
+            "at": "2026-10-13T20:00:00Z",
+            "bytes": 27627377131.52,
+            "inodes": 40258
+          },
+          {
+            "at": "2026-10-14T00:00:00Z",
+            "bytes": 27686432931.84,
+            "inodes": 40261
+          },
+          {
+            "at": "2026-10-14T04:00:00Z",
+            "bytes": 27745488732.16,
+            "inodes": 40264
+          },
+          {
+            "at": "2026-10-14T08:00:00Z",
+            "bytes": 27804544532.48,
+            "inodes": 40267
+          },
+          {
+            "at": "2026-10-14T12:00:00Z",
+            "bytes": 27863600332.8,
+            "inodes": 40270
+          },
+          {
+            "at": "2026-10-14T16:00:00Z",
+            "bytes": 27922656133.12,
+            "inodes": 40273
+          },
+          {
+            "at": "2026-10-14T20:00:00Z",
+            "bytes": 27981711933.440002,
+            "inodes": 40276
+          },
+          {
+            "at": "2026-10-15T00:00:00Z",
+            "bytes": 28040767733.760002,
+            "inodes": 40279
+          },
+          {
+            "at": "2026-10-15T04:00:00Z",
+            "bytes": 28099823534.08,
+            "inodes": 40282
+          },
+          {
+            "at": "2026-10-15T08:00:00Z",
+            "bytes": 28158879334.4,
+            "inodes": 40285
+          },
+          {
+            "at": "2026-10-15T12:00:00Z",
+            "bytes": 28217935134.72,
+            "inodes": 40288
+          },
+          {
+            "at": "2026-10-15T16:00:00Z",
+            "bytes": 28276990935.04,
+            "inodes": 40291
+          },
+          {
+            "at": "2026-10-15T20:00:00Z",
+            "bytes": 28336046735.36,
+            "inodes": 40294
+          },
+          {
+            "at": "2026-10-16T00:00:00Z",
+            "bytes": 28395102535.68,
+            "inodes": 40297
+          },
+          {
+            "at": "2026-10-16T04:00:00Z",
+            "bytes": 28454158336,
+            "inodes": 40300
+          },
+          {
+            "at": "2026-10-16T08:00:00Z",
+            "bytes": 28513214136.32,
+            "inodes": 40303
+          },
+          {
+            "at": "2026-10-16T12:00:00Z",
+            "bytes": 28572269936.64,
+            "inodes": 40306
+          },
+          {
+            "at": "2026-10-16T16:00:00Z",
+            "bytes": 28631325736.96,
+            "inodes": 40309
+          },
+          {
+            "at": "2026-10-16T20:00:00Z",
+            "bytes": 28690381537.28,
+            "inodes": 40312
+          },
+          {
+            "at": "2026-10-17T00:00:00Z",
+            "bytes": 28749437337.6,
+            "inodes": 40315
+          },
+          {
+            "at": "2026-10-17T04:00:00Z",
+            "bytes": 28808493137.920002,
+            "inodes": 40318
+          },
+          {
+            "at": "2026-10-17T08:00:00Z",
+            "bytes": 28867548938.24,
+            "inodes": 40321
+          },
+          {
+            "at": "2026-10-17T12:00:00Z",
+            "bytes": 28926604738.56,
+            "inodes": 40324
+          },
+          {
+            "at": "2026-10-17T16:00:00Z",
+            "bytes": 28985660538.88,
+            "inodes": 40327
+          },
+          {
+            "at": "2026-10-17T20:00:00Z",
+            "bytes": 29044716339.2,
+            "inodes": 40330
+          },
+          {
+            "at": "2026-10-18T00:00:00Z",
+            "bytes": 29103772139.52,
+            "inodes": 40333
+          },
+          {
+            "at": "2026-10-18T04:00:00Z",
+            "bytes": 29162827939.84,
+            "inodes": 40336
+          },
+          {
+            "at": "2026-10-18T08:00:00Z",
+            "bytes": 29221883740.16,
+            "inodes": 40339
+          },
+          {
+            "at": "2026-10-18T12:00:00Z",
+            "bytes": 29280939540.48,
+            "inodes": 40342
+          },
+          {
+            "at": "2026-10-18T16:00:00Z",
+            "bytes": 29339995340.8,
+            "inodes": 40345
+          },
+          {
+            "at": "2026-10-18T20:00:00Z",
+            "bytes": 29399051141.12,
+            "inodes": 40348
+          },
+          {
+            "at": "2026-10-19T00:00:00Z",
+            "bytes": 29458106941.44,
+            "inodes": 40351
+          },
+          {
+            "at": "2026-10-19T04:00:00Z",
+            "bytes": 29517162741.760002,
+            "inodes": 40354
+          },
+          {
+            "at": "2026-10-19T08:00:00Z",
+            "bytes": 29576218542.08,
+            "inodes": 40357
+          },
+          {
+            "at": "2026-10-19T12:00:00Z",
+            "bytes": 29635274342.4,
+            "inodes": 40360
+          },
+          {
+            "at": "2026-10-19T16:00:00Z",
+            "bytes": 29694330142.72,
+            "inodes": 40363
+          },
+          {
+            "at": "2026-10-19T20:00:00Z",
+            "bytes": 29753385943.04,
+            "inodes": 40366
+          },
+          {
+            "at": "2026-10-20T00:00:00Z",
+            "bytes": 29812441743.36,
+            "inodes": 40369
+          },
+          {
+            "at": "2026-10-20T04:00:00Z",
+            "bytes": 29871497543.68,
+            "inodes": 40372
+          },
+          {
+            "at": "2026-10-20T08:00:00Z",
+            "bytes": 29930553344,
+            "inodes": 40375
+          },
+          {
+            "at": "2026-10-20T12:00:00Z",
+            "bytes": 29989609144.32,
+            "inodes": 40378
+          },
+          {
+            "at": "2026-10-20T16:00:00Z",
+            "bytes": 30048664944.64,
+            "inodes": 40381
+          },
+          {
+            "at": "2026-10-20T20:00:00Z",
+            "bytes": 30107720744.96,
+            "inodes": 40384
+          },
+          {
+            "at": "2026-10-21T00:00:00Z",
+            "bytes": 30166776545.28,
+            "inodes": 40387
+          },
+          {
+            "at": "2026-10-21T04:00:00Z",
+            "bytes": 30225832345.6,
+            "inodes": 40390
+          },
+          {
+            "at": "2026-10-21T08:00:00Z",
+            "bytes": 30284888145.920002,
+            "inodes": 40393
+          },
+          {
+            "at": "2026-10-21T12:00:00Z",
+            "bytes": 30343943946.24,
+            "inodes": 40396
+          },
+          {
+            "at": "2026-10-21T16:00:00Z",
+            "bytes": 30402999746.56,
+            "inodes": 40399
+          },
+          {
+            "at": "2026-10-21T20:00:00Z",
+            "bytes": 30462055546.88,
+            "inodes": 40402
+          },
+          {
+            "at": "2026-10-22T00:00:00Z",
+            "bytes": 30521111347.2,
+            "inodes": 40405
+          },
+          {
+            "at": "2026-10-22T04:00:00Z",
+            "bytes": 30580167147.52,
+            "inodes": 40408
+          },
+          {
+            "at": "2026-10-22T08:00:00Z",
+            "bytes": 30639222947.84,
+            "inodes": 40411
+          },
+          {
+            "at": "2026-10-22T12:00:00Z",
+            "bytes": 30698278748.16,
+            "inodes": 40414
+          },
+          {
+            "at": "2026-10-22T16:00:00Z",
+            "bytes": 30757334548.48,
+            "inodes": 40417
+          },
+          {
+            "at": "2026-10-22T20:00:00Z",
+            "bytes": 30816390348.8,
+            "inodes": 40420
+          },
+          {
+            "at": "2026-10-23T00:00:00Z",
+            "bytes": 30875446149.12,
+            "inodes": 40423
+          },
+          {
+            "at": "2026-10-23T04:00:00Z",
+            "bytes": 30934501949.44,
+            "inodes": 40426
+          },
+          {
+            "at": "2026-10-23T08:00:00Z",
+            "bytes": 30993557749.760002,
+            "inodes": 40429
+          },
+          {
+            "at": "2026-10-23T12:00:00Z",
+            "bytes": 31052613550.08,
+            "inodes": 40432
+          },
+          {
+            "at": "2026-10-23T16:00:00Z",
+            "bytes": 31111669350.4,
+            "inodes": 40435
+          },
+          {
+            "at": "2026-10-23T20:00:00Z",
+            "bytes": 31170725150.72,
+            "inodes": 40438
+          },
+          {
+            "at": "2026-10-24T00:00:00Z",
+            "bytes": 31229780951.04,
+            "inodes": 40441
+          },
+          {
+            "at": "2026-10-24T04:00:00Z",
+            "bytes": 31288836751.36,
+            "inodes": 40444
+          },
+          {
+            "at": "2026-10-24T08:00:00Z",
+            "bytes": 31347892551.68,
+            "inodes": 40447
+          },
+          {
+            "at": "2026-10-24T12:00:00Z",
+            "bytes": 31406948352,
+            "inodes": 40450
+          },
+          {
+            "at": "2026-10-24T16:00:00Z",
+            "bytes": 31466004152.32,
+            "inodes": 40453
+          },
+          {
+            "at": "2026-10-24T20:00:00Z",
+            "bytes": 31525059952.64,
+            "inodes": 40456
+          },
+          {
+            "at": "2026-10-25T00:00:00Z",
+            "bytes": 31584115752.96,
+            "inodes": 40459
+          },
+          {
+            "at": "2026-10-25T04:00:00Z",
+            "bytes": 31643171553.28,
+            "inodes": 40462
+          },
+          {
+            "at": "2026-10-25T08:00:00Z",
+            "bytes": 31702227353.6,
+            "inodes": 40465
+          },
+          {
+            "at": "2026-10-25T12:00:00Z",
+            "bytes": 31761283153.92,
+            "inodes": 40468
+          },
+          {
+            "at": "2026-10-25T16:00:00Z",
+            "bytes": 31820338954.239998,
+            "inodes": 40471
+          },
+          {
+            "at": "2026-10-25T20:00:00Z",
+            "bytes": 31879394754.559998,
+            "inodes": 40474
+          },
+          {
+            "at": "2026-10-26T00:00:00Z",
+            "bytes": 31938450554.88,
+            "inodes": 40477
+          },
+          {
+            "at": "2026-10-26T04:00:00Z",
+            "bytes": 31997506355.2,
+            "inodes": 40480
+          },
+          {
+            "at": "2026-10-26T08:00:00Z",
+            "bytes": 32056562155.52,
+            "inodes": 40483
+          },
+          {
+            "at": "2026-10-26T12:00:00Z",
+            "bytes": 32115617955.84,
+            "inodes": 40486
+          },
+          {
+            "at": "2026-10-26T16:00:00Z",
+            "bytes": 32174673756.16,
+            "inodes": 40489
+          },
+          {
+            "at": "2026-10-26T20:00:00Z",
+            "bytes": 32233729556.480003,
+            "inodes": 40492
+          },
+          {
+            "at": "2026-10-27T00:00:00Z",
+            "bytes": 32292785356.800003,
+            "inodes": 40495
+          },
+          {
+            "at": "2026-10-27T04:00:00Z",
+            "bytes": 32351841157.120003,
+            "inodes": 40498
+          },
+          {
+            "at": "2026-10-27T08:00:00Z",
+            "bytes": 32410896957.440002,
+            "inodes": 40501
+          },
+          {
+            "at": "2026-10-27T12:00:00Z",
+            "bytes": 32469952757.760002,
+            "inodes": 40504
+          },
+          {
+            "at": "2026-10-27T16:00:00Z",
+            "bytes": 32529008558.08,
+            "inodes": 40507
+          },
+          {
+            "at": "2026-10-27T20:00:00Z",
+            "bytes": 32588064358.4,
+            "inodes": 40510
+          },
+          {
+            "at": "2026-10-28T00:00:00Z",
+            "bytes": 32647120158.72,
+            "inodes": 40513
+          },
+          {
+            "at": "2026-10-28T04:00:00Z",
+            "bytes": 32706175959.04,
+            "inodes": 40516
+          },
+          {
+            "at": "2026-10-28T08:00:00Z",
+            "bytes": 32765231759.36,
+            "inodes": 40519
+          },
+          {
+            "at": "2026-10-28T12:00:00Z",
+            "bytes": 32824287559.68,
+            "inodes": 40522
+          },
+          {
+            "at": "2026-10-28T16:00:00Z",
+            "bytes": 32883343360,
+            "inodes": 40525
+          },
+          {
+            "at": "2026-10-28T20:00:00Z",
+            "bytes": 32942399160.32,
+            "inodes": 40528
+          },
+          {
+            "at": "2026-10-29T00:00:00Z",
+            "bytes": 33001454960.64,
+            "inodes": 40531
+          },
+          {
+            "at": "2026-10-29T04:00:00Z",
+            "bytes": 33060510760.96,
+            "inodes": 40534
+          },
+          {
+            "at": "2026-10-29T08:00:00Z",
+            "bytes": 33119566561.28,
+            "inodes": 40537
+          }
+        ],
+        "provenance": {
+          "origin": "instance",
+          "source": "/pg/status volumeUsages",
+          "observedAt": "2026-10-29T11:59:40Z"
+        }
+      },
+      {
+        "instance": "billing-1",
+        "volume": "wal",
+        "primary": true,
+        "totalBytes": 10737418240,
+        "availableBytes": 2147483648,
+        "usedBytes": 8589934592,
+        "asOf": "2026-10-29T11:59:40Z",
+        "since": "2026-10-25T12:00:00Z",
+        "samples": 384,
+        "bytesForecast": {
+          "measure": "bytes",
+          "state": "forecast",
+          "consumed": 8589934592,
+          "capacity": 10737418240,
+          "headroom": 2147483648,
+          "target": "filesystem",
+          "ratePerDay": 1717986918.4,
+          "windowStart": "2026-10-25T12:00:00Z",
+          "windowEnd": "2026-10-29T11:45:00Z",
+          "windowHours": 96,
+          "fullAt": "2026-10-30T18:00:00Z",
+          "earliestAt": "2026-10-30T10:00:00Z",
+          "latestAt": "2026-10-31T08:00:00Z",
+          "confidence": "medium",
+          "accelerating": true,
+          "firstHalfRatePerDay": 429496729.6,
+          "recentRatePerDay": 1717986918.4,
+          "minimumGrowth": 5368709,
+          "minimumHours": 24,
+          "hoursFound": 96
+        },
+        "inodesForecast": {
+          "measure": "inodes",
+          "state": "noData",
+          "consumed": 0,
+          "capacity": 0,
+          "headroom": 0,
+          "target": "filesystem",
+          "ratePerDay": 0,
+          "windowHours": 0,
+          "firstHalfRatePerDay": 0,
+          "recentRatePerDay": 0,
+          "minimumGrowth": 0,
+          "minimumHours": 24,
+          "hoursFound": 0
+        },
+        "archivingFailing": true,
+        "archivingText": "WAL archiving is failing (ContinuousArchiving False (ContinuousArchivingFailing)). PostgreSQL keeps every WAL segment until it is archived, so this volume grows until archiving recovers: the growth is a symptom, fix archiving first.",
+        "trend": [
+          {
+            "at": "2026-10-25T12:00:00Z",
+            "bytes": 2147483648
+          },
+          {
+            "at": "2026-10-25T16:00:00Z",
+            "bytes": 2415919104
+          },
+          {
+            "at": "2026-10-25T20:00:00Z",
+            "bytes": 2684354560
+          },
+          {
+            "at": "2026-10-26T00:00:00Z",
+            "bytes": 2952790016
+          },
+          {
+            "at": "2026-10-26T04:00:00Z",
+            "bytes": 3221225472
+          },
+          {
+            "at": "2026-10-26T08:00:00Z",
+            "bytes": 3489660928
+          },
+          {
+            "at": "2026-10-26T12:00:00Z",
+            "bytes": 3758096384
+          },
+          {
+            "at": "2026-10-26T16:00:00Z",
+            "bytes": 4026531840
+          },
+          {
+            "at": "2026-10-26T20:00:00Z",
+            "bytes": 4294967296
+          },
+          {
+            "at": "2026-10-27T00:00:00Z",
+            "bytes": 4563402752
+          },
+          {
+            "at": "2026-10-27T04:00:00Z",
+            "bytes": 4831838208
+          },
+          {
+            "at": "2026-10-27T08:00:00Z",
+            "bytes": 5100273664
+          },
+          {
+            "at": "2026-10-27T12:00:00Z",
+            "bytes": 5368709120
+          },
+          {
+            "at": "2026-10-27T16:00:00Z",
+            "bytes": 5637144576
+          },
+          {
+            "at": "2026-10-27T20:00:00Z",
+            "bytes": 5905580032
+          },
+          {
+            "at": "2026-10-28T00:00:00Z",
+            "bytes": 6174015488
+          },
+          {
+            "at": "2026-10-28T04:00:00Z",
+            "bytes": 6442450944
+          },
+          {
+            "at": "2026-10-28T08:00:00Z",
+            "bytes": 6710886400
+          },
+          {
+            "at": "2026-10-28T12:00:00Z",
+            "bytes": 6979321856
+          },
+          {
+            "at": "2026-10-28T16:00:00Z",
+            "bytes": 7247757312
+          },
+          {
+            "at": "2026-10-28T20:00:00Z",
+            "bytes": 7516192768
+          },
+          {
+            "at": "2026-10-29T00:00:00Z",
+            "bytes": 7784628224
+          },
+          {
+            "at": "2026-10-29T04:00:00Z",
+            "bytes": 8053063680
+          },
+          {
+            "at": "2026-10-29T08:00:00Z",
+            "bytes": 8321499136
+          }
+        ],
+        "provenance": {
+          "origin": "instance",
+          "source": "/pg/status volumeUsages",
+          "observedAt": "2026-10-29T11:59:40Z"
+        }
+      },
+      {
+        "instance": "billing-2",
+        "volume": "pgdata",
+        "totalBytes": 42949672960,
+        "availableBytes": 23622320128,
+        "usedBytes": 19327352832,
+        "inodes": 2621440,
+        "inodesFree": 2590000,
+        "asOf": "2026-10-29T11:59:40Z",
+        "since": "2026-09-29T12:00:00Z",
+        "samples": 2880,
+        "bytesForecast": {
+          "measure": "bytes",
+          "state": "notGrowing",
+          "consumed": 19327352832,
+          "capacity": 42949672960,
+          "headroom": 23622320128,
+          "target": "filesystem",
+          "autoGrowSteps": true,
+          "ratePerDay": 120000,
+          "windowStart": "2026-10-22T12:00:00Z",
+          "windowEnd": "2026-10-29T11:45:00Z",
+          "windowHours": 168,
+          "firstHalfRatePerDay": 0,
+          "recentRatePerDay": 0,
+          "minimumGrowth": 21474836,
+          "minimumHours": 24,
+          "hoursFound": 168,
+          "resizedAt": "2026-10-27T00:00:00Z",
+          "fitSinceResize": true
+        },
+        "autoGrowForecast": {
+          "measure": "bytes",
+          "state": "notGrowing",
+          "consumed": 19327352832,
+          "capacity": 97710505984,
+          "headroom": 78383153152,
+          "target": "autoGrowMaxSize",
+          "autoGrowSteps": true,
+          "ratePerDay": 120000,
+          "windowStart": "2026-10-22T12:00:00Z",
+          "windowEnd": "2026-10-29T11:45:00Z",
+          "windowHours": 168,
+          "firstHalfRatePerDay": 0,
+          "recentRatePerDay": 0,
+          "minimumGrowth": 48855187,
+          "minimumHours": 24,
+          "hoursFound": 168
+        },
+        "inodesForecast": {
+          "measure": "inodes",
+          "state": "notGrowing",
+          "consumed": 41440,
+          "capacity": 2621440,
+          "headroom": 2580000,
+          "target": "filesystem",
+          "ratePerDay": 18,
+          "windowStart": "2026-10-22T12:00:00Z",
+          "windowEnd": "2026-10-29T11:45:00Z",
+          "windowHours": 168,
+          "firstHalfRatePerDay": 17,
+          "recentRatePerDay": 19,
+          "minimumGrowth": 1310.72,
+          "minimumHours": 24,
+          "hoursFound": 168
+        },
+        "autoGrow": {
+          "maxSize": "100Gi",
+          "threshold": 80,
+          "step": "20%"
+        },
+        "trend": [
+          {
+            "at": "2026-09-29T12:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40000
+          },
+          {
+            "at": "2026-09-29T16:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40003
+          },
+          {
+            "at": "2026-09-29T20:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40006
+          },
+          {
+            "at": "2026-09-30T00:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40009
+          },
+          {
+            "at": "2026-09-30T04:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40012
+          },
+          {
+            "at": "2026-09-30T08:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40015
+          },
+          {
+            "at": "2026-09-30T12:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40018
+          },
+          {
+            "at": "2026-09-30T16:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40021
+          },
+          {
+            "at": "2026-09-30T20:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40024
+          },
+          {
+            "at": "2026-10-01T00:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40027
+          },
+          {
+            "at": "2026-10-01T04:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40030
+          },
+          {
+            "at": "2026-10-01T08:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40033
+          },
+          {
+            "at": "2026-10-01T12:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40036
+          },
+          {
+            "at": "2026-10-01T16:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40039
+          },
+          {
+            "at": "2026-10-01T20:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40042
+          },
+          {
+            "at": "2026-10-02T00:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40045
+          },
+          {
+            "at": "2026-10-02T04:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40048
+          },
+          {
+            "at": "2026-10-02T08:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40051
+          },
+          {
+            "at": "2026-10-02T12:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40054
+          },
+          {
+            "at": "2026-10-02T16:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40057
+          },
+          {
+            "at": "2026-10-02T20:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40060
+          },
+          {
+            "at": "2026-10-03T00:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40063
+          },
+          {
+            "at": "2026-10-03T04:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40066
+          },
+          {
+            "at": "2026-10-03T08:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40069
+          },
+          {
+            "at": "2026-10-03T12:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40072
+          },
+          {
+            "at": "2026-10-03T16:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40075
+          },
+          {
+            "at": "2026-10-03T20:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40078
+          },
+          {
+            "at": "2026-10-04T00:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40081
+          },
+          {
+            "at": "2026-10-04T04:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40084
+          },
+          {
+            "at": "2026-10-04T08:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40087
+          },
+          {
+            "at": "2026-10-04T12:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40090
+          },
+          {
+            "at": "2026-10-04T16:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40093
+          },
+          {
+            "at": "2026-10-04T20:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40096
+          },
+          {
+            "at": "2026-10-05T00:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40099
+          },
+          {
+            "at": "2026-10-05T04:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40102
+          },
+          {
+            "at": "2026-10-05T08:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40105
+          },
+          {
+            "at": "2026-10-05T12:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40108
+          },
+          {
+            "at": "2026-10-05T16:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40111
+          },
+          {
+            "at": "2026-10-05T20:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40114
+          },
+          {
+            "at": "2026-10-06T00:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40117
+          },
+          {
+            "at": "2026-10-06T04:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40120
+          },
+          {
+            "at": "2026-10-06T08:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40123
+          },
+          {
+            "at": "2026-10-06T12:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40126
+          },
+          {
+            "at": "2026-10-06T16:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40129
+          },
+          {
+            "at": "2026-10-06T20:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40132
+          },
+          {
+            "at": "2026-10-07T00:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40135
+          },
+          {
+            "at": "2026-10-07T04:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40138
+          },
+          {
+            "at": "2026-10-07T08:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40141
+          },
+          {
+            "at": "2026-10-07T12:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40144
+          },
+          {
+            "at": "2026-10-07T16:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40147
+          },
+          {
+            "at": "2026-10-07T20:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40150
+          },
+          {
+            "at": "2026-10-08T00:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40153
+          },
+          {
+            "at": "2026-10-08T04:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40156
+          },
+          {
+            "at": "2026-10-08T08:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40159
+          },
+          {
+            "at": "2026-10-08T12:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40162
+          },
+          {
+            "at": "2026-10-08T16:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40165
+          },
+          {
+            "at": "2026-10-08T20:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40168
+          },
+          {
+            "at": "2026-10-09T00:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40171
+          },
+          {
+            "at": "2026-10-09T04:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40174
+          },
+          {
+            "at": "2026-10-09T08:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40177
+          },
+          {
+            "at": "2026-10-09T12:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40180
+          },
+          {
+            "at": "2026-10-09T16:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40183
+          },
+          {
+            "at": "2026-10-09T20:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40186
+          },
+          {
+            "at": "2026-10-10T00:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40189
+          },
+          {
+            "at": "2026-10-10T04:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40192
+          },
+          {
+            "at": "2026-10-10T08:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40195
+          },
+          {
+            "at": "2026-10-10T12:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40198
+          },
+          {
+            "at": "2026-10-10T16:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40201
+          },
+          {
+            "at": "2026-10-10T20:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40204
+          },
+          {
+            "at": "2026-10-11T00:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40207
+          },
+          {
+            "at": "2026-10-11T04:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40210
+          },
+          {
+            "at": "2026-10-11T08:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40213
+          },
+          {
+            "at": "2026-10-11T12:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40216
+          },
+          {
+            "at": "2026-10-11T16:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40219
+          },
+          {
+            "at": "2026-10-11T20:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40222
+          },
+          {
+            "at": "2026-10-12T00:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40225
+          },
+          {
+            "at": "2026-10-12T04:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40228
+          },
+          {
+            "at": "2026-10-12T08:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40231
+          },
+          {
+            "at": "2026-10-12T12:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40234
+          },
+          {
+            "at": "2026-10-12T16:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40237
+          },
+          {
+            "at": "2026-10-12T20:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40240
+          },
+          {
+            "at": "2026-10-13T00:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40243
+          },
+          {
+            "at": "2026-10-13T04:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40246
+          },
+          {
+            "at": "2026-10-13T08:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40249
+          },
+          {
+            "at": "2026-10-13T12:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40252
+          },
+          {
+            "at": "2026-10-13T16:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40255
+          },
+          {
+            "at": "2026-10-13T20:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40258
+          },
+          {
+            "at": "2026-10-14T00:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40261
+          },
+          {
+            "at": "2026-10-14T04:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40264
+          },
+          {
+            "at": "2026-10-14T08:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40267
+          },
+          {
+            "at": "2026-10-14T12:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40270
+          },
+          {
+            "at": "2026-10-14T16:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40273
+          },
+          {
+            "at": "2026-10-14T20:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40276
+          },
+          {
+            "at": "2026-10-15T00:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40279
+          },
+          {
+            "at": "2026-10-15T04:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40282
+          },
+          {
+            "at": "2026-10-15T08:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40285
+          },
+          {
+            "at": "2026-10-15T12:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40288
+          },
+          {
+            "at": "2026-10-15T16:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40291
+          },
+          {
+            "at": "2026-10-15T20:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40294
+          },
+          {
+            "at": "2026-10-16T00:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40297
+          },
+          {
+            "at": "2026-10-16T04:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40300
+          },
+          {
+            "at": "2026-10-16T08:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40303
+          },
+          {
+            "at": "2026-10-16T12:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40306
+          },
+          {
+            "at": "2026-10-16T16:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40309
+          },
+          {
+            "at": "2026-10-16T20:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40312
+          },
+          {
+            "at": "2026-10-17T00:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40315
+          },
+          {
+            "at": "2026-10-17T04:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40318
+          },
+          {
+            "at": "2026-10-17T08:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40321
+          },
+          {
+            "at": "2026-10-17T12:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40324
+          },
+          {
+            "at": "2026-10-17T16:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40327
+          },
+          {
+            "at": "2026-10-17T20:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40330
+          },
+          {
+            "at": "2026-10-18T00:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40333
+          },
+          {
+            "at": "2026-10-18T04:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40336
+          },
+          {
+            "at": "2026-10-18T08:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40339
+          },
+          {
+            "at": "2026-10-18T12:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40342
+          },
+          {
+            "at": "2026-10-18T16:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40345
+          },
+          {
+            "at": "2026-10-18T20:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40348
+          },
+          {
+            "at": "2026-10-19T00:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40351
+          },
+          {
+            "at": "2026-10-19T04:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40354
+          },
+          {
+            "at": "2026-10-19T08:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40357
+          },
+          {
+            "at": "2026-10-19T12:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40360
+          },
+          {
+            "at": "2026-10-19T16:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40363
+          },
+          {
+            "at": "2026-10-19T20:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40366
+          },
+          {
+            "at": "2026-10-20T00:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40369
+          },
+          {
+            "at": "2026-10-20T04:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40372
+          },
+          {
+            "at": "2026-10-20T08:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40375
+          },
+          {
+            "at": "2026-10-20T12:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40378
+          },
+          {
+            "at": "2026-10-20T16:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40381
+          },
+          {
+            "at": "2026-10-20T20:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40384
+          },
+          {
+            "at": "2026-10-21T00:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40387
+          },
+          {
+            "at": "2026-10-21T04:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40390
+          },
+          {
+            "at": "2026-10-21T08:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40393
+          },
+          {
+            "at": "2026-10-21T12:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40396
+          },
+          {
+            "at": "2026-10-21T16:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40399
+          },
+          {
+            "at": "2026-10-21T20:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40402
+          },
+          {
+            "at": "2026-10-22T00:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40405
+          },
+          {
+            "at": "2026-10-22T04:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40408
+          },
+          {
+            "at": "2026-10-22T08:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40411
+          },
+          {
+            "at": "2026-10-22T12:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40414
+          },
+          {
+            "at": "2026-10-22T16:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40417
+          },
+          {
+            "at": "2026-10-22T20:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40420
+          },
+          {
+            "at": "2026-10-23T00:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40423
+          },
+          {
+            "at": "2026-10-23T04:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40426
+          },
+          {
+            "at": "2026-10-23T08:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40429
+          },
+          {
+            "at": "2026-10-23T12:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40432
+          },
+          {
+            "at": "2026-10-23T16:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40435
+          },
+          {
+            "at": "2026-10-23T20:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40438
+          },
+          {
+            "at": "2026-10-24T00:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40441
+          },
+          {
+            "at": "2026-10-24T04:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40444
+          },
+          {
+            "at": "2026-10-24T08:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40447
+          },
+          {
+            "at": "2026-10-24T12:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40450
+          },
+          {
+            "at": "2026-10-24T16:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40453
+          },
+          {
+            "at": "2026-10-24T20:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40456
+          },
+          {
+            "at": "2026-10-25T00:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40459
+          },
+          {
+            "at": "2026-10-25T04:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40462
+          },
+          {
+            "at": "2026-10-25T08:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40465
+          },
+          {
+            "at": "2026-10-25T12:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40468
+          },
+          {
+            "at": "2026-10-25T16:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40471
+          },
+          {
+            "at": "2026-10-25T20:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40474
+          },
+          {
+            "at": "2026-10-26T00:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40477
+          },
+          {
+            "at": "2026-10-26T04:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40480
+          },
+          {
+            "at": "2026-10-26T08:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40483
+          },
+          {
+            "at": "2026-10-26T12:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40486
+          },
+          {
+            "at": "2026-10-26T16:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40489
+          },
+          {
+            "at": "2026-10-26T20:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40492
+          },
+          {
+            "at": "2026-10-27T00:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40495
+          },
+          {
+            "at": "2026-10-27T04:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40498
+          },
+          {
+            "at": "2026-10-27T08:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40501
+          },
+          {
+            "at": "2026-10-27T12:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40504
+          },
+          {
+            "at": "2026-10-27T16:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40507
+          },
+          {
+            "at": "2026-10-27T20:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40510
+          },
+          {
+            "at": "2026-10-28T00:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40513
+          },
+          {
+            "at": "2026-10-28T04:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40516
+          },
+          {
+            "at": "2026-10-28T08:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40519
+          },
+          {
+            "at": "2026-10-28T12:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40522
+          },
+          {
+            "at": "2026-10-28T16:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40525
+          },
+          {
+            "at": "2026-10-28T20:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40528
+          },
+          {
+            "at": "2026-10-29T00:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40531
+          },
+          {
+            "at": "2026-10-29T04:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40534
+          },
+          {
+            "at": "2026-10-29T08:00:00Z",
+            "bytes": 19327352832,
+            "inodes": 40537
+          }
+        ],
+        "provenance": {
+          "origin": "instance",
+          "source": "/pg/status volumeUsages",
+          "observedAt": "2026-10-29T11:59:40Z"
+        }
+      },
+      {
+        "instance": "billing-3",
+        "volume": "pgdata",
+        "totalBytes": 42949672960,
+        "availableBytes": 22548578304,
+        "usedBytes": 20401094656,
+        "asOf": "2026-10-29T11:59:40Z",
+        "since": "2026-10-29T03:00:00Z",
+        "samples": 36,
+        "bytesForecast": {
+          "measure": "bytes",
+          "state": "tooFewPoints",
+          "consumed": 20401094656,
+          "capacity": 42949672960,
+          "headroom": 22548578304,
+          "target": "filesystem",
+          "autoGrowSteps": true,
+          "ratePerDay": 0,
+          "windowHours": 9,
+          "firstHalfRatePerDay": 0,
+          "recentRatePerDay": 0,
+          "minimumGrowth": 21474836,
+          "minimumHours": 24,
+          "hoursFound": 9
+        },
+        "autoGrowForecast": {
+          "measure": "bytes",
+          "state": "tooFewPoints",
+          "consumed": 20401094656,
+          "capacity": 97710505984,
+          "headroom": 77309411328,
+          "target": "autoGrowMaxSize",
+          "autoGrowSteps": true,
+          "ratePerDay": 0,
+          "windowHours": 9,
+          "firstHalfRatePerDay": 0,
+          "recentRatePerDay": 0,
+          "minimumGrowth": 48855187,
+          "minimumHours": 24,
+          "hoursFound": 9
+        },
+        "inodesForecast": {
+          "measure": "inodes",
+          "state": "noData",
+          "consumed": 0,
+          "capacity": 0,
+          "headroom": 0,
+          "target": "filesystem",
+          "ratePerDay": 0,
+          "windowHours": 0,
+          "firstHalfRatePerDay": 0,
+          "recentRatePerDay": 0,
+          "minimumGrowth": 0,
+          "minimumHours": 24,
+          "hoursFound": 0
+        },
+        "autoGrow": {
+          "maxSize": "100Gi",
+          "threshold": 80,
+          "step": "20%"
+        },
+        "trend": [
+          {
+            "at": "2026-10-28T12:00:00Z",
+            "bytes": 20401094656
+          },
+          {
+            "at": "2026-10-28T16:00:00Z",
+            "bytes": 20418990353.066666
+          }
+        ],
+        "provenance": {
+          "origin": "instance",
+          "source": "/pg/status volumeUsages",
+          "observedAt": "2026-10-29T11:59:40Z"
+        }
+      }
+    ]
+  },
+  "sources": [
+    {
+      "source": "clusters",
+      "state": "live",
+      "since": "2026-10-29T09:00:00Z",
+      "health": "ok"
+    },
+    {
+      "source": "pvcs",
+      "state": "live",
+      "since": "2026-10-29T09:00:00Z",
+      "health": "ok"
+    }
+  ],
+  "blindSpots": []
+}

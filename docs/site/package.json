@@ -1,0 +1,62 @@
+{
+  "name": "pgtoolbox-docs",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "docusaurus": "docusaurus",
+    "prestart": "npm run screens",
+    "start": "docusaurus start",
+    "screens": "node scripts/copy-screens.mjs",
+    "prebuild": "npm run screens",
+    "build": "docusaurus build",
+    "swizzle": "docusaurus swizzle",
+    "deploy": "docusaurus deploy",
+    "clear": "docusaurus clear",
+    "serve": "docusaurus serve",
+    "typecheck": "tsc",
+    "check:mermaid": "node scripts/check-mermaid.mjs",
+    "test": "node --no-warnings --test plugins/llms/llms.test.ts"
+  },
+  "dependencies": {
+    "@docusaurus/core": "3.10.2",
+    "@docusaurus/plugin-content-docs": "3.10.2",
+    "@docusaurus/preset-classic": "3.10.2",
+    "@docusaurus/theme-common": "3.10.2",
+    "@docusaurus/theme-mermaid": "3.10.2",
+    "@easyops-cn/docusaurus-search-local": "^0.55.0",
+    "@mdx-js/react": "^3.0.0",
+    "clsx": "^2.0.0",
+    "mermaid": "12.3.0",
+    "prism-react-renderer": "^2.3.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
+  },
+  "devDependencies": {
+    "@docusaurus/module-type-aliases": "3.10.2",
+    "@docusaurus/tsconfig": "3.10.2",
+    "@docusaurus/types": "3.10.2",
+    "@types/react": "^19.3.0",
+    "dompurify": "3.4.17",
+    "typescript": "~5.9.3"
+  },
+  "browserslist": {
+    "production": [
+      ">0.5%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 3 chrome version",
+      "last 3 firefox version",
+      "last 5 safari version"
+    ]
+  },
+  "engines": {
+    "node": ">=18.0"
+  },
+  "overrides": {
+    "serialize-javascript": "^7.0.5",
+    "tinypool": "^2.1.2",
+    "uuid": "^11.1.1"
+  }
+}

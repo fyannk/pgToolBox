@@ -1,0 +1,415 @@
+{
+  "ref": {
+    "namespace": "team-a",
+    "name": "billing",
+    "uid": "4d2f1e0a-1b2c-4d3e-8f90-a1b2c3d4e5f6"
+  },
+  "generatedAt": "2026-10-29T12:00:00Z",
+  "present": true,
+  "verdict": {
+    "health": "critical",
+    "contributors": [
+      {
+        "id": "phase",
+        "health": "critical",
+        "label": "Phase",
+        "detail": "Failing over",
+        "provenance": {
+          "origin": "operator",
+          "source": "Cluster.status.phase",
+          "observedAt": "2026-10-29T12:00:00Z"
+        }
+      },
+      {
+        "id": "escapeHatch:cnpg.io/skipWalArchiving",
+        "health": "critical",
+        "label": "cnpg.io/skipWalArchiving",
+        "detail": "PostgreSQL does not archive WAL: no point-in-time recovery beyond the last backup",
+        "provenance": {
+          "origin": "operator",
+          "source": "Cluster.metadata.annotations",
+          "observedAt": "2026-10-29T12:00:00Z"
+        }
+      },
+      {
+        "id": "diagnostics",
+        "health": "critical",
+        "label": "Diagnostics",
+        "detail": "1 critical, 0 high, 0 warning, 0 note; 144 checks could not run",
+        "provenance": {
+          "origin": "console",
+          "source": "diagnostics",
+          "observedAt": "2026-10-29T12:00:00Z"
+        },
+        "link": "diagnostics"
+      },
+      {
+        "id": "readyCondition",
+        "health": "warning",
+        "label": "Ready condition",
+        "detail": "False (ClusterIsNotReady)",
+        "provenance": {
+          "origin": "operator",
+          "source": "Cluster.status.conditions[Ready]",
+          "observedAt": "2026-10-29T12:00:00Z"
+        }
+      },
+      {
+        "id": "instances",
+        "health": "warning",
+        "label": "Instances ready",
+        "detail": "1 of 2",
+        "provenance": {
+          "origin": "operator",
+          "source": "Cluster.status.readyInstances",
+          "observedAt": "2026-10-29T12:00:00Z"
+        },
+        "link": "instances"
+      },
+      {
+        "id": "archiving",
+        "health": "warning",
+        "label": "WAL archiving",
+        "detail": "ArchivingSkipped",
+        "provenance": {
+          "origin": "operator",
+          "source": "Cluster.status.conditions[ContinuousArchiving]",
+          "observedAt": "2026-10-29T12:00:00Z"
+        },
+        "link": "backups"
+      },
+      {
+        "id": "instanceStatus",
+        "health": "unknown",
+        "label": "Instance self-reports",
+        "detail": "0 of 2 instances read",
+        "provenance": {
+          "origin": "instance",
+          "source": "/pg/status",
+          "observedAt": "2026-10-29T11:59:52Z"
+        },
+        "link": "instances"
+      },
+      {
+        "id": "backupRecency",
+        "health": "info",
+        "label": "Last backup",
+        "detail": "no backup configured",
+        "provenance": {
+          "origin": "operator",
+          "source": "Backup.status",
+          "observedAt": "2026-10-29T12:00:00Z"
+        },
+        "link": "backups"
+      }
+    ]
+  },
+  "phase": {
+    "text": "Failing over",
+    "reason": "Failing over from billing-1 to billing-2",
+    "health": "critical",
+    "known": true,
+    "since": "2026-10-29T12:00:00Z",
+    "provenance": {
+      "origin": "operator",
+      "source": "Cluster.status.phase",
+      "observedAt": "2026-10-29T12:00:00Z"
+    }
+  },
+  "primary": {
+    "current": "billing-1",
+    "target": "billing-2",
+    "state": "failover",
+    "since": "2026-10-29T11:58:25Z",
+    "failingSince": "2026-10-29T11:58:20Z",
+    "labelPrimaries": [
+      "billing-1"
+    ],
+    "provenance": {
+      "origin": "operator",
+      "source": "Cluster.status.currentPrimary",
+      "observedAt": "2026-10-29T12:00:00Z"
+    }
+  },
+  "instances": {
+    "desired": 2,
+    "ready": 1,
+    "reported": 2,
+    "podsReady": 1,
+    "health": "warning"
+  },
+  "cards": [
+    {
+      "name": "billing-1",
+      "role": "primary",
+      "health": "critical",
+      "ready": false,
+      "statusRead": "unreachable",
+      "detail": "CrashLoopBackOff"
+    },
+    {
+      "name": "billing-2",
+      "role": "replica",
+      "health": "warning",
+      "ready": true,
+      "statusRead": "noTLS",
+      "detail": "status port without TLS (Pod created before CNPG 1.24): restart the instance"
+    },
+    {
+      "name": "billing-3",
+      "role": "replica",
+      "health": "critical",
+      "statusRead": "notRunning",
+      "detail": "the operator reports this instance but no pod exists"
+    }
+  ],
+  "conditions": [
+    {
+      "type": "Ready",
+      "status": "False",
+      "reason": "ClusterIsNotReady",
+      "lastTransition": "2026-10-29T11:58:25Z",
+      "health": "warning",
+      "known": true
+    }
+  ],
+  "waiting": {
+    "phaseReason": "Failing over from billing-1 to billing-2",
+    "causes": [],
+    "reasons": [
+      {
+        "id": "switchover-pending",
+        "text": "The operator asked billing-2 to become primary and waits for it.",
+        "heuristic": false,
+        "evidence": [
+          "Cluster.status.currentPrimary = billing-1",
+          "Cluster.status.targetPrimary = billing-2",
+          "Cluster.status.targetPrimaryTimestamp = 2026-10-29T11:58:25Z"
+        ]
+      },
+      {
+        "id": "crash-loop",
+        "text": "These instance containers keep crashing; read the postgres container's logs.",
+        "heuristic": true,
+        "evidence": [
+          "Pod/billing-1 container postgres waiting: CrashLoopBackOff"
+        ]
+      }
+    ]
+  },
+  "recentWarnings": [
+    {
+      "type": "Warning",
+      "reason": "BackOff",
+      "message": "Back-off restarting failed container postgres",
+      "object": {
+        "kind": "Pod",
+        "name": "billing-1"
+      },
+      "count": 7,
+      "lastSeen": "2026-10-29T11:59:30Z",
+      "reporter": "kubelet",
+      "origin": "kubernetes",
+      "health": "warning"
+    },
+    {
+      "type": "Warning",
+      "reason": "FailingOver",
+      "message": "Primary billing-1 is not healthy",
+      "object": {
+        "kind": "Cluster",
+        "name": "billing"
+      },
+      "count": 1,
+      "firstSeen": "2026-10-29T11:58:25Z",
+      "lastSeen": "2026-10-29T11:58:25Z",
+      "reporter": "cloudnative-pg",
+      "origin": "operator",
+      "health": "warning"
+    }
+  ],
+  "escapeHatches": [
+    {
+      "annotation": "cnpg.io/skipWalArchiving",
+      "value": "enabled",
+      "effect": "PostgreSQL does not archive WAL: no point-in-time recovery beyond the last backup",
+      "health": "critical"
+    }
+  ],
+  "fencing": {
+    "state": "none"
+  },
+  "failover": {
+    "outcome": "unknown",
+    "health": "unknown",
+    "text": "No replica's status could be read, so the console cannot tell which one the operator would promote.",
+    "dataLoss": "unknown",
+    "dataLossText": "not known",
+    "certain": false,
+    "ranking": [
+      {
+        "name": "billing-2",
+        "eligible": false,
+        "reason": "its status could not be read by the console",
+        "podReady": true,
+        "node": "node-2",
+        "provenance": {
+          "origin": "instance",
+          "source": "/pg/status",
+          "stale": true,
+          "staleReason": "status port without TLS (Pod created before CNPG 1.24): restart the instance"
+        }
+      },
+      {
+        "name": "billing-3",
+        "eligible": false,
+        "reason": "its status could not be read by the console",
+        "provenance": {
+          "origin": "instance",
+          "source": "/pg/status"
+        }
+      }
+    ],
+    "synchronous": "none",
+    "fencing": "none",
+    "primaryNode": "node-1",
+    "notes": [
+      "Not read by the console: billing-2, billing-3. The operator reads the instances itself and would rank one of them first if it is further ahead."
+    ],
+    "provenance": {
+      "origin": "console",
+      "source": "CloudNativePG's election rule over /pg/status, Cluster.spec, FailoverQuorum and Pods",
+      "observedAt": "2026-10-29T11:59:52Z",
+      "stale": true,
+      "staleReason": "billing-1: not reachable from this console: timed out"
+    },
+    "blindSpots": [
+      {
+        "id": "failover.zones",
+        "panel": "failover",
+        "text": "The console reads no Node, so it cannot tell whether replicas share the primary's zone (topology.kubernetes.io/zone); only same-node placement is shown."
+      },
+      {
+        "id": "failover.synchronousCommit",
+        "panel": "failover",
+        "text": "synchronous_commit is read from the Cluster's parameters only: a role, a database, a session or a transaction can lower it (local, off), and those commits do not wait for any standby whatever sync_state says."
+      },
+      {
+        "id": "failover.consoleSweep",
+        "panel": "failover",
+        "text": "Positions are the console's last sweep of /pg/status; at a real failure the operator reads the instances itself, and the distance will have moved."
+      }
+    ]
+  },
+  "hibernation": {
+    "state": "off"
+  },
+  "backups": {
+    "health": "info",
+    "configured": false,
+    "provenance": {
+      "origin": "operator",
+      "source": "Backup.status",
+      "observedAt": "2026-10-29T12:00:00Z"
+    },
+    "archiving": {
+      "health": "warning",
+      "reason": "ArchivingSkipped",
+      "message": "cnpg.io/skipWalArchiving is enabled: PostgreSQL does not archive WAL",
+      "provenance": {
+        "origin": "operator",
+        "source": "Cluster.status.conditions[ContinuousArchiving]",
+        "observedAt": "2026-10-29T12:00:00Z"
+      }
+    }
+  },
+  "version": {
+    "cnpg": "1.30.0",
+    "cnpgMinor": "1.30",
+    "confidence": "reported",
+    "detectedBy": "instanceManagerVersion"
+  },
+  "findings": {
+    "critical": 1,
+    "high": 0,
+    "warning": 0,
+    "note": 0,
+    "unavailable": 144,
+    "runAt": "2026-10-29T12:00:00Z"
+  },
+  "sources": [
+    {
+      "source": "clusters",
+      "state": "live",
+      "since": "2026-10-29T09:00:00Z",
+      "health": "ok"
+    },
+    {
+      "source": "pods",
+      "state": "live",
+      "since": "2026-10-29T09:00:00Z",
+      "health": "ok"
+    },
+    {
+      "source": "events",
+      "state": "live",
+      "since": "2026-10-29T09:00:00Z",
+      "health": "ok"
+    },
+    {
+      "source": "backups",
+      "state": "live",
+      "since": "2026-10-29T09:00:00Z",
+      "health": "ok"
+    },
+    {
+      "source": "objectStores",
+      "state": "live",
+      "since": "2026-10-29T09:00:00Z",
+      "health": "ok"
+    },
+    {
+      "source": "instanceStatus",
+      "state": "live",
+      "since": "2026-10-29T09:00:00Z",
+      "health": "ok"
+    },
+    {
+      "source": "diagnostics",
+      "state": "live",
+      "health": "ok"
+    }
+  ],
+  "blindSpots": [
+    {
+      "id": "replication.streamingReplicaOnly",
+      "panel": "replication",
+      "text": "Only this cluster's own standbys (\u003ccluster\u003e-N connected as streaming_replica) are listed. Replica clusters, logical replication walsenders and external base backups are not reported by the instance. The \"received\" LSN of each standby is the primary's sent_lsn."
+    },
+    {
+      "id": "replication.syncStandbyNamesNotReported",
+      "panel": "replication",
+      "text": "The synchronous_standby_names PostgreSQL actually applies is not reported by the instance; sync_state per standby and FailoverQuorum.status (when quorum failover is enabled) are the evidence."
+    },
+    {
+      "id": "instances.isFencedNotReported",
+      "panel": "instances",
+      "text": "Whether an instance is fenced comes from the cnpg.io/fencedInstances annotation (intent); the instance's own status does not report it."
+    },
+    {
+      "id": "operator.noObservedGeneration",
+      "panel": "operator",
+      "text": "The Cluster status has no observedGeneration: the console cannot prove the operator has processed the latest spec. Condition and event ages are the only liveness evidence."
+    },
+    {
+      "id": "storage.volumeUsageNotReported",
+      "panel": "storage",
+      "text": "Disk usage per volume is not reported by upstream CloudNativePG instances; PVC classes and metrics are the evidence."
+    },
+    {
+      "id": "topology.noSyncTopologyCondition",
+      "panel": "topology",
+      "text": "CloudNativePG 1.30 does not report whether synchronous standbys sit in another failure domain."
+    }
+  ]
+}

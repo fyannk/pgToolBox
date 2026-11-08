@@ -1,0 +1,22 @@
+{
+  "api_version": "evidence.pgtoolbox.fyannk.dev/v1alpha1",
+  "kind": "BarmanWALGapPage",
+  "revision": 42,
+  "evidence_generation": 42,
+  "total_items": 1,
+  "next_cursor": null,
+  "items": [
+    {
+      "server": "orders",
+      "timeline": 1,
+      "start_position": 3,
+      "end_position": 3,
+      "segment_count": 1,
+      "first_wal": "000000010000000000000003",
+      "last_wal": "000000010000000000000003",
+      "status": "candidate",
+      "first_observed_generation": 42,
+      "last_observed_generation": 42
+    }
+  ]
+}

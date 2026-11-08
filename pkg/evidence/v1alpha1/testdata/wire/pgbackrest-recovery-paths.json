@@ -1,0 +1,64 @@
+{
+  "api_version": "evidence.pgtoolbox.fyannk.dev/v1alpha1",
+  "kind": "PGBackRestRecoveryPathPage",
+  "revision": 42,
+  "evidence_generation": 42,
+  "total_items": 2,
+  "next_cursor": null,
+  "items": [
+    {
+      "stanza": "orders",
+      "label": "20261107-081054F",
+      "archive_id": "17-1",
+      "target_timeline": 1,
+      "state": "warning",
+      "reason": {
+        "code": "coverage-path-warning",
+        "message": "WAL is contiguous to 000000010000000000000008; a candidate gap follows"
+      },
+      "stop": "candidate-limited",
+      "timelines": [
+        1
+      ],
+      "start_wal": "000000010000000000000003",
+      "consistent_wal": "000000010000000000000004",
+      "consistent": true,
+      "off_target": false,
+      "frontier_timeline": 1,
+      "frontier_position": 8,
+      "frontier_wal": "000000010000000000000008",
+      "frontier_receipt_at": "2026-07-28T09:59:00.123Z",
+      "assumption_codes": [
+        "segment-name-presence-only",
+        "wal-bytes-and-restore-not-verified"
+      ]
+    },
+    {
+      "stanza": "orders",
+      "label": "20261107-081054F_20261107-091108I",
+      "archive_id": "17-1",
+      "target_timeline": 1,
+      "state": "warning",
+      "reason": {
+        "code": "coverage-path-warning",
+        "message": "WAL is contiguous to 000000010000000000000008; a candidate gap follows"
+      },
+      "stop": "candidate-limited",
+      "timelines": [
+        1
+      ],
+      "start_wal": "000000010000000000000007",
+      "consistent_wal": "000000010000000000000007",
+      "consistent": true,
+      "off_target": false,
+      "frontier_timeline": 1,
+      "frontier_position": 8,
+      "frontier_wal": "000000010000000000000008",
+      "frontier_receipt_at": "2026-07-28T09:59:00.123Z",
+      "assumption_codes": [
+        "segment-name-presence-only",
+        "wal-bytes-and-restore-not-verified"
+      ]
+    }
+  ]
+}

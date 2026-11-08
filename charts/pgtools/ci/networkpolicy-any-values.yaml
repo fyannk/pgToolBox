@@ -1,0 +1,4 @@
+console:
+  networkPolicy:
+    enabled: true
+    apiServer: {mode: any}

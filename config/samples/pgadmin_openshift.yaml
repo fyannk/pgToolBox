@@ -1,0 +1,20 @@
+# One pgAdmin for the team namespace, on OpenShift: the oauth-proxy admits
+# only users who may get this PgAdmin (the pgtoolbox-console-operator role), Route
+# exposure, every Cluster of the namespace labelled team=a, and the
+# optional NetworkPolicy, whose egress PgAdminEgressConfined reports.
+apiVersion: pgtoolbox.fyannk.dev/v1alpha1
+kind: PgAdmin
+metadata:
+  name: team-a
+spec:
+  clusterSelector:
+    matchLabels:
+      team: a
+  auth:
+    openshiftOAuthProxy: {}
+  exposure:
+    type: route
+    hostname: pgadmin-team-a.apps.example.com
+  networkPolicy:
+    enabled: true
+    identityProviderCIDRs: [10.0.0.0/16]

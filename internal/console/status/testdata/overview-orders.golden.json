@@ -1,0 +1,403 @@
+{
+  "ref": {
+    "namespace": "team-a",
+    "name": "orders",
+    "uid": "0b6a2c1e-8f0d-4a55-9a3e-7c1f2b3d4e5f"
+  },
+  "labels": {
+    "app": "orders"
+  },
+  "generatedAt": "2026-10-29T12:00:00Z",
+  "present": true,
+  "verdict": {
+    "health": "ok",
+    "contributors": [
+      {
+        "id": "phase",
+        "health": "ok",
+        "label": "Phase",
+        "detail": "Cluster in healthy state",
+        "provenance": {
+          "origin": "operator",
+          "source": "Cluster.status.phase",
+          "observedAt": "2026-10-29T12:00:00Z"
+        }
+      },
+      {
+        "id": "readyCondition",
+        "health": "ok",
+        "label": "Ready condition",
+        "detail": "True (ClusterIsReady)",
+        "provenance": {
+          "origin": "operator",
+          "source": "Cluster.status.conditions[Ready]",
+          "observedAt": "2026-10-29T12:00:00Z"
+        }
+      },
+      {
+        "id": "instances",
+        "health": "ok",
+        "label": "Instances ready",
+        "detail": "3 of 3",
+        "provenance": {
+          "origin": "operator",
+          "source": "Cluster.status.readyInstances",
+          "observedAt": "2026-10-29T12:00:00Z"
+        },
+        "link": "instances"
+      },
+      {
+        "id": "archiving",
+        "health": "ok",
+        "label": "WAL archiving",
+        "detail": "ContinuousArchiving True (ContinuousArchivingSuccess)",
+        "provenance": {
+          "origin": "instance",
+          "source": "/pg/status",
+          "observedAt": "2026-10-29T11:59:52Z"
+        },
+        "link": "backups"
+      },
+      {
+        "id": "backupRecency",
+        "health": "ok",
+        "label": "Last backup",
+        "detail": "completed 5h0m ago",
+        "provenance": {
+          "origin": "operator",
+          "source": "Backup.status",
+          "observedAt": "2026-10-29T12:00:00Z"
+        },
+        "link": "backups"
+      },
+      {
+        "id": "instanceStatus",
+        "health": "ok",
+        "label": "Instance self-reports",
+        "detail": "3 of 3 instances read",
+        "provenance": {
+          "origin": "instance",
+          "source": "/pg/status",
+          "observedAt": "2026-10-29T11:59:52Z"
+        },
+        "link": "instances"
+      },
+      {
+        "id": "diagnostics",
+        "health": "ok",
+        "label": "Diagnostics",
+        "detail": "0 critical, 0 high, 0 warning, 0 note; 144 checks could not run",
+        "provenance": {
+          "origin": "console",
+          "source": "diagnostics",
+          "observedAt": "2026-10-29T12:00:00Z"
+        },
+        "link": "diagnostics"
+      }
+    ]
+  },
+  "phase": {
+    "text": "Cluster in healthy state",
+    "health": "ok",
+    "known": true,
+    "since": "2026-10-29T12:00:00Z",
+    "provenance": {
+      "origin": "operator",
+      "source": "Cluster.status.phase",
+      "observedAt": "2026-10-29T12:00:00Z"
+    }
+  },
+  "primary": {
+    "current": "orders-1",
+    "target": "orders-1",
+    "state": "stable",
+    "livePrimaries": [
+      "orders-1"
+    ],
+    "labelPrimaries": [
+      "orders-1"
+    ],
+    "lease": {
+      "holder": "orders-1",
+      "renewedAt": "2026-10-29T11:59:57Z",
+      "provenance": {
+        "origin": "kubernetes",
+        "source": "Lease/orders",
+        "observedAt": "2026-10-29T12:00:00Z"
+      }
+    },
+    "provenance": {
+      "origin": "operator",
+      "source": "Cluster.status.currentPrimary",
+      "observedAt": "2026-10-29T12:00:00Z"
+    }
+  },
+  "instances": {
+    "desired": 3,
+    "ready": 3,
+    "reported": 3,
+    "podsReady": 3,
+    "health": "ok"
+  },
+  "cards": [
+    {
+      "name": "orders-1",
+      "role": "primary",
+      "health": "ok",
+      "ready": true,
+      "statusRead": "ok"
+    },
+    {
+      "name": "orders-2",
+      "role": "replica",
+      "health": "ok",
+      "ready": true,
+      "statusRead": "ok",
+      "detail": "lag 0 B"
+    },
+    {
+      "name": "orders-3",
+      "role": "replica",
+      "health": "ok",
+      "ready": true,
+      "statusRead": "ok",
+      "detail": "lag 16384 B"
+    }
+  ],
+  "conditions": [
+    {
+      "type": "Ready",
+      "status": "True",
+      "reason": "ClusterIsReady",
+      "message": "Cluster is Ready",
+      "lastTransition": "2026-10-28T10:00:00Z",
+      "health": "ok",
+      "known": true
+    },
+    {
+      "type": "ContinuousArchiving",
+      "status": "True",
+      "reason": "ContinuousArchivingSuccess",
+      "lastTransition": "2026-10-28T10:00:00Z",
+      "health": "ok",
+      "known": true
+    },
+    {
+      "type": "example.com/Custom",
+      "status": "True",
+      "reason": "Whatever",
+      "lastTransition": "2026-10-29T11:00:00Z",
+      "health": "info",
+      "known": false
+    }
+  ],
+  "recentWarnings": [],
+  "escapeHatches": [],
+  "fencing": {
+    "state": "none"
+  },
+  "failover": {
+    "outcome": "promote",
+    "health": "ok",
+    "text": "orders-2 would be promoted, with no WAL missing at the last sweep (asynchronous, so not guaranteed).",
+    "candidate": "orders-2",
+    "behindBytes": 0,
+    "dataLoss": "upTo",
+    "dataLossText": "Asynchronous replication: WAL the replica had not received is lost, committed transactions included.",
+    "certain": true,
+    "ranking": [
+      {
+        "name": "orders-2",
+        "eligible": true,
+        "replayLsn": "0/3000000",
+        "behindBytes": 0,
+        "podReady": true,
+        "node": "node-2",
+        "provenance": {
+          "origin": "instance",
+          "source": "/pg/status",
+          "observedAt": "2026-10-29T11:59:52Z"
+        }
+      },
+      {
+        "name": "orders-3",
+        "eligible": true,
+        "replayLsn": "0/2FFC000",
+        "behindBytes": 16384,
+        "podReady": true,
+        "node": "node-3",
+        "provenance": {
+          "origin": "instance",
+          "source": "/pg/status",
+          "observedAt": "2026-10-29T11:59:52Z"
+        }
+      }
+    ],
+    "synchronous": "none",
+    "fencing": "none",
+    "primaryNode": "node-1",
+    "provenance": {
+      "origin": "console",
+      "source": "CloudNativePG's election rule over /pg/status, Cluster.spec, FailoverQuorum and Pods",
+      "observedAt": "2026-10-29T11:59:52Z"
+    },
+    "blindSpots": [
+      {
+        "id": "failover.zones",
+        "panel": "failover",
+        "text": "The console reads no Node, so it cannot tell whether replicas share the primary's zone (topology.kubernetes.io/zone); only same-node placement is shown."
+      },
+      {
+        "id": "failover.synchronousCommit",
+        "panel": "failover",
+        "text": "synchronous_commit is read from the Cluster's parameters only: a role, a database, a session or a transaction can lower it (local, off), and those commits do not wait for any standby whatever sync_state says."
+      },
+      {
+        "id": "failover.consoleSweep",
+        "panel": "failover",
+        "text": "Positions are the console's last sweep of /pg/status; at a real failure the operator reads the instances itself, and the distance will have moved."
+      }
+    ]
+  },
+  "hibernation": {
+    "state": "off"
+  },
+  "backups": {
+    "health": "ok",
+    "lastCompletedAt": "2026-10-29T07:00:00Z",
+    "configured": true,
+    "pluginBased": true,
+    "provenance": {
+      "origin": "operator",
+      "source": "Backup.status",
+      "observedAt": "2026-10-29T12:00:00Z"
+    },
+    "archiving": {
+      "health": "ok",
+      "conditionStatus": "True",
+      "reason": "ContinuousArchivingSuccess",
+      "liveArchiving": true,
+      "readyWalFiles": 0,
+      "provenance": {
+        "origin": "instance",
+        "source": "/pg/status",
+        "observedAt": "2026-10-29T11:59:52Z"
+      }
+    },
+    "recoveryWindow": {
+      "first": "2026-10-22T12:00:00Z",
+      "last": "2026-10-29T07:00:00Z",
+      "provenance": {
+        "origin": "operator",
+        "source": "ObjectStore.status.serverRecoveryWindow[orders]",
+        "observedAt": "2026-10-29T12:00:00Z"
+      }
+    },
+    "nextScheduledAt": "2026-10-30T00:00:00Z",
+    "notReported": [
+      "status.firstRecoverabilityPoint",
+      "status.firstRecoverabilityPointByMethod",
+      "status.lastSuccessfulBackup",
+      "status.lastSuccessfulBackupByMethod",
+      "status.lastFailedBackup",
+      "metric:cnpg_collector_first_recoverability_point",
+      "metric:cnpg_collector_last_available_backup_timestamp",
+      "metric:cnpg_collector_last_failed_backup_timestamp"
+    ]
+  },
+  "version": {
+    "cnpg": "1.30.0",
+    "cnpgMinor": "1.30",
+    "confidence": "reported",
+    "detectedBy": "instanceManagerVersion",
+    "image": "ghcr.io/cloudnative-pg/postgresql:18.1"
+  },
+  "findings": {
+    "critical": 0,
+    "high": 0,
+    "warning": 0,
+    "note": 0,
+    "unavailable": 144,
+    "runAt": "2026-10-29T12:00:00Z"
+  },
+  "sources": [
+    {
+      "source": "clusters",
+      "state": "live",
+      "since": "2026-10-29T09:00:00Z",
+      "health": "ok"
+    },
+    {
+      "source": "pods",
+      "state": "live",
+      "since": "2026-10-29T09:00:00Z",
+      "health": "ok"
+    },
+    {
+      "source": "events",
+      "state": "live",
+      "since": "2026-10-29T09:00:00Z",
+      "health": "ok"
+    },
+    {
+      "source": "backups",
+      "state": "live",
+      "since": "2026-10-29T09:00:00Z",
+      "health": "ok"
+    },
+    {
+      "source": "objectStores",
+      "state": "live",
+      "since": "2026-10-29T09:00:00Z",
+      "health": "ok"
+    },
+    {
+      "source": "instanceStatus",
+      "state": "live",
+      "since": "2026-10-29T09:00:00Z",
+      "health": "ok"
+    },
+    {
+      "source": "diagnostics",
+      "state": "live",
+      "health": "ok"
+    }
+  ],
+  "blindSpots": [
+    {
+      "id": "replication.streamingReplicaOnly",
+      "panel": "replication",
+      "text": "Only this cluster's own standbys (\u003ccluster\u003e-N connected as streaming_replica) are listed. Replica clusters, logical replication walsenders and external base backups are not reported by the instance. The \"received\" LSN of each standby is the primary's sent_lsn."
+    },
+    {
+      "id": "replication.syncStandbyNamesNotReported",
+      "panel": "replication",
+      "text": "The synchronous_standby_names PostgreSQL actually applies is not reported by the instance; sync_state per standby and FailoverQuorum.status (when quorum failover is enabled) are the evidence."
+    },
+    {
+      "id": "instances.isFencedNotReported",
+      "panel": "instances",
+      "text": "Whether an instance is fenced comes from the cnpg.io/fencedInstances annotation (intent); the instance's own status does not report it."
+    },
+    {
+      "id": "operator.noObservedGeneration",
+      "panel": "operator",
+      "text": "The Cluster status has no observedGeneration: the console cannot prove the operator has processed the latest spec. Condition and event ages are the only liveness evidence."
+    },
+    {
+      "id": "storage.volumeUsageNotReported",
+      "panel": "storage",
+      "text": "Disk usage per volume is not reported by upstream CloudNativePG instances; PVC classes and metrics are the evidence."
+    },
+    {
+      "id": "backups.pluginNotReported",
+      "panel": "backups",
+      "text": "Backups go through barman-cloud.cloudnative-pg.io: the Cluster's first recoverability point and last backup fields (and their cnpg_collector metrics) are not reported by plugin-based backups. Recoverability comes from the ObjectStore's serverRecoveryWindow, the Backup objects and repository evidence."
+    },
+    {
+      "id": "topology.noSyncTopologyCondition",
+      "panel": "topology",
+      "text": "CloudNativePG 1.30 does not report whether synchronous standbys sit in another failure domain."
+    }
+  ]
+}

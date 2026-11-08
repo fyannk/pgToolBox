@@ -1,0 +1,17 @@
+# What a scraper needs to read the operator's /metrics through an authenticating
+# endpoint: `get` on the non-resource URL. Bind it to the scraper's ServiceAccount
+# yourself. The operator serves /metrics over HTTPS on --metrics-bind-address,
+# authenticating each scrape with a TokenReview and authorizing it with a
+# SubjectAccessReview for this verb; --metrics-cert-dir supplies the certificate
+# (self-signed otherwise).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: pgtoolbox-metrics-reader
+  labels:
+    app.kubernetes.io/part-of: pgtoolbox
+rules:
+- nonResourceURLs:
+  - /metrics
+  verbs:
+  - get

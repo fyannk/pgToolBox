@@ -1,0 +1,12 @@
+# The optional policy, switched on by the installing admin. The API server
+# addresses are given because `helm lint`/`template` cannot look them up.
+console:
+  watchNamespaces: [team-a, team-b]
+  exposure:
+    type: ingress
+    host: console.example.org
+    routerNamespace: ingress-nginx
+    ingress: {className: nginx, tls: {enabled: true, secretName: pgtoolbox-console-tls}}
+  networkPolicy:
+    enabled: true
+    apiServer: {mode: addresses, addresses: [10.96.0.1]}

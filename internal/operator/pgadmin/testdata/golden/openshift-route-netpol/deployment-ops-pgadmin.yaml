@@ -1,0 +1,336 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  annotations:
+    pgtoolbox.fyannk.dev/spec-hash: 43ddf35fb3ec272a
+  labels:
+    app.kubernetes.io/component: pgadmin
+    app.kubernetes.io/instance: ops
+    app.kubernetes.io/managed-by: pgtoolbox
+    app.kubernetes.io/name: pgadmin
+    app.kubernetes.io/part-of: pgtoolbox
+    cost-center: db
+    pgtoolbox.fyannk.dev/pgadmin: ops
+    pgtoolbox.fyannk.dev/reconcile: "true"
+  name: ops-pgadmin
+  namespace: team-a
+  ownerReferences:
+  - apiVersion: pgtoolbox.fyannk.dev/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: PgAdmin
+    name: ops
+    uid: pga-uid
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: pgadmin
+      app.kubernetes.io/instance: ops
+      app.kubernetes.io/name: pgadmin
+      pgtoolbox.fyannk.dev/pgadmin: ops
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      annotations:
+        pgtoolbox.fyannk.dev/spec-hash: 43ddf35fb3ec272a
+        sidecar.istio.io/inject: "false"
+      labels:
+        app.kubernetes.io/component: pgadmin
+        app.kubernetes.io/instance: ops
+        app.kubernetes.io/managed-by: pgtoolbox
+        app.kubernetes.io/name: pgadmin
+        app.kubernetes.io/part-of: pgtoolbox
+        cost-center: db
+        pgtoolbox.fyannk.dev/pgadmin: ops
+        pgtoolbox.fyannk.dev/reconcile: "true"
+    spec:
+      automountServiceAccountToken: false
+      containers:
+      - env:
+        - name: PGADMIN_LISTEN_ADDRESS
+          value: 127.0.0.1
+        - name: PGADMIN_LISTEN_PORT
+          value: "8080"
+        - name: PGADMIN_DEFAULT_EMAIL
+          value: pgtoolbox@pgtoolbox.fyannk.dev
+        - name: PGADMIN_CUSTOM_CONFIG_DISTRO_FILE
+          value: /run/pgadmin/config_distro.py
+        - name: PGADMIN_DEFAULT_PASSWORD_FILE
+          value: /run/secrets/pgadmin-bootstrap/password
+        - name: PGADMIN_CONFIG_SERVER_MODE
+          value: "True"
+        - name: PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED
+          value: "False"
+        - name: PGADMIN_CONFIG_ALLOW_SAVE_PASSWORD
+          value: "False"
+        - name: PGADMIN_CONFIG_ALLOW_SAVE_TUNNEL_PASSWORD
+          value: "False"
+        - name: PGADMIN_CONFIG_UPGRADE_CHECK_ENABLED
+          value: "False"
+        - name: PGADMIN_CONFIG_ENABLE_PSQL
+          value: "False"
+        - name: PGADMIN_CONFIG_SESSION_COOKIE_SECURE
+          value: "True"
+        - name: PGSERVICEFILE
+          value: /run/pgadmin/credentials/pg_service.conf
+        - name: PGPASSFILE
+          value: /run/pgadmin/credentials/pgpass
+        - name: PGSSLMODE
+          value: verify-full
+        - name: PGSSLROOTCERT
+          value: /run/pgadmin/credentials/ca/bundle.crt
+        - name: PGREQUIREAUTH
+          value: scram-sha-256
+        - name: PGCHANNELBINDING
+          value: require
+        - name: PGADMIN_CONFIG_AUTHENTICATION_SOURCES
+          value: '[''webserver'']'
+        - name: PGADMIN_CONFIG_WEBSERVER_AUTO_CREATE_USER
+          value: "True"
+        - name: PGADMIN_CONFIG_WEBSERVER_REMOTE_USER
+          value: '''X-Forwarded-User'''
+        - name: PGADMIN_CONFIG_WEBSERVER_REMOTE_USER_FROM_HEADER
+          value: "True"
+        - name: PGADMIN_CONFIG_WEBSERVER_TRUSTED_PROXIES
+          value: '[''127.0.0.1/32'']'
+        image: ghcr.io/fyannk/pgadmin:9.18-hardened@sha256:96576df8aba0d0057248644d6d5ad398869e42bcf3fcfba2c0f7c13d151ea17c
+        imagePullPolicy: IfNotPresent
+        livenessProbe:
+          exec:
+            command:
+            - /venv/bin/python3
+            - -c
+            - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/misc/ping',
+              timeout=4)
+          failureThreshold: 3
+          periodSeconds: 30
+          timeoutSeconds: 5
+        name: pgadmin
+        ports:
+        - containerPort: 8080
+          name: http
+          protocol: TCP
+        readinessProbe:
+          exec:
+            command:
+            - /venv/bin/python3
+            - -c
+            - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/misc/ping',
+              timeout=4)
+          failureThreshold: 3
+          periodSeconds: 10
+          timeoutSeconds: 5
+        resources:
+          limits:
+            memory: 1Gi
+          requests:
+            cpu: 100m
+            memory: 256Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          seccompProfile:
+            type: RuntimeDefault
+        startupProbe:
+          exec:
+            command:
+            - /venv/bin/python3
+            - -c
+            - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/misc/ping',
+              timeout=4)
+          failureThreshold: 60
+          periodSeconds: 5
+          timeoutSeconds: 5
+        volumeMounts:
+        - mountPath: /var/lib/pgadmin
+          name: settings
+        - mountPath: /tmp
+          name: tmp
+        - mountPath: /run/pgadmin
+          name: run
+        - mountPath: /run/pgadmin/credentials
+          name: credentials
+          readOnly: true
+        - mountPath: /run/secrets/pgadmin-bootstrap
+          name: bootstrap
+          readOnly: true
+      - command:
+        - /opt/pgtoolbox/bin/manager
+        - passfile-sync
+        - --offer-secret
+        - ops-pgadmin-offer
+        - --dir
+        - /run/pgadmin/credentials
+        env:
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              apiVersion: v1
+              fieldPath: metadata.namespace
+        image: ghcr.io/fyannk/pgadmin:9.18-hardened@sha256:96576df8aba0d0057248644d6d5ad398869e42bcf3fcfba2c0f7c13d151ea17c
+        imagePullPolicy: IfNotPresent
+        name: passfile-sync
+        resources:
+          limits:
+            memory: 128Mi
+          requests:
+            cpu: 10m
+            memory: 32Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          seccompProfile:
+            type: RuntimeDefault
+        volumeMounts:
+        - mountPath: /opt/pgtoolbox/bin
+          name: pgtoolbox-bin
+          readOnly: true
+        - mountPath: /run/pgadmin/credentials
+          name: credentials
+        - mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+          name: kube-api-access
+          readOnly: true
+      - args:
+        - --provider=openshift
+        - --https-address=:8443
+        - --http-address=
+        - --upstream=http://127.0.0.1:8080
+        - --openshift-service-account=ops-pgadmin
+        - --openshift-sar={"namespace":"team-a","resource":"pgadmins","resourceName":"ops","verb":"get","group":"pgtoolbox.fyannk.dev"}
+        - --tls-cert=/etc/tls/private/tls.crt
+        - --tls-key=/etc/tls/private/tls.key
+        - --cookie-secret-file=/etc/proxy/cookie/cookie-secret
+        - --cookie-secure=true
+        - --pass-user-headers=true
+        - --skip-provider-button=true
+        image: quay.io/openshift/origin-oauth-proxy:4.18
+        imagePullPolicy: IfNotPresent
+        name: oauth-proxy
+        ports:
+        - containerPort: 8443
+          name: https
+          protocol: TCP
+        readinessProbe:
+          httpGet:
+            path: /oauth/healthz
+            port: https
+            scheme: HTTPS
+          periodSeconds: 10
+        resources:
+          limits:
+            memory: 128Mi
+          requests:
+            cpu: 10m
+            memory: 32Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          seccompProfile:
+            type: RuntimeDefault
+        volumeMounts:
+        - mountPath: /etc/tls/private
+          name: proxy-tls
+          readOnly: true
+        - mountPath: /etc/proxy/cookie
+          name: proxy-cookie
+          readOnly: true
+        - mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+          name: kube-api-access
+          readOnly: true
+      enableServiceLinks: false
+      initContainers:
+      - command:
+        - /manager
+        - install
+        - --target
+        - /opt/pgtoolbox/bin/manager
+        image: ghcr.io/fyannk/pgtoolbox-operator:2.0.0@sha256:1111111111111111111111111111111111111111111111111111111111111111
+        imagePullPolicy: IfNotPresent
+        name: install-passfile-sync
+        resources:
+          limits:
+            memory: 128Mi
+          requests:
+            cpu: 10m
+            memory: 32Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          seccompProfile:
+            type: RuntimeDefault
+        volumeMounts:
+        - mountPath: /opt/pgtoolbox/bin
+          name: pgtoolbox-bin
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      serviceAccountName: ops-pgadmin
+      terminationGracePeriodSeconds: 30
+      volumes:
+      - name: settings
+        persistentVolumeClaim:
+          claimName: ops-pgadmin
+      - emptyDir:
+          sizeLimit: 512Mi
+        name: tmp
+      - emptyDir:
+          sizeLimit: 16Mi
+        name: run
+      - emptyDir:
+          medium: Memory
+          sizeLimit: 4Mi
+        name: credentials
+      - emptyDir:
+          sizeLimit: 256Mi
+        name: pgtoolbox-bin
+      - name: bootstrap
+        secret:
+          defaultMode: 288
+          secretName: ops-pgadmin-bootstrap
+      - name: kube-api-access
+        projected:
+          defaultMode: 292
+          sources:
+          - serviceAccountToken:
+              expirationSeconds: 3600
+              path: token
+          - configMap:
+              items:
+              - key: ca.crt
+                path: ca.crt
+              name: kube-root-ca.crt
+          - downwardAPI:
+              items:
+              - fieldRef:
+                  apiVersion: v1
+                  fieldPath: metadata.namespace
+                path: namespace
+      - name: proxy-tls
+        secret:
+          defaultMode: 288
+          secretName: ops-pgadmin-tls
+      - name: proxy-cookie
+        secret:
+          defaultMode: 288
+          secretName: ops-pgadmin-proxy-cookie
+status: {}

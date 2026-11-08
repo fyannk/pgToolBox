@@ -1,0 +1,23 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: pgtoolbox
+    pgtoolbox.fyannk.dev/access-request: jane-operator
+    pgtoolbox.fyannk.dev/reconcile: "true"
+  name: pgaccess-jane-operator
+  namespace: team-a
+  ownerReferences:
+  - apiVersion: pgtoolbox.fyannk.dev/v1alpha1
+    controller: true
+    kind: PgAccessRequest
+    name: jane-operator
+    uid: 8f9e0c1d-0000-4000-8000-000000000001
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: pgtoolbox-console-operator
+subjects:
+- apiGroup: rbac.authorization.k8s.io
+  kind: User
+  name: oidc:jane@corp.example

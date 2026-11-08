@@ -1,0 +1,185 @@
+{
+  "generatedAt": "2026-10-29T12:00:00Z",
+  "namespaces": [
+    {
+      "name": "team-a",
+      "pgAdminsVisible": true,
+      "pgAdmins": [
+        {
+          "name": "team-a",
+          "health": "ok",
+          "url": "https://pgadmin-team-a.apps.example.com",
+          "version": "9.9",
+          "image": "ghcr.io/fyannk/pgadmin@sha256:0123",
+          "servers": [
+            {
+              "cluster": "orders",
+              "endpoint": "rw",
+              "state": "Registered"
+            },
+            {
+              "cluster": "billing",
+              "endpoint": "rw",
+              "state": "Registered"
+            }
+          ],
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "reason": "Ready",
+              "lastTransition": "2026-10-28T10:00:00Z",
+              "health": "ok",
+              "known": true
+            }
+          ],
+          "provenance": {
+            "origin": "operator",
+            "source": "PgAdmin.status",
+            "observedAt": "2026-10-29T11:59:58Z"
+          }
+        }
+      ],
+      "evidenceAgentsVisible": true,
+      "evidenceAgents": [
+        {
+          "name": "orders-evidence",
+          "health": "ok",
+          "endpoint": "https://orders-evidence.team-a.svc:8443",
+          "fingerprint": "sha256:9f86d081884c7d65",
+          "producerEpoch": 3,
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "reason": "Ready",
+              "lastTransition": "2026-10-28T10:00:00Z",
+              "health": "ok",
+              "known": true
+            }
+          ],
+          "provenance": {
+            "origin": "operator",
+            "source": "EvidenceAgent.status",
+            "observedAt": "2026-10-29T11:59:58Z"
+          }
+        }
+      ],
+      "sources": [
+        {
+          "source": "pgAdmins",
+          "state": "live",
+          "since": "2026-10-29T09:00:00Z",
+          "health": "ok"
+        },
+        {
+          "source": "evidenceAgents",
+          "state": "live",
+          "since": "2026-10-29T09:00:00Z",
+          "health": "ok"
+        }
+      ]
+    },
+    {
+      "name": "team-a-staging",
+      "pgAdminsVisible": false,
+      "pgAdmins": [],
+      "evidenceAgentsVisible": false,
+      "evidenceAgents": [],
+      "sources": []
+    }
+  ],
+  "console": {
+    "version": "0.3.0",
+    "namespace": "team-a",
+    "watchNamespaces": [
+      "team-a",
+      "team-a-staging"
+    ],
+    "runners": [
+      {
+        "name": "informers",
+        "core": true,
+        "running": true,
+        "restarts": 0
+      },
+      {
+        "name": "sweep",
+        "core": true,
+        "running": true,
+        "restarts": 0
+      },
+      {
+        "name": "diagnostics",
+        "core": false,
+        "running": true,
+        "restarts": 1,
+        "lastError": "diagnostics run panicked; restarted"
+      }
+    ],
+    "sources": [
+      {
+        "source": "instanceStatus",
+        "state": "live",
+        "since": "2026-10-29T09:00:00Z",
+        "health": "ok"
+      },
+      {
+        "source": "diagnostics",
+        "state": "live",
+        "since": "2026-10-29T09:00:00Z",
+        "health": "ok"
+      },
+      {
+        "source": "history",
+        "state": "live",
+        "since": "2026-10-29T09:00:00Z",
+        "health": "ok"
+      },
+      {
+        "source": "evidence",
+        "state": "live",
+        "since": "2026-10-29T11:00:00Z",
+        "health": "ok"
+      }
+    ],
+    "digest": {
+      "enabled": true,
+      "schedule": {
+        "hour": 7,
+        "retention": "720h0m0s",
+        "next": "2026-10-30T07:00:00Z",
+        "persistent": true
+      },
+      "last": "20261029T0700Z",
+      "channels": [
+        {
+          "channel": "chat",
+          "configured": true,
+          "digestId": "20261029T0700Z",
+          "lastAttempt": "2026-10-29T07:00:03Z",
+          "lastSuccess": "2026-10-29T07:00:03Z",
+          "attempts": 1
+        },
+        {
+          "channel": "webhook",
+          "configured": false
+        },
+        {
+          "channel": "mail",
+          "configured": true,
+          "digestId": "20261029T0700Z",
+          "lastAttempt": "2026-10-29T07:00:33Z",
+          "attempts": 2,
+          "pending": true,
+          "lastError": "the mail server does not offer STARTTLS; the digest is never sent in clear"
+        }
+      ]
+    },
+    "provenance": {
+      "origin": "console",
+      "source": "console",
+      "observedAt": "2026-10-29T11:59:58Z"
+    }
+  }
+}

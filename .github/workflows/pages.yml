@@ -1,0 +1,147 @@
+name: Pages
+
+# One GitHub Pages site: the Docusaurus documentation at
+# https://fyannk.github.io/pgToolBox/, including the Security page at
+# https://fyannk.github.io/pgToolBox/security/.
+#
+# The Security page is a page of the site (docs/site/src/pages/security.tsx)
+# that reads security/results.json in the browser. After the site is built,
+# hack/security_report.py render writes that file from the `security-results`
+# artifact of the newest completed security.yml run on main: for each scanner
+# its tool and version, when it ran, on which commit, the counts by severity,
+# the open findings with whether a fix exists, the images that were scanned by
+# digest and the OpenSSF Scorecard score. A scanner that did not run reads
+# "not run"; the page never turns a missing result into "0 findings".
+#
+# Deployed when the Security workflow finishes on main, every night (so the
+# page's age is at most a day even when nothing is pushed), by hand, and by the
+# release workflow after a release (an event raised with the Actions token
+# starts no other workflow, so release.yml dispatches this one on main).
+on:
+  workflow_run: # zizmor: ignore[dangerous-triggers] checks out main only and renders JSON from main's own runs; see the build job
+    workflows: [Security]
+    types: [completed]
+    branches: [main]
+  schedule:
+    - cron: "47 4 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  # One deployment at a time, and never cancel a half-finished one.
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build the site and the Security page
+    # A workflow_run event also fires for pull requests and for forks that have
+    # a branch named main. Only a run of this repository's own push or schedule
+    # on main may feed the public site.
+    if: >-
+      github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.event != 'pull_request' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read # check out main
+      actions: read # download the security-results artifact of another run
+      security-events: read # read the open CodeQL alerts
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+    steps:
+      # The default branch, never the commit a workflow_run event names.
+      - name: Check out main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Install the pinned tools
+        uses: ./.github/actions/toolchain
+        with:
+          tools: node
+          node-cache: "true"
+      - name: Configure Pages
+        id: pages
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+      # Docusaurus fails the build on a broken internal link, anchor or Markdown
+      # link, so a site that deploys is a site whose links resolve.
+      - name: Build the documentation
+        run: |
+          set -euo pipefail
+          make docs-build
+      # The newest completed run of the security workflow that is not a pull
+      # request's. Without one the page says so.
+      - name: Fetch the security results
+        run: |
+          set -euo pipefail
+          mkdir -p security
+          echo '{"schema":1,"envelopes":[]}' > security/merged.json
+          for id in $(gh run list --repo "${REPO}" --workflow security.yml --branch main --status completed --limit 20 --json databaseId,event --jq '.[] | select(.event != "pull_request") | .databaseId'); do
+            if gh run download "${id}" --repo "${REPO}" --name security-results --dir security/run 2>/dev/null; then
+              cp security/run/security-results.json security/merged.json
+              echo "security results: run ${id}"
+              break
+            fi
+          done
+      # CodeQL reports to code scanning, not to an artifact: read its open
+      # alerts and the latest analysis of main. When code scanning has no
+      # analysis, or the API refuses, CodeQL is "not run" on the page.
+      - name: Fetch the CodeQL alerts
+        run: |
+          set -euo pipefail
+          cd security
+          if analysis="$(gh api "repos/${REPO}/code-scanning/analyses?tool_name=CodeQL&ref=refs/heads/main&per_page=1" 2>/dev/null)" \
+            && [[ "$(jq 'length' <<<"${analysis}")" -gt 0 ]] \
+            && gh api --paginate --slurp "repos/${REPO}/code-scanning/alerts?state=open&tool_name=CodeQL&ref=refs/heads/main&per_page=100" 2>/dev/null | jq 'add // []' > alerts.json; then
+            python3 ../hack/security_report.py normalize --scanner codeql --kind code-scanning-alerts \
+              --input alerts.json --output codeql.envelope.json \
+              --scanned-at "$(jq -r '.[0].created_at' <<<"${analysis}")" \
+              --commit "$(jq -r '.[0].commit_sha' <<<"${analysis}")" \
+              --tool-name CodeQL --tool-version "$(jq -r '.[0].tool.version // ""' <<<"${analysis}")"
+          else
+            python3 ../hack/security_report.py unrun --scanner codeql \
+              --reason "code scanning has no CodeQL analysis of main, or the alerts could not be read" \
+              --output codeql.envelope.json
+          fi
+          python3 ../hack/security_report.py add --input merged.json --envelope codeql.envelope.json --output merged.json
+      # The aggregate score is published by the Scorecard action's
+      # publish_results; a missing answer is rendered as "not run".
+      - name: Fetch the Scorecard score
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --location --max-time 30 \
+            "https://api.securityscorecards.dev/projects/github.com/${REPO}" -o security/scorecard.json \
+            || rm -f security/scorecard.json
+      # Writes docs/site/build/security/results.json next to the page the
+      # build produced; it must not write an index.html there.
+      - name: Write the Security page's results
+        run: |
+          set -euo pipefail
+          scorecard=()
+          if [[ -f security/scorecard.json ]]; then scorecard=(--scorecard security/scorecard.json); fi
+          python3 hack/security_report.py render --input security/merged.json --output-dir docs/site/build/security \
+            --accepted hack/security-accepted.txt "${scorecard[@]}"
+      - name: Upload the site
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: docs/site/build
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write # publish the site
+      id-token: write # prove to Pages that the deployment comes from this workflow
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

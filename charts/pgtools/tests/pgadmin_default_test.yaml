@@ -1,0 +1,105 @@
+# pgAdmin without the operator is off by default, and its values
+# are refused rather than guessed: no credential source means no render.
+suite: pgadmin defaults and refusals
+templates:
+  - templates/pgadmin/configmap-servers.yaml
+  - templates/pgadmin/deployment.yaml
+  - templates/pgadmin/exposure.yaml
+  - templates/pgadmin/networkpolicy.yaml
+  - templates/pgadmin/pvc.yaml
+  - templates/pgadmin/rbac.yaml
+  - templates/pgadmin/secrets.yaml
+  - templates/pgadmin/service.yaml
+  - templates/pgadmin/serviceaccount.yaml
+release:
+  name: pgc
+  namespace: team-a
+set:
+  pgadmin.auth.oidc:
+    issuerURL: https://idp.example.com/realms/corp
+    clientID: pgadmin
+    clientSecret: {existingSecret: pgadmin-oidc}
+tests:
+  - it: renders nothing by default
+    asserts:
+      - hasDocuments: {count: 0}
+
+  - it: renders nothing with servers declared but pgadmin.enabled false
+    set:
+      pgadmin.servers:
+        - {cluster: orders, endpoint: rw, credentials: {application: {secret: orders-app}}}
+    asserts:
+      - hasDocuments: {count: 0}
+
+  - it: refuses a server without credentials (schema; there is no default)
+    set:
+      pgadmin.enabled: true
+      pgadmin.servers:
+        - {cluster: orders, endpoint: rw}
+    asserts:
+      - failedTemplate: {}
+
+  - it: refuses credentials secret without user and database (schema)
+    set:
+      pgadmin.enabled: true
+      pgadmin.servers:
+        - {cluster: orders, endpoint: rw, credentials: {secret: orders-owner}}
+    asserts:
+      - failedTemplate: {}
+
+  - it: refuses credentials none without user and database (schema)
+    set:
+      pgadmin.enabled: true
+      pgadmin.servers:
+        - {cluster: orders, endpoint: rw, user: alice, credentials: none}
+    asserts:
+      - failedTemplate: {}
+
+  - it: refuses two credential sources on one server (schema)
+    set:
+      pgadmin.enabled: true
+      pgadmin.servers:
+        - cluster: orders
+          endpoint: rw
+          credentials: {application: {secret: orders-app}, superuser: {secret: orders-superuser}}
+    asserts:
+      - failedTemplate: {}
+
+  - it: refuses a word other than none as credentials (schema)
+    set:
+      pgadmin.enabled: true
+      pgadmin.servers:
+        - {cluster: orders, endpoint: rw, credentials: application}
+    asserts:
+      - failedTemplate: {}
+
+  - it: refuses an unknown endpoint (schema)
+    set:
+      pgadmin.enabled: true
+      pgadmin.servers:
+        - {cluster: orders, endpoint: primary, credentials: {application: {secret: orders-app}}}
+    asserts:
+      - failedTemplate: {}
+
+  - it: refuses a misspelt pgadmin key (schema)
+    set: {pgadmin.enabeld: true}
+    asserts:
+      - failedTemplate: {}
+
+  - it: refuses two servers with the same pgAdmin name
+    set:
+      pgadmin.enabled: true
+      pgadmin.servers:
+        - {cluster: orders, endpoint: rw, credentials: {application: {secret: orders-app}}}
+        - {cluster: orders, endpoint: rw, credentials: {application: {secret: orders-app2}}}
+    template: templates/pgadmin/deployment.yaml
+    asserts:
+      - failedTemplate:
+          errorPattern: "another server is already named \"orders rw \\(application\\)\"; set name"
+
+  - it: refuses a quote in a value that reaches pgAdmin's Python configuration (schema)
+    set:
+      pgadmin.enabled: true
+      pgadmin.auth.oidc.displayName: "it's"
+    asserts:
+      - failedTemplate: {}

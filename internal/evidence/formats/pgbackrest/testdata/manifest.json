@@ -1,0 +1,28 @@
+{
+  "format": "pgbackrest",
+  "generator": "hack/evidence/pgbackrest-generator/generate.sh",
+  "generator_image": "evidence-agent-pgbackrest-generator:2.60.0",
+  "generator_version": "2.60.0",
+  "postgresql_version": "17.11",
+  "reproduction": "make test-pgbackrest-fixtures",
+  "generated_at": "2026-11-07T00:00:00Z",
+  "fixtures": [
+    {
+      "path": "pgbackrest-2.60.0/plain",
+      "scenario": "unencrypted repo1: full, diff, incr on timeline 1, a promotion to timeline 2, an incr on timeline 2; gzip WAL"
+    },
+    {
+      "path": "pgbackrest-2.60.0/encrypted",
+      "scenario": "aes-256-cbc repo2 of the same cluster: the same backups, the timeline-1 incr taken after the branch point (off target)"
+    },
+    {
+      "path": "pgbackrest-2.60.0/format6",
+      "scenario": "an encrypted stanza created with --repo1-format=6: info files only, PGBR006_ header"
+    },
+    {
+      "path": "pgbackrest-2.60.0-many",
+      "scenario": "one stanza of 260 backups (full, incr, a diff every tenth) with inflating and escaping annotations: backup.info (gzip) and archive.info only",
+      "reproduction": "docker run --rm --tmpfs /repo --tmpfs /tmp -e N=260 evidence-agent-pgbackrest-generator:2.60.0 pgbackrest-many-backups | tar -xf -"
+    }
+  ]
+}

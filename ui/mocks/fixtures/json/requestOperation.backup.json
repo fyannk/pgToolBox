@@ -1,0 +1,13 @@
+{
+  "operationId": "eyJ2IjoxLCJrIjoiYmFja3VwIiwibiI6InRlYW0tYSIsImMiOiJvcmRlcnMiLCJiIjoib25kZW1hbmQtMjAyNjEwMjkxMTU1MDAteDdrMnAiLCJ0IjoxNzkzMjc1MjAwfQ",
+  "kind": "backup",
+  "target": {
+    "namespace": "team-a",
+    "name": "orders",
+    "uid": "0b6a2c1e-8f0d-4a55-9a3e-7c1f2b3d4e5f"
+  },
+  "acceptedAt": "2026-10-29T12:00:00Z",
+  "observedGeneration": 3,
+  "created": "ondemand-20261029115500-x7k2p"
+}
+

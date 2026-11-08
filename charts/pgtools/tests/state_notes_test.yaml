@@ -1,0 +1,29 @@
+# NOTES.txt says what to create when the chart renders no RBAC: the shared
+# state ConfigMap and its Role (P4-F), and that MCP clients wait for them.
+suite: shared state notes
+templates:
+  - templates/NOTES.txt
+release:
+  name: pgc
+  namespace: team-a
+tests:
+  - it: says nothing about the state ConfigMap when the chart creates it
+    asserts:
+      - notMatchRegexRaw: {pattern: "console.rbac.create is false"}
+
+  - it: names the ConfigMap, the Role's verbs and the ServiceAccount without the chart's RBAC
+    set:
+      console.rbac.create: false
+    asserts:
+      - matchRegexRaw: {pattern: "create configmap pgc-console-state"}
+      - matchRegexRaw: {pattern: "--verb=get,watch,update --resource=configmaps --resource-name=pgc-console-state"}
+      - matchRegexRaw: {pattern: "--serviceaccount=team-a:pgc-console"}
+      - notMatchRegexRaw: {pattern: "MCP clients cannot connect"}
+
+  - it: says MCP clients cannot connect until then, with MCP on
+    set:
+      console.rbac.create: false
+      console.mcp.enabled: true
+      console.publicURL: https://console.example.com
+    asserts:
+      - matchRegexRaw: {pattern: "MCP clients cannot connect"}

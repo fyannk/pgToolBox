@@ -1,0 +1,16 @@
+# Copyright 2026 The pgToolBox Authors.
+# SPDX-License-Identifier: Apache-2.0
+#
+# The kind cluster every CI e2e starts from. etcd keeps its data in /tmp, which
+# kind mounts as tmpfs in the node container: a CI cluster has nothing worth
+# keeping across a node restart, and etcd on a shared runner disk can time out
+# on fsync ("etcdserver: request timed out") when several containers write at
+# once.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+kubeadmConfigPatches:
+  - |
+    kind: ClusterConfiguration
+    etcd:
+      local:
+        dataDir: /tmp/etcd

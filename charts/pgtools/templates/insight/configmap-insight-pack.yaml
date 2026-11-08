@@ -1,0 +1,31 @@
+{{- if .Values.insightPack.enabled }}
+{{- $queries := .Files.Get "files/insight-pack/queries.yaml" }}
+{{- $version := regexFind "[0-9]+" (regexFind "insight pack, version [0-9]+" $queries) }}
+{{- if not $version }}{{ fail "files/insight-pack/queries.yaml carries no version header" }}{{ end }}
+{{- $namespaces := .Values.insightPack.namespaces | default (include "pgtools.console.watchNamespaces" . | fromJsonArray) }}
+{{- $skip := .Values.insightPack.skipNamespaces | default list }}
+{{- range $ns := uniq $namespaces }}
+{{- if not (has $ns $skip) }}
+---
+# The pgToolBox insight pack: CloudNativePG custom queries a team opts a
+# Cluster into, in that Cluster's namespace, with
+#   spec.monitoring.customQueriesConfigMap: [{name: pgtoolbox-insight-pack, key: queries}]
+# Creating it changes nothing on any Cluster. cnpg.io/reload makes the
+# instances reload it when the chart upgrades the pack.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pgtoolbox-insight-pack
+  namespace: {{ $ns }}
+  labels:
+    {{- include "pgtools.console.labels" $ | nindent 4 }}
+    cnpg.io/reload: ""
+    pgtoolbox.fyannk.dev/insight-pack-version: {{ $version | quote }}
+  annotations:
+    pgtoolbox.fyannk.dev/insight-pack-version: {{ $version | quote }}
+data:
+  queries: |
+    {{- $queries | nindent 4 }}
+{{- end }}
+{{- end }}
+{{- end }}

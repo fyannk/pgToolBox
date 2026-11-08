@@ -1,0 +1,311 @@
+# Restore drills: off by default; on, the console reads the
+# RESTORE_DRILL_* contract and holds one opt-in teardown Role per drill
+# namespace: get/list/watch/delete on clusters and nothing else.
+suite: console restore drills
+release:
+  name: pgc
+  namespace: team-a
+tests:
+  - it: renders no drill variable and no teardown Role by default
+    template: templates/console/deployment.yaml
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content: {name: RESTORE_DRILL_ENABLED, value: "true"}
+          any: true
+
+  - it: renders no teardown Role by default
+    template: templates/console/rbac.yaml
+    asserts:
+      - hasDocuments: {count: 4}
+      - notContains:
+          path: rules
+          content: {apiGroups: [postgresql.cnpg.io], resources: [clusters], verbs: [get, list, watch, delete]}
+
+  - it: renders the drill contract when enabled, with defaults
+    template: templates/console/deployment.yaml
+    set: {console.restoreDrills.enabled: true}
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: RESTORE_DRILL_ENABLED, value: "true"}
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: RESTORE_DRILL_PREFIX, value: drill-}
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: RESTORE_DRILL_TIME_LIMIT, value: 2h}
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content: {name: RESTORE_DRILL_NAMESPACE}
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content: {name: RESTORE_DRILL_MEMORY_REQUEST}
+          any: true
+
+  - it: renders every drill setting
+    template: templates/console/deployment.yaml
+    set:
+      console.watchNamespaces: [team-a, drills]
+      console.restoreDrills:
+        enabled: true
+        namespace: drills
+        prefix: rd-
+        timeLimit: 45m
+        resources: {requests: {cpu: 500m, memory: 1Gi}, limits: {cpu: "2", memory: 2Gi}}
+        storage: {size: 50Gi, storageClass: fast}
+    asserts:
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: RESTORE_DRILL_NAMESPACE, value: drills}}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: RESTORE_DRILL_PREFIX, value: rd-}}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: RESTORE_DRILL_TIME_LIMIT, value: 45m}}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: RESTORE_DRILL_CPU_REQUEST, value: 500m}}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: RESTORE_DRILL_MEMORY_REQUEST, value: 1Gi}}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: RESTORE_DRILL_CPU_LIMIT, value: "2"}}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: RESTORE_DRILL_MEMORY_LIMIT, value: 2Gi}}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: RESTORE_DRILL_STORAGE_SIZE, value: 50Gi}}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: RESTORE_DRILL_STORAGE_CLASS, value: fast}}
+
+  # The drill's server CA (RESTORE_DRILL_SERVER_CA): the console verifies a
+  # drill against the admin-filled bundle, so a drill is signed by a CA already
+  # in it. The console reads no Secret for it and its RBAC does not change.
+  - it: signs drills in the source's namespace with the source's server CA by default
+    template: templates/console/deployment.yaml
+    set: {console.restoreDrills.enabled: true}
+    asserts:
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: RESTORE_DRILL_SERVER_CA, value: source}}
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content: {name: RESTORE_DRILL_SERVER_CA_SECRET}
+          any: true
+
+  - it: falls back to the drill's own CA in a dedicated drill namespace without a CA Secret
+    template: templates/console/deployment.yaml
+    set:
+      console.watchNamespaces: [team-a, drills]
+      console.restoreDrills: {enabled: true, namespace: drills}
+    asserts:
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: RESTORE_DRILL_SERVER_CA, value: own}}
+
+  - it: signs drills with the admin's CA Secret when one is named
+    template: templates/console/deployment.yaml
+    set:
+      console.watchNamespaces: [team-a, drills]
+      console.restoreDrills: {enabled: true, namespace: drills, serverCA: {secret: drill-ca}}
+    asserts:
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: RESTORE_DRILL_SERVER_CA, value: secret}}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: RESTORE_DRILL_SERVER_CA_SECRET, value: drill-ca}}
+
+  - it: keeps an explicit own mode
+    template: templates/console/deployment.yaml
+    set: {console.restoreDrills: {enabled: true, serverCA: {mode: own}}}
+    asserts:
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: RESTORE_DRILL_SERVER_CA, value: own}}
+
+  - it: refuses the source's CA for drills in another namespace
+    template: templates/console/deployment.yaml
+    set:
+      console.watchNamespaces: [team-a, drills]
+      console.restoreDrills: {enabled: true, namespace: drills, serverCA: {mode: source}}
+    asserts:
+      - failedTemplate:
+          errorPattern: needs drills in the source's namespace
+
+  - it: refuses mode secret without a Secret
+    template: templates/console/deployment.yaml
+    set: {console.restoreDrills: {enabled: true, serverCA: {mode: secret}}}
+    asserts:
+      - failedTemplate:
+          errorPattern: serverCA.secret is required
+
+  - it: refuses a CA Secret the mode would ignore
+    template: templates/console/deployment.yaml
+    set: {console.restoreDrills: {enabled: true, serverCA: {mode: own, secret: drill-ca}}}
+    asserts:
+      - failedTemplate:
+          errorPattern: only used with serverCA.mode=secret
+
+  - it: refuses an unknown server CA mode
+    template: templates/console/deployment.yaml
+    set: {console.restoreDrills: {enabled: true, serverCA: {mode: mirror}}}
+    asserts:
+      - failedTemplate: {}
+
+  - it: grants the console no Secret read for the drill's CA
+    template: templates/console/rbac.yaml
+    set: {console.restoreDrills: {enabled: true, serverCA: {mode: source}}}
+    asserts:
+      - notContains:
+          path: rules
+          content: {apiGroups: [""], resources: [secrets], verbs: [get]}
+          any: true
+
+  - it: binds the teardown Role in every watched namespace when drills run in the source's own
+    template: templates/console/rbac.yaml
+    set:
+      console.watchNamespaces: [team-a, team-b]
+      console.restoreDrills.enabled: true
+    asserts:
+      - hasDocuments: {count: 10}
+      - documentIndex: 4
+        isKind: {of: Role}
+      - documentIndex: 4
+        equal: {path: metadata.name, value: pgc-console-restore-drills}
+      - documentIndex: 4
+        equal: {path: metadata.namespace, value: team-a}
+      - documentIndex: 6
+        equal: {path: metadata.namespace, value: team-b}
+
+  - it: pins the teardown Role to delete on clusters and nothing else
+    template: templates/console/rbac.yaml
+    set: {console.restoreDrills.enabled: true}
+    documentIndex: 2
+    asserts:
+      - isKind: {of: Role}
+      - equal:
+          path: rules
+          value:
+            - apiGroups: [postgresql.cnpg.io]
+              resources: [clusters]
+              verbs: [get, list, watch, delete]
+      - notExists: {path: "rules[0].resourceNames"}
+
+  - it: binds the teardown Role to the console ServiceAccount only
+    template: templates/console/rbac.yaml
+    set: {console.restoreDrills.enabled: true}
+    documentIndex: 3
+    asserts:
+      - isKind: {of: RoleBinding}
+      - equal: {path: roleRef.name, value: pgc-console-restore-drills}
+      - equal:
+          path: subjects
+          value: [{kind: ServiceAccount, name: pgc-console, namespace: team-a}]
+
+  - it: binds only the drill namespace when one is set
+    template: templates/console/rbac.yaml
+    set:
+      console.watchNamespaces: [team-a, drills]
+      console.restoreDrills: {enabled: true, namespace: drills}
+    asserts:
+      - hasDocuments: {count: 8}
+      - documentIndex: 4
+        equal: {path: metadata.namespace, value: drills}
+      - documentIndex: 4
+        equal: {path: metadata.name, value: pgc-console-restore-drills}
+
+  - it: refuses a drill namespace the console does not watch
+    template: templates/console/rbac.yaml
+    set: {console.restoreDrills: {enabled: true, namespace: elsewhere, networkPolicy: {enabled: false}}}
+    asserts:
+      - failedTemplate:
+          errorPattern: must be one of the watched namespaces
+
+  - it: refuses drills without operations
+    template: templates/console/rbac.yaml
+    set: {console.restoreDrills.enabled: true, console.operations.enabled: false}
+    asserts:
+      - failedTemplate:
+          errorPattern: requires console.operations.enabled
+
+  - it: refuses a prefix the console would refuse
+    template: templates/console/deployment.yaml
+    set: {console.restoreDrills.prefix: "-Bad"}
+    asserts:
+      - failedTemplate: {}
+
+  - it: renders the concurrency cap, 3 by default
+    template: templates/console/deployment.yaml
+    set: {console.restoreDrills.enabled: true}
+    asserts:
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: RESTORE_DRILL_MAX_CONCURRENT, value: "3"}}
+
+  - it: rejects a concurrency cap above 20
+    template: templates/console/deployment.yaml
+    set: {console.restoreDrills: {enabled: true, maxConcurrent: 21}}
+    asserts:
+      - failedTemplate: {}
+
+  - it: renders no drill NetworkPolicy without drills
+    template: templates/console/restoredrills-networkpolicy.yaml
+    asserts:
+      - hasDocuments: {count: 0}
+
+  - it: holds the drill Pods to DNS, the API server and the object store
+    template: templates/console/restoredrills-networkpolicy.yaml
+    set: {console.restoreDrills.enabled: true}
+    asserts:
+      - hasDocuments: {count: 1}
+      - isKind: {of: NetworkPolicy}
+      - equal: {path: metadata.namespace, value: team-a}
+      - equal: {path: metadata.name, value: pgc-console-restore-drills}
+      - equal: {path: spec.policyTypes, value: [Ingress, Egress]}
+      - equal: {path: spec.podSelector.matchLabels, value: {pgtoolbox.fyannk.dev/drill-owner: team-a}}
+      - contains: {path: spec.podSelector.matchExpressions, content: {key: pgtoolbox.fyannk.dev/restore-drill-of, operator: Exists}}
+      - lengthEqual: {path: spec.egress, count: 3}
+      - equal: {path: "spec.egress[0].to[0].namespaceSelector.matchLabels", value: {kubernetes.io/metadata.name: kube-system}}
+      - equal: {path: "spec.egress[1].ports", value: [{port: 443, protocol: TCP}, {port: 6443, protocol: TCP}]}
+      - notExists: {path: "spec.egress[1].to"}
+      - equal: {path: "spec.egress[2].ports", value: [{port: 443, protocol: TCP}]}
+      - lengthEqual: {path: spec.ingress, count: 2}
+      - equal: {path: "spec.ingress[0].from[0].namespaceSelector.matchLabels", value: {kubernetes.io/metadata.name: cnpg-system}}
+      - equal: {path: "spec.ingress[1].from[0].namespaceSelector.matchLabels", value: {kubernetes.io/metadata.name: team-a}}
+
+  - it: closes the API server and object store rules to the given addresses
+    template: templates/console/restoredrills-networkpolicy.yaml
+    set:
+      console.watchNamespaces: [team-a, drills]
+      console.restoreDrills:
+        enabled: true
+        namespace: drills
+        networkPolicy:
+          apiServer: {mode: addresses, addresses: [10.0.0.1, "fd00::1", 10.1.0.0/16]}
+          objectStore: {to: [{ipBlock: {cidr: 192.0.2.10/32}}], ports: [9000]}
+    asserts:
+      - equal: {path: metadata.namespace, value: drills}
+      - equal: {path: "spec.egress[1].to", value: [{ipBlock: {cidr: 10.0.0.1/32}}, {ipBlock: {cidr: "fd00::1/128"}}, {ipBlock: {cidr: 10.1.0.0/16}}]}
+      - equal: {path: "spec.egress[2].to", value: [{ipBlock: {cidr: 192.0.2.10/32}}]}
+      - equal: {path: "spec.egress[2].ports", value: [{port: 9000, protocol: TCP}]}
+
+  - it: refuses the addresses mode without addresses
+    template: templates/console/restoredrills-networkpolicy.yaml
+    set: {console.restoreDrills: {enabled: true, networkPolicy: {apiServer: {mode: addresses}}}}
+    asserts:
+      - failedTemplate: {errorPattern: "needs apiServer.addresses"}
+
+  - it: renders no drill NetworkPolicy when turned off
+    template: templates/console/restoredrills-networkpolicy.yaml
+    set: {console.restoreDrills: {enabled: true, networkPolicy: {enabled: false}}}
+    asserts:
+      - hasDocuments: {count: 0}
+
+  - it: renders no admission policy unless a cluster admin asks
+    template: templates/console/restoredrills-admissionpolicy.yaml
+    set: {console.restoreDrills.enabled: true}
+    asserts:
+      - hasDocuments: {count: 0}
+
+  - it: renders the drill delete guard on request
+    template: templates/console/restoredrills-admissionpolicy.yaml
+    set:
+      console.watchNamespaces: [team-a, drills]
+      console.restoreDrills: {enabled: true, namespace: drills, prefix: rd-, admissionPolicy: {create: true}}
+    asserts:
+      - hasDocuments: {count: 2}
+      - documentIndex: 0
+        isKind: {of: ValidatingAdmissionPolicy}
+      - documentIndex: 0
+        equal: {path: "spec.matchConstraints.resourceRules[0].operations", value: [DELETE]}
+      - documentIndex: 0
+        contains: {path: spec.variables, content: {name: account, expression: "\"system:serviceaccount:team-a:pgc-console\""}}
+      - documentIndex: 0
+        contains: {path: spec.variables, content: {name: owner, expression: "\"team-a\""}}
+      - documentIndex: 0
+        contains: {path: spec.variables, content: {name: prefix, expression: "\"rd-\""}}
+      - documentIndex: 1
+        isKind: {of: ValidatingAdmissionPolicyBinding}
+      - documentIndex: 1
+        equal: {path: spec.policyName, value: pgc-console-team-a-restore-drills}
+      - documentIndex: 1
+        equal: {path: spec.validationActions, value: [Deny]}
+      - documentIndex: 1
+        equal: {path: "spec.matchResources.namespaceSelector.matchExpressions[0].values", value: [drills]}

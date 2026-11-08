@@ -1,0 +1,29 @@
+suite: pgtoolbox-aggregate-to-admin
+templates:
+  - templates/operator/user-clusterroles.yaml
+tests:
+  - it: aggregates what the user roles hold on pgToolBox's kinds into admin, not edit or view
+    documentIndex: 2
+    asserts:
+      - isKind: {of: ClusterRole}
+      - equal: {path: metadata.name, value: pgtoolbox-aggregate-to-admin}
+      - equal: {path: "metadata.labels[\"rbac.authorization.k8s.io/aggregate-to-admin\"]", value: "true"}
+      - isNull: {path: "metadata.labels[\"rbac.authorization.k8s.io/aggregate-to-edit\"]"}
+      - isNull: {path: "metadata.labels[\"rbac.authorization.k8s.io/aggregate-to-view\"]"}
+      - equal:
+          path: rules
+          value:
+            - apiGroups: [pgtoolbox.fyannk.dev]
+              resources: [evidenceagents, pgaccessrequests, pgadmins]
+              verbs: [get, list, watch]
+            - apiGroups: [pgtoolbox.fyannk.dev]
+              resources: [pgaccessrequests]
+              verbs: [create]
+            - apiGroups: [pgtoolbox.fyannk.dev]
+              resources: [pgaccessrequests/status]
+              verbs: [update]
+
+  - it: can be left out
+    set: {operator.userRoles.aggregateToAdmin: false}
+    asserts:
+      - hasDocuments: {count: 2}

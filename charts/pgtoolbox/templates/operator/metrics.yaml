@@ -1,0 +1,86 @@
+{{- if .Values.operator.enabled }}
+{{- $m := .Values.operator.metrics }}
+{{- $ns := include "pgtoolbox.namespace" . }}
+{{- $svc := include "pgtoolbox.metricsServiceName" . }}
+{{- /*
+/metrics is HTTPS and every scrape needs a token allowed to `get` /metrics
+(cmd/operator/metrics.go). The monitors send the scraper's ServiceAccount token
+and verify the endpoint against tls.caSecret, or skip verification when the
+operator serves its self-signed default certificate: the token still decides.
+*/ -}}
+{{- if $m.serviceMonitor.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $svc }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "pgtoolbox.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "pgtoolbox.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: metrics
+      port: {{ include "pgtoolbox.bindPort" .Values.metricsBindAddress }}
+      targetPort: metrics
+      protocol: TCP
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "pgtoolbox.fullname" . }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "pgtoolbox.labels" . | nindent 4 }}
+    {{- with $m.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "pgtoolbox.selectorLabels" . | nindent 6 }}
+  endpoints:
+    - port: metrics
+      path: /metrics
+      scheme: https
+      interval: {{ $m.serviceMonitor.interval }}
+      # Prometheus' own ServiceAccount token (bind operator.metrics.readerSubjects to it).
+      bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+      tlsConfig:
+        {{- include "pgtoolbox.operator.tlsConfig" . | trim | nindent 8 }}
+{{- end }}
+{{- if $m.podMonitor.enabled }}
+{{- $tok := $m.podMonitor.bearerTokenSecret }}
+{{- if not $tok.name }}
+{{- fail "operator.metrics.podMonitor.bearerTokenSecret.name is required: a PodMonitor cannot send a token file, and /metrics needs a token allowed to get /metrics. Prefer the ServiceMonitor." }}
+{{- end }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: {{ include "pgtoolbox.fullname" . }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "pgtoolbox.labels" . | nindent 4 }}
+    {{- with $m.podMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "pgtoolbox.selectorLabels" . | nindent 6 }}
+  podMetricsEndpoints:
+    - port: metrics
+      path: /metrics
+      scheme: https
+      interval: {{ $m.podMonitor.interval }}
+      authorization:
+        type: Bearer
+        credentials:
+          name: {{ $tok.name }}
+          key: {{ $tok.key }}
+      tlsConfig:
+        {{- include "pgtoolbox.operator.tlsConfig" . | trim | nindent 8 }}
+{{- end }}
+{{- end }}

@@ -1,0 +1,69 @@
+{
+  "minor": "1.31",
+  "phases": [
+    {
+      "phase": "pending",
+      "class": "progressing",
+      "terminal": false,
+      "failed": false,
+      "since": "1.30",
+      "source": "api/v1/backup_types.go BackupPhasePending (v1.30.0:32, main:32)"
+    },
+    {
+      "phase": "started",
+      "class": "progressing",
+      "terminal": false,
+      "failed": false,
+      "since": "1.30",
+      "source": "api/v1/backup_types.go BackupPhaseStarted (v1.30.0:35, main:35)"
+    },
+    {
+      "phase": "running",
+      "class": "progressing",
+      "terminal": false,
+      "failed": false,
+      "since": "1.30",
+      "source": "api/v1/backup_types.go BackupPhaseRunning (v1.30.0:38, main:38)"
+    },
+    {
+      "phase": "finalizing",
+      "class": "progressing",
+      "terminal": false,
+      "failed": false,
+      "since": "1.30",
+      "source": "api/v1/backup_types.go BackupPhaseFinalizing (v1.30.0:46, main:46)"
+    },
+    {
+      "phase": "completed",
+      "class": "ok",
+      "terminal": true,
+      "failed": false,
+      "since": "1.30",
+      "source": "api/v1/backup_types.go BackupPhaseCompleted (v1.30.0:49, main:49)"
+    },
+    {
+      "phase": "failed",
+      "class": "critical",
+      "terminal": true,
+      "failed": true,
+      "since": "1.30",
+      "source": "api/v1/backup_types.go BackupPhaseFailed (v1.30.0:52, main:52)"
+    },
+    {
+      "phase": "walArchivingFailing",
+      "class": "critical",
+      "terminal": false,
+      "failed": true,
+      "since": "1.30",
+      "source": "api/v1/backup_types.go BackupPhaseWalArchivingFailing (v1.30.0:55, main:55)"
+    },
+    {
+      "phase": "invalid backup definition",
+      "class": "critical",
+      "terminal": false,
+      "failed": true,
+      "since": "1.30",
+      "source": "api/v1/backup_types.go BackupPhaseDefinitionInvalid (v1.30.0:58, main:58)"
+    }
+  ]
+}

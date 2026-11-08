@@ -1,0 +1,121 @@
+{{- if and .Values.pgadmin.enabled .Values.pgadmin.networkPolicy.enabled }}
+{{- /*
+OPTIONAL, OFF BY DEFAULT: the installing admin's choice, as the console's. It
+isolates the pgAdmin Pod and says exactly what it needs, as the operator's
+PgAdmin policy does: DNS; the declared Clusters' and Poolers' pods on 5432
+(selected by cnpg.io/cluster and cnpg.io/poolerName from pgadmin.servers);
+the API server, for the sidecar's get and watch; the identity provider on
+443; ingress from the router namespace on pgAdmin's (or the proxy's) port.
+Kubelet probes come from the node and are not subject to it.
+*/ -}}
+{{- $p := .Values.pgadmin }}
+{{- $np := $p.networkPolicy }}
+{{- $n := include "pgtools.pgadmin.names" . | fromJson }}
+{{- $proxied := eq $p.auth.provider "openshift" }}
+{{- /*
+The settings database (configDatabase) lives in a Cluster the declared servers
+may not name: open 5432 to it too, or say how (extraEgress).
+*/ -}}
+{{- $cfgdb := $p.configDatabase | default dict }}
+{{- $clusters := $n.clusters | default list }}
+{{- $poolers := $n.poolers | default list }}
+{{- if $cfgdb.existingSecret }}
+{{- if $cfgdb.cluster }}{{ $clusters = append $clusters $cfgdb.cluster | uniq | sortAlpha }}{{ end }}
+{{- if $cfgdb.pooler }}{{ $poolers = append $poolers $cfgdb.pooler | uniq | sortAlpha }}{{ end }}
+{{- if not (or $cfgdb.cluster $cfgdb.pooler $np.extraEgress) }}
+{{- fail "pgadmin.networkPolicy.enabled with pgadmin.configDatabase.existingSecret blocks the settings database: name its Cluster in pgadmin.configDatabase.cluster (or its Pooler in pgadmin.configDatabase.pooler), or allow it in pgadmin.networkPolicy.extraEgress" }}
+{{- end }}
+{{- end }}
+{{- $addresses := list }}
+{{- $ports := $np.apiServer.ports }}
+{{- if eq $np.apiServer.mode "addresses" }}
+{{- $api := include "pgtools.apiServerAddresses" (dict "np" $np "path" "pgadmin.networkPolicy") | fromJson }}
+{{- $addresses = $api.addresses }}
+{{- $ports = $api.ports }}
+{{- end }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "pgtools.pgadmin.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "pgtools.pgadmin.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "pgtools.pgadmin.selectorLabels" . | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  {{- /* An ingress rule without `from` admits every source, so with no peer at
+  all the rule is omitted and Ingress stays denied. */}}
+  {{- if or (ne $p.exposure.type "none") $np.ingress.extraFrom }}
+  ingress:
+    - from:
+        {{- if ne $p.exposure.type "none" }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $p.exposure.routerNamespace | quote }}
+        {{- end }}
+        {{- with $np.ingress.extraFrom }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      ports:
+        - {port: {{ ternary 8443 8080 $proxied }}, protocol: TCP}
+  {{- end }}
+  egress:
+    # DNS.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $np.dns.namespace | quote }}
+          podSelector:
+            matchLabels:
+              {{- toYaml $np.dns.podLabels | nindent 14 }}
+      ports:
+        {{- range $port := $np.dns.ports }}
+        - {port: {{ $port }}, protocol: UDP}
+        - {port: {{ $port }}, protocol: TCP}
+        {{- end }}
+    {{- if or $clusters $poolers }}
+    # The declared Clusters' instances and Poolers (and the settings database's), PostgreSQL only.
+    - to:
+        {{- with $clusters }}
+        - podSelector:
+            matchExpressions:
+              - {key: cnpg.io/cluster, operator: In, values: {{ toJson . }}}
+        {{- end }}
+        {{- with $poolers }}
+        - podSelector:
+            matchExpressions:
+              - {key: cnpg.io/poolerName, operator: In, values: {{ toJson . }}}
+        {{- end }}
+      ports:
+        - {port: 5432, protocol: TCP}
+    {{- end }}
+    # The API server: the sidecar's get and watch (and the proxy's reviews).
+    {{- if eq $np.apiServer.mode "any" }}
+    - ports:
+        {{- range $port := $ports }}
+        - {port: {{ $port }}, protocol: TCP}
+        {{- end }}
+    {{- else }}
+    - to:
+        {{- range $ip := $addresses }}
+        - ipBlock:
+            cidr: {{ if contains "/" (toString $ip) }}{{ $ip }}{{ else if contains ":" (toString $ip) }}{{ $ip }}/128{{ else }}{{ $ip }}/32{{ end }}
+        {{- end }}
+      ports:
+        {{- range $port := $ports }}
+        - {port: {{ $port }}, protocol: TCP}
+        {{- end }}
+    {{- end }}
+    # The identity provider (or the OpenShift OAuth server).
+    - ports:
+        - {port: 443, protocol: TCP}
+      {{- with $np.identityProvider.to }}
+      to:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    {{- with $np.extraEgress }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- end }}

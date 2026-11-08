@@ -1,0 +1,144 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  annotations:
+    pgtoolbox.fyannk.dev/spec-hash: ba47c3d1c3a840de
+    pgtoolbox.fyannk.dev/upgrade-target: ghcr.io/fyannk/pgadmin:9.18-hardened@sha256:96576df8aba0d0057248644d6d5ad398869e42bcf3fcfba2c0f7c13d151ea17c
+  labels:
+    app.kubernetes.io/component: upgrade-backup
+    app.kubernetes.io/instance: ops
+    app.kubernetes.io/managed-by: pgtoolbox
+    app.kubernetes.io/name: pgadmin
+    app.kubernetes.io/part-of: pgtoolbox
+    cost-center: db
+    pgtoolbox.fyannk.dev/pgadmin: ops
+    pgtoolbox.fyannk.dev/reconcile: "true"
+  name: ops-pgadmin-bk-0065be49
+  namespace: team-a
+  ownerReferences:
+  - apiVersion: pgtoolbox.fyannk.dev/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: PgAdmin
+    name: ops
+    uid: pga-uid
+spec:
+  activeDeadlineSeconds: 600
+  backoffLimit: 2
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: upgrade-backup
+        app.kubernetes.io/instance: ops
+        app.kubernetes.io/managed-by: pgtoolbox
+        app.kubernetes.io/name: pgadmin
+        app.kubernetes.io/part-of: pgtoolbox
+        pgtoolbox.fyannk.dev/pgadmin: ops
+        pgtoolbox.fyannk.dev/reconcile: "true"
+    spec:
+      affinity:
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchLabels:
+                app.kubernetes.io/component: pgadmin
+                app.kubernetes.io/instance: ops
+                app.kubernetes.io/name: pgadmin
+                pgtoolbox.fyannk.dev/pgadmin: ops
+            topologyKey: kubernetes.io/hostname
+      automountServiceAccountToken: false
+      containers:
+      - command:
+        - /opt/pgtoolbox/bin/manager
+        - pgadmin-backup
+        - --settings-db
+        - /var/lib/pgadmin/pgadmin4.db
+        - --dir
+        - /var/lib/pgadmin/.pgtoolbox/backups
+        - --keep
+        - "3"
+        - --lock
+        - /var/lib/pgadmin/.pgtoolbox/setup.lock
+        - --label
+        - 0065be49
+        env:
+        - name: TMPDIR
+          value: /tmp
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              apiVersion: v1
+              fieldPath: metadata.namespace
+        image: ghcr.io/fyannk/pgadmin:9.18-hardened@sha256:96576df8aba0d0057248644d6d5ad398869e42bcf3fcfba2c0f7c13d151ea17c
+        imagePullPolicy: IfNotPresent
+        name: upgrade-backup
+        resources:
+          limits:
+            memory: 1Gi
+          requests:
+            cpu: 100m
+            memory: 256Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          seccompProfile:
+            type: RuntimeDefault
+        terminationMessagePolicy: FallbackToLogsOnError
+        volumeMounts:
+        - mountPath: /opt/pgtoolbox/bin
+          name: pgtoolbox-bin
+          readOnly: true
+        - mountPath: /var/lib/pgadmin
+          name: settings
+        - mountPath: /tmp
+          name: tmp
+      enableServiceLinks: false
+      initContainers:
+      - command:
+        - /manager
+        - install
+        - --target
+        - /opt/pgtoolbox/bin/manager
+        image: ghcr.io/fyannk/pgtoolbox-operator:2.0.0@sha256:1111111111111111111111111111111111111111111111111111111111111111
+        imagePullPolicy: IfNotPresent
+        name: install-passfile-sync
+        resources:
+          limits:
+            memory: 128Mi
+          requests:
+            cpu: 10m
+            memory: 32Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          seccompProfile:
+            type: RuntimeDefault
+        volumeMounts:
+        - mountPath: /opt/pgtoolbox/bin
+          name: pgtoolbox-bin
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      serviceAccountName: ops-pgadmin
+      volumes:
+      - emptyDir:
+          sizeLimit: 256Mi
+        name: pgtoolbox-bin
+      - name: settings
+        persistentVolumeClaim:
+          claimName: ops-pgadmin
+      - emptyDir:
+          sizeLimit: 256Mi
+        name: tmp
+  ttlSecondsAfterFinished: 3600
+status: {}

@@ -1,0 +1,18 @@
+# pgAdmin without the operator, settings database in PostgreSQL: no PVC, no
+# pre-upgrade backup, the URI read from a Secret of the release namespace.
+pgadmin:
+  enabled: true
+  admins: [alice@example.org]
+  auth:
+    provider: oidc
+    oidc:
+      issuerURL: https://idp.example.org/realms/corp
+      clientID: pgadmin
+      clientSecret: {existingSecret: pgadmin-oidc}
+  configDatabase:
+    existingSecret: pgadmin-settings-db
+  servers:
+    - cluster: orders
+      endpoint: rw
+      credentials:
+        application: {secret: orders-app}

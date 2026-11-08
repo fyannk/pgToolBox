@@ -1,0 +1,47 @@
+{{- /*
+Claude Code. Source: https://code.claude.com/docs/en/mcp (2026-11):
+"claude mcp add --transport http [--scope local|project|user] <name> <url>";
+project scope is .mcp.json at the repository root, user scope the
+mcpServers of ~/.claude.json, both {"mcpServers": {name: {"type": "http",
+"url", "headers", "headersHelper"}}}; headersHelper is a shell command whose
+output is a JSON object of headers, run at each connection; "/mcp" in a
+session (or "claude mcp login <name>" from a shell) signs in (OAuth: dynamic registration or a client ID metadata
+document, redirect http://localhost:<port>/callback); "claude mcp get"
+shows a server and its status.
+*/ -}}
+{{define "name"}}Claude Code{{end}}
+{{define "docs"}}https://code.claude.com/docs/en/mcp{{end}}
+{{define "add"}}claude mcp add --transport http --scope user {{.Server}} {{.URL}}{{end}}
+{{define "login"}}/mcp{{end}}
+{{define "check"}}claude mcp get {{.Server}}{{end}}
+{{define "pack.document"}}skill{{end}}
+{{define "pack.project"}}.claude/skills/{{.Server}}/SKILL.md{{end}}
+{{define "pack.user"}}~/.claude/skills/{{.Server}}/SKILL.md{{end}}
+{{define "user.path"}}~/.claude.json{{end}}
+{{define "user.format"}}json{{end}}
+{{define "user"}}{
+  "mcpServers": {
+    {{q .Server}}: {
+      "type": "http",
+      "url": {{q .URL}}
+    }
+  }
+}
+{{end}}
+{{define "project.path"}}.mcp.json{{end}}
+{{define "project.format"}}json{{end}}
+{{define "project"}}{{template "user" .}}{{end}}
+{{define "static.path"}}.mcp.json{{end}}
+{{define "static.format"}}json{{end}}
+{{define "static"}}{
+  "mcpServers": {
+    {{q .Server}}: {
+      "type": "http",
+      "url": {{q .URL}},
+      "headersHelper": {{q (print "printf '{\"Authorization\": \"Bearer %s\"}' \"$(" .TokenCommand ")\"")}}
+    }
+  }
+}
+{{end}}
+{{define "static.env"}}{{end}}
+{{define "static.note"}}Claude Code runs the headersHelper command at each connection, so the token is always fresh and never written to a file. Use it where token sign-in is your break-glass path; the sign-in above is the normal one.{{end}}

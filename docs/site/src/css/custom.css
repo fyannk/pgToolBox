@@ -1,0 +1,469 @@
+/**
+ * pgToolBox docs theme: fyannk/design, as the console wears it.
+ *
+ * fyannk.css (the vendored --fy-* tokens) is loaded first and switches
+ * on :root[data-theme], which is the attribute Docusaurus sets, so the
+ * docs follow the same light/dark values as the console. This file only
+ * maps Infima's variables onto those tokens and draws the few branded
+ * pieces: the navbar wordmark and the landing page.
+ */
+
+@import './fonts/fonts.css';
+
+/* Infima redefines its variables under [data-theme='dark']:root, which
+   outranks a bare :root; naming both theme scopes lets these win in both. */
+:root,
+:root[data-theme='dark'],
+:root[data-theme='light'] {
+  /* One accent: the lichen. Infima derives hover/active shades from the
+     ramp, so it is mixed from the accent rather than hand-picked. */
+  --ifm-color-primary: var(--fy-accent);
+  --ifm-color-primary-dark: color-mix(in srgb, var(--fy-accent) 88%, var(--fy-bg));
+  --ifm-color-primary-darker: color-mix(in srgb, var(--fy-accent) 80%, var(--fy-bg));
+  --ifm-color-primary-darkest: color-mix(in srgb, var(--fy-accent) 65%, var(--fy-bg));
+  --ifm-color-primary-light: color-mix(in srgb, var(--fy-accent) 88%, var(--fy-text));
+  --ifm-color-primary-lighter: color-mix(in srgb, var(--fy-accent) 80%, var(--fy-text));
+  --ifm-color-primary-lightest: color-mix(in srgb, var(--fy-accent) 65%, var(--fy-text));
+
+  /* Status colours only ever mean status (admonitions). */
+  --ifm-color-success: var(--fy-ok);
+  --ifm-color-warning: var(--fy-warn);
+  --ifm-color-danger: var(--fy-crit);
+  --ifm-color-info: var(--fy-info);
+
+  --ifm-background-color: var(--fy-bg);
+  --ifm-background-surface-color: var(--fy-surface);
+  --ifm-font-color-base: var(--fy-text);
+  --ifm-font-color-secondary: var(--fy-text-muted);
+  --ifm-heading-color: var(--fy-text);
+  --ifm-toc-border-color: var(--fy-border);
+  --ifm-hr-border-color: var(--fy-border);
+  --ifm-table-border-color: var(--fy-border);
+  --ifm-table-head-background: var(--fy-surface);
+  --ifm-table-stripe-background: color-mix(in srgb, var(--fy-surface) 50%, transparent);
+  --ifm-color-emphasis-200: var(--fy-border);
+  --ifm-color-emphasis-300: var(--fy-border-strong);
+
+  /* Monospace speaks, sans explains. */
+  --ifm-font-family-base: var(--fy-font-sans);
+  --ifm-font-family-monospace: var(--fy-font-mono);
+  --ifm-heading-font-family: var(--fy-font-mono);
+  --ifm-heading-font-weight: 600;
+  --ifm-code-font-size: 92%;
+
+  /* Tight corners, 1 px borders, no shadows on the page. */
+  --ifm-global-radius: var(--fy-radius-md);
+  --ifm-code-border-radius: var(--fy-radius-sm);
+  --ifm-button-border-radius: var(--fy-radius-md);
+  --ifm-global-shadow-lw: none;
+  --ifm-global-shadow-md: none;
+  --ifm-navbar-shadow: none;
+  --ifm-code-background: var(--fy-raised);
+
+  --ifm-navbar-background-color: var(--fy-surface);
+  --ifm-navbar-link-color: var(--fy-text-muted);
+  --ifm-navbar-link-hover-color: var(--fy-text);
+  --ifm-navbar-search-input-background-color: var(--fy-bg);
+  --ifm-navbar-search-input-color: var(--fy-text);
+  --ifm-navbar-search-input-placeholder-color: var(--fy-text-muted);
+  --ifm-footer-background-color: var(--fy-surface);
+  --ifm-footer-color: var(--fy-text-muted);
+  --ifm-footer-link-color: var(--fy-text-muted);
+  --ifm-footer-link-hover-color: var(--fy-accent);
+  --ifm-footer-title-color: var(--fy-text);
+  --ifm-menu-color-background-active: var(--fy-accent-soft);
+}
+
+/* The footer keeps the page's theme rather than Infima's forced dark.
+   Infima sets the dark footer's text colours on this class, so they are
+   restated here; otherwise light mode shows white text on a light surface. */
+.footer--dark {
+  --ifm-footer-background-color: var(--fy-surface);
+  --ifm-footer-color: var(--fy-text-muted);
+  --ifm-footer-link-color: var(--fy-text-muted);
+  --ifm-footer-link-hover-color: var(--fy-accent);
+  --ifm-footer-title-color: var(--fy-text);
+  border-top: 1px solid var(--fy-border);
+}
+
+.navbar {
+  border-bottom: 1px solid var(--fy-border);
+}
+
+.navbar__link--active {
+  color: var(--fy-text);
+}
+
+/* The wordmark: "pg" muted, "ToolBox" in the text colour, the block cursor
+   in the accent — Plex Mono 600. The navbar title cannot carry markup, so
+   the parts are pseudo-elements and the text node is collapsed; the logo
+   keeps a real alt so the link still has a name. */
+.navbar__brand .navbar__title {
+  font-family: var(--fy-font-mono);
+  font-size: 0;
+  font-weight: 600;
+}
+
+.navbar__brand .navbar__title::before,
+.navbar__brand .navbar__title::after {
+  font-size: 1.2rem;
+}
+
+.navbar__brand .navbar__title::before {
+  color: var(--fy-text-muted);
+  content: 'pg';
+}
+
+.navbar__brand .navbar__title::after {
+  color: var(--fy-text);
+  content: 'ToolBox';
+}
+
+/* The block cursor, in the accent, closes the brand link. */
+.navbar__brand::after {
+  color: var(--fy-accent);
+  content: '\258D';
+  font-family: var(--fy-font-mono);
+  font-size: 1.2rem;
+  font-weight: 600;
+}
+
+.navbar__logo {
+  height: 1.75rem;
+  margin-right: 0.6rem;
+}
+
+.navbar .dropdown__menu {
+  background-color: var(--fy-raised);
+  border: 1px solid var(--fy-border);
+  box-shadow: none;
+}
+
+/* Repository link: icon only, its name from aria-label. */
+.navbar-github {
+  align-items: center;
+  display: flex;
+  padding: 0.25rem 0.5rem;
+}
+
+.navbar-github::before {
+  background-color: var(--fy-text-muted);
+  content: '';
+  display: block;
+  height: 1.3rem;
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z'/%3E%3C/svg%3E");
+  mask-repeat: no-repeat;
+  mask-size: contain;
+  width: 1.3rem;
+}
+
+.navbar-github:hover::before {
+  background-color: var(--fy-text);
+}
+
+/* Primary buttons: the accent fill with its ink. */
+.button--primary {
+  --ifm-button-color: var(--fy-accent-ink);
+  color: var(--fy-accent-ink);
+}
+
+.button--primary:hover {
+  color: var(--fy-accent-ink);
+}
+
+code {
+  border: 1px solid var(--fy-border);
+}
+
+/* Landing page: the mark beside the wordmark at scale, on the page's own
+   background with a 1 px rule, no gradient field. */
+.ptb-hero {
+  border-bottom: 1px solid var(--fy-border);
+  padding: 4.5rem 1rem;
+}
+
+.ptb-hero__inner {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3rem;
+  justify-content: center;
+  margin: 0 auto;
+  max-width: 60rem;
+}
+
+.ptb-hero__mark {
+  height: auto;
+  max-width: 200px;
+  width: 100%;
+}
+
+.ptb-hero__copy {
+  flex: 1 1 22rem;
+}
+
+.ptb-hero__title {
+  font-family: var(--fy-font-mono);
+  font-size: clamp(2.5rem, 7vw, 3.75rem);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.05;
+  margin: 0 0 1rem;
+}
+
+.ptb-hero__title .pg {
+  color: var(--fy-text-muted);
+}
+
+.ptb-hero__title .cursor {
+  color: var(--fy-accent);
+}
+
+.ptb-hero__tagline {
+  color: var(--fy-text-muted);
+  font-size: 1.25rem;
+  margin: 0 0 1.75rem;
+  max-width: 32ch;
+}
+
+.ptb-hero__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.ptb-hero__ghost.button--outline {
+  border-color: var(--fy-border-strong);
+  color: var(--fy-text);
+}
+
+.ptb-hero__ghost.button--outline:hover {
+  background: var(--fy-raised);
+  border-color: var(--fy-text-muted);
+  color: var(--fy-text);
+}
+
+.ptb-main {
+  margin: 0 auto;
+  max-width: 60rem;
+  padding: 3.5rem 1rem 4.5rem;
+}
+
+.ptb-lede {
+  font-size: 1.125rem;
+  margin: 0 0 2.75rem;
+  max-width: 65ch;
+}
+
+.ptb-grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(min(24rem, 100%), 1fr));
+}
+
+/* The screenshot is a full page: the frame shows its top (health and
+   wiring) and the link opens the tour. */
+.ptb-shot {
+  margin: 0 0 2.75rem;
+}
+
+.ptb-shot__frame {
+  aspect-ratio: 1440 / 1480;
+  border: 1px solid var(--fy-border);
+  border-radius: var(--fy-radius-md);
+  display: block;
+  overflow: hidden;
+}
+
+.ptb-shot__frame img {
+  display: block;
+  height: auto;
+  width: 100%;
+}
+
+.ptb-shot figcaption {
+  color: var(--fy-text-muted);
+  font-size: 0.95rem;
+  margin-top: 0.75rem;
+}
+
+.ptb-card {
+  background: var(--fy-surface);
+  border: 1px solid var(--fy-border);
+  border-radius: var(--fy-radius-md);
+  padding: 1.5rem;
+}
+
+.ptb-card h2 {
+  font-size: 1.05rem;
+  margin: 0 0 0.5rem;
+}
+
+.ptb-card p {
+  color: var(--fy-text-muted);
+  margin: 0;
+}
+
+/* The limitations block is a statement of scope, not a warning: neutral
+   surface, the accent only as its leading rule. */
+.ptb-note {
+  background: var(--fy-surface);
+  border: 1px solid var(--fy-border);
+  border-left: 2px solid var(--fy-accent);
+  border-radius: var(--fy-radius-md);
+  margin-top: 2.75rem;
+  padding: 1.25rem 1.5rem;
+}
+
+/* A Mermaid diagram that cannot shrink to the column without illegible
+   labels scrolls inside its own box (src/client/mermaid-scale.ts). */
+.docusaurus-mermaid-container {
+  margin-bottom: var(--ifm-leading);
+  overflow-x: auto;
+}
+
+/* The Security page (src/pages/security.tsx). Status is never colour alone:
+   each one carries a glyph and a word; the colours are the status tokens. */
+.ptb-sec {
+  box-sizing: border-box;
+  margin: 0 auto;
+  max-width: 75rem;
+  /* The layout's wrapper is a flex row: without this the widest table sets
+     the page's width and the whole page scrolls sideways on a phone. */
+  min-width: 0;
+  padding: 2.5rem 1rem 4.5rem;
+  width: 100%;
+}
+
+.ptb-sec h2 {
+  border-bottom: 1px solid var(--fy-border);
+  margin-top: 2.5rem;
+  padding-bottom: 0.4rem;
+}
+
+.ptb-sec__lede {
+  max-width: 75ch;
+}
+
+.ptb-sec__muted {
+  color: var(--fy-text-muted);
+}
+
+.ptb-sec__banner {
+  background: var(--fy-surface);
+  border: 1px solid var(--fy-border);
+  border-left: 2px solid var(--fy-border-strong);
+  border-radius: var(--fy-radius-md);
+  margin: 1.25rem 0;
+  padding: 0.9rem 1.25rem;
+}
+
+.ptb-sec__banner--warn {
+  border-left-color: var(--fy-warn);
+}
+
+.ptb-sec__banner--bad {
+  border-left-color: var(--fy-crit);
+}
+
+/* Wide tables scroll inside their own box, never the page. */
+.ptb-sec__scroll {
+  margin-bottom: var(--ifm-leading);
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.ptb-sec__scroll:focus-visible {
+  outline: 2px solid var(--fy-accent);
+  outline-offset: 2px;
+}
+
+.ptb-sec__table {
+  display: table;
+  font-size: var(--fy-text-sm);
+  margin: 0;
+  width: 100%;
+}
+
+.ptb-sec__table th,
+.ptb-sec__table td {
+  padding: 0.4rem 0.65rem;
+  text-align: left;
+  vertical-align: top;
+}
+
+.ptb-sec__table thead th {
+  white-space: nowrap;
+}
+
+.ptb-sec__table tbody th {
+  font-weight: 500;
+}
+
+.ptb-sec__caption {
+  caption-side: top;
+  color: var(--fy-text-muted);
+  font-size: var(--fy-text-xs);
+  padding: 0 0 0.35rem;
+  text-align: left;
+}
+
+.ptb-sec__table .ptb-sec__n {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.ptb-sec__nowrap {
+  white-space: nowrap;
+}
+
+.ptb-sec__break {
+  word-break: break-all;
+}
+
+.ptb-sec__status {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.ptb-sec__status--ok {
+  color: var(--fy-ok);
+}
+
+.ptb-sec__status--not-run,
+.ptb-sec__status--failed {
+  color: var(--fy-crit);
+}
+
+.ptb-sec__sev {
+  font-family: var(--fy-font-mono);
+  text-transform: uppercase;
+}
+
+.ptb-sec__sev--critical {
+  color: var(--fy-crit);
+  font-weight: 700;
+}
+
+.ptb-sec__sev--high {
+  color: var(--fy-warn);
+  font-weight: 700;
+}
+
+.ptb-sec__sev--medium {
+  color: var(--fy-text);
+}
+
+.ptb-sec__sev--low,
+.ptb-sec__sev--unknown {
+  color: var(--fy-text-muted);
+}
+
+.ptb-sec__fix--none {
+  font-weight: 600;
+}
+
+.ptb-sec__score {
+  font-family: var(--fy-font-mono);
+  font-size: var(--fy-text-lg);
+}

@@ -1,0 +1,288 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  annotations:
+    pgtoolbox.fyannk.dev/spec-hash: 21311b0d66fe4eca
+  labels:
+    app.kubernetes.io/component: pgadmin
+    app.kubernetes.io/instance: web
+    app.kubernetes.io/managed-by: pgtoolbox
+    app.kubernetes.io/name: pgadmin
+    app.kubernetes.io/part-of: pgtoolbox
+    pgtoolbox.fyannk.dev/pgadmin: web
+    pgtoolbox.fyannk.dev/reconcile: "true"
+  name: web-pgadmin
+  namespace: team-a
+  ownerReferences:
+  - apiVersion: pgtoolbox.fyannk.dev/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: PgAdmin
+    name: web
+    uid: pga-uid
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: pgadmin
+      app.kubernetes.io/instance: web
+      app.kubernetes.io/name: pgadmin
+      pgtoolbox.fyannk.dev/pgadmin: web
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      annotations:
+        pgtoolbox.fyannk.dev/spec-hash: 21311b0d66fe4eca
+      labels:
+        app.kubernetes.io/component: pgadmin
+        app.kubernetes.io/instance: web
+        app.kubernetes.io/managed-by: pgtoolbox
+        app.kubernetes.io/name: pgadmin
+        app.kubernetes.io/part-of: pgtoolbox
+        pgtoolbox.fyannk.dev/pgadmin: web
+        pgtoolbox.fyannk.dev/reconcile: "true"
+    spec:
+      automountServiceAccountToken: false
+      containers:
+      - env:
+        - name: PGADMIN_LISTEN_ADDRESS
+          value: 0.0.0.0
+        - name: PGADMIN_LISTEN_PORT
+          value: "8080"
+        - name: PGADMIN_DEFAULT_EMAIL
+          value: pgtoolbox@pgtoolbox.fyannk.dev
+        - name: PGADMIN_CUSTOM_CONFIG_DISTRO_FILE
+          value: /run/pgadmin/config_distro.py
+        - name: PGADMIN_DEFAULT_PASSWORD_FILE
+          value: /run/secrets/pgadmin-bootstrap/password
+        - name: PGADMIN_CONFIG_SERVER_MODE
+          value: "True"
+        - name: PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED
+          value: "False"
+        - name: PGADMIN_CONFIG_ALLOW_SAVE_PASSWORD
+          value: "False"
+        - name: PGADMIN_CONFIG_ALLOW_SAVE_TUNNEL_PASSWORD
+          value: "False"
+        - name: PGADMIN_CONFIG_UPGRADE_CHECK_ENABLED
+          value: "False"
+        - name: PGADMIN_CONFIG_ENABLE_PSQL
+          value: "False"
+        - name: PGADMIN_CONFIG_SESSION_COOKIE_SECURE
+          value: "True"
+        - name: PGSERVICEFILE
+          value: /run/pgadmin/credentials/pg_service.conf
+        - name: PGPASSFILE
+          value: /run/pgadmin/credentials/pgpass
+        - name: PGSSLMODE
+          value: verify-full
+        - name: PGSSLROOTCERT
+          value: /run/pgadmin/credentials/ca/bundle.crt
+        - name: PGREQUIREAUTH
+          value: scram-sha-256
+        - name: PGCHANNELBINDING
+          value: require
+        - name: PGADMIN_CONFIG_AUTHENTICATION_SOURCES
+          value: '[''oauth2'']'
+        - name: PGADMIN_CONFIG_OAUTH2_AUTO_CREATE_USER
+          value: "True"
+        - name: PGADMIN_CONFIG_OAUTH2_CONFIG
+          value: '[{''OAUTH2_NAME'': ''pgtoolbox'', ''OAUTH2_DISPLAY_NAME'': ''Single
+            sign-on'', ''OAUTH2_CLIENT_ID'': ''pgadmin'', ''OAUTH2_CLIENT_SECRET'':
+            open(''/run/pgadmin/oauth2/client-secret'').read().strip(), ''OAUTH2_SERVER_METADATA_URL'':
+            ''https://idp.example.com/realms/corp/.well-known/openid-configuration'',
+            ''OAUTH2_API_BASE_URL'': ''https://idp.example.com/realms/corp/'', ''OAUTH2_SCOPE'':
+            ''openid email profile'', ''OAUTH2_USERNAME_CLAIM'': ''email'', ''OAUTH2_ADDITIONAL_CLAIMS'':
+            {''groups'': [''dba'', ''it\''s'']}, ''OAUTH2_SSL_CERT_VERIFICATION'':
+            True}]'
+        image: registry.example.com/pgadmin:9.18
+        imagePullPolicy: Always
+        livenessProbe:
+          exec:
+            command:
+            - /venv/bin/python3
+            - -c
+            - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/misc/ping',
+              timeout=4)
+          failureThreshold: 3
+          periodSeconds: 30
+          timeoutSeconds: 5
+        name: pgadmin
+        ports:
+        - containerPort: 8080
+          name: http
+          protocol: TCP
+        readinessProbe:
+          exec:
+            command:
+            - /venv/bin/python3
+            - -c
+            - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/misc/ping',
+              timeout=4)
+          failureThreshold: 3
+          periodSeconds: 10
+          timeoutSeconds: 5
+        resources:
+          requests:
+            memory: 512Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          seccompProfile:
+            type: RuntimeDefault
+        startupProbe:
+          exec:
+            command:
+            - /venv/bin/python3
+            - -c
+            - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/misc/ping',
+              timeout=4)
+          failureThreshold: 60
+          periodSeconds: 5
+          timeoutSeconds: 5
+        volumeMounts:
+        - mountPath: /var/lib/pgadmin
+          name: settings
+        - mountPath: /tmp
+          name: tmp
+        - mountPath: /run/pgadmin
+          name: run
+        - mountPath: /run/pgadmin/credentials
+          name: credentials
+          readOnly: true
+        - mountPath: /run/secrets/pgadmin-bootstrap
+          name: bootstrap
+          readOnly: true
+        - mountPath: /run/pgadmin/oauth2
+          name: oauth2-client
+          readOnly: true
+      - command:
+        - /opt/pgtoolbox/bin/manager
+        - passfile-sync
+        - --offer-secret
+        - web-pgadmin-offer
+        - --dir
+        - /run/pgadmin/credentials
+        env:
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              apiVersion: v1
+              fieldPath: metadata.namespace
+        image: registry.example.com/pgadmin:9.18
+        imagePullPolicy: Always
+        name: passfile-sync
+        resources:
+          limits:
+            memory: 128Mi
+          requests:
+            cpu: 10m
+            memory: 32Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          seccompProfile:
+            type: RuntimeDefault
+        volumeMounts:
+        - mountPath: /opt/pgtoolbox/bin
+          name: pgtoolbox-bin
+          readOnly: true
+        - mountPath: /run/pgadmin/credentials
+          name: credentials
+        - mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+          name: kube-api-access
+          readOnly: true
+      enableServiceLinks: false
+      imagePullSecrets:
+      - name: pull
+      initContainers:
+      - command:
+        - /manager
+        - install
+        - --target
+        - /opt/pgtoolbox/bin/manager
+        image: ghcr.io/fyannk/pgtoolbox-operator:2.0.0@sha256:1111111111111111111111111111111111111111111111111111111111111111
+        imagePullPolicy: IfNotPresent
+        name: install-passfile-sync
+        resources:
+          limits:
+            memory: 128Mi
+          requests:
+            cpu: 10m
+            memory: 32Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          seccompProfile:
+            type: RuntimeDefault
+        volumeMounts:
+        - mountPath: /opt/pgtoolbox/bin
+          name: pgtoolbox-bin
+      securityContext:
+        fsGroup: 5050
+        fsGroupChangePolicy: OnRootMismatch
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      serviceAccountName: web-pgadmin
+      terminationGracePeriodSeconds: 30
+      volumes:
+      - name: settings
+        persistentVolumeClaim:
+          claimName: web-pgadmin
+      - emptyDir:
+          sizeLimit: 512Mi
+        name: tmp
+      - emptyDir:
+          sizeLimit: 16Mi
+        name: run
+      - emptyDir:
+          medium: Memory
+          sizeLimit: 4Mi
+        name: credentials
+      - emptyDir:
+          sizeLimit: 256Mi
+        name: pgtoolbox-bin
+      - name: bootstrap
+        secret:
+          defaultMode: 288
+          secretName: web-pgadmin-bootstrap
+      - name: kube-api-access
+        projected:
+          defaultMode: 292
+          sources:
+          - serviceAccountToken:
+              expirationSeconds: 3600
+              path: token
+          - configMap:
+              items:
+              - key: ca.crt
+                path: ca.crt
+              name: kube-root-ca.crt
+          - downwardAPI:
+              items:
+              - fieldRef:
+                  apiVersion: v1
+                  fieldPath: metadata.namespace
+                path: namespace
+      - name: oauth2-client
+        secret:
+          defaultMode: 288
+          items:
+          - key: client-secret
+            path: client-secret
+          secretName: pgadmin-oidc
+status: {}

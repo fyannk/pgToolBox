@@ -1,0 +1,250 @@
+{
+  "api_version": "evidence.pgtoolbox.fyannk.dev/v1alpha1",
+  "kind": "RepositoryEvidenceSnapshot",
+  "producer": {
+    "name": "evidence-agent",
+    "version": "1.0.0"
+  },
+  "producer_instance": "0123456789abcdef0123456789abcdef",
+  "producer_epoch": 7,
+  "identity": {
+    "cluster": {
+      "namespace": "database-team",
+      "uid": "2f12b7d1-7e8d-4c37-a68f-233efc5f3191",
+      "name": "orders"
+    },
+    "repository": {
+      "provider": "s3",
+      "format": "pgbackrest",
+      "destination_fingerprint": "sha256:ee5467f0b0aa91f528c8000a1bfdcca26b856809e115c621023ed32b43eb8936",
+      "scope": {
+        "kind": "stanza",
+        "name": "orders"
+      }
+    }
+  },
+  "revision": 42,
+  "evidence_generation": 42,
+  "started_at": "2026-07-28T10:00:00.123Z",
+  "completed_at": "2026-07-28T10:00:03.123Z",
+  "last_attempt_at": "2026-07-28T10:00:00.123Z",
+  "completeness": "complete",
+  "stale": false,
+  "state": "unhealthy",
+  "reason": {
+    "code": "snapshot-unhealthy",
+    "message": "pgBackRest catalog, WAL, timeline or recovery evidence is not healthy"
+  },
+  "capabilities": [
+    {
+      "id": "catalog-listing",
+      "support": "supported",
+      "state": "unhealthy",
+      "reason": {
+        "code": "capability-catalog-listing-unhealthy",
+        "message": "a backup is not usable"
+      }
+    },
+    {
+      "id": "dependency-chain-validation",
+      "support": "supported",
+      "state": "healthy",
+      "reason": {
+        "code": "evidence-evaluated",
+        "message": "structural evidence evaluated"
+      }
+    },
+    {
+      "id": "encrypted-metadata",
+      "support": "supported",
+      "state": "healthy",
+      "reason": {
+        "code": "evidence-evaluated",
+        "message": "structural evidence evaluated"
+      }
+    },
+    {
+      "id": "object-inventory",
+      "support": "supported",
+      "state": "healthy",
+      "reason": {
+        "code": "evidence-evaluated",
+        "message": "structural evidence evaluated"
+      }
+    },
+    {
+      "id": "observed-recovery-coverage",
+      "support": "supported",
+      "state": "warning",
+      "reason": {
+        "code": "capability-observed-recovery-coverage-warning",
+        "message": "a candidate WAL gap follows the archived WAL"
+      }
+    },
+    {
+      "id": "retention-expectation-comparison",
+      "support": "supported",
+      "state": "healthy",
+      "reason": {
+        "code": "capability-retention-expectation-comparison-healthy",
+        "message": "the backups and WAL match the retention of 2 full backups"
+      }
+    },
+    {
+      "id": "structural-artifact-validation",
+      "support": "supported",
+      "state": "unhealthy",
+      "reason": {
+        "code": "capability-structural-artifact-validation-unhealthy",
+        "message": "a backup is not usable"
+      }
+    },
+    {
+      "id": "timeline-history-traversal",
+      "support": "supported",
+      "state": "healthy",
+      "reason": {
+        "code": "evidence-evaluated",
+        "message": "structural evidence evaluated"
+      }
+    },
+    {
+      "id": "wal-continuity",
+      "support": "supported",
+      "state": "warning",
+      "reason": {
+        "code": "capability-wal-continuity-warning",
+        "message": "a candidate WAL gap follows the archived WAL"
+      }
+    }
+  ],
+  "inventory": {
+    "known": true,
+    "object_count": 1,
+    "stored_bytes": 4096,
+    "unscoped_object_count": 0,
+    "pages_examined": 1,
+    "objects_examined": 1,
+    "last_failure_category": null
+  },
+  "details": {
+    "type": "pgbackrest/v1alpha1",
+    "pgbackrest": {
+      "stanza": "orders",
+      "archive_stanza": "orders",
+      "repository": 1,
+      "repository_format": 5,
+      "encrypted": true,
+      "pgbackrest_version": "2.60.0",
+      "database": {
+        "db_id": 1,
+        "system_id": "7570185463461748506",
+        "version": "17",
+        "postgresql_version": 170000
+      },
+      "archive_ids": [
+        "17-1"
+      ],
+      "wal_segment_size_bytes": 16777216,
+      "wal_segment_size_source": "backup-lsn",
+      "backup_items": 2,
+      "wal_range_items": 1,
+      "wal_gap_items": 1,
+      "recovery_path_items": 2,
+      "usable_backups": 1,
+      "backup_states": {
+        "healthy": 1,
+        "warning": 0,
+        "unhealthy": 1,
+        "unknown": 0
+      },
+      "wal_counts": {
+        "segment": 6,
+        "partial": 0,
+        "history": 0,
+        "backup_history": 2,
+        "unknown": 0,
+        "duplicate": 0
+      },
+      "catalog": {
+        "state": "unhealthy",
+        "reason": {
+          "code": "catalog-unhealthy",
+          "message": "a backup is not usable"
+        }
+      },
+      "wal": {
+        "state": "warning",
+        "reason": {
+          "code": "wal-warning",
+          "message": "a candidate WAL gap was observed"
+        }
+      },
+      "timeline": {
+        "state": "healthy",
+        "reason": {
+          "code": "timeline-healthy",
+          "message": "timeline history evaluated"
+        }
+      },
+      "coverage": {
+        "state": "warning",
+        "reason": {
+          "code": "coverage-warning",
+          "message": "a recovery path stops at a candidate WAL gap"
+        }
+      },
+      "recovery_window": {
+        "oldest_backup": "20261107-081054F",
+        "start_at": "2026-07-28T08:00:30.123Z",
+        "newest_backup": "20261107-081054F",
+        "newest_stop_at": "2026-07-28T08:00:30.123Z",
+        "end_timeline": 1,
+        "end_wal": "000000010000000000000008",
+        "end_lsn": "0/9000000",
+        "end_receipt_at": "2026-07-28T09:59:00.123Z",
+        "usable_backups": 1,
+        "assumption_codes": [
+          "window-end-at-segment-upload-time"
+        ]
+      },
+      "latest_archive_receipt_at": "2026-07-28T09:59:00.123Z",
+      "ranges_truncated": false,
+      "diagnostics_truncated": false,
+      "findings": [
+        {
+          "code": "ChecksumMismatch",
+          "severity": "error",
+          "subject": "backup/orders/20261107-081054F_20261107-091108I/backup.manifest",
+          "message": "content does not match its backrest-checksum"
+        },
+        {
+          "code": "WALGap",
+          "severity": "warning",
+          "subject": "archive/orders/17-1/000000010000000000000009",
+          "message": "1 segment(s) missing on timeline 1, 000000010000000000000009 to 000000010000000000000009 (candidate)"
+        }
+      ],
+      "findings_truncated": false,
+      "retention": {
+        "configured": true,
+        "full": 2,
+        "full_type": "count",
+        "diff": null,
+        "archive": null,
+        "archive_type": "full",
+        "effective_archive": 2,
+        "full_backups": 1,
+        "differential_backups": 0,
+        "incremental_backups": 1,
+        "evaluated_at": "2026-07-28T09:00:10.123Z",
+        "window_start_at": null,
+        "state": "healthy",
+        "reason": {
+          "code": "retention-healthy",
+          "message": "the backups and WAL match the retention of 2 full backups"
+        }
+      }
+    }
+  }
+}

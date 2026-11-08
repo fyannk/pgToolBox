@@ -1,0 +1,22 @@
+{
+  "api_version": "evidence.pgtoolbox.fyannk.dev/v1alpha1",
+  "kind": "PGBackRestWALRangePage",
+  "revision": 42,
+  "evidence_generation": 42,
+  "total_items": 1,
+  "next_cursor": null,
+  "items": [
+    {
+      "stanza": "orders",
+      "archive_id": "17-1",
+      "timeline": 1,
+      "start_position": 3,
+      "end_position": 8,
+      "segment_count": 6,
+      "first_wal": "000000010000000000000003",
+      "last_wal": "000000010000000000000008",
+      "latest_receipt_at": "2026-07-28T09:59:00.123Z",
+      "end_receipt_at": "2026-07-28T09:59:00.123Z"
+    }
+  ]
+}

@@ -1,0 +1,2 @@
+# ct lint renders the chart once per ci/*-values.yaml. Defaults only: the
+# console on, the operator off, no NetworkPolicy.

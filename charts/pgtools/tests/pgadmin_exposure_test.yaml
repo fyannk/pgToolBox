@@ -1,0 +1,159 @@
+# pgAdmin's Service, exposure and the optional NetworkPolicy (off by default).
+suite: pgadmin exposure and NetworkPolicy
+templates:
+  - templates/pgadmin/service.yaml
+  - templates/pgadmin/exposure.yaml
+  - templates/pgadmin/networkpolicy.yaml
+  - templates/pgadmin/serviceaccount.yaml
+  - templates/pgadmin/secrets.yaml
+  - templates/pgadmin/pvc.yaml
+release:
+  name: pgc
+  namespace: team-a
+set:
+  pgadmin.enabled: true
+  pgadmin.auth.oidc:
+    issuerURL: https://idp.example.com
+    clientID: pgadmin
+    clientSecret: {existingSecret: pgadmin-oidc}
+  pgadmin.servers:
+    - {cluster: orders, endpoint: rw, credentials: {application: {secret: orders-app}}}
+    - {cluster: orders, endpoint: "pooler:orders-pool", credentials: {application: {secret: orders-app}}, name: pooled}
+tests:
+  - it: renders no NetworkPolicy by default
+    template: templates/pgadmin/networkpolicy.yaml
+    asserts:
+      - hasDocuments: {count: 0}
+
+  - it: refuses an API-server rule it cannot fill in
+    set: {pgadmin.networkPolicy.enabled: true}
+    template: templates/pgadmin/networkpolicy.yaml
+    asserts:
+      - failedTemplate:
+          errorPattern: "pgadmin.networkPolicy.apiServer.mode=addresses has no API server address to allow"
+
+  - it: opens PostgreSQL to the declared Clusters and Poolers only, and no ingress without exposure
+    set:
+      pgadmin.networkPolicy.enabled: true
+      pgadmin.networkPolicy.apiServer.addresses: [10.96.0.1]
+    template: templates/pgadmin/networkpolicy.yaml
+    asserts:
+      - equal: {path: spec.policyTypes, value: [Ingress, Egress]}
+      - notExists: {path: spec.ingress}
+      - contains:
+          path: spec.egress
+          content:
+            to:
+              - podSelector: {matchExpressions: [{key: cnpg.io/cluster, operator: In, values: [orders]}]}
+              - podSelector: {matchExpressions: [{key: cnpg.io/poolerName, operator: In, values: [orders-pool]}]}
+            ports: [{port: 5432, protocol: TCP}]
+      - contains:
+          path: spec.egress
+          content:
+            to: [{ipBlock: {cidr: 10.96.0.1/32}}]
+            ports: [{port: 443, protocol: TCP}, {port: 6443, protocol: TCP}]
+
+  - it: admits the router namespace on the proxy port with OpenShift
+    set:
+      pgadmin.networkPolicy.enabled: true
+      pgadmin.networkPolicy.apiServer.mode: any
+      pgadmin.auth.provider: openshift
+      pgadmin.exposure.type: route
+    template: templates/pgadmin/networkpolicy.yaml
+    asserts:
+      - equal:
+          path: spec.ingress
+          value:
+            - from: [{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: openshift-ingress}}}]
+              ports: [{port: 8443, protocol: TCP}]
+
+  - it: serves plain HTTP on 80 with OIDC
+    template: templates/pgadmin/service.yaml
+    asserts:
+      - equal: {path: spec.ports, value: [{name: http, port: 80, targetPort: http, protocol: TCP}]}
+      - notExists: {path: metadata.annotations}
+
+  - it: serves HTTPS on 443 behind the proxy, with a service-CA certificate, re-encrypted by the Route
+    set:
+      pgadmin.auth.provider: openshift
+      pgadmin.exposure.type: route
+    asserts:
+      - template: templates/pgadmin/service.yaml
+        equal: {path: spec.ports, value: [{name: https, port: 443, targetPort: https, protocol: TCP}]}
+      - template: templates/pgadmin/service.yaml
+        equal:
+          path: metadata.annotations["service.beta.openshift.io/serving-cert-secret-name"]
+          value: pgc-pgadmin-tls
+      - template: templates/pgadmin/exposure.yaml
+        equal: {path: spec.tls.termination, value: reencrypt}
+      - template: templates/pgadmin/serviceaccount.yaml
+        equal:
+          path: metadata.annotations["serviceaccounts.openshift.io/oauth-redirectreference.primary"]
+          value: '{"kind":"OAuthRedirectReference","apiVersion":"v1","reference":{"kind":"Route","name":"pgc-pgadmin"}}'
+      - template: templates/pgadmin/secrets.yaml
+        documentIndex: 1
+        equal: {path: metadata.name, value: pgc-pgadmin-proxy-cookie}
+
+  - it: renders an Ingress to the http port with OIDC
+    set:
+      pgadmin.exposure: {type: ingress, host: pgadmin.example.com}
+    template: templates/pgadmin/exposure.yaml
+    asserts:
+      - isKind: {of: Ingress}
+      - equal: {path: 'spec.rules[0].http.paths[0].backend.service', value: {name: pgc-pgadmin, port: {name: http}}}
+
+  - it: generates the bootstrap Secret only, without the proxy
+    template: templates/pgadmin/secrets.yaml
+    asserts:
+      - hasDocuments: {count: 1}
+      - equal: {path: metadata.name, value: pgc-pgadmin-bootstrap}
+
+  - it: keeps the settings PVC on uninstall by default
+    template: templates/pgadmin/pvc.yaml
+    asserts:
+      - equal: {path: 'metadata.annotations["helm.sh/resource-policy"]', value: keep}
+      - equal: {path: spec.resources.requests.storage, value: 1Gi}
+
+  - it: never mounts the ServiceAccount token by default
+    template: templates/pgadmin/serviceaccount.yaml
+    asserts:
+      - equal: {path: automountServiceAccountToken, value: false}
+
+  - it: refuses a NetworkPolicy that would block the settings database
+    set:
+      pgadmin.networkPolicy.enabled: true
+      pgadmin.networkPolicy.apiServer.mode: any
+      pgadmin.configDatabase.existingSecret: pgadmin-config-db
+    template: templates/pgadmin/networkpolicy.yaml
+    asserts:
+      - failedTemplate:
+          errorPattern: "pgadmin.configDatabase.cluster"
+
+  - it: opens PostgreSQL to the settings database's Cluster and Pooler
+    set:
+      pgadmin.networkPolicy.enabled: true
+      pgadmin.networkPolicy.apiServer.mode: any
+      pgadmin.configDatabase.existingSecret: pgadmin-config-db
+      pgadmin.configDatabase.cluster: settings-pg
+      pgadmin.configDatabase.pooler: settings-pool
+    template: templates/pgadmin/networkpolicy.yaml
+    asserts:
+      - contains:
+          path: spec.egress
+          content:
+            to:
+              - podSelector: {matchExpressions: [{key: cnpg.io/cluster, operator: In, values: [orders, settings-pg]}]}
+              - podSelector: {matchExpressions: [{key: cnpg.io/poolerName, operator: In, values: [orders-pool, settings-pool]}]}
+            ports: [{port: 5432, protocol: TCP}]
+
+  - it: accepts extraEgress as the alternative to naming the settings database's Cluster
+    set:
+      pgadmin.networkPolicy.enabled: true
+      pgadmin.networkPolicy.apiServer.mode: any
+      pgadmin.configDatabase.existingSecret: pgadmin-config-db
+      pgadmin.networkPolicy.extraEgress:
+        - to: [{ipBlock: {cidr: 10.0.0.5/32}}]
+          ports: [{port: 5432, protocol: TCP}]
+    template: templates/pgadmin/networkpolicy.yaml
+    asserts:
+      - isKind: {of: NetworkPolicy}

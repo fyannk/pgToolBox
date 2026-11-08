@@ -1,0 +1,34 @@
+{{- /*
+Codex CLI. Source: https://learn.chatgpt.com/docs/extend/mcp?surface=cli
+(2026-11): "codex mcp add <name> --url <url>", "codex mcp login <name>"
+(OAuth: a client ID metadata document when the server advertises it, else
+dynamic registration; redirect http://127.0.0.1:<port>/callback),
+"codex mcp list"; servers are [mcp_servers.<name>] tables of
+~/.codex/config.toml or a trusted project's .codex/config.toml, with url,
+bearer_token_env_var (the variable holding a bearer token), http_headers,
+env_http_headers and scopes.
+*/ -}}
+{{define "name"}}Codex CLI{{end}}
+{{define "docs"}}https://learn.chatgpt.com/docs/extend/mcp?surface=cli{{end}}
+{{define "add"}}codex mcp add {{.Server}} --url {{.URL}}{{end}}
+{{define "login"}}codex mcp login {{.Server}}{{end}}
+{{define "check"}}codex mcp list{{end}}
+{{define "pack.document"}}agents{{end}}
+{{define "pack.project"}}AGENTS.md{{end}}
+{{define "pack.user"}}~/.codex/AGENTS.md{{end}}
+{{define "user.path"}}~/.codex/config.toml{{end}}
+{{define "user.format"}}toml{{end}}
+{{define "user"}}[mcp_servers.{{q .Server}}]
+url = {{q .URL}}
+{{end}}
+{{define "project.path"}}.codex/config.toml{{end}}
+{{define "project.format"}}toml{{end}}
+{{define "project"}}{{template "user" .}}{{end}}
+{{define "static.path"}}~/.codex/config.toml{{end}}
+{{define "static.format"}}toml{{end}}
+{{define "static"}}[mcp_servers.{{q .Server}}]
+url = {{q .URL}}
+bearer_token_env_var = {{q .TokenEnv}}
+{{end}}
+{{define "static.env"}}export {{.TokenEnv}}="$({{.TokenCommand}})"{{end}}
+{{define "static.note"}}Codex sends the variable's value as the bearer token; set it in the shell that starts Codex. Use it where token sign-in is your break-glass path; the sign-in above is the normal one.{{end}}

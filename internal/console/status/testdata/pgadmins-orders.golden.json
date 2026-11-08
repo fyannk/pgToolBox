@@ -1,0 +1,8 @@
+[
+  {
+    "name": "team-a",
+    "url": "https://pgadmin.example.com",
+    "health": "ok",
+    "serverState": "Registered"
+  }
+]

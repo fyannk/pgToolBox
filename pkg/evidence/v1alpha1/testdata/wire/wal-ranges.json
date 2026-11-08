@@ -1,0 +1,21 @@
+{
+  "api_version": "evidence.pgtoolbox.fyannk.dev/v1alpha1",
+  "kind": "BarmanWALRangePage",
+  "revision": 42,
+  "evidence_generation": 42,
+  "total_items": 1,
+  "next_cursor": null,
+  "items": [
+    {
+      "server": "orders",
+      "timeline": 1,
+      "start_position": 1,
+      "end_position": 2,
+      "segment_count": 2,
+      "first_wal": "000000010000000000000001",
+      "last_wal": "000000010000000000000002",
+      "latest_receipt_at": "2026-07-28T10:02:03.123Z",
+      "end_receipt_at": "2026-07-28T10:02:03.123Z"
+    }
+  ]
+}

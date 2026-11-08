@@ -1,0 +1,132 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.23.0
+  name: pgadminaccesses.pgtoolbox.fyannk.dev
+spec:
+  group: pgtoolbox.fyannk.dev
+  names:
+    categories:
+    - pgtoolbox
+    kind: PgAdminAccess
+    listKind: PgAdminAccessList
+    plural: pgadminaccesses
+    shortNames:
+    - pgaa
+    singular: pgadminaccess
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.pgAdmin.namespace
+      name: PgAdmin Namespace
+      type: string
+    - jsonPath: .spec.pgAdmin.name
+      name: PgAdmin
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          PgAdminAccess is a grant, in the namespace of the Clusters it names: the
+          PgAdmin it names, in another namespace, may register those Clusters and
+          read their offered credentials. Creating one is the decision of whoever
+          may read this namespace's Secrets; who may create PgAdminAccess objects
+          here is therefore an RBAC decision of the namespace owner. Like the
+          Gateway API's ReferenceGrant it has no status: the PgAdmin reports
+          whether it is granted (ConfigurationValid, GrantMissing). Deleting it
+          revokes the access (the Role and RoleBinding it owns are garbage
+          collected).
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              PgAdminAccessSpec grants one PgAdmin of another namespace the
+              registration of named Clusters of this namespace.
+            properties:
+              allowPrivileged:
+                default: false
+                description: |-
+                  Whether the privileged credentials of these Clusters (the superuser,
+                  and DatabaseRoles that are superuser, createrole, bypassrls or
+                  replication or members of a privileged role) may be offered, when the
+                  PgAdmin asks for them (spec.credentials.superuser). Off by default:
+                  the PgAdmin's own spec cannot widen what this grant allows.
+                type: boolean
+              clusters:
+                description: |-
+                  The Clusters of this namespace it may register. Their credentials
+                  (the Secrets its spec.credentials offers and each Cluster's CA) become
+                  readable by that PgAdmin's ServiceAccount through a name-scoped Role
+                  the operator maintains here while this grant exists.
+                items:
+                  description: |-
+                    LocalObjectReference names an object in the referencing object's own
+                    namespace. Cross-namespace references do not exist in v1alpha1; a future
+                    one goes through an explicit grant object in the target
+                    namespace, never through a selector.
+                  properties:
+                    name:
+                      description: The name of the referenced object.
+                      maxLength: 253
+                      minLength: 1
+                      pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                      type: string
+                  required:
+                  - name
+                  type: object
+                maxItems: 32
+                minItems: 1
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
+              pgAdmin:
+                description: The PgAdmin granted access.
+                properties:
+                  name:
+                    description: The name of the PgAdmin.
+                    maxLength: 40
+                    minLength: 1
+                    pattern: ^[a-z]([-a-z0-9]*[a-z0-9])?$
+                    type: string
+                  namespace:
+                    description: The namespace of the PgAdmin.
+                    maxLength: 63
+                    minLength: 1
+                    pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                    type: string
+                required:
+                - name
+                - namespace
+                type: object
+            required:
+            - clusters
+            - pgAdmin
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources: {}

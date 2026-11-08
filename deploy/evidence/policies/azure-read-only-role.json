@@ -1,0 +1,14 @@
+{
+  "Name": "pgToolBox evidence agent Blob Reader",
+  "IsCustom": true,
+  "Description": "Read-only blob data operations; assign at the narrowest storage container scope.",
+  "Actions": [],
+  "NotActions": [],
+  "DataActions": [
+    "Microsoft.Storage/storageAccounts/blobServices/containers/blobs/read"
+  ],
+  "NotDataActions": [],
+  "AssignableScopes": [
+    "/subscriptions/00000000-0000-0000-0000-000000000000"
+  ]
+}

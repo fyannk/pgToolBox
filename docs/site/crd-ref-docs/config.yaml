@@ -1,0 +1,11 @@
+# crd-ref-docs configuration (make crd-ref-docs). The reference page is
+# generated from api/v1alpha1, committed, and kept equal to it by `make docs`:
+# never edit docs/site/docs/reference/api.md by hand.
+processor:
+  # Types that are plumbing, not API.
+  ignoreTypes: []
+  ignoreFields:
+    - "TypeMeta$"
+render:
+  # Links to the Kubernetes API reference (ObjectMeta, ResourceRequirements...).
+  kubernetesVersion: 1.34

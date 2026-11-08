@@ -1,0 +1,67 @@
+# NOTES.txt says what pgAdmin without the operator gives up.
+suite: pgadmin notes
+templates:
+  - templates/NOTES.txt
+release:
+  name: pgc
+  namespace: team-a
+tests:
+  - it: says nothing about pgAdmin by default
+    asserts:
+      - notMatchRegexRaw: {pattern: pgAdmin}
+
+  - it: names what the team chart gives up and where a refused server is explained
+    set:
+      pgadmin.enabled: true
+      pgadmin.auth.oidc:
+        issuerURL: https://idp.example.com
+        clientID: pgadmin
+        clientSecret: {existingSecret: pgadmin-oidc}
+    asserts:
+      - matchRegexRaw: {pattern: "is not registered until you add it to\\s+pgadmin.servers"}
+      - matchRegexRaw: {pattern: "logs deploy/pgc-pgadmin -c passfile-sync"}
+      - matchRegexRaw: {pattern: "reads only the Secrets named in pgadmin.servers"}
+      - matchRegexRaw: {pattern: "console does not link this pgAdmin until console.pgadmin.url is set"}
+      # No server, so no derived CA Secret.
+      - notMatchRegexRaw: {pattern: DEPRECATED}
+
+  - it: warns about each derived CA Secret, by name, and what replaces it
+    set:
+      pgadmin.enabled: true
+      pgadmin.auth.oidc:
+        issuerURL: https://idp.example.com
+        clientID: pgadmin
+        clientSecret: {existingSecret: pgadmin-oidc}
+      pgadmin.servers:
+        - {cluster: orders, endpoint: rw, credentials: {application: {secret: orders-app}}}
+        - {cluster: orders, endpoint: ro, credentials: {application: {secret: orders-app}}}
+        - {cluster: billing, endpoint: rw, credentials: {application: {secret: billing-app}}}
+        - {cluster: legacy, endpoint: rw, database: app, user: alice, caSecret: legacy-server-ca, credentials: none}
+        - {cluster: shop, endpoint: rw, caConfigMap: shop-ca-crt, credentials: {application: {secret: shop-app}}}
+    asserts:
+      - matchRegexRaw: {pattern: "reads only the Secrets named in pgadmin.servers, and the derived CA Secrets\\s+below"}
+      - matchRegexRaw: {pattern: "DEPRECATED: a server without caSecret or caConfigMap gets its CA from <cluster>-ca"}
+      - matchRegexRaw: {pattern: "The Role grants get and watch on:\\n  - billing-ca\\n  - orders-ca\\n"}
+      - matchRegexRaw: {pattern: "also holds ca.key, the CA's signing key"}
+      - matchRegexRaw: {pattern: "The next minor release requires\\s+caSecret or caConfigMap on every server"}
+      - matchRegexRaw: {pattern: "kubectl -n team-a get secret billing-ca -o jsonpath='\\{.data.ca\\\\.crt\\}' \\| base64 -d > ca.crt"}
+      - matchRegexRaw: {pattern: "kubectl -n team-a create configmap billing-ca-crt --from-file=ca.crt=ca.crt"}
+      - matchRegexRaw: {pattern: "set caConfigMap: billing-ca-crt on every server of Cluster billing"}
+      # Only the derived ones: a named caSecret or a caConfigMap is not listed.
+      - notMatchRegexRaw: {pattern: "  - legacy-server-ca"}
+      - notMatchRegexRaw: {pattern: "  - shop-ca"}
+
+  - it: says nothing about a derived CA when every server names its CA source
+    set:
+      pgadmin.enabled: true
+      pgadmin.auth.oidc:
+        issuerURL: https://idp.example.com
+        clientID: pgadmin
+        clientSecret: {existingSecret: pgadmin-oidc}
+      pgadmin.servers:
+        - {cluster: orders, endpoint: rw, caSecret: orders-ca, credentials: {application: {secret: orders-app}}}
+        - {cluster: shop, endpoint: rw, caConfigMap: shop-ca-crt, credentials: {application: {secret: shop-app}}}
+    asserts:
+      - matchRegexRaw: {pattern: "reads only the Secrets named in pgadmin.servers \\(Role pgc-pgadmin-credentials"}
+      - notMatchRegexRaw: {pattern: DEPRECATED}
+      - notMatchRegexRaw: {pattern: derived}

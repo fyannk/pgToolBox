@@ -1,0 +1,192 @@
+{
+  "api_version": "evidence.pgtoolbox.fyannk.dev/v1alpha1",
+  "kind": "RepositoryEvidenceSnapshot",
+  "producer": {
+    "name": "evidence-agent",
+    "version": "1.0.0"
+  },
+  "producer_instance": "0123456789abcdef0123456789abcdef",
+  "producer_epoch": 7,
+  "identity": {
+    "cluster": {
+      "namespace": "database-team",
+      "uid": "2f12b7d1-7e8d-4c37-a68f-233efc5f3191",
+      "name": "orders"
+    },
+    "repository": {
+      "provider": "s3",
+      "format": "barman-cloud",
+      "destination_fingerprint": "sha256:2ed6b238abc9fe4737e941557cc47fa91a42a3864adfc13820c248b4e47e25d3",
+      "scope": {
+        "kind": "barman-server",
+        "name": "orders"
+      }
+    }
+  },
+  "revision": 42,
+  "evidence_generation": 42,
+  "started_at": "2026-07-28T10:00:00.123Z",
+  "completed_at": "2026-07-28T10:00:03.123Z",
+  "last_attempt_at": "2026-07-28T10:00:00.123Z",
+  "completeness": "complete",
+  "stale": false,
+  "state": "healthy",
+  "reason": {
+    "code": "evidence-evaluated",
+    "message": "structural evidence evaluated"
+  },
+  "capabilities": [
+    {
+      "id": "catalog-listing",
+      "support": "supported",
+      "state": "healthy",
+      "reason": {
+        "code": "evidence-evaluated",
+        "message": "structural evidence evaluated"
+      }
+    },
+    {
+      "id": "dependency-chain-validation",
+      "support": "supported",
+      "state": "healthy",
+      "reason": {
+        "code": "evidence-evaluated",
+        "message": "structural evidence evaluated"
+      }
+    },
+    {
+      "id": "encrypted-metadata",
+      "support": "supported",
+      "state": "healthy",
+      "reason": {
+        "code": "evidence-evaluated",
+        "message": "structural evidence evaluated"
+      }
+    },
+    {
+      "id": "object-inventory",
+      "support": "supported",
+      "state": "healthy",
+      "reason": {
+        "code": "evidence-evaluated",
+        "message": "structural evidence evaluated"
+      }
+    },
+    {
+      "id": "observed-recovery-coverage",
+      "support": "supported",
+      "state": "healthy",
+      "reason": {
+        "code": "evidence-evaluated",
+        "message": "structural evidence evaluated"
+      }
+    },
+    {
+      "id": "retention-expectation-comparison",
+      "support": "supported",
+      "state": "healthy",
+      "reason": {
+        "code": "evidence-evaluated",
+        "message": "structural evidence evaluated"
+      }
+    },
+    {
+      "id": "structural-artifact-validation",
+      "support": "supported",
+      "state": "healthy",
+      "reason": {
+        "code": "evidence-evaluated",
+        "message": "structural evidence evaluated"
+      }
+    },
+    {
+      "id": "timeline-history-traversal",
+      "support": "supported",
+      "state": "healthy",
+      "reason": {
+        "code": "evidence-evaluated",
+        "message": "structural evidence evaluated"
+      }
+    },
+    {
+      "id": "wal-continuity",
+      "support": "supported",
+      "state": "healthy",
+      "reason": {
+        "code": "evidence-evaluated",
+        "message": "structural evidence evaluated"
+      }
+    }
+  ],
+  "inventory": {
+    "known": true,
+    "object_count": 1,
+    "stored_bytes": 4096,
+    "unscoped_object_count": 0,
+    "pages_examined": 1,
+    "objects_examined": 1,
+    "last_failure_category": null
+  },
+  "details": {
+    "type": "barman-cloud/v1alpha1",
+    "barman_cloud": {
+      "backup_items": 1,
+      "wal_range_items": 1,
+      "wal_gap_items": 1,
+      "recovery_path_items": 1,
+      "structurally_usable_backups": 1,
+      "backup_states": {
+        "healthy": 1,
+        "warning": 0,
+        "unhealthy": 0,
+        "unknown": 0
+      },
+      "wal_counts": {
+        "segment": 2,
+        "partial": 0,
+        "history": 0,
+        "backup_history": 0,
+        "unknown": 0,
+        "duplicate": 0
+      },
+      "wal": {
+        "state": "healthy",
+        "reason": {
+          "code": "evidence-evaluated",
+          "message": "structural evidence evaluated"
+        }
+      },
+      "timeline": {
+        "state": "healthy",
+        "reason": {
+          "code": "evidence-evaluated",
+          "message": "structural evidence evaluated"
+        }
+      },
+      "coverage": {
+        "state": "healthy",
+        "reason": {
+          "code": "evidence-evaluated",
+          "message": "structural evidence evaluated"
+        }
+      },
+      "retention": {
+        "visible_backups": 1,
+        "structurally_usable_backups": 1,
+        "oldest_completion_at": "2026-07-28T10:00:03.123Z",
+        "newest_completion_at": "2026-07-28T10:00:03.123Z",
+        "minimum_configured": false,
+        "minimum_redundancy": null,
+        "policy_configured": false,
+        "state": "healthy",
+        "reason": {
+          "code": "evidence-evaluated",
+          "message": "structural evidence evaluated"
+        }
+      },
+      "latest_archive_receipt_at": "2026-07-28T10:02:03.123Z",
+      "ranges_truncated": false,
+      "diagnostics_truncated": false
+    }
+  }
+}

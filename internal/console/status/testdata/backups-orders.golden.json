@@ -1,0 +1,251 @@
+{
+  "ref": {
+    "namespace": "team-a",
+    "name": "orders",
+    "uid": "0b6a2c1e-8f0d-4a55-9a3e-7c1f2b3d4e5f"
+  },
+  "generatedAt": "2026-10-29T12:00:00Z",
+  "summary": {
+    "health": "ok",
+    "lastCompletedAt": "2026-10-29T07:00:00Z",
+    "configured": true,
+    "pluginBased": true,
+    "provenance": {
+      "origin": "operator",
+      "source": "Backup.status",
+      "observedAt": "2026-10-29T12:00:00Z"
+    },
+    "archiving": {
+      "health": "ok",
+      "conditionStatus": "True",
+      "reason": "ContinuousArchivingSuccess",
+      "liveArchiving": true,
+      "readyWalFiles": 0,
+      "provenance": {
+        "origin": "instance",
+        "source": "/pg/status",
+        "observedAt": "2026-10-29T11:59:52Z"
+      }
+    },
+    "recoveryWindow": {
+      "first": "2026-10-22T12:00:00Z",
+      "last": "2026-10-29T07:00:00Z",
+      "provenance": {
+        "origin": "operator",
+        "source": "ObjectStore.status.serverRecoveryWindow[orders]",
+        "observedAt": "2026-10-29T12:00:00Z"
+      }
+    },
+    "nextScheduledAt": "2026-10-30T00:00:00Z",
+    "notReported": [
+      "status.firstRecoverabilityPoint",
+      "status.firstRecoverabilityPointByMethod",
+      "status.lastSuccessfulBackup",
+      "status.lastSuccessfulBackupByMethod",
+      "status.lastFailedBackup",
+      "metric:cnpg_collector_first_recoverability_point",
+      "metric:cnpg_collector_last_available_backup_timestamp",
+      "metric:cnpg_collector_last_failed_backup_timestamp"
+    ]
+  },
+  "method": {
+    "configured": true,
+    "pluginBased": true,
+    "pluginName": "barman-cloud.cloudnative-pg.io",
+    "objectStore": "store",
+    "provenance": {
+      "origin": "operator",
+      "source": "Cluster.spec.backup / Cluster.spec.plugins",
+      "observedAt": "2026-10-29T12:00:00Z"
+    }
+  },
+  "items": [
+    {
+      "name": "orders-nightly-1",
+      "phase": "completed",
+      "health": "ok",
+      "known": true,
+      "terminal": true,
+      "method": "plugin",
+      "createdAt": "2026-10-29T06:00:00Z",
+      "stoppedAt": "2026-10-29T07:00:00Z",
+      "repository": "notChecked",
+      "provenance": {
+        "origin": "operator",
+        "source": "Backup.status",
+        "observedAt": "2026-10-29T12:00:00Z"
+      }
+    }
+  ],
+  "schedules": [
+    {
+      "name": "orders-nightly",
+      "schedule": "0 0 0 * * *",
+      "state": "awaitingFirstCheck",
+      "health": "progressing",
+      "text": "not checked by the operator yet",
+      "method": "barmanObjectStore",
+      "nextScheduledAt": "2026-10-30T00:00:00Z",
+      "provenance": {
+        "origin": "operator",
+        "source": "ScheduledBackup.status",
+        "observedAt": "2026-10-29T12:00:00Z"
+      }
+    }
+  ],
+  "evidence": {
+    "state": "live",
+    "health": "ok",
+    "agent": "orders-evidence",
+    "repository": {
+      "completeness": "complete",
+      "overall": {
+        "state": "healthy",
+        "health": "ok"
+      },
+      "wal": {
+        "state": "healthy",
+        "health": "ok"
+      },
+      "timeline": {
+        "state": "healthy",
+        "health": "ok"
+      },
+      "coverage": {
+        "state": "warning",
+        "health": "warning",
+        "code": "gap",
+        "message": "one WAL gap"
+      },
+      "retention": {
+        "state": "unknown",
+        "health": "unknown"
+      },
+      "backups": 3,
+      "structurallyUsable": 2,
+      "repositoryOnly": 2
+    },
+    "provenance": {
+      "origin": "evidence",
+      "source": "EvidenceAgent orders-evidence /api/v1alpha1/snapshot",
+      "observedAt": "2026-10-29T11:59:20Z"
+    }
+  },
+  "recoveryTimeline": {
+    "basis": "evidence",
+    "state": "warning",
+    "reason": "the window has holes where WAL is missing",
+    "earliest": "2026-10-28T06:00:00Z",
+    "latest": "2026-10-29T11:58:00Z",
+    "targetTimeline": 1,
+    "segments": [
+      {
+        "from": "2026-10-28T06:00:00Z",
+        "to": "2026-10-28T06:05:40Z",
+        "kind": "unknown",
+        "text": "Within 6 min of the oldest restore point: a retention purge since the repository was last read may have removed this base backup."
+      },
+      {
+        "from": "2026-10-28T06:05:40Z",
+        "to": "2026-10-28T15:45:00Z",
+        "kind": "covered",
+        "backupId": "20261028T060000",
+        "text": "Structurally covered: base backup 20261028T060000 and contiguous archived WAL."
+      },
+      {
+        "from": "2026-10-28T15:45:00Z",
+        "to": "2026-10-28T16:00:00Z",
+        "kind": "unknown",
+        "text": "Within 15 min of a hole in the archived WAL: segment names cannot place this target on either side."
+      },
+      {
+        "from": "2026-10-28T16:00:00Z",
+        "to": "2026-10-29T06:00:00Z",
+        "kind": "missingWAL",
+        "text": "WAL is missing from the repository: no restore target in this span."
+      },
+      {
+        "from": "2026-10-29T06:00:00Z",
+        "to": "2026-10-29T11:43:00Z",
+        "kind": "covered",
+        "backupId": "20261029T060000",
+        "text": "Structurally covered: base backup 20261029T060000 and contiguous archived WAL."
+      },
+      {
+        "from": "2026-10-29T11:43:00Z",
+        "to": "2026-10-29T11:58:00Z",
+        "kind": "unknown",
+        "text": "Within 15 min of the end of the archived WAL: segment names cannot tell whether this target's WAL is archived yet."
+      }
+    ],
+    "markers": [
+      {
+        "at": "2026-10-27T06:00:00Z",
+        "backupId": "20261027T060000",
+        "kind": "failed",
+        "text": "barman reports FAILED",
+        "source": "repository"
+      },
+      {
+        "at": "2026-10-28T06:00:00Z",
+        "backupId": "20261028T060000",
+        "kind": "completed",
+        "source": "repository"
+      },
+      {
+        "at": "2026-10-29T06:00:00Z",
+        "backupId": "20261029T060000",
+        "kind": "completed",
+        "source": "repository"
+      }
+    ],
+    "assumptions": [
+      "segment-name-presence-only",
+      "wal-bytes-and-restore-not-verified"
+    ],
+    "complete": true,
+    "provenance": {
+      "origin": "evidence",
+      "source": "EvidenceAgent orders-evidence /api/v1alpha1/recovery-paths",
+      "observedAt": "2026-10-29T11:59:20Z"
+    }
+  },
+  "drills": {
+    "enabled": false,
+    "items": [],
+    "scope": "restore drills are not enabled on this console (RESTORE_DRILL_ENABLED)",
+    "notChecked": []
+  },
+  "sources": [
+    {
+      "source": "backups",
+      "state": "live",
+      "since": "2026-10-29T09:00:00Z",
+      "health": "ok"
+    },
+    {
+      "source": "scheduledBackups",
+      "state": "live",
+      "since": "2026-10-29T09:00:00Z",
+      "health": "ok"
+    },
+    {
+      "source": "objectStores",
+      "state": "live",
+      "since": "2026-10-29T09:00:00Z",
+      "health": "ok"
+    },
+    {
+      "source": "evidence",
+      "state": "live",
+      "health": "ok"
+    }
+  ],
+  "blindSpots": [
+    {
+      "id": "backups.pluginNotReported",
+      "panel": "backups",
+      "text": "Backups go through barman-cloud.cloudnative-pg.io: the Cluster's first recoverability point and last backup fields (and their cnpg_collector metrics) are not reported by plugin-based backups. Recoverability comes from the ObjectStore's serverRecoveryWindow, the Backup objects and repository evidence."
+    }
+  ]
+}

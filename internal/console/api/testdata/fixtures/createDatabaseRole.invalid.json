@@ -1,0 +1,6 @@
+{
+  "title": "Unprocessable Entity",
+  "status": 422,
+  "detail": "role is not a valid personal role name (a lower-case identifier, not pg_-prefixed, not postgres)"
+}
+

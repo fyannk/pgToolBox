@@ -1,0 +1,3385 @@
+{
+  "$comment": "Generated from github.com/fyannk/pgToolBox/pkg/evidence/v1alpha1. Go Validate methods enforce cross-field, ordering, UTC, and UTF-8 byte-length invariants that JSON Schema cannot express portably.",
+  "$defs": {
+    "BarmanBackup": {
+      "additionalProperties": true,
+      "properties": {
+        "artifact_count": {
+          "anyOf": [
+            {
+              "maximum": 18446744073709551615,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "backup_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "type": "string",
+          "x-max-utf8-bytes": 256
+        },
+        "backup_type": {
+          "anyOf": [
+            {
+              "maxLength": 64,
+              "minLength": 1,
+              "type": "string",
+              "x-max-utf8-bytes": 64
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "begin_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "begin_lsn": {
+          "anyOf": [
+            {
+              "maxLength": 17,
+              "minLength": 1,
+              "pattern": "^[0-9A-F]{1,8}/[0-9A-F]{1,8}$",
+              "type": "string",
+              "x-max-utf8-bytes": 17
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "begin_wal": {
+          "anyOf": [
+            {
+              "maxLength": 24,
+              "minLength": 1,
+              "pattern": "^[0-9A-F]{24}$",
+              "type": "string",
+              "x-max-utf8-bytes": 24
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "compression": {
+          "anyOf": [
+            {
+              "maxLength": 64,
+              "minLength": 1,
+              "type": "string",
+              "x-max-utf8-bytes": 64
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "deduplicated_bytes": {
+          "anyOf": [
+            {
+              "maximum": 18446744073709551615,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "encryption": {
+          "anyOf": [
+            {
+              "maxLength": 64,
+              "minLength": 1,
+              "type": "string",
+              "x-max-utf8-bytes": 64
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "end_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "end_lsn": {
+          "anyOf": [
+            {
+              "maxLength": 17,
+              "minLength": 1,
+              "pattern": "^[0-9A-F]{1,8}/[0-9A-F]{1,8}$",
+              "type": "string",
+              "x-max-utf8-bytes": 17
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "end_wal": {
+          "anyOf": [
+            {
+              "maxLength": 24,
+              "minLength": 1,
+              "pattern": "^[0-9A-F]{24}$",
+              "type": "string",
+              "x-max-utf8-bytes": 24
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "logical_bytes": {
+          "anyOf": [
+            {
+              "maximum": 18446744073709551615,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "postgresql_version": {
+          "anyOf": [
+            {
+              "maximum": 18446744073709551615,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reason": {
+          "$ref": "#/$defs/Reason"
+        },
+        "server": {
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "^[^/\\\\]+$",
+          "type": "string",
+          "x-max-utf8-bytes": 256
+        },
+        "state": {
+          "$ref": "#/$defs/State"
+        },
+        "status": {
+          "anyOf": [
+            {
+              "maxLength": 64,
+              "minLength": 1,
+              "type": "string",
+              "x-max-utf8-bytes": 64
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "stored_artifact_bytes": {
+          "anyOf": [
+            {
+              "maximum": 18446744073709551615,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "system_id": {
+          "anyOf": [
+            {
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[0-9]+$",
+              "type": "string",
+              "x-max-utf8-bytes": 64
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tablespace_count": {
+          "anyOf": [
+            {
+              "maximum": 18446744073709551615,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "timeline": {
+          "anyOf": [
+            {
+              "maximum": 18446744073709551615,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "wal_segment_size_bytes": {
+          "anyOf": [
+            {
+              "enum": [
+                1048576,
+                2097152,
+                4194304,
+                8388608,
+                16777216,
+                33554432,
+                67108864,
+                134217728,
+                268435456,
+                536870912,
+                1073741824
+              ],
+              "maximum": 18446744073709551615,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "server",
+        "backup_id",
+        "status",
+        "backup_type",
+        "state",
+        "reason",
+        "system_id",
+        "postgresql_version",
+        "timeline",
+        "wal_segment_size_bytes",
+        "begin_wal",
+        "end_wal",
+        "begin_lsn",
+        "end_lsn",
+        "begin_at",
+        "end_at",
+        "logical_bytes",
+        "deduplicated_bytes",
+        "stored_artifact_bytes",
+        "compression",
+        "encryption",
+        "artifact_count",
+        "tablespace_count"
+      ],
+      "type": "object"
+    },
+    "BarmanBackupPage": {
+      "additionalProperties": true,
+      "properties": {
+        "api_version": {
+          "const": "evidence.pgtoolbox.fyannk.dev/v1alpha1"
+        },
+        "evidence_generation": {
+          "maximum": 18446744073709551615,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/BarmanBackup"
+          },
+          "maxItems": 200,
+          "type": "array"
+        },
+        "kind": {
+          "const": "BarmanBackupPage"
+        },
+        "next_cursor": {
+          "anyOf": [
+            {
+              "maxLength": 4096,
+              "minLength": 1,
+              "type": "string",
+              "x-max-utf8-bytes": 4096
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "revision": {
+          "maximum": 18446744073709551615,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "total_items": {
+          "anyOf": [
+            {
+              "maximum": 18446744073709551615,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "api_version",
+        "kind",
+        "revision",
+        "evidence_generation",
+        "total_items",
+        "next_cursor",
+        "items"
+      ],
+      "type": "object"
+    },
+    "BarmanCloudSummary": {
+      "additionalProperties": true,
+      "properties": {
+        "backup_items": {
+          "anyOf": [
+            {
+              "maximum": 18446744073709551615,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "backup_states": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StateCounts"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "coverage": {
+          "$ref": "#/$defs/StateReason"
+        },
+        "diagnostics_truncated": {
+          "type": "boolean"
+        },
+        "latest_archive_receipt_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ranges_truncated": {
+          "type": "boolean"
+        },
+        "recovery_path_items": {
+          "anyOf": [
+            {
+              "maximum": 18446744073709551615,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "retention": {
+          "$ref": "#/$defs/BarmanRetentionSummary"
+        },
+        "structurally_usable_backups": {
+          "anyOf": [
+            {
+              "maximum": 18446744073709551615,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "timeline": {
+          "$ref": "#/$defs/StateReason"
+        },
+        "wal": {
+          "$ref": "#/$defs/StateReason"
+        },
+        "wal_counts": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BarmanWALCounts"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "wal_gap_items": {
+          "anyOf": [
+            {
+              "maximum": 18446744073709551615,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "wal_range_items": {
+          "anyOf": [
+            {
+              "maximum": 18446744073709551615,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "backup_items",
+        "wal_range_items",
+        "wal_gap_items",
+        "recovery_path_items",
+        "structurally_usable_backups",
+        "backup_states",
+        "wal_counts",
+        "wal",
+        "timeline",
+        "coverage",
+        "retention",
+        "latest_archive_receipt_at",
+        "ranges_truncated",
+        "diagnostics_truncated"
+      ],
+      "type": "object"
+    },
+    "BarmanRecoveryPath": {
+      "additionalProperties": true,
+      "properties": {
+        "assumption_codes": {
+          "items": {
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+            "type": "string",
+            "x-max-utf8-bytes": 64
+          },
+          "maxItems": 32,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "backup_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "type": "string",
+          "x-max-utf8-bytes": 256
+        },
+        "frontier_position": {
+          "anyOf": [
+            {
+              "maximum": 18446744073709551615,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "frontier_receipt_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "frontier_timeline": {
+          "anyOf": [
+            {
+              "maximum": 18446744073709551615,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "frontier_wal": {
+          "anyOf": [
+            {
+              "maxLength": 24,
+              "minLength": 1,
+              "pattern": "^[0-9A-F]{24}$",
+              "type": "string",
+              "x-max-utf8-bytes": 24
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "lower_bound_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reason": {
+          "$ref": "#/$defs/Reason"
+        },
+        "server": {
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "^[^/\\\\]+$",
+          "type": "string",
+          "x-max-utf8-bytes": 256
+        },
+        "start_position": {
+          "anyOf": [
+            {
+              "maximum": 18446744073709551615,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "start_timeline": {
+          "anyOf": [
+            {
+              "maximum": 18446744073709551615,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "start_wal": {
+          "anyOf": [
+            {
+              "maxLength": 24,
+              "minLength": 1,
+              "pattern": "^[0-9A-F]{24}$",
+              "type": "string",
+              "x-max-utf8-bytes": 24
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "state": {
+          "$ref": "#/$defs/State"
+        },
+        "stop": {
+          "$ref": "#/$defs/CoverageStop"
+        },
+        "target_timeline": {
+          "maximum": 18446744073709551615,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "server",
+        "backup_id",
+        "target_timeline",
+        "state",
+        "reason",
+        "stop",
+        "lower_bound_at",
+        "start_timeline",
+        "start_position",
+        "start_wal",
+        "frontier_timeline",
+        "frontier_position",
+        "frontier_wal",
+        "frontier_receipt_at",
+        "assumption_codes"
+      ],
+      "type": "object"
+    },
+    "BarmanRecoveryPathPage": {
+      "additionalProperties": true,
+      "properties": {
+        "api_version": {
+          "const": "evidence.pgtoolbox.fyannk.dev/v1alpha1"
+        },
+        "evidence_generation": {
+          "maximum": 18446744073709551615,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/BarmanRecoveryPath"
+          },
+          "maxItems": 200,
+          "type": "array"
+        },
+        "kind": {
+          "const": "BarmanRecoveryPathPage"
+        },
+        "next_cursor": {
+          "anyOf": [
+            {
+              "maxLength": 4096,
+              "minLength": 1,
+              "type": "string",
+              "x-max-utf8-bytes": 4096
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "revision": {
+          "maximum": 18446744073709551615,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "total_items": {
+          "anyOf": [
+            {
+              "maximum": 18446744073709551615,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "api_version",
+        "kind",
+        "revision",
+        "evidence_generation",
+        "total_items",
+        "next_cursor",
+        "items"
+      ],
+      "type": "object"
+    },
+    "BarmanRetentionSummary": {
+      "additionalProperties": true,
+      "properties": {
+        "minimum_configured": {
+          "type": "boolean"
+        },
+        "minimum_redundancy": {
+          "anyOf": [
+            {
+              "maximum": 18446744073709551615,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "newest_completion_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "oldest_completion_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "policy_configured": {
+          "type": "boolean"
+        },
+        "reason": {
+          "$ref": "#/$defs/Reason"
+        },
+        "state": {
+          "$ref": "#/$defs/State"
+        },
+        "structurally_usable_backups": {
+          "anyOf": [
+            {
+              "maximum": 18446744073709551615,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "visible_backups": {
+          "anyOf": [
+            {
+              "maximum": 18446744073709551615,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "visible_backups",
+        "structurally_usable_backups",
+        "oldest_completion_at",
+        "newest_completion_at",
+        "minimum_configured",
+        "minimum_redundancy",
+        "policy_configured",
+        "state",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "BarmanWALCounts": {
+      "additionalProperties": true,
+      "properties": {
+        "backup_history": {
+          "maximum": 18446744073709551615,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "duplicate": {
+          "maximum": 18446744073709551615,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "history": {
+          "maximum": 18446744073709551615,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "partial": {
+          "maximum": 18446744073709551615,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "segment": {
+          "maximum": 18446744073709551615,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "unknown": {
+          "maximum": 18446744073709551615,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "segment",
+        "partial",
+        "history",
+        "backup_history",
+        "unknown",
+        "duplicate"
+      ],
+      "type": "object"
+    },
+    "BarmanWALGap": {
+      "additionalProperties": true,
+      "properties": {
+        "end_position": {
+          "maximum": 18446744073709551615,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "first_observed_generation": {
+          "maximum": 18446744073709551615,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "first_wal": {
+          "maxLength": 24,
+          "minLength": 1,
+          "pattern": "^[0-9A-F]{24}$",
+          "type": "string",
+          "x-max-utf8-bytes": 24
+        },
+        "last_observed_generation": {
+          "maximum": 18446744073709551615,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "last_wal": {
+          "maxLength": 24,
+          "minLength": 1,
+          "pattern": "^[0-9A-F]{24}$",
+          "type": "string",
+          "x-max-utf8-bytes": 24
+        },
+        "segment_count": {
+          "maximum": 18446744073709551615,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "server": {
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "^[^/\\\\]+$",
+          "type": "string",
+          "x-max-utf8-bytes": 256
+        },
+        "start_position": {
+          "maximum": 18446744073709551615,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "status": {
+          "$ref": "#/$defs/GapStatus"
+        },
+        "timeline": {
+          "maximum": 18446744073709551615,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "server",
+        "timeline",
+        "start_position",
+        "end_position",
+        "segment_count",
+        "first_wal",
+        "last_wal",
+        "status",
+        "first_observed_generation",
+        "last_observed_generation"
+      ],
+      "type": "object"
+    },
+    "BarmanWALGapPage": {
+      "additionalProperties": true,
+      "properties": {
+        "api_version": {
+          "const": "evidence.pgtoolbox.fyannk.dev/v1alpha1"
+        },
+        "evidence_generation": {
+          "maximum": 18446744073709551615,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/BarmanWALGap"
+          },
+          "maxItems": 200,
+          "type": "array"
+        },
+        "kind": {
+          "const": "BarmanWALGapPage"
+        },
+        "next_cursor": {
+          "anyOf": [
+            {
+              "maxLength": 4096,
+              "minLength": 1,
+              "type": "string",
+              "x-max-utf8-bytes": 4096
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "revision": {
+          "maximum": 18446744073709551615,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "total_items": {
+          "anyOf": [
+            {
+              "maximum": 18446744073709551615,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "api_version",
+        "kind",
+        "revision",
+        "evidence_generation",
+        "total_items",
+        "next_cursor",
+        "items"
+      ],
+      "type": "object"
+    },
+    "BarmanWALRange": {
+      "additionalProperties": true,
+      "properties": {
+        "end_position": {
+          "maximum": 18446744073709551615,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "end_receipt_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "first_wal": {
+          "maxLength": 24,
+          "minLength": 1,
+          "pattern": "^[0-9A-F]{24}$",
+          "type": "string",
+          "x-max-utf8-bytes": 24
+        },
+        "last_wal": {
+          "maxLength": 24,
+          "minLength": 1,
+          "pattern": "^[0-9A-F]{24}$",
+          "type": "string",
+          "x-max-utf8-bytes": 24
+        },
+        "latest_receipt_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "segment_count": {
+          "maximum": 18446744073709551615,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "server": {
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "^[^/\\\\]+$",
+          "type": "string",
+          "x-max-utf8-bytes": 256
+        },
+        "start_position": {
+          "maximum": 18446744073709551615,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "timeline": {
+          "maximum": 18446744073709551615,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "server",
+        "timeline",
+        "start_position",
+        "end_position",
+        "segment_count",
+        "first_wal",
+        "last_wal",
+        "latest_receipt_at",
+        "end_receipt_at"
+      ],
+      "type": "object"
+    },
+    "BarmanWALRangePage": {
+      "additionalProperties": true,
+      "properties": {
+        "api_version": {
+          "const": "evidence.pgtoolbox.fyannk.dev/v1alpha1"
+        },
+        "evidence_generation": {
+          "maximum": 18446744073709551615,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/BarmanWALRange"
+          },
+          "maxItems": 200,
+          "type": "array"
+        },
+        "kind": {
+          "const": "BarmanWALRangePage"
+        },
+        "next_cursor": {
+          "anyOf": [
+            {
+              "maxLength": 4096,
+              "minLength": 1,
+              "type": "string",
+              "x-max-utf8-bytes": 4096
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "revision": {
+          "maximum": 18446744073709551615,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "total_items": {
+          "anyOf": [
+            {
+              "maximum": 18446744073709551615,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "api_version",
+        "kind",
+        "revision",
+        "evidence_generation",
+        "total_items",
+        "next_cursor",
+        "items"
+      ],
+      "type": "object"
+    },
+    "Capability": {
+      "additionalProperties": true,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/CapabilityID"
+        },
+        "reason": {
+          "$ref": "#/$defs/Reason"
+        },
+        "state": {
+          "$ref": "#/$defs/State"
+        },
+        "support": {
+          "$ref": "#/$defs/Support"
+        }
+      },
+      "required": [
+        "id",
+        "support",
+        "state",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "CapabilityID": {
+      "enum": [
+        "object-inventory",
+        "catalog-listing",
+        "structural-artifact-validation",
+        "dependency-chain-validation",
+        "wal-continuity",
+        "timeline-history-traversal",
+        "encrypted-metadata",
+        "observed-recovery-coverage",
+        "retention-expectation-comparison"
+      ],
+      "type": "string"
+    },
+    "ClusterIdentity": {
+      "additionalProperties": true,
+      "properties": {
+        "name": {
+          "anyOf": [
+            {
+              "maxLength": 253,
+              "minLength": 1,
+              "type": "string",
+              "x-max-utf8-bytes": 253
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "namespace": {
+          "maxLength": 63,
+          "minLength": 1,
+          "type": "string",
+          "x-max-utf8-bytes": 63
+        },
+        "uid": {
+          "maxLength": 128,
+          "minLength": 1,
+          "type": "string",
+          "x-max-utf8-bytes": 128
+        }
+      },
+      "required": [
+        "namespace",
+        "uid",
+        "name"
+      ],
+      "type": "object"
+    },
+    "Completeness": {
+      "enum": [
+        "complete",
+        "incomplete",
+        "no-completed-scan"
+      ],
+      "type": "string"
+    },
+    "CoverageStop": {
+      "enum": [
+        "frontier",
+        "candidate-limited",
+        "gap-limited",
+        "unknown-limited"
+      ],
+      "type": "string"
+    },
+    "Details": {
+      "oneOf": [
+        {
+          "additionalProperties": true,
+          "properties": {
+            "barman_cloud": {
+              "$ref": "#/$defs/BarmanCloudSummary"
+            },
+            "type": {
+              "const": "barman-cloud/v1alpha1"
+            }
+          },
+          "required": [
+            "type",
+            "barman_cloud"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": true,
+          "properties": {
+            "pgbackrest": {
+              "$ref": "#/$defs/PGBackRestSummary"
+            },
+            "type": {
+              "const": "pgbackrest/v1alpha1"
+            }
+          },
+          "required": [
+            "type",
+            "pgbackrest"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": true,
+          "not": {
+            "properties": {
+              "type": {
+                "enum": [
+                  "barman-cloud/v1alpha1",
+                  "pgbackrest/v1alpha1"
+                ]
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "properties": {
+            "type": {
+              "maxLength": 64,
+              "minLength": 1,
+              "type": "string",
+              "x-max-utf8-bytes": 64
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ErrorCode": {
+      "enum": [
+        "invalid-request",
+        "unauthenticated",
+        "not-found",
+        "method-not-allowed",
+        "publication-changed",
+        "response-limit",
+        "busy",
+        "invalid-publication",
+        "forbidden",
+        "authentication-unavailable",
+        "audience-mismatch"
+      ],
+      "type": "string"
+    },
+    "EvidenceAPIError": {
+      "additionalProperties": true,
+      "properties": {
+        "api_version": {
+          "const": "evidence.pgtoolbox.fyannk.dev/v1alpha1"
+        },
+        "code": {
+          "$ref": "#/$defs/ErrorCode"
+        },
+        "kind": {
+          "const": "EvidenceAPIError"
+        },
+        "message": {
+          "maxLength": 256,
+          "minLength": 1,
+          "type": "string",
+          "x-max-utf8-bytes": 256
+        }
+      },
+      "required": [
+        "api_version",
+        "kind",
+        "code",
+        "message"
+      ],
+      "type": "object"
+    },
+    "FailureCategory": {
+      "enum": [
+        "canceled",
+        "timeout",
+        "invalid_configuration",
+        "authentication",
+        "authorization",
+        "throttled",
+        "unavailable",
+        "not_found",
+        "incompatible_format",
+        "safety_limit"
+      ],
+      "type": "string"
+    },
+    "GapStatus": {
+      "enum": [
+        "candidate",
+        "confirmed"
+      ],
+      "type": "string"
+    },
+    "Identity": {
+      "additionalProperties": true,
+      "properties": {
+        "cluster": {
+          "$ref": "#/$defs/ClusterIdentity"
+        },
+        "repository": {
+          "$ref": "#/$defs/RepositoryIdentity"
+        }
+      },
+      "required": [
+        "cluster",
+        "repository"
+      ],
+      "type": "object"
+    },
+    "InventorySummary": {
+      "additionalProperties": true,
+      "properties": {
+        "known": {
+          "type": "boolean"
+        },
+        "last_failure_category": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FailureCategory"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "object_count": {
+          "anyOf": [
+            {
+              "maximum": 18446744073709551615,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "objects_examined": {
+          "maximum": 18446744073709551615,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "pages_examined": {
+          "maximum": 18446744073709551615,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "stored_bytes": {
+          "anyOf": [
+            {
+              "maximum": 18446744073709551615,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "unscoped_object_count": {
+          "anyOf": [
+            {
+              "maximum": 18446744073709551615,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "known",
+        "object_count",
+        "stored_bytes",
+        "unscoped_object_count",
+        "pages_examined",
+        "objects_examined",
+        "last_failure_category"
+      ],
+      "type": "object"
+    },
+    "PGBackRestAnnotation": {
+      "additionalProperties": true,
+      "properties": {
+        "key": {
+          "maxLength": 256,
+          "minLength": 1,
+          "type": "string",
+          "x-max-utf8-bytes": 256
+        },
+        "value": {
+          "maxLength": 256,
+          "type": "string",
+          "x-max-utf8-bytes": 256
+        }
+      },
+      "required": [
+        "key",
+        "value"
+      ],
+      "type": "object"
+    },
+    "PGBackRestBackup": {
+      "additionalProperties": true,
+      "properties": {
+        "annotations": {
+          "items": {
+            "$ref": "#/$defs/PGBackRestAnnotation"
+          },
+          "maxItems": 32,
+          "type": "array"
+        },
+        "annotations_withheld": {
+          "maximum": 18446744073709551615,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "archive_id": {
+          "anyOf": [
+            {
+              "maxLength": 32,
+              "minLength": 1,
+              "pattern": "^[1-9][0-9]?(?:\\.[0-9])?-[1-9][0-9]*$",
+              "type": "string",
+              "x-max-utf8-bytes": 32
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "archive_start": {
+          "anyOf": [
+            {
+              "maxLength": 24,
+              "minLength": 1,
+              "pattern": "^[0-9A-F]{24}$",
+              "type": "string",
+              "x-max-utf8-bytes": 24
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "archive_stop": {
+          "anyOf": [
+            {
+              "maxLength": 24,
+              "minLength": 1,
+              "pattern": "^[0-9A-F]{24}$",
+              "type": "string",
+              "x-max-utf8-bytes": 24
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cnpg_backup_name": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string",
+              "x-max-utf8-bytes": 256
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "delta_bytes": {
+          "maximum": 18446744073709551615,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "label": {
+          "maxLength": 33,
+          "minLength": 1,
+          "pattern": "^[0-9]{8}-[0-9]{6}F(?:_[0-9]{8}-[0-9]{6}[DI])?$",
+          "type": "string",
+          "x-max-utf8-bytes": 33
+        },
+        "pgbackrest_version": {
+          "anyOf": [
+            {
+              "maxLength": 64,
+              "minLength": 1,
+              "type": "string",
+              "x-max-utf8-bytes": 64
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "postgresql_version": {
+          "anyOf": [
+            {
+              "maximum": 18446744073709551615,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "prior": {
+          "anyOf": [
+            {
+              "maxLength": 33,
+              "minLength": 1,
+              "pattern": "^[0-9]{8}-[0-9]{6}F(?:_[0-9]{8}-[0-9]{6}[DI])?$",
+              "type": "string",
+              "x-max-utf8-bytes": 33
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reason": {
+          "$ref": "#/$defs/Reason"
+        },
+        "references": {
+          "items": {
+            "maxLength": 33,
+            "minLength": 1,
+            "pattern": "^[0-9]{8}-[0-9]{6}F(?:_[0-9]{8}-[0-9]{6}[DI])?$",
+            "type": "string",
+            "x-max-utf8-bytes": 33
+          },
+          "maxItems": 1000,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "repository_delta_bytes": {
+          "maximum": 18446744073709551615,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "repository_size_bytes": {
+          "maximum": 18446744073709551615,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "size_bytes": {
+          "maximum": 18446744073709551615,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "stanza": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[^/\\\\]+$",
+          "type": "string",
+          "x-max-utf8-bytes": 128
+        },
+        "start_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "start_lsn": {
+          "anyOf": [
+            {
+              "maxLength": 17,
+              "minLength": 1,
+              "pattern": "^[0-9A-F]{1,8}/[0-9A-F]{1,8}$",
+              "type": "string",
+              "x-max-utf8-bytes": 17
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "state": {
+          "$ref": "#/$defs/State"
+        },
+        "stop_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "stop_lsn": {
+          "anyOf": [
+            {
+              "maxLength": 17,
+              "minLength": 1,
+              "pattern": "^[0-9A-F]{1,8}/[0-9A-F]{1,8}$",
+              "type": "string",
+              "x-max-utf8-bytes": 17
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "system_id": {
+          "anyOf": [
+            {
+              "maxLength": 20,
+              "minLength": 1,
+              "pattern": "^[0-9]+$",
+              "type": "string",
+              "x-max-utf8-bytes": 20
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "timeline": {
+          "anyOf": [
+            {
+              "maximum": 18446744073709551615,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "type": {
+          "enum": [
+            "full",
+            "diff",
+            "incr"
+          ],
+          "type": "string"
+        },
+        "unusable_reasons": {
+          "items": {
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+            "type": "string",
+            "x-max-utf8-bytes": 64
+          },
+          "maxItems": 32,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "usable": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "stanza",
+        "label",
+        "type",
+        "prior",
+        "references",
+        "state",
+        "reason",
+        "usable",
+        "unusable_reasons",
+        "archive_id",
+        "system_id",
+        "postgresql_version",
+        "timeline",
+        "start_at",
+        "stop_at",
+        "start_lsn",
+        "stop_lsn",
+        "archive_start",
+        "archive_stop",
+        "size_bytes",
+        "delta_bytes",
+        "repository_size_bytes",
+        "repository_delta_bytes",
+        "error",
+        "pgbackrest_version",
+        "cnpg_backup_name",
+        "annotations",
+        "annotations_withheld"
+      ],
+      "type": "object"
+    },
+    "PGBackRestBackupPage": {
+      "additionalProperties": true,
+      "properties": {
+        "api_version": {
+          "const": "evidence.pgtoolbox.fyannk.dev/v1alpha1"
+        },
+        "evidence_generation": {
+          "maximum": 18446744073709551615,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/PGBackRestBackup"
+          },
+          "maxItems": 200,
+          "type": "array"
+        },
+        "kind": {
+          "const": "PGBackRestBackupPage"
+        },
+        "next_cursor": {
+          "anyOf": [
+            {
+              "maxLength": 4096,
+              "minLength": 1,
+              "type": "string",
+              "x-max-utf8-bytes": 4096
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "revision": {
+          "maximum": 18446744073709551615,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "total_items": {
+          "anyOf": [
+            {
+              "maximum": 18446744073709551615,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "api_version",
+        "kind",
+        "revision",
+        "evidence_generation",
+        "total_items",
+        "next_cursor",
+        "items"
+      ],
+      "type": "object"
+    },
+    "PGBackRestDatabase": {
+      "additionalProperties": true,
+      "properties": {
+        "db_id": {
+          "maximum": 18446744073709551615,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "postgresql_version": {
+          "anyOf": [
+            {
+              "maximum": 18446744073709551615,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "system_id": {
+          "maxLength": 20,
+          "minLength": 1,
+          "pattern": "^[0-9]+$",
+          "type": "string",
+          "x-max-utf8-bytes": 20
+        },
+        "version": {
+          "maxLength": 4,
+          "minLength": 1,
+          "pattern": "^[1-9][0-9]?(?:\\.[0-9])?$",
+          "type": "string",
+          "x-max-utf8-bytes": 4
+        }
+      },
+      "required": [
+        "db_id",
+        "system_id",
+        "version",
+        "postgresql_version"
+      ],
+      "type": "object"
+    },
+    "PGBackRestFinding": {
+      "additionalProperties": true,
+      "properties": {
+        "code": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Z][A-Za-z0-9]*$",
+          "type": "string",
+          "x-max-utf8-bytes": 64
+        },
+        "message": {
+          "maxLength": 256,
+          "minLength": 1,
+          "type": "string",
+          "x-max-utf8-bytes": 256
+        },
+        "severity": {
+          "enum": [
+            "warning",
+            "error"
+          ],
+          "type": "string"
+        },
+        "subject": {
+          "maxLength": 1024,
+          "minLength": 1,
+          "type": "string",
+          "x-max-utf8-bytes": 1024
+        }
+      },
+      "required": [
+        "code",
+        "severity",
+        "subject",
+        "message"
+      ],
+      "type": "object"
+    },
+    "PGBackRestRecoveryPath": {
+      "additionalProperties": true,
+      "properties": {
+        "archive_id": {
+          "anyOf": [
+            {
+              "maxLength": 32,
+              "minLength": 1,
+              "pattern": "^[1-9][0-9]?(?:\\.[0-9])?-[1-9][0-9]*$",
+              "type": "string",
+              "x-max-utf8-bytes": 32
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "assumption_codes": {
+          "items": {
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+            "type": "string",
+            "x-max-utf8-bytes": 64
+          },
+          "maxItems": 32,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "consistent": {
+          "type": "boolean"
+        },
+        "consistent_wal": {
+          "anyOf": [
+            {
+              "maxLength": 24,
+              "minLength": 1,
+              "pattern": "^[0-9A-F]{24}$",
+              "type": "string",
+              "x-max-utf8-bytes": 24
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "frontier_position": {
+          "anyOf": [
+            {
+              "maximum": 18446744073709551615,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "frontier_receipt_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "frontier_timeline": {
+          "anyOf": [
+            {
+              "maximum": 18446744073709551615,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "frontier_wal": {
+          "anyOf": [
+            {
+              "maxLength": 24,
+              "minLength": 1,
+              "pattern": "^[0-9A-F]{24}$",
+              "type": "string",
+              "x-max-utf8-bytes": 24
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "label": {
+          "maxLength": 33,
+          "minLength": 1,
+          "pattern": "^[0-9]{8}-[0-9]{6}F(?:_[0-9]{8}-[0-9]{6}[DI])?$",
+          "type": "string",
+          "x-max-utf8-bytes": 33
+        },
+        "off_target": {
+          "type": "boolean"
+        },
+        "reason": {
+          "$ref": "#/$defs/Reason"
+        },
+        "stanza": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[^/\\\\]+$",
+          "type": "string",
+          "x-max-utf8-bytes": 128
+        },
+        "start_wal": {
+          "anyOf": [
+            {
+              "maxLength": 24,
+              "minLength": 1,
+              "pattern": "^[0-9A-F]{24}$",
+              "type": "string",
+              "x-max-utf8-bytes": 24
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "state": {
+          "$ref": "#/$defs/State"
+        },
+        "stop": {
+          "$ref": "#/$defs/CoverageStop"
+        },
+        "target_timeline": {
+          "maximum": 18446744073709551615,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "timelines": {
+          "items": {
+            "maximum": 18446744073709551615,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "maxItems": 128,
+          "type": "array"
+        }
+      },
+      "required": [
+        "stanza",
+        "label",
+        "archive_id",
+        "target_timeline",
+        "state",
+        "reason",
+        "stop",
+        "timelines",
+        "start_wal",
+        "consistent_wal",
+        "consistent",
+        "off_target",
+        "frontier_timeline",
+        "frontier_position",
+        "frontier_wal",
+        "frontier_receipt_at",
+        "assumption_codes"
+      ],
+      "type": "object"
+    },
+    "PGBackRestRecoveryPathPage": {
+      "additionalProperties": true,
+      "properties": {
+        "api_version": {
+          "const": "evidence.pgtoolbox.fyannk.dev/v1alpha1"
+        },
+        "evidence_generation": {
+          "maximum": 18446744073709551615,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/PGBackRestRecoveryPath"
+          },
+          "maxItems": 200,
+          "type": "array"
+        },
+        "kind": {
+          "const": "PGBackRestRecoveryPathPage"
+        },
+        "next_cursor": {
+          "anyOf": [
+            {
+              "maxLength": 4096,
+              "minLength": 1,
+              "type": "string",
+              "x-max-utf8-bytes": 4096
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "revision": {
+          "maximum": 18446744073709551615,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "total_items": {
+          "anyOf": [
+            {
+              "maximum": 18446744073709551615,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "api_version",
+        "kind",
+        "revision",
+        "evidence_generation",
+        "total_items",
+        "next_cursor",
+        "items"
+      ],
+      "type": "object"
+    },
+    "PGBackRestRecoveryWindow": {
+      "additionalProperties": true,
+      "properties": {
+        "assumption_codes": {
+          "items": {
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+            "type": "string",
+            "x-max-utf8-bytes": 64
+          },
+          "maxItems": 32,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "end_lsn": {
+          "maxLength": 17,
+          "minLength": 1,
+          "pattern": "^[0-9A-F]{1,8}/[0-9A-F]{1,8}$",
+          "type": "string",
+          "x-max-utf8-bytes": 17
+        },
+        "end_receipt_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "end_timeline": {
+          "maximum": 18446744073709551615,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "end_wal": {
+          "maxLength": 24,
+          "minLength": 1,
+          "pattern": "^[0-9A-F]{24}$",
+          "type": "string",
+          "x-max-utf8-bytes": 24
+        },
+        "newest_backup": {
+          "maxLength": 33,
+          "minLength": 1,
+          "pattern": "^[0-9]{8}-[0-9]{6}F(?:_[0-9]{8}-[0-9]{6}[DI])?$",
+          "type": "string",
+          "x-max-utf8-bytes": 33
+        },
+        "newest_stop_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "oldest_backup": {
+          "maxLength": 33,
+          "minLength": 1,
+          "pattern": "^[0-9]{8}-[0-9]{6}F(?:_[0-9]{8}-[0-9]{6}[DI])?$",
+          "type": "string",
+          "x-max-utf8-bytes": 33
+        },
+        "start_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "usable_backups": {
+          "maximum": 18446744073709551615,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "oldest_backup",
+        "start_at",
+        "newest_backup",
+        "newest_stop_at",
+        "end_timeline",
+        "end_wal",
+        "end_lsn",
+        "end_receipt_at",
+        "usable_backups",
+        "assumption_codes"
+      ],
+      "type": "object"
+    },
+    "PGBackRestRetention": {
+      "additionalProperties": true,
+      "properties": {
+        "archive": {
+          "anyOf": [
+            {
+              "maximum": 9999999,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "archive_type": {
+          "enum": [
+            "full",
+            "diff",
+            "incr"
+          ],
+          "type": "string"
+        },
+        "configured": {
+          "type": "boolean"
+        },
+        "diff": {
+          "anyOf": [
+            {
+              "maximum": 9999999,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "differential_backups": {
+          "maximum": 18446744073709551615,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "effective_archive": {
+          "anyOf": [
+            {
+              "maximum": 9999999,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "evaluated_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "full": {
+          "anyOf": [
+            {
+              "maximum": 9999999,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "full_backups": {
+          "maximum": 18446744073709551615,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "full_type": {
+          "enum": [
+            "count",
+            "time"
+          ],
+          "type": "string"
+        },
+        "incremental_backups": {
+          "maximum": 18446744073709551615,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "reason": {
+          "$ref": "#/$defs/Reason"
+        },
+        "state": {
+          "$ref": "#/$defs/State"
+        },
+        "window_start_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "configured",
+        "full",
+        "full_type",
+        "diff",
+        "archive",
+        "archive_type",
+        "effective_archive",
+        "full_backups",
+        "differential_backups",
+        "incremental_backups",
+        "evaluated_at",
+        "window_start_at",
+        "state",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "PGBackRestSummary": {
+      "additionalProperties": true,
+      "properties": {
+        "archive_ids": {
+          "items": {
+            "maxLength": 32,
+            "minLength": 1,
+            "pattern": "^[1-9][0-9]?(?:\\.[0-9])?-[1-9][0-9]*$",
+            "type": "string",
+            "x-max-utf8-bytes": 32
+          },
+          "maxItems": 256,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "archive_stanza": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[^/\\\\]+$",
+          "type": "string",
+          "x-max-utf8-bytes": 128
+        },
+        "backup_items": {
+          "anyOf": [
+            {
+              "maximum": 18446744073709551615,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "backup_states": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StateCounts"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "catalog": {
+          "$ref": "#/$defs/StateReason"
+        },
+        "coverage": {
+          "$ref": "#/$defs/StateReason"
+        },
+        "database": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PGBackRestDatabase"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "diagnostics_truncated": {
+          "type": "boolean"
+        },
+        "encrypted": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "findings": {
+          "items": {
+            "$ref": "#/$defs/PGBackRestFinding"
+          },
+          "maxItems": 200,
+          "type": "array"
+        },
+        "findings_truncated": {
+          "type": "boolean"
+        },
+        "latest_archive_receipt_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pgbackrest_version": {
+          "anyOf": [
+            {
+              "maxLength": 64,
+              "minLength": 1,
+              "type": "string",
+              "x-max-utf8-bytes": 64
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ranges_truncated": {
+          "type": "boolean"
+        },
+        "recovery_path_items": {
+          "anyOf": [
+            {
+              "maximum": 18446744073709551615,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "recovery_window": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PGBackRestRecoveryWindow"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "repository": {
+          "maximum": 256,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "repository_format": {
+          "anyOf": [
+            {
+              "maximum": 99,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "retention": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PGBackRestRetention"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "stanza": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[^/\\\\]+$",
+          "type": "string",
+          "x-max-utf8-bytes": 128
+        },
+        "timeline": {
+          "$ref": "#/$defs/StateReason",
+          "minimum": 1
+        },
+        "usable_backups": {
+          "anyOf": [
+            {
+              "maximum": 18446744073709551615,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "wal": {
+          "$ref": "#/$defs/StateReason",
+          "maxLength": 24,
+          "minLength": 1,
+          "pattern": "^[0-9A-F]{24}$",
+          "x-max-utf8-bytes": 24
+        },
+        "wal_counts": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PGBackRestWALCounts"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "wal_gap_items": {
+          "anyOf": [
+            {
+              "maximum": 18446744073709551615,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "wal_range_items": {
+          "anyOf": [
+            {
+              "maximum": 18446744073709551615,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "wal_segment_size_bytes": {
+          "anyOf": [
+            {
+              "enum": [
+                1048576,
+                2097152,
+                4194304,
+                8388608,
+                16777216,
+                33554432,
+                67108864,
+                134217728,
+                268435456,
+                536870912,
+                1073741824
+              ],
+              "maximum": 18446744073709551615,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "wal_segment_size_source": {
+          "anyOf": [
+            {
+              "enum": [
+                "backup-lsn",
+                "assumed-default"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "stanza",
+        "archive_stanza",
+        "repository",
+        "repository_format",
+        "encrypted",
+        "pgbackrest_version",
+        "database",
+        "archive_ids",
+        "wal_segment_size_bytes",
+        "wal_segment_size_source",
+        "backup_items",
+        "wal_range_items",
+        "wal_gap_items",
+        "recovery_path_items",
+        "usable_backups",
+        "backup_states",
+        "wal_counts",
+        "catalog",
+        "wal",
+        "timeline",
+        "coverage",
+        "recovery_window",
+        "latest_archive_receipt_at",
+        "ranges_truncated",
+        "diagnostics_truncated",
+        "findings",
+        "findings_truncated"
+      ],
+      "type": "object"
+    },
+    "PGBackRestWALCounts": {
+      "additionalProperties": true,
+      "properties": {
+        "backup_history": {
+          "maximum": 18446744073709551615,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "duplicate": {
+          "maximum": 18446744073709551615,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "history": {
+          "maximum": 18446744073709551615,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "partial": {
+          "maximum": 18446744073709551615,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "segment": {
+          "maximum": 18446744073709551615,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "unknown": {
+          "maximum": 18446744073709551615,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "segment",
+        "partial",
+        "history",
+        "backup_history",
+        "unknown",
+        "duplicate"
+      ],
+      "type": "object"
+    },
+    "PGBackRestWALGap": {
+      "additionalProperties": true,
+      "properties": {
+        "archive_id": {
+          "maxLength": 32,
+          "minLength": 1,
+          "pattern": "^[1-9][0-9]?(?:\\.[0-9])?-[1-9][0-9]*$",
+          "type": "string",
+          "x-max-utf8-bytes": 32
+        },
+        "end_position": {
+          "maximum": 18446744073709551615,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "first_observed_generation": {
+          "maximum": 18446744073709551615,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "first_wal": {
+          "maxLength": 24,
+          "minLength": 1,
+          "pattern": "^[0-9A-F]{24}$",
+          "type": "string",
+          "x-max-utf8-bytes": 24
+        },
+        "last_observed_generation": {
+          "maximum": 18446744073709551615,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "last_wal": {
+          "maxLength": 24,
+          "minLength": 1,
+          "pattern": "^[0-9A-F]{24}$",
+          "type": "string",
+          "x-max-utf8-bytes": 24
+        },
+        "segment_count": {
+          "maximum": 18446744073709551615,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "stanza": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[^/\\\\]+$",
+          "type": "string",
+          "x-max-utf8-bytes": 128
+        },
+        "start_position": {
+          "maximum": 18446744073709551615,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "status": {
+          "$ref": "#/$defs/GapStatus"
+        },
+        "timeline": {
+          "maximum": 18446744073709551615,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "stanza",
+        "archive_id",
+        "timeline",
+        "start_position",
+        "end_position",
+        "segment_count",
+        "first_wal",
+        "last_wal",
+        "status",
+        "first_observed_generation",
+        "last_observed_generation"
+      ],
+      "type": "object"
+    },
+    "PGBackRestWALGapPage": {
+      "additionalProperties": true,
+      "properties": {
+        "api_version": {
+          "const": "evidence.pgtoolbox.fyannk.dev/v1alpha1"
+        },
+        "evidence_generation": {
+          "maximum": 18446744073709551615,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/PGBackRestWALGap"
+          },
+          "maxItems": 200,
+          "type": "array"
+        },
+        "kind": {
+          "const": "PGBackRestWALGapPage"
+        },
+        "next_cursor": {
+          "anyOf": [
+            {
+              "maxLength": 4096,
+              "minLength": 1,
+              "type": "string",
+              "x-max-utf8-bytes": 4096
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "revision": {
+          "maximum": 18446744073709551615,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "total_items": {
+          "anyOf": [
+            {
+              "maximum": 18446744073709551615,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "api_version",
+        "kind",
+        "revision",
+        "evidence_generation",
+        "total_items",
+        "next_cursor",
+        "items"
+      ],
+      "type": "object"
+    },
+    "PGBackRestWALRange": {
+      "additionalProperties": true,
+      "properties": {
+        "archive_id": {
+          "maxLength": 32,
+          "minLength": 1,
+          "pattern": "^[1-9][0-9]?(?:\\.[0-9])?-[1-9][0-9]*$",
+          "type": "string",
+          "x-max-utf8-bytes": 32
+        },
+        "end_position": {
+          "maximum": 18446744073709551615,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "end_receipt_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "first_wal": {
+          "maxLength": 24,
+          "minLength": 1,
+          "pattern": "^[0-9A-F]{24}$",
+          "type": "string",
+          "x-max-utf8-bytes": 24
+        },
+        "last_wal": {
+          "maxLength": 24,
+          "minLength": 1,
+          "pattern": "^[0-9A-F]{24}$",
+          "type": "string",
+          "x-max-utf8-bytes": 24
+        },
+        "latest_receipt_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "segment_count": {
+          "maximum": 18446744073709551615,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "stanza": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[^/\\\\]+$",
+          "type": "string",
+          "x-max-utf8-bytes": 128
+        },
+        "start_position": {
+          "maximum": 18446744073709551615,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "timeline": {
+          "maximum": 18446744073709551615,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "stanza",
+        "archive_id",
+        "timeline",
+        "start_position",
+        "end_position",
+        "segment_count",
+        "first_wal",
+        "last_wal",
+        "latest_receipt_at",
+        "end_receipt_at"
+      ],
+      "type": "object"
+    },
+    "PGBackRestWALRangePage": {
+      "additionalProperties": true,
+      "properties": {
+        "api_version": {
+          "const": "evidence.pgtoolbox.fyannk.dev/v1alpha1"
+        },
+        "evidence_generation": {
+          "maximum": 18446744073709551615,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/PGBackRestWALRange"
+          },
+          "maxItems": 200,
+          "type": "array"
+        },
+        "kind": {
+          "const": "PGBackRestWALRangePage"
+        },
+        "next_cursor": {
+          "anyOf": [
+            {
+              "maxLength": 4096,
+              "minLength": 1,
+              "type": "string",
+              "x-max-utf8-bytes": 4096
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "revision": {
+          "maximum": 18446744073709551615,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "total_items": {
+          "anyOf": [
+            {
+              "maximum": 18446744073709551615,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "api_version",
+        "kind",
+        "revision",
+        "evidence_generation",
+        "total_items",
+        "next_cursor",
+        "items"
+      ],
+      "type": "object"
+    },
+    "Producer": {
+      "additionalProperties": true,
+      "properties": {
+        "name": {
+          "const": "evidence-agent"
+        },
+        "version": {
+          "maxLength": 64,
+          "minLength": 1,
+          "type": "string",
+          "x-max-utf8-bytes": 64
+        }
+      },
+      "required": [
+        "name",
+        "version"
+      ],
+      "type": "object"
+    },
+    "Reason": {
+      "additionalProperties": true,
+      "properties": {
+        "code": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+          "type": "string",
+          "x-max-utf8-bytes": 64
+        },
+        "message": {
+          "maxLength": 256,
+          "minLength": 1,
+          "type": "string",
+          "x-max-utf8-bytes": 256
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "type": "object"
+    },
+    "RepositoryEvidenceSnapshot": {
+      "additionalProperties": true,
+      "properties": {
+        "api_version": {
+          "const": "evidence.pgtoolbox.fyannk.dev/v1alpha1"
+        },
+        "capabilities": {
+          "items": {
+            "$ref": "#/$defs/Capability"
+          },
+          "maxItems": 9,
+          "minItems": 9,
+          "type": "array"
+        },
+        "completed_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "completeness": {
+          "$ref": "#/$defs/Completeness"
+        },
+        "details": {
+          "$ref": "#/$defs/Details"
+        },
+        "evidence_generation": {
+          "maximum": 18446744073709551615,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "identity": {
+          "$ref": "#/$defs/Identity"
+        },
+        "inventory": {
+          "$ref": "#/$defs/InventorySummary"
+        },
+        "kind": {
+          "const": "RepositoryEvidenceSnapshot"
+        },
+        "last_attempt_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "producer": {
+          "$ref": "#/$defs/Producer"
+        },
+        "producer_epoch": {
+          "maximum": 18446744073709551615,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "producer_instance": {
+          "maxLength": 32,
+          "minLength": 32,
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string",
+          "x-max-utf8-bytes": 32
+        },
+        "reason": {
+          "$ref": "#/$defs/Reason"
+        },
+        "revision": {
+          "maximum": 18446744073709551615,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "stale": {
+          "type": "boolean"
+        },
+        "started_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "state": {
+          "$ref": "#/$defs/State"
+        }
+      },
+      "required": [
+        "api_version",
+        "kind",
+        "producer",
+        "producer_instance",
+        "producer_epoch",
+        "identity",
+        "revision",
+        "evidence_generation",
+        "started_at",
+        "completed_at",
+        "last_attempt_at",
+        "completeness",
+        "stale",
+        "state",
+        "reason",
+        "capabilities",
+        "inventory",
+        "details"
+      ],
+      "type": "object"
+    },
+    "RepositoryIdentity": {
+      "additionalProperties": true,
+      "properties": {
+        "destination_fingerprint": {
+          "maxLength": 71,
+          "minLength": 1,
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "type": "string",
+          "x-max-utf8-bytes": 71
+        },
+        "format": {
+          "enum": [
+            "barman-cloud",
+            "pgbackrest"
+          ],
+          "type": "string"
+        },
+        "provider": {
+          "enum": [
+            "s3",
+            "azure",
+            "gcs"
+          ],
+          "type": "string"
+        },
+        "scope": {
+          "$ref": "#/$defs/ScopeIdentity"
+        }
+      },
+      "required": [
+        "provider",
+        "format",
+        "destination_fingerprint",
+        "scope"
+      ],
+      "type": "object"
+    },
+    "ScopeIdentity": {
+      "additionalProperties": true,
+      "properties": {
+        "kind": {
+          "enum": [
+            "barman-server",
+            "stanza"
+          ],
+          "type": "string"
+        },
+        "name": {
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "^[^/\\\\]+$",
+          "type": "string",
+          "x-max-utf8-bytes": 256
+        }
+      },
+      "required": [
+        "kind",
+        "name"
+      ],
+      "type": "object"
+    },
+    "ServiceStatus": {
+      "oneOf": [
+        {
+          "additionalProperties": true,
+          "properties": {
+            "api_version": {
+              "const": "evidence.pgtoolbox.fyannk.dev/v1alpha1"
+            },
+            "kind": {
+              "const": "HealthStatus"
+            },
+            "status": {
+              "const": "live"
+            }
+          },
+          "required": [
+            "api_version",
+            "kind",
+            "status"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": true,
+          "properties": {
+            "api_version": {
+              "const": "evidence.pgtoolbox.fyannk.dev/v1alpha1"
+            },
+            "kind": {
+              "const": "ReadinessStatus"
+            },
+            "status": {
+              "const": "ready"
+            }
+          },
+          "required": [
+            "api_version",
+            "kind",
+            "status"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": true,
+          "properties": {
+            "api_version": {
+              "const": "evidence.pgtoolbox.fyannk.dev/v1alpha1"
+            },
+            "kind": {
+              "const": "ReadinessStatus"
+            },
+            "status": {
+              "const": "not-ready"
+            }
+          },
+          "required": [
+            "api_version",
+            "kind",
+            "status"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "State": {
+      "enum": [
+        "healthy",
+        "warning",
+        "unhealthy",
+        "unknown"
+      ],
+      "type": "string"
+    },
+    "StateCounts": {
+      "additionalProperties": true,
+      "properties": {
+        "healthy": {
+          "maximum": 18446744073709551615,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "unhealthy": {
+          "maximum": 18446744073709551615,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "unknown": {
+          "maximum": 18446744073709551615,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "warning": {
+          "maximum": 18446744073709551615,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "healthy",
+        "warning",
+        "unhealthy",
+        "unknown"
+      ],
+      "type": "object"
+    },
+    "StateReason": {
+      "additionalProperties": true,
+      "properties": {
+        "reason": {
+          "$ref": "#/$defs/Reason"
+        },
+        "state": {
+          "$ref": "#/$defs/State"
+        }
+      },
+      "required": [
+        "state",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "Support": {
+      "enum": [
+        "supported",
+        "unsupported",
+        "unknown"
+      ],
+      "type": "string"
+    }
+  },
+  "$id": "https://github.com/fyannk/pgToolBox/pkg/evidence/v1alpha1/schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/RepositoryEvidenceSnapshot"
+    },
+    {
+      "$ref": "#/$defs/BarmanBackupPage"
+    },
+    {
+      "$ref": "#/$defs/BarmanWALRangePage"
+    },
+    {
+      "$ref": "#/$defs/BarmanWALGapPage"
+    },
+    {
+      "$ref": "#/$defs/BarmanRecoveryPathPage"
+    },
+    {
+      "$ref": "#/$defs/PGBackRestBackupPage"
+    },
+    {
+      "$ref": "#/$defs/PGBackRestWALRangePage"
+    },
+    {
+      "$ref": "#/$defs/PGBackRestWALGapPage"
+    },
+    {
+      "$ref": "#/$defs/PGBackRestRecoveryPathPage"
+    },
+    {
+      "$ref": "#/$defs/EvidenceAPIError"
+    },
+    {
+      "$ref": "#/$defs/ServiceStatus"
+    }
+  ],
+  "title": "pgToolBox evidence agent API v1alpha1"
+}

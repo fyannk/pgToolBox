@@ -1,0 +1,1337 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.23.0
+  name: pgadmins.pgtoolbox.fyannk.dev
+spec:
+  group: pgtoolbox.fyannk.dev
+  names:
+    categories:
+    - pgtoolbox
+    kind: PgAdmin
+    listKind: PgAdminList
+    plural: pgadmins
+    shortNames:
+    - pga
+    singular: pgadmin
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.conditions[?(@.type=="Ready")].status
+      name: Ready
+      type: string
+    - jsonPath: .status.conditions[?(@.type=="Ready")].reason
+      name: Reason
+      priority: 1
+      type: string
+    - jsonPath: .status.url
+      name: URL
+      type: string
+    - jsonPath: .status.pgAdminVersion
+      name: Version
+      priority: 1
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          PgAdmin is one pgAdmin for a team namespace, registered against the
+          CloudNativePG Clusters of that namespace. Only dba may open it: whoever
+          reaches it holds the credentials of every role it offers.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              PgAdminSpec declares one pgAdmin for a team namespace: the
+              Clusters of that namespace it registers, the credentials it offers, how
+              people sign in, and how it is published.
+
+              Who may open it: dba only. Whoever reaches pgAdmin holds the credentials
+              of every role it offers (pgAdmin hides the passwords but a connected role
+              can change its own, and a server a user registers can name a managed
+              libpq service), so opening it is equivalent to reading those Secrets.
+            properties:
+              admins:
+                description: |-
+                  Usernames (as the identity provider presents them) that get pgAdmin's
+                  Administrator role; everyone else who signs in is a User.
+                items:
+                  maxLength: 254
+                  minLength: 1
+                  pattern: ^[^-\s'"\\][^\s'"\\]*$
+                  type: string
+                maxItems: 32
+                type: array
+                x-kubernetes-list-type: set
+              auth:
+                description: How people sign in. pgAdmin has no local password login
+                  here.
+                properties:
+                  oauth2:
+                    description: pgAdmin's native OAuth2 / OpenID Connect sign-in.
+                    properties:
+                      clientID:
+                        description: The OAuth2 client ID.
+                        maxLength: 256
+                        minLength: 1
+                        pattern: ^[^\s'"\\]+$
+                        type: string
+                      clientSecretRef:
+                        description: |-
+                          The Secret (this namespace) holding the client secret. pgAdmin reads
+                          it from a mounted file; it never enters the Pod spec or the operator.
+                        properties:
+                          key:
+                            default: client-secret
+                            description: The key.
+                            maxLength: 253
+                            pattern: ^[-._a-zA-Z0-9]+$
+                            type: string
+                          name:
+                            description: The Secret name.
+                            maxLength: 253
+                            minLength: 1
+                            pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                            type: string
+                        required:
+                        - name
+                        type: object
+                      displayName:
+                        description: The button label on pgAdmin's login page.
+                        maxLength: 64
+                        pattern: ^[^'"\\\r\n]*$
+                        type: string
+                      issuerURL:
+                        description: The issuer; pgAdmin reads <issuerURL>/.well-known/openid-configuration.
+                        maxLength: 512
+                        pattern: ^https://[^\s'"\\]+$
+                        type: string
+                      requiredClaims:
+                        additionalProperties:
+                          description: ClaimValues are the accepted values of one
+                            claim; any one matches.
+                          items:
+                            maxLength: 256
+                            pattern: ^[^'"\\\r\n]+$
+                            type: string
+                          maxItems: 16
+                          minItems: 1
+                          type: array
+                        description: |-
+                          The claims a user must carry to sign in, e.g. {"groups": ["dba"]}.
+                          Required: on Kubernetes the identity provider, not RBAC, decides who
+                          reaches pgAdmin, so this must name the same people the namespace's
+                          pgtoolbox-console-operator RoleBinding names.
+                        maxProperties: 8
+                        minProperties: 1
+                        type: object
+                        x-kubernetes-validations:
+                        - message: claim names are 1-64 characters of letters, digits
+                            and _.:-
+                          reason: FieldValueInvalid
+                          rule: self.all(k, k.matches('^[A-Za-z0-9_.:-]{1,64}$'))
+                      scopes:
+                        default:
+                        - openid
+                        - email
+                        - profile
+                        description: Scopes requested.
+                        items:
+                          pattern: ^[A-Za-z0-9_.:/-]{1,128}$
+                          type: string
+                        maxItems: 16
+                        type: array
+                        x-kubernetes-list-type: set
+                      usernameClaim:
+                        default: email
+                        description: The claim that becomes the pgAdmin username.
+                        maxLength: 64
+                        pattern: ^[A-Za-z0-9_.:-]+$
+                        type: string
+                    required:
+                    - clientID
+                    - clientSecretRef
+                    - issuerURL
+                    - requiredClaims
+                    type: object
+                  openshiftOAuthProxy:
+                    description: |-
+                      The OpenShift oauth-proxy, authorizing with a SubjectAccessReview
+                      "get pgadmins/<name>" (granted by the pgtoolbox-console-operator role).
+                    properties:
+                      image:
+                        description: The oauth-proxy image. Omitted, the operator's
+                          default.
+                        properties:
+                          digest:
+                            description: Image digest; when set it is what the Pod
+                              runs.
+                            pattern: ^sha256:[a-f0-9]{64}$
+                            type: string
+                          pullPolicy:
+                            description: |-
+                              Image pull policy. Defaults to IfNotPresent for a digest and Always
+                              for a tag alone.
+                            enum:
+                            - Always
+                            - IfNotPresent
+                            - Never
+                            type: string
+                          pullSecrets:
+                            description: Pull secrets for the image registry, in the
+                              CR's namespace.
+                            items:
+                              description: |-
+                                LocalObjectReference names an object in the referencing object's own
+                                namespace. Cross-namespace references do not exist in v1alpha1; a future
+                                one goes through an explicit grant object in the target
+                                namespace, never through a selector.
+                              properties:
+                                name:
+                                  description: The name of the referenced object.
+                                  maxLength: 253
+                                  minLength: 1
+                                  pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                                  type: string
+                              required:
+                              - name
+                              type: object
+                            maxItems: 8
+                            type: array
+                            x-kubernetes-list-map-keys:
+                            - name
+                            x-kubernetes-list-type: map
+                          repository:
+                            description: Image repository, without tag or digest (registry/path/name).
+                            maxLength: 255
+                            minLength: 1
+                            pattern: ^[a-z0-9]+([._-][a-z0-9]+)*(:[0-9]{1,5})?(/[a-z0-9]+([._-][a-z0-9]+)*)*$
+                            type: string
+                          tag:
+                            description: Image tag; informative when a digest is set.
+                            maxLength: 128
+                            pattern: ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$
+                            type: string
+                        required:
+                        - repository
+                        type: object
+                        x-kubernetes-validations:
+                        - message: an image needs a tag, a digest or both
+                          reason: FieldValueRequired
+                          rule: has(self.tag) || has(self.digest)
+                    type: object
+                type: object
+                x-kubernetes-validations:
+                - message: exactly one of oauth2 and openshiftOAuthProxy is required
+                  reason: FieldValueInvalid
+                  rule: has(self.oauth2) != has(self.openshiftOAuthProxy)
+              clusterRefs:
+                description: |-
+                  The CloudNativePG Clusters to register, by name, in this namespace.
+                  Exactly one of clusterRefs and clusterSelector.
+                items:
+                  description: |-
+                    LocalObjectReference names an object in the referencing object's own
+                    namespace. Cross-namespace references do not exist in v1alpha1; a future
+                    one goes through an explicit grant object in the target
+                    namespace, never through a selector.
+                  properties:
+                    name:
+                      description: The name of the referenced object.
+                      maxLength: 253
+                      minLength: 1
+                      pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                      type: string
+                  required:
+                  - name
+                  type: object
+                maxItems: 32
+                minItems: 1
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
+              clusterSelector:
+                description: |-
+                  A label selector over the Clusters of this namespace only; Clusters
+                  of other namespaces are never selected, only named in
+                  crossNamespaceClusterRefs. At most one of clusterRefs and
+                  clusterSelector.
+                properties:
+                  matchExpressions:
+                    description: matchExpressions is a list of label selector requirements.
+                      The requirements are ANDed.
+                    items:
+                      description: |-
+                        A label selector requirement is a selector that contains values, a key, and an operator that
+                        relates the key and values.
+                      properties:
+                        key:
+                          description: key is the label key that the selector applies
+                            to.
+                          type: string
+                        operator:
+                          description: |-
+                            operator represents a key's relationship to a set of values.
+                            Valid operators are In, NotIn, Exists and DoesNotExist.
+                          type: string
+                        values:
+                          description: |-
+                            values is an array of string values. If the operator is In or NotIn,
+                            the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                            the values array must be empty. This array is replaced during a strategic
+                            merge patch.
+                          items:
+                            type: string
+                          type: array
+                          x-kubernetes-list-type: atomic
+                      required:
+                      - key
+                      - operator
+                      type: object
+                    type: array
+                    x-kubernetes-list-type: atomic
+                  matchLabels:
+                    additionalProperties:
+                      type: string
+                    description: |-
+                      matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                      map is equivalent to an element of matchExpressions, whose key field is "key", the
+                      operator is "In", and the values array contains only "value". The requirements are ANDed.
+                    type: object
+                type: object
+                x-kubernetes-map-type: atomic
+              configDatabase:
+                description: |-
+                  pgAdmin's settings database on a CloudNativePG Cluster of this
+                  namespace instead of SQLite on the settings volume (pgAdmin's
+                  CONFIG_DATABASE_URI). The operator owns a DatabaseRole whose password
+                  CloudNativePG generates (1.31 and later) and a Database it owns; the
+                  password reaches the pgAdmin Pod only. Set at creation only.
+                properties:
+                  clusterRef:
+                    description: The Cluster, in this namespace.
+                    properties:
+                      name:
+                        description: The name of the referenced object.
+                        maxLength: 253
+                        minLength: 1
+                        pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                        type: string
+                    required:
+                    - name
+                    type: object
+                  database:
+                    description: |-
+                      The database, and the role that owns it. Defaults to
+                      pgadmin_<PgAdmin name, dashes as underscores>.
+                    maxLength: 63
+                    pattern: ^[a-z_][a-z0-9_]*$
+                    type: string
+                required:
+                - clusterRef
+                type: object
+                x-kubernetes-validations:
+                - message: configDatabase is immutable
+                  reason: FieldValueForbidden
+                  rule: self == oldSelf
+              credentials:
+                default: {}
+                description: Which credentials each registered Cluster offers.
+                properties:
+                  application:
+                    default: true
+                    description: |-
+                      The application user (the Cluster's app Secret, or the Secret its
+                      bootstrap names).
+                    type: boolean
+                  databaseRoles:
+                    default: true
+                    description: |-
+                      DatabaseRoles of the Cluster that CloudNativePG reports applied, with
+                      the password Secret at the version it applied. Privileged ones need
+                      superuser as well. CloudNativePG 1.30 and later serve the
+                      DatabaseRole kind; where an install does not (its CRDs lack it), none
+                      is offered and the PgAdmin is still Ready: the ConfigurationValid
+                      message says so. Where the operator may not list
+                      DatabaseRoles, ConfigurationValid is False (DatabaseRoleAPIUnavailable).
+                    type: boolean
+                  superuser:
+                    default: false
+                    description: |-
+                      The privileged credentials: the superuser (when the Cluster enables
+                      superuser access) and DatabaseRoles that are superuser, createrole,
+                      bypassrls or replication, or members, directly or through roles the
+                      Cluster declares, of a pg_* role, the superuser, the application
+                      owner or another privileged role. Off by default.
+                    type: boolean
+                type: object
+              crossNamespaceClusterRefs:
+                description: |-
+                  Clusters of other namespaces, by namespace and name. Each is
+                  registered only while a PgAdminAccess in its namespace grants this
+                  PgAdmin that Cluster (ConfigurationValid=False, GrantMissing,
+                  otherwise); the grant is the target namespace owner's decision.
+                items:
+                  description: PgAdminClusterReference names a Cluster of another
+                    namespace.
+                  properties:
+                    name:
+                      description: The name of the Cluster.
+                      maxLength: 253
+                      minLength: 1
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                      type: string
+                    namespace:
+                      description: The namespace of the Cluster.
+                      maxLength: 63
+                      minLength: 1
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                      type: string
+                  required:
+                  - name
+                  - namespace
+                  type: object
+                maxItems: 32
+                minItems: 1
+                type: array
+                x-kubernetes-list-map-keys:
+                - namespace
+                - name
+                x-kubernetes-list-type: map
+              endpoints:
+                default:
+                - rw
+                description: Which Services of every registered Cluster get a server.
+                items:
+                  description: |-
+                    Endpoint names which Service of a Cluster a server connects through:
+                    rw (the primary), ro (the replicas), r (any instance) or
+                    pooler:<Pooler name> (a CNPG Pooler of that Cluster; its Service name
+                    must be among the Cluster's spec.certificates.serverAltDNSNames for
+                    verify-full to succeed).
+                  maxLength: 70
+                  pattern: ^(rw|ro|r|pooler:[a-z0-9]([-a-z0-9]*[a-z0-9])?)$
+                  type: string
+                maxItems: 8
+                minItems: 1
+                type: array
+                x-kubernetes-list-type: set
+              exposure:
+                default: {}
+                description: How pgAdmin is published.
+                properties:
+                  annotations:
+                    additionalProperties:
+                      type: string
+                    description: |-
+                      Annotations added to the exposure object; keys under
+                      pgtoolbox.fyannk.dev/ are rejected.
+                    maxProperties: 32
+                    type: object
+                    x-kubernetes-validations:
+                    - message: annotation keys under pgtoolbox.fyannk.dev/ are reserved
+                      reason: FieldValueForbidden
+                      rule: self.all(k, !k.startsWith('pgtoolbox.fyannk.dev/'))
+                  gateway:
+                    description: Gateway API attachment, for gateway exposure only.
+                    properties:
+                      parentRef:
+                        description: The Gateway listener to attach to.
+                        properties:
+                          name:
+                            description: Gateway name.
+                            maxLength: 253
+                            minLength: 1
+                            type: string
+                          namespace:
+                            description: Gateway namespace; defaults to the CR's namespace.
+                            maxLength: 63
+                            type: string
+                          sectionName:
+                            description: Listener (section) name on the Gateway.
+                            maxLength: 253
+                            type: string
+                        required:
+                        - name
+                        type: object
+                    required:
+                    - parentRef
+                    type: object
+                  hostname:
+                    description: The external hostname. Required for route, ingress
+                      and gateway.
+                    maxLength: 253
+                    pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                    type: string
+                  ingressClassName:
+                    description: IngressClass name, for ingress exposure only.
+                    maxLength: 253
+                    type: string
+                  labels:
+                    additionalProperties:
+                      type: string
+                    description: |-
+                      Labels added to the exposure object under the operator's own
+                      identity labels, which always win. Ingress controllers and OpenShift
+                      router shards select by label; keys under pgtoolbox.fyannk.dev/ are
+                      rejected.
+                    maxProperties: 32
+                    type: object
+                    x-kubernetes-validations:
+                    - message: label keys under pgtoolbox.fyannk.dev/ are reserved
+                      reason: FieldValueForbidden
+                      rule: self.all(k, !k.startsWith('pgtoolbox.fyannk.dev/'))
+                  tls:
+                    description: |-
+                      TLS for route and ingress exposure. A Route always terminates TLS at
+                      the edge; an Ingress uses certificateSecretRef, or the controller's
+                      default certificate when it is omitted. For gateway exposure TLS
+                      terminates at the Gateway listener.
+                    properties:
+                      certificateSecretRef:
+                        description: |-
+                          TLS certificate Secret (kubernetes.io/tls) in the CR's namespace,
+                          for ingress exposure.
+                        properties:
+                          name:
+                            description: The name of the referenced object.
+                            maxLength: 253
+                            minLength: 1
+                            pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                            type: string
+                        required:
+                        - name
+                        type: object
+                    type: object
+                  type:
+                    default: clusterIP
+                    description: The exposure mechanism.
+                    enum:
+                    - clusterIP
+                    - route
+                    - ingress
+                    - gateway
+                    type: string
+                type: object
+                x-kubernetes-validations:
+                - fieldPath: .hostname
+                  message: hostname is required for route, ingress and gateway exposure
+                  reason: FieldValueRequired
+                  rule: '!has(self.type) || self.type == ''clusterIP'' || (has(self.hostname)
+                    && size(self.hostname) > 0)'
+                - fieldPath: .gateway
+                  message: gateway is required exactly when type is gateway
+                  reason: FieldValueInvalid
+                  rule: (has(self.type) && self.type == 'gateway') == has(self.gateway)
+                - fieldPath: .ingressClassName
+                  message: ingressClassName applies to ingress exposure only
+                  reason: FieldValueForbidden
+                  rule: (has(self.type) && self.type == 'ingress') || !has(self.ingressClassName)
+                - fieldPath: .tls.certificateSecretRef
+                  message: tls.certificateSecretRef applies to ingress exposure only
+                  reason: FieldValueForbidden
+                  rule: (has(self.type) && self.type == 'ingress') || !has(self.tls)
+                    || !has(self.tls.certificateSecretRef)
+              image:
+                description: |-
+                  The pgAdmin image. Omitted, the operator's digest-pinned default.
+                  Changing the image backs up pgAdmin's settings database before the
+                  new image rolls out (status.conditions: UpgradeBackup*).
+                properties:
+                  digest:
+                    description: Image digest; when set it is what the Pod runs.
+                    pattern: ^sha256:[a-f0-9]{64}$
+                    type: string
+                  pullPolicy:
+                    description: |-
+                      Image pull policy. Defaults to IfNotPresent for a digest and Always
+                      for a tag alone.
+                    enum:
+                    - Always
+                    - IfNotPresent
+                    - Never
+                    type: string
+                  pullSecrets:
+                    description: Pull secrets for the image registry, in the CR's
+                      namespace.
+                    items:
+                      description: |-
+                        LocalObjectReference names an object in the referencing object's own
+                        namespace. Cross-namespace references do not exist in v1alpha1; a future
+                        one goes through an explicit grant object in the target
+                        namespace, never through a selector.
+                      properties:
+                        name:
+                          description: The name of the referenced object.
+                          maxLength: 253
+                          minLength: 1
+                          pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                          type: string
+                      required:
+                      - name
+                      type: object
+                    maxItems: 8
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - name
+                    x-kubernetes-list-type: map
+                  repository:
+                    description: Image repository, without tag or digest (registry/path/name).
+                    maxLength: 255
+                    minLength: 1
+                    pattern: ^[a-z0-9]+([._-][a-z0-9]+)*(:[0-9]{1,5})?(/[a-z0-9]+([._-][a-z0-9]+)*)*$
+                    type: string
+                  tag:
+                    description: Image tag; informative when a digest is set.
+                    maxLength: 128
+                    pattern: ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$
+                    type: string
+                required:
+                - repository
+                type: object
+                x-kubernetes-validations:
+                - message: an image needs a tag, a digest or both
+                  reason: FieldValueRequired
+                  rule: has(self.tag) || has(self.digest)
+              metadataPropagation:
+                description: Labels and annotations copied onto generated objects.
+                items:
+                  description: |-
+                    MetadataPropagation copies labels and annotations onto generated
+                    objects (cost-centre labels, backup-tool annotations, mesh opt-outs). The
+                    operator's own keys always win, keys under pgtoolbox.fyannk.dev/ are
+                    rejected, and a change rolls only the objects it targets.
+                  properties:
+                    annotations:
+                      additionalProperties:
+                        type: string
+                      description: Annotations to add.
+                      maxProperties: 32
+                      type: object
+                      x-kubernetes-validations:
+                      - message: annotation keys under pgtoolbox.fyannk.dev/ are reserved
+                        reason: FieldValueForbidden
+                        rule: self.all(k, !k.startsWith('pgtoolbox.fyannk.dev/'))
+                    labels:
+                      additionalProperties:
+                        type: string
+                      description: Labels to add.
+                      maxProperties: 32
+                      type: object
+                      x-kubernetes-validations:
+                      - message: label keys under pgtoolbox.fyannk.dev/ and app.kubernetes.io/
+                          are reserved
+                        reason: FieldValueForbidden
+                        rule: self.all(k, !k.startsWith('pgtoolbox.fyannk.dev/') &&
+                          !k.startsWith('app.kubernetes.io/'))
+                    target:
+                      description: Which generated objects receive the metadata.
+                      enum:
+                      - All
+                      - Workload
+                      - Pod
+                      - Service
+                      - Exposure
+                      - Storage
+                      type: string
+                  required:
+                  - target
+                  type: object
+                maxItems: 8
+                type: array
+              networkPolicy:
+                default: {}
+                description: |-
+                  An optional NetworkPolicy around the pgAdmin Pod. Off by default: a
+                  NetworkPolicy is the installing admin's choice, never a product
+                  precondition. Whether it confines egress is reported by the advisory
+                  PgAdminEgressConfined condition.
+                properties:
+                  enabled:
+                    default: false
+                    description: |-
+                      Whether the operator renders a NetworkPolicy around the pgAdmin Pod
+                      (ingress and egress). Off by default.
+                    type: boolean
+                  extraEgress:
+                    description: Additional egress rules, appended to the generated
+                      ones.
+                    items:
+                      description: |-
+                        NetworkPolicyEgressRule describes a particular set of traffic that is allowed out of pods
+                        matched by a NetworkPolicySpec's podSelector. The traffic must match both ports and to.
+                        This type is beta-level in 1.8
+                      properties:
+                        ports:
+                          description: |-
+                            ports is a list of destination ports for outgoing traffic.
+                            Each item in this list is combined using a logical OR. If this field is
+                            empty or missing, this rule matches all ports (traffic not restricted by port).
+                            If this field is present and contains at least one item, then this rule allows
+                            traffic only if the traffic matches at least one port in the list.
+                          items:
+                            description: NetworkPolicyPort describes a port to allow
+                              traffic on
+                            properties:
+                              endPort:
+                                description: |-
+                                  endPort indicates that the range of ports from port to endPort if set, inclusive,
+                                  should be allowed by the policy. This field cannot be defined if the port field
+                                  is not defined or if the port field is defined as a named (string) port.
+                                  The endPort must be equal or greater than port.
+                                format: int32
+                                type: integer
+                              port:
+                                anyOf:
+                                - type: integer
+                                - type: string
+                                description: |-
+                                  port represents the port on the given protocol. This can either be a numerical or named
+                                  port on a pod. If this field is not provided, this matches all port names and
+                                  numbers.
+                                  If present, only traffic on the specified protocol AND port will be matched.
+                                x-kubernetes-int-or-string: true
+                              protocol:
+                                description: |-
+                                  protocol represents the protocol (TCP, UDP, or SCTP) which traffic must match.
+                                  If not specified, this field defaults to TCP.
+                                type: string
+                            type: object
+                          type: array
+                          x-kubernetes-list-type: atomic
+                        to:
+                          description: |-
+                            to is a list of destinations for outgoing traffic of pods selected for this rule.
+                            Items in this list are combined using a logical OR operation. If this field is
+                            empty or missing, this rule matches all destinations (traffic not restricted by
+                            destination). If this field is present and contains at least one item, this rule
+                            allows traffic only if the traffic matches at least one item in the to list.
+                          items:
+                            description: |-
+                              NetworkPolicyPeer describes a peer to allow traffic to/from. Only certain combinations of
+                              fields are allowed
+                            properties:
+                              ipBlock:
+                                description: |-
+                                  ipBlock defines policy on a particular IPBlock. If this field is set then
+                                  neither of the other fields can be.
+                                properties:
+                                  cidr:
+                                    description: |-
+                                      cidr is a string representing the IPBlock
+                                      Valid examples are "192.168.1.0/24" or "2001:db8::/64"
+                                    type: string
+                                  except:
+                                    description: |-
+                                      except is a slice of CIDRs that should not be included within an IPBlock
+                                      Valid examples are "192.168.1.0/24" or "2001:db8::/64"
+                                      Except values will be rejected if they are outside the cidr range
+                                    items:
+                                      type: string
+                                    type: array
+                                    x-kubernetes-list-type: atomic
+                                required:
+                                - cidr
+                                type: object
+                              namespaceSelector:
+                                description: |-
+                                  namespaceSelector selects namespaces using cluster-scoped labels. This field follows
+                                  standard label selector semantics; if present but empty, it selects all namespaces.
+
+                                  If podSelector is also set, then the NetworkPolicyPeer as a whole selects
+                                  the pods matching podSelector in the namespaces selected by namespaceSelector.
+                                  Otherwise it selects all pods in the namespaces selected by namespaceSelector.
+                                properties:
+                                  matchExpressions:
+                                    description: matchExpressions is a list of label
+                                      selector requirements. The requirements are
+                                      ANDed.
+                                    items:
+                                      description: |-
+                                        A label selector requirement is a selector that contains values, a key, and an operator that
+                                        relates the key and values.
+                                      properties:
+                                        key:
+                                          description: key is the label key that the
+                                            selector applies to.
+                                          type: string
+                                        operator:
+                                          description: |-
+                                            operator represents a key's relationship to a set of values.
+                                            Valid operators are In, NotIn, Exists and DoesNotExist.
+                                          type: string
+                                        values:
+                                          description: |-
+                                            values is an array of string values. If the operator is In or NotIn,
+                                            the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                                            the values array must be empty. This array is replaced during a strategic
+                                            merge patch.
+                                          items:
+                                            type: string
+                                          type: array
+                                          x-kubernetes-list-type: atomic
+                                      required:
+                                      - key
+                                      - operator
+                                      type: object
+                                    type: array
+                                    x-kubernetes-list-type: atomic
+                                  matchLabels:
+                                    additionalProperties:
+                                      type: string
+                                    description: |-
+                                      matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                                      map is equivalent to an element of matchExpressions, whose key field is "key", the
+                                      operator is "In", and the values array contains only "value". The requirements are ANDed.
+                                    type: object
+                                type: object
+                                x-kubernetes-map-type: atomic
+                              podSelector:
+                                description: |-
+                                  podSelector is a label selector which selects pods. This field follows standard label
+                                  selector semantics; if present but empty, it selects all pods.
+
+                                  If namespaceSelector is also set, then the NetworkPolicyPeer as a whole selects
+                                  the pods matching podSelector in the Namespaces selected by NamespaceSelector.
+                                  Otherwise it selects the pods matching podSelector in the policy's own namespace.
+                                properties:
+                                  matchExpressions:
+                                    description: matchExpressions is a list of label
+                                      selector requirements. The requirements are
+                                      ANDed.
+                                    items:
+                                      description: |-
+                                        A label selector requirement is a selector that contains values, a key, and an operator that
+                                        relates the key and values.
+                                      properties:
+                                        key:
+                                          description: key is the label key that the
+                                            selector applies to.
+                                          type: string
+                                        operator:
+                                          description: |-
+                                            operator represents a key's relationship to a set of values.
+                                            Valid operators are In, NotIn, Exists and DoesNotExist.
+                                          type: string
+                                        values:
+                                          description: |-
+                                            values is an array of string values. If the operator is In or NotIn,
+                                            the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                                            the values array must be empty. This array is replaced during a strategic
+                                            merge patch.
+                                          items:
+                                            type: string
+                                          type: array
+                                          x-kubernetes-list-type: atomic
+                                      required:
+                                      - key
+                                      - operator
+                                      type: object
+                                    type: array
+                                    x-kubernetes-list-type: atomic
+                                  matchLabels:
+                                    additionalProperties:
+                                      type: string
+                                    description: |-
+                                      matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                                      map is equivalent to an element of matchExpressions, whose key field is "key", the
+                                      operator is "In", and the values array contains only "value". The requirements are ANDed.
+                                    type: object
+                                type: object
+                                x-kubernetes-map-type: atomic
+                            type: object
+                          type: array
+                          x-kubernetes-list-type: atomic
+                      type: object
+                    maxItems: 16
+                    type: array
+                  identityProviderCIDRs:
+                    description: |-
+                      The identity provider's addresses (CIDRs), for pgAdmin's server-side
+                      OAuth2 calls. Without them the generated rule allows port 443 to any
+                      address, and PgAdminEgressConfined says so.
+                    items:
+                      maxLength: 49
+                      pattern: ^[0-9a-fA-F:.]+/[0-9]{1,3}$
+                      type: string
+                    maxItems: 16
+                    type: array
+                  ingressFrom:
+                    description: |-
+                      Who may reach pgAdmin's port. Empty: any source (the router or
+                      ingress controller of the exposure lives in a namespace only the
+                      admin knows).
+                    items:
+                      description: |-
+                        NetworkPolicyPeer describes a peer to allow traffic to/from. Only certain combinations of
+                        fields are allowed
+                      properties:
+                        ipBlock:
+                          description: |-
+                            ipBlock defines policy on a particular IPBlock. If this field is set then
+                            neither of the other fields can be.
+                          properties:
+                            cidr:
+                              description: |-
+                                cidr is a string representing the IPBlock
+                                Valid examples are "192.168.1.0/24" or "2001:db8::/64"
+                              type: string
+                            except:
+                              description: |-
+                                except is a slice of CIDRs that should not be included within an IPBlock
+                                Valid examples are "192.168.1.0/24" or "2001:db8::/64"
+                                Except values will be rejected if they are outside the cidr range
+                              items:
+                                type: string
+                              type: array
+                              x-kubernetes-list-type: atomic
+                          required:
+                          - cidr
+                          type: object
+                        namespaceSelector:
+                          description: |-
+                            namespaceSelector selects namespaces using cluster-scoped labels. This field follows
+                            standard label selector semantics; if present but empty, it selects all namespaces.
+
+                            If podSelector is also set, then the NetworkPolicyPeer as a whole selects
+                            the pods matching podSelector in the namespaces selected by namespaceSelector.
+                            Otherwise it selects all pods in the namespaces selected by namespaceSelector.
+                          properties:
+                            matchExpressions:
+                              description: matchExpressions is a list of label selector
+                                requirements. The requirements are ANDed.
+                              items:
+                                description: |-
+                                  A label selector requirement is a selector that contains values, a key, and an operator that
+                                  relates the key and values.
+                                properties:
+                                  key:
+                                    description: key is the label key that the selector
+                                      applies to.
+                                    type: string
+                                  operator:
+                                    description: |-
+                                      operator represents a key's relationship to a set of values.
+                                      Valid operators are In, NotIn, Exists and DoesNotExist.
+                                    type: string
+                                  values:
+                                    description: |-
+                                      values is an array of string values. If the operator is In or NotIn,
+                                      the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                                      the values array must be empty. This array is replaced during a strategic
+                                      merge patch.
+                                    items:
+                                      type: string
+                                    type: array
+                                    x-kubernetes-list-type: atomic
+                                required:
+                                - key
+                                - operator
+                                type: object
+                              type: array
+                              x-kubernetes-list-type: atomic
+                            matchLabels:
+                              additionalProperties:
+                                type: string
+                              description: |-
+                                matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                                map is equivalent to an element of matchExpressions, whose key field is "key", the
+                                operator is "In", and the values array contains only "value". The requirements are ANDed.
+                              type: object
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        podSelector:
+                          description: |-
+                            podSelector is a label selector which selects pods. This field follows standard label
+                            selector semantics; if present but empty, it selects all pods.
+
+                            If namespaceSelector is also set, then the NetworkPolicyPeer as a whole selects
+                            the pods matching podSelector in the Namespaces selected by NamespaceSelector.
+                            Otherwise it selects the pods matching podSelector in the policy's own namespace.
+                          properties:
+                            matchExpressions:
+                              description: matchExpressions is a list of label selector
+                                requirements. The requirements are ANDed.
+                              items:
+                                description: |-
+                                  A label selector requirement is a selector that contains values, a key, and an operator that
+                                  relates the key and values.
+                                properties:
+                                  key:
+                                    description: key is the label key that the selector
+                                      applies to.
+                                    type: string
+                                  operator:
+                                    description: |-
+                                      operator represents a key's relationship to a set of values.
+                                      Valid operators are In, NotIn, Exists and DoesNotExist.
+                                    type: string
+                                  values:
+                                    description: |-
+                                      values is an array of string values. If the operator is In or NotIn,
+                                      the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                                      the values array must be empty. This array is replaced during a strategic
+                                      merge patch.
+                                    items:
+                                      type: string
+                                    type: array
+                                    x-kubernetes-list-type: atomic
+                                required:
+                                - key
+                                - operator
+                                type: object
+                              type: array
+                              x-kubernetes-list-type: atomic
+                            matchLabels:
+                              additionalProperties:
+                                type: string
+                              description: |-
+                                matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                                map is equivalent to an element of matchExpressions, whose key field is "key", the
+                                operator is "In", and the values array contains only "value". The requirements are ANDed.
+                              type: object
+                          type: object
+                          x-kubernetes-map-type: atomic
+                      type: object
+                    maxItems: 16
+                    type: array
+                type: object
+              replicas:
+                default: 1
+                description: |-
+                  pgAdmin Pods. Above 1 only with configDatabase; the Service then keeps
+                  a client on one Pod (sessionAffinity ClientIP), and the exposure must
+                  be sticky too.
+                format: int32
+                maximum: 10
+                minimum: 1
+                type: integer
+              resources:
+                description: |-
+                  The pgAdmin container's resources. Defaults to a request of 100m CPU
+                  and 256Mi memory and a 1Gi memory limit.
+                properties:
+                  claims:
+                    description: |-
+                      Claims lists the names of resources, defined in spec.resourceClaims,
+                      that are used by this container.
+
+                      This field depends on the
+                      DynamicResourceAllocation feature gate.
+
+                      This field is immutable. It can only be set for containers.
+                    items:
+                      description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                      properties:
+                        name:
+                          description: |-
+                            Name must match the name of one entry in pod.spec.resourceClaims of
+                            the Pod where this field is used. It makes that resource available
+                            inside a container.
+                          type: string
+                        request:
+                          description: |-
+                            Request is the name chosen for a request in the referenced claim.
+                            If empty, everything from the claim is made available, otherwise
+                            only the result of this request.
+                          type: string
+                      required:
+                      - name
+                      type: object
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - name
+                    x-kubernetes-list-type: map
+                  limits:
+                    additionalProperties:
+                      anyOf:
+                      - type: integer
+                      - type: string
+                      pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                      x-kubernetes-int-or-string: true
+                    description: |-
+                      Limits describes the maximum amount of compute resources allowed.
+                      More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                    type: object
+                  requests:
+                    additionalProperties:
+                      anyOf:
+                      - type: integer
+                      - type: string
+                      pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                      x-kubernetes-int-or-string: true
+                    description: |-
+                      Requests describes the minimum amount of compute resources required.
+                      If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                      otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                      More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                    type: object
+                type: object
+              storage:
+                default: {}
+                description: |-
+                  The settings volume (pgAdmin's SQLite database and STORAGE_DIR).
+                  Unused with configDatabase: STORAGE_DIR is then per Pod and
+                  ephemeral.
+                properties:
+                  retainPolicy:
+                    default: Retain
+                    description: What happens to the volume when the PgAdmin is deleted.
+                    enum:
+                    - Retain
+                    - Delete
+                    type: string
+                  size:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: Requested size; may grow, never shrink. Defaults
+                      to 1Gi.
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                  storageClassName:
+                    description: The StorageClass; the cluster default when omitted.
+                      Immutable.
+                    maxLength: 253
+                    type: string
+                    x-kubernetes-validations:
+                    - message: storageClassName is immutable
+                      reason: FieldValueForbidden
+                      rule: self == oldSelf
+                type: object
+            required:
+            - auth
+            type: object
+            x-kubernetes-validations:
+            - message: clusterRefs and clusterSelector are mutually exclusive
+              reason: FieldValueInvalid
+              rule: '!(has(self.clusterRefs) && has(self.clusterSelector))'
+            - message: one of clusterRefs, clusterSelector and crossNamespaceClusterRefs
+                is required
+              reason: FieldValueRequired
+              rule: has(self.clusterRefs) || has(self.clusterSelector) || has(self.crossNamespaceClusterRefs)
+            - message: 'replicas above 1 need configDatabase: SQLite on a ReadWriteOnce
+                volume serves one pgAdmin'
+              reason: FieldValueForbidden
+              rule: '!has(self.replicas) || self.replicas == 1 || has(self.configDatabase)'
+            - message: 'configDatabase cannot be added to or removed from an existing
+                PgAdmin: pgAdmin''s settings do not move between SQLite and PostgreSQL
+                automatically (see the manual move in the documentation)'
+              reason: FieldValueForbidden
+              rule: has(self.configDatabase) == has(oldSelf.configDatabase)
+          status:
+            description: PgAdminStatus is the observed state of a PgAdmin.
+            properties:
+              conditions:
+                description: |-
+                  Conditions: Ready (summary of ConfigurationValid, WorkloadReady,
+                  ExposureReady and ServersSynced), Progressing, Stalled, and the
+                  advisory PgAdminEgressConfined, which never enters Ready.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                maxItems: 16
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              image:
+                description: |-
+                  The image the Ready workload runs (the resolved reference, with its
+                  digest when pinned).
+                maxLength: 512
+                type: string
+              observedGeneration:
+                description: The generation the status was computed from.
+                format: int64
+                type: integer
+              personalServerOwners:
+                description: |-
+                  The pgAdmin users the last successful registration gave personal
+                  servers (per-person DatabaseRoles); the next registration removes
+                  the managed personal servers of those no longer among them.
+                items:
+                  maxLength: 254
+                  type: string
+                maxItems: 64
+                type: array
+                x-kubernetes-list-type: set
+              pgAdminVersion:
+                description: The pgAdmin version the last registration Job reported.
+                maxLength: 32
+                type: string
+              registeredHash:
+                description: |-
+                  The hash of the offered set the last successful registration
+                  applied.
+                maxLength: 64
+                type: string
+              servers:
+                description: The servers pgAdmin offers and the credentials it does
+                  not.
+                items:
+                  description: |-
+                    PgAdminServerStatus is one server pgAdmin offers, or a credential it
+                    does not. It names the role, never a secret.
+                  properties:
+                    cluster:
+                      description: The Cluster.
+                      maxLength: 253
+                      type: string
+                    endpoint:
+                      description: The endpoint (rw, ro, r, pooler:<name>).
+                      maxLength: 70
+                      type: string
+                    message:
+                      description: Why a credential is not offered.
+                      maxLength: 256
+                      type: string
+                    pgAdminUser:
+                      description: |-
+                        The pgAdmin user a personal server belongs to; empty for a shared
+                        server.
+                      maxLength: 254
+                      type: string
+                    state:
+                      description: The registration state.
+                      enum:
+                      - Registered
+                      - Pending
+                      - NotOffered
+                      type: string
+                    user:
+                      description: The PostgreSQL role.
+                      maxLength: 128
+                      type: string
+                  required:
+                  - cluster
+                  - endpoint
+                  - state
+                  type: object
+                maxItems: 256
+                type: array
+                x-kubernetes-list-type: atomic
+              upgradeBackup:
+                description: |-
+                  The last image change the pre-upgrade backup released. It outlives
+                  the backup Job (deleted an hour after it finishes), so that a new
+                  image slow to become Ready is neither rolled back nor backed up again.
+                properties:
+                  from:
+                    description: |-
+                      The image whose settings database was backed up: the image the Ready
+                      workload ran before the change.
+                    maxLength: 512
+                    type: string
+                  hash:
+                    description: |-
+                      The hash of the change: it names the backup Job and labels the
+                      backup file.
+                    maxLength: 64
+                    type: string
+                  skipped:
+                    description: |-
+                      The backup was not taken: the skip-upgrade-backup annotation named
+                      this target.
+                    type: boolean
+                  to:
+                    description: The image the backup released.
+                    maxLength: 512
+                    type: string
+                required:
+                - from
+                - hash
+                - to
+                type: object
+              url:
+                description: |-
+                  Where pgAdmin is reached: the exposure URL, or the in-cluster
+                  Service URL for clusterIP exposure.
+                maxLength: 512
+                type: string
+            type: object
+        required:
+        - spec
+        type: object
+        x-kubernetes-validations:
+        - message: metadata.name must be a DNS-1035 label of at most 40 characters
+            (it prefixes generated object names)
+          reason: FieldValueInvalid
+          rule: size(self.metadata.name) <= 40 && self.metadata.name.matches('^[a-z]([-a-z0-9]*[a-z0-9])?$')
+    served: true
+    storage: true
+    subresources:
+      status: {}

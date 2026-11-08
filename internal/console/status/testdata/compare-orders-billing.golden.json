@@ -1,0 +1,450 @@
+{
+  "generatedAt": "2026-10-29T12:00:00Z",
+  "left": {
+    "ref": {
+      "namespace": "team-a",
+      "name": "orders",
+      "uid": "0b6a2c1e-8f0d-4a55-9a3e-7c1f2b3d4e5f"
+    },
+    "health": "ok",
+    "phase": "Cluster in healthy state",
+    "provenance": {
+      "origin": "operator",
+      "source": "Cluster",
+      "observedAt": "2026-10-29T12:00:00Z"
+    }
+  },
+  "right": {
+    "ref": {
+      "namespace": "team-a",
+      "name": "billing",
+      "uid": "4d2f1e0a-1b2c-4d3e-8f90-a1b2c3d4e5f6"
+    },
+    "health": "critical",
+    "phase": "Failing over",
+    "provenance": {
+      "origin": "operator",
+      "source": "Cluster",
+      "observedAt": "2026-10-29T12:00:00Z"
+    }
+  },
+  "sections": [
+    {
+      "id": "version",
+      "origin": "operator",
+      "source": "Cluster.status.image, pgDataImageInfo; Cluster.spec.imageName, imageCatalogRef; detected operator version",
+      "rows": [
+        {
+          "key": "PostgreSQL major",
+          "left": {
+            "state": "unknown"
+          },
+          "right": {
+            "state": "unknown"
+          },
+          "same": false
+        },
+        {
+          "key": "status.image",
+          "left": {
+            "state": "set",
+            "value": "ghcr.io/cloudnative-pg/postgresql:18.1"
+          },
+          "right": {
+            "state": "unknown"
+          },
+          "same": false
+        },
+        {
+          "key": "spec.imageName",
+          "left": {
+            "state": "unset"
+          },
+          "right": {
+            "state": "unset"
+          },
+          "same": true
+        },
+        {
+          "key": "spec.imageCatalogRef",
+          "left": {
+            "state": "unset"
+          },
+          "right": {
+            "state": "unset"
+          },
+          "same": true
+        },
+        {
+          "key": "CloudNativePG (detected)",
+          "left": {
+            "state": "set",
+            "value": "1.30.0"
+          },
+          "right": {
+            "state": "set",
+            "value": "1.30.0"
+          },
+          "same": true
+        }
+      ],
+      "differences": 2
+    },
+    {
+      "id": "instances",
+      "origin": "operator",
+      "source": "Cluster.spec, Cluster.status.readyInstances",
+      "rows": [
+        {
+          "key": "spec.instances",
+          "left": {
+            "state": "set",
+            "value": "3"
+          },
+          "right": {
+            "state": "set",
+            "value": "2"
+          },
+          "same": false
+        },
+        {
+          "key": "status.readyInstances",
+          "left": {
+            "state": "set",
+            "value": "3"
+          },
+          "right": {
+            "state": "set",
+            "value": "1"
+          },
+          "same": false
+        },
+        {
+          "key": "spec.primaryUpdateStrategy",
+          "left": {
+            "state": "unset"
+          },
+          "right": {
+            "state": "unset"
+          },
+          "same": true
+        },
+        {
+          "key": "spec.primaryUpdateMethod",
+          "left": {
+            "state": "unset"
+          },
+          "right": {
+            "state": "unset"
+          },
+          "same": true
+        },
+        {
+          "key": "spec.failoverDelay",
+          "left": {
+            "state": "unset"
+          },
+          "right": {
+            "state": "unset"
+          },
+          "same": true
+        },
+        {
+          "key": "spec.switchoverDelay",
+          "left": {
+            "state": "unset"
+          },
+          "right": {
+            "state": "unset"
+          },
+          "same": true
+        },
+        {
+          "key": "spec.replica.enabled",
+          "left": {
+            "state": "unset"
+          },
+          "right": {
+            "state": "unset"
+          },
+          "same": true
+        }
+      ],
+      "differences": 2
+    },
+    {
+      "id": "parameters",
+      "origin": "operator",
+      "source": "Cluster.spec.postgresql.parameters, shared_preload_libraries",
+      "rows": [
+        {
+          "key": "shared_preload_libraries",
+          "left": {
+            "state": "unset"
+          },
+          "right": {
+            "state": "unset"
+          },
+          "same": true
+        }
+      ],
+      "differences": 0
+    },
+    {
+      "id": "resources",
+      "origin": "operator",
+      "source": "Cluster.spec.resources (the postgres container)",
+      "rows": [
+        {
+          "key": "requests.cpu",
+          "left": {
+            "state": "unset"
+          },
+          "right": {
+            "state": "unset"
+          },
+          "same": true
+        },
+        {
+          "key": "limits.cpu",
+          "left": {
+            "state": "unset"
+          },
+          "right": {
+            "state": "unset"
+          },
+          "same": true
+        },
+        {
+          "key": "requests.memory",
+          "left": {
+            "state": "unset"
+          },
+          "right": {
+            "state": "unset"
+          },
+          "same": true
+        },
+        {
+          "key": "limits.memory",
+          "left": {
+            "state": "unset"
+          },
+          "right": {
+            "state": "unset"
+          },
+          "same": true
+        }
+      ],
+      "differences": 0
+    },
+    {
+      "id": "storage",
+      "origin": "operator",
+      "source": "Cluster.spec.storage, walStorage, tablespaces",
+      "rows": [
+        {
+          "key": "storage.size",
+          "left": {
+            "state": "unset"
+          },
+          "right": {
+            "state": "unset"
+          },
+          "same": true
+        },
+        {
+          "key": "storage.storageClass",
+          "left": {
+            "state": "unset"
+          },
+          "right": {
+            "state": "unset"
+          },
+          "same": true
+        },
+        {
+          "key": "walStorage.size",
+          "left": {
+            "state": "unset"
+          },
+          "right": {
+            "state": "unset"
+          },
+          "same": true
+        },
+        {
+          "key": "walStorage.storageClass",
+          "left": {
+            "state": "unset"
+          },
+          "right": {
+            "state": "unset"
+          },
+          "same": true
+        },
+        {
+          "key": "tablespaces",
+          "left": {
+            "state": "unset"
+          },
+          "right": {
+            "state": "unset"
+          },
+          "same": true
+        }
+      ],
+      "differences": 0
+    },
+    {
+      "id": "backup",
+      "origin": "operator",
+      "source": "Cluster.spec.backup, spec.plugins, ObjectStore.spec, ScheduledBackups",
+      "rows": [
+        {
+          "key": "method",
+          "left": {
+            "state": "set",
+            "value": "plugin barman-cloud.cloudnative-pg.io"
+          },
+          "right": {
+            "state": "set",
+            "value": "none"
+          },
+          "same": false
+        },
+        {
+          "key": "objectStore",
+          "left": {
+            "state": "set",
+            "value": "store"
+          },
+          "right": {
+            "state": "unset"
+          },
+          "same": false
+        },
+        {
+          "key": "retentionPolicy",
+          "left": {
+            "state": "unset"
+          },
+          "right": {
+            "state": "unset"
+          },
+          "same": true
+        },
+        {
+          "key": "backup.target",
+          "left": {
+            "state": "unset"
+          },
+          "right": {
+            "state": "unset"
+          },
+          "same": true
+        },
+        {
+          "key": "schedules",
+          "left": {
+            "state": "set",
+            "value": "0 0 0 * * *"
+          },
+          "right": {
+            "state": "unset"
+          },
+          "same": false
+        }
+      ],
+      "differences": 3
+    },
+    {
+      "id": "topology",
+      "origin": "operator",
+      "source": "Cluster.spec.postgresql.synchronous, spec.affinity, Poolers",
+      "rows": [
+        {
+          "key": "synchronous",
+          "left": {
+            "state": "set",
+            "value": "none"
+          },
+          "right": {
+            "state": "set",
+            "value": "none"
+          },
+          "same": true
+        },
+        {
+          "key": "affinity.enablePodAntiAffinity",
+          "left": {
+            "state": "unset"
+          },
+          "right": {
+            "state": "unset"
+          },
+          "same": true
+        },
+        {
+          "key": "affinity.podAntiAffinityType",
+          "left": {
+            "state": "unset"
+          },
+          "right": {
+            "state": "unset"
+          },
+          "same": true
+        },
+        {
+          "key": "affinity.topologyKey",
+          "left": {
+            "state": "unset"
+          },
+          "right": {
+            "state": "unset"
+          },
+          "same": true
+        },
+        {
+          "key": "affinity.nodeSelector",
+          "left": {
+            "state": "unset"
+          },
+          "right": {
+            "state": "unset"
+          },
+          "same": true
+        },
+        {
+          "key": "affinity.tolerations",
+          "left": {
+            "state": "unset"
+          },
+          "right": {
+            "state": "unset"
+          },
+          "same": true
+        },
+        {
+          "key": "poolers",
+          "left": {
+            "state": "unset"
+          },
+          "right": {
+            "state": "unset"
+          },
+          "same": true
+        }
+      ],
+      "differences": 0
+    }
+  ],
+  "differences": 7,
+  "blindSpots": [
+    {
+      "id": "compare.declared",
+      "panel": "compare",
+      "text": "Parameters and resources are what each Cluster declares; what PostgreSQL applied is not reported (a change waiting for a restart reads as applied)."
+    }
+  ]
+}

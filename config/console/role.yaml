@@ -1,0 +1,87 @@
+# Read-only, no Secret verb, no wildcard. The only ConfigMap the console can
+# read through the API is its revocation list, by name.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: pgtoolbox-console
+rules:
+- apiGroups: [postgresql.cnpg.io]
+  resources:
+  - clusters
+  - backups
+  - scheduledbackups
+  - poolers
+  - databases
+  - databaseroles
+  - publications
+  - subscriptions
+  - failoverquorums
+  - imagecatalogs
+  verbs: [get, list, watch]
+- apiGroups: [barmancloud.cnpg.io]
+  resources: [objectstores]
+  verbs: [get, list, watch]
+- apiGroups: [pgbackrest.dalibo.com]
+  resources: [stanzas]
+  verbs: [get, list, watch]
+- apiGroups: [pgbackrest.cnpg.opera.com]
+  resources: [archives]
+  verbs: [get, list, watch]
+- apiGroups: [pgtoolbox.fyannk.dev]
+  resources: [pgadmins, evidenceagents, pgaccessrequests]
+  verbs: [get, list, watch]
+- apiGroups: [""]
+  resources: [pods, persistentvolumeclaims, services]
+  verbs: [get, list, watch]
+- apiGroups: [""]
+  resources: [events, resourcequotas]
+  verbs: [list, watch]
+- apiGroups: [policy]
+  resources: [poddisruptionbudgets]
+  verbs: [get, list, watch]
+- apiGroups: [coordination.k8s.io]
+  resources: [leases]
+  verbs: [get, list, watch]
+- apiGroups: [batch]
+  resources: [jobs]
+  verbs: [get, list, watch]
+- apiGroups: [apps]
+  resources: [replicasets, deployments]
+  verbs: [get]
+- apiGroups: [""]
+  resources: [pods/log]
+  verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: pgtoolbox-console-revocations
+rules:
+- apiGroups: [""]
+  resources: [configmaps]
+  resourceNames: [pgtoolbox-console-revocations]
+  verbs: [get, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: pgtoolbox-console
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: pgtoolbox-console
+subjects:
+- kind: ServiceAccount
+  name: pgtoolbox-console
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: pgtoolbox-console-revocations
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: pgtoolbox-console-revocations
+subjects:
+- kind: ServiceAccount
+  name: pgtoolbox-console

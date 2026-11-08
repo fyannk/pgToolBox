@@ -1,0 +1,63 @@
+# The state the console's replicas share: one ConfigMap, created
+# empty, and a Role that names it and nothing else.
+suite: the shared state
+templates:
+  - templates/console/state.yaml
+  - templates/console/deployment.yaml
+release:
+  name: pgc
+  namespace: team-a
+tests:
+  - it: creates the state ConfigMap empty, its Role and its RoleBinding in the release namespace
+    template: templates/console/state.yaml
+    asserts:
+      - hasDocuments: {count: 3}
+      - documentIndex: 0
+        isKind: {of: ConfigMap}
+      - documentIndex: 0
+        equal: {path: metadata.name, value: pgc-console-state}
+      - documentIndex: 0
+        equal: {path: data, value: {}}
+      - documentIndex: 1
+        isKind: {of: Role}
+      - documentIndex: 2
+        isKind: {of: RoleBinding}
+      - equal: {path: metadata.namespace, value: team-a}
+
+  - it: grants get, watch and update on that ConfigMap by name, and nothing else
+    template: templates/console/state.yaml
+    documentIndex: 1
+    asserts:
+      - equal:
+          path: rules
+          value:
+            - apiGroups: [""]
+              resources: [configmaps]
+              resourceNames: [pgc-console-state]
+              verbs: [get, watch, update]
+
+  - it: binds it to the console's ServiceAccount only
+    template: templates/console/state.yaml
+    documentIndex: 2
+    asserts:
+      - equal: {path: roleRef, value: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: pgc-console-state}}
+      - equal: {path: subjects, value: [{kind: ServiceAccount, name: pgc-console, namespace: team-a}]}
+
+  - it: points the console at it
+    template: templates/console/deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: STATE_CONFIGMAP, value: pgc-console-state}
+
+  - it: renders nothing when rbac.create is false (the console then keeps its state per replica)
+    template: templates/console/state.yaml
+    set: {console.rbac.create: false}
+    asserts:
+      - hasDocuments: {count: 0}
+
+  - it: renders nothing when the console is disabled
+    template: templates/console/state.yaml
+    set: {console.enabled: false}
+    asserts:
+      - hasDocuments: {count: 0}

@@ -1,0 +1,103 @@
+{{- if and .Values.console.enabled .Values.console.breakGlass.enabled }}
+{{- /*
+OPTIONAL, OFF BY DEFAULT: the identity behind the token login form. A
+ServiceAccount that holds no token and automounts nothing, bound to the
+pgtoolbox-console-operator ClusterRole (roleKind: ClusterRole, the default; the pgtoolbox chart
+or config/rbac creates it) or to a namespaced Role of the same rules that this chart
+renders (roleKind: Role, for a namespace admin who installs without the operator), in
+each watched namespace, by a RoleBinding. A
+short-lived token minted with `kubectl create token` is pasted into the form; every
+action is audited as this ServiceAccount, and deleting the binding revokes it. It is
+the person's access, not the console's: the console's own Roles are untouched.
+
+The Role's rules are those of the pgtoolbox-console-operator ClusterRole
+(charts/pgtoolbox/templates/operator/user-clusterroles.yaml), in the same order;
+hack/validate-packaging.sh compares them so they cannot drift. The pgtoolbox.fyannk.dev
+rules are left out unless the operator's kinds are served (console.rbac.operatorKinds):
+Kubernetes refuses to create a Role that grants a verb its creator lacks, and a
+namespace admin holds none on kinds that are not installed.
+*/ -}}
+{{- $kind := .Values.console.breakGlass.roleKind | default "ClusterRole" }}
+{{- if not (has $kind (list "ClusterRole" "Role")) }}
+{{- fail (printf "console.breakGlass.roleKind must be ClusterRole or Role (got %v)" $kind) }}
+{{- end }}
+{{- $sa := .Values.console.breakGlass.serviceAccountName }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $sa }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "pgtools.console.labels" . | nindent 4 }}
+automountServiceAccountToken: false
+{{- range $ns := include "pgtools.console.watchNamespaces" . | fromJsonArray }}
+{{- if eq $kind "Role" }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $sa }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "pgtools.console.labels" $ | nindent 4 }}
+rules:
+  - apiGroups: [postgresql.cnpg.io]
+    resources: [backups, clusters, databaseroles, databases, failoverquorums, imagecatalogs, poolers, publications, scheduledbackups, subscriptions]
+    verbs: [get, list, watch]
+  - apiGroups: [postgresql.cnpg.io]
+    resources: [backups]
+    verbs: [create]
+  - apiGroups: [postgresql.cnpg.io]
+    resources: [databaseroles]
+    verbs: [create]
+  - apiGroups: [postgresql.cnpg.io]
+    resources: [clusters, clusters/status]
+    verbs: [patch]
+  {{- if include "pgtools.console.operatorKinds" $ }}
+  - apiGroups: [pgtoolbox.fyannk.dev]
+    resources: [pgadmins]
+    verbs: [get]
+  - apiGroups: [pgtoolbox.fyannk.dev]
+    resources: [pgaccessrequests]
+    verbs: [create, get, list, watch]
+  - apiGroups: [pgtoolbox.fyannk.dev]
+    resources: [pgaccessrequests/status]
+    verbs: [update]
+  {{- end }}
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [rolebindings]
+    verbs: [create]
+  - apiGroups: [barmancloud.cnpg.io]
+    resources: [objectstores]
+    verbs: [get, list, watch]
+  - apiGroups: [pgbackrest.dalibo.com]
+    resources: [stanzas]
+    verbs: [get, list, watch]
+  - apiGroups: [pgbackrest.cnpg.opera.com]
+    resources: [archives]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [events, persistentvolumeclaims, pods, services]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [pods/log]
+    verbs: [get]
+{{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $sa }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "pgtools.console.labels" $ | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: {{ $kind }}
+  name: {{ if eq $kind "Role" }}{{ $sa }}{{ else }}pgtoolbox-console-operator{{ end }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $sa }}
+    namespace: {{ $.Release.Namespace }}
+{{- end }}
+{{- end }}

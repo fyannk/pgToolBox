@@ -1,0 +1,336 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.23.0
+  name: pgaccessrequests.pgtoolbox.fyannk.dev
+spec:
+  group: pgtoolbox.fyannk.dev
+  names:
+    categories:
+    - pgtoolbox
+    kind: PgAccessRequest
+    listKind: PgAccessRequestList
+    plural: pgaccessrequests
+    shortNames:
+    - pgar
+    singular: pgaccessrequest
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.subject.name
+      name: Subject
+      type: string
+    - jsonPath: .spec.capability
+      name: Capability
+      type: string
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .spec.cluster
+      name: Cluster
+      priority: 1
+      type: string
+    - jsonPath: .status.decidedBy
+      name: Decided-By
+      priority: 1
+      type: string
+    - jsonPath: .spec.expiresAt
+      name: Expires
+      type: date
+    - jsonPath: .status.conditions[?(@.type=="Ready")].status
+      name: Ready
+      priority: 1
+      type: string
+    - jsonPath: .status.conditions[?(@.type=="Ready")].reason
+      name: Reason
+      priority: 1
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          PgAccessRequest asks for one of the console's two ClusterRoles
+          (pgtoolbox-console-viewer, pgtoolbox-console-operator) in this namespace. Whoever may
+          create RoleBindings here and update the request's status approves it
+          through the console, which creates the RoleBinding with the approver's own
+          token; the operator deletes it when the request expires, is revoked or is
+          deleted.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              PgAccessRequestSpec is a request for access to the CloudNativePG
+              Clusters of this namespace through the console. A request is immutable:
+              to change it, make a new one.
+            properties:
+              capability:
+                description: The capability requested.
+                enum:
+                - viewer
+                - operator
+                type: string
+              cluster:
+                description: |-
+                  The Cluster, in this namespace, the access is wanted for. Empty: every
+                  Cluster of the namespace. Informative only: a RoleBinding cannot be
+                  narrowed to one Cluster, so an approved request grants the
+                  capability on every Cluster of the namespace, and its status says so.
+                maxLength: 253
+                pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                type: string
+              expiresAt:
+                description: |-
+                  When the access ends. The operator deletes the RoleBinding at this
+                  time and marks the request Expired; a Pending request past it can no
+                  longer be approved. Omitted: until revoked.
+                format: date-time
+                type: string
+              justification:
+                description: Why the access is needed; shown to whoever decides.
+                maxLength: 1024
+                minLength: 1
+                type: string
+              subject:
+                description: Who the access is for.
+                properties:
+                  kind:
+                    description: The subject's kind.
+                    enum:
+                    - User
+                    - Group
+                    - ServiceAccount
+                    type: string
+                  name:
+                    description: |-
+                      The subject's name as the API server sees it: a username (with its
+                      OIDC prefix, if the API server adds one), a group, or a
+                      ServiceAccount name in this namespace.
+                    maxLength: 512
+                    minLength: 1
+                    pattern: ^[^\x00-\x1f\x7f]+$
+                    type: string
+                required:
+                - kind
+                - name
+                type: object
+                x-kubernetes-validations:
+                - fieldPath: .name
+                  message: a ServiceAccount subject is the name of a ServiceAccount
+                    in the request's namespace (a DNS subdomain)
+                  reason: FieldValueInvalid
+                  rule: self.kind != 'ServiceAccount' || (size(self.name) <= 253 &&
+                    self.name.matches('^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$'))
+                - fieldPath: .name
+                  message: 'system: users and groups cannot be granted access through
+                    a request (system:authenticated would grant everyone); name a
+                    person, a group or a ServiceAccount'
+                  reason: FieldValueForbidden
+                  rule: self.kind == 'ServiceAccount' || !self.name.startsWith('system:')
+            required:
+            - capability
+            - justification
+            - subject
+            type: object
+            x-kubernetes-validations:
+            - message: a PgAccessRequest cannot be changed once made; create a new
+                one
+              reason: FieldValueForbidden
+              rule: self == oldSelf
+          status:
+            description: |-
+              PgAccessRequestStatus is the decision and its effect. The decision
+              fields are written by the deciding person (through the console, with
+              their own token: the API server records who wrote them); the conditions
+              by the operator.
+            properties:
+              clusterRole:
+                description: The ClusterRole the RoleBinding references.
+                maxLength: 253
+                type: string
+              conditions:
+                description: |-
+                  Conditions: Ready (summary), ConfigurationValid, RoleBindingSynced,
+                  Progressing and Stalled.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                maxItems: 16
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              decidedAt:
+                description: When the request was approved or denied.
+                format: date-time
+                type: string
+              decidedBy:
+                description: |-
+                  The username of the person who approved or denied the request, as
+                  the API server named them when the console asked.
+                maxLength: 512
+                type: string
+              grantedScope:
+                description: |-
+                  How far the grant reaches: always Namespace, since a RoleBinding
+                  cannot be narrowed to one Cluster, even when spec.cluster names one.
+                enum:
+                - Namespace
+                type: string
+              note:
+                description: |-
+                  The decider's note: why it was denied (required), approved or
+                  revoked; or the operator's explanation of a revocation.
+                maxLength: 1024
+                type: string
+              observedGeneration:
+                description: The generation the conditions were computed from.
+                format: int64
+                type: integer
+              phase:
+                description: |-
+                  Where the request stands. Empty until the operator or a decision
+                  first writes it.
+                enum:
+                - Pending
+                - Approved
+                - Denied
+                - Expired
+                - Revoked
+                type: string
+              revokedAt:
+                description: When the grant was revoked.
+                format: date-time
+                type: string
+              revokedBy:
+                description: |-
+                  The username of the person who revoked the grant, or
+                  "pgtoolbox-operator" when the operator revoked a self-approval.
+                maxLength: 512
+                type: string
+              roleBinding:
+                description: The RoleBinding of an approved request, in this namespace.
+                maxLength: 253
+                type: string
+            type: object
+            x-kubernetes-validations:
+            - fieldPath: .phase
+              message: phase moves only Pending to Approved, Denied or Expired, and
+                Approved to Revoked or Expired
+              reason: FieldValueForbidden
+              rule: '!has(oldSelf.phase) || oldSelf.phase == self.phase || (oldSelf.phase
+                == ''Pending'' && self.phase in [''Approved'', ''Denied'', ''Expired''])
+                || (oldSelf.phase == ''Approved'' && self.phase in [''Revoked'', ''Expired''])'
+            - fieldPath: .decidedBy
+              message: decidedBy cannot change once recorded
+              reason: FieldValueForbidden
+              rule: '!has(oldSelf.decidedBy) || (has(self.decidedBy) && self.decidedBy
+                == oldSelf.decidedBy)'
+            - fieldPath: .roleBinding
+              message: roleBinding cannot change once recorded
+              reason: FieldValueForbidden
+              rule: '!has(oldSelf.roleBinding) || (has(self.roleBinding) && self.roleBinding
+                == oldSelf.roleBinding)'
+            - fieldPath: .decidedBy
+              message: an Approved or Denied request records decidedBy and decidedAt
+              reason: FieldValueRequired
+              rule: '!has(self.phase) || !(self.phase in [''Approved'', ''Denied''])
+                || (has(self.decidedBy) && has(self.decidedAt))'
+            - fieldPath: .roleBinding
+              message: an Approved request records its roleBinding and clusterRole
+              reason: FieldValueRequired
+              rule: '!has(self.phase) || self.phase != ''Approved'' || (has(self.roleBinding)
+                && has(self.clusterRole))'
+            - fieldPath: .note
+              message: a Denied request records why in note
+              reason: FieldValueRequired
+              rule: '!has(self.phase) || self.phase != ''Denied'' || (has(self.note)
+                && size(self.note) > 0)'
+            - fieldPath: .revokedBy
+              message: a Revoked request records revokedBy and revokedAt
+              reason: FieldValueRequired
+              rule: '!has(self.phase) || self.phase != ''Revoked'' || (has(self.revokedBy)
+                && has(self.revokedAt))'
+        required:
+        - spec
+        type: object
+        x-kubernetes-validations:
+        - message: metadata.name must be a DNS-1123 label of at most 63 characters
+            (it names the RoleBinding and labels it)
+          reason: FieldValueInvalid
+          rule: size(self.metadata.name) <= 63 && self.metadata.name.matches('^[a-z0-9]([-a-z0-9]*[a-z0-9])?$')
+    served: true
+    storage: true
+    subresources:
+      status: {}

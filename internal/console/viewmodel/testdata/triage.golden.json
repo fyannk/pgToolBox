@@ -1,0 +1,36 @@
+{
+  "ref": {
+    "namespace": "team-a",
+    "name": "billing",
+    "uid": "4d2f1e0a-1b2c-4d3e-8f90-a1b2c3d4e5f6"
+  },
+  "runAt": "2026-10-29T11:59:45Z",
+  "playbooks": [
+    {
+      "id": "primary-unavailable",
+      "symptom": "Applications cannot write",
+      "upstream": "https://cloudnative-pg.io/documentation/current/failover/",
+      "startAt": 1,
+      "steps": [
+        {
+          "question": "Does the cluster exist?",
+          "outcome": "ruledOut",
+          "explain": "Cluster/billing is present."
+        },
+        {
+          "question": "Is the primary pod running?",
+          "outcome": "found",
+          "yourself": "kubectl get pod -n team-a billing-1 -o wide",
+          "findings": [
+            "pod-crashloop/billing-1"
+          ]
+        },
+        {
+          "question": "Is a failover quorum reached?",
+          "outcome": "unknown",
+          "because": "failoverquorums.postgresql.cnpg.io is not served by this cluster"
+        }
+      ]
+    }
+  ]
+}

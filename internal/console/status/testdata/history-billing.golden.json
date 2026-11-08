@@ -1,0 +1,24 @@
+{
+  "ref": {
+    "namespace": "team-a",
+    "name": "billing",
+    "uid": "4d2f1e0a-1b2c-4d3e-8f90-a1b2c3d4e5f6"
+  },
+  "generatedAt": "2026-10-29T12:00:00Z",
+  "source": {
+    "source": "history",
+    "state": "live",
+    "health": "ok"
+  },
+  "persistent": false,
+  "items": [
+    {
+      "seq": 1,
+      "kind": "Cluster",
+      "name": "billing",
+      "change": "first-observed",
+      "observedAt": "2026-10-29T11:00:00Z",
+      "hasManifest": true
+    }
+  ]
+}

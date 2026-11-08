@@ -1,0 +1,58 @@
+{
+  "healthOrder": [
+    "info",
+    "ok",
+    "inactive",
+    "progressing",
+    "unknown",
+    "warning",
+    "critical"
+  ],
+  "sourceStates": [
+    {
+      "state": "live",
+      "health": "ok"
+    },
+    {
+      "state": "pending",
+      "health": "progressing"
+    },
+    {
+      "state": "stale",
+      "health": "unknown"
+    },
+    {
+      "state": "unavailable",
+      "health": "warning"
+    },
+    {
+      "state": "forbidden",
+      "health": "warning"
+    },
+    {
+      "state": "notInstalled",
+      "health": "info"
+    },
+    {
+      "state": "disabled",
+      "health": "inactive"
+    }
+  ],
+  "sections": [
+    "",
+    "instances",
+    "events",
+    "diagnostics",
+    "triage",
+    "replication",
+    "backups",
+    "storage",
+    "objects",
+    "history",
+    "metrics",
+    "operations",
+    "logs",
+    "insight"
+  ]
+}
+

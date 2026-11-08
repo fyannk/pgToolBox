@@ -1,0 +1,478 @@
+{
+  "Stanza": "demo",
+  "ArchiveStanza": "demo",
+  "State": "healthy",
+  "Reason": "a recovery window exists and every check passed",
+  "BackupInfo": {
+    "Used": "main",
+    "Main": {
+      "Key": "backup/demo/backup.info",
+      "Present": true,
+      "Problem": "",
+      "Checksum": "807fec109d31dfd4cc598af24412ebf19159ee19",
+      "Encrypted": false,
+      "Format": 5
+    },
+    "Copy": {
+      "Key": "backup/demo/backup.info.copy",
+      "Present": true,
+      "Problem": "",
+      "Checksum": "807fec109d31dfd4cc598af24412ebf19159ee19",
+      "Encrypted": false,
+      "Format": 5
+    },
+    "Agree": true
+  },
+  "ArchiveInfo": {
+    "Used": "main",
+    "Main": {
+      "Key": "archive/demo/archive.info",
+      "Present": true,
+      "Problem": "",
+      "Checksum": "829d255548cf1b99f090d3d6a1ff3404917841f1",
+      "Encrypted": false,
+      "Format": 5
+    },
+    "Copy": {
+      "Key": "archive/demo/archive.info.copy",
+      "Present": true,
+      "Problem": "",
+      "Checksum": "829d255548cf1b99f090d3d6a1ff3404917841f1",
+      "Encrypted": false,
+      "Format": 5
+    },
+    "Agree": true
+  },
+  "Encrypted": false,
+  "Database": {
+    "ID": 1,
+    "SystemID": 7705338956479107096,
+    "Version": "17",
+    "VersionNumber": 170000,
+    "CatalogVersion": 202406281,
+    "ControlVersion": 1700
+  },
+  "ArchiveIDs": [
+    "17-1"
+  ],
+  "SegmentSize": 16777216,
+  "SegmentSizeSource": "backup-lsn",
+  "Backups": [
+    {
+      "Backup": {
+        "Label": "20261107-081046F",
+        "Type": "full",
+        "Prior": "",
+        "Reference": null,
+        "ArchiveStart": "000000010000000000000003",
+        "ArchiveStop": "000000010000000000000004",
+        "LSNStart": "0/3000028",
+        "LSNStop": "0/4000050",
+        "TimestampStart": "2026-11-07T08:10:46Z",
+        "TimestampStop": "2026-11-07T08:10:54Z",
+        "Error": false,
+        "BackrestFormat": 5,
+        "BackrestVersion": "2.60.0",
+        "DBID": 1,
+        "Size": 23839822,
+        "SizeDelta": 23839822,
+        "RepoSize": 3258062,
+        "RepoSizeDelta": 3258062,
+        "RepoSizeMap": null,
+        "RepoSizeMapDelta": null,
+        "Annotations": {
+          "cnpg-backup-name": "fixture-repo1-full"
+        },
+        "AnnotationsWithheld": 0,
+        "OptionArchiveCheck": true,
+        "OptionArchiveCopy": false,
+        "OptionBackupStandby": false,
+        "OptionChecksumPage": false,
+        "OptionCompress": true,
+        "OptionHardlink": false,
+        "OptionOnline": true
+      },
+      "ArchiveID": "17-1",
+      "ChainState": "healthy",
+      "ChainReason": "prior and references are present and consistent",
+      "Manifest": {
+        "Inspected": true,
+        "State": "healthy",
+        "Reason": "manifest verifies and agrees with backup.info",
+        "Pair": {
+          "Used": "main",
+          "Main": {
+            "Key": "backup/demo/20261107-081046F/backup.manifest",
+            "Present": true,
+            "Problem": "",
+            "Checksum": "e608a3deb5d8ed45364046b6bb3c9af8934984ba",
+            "Encrypted": false,
+            "Format": 5
+          },
+          "Copy": {
+            "Key": "backup/demo/20261107-081046F/backup.manifest.copy",
+            "Present": true,
+            "Problem": "",
+            "Checksum": "e608a3deb5d8ed45364046b6bb3c9af8934984ba",
+            "Encrypted": false,
+            "Format": 5
+          },
+          "Agree": true
+        },
+        "Mismatch": ""
+      },
+      "Path": {
+        "State": "healthy",
+        "Reason": "WAL is contiguous from the backup to the newest segment of the target timeline",
+        "Stop": "frontier",
+        "TargetTimeline": 2,
+        "Timelines": [
+          1,
+          2
+        ],
+        "StartWAL": "000000010000000000000003",
+        "ConsistentWAL": "000000010000000000000004",
+        "Consistent": true,
+        "FrontierTimeline": 2,
+        "FrontierWAL": "000000020000000000000014",
+        "FrontierPosition": 20,
+        "FrontierReceipt": "2026-11-07T08:11:21Z",
+        "OffTarget": false
+      },
+      "Usable": true
+    },
+    {
+      "Backup": {
+        "Label": "20261107-081046F_20261107-081101D",
+        "Type": "diff",
+        "Prior": "20261107-081046F",
+        "Reference": [
+          "20261107-081046F"
+        ],
+        "ArchiveStart": "000000010000000000000008",
+        "ArchiveStop": "000000010000000000000009",
+        "LSNStart": "0/8000028",
+        "LSNStop": "0/9000050",
+        "TimestampStart": "2026-11-07T08:11:01Z",
+        "TimestampStop": "2026-11-07T08:11:03Z",
+        "Error": false,
+        "BackrestFormat": 5,
+        "BackrestVersion": "2.60.0",
+        "DBID": 1,
+        "Size": 24519758,
+        "SizeDelta": 1384706,
+        "RepoSize": 3531501,
+        "RepoSizeDelta": 547818,
+        "RepoSizeMap": null,
+        "RepoSizeMapDelta": null,
+        "Annotations": {
+          "cnpg-backup-name": "fixture-repo1-diff"
+        },
+        "AnnotationsWithheld": 0,
+        "OptionArchiveCheck": true,
+        "OptionArchiveCopy": false,
+        "OptionBackupStandby": false,
+        "OptionChecksumPage": false,
+        "OptionCompress": true,
+        "OptionHardlink": false,
+        "OptionOnline": true
+      },
+      "ArchiveID": "17-1",
+      "ChainState": "healthy",
+      "ChainReason": "prior and references are present and consistent",
+      "Manifest": {
+        "Inspected": true,
+        "State": "healthy",
+        "Reason": "manifest verifies and agrees with backup.info",
+        "Pair": {
+          "Used": "main",
+          "Main": {
+            "Key": "backup/demo/20261107-081046F_20261107-081101D/backup.manifest",
+            "Present": true,
+            "Problem": "",
+            "Checksum": "89094ee9321a4b79b40d8fd6e9d20ceeed403fb8",
+            "Encrypted": false,
+            "Format": 5
+          },
+          "Copy": {
+            "Key": "backup/demo/20261107-081046F_20261107-081101D/backup.manifest.copy",
+            "Present": true,
+            "Problem": "",
+            "Checksum": "89094ee9321a4b79b40d8fd6e9d20ceeed403fb8",
+            "Encrypted": false,
+            "Format": 5
+          },
+          "Agree": true
+        },
+        "Mismatch": ""
+      },
+      "Path": {
+        "State": "healthy",
+        "Reason": "WAL is contiguous from the backup to the newest segment of the target timeline",
+        "Stop": "frontier",
+        "TargetTimeline": 2,
+        "Timelines": [
+          1,
+          2
+        ],
+        "StartWAL": "000000010000000000000008",
+        "ConsistentWAL": "000000010000000000000009",
+        "Consistent": true,
+        "FrontierTimeline": 2,
+        "FrontierWAL": "000000020000000000000014",
+        "FrontierPosition": 20,
+        "FrontierReceipt": "2026-11-07T08:11:21Z",
+        "OffTarget": false
+      },
+      "Usable": true
+    },
+    {
+      "Backup": {
+        "Label": "20261107-081046F_20261107-081105I",
+        "Type": "incr",
+        "Prior": "20261107-081046F_20261107-081101D",
+        "Reference": [
+          "20261107-081046F",
+          "20261107-081046F_20261107-081101D"
+        ],
+        "ArchiveStart": "00000001000000000000000D",
+        "ArchiveStop": "00000001000000000000000E",
+        "LSNStart": "0/D000028",
+        "LSNStop": "0/E000050",
+        "TimestampStart": "2026-11-07T08:11:05Z",
+        "TimestampStop": "2026-11-07T08:11:07Z",
+        "Error": false,
+        "BackrestFormat": 5,
+        "BackrestVersion": "2.60.0",
+        "DBID": 1,
+        "Size": 25199693,
+        "SizeDelta": 2064641,
+        "RepoSize": 3805240,
+        "RepoSizeDelta": 821557,
+        "RepoSizeMap": null,
+        "RepoSizeMapDelta": null,
+        "Annotations": {
+          "cnpg-backup-name": "fixture-repo1-incr-tl1"
+        },
+        "AnnotationsWithheld": 0,
+        "OptionArchiveCheck": true,
+        "OptionArchiveCopy": false,
+        "OptionBackupStandby": false,
+        "OptionChecksumPage": false,
+        "OptionCompress": true,
+        "OptionHardlink": false,
+        "OptionOnline": true
+      },
+      "ArchiveID": "17-1",
+      "ChainState": "healthy",
+      "ChainReason": "prior and references are present and consistent",
+      "Manifest": {
+        "Inspected": true,
+        "State": "healthy",
+        "Reason": "manifest verifies and agrees with backup.info",
+        "Pair": {
+          "Used": "main",
+          "Main": {
+            "Key": "backup/demo/20261107-081046F_20261107-081105I/backup.manifest",
+            "Present": true,
+            "Problem": "",
+            "Checksum": "614374cc16d39dea3e6326be2f452cb4419cf66d",
+            "Encrypted": false,
+            "Format": 5
+          },
+          "Copy": {
+            "Key": "backup/demo/20261107-081046F_20261107-081105I/backup.manifest.copy",
+            "Present": true,
+            "Problem": "",
+            "Checksum": "614374cc16d39dea3e6326be2f452cb4419cf66d",
+            "Encrypted": false,
+            "Format": 5
+          },
+          "Agree": true
+        },
+        "Mismatch": ""
+      },
+      "Path": {
+        "State": "healthy",
+        "Reason": "WAL is contiguous from the backup to the newest segment of the target timeline",
+        "Stop": "frontier",
+        "TargetTimeline": 2,
+        "Timelines": [
+          1,
+          2
+        ],
+        "StartWAL": "00000001000000000000000D",
+        "ConsistentWAL": "00000001000000000000000E",
+        "Consistent": true,
+        "FrontierTimeline": 2,
+        "FrontierWAL": "000000020000000000000014",
+        "FrontierPosition": 20,
+        "FrontierReceipt": "2026-11-07T08:11:21Z",
+        "OffTarget": false
+      },
+      "Usable": true
+    },
+    {
+      "Backup": {
+        "Label": "20261107-081046F_20261107-081114I",
+        "Type": "incr",
+        "Prior": "20261107-081046F_20261107-081105I",
+        "Reference": [
+          "20261107-081046F",
+          "20261107-081046F_20261107-081101D",
+          "20261107-081046F_20261107-081105I"
+        ],
+        "ArchiveStart": "00000002000000000000000F",
+        "ArchiveStop": "000000020000000000000010",
+        "LSNStart": "0/F000028",
+        "LSNStop": "0/10000050",
+        "TimestampStart": "2026-11-07T08:11:14Z",
+        "TimestampStop": "2026-11-07T08:11:17Z",
+        "Error": false,
+        "BackrestFormat": 5,
+        "BackrestVersion": "2.60.0",
+        "DBID": 1,
+        "Size": 25888074,
+        "SizeDelta": 3351126,
+        "RepoSize": 4078851,
+        "RepoSizeDelta": 1150375,
+        "RepoSizeMap": null,
+        "RepoSizeMapDelta": null,
+        "Annotations": {
+          "cnpg-backup-name": "fixture-repo1-incr-tl2"
+        },
+        "AnnotationsWithheld": 0,
+        "OptionArchiveCheck": true,
+        "OptionArchiveCopy": false,
+        "OptionBackupStandby": false,
+        "OptionChecksumPage": false,
+        "OptionCompress": true,
+        "OptionHardlink": false,
+        "OptionOnline": true
+      },
+      "ArchiveID": "17-1",
+      "ChainState": "healthy",
+      "ChainReason": "prior and references are present and consistent",
+      "Manifest": {
+        "Inspected": true,
+        "State": "healthy",
+        "Reason": "manifest verifies and agrees with backup.info",
+        "Pair": {
+          "Used": "main",
+          "Main": {
+            "Key": "backup/demo/20261107-081046F_20261107-081114I/backup.manifest",
+            "Present": true,
+            "Problem": "",
+            "Checksum": "4d3f7a32601480f5f6945a86a8ea9918ecc2ce01",
+            "Encrypted": false,
+            "Format": 5
+          },
+          "Copy": {
+            "Key": "backup/demo/20261107-081046F_20261107-081114I/backup.manifest.copy",
+            "Present": true,
+            "Problem": "",
+            "Checksum": "4d3f7a32601480f5f6945a86a8ea9918ecc2ce01",
+            "Encrypted": false,
+            "Format": 5
+          },
+          "Agree": true
+        },
+        "Mismatch": ""
+      },
+      "Path": {
+        "State": "healthy",
+        "Reason": "WAL is contiguous from the backup to the newest segment of the target timeline",
+        "Stop": "frontier",
+        "TargetTimeline": 2,
+        "Timelines": [
+          2
+        ],
+        "StartWAL": "00000002000000000000000F",
+        "ConsistentWAL": "000000020000000000000010",
+        "Consistent": true,
+        "FrontierTimeline": 2,
+        "FrontierWAL": "000000020000000000000014",
+        "FrontierPosition": 20,
+        "FrontierReceipt": "2026-11-07T08:11:21Z",
+        "OffTarget": false
+      },
+      "Usable": true
+    }
+  ],
+  "WAL": [
+    {
+      "Stanza": "demo",
+      "ArchiveID": "17-1",
+      "State": "healthy",
+      "Reason": "no segment-name gaps observed within compact ranges",
+      "SegmentSize": 16777216,
+      "Counts": {
+        "Segments": 25,
+        "Partials": 0,
+        "History": 1,
+        "BackupHistory": 8,
+        "Unknown": 0,
+        "Duplicates": 0
+      },
+      "Ranges": [
+        {
+          "Timeline": 1,
+          "Start": 1,
+          "End": 18,
+          "Count": 18,
+          "First": "000000010000000000000001",
+          "Last": "000000010000000000000012",
+          "LatestReceipt": "2026-11-07T08:11:10Z",
+          "EndReceipt": "2026-11-07T08:11:10Z"
+        },
+        {
+          "Timeline": 2,
+          "Start": 14,
+          "End": 20,
+          "Count": 7,
+          "First": "00000002000000000000000E",
+          "Last": "000000020000000000000014",
+          "LatestReceipt": "2026-11-07T08:11:21Z",
+          "EndReceipt": "2026-11-07T08:11:21Z"
+        }
+      ],
+      "Gaps": [],
+      "Diagnostics": null,
+      "DiagnosticsTruncated": false,
+      "RangesTruncated": false,
+      "LatestArchiveReceipt": "2026-11-07T08:11:21Z"
+    }
+  ],
+  "Timelines": [
+    {
+      "ArchiveID": "17-1",
+      "Key": "archive/demo/17-1/00000002.history",
+      "Timeline": 2,
+      "State": "healthy",
+      "Reason": "timeline ancestry parsed",
+      "Edges": [
+        {
+          "Parent": 1,
+          "Child": 2,
+          "SwitchLSN": 234881104,
+          "SwitchPosition": 14
+        }
+      ]
+    }
+  ],
+  "Window": {
+    "OldestBackup": "20261107-081046F",
+    "Start": "2026-11-07T08:10:54Z",
+    "NewestBackup": "20261107-081046F_20261107-081114I",
+    "NewestStop": "2026-11-07T08:11:17Z",
+    "EndTimeline": 2,
+    "EndWAL": "000000020000000000000014",
+    "EndLSN": "0/15000000",
+    "EndReceipt": "2026-11-07T08:11:21Z",
+    "UsableBackups": 4,
+    "Assumptions": [
+      "the window ends at the end of the last contiguous segment; its time is the segment's upload time, not a commit time"
+    ]
+  },
+  "Findings": null
+}

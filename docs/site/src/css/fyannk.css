@@ -1,0 +1,134 @@
+/* Vendored, unmodified below this comment, from the maintainer's design
+   system fyannk/design (git@github.com:fyannk/design.git), tokens.css v0.1 at
+   commit e895b3ba6f273b156f5a5293efd4d8da5e526e01 (2026-11-01). Do not edit
+   it here: change fyannk/design and copy the file again. pgToolBox's own
+   semantic tokens (tokens.css) are mapped onto these --fy-* names.
+
+   The docs site's copy of ui/tokens/fyannk.css. The Google Fonts <link> its
+   header mentions is NOT used: IBM Plex Mono and Sans are bundled from
+   src/css/fonts, like the console's. */
+
+/*
+ * fyannk design tokens — v0.1
+ * Dark-first. Light theme via [data-theme="light"] or the OS preference.
+ * Source of truth: this file. tokens.json mirrors it for tooling.
+ *
+ * Fonts (SIL OFL, Google Fonts):
+ *   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+ */
+
+:root {
+  /* ── Primitives ─────────────────────────────────────────── */
+  /* Ink: near-black neutrals with a green bias */
+  --fy-ink-950: #040604;
+  --fy-ink-900: #090c0a;
+  --fy-ink-800: #0f1410;
+  --fy-ink-700: #1b231d;
+  --fy-ink-600: #29342b;
+
+  /* Brand greens, from the ermine mark's gradient */
+  --fy-forest: #113c00;   /* deep end of the mark */
+  --fy-moss:   #5e8a2a;
+  --fy-olive:  #858314;   /* light end of the mark */
+  --fy-lichen: #b3bf3a;   /* UI accent on dark */
+  --fy-lichen-deep: #4f6b0e; /* UI accent on light */
+
+  /* Ermine: warm off-whites (the fur) */
+  --fy-ermine-50:  #fbfaf3;
+  --fy-ermine-100: #f2f1e8;
+  --fy-ermine-200: #e6e4d6;
+  --fy-ermine-400: #9ca393;
+  --fy-ermine-500: #737b6b;
+
+  /* ── Semantic: dark (default) ───────────────────────────── */
+  color-scheme: dark;
+  --fy-bg:        var(--fy-ink-950);
+  --fy-surface:   var(--fy-ink-900);
+  --fy-raised:    var(--fy-ink-800);
+  --fy-border:    var(--fy-ink-700);
+  --fy-border-strong: var(--fy-ink-600);
+
+  --fy-text:       var(--fy-ermine-200);
+  --fy-text-muted: var(--fy-ermine-400);
+  --fy-text-faint: var(--fy-ermine-500); /* decorative / large text only (4.6:1) */
+
+  --fy-accent:      var(--fy-lichen);
+  --fy-accent-ink:  var(--fy-ink-950);   /* text on accent fills */
+  --fy-accent-soft: color-mix(in srgb, var(--fy-lichen) 14%, transparent);
+  --fy-brand:       var(--fy-olive);     /* marks, large brand surfaces */
+
+  --fy-ok:   #6cc070;
+  --fy-warn: #e3a83f;
+  --fy-crit: #ec6a55;
+  --fy-info: #62b8b0;
+
+  /* ── Type ───────────────────────────────────────────────── */
+  --fy-font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  --fy-font-sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+
+  /* Major-third scale, 16px base */
+  --fy-text-xs:  0.75rem;   /* 12 */
+  --fy-text-sm:  0.875rem;  /* 14 */
+  --fy-text-md:  1rem;      /* 16 */
+  --fy-text-lg:  1.25rem;   /* 20 */
+  --fy-text-xl:  1.5625rem; /* 25 */
+  --fy-text-2xl: 1.953rem;  /* 31 */
+  --fy-text-3xl: 2.441rem;  /* 39 */
+
+  /* ── Space (4px grid) ───────────────────────────────────── */
+  --fy-space-1: 4px;
+  --fy-space-2: 8px;
+  --fy-space-3: 12px;
+  --fy-space-4: 16px;
+  --fy-space-6: 24px;
+  --fy-space-8: 32px;
+  --fy-space-12: 48px;
+
+  /* ── Shape ──────────────────────────────────────────────── */
+  --fy-radius-sm: 2px;  /* inputs, chips */
+  --fy-radius-md: 4px;  /* cards, buttons */
+  --fy-radius-lg: 8px;  /* dialogs only */
+  --fy-border-width: 1px;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    color-scheme: light;
+    --fy-bg:        var(--fy-ermine-100);
+    --fy-surface:   var(--fy-ermine-50);
+    --fy-raised:    #ffffff;
+    --fy-border:    #d6d6c6;
+    --fy-border-strong: #b9bba8;
+    --fy-text:       #14200f;
+    --fy-text-muted: #4f5a48;
+    --fy-text-faint: #6b7563;
+    --fy-accent:      var(--fy-lichen-deep);
+    --fy-accent-ink:  var(--fy-ermine-50);
+    --fy-accent-soft: color-mix(in srgb, var(--fy-lichen-deep) 12%, transparent);
+    --fy-brand:       var(--fy-forest);
+    --fy-ok:   #2f7d36;
+    --fy-warn: #8f5a00;
+    --fy-crit: #b8371f;
+    --fy-info: #1f6f69;
+  }
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --fy-bg:        var(--fy-ermine-100);
+  --fy-surface:   var(--fy-ermine-50);
+  --fy-raised:    #ffffff;
+  --fy-border:    #d6d6c6;
+  --fy-border-strong: #b9bba8;
+  --fy-text:       #14200f;
+  --fy-text-muted: #4f5a48;
+  --fy-text-faint: #6b7563;
+  --fy-accent:      var(--fy-lichen-deep);
+  --fy-accent-ink:  var(--fy-ermine-50);
+  --fy-accent-soft: color-mix(in srgb, var(--fy-lichen-deep) 12%, transparent);
+  --fy-brand:       var(--fy-forest);
+  --fy-ok:   #2f7d36;
+  --fy-warn: #8f5a00;
+  --fy-crit: #b8371f;
+  --fy-info: #1f6f69;
+}

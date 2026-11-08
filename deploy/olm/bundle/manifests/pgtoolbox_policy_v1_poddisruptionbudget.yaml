@@ -1,0 +1,13 @@
+# Two replicas, one of them always up through a node drain.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: pgtoolbox
+  labels:
+    app.kubernetes.io/name: pgtoolbox
+spec:
+  minAvailable: 1
+  unhealthyPodEvictionPolicy: AlwaysAllow
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: pgtoolbox

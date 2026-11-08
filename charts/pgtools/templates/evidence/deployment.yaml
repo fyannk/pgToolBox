@@ -1,0 +1,222 @@
+{{- include "pgtools.evidence.validate" . }}
+{{- $e := .Values.evidence }}
+{{- $plain := eq $e.tls.mode "none" }}
+{{- $port := ternary "http" "https" $plain }}
+{{- range $agent := $e.agents }}
+{{- $ctx := dict "root" $ "agent" $agent }}
+{{- $name := include "pgtools.evidence.name" $ctx }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "pgtools.evidence.labels" $ctx | nindent 4 }}
+  annotations:
+    # AGENT_ALLOWED_SECRETS and AGENT_TOKEN_FILE name Secrets and a file; no
+    # secret value is in the environment.
+    ignore-check.kube-linter.io/env-var-secret: "the variables hold Secret names and a file path, not secret values"
+spec:
+  # One reader per repository: a second replica would double the
+  # object-store traffic for the same answer.
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      {{- include "pgtools.evidence.selectorLabels" $ctx | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "pgtools.evidence.labels" $ctx | nindent 8 }}
+        {{- /* Azure workload identity's azure.workload.identity/use, the
+        only label the schema admits. */}}
+        {{- with ($agent.workloadIdentity | default dict).podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ $agent.serviceAccountName | default $name }}
+      # The one API token is the projected volume below.
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        {{- toYaml $e.podSecurityContext | nindent 8 }}
+      {{- with $e.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: agent
+          image: {{ include "pgtools.evidence.image" $ctx | quote }}
+          imagePullPolicy: {{ $e.image.pullPolicy }}
+          env:
+            - name: RUNTIME_MODE
+              value: agent
+            # Never the node's instance metadata: the agent's AWS identity
+            # is IRSA or EKS Pod Identity, or none.
+            - name: AWS_EC2_METADATA_DISABLED
+              value: "true"
+            - name: LISTEN_ADDR
+              value: ":8443"
+            - name: AGENT_NAME
+              value: {{ $name | quote }}
+            - name: AGENT_NAMESPACE
+              value: {{ $.Release.Namespace | quote }}
+            # The console presents the shared token of evidence.token; the
+            # agent re-reads the file when the kubelet updates it.
+            - name: AGENT_AUTH
+              value: sharedtoken
+            - name: AGENT_TOKEN_FILE
+              value: /var/run/pgtools/evidence-token/token
+            # The agent resolves its repository from the Cluster, reading
+            # only the Secrets listed here (the Role grants get on them);
+            # none for workload identity.
+            - name: AGENT_RESOLVE
+              value: cluster
+            - name: CNPG_CLUSTER_NAME
+              value: {{ $agent.cluster | quote }}
+            {{- with $agent.secrets }}
+            - name: AGENT_ALLOWED_SECRETS
+              value: {{ . | uniq | join "," | quote }}
+            {{- end }}
+            {{- /* The entry's opt-ins, checked against what the Cluster's
+            configuration (written by whoever may edit it) asks for. */}}
+            {{- if $agent.allowInsecureEndpoint }}
+            - name: AGENT_ALLOW_INSECURE_ENDPOINT
+              value: "true"
+            {{- end }}
+            {{- if hasKey $agent "workloadIdentity" }}
+            - name: AGENT_WORKLOAD_IDENTITY
+              value: "true"
+            {{- end }}
+            {{- /* A Cluster backed up with pgBackRest: the repository number
+            (repo1 when unset), the CA of the endpoint, over the one the
+            plugin's object names, and the endpoint pin. */}}
+            {{- with $agent.pgbackrest }}
+            {{- with .repository }}
+            - name: AGENT_PGBACKREST_REPOSITORY
+              value: {{ . | toString | quote }}
+            {{- end }}
+            {{- with .endpointCA }}
+            - name: AGENT_PGBACKREST_ENDPOINT_CA_SECRET
+              value: {{ .name | quote }}
+            - name: AGENT_PGBACKREST_ENDPOINT_CA_KEY
+              value: {{ .key | quote }}
+            {{- end }}
+            {{- with .endpoint }}
+            - name: AGENT_PGBACKREST_ENDPOINT
+              value: {{ . | quote }}
+            {{- end }}
+            {{- end }}
+            {{- if $plain }}
+            - name: AGENT_PLAIN_HTTP
+              value: "true"
+            {{- else }}
+            - name: TLS_CERT_FILE
+              value: /var/run/pgtools/tls/tls.crt
+            - name: TLS_KEY_FILE
+              value: /var/run/pgtools/tls/tls.key
+            {{- end }}
+            {{- with $e.logLevel }}
+            - name: LOG_LEVEL
+              value: {{ . | quote }}
+            {{- end }}
+          ports:
+            - name: {{ $port }}
+              containerPort: 8443
+              protocol: TCP
+          # /healthz is unauthenticated and follows the process, not the
+          # store: stale or unknown evidence is still served, and says so.
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ $port }}
+              scheme: {{ ternary "HTTP" "HTTPS" $plain }}
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ $port }}
+              scheme: {{ ternary "HTTP" "HTTPS" $plain }}
+            periodSeconds: 20
+            timeoutSeconds: 3
+          resources:
+            {{- toYaml ($agent.resources | default $e.resources) | nindent 12 }}
+          securityContext:
+            {{- toYaml $e.securityContext | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: kube-api-access
+              mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+              readOnly: true
+            - name: evidence-token
+              mountPath: /var/run/pgtools/evidence-token
+              readOnly: true
+            {{- if not $plain }}
+            - name: tls
+              mountPath: /var/run/pgtools/tls
+              readOnly: true
+            {{- end }}
+      # Files are 0444: the platform picks the UID and there is no fsGroup,
+      # so world-readable inside the Pod is the only mode it can read; the
+      # Pod boundary is the confinement.
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
+        - name: kube-api-access
+          projected:
+            defaultMode: 0444
+            sources:
+              - serviceAccountToken:
+                  path: token
+                  expirationSeconds: 3600
+              - configMap:
+                  name: kube-root-ca.crt
+                  items:
+                    - key: ca.crt
+                      path: ca.crt
+              - downwardAPI:
+                  items:
+                    - path: namespace
+                      fieldRef:
+                        fieldPath: metadata.namespace
+        - name: evidence-token
+          secret:
+            secretName: {{ include "pgtools.evidence.tokenSecret" $ }}
+            defaultMode: 0444
+            items:
+              - key: {{ $e.token.key }}
+                path: token
+        {{- if not $plain }}
+        - name: tls
+          secret:
+            secretName: {{ printf "%s-tls" $name }}
+            defaultMode: 0444
+            items:
+              - key: tls.crt
+                path: tls.crt
+              - key: tls.key
+                path: tls.key
+        {{- end }}
+      {{- with $agent.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $agent.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $agent.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

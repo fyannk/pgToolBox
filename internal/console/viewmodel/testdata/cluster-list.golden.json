@@ -1,0 +1,213 @@
+{
+  "generatedAt": "2026-10-29T12:00:00Z",
+  "namespaces": [
+    {
+      "name": "team-a",
+      "sources": [
+        {
+          "source": "clusters",
+          "state": "live",
+          "since": "2026-10-29T09:00:00Z",
+          "health": "ok"
+        }
+      ]
+    },
+    {
+      "name": "team-a-staging",
+      "sources": [
+        {
+          "source": "clusters",
+          "state": "forbidden",
+          "since": "2026-10-29T09:00:00Z",
+          "reason": "the console ServiceAccount may not list clusters.postgresql.cnpg.io in team-a-staging",
+          "health": "warning"
+        }
+      ]
+    }
+  ],
+  "items": [
+    {
+      "ref": {
+        "namespace": "team-a",
+        "name": "billing",
+        "uid": "4d2f1e0a-1b2c-4d3e-8f90-a1b2c3d4e5f6"
+      },
+      "verdict": {
+        "health": "critical",
+        "stale": true,
+        "contributors": [
+          {
+            "id": "phase",
+            "health": "critical",
+            "label": "Phase",
+            "detail": "Failing over",
+            "provenance": {
+              "origin": "operator",
+              "source": "Cluster.status.phase",
+              "observedAt": "2026-10-29T11:59:58Z"
+            }
+          },
+          {
+            "id": "source:pods",
+            "health": "unknown",
+            "label": "Pods",
+            "detail": "stale for 4m",
+            "provenance": {
+              "origin": "kubernetes",
+              "source": "Pod",
+              "observedAt": "2026-10-29T11:56:00Z",
+              "stale": true,
+              "staleReason": "pod watch lost: connection refused"
+            },
+            "link": "instances"
+          },
+          {
+            "id": "instances",
+            "health": "warning",
+            "label": "Instances ready",
+            "detail": "1 of 2",
+            "provenance": {
+              "origin": "operator",
+              "source": "Cluster.status.readyInstances",
+              "observedAt": "2026-10-29T11:59:58Z"
+            },
+            "link": "instances"
+          }
+        ]
+      },
+      "phase": {
+        "text": "Failing over",
+        "reason": "Failing over from billing-1 to billing-2",
+        "health": "critical",
+        "known": true,
+        "since": "2026-10-29T11:58:30Z",
+        "provenance": {
+          "origin": "operator",
+          "source": "Cluster.status.phase",
+          "observedAt": "2026-10-29T11:59:58Z"
+        }
+      },
+      "primary": {
+        "current": "billing-1",
+        "target": "billing-2",
+        "state": "failover",
+        "since": "2026-10-29T11:58:25Z"
+      },
+      "instances": {
+        "desired": 2,
+        "ready": 1,
+        "reported": 2,
+        "health": "warning"
+      },
+      "backup": {
+        "health": "unknown",
+        "configured": true,
+        "provenance": {
+          "origin": "operator",
+          "source": "Backup.status",
+          "observedAt": "2026-10-29T11:59:58Z"
+        }
+      },
+      "findings": {
+        "critical": 1,
+        "high": 0,
+        "warning": 1,
+        "note": 0,
+        "unavailable": 2,
+        "runAt": "2026-10-29T11:59:45Z"
+      },
+      "version": {
+        "cnpg": "\u003e=1.30",
+        "cnpgMinor": "1.30",
+        "confidence": "inferred",
+        "detectedBy": "featureProbe"
+      },
+      "provenance": {
+        "origin": "operator",
+        "source": "Cluster",
+        "observedAt": "2026-10-29T11:59:58Z"
+      }
+    },
+    {
+      "ref": {
+        "namespace": "team-a",
+        "name": "orders",
+        "uid": "0b6a2c1e-8f0d-4a55-9a3e-7c1f2b3d4e5f"
+      },
+      "labels": {
+        "app": "orders"
+      },
+      "verdict": {
+        "health": "ok",
+        "contributors": [
+          {
+            "id": "phase",
+            "health": "ok",
+            "label": "Phase",
+            "detail": "Cluster in healthy state",
+            "provenance": {
+              "origin": "operator",
+              "source": "Cluster.status.phase",
+              "observedAt": "2026-10-29T11:59:58Z"
+            }
+          }
+        ]
+      },
+      "phase": {
+        "text": "Cluster in healthy state",
+        "health": "ok",
+        "known": true,
+        "since": "2026-10-28T10:00:00Z",
+        "provenance": {
+          "origin": "operator",
+          "source": "Cluster.status.phase",
+          "observedAt": "2026-10-29T11:59:58Z"
+        }
+      },
+      "primary": {
+        "current": "orders-1",
+        "target": "orders-1",
+        "state": "stable"
+      },
+      "instances": {
+        "desired": 3,
+        "ready": 3,
+        "reported": 3,
+        "podsReady": 3,
+        "health": "ok"
+      },
+      "backup": {
+        "health": "ok",
+        "lastCompletedAt": "2026-10-29T07:00:00Z",
+        "configured": true,
+        "pluginBased": true,
+        "provenance": {
+          "origin": "operator",
+          "source": "Backup.status",
+          "observedAt": "2026-10-29T11:59:58Z"
+        }
+      },
+      "findings": {
+        "critical": 0,
+        "high": 0,
+        "warning": 0,
+        "note": 0,
+        "unavailable": 0,
+        "runAt": "2026-10-29T11:59:40Z"
+      },
+      "version": {
+        "cnpg": "1.30.1",
+        "cnpgMinor": "1.30",
+        "confidence": "reported",
+        "detectedBy": "instanceManagerVersion",
+        "postgresMajor": 18,
+        "image": "ghcr.io/cloudnative-pg/postgresql:18.1-system-trixie"
+      },
+      "provenance": {
+        "origin": "operator",
+        "source": "Cluster",
+        "observedAt": "2026-10-29T11:59:58Z"
+      }
+    }
+  ]
+}

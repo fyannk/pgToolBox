@@ -1,0 +1,284 @@
+{
+  "minor": "1.31",
+  "phases": [
+    {
+      "phase": "Switchover in progress",
+      "class": "progressing",
+      "kubectl": "red",
+      "since": "1.30",
+      "source": "api/v1/cluster_types.go PhaseSwitchover (v1.30.0:699, main:710)",
+      "reading": {
+        "class": "progressing",
+        "known": true
+      }
+    },
+    {
+      "phase": "Failing over",
+      "class": "critical",
+      "kubectl": "red",
+      "since": "1.30",
+      "source": "api/v1/cluster_types.go PhaseFailOver (v1.30.0:702, main:713)",
+      "reading": {
+        "class": "critical",
+        "known": true
+      }
+    },
+    {
+      "phase": "Setting up primary",
+      "class": "progressing",
+      "kubectl": "green",
+      "since": "1.30",
+      "source": "api/v1/cluster_types.go PhaseFirstPrimary (v1.30.0:705, main:716)",
+      "reading": {
+        "class": "progressing",
+        "known": true
+      }
+    },
+    {
+      "phase": "Creating a new replica",
+      "class": "progressing",
+      "kubectl": "green",
+      "since": "1.30",
+      "source": "api/v1/cluster_types.go PhaseCreatingReplica (v1.30.0:708, main:719)",
+      "reading": {
+        "class": "progressing",
+        "known": true
+      }
+    },
+    {
+      "phase": "Upgrading cluster",
+      "class": "progressing",
+      "kubectl": "yellow",
+      "since": "1.30",
+      "source": "api/v1/cluster_types.go PhaseUpgrade (v1.30.0:711, main:722)",
+      "reading": {
+        "class": "progressing",
+        "known": true
+      }
+    },
+    {
+      "phase": "Upgrading Postgres major version",
+      "class": "progressing",
+      "kubectl": "red",
+      "since": "1.30",
+      "source": "api/v1/cluster_types.go PhaseMajorUpgrade (v1.30.0:714, main:725)",
+      "reading": {
+        "class": "progressing",
+        "known": true
+      }
+    },
+    {
+      "phase": "Cluster upgrade delayed",
+      "class": "warning",
+      "kubectl": "red",
+      "since": "1.30",
+      "source": "api/v1/cluster_types.go PhaseUpgradeDelayed (v1.30.0:718, main:729)",
+      "reading": {
+        "class": "warning",
+        "known": true
+      }
+    },
+    {
+      "phase": "Waiting for user action",
+      "class": "warning",
+      "kubectl": "yellow",
+      "since": "1.30",
+      "source": "api/v1/cluster_types.go PhaseWaitingForUser (v1.30.0:721, main:732)",
+      "reading": {
+        "class": "warning",
+        "known": true
+      }
+    },
+    {
+      "phase": "Primary instance is being restarted in-place",
+      "class": "progressing",
+      "kubectl": "red",
+      "since": "1.30",
+      "source": "api/v1/cluster_types.go PhaseInplacePrimaryRestart (v1.30.0:724, main:735)",
+      "reading": {
+        "class": "progressing",
+        "known": true
+      }
+    },
+    {
+      "phase": "Primary instance is being restarted without a switchover",
+      "class": "progressing",
+      "kubectl": "red",
+      "since": "1.30",
+      "source": "api/v1/cluster_types.go PhaseInplaceDeletePrimaryRestart (v1.30.0:727, main:738)",
+      "reading": {
+        "class": "progressing",
+        "known": true
+      }
+    },
+    {
+      "phase": "Cluster in healthy state",
+      "class": "ok",
+      "kubectl": "green",
+      "since": "1.30",
+      "source": "api/v1/cluster_types.go PhaseHealthy (v1.30.0:730, main:741)",
+      "reading": {
+        "class": "ok",
+        "known": true
+      }
+    },
+    {
+      "phase": "Cluster cannot proceed to reconciliation due to an unknown plugin being required",
+      "class": "critical",
+      "kubectl": "red",
+      "since": "1.30",
+      "source": "api/v1/cluster_types.go PhaseUnknownPlugin (v1.30.0:734, main:745)",
+      "reading": {
+        "class": "critical",
+        "known": true
+      }
+    },
+    {
+      "phase": "Cluster cannot proceed to reconciliation due to an error while interacting with plugins",
+      "class": "critical",
+      "kubectl": "red",
+      "since": "1.30",
+      "source": "api/v1/cluster_types.go PhaseFailurePlugin (v1.30.0:737, main:748)",
+      "reading": {
+        "class": "critical",
+        "known": true
+      }
+    },
+    {
+      "phase": "Cluster has incomplete or invalid image catalog",
+      "class": "critical",
+      "kubectl": "red",
+      "since": "1.30",
+      "source": "api/v1/cluster_types.go PhaseImageCatalogError (v1.30.0:741, main:752)",
+      "reading": {
+        "class": "critical",
+        "known": true
+      }
+    },
+    {
+      "phase": "Cluster is unrecoverable and needs manual intervention",
+      "class": "critical",
+      "kubectl": "red",
+      "since": "1.30",
+      "source": "api/v1/cluster_types.go PhaseUnrecoverable (v1.30.0:744, main:755)",
+      "reading": {
+        "class": "critical",
+        "known": true
+      }
+    },
+    {
+      "phase": "Cluster cannot execute instance online upgrade due to missing architecture binary",
+      "class": "critical",
+      "kubectl": "red",
+      "since": "1.30",
+      "source": "api/v1/cluster_types.go PhaseArchitectureBinaryMissing (v1.30.0:747, main:758)",
+      "reading": {
+        "class": "critical",
+        "known": true
+      }
+    },
+    {
+      "phase": "Waiting for the instances to become active",
+      "class": "warning",
+      "kubectl": "red",
+      "since": "1.30",
+      "source": "api/v1/cluster_types.go PhaseWaitingForInstancesToBeActive (v1.30.0:750, main:761)",
+      "reading": {
+        "class": "warning",
+        "known": true
+      }
+    },
+    {
+      "phase": "Online upgrade in progress",
+      "class": "progressing",
+      "kubectl": "red",
+      "since": "1.30",
+      "source": "api/v1/cluster_types.go PhaseOnlineUpgrading (v1.30.0:753, main:764)",
+      "reading": {
+        "class": "progressing",
+        "known": true
+      }
+    },
+    {
+      "phase": "Applying configuration",
+      "class": "progressing",
+      "kubectl": "red",
+      "since": "1.30",
+      "source": "api/v1/cluster_types.go PhaseApplyingConfiguration (v1.30.0:757, main:768)",
+      "reading": {
+        "class": "progressing",
+        "known": true
+      }
+    },
+    {
+      "phase": "Promoting to primary cluster",
+      "class": "progressing",
+      "kubectl": "red",
+      "since": "1.30",
+      "source": "api/v1/cluster_types.go PhaseReplicaClusterPromotion (v1.30.0:760, main:771)",
+      "reading": {
+        "class": "progressing",
+        "known": true
+      }
+    },
+    {
+      "phase": "Unable to create required cluster objects",
+      "class": "critical",
+      "kubectl": "red",
+      "since": "1.30",
+      "source": "api/v1/cluster_types.go PhaseCannotCreateClusterObjects (v1.30.0:763, main:774)",
+      "reading": {
+        "class": "critical",
+        "known": true
+      }
+    },
+    {
+      "phase": "Invalid cluster definition",
+      "class": "critical",
+      "kubectl": "red",
+      "since": "1.30",
+      "source": "api/v1/cluster_types.go PhaseDefinitionInvalid (v1.30.0:766, main:777)",
+      "reading": {
+        "class": "critical",
+        "known": true
+      }
+    }
+  ],
+  "probes": [
+    {
+      "phase": "",
+      "reading": {
+        "class": "unknown",
+        "known": false
+      }
+    },
+    {
+      "phase": "Cluster in healthy state ",
+      "reading": {
+        "class": "warning",
+        "known": false
+      }
+    },
+    {
+      "phase": "cluster in healthy state",
+      "reading": {
+        "class": "warning",
+        "known": false
+      }
+    },
+    {
+      "phase": "Invalid cluster definition",
+      "reading": {
+        "class": "critical",
+        "known": true
+      }
+    },
+    {
+      "phase": "Hibernated",
+      "reading": {
+        "class": "warning",
+        "known": false
+      }
+    }
+  ]
+}

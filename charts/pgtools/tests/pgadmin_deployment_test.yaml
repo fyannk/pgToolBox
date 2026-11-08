@@ -1,0 +1,273 @@
+# The pgAdmin Pod: the operator's Pod rendered statically (the parity with the
+# Go builders is internal/operator/pgadmin/chart_parity_test.go), plus the
+# registration sidecar and the pre-upgrade backup the operator runs as Jobs.
+suite: pgadmin Deployment
+templates:
+  - templates/pgadmin/deployment.yaml
+release:
+  name: pgc
+  namespace: team-a
+chart:
+  appVersion: 9.9.9
+set:
+  pgadmin.enabled: true
+  pgadmin.auth.oidc:
+    issuerURL: https://idp.example.com/realms/corp/
+    clientID: pgadmin
+    clientSecret: {existingSecret: pgadmin-oidc}
+  pgadmin.servers:
+    - {cluster: orders, endpoint: rw, credentials: {application: {secret: orders-app}}}
+tests:
+  - it: runs one replica with Recreate (SQLite on a ReadWriteOnce volume)
+    asserts:
+      - equal: {path: spec.replicas, value: 1}
+      - equal: {path: spec.strategy, value: {type: Recreate}}
+      - equal: {path: 'spec.template.spec.volumes[0].persistentVolumeClaim.claimName', value: pgc-pgadmin}
+
+  - it: carries the checksum of the declared list
+    asserts:
+      - equal:
+          path: spec.template.metadata.annotations["checksum/servers"]
+          value: a4ad095479a695de1c09b1965500dd378f3bf4bf5b08b28765a66f85841686b0
+
+  - it: changes the checksum when the list changes, so the Pod rolls
+    set:
+      pgadmin.servers:
+        - {cluster: orders, endpoint: ro, credentials: {application: {secret: orders-app}}}
+    asserts:
+      - notEqual:
+          path: spec.template.metadata.annotations["checksum/servers"]
+          value: a4ad095479a695de1c09b1965500dd378f3bf4bf5b08b28765a66f85841686b0
+
+  - it: is restricted everywhere, with no fixed UID and no automounted token
+    asserts:
+      - equal: {path: spec.template.spec.automountServiceAccountToken, value: false}
+      - equal: {path: spec.template.spec.securityContext.runAsNonRoot, value: true}
+      - notExists: {path: spec.template.spec.securityContext.runAsUser}
+      - equal: {path: spec.template.spec.securityContext.seccompProfile.type, value: RuntimeDefault}
+      - equal:
+          path: spec.template.spec.containers[0].securityContext
+          value: &restricted
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            seccompProfile: {type: RuntimeDefault}
+      - equal: {path: 'spec.template.spec.containers[1].securityContext', value: *restricted}
+      - equal: {path: 'spec.template.spec.initContainers[0].securityContext', value: *restricted}
+      - equal: {path: 'spec.template.spec.initContainers[1].securityContext', value: *restricted}
+      - equal: {path: 'spec.template.spec.initContainers[2].securityContext', value: *restricted}
+
+  - it: installs the binary from the tools image (appVersion), then backs up, then registers as a native sidecar
+    asserts:
+      - equal: {path: 'spec.template.spec.initContainers[0].name', value: install-passfile-sync}
+      - equal: {path: 'spec.template.spec.initContainers[0].image', value: ghcr.io/fyannk/pgtoolbox-operator:9.9.9}
+      - equal: {path: 'spec.template.spec.initContainers[1].name', value: pre-upgrade-backup}
+      - notExists: {path: 'spec.template.spec.initContainers[1].restartPolicy'}
+      - contains:
+          path: spec.template.spec.initContainers[1].command
+          content: ghcr.io/fyannk/pgadmin:9.18-hardened@sha256:96576df8aba0d0057248644d6d5ad398869e42bcf3fcfba2c0f7c13d151ea17c
+      - equal: {path: 'spec.template.spec.initContainers[2].name', value: registration}
+      - equal: {path: 'spec.template.spec.initContainers[2].restartPolicy', value: Always}
+      - equal:
+          path: spec.template.spec.initContainers[2].command
+          value:
+            - /opt/pgtoolbox/bin/manager
+            - pgadmin-register
+            - --declared
+            - /run/pgtoolbox/servers/servers.json
+            - --withheld
+            - /run/pgtoolbox/withheld/withheld.json
+            - --keep-running
+            - --owner
+            - pgtoolbox@pgtoolbox.fyannk.dev
+            - --auth-source
+            - oauth2
+            - --settings-db
+            - /var/lib/pgadmin/pgadmin4.db
+            - --lock
+            - /var/lib/pgadmin/.pgtoolbox/setup.lock
+            - --wait-ready
+            - http://127.0.0.1:8080/misc/ping
+            - --wait
+            - 5m
+
+  - it: keeps the configured number of pre-upgrade copies
+    set: {pgadmin.backups.keep: 5}
+    asserts:
+      - contains: {path: 'spec.template.spec.initContainers[1].command', content: "5"}
+
+  - it: names the administrators to the registration
+    set: {pgadmin.admins: [alice@example.com, bob@example.com]}
+    asserts:
+      - equal: {path: 'spec.template.spec.initContainers[2].command[19]', value: --admin}
+      - equal: {path: 'spec.template.spec.initContainers[2].command[20]', value: alice@example.com}
+      - equal: {path: 'spec.template.spec.initContainers[2].command[21]', value: --admin}
+      - equal: {path: 'spec.template.spec.initContainers[2].command[22]', value: bob@example.com}
+
+  - it: runs passfile-sync on the declared list, with a token only there
+    asserts:
+      - equal: {path: 'spec.template.spec.containers[1].name', value: passfile-sync}
+      - equal:
+          path: spec.template.spec.containers[1].command
+          value: [/opt/pgtoolbox/bin/manager, passfile-sync, --declared, /run/pgtoolbox/servers/servers.json, --dir, /run/pgadmin/credentials, --withheld, /run/pgtoolbox/withheld/withheld.json]
+      - contains:
+          path: spec.template.spec.containers[1].volumeMounts
+          content: {name: kube-api-access, mountPath: /var/run/secrets/kubernetes.io/serviceaccount, readOnly: true}
+      - notContains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content: {name: kube-api-access, mountPath: /var/run/secrets/kubernetes.io/serviceaccount, readOnly: true}
+
+  - it: mounts no CA ConfigMap when no server names one
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[1].command
+          content: --ca-dir
+      - notContains:
+          path: spec.template.spec.containers[1].volumeMounts
+          content: {name: server-ca, mountPath: /run/pgtoolbox/ca, readOnly: true}
+      - notExists: {path: 'spec.template.spec.volumes[?(@.name == "server-ca")]'}
+
+  - it: mounts each caConfigMap's ca.crt (only that key) into passfile-sync alone, optional
+    set:
+      pgadmin.servers:
+        - {cluster: orders, endpoint: rw, caConfigMap: orders-ca-crt, credentials: {application: {secret: orders-app}}}
+        - {cluster: orders, endpoint: ro, caConfigMap: orders-ca-crt, credentials: {application: {secret: orders-app}}}
+        - {cluster: billing, endpoint: rw, caConfigMap: a-bundle, credentials: {application: {secret: billing-app}}}
+        - {cluster: legacy, endpoint: rw, database: app, user: alice, caSecret: legacy-server-ca, credentials: none}
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[1].command
+          value: [/opt/pgtoolbox/bin/manager, passfile-sync, --declared, /run/pgtoolbox/servers/servers.json, --dir, /run/pgadmin/credentials, --withheld, /run/pgtoolbox/withheld/withheld.json, --ca-dir, /run/pgtoolbox/ca]
+      - contains:
+          path: spec.template.spec.containers[1].volumeMounts
+          content: {name: server-ca, mountPath: /run/pgtoolbox/ca, readOnly: true}
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: server-ca
+            projected:
+              defaultMode: 0444
+              sources:
+                - configMap: {name: a-bundle, optional: true, items: [{key: ca.crt, path: a-bundle/ca.crt}]}
+                - configMap: {name: orders-ca-crt, optional: true, items: [{key: ca.crt, path: orders-ca-crt/ca.crt}]}
+      # pgAdmin reads its CA files from passfile-sync's credential directory;
+      # neither it nor the registration mounts the ConfigMaps.
+      - notContains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content: {name: server-ca, mountPath: /run/pgtoolbox/ca, readOnly: true}
+      - notContains:
+          path: spec.template.spec.initContainers[2].volumeMounts
+          content: {name: server-ca, mountPath: /run/pgtoolbox/ca, readOnly: true}
+
+  - it: refuses caSecret and caConfigMap on one server
+    set:
+      pgadmin.servers:
+        - {cluster: orders, endpoint: rw, caSecret: orders-ca, caConfigMap: orders-ca-crt, credentials: {application: {secret: orders-app}}}
+    asserts:
+      - failedTemplate:
+          errorPattern: "pgadmin/servers/0"
+
+  - it: refuses two CA sources for one Cluster
+    set:
+      pgadmin.servers:
+        - {cluster: orders, endpoint: rw, caConfigMap: orders-ca-crt, credentials: {application: {secret: orders-app}}}
+        - {cluster: orders, endpoint: ro, credentials: {application: {secret: orders-app}}}
+    asserts:
+      - failedTemplate:
+          errorMessage: "pgadmin.servers[1]: every server of Cluster orders must name the same caConfigMap"
+
+  - it: hands passfile-sync's withheld servers to the registration on a shared volume, read-only there
+    asserts:
+      - contains:
+          path: spec.template.spec.volumes
+          content: {name: withheld, emptyDir: {sizeLimit: 1Mi}}
+      - contains:
+          path: spec.template.spec.containers[1].volumeMounts
+          content: {name: withheld, mountPath: /run/pgtoolbox/withheld}
+      - contains:
+          path: spec.template.spec.initContainers[2].volumeMounts
+          content: {name: withheld, mountPath: /run/pgtoolbox/withheld, readOnly: true}
+      - notContains:
+          path: spec.template.spec.initContainers[2].volumeMounts
+          content: {name: kube-api-access, mountPath: /var/run/secrets/kubernetes.io/serviceaccount, readOnly: true}
+
+  - it: signs in with OIDC by default, no local login, the client secret as a file
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: PGADMIN_CONFIG_AUTHENTICATION_SOURCES, value: "['oauth2']"}
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PGADMIN_CONFIG_OAUTH2_CONFIG
+            value: "[{'OAUTH2_NAME': 'pgtoolbox', 'OAUTH2_DISPLAY_NAME': 'Single sign-on', 'OAUTH2_CLIENT_ID': 'pgadmin', 'OAUTH2_CLIENT_SECRET': open('/run/pgadmin/oauth2/client-secret').read().strip(), 'OAUTH2_SERVER_METADATA_URL': 'https://idp.example.com/realms/corp/.well-known/openid-configuration', 'OAUTH2_API_BASE_URL': 'https://idp.example.com/realms/corp/', 'OAUTH2_SCOPE': 'openid email profile', 'OAUTH2_USERNAME_CLAIM': 'email', 'OAUTH2_ADDITIONAL_CLAIMS': {}, 'OAUTH2_SSL_CERT_VERIFICATION': True}]"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: PGADMIN_LISTEN_ADDRESS, value: 0.0.0.0}
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: oauth2-client
+            secret: {secretName: pgadmin-oidc, defaultMode: 0440, items: [{key: client-secret, path: client-secret}]}
+      - lengthEqual: {path: spec.template.spec.containers, count: 2}
+
+  - it: refuses OIDC without its client secret
+    set: {pgadmin.auth.oidc.clientSecret.existingSecret: ""}
+    asserts:
+      - failedTemplate:
+          errorMessage: pgadmin.auth.oidc.clientSecret.existingSecret is required with auth.provider=oidc
+
+  - it: signs in through the OpenShift oauth-proxy, pgAdmin on the loopback trusting it alone
+    set:
+      pgadmin.auth.provider: openshift
+      pgadmin.exposure.type: route
+    asserts:
+      - lengthEqual: {path: spec.template.spec.containers, count: 3}
+      - equal: {path: 'spec.template.spec.containers[2].name', value: oauth-proxy}
+      - contains:
+          path: spec.template.spec.containers[2].args
+          content: --openshift-sar={"namespace":"team-a","resource":"secrets","verb":"get"}
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: PGADMIN_CONFIG_AUTHENTICATION_SOURCES, value: "['webserver']"}
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: PGADMIN_CONFIG_WEBSERVER_TRUSTED_PROXIES, value: "['127.0.0.1/32']"}
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: PGADMIN_LISTEN_ADDRESS, value: 127.0.0.1}
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content: {name: PGADMIN_CONFIG_AUTHENTICATION_SOURCES, value: "['oauth2']"}
+
+  - it: takes another SubjectAccessReview for the proxy
+    set:
+      pgadmin.auth.provider: openshift
+      pgadmin.exposure.type: route
+      pgadmin.auth.openshift.sar: '{"namespace":"team-a","resource":"services","resourceName":"pgc-pgadmin","verb":"get"}'
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[2].args
+          content: --openshift-sar={"namespace":"team-a","resource":"services","resourceName":"pgc-pgadmin","verb":"get"}
+
+  - it: refuses the OpenShift proxy without a Route
+    set: {pgadmin.auth.provider: openshift}
+    asserts:
+      - failedTemplate:
+          errorPattern: "needs pgadmin.exposure.type=route"
+
+  - it: drops the fixed fsGroup when told to (OpenShift's SCC assigns one)
+    set: {pgadmin.fsGroup: null}
+    asserts:
+      - notExists: {path: spec.template.spec.securityContext.fsGroup}
+
+  - it: rewrites every image for a mirror
+    set: {global.imageRegistry: registry.corp:5000/mirror}
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: registry.corp:5000/mirror/fyannk/pgadmin:9.18-hardened@sha256:96576df8aba0d0057248644d6d5ad398869e42bcf3fcfba2c0f7c13d151ea17c
+      - equal:
+          path: spec.template.spec.initContainers[0].image
+          value: registry.corp:5000/mirror/fyannk/pgtoolbox-operator:9.9.9

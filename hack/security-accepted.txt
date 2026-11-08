@@ -1,0 +1,19 @@
+# Accepted findings, one per line:
+#
+#   scanner  id  package-or-path  reason (how it was shown)
+#
+# The third field is the package for dependency scanners (grype, osv-scanner,
+# govulncheck) and the file path for code scanners (CodeQL, gosec), so a line
+# covers only the one place that was reviewed; `*` matches any package or path
+# and needs a reason that holds for every one of them.
+#
+# A finding is accepted only when it is shown to be unreachable (not compiled
+# into what ships, or the vulnerable function is never called) or not a
+# vulnerability where it stands (the flagged value is not secret, or an external
+# format mandates the construct and nothing else can read it), and the reason
+# says how that was shown (SECURITY.md, "How scan findings are triaged").
+# "No fix available" is never a reason. Accepted findings stay on the Security
+# page, marked as accepted, and are dismissed in code scanning with the same
+# reason.
+codeql go/weak-sensitive-data-hashing internal/evidence/formats/pgbackrest/cipher.go mandated by the format: SHA-1 EVP_BytesToKey (count 1) is the key derivation pgBackRest repository format 5 writes every encrypted file with (cipherBlock.c, 2.60.0), so a reader cannot open the files with any other; the derived key opens one file in memory and is never stored or sent, and format 6 is refused.
+codeql go/weak-sensitive-data-hashing internal/operator/specs/specs.go not secret: no password reaches Hash; the "password" CodeQL names is the Secret name "<name>-pgadmin-config-password" (internal/operator/pgadmin/configdb.go configPasswordSecretName), and the SHA-256 is a drift fingerprint of a rendered spec, not a password hash.

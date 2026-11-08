@@ -1,0 +1,16 @@
+{{- if and .Values.operator.enabled .Values.operator.podDisruptionBudget.enabled (gt (int .Values.replicaCount) 1) }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "pgtoolbox.fullname" . }}
+  namespace: {{ include "pgtoolbox.namespace" . }}
+  labels:
+    {{- include "pgtoolbox.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.operator.podDisruptionBudget.minAvailable }}
+  # An operator replica that is not Ready must not block a node drain.
+  unhealthyPodEvictionPolicy: AlwaysAllow
+  selector:
+    matchLabels:
+      {{- include "pgtoolbox.selectorLabels" . | nindent 6 }}
+{{- end }}

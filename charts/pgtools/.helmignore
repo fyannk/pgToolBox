@@ -1,0 +1,10 @@
+# Patterns to ignore when building packages.
+.DS_Store
+.git/
+*.swp
+*.bak
+*.orig
+# Unit tests (helm-unittest) are not part of the package.
+tests/
+# ct install cases (hack/e2e-chart.sh) and their notes are not part of the package.
+ci-install/

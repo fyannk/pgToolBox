@@ -1,0 +1,8 @@
+# Evidence agents on OpenShift: the service CA signs each agent's Service
+# certificate and the console trusts openshift-service-ca.crt.
+evidence:
+  agents:
+    - cluster: orders
+      secrets: [orders-s3]
+  tls:
+    mode: openshiftServiceCA

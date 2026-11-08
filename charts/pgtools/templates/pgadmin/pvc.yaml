@@ -1,0 +1,28 @@
+{{- if and .Values.pgadmin.enabled (not ((.Values.pgadmin.configDatabase | default dict).existingSecret)) }}
+{{- /*
+pgAdmin's settings database (SQLite): the users, the servers they added
+themselves, their preferences, and the pre-upgrade copies. Kept across
+`helm uninstall` by default: deleting it is a decision, not a side effect.
+Not rendered with pgadmin.configDatabase.existingSecret: the settings are in PostgreSQL.
+*/ -}}
+{{- $s := .Values.pgadmin.storage }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "pgtools.pgadmin.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "pgtools.pgadmin.labels" . | nindent 4 }}
+  {{- if $s.keep }}
+  annotations:
+    helm.sh/resource-policy: keep
+  {{- end }}
+spec:
+  accessModes: [ReadWriteOnce]
+  {{- with $s.storageClassName }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ $s.size }}
+{{- end }}

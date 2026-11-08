@@ -1,0 +1,36 @@
+.git
+.github
+.claude
+bin
+dist
+artifacts
+release
+# docs/site builds the documentation bundle the console embeds (Dockerfile,
+# docs-site stage); the rest of docs/ is not an input.
+docs/*
+!docs/site
+docs/site/build
+docs/site/.docusaurus
+docs/site/static/img/screens
+# A locally generated documentation
+# bundle must not shadow the one the image builds (data/.keep stays).
+internal/console/docsbundle/data/*
+!internal/console/docsbundle/data/.keep
+# ui/ is the SPA stage's input; its build outputs and test baselines are not.
+ui/dist
+ui/dist-harness
+ui/storybook-static
+ui/src/paraglide
+ui/e2e
+# ...but the docs-site stage reads the console tour's baselines.
+!ui/e2e/__screenshots__/screens.spec.ts
+ui/test-results
+ui/playwright-report
+ui/.vitest
+ui/.vitest-attachments
+# A local SPA copy must not shadow the one the image builds.
+internal/console/uiassets/dist
+test
+**/node_modules
+*.out
+coverage.txt

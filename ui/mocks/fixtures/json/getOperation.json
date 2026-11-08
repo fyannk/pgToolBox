@@ -1,0 +1,35 @@
+{
+  "operationId": "eyJ2IjoxLCJrIjoiYmFja3VwIiwibiI6InRlYW0tYSIsImMiOiJvcmRlcnMiLCJiIjoib25kZW1hbmQtMjAyNjEwMjkxMTU1MDAteDdrMnAiLCJ0IjoxNzkzMjc0OTAwfQ",
+  "kind": "backup",
+  "target": {
+    "namespace": "team-a",
+    "name": "orders",
+    "uid": "0b6a2c1e-8f0d-4a55-9a3e-7c1f2b3d4e5f"
+  },
+  "created": "ondemand-20261029115500-x7k2p",
+  "phase": "acting",
+  "health": "progressing",
+  "steps": [
+    {
+      "phase": "requested",
+      "at": "2026-10-29T11:55:00Z",
+      "source": "console",
+      "text": "requested"
+    },
+    {
+      "phase": "accepted",
+      "at": "2026-10-29T11:55:00Z",
+      "source": "API server",
+      "text": "Backup ondemand-20261029115500-x7k2p created"
+    },
+    {
+      "phase": "acting",
+      "at": "2026-10-29T11:56:00Z",
+      "source": "Backup.status.phase",
+      "text": "started"
+    }
+  ],
+  "acceptedAt": "2026-10-29T11:55:00Z",
+  "deadline": "2026-10-29T12:25:00Z"
+}
+

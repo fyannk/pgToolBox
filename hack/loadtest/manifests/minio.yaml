@@ -1,0 +1,39 @@
+# MinIO for `loadgen s3fill` and, later, evidence-agent scans. On the real
+# node, in memory-backed storage (emptyDir): the bucket is throwaway.
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: minio, namespace: loadtest}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector: {matchLabels: {app: minio}}
+  template:
+    metadata: {labels: {app: minio}}
+    spec:
+      nodeSelector: {type: real}
+      containers:
+        - name: minio
+          image: __MINIO_IMAGE__
+          imagePullPolicy: Never
+          command: [minio]
+          args: [server, /data]
+          env:
+            - {name: MINIO_ROOT_USER, value: loadtest}
+            - {name: MINIO_ROOT_PASSWORD, value: loadtest-secret}
+          ports: [{name: s3, containerPort: 9000}]
+          readinessProbe: {httpGet: {path: /minio/health/ready, port: s3}, periodSeconds: 5}
+          securityContext: {runAsUser: 0}
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {memory: 6Gi}
+          volumeMounts: [{name: data, mountPath: /data}]
+      volumes:
+        - {name: data, emptyDir: {medium: Memory, sizeLimit: 4Gi}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: minio, namespace: loadtest}
+spec:
+  type: NodePort
+  selector: {app: minio}
+  ports: [{name: s3, port: 9000, targetPort: s3, nodePort: __S3_NODEPORT__}]

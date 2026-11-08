@@ -1,0 +1,144 @@
+{
+  "ref": {
+    "namespace": "team-a",
+    "name": "orders",
+    "uid": "0b6a2c1e-8f0d-4a55-9a3e-7c1f2b3d4e5f"
+  },
+  "generatedAt": "2026-10-29T12:00:00Z",
+  "offers": [
+    {
+      "kind": "backup",
+      "title": "Request an on-demand backup",
+      "summary": "Creates one Backup referencing this cluster, through the plugin it archives with.",
+      "consequence": "The backup reads from a standby when the cluster prefers one; it adds I/O load for its duration.",
+      "expectedDuration": "minutes to hours, depending on size",
+      "allowed": true,
+      "requires": [
+        "create backups"
+      ],
+      "blockers": [],
+      "confirmation": "orders",
+      "observable": true
+    },
+    {
+      "kind": "reload",
+      "title": "Reload configuration",
+      "summary": "Asks every instance to reload its configuration (annotation cnpg.io/reloadedAt).",
+      "consequence": "PostgreSQL reloads only if a configuration file changed; CloudNativePG reports no outcome.",
+      "expectedDuration": "seconds",
+      "allowed": true,
+      "requires": [
+        "patch clusters"
+      ],
+      "blockers": [],
+      "confirmation": "orders",
+      "observable": false
+    },
+    {
+      "kind": "restart",
+      "title": "Restart the cluster",
+      "summary": "Rolls every instance (annotation kubectl.kubernetes.io/restartedAt), replicas first, then a switchover.",
+      "consequence": "Each instance restarts once; clients of the primary are disconnected during the switchover.",
+      "expectedDuration": "a few minutes per instance",
+      "allowed": true,
+      "requires": [
+        "patch clusters"
+      ],
+      "blockers": [],
+      "confirmation": "orders",
+      "observable": true
+    },
+    {
+      "kind": "promote",
+      "title": "Promote a replica (switchover)",
+      "summary": "Moves the primary role to the chosen replica.",
+      "consequence": "Clients of the primary are disconnected; the old primary becomes a replica.",
+      "expectedDuration": "under a minute",
+      "allowed": true,
+      "requires": [
+        "patch clusters/status"
+      ],
+      "blockers": [],
+      "confirmation": "the target instance name",
+      "observable": true,
+      "targets": [
+        {
+          "name": "orders-2",
+          "eligible": true,
+          "health": "ok",
+          "lagBytes": 0
+        },
+        {
+          "name": "orders-3",
+          "eligible": false,
+          "blockers": [
+            {
+              "reason": "TargetFenced",
+              "text": "orders-3 is fenced",
+              "source": "Cluster.metadata.annotations[cnpg.io/fencedInstances]"
+            }
+          ],
+          "health": "unknown"
+        }
+      ]
+    },
+    {
+      "kind": "restoreDrill",
+      "title": "Run a restore drill",
+      "summary": "Restores the latest backup into a throwaway Cluster in team-a, checks it without SQL, then deletes it.",
+      "consequence": "The drill Cluster uses storage and compute like one instance of this Cluster until it is deleted (after its check, at the latest after 2h). It has no WAL archiver and no backup configuration, and starts with logical replication workers, pg_cron jobs and TimescaleDB jobs off; other extensions that reach the network are not neutralised (see the drill NetworkPolicy).",
+      "expectedDuration": "about as long as a restore of this Cluster",
+      "allowed": true,
+      "requires": [
+        "create clusters in team-a"
+      ],
+      "blockers": [],
+      "confirmation": "orders",
+      "observable": true,
+      "drill": {
+        "namespace": "team-a",
+        "backup": "orders-daily-20261029070000",
+        "backupStoppedAt": "2026-10-29T07:08:00Z",
+        "recoverySource": "ObjectStore orders-store (barman-cloud plugin), server orders",
+        "timeLimitSeconds": 7200
+      }
+    }
+  ],
+  "recent": [
+    {
+      "operationId": "eyJ2IjoxLCJrIjoiYmFja3VwIiwibiI6InRlYW0tYSIsImMiOiJvcmRlcnMiLCJiIjoib25kZW1hbmQtMjAyNjEwMjkxMTU1MDAteDdrMnAiLCJ0IjoxNzkzMjc0OTAwfQ",
+      "kind": "backup",
+      "target": {
+        "namespace": "team-a",
+        "name": "orders",
+        "uid": "0b6a2c1e-8f0d-4a55-9a3e-7c1f2b3d4e5f"
+      },
+      "created": "ondemand-20261029115500-x7k2p",
+      "phase": "acting",
+      "health": "progressing",
+      "steps": [
+        {
+          "phase": "requested",
+          "at": "2026-10-29T11:55:00Z",
+          "source": "console",
+          "text": "requested"
+        },
+        {
+          "phase": "accepted",
+          "at": "2026-10-29T11:55:00Z",
+          "source": "API server",
+          "text": "Backup ondemand-20261029115500-x7k2p created"
+        },
+        {
+          "phase": "acting",
+          "at": "2026-10-29T11:56:00Z",
+          "source": "Backup.status.phase",
+          "text": "started"
+        }
+      ],
+      "acceptedAt": "2026-10-29T11:55:00Z",
+      "deadline": "2026-10-29T12:25:00Z"
+    }
+  ],
+  "recentScope": "operations issued through this console replica since it started; the API server's audit log is the complete record"
+}

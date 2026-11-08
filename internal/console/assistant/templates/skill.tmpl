@@ -1,0 +1,12 @@
+{{- /*
+The Claude Code skill of the prompt pack. Format, source:
+https://code.claude.com/docs/en/skills (2026-11): a SKILL.md in
+.claude/skills/<name>/ (project) or ~/.claude/skills/<name>/ (user), YAML
+front matter with name and description, then Markdown instructions.
+*/ -}}
+---
+name: {{.Server}}
+description: Read CloudNativePG clusters through the pgToolBox console at {{.Origin}} (MCP server "{{.Server}}"). Use when asked about a PostgreSQL cluster's health, replication, backups, storage, slow statements, locks or recent incidents on that console.
+---
+
+{{template "body" .}}

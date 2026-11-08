@@ -1,0 +1,95 @@
+{{- if and .Values.operator.enabled .Values.operator.admissionPolicy.enabled }}
+{{- /*
+OPTIONAL, OFF BY DEFAULT: a ValidatingAdmissionPolicy, evaluated by
+the API server in CEL, with no webhook to keep available. The CRDs' own CEL cannot
+see who is asking; this one rule needs it. spec.image on a PgAdmin or an
+EvidenceAgent replaces the operator's vetted default image, so only the listed
+users and groups may set it; spec.workloadIdentity on an EvidenceAgent binds
+its ServiceAccount to a cloud identity (and is the opt-in to use it), so it
+has its own list. The operator's own writes are status-subresource updates,
+which this policy does not match.
+
+Third rule: whoever may edit a PgToolBoxConsole or a PgAdmin
+could otherwise name any Secret of its namespace in a Secret reference
+(SMTP password, webhook URL, OIDC client secret, Prometheus token, pull
+secret, ...) and have the operator mount it into a workload that sends it to
+a server the editor chose. The CRDs' CEL cannot ask the API server who may
+read a Secret; the `authorizer` of a policy can: every Secret the spec names
+must be one the requesting user may `get`. On UPDATE only the references that
+are new or changed are checked: the operator's own metadata writes (finalizers,
+annotations) and unrelated edits of an object created before the policy was
+turned on keep working, and a Secret that was already referenced at that
+field is no new disclosure. A reference moved to another field is "new".
+Keep the lists below in step with api/v1alpha1 (every SecretKeyReference,
+SecretKeySelector, pullSecrets and certificateSecretRef); the envtest in
+internal/operator/admissionpolicy walks them.
+*/ -}}
+{{- $ap := .Values.operator.admissionPolicy }}
+{{- $io := $ap.imageOverride }}
+{{- $wi := $ap.workloadIdentity }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ include "pgtoolbox.fullname" . }}-image-override
+  labels:
+    {{- include "pgtoolbox.labels" . | nindent 4 }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [pgtoolbox.fyannk.dev]
+        apiVersions: [v1alpha1]
+        operations: [CREATE, UPDATE]
+        resources: [pgadmins, evidenceagents, pgtoolboxconsoles]
+  variables:
+    - name: allowedUsers
+      expression: {{ toJson $io.allowedUsers | quote }}
+    - name: allowedGroups
+      expression: {{ toJson $io.allowedGroups | quote }}
+    - name: identityUsers
+      expression: {{ toJson $wi.allowedUsers | quote }}
+    - name: identityGroups
+      expression: {{ toJson $wi.allowedGroups | quote }}
+    - name: secretRefs
+      expression: >-
+        {{- include "pgtoolbox.admission.secretRefs" "object" | nindent 8 }}
+    - name: oldSecretRefs
+      expression: >-
+        oldObject == null ? [] : (
+        {{- include "pgtoolbox.admission.secretRefs" "oldObject" | nindent 8 }}
+        )
+  validations:
+    - expression: >-
+        request.resource.resource == 'pgtoolboxconsoles' ||
+        !has(object.spec.image) ||
+        (oldObject != null && has(oldObject.spec.image) && object.spec.image == oldObject.spec.image) ||
+        request.userInfo.username in variables.allowedUsers ||
+        request.userInfo.groups.exists(g, g in variables.allowedGroups)
+      message: spec.image may be set only by the users and groups the platform team listed in the operator chart (operator.admissionPolicy.imageOverride); omit it to use the operator's default image
+      reason: Forbidden
+    - expression: >-
+        request.resource.resource != 'evidenceagents' ||
+        !has(object.spec.workloadIdentity) ||
+        (oldObject != null && has(oldObject.spec.workloadIdentity) && object.spec.workloadIdentity == oldObject.spec.workloadIdentity) ||
+        request.userInfo.username in variables.identityUsers ||
+        request.userInfo.groups.exists(g, g in variables.identityGroups)
+      message: spec.workloadIdentity may be set only by the users and groups the platform team listed in the operator chart (operator.admissionPolicy.workloadIdentity)
+      reason: Forbidden
+    - expression: >-
+        variables.secretRefs.all(r,
+        (oldObject != null && r in variables.oldSecretRefs) ||
+        authorizer.group('').resource('secrets').namespace(object.metadata.namespace).name(r.n).check('get').allowed())
+      message: editing a PgToolBoxConsole or a PgAdmin requires get on every Secret it references (a Secret reference you may not read is refused, whichever field names it)
+      reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ include "pgtoolbox.fullname" . }}-image-override
+  labels:
+    {{- include "pgtoolbox.labels" . | nindent 4 }}
+spec:
+  policyName: {{ include "pgtoolbox.fullname" . }}-image-override
+  validationActions:
+    {{- toYaml $ap.validationActions | nindent 4 }}
+{{- end }}

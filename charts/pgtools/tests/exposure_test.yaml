@@ -1,0 +1,138 @@
+suite: console exposure
+templates:
+  - templates/console/exposure.yaml
+  - templates/console/service.yaml
+release:
+  name: pgc
+  namespace: team-a
+tests:
+  - it: exposes nothing by default (a ClusterIP Service only)
+    template: templates/console/exposure.yaml
+    asserts:
+      - hasDocuments: {count: 0}
+
+  - it: fronts the console with a ClusterIP Service on port 80
+    template: templates/console/service.yaml
+    asserts:
+      - equal: {path: spec.type, value: ClusterIP}
+      - equal: {path: "spec.ports[0].port", value: 80}
+      - equal: {path: "spec.ports[0].targetPort", value: http}
+
+  - it: sets the SSE timeouts and disables buffering on an Ingress
+    template: templates/console/exposure.yaml
+    set: {console.exposure.type: ingress, console.exposure.host: pgc.example.org}
+    asserts:
+      - isKind: {of: Ingress}
+      - equal: {path: 'metadata.annotations["nginx.ingress.kubernetes.io/proxy-read-timeout"]', value: "3600"}
+      - equal: {path: 'metadata.annotations["nginx.ingress.kubernetes.io/proxy-send-timeout"]', value: "3600"}
+      - equal: {path: 'metadata.annotations["nginx.ingress.kubernetes.io/proxy-buffering"]', value: "off"}
+      - equal: {path: "spec.rules[0].host", value: pgc.example.org}
+
+  - it: converts compound SSE timeouts to seconds
+    template: templates/console/exposure.yaml
+    set: {console.exposure.type: ingress, console.exposure.sse.timeout: 1h30m}
+    asserts:
+      - equal: {path: 'metadata.annotations["nginx.ingress.kubernetes.io/proxy-read-timeout"]', value: "5400"}
+
+  - it: requires a host for Ingress TLS
+    template: templates/console/exposure.yaml
+    set: {console.exposure.type: ingress, console.exposure.ingress.tls.enabled: true}
+    asserts:
+      - failedTemplate: {}
+
+  - it: sets the router timeout on an OpenShift Route and redirects plain HTTP
+    template: templates/console/exposure.yaml
+    set: {console.exposure.type: route}
+    asserts:
+      - isKind: {of: Route}
+      - equal: {path: 'metadata.annotations["haproxy.router.openshift.io/timeout"]', value: 1h}
+      - equal: {path: spec.tls.termination, value: edge}
+      - equal: {path: spec.tls.insecureEdgeTerminationPolicy, value: Redirect}
+
+  - it: sets the request timeout on an HTTPRoute
+    template: templates/console/exposure.yaml
+    set:
+      console.exposure.type: httpRoute
+      console.exposure.httpRoute.parentRefs: [{name: gw, namespace: infra}]
+    asserts:
+      - isKind: {of: HTTPRoute}
+      - equal: {path: "spec.rules[0].timeouts.request", value: 1h}
+      - equal: {path: "spec.parentRefs[0].name", value: gw}
+
+  # Sticky sessions: a person stays on one replica, whose history
+  # and charts they keep seeing.
+  - it: sets ingress-nginx cookie affinity on the Ingress, secure with TLS
+    template: templates/console/exposure.yaml
+    set:
+      console.exposure.type: ingress
+      console.exposure.host: pgc.example.org
+      console.exposure.ingress.tls.enabled: true
+    asserts:
+      - equal: {path: 'metadata.annotations["nginx.ingress.kubernetes.io/affinity"]', value: cookie}
+      - equal: {path: 'metadata.annotations["nginx.ingress.kubernetes.io/affinity-mode"]', value: persistent}
+      - equal: {path: 'metadata.annotations["nginx.ingress.kubernetes.io/session-cookie-name"]', value: pgtoolbox-console-replica}
+      - equal: {path: 'metadata.annotations["nginx.ingress.kubernetes.io/session-cookie-secure"]', value: "true"}
+
+  - it: lets an explicit annotation win over the affinity default
+    template: templates/console/exposure.yaml
+    set:
+      console.exposure.type: ingress
+      console.exposure.ingress.annotations: {nginx.ingress.kubernetes.io/affinity-mode: balanced}
+    asserts:
+      - equal: {path: 'metadata.annotations["nginx.ingress.kubernetes.io/affinity-mode"]', value: balanced}
+      - notExists: {path: 'metadata.annotations["nginx.ingress.kubernetes.io/session-cookie-secure"]'}
+
+  - it: sets Traefik's sticky cookie on the Service for an Ingress
+    template: templates/console/service.yaml
+    set: {console.exposure.type: ingress, console.exposure.sticky.cookieName: team-a-console}
+    asserts:
+      - equal: {path: 'metadata.annotations["traefik.ingress.kubernetes.io/service.sticky.cookie"]', value: "true"}
+      - equal: {path: 'metadata.annotations["traefik.ingress.kubernetes.io/service.sticky.cookie.name"]', value: team-a-console}
+
+  - it: keeps the Service free of affinity annotations without an Ingress
+    template: templates/console/service.yaml
+    set: {console.exposure.type: route}
+    asserts:
+      - notExists: {path: metadata.annotations}
+
+  - it: names the Route's cookie
+    template: templates/console/exposure.yaml
+    set: {console.exposure.type: route, console.exposure.host: pgc.apps.example.org}
+    asserts:
+      - equal: {path: 'metadata.annotations["router.openshift.io/cookie_name"]', value: pgtoolbox-console-replica}
+      - notExists: {path: 'metadata.annotations["haproxy.router.openshift.io/disable_cookies"]'}
+
+  - it: disables the Route's cookie with sticky.enabled false
+    template: templates/console/exposure.yaml
+    set: {console.exposure.type: route, console.exposure.sticky.enabled: false}
+    asserts:
+      - equal: {path: 'metadata.annotations["haproxy.router.openshift.io/disable_cookies"]', value: "true"}
+      - notExists: {path: 'metadata.annotations["router.openshift.io/cookie_name"]'}
+
+  - it: renders no affinity with sticky.enabled false
+    template: templates/console/exposure.yaml
+    set: {console.exposure.type: ingress, console.exposure.sticky.enabled: false}
+    asserts:
+      - notExists: {path: 'metadata.annotations["nginx.ingress.kubernetes.io/affinity"]'}
+
+  - it: does not emit an SSE annotation twice when the user sets the same key (Ingress)
+    template: templates/console/exposure.yaml
+    set:
+      console.exposure.type: ingress
+      console.exposure.host: pgc.example.org
+      console.exposure.ingress.annotations:
+        nginx.ingress.kubernetes.io/proxy-read-timeout: "7200"
+        nginx.ingress.kubernetes.io/proxy-buffering: "on"
+    asserts:
+      - equal: {path: 'metadata.annotations["nginx.ingress.kubernetes.io/proxy-read-timeout"]', value: "7200"}
+      - equal: {path: 'metadata.annotations["nginx.ingress.kubernetes.io/proxy-send-timeout"]', value: "3600"}
+      - equal: {path: 'metadata.annotations["nginx.ingress.kubernetes.io/proxy-buffering"]', value: "on"}
+
+  - it: does not emit the Route timeout twice when the user sets it
+    template: templates/console/exposure.yaml
+    set:
+      console.exposure.type: route
+      console.exposure.route.annotations:
+        haproxy.router.openshift.io/timeout: 2h
+    asserts:
+      - equal: {path: 'metadata.annotations["haproxy.router.openshift.io/timeout"]', value: 2h}

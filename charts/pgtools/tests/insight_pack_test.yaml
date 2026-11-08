@@ -1,0 +1,53 @@
+suite: the insight pack
+templates:
+  - templates/insight/configmap-insight-pack.yaml
+release:
+  name: pgc
+  namespace: team-a
+tests:
+  - it: creates the pack in the release namespace by default, versioned, reloadable
+    asserts:
+      - hasDocuments: {count: 1}
+      - equal: {path: metadata.name, value: pgtoolbox-insight-pack}
+      - equal: {path: metadata.namespace, value: team-a}
+      - equal: {path: 'metadata.labels["cnpg.io/reload"]', value: ""}
+      - equal: {path: 'metadata.labels["pgtoolbox.fyannk.dev/insight-pack-version"]', value: "1"}
+      - equal: {path: 'metadata.annotations["pgtoolbox.fyannk.dev/insight-pack-version"]', value: "1"}
+      - matchRegex: {path: data.queries, pattern: "pgtoolbox_pack:"}
+      - matchRegex: {path: data.queries, pattern: "pgtoolbox_statements:"}
+
+  - it: follows the console's watched namespaces
+    set:
+      console.watchNamespaces: [team-a, team-b]
+    asserts:
+      - hasDocuments: {count: 2}
+      - equal: {path: metadata.namespace, value: team-b}
+        documentIndex: 1
+
+  - it: takes its own namespace list over the console's
+    set:
+      console.watchNamespaces: [team-a, team-b]
+      insightPack.namespaces: [team-c]
+    asserts:
+      - hasDocuments: {count: 1}
+      - equal: {path: metadata.namespace, value: team-c}
+
+  - it: leaves out the namespaces whose teams apply the pack themselves
+    set:
+      console.watchNamespaces: [team-a, team-b]
+      insightPack.skipNamespaces: [team-a]
+    asserts:
+      - hasDocuments: {count: 1}
+      - equal: {path: metadata.namespace, value: team-b}
+
+  - it: renders with reused values from before skipNamespaces
+    set:
+      insightPack.skipNamespaces: null
+    asserts:
+      - hasDocuments: {count: 1}
+
+  - it: creates nothing when disabled
+    set:
+      insightPack.enabled: false
+    asserts:
+      - hasDocuments: {count: 0}

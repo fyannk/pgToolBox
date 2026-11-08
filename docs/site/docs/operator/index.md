@@ -1,0 +1,192 @@
+---
+sidebar_position: 1
+title: The operator
+---
+
+# The operator
+
+The operator owns only state that must persist. It reconciles these kinds in the
+API group `pgtoolbox.fyannk.dev`, version `v1alpha1`:
+
+| Kind | Short name | One per | Page |
+|---|---|---|---|
+| `PgAdmin` | `pga` | team namespace | [PgAdmin](pgadmin.md) |
+| `EvidenceAgent` | `pgea` | backup repository (CloudNativePG Cluster) | [EvidenceAgent](evidenceagent.md) |
+| `PgToolBoxConsole` | `pgc` | namespace (its CloudNativePG Clusters) | [PgToolBoxConsole](console.md) |
+| `PgAccessRequest` | `pgar` | request for time-bound access to a namespace | [Access requests](../console/access-requests.md) |
+| `PgAdminAccess` | `pgaa` | grant letting a `PgAdmin` of another namespace use this namespace's Clusters (read by the `PgAdmin` controller; no status) | [Clusters of other namespaces](pgadmin.md#clusters-of-other-namespaces) |
+
+`kubectl get pgtoolbox -A` lists them (category `pgtoolbox`). Fields are in the
+[generated API reference](../reference/api.md); status conditions and their
+reasons are on [Conditions](conditions.md).
+
+## How a controller works
+
+Each kind has one controller, and every controller runs the same skeleton: read
+the object, run its steps in dependency order, and end with **one** status write
+on every exit path, skipped when nothing changed:
+
+```mermaid
+flowchart TB
+    Q[Work queue: the object,<br/>or an owned or watched child] --> G[Get the object]
+    G -- gone or deleting --> N[Nothing: owner references<br/>hand children to the GC]
+    G --> P{reconcile: skip?}
+    P -- yes --> W[Publish status: paused]
+    P -- no --> S[Steps: resolve inputs,<br/>server-side apply children,<br/>observe them]
+    S --> W2[Publish status]
+    W2 -- converged or waiting --> I[Idle until a watch fires]
+    W2 -- stall --> I
+    W2 -- error --> B[Requeue with backoff]
+    W2 -- timer --> T[Requeue at a known time]
+```
+
+- **Server-side apply** with field owner `pgtoolbox` and forced ownership, after a
+  check that an existing object of that name is controlled by the same custom
+  resource; otherwise `ResourceNotOwned`. Status is written with a merge patch
+  locked to the resourceVersion read (field owner `pgtoolbox-status`).
+- **Stall versus requeue.** A stall (an input only a person can fix: a refused
+  image, a missing reference, a foreign object) is not retried: a change of a
+  watched object wakes the controller. An API error is returned to
+  controller-runtime, which retries with backoff. A timer is set only for a fact
+  that changes without an event.
+- **No finalizers.** Deleting a custom resource deletes its children through
+  owner references (a `PgAdmin`'s settings volume only with `retainPolicy: Delete`).
+
+| Controller | Reads | Applies | Timed requeue |
+|---|---|---|---|
+| `PgAdmin` | Clusters, Poolers, `DatabaseRole`s, `PgAdminAccess` grants, Secret metadata | volume, ServiceAccount, Role, offer Secret, Service, NetworkPolicy, exposure, Deployment, Jobs; grant Roles in granted namespaces | none |
+| `PgToolBoxConsole` | ClusterRole existence, the lifecycle ConfigMap | ServiceAccount, Service, RoleBindings, NetworkPolicy, PVC, PDB, exposure, Deployment; creates the session Secret and revocation ConfigMap once | 2 min while `ConsoleRoleMissing` |
+| `EvidenceAgent` | Cluster, `ObjectStore` (past the cache), Secret metadata | ServiceAccount, Service, the agents' ClusterRole and binding, certificate Secrets, Deployment | at the certificate's renewal |
+| `PgAccessRequest` | its RoleBindings, the named Cluster | nothing: it only deletes RoleBindings | at `expiresAt`, and at the end of an orphan's grace |
+
+The per-kind flows are on [PgAdmin](pgadmin.md#reconcile-loop),
+[PgToolBoxConsole](console.md#reconcile-loop),
+[EvidenceAgent](evidenceagent.md#reconcile-loop) and
+[access requests](../console/access-requests.md#lifecycle); what the conditions
+say is on [Conditions](conditions.md).
+
+## Rules the kinds share
+
+- **Same namespace only.** `clusterRefs`, `clusterSelector`, `clusterRef`,
+  `objectStoreRef` and every Secret reference name objects in the custom
+  resource's own namespace. The one exception is a `PgAdmin`'s
+  `crossNamespaceClusterRefs`, which take effect only while a `PgAdminAccess` in
+  the target namespace grants them: an explicit grant object, never an implicit
+  selector.
+- **Names** are DNS-1035 labels of at most 40 characters, because they prefix the
+  generated objects.
+- **Pause.** The annotation `pgtoolbox.fyannk.dev/reconcile: skip` pauses
+  reconciliation. Status is still published: `Progressing=False` and `Ready=Unknown`
+  with reason `ReconciliationPaused`, meaning the operator is not looking and does
+  not vouch for the children.
+- **Ownership.** If an object the operator must create already exists under the
+  generated name and is controlled by someone else, it stops with
+  `ConfigurationValid=False` (`ResourceNotOwned`) instead of taking it over.
+- **Rollouts.** The desired state of each generated child carries a content hash
+  in the annotation `pgtoolbox.fyannk.dev/spec-hash`; a changed hash is a rollout
+  and the operator says so in an Event. A reconcile that changes no status writes
+  none.
+- **Metadata propagation.** `spec.metadataPropagation` copies labels and annotations
+  onto chosen generated objects; keys under `pgtoolbox.fyannk.dev/` are rejected
+  and the operator's own labels always win.
+
+Labels the operator sets (frozen API surface: extended, never renamed):
+
+| Key | On | Meaning |
+|---|---|---|
+| `app.kubernetes.io/managed-by=pgtoolbox` | every generated object | |
+| `pgtoolbox.fyannk.dev/reconcile=true` | every object the operator creates | Selects the operator's own objects. |
+| `pgtoolbox.fyannk.dev/pgadmin=<name>` | objects generated for a `PgAdmin` | |
+| `pgtoolbox.fyannk.dev/evidenceagent=<name>` | objects generated for an `EvidenceAgent` | |
+| annotation `pgtoolbox.fyannk.dev/producer-epoch` | an agent's Pod template | The generation the Deployment was rendered from. |
+
+## Configuration
+
+One struct, defaults in code, overlaid by the environment, then the ConfigMap
+`pgtoolbox-operator-config`, then the Secret of the same name in the operator's
+namespace (the Secret wins; both optional). It is loaded and validated once before
+the manager starts, with all problems in one message. **There is no hot reload:**
+edit the ConfigMap, then roll the operator. The effective values, with their
+source, are exported as `pgtoolbox_config_info` (values from the Secret are
+redacted).
+
+| Key | Chart value | Default | |
+|---|---|---|---|
+| `WATCH_NAMESPACES` | `operator.config.watchNamespaces` | empty: every namespace the ClusterRole allows | Comma list; restricts the caches. |
+| `POD_NAMESPACE` | downward API | | Where the operator runs. |
+| `OPERATOR_IMAGE` | `image.*` | baked in at build | Copied into pgAdmin Pods for the credential sidecar. |
+| `PGADMIN_IMAGE` | `operator.pgAdmin.image` | the hardened, digest-pinned image compiled in | |
+| `PGADMIN_IMAGE_REPOSITORIES` | `operator.pgAdmin.imageRepositories` | each image's default repository only | The [allow-list](images.md) for `PgAdmin` images. |
+| `OAUTH_PROXY_IMAGE` | `operator.oauthProxyImage` | `quay.io/openshift/origin-oauth-proxy:4.18`, pinned by digest | On OpenShift use the release payload's. |
+| `MAX_CONCURRENT_RECONCILES` | `operator.config.maxConcurrentReconciles` | `4` | Per controller. |
+| `RECONCILIATION_TIMEOUT` | `operator.config.reconciliationTimeout` | `2m` | Bounds one reconcile. |
+| `LEADER_ELECTION_LEASE_DURATION`, `_RENEW_DEADLINE`, `_RETRY_PERIOD` | | `30s`, `20s`, `5s` | |
+| `UPGRADE_BACKUPS_KEPT` | `operator.config.upgradeBackupsKept` | `3` | [Pre-upgrade backups](pgadmin.md#upgrades) kept per `PgAdmin`. |
+
+Command-line flags: `--metrics-bind-address` (`:8080`), `--metrics-cert-dir`,
+`--health-probe-bind-address` (`:8081`: `/healthz` is liveness, the process
+answers; `/readyz` is readiness, true only once every informer cache has synced,
+so a replica that cannot list what it watches stays out of rotation), `--leader-elect` (default true),
+`--default-evidence-agent-image`, `--evidence-agent-image-repositories`,
+`--default-console-image` (`CONSOLE_IMAGE`; the chart passes `console.image`),
+`--console-image-repositories` (`CONSOLE_IMAGE_REPOSITORIES`, chart
+`operator.console.imageRepositories`) and `--pgadmin-image-repositories` (the last
+overrides `PGADMIN_IMAGE_REPOSITORIES`; see [images](images.md)).
+
+## Availability
+
+Two replicas with leader election, a PodDisruptionBudget (`minAvailable: 1`),
+soft topology spread across nodes, and a 40-second termination grace period (the
+schema's floor: it covers releasing the lease). The operator being down does not
+affect running pgAdmins, evidence agents or consoles; it affects only changes to
+the custom resources. Run one operator per Kubernetes cluster: it owns CRDs and
+cluster-scoped RBAC.
+
+## NetworkPolicy and admission policy
+
+Both are optional and **off by default**, because each is the installing admin's
+decision, never the product's.
+
+- `operator.networkPolicy.enabled`: egress to DNS, the API server (looked up from
+  the `kubernetes` Endpoints at install time, or `apiServer.mode: any` or
+  `addresses`) and `extraEgress`; ingress only from `ingress.metricsFrom`, on the
+  metrics port.
+- `operator.admissionPolicy.enabled`: a `ValidatingAdmissionPolicy` (CEL, no
+  webhook, Kubernetes 1.30 or newer). Three rules: only `imageOverride.allowedUsers`
+  and `allowedGroups` (default group `system:masters`) may set `spec.image` on a
+  `PgAdmin` or `EvidenceAgent`, everyone else getting the operator's default
+  image; and only `workloadIdentity.allowedUsers` and `allowedGroups` (same
+  default) may add or change `spec.workloadIdentity` on an `EvidenceAgent`, which
+  lends the agent a cloud role; and a third, the Secret rule: creating or editing a
+  `PgToolBoxConsole` or `PgAdmin` requires `get` on every Secret it references (see
+  [Security](../security.md#secret-references-need-get)).
+  `validationActions` selects `Deny`, `Warn` and/or `Audit`; `Deny` alone enforces.
+  See [images](images.md) for why.
+
+## Permissions
+
+The operator's ClusterRole is generated from the controllers' markers
+(`config/rbac/role.yaml`, copied by `make manifests`); the file in the repository
+is the authority, and `make validate-packaging` compares the chart and the OLM
+bundle with it. It is broad because the operator creates workloads: Secrets (the
+serving-certificate CA and key of an `EvidenceAgent`, pgAdmin's bootstrap and
+cookie material), Roles and RoleBindings (the name-scoped Role of a pgAdmin
+Pod), and the agents' ClusterRole and binding. Three rules matter for the
+security model:
+
+- It holds `create` on `tokenreviews` and `subjectaccessreviews`, because the
+  evidence agents' ClusterRole needs both and Kubernetes' escalation prevention
+  makes a grantor hold what it grants.
+- It does **not** hold the console's read rules. A `PgToolBoxConsole`'s ServiceAccount is
+  bound to two ClusterRoles shipped with the operator, `pgtoolbox-console` and
+  `pgtoolbox-console-pod-logs`; the operator has only the `bind` verb on those two
+  names, so no `PgToolBoxConsole` can obtain more than they grant.
+- It reads user Secrets by metadata only (existence and version); their content
+  is never cached.
+- The operator never holds a database password. For pgAdmin it writes only an
+  *offer* naming Secrets and roles; a sidecar with a name-scoped Role reads the
+  Secrets ([how](pgadmin.md#credentials)).
+
+## Metrics
+
+See [Operator metrics](metrics.md).

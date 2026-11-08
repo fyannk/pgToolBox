@@ -1,0 +1,60 @@
+{{- /*
+Other MCP clients. Cursor, source: https://cursor.com/docs/mcp (2026-11):
+{"mcpServers": {name: {"url", "headers"}}} in ~/.cursor/mcp.json (user) or
+.cursor/mcp.json (project), no "type" for a remote server, "${env:NAME}"
+substitutes a variable in url and headers, dynamic registration as a public
+client; the desktop application signs in with redirect
+http://localhost:8787/callback (its web agents' https redirect is not
+admitted). VS Code, source:
+https://code.visualstudio.com/docs/agents/reference/mcp-configuration
+(2026-11): the VS Code format {"servers": {name: {"type": "http", "url",
+"headers"}}} in .vscode/mcp.json or the user profile's mcp.json (its
+guided flow labels both destinations deprecated but still reads them), the
+portable format {"mcpServers": {...}} in ~/.copilot/mcp-config.json; it
+registers a loopback and an https redirect URI, of which the console keeps
+the loopback one. The docs link is VS Code's reference, which covers both
+formats (the MCP site's remote-servers guide is about Claude's connectors).
+*/ -}}
+{{define "name"}}VS Code, Cursor and other clients{{end}}
+{{define "docs"}}https://code.visualstudio.com/docs/agents/reference/mcp-configuration{{end}}
+{{define "add"}}{{end}}
+{{define "login"}}{{end}}
+{{define "check.note"}}Open the client's list of MCP servers: {{.Server}} shows as connected once you have signed in.{{end}}
+{{define "pack.document"}}agents{{end}}
+{{define "pack.project"}}AGENTS.md{{end}}
+{{define "user.path"}}~/.cursor/mcp.json{{end}}
+{{define "user.format"}}json{{end}}
+{{define "user"}}{
+  "mcpServers": {
+    {{q .Server}}: {
+      "url": {{q .URL}}
+    }
+  }
+}
+{{end}}
+{{define "project.path"}}.vscode/mcp.json{{end}}
+{{define "project.format"}}json{{end}}
+{{define "project"}}{
+  "servers": {
+    {{q .Server}}: {
+      "type": "http",
+      "url": {{q .URL}}
+    }
+  }
+}
+{{end}}
+{{define "static.path"}}~/.cursor/mcp.json{{end}}
+{{define "static.format"}}json{{end}}
+{{define "static"}}{
+  "mcpServers": {
+    {{q .Server}}: {
+      "url": {{q .URL}},
+      "headers": {
+        "Authorization": {{q (print "Bearer ${env:" .TokenEnv "}")}}
+      }
+    }
+  }
+}
+{{end}}
+{{define "static.env"}}export {{.TokenEnv}}="$({{.TokenCommand}})"{{end}}
+{{define "static.note"}}The client sends the variable's value as the bearer token. Use it where token sign-in is your break-glass path; the sign-in above is the normal one.{{end}}

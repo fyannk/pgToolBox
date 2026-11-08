@@ -1,0 +1,48 @@
+{
+  "ref": {
+    "namespace": "team-a",
+    "name": "billing",
+    "uid": "4d2f1e0a-1b2c-4d3e-8f90-a1b2c3d4e5f6"
+  },
+  "generatedAt": "2026-10-29T12:00:00Z",
+  "requests": [
+    {
+      "role": "PG_DATA",
+      "provenance": {
+        "origin": "operator",
+        "source": "Cluster.spec.storage",
+        "observedAt": "2026-10-29T12:00:00Z"
+      }
+    }
+  ],
+  "volumes": [],
+  "forecasts": {
+    "state": "unavailable",
+    "reason": "No instance of this cluster reports its volumes: neither /pg/status volumeUsages nor the cnpg_disk_* metrics are present. Upstream CloudNativePG reports neither; builds that do (such as the autoGrow fork) fill this panel on their own. PVC capacity and the metrics are the evidence meanwhile.",
+    "intervalSeconds": 900,
+    "retentionSeconds": 2592000,
+    "persistent": false,
+    "volumes": []
+  },
+  "sources": [
+    {
+      "source": "clusters",
+      "state": "live",
+      "since": "2026-10-29T09:00:00Z",
+      "health": "ok"
+    },
+    {
+      "source": "pvcs",
+      "state": "live",
+      "since": "2026-10-29T09:00:00Z",
+      "health": "ok"
+    }
+  ],
+  "blindSpots": [
+    {
+      "id": "storage.volumeUsageNotReported",
+      "panel": "storage",
+      "text": "Disk usage per volume is not reported by upstream CloudNativePG instances; PVC classes and metrics are the evidence."
+    }
+  ]
+}

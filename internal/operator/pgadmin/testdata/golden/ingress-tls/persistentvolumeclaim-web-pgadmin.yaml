@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  annotations:
+    pgtoolbox.fyannk.dev/spec-hash: 46582434ab270d58
+  labels:
+    app.kubernetes.io/component: pgadmin
+    app.kubernetes.io/instance: web
+    app.kubernetes.io/managed-by: pgtoolbox
+    app.kubernetes.io/name: pgadmin
+    app.kubernetes.io/part-of: pgtoolbox
+    pgtoolbox.fyannk.dev/pgadmin: web
+    pgtoolbox.fyannk.dev/reconcile: "true"
+  name: web-pgadmin
+  namespace: team-a
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+status: {}

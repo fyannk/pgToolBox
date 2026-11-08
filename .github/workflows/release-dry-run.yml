@@ -1,0 +1,54 @@
+name: Release dry run
+
+# The build release.yml makes, with nothing pushed, signed or attested
+# (hack/release.sh check, then make release-dry-run): on a pull request that
+# touches the release files and weekly on main. It lives apart from release.yml
+# so that a workflow a pull request starts never holds a publishing
+# permission, and the release never runs code from a ref other than its tag.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - .github/workflows/release.yml
+      - .github/workflows/release-dry-run.yml
+      - hack/release.sh
+      - Dockerfile
+      - deploy/olm/**
+      - mise.toml
+  schedule:
+    - cron: "23 3 * * 0"
+
+# Nothing is granted by default; each job states what it needs.
+permissions: {}
+
+concurrency:
+  group: release-dry-run-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dry-run:
+    name: Dry run (build everything, publish nothing)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read # check out the repository
+    steps:
+      - name: Check out the repository with its tags
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      # No tool cache: the dry run installs what mise.toml pins, as the release does.
+      - name: Install the pinned tools
+        uses: ./.github/actions/toolchain
+        with:
+          tools: go helm kubectl
+          mise-cache: "false"
+      - name: Check semver, chart versions and CHANGELOG
+        run: |
+          set -euo pipefail
+          ./hack/release.sh check
+      - name: Build the images, pin and package the charts and manifests
+        run: |
+          set -euo pipefail
+          make release-dry-run

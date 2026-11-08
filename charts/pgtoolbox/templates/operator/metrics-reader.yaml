@@ -1,0 +1,33 @@
+{{- if and .Values.operator.enabled .Values.operator.metrics.readerClusterRole }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "pgtoolbox.fullname" . }}-metrics-reader
+  labels:
+    {{- include "pgtoolbox.labels" . | nindent 4 }}
+rules:
+- nonResourceURLs:
+  - /metrics
+  verbs:
+  - get
+{{- with .Values.operator.metrics.readerSubjects }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "pgtoolbox.fullname" $ }}-metrics-reader
+  labels:
+    {{- include "pgtoolbox.labels" $ | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "pgtoolbox.fullname" $ }}-metrics-reader
+subjects:
+  {{- range . }}
+  - kind: ServiceAccount
+    name: {{ .name }}
+    namespace: {{ .namespace }}
+  {{- end }}
+{{- end }}
+{{- end }}

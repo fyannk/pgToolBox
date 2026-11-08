@@ -1,0 +1,465 @@
+{
+  "encrypted": {
+    "State": "healthy",
+    "Reason": "a recovery window exists and every check passed",
+    "Encrypted": true,
+    "BackupInfo": {
+      "Used": "main",
+      "Agree": true,
+      "MainProblem": "",
+      "CopyProblem": "",
+      "MainEncrypted": true,
+      "MainFormat": 5
+    },
+    "ArchiveInfo": {
+      "Used": "main",
+      "Agree": true,
+      "MainProblem": "",
+      "CopyProblem": "",
+      "MainEncrypted": true,
+      "MainFormat": 5
+    },
+    "Database": {
+      "Version": "17",
+      "VersionNumber": 170000,
+      "ID": 1,
+      "CatalogVersion": 202406281,
+      "ControlVer": 1700
+    },
+    "ArchiveIDs": [
+      "17-1"
+    ],
+    "SegmentSize": 16777216,
+    "SegmentSizeSource": "backup-lsn",
+    "Backups": [
+      {
+        "Name": "1:full#1",
+        "Type": "full",
+        "Prior": "",
+        "References": [],
+        "ChainState": "healthy",
+        "ManifestState": "healthy",
+        "ManifestUsed": "main",
+        "ManifestAgree": true,
+        "PathState": "healthy",
+        "PathStop": "frontier",
+        "OffTarget": false,
+        "Consistent": true,
+        "TargetTimeline": 2,
+        "Timelines": [
+          1,
+          2
+        ],
+        "StartTimeline": "00000001",
+        "FrontierTimeline": 2,
+        "Usable": true,
+        "Annotation": "fixture-repo2-full",
+        "HasArchiveAndLSN": true,
+        "BackrestVersion": "2.60.0",
+        "ArchiveID": "17-1",
+        "OptionCompress": true,
+        "OptionArchiveCheck": true,
+        "Error": false,
+        "ReferenceCountInInfo": 0
+      },
+      {
+        "Name": "2:diff#1",
+        "Type": "diff",
+        "Prior": "1:full#1",
+        "References": [
+          "1:full#1"
+        ],
+        "ChainState": "healthy",
+        "ManifestState": "healthy",
+        "ManifestUsed": "main",
+        "ManifestAgree": true,
+        "PathState": "healthy",
+        "PathStop": "frontier",
+        "OffTarget": false,
+        "Consistent": true,
+        "TargetTimeline": 2,
+        "Timelines": [
+          1,
+          2
+        ],
+        "StartTimeline": "00000001",
+        "FrontierTimeline": 2,
+        "Usable": true,
+        "Annotation": "fixture-repo2-diff",
+        "HasArchiveAndLSN": true,
+        "BackrestVersion": "2.60.0",
+        "ArchiveID": "17-1",
+        "OptionCompress": true,
+        "OptionArchiveCheck": true,
+        "Error": false,
+        "ReferenceCountInInfo": 1
+      },
+      {
+        "Name": "3:incr#1",
+        "Type": "incr",
+        "Prior": "2:diff#1",
+        "References": [
+          "1:full#1",
+          "2:diff#1"
+        ],
+        "ChainState": "healthy",
+        "ManifestState": "healthy",
+        "ManifestUsed": "main",
+        "ManifestAgree": true,
+        "PathState": "warning",
+        "PathStop": "frontier",
+        "OffTarget": true,
+        "Consistent": true,
+        "TargetTimeline": 1,
+        "Timelines": [
+          1
+        ],
+        "StartTimeline": "00000001",
+        "FrontierTimeline": 1,
+        "Usable": false,
+        "Annotation": "fixture-repo2-incr-tl1",
+        "HasArchiveAndLSN": true,
+        "BackrestVersion": "2.60.0",
+        "ArchiveID": "17-1",
+        "OptionCompress": true,
+        "OptionArchiveCheck": true,
+        "Error": false,
+        "ReferenceCountInInfo": 2
+      },
+      {
+        "Name": "4:incr#2",
+        "Type": "incr",
+        "Prior": "3:incr#1",
+        "References": [
+          "1:full#1",
+          "2:diff#1",
+          "3:incr#1"
+        ],
+        "ChainState": "healthy",
+        "ManifestState": "healthy",
+        "ManifestUsed": "main",
+        "ManifestAgree": true,
+        "PathState": "healthy",
+        "PathStop": "frontier",
+        "OffTarget": false,
+        "Consistent": true,
+        "TargetTimeline": 2,
+        "Timelines": [
+          2
+        ],
+        "StartTimeline": "00000002",
+        "FrontierTimeline": 2,
+        "Usable": true,
+        "Annotation": "fixture-repo2-incr-tl2",
+        "HasArchiveAndLSN": true,
+        "BackrestVersion": "2.60.0",
+        "ArchiveID": "17-1",
+        "OptionCompress": true,
+        "OptionArchiveCheck": true,
+        "Error": false,
+        "ReferenceCountInInfo": 3
+      }
+    ],
+    "WAL": [
+      {
+        "ArchiveID": "17-1",
+        "State": "healthy",
+        "RangeTimelines": [
+          1,
+          2
+        ],
+        "Gaps": 0,
+        "History": 1,
+        "BackupHistory": 8,
+        "Partials": 0,
+        "Unknown": 0,
+        "Duplicates": 0,
+        "SegmentsPresent": true
+      }
+    ],
+    "Timelines": [
+      {
+        "Timeline": 2,
+        "State": "healthy",
+        "Edges": [
+          [
+            1,
+            2
+          ]
+        ]
+      }
+    ],
+    "Window": {
+      "OldestBackup": "1:full#1",
+      "NewestBackup": "4:incr#2",
+      "EndTimeline": 2,
+      "UsableBackups": 3,
+      "Assumptions": [
+        "the window ends at the end of the last contiguous segment; its time is the segment's upload time, not a commit time"
+      ]
+    },
+    "Findings": null,
+    "ListedKinds": {
+      "archive:backup-history": 8,
+      "archive:history": 1,
+      "other": 12
+    }
+  },
+  "format6": {
+    "State": "unknown",
+    "Reason": "repository format is not supported (only format 5 is read)",
+    "Encrypted": false,
+    "BackupInfo": {
+      "Used": "",
+      "Agree": false,
+      "MainProblem": "format-unsupported",
+      "CopyProblem": "format-unsupported",
+      "MainEncrypted": true,
+      "MainFormat": 6
+    },
+    "ArchiveInfo": {
+      "Used": "",
+      "Agree": false,
+      "MainProblem": "format-unsupported",
+      "CopyProblem": "format-unsupported",
+      "MainEncrypted": true,
+      "MainFormat": 6
+    },
+    "Database": null,
+    "ArchiveIDs": null,
+    "SegmentSize": 0,
+    "SegmentSizeSource": "",
+    "Backups": null,
+    "WAL": null,
+    "Timelines": null,
+    "Window": null,
+    "Findings": [
+      {
+        "Code": "RepositoryFormatUnsupported",
+        "Severity": "error"
+      },
+      {
+        "Code": "RepositoryFormatUnsupported",
+        "Severity": "error"
+      },
+      {
+        "Code": "RepositoryFormatUnsupported",
+        "Severity": "error"
+      },
+      {
+        "Code": "RepositoryFormatUnsupported",
+        "Severity": "error"
+      }
+    ],
+    "ListedKinds": {
+      "other": 4
+    }
+  },
+  "plain": {
+    "State": "healthy",
+    "Reason": "a recovery window exists and every check passed",
+    "Encrypted": false,
+    "BackupInfo": {
+      "Used": "main",
+      "Agree": true,
+      "MainProblem": "",
+      "CopyProblem": "",
+      "MainEncrypted": false,
+      "MainFormat": 5
+    },
+    "ArchiveInfo": {
+      "Used": "main",
+      "Agree": true,
+      "MainProblem": "",
+      "CopyProblem": "",
+      "MainEncrypted": false,
+      "MainFormat": 5
+    },
+    "Database": {
+      "Version": "17",
+      "VersionNumber": 170000,
+      "ID": 1,
+      "CatalogVersion": 202406281,
+      "ControlVer": 1700
+    },
+    "ArchiveIDs": [
+      "17-1"
+    ],
+    "SegmentSize": 16777216,
+    "SegmentSizeSource": "backup-lsn",
+    "Backups": [
+      {
+        "Name": "1:full#1",
+        "Type": "full",
+        "Prior": "",
+        "References": [],
+        "ChainState": "healthy",
+        "ManifestState": "healthy",
+        "ManifestUsed": "main",
+        "ManifestAgree": true,
+        "PathState": "healthy",
+        "PathStop": "frontier",
+        "OffTarget": false,
+        "Consistent": true,
+        "TargetTimeline": 2,
+        "Timelines": [
+          1,
+          2
+        ],
+        "StartTimeline": "00000001",
+        "FrontierTimeline": 2,
+        "Usable": true,
+        "Annotation": "fixture-repo1-full",
+        "HasArchiveAndLSN": true,
+        "BackrestVersion": "2.60.0",
+        "ArchiveID": "17-1",
+        "OptionCompress": true,
+        "OptionArchiveCheck": true,
+        "Error": false,
+        "ReferenceCountInInfo": 0
+      },
+      {
+        "Name": "2:diff#1",
+        "Type": "diff",
+        "Prior": "1:full#1",
+        "References": [
+          "1:full#1"
+        ],
+        "ChainState": "healthy",
+        "ManifestState": "healthy",
+        "ManifestUsed": "main",
+        "ManifestAgree": true,
+        "PathState": "healthy",
+        "PathStop": "frontier",
+        "OffTarget": false,
+        "Consistent": true,
+        "TargetTimeline": 2,
+        "Timelines": [
+          1,
+          2
+        ],
+        "StartTimeline": "00000001",
+        "FrontierTimeline": 2,
+        "Usable": true,
+        "Annotation": "fixture-repo1-diff",
+        "HasArchiveAndLSN": true,
+        "BackrestVersion": "2.60.0",
+        "ArchiveID": "17-1",
+        "OptionCompress": true,
+        "OptionArchiveCheck": true,
+        "Error": false,
+        "ReferenceCountInInfo": 1
+      },
+      {
+        "Name": "3:incr#1",
+        "Type": "incr",
+        "Prior": "2:diff#1",
+        "References": [
+          "1:full#1",
+          "2:diff#1"
+        ],
+        "ChainState": "healthy",
+        "ManifestState": "healthy",
+        "ManifestUsed": "main",
+        "ManifestAgree": true,
+        "PathState": "healthy",
+        "PathStop": "frontier",
+        "OffTarget": false,
+        "Consistent": true,
+        "TargetTimeline": 2,
+        "Timelines": [
+          1,
+          2
+        ],
+        "StartTimeline": "00000001",
+        "FrontierTimeline": 2,
+        "Usable": true,
+        "Annotation": "fixture-repo1-incr-tl1",
+        "HasArchiveAndLSN": true,
+        "BackrestVersion": "2.60.0",
+        "ArchiveID": "17-1",
+        "OptionCompress": true,
+        "OptionArchiveCheck": true,
+        "Error": false,
+        "ReferenceCountInInfo": 2
+      },
+      {
+        "Name": "4:incr#2",
+        "Type": "incr",
+        "Prior": "3:incr#1",
+        "References": [
+          "1:full#1",
+          "2:diff#1",
+          "3:incr#1"
+        ],
+        "ChainState": "healthy",
+        "ManifestState": "healthy",
+        "ManifestUsed": "main",
+        "ManifestAgree": true,
+        "PathState": "healthy",
+        "PathStop": "frontier",
+        "OffTarget": false,
+        "Consistent": true,
+        "TargetTimeline": 2,
+        "Timelines": [
+          2
+        ],
+        "StartTimeline": "00000002",
+        "FrontierTimeline": 2,
+        "Usable": true,
+        "Annotation": "fixture-repo1-incr-tl2",
+        "HasArchiveAndLSN": true,
+        "BackrestVersion": "2.60.0",
+        "ArchiveID": "17-1",
+        "OptionCompress": true,
+        "OptionArchiveCheck": true,
+        "Error": false,
+        "ReferenceCountInInfo": 3
+      }
+    ],
+    "WAL": [
+      {
+        "ArchiveID": "17-1",
+        "State": "healthy",
+        "RangeTimelines": [
+          1,
+          2
+        ],
+        "Gaps": 0,
+        "History": 1,
+        "BackupHistory": 8,
+        "Partials": 0,
+        "Unknown": 0,
+        "Duplicates": 0,
+        "SegmentsPresent": true
+      }
+    ],
+    "Timelines": [
+      {
+        "Timeline": 2,
+        "State": "healthy",
+        "Edges": [
+          [
+            1,
+            2
+          ]
+        ]
+      }
+    ],
+    "Window": {
+      "OldestBackup": "1:full#1",
+      "NewestBackup": "4:incr#2",
+      "EndTimeline": 2,
+      "UsableBackups": 4,
+      "Assumptions": [
+        "the window ends at the end of the last contiguous segment; its time is the segment's upload time, not a commit time"
+      ]
+    },
+    "Findings": null,
+    "ListedKinds": {
+      "archive:backup-history": 8,
+      "archive:history": 1,
+      "other": 12
+    }
+  }
+}

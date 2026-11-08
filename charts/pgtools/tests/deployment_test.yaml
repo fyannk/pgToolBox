@@ -1,0 +1,341 @@
+suite: console deployment
+templates:
+  - templates/console/deployment.yaml
+release:
+  name: pgc
+  namespace: team-a
+tests:
+  - it: is named after the release and selects only console pods
+    asserts:
+      - isKind: {of: Deployment}
+      - equal: {path: metadata.name, value: pgc-console}
+      - equal: {path: metadata.namespace, value: team-a}
+      - equal:
+          path: spec.selector.matchLabels
+          value:
+            app.kubernetes.io/name: pgtoolbox-console
+            app.kubernetes.io/instance: pgc
+            app.kubernetes.io/component: console
+
+  - it: reuses a release name that already says console
+    release: {name: pgtoolbox-console-team-a, namespace: team-a}
+    asserts:
+      - equal: {path: metadata.name, value: pgtoolbox-console-team-a}
+
+  - it: meets Pod Security restricted and takes no fixed UID
+    asserts:
+      - equal:
+          path: spec.template.spec.securityContext
+          value:
+            runAsNonRoot: true
+            seccompProfile: {type: RuntimeDefault}
+      - equal:
+          path: spec.template.spec.containers[0].securityContext
+          value:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+      - notExists: {path: spec.template.spec.securityContext.runAsUser}
+      - notExists: {path: "spec.template.spec.containers[0].securityContext.runAsUser"}
+
+  - it: refuses to loosen the container hardening
+    set: {console.securityContext.readOnlyRootFilesystem: false}
+    asserts:
+      - failedTemplate: {}
+
+  - it: gives the API token to the console container only, as a projected volume
+    asserts:
+      - equal: {path: spec.template.spec.automountServiceAccountToken, value: false}
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: kube-api-access
+            mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+            readOnly: true
+      - equal:
+          path: spec.template.spec.volumes[1].projected.sources[0].serviceAccountToken
+          value: {path: token, expirationSeconds: 3600}
+
+  - it: has no Secret-backed env var and mounts only the session key by default
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content: {name: SESSION_KEY}
+          any: true
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: session
+            secret:
+              secretName: pgc-console-session
+              items: [{key: session-key, path: session-key}]
+
+  - it: watches the release namespace by default, never an empty list
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: WATCH_NAMESPACES, value: team-a}
+
+  - it: watches the listed namespaces
+    set: {console.watchNamespaces: [team-b, team-c]}
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: WATCH_NAMESPACES, value: "team-b,team-c"}
+
+  - it: refuses more than sixteen watched namespaces (the console's own limit), a name that is not a namespace, or a duplicate
+    set: {console.watchNamespaces: [a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, q]}
+    asserts:
+      - failedTemplate: {}
+
+  - it: passes the cluster selector as sorted key=value pairs
+    set: {console.clusterSelector: {tier: prod, app: orders}}
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: CLUSTER_SELECTOR, value: "app=orders,tier=prod"}
+
+  - it: mounts the admin-supplied CA bundle as a directory (so the kubelet refreshes it) and points the console at the file
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: INSTANCE_STATUS_CA_FILE, value: /var/run/console/instance-ca/ca.crt}
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content: {name: instance-ca, mountPath: /var/run/console/instance-ca, readOnly: true}
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: instance-ca
+            configMap:
+              name: pgtoolbox-console-instance-ca
+              optional: true
+              items: [{key: ca.crt, path: ca.crt}]
+
+  - it: follows a CA bundle ConfigMap override
+    set: {console.instanceStatus.caBundleConfigMap: team-a-cas}
+    asserts:
+      - equal: {path: "spec.template.spec.volumes[?(@.name=='instance-ca')].configMap.name", value: team-a-cas}
+
+  - it: mounts no CA bundle when the name is empty
+    set: {console.instanceStatus.caBundleConfigMap: ""}
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content: {name: INSTANCE_STATUS_CA_FILE, value: /var/run/console/instance-ca/ca.crt}
+      - notContains:
+          path: spec.template.spec.volumes
+          content: {name: instance-ca}
+          any: true
+
+  - it: tells the console which ConfigMap holds the revocation list
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: REVOCATION_CONFIGMAP, value: pgc-console-revocations}
+
+  - it: probes the dedicated probe listener
+    asserts:
+      - equal: {path: "spec.template.spec.containers[0].livenessProbe.httpGet", value: {path: /healthz, port: probes}}
+      - equal: {path: "spec.template.spec.containers[0].readinessProbe.httpGet", value: {path: /readyz, port: probes}}
+
+  - it: runs the chart's appVersion unless a tag or digest is given
+    asserts:
+      - equal: {path: "spec.template.spec.containers[0].image", value: "ghcr.io/fyannk/pgtoolbox-console:0.1.0"}
+
+  - it: lets a digest win over the tag and a mirror replace the registry
+    set:
+      global.imageRegistry: registry.corp:5000/mirror
+      console.image.tag: "9.9.9"
+      console.image.digest: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    asserts:
+      - equal:
+          path: "spec.template.spec.containers[0].image"
+          value: "registry.corp:5000/mirror/fyannk/pgtoolbox-console@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+  - it: opts in to the ClusterImageCatalog read only when asked
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content: {name: ALLOW_CLUSTER_CATALOGS, value: "true"}
+
+  - it: tells the console about the catalog opt-in
+    set: {console.clusterImageCatalogs.enabled: true}
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: ALLOW_CLUSTER_CATALOGS, value: "true"}
+
+  - it: requires the OIDC settings with the oidc provider
+    set: {console.auth.provider: oidc}
+    asserts:
+      - failedTemplate:
+          errorMessage: "console.auth.oidc.issuerURL is required with auth.provider=oidc"
+
+  - it: mounts the OIDC client secret as a file
+    set:
+      console.auth.provider: oidc
+      console.auth.oidc.issuerURL: https://idp.example.org
+      console.auth.oidc.clientID: pgtoolbox-console
+      console.auth.oidc.clientSecret.existingSecret: pgtoolbox-console-oidc
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: OIDC_CLIENT_SECRET_FILE, value: /var/run/console/oidc/client-secret}
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: oidc
+            secret:
+              secretName: pgtoolbox-console-oidc
+              items: [{key: client-secret, path: client-secret}]
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content: {name: OIDC_GRANT_CLIENT_ID, value: ""}
+          any: true
+
+  - it: mounts the OIDC grant client's secret when one is named
+    set:
+      console.auth.provider: oidc
+      console.auth.oidc.issuerURL: https://idp.example.org
+      console.auth.oidc.clientID: pgtoolbox-console
+      console.auth.oidc.clientSecret.existingSecret: pgtoolbox-console-oidc
+      console.auth.oidc.grantClient.clientID: pgtoolbox-console-grants
+      console.auth.oidc.grantClient.clientSecret.existingSecret: pgtoolbox-console-grants-oidc
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: OIDC_GRANT_CLIENT_ID, value: pgtoolbox-console-grants}
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: OIDC_GRANT_CLIENT_SECRET_FILE, value: /var/run/console/oidc-grant/client-secret}
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content: {name: oidc-grant, mountPath: /var/run/console/oidc-grant, readOnly: true}
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: oidc-grant
+            secret:
+              secretName: pgtoolbox-console-grants-oidc
+              items: [{key: client-secret, path: client-secret}]
+
+  - it: refuses a grant client without its secret, or the console's own
+    set:
+      console.auth.provider: oidc
+      console.auth.oidc.issuerURL: https://idp.example.org
+      console.auth.oidc.clientID: pgtoolbox-console
+      console.auth.oidc.clientSecret.existingSecret: pgtoolbox-console-oidc
+      console.auth.oidc.grantClient.clientID: pgtoolbox-console-grants
+    asserts:
+      - failedTemplate:
+          errorMessage: "console.auth.oidc.grantClient.clientSecret.existingSecret is required with console.auth.oidc.grantClient.clientID"
+
+  - it: refuses the console's own client as the grant client
+    set:
+      console.auth.provider: oidc
+      console.auth.oidc.issuerURL: https://idp.example.org
+      console.auth.oidc.clientID: pgtoolbox-console
+      console.auth.oidc.clientSecret.existingSecret: pgtoolbox-console-oidc
+      console.auth.oidc.grantClient.clientID: pgtoolbox-console
+      console.auth.oidc.grantClient.clientSecret.existingSecret: pgtoolbox-console-oidc
+    asserts:
+      - failedTemplate:
+          errorMessage: "console.auth.oidc.grantClient.clientID must differ from console.auth.oidc.clientID (or be left empty)"
+
+  - it: sends the log matcher settings with their defaults
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: LOG_STREAM_ENABLED, value: "true"}
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: LOG_MATCH_MAX_AGE, value: 6h}
+
+  - it: turns the log matcher off when the console may not read pod logs
+    set: {console.rbac.podLogs: false}
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: ALLOW_LOGS, value: "false"}
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: LOG_STREAM_ENABLED, value: "false"}
+
+  - it: lets the log matcher be tuned
+    set: {console.logs.streamEnabled: false, console.logs.matchMaxAge: 30m}
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: LOG_STREAM_ENABLED, value: "false"}
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: LOG_MATCH_MAX_AGE, value: 30m}
+
+  - it: rejects a malformed matcher age
+    set: {console.logs.matchMaxAge: soon}
+    asserts:
+      - failedTemplate: {}
+
+  - it: renders no Prometheus settings by default
+    asserts:
+      - notExists: {path: "spec.template.spec.containers[0].env[?(@.name=='PROMETHEUS_URL')]"}
+      - notExists: {path: "spec.template.spec.containers[0].env[?(@.name=='PROMETHEUS_TOKEN_FILE')]"}
+
+  - it: points the console at Prometheus with a projected ServiceAccount token, a CA and the tenancy flag
+    set:
+      console.prometheus.url: https://thanos-querier.openshift-monitoring.svc:9091
+      console.prometheus.token.projected.enabled: true
+      console.prometheus.caConfigMap: openshift-service-ca.crt
+      console.prometheus.namespaced: true
+      console.prometheus.range: 2h
+    asserts:
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: PROMETHEUS_URL, value: "https://thanos-querier.openshift-monitoring.svc:9091"}}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: PROMETHEUS_TOKEN_FILE, value: /var/run/console/prometheus/token}}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: PROMETHEUS_CA_FILE, value: /var/run/console/prometheus-ca/ca.crt}}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: PROMETHEUS_NAMESPACED, value: "true"}}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: PROMETHEUS_RANGE, value: 2h}}
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: prometheus-token
+            projected:
+              sources:
+                - serviceAccountToken: {expirationSeconds: 3600, path: token}
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content: {name: prometheus-token, mountPath: /var/run/console/prometheus, readOnly: true}
+
+  - it: mounts a bearer token Secret as a file
+    set:
+      console.prometheus.url: https://prom.example.org
+      console.prometheus.token.secret.name: prom-token
+    asserts:
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: PROMETHEUS_TOKEN_FILE, value: /var/run/console/prometheus/token}}
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: prometheus-token
+            secret:
+              secretName: prom-token
+              items: [{key: token, path: token}]
+
+  - it: refuses a token over plain http
+    set:
+      console.prometheus.url: http://prom.example.org
+      console.prometheus.token.projected.enabled: true
+    asserts:
+      - failedTemplate: {errorMessage: "console.prometheus.url must be https when a token is configured: the token is never sent in clear"}
+
+  - it: refuses Prometheus options without a url
+    set: {console.prometheus.namespaced: true}
+    asserts:
+      - failedTemplate: {errorMessage: "console.prometheus.url is required by the other console.prometheus values"}
+
+  - it: refuses two token sources
+    set:
+      console.prometheus.url: https://prom.example.org
+      console.prometheus.token.secret.name: prom-token
+      console.prometheus.token.projected.enabled: true
+    asserts:
+      - failedTemplate: {errorMessage: "console.prometheus.token: set either secret.name or projected.enabled, not both"}

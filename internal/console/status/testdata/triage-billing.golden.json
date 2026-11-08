@@ -1,0 +1,353 @@
+{
+  "ref": {
+    "namespace": "team-a",
+    "name": "billing",
+    "uid": "4d2f1e0a-1b2c-4d3e-8f90-a1b2c3d4e5f6"
+  },
+  "runAt": "2026-10-29T12:00:00Z",
+  "playbooks": [
+    {
+      "id": "cannot-connect",
+      "symptom": "Clients cannot connect",
+      "describes": "connections to the cluster's services fail or time out",
+      "upstream": "https://cloudnative-pg.io/docs/1.30/troubleshooting/",
+      "startAt": 3,
+      "steps": [
+        {
+          "question": "Is the cluster deliberately down?",
+          "outcome": "unknown",
+          "explain": "A hibernated cluster has no pods; a demoted or fenced one has pods with PostgreSQL stopped. Nothing is broken, and nothing answers.",
+          "because": "could not run — cnpg-hibernated: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-demotion-fencing: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-instance-fenced: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31"
+        },
+        {
+          "question": "Does the Cluster exist, and does the operator name a primary?",
+          "outcome": "unknown",
+          "explain": "With no primary named there is nothing for the read-write service to route to. The phase says whether the operator is still creating one or has given up.",
+          "yourself": "kubectl -n \u003cnamespace\u003e get cluster \u003cname\u003e -o yaml",
+          "because": "could not run — cnpg-unrecoverable: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-invalid-definition: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-bootstrap-stuck: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-no-system-id: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31"
+        },
+        {
+          "question": "Is the primary failing, or moving?",
+          "outcome": "unknown",
+          "explain": "Between primaries, the read-write service points at nothing that accepts writes; a primary the operator reports as failing is one it has not yet replaced.",
+          "because": "could not run — cnpg-primary-failing: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-primary-move-stuck: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-primary-lease-expired: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-primary-lease-holder-mismatch: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-primary-disagreement: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-lease-not-acquired: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31"
+        },
+        {
+          "question": "Is any instance pod ready at all?",
+          "outcome": "found",
+          "explain": "A pod that is not ready is not behind any Service. The pod-level checks name what keeps it out: scheduling, an image, a crash.",
+          "yourself": "kubectl -n \u003cnamespace\u003e get pods -l cnpg.io/cluster=\u003cname\u003e -L role -o wide",
+          "because": "matched: k8s-container-crashloop",
+          "findings": [
+            "k8s-container-crashloop/billing-1/postgres"
+          ]
+        },
+        {
+          "question": "Is PostgreSQL itself down on the instances?",
+          "outcome": "unknown",
+          "explain": "The pod runs but the postmaster does not: a failed start, a crash, or the operator keeping it down for lack of disk.",
+          "yourself": "kubectl -n \u003cnamespace\u003e logs \u003cpod\u003e -c postgres --previous",
+          "because": "could not run — cnpg-postgres-start-failed: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-postgres-exited: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-wal-disk-space-phase: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-wal-disk-full: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; postgres-panic: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-pg-control-lost: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31"
+        },
+        {
+          "question": "Has a certificate expired?",
+          "outcome": "unknown",
+          "explain": "An expired server certificate ends every TLS connection; clients see a handshake failure rather than a refusal.",
+          "because": "could not run — cnpg-certificate-expired: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-certificate-expiring: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-ca-secret-unusable: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31"
+        },
+        {
+          "question": "Does the read-write Service exist?",
+          "outcome": "unknown",
+          "explain": "Without the -rw Service there is no stable name for clients to reach.",
+          "yourself": "kubectl -n \u003cnamespace\u003e get svc -l cnpg.io/cluster=\u003cname\u003e",
+          "because": "the cluster's Services have not been observed yet"
+        },
+        {
+          "question": "If clients go through a pooler, is the pooler up?",
+          "outcome": "unknown",
+          "explain": "A pooler with no ready instance answers nothing; one that is queueing answers slowly enough to time out.",
+          "because": "could not run — cnpg-pooler-failed: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-pooler-inactive: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-pooler-short: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-pooler-clients-waiting: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31"
+        },
+        {
+          "question": "Is PostgreSQL refusing the connections it receives?",
+          "outcome": "unknown",
+          "explain": "A FATAL record on every attempt is authentication or a full connection slot, in the server's own words.",
+          "yourself": "kubectl -n \u003cnamespace\u003e logs \u003cpod\u003e -c postgres | jq 'select(.record.error_severity==\"FATAL\")'",
+          "because": "could not run — postgres-fatal: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31"
+        },
+        {
+          "question": "Is a NetworkPolicy dropping the traffic?",
+          "outcome": "unknown",
+          "explain": "A policy that drops traffic produces no event and no condition. The console sees only its consequences: the operator unable to read instance status, or an instance unable to reach its peers.",
+          "yourself": "kubectl -n \u003cnamespace\u003e get networkpolicies",
+          "because": "could not run — cnpg-status-unreachable: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-liveness-isolation: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31"
+        }
+      ]
+    },
+    {
+      "id": "writes-refused",
+      "symptom": "Writes are refused or hang",
+      "describes": "reads work but writes fail, or commits wait",
+      "upstream": "https://cloudnative-pg.io/docs/1.30/troubleshooting/",
+      "startAt": -1,
+      "steps": [
+        {
+          "question": "Is this cluster a replica, or being demoted to one?",
+          "outcome": "unknown",
+          "explain": "A replica cluster's designated primary is read-only until promoted. Every write fails until then.",
+          "because": "could not run — cnpg-demotion-fencing: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-replica-switch-stuck: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-promotion-stuck: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31"
+        },
+        {
+          "question": "Do the operator and the instances agree on who is primary?",
+          "outcome": "unknown",
+          "explain": "A named primary that is in recovery refuses every write; a move in flight has no writer at all.",
+          "because": "could not run — cnpg-primary-disagreement: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-primary-lease-holder-mismatch: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-primary-move-stuck: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-timeline-divergence: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31"
+        },
+        {
+          "question": "Is PostgreSQL protecting itself from wraparound?",
+          "outcome": "unknown",
+          "explain": "Near wraparound PostgreSQL refuses new transactions until a vacuum of the oldest database finishes.",
+          "because": "could not run — postgres-xid-wraparound: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; postgres-mxid-wraparound: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31"
+        },
+        {
+          "question": "Are commits waiting on synchronous standbys that are not there?",
+          "outcome": "unknown",
+          "explain": "A commit waits for as many standbys as the configuration names; fewer streaming means every commit hangs.",
+          "because": "could not run — cnpg-sync-replicas-short: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-quorum-standbys-short: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-replica-not-streaming: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-replica-not-receiving: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31"
+        },
+        {
+          "question": "Has the WAL volume filled?",
+          "outcome": "unknown",
+          "explain": "With no room for the next segment PostgreSQL stops writing, and the operator keeps it down until there is.",
+          "because": "could not run — cnpg-wal-disk-full: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-wal-disk-space-phase: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-wal-archive-backlog: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-wal-archiving-failing: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31"
+        },
+        {
+          "question": "Is a lock, a long transaction or a deadlock pattern holding writes?",
+          "outcome": "unknown",
+          "explain": "Writes that hang rather than fail are usually waiting on a lock another session holds.",
+          "yourself": "kubectl cnpg psql \u003cname\u003e -- -c 'select pid, state, wait_event_type, query from pg_stat_activity where wait_event is not null'",
+          "because": "could not run — postgres-backends-waiting: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; postgres-long-transaction: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; postgres-deadlocks-ongoing: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31"
+        }
+      ]
+    },
+    {
+      "id": "backups-not-happening",
+      "symptom": "Backups are not happening",
+      "describes": "no recent backup, or backups that fail",
+      "upstream": "https://cloudnative-pg.io/docs/1.30/troubleshooting/",
+      "startAt": 0,
+      "steps": [
+        {
+          "question": "Is there a schedule, and is it firing?",
+          "outcome": "found",
+          "explain": "No Backup object is created unless a schedule fires, and the schedule's own events say why it did not.",
+          "yourself": "kubectl -n \u003cnamespace\u003e get scheduledbackup,backup -l cnpg.io/cluster=\u003cname\u003e",
+          "evidence": [
+            {
+              "origin": "operator-reported",
+              "object": "ScheduledBackup objects",
+              "detail": "none reference this cluster"
+            }
+          ]
+        },
+        {
+          "question": "Is a backup stuck before it starts?",
+          "outcome": "unknown",
+          "explain": "A backup runs on one instance and waits while that instance is not healthy; a target that never becomes healthy is the finding.",
+          "because": "could not run — cnpg-backup-stuck-pending: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-backup-target-unhealthy: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-backup-waiting-for-target: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31"
+        },
+        {
+          "question": "Did the backup fail?",
+          "outcome": "unknown",
+          "explain": "The Backup object and its events carry the error the command returned.",
+          "yourself": "kubectl -n \u003cnamespace\u003e describe backup \u003cbackup\u003e",
+          "because": "could not run — cnpg-backup-failed: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-backup-error: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-backup-manager-restarted: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-backup-plugin-missing: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-backup-stop-blocked: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-last-backup-failed: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31"
+        },
+        {
+          "question": "Is WAL archiving working?",
+          "outcome": "unknown",
+          "explain": "A backup is not a recovery point without the WAL that follows it, and the operator refuses to finish one while archiving fails.",
+          "yourself": "kubectl -n \u003cnamespace\u003e logs \u003cprimary-pod\u003e -c plugin-barman-cloud",
+          "because": "could not run — cnpg-wal-archiving-failing: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-wal-archive-command-failed: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-wal-archive-plugin-missing: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-archiver-failing: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-wal-archive-backlog: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-backup-wal-archiving: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31. could not be judged in full — switched off: object-store-denied, object-store-forbidden, object-store-unreachable, backup-destination-conflict, wal-archive-not-empty"
+        },
+        {
+          "question": "What does the object store itself hold?",
+          "outcome": "unknown",
+          "explain": "The plugin's and the evidence agent's own accounts of the store, independent of what the operator claims.",
+          "because": "could not run — cnpg-retention-failed: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31. could not be judged in full — switched off: repository-wal-unhealthy, repository-coverage-unhealthy, repository-retention-unhealthy"
+        }
+      ]
+    },
+    {
+      "id": "will-not-come-up",
+      "symptom": "The cluster will not come up",
+      "describes": "a new cluster, or a recreated instance, never becomes healthy",
+      "upstream": "https://cloudnative-pg.io/docs/1.30/troubleshooting/",
+      "startAt": 2,
+      "steps": [
+        {
+          "question": "Has the operator refused the definition, or stopped before starting?",
+          "outcome": "unknown",
+          "explain": "These phases stop reconciliation entirely; nothing else runs until the definition or the platform is corrected.",
+          "yourself": "kubectl -n \u003cnamespace\u003e get cluster \u003cname\u003e -o jsonpath='{.status.phase}: {.status.phaseReason}'",
+          "because": "could not run — cnpg-invalid-definition: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-unrecoverable: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-cannot-create-objects: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-unknown-plugin: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-plugin-failure: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-image-catalog-unusable: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-image-catalog-missing: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-image-catalog-lacks-major: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-service-account-missing: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31"
+        },
+        {
+          "question": "Is the bootstrap or the clone failing?",
+          "outcome": "unknown",
+          "explain": "The bootstrap job's log carries the step that failed: initdb, a restore, an archive that was not empty, a clone the primary refused.",
+          "yourself": "kubectl -n \u003cnamespace\u003e logs job/\u003cname\u003e-1-initdb",
+          "because": "could not run — cnpg-bootstrap-stuck: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-initdb-failed: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-restore-failed: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-recovery-target-missing: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-bootstrap-backup-missing: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-join-failed: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-pvc-initializing-stuck: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31. could not be judged in full — switched off: wal-archive-not-empty"
+        },
+        {
+          "question": "Can the pods be scheduled and started at all?",
+          "outcome": "found",
+          "explain": "Before the operator's job can run, Kubernetes has to place it and pull its image.",
+          "yourself": "kubectl -n \u003cnamespace\u003e get events --sort-by=.metadata.creationTimestamp",
+          "because": "matched: k8s-container-crashloop",
+          "findings": [
+            "k8s-container-crashloop/billing-1/postgres"
+          ]
+        },
+        {
+          "question": "Can the operator reach the instances it created?",
+          "outcome": "unknown",
+          "explain": "A cluster stuck creating a replica with an instance status extraction error is networking: the operator cannot reach port 8000 on the pod.",
+          "yourself": "kubectl -n cnpg-system logs deployment/cnpg-controller-manager | grep 'Cannot extract Pod status'",
+          "because": "could not run — cnpg-status-unreachable: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-liveness-isolation: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-no-system-id: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-not-ready: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31"
+        },
+        {
+          "question": "Is the data directory itself usable?",
+          "outcome": "unknown",
+          "explain": "A claim missing its WAL sibling, or a pg_control that is empty, is an instance that has to be recreated from the primary.",
+          "because": "could not run — cnpg-pvc-unusable: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-pvc-dangling: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-pg-control-lost: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-pg-rewind-failed: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31"
+        }
+      ]
+    },
+    {
+      "id": "replica-behind",
+      "symptom": "A replica is behind or not replicating",
+      "describes": "a standby lags, is out of the read service, or is on the wrong timeline",
+      "upstream": "https://cloudnative-pg.io/docs/1.30/troubleshooting/",
+      "startAt": 3,
+      "steps": [
+        {
+          "question": "Is the replica streaming at all?",
+          "outcome": "unknown",
+          "explain": "A replica with no WAL receiver is not replicating; one whose lag holds past the threshold is not keeping up.",
+          "yourself": "kubectl cnpg status \u003cname\u003e --verbose",
+          "because": "could not run — cnpg-replica-not-streaming: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-replica-not-receiving: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-replica-lagging: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-replication-lag-high: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31"
+        },
+        {
+          "question": "Is a replication slot or its synchronisation the problem?",
+          "outcome": "unknown",
+          "explain": "A slot that holds WAL back is a consumer that stopped; slot synchronisation failing means a failover cannot resume replication cleanly.",
+          "because": "could not run — cnpg-slot-retaining-wal: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-slot-sync-failing: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31"
+        },
+        {
+          "question": "Did the replica fail to rejoin after a promotion?",
+          "outcome": "unknown",
+          "explain": "A former primary that cannot rewind, or an instance still on the old timeline, is serving reads from before the promotion.",
+          "because": "could not run — cnpg-pg-rewind-failed: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-timeline-divergence: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-pg-control-lost: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-wal-restore-failed: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31"
+        },
+        {
+          "question": "Is the instance deliberately stopped, or crashing?",
+          "outcome": "found",
+          "explain": "A fenced or crash-looping replica replicates nothing while it is down.",
+          "because": "matched: k8s-container-crashloop",
+          "findings": [
+            "k8s-container-crashloop/billing-1/postgres"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "operation-stuck",
+      "symptom": "A switchover, failover or upgrade is stuck",
+      "describes": "the cluster has been between states for too long",
+      "upstream": "https://cloudnative-pg.io/docs/1.30/troubleshooting/",
+      "startAt": -1,
+      "steps": [
+        {
+          "question": "Is a primary move in flight and not finishing?",
+          "outcome": "unknown",
+          "explain": "The operator's current and target primaries disagree, and the promotion-side checks say which side is wedged.",
+          "yourself": "kubectl -n \u003cnamespace\u003e get lease \u003cname\u003e -o yaml",
+          "because": "could not run — cnpg-primary-move-stuck: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-primary-failing: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-primary-lease-expired: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-lease-not-acquired: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-lease-preempted: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-primary-lease-conflict: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-primary-status-check: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31"
+        },
+        {
+          "question": "Is the operator waiting for a person?",
+          "outcome": "unknown",
+          "explain": "A supervised update strategy parks the cluster until someone issues the switchover; nothing is broken and nothing resumes on its own.",
+          "yourself": "kubectl cnpg promote \u003cname\u003e \u003cinstance\u003e",
+          "because": "could not run — cnpg-waiting-for-user: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-switchover-required: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-upgrade-delayed: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31"
+        },
+        {
+          "question": "Is a rollout or upgrade not finishing?",
+          "outcome": "unknown",
+          "explain": "A rollout waits on one instance at a time; the phase reason names the one it is waiting for, and the pod-level checks say why.",
+          "because": "could not run — cnpg-rollout-stuck: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-major-upgrade-stuck: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-arch-binary-missing: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-manager-upgrade-failed: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-not-ready: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-instances-short: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31"
+        },
+        {
+          "question": "Does the quorum forbid the failover?",
+          "outcome": "unknown",
+          "explain": "With quorum failover, the operator refuses to promote a standby the quorum never saw. The missing standbys are the problem.",
+          "because": "could not run — cnpg-quorum-standbys-short: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-sync-replicas-short: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31"
+        },
+        {
+          "question": "Is a replica-cluster promotion or demotion in progress?",
+          "outcome": "unknown",
+          "explain": "A promotion with a token waits for the replica to replay to the token's point; a demotion fences everything first.",
+          "because": "could not run — cnpg-promotion-stuck: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-replica-switch-stuck: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-demotion-fencing: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31"
+        }
+      ]
+    },
+    {
+      "id": "operator-silent",
+      "symptom": "The operator seems to be doing nothing",
+      "describes": "a change to the Cluster has no effect, or the status stops moving",
+      "upstream": "https://cloudnative-pg.io/docs/1.30/troubleshooting/",
+      "startAt": -1,
+      "steps": [
+        {
+          "question": "Has the operator been told to wait, or to stop?",
+          "outcome": "unknown",
+          "explain": "Hibernation, a supervised strategy and a rollout delay are the operator waiting on purpose.",
+          "yourself": "kubectl -n \u003cnamespace\u003e get cluster \u003cname\u003e -o jsonpath='{.metadata.annotations}'",
+          "because": "could not run — cnpg-hibernated: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-waiting-for-user: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-upgrade-delayed: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-hibernation-blocked: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31"
+        },
+        {
+          "question": "Has reconciliation stopped on a plugin or the definition?",
+          "outcome": "unknown",
+          "explain": "These are checked before anything else on every reconcile; while one holds, no failover, rollout or backup happens.",
+          "because": "could not run — cnpg-unknown-plugin: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-plugin-failure: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-invalid-definition: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-image-catalog-unusable: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31"
+        },
+        {
+          "question": "Can the operator reach the instances?",
+          "outcome": "unknown",
+          "explain": "An operator that cannot read instance status makes no decision at all.",
+          "yourself": "kubectl -n cnpg-system logs deployment/cnpg-controller-manager --all-containers=true",
+          "because": "could not run — cnpg-status-unreachable: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-liveness-isolation: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-no-system-id: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31"
+        },
+        {
+          "question": "Is something rewriting the definition under the operator?",
+          "outcome": "unknown",
+          "explain": "Two controllers alternating on one object is each undoing the other; the field managers the API server attributes the writes to say who.",
+          "because": "could not run — cnpg-scale-down-refused: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-pvc-resizing-stuck: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31. could not be judged in full — switched off: k8s-definition-rewritten-repeatedly"
+        },
+        {
+          "question": "Has the operator stopped renewing what it manages?",
+          "outcome": "unknown",
+          "explain": "A certificate the operator issued and let expire is an operator that has not reconciled this cluster in days.",
+          "because": "could not run — cnpg-certificate-expired: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-certificate-expiring: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-not-ready: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31; cnpg-rollout-stuck: the CloudNativePG version is not observed, and this check applies only to CloudNativePG \u003e=1.30 \u003c1.31"
+        },
+        {
+          "question": "Is the operator itself running?",
+          "outcome": "ask",
+          "explain": "The operator lives in its own namespace, outside this console's authority. Its pod, its leader election and its webhook are read there.",
+          "yourself": "kubectl -n cnpg-system get pods \u0026\u0026 kubectl -n cnpg-system describe deployment cnpg-controller-manager"
+        }
+      ]
+    }
+  ]
+}

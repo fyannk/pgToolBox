@@ -1,0 +1,27 @@
+{
+  "ref": {
+    "namespace": "team-a",
+    "name": "orders",
+    "uid": "0b6a2c1e-8f0d-4a55-9a3e-7c1f2b3d4e5f"
+  },
+  "generatedAt": "2026-10-29T12:00:00Z",
+  "source": {
+    "source": "metrics",
+    "state": "pending",
+    "reason": "the Cluster was not swept yet",
+    "health": "progressing"
+  },
+  "tiles": [],
+  "charts": [],
+  "chartSource": "ring",
+  "monitoring": {
+    "state": "notConfigured"
+  },
+  "blindSpots": [
+    {
+      "id": "metrics.notAMonitoringSystem",
+      "panel": "metrics",
+      "text": "The console keeps a short window of the values its checks read; it is not a monitoring system."
+    }
+  ]
+}

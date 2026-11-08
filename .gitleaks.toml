@@ -1,0 +1,25 @@
+# gitleaks configuration for the secret scan in .github/workflows/security.yml.
+# The default rules stay on; this file only teaches the scan which paths hold
+# values that look like secrets on purpose. Anything it reports anywhere else
+# is a finding and blocks the pull request.
+title = "pgToolBox"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Test code, golden files and fixtures hold canary tokens, example JWTs and Azurite's published development key"
+paths = [
+  '''_test\.go$''',
+  '''(^|/)testdata/''',
+  '''^test/''',
+  '''^hack/evidence/test-''',
+]
+
+[[allowlists]]
+description = "Go identifiers and comments the generic key rule mistakes for secrets"
+targetRules = ["generic-api-key"]
+paths = [
+  '''^internal/evidence/config/config\.go$''',
+  '''^pkg/cnpgstatus/observe/observe\.go$''',
+]

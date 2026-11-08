@@ -1,0 +1,14 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "workspaces": {
+    ".": {
+      "entry": ["src/routes/**/*.tsx", "scripts/*.{mjs,ts}", "e2e/**/*.ts"],
+      "project": ["src/**/*.{ts,tsx}", "mocks/**/*.ts", "scripts/**", "e2e/**/*.ts", ".storybook/**"],
+      "ignore": ["src/api/generated/**", "mocks/fixtures/scenarios.gen.ts"],
+      "ignoreDependencies": ["@inlang/plugin-message-format", "tailwindcss", "@pgtoolbox/ui-tokens"]
+    },
+    "tokens": {
+      "entry": ["scripts/*.mjs", "*.test.mjs"]
+    }
+  }
+}

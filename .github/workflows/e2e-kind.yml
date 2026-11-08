@@ -1,0 +1,78 @@
+name: E2E on kind
+
+# One kind scenario on a fresh runner: the reusable half of ci.yml's e2e jobs.
+# A hosted runner is disposable and has Docker, so the scenario scripts run
+# unchanged (they build the images from the working tree, create a kind
+# cluster, run the suite and delete the cluster). Each scenario gets its own
+# runner and its own cluster, which is also why nothing here takes a lock.
+#
+# The inputs reach the shell only through env: they are never interpolated
+# into a script.
+on:
+  workflow_call:
+    inputs:
+      target:
+        description: Makefile target that runs the scenario (for example test-e2e-console)
+        required: true
+        type: string
+      tools:
+        description: Tools from mise.toml the scenario needs
+        required: false
+        type: string
+        default: go kind kubectl helm
+      timeout:
+        description: Job timeout in minutes
+        required: false
+        type: number
+        default: 45
+
+permissions: {}
+
+jobs:
+  e2e:
+    name: ${{ inputs.target }}
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout }}
+    permissions:
+      contents: read # check out the repository
+    env:
+      TARGET: ${{ inputs.target }}
+      # The scripts refuse to touch ~/.kube/config when this is set.
+      E2E_REQUIRE_KUBECONFIG: "1"
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the pinned tools
+        uses: ./.github/actions/toolchain
+        with:
+          tools: ${{ inputs.tools }}
+          go-cache: "true"
+      - name: Private kubeconfig
+        run: |
+          set -euo pipefail
+          echo "KUBECONFIG=${RUNNER_TEMP}/kubeconfig" >> "${GITHUB_ENV}"
+      - name: Run the scenario
+        run: |
+          set -euo pipefail
+          make "${TARGET}"
+      # Cluster logs and failure dumps land under artifacts/; they are the
+      # first thing to read when a scenario fails.
+      - name: Keep the failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: e2e-${{ inputs.target }}
+          path: artifacts
+          retention-days: 7
+          if-no-files-found: ignore
+      - name: Delete leftover kind clusters
+        if: always()
+        run: |
+          set -euo pipefail
+          if command -v kind >/dev/null; then
+            kind get clusters 2>/dev/null | while read -r name; do
+              kind delete cluster --name "${name}" || true
+            done
+          fi

@@ -1,0 +1,171 @@
+{
+  "ref": {
+    "namespace": "team-a",
+    "name": "orders",
+    "uid": "0b6a2c1e-8f0d-4a55-9a3e-7c1f2b3d4e5f"
+  },
+  "generatedAt": "2026-10-29T12:00:00Z",
+  "databases": [
+    {
+      "kind": "Database",
+      "name": "orders-app",
+      "pgName": "app",
+      "ensure": "present",
+      "state": "applied",
+      "health": "ok",
+      "generation": 3,
+      "observedGeneration": 3,
+      "provenance": {
+        "origin": "operator",
+        "source": "Database.status",
+        "observedAt": "2026-10-29T11:59:58Z"
+      }
+    },
+    {
+      "kind": "Database",
+      "name": "orders-reporting",
+      "pgName": "reporting",
+      "ensure": "present",
+      "state": "failed",
+      "health": "warning",
+      "message": "ERROR: role \"reporter\" does not exist (SQLSTATE 42704)",
+      "generation": 2,
+      "observedGeneration": 1,
+      "provenance": {
+        "origin": "operator",
+        "source": "Database.status",
+        "observedAt": "2026-10-29T11:59:58Z"
+      }
+    }
+  ],
+  "roles": [
+    {
+      "kind": "DatabaseRole",
+      "name": "orders-reader",
+      "pgName": "reader",
+      "ensure": "present",
+      "state": "applied",
+      "health": "ok",
+      "generation": 1,
+      "observedGeneration": 1,
+      "provenance": {
+        "origin": "operator",
+        "source": "DatabaseRole.status",
+        "observedAt": "2026-10-29T11:59:58Z"
+      }
+    }
+  ],
+  "managedRoles": [
+    {
+      "name": "app_owner",
+      "status": "reconciled",
+      "health": "ok",
+      "declared": true,
+      "provenance": {
+        "origin": "operator",
+        "source": "Cluster.status.managedRolesStatus",
+        "observedAt": "2026-10-29T11:59:58Z"
+      }
+    },
+    {
+      "name": "etl",
+      "status": "unreported",
+      "health": "unknown",
+      "declared": true,
+      "provenance": {
+        "origin": "operator",
+        "source": "Cluster.status.managedRolesStatus",
+        "observedAt": "2026-10-29T11:59:58Z"
+      }
+    }
+  ],
+  "tablespaces": [],
+  "publications": [
+    {
+      "kind": "Publication",
+      "name": "orders-pub",
+      "pgName": "orders_pub",
+      "database": "app",
+      "state": "applied",
+      "health": "ok",
+      "generation": 1,
+      "observedGeneration": 1,
+      "provenance": {
+        "origin": "operator",
+        "source": "Publication.status",
+        "observedAt": "2026-10-29T11:59:58Z"
+      }
+    }
+  ],
+  "subscriptions": [],
+  "poolers": [
+    {
+      "name": "orders-pooler-rw",
+      "type": "rw",
+      "poolMode": "transaction",
+      "desiredInstances": 2,
+      "instances": 2,
+      "podsReady": 2,
+      "phase": "active",
+      "image": "ghcr.io/cloudnative-pg/pgbouncer:1.24.1",
+      "text": "status.instances is the Deployment's replica count, not ready pods",
+      "health": "ok",
+      "provenance": {
+        "origin": "operator",
+        "source": "Pooler.status",
+        "observedAt": "2026-10-29T11:59:58Z"
+      }
+    }
+  ],
+  "imageCatalog": {
+    "kind": "ClusterImageCatalog",
+    "name": "postgresql",
+    "major": 18,
+    "state": "notReadable",
+    "reason": "catalog not readable: the console is not granted the opt-in ClusterImageCatalog read",
+    "health": "unknown",
+    "provenance": {
+      "origin": "operator",
+      "source": "ClusterImageCatalog"
+    }
+  },
+  "sources": [
+    {
+      "source": "databases",
+      "state": "live",
+      "since": "2026-10-29T09:00:00Z",
+      "health": "ok"
+    },
+    {
+      "source": "databaseRoles",
+      "state": "live",
+      "since": "2026-10-29T09:00:00Z",
+      "health": "ok"
+    },
+    {
+      "source": "publications",
+      "state": "live",
+      "since": "2026-10-29T09:00:00Z",
+      "health": "ok"
+    },
+    {
+      "source": "subscriptions",
+      "state": "live",
+      "since": "2026-10-29T09:00:00Z",
+      "health": "ok"
+    },
+    {
+      "source": "poolers",
+      "state": "live",
+      "since": "2026-10-29T09:00:00Z",
+      "health": "ok"
+    },
+    {
+      "source": "clusterImageCatalogs",
+      "state": "disabled",
+      "reason": "ALLOW_CLUSTER_CATALOGS is false",
+      "health": "inactive"
+    }
+  ],
+  "blindSpots": []
+}

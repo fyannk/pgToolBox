@@ -1,0 +1,30 @@
+{{- if .Values.pgadmin.enabled }}
+{{- $proxied := eq .Values.pgadmin.auth.provider "openshift" }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "pgtools.pgadmin.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "pgtools.pgadmin.labels" . | nindent 4 }}
+  {{- if or $proxied .Values.pgadmin.service.annotations }}
+  annotations:
+    {{- if $proxied }}
+    # The proxy's serving certificate, signed by the OpenShift service CA.
+    service.beta.openshift.io/serving-cert-secret-name: {{ include "pgtools.pgadmin.fullname" . }}-tls
+    {{- end }}
+    {{- with .Values.pgadmin.service.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- end }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "pgtools.pgadmin.selectorLabels" . | nindent 4 }}
+  ports:
+    {{- if $proxied }}
+    - {name: https, port: 443, targetPort: https, protocol: TCP}
+    {{- else }}
+    - {name: http, port: 80, targetPort: http, protocol: TCP}
+    {{- end }}
+{{- end }}

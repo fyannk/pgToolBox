@@ -1,0 +1,23 @@
+apiVersion: v2
+name: pgtools
+description: The pgToolBox team tools for CloudNativePG - the console for a team's namespaces, installed with namespace-admin rights and no operator.
+type: application
+# Kubernetes 1.28 or newer, as the product documents. The pre-release suffix
+# keeps managed distributions (1.28.3-gke.100, v1.29.4+k3s1) in range.
+kubeVersion: ">=1.28.0-0"
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - postgresql
+  - cloudnativepg
+  - console
+  - oidc
+  - openshift
+home: https://github.com/fyannk/pgToolBox
+icon: https://raw.githubusercontent.com/fyannk/pgToolBox/v0.1.0/docs/site/static/img/logo.png
+sources:
+  - https://github.com/fyannk/pgToolBox
+maintainers:
+  - name: fyannk
+annotations:
+  artifacthub.io/license: Apache-2.0

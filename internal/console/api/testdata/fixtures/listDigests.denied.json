@@ -1,0 +1,59 @@
+{
+  "generatedAt": "2026-10-29T12:00:00Z",
+  "source": {
+    "source": "digest",
+    "state": "live",
+    "health": "ok"
+  },
+  "schedule": {
+    "hour": 7,
+    "retention": "720h0m0s",
+    "next": "2026-10-30T07:00:00Z",
+    "persistent": true
+  },
+  "items": [
+    {
+      "id": "20261029T0700Z",
+      "from": "2026-10-28T07:00:00Z",
+      "to": "2026-10-29T07:00:00Z",
+      "generatedAt": "2026-10-29T07:00:02Z",
+      "counts": {
+        "clusters": 1,
+        "attention": 0,
+        "revisions": 1,
+        "newFindings": 0,
+        "worseFindings": 0,
+        "clearedFindings": 0,
+        "failovers": 0,
+        "switchovers": 0,
+        "failedBackups": 0,
+        "restarts": 0
+      },
+      "attention": [],
+      "partial": true,
+      "partialReasons": [
+        "consoleRestarted"
+      ]
+    },
+    {
+      "id": "20261028T0700Z",
+      "from": "2026-10-27T07:00:00Z",
+      "to": "2026-10-28T07:00:00Z",
+      "generatedAt": "2026-10-28T07:00:02Z",
+      "counts": {
+        "clusters": 1,
+        "attention": 0,
+        "revisions": 0,
+        "newFindings": 0,
+        "worseFindings": 0,
+        "clearedFindings": 0,
+        "failovers": 0,
+        "switchovers": 0,
+        "failedBackups": 0,
+        "restarts": 0
+      },
+      "attention": []
+    }
+  ]
+}
+

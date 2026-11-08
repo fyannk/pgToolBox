@@ -1,0 +1,106 @@
+{
+  "mcpURL": "https://console.example.com/mcp",
+  "serverName": "pgtoolbox",
+  "access": "readOperate",
+  "tokenLogin": false,
+  "clients": [
+    {
+      "id": "claude-code",
+      "name": "Claude Code",
+      "docs": "https://code.claude.com/docs/en/mcp",
+      "add": "claude mcp add --transport http --scope user pgtoolbox https://console.example.com/mcp",
+      "login": "/mcp",
+      "userConfig": {
+        "path": "~/.claude.json",
+        "format": "json",
+        "content": "{\n  \"mcpServers\": {\n    \"pgtoolbox\": {\n      \"type\": \"http\",\n      \"url\": \"https://console.example.com/mcp\"\n    }\n  }\n}\n"
+      },
+      "projectConfig": {
+        "path": ".mcp.json",
+        "format": "json",
+        "content": "{\n  \"mcpServers\": {\n    \"pgtoolbox\": {\n      \"type\": \"http\",\n      \"url\": \"https://console.example.com/mcp\"\n    }\n  }\n}\n"
+      },
+      "check": "claude mcp get pgtoolbox",
+      "pack": {
+        "document": "skill",
+        "download": "/api/v1/assistant-setup/skill",
+        "fileName": "SKILL.md",
+        "projectPath": ".claude/skills/pgtoolbox/SKILL.md",
+        "userPath": "~/.claude/skills/pgtoolbox/SKILL.md"
+      }
+    },
+    {
+      "id": "codex",
+      "name": "Codex CLI",
+      "docs": "https://learn.chatgpt.com/docs/extend/mcp?surface=cli",
+      "add": "codex mcp add pgtoolbox --url https://console.example.com/mcp",
+      "login": "codex mcp login pgtoolbox",
+      "userConfig": {
+        "path": "~/.codex/config.toml",
+        "format": "toml",
+        "content": "[mcp_servers.\"pgtoolbox\"]\nurl = \"https://console.example.com/mcp\"\n"
+      },
+      "projectConfig": {
+        "path": ".codex/config.toml",
+        "format": "toml",
+        "content": "[mcp_servers.\"pgtoolbox\"]\nurl = \"https://console.example.com/mcp\"\n"
+      },
+      "check": "codex mcp list",
+      "pack": {
+        "document": "agents",
+        "download": "/api/v1/assistant-setup/agents",
+        "fileName": "AGENTS.md",
+        "projectPath": "AGENTS.md",
+        "userPath": "~/.codex/AGENTS.md"
+      }
+    },
+    {
+      "id": "opencode",
+      "name": "OpenCode",
+      "docs": "https://opencode.ai/docs/mcp-servers/",
+      "login": "opencode mcp auth pgtoolbox",
+      "userConfig": {
+        "path": "~/.config/opencode/opencode.json",
+        "format": "json",
+        "content": "{\n  \"$schema\": \"https://opencode.ai/config.json\",\n  \"mcp\": {\n    \"pgtoolbox\": {\n      \"type\": \"remote\",\n      \"url\": \"https://console.example.com/mcp\",\n      \"enabled\": true\n    }\n  }\n}\n"
+      },
+      "projectConfig": {
+        "path": "opencode.json",
+        "format": "json",
+        "content": "{\n  \"$schema\": \"https://opencode.ai/config.json\",\n  \"mcp\": {\n    \"pgtoolbox\": {\n      \"type\": \"remote\",\n      \"url\": \"https://console.example.com/mcp\",\n      \"enabled\": true\n    }\n  }\n}\n"
+      },
+      "check": "opencode mcp list",
+      "pack": {
+        "document": "agents",
+        "download": "/api/v1/assistant-setup/agents",
+        "fileName": "AGENTS.md",
+        "projectPath": "AGENTS.md",
+        "userPath": "~/.config/opencode/AGENTS.md"
+      }
+    },
+    {
+      "id": "generic",
+      "name": "VS Code, Cursor and other clients",
+      "docs": "https://code.visualstudio.com/docs/agents/reference/mcp-configuration",
+      "userConfig": {
+        "path": "~/.cursor/mcp.json",
+        "format": "json",
+        "content": "{\n  \"mcpServers\": {\n    \"pgtoolbox\": {\n      \"url\": \"https://console.example.com/mcp\"\n    }\n  }\n}\n"
+      },
+      "projectConfig": {
+        "path": ".vscode/mcp.json",
+        "format": "json",
+        "content": "{\n  \"servers\": {\n    \"pgtoolbox\": {\n      \"type\": \"http\",\n      \"url\": \"https://console.example.com/mcp\"\n    }\n  }\n}\n"
+      },
+      "checkNote": "Open the client's list of MCP servers: pgtoolbox shows as connected once you have signed in.",
+      "pack": {
+        "document": "agents",
+        "download": "/api/v1/assistant-setup/agents",
+        "fileName": "AGENTS.md",
+        "projectPath": "AGENTS.md"
+      }
+    }
+  ],
+  "skillPath": "/api/v1/assistant-setup/skill",
+  "agentsPath": "/api/v1/assistant-setup/agents"
+}

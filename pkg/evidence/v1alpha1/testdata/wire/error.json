@@ -1,0 +1,6 @@
+{
+  "api_version": "evidence.pgtoolbox.fyannk.dev/v1alpha1",
+  "kind": "EvidenceAPIError",
+  "code": "publication-changed",
+  "message": "repository evidence changed; restart from snapshot"
+}

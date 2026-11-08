@@ -1,0 +1,6 @@
+{
+  "title": "Conflict",
+  "status": 409,
+  "detail": "promote refused: orders-3 is fenced"
+}
+

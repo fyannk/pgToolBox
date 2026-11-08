@@ -1,0 +1,192 @@
+# The daily digest: the page is on with persistent history,
+# delivery is off until a channel is set, every credential is a Secret key
+# mounted as a file, delivery needs persistent history (the message links to
+# the digest's page), and only the replica holding the digest Lease delivers.
+suite: console daily digest
+templates:
+  - templates/console/deployment.yaml
+  - templates/console/networkpolicy.yaml
+  - templates/console/digest-lease.yaml
+release:
+  name: pgc
+  namespace: team-a
+tests:
+  - it: sets no DIGEST_* and mounts no digest Secret by default
+    template: templates/console/deployment.yaml
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content: {name: DIGEST_ENABLED, value: "true"}
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content: {name: DIGEST_ENABLED, value: "false"}
+      - notContains:
+          path: spec.template.spec.volumes
+          content: {name: digest-chat}
+          any: true
+
+  - it: renders the schedule switches when set
+    template: templates/console/deployment.yaml
+    set:
+      console.digest.enabled: false
+      console.digest.hour: 0
+      console.digest.retention: 168h
+    asserts:
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: DIGEST_ENABLED, value: "false"}}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: DIGEST_HOUR, value: "0"}}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: DIGEST_RETENTION, value: 168h}}
+
+  - it: refuses delivery without persistent history (the digest's page would not survive a restart)
+    template: templates/console/deployment.yaml
+    set:
+      console.digest.delivery.chat.existingSecret: digest-chat
+    asserts:
+      - failedTemplate:
+          errorPattern: needs console.history.persistent=true
+
+  - it: refuses delivery with the digest switched off
+    template: templates/console/deployment.yaml
+    set:
+      console.history.persistent: true
+      console.digest.enabled: false
+      console.digest.delivery.webhook.existingSecret: digest-webhook
+    asserts:
+      - failedTemplate:
+          errorPattern: needs console.digest.enabled
+
+  - it: names the digest Lease and renders its Role only with a delivery channel
+    template: templates/console/digest-lease.yaml
+    asserts:
+      - hasDocuments: {count: 0}
+
+  - it: grants get and update on the digest Lease by name, and create on leases
+    template: templates/console/digest-lease.yaml
+    set:
+      console.history.persistent: true
+      console.digest.delivery.chat.existingSecret: digest-chat
+    asserts:
+      - hasDocuments: {count: 2}
+      - isKind: {of: Role}
+        documentIndex: 0
+      - equal:
+          path: metadata.name
+          value: pgc-console-digest
+        documentIndex: 0
+      - equal:
+          path: rules
+          value:
+            - apiGroups: [coordination.k8s.io]
+              resources: [leases]
+              resourceNames: [pgc-console-digest]
+              verbs: [get, update]
+            - apiGroups: [coordination.k8s.io]
+              resources: [leases]
+              verbs: [create]
+        documentIndex: 0
+      - isKind: {of: RoleBinding}
+        documentIndex: 1
+      - equal:
+          path: subjects
+          value: [{kind: ServiceAccount, name: pgc-console, namespace: team-a}]
+        documentIndex: 1
+
+  - it: renders no digest Lease Role without rbac.create
+    template: templates/console/digest-lease.yaml
+    set:
+      console.rbac.create: false
+      console.history.persistent: true
+      console.digest.delivery.chat.existingSecret: digest-chat
+    asserts:
+      - hasDocuments: {count: 0}
+
+  - it: points the console at the digest Lease only with a delivery channel
+    template: templates/console/deployment.yaml
+    set:
+      console.history.persistent: true
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content: {name: DIGEST_LEASE, value: pgc-console-digest}
+
+  - it: mounts the chat and webhook URLs as files, never as values
+    template: templates/console/deployment.yaml
+    set:
+      console.history.persistent: true
+      console.digest.delivery.chat.existingSecret: digest-chat
+      console.digest.delivery.webhook: {existingSecret: digest-webhook, key: endpoint}
+      console.digest.delivery.timeout: 20s
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: DIGEST_CHAT_WEBHOOK_URL_FILE, value: /var/run/console/digest/chat/url}
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: DIGEST_WEBHOOK_URL_FILE, value: /var/run/console/digest/webhook/endpoint}
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: DIGEST_DELIVERY_TIMEOUT, value: 20s}
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: DIGEST_LEASE, value: pgc-console-digest}
+      - isKind: {of: StatefulSet}
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: digest-webhook
+            secret:
+              secretName: digest-webhook
+              items: [{key: endpoint, path: endpoint}]
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content: {name: digest-chat, mountPath: /var/run/console/digest/chat, readOnly: true}
+
+  - it: renders mail with STARTTLS by default and the password as a file
+    template: templates/console/deployment.yaml
+    set:
+      console.history.persistent: true
+      console.digest.delivery.smtp:
+        address: smtp.example.com:587
+        username: pgtoolbox-console
+        password: {existingSecret: digest-smtp, key: password}
+        from: pgtoolbox-console@example.com
+        to: [dba@example.com, oncall@example.com]
+    asserts:
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: DIGEST_SMTP_TLS, value: starttls}}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: DIGEST_SMTP_TO, value: "dba@example.com,oncall@example.com"}}
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: DIGEST_SMTP_PASSWORD_FILE, value: /var/run/console/digest/smtp/password}
+      - isNotNullOrEmpty:
+          path: metadata.annotations["ignore-check.kube-linter.io/env-var-secret"]
+
+  - it: refuses mail without recipients
+    template: templates/console/deployment.yaml
+    set:
+      console.history.persistent: true
+      console.digest.delivery.smtp: {address: "smtp.example.com:465", tls: tls, from: pgtoolbox-console@example.com}
+    asserts:
+      - failedTemplate:
+          errorPattern: needs at least one recipient
+
+  - it: refuses a plaintext mail mode in the schema
+    template: templates/console/deployment.yaml
+    set:
+      console.history.persistent: true
+      console.digest.delivery.smtp: {address: "smtp.example.com:25", tls: none, from: a@example.com, to: [b@example.com]}
+    asserts:
+      - failedTemplate: {}
+
+  - it: appends extra egress rules to the policy
+    template: templates/console/networkpolicy.yaml
+    set:
+      console.networkPolicy.enabled: true
+      console.networkPolicy.apiServer.mode: any
+      console.networkPolicy.extraEgress:
+        - to: [{ipBlock: {cidr: 203.0.113.10/32}}]
+          ports: [{port: 443, protocol: TCP}]
+    asserts:
+      - contains:
+          path: spec.egress
+          content:
+            to: [{ipBlock: {cidr: 203.0.113.10/32}}]
+            ports: [{port: 443, protocol: TCP}]

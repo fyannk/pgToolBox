@@ -1,0 +1,36 @@
+apiVersion: v1
+kind: Service
+metadata:
+  annotations:
+    pgtoolbox.fyannk.dev/spec-hash: 92d41185648192f8
+  labels:
+    app.kubernetes.io/component: pgadmin
+    app.kubernetes.io/instance: web
+    app.kubernetes.io/managed-by: pgtoolbox
+    app.kubernetes.io/name: pgadmin
+    app.kubernetes.io/part-of: pgtoolbox
+    pgtoolbox.fyannk.dev/pgadmin: web
+    pgtoolbox.fyannk.dev/reconcile: "true"
+  name: web-pgadmin
+  namespace: team-a
+  ownerReferences:
+  - apiVersion: pgtoolbox.fyannk.dev/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: PgAdmin
+    name: web
+    uid: pga-uid
+spec:
+  ports:
+  - name: http
+    port: 80
+    protocol: TCP
+    targetPort: http
+  selector:
+    app.kubernetes.io/component: pgadmin
+    app.kubernetes.io/instance: web
+    app.kubernetes.io/name: pgadmin
+    pgtoolbox.fyannk.dev/pgadmin: web
+  type: ClusterIP
+status:
+  loadBalancer: {}

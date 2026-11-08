@@ -1,0 +1,13 @@
+# Restore drills in a dedicated namespace, with the drill NetworkPolicy closed
+# to given addresses and the cluster-admin delete guard (Kubernetes 1.30+).
+console:
+  watchNamespaces: [team-a, drills]
+  restoreDrills:
+    enabled: true
+    namespace: drills
+    networkPolicy:
+      apiServer: {mode: addresses, addresses: [10.96.0.1]}
+      objectStore:
+        to: [{ipBlock: {cidr: 192.0.2.10/32}}]
+    admissionPolicy:
+      create: true

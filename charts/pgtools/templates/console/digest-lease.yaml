@@ -1,0 +1,41 @@
+{{- $dl := .Values.console.digest.delivery }}
+{{- if and .Values.console.enabled .Values.console.rbac.create (or $dl.chat.existingSecret $dl.webhook.existingSecret $dl.smtp.address) }}
+{{- $fullname := include "pgtools.console.fullname" . }}
+{{- $lease := include "pgtools.console.digestLease" . }}
+# Only the replica holding this Lease delivers the daily digests.
+# get and update on that Lease by name; create on leases, which RBAC cannot
+# scope by name (a create is authorized before the object, and so its name,
+# exists): the first replica that stands creates the Lease. A namespace admin
+# may grant these verbs (leases are in the built-in edit and admin roles).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $lease }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "pgtools.console.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    resourceNames: [{{ $lease | quote }}]
+    verbs: [get, update]
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $lease }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "pgtools.console.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $lease }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $fullname }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

@@ -1,0 +1,528 @@
+{
+  "ref": {
+    "namespace": "team-a",
+    "name": "orders",
+    "uid": "0b6a2c1e-8f0d-4a55-9a3e-7c1f2b3d4e5f"
+  },
+  "generatedAt": "2026-10-29T12:00:00Z",
+  "title": "How orders is wired",
+  "aria": "The wiring of orders; 1 pooler(s) front its Services; orders-rw leads to the primary orders-1; orders-ro leads to the replicas orders-2, orders-3, which stream from the primary; 3 volume(s) are drawn beside their instances; 1 backup schedule(s) target the cluster; WAL is archived to the object store.",
+  "width": 1690,
+  "height": 522,
+  "frames": [
+    {
+      "label": "Poolers",
+      "kind": "pool",
+      "x": 8,
+      "y": 160,
+      "w": 242,
+      "h": 129,
+      "foldable": true
+    },
+    {
+      "label": "Cluster",
+      "kind": "cluster",
+      "x": 310,
+      "y": 160,
+      "w": 856,
+      "h": 354,
+      "foldable": true
+    },
+    {
+      "label": "Backups",
+      "kind": "backup",
+      "x": 608,
+      "y": 8,
+      "w": 242,
+      "h": 124,
+      "foldable": true
+    },
+    {
+      "label": "Kubernetes storage",
+      "kind": "kubeStorage",
+      "x": 1226,
+      "y": 160,
+      "w": 456,
+      "h": 344,
+      "foldable": true
+    },
+    {
+      "label": "Object storage",
+      "kind": "objectStorage",
+      "x": 1226,
+      "y": 8,
+      "w": 456,
+      "h": 124
+    }
+  ],
+  "edges": [
+    {
+      "kind": "write",
+      "path": "M 234 242 L 326 242"
+    },
+    {
+      "kind": "write",
+      "path": "M 566 242 L 614 242"
+    },
+    {
+      "kind": "read",
+      "path": "M 566 347 L 920 347"
+    },
+    {
+      "kind": "read",
+      "path": "M 566 347 L 584 347 Q 590 347 590 353 L 590 451 Q 590 457 596 457 L 920 457"
+    },
+    {
+      "kind": "baseBackup",
+      "path": "M 729 116 L 729 160"
+    },
+    {
+      "kind": "replicate",
+      "path": "M 844 257 L 876 257 Q 882 257 882 263 L 882 356 Q 882 362 888 362 L 920 362"
+    },
+    {
+      "kind": "replicate",
+      "label": "replication",
+      "path": "M 844 257 L 876 257 Q 882 257 882 263 L 882 466 Q 882 472 888 472 L 920 472",
+      "labelX": 878,
+      "labelY": 309,
+      "labelVertical": true
+    },
+    {
+      "kind": "volume",
+      "path": "M 844 242 L 1242 242"
+    },
+    {
+      "kind": "volume",
+      "path": "M 1150 347 L 1466 347"
+    },
+    {
+      "kind": "volume",
+      "path": "M 1150 457 L 1242 457"
+    },
+    {
+      "kind": "wal",
+      "label": "WAL archive",
+      "path": "M 844 227 L 1178 227 Q 1184 227 1184 221 L 1184 84 Q 1184 78 1190 78 L 1242 78",
+      "labelX": 1014,
+      "labelY": 220
+    }
+  ],
+  "nodes": [
+    {
+      "id": "pooler-orders-pooler-rw",
+      "kind": "pooler",
+      "label": "orders-pooler-rw",
+      "state": "unknown",
+      "lines": [
+        {
+          "class": "label",
+          "text": "orders-pooler-rw",
+          "x": 38,
+          "y": 230
+        },
+        {
+          "class": "sub",
+          "text": "pgbouncer rw · session",
+          "x": 38,
+          "y": 247
+        },
+        {
+          "class": "disk",
+          "text": "2 of 2 pods created",
+          "x": 38,
+          "y": 261
+        }
+      ],
+      "x": 24,
+      "y": 211,
+      "w": 210,
+      "h": 62,
+      "link": "objects"
+    },
+    {
+      "id": "svc-rw",
+      "kind": "service",
+      "label": "orders-rw",
+      "state": "info",
+      "lines": [
+        {
+          "class": "label",
+          "text": "orders-rw",
+          "x": 340,
+          "y": 230
+        },
+        {
+          "class": "sub",
+          "text": "routes to the primary",
+          "x": 340,
+          "y": 247
+        },
+        {
+          "class": "disk",
+          "text": "ClusterIP 10.96.14.20:5432",
+          "x": 340,
+          "y": 261
+        }
+      ],
+      "x": 326,
+      "y": 211,
+      "w": 240,
+      "h": 62
+    },
+    {
+      "id": "svc-ro",
+      "kind": "service",
+      "label": "orders-ro",
+      "state": "info",
+      "lines": [
+        {
+          "class": "label",
+          "text": "orders-ro",
+          "x": 340,
+          "y": 335
+        },
+        {
+          "class": "sub",
+          "text": "routes to the replicas",
+          "x": 340,
+          "y": 352
+        },
+        {
+          "class": "disk",
+          "text": "ClusterIP 10.96.14.21:5432",
+          "x": 340,
+          "y": 366
+        }
+      ],
+      "x": 326,
+      "y": 316,
+      "w": 240,
+      "h": 62
+    },
+    {
+      "id": "inst-orders-1",
+      "kind": "primary",
+      "label": "orders-1",
+      "state": "ok",
+      "lines": [
+        {
+          "class": "label",
+          "text": "orders-1 — primary",
+          "x": 628,
+          "y": 223
+        },
+        {
+          "class": "sub",
+          "text": "Running · ready",
+          "x": 628,
+          "y": 240
+        },
+        {
+          "class": "disk",
+          "text": "node node-1",
+          "x": 628,
+          "y": 254
+        },
+        {
+          "class": "disk",
+          "text": "postgresql:18.1",
+          "x": 628,
+          "y": 268
+        }
+      ],
+      "x": 614,
+      "y": 206,
+      "w": 230,
+      "h": 72,
+      "link": "instances/orders-1"
+    },
+    {
+      "id": "inst-orders-2",
+      "kind": "replica",
+      "label": "orders-2",
+      "state": "ok",
+      "lines": [
+        {
+          "class": "label",
+          "text": "orders-2 — replica",
+          "x": 934,
+          "y": 321
+        },
+        {
+          "class": "sub",
+          "text": "streaming · quorum",
+          "x": 934,
+          "y": 338
+        },
+        {
+          "class": "sub",
+          "text": "Running · ready",
+          "x": 934,
+          "y": 352
+        },
+        {
+          "class": "disk",
+          "text": "node node-2",
+          "x": 934,
+          "y": 366
+        },
+        {
+          "class": "disk",
+          "text": "postgresql:18.1",
+          "x": 934,
+          "y": 380
+        }
+      ],
+      "x": 920,
+      "y": 306,
+      "w": 230,
+      "h": 82,
+      "link": "instances/orders-2"
+    },
+    {
+      "id": "inst-orders-3",
+      "kind": "replica",
+      "label": "orders-3",
+      "state": "ok",
+      "lines": [
+        {
+          "class": "label",
+          "text": "orders-3 — replica",
+          "x": 934,
+          "y": 431
+        },
+        {
+          "class": "sub",
+          "text": "catchup · async",
+          "x": 934,
+          "y": 448
+        },
+        {
+          "class": "sub",
+          "text": "Running · ready",
+          "x": 934,
+          "y": 462
+        },
+        {
+          "class": "disk",
+          "text": "node node-3",
+          "x": 934,
+          "y": 476
+        },
+        {
+          "class": "disk",
+          "text": "postgresql:18.1",
+          "x": 934,
+          "y": 490
+        }
+      ],
+      "x": 920,
+      "y": 416,
+      "w": 230,
+      "h": 82,
+      "link": "instances/orders-3"
+    },
+    {
+      "id": "sched-orders-nightly",
+      "kind": "schedule",
+      "label": "orders-nightly",
+      "state": "progressing",
+      "lines": [
+        {
+          "class": "label",
+          "text": "orders-nightly",
+          "x": 638,
+          "y": 73
+        },
+        {
+          "class": "disk",
+          "text": "0 0 0 * * *",
+          "x": 638,
+          "y": 90
+        },
+        {
+          "class": "sub",
+          "text": "next Oct 30 00:00 UTC",
+          "x": 638,
+          "y": 104
+        }
+      ],
+      "x": 624,
+      "y": 54,
+      "w": 210,
+      "h": 62,
+      "link": "backups"
+    },
+    {
+      "id": "store",
+      "kind": "store",
+      "label": "ObjectStore store",
+      "state": "ok",
+      "lines": [
+        {
+          "class": "label",
+          "text": "ObjectStore store",
+          "x": 1256,
+          "y": 73
+        },
+        {
+          "class": "sub",
+          "text": "WAL archive · base backups",
+          "x": 1256,
+          "y": 90
+        },
+        {
+          "class": "note",
+          "text": "plugin barman-cloud",
+          "x": 1256,
+          "y": 104
+        }
+      ],
+      "x": 1242,
+      "y": 54,
+      "w": 265,
+      "h": 62,
+      "link": "backups"
+    },
+    {
+      "id": "pvc-orders-1",
+      "kind": "volume",
+      "label": "orders-1",
+      "state": "unknown",
+      "lines": [
+        {
+          "class": "label",
+          "text": "orders-1",
+          "x": 1256,
+          "y": 230
+        },
+        {
+          "class": "sub",
+          "text": "PG_DATA · Bound",
+          "x": 1256,
+          "y": 247
+        },
+        {
+          "class": "disk",
+          "text": "10Gi · fast",
+          "x": 1256,
+          "y": 261
+        }
+      ],
+      "x": 1242,
+      "y": 211,
+      "w": 200,
+      "h": 62,
+      "link": "storage"
+    },
+    {
+      "id": "pvc-orders-2",
+      "kind": "volume",
+      "label": "orders-2",
+      "state": "unknown",
+      "lines": [
+        {
+          "class": "label",
+          "text": "orders-2",
+          "x": 1480,
+          "y": 335
+        },
+        {
+          "class": "sub",
+          "text": "PG_DATA · Bound",
+          "x": 1480,
+          "y": 352
+        },
+        {
+          "class": "disk",
+          "text": "10Gi · fast",
+          "x": 1480,
+          "y": 366
+        }
+      ],
+      "x": 1466,
+      "y": 316,
+      "w": 200,
+      "h": 62,
+      "link": "storage"
+    },
+    {
+      "id": "pvc-orders-3",
+      "kind": "volume",
+      "label": "orders-3",
+      "state": "unknown",
+      "lines": [
+        {
+          "class": "label",
+          "text": "orders-3",
+          "x": 1256,
+          "y": 445
+        },
+        {
+          "class": "sub",
+          "text": "PG_DATA · Bound",
+          "x": 1256,
+          "y": 462
+        },
+        {
+          "class": "disk",
+          "text": "10Gi · fast",
+          "x": 1256,
+          "y": 476
+        }
+      ],
+      "x": 1242,
+      "y": 426,
+      "w": 200,
+      "h": 62,
+      "link": "storage"
+    }
+  ],
+  "dots": [
+    {
+      "kind": "read",
+      "x": 590,
+      "y": 347
+    },
+    {
+      "kind": "replicate",
+      "x": 882,
+      "y": 362
+    }
+  ],
+  "legend": [
+    {
+      "kind": "write",
+      "label": "writes"
+    },
+    {
+      "kind": "read",
+      "label": "reads"
+    },
+    {
+      "kind": "replicate",
+      "label": "replication"
+    },
+    {
+      "kind": "wal",
+      "label": "WAL archive"
+    },
+    {
+      "kind": "baseBackup",
+      "label": "base backup"
+    },
+    {
+      "kind": "volume",
+      "label": "volume"
+    }
+  ],
+  "caption": "Instance, pooler, schedule, volume and object-store states are observed, and the base-backup wire leaves the instance the newest Backup reports; the Services, the client paths, replication and WAL archiving are the standard CloudNativePG wiring, not observed traffic.",
+  "blindSpots": [
+    {
+      "id": "topology.noSyncTopologyCondition",
+      "panel": "topology",
+      "text": "CloudNativePG 1.30 does not report whether synchronous standbys sit in another failure domain."
+    }
+  ]
+}

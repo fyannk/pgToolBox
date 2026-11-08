@@ -1,0 +1,189 @@
+# The console's whole authority: Roles in the watched namespaces
+# and an opt-in catalog read. No ClusterRole by default: access questions are
+# SelfSubjectAccessReviews asked with the user's own token.
+#
+# Render order of templates/console/rbac.yaml, which the indexes below rely on:
+#   per watched namespace: Role, RoleBinding
+#   opt-in (restoreDrills): per drill namespace, teardown Role, RoleBinding
+#   then: revocation Role, revocation RoleBinding
+#   opt-in: catalog ClusterRole, catalog ClusterRoleBinding
+suite: console RBAC
+templates:
+  - templates/console/rbac.yaml
+release:
+  name: pgc
+  namespace: team-a
+tests:
+  - it: renders one Role pair and the revocation pair by default, nothing cluster-scoped
+    asserts:
+      - hasDocuments: {count: 4}
+      - documentIndex: 0
+        isKind: {of: Role}
+      - documentIndex: 1
+        isKind: {of: RoleBinding}
+      - documentIndex: 2
+        isKind: {of: Role}
+      - documentIndex: 3
+        isKind: {of: RoleBinding}
+
+  - it: pins the watched-namespace Role (a change to the console's authority shows up as a snapshot diff)
+    documentIndex: 0
+    capabilities:
+      apiVersions: [pgtoolbox.fyannk.dev/v1alpha1]
+    asserts:
+      - matchSnapshot: {path: rules}
+
+  - it: gives the watched-namespace Role read-only verbs on the CNPG kinds
+    documentIndex: 0
+    asserts:
+      - contains:
+          path: rules
+          content:
+            apiGroups: [postgresql.cnpg.io]
+            resources:
+              - clusters
+              - backups
+              - scheduledbackups
+              - poolers
+              - databases
+              - databaseroles
+              - publications
+              - subscriptions
+              - failoverquorums
+              - imagecatalogs
+            verbs: [get, list, watch]
+
+  - it: reads the revocation list by name in the release namespace, and no other ConfigMap
+    documentIndex: 2
+    asserts:
+      - equal: {path: metadata.namespace, value: team-a}
+      - equal:
+          path: rules
+          value:
+            - apiGroups: [""]
+              resources: [configmaps]
+              resourceNames: [pgc-console-revocations]
+              verbs: [get, watch]
+
+  - it: follows a revocations.configMapName override
+    set: {console.revocations.configMapName: shared-revocations}
+    documentIndex: 2
+    asserts:
+      - equal: {path: "rules[0].resourceNames", value: [shared-revocations]}
+
+  - it: renders a Role and RoleBinding in each watched namespace, and the revocation Role in the release namespace
+    set: {console.watchNamespaces: [team-b, team-c]}
+    asserts:
+      - hasDocuments: {count: 6}
+      - documentIndex: 0
+        equal: {path: metadata.namespace, value: team-b}
+      - documentIndex: 1
+        equal: {path: metadata.namespace, value: team-b}
+      - documentIndex: 2
+        equal: {path: metadata.namespace, value: team-c}
+      - documentIndex: 3
+        equal: {path: metadata.namespace, value: team-c}
+      - documentIndex: 4
+        equal: {path: metadata.namespace, value: team-a}
+      - documentIndex: 4
+        equal: {path: metadata.name, value: pgc-console-revocations}
+      - documentIndex: 1
+        equal: {path: "subjects[0].namespace", value: team-a}
+
+  - it: leaves out pods/log when logs are withheld
+    set: {console.rbac.podLogs: false}
+    documentIndex: 0
+    asserts:
+      - notContains:
+          path: rules
+          content:
+            apiGroups: [""]
+            resources: [pods/log]
+            verbs: [get]
+
+  - it: grants pods/log get by default
+    documentIndex: 0
+    asserts:
+      - contains:
+          path: rules
+          content:
+            apiGroups: [""]
+            resources: [pods/log]
+            verbs: [get]
+
+  - it: adds the read-only ClusterImageCatalog ClusterRole only on opt-in
+    set: {console.clusterImageCatalogs.enabled: true}
+    asserts:
+      - hasDocuments: {count: 6}
+      - documentIndex: 4
+        isKind: {of: ClusterRole}
+      - documentIndex: 4
+        equal: {path: metadata.name, value: "team-a:pgc-console:clusterimagecatalogs"}
+      - documentIndex: 4
+        equal:
+          path: rules
+          value:
+            - apiGroups: [postgresql.cnpg.io]
+              resources: [clusterimagecatalogs]
+              verbs: [get, list, watch]
+      - documentIndex: 5
+        isKind: {of: ClusterRoleBinding}
+      - documentIndex: 5
+        equal: {path: "subjects[0].name", value: pgc-console}
+
+  - it: renders no RBAC when rbac.create is false
+    set: {console.rbac.create: false}
+    asserts:
+      - hasDocuments: {count: 0}
+
+  - it: renders no RBAC when the console is disabled
+    set: {console.enabled: false}
+    asserts:
+      - hasDocuments: {count: 0}
+
+  - it: lets the console read PgAccessRequests in each watched namespace, and nothing more on them
+    documentIndex: 0
+    capabilities:
+      apiVersions: [pgtoolbox.fyannk.dev/v1alpha1]
+    asserts:
+      - contains:
+          path: rules
+          content:
+            apiGroups: [pgtoolbox.fyannk.dev]
+            resources: [pgadmins, evidenceagents, pgaccessrequests]
+            verbs: [get, list, watch]
+
+  - it: grants nothing on the operator's kinds where the cluster does not serve them (a namespace admin can install it)
+    documentIndex: 0
+    asserts:
+      - notContains:
+          path: rules
+          content:
+            apiGroups: [pgtoolbox.fyannk.dev]
+            resources: [pgadmins, evidenceagents, pgaccessrequests]
+            verbs: [get, list, watch]
+          any: true
+
+  - it: grants the operator's kinds when operatorKinds is true, without discovery (helm template)
+    documentIndex: 0
+    set: {console.rbac.operatorKinds: true}
+    asserts:
+      - contains:
+          path: rules
+          content:
+            apiGroups: [pgtoolbox.fyannk.dev]
+            resources: [pgadmins, evidenceagents, pgaccessrequests]
+            verbs: [get, list, watch]
+
+  - it: withholds them when operatorKinds is false, even where they are served
+    documentIndex: 0
+    set: {console.rbac.operatorKinds: false}
+    capabilities:
+      apiVersions: [pgtoolbox.fyannk.dev/v1alpha1]
+    asserts:
+      - notContains:
+          path: rules
+          content:
+            apiGroups: [pgtoolbox.fyannk.dev]
+            resources: [pgadmins, evidenceagents, pgaccessrequests]
+            verbs: [get, list, watch]

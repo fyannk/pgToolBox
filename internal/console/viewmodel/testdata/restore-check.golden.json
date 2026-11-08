@@ -1,0 +1,22 @@
+{
+  "ref": {
+    "namespace": "team-a",
+    "name": "orders",
+    "uid": "0b6a2c1e-8f0d-4a55-9a3e-7c1f2b3d4e5f"
+  },
+  "generatedAt": "2026-10-29T12:00:00Z",
+  "at": "2026-10-29T10:00:00Z",
+  "answer": "covered",
+  "text": "Structurally covered: restore from base backup 20261029T070001 and replay the archived WAL to this time.",
+  "backupId": "20261029T070001",
+  "basis": "evidence",
+  "caveats": [
+    "Judged from WAL segment names in the repository: the WAL bytes were not read and no restore was run.",
+    "The latest restore point is bounded by when the last contiguous segment reached the repository; the newest transactions may still be only on the instance."
+  ],
+  "provenance": {
+    "origin": "evidence",
+    "source": "EvidenceAgent orders-evidence /api/v1alpha1/recovery-paths",
+    "observedAt": "2026-10-29T11:59:20Z"
+  }
+}

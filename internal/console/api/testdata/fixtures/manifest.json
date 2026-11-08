@@ -1,0 +1,661 @@
+[
+  {
+    "file": "approveAccessRequest.conflict.json",
+    "operationId": "approveAccessRequest",
+    "method": "POST",
+    "path": "/api/v1/namespaces/team-a/access-requests/operator-w3e4r/approve",
+    "status": 409,
+    "scenario": "409: already denied",
+    "body": "{}"
+  },
+  {
+    "file": "approveAccessRequest.forbidden.json",
+    "operationId": "approveAccessRequest",
+    "method": "POST",
+    "path": "/api/v1/namespaces/team-a/access-requests/operator-k2x9p/approve",
+    "status": 403,
+    "scenario": "403: no create rolebindings here",
+    "body": "{}"
+  },
+  {
+    "file": "approveAccessRequest.json",
+    "operationId": "approveAccessRequest",
+    "method": "POST",
+    "path": "/api/v1/namespaces/team-a/access-requests/operator-k2x9p/approve",
+    "status": 200,
+    "scenario": "200: approved, RoleBinding created as the approver",
+    "body": "{\"note\":\"for INC-4211 only\"}"
+  },
+  {
+    "file": "approveAccessRequest.self.json",
+    "operationId": "approveAccessRequest",
+    "method": "POST",
+    "path": "/api/v1/namespaces/team-a/access-requests/operator-m4n7t/approve",
+    "status": 403,
+    "scenario": "403: the request names the approver",
+    "body": "{}"
+  },
+  {
+    "file": "compareClusters.forbidden.json",
+    "operationId": "compareClusters",
+    "method": "GET",
+    "path": "/api/v1/compare?leftNamespace=team-a\u0026leftName=orders\u0026rightNamespace=team-a\u0026rightName=billing",
+    "status": 403,
+    "scenario": "403: the user may not get one of the two"
+  },
+  {
+    "file": "compareClusters.json",
+    "operationId": "compareClusters",
+    "method": "GET",
+    "path": "/api/v1/compare?leftNamespace=team-a\u0026leftName=orders\u0026rightNamespace=team-a\u0026rightName=billing",
+    "status": 200,
+    "scenario": "orders against billing: memory, backups and synchronous replication differ"
+  },
+  {
+    "file": "compareClusters.notFound.json",
+    "operationId": "compareClusters",
+    "method": "GET",
+    "path": "/api/v1/compare?leftNamespace=team-a\u0026leftName=orders\u0026rightNamespace=team-a\u0026rightName=gone",
+    "status": 404,
+    "scenario": "404: one is not in the watched namespaces"
+  },
+  {
+    "file": "createAccessRequest.forbidden.json",
+    "operationId": "createAccessRequest",
+    "method": "POST",
+    "path": "/api/v1/namespaces/team-a/access-requests",
+    "status": 403,
+    "scenario": "403: no create pgaccessrequests here",
+    "body": "{\"capability\":\"viewer\",\"justification\":\"read the dashboards\"}"
+  },
+  {
+    "file": "createAccessRequest.invalid.json",
+    "operationId": "createAccessRequest",
+    "method": "POST",
+    "path": "/api/v1/namespaces/team-a/access-requests",
+    "status": 422,
+    "scenario": "422: an expiry in the past",
+    "body": "{\"capability\":\"viewer\",\"justification\":\"read\",\"expiresAt\":\"2026-10-29T11:00:00Z\"}"
+  },
+  {
+    "file": "createAccessRequest.json",
+    "operationId": "createAccessRequest",
+    "method": "POST",
+    "path": "/api/v1/namespaces/team-a/access-requests",
+    "status": 201,
+    "scenario": "201: a request for yourself",
+    "body": "{\"capability\":\"operator\",\"cluster\":\"orders\",\"justification\":\"INC-4300: failover drill\",\"expiresAt\":\"2026-10-29T20:00:00Z\"}"
+  },
+  {
+    "file": "createDatabaseRole.exists.json",
+    "operationId": "createDatabaseRole",
+    "method": "POST",
+    "path": "/api/v1/namespaces/team-a/clusters/orders/database-roles",
+    "status": 409,
+    "scenario": "409: a DatabaseRole of that name exists",
+    "body": "{\"role\":\"jane\"}"
+  },
+  {
+    "file": "createDatabaseRole.forbidden.json",
+    "operationId": "createDatabaseRole",
+    "method": "POST",
+    "path": "/api/v1/namespaces/team-a/clusters/orders/database-roles",
+    "status": 403,
+    "scenario": "403: the user may not create databaseroles",
+    "body": "{\"role\":\"alice_ro\"}"
+  },
+  {
+    "file": "createDatabaseRole.invalid.json",
+    "operationId": "createDatabaseRole",
+    "method": "POST",
+    "path": "/api/v1/namespaces/team-a/clusters/orders/database-roles",
+    "status": 422,
+    "scenario": "422: a reserved role name",
+    "body": "{\"role\":\"pg_monitor\"}"
+  },
+  {
+    "file": "createDatabaseRole.json",
+    "operationId": "createDatabaseRole",
+    "method": "POST",
+    "path": "/api/v1/namespaces/team-a/clusters/orders/database-roles",
+    "status": 201,
+    "scenario": "201: a personal role for a named pgAdmin user",
+    "body": "{\"role\":\"alice_ro\",\"pgAdminUser\":\"alice@example.com\",\"inRoles\":[\"reporting\"]}"
+  },
+  {
+    "file": "createDatabaseRole.unavailable.json",
+    "operationId": "createDatabaseRole",
+    "method": "POST",
+    "path": "/api/v1/namespaces/team-a/clusters/billing/database-roles",
+    "status": 501,
+    "scenario": "501: CloudNativePG before 1.31 cannot generate the password",
+    "body": "{\"role\":\"alice_ro\"}"
+  },
+  {
+    "file": "denyAccessRequest.json",
+    "operationId": "denyAccessRequest",
+    "method": "POST",
+    "path": "/api/v1/namespaces/team-a/access-requests/operator-k2x9p/deny",
+    "status": 200,
+    "scenario": "200: denied with a note",
+    "body": "{\"note\":\"Restarting the standby is on-call work: ask the on-call DBA\"}"
+  },
+  {
+    "file": "denyAccessRequest.noNote.json",
+    "operationId": "denyAccessRequest",
+    "method": "POST",
+    "path": "/api/v1/namespaces/team-a/access-requests/operator-k2x9p/deny",
+    "status": 422,
+    "scenario": "422: a denial needs a note",
+    "body": "{}"
+  },
+  {
+    "file": "getAccessRequest.forbidden.json",
+    "operationId": "getAccessRequest",
+    "method": "GET",
+    "path": "/api/v1/namespaces/team-a/access-requests/operator-k2x9p",
+    "status": 403,
+    "scenario": "403: not theirs and no get"
+  },
+  {
+    "file": "getAccessRequest.json",
+    "operationId": "getAccessRequest",
+    "method": "GET",
+    "path": "/api/v1/namespaces/team-a/access-requests/operator-k2x9p",
+    "status": 200,
+    "scenario": "a pending request naming a Cluster: the scope says namespace-wide"
+  },
+  {
+    "file": "getAdmin.json",
+    "operationId": "getAdmin",
+    "method": "GET",
+    "path": "/api/v1/admin",
+    "status": 200,
+    "scenario": "a PgAdmin, an EvidenceAgent, a namespace the user may not list"
+  },
+  {
+    "file": "getAssistantSetup.notServed.json",
+    "operationId": "getAssistantSetup",
+    "method": "GET",
+    "path": "/api/v1/assistant-setup",
+    "status": 404,
+    "scenario": "404: MCP is off on this console"
+  },
+  {
+    "file": "getBackups.billing.json",
+    "operationId": "getBackups",
+    "method": "GET",
+    "path": "/api/v1/namespaces/team-a/clusters/billing/backups",
+    "status": 200,
+    "scenario": "pgBackRest (Dalibo): a full, differential and incremental chain, a failed incremental, the agent's recovery window and one finding"
+  },
+  {
+    "file": "getBackups.orders.json",
+    "operationId": "getBackups",
+    "method": "GET",
+    "path": "/api/v1/namespaces/team-a/clusters/orders/backups",
+    "status": 200,
+    "scenario": "plugin backups: running, completed, failed; evidence live"
+  },
+  {
+    "file": "getCluster.billing.json",
+    "operationId": "getCluster",
+    "method": "GET",
+    "path": "/api/v1/namespaces/team-a/clusters/billing",
+    "status": 200,
+    "scenario": "failing over, viewer capabilities"
+  },
+  {
+    "file": "getCluster.forbidden.json",
+    "operationId": "getCluster",
+    "method": "GET",
+    "path": "/api/v1/namespaces/team-a/clusters/billing",
+    "status": 403,
+    "scenario": "403: the user may not get this cluster"
+  },
+  {
+    "file": "getCluster.notFound.json",
+    "operationId": "getCluster",
+    "method": "GET",
+    "path": "/api/v1/namespaces/team-a/clusters/gone",
+    "status": 404,
+    "scenario": "404: not in the watched namespaces"
+  },
+  {
+    "file": "getCluster.orders.json",
+    "operationId": "getCluster",
+    "method": "GET",
+    "path": "/api/v1/namespaces/team-a/clusters/orders",
+    "status": 200,
+    "scenario": "healthy cluster, operator capabilities"
+  },
+  {
+    "file": "getCluster.unchecked.json",
+    "operationId": "getCluster",
+    "method": "GET",
+    "path": "/api/v1/namespaces/team-a/clusters/billing",
+    "status": 503,
+    "scenario": "503: the API server could not be asked"
+  },
+  {
+    "file": "getDiagnostics.billing.json",
+    "operationId": "getDiagnostics",
+    "method": "GET",
+    "path": "/api/v1/namespaces/team-a/clusters/billing/diagnostics",
+    "status": 200,
+    "scenario": "one incident, unavailable checks"
+  },
+  {
+    "file": "getDigest.json",
+    "operationId": "getDigest",
+    "method": "GET",
+    "path": "/api/v1/digests/20261029T0700Z",
+    "status": 200,
+    "scenario": "one digest with billing's failover and orders' revision"
+  },
+  {
+    "file": "getDigest.notFound.json",
+    "operationId": "getDigest",
+    "method": "GET",
+    "path": "/api/v1/digests/20250101T0700Z",
+    "status": 404,
+    "scenario": "404: left the retention"
+  },
+  {
+    "file": "getFleetStatements.denied.json",
+    "operationId": "getFleetStatements",
+    "method": "GET",
+    "path": "/api/v1/insight/statements",
+    "status": 200,
+    "scenario": "billing is not visible to this user"
+  },
+  {
+    "file": "getFleetStatements.json",
+    "operationId": "getFleetStatements",
+    "method": "GET",
+    "path": "/api/v1/insight/statements",
+    "status": 200,
+    "scenario": "orders compared, billing not opted in"
+  },
+  {
+    "file": "getInsight.billing.json",
+    "operationId": "getInsight",
+    "method": "GET",
+    "path": "/api/v1/namespaces/team-a/clusters/billing/insight",
+    "status": 200,
+    "scenario": "the pack not enabled: the spec change to opt in"
+  },
+  {
+    "file": "getInsight.orders.json",
+    "operationId": "getInsight",
+    "method": "GET",
+    "path": "/api/v1/namespaces/team-a/clusters/orders/insight",
+    "status": 200,
+    "scenario": "the pack enabled: wraparound overdue, a lock chain, a regression"
+  },
+  {
+    "file": "getInsightBlocking.orders.json",
+    "operationId": "getInsightBlocking",
+    "method": "GET",
+    "path": "/api/v1/namespaces/team-a/clusters/orders/insight/blocking?refresh=true",
+    "status": 200,
+    "scenario": "a lock chain behind an idle-in-transaction session, read on demand"
+  },
+  {
+    "file": "getLogTail.forbidden.json",
+    "operationId": "getLogTail",
+    "method": "GET",
+    "path": "/api/v1/namespaces/team-a/clusters/orders/instances/orders-1/logs",
+    "status": 403,
+    "scenario": "403: the user may not get pods/log"
+  },
+  {
+    "file": "getLogTail.orders.json",
+    "operationId": "getLogTail",
+    "method": "GET",
+    "path": "/api/v1/namespaces/team-a/clusters/orders/instances/orders-1/logs?container=postgres",
+    "status": 200,
+    "scenario": "two lines"
+  },
+  {
+    "file": "getMetrics.orders.json",
+    "operationId": "getMetrics",
+    "method": "GET",
+    "path": "/api/v1/namespaces/team-a/clusters/orders/metrics",
+    "status": 200,
+    "scenario": "tiles with an unreported instance, a chart with a gap"
+  },
+  {
+    "file": "getObjects.orders.json",
+    "operationId": "getObjects",
+    "method": "GET",
+    "path": "/api/v1/namespaces/team-a/clusters/orders/objects",
+    "status": 200,
+    "scenario": "a failed Database, an unreported managed role, a catalog not readable"
+  },
+  {
+    "file": "getOperation.json",
+    "operationId": "getOperation",
+    "method": "GET",
+    "path": "/api/v1/operations/eyJ2IjoxLCJrIjoiYmFja3VwIiwibiI6InRlYW0tYSIsImMiOiJvcmRlcnMiLCJiIjoib25kZW1hbmQtMjAyNjEwMjkxMTU1MDAteDdrMnAiLCJ0IjoxNzkzMjc0OTAwfQ",
+    "status": 200,
+    "scenario": "a running backup"
+  },
+  {
+    "file": "getOperation.notFound.json",
+    "operationId": "getOperation",
+    "method": "GET",
+    "path": "/api/v1/operations/not-an-id",
+    "status": 404,
+    "scenario": "404: not an operation id"
+  },
+  {
+    "file": "getReplication.orders.json",
+    "operationId": "getReplication",
+    "method": "GET",
+    "path": "/api/v1/namespaces/team-a/clusters/orders/replication",
+    "status": 200,
+    "scenario": "quorum sync, one catching-up standby, one replica not verifiable"
+  },
+  {
+    "file": "getRestoreCheck.orders.json",
+    "operationId": "getRestoreCheck",
+    "method": "GET",
+    "path": "/api/v1/namespaces/team-a/clusters/orders/backups/restore-check?at=2026-10-29T10:00:00Z",
+    "status": 200,
+    "scenario": "covered: base backup and contiguous archived WAL, with caveats"
+  },
+  {
+    "file": "getRevision.notFound.json",
+    "operationId": "getRevision",
+    "method": "GET",
+    "path": "/api/v1/namespaces/team-a/clusters/orders/history/9",
+    "status": 404,
+    "scenario": "404: not a revision of this Cluster"
+  },
+  {
+    "file": "getRevision.orders.json",
+    "operationId": "getRevision",
+    "method": "GET",
+    "path": "/api/v1/namespaces/team-a/clusters/orders/history/42",
+    "status": 200,
+    "scenario": "a spec change with its diff"
+  },
+  {
+    "file": "getSession.json",
+    "operationId": "getSession",
+    "method": "GET",
+    "path": "/api/v1/session",
+    "status": 200,
+    "scenario": "a refreshable OIDC session five minutes before reauth"
+  },
+  {
+    "file": "getSession.mcpOff.json",
+    "operationId": "getSession",
+    "method": "GET",
+    "path": "/api/v1/session",
+    "status": 200,
+    "scenario": "the session of a console that does not serve MCP (features.mcp false)"
+  },
+  {
+    "file": "getStorage.billing.json",
+    "operationId": "getStorage",
+    "method": "GET",
+    "path": "/api/v1/namespaces/team-a/clusters/billing/storage",
+    "status": 200,
+    "scenario": "volumes reported: forecasts toward autoGrow.maxSize, WAL growing while archiving fails, too few points"
+  },
+  {
+    "file": "getStorage.orders.json",
+    "operationId": "getStorage",
+    "method": "GET",
+    "path": "/api/v1/namespaces/team-a/clusters/orders/storage",
+    "status": 200,
+    "scenario": "one PVC resizing, usage not reported"
+  },
+  {
+    "file": "getTimeline.badWindow.json",
+    "operationId": "getTimeline",
+    "method": "GET",
+    "path": "/api/v1/namespaces/team-a/clusters/billing/timeline?from=2026-10-29T12:00:00Z\u0026to=2026-10-29T11:00:00Z",
+    "status": 422,
+    "scenario": "422: from after to"
+  },
+  {
+    "file": "getTimeline.billing.filtered.json",
+    "operationId": "getTimeline",
+    "method": "GET",
+    "path": "/api/v1/namespaces/team-a/clusters/billing/timeline?kind=finding,primary",
+    "status": 200,
+    "scenario": "the same window, findings and primary changes only"
+  },
+  {
+    "file": "getTimeline.billing.json",
+    "operationId": "getTimeline",
+    "method": "GET",
+    "path": "/api/v1/namespaces/team-a/clusters/billing/timeline",
+    "status": 200,
+    "scenario": "a failover with its findings, a restart, a failed backup and a console gap"
+  },
+  {
+    "file": "getTopology.orders.json",
+    "operationId": "getTopology",
+    "method": "GET",
+    "path": "/api/v1/namespaces/team-a/clusters/orders/topology",
+    "status": 200,
+    "scenario": "the wiring diagram with geometry"
+  },
+  {
+    "file": "getTriage.billing.json",
+    "operationId": "getTriage",
+    "method": "GET",
+    "path": "/api/v1/namespaces/team-a/clusters/billing/triage",
+    "status": 200,
+    "scenario": "one playbook walked"
+  },
+  {
+    "file": "getVocabulary.json",
+    "operationId": "getVocabulary",
+    "method": "GET",
+    "path": "/api/v1/vocabulary",
+    "status": 200,
+    "scenario": "the health order and source-state mapping"
+  },
+  {
+    "file": "listAccessRequests.json",
+    "operationId": "listAccessRequests",
+    "method": "GET",
+    "path": "/api/v1/access-requests",
+    "status": 200,
+    "scenario": "a reviewer: every request of team-a and team-b, with the decisions offered"
+  },
+  {
+    "file": "listAccessRequests.readOnly.json",
+    "operationId": "listAccessRequests",
+    "method": "GET",
+    "path": "/api/v1/access-requests?namespace=team-a",
+    "status": 200,
+    "scenario": "a console without writes: requests listed, nothing offered"
+  },
+  {
+    "file": "listAccessRequests.requester.json",
+    "operationId": "listAccessRequests",
+    "method": "GET",
+    "path": "/api/v1/access-requests",
+    "status": 200,
+    "scenario": "a requester who may not list: only the requests naming them (their user, their group)"
+  },
+  {
+    "file": "listClusters.denied.json",
+    "operationId": "listClusters",
+    "method": "GET",
+    "path": "/api/v1/clusters",
+    "status": 200,
+    "scenario": "billing is not visible to this user"
+  },
+  {
+    "file": "listClusters.json",
+    "operationId": "listClusters",
+    "method": "GET",
+    "path": "/api/v1/clusters",
+    "status": 200,
+    "scenario": "two visible clusters, one namespace the console may not list"
+  },
+  {
+    "file": "listClusters.partial.json",
+    "operationId": "listClusters",
+    "method": "GET",
+    "path": "/api/v1/clusters",
+    "status": 200,
+    "scenario": "billing could not be checked and is left out"
+  },
+  {
+    "file": "listDigests.denied.json",
+    "operationId": "listDigests",
+    "method": "GET",
+    "path": "/api/v1/digests",
+    "status": 200,
+    "scenario": "billing is not visible: counted out, only the hidden count remains"
+  },
+  {
+    "file": "listDigests.json",
+    "operationId": "listDigests",
+    "method": "GET",
+    "path": "/api/v1/digests",
+    "status": 200,
+    "scenario": "two digests, the newer with billing needing attention"
+  },
+  {
+    "file": "listEvents.billing.json",
+    "operationId": "listEvents",
+    "method": "GET",
+    "path": "/api/v1/namespaces/team-a/clusters/billing/events",
+    "status": 200,
+    "scenario": "recent warnings"
+  },
+  {
+    "file": "listGrants.empty.json",
+    "operationId": "listGrants",
+    "method": "GET",
+    "path": "/api/v1/session/grants",
+    "status": 200,
+    "scenario": "no connected assistant"
+  },
+  {
+    "file": "listGrants.json",
+    "operationId": "listGrants",
+    "method": "GET",
+    "path": "/api/v1/session/grants",
+    "status": 200,
+    "scenario": "three connected assistants, one never used, one with the write tools"
+  },
+  {
+    "file": "listGrants.notServed.json",
+    "operationId": "listGrants",
+    "method": "GET",
+    "path": "/api/v1/session/grants",
+    "status": 404,
+    "scenario": "404: MCP is off on this console"
+  },
+  {
+    "file": "listHistory.orders.json",
+    "operationId": "listHistory",
+    "method": "GET",
+    "path": "/api/v1/namespaces/team-a/clusters/orders/history",
+    "status": 200,
+    "scenario": "three revisions"
+  },
+  {
+    "file": "listInstances.billing.json",
+    "operationId": "listInstances",
+    "method": "GET",
+    "path": "/api/v1/namespaces/team-a/clusters/billing/instances",
+    "status": 200,
+    "scenario": "one row per status-read state"
+  },
+  {
+    "file": "listOperations.billing.json",
+    "operationId": "listOperations",
+    "method": "GET",
+    "path": "/api/v1/namespaces/team-a/clusters/billing/operations",
+    "status": 200,
+    "scenario": "viewer: nothing allowed"
+  },
+  {
+    "file": "listOperations.orders.json",
+    "operationId": "listOperations",
+    "method": "GET",
+    "path": "/api/v1/namespaces/team-a/clusters/orders/operations",
+    "status": 200,
+    "scenario": "operator: every offer allowed, promote roster"
+  },
+  {
+    "file": "requestOperation.backup.json",
+    "operationId": "requestOperation",
+    "method": "POST",
+    "path": "/api/v1/namespaces/team-a/clusters/orders/operations",
+    "status": 202,
+    "scenario": "202: a backup accepted",
+    "body": "{\"kind\":\"backup\",\"confirmation\":\"orders\"}"
+  },
+  {
+    "file": "requestOperation.badConfirmation.json",
+    "operationId": "requestOperation",
+    "method": "POST",
+    "path": "/api/v1/namespaces/team-a/clusters/orders/operations",
+    "status": 422,
+    "scenario": "422: the confirmation does not match",
+    "body": "{\"kind\":\"restart\",\"confirmation\":\"order\"}"
+  },
+  {
+    "file": "requestOperation.refused.json",
+    "operationId": "requestOperation",
+    "method": "POST",
+    "path": "/api/v1/namespaces/team-a/clusters/orders/operations",
+    "status": 409,
+    "scenario": "409: a precondition is not met",
+    "body": "{\"kind\":\"promote\",\"target\":\"orders-3\",\"confirmation\":\"orders-3\"}"
+  },
+  {
+    "file": "requestOperation.restoreDrill.json",
+    "operationId": "requestOperation",
+    "method": "POST",
+    "path": "/api/v1/namespaces/team-a/clusters/orders/operations",
+    "status": 202,
+    "scenario": "202: a restore drill accepted",
+    "body": "{\"kind\":\"restoreDrill\",\"confirmation\":\"orders\"}"
+  },
+  {
+    "file": "revokeAccessRequest.json",
+    "operationId": "revokeAccessRequest",
+    "method": "POST",
+    "path": "/api/v1/namespaces/team-a/access-requests/viewer-q8w3d/revoke",
+    "status": 200,
+    "scenario": "200: revoked; the operator deletes the RoleBinding next",
+    "body": "{\"note\":\"the DBA team moved to team-c\"}"
+  },
+  {
+    "file": "revokeAllGrants.notServed.json",
+    "operationId": "revokeAllGrants",
+    "method": "DELETE",
+    "path": "/api/v1/session/grants",
+    "status": 404,
+    "scenario": "404: MCP is off on this console"
+  },
+  {
+    "file": "revokeGrant.notFound.json",
+    "operationId": "revokeGrant",
+    "method": "DELETE",
+    "path": "/api/v1/session/grants/grant-00000000000000000000000000000000",
+    "status": 404,
+    "scenario": "404: not a grant of yours (or already revoked)"
+  },
+  {
+    "file": "stream.events.json",
+    "operationId": "stream",
+    "method": "GET",
+    "path": "/api/v1/stream",
+    "status": 200,
+    "scenario": "an example event sequence (one JSON object per SSE message)"
+  }
+]

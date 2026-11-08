@@ -1,0 +1,27 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: cluster-restore
+spec:
+  instances: 3
+  imagePullPolicy: IfNotPresent
+
+  bootstrap:
+    recovery:
+      source: source
+
+  plugins:
+  - name: pgbackrest.cnpg.opera.com
+    parameters:
+      pgbackrestObjectName: minio-store-bis
+
+  externalClusters:
+  - name: source
+    plugin:
+      name: pgbackrest.cnpg.opera.com
+      parameters:
+        pgbackrestObjectName: minio-store
+        stanza: cluster-example
+
+  storage:
+    size: 1Gi

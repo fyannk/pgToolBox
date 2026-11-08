@@ -1,0 +1,21 @@
+# Evidence agents without the operator: two Clusters, plain HTTP
+# inside the namespace, the agents' NetworkPolicy on. The API server
+# addresses are given because `helm lint`/`template` cannot look them up.
+evidence:
+  agents:
+    - cluster: orders
+      secrets: [orders-s3]
+      objectStore: orders-store
+    - cluster: billing
+      secrets: [billing-s3, minio-ca]
+      resources:
+        requests: {cpu: 20m, memory: 64Mi}
+        limits: {memory: 512Mi}
+  networkPolicy:
+    enabled: true
+    apiServer: {mode: addresses, addresses: [10.96.0.1]}
+    objectStore:
+      to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: minio}
+      ports: [9000]

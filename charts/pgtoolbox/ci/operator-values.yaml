@@ -1,0 +1,42 @@
+# The operator as the e2e and dev-up install it, with every optional piece on.
+operator:
+  enabled: true
+  evidenceAgent:
+    image: ghcr.io/fyannk/pgtoolbox-evidence-agent@sha256:0000000000000000000000000000000000000000000000000000000000000000
+    imageRepositories: [ghcr.io/fyannk/pgtoolbox-evidence-agent, registry.example.org/mirror/]
+  pgAdmin:
+    image: registry.example.org/mirror/pgadmin:9.18-hardened
+    imageRepositories: [ghcr.io/fyannk/pgadmin, registry.example.org/mirror/]
+  oauthProxyImage: registry.example.org/mirror/oauth-proxy:4.18
+  config:
+    watchNamespaces: [team-a, team-b]
+    maxConcurrentReconciles: 2
+    reconciliationTimeout: 90s
+    upgradeBackupsKept: 5
+  metrics:
+    readerClusterRole: true
+    readerSubjects: [{name: prometheus-k8s, namespace: monitoring}]
+    tls:
+      certSecret: pgtoolbox-metrics-tls
+      caSecret: {name: pgtoolbox-metrics-ca, key: ca.crt}
+    serviceMonitor: {enabled: true}
+    podMonitor:
+      enabled: true
+      bearerTokenSecret: {name: prometheus-scrape-token, key: token}
+  priorityClassName: system-cluster-critical
+  topologySpreadConstraints:
+    - maxSkew: 1
+      topologyKey: topology.kubernetes.io/zone
+      whenUnsatisfiable: ScheduleAnyway
+      labelSelector:
+        matchLabels: {app.kubernetes.io/name: pgtoolbox}
+  networkPolicy:
+    enabled: true
+    apiServer: {mode: any}
+    ingress:
+      metricsFrom:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: monitoring}}
+  admissionPolicy:
+    enabled: true
+    imageOverride: {allowedUsers: [platform-bot], allowedGroups: [system:masters, platform-admins]}
+namespace: {create: true}

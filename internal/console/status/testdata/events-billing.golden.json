@@ -1,0 +1,46 @@
+{
+  "ref": {
+    "namespace": "team-a",
+    "name": "billing",
+    "uid": "4d2f1e0a-1b2c-4d3e-8f90-a1b2c3d4e5f6"
+  },
+  "generatedAt": "2026-10-29T12:00:00Z",
+  "source": {
+    "source": "events",
+    "state": "live",
+    "since": "2026-10-29T09:00:00Z",
+    "health": "ok"
+  },
+  "window": "1h0m0s",
+  "items": [
+    {
+      "type": "Warning",
+      "reason": "BackOff",
+      "message": "Back-off restarting failed container postgres",
+      "object": {
+        "kind": "Pod",
+        "name": "billing-1"
+      },
+      "count": 7,
+      "lastSeen": "2026-10-29T11:59:30Z",
+      "reporter": "kubelet",
+      "origin": "kubernetes",
+      "health": "warning"
+    },
+    {
+      "type": "Warning",
+      "reason": "FailingOver",
+      "message": "Primary billing-1 is not healthy",
+      "object": {
+        "kind": "Cluster",
+        "name": "billing"
+      },
+      "count": 1,
+      "firstSeen": "2026-10-29T11:58:25Z",
+      "lastSeen": "2026-10-29T11:58:25Z",
+      "reporter": "cloudnative-pg",
+      "origin": "operator",
+      "health": "warning"
+    }
+  ]
+}

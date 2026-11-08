@@ -1,0 +1,67 @@
+{
+  "ref": {
+    "namespace": "team-a",
+    "name": "orders",
+    "uid": "0b6a2c1e-8f0d-4a55-9a3e-7c1f2b3d4e5f"
+  },
+  "entry": {
+    "seq": 2,
+    "kind": "Cluster",
+    "name": "orders",
+    "change": "spec-changed",
+    "observedAt": "2026-10-29T11:50:00Z",
+    "hasManifest": true
+  },
+  "manifest": "{\n  \"kind\": \"Cluster\",\n  \"spec\": {\n    \"instances\": 3,\n    \"postgresql\": {\n      \"parameters\": {\n        \"max_connections\": \"300\",\n        \"work_mem\": \"16MB\"\n      }\n    }\n  }\n}",
+  "baseManifest": "{\n  \"kind\": \"Cluster\",\n  \"spec\": {\n    \"instances\": 3,\n    \"postgresql\": {\n      \"parameters\": {\n        \"max_connections\": \"200\",\n        \"work_mem\": \"4MB\"\n      }\n    }\n  }\n}",
+  "diff": {
+    "hasBase": true,
+    "baseSeq": 1,
+    "baseObservedAt": "2026-10-29T11:00:00Z",
+    "entries": [
+      {
+        "path": ".spec.instances",
+        "op": "changed",
+        "before": "2",
+        "after": "3"
+      }
+    ]
+  },
+  "preview": {
+    "effect": "restart",
+    "parameters": [
+      {
+        "name": "max_connections",
+        "before": "200",
+        "after": "300",
+        "effect": "restart",
+        "context": "postmaster"
+      },
+      {
+        "name": "work_mem",
+        "before": "4MB",
+        "after": "16MB",
+        "effect": "reload",
+        "context": "reload"
+      }
+    ],
+    "fields": [],
+    "strategy": "unsupervised",
+    "method": "restart",
+    "primary": "restartInPlace",
+    "steps": [
+      {
+        "role": "replicas",
+        "instances": [],
+        "action": "recreate"
+      },
+      {
+        "role": "primary",
+        "instances": [],
+        "action": "restartInPlace"
+      }
+    ],
+    "verified": false,
+    "cnpgMinor": "1.30"
+  }
+}

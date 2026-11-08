@@ -1,0 +1,17 @@
+{{- if .Values.operator.enabled }}
+{{- /*
+The operator's CRDs. They live in operator-crds/ (verbatim copies of
+config/crd/bases, kept in step by hack/sync-manifests.sh) and not in crds/,
+because Helm installs crds/ whatever the values say and a console-only release
+must not put the operator's CRDs into a cluster. Rendered as templates they are
+upgraded by `helm upgrade`, which crds/ never was, and they carry the keep
+policy so that `helm uninstall` cannot delete them and, with them, every
+PgAdmin and EvidenceAgent in the cluster.
+*/ -}}
+{{- range $path, $_ := .Files.Glob "operator-crds/*.yaml" }}
+---
+{{- $crd := $.Files.Get $path | fromYaml }}
+{{- $_ := set $crd.metadata "annotations" (merge (default (dict) $crd.metadata.annotations) (dict "helm.sh/resource-policy" "keep")) }}
+{{ toYaml $crd }}
+{{- end }}
+{{- end }}

@@ -1,0 +1,58 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  annotations:
+    pgtoolbox.fyannk.dev/restore-drill: '{"v":1,"sourceNamespace":"team-a","source":"orders","sourceUID":"src-uid","backup":"orders-20261103","startedAt":"2026-11-03T14:15:00Z","deadline":"2026-11-03T16:15:00Z","sourceBytes":1073741824,"owner":"team-a"}'
+    pgtoolbox.fyannk.dev/restore-drill-seal: 2-sfyCYV7YUMFSUfGAwbX_-w3MH08Xv5waaIbeW2a_k
+  labels:
+    pgtoolbox.fyannk.dev/drill-owner: team-a
+    pgtoolbox.fyannk.dev/restore-drill-of: orders
+    pgtoolbox.fyannk.dev/restore-drill-source-namespace: team-a
+    team: a
+  name: drill-orders-2611031415
+  namespace: team-a
+spec:
+  affinity: {}
+  bootstrap:
+    recovery:
+      source: drill-source
+  description: Restore drill of team-a/orders (pgToolBox console); deleted after its
+    check
+  externalClusters:
+  - name: drill-source
+    plugin:
+      name: barman-cloud.cloudnative-pg.io
+      parameters:
+        barmanObjectName: orders-store
+        serverName: orders-v2
+  imageName: ghcr.io/cloudnative-pg/postgresql:17.6
+  inheritedMetadata:
+    labels:
+      pgtoolbox.fyannk.dev/drill-owner: team-a
+      pgtoolbox.fyannk.dev/restore-drill-of: orders
+      pgtoolbox.fyannk.dev/restore-drill-source-namespace: team-a
+  instances: 1
+  postgresql:
+    parameters:
+      cron.launch_active_jobs: "off"
+      max_connections: "300"
+      max_logical_replication_workers: "0"
+      timescaledb.max_background_workers: "0"
+    syncReplicaElectionConstraint:
+      enabled: false
+  resources:
+    requests:
+      memory: 1Gi
+  storage:
+    size: 10Gi
+    storageClass: drills
+  walStorage:
+    size: 2Gi
+    storageClass: drills
+status:
+  certificates: {}
+  configMapResourceVersion: {}
+  managedRolesStatus: {}
+  secretsResourceVersion: {}
+  switchReplicaClusterStatus: {}
+  topology: {}

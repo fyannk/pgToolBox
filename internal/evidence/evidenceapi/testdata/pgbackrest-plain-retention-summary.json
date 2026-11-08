@@ -1,0 +1,104 @@
+{
+  "stanza": "demo",
+  "archive_stanza": "demo",
+  "repository": 1,
+  "repository_format": 5,
+  "encrypted": false,
+  "pgbackrest_version": "2.60.0",
+  "database": {
+    "db_id": 1,
+    "system_id": "7705338956479107096",
+    "version": "17",
+    "postgresql_version": 170000
+  },
+  "archive_ids": [
+    "17-1"
+  ],
+  "wal_segment_size_bytes": 16777216,
+  "wal_segment_size_source": "backup-lsn",
+  "backup_items": 4,
+  "wal_range_items": 2,
+  "wal_gap_items": 0,
+  "recovery_path_items": 4,
+  "usable_backups": 4,
+  "backup_states": {
+    "healthy": 4,
+    "warning": 0,
+    "unhealthy": 0,
+    "unknown": 0
+  },
+  "wal_counts": {
+    "segment": 25,
+    "partial": 0,
+    "history": 1,
+    "backup_history": 8,
+    "unknown": 0,
+    "duplicate": 0
+  },
+  "catalog": {
+    "state": "healthy",
+    "reason": {
+      "code": "catalog-healthy",
+      "message": "every backup is usable"
+    }
+  },
+  "wal": {
+    "state": "healthy",
+    "reason": {
+      "code": "wal-healthy",
+      "message": "WAL continuity evaluated"
+    }
+  },
+  "timeline": {
+    "state": "healthy",
+    "reason": {
+      "code": "timeline-healthy",
+      "message": "timeline history evaluated"
+    }
+  },
+  "coverage": {
+    "state": "healthy",
+    "reason": {
+      "code": "coverage-healthy",
+      "message": "every usable backup reaches the newest archived WAL"
+    }
+  },
+  "recovery_window": {
+    "oldest_backup": "20261107-081046F",
+    "start_at": "2026-11-07T08:10:54Z",
+    "newest_backup": "20261107-081046F_20261107-081114I",
+    "newest_stop_at": "2026-11-07T08:11:17Z",
+    "end_timeline": 2,
+    "end_wal": "000000020000000000000014",
+    "end_lsn": "0/15000000",
+    "end_receipt_at": "2026-11-07T08:11:21Z",
+    "usable_backups": 4,
+    "assumption_codes": [
+      "window-end-at-segment-upload-time"
+    ]
+  },
+  "latest_archive_receipt_at": "2026-11-07T08:11:21Z",
+  "ranges_truncated": false,
+  "diagnostics_truncated": false,
+  "findings": [],
+  "findings_truncated": false,
+  "retention": {
+    "configured": true,
+    "full": 7,
+    "full_type": "time",
+    "diff": 2,
+    "archive": null,
+    "archive_type": "full",
+    "effective_archive": null,
+    "full_backups": 1,
+    "differential_backups": 1,
+    "incremental_backups": 2,
+    "evaluated_at": "2026-11-07T08:11:17Z",
+    "window_start_at": "2026-10-31T08:11:17Z",
+    "state": "healthy",
+    "reason": {
+      "code": "retention-healthy",
+      "message": "the backups and WAL match the 7-day retention as of the newest backup"
+    }
+  }
+}

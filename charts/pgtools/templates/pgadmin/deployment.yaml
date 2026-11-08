@@ -1,0 +1,474 @@
+{{- if .Values.pgadmin.enabled }}
+{{- /*
+pgAdmin without the operator, the Pod the operator's PgAdmin
+builds (internal/operator/pgadmin/workload.go), rendered statically; the
+registration Job and the pre-upgrade backup Job of the operator become a
+native sidecar and an init container of the same Pod, since SQLite on a
+ReadWriteOnce volume cannot be opened by a second Pod elsewhere.
+
+  install-passfile-sync  copies the pgToolBox binary into the Pod (tools image)
+  pre-upgrade-backup     before a new pgAdmin image first starts: the settings
+                         database copied aside (keeps pgadmin.backups.keep);
+                         not rendered with pgadmin.configDatabase (no SQLite file)
+  registration           native sidecar: the declared servers into pgAdmin's
+                         "PgToolBox" group, once pgAdmin has created its database,
+                         but those passfile-sync withholds; again when that changes
+  pgadmin                pgAdmin
+  passfile-sync          the libpq service and password files, from the named
+                         Secrets once checked against the live Cluster or role,
+                         and the servers whose Cluster cannot serve the endpoint
+                         (ro without a replica, a disabled ro/r Service)
+  oauth-proxy            auth.provider openshift only
+*/ -}}
+{{- $p := .Values.pgadmin }}
+{{- $name := include "pgtools.pgadmin.fullname" . }}
+{{- $proxied := eq $p.auth.provider "openshift" }}
+{{- $image := include "pgtools.pgadmin.image" . }}
+{{- $servers := include "pgtools.pgadmin.servers" . }}
+{{- $caConfigMaps := include "pgtools.pgadmin.caConfigMaps" . | fromJsonArray }}
+{{- $caDir := include "pgtools.pgadmin.caDir" . }}
+{{- if $proxied }}
+{{- if ne $p.exposure.type "route" }}
+{{- fail "pgadmin.auth.provider=openshift needs pgadmin.exposure.type=route: the proxy's OAuth client is the ServiceAccount, whose redirect reference names the Route" }}
+{{- end }}
+{{- else }}
+{{- $_ := required "pgadmin.auth.oidc.issuerURL is required with auth.provider=oidc" $p.auth.oidc.issuerURL }}
+{{- $_ := required "pgadmin.auth.oidc.clientID is required with auth.provider=oidc" $p.auth.oidc.clientID }}
+{{- $_ := required "pgadmin.auth.oidc.clientSecret.existingSecret is required with auth.provider=oidc" $p.auth.oidc.clientSecret.existingSecret }}
+{{- end }}
+{{- /*
+pgadmin.configDatabase.existingSecret: the settings database is the PostgreSQL
+database whose URI the team's Secret holds, read by the kubelet (secretKeyRef;
+no Role entry, no API read). Nothing else in this template changes shape but
+the settings volume (an emptyDir for sessions and STORAGE_DIR) and the backup.
+*/ -}}
+{{- $cfg := $p.configDatabase | default dict }}
+{{- $cfgSecret := $cfg.existingSecret | default "" }}
+{{- $cfgKey := $cfg.key | default "CONFIG_DATABASE_URI" }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "pgtools.pgadmin.labels" . | nindent 4 }}
+  annotations:
+    # PGADMIN_DEFAULT_PASSWORD_FILE is a path to a mounted file, not a secret value.
+    ignore-check.kube-linter.io/env-var-secret: "the variable holds a file path; the secret is a mounted file"
+spec:
+  # SQLite on a ReadWriteOnce volume: one replica, and the old Pod is gone
+  # before the new one opens the database. With configDatabase one replica
+  # still creates the settings schema.
+  replicas: 1
+  revisionHistoryLimit: 3
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "pgtools.pgadmin.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "pgtools.pgadmin.labels" . | nindent 8 }}
+        {{- with $p.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        # The server list is read once at start: a changed list rolls the Pod.
+        checksum/servers: {{ $servers | sha256sum }}
+        {{- with $p.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ $name }}
+      # Only passfile-sync (and the proxy) get an API token, as a projected volume.
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: 30
+      {{- with $p.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+        {{- if $p.fsGroup }}
+        fsGroup: {{ $p.fsGroup }}
+        fsGroupChangePolicy: OnRootMismatch
+        {{- end }}
+      {{- with $p.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      initContainers:
+        - name: install-passfile-sync
+          image: {{ include "pgtools.pgadmin.toolsImage" . | quote }}
+          imagePullPolicy: {{ $p.tools.image.pullPolicy }}
+          command: [/manager, install, --target, /opt/pgtoolbox/bin/manager]
+          resources: &small
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {memory: 128Mi}
+          securityContext: &restricted
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+          volumeMounts:
+            - {name: pgtoolbox-bin, mountPath: /opt/pgtoolbox/bin}
+        {{- if $cfgSecret }}
+        # The Secret holds the raw URI; pgAdmin's image wants a quoted Python
+        # literal (the operator puts one inline). This writes it, owner only,
+        # to the run volume, so the URI is never in the Pod spec.
+        - name: config-database-uri
+          image: {{ $image | quote }}
+          imagePullPolicy: {{ $p.image.pullPolicy }}
+          command:
+            - /opt/pgtoolbox/bin/manager
+            - pgadmin-config-uri
+            - --env
+            - PGTOOLBOX_CONFIG_DATABASE_URI
+            - --out
+            - /run/pgadmin/config_database_uri
+          env:
+            - name: PGTOOLBOX_CONFIG_DATABASE_URI
+              valueFrom:
+                secretKeyRef: {name: {{ $cfgSecret | quote }}, key: {{ $cfgKey | quote }}}
+          resources: *small
+          securityContext: *restricted
+          terminationMessagePolicy: FallbackToLogsOnError
+          volumeMounts:
+            - {name: pgtoolbox-bin, mountPath: /opt/pgtoolbox/bin, readOnly: true}
+            - {name: run, mountPath: /run/pgadmin}
+        {{- else }}
+        # Before pgAdmin opens (and migrates) its database with an image it has
+        # not run before: a consistent copy (SQLite's online backup), then the
+        # image is recorded. The first start only records it.
+        - name: pre-upgrade-backup
+          image: {{ $image | quote }}
+          imagePullPolicy: {{ $p.image.pullPolicy }}
+          command:
+            - /opt/pgtoolbox/bin/manager
+            - pgadmin-backup
+            - --settings-db
+            - /var/lib/pgadmin/pgadmin4.db
+            - --dir
+            - /var/lib/pgadmin/.pgtoolbox/backups
+            - --keep
+            - {{ $p.backups.keep | quote }}
+            - --lock
+            - /var/lib/pgadmin/.pgtoolbox/setup.lock
+            - --label
+            - pre-upgrade
+            - --if-image-changed
+            - {{ $image | quote }}
+            - --marker
+            - /var/lib/pgadmin/.pgtoolbox/image
+          env:
+            - {name: TMPDIR, value: /tmp}
+          resources: *small
+          securityContext: *restricted
+          terminationMessagePolicy: FallbackToLogsOnError
+          volumeMounts:
+            - {name: pgtoolbox-bin, mountPath: /opt/pgtoolbox/bin, readOnly: true}
+            - {name: settings, mountPath: /var/lib/pgadmin}
+            - {name: tmp, mountPath: /tmp}
+        {{- end }}
+        # A native sidecar (restartPolicy: Always), not a run-once init
+        # container: pgAdmin creates its settings database at its first start,
+        # so the registration waits for it beside pgAdmin, registers once, and
+        # stays. It waits for pgAdmin's ping, not only for the file: a setup.py
+        # run while pgAdmin is still creating the database leaves one it cannot
+        # start on again. It reads nothing from the API: the list is the
+        # mounted file, less the servers passfile-sync withholds (an ro server
+        # of a one-instance Cluster, an ro or r server whose Service the
+        # Cluster disabled), followed so a scaled Cluster gets its server.
+        - name: registration
+          image: {{ $image | quote }}
+          imagePullPolicy: {{ $p.image.pullPolicy }}
+          restartPolicy: Always
+          command:
+            - /opt/pgtoolbox/bin/manager
+            - pgadmin-register
+            - --declared
+            - /run/pgtoolbox/servers/servers.json
+            - --withheld
+            - /run/pgtoolbox/withheld/withheld.json
+            - --keep-running
+            - --owner
+            - pgtoolbox@pgtoolbox.fyannk.dev
+            - --auth-source
+            - {{ include "pgtools.pgadmin.authSource" . }}
+            {{- if $cfgSecret }}
+            # setup.py opens the same settings database as pgAdmin: its URI,
+            # from the Secret, written to a config_local.py under /tmp.
+            - --config-database-uri-env
+            - PGTOOLBOX_CONFIG_DATABASE_URI
+            {{- else }}
+            - --settings-db
+            - /var/lib/pgadmin/pgadmin4.db
+            {{- end }}
+            - --lock
+            - /var/lib/pgadmin/.pgtoolbox/setup.lock
+            # pgAdmin's startup probe allows it 300 s.
+            - --wait-ready
+            - http://127.0.0.1:8080/misc/ping
+            - --wait
+            - 5m
+            {{- range $admin := $p.admins }}
+            - --admin
+            - {{ $admin | quote }}
+            {{- end }}
+          env:
+            - {name: TMPDIR, value: /tmp}
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef: {apiVersion: v1, fieldPath: metadata.namespace}
+            {{- if $cfgSecret }}
+            - name: PGTOOLBOX_CONFIG_DATABASE_URI
+              valueFrom:
+                secretKeyRef: {name: {{ $cfgSecret | quote }}, key: {{ $cfgKey | quote }}}
+            {{- end }}
+          # setup.py loads pgAdmin's application: the registration Job's limit.
+          resources:
+            requests: {cpu: 10m, memory: 128Mi}
+            limits: {memory: 1Gi}
+          securityContext: *restricted
+          terminationMessagePolicy: FallbackToLogsOnError
+          volumeMounts:
+            - {name: pgtoolbox-bin, mountPath: /opt/pgtoolbox/bin, readOnly: true}
+            - {name: settings, mountPath: /var/lib/pgadmin}
+            - {name: tmp, mountPath: /tmp}
+            - {name: servers, mountPath: /run/pgtoolbox/servers, readOnly: true}
+            - {name: withheld, mountPath: /run/pgtoolbox/withheld, readOnly: true}
+      containers:
+        - name: pgadmin
+          image: {{ $image | quote }}
+          imagePullPolicy: {{ $p.image.pullPolicy }}
+          env:
+            # Behind the proxy pgAdmin listens on the loopback only.
+            - {name: PGADMIN_LISTEN_ADDRESS, value: {{ ternary "127.0.0.1" "0.0.0.0" $proxied | quote }}}
+            - {name: PGADMIN_LISTEN_PORT, value: "8080"}
+            - {name: PGADMIN_DEFAULT_EMAIL, value: pgtoolbox@pgtoolbox.fyannk.dev}
+            - {name: PGADMIN_CUSTOM_CONFIG_DISTRO_FILE, value: /run/pgadmin/config_distro.py}
+            - {name: PGADMIN_DEFAULT_PASSWORD_FILE, value: /run/secrets/pgadmin-bootstrap/password}
+            - {name: PGADMIN_CONFIG_SERVER_MODE, value: "True"}
+            - {name: PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED, value: "False"}
+            # No password is ever stored in pgAdmin: they come from the
+            # passfile, or pgAdmin asks.
+            - {name: PGADMIN_CONFIG_ALLOW_SAVE_PASSWORD, value: "False"}
+            - {name: PGADMIN_CONFIG_ALLOW_SAVE_TUNNEL_PASSWORD, value: "False"}
+            - {name: PGADMIN_CONFIG_UPGRADE_CHECK_ENABLED, value: "False"}
+            - {name: PGADMIN_CONFIG_ENABLE_PSQL, value: "False"}
+            {{- if $cfgSecret }}
+            # The operator's variable, delivered as a file (the image reads
+            # PGADMIN_CONFIG_CONFIG_DATABASE_URI_FILE): the config-database-uri
+            # init container wrote the URI there as a quoted Python literal.
+            - {name: PGADMIN_CONFIG_CONFIG_DATABASE_URI_FILE, value: /run/pgadmin/config_database_uri}
+            {{- end }}
+            - {name: PGADMIN_CONFIG_SESSION_COOKIE_SECURE, value: {{ ternary "True" "False" (or $proxied (ne $p.exposure.type "none")) | quote }}}
+            - {name: PGSERVICEFILE, value: /run/pgadmin/credentials/pg_service.conf}
+            - {name: PGPASSFILE, value: /run/pgadmin/credentials/pgpass}
+            - {name: PGSSLMODE, value: verify-full}
+            - {name: PGSSLROOTCERT, value: /run/pgadmin/credentials/ca/bundle.crt}
+            - {name: PGREQUIREAUTH, value: scram-sha-256}
+            - {name: PGCHANNELBINDING, value: require}
+            {{- if $proxied }}
+            - {name: PGADMIN_CONFIG_AUTHENTICATION_SOURCES, value: "['webserver']"}
+            - {name: PGADMIN_CONFIG_WEBSERVER_AUTO_CREATE_USER, value: "True"}
+            - {name: PGADMIN_CONFIG_WEBSERVER_REMOTE_USER, value: "'X-Forwarded-User'"}
+            - {name: PGADMIN_CONFIG_WEBSERVER_REMOTE_USER_FROM_HEADER, value: "True"}
+            # Only the proxy in this Pod may set the user header.
+            - {name: PGADMIN_CONFIG_WEBSERVER_TRUSTED_PROXIES, value: "['127.0.0.1/32']"}
+            {{- else }}
+            - {name: PGADMIN_CONFIG_AUTHENTICATION_SOURCES, value: "['oauth2']"}
+            - {name: PGADMIN_CONFIG_OAUTH2_AUTO_CREATE_USER, value: "True"}
+            - name: PGADMIN_CONFIG_OAUTH2_CONFIG
+              value: {{ include "pgtools.pgadmin.oauth2Config" . | quote }}
+            {{- end }}
+          ports:
+            - {name: http, containerPort: 8080, protocol: TCP}
+          startupProbe:
+            exec: &ping
+              command:
+                - /venv/bin/python3
+                - -c
+                - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/misc/ping', timeout=4)
+            periodSeconds: 5
+            failureThreshold: 60
+            timeoutSeconds: 5
+          readinessProbe:
+            exec: *ping
+            periodSeconds: 10
+            failureThreshold: 3
+            timeoutSeconds: 5
+          livenessProbe:
+            exec: *ping
+            periodSeconds: 30
+            failureThreshold: 3
+            timeoutSeconds: 5
+          resources:
+            {{- toYaml $p.resources | nindent 12 }}
+          securityContext: *restricted
+          volumeMounts:
+            - {name: settings, mountPath: /var/lib/pgadmin}
+            - {name: tmp, mountPath: /tmp}
+            - {name: run, mountPath: /run/pgadmin}
+            - {name: credentials, mountPath: /run/pgadmin/credentials, readOnly: true}
+            - {name: bootstrap, mountPath: /run/secrets/pgadmin-bootstrap, readOnly: true}
+            {{- if not $proxied }}
+            - {name: oauth2-client, mountPath: /run/pgadmin/oauth2, readOnly: true}
+            {{- end }}
+        # Reads only the objects the declared list names, by name (get and
+        # watch), and logs a refused server by name and reason, never a value.
+        # A server's caConfigMap is mounted here instead (ca.crt only, never
+        # read through the API): the Role then names no CA Secret for it.
+        - name: passfile-sync
+          image: {{ $image | quote }}
+          imagePullPolicy: {{ $p.image.pullPolicy }}
+          command:
+            - /opt/pgtoolbox/bin/manager
+            - passfile-sync
+            - --declared
+            - /run/pgtoolbox/servers/servers.json
+            - --dir
+            - /run/pgadmin/credentials
+            - --withheld
+            - /run/pgtoolbox/withheld/withheld.json
+            {{- if $caConfigMaps }}
+            - --ca-dir
+            - {{ $caDir }}
+            {{- end }}
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef: {apiVersion: v1, fieldPath: metadata.namespace}
+          resources: *small
+          securityContext: *restricted
+          volumeMounts:
+            - {name: pgtoolbox-bin, mountPath: /opt/pgtoolbox/bin, readOnly: true}
+            - {name: credentials, mountPath: /run/pgadmin/credentials}
+            - {name: servers, mountPath: /run/pgtoolbox/servers, readOnly: true}
+            - {name: withheld, mountPath: /run/pgtoolbox/withheld}
+            - {name: kube-api-access, mountPath: /var/run/secrets/kubernetes.io/serviceaccount, readOnly: true}
+            {{- if $caConfigMaps }}
+            - {name: server-ca, mountPath: {{ $caDir }}, readOnly: true}
+            {{- end }}
+        {{- if $proxied }}
+        - name: oauth-proxy
+          image: {{ include "pgtools.pgadmin.proxyImage" . | quote }}
+          imagePullPolicy: {{ $p.auth.openshift.image.pullPolicy }}
+          args:
+            - --provider=openshift
+            - --https-address=:8443
+            - --http-address=
+            - --upstream=http://127.0.0.1:8080
+            - --openshift-service-account={{ $name }}
+            - --openshift-sar={{ $p.auth.openshift.sar | default (printf `{"namespace":%q,"resource":"secrets","verb":"get"}` .Release.Namespace) }}
+            - --tls-cert=/etc/tls/private/tls.crt
+            - --tls-key=/etc/tls/private/tls.key
+            - --cookie-secret-file=/etc/proxy/cookie/cookie-secret
+            - --cookie-secure=true
+            - --pass-user-headers=true
+            - --skip-provider-button=true
+          ports:
+            - {name: https, containerPort: 8443, protocol: TCP}
+          readinessProbe:
+            httpGet: {path: /oauth/healthz, port: https, scheme: HTTPS}
+            periodSeconds: 10
+          resources: *small
+          securityContext: *restricted
+          volumeMounts:
+            - {name: proxy-tls, mountPath: /etc/tls/private, readOnly: true}
+            - {name: proxy-cookie, mountPath: /etc/proxy/cookie, readOnly: true}
+            - {name: kube-api-access, mountPath: /var/run/secrets/kubernetes.io/serviceaccount, readOnly: true}
+        {{- end }}
+      {{- with $p.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $p.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $p.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      volumes:
+        {{- if $cfgSecret }}
+        # The settings are in PostgreSQL: DATA_DIR keeps sessions and
+        # STORAGE_DIR only, per Pod.
+        - name: settings
+          emptyDir:
+            sizeLimit: {{ $p.storage.size | quote }}
+        {{- else }}
+        - name: settings
+          persistentVolumeClaim:
+            claimName: {{ $name }}
+        {{- end }}
+        - {name: tmp, emptyDir: {sizeLimit: 512Mi}}
+        - {name: run, emptyDir: {sizeLimit: 16Mi}}
+        # The password file never touches a disk.
+        - {name: credentials, emptyDir: {medium: Memory, sizeLimit: 4Mi}}
+        - {name: pgtoolbox-bin, emptyDir: {sizeLimit: 256Mi}}
+        # passfile-sync -> registration: the declared servers left out (names
+        # and reasons, never a credential).
+        - {name: withheld, emptyDir: {sizeLimit: 1Mi}}
+        - name: servers
+          configMap:
+            name: {{ $name }}-servers
+            defaultMode: 0444
+        - name: bootstrap
+          secret:
+            secretName: {{ include "pgtools.pgadmin.bootstrapSecret" . }}
+            defaultMode: 0440
+        - name: kube-api-access
+          projected:
+            defaultMode: 0444
+            sources:
+              - serviceAccountToken: {path: token, expirationSeconds: 3600}
+              - configMap:
+                  name: kube-root-ca.crt
+                  items: [{key: ca.crt, path: ca.crt}]
+              - downwardAPI:
+                  items:
+                    - path: namespace
+                      fieldRef: {apiVersion: v1, fieldPath: metadata.namespace}
+        {{- if $caConfigMaps }}
+        # The servers' CA ConfigMaps, only their ca.crt, at <name>/ca.crt.
+        # Optional: an absent one leaves its servers without a section, named
+        # in passfile-sync's log, rather than the Pod stuck in ContainerCreating;
+        # the kubelet projects it once it exists, and follows its updates.
+        - name: server-ca
+          projected:
+            defaultMode: 0444
+            sources:
+              {{- range $cm := $caConfigMaps }}
+              - configMap:
+                  name: {{ $cm }}
+                  optional: true
+                  items: [{key: ca.crt, path: {{ printf "%s/ca.crt" $cm }}}]
+              {{- end }}
+        {{- end }}
+        {{- if $proxied }}
+        - name: proxy-tls
+          secret:
+            secretName: {{ $name }}-tls
+            defaultMode: 0440
+        - name: proxy-cookie
+          secret:
+            secretName: {{ include "pgtools.pgadmin.cookieSecret" . }}
+            defaultMode: 0440
+        {{- else }}
+        - name: oauth2-client
+          secret:
+            secretName: {{ $p.auth.oidc.clientSecret.existingSecret }}
+            defaultMode: 0440
+            items:
+              - key: {{ $p.auth.oidc.clientSecret.key }}
+                path: client-secret
+        {{- end }}
+{{- end }}

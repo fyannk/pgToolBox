@@ -1,0 +1,134 @@
+{{- if and .Values.console.enabled .Values.console.networkPolicy.enabled }}
+{{- /*
+OPTIONAL, OFF BY DEFAULT: the installing admin's choice, never the product's.
+Rendered only when console.networkPolicy.enabled is true; it
+isolates the console Pods and nothing else, and says exactly what the console
+needs: egress to the watched Clusters' instance pods (status, metrics), their
+poolers, the EvidenceAgent Service, the API server and DNS; ingress from the
+router namespace only. Every namespace selector derives from watchNamespaces.
+Kubelet probes come from the node and are not subject to it.
+*/ -}}
+{{- $np := .Values.console.networkPolicy }}
+{{- $watched := include "pgtools.console.watchNamespaces" . | fromJsonArray }}
+{{- $addresses := list }}
+{{- $ports := $np.apiServer.ports }}
+{{- if eq $np.apiServer.mode "addresses" }}
+{{- $api := include "pgtools.apiServerAddresses" (dict "np" $np "path" "console.networkPolicy") | fromJson }}
+{{- $addresses = $api.addresses }}
+{{- $ports = $api.ports }}
+{{- end }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "pgtools.console.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "pgtools.console.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "pgtools.console.selectorLabels" . | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  {{- /* An ingress rule without `from` admits every source, so with no peer at
+  all the rule is omitted and Ingress stays denied. */}}
+  {{- if or (ne .Values.console.exposure.type "none") $np.ingress.extraFrom $np.ingress.metricsFrom }}
+  ingress:
+    {{- if or (ne .Values.console.exposure.type "none") $np.ingress.extraFrom }}
+    # The ingress router (and extra peers), on the console port only.
+    - from:
+        {{- if ne .Values.console.exposure.type "none" }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.console.exposure.routerNamespace | quote }}
+        {{- end }}
+        {{- with $np.ingress.extraFrom }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      ports:
+        - port: http
+          protocol: TCP
+    {{- end }}
+    {{- with $np.ingress.metricsFrom }}
+    # Scrapers of /metrics, on the probe port only.
+    - from:
+        {{- toYaml . | nindent 8 }}
+      ports:
+        - port: probes
+          protocol: TCP
+    {{- end }}
+  {{- end }}
+  egress:
+    # DNS.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $np.dns.namespace | quote }}
+          podSelector:
+            matchLabels:
+              {{- toYaml $np.dns.podLabels | nindent 14 }}
+      ports:
+        {{- range $port := $np.dns.ports }}
+        - {port: {{ $port }}, protocol: UDP}
+        - {port: {{ $port }}, protocol: TCP}
+        {{- end }}
+    # The API server.
+    {{- if eq $np.apiServer.mode "any" }}
+    - ports:
+        {{- range $port := $ports }}
+        - {port: {{ $port }}, protocol: TCP}
+        {{- end }}
+    {{- else }}
+    - to:
+        {{- range $ip := $addresses }}
+        - ipBlock:
+            cidr: {{ if contains "/" (toString $ip) }}{{ $ip }}{{ else if contains ":" (toString $ip) }}{{ $ip }}/128{{ else }}{{ $ip }}/32{{ end }}
+        {{- end }}
+      ports:
+        {{- range $port := $ports }}
+        - {port: {{ $port }}, protocol: TCP}
+        {{- end }}
+    {{- end }}
+    # The watched Clusters' instance pods: /pg/status and metrics.
+    - to:
+        {{- range $ns := $watched }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $ns | quote }}
+          podSelector:
+            matchLabels:
+              cnpg.io/podRole: instance
+        {{- end }}
+      ports:
+        - {port: {{ $np.instance.statusPort }}, protocol: TCP}
+        - {port: {{ $np.instance.metricsPort }}, protocol: TCP}
+    # Their poolers.
+    - to:
+        {{- range $ns := $watched }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $ns | quote }}
+          podSelector:
+            matchLabels:
+              cnpg.io/podRole: pooler
+        {{- end }}
+      ports:
+        - {port: {{ $np.instance.poolerPort }}, protocol: TCP}
+    {{- if $np.evidenceAgent.enabled }}
+    # The EvidenceAgent Service in the watched namespaces.
+    - to:
+        {{- range $ns := $watched }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $ns | quote }}
+          podSelector:
+            matchLabels:
+              {{- toYaml $np.evidenceAgent.podLabels | nindent 14 }}
+        {{- end }}
+      ports:
+        - {port: {{ $np.evidenceAgent.port }}, protocol: TCP}
+    {{- end }}
+    {{- with $np.extraEgress }}
+    # Extra destinations (networkPolicy.extraEgress): a digest webhook or mail server, a trace collector.
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- end }}

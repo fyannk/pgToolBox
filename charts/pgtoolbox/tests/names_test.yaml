@@ -1,0 +1,23 @@
+# Object names are cut to a DNS label (63) with a hash suffix, never a plain
+# truncation that lets two long names collide; names that fit do not change.
+suite: object names
+templates:
+  - templates/operator/metrics.yaml
+set:
+  operator.enabled: true
+  operator.metrics.serviceMonitor.enabled: true
+tests:
+  - it: keeps a short metrics Service name as it was
+    release: {name: pgtoolbox, namespace: pgtoolbox}
+    documentSelector: {path: kind, value: Service}
+    asserts:
+      - equal: {path: metadata.name, value: pgtoolbox-metrics}
+
+  - it: cuts a long metrics Service name to 63 characters with a hash suffix
+    release: {name: pgtoolbox, namespace: pgtoolbox}
+    set:
+      fullnameOverride: a-very-long-name-for-the-operator-installation-in-a-team-ns
+    documentSelector: {path: kind, value: Service}
+    asserts:
+      - matchRegex: {path: metadata.name, pattern: '^[a-z0-9-]{1,54}-[0-9a-f]{8}$'}
+      - matchRegex: {path: metadata.name, pattern: '^.{63}$'}

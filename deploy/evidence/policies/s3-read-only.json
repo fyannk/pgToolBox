@@ -1,0 +1,22 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ListConfiguredPrefix",
+      "Effect": "Allow",
+      "Action": ["s3:ListBucket"],
+      "Resource": ["${BUCKET_ARN}"],
+      "Condition": {
+        "StringLike": {
+          "s3:prefix": ["${PREFIX}", "${PREFIX}/*"]
+        }
+      }
+    },
+    {
+      "Sid": "ReadConfiguredPrefix",
+      "Effect": "Allow",
+      "Action": ["s3:GetObject"],
+      "Resource": ["${BUCKET_ARN}/${PREFIX}/*"]
+    }
+  ]
+}

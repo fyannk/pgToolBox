@@ -1,0 +1,23 @@
+{
+  "api_version": "evidence.pgtoolbox.fyannk.dev/v1alpha1",
+  "kind": "PGBackRestWALGapPage",
+  "revision": 42,
+  "evidence_generation": 42,
+  "total_items": 1,
+  "next_cursor": null,
+  "items": [
+    {
+      "stanza": "orders",
+      "archive_id": "17-1",
+      "timeline": 1,
+      "start_position": 9,
+      "end_position": 9,
+      "segment_count": 1,
+      "first_wal": "000000010000000000000009",
+      "last_wal": "000000010000000000000009",
+      "status": "candidate",
+      "first_observed_generation": 42,
+      "last_observed_generation": 42
+    }
+  ]
+}

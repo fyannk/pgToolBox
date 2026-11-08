@@ -1,0 +1,112 @@
+{
+  "generatedAt": "2026-10-29T12:00:00Z",
+  "namespaces": [
+    {
+      "name": "team-a",
+      "sources": [
+        {
+          "source": "clusters",
+          "state": "live",
+          "since": "2026-10-29T09:00:00Z",
+          "health": "ok"
+        }
+      ]
+    },
+    {
+      "name": "team-a-staging",
+      "sources": [
+        {
+          "source": "clusters",
+          "state": "forbidden",
+          "since": "2026-10-29T09:00:00Z",
+          "reason": "the console ServiceAccount may not list clusters.postgresql.cnpg.io in team-a-staging",
+          "health": "warning"
+        }
+      ]
+    }
+  ],
+  "items": [
+    {
+      "ref": {
+        "namespace": "team-a",
+        "name": "orders",
+        "uid": "0b6a2c1e-8f0d-4a55-9a3e-7c1f2b3d4e5f"
+      },
+      "labels": {
+        "app": "orders"
+      },
+      "verdict": {
+        "health": "ok",
+        "contributors": [
+          {
+            "id": "phase",
+            "health": "ok",
+            "label": "Phase",
+            "detail": "Cluster in healthy state",
+            "provenance": {
+              "origin": "operator",
+              "source": "Cluster.status.phase",
+              "observedAt": "2026-10-29T11:59:58Z"
+            }
+          }
+        ]
+      },
+      "phase": {
+        "text": "Cluster in healthy state",
+        "health": "ok",
+        "known": true,
+        "since": "2026-10-28T10:00:00Z",
+        "provenance": {
+          "origin": "operator",
+          "source": "Cluster.status.phase",
+          "observedAt": "2026-10-29T11:59:58Z"
+        }
+      },
+      "primary": {
+        "current": "orders-1",
+        "target": "orders-1",
+        "state": "stable"
+      },
+      "instances": {
+        "desired": 3,
+        "ready": 3,
+        "reported": 3,
+        "podsReady": 3,
+        "health": "ok"
+      },
+      "backup": {
+        "health": "ok",
+        "lastCompletedAt": "2026-10-29T07:00:00Z",
+        "configured": true,
+        "pluginBased": true,
+        "provenance": {
+          "origin": "operator",
+          "source": "Backup.status",
+          "observedAt": "2026-10-29T11:59:58Z"
+        }
+      },
+      "findings": {
+        "critical": 0,
+        "high": 0,
+        "warning": 0,
+        "note": 0,
+        "unavailable": 0,
+        "runAt": "2026-10-29T11:59:40Z"
+      },
+      "version": {
+        "cnpg": "1.30.1",
+        "cnpgMinor": "1.30",
+        "confidence": "reported",
+        "detectedBy": "instanceManagerVersion",
+        "postgresMajor": 18,
+        "image": "ghcr.io/cloudnative-pg/postgresql:18.1-system-trixie"
+      },
+      "provenance": {
+        "origin": "operator",
+        "source": "Cluster",
+        "observedAt": "2026-10-29T11:59:58Z"
+      }
+    }
+  ]
+}
+

@@ -1,0 +1,155 @@
+{
+  "ref": {
+    "namespace": "team-a",
+    "name": "billing",
+    "uid": "4d2f1e0a-1b2c-4d3e-8f90-a1b2c3d4e5f6"
+  },
+  "generatedAt": "2026-10-29T12:00:00Z",
+  "pack": {
+    "state": "notEnabled",
+    "health": "info",
+    "text": "The insight pack is not enabled on this Cluster. Opt in with spec.monitoring.customQueriesConfigMap: [{name: pgtoolbox-insight-pack, key: queries}].",
+    "expected": "1",
+    "referenced": false,
+    "configMap": "pgtoolbox-insight-pack",
+    "key": "queries",
+    "specChange": "spec.monitoring.customQueriesConfigMap: [{name: pgtoolbox-insight-pack, key: queries}]",
+    "instances": [
+      {
+        "instance": "billing-1",
+        "primary": true,
+        "provenance": {
+          "origin": "instance",
+          "source": "cnpg_pgtoolbox_pack_info, billing-1:9187/metrics",
+          "observedAt": "2026-10-29T11:59:57Z"
+        }
+      },
+      {
+        "instance": "billing-2",
+        "primary": false,
+        "provenance": {
+          "origin": "instance",
+          "source": "cnpg_pgtoolbox_pack_info, billing-2:9187/metrics",
+          "observedAt": "2026-10-29T11:59:57Z"
+        }
+      }
+    ],
+    "queryErrors": []
+  },
+  "wraparound": {
+    "available": false,
+    "text": "The insight pack is not enabled on this Cluster. Opt in with spec.monitoring.customQueriesConfigMap: [{name: pgtoolbox-insight-pack, key: queries}].",
+    "limits": [],
+    "assumed": [],
+    "databases": [],
+    "tables": [],
+    "vacuums": [],
+    "preparedXacts": [],
+    "partial": false
+  },
+  "statements": {
+    "available": false,
+    "text": "The insight pack is not enabled on this Cluster. Opt in with spec.monitoring.customQueriesConfigMap: [{name: pgtoolbox-insight-pack, key: queries}].",
+    "top": [],
+    "comparable": false,
+    "comparisonText": "The insight pack is not enabled on this Cluster. Opt in with spec.monitoring.customQueriesConfigMap: [{name: pgtoolbox-insight-pack, key: queries}].",
+    "coveredSeconds": 0,
+    "needsSeconds": 90000,
+    "regressions": [],
+    "textQuery": "SELECT query FROM pg_stat_statements WHERE queryid = QUERYID LIMIT 1;",
+    "regressionRatio": 2,
+    "noBaseline": 0,
+    "restarted": 0,
+    "partial": false
+  },
+  "indexes": {
+    "available": false,
+    "text": "The insight pack is not enabled on this Cluster. Opt in with spec.monitoring.customQueriesConfigMap: [{name: pgtoolbox-insight-pack, key: queries}].",
+    "unused": [],
+    "invalid": [],
+    "duplicate": [],
+    "partial": false
+  },
+  "connections": {
+    "available": false,
+    "text": "The insight pack is not enabled on this Cluster. Opt in with spec.monitoring.customQueriesConfigMap: [{name: pgtoolbox-insight-pack, key: queries}].",
+    "instances": [],
+    "partial": false
+  },
+  "blocking": {
+    "available": false,
+    "text": "The insight pack is not enabled on this Cluster. Opt in with spec.monitoring.customQueriesConfigMap: [{name: pgtoolbox-insight-pack, key: queries}].",
+    "minRefreshSeconds": 1,
+    "instances": [],
+    "partial": false
+  },
+  "sources": [
+    {
+      "source": "insight",
+      "state": "live",
+      "since": "2026-10-29T09:00:00Z",
+      "health": "ok"
+    }
+  ],
+  "blindSpots": [
+    {
+      "id": "insight.primaryOnly",
+      "panel": "insight",
+      "text": "Wraparound, tables, indexes and statements are read on the primary only: an index read as unused counts primary scans, and the replicas' pg_stat_statements are not shown."
+    },
+    {
+      "id": "insight.noStatementText",
+      "panel": "insight",
+      "text": "Statement text never leaves the database: the console shows the queryid, and pgAdmin shows the text."
+    },
+    {
+      "id": "insight.inMemoryHistory",
+      "panel": "insight",
+      "text": "Consumption rates, autovacuum verdicts and regressions rest on samples the console keeps in memory: they start again when the console restarts."
+    },
+    {
+      "id": "insight.topStatementsOnly",
+      "panel": "insight",
+      "text": "The console keeps each hour's costliest statements only: a statement that entered them lately has no baseline a day earlier and is not compared."
+    },
+    {
+      "id": "insight.exporterCache",
+      "panel": "insight",
+      "text": "The exporter caches its custom queries for the Cluster's metricsQueriesTTL (30 s by default): a refreshed lock graph can be that old."
+    },
+    {
+      "id": "insight.multixactMembers",
+      "panel": "insight",
+      "text": "Multixact member space is not read: it can run out before multixact ids do, and autovacuum then freezes multixacts earlier than autovacuum_multixact_freeze_max_age says."
+    },
+    {
+      "id": "insight.dynamicFreezeAge",
+      "panel": "insight",
+      "text": "The forecasts use the configured freeze ages: PostgreSQL lowers the effective multixact freeze age on its own when member space runs short, which they do not show."
+    },
+    {
+      "id": "insight.countersReset",
+      "panel": "insight",
+      "text": "A failover or a crash recovery resets the scan and vacuum counters without setting stats_reset: an index read as unused may have been scanned before it."
+    },
+    {
+      "id": "insight.fkIndexScans",
+      "panel": "insight",
+      "text": "An index that serves a foreign key's checks often shows no scans: it is used when referenced rows are deleted or updated, which may be rare and still need it."
+    },
+    {
+      "id": "insight.notEnabled",
+      "panel": "insight",
+      "text": "The insight pack is not enabled on this Cluster, so none of these panels has data. Opt in with spec.monitoring.customQueriesConfigMap: [{name: pgtoolbox-insight-pack, key: queries}]."
+    }
+  ],
+  "pgAdmins": [
+    {
+      "name": "team-a",
+      "url": "https://pgadmin-team-a.apps.example.com",
+      "health": "ok",
+      "serverState": "Registered"
+    }
+  ]
+}
+

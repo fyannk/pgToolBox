@@ -1,0 +1,80 @@
+// Command expogen writes the exposition CloudNativePG's exporter would serve
+// for the given custom queries, using CNPG v1.30.0's own metrics package.
+package main
+
+import (
+	"database/sql"
+	"flag"
+	"fmt"
+	"os"
+	"strings"
+	"time"
+
+	"github.com/Masterminds/semver/v3"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/stdlib"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/common/expfmt"
+
+	"expogen/metrics"
+)
+
+func main() {
+	host := flag.String("host", "", "host")
+	files := flag.String("queries", "", "comma-separated query files (defaults first)")
+	def := flag.String("db", "postgres", "default database")
+	primary := flag.Bool("primary", true, "instance is primary")
+	flag.Parse()
+	open := func(db string) (*sql.DB, error) {
+		cfg, err := pgx.ParseConfig(fmt.Sprintf("host=%s port=5432 user=cnpg_metrics_exporter dbname=%s sslmode=disable", *host, db))
+		if err != nil {
+			return nil, err
+		}
+		cfg.RuntimeParams["search_path"] = "pg_catalog, public, pg_temp"
+		cfg.RuntimeParams["application_name"] = "cnpg_metrics_exporter"
+		return sql.Open("pgx", stdlib.RegisterConnConfig(cfg))
+	}
+	conn, err := open(*def)
+	must(err)
+	var vnum string
+	must(conn.QueryRow("SELECT current_setting('server_version_num')").Scan(&vnum))
+	var dbs []string
+	rows, err := conn.Query("SELECT datname FROM pg_catalog.pg_database WHERE datallowconn AND NOT datistemplate AND pg_catalog.has_database_privilege(datname, 'CONNECT') ORDER BY 1")
+	must(err)
+	for rows.Next() {
+		var d string
+		must(rows.Scan(&d))
+		dbs = append(dbs, d)
+	}
+	var n int
+	fmt.Sscan(vnum, &n)
+	version := semver.MustParse(fmt.Sprintf("%d.%d.0", n/10000, n%100))
+	q := metrics.NewQueriesCollector("cnpg", nil, *def)
+	for _, f := range strings.Split(*files, ",") {
+		b, err := os.ReadFile(f)
+		must(err)
+		must(q.ParseQueries(b))
+	}
+	q.Generate(open, dbs, *primary, version, time.Now())
+	reg := prometheus.NewRegistry()
+	reg.MustRegister(unchecked{q})
+	mfs, err := reg.Gather()
+	must(err)
+	enc := expfmt.NewEncoder(os.Stdout, expfmt.NewFormat(expfmt.TypeTextPlain))
+	for _, mf := range mfs {
+		must(enc.Encode(mf))
+	}
+}
+
+func must(err error) {
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}
+
+// unchecked registers the collector without descriptor checks.
+type unchecked struct{ c prometheus.Collector }
+
+func (unchecked) Describe(chan<- *prometheus.Desc)    {}
+func (u unchecked) Collect(ch chan<- prometheus.Metric) { u.c.Collect(ch) }

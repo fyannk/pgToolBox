@@ -1,0 +1,35 @@
+{
+  "ref": {
+    "namespace": "team-a",
+    "name": "orders",
+    "uid": "0b6a2c1e-8f0d-4a55-9a3e-7c1f2b3d4e5f"
+  },
+  "generatedAt": "2026-10-29T12:00:00Z",
+  "source": {
+    "source": "history",
+    "state": "live",
+    "health": "ok"
+  },
+  "persistent": false,
+  "items": [
+    {
+      "seq": 3,
+      "kind": "Backup",
+      "name": "orders-nightly-1",
+      "change": "status-transition",
+      "observedAt": "2026-10-29T07:00:00Z",
+      "hasManifest": true
+    },
+    {
+      "seq": 2,
+      "kind": "Cluster",
+      "name": "orders",
+      "change": "spec-changed",
+      "manager": "kubectl",
+      "operation": "Update",
+      "observedAt": "2026-10-29T11:50:00Z",
+      "prevObservedAt": "2026-10-29T11:00:00Z",
+      "hasManifest": true
+    }
+  ]
+}

@@ -1,0 +1,81 @@
+{
+  "Stanza": "demo",
+  "ArchiveStanza": "demo",
+  "State": "unknown",
+  "Reason": "repository format is not supported (only format 5 is read)",
+  "BackupInfo": {
+    "Used": "",
+    "Main": {
+      "Key": "backup/demo/backup.info",
+      "Present": true,
+      "Problem": "format-unsupported",
+      "Checksum": "",
+      "Encrypted": true,
+      "Format": 6
+    },
+    "Copy": {
+      "Key": "backup/demo/backup.info.copy",
+      "Present": true,
+      "Problem": "format-unsupported",
+      "Checksum": "",
+      "Encrypted": true,
+      "Format": 6
+    },
+    "Agree": false
+  },
+  "ArchiveInfo": {
+    "Used": "",
+    "Main": {
+      "Key": "archive/demo/archive.info",
+      "Present": true,
+      "Problem": "format-unsupported",
+      "Checksum": "",
+      "Encrypted": true,
+      "Format": 6
+    },
+    "Copy": {
+      "Key": "archive/demo/archive.info.copy",
+      "Present": true,
+      "Problem": "format-unsupported",
+      "Checksum": "",
+      "Encrypted": true,
+      "Format": 6
+    },
+    "Agree": false
+  },
+  "Encrypted": false,
+  "Database": null,
+  "ArchiveIDs": null,
+  "SegmentSize": 0,
+  "SegmentSizeSource": "",
+  "Backups": null,
+  "WAL": null,
+  "Timelines": null,
+  "Window": null,
+  "Findings": [
+    {
+      "Code": "RepositoryFormatUnsupported",
+      "Severity": "error",
+      "Subject": "archive/demo/archive.info",
+      "Message": "repository format 6 is not supported; only format 5 is read"
+    },
+    {
+      "Code": "RepositoryFormatUnsupported",
+      "Severity": "error",
+      "Subject": "archive/demo/archive.info.copy",
+      "Message": "repository format 6 is not supported; only format 5 is read"
+    },
+    {
+      "Code": "RepositoryFormatUnsupported",
+      "Severity": "error",
+      "Subject": "backup/demo/backup.info",
+      "Message": "repository format 6 is not supported; only format 5 is read"
+    },
+    {
+      "Code": "RepositoryFormatUnsupported",
+      "Severity": "error",
+      "Subject": "backup/demo/backup.info.copy",
+      "Message": "repository format 6 is not supported; only format 5 is read"
+    }
+  ]
+}

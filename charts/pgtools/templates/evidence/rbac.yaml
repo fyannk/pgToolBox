@@ -1,0 +1,72 @@
+{{- include "pgtools.evidence.validate" . }}
+{{- /*
+One Role per agent, in the release namespace, and nothing cluster-scoped: the
+agent reads its own Cluster and ObjectStore (get, and list/watch by name: the
+API server authorizes a list or watch filtered on metadata.name against
+resourceNames) and `get` on the Secrets named in values, never list; none
+when values name no Secret (workload identity). A Cluster backed up with
+pgBackRest names a Stanza (Dalibo's plugin) or an Archive (Opera's) instead
+of an ObjectStore: the Role names that one object and no ObjectStore.
+*/ -}}
+{{- range $agent := .Values.evidence.agents }}
+{{- $ctx := dict "root" $ "agent" $agent }}
+{{- $name := include "pgtools.evidence.name" $ctx }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $name }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "pgtools.evidence.labels" $ctx | nindent 4 }}
+rules:
+  - apiGroups: [postgresql.cnpg.io]
+    resources: [clusters]
+    resourceNames: [{{ $agent.cluster | quote }}]
+    verbs: [get, list, watch]
+  {{- if $agent.stanza }}
+  - apiGroups: [pgbackrest.dalibo.com]
+    resources: [stanzas]
+    resourceNames: [{{ $agent.stanza | quote }}]
+    verbs: [get, list, watch]
+  {{- else if $agent.archive }}
+  - apiGroups: [pgbackrest.cnpg.opera.com]
+    resources: [archives]
+    resourceNames: [{{ $agent.archive | quote }}]
+    verbs: [get, list, watch]
+  {{- else }}
+  - apiGroups: [barmancloud.cnpg.io]
+    resources: [objectstores]
+    {{- with $agent.objectStore }}
+    resourceNames: [{{ . | quote }}]
+    {{- end }}
+    verbs: [get, list, watch]
+  {{- end }}
+  {{- /* No rule at all without Secrets (workload identity): a rule with
+  no resourceNames would grant every Secret of the namespace. */}}
+  {{- with $agent.secrets }}
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames:
+      {{- range $secret := . | uniq }}
+      - {{ $secret | quote }}
+      {{- end }}
+    verbs: [get]
+  {{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $name }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "pgtools.evidence.labels" $ctx | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $name }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $agent.serviceAccountName | default $name }}
+    namespace: {{ $.Release.Namespace }}
+{{- end }}

@@ -1,0 +1,84 @@
+{{- if and .Values.operator.enabled .Values.operator.networkPolicy.enabled }}
+{{- /*
+OPTIONAL, OFF BY DEFAULT: the installing admin's choice, never the product's.
+It isolates the operator pods and nothing else: egress to DNS, the
+API server and operator.networkPolicy.extraEgress; ingress only from the
+scrapers in ingress.metricsFrom, on the metrics port. Kubelet probes come from the
+node and are not subject to it.
+*/ -}}
+{{- $np := .Values.operator.networkPolicy }}
+{{- $addresses := list }}
+{{- $ports := $np.apiServer.ports }}
+{{- if eq $np.apiServer.mode "addresses" }}
+{{- $addresses = $np.apiServer.addresses }}
+{{- if not $addresses }}
+{{- $ep := lookup "v1" "Endpoints" "default" "kubernetes" }}
+{{- if $ep }}
+{{- range $subset := $ep.subsets }}
+{{- range $a := $subset.addresses }}{{ $addresses = append $addresses $a.ip }}{{ end }}
+{{- $ports = list }}
+{{- range $p := $subset.ports }}{{ $ports = append $ports $p.port }}{{ end }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- if not $addresses }}
+{{- fail "operator.networkPolicy.apiServer.mode=addresses found no API server address: the lookup of the `kubernetes` Endpoints returned none (helm template and --dry-run have no cluster). Set operator.networkPolicy.apiServer.addresses, or mode: any." }}
+{{- end }}
+{{- end }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "pgtoolbox.fullname" . }}
+  namespace: {{ include "pgtoolbox.namespace" . }}
+  labels:
+    {{- include "pgtoolbox.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "pgtoolbox.selectorLabels" . | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  {{- /* An ingress rule without `from` admits every source: with no scraper listed
+  the rule is omitted and Ingress stays denied. */}}
+  {{- with $np.ingress.metricsFrom }}
+  ingress:
+    - from:
+        {{- toYaml . | nindent 8 }}
+      ports:
+        - port: metrics
+          protocol: TCP
+  {{- end }}
+  egress:
+    # DNS.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $np.dns.namespace | quote }}
+          podSelector:
+            matchLabels:
+              {{- toYaml $np.dns.podLabels | nindent 14 }}
+      ports:
+        {{- range $port := $np.dns.ports }}
+        - {port: {{ $port }}, protocol: UDP}
+        - {port: {{ $port }}, protocol: TCP}
+        {{- end }}
+    # The API server.
+    {{- if eq $np.apiServer.mode "any" }}
+    - ports:
+        {{- range $port := $ports }}
+        - {port: {{ $port }}, protocol: TCP}
+        {{- end }}
+    {{- else }}
+    - to:
+        {{- range $ip := $addresses }}
+        - ipBlock:
+            cidr: {{ if contains "/" (toString $ip) }}{{ $ip }}{{ else if contains ":" (toString $ip) }}{{ $ip }}/128{{ else }}{{ $ip }}/32{{ end }}
+        {{- end }}
+      ports:
+        {{- range $port := $ports }}
+        - {port: {{ $port }}, protocol: TCP}
+        {{- end }}
+    {{- end }}
+    {{- with $np.extraEgress }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- end }}

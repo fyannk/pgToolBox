@@ -1,0 +1,34 @@
+# The teardown of the restore drills of a console the operator runs (PgToolBoxConsole
+# spec.restoreDrills.enabled, default false); see pgtoolbox_console_clusterrole.yaml.
+# Bound by a RoleBinding in the console's namespace only. The console deletes
+# only the drill Clusters it sealed as its own; creating a drill is the
+# person's own token's job, never this role's.
+#
+# The second rule is a marker with no API effect (no API serves
+# restoredrills): the restore-drill delete guard (config/admission) applies to
+# a console ServiceAccount holding it, so only to consoles bound to this role.
+#
+# Hand-written source of truth: hack/sync-manifests.sh copies the rules into the
+# Helm chart and the OLM bundle, and hack/validate-packaging.sh compares them.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: pgtoolbox-console-restore-drills
+  labels:
+    app.kubernetes.io/part-of: pgtoolbox
+rules:
+- apiGroups:
+  - postgresql.cnpg.io
+  resources:
+  - clusters
+  verbs:
+  - delete
+  - get
+  - list
+  - watch
+- apiGroups:
+  - pgtoolbox.fyannk.dev
+  resources:
+  - restoredrills
+  verbs:
+  - teardown

@@ -1,0 +1,31 @@
+pgToolBox
+Copyright 2026 The pgToolBox Authors
+
+This product includes software developed by the pgToolBox Authors (see
+AUTHORS), licensed under the Apache License, Version 2.0. See the LICENSE
+file for the full text.
+
+--------------------------------------------------------------------------
+Third-party front-end assets
+--------------------------------------------------------------------------
+
+The console's single-page application (ui/) bundles the libraries below
+into its build (ui/dist), which is redistributed wherever that build is
+served. The console container image (pgtoolbox-console) carries their
+licence texts under /licenses/console/.
+The other npm dependencies of ui/ are pinned, with their licences, in its
+lockfile.
+
+uPlot 1.6.32
+  Copyright (c) 2022 Leon Sorokin
+  MIT License
+  https://github.com/leeoniya/uPlot
+
+--------------------------------------------------------------------------
+Go dependencies
+--------------------------------------------------------------------------
+
+Go module dependencies are linked into the binary rather than vendored in
+this repository. Every release publishes an SPDX SBOM and a licence report
+(licenses.csv) generated from the module graph; both are attached to the
+GitHub release and the SBOM is also attested to the published image.

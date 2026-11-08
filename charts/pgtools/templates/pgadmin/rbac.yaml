@@ -1,0 +1,46 @@
+{{- if .Values.pgadmin.enabled }}
+{{- /*
+The sidecar's whole authority: get and watch on exactly the objects the
+declared list names, by resourceNames. A watch is authorized against
+resourceNames only with the field selector metadata.name=<name>, which is how
+the sidecar watches (proven on envtest: passfilesync TestEnvtestDeclaredSidecarUnderNameScopedRole).
+No list, no other Secret of the namespace, nothing cluster-scoped.
+A kind with no name is left out: a rule with empty resourceNames would grant
+every object of that kind.
+*/ -}}
+{{- $name := include "pgtools.pgadmin.fullname" . }}
+{{- $n := include "pgtools.pgadmin.names" . | fromJson }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $name }}-credentials
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "pgtools.pgadmin.labels" . | nindent 4 }}
+rules:
+  {{- range $rule := list (list "postgresql.cnpg.io" "clusters" $n.clusters) (list "postgresql.cnpg.io" "databaseroles" $n.databaseRoles) (list "postgresql.cnpg.io" "poolers" $n.poolers) (list "" "secrets" $n.secrets) }}
+  {{- if index $rule 2 }}
+  - apiGroups: [{{ index $rule 0 | quote }}]
+    resources: [{{ index $rule 1 }}]
+    resourceNames: {{ index $rule 2 | toJson }}
+    verbs: [get, watch]
+  {{- end }}
+  {{- end }}
+  {{- if not (or $n.clusters $n.secrets) }} []{{ end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $name }}-credentials
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "pgtools.pgadmin.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $name }}-credentials
+subjects:
+  - kind: ServiceAccount
+    name: {{ $name }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

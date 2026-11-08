@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("{\"redireCt_uris\":[\"http://[::1]:0010/0?\"]}")

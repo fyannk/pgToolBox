@@ -1,0 +1,6 @@
+{
+  "title": "Forbidden",
+  "status": 403,
+  "detail": "you may not create pgaccessrequests in namespace team-a: ask for the pgtoolbox-console-viewer role there"
+}
+

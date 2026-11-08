@@ -1,0 +1,459 @@
+{
+  "ref": {
+    "namespace": "team-a",
+    "name": "billing",
+    "uid": "4d2f1e0a-1b2c-4d3e-8f90-a1b2c3d4e5f6"
+  },
+  "generatedAt": "2026-10-29T12:00:00Z",
+  "summary": {
+    "health": "ok",
+    "lastCompletedAt": "2026-10-28T20:54:00Z",
+    "configured": true,
+    "pluginBased": true,
+    "provenance": {
+      "origin": "operator",
+      "source": "Backup.status",
+      "observedAt": "2026-10-29T11:59:58Z"
+    },
+    "archiving": {
+      "health": "ok",
+      "conditionStatus": "True",
+      "reason": "ContinuousArchivingSuccess",
+      "liveArchiving": true,
+      "readyWalFiles": 0,
+      "provenance": {
+        "origin": "operator",
+        "source": "Cluster.status.conditions[ContinuousArchiving]",
+        "observedAt": "2026-10-29T11:59:58Z"
+      }
+    },
+    "recoveryWindow": {
+      "first": "2026-10-22T20:42:00Z",
+      "last": "2026-10-29T11:59:10Z",
+      "provenance": {
+        "origin": "evidence",
+        "source": "EvidenceAgent billing-evidence /api/v1alpha1/snapshot recovery_window",
+        "observedAt": "2026-10-29T11:59:20Z"
+      }
+    },
+    "nextScheduledAt": "2026-10-30T03:00:00Z",
+    "notReported": [
+      "status.firstRecoverabilityPoint",
+      "status.lastSuccessfulBackup",
+      "metric:cnpg_collector_last_available_backup_timestamp"
+    ]
+  },
+  "method": {
+    "configured": true,
+    "pluginBased": true,
+    "pluginName": "pgbackrest.dalibo.com",
+    "pgbackrest": {
+      "plugin": "pgbackrest.dalibo.com",
+      "flavor": "dalibo",
+      "display": "pgBackRest (Dalibo)",
+      "objectKind": "Stanza",
+      "objectName": "billing-stanza",
+      "stanza": "billing",
+      "repository": 1,
+      "encrypted": true
+    },
+    "provenance": {
+      "origin": "operator",
+      "source": "Cluster.spec.plugins",
+      "observedAt": "2026-10-29T11:59:58Z"
+    }
+  },
+  "items": [
+    {
+      "name": "billing-nightly-20261029030000",
+      "phase": "failed",
+      "health": "critical",
+      "known": true,
+      "terminal": true,
+      "method": "plugin",
+      "pluginName": "pgbackrest.dalibo.com",
+      "error": "pgbackrest backup exited with code 82",
+      "createdAt": "2026-10-29T03:00:00Z",
+      "schedule": "billing-nightly",
+      "repository": "notChecked",
+      "provenance": {
+        "origin": "operator",
+        "source": "Backup.status",
+        "observedAt": "2026-10-29T11:59:58Z"
+      }
+    },
+    {
+      "name": "billing-nightly-20261028030000",
+      "phase": "completed",
+      "health": "ok",
+      "known": true,
+      "terminal": true,
+      "method": "plugin",
+      "pluginName": "pgbackrest.dalibo.com",
+      "online": true,
+      "createdAt": "2026-10-28T20:54:00Z",
+      "startedAt": "2026-10-28T20:54:00Z",
+      "stoppedAt": "2026-10-28T20:54:00Z",
+      "schedule": "billing-nightly",
+      "repository": "present",
+      "pgbackrest": {
+        "label": "20261022-030004F_20261028-030003I",
+        "type": "incr",
+        "prior": "20261022-030004F_20261026-030002D",
+        "full": "20261022-030004F",
+        "usable": true,
+        "stanza": "billing"
+      },
+      "provenance": {
+        "origin": "operator",
+        "source": "Backup.status",
+        "observedAt": "2026-10-29T11:59:58Z"
+      }
+    },
+    {
+      "name": "billing-nightly-20261026030000",
+      "phase": "completed",
+      "health": "ok",
+      "known": true,
+      "terminal": true,
+      "method": "plugin",
+      "pluginName": "pgbackrest.dalibo.com",
+      "online": true,
+      "createdAt": "2026-10-26T20:49:00Z",
+      "startedAt": "2026-10-26T20:49:00Z",
+      "stoppedAt": "2026-10-26T20:49:00Z",
+      "schedule": "billing-nightly",
+      "repository": "present",
+      "pgbackrest": {
+        "label": "20261022-030004F_20261026-030002D",
+        "type": "diff",
+        "prior": "20261022-030004F",
+        "full": "20261022-030004F",
+        "usable": true,
+        "stanza": "billing"
+      },
+      "provenance": {
+        "origin": "operator",
+        "source": "Backup.status",
+        "observedAt": "2026-10-29T11:59:58Z"
+      }
+    },
+    {
+      "name": "billing-nightly-20261022030000",
+      "phase": "completed",
+      "health": "ok",
+      "known": true,
+      "terminal": true,
+      "method": "plugin",
+      "pluginName": "pgbackrest.dalibo.com",
+      "online": true,
+      "createdAt": "2026-10-22T20:42:00Z",
+      "startedAt": "2026-10-22T20:42:00Z",
+      "stoppedAt": "2026-10-22T20:42:00Z",
+      "schedule": "billing-nightly",
+      "repository": "present",
+      "pgbackrest": {
+        "label": "20261022-030004F",
+        "type": "full",
+        "full": "20261022-030004F",
+        "usable": true,
+        "stanza": "billing"
+      },
+      "provenance": {
+        "origin": "operator",
+        "source": "Backup.status",
+        "observedAt": "2026-10-29T11:59:58Z"
+      }
+    }
+  ],
+  "schedules": [
+    {
+      "name": "billing-nightly",
+      "schedule": "0 0 3 * * *",
+      "state": "active",
+      "health": "ok",
+      "method": "plugin",
+      "target": "prefer-standby",
+      "lastScheduledAt": "2026-10-29T03:00:00Z",
+      "nextScheduledAt": "2026-10-30T03:00:00Z",
+      "provenance": {
+        "origin": "operator",
+        "source": "ScheduledBackup.status",
+        "observedAt": "2026-10-29T11:59:58Z"
+      }
+    }
+  ],
+  "evidence": {
+    "state": "live",
+    "health": "warning",
+    "agent": "billing-evidence",
+    "repository": {
+      "completeness": "complete",
+      "overall": {
+        "state": "warning",
+        "health": "warning",
+        "code": "findings",
+        "message": "the reader reported one finding"
+      },
+      "wal": {
+        "state": "healthy",
+        "health": "ok"
+      },
+      "timeline": {
+        "state": "healthy",
+        "health": "ok"
+      },
+      "coverage": {
+        "state": "healthy",
+        "health": "ok"
+      },
+      "retention": {
+        "state": "healthy",
+        "health": "ok",
+        "code": "retention-healthy",
+        "message": "the backups and WAL match the retention of 4 full backups"
+      },
+      "backups": 4,
+      "structurallyUsable": 3,
+      "repositoryOnly": 0,
+      "oldestCompletionAt": "2026-10-22T20:42:00Z",
+      "newestCompletionAt": "2026-10-28T20:54:00Z",
+      "latestArchiveReceiptAt": "2026-10-29T11:59:10Z",
+      "completedAt": "2026-10-29T11:59:20Z",
+      "pgbackrest": {
+        "stanza": "billing",
+        "archiveStanza": "billing",
+        "repository": 1,
+        "repositoryFormat": 5,
+        "encrypted": true,
+        "pgbackrestVersion": "2.57.0",
+        "catalog": {
+          "state": "healthy",
+          "health": "ok"
+        },
+        "retention": {
+          "configured": true,
+          "full": 4,
+          "fullType": "count",
+          "archiveType": "full",
+          "effectiveArchive": 4,
+          "fullBackups": 1,
+          "differentialBackups": 1,
+          "incrementalBackups": 2,
+          "evaluatedAt": "2026-10-29T03:04:00Z",
+          "result": {
+            "state": "healthy",
+            "health": "ok",
+            "code": "retention-healthy",
+            "message": "the backups and WAL match the retention of 4 full backups"
+          }
+        },
+        "recoveryWindow": {
+          "oldestBackup": "20261022-030004F",
+          "startAt": "2026-10-22T20:42:00Z",
+          "newestBackup": "20261022-030004F_20261028-030003I",
+          "newestStopAt": "2026-10-28T20:54:00Z",
+          "endTimeline": 2,
+          "endWal": "00000002000000140000003A",
+          "endReceiptAt": "2026-10-29T11:59:10Z",
+          "usableBackups": 3,
+          "assumptions": [
+            "segment-name-presence-only",
+            "wal-bytes-and-restore-not-verified"
+          ]
+        },
+        "findings": [
+          {
+            "code": "WALUnknown",
+            "severity": "warning",
+            "health": "warning",
+            "subject": "archive/billing/16-1/0000000200000014",
+            "message": "a WAL directory could not be listed completely"
+          }
+        ],
+        "backups": [
+          {
+            "label": "20261022-030004F_20261029-030001I",
+            "type": "incr",
+            "prior": "20261022-030004F_20261028-030003I",
+            "full": "20261022-030004F",
+            "references": 3,
+            "usable": false,
+            "unusableReasons": [
+              "backup-error"
+            ],
+            "state": "unhealthy",
+            "health": "critical",
+            "failed": true,
+            "startedAt": "2026-10-29T03:00:00Z",
+            "stoppedAt": "2026-10-29T03:04:00Z",
+            "timeline": 2,
+            "sizeBytes": 2147483648,
+            "repositorySizeBytes": 325058560
+          },
+          {
+            "label": "20261022-030004F_20261028-030003I",
+            "type": "incr",
+            "prior": "20261022-030004F_20261026-030002D",
+            "full": "20261022-030004F",
+            "references": 2,
+            "usable": true,
+            "unusableReasons": [],
+            "state": "healthy",
+            "health": "ok",
+            "startedAt": "2026-10-28T20:59:00Z",
+            "stoppedAt": "2026-10-28T20:54:00Z",
+            "timeline": 2,
+            "sizeBytes": 2147483648,
+            "repositorySizeBytes": 293601280,
+            "backupName": "billing-nightly-20261028030000"
+          },
+          {
+            "label": "20261022-030004F_20261026-030002D",
+            "type": "diff",
+            "prior": "20261022-030004F",
+            "full": "20261022-030004F",
+            "references": 1,
+            "usable": true,
+            "unusableReasons": [],
+            "state": "healthy",
+            "health": "ok",
+            "startedAt": "2026-10-26T20:57:00Z",
+            "stoppedAt": "2026-10-26T20:49:00Z",
+            "timeline": 2,
+            "sizeBytes": 9663676416,
+            "repositorySizeBytes": 1073741824,
+            "backupName": "billing-nightly-20261026030000"
+          },
+          {
+            "label": "20261022-030004F",
+            "type": "full",
+            "full": "20261022-030004F",
+            "references": 0,
+            "usable": true,
+            "unusableReasons": [],
+            "state": "healthy",
+            "health": "ok",
+            "startedAt": "2026-10-22T20:56:00Z",
+            "stoppedAt": "2026-10-22T20:42:00Z",
+            "timeline": 2,
+            "sizeBytes": 51539607552,
+            "repositorySizeBytes": 11811160064,
+            "backupName": "billing-nightly-20261022030000"
+          }
+        ]
+      }
+    },
+    "provenance": {
+      "origin": "evidence",
+      "source": "EvidenceAgent billing-evidence /api/v1alpha1/snapshot",
+      "observedAt": "2026-10-29T11:59:20Z"
+    }
+  },
+  "recoveryTimeline": {
+    "basis": "evidence",
+    "state": "healthy",
+    "earliest": "2026-10-22T20:42:00Z",
+    "latest": "2026-10-29T11:59:10Z",
+    "targetTimeline": 2,
+    "segments": [
+      {
+        "from": "2026-10-22T20:42:00Z",
+        "to": "2026-10-26T20:49:00Z",
+        "kind": "covered",
+        "backupId": "20261022-030004F",
+        "text": "Structurally covered: base backup 20261022-030004F and contiguous archived WAL."
+      },
+      {
+        "from": "2026-10-26T20:49:00Z",
+        "to": "2026-10-28T20:54:00Z",
+        "kind": "covered",
+        "backupId": "20261022-030004F_20261026-030002D",
+        "text": "Structurally covered: base backup 20261022-030004F_20261026-030002D and contiguous archived WAL."
+      },
+      {
+        "from": "2026-10-28T20:54:00Z",
+        "to": "2026-10-29T11:59:10Z",
+        "kind": "covered",
+        "backupId": "20261022-030004F_20261028-030003I",
+        "text": "Structurally covered: base backup 20261022-030004F_20261028-030003I and contiguous archived WAL."
+      }
+    ],
+    "markers": [
+      {
+        "at": "2026-10-22T20:42:00Z",
+        "backupId": "20261022-030004F",
+        "kind": "completed",
+        "source": "repository"
+      },
+      {
+        "at": "2026-10-26T20:49:00Z",
+        "backupId": "20261022-030004F_20261026-030002D",
+        "kind": "completed",
+        "source": "repository"
+      },
+      {
+        "at": "2026-10-28T20:54:00Z",
+        "backupId": "20261022-030004F_20261028-030003I",
+        "kind": "completed",
+        "source": "repository"
+      },
+      {
+        "at": "2026-10-29T03:04:00Z",
+        "backupId": "20261022-030004F_20261029-030001I",
+        "kind": "failed",
+        "source": "repository"
+      }
+    ],
+    "assumptions": [
+      "segment-name-presence-only",
+      "wal-bytes-and-restore-not-verified"
+    ],
+    "complete": true,
+    "provenance": {
+      "origin": "evidence",
+      "source": "EvidenceAgent billing-evidence /api/v1alpha1/recovery-paths",
+      "observedAt": "2026-10-29T11:59:20Z"
+    }
+  },
+  "drills": {
+    "enabled": false,
+    "items": [],
+    "scope": "kept in this console's persistent history (bounded to the 50 newest drills per Cluster)",
+    "notChecked": [
+      "the content of the data: no query is run (the console runs no SQL)",
+      "each database separately: the size check compares the sum over all databases",
+      "a recovery to a point in time other than the end of the archive",
+      "WAL written after the last archived segment",
+      "the replicas, poolers and applications of the source"
+    ]
+  },
+  "sources": [
+    {
+      "source": "backups",
+      "state": "live",
+      "since": "2026-10-29T09:00:00Z",
+      "health": "ok"
+    },
+    {
+      "source": "scheduledBackups",
+      "state": "live",
+      "since": "2026-10-29T09:00:00Z",
+      "health": "ok"
+    },
+    {
+      "source": "evidence",
+      "state": "live",
+      "since": "2026-10-29T11:00:00Z",
+      "health": "ok"
+    }
+  ],
+  "blindSpots": [
+    {
+      "id": "backups.pluginNotReported",
+      "panel": "backups",
+      "text": "Backups go through pgBackRest (Dalibo): the Cluster's first recoverability point and last backup fields (and their cnpg_collector metrics) are not reported by plugin-based backups. Recoverability comes from the repository evidence of an EvidenceAgent and the Backup objects only."
+    }
+  ]
+}
+
