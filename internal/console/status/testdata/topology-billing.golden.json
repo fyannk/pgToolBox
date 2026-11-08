@@ -1,0 +1,244 @@
+{
+  "ref": {
+    "namespace": "team-a",
+    "name": "billing",
+    "uid": "4d2f1e0a-1b2c-4d3e-8f90-a1b2c3d4e5f6"
+  },
+  "generatedAt": "2026-10-29T12:00:00Z",
+  "title": "How billing is wired",
+  "aria": "The wiring of billing; billing-rw leads to the primary billing-1; billing-ro leads to the replicas billing-2, billing-3, which stream from the primary.",
+  "width": 872,
+  "height": 330,
+  "frames": [
+    {
+      "label": "Cluster",
+      "kind": "cluster",
+      "x": 8,
+      "y": 8,
+      "w": 856,
+      "h": 314,
+      "foldable": true
+    }
+  ],
+  "edges": [
+    {
+      "kind": "write",
+      "path": "M 264 90 L 312 90"
+    },
+    {
+      "kind": "read",
+      "path": "M 264 190 L 618 190"
+    },
+    {
+      "kind": "read",
+      "path": "M 264 190 L 282 190 Q 288 190 288 196 L 288 274 Q 288 280 294 280 L 618 280"
+    },
+    {
+      "kind": "replicate",
+      "path": "M 542 105 L 574 105 Q 580 105 580 111 L 580 199 Q 580 205 586 205 L 618 205"
+    },
+    {
+      "kind": "replicate",
+      "label": "replication",
+      "path": "M 542 105 L 574 105 Q 580 105 580 111 L 580 289 Q 580 295 586 295 L 618 295",
+      "labelX": 576,
+      "labelY": 155,
+      "labelVertical": true
+    }
+  ],
+  "nodes": [
+    {
+      "id": "svc-rw",
+      "kind": "service",
+      "label": "billing-rw",
+      "state": "info",
+      "lines": [
+        {
+          "class": "label",
+          "text": "billing-rw",
+          "x": 38,
+          "y": 78
+        },
+        {
+          "class": "sub",
+          "text": "routes to the primary",
+          "x": 38,
+          "y": 95
+        },
+        {
+          "class": "disk",
+          "text": "Service not found",
+          "x": 38,
+          "y": 109
+        }
+      ],
+      "x": 24,
+      "y": 59,
+      "w": 240,
+      "h": 62
+    },
+    {
+      "id": "svc-ro",
+      "kind": "service",
+      "label": "billing-ro",
+      "state": "info",
+      "lines": [
+        {
+          "class": "label",
+          "text": "billing-ro",
+          "x": 38,
+          "y": 178
+        },
+        {
+          "class": "sub",
+          "text": "routes to the replicas",
+          "x": 38,
+          "y": 195
+        },
+        {
+          "class": "disk",
+          "text": "Service not found",
+          "x": 38,
+          "y": 209
+        }
+      ],
+      "x": 24,
+      "y": 159,
+      "w": 240,
+      "h": 62
+    },
+    {
+      "id": "inst-billing-1",
+      "kind": "primary",
+      "label": "billing-1",
+      "state": "critical",
+      "lines": [
+        {
+          "class": "label",
+          "text": "billing-1 — primary",
+          "x": 326,
+          "y": 71
+        },
+        {
+          "class": "sub",
+          "text": "CrashLoopBackOff · 4 restarts",
+          "x": 326,
+          "y": 88
+        },
+        {
+          "class": "disk",
+          "text": "node node-1",
+          "x": 326,
+          "y": 102
+        },
+        {
+          "class": "disk",
+          "text": "postgresql:18.1",
+          "x": 326,
+          "y": 116
+        }
+      ],
+      "x": 312,
+      "y": 54,
+      "w": 230,
+      "h": 72,
+      "link": "instances/billing-1"
+    },
+    {
+      "id": "inst-billing-2",
+      "kind": "replica",
+      "label": "billing-2",
+      "state": "warning",
+      "lines": [
+        {
+          "class": "label",
+          "text": "billing-2 — replica",
+          "x": 632,
+          "y": 171
+        },
+        {
+          "class": "sub",
+          "text": "Running · ready",
+          "x": 632,
+          "y": 188
+        },
+        {
+          "class": "disk",
+          "text": "node node-2",
+          "x": 632,
+          "y": 202
+        },
+        {
+          "class": "disk",
+          "text": "postgresql:18.1",
+          "x": 632,
+          "y": 216
+        }
+      ],
+      "x": 618,
+      "y": 154,
+      "w": 230,
+      "h": 72,
+      "link": "instances/billing-2"
+    },
+    {
+      "id": "inst-billing-3",
+      "kind": "replica",
+      "label": "billing-3",
+      "state": "critical",
+      "lines": [
+        {
+          "class": "label",
+          "text": "billing-3 — replica",
+          "x": 632,
+          "y": 275
+        },
+        {
+          "class": "sub",
+          "text": "no pod",
+          "x": 632,
+          "y": 292
+        }
+      ],
+      "x": 618,
+      "y": 254,
+      "w": 230,
+      "h": 52,
+      "link": "instances/billing-3"
+    }
+  ],
+  "dots": [
+    {
+      "kind": "read",
+      "x": 288,
+      "y": 190
+    },
+    {
+      "kind": "replicate",
+      "x": 580,
+      "y": 205
+    }
+  ],
+  "legend": [
+    {
+      "kind": "write",
+      "label": "writes"
+    },
+    {
+      "kind": "read",
+      "label": "reads"
+    },
+    {
+      "kind": "replicate",
+      "label": "replication"
+    }
+  ],
+  "caption": "Instance, pooler, schedule, volume and object-store states are observed, and the base-backup wire leaves the instance the newest Backup reports; the Services, the client paths, replication and WAL archiving are the standard CloudNativePG wiring, not observed traffic.",
+  "blindSpots": [
+    {
+      "id": "topology.noSyncTopologyCondition",
+      "panel": "topology",
+      "text": "CloudNativePG 1.30 does not report whether synchronous standbys sit in another failure domain."
+    }
+  ]
+}

@@ -1,0 +1,43 @@
+# A fake node. KWOK (manageNodesWithAnnotationSelector kwok.x-k8s.io/node=fake)
+# keeps it Ready and gives the Pods scheduled on it Running status and an IP.
+# The taint keeps every real workload off it; loadgen creates its Pods with
+# spec.nodeName set, so they do not need the scheduler.
+apiVersion: v1
+kind: Node
+metadata:
+  name: __NAME__
+  annotations:
+    node.alpha.kubernetes.io/ttl: "0"
+    kwok.x-k8s.io/node: fake
+  labels:
+    type: kwok
+    kubernetes.io/hostname: __NAME__
+    kubernetes.io/os: linux
+    kubernetes.io/arch: amd64
+    kubernetes.io/role: agent
+    node.kubernetes.io/exclude-from-external-load-balancers: "true"
+# A /16 per node: without one the controller manager hands the node a /24 of
+# 10.244.0.0/16, which holds 254 Pods. kindnet routes this CIDR through the
+# node's address (the KWOK controller Pod); cluster.sh routes the two /17
+# halves to the node itself, which are more specific and so win.
+spec:
+  podCIDR: __CIDR__
+  taints:
+    - key: kwok.x-k8s.io/node
+      value: fake
+      effect: NoSchedule
+status:
+  allocatable: {cpu: "64", memory: 512Gi, pods: "2000"}
+  capacity: {cpu: "64", memory: 512Gi, pods: "2000"}
+  nodeInfo:
+    architecture: amd64
+    bootID: ""
+    containerRuntimeVersion: ""
+    kernelVersion: ""
+    kubeProxyVersion: fake
+    kubeletVersion: fake
+    machineID: ""
+    operatingSystem: linux
+    osImage: ""
+    systemUUID: ""
+  phase: Running

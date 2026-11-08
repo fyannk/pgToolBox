@@ -1,0 +1,31 @@
+{{- include "pgtools.evidence.validate" . }}
+{{- range $agent := .Values.evidence.agents }}
+{{- $ctx := dict "root" $ "agent" $agent }}
+{{- $name := include "pgtools.evidence.name" $ctx }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "pgtools.evidence.labels" $ctx | nindent 4 }}
+  {{- if eq $.Values.evidence.tls.mode "openshiftServiceCA" }}
+  annotations:
+    # The OpenShift service CA writes the serving certificate for
+    # <name>.<namespace>.svc into this Secret.
+    service.beta.openshift.io/serving-cert-secret-name: {{ printf "%s-tls" $name | quote }}
+  {{- end }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "pgtools.evidence.selectorLabels" $ctx | nindent 4 }}
+  ports:
+    - name: {{ ternary "http" "https" (eq $.Values.evidence.tls.mode "none") }}
+      port: 8443
+      targetPort: {{ ternary "http" "https" (eq $.Values.evidence.tls.mode "none") }}
+      protocol: TCP
+      # As the operator's EvidenceAgent Service (chart_parity_test.go): the
+      # hint a mesh or gateway reads to pick the protocol.
+      appProtocol: {{ ternary "http" "https" (eq $.Values.evidence.tls.mode "none") }}
+{{- end }}

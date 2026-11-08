@@ -1,0 +1,27 @@
+# One real node. The API server's in-flight limits are raised so that it is not
+# what a 16-namespace population saturates first, and etcd gets room for tens of
+# thousands of objects.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+    kubeadmConfigPatches:
+      - |
+        kind: ClusterConfiguration
+        apiServer:
+          extraArgs:
+            max-requests-inflight: "800"
+            max-mutating-requests-inflight: "400"
+        controllerManager:
+          extraArgs:
+            # The fake nodes own 10.192-10.223.0.0/16 (cluster.sh). Outside
+            # the cluster range, the node-IPAM controller refuses them when
+            # the controller manager restarts, and it then crash-loops.
+            cluster-cidr: "10.192.0.0/10"
+        etcd:
+          local:
+            extraArgs:
+              quota-backend-bytes: "4294967296"
+      - |
+        kind: KubeletConfiguration
+        maxPods: 250

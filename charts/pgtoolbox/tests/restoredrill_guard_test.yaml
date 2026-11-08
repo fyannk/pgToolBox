@@ -1,0 +1,51 @@
+# The restore-drill delete guard (config/admission): a
+# ValidatingAdmissionPolicy that holds a console's ServiceAccount bound to the
+# drills ClusterRole to deleting its own sealed drills. Kubernetes 1.30+:
+# rendered when the API is served (auto), always (true), or never (false).
+suite: the restore-drill delete guard
+templates:
+  - templates/operator/restoredrill-guard.yaml
+release:
+  name: pgtoolbox
+  namespace: pgtoolbox
+tests:
+  - it: renders nothing where the API server serves no v1 policies
+    set: {operator.enabled: true}
+    asserts:
+      - hasDocuments: {count: 0}
+
+  - it: renders the policy and its binding on 1.30+
+    set: {operator.enabled: true}
+    capabilities:
+      apiVersions: [admissionregistration.k8s.io/v1/ValidatingAdmissionPolicy]
+    asserts:
+      - hasDocuments: {count: 2}
+      - documentIndex: 0
+        isKind: {of: ValidatingAdmissionPolicy}
+      - documentIndex: 0
+        equal: {path: metadata.name, value: pgtoolbox-console-restore-drills}
+      - documentIndex: 0
+        equal: {path: spec.failurePolicy, value: Fail}
+      - documentIndex: 0
+        equal: {path: "spec.matchConstraints.resourceRules[0].operations", value: [DELETE]}
+      - documentIndex: 1
+        isKind: {of: ValidatingAdmissionPolicyBinding}
+      - documentIndex: 1
+        equal: {path: spec.validationActions, value: [Deny]}
+
+  - it: renders it without discovery when asked
+    set: {operator.enabled: true, operator.restoreDrillGuard.enabled: true}
+    asserts:
+      - hasDocuments: {count: 2}
+
+  - it: renders nothing when turned off
+    set: {operator.enabled: true, operator.restoreDrillGuard.enabled: false}
+    capabilities:
+      apiVersions: [admissionregistration.k8s.io/v1/ValidatingAdmissionPolicy]
+    asserts:
+      - hasDocuments: {count: 0}
+
+  - it: renders nothing without the operator
+    set: {operator.enabled: false, operator.restoreDrillGuard.enabled: true}
+    asserts:
+      - hasDocuments: {count: 0}

@@ -1,0 +1,9 @@
+{
+  "title": "EvidenceAgentReadOnly",
+  "description": "List and read objects within a separately scoped GCS bucket binding.",
+  "stage": "GA",
+  "includedPermissions": [
+    "storage.objects.get",
+    "storage.objects.list"
+  ]
+}

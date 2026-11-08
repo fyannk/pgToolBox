@@ -1,0 +1,1493 @@
+# Default values for pgtools.
+#
+# The team chart: the tools a team runs beside its CloudNativePG
+# Clusters, in its own namespace, with namespace-admin rights only. It renders
+# no CRD and, by default, nothing cluster-scoped. The pgtoolbox chart (the
+# operator) is not needed: what the operator would keep in step with the
+# Clusters is declared here instead, so a Cluster created later is not picked
+# up until these values say so.
+#
+#   console   the console, one Deployment per team namespace. ON.
+#   evidence  one backup-evidence agent per Cluster listed in
+#             evidence.agents. None by default.
+#   pgadmin   one pgAdmin for the team, servers declared in
+#             pgadmin.servers. OFF.
+#
+#   helm install pgtoolbox-console charts/pgtools -n team-a
+
+global:
+  # -- Registry that prefixes every image of the chart, for an air-gapped install
+  # that mirrors the product images (`registry.corp:5000/mirror`). Empty leaves
+  # the references as written.
+  imageRegistry: ""
+
+# -- Labels added to every resource.
+commonLabels: {}
+
+# ==========================================================================
+# The console: one console per team namespace, never
+# cluster-scoped. Its whole authority is a Role in each watched namespace; it
+# has no Secret verb, no cluster-wide read and, by default, no ClusterRole: it
+# asks the API server about each reader with that reader's own token
+# (SelfSubjectAccessReview). See the README for the RBAC table.
+# ==========================================================================
+console:
+  # -- Install the console. `false` renders only the other sections (the evidence
+  # agents, pgAdmin, the insight pack).
+  enabled: true
+
+  # -- Name of the console's objects. Default: the release name when it already
+  # says "console", otherwise `<release>-console`.
+  fullnameOverride: ""
+
+  image:
+    # -- Repository of the console image.
+    repository: ghcr.io/fyannk/pgtoolbox-console
+    # -- Tag of the console image. Empty: the chart's `appVersion`.
+    tag: ""
+    # -- Digest of the console image (`sha256:...`). It wins over the tag;
+    # air-gapped installs pin by it.
+    digest: ""
+    # -- Pull policy of the console image.
+    pullPolicy: IfNotPresent
+  # -- Pull Secrets for the image, as `[{name: regcred}]`.
+  imagePullSecrets: []
+
+  # -- Namespaces the console watches and receives a Role in. Empty: the release
+  # namespace. A short list the team owns (the schema allows 16); the console
+  # refuses to start with none and never watches all namespaces.
+  watchNamespaces: []
+
+  # -- Labels a Cluster must all carry to be shown, on top of what each user's own
+  # RBAC allows.
+  clusterSelector: {}
+
+  # -- Console replicas, with in-memory or persistent history. Each replica
+  # keeps its own history; `exposure.sticky` keeps a person on one.
+  replicas: 2
+  history:
+    # -- Keep the history (and the state snapshots, the timeline, the digests)
+    # on a volume per replica: the console is then a StatefulSet with one claim
+    # per replica, `history-<console>-<ordinal>`, rolling one pod at a time.
+    # `false`: history in memory, a Deployment. Off by default because a team
+    # namespace may have no StorageClass; turn it on where one exists. Coming
+    # from chart 1.2, read the README ("Persistent history") first.
+    persistent: false
+    # -- Size of each replica's history claim. 1Gi holds the default retention
+    # with room: see the README for the sizing. A StatefulSet's claim template
+    # cannot change: a new size applies to claims made later.
+    size: 1Gi
+    # -- StorageClass of the history claims. Empty: the cluster's default.
+    storageClassName: ""
+
+  # digest: the daily digest. Each day at `hour` (UTC) the console
+  # summarises the last 24 hours (changes, findings that appeared, worsened or
+  # cleared, failovers, failed backups, Clusters needing attention) on its
+  # /digests page, kept `retention` with the history. Delivery is off until a
+  # channel is set, and needs history.persistent (the message links to the
+  # digest's page, which in-memory history loses at the next restart). Every
+  # replica makes the digest; only the one holding the `<console>-digest` Lease
+  # delivers it, and the delivery marks are shared, so a roll sends nothing twice.
+  # Messages carry counts, the names of Clusters needing attention and a link
+  # (publicURL/digests/<id>), never the details. Every credential is a key of a
+  # Secret you create, mounted as a file; the console reads no Secret through
+  # the API. With networkPolicy.enabled, add the destinations to
+  # networkPolicy.extraEgress.
+  digest:
+    # -- Serve the daily digest page. `null`: on with `history.persistent`. With
+    # in-memory history each replica would build its own digest and lose it on
+    # restart, so set `true` to have the page anyway (it then differs per
+    # replica).
+    enabled: null
+    # -- UTC hour (0-23) at which each digest closes its 24 hours. `null`: 7.
+    hour: null
+    # -- How long digests are kept, a Go duration between 24h and 8784h. Empty:
+    # 720h.
+    retention: ""
+    delivery:
+      # -- Bound of one delivery attempt (1s to 1m). Empty: 10s. Failed attempts
+      # are retried with backoff and shown on the admin page; they never block
+      # anything else.
+      timeout: ""
+      # -- Slack or Mattermost incoming-webhook URL (https), read from a key of a
+      # Secret you create: `{existingSecret: name, key: url}`.
+      chat: {existingSecret: "", key: url}
+      # -- Generic webhook URL (https) that receives the digest's JSON summary,
+      # read from a key of a Secret you create: `{existingSecret: name, key:
+      # url}`.
+      webhook: {existingSecret: "", key: url}
+      # Mail over TLS: starttls (required, never optional) or tls (implicit,
+      # port 465). There is no plaintext mode.
+      smtp:
+        # -- SMTP server as `host:port`. Empty: mail delivery is off.
+        address: ""   # host:port
+        # -- `starttls` (required, never optional) or `tls` (implicit, port 465).
+        # There is no plaintext mode.
+        tls: starttls
+        # -- SMTP user name (AUTH PLAIN, over TLS only).
+        username: ""  # with password: AUTH PLAIN, over TLS only
+        # -- SMTP password, read from a key of a Secret you create:
+        # `{existingSecret: name, key: password}`.
+        password: {existingSecret: "", key: password}
+        # -- Sender address of the digest mail.
+        from: ""
+        # -- Recipient addresses of the digest mail.
+        to: []
+
+  auth:
+    # -- How people sign in. `token`: paste an API server token (break-glass;
+    # works everywhere). `oidc`: code flow against an IdP the API server also
+    # trusts, so the token is an API server token. `openshift`: the OpenShift
+    # OAuth code flow.
+    provider: token
+    oidc:
+      # -- Issuer URL of the OIDC provider.
+      issuerURL: ""
+      # -- OIDC client ID.
+      clientID: ""
+      # -- OIDC client secret, read from a Secret you create and mounted as a
+      # file: `{existingSecret: name, key: client-secret}`.
+      clientSecret: {existingSecret: "", key: client-secret}
+      # -- Callback URL registered with the IdP. Empty: derived from `publicURL`.
+      redirectURL: ""
+      # -- OIDC scopes requested at sign-in.
+      scopes: [openid, email, profile, offline_access]
+      # -- ConfigMap with a PEM bundle (key `ca.crt`) that trusts a private IdP,
+      # mounted as `OIDC_CA_FILE`. Empty: the system roots.
+      caConfigMap: ""
+      # -- Refuse a login whose ID token does not carry `email_verified=true`. Set
+      # `false` only for an IdP that omits the claim.
+      requireEmailVerified: true
+      # A second client of the same issuer for the identity provider sign-ins
+      # of console grants (MCP clients, `OIDC_GRANT_CLIENT_ID`), registered with
+      # the same redirect URI. An identity provider that keeps one refresh token
+      # per person and client (dex) otherwise ends the browser session's renewal
+      # each time an assistant connects. The API server's JWT authenticator must
+      # accept this client's audience too. Empty: grants sign in as `clientID`.
+      grantClient:
+        # -- OIDC client ID of grant sign-ins. Empty: off.
+        clientID: ""
+        # -- Its client secret, from a Secret you create:
+        # `{existingSecret: name, key: client-secret}`.
+        clientSecret: {existingSecret: "", key: client-secret}
+    openshift:
+      # -- Public callback URL of the console. Required: it becomes the
+      # `serviceaccounts.openshift.io/oauth-redirecturi.console` annotation of
+      # the console's ServiceAccount, which is the OAuth client, and OpenShift
+      # only redirects to URIs the ServiceAccount lists.
+      redirectURI: ""
+      # -- OAuth client ID (`OPENSHIFT_CLIENT_ID`). Empty: read from the console's
+      # projected token (`system:serviceaccount:<namespace>:<serviceaccount>`).
+      clientID: ""
+      # -- Secret holding a long-lived ServiceAccount token to present as the
+      # client secret (`OPENSHIFT_CLIENT_SECRET_FILE`). Empty: the console
+      # presents its projected ServiceAccount token. Whether OpenShift accepts
+      # a bound projected token there is not yet verified on a live cluster; if
+      # it does not, create the token Secret and name it here.
+      clientSecret: {existingSecret: "", key: token}
+      # -- Metadata document of the OAuth server (`OPENSHIFT_DISCOVERY_URL`, https
+      # only). Empty:
+      # `https://openshift.default.svc/.well-known/oauth-authorization-server`.
+      discoveryURL: ""
+      # -- OAuth scopes requested (`OPENSHIFT_SCOPES`). Narrow the defaults only
+      # knowingly.
+      scopes: [user:info, user:check-access, user:full]
+      # -- ConfigMap with `ca.crt` that trusts the OAuth server
+      # (`OPENSHIFT_CA_FILE`). Empty: the service CA OpenShift mounts into
+      # every pod.
+      caConfigMap: ""
+    # -- Secret holding the key that seals the session cookie (AES-GCM under HKDF
+    # keys). Empty `existingSecret`: the chart generates 32 random bytes once
+    # and keeps them across upgrades; all replicas share them, so a login
+    # survives a roll.
+    sessionKey: {existingSecret: "", key: session-key}
+    # -- Idle timeout of a session. It must not exceed `sessionMaxAge`.
+    sessionIdleTimeout: 1h
+    # -- Maximum age of a session whatever its activity. Empty: the console's
+    # default, 12h.
+    sessionMaxAge: ""
+    # -- Show the break-glass form (paste an API server token) next to single
+    # sign-on. `false` removes the form.
+    tokenLogin: true
+    # -- Time limit of calls to the IdP or OAuth server. Empty: the console's
+    # default.
+    idpTimeout: ""
+
+  # breakGlass: the identity behind the token login form, off by default.
+  # Enabled, the chart renders the ServiceAccount (it automounts nothing and holds no
+  # token) and, in each watched namespace, a RoleBinding to the pgtoolbox-console-operator
+  # ClusterRole, which must exist (the pgtoolbox chart's operator.userRoles.create,
+  # or config/rbac); with roleKind: Role it renders a namespaced Role of the same
+  # rules instead, for installs without the operator. Mint a short-lived token when needed and paste it into the
+  # login form:
+  #   kubectl -n <release namespace> create token pgtoolbox-console-breakglass --duration=1h
+  # Every action is then audited as that ServiceAccount; revoking it is deleting the
+  # binding (or setting enabled back to false). The product stores no password.
+  breakGlass:
+    # -- Render the break-glass ServiceAccount (it automounts nothing and holds no
+    # token) and, in each watched namespace, a RoleBinding to the
+    # `pgtoolbox-console-operator` ClusterRole, which must exist. Mint a short-lived
+    # token when needed and paste it into the login form.
+    enabled: false
+    # -- Name of the break-glass ServiceAccount.
+    serviceAccountName: pgtoolbox-console-breakglass
+    # -- What the RoleBinding points at. `ClusterRole` binds the `pgtoolbox-console-operator`
+    # ClusterRole, which the pgtoolbox chart (`operator.userRoles.create`) or
+    # `config/rbac` must have created. `Role` renders, in each watched namespace, a
+    # Role of the same rules (the `pgtoolbox.fyannk.dev` ones only when
+    # `console.rbac.operatorKinds` resolves to true) and binds that: for a namespace
+    # admin who installs without the operator.
+    roleKind: ClusterRole
+
+  # -- URL people type, `https://host/`. Used for cookies, redirects and the
+  # OpenShift callback. Default: `https://<exposure.host>` when a host is set.
+  publicURL: ""
+  # -- Force the session cookie's `Secure` attribute (`true` or `false`). Empty
+  # keeps the console's rule: Secure unless the request is plain loopback HTTP.
+  cookieSecure: ""
+  # -- Reverse-proxy hops to trust for `X-Forwarded-*`. 0 trusts none.
+  trustedProxyHops: 0
+  # tls.secretName: serve HTTPS on `port` from a kubernetes.io/tls Secret that is
+  # mounted as files (the console reads no Secret through the API). Point the edge
+  # at it with the usual backend-protocol setting of your controller.
+  tls:
+    # -- kubernetes.io/tls Secret that makes the console serve HTTPS on `port`
+    # (mounted as files). Point the edge at it with your controller's
+    # backend-protocol setting.
+    secretName: ""
+
+  # evidence: read repository evidence from the namespace's EvidenceAgents
+  # (EVIDENCE_ENABLED, default on). Off, the backups screen says "disabled"
+  # instead of looking for an agent. interval (EVIDENCE_INTERVAL): how often each
+  # agent is asked again; empty keeps the console's default.
+  evidence:
+    # -- Read repository evidence from the namespace's EvidenceAgents
+    # (`EVIDENCE_ENABLED`). Off, the backups screen says "disabled" instead of
+    # looking for an agent.
+    enabled: true
+    # -- How often each agent is asked again (`EVIDENCE_INTERVAL`). Empty keeps
+    # the console's default.
+    interval: ""
+
+  # operations: serve the operations endpoints (backup, reload, restart, promote;
+  # OPERATIONS_ENABLED, default on). Every write is still made with the caller's own
+  # token and authorized by the API server; false makes the endpoints refuse (501).
+  operations:
+    # -- Serve the operations endpoints (backup, reload, restart, promote;
+    # `OPERATIONS_ENABLED`). Every write is still made with the caller's own
+    # token and authorized by the API server. `false` makes the endpoints
+    # answer 501.
+    enabled: true
+
+  # mcp: the read-only MCP endpoint at /mcp for AI agents and IDE assistants
+  # (MCP_ENABLED, off by default). A client sends `Authorization: Bearer <token>`,
+  # never the session cookie. The console is the clients' OAuth authorization
+  # server: a client registers, the person signs in and approves it, and the
+  # client gets a console grant acting as that person. Raw API-server tokens
+  # are accepted too while auth.tokenLogin is on (break-glass). Every tool is
+  # authorized as its owner exactly like the screen it mirrors.
+  # The tuning knobs below are rendered only with enabled and only when set;
+  # empty keeps the console's default. oauthClientMetadataDocuments makes the
+  # console fetch from the Internet (off by default). The OAuth server needs
+  # an https public URL (http only on loopback). writeTools (MCP_WRITE_TOOLS)
+  # adds the write tools (backup, reload, restart, promote; requires enabled
+  # and operations.enabled): each runs the console's own operation as the
+  # person, once, after a confirmation (MCP elicitation): backup and reload in
+  # the client's form, which the client relays (it proves the client asked);
+  # restart and promote on a console page in the person's own browser session
+  # (it proves the person approved). A client that cannot ask is refused.
+  mcp:
+    # -- Serve the read-only MCP endpoint at `/mcp` (`MCP_ENABLED`) and the
+    # console's OAuth authorization server for MCP clients. Bearer tokens
+    # only; every tool runs as the token's owner. Requires a public URL.
+    enabled: false
+    # -- Add the MCP write tools `backup`, `reload`, `restart`, `promote`
+    # (`MCP_WRITE_TOOLS`). Requires `mcp.enabled` and `operations.enabled`.
+    # Each runs as the person, once confirmed: backup and reload in the
+    # client's form, restart and promote on a console page (URL elicitation).
+    writeTools: false
+    # -- (int) Cap on one tool result's JSON in bytes (`MCP_MAX_RESULT_BYTES`), 16384
+    # to 4194304; a larger result is shortened and says so. `null`: the
+    # console's default, 262144 (256 KiB).
+    maxResultBytes: null
+    # -- Time limit of one tool call (`MCP_CALL_TIMEOUT`), a Go duration from
+    # `1s` to `50s`. Empty: the console's default, `20s`.
+    callTimeout: ""
+    # -- Lifetime of an access token the console issues to an MCP client
+    # (`MCP_OAUTH_ACCESS_TTL`), from `10s` to `1h`; the client renews it with
+    # its refresh token. Empty: the console's default, `1h`.
+    oauthAccessTTL: ""
+    # -- Accept OAuth client ID metadata documents
+    # (`MCP_OAUTH_CLIENT_METADATA_DOCUMENTS`): a client names itself with an
+    # HTTPS URL and the console fetches the document there, from public
+    # addresses only (and only from `oauthClientMetadataHosts` when set). The
+    # console then needs HTTPS (TCP 443) to the Internet: with
+    # `networkPolicy.enabled`, allow it in `networkPolicy.extraEgress`.
+    # Dynamic registration, always on, needs no egress.
+    oauthClientMetadataDocuments: false
+    # -- The only hosts (DNS names) client ID metadata documents are fetched
+    # from (`MCP_OAUTH_CLIENT_METADATA_HOSTS`), for example
+    # `[claude.ai, chatgpt.com]`; applies with `oauthClientMetadataDocuments`.
+    # Empty: any public address.
+    oauthClientMetadataHosts: []
+
+  # tracing: OpenTelemetry spans for HTTP requests, the Kubernetes API calls
+  # they make and MCP tool calls (GenAI execute_tool spans), exported over
+  # OTLP/HTTP to Jaeger, Tempo, LangSmith, Langfuse or Phoenix. Off while
+  # endpoint is empty. Spans name the person (enduser.id) and never carry
+  # tool arguments or results unless includePayloads. With
+  # networkPolicy.enabled, allow the collector in networkPolicy.extraEgress.
+  tracing:
+    # -- OTLP/HTTP base URL (`OTEL_EXPORTER_OTLP_ENDPOINT`); `/v1/traces` is
+    # appended. Empty: tracing is off. For example
+    # `http://jaeger-collector.monitoring:4318` or
+    # `https://api.smith.langchain.com/otel`.
+    endpoint: ""
+    # -- Exporter headers (an API key, a project name), read from a key of a
+    # Secret you create, `key=value,...` (`OTEL_EXPORTER_OTLP_HEADERS` format),
+    # mounted as a file (`TRACING_HEADERS_FILE`): `{existingSecret: name, key:
+    # headers}`.
+    headersSecret: {existingSecret: "", key: headers}
+    # -- Service name (`OTEL_SERVICE_NAME`). Empty: `pgtoolbox-console`.
+    serviceName: ""
+    # -- Sampler (`OTEL_TRACES_SAMPLER`): `parentbased_always_on` (the
+    # default), `parentbased_traceidratio`, `traceidratio`, `always_on`,
+    # `always_off`, `parentbased_always_off`.
+    sampler: ""
+    # -- Ratio of the traceidratio samplers (`OTEL_TRACES_SAMPLER_ARG`),
+    # `"0"` to `"1"`.
+    samplerArg: ""
+    # -- Add MCP tool arguments and results to the tool spans, redacted and
+    # capped at 16 KiB each (`TRACING_INCLUDE_PAYLOADS`). Tokens never.
+    includePayloads: false
+
+  # restoreDrills: the "Run a restore drill" operation of the Backups screen
+  # (RESTORE_DRILL_*). Off by default. A person starts a drill with
+  # their own token (the API server decides whether they may create a Cluster in
+  # the drill namespace); the console restores the latest backup into a throwaway
+  # one-instance Cluster with no WAL archiver and no backup configuration, checks
+  # it without SQL and deletes it after its check or the time limit. Deleting is
+  # the console ServiceAccount's job (the person may have left), so enabling
+  # drills adds a Role in the drill namespace(s) with get/list/watch/delete on
+  # clusters.postgresql.cnpg.io and nothing else; the console deletes only the
+  # Clusters it sealed as its own drills. Requires operations.enabled.
+  #   namespace: where drill Clusters run; empty is each source Cluster's own
+  #     namespace. It must be a watched namespace (the console checks a drill
+  #     through its read model). With the barman-cloud plugin, a drill in
+  #     another namespace needs an ObjectStore there pointing at the same
+  #     bucket, ideally with read-only credentials.
+  #   prefix: the drill Clusters' name prefix (at most 20 characters).
+  #   timeLimit: when an unfinished drill is recorded as timed out and deleted.
+  #   resources, storage: the drill instance's; empty keeps the source's.
+  #   maxConcurrent: the drills of this console running at once (1 to 20).
+  #
+  # A DEDICATED DRILL NAMESPACE IS STRONGLY RECOMMENDED. The teardown Role may
+  # delete any Cluster of the namespace it is in: the console itself deletes
+  # only its sealed drills, but anyone who may create Pods there can run as the
+  # console's ServiceAccount. In a namespace of drills only, that reaches drills
+  # only. A drill is also a full copy of the source's data, readable by whoever
+  # reads Pods, Secrets or exec there. See admissionPolicy for the guard a
+  # cluster admin can add.
+  restoreDrills:
+    # -- Enable the "Run a restore drill" operation of the Backups screen. Adds a
+    # Role in the drill namespace(s) that can get, list, watch and delete
+    # Clusters. Requires `operations.enabled`.
+    enabled: false
+    # -- Namespace where drill Clusters run. Empty: each source Cluster's own
+    # namespace. It must be a watched namespace. A dedicated drill namespace is
+    # strongly recommended.
+    namespace: ""
+    # -- Name prefix of the drill Clusters (at most 20 characters).
+    prefix: drill-
+    # -- How long an unfinished drill runs before it is recorded as timed out and
+    # deleted.
+    timeLimit: 2h
+    # -- Drills of this console running at once (1 to 20).
+    maxConcurrent: 3
+    # -- Resource requests and limits of the drill instance. Empty values keep the
+    # source Cluster's.
+    resources:
+      requests:
+        cpu: ""
+        memory: ""
+      limits:
+        cpu: ""
+        memory: ""
+    # -- Storage of the drill instance: `size` and `storageClass`. Empty values
+    # keep the source Cluster's.
+    storage:
+      size: ""
+      storageClass: ""
+    # serverCA: the CA that signs each drill's server certificate. The console
+    # checks a drill by reading its /pg/status over TLS against
+    # instanceStatus.caBundleConfigMap, which you fill before the drill exists,
+    # so the drill must be signed by a CA already in it. Through
+    # spec.certificates.serverCASecret only: CloudNativePG reads that Secret for
+    # the drill (it never owns or renews a CA you provide), the console reads no
+    # Secret and its ServiceAccount gains nothing, and the drill keeps its own
+    # client CA. The drill's instance Role can read the named Secret, ca.key
+    # included, as the source's instances can.
+    #   source: the source Cluster's server CA, already in the bundle. Drills in
+    #     the source's namespace only, and only for a Cluster whose server
+    #     certificate CloudNativePG generates (no serverTLSSecret); the console
+    #     refuses the others (DrillNotVerifiable).
+    #   secret: the CA Secret named in `secret` (ca.crt and ca.key), which you
+    #     create in every drill namespace and whose ca.crt you add to the bundle;
+    #     the way for a dedicated drill namespace.
+    #   own: CloudNativePG's <drill>-ca, which no admin-filled bundle can hold:
+    #     the console cannot verify the drill, which times out. For a bundle kept
+    #     by something else (cert-manager trust-manager).
+    #   auto: `secret` when `secret` is set, else `source` when `namespace` is
+    #     empty, else `own`.
+    serverCA:
+      # -- CA that signs each drill's server certificate: `auto`, `source`,
+      # `secret` or `own` (see the comment above).
+      mode: auto
+      # -- CA Secret (`ca.crt` and `ca.key`) in every drill namespace, for mode
+      # `secret` (and `auto`); its `ca.crt` must be in
+      # `instanceStatus.caBundleConfigMap`.
+      secret: ""
+    # networkPolicy: the drill Pods' policy, in every drill namespace, ON with
+    # drills (a promoted drill is a live copy of a production database: the
+    # extensions the console cannot neutralise must not reach the network).
+    # Egress: DNS, the API server, the object store; ingress: the
+    # CloudNativePG operator and this console, on the instance ports. Both
+    # apiServer and objectStore default to "any address on these ports" so that
+    # it renders without a cluster; set objectStore.to (an ipBlock of the
+    # object store, a namespaceSelector for an in-cluster MinIO) and
+    # apiServer.addresses to close port 443 to everything else.
+    networkPolicy:
+      # -- Render the drill Pods' NetworkPolicy in every drill namespace. On with
+      # drills: a promoted drill is a live copy of a production database, and
+      # extensions the console cannot neutralise must not reach the network.
+      enabled: true
+      apiServer:
+        # -- How egress to the API server is allowed: `any` (any address on
+        # `apiServer.ports`, so that the policy renders without a cluster) or
+        # `addresses` (only `apiServer.addresses`).
+        mode: any
+        # -- API server IP addresses to allow when `apiServer.mode` is `addresses`
+        # and the Endpoints lookup is unavailable (`helm template`, GitOps
+        # renderers).
+        addresses: []
+        # -- Ports of the API server that egress is allowed to.
+        ports: [443, 6443]
+      dns:
+        # -- Namespace of the cluster DNS pods that egress is allowed to.
+        namespace: kube-system
+        # -- Labels that select the cluster DNS pods.
+        podLabels: {k8s-app: kube-dns}
+        # -- Ports of the cluster DNS pods (TCP and UDP). OpenShift DNS pods
+        # listen on 5353: use `[5353]` there.
+        ports: [53]
+      objectStore:
+        # -- Where the object store is, as raw NetworkPolicy `to` peers (an
+        # `ipBlock`, or a `namespaceSelector` for an in-cluster MinIO). Empty
+        # allows any address on `objectStore.ports`.
+        to: []
+        # -- Ports of the object store that egress is allowed to.
+        ports: [443]
+      # The CloudNativePG operator, which reaches every instance's status port.
+      operator:
+        # -- Namespace of the CloudNativePG operator, which reaches every
+        # instance's status port.
+        namespace: cnpg-system
+        # -- Labels that select the CloudNativePG operator pods.
+        podLabels: {app.kubernetes.io/name: cloudnative-pg}
+    # admissionPolicy: a ValidatingAdmissionPolicy (Kubernetes 1.30+) that
+    # lets this console's ServiceAccount delete only Clusters carrying its
+    # drill-owner label, its seal annotation and the drill prefix, whatever
+    # the Role allows. It is cluster-scoped, which a namespace admin cannot
+    # install: a cluster admin sets create=true (or applies the rendered
+    # policy). Off by default for that reason only.
+    admissionPolicy:
+      # -- Render a ValidatingAdmissionPolicy (Kubernetes 1.30 or newer) that lets
+      # the console delete only Clusters carrying its drill-owner label, its
+      # seal annotation and the drill prefix. Cluster-scoped, so a cluster
+      # admin sets it (or applies the rendered policy).
+      create: false
+      # -- Validation actions of the binding: `Deny`, `Warn` and/or `Audit`. Only
+      # `Deny` blocks a request.
+      validationActions: [Deny]
+
+  # -- Link-out to the site's monitoring system (`MONITORING_URL`): https, or
+  # root-relative. Empty: no link.
+  monitoringURL: ""
+
+  # pgadmin.url: a fixed pgAdmin link on every Cluster (PGADMIN_URL): https, or
+  # root-relative. For a pgAdmin without the operator (the pgadmin section of
+  # this chart), which no PgAdmin object announces. Empty: the console links
+  # only the PgAdmin objects that register a Cluster (the operator's).
+  pgadmin:
+    # -- Fixed pgAdmin link shown on every Cluster (`PGADMIN_URL`): https, or
+    # root-relative. For a pgAdmin without the operator, which no PgAdmin
+    # object announces. Empty: the console links only the PgAdmin objects that
+    # register a Cluster.
+    url: ""
+
+  # prometheus: the PromQL source of the metrics charts. With a url the console
+  # queries the Prometheus HTTP API for its charts (PROMETHEUS_URL); without, the
+  # charts come from the console's own ring. monitoringURL stays the link-out.
+  # The console's request goes out from its pod: with console.networkPolicy.enabled,
+  # allow it through console.networkPolicy.extraEgress (the chart cannot know where
+  # your Prometheus or Thanos querier lives).
+  prometheus:
+    # -- Prometheus HTTP API the console queries for its metrics charts
+    # (`PROMETHEUS_URL`): on OpenShift
+    # `https://thanos-querier.openshift-monitoring.svc:9091` (with `namespaced:
+    # true`, the tenancy port). Empty: the charts come from the console's own
+    # ring. http is accepted only without a token.
+    url: ""
+    # Authentication for the queries (https only). Either a Secret key holding a
+    # bearer token (mounted as a file), or projected: the console's own
+    # ServiceAccount token, which the kubelet rotates in place (what the
+    # OpenShift thanos-querier accepts once the ServiceAccount may view metrics).
+    token:
+      # -- Secret key holding a bearer token for the queries (https only), mounted
+      # as a file: `{name, key}`.
+      secret: {name: "", key: token}
+      # -- Use the console's own ServiceAccount token instead, which the kubelet
+      # rotates in place (what the OpenShift thanos-querier accepts once the
+      # ServiceAccount may view metrics): `{enabled, expirationSeconds}`.
+      projected: {enabled: false, expirationSeconds: 3600}
+    # -- ConfigMap with `ca.crt` that signed the server certificate (OpenShift:
+    # `openshift-service-ca.crt`, copied into the namespace). Empty: the system
+    # roots.
+    caConfigMap: ""
+    # -- Add `namespace=<ns>` to each query (`PROMETHEUS_NAMESPACED`), as
+    # OpenShift's tenancy port requires.
+    namespaced: false
+    # -- Window of the charts (`PROMETHEUS_RANGE`, 5m to 24h). Empty: the
+    # console's 1h.
+    range: ""
+
+  # evidenceToken: the console authenticates to an EvidenceAgent with
+  # a ServiceAccount token the kubelet projects for the audience
+  # pgtoolbox-evidence-agent/<namespace> and rotates in place (no Secret): one
+  # projected token per entry of watchNamespaces, so a token presented to an agent
+  # in one namespace is refused by the agents of every other. The agent checks it
+  # with a TokenReview and then a SubjectAccessReview "may this subject get
+  # evidenceagents/<name>", which the console's Role already grants. The token is
+  # useless against the API server and every other audience. Mounted at
+  # /var/run/secrets/pgtoolbox.fyannk.dev/evidence-agent/<namespace>/token
+  # (EVIDENCE_TOKEN_DIR is the directory).
+  evidenceToken:
+    # -- Authenticate to the EvidenceAgents with a projected ServiceAccount token
+    # (no Secret), one per watched namespace, with the audience
+    # `pgtoolbox-evidence-agent/<namespace>`. The agent checks it with a
+    # TokenReview and a SubjectAccessReview.
+    enabled: true
+    # -- Lifetime of the projected token, rotated in place by the kubelet.
+    expirationSeconds: 3600
+
+  # instanceStatus: the console reads each instance's /pg/status over HTTPS and
+  # verifies it against a CA bundle that YOU supply: a ConfigMap
+  # with the key ca.crt holding the PEM server CAs of the watched Clusters. The
+  # chart only mounts it (the kubelet refreshes it, no restart); the console
+  # reads no Secret to build it, because <cluster>-ca also holds ca.key. A
+  # Cluster missing from the bundle is shown as "not verifiable", never read
+  # unverified. Create it with the command in the README. Empty disables the
+  # mount.
+  instanceStatus:
+    # -- ConfigMap with the key `ca.crt` that you supply, holding the PEM server
+    # CAs of the watched Clusters. The console verifies each instance's
+    # `/pg/status` against it; a Cluster missing from the bundle is shown as
+    # "not verifiable". Empty disables the mount. Create it with the command in
+    # the README.
+    caBundleConfigMap: pgtoolbox-console-instance-ca
+
+  # revocations: the ConfigMap holding the revocation list, which every replica
+  # gets and watches (never writes) so that a revoked session dies everywhere. The chart creates it empty; an ADMIN edits its keys `notBefore`
+  # (sessions issued before it die), `users` and `sessions` (named revocations).
+  # The console's Role may get/watch this one name only.
+  revocations:
+    # -- Name of the revocation ConfigMap, which every replica watches so that a
+    # revoked session dies everywhere. The chart creates it empty; an admin
+    # edits its keys `notBefore`, `users` and `sessions`. Empty:
+    # `<fullname>-revocations`.
+    configMapName: ""
+
+  # lifecycle: the end-of-life table the diagnostics read: PostgreSQL,
+  # Kubernetes, CloudNativePG and Barman Cloud plugin release lines and the day
+  # each leaves upstream support. Each line carries its own date, so the table
+  # only needs a new line when a component releases one, never because time
+  # passed. Edits take effect at the next diagnostics run, without a restart.
+  #   - Default: the chart creates <fullname>-lifecycle from the table this
+  #     chart version ships, and refreshes it on every upgrade.
+  #   - To keep your own edits of that ConfigMap across upgrades, annotate it
+  #     pgtoolbox.fyannk.dev/user-managed=true: the chart then re-renders what is in it
+  #     instead of its own table. (This reads the live object, so `helm
+  #     template` and GitOps renderers without cluster access do not see it.)
+  #   - Or name a ConfigMap you manage (key lifecycle.json): the chart then
+  #     creates nothing and never touches it.
+  lifecycle:
+    # -- Name of a ConfigMap you manage (key `lifecycle.json`) with the
+    # end-of-life table the diagnostics read. Empty: the chart creates
+    # `<fullname>-lifecycle` from the table this chart version ships and
+    # refreshes it on every upgrade.
+    configMapName: ""
+
+  # clusterImageCatalogs: opt in to read ClusterImageCatalog objects (a cluster-
+  # scoped CNPG kind, shown in the image/upgrade panels). Adds a second, read-
+  # only ClusterRole limited to that kind. Without it the UI says "catalog not
+  # readable", never an empty list.
+  clusterImageCatalogs:
+    # -- Read ClusterImageCatalog objects (a cluster-scoped CloudNativePG kind)
+    # for the image and upgrade panels. Adds a second, read-only ClusterRole
+    # limited to that kind. Without it the UI says "catalog not readable".
+    enabled: false
+
+  # rbac.create renders the Roles, the ClusterRole(s), the bindings and the
+  # revocation ConfigMap. Turn it off only if you manage them yourself; the
+  # authority the console needs is documented in the README.
+  rbac:
+    # -- Render the Roles, ClusterRoles, bindings and the revocation ConfigMap.
+    # Turn it off only if you manage them yourself; the authority the console
+    # needs is documented in the README.
+    create: true
+    # -- Grant `get pods/log` in the watched namespaces (the bounded log tail and
+    # the log-based diagnostics). Withhold it to run without logs.
+    podLogs: true
+    # -- Grant read on the operator's kinds (PgAdmin, EvidenceAgent,
+    # PgAccessRequest) for the console's link-outs. `auto`: when the cluster
+    # serves `pgtoolbox.fyannk.dev/v1alpha1` (with `helm template`, pass
+    # `--api-versions` or set `true`). The console runs without them.
+    operatorKinds: auto
+
+  # logs: the diagnostics log matcher.
+  # streamEnabled follows each member container's log continuously so the
+  # matcher sees every line as it arrives; it keeps only what matched and stores
+  # no log text. It needs rbac.podLogs (without `get pods/log` the chart sends
+  # LOG_STREAM_ENABLED=false). matchMaxAge expires a log observation this long
+  # after its last matching line (10m to 48h).
+  logs:
+    # -- Follow each member container's log continuously so the diagnostics log
+    # matcher sees every line. It keeps only what matched and stores no log
+    # text. Needs `rbac.podLogs`.
+    streamEnabled: true
+    # -- How long a log observation lasts after its last matching line (10m to
+    # 48h).
+    matchMaxAge: 6h
+
+  service:
+    # -- Service type.
+    type: ClusterIP
+    # -- Service port.
+    port: 80
+
+  # -- Port the console serves its API and UI on.
+  port: 3000
+  # -- Port of `/healthz`, `/readyz` and `/metrics` (plain HTTP unless
+  # `tls.secretName` is set). `/metrics` needs a token that may `get` that URL.
+  probePort: 3001
+
+  # Exposure: none | ingress | route | httpRoute. The console streams events
+  # over SSE, so every edge needs a long timeout and no buffering; the chart sets
+  # the ones it knows (sse.timeout).
+  exposure:
+    # -- How the Service is exposed outside the cluster: `none`, `ingress`,
+    # `route` (OpenShift) or `httpRoute` (Gateway API).
+    type: none
+    # -- Host name the Ingress, Route or HTTPRoute answers to. Required with any
+    # exposure type other than `none`.
+    host: ""
+    sse:
+      # -- Idle timeout the edge is configured with, for the event stream (SSE)
+      # the console keeps open.
+      timeout: 1h
+    # Sticky sessions: keep a person on one replica through a cookie the edge
+    # sets. Each replica has its own history, metrics window and sparklines, so
+    # without affinity two reloads may draw different charts; sign-outs and
+    # "since" times agree anyway (the state ConfigMap). The console's session
+    # cookie does not depend on it: losing affinity costs a different view,
+    # never a sign-out.
+    sticky:
+      # -- Render cookie affinity for the exposure: ingress-nginx's annotations
+      # on the Ingress and Traefik's on the Service (each controller ignores the
+      # other's; for another controller, put its own in `ingress.annotations`).
+      # An OpenShift Route is sticky by default (`false` disables its cookie).
+      # Gateway API session persistence is not in the standard channel: set it on
+      # the gateway.
+      enabled: true
+      # -- Name of the affinity cookie. It identifies a replica, nothing of the
+      # session.
+      cookieName: pgtoolbox-console-replica
+    ingress:
+      # -- `ingressClassName` of the Ingress. Empty uses the cluster's default
+      # class.
+      className: ""
+      # -- Annotations of the Ingress (controller settings, cert-manager issuer).
+      annotations: {}
+      # -- TLS of the Ingress: `enabled` and the `secretName` of the
+      # kubernetes.io/tls Secret that holds the certificate.
+      tls: {enabled: false, secretName: ""}
+    route:
+      # -- Annotations of the OpenShift Route.
+      annotations: {}
+      # -- TLS termination of the Route: `edge`, `reencrypt` or `passthrough`.
+      termination: edge
+    httpRoute:
+      # -- Gateways the HTTPRoute attaches to, as Gateway API `parentRefs`:
+      # `[{name: gw, namespace: infra}]`.
+      parentRefs: []
+    # -- Namespace the ingress router runs in, the one place the NetworkPolicy
+    # lets reach the Pod: `openshift-ingress` on OpenShift, `ingress-nginx` for
+    # the community controller. Used only when the NetworkPolicy is enabled.
+    routerNamespace: openshift-ingress
+
+  # networkPolicy: a policy TEMPLATE, off by default and never on by default.
+  # Whether this cluster enforces policies, and whether this namespace wants
+  # one, is the installing admin's decision; a default-deny rendered unasked
+  # breaks exposure, DNS or the API-server path. RBAC and SAR are the isolation
+  # the product guarantees; this adds a network boundary where the CNI enforces
+  # one (the chart cannot prove it does). Enabling it renders exactly the
+  # console's egress (watched Clusters' pods :8000/:9187, poolers :9127, the
+  # EvidenceAgent Service, the API server, DNS) and ingress from the router
+  # namespace only; selectors derive from watchNamespaces, never from a request.
+  networkPolicy:
+    # -- Render a NetworkPolicy for these pods. Off by default: whether the
+    # cluster enforces policies, and whether this namespace wants one, is the
+    # installing admin's decision.
+    enabled: false
+    apiServer:
+      # -- How egress to the API server is allowed. `addresses`: the addresses of
+      # the addresses you list in `apiServer.addresses`, or, with
+      # `apiServer.lookup`, those of the `kubernetes` Endpoints read at install time (deprecated default, see `apiServer.lookup`). `any`: any address on `apiServer.ports`, the
+      # fallback for API servers behind a load balancer whose address is not in
+      # the Endpoints.
+      mode: addresses
+      # -- API server IP addresses to allow when `apiServer.mode` is `addresses`:
+      # the ClusterIP and endpoints of `kubectl get endpoints kubernetes -n default`
+      # (a namespace admin usually cannot read that object: ask the cluster admin).
+      addresses: []
+      # -- With `mode: addresses` and no `addresses`, read them from the `kubernetes`
+      # Endpoints of the `default` namespace at install time. On in this minor so
+      # existing installs keep working; it needs a user allowed to `get` `endpoints` in
+      # `default` (a namespace admin usually is not: Helm then stops with a Forbidden
+      # error), and `helm template` / `--dry-run` have no cluster. NOTES warns while it
+      # is used. The NEXT MINOR DEFAULTS IT TO false: list `addresses`, set
+      # `mode: any`, or keep `lookup: true` as a cluster admin. With `lookup: false`
+      # and no `addresses`, the chart refuses to render and says so.
+      lookup: true
+      # -- Ports of the API server that egress is allowed to.
+      ports: [443, 6443]
+    dns:
+      # -- Namespace of the cluster DNS pods that egress is allowed to.
+      namespace: kube-system
+      # -- Labels that select the cluster DNS pods.
+      podLabels: {k8s-app: kube-dns}
+      # -- Ports of the cluster DNS pods (TCP and UDP). OpenShift DNS pods listen
+      # on 5353: use `[5353]` there.
+      ports: [53]
+    # -- Ports of the Cluster instances the console reaches: `statusPort`,
+    # `metricsPort` and `poolerPort`.
+    instance: {statusPort: 8000, metricsPort: 9187, poolerPort: 9127}
+    # The EvidenceAgent Service. The labels and the port are what the operator
+    # puts on every agent pod (internal/operator/evidenceagent: name
+    # "evidence-agent"; pkg/evidence/v1alpha1 AgentPort); validate-packaging
+    # compares them with the Go constants.
+    evidenceAgent:
+      # -- Allow egress to the EvidenceAgent Service.
+      enabled: true
+      # -- Labels of the evidence agent pods (what the operator sets on every
+      # agent).
+      podLabels: {app.kubernetes.io/name: evidence-agent}
+      # -- Port of the evidence agent.
+      port: 8443
+    # -- Extra egress rules, as raw NetworkPolicy `egress` items (an egress proxy,
+    # a webhook or mail server, a Prometheus outside the watched namespaces, the
+    # trace collector of `tracing.endpoint`).
+    extraEgress: []
+    ingress:
+      # -- Extra ingress peers (monitoring, a test client), as raw NetworkPolicy
+      # `from` items.
+      extraFrom: []
+      # -- Peers allowed to scrape `/metrics`, as raw NetworkPolicy `from` items
+      # (for example the monitoring namespace). Empty: no ingress on the
+      # metrics port.
+      metricsFrom: []
+
+  # metrics: /metrics on the probe port.
+  metrics:
+    # -- Render a ClusterRole that allows `get` on the non-resource URL
+    # `/metrics`, to bind to the scraper's ServiceAccount yourself. Off by
+    # default: it is not part of the console's own authority.
+    readerClusterRole: false
+    # -- ServiceAccounts to bind the reader ClusterRole to: `[{name:
+    # prometheus-k8s, namespace: monitoring}]`.
+    readerSubjects: []
+    # With console.tls.secretName the whole probe listener (/healthz, /readyz,
+    # /metrics) serves HTTPS with that certificate: the probes switch to
+    # scheme HTTPS and both monitors scrape https. tls says how they verify it:
+    # caSecret is a Secret in the monitor's namespace holding the CA that signed
+    # the console certificate; serverName defaults to <console service>.<ns>.svc;
+    # insecureSkipVerify is an explicit opt-in for a self-signed certificate (the
+    # bearer token still decides who may read). Neither set: the system roots.
+    tls:
+      # -- Secret (name and key), in the monitor's namespace, with the CA that
+      # signed the console certificate. Used when `tls.secretName` is set.
+      # Neither this nor `insecureSkipVerify`: the system roots.
+      caSecret: {name: "", key: ca.crt}
+      # -- Server name the monitors verify. Empty: `<console
+      # service>.<namespace>.svc`.
+      serverName: ""
+      # -- Skip certificate verification, an explicit opt-in for a self-signed
+      # certificate. The bearer token still decides who may read.
+      insecureSkipVerify: false
+    # -- Create a ServiceMonitor: `enabled`, scrape `interval` and extra `labels`.
+    serviceMonitor: {enabled: false, interval: 30s, labels: {}}
+    # -- Create a PodMonitor: `enabled`, scrape `interval` and extra `labels`.
+    podMonitor: {enabled: false, interval: 30s, labels: {}}
+    # -- Create a PrometheusRule with the MCP and MCP OAuth alerts
+    # (`files/alerts/mcp.rules.yaml`): `enabled` and extra `labels` (for the
+    # Prometheus `ruleSelector`).
+    prometheusRule: {enabled: false, labels: {}}
+    # -- Create a ConfigMap with the "MCP / AI assistants" Grafana dashboard
+    # (`files/dashboards/mcp.json`): `enabled` and extra `labels`. The dashboard
+    # sidecar's label `grafana_dashboard: "1"` is always set.
+    grafanaDashboard: {enabled: false, labels: {}}
+
+  podDisruptionBudget:
+    # -- Render a PodDisruptionBudget. It is rendered only with more than one
+    # replica.
+    enabled: true
+    # -- `minAvailable` of the PodDisruptionBudget.
+    minAvailable: 1
+
+  # -- Pod security context (Pod Security Standard `restricted`; no fixed UID, so
+  # an OpenShift SCC can assign one).
+  podSecurityContext:
+    runAsNonRoot: true
+    seccompProfile: {type: RuntimeDefault}
+  # -- Container security context (non-root, read-only root filesystem, all
+  # capabilities dropped).
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities: {drop: [ALL]}
+
+  # Sizing, from the load test (hack/loadtest, 2026-11-03): memory is about
+  # 150 MiB plus 1 MiB per watched Cluster of three instances with the
+  # instance metrics on, so the 512Mi default suits up to about 350
+  # Clusters; 1,600 Clusters used a 1.0-1.5 GiB working set under a 2Gi
+  # limit. The console sets its Go memory limit from this one, so it
+  # collects before the kernel would kill it. One CPU served 1,600
+  # Clusters at 20 requests/s with the list under 300 ms at p95. Beyond
+  # about 1,500 Clusters, split the namespaces across consoles.
+  # -- Resource requests and limits. Memory is about 150 MiB plus 1 MiB per
+  # watched Cluster of three instances; the default suits up to about 350
+  # Clusters. Beyond about 1,500 Clusters, split the namespaces across
+  # consoles. The console sets its Go memory limit from the limit.
+  resources:
+    requests: {cpu: 50m, memory: 128Mi}
+    limits: {cpu: "1", memory: 512Mi}
+
+  # -- Node selector of the pods.
+  nodeSelector: {}
+  # -- Tolerations of the pods.
+  tolerations: []
+  # -- Affinity of the pods.
+  affinity: {}
+  # -- Topology spread constraints of the pods. Empty with more than one replica:
+  # a soft spread across nodes.
+  topologySpreadConstraints: []
+  # -- `priorityClassName` of the pods. Empty: none.
+  priorityClassName: ""
+  # -- Extra labels on the pods.
+  podLabels: {}
+  # -- Extra annotations on the pods.
+  podAnnotations: {}
+  # -- Extra environment variables of the console container, as plain EnvVar
+  # objects.
+  extraEnv: []
+  # -- Extra volumes of the console pod.
+  extraVolumes: []
+  # -- Extra volume mounts of the console container.
+  extraVolumeMounts: []
+
+# ==========================================================================
+# The insight pack: CloudNativePG custom queries that let the
+# console show wraparound, vacuum health, blocking, connections,
+# pg_stat_statements top-N and index hygiene without connecting to
+# PostgreSQL itself. The chart creates the ConfigMap pgtoolbox-insight-pack
+# in each namespace below; nothing changes on any Cluster until its team adds
+#   spec.monitoring.customQueriesConfigMap: [{name: pgtoolbox-insight-pack, key: queries}]
+# to the Cluster. The queries run as CloudNativePG's metrics user, read-only,
+# each with a 1 s statement_timeout; their cost is in the documentation.
+# ==========================================================================
+insightPack:
+  # -- Create the ConfigMap `pgtoolbox-insight-pack` of CloudNativePG custom
+  # queries. Nothing changes on a Cluster until its team adds it to
+  # `spec.monitoring.customQueriesConfigMap`.
+  enabled: true
+  # -- Namespaces that get the ConfigMap. Empty: `console.watchNamespaces`, or the
+  # release namespace.
+  namespaces: []
+  # -- Namespaces left out because their teams apply the pack's ConfigMap
+  # themselves. Helm will not take over a ConfigMap it did not create, so an
+  # install over a hand-applied one fails until its namespace is listed here.
+  skipNamespaces: []
+
+# ==========================================================================
+# Evidence agents without the operator: one agent per Cluster
+# listed below, each a Deployment (1 replica), a Service, a ServiceAccount
+# and a Role in the release namespace. The agent reads its Cluster, the
+# barman-cloud configuration the Cluster uses (the plugin's ObjectStore, or
+# the in-tree spec.backup.barmanObjectStore), and the Secrets listed in
+# `secrets` (get only, never list), then reads the backup repository and
+# tells the console what it finds. Nothing cluster-scoped, no operator, no
+# TokenReview: the console presents a shared token from a Secret.
+#
+# Repositories: S3 (keys, or the IAM role of the ServiceAccount), Azure Blob
+# (connection string, storage key, SAS token, or Azure workload identity) and
+# GCS (a service account JSON key, or GKE workload identity), written by
+# barman-cloud or, through Dalibo's or Opera's pgBackRest plugin (a Stanza
+# or an Archive instead of the ObjectStore), by pgBackRest on S3 or Azure
+# Blob. Whoever may edit the Cluster or the ObjectStore chooses
+# what the configuration names; the agent reads only what its entry here
+# allows: the listed Secrets, an https endpoint unless allowInsecureEndpoint,
+# the Pod's cloud identity only with workloadIdentity.
+#
+# Limits (README, "Evidence agents without the operator"): a Cluster created
+# later is not picked up until it is listed here; Secrets the configuration
+# names must be listed by hand (the agent refuses the others by name and says
+# which value to add); the console compares no producerEpoch with these agents.
+# ==========================================================================
+evidence:
+  # agents: one entry per Cluster of the release namespace.
+  #   - cluster: orders                 # the CloudNativePG Cluster
+  #     secrets: [minio-creds]          # every Secret the configuration names
+  #                                     # (keys, endpoint CA, region); empty
+  #                                     # with workload identity: the Role
+  #                                     # then grants no Secret at all
+  #     objectStore: orders-store       # optional: the ObjectStore's name, so
+  #                                     # the Role names it too (empty: any
+  #                                     # ObjectStore of the namespace)
+  #     stanza: ""                      # pgBackRest through Dalibo's plugin:
+  #                                     # the Stanza the Cluster names (its
+  #                                     # stanzaRef); the Role names it and
+  #                                     # no ObjectStore
+  #     archive: ""                     # pgBackRest through Opera's plugin:
+  #                                     # the Archive the Cluster names (its
+  #                                     # pgbackrestObjectName); exclusive
+  #                                     # with stanza and objectStore
+  #     pgbackrest:                     # with stanza or archive only
+  #       repository: 1                 # the repo<n> the agent reads
+  #       endpointCA: {name: "", key: ""}  # the endpoint's CA, over the one
+  #                                     # the plugin's object names; the
+  #                                     # Secret must be in secrets
+  #       endpoint: ""                  # host[:port] pin: the repository's
+  #                                     # endpoint must be this one; also
+  #                                     # admits an Azure key off the Azure
+  #                                     # Blob hosts (Azurite)
+  #     serviceAccountName: ""          # default: the agent's name
+  #     allowInsecureEndpoint: false    # admit a plain-http endpoint (the
+  #                                     # keys then cross the network in
+  #                                     # clear text); off: refused by name
+  #     workloadIdentity:               # the opt-in to the Pod's cloud
+  #                                     # identity; absent, inheritFromIAMRole,
+  #                                     # inheritFromAzureAD and gkeEnvironment
+  #                                     # are refused ({} is enough for GKE
+  #                                     # workload identity federation)
+  #       platform: ""                  # gke | eksPodIdentity | irsa | azure:
+  #                                     # with evidence.networkPolicy, opens
+  #                                     # the link-local credential endpoint
+  #                                     # of gke and eksPodIdentity
+  #       serviceAccountAnnotations: {} # only eks.amazonaws.com/role-arn,
+  #                                     # .../sts-regional-endpoints,
+  #                                     # .../token-expiration,
+  #                                     # azure.workload.identity/client-id,
+  #                                     # .../tenant-id and
+  #                                     # iam.gke.io/gcp-service-account
+  #       podLabels: {}                 # only azure.workload.identity/use:
+  #                                     # "true" (quote it)
+  #     resources: {}                   # default: evidence.resources
+  #     image: {repository: "", tag: "", digest: ""}  # over evidence.image
+  #     nodeSelector: {}
+  #     tolerations: []
+  #     affinity: {}
+  # -- One evidence agent per listed Cluster of the release namespace. Each entry
+  # takes `cluster`, `secrets`, `objectStore`, `stanza`, `archive`, `pgbackrest`,
+  # `serviceAccountName`,
+  # `allowInsecureEndpoint`, `workloadIdentity`, `resources`, `image`,
+  # `nodeSelector`, `tolerations` and `affinity`; see the README.
+  agents: []
+
+  image:
+    # -- Image repository.
+    repository: ghcr.io/fyannk/pgtoolbox-evidence-agent
+    # -- Tag of the evidence agent image. Empty: the chart's `appVersion`.
+    tag: ""
+    # -- Digest of the evidence agent image (`sha256:...`). It wins over the tag.
+    digest: ""
+    # -- Image pull policy.
+    pullPolicy: IfNotPresent
+  # -- Pull Secrets for the image, as `[{name: regcred}]`.
+  imagePullSecrets: []
+
+  # tls.mode: how the console reaches the agents on port 8443.
+  #   none                plain HTTP inside the namespace (the default). The
+  #                       shared token crosses the pod network in clear text;
+  #                       evidence.networkPolicy narrows who can reach it.
+  #   certManager         a cert-manager Certificate per agent from
+  #                       certManager.issuerRef; the console trusts its ca.crt
+  #                       (an issuer that fills ca.crt, such as a CA issuer).
+  #   openshiftServiceCA  the OpenShift service CA signs each agent's Service
+  #                       certificate; the console trusts the
+  #                       openshift-service-ca.crt ConfigMap.
+  tls:
+    # -- How the console reaches the agents on port 8443. `none`: plain HTTP
+    # inside the namespace. `certManager`: a cert-manager Certificate per agent
+    # from `certManager.issuerRef`. `openshiftServiceCA`: the OpenShift service
+    # CA signs each agent's Service certificate.
+    mode: none
+    certManager:
+      # -- Issuer for the agents' certificates: `{name, kind, group}`. It must
+      # fill `ca.crt` (a CA issuer does).
+      issuerRef: {name: "", kind: Issuer, group: cert-manager.io}
+
+  # token: the shared token the console presents and every agent accepts.
+  # Empty existingSecret: the chart creates "<release>-evidence-token" with a
+  # random value once and keeps it across upgrades (`lookup`). `helm template`
+  # and GitOps renderers (Argo CD) have no cluster to look up and would render
+  # a new value each time: create the Secret yourself (a key `token`, at least
+  # 32 characters) and name it here. Both sides re-read it, so a rotation
+  # needs no restart.
+  token:
+    # -- Secret holding the shared token (key `token`, at least 32 characters).
+    # Empty: the chart creates `<release>-evidence-token` with a random value
+    # once and keeps it across upgrades. `helm template` and GitOps renderers
+    # cannot look it up: create the Secret and name it here.
+    existingSecret: ""
+    # -- Key of the shared token in the Secret.
+    key: token
+
+  # networkPolicy: a policy TEMPLATE for the agents, off by default (the
+  # installing admin's choice, like console.networkPolicy). Enabled, the agent
+  # pods admit only the console pods on their port and reach only DNS, the API
+  # server and the object store.
+  networkPolicy:
+    # -- Render a NetworkPolicy for the agent pods: they then admit only the
+    # console on their port and reach only DNS, the API server and the object
+    # store. Off by default (the installing admin's choice).
+    enabled: false
+    apiServer:
+      # -- How egress to the API server is allowed. `addresses`: the addresses of
+      # the addresses you list in `apiServer.addresses`, or, with
+      # `apiServer.lookup`, those of the `kubernetes` Endpoints read at install time (deprecated default, see `apiServer.lookup`). `any`: any address on `apiServer.ports`, the
+      # fallback for API servers behind a load balancer whose address is not in
+      # the Endpoints.
+      mode: addresses
+      # -- API server IP addresses to allow when `apiServer.mode` is `addresses`:
+      # the ClusterIP and endpoints of `kubectl get endpoints kubernetes -n default`
+      # (a namespace admin usually cannot read that object: ask the cluster admin).
+      addresses: []
+      # -- With `mode: addresses` and no `addresses`, read them from the `kubernetes`
+      # Endpoints of the `default` namespace at install time. On in this minor so
+      # existing installs keep working; it needs a user allowed to `get` `endpoints` in
+      # `default` (a namespace admin usually is not: Helm then stops with a Forbidden
+      # error), and `helm template` / `--dry-run` have no cluster. NOTES warns while it
+      # is used. The NEXT MINOR DEFAULTS IT TO false: list `addresses`, set
+      # `mode: any`, or keep `lookup: true` as a cluster admin. With `lookup: false`
+      # and no `addresses`, the chart refuses to render and says so.
+      lookup: true
+      # -- Ports of the API server that egress is allowed to.
+      ports: [443, 6443]
+    dns:
+      # -- Namespace of the cluster DNS pods that egress is allowed to.
+      namespace: kube-system
+      # -- Labels that select the cluster DNS pods.
+      podLabels: {k8s-app: kube-dns}
+      # -- Ports of the cluster DNS pods (TCP and UDP). OpenShift DNS pods listen
+      # on 5353: use `[5353]` there.
+      ports: [53]
+    # objectStore: where the repository lives. `to` is a list of raw
+    # NetworkPolicy peers (an ipBlock, a namespaceSelector for an in-cluster
+    # MinIO); empty allows any address on `ports`.
+    objectStore:
+      # -- Where the object store is, as raw NetworkPolicy `to` peers (an
+      # `ipBlock`, or a `namespaceSelector` for an in-cluster MinIO). Empty
+      # allows any address on `objectStore.ports`.
+      to: []
+      # -- Ports of the object store that egress is allowed to.
+      ports: [443]
+
+  # -- Pod security context of the agents (Pod Security Standard `restricted`; no
+  # fixed UID).
+  podSecurityContext:
+    runAsNonRoot: true
+    seccompProfile: {type: RuntimeDefault}
+  # -- Container security context of the agents.
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    capabilities: {drop: [ALL]}
+
+  # -- Resource requests and limits of an agent. A scan streams the repository
+  # listing: about 21 MiB of working set for a repository of one million
+  # objects.
+  resources:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {memory: 512Mi}
+
+  # -- Log level of the agents: `debug`, `info`, `warn` or `error`. Empty: `info`.
+  logLevel: ""
+
+# ==========================================================================
+# pgAdmin without the operator. OFF by default. One pgAdmin for
+# the team, its servers declared below: the chart does not find the Clusters
+# (a Cluster created later is not registered until it is added here and the
+# release upgraded), and it does not guess which Secret holds which
+# credential: every server names its credential source, and a sidecar checks
+# that source against the live Cluster or DatabaseRole before using it.
+#
+# What this gives up next to the operator's PgAdmin (README, "pgAdmin without
+# the operator"):
+#
+#   | New Cluster or DatabaseRole  | operator: registered automatically | here: add it to pgadmin.servers, helm upgrade |
+#   | Which Secret holds what      | operator: worked out               | here: named by you, checked live              |
+#   | Role password before applied | never offered                      | never offered (the sidecar checks)            |
+#   | Password rotation            | automatic                          | automatic                                     |
+#   | Clusters of other namespaces | with a grant                       | no                                            |
+#   | Status in the console        | conditions per server              | sidecar logs only                             |
+#   | Settings database            | a CloudNativePG Database           | SQLite on a PVC                               |
+#   | Backup before an upgrade     | a Job                              | an init container, local copy                 |
+#
+# Its whole authority is a Role granting get and watch on exactly the
+# Clusters, DatabaseRoles, Poolers and Secrets named below (resourceNames),
+# plus, until the next minor, the derived <cluster>-ca of a server that names
+# neither caSecret nor caConfigMap: no list, no other Secret of the namespace,
+# nothing cluster-scoped.
+# ==========================================================================
+pgadmin:
+  # -- Install pgAdmin without the operator: one pgAdmin for the team, with the
+  # servers declared in `servers`.
+  enabled: false
+
+  # -- Name of pgAdmin's objects. Default: the release name when it already says
+  # "pgadmin", otherwise `<release>-pgadmin`.
+  fullnameOverride: ""
+
+  # The hardened pgAdmin image the operator runs by default
+  # (internal/configuration DefaultPgAdminImage; validate-packaging holds the
+  # two equal). Tag and digest are both kept: tag@digest.
+  image:
+    # -- Repository of the pgAdmin image.
+    repository: ghcr.io/fyannk/pgadmin
+    # -- Tag of the pgAdmin image. Tag and digest are both kept (`tag@digest`).
+    tag: 9.18-hardened
+    # -- Digest of the pgAdmin image. The default is the hardened image the
+    # operator runs.
+    digest: sha256:96576df8aba0d0057248644d6d5ad398869e42bcf3fcfba2c0f7c13d151ea17c
+    # -- Pull policy of the pgAdmin image.
+    pullPolicy: IfNotPresent
+
+  # tools: the pgToolBox image, only for its binary: an init container copies
+  # it into the Pod, where it runs the credential sidecar, the registration and
+  # the pre-upgrade backup inside pgAdmin's image. No operator runs.
+  tools:
+    image:
+      # -- Repository of the pgToolBox image, used only for its binary: an init
+      # container copies it into the pod, where it runs the credential sidecar,
+      # the registration and the pre-upgrade backup.
+      repository: ghcr.io/fyannk/pgtoolbox-operator
+      # -- Tag of the tools image. Empty: the chart's `appVersion`.
+      tag: ""
+      # -- Digest of the tools image. Written by the release; empty in the source
+      # tree.
+      digest: ""
+      # -- Pull policy of the tools image.
+      pullPolicy: IfNotPresent
+
+  # -- Pull Secrets for the image, as `[{name: regcred}]`.
+  imagePullSecrets: []
+
+  # servers: the shared servers every pgAdmin user sees, in the "PgToolBox"
+  # group. Servers people add themselves are kept across restarts.
+  #
+  #   cluster      a CloudNativePG Cluster of this namespace
+  #   endpoint     rw | ro | r | pooler:<Pooler name>
+  #   name         the name shown in pgAdmin (default "<cluster> <endpoint> (<who>)")
+  #   database     default: the Cluster's application database (application),
+  #                "postgres" (superuser, databaseRole); required for secret, none
+  #   user         default: from the Cluster or the role; required for secret, none
+  #   caConfigMap  a ConfigMap holding only the server CA (key ca.crt), mounted
+  #                into the sidecar: the Role then names no CA Secret for this
+  #                server. Not checked against the Cluster (the Pod may not read
+  #                its CA Secret); libpq's verify-full is the check. Every server
+  #                of one Cluster names the same one. Preferred.
+  #   caSecret     a Secret with the server CA (ca.crt), checked against
+  #                spec.certificates.serverCASecret. Exclusive with caConfigMap.
+  #                DEPRECATED default: with neither, the chart derives
+  #                "<cluster>-ca" and grants the sidecar get and watch on it,
+  #                a Secret these values do not name, which CloudNativePG fills
+  #                with ca.key, the CA's signing key, too (the sidecar copies
+  #                only ca.crt). NOTES names each one; the next minor release
+  #                requires caSecret or caConfigMap on every server.
+  #   credentials  REQUIRED, there is no default. Exactly one of:
+  #     application: {secret: <cluster>-app}     the Cluster's application owner;
+  #                  the Secret must be the one CloudNativePG made for this
+  #                  Cluster (<cluster>-app, or bootstrap.initdb.secret)
+  #     superuser: {secret: <cluster>-superuser} only with enableSuperuserAccess;
+  #                  the Secret must be <cluster>-superuser or spec.superuserSecret
+  #     databaseRole: {name: <DatabaseRole>, secret: <its password Secret>}
+  #                  offered only once CloudNativePG applied the role at its
+  #                  current generation with that Secret's current version
+  #     secret: <name>   a Secret you manage (basic-auth, or a pgpass key); not
+  #                  checked against anything; needs user and database
+  #     none         no password: pgAdmin asks for it; needs user and database
+  #
+  # A source that does not match the live Cluster or role is never used: the
+  # server is still listed, pgAdmin asks for the password, and the sidecar logs
+  # the server's name and why (names only, never a value).
+  # -- Shared servers every pgAdmin user sees, in the "PgToolBox" group. Each
+  # entry takes `cluster`, `endpoint` and `credentials` (required), and
+  # optionally `name`, `database`, `user`, and `caConfigMap` or `caSecret` (one
+  # of them will be required in the next minor: the derived `<cluster>-ca`
+  # default is deprecated); see the README. A credential source that does not
+  # match the live Cluster is never used.
+  servers: []
+  # - cluster: orders
+  #   endpoint: rw
+  #   caConfigMap: orders-ca-crt
+  #   credentials:
+  #     application: {secret: orders-app}
+  # - cluster: orders
+  #   endpoint: ro
+  #   caConfigMap: orders-ca-crt
+  #   credentials:
+  #     databaseRole: {name: orders-reporting, secret: orders-reporting-password}
+  # - cluster: billing
+  #   endpoint: rw
+  #   database: billing
+  #   user: billing_owner
+  #   caConfigMap: billing-ca-crt
+  #   credentials: {secret: billing-owner}
+  # - cluster: legacy
+  #   endpoint: rw
+  #   database: app
+  #   user: alice
+  #   caSecret: legacy-server-ca
+  #   credentials: none
+
+  # -- pgAdmin administrators, as pgAdmin names them (the OIDC username claim, or
+  # the OpenShift user name). Everyone else signs in as a plain user.
+  admins: []
+
+  # auth: how people sign in. There is no local password login.
+  auth:
+    # -- How people sign in; there is no local password login. `oidc`: pgAdmin's
+    # own OAuth2 client against your identity provider. `openshift`: an
+    # oauth-proxy in front of pgAdmin (OpenShift only).
+    provider: oidc
+    oidc:
+      # -- Issuer URL of the OIDC provider.
+      issuerURL: ""
+      # -- OIDC client ID.
+      clientID: ""
+      # The client secret, in a Secret you create in this namespace.
+      clientSecret:
+        # -- Secret, created by you in this namespace, holding the client secret.
+        existingSecret: ""
+        # -- Key of the client secret in the Secret.
+        key: client-secret
+      # -- Label of the sign-in button. Empty: "Single sign-on".
+      displayName: ""
+      # -- OIDC scopes. Empty: `[openid, email, profile]`.
+      scopes: []
+      # -- Claim used as the pgAdmin user name.
+      usernameClaim: email
+      # -- Claims a token must carry to sign in, each a list of accepted values:
+      # `{groups: [dba]}`.
+      requiredClaims: {}
+    openshift:
+      image:
+        # -- Repository of the oauth-proxy image.
+        repository: quay.io/openshift/origin-oauth-proxy
+        # -- Tag of the oauth-proxy image.
+        tag: "4.18"
+        # -- Digest of the oauth-proxy image (the 4.18 manifest list, as the
+        # operator's default). On OpenShift prefer the release payload's own
+        # image, which your registry mirrors.
+        digest: "sha256:63b0344b903162519efdb63052c1dde81aa17cfc46ba63cc87300db47f0fb5df"
+        # -- Pull policy of the oauth-proxy image.
+        pullPolicy: IfNotPresent
+      # -- SubjectAccessReview the proxy asks for each user, as the JSON object
+      # oauth-proxy's `--openshift-sar` takes. Empty: may `get secrets` in this
+      # namespace, since the shared servers connect with credentials read from
+      # Secrets here.
+      sar: ""
+      # The proxy's cookie secret (key cookie-secret, 16, 24 or 32 bytes).
+      # Empty: generated once and kept across upgrades (lookup); set it for a
+      # GitOps tool that renders client-side.
+      cookieSecret:
+        # -- Secret holding the proxy's cookie secret (key `cookie-secret`, 16, 24
+        # or 32 bytes). Empty: generated once and kept across upgrades; set it
+        # for a GitOps tool that renders client-side.
+        existingSecret: ""
+
+  # configDatabase: pgAdmin's settings database in PostgreSQL, instead of SQLite
+  # on a PVC. The chart creates nothing in your Clusters (the operator's PgAdmin
+  # owns a Database and a DatabaseRole for it): you create the database and the
+  # role, and put the URI in a Secret of the release namespace. With it set: no
+  # PVC, no pre-upgrade backup (back the database up where it lives), and
+  # `storage.size` becomes the size limit of a per-Pod emptyDir (sessions).
+  configDatabase:
+    # -- Secret of the release namespace holding pgAdmin's settings database
+    # URI, e.g. `postgresql://pgadmin:<percent-encoded password>@orders-rw:5432/pgadmin?sslmode=verify-full&sslrootcert=system`.
+    # The URI must be self-contained: the Pod's libpq defaults (the declared
+    # servers' CA bundle, the passfile) are not applied to it by the registration
+    # sidecar, so name `sslmode` (and a root certificate the image trusts, or
+    # `sslmode=require`) in the URI. Control characters are refused; quote or
+    # backslash are escaped for pgAdmin but refused by the registration, so
+    # percent-encode them. Read by the kubelet (`secretKeyRef`) into an init
+    # container that writes it, owner only, to the Pod's run volume for pgAdmin
+    # (`PGADMIN_CONFIG_CONFIG_DATABASE_URI_FILE`), never through the API, so the
+    # Pod's Role does not name it and the Deployment never holds it. Changing the Secret needs a Pod
+    # restart. Empty: SQLite on a PVC. Set at install: moving an existing SQLite
+    # database into PostgreSQL is a manual step with pgAdmin's own tooling.
+    existingSecret: ""
+    # -- Key of the Secret holding the URI.
+    key: CONFIG_DATABASE_URI
+    # -- Name of the CloudNativePG Cluster that holds the settings database.
+    # With `networkPolicy.enabled` and `existingSecret`, the policy opens
+    # PostgreSQL (5432) to that Cluster's pods, which the declared `servers`
+    # may not name. The chart cannot read the URI (the kubelet does), so it
+    # cannot find the host itself. Alternative: allow the database in
+    # `networkPolicy.extraEgress`. With neither, the chart refuses to render.
+    cluster: ""
+    # -- Name of the Pooler (cnpg.io/poolerName) in front of the settings
+    # database, when the URI goes through one. Same rules as `cluster`.
+    pooler: ""
+
+  # The SQLite settings database (users, their own servers, preferences).
+  storage:
+    # -- Size of the volume holding pgAdmin's SQLite settings database (users,
+    # their own servers, preferences). With `configDatabase.existingSecret`, the
+    # size limit of the per-Pod emptyDir for sessions instead.
+    size: 1Gi
+    # -- StorageClass of the volume. Empty: the cluster's default.
+    storageClassName: ""
+    # -- Keep the volume on `helm uninstall` (`helm.sh/resource-policy: keep`).
+    keep: true
+
+  # backups: copies of the settings database taken before the first start of a
+  # new pgAdmin image, next to it on the PVC (.pgtoolbox/backups).
+  backups:
+    # -- Copies of the settings database kept next to it on the volume, taken
+    # before the first start of a new pgAdmin image.
+    keep: 3
+
+  service:
+    # -- Annotations of the Service.
+    annotations: {}
+
+  # exposure: as the console's. With auth.provider openshift the Service
+  # serves HTTPS (the service CA signs it) and a Route re-encrypts.
+  exposure:
+    # -- How the Service is exposed outside the cluster: `none`, `ingress`,
+    # `route` (OpenShift) or `httpRoute` (Gateway API).
+    type: none
+    # -- Host name the Ingress, Route or HTTPRoute answers to. Required with any
+    # exposure type other than `none`.
+    host: ""
+    ingress:
+      # -- `ingressClassName` of the Ingress. Empty uses the cluster's default
+      # class.
+      className: ""
+      # -- Annotations of the Ingress (controller settings, cert-manager issuer).
+      annotations: {}
+      # -- TLS of the Ingress: `enabled` and the `secretName` of the
+      # kubernetes.io/tls Secret that holds the certificate.
+      tls: {enabled: false, secretName: ""}
+    route:
+      # -- Annotations of the OpenShift Route.
+      annotations: {}
+      # -- Route TLS termination: `edge` or `reencrypt`. Empty: `reencrypt` with
+      # `auth.provider: openshift`, otherwise `edge`.
+      termination: ""
+    httpRoute:
+      # -- Gateways the HTTPRoute attaches to, as Gateway API `parentRefs`:
+      # `[{name: gw, namespace: infra}]`.
+      parentRefs: []
+    # -- Namespace the ingress router runs in, the one place the NetworkPolicy
+    # lets reach the Pod: `openshift-ingress` on OpenShift, `ingress-nginx` for
+    # the community controller. Used only when the NetworkPolicy is enabled.
+    routerNamespace: openshift-ingress
+
+  # networkPolicy: a policy TEMPLATE, off by default and never on by default
+  # (the installing admin's choice, as the console's). Enabling it renders
+  # exactly pgAdmin's egress (the declared Clusters' and Poolers' pods on 5432,
+  # the API server for the sidecar, DNS, the identity provider on 443) and
+  # ingress from the router namespace only.
+  networkPolicy:
+    # -- Render a NetworkPolicy for these pods. Off by default: whether the
+    # cluster enforces policies, and whether this namespace wants one, is the
+    # installing admin's decision.
+    enabled: false
+    apiServer:
+      # -- How egress to the API server is allowed. `addresses`: the addresses of
+      # the addresses you list in `apiServer.addresses`, or, with
+      # `apiServer.lookup`, those of the `kubernetes` Endpoints read at install time (deprecated default, see `apiServer.lookup`). `any`: any address on `apiServer.ports`, the
+      # fallback for API servers behind a load balancer whose address is not in
+      # the Endpoints.
+      mode: addresses
+      # -- API server IP addresses to allow when `apiServer.mode` is `addresses`:
+      # the ClusterIP and endpoints of `kubectl get endpoints kubernetes -n default`
+      # (a namespace admin usually cannot read that object: ask the cluster admin).
+      addresses: []
+      # -- With `mode: addresses` and no `addresses`, read them from the `kubernetes`
+      # Endpoints of the `default` namespace at install time. On in this minor so
+      # existing installs keep working; it needs a user allowed to `get` `endpoints` in
+      # `default` (a namespace admin usually is not: Helm then stops with a Forbidden
+      # error), and `helm template` / `--dry-run` have no cluster. NOTES warns while it
+      # is used. The NEXT MINOR DEFAULTS IT TO false: list `addresses`, set
+      # `mode: any`, or keep `lookup: true` as a cluster admin. With `lookup: false`
+      # and no `addresses`, the chart refuses to render and says so.
+      lookup: true
+      # -- Ports of the API server that egress is allowed to.
+      ports: [443, 6443]
+    dns:
+      # -- Namespace of the cluster DNS pods that egress is allowed to.
+      namespace: kube-system
+      # -- Labels that select the cluster DNS pods.
+      podLabels: {k8s-app: kube-dns}
+      # -- Ports of the cluster DNS pods (TCP and UDP). OpenShift DNS pods listen
+      # on 5353: use `[5353]` there.
+      ports: [53]
+    # The identity provider (oidc) or the OAuth server (openshift): any address
+    # on 443 unless narrowed here with raw NetworkPolicy `to` items.
+    identityProvider:
+      # -- Where the identity provider (oidc) or OAuth server (openshift) is, as
+      # raw NetworkPolicy `to` items. Empty: any address on 443.
+      to: []
+    # -- Extra egress rules, as raw NetworkPolicy `egress` items (an egress proxy,
+    # a webhook or mail server, a Prometheus outside the watched namespaces, a
+    # settings database that `configDatabase.cluster` does not cover).
+    extraEgress: []
+    ingress:
+      # -- Extra ingress peers (monitoring, a test client), as raw NetworkPolicy
+      # `from` items.
+      extraFrom: []
+
+  # -- Group that owns pgAdmin's volume. OpenShift's restricted SCC assigns its
+  # own range: set `null` there.
+  fsGroup: 5050
+  # -- Resource requests and limits of the pgadmin container (the operator's
+  # defaults); the small sidecars have their own fixed ones.
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {memory: 1Gi}
+  # -- Node selector of the pods.
+  nodeSelector: {}
+  # -- Tolerations of the pods.
+  tolerations: []
+  # -- Affinity of the pods.
+  affinity: {}
+  # -- `priorityClassName` of the pods. Empty: none.
+  priorityClassName: ""
+  # -- Extra labels on the pods.
+  podLabels: {}
+  # -- Extra annotations on the pods.
+  podAnnotations: {}

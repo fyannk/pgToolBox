@@ -1,0 +1,8 @@
+# kube-linter for the operator chart (charts/pgtoolbox): its Deployment sets no
+# pod anti-affinity, so that check is excluded. The pgtools chart is linted with
+# kube-linter's defaults and no exclusion.
+checks:
+  addAllBuiltIn: false
+  doNotAutoAddDefaults: false
+  exclude:
+    - no-anti-affinity

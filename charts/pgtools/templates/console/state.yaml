@@ -1,0 +1,48 @@
+{{- if and .Values.console.enabled .Values.console.rbac.create }}
+{{- $fullname := include "pgtools.console.fullname" . }}
+{{- $state := include "pgtools.console.state" . }}
+# The state the console's replicas share: sign-outs (SHA-256 of
+# the session, never the session) and "since" times, kept by the console.
+# Created empty; `helm upgrade` leaves the keys the console wrote, since it
+# renders none. Without it the console keeps both per replica.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $state }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "pgtools.console.labels" . | nindent 4 }}
+data: {}
+---
+# The console's one own-identity write besides the opt-in drill teardown:
+# this ConfigMap, by name, nothing else. A namespace admin may grant it
+# (configmaps are in the namespace admin role).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $state }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "pgtools.console.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [configmaps]
+    resourceNames: [{{ $state | quote }}]
+    verbs: [get, watch, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $state }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "pgtools.console.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $state }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $fullname }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

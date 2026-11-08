@@ -1,0 +1,10 @@
+# Persistent history: a StatefulSet, one claim per replica. Exposed through Gateway API.
+console:
+  history: {persistent: true, size: 2Gi}
+  replicas: 3
+  rbac: {podLogs: false}
+  exposure:
+    type: httpRoute
+    host: console.example.org
+    httpRoute:
+      parentRefs: [{name: shared-gateway, namespace: infra}]

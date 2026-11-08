@@ -1,0 +1,289 @@
+{
+  "ref": {
+    "namespace": "team-a",
+    "name": "orders",
+    "uid": "0b6a2c1e-8f0d-4a55-9a3e-7c1f2b3d4e5f"
+  },
+  "generatedAt": "2026-10-29T12:00:00Z",
+  "primary": {
+    "current": "orders-1",
+    "target": "orders-1",
+    "state": "stable",
+    "livePrimaries": [
+      "orders-1"
+    ],
+    "labelPrimaries": [
+      "orders-1"
+    ],
+    "lease": {
+      "holder": "orders-1",
+      "renewedAt": "2026-10-29T11:59:56Z",
+      "provenance": {
+        "origin": "kubernetes",
+        "source": "Lease.spec",
+        "observedAt": "2026-10-29T11:59:58Z"
+      }
+    },
+    "provenance": {
+      "origin": "operator",
+      "source": "Cluster.status.currentPrimary",
+      "observedAt": "2026-10-29T11:59:58Z"
+    }
+  },
+  "synchronous": {
+    "mode": "explicit",
+    "method": "any",
+    "number": 1,
+    "dataDurability": "required",
+    "failoverQuorum": true,
+    "provenance": {
+      "origin": "operator",
+      "source": "Cluster.spec.postgresql.synchronous",
+      "observedAt": "2026-10-29T11:59:58Z"
+    }
+  },
+  "quorum": {
+    "health": "ok",
+    "method": "ANY",
+    "number": 1,
+    "standbyNames": [
+      "orders-2",
+      "orders-3"
+    ],
+    "primary": "orders-1",
+    "text": "the primary applied ANY 1 (orders-2, orders-3)",
+    "provenance": {
+      "origin": "operator",
+      "source": "FailoverQuorum.status",
+      "observedAt": "2026-10-29T11:59:58Z"
+    }
+  },
+  "standbys": [
+    {
+      "name": "orders-2",
+      "state": "streaming",
+      "syncState": "quorum",
+      "syncPriority": "1",
+      "synchronous": true,
+      "sentLsn": "0/9000148",
+      "writeLsn": "0/9000148",
+      "flushLsn": "0/9000148",
+      "replayLsn": "0/9000148",
+      "writeLag": "00:00:00.000412",
+      "flushLag": "00:00:00.000903",
+      "replayLag": "00:00:00.001021",
+      "lagBytes": 0,
+      "health": "ok",
+      "provenance": {
+        "origin": "instance",
+        "source": "/pg/status",
+        "observedAt": "2026-10-29T11:59:52Z"
+      }
+    },
+    {
+      "name": "orders-3",
+      "state": "catchup",
+      "syncState": "potential",
+      "syncPriority": "1",
+      "sentLsn": "0/8F00000",
+      "replayLsn": "0/8E00000",
+      "lagBytes": 18874696,
+      "health": "progressing",
+      "provenance": {
+        "origin": "instance",
+        "source": "/pg/status",
+        "observedAt": "2026-10-29T11:59:52Z"
+      }
+    }
+  ],
+  "receivers": [
+    {
+      "name": "orders-2",
+      "health": "ok",
+      "statusRead": {
+        "state": "ok",
+        "at": "2026-10-29T11:59:52Z"
+      },
+      "receivedLsn": "0/9000148",
+      "replayLsn": "0/9000148",
+      "lagBytes": 0,
+      "walReceiverActive": true,
+      "timelineId": 3,
+      "provenance": {
+        "origin": "instance",
+        "source": "/pg/status",
+        "observedAt": "2026-10-29T11:59:52Z"
+      }
+    },
+    {
+      "name": "orders-3",
+      "health": "unknown",
+      "statusRead": {
+        "state": "notVerifiable",
+        "reason": "status port not verifiable: CA not in the console's bundle",
+        "since": "2026-10-29T11:40:00Z"
+      },
+      "provenance": {
+        "origin": "instance",
+        "source": "/pg/status"
+      }
+    }
+  ],
+  "failover": {
+    "outcome": "promote",
+    "health": "warning",
+    "text": "orders-2 would be promoted, with no acknowledged commit lost (synchronous, for transactions using the cluster default synchronous_commit).",
+    "candidate": "orders-2",
+    "behindBytes": 0,
+    "dataLoss": "none",
+    "dataLossText": "Quorum synchronous replication (sync_state quorum) and enough promotable members of the quorum: the most advanced of them holds every acknowledged commit. This holds for transactions using the cluster default: a role, a database, a session or a transaction can lower synchronous_commit, which the console cannot see.",
+    "certain": false,
+    "ranking": [
+      {
+        "name": "orders-2",
+        "eligible": true,
+        "receivedLsn": "0/9000148",
+        "replayLsn": "0/9000148",
+        "behindBytes": 0,
+        "syncState": "quorum",
+        "podReady": true,
+        "node": "node-b",
+        "provenance": {
+          "origin": "instance",
+          "source": "/pg/status",
+          "observedAt": "2026-10-29T11:59:52Z"
+        }
+      },
+      {
+        "name": "orders-3",
+        "eligible": false,
+        "reason": "its status could not be read by the console",
+        "syncState": "potential",
+        "podReady": true,
+        "node": "node-a",
+        "sameNodeAsPrimary": true,
+        "provenance": {
+          "origin": "instance",
+          "source": "/pg/status",
+          "stale": true,
+          "staleReason": "status port not verifiable: CA not in the console's bundle"
+        }
+      }
+    ],
+    "quorum": {
+      "required": 1,
+      "set": [
+        "orders-2",
+        "orders-3"
+      ],
+      "promotable": [
+        "orders-2"
+      ],
+      "text": "cannot tell: 1 promotable of 2, 1 required, and orders-3 not read by the console (R + W \u003e N needs 2)",
+      "provenance": {
+        "origin": "operator",
+        "source": "FailoverQuorum.status",
+        "observedAt": "2026-10-29T11:59:58Z"
+      }
+    },
+    "synchronous": "explicit",
+    "fencing": "none",
+    "primaryNode": "node-a",
+    "sameNodeAsPrimary": [
+      "orders-3"
+    ],
+    "notes": [
+      "Not read by the console: orders-3. The operator reads the instances itself and would rank one of them first if it is further ahead."
+    ],
+    "provenance": {
+      "origin": "console",
+      "source": "CloudNativePG's election rule over /pg/status, Cluster.spec, FailoverQuorum and Pods",
+      "observedAt": "2026-10-29T11:59:52Z"
+    },
+    "blindSpots": [
+      {
+        "id": "failover.zones",
+        "panel": "failover",
+        "text": "The console reads no Node, so it cannot tell whether replicas share the primary's zone (topology.kubernetes.io/zone); only same-node placement is shown."
+      },
+      {
+        "id": "failover.synchronousCommit",
+        "panel": "failover",
+        "text": "synchronous_commit is read from the Cluster's parameters only: a role, a database, a session or a transaction can lower it (local, off), and those commits do not wait for any standby whatever sync_state says."
+      },
+      {
+        "id": "failover.consoleSweep",
+        "panel": "failover",
+        "text": "Positions are the console's last sweep of /pg/status; at a real failure the operator reads the instances itself, and the distance will have moved."
+      }
+    ]
+  },
+  "slots": [
+    {
+      "instance": "orders-1",
+      "name": "_cnpg_orders_2",
+      "type": "physical",
+      "walStatus": "reserved",
+      "active": true,
+      "health": "ok",
+      "provenance": {
+        "origin": "instance",
+        "source": "/pg/status",
+        "observedAt": "2026-10-29T11:59:52Z"
+      }
+    },
+    {
+      "instance": "orders-1",
+      "name": "debezium",
+      "type": "logical",
+      "database": "app",
+      "plugin": "pgoutput",
+      "walStatus": "extended",
+      "active": false,
+      "health": "warning",
+      "provenance": {
+        "origin": "instance",
+        "source": "/pg/status",
+        "observedAt": "2026-10-29T11:59:52Z"
+      }
+    }
+  ],
+  "sources": [
+    {
+      "source": "clusters",
+      "state": "live",
+      "since": "2026-10-29T09:00:00Z",
+      "health": "ok"
+    },
+    {
+      "source": "instanceStatus",
+      "state": "live",
+      "since": "2026-10-29T09:00:00Z",
+      "health": "ok"
+    },
+    {
+      "source": "failoverQuorums",
+      "state": "live",
+      "since": "2026-10-29T09:00:00Z",
+      "health": "ok"
+    },
+    {
+      "source": "leases",
+      "state": "live",
+      "since": "2026-10-29T09:00:00Z",
+      "health": "ok"
+    }
+  ],
+  "blindSpots": [
+    {
+      "id": "replication.streamingReplicaOnly",
+      "panel": "replication",
+      "text": "The instance manager lists only this cluster's streaming_replica walsenders: replica clusters, logical walsenders and external base backups are not shown."
+    },
+    {
+      "id": "replication.syncNamesNotReported",
+      "panel": "replication",
+      "text": "synchronous_standby_names is not reported by the instance manager; FailoverQuorum.status is the only account of the set PostgreSQL applied."
+    }
+  ]
+}

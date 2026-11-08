@@ -1,0 +1,113 @@
+[
+  {
+    "stanza": "demo",
+    "label": "20261107-081046F",
+    "archive_id": "17-1",
+    "target_timeline": 2,
+    "state": "healthy",
+    "reason": {
+      "code": "coverage-path-healthy",
+      "message": "WAL is contiguous from the backup to the newest segment of the target timeline"
+    },
+    "stop": "frontier",
+    "timelines": [
+      1,
+      2
+    ],
+    "start_wal": "000000010000000000000003",
+    "consistent_wal": "000000010000000000000004",
+    "consistent": true,
+    "off_target": false,
+    "frontier_timeline": 2,
+    "frontier_position": 20,
+    "frontier_wal": "000000020000000000000014",
+    "frontier_receipt_at": "2026-11-07T08:11:21Z",
+    "assumption_codes": [
+      "segment-name-presence-only",
+      "wal-bytes-and-restore-not-verified"
+    ]
+  },
+  {
+    "stanza": "demo",
+    "label": "20261107-081046F_20261107-081101D",
+    "archive_id": "17-1",
+    "target_timeline": 2,
+    "state": "healthy",
+    "reason": {
+      "code": "coverage-path-healthy",
+      "message": "WAL is contiguous from the backup to the newest segment of the target timeline"
+    },
+    "stop": "frontier",
+    "timelines": [
+      1,
+      2
+    ],
+    "start_wal": "000000010000000000000008",
+    "consistent_wal": "000000010000000000000009",
+    "consistent": true,
+    "off_target": false,
+    "frontier_timeline": 2,
+    "frontier_position": 20,
+    "frontier_wal": "000000020000000000000014",
+    "frontier_receipt_at": "2026-11-07T08:11:21Z",
+    "assumption_codes": [
+      "segment-name-presence-only",
+      "wal-bytes-and-restore-not-verified"
+    ]
+  },
+  {
+    "stanza": "demo",
+    "label": "20261107-081046F_20261107-081105I",
+    "archive_id": "17-1",
+    "target_timeline": 2,
+    "state": "healthy",
+    "reason": {
+      "code": "coverage-path-healthy",
+      "message": "WAL is contiguous from the backup to the newest segment of the target timeline"
+    },
+    "stop": "frontier",
+    "timelines": [
+      1,
+      2
+    ],
+    "start_wal": "00000001000000000000000D",
+    "consistent_wal": "00000001000000000000000E",
+    "consistent": true,
+    "off_target": false,
+    "frontier_timeline": 2,
+    "frontier_position": 20,
+    "frontier_wal": "000000020000000000000014",
+    "frontier_receipt_at": "2026-11-07T08:11:21Z",
+    "assumption_codes": [
+      "segment-name-presence-only",
+      "wal-bytes-and-restore-not-verified"
+    ]
+  },
+  {
+    "stanza": "demo",
+    "label": "20261107-081046F_20261107-081114I",
+    "archive_id": "17-1",
+    "target_timeline": 2,
+    "state": "healthy",
+    "reason": {
+      "code": "coverage-path-healthy",
+      "message": "WAL is contiguous from the backup to the newest segment of the target timeline"
+    },
+    "stop": "frontier",
+    "timelines": [
+      2
+    ],
+    "start_wal": "00000002000000000000000F",
+    "consistent_wal": "000000020000000000000010",
+    "consistent": true,
+    "off_target": false,
+    "frontier_timeline": 2,
+    "frontier_position": 20,
+    "frontier_wal": "000000020000000000000014",
+    "frontier_receipt_at": "2026-11-07T08:11:21Z",
+    "assumption_codes": [
+      "segment-name-presence-only",
+      "wal-bytes-and-restore-not-verified"
+    ]
+  }
+]

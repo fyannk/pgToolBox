@@ -1,0 +1,68 @@
+{{- define "pgtools.console.metricsTLS" -}}
+{{- $t := .Values.console.metrics.tls -}}
+tlsConfig:
+  serverName: {{ $t.serverName | default (printf "%s.%s.svc" (include "pgtools.console.fullname" .) .Release.Namespace) | quote }}
+  {{- if $t.insecureSkipVerify }}
+  insecureSkipVerify: true
+  {{- else if $t.caSecret.name }}
+  ca:
+    secret:
+      name: {{ $t.caSecret.name }}
+      key: {{ $t.caSecret.key }}
+  {{- end }}
+{{- end -}}
+{{- if and .Values.console.enabled .Values.console.metrics.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "pgtools.console.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "pgtools.console.labels" . | nindent 4 }}
+    {{- with .Values.console.metrics.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "pgtools.console.selectorLabels" . | nindent 6 }}
+  endpoints:
+    # The probe port: plain HTTP, or HTTPS with the console's certificate when
+    # console.tls.secretName is set. The scraper's token must be allowed `get /metrics`.
+    - port: metrics
+      path: /metrics
+      {{- if .Values.console.tls.secretName }}
+      scheme: https
+      {{- include "pgtools.console.metricsTLS" . | nindent 6 }}
+      {{- end }}
+      interval: {{ .Values.console.metrics.serviceMonitor.interval }}
+      # Prometheus' own ServiceAccount token (bind metrics.readerSubjects to it).
+      bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+{{- end }}
+{{- if and .Values.console.enabled .Values.console.metrics.podMonitor.enabled }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: {{ include "pgtools.console.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "pgtools.console.labels" . | nindent 4 }}
+    {{- with .Values.console.metrics.podMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "pgtools.console.selectorLabels" . | nindent 6 }}
+  podMetricsEndpoints:
+    # PodMonitor cannot send a token file: prefer the ServiceMonitor, or put the
+    # scraper's authorization in an additionalScrapeConfig.
+    - port: probes
+      path: /metrics
+      {{- if .Values.console.tls.secretName }}
+      scheme: https
+      {{- include "pgtools.console.metricsTLS" . | nindent 6 }}
+      {{- end }}
+      interval: {{ .Values.console.metrics.podMonitor.interval }}
+{{- end }}

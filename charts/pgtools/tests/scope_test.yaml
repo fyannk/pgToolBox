@@ -1,0 +1,152 @@
+# The team chart: a namespace admin installs it, so the default
+# render holds no CRD and no cluster-scoped kind; the operator is refused.
+suite: namespace scope
+release:
+  name: pgtoolbox-console
+  namespace: team-a
+tests:
+  - it: renders only namespaced kinds by default
+    asserts:
+      - notMatchRegex: {path: kind, pattern: "^(ClusterRole|ClusterRoleBinding|CustomResourceDefinition|Namespace|ValidatingAdmissionPolicy|ValidatingAdmissionPolicyBinding|ValidatingWebhookConfiguration|MutatingWebhookConfiguration|PriorityClass|StorageClass|IngressClass|PersistentVolume)$"}
+
+  - it: puts every object of the default render in the release namespace
+    templates:
+      - templates/console/configmap-lifecycle.yaml
+      - templates/console/configmap-revocations.yaml
+      - templates/console/deployment.yaml
+      - templates/console/poddisruptionbudget.yaml
+      - templates/console/rbac.yaml
+      - templates/console/secret-session.yaml
+      - templates/console/service.yaml
+      - templates/console/serviceaccount.yaml
+      - templates/console/state.yaml
+    asserts:
+      - equal: {path: metadata.namespace, value: team-a}
+
+  - it: stays namespaced with evidence agents, in every TLS mode and with their NetworkPolicy
+    set:
+      evidence:
+        agents: [{cluster: orders, secrets: [minio-creds]}]
+        tls: {mode: certManager, certManager: {issuerRef: {name: team-ca}}}
+        networkPolicy: {enabled: true, apiServer: {addresses: [10.96.0.1]}}
+    asserts:
+      - notMatchRegex: {path: kind, pattern: "^(ClusterRole|ClusterRoleBinding|ClusterIssuer|CustomResourceDefinition|Namespace|ValidatingAdmissionPolicy|ValidatingAdmissionPolicyBinding|ValidatingWebhookConfiguration|MutatingWebhookConfiguration|PriorityClass|StorageClass|IngressClass|PersistentVolume)$"}
+
+  - it: puts every evidence agent object in the release namespace
+    set:
+      evidence.agents: [{cluster: orders, secrets: [minio-creds]}]
+    templates:
+      - templates/evidence/configmap-agents.yaml
+      - templates/evidence/deployment.yaml
+      - templates/evidence/rbac.yaml
+      - templates/evidence/secret-token.yaml
+      - templates/evidence/service.yaml
+      - templates/evidence/serviceaccount.yaml
+    asserts:
+      - equal: {path: metadata.namespace, value: team-a}
+
+  - it: rejects a misspelt console key
+    set: {console.replicsa: 3}
+    template: templates/console/deployment.yaml
+    asserts:
+      - failedTemplate: {}
+
+  - it: renders only namespaced kinds with pgAdmin on, every option set
+    set: &pgadminAll
+      pgadmin:
+        enabled: true
+        auth:
+          provider: openshift
+        exposure: {type: route, host: pgadmin.apps.example.com}
+        networkPolicy: {enabled: true, apiServer: {mode: any}}
+        servers:
+          - {cluster: orders, endpoint: rw, credentials: {application: {secret: orders-app}}}
+          - {cluster: orders, endpoint: "pooler:orders-pool", name: pooled, credentials: {superuser: {secret: orders-superuser}}}
+          - {cluster: orders, endpoint: ro, credentials: {databaseRole: {name: orders-reporting, secret: orders-reporting-password}}}
+    asserts:
+      - notMatchRegex: {path: kind, pattern: "^(ClusterRole|ClusterRoleBinding|CustomResourceDefinition|Namespace|ValidatingAdmissionPolicy|ValidatingAdmissionPolicyBinding|ValidatingWebhookConfiguration|MutatingWebhookConfiguration|PriorityClass|StorageClass|IngressClass|PersistentVolume)$"}
+
+  - it: puts every pgAdmin object in the release namespace
+    set: *pgadminAll
+    templates:
+      - templates/pgadmin/configmap-servers.yaml
+      - templates/pgadmin/deployment.yaml
+      - templates/pgadmin/exposure.yaml
+      - templates/pgadmin/networkpolicy.yaml
+      - templates/pgadmin/pvc.yaml
+      - templates/pgadmin/rbac.yaml
+      - templates/pgadmin/secrets.yaml
+      - templates/pgadmin/service.yaml
+      - templates/pgadmin/serviceaccount.yaml
+    asserts:
+      - equal: {path: metadata.namespace, value: team-a}
+
+  - it: binds pgAdmin's Role to its own ServiceAccount in the release namespace only
+    set: *pgadminAll
+    template: templates/pgadmin/rbac.yaml
+    documentIndex: 1
+    asserts:
+      - equal: {path: 'subjects[0].namespace', value: team-a}
+      - equal: {path: roleRef.kind, value: Role}
+
+  # Every namespaced console option at once (1.3.0): the render a namespace
+  # admin gets with MCP and its write tools, tracing, the digest and its Lease
+  # Role, persistent history, restore drills without the admission policy (the
+  # one cluster-scoped object of the chart, opt-in), evidence agents and pgAdmin.
+  - it: renders only namespaced kinds with every namespaced console option on
+    set: &consoleAll
+      console:
+        publicURL: https://console.team-a.example.com
+        history: {persistent: true}
+        digest:
+          delivery: {webhook: {existingSecret: team-digest, key: url}}
+        mcp: {enabled: true, writeTools: true}
+        tracing: {endpoint: "http://jaeger-collector.monitoring:4318", includePayloads: true}
+        restoreDrills: {enabled: true}
+      evidence:
+        agents: [{cluster: orders, secrets: [minio-creds]}]
+        networkPolicy: {enabled: true, apiServer: {addresses: [10.96.0.1]}}
+      pgadmin:
+        enabled: true
+        auth:
+          provider: openshift
+        exposure: {type: route, host: pgadmin.apps.example.com}
+        servers:
+          - {cluster: orders, endpoint: rw, credentials: {application: {secret: orders-app}}}
+    asserts:
+      - notMatchRegex: {path: kind, pattern: "^(ClusterRole|ClusterRoleBinding|ClusterIssuer|CustomResourceDefinition|Namespace|ValidatingAdmissionPolicy|ValidatingAdmissionPolicyBinding|ValidatingWebhookConfiguration|MutatingWebhookConfiguration|PriorityClass|StorageClass|IngressClass|PersistentVolume)$"}
+
+  # Guards against a vacuous pass: a renamed value would drop an option from the
+  # render above without failing it.
+  - it: renders the digest Lease Role in that render
+    set: *consoleAll
+    template: templates/console/digest-lease.yaml
+    documentIndex: 0
+    asserts:
+      - isKind: {of: Role}
+      - equal: {path: metadata.namespace, value: team-a}
+
+  - it: renders the console as a StatefulSet with persistent history in that render
+    set: *consoleAll
+    template: templates/console/deployment.yaml
+    asserts:
+      - isKind: {of: StatefulSet}
+
+  - it: puts every console object of that render in the release namespace
+    set: *consoleAll
+    templates:
+      - templates/console/deployment.yaml
+      - templates/console/digest-lease.yaml
+      - templates/console/rbac.yaml
+      - templates/console/state.yaml
+      - templates/console/restoredrills-networkpolicy.yaml
+      - templates/console/service.yaml
+      - templates/console/serviceaccount.yaml
+    asserts:
+      - equal: {path: metadata.namespace, value: team-a}
+
+  - it: renders no admission policy for restore drills unless a cluster admin asks for it
+    set: *consoleAll
+    template: templates/console/restoredrills-admissionpolicy.yaml
+    asserts:
+      - hasDocuments: {count: 0}

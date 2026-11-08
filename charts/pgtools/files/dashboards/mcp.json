@@ -1,0 +1,789 @@
+{
+  "uid": "pgtoolbox-mcp",
+  "title": "pgToolBox console: MCP / AI assistants",
+  "tags": [
+    "pgtoolbox",
+    "pgtoolbox-console",
+    "mcp"
+  ],
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "graphTooltip": 1,
+  "refresh": "30s",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "annotations": {
+    "list": []
+  },
+  "links": [],
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "label": "Data source",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {},
+        "hide": 0
+      },
+      {
+        "name": "namespace",
+        "label": "Namespace",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "includeAll": true,
+        "multi": true,
+        "current": {},
+        "refresh": 2,
+        "sort": 1,
+        "allValue": ".+",
+        "query": {
+          "query": "label_values(pgtoolbox_console_mcp_calls_total, namespace)",
+          "refId": "ns"
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "row",
+      "title": "MCP / AI assistants: tool calls",
+      "id": 1,
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Tool calls per second by tool",
+      "id": 2,
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (tool) (rate(pgtoolbox_console_mcp_calls_total{namespace=~\"$namespace\"}[$__rate_interval]))",
+          "legendFormat": "{{tool}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Tool calls per second by outcome",
+      "id": 3,
+      "description": "ok, an HTTP status, timeout, error, unauthenticated; for the write tools also confirmation_requested, declined, unconfirmed.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (outcome) (rate(pgtoolbox_console_mcp_calls_total{namespace=~\"$namespace\"}[$__rate_interval]))",
+          "legendFormat": "{{outcome}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "p95 call duration by tool",
+      "id": 4,
+      "description": "Compare with the call timeout (20 s by default).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 9
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le, tool) (rate(pgtoolbox_console_mcp_call_duration_seconds_bucket{namespace=~\"$namespace\"}[$__rate_interval])))",
+          "legendFormat": "{{tool}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Error and timeout ratio",
+      "id": 5,
+      "description": "The PgToolBoxConsoleMCPHighErrorRatio alert fires above 10% for 15 minutes.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 9
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum(rate(pgtoolbox_console_mcp_calls_total{namespace=~\"$namespace\",outcome=~\"error|timeout|5..\"}[$__rate_interval])) / sum(rate(pgtoolbox_console_mcp_calls_total{namespace=~\"$namespace\"}[$__rate_interval]))",
+          "legendFormat": "error, timeout, 5xx"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum(rate(pgtoolbox_console_mcp_calls_total{namespace=~\"$namespace\",outcome=\"timeout\"}[$__rate_interval])) / sum(rate(pgtoolbox_console_mcp_calls_total{namespace=~\"$namespace\"}[$__rate_interval]))",
+          "legendFormat": "timeout"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "MCP / AI assistants: results and refusals",
+      "id": 6,
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 17
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Truncation rate by tool",
+      "id": 7,
+      "description": "Share of successful results shortened to fit the response cap.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 18
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (tool) (rate(pgtoolbox_console_mcp_result_truncated_total{namespace=~\"$namespace\"}[$__rate_interval])) / sum by (tool) (rate(pgtoolbox_console_mcp_result_bytes_count{namespace=~\"$namespace\"}[$__rate_interval]))",
+          "legendFormat": "{{tool}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "p95 result size by tool",
+      "id": 8,
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 18
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le, tool) (rate(pgtoolbox_console_mcp_result_bytes_bucket{namespace=~\"$namespace\"}[$__rate_interval])))",
+          "legendFormat": "{{tool}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Denied and unauthenticated calls per second",
+      "id": 9,
+      "description": "403: the person's own RBAC refused the read. unauthenticated should stay at zero.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 26
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (outcome) (rate(pgtoolbox_console_mcp_calls_total{namespace=~\"$namespace\",outcome=~\"401|403|unauthenticated\"}[$__rate_interval]))",
+          "legendFormat": "{{outcome}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Other MCP requests per second (resources, prompts, lists)",
+      "id": 10,
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 26
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (method, outcome) (rate(pgtoolbox_console_mcp_requests_total{namespace=~\"$namespace\"}[$__rate_interval]))",
+          "legendFormat": "{{method}} {{outcome}}"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "MCP / AI assistants: write tools",
+      "id": 11,
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 34
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Write tools: confirmations asked, declined and done per second",
+      "id": 12,
+      "description": "confirmation_requested: the model asked and the person was shown the confirmation page. ok: the operation ran after the person confirmed.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 35
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (outcome) (rate(pgtoolbox_console_mcp_calls_total{namespace=~\"$namespace\",tool=~\"backup|reload|restart|promote\",outcome=~\"confirmation_requested|declined|unconfirmed|ok\"}[$__rate_interval]))",
+          "legendFormat": "{{outcome}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Write tools: confirmed share of confirmations asked",
+      "id": 13,
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 35
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum(increase(pgtoolbox_console_mcp_calls_total{namespace=~\"$namespace\",tool=~\"backup|reload|restart|promote\",outcome=\"ok\"}[$__range])) / sum(increase(pgtoolbox_console_mcp_calls_total{namespace=~\"$namespace\",tool=~\"backup|reload|restart|promote\",outcome=\"confirmation_requested\"}[$__range]))",
+          "legendFormat": "ok / asked"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "MCP / AI assistants: OAuth server",
+      "id": 14,
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 43
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "OAuth token endpoint per second by outcome",
+      "id": 15,
+      "description": "ok: a token issued, by authorization code or by refresh. Anything else is a failure: refused, revoked, replayed, throttled, busy, error.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 44
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (outcome) (rate(pgtoolbox_console_mcp_oauth_requests_total{namespace=~\"$namespace\",endpoint=\"token\"}[$__rate_interval]))",
+          "legendFormat": "{{outcome}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "OAuth token failure ratio",
+      "id": 16,
+      "description": "The PgToolBoxConsoleMCPOAuthTokenFailures alert fires above 25% for 15 minutes.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 44
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum(rate(pgtoolbox_console_mcp_oauth_requests_total{namespace=~\"$namespace\",endpoint=\"token\",outcome!=\"ok\"}[$__rate_interval])) / sum(rate(pgtoolbox_console_mcp_oauth_requests_total{namespace=~\"$namespace\",endpoint=\"token\"}[$__rate_interval]))",
+          "legendFormat": "failed / all"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Sign-ins to assistants: authorize outcomes per second",
+      "id": 17,
+      "description": "consent: the consent page was shown. approved or denied: the person's answer.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 52
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (outcome) (rate(pgtoolbox_console_mcp_oauth_requests_total{namespace=~\"$namespace\",endpoint=\"authorize\"}[$__rate_interval]))",
+          "legendFormat": "{{outcome}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Registration, metadata and revocation per second",
+      "id": 18,
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 52
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (endpoint, outcome) (rate(pgtoolbox_console_mcp_oauth_requests_total{namespace=~\"$namespace\",endpoint=~\"register|client_metadata|revoke\"}[$__rate_interval]))",
+          "legendFormat": "{{endpoint}} {{outcome}}"
+        }
+      ]
+    }
+  ]
+}

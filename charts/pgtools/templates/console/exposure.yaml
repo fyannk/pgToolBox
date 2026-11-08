@@ -1,0 +1,135 @@
+{{- if and .Values.console.enabled (ne .Values.console.exposure.type "none") }}
+{{- $e := .Values.console.exposure }}
+{{- $name := include "pgtools.console.fullname" . }}
+{{- $sticky := $e.sticky | default dict }}
+{{- if eq $e.type "ingress" }}
+{{- /* Cookie affinity: a person stays on one replica, whose
+history and charts they keep seeing. ingress-nginx reads these; Traefik reads
+its own on the Service (service.yaml). Explicit annotations win. */}}
+{{- $affinity := dict }}
+{{- if $sticky.enabled }}
+{{- $_ := set $affinity "nginx.ingress.kubernetes.io/affinity" "cookie" }}
+{{- $_ := set $affinity "nginx.ingress.kubernetes.io/affinity-mode" "persistent" }}
+{{- $_ := set $affinity "nginx.ingress.kubernetes.io/session-cookie-name" $sticky.cookieName }}
+{{- $_ := set $affinity "nginx.ingress.kubernetes.io/session-cookie-path" "/" }}
+{{- $_ := set $affinity "nginx.ingress.kubernetes.io/session-cookie-samesite" "Lax" }}
+{{- if $e.ingress.tls.enabled }}
+{{- $_ := set $affinity "nginx.ingress.kubernetes.io/session-cookie-secure" "true" }}
+{{- end }}
+{{- end }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "pgtools.console.labels" . | nindent 4 }}
+  annotations:
+    # SSE: the event stream is long-lived and must not be buffered or cut at the
+    # edge's default timeout. ingress-nginx honours these; other controllers
+    # ignore them, so set theirs in exposure.ingress.annotations.
+    {{- /* A key the user sets in exposure.ingress.annotations wins and is not emitted twice. */}}
+    {{- if not (hasKey $e.ingress.annotations "nginx.ingress.kubernetes.io/proxy-read-timeout") }}
+    nginx.ingress.kubernetes.io/proxy-read-timeout: {{ include "pgtools.seconds" $e.sse.timeout | quote }}
+    {{- end }}
+    {{- if not (hasKey $e.ingress.annotations "nginx.ingress.kubernetes.io/proxy-send-timeout") }}
+    nginx.ingress.kubernetes.io/proxy-send-timeout: {{ include "pgtools.seconds" $e.sse.timeout | quote }}
+    {{- end }}
+    {{- if not (hasKey $e.ingress.annotations "nginx.ingress.kubernetes.io/proxy-buffering") }}
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    {{- end }}
+    {{- range $key, $value := $affinity }}
+    {{- if not (hasKey $e.ingress.annotations $key) }}
+    {{ $key }}: {{ $value | quote }}
+    {{- end }}
+    {{- end }}
+    {{- with $e.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  {{- with $e.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- if $e.ingress.tls.enabled }}
+  tls:
+    - hosts: [{{ required "console.exposure.host is required for an Ingress with TLS" $e.host | quote }}]
+      {{- with $e.ingress.tls.secretName }}
+      secretName: {{ . }}
+      {{- end }}
+  {{- end }}
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $name }}
+                port:
+                  name: http
+      {{- with $e.host }}
+      host: {{ . | quote }}
+      {{- end }}
+{{- else if eq $e.type "route" }}
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "pgtools.console.labels" . | nindent 4 }}
+  annotations:
+    # SSE: the router's default 30 s timeout would cut the event stream.
+    {{- if not (hasKey $e.route.annotations "haproxy.router.openshift.io/timeout") }}
+    haproxy.router.openshift.io/timeout: {{ $e.sse.timeout | quote }}
+    {{- end }}
+    {{- /* The router is sticky by default, through its own cookie. */}}
+    {{- if $sticky.enabled }}
+    {{- if not (hasKey $e.route.annotations "router.openshift.io/cookie_name") }}
+    router.openshift.io/cookie_name: {{ $sticky.cookieName | quote }}
+    {{- end }}
+    {{- else if not (hasKey $e.route.annotations "haproxy.router.openshift.io/disable_cookies") }}
+    haproxy.router.openshift.io/disable_cookies: "true"
+    {{- end }}
+    {{- with $e.route.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  {{- with $e.host }}
+  host: {{ . | quote }}
+  {{- end }}
+  to:
+    kind: Service
+    name: {{ $name }}
+  port:
+    targetPort: http
+  tls:
+    termination: {{ $e.route.termination }}
+    insecureEdgeTerminationPolicy: Redirect
+{{- else if eq $e.type "httpRoute" }}
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "pgtools.console.labels" . | nindent 4 }}
+spec:
+  {{- with $e.httpRoute.parentRefs }}
+  parentRefs:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with $e.host }}
+  hostnames: [{{ . | quote }}]
+  {{- end }}
+  rules:
+    - matches:
+        - path: {type: PathPrefix, value: /}
+      # SSE: no request timeout shorter than the stream.
+      timeouts:
+        request: {{ $e.sse.timeout | quote }}
+      backendRefs:
+        - name: {{ $name }}
+          port: {{ .Values.console.service.port }}
+{{- end }}
+{{- end }}

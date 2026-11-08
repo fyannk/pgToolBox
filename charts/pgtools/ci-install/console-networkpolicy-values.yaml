@@ -1,0 +1,7 @@
+# The NetworkPolicy rendered and enforced (Calico): the console must still come
+# Ready, so the API-server egress it renders is the one the pod needs.
+console:
+  replicas: 1
+  networkPolicy:
+    enabled: true
+    apiServer: {mode: any}

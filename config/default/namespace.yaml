@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: pgtoolbox
+  labels:
+    app.kubernetes.io/name: pgtoolbox
+    # Restricted Pod Security (checklist 18): the operator and every pod it runs.
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted

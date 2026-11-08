@@ -1,0 +1,1162 @@
+{
+  "ref": {
+    "namespace": "team-a",
+    "name": "orders",
+    "uid": "0b6a2c1e-8f0d-4a55-9a3e-7c1f2b3d4e5f"
+  },
+  "runAt": "2026-10-29T12:00:00Z",
+  "inputGeneration": 2,
+  "runner": {
+    "source": "diagnostics",
+    "state": "live",
+    "health": "ok"
+  },
+  "catalogPins": [
+    "1.30.0",
+    "1.30.1"
+  ],
+  "applied": "1.30",
+  "counts": {
+    "critical": 0,
+    "high": 0,
+    "warning": 3,
+    "note": 1,
+    "unavailable": 34,
+    "runAt": "2026-10-29T12:00:00Z"
+  },
+  "incidents": [
+    {
+      "root": {
+        "id": "cnpg-declared-object-failed/database/orders-reporting",
+        "check": "cnpg-declared-object-failed",
+        "subject": {
+          "kind": "Database",
+          "name": "orders-reporting"
+        },
+        "severity": "warning",
+        "summary": "The operator cannot apply the declared Database \"orders-reporting\".",
+        "detail": "The declaration exists but its effect does not: whatever expects this database, role, publication or subscription to be there finds it missing or outdated. The operator's own message below names the refusal, and nothing changes until its cause is fixed.",
+        "since": "2026-10-29T12:00:00Z",
+        "evidence": [
+          {
+            "origin": "operator-reported",
+            "object": "Database/orders-reporting",
+            "detail": "applied false: role \"reporter\" does not exist"
+          },
+          {
+            "origin": "console-parsed from Kubernetes-observed image",
+            "object": "Pod/orders-1 init container bootstrap-controller",
+            "detail": "operator bootstrap image \"ghcr.io/cloudnative-pg/cloudnative-pg:1.30.0\""
+          }
+        ],
+        "link": "objects",
+        "linkLabel": "Databases"
+      },
+      "severity": "warning"
+    },
+    {
+      "root": {
+        "id": "k8s-eol",
+        "check": "k8s-eol",
+        "subject": {
+          "kind": ""
+        },
+        "severity": "warning",
+        "summary": "The Kubernetes server version no longer receives upstream patches.",
+        "detail": "Kubernetes patches each minor for about fourteen months, so bug and security fixes are no longer published for this one. Where support ends is the lifecycle table's claim, quoted below with the version it is applied to.",
+        "since": "2026-10-29T12:00:00Z",
+        "evidence": [
+          {
+            "origin": "Kubernetes-reported",
+            "object": "API server",
+            "detail": "/version reports \"v1.34.1\""
+          },
+          {
+            "origin": "console-pinned",
+            "object": "lifecycle table (built-in)",
+            "detail": "Kubernetes 1.34 left upstream support on 2026-10-27; table reviewed 2026-11-02"
+          }
+        ],
+        "linkLabel": "Overview"
+      },
+      "severity": "warning"
+    },
+    {
+      "root": {
+        "id": "volume-full-forecast/orders-1/pgdata/bytes",
+        "check": "volume-full-forecast",
+        "subject": {
+          "kind": "Pod",
+          "name": "orders-1"
+        },
+        "severity": "warning",
+        "summary": "The pgdata volume of orders-1 will be full in about 8 days (2026-11-06 11:37 UTC).",
+        "detail": "A robust fit of the last 168 hours grows 1.0 GiB a day, high confidence. The earliest plausible date is 2026-11-06 11:37 UTC.",
+        "at": "2026-10-29T12:00:00Z",
+        "since": "2026-10-29T12:00:00Z",
+        "evidence": [
+          {
+            "origin": "console-observed",
+            "object": "Pod/orders-1",
+            "detail": "/pg/status volumeUsages: 8.0 GiB left of 20.0 GiB (filesystem)"
+          }
+        ],
+        "nextSteps": "Raise the storage size (the storage class must allow expansion), or find and stop the growth.",
+        "link": "storage",
+        "linkLabel": "Storage"
+      },
+      "severity": "warning"
+    },
+    {
+      "root": {
+        "id": "restore-drill-overdue",
+        "check": "restore-drill-overdue",
+        "subject": {
+          "kind": "Cluster"
+        },
+        "severity": "note",
+        "summary": "No restore drill run from this console has passed for this Cluster in the last 90 days.",
+        "detail": "A backup is proven restorable only by restoring it. A drill restores the latest backup into a throwaway Cluster, checks it and deletes it; its duration is the measured recovery time. Drills run by hand or by another console are not in this console's record.",
+        "since": "2026-10-29T12:00:00Z",
+        "evidence": [
+          {
+            "origin": "console-recorded",
+            "object": "restore drill record",
+            "detail": "no drill of this Cluster recorded since 2026-04-12"
+          }
+        ],
+        "nextSteps": "Run a restore drill from the Backups screen.",
+        "link": "backups",
+        "linkLabel": "Backups"
+      },
+      "severity": "note"
+    }
+  ],
+  "checks": [
+    {
+      "name": "resource-quota",
+      "layer": "Kubernetes",
+      "describes": "an object the API server refused to create against a namespace quota",
+      "outcome": "clear"
+    },
+    {
+      "name": "quota-exhausted",
+      "layer": "Kubernetes",
+      "describes": "a namespace quota whose usage has reached its ceiling",
+      "outcome": "unavailable",
+      "because": "resource quotas have not been observed yet — deployments predating the resourcequotas grant need the updated Role"
+    },
+    {
+      "name": "pod-scheduling",
+      "layer": "Kubernetes",
+      "describes": "a pod the scheduler cannot place on any node",
+      "outcome": "clear"
+    },
+    {
+      "name": "image-pull",
+      "layer": "Kubernetes",
+      "describes": "a container whose image the kubelet cannot pull",
+      "outcome": "clear"
+    },
+    {
+      "name": "volume-binding",
+      "layer": "Kubernetes",
+      "describes": "a persistent volume claim that has not bound",
+      "outcome": "unavailable",
+      "because": "the cluster's volumes have not been observed yet"
+    },
+    {
+      "name": "backup-cadence",
+      "layer": "Backups and archive",
+      "describes": "a backup schedule that runs far more often than its author is likely to have intended",
+      "outcome": "clear"
+    },
+    {
+      "name": "restore-drill-overdue",
+      "layer": "Backups and archive",
+      "describes": "a Cluster this console can drill with no passed restore drill in its record for 90 days",
+      "outcome": "matched"
+    },
+    {
+      "name": "insight-wraparound",
+      "layer": "PostgreSQL",
+      "describes": "a database whose transaction id or multixact age is past its anti-wraparound threshold or near the stop limit (insight pack)",
+      "outcome": "unavailable",
+      "because": "instance metrics are not scraped",
+      "sourceOff": true
+    },
+    {
+      "name": "insight-idle-in-transaction",
+      "layer": "PostgreSQL",
+      "describes": "a session idle inside an open transaction for longer than ten minutes (insight pack)",
+      "outcome": "unavailable",
+      "because": "instance metrics are not scraped",
+      "sourceOff": true
+    },
+    {
+      "name": "insight-connection-saturation",
+      "layer": "PostgreSQL",
+      "describes": "an instance with more than 80% of the connection slots ordinary roles may take in use by clients (insight pack)",
+      "outcome": "unavailable",
+      "because": "instance metrics are not scraped",
+      "sourceOff": true
+    },
+    {
+      "name": "volume-full-forecast",
+      "layer": "Kubernetes",
+      "describes": "a volume whose trend reaches full within two weeks, in bytes or inodes",
+      "outcome": "matched"
+    },
+    {
+      "name": "wal-growing-archiving-failing",
+      "layer": "Backups and archive",
+      "describes": "WAL piling up on the primary's volume while archiving fails",
+      "outcome": "clear"
+    },
+    {
+      "name": "volume-autogrow-stopped",
+      "layer": "Operator",
+      "describes": "the operator stopped growing a volume, or the storage refused an expansion",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-unrecoverable",
+      "layer": "Operator",
+      "describes": "the operator declaring the cluster unrecoverable (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-invalid-definition",
+      "layer": "Operator",
+      "describes": "a cluster definition the operator's validation rejected (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-cannot-create-objects",
+      "layer": "Kubernetes",
+      "describes": "the operator failing to create the cluster's auxiliary objects (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-unknown-plugin",
+      "layer": "Operator",
+      "describes": "a required CNPG-I plugin the operator cannot find (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-plugin-failure",
+      "layer": "Operator",
+      "describes": "a CNPG-I plugin interaction failing during reconciliation (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-image-catalog-unusable",
+      "layer": "Operator",
+      "describes": "an image catalog the operator cannot resolve an image from (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-arch-binary-missing",
+      "layer": "Operator",
+      "describes": "an online instance-manager upgrade blocked by a missing architecture binary (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-waiting-for-user",
+      "layer": "Operator",
+      "describes": "the operator waiting for a supervised switchover (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-upgrade-delayed",
+      "layer": "Operator",
+      "describes": "an upgrade the operator is configured to delay (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-wal-disk-space-phase",
+      "layer": "PostgreSQL",
+      "describes": "the operator refusing to run PostgreSQL for lack of WAL disk space (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-primary-move-stuck",
+      "layer": "Replication",
+      "describes": "a switchover or failover still unfinished after ten minutes (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-status-unreachable",
+      "layer": "Operator",
+      "describes": "the operator unable to reach any ready instance's status endpoint (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-bootstrap-stuck",
+      "layer": "Operator",
+      "describes": "the operator creating the primary or a replica for half an hour (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-rollout-stuck",
+      "layer": "Operator",
+      "describes": "a rollout or configuration phase held for half an hour (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-major-upgrade-stuck",
+      "layer": "Operator",
+      "describes": "a PostgreSQL major upgrade running for two hours (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-promotion-stuck",
+      "layer": "Replication",
+      "describes": "a replica cluster's promotion running for a quarter of an hour (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-wal-archiving-failing",
+      "layer": "Backups and archive",
+      "describes": "the instance manager reporting continuous archiving as failing (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-last-backup-failed",
+      "layer": "Backups and archive",
+      "describes": "the last backup having failed (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-system-id-mismatch",
+      "layer": "Operator",
+      "describes": "instances reporting different PostgreSQL system identifiers (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-hibernation-blocked",
+      "layer": "Operator",
+      "describes": "a requested hibernation waiting on cluster health (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-demotion-fencing",
+      "layer": "Replication",
+      "describes": "every instance fenced for a replica-cluster transition (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-not-ready",
+      "layer": "Operator",
+      "describes": "the operator reporting the cluster not ready for ten minutes (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-no-system-id",
+      "layer": "Operator",
+      "describes": "no instance reporting a system identifier for a quarter of an hour (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-hibernation-stuck",
+      "layer": "Operator",
+      "describes": "hibernation waiting on pod deletion for a quarter of an hour (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-hibernated",
+      "layer": "Operator",
+      "describes": "the operator reporting the cluster as hibernated (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-primary-status-check",
+      "layer": "Operator",
+      "describes": "a Ready primary whose status check the operator cannot pass (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-primary-lease-conflict",
+      "layer": "Operator",
+      "describes": "a primary lease owned by something else (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-scale-down-refused",
+      "layer": "Operator",
+      "describes": "a scale-down the operator reverted (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-ca-secret-unusable",
+      "layer": "Operator",
+      "describes": "a referenced CA secret that is missing or unparseable (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-ca-expiring",
+      "layer": "Operator",
+      "describes": "a user-supplied CA approaching expiry (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-service-account-missing",
+      "layer": "Kubernetes",
+      "describes": "a specified ServiceAccount that does not exist (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-bootstrap-backup-missing",
+      "layer": "Operator",
+      "describes": "a bootstrap recovery pointing at a Backup that does not exist (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-manager-upgrade-failed",
+      "layer": "Operator",
+      "describes": "an in-place instance-manager upgrade that failed (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-retention-failed",
+      "layer": "Backups and archive",
+      "describes": "a backup retention policy that failed to prune (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-backup-target-unhealthy",
+      "layer": "Backups and archive",
+      "describes": "the operator refusing to run a backup on an unhealthy target instance (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-backup-waiting-for-target",
+      "layer": "Backups and archive",
+      "describes": "a backup waiting because its target instance is not ready or not found (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-backup-error",
+      "layer": "Backups and archive",
+      "describes": "a backup the operator recorded as exiting with an error (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-backup-manager-restarted",
+      "layer": "Backups and archive",
+      "describes": "a backup the operator failed because the instance manager restarted under it (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-schedule-cluster-unhealthy",
+      "layer": "Backups and archive",
+      "describes": "a schedule the operator holds back because the cluster is not healthy (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-schedule-invalid",
+      "layer": "Backups and archive",
+      "describes": "a schedule expression no time satisfies (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-schedule-adoption-refused",
+      "layer": "Backups and archive",
+      "describes": "a schedule skipping a run because a Backup of that name is not its own (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-schedule-creation-failed",
+      "layer": "Backups and archive",
+      "describes": "a schedule the operator could not create a Backup object for (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-pooler-image-catalog-error",
+      "layer": "Poolers",
+      "describes": "a Pooler whose image the operator cannot resolve from its catalog (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-pooler-ownership-invalid",
+      "layer": "Poolers",
+      "describes": "a Pooler whose managed resources the operator found owned by something else (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-instance-fenced",
+      "layer": "PostgreSQL",
+      "describes": "an instance the operator has fenced (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "unavailable",
+      "because": "instance metrics are not scraped",
+      "sourceOff": true
+    },
+    {
+      "name": "cnpg-switchover-required",
+      "layer": "Operator",
+      "describes": "an instance reporting that a manual switchover is required (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "unavailable",
+      "because": "instance metrics are not scraped",
+      "sourceOff": true
+    },
+    {
+      "name": "cnpg-primary-disagreement",
+      "layer": "Replication",
+      "describes": "an instance whose own recovery state contradicts the operator's current primary (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "unavailable",
+      "because": "instance metrics are not scraped",
+      "sourceOff": true
+    },
+    {
+      "name": "cnpg-wal-archive-backlog",
+      "layer": "Backups and archive",
+      "describes": "WAL segments waiting to be archived, at least 32 of them, held for a quarter of an hour (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "unavailable",
+      "because": "instance metrics are not scraped",
+      "sourceOff": true
+    },
+    {
+      "name": "cnpg-archiver-failing",
+      "layer": "Backups and archive",
+      "describes": "PostgreSQL counting archive failures continuously for a quarter of an hour (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "unavailable",
+      "because": "instance metrics are not scraped",
+      "sourceOff": true
+    },
+    {
+      "name": "cnpg-backup-failed",
+      "layer": "Backups and archive",
+      "describes": "a Backup object reporting the failed phase (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-backup-stuck-pending",
+      "layer": "Backups and archive",
+      "describes": "a Backup pending for over half an hour (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-backup-wal-archiving",
+      "layer": "Backups and archive",
+      "describes": "a Backup blocked by failing WAL archiving (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-schedule-suspended",
+      "layer": "Backups and archive",
+      "describes": "a suspended backup schedule (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-schedule-not-firing",
+      "layer": "Backups and archive",
+      "describes": "a backup schedule that has stopped firing (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-declared-object-failed",
+      "layer": "Declared objects",
+      "describes": "a declared database object the operator cannot apply (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "matched"
+    },
+    {
+      "name": "cnpg-wal-archive-command-failed",
+      "layer": "Backups and archive",
+      "describes": "the archive_command wrapper failing (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-wal-archive-plugin-missing",
+      "layer": "Backups and archive",
+      "describes": "a WAL-archive plugin whose socket is absent from the pod (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-wal-restore-failed",
+      "layer": "Replication",
+      "describes": "the restore_command wrapper failing for reasons other than a missing WAL (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-pg-rewind-failed",
+      "layer": "PostgreSQL",
+      "describes": "pg_rewind failing on a demoted primary (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-pg-control-lost",
+      "layer": "PostgreSQL",
+      "describes": "a zero-length pg_control with no surviving backup copy (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-join-failed",
+      "layer": "Operator",
+      "describes": "a new replica failing to join the cluster (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-initdb-failed",
+      "layer": "Operator",
+      "describes": "initdb bootstrap failing (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-restore-failed",
+      "layer": "Operator",
+      "describes": "a recovery bootstrap failing (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-recovery-target-missing",
+      "layer": "Operator",
+      "describes": "a recovery target matching no backup in the catalog (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-wal-disk-full",
+      "layer": "PostgreSQL",
+      "describes": "the instance manager refusing to start PostgreSQL for lack of WAL space (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-postgres-start-failed",
+      "layer": "PostgreSQL",
+      "describes": "the postmaster failing to launch (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-postgres-exited",
+      "layer": "PostgreSQL",
+      "describes": "the postmaster exiting with errors (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-lease-preempted",
+      "layer": "Replication",
+      "describes": "a primary shut down because another instance took its lease (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-lease-not-acquired",
+      "layer": "Replication",
+      "describes": "a promotion stalled waiting for the primary lease (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-replica-not-streaming",
+      "layer": "Replication",
+      "describes": "the streaming readiness probe finding no replication connection (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-replica-lagging",
+      "layer": "Replication",
+      "describes": "a replica exceeding the configured maximum lag (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-slot-sync-failing",
+      "layer": "Replication",
+      "describes": "replication slot synchronization failing on a replica (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-liveness-isolation",
+      "layer": "Operator",
+      "describes": "an instance concluding it is network-isolated (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-backup-plugin-missing",
+      "layer": "Backups and archive",
+      "describes": "a backup targeting a plugin absent from the pod (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-backup-stop-blocked",
+      "layer": "Backups and archive",
+      "describes": "pg_backup_stop failing at the end of a physical backup (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-pooler-short",
+      "layer": "Poolers",
+      "describes": "a Pooler with fewer ready instances than declared (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-pooler-clients-waiting",
+      "layer": "Poolers",
+      "describes": "a pooler instance whose oldest queued client has waited at least five seconds (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "unavailable",
+      "because": "pooler metrics are not scraped",
+      "sourceOff": true
+    },
+    {
+      "name": "cnpg-quorum-standbys-short",
+      "layer": "Replication",
+      "describes": "a failover quorum with fewer potentially synchronous standbys than transactions wait for (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-image-catalog-missing",
+      "layer": "Operator",
+      "describes": "a Cluster whose imageCatalogRef names a catalog that does not exist (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-image-catalog-lacks-major",
+      "layer": "Operator",
+      "describes": "a referenced image catalog with no image for the Cluster's PostgreSQL major (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-pooler-failed",
+      "layer": "Poolers",
+      "describes": "a Pooler the operator reports as failed (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-pooler-inactive",
+      "layer": "Poolers",
+      "describes": "a Pooler the operator reports as inactive (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-pooler-paused",
+      "layer": "Poolers",
+      "describes": "a Pooler the operator reports as paused (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-replica-not-receiving",
+      "layer": "Replication",
+      "describes": "a replica in recovery with no WAL receiver and a lag that is not closing (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "unavailable",
+      "because": "instance metrics are not scraped",
+      "sourceOff": true
+    },
+    {
+      "name": "cnpg-replication-lag-high",
+      "layer": "Replication",
+      "describes": "a replica whose lag has stayed past the threshold (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "unavailable",
+      "because": "instance metrics are not scraped",
+      "sourceOff": true
+    },
+    {
+      "name": "cnpg-sync-replicas-short",
+      "layer": "Replication",
+      "describes": "an instance reporting fewer synchronous replicas than it expects (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "unavailable",
+      "because": "instance metrics are not scraped",
+      "sourceOff": true
+    },
+    {
+      "name": "cnpg-slot-retaining-wal",
+      "layer": "Replication",
+      "describes": "a replication slot holding back WAL past the threshold (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "unavailable",
+      "because": "instance metrics are not scraped",
+      "sourceOff": true
+    },
+    {
+      "name": "cnpg-instance-failed",
+      "layer": "Operator",
+      "describes": "an instance the operator lists as failed (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-pvc-unusable",
+      "layer": "Kubernetes",
+      "describes": "a volume claim the operator lists as unusable (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-pvc-dangling",
+      "layer": "Kubernetes",
+      "describes": "a volume claim with no pod, listed by the operator for a quarter of an hour (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-pvc-resizing-stuck",
+      "layer": "Kubernetes",
+      "describes": "a volume claim carrying the resize condition for half an hour (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-pvc-initializing-stuck",
+      "layer": "Kubernetes",
+      "describes": "a volume claim whose creating job has produced no pod in half an hour (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-primary-failing",
+      "layer": "Replication",
+      "describes": "the operator reporting the current primary as failing for over a minute (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-timeline-divergence",
+      "layer": "Replication",
+      "describes": "an instance reporting a PostgreSQL timeline other than the cluster's for ten minutes (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "unavailable",
+      "because": "the operator reports no cluster timeline to compare instances against"
+    },
+    {
+      "name": "cnpg-certificate-expired",
+      "layer": "Operator",
+      "describes": "a certificate the operator reports as already expired (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-certificate-expiring",
+      "layer": "Operator",
+      "describes": "a certificate the operator reports as expiring within three days (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-managed-role-unreconcilable",
+      "layer": "Operator",
+      "describes": "a managed role the operator reports it cannot reconcile (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-tablespace-error",
+      "layer": "Operator",
+      "describes": "a declared tablespace the operator reports an error for (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-replica-switch-stuck",
+      "layer": "Replication",
+      "describes": "a switch to replica cluster in progress for a quarter of an hour (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-instances-short",
+      "layer": "Operator",
+      "describes": "fewer ready instances than declared, by the operator's own count, for ten minutes (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-primary-lease-expired",
+      "layer": "Replication",
+      "describes": "the primary lease unrenewed for a minute past its duration, or released with a primary named (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "unavailable",
+      "because": "the primary lease carries no renewal time or duration, so its validity cannot be judged"
+    },
+    {
+      "name": "cnpg-primary-lease-holder-mismatch",
+      "layer": "Replication",
+      "describes": "the primary lease held by an instance other than the operator's current primary (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-pending-restart",
+      "layer": "PostgreSQL",
+      "describes": "an instance reporting a configuration change waiting for a restart (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "unavailable",
+      "because": "the instance managers' status reports have not been swept yet"
+    },
+    {
+      "name": "cnpg-replay-paused",
+      "layer": "Replication",
+      "describes": "a replica reporting its WAL replay paused (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "unavailable",
+      "because": "the instance managers' status reports have not been swept yet"
+    },
+    {
+      "name": "cnpg-instance-might-be-unavailable",
+      "layer": "PostgreSQL",
+      "describes": "an instance manager doubting its own PostgreSQL is reachable (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "unavailable",
+      "because": "the instance managers' status reports have not been swept yet"
+    },
+    {
+      "name": "cnpg-instance-archive-failing",
+      "layer": "Backups and archive",
+      "describes": "an instance whose last archive failure is more recent than its last success (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "unavailable",
+      "because": "the instance managers' status reports have not been swept yet"
+    },
+    {
+      "name": "cnpg-wal-files-waiting",
+      "layer": "Backups and archive",
+      "describes": "an instance counting at least 32 WAL segments waiting to be archived (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "unavailable",
+      "because": "the instance managers' status reports have not been swept yet"
+    },
+    {
+      "name": "cnpg-replication-slot-inactive",
+      "layer": "Replication",
+      "describes": "an inactive replication slot the operator does not manage (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "unavailable",
+      "because": "the instance managers' status reports have not been swept yet"
+    },
+    {
+      "name": "cnpg-manager-version-drift",
+      "layer": "Operator",
+      "describes": "instances reporting more than one instance-manager version (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "unavailable",
+      "because": "the instance managers' status reports have not been swept yet"
+    },
+    {
+      "name": "postgres-fatal",
+      "layer": "PostgreSQL",
+      "describes": "a server log record with FATAL severity (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "postgres-panic",
+      "layer": "PostgreSQL",
+      "describes": "a server log record with PANIC severity (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "clear"
+    },
+    {
+      "name": "postgres-xid-wraparound",
+      "layer": "PostgreSQL",
+      "describes": "a database's transaction-id age near wraparound (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "unavailable",
+      "because": "instance metrics are not scraped",
+      "sourceOff": true
+    },
+    {
+      "name": "postgres-mxid-wraparound",
+      "layer": "PostgreSQL",
+      "describes": "a database's multixact-id age near wraparound (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "unavailable",
+      "because": "instance metrics are not scraped",
+      "sourceOff": true
+    },
+    {
+      "name": "postgres-eol",
+      "layer": "PostgreSQL",
+      "describes": "a PostgreSQL major version past upstream end of life",
+      "outcome": "unavailable",
+      "because": "the PostgreSQL version is not observed"
+    },
+    {
+      "name": "postgres-eol-soon",
+      "layer": "PostgreSQL",
+      "describes": "a PostgreSQL major version leaving upstream support within 180 days",
+      "outcome": "unavailable",
+      "because": "the PostgreSQL version is not observed"
+    },
+    {
+      "name": "postgres-long-transaction",
+      "layer": "PostgreSQL",
+      "describes": "an instance with a transaction open past the threshold (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "unavailable",
+      "because": "instance metrics are not scraped",
+      "sourceOff": true
+    },
+    {
+      "name": "postgres-deadlocks-ongoing",
+      "layer": "PostgreSQL",
+      "describes": "deadlocks at a rate of one a minute or more, held for a quarter of an hour (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "unavailable",
+      "because": "instance metrics are not scraped",
+      "sourceOff": true
+    },
+    {
+      "name": "postgres-backends-waiting",
+      "layer": "PostgreSQL",
+      "describes": "at least 300 backends waiting on a lock, held for five minutes (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "unavailable",
+      "because": "instance metrics are not scraped",
+      "sourceOff": true
+    },
+    {
+      "name": "postgres-extension-update-available",
+      "layer": "PostgreSQL",
+      "describes": "an installed extension older than the version its image ships (applies to CloudNativePG \u003e=1.30 \u003c1.31)",
+      "outcome": "unavailable",
+      "because": "instance metrics are not scraped",
+      "sourceOff": true
+    },
+    {
+      "name": "pg-memory-over-limit",
+      "layer": "PostgreSQL",
+      "describes": "worst-case PostgreSQL memory (shared_buffers + wal_buffers + max_connections × work_mem + autovacuum_max_workers × autovacuum memory) above the postgres container's memory limit",
+      "outcome": "clear"
+    },
+    {
+      "name": "pg-shared-buffers-over-limit",
+      "layer": "PostgreSQL",
+      "describes": "shared_buffers + wal_buffers at or above the postgres container's memory limit",
+      "outcome": "clear"
+    },
+    {
+      "name": "pg-effective-cache-size-over-limit",
+      "layer": "PostgreSQL",
+      "describes": "effective_cache_size above the postgres container's memory limit",
+      "outcome": "clear"
+    },
+    {
+      "name": "pg-huge-pages-missing",
+      "layer": "PostgreSQL",
+      "describes": "huge_pages = on without a hugepages-* reservation large enough for shared_buffers + wal_buffers",
+      "outcome": "clear"
+    },
+    {
+      "name": "pg-huge-pages-unused",
+      "layer": "PostgreSQL",
+      "describes": "a hugepages-* reservation PostgreSQL will not use (huge_pages off, or try with too small a reservation)",
+      "outcome": "clear"
+    },
+    {
+      "name": "pg-memory-parameter-unparsable",
+      "layer": "PostgreSQL",
+      "describes": "a memory parameter in spec.postgresql.parameters that does not parse as PostgreSQL reads it",
+      "outcome": "clear"
+    },
+    {
+      "name": "wal-archive-not-empty",
+      "layer": "Backups and archive",
+      "describes": "the archiver refusing a WAL archive that is not empty",
+      "outcome": "clear"
+    },
+    {
+      "name": "backup-destination-conflict",
+      "layer": "Backups and archive",
+      "describes": "a backup destination already holding another cluster's data",
+      "outcome": "clear"
+    },
+    {
+      "name": "object-store-denied",
+      "layer": "Backups and archive",
+      "describes": "the object store refusing the configured credentials",
+      "outcome": "clear"
+    },
+    {
+      "name": "object-store-forbidden",
+      "layer": "Backups and archive",
+      "describes": "the object store answering 403 Forbidden",
+      "outcome": "clear"
+    },
+    {
+      "name": "object-store-unreachable",
+      "layer": "Backups and archive",
+      "describes": "an unreachable object store endpoint",
+      "outcome": "clear"
+    },
+    {
+      "name": "barman-last-backup-failed",
+      "layer": "Backups and archive",
+      "describes": "the barman-cloud plugin reporting the last backup as failed",
+      "outcome": "clear"
+    },
+    {
+      "name": "barman-no-successful-backup",
+      "layer": "Backups and archive",
+      "describes": "the barman-cloud plugin reporting no successful backup for a cluster scheduled for a day",
+      "outcome": "clear"
+    },
+    {
+      "name": "repository-wal-unhealthy",
+      "layer": "Backups and archive",
+      "describes": "the evidence agent reporting WAL continuity as unhealthy",
+      "outcome": "clear"
+    },
+    {
+      "name": "repository-coverage-unhealthy",
+      "layer": "Backups and archive",
+      "describes": "the evidence agent reporting recovery coverage as unhealthy",
+      "outcome": "clear"
+    },
+    {
+      "name": "repository-retention-unhealthy",
+      "layer": "Backups and archive",
+      "describes": "the evidence agent reporting retention as unhealthy",
+      "outcome": "clear"
+    },
+    {
+      "name": "repository-retention-not-applied",
+      "layer": "Backups and archive",
+      "describes": "the evidence agent raising the RetentionNotApplied finding",
+      "outcome": "clear"
+    },
+    {
+      "name": "repository-retention-not-configured",
+      "layer": "Backups and archive",
+      "describes": "the evidence agent raising the RetentionNotConfigured finding",
+      "outcome": "clear"
+    },
+    {
+      "name": "repository-stanza-split",
+      "layer": "Backups and archive",
+      "describes": "the evidence agent raising the StanzaSplit finding",
+      "outcome": "clear"
+    },
+    {
+      "name": "k8s-volume-mount-failed",
+      "layer": "Kubernetes",
+      "describes": "a pod that cannot mount or attach one of its volumes",
+      "outcome": "clear"
+    },
+    {
+      "name": "k8s-pod-evicted",
+      "layer": "Kubernetes",
+      "describes": "a member pod evicted from its node",
+      "outcome": "clear"
+    },
+    {
+      "name": "k8s-container-crashloop",
+      "layer": "Kubernetes",
+      "describes": "a container in CrashLoopBackOff",
+      "outcome": "clear"
+    },
+    {
+      "name": "k8s-container-oom",
+      "layer": "Kubernetes",
+      "describes": "a container the kernel killed for exceeding its memory limit",
+      "outcome": "clear"
+    },
+    {
+      "name": "k8s-container-config-error",
+      "layer": "Kubernetes",
+      "describes": "a container the kubelet cannot construct",
+      "outcome": "clear"
+    },
+    {
+      "name": "k8s-pod-replaced-repeatedly",
+      "layer": "Kubernetes",
+      "describes": "a pod replaced several times inside an hour",
+      "outcome": "clear"
+    },
+    {
+      "name": "k8s-definition-rewritten-repeatedly",
+      "layer": "Kubernetes",
+      "describes": "an object whose definition is rewritten again and again inside an hour",
+      "outcome": "clear"
+    },
+    {
+      "name": "k8s-eol",
+      "layer": "Kubernetes",
+      "describes": "a Kubernetes version past upstream end of life",
+      "outcome": "matched"
+    },
+    {
+      "name": "k8s-eol-soon",
+      "layer": "Kubernetes",
+      "describes": "a Kubernetes version leaving upstream support within 90 days",
+      "outcome": "clear"
+    },
+    {
+      "name": "cnpg-eol",
+      "layer": "Operator",
+      "describes": "a CloudNativePG release past its end of life",
+      "outcome": "unavailable",
+      "because": "the lifecycle table lists no CloudNativePG release lines"
+    },
+    {
+      "name": "barman-plugin-eol",
+      "layer": "Backups and archive",
+      "describes": "a Barman Cloud plugin release past its end of life",
+      "outcome": "unavailable",
+      "because": "the Barman Cloud plugin version is not observed"
+    }
+  ]
+}

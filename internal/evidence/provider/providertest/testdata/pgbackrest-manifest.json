@@ -1,0 +1,23 @@
+{
+  "profile": "pgbackrest-2.60.0-provider-v1",
+  "format": "pgbackrest",
+  "generator": "hack/evidence/pgbackrest-generator/generate-providers.sh (pgBackRest 2.60.0, PostgreSQL 17)",
+  "stanza": "demo",
+  "repositories": [
+    {"name": "repo1", "provider": "s3", "repo_path": "/pgbr/orders", "store_prefix": "pgbr/orders", "encrypted": false},
+    {"name": "repo2", "provider": "azure", "repo_path": "/pgbr/orders", "store_prefix": "pgbr/orders", "encrypted": false},
+    {"name": "repo3", "provider": "s3", "repo_path": "/pgbr/orders-enc", "store_prefix": "pgbr/orders-enc", "encrypted": true}
+  ],
+  "transport": "TLS with a CA made per run; S3 path-style; Azure path-style",
+  "scenarios": [
+    {"name": "full", "expected_state": "healthy", "usable": true},
+    {"name": "diff", "expected_state": "healthy", "usable": true},
+    {"name": "incr", "expected_state": "healthy", "usable": true}
+  ],
+  "normalized_fields": [
+    "repository_format", "scope_kind", "scopes", "completeness", "overall_state", "encrypted",
+    "info_format", "archive_ids", "segment_size", "backups", "wal_ranges", "wal_gaps",
+    "window_usable_backups", "finding_codes", "capabilities"
+  ],
+  "excluded_provider_facts": ["provider", "labels", "timestamps", "system_id", "lsn", "wal_names", "sizes", "checksums"]
+}

@@ -1,0 +1,41 @@
+[
+  {
+    "event": "hello",
+    "data": {
+      "serverTime": "2026-10-29T12:00:00Z",
+      "heartbeatSeconds": 15,
+      "pollMinSeconds": 2,
+      "pollMaxSeconds": 10
+    }
+  },
+  {
+    "event": "invalidate",
+    "data": {
+      "topic": "cluster",
+      "namespace": "team-a",
+      "name": "billing"
+    }
+  },
+  {
+    "comment": "heartbeat"
+  },
+  {
+    "event": "invalidate",
+    "data": {
+      "topic": "clusters"
+    }
+  },
+  {
+    "event": "reauth",
+    "data": {
+      "expiresAt": "2026-10-29T12:05:00Z",
+      "refreshable": true
+    }
+  },
+  {
+    "event": "resync",
+    "data": {
+      "reason": "events were dropped for this client"
+    }
+  }
+]

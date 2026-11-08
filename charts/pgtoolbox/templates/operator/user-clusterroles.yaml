@@ -1,0 +1,222 @@
+{{- if and .Values.operator.enabled .Values.operator.userRoles.create }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: pgtoolbox-console-viewer
+  labels:
+    {{- include "pgtoolbox.labels" . | nindent 4 }}
+rules:
+- apiGroups:
+  - postgresql.cnpg.io
+  resources:
+  - backups
+  - clusters
+  - databaseroles
+  - databases
+  - failoverquorums
+  - imagecatalogs
+  - poolers
+  - publications
+  - scheduledbackups
+  - subscriptions
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - pgtoolbox.fyannk.dev
+  resources:
+  - pgaccessrequests
+  verbs:
+  - create
+  - get
+  - list
+  - watch
+- apiGroups:
+  - barmancloud.cnpg.io
+  resources:
+  - objectstores
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - pgbackrest.dalibo.com
+  resources:
+  - stanzas
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - pgbackrest.cnpg.opera.com
+  resources:
+  - archives
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - events
+  - persistentvolumeclaims
+  - pods
+  - services
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - pods/log
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: pgtoolbox-console-operator
+  labels:
+    {{- include "pgtoolbox.labels" . | nindent 4 }}
+rules:
+- apiGroups:
+  - postgresql.cnpg.io
+  resources:
+  - backups
+  - clusters
+  - databaseroles
+  - databases
+  - failoverquorums
+  - imagecatalogs
+  - poolers
+  - publications
+  - scheduledbackups
+  - subscriptions
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - postgresql.cnpg.io
+  resources:
+  - backups
+  verbs:
+  - create
+- apiGroups:
+  - postgresql.cnpg.io
+  resources:
+  - databaseroles
+  verbs:
+  - create
+- apiGroups:
+  - postgresql.cnpg.io
+  resources:
+  - clusters
+  - clusters/status
+  verbs:
+  - patch
+- apiGroups:
+  - pgtoolbox.fyannk.dev
+  resources:
+  - pgadmins
+  verbs:
+  - get
+- apiGroups:
+  - pgtoolbox.fyannk.dev
+  resources:
+  - pgaccessrequests
+  verbs:
+  - create
+  - get
+  - list
+  - watch
+- apiGroups:
+  - pgtoolbox.fyannk.dev
+  resources:
+  - pgaccessrequests/status
+  verbs:
+  - update
+- apiGroups:
+  - rbac.authorization.k8s.io
+  resources:
+  - rolebindings
+  verbs:
+  - create
+- apiGroups:
+  - barmancloud.cnpg.io
+  resources:
+  - objectstores
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - pgbackrest.dalibo.com
+  resources:
+  - stanzas
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - pgbackrest.cnpg.opera.com
+  resources:
+  - archives
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - events
+  - persistentvolumeclaims
+  - pods
+  - services
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - pods/log
+  verbs:
+  - get
+{{- if .Values.operator.userRoles.aggregateToAdmin }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: pgtoolbox-aggregate-to-admin
+  labels:
+    {{- include "pgtoolbox.labels" . | nindent 4 }}
+    rbac.authorization.k8s.io/aggregate-to-admin: "true"
+rules:
+- apiGroups:
+  - pgtoolbox.fyannk.dev
+  resources:
+  - evidenceagents
+  - pgaccessrequests
+  - pgadmins
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - pgtoolbox.fyannk.dev
+  resources:
+  - pgaccessrequests
+  verbs:
+  - create
+- apiGroups:
+  - pgtoolbox.fyannk.dev
+  resources:
+  - pgaccessrequests/status
+  verbs:
+  - update
+{{- end }}
+{{- end }}

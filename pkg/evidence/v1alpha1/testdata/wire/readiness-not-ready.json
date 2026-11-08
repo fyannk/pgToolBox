@@ -1,0 +1,5 @@
+{
+  "api_version": "evidence.pgtoolbox.fyannk.dev/v1alpha1",
+  "kind": "ReadinessStatus",
+  "status": "not-ready"
+}

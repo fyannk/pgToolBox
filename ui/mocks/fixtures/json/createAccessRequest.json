@@ -1,0 +1,39 @@
+{
+  "namespace": "team-a",
+  "name": "operator-h7d2c",
+  "subject": {
+    "kind": "User",
+    "name": "oidc:jane@corp.example"
+  },
+  "capability": "operator",
+  "clusterRole": "pgtoolbox-console-operator",
+  "cluster": "orders",
+  "justification": "INC-4300: failover drill",
+  "createdAt": "2026-10-29T12:00:00Z",
+  "expiresAt": "2026-10-29T20:00:00Z",
+  "phase": "Pending",
+  "health": "progressing",
+  "scope": "every Cluster of namespace team-a, not only orders: a RoleBinding cannot be narrowed to one Cluster",
+  "mine": true,
+  "condition": {
+    "status": "Unknown",
+    "reason": "Initializing",
+    "message": "the operator has not reported on this request yet",
+    "observed": false
+  },
+  "actions": {
+    "approve": {
+      "allowed": false,
+      "why": "deciding takes create rolebindings and update pgaccessrequests/status in namespace team-a"
+    },
+    "deny": {
+      "allowed": false,
+      "why": "deciding takes create rolebindings and update pgaccessrequests/status in namespace team-a"
+    },
+    "revoke": {
+      "allowed": false,
+      "why": "you may not update pgaccessrequests/status in namespace team-a"
+    }
+  }
+}
+

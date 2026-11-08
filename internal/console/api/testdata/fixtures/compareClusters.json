@@ -1,0 +1,513 @@
+{
+  "generatedAt": "2026-10-29T12:00:00Z",
+  "left": {
+    "ref": {
+      "namespace": "team-a",
+      "name": "orders",
+      "uid": "0b6a2c1e-8f0d-4a55-9a3e-7c1f2b3d4e5f"
+    },
+    "health": "ok",
+    "phase": "Cluster in healthy state",
+    "provenance": {
+      "origin": "operator",
+      "source": "Cluster",
+      "observedAt": "2026-10-29T11:59:58Z"
+    }
+  },
+  "right": {
+    "ref": {
+      "namespace": "team-a",
+      "name": "billing",
+      "uid": "4d2f1e0a-1b2c-4d3e-8f90-a1b2c3d4e5f6"
+    },
+    "health": "critical",
+    "phase": "Failing over",
+    "provenance": {
+      "origin": "operator",
+      "source": "Cluster",
+      "observedAt": "2026-10-29T11:59:58Z"
+    }
+  },
+  "sections": [
+    {
+      "id": "version",
+      "origin": "operator",
+      "source": "Cluster.status.image, pgDataImageInfo; Cluster.spec.imageName, imageCatalogRef; detected operator version",
+      "rows": [
+        {
+          "key": "PostgreSQL major",
+          "left": {
+            "state": "set",
+            "value": "18"
+          },
+          "right": {
+            "state": "set",
+            "value": "18"
+          },
+          "same": true
+        },
+        {
+          "key": "status.image",
+          "left": {
+            "state": "set",
+            "value": "ghcr.io/cloudnative-pg/postgresql:18.1"
+          },
+          "right": {
+            "state": "set",
+            "value": "ghcr.io/cloudnative-pg/postgresql:18.0"
+          },
+          "same": false
+        },
+        {
+          "key": "spec.imageName",
+          "left": {
+            "state": "set",
+            "value": "ghcr.io/cloudnative-pg/postgresql:18.1"
+          },
+          "right": {
+            "state": "set",
+            "value": "ghcr.io/cloudnative-pg/postgresql:18.0"
+          },
+          "same": false
+        },
+        {
+          "key": "spec.imageCatalogRef",
+          "left": {
+            "state": "unset"
+          },
+          "right": {
+            "state": "unset"
+          },
+          "same": true
+        },
+        {
+          "key": "CloudNativePG (detected)",
+          "left": {
+            "state": "set",
+            "value": "1.30.1"
+          },
+          "right": {
+            "state": "unknown"
+          },
+          "same": false
+        }
+      ],
+      "differences": 3
+    },
+    {
+      "id": "instances",
+      "origin": "operator",
+      "source": "Cluster.spec, Cluster.status.readyInstances",
+      "rows": [
+        {
+          "key": "spec.instances",
+          "left": {
+            "state": "set",
+            "value": "3"
+          },
+          "right": {
+            "state": "set",
+            "value": "2"
+          },
+          "same": false
+        },
+        {
+          "key": "status.readyInstances",
+          "left": {
+            "state": "set",
+            "value": "3"
+          },
+          "right": {
+            "state": "set",
+            "value": "1"
+          },
+          "same": false
+        },
+        {
+          "key": "spec.primaryUpdateStrategy",
+          "left": {
+            "state": "set",
+            "value": "unsupervised"
+          },
+          "right": {
+            "state": "set",
+            "value": "unsupervised"
+          },
+          "same": true
+        },
+        {
+          "key": "spec.primaryUpdateMethod",
+          "left": {
+            "state": "set",
+            "value": "switchover"
+          },
+          "right": {
+            "state": "set",
+            "value": "restart"
+          },
+          "same": false
+        },
+        {
+          "key": "spec.failoverDelay",
+          "left": {
+            "state": "unset"
+          },
+          "right": {
+            "state": "unset"
+          },
+          "same": true
+        },
+        {
+          "key": "spec.switchoverDelay",
+          "left": {
+            "state": "unset"
+          },
+          "right": {
+            "state": "unset"
+          },
+          "same": true
+        },
+        {
+          "key": "spec.replica.enabled",
+          "left": {
+            "state": "unset"
+          },
+          "right": {
+            "state": "unset"
+          },
+          "same": true
+        }
+      ],
+      "differences": 3
+    },
+    {
+      "id": "parameters",
+      "origin": "operator",
+      "source": "Cluster.spec.postgresql.parameters, shared_preload_libraries",
+      "rows": [
+        {
+          "key": "max_connections",
+          "left": {
+            "state": "set",
+            "value": "200"
+          },
+          "right": {
+            "state": "set",
+            "value": "400"
+          },
+          "same": false
+        },
+        {
+          "key": "shared_buffers",
+          "left": {
+            "state": "set",
+            "value": "2GB"
+          },
+          "right": {
+            "state": "set",
+            "value": "2048MB"
+          },
+          "same": true,
+          "note": "the same value, spelled differently"
+        },
+        {
+          "key": "work_mem",
+          "left": {
+            "state": "set",
+            "value": "16MB"
+          },
+          "right": {
+            "state": "set",
+            "value": "64MB"
+          },
+          "same": false
+        },
+        {
+          "key": "shared_preload_libraries",
+          "left": {
+            "state": "set",
+            "value": "pg_stat_statements"
+          },
+          "right": {
+            "state": "unset"
+          },
+          "same": false
+        }
+      ],
+      "differences": 3
+    },
+    {
+      "id": "resources",
+      "origin": "operator",
+      "source": "Cluster.spec.resources (the postgres container)",
+      "rows": [
+        {
+          "key": "requests.cpu",
+          "left": {
+            "state": "set",
+            "value": "2"
+          },
+          "right": {
+            "state": "set",
+            "value": "1"
+          },
+          "same": false
+        },
+        {
+          "key": "limits.cpu",
+          "left": {
+            "state": "set",
+            "value": "2"
+          },
+          "right": {
+            "state": "unset"
+          },
+          "same": false
+        },
+        {
+          "key": "requests.memory",
+          "left": {
+            "state": "set",
+            "value": "8Gi"
+          },
+          "right": {
+            "state": "set",
+            "value": "4Gi"
+          },
+          "same": false
+        },
+        {
+          "key": "limits.memory",
+          "left": {
+            "state": "set",
+            "value": "8Gi"
+          },
+          "right": {
+            "state": "set",
+            "value": "4Gi"
+          },
+          "same": false
+        }
+      ],
+      "differences": 4
+    },
+    {
+      "id": "storage",
+      "origin": "operator",
+      "source": "Cluster.spec.storage, walStorage, tablespaces",
+      "rows": [
+        {
+          "key": "storage.size",
+          "left": {
+            "state": "set",
+            "value": "100Gi"
+          },
+          "right": {
+            "state": "set",
+            "value": "100Gi"
+          },
+          "same": true
+        },
+        {
+          "key": "storage.storageClass",
+          "left": {
+            "state": "set",
+            "value": "fast-ssd"
+          },
+          "right": {
+            "state": "set",
+            "value": "fast-ssd"
+          },
+          "same": true
+        },
+        {
+          "key": "walStorage.size",
+          "left": {
+            "state": "set",
+            "value": "20Gi"
+          },
+          "right": {
+            "state": "unset"
+          },
+          "same": false
+        },
+        {
+          "key": "walStorage.storageClass",
+          "left": {
+            "state": "set",
+            "value": "fast-ssd"
+          },
+          "right": {
+            "state": "unset"
+          },
+          "same": false
+        },
+        {
+          "key": "tablespaces",
+          "left": {
+            "state": "unset"
+          },
+          "right": {
+            "state": "unset"
+          },
+          "same": true
+        }
+      ],
+      "differences": 2
+    },
+    {
+      "id": "backup",
+      "origin": "operator",
+      "source": "Cluster.spec.backup, spec.plugins, ObjectStore.spec, ScheduledBackups",
+      "rows": [
+        {
+          "key": "method",
+          "left": {
+            "state": "set",
+            "value": "plugin barman-cloud.cloudnative-pg.io"
+          },
+          "right": {
+            "state": "set",
+            "value": "none"
+          },
+          "same": false
+        },
+        {
+          "key": "objectStore",
+          "left": {
+            "state": "set",
+            "value": "orders-store"
+          },
+          "right": {
+            "state": "unset"
+          },
+          "same": false
+        },
+        {
+          "key": "retentionPolicy",
+          "left": {
+            "state": "unknown"
+          },
+          "right": {
+            "state": "unset"
+          },
+          "same": false
+        },
+        {
+          "key": "backup.target",
+          "left": {
+            "state": "unset"
+          },
+          "right": {
+            "state": "unset"
+          },
+          "same": true
+        },
+        {
+          "key": "schedules",
+          "left": {
+            "state": "set",
+            "value": "0 0 7 * * *"
+          },
+          "right": {
+            "state": "unset"
+          },
+          "same": false
+        }
+      ],
+      "differences": 4
+    },
+    {
+      "id": "topology",
+      "origin": "operator",
+      "source": "Cluster.spec.postgresql.synchronous, spec.affinity, Poolers",
+      "rows": [
+        {
+          "key": "synchronous",
+          "left": {
+            "state": "set",
+            "value": "any 1, dataDurability required, failoverQuorum"
+          },
+          "right": {
+            "state": "set",
+            "value": "none"
+          },
+          "same": false
+        },
+        {
+          "key": "affinity.enablePodAntiAffinity",
+          "left": {
+            "state": "unset"
+          },
+          "right": {
+            "state": "unset"
+          },
+          "same": true
+        },
+        {
+          "key": "affinity.podAntiAffinityType",
+          "left": {
+            "state": "set",
+            "value": "required"
+          },
+          "right": {
+            "state": "unset"
+          },
+          "same": false
+        },
+        {
+          "key": "affinity.topologyKey",
+          "left": {
+            "state": "set",
+            "value": "topology.kubernetes.io/zone"
+          },
+          "right": {
+            "state": "unset"
+          },
+          "same": false
+        },
+        {
+          "key": "affinity.nodeSelector",
+          "left": {
+            "state": "unset"
+          },
+          "right": {
+            "state": "unset"
+          },
+          "same": true
+        },
+        {
+          "key": "affinity.tolerations",
+          "left": {
+            "state": "unset"
+          },
+          "right": {
+            "state": "unset"
+          },
+          "same": true
+        },
+        {
+          "key": "poolers",
+          "left": {
+            "state": "set",
+            "value": "rw ×2"
+          },
+          "right": {
+            "state": "unknown"
+          },
+          "same": false
+        }
+      ],
+      "differences": 4
+    }
+  ],
+  "differences": 23,
+  "blindSpots": [
+    {
+      "id": "compare.declared",
+      "panel": "compare",
+      "text": "Parameters and resources are what each Cluster declares; what PostgreSQL applied is not reported (a change waiting for a restart reads as applied)."
+    }
+  ]
+}
+

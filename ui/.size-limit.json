@@ -1,0 +1,142 @@
+[
+  {
+    "name": "initial JS (entry chunk, gzip)",
+    "path": "dist/assets/index-*.js",
+    "limit": "180 KB",
+    "gzip": true
+  },
+  {
+    "name": "route chunks: cluster frame + instances layout (gzip, together)",
+    "path": "dist/assets/route-*.js",
+    "limit": "60 KB",
+    "gzip": true
+  },
+  {
+    "name": "route chunk: diagnostics (gzip)",
+    "path": "dist/assets/diagnostics-*.js",
+    "limit": "60 KB",
+    "gzip": true
+  },
+  {
+    "name": "route chunk: overview (gzip)",
+    "path": "dist/assets/_cluster-*.js",
+    "limit": "60 KB",
+    "gzip": true
+  },
+  {
+    "name": "route chunk: events (gzip)",
+    "path": "dist/assets/events-*.js",
+    "limit": "60 KB",
+    "gzip": true
+  },
+  {
+    "name": "route chunk: cluster list (gzip)",
+    "path": "dist/assets/routes-*.js",
+    "limit": "60 KB",
+    "gzip": true
+  },
+  {
+    "name": "shared lazy chunk: DataTable (gzip)",
+    "path": "dist/assets/DataTable-*.js",
+    "limit": "60 KB",
+    "gzip": true
+  },
+  {
+    "name": "route chunk: replication (gzip)",
+    "path": "dist/assets/replication-*.js",
+    "limit": "60 KB",
+    "gzip": true
+  },
+  {
+    "name": "route chunk: backups (gzip)",
+    "path": "dist/assets/backups-*.js",
+    "limit": "60 KB",
+    "gzip": true
+  },
+  {
+    "name": "route chunk: storage (gzip)",
+    "path": "dist/assets/storage-*.js",
+    "limit": "60 KB",
+    "gzip": true
+  },
+  {
+    "name": "route chunk: objects (gzip)",
+    "path": "dist/assets/objects-*.js",
+    "limit": "60 KB",
+    "gzip": true
+  },
+  {
+    "name": "route chunks: history + revision (gzip, together)",
+    "path": "dist/assets/[Hh]istory-*.js",
+    "limit": "60 KB",
+    "gzip": true
+  },
+  {
+    "name": "route chunk: metrics with uPlot (gzip)",
+    "path": "dist/assets/metrics-*.js",
+    "limit": "60 KB",
+    "gzip": true
+  },
+  {
+    "name": "route chunk: operations (gzip)",
+    "path": "dist/assets/operations-*.js",
+    "limit": "60 KB",
+    "gzip": true
+  },
+  {
+    "name": "route chunk: admin (gzip)",
+    "path": "dist/assets/admin-*.js",
+    "limit": "60 KB",
+    "gzip": true
+  },
+  {
+    "name": "route chunk: access requests (gzip)",
+    "path": "dist/assets/access-*.js",
+    "limit": "60 KB",
+    "gzip": true
+  },
+  {
+    "name": "route chunk: assistants (gzip)",
+    "path": "dist/assets/assistants-*.js",
+    "limit": "60 KB",
+    "gzip": true
+  },
+  {
+    "name": "route chunks: digests list + digest (gzip, together)",
+    "path": ["dist/assets/[Dd]igests-*.js", "dist/assets/_id-*.js"],
+    "limit": "60 KB",
+    "gzip": true
+  },
+  {
+    "name": "route chunks: instance drawer + logs (gzip, together)",
+    "path": "dist/assets/_pod-*.js",
+    "limit": "60 KB",
+    "gzip": true
+  },
+  {
+    "name": "route chunks: insight screens + team-wide query insight (gzip, together)",
+    "path": [
+      "dist/assets/insight-*.js",
+      "dist/assets/vacuum-*.js",
+      "dist/assets/blocking-*.js",
+      "dist/assets/[Ss]tatements-*.js",
+      "dist/assets/indexes-*.js",
+      "dist/assets/connections-*.js",
+      "dist/assets/common-*.js"
+    ],
+    "limit": "60 KB",
+    "gzip": true
+  },
+  {
+    "name": "lazy chunk: the wiring drawing, React Flow (gzip)",
+    "path": "dist/assets/TopologyView-*.js",
+    "limit": "65 KB",
+    "gzip": true
+  },
+  {
+    "name": "CSS (gzip)",
+    "path": "dist/assets/*.css",
+    "limit": "35 KB",
+    "gzip": true
+  }
+]

@@ -1,0 +1,103 @@
+{
+  "available": true,
+  "refreshedAt": "2026-10-29T12:00:00Z",
+  "minRefreshSeconds": 1,
+  "instances": [
+    {
+      "instance": "orders-1",
+      "primary": true,
+      "waiting": 2,
+      "roots": [
+        {
+          "pid": 4711,
+          "database": "app",
+          "user": "billing",
+          "application": "billing-api",
+          "state": "idle in transaction",
+          "waitEventType": "Client",
+          "waitEvent": "ClientRead",
+          "backendType": "client backend",
+          "queryId": "-6311483212785534117",
+          "xactAgeSeconds": 2280,
+          "stateAgeSeconds": 2275,
+          "blocked": 2,
+          "waiters": [
+            {
+              "pid": 5120,
+              "database": "app",
+              "user": "migrator",
+              "application": "flyway",
+              "state": "active",
+              "waitEventType": "Lock",
+              "waitEvent": "relation",
+              "backendType": "client backend",
+              "queryId": "3305271982216418801",
+              "waitSeconds": 610,
+              "xactAgeSeconds": 611,
+              "stateAgeSeconds": 610,
+              "blocked": 1,
+              "waiters": [
+                {
+                  "pid": 5133,
+                  "database": "app",
+                  "user": "orders",
+                  "application": "orders-api",
+                  "state": "active",
+                  "waitEventType": "Lock",
+                  "waitEvent": "relation",
+                  "backendType": "client backend",
+                  "queryId": "812734598812374661",
+                  "waitSeconds": 598,
+                  "xactAgeSeconds": 598,
+                  "stateAgeSeconds": 598,
+                  "blocked": 0,
+                  "waiters": []
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "dataAgeSeconds": 12,
+      "provenance": {
+        "origin": "instance",
+        "source": "insight pack, orders-1:9187/metrics",
+        "observedAt": "2026-10-29T11:59:48Z"
+      }
+    },
+    {
+      "instance": "orders-2",
+      "primary": false,
+      "waiting": 0,
+      "roots": [],
+      "dataAgeSeconds": 20,
+      "provenance": {
+        "origin": "instance",
+        "source": "insight pack, orders-2:9187/metrics",
+        "observedAt": "2026-10-29T11:59:36Z"
+      }
+    },
+    {
+      "instance": "orders-3",
+      "primary": false,
+      "waiting": 0,
+      "roots": [],
+      "dataAgeSeconds": 20,
+      "provenance": {
+        "origin": "instance",
+        "source": "insight pack, orders-3:9187/metrics",
+        "observedAt": "2026-10-29T11:59:36Z"
+      }
+    }
+  ],
+  "partial": false,
+  "pgAdmins": [
+    {
+      "name": "team-a",
+      "url": "https://pgadmin-team-a.apps.example.com",
+      "health": "ok",
+      "serverState": "Registered"
+    }
+  ]
+}
+

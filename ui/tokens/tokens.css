@@ -1,0 +1,243 @@
+/* pgToolBox semantic tokens, mapped onto the maintainer's design system
+   fyannk/design (fyannk.css, vendored beside this file and imported before
+   it). Components only ever name these semantic tokens; the --fy-* palette is
+   referenced here and nowhere else, so restyling is a change of this file.
+
+   Like fyannk.css the file is dark-first: :root is the dark theme, and the
+   light theme overrides it under prefers-color-scheme: light (unless dark is
+   pinned with data-theme="dark") and under data-theme="light". fyannk.css
+   switches its own palette with the same selectors, so a semantic token that
+   is a plain var(--fy-*) reference follows the theme without an override.
+
+   Status is conveyed through a glyph and a word; the hue only reinforces
+   them. fyannk/design has four status colours (ok, warn, crit, info) and the
+   muted text colour for unknown; the console's seven health states map onto
+   them as follows (ui/src/ds/health.ts holds the glyphs):
+
+     ok          ● --fy-ok
+     progressing ◐ --fy-info   (a transition under way: neutral, not a verdict)
+     warning     ▲ --fy-warn
+     critical    ■ --fy-crit
+     inactive    ‖ --fy-text-muted, solid border
+     unknown     ○ --fy-text-muted, dashed border
+     info        i --fy-text-muted (provenance, notes: quiet until needed)
+
+   Fonts: IBM Plex Sans (body) and IBM Plex Mono (headings, numbers, nav,
+   identifiers), self-hosted from ui/src/ds/fonts under font-src 'self'.
+
+   ui/tokens/contrast.test.mjs checks every text and glyph pair in both
+   themes; tints are color-mix(in srgb) of two opaque colours so their
+   contrast is computable. */
+
+:root {
+  /* Type */
+  --font-ui: var(--fy-font-sans);
+  --font-mono: var(--fy-font-mono);
+
+  --text-xs: var(--fy-text-xs);
+  --text-sm: var(--fy-text-sm);
+  --text-base: var(--fy-text-md);
+  --text-lg: var(--fy-text-lg);
+  --text-xl: var(--fy-text-xl);
+  --text-2xl: var(--fy-text-2xl);
+
+  /* Spacing: the 4 px grid */
+  --space-1: var(--fy-space-1);
+  --space-2: var(--fy-space-2);
+  --space-3: var(--fy-space-3);
+  --space-4: var(--fy-space-4);
+  --space-5: var(--fy-space-6);
+  --space-6: var(--fy-space-8);
+  --space-7: var(--fy-space-12);
+
+  /* Shape: 2 px chips and inputs, 4 px cards and buttons, 8 px dialogs only;
+     a status chip is the one pill. */
+  --radius: var(--fy-radius-md);
+  --radius-sm: var(--fy-radius-sm);
+  --radius-md: var(--fy-radius-md);
+  --radius-lg: var(--fy-radius-lg);
+  --radius-round: 999px;
+  /* The page's widest: wide enough that a large screen is used (tables and
+     the wiring drawing grow with it), short of the point where a table row
+     can no longer be followed across. */
+  --measure: 160rem;
+
+  /* Surfaces and text */
+  --bg: var(--fy-bg);
+  --surface: var(--fy-surface);
+  --surface-2: var(--fy-raised);
+  --text: var(--fy-text);
+  --text-muted: var(--fy-text-muted);
+  --text-faint: var(--fy-text-faint);
+  --border: var(--fy-border);
+  --border-strong: var(--fy-border-strong);
+
+  /* The one accent: the primary action, the cursor, the active item. */
+  --accent: var(--fy-accent);
+  --accent-ink: var(--fy-accent-ink);
+  --accent-weak: color-mix(in srgb, var(--fy-accent) 14%, var(--fy-surface));
+  /* Storage identity: the wiring drawing's storage frames and boxes. A domain
+     colour, not a status: fyannk's brand green (olive on dark, forest on
+     light), which no status uses. */
+  --storage: var(--fy-brand);
+  /* The wiring drawing's flows, keyed by colour and dash in its legend.
+     Identity, not status: no flow takes a status colour. Writes take the
+     accent (the path that matters), replication fyannk's moss, WAL archiving
+     and base backups (bound for the store) the storage colour, reads and
+     volumes the muted and faint text colours. A kind this build does not know is drawn
+     as a read (styles.css). */
+  --flow-write: var(--fy-accent);
+  --flow-read: var(--fy-text-muted);
+  --flow-replicate: var(--fy-moss);
+  --flow-archive: var(--storage);
+  --flow-volume: var(--fy-text-faint);
+  /* Chart series: eight categorical slots for identity, assigned
+     in this fixed order and never cycled (a ninth series folds into "other").
+     The order is the colour-blind safety: adjacent slots stay apart under
+     protan/deutan/tritan simulation (ΔE ≥ 8, OKLab ×100) and to normal vision
+     (ΔE ≥ 15); only the first three are safe all-pairs (scatter, small
+     multiples). Slots 3–5 are under 3:1 on the light surface, so a chart
+     always carries a legend with direct labels and a table view (relief
+     rule). Never a status: a series is identity, a verdict is a health state.
+     fyannk/design has no categorical palette; these are the console's own. */
+  --series-1: oklch(62.2% 0.161 255);
+  --series-2: oklch(62.2% 0.173 40);
+  --series-3: oklch(62.1% 0.128 163);
+  --series-4: oklch(67.0% 0.143 73);
+  --series-5: oklch(62.2% 0.171 1);
+  --series-6: oklch(52.9% 0.180 142);
+  --series-7: oklch(67.0% 0.145 287);
+  --series-8: oklch(66.9% 0.159 22);
+
+  /* The top bar is a surface separated by a 1 px rule, as in fyannk. */
+  --topbar-bg: var(--fy-surface);
+  --topbar-border: var(--fy-border);
+  --topbar-text: var(--fy-text);
+  --topbar-muted: var(--fy-text-muted);
+
+  /* Status colours, plain. */
+  --ok: var(--fy-ok);
+  --warn: var(--fy-warn);
+  --warn-weak: color-mix(in srgb, var(--fy-warn) 12%, var(--fy-surface));
+  --bad: var(--fy-crit);
+  --bad-weak: color-mix(in srgb, var(--fy-crit) 12%, var(--fy-surface));
+  --unknown: var(--fy-text-muted);
+
+  /* Health states. Seven, fixed. -fg is the word, -bg the chip's
+     faint tint, -border its 1 px outline, -icon the glyph. */
+  --health-ok-fg: var(--fy-ok);
+  --health-ok-bg: color-mix(in srgb, var(--fy-ok) 6%, var(--fy-surface));
+  --health-ok-border: var(--fy-ok);
+  --health-ok-icon: var(--fy-ok);
+  --health-progressing-fg: var(--fy-info);
+  --health-progressing-bg: color-mix(in srgb, var(--fy-info) 6%, var(--fy-surface));
+  --health-progressing-border: var(--fy-info);
+  --health-progressing-icon: var(--fy-info);
+  --health-warning-fg: var(--fy-warn);
+  --health-warning-bg: color-mix(in srgb, var(--fy-warn) 6%, var(--fy-surface));
+  --health-warning-border: var(--fy-warn);
+  --health-warning-icon: var(--fy-warn);
+  --health-critical-fg: var(--fy-crit);
+  --health-critical-bg: color-mix(in srgb, var(--fy-crit) 6%, var(--fy-surface));
+  --health-critical-border: var(--fy-crit);
+  --health-critical-icon: var(--fy-crit);
+  --health-inactive-fg: var(--fy-text-muted);
+  --health-inactive-bg: color-mix(in srgb, var(--fy-text-muted) 6%, var(--fy-surface));
+  --health-inactive-border: var(--fy-border-strong);
+  --health-inactive-icon: var(--fy-text-muted);
+  --health-unknown-fg: var(--fy-text-muted);
+  --health-unknown-bg: var(--fy-surface);
+  --health-unknown-border: var(--fy-text-muted);
+  --health-unknown-icon: var(--fy-text-muted);
+  --health-info-fg: var(--fy-text-muted);
+  --health-info-bg: color-mix(in srgb, var(--fy-info) 6%, var(--fy-surface));
+  --health-info-border: var(--fy-border-strong);
+  --health-info-icon: var(--fy-info);
+
+  /* Row tints: a whole table row or verdict line that is not fine. Stronger
+     than a chip's tint, which sits on a small pill; a row must be noticed
+     across the page. */
+  --row-warning-bg: color-mix(in srgb, var(--fy-warn) 16%, var(--fy-surface));
+  --row-critical-bg: color-mix(in srgb, var(--fy-crit) 16%, var(--fy-surface));
+  --row-progressing-bg: color-mix(in srgb, var(--fy-info) 13%, var(--fy-surface));
+  --row-unknown-bg: color-mix(in srgb, var(--fy-text-muted) 12%, var(--fy-surface));
+
+  /* Finding severities on the cluster list's count squares: critical is
+     purple and note blue, so neither reads as a health state's red or teal. */
+  --sev-critical: oklch(74% 0.14 305);
+  --sev-critical-bg: color-mix(in srgb, var(--sev-critical) 14%, var(--fy-surface));
+  --sev-note: oklch(74% 0.11 245);
+  --sev-note-bg: color-mix(in srgb, var(--sev-note) 14%, var(--fy-surface));
+
+  /* Staleness modifier (data-stale): a reading the console holds but could
+     not refresh. The chip keeps its state and word, loses its tint, draws a
+     dashed border and says how old the reading is. */
+  --stale-bg: var(--fy-surface);
+  --stale-border: var(--fy-text-faint);
+
+  /* Overlays, elevation and focus. A shadow is for what floats (menus,
+     dialogs) only. */
+  --overlay: oklch(0% 0 0 / 0.6);
+  --shadow-popover: 0 0.5rem 1.5rem oklch(0% 0 0 / 0.5);
+  --focus-ring: var(--fy-accent);
+
+  /* Density of tables and lists; compact is a per-reader preference. */
+  --row-comfortable: 2.25rem;
+  --row-compact: 1.75rem;
+
+  /* Motion; zero under prefers-reduced-motion (last block). */
+  --motion-fast: 120ms;
+  --motion-base: 200ms;
+}
+
+/* Light. With no data-theme the OS preference decides; data-theme on <html>
+   pins one, so the light set is also declared under its own attribute scope.
+   Only what is not already a themed --fy-* reference is overridden. */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --surface-2: var(--fy-bg);
+    --series-1: oklch(57.5% 0.163 256);
+    --series-2: oklch(67.1% 0.175 41);
+    --series-3: oklch(66.9% 0.141 162);
+    --series-4: oklch(76.4% 0.161 75);
+    --series-5: oklch(71.6% 0.141 357);
+    --series-6: oklch(52.9% 0.180 142);
+    --series-7: oklch(52.7% 0.197 283);
+    --series-8: oklch(62.3% 0.191 25);
+    --overlay: oklch(22% 0.02 130 / 0.4);
+    --shadow-popover: 0 0.5rem 1.5rem oklch(20% 0.02 130 / 0.16);
+    --sev-critical: oklch(47% 0.18 305);
+    --sev-note: oklch(48% 0.14 250);
+    /* On the light surface the state word needs a paler row tint to keep 4.5:1. */
+    --row-warning-bg: color-mix(in srgb, var(--fy-warn) 12%, var(--fy-surface));
+    --row-critical-bg: color-mix(in srgb, var(--fy-crit) 12%, var(--fy-surface));
+  }
+}
+
+:root[data-theme="light"] {
+  --surface-2: var(--fy-bg);
+  --series-1: oklch(57.5% 0.163 256);
+  --series-2: oklch(67.1% 0.175 41);
+  --series-3: oklch(66.9% 0.141 162);
+  --series-4: oklch(76.4% 0.161 75);
+  --series-5: oklch(71.6% 0.141 357);
+  --series-6: oklch(52.9% 0.180 142);
+  --series-7: oklch(52.7% 0.197 283);
+  --series-8: oklch(62.3% 0.191 25);
+  --overlay: oklch(22% 0.02 130 / 0.4);
+  --shadow-popover: 0 0.5rem 1.5rem oklch(20% 0.02 130 / 0.16);
+  --sev-critical: oklch(47% 0.18 305);
+  --sev-note: oklch(48% 0.14 250);
+  /* On the light surface the state word needs a paler row tint to keep 4.5:1. */
+  --row-warning-bg: color-mix(in srgb, var(--fy-warn) 12%, var(--fy-surface));
+  --row-critical-bg: color-mix(in srgb, var(--fy-crit) 12%, var(--fy-surface));
+}
+
+/* Reduced motion: every motion token is zero. Components animate only through
+   these tokens, so nothing moves for a reader who asked it not to. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-fast: 0ms;
+    --motion-base: 0ms;
+  }
+}

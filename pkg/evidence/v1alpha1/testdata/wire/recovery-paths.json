@@ -1,0 +1,33 @@
+{
+  "api_version": "evidence.pgtoolbox.fyannk.dev/v1alpha1",
+  "kind": "BarmanRecoveryPathPage",
+  "revision": 42,
+  "evidence_generation": 42,
+  "total_items": 1,
+  "next_cursor": null,
+  "items": [
+    {
+      "server": "orders",
+      "backup_id": "20260728T100000",
+      "target_timeline": 1,
+      "state": "healthy",
+      "reason": {
+        "code": "evidence-evaluated",
+        "message": "structural evidence evaluated"
+      },
+      "stop": "frontier",
+      "lower_bound_at": "2026-07-28T10:00:03.123Z",
+      "start_timeline": 1,
+      "start_position": 1,
+      "start_wal": "000000010000000000000001",
+      "frontier_timeline": 1,
+      "frontier_position": 2,
+      "frontier_wal": "000000010000000000000002",
+      "frontier_receipt_at": "2026-07-28T10:02:03.123Z",
+      "assumption_codes": [
+        "segment-name-presence-only",
+        "wal-bytes-and-restore-not-verified"
+      ]
+    }
+  ]
+}

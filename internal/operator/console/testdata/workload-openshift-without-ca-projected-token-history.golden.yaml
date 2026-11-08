@@ -1,0 +1,244 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  annotations:
+    pgtoolbox.fyannk.dev/claim-template-hash: 30f4fad33aa8b3e9
+    pgtoolbox.fyannk.dev/spec-hash: eaa48ac7e13be796
+  labels:
+    app.kubernetes.io/component: console
+    app.kubernetes.io/instance: console
+    app.kubernetes.io/managed-by: pgtoolbox
+    app.kubernetes.io/name: pgtoolbox-console
+    app.kubernetes.io/part-of: pgtoolbox
+    pgtoolbox.fyannk.dev/console: console
+    pgtoolbox.fyannk.dev/reconcile: "true"
+  name: console
+  namespace: team-a
+  ownerReferences:
+  - apiVersion: pgtoolbox.fyannk.dev/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: PgToolBoxConsole
+    name: console
+    uid: u
+spec:
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Delete
+    whenScaled: Retain
+  podManagementPolicy: Parallel
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: console
+      app.kubernetes.io/instance: console
+      app.kubernetes.io/name: pgtoolbox-console
+      pgtoolbox.fyannk.dev/console: console
+  serviceName: console
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: console
+        app.kubernetes.io/instance: console
+        app.kubernetes.io/managed-by: pgtoolbox
+        app.kubernetes.io/name: pgtoolbox-console
+        app.kubernetes.io/part-of: pgtoolbox
+        pgtoolbox.fyannk.dev/console: console
+        pgtoolbox.fyannk.dev/reconcile: "true"
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app.kubernetes.io/component: console
+                  app.kubernetes.io/instance: console
+                  app.kubernetes.io/name: pgtoolbox-console
+                  pgtoolbox.fyannk.dev/console: console
+              topologyKey: kubernetes.io/hostname
+            weight: 100
+      automountServiceAccountToken: false
+      containers:
+      - env:
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: WATCH_NAMESPACES
+          value: team-a
+        - name: LISTEN_ADDR
+          value: :3000
+        - name: PROBE_LISTEN_ADDR
+          value: :3001
+        - name: AUTH_PROVIDER
+          value: openshift
+        - name: SESSION_KEY_FILE
+          value: /var/run/console/session/session-key
+        - name: SESSION_IDLE_TIMEOUT
+          value: 1h
+        - name: LIFECYCLE_FILE
+          value: /var/run/console/lifecycle/lifecycle.json
+        - name: REVOCATION_CONFIGMAP
+          value: console-revocations
+        - name: STATE_CONFIGMAP
+          value: console-state
+        - name: INSTANCE_STATUS_CA_FILE
+          value: /var/run/console/instance-ca/ca.crt
+        - name: EVIDENCE_TOKEN_DIR
+          value: /var/run/secrets/pgtoolbox.fyannk.dev/evidence-agent
+        - name: PROMETHEUS_URL
+          value: https://prometheus.example
+        - name: PROMETHEUS_TOKEN_FILE
+          value: /var/run/console/prometheus/token
+        - name: LOG_STREAM_ENABLED
+          value: "true"
+        - name: LOG_MATCH_MAX_AGE
+          value: 6h
+        - name: HISTORY_ENABLED
+          value: "true"
+        - name: HISTORY_PATH
+          value: /var/lib/console/history.db
+        image: registry.example/pgtoolbox-console:1.2.0
+        imagePullPolicy: IfNotPresent
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: probes
+          periodSeconds: 20
+        name: console
+        ports:
+        - containerPort: 3000
+          name: http
+          protocol: TCP
+        - containerPort: 3001
+          name: probes
+          protocol: TCP
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: probes
+          periodSeconds: 10
+        resources:
+          requests:
+            memory: 256Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          seccompProfile:
+            type: RuntimeDefault
+        volumeMounts:
+        - mountPath: /tmp
+          name: tmp
+        - mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+          name: kube-api-access
+          readOnly: true
+        - mountPath: /var/run/console/session
+          name: session
+          readOnly: true
+        - mountPath: /var/run/console/prometheus
+          name: prometheus-token
+          readOnly: true
+        - mountPath: /var/run/secrets/pgtoolbox.fyannk.dev/evidence-agent
+          name: evidence-agent-token
+          readOnly: true
+        - mountPath: /var/run/console/instance-ca
+          name: instance-ca
+          readOnly: true
+        - mountPath: /var/run/console/lifecycle
+          name: lifecycle
+          readOnly: true
+        - mountPath: /var/lib/console
+          name: history
+      securityContext:
+        fsGroup: 65532
+        fsGroupChangePolicy: OnRootMismatch
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      serviceAccountName: console
+      volumes:
+      - emptyDir: {}
+        name: tmp
+      - name: kube-api-access
+        projected:
+          sources:
+          - serviceAccountToken:
+              expirationSeconds: 3600
+              path: token
+          - configMap:
+              items:
+              - key: ca.crt
+                path: ca.crt
+              name: kube-root-ca.crt
+          - configMap:
+              items:
+              - key: service-ca.crt
+                path: service-ca.crt
+              name: openshift-service-ca.crt
+              optional: true
+          - downwardAPI:
+              items:
+              - fieldRef:
+                  fieldPath: metadata.namespace
+                path: namespace
+      - name: session
+        secret:
+          items:
+          - key: session-key
+            path: session-key
+          secretName: console-session
+      - name: prometheus-token
+        projected:
+          sources:
+          - serviceAccountToken:
+              expirationSeconds: 3600
+              path: token
+      - name: evidence-agent-token
+        projected:
+          sources:
+          - serviceAccountToken:
+              audience: pgtoolbox-evidence-agent/team-a
+              expirationSeconds: 3600
+              path: team-a/token
+      - configMap:
+          items:
+          - key: ca.crt
+            path: ca.crt
+          name: console-instance-ca
+          optional: true
+        name: instance-ca
+      - configMap:
+          items:
+          - key: lifecycle.json
+            path: lifecycle.json
+          name: console-lifecycle
+          optional: true
+        name: lifecycle
+  updateStrategy:
+    type: RollingUpdate
+  volumeClaimTemplates:
+  - metadata:
+      labels:
+        app.kubernetes.io/component: console
+        app.kubernetes.io/instance: console
+        app.kubernetes.io/managed-by: pgtoolbox
+        app.kubernetes.io/name: pgtoolbox-console
+        app.kubernetes.io/part-of: pgtoolbox
+        pgtoolbox.fyannk.dev/console: console
+        pgtoolbox.fyannk.dev/reconcile: "true"
+      name: history
+    spec:
+      accessModes:
+      - ReadWriteOnce
+      resources:
+        requests:
+          storage: 4Gi
+      storageClassName: fast
+    status: {}
+status:
+  availableReplicas: 0
+  replicas: 0

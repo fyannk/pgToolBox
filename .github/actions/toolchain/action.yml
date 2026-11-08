@@ -1,0 +1,56 @@
+name: Toolchain
+description: >-
+  Install the tools mise.toml pins (the single source of tool versions) and
+  restore the dependency caches, so every job starts the same way.
+
+inputs:
+  tools:
+    description: >-
+      Space-separated tools from mise.toml to install (for example "go node
+      pnpm"). Naming them keeps a job from compiling every Go tool in the file.
+    required: true
+  mise-cache:
+    description: Cache the installed tools between runs ("true" or "false"). The release workflow turns it off so that nothing a pull request wrote is installed into a release.
+    default: "true"
+  go-cache:
+    description: Restore and save the Go build, module and golangci-lint caches ("true" or "false").
+    default: "false"
+  node-cache:
+    description: Restore and save the npm and pnpm stores, keyed by the lockfiles ("true" or "false").
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - name: Install the pinned tools (mise.toml)
+      uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
+      with:
+        install_args: ${{ inputs.tools }}
+        cache: ${{ inputs.mise-cache }}
+
+    # The key carries the lockfiles, so a dependency bump starts a fresh cache
+    # and an unchanged tree restores the previous one. restore-keys falls back
+    # to the newest cache of the same OS, which is still mostly warm.
+    - name: Go caches
+      if: inputs.go-cache == 'true'
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          ~/.cache/go-build
+          ~/go/pkg/mod
+          ~/.cache/golangci-lint
+        key: go-${{ runner.os }}-${{ hashFiles('go.sum', 'pkg/evidence/go.sum', 'mise.toml') }}
+        restore-keys: |
+          go-${{ runner.os }}-
+
+    - name: Node caches
+      if: inputs.node-cache == 'true'
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          ~/.npm
+          ~/.local/share/pnpm/store
+          ~/.cache/ms-playwright
+        key: node-${{ runner.os }}-${{ hashFiles('ui/pnpm-lock.yaml', 'docs/site/package-lock.json', 'headlamp/package-lock.json') }}
+        restore-keys: |
+          node-${{ runner.os }}-

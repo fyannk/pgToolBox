@@ -1,0 +1,64 @@
+{{- $d := .Values.console.restoreDrills }}
+{{- if and $d.enabled $d.admissionPolicy.create }}
+{{- /*
+OPT-IN, CLUSTER-SCOPED: a namespace admin cannot install
+it, so a cluster admin sets console.restoreDrills.admissionPolicy.create=true
+(Kubernetes 1.30+). Whatever the teardown Role allows, this console's
+ServiceAccount may delete a Cluster in the drill namespaces only when it
+carries this console's drill-owner label, the drill seal annotation and the
+drill prefix: the console's own check, enforced by the API server, so that a
+Pod run as that ServiceAccount cannot delete a production Cluster.
+*/ -}}
+{{- $name := include "pgtools.safeName" (printf "%s-%s-restore-drills" (include "pgtools.console.fullname" .) .Release.Namespace) }}
+{{- $account := printf "system:serviceaccount:%s:%s" .Release.Namespace (include "pgtools.console.fullname" .) }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "pgtools.console.labels" . | nindent 4 }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [postgresql.cnpg.io]
+        apiVersions: ["*"]
+        operations: [DELETE]
+        resources: [clusters]
+  variables:
+    - name: account
+      expression: {{ $account | quote | quote }}
+    - name: owner
+      expression: {{ .Release.Namespace | quote | quote }}
+    - name: prefix
+      expression: {{ $d.prefix | quote | quote }}
+  validations:
+    - expression: >-
+        request.userInfo.username != variables.account ||
+        (has(oldObject.metadata.labels) &&
+        'pgtoolbox.fyannk.dev/drill-owner' in oldObject.metadata.labels &&
+        oldObject.metadata.labels['pgtoolbox.fyannk.dev/drill-owner'] == variables.owner &&
+        'pgtoolbox.fyannk.dev/restore-drill-of' in oldObject.metadata.labels &&
+        has(oldObject.metadata.annotations) &&
+        'pgtoolbox.fyannk.dev/restore-drill-seal' in oldObject.metadata.annotations &&
+        oldObject.metadata.name.startsWith(variables.prefix))
+      message: this console's ServiceAccount may delete only the restore drill Clusters it created (drill-owner label, drill seal, drill name prefix)
+      reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "pgtools.console.labels" . | nindent 4 }}
+spec:
+  policyName: {{ $name }}
+  validationActions:
+    {{- toYaml $d.admissionPolicy.validationActions | nindent 4 }}
+  matchResources:
+    namespaceSelector:
+      matchExpressions:
+        - key: kubernetes.io/metadata.name
+          operator: In
+          values: {{ include "pgtools.console.drillNamespaces" . }}
+{{- end }}

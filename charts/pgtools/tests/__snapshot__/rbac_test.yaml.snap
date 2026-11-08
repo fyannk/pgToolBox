@@ -1,0 +1,108 @@
+pins the watched-namespace Role (a change to the console's authority shows up as a snapshot diff):
+  1: |
+    - apiGroups:
+        - postgresql.cnpg.io
+      resources:
+        - clusters
+        - backups
+        - scheduledbackups
+        - poolers
+        - databases
+        - databaseroles
+        - publications
+        - subscriptions
+        - failoverquorums
+        - imagecatalogs
+      verbs:
+        - get
+        - list
+        - watch
+    - apiGroups:
+        - barmancloud.cnpg.io
+      resources:
+        - objectstores
+      verbs:
+        - get
+        - list
+        - watch
+    - apiGroups:
+        - pgbackrest.dalibo.com
+      resources:
+        - stanzas
+      verbs:
+        - get
+        - list
+        - watch
+    - apiGroups:
+        - pgbackrest.cnpg.opera.com
+      resources:
+        - archives
+      verbs:
+        - get
+        - list
+        - watch
+    - apiGroups:
+        - pgtoolbox.fyannk.dev
+      resources:
+        - pgadmins
+        - evidenceagents
+        - pgaccessrequests
+      verbs:
+        - get
+        - list
+        - watch
+    - apiGroups:
+        - ""
+      resources:
+        - pods
+        - persistentvolumeclaims
+        - services
+      verbs:
+        - get
+        - list
+        - watch
+    - apiGroups:
+        - ""
+      resources:
+        - events
+        - resourcequotas
+      verbs:
+        - list
+        - watch
+    - apiGroups:
+        - policy
+      resources:
+        - poddisruptionbudgets
+      verbs:
+        - get
+        - list
+        - watch
+    - apiGroups:
+        - coordination.k8s.io
+      resources:
+        - leases
+      verbs:
+        - get
+        - list
+        - watch
+    - apiGroups:
+        - batch
+      resources:
+        - jobs
+      verbs:
+        - get
+        - list
+        - watch
+    - apiGroups:
+        - apps
+      resources:
+        - replicasets
+        - deployments
+      verbs:
+        - get
+    - apiGroups:
+        - ""
+      resources:
+        - pods/log
+      verbs:
+        - get

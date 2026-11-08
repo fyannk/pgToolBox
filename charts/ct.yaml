@@ -1,0 +1,19 @@
+# chart-testing (ct lint) for charts/pgtoolbox and charts/pgtools. Run from the
+# repository root:
+#   ct lint --config charts/ct.yaml
+# ct renders each chart once per charts/<chart>/ci/*-values.yaml.
+chart-dirs:
+  - charts
+charts:
+  - charts/pgtoolbox
+  - charts/pgtools
+# The repository releases from tags; there is no previous chart to bump from,
+# and maintainer validation asks GitHub about the names in Chart.yaml.
+check-version-increment: false
+validate-maintainers: false
+# yamale is a Python tool the CI image does not carry; values.schema.json and
+# helm lint --strict cover the same ground.
+validate-chart-schema: false
+validate-yaml: true
+lint-conf: charts/lintconf.yaml
+helm-lint-extra-args: --strict

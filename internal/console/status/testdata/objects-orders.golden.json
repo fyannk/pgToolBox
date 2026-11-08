@@ -1,0 +1,100 @@
+{
+  "ref": {
+    "namespace": "team-a",
+    "name": "orders",
+    "uid": "0b6a2c1e-8f0d-4a55-9a3e-7c1f2b3d4e5f"
+  },
+  "generatedAt": "2026-10-29T12:00:00Z",
+  "databases": [
+    {
+      "kind": "Database",
+      "name": "orders-app",
+      "pgName": "app",
+      "state": "applied",
+      "health": "ok",
+      "generation": 2,
+      "observedGeneration": 2,
+      "provenance": {
+        "origin": "operator",
+        "source": "Database.status",
+        "observedAt": "2026-10-29T12:00:00Z"
+      }
+    },
+    {
+      "kind": "Database",
+      "name": "orders-reporting",
+      "pgName": "reporting",
+      "state": "failed",
+      "health": "warning",
+      "message": "role \"reporter\" does not exist",
+      "generation": 3,
+      "observedGeneration": 2,
+      "provenance": {
+        "origin": "operator",
+        "source": "Database.status",
+        "observedAt": "2026-10-29T12:00:00Z"
+      }
+    }
+  ],
+  "roles": [],
+  "managedRoles": [],
+  "tablespaces": [],
+  "publications": [],
+  "subscriptions": [],
+  "poolers": [
+    {
+      "name": "orders-pooler-rw",
+      "type": "rw",
+      "poolMode": "session",
+      "desiredInstances": 2,
+      "instances": 2,
+      "podsReady": 0,
+      "text": "the operator has not reported a phase",
+      "health": "unknown",
+      "provenance": {
+        "origin": "operator",
+        "source": "Pooler.status",
+        "observedAt": "2026-10-29T12:00:00Z"
+      }
+    }
+  ],
+  "sources": [
+    {
+      "source": "databases",
+      "state": "live",
+      "since": "2026-10-29T09:00:00Z",
+      "health": "ok"
+    },
+    {
+      "source": "databaseRoles",
+      "state": "notInstalled",
+      "reason": "databaseroles.postgresql.cnpg.io is not served",
+      "health": "info"
+    },
+    {
+      "source": "publications",
+      "state": "live",
+      "since": "2026-10-29T09:00:00Z",
+      "health": "ok"
+    },
+    {
+      "source": "subscriptions",
+      "state": "live",
+      "since": "2026-10-29T09:00:00Z",
+      "health": "ok"
+    },
+    {
+      "source": "poolers",
+      "state": "live",
+      "since": "2026-10-29T09:00:00Z",
+      "health": "ok"
+    },
+    {
+      "source": "imageCatalogs",
+      "state": "live",
+      "since": "2026-10-29T09:00:00Z",
+      "health": "ok"
+    }
+  ],
+  "blindSpots": []
+}

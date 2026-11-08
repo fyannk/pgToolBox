@@ -1,0 +1,30 @@
+# NOTES.txt tells the installer what was created, how to check it and what to do
+# next; with the operator off it says the release is empty.
+suite: install notes
+templates:
+  - templates/NOTES.txt
+release:
+  name: pgtoolbox
+  namespace: pgtoolbox
+tests:
+  - it: names the installed version, the checks and the next steps
+    asserts:
+      - matchRegexRaw: {pattern: "pgToolBox operator [0-9]+\\.[0-9]+\\.[0-9]+.* is installed in namespace pgtoolbox"}
+      - matchRegexRaw: {pattern: "kubectl -n pgtoolbox rollout status deploy/pgtoolbox"}
+      - matchRegexRaw: {pattern: "kubectl get crd \\| grep pgtoolbox.fyannk.dev"}
+      - matchRegexRaw: {pattern: "Next steps"}
+      - matchRegexRaw: {pattern: "pgtoolbox-console-viewer"}
+      - matchRegexRaw: {pattern: "github.com/fyannk/pgToolBox/src/branch/main/docs/site/docs/operator/"}
+  - it: says which namespaces it watches
+    set: {operator.config.watchNamespaces: [team-a, team-b]}
+    asserts:
+      - matchRegexRaw: {pattern: "watching team-a, team-b"}
+  - it: points at the metrics pieces according to the values
+    set: {operator.metrics.podMonitor.enabled: true, operator.metrics.readerClusterRole: true}
+    asserts:
+      - matchRegexRaw: {pattern: "a PodMonitor scrapes"}
+      - matchRegexRaw: {pattern: "pgtoolbox-metrics-reader"}
+  - it: says the release is empty when the operator is off
+    set: {operator.enabled: false}
+    asserts:
+      - matchRegexRaw: {pattern: "operator.enabled is false: this release renders nothing"}

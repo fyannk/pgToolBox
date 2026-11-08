@@ -1,0 +1,39 @@
+{{- if .Values.console.enabled }}
+{{- $e := .Values.console.exposure }}
+{{- $sticky := $e.sticky | default dict }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "pgtools.console.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "pgtools.console.labels" . | nindent 4 }}
+  {{- if and (eq $e.type "ingress") $sticky.enabled }}
+  # Cookie affinity for Traefik's Ingress provider, which reads it from the
+  # Service (ingress-nginx's is on the Ingress); other controllers ignore it.
+  annotations:
+    traefik.ingress.kubernetes.io/service.sticky.cookie: "true"
+    traefik.ingress.kubernetes.io/service.sticky.cookie.name: {{ $sticky.cookieName | quote }}
+    traefik.ingress.kubernetes.io/service.sticky.cookie.httponly: "true"
+    traefik.ingress.kubernetes.io/service.sticky.cookie.samesite: lax
+    {{- if $e.ingress.tls.enabled }}
+    traefik.ingress.kubernetes.io/service.sticky.cookie.secure: "true"
+    {{- end }}
+  {{- end }}
+spec:
+  type: {{ .Values.console.service.type }}
+  selector:
+    {{- include "pgtools.console.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.console.service.port }}
+      targetPort: http
+      protocol: TCP
+    {{- if .Values.console.metrics.serviceMonitor.enabled }}
+    # /metrics is served on the probe port (HTTP, or HTTPS with console.tls.secretName; SelfSubjectReview + SAR).
+    - name: metrics
+      port: {{ .Values.console.probePort }}
+      targetPort: probes
+      protocol: TCP
+    {{- end }}
+{{- end }}

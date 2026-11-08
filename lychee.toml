@@ -1,0 +1,23 @@
+# lychee, run by `make docs-links` and the docs job.
+# Docusaurus already fails the build on a broken INTERNAL link; this checks the
+# external ones, so it is non-blocking (a third-party site being down must not
+# stop a release), and reports instead.
+no_progress = true
+max_concurrency = 8
+timeout = 20
+max_retries = 2
+retry_wait_time = 3
+# 429 is a rate limit, not a dead link.
+accept = ["200..=299", "429"]
+scheme = ["https"]
+exclude = [
+  '^https?://localhost',
+  '^https?://127\.0\.0\.1',
+  '^https://([a-z0-9-]+\.)*example\.(org|com|net)',
+  '^https://(idp|oauth-openshift|pgtoolbox-console|registry|dex|keycloak)[a-z0-9.-]*\.(example|corp|local)',
+  '\.svc(\.cluster\.local)?(:[0-9]+)?(/|$)',
+  # The documentation site is published by the same release: its own pages
+  # exist only after the commit being checked.
+  '^https://fyannk\.github\.io/pgToolBox',
+]
+exclude_path = ["node_modules", "docs/site/build", "docs/site/.docusaurus", "docs/site/docs/reference/api.md"]

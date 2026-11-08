@@ -1,0 +1,361 @@
+# Default values for pgtoolbox: the operator.
+#
+# One operator per cluster, or per set of namespaces (operator.config.watchNamespaces).
+# It reconciles the v1alpha1 kinds PgToolBoxConsole, PgAdmin and EvidenceAgent, and
+# decides PgAccessRequests. The team tools without the operator (the console,
+# the evidence agent, pgAdmin) are the pgtools chart.
+#
+#   helm install pgtoolbox charts/pgtoolbox -n pgtoolbox --create-namespace
+
+global:
+  # -- Not used by this chart: set the operator's image repositories below.
+  # Accepted so that a values file shared with the pgtools chart (where it
+  # prefixes every image) still validates.
+  imageRegistry: ""
+
+# -- Replaces the chart name in resource names.
+nameOverride: ""
+# -- Replaces the fully qualified app name in resource names.
+fullnameOverride: ""
+
+# ==========================================================================
+# The operator half. Everything under `operator:` is read only when
+# operator.enabled is true. The operator reconciles the v1alpha1 kinds PgToolBoxConsole,
+# PgAdmin, PgAdminAccess, PgAccessRequest and EvidenceAgent. The flat keys
+# further down (image, replicaCount, ...) are the operator's pod settings.
+# One operator per cluster: it owns cluster-scoped objects (the CRDs, the manager
+# ClusterRole, the two user ClusterRoles).
+# ==========================================================================
+operator:
+  # -- Render the operator: its Deployment, ClusterRole, leader-election Role, the
+  # CRDs (kept on uninstall) and the user ClusterRoles. `false` renders nothing.
+  enabled: true
+
+  # evidenceAgent: what the operator runs for an EvidenceAgent that names no image.
+  evidenceAgent:
+    # -- Image an EvidenceAgent that names none runs
+    # (`--default-evidence-agent-image`). Empty: `imageRepository` at the
+    # chart's `appVersion`. Prefer a digest-pinned reference in production:
+    # `repo@sha256:...`.
+    image: ""
+    # -- Repository of the default evidence agent image, tagged with the chart's
+    # `appVersion`, used when `operator.evidenceAgent.image` is empty.
+    imageRepository: ghcr.io/fyannk/pgtoolbox-evidence-agent
+    # -- Repositories an EvidenceAgent's `spec.image` may name, exact or as a
+    # prefix ending in `/` (`--evidence-agent-image-repositories`). Empty: the
+    # default image's repository only.
+    imageRepositories: []
+
+  # console: what the operator runs for a PgToolBoxConsole that names no image.
+  console:
+    # -- Image a PgToolBoxConsole that names none runs (`--default-console-image`):
+    # `repository`, `tag` (empty: the chart's `appVersion`) and `digest`. A
+    # digest wins over the tag; the released chart carries it.
+    image:
+      # -- Repository of the default console image, for a PgToolBoxConsole that names no
+      # image.
+      repository: ghcr.io/fyannk/pgtoolbox-console
+      # -- Tag of the default console image. Empty: the chart's `appVersion`.
+      tag: ""
+      # -- Digest of the default console image (`sha256:...`). It wins over the
+      # tag; the released chart carries it.
+      digest: ""
+    # -- Repositories a PgToolBoxConsole's `spec.image` may name, exact or as a prefix
+    # ending in `/` (`--console-image-repositories`). Empty: the default
+    # image's repository only.
+    imageRepositories: []
+
+  # pgAdmin: PGADMIN_IMAGE, what a PgAdmin that names no image runs. Empty: the
+  # hardened, digest-pinned image compiled into the operator.
+  pgAdmin:
+    # -- Image a PgAdmin that names none runs (`PGADMIN_IMAGE`). Empty: the
+    # hardened, digest-pinned image compiled into the operator.
+    image: ""
+    # -- Repositories a PgAdmin's `spec.image` and its oauth-proxy image may name,
+    # exact or as a prefix ending in `/`. Empty: each image's default
+    # repository only. Set it to your mirror when the image values point at
+    # one.
+    imageRepositories: []
+  # -- Image of the OpenShift oauth-proxy in front of pgAdmin
+  # (`OAUTH_PROXY_IMAGE`). Empty: the compiled-in default. On OpenShift, set
+  # the release payload's own image so that a mirrored registry serves it.
+  oauthProxyImage: ""
+
+  # config: the operator configuration keys (internal/operator/configuration),
+  # rendered as environment variables only when set. Everything is also
+  # readable from the pgtoolbox-operator-config ConfigMap/Secret.
+  config:
+    # -- Namespaces the operator watches (`WATCH_NAMESPACES`). Empty: every
+    # namespace the ClusterRole allows.
+    watchNamespaces: []
+    # -- Reconciles the operator runs in parallel (`MAX_CONCURRENT_RECONCILES`). 0
+    # keeps the operator's default.
+    maxConcurrentReconciles: 0
+    # -- Time limit of one reconcile, a Go duration (`RECONCILIATION_TIMEOUT`).
+    # Empty keeps the operator's default.
+    reconciliationTimeout: ""
+    # -- Pre-upgrade backups kept per PgAdmin (`UPGRADE_BACKUPS_KEPT`). 0 keeps
+    # the operator's default, 3.
+    upgradeBackupsKept: 0
+
+  # metrics: /metrics on metricsBindAddress is HTTPS, and every scrape needs a
+  # token allowed to `get` the non-resource URL /metrics (TokenReview +
+  # SubjectAccessReview in the operator).
+  metrics:
+    # -- Render the `<fullname>-metrics-reader` ClusterRole (`get` on `/metrics`)
+    # for the scraper. The chart binds it to `readerSubjects` only.
+    readerClusterRole: false
+    # -- ServiceAccounts bound to the metrics reader ClusterRole: `[{name:
+    # prometheus-k8s, namespace: monitoring}]`.
+    readerSubjects: []
+    tls:
+      # -- kubernetes.io/tls Secret that serves the metrics endpoint
+      # (cert-manager, or the OpenShift service CA through the metrics
+      # Service's `service.beta.openshift.io/serving-cert-secret-name`). Empty:
+      # the operator generates a self-signed certificate at start and the
+      # monitors skip verification; the bearer token still decides who may
+      # read.
+      certSecret: ""
+      # -- Secret (name and key) holding the CA that signed the metrics
+      # certificate, for the monitors to verify the endpoint. Empty name: the
+      # monitors skip verification.
+      caSecret: {name: "", key: ca.crt}
+      # -- Server name the monitors verify. Empty:
+      # `<fullname>-metrics.<namespace>.svc`.
+      serverName: ""
+    # -- Create a metrics Service and a ServiceMonitor: `enabled`, scrape
+    # `interval`, and extra `labels` (for example the Prometheus Operator's
+    # release selector). The ServiceMonitor sends the Prometheus pod's
+    # ServiceAccount token.
+    serviceMonitor: {enabled: false, interval: 30s, labels: {}}
+    podMonitor:
+      # -- Create a PodMonitor for the operator pods. It cannot read the
+      # Prometheus pod's token, so it needs `bearerTokenSecret`.
+      enabled: false
+      # -- Scrape interval of the PodMonitor.
+      interval: 30s
+      # -- Extra labels on the PodMonitor (for example the Prometheus Operator's
+      # release selector).
+      labels: {}
+      # -- Secret (name and key) holding the bearer token the PodMonitor sends.
+      # The token's identity must be allowed to `get` the URL `/metrics`.
+      bearerTokenSecret: {name: "", key: token}
+
+  # Availability of the operator pods.
+  podDisruptionBudget:
+    # -- Render a PodDisruptionBudget. It is rendered only with more than one
+    # replica.
+    enabled: true
+    # -- `minAvailable` of the PodDisruptionBudget.
+    minAvailable: 1
+  # -- Topology spread constraints of the pods. Empty with more than one replica:
+  # a soft spread across nodes.
+  topologySpreadConstraints: []
+  # -- `priorityClassName` of the pods. Empty: none.
+  priorityClassName: ""
+  # -- Grace period of the manager pod. The manager releases its leader lease on
+  # shutdown; 40 s covers the lease renew deadline and in-flight reconciles.
+  terminationGracePeriodSeconds: 40
+  # -- Node selector of the pods.
+  nodeSelector: {}
+  # -- Tolerations of the pods.
+  tolerations: []
+
+  # networkPolicy: a policy TEMPLATE for the operator pods, off by default and never
+  # on by default: whether the cluster enforces policies, and whether the operator
+  # namespace wants one, is the installing admin's decision. Egress:
+  # DNS and the API server, plus extraEgress for anything else your environment
+  # needs (an egress proxy, for instance). Ingress: only
+  # the scrapers listed in ingress.metricsFrom, on the metrics port. Kubelet
+  # probes come from the node and are not subject to it.
+  networkPolicy:
+    # -- Render a NetworkPolicy for the operator pods. Off by default: whether the
+    # cluster enforces policies, and whether the operator namespace wants one,
+    # is the installing admin's decision. Egress is DNS and the API server
+    # (plus `extraEgress`); ingress is the scrapers in `ingress.metricsFrom`,
+    # on the metrics port.
+    enabled: false
+    apiServer:
+      # -- How egress to the API server is allowed. `addresses`: the addresses of
+      # the `kubernetes` Endpoints, looked up at install time or taken from
+      # `apiServer.addresses`. `any`: any address on `apiServer.ports`, the
+      # fallback for API servers behind a load balancer whose address is not in
+      # the Endpoints.
+      mode: addresses
+      # -- API server IP addresses to allow when `apiServer.mode` is `addresses`
+      # and the Endpoints lookup is unavailable (`helm template`, GitOps
+      # renderers).
+      addresses: []
+      # -- Ports of the API server that egress is allowed to.
+      ports: [443, 6443]
+    dns:
+      # -- Namespace of the cluster DNS pods that egress is allowed to.
+      namespace: kube-system
+      # -- Labels that select the cluster DNS pods.
+      podLabels: {k8s-app: kube-dns}
+      # -- Ports of the cluster DNS pods (TCP and UDP). OpenShift DNS pods listen
+      # on 5353: use `[5353]` there.
+      ports: [53]
+    ingress:
+      # -- Peers allowed to scrape the metrics port, as raw NetworkPolicy `from`
+      # items. Empty: no ingress on that port.
+      metricsFrom: []
+    # -- Extra egress rules, as raw NetworkPolicy `egress` items (an egress proxy,
+    # a webhook or mail server, a Prometheus outside the watched namespaces).
+    extraEgress: []
+
+  # restoreDrillGuard: the restore-drill delete guard (config/admission), a
+  # ValidatingAdmissionPolicy that lets a console's ServiceAccount bound to
+  # the drills ClusterRole delete only the drill Clusters it sealed.
+  # Kubernetes 1.30+ (admissionregistration.k8s.io/v1 policies); on 1.28 and
+  # 1.29 nothing enforces it, and the docs recommend keeping restore drills
+  # off there. auto: rendered when the cluster serves the API (helm install,
+  # or helm template --api-versions / --kube-version); true: always (a GitOps
+  # render without discovery); false: never.
+  restoreDrillGuard:
+    # -- Render the restore-drill delete guard. `auto`: when the cluster serves
+    # the policy API (`helm install`, or `helm template --api-versions`);
+    # `true`: always (a GitOps render without discovery); `false`: never. Needs
+    # Kubernetes 1.30 or newer to be enforced.
+    enabled: auto
+
+  # admissionPolicy: an optional ValidatingAdmissionPolicy (CEL, no webhook)
+  # for rules that need the request's identity, which the CRD's own
+  # CEL cannot see. spec.image on a PgAdmin or an EvidenceAgent (which runs with
+  # object-store credentials or database credentials) may be set only by the
+  # users and groups of imageOverride; everyone else uses the operator's default
+  # image. spec.workloadIdentity on an EvidenceAgent, only by those of
+  # workloadIdentity. Editing a PgToolBoxConsole or a PgAdmin requires `get` on every
+  # Secret it references (SMTP password, webhook URLs, OIDC client secret,
+  # Prometheus token, pull and TLS Secrets), asked of the API server's
+  # authorizer as the requesting user; on update only references that are new
+  # or changed are checked.
+  # Needs Kubernetes 1.30+ (admissionregistration.k8s.io/v1 policies). Off by default.
+  admissionPolicy:
+    # -- Render the optional ValidatingAdmissionPolicy for rules that need the
+    # request's identity. Needs Kubernetes 1.30 or newer.
+    enabled: false
+    # -- Validation actions of the policy binding: `Deny`, `Warn` and/or `Audit`.
+    # Only `Deny` blocks a request.
+    validationActions: [Deny]
+    imageOverride:
+      # -- Users allowed to set `spec.image` on a PgAdmin or an EvidenceAgent.
+      # Everyone else gets the operator's default image.
+      allowedUsers: []
+      # -- Groups allowed to set `spec.image` on a PgAdmin or an EvidenceAgent.
+      allowedGroups: [system:masters]
+    # workloadIdentity: who may set spec.workloadIdentity on an EvidenceAgent
+    # (it annotates the agent's ServiceAccount with a cloud role and opts the
+    # agent into using it).
+    workloadIdentity:
+      # -- Users allowed to set `spec.workloadIdentity` on an EvidenceAgent.
+      allowedUsers: []
+      # -- Groups allowed to set `spec.workloadIdentity` on an EvidenceAgent.
+      allowedGroups: [system:masters]
+
+  # userRoles: the two ClusterRoles people are bound to per namespace with a
+  # RoleBinding: pgtoolbox-console-viewer (read the CNPG kinds, pods,
+  # events, logs) and pgtoolbox-console-operator (viewer plus create backups, patch
+  # clusters and their status, get pgadmins: whoever may open pgAdmin holds the
+  # offered credentials). The chart renders no binding for them.
+  userRoles:
+    # -- Render the `pgtoolbox-console-viewer` and `pgtoolbox-console-operator` ClusterRoles. The
+    # chart renders no binding for them: bind them per namespace with a
+    # RoleBinding.
+    create: true
+    # -- Render `pgtoolbox-aggregate-to-admin`, aggregated into the built-in
+    # `admin` ClusterRole (not `edit`), so a namespace admin can bind the two
+    # user roles to their team and install a pgtools console that links to the
+    # operator's objects.
+    aggregateToAdmin: true
+
+# namespace controls where the operator is installed. When create is true the
+# chart creates the namespace; otherwise the release namespace is used.
+namespace:
+  # -- Name of the namespace the chart creates when `create` is true. Otherwise
+  # the release namespace is used.
+  name: pgtoolbox
+  # -- Create the operator's namespace, labelled with `podSecurity`.
+  create: false
+  # -- Pod Security Admission labels (`enforce`, `audit`, `warn`) put on the
+  # namespace the chart creates. The operator, and everything it runs for
+  # PgAdmin and EvidenceAgent, fits `restricted`. Without `namespace.create`,
+  # label the namespace yourself.
+  podSecurity: {enforce: restricted, audit: restricted, warn: restricted}
+
+# -- Number of manager replicas. With more than one, leader election picks the
+# active one.
+replicaCount: 2
+
+# image is the operator (manager) image. An empty tag means the chart's
+# appVersion: a chart installed at 0.1.0 runs 0.1.0, rather than whatever a
+# floating tag resolves to on the day it is installed.
+image:
+  # -- Repository of the operator (manager) image.
+  repository: ghcr.io/fyannk/pgtoolbox-operator
+  # -- Tag of the operator image. Empty: the chart's `appVersion`.
+  tag: ""
+  # -- Digest of the operator image (`sha256:...`). It wins over the tag. The
+  # released chart carries the digest of the image pushed by the same release;
+  # the source tree leaves it empty.
+  digest: ""
+  # -- Pull policy of the operator image.
+  pullPolicy: IfNotPresent
+
+# -- Enable controller-runtime leader election. Keep it on with more than one
+# replica.
+leaderElection: true
+
+# -- Address the metrics endpoint listens on (HTTPS, authenticated). The Service
+# port is taken from it.
+metricsBindAddress: ":8080"
+# -- Address the liveness and readiness probes are served on.
+healthProbeBindAddress: ":8081"
+
+# -- Resource requests and limits of the manager container.
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+# -- Pod security context of the manager pod (Pod Security Standard `restricted`).
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+
+# -- Container security context of the manager (non-root, read-only root
+# filesystem, all capabilities dropped).
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+# -- Liveness probe of the manager container.
+livenessProbe:
+  httpGet:
+    path: /healthz
+    # 8081 (the default of healthProbeBindAddress) follows healthProbeBindAddress:
+    # the probe uses that address's port. Any other value is used as written.
+    port: 8081
+  initialDelaySeconds: 15
+  periodSeconds: 20
+# -- Readiness probe of the manager container.
+readinessProbe:
+  httpGet:
+    path: /readyz
+    port: 8081
+  initialDelaySeconds: 5
+  periodSeconds: 10
+
+# -- Labels added to every resource.
+commonLabels: {}
+# -- Extra labels on the pods.
+podLabels: {}
+# -- Extra annotations on the pods.
+podAnnotations: {}

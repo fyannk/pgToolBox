@@ -1,0 +1,18 @@
+# A request for the console's operator capability in this namespace, for one
+# person, for a working day. Someone who may create RoleBindings here and update
+# PgAccessRequest status approves it in the console (Access requests), which binds
+# the person to the pgtoolbox-console-operator ClusterRole with the approver's own token;
+# the operator deletes that RoleBinding at expiresAt. spec.cluster is informative:
+# a RoleBinding covers every Cluster of the namespace, and the status says so.
+apiVersion: pgtoolbox.fyannk.dev/v1alpha1
+kind: PgAccessRequest
+metadata:
+  name: jane-operator
+spec:
+  subject:
+    kind: User
+    name: oidc:jane@corp.example
+  cluster: cluster-example
+  capability: operator
+  justification: "INC-4211: replica lag on cluster-example, need to restart the standby"
+  expiresAt: "2030-01-01T18:00:00Z"

@@ -1,0 +1,117 @@
+# Dependency updates, in the house style of the other fyannk repositories:
+# weekly on Monday morning (Europe/Paris), at most five open pull requests per
+# ecosystem, a seven-day cooldown so a release that is yanked or fixed within a
+# week is never proposed, and Conventional Commit prefixes. Minor and patch
+# updates are grouped into one pull request per ecosystem and merged by
+# automerge.yml when the required checks pass; a major update is its own pull
+# request, left for a person (the quarterly toolchain day,
+# docs/site/docs/development/ci.md). The tool versions in mise.toml and the
+# pins in hack/*.sh are not read by Dependabot; that day bumps them by hand.
+version: 2
+
+updates:
+  - package-ecosystem: gomod
+    directories:
+      - /
+      - /pkg/evidence
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:30"
+      timezone: Europe/Paris
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: "build(deps)"
+    groups:
+      kubernetes:
+        applies-to: version-updates
+        patterns:
+          - "k8s.io/*"
+          - "sigs.k8s.io/*"
+          - "github.com/cloudnative-pg/*"
+        update-types:
+          - minor
+          - patch
+      go-routine:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "k8s.io/*"
+          - "sigs.k8s.io/*"
+          - "github.com/cloudnative-pg/*"
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: npm
+    directories:
+      - /ui
+      - /docs/site
+      - /headlamp
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:40"
+      timezone: Europe/Paris
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: "build(deps)"
+    groups:
+      npm-routine:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: docker
+    directories:
+      - /
+      - /deploy/olm
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:50"
+      timezone: Europe/Paris
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: "build(deps)"
+    groups:
+      container-routine:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: github-actions
+    directories:
+      - /
+      - /.github/actions/toolchain
+    schedule:
+      interval: weekly
+      day: monday
+      time: "07:00"
+      timezone: Europe/Paris
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: "ci(deps)"
+    groups:
+      actions-routine:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch

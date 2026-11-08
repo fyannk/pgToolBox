@@ -1,0 +1,243 @@
+{{- if and .Values.console.enabled .Values.console.rbac.create }}
+{{- /*
+The console's whole authority:
+
+  * a Role + RoleBinding in each watched namespace (read-only, no Secret verb,
+    no wildcard, no write);
+  * opt-in: a ClusterRole, read-only on clusterimagecatalogs;
+  * opt-in (restoreDrills): a Role in the drill namespace(s) that may delete
+    Clusters, for the teardown of the drills the console created.
+
+Access questions are asked with the asker's own token (SelfSubjectAccessReview,
+open to every authenticated user), so the console holds no
+cluster-scoped grant by default. Writes are made with the user's own token,
+never this ServiceAccount, with the one exception of the drill teardown.
+*/ -}}
+{{- $fullname := include "pgtools.console.fullname" . }}
+{{- $sa := $fullname }}
+{{- range $ns := include "pgtools.console.watchNamespaces" . | fromJsonArray }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $fullname }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "pgtools.console.labels" $ | nindent 4 }}
+rules:
+  # CloudNativePG kinds the read model watches.
+  - apiGroups: [postgresql.cnpg.io]
+    resources:
+      - clusters
+      - backups
+      - scheduledbackups
+      - poolers
+      - databases
+      - databaseroles
+      - publications
+      - subscriptions
+      - failoverquorums
+      - imagecatalogs
+    verbs: [get, list, watch]
+  # Where plugin-based backups report their recovery window (barman-cloud
+  # ObjectStores, and the pgBackRest plugins' Stanzas and Archives).
+  - apiGroups: [barmancloud.cnpg.io]
+    resources: [objectstores]
+    verbs: [get, list, watch]
+  - apiGroups: [pgbackrest.dalibo.com]
+    resources: [stanzas]
+    verbs: [get, list, watch]
+  - apiGroups: [pgbackrest.cnpg.opera.com]
+    resources: [archives]
+    verbs: [get, list, watch]
+  {{- if include "pgtools.console.operatorKinds" $ }}
+  # Link-outs to the objects the operator owns.
+  - apiGroups: [pgtoolbox.fyannk.dev]
+    resources: [pgadmins, evidenceagents, pgaccessrequests]
+    verbs: [get, list, watch]
+  {{- end }}
+  # Instance and pooler pods, the claims they keep data on, the Services that
+  # name the addresses clients dial, events and quotas that explain a wait.
+  - apiGroups: [""]
+    resources: [pods, persistentvolumeclaims, services]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [events, resourcequotas]
+    verbs: [list, watch]
+  - apiGroups: [policy]
+    resources: [poddisruptionbudgets]
+    verbs: [get, list, watch]
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [get, list, watch]
+  # Major-upgrade Jobs.
+  - apiGroups: [batch]
+    resources: [jobs]
+    verbs: [get, list, watch]
+  # Pooler pods are owned through Pod -> ReplicaSet -> Deployment -> Pooler.
+  - apiGroups: [apps]
+    resources: [replicasets, deployments]
+    verbs: [get]
+  {{- if $.Values.console.rbac.podLogs }}
+  - apiGroups: [""]
+    resources: [pods/log]
+    verbs: [get]
+  {{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $fullname }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "pgtools.console.labels" $ | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $fullname }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $sa }}
+    namespace: {{ $.Release.Namespace }}
+{{- end }}
+{{- with .Values.console.restoreDrills }}
+{{- if .enabled }}
+{{- if not $.Values.console.operations.enabled }}
+{{- fail "console.restoreDrills.enabled requires console.operations.enabled: a drill is started as an operation" }}
+{{- end }}
+{{- range $ns := include "pgtools.console.drillNamespaces" $ | fromJsonArray }}
+---
+# Opt-in restore-drill teardown: the console deletes the drill
+# Clusters it created, after their check or their time limit, when the person
+# who started them may be gone. It reads them to find them and may delete
+# Clusters here, nothing else; the console deletes only Clusters carrying its
+# drill seal (an HMAC only it can produce), preconditioned on their UID. The
+# drill's PVCs follow through CloudNativePG's owner references. Creating a drill
+# is the person's own write, never this ServiceAccount's.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $fullname }}-restore-drills
+  namespace: {{ $ns }}
+  labels:
+    {{- include "pgtools.console.labels" $ | nindent 4 }}
+rules:
+  - apiGroups: [postgresql.cnpg.io]
+    resources: [clusters]
+    verbs: [get, list, watch, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $fullname }}-restore-drills
+  namespace: {{ $ns }}
+  labels:
+    {{- include "pgtools.console.labels" $ | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $fullname }}-restore-drills
+subjects:
+  - kind: ServiceAccount
+    name: {{ $sa }}
+    namespace: {{ $.Release.Namespace }}
+{{- end }}
+{{- end }}
+{{- end }}
+---
+# The revocation list, by name, in the release namespace: the only ConfigMap the
+# console can read through the API, and it only gets and watches it (an admin
+# edits it). The CA bundle is a mounted file, not an API read.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $fullname }}-revocations
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "pgtools.console.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [configmaps]
+    resourceNames: [{{ include "pgtools.console.revocations" . | quote }}]
+    verbs: [get, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $fullname }}-revocations
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "pgtools.console.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $fullname }}-revocations
+subjects:
+  - kind: ServiceAccount
+    name: {{ $sa }}
+    namespace: {{ .Release.Namespace }}
+{{- if .Values.console.metrics.readerClusterRole }}
+---
+# Opt-in: what a scraper needs to read /metrics (the console asks the API server
+# for `get /metrics` on behalf of the caller). The chart binds it to nobody
+# unless metrics.readerSubjects names ServiceAccounts; it is not the console's own
+# authority.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "pgtools.console.clusterRoleName" . }}:metrics-reader
+  labels:
+    {{- include "pgtools.console.labels" . | nindent 4 }}
+rules:
+  - nonResourceURLs: [/metrics]
+    verbs: [get]
+{{- with .Values.console.metrics.readerSubjects }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "pgtools.console.clusterRoleName" $ }}:metrics-reader
+  labels:
+    {{- include "pgtools.console.labels" $ | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "pgtools.console.clusterRoleName" $ }}:metrics-reader
+subjects:
+  {{- range . }}
+  - kind: ServiceAccount
+    name: {{ .name }}
+    namespace: {{ .namespace }}
+  {{- end }}
+{{- end }}
+{{- end }}
+{{- if .Values.console.clusterImageCatalogs.enabled }}
+---
+# Opt-in: ClusterImageCatalog is a cluster-scoped CNPG kind.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "pgtools.console.clusterRoleName" . }}:clusterimagecatalogs
+  labels:
+    {{- include "pgtools.console.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [postgresql.cnpg.io]
+    resources: [clusterimagecatalogs]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "pgtools.console.clusterRoleName" . }}:clusterimagecatalogs
+  labels:
+    {{- include "pgtools.console.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "pgtools.console.clusterRoleName" . }}:clusterimagecatalogs
+subjects:
+  - kind: ServiceAccount
+    name: {{ $sa }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}
+{{- end }}

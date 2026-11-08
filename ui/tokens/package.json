@@ -1,0 +1,25 @@
+{
+  "name": "@pgtoolbox/ui-tokens",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Design tokens of pgToolBox: the vendored fyannk/design palette (fyannk.css), the console's semantic tokens mapped onto it (tokens.css, source of truth) and a typed export. No dependencies; no build step.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "files": [
+    "fyannk.css",
+    "tokens.css",
+    "tokens.ts"
+  ],
+  "exports": {
+    "./fyannk.css": "./fyannk.css",
+    "./tokens.css": "./tokens.css",
+    ".": "./tokens.ts"
+  },
+  "scripts": {
+    "generate": "node scripts/generate.mjs",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=22.18"
+  }
+}

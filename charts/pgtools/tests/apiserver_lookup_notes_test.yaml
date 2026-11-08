@@ -1,0 +1,49 @@
+# While apiServer.lookup is on (this minor's default) and no addresses are
+# listed, NOTES warns what the lookup needs and that the next minor turns it off.
+suite: API server lookup notes
+templates:
+  - templates/NOTES.txt
+  - templates/console/networkpolicy.yaml
+release:
+  name: pgc
+  namespace: team-a
+kubernetesProvider:
+  scheme:
+    "v1/Endpoints": {gvr: {group: "", version: v1, resource: endpoints}, namespaced: true}
+  objects:
+    - apiVersion: v1
+      kind: Endpoints
+      metadata: {name: kubernetes, namespace: default}
+      subsets:
+        - addresses: [{ip: 10.96.0.1}]
+
+set:
+  console.networkPolicy.enabled: true
+tests:
+  - it: warns while the lookup is used without addresses
+    template: templates/NOTES.txt
+    asserts:
+      - matchRegexRaw:
+          pattern: "(?s)WARNING: console.networkPolicy.apiServer.lookup is on.*Forbidden.*list console.networkPolicy.apiServer.addresses.*mode: any.*cluster admin.*next minor defaults console.networkPolicy.apiServer.lookup to false"
+
+  - it: finds the address through the lookup
+    template: templates/console/networkpolicy.yaml
+    asserts:
+      - contains:
+          path: spec.egress
+          content:
+            # The fake Endpoints carry no ports, hence null.
+            to: [{ipBlock: {cidr: 10.96.0.1/32}}]
+            ports: null
+
+  - it: is silent when addresses are listed
+    template: templates/NOTES.txt
+    set: {console.networkPolicy.apiServer.addresses: [10.96.0.1]}
+    asserts:
+      - notMatchRegexRaw: {pattern: "WARNING: console.networkPolicy.apiServer.lookup"}
+
+  - it: is silent with lookup off
+    template: templates/NOTES.txt
+    set: {console.networkPolicy.apiServer.lookup: false, console.networkPolicy.apiServer.addresses: [10.96.0.1]}
+    asserts:
+      - notMatchRegexRaw: {pattern: "WARNING: console.networkPolicy.apiServer.lookup"}

@@ -1,0 +1,160 @@
+{
+  "ref": {
+    "namespace": "team-a",
+    "name": "orders",
+    "uid": "0b6a2c1e-8f0d-4a55-9a3e-7c1f2b3d4e5f"
+  },
+  "generatedAt": "2026-10-29T12:00:00Z",
+  "requests": [
+    {
+      "role": "PG_DATA",
+      "size": "40Gi",
+      "storageClass": "fast-ssd",
+      "resizeInUseVolumes": true,
+      "provenance": {
+        "origin": "operator",
+        "source": "Cluster.spec.storage",
+        "observedAt": "2026-10-29T11:59:58Z"
+      }
+    },
+    {
+      "role": "PG_WAL",
+      "size": "5Gi",
+      "storageClass": "fast-ssd",
+      "provenance": {
+        "origin": "operator",
+        "source": "Cluster.spec.walStorage",
+        "observedAt": "2026-10-29T11:59:58Z"
+      }
+    }
+  ],
+  "volumes": [
+    {
+      "name": "orders-1",
+      "instance": "orders-1",
+      "role": "PG_DATA",
+      "group": "healthy",
+      "health": "ok",
+      "phase": "Bound",
+      "capacity": "20Gi",
+      "requested": "20Gi",
+      "storageClass": "fast-ssd",
+      "provenance": {
+        "origin": "kubernetes",
+        "source": "PersistentVolumeClaim",
+        "observedAt": "2026-10-29T11:59:58Z"
+      }
+    },
+    {
+      "name": "orders-1-wal",
+      "instance": "orders-1",
+      "role": "PG_WAL",
+      "group": "healthy",
+      "health": "ok",
+      "phase": "Bound",
+      "capacity": "20Gi",
+      "requested": "20Gi",
+      "storageClass": "fast-ssd",
+      "provenance": {
+        "origin": "kubernetes",
+        "source": "PersistentVolumeClaim",
+        "observedAt": "2026-10-29T11:59:58Z"
+      }
+    },
+    {
+      "name": "orders-2",
+      "instance": "orders-2",
+      "role": "PG_DATA",
+      "group": "healthy",
+      "health": "ok",
+      "phase": "Bound",
+      "capacity": "20Gi",
+      "requested": "20Gi",
+      "storageClass": "fast-ssd",
+      "provenance": {
+        "origin": "kubernetes",
+        "source": "PersistentVolumeClaim",
+        "observedAt": "2026-10-29T11:59:58Z"
+      }
+    },
+    {
+      "name": "orders-2-wal",
+      "instance": "orders-2",
+      "role": "PG_WAL",
+      "group": "healthy",
+      "health": "ok",
+      "phase": "Bound",
+      "capacity": "20Gi",
+      "requested": "20Gi",
+      "storageClass": "fast-ssd",
+      "provenance": {
+        "origin": "kubernetes",
+        "source": "PersistentVolumeClaim",
+        "observedAt": "2026-10-29T11:59:58Z"
+      }
+    },
+    {
+      "name": "orders-3",
+      "instance": "orders-3",
+      "role": "PG_DATA",
+      "group": "resizing",
+      "groupText": "being resized",
+      "health": "progressing",
+      "phase": "Bound",
+      "capacity": "20Gi",
+      "requested": "40Gi",
+      "storageClass": "fast-ssd",
+      "resizing": true,
+      "provenance": {
+        "origin": "kubernetes",
+        "source": "PersistentVolumeClaim",
+        "observedAt": "2026-10-29T11:59:58Z"
+      }
+    },
+    {
+      "name": "orders-3-wal",
+      "instance": "orders-3",
+      "role": "PG_WAL",
+      "group": "healthy",
+      "health": "ok",
+      "phase": "Bound",
+      "capacity": "20Gi",
+      "requested": "20Gi",
+      "storageClass": "fast-ssd",
+      "provenance": {
+        "origin": "kubernetes",
+        "source": "PersistentVolumeClaim",
+        "observedAt": "2026-10-29T11:59:58Z"
+      }
+    }
+  ],
+  "forecasts": {
+    "state": "unavailable",
+    "reason": "No instance of this cluster reports its volumes: neither /pg/status volumeUsages nor the cnpg_disk_* metrics are present. Upstream CloudNativePG reports neither; builds that do (such as the autoGrow fork) fill this panel on their own. PVC capacity and the metrics are the evidence meanwhile.",
+    "intervalSeconds": 900,
+    "retentionSeconds": 2592000,
+    "persistent": false,
+    "volumes": []
+  },
+  "sources": [
+    {
+      "source": "clusters",
+      "state": "live",
+      "since": "2026-10-29T09:00:00Z",
+      "health": "ok"
+    },
+    {
+      "source": "pvcs",
+      "state": "live",
+      "since": "2026-10-29T09:00:00Z",
+      "health": "ok"
+    }
+  ],
+  "blindSpots": [
+    {
+      "id": "storage.usageNotReported",
+      "panel": "storage",
+      "text": "Upstream CloudNativePG does not report volume usage in /pg/status; disk usage is the exporter's or your monitoring's to show."
+    }
+  ]
+}

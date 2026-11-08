@@ -1,0 +1,79 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  annotations:
+    pgtoolbox.fyannk.dev/egress-rules: dns,postgresql,kubernetes-api,identity-provider,extraEgress[0]
+    pgtoolbox.fyannk.dev/spec-hash: 9c4b83503e188c6e
+  labels:
+    app.kubernetes.io/component: pgadmin
+    app.kubernetes.io/instance: ops
+    app.kubernetes.io/managed-by: pgtoolbox
+    app.kubernetes.io/name: pgadmin
+    app.kubernetes.io/part-of: pgtoolbox
+    cost-center: db
+    pgtoolbox.fyannk.dev/pgadmin: ops
+    pgtoolbox.fyannk.dev/reconcile: "true"
+  name: ops-pgadmin
+  namespace: team-a
+  ownerReferences:
+  - apiVersion: pgtoolbox.fyannk.dev/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: PgAdmin
+    name: ops
+    uid: pga-uid
+spec:
+  egress:
+  - ports:
+    - port: 53
+      protocol: UDP
+    - port: 53
+      protocol: TCP
+    - port: 5353
+      protocol: UDP
+    - port: 5353
+      protocol: TCP
+    to:
+    - namespaceSelector: {}
+  - ports:
+    - port: 5432
+      protocol: TCP
+    to:
+    - podSelector:
+        matchExpressions:
+        - key: cnpg.io/cluster
+          operator: In
+          values:
+          - orders
+          - billing
+    - podSelector:
+        matchExpressions:
+        - key: cnpg.io/poolerName
+          operator: In
+          values:
+          - orders-pooler
+  - ports:
+    - port: 6443
+      protocol: TCP
+    to:
+    - ipBlock:
+        cidr: 172.18.0.2/32
+  - ports:
+    - port: 443
+      protocol: TCP
+  - to:
+    - ipBlock:
+        cidr: 0.0.0.0/0
+  ingress:
+  - ports:
+    - port: 8443
+      protocol: TCP
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: pgadmin
+      app.kubernetes.io/instance: ops
+      app.kubernetes.io/name: pgadmin
+      pgtoolbox.fyannk.dev/pgadmin: ops
+  policyTypes:
+  - Ingress
+  - Egress

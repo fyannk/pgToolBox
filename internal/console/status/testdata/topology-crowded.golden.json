@@ -1,0 +1,996 @@
+{
+  "ref": {
+    "namespace": "team-a",
+    "name": "crowd",
+    "uid": "9e8d7c6b-5a49-4382-9170-6f5e4d3c2b1a"
+  },
+  "generatedAt": "2026-10-29T12:00:00Z",
+  "title": "How crowd is wired",
+  "aria": "The wiring of crowd; 8 pooler(s) front its Services; crowd-rw leads to the primary crowd-1; crowd-ro leads to the replicas crowd-10, crowd-11, crowd-2, crowd-3, crowd-4, crowd-5, crowd-6, which stream from the primary; 5 backup schedule(s) target the cluster; the newest attributed base backup left crowd-2.",
+  "width": 1531,
+  "height": 1092,
+  "frames": [
+    {
+      "label": "Poolers",
+      "kind": "pool",
+      "x": 8,
+      "y": 160,
+      "w": 242,
+      "h": 564,
+      "foldable": true
+    },
+    {
+      "label": "Cluster",
+      "kind": "cluster",
+      "x": 310,
+      "y": 160,
+      "w": 856,
+      "h": 924,
+      "foldable": true
+    },
+    {
+      "label": "Backups",
+      "kind": "backup",
+      "x": 382,
+      "y": 8,
+      "w": 694,
+      "h": 124,
+      "foldable": true
+    },
+    {
+      "label": "Kubernetes storage",
+      "kind": "kubeStorage",
+      "x": 1226,
+      "y": 8,
+      "w": 297,
+      "h": 124,
+      "foldable": true
+    }
+  ],
+  "edges": [
+    {
+      "kind": "write",
+      "path": "M 234 237 L 275 237 Q 280 237 280 242 L 280 242 Q 280 247 285 247 L 326 247"
+    },
+    {
+      "kind": "write",
+      "path": "M 234 327 L 274 327 Q 280 327 280 321 L 280 253 Q 280 247 286 247 L 326 247"
+    },
+    {
+      "kind": "read",
+      "path": "M 234 417 L 274 417 Q 280 417 280 411 L 280 358 Q 280 352 286 352 L 326 352"
+    },
+    {
+      "kind": "read",
+      "path": "M 234 507 L 274 507 Q 280 507 280 501 L 280 358 Q 280 352 286 352 L 326 352"
+    },
+    {
+      "kind": "read",
+      "path": "M 234 597 L 274 597 Q 280 597 280 591 L 280 448 Q 280 442 286 442 L 326 442"
+    },
+    {
+      "kind": "write",
+      "path": "M 566 247 L 614 247"
+    },
+    {
+      "kind": "read",
+      "path": "M 566 352 L 920 352"
+    },
+    {
+      "kind": "read",
+      "path": "M 566 352 L 584 352 Q 590 352 590 358 L 590 446 Q 590 452 596 452 L 920 452"
+    },
+    {
+      "kind": "read",
+      "path": "M 566 352 L 584 352 Q 590 352 590 358 L 590 546 Q 590 552 596 552 L 920 552"
+    },
+    {
+      "kind": "read",
+      "path": "M 566 352 L 584 352 Q 590 352 590 358 L 590 646 Q 590 652 596 652 L 920 652"
+    },
+    {
+      "kind": "read",
+      "path": "M 566 352 L 584 352 Q 590 352 590 358 L 590 746 Q 590 752 596 752 L 920 752"
+    },
+    {
+      "kind": "read",
+      "path": "M 566 352 L 584 352 Q 590 352 590 358 L 590 846 Q 590 852 596 852 L 920 852"
+    },
+    {
+      "kind": "read",
+      "path": "M 566 352 L 584 352 Q 590 352 590 358 L 590 946 Q 590 952 596 952 L 920 952"
+    },
+    {
+      "kind": "baseBackup",
+      "path": "M 503 116 L 503 140 Q 503 146 509 146 L 723 146 Q 729 146 729 152 L 729 160"
+    },
+    {
+      "kind": "baseBackup",
+      "path": "M 729 116 L 729 160"
+    },
+    {
+      "kind": "baseBackup",
+      "path": "M 955 106 L 955 140 Q 955 146 949 146 L 735 146 Q 729 146 729 152 L 729 160"
+    },
+    {
+      "kind": "replicate",
+      "path": "M 844 262 L 876 262 Q 882 262 882 268 L 882 361 Q 882 367 888 367 L 920 367"
+    },
+    {
+      "kind": "replicate",
+      "path": "M 844 262 L 876 262 Q 882 262 882 268 L 882 461 Q 882 467 888 467 L 920 467"
+    },
+    {
+      "kind": "replicate",
+      "path": "M 844 262 L 876 262 Q 882 262 882 268 L 882 561 Q 882 567 888 567 L 920 567"
+    },
+    {
+      "kind": "replicate",
+      "path": "M 844 262 L 876 262 Q 882 262 882 268 L 882 661 Q 882 667 888 667 L 920 667"
+    },
+    {
+      "kind": "replicate",
+      "path": "M 844 262 L 876 262 Q 882 262 882 268 L 882 761 Q 882 767 888 767 L 920 767"
+    },
+    {
+      "kind": "replicate",
+      "path": "M 844 262 L 876 262 Q 882 262 882 268 L 882 861 Q 882 867 888 867 L 920 867"
+    },
+    {
+      "kind": "replicate",
+      "label": "replication",
+      "path": "M 844 262 L 876 262 Q 882 262 882 268 L 882 961 Q 882 967 888 967 L 920 967",
+      "labelX": 878,
+      "labelY": 314,
+      "labelVertical": true
+    },
+    {
+      "kind": "baseBackup",
+      "label": "base backup · volume snapshot",
+      "path": "M 1150 537 L 1202 537 Q 1208 537 1208 531 L 1208 98 Q 1208 92 1214 92 L 1242 92",
+      "labelX": 1204,
+      "labelY": 314,
+      "labelVertical": true
+    }
+  ],
+  "nodes": [
+    {
+      "id": "pooler-crowd-pool-1",
+      "kind": "pooler",
+      "label": "crowd-pool-1",
+      "state": "unknown",
+      "lines": [
+        {
+          "class": "label",
+          "text": "crowd-pool-1",
+          "x": 38,
+          "y": 225
+        },
+        {
+          "class": "sub",
+          "text": "pgbouncer rw · session",
+          "x": 38,
+          "y": 242
+        },
+        {
+          "class": "disk",
+          "text": "0 of 1 pods created",
+          "x": 38,
+          "y": 256
+        }
+      ],
+      "x": 24,
+      "y": 206,
+      "w": 210,
+      "h": 62,
+      "link": "objects"
+    },
+    {
+      "id": "pooler-crowd-pool-4",
+      "kind": "pooler",
+      "label": "crowd-pool-4",
+      "state": "unknown",
+      "lines": [
+        {
+          "class": "label",
+          "text": "crowd-pool-4",
+          "x": 38,
+          "y": 315
+        },
+        {
+          "class": "sub",
+          "text": "pgbouncer rw · session",
+          "x": 38,
+          "y": 332
+        },
+        {
+          "class": "disk",
+          "text": "0 of 1 pods created",
+          "x": 38,
+          "y": 346
+        }
+      ],
+      "x": 24,
+      "y": 296,
+      "w": 210,
+      "h": 62,
+      "link": "objects"
+    },
+    {
+      "id": "pooler-crowd-pool-2",
+      "kind": "pooler",
+      "label": "crowd-pool-2",
+      "state": "unknown",
+      "lines": [
+        {
+          "class": "label",
+          "text": "crowd-pool-2",
+          "x": 38,
+          "y": 405
+        },
+        {
+          "class": "sub",
+          "text": "pgbouncer ro · session",
+          "x": 38,
+          "y": 422
+        },
+        {
+          "class": "disk",
+          "text": "0 of 1 pods created",
+          "x": 38,
+          "y": 436
+        }
+      ],
+      "x": 24,
+      "y": 386,
+      "w": 210,
+      "h": 62,
+      "link": "objects"
+    },
+    {
+      "id": "pooler-crowd-pool-5",
+      "kind": "pooler",
+      "label": "crowd-pool-5",
+      "state": "unknown",
+      "lines": [
+        {
+          "class": "label",
+          "text": "crowd-pool-5",
+          "x": 38,
+          "y": 495
+        },
+        {
+          "class": "sub",
+          "text": "pgbouncer ro · session",
+          "x": 38,
+          "y": 512
+        },
+        {
+          "class": "disk",
+          "text": "0 of 1 pods created",
+          "x": 38,
+          "y": 526
+        }
+      ],
+      "x": 24,
+      "y": 476,
+      "w": 210,
+      "h": 62,
+      "link": "objects"
+    },
+    {
+      "id": "pooler-crowd-pool-3",
+      "kind": "pooler",
+      "label": "crowd-pool-3",
+      "state": "unknown",
+      "lines": [
+        {
+          "class": "label",
+          "text": "crowd-pool-3",
+          "x": 38,
+          "y": 585
+        },
+        {
+          "class": "sub",
+          "text": "pgbouncer r · session",
+          "x": 38,
+          "y": 602
+        },
+        {
+          "class": "disk",
+          "text": "0 of 1 pods created",
+          "x": 38,
+          "y": 616
+        }
+      ],
+      "x": 24,
+      "y": 566,
+      "w": 210,
+      "h": 62,
+      "link": "objects"
+    },
+    {
+      "id": "pooler-more",
+      "kind": "pooler",
+      "label": "+3 more poolers",
+      "state": "unknown",
+      "lines": [
+        {
+          "class": "label",
+          "text": "+3 more poolers",
+          "x": 38,
+          "y": 677
+        },
+        {
+          "class": "sub",
+          "text": "see the objects screen",
+          "x": 38,
+          "y": 694
+        }
+      ],
+      "x": 24,
+      "y": 656,
+      "w": 210,
+      "h": 52,
+      "link": "objects"
+    },
+    {
+      "id": "svc-rw",
+      "kind": "service",
+      "label": "crowd-rw",
+      "state": "info",
+      "lines": [
+        {
+          "class": "label",
+          "text": "crowd-rw",
+          "x": 340,
+          "y": 235
+        },
+        {
+          "class": "sub",
+          "text": "routes to the primary",
+          "x": 340,
+          "y": 252
+        },
+        {
+          "class": "disk",
+          "text": "Service not found",
+          "x": 340,
+          "y": 266
+        }
+      ],
+      "x": 326,
+      "y": 216,
+      "w": 240,
+      "h": 62
+    },
+    {
+      "id": "svc-ro",
+      "kind": "service",
+      "label": "crowd-ro",
+      "state": "info",
+      "lines": [
+        {
+          "class": "label",
+          "text": "crowd-ro",
+          "x": 340,
+          "y": 340
+        },
+        {
+          "class": "sub",
+          "text": "routes to the replicas",
+          "x": 340,
+          "y": 357
+        },
+        {
+          "class": "disk",
+          "text": "Service not found",
+          "x": 340,
+          "y": 371
+        }
+      ],
+      "x": 326,
+      "y": 321,
+      "w": 240,
+      "h": 62
+    },
+    {
+      "id": "svc-r",
+      "kind": "service",
+      "label": "crowd-r",
+      "state": "info",
+      "lines": [
+        {
+          "class": "label",
+          "text": "crowd-r",
+          "x": 340,
+          "y": 430
+        },
+        {
+          "class": "sub",
+          "text": "routes to any instance",
+          "x": 340,
+          "y": 447
+        },
+        {
+          "class": "disk",
+          "text": "Service not found",
+          "x": 340,
+          "y": 461
+        }
+      ],
+      "x": 326,
+      "y": 411,
+      "w": 240,
+      "h": 62
+    },
+    {
+      "id": "inst-crowd-1",
+      "kind": "primary",
+      "label": "crowd-1",
+      "state": "unknown",
+      "lines": [
+        {
+          "class": "label",
+          "text": "crowd-1 — primary",
+          "x": 628,
+          "y": 221
+        },
+        {
+          "class": "sub",
+          "text": "timeline 3",
+          "x": 628,
+          "y": 238
+        },
+        {
+          "class": "sub",
+          "text": "Running · ready",
+          "x": 628,
+          "y": 252
+        },
+        {
+          "class": "disk",
+          "text": "node node-1",
+          "x": 628,
+          "y": 266
+        },
+        {
+          "class": "disk",
+          "text": "postgresql:18.1",
+          "x": 628,
+          "y": 280
+        }
+      ],
+      "x": 614,
+      "y": 206,
+      "w": 230,
+      "h": 82,
+      "link": "instances/crowd-1"
+    },
+    {
+      "id": "inst-crowd-10",
+      "kind": "replica",
+      "label": "crowd-10",
+      "state": "unknown",
+      "lines": [
+        {
+          "class": "label",
+          "text": "crowd-10 — replica",
+          "x": 934,
+          "y": 333
+        },
+        {
+          "class": "sub",
+          "text": "Running · ready",
+          "x": 934,
+          "y": 350
+        },
+        {
+          "class": "disk",
+          "text": "node node-10",
+          "x": 934,
+          "y": 364
+        },
+        {
+          "class": "disk",
+          "text": "postgresql:18.1",
+          "x": 934,
+          "y": 378
+        }
+      ],
+      "x": 920,
+      "y": 316,
+      "w": 230,
+      "h": 72,
+      "link": "instances/crowd-10"
+    },
+    {
+      "id": "inst-crowd-11",
+      "kind": "replica",
+      "label": "crowd-11",
+      "state": "unknown",
+      "lines": [
+        {
+          "class": "label",
+          "text": "crowd-11 — replica",
+          "x": 934,
+          "y": 433
+        },
+        {
+          "class": "sub",
+          "text": "Running · ready",
+          "x": 934,
+          "y": 450
+        },
+        {
+          "class": "disk",
+          "text": "node node-11",
+          "x": 934,
+          "y": 464
+        },
+        {
+          "class": "disk",
+          "text": "postgresql:18.1",
+          "x": 934,
+          "y": 478
+        }
+      ],
+      "x": 920,
+      "y": 416,
+      "w": 230,
+      "h": 72,
+      "link": "instances/crowd-11"
+    },
+    {
+      "id": "inst-crowd-2",
+      "kind": "replica",
+      "label": "crowd-2",
+      "state": "unknown",
+      "lines": [
+        {
+          "class": "label",
+          "text": "crowd-2 — replica",
+          "x": 934,
+          "y": 533
+        },
+        {
+          "class": "sub",
+          "text": "Running · ready",
+          "x": 934,
+          "y": 550
+        },
+        {
+          "class": "disk",
+          "text": "node node-2",
+          "x": 934,
+          "y": 564
+        },
+        {
+          "class": "disk",
+          "text": "postgresql:18.1",
+          "x": 934,
+          "y": 578
+        }
+      ],
+      "x": 920,
+      "y": 516,
+      "w": 230,
+      "h": 72,
+      "link": "instances/crowd-2"
+    },
+    {
+      "id": "inst-crowd-3",
+      "kind": "replica",
+      "label": "crowd-3",
+      "state": "unknown",
+      "lines": [
+        {
+          "class": "label",
+          "text": "crowd-3 — replica",
+          "x": 934,
+          "y": 633
+        },
+        {
+          "class": "sub",
+          "text": "Running · ready",
+          "x": 934,
+          "y": 650
+        },
+        {
+          "class": "disk",
+          "text": "node node-3",
+          "x": 934,
+          "y": 664
+        },
+        {
+          "class": "disk",
+          "text": "postgresql:18.1",
+          "x": 934,
+          "y": 678
+        }
+      ],
+      "x": 920,
+      "y": 616,
+      "w": 230,
+      "h": 72,
+      "link": "instances/crowd-3"
+    },
+    {
+      "id": "inst-crowd-4",
+      "kind": "replica",
+      "label": "crowd-4",
+      "state": "warning",
+      "lines": [
+        {
+          "class": "label",
+          "text": "crowd-4 — replica",
+          "x": 934,
+          "y": 733
+        },
+        {
+          "class": "sub",
+          "text": "Running · not ready",
+          "x": 934,
+          "y": 750
+        },
+        {
+          "class": "disk",
+          "text": "node node-4",
+          "x": 934,
+          "y": 764
+        },
+        {
+          "class": "disk",
+          "text": "postgresql:18.1",
+          "x": 934,
+          "y": 778
+        }
+      ],
+      "x": 920,
+      "y": 716,
+      "w": 230,
+      "h": 72,
+      "link": "instances/crowd-4"
+    },
+    {
+      "id": "inst-crowd-5",
+      "kind": "replica",
+      "label": "crowd-5",
+      "state": "unknown",
+      "lines": [
+        {
+          "class": "label",
+          "text": "crowd-5 — replica",
+          "x": 934,
+          "y": 833
+        },
+        {
+          "class": "sub",
+          "text": "Running · ready",
+          "x": 934,
+          "y": 850
+        },
+        {
+          "class": "disk",
+          "text": "node node-5",
+          "x": 934,
+          "y": 864
+        },
+        {
+          "class": "disk",
+          "text": "postgresql:18.1",
+          "x": 934,
+          "y": 878
+        }
+      ],
+      "x": 920,
+      "y": 816,
+      "w": 230,
+      "h": 72,
+      "link": "instances/crowd-5"
+    },
+    {
+      "id": "inst-crowd-6",
+      "kind": "replica",
+      "label": "crowd-6",
+      "state": "unknown",
+      "lines": [
+        {
+          "class": "label",
+          "text": "crowd-6 — replica",
+          "x": 934,
+          "y": 933
+        },
+        {
+          "class": "sub",
+          "text": "Running · ready",
+          "x": 934,
+          "y": 950
+        },
+        {
+          "class": "disk",
+          "text": "node node-6",
+          "x": 934,
+          "y": 964
+        },
+        {
+          "class": "disk",
+          "text": "postgresql:18.1",
+          "x": 934,
+          "y": 978
+        }
+      ],
+      "x": 920,
+      "y": 916,
+      "w": 230,
+      "h": 72,
+      "link": "instances/crowd-6"
+    },
+    {
+      "id": "inst-more",
+      "kind": "instance",
+      "label": "+3 more instances",
+      "state": "warning",
+      "lines": [
+        {
+          "class": "label",
+          "text": "+3 more instances",
+          "x": 934,
+          "y": 1037
+        },
+        {
+          "class": "sub",
+          "text": "see the instances screen",
+          "x": 934,
+          "y": 1054
+        }
+      ],
+      "x": 920,
+      "y": 1016,
+      "w": 230,
+      "h": 52,
+      "link": "instances"
+    },
+    {
+      "id": "sched-crowd-sched-1",
+      "kind": "schedule",
+      "label": "crowd-sched-1",
+      "state": "progressing",
+      "lines": [
+        {
+          "class": "label",
+          "text": "crowd-sched-1",
+          "x": 412,
+          "y": 73
+        },
+        {
+          "class": "disk",
+          "text": "0 0 0 * * *",
+          "x": 412,
+          "y": 90
+        },
+        {
+          "class": "sub",
+          "text": "next Oct 29 13:00 UTC",
+          "x": 412,
+          "y": 104
+        }
+      ],
+      "x": 398,
+      "y": 54,
+      "w": 210,
+      "h": 62,
+      "link": "backups"
+    },
+    {
+      "id": "sched-crowd-sched-2",
+      "kind": "schedule",
+      "label": "crowd-sched-2",
+      "state": "inactive",
+      "lines": [
+        {
+          "class": "label",
+          "text": "crowd-sched-2",
+          "x": 638,
+          "y": 73
+        },
+        {
+          "class": "disk",
+          "text": "0 0 1 * * *",
+          "x": 638,
+          "y": 90
+        },
+        {
+          "class": "sub",
+          "text": "suspended",
+          "x": 638,
+          "y": 104
+        }
+      ],
+      "x": 624,
+      "y": 54,
+      "w": 210,
+      "h": 62,
+      "link": "backups"
+    },
+    {
+      "id": "sched-more",
+      "kind": "schedule",
+      "label": "+3 more schedules",
+      "state": "info",
+      "lines": [
+        {
+          "class": "label",
+          "text": "+3 more schedules",
+          "x": 864,
+          "y": 75
+        },
+        {
+          "class": "sub",
+          "text": "see the backups screen",
+          "x": 864,
+          "y": 92
+        }
+      ],
+      "x": 850,
+      "y": 54,
+      "w": 210,
+      "h": 52,
+      "link": "backups"
+    },
+    {
+      "id": "snapshot",
+      "kind": "snapshot",
+      "label": "Volume snapshots",
+      "state": "info",
+      "lines": [
+        {
+          "class": "label",
+          "text": "Volume snapshots",
+          "x": 1256,
+          "y": 73
+        },
+        {
+          "class": "sub",
+          "text": "2 snapshot backup(s)",
+          "x": 1256,
+          "y": 90
+        },
+        {
+          "class": "disk",
+          "text": "class csi-snapclass",
+          "x": 1256,
+          "y": 104
+        }
+      ],
+      "x": 1242,
+      "y": 54,
+      "w": 265,
+      "h": 62,
+      "link": "backups"
+    }
+  ],
+  "dots": [
+    {
+      "kind": "write",
+      "x": 280,
+      "y": 237
+    },
+    {
+      "kind": "write",
+      "x": 280,
+      "y": 327
+    },
+    {
+      "kind": "read",
+      "x": 280,
+      "y": 417
+    },
+    {
+      "kind": "read",
+      "x": 280,
+      "y": 507
+    },
+    {
+      "kind": "read",
+      "x": 590,
+      "y": 352
+    },
+    {
+      "kind": "read",
+      "x": 590,
+      "y": 452
+    },
+    {
+      "kind": "read",
+      "x": 590,
+      "y": 552
+    },
+    {
+      "kind": "read",
+      "x": 590,
+      "y": 652
+    },
+    {
+      "kind": "read",
+      "x": 590,
+      "y": 752
+    },
+    {
+      "kind": "read",
+      "x": 590,
+      "y": 852
+    },
+    {
+      "kind": "baseBackup",
+      "x": 503,
+      "y": 146
+    },
+    {
+      "kind": "baseBackup",
+      "x": 955,
+      "y": 146
+    },
+    {
+      "kind": "replicate",
+      "x": 882,
+      "y": 367
+    },
+    {
+      "kind": "replicate",
+      "x": 882,
+      "y": 467
+    },
+    {
+      "kind": "replicate",
+      "x": 882,
+      "y": 567
+    },
+    {
+      "kind": "replicate",
+      "x": 882,
+      "y": 667
+    },
+    {
+      "kind": "replicate",
+      "x": 882,
+      "y": 767
+    },
+    {
+      "kind": "replicate",
+      "x": 882,
+      "y": 867
+    }
+  ],
+  "legend": [
+    {
+      "kind": "write",
+      "label": "writes"
+    },
+    {
+      "kind": "read",
+      "label": "reads"
+    },
+    {
+      "kind": "replicate",
+      "label": "replication"
+    },
+    {
+      "kind": "baseBackup",
+      "label": "base backup"
+    }
+  ],
+  "caption": "Instance, pooler, schedule, volume and object-store states are observed, and the base-backup wire leaves the instance the newest Backup reports; the Services, the client paths, replication and WAL archiving are the standard CloudNativePG wiring, not observed traffic.",
+  "blindSpots": [
+    {
+      "id": "topology.snapshotsNotRead",
+      "panel": "topology",
+      "text": "VolumeSnapshots are outside the console's Role: the snapshot box counts Backups of method volumeSnapshot, not the snapshots themselves."
+    },
+    {
+      "id": "topology.noSyncTopologyCondition",
+      "panel": "topology",
+      "text": "CloudNativePG 1.30 does not report whether synchronous standbys sit in another failure domain."
+    }
+  ]
+}

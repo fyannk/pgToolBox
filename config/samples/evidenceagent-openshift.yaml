@@ -1,0 +1,17 @@
+# The same agent on OpenShift, with its serving certificate issued by the
+# OpenShift service CA instead of the operator, and explicit overrides of the
+# ObjectStore and server name the Cluster's plugin stanza would supply.
+apiVersion: pgtoolbox.fyannk.dev/v1alpha1
+kind: EvidenceAgent
+metadata:
+  name: cluster-example
+spec:
+  clusterRef:
+    name: cluster-example
+  objectStoreRef:
+    name: cluster-example-store
+  serverName: cluster-example
+  allowedSecrets:
+    - backup-creds
+  tls:
+    issuer: OpenShiftServiceCA

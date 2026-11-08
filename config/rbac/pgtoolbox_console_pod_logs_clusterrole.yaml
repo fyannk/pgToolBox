@@ -1,0 +1,18 @@
+# The bounded log tail and the log-based diagnostics of a console the operator
+# runs (PgToolBoxConsole spec.podLogs, default true); see pgtoolbox_console_clusterrole.yaml.
+#
+# Hand-written source of truth: hack/sync-manifests.sh copies the rules into the
+# Helm chart and the OLM bundle, and hack/validate-packaging.sh compares them.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: pgtoolbox-console-pod-logs
+  labels:
+    app.kubernetes.io/part-of: pgtoolbox
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - pods/log
+  verbs:
+  - get

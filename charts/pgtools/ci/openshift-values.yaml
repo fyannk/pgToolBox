@@ -1,0 +1,6 @@
+# The OpenShift OAuth code flow: the ServiceAccount is the OAuth client.
+console:
+  auth:
+    provider: openshift
+    openshift: {redirectURI: https://console.apps.example.org/auth/callback}
+  exposure: {type: route, host: console.apps.example.org}

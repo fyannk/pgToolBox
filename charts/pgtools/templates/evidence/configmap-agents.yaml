@@ -1,0 +1,17 @@
+{{- include "pgtools.evidence.validate" . }}
+{{- if and .Values.evidence.agents .Values.console.enabled .Values.console.evidence.enabled }}
+{{- /*
+The console's fixed list of agents (EVIDENCE_AGENTS_FILE): a URL and the
+files of the console's mounts, no secret.
+*/ -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "pgtools.evidence.agentsConfigMap" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "pgtools.console.labels" . | nindent 4 }}
+data:
+  agents.json: |
+    {{- include "pgtools.evidence.agentsFile" . | nindent 4 }}
+{{- end }}

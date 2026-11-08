@@ -1,0 +1,141 @@
+{
+  "mcpURL": "https://console.example.com/mcp",
+  "serverName": "pgtoolbox",
+  "access": "read",
+  "tokenLogin": true,
+  "clients": [
+    {
+      "id": "claude-code",
+      "name": "Claude Code",
+      "docs": "https://code.claude.com/docs/en/mcp",
+      "add": "claude mcp add --transport http --scope user pgtoolbox https://console.example.com/mcp",
+      "login": "/mcp",
+      "userConfig": {
+        "path": "~/.claude.json",
+        "format": "json",
+        "content": "{\n  \"mcpServers\": {\n    \"pgtoolbox\": {\n      \"type\": \"http\",\n      \"url\": \"https://console.example.com/mcp\"\n    }\n  }\n}\n"
+      },
+      "projectConfig": {
+        "path": ".mcp.json",
+        "format": "json",
+        "content": "{\n  \"mcpServers\": {\n    \"pgtoolbox\": {\n      \"type\": \"http\",\n      \"url\": \"https://console.example.com/mcp\"\n    }\n  }\n}\n"
+      },
+      "staticToken": {
+        "config": {
+          "path": ".mcp.json",
+          "format": "json",
+          "content": "{\n  \"mcpServers\": {\n    \"pgtoolbox\": {\n      \"type\": \"http\",\n      \"url\": \"https://console.example.com/mcp\",\n      \"headersHelper\": \"printf '{\\\"Authorization\\\": \\\"Bearer %s\\\"}' \\\"$(kubectl -n \u003cnamespace\u003e create token \u003cserviceaccount\u003e --duration=1h)\\\"\"\n    }\n  }\n}\n"
+        },
+        "note": "Claude Code runs the headersHelper command at each connection, so the token is always fresh and never written to a file. Use it where token sign-in is your break-glass path; the sign-in above is the normal one."
+      },
+      "check": "claude mcp get pgtoolbox",
+      "pack": {
+        "document": "skill",
+        "download": "/api/v1/assistant-setup/skill",
+        "fileName": "SKILL.md",
+        "projectPath": ".claude/skills/pgtoolbox/SKILL.md",
+        "userPath": "~/.claude/skills/pgtoolbox/SKILL.md"
+      }
+    },
+    {
+      "id": "codex",
+      "name": "Codex CLI",
+      "docs": "https://learn.chatgpt.com/docs/extend/mcp?surface=cli",
+      "add": "codex mcp add pgtoolbox --url https://console.example.com/mcp",
+      "login": "codex mcp login pgtoolbox",
+      "userConfig": {
+        "path": "~/.codex/config.toml",
+        "format": "toml",
+        "content": "[mcp_servers.\"pgtoolbox\"]\nurl = \"https://console.example.com/mcp\"\n"
+      },
+      "projectConfig": {
+        "path": ".codex/config.toml",
+        "format": "toml",
+        "content": "[mcp_servers.\"pgtoolbox\"]\nurl = \"https://console.example.com/mcp\"\n"
+      },
+      "staticToken": {
+        "config": {
+          "path": "~/.codex/config.toml",
+          "format": "toml",
+          "content": "[mcp_servers.\"pgtoolbox\"]\nurl = \"https://console.example.com/mcp\"\nbearer_token_env_var = \"PGTOOLBOX_TOKEN\"\n"
+        },
+        "env": "export PGTOOLBOX_TOKEN=\"$(kubectl -n \u003cnamespace\u003e create token \u003cserviceaccount\u003e --duration=1h)\"",
+        "note": "Codex sends the variable's value as the bearer token; set it in the shell that starts Codex. Use it where token sign-in is your break-glass path; the sign-in above is the normal one."
+      },
+      "check": "codex mcp list",
+      "pack": {
+        "document": "agents",
+        "download": "/api/v1/assistant-setup/agents",
+        "fileName": "AGENTS.md",
+        "projectPath": "AGENTS.md",
+        "userPath": "~/.codex/AGENTS.md"
+      }
+    },
+    {
+      "id": "opencode",
+      "name": "OpenCode",
+      "docs": "https://opencode.ai/docs/mcp-servers/",
+      "login": "opencode mcp auth pgtoolbox",
+      "userConfig": {
+        "path": "~/.config/opencode/opencode.json",
+        "format": "json",
+        "content": "{\n  \"$schema\": \"https://opencode.ai/config.json\",\n  \"mcp\": {\n    \"pgtoolbox\": {\n      \"type\": \"remote\",\n      \"url\": \"https://console.example.com/mcp\",\n      \"enabled\": true\n    }\n  }\n}\n"
+      },
+      "projectConfig": {
+        "path": "opencode.json",
+        "format": "json",
+        "content": "{\n  \"$schema\": \"https://opencode.ai/config.json\",\n  \"mcp\": {\n    \"pgtoolbox\": {\n      \"type\": \"remote\",\n      \"url\": \"https://console.example.com/mcp\",\n      \"enabled\": true\n    }\n  }\n}\n"
+      },
+      "staticToken": {
+        "config": {
+          "path": "~/.config/opencode/opencode.json",
+          "format": "json",
+          "content": "{\n  \"$schema\": \"https://opencode.ai/config.json\",\n  \"mcp\": {\n    \"pgtoolbox\": {\n      \"type\": \"remote\",\n      \"url\": \"https://console.example.com/mcp\",\n      \"enabled\": true,\n      \"oauth\": false,\n      \"headers\": {\n        \"Authorization\": \"Bearer {env:PGTOOLBOX_TOKEN}\"\n      }\n    }\n  }\n}\n"
+        },
+        "env": "export PGTOOLBOX_TOKEN=\"$(kubectl -n \u003cnamespace\u003e create token \u003cserviceaccount\u003e --duration=1h)\"",
+        "note": "OpenCode reads the token from the variable when it starts; \"oauth\": false keeps it from signing in instead. Use it where token sign-in is your break-glass path; the sign-in above is the normal one."
+      },
+      "check": "opencode mcp list",
+      "pack": {
+        "document": "agents",
+        "download": "/api/v1/assistant-setup/agents",
+        "fileName": "AGENTS.md",
+        "projectPath": "AGENTS.md",
+        "userPath": "~/.config/opencode/AGENTS.md"
+      }
+    },
+    {
+      "id": "generic",
+      "name": "VS Code, Cursor and other clients",
+      "docs": "https://code.visualstudio.com/docs/agents/reference/mcp-configuration",
+      "userConfig": {
+        "path": "~/.cursor/mcp.json",
+        "format": "json",
+        "content": "{\n  \"mcpServers\": {\n    \"pgtoolbox\": {\n      \"url\": \"https://console.example.com/mcp\"\n    }\n  }\n}\n"
+      },
+      "projectConfig": {
+        "path": ".vscode/mcp.json",
+        "format": "json",
+        "content": "{\n  \"servers\": {\n    \"pgtoolbox\": {\n      \"type\": \"http\",\n      \"url\": \"https://console.example.com/mcp\"\n    }\n  }\n}\n"
+      },
+      "staticToken": {
+        "config": {
+          "path": "~/.cursor/mcp.json",
+          "format": "json",
+          "content": "{\n  \"mcpServers\": {\n    \"pgtoolbox\": {\n      \"url\": \"https://console.example.com/mcp\",\n      \"headers\": {\n        \"Authorization\": \"Bearer ${env:PGTOOLBOX_TOKEN}\"\n      }\n    }\n  }\n}\n"
+        },
+        "env": "export PGTOOLBOX_TOKEN=\"$(kubectl -n \u003cnamespace\u003e create token \u003cserviceaccount\u003e --duration=1h)\"",
+        "note": "The client sends the variable's value as the bearer token. Use it where token sign-in is your break-glass path; the sign-in above is the normal one."
+      },
+      "checkNote": "Open the client's list of MCP servers: pgtoolbox shows as connected once you have signed in.",
+      "pack": {
+        "document": "agents",
+        "download": "/api/v1/assistant-setup/agents",
+        "fileName": "AGENTS.md",
+        "projectPath": "AGENTS.md"
+      }
+    }
+  ],
+  "skillPath": "/api/v1/assistant-setup/skill",
+  "agentsPath": "/api/v1/assistant-setup/agents"
+}

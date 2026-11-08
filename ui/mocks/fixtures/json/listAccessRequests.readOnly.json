@@ -1,0 +1,209 @@
+{
+  "generatedAt": "2026-10-29T12:00:00Z",
+  "namespaces": [
+    {
+      "name": "team-a",
+      "seesAll": true,
+      "canRequest": false,
+      "canReview": false,
+      "readable": true
+    }
+  ],
+  "items": [
+    {
+      "namespace": "team-a",
+      "name": "operator-m4n7t",
+      "subject": {
+        "kind": "User",
+        "name": "oidc:jane@corp.example"
+      },
+      "capability": "operator",
+      "clusterRole": "pgtoolbox-console-operator",
+      "justification": "On call this week: backups and restarts",
+      "createdAt": "2026-10-29T11:55:00Z",
+      "expiresAt": "2026-11-05T12:00:00Z",
+      "phase": "Pending",
+      "health": "progressing",
+      "scope": "every Cluster of namespace team-a: a RoleBinding cannot be narrowed to one Cluster",
+      "mine": true,
+      "condition": {
+        "status": "True",
+        "reason": "AwaitingDecision",
+        "message": "waiting for a decision; nothing is bound",
+        "observed": true
+      },
+      "actions": {
+        "approve": {
+          "allowed": false,
+          "why": "this console serves no writes (OPERATIONS_ENABLED=false)"
+        },
+        "deny": {
+          "allowed": false,
+          "why": "this console serves no writes (OPERATIONS_ENABLED=false)"
+        },
+        "revoke": {
+          "allowed": false,
+          "why": "this console serves no writes (OPERATIONS_ENABLED=false)"
+        }
+      }
+    },
+    {
+      "namespace": "team-a",
+      "name": "operator-k2x9p",
+      "subject": {
+        "kind": "User",
+        "name": "oidc:victor@corp.example"
+      },
+      "capability": "operator",
+      "clusterRole": "pgtoolbox-console-operator",
+      "cluster": "orders",
+      "justification": "INC-4211: replica lag on orders, need to restart the standby",
+      "createdAt": "2026-10-29T11:50:00Z",
+      "expiresAt": "2026-10-29T20:00:00Z",
+      "phase": "Pending",
+      "health": "progressing",
+      "scope": "every Cluster of namespace team-a, not only orders: a RoleBinding cannot be narrowed to one Cluster",
+      "mine": false,
+      "condition": {
+        "status": "True",
+        "reason": "AwaitingDecision",
+        "message": "waiting for a decision; nothing is bound",
+        "observed": true
+      },
+      "actions": {
+        "approve": {
+          "allowed": false,
+          "why": "this console serves no writes (OPERATIONS_ENABLED=false)"
+        },
+        "deny": {
+          "allowed": false,
+          "why": "this console serves no writes (OPERATIONS_ENABLED=false)"
+        },
+        "revoke": {
+          "allowed": false,
+          "why": "this console serves no writes (OPERATIONS_ENABLED=false)"
+        }
+      }
+    },
+    {
+      "namespace": "team-a",
+      "name": "viewer-q8w3d",
+      "subject": {
+        "kind": "Group",
+        "name": "dba"
+      },
+      "capability": "viewer",
+      "clusterRole": "pgtoolbox-console-viewer",
+      "justification": "The DBA team reads every cluster of team-a",
+      "createdAt": "2026-10-28T10:00:00Z",
+      "phase": "Approved",
+      "health": "ok",
+      "scope": "every Cluster of namespace team-a: a RoleBinding cannot be narrowed to one Cluster",
+      "decidedBy": "oidc:bob@corp.example",
+      "decidedAt": "2026-10-28T11:00:00Z",
+      "roleBinding": "pgaccess-viewer-q8w3d",
+      "mine": true,
+      "condition": {
+        "status": "True",
+        "reason": "AsExpected",
+        "message": "every aspect is as expected",
+        "observed": true
+      },
+      "actions": {
+        "approve": {
+          "allowed": false,
+          "why": "this console serves no writes (OPERATIONS_ENABLED=false)"
+        },
+        "deny": {
+          "allowed": false,
+          "why": "this console serves no writes (OPERATIONS_ENABLED=false)"
+        },
+        "revoke": {
+          "allowed": false,
+          "why": "this console serves no writes (OPERATIONS_ENABLED=false)"
+        }
+      }
+    },
+    {
+      "namespace": "team-a",
+      "name": "operator-w3e4r",
+      "subject": {
+        "kind": "ServiceAccount",
+        "name": "nightly-report"
+      },
+      "capability": "operator",
+      "clusterRole": "pgtoolbox-console-operator",
+      "justification": "The report job wants to trigger backups",
+      "createdAt": "2026-10-27T10:00:00Z",
+      "phase": "Denied",
+      "health": "inactive",
+      "scope": "every Cluster of namespace team-a: a RoleBinding cannot be narrowed to one Cluster",
+      "decidedBy": "oidc:bob@corp.example",
+      "decidedAt": "2026-10-27T11:00:00Z",
+      "note": "Reading is enough for a report: request viewer",
+      "mine": false,
+      "condition": {
+        "status": "True",
+        "reason": "AsExpected",
+        "message": "every aspect is as expected",
+        "observed": true
+      },
+      "actions": {
+        "approve": {
+          "allowed": false,
+          "why": "this console serves no writes (OPERATIONS_ENABLED=false)"
+        },
+        "deny": {
+          "allowed": false,
+          "why": "this console serves no writes (OPERATIONS_ENABLED=false)"
+        },
+        "revoke": {
+          "allowed": false,
+          "why": "this console serves no writes (OPERATIONS_ENABLED=false)"
+        }
+      }
+    },
+    {
+      "namespace": "team-a",
+      "name": "operator-a9s8d",
+      "subject": {
+        "kind": "User",
+        "name": "oidc:victor@corp.example"
+      },
+      "capability": "operator",
+      "clusterRole": "pgtoolbox-console-operator",
+      "justification": "Upgrade window",
+      "createdAt": "2026-10-20T12:00:00Z",
+      "expiresAt": "2026-10-21T12:00:00Z",
+      "phase": "Expired",
+      "health": "inactive",
+      "scope": "every Cluster of namespace team-a: a RoleBinding cannot be narrowed to one Cluster",
+      "decidedBy": "oidc:bob@corp.example",
+      "decidedAt": "2026-10-20T12:00:00Z",
+      "roleBinding": "pgaccess-operator-a9s8d",
+      "mine": false,
+      "condition": {
+        "status": "True",
+        "reason": "AsExpected",
+        "message": "every aspect is as expected",
+        "observed": true
+      },
+      "actions": {
+        "approve": {
+          "allowed": false,
+          "why": "this console serves no writes (OPERATIONS_ENABLED=false)"
+        },
+        "deny": {
+          "allowed": false,
+          "why": "this console serves no writes (OPERATIONS_ENABLED=false)"
+        },
+        "revoke": {
+          "allowed": false,
+          "why": "this console serves no writes (OPERATIONS_ENABLED=false)"
+        }
+      }
+    }
+  ],
+  "writable": false
+}
+

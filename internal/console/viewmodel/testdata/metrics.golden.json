@@ -1,0 +1,102 @@
+{
+  "ref": {
+    "namespace": "team-a",
+    "name": "orders",
+    "uid": "0b6a2c1e-8f0d-4a55-9a3e-7c1f2b3d4e5f"
+  },
+  "generatedAt": "2026-10-29T12:00:00Z",
+  "source": {
+    "source": "metrics",
+    "state": "live",
+    "since": "2026-10-29T09:00:00Z",
+    "health": "ok"
+  },
+  "intervalSeconds": 30,
+  "retentionSeconds": 3600,
+  "tiles": [
+    {
+      "key": "backends",
+      "label": "Backends",
+      "group": "Connections",
+      "unit": "count",
+      "instance": "orders-1",
+      "value": 42,
+      "at": "2026-10-29T11:59:52Z",
+      "provenance": {
+        "origin": "instance",
+        "source": ":9187/metrics",
+        "observedAt": "2026-10-29T11:59:52Z"
+      }
+    },
+    {
+      "key": "backends",
+      "label": "Backends",
+      "group": "Connections",
+      "unit": "count",
+      "instance": "orders-2",
+      "value": 3,
+      "at": "2026-10-29T11:59:52Z",
+      "provenance": {
+        "origin": "instance",
+        "source": ":9187/metrics",
+        "observedAt": "2026-10-29T11:59:52Z"
+      }
+    },
+    {
+      "key": "backends",
+      "label": "Backends",
+      "group": "Connections",
+      "unit": "count",
+      "instance": "orders-3",
+      "provenance": {
+        "origin": "instance",
+        "source": ":9187/metrics",
+        "stale": true,
+        "staleReason": "the exporter did not answer"
+      }
+    }
+  ],
+  "charts": [
+    {
+      "key": "replication_lag",
+      "label": "Replication lag",
+      "group": "Replication",
+      "unit": "seconds",
+      "times": [
+        "2026-10-29T11:58:30Z",
+        "2026-10-29T11:59:00Z",
+        "2026-10-29T11:59:30Z"
+      ],
+      "lines": [
+        {
+          "instance": "orders-2",
+          "values": [
+            0,
+            0.4,
+            0
+          ]
+        },
+        {
+          "instance": "orders-3",
+          "values": [
+            1.2,
+            null,
+            3.5
+          ]
+        }
+      ],
+      "note": "grows on an idle primary: never alert on it alone"
+    }
+  ],
+  "chartSource": "ring",
+  "monitoring": {
+    "state": "notConfigured"
+  },
+  "blindSpots": [
+    {
+      "id": "metrics.notAMonitoringSystem",
+      "panel": "metrics",
+      "text": "The console keeps one hour of the values its checks read; it is not a monitoring system."
+    }
+  ]
+}

@@ -1,0 +1,587 @@
+name: Security
+
+# Every scanner the project runs on itself, in one workflow:
+#
+#   CodeQL         go, javascript-typescript and actions, to code scanning
+#   govulncheck    Go call graph, both modules
+#   osv-scanner    npm and Go lockfiles
+#   grype          the three images, built from this commit
+#   grype          the latest published images (once a release exists)
+#   gitleaks       secrets in the whole history
+#   gosec          golangci-lint's gosec rules, both modules
+#   zizmor         the workflows
+#   kube-linter    the rendered Helm charts
+#
+# Each scanner writes SARIF (uploaded to code scanning under its own category)
+# and a normalised result (hack/security_report.py). The `security-gate` job
+# merges the results, decides whether the run passes and publishes the merge as
+# the `security-results` artifact, which pages.yml turns into the Security page
+# of the documentation site. A scanner that did not run is "not run" there and
+# fails the gate; it is never zero findings.
+#
+# The gate (SECURITY.md, "How scan findings are triaged"): a fixable critical
+# blocks, a new fixable high blocks a pull request, a secret blocks, a
+# reachable Go vulnerability blocks. "No fix available" never dismisses a
+# finding; only hack/security-accepted.txt does, with the reason.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Daily: new advisories appear without any push.
+    - cron: "37 3 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: security-${{ github.event.pull_request.number || github.sha }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  codeql:
+    name: CodeQL (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read # check out the repository
+      actions: read # read workflow run metadata for the analysis
+      security-events: write # upload the analysis to code scanning
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: go
+            build-mode: autobuild
+          - language: javascript-typescript
+            build-mode: none
+          - language: actions
+            build-mode: none
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The Go autobuild builds the module graph with the toolchain mise.toml
+      # pins, not with whatever Go the runner image ships.
+      - name: Install Go
+        if: matrix.language == 'go'
+        uses: ./.github/actions/toolchain
+        with:
+          tools: go
+          go-cache: "true"
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+          queries: security-extended
+          config-file: ./.github/codeql/codeql-config.yml
+      - name: Analyze
+        uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          category: "/language:${{ matrix.language }}"
+
+  govulncheck:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read # check out the repository
+      security-events: write # upload SARIF to code scanning
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the pinned tools
+        uses: ./.github/actions/toolchain
+        with:
+          tools: go go:golang.org/x/vuln/cmd/govulncheck
+          go-cache: "true"
+      # Only a vulnerable symbol the code can reach is a finding; the JSON feeds
+      # the gate and the page, the SARIF feeds code scanning.
+      - name: Scan both modules
+        run: |
+          set -euo pipefail
+          mkdir -p results
+          govulncheck -json ./... > results/govulncheck-root.json
+          govulncheck -format sarif ./... > results/govulncheck-root.sarif
+          (cd pkg/evidence && govulncheck -json ./... > ../../results/govulncheck-evidence.json)
+          (cd pkg/evidence && govulncheck -format sarif ./... > ../../results/govulncheck-evidence.sarif)
+          for module in root evidence; do
+            target="${module/evidence/pkg/evidence}"
+            python3 hack/security_report.py normalize --scanner govulncheck --kind govulncheck-json \
+              --input "results/govulncheck-${module}.json" --target "${target}" \
+              --tool-mise go:golang.org/x/vuln/cmd/govulncheck \
+              --output "results/govulncheck-${module}.envelope.json"
+          done
+      - name: Upload to code scanning (root module)
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        continue-on-error: ${{ github.event_name == 'pull_request' }} # a fork's token cannot upload
+        with:
+          sarif_file: results/govulncheck-root.sarif
+          category: govulncheck-root
+      - name: Upload to code scanning (pkg/evidence)
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        continue-on-error: ${{ github.event_name == 'pull_request' }} # a fork's token cannot upload
+        with:
+          sarif_file: results/govulncheck-evidence.sarif
+          category: govulncheck-evidence
+      - name: Keep the result
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: result-govulncheck
+          path: results
+          retention-days: 14
+
+  osv-scanner:
+    name: osv-scanner (npm and Go lockfiles)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read # check out the repository
+      security-events: write # upload SARIF to code scanning
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the pinned tools
+        uses: ./.github/actions/toolchain
+        with:
+          tools: aqua:google/osv-scanner
+      # osv-scanner exits 1 when it finds something; 0 and 1 are both a result,
+      # anything else is the scanner failing.
+      - name: Scan the lockfiles
+        run: |
+          set -euo pipefail
+          mkdir -p results
+          lockfiles=(-L ui/pnpm-lock.yaml -L docs/site/package-lock.json -L headlamp/package-lock.json -L go.mod -L pkg/evidence/go.mod)
+          for format in json sarif; do
+            status=0
+            osv-scanner scan source "${lockfiles[@]}" --format "${format}" --output-file "results/osv-scanner.${format}" || status=$?
+            if (( status > 1 )); then echo "::error::osv-scanner failed (exit ${status})"; exit "${status}"; fi
+          done
+          python3 hack/security_report.py normalize --scanner osv-scanner --kind osv-json \
+            --input results/osv-scanner.json --tool-mise aqua:google/osv-scanner \
+            --output results/osv-scanner.envelope.json
+      - name: Upload to code scanning
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        continue-on-error: ${{ github.event_name == 'pull_request' }} # a fork's token cannot upload
+        with:
+          sarif_file: results/osv-scanner.sarif
+          category: osv-scanner
+      - name: Keep the result
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: result-osv-scanner
+          path: results
+          retention-days: 14
+
+  npm-audit:
+    name: npm audit (accepted advisories only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read # check out the repository
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the pinned tools
+        uses: ./.github/actions/toolchain
+        with:
+          tools: node pnpm
+      # npm audit has no per-advisory exception; the wrapper subtracts the
+      # advisories reviewed and accepted in hack/npm-audit-accepted.txt.
+      - name: Audit the documentation site and the SPA's runtime dependencies
+        run: |
+          set -euo pipefail
+          make audit
+          make ui-audit
+
+  images:
+    name: grype (${{ matrix.image }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read # check out the repository
+      security-events: write # upload SARIF to code scanning
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [operator, console, evidence-agent]
+    env:
+      NAME: pgtoolbox-${{ matrix.image }}
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the pinned tools
+        uses: ./.github/actions/toolchain
+        with:
+          tools: aqua:anchore/grype
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      # The layers come from the cache ci.yml's image job wrote when it can; the
+      # image is built from this commit either way.
+      - name: Build the image from this commit
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          target: ${{ matrix.image }}
+          platforms: linux/amd64
+          build-args: |
+            VERSION=ci
+          load: true
+          tags: ${{ env.NAME }}:ci
+          cache-from: type=gha,scope=image-${{ matrix.image }}
+      - name: Scan
+        run: |
+          set -euo pipefail
+          mkdir -p results
+          grype "docker:${NAME}:ci" -o "json=results/grype-${NAME}.json" -o "sarif=results/grype-${NAME}.sarif"
+          python3 hack/security_report.py normalize --scanner grype --kind grype \
+            --input "results/grype-${NAME}.json" --target "${NAME}" --tool-mise aqua:anchore/grype \
+            --output "results/grype-${NAME}.envelope.json"
+      - name: Upload to code scanning
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        continue-on-error: ${{ github.event_name == 'pull_request' }} # a fork's token cannot upload
+        with:
+          sarif_file: results/grype-${{ env.NAME }}.sarif
+          category: grype-${{ env.NAME }}
+      - name: Keep the result
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: result-grype-${{ env.NAME }}
+          path: results
+          retention-days: 14
+
+  published-images:
+    name: grype (published ${{ matrix.image }})
+    # A pull request cannot change what is published; main, the schedule and a
+    # dispatch look at the latest release.
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read # check out the repository
+      packages: read # pull the published image
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [operator, console, evidence-agent]
+    env:
+      NAME: pgtoolbox-${{ matrix.image }}
+      REF: ghcr.io/${{ github.repository_owner }}/pgtoolbox-${{ matrix.image }}:latest
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the pinned tools
+        uses: ./.github/actions/toolchain
+        with:
+          tools: aqua:anchore/grype
+      - name: Log in to GHCR
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # `latest` exists only after a stable release. Before the first one the
+      # honest result is "not run", marked optional so the gate does not fail on
+      # what cannot exist yet.
+      - name: Scan the latest published image by digest
+        run: |
+          set -euo pipefail
+          mkdir -p results
+          target="published-${NAME}"
+          if ! digest="$(docker buildx imagetools inspect "${REF}" --format '{{json .Manifest.Digest}}' 2>/dev/null | tr -d '"')" || [[ -z "${digest}" ]]; then
+            python3 hack/security_report.py unrun --scanner grype --target "${target}" --optional \
+              --reason "the latest image could not be read: no stable release is published yet, or its package is not public" \
+              --output "results/grype-${target}.envelope.json"
+            exit 0
+          fi
+          grype "registry:${REF%:latest}@${digest}" -o "json=results/grype-${target}.json"
+          python3 hack/security_report.py normalize --scanner grype --kind grype \
+            --input "results/grype-${target}.json" --target "${target}" --tool-mise aqua:anchore/grype \
+            --subject "image=${REF}" --subject "digest=${digest}" \
+            --output "results/grype-${target}.envelope.json"
+      - name: Keep the result
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: result-grype-published-${{ env.NAME }}
+          path: results
+          retention-days: 14
+
+  gitleaks:
+    name: gitleaks (secrets in history)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read # check out the repository
+      security-events: write # upload SARIF to code scanning
+    steps:
+      - name: Check out the whole history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install the pinned tools
+        uses: ./.github/actions/toolchain
+        with:
+          tools: aqua:gitleaks/gitleaks
+      # Values are redacted in the report. The paths allowed to hold canary
+      # tokens on purpose are in .gitleaks.toml.
+      - name: Scan
+        run: |
+          set -euo pipefail
+          mkdir -p results
+          gitleaks git --report-format sarif --report-path results/gitleaks.sarif --redact --exit-code 0 --no-banner .
+          python3 hack/security_report.py normalize --scanner gitleaks --kind sarif \
+            --input results/gitleaks.sarif --tool-mise aqua:gitleaks/gitleaks \
+            --output results/gitleaks.envelope.json
+      - name: Upload to code scanning
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        continue-on-error: ${{ github.event_name == 'pull_request' }} # a fork's token cannot upload
+        with:
+          sarif_file: results/gitleaks.sarif
+          category: gitleaks
+      - name: Keep the result
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: result-gitleaks
+          path: results
+          retention-days: 14
+
+  gosec:
+    name: gosec (via golangci-lint)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read # check out the repository
+      security-events: write # upload SARIF to code scanning
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the pinned tools
+        uses: ./.github/actions/toolchain
+        with:
+          tools: go go:github.com/golangci/golangci-lint/v2/cmd/golangci-lint
+          go-cache: "true"
+      # `make lint` already fails on a gosec finding the repository has not
+      # excluded with a reason; this run only reports them to code scanning and
+      # the Security page. Exit 1 means findings, anything higher means failure.
+      - name: Scan both modules
+        run: |
+          set -euo pipefail
+          mkdir -p results
+          status=0
+          golangci-lint run --enable-only gosec --output.sarif.path results/gosec-root.sarif --output.text.path /dev/null ./... || status=$?
+          if (( status > 1 )); then exit "${status}"; fi
+          status=0
+          (cd pkg/evidence && golangci-lint run --config ../../.golangci.yml --enable-only gosec --output.sarif.path ../../results/gosec-evidence.sarif --output.text.path /dev/null ./...) || status=$?
+          if (( status > 1 )); then exit "${status}"; fi
+          for module in root evidence; do
+            target="${module/evidence/pkg/evidence}"
+            python3 hack/security_report.py normalize --scanner gosec --kind sarif \
+              --input "results/gosec-${module}.sarif" --target "${target}" \
+              --tool-name gosec --tool-mise go:github.com/golangci/golangci-lint/v2/cmd/golangci-lint \
+              --output "results/gosec-${module}.envelope.json"
+          done
+      - name: Upload to code scanning (root module)
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        continue-on-error: ${{ github.event_name == 'pull_request' }} # a fork's token cannot upload
+        with:
+          sarif_file: results/gosec-root.sarif
+          category: gosec-root
+      - name: Upload to code scanning (pkg/evidence)
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        continue-on-error: ${{ github.event_name == 'pull_request' }} # a fork's token cannot upload
+        with:
+          sarif_file: results/gosec-evidence.sarif
+          category: gosec-evidence
+      - name: Keep the result
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: result-gosec
+          path: results
+          retention-days: 14
+
+  zizmor:
+    name: zizmor (workflows)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read # check out the repository
+      security-events: write # upload SARIF to code scanning
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the pinned tools
+        uses: ./.github/actions/toolchain
+        with:
+          tools: zizmor
+      # `make lint-workflows` in ci.yml is the gate on the workflows themselves;
+      # this run reports them to code scanning and the Security page. The token
+      # is read-only and lets the online audits run.
+      - name: Audit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p results
+          zizmor --format sarif --no-progress --no-exit-codes .github > results/zizmor.sarif
+          python3 hack/security_report.py normalize --scanner zizmor --kind sarif \
+            --input results/zizmor.sarif --tool-mise zizmor \
+            --output results/zizmor.envelope.json
+      - name: Upload to code scanning
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        continue-on-error: ${{ github.event_name == 'pull_request' }} # a fork's token cannot upload
+        with:
+          sarif_file: results/zizmor.sarif
+          category: zizmor
+      - name: Keep the result
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: result-zizmor
+          path: results
+          retention-days: 14
+
+  kube-linter:
+    name: kube-linter (Helm charts)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read # check out the repository
+      security-events: write # upload SARIF to code scanning
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the pinned tools
+        uses: ./.github/actions/toolchain
+        with:
+          tools: helm github:stackrox/kube-linter
+      # Every ci/*-values.yaml rendering of both charts. `make chart-gates` in
+      # ci.yml is the gate; this run reports the same findings to code scanning
+      # and the Security page.
+      - name: Lint the renderings
+        run: |
+          set -euo pipefail
+          mkdir -p results
+          ./hack/chart-gates.sh kube-linter-sarif results
+          for chart in pgtoolbox pgtools; do
+            python3 hack/security_report.py normalize --scanner kube-linter --kind sarif \
+              --input "results/kube-linter-${chart}.sarif" --target "${chart}" \
+              --tool-mise github:stackrox/kube-linter \
+              --output "results/kube-linter-${chart}.envelope.json"
+          done
+      - name: Upload to code scanning (pgtoolbox chart)
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        continue-on-error: ${{ github.event_name == 'pull_request' }} # a fork's token cannot upload
+        with:
+          sarif_file: results/kube-linter-pgtoolbox.sarif
+          category: kube-linter-pgtoolbox
+      - name: Upload to code scanning (pgtools chart)
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        continue-on-error: ${{ github.event_name == 'pull_request' }} # a fork's token cannot upload
+        with:
+          sarif_file: results/kube-linter-pgtools.sarif
+          category: kube-linter-pgtools
+      - name: Keep the result
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: result-kube-linter
+          path: results
+          retention-days: 14
+
+  # Merge, decide, publish. Runs when the scanners have finished, whatever they
+  # concluded, so the Security page gets a result (with "not run" rows) even
+  # when a scanner broke.
+  security-gate:
+    name: security-gate
+    if: always() && !cancelled()
+    needs: [codeql, govulncheck, osv-scanner, npm-audit, images, published-images, gitleaks, gosec, zizmor, kube-linter]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read # check out the repository
+      actions: read # download the artifacts of this run and of the last run on main
+    env:
+      GH_TOKEN: ${{ github.token }}
+      EVENT: ${{ github.event_name }}
+      REPO: ${{ github.repository }}
+      NEEDS: ${{ toJSON(needs) }}
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Download every scanner's result
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: result-*
+          path: results
+          merge-multiple: true
+      # The newest completed run on main is the baseline for "new" highs. A pull
+      # request's own runs are never one (a fork can have a branch named main),
+      # so only push, schedule and dispatch runs count. No baseline (the first
+      # run, an expired artifact) is not an error: highs are then reported and
+      # only criticals and secrets block.
+      - name: Fetch the baseline from main
+        run: |
+          set -euo pipefail
+          mkdir -p baseline
+          for id in $(gh run list --repo "${REPO}" --workflow security.yml --branch main --status completed --limit 20 --json databaseId,event --jq '.[] | select(.event != "pull_request") | .databaseId'); do
+            if gh run download "${id}" --repo "${REPO}" --name security-results --dir baseline 2>/dev/null; then
+              echo "baseline: run ${id}"
+              break
+            fi
+          done
+          ls baseline
+      - name: Merge, publish and decide
+        run: |
+          set -euo pipefail
+          expect="grype:pgtoolbox-operator,grype:pgtoolbox-console,grype:pgtoolbox-evidence-agent,govulncheck:root,govulncheck:pkg/evidence,osv-scanner,gitleaks,gosec:root,gosec:pkg/evidence,zizmor,kube-linter:pgtoolbox,kube-linter:pgtools"
+          if [[ "${EVENT}" != "pull_request" ]]; then
+            expect+=",grype:published-pgtoolbox-operator,grype:published-pgtoolbox-console,grype:published-pgtoolbox-evidence-agent"
+          fi
+          mkdir -p out
+          python3 hack/security_report.py merge --dir results --expect "${expect}" --output out/security-results.json
+          {
+            echo "## Security"
+            echo
+            python3 hack/security_report.py summary --input out/security-results.json
+          } >> "${GITHUB_STEP_SUMMARY}"
+          baseline=()
+          if [[ -f baseline/security-results.json ]]; then baseline=(--baseline baseline/security-results.json); fi
+          # CodeQL and npm audit gate themselves (code scanning results in the
+          # ruleset; the job's own exit status): fail here if either failed.
+          failed="$(jq -r 'to_entries[] | select((.key == "codeql" or .key == "npm-audit") and .value.result == "failure") | .key' <<<"${NEEDS}")"
+          status=0
+          python3 hack/security_report.py gate --input out/security-results.json "${baseline[@]}" \
+            --accepted hack/security-accepted.txt --event "${EVENT}" || status=$?
+          if [[ -n "${failed}" ]]; then
+            echo "::error::These scanners failed: ${failed}"
+            status=1
+          fi
+          exit "${status}"
+      - name: Publish the merged result for the Security page
+        if: always() && !cancelled()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: security-results
+          path: out/security-results.json
+          retention-days: 90
+          if-no-files-found: ignore

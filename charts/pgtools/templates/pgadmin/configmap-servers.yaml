@@ -1,0 +1,16 @@
+{{- if .Values.pgadmin.enabled }}
+{{- /*
+The declared server list, the offer the sidecar and the registration read
+(internal/operator/pgadmin/declared): names only, never a credential. The
+Deployment carries its checksum, so a changed list rolls the Pod.
+*/ -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "pgtools.pgadmin.fullname" . }}-servers
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "pgtools.pgadmin.labels" . | nindent 4 }}
+data:
+  servers.json: {{ include "pgtools.pgadmin.servers" . | quote }}
+{{- end }}

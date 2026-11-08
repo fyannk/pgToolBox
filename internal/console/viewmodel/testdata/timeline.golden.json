@@ -1,0 +1,229 @@
+{
+  "ref": {
+    "namespace": "team-a",
+    "name": "billing",
+    "uid": "4d2f1e0a-1b2c-4d3e-8f90-a1b2c3d4e5f6"
+  },
+  "generatedAt": "2026-10-29T12:00:00Z",
+  "from": "2026-10-28T12:00:00Z",
+  "to": "2026-10-29T12:00:00Z",
+  "kinds": [],
+  "source": {
+    "source": "timeline",
+    "state": "live",
+    "health": "ok"
+  },
+  "persistent": true,
+  "observedSince": "2026-10-28T10:00:00Z",
+  "eventsWindow": "1h0m0s",
+  "counts": [
+    {
+      "kind": "phase",
+      "count": 1
+    },
+    {
+      "kind": "primary",
+      "count": 1
+    },
+    {
+      "kind": "restart",
+      "count": 1
+    },
+    {
+      "kind": "backup",
+      "count": 1
+    },
+    {
+      "kind": "finding",
+      "count": 2
+    },
+    {
+      "kind": "revision",
+      "count": 1
+    },
+    {
+      "kind": "event",
+      "count": 1
+    },
+    {
+      "kind": "console",
+      "count": 1
+    }
+  ],
+  "items": [
+    {
+      "id": "j:118",
+      "kind": "finding",
+      "action": "appeared",
+      "at": "2026-10-29T11:59:45Z",
+      "timing": "observed",
+      "scope": "cluster",
+      "severity": "critical",
+      "health": "critical",
+      "detail": "No ready primary for 90 s",
+      "ref": "primary.unavailable",
+      "provenance": {
+        "origin": "console",
+        "source": "diagnostics",
+        "observedAt": "2026-10-29T11:59:58Z"
+      },
+      "link": "diagnostics"
+    },
+    {
+      "id": "j:117",
+      "kind": "phase",
+      "action": "changed",
+      "at": "2026-10-29T11:58:30Z",
+      "timing": "observed",
+      "scope": "cluster",
+      "from": "Cluster in healthy state",
+      "to": "Failing over",
+      "health": "critical",
+      "detail": "Failing over from billing-1 to billing-2",
+      "provenance": {
+        "origin": "operator",
+        "source": "Cluster.status.phase",
+        "observedAt": "2026-10-29T11:59:58Z"
+      }
+    },
+    {
+      "id": "j:116",
+      "kind": "primary",
+      "action": "failover",
+      "at": "2026-10-29T11:58:25Z",
+      "timing": "reported",
+      "scope": "cluster",
+      "subject": {
+        "kind": "Pod",
+        "name": "billing-2"
+      },
+      "from": "billing-1",
+      "to": "billing-2",
+      "health": "critical",
+      "provenance": {
+        "origin": "operator",
+        "source": "Cluster.status.targetPrimaryTimestamp",
+        "observedAt": "2026-10-29T11:59:58Z"
+      },
+      "link": "replication"
+    },
+    {
+      "id": "e:5b1c",
+      "kind": "event",
+      "action": "Warning",
+      "at": "2026-10-29T11:58:20Z",
+      "timing": "reported",
+      "scope": "cluster",
+      "subject": {
+        "kind": "Pod",
+        "name": "billing-1"
+      },
+      "health": "warning",
+      "detail": "Readiness probe failed: HTTP probe failed with statuscode: 500",
+      "ref": "Unhealthy",
+      "count": 4,
+      "provenance": {
+        "origin": "kubernetes",
+        "source": "Event",
+        "observedAt": "2026-10-29T11:59:58Z"
+      },
+      "link": "events"
+    },
+    {
+      "id": "j:115",
+      "kind": "restart",
+      "action": "restarted",
+      "at": "2026-10-29T10:00:00Z",
+      "timing": "reported",
+      "scope": "cluster",
+      "subject": {
+        "kind": "Pod",
+        "name": "billing-1"
+      },
+      "health": "warning",
+      "detail": "OOMKilled (exit 137)",
+      "provenance": {
+        "origin": "kubernetes",
+        "source": "Pod.status.containerStatuses",
+        "observedAt": "2026-10-29T11:59:58Z"
+      },
+      "link": "instances/billing-1"
+    },
+    {
+      "id": "j:114",
+      "kind": "backup",
+      "action": "failed",
+      "at": "2026-10-29T07:00:00Z",
+      "timing": "reported",
+      "scope": "cluster",
+      "subject": {
+        "kind": "Backup",
+        "name": "billing-daily-20261029"
+      },
+      "health": "critical",
+      "detail": "can't upload: AccessDenied",
+      "provenance": {
+        "origin": "operator",
+        "source": "Backup.status",
+        "observedAt": "2026-10-29T11:59:58Z"
+      },
+      "link": "backups"
+    },
+    {
+      "id": "r:41",
+      "kind": "revision",
+      "action": "spec-changed",
+      "at": "2026-10-29T03:00:00Z",
+      "timing": "observed",
+      "scope": "cluster",
+      "subject": {
+        "kind": "Cluster",
+        "name": "billing"
+      },
+      "health": "info",
+      "detail": "1 parameter changed",
+      "ref": "41",
+      "provenance": {
+        "origin": "console",
+        "source": "history",
+        "observedAt": "2026-10-29T11:59:58Z"
+      },
+      "link": "history/41"
+    },
+    {
+      "id": "j:112",
+      "kind": "console",
+      "action": "started",
+      "at": "2026-10-29T01:00:00Z",
+      "timing": "observed",
+      "since": "2026-10-29T00:56:00Z",
+      "scope": "console",
+      "health": "info",
+      "provenance": {
+        "origin": "console",
+        "source": "console",
+        "observedAt": "2026-10-29T11:59:58Z"
+      }
+    },
+    {
+      "id": "j:113",
+      "kind": "finding",
+      "action": "cleared",
+      "at": "2026-10-29T01:00:00Z",
+      "timing": "observed",
+      "since": "2026-10-29T00:56:00Z",
+      "afterGap": true,
+      "scope": "cluster",
+      "severity": "warning",
+      "health": "ok",
+      "detail": "WAL archiving behind by 12 segments",
+      "ref": "wal.archiveLag",
+      "provenance": {
+        "origin": "console",
+        "source": "diagnostics",
+        "observedAt": "2026-10-29T11:59:58Z"
+      },
+      "link": "diagnostics"
+    }
+  ]
+}

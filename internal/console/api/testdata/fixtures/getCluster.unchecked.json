@@ -1,0 +1,6 @@
+{
+  "title": "Service Unavailable",
+  "status": 503,
+  "detail": "the Kubernetes API server could not be asked whether you may see this Cluster; retry"
+}
+

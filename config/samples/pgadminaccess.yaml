@@ -1,0 +1,15 @@
+# Created in team-b by whoever may read team-b's Secrets: PgAdmin team-a/team-a
+# may register Cluster payments, and its ServiceAccount may read payments'
+# offered credentials through a Role the operator keeps here. Deleting this
+# object revokes both.
+apiVersion: pgtoolbox.fyannk.dev/v1alpha1
+kind: PgAdminAccess
+metadata:
+  name: pgadmin-team-a
+  namespace: team-b
+spec:
+  pgAdmin:
+    namespace: team-a
+    name: team-a
+  clusters:
+  - name: payments

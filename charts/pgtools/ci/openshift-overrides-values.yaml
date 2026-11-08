@@ -1,0 +1,13 @@
+# Every OpenShift override the console reads (OPENSHIFT_*), and the evidence token off.
+console:
+  auth:
+    provider: openshift
+    openshift:
+      redirectURI: https://console.apps.example.org/auth/callback
+      clientID: system:serviceaccount:team-a:pgtoolbox-console
+      clientSecret: {existingSecret: pgtoolbox-console-oauth-token, key: token}
+      discoveryURL: https://oauth-openshift.apps.example.org/.well-known/oauth-authorization-server
+      scopes: [user:info, user:check-access]
+      caConfigMap: oauth-server-ca
+  evidenceToken: {enabled: false}
+  exposure: {type: route, host: console.apps.example.org}

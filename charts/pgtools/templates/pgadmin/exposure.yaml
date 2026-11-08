@@ -1,0 +1,90 @@
+{{- if and .Values.pgadmin.enabled (ne .Values.pgadmin.exposure.type "none") }}
+{{- $e := .Values.pgadmin.exposure }}
+{{- $name := include "pgtools.pgadmin.fullname" . }}
+{{- $proxied := eq .Values.pgadmin.auth.provider "openshift" }}
+{{- $port := ternary "https" "http" $proxied }}
+{{- if eq $e.type "ingress" }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "pgtools.pgadmin.labels" . | nindent 4 }}
+  {{- with $e.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with $e.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- if $e.ingress.tls.enabled }}
+  tls:
+    - hosts: [{{ required "pgadmin.exposure.host is required for an Ingress with TLS" $e.host | quote }}]
+      {{- with $e.ingress.tls.secretName }}
+      secretName: {{ . }}
+      {{- end }}
+  {{- end }}
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $name }}
+                port:
+                  name: {{ $port }}
+      {{- with $e.host }}
+      host: {{ . | quote }}
+      {{- end }}
+{{- else if eq $e.type "route" }}
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "pgtools.pgadmin.labels" . | nindent 4 }}
+  {{- with $e.route.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with $e.host }}
+  host: {{ . | quote }}
+  {{- end }}
+  to:
+    kind: Service
+    name: {{ $name }}
+  port:
+    targetPort: {{ $port }}
+  tls:
+    # Behind the proxy the Service serves HTTPS: the router re-encrypts.
+    termination: {{ $e.route.termination | default (ternary "reencrypt" "edge" $proxied) }}
+    insecureEdgeTerminationPolicy: Redirect
+{{- else if eq $e.type "httpRoute" }}
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "pgtools.pgadmin.labels" . | nindent 4 }}
+spec:
+  {{- with $e.httpRoute.parentRefs }}
+  parentRefs:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with $e.host }}
+  hostnames: [{{ . | quote }}]
+  {{- end }}
+  rules:
+    - matches:
+        - path: {type: PathPrefix, value: /}
+      backendRefs:
+        - name: {{ $name }}
+          port: {{ ternary 443 80 $proxied }}
+{{- end }}
+{{- end }}

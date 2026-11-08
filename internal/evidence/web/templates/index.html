@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>pgToolBox evidence agent</title>
+</head>
+<body>
+  <header>
+    <h1>the evidence agent</h1>
+    {{if .User}}<p>Signed in as <span>{{.User}}</span> (display only)</p>{{end}}
+  </header>
+  <main>
+    <h2>Repository evidence</h2>
+    <dl>
+      <dt>Format</dt><dd>{{.FormatName}} (<code>{{.FormatID}}</code>)</dd>
+      <dt>Provider</dt><dd>{{.Provider}}</dd>
+      <dt>Scope kind</dt><dd>{{.ScopeKind}}</dd>
+      <dt>Format compatibility</dt><dd>{{.Compatibility}}</dd>
+      <dt>Evidence state</dt><dd>{{.State}}: {{.Reason}}</dd>
+      <dt>Completeness</dt><dd>{{.Completeness}}</dd>
+      <dt>Generation</dt><dd>{{.Generation}}</dd>
+      <dt>Last completed scan</dt><dd>{{.CompletedAt}}</dd>
+      <dt>Evidence age</dt><dd>{{.EvidenceAge}}</dd>
+      <dt>Stale</dt><dd>{{.Stale}}</dd>
+      <dt>Last refresh</dt><dd>{{.Refresh}}</dd>
+      <dt>Object total</dt><dd>{{.ObjectCount}}</dd>
+      <dt>Stored bytes</dt><dd>{{.StoredBytes}}</dd>
+      <dt>Objects outside validated scopes</dt><dd>{{.Unscoped}}</dd>
+    </dl>
+
+    <h2>Validated scopes</h2>
+    {{if .Scopes}}
+    <table>
+      <thead><tr><th>Name</th><th>Recognized layout</th><th>Objects</th><th>Stored bytes</th></tr></thead>
+      <tbody>
+      {{range .Scopes}}
+        <tr><td>{{.Name}}</td><td>{{.Recognized}}</td><td>{{.ObjectCount}}</td><td>{{.StoredBytes}} bytes</td></tr>
+      {{end}}
+      </tbody>
+    </table>
+    {{else}}<p>No validated scopes observed.</p>{{end}}
+
+    {{if .PGBackRest}}
+    <h2>pgBackRest stanzas</h2>
+    {{if .Stanzas}}
+    {{range .Stanzas}}
+      <h3>Stanza {{.Stanza}}</h3>
+      <dl>
+        <dt>Archive stanza</dt><dd>{{.ArchiveStanza}}</dd>
+        <dt>Evidence</dt><dd>{{.State}} — {{.Reason}}</dd>
+        <dt>Encryption</dt><dd>{{.Encryption}}</dd>
+        <dt>Repository format</dt><dd>{{.RepositoryFormat}}</dd>
+        <dt>Database</dt><dd>{{.Database}}</dd>
+        <dt>WAL segment size</dt><dd>{{.SegmentSize}}</dd>
+      </dl>
+      <table>
+        <thead><tr><th>Aspect</th><th>Evidence</th><th>Reason</th></tr></thead>
+        <tbody>{{range .Aspects}}<tr><td>{{.Name}}</td><td>{{.State}}</td><td>{{.Reason}}</td></tr>{{end}}</tbody>
+      </table>
+      {{if .Backups}}
+      <table>
+        <thead><tr><th>Label</th><th>Type</th><th>Prior</th><th>Evidence</th><th>Reason</th><th>Usable</th><th>Database size</th><th>Repository size</th><th>Start</th><th>Stop</th><th>WAL start</th><th>WAL stop</th><th>CNPG backup</th></tr></thead>
+        <tbody>{{range .Backups}}<tr><td>{{.Label}}</td><td>{{.Type}}</td><td>{{.Prior}}</td><td>{{.State}}</td><td>{{.Reason}}</td><td>{{.Usable}}</td><td>{{.Size}}</td><td>{{.RepositorySize}}</td><td>{{.Start}}</td><td>{{.Stop}}</td><td><code>{{.ArchiveStart}}</code></td><td><code>{{.ArchiveStop}}</code></td><td>{{.CNPGBackup}}</td></tr>{{end}}</tbody>
+      </table>
+      {{else}}<p>backup.info lists no backup.</p>{{end}}
+      {{with .Window}}
+      <h4>Recovery window</h4>
+      <dl><dt>Oldest usable backup</dt><dd>{{.Oldest}} (consistent from {{.Start}})</dd><dt>Newest usable backup</dt><dd>{{.Newest}} (stopped {{.NewestStop}})</dd><dt>Window end</dt><dd><code>{{.EndWAL}}</code> at LSN <code>{{.EndLSN}}</code>, received {{.EndReceipt}}</dd><dt>Usable backups</dt><dd>{{.Usable}}</dd><dt>Assumptions</dt><dd>{{.Assumptions}}</dd></dl>
+      {{else}}<p>No recovery window: no usable backup reaches the archived WAL.</p>{{end}}
+      {{if .Findings}}
+      <h4>Findings</h4>
+      <table>
+        <thead><tr><th>Code</th><th>Severity</th><th>Subject</th><th>Message</th></tr></thead>
+        <tbody>{{range .Findings}}<tr><td>{{.Code}}</td><td>{{.Severity}}</td><td><code>{{.Subject}}</code></td><td>{{.Message}}</td></tr>{{end}}</tbody>
+      </table>
+      {{end}}
+      {{with .Recovery}}
+      <h4>Recovery paths</h4>
+      <p>Timeline evidence: {{.TimelineState}} — {{.TimelineReason}}. Coverage rollup: {{.CoverageState}} — {{.CoverageReason}}.</p>
+      {{if .Histories}}
+      <table>
+        <thead><tr><th>History target</th><th>Parent</th><th>Child</th><th>Switch LSN</th><th>Child switch WAL</th><th>Evidence</th><th>Reason</th></tr></thead>
+        <tbody>{{range .Histories}}<tr><td>{{.Timeline}}</td><td>{{.Parent}}</td><td>{{.Child}}</td><td><code>{{.SwitchLSN}}</code></td><td><code>{{.SwitchWAL}}</code></td><td>{{.State}}</td><td>{{.Reason}}</td></tr>{{end}}</tbody>
+      </table>
+      {{end}}
+      {{if .Paths}}
+      <table>
+        <thead><tr><th>Backup</th><th>Target timeline</th><th>Evidence</th><th>Stop</th><th>Backup stop</th><th>Start WAL</th><th>Observed frontier WAL</th><th>Latest contiguous archived WAL received at</th><th>Reason</th><th>Assumptions</th></tr></thead>
+        <tbody>{{range .Paths}}<tr><td>{{.BackupID}}</td><td>{{.TargetTimeline}}</td><td>{{.State}}</td><td>{{.Stop}}</td><td>{{.LowerBound}}</td><td><code>{{.StartWAL}}</code></td><td><code>{{.FrontierWAL}}</code></td><td>{{.FrontierReceipt}}</td><td>{{.Reason}}</td><td>{{.Assumptions}}</td></tr>{{end}}</tbody>
+      </table>
+      {{end}}
+      {{end}}
+    {{end}}
+    <p>pgBackRest evidence is structural: info files and manifests are verified against their checksums, WAL is judged from segment names. It does not validate WAL bytes or prove that a restore will succeed. Retention expectations are not evaluated for pgBackRest.</p>
+    {{else}}<p>No pgBackRest stanza analysed yet.</p>{{end}}
+
+    <h2>pgBackRest WAL continuity</h2>
+    {{if .WALServers}}
+    <table>
+      <thead><tr><th>Archive</th><th>Evidence</th><th>Reason</th><th>PostgreSQL version</th><th>Segment size</th><th>Complete segments</th><th>Compact ranges</th><th>Candidate gaps</th><th>Confirmed gaps</th><th>Partial WAL files</th><th>Timeline history files</th><th>Backup history files</th><th>Unrecognized objects</th><th>Duplicate representations</th><th>Latest archive receipt</th></tr></thead>
+      <tbody>
+      {{range .WALServers}}
+        <tr><td><a href="/wals?server={{.Server}}">{{.Server}}</a></td><td>{{.State}}</td><td>{{.Reason}}</td><td>{{.PostgreSQLVersion}}</td><td>{{.SegmentSize}}</td><td>{{.Segments}}</td><td>{{.Ranges}}</td><td>{{.CandidateGaps}}</td><td>{{.ConfirmedGaps}}</td><td>{{.Partials}}</td><td>{{.History}}</td><td>{{.BackupHistory}}</td><td>{{.Unrecognized}}</td><td>{{.Duplicates}}</td><td>{{.LatestReceipt}}</td></tr>
+      {{end}}
+      </tbody>
+    </table>
+    {{else}}<p>No pgBackRest WAL continuity evidence available.</p>{{end}}
+    {{else}}
+    <h2>Barman Cloud backups</h2>
+    {{if .Backups}}
+    <table>
+      <thead><tr><th>Server</th><th>Backup ID</th><th>Status</th><th>Type</th><th>Structural evidence</th><th>Reason</th><th>Logical bytes</th><th>Deduplicated bytes</th><th>Stored artifact bytes</th><th>Compression</th><th>Encryption</th></tr></thead>
+      <tbody>
+      {{range .Backups}}
+        <tr><td>{{.Server}}</td><td>{{.ID}}</td><td>{{.Status}}</td><td>{{.Type}}</td><td>{{.State}}</td><td>{{.Reason}}</td><td>{{.Logical}}</td><td>{{.Deduplicated}}</td><td>{{.Stored}}</td><td>{{.Compression}}</td><td>{{.Encryption}}</td></tr>
+      {{end}}
+      </tbody>
+    </table>
+    <p>A structurally usable backup has supported completed metadata and stat-able data artifacts. This is not proof that a restore will succeed.</p>
+    {{else}}<p>No Barman backup metadata available.</p>{{end}}
+
+    <h2>Barman WAL continuity</h2>
+    {{if .WALServers}}
+    <table>
+      <thead><tr><th>Server</th><th>Evidence</th><th>Reason</th><th>PostgreSQL version</th><th>Segment size</th><th>Complete segments</th><th>Compact ranges</th><th>Candidate gaps</th><th>Confirmed gaps</th><th>Partial WAL files</th><th>Timeline history files</th><th>Backup history files</th><th>Unrecognized objects</th><th>Duplicate representations</th><th>Latest archive receipt</th></tr></thead>
+      <tbody>
+      {{range .WALServers}}
+        <tr><td><a href="/wals?server={{.Server}}">{{.Server}}</a></td><td>{{.State}}</td><td>{{.Reason}}</td><td>{{.PostgreSQLVersion}}</td><td>{{.SegmentSize}}</td><td>{{.Segments}}</td><td>{{.Ranges}}</td><td>{{.CandidateGaps}}</td><td>{{.ConfirmedGaps}}</td><td>{{.Partials}}</td><td>{{.History}}</td><td>{{.BackupHistory}}</td><td>{{.Unrecognized}}</td><td>{{.Duplicates}}</td><td>{{.LatestReceipt}}</td></tr>
+      {{end}}
+      </tbody>
+    </table>
+    <p>Continuity uses WAL names and metadata-derived segment size. Archive receipt is provider modification time, not transaction time. Recovery-path relevance is evaluated separately below.</p>
+    {{else}}<p>No Barman WAL continuity evidence available.</p>{{end}}
+
+    <h2>Observed recovery coverage</h2>
+    {{if .RecoveryServers}}
+    {{range .RecoveryServers}}
+      <h3>Server {{.Server}}</h3>
+      <p>Timeline evidence: {{.TimelineState}} — {{.TimelineReason}}. Coverage rollup: {{.CoverageState}} — {{.CoverageReason}}.</p>
+      {{if .Histories}}
+      <table>
+        <thead><tr><th>History target</th><th>Parent</th><th>Child</th><th>Switch LSN</th><th>Child switch WAL</th><th>Evidence</th><th>Reason</th></tr></thead>
+        <tbody>{{range .Histories}}<tr><td>{{.Timeline}}</td><td>{{.Parent}}</td><td>{{.Child}}</td><td><code>{{.SwitchLSN}}</code></td><td><code>{{.SwitchWAL}}</code></td><td>{{.State}}</td><td>{{.Reason}}</td></tr>{{end}}</tbody>
+      </table>
+      {{else}}<p>Timeline 1 requires no history file; no child timeline ancestry is claimed.</p>{{end}}
+      {{if .Paths}}
+      <table>
+        <thead><tr><th>Backup</th><th>Target timeline</th><th>Evidence</th><th>Stop</th><th>Conservative lower time bound</th><th>Start WAL</th><th>Observed frontier WAL</th><th>Latest contiguous archived WAL received at</th><th>Reason</th><th>Assumptions</th></tr></thead>
+        <tbody>{{range .Paths}}<tr><td>{{.BackupID}}</td><td>{{.TargetTimeline}}</td><td>{{.State}}</td><td>{{.Stop}}</td><td>{{.LowerBound}}</td><td><code>{{.StartWAL}}</code></td><td><code>{{.FrontierWAL}}</code></td><td>{{.FrontierReceipt}}</td><td>{{.Reason}}</td><td>{{.Assumptions}}</td></tr>{{end}}</tbody>
+      </table>
+      {{else}}<p>No structurally usable backup recovery anchor is available.</p>{{end}}
+      <h4>Descriptive retention evidence</h4>
+      <dl><dt>Visible backups</dt><dd>{{.Retention.Visible}}</dd><dt>Structurally usable</dt><dd>{{.Retention.Usable}}</dd><dt>Oldest completion</dt><dd>{{.Retention.Oldest}}</dd><dt>Newest completion</dt><dd>{{.Retention.Newest}}</dd><dt>Expected minimum redundancy</dt><dd>{{.Retention.ExpectedMinimum}}</dd><dt>Retention policy</dt><dd>{{.Retention.Policy}}</dd><dt>Evidence</dt><dd>{{.Retention.State}} — {{.Retention.Reason}}</dd></dl>
+    {{end}}
+    <p>Observed recovery coverage is structural evidence from backup metadata, WAL names, and timeline history. It does not validate WAL bytes or prove that a restore will succeed. Archive receipt is not transaction time.</p>
+    {{else}}<p>No Barman recovery coverage evidence available.</p>{{end}}
+
+    {{end}}
+
+    <h2>Recent objects</h2>
+    {{if .Recent}}
+    <table>
+      <thead><tr><th>Object key</th><th>Scope</th><th>Size</th><th>Store modification time</th></tr></thead>
+      <tbody>
+      {{range .Recent}}
+        <tr><td><code>{{.Key}}</code></td><td>{{if .Scope}}{{.Scope}}{{else}}unscoped{{end}}</td><td>{{.Size}}</td><td>{{.LastModified}}</td></tr>
+      {{end}}
+      </tbody>
+    </table>
+    {{else}}<p>No recent objects available.</p>{{end}}
+
+    <h2>Capabilities</h2>
+    <table>
+      <thead><tr><th>Capability</th><th>Support</th><th>Evidence</th><th>Reason</th></tr></thead>
+      <tbody>
+      {{range .Capabilities}}
+        <tr><td>{{.ID}}</td><td>{{.Support}}</td><td>{{.State}}</td><td>{{.Reason}}</td></tr>
+      {{end}}
+      </tbody>
+    </table>
+
+    <h2>Evidence limit</h2>
+    <p>the evidence agent reports structural evidence. It does not verify that a restore will succeed.</p>
+    <p>The application port has no authentication. Deploy it only behind the authenticated proxy and operator-managed network boundary.</p>
+  </main>
+</body>
+</html>

@@ -1,0 +1,35 @@
+{
+  "items": [
+    {
+      "id": "grant-0c1d2e3f405162738495a6b7c8d9eaf0",
+      "client": "Claude Code",
+      "scopes": [
+        "mcp:read",
+        "mcp:operate"
+      ],
+      "createdAt": "2026-10-28T10:00:00Z",
+      "lastUsedAt": "2026-10-29T11:56:00Z",
+      "expiresAt": "2026-11-04T10:00:00Z"
+    },
+    {
+      "id": "grant-1f2e3d4c5b6a79881726354453627180",
+      "client": "codex-mcp-client",
+      "scopes": [
+        "mcp:read"
+      ],
+      "createdAt": "2026-10-26T12:00:00Z",
+      "lastUsedAt": "2026-10-27T12:00:00Z",
+      "expiresAt": "2026-11-02T12:00:00Z"
+    },
+    {
+      "id": "grant-9a8b7c6d5e4f30211203f4e5d6c7b8a9",
+      "client": "opencode",
+      "scopes": [
+        "mcp:read"
+      ],
+      "createdAt": "2026-10-29T11:40:00Z",
+      "expiresAt": "2026-11-05T11:40:00Z"
+    }
+  ]
+}
+

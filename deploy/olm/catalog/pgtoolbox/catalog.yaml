@@ -1,0 +1,48 @@
+---
+schema: olm.package
+name: pgtoolbox
+defaultChannel: alpha
+description: >-
+  pgToolBox operator for CloudNativePG — one pgAdmin per team namespace and
+  a read-only evidence agent per backup repository.
+---
+schema: olm.channel
+package: pgtoolbox
+name: alpha
+entries:
+- name: pgtoolbox.v0.1.0
+---
+schema: olm.bundle
+package: pgtoolbox
+name: pgtoolbox.v0.1.0
+image: ghcr.io/fyannk/pgtoolbox-bundle:0.1.0
+properties:
+- type: olm.package
+  value:
+    packageName: pgtoolbox
+    version: 0.1.0
+- type: olm.gvk
+  value:
+    group: pgtoolbox.fyannk.dev
+    kind: EvidenceAgent
+    version: v1alpha1
+- type: olm.gvk
+  value:
+    group: pgtoolbox.fyannk.dev
+    kind: PgAccessRequest
+    version: v1alpha1
+- type: olm.gvk
+  value:
+    group: pgtoolbox.fyannk.dev
+    kind: PgAdmin
+    version: v1alpha1
+- type: olm.gvk
+  value:
+    group: pgtoolbox.fyannk.dev
+    kind: PgToolBoxConsole
+    version: v1alpha1
+- type: olm.gvk
+  value:
+    group: pgtoolbox.fyannk.dev
+    kind: PgAdminAccess
+    version: v1alpha1

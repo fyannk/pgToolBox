@@ -1,0 +1,38 @@
+{
+  "api_version": "evidence.pgtoolbox.fyannk.dev/v1alpha1",
+  "kind": "BarmanBackupPage",
+  "revision": 42,
+  "evidence_generation": 42,
+  "total_items": 1,
+  "next_cursor": null,
+  "items": [
+    {
+      "server": "orders",
+      "backup_id": "20260728T100000",
+      "status": "DONE",
+      "backup_type": "full",
+      "state": "healthy",
+      "reason": {
+        "code": "evidence-evaluated",
+        "message": "structural evidence evaluated"
+      },
+      "system_id": "7396242311909787798",
+      "postgresql_version": 170000,
+      "timeline": 1,
+      "wal_segment_size_bytes": 16777216,
+      "begin_wal": "000000010000000000000001",
+      "end_wal": "000000010000000000000002",
+      "begin_lsn": "0/1000000",
+      "end_lsn": "0/2000000",
+      "begin_at": "2026-07-28T10:00:00.123Z",
+      "end_at": "2026-07-28T10:00:03.123Z",
+      "logical_bytes": 8192,
+      "deduplicated_bytes": null,
+      "stored_artifact_bytes": 4096,
+      "compression": "gzip",
+      "encryption": "none",
+      "artifact_count": 1,
+      "tablespace_count": 0
+    }
+  ]
+}

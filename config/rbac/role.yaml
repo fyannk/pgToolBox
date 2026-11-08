@@ -1,0 +1,292 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: manager-role
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - configmaps
+  verbs:
+  - create
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - persistentvolumeclaims
+  - secrets
+  - serviceaccounts
+  - services
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - apps
+  resources:
+  - deployments
+  - statefulsets
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - authentication.k8s.io
+  resources:
+  - tokenreviews
+  verbs:
+  - create
+- apiGroups:
+  - authorization.k8s.io
+  resources:
+  - subjectaccessreviews
+  verbs:
+  - create
+- apiGroups:
+  - barmancloud.cnpg.io
+  resources:
+  - objectstores
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - batch
+  resources:
+  - jobs
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - coordination.k8s.io
+  resources:
+  - leases
+  verbs:
+  - create
+  - get
+  - update
+- apiGroups:
+  - discovery.k8s.io
+  resourceNames:
+  - kubernetes
+  resources:
+  - endpointslices
+  verbs:
+  - get
+- apiGroups:
+  - events.k8s.io
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+- apiGroups:
+  - gateway.networking.k8s.io
+  resources:
+  - httproutes
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - networking.k8s.io
+  resources:
+  - ingresses
+  - networkpolicies
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - pgbackrest.cnpg.opera.com
+  resources:
+  - archives
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - pgbackrest.dalibo.com
+  resources:
+  - stanzas
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - pgtoolbox.fyannk.dev
+  resources:
+  - evidenceagents
+  - pgaccessrequests
+  - pgadminaccesses
+  - pgtoolboxconsoles
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - pgtoolbox.fyannk.dev
+  resources:
+  - evidenceagents/status
+  - pgaccessrequests/status
+  - pgadmins/status
+  - pgtoolboxconsoles/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - pgtoolbox.fyannk.dev
+  resources:
+  - pgadminaccesses/finalizers
+  - pgadmins/finalizers
+  - pgtoolboxconsoles/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - pgtoolbox.fyannk.dev
+  resources:
+  - pgadmins
+  verbs:
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - policy
+  resources:
+  - poddisruptionbudgets
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - postgresql.cnpg.io
+  resources:
+  - clusters
+  - poolers
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - postgresql.cnpg.io
+  resources:
+  - databaseroles
+  - databases
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - rbac.authorization.k8s.io
+  resources:
+  - clusterrolebindings
+  - clusterroles
+  verbs:
+  - create
+  - get
+  - list
+  - watch
+- apiGroups:
+  - rbac.authorization.k8s.io
+  resourceNames:
+  - pgtoolbox-evidence-agent
+  resources:
+  - clusterrolebindings
+  - clusterroles
+  verbs:
+  - patch
+  - update
+- apiGroups:
+  - rbac.authorization.k8s.io
+  resourceNames:
+  - pgtoolbox-console
+  - pgtoolbox-console-pod-logs
+  - pgtoolbox-console-restore-drills
+  resources:
+  - clusterroles
+  verbs:
+  - bind
+- apiGroups:
+  - rbac.authorization.k8s.io
+  resources:
+  - rolebindings
+  - roles
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - route.openshift.io
+  resources:
+  - routes
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - route.openshift.io
+  resources:
+  - routes/custom-host
+  verbs:
+  - create
+  - patch
+  - update
+- apiGroups:
+  - security.openshift.io
+  resources:
+  - securitycontextconstraints
+  verbs:
+  - list

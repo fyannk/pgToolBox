@@ -1,0 +1,220 @@
+{
+  "generatedAt": "2026-10-29T12:00:00Z",
+  "namespaces": [
+    {
+      "name": "team-a",
+      "sources": [
+        {
+          "source": "clusters",
+          "state": "live",
+          "since": "2026-10-29T09:00:00Z",
+          "health": "ok"
+        }
+      ]
+    }
+  ],
+  "items": [
+    {
+      "ref": {
+        "namespace": "team-a",
+        "name": "billing",
+        "uid": "4d2f1e0a-1b2c-4d3e-8f90-a1b2c3d4e5f6"
+      },
+      "verdict": {
+        "health": "critical",
+        "contributors": [
+          {
+            "id": "phase",
+            "health": "critical",
+            "label": "Phase",
+            "detail": "Failing over",
+            "provenance": {
+              "origin": "operator",
+              "source": "Cluster.status.phase",
+              "observedAt": "2026-10-29T12:00:00Z"
+            }
+          },
+          {
+            "id": "escapeHatch:cnpg.io/skipWalArchiving",
+            "health": "critical",
+            "label": "cnpg.io/skipWalArchiving",
+            "detail": "PostgreSQL does not archive WAL: no point-in-time recovery beyond the last backup",
+            "provenance": {
+              "origin": "operator",
+              "source": "Cluster.metadata.annotations",
+              "observedAt": "2026-10-29T12:00:00Z"
+            }
+          },
+          {
+            "id": "diagnostics",
+            "health": "critical",
+            "label": "Diagnostics",
+            "detail": "1 critical, 0 high, 0 warning, 0 note; 144 checks could not run",
+            "provenance": {
+              "origin": "console",
+              "source": "diagnostics",
+              "observedAt": "2026-10-29T12:00:00Z"
+            },
+            "link": "diagnostics"
+          }
+        ]
+      },
+      "phase": {
+        "text": "Failing over",
+        "reason": "Failing over from billing-1 to billing-2",
+        "health": "critical",
+        "known": true,
+        "since": "2026-10-29T12:00:00Z",
+        "provenance": {
+          "origin": "operator",
+          "source": "Cluster.status.phase",
+          "observedAt": "2026-10-29T12:00:00Z"
+        }
+      },
+      "primary": {
+        "current": "billing-1",
+        "target": "billing-2",
+        "state": "failover",
+        "since": "2026-10-29T11:58:25Z"
+      },
+      "instances": {
+        "desired": 2,
+        "ready": 1,
+        "reported": 2,
+        "podsReady": 1,
+        "health": "warning"
+      },
+      "backup": {
+        "health": "info",
+        "configured": false,
+        "provenance": {
+          "origin": "operator",
+          "source": "Backup.status",
+          "observedAt": "2026-10-29T12:00:00Z"
+        }
+      },
+      "findings": {
+        "critical": 1,
+        "high": 0,
+        "warning": 0,
+        "note": 0,
+        "unavailable": 144,
+        "runAt": "2026-10-29T12:00:00Z"
+      },
+      "version": {
+        "cnpg": "1.30.0",
+        "cnpgMinor": "1.30",
+        "confidence": "reported",
+        "detectedBy": "instanceManagerVersion"
+      },
+      "provenance": {
+        "origin": "operator",
+        "source": "Cluster",
+        "observedAt": "2026-10-29T12:00:00Z"
+      }
+    },
+    {
+      "ref": {
+        "namespace": "team-a",
+        "name": "orders",
+        "uid": "0b6a2c1e-8f0d-4a55-9a3e-7c1f2b3d4e5f"
+      },
+      "labels": {
+        "app": "orders"
+      },
+      "verdict": {
+        "health": "ok",
+        "contributors": [
+          {
+            "id": "phase",
+            "health": "ok",
+            "label": "Phase",
+            "detail": "Cluster in healthy state",
+            "provenance": {
+              "origin": "operator",
+              "source": "Cluster.status.phase",
+              "observedAt": "2026-10-29T12:00:00Z"
+            }
+          },
+          {
+            "id": "readyCondition",
+            "health": "ok",
+            "label": "Ready condition",
+            "detail": "True (ClusterIsReady)",
+            "provenance": {
+              "origin": "operator",
+              "source": "Cluster.status.conditions[Ready]",
+              "observedAt": "2026-10-29T12:00:00Z"
+            }
+          },
+          {
+            "id": "instances",
+            "health": "ok",
+            "label": "Instances ready",
+            "detail": "3 of 3",
+            "provenance": {
+              "origin": "operator",
+              "source": "Cluster.status.readyInstances",
+              "observedAt": "2026-10-29T12:00:00Z"
+            },
+            "link": "instances"
+          }
+        ]
+      },
+      "phase": {
+        "text": "Cluster in healthy state",
+        "health": "ok",
+        "known": true,
+        "since": "2026-10-29T12:00:00Z",
+        "provenance": {
+          "origin": "operator",
+          "source": "Cluster.status.phase",
+          "observedAt": "2026-10-29T12:00:00Z"
+        }
+      },
+      "primary": {
+        "current": "orders-1",
+        "target": "orders-1",
+        "state": "stable"
+      },
+      "instances": {
+        "desired": 3,
+        "ready": 3,
+        "reported": 3,
+        "podsReady": 3,
+        "health": "ok"
+      },
+      "backup": {
+        "health": "ok",
+        "lastCompletedAt": "2026-10-29T07:00:00Z",
+        "configured": true,
+        "pluginBased": true,
+        "provenance": {
+          "origin": "operator",
+          "source": "Backup.status",
+          "observedAt": "2026-10-29T12:00:00Z"
+        }
+      },
+      "findings": {
+        "critical": 0,
+        "high": 0,
+        "warning": 0,
+        "note": 0,
+        "unavailable": 144,
+        "runAt": "2026-10-29T12:00:00Z"
+      },
+      "version": {
+        "cnpg": "1.30.0",
+        "cnpgMinor": "1.30",
+        "confidence": "reported",
+        "detectedBy": "instanceManagerVersion",
+        "image": "ghcr.io/cloudnative-pg/postgresql:18.1"
+      },
+      "provenance": {
+        "origin": "operator",
+        "source": "Cluster",
+        "observedAt": "2026-10-29T12:00:00Z"
+      }
+    }
+  ]
+}

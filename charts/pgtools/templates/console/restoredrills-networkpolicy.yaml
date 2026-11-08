@@ -1,0 +1,90 @@
+{{- $d := .Values.console.restoreDrills }}
+{{- if and $d.enabled $d.networkPolicy.enabled }}
+{{- /*
+The restore-drill Pods' NetworkPolicy, in each drill namespace. A promoted drill is a live copy of a production
+database: the console turns off the background workers it knows (logical
+replication, pg_cron, TimescaleDB jobs), and this policy is what holds the
+rest (an extension, a function a user calls) to DNS, the API server and the
+object store. Selected by the drill labels CloudNativePG copies from the
+Cluster's inheritedMetadata onto its Pods and its recovery Job.
+*/ -}}
+{{- $np := $d.networkPolicy }}
+{{- $instance := .Values.console.networkPolicy.instance }}
+{{- range $ns := include "pgtools.console.drillNamespaces" $ | fromJsonArray }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "pgtools.console.fullname" $ }}-restore-drills
+  namespace: {{ $ns }}
+  labels:
+    {{- include "pgtools.console.labels" $ | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      pgtoolbox.fyannk.dev/drill-owner: {{ $.Release.Namespace | quote }}
+    matchExpressions:
+      - {key: pgtoolbox.fyannk.dev/restore-drill-of, operator: Exists}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    # The CloudNativePG operator, on the status port.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $np.operator.namespace | quote }}
+          podSelector:
+            matchLabels:
+              {{- toYaml $np.operator.podLabels | nindent 14 }}
+      ports:
+        - {port: {{ $instance.statusPort }}, protocol: TCP}
+    # This console: /pg/status and the exporter, the drill's checks.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $.Release.Namespace | quote }}
+          podSelector:
+            matchLabels:
+              {{- include "pgtools.console.selectorLabels" $ | nindent 14 }}
+      ports:
+        - {port: {{ $instance.statusPort }}, protocol: TCP}
+        - {port: {{ $instance.metricsPort }}, protocol: TCP}
+  egress:
+    # DNS.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $np.dns.namespace | quote }}
+          podSelector:
+            matchLabels:
+              {{- toYaml $np.dns.podLabels | nindent 14 }}
+      ports:
+        {{- range $port := $np.dns.ports }}
+        - {port: {{ $port }}, protocol: UDP}
+        - {port: {{ $port }}, protocol: TCP}
+        {{- end }}
+    # The API server (the instance manager and the barman-cloud sidecar).
+    - {{- if eq $np.apiServer.mode "addresses" }}
+      {{- if not $np.apiServer.addresses }}
+      {{- fail "console.restoreDrills.networkPolicy.apiServer.mode=addresses needs apiServer.addresses" }}
+      {{- end }}
+      to:
+        {{- range $ip := $np.apiServer.addresses }}
+        - ipBlock:
+            cidr: {{ if contains "/" (toString $ip) }}{{ $ip }}{{ else if contains ":" (toString $ip) }}{{ $ip }}/128{{ else }}{{ $ip }}/32{{ end }}
+        {{- end }}
+      {{- end }}
+      ports:
+        {{- range $port := $np.apiServer.ports }}
+        - {port: {{ $port }}, protocol: TCP}
+        {{- end }}
+    # The object store the drill restores from.
+    - {{- with $np.objectStore.to }}
+      to:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      ports:
+        {{- range $port := $np.objectStore.ports }}
+        - {port: {{ $port }}, protocol: TCP}
+        {{- end }}
+{{- end }}
+{{- end }}

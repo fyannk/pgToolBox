@@ -1,0 +1,9 @@
+# The PromQL source of the metrics charts: OpenShift's tenancy port with the
+# console's projected ServiceAccount token and the service CA.
+console:
+  prometheus:
+    url: https://thanos-querier.openshift-monitoring.svc:9092
+    token: {projected: {enabled: true}}
+    caConfigMap: openshift-service-ca.crt
+    namespaced: true
+    range: 2h

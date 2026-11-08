@@ -1,0 +1,193 @@
+// Copyright 2026 The pgToolBox Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// Package discovery probes optional APIs the way the operator and the
+// console both need to: a scoped List with
+// Limit 1, which answers the only question that matters — "may this
+// ServiceAccount list this kind here?" — in one request, without the
+// cluster-wide discovery documents or a RESTMapper refresh. Forbidden and
+// "not served" turn the feature off with a reason; any other error is
+// returned, because a start-up that cannot tell is a start-up that
+// should fail rather than guess.
+package discovery
+
+import (
+	"context"
+	"errors"
+	"fmt"
+
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+)
+
+// State is the outcome of one probe.
+type State string
+
+// The probe outcomes.
+const (
+	// Available means the List succeeded.
+	Available State = "available"
+	// Forbidden means RBAC denied the List to the caller.
+	Forbidden State = "forbidden"
+	// NotInstalled means the API server does not serve the kind (no CRD,
+	// or a CNPG minor without it).
+	NotInstalled State = "notInstalled"
+)
+
+// Result is one probe outcome with a bounded, secret-free reason.
+type Result struct {
+	GVK       schema.GroupVersionKind
+	Namespace string
+	State     State
+	// Reason explains Forbidden and NotInstalled in words, naming the
+	// resource and namespace; empty when Available.
+	Reason string
+}
+
+// Usable reports whether the feature can be watched.
+func (r Result) Usable() bool { return r.State == Available }
+
+// Lister is the one method a probe needs; a controller-runtime client,
+// an APIReader or a fake satisfy it.
+type Lister interface {
+	List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error
+}
+
+// ProbeListable lists at most one object of gvk, as metadata only, in
+// namespace ("" for a cluster-scoped kind or a cluster-wide list). It
+// returns Available, Forbidden or NotInstalled; every other error is
+// returned unclassified so the caller fails its start.
+func ProbeListable(ctx context.Context, c Lister, gvk schema.GroupVersionKind, namespace string) (Result, error) {
+	result := Result{GVK: gvk, Namespace: namespace}
+	list := &metav1.PartialObjectMetadataList{}
+	list.SetGroupVersionKind(gvk.GroupVersion().WithKind(gvk.Kind + "List"))
+	opts := []client.ListOption{client.Limit(1)}
+	if namespace != "" {
+		opts = append(opts, client.InNamespace(namespace))
+	}
+	err := c.List(ctx, list, opts...)
+	switch {
+	case err == nil:
+		result.State = Available
+		return result, nil
+	case apierrors.IsForbidden(err) || apierrors.IsUnauthorized(err):
+		result.State = Forbidden
+		result.Reason = fmt.Sprintf("not allowed to list %s%s", resourceName(gvk), where(namespace))
+		return result, nil
+	case meta.IsNoMatchError(err) || apierrors.IsNotFound(err) || isDiscoveryFailure(err):
+		result.State = NotInstalled
+		result.Reason = resourceName(gvk) + " is not served by this cluster"
+		return result, nil
+	default:
+		return result, fmt.Errorf("probing %s%s: %w", resourceName(gvk), where(namespace), err)
+	}
+}
+
+// ProbeNamespaces probes gvk in every namespace of namespaces, or once
+// cluster-wide when namespaces is empty, and returns the first outcome that
+// is not Available: a feature a controller enables is watched in every
+// namespace it watches, so one namespace where the List is refused turns
+// it off everywhere rather than leaving a watch that never syncs.
+func ProbeNamespaces(ctx context.Context, c Lister, gvk schema.GroupVersionKind, namespaces []string) (Result, error) {
+	if len(namespaces) == 0 {
+		return ProbeListable(ctx, c, gvk, "")
+	}
+	var result Result
+	for _, namespace := range namespaces {
+		probed, err := ProbeListable(ctx, c, gvk, namespace)
+		if err != nil || !probed.Usable() {
+			return probed, err
+		}
+		result = probed
+	}
+	return result, nil
+}
+
+// ObjectStoreGVK is the barman-cloud plugin's ObjectStore, the optional
+// API an EvidenceAgent resolves its repository from.
+var ObjectStoreGVK = schema.GroupVersionKind{Group: "barmancloud.cnpg.io", Version: "v1", Kind: "ObjectStore"}
+
+// ProbeObjectStoreAPI is the start-time probe of the barman-cloud
+// ObjectStore API in the watched namespaces (cluster-wide when none):
+// not served or forbidden turns the feature off (EvidenceAgents then
+// report ObjectStoreAPIUnavailable), any other error fails the start.
+func ProbeObjectStoreAPI(ctx context.Context, c Lister, namespaces []string) (Result, error) {
+	return ProbeNamespaces(ctx, c, ObjectStoreGVK, namespaces)
+}
+
+// StanzaGVK is Dalibo's pgBackRest plugin Stanza
+// (pgbackrest.dalibo.com): an optional API an EvidenceAgent
+// resolves a pgBackRest repository from.
+var StanzaGVK = schema.GroupVersionKind{Group: "pgbackrest.dalibo.com", Version: "v1", Kind: "Stanza"}
+
+// ArchiveGVK is Opera's pgBackRest plugin Archive
+// (pgbackrest.cnpg.opera.com): an optional API an EvidenceAgent
+// resolves a pgBackRest repository from.
+var ArchiveGVK = schema.GroupVersionKind{Group: "pgbackrest.cnpg.opera.com", Version: "v1", Kind: "Archive"}
+
+// ProbeStanzaAPI is the start-time probe of the Stanza API, with
+// ProbeObjectStoreAPI's semantics: not served or forbidden turns the
+// feature off (the EvidenceAgents of such Clusters report
+// ObjectStoreAPIUnavailable), any other error fails the start.
+func ProbeStanzaAPI(ctx context.Context, c Lister, namespaces []string) (Result, error) {
+	return ProbeNamespaces(ctx, c, StanzaGVK, namespaces)
+}
+
+// ProbeArchiveAPI is the start-time probe of the Archive API, with
+// ProbeObjectStoreAPI's semantics.
+func ProbeArchiveAPI(ctx context.Context, c Lister, namespaces []string) (Result, error) {
+	return ProbeNamespaces(ctx, c, ArchiveGVK, namespaces)
+}
+
+// isDiscoveryFailure matches the RESTMapper's report that a whole group
+// version is absent, which some client versions return instead of a
+// NoKindMatch.
+func isDiscoveryFailure(err error) bool {
+	var groupErr *meta.NoResourceMatchError
+	return errors.As(err, &groupErr)
+}
+
+func resourceName(gvk schema.GroupVersionKind) string {
+	if gvk.Group == "" {
+		return gvk.Kind
+	}
+	return gvk.Kind + "." + gvk.Group
+}
+
+func where(namespace string) string {
+	if namespace == "" {
+		return " cluster-wide"
+	}
+	return " in " + namespace
+}
+
+// SCCGVK is OpenShift's SecurityContextConstraints kind.
+var SCCGVK = schema.GroupVersionKind{Group: "security.openshift.io", Version: "v1", Kind: "SecurityContextConstraints"}
+
+// ProbeSCC reports whether the cluster is OpenShift, by probing the
+// cluster-scoped SecurityContextConstraints kind. Forbidden counts as
+// present — the API answered, it only refused this caller — which is
+// exactly the answer a renderer needs to omit runAsUser and fsGroup and
+// let the SCC assign them. Only "not served" means plain
+// Kubernetes.
+func ProbeSCC(ctx context.Context, c Lister) (bool, error) {
+	result, err := ProbeListable(ctx, c, SCCGVK, "")
+	if err != nil {
+		return false, err
+	}
+	return result.State != NotInstalled, nil
+}

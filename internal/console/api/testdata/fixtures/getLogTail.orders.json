@@ -1,0 +1,24 @@
+{
+  "ref": {
+    "namespace": "team-a",
+    "name": "orders",
+    "uid": "0b6a2c1e-8f0d-4a55-9a3e-7c1f2b3d4e5f"
+  },
+  "pod": "orders-1",
+  "container": "postgres",
+  "containers": [
+    "postgres"
+  ],
+  "readAt": "2026-10-29T12:00:00Z",
+  "lines": [
+    {
+      "at": "2026-10-29T11:58:50Z",
+      "text": "{\"level\":\"info\",\"ts\":\"2026-10-29T11:58:50Z\",\"logger\":\"postgres\",\"msg\":\"record\",\"record\":{\"message\":\"checkpoint starting: time\"}}"
+    },
+    {
+      "at": "2026-10-29T11:59:50Z",
+      "text": "{\"level\":\"info\",\"ts\":\"2026-10-29T11:59:50Z\",\"logger\":\"postgres\",\"msg\":\"record\",\"record\":{\"message\":\"checkpoint complete\"}}"
+    }
+  ]
+}
+

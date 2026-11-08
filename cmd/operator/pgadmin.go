@@ -1,0 +1,217 @@
+// Copyright 2026 The pgToolBox Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package main
+
+// PgAdmin wiring of the operator binary. Kept in its own file, as the
+// EvidenceAgent's is: main.go calls preparePgAdmin
+// before the manager, pgAdminManagerOptions on the manager options, and
+// setupPgAdmin once the manager exists, all with main's one ctx.
+
+import (
+	"context"
+	"errors"
+	"flag"
+	"fmt"
+	"os"
+	"reflect"
+	"time"
+
+	cnpgv1 "github.com/cloudnative-pg/api/pkg/api/v1"
+	routev1 "github.com/openshift/api/route/v1"
+	securityv1 "github.com/openshift/api/security/v1"
+	"github.com/prometheus/client_golang/prometheus"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/metrics"
+	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+
+	pgtoolboxv1alpha1 "github.com/fyannk/pgToolBox/api/v1alpha1"
+	"github.com/fyannk/pgToolBox/internal/operator/configuration"
+	"github.com/fyannk/pgToolBox/internal/operator/pgadmin"
+	"github.com/fyannk/pgToolBox/pkg/discovery"
+)
+
+// pgAdminImageRepositories is --pgadmin-image-repositories: the
+// repositories a PgAdmin's images may name, over PGADMIN_IMAGE_REPOSITORIES
+// (env, operator ConfigMap or Secret). It mirrors the EvidenceAgent's
+// --evidence-agent-image-repositories.
+var pgAdminImageRepositories string
+
+func init() {
+	utilruntime.Must(pgtoolboxv1alpha1.AddToScheme(scheme))
+	utilruntime.Must(securityv1.AddToScheme(scheme))
+	flag.StringVar(&pgAdminImageRepositories, "pgadmin-image-repositories", "",
+		"Comma-separated image repositories a PgAdmin's spec.image and oauth-proxy image may name (exact, or a prefix ending in '/'). "+
+			"Overrides PGADMIN_IMAGE_REPOSITORIES. Empty everywhere: each image's default repository only.")
+}
+
+// pgAdminPrepared is what preparePgAdmin read before the manager exists.
+type pgAdminPrepared struct {
+	Config   configuration.Config
+	Features pgadmin.Features
+}
+
+// preparePgAdmin loads the configuration (defaults, env, ConfigMap, Secret;
+// one structured error) and probes the optional APIs with a scoped
+// List(Limit 1), through a client that reads past any cache.
+func preparePgAdmin(ctx context.Context, operatorImage, configMapName, secretName string) (pgAdminPrepared, error) {
+	direct, err := client.New(ctrl.GetConfigOrDie(), client.Options{Scheme: scheme})
+	if err != nil {
+		return pgAdminPrepared{}, fmt.Errorf("build API client: %w", err)
+	}
+	if operatorImage != "" {
+		configuration.DefaultOperatorImage = operatorImage
+	}
+	loaded, err := configuration.Load(ctx, direct, os.LookupEnv, configuration.Objects{
+		Namespace: os.Getenv("POD_NAMESPACE"), ConfigMap: configMapName, Secret: secretName,
+	})
+	if err != nil {
+		return pgAdminPrepared{}, err
+	}
+	if err := loaded.OverrideFlag("PGADMIN_IMAGE_REPOSITORIES", pgAdminImageRepositories); err != nil {
+		return pgAdminPrepared{}, err
+	}
+	if err := loaded.RegisterInfoMetric(metrics.Registry); err != nil {
+		return pgAdminPrepared{}, err
+	}
+	registerBuildInfo()
+	features, err := probeFeatures(ctx, direct, loaded.Config.WatchNamespaces)
+	if err != nil {
+		return pgAdminPrepared{}, err
+	}
+	setupLog.Info("PgAdmin optional APIs",
+		"routes", features.Routes.State, "gateways", features.Gateways.State,
+		"databaseRoles", features.DatabaseRoles.State, "poolers", features.Poolers.State,
+		"openshift", features.OpenShift)
+	return pgAdminPrepared{Config: loaded.Config, Features: features}, nil
+}
+
+// pgAdminManagerOptions adds the PgAdmin controller's needs to the shared
+// manager's options: label-filtered informers for the kinds it owns (a
+// kind another controller already filters keeps that filter: every
+// generated object carries managed-by=pgtoolbox, the common selector),
+// managedFields stripped, Secret and ConfigMap content never cached, the
+// namespaces to watch, and the leader-election behaviour.
+func pgAdminManagerOptions(options *ctrl.Options, prepared pgAdminPrepared) {
+	if options.Cache.ByObject == nil {
+		options.Cache.ByObject = map[client.Object]cache.ByObject{}
+	}
+	present := map[reflect.Type]bool{}
+	for object := range options.Cache.ByObject {
+		present[reflect.TypeOf(object)] = true
+	}
+	for object, byObject := range pgadmin.CacheByObject(prepared.Features) {
+		if !present[reflect.TypeOf(object)] {
+			options.Cache.ByObject[object] = byObject
+		}
+	}
+	if options.Cache.DefaultTransform == nil {
+		options.Cache.DefaultTransform = cache.TransformStripManagedFields()
+	}
+	if options.Client.Cache == nil {
+		options.Client.Cache = &client.CacheOptions{}
+	}
+	for _, object := range []client.Object{&corev1.Secret{}, &corev1.ConfigMap{}} {
+		disabled := false
+		for _, existing := range options.Client.Cache.DisableFor {
+			disabled = disabled || reflect.TypeOf(existing) == reflect.TypeOf(object)
+		}
+		if !disabled {
+			options.Client.Cache.DisableFor = append(options.Client.Cache.DisableFor, object)
+		}
+	}
+	if namespaces := prepared.Config.WatchNamespaces; len(namespaces) > 0 && options.Cache.DefaultNamespaces == nil {
+		options.Cache.DefaultNamespaces = map[string]cache.Config{}
+		for _, namespace := range namespaces {
+			options.Cache.DefaultNamespaces[namespace] = cache.Config{}
+		}
+	}
+	lease, renew, retry := prepared.Config.LeaseDuration, prepared.Config.RenewDeadline, prepared.Config.RetryPeriod
+	shutdown := 30 * time.Second
+	options.LeaseDuration, options.RenewDeadline, options.RetryPeriod = &lease, &renew, &retry
+	// main exits right after Start returns, so releasing the lease on
+	// cancellation hands over at once instead of after a lease period.
+	options.LeaderElectionReleaseOnCancel = true
+	options.GracefulShutdownTimeout = &shutdown
+}
+
+// setupPgAdmin registers the PgAdmin controller and its per-CR gauges
+// (pgtoolbox_pgadmin_info, pgtoolbox_pgadmin_condition), computed on
+// scrape from the manager's cache.
+func setupPgAdmin(ctx context.Context, mgr ctrl.Manager, prepared pgAdminPrepared) error {
+	if err := metrics.Registry.Register(pgadmin.Collector{Reader: mgr.GetCache()}); err != nil {
+		return err
+	}
+	return (&pgadmin.Reconciler{
+		Client:    mgr.GetClient(),
+		APIReader: mgr.GetAPIReader(),
+		Scheme:    mgr.GetScheme(),
+		Recorder:  mgr.GetEventRecorder("pgadmin"),
+		Config:    prepared.Config,
+		Features:  prepared.Features,
+	}).SetupWithManager(ctx, mgr)
+}
+
+// probeFeatures checks every optional API with a scoped List(Limit 1) in
+// every watched namespace (pkg/discovery): off when not served or
+// forbidden, start fails on any other error. The CloudNativePG Cluster API
+// is required; SecurityContextConstraints are probed cluster-wide and a
+// Forbidden answer still means OpenShift.
+func probeFeatures(ctx context.Context, reader client.Reader, namespaces []string) (pgadmin.Features, error) {
+	var features pgadmin.Features
+	probes := []struct {
+		target *discovery.Result
+		gvk    schema.GroupVersionKind
+	}{
+		{&features.Routes, routev1.GroupVersion.WithKind("Route")},
+		{&features.Gateways, schema.GroupVersionKind{Group: gatewayv1.GroupName, Version: "v1", Kind: "HTTPRoute"}},
+		{&features.DatabaseRoles, cnpgv1.SchemeGroupVersion.WithKind("DatabaseRole")},
+		{&features.Poolers, cnpgv1.SchemeGroupVersion.WithKind("Pooler")},
+		{&features.Databases, cnpgv1.SchemeGroupVersion.WithKind("Database")},
+	}
+	for _, probe := range probes {
+		result, err := discovery.ProbeNamespaces(ctx, reader, probe.gvk, namespaces)
+		if err != nil {
+			return features, err
+		}
+		*probe.target = result
+	}
+	openShift, err := discovery.ProbeSCC(ctx, reader)
+	if err != nil {
+		return features, err
+	}
+	features.OpenShift = openShift
+	clusters, err := discovery.ProbeNamespaces(ctx, reader, cnpgv1.SchemeGroupVersion.WithKind("Cluster"), namespaces)
+	if err != nil {
+		return features, err
+	}
+	if !clusters.Usable() {
+		return features, errors.New("the CloudNativePG Cluster API is required: " + clusters.Reason)
+	}
+	return features, nil
+}
+
+func registerBuildInfo() {
+	info := prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "pgtoolbox_build_info",
+		Help: "Build information of the pgToolBox operator.",
+	}, []string{"version"})
+	info.WithLabelValues(operatorVersion).Set(1)
+	_ = metrics.Registry.Register(info)
+}

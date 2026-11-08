@@ -1,0 +1,33 @@
+# The console's shared state: sign-outs and "since" times its
+# replicas share, created empty here and filled by the console. Its Role is
+# the console's one own-identity write besides the opt-in drill teardown:
+# get, watch and update on this ConfigMap by name, nothing else
+# (hack/check-readonly.sh pins the rule exactly). Without it the console
+# keeps both per replica.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pgtoolbox-console-state
+data: {}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: pgtoolbox-console-state
+rules:
+- apiGroups: [""]
+  resources: [configmaps]
+  resourceNames: [pgtoolbox-console-state]
+  verbs: [get, watch, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: pgtoolbox-console-state
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: pgtoolbox-console-state
+subjects:
+- kind: ServiceAccount
+  name: pgtoolbox-console

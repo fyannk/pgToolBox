@@ -1,0 +1,86 @@
+# console.mcp.oauthClientMetadataDocuments makes the console fetch MCP
+# client metadata over HTTPS from the Internet. The console NetworkPolicy is
+# the installing admin's and opens no destination outside the cluster by
+# itself (an IdP, a trace collector and the digest's servers go through
+# networkPolicy.extraEgress too), so the switch adds no rule: NOTES says what
+# to add, and the documented rule renders through extraEgress.
+suite: console mcp egress
+release:
+  name: pgc
+  namespace: team-a
+templates:
+  - templates/console/networkpolicy.yaml
+  - templates/NOTES.txt
+tests:
+  - it: adds no egress rule of its own
+    template: templates/console/networkpolicy.yaml
+    set:
+      console.publicURL: "https://console.example"
+      console.mcp: {enabled: true, oauthClientMetadataDocuments: true}
+      console.networkPolicy.enabled: true
+      console.networkPolicy.apiServer.mode: any
+    asserts:
+      - lengthEqual: {path: spec.egress, count: 5}
+
+  - it: renders the documented HTTPS rule through extraEgress
+    template: templates/console/networkpolicy.yaml
+    set:
+      console.publicURL: "https://console.example"
+      console.mcp: {enabled: true, oauthClientMetadataDocuments: true}
+      console.networkPolicy.enabled: true
+      console.networkPolicy.apiServer.mode: any
+      console.networkPolicy.extraEgress:
+        - to:
+            - ipBlock:
+                cidr: 0.0.0.0/0
+                except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, 169.254.0.0/16]
+          ports:
+            - {port: 443, protocol: TCP}
+    asserts:
+      - lengthEqual: {path: spec.egress, count: 6}
+      - contains:
+          path: spec.egress
+          content:
+            to:
+              - ipBlock:
+                  cidr: 0.0.0.0/0
+                  except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, 169.254.0.0/16]
+            ports:
+              - {port: 443, protocol: TCP}
+
+  - it: says in NOTES that the policy does not open the fetch
+    template: templates/NOTES.txt
+    set:
+      console.publicURL: "https://console.example"
+      console.mcp: {enabled: true, oauthClientMetadataDocuments: true}
+      console.networkPolicy.enabled: true
+      console.networkPolicy.apiServer.mode: any
+    asserts:
+      - matchRegexRaw: {pattern: "add a TCP 443 rule to\\s+console.networkPolicy.extraEgress"}
+
+  - it: says nothing about it without the NetworkPolicy
+    template: templates/NOTES.txt
+    set:
+      console.publicURL: "https://console.example"
+      console.mcp: {enabled: true, oauthClientMetadataDocuments: true}
+    asserts:
+      - notMatchRegexRaw: {pattern: "oauthClientMetadataDocuments"}
+
+  - it: says nothing about it with the switch off
+    template: templates/NOTES.txt
+    set:
+      console.publicURL: "https://console.example"
+      console.mcp.enabled: true
+      console.networkPolicy.enabled: true
+      console.networkPolicy.apiServer.mode: any
+    asserts:
+      - notMatchRegexRaw: {pattern: "oauthClientMetadataDocuments"}
+
+  - it: says nothing about it while the endpoint is off
+    template: templates/NOTES.txt
+    set:
+      console.mcp.oauthClientMetadataDocuments: true
+      console.networkPolicy.enabled: true
+      console.networkPolicy.apiServer.mode: any
+    asserts:
+      - notMatchRegexRaw: {pattern: "oauthClientMetadataDocuments"}

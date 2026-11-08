@@ -1,0 +1,25 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  annotations:
+    pgtoolbox.fyannk.dev/spec-hash: sha256:bad5ce754b507d5678e33f04af536e622f9eae09c43002db9a9f6353950668e7
+  labels:
+    app.kubernetes.io/component: evidence-agent
+    app.kubernetes.io/managed-by: pgtoolbox
+    app.kubernetes.io/name: evidence-agent
+    app.kubernetes.io/part-of: pgtoolbox
+    pgtoolbox.fyannk.dev/reconcile: "true"
+  name: pgtoolbox-evidence-agent
+rules:
+- apiGroups:
+  - authentication.k8s.io
+  resources:
+  - tokenreviews
+  verbs:
+  - create
+- apiGroups:
+  - authorization.k8s.io
+  resources:
+  - subjectaccessreviews
+  verbs:
+  - create

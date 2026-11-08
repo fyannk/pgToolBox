@@ -1,0 +1,10 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# The restore-drill delete guard (Kubernetes 1.30+). Not part of
+# config/default, which still supports 1.28: apply it with
+# `kubectl apply -k config/admission` on 1.30+. The Helm chart renders it on
+# 1.30+ (operator.restoreDrillGuard.enabled); the OLM bundle cannot carry it,
+# see docs/site/docs/console/restore-drills.md.
+resources:
+- restore_drill_guard.yaml

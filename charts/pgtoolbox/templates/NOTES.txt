@@ -1,0 +1,58 @@
+{{- if .Values.operator.enabled }}
+{{- $ns := include "pgtoolbox.namespace" . }}
+{{- $name := include "pgtoolbox.fullname" . }}
+The pgToolBox operator {{ .Chart.AppVersion }} is installed in namespace {{ $ns }}: {{ .Values.replicaCount }} replica(s), {{ if .Values.leaderElection }}one leader elected{{ else }}leader election OFF{{ end }}, watching {{ if .Values.operator.config.watchNamespaces }}{{ join ", " .Values.operator.config.watchNamespaces }}{{ else }}every namespace its ClusterRole allows{{ end }}.
+
+What the release created (cluster-scoped, so it needs a cluster administrator):
+  - the CRDs PgToolBoxConsole, PgAdmin, EvidenceAgent, PgAdminAccess and PgAccessRequest
+    (pgtoolbox.fyannk.dev/v1alpha1). They are kept on `helm uninstall`; `helm upgrade`
+    updates them.
+{{- if .Values.operator.userRoles.create }}
+  - the ClusterRoles pgtoolbox-console-viewer and pgtoolbox-console-operator. The chart binds
+    nobody: give a team access with a RoleBinding in its namespace.
+{{- end }}
+{{- if .Values.operator.userRoles.aggregateToAdmin }}
+  - pgtoolbox-aggregate-to-admin, aggregated into the built-in `admin` role, so a
+    namespace admin can bind those roles to their team.
+{{- end }}
+
+Check that it runs:
+
+  kubectl -n {{ $ns }} rollout status deploy/{{ $name }}
+  kubectl get crd | grep pgtoolbox.fyannk.dev
+  kubectl -n {{ $ns }} logs deploy/{{ $name }} --tail=20
+
+Next steps:
+
+  1. Give a team its tools: a PgToolBoxConsole, PgAdmin or EvidenceAgent in its namespace
+     (the operator reconciles them), or let a namespace admin install the `pgtools`
+     chart there without the operator.
+  2. Bind pgtoolbox-console-viewer (read) or pgtoolbox-console-operator (read and operate) to the
+     people who should see its Clusters:
+
+       kubectl -n <team namespace> create rolebinding <name> --clusterrole=pgtoolbox-console-viewer --group=<group>
+
+{{- if .Values.operator.metrics.serviceMonitor.enabled }}
+
+Metrics: a ServiceMonitor scrapes https `/metrics`; the scraper's token must be
+allowed to `get` the URL `/metrics`{{ if .Values.operator.metrics.readerClusterRole }} (the ClusterRole {{ $name }}-metrics-reader is rendered for it){{ end }}.
+{{- else if .Values.operator.metrics.podMonitor.enabled }}
+
+Metrics: a PodMonitor scrapes https `/metrics`; the scraper's token must be
+allowed to `get` the URL `/metrics`{{ if .Values.operator.metrics.readerClusterRole }} (the ClusterRole {{ $name }}-metrics-reader is rendered for it){{ end }}.
+{{- else }}
+
+Metrics are served over HTTPS on {{ .Values.metricsBindAddress }} and every scrape needs a token allowed
+to `get` the URL `/metrics`. Enable operator.metrics.serviceMonitor or
+operator.metrics.podMonitor to have Prometheus scrape it.
+{{- end }}
+{{- if .Values.operator.networkPolicy.enabled }}
+
+NetworkPolicy is ENABLED (your choice). The chart cannot prove your CNI enforces it.
+{{- end }}
+
+Documentation: https://github.com/fyannk/pgToolBox/src/branch/main/docs/site/docs/operator/
+{{- else }}
+operator.enabled is false: this release renders nothing. The team tools (console,
+evidence agents, pgAdmin) are the pgtools chart.
+{{- end }}

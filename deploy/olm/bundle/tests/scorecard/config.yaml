@@ -1,0 +1,37 @@
+# operator-sdk scorecard configuration. The basic and
+# olm suites, run against this bundle by `make scorecard` (hack/scorecard.sh) and
+# the `olm-scorecard` job of .github/workflows/ci.yml. The tests are static
+# checks of the bundle (the scorecard-test image reads the mounted bundle), so a
+# bare kind cluster is enough.
+#
+# Which tests gate and which only report is policy of hack/scorecard.sh, not of
+# this file: it lists the tests every bundle must pass; the two descriptor tests
+# report what the CSV does not yet describe for OperatorHub's form.
+#
+# The scorecard-test image tag is the operator-sdk release the bundle is
+# validated with; bump it with the operator-sdk pin when that moves.
+apiVersion: scorecard.operatorframework.io/v1alpha3
+kind: Configuration
+metadata:
+  name: config
+stages:
+- parallel: true
+  tests:
+  - entrypoint: [scorecard-test, basic-check-spec]
+    image: quay.io/operator-framework/scorecard-test:v1.42.3
+    labels: {suite: basic, test: basic-check-spec-test}
+  - entrypoint: [scorecard-test, olm-bundle-validation]
+    image: quay.io/operator-framework/scorecard-test:v1.42.3
+    labels: {suite: olm, test: olm-bundle-validation-test}
+  - entrypoint: [scorecard-test, olm-crds-have-validation]
+    image: quay.io/operator-framework/scorecard-test:v1.42.3
+    labels: {suite: olm, test: olm-crds-have-validation-test}
+  - entrypoint: [scorecard-test, olm-crds-have-resources]
+    image: quay.io/operator-framework/scorecard-test:v1.42.3
+    labels: {suite: olm, test: olm-crds-have-resources-test}
+  - entrypoint: [scorecard-test, olm-spec-descriptors]
+    image: quay.io/operator-framework/scorecard-test:v1.42.3
+    labels: {suite: olm, test: olm-spec-descriptors-test}
+  - entrypoint: [scorecard-test, olm-status-descriptors]
+    image: quay.io/operator-framework/scorecard-test:v1.42.3
+    labels: {suite: olm, test: olm-status-descriptors-test}

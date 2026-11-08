@@ -1,0 +1,105 @@
+{
+  "generatedAt": "2026-10-29T12:00:00Z",
+  "namespaces": [
+    {
+      "name": "team-a",
+      "pgAdminsVisible": false,
+      "pgAdmins": [
+        {
+          "name": "team-a",
+          "health": "ok",
+          "url": "https://pgadmin.example.com",
+          "servers": [
+            {
+              "cluster": "orders",
+              "endpoint": "rw",
+              "state": "Registered"
+            }
+          ],
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "reason": "AsExpected",
+              "lastTransition": "2026-10-29T11:00:00Z",
+              "health": "ok",
+              "known": true
+            }
+          ],
+          "provenance": {
+            "origin": "operator",
+            "source": "PgAdmin.status",
+            "observedAt": "2026-10-29T12:00:00Z"
+          }
+        }
+      ],
+      "evidenceAgentsVisible": false,
+      "evidenceAgents": [
+        {
+          "name": "orders-evidence",
+          "health": "unknown",
+          "endpoint": "https://orders-evidence.team-a.svc:8443",
+          "conditions": [],
+          "stale": true,
+          "provenance": {
+            "origin": "operator",
+            "source": "EvidenceAgent.status",
+            "observedAt": "2026-10-29T12:00:00Z"
+          }
+        }
+      ],
+      "sources": [
+        {
+          "source": "pgAdmins",
+          "state": "live",
+          "since": "2026-10-29T09:00:00Z",
+          "health": "ok"
+        },
+        {
+          "source": "evidenceAgents",
+          "state": "live",
+          "since": "2026-10-29T09:00:00Z",
+          "health": "ok"
+        }
+      ]
+    }
+  ],
+  "console": {
+    "version": "test",
+    "namespace": "team-a",
+    "watchNamespaces": [
+      "team-a"
+    ],
+    "runners": [
+      {
+        "name": "informer-cache",
+        "core": true,
+        "running": true,
+        "restarts": 0
+      }
+    ],
+    "sources": [
+      {
+        "source": "instanceStatus",
+        "state": "live",
+        "since": "2026-10-29T09:00:00Z",
+        "health": "ok"
+      },
+      {
+        "source": "history",
+        "state": "live",
+        "health": "ok"
+      },
+      {
+        "source": "evidence",
+        "state": "live",
+        "health": "ok"
+      }
+    ],
+    "provenance": {
+      "origin": "console",
+      "source": "console",
+      "observedAt": "2026-10-29T12:00:00Z"
+    }
+  }
+}

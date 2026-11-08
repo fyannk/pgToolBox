@@ -1,0 +1,25 @@
+{
+  "username": "oidc:jane@corp.example",
+  "groups": [
+    "dba",
+    "system:authenticated"
+  ],
+  "provider": "oidc",
+  "sessionId": "5f0c2a9e8d7b6a5f4e3d2c1b0a998877",
+  "expiresAt": "2026-10-29T12:05:00Z",
+  "absoluteExpiresAt": "2026-10-30T00:00:00Z",
+  "tokenExpiresAt": "2026-10-29T12:05:00Z",
+  "refreshable": true,
+  "logoutURL": "/logout",
+  "features": {
+    "logs": true,
+    "history": true,
+    "metrics": true,
+    "evidence": true,
+    "operations": true,
+    "digest": true,
+    "mcp": true,
+    "mcpWriteTools": false
+  }
+}
+

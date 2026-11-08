@@ -1,0 +1,28 @@
+{{- include "pgtools.evidence.validate" . }}
+{{- if eq .Values.evidence.tls.mode "certManager" }}
+{{- range $agent := .Values.evidence.agents }}
+{{- $ctx := dict "root" $ "agent" $agent }}
+{{- $name := include "pgtools.evidence.name" $ctx }}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ $name }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "pgtools.evidence.labels" $ctx | nindent 4 }}
+spec:
+  secretName: {{ printf "%s-tls" $name }}
+  # The console verifies <service>.<namespace>.svc.
+  dnsNames:
+    - {{ printf "%s.%s.svc" $name $.Release.Namespace }}
+    - {{ printf "%s.%s.svc.cluster.local" $name $.Release.Namespace }}
+  usages: [server auth, digital signature, key encipherment]
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+    rotationPolicy: Always
+  issuerRef:
+    {{- toYaml $.Values.evidence.tls.certManager.issuerRef | nindent 4 }}
+{{- end }}
+{{- end }}

@@ -1,0 +1,35 @@
+# One pgAdmin for the team namespace, on Kubernetes: pgAdmin's own OAuth2
+# sign-in against the platform's OpenID Connect provider. requiredClaims
+# decides who gets in — keep it equal to the people bound to the
+# pgtoolbox-console-operator role in this namespace: whoever opens pgAdmin holds the
+# credentials of every role it offers.
+apiVersion: pgtoolbox.fyannk.dev/v1alpha1
+kind: PgAdmin
+metadata:
+  name: team-a
+spec:
+  clusterRefs:
+  - name: orders
+  - name: billing
+  endpoints: [rw, ro]
+  credentials:
+    superuser: false
+  auth:
+    oauth2:
+      issuerURL: https://idp.example.com/realms/corp
+      clientID: pgadmin-team-a
+      clientSecretRef:
+        name: pgadmin-team-a-oidc
+      requiredClaims:
+        groups: [team-a-dba]
+  admins:
+  - alice@example.com
+  exposure:
+    type: ingress
+    hostname: pgadmin.team-a.example.com
+    ingressClassName: nginx
+    tls:
+      certificateSecretRef:
+        name: pgadmin-team-a-tls
+  storage:
+    size: 2Gi

@@ -1,0 +1,13 @@
+{
+  "namespace": "team-a",
+  "cluster": "orders",
+  "name": "orders-alice-ro",
+  "role": "alice_ro",
+  "pgAdminUser": "alice@example.com",
+  "inRoles": [
+    "reporting"
+  ],
+  "passwordSecret": "orders-alice-ro-password",
+  "note": "CloudNativePG creates the role and generates its password; each PgAdmin registering this Cluster adds it as a personal server of alice@example.com at its next registration (kubectl get pgadmin shows ServersSynced)."
+}
+

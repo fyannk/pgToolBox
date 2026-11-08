@@ -1,0 +1,852 @@
+{
+  "ref": {
+    "namespace": "team-a",
+    "name": "orders",
+    "uid": "0b6a2c1e-8f0d-4a55-9a3e-7c1f2b3d4e5f"
+  },
+  "generatedAt": "2026-10-29T12:00:00Z",
+  "pack": {
+    "state": "enabled",
+    "health": "ok",
+    "text": "The insight pack version 1 is enabled.",
+    "expected": "1",
+    "referenced": true,
+    "configMap": "pgtoolbox-insight-pack",
+    "key": "queries",
+    "specChange": "spec.monitoring.customQueriesConfigMap: [{name: pgtoolbox-insight-pack, key: queries}]",
+    "instances": [
+      {
+        "instance": "orders-1",
+        "primary": true,
+        "version": "1",
+        "exporterUpdatedAt": "2026-10-29T11:59:48Z",
+        "provenance": {
+          "origin": "instance",
+          "source": "cnpg_pgtoolbox_pack_info, orders-1:9187/metrics",
+          "observedAt": "2026-10-29T12:00:00Z"
+        }
+      },
+      {
+        "instance": "orders-2",
+        "primary": false,
+        "version": "1",
+        "exporterUpdatedAt": "2026-10-29T11:59:36Z",
+        "provenance": {
+          "origin": "instance",
+          "source": "cnpg_pgtoolbox_pack_info, orders-2:9187/metrics",
+          "observedAt": "2026-10-29T11:59:56Z"
+        }
+      },
+      {
+        "instance": "orders-3",
+        "primary": false,
+        "version": "1",
+        "exporterUpdatedAt": "2026-10-29T11:59:36Z",
+        "provenance": {
+          "origin": "instance",
+          "source": "cnpg_pgtoolbox_pack_info, orders-3:9187/metrics",
+          "observedAt": "2026-10-29T11:59:56Z"
+        }
+      }
+    ],
+    "queryErrors": []
+  },
+  "wraparound": {
+    "available": true,
+    "instance": "orders-1",
+    "limits": [
+      {
+        "name": "autovacuum_freeze_max_age",
+        "value": 200000000,
+        "source": "instance"
+      },
+      {
+        "name": "vacuum_failsafe_age",
+        "value": 1600000000,
+        "source": "instance"
+      },
+      {
+        "name": "autovacuum_multixact_freeze_max_age",
+        "value": 400000000,
+        "source": "instance"
+      },
+      {
+        "name": "vacuum_multixact_failsafe_age",
+        "value": 1600000000,
+        "source": "instance"
+      }
+    ],
+    "assumed": [],
+    "xidRate": {
+      "perSecond": 1500,
+      "windowSeconds": 3600,
+      "from": "2026-10-29T10:59:48Z",
+      "to": "2026-10-29T11:59:48Z"
+    },
+    "mxidRate": {
+      "perSecond": 0,
+      "windowSeconds": 3600,
+      "from": "2026-10-29T10:59:48Z",
+      "to": "2026-10-29T11:59:48Z"
+    },
+    "databases": [
+      {
+        "name": "app",
+        "allowConnections": true,
+        "xid": {
+          "age": 340000000,
+          "autovacuum": {
+            "threshold": 200000000,
+            "remaining": -140000000,
+            "past": true
+          },
+          "failsafe": {
+            "threshold": 1600000000,
+            "remaining": 1260000000,
+            "past": false,
+            "inSeconds": 840000
+          },
+          "stop": {
+            "threshold": 2144483647,
+            "remaining": 1804483647,
+            "past": false,
+            "inSeconds": 1202989.098
+          },
+          "health": "warning"
+        },
+        "mxid": {
+          "age": 12000000,
+          "autovacuum": {
+            "threshold": 400000000,
+            "remaining": 388000000,
+            "past": false
+          },
+          "failsafe": {
+            "threshold": 1600000000,
+            "remaining": 1588000000,
+            "past": false
+          },
+          "stop": {
+            "threshold": 2144483647,
+            "remaining": 2132483647,
+            "past": false
+          },
+          "health": "ok"
+        },
+        "statsResetAt": "2026-09-19T12:00:00Z"
+      },
+      {
+        "name": "template0",
+        "allowConnections": false,
+        "xid": {
+          "age": 190000000,
+          "autovacuum": {
+            "threshold": 200000000,
+            "remaining": 10000000,
+            "past": false,
+            "inSeconds": 6666.666666666
+          },
+          "failsafe": {
+            "threshold": 1600000000,
+            "remaining": 1410000000,
+            "past": false,
+            "inSeconds": 940000
+          },
+          "stop": {
+            "threshold": 2144483647,
+            "remaining": 1954483647,
+            "past": false,
+            "inSeconds": 1302989.098
+          },
+          "health": "ok"
+        },
+        "mxid": {
+          "age": 12000000,
+          "autovacuum": {
+            "threshold": 400000000,
+            "remaining": 388000000,
+            "past": false
+          },
+          "failsafe": {
+            "threshold": 1600000000,
+            "remaining": 1588000000,
+            "past": false
+          },
+          "stop": {
+            "threshold": 2144483647,
+            "remaining": 2132483647,
+            "past": false
+          },
+          "health": "ok"
+        }
+      },
+      {
+        "name": "postgres",
+        "allowConnections": true,
+        "xid": {
+          "age": 41000000,
+          "autovacuum": {
+            "threshold": 200000000,
+            "remaining": 159000000,
+            "past": false,
+            "inSeconds": 106000
+          },
+          "failsafe": {
+            "threshold": 1600000000,
+            "remaining": 1559000000,
+            "past": false,
+            "inSeconds": 1039333.333333333
+          },
+          "stop": {
+            "threshold": 2144483647,
+            "remaining": 2103483647,
+            "past": false,
+            "inSeconds": 1402322.431333333
+          },
+          "health": "ok"
+        },
+        "mxid": {
+          "age": 12000000,
+          "autovacuum": {
+            "threshold": 400000000,
+            "remaining": 388000000,
+            "past": false
+          },
+          "failsafe": {
+            "threshold": 1600000000,
+            "remaining": 1588000000,
+            "past": false
+          },
+          "stop": {
+            "threshold": 2144483647,
+            "remaining": 2132483647,
+            "past": false
+          },
+          "health": "ok"
+        }
+      }
+    ],
+    "tables": [
+      {
+        "database": "app",
+        "schema": "public",
+        "name": "orders_archive",
+        "kind": "table",
+        "reltuples": 81000000,
+        "xid": {
+          "age": 340000000,
+          "autovacuum": {
+            "threshold": 200000000,
+            "remaining": -140000000,
+            "past": true
+          },
+          "failsafe": {
+            "threshold": 1600000000,
+            "remaining": 1260000000,
+            "past": false,
+            "inSeconds": 840000
+          },
+          "stop": {
+            "threshold": 2144483647,
+            "remaining": 1804483647,
+            "past": false,
+            "inSeconds": 1202989.098
+          },
+          "health": "warning"
+        },
+        "mxidAge": 12000000,
+        "liveTuples": 81000000,
+        "deadTuples": 1200,
+        "autovacuumThreshold": 16200050,
+        "sinceVacuumSeconds": 777600,
+        "sinceAutovacuumSeconds": 777600,
+        "sinceAnalyzeSeconds": 172800,
+        "autovacuumEnabled": true,
+        "keepUp": "keepingUp",
+        "keepUpText": "Dead rows are not growing, or stay under the autovacuum threshold.",
+        "health": "warning"
+      },
+      {
+        "database": "app",
+        "schema": "public",
+        "name": "events",
+        "kind": "table",
+        "reltuples": 9500000,
+        "xid": {
+          "age": 110000000,
+          "autovacuum": {
+            "threshold": 200000000,
+            "remaining": 90000000,
+            "past": false,
+            "inSeconds": 60000
+          },
+          "failsafe": {
+            "threshold": 1600000000,
+            "remaining": 1490000000,
+            "past": false,
+            "inSeconds": 993333.333333333
+          },
+          "stop": {
+            "threshold": 2144483647,
+            "remaining": 2034483647,
+            "past": false,
+            "inSeconds": 1356322.431333333
+          },
+          "health": "ok"
+        },
+        "mxidAge": 12000000,
+        "liveTuples": 9500000,
+        "deadTuples": 2400000,
+        "autovacuumThreshold": 1900050,
+        "sinceVacuumSeconds": 7200,
+        "sinceAutovacuumSeconds": 7200,
+        "sinceAnalyzeSeconds": 3600,
+        "autovacuumEnabled": true,
+        "keepUp": "notStarted",
+        "keepUpText": "Past its autovacuum threshold with dead rows growing, and no autovacuum completed in the window: the workers are busy elsewhere, or each run is cancelled by a conflicting lock.",
+        "health": "warning"
+      },
+      {
+        "database": "app",
+        "schema": "audit",
+        "name": "trail",
+        "kind": "table",
+        "reltuples": 22000000,
+        "xid": {
+          "age": 290000000,
+          "autovacuum": {
+            "threshold": 100000000,
+            "remaining": -190000000,
+            "past": true
+          },
+          "failsafe": {
+            "threshold": 1600000000,
+            "remaining": 1310000000,
+            "past": false,
+            "inSeconds": 873333.333333333
+          },
+          "stop": {
+            "threshold": 2144483647,
+            "remaining": 1854483647,
+            "past": false,
+            "inSeconds": 1236322.431333333
+          },
+          "health": "warning"
+        },
+        "mxidAge": 12000000,
+        "liveTuples": 22000000,
+        "deadTuples": 5300000,
+        "autovacuumThreshold": 4400050,
+        "autovacuumEnabled": false,
+        "keepUp": "disabled",
+        "keepUpText": "autovacuum_enabled is off on this table and it is past its threshold: only an anti-wraparound autovacuum will visit it.",
+        "health": "warning"
+      },
+      {
+        "database": "app",
+        "schema": "pg_toast",
+        "name": "pg_toast_16412",
+        "kind": "toast",
+        "reltuples": 440000,
+        "xid": {
+          "age": 330000000,
+          "autovacuum": {
+            "threshold": 200000000,
+            "remaining": -130000000,
+            "past": true
+          },
+          "failsafe": {
+            "threshold": 1600000000,
+            "remaining": 1270000000,
+            "past": false,
+            "inSeconds": 846666.666666666
+          },
+          "stop": {
+            "threshold": 2144483647,
+            "remaining": 1814483647,
+            "past": false,
+            "inSeconds": 1209655.764666666
+          },
+          "health": "warning"
+        },
+        "mxidAge": 12000000,
+        "liveTuples": 440000,
+        "deadTuples": 0,
+        "autovacuumThreshold": 88050,
+        "autovacuumEnabled": true,
+        "keepUp": "keepingUp",
+        "keepUpText": "Dead rows are not growing, or stay under the autovacuum threshold.",
+        "health": "warning"
+      }
+    ],
+    "vacuums": [
+      {
+        "database": "app",
+        "schema": "public",
+        "table": "orders_archive",
+        "phase": "scanning heap",
+        "autovacuum": true,
+        "wraparound": true,
+        "runningSeconds": 1260,
+        "heapBlksTotal": 1040000,
+        "heapBlksScanned": 410000,
+        "heapBlksVacuumed": 0,
+        "indexVacuumCount": 0
+      }
+    ],
+    "preparedXacts": [],
+    "horizons": {
+      "slotXminAge": 338000000,
+      "backendXminAge": 3420000,
+      "backendXidAge": 3420000,
+      "holder": "slot"
+    },
+    "partial": false,
+    "provenance": {
+      "origin": "instance",
+      "source": "insight pack, orders-1:9187/metrics",
+      "observedAt": "2026-10-29T11:59:48Z"
+    }
+  },
+  "statements": {
+    "available": true,
+    "instance": "orders-1",
+    "top": [
+      {
+        "queryId": "-1840029318271940210",
+        "database": "app",
+        "role": "reporting",
+        "calls": 5000000,
+        "totalMillis": 205000000000,
+        "meanMillis": 41000,
+        "rows": 5000000,
+        "sharedBlksHit": 200000000,
+        "sharedBlksRead": 45000000000,
+        "hitRatio": 0.004424778761061947
+      },
+      {
+        "queryId": "7766023351299184043",
+        "database": "app",
+        "role": "billing",
+        "calls": 200000,
+        "totalMillis": 8054000,
+        "meanMillis": 40.27,
+        "rows": 2400000,
+        "sharedBlksHit": 180000000,
+        "sharedBlksRead": 6000000,
+        "hitRatio": 0.967741935483871
+      },
+      {
+        "queryId": "812734598812374661",
+        "database": "app",
+        "role": "orders",
+        "calls": 5000000,
+        "totalMillis": 6000000,
+        "meanMillis": 1.2,
+        "rows": 5000000,
+        "sharedBlksHit": 200000000,
+        "sharedBlksRead": 1500000,
+        "hitRatio": 0.9925558312655087
+      }
+    ],
+    "comparable": true,
+    "comparisonText": "3 statements compared: the last hour against the same hour a day earlier, on the same primary.",
+    "coveredSeconds": 90012,
+    "needsSeconds": 90000,
+    "regressions": [
+      {
+        "queryId": "7766023351299184043",
+        "database": "app",
+        "role": "billing",
+        "ratio": 3.25,
+        "recentMeanMillis": 130,
+        "baselineMeanMillis": 40,
+        "recentCalls": 600,
+        "baselineCalls": 600,
+        "recentFrom": "2026-10-29T10:59:48Z",
+        "recentTo": "2026-10-29T11:59:48Z",
+        "baselineFrom": "2026-10-28T10:59:48Z",
+        "baselineTo": "2026-10-28T11:59:48Z"
+      }
+    ],
+    "deallocations": 0,
+    "maxStatements": 5000,
+    "statsResetAt": "2026-09-19T12:00:00Z",
+    "textQuery": "SELECT query FROM pg_stat_statements WHERE queryid = QUERYID LIMIT 1;",
+    "provenance": {
+      "origin": "instance",
+      "source": "insight pack, orders-1:9187/metrics",
+      "observedAt": "2026-10-29T11:59:48Z"
+    },
+    "regressionRatio": 2,
+    "noBaseline": 0,
+    "restarted": 0,
+    "evicted": 0,
+    "partial": false
+  },
+  "indexes": {
+    "available": true,
+    "instance": "orders-1",
+    "unused": [
+      {
+        "database": "app",
+        "schema": "public",
+        "table": "events",
+        "name": "events_payload_gin",
+        "sizeBytes": 3100000000,
+        "scans": 0,
+        "unique": false,
+        "statsResetAt": "2026-09-19T12:00:00Z"
+      },
+      {
+        "database": "app",
+        "schema": "public",
+        "table": "orders",
+        "name": "orders_note_trgm",
+        "sizeBytes": 420000000,
+        "scans": 0,
+        "unique": false,
+        "statsResetAt": "2026-09-19T12:00:00Z"
+      }
+    ],
+    "invalid": [
+      {
+        "database": "app",
+        "schema": "public",
+        "table": "orders",
+        "name": "orders_customer_idx_ccnew",
+        "sizeBytes": 910000000,
+        "scans": 0,
+        "unique": false,
+        "statsResetAt": "2026-09-19T12:00:00Z"
+      }
+    ],
+    "duplicate": [
+      {
+        "database": "app",
+        "schema": "public",
+        "table": "orders",
+        "name": "orders_customer_id_idx1",
+        "duplicateOf": "orders_customer_id_idx",
+        "sizeBytes": 900000000,
+        "scans": 12,
+        "unique": false,
+        "statsResetAt": "2026-09-19T12:00:00Z"
+      }
+    ],
+    "statsResetAt": "2026-09-19T12:00:00Z",
+    "partial": false,
+    "provenance": {
+      "origin": "instance",
+      "source": "insight pack, orders-1:9187/metrics",
+      "observedAt": "2026-10-29T11:59:48Z"
+    }
+  },
+  "connections": {
+    "available": true,
+    "instances": [
+      {
+        "instance": "orders-1",
+        "primary": true,
+        "client": 172,
+        "maxConnections": 200,
+        "reserved": 3,
+        "usable": 197,
+        "share": 0.8730964467005076,
+        "active": 19,
+        "idleInTransaction": 1,
+        "idleInTransactionMaxSeconds": 2275,
+        "lockWaiting": 2,
+        "maxXactAgeSeconds": 2280,
+        "idleInTransactionSessionTimeoutSeconds": 0,
+        "groups": [
+          {
+            "database": "app",
+            "application": "orders-api",
+            "state": "idle",
+            "sessions": 96,
+            "maxStateAgeSeconds": 3400
+          },
+          {
+            "database": "app",
+            "application": "billing-api",
+            "state": "idle",
+            "sessions": 48,
+            "maxStateAgeSeconds": 5100
+          },
+          {
+            "database": "app",
+            "application": "orders-api",
+            "state": "active",
+            "sessions": 17,
+            "maxStateAgeSeconds": 598
+          },
+          {
+            "database": "app",
+            "application": "reporting",
+            "state": "idle",
+            "sessions": 8,
+            "maxStateAgeSeconds": 86000
+          },
+          {
+            "database": "app",
+            "application": "billing-api",
+            "state": "idle in transaction",
+            "sessions": 1,
+            "maxStateAgeSeconds": 2275
+          },
+          {
+            "database": "app",
+            "application": "flyway",
+            "state": "active",
+            "sessions": 1,
+            "maxStateAgeSeconds": 610
+          },
+          {
+            "database": "postgres",
+            "application": "psql",
+            "state": "active",
+            "sessions": 1,
+            "maxStateAgeSeconds": 2
+          }
+        ],
+        "health": "warning",
+        "provenance": {
+          "origin": "instance",
+          "source": "insight pack, orders-1:9187/metrics",
+          "observedAt": "2026-10-29T11:59:48Z"
+        }
+      },
+      {
+        "instance": "orders-2",
+        "primary": false,
+        "client": 31,
+        "maxConnections": 200,
+        "reserved": 3,
+        "usable": 197,
+        "share": 0.15736040609137056,
+        "active": 4,
+        "idleInTransaction": 0,
+        "lockWaiting": 0,
+        "maxXactAgeSeconds": 12,
+        "idleInTransactionSessionTimeoutSeconds": 0,
+        "groups": [
+          {
+            "database": "app",
+            "application": "reporting",
+            "state": "idle",
+            "sessions": 27,
+            "maxStateAgeSeconds": 9000
+          },
+          {
+            "database": "app",
+            "application": "reporting",
+            "state": "active",
+            "sessions": 4,
+            "maxStateAgeSeconds": 12
+          }
+        ],
+        "health": "ok",
+        "provenance": {
+          "origin": "instance",
+          "source": "insight pack, orders-2:9187/metrics",
+          "observedAt": "2026-10-29T11:59:36Z"
+        }
+      },
+      {
+        "instance": "orders-3",
+        "primary": false,
+        "client": 31,
+        "maxConnections": 200,
+        "reserved": 3,
+        "usable": 197,
+        "share": 0.15736040609137056,
+        "active": 4,
+        "idleInTransaction": 0,
+        "lockWaiting": 0,
+        "maxXactAgeSeconds": 12,
+        "idleInTransactionSessionTimeoutSeconds": 0,
+        "groups": [
+          {
+            "database": "app",
+            "application": "reporting",
+            "state": "idle",
+            "sessions": 27,
+            "maxStateAgeSeconds": 9000
+          },
+          {
+            "database": "app",
+            "application": "reporting",
+            "state": "active",
+            "sessions": 4,
+            "maxStateAgeSeconds": 12
+          }
+        ],
+        "health": "ok",
+        "provenance": {
+          "origin": "instance",
+          "source": "insight pack, orders-3:9187/metrics",
+          "observedAt": "2026-10-29T11:59:36Z"
+        }
+      }
+    ],
+    "partial": false
+  },
+  "blocking": {
+    "available": true,
+    "minRefreshSeconds": 1,
+    "instances": [
+      {
+        "instance": "orders-1",
+        "primary": true,
+        "waiting": 2,
+        "roots": [
+          {
+            "pid": 4711,
+            "database": "app",
+            "user": "billing",
+            "application": "billing-api",
+            "state": "idle in transaction",
+            "waitEventType": "Client",
+            "waitEvent": "ClientRead",
+            "backendType": "client backend",
+            "queryId": "-6311483212785534117",
+            "xactAgeSeconds": 2280,
+            "stateAgeSeconds": 2275,
+            "blocked": 2,
+            "waiters": [
+              {
+                "pid": 5120,
+                "database": "app",
+                "user": "migrator",
+                "application": "flyway",
+                "state": "active",
+                "waitEventType": "Lock",
+                "waitEvent": "relation",
+                "backendType": "client backend",
+                "queryId": "3305271982216418801",
+                "waitSeconds": 610,
+                "xactAgeSeconds": 611,
+                "stateAgeSeconds": 610,
+                "blocked": 1,
+                "waiters": [
+                  {
+                    "pid": 5133,
+                    "database": "app",
+                    "user": "orders",
+                    "application": "orders-api",
+                    "state": "active",
+                    "waitEventType": "Lock",
+                    "waitEvent": "relation",
+                    "backendType": "client backend",
+                    "queryId": "812734598812374661",
+                    "waitSeconds": 598,
+                    "xactAgeSeconds": 598,
+                    "stateAgeSeconds": 598,
+                    "blocked": 0,
+                    "waiters": []
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "dataAgeSeconds": 12,
+        "provenance": {
+          "origin": "instance",
+          "source": "insight pack, orders-1:9187/metrics",
+          "observedAt": "2026-10-29T11:59:48Z"
+        }
+      },
+      {
+        "instance": "orders-2",
+        "primary": false,
+        "waiting": 0,
+        "roots": [],
+        "dataAgeSeconds": 20,
+        "provenance": {
+          "origin": "instance",
+          "source": "insight pack, orders-2:9187/metrics",
+          "observedAt": "2026-10-29T11:59:36Z"
+        }
+      },
+      {
+        "instance": "orders-3",
+        "primary": false,
+        "waiting": 0,
+        "roots": [],
+        "dataAgeSeconds": 20,
+        "provenance": {
+          "origin": "instance",
+          "source": "insight pack, orders-3:9187/metrics",
+          "observedAt": "2026-10-29T11:59:36Z"
+        }
+      }
+    ],
+    "partial": false
+  },
+  "sources": [
+    {
+      "source": "insight",
+      "state": "live",
+      "since": "2026-10-29T09:00:00Z",
+      "health": "ok"
+    }
+  ],
+  "blindSpots": [
+    {
+      "id": "insight.primaryOnly",
+      "panel": "insight",
+      "text": "Wraparound, tables, indexes and statements are read on the primary only: an index read as unused counts primary scans, and the replicas' pg_stat_statements are not shown."
+    },
+    {
+      "id": "insight.noStatementText",
+      "panel": "insight",
+      "text": "Statement text never leaves the database: the console shows the queryid, and pgAdmin shows the text."
+    },
+    {
+      "id": "insight.inMemoryHistory",
+      "panel": "insight",
+      "text": "Consumption rates, autovacuum verdicts and regressions rest on samples the console keeps in memory: they start again when the console restarts."
+    },
+    {
+      "id": "insight.topStatementsOnly",
+      "panel": "insight",
+      "text": "The console keeps each hour's costliest statements only: a statement that entered them lately has no baseline a day earlier and is not compared."
+    },
+    {
+      "id": "insight.exporterCache",
+      "panel": "insight",
+      "text": "The exporter caches its custom queries for the Cluster's metricsQueriesTTL (30 s by default): a refreshed lock graph can be that old."
+    },
+    {
+      "id": "insight.multixactMembers",
+      "panel": "insight",
+      "text": "Multixact member space is not read: it can run out before multixact ids do, and autovacuum then freezes multixacts earlier than autovacuum_multixact_freeze_max_age says."
+    },
+    {
+      "id": "insight.dynamicFreezeAge",
+      "panel": "insight",
+      "text": "The forecasts use the configured freeze ages: PostgreSQL lowers the effective multixact freeze age on its own when member space runs short, which they do not show."
+    },
+    {
+      "id": "insight.countersReset",
+      "panel": "insight",
+      "text": "A failover or a crash recovery resets the scan and vacuum counters without setting stats_reset: an index read as unused may have been scanned before it."
+    },
+    {
+      "id": "insight.fkIndexScans",
+      "panel": "insight",
+      "text": "An index that serves a foreign key's checks often shows no scans: it is used when referenced rows are deleted or updated, which may be rare and still need it."
+    }
+  ],
+  "pgAdmins": [
+    {
+      "name": "team-a",
+      "url": "https://pgadmin-team-a.apps.example.com",
+      "health": "ok",
+      "serverState": "Registered"
+    }
+  ]
+}
+

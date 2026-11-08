@@ -1,0 +1,163 @@
+[
+  {
+    "stanza": "demo",
+    "label": "20261107-081046F",
+    "type": "full",
+    "prior": null,
+    "references": [],
+    "state": "healthy",
+    "reason": {
+      "code": "backup-healthy",
+      "message": "chain, manifests and WAL to consistency are present and verified"
+    },
+    "usable": true,
+    "unusable_reasons": [],
+    "archive_id": "17-1",
+    "system_id": "7705338956479107096",
+    "postgresql_version": 170000,
+    "timeline": 1,
+    "start_at": "2026-11-07T08:10:46Z",
+    "stop_at": "2026-11-07T08:10:54Z",
+    "start_lsn": "0/3000028",
+    "stop_lsn": "0/4000050",
+    "archive_start": "000000010000000000000003",
+    "archive_stop": "000000010000000000000004",
+    "size_bytes": 23839822,
+    "delta_bytes": 23839822,
+    "repository_size_bytes": 3258062,
+    "repository_delta_bytes": 3258062,
+    "error": false,
+    "pgbackrest_version": "2.60.0",
+    "cnpg_backup_name": "fixture-repo1-full",
+    "annotations": [
+      {
+        "key": "cnpg-backup-name",
+        "value": "fixture-repo1-full"
+      }
+    ],
+    "annotations_withheld": 0
+  },
+  {
+    "stanza": "demo",
+    "label": "20261107-081046F_20261107-081101D",
+    "type": "diff",
+    "prior": "20261107-081046F",
+    "references": [
+      "20261107-081046F"
+    ],
+    "state": "healthy",
+    "reason": {
+      "code": "backup-healthy",
+      "message": "chain, manifests and WAL to consistency are present and verified"
+    },
+    "usable": true,
+    "unusable_reasons": [],
+    "archive_id": "17-1",
+    "system_id": "7705338956479107096",
+    "postgresql_version": 170000,
+    "timeline": 1,
+    "start_at": "2026-11-07T08:11:01Z",
+    "stop_at": "2026-11-07T08:11:03Z",
+    "start_lsn": "0/8000028",
+    "stop_lsn": "0/9000050",
+    "archive_start": "000000010000000000000008",
+    "archive_stop": "000000010000000000000009",
+    "size_bytes": 24519758,
+    "delta_bytes": 1384706,
+    "repository_size_bytes": 3531501,
+    "repository_delta_bytes": 547818,
+    "error": false,
+    "pgbackrest_version": "2.60.0",
+    "cnpg_backup_name": "fixture-repo1-diff",
+    "annotations": [
+      {
+        "key": "cnpg-backup-name",
+        "value": "fixture-repo1-diff"
+      }
+    ],
+    "annotations_withheld": 0
+  },
+  {
+    "stanza": "demo",
+    "label": "20261107-081046F_20261107-081105I",
+    "type": "incr",
+    "prior": "20261107-081046F_20261107-081101D",
+    "references": [
+      "20261107-081046F",
+      "20261107-081046F_20261107-081101D"
+    ],
+    "state": "healthy",
+    "reason": {
+      "code": "backup-healthy",
+      "message": "chain, manifests and WAL to consistency are present and verified"
+    },
+    "usable": true,
+    "unusable_reasons": [],
+    "archive_id": "17-1",
+    "system_id": "7705338956479107096",
+    "postgresql_version": 170000,
+    "timeline": 1,
+    "start_at": "2026-11-07T08:11:05Z",
+    "stop_at": "2026-11-07T08:11:07Z",
+    "start_lsn": "0/D000028",
+    "stop_lsn": "0/E000050",
+    "archive_start": "00000001000000000000000D",
+    "archive_stop": "00000001000000000000000E",
+    "size_bytes": 25199693,
+    "delta_bytes": 2064641,
+    "repository_size_bytes": 3805240,
+    "repository_delta_bytes": 821557,
+    "error": false,
+    "pgbackrest_version": "2.60.0",
+    "cnpg_backup_name": "fixture-repo1-incr-tl1",
+    "annotations": [
+      {
+        "key": "cnpg-backup-name",
+        "value": "fixture-repo1-incr-tl1"
+      }
+    ],
+    "annotations_withheld": 0
+  },
+  {
+    "stanza": "demo",
+    "label": "20261107-081046F_20261107-081114I",
+    "type": "incr",
+    "prior": "20261107-081046F_20261107-081105I",
+    "references": [
+      "20261107-081046F",
+      "20261107-081046F_20261107-081101D",
+      "20261107-081046F_20261107-081105I"
+    ],
+    "state": "healthy",
+    "reason": {
+      "code": "backup-healthy",
+      "message": "chain, manifests and WAL to consistency are present and verified"
+    },
+    "usable": true,
+    "unusable_reasons": [],
+    "archive_id": "17-1",
+    "system_id": "7705338956479107096",
+    "postgresql_version": 170000,
+    "timeline": 2,
+    "start_at": "2026-11-07T08:11:14Z",
+    "stop_at": "2026-11-07T08:11:17Z",
+    "start_lsn": "0/F000028",
+    "stop_lsn": "0/10000050",
+    "archive_start": "00000002000000000000000F",
+    "archive_stop": "000000020000000000000010",
+    "size_bytes": 25888074,
+    "delta_bytes": 3351126,
+    "repository_size_bytes": 4078851,
+    "repository_delta_bytes": 1150375,
+    "error": false,
+    "pgbackrest_version": "2.60.0",
+    "cnpg_backup_name": "fixture-repo1-incr-tl2",
+    "annotations": [
+      {
+        "key": "cnpg-backup-name",
+        "value": "fixture-repo1-incr-tl2"
+      }
+    ],
+    "annotations_withheld": 0
+  }
+]

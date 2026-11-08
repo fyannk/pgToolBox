@@ -1,0 +1,5 @@
+# A DBA who owns several namespaces: a Role in each, one console.
+console:
+  watchNamespaces: [team-a, team-b]
+  clusterSelector: {tier: prod}
+  clusterImageCatalogs: {enabled: true}

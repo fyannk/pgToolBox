@@ -1,0 +1,38 @@
+# pgToolBox's share of the built-in `admin` ClusterRole (aggregated, as
+# cert-manager does): whoever administers a namespace can see its PgAdmins,
+# EvidenceAgents and PgAccessRequests, ask for access and decide on requests
+# (they could create the RoleBinding a request asks for anyway), so they can
+# bind pgtoolbox-console-viewer or pgtoolbox-console-operator to their team and install a
+# pgtools console that links to these objects (Kubernetes lets a user grant
+# only what they hold). Not `edit`: `get pgadmins/<name>` is who may open pgAdmin behind
+# the OpenShift oauth-proxy, which is reading the Secrets it offers; `admin`
+# reads them already, `edit` users get it through pgtoolbox-console-operator.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: pgtoolbox-aggregate-to-admin
+  labels:
+    rbac.authorization.k8s.io/aggregate-to-admin: "true"
+rules:
+- apiGroups:
+  - pgtoolbox.fyannk.dev
+  resources:
+  - evidenceagents
+  - pgaccessrequests
+  - pgadmins
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - pgtoolbox.fyannk.dev
+  resources:
+  - pgaccessrequests
+  verbs:
+  - create
+- apiGroups:
+  - pgtoolbox.fyannk.dev
+  resources:
+  - pgaccessrequests/status
+  verbs:
+  - update

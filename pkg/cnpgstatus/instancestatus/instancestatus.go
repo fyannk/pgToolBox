@@ -1,0 +1,717 @@
+// Copyright 2026 The pgToolBox Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// Package instancestatus reads what each instance manager says about its
+// own PostgreSQL: the /pg/status report on the instance pod's status
+// port, the same report the operator reads to make its decisions and
+// kubectl cnpg status prints. It is the richest instance-side source the
+// console has that involves no SQL — archiver state, pending restarts,
+// replication slots, the manager's own version — and it is read the way
+// the metrics exporter is: a bounded HTTP GET to each instance pod's IP
+// on a sweep, nothing stored beyond the last report per instance.
+//
+// The report is the instance's claim about itself, and everything here
+// is attributed as such. A pod the sweep cannot reach keeps its last
+// report with the failure beside it; a pod that leaves the roster is
+// forgotten. From CloudNativePG 1.30 the status port's mutating paths
+// require the operator's client certificate, and /pg/status does not;
+// the port is read over TLS only, with the certificate verified against
+// the cluster CA, and a port the console cannot read is reported per
+// instance rather than guessed at.
+package instancestatus
+
+import (
+	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"net"
+	"net/http"
+	"sort"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/fyannk/pgToolBox/pkg/cnpgstatus/observe"
+	"github.com/fyannk/pgToolBox/pkg/redact"
+)
+
+const (
+	// Port is the instance manager's status port.
+	Port = "8000"
+	// path is the status report's path.
+	path = "/pg/status"
+	// maxBody bounds one report; the report is a few kilobytes, and
+	// anything larger is cut, not buffered.
+	maxBody = 1 << 20
+	// requestTimeout bounds one request.
+	requestTimeout = 5 * time.Second
+	// maxStandbys and maxSlots bound the lists one report may carry.
+	maxStandbys = 64
+	maxSlots    = 64
+	// maxText bounds each string the report carries.
+	maxText = 256
+	// maxVolumes bounds the volume usages one report may carry: PGDATA,
+	// the WAL volume and one per tablespace.
+	maxVolumes = 64
+)
+
+// Standby is one row of the primary's pg_stat_replication as the
+// instance manager reports it. The instance manager reports only its own
+// cluster's streaming_replica walsenders: replica clusters, logical
+// walsenders and other users' base backups are absent, so this list is
+// not the whole of pg_stat_replication.
+type Standby struct {
+	ApplicationName string
+	State           string
+	// SentLSN is pg_stat_replication.sent_lsn: what the primary has sent,
+	// not what the standby has received. CloudNativePG serialises it
+	// under the JSON key "receivedLsn" (pkg/postgres/status.go,
+	// PgStatReplication.SentLsn); the name here says what it is.
+	SentLSN string
+	// WriteLSN, FlushLSN and ReplayLSN are the standby's positions as
+	// the primary last heard them.
+	WriteLSN     string
+	FlushLSN     string
+	ReplayLSN    string
+	SyncState    string
+	SyncPriority string
+	WriteLag     string
+	FlushLag     string
+	ReplayLag    string
+}
+
+// Slot is one row of the instance's pg_replication_slots.
+type Slot struct {
+	Name      string
+	Type      string
+	Database  string
+	Plugin    string
+	WALStatus string
+	Active    bool
+}
+
+// VolumeUsage is the fork's statfs reading of one mounted volume
+// (FORK origin/dev/64 dfb05c5d4 pkg/postgres/status.go VolumeUsage):
+// Volume is "pgdata", "wal" or "tbs-<tablespace>". UsedBytes counts the
+// reserved blocks (blocks - bfree), AvailableBytes excludes them
+// (bavail), so the volume is full for PostgreSQL when AvailableBytes
+// reaches zero, before UsedBytes reaches TotalBytes. Inodes and
+// InodesFree are zero when the filesystem reports no inodes; HasInodes
+// says which.
+type VolumeUsage struct {
+	Volume         string
+	TotalBytes     uint64
+	AvailableBytes uint64
+	UsedBytes      uint64
+	Inodes         uint64
+	InodesFree     uint64
+	HasInodes      bool
+}
+
+// Reading is one instance's report, converted to a source-neutral shape.
+// A string the instance did not report is empty; a time it did not
+// report is nil.
+type Reading struct {
+	// Instance is the pod the report came from, and PodUID that pod's
+	// identity: a recreated pod of the same name is another pod, and a
+	// retained report never speaks for it.
+	Instance string
+	PodUID   string
+	// ObservedAt is when the sweep read it.
+	ObservedAt time.Time
+	// IsPrimary is the instance's own claim to the primary role.
+	IsPrimary bool
+	// ReplayPaused reports a replica whose WAL replay is paused.
+	ReplayPaused bool
+	// PendingRestart reports a configuration change waiting for a
+	// restart; PendingRestartForDecrease that it is a decrease of a
+	// hot-standby-sensitive parameter.
+	PendingRestart            bool
+	PendingRestartForDecrease bool
+	// IsWalReceiverActive reports a replica with a live WAL receiver.
+	IsWalReceiverActive bool
+	// IsPgRewindRunning reports a rewind in progress.
+	IsPgRewindRunning bool
+	// MightBeUnavailable is the instance manager's own flag that its
+	// PostgreSQL may not be reachable, with the error it masked.
+	MightBeUnavailable            bool
+	MightBeUnavailableMaskedError string
+	// IsArchivingWAL reports that this instance archives WAL.
+	IsArchivingWAL bool
+	// IsInstanceManagerUpgrading reports an in-place manager upgrade.
+	IsInstanceManagerUpgrading bool
+	// CurrentLSN, ReceivedLSN and ReplayLSN are the instance's positions.
+	CurrentLSN  string
+	ReceivedLSN string
+	ReplayLSN   string
+	// CurrentWAL is the segment being written; ReadyWALFiles counts the
+	// segments waiting to be archived.
+	CurrentWAL    string
+	ReadyWALFiles int
+	// LastArchivedWAL and LastFailedWAL are pg_stat_archiver's, with the
+	// instants they carry.
+	LastArchivedWAL     string
+	LastArchivedWALTime *time.Time
+	LastFailedWAL       string
+	LastFailedWALTime   *time.Time
+	// SystemID and TimelineID identify what the instance is replaying.
+	SystemID   string
+	TimelineID int
+	// InstanceManagerVersion and InstanceArch are the manager's own.
+	InstanceManagerVersion string
+	InstanceArch           string
+	// Node is the node the instance reports running on.
+	Node string
+	// IsFenced is the report's isFenced, nil when the report does not
+	// carry it. CloudNativePG documents that the instance manager never
+	// populates it — the operator fills it when merging reports — so
+	// the fencing source of truth is the Cluster's
+	// cnpg.io/fencedInstances annotation, and this is corroboration only.
+	IsFenced *bool
+	// Standbys is the primary's replication view, bounded; Slots the
+	// instance's replication slots, bounded.
+	Standbys []Standby
+	Slots    []Slot
+	// VolumeUsagesReported is true when the report carries the fork's
+	// volumeUsages key at all; VolumeUsages are its well-formed entries,
+	// bounded. Upstream CloudNativePG (v1.30.0, main) reports no
+	// volume usage, so false is "not reported by this CloudNativePG",
+	// never "no volume".
+	VolumeUsagesReported bool
+	VolumeUsages         []VolumeUsage
+}
+
+// Snapshot is what the console reads: the last report per instance,
+// and per instance the failure of the last sweep, when it failed.
+type Snapshot struct {
+	// Generation increases by one on every sweep that published.
+	Generation uint64
+	// SweptAt is when the last sweep ran.
+	SweptAt time.Time
+	// Interval is the sweep cadence, so a reader can judge a report's
+	// age against it.
+	Interval time.Duration
+	// Readings are the last report per instance, by instance name.
+	Readings map[string]Reading
+	// Failing records, per instance the last sweep could not read, the
+	// failure's category. An instance present here may still have a
+	// reading from an earlier sweep.
+	Failing map[string]string
+	// Disabled is non-empty when the sweep was asked for but does not
+	// run, and says why, for the reader verbatim. A disabled snapshot
+	// has no readings because nothing was read, not because no instance
+	// reported.
+	Disabled string
+}
+
+// Instances lists the instances with a reading, sorted.
+func (s Snapshot) Instances() []string {
+	names := make([]string, 0, len(s.Readings))
+	for name := range s.Readings {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// Store holds the current snapshot for concurrent readers.
+type Store struct {
+	mu       sync.RWMutex
+	snap     Snapshot
+	has      bool
+	interval time.Duration
+}
+
+// NewStore returns an empty store for the given sweep cadence.
+func NewStore(interval time.Duration) *Store {
+	return &Store{interval: interval, snap: Snapshot{Interval: interval}}
+}
+
+// NewDisabledStore returns a store whose one snapshot states that the
+// sweep does not run and why. No collector is started over it.
+func NewDisabledStore(interval time.Duration, reason string) *Store {
+	return &Store{
+		interval: interval,
+		has:      true,
+		snap:     Snapshot{Interval: interval, Disabled: reason, Readings: map[string]Reading{}, Failing: map[string]string{}},
+	}
+}
+
+// Disabled reports why the sweep does not run; empty when it does.
+func (s *Store) Disabled() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.snap.Disabled
+}
+
+// Interval is the sweep cadence.
+func (s *Store) Interval() time.Duration { return s.interval }
+
+// CurrentInstanceStatus returns the snapshot and whether a sweep has
+// published one.
+func (s *Store) CurrentInstanceStatus() (Snapshot, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.snap, s.has
+}
+
+// member is one roster entry the sweep accounts for: the pod's name
+// and identity.
+type member struct {
+	name, uid string
+}
+
+// publish replaces the snapshot with the sweep's outcome: fresh
+// readings for the instances reached, the previous reading kept beside
+// the failure for the ones not reached when it came from the same pod,
+// and instances no longer on the roster dropped.
+func (s *Store) publish(at time.Time, roster []member, fresh map[string]Reading, failing map[string]string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	next := Snapshot{
+		Generation: s.snap.Generation + 1,
+		SweptAt:    at,
+		Interval:   s.interval,
+		Readings:   make(map[string]Reading, len(roster)),
+		Failing:    make(map[string]string, len(failing)),
+	}
+	for _, m := range roster {
+		if reading, ok := fresh[m.name]; ok {
+			next.Readings[m.name] = reading
+			continue
+		}
+		if previous, ok := s.snap.Readings[m.name]; ok && previous.PodUID == m.uid {
+			next.Readings[m.name] = previous
+		}
+		if category, ok := failing[m.name]; ok {
+			next.Failing[m.name] = category
+		}
+	}
+	for name, category := range failing {
+		if _, listed := next.Failing[name]; !listed {
+			next.Failing[name] = category
+		}
+	}
+	s.snap = next
+	s.has = true
+}
+
+// PodsSource is the roster the sweep reads: the instance pods and
+// their IPs.
+type PodsSource interface {
+	CurrentPods() (observe.PodsSnapshot, bool)
+}
+
+// Collector sweeps the instance pods' status ports on a cadence.
+type Collector struct {
+	source   PodsSource
+	store    *Store
+	clock    observe.Clock
+	logger   *slog.Logger
+	interval time.Duration
+	client   *http.Client
+	port     string
+	// failing tracks which instances the previous sweep could not
+	// reach, so reachability changes log once instead of every sweep.
+	failing map[string]bool
+}
+
+// New wires a roster to a store. The port is the status port, fixed to
+// the CloudNativePG default and overridden only by tests; the TLS
+// configuration is TLSConfig's.
+func New(source PodsSource, store *Store, port string, tlsConfig *tls.Config, clock observe.Clock, logger *slog.Logger) *Collector {
+	if port == "" {
+		port = Port
+	}
+	return &Collector{
+		source:   source,
+		store:    store,
+		clock:    clock,
+		logger:   logger,
+		interval: store.Interval(),
+		client:   &http.Client{Timeout: requestTimeout, Transport: &http.Transport{TLSClientConfig: tlsConfig}},
+		port:     port,
+		failing:  map[string]bool{},
+	}
+}
+
+// TLSConfig is how the status port's certificate is judged: the chain
+// is verified against the cluster CA and the certificate must name the
+// cluster's read-write Service. The certificate is the cluster's own
+// server certificate, issued for the cluster's Services and signed by
+// the CA in the <cluster>-ca Secret, which this console never reads
+// through the API: the deployer mounts its ca.crt and names it in
+// INSTANCE_STATUS_CA_FILE.
+//
+// The status port is TLS 1.3 only upstream, so nothing older is
+// offered. An empty or certificate-free CA is refused: a TLS
+// configuration that verifies nothing is InsecureTLSConfig, and is
+// only ever chosen explicitly.
+func TLSConfig(clusterName string, caPEM []byte) (*tls.Config, error) {
+	roots := x509.NewCertPool()
+	if len(caPEM) == 0 || !roots.AppendCertsFromPEM(caPEM) {
+		return nil, redact.NewError("instance status CA", redact.CategoryInternal,
+			errors.New("no certificate found in the CA file"))
+	}
+	return &tls.Config{
+		MinVersion: tls.VersionTLS13,
+		// The name the certificate must carry: the cluster's read-write
+		// Service, checked by the standard verification against the
+		// standard chain check. The default host check against the pod
+		// IP could never pass, because the certificate names Services.
+		ServerName: clusterName + "-rw",
+		RootCAs:    roots,
+	}, nil
+}
+
+// InsecureTLSConfig accepts any certificate that names the cluster's
+// read-write Service, without verifying its chain. It ties the
+// certificate to this cluster's name rather than to any cluster, but
+// anything able to present a self-signed certificate for that name is
+// believed, and the endpoint's identity rests on the pod IP the API
+// server reported. It exists for labs and is chosen only by an explicit
+// INSTANCE_STATUS_INSECURE=true.
+func InsecureTLSConfig(clusterName string) *tls.Config {
+	serviceName := clusterName + "-rw"
+	return &tls.Config{
+		MinVersion: tls.VersionTLS13,
+		ServerName: serviceName,
+		// The built-in verification cannot run without a CA and is
+		// replaced by the name check below rather than by nothing.
+		InsecureSkipVerify: true, // #nosec G402 -- explicit opt-in; the name is still checked in VerifyConnection.
+		VerifyConnection: func(state tls.ConnectionState) error {
+			if len(state.PeerCertificates) == 0 {
+				return errors.New("the status port presented no certificate")
+			}
+			if err := state.PeerCertificates[0].VerifyHostname(serviceName); err != nil {
+				return fmt.Errorf("the status port's certificate does not name %s: %w", serviceName, err)
+			}
+			return nil
+		},
+	}
+}
+
+// Run sweeps until ctx is done.
+func (c *Collector) Run(ctx context.Context) error {
+	for {
+		if err := c.clock.Wait(ctx, c.interval); err != nil {
+			return err
+		}
+		c.sweep(ctx)
+	}
+}
+
+// sweep reads every instance pod once, inside one sweep interval. A
+// stale roster is not swept: its IPs are the last good ones, and a
+// report read from them could be another pod's; the retained reports
+// age into refusal instead. A pod without an IP has not started and a
+// deleting pod is not read; both are recorded as unread rather than
+// left out, so an incomplete sweep never reads as a complete one. A
+// pod the deadline leaves unread, and a roster cut at its bound, are
+// recorded the same way.
+func (c *Collector) sweep(ctx context.Context) {
+	snap, ok := c.source.CurrentPods()
+	if !ok || snap.Stale {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, c.interval)
+	defer cancel()
+	at := c.clock.Now()
+	var roster []member
+	fresh := map[string]Reading{}
+	failing := map[string]string{}
+	for _, pod := range snap.Pods {
+		roster = append(roster, member{name: pod.Name, uid: pod.UID})
+		switch {
+		case pod.Deleting:
+			failing[pod.Name] = "deleting"
+			continue
+		case pod.IP == "":
+			failing[pod.Name] = "not started"
+			continue
+		case ctx.Err() != nil:
+			failing[pod.Name] = "sweep deadline"
+			continue
+		}
+		reading, err := c.readOne(ctx, pod.StatusScheme, pod.IP)
+		if err != nil {
+			category := redact.Safe(err)
+			failing[pod.Name] = category
+			if !c.failing[pod.Name] {
+				c.failing[pod.Name] = true
+				c.logger.Info("instance status read failed",
+					slog.String("instance", pod.Name),
+					slog.String("category", category))
+			}
+			continue
+		}
+		if c.failing[pod.Name] {
+			delete(c.failing, pod.Name)
+			c.logger.Info("instance status read recovered", slog.String("instance", pod.Name))
+		}
+		reading.Instance = pod.Name
+		reading.PodUID = pod.UID
+		reading.ObservedAt = at
+		fresh[pod.Name] = reading
+	}
+	if snap.Truncated {
+		failing["(roster)"] = "more pods than the roster bound, so the sweep is incomplete"
+	}
+	c.store.publish(at, roster, fresh, failing)
+}
+
+// readOne fetches and converts one instance's report with the scheme
+// the pod spec declares (observe.PodFacts.StatusScheme): HTTPS, the
+// default when unknown, with the certificate judged as the configured
+// TLS settings say, or plain HTTP for a pre-TLS instance manager. There
+// is no fallback from one to the other: a fallback is a downgrade
+// anyone on the path can force, while the declared scheme comes from
+// the API server.
+func (c *Collector) readOne(ctx context.Context, scheme, ip string) (Reading, error) {
+	if scheme != "http" {
+		scheme = "https"
+	}
+	url := scheme + "://" + net.JoinHostPort(ip, c.port) + path
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return Reading{}, redact.NewError("instance status read", redact.CategoryInternal, err)
+	}
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return Reading{}, redact.NewError("instance status read", redact.CategoryUnavailable, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return Reading{}, redact.NewError("instance status read", redact.CategoryUnavailable,
+			fmt.Errorf("status %d", resp.StatusCode))
+	}
+	return Parse(io.LimitReader(resp.Body, maxBody))
+}
+
+// report is the subset of the instance manager's JSON the console reads.
+// The field names are the operator's own JSON tags, pinned by the
+// catalog rules that read them.
+type report struct {
+	CurrentLsn                    string `json:"currentLsn"`
+	ReceivedLsn                   string `json:"receivedLsn"`
+	ReplayLsn                     string `json:"replayLsn"`
+	SystemID                      string `json:"systemID"`
+	IsPrimary                     bool   `json:"isPrimary"`
+	ReplayPaused                  bool   `json:"replayPaused"`
+	PendingRestart                bool   `json:"pendingRestart"`
+	PendingRestartForDecrease     bool   `json:"pendingRestartForDecrease"`
+	IsWalReceiverActive           bool   `json:"isWalReceiverActive"`
+	IsPgRewindRunning             bool   `json:"isPgRewindRunning"`
+	MightBeUnavailable            bool   `json:"mightBeUnavailable"`
+	MightBeUnavailableMaskedError string `json:"mightBeUnavailableMaskedError"`
+	IsArchivingWAL                bool   `json:"isArchivingWAL"`
+	Node                          string `json:"node"`
+	LastArchivedWAL               string `json:"lastArchivedWAL"`
+	LastArchivedWALTime           string `json:"lastArchivedWALTime"`
+	LastFailedWAL                 string `json:"lastFailedWAL"`
+	LastFailedWALTime             string `json:"lastFailedWALTime"`
+	CurrentWAL                    string `json:"currentWAL"`
+	ReadyWALFiles                 int    `json:"readyWalFiles"`
+	TimeLineID                    int    `json:"timeLineID"`
+	InstanceManagerVersion        string `json:"instanceManagerVersion"`
+	InstanceArch                  string `json:"instanceArch"`
+	IsInstanceManagerUpgrading    bool   `json:"isInstanceManagerUpgrading"`
+	IsFenced                      *bool  `json:"isFenced"`
+	ReplicationInfo               []struct {
+		ApplicationName string `json:"applicationName"`
+		State           string `json:"state"`
+		// SentLsn is sent_lsn, under CloudNativePG's "receivedLsn" key.
+		SentLsn      string `json:"receivedLsn"`
+		WriteLsn     string `json:"writeLsn"`
+		FlushLsn     string `json:"flushLsn"`
+		ReplayLsn    string `json:"replayLsn"`
+		WriteLag     string `json:"writeLag"`
+		FlushLag     string `json:"flushLag"`
+		ReplayLag    string `json:"replayLag"`
+		SyncState    string `json:"syncState"`
+		SyncPriority string `json:"syncPriority"`
+	} `json:"replicationInfo"`
+	ReplicationSlotsInfo []struct {
+		SlotName  string `json:"slotName"`
+		Plugin    string `json:"plugin"`
+		SlotType  string `json:"slotType"`
+		Database  string `json:"database"`
+		Active    bool   `json:"active"`
+		WalStatus string `json:"walStatus"`
+	} `json:"replicationSlotsInfo"`
+	// VolumeUsages is decoded on its own, so a malformed fork field
+	// never costs the rest of the report.
+	VolumeUsages json.RawMessage `json:"volumeUsages"`
+}
+
+// volumeUsage is the wire form of one volumeUsages[] entry.
+type volumeUsage struct {
+	Volume         string  `json:"volume"`
+	TotalBytes     *uint64 `json:"totalBytes"`
+	AvailableBytes *uint64 `json:"availableBytes"`
+	UsedBytes      *uint64 `json:"usedBytes"`
+	Inodes         uint64  `json:"inodes"`
+	InodesFree     uint64  `json:"inodesFree"`
+}
+
+// Parse decodes one report into a bounded Reading. A malformed body is
+// an error; an absent field stays at its zero value.
+func Parse(body io.Reader) (Reading, error) {
+	var r report
+	if err := json.NewDecoder(body).Decode(&r); err != nil {
+		return Reading{}, redact.NewError("instance status decode", redact.CategoryUnavailable, err)
+	}
+	reading := Reading{
+		IsPrimary:                     r.IsPrimary,
+		ReplayPaused:                  r.ReplayPaused,
+		PendingRestart:                r.PendingRestart,
+		PendingRestartForDecrease:     r.PendingRestartForDecrease,
+		IsWalReceiverActive:           r.IsWalReceiverActive,
+		IsPgRewindRunning:             r.IsPgRewindRunning,
+		MightBeUnavailable:            r.MightBeUnavailable,
+		MightBeUnavailableMaskedError: bound(r.MightBeUnavailableMaskedError),
+		IsArchivingWAL:                r.IsArchivingWAL,
+		IsInstanceManagerUpgrading:    r.IsInstanceManagerUpgrading,
+		CurrentLSN:                    bound(r.CurrentLsn),
+		ReceivedLSN:                   bound(r.ReceivedLsn),
+		ReplayLSN:                     bound(r.ReplayLsn),
+		CurrentWAL:                    bound(r.CurrentWAL),
+		ReadyWALFiles:                 r.ReadyWALFiles,
+		LastArchivedWAL:               bound(r.LastArchivedWAL),
+		LastArchivedWALTime:           instant(r.LastArchivedWALTime),
+		LastFailedWAL:                 bound(r.LastFailedWAL),
+		LastFailedWALTime:             instant(r.LastFailedWALTime),
+		SystemID:                      bound(r.SystemID),
+		TimelineID:                    r.TimeLineID,
+		InstanceManagerVersion:        bound(r.InstanceManagerVersion),
+		InstanceArch:                  bound(r.InstanceArch),
+		Node:                          bound(r.Node),
+		IsFenced:                      r.IsFenced,
+	}
+	for i, standby := range r.ReplicationInfo {
+		if i == maxStandbys {
+			break
+		}
+		reading.Standbys = append(reading.Standbys, Standby{
+			ApplicationName: bound(standby.ApplicationName), State: bound(standby.State),
+			SyncState: bound(standby.SyncState), SyncPriority: bound(standby.SyncPriority),
+			WriteLag: bound(standby.WriteLag), FlushLag: bound(standby.FlushLag), ReplayLag: bound(standby.ReplayLag),
+			SentLSN: bound(standby.SentLsn), WriteLSN: bound(standby.WriteLsn),
+			FlushLSN: bound(standby.FlushLsn), ReplayLSN: bound(standby.ReplayLsn),
+		})
+	}
+	for i, slot := range r.ReplicationSlotsInfo {
+		if i == maxSlots {
+			break
+		}
+		reading.Slots = append(reading.Slots, Slot{
+			Name: bound(slot.SlotName), Type: bound(slot.SlotType), Database: bound(slot.Database),
+			Plugin: bound(slot.Plugin), WALStatus: bound(slot.WalStatus), Active: slot.Active,
+		})
+	}
+	reading.VolumeUsagesReported, reading.VolumeUsages = parseVolumeUsages(r.VolumeUsages)
+	return reading, nil
+}
+
+// parseVolumeUsages decodes the fork's volumeUsages[]. An absent or null
+// key is "not reported"; a key that does not decode is reported with no
+// usable entry; an entry whose name is not pgdata, wal or tbs-<name>, or
+// whose numbers contradict each other (available or used above total, or
+// free inodes above inodes) is dropped rather than shown.
+func parseVolumeUsages(raw json.RawMessage) (bool, []VolumeUsage) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return false, nil
+	}
+	var entries []volumeUsage
+	if err := json.Unmarshal(raw, &entries); err != nil {
+		return true, nil
+	}
+	var out []VolumeUsage
+	seen := map[string]bool{}
+	for _, e := range entries {
+		if len(out) == maxVolumes {
+			break
+		}
+		if !ValidVolumeName(e.Volume) || seen[e.Volume] || e.TotalBytes == nil || e.AvailableBytes == nil || e.UsedBytes == nil {
+			continue
+		}
+		if *e.AvailableBytes > *e.TotalBytes || *e.UsedBytes > *e.TotalBytes || e.InodesFree > e.Inodes {
+			continue
+		}
+		seen[e.Volume] = true
+		out = append(out, VolumeUsage{
+			Volume: e.Volume, TotalBytes: *e.TotalBytes, AvailableBytes: *e.AvailableBytes, UsedBytes: *e.UsedBytes,
+			Inodes: e.Inodes, InodesFree: e.InodesFree, HasInodes: e.Inodes > 0,
+		})
+	}
+	return true, out
+}
+
+// ValidVolumeName accepts the fork's volume names: pgdata, wal, and
+// tbs- followed by a tablespace name (at most 63 bytes of letters,
+// digits, '_', '-' or '.'), the names of the volume label of the
+// cnpg_disk_* series too.
+func ValidVolumeName(name string) bool {
+	switch name {
+	case "pgdata", "wal":
+		return true
+	}
+	tbs, ok := strings.CutPrefix(name, "tbs-")
+	if !ok || tbs == "" || len(tbs) > 63 {
+		return false
+	}
+	for _, r := range tbs {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_' || r == '-' || r == '.') {
+			return false
+		}
+	}
+	return true
+}
+
+// bound cuts one reported string at the text ceiling.
+func bound(s string) string {
+	if len(s) > maxText {
+		return s[:maxText]
+	}
+	return s
+}
+
+// instantLayouts are the forms the instance manager writes a timestamp
+// in: RFC3339 from Go, and PostgreSQL's own text for pg_stat_archiver.
+var instantLayouts = []string{
+	time.RFC3339Nano,
+	"2006-01-02 15:04:05.999999999-07",
+	"2006-01-02 15:04:05.999999999-07:00",
+	"2006-01-02T15:04:05.999999999-07",
+}
+
+// instant parses one reported timestamp; nil for an absent or
+// unparseable value, never a wrong instant.
+func instant(raw string) *time.Time {
+	if raw == "" {
+		return nil
+	}
+	for _, layout := range instantLayouts {
+		if at, err := time.Parse(layout, raw); err == nil {
+			at = at.UTC()
+			return &at
+		}
+	}
+	return nil
+}

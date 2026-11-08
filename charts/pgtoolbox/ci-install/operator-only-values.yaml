@@ -1,0 +1,5 @@
+# The operator chart as a cluster admin installs it.
+operator:
+  enabled: true
+replicaCount: 1
+leaderElection: true

@@ -1,0 +1,211 @@
+{
+  "ref": {
+    "namespace": "team-a",
+    "name": "orders",
+    "uid": "0b6a2c1e-8f0d-4a55-9a3e-7c1f2b3d4e5f"
+  },
+  "generatedAt": "2026-10-29T12:00:00Z",
+  "from": "2026-10-28T12:00:00Z",
+  "to": "2026-10-29T12:00:00Z",
+  "kinds": [],
+  "source": {
+    "source": "timeline",
+    "state": "live",
+    "health": "ok"
+  },
+  "persistent": false,
+  "observedSince": "2026-10-29T09:00:00Z",
+  "eventsWindow": "1h0m0s",
+  "counts": [
+    {
+      "kind": "primary",
+      "count": 1
+    },
+    {
+      "kind": "restart",
+      "count": 1
+    },
+    {
+      "kind": "backup",
+      "count": 1
+    },
+    {
+      "kind": "finding",
+      "count": 2
+    },
+    {
+      "kind": "revision",
+      "count": 1
+    },
+    {
+      "kind": "gap",
+      "count": 2
+    },
+    {
+      "kind": "console",
+      "count": 1
+    }
+  ],
+  "items": [
+    {
+      "id": "r:2",
+      "kind": "revision",
+      "action": "spec-changed",
+      "at": "2026-10-29T11:50:00Z",
+      "timing": "observed",
+      "scope": "cluster",
+      "subject": {
+        "kind": "Cluster",
+        "name": "orders"
+      },
+      "health": "progressing",
+      "detail": "kubectl",
+      "ref": "2",
+      "provenance": {
+        "origin": "kubernetes",
+        "source": "revision history (Cluster)",
+        "observedAt": "2026-10-29T11:50:00Z"
+      },
+      "link": "history/2"
+    },
+    {
+      "id": "j:8",
+      "kind": "finding",
+      "action": "cleared",
+      "at": "2026-10-29T11:20:00Z",
+      "timing": "observed",
+      "scope": "cluster",
+      "severity": "warning",
+      "health": "ok",
+      "ref": "wal.archiveLag",
+      "provenance": {
+        "origin": "console",
+        "source": "diagnostics",
+        "observedAt": "2026-10-29T11:20:00Z"
+      },
+      "link": "diagnostics"
+    },
+    {
+      "id": "j:7",
+      "kind": "finding",
+      "action": "appeared",
+      "at": "2026-10-29T11:10:00Z",
+      "timing": "observed",
+      "scope": "cluster",
+      "severity": "warning",
+      "health": "warning",
+      "detail": "The last backup failed",
+      "ref": "backup.failed",
+      "provenance": {
+        "origin": "console",
+        "source": "diagnostics",
+        "observedAt": "2026-10-29T11:10:00Z"
+      },
+      "link": "diagnostics"
+    },
+    {
+      "id": "j:6",
+      "kind": "backup",
+      "action": "failed",
+      "at": "2026-10-29T11:00:00Z",
+      "timing": "reported",
+      "scope": "cluster",
+      "subject": {
+        "kind": "Backup",
+        "name": "orders-nightly-1"
+      },
+      "health": "critical",
+      "detail": "AccessDenied",
+      "provenance": {
+        "origin": "operator",
+        "source": "Backup.status.phase"
+      },
+      "link": "backups"
+    },
+    {
+      "id": "j:5",
+      "kind": "restart",
+      "action": "restarted",
+      "at": "2026-10-29T10:40:00Z",
+      "timing": "reported",
+      "scope": "cluster",
+      "subject": {
+        "kind": "Pod",
+        "name": "orders-1"
+      },
+      "health": "warning",
+      "detail": "OOMKilled (exit 137)",
+      "provenance": {
+        "origin": "kubernetes",
+        "source": "Pod.status.containerStatuses[postgres]"
+      },
+      "link": "instances/orders-1"
+    },
+    {
+      "id": "j:4",
+      "kind": "primary",
+      "action": "switchover",
+      "at": "2026-10-29T10:30:00Z",
+      "timing": "reported",
+      "scope": "cluster",
+      "subject": {
+        "kind": "Pod",
+        "name": "orders-2"
+      },
+      "from": "orders-1",
+      "to": "orders-2",
+      "health": "progressing",
+      "provenance": {
+        "origin": "operator",
+        "source": "Cluster.status.currentPrimary"
+      },
+      "link": "replication"
+    },
+    {
+      "id": "j:3",
+      "kind": "gap",
+      "action": "ended",
+      "at": "2026-10-29T10:10:00Z",
+      "timing": "observed",
+      "since": "2026-10-29T10:00:00Z",
+      "scope": "namespace",
+      "health": "ok",
+      "ref": "pods",
+      "provenance": {
+        "origin": "console",
+        "source": "source pods",
+        "observedAt": "2026-10-29T10:10:00Z"
+      }
+    },
+    {
+      "id": "j:2",
+      "kind": "gap",
+      "action": "began",
+      "at": "2026-10-29T10:00:00Z",
+      "timing": "observed",
+      "scope": "namespace",
+      "health": "unknown",
+      "detail": "watch lost",
+      "ref": "pods",
+      "provenance": {
+        "origin": "console",
+        "source": "source pods",
+        "observedAt": "2026-10-29T10:00:00Z"
+      }
+    },
+    {
+      "id": "j:1",
+      "kind": "console",
+      "action": "started",
+      "at": "2026-10-29T09:00:00Z",
+      "timing": "observed",
+      "scope": "console",
+      "health": "info",
+      "provenance": {
+        "origin": "console",
+        "source": "console",
+        "observedAt": "2026-10-29T09:00:00Z"
+      }
+    }
+  ]
+}

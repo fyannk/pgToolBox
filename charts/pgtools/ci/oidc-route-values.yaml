@@ -1,0 +1,17 @@
+# OpenShift shape: OIDC login behind a Route, images from a mirror.
+global:
+  imageRegistry: registry.corp.example:5000/mirror
+console:
+  image: {digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000"}
+  auth:
+    provider: oidc
+    oidc:
+      issuerURL: https://idp.example.org/realms/corp
+      clientID: pgtoolbox-console
+      clientSecret: {existingSecret: pgtoolbox-console-oidc}
+      caConfigMap: idp-ca
+      requireEmailVerified: false
+    sessionKey: {existingSecret: pgtoolbox-console-session}
+  exposure:
+    type: route
+    host: console.apps.example.org

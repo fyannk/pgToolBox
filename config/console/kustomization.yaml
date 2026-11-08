@@ -1,0 +1,42 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# The namespace console without Helm: a hand-written second
+# rendering of what charts/pgtools renders for the console, kept in step
+# by hack/validate-packaging.sh, which compares the two field by field (RBAC
+# rules, the security contexts, probes, ports, the env contract, the availability
+# rule). It watches the namespace it is applied to; for several namespaces, or
+# several consoles in one cluster (the ClusterRole names here are fixed), use Helm.
+#
+#   kubectl apply -k config/console -n <team-namespace>   # via `kustomize edit set namespace`
+namespace: pgtoolbox-console
+resources:
+- service_account.yaml
+- role.yaml
+- revocations.yaml
+- state.yaml
+- service.yaml
+- deployment.yaml
+
+images:
+- name: pgtoolbox-console
+  newName: ghcr.io/fyannk/pgtoolbox-console
+  newTag: 0.1.0
+
+# The evidence token's audience is pgtoolbox-evidence-agent/<namespace> and its
+# path <namespace>/token: take the namespace from the Deployment, so
+# `kustomize edit set namespace team-a` is the only edit an install needs.
+replacements:
+- source:
+    kind: Deployment
+    name: pgtoolbox-console
+    fieldPath: metadata.namespace
+  targets:
+  - select: {kind: Deployment, name: pgtoolbox-console}
+    fieldPaths:
+    - spec.template.spec.volumes.[name=evidence-agent-token].projected.sources.0.serviceAccountToken.audience
+    options: {delimiter: "/", index: 1}
+  - select: {kind: Deployment, name: pgtoolbox-console}
+    fieldPaths:
+    - spec.template.spec.volumes.[name=evidence-agent-token].projected.sources.0.serviceAccountToken.path
+    options: {delimiter: "/", index: 0}

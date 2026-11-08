@@ -1,0 +1,6 @@
+{
+  "title": "Unprocessable Entity",
+  "status": 422,
+  "detail": "expiresAt must be in the future"
+}
+

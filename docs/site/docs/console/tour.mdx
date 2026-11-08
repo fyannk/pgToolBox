@@ -1,0 +1,273 @@
+---
+sidebar_position: 1.5
+title: A tour of the console
+description: The console's screens, one by one, with what a DBA reads on each.
+---
+
+import ThemedImage from '@theme/ThemedImage';
+import useBaseUrl from '@docusaurus/useBaseUrl';
+
+export function Screen({name, alt, height}) {
+  // On a narrow screen the image keeps a readable width and scrolls sideways
+  // inside its own box (focusable, so the keyboard can scroll it too).
+  return (
+    <div
+      role="group"
+      aria-label={`Screenshot: ${name}`}
+      tabIndex={0}
+      style={{overflowX: 'auto', marginBottom: '1rem'}}
+    >
+      <ThemedImage
+        alt={alt}
+        sources={{
+          light: useBaseUrl(`/img/screens/${name}-light-1440.png`),
+          dark: useBaseUrl(`/img/screens/${name}-dark-1440.png`),
+        }}
+        width={1440}
+        height={height}
+        loading="lazy"
+        decoding="async"
+        className="shadow--lw"
+        style={{height: 'auto', minWidth: '640px', display: 'block'}}
+      />
+    </div>
+  );
+}
+
+# A tour of the console
+
+These are the console's own screens. They are the UI's screenshot test
+baselines, rendered at 1440 px from the API's fixtures: two Clusters in
+`team-a`, `orders` healthy and `billing` failing over. The images follow the
+site's light or dark theme. The site build copies them from the UI's baselines
+(`docs/site/scripts/copy-screens.mjs`, run by `npm run build`) instead of
+keeping its own copies, and fails on a missing one, so what you see here is
+what the console draws today.
+
+Every screen says where each fact comes from (an operator claim, an instance's
+self-report, Kubernetes, or the console's own inference), how old it is, and
+what the console cannot see from where it stands. A verdict is never shown by
+colour alone: it has a word and a glyph, and "stale" when its source is.
+
+## Clusters
+
+<Screen
+  name="clusters"
+  height={900}
+  alt="The Clusters list: team-a/billing marked critical and stale while failing over from billing-1 to billing-2, with 1 of 2 instances and no completed backup; team-a/orders marked ok with 3 of 3 instances and a backup 5 hours ago. A banner says the console may not list Clusters in team-a-staging."
+/>
+
+The first screen lists the Clusters you may see in the namespaces the console
+watches, one row each: verdict, phase, primary, ready instances, last backup
+and the count of diagnostics findings by severity. A namespace the console
+cannot read is named in a banner rather than shown as empty. Tick two rows to
+[compare them](../guides/compare.md). What you may see is decided by the API
+server for your own identity ([authorization](authorization.md)).
+
+## Overview
+
+<Screen
+  name="overview-healthy"
+  height={3386}
+  alt="The overview of the Cluster orders: an overall health panel with each contributor (phase, Ready condition, instances ready, WAL archiving, last backup, diagnostics) marked ok with its source; a wiring diagram of poolers, services, instances, the backup schedule, volumes and the object store; primary, backups and WAL archiving panels; a failover verdict naming orders-2; instance cards; conditions; sources; and the list of operations you are allowed."
+/>
+
+The roll-up verdict and each fact it rests on, with its source and age. Below
+it: the Cluster's wiring, the primary election, backups and WAL archiving,
+"if the primary failed now", the instance cards, conditions and recent
+warnings. When the phase is not healthy, the overview also explains
+[why the operator is waiting](index.md#why-the-operator-waits). The last
+panels list the sources the page rests on and what you may do here.
+
+## Instances
+
+<Screen
+  name="instances"
+  height={900}
+  alt="The Instances table of the Cluster billing: billing-1 critical and stale, primary, not ready in CrashLoopBackOff, its status port not reachable; billing-2 unknown and stale, its status port not verifiable because the Cluster's CA is not in the console's bundle; billing-3 warning, its status port without TLS."
+/>
+
+Each instance as the operator, the Pod and the instance's own `/pg/status`
+see it, side by side, so a disagreement between them is visible. When the
+console cannot read an instance's status, the row says why and what fixes it
+(for example [the instance CA bundle](configuration.md#the-instance-ca-bundle)).
+
+## Replication
+
+<Screen
+  name="replication"
+  height={2612}
+  alt="The Replication screen of orders: the primary and the declared synchronous replication; the synchronous set PostgreSQL applied (ANY 1 of orders-2 and orders-3); a failover verdict saying orders-2 would be promoted with no acknowledged commit lost, with the election ranking; WAL senders, WAL receivers and replication slots, including a logical slot debezium marked warning."
+/>
+
+The declared synchronous configuration next to the set PostgreSQL applied,
+then the [failover rehearsal](../guides/failover-rehearsal.md): which replica
+the operator would promote if the primary failed now, and whether an
+acknowledged commit could be lost. Below: WAL senders with their lag, WAL
+receivers, and replication slots, where an inactive slot holding WAL stands
+out.
+
+## Backups and restore drills
+
+<Screen
+  name="backups"
+  height={3436}
+  alt="The Backups screen of orders: backup and WAL archiving status through a CNPG-I plugin; the repository cross-check from the evidence agent with a coverage gap warning; a recovery window bar over 7 days with a red segment where WAL is missing; a form to check a restore target; the restore drill panel with one passed and one failed drill; the Backup objects and the schedule."
+/>
+
+The operator's `Backup` objects, the plugin's view and the
+[repository evidence](../evidence-agent.md), side by side. The
+[recovery window bar](forecasts-and-recovery.md#recovery-window-backups-screen)
+shows the span a restore can target, holes included, and answers "can I
+restore to this time?". [Restore drills](restore-drills.md) restore the latest
+backup into a throwaway Cluster and report what they checked and what they
+did not.
+
+## Storage
+
+<Screen
+  name="storage"
+  height={1183}
+  alt="The Storage screen of orders: the volumes the Cluster declares (PG_DATA 40Gi, PG_WAL 5Gi on fast-ssd); the persistent volume claims of each instance, orders-3 data volume shown in progress while being resized from 20Gi to 40Gi; and a volume forecasts panel explaining that no instance reports its volume usage."
+/>
+
+The volumes the Cluster declares, each PVC with its phase, capacity and
+resize state, and the usage an instance reports. When usage is reported, the
+console [forecasts when each volume fills](forecasts-and-recovery.md#volume-forecasts-storage-screen);
+otherwise it says which source is missing.
+
+## Diagnostics
+
+<Screen
+  name="diagnostics"
+  height={983}
+  alt="The Diagnostics screen of billing, Incidents tab: a critical incident, instance billing-1 restarting in a loop, with the verbatim CrashLoopBackOff evidence, a kubectl logs command to check it yourself, and the related warning that the operator is failing over; and a note that no restore drill has passed in the last 90 days."
+/>
+
+The [diagnostics](../guides/diagnostics.md) run for the Cluster, grouped into
+incidents: each finding with its severity, its verbatim evidence and a command
+to check it yourself. The Checks tab lists every [check](../reference/checks.md)
+and its outcome, including those that could not run; Triage starts from a
+symptom.
+
+## Events
+
+<Screen
+  name="events"
+  height={900}
+  alt="The Events screen of billing: a live event watch over one hour, listing a FailingOver event on Cluster/billing from the operator and a Pulled event on Pod/billing-1 from the kubelet, with counts and origins."
+/>
+
+Kubernetes Events about the Cluster and its children, bounded by age and
+count, each with its origin (the operator or the kubelet).
+
+## History: timeline and revisions
+
+<Screen
+  name="timeline"
+  height={1404}
+  alt="The incident timeline of billing over 24 hours: a critical finding 'no ready primary for 90 s', the phase change to Failing over, the failover from billing-1 to billing-2, readiness probe failures, an OOMKilled container restart, a failed backup, a spec change, the console starting with the gap it did not observe, and a cleared WAL archiving finding. Filters by kind sit above."
+/>
+
+The [incident timeline](timeline-and-digest.md#incident-timeline) puts phase
+changes, failovers, restarts, backups, findings, revisions and Events on one
+time axis, and marks when each time comes from the console's clock or from
+the source's. Times when the console was not watching are shown as gaps, not
+as quiet.
+
+<Screen
+  name="revision"
+  height={1952}
+  alt="Revision 42 of Cluster/orders: the changed fields (instances 2 to 3, max_connections 200 to 300, work_mem 4MB to 16MB) with their field manager, a line-by-line diff, and 'what this change sets in motion': a restart, replicas first then a switchover of the primary, with max_connections needing a restart and work_mem a reload."
+/>
+
+A revision shows what changed in the definition, who declared the change, and
+the [change preview](timeline-and-digest.md#change-preview): which parameters
+reload, which restart, and in what order the operator rolls the instances.
+
+## Metrics
+
+<Screen
+  name="metrics"
+  height={1148}
+  alt="The Metrics screen of orders: the latest backend count of each instance, orders-3 not reported because its exporter did not answer, and a short chart of replication lag for orders-2 and orders-3 over the last minute."
+/>
+
+The latest exporter readings as tiles and a short series the console keeps
+(one hour by default), or [charts from Prometheus](prometheus.md) when it is
+configured. The console is not a monitoring system; this screen links to
+yours.
+
+## Insight
+
+<Screen
+  name="insight-blocking"
+  height={1573}
+  alt="The Blocking insight screen of orders: on the primary orders-1, pid 4711 from billing-api idle in transaction for 37 minutes blocks pid 5120 (flyway), which blocks pid 5133 (orders-api); the replicas have no backend waiting on a lock. A pgAdmin panel says the console ends no backend."
+/>
+
+With the [insight pack](insight-pack.md) enabled, a Cluster's Insight section
+shows what a DBA usually checks with SQL: wraparound and vacuum, blocking (the
+lock graph, root blockers first, above), the costliest statements, index
+hygiene and connections. The console runs no SQL: the numbers come from the
+instances' exporters.
+
+<Screen
+  name="fleet-insight"
+  height={908}
+  alt="The team-wide Query insight page: one statement regressed 3.25 times against the same hour a day earlier, the top statements across Clusters by total time, and the coverage of each Cluster (insight pack enabled on orders, not on billing)."
+/>
+
+The team-wide [query insight](insight-pack.md#what-the-console-shows) page
+lists regressions and the costliest statements of every Cluster you may see,
+and says which Clusters it covers.
+
+## Operations
+
+<Screen
+  name="operations"
+  height={1039}
+  alt="The Operations screen of orders: request an on-demand backup, reload configuration, restart the cluster, promote a replica, and run a restore drill (refused for this user by the API server), each with the permission it needs; and a recent backup operation shown as operator acting."
+/>
+
+[What the console may do](../operations.md): backup, reload, restart, promote
+and restore drill, each with the permission it needs and its consequences.
+You type the target's name to confirm; the request is sent as you, and then
+followed until the operator reports an outcome.
+
+## Access requests
+
+<Screen
+  name="access"
+  height={3153}
+  alt="The Access requests page: a form to ask for the View or Operate capability in a namespace with a justification and an optional expiry; my requests, one waiting for review and one approved; and requests to review, with approve and deny buttons, one approved grant whose RoleBinding is missing, one denied and one expired."
+/>
+
+[Access requests](access-requests.md): ask for view or operate rights in a
+namespace, follow your requests, and decide those of others when you may
+create the RoleBinding. Nobody decides a request that names them.
+
+## Daily digest
+
+<Screen
+  name="digest"
+  height={1915}
+  alt="A daily digest covering 24 hours: marked partial because the console was down during the window; totals of Clusters, findings, failovers, failed backups and restarts; the console's own gaps; then per Cluster, billing critical with its failover, restart, failed backup and findings, and orders ok with nothing happening."
+/>
+
+The [daily digest](timeline-and-digest.md#daily-digest) sums up the last 24
+hours per Cluster. It says when it is partial: a window the console did not
+fully observe is not an all-clear.
+
+## Administration
+
+<Screen
+  name="admin"
+  height={1611}
+  alt="The Administration page: per watched namespace, the PgAdmin and EvidenceAgent objects with their health, a namespace the user may not list; this console's version, watched namespaces and the state of its internal loops; and the daily digest delivery per channel, with a mail channel retrying because the server does not offer STARTTLS."
+/>
+
+The [PgAdmin](../operator/pgadmin.md) and
+[EvidenceAgent](../operator/evidenceagent.md) objects you may list, the
+console's own health, and the delivery state of the
+[daily digest](timeline-and-digest.md#configuring-it).

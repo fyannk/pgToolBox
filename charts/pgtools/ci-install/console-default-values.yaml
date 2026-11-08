@@ -1,0 +1,3 @@
+# The default namespace console, one replica (the kind cluster has one node).
+console:
+  replicas: 1

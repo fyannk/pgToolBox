@@ -1,0 +1,35 @@
+# An evidence agent for the backup repository of the CloudNativePG Cluster
+# "cluster-example" in this namespace. The ObjectStore and the Barman server
+# name come from the Cluster's barman-cloud plugin stanza
+# (barmanObjectName / serverName); the agent reads the repository with the
+# same credentials the plugin uses, and those never leave this namespace.
+#
+# A console calls the agent at status.endpoint, verifies it with
+# status.caBundle and authenticates with a ServiceAccount token projected
+# for the audience "pgtoolbox-evidence-agent/<this namespace>"; whoever may `get` this object
+# may read its evidence (docs: the evidence agent channel).
+apiVersion: pgtoolbox.fyannk.dev/v1alpha1
+kind: EvidenceAgent
+metadata:
+  name: cluster-example
+spec:
+  clusterRef:
+    name: cluster-example
+  # Every Secret the backup configuration may name. Whoever may edit the
+  # Cluster or the ObjectStore cannot point the agent at another Secret.
+  # Left empty, the deprecated behaviour applies: any Secret a plugin
+  # ObjectStore names, and the in-tree barmanObjectStore is refused.
+  allowedSecrets:
+    - backup-creds
+  # The digest-pinned agent image; omitted, the operator's
+  # --default-evidence-agent-image applies.
+  # image:
+  #   repository: ghcr.io/fyannk/pgtoolbox-evidence-agent
+  #   digest: sha256:...
+  refreshInterval: 5m
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 1Gi

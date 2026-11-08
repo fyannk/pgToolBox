@@ -1,0 +1,409 @@
+{
+  "ref": {
+    "namespace": "team-a",
+    "name": "orders",
+    "uid": "0b6a2c1e-8f0d-4a55-9a3e-7c1f2b3d4e5f"
+  },
+  "generatedAt": "2026-10-29T12:00:00Z",
+  "summary": {
+    "health": "ok",
+    "lastCompletedAt": "2026-10-29T07:00:00Z",
+    "configured": true,
+    "pluginBased": true,
+    "provenance": {
+      "origin": "operator",
+      "source": "Backup.status",
+      "observedAt": "2026-10-29T11:59:58Z"
+    },
+    "archiving": {
+      "health": "ok",
+      "conditionStatus": "True",
+      "reason": "ContinuousArchivingSuccess",
+      "liveArchiving": true,
+      "readyWalFiles": 0,
+      "provenance": {
+        "origin": "operator",
+        "source": "Cluster.status.conditions[ContinuousArchiving]",
+        "observedAt": "2026-10-29T11:59:58Z"
+      }
+    },
+    "recoveryWindow": {
+      "first": "2026-10-22T12:00:00Z",
+      "last": "2026-10-29T11:59:30Z",
+      "provenance": {
+        "origin": "operator",
+        "source": "ObjectStore.status.serverRecoveryWindow[orders]",
+        "observedAt": "2026-10-29T11:59:58Z"
+      }
+    },
+    "nextScheduledAt": "2026-10-30T07:00:00Z",
+    "notReported": [
+      "status.firstRecoverabilityPoint",
+      "status.lastSuccessfulBackup",
+      "metric:cnpg_collector_last_available_backup_timestamp"
+    ]
+  },
+  "method": {
+    "configured": true,
+    "pluginBased": true,
+    "pluginName": "barman-cloud.cloudnative-pg.io",
+    "objectStore": "orders-store",
+    "provenance": {
+      "origin": "operator",
+      "source": "Cluster.spec.plugins",
+      "observedAt": "2026-10-29T11:59:58Z"
+    }
+  },
+  "items": [
+    {
+      "name": "ondemand-20261029115500-x7k2p",
+      "phase": "started",
+      "health": "progressing",
+      "known": true,
+      "method": "plugin",
+      "pluginName": "barman-cloud.cloudnative-pg.io",
+      "createdAt": "2026-10-29T11:55:00Z",
+      "notReportedWhileRunning": [
+        "status.startedAt",
+        "status.stoppedAt",
+        "status.backupId"
+      ],
+      "repository": "unknown",
+      "provenance": {
+        "origin": "operator",
+        "source": "Backup.status",
+        "observedAt": "2026-10-29T11:59:58Z"
+      }
+    },
+    {
+      "name": "orders-daily-20261029070000",
+      "phase": "completed",
+      "health": "ok",
+      "known": true,
+      "terminal": true,
+      "method": "plugin",
+      "pluginName": "barman-cloud.cloudnative-pg.io",
+      "instance": "orders-2",
+      "online": true,
+      "backupId": "20261029T070001",
+      "createdAt": "2026-10-29T07:00:00Z",
+      "startedAt": "2026-10-29T07:00:00Z",
+      "stoppedAt": "2026-10-29T07:08:00Z",
+      "schedule": "orders-daily",
+      "repository": "present",
+      "provenance": {
+        "origin": "operator",
+        "source": "Backup.status",
+        "observedAt": "2026-10-29T11:59:58Z"
+      }
+    },
+    {
+      "name": "orders-daily-20261028070000",
+      "phase": "failed",
+      "health": "critical",
+      "known": true,
+      "terminal": true,
+      "method": "plugin",
+      "pluginName": "barman-cloud.cloudnative-pg.io",
+      "error": "rpc error: code = Unknown desc = missing WAL file 000000030000000000000007",
+      "createdAt": "2026-10-28T07:00:00Z",
+      "schedule": "orders-daily",
+      "repository": "notChecked",
+      "provenance": {
+        "origin": "operator",
+        "source": "Backup.status",
+        "observedAt": "2026-10-29T11:59:58Z"
+      }
+    }
+  ],
+  "schedules": [
+    {
+      "name": "orders-daily",
+      "schedule": "0 0 7 * * *",
+      "state": "active",
+      "health": "ok",
+      "method": "plugin",
+      "target": "prefer-standby",
+      "lastScheduledAt": "2026-10-29T07:00:00Z",
+      "nextScheduledAt": "2026-10-30T07:00:00Z",
+      "provenance": {
+        "origin": "operator",
+        "source": "ScheduledBackup.status",
+        "observedAt": "2026-10-29T11:59:58Z"
+      }
+    }
+  ],
+  "evidence": {
+    "state": "live",
+    "health": "ok",
+    "agent": "orders-evidence",
+    "repository": {
+      "completeness": "complete",
+      "overall": {
+        "state": "healthy",
+        "health": "ok"
+      },
+      "wal": {
+        "state": "healthy",
+        "health": "ok"
+      },
+      "timeline": {
+        "state": "healthy",
+        "health": "ok"
+      },
+      "coverage": {
+        "state": "warning",
+        "health": "warning",
+        "code": "coverage_gap",
+        "message": "one WAL gap on timeline 2 before the oldest usable backup"
+      },
+      "retention": {
+        "state": "unknown",
+        "health": "unknown",
+        "code": "policy_not_configured",
+        "message": "no retention policy is configured on the ObjectStore"
+      },
+      "backups": 8,
+      "structurallyUsable": 7,
+      "repositoryOnly": 6,
+      "oldestCompletionAt": "2026-10-22T12:00:00Z",
+      "newestCompletionAt": "2026-10-29T07:08:00Z",
+      "latestArchiveReceiptAt": "2026-10-29T11:59:15Z",
+      "completedAt": "2026-10-29T11:59:20Z"
+    },
+    "provenance": {
+      "origin": "evidence",
+      "source": "EvidenceAgent orders-evidence /api/v1alpha1/snapshot",
+      "observedAt": "2026-10-29T11:59:20Z"
+    }
+  },
+  "recoveryTimeline": {
+    "basis": "evidence",
+    "state": "warning",
+    "reason": "the window has holes where WAL is missing",
+    "earliest": "2026-10-22T07:08:00Z",
+    "latest": "2026-10-29T11:59:15Z",
+    "targetTimeline": 3,
+    "segments": [
+      {
+        "from": "2026-10-22T07:08:00Z",
+        "to": "2026-10-24T16:08:00Z",
+        "kind": "covered",
+        "backupId": "20261023T070800",
+        "text": "Structurally covered: base backup 20261023T070800 and contiguous archived WAL."
+      },
+      {
+        "from": "2026-10-24T16:08:00Z",
+        "to": "2026-10-25T07:08:00Z",
+        "kind": "missingWAL",
+        "text": "WAL is missing from the repository: no restore target in this span."
+      },
+      {
+        "from": "2026-10-25T07:08:00Z",
+        "to": "2026-10-29T11:59:15Z",
+        "kind": "covered",
+        "backupId": "20261029T070001",
+        "text": "Structurally covered: base backup 20261029T070001 and contiguous archived WAL."
+      }
+    ],
+    "markers": [
+      {
+        "at": "2026-10-22T07:08:00Z",
+        "backupId": "20261022T070800",
+        "kind": "completed",
+        "source": "repository"
+      },
+      {
+        "at": "2026-10-23T07:08:00Z",
+        "backupId": "20261023T070800",
+        "kind": "completed",
+        "source": "repository"
+      },
+      {
+        "at": "2026-10-24T07:08:00Z",
+        "backupId": "20261024T070800",
+        "kind": "completed",
+        "source": "repository"
+      },
+      {
+        "at": "2026-10-25T07:08:00Z",
+        "backupId": "20261025T070800",
+        "kind": "completed",
+        "source": "repository"
+      },
+      {
+        "at": "2026-10-26T07:08:00Z",
+        "backupId": "20261026T070800",
+        "kind": "completed",
+        "source": "repository"
+      },
+      {
+        "at": "2026-10-27T07:08:00Z",
+        "backupId": "20261027T070800",
+        "kind": "completed",
+        "source": "repository"
+      },
+      {
+        "at": "2026-10-28T07:00:00Z",
+        "name": "orders-daily-20261028070000",
+        "kind": "failed",
+        "text": "rpc error: code = Unknown desc = missing WAL file 000000030000000000000007",
+        "source": "backupObject"
+      },
+      {
+        "at": "2026-10-29T07:08:00Z",
+        "backupId": "20261029T070001",
+        "kind": "completed",
+        "source": "repository"
+      }
+    ],
+    "assumptions": [
+      "segment-name-presence-only",
+      "wal-bytes-and-restore-not-verified"
+    ],
+    "complete": true,
+    "provenance": {
+      "origin": "evidence",
+      "source": "EvidenceAgent orders-evidence /api/v1alpha1/recovery-paths",
+      "observedAt": "2026-10-29T11:59:20Z"
+    }
+  },
+  "drills": {
+    "enabled": true,
+    "namespace": "team-a",
+    "timeLimitSeconds": 7200,
+    "sizeTolerancePercent": 10,
+    "lastPassedAt": "2026-10-28T12:14:00Z",
+    "items": [
+      {
+        "drill": {
+          "namespace": "team-a",
+          "name": "drill-orders-2610281200"
+        },
+        "source": {
+          "namespace": "team-a",
+          "name": "orders",
+          "uid": "0b6a2c1e-8f0d-4a55-9a3e-7c1f2b3d4e5f"
+        },
+        "backup": "orders-daily-20261028070000",
+        "backupStoppedAt": "2026-10-28T07:08:00Z",
+        "startedAt": "2026-10-28T12:00:00Z",
+        "deadline": "2026-10-28T14:00:00Z",
+        "healthyAt": "2026-10-28T12:14:00Z",
+        "finishedAt": "2026-10-28T12:14:00Z",
+        "tornDownAt": "2026-10-28T12:15:00Z",
+        "durationSeconds": 840,
+        "restoredBytes": 195421011968,
+        "sourceBytes": 198642237440,
+        "timeline": 4,
+        "result": "passed",
+        "health": "ok",
+        "checks": [
+          {
+            "name": "healthy",
+            "outcome": "passed",
+            "text": "healthy after 14m",
+            "source": "Cluster.status.phase, Cluster.status.readyInstances"
+          },
+          {
+            "name": "promoted",
+            "outcome": "passed",
+            "text": "recovery ended; primary on timeline 4",
+            "source": "/pg/status (isPrimary, timeLineID)"
+          },
+          {
+            "name": "size",
+            "outcome": "passed",
+            "text": "restored 182.0 GiB, source 185.0 GiB at the start (tolerance ±10%)",
+            "source": "exporter cnpg_pg_database_size_bytes, sum over databases"
+          }
+        ]
+      },
+      {
+        "drill": {
+          "namespace": "team-a",
+          "name": "drill-orders-2610211200"
+        },
+        "source": {
+          "namespace": "team-a",
+          "name": "orders",
+          "uid": "0b6a2c1e-8f0d-4a55-9a3e-7c1f2b3d4e5f"
+        },
+        "backup": "orders-daily-20261021070000",
+        "startedAt": "2026-10-21T12:00:00Z",
+        "deadline": "2026-10-21T14:00:00Z",
+        "healthyAt": "2026-10-21T12:16:00Z",
+        "finishedAt": "2026-10-21T12:17:00Z",
+        "tornDownAt": "2026-10-21T12:17:00Z",
+        "durationSeconds": 960,
+        "restoredBytes": 128849018880,
+        "sourceBytes": 191126044672,
+        "timeline": 3,
+        "result": "failed",
+        "health": "critical",
+        "reason": "size: restored 120.0 GiB, source 178.0 GiB at the start (tolerance ±10%)",
+        "checks": [
+          {
+            "name": "healthy",
+            "outcome": "passed",
+            "text": "healthy after 16m",
+            "source": "Cluster.status.phase, Cluster.status.readyInstances"
+          },
+          {
+            "name": "promoted",
+            "outcome": "passed",
+            "text": "recovery ended; primary on timeline 3",
+            "source": "/pg/status (isPrimary, timeLineID)"
+          },
+          {
+            "name": "size",
+            "outcome": "failed",
+            "text": "restored 120.0 GiB, source 178.0 GiB at the start (tolerance ±10%)",
+            "source": "exporter cnpg_pg_database_size_bytes, sum over databases"
+          }
+        ]
+      }
+    ],
+    "scope": "kept in this console's persistent history (bounded to the 50 newest drills per Cluster)",
+    "notChecked": [
+      "the content of the data: no query is run (the console runs no SQL)",
+      "each database separately: the size check compares the sum over all databases",
+      "a recovery to a point in time other than the end of the archive",
+      "WAL written after the last archived segment",
+      "the replicas, poolers and applications of the source"
+    ]
+  },
+  "sources": [
+    {
+      "source": "backups",
+      "state": "live",
+      "since": "2026-10-29T09:00:00Z",
+      "health": "ok"
+    },
+    {
+      "source": "scheduledBackups",
+      "state": "live",
+      "since": "2026-10-29T09:00:00Z",
+      "health": "ok"
+    },
+    {
+      "source": "objectStores",
+      "state": "live",
+      "since": "2026-10-29T09:00:00Z",
+      "health": "ok"
+    },
+    {
+      "source": "evidence",
+      "state": "live",
+      "since": "2026-10-29T11:00:00Z",
+      "health": "ok"
+    }
+  ],
+  "blindSpots": [
+    {
+      "id": "backups.pluginNotReported",
+      "panel": "backups",
+      "text": "Backups go through a CNPG-I plugin: Cluster.status recoverability fields and cnpg_collector backup metrics are not reported; the ObjectStore recovery window is the source."
+    }
+  ]
+}

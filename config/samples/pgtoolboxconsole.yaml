@@ -1,0 +1,18 @@
+# The console for the CloudNativePG Clusters of this namespace, run by the
+# operator: the same console the pgtools chart installs (console.enabled), as a
+# resource. Sign-in through the corporate IdP; reachable on an Ingress.
+apiVersion: pgtoolbox.fyannk.dev/v1alpha1
+kind: PgToolBoxConsole
+metadata:
+  name: console
+spec:
+  auth:
+    provider: oidc
+    oidc:
+      issuerURL: https://idp.example.com/realms/corp
+      clientID: pgtoolbox-console-team-a
+      clientSecretRef:
+        name: pgtoolbox-console-team-a-oidc
+  exposure:
+    type: ingress
+    hostname: console.team-a.example.com

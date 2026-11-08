@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} WAL evidence — pgToolBox evidence agent</title>
+</head>
+<body>
+  <header>
+    <h1>{{.Title}} WAL evidence</h1>
+    <p><a href="/">Repository summary</a></p>
+  </header>
+  <main>
+    <dl>
+      <dt>Generation</dt><dd>{{.Generation}}</dd>
+      <dt>Completeness</dt><dd>{{.Completeness}}</dd>
+      <dt>Stale</dt><dd>{{.Stale}}</dd>
+    </dl>
+
+    <h2>Filters</h2>
+    <form method="get" action="/wals">
+      <label>Server <input name="server" value="{{.Server}}" maxlength="128"></label>
+      <label>Class
+        <select name="class">
+          <option value="all"{{if eq .Class "all"}} selected{{end}}>all</option>
+          <option value="segment"{{if eq .Class "segment"}} selected{{end}}>segment</option>
+          <option value="gap"{{if eq .Class "gap"}} selected{{end}}>gap</option>
+          <option value="unknown"{{if eq .Class "unknown"}} selected{{end}}>unknown</option>
+          <option value="duplicate"{{if eq .Class "duplicate"}} selected{{end}}>duplicate</option>
+        </select>
+      </label>
+      <label>Timeline <input name="timeline" value="{{.Timeline}}" inputmode="numeric"></label>
+      <label>Start WAL <input name="start" value="{{.Start}}" minlength="24" maxlength="24"></label>
+      <label>End WAL <input name="end" value="{{.End}}" minlength="24" maxlength="24"></label>
+      <button type="submit">Filter cached evidence</button>
+    </form>
+    <p>Start/end filters require a server because segment-size context is server-specific.</p>
+    <p>Partial, timeline-history, and backup-history files are counted on the summary page, not listed here; this list shows segments, gaps, and anomalies.</p>
+
+    <h2>Classified ranges and diagnostics</h2>
+    <p>Rows: {{.TotalRows}}. Page {{.Page}}{{if .TotalPages}} of {{.TotalPages}}{{end}}.</p>
+    {{if .DiagnosticsNotice}}<p>{{.DiagnosticsNotice}}</p>{{end}}
+    {{if .Rows}}
+    <table>
+      <thead><tr><th>Server</th><th>Class</th><th>Timeline</th><th>Start/name</th><th>End</th><th>Count</th><th>Status</th><th>Archive receipt</th><th>Reason</th><th>Bounded diagnostic key</th></tr></thead>
+      <tbody>
+      {{range .Rows}}
+        <tr><td>{{.Server}}</td><td>{{.Class}}</td><td>{{.Timeline}}</td><td><code>{{.Start}}</code></td><td><code>{{.End}}</code></td><td>{{.Count}}</td><td>{{.Status}}</td><td>{{.Receipt}}</td><td>{{.Reason}}</td><td>{{if .Key}}<code>{{.Key}}</code>{{else}}not retained{{end}}</td></tr>
+      {{end}}
+      </tbody>
+    </table>
+    {{else}}<p>No cached WAL evidence matches these filters.</p>{{end}}
+    <nav>
+      {{if .PreviousURL}}<a href="{{.PreviousURL}}">Previous page</a>{{end}}
+      {{if .NextURL}}<a href="{{.NextURL}}">Next page</a>{{end}}
+    </nav>
+
+    <h2>Evidence limit</h2>
+    <p>{{.EvidenceLimit}}</p>
+  </main>
+</body>
+</html>

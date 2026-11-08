@@ -1,0 +1,98 @@
+{
+  "ref": {
+    "namespace": "team-a",
+    "name": "orders",
+    "uid": "0b6a2c1e-8f0d-4a55-9a3e-7c1f2b3d4e5f"
+  },
+  "entry": {
+    "seq": 42,
+    "kind": "Cluster",
+    "name": "orders",
+    "change": "spec-changed",
+    "manager": "kubectl-client-side-apply",
+    "operation": "Update",
+    "observedAt": "2026-10-29T11:50:00Z",
+    "prevObservedAt": "2026-10-29T10:00:00Z",
+    "hasManifest": true
+  },
+  "manifest": "{\n  \"apiVersion\": \"postgresql.cnpg.io/v1\",\n  \"kind\": \"Cluster\",\n  \"spec\": {\n    \"instances\": 3,\n    \"postgresql\": {\n      \"parameters\": {\n        \"max_connections\": \"300\",\n        \"work_mem\": \"16MB\"\n      }\n    }\n  }\n}",
+  "baseManifest": "{\n  \"apiVersion\": \"postgresql.cnpg.io/v1\",\n  \"kind\": \"Cluster\",\n  \"spec\": {\n    \"instances\": 2,\n    \"postgresql\": {\n      \"parameters\": {\n        \"max_connections\": \"200\",\n        \"work_mem\": \"4MB\"\n      }\n    }\n  }\n}",
+  "diff": {
+    "hasBase": true,
+    "baseSeq": 7,
+    "baseObservedAt": "2026-10-29T09:00:00Z",
+    "entries": [
+      {
+        "path": ".spec.instances",
+        "op": "changed",
+        "before": "2",
+        "after": "3",
+        "manager": "kubectl-client-side-apply"
+      },
+      {
+        "path": ".spec.postgresql.parameters.max_connections",
+        "op": "changed",
+        "before": "200",
+        "after": "300",
+        "manager": "kubectl-client-side-apply"
+      },
+      {
+        "path": ".spec.postgresql.parameters.work_mem",
+        "op": "changed",
+        "before": "4MB",
+        "after": "16MB",
+        "manager": "kubectl-client-side-apply"
+      }
+    ]
+  },
+  "preview": {
+    "effect": "restart",
+    "parameters": [
+      {
+        "name": "max_connections",
+        "before": "200",
+        "after": "300",
+        "effect": "restart",
+        "context": "postmaster"
+      },
+      {
+        "name": "work_mem",
+        "before": "4MB",
+        "after": "16MB",
+        "effect": "reload",
+        "context": "reload"
+      }
+    ],
+    "fields": [
+      {
+        "path": ".spec.instances",
+        "effect": "none",
+        "reason": "scale"
+      }
+    ],
+    "strategy": "unsupervised",
+    "method": "switchover",
+    "primary": "switchover",
+    "steps": [
+      {
+        "role": "replicas",
+        "instances": [
+          "orders-3",
+          "orders-2"
+        ],
+        "action": "recreate"
+      },
+      {
+        "role": "primary",
+        "instances": [
+          "orders-1"
+        ],
+        "action": "switchover"
+      }
+    ],
+    "postgresMajor": 17,
+    "verified": true,
+    "cnpgMinor": "1.30"
+  }
+}
+

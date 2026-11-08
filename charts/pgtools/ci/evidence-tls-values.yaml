@@ -1,0 +1,12 @@
+# Evidence agents serving HTTPS from cert-manager Certificates; the console
+# trusts each agent's ca.crt. The token Secret is the team's own.
+evidence:
+  agents:
+    - cluster: orders
+      secrets: [orders-s3]
+  tls:
+    mode: certManager
+    certManager:
+      issuerRef: {name: team-ca, kind: Issuer, group: cert-manager.io}
+  token:
+    existingSecret: team-evidence-token

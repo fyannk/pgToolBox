@@ -1,0 +1,551 @@
+{
+  "Width": 1690,
+  "Height": 532,
+  "Frames": [
+    {
+      "label": "Poolers",
+      "kind": "pool",
+      "x": 8,
+      "y": 160,
+      "w": 242,
+      "h": 244,
+      "foldable": true
+    },
+    {
+      "label": "Cluster",
+      "kind": "cluster",
+      "x": 310,
+      "y": 160,
+      "w": 856,
+      "h": 364,
+      "foldable": true
+    },
+    {
+      "label": "Backups",
+      "kind": "backup",
+      "x": 608,
+      "y": 8,
+      "w": 242,
+      "h": 124,
+      "foldable": true
+    },
+    {
+      "label": "Kubernetes storage",
+      "kind": "kubeStorage",
+      "x": 1226,
+      "y": 160,
+      "w": 456,
+      "h": 354,
+      "foldable": true
+    },
+    {
+      "label": "Object storage",
+      "kind": "objectStorage",
+      "x": 1226,
+      "y": 8,
+      "w": 456,
+      "h": 124
+    }
+  ],
+  "Edges": [
+    {
+      "kind": "write",
+      "path": "M 234 247 L 326 247"
+    },
+    {
+      "kind": "read",
+      "path": "M 234 357 L 326 357"
+    },
+    {
+      "kind": "write",
+      "path": "M 566 247 L 614 247"
+    },
+    {
+      "kind": "read",
+      "path": "M 566 357 L 920 357"
+    },
+    {
+      "kind": "read",
+      "path": "M 566 357 L 584 357 Q 590 357 590 363 L 590 461 Q 590 467 596 467 L 920 467"
+    },
+    {
+      "kind": "baseBackup",
+      "path": "M 729 116 L 729 160"
+    },
+    {
+      "kind": "replicate",
+      "path": "M 844 262 L 876 262 Q 882 262 882 268 L 882 366 Q 882 372 888 372 L 920 372"
+    },
+    {
+      "kind": "replicate",
+      "label": "replication",
+      "path": "M 844 262 L 876 262 Q 882 262 882 268 L 882 476 Q 882 482 888 482 L 920 482",
+      "labelX": 878,
+      "labelY": 317,
+      "labelVertical": true
+    },
+    {
+      "kind": "volume",
+      "path": "M 844 247 L 1242 247"
+    },
+    {
+      "kind": "volume",
+      "path": "M 1150 357 L 1466 357"
+    },
+    {
+      "kind": "volume",
+      "path": "M 1150 467 L 1242 467"
+    },
+    {
+      "kind": "wal",
+      "label": "WAL archive",
+      "path": "M 844 232 L 1178 232 Q 1184 232 1184 226 L 1184 84 Q 1184 78 1190 78 L 1242 78",
+      "labelX": 1014,
+      "labelY": 225
+    },
+    {
+      "kind": "baseBackup",
+      "label": "base backup · barman-cloud",
+      "path": "M 1150 342 L 1202 342 Q 1208 342 1208 336 L 1208 98 Q 1208 92 1214 92 L 1242 92",
+      "labelX": 1204,
+      "labelY": 217,
+      "labelVertical": true
+    }
+  ],
+  "Nodes": [
+    {
+      "id": "pool-rw",
+      "kind": "pooler",
+      "label": "orders-pool-rw",
+      "state": "ok",
+      "lines": [
+        {
+          "class": "label",
+          "text": "orders-pool-rw",
+          "x": 38,
+          "y": 235
+        },
+        {
+          "class": "sub",
+          "text": "fact 1",
+          "x": 38,
+          "y": 252
+        },
+        {
+          "class": "sub",
+          "text": "fact 2",
+          "x": 38,
+          "y": 266
+        }
+      ],
+      "x": 24,
+      "y": 216,
+      "w": 210,
+      "h": 62
+    },
+    {
+      "id": "pool-ro",
+      "kind": "pooler",
+      "label": "orders-pool-ro",
+      "state": "ok",
+      "lines": [
+        {
+          "class": "label",
+          "text": "orders-pool-ro",
+          "x": 38,
+          "y": 345
+        },
+        {
+          "class": "sub",
+          "text": "fact 1",
+          "x": 38,
+          "y": 362
+        },
+        {
+          "class": "sub",
+          "text": "fact 2",
+          "x": 38,
+          "y": 376
+        }
+      ],
+      "x": 24,
+      "y": 326,
+      "w": 210,
+      "h": 62
+    },
+    {
+      "id": "svc-rw",
+      "kind": "service",
+      "label": "orders-rw",
+      "state": "ok",
+      "lines": [
+        {
+          "class": "label",
+          "text": "orders-rw",
+          "x": 340,
+          "y": 235
+        },
+        {
+          "class": "sub",
+          "text": "fact 1",
+          "x": 340,
+          "y": 252
+        },
+        {
+          "class": "sub",
+          "text": "fact 2",
+          "x": 340,
+          "y": 266
+        }
+      ],
+      "x": 326,
+      "y": 216,
+      "w": 240,
+      "h": 62
+    },
+    {
+      "id": "svc-ro",
+      "kind": "service",
+      "label": "orders-ro",
+      "state": "ok",
+      "lines": [
+        {
+          "class": "label",
+          "text": "orders-ro",
+          "x": 340,
+          "y": 345
+        },
+        {
+          "class": "sub",
+          "text": "fact 1",
+          "x": 340,
+          "y": 362
+        },
+        {
+          "class": "sub",
+          "text": "fact 2",
+          "x": 340,
+          "y": 376
+        }
+      ],
+      "x": 326,
+      "y": 326,
+      "w": 240,
+      "h": 62
+    },
+    {
+      "id": "inst-orders-1",
+      "kind": "primary",
+      "label": "orders-1",
+      "state": "ok",
+      "lines": [
+        {
+          "class": "label",
+          "text": "orders-1",
+          "x": 628,
+          "y": 221
+        },
+        {
+          "class": "sub",
+          "text": "fact 1",
+          "x": 628,
+          "y": 238
+        },
+        {
+          "class": "sub",
+          "text": "fact 2",
+          "x": 628,
+          "y": 252
+        },
+        {
+          "class": "sub",
+          "text": "fact 3",
+          "x": 628,
+          "y": 266
+        },
+        {
+          "class": "sub",
+          "text": "fact 4",
+          "x": 628,
+          "y": 280
+        }
+      ],
+      "x": 614,
+      "y": 206,
+      "w": 230,
+      "h": 82
+    },
+    {
+      "id": "inst-orders-2",
+      "kind": "replica",
+      "label": "orders-2",
+      "state": "ok",
+      "lines": [
+        {
+          "class": "label",
+          "text": "orders-2",
+          "x": 934,
+          "y": 331
+        },
+        {
+          "class": "sub",
+          "text": "fact 1",
+          "x": 934,
+          "y": 348
+        },
+        {
+          "class": "sub",
+          "text": "fact 2",
+          "x": 934,
+          "y": 362
+        },
+        {
+          "class": "sub",
+          "text": "fact 3",
+          "x": 934,
+          "y": 376
+        },
+        {
+          "class": "sub",
+          "text": "fact 4",
+          "x": 934,
+          "y": 390
+        }
+      ],
+      "x": 920,
+      "y": 316,
+      "w": 230,
+      "h": 82
+    },
+    {
+      "id": "inst-orders-3",
+      "kind": "replica",
+      "label": "orders-3",
+      "state": "ok",
+      "lines": [
+        {
+          "class": "label",
+          "text": "orders-3",
+          "x": 934,
+          "y": 441
+        },
+        {
+          "class": "sub",
+          "text": "fact 1",
+          "x": 934,
+          "y": 458
+        },
+        {
+          "class": "sub",
+          "text": "fact 2",
+          "x": 934,
+          "y": 472
+        },
+        {
+          "class": "sub",
+          "text": "fact 3",
+          "x": 934,
+          "y": 486
+        },
+        {
+          "class": "sub",
+          "text": "fact 4",
+          "x": 934,
+          "y": 500
+        }
+      ],
+      "x": 920,
+      "y": 426,
+      "w": 230,
+      "h": 82
+    },
+    {
+      "id": "sched-daily",
+      "kind": "schedule",
+      "label": "daily",
+      "state": "ok",
+      "lines": [
+        {
+          "class": "label",
+          "text": "daily",
+          "x": 638,
+          "y": 73
+        },
+        {
+          "class": "sub",
+          "text": "fact 1",
+          "x": 638,
+          "y": 90
+        },
+        {
+          "class": "sub",
+          "text": "fact 2",
+          "x": 638,
+          "y": 104
+        }
+      ],
+      "x": 624,
+      "y": 54,
+      "w": 210,
+      "h": 62
+    },
+    {
+      "id": "store",
+      "kind": "store",
+      "label": "store",
+      "state": "ok",
+      "lines": [
+        {
+          "class": "label",
+          "text": "store",
+          "x": 1256,
+          "y": 73
+        },
+        {
+          "class": "sub",
+          "text": "fact 1",
+          "x": 1256,
+          "y": 90
+        },
+        {
+          "class": "sub",
+          "text": "fact 2",
+          "x": 1256,
+          "y": 104
+        }
+      ],
+      "x": 1242,
+      "y": 54,
+      "w": 265,
+      "h": 62
+    },
+    {
+      "id": "pvc-1",
+      "kind": "volume",
+      "label": "orders-1",
+      "state": "ok",
+      "lines": [
+        {
+          "class": "label",
+          "text": "orders-1",
+          "x": 1256,
+          "y": 235
+        },
+        {
+          "class": "sub",
+          "text": "fact 1",
+          "x": 1256,
+          "y": 252
+        },
+        {
+          "class": "sub",
+          "text": "fact 2",
+          "x": 1256,
+          "y": 266
+        }
+      ],
+      "x": 1242,
+      "y": 216,
+      "w": 200,
+      "h": 62
+    },
+    {
+      "id": "pvc-2",
+      "kind": "volume",
+      "label": "orders-2",
+      "state": "ok",
+      "lines": [
+        {
+          "class": "label",
+          "text": "orders-2",
+          "x": 1480,
+          "y": 345
+        },
+        {
+          "class": "sub",
+          "text": "fact 1",
+          "x": 1480,
+          "y": 362
+        },
+        {
+          "class": "sub",
+          "text": "fact 2",
+          "x": 1480,
+          "y": 376
+        }
+      ],
+      "x": 1466,
+      "y": 326,
+      "w": 200,
+      "h": 62
+    },
+    {
+      "id": "pvc-3",
+      "kind": "volume",
+      "label": "orders-3",
+      "state": "ok",
+      "lines": [
+        {
+          "class": "label",
+          "text": "orders-3",
+          "x": 1256,
+          "y": 455
+        },
+        {
+          "class": "sub",
+          "text": "fact 1",
+          "x": 1256,
+          "y": 472
+        },
+        {
+          "class": "sub",
+          "text": "fact 2",
+          "x": 1256,
+          "y": 486
+        }
+      ],
+      "x": 1242,
+      "y": 436,
+      "w": 200,
+      "h": 62
+    }
+  ],
+  "Dots": [
+    {
+      "kind": "read",
+      "x": 590,
+      "y": 357
+    },
+    {
+      "kind": "replicate",
+      "x": 882,
+      "y": 372
+    }
+  ],
+  "Legend": [
+    {
+      "kind": "write",
+      "label": "writes"
+    },
+    {
+      "kind": "read",
+      "label": "reads"
+    },
+    {
+      "kind": "replicate",
+      "label": "replication"
+    },
+    {
+      "kind": "wal",
+      "label": "WAL archive"
+    },
+    {
+      "kind": "baseBackup",
+      "label": "base backup"
+    },
+    {
+      "kind": "volume",
+      "label": "volume"
+    }
+  ]
+}

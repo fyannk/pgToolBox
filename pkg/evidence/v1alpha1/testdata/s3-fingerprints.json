@@ -1,0 +1,57 @@
+[
+  {
+    "name": "aws-default-empty-prefix",
+    "destination": "s3://Backup-Bucket",
+    "endpoint": "",
+    "bucket": "Backup-Bucket",
+    "prefix": "",
+    "format": "barman-cloud",
+    "scope_kind": "barman-server",
+    "scope_name": "orders",
+    "fingerprint": "sha256:b2dca02d285b29bb56e535496a56e7c2234bf3c403b44f39a81fa58dc0496fa8"
+  },
+  {
+    "name": "compatible-origin-canonicalization",
+    "destination": "s3://backup-bucket/team/Orders/",
+    "endpoint": "HTTPS://MinIO.Example.TEST:443/",
+    "bucket": "backup-bucket",
+    "prefix": "team/Orders",
+    "format": "barman-cloud",
+    "scope_kind": "barman-server",
+    "scope_name": "Orders",
+    "fingerprint": "sha256:c7a0c142c1a730012ad1765f474307ec2a97378ea3ee76263710e449e4848d60"
+  },
+  {
+    "name": "cnpg-object-store-prefix",
+    "destination": "s3://cnpg-backups/prod/cluster-example",
+    "endpoint": "",
+    "bucket": "cnpg-backups",
+    "prefix": "prod/cluster-example",
+    "format": "barman-cloud",
+    "scope_kind": "barman-server",
+    "scope_name": "cluster-example",
+    "fingerprint": "sha256:130d6bb1a5657660d1af2ab2ff3ee0293c61a71efbf155fd7515a5c4ac1a4694"
+  },
+  {
+    "name": "percent-encoded-prefix-decoded-once",
+    "destination": "s3://backup-bucket/team%20a/orders%2Fdb",
+    "endpoint": "http://minio.minio-system.svc:9000",
+    "bucket": "backup-bucket",
+    "prefix": "team a/orders/db",
+    "format": "barman-cloud",
+    "scope_kind": "barman-server",
+    "scope_name": "orders",
+    "fingerprint": "sha256:0406f8f5dd44d76bf6609e1f16380fb7e43580e7dd03e3a99dc435b60b456c14"
+  },
+  {
+    "name": "trailing-slash-equals-bare-bucket",
+    "destination": "s3://backup-bucket/",
+    "endpoint": "https://s3.eu-west-1.amazonaws.com",
+    "bucket": "backup-bucket",
+    "prefix": "",
+    "format": "barman-cloud",
+    "scope_kind": "barman-server",
+    "scope_name": "orders",
+    "fingerprint": "sha256:3f131569431ad76ed81da8726080e4998cb2471df649d1c3f2ccf364d3b28621"
+  }
+]

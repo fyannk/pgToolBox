@@ -1,0 +1,5 @@
+# Two watched namespaces: a Role, a RoleBinding and an evidence token per entry.
+# hack/e2e-chart.sh creates the namespaces first.
+console:
+  replicas: 1
+  watchNamespaces: [ct-team-a, ct-team-b]

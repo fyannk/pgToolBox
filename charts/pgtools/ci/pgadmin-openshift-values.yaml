@@ -1,0 +1,15 @@
+# pgAdmin without the operator on OpenShift: the oauth-proxy, a re-encrypting
+# Route, no fixed fsGroup (the restricted SCC assigns one).
+pgadmin:
+  enabled: true
+  auth:
+    provider: openshift
+  exposure:
+    type: route
+    host: pgadmin.apps.example.org
+  fsGroup: null
+  servers:
+    - cluster: orders
+      endpoint: rw
+      credentials:
+        application: {secret: orders-app}

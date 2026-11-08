@@ -1,0 +1,53 @@
+{{- /*
+OpenCode. Source: https://opencode.ai/docs/mcp-servers/ (2026-11): servers
+are the "mcp" object of opencode.json (project) or
+~/.config/opencode/opencode.json (user), {name: {"type": "remote", "url",
+"enabled", "headers", "oauth"}}; "{env:VAR}" substitutes a variable;
+"oauth": false turns the automatic sign-in off; "opencode mcp auth <name>"
+signs in (dynamic registration, redirect
+http://127.0.0.1:19876/mcp/oauth/callback), "opencode mcp list" shows the
+servers and their state. Its add command is interactive, so none is given.
+*/ -}}
+{{define "name"}}OpenCode{{end}}
+{{define "docs"}}https://opencode.ai/docs/mcp-servers/{{end}}
+{{define "add"}}{{end}}
+{{define "login"}}opencode mcp auth {{.Server}}{{end}}
+{{define "check"}}opencode mcp list{{end}}
+{{define "pack.document"}}agents{{end}}
+{{define "pack.project"}}AGENTS.md{{end}}
+{{define "pack.user"}}~/.config/opencode/AGENTS.md{{end}}
+{{define "user.path"}}~/.config/opencode/opencode.json{{end}}
+{{define "user.format"}}json{{end}}
+{{define "user"}}{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    {{q .Server}}: {
+      "type": "remote",
+      "url": {{q .URL}},
+      "enabled": true
+    }
+  }
+}
+{{end}}
+{{define "project.path"}}opencode.json{{end}}
+{{define "project.format"}}json{{end}}
+{{define "project"}}{{template "user" .}}{{end}}
+{{define "static.path"}}~/.config/opencode/opencode.json{{end}}
+{{define "static.format"}}json{{end}}
+{{define "static"}}{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    {{q .Server}}: {
+      "type": "remote",
+      "url": {{q .URL}},
+      "enabled": true,
+      "oauth": false,
+      "headers": {
+        "Authorization": {{q (print "Bearer {env:" .TokenEnv "}")}}
+      }
+    }
+  }
+}
+{{end}}
+{{define "static.env"}}export {{.TokenEnv}}="$({{.TokenCommand}})"{{end}}
+{{define "static.note"}}OpenCode reads the token from the variable when it starts; "oauth": false keeps it from signing in instead. Use it where token sign-in is your break-glass path; the sign-in above is the normal one.{{end}}

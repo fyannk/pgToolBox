@@ -1,0 +1,6 @@
+{
+  "title": "Forbidden",
+  "status": 403,
+  "detail": "you may not create rolebindings and update pgaccessrequests/status in namespace team-a: deciding access requests takes the pgtoolbox-console-operator role there"
+}
+

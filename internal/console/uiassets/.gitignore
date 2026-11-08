@@ -1,0 +1,4 @@
+# The SPA build (ui/dist) is copied here by the console image build; only the
+# placeholder that keeps `go:embed all:dist` valid without Node is committed.
+/dist/*
+!/dist/.gitkeep

@@ -1,0 +1,72 @@
+name: Dependabot auto-merge
+
+# Routine dependency bumps are reviewed by the pipeline rather than by hand.
+# This workflow only arms GitHub's auto-merge: nothing lands early, because
+# auto-merge merely tells GitHub to merge once the ruleset on main is
+# satisfied, so the same required checks (ci-ok, security-gate) and the same
+# resolved-thread requirement a human merge faces still apply. Major upgrades
+# are left for a person to read the changelog.
+#
+# pull_request_target, not pull_request: a workflow triggered by Dependabot on
+# pull_request gets a read-only token and could not enable auto-merge. No step
+# here checks out the pull request, so the elevated token never meets anything
+# the branch wrote.
+on:
+  pull_request_target: # zizmor: ignore[dangerous-triggers] no checkout; gated on Dependabot author and sender, see above
+    types:
+      - opened
+      - reopened
+      - synchronize
+
+permissions: {}
+
+concurrency:
+  group: automerge-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  automerge:
+    name: Queue for merge on green
+    # Author and sender both, not author alone: on synchronize the author is
+    # still Dependabot even when a person pushed the commit that fired the
+    # event, and this job holds a write token under pull_request_target.
+    if: >-
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
+      github.event.sender.login == 'dependabot[bot]' &&
+      github.event.pull_request.base.ref == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write # `gh pr merge --auto` enables the merge
+      pull-requests: write # and writes the pull request state
+    steps:
+      - name: Read the update Dependabot proposes
+        id: metadata
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # An allowlist rather than "not major": if update-type is ever empty or
+      # carries a value this workflow has not seen, the gate closes instead of
+      # arming a merge nobody chose.
+      - name: Queue patch and minor updates
+        if: >-
+          steps.metadata.outputs.update-type == 'version-update:semver-patch' ||
+          steps.metadata.outputs.update-type == 'version-update:semver-minor'
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh pr merge --auto --squash "${PR_URL}"
+
+      - name: Say why the bump was left alone
+        if: >-
+          steps.metadata.outputs.update-type != 'version-update:semver-patch' &&
+          steps.metadata.outputs.update-type != 'version-update:semver-minor'
+        env:
+          NAMES: ${{ steps.metadata.outputs.dependency-names }}
+          UPDATE_TYPE: ${{ steps.metadata.outputs.update-type }}
+        run: |
+          set -euo pipefail
+          echo "::notice::${NAMES} has update-type '${UPDATE_TYPE}', which is outside the auto-merge allowlist. Left for manual review."

@@ -1,0 +1,258 @@
+/* The sign-in, denied and error pages, in fyannk/design (the console's
+   own look): ink background, one lichen accent, Plex Mono for names and
+   headings, 1 px borders, tight corners, no shadows. The values are the
+   --fy-* tokens of ui/tokens/fyannk.css, copied because these pages carry
+   one hashed inline style and nothing else. The page CSP loads no fonts,
+   so the Plex families apply only where installed; the system stacks
+   behind them are the designed fallback. */
+:root {
+  color-scheme: dark light;
+  --bg: #040604;
+  --surface: #090c0a;
+  --raised: #0f1410;
+  --border: #1b231d;
+  --border-strong: #29342b;
+  --text: #e6e4d6;
+  --text-muted: #9ca393;
+  --accent: #b3bf3a;
+  --accent-ink: #040604;
+  --crit: #ec6a55;
+  --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f2f1e8;
+    --surface: #fbfaf3;
+    --raised: #ffffff;
+    --border: #d6d6c6;
+    --border-strong: #b9bba8;
+    --text: #14200f;
+    --text-muted: #4f5a48;
+    --accent: #4f6b0e;
+    --accent-ink: #fbfaf3;
+    --crit: #b8371f;
+  }
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--sans);
+  background: var(--bg);
+  color: var(--text);
+}
+.card {
+  width: min(26rem, 92vw);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2rem;
+}
+/* The product lockup: the console mark, then "pg" muted, "Console" in
+   the text colour and the accent block cursor, Plex Mono 600. */
+.brand {
+  align-items: center;
+  display: flex;
+  gap: 0.7rem;
+  margin-bottom: 1.5rem;
+}
+.brand .mark {
+  height: 2.5rem;
+  width: 2.5rem;
+}
+.brand .wordmark {
+  font-family: var(--mono);
+  font-size: 1.3rem;
+  font-weight: 600;
+}
+.brand .wordmark .pg {
+  color: var(--text-muted);
+}
+.brand .wordmark .cursor {
+  color: var(--accent);
+}
+h1 {
+  font-family: var(--mono);
+  font-size: 1.25rem;
+  font-weight: 600;
+  margin: 0 0 1rem;
+}
+p {
+  line-height: 1.5;
+}
+a {
+  color: var(--accent);
+}
+code {
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  font-family: var(--mono);
+  font-size: 0.9em;
+  padding: 0.05rem 0.3rem;
+}
+form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+label {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+input[type="text"],
+input[type="password"],
+textarea {
+  width: 100%;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 2px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 0.9rem;
+}
+input:focus,
+textarea:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+/* The one filled button: the accent, the single thing to act on. */
+button {
+  margin-top: 0.5rem;
+  padding: 0.6rem 1rem;
+  border: 0;
+  border-radius: 4px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-family: var(--mono);
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+button:hover {
+  filter: brightness(1.1);
+}
+/* Status is never colour alone: the glyph says it too. */
+.alert {
+  border: 1px solid var(--crit);
+  border-radius: 4px;
+  padding: 0.6rem 0.8rem;
+  color: var(--crit);
+}
+.alert::before {
+  content: "■ ";
+}
+.foot {
+  margin-top: 1.25rem;
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+/* The separator between the local form and the identity providers beside
+   it. A rule on each side rather than a bare word, so the two ways in read
+   as alternatives rather than as a caption on the button below. */
+.or {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 1.25rem 0 1rem;
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.or::before,
+.or::after {
+  content: "";
+  flex: 1;
+  border-top: 1px solid var(--border);
+}
+/* One per external provider. Outlined rather than filled: the local form
+   keeps the single filled button, so the page still says which way in is
+   the primary one without hiding the other. */
+.button-link {
+  display: block;
+  padding: 0.6rem 1rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 0.95rem;
+  font-weight: 600;
+  text-align: center;
+  text-decoration: none;
+}
+.button-link + .button-link {
+  margin-top: 0.5rem;
+}
+.button-link:hover {
+  border-color: var(--accent);
+  background: var(--raised);
+}
+
+/* The break-glass token form folds away without script. */
+details {
+  margin-top: 1.25rem;
+}
+summary {
+  cursor: pointer;
+  color: inherit;
+}
+/* The consent page's Approve arms after a moment: a click meant for
+   something that was on screen just before (a window opened over the
+   page, a double click) does not land on it. Enter in the form submits
+   the first button of the document, Deny: Approve comes after it in the
+   markup and is shown first by the row's reversed direction, so no key
+   press approves before it is armed (P4-E). */
+.decision {
+  display: flex;
+  flex-direction: row-reverse;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+button.armed {
+  pointer-events: none;
+  opacity: 0.6;
+  animation: arm 0s linear 0.8s forwards;
+}
+@keyframes arm {
+  to {
+    pointer-events: auto;
+    opacity: 1;
+  }
+}
+fieldset {
+  margin: 0.75rem 0 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+fieldset label {
+  display: block;
+}
+.hint {
+  font-size: 0.875rem;
+  color: var(--text-muted);
+}
+/* A second submit beside the filled one (sign out and also disconnect the
+   assistants): outlined like .button-link, so the page keeps a single
+   filled button. */
+button.secondary {
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  color: var(--text);
+}
+button.secondary:hover {
+  filter: none;
+  border-color: var(--accent);
+  background: var(--raised);
+}

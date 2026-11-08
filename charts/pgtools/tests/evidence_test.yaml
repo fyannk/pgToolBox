@@ -1,0 +1,680 @@
+# Evidence agents without the operator: one agent per listed
+# Cluster, namespaced objects only, the Role naming exactly what it reads.
+suite: evidence agents
+release:
+  name: pgc
+  namespace: team-a
+templates:
+  - templates/evidence/deployment.yaml
+  - templates/evidence/service.yaml
+  - templates/evidence/serviceaccount.yaml
+  - templates/evidence/rbac.yaml
+  - templates/evidence/secret-token.yaml
+  - templates/evidence/configmap-agents.yaml
+  - templates/evidence/certificate.yaml
+  - templates/evidence/networkpolicy.yaml
+  - templates/console/deployment.yaml
+  - templates/NOTES.txt
+tests:
+  - it: renders no agent by default
+    templates:
+      - templates/evidence/deployment.yaml
+      - templates/evidence/service.yaml
+      - templates/evidence/serviceaccount.yaml
+      - templates/evidence/rbac.yaml
+      - templates/evidence/secret-token.yaml
+      - templates/evidence/configmap-agents.yaml
+      - templates/evidence/certificate.yaml
+      - templates/evidence/networkpolicy.yaml
+    asserts:
+      - hasDocuments: {count: 0}
+
+  - it: leaves the console on the EvidenceAgent path by default
+    template: templates/console/deployment.yaml
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content: {name: EVIDENCE_AGENTS_FILE, value: /var/run/console/evidence-agents/agents.json}
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: EVIDENCE_TOKEN_DIR, value: /var/run/secrets/pgtoolbox.fyannk.dev/evidence-agent}
+
+  - it: renders exactly one Deployment, Service, ServiceAccount, Role and RoleBinding per agent
+    set:
+      evidence.agents: [{cluster: orders, secrets: [minio-creds]}]
+    asserts:
+      - hasDocuments: {count: 1}
+        template: templates/evidence/deployment.yaml
+      - hasDocuments: {count: 1}
+        template: templates/evidence/service.yaml
+      - hasDocuments: {count: 1}
+        template: templates/evidence/serviceaccount.yaml
+      - hasDocuments: {count: 2}
+        template: templates/evidence/rbac.yaml
+      - hasDocuments: {count: 1}
+        template: templates/evidence/secret-token.yaml
+      - hasDocuments: {count: 1}
+        template: templates/evidence/configmap-agents.yaml
+      - hasDocuments: {count: 0}
+        template: templates/evidence/certificate.yaml
+      - hasDocuments: {count: 0}
+        template: templates/evidence/networkpolicy.yaml
+      - equal: {path: metadata.name, value: pgc-evidence-orders}
+        template: templates/evidence/deployment.yaml
+      - equal: {path: metadata.namespace, value: team-a}
+        template: templates/evidence/deployment.yaml
+
+  - it: runs one restricted replica with the projected token only
+    set:
+      evidence.agents: [{cluster: orders, secrets: [minio-creds]}]
+    template: templates/evidence/deployment.yaml
+    asserts:
+      - equal: {path: spec.replicas, value: 1}
+      - equal: {path: spec.template.spec.automountServiceAccountToken, value: false}
+      - equal: {path: spec.template.spec.securityContext, value: {runAsNonRoot: true, seccompProfile: {type: RuntimeDefault}}}
+      - notExists: {path: spec.template.spec.securityContext.runAsUser}
+      - notExists: {path: 'spec.template.spec.containers[0].securityContext.runAsUser'}
+      - equal:
+          path: spec.template.spec.containers[0].securityContext
+          value: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, runAsNonRoot: true, capabilities: {drop: [ALL]}}
+      - equal: {path: spec.template.spec.serviceAccountName, value: pgc-evidence-orders}
+      - equal: {path: 'spec.template.spec.containers[0].image', value: "ghcr.io/fyannk/pgtoolbox-evidence-agent:0.1.0"}
+      - contains:
+          path: spec.template.spec.volumes[1].projected.sources
+          content: {serviceAccountToken: {path: token, expirationSeconds: 3600}}
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: AGENT_RESOLVE, value: cluster}
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: AGENT_AUTH, value: sharedtoken}
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: AGENT_ALLOWED_SECRETS, value: minio-creds}
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: CNPG_CLUSTER_NAME, value: orders}
+
+  - it: grants get on the named Secrets only, and reads its Cluster by name
+    set:
+      evidence.agents: [{cluster: orders, secrets: [minio-creds, minio-ca, minio-creds], objectStore: orders-store}]
+    template: templates/evidence/rbac.yaml
+    documentIndex: 0
+    asserts:
+      - isKind: {of: Role}
+      - equal:
+          path: rules
+          value:
+            - {apiGroups: [postgresql.cnpg.io], resources: [clusters], resourceNames: [orders], verbs: [get, list, watch]}
+            - {apiGroups: [barmancloud.cnpg.io], resources: [objectstores], resourceNames: [orders-store], verbs: [get, list, watch]}
+            - {apiGroups: [""], resources: [secrets], resourceNames: [minio-creds, minio-ca], verbs: [get]}
+
+  - it: reads any ObjectStore of the namespace when none is named (they hold references only)
+    set:
+      evidence.agents: [{cluster: orders, secrets: [minio-creds]}]
+    template: templates/evidence/rbac.yaml
+    documentIndex: 0
+    asserts:
+      - equal:
+          path: rules[1]
+          value: {apiGroups: [barmancloud.cnpg.io], resources: [objectstores], verbs: [get, list, watch]}
+      - notContains:
+          path: rules
+          content: {apiGroups: [""], resources: [secrets], verbs: [get, list, watch]}
+
+  - it: names the pgBackRest Stanza and no ObjectStore for a Cluster backed up with Dalibo's plugin
+    set:
+      evidence.agents: [{cluster: orders, secrets: [minio-creds], stanza: orders-stanza}]
+    template: templates/evidence/rbac.yaml
+    documentIndex: 0
+    asserts:
+      - equal:
+          path: rules
+          value:
+            - {apiGroups: [postgresql.cnpg.io], resources: [clusters], resourceNames: [orders], verbs: [get, list, watch]}
+            - {apiGroups: [pgbackrest.dalibo.com], resources: [stanzas], resourceNames: [orders-stanza], verbs: [get, list, watch]}
+            - {apiGroups: [""], resources: [secrets], resourceNames: [minio-creds], verbs: [get]}
+
+  - it: names the pgBackRest Archive and no ObjectStore for a Cluster backed up with Opera's plugin
+    set:
+      evidence.agents: [{cluster: orders, secrets: [minio-creds], archive: orders-archive}]
+    template: templates/evidence/rbac.yaml
+    documentIndex: 0
+    asserts:
+      - equal:
+          path: rules[1]
+          value: {apiGroups: [pgbackrest.cnpg.opera.com], resources: [archives], resourceNames: [orders-archive], verbs: [get, list, watch]}
+      - lengthEqual: {path: rules, count: 3}
+
+  - it: passes the pgBackRest repository and endpoint CA to the agent
+    set:
+      evidence.agents: [{cluster: orders, secrets: [minio-creds, minio-ca], archive: orders-archive, pgbackrest: {repository: 2, endpointCA: {name: minio-ca, key: ca.crt}, endpoint: "minio.storage.svc:9000"}}]
+    template: templates/evidence/deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: AGENT_PGBACKREST_ENDPOINT, value: "minio.storage.svc:9000"}
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: AGENT_PGBACKREST_REPOSITORY, value: "2"}
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: AGENT_PGBACKREST_ENDPOINT_CA_SECRET, value: minio-ca}
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: AGENT_PGBACKREST_ENDPOINT_CA_KEY, value: ca.crt}
+
+  - it: sets no pgBackRest variable without the pgbackrest block
+    set:
+      evidence.agents: [{cluster: orders, secrets: [minio-creds], stanza: orders-stanza}]
+    template: templates/evidence/deployment.yaml
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content: {name: AGENT_PGBACKREST_REPOSITORY}
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content: {name: AGENT_PGBACKREST_ENDPOINT_CA_SECRET}
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content: {name: AGENT_PGBACKREST_ENDPOINT}
+          any: true
+
+  - it: refuses an endpoint pin that is not a host[:port]
+    set:
+      evidence.agents: [{cluster: orders, secrets: [minio-creds], archive: orders-archive, pgbackrest: {endpoint: "https://minio:9000"}}]
+    template: templates/evidence/deployment.yaml
+    asserts:
+      - failedTemplate: {}
+
+  - it: accepts an IPv6 endpoint pin
+    set:
+      evidence.agents: [{cluster: orders, secrets: [minio-creds], archive: orders-archive, pgbackrest: {endpoint: "[fd00::1]:9000"}}]
+    template: templates/evidence/deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: AGENT_PGBACKREST_ENDPOINT, value: "[fd00::1]:9000"}
+
+  - it: refuses a Cluster entry naming both a stanza and an archive
+    set:
+      evidence.agents: [{cluster: orders, secrets: [s], stanza: a, archive: b}]
+    # The ServiceAccount reports the shared validation (rendered first).
+    template: templates/evidence/serviceaccount.yaml
+    asserts:
+      - failedTemplate:
+          errorMessage: "evidence.agents: the Cluster orders names both a stanza and an archive; a Cluster uses one pgBackRest plugin"
+
+  - it: refuses a Cluster entry naming an objectStore and a stanza
+    set:
+      evidence.agents: [{cluster: orders, secrets: [s], objectStore: store, stanza: a}]
+    # The ServiceAccount reports the shared validation (rendered first).
+    template: templates/evidence/serviceaccount.yaml
+    asserts:
+      - failedTemplate:
+          errorMessage: "evidence.agents: the Cluster orders names an objectStore and a pgBackRest stanza or archive; a Cluster uses one backup plugin"
+
+  - it: refuses pgbackrest settings without a stanza or archive
+    set:
+      evidence.agents: [{cluster: orders, secrets: [s], pgbackrest: {repository: 2}}]
+    # The ServiceAccount reports the shared validation (rendered first).
+    template: templates/evidence/serviceaccount.yaml
+    asserts:
+      - failedTemplate:
+          errorMessage: "evidence.agents: the Cluster orders sets pgbackrest without its stanza (Dalibo's plugin) or archive (Opera's)"
+
+  - it: refuses an endpoint CA Secret that secrets does not list
+    set:
+      evidence.agents: [{cluster: orders, secrets: [s], stanza: a, pgbackrest: {endpointCA: {name: other-ca, key: ca.crt}}}]
+    # The ServiceAccount reports the shared validation (rendered first).
+    template: templates/evidence/serviceaccount.yaml
+    asserts:
+      - failedTemplate:
+          errorMessage: "evidence.agents: the Cluster orders names the endpoint CA Secret other-ca, which its secrets must list"
+
+  - it: refuses a pgBackRest repository number out of range
+    set:
+      evidence.agents: [{cluster: orders, secrets: [s], stanza: a, pgbackrest: {repository: 0}}]
+    # The ServiceAccount reports the shared validation (rendered first).
+    template: templates/evidence/serviceaccount.yaml
+    asserts:
+      - failedTemplate: {}
+
+  - it: binds the Role to the agent's ServiceAccount
+    set:
+      evidence.agents: [{cluster: orders, secrets: [s], serviceAccountName: orders-reader, workloadIdentity: {serviceAccountAnnotations: {iam.gke.io/gcp-service-account: orders@p.iam.gserviceaccount.com}}}]
+    asserts:
+      - equal: {path: subjects, value: [{kind: ServiceAccount, name: orders-reader, namespace: team-a}]}
+        template: templates/evidence/rbac.yaml
+        documentIndex: 1
+      - equal: {path: metadata.name, value: orders-reader}
+        template: templates/evidence/serviceaccount.yaml
+      - equal: {path: metadata.annotations, value: {iam.gke.io/gcp-service-account: orders@p.iam.gserviceaccount.com}}
+        template: templates/evidence/serviceaccount.yaml
+      - equal: {path: automountServiceAccountToken, value: false}
+        template: templates/evidence/serviceaccount.yaml
+
+  - it: renders nothing cluster-scoped
+    set:
+      evidence.agents: [{cluster: orders, secrets: [s]}, {cluster: billing, secrets: [t]}]
+      evidence.networkPolicy: {enabled: true, apiServer: {addresses: [10.96.0.1]}}
+      evidence.tls: {mode: certManager, certManager: {issuerRef: {name: team-ca}}}
+    templates:
+      - templates/evidence/deployment.yaml
+      - templates/evidence/service.yaml
+      - templates/evidence/serviceaccount.yaml
+      - templates/evidence/rbac.yaml
+      - templates/evidence/secret-token.yaml
+      - templates/evidence/configmap-agents.yaml
+      - templates/evidence/certificate.yaml
+      - templates/evidence/networkpolicy.yaml
+    asserts:
+      - notMatchRegex: {path: kind, pattern: "^(ClusterRole|ClusterRoleBinding|ClusterIssuer)$"}
+      - equal: {path: metadata.namespace, value: team-a}
+
+  - it: lists every agent for the console, plain HTTP by default
+    set:
+      evidence.agents: [{cluster: orders, secrets: [s]}]
+    template: templates/evidence/configmap-agents.yaml
+    asserts:
+      - equal:
+          path: data["agents.json"]
+          value: |
+            [
+              {
+                "cluster": "orders",
+                "namespace": "team-a",
+                "tokenFile": "/var/run/console/evidence-token/token",
+                "url": "http://pgc-evidence-orders.team-a.svc:8443"
+              }
+            ]
+
+  - it: wires the console to the agents file and the shared token, keeping the bound tokens
+    set:
+      evidence.agents: [{cluster: orders, secrets: [s]}]
+    template: templates/console/deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: EVIDENCE_AGENTS_FILE, value: /var/run/console/evidence-agents/agents.json}
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: EVIDENCE_TOKEN_DIR, value: /var/run/secrets/pgtoolbox.fyannk.dev/evidence-agent}
+      - contains:
+          path: spec.template.spec.volumes
+          content: {name: evidence-token, secret: {secretName: pgc-evidence-token, items: [{key: token, path: token}]}}
+      - contains:
+          path: spec.template.spec.volumes
+          content: {name: evidence-agents, configMap: {name: pgc-console-evidence-agents, items: [{key: agents.json, path: agents.json}]}}
+      - notContains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content: {name: evidence-ca, mountPath: /var/run/console/evidence-ca, readOnly: true}
+      - exists: {path: 'spec.template.metadata.annotations["checksum/evidence-agents"]'}
+
+  - it: names a token Secret of your own instead of generating one
+    set:
+      evidence.agents: [{cluster: orders, secrets: [s]}]
+      evidence.token: {existingSecret: team-evidence-token, key: value}
+    asserts:
+      - hasDocuments: {count: 0}
+        template: templates/evidence/secret-token.yaml
+      - contains:
+          path: spec.template.spec.volumes
+          content: {name: evidence-token, secret: {secretName: team-evidence-token, defaultMode: 0444, items: [{key: value, path: token}]}}
+        template: templates/evidence/deployment.yaml
+
+  - it: keeps the generated token through lookup
+    set:
+      evidence.agents: [{cluster: orders, secrets: [s]}]
+    template: templates/evidence/secret-token.yaml
+    kubernetesProvider:
+      scheme:
+        "v1/Secret": {gvr: {version: v1, resource: secrets}, namespaced: true}
+      objects:
+        - apiVersion: v1
+          kind: Secret
+          metadata: {name: pgc-evidence-token, namespace: team-a}
+          data: {token: a2VwdC1zaGFyZWQtdG9rZW4tMDEyMzQ1Njc4OWFiY2RlZmdoaWo=}
+    asserts:
+      - equal: {path: data.token, value: a2VwdC1zaGFyZWQtdG9rZW4tMDEyMzQ1Njc4OWFiY2RlZmdoaWo=}
+
+  - it: generates a 48-character token on first install
+    set:
+      evidence.agents: [{cluster: orders, secrets: [s]}]
+    template: templates/evidence/secret-token.yaml
+    asserts:
+      - matchRegex: {path: data.token, pattern: "^[A-Za-z0-9+/]{64}$"}
+
+  - it: serves HTTPS with a cert-manager Certificate and gives the console each agent's CA
+    set:
+      evidence.agents: [{cluster: orders, secrets: [s]}]
+      evidence.tls: {mode: certManager, certManager: {issuerRef: {name: team-ca}}}
+    asserts:
+      - hasDocuments: {count: 1}
+        template: templates/evidence/certificate.yaml
+      - equal: {path: spec.secretName, value: pgc-evidence-orders-tls}
+        template: templates/evidence/certificate.yaml
+      - equal: {path: spec.dnsNames, value: [pgc-evidence-orders.team-a.svc, pgc-evidence-orders.team-a.svc.cluster.local]}
+        template: templates/evidence/certificate.yaml
+      - equal: {path: spec.issuerRef, value: {name: team-ca, kind: Issuer, group: cert-manager.io}}
+        template: templates/evidence/certificate.yaml
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: TLS_CERT_FILE, value: /var/run/pgtools/tls/tls.crt}
+        template: templates/evidence/deployment.yaml
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content: {name: AGENT_PLAIN_HTTP, value: "true"}
+        template: templates/evidence/deployment.yaml
+      - equal: {path: 'spec.template.spec.containers[0].readinessProbe.httpGet.scheme', value: HTTPS}
+        template: templates/evidence/deployment.yaml
+      - equal: {path: 'spec.ports[0].name', value: https}
+        template: templates/evidence/service.yaml
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: evidence-ca
+            projected:
+              sources:
+                - secret: {name: pgc-evidence-orders-tls, optional: true, items: [{key: ca.crt, path: orders/ca.crt}]}
+        template: templates/console/deployment.yaml
+      - matchRegex:
+          path: data["agents.json"]
+          pattern: '"caFile": "/var/run/console/evidence-ca/orders/ca.crt"'
+        template: templates/evidence/configmap-agents.yaml
+
+  - it: refuses certManager without an issuer
+    set:
+      evidence.agents: [{cluster: orders, secrets: [s]}]
+      evidence.tls.mode: certManager
+    # Helm renders the evidence templates last-name-first: the
+    # ServiceAccount is the one that reports the shared validation.
+    template: templates/evidence/serviceaccount.yaml
+    asserts:
+      - failedTemplate:
+          errorMessage: "evidence.tls.certManager.issuerRef.name is required with evidence.tls.mode=certManager"
+
+  - it: serves HTTPS from the OpenShift service CA
+    set:
+      evidence.agents: [{cluster: orders, secrets: [s]}]
+      evidence.tls.mode: openshiftServiceCA
+    asserts:
+      - equal:
+          path: metadata.annotations["service.beta.openshift.io/serving-cert-secret-name"]
+          value: pgc-evidence-orders-tls
+        template: templates/evidence/service.yaml
+      - hasDocuments: {count: 0}
+        template: templates/evidence/certificate.yaml
+      - contains:
+          path: spec.template.spec.volumes
+          content: {name: evidence-ca, configMap: {name: openshift-service-ca.crt, items: [{key: service-ca.crt, path: service-ca.crt}]}}
+        template: templates/console/deployment.yaml
+      - matchRegex:
+          path: data["agents.json"]
+          pattern: '"url": "https://pgc-evidence-orders.team-a.svc:8443"'
+        template: templates/evidence/configmap-agents.yaml
+
+  - it: renders no NetworkPolicy unless asked
+    set:
+      evidence.agents: [{cluster: orders, secrets: [s]}]
+    template: templates/evidence/networkpolicy.yaml
+    asserts:
+      - hasDocuments: {count: 0}
+
+  - it: admits the console only and reaches DNS, the API server and the object store
+    set:
+      evidence.agents: [{cluster: orders, secrets: [s]}]
+      evidence.networkPolicy:
+        enabled: true
+        apiServer: {addresses: [10.96.0.1]}
+        objectStore: {to: [{ipBlock: {cidr: 192.0.2.10/32}}], ports: [9000]}
+    template: templates/evidence/networkpolicy.yaml
+    asserts:
+      - equal: {path: spec.policyTypes, value: [Ingress, Egress]}
+      - equal:
+          path: spec.podSelector.matchLabels
+          value: {app.kubernetes.io/name: evidence-agent, app.kubernetes.io/instance: pgc, app.kubernetes.io/component: evidence-agent}
+      - equal:
+          path: spec.ingress
+          value:
+            - from:
+                - podSelector:
+                    matchLabels: {app.kubernetes.io/name: pgtoolbox-console, app.kubernetes.io/instance: pgc, app.kubernetes.io/component: console}
+              ports: [{port: 8443, protocol: TCP}]
+      - contains:
+          path: spec.egress
+          content:
+            to: [{ipBlock: {cidr: 10.96.0.1/32}}]
+            ports: [{port: 443, protocol: TCP}, {port: 6443, protocol: TCP}]
+      - contains:
+          path: spec.egress
+          content:
+            to: [{ipBlock: {cidr: 192.0.2.10/32}}]
+            ports: [{port: 9000, protocol: TCP}]
+      - lengthEqual: {path: spec.egress, count: 3}
+
+  - it: refuses an API-server rule it cannot fill in
+    set:
+      evidence.agents: [{cluster: orders, secrets: [s]}]
+      evidence.networkPolicy.enabled: true
+    template: templates/evidence/networkpolicy.yaml
+    asserts:
+      - failedTemplate: {}
+
+  - it: refuses a Cluster listed twice
+    set:
+      evidence.agents: [{cluster: orders, secrets: [s]}, {cluster: orders, secrets: [t]}]
+    # Helm renders the evidence templates last-name-first: the
+    # ServiceAccount is the one that reports the shared validation.
+    template: templates/evidence/serviceaccount.yaml
+    asserts:
+      - failedTemplate:
+          errorMessage: "evidence.agents: the Cluster orders is listed twice"
+
+  - it: refuses agents the console does not watch
+    set:
+      evidence.agents: [{cluster: orders, secrets: [s]}]
+      console.watchNamespaces: [team-b]
+    # Helm renders the evidence templates last-name-first: the
+    # ServiceAccount is the one that reports the shared validation.
+    template: templates/evidence/serviceaccount.yaml
+    asserts:
+      - failedTemplate:
+          errorMessage: "evidence.agents run in the release namespace, which console.watchNamespaces must include for the console to read them"
+
+  - it: reads no Secret with workload identity (no secrets), and grants none
+    set:
+      evidence.agents:
+        - cluster: orders
+          workloadIdentity:
+            serviceAccountAnnotations: {eks.amazonaws.com/role-arn: "arn:aws:iam::123456789012:role/orders-backups"}
+            podLabels: {azure.workload.identity/use: "true"}
+    asserts:
+      - equal:
+          path: rules
+          value:
+            - {apiGroups: [postgresql.cnpg.io], resources: [clusters], resourceNames: [orders], verbs: [get, list, watch]}
+            - {apiGroups: [barmancloud.cnpg.io], resources: [objectstores], verbs: [get, list, watch]}
+        template: templates/evidence/rbac.yaml
+        documentIndex: 0
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content: {name: AGENT_ALLOWED_SECRETS}
+          any: true
+        template: templates/evidence/deployment.yaml
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: AGENT_WORKLOAD_IDENTITY, value: "true"}
+        template: templates/evidence/deployment.yaml
+      - equal: {path: 'spec.template.metadata.labels["azure.workload.identity/use"]', value: "true"}
+        template: templates/evidence/deployment.yaml
+      - notExists: {path: 'spec.selector.matchLabels["azure.workload.identity/use"]'}
+        template: templates/evidence/deployment.yaml
+      - equal: {path: 'metadata.annotations["eks.amazonaws.com/role-arn"]', value: "arn:aws:iam::123456789012:role/orders-backups"}
+        template: templates/evidence/serviceaccount.yaml
+
+  - it: opts in to nothing by default, and never to the node's instance metadata
+    set:
+      evidence.agents: [{cluster: orders, secrets: [s]}]
+    template: templates/evidence/deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: AWS_EC2_METADATA_DISABLED, value: "true"}
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content: {name: AGENT_WORKLOAD_IDENTITY}
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content: {name: AGENT_ALLOW_INSECURE_ENDPOINT}
+          any: true
+      - notExists: {path: spec.template.metadata.annotations}
+
+  - it: renders the insecure-endpoint opt-in, and an empty workloadIdentity as an opt-in
+    set:
+      evidence.agents: [{cluster: orders, secrets: [s], allowInsecureEndpoint: true, workloadIdentity: {}}]
+    template: templates/evidence/deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: AGENT_ALLOW_INSECURE_ENDPOINT, value: "true"}
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: AGENT_WORKLOAD_IDENTITY, value: "true"}
+
+  - it: refuses a pod label other than azure.workload.identity/use
+    set:
+      evidence.agents: [{cluster: orders, workloadIdentity: {podLabels: {cnpg.io/instanceRole: primary}}}]
+    # Helm renders the evidence templates last-name-first: the
+    # ServiceAccount is the one that reports the shared validation.
+    template: templates/evidence/serviceaccount.yaml
+    asserts:
+      - failedTemplate: {}
+
+  - it: refuses a ServiceAccount annotation outside the workload-identity ones
+    set:
+      evidence.agents: [{cluster: orders, workloadIdentity: {serviceAccountAnnotations: {serviceaccounts.openshift.io/oauth-redirecturi.first: "https://example.test"}}}]
+    template: templates/evidence/serviceaccount.yaml
+    asserts:
+      - failedTemplate: {}
+
+  - it: refuses the former free-form annotations and podLabels keys
+    set:
+      evidence.agents: [{cluster: orders, annotations: {a: b}}]
+    template: templates/evidence/serviceaccount.yaml
+    asserts:
+      - failedTemplate: {}
+
+  - it: opens the GKE metadata server to that agent only
+    set:
+      evidence.networkPolicy: {enabled: true, apiServer: {addresses: [10.96.0.1]}}
+      evidence.agents:
+        - {cluster: orders, workloadIdentity: {platform: gke}}
+        - {cluster: other, secrets: [s]}
+    template: templates/evidence/networkpolicy.yaml
+    asserts:
+      - hasDocuments: {count: 2}
+      - equal: {path: 'spec.podSelector.matchLabels["pgtoolbox.fyannk.dev/cluster"]', value: orders}
+        documentIndex: 1
+      - equal: {path: spec.policyTypes, value: [Egress]}
+        documentIndex: 1
+      - equal:
+          path: spec.egress
+          value:
+            - {to: [{ipBlock: {cidr: 169.254.169.254/32}}], ports: [{port: 80, protocol: TCP}]}
+            - {to: [{ipBlock: {cidr: 169.254.169.252/32}}], ports: [{port: 988, protocol: TCP}]}
+        documentIndex: 1
+
+  - it: opens the EKS Pod Identity Agent, and nothing for IRSA or Azure
+    set:
+      evidence.networkPolicy: {enabled: true, apiServer: {addresses: [10.96.0.1]}}
+      evidence.agents:
+        - {cluster: orders, workloadIdentity: {platform: eksPodIdentity}}
+        - {cluster: irsa, workloadIdentity: {platform: irsa}}
+        - {cluster: azure, workloadIdentity: {platform: azure}}
+    template: templates/evidence/networkpolicy.yaml
+    asserts:
+      - hasDocuments: {count: 2}
+      - equal:
+          path: spec.egress
+          value:
+            - {to: [{ipBlock: {cidr: 169.254.170.23/32}}, {ipBlock: {cidr: "fd00:ec2::23/128"}}], ports: [{port: 80, protocol: TCP}]}
+        documentIndex: 1
+
+  - it: applies global.imageRegistry, the per-agent image and the digest
+    set:
+      global.imageRegistry: registry.corp:5000/mirror
+      evidence.image.digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+      evidence.agents:
+        - {cluster: orders, secrets: [s]}
+        - {cluster: billing, secrets: [s], image: {tag: "9.9.9", digest: ""}, resources: {limits: {memory: 2Gi}}, nodeSelector: {disk: ssd}}
+    template: templates/evidence/deployment.yaml
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: "registry.corp:5000/mirror/fyannk/pgtoolbox-evidence-agent@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+        documentIndex: 0
+      - equal: {path: 'spec.template.spec.containers[0].resources', value: {limits: {memory: 2Gi}}}
+        documentIndex: 1
+      - equal: {path: spec.template.spec.nodeSelector, value: {disk: ssd}}
+        documentIndex: 1
+
+  - it: says in NOTES which agents run, what they read, and the clear-text default
+    set:
+      evidence.agents: [{cluster: orders, secrets: [s]}]
+    template: templates/NOTES.txt
+    asserts:
+      - matchRegexRaw: {pattern: "Evidence agents \\(1\\), one per Cluster of team-a: orders\\."}
+      - matchRegexRaw: {pattern: "logs deploy/pgc-evidence-orders"}
+      - matchRegexRaw: {pattern: "plain HTTP \\(evidence.tls.mode=none\\)"}
+      - matchRegexRaw: {pattern: "Secret pgc-evidence-token was generated"}
+
+  - it: names the Service port's protocol as the operator does (https with TLS)
+    template: templates/evidence/service.yaml
+    set:
+      evidence.agents: [{cluster: orders}]
+      evidence.tls.mode: openshiftServiceCA
+    asserts:
+      - equal:
+          path: spec.ports[0].appProtocol
+          value: https
+
+  - it: names the Service port http when the agent serves plain HTTP (the default)
+    template: templates/evidence/service.yaml
+    set:
+      evidence.agents: [{cluster: orders}]
+      evidence.tls.mode: none
+    asserts:
+      - equal:
+          path: spec.ports[0].appProtocol
+          value: http
+
+  - it: keeps two long Cluster names that differ only at the end apart after the 63-character cut
+    release:
+      name: pgtools-payments
+      namespace: payments
+    set:
+      evidence.agents:
+        - {cluster: payments-ledger-eu-west-1-pg16-cluster-01, secrets: [s3]}
+        - {cluster: payments-ledger-eu-west-1-pg16-cluster-02, secrets: [s3]}
+    template: templates/evidence/service.yaml
+    asserts:
+      - hasDocuments: {count: 2}
+      - equal:
+          path: metadata.name
+          value: pgtools-payments-evidence-payments-ledger-eu-west-1-pg-19eb530d
+        documentIndex: 0
+      - equal:
+          path: metadata.name
+          value: pgtools-payments-evidence-payments-ledger-eu-west-1-pg-87b3af9e
+        documentIndex: 1
+
+  - it: leaves a name that fits untouched (upgrade safety)
+    set:
+      evidence.agents: [{cluster: orders, secrets: [minio-creds]}]
+    template: templates/evidence/service.yaml
+    asserts:
+      - equal: {path: metadata.name, value: pgc-evidence-orders}

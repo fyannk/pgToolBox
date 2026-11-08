@@ -1,0 +1,21 @@
+# Scraping, a PodMonitor, served TLS, the break-glass form off and the optional env.
+console:
+  publicURL: https://console.example.org
+  cookieSecure: "true"
+  trustedProxyHops: 1
+  tls: {secretName: pgtoolbox-console-tls}
+  auth:
+    tokenLogin: false
+    sessionMaxAge: 12h
+    idpTimeout: 10s
+  metrics:
+    readerClusterRole: true
+    readerSubjects: [{name: prometheus-k8s, namespace: monitoring}]
+    serviceMonitor: {enabled: true}
+    podMonitor: {enabled: true}
+  networkPolicy:
+    enabled: true
+    apiServer: {mode: any}
+    ingress:
+      metricsFrom:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: monitoring}}

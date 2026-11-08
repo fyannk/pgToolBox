@@ -1,0 +1,28 @@
+# A pgAdmin of three replicas whose settings database is on a CloudNativePG
+# Cluster of the namespace (CloudNativePG 1.31 or later: the operator asks it
+# to generate the database role's password and never holds it), and that
+# also registers a Cluster of team-b, which team-b grants with a
+# PgAdminAccess (pgadminaccess.yaml). configDatabase is chosen at creation:
+# an existing SQLite settings database is moved by hand.
+apiVersion: pgtoolbox.fyannk.dev/v1alpha1
+kind: PgAdmin
+metadata:
+  name: team-a
+spec:
+  clusterRefs:
+  - name: orders
+  crossNamespaceClusterRefs:
+  - namespace: team-b
+    name: payments
+  configDatabase:
+    clusterRef:
+      name: pgadmin-settings
+  replicas: 3
+  auth:
+    oauth2:
+      issuerURL: https://idp.example.com/realms/corp
+      clientID: pgadmin-team-a
+      clientSecretRef:
+        name: pgadmin-team-a-oidc
+      requiredClaims:
+        groups: [team-a-dba]

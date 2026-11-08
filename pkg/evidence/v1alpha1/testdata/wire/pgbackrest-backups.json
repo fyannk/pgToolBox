@@ -1,0 +1,85 @@
+{
+  "api_version": "evidence.pgtoolbox.fyannk.dev/v1alpha1",
+  "kind": "PGBackRestBackupPage",
+  "revision": 42,
+  "evidence_generation": 42,
+  "total_items": 2,
+  "next_cursor": null,
+  "items": [
+    {
+      "stanza": "orders",
+      "label": "20261107-081054F",
+      "type": "full",
+      "prior": null,
+      "references": [],
+      "state": "healthy",
+      "reason": {
+        "code": "backup-healthy",
+        "message": "chain, manifests and WAL to consistency are present and verified"
+      },
+      "usable": true,
+      "unusable_reasons": [],
+      "archive_id": "17-1",
+      "system_id": "7570185463461748506",
+      "postgresql_version": 170000,
+      "timeline": 1,
+      "start_at": "2026-07-28T08:00:00.123Z",
+      "stop_at": "2026-07-28T08:00:30.123Z",
+      "start_lsn": "0/3000028",
+      "stop_lsn": "0/4000100",
+      "archive_start": "000000010000000000000003",
+      "archive_stop": "000000010000000000000004",
+      "size_bytes": 23000000,
+      "delta_bytes": 23000000,
+      "repository_size_bytes": 3000000,
+      "repository_delta_bytes": 3000000,
+      "error": false,
+      "pgbackrest_version": "2.60.0",
+      "cnpg_backup_name": "orders-20261107081054",
+      "annotations": [
+        {
+          "key": "cnpg-backup-name",
+          "value": "orders-20261107081054"
+        }
+      ],
+      "annotations_withheld": 0
+    },
+    {
+      "stanza": "orders",
+      "label": "20261107-081054F_20261107-091108I",
+      "type": "incr",
+      "prior": "20261107-081054F",
+      "references": [
+        "20261107-081054F"
+      ],
+      "state": "unhealthy",
+      "reason": {
+        "code": "backup-unhealthy",
+        "message": "manifest does not verify"
+      },
+      "usable": false,
+      "unusable_reasons": [
+        "manifest-unhealthy"
+      ],
+      "archive_id": "17-1",
+      "system_id": "7570185463461748506",
+      "postgresql_version": 170000,
+      "timeline": 1,
+      "start_at": "2026-07-28T09:00:00.123Z",
+      "stop_at": "2026-07-28T09:00:10.123Z",
+      "start_lsn": "0/7000028",
+      "stop_lsn": "0/7000100",
+      "archive_start": "000000010000000000000007",
+      "archive_stop": "000000010000000000000007",
+      "size_bytes": 23000000,
+      "delta_bytes": 400000,
+      "repository_size_bytes": 3000000,
+      "repository_delta_bytes": 60000,
+      "error": false,
+      "pgbackrest_version": "2.60.0",
+      "cnpg_backup_name": null,
+      "annotations": [],
+      "annotations_withheld": 0
+    }
+  ]
+}

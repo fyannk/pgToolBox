@@ -1,0 +1,43 @@
+# Every pull request gets @fyannk as a reviewer automatically.
+#
+# The ruleset on main requires the `ci-ok` and `security-gate` checks and no
+# approvals, so this does not gate merging by itself; it exists so review is
+# requested without anyone having to remember to ask, and so the owner of each
+# area is written down rather than known. The area lines below are commented
+# out while one person owns everything: uncomment a line and change its owner
+# when a co-maintainer takes an area, and turn on "Require review from Code
+# Owners" in the ruleset if the area should gate merging.
+*                           @fyannk
+
+# The trust boundary. The console's sign-in and SubjectAccessReview authorizer
+# decide who sees what, and its write path is the only code that mutates a
+# cluster with a person's token; a wrong change here is a security change
+# rather than a bug. The generated RBAC is what keeps the operator and the
+# console within their grants.
+# /internal/console/auth/       @fyannk
+# /internal/console/authz/      @fyannk
+# /internal/console/ops/        @fyannk
+# /internal/console/kube/ops.go @fyannk
+# /internal/evidence/agent/     @fyannk
+# /api/                         @fyannk
+# /deploy/                      @fyannk
+# /config/rbac/                 @fyannk
+# /config/console/              @fyannk
+# /charts/pgtoolbox/templates/  @fyannk
+# /charts/pgtools/templates/    @fyannk
+# /SECURITY.md                  @fyannk
+
+# Credentials in flight: the PgAdmin Pod's passfile-sync sidecar writes the
+# offered roles' passwords into libpq files.
+# /internal/operator/adminsync/ @fyannk
+# /internal/operator/pgadmin/   @fyannk
+
+# Publishing and supply chain: anything here decides what gets built and
+# pushed under the project's name.
+# /.github/                     @fyannk
+# /Dockerfile                   @fyannk
+# /Makefile                     @fyannk
+# /hack/                        @fyannk
+# /mise.toml                    @fyannk
+# /NOTICE                       @fyannk
+# /LICENSE                      @fyannk

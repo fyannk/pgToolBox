@@ -1,0 +1,16 @@
+{{- if and .Values.console.enabled .Values.console.podDisruptionBudget.enabled (gt (int (include "pgtools.console.replicas" .)) 1) }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "pgtools.console.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "pgtools.console.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.console.podDisruptionBudget.minAvailable }}
+  # A console that is not Ready must not block a node drain.
+  unhealthyPodEvictionPolicy: AlwaysAllow
+  selector:
+    matchLabels:
+      {{- include "pgtools.console.selectorLabels" . | nindent 6 }}
+{{- end }}

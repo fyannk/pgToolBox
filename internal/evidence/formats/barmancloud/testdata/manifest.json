@@ -1,0 +1,14 @@
+{
+  "format": "barman-cloud",
+  "generator": "barman.infofile.BackupInfo.save",
+  "generator_image": "evidence-agent-barman-generator:3.19.1",
+  "generator_version": "3.19.1",
+  "reproduction": "make test-barman-fixtures",
+  "generated_at": "2026-07-27T00:00:00Z",
+  "fixtures": [
+    {
+      "path": "barman-3.19.1/completed/backup.info",
+      "scenario": "completed postgres-mode backup with gzip and one tablespace"
+    }
+  ]
+}

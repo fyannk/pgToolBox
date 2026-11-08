@@ -1,0 +1,1601 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.23.0
+  name: pgtoolboxconsoles.pgtoolbox.fyannk.dev
+spec:
+  group: pgtoolbox.fyannk.dev
+  names:
+    categories:
+    - pgtoolbox
+    kind: PgToolBoxConsole
+    listKind: PgToolBoxConsoleList
+    plural: pgtoolboxconsoles
+    shortNames:
+    - pgc
+    singular: pgtoolboxconsole
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.url
+      name: URL
+      type: string
+    - jsonPath: .status.conditions[?(@.type=="Ready")].status
+      name: Ready
+      type: string
+    - jsonPath: .status.conditions[?(@.type=="Ready")].reason
+      name: Reason
+      priority: 1
+      type: string
+    - jsonPath: .status.image
+      name: Image
+      priority: 1
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          PgToolBoxConsole runs the pgToolBox console for the CloudNativePG Clusters of
+          its namespace: the same console the chart installs, kept converged by the
+          operator. The console's own authority is read-only in this namespace;
+          whoever may create a PgToolBoxConsole may create a Deployment here anyway.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              PgToolBoxConsoleSpec declares one console in this namespace: the console the
+              chart installs, run and kept converged by the operator. It watches the
+              CloudNativePG Clusters of its own namespace only; every reader still sees
+              only what their own RBAC allows (SubjectAccessReview).
+            properties:
+              auth:
+                default:
+                  provider: token
+                description: How people sign in.
+                properties:
+                  oidc:
+                    description: OpenID Connect, for provider oidc.
+                    properties:
+                      caConfigMapRef:
+                        description: |-
+                          A ConfigMap with ca.crt trusting a private IdP. Omitted: the system
+                          roots.
+                        properties:
+                          name:
+                            description: The name of the referenced object.
+                            maxLength: 253
+                            minLength: 1
+                            pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                            type: string
+                        required:
+                        - name
+                        type: object
+                      clientID:
+                        description: The client id.
+                        maxLength: 256
+                        minLength: 1
+                        type: string
+                      clientSecretRef:
+                        description: The Secret key holding the client secret, mounted
+                          as a file.
+                        properties:
+                          key:
+                            default: client-secret
+                            description: The key.
+                            maxLength: 253
+                            pattern: ^[-._a-zA-Z0-9]+$
+                            type: string
+                          name:
+                            description: The Secret name.
+                            maxLength: 253
+                            minLength: 1
+                            pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                            type: string
+                        required:
+                        - name
+                        type: object
+                      grantClient:
+                        description: |-
+                          A second client of the same issuer for the identity provider sign-ins
+                          of console grants (MCP clients), registered with the same redirect
+                          URI. An identity provider that keeps one refresh token per person and
+                          client (dex) otherwise ends the browser session's renewal each time an
+                          assistant connects. The API server's JWT authenticator must accept
+                          this client's audience too. Omitted: grants sign in as clientID.
+                        properties:
+                          clientID:
+                            description: The client id.
+                            maxLength: 256
+                            minLength: 1
+                            type: string
+                          clientSecretRef:
+                            description: The Secret key holding the client secret,
+                              mounted as a file.
+                            properties:
+                              key:
+                                default: client-secret
+                                description: The key.
+                                maxLength: 253
+                                pattern: ^[-._a-zA-Z0-9]+$
+                                type: string
+                              name:
+                                description: The Secret name.
+                                maxLength: 253
+                                minLength: 1
+                                pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                                type: string
+                            required:
+                            - name
+                            type: object
+                        required:
+                        - clientID
+                        - clientSecretRef
+                        type: object
+                      issuerURL:
+                        description: The issuer, https only.
+                        maxLength: 512
+                        pattern: ^https://
+                        type: string
+                      redirectURL:
+                        description: The callback URL. Defaults to <publicURL>/auth/oidc/callback.
+                        maxLength: 512
+                        pattern: ^https://
+                        type: string
+                      requireEmailVerified:
+                        description: |-
+                          Refuse a login whose ID token lacks email_verified=true. Default true;
+                          set false only for an IdP that omits the claim.
+                        type: boolean
+                      scopes:
+                        description: 'Scopes requested. Default: openid, email, profile,
+                          offline_access.'
+                        items:
+                          maxLength: 128
+                          type: string
+                        maxItems: 16
+                        type: array
+                    required:
+                    - clientID
+                    - clientSecretRef
+                    - issuerURL
+                    type: object
+                    x-kubernetes-validations:
+                    - fieldPath: .grantClient.clientID
+                      message: oidc.grantClient.clientID must differ from oidc.clientID
+                      reason: FieldValueInvalid
+                      rule: '!has(self.grantClient) || self.grantClient.clientID !=
+                        self.clientID'
+                  openshift:
+                    description: OpenShift OAuth, for provider openshift.
+                    properties:
+                      caConfigMapRef:
+                        description: |-
+                          A ConfigMap with ca.crt trusting the OAuth server. Omitted: the
+                          service CA OpenShift publishes in every namespace.
+                        properties:
+                          name:
+                            description: The name of the referenced object.
+                            maxLength: 253
+                            minLength: 1
+                            pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                            type: string
+                        required:
+                        - name
+                        type: object
+                      clientSecretRef:
+                        description: |-
+                          The Secret key holding a long-lived ServiceAccount token to present as
+                          the client secret. Omitted: the console presents its projected token.
+                        properties:
+                          key:
+                            description: The key.
+                            maxLength: 253
+                            minLength: 1
+                            pattern: ^[-._a-zA-Z0-9]+$
+                            type: string
+                          name:
+                            description: The Secret name.
+                            maxLength: 253
+                            minLength: 1
+                            pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                            type: string
+                        required:
+                        - key
+                        - name
+                        type: object
+                    type: object
+                  provider:
+                    default: token
+                    description: The sign-in provider.
+                    enum:
+                    - token
+                    - oidc
+                    - openshift
+                    type: string
+                  sessionIdleTimeout:
+                    description: Idle timeout of a session. Default 1h.
+                    type: string
+                    x-kubernetes-validations:
+                    - message: sessionIdleTimeout must be between 1m and 12h
+                      reason: FieldValueInvalid
+                      rule: duration(self) >= duration('1m') && duration(self) <=
+                        duration('12h')
+                  sessionMaxAge:
+                    description: Maximum age of a session whatever its activity. Default
+                      12h.
+                    type: string
+                    x-kubernetes-validations:
+                    - message: sessionMaxAge must be between 5m and 168h
+                      reason: FieldValueInvalid
+                      rule: duration(self) >= duration('5m') && duration(self) <=
+                        duration('168h')
+                  tokenLogin:
+                    description: |-
+                      Shows the break-glass form (paste an API-server token) next to SSO.
+                      Default true.
+                    type: boolean
+                type: object
+                x-kubernetes-validations:
+                - fieldPath: .sessionIdleTimeout
+                  message: sessionIdleTimeout must not exceed sessionMaxAge
+                  reason: FieldValueInvalid
+                  rule: '!has(self.sessionIdleTimeout) || !has(self.sessionMaxAge)
+                    || duration(self.sessionIdleTimeout) <= duration(self.sessionMaxAge)'
+              clusterSelector:
+                description: |-
+                  Narrows the Clusters shown to those this selector matches, on top of
+                  what each user's own RBAC allows. Omitted: every Cluster of the
+                  namespace.
+                properties:
+                  matchExpressions:
+                    description: matchExpressions is a list of label selector requirements.
+                      The requirements are ANDed.
+                    items:
+                      description: |-
+                        A label selector requirement is a selector that contains values, a key, and an operator that
+                        relates the key and values.
+                      properties:
+                        key:
+                          description: key is the label key that the selector applies
+                            to.
+                          type: string
+                        operator:
+                          description: |-
+                            operator represents a key's relationship to a set of values.
+                            Valid operators are In, NotIn, Exists and DoesNotExist.
+                          type: string
+                        values:
+                          description: |-
+                            values is an array of string values. If the operator is In or NotIn,
+                            the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                            the values array must be empty. This array is replaced during a strategic
+                            merge patch.
+                          items:
+                            type: string
+                          type: array
+                          x-kubernetes-list-type: atomic
+                      required:
+                      - key
+                      - operator
+                      type: object
+                    type: array
+                    x-kubernetes-list-type: atomic
+                  matchLabels:
+                    additionalProperties:
+                      type: string
+                    description: |-
+                      matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                      map is equivalent to an element of matchExpressions, whose key field is "key", the
+                      operator is "In", and the values array contains only "value". The requirements are ANDed.
+                    type: object
+                type: object
+                x-kubernetes-map-type: atomic
+              digest:
+                description: |-
+                  The daily digest: a summary page per day, kept with the history, and
+                  optional delivery to chat, a webhook or mail. Delivery needs
+                  history.persistent (the message links to the digest's page); only the
+                  replica holding the Lease <console>-digest delivers.
+                properties:
+                  delivery:
+                    description: |-
+                      Where each digest is sent: a summary and a link, never the details.
+                      Omitted: nowhere (the page only).
+                    properties:
+                      chatWebhookSecretRef:
+                        description: |-
+                          A Slack or Mattermost incoming-webhook URL (https), which receives
+                          POST {"text": ...}.
+                        properties:
+                          key:
+                            description: The key.
+                            maxLength: 253
+                            minLength: 1
+                            pattern: ^[-._a-zA-Z0-9]+$
+                            type: string
+                          name:
+                            description: The Secret name.
+                            maxLength: 253
+                            minLength: 1
+                            pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                            type: string
+                        required:
+                        - key
+                        - name
+                        type: object
+                      smtp:
+                        description: Mail over TLS.
+                        properties:
+                          address:
+                            description: The mail server, host:port.
+                            maxLength: 261
+                            pattern: ^[A-Za-z0-9]([-A-Za-z0-9.]*[A-Za-z0-9])?:[0-9]{1,5}$
+                            type: string
+                          from:
+                            description: The sender, one bare address.
+                            maxLength: 254
+                            minLength: 3
+                            type: string
+                          passwordSecretRef:
+                            description: The password.
+                            properties:
+                              key:
+                                description: The key.
+                                maxLength: 253
+                                minLength: 1
+                                pattern: ^[-._a-zA-Z0-9]+$
+                                type: string
+                              name:
+                                description: The Secret name.
+                                maxLength: 253
+                                minLength: 1
+                                pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                                type: string
+                            required:
+                            - key
+                            - name
+                            type: object
+                          tls:
+                            default: starttls
+                            description: |-
+                              starttls (required, never optional) or tls (implicit, port 465).
+                              Default starttls.
+                            enum:
+                            - starttls
+                            - tls
+                            type: string
+                          to:
+                            description: The recipients, bare addresses.
+                            items:
+                              maxLength: 254
+                              type: string
+                            maxItems: 20
+                            minItems: 1
+                            type: array
+                          username:
+                            description: The user for AUTH PLAIN (over TLS only).
+                            maxLength: 256
+                            type: string
+                        required:
+                        - address
+                        - from
+                        - to
+                        type: object
+                        x-kubernetes-validations:
+                        - message: smtp.username and smtp.passwordSecretRef are set
+                            together
+                          reason: FieldValueInvalid
+                          rule: has(self.username) == has(self.passwordSecretRef)
+                      timeout:
+                        description: Bound of one delivery attempt. Default 10s.
+                        type: string
+                        x-kubernetes-validations:
+                        - message: digest.delivery.timeout must be between 1s and
+                            1m
+                          reason: FieldValueInvalid
+                          rule: duration(self) >= duration('1s') && duration(self)
+                            <= duration('1m')
+                      webhookSecretRef:
+                        description: |-
+                          A generic webhook URL (https), which receives the digest's JSON
+                          summary.
+                        properties:
+                          key:
+                            description: The key.
+                            maxLength: 253
+                            minLength: 1
+                            pattern: ^[-._a-zA-Z0-9]+$
+                            type: string
+                          name:
+                            description: The Secret name.
+                            maxLength: 253
+                            minLength: 1
+                            pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                            type: string
+                        required:
+                        - key
+                        - name
+                        type: object
+                    type: object
+                    x-kubernetes-validations:
+                    - message: digest.delivery names no channel
+                      reason: FieldValueRequired
+                      rule: has(self.chatWebhookSecretRef) || has(self.webhookSecretRef)
+                        || has(self.smtp)
+                  enabled:
+                    description: |-
+                      Make a digest every day. Default: on with persistent history; with
+                      in-memory history each replica would make its own, so it is on only
+                      when set.
+                    type: boolean
+                  hour:
+                    description: The UTC hour at which each digest closes its 24 hours.
+                      Default 7.
+                    format: int32
+                    maximum: 23
+                    minimum: 0
+                    type: integer
+                  retention:
+                    description: How long digests are kept. Default 720h (30 days).
+                    type: string
+                    x-kubernetes-validations:
+                    - message: digest.retention must be between 24h and 8784h
+                      reason: FieldValueInvalid
+                      rule: duration(self) >= duration('24h') && duration(self) <=
+                        duration('8784h')
+                type: object
+              evidence:
+                description: Repository evidence from the namespace's EvidenceAgents.
+                properties:
+                  enabled:
+                    description: |-
+                      Read repository evidence from the namespace's EvidenceAgents. Default
+                      true. Off, the backups screen says "disabled".
+                    type: boolean
+                  interval:
+                    description: 'How often each agent is asked again. Omitted: the
+                      console''s default.'
+                    type: string
+                    x-kubernetes-validations:
+                    - message: evidence.interval must be between 30s and 1h
+                      reason: FieldValueInvalid
+                      rule: duration(self) >= duration('30s') && duration(self) <=
+                        duration('1h')
+                type: object
+              exposure:
+                default:
+                  type: clusterIP
+                description: |-
+                  Exposure of the console. The console streams events over SSE; the
+                  operator sets the long edge timeouts it knows for each type.
+                properties:
+                  annotations:
+                    additionalProperties:
+                      type: string
+                    description: |-
+                      Annotations added to the exposure object; keys under
+                      pgtoolbox.fyannk.dev/ are rejected.
+                    maxProperties: 32
+                    type: object
+                    x-kubernetes-validations:
+                    - message: annotation keys under pgtoolbox.fyannk.dev/ are reserved
+                      reason: FieldValueForbidden
+                      rule: self.all(k, !k.startsWith('pgtoolbox.fyannk.dev/'))
+                  gateway:
+                    description: Gateway API attachment, for gateway exposure only.
+                    properties:
+                      parentRef:
+                        description: The Gateway listener to attach to.
+                        properties:
+                          name:
+                            description: Gateway name.
+                            maxLength: 253
+                            minLength: 1
+                            type: string
+                          namespace:
+                            description: Gateway namespace; defaults to the CR's namespace.
+                            maxLength: 63
+                            type: string
+                          sectionName:
+                            description: Listener (section) name on the Gateway.
+                            maxLength: 253
+                            type: string
+                        required:
+                        - name
+                        type: object
+                    required:
+                    - parentRef
+                    type: object
+                  hostname:
+                    description: The external hostname. Required for route, ingress
+                      and gateway.
+                    maxLength: 253
+                    pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                    type: string
+                  ingressClassName:
+                    description: IngressClass name, for ingress exposure only.
+                    maxLength: 253
+                    type: string
+                  labels:
+                    additionalProperties:
+                      type: string
+                    description: |-
+                      Labels added to the exposure object under the operator's own
+                      identity labels, which always win. Ingress controllers and OpenShift
+                      router shards select by label; keys under pgtoolbox.fyannk.dev/ are
+                      rejected.
+                    maxProperties: 32
+                    type: object
+                    x-kubernetes-validations:
+                    - message: label keys under pgtoolbox.fyannk.dev/ are reserved
+                      reason: FieldValueForbidden
+                      rule: self.all(k, !k.startsWith('pgtoolbox.fyannk.dev/'))
+                  tls:
+                    description: |-
+                      TLS for route and ingress exposure. A Route always terminates TLS at
+                      the edge; an Ingress uses certificateSecretRef, or the controller's
+                      default certificate when it is omitted. For gateway exposure TLS
+                      terminates at the Gateway listener.
+                    properties:
+                      certificateSecretRef:
+                        description: |-
+                          TLS certificate Secret (kubernetes.io/tls) in the CR's namespace,
+                          for ingress exposure.
+                        properties:
+                          name:
+                            description: The name of the referenced object.
+                            maxLength: 253
+                            minLength: 1
+                            pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                            type: string
+                        required:
+                        - name
+                        type: object
+                    type: object
+                  type:
+                    default: clusterIP
+                    description: The exposure mechanism.
+                    enum:
+                    - clusterIP
+                    - route
+                    - ingress
+                    - gateway
+                    type: string
+                type: object
+                x-kubernetes-validations:
+                - fieldPath: .hostname
+                  message: hostname is required for route, ingress and gateway exposure
+                  reason: FieldValueRequired
+                  rule: '!has(self.type) || self.type == ''clusterIP'' || (has(self.hostname)
+                    && size(self.hostname) > 0)'
+                - fieldPath: .gateway
+                  message: gateway is required exactly when type is gateway
+                  reason: FieldValueInvalid
+                  rule: (has(self.type) && self.type == 'gateway') == has(self.gateway)
+                - fieldPath: .ingressClassName
+                  message: ingressClassName applies to ingress exposure only
+                  reason: FieldValueForbidden
+                  rule: (has(self.type) && self.type == 'ingress') || !has(self.ingressClassName)
+                - fieldPath: .tls.certificateSecretRef
+                  message: tls.certificateSecretRef applies to ingress exposure only
+                  reason: FieldValueForbidden
+                  rule: (has(self.type) && self.type == 'ingress') || !has(self.tls)
+                    || !has(self.tls.certificateSecretRef)
+              history:
+                default:
+                  persistent: true
+                description: |-
+                  The history journal, and with it the state snapshots, the timeline
+                  and the digests. Persistent by default: the console is then a
+                  StatefulSet with one volume per replica.
+                properties:
+                  persistent:
+                    default: true
+                    description: |-
+                      Keep the history on a volume per replica, across restarts: the
+                      console is a StatefulSet whose claim template makes
+                      history-<console>-<ordinal> for each replica. false: history in
+                      memory, a Deployment. Default true.
+                    type: boolean
+                  size:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: |-
+                      Size of each replica's history volume. Default 1Gi, which holds the
+                      default retention of a console of a few hundred instances. A change
+                      replaces the StatefulSet (its Pods keep running) and applies to
+                      volumes made later; grow an existing one by editing its claim.
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                  storageClassName:
+                    description: |-
+                      StorageClass of the history volumes. Omitted: the cluster default.
+                      Like size, a change applies to volumes made later.
+                    maxLength: 253
+                    type: string
+                type: object
+              image:
+                description: |-
+                  The console image. Omitted, the operator's default applies (the
+                  console released with the operator). The repository must be in the
+                  operator's allow-list (--console-image-repositories; by default the
+                  default image's repository only).
+                properties:
+                  digest:
+                    description: Image digest; when set it is what the Pod runs.
+                    pattern: ^sha256:[a-f0-9]{64}$
+                    type: string
+                  pullPolicy:
+                    description: |-
+                      Image pull policy. Defaults to IfNotPresent for a digest and Always
+                      for a tag alone.
+                    enum:
+                    - Always
+                    - IfNotPresent
+                    - Never
+                    type: string
+                  pullSecrets:
+                    description: Pull secrets for the image registry, in the CR's
+                      namespace.
+                    items:
+                      description: |-
+                        LocalObjectReference names an object in the referencing object's own
+                        namespace. Cross-namespace references do not exist in v1alpha1; a future
+                        one goes through an explicit grant object in the target
+                        namespace, never through a selector.
+                      properties:
+                        name:
+                          description: The name of the referenced object.
+                          maxLength: 253
+                          minLength: 1
+                          pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                          type: string
+                      required:
+                      - name
+                      type: object
+                    maxItems: 8
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - name
+                    x-kubernetes-list-type: map
+                  repository:
+                    description: Image repository, without tag or digest (registry/path/name).
+                    maxLength: 255
+                    minLength: 1
+                    pattern: ^[a-z0-9]+([._-][a-z0-9]+)*(:[0-9]{1,5})?(/[a-z0-9]+([._-][a-z0-9]+)*)*$
+                    type: string
+                  tag:
+                    description: Image tag; informative when a digest is set.
+                    maxLength: 128
+                    pattern: ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$
+                    type: string
+                required:
+                - repository
+                type: object
+                x-kubernetes-validations:
+                - message: an image needs a tag, a digest or both
+                  reason: FieldValueRequired
+                  rule: has(self.tag) || has(self.digest)
+              instanceCABundleRef:
+                description: |-
+                  The CA bundle the console verifies each instance's /pg/status with:
+                  a ConfigMap with the key ca.crt holding the PEM server CAs of the
+                  namespace's Clusters. Omitted (recommended): the operator keeps
+                  <name>-instance-ca itself, copying only the public ca.crt of each
+                  selected Cluster's server CA Secret, and follows CloudNativePG's CA
+                  renewals and Clusters coming and going; the console still reads no
+                  Secret. Set: the console mounts the named ConfigMap, which you keep
+                  current yourself (CloudNativePG renews its self-signed CA every 90
+                  days, so a one-off copy expires). A Cluster missing from the bundle
+                  is shown as "not verifiable", never read unverified.
+                properties:
+                  name:
+                    description: The name of the referenced object.
+                    maxLength: 253
+                    minLength: 1
+                    pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                    type: string
+                required:
+                - name
+                type: object
+              lifecycleConfigMapRef:
+                description: |-
+                  The end-of-life table the diagnostics read. Omitted, the operator
+                  creates <console>-lifecycle with its built-in table and keeps it at
+                  the operator's table until someone edits it (or annotates it
+                  pgtoolbox.fyannk.dev/user-managed=true); from then on it is left
+                  alone. Set, the console reads that ConfigMap (key lifecycle.json) and
+                  the operator creates none.
+                properties:
+                  name:
+                    description: The name of the referenced object.
+                    maxLength: 253
+                    minLength: 1
+                    pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                    type: string
+                required:
+                - name
+                type: object
+              mcp:
+                description: |-
+                  The read-only MCP endpoint at /mcp, for AI agents and IDE
+                  assistants. Off by default.
+                properties:
+                  callTimeout:
+                    description: |-
+                      The time limit of one tool call (MCP_CALL_TIMEOUT). Omitted: the
+                      console's default, 20s. Used only with enabled.
+                    type: string
+                    x-kubernetes-validations:
+                    - message: mcp.callTimeout must be between 1s and 50s
+                      reason: FieldValueInvalid
+                      rule: duration(self) >= duration('1s') && duration(self) <=
+                        duration('50s')
+                  enabled:
+                    description: Serve the read-only MCP endpoint. Default false.
+                    type: boolean
+                  maxResultBytes:
+                    description: |-
+                      The cap on one tool result's JSON, in bytes (MCP_MAX_RESULT_BYTES);
+                      a larger result is shortened and says so. Omitted: the console's
+                      default, 262144 (256 KiB). Used only with enabled.
+                    format: int32
+                    maximum: 4194304
+                    minimum: 16384
+                    type: integer
+                  oauthAccessTTL:
+                    description: |-
+                      The lifetime of an access token the console issues to an MCP client
+                      (MCP_OAUTH_ACCESS_TTL); the client renews it with its refresh token.
+                      Omitted: the console's default, 1h. Used only with enabled.
+                    type: string
+                    x-kubernetes-validations:
+                    - message: mcp.oauthAccessTTL must be between 10s and 1h
+                      reason: FieldValueInvalid
+                      rule: duration(self) >= duration('10s') && duration(self) <=
+                        duration('1h')
+                  oauthClientMetadataDocuments:
+                    description: |-
+                      Accept OAuth client ID metadata documents
+                      (MCP_OAUTH_CLIENT_METADATA_DOCUMENTS): a client may name itself with
+                      an HTTPS URL, and the console fetches the document at that URL, only
+                      from a public address and, when oauthClientMetadataHosts is set, only
+                      from those hosts. The console then needs egress to the Internet on
+                      TCP 443; the operator renders no NetworkPolicy around the console, so
+                      where egress is policed the site's policy must allow it. Dynamic
+                      registration, always accepted, needs no egress. Used only with
+                      enabled. Default false.
+                    type: boolean
+                  oauthClientMetadataHosts:
+                    description: |-
+                      The only hosts (lower-case DNS names) the console fetches client ID
+                      metadata documents from (MCP_OAUTH_CLIENT_METADATA_HOSTS). It takes
+                      effect with oauthClientMetadataDocuments and is ignored without it.
+                      Omitted: any public address. Used only with enabled.
+                    items:
+                      maxLength: 253
+                      pattern: ^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?(\.[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)*$
+                      type: string
+                    maxItems: 32
+                    type: array
+                    x-kubernetes-list-type: set
+                  writeTools:
+                    description: |-
+                      Add the MCP write tools (backup, reload, restart, promote) when the
+                      console serves operations. Each runs the console's own operation as
+                      the person, once, after a confirmation (MCP elicitation): backup and
+                      reload in the client's form, which the client relays (it proves the
+                      client asked); restart and promote on a console page in the person's
+                      own browser session (it proves the person approved). A client that
+                      cannot ask is refused. A console grant acts only if consented for
+                      "read and operate". Requires enabled. Default false.
+                    type: boolean
+                type: object
+                x-kubernetes-validations:
+                - fieldPath: .writeTools
+                  message: mcp.writeTools requires mcp.enabled
+                  reason: FieldValueInvalid
+                  rule: '!has(self.writeTools) || !self.writeTools || (has(self.enabled)
+                    && self.enabled)'
+              metadataPropagation:
+                description: Labels and annotations copied onto the generated objects.
+                items:
+                  description: |-
+                    MetadataPropagation copies labels and annotations onto generated
+                    objects (cost-centre labels, backup-tool annotations, mesh opt-outs). The
+                    operator's own keys always win, keys under pgtoolbox.fyannk.dev/ are
+                    rejected, and a change rolls only the objects it targets.
+                  properties:
+                    annotations:
+                      additionalProperties:
+                        type: string
+                      description: Annotations to add.
+                      maxProperties: 32
+                      type: object
+                      x-kubernetes-validations:
+                      - message: annotation keys under pgtoolbox.fyannk.dev/ are reserved
+                        reason: FieldValueForbidden
+                        rule: self.all(k, !k.startsWith('pgtoolbox.fyannk.dev/'))
+                    labels:
+                      additionalProperties:
+                        type: string
+                      description: Labels to add.
+                      maxProperties: 32
+                      type: object
+                      x-kubernetes-validations:
+                      - message: label keys under pgtoolbox.fyannk.dev/ and app.kubernetes.io/
+                          are reserved
+                        reason: FieldValueForbidden
+                        rule: self.all(k, !k.startsWith('pgtoolbox.fyannk.dev/') &&
+                          !k.startsWith('app.kubernetes.io/'))
+                    target:
+                      description: Which generated objects receive the metadata.
+                      enum:
+                      - All
+                      - Workload
+                      - Pod
+                      - Service
+                      - Exposure
+                      - Storage
+                      type: string
+                  required:
+                  - target
+                  type: object
+                maxItems: 8
+                type: array
+              monitoringURL:
+                description: |-
+                  The link-out to the site's monitoring system: https, or
+                  root-relative.
+                maxLength: 512
+                type: string
+                x-kubernetes-validations:
+                - message: monitoringURL must be https or root-relative
+                  reason: FieldValueInvalid
+                  rule: self.startsWith('https://') || (self.startsWith('/') && !self.startsWith('//'))
+              operations:
+                description: |-
+                  The operations endpoints (backup, reload, restart, promote). Every
+                  write is made with the caller's own token and authorized by the API
+                  server. Default true.
+                type: boolean
+              podLogs:
+                description: |-
+                  Pod logs: the bounded log tail and the log-based diagnostics, which
+                  need `get pods/log`. Default true.
+                type: boolean
+              prometheus:
+                description: |-
+                  The PromQL source of the metrics charts. Omitted, the charts come
+                  from the console's own ring.
+                properties:
+                  caConfigMapRef:
+                    description: |-
+                      A ConfigMap with ca.crt that signed the server certificate. Omitted:
+                      the system roots.
+                    properties:
+                      name:
+                        description: The name of the referenced object.
+                        maxLength: 253
+                        minLength: 1
+                        pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                        type: string
+                    required:
+                    - name
+                    type: object
+                  namespaced:
+                    description: Add namespace=<ns> to each query, as OpenShift's
+                      tenancy port requires.
+                    type: boolean
+                  projectedToken:
+                    description: |-
+                      Present the console's own ServiceAccount token, projected and rotated
+                      by the kubelet (what the OpenShift thanos-querier accepts once the
+                      ServiceAccount may view metrics).
+                    type: boolean
+                  range:
+                    description: 'The charts'' window. Omitted: 1h.'
+                    type: string
+                    x-kubernetes-validations:
+                    - message: prometheus.range must be between 5m and 24h
+                      reason: FieldValueInvalid
+                      rule: duration(self) >= duration('5m') && duration(self) <=
+                        duration('24h')
+                  tokenSecretRef:
+                    description: A Secret key holding a bearer token, mounted as a
+                      file.
+                    properties:
+                      key:
+                        description: The key.
+                        maxLength: 253
+                        minLength: 1
+                        pattern: ^[-._a-zA-Z0-9]+$
+                        type: string
+                      name:
+                        description: The Secret name.
+                        maxLength: 253
+                        minLength: 1
+                        pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                        type: string
+                    required:
+                    - key
+                    - name
+                    type: object
+                  url:
+                    description: The Prometheus (or Thanos querier) URL.
+                    maxLength: 512
+                    pattern: ^https?://
+                    type: string
+                required:
+                - url
+                type: object
+                x-kubernetes-validations:
+                - fieldPath: .url
+                  message: 'prometheus.url must be https when a token is configured:
+                    the token is never sent in clear'
+                  reason: FieldValueInvalid
+                  rule: (!has(self.tokenSecretRef) && (!has(self.projectedToken) ||
+                    !self.projectedToken)) || self.url.startsWith('https://')
+              publicURL:
+                description: |-
+                  The URL people type, https://host. Used for cookies, redirects and the
+                  OpenShift callback. Defaults to https://<exposure.hostname>.
+                maxLength: 512
+                pattern: ^https://[a-z0-9]([-a-z0-9.]*[a-z0-9])?(:[0-9]{1,5})?/?$
+                type: string
+              replicas:
+                default: 2
+                description: |-
+                  Replicas of the console, with or without persistent history. Each
+                  replica keeps its own history; the exposure keeps a person on one
+                  (cookie affinity).
+                format: int32
+                maximum: 5
+                minimum: 1
+                type: integer
+              resources:
+                description: |-
+                  Compute resources of the console container. Omitted: requests 50m and
+                  128Mi, limits 1 CPU and 512Mi (the chart's).
+                properties:
+                  claims:
+                    description: |-
+                      Claims lists the names of resources, defined in spec.resourceClaims,
+                      that are used by this container.
+
+                      This field depends on the
+                      DynamicResourceAllocation feature gate.
+
+                      This field is immutable. It can only be set for containers.
+                    items:
+                      description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                      properties:
+                        name:
+                          description: |-
+                            Name must match the name of one entry in pod.spec.resourceClaims of
+                            the Pod where this field is used. It makes that resource available
+                            inside a container.
+                          type: string
+                        request:
+                          description: |-
+                            Request is the name chosen for a request in the referenced claim.
+                            If empty, everything from the claim is made available, otherwise
+                            only the result of this request.
+                          type: string
+                      required:
+                      - name
+                      type: object
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - name
+                    x-kubernetes-list-type: map
+                  limits:
+                    additionalProperties:
+                      anyOf:
+                      - type: integer
+                      - type: string
+                      pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                      x-kubernetes-int-or-string: true
+                    description: |-
+                      Limits describes the maximum amount of compute resources allowed.
+                      More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                    type: object
+                  requests:
+                    additionalProperties:
+                      anyOf:
+                      - type: integer
+                      - type: string
+                      pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                      x-kubernetes-int-or-string: true
+                    description: |-
+                      Requests describes the minimum amount of compute resources required.
+                      If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                      otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                      More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                    type: object
+                type: object
+              restoreDrills:
+                description: |-
+                  Restore drills: the "Run a restore drill" operation of the Backups
+                  screen. A person starts a drill with their own token; the console
+                  restores the latest backup into a throwaway one-instance Cluster in
+                  this namespace (no WAL archiver, no backup configuration), checks it
+                  without SQL and deletes it after its check or the time limit. Enabled,
+                  the operator also binds the console's ServiceAccount to
+                  pgtoolbox-console-restore-drills (get, list, watch and delete
+                  clusters, in this namespace only). Needs operations.
+                properties:
+                  enabled:
+                    description: Offer the drill. Default false.
+                    type: boolean
+                  maxConcurrent:
+                    description: |-
+                      The drills of this console running at once (one per source in any
+                      case). Omitted: 3.
+                    format: int32
+                    maximum: 20
+                    minimum: 1
+                    type: integer
+                  networkPolicy:
+                    description: |-
+                      The NetworkPolicy around the drill Pods. A promoted drill is a live
+                      copy of a production database: the console turns off the background
+                      workers it knows (logical replication, pg_cron, TimescaleDB), and this
+                      policy holds the rest to DNS, the API server and the object store.
+                    properties:
+                      apiServerCIDRs:
+                        description: |-
+                          The API server's addresses (CIDRs). Empty: ports 443 and 6443 to any
+                          address.
+                        items:
+                          maxLength: 49
+                          pattern: ^[0-9a-fA-F:.]+/[0-9]{1,3}$
+                          type: string
+                        maxItems: 16
+                        type: array
+                      enabled:
+                        default: true
+                        description: |-
+                          Whether the operator renders it. Default true: unlike the pgAdmin
+                          policy, it fences a copy of production data the console created.
+                        type: boolean
+                      objectStore:
+                        description: |-
+                          The object store the drills restore from: an ipBlock, or a
+                          namespaceSelector and podSelector for an in-cluster store. Empty:
+                          objectStorePorts to any address.
+                        items:
+                          description: |-
+                            NetworkPolicyPeer describes a peer to allow traffic to/from. Only certain combinations of
+                            fields are allowed
+                          properties:
+                            ipBlock:
+                              description: |-
+                                ipBlock defines policy on a particular IPBlock. If this field is set then
+                                neither of the other fields can be.
+                              properties:
+                                cidr:
+                                  description: |-
+                                    cidr is a string representing the IPBlock
+                                    Valid examples are "192.168.1.0/24" or "2001:db8::/64"
+                                  type: string
+                                except:
+                                  description: |-
+                                    except is a slice of CIDRs that should not be included within an IPBlock
+                                    Valid examples are "192.168.1.0/24" or "2001:db8::/64"
+                                    Except values will be rejected if they are outside the cidr range
+                                  items:
+                                    type: string
+                                  type: array
+                                  x-kubernetes-list-type: atomic
+                              required:
+                              - cidr
+                              type: object
+                            namespaceSelector:
+                              description: |-
+                                namespaceSelector selects namespaces using cluster-scoped labels. This field follows
+                                standard label selector semantics; if present but empty, it selects all namespaces.
+
+                                If podSelector is also set, then the NetworkPolicyPeer as a whole selects
+                                the pods matching podSelector in the namespaces selected by namespaceSelector.
+                                Otherwise it selects all pods in the namespaces selected by namespaceSelector.
+                              properties:
+                                matchExpressions:
+                                  description: matchExpressions is a list of label
+                                    selector requirements. The requirements are ANDed.
+                                  items:
+                                    description: |-
+                                      A label selector requirement is a selector that contains values, a key, and an operator that
+                                      relates the key and values.
+                                    properties:
+                                      key:
+                                        description: key is the label key that the
+                                          selector applies to.
+                                        type: string
+                                      operator:
+                                        description: |-
+                                          operator represents a key's relationship to a set of values.
+                                          Valid operators are In, NotIn, Exists and DoesNotExist.
+                                        type: string
+                                      values:
+                                        description: |-
+                                          values is an array of string values. If the operator is In or NotIn,
+                                          the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                                          the values array must be empty. This array is replaced during a strategic
+                                          merge patch.
+                                        items:
+                                          type: string
+                                        type: array
+                                        x-kubernetes-list-type: atomic
+                                    required:
+                                    - key
+                                    - operator
+                                    type: object
+                                  type: array
+                                  x-kubernetes-list-type: atomic
+                                matchLabels:
+                                  additionalProperties:
+                                    type: string
+                                  description: |-
+                                    matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                                    map is equivalent to an element of matchExpressions, whose key field is "key", the
+                                    operator is "In", and the values array contains only "value". The requirements are ANDed.
+                                  type: object
+                              type: object
+                              x-kubernetes-map-type: atomic
+                            podSelector:
+                              description: |-
+                                podSelector is a label selector which selects pods. This field follows standard label
+                                selector semantics; if present but empty, it selects all pods.
+
+                                If namespaceSelector is also set, then the NetworkPolicyPeer as a whole selects
+                                the pods matching podSelector in the Namespaces selected by NamespaceSelector.
+                                Otherwise it selects the pods matching podSelector in the policy's own namespace.
+                              properties:
+                                matchExpressions:
+                                  description: matchExpressions is a list of label
+                                    selector requirements. The requirements are ANDed.
+                                  items:
+                                    description: |-
+                                      A label selector requirement is a selector that contains values, a key, and an operator that
+                                      relates the key and values.
+                                    properties:
+                                      key:
+                                        description: key is the label key that the
+                                          selector applies to.
+                                        type: string
+                                      operator:
+                                        description: |-
+                                          operator represents a key's relationship to a set of values.
+                                          Valid operators are In, NotIn, Exists and DoesNotExist.
+                                        type: string
+                                      values:
+                                        description: |-
+                                          values is an array of string values. If the operator is In or NotIn,
+                                          the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                                          the values array must be empty. This array is replaced during a strategic
+                                          merge patch.
+                                        items:
+                                          type: string
+                                        type: array
+                                        x-kubernetes-list-type: atomic
+                                    required:
+                                    - key
+                                    - operator
+                                    type: object
+                                  type: array
+                                  x-kubernetes-list-type: atomic
+                                matchLabels:
+                                  additionalProperties:
+                                    type: string
+                                  description: |-
+                                    matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                                    map is equivalent to an element of matchExpressions, whose key field is "key", the
+                                    operator is "In", and the values array contains only "value". The requirements are ANDed.
+                                  type: object
+                              type: object
+                              x-kubernetes-map-type: atomic
+                          type: object
+                        maxItems: 16
+                        type: array
+                      objectStorePorts:
+                        description: 'The object store''s ports. Omitted: 443.'
+                        items:
+                          format: int32
+                          maximum: 65535
+                          minimum: 1
+                          type: integer
+                        maxItems: 8
+                        type: array
+                      operatorNamespace:
+                        description: |-
+                          The CloudNativePG operator's namespace, which reaches every
+                          instance's status port. Omitted: cnpg-system.
+                        maxLength: 63
+                        pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                        type: string
+                    type: object
+                  prefix:
+                    description: 'The drill Clusters'' name prefix. Omitted: drill-.'
+                    maxLength: 20
+                    pattern: ^[a-z]([-a-z0-9]*)?$
+                    type: string
+                  resources:
+                    description: 'The drill instance''s CPU and memory. Omitted: the
+                      source Cluster''s.'
+                    properties:
+                      limits:
+                        description: PgToolBoxConsoleDrillQuantities are a CPU and
+                          a memory quantity.
+                        properties:
+                          cpu:
+                            anyOf:
+                            - type: integer
+                            - type: string
+                            pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                            x-kubernetes-int-or-string: true
+                          memory:
+                            anyOf:
+                            - type: integer
+                            - type: string
+                            pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                            x-kubernetes-int-or-string: true
+                        type: object
+                      requests:
+                        description: PgToolBoxConsoleDrillQuantities are a CPU and
+                          a memory quantity.
+                        properties:
+                          cpu:
+                            anyOf:
+                            - type: integer
+                            - type: string
+                            pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                            x-kubernetes-int-or-string: true
+                          memory:
+                            anyOf:
+                            - type: integer
+                            - type: string
+                            pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                            x-kubernetes-int-or-string: true
+                        type: object
+                    type: object
+                  storage:
+                    description: 'The drill instance''s storage. Omitted: the source
+                      Cluster''s.'
+                    properties:
+                      size:
+                        anyOf:
+                        - type: integer
+                        - type: string
+                        description: 'The volume size. Omitted: the source Cluster''s.'
+                        pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                        x-kubernetes-int-or-string: true
+                      storageClass:
+                        description: 'The StorageClass. Omitted: the source Cluster''s.'
+                        maxLength: 253
+                        pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                        type: string
+                    type: object
+                  timeLimit:
+                    description: |-
+                      When an unfinished drill is recorded as timed out and deleted.
+                      Omitted: 2h.
+                    type: string
+                    x-kubernetes-validations:
+                    - message: restoreDrills.timeLimit must be between 10m and 24h
+                      reason: FieldValueInvalid
+                      rule: duration(self) >= duration('10m') && duration(self) <=
+                        duration('24h')
+                type: object
+              tracing:
+                description: |-
+                  OpenTelemetry tracing: spans for HTTP requests, the Kubernetes API
+                  calls they make and MCP tool calls, exported over OTLP/HTTP. Off
+                  when omitted.
+                properties:
+                  endpoint:
+                    description: |-
+                      The OTLP/HTTP base URL (OTEL_EXPORTER_OTLP_ENDPOINT); /v1/traces is
+                      appended. For example http://jaeger-collector.monitoring:4318 or
+                      https://api.smith.langchain.com/otel.
+                    maxLength: 512
+                    minLength: 1
+                    pattern: ^https?://[^\s/?#@]+(/[^\s?#]*)?$
+                    type: string
+                  headersSecretRef:
+                    description: |-
+                      A Secret key holding the exporter's headers, `key=value,...` with
+                      percent-encoded values (an API key, a project name), mounted as a
+                      file and read at start: the console reads no Secret through the API.
+                    properties:
+                      key:
+                        description: The key.
+                        maxLength: 253
+                        minLength: 1
+                        pattern: ^[-._a-zA-Z0-9]+$
+                        type: string
+                      name:
+                        description: The Secret name.
+                        maxLength: 253
+                        minLength: 1
+                        pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                        type: string
+                    required:
+                    - key
+                    - name
+                    type: object
+                  includePayloads:
+                    description: |-
+                      Add MCP tool arguments and results to the tool spans, redacted and
+                      capped (TRACING_INCLUDE_PAYLOADS). Default false; tokens never.
+                    type: boolean
+                  sampler:
+                    description: |-
+                      The sampler (OTEL_TRACES_SAMPLER). Default parentbased_always_on: a
+                      request the caller traces is traced.
+                    enum:
+                    - always_on
+                    - always_off
+                    - traceidratio
+                    - parentbased_always_on
+                    - parentbased_always_off
+                    - parentbased_traceidratio
+                    type: string
+                  samplerArg:
+                    description: |-
+                      The ratio of the traceidratio samplers (OTEL_TRACES_SAMPLER_ARG),
+                      from "0" to "1".
+                    pattern: ^(0(\.[0-9]{1,6})?|1(\.0{1,6})?)$
+                    type: string
+                  serviceName:
+                    description: The service name (OTEL_SERVICE_NAME). Default pgtoolbox-console.
+                    maxLength: 128
+                    pattern: ^[A-Za-z0-9][-._A-Za-z0-9]*$
+                    type: string
+                required:
+                - endpoint
+                type: object
+                x-kubernetes-validations:
+                - fieldPath: .samplerArg
+                  message: tracing.samplerArg needs a traceidratio sampler
+                  reason: FieldValueInvalid
+                  rule: '!has(self.samplerArg) || (has(self.sampler) && self.sampler.endsWith(''traceidratio''))'
+            type: object
+            x-kubernetes-validations:
+            - fieldPath: .auth.oidc
+              message: auth.oidc is required with auth.provider=oidc
+              reason: FieldValueRequired
+              rule: self.auth.provider != 'oidc' || has(self.auth.oidc)
+            - fieldPath: .publicURL
+              message: 'auth.provider=openshift needs publicURL or exposure.hostname:
+                OpenShift redirects only to the callback the ServiceAccount lists'
+              reason: FieldValueRequired
+              rule: self.auth.provider != 'openshift' || (has(self.publicURL) && size(self.publicURL)
+                > 0) || (has(self.exposure.hostname) && size(self.exposure.hostname)
+                > 0)
+            - fieldPath: .mcp
+              message: 'mcp needs publicURL or exposure.hostname: the MCP endpoint
+                advertises only its configured origin'
+              reason: FieldValueRequired
+              rule: '!has(self.mcp) || !has(self.mcp.enabled) || !self.mcp.enabled
+                || (has(self.publicURL) && size(self.publicURL) > 0) || (has(self.exposure.hostname)
+                && size(self.exposure.hostname) > 0)'
+            - fieldPath: .restoreDrills
+              message: 'restoreDrills needs operations: a drill is started through
+                the operations endpoints'
+              reason: FieldValueInvalid
+              rule: '!has(self.restoreDrills) || !has(self.restoreDrills.enabled)
+                || !self.restoreDrills.enabled || !has(self.operations) || self.operations'
+            - fieldPath: .prometheus
+              message: 'prometheus: set tokenSecretRef or projectedToken, not both'
+              reason: FieldValueInvalid
+              rule: '!has(self.prometheus) || !has(self.prometheus.tokenSecretRef)
+                || !has(self.prometheus.projectedToken) || !self.prometheus.projectedToken'
+            - fieldPath: .digest.delivery
+              message: 'digest.delivery needs history.persistent: a delivered digest
+                links to its page, which in-memory history loses at the next restart'
+              reason: FieldValueInvalid
+              rule: '!has(self.digest) || !has(self.digest.delivery) || !has(self.history)
+                || !has(self.history.persistent) || self.history.persistent'
+            - fieldPath: .digest.enabled
+              message: digest.delivery needs digest.enabled
+              reason: FieldValueInvalid
+              rule: '!has(self.digest) || !has(self.digest.delivery) || !has(self.digest.enabled)
+                || self.digest.enabled'
+          status:
+            description: PgToolBoxConsoleStatus is the observed state of a PgToolBoxConsole.
+            properties:
+              conditions:
+                description: |-
+                  Conditions: Ready (summary), ConfigurationValid, WorkloadReady,
+                  ExposureReady, Progressing, Stalled and the advisory
+                  InstanceCABundleComplete.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                maxItems: 16
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              image:
+                description: The image reference the console runs.
+                maxLength: 512
+                type: string
+              instanceCABundle:
+                description: |-
+                  The instance CA bundle the console mounts, who keeps it and, when the
+                  operator does, how many Clusters it covers and which are missing.
+                properties:
+                  clusters:
+                    description: |-
+                      How many selected Clusters have their server CA in the bundle, when
+                      the operator keeps it (Clusters sharing one CA each count).
+                    format: int32
+                    type: integer
+                  configMap:
+                    description: The ConfigMap's name.
+                    maxLength: 253
+                    type: string
+                  keptBy:
+                    description: Who keeps it.
+                    enum:
+                    - Operator
+                    - Referenced
+                    type: string
+                  missing:
+                    description: |-
+                      The selected Clusters whose server CA is not in the bundle, and why;
+                      at most 32, by Cluster name (the condition message has the count).
+                    items:
+                      description: |-
+                        PgToolBoxConsoleInstanceCAMissing is a Cluster whose server CA the operator
+                        could not put in the bundle.
+                      properties:
+                        cluster:
+                          description: The Cluster's name.
+                          maxLength: 253
+                          type: string
+                        reason:
+                          description: |-
+                            Why: SecretNotFound, SecretKeyMissing (no ca.crt), InstanceCAInvalid
+                            (ca.crt holds no PEM certificate) or InstanceCABundleFull.
+                          maxLength: 64
+                          type: string
+                        secret:
+                          description: |-
+                            The server CA Secret read: status.certificates.serverCASecret, else
+                            spec.certificates.serverCASecret, else <cluster>-ca.
+                          maxLength: 253
+                          type: string
+                      required:
+                      - cluster
+                      - reason
+                      type: object
+                    maxItems: 32
+                    type: array
+                    x-kubernetes-list-type: atomic
+                required:
+                - configMap
+                - keptBy
+                type: object
+              lifecycle:
+                description: |-
+                  The ConfigMap the console reads its end-of-life table from, and who
+                  keeps it: Operator (the operator's table, updated with the operator),
+                  User (edited or annotated user-managed, left alone) or Referenced
+                  (spec.lifecycleConfigMapRef).
+                properties:
+                  configMap:
+                    description: The ConfigMap's name.
+                    maxLength: 253
+                    type: string
+                  keptBy:
+                    description: Who keeps it.
+                    enum:
+                    - Operator
+                    - User
+                    - Referenced
+                    type: string
+                  reviewed:
+                    description: |-
+                      The day the operator's table was last reviewed, when the operator
+                      keeps it.
+                    maxLength: 10
+                    type: string
+                required:
+                - configMap
+                - keptBy
+                type: object
+              observedGeneration:
+                description: The generation the status was computed from.
+                format: int64
+                type: integer
+              url:
+                description: Where the console is reached.
+                maxLength: 512
+                type: string
+            type: object
+        type: object
+        x-kubernetes-validations:
+        - message: metadata.name must be a DNS-1035 label of at most 40 characters
+            (it prefixes generated object names)
+          reason: FieldValueInvalid
+          rule: size(self.metadata.name) <= 40 && self.metadata.name.matches('^[a-z]([-a-z0-9]*[a-z0-9])?$')
+    served: true
+    storage: true
+    subresources:
+      status: {}

@@ -1,0 +1,12 @@
+rules:
+  # Every `uses:` is pinned to a full commit SHA with a version comment;
+  # Dependabot keeps the pins current.
+  unpinned-uses:
+    config:
+      policies:
+        "*": hash-pin
+  # The local toolchain action is referenced as ./.github/actions/toolchain.
+  # GitHub's `$/` self-repository spelling is not understood by actionlint,
+  # which this repository also holds to zero findings.
+  self-repository:
+    disable: true

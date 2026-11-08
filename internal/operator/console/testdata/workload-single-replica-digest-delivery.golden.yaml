@@ -1,0 +1,278 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  annotations:
+    pgtoolbox.fyannk.dev/claim-template-hash: 4229bd76cf97f0be
+    pgtoolbox.fyannk.dev/spec-hash: 47ae3a1e5e919144
+  labels:
+    app.kubernetes.io/component: console
+    app.kubernetes.io/instance: console
+    app.kubernetes.io/managed-by: pgtoolbox
+    app.kubernetes.io/name: pgtoolbox-console
+    app.kubernetes.io/part-of: pgtoolbox
+    pgtoolbox.fyannk.dev/console: console
+    pgtoolbox.fyannk.dev/reconcile: "true"
+  name: console
+  namespace: team-a
+  ownerReferences:
+  - apiVersion: pgtoolbox.fyannk.dev/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: PgToolBoxConsole
+    name: console
+    uid: u
+spec:
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Delete
+    whenScaled: Retain
+  podManagementPolicy: Parallel
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: console
+      app.kubernetes.io/instance: console
+      app.kubernetes.io/name: pgtoolbox-console
+      pgtoolbox.fyannk.dev/console: console
+  serviceName: console
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: console
+        app.kubernetes.io/instance: console
+        app.kubernetes.io/managed-by: pgtoolbox
+        app.kubernetes.io/name: pgtoolbox-console
+        app.kubernetes.io/part-of: pgtoolbox
+        pgtoolbox.fyannk.dev/console: console
+        pgtoolbox.fyannk.dev/reconcile: "true"
+    spec:
+      automountServiceAccountToken: false
+      containers:
+      - env:
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: WATCH_NAMESPACES
+          value: team-a
+        - name: LISTEN_ADDR
+          value: :3000
+        - name: PROBE_LISTEN_ADDR
+          value: :3001
+        - name: AUTH_PROVIDER
+          value: token
+        - name: SESSION_KEY_FILE
+          value: /var/run/console/session/session-key
+        - name: SESSION_IDLE_TIMEOUT
+          value: 1h
+        - name: LIFECYCLE_FILE
+          value: /var/run/console/lifecycle/lifecycle.json
+        - name: REVOCATION_CONFIGMAP
+          value: console-revocations
+        - name: STATE_CONFIGMAP
+          value: console-state
+        - name: INSTANCE_STATUS_CA_FILE
+          value: /var/run/console/instance-ca/ca.crt
+        - name: EVIDENCE_TOKEN_DIR
+          value: /var/run/secrets/pgtoolbox.fyannk.dev/evidence-agent
+        - name: RESTORE_DRILL_ENABLED
+          value: "true"
+        - name: RESTORE_DRILL_PREFIX
+          value: drill-
+        - name: RESTORE_DRILL_TIME_LIMIT
+          value: 2h
+        - name: RESTORE_DRILL_MAX_CONCURRENT
+          value: "3"
+        - name: RESTORE_DRILL_SERVER_CA
+          value: own
+        - name: MCP_ENABLED
+          value: "true"
+        - name: MCP_WRITE_TOOLS
+          value: "true"
+        - name: MCP_MAX_RESULT_BYTES
+          value: "1048576"
+        - name: MCP_CALL_TIMEOUT
+          value: 45s
+        - name: MCP_OAUTH_ACCESS_TTL
+          value: 15m
+        - name: MCP_OAUTH_CLIENT_METADATA_DOCUMENTS
+          value: "true"
+        - name: MCP_OAUTH_CLIENT_METADATA_HOSTS
+          value: claude.ai,chatgpt.com
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: https://api.smith.langchain.com/otel
+        - name: OTEL_SERVICE_NAME
+          value: pgtoolbox-console-team-a
+        - name: OTEL_TRACES_SAMPLER
+          value: parentbased_traceidratio
+        - name: OTEL_TRACES_SAMPLER_ARG
+          value: "0.25"
+        - name: TRACING_HEADERS_FILE
+          value: /var/run/console/tracing/headers
+        - name: TRACING_INCLUDE_PAYLOADS
+          value: "true"
+        - name: LOG_STREAM_ENABLED
+          value: "true"
+        - name: LOG_MATCH_MAX_AGE
+          value: 6h
+        - name: HISTORY_ENABLED
+          value: "true"
+        - name: HISTORY_PATH
+          value: /var/lib/console/history.db
+        - name: DIGEST_ENABLED
+          value: "true"
+        - name: DIGEST_HOUR
+          value: "7"
+        - name: DIGEST_WEBHOOK_URL_FILE
+          value: /var/run/console/digest/webhook/url
+        - name: DIGEST_LEASE
+          value: console-digest
+        image: registry.example/pgtoolbox-console:1.2.0
+        imagePullPolicy: IfNotPresent
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: probes
+          periodSeconds: 20
+        name: console
+        ports:
+        - containerPort: 3000
+          name: http
+          protocol: TCP
+        - containerPort: 3001
+          name: probes
+          protocol: TCP
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: probes
+          periodSeconds: 10
+        resources:
+          limits:
+            cpu: "1"
+            memory: 512Mi
+          requests:
+            cpu: 50m
+            memory: 128Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          seccompProfile:
+            type: RuntimeDefault
+        volumeMounts:
+        - mountPath: /tmp
+          name: tmp
+        - mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+          name: kube-api-access
+          readOnly: true
+        - mountPath: /var/run/console/session
+          name: session
+          readOnly: true
+        - mountPath: /var/run/secrets/pgtoolbox.fyannk.dev/evidence-agent
+          name: evidence-agent-token
+          readOnly: true
+        - mountPath: /var/run/console/instance-ca
+          name: instance-ca
+          readOnly: true
+        - mountPath: /var/run/console/lifecycle
+          name: lifecycle
+          readOnly: true
+        - mountPath: /var/run/console/digest/webhook
+          name: digest-webhook
+          readOnly: true
+        - mountPath: /var/run/console/tracing
+          name: tracing-headers
+          readOnly: true
+        - mountPath: /var/lib/console
+          name: history
+      securityContext:
+        fsGroup: 65532
+        fsGroupChangePolicy: OnRootMismatch
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      serviceAccountName: console
+      volumes:
+      - emptyDir: {}
+        name: tmp
+      - name: kube-api-access
+        projected:
+          sources:
+          - serviceAccountToken:
+              expirationSeconds: 3600
+              path: token
+          - configMap:
+              items:
+              - key: ca.crt
+                path: ca.crt
+              name: kube-root-ca.crt
+          - downwardAPI:
+              items:
+              - fieldRef:
+                  fieldPath: metadata.namespace
+                path: namespace
+      - name: session
+        secret:
+          items:
+          - key: session-key
+            path: session-key
+          secretName: console-session
+      - name: evidence-agent-token
+        projected:
+          sources:
+          - serviceAccountToken:
+              audience: pgtoolbox-evidence-agent/team-a
+              expirationSeconds: 3600
+              path: team-a/token
+      - configMap:
+          items:
+          - key: ca.crt
+            path: ca.crt
+          name: console-instance-ca
+          optional: true
+        name: instance-ca
+      - configMap:
+          items:
+          - key: lifecycle.json
+            path: lifecycle.json
+          name: console-lifecycle
+          optional: true
+        name: lifecycle
+      - name: digest-webhook
+        secret:
+          items:
+          - key: url
+            path: url
+          secretName: hook
+      - name: tracing-headers
+        secret:
+          items:
+          - key: headers
+            path: headers
+          secretName: langsmith
+  updateStrategy:
+    type: RollingUpdate
+  volumeClaimTemplates:
+  - metadata:
+      labels:
+        app.kubernetes.io/component: console
+        app.kubernetes.io/instance: console
+        app.kubernetes.io/managed-by: pgtoolbox
+        app.kubernetes.io/name: pgtoolbox-console
+        app.kubernetes.io/part-of: pgtoolbox
+        pgtoolbox.fyannk.dev/console: console
+        pgtoolbox.fyannk.dev/reconcile: "true"
+      name: history
+    spec:
+      accessModes:
+      - ReadWriteOnce
+      resources:
+        requests:
+          storage: 1Gi
+    status: {}
+status:
+  availableReplicas: 0
+  replicas: 0

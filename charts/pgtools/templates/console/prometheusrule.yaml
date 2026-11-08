@@ -1,0 +1,14 @@
+{{- if and .Values.console.enabled .Values.console.metrics.prometheusRule.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "pgtools.console.fullname" . }}-mcp
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "pgtools.console.labels" . | nindent 4 }}
+    {{- with .Values.console.metrics.prometheusRule.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  {{- (.Files.Get "files/alerts/mcp.rules.yaml" | fromYaml) | toYaml | nindent 2 }}
+{{- end }}

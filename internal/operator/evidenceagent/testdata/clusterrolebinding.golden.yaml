@@ -1,0 +1,23 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  annotations:
+    pgtoolbox.fyannk.dev/spec-hash: sha256:64c060055b3a6a4118173a12b6f65fadc997475cccbf27687ccc044040d1a53a
+  labels:
+    app.kubernetes.io/component: evidence-agent
+    app.kubernetes.io/managed-by: pgtoolbox
+    app.kubernetes.io/name: evidence-agent
+    app.kubernetes.io/part-of: pgtoolbox
+    pgtoolbox.fyannk.dev/reconcile: "true"
+  name: pgtoolbox-evidence-agent
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: pgtoolbox-evidence-agent
+subjects:
+- kind: ServiceAccount
+  name: orders-evidence-agent
+  namespace: team-a
+- kind: ServiceAccount
+  name: billing-evidence-agent
+  namespace: team-b

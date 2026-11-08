@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  annotations:
+    pgtoolbox.fyannk.dev/spec-hash: sha256:0509f98c560bf347a0ea6dec8e9bf45fba9184badde0c478cd41e4b375f0e38c
+    service.beta.openshift.io/inject-cabundle: "true"
+  labels:
+    app.kubernetes.io/component: evidence-agent
+    app.kubernetes.io/instance: orders
+    app.kubernetes.io/managed-by: pgtoolbox
+    app.kubernetes.io/name: evidence-agent
+    app.kubernetes.io/part-of: pgtoolbox
+    pgtoolbox.fyannk.dev/evidenceagent: orders
+    pgtoolbox.fyannk.dev/reconcile: "true"
+  name: orders-evidence-agent-ca
+  namespace: team-a
+  ownerReferences:
+  - apiVersion: pgtoolbox.fyannk.dev/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: EvidenceAgent
+    name: orders
+    uid: 4d7c6c1e-8a51-4c43-9a0e-2b1d5f6e7a80

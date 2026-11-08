@@ -1,0 +1,916 @@
+# Generated from charts/pgtools/files/insight-pack/queries.yaml by
+# `make insight-pack`; do not edit. Apply it in a Cluster's namespace:
+#   kubectl apply -n <namespace> -f deploy/insight-pack/insight-pack.yaml
+# then opt the Cluster in with
+#   spec.monitoring.customQueriesConfigMap: [{name: pgtoolbox-insight-pack, key: queries}]
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pgtoolbox-insight-pack
+  labels:
+    cnpg.io/reload: ""
+    pgtoolbox.fyannk.dev/insight-pack-version: "1"
+  annotations:
+    pgtoolbox.fyannk.dev/insight-pack-version: "1"
+data:
+  queries: |
+    # pgToolBox insight pack, version 1.
+    #
+    # CloudNativePG custom queries (spec.monitoring.customQueriesConfigMap). Every
+    # metric is named cnpg_pgtoolbox_<query>_<column>. The console detects the pack by
+    # cnpg_pgtoolbox_pack_info{version="..."} and reads the rest; Prometheus, if it
+    # scrapes the instances, gets them too.
+    #
+    # Rules every query follows (docs/site/docs/console/insight-pack.md):
+    #   - read-only catalog and statistics views only, within pg_monitor's rights;
+    #   - bounded: an explicit LIMIT on every row set, and a predicate_query that
+    #     sets statement_timeout (1 s) and lock_timeout (100 ms) for the rest of the
+    #     exporter's read-only transaction (set_config(..., true) is SET LOCAL);
+    #   - no statement text, ever: statements are identified by queryid only;
+    #   - every function and operator schema-qualified, as CloudNativePG's own
+    #     queries are, so nothing in a user schema can shadow them.
+    # PostgreSQL 14 or later (pg_locks.waitstart, pg_stat_activity.query_id).
+
+    pgtoolbox_pack:
+      # No runonserver: on PostgreSQL 13 this is the only family the pack yields,
+      # so the console can say "PostgreSQL 13 is not supported" instead of
+      # "pack not enabled".
+      query: |
+        SELECT '1' AS version, 1 AS info,
+               CAST(pg_catalog.current_setting('server_version_num') AS pg_catalog.float8) AS server_version_num
+      metrics:
+        - version:
+            usage: "LABEL"
+            description: "Version of the pgToolBox insight pack"
+        - info:
+            usage: "GAUGE"
+            description: "Always 1: the pgToolBox insight pack is loaded on this instance"
+        - server_version_num:
+            usage: "GAUGE"
+            description: "server_version_num; below 140000 every other pack query is skipped (PostgreSQL 13 is not supported)"
+
+    pgtoolbox_settings:
+      runonserver: ">=14.0.0"
+      predicate_query: |
+        SELECT pg_catalog.set_config('statement_timeout', '1000', true) OPERATOR(pg_catalog.<>) ''
+           AND pg_catalog.set_config('lock_timeout', '100', true) OPERATOR(pg_catalog.<>) ''
+           AND pg_catalog.set_config('max_parallel_workers_per_gather', '0', true) OPERATOR(pg_catalog.<>) ''
+      query: |
+        SELECT s.name,
+               CAST(CASE s.setting WHEN 'on' THEN '1' WHEN 'off' THEN '0' ELSE s.setting END AS pg_catalog.float8) AS value
+          FROM pg_catalog.pg_settings s
+         WHERE s.name OPERATOR(pg_catalog.=) ANY (ARRAY[
+                 'max_connections', 'superuser_reserved_connections', 'reserved_connections',
+                 'autovacuum', 'track_counts', 'autovacuum_max_workers', 'autovacuum_naptime',
+                 'autovacuum_freeze_max_age', 'autovacuum_multixact_freeze_max_age',
+                 'vacuum_failsafe_age', 'vacuum_multixact_failsafe_age',
+                 'autovacuum_vacuum_threshold', 'autovacuum_vacuum_scale_factor',
+                 'autovacuum_vacuum_max_threshold', 'idle_in_transaction_session_timeout'])
+         ORDER BY s.name
+         LIMIT 20
+      metrics:
+        - name:
+            usage: "LABEL"
+            description: "Name of the setting"
+        - value:
+            usage: "GAUGE"
+            description: "Value of the setting in its base unit (booleans as 0 or 1); a setting the server does not have (reserved_connections before 16, autovacuum_vacuum_max_threshold before 18) yields no row"
+
+    pgtoolbox_xid:
+      primary: true
+      runonserver: ">=14.0.0"
+      predicate_query: |
+        SELECT pg_catalog.set_config('statement_timeout', '1000', true) OPERATOR(pg_catalog.<>) ''
+           AND pg_catalog.set_config('lock_timeout', '100', true) OPERATOR(pg_catalog.<>) ''
+           AND pg_catalog.set_config('max_parallel_workers_per_gather', '0', true) OPERATOR(pg_catalog.<>) ''
+      query: |
+        SELECT CAST(CAST(pg_catalog.pg_snapshot_xmax(pg_catalog.pg_current_snapshot()) AS pg_catalog.text) AS pg_catalog.float8) AS next_xid
+      metrics:
+        - next_xid:
+            usage: "COUNTER"
+            description: "Next transaction id to be assigned (64-bit, epoch included); its rate is the transaction id consumption"
+
+    pgtoolbox_database:
+      primary: true
+      runonserver: ">=14.0.0"
+      predicate_query: |
+        SELECT pg_catalog.set_config('statement_timeout', '1000', true) OPERATOR(pg_catalog.<>) ''
+           AND pg_catalog.set_config('lock_timeout', '100', true) OPERATOR(pg_catalog.<>) ''
+           AND pg_catalog.set_config('max_parallel_workers_per_gather', '0', true) OPERATOR(pg_catalog.<>) ''
+      query: |
+        SELECT d.datname,
+               pg_catalog.age(d.datfrozenxid) AS xid_age,
+               pg_catalog.mxid_age(d.datminmxid) AS mxid_age,
+               CAST(CAST(d.datminmxid AS pg_catalog.text) AS pg_catalog.float8) AS min_mxid,
+               EXTRACT(EPOCH FROM s.stats_reset) AS stats_reset_time,
+               CASE WHEN d.datallowconn THEN 1 ELSE 0 END AS allow_connections
+          FROM pg_catalog.pg_database d
+          LEFT JOIN pg_catalog.pg_stat_database s ON s.datid OPERATOR(pg_catalog.=) d.oid
+         ORDER BY pg_catalog.age(d.datfrozenxid) DESC, d.datname
+         LIMIT 50
+      metrics:
+        - datname:
+            usage: "LABEL"
+            description: "Name of the database"
+        - xid_age:
+            usage: "GAUGE"
+            description: "Age of datfrozenxid in transactions: the wraparound clock of the database"
+        - mxid_age:
+            usage: "GAUGE"
+            description: "Age of datminmxid in multixacts"
+        - min_mxid:
+            usage: "GAUGE"
+            description: "datminmxid itself; unchanged between two samples, the mxid_age delta is the multixact consumption"
+        - stats_reset_time:
+            usage: "GAUGE"
+            description: "When the database's statistics were last reset (epoch), the start of every 'unused' claim"
+        - allow_connections:
+            usage: "GAUGE"
+            description: "1 when the database accepts connections (template0 does not, and still ages)"
+
+    pgtoolbox_prepared_xacts:
+      primary: true
+      runonserver: ">=14.0.0"
+      predicate_query: |
+        SELECT pg_catalog.set_config('statement_timeout', '1000', true) OPERATOR(pg_catalog.<>) ''
+           AND pg_catalog.set_config('lock_timeout', '100', true) OPERATOR(pg_catalog.<>) ''
+           AND pg_catalog.set_config('max_parallel_workers_per_gather', '0', true) OPERATOR(pg_catalog.<>) ''
+      query: |
+        -- Never the gid: it is application data. A forgotten prepared
+        -- transaction holds its locks and the xmin horizon until someone
+        -- commits or rolls it back by gid.
+        SELECT x.database AS datname,
+               pg_catalog.count(*) AS count,
+               pg_catalog.max(EXTRACT(EPOCH FROM (GREATEST(pg_catalog.clock_timestamp(), x.prepared) OPERATOR(pg_catalog.-) x.prepared))) AS oldest_seconds,
+               pg_catalog.max(pg_catalog.age(x.transaction)) AS oldest_xid_age
+          FROM pg_catalog.pg_prepared_xacts x
+         GROUP BY x.database
+         ORDER BY pg_catalog.max(pg_catalog.age(x.transaction)) DESC, x.database
+         LIMIT 50
+      metrics:
+        - datname:
+            usage: "LABEL"
+            description: "Database the transaction was prepared in"
+        - count:
+            usage: "GAUGE"
+            description: "Prepared transactions waiting for COMMIT PREPARED or ROLLBACK PREPARED"
+        - oldest_seconds:
+            usage: "GAUGE"
+            description: "Seconds since the oldest of them was prepared"
+        - oldest_xid_age:
+            usage: "GAUGE"
+            description: "Age of the oldest one's transaction id: vacuum cannot freeze past it"
+
+    pgtoolbox_xmin:
+      primary: true
+      runonserver: ">=14.0.0"
+      predicate_query: |
+        SELECT pg_catalog.set_config('statement_timeout', '1000', true) OPERATOR(pg_catalog.<>) ''
+           AND pg_catalog.set_config('lock_timeout', '100', true) OPERATOR(pg_catalog.<>) ''
+           AND pg_catalog.set_config('max_parallel_workers_per_gather', '0', true) OPERATOR(pg_catalog.<>) ''
+      query: |
+        -- What holds the xmin horizon back, so that VACUUM cannot freeze or
+        -- remove past it. Walsenders show the standbys' hot_standby_feedback
+        -- in backend_xmin. NaN when nothing holds one.
+        SELECT (SELECT pg_catalog.max(pg_catalog.age(r.xmin)) FROM pg_catalog.pg_replication_slots r) AS slot_xmin_age,
+               (SELECT pg_catalog.max(pg_catalog.age(r.catalog_xmin)) FROM pg_catalog.pg_replication_slots r) AS slot_catalog_xmin_age,
+               (SELECT pg_catalog.max(pg_catalog.age(a.backend_xmin)) FROM pg_catalog.pg_stat_activity a
+                 WHERE a.pid OPERATOR(pg_catalog.<>) pg_catalog.pg_backend_pid()) AS backend_xmin_age,
+               (SELECT pg_catalog.max(pg_catalog.age(a.backend_xid)) FROM pg_catalog.pg_stat_activity a
+                 WHERE a.pid OPERATOR(pg_catalog.<>) pg_catalog.pg_backend_pid()) AS backend_xid_age
+      metrics:
+        - slot_xmin_age:
+            usage: "GAUGE"
+            description: "Age of the oldest xmin a replication slot holds (physical slots with hot_standby_feedback)"
+        - slot_catalog_xmin_age:
+            usage: "GAUGE"
+            description: "Age of the oldest catalog_xmin a replication slot holds (logical slots)"
+        - backend_xmin_age:
+            usage: "GAUGE"
+            description: "Age of the oldest backend_xmin: snapshots of open transactions, walsender feedback included; the exporter's own excluded"
+        - backend_xid_age:
+            usage: "GAUGE"
+            description: "Age of the oldest transaction id a running backend holds"
+
+    pgtoolbox_tables:
+      primary: true
+      runonserver: ">=14.0.0"
+      target_databases:
+        - "*"
+      predicate_query: |
+        SELECT pg_catalog.set_config('statement_timeout', '1000', true) OPERATOR(pg_catalog.<>) ''
+           AND pg_catalog.set_config('lock_timeout', '100', true) OPERATOR(pg_catalog.<>) ''
+           AND pg_catalog.set_config('max_parallel_workers_per_gather', '0', true) OPERATOR(pg_catalog.<>) ''
+      query: |
+        WITH settings AS (
+          -- autovacuum_vacuum_max_threshold exists from PostgreSQL 18; -1 (no
+          -- cap) stands in for it before.
+          SELECT CAST(pg_catalog.current_setting('autovacuum_freeze_max_age') AS pg_catalog.int8) AS freeze_max_age,
+                 CAST(pg_catalog.current_setting('autovacuum_vacuum_threshold') AS pg_catalog.float8) AS vac_threshold,
+                 CAST(pg_catalog.current_setting('autovacuum_vacuum_scale_factor') AS pg_catalog.float8) AS vac_scale,
+                 CAST(COALESCE(pg_catalog.current_setting('autovacuum_vacuum_max_threshold', true), '-1') AS pg_catalog.float8) AS vac_max
+        ), rels AS MATERIALIZED (
+          SELECT c.oid,
+                 pg_catalog.age(c.relfrozenxid) AS xid_age,
+                 pg_catalog.mxid_age(c.relminmxid) AS mxid_age,
+                 pg_catalog.pg_stat_get_dead_tuples(c.oid) AS dead
+            FROM pg_catalog.pg_class c
+           WHERE c.relkind OPERATOR(pg_catalog.=) ANY (ARRAY['r', 'm', 't']::pg_catalog."char"[])
+        ), candidates AS (
+          (SELECT r.oid FROM rels r ORDER BY r.xid_age DESC, r.oid LIMIT 10)
+          UNION
+          (SELECT r.oid FROM rels r ORDER BY r.mxid_age DESC, r.oid LIMIT 5)
+          UNION
+          (SELECT r.oid FROM rels r ORDER BY r.dead DESC, r.oid LIMIT 10)
+        )
+        -- Every OPERATOR() below is parenthesized: OPERATOR(x) takes the "any
+        -- other operator" precedence whatever x is, left-associative, so
+        -- a OPERATOR(+) b OPERATOR(*) c would read (a + b) * c.
+        SELECT pg_catalog.current_database() AS datname,
+               n.nspname AS schema,
+               c.relname AS "table",
+               CASE WHEN c.relpersistence OPERATOR(pg_catalog.=) 't' THEN 'temporary'
+                    WHEN c.relkind OPERATOR(pg_catalog.=) 't' THEN 'toast'
+                    WHEN c.relkind OPERATOR(pg_catalog.=) 'm' THEN 'matview'
+                    ELSE 'table' END AS kind,
+               COALESCE(pn.nspname, '') AS parent_schema,
+               COALESCE(p.relname, '') AS parent_table,
+               pg_catalog.age(c.relfrozenxid) AS xid_age,
+               pg_catalog.mxid_age(c.relminmxid) AS mxid_age,
+               LEAST(COALESCE(o.freeze_max_age, s.freeze_max_age), s.freeze_max_age) AS freeze_max_age,
+               pg_catalog.pg_stat_get_live_tuples(c.oid) AS live_tuples,
+               pg_catalog.pg_stat_get_dead_tuples(c.oid) AS dead_tuples,
+               CASE WHEN c.reltuples OPERATOR(pg_catalog.>=) 0 THEN CAST(c.reltuples AS pg_catalog.float8) END AS reltuples,
+               -- relation_needs_vacanalyze(): base + scale * reltuples, capped
+               -- by vacuum_max_threshold (table setting from -1 up, else the
+               -- server's; -1 is no cap). Unknown (NaN) while reltuples is -1.
+               CASE WHEN c.reltuples OPERATOR(pg_catalog.>=) 0 THEN
+                 CASE WHEN cap.v OPERATOR(pg_catalog.>=) 0
+                      THEN LEAST(cap.v, (COALESCE(o.vac_threshold, s.vac_threshold)
+                             OPERATOR(pg_catalog.+) (COALESCE(o.vac_scale, s.vac_scale)
+                               OPERATOR(pg_catalog.*) CAST(c.reltuples AS pg_catalog.float8))))
+                      ELSE (COALESCE(o.vac_threshold, s.vac_threshold)
+                             OPERATOR(pg_catalog.+) (COALESCE(o.vac_scale, s.vac_scale)
+                               OPERATOR(pg_catalog.*) CAST(c.reltuples AS pg_catalog.float8)))
+                 END
+               END AS autovacuum_threshold,
+               -- The clock at the row, not the transaction's start, which is older
+               -- than events the statistics snapshot may already hold.
+               -- GREATEST(clock, t) - t clamps at 0 and keeps NULL (never) NULL.
+               EXTRACT(EPOCH FROM (GREATEST(pg_catalog.clock_timestamp(), t.vacuumed) OPERATOR(pg_catalog.-) t.vacuumed)) AS seconds_since_vacuum,
+               EXTRACT(EPOCH FROM (GREATEST(pg_catalog.clock_timestamp(), t.autovacuumed) OPERATOR(pg_catalog.-) t.autovacuumed)) AS seconds_since_autovacuum,
+               EXTRACT(EPOCH FROM (GREATEST(pg_catalog.clock_timestamp(), t.analyzed) OPERATOR(pg_catalog.-) t.analyzed)) AS seconds_since_analyze,
+               pg_catalog.pg_stat_get_autovacuum_count(c.oid) AS autovacuum_count,
+               CASE WHEN o.enabled IS FALSE THEN 0 ELSE 1 END AS autovacuum_enabled
+          FROM candidates k
+          JOIN pg_catalog.pg_class c ON c.oid OPERATOR(pg_catalog.=) k.oid
+          JOIN pg_catalog.pg_namespace n ON n.oid OPERATOR(pg_catalog.=) c.relnamespace
+          LEFT JOIN pg_catalog.pg_class p ON c.relkind OPERATOR(pg_catalog.=) 't'
+                                         AND p.reltoastrelid OPERATOR(pg_catalog.=) c.oid
+          LEFT JOIN pg_catalog.pg_namespace pn ON pn.oid OPERATOR(pg_catalog.=) p.relnamespace
+          CROSS JOIN settings s
+          CROSS JOIN LATERAL (
+            SELECT GREATEST(pg_catalog.pg_stat_get_last_vacuum_time(c.oid),
+                            pg_catalog.pg_stat_get_last_autovacuum_time(c.oid)) AS vacuumed,
+                   pg_catalog.pg_stat_get_last_autovacuum_time(c.oid) AS autovacuumed,
+                   GREATEST(pg_catalog.pg_stat_get_last_analyze_time(c.oid),
+                            pg_catalog.pg_stat_get_last_autoanalyze_time(c.oid)) AS analyzed
+          ) t
+          LEFT JOIN LATERAL (
+            SELECT CAST(pg_catalog.max(CASE WHEN r.option_name OPERATOR(pg_catalog.=) 'autovacuum_freeze_max_age' THEN r.option_value END) AS pg_catalog.int8) AS freeze_max_age,
+                   CAST(pg_catalog.max(CASE WHEN r.option_name OPERATOR(pg_catalog.=) 'autovacuum_vacuum_threshold' THEN r.option_value END) AS pg_catalog.float8) AS vac_threshold,
+                   CAST(pg_catalog.max(CASE WHEN r.option_name OPERATOR(pg_catalog.=) 'autovacuum_vacuum_scale_factor' THEN r.option_value END) AS pg_catalog.float8) AS vac_scale,
+                   CAST(pg_catalog.max(CASE WHEN r.option_name OPERATOR(pg_catalog.=) 'autovacuum_vacuum_max_threshold' THEN r.option_value END) AS pg_catalog.float8) AS vac_max,
+                   pg_catalog.bool_and(CAST(r.option_value AS pg_catalog.bool)) FILTER (WHERE r.option_name OPERATOR(pg_catalog.=) 'autovacuum_enabled') AS enabled
+              FROM pg_catalog.pg_options_to_table(c.reloptions) r
+          ) o ON true
+          CROSS JOIN LATERAL (
+            SELECT CASE WHEN o.vac_max OPERATOR(pg_catalog.>=) -1 THEN o.vac_max ELSE s.vac_max END AS v
+          ) cap
+         ORDER BY pg_catalog.age(c.relfrozenxid) DESC, c.oid
+         LIMIT 25
+      metrics:
+        - datname:
+            usage: "LABEL"
+            description: "Name of the database"
+        - schema:
+            usage: "LABEL"
+            description: "Schema of the table"
+        - table:
+            usage: "LABEL"
+            description: "Name of the table"
+        - kind:
+            usage: "LABEL"
+            description: "table, toast, matview or temporary (autovacuum never processes temporary tables)"
+        - parent_schema:
+            usage: "LABEL"
+            description: "For a TOAST table: schema of the table it belongs to; empty otherwise"
+        - parent_table:
+            usage: "LABEL"
+            description: "For a TOAST table: the table it belongs to, the one to VACUUM; empty otherwise"
+        - xid_age:
+            usage: "GAUGE"
+            description: "Age of relfrozenxid in transactions"
+        - mxid_age:
+            usage: "GAUGE"
+            description: "Age of relminmxid in multixacts"
+        - freeze_max_age:
+            usage: "GAUGE"
+            description: "Effective autovacuum_freeze_max_age of the table (a table setting can only lower it)"
+        - live_tuples:
+            usage: "GAUGE"
+            description: "Estimated live rows (pg_stat n_live_tup)"
+        - dead_tuples:
+            usage: "GAUGE"
+            description: "Estimated dead rows (pg_stat n_dead_tup)"
+        - reltuples:
+            usage: "GAUGE"
+            description: "pg_class.reltuples, the row estimate autovacuum scales with; NaN while -1 (never vacuumed nor analyzed)"
+        - autovacuum_threshold:
+            usage: "GAUGE"
+            description: "Dead rows past which autovacuum vacuums the table: min(vacuum_max_threshold, threshold + scale_factor x reltuples), table settings included; NaN while reltuples is unknown"
+        - seconds_since_vacuum:
+            usage: "GAUGE"
+            description: "Seconds since the last VACUUM or autovacuum; NaN when never since the statistics reset"
+        - seconds_since_autovacuum:
+            usage: "GAUGE"
+            description: "Seconds since the last autovacuum; NaN when never since the statistics reset"
+        - seconds_since_analyze:
+            usage: "GAUGE"
+            description: "Seconds since the last ANALYZE or autoanalyze; NaN when never since the statistics reset"
+        - autovacuum_count:
+            usage: "COUNTER"
+            description: "Autovacuum runs completed on the table since the statistics reset"
+        - autovacuum_enabled:
+            usage: "GAUGE"
+            description: "0 when the table disables autovacuum (reloption autovacuum_enabled=false)"
+
+    pgtoolbox_vacuum_progress:
+      primary: true
+      runonserver: ">=14.0.0"
+      target_databases:
+        - "*"
+      predicate_query: |
+        SELECT pg_catalog.set_config('statement_timeout', '1000', true) OPERATOR(pg_catalog.<>) ''
+           AND pg_catalog.set_config('lock_timeout', '100', true) OPERATOR(pg_catalog.<>) ''
+           AND pg_catalog.set_config('max_parallel_workers_per_gather', '0', true) OPERATOR(pg_catalog.<>) ''
+      query: |
+        SELECT p.datname,
+               n.nspname AS schema,
+               c.relname AS "table",
+               p.phase,
+               CASE WHEN a.backend_type OPERATOR(pg_catalog.=) 'autovacuum worker' THEN 1 ELSE 0 END AS autovacuum,
+               CASE WHEN a.query OPERATOR(pg_catalog.~~) '%(to prevent wraparound)%' THEN 1 ELSE 0 END AS wraparound,
+               EXTRACT(EPOCH FROM (GREATEST(pg_catalog.clock_timestamp(), a.xact_start) OPERATOR(pg_catalog.-) a.xact_start)) AS running_seconds,
+               p.heap_blks_total,
+               p.heap_blks_scanned,
+               p.heap_blks_vacuumed,
+               p.index_vacuum_count
+          FROM pg_catalog.pg_stat_progress_vacuum p
+          JOIN pg_catalog.pg_class c ON c.oid OPERATOR(pg_catalog.=) p.relid
+          JOIN pg_catalog.pg_namespace n ON n.oid OPERATOR(pg_catalog.=) c.relnamespace
+          LEFT JOIN pg_catalog.pg_stat_activity a ON a.pid OPERATOR(pg_catalog.=) p.pid
+         WHERE p.datid OPERATOR(pg_catalog.=) (SELECT d.oid FROM pg_catalog.pg_database d
+                                                WHERE d.datname OPERATOR(pg_catalog.=) pg_catalog.current_database())
+         ORDER BY a.xact_start, p.pid
+         LIMIT 10
+      metrics:
+        - datname:
+            usage: "LABEL"
+            description: "Name of the database"
+        - schema:
+            usage: "LABEL"
+            description: "Schema of the table being vacuumed"
+        - table:
+            usage: "LABEL"
+            description: "Name of the table being vacuumed"
+        - phase:
+            usage: "LABEL"
+            description: "Phase of the VACUUM (pg_stat_progress_vacuum.phase)"
+        - autovacuum:
+            usage: "GAUGE"
+            description: "1 for an autovacuum worker, 0 for a manual VACUUM"
+        - wraparound:
+            usage: "GAUGE"
+            description: "1 when autovacuum runs to prevent wraparound (it does not yield to lock requests)"
+        - running_seconds:
+            usage: "GAUGE"
+            description: "Seconds since the vacuum's transaction started"
+        - heap_blks_total:
+            usage: "GAUGE"
+            description: "Heap blocks of the table when the scan began"
+        - heap_blks_scanned:
+            usage: "GAUGE"
+            description: "Heap blocks scanned"
+        - heap_blks_vacuumed:
+            usage: "GAUGE"
+            description: "Heap blocks vacuumed"
+        - index_vacuum_count:
+            usage: "GAUGE"
+            description: "Index vacuum cycles completed (more than one means maintenance_work_mem was too small for the dead tuples)"
+
+    pgtoolbox_blocking:
+      runonserver: ">=14.0.0"
+      predicate_query: |
+        SELECT pg_catalog.set_config('statement_timeout', '1000', true) OPERATOR(pg_catalog.<>) ''
+           AND pg_catalog.set_config('lock_timeout', '100', true) OPERATOR(pg_catalog.<>) ''
+           AND pg_catalog.set_config('max_parallel_workers_per_gather', '0', true) OPERATOR(pg_catalog.<>) ''
+      query: |
+        -- One pg_locks snapshot finds the waiters; pg_blocking_pids, which takes
+        -- every lock-manager partition lock in turn, then runs for the 50 that
+        -- have waited longest only.
+        WITH lockwait AS MATERIALIZED (
+          SELECT l.pid, pg_catalog.min(l.waitstart) AS waitstart
+            FROM pg_catalog.pg_locks l
+           WHERE NOT l.granted
+             AND l.pid OPERATOR(pg_catalog.<>) pg_catalog.pg_backend_pid()
+           GROUP BY l.pid
+        ), waiting AS MATERIALIZED (
+          SELECT w.pid, pg_catalog.pg_blocking_pids(w.pid) AS blockers
+            FROM (SELECT lw.pid FROM lockwait lw ORDER BY lw.waitstart NULLS LAST, lw.pid LIMIT 50) w
+        ), edges AS (
+          SELECT w.pid, b.blocker
+            FROM waiting w, LATERAL pg_catalog.unnest(w.blockers) AS b(blocker)
+        ), involved AS (
+          SELECT e.pid FROM edges e
+          UNION
+          SELECT e.blocker FROM edges e
+        ), rows AS (
+          -- pid 0 is how pg_blocking_pids names a prepared transaction: it has no
+          -- backend, so it has no pg_stat_activity row either.
+          SELECT CAST(i.pid AS pg_catalog.text) AS pid,
+                 COALESCE((SELECT pg_catalog.string_agg(CAST(f.blocker AS pg_catalog.text), ',' ORDER BY f.blocker)
+                             FROM (SELECT DISTINCT e.blocker FROM edges e WHERE e.pid OPERATOR(pg_catalog.=) i.pid
+                                    ORDER BY e.blocker LIMIT 8) f), '') AS blocked_by,
+                 COALESCE(a.datname, '') AS datname,
+                 COALESCE(a.usename, '') AS usename,
+                 COALESCE(a.application_name, '') AS application_name,
+                 COALESCE(a.state, '') AS state,
+                 COALESCE(a.wait_event_type, '') AS wait_event_type,
+                 COALESCE(a.wait_event, '') AS wait_event,
+                 CASE WHEN i.pid OPERATOR(pg_catalog.=) 0 THEN 'prepared transaction'
+                      ELSE COALESCE(a.backend_type, '') END AS backend_type,
+                 COALESCE(CAST(a.query_id AS pg_catalog.text), '') AS queryid,
+                 EXTRACT(EPOCH FROM (GREATEST(pg_catalog.clock_timestamp(), lw.waitstart) OPERATOR(pg_catalog.-) lw.waitstart)) AS wait_seconds,
+                 EXTRACT(EPOCH FROM (GREATEST(pg_catalog.clock_timestamp(), a.xact_start) OPERATOR(pg_catalog.-) a.xact_start)) AS xact_age_seconds,
+                 EXTRACT(EPOCH FROM (GREATEST(pg_catalog.clock_timestamp(), a.state_change) OPERATOR(pg_catalog.-) a.state_change)) AS state_age_seconds,
+                 (SELECT pg_catalog.count(DISTINCT e.pid) FROM edges e WHERE e.blocker OPERATOR(pg_catalog.=) i.pid) AS blocking_count
+            FROM involved i
+            LEFT JOIN pg_catalog.pg_stat_activity a ON a.pid OPERATOR(pg_catalog.=) i.pid
+            LEFT JOIN lockwait lw ON lw.pid OPERATOR(pg_catalog.=) i.pid
+           WHERE a.pid IS NOT NULL OR i.pid OPERATOR(pg_catalog.=) 0
+        )
+        SELECT r.*
+          FROM rows r
+         ORDER BY (r.blocked_by OPERATOR(pg_catalog.=) '') DESC, r.blocking_count DESC, r.wait_seconds DESC NULLS LAST, r.pid
+         LIMIT 50
+      metrics:
+        - pid:
+            usage: "LABEL"
+            description: "Backend process id; 0 stands for a prepared transaction (pg_blocking_pids cannot say which one)"
+        - blocked_by:
+            usage: "LABEL"
+            description: "Comma-separated pids this backend waits for (pg_blocking_pids, at most 8; 0 is a prepared transaction); empty for a root blocker. Only the 50 longest waiters are examined"
+        - datname:
+            usage: "LABEL"
+            description: "Database of the backend"
+        - usename:
+            usage: "LABEL"
+            description: "Role of the backend"
+        - application_name:
+            usage: "LABEL"
+            description: "application_name of the backend"
+        - state:
+            usage: "LABEL"
+            description: "State of the backend (active, idle in transaction, ...)"
+        - wait_event_type:
+            usage: "LABEL"
+            description: "Wait event type"
+        - wait_event:
+            usage: "LABEL"
+            description: "Wait event"
+        - backend_type:
+            usage: "LABEL"
+            description: "Backend type; 'prepared transaction' for pid 0"
+        - queryid:
+            usage: "LABEL"
+            description: "query_id of the current statement (empty without compute_query_id); never its text"
+        - wait_seconds:
+            usage: "GAUGE"
+            description: "Seconds since the backend started waiting for its lock (pg_locks.waitstart); NaN for a root blocker"
+        - xact_age_seconds:
+            usage: "GAUGE"
+            description: "Seconds since the backend's transaction started"
+        - state_age_seconds:
+            usage: "GAUGE"
+            description: "Seconds since the backend's state last changed"
+        - blocking_count:
+            usage: "GAUGE"
+            description: "Backends waiting directly on this one"
+
+    pgtoolbox_backends:
+      runonserver: ">=14.0.0"
+      predicate_query: |
+        SELECT pg_catalog.set_config('statement_timeout', '1000', true) OPERATOR(pg_catalog.<>) ''
+           AND pg_catalog.set_config('lock_timeout', '100', true) OPERATOR(pg_catalog.<>) ''
+           AND pg_catalog.set_config('max_parallel_workers_per_gather', '0', true) OPERATOR(pg_catalog.<>) ''
+      query: |
+        -- The exporter's own backend counts in client (it holds a
+        -- max_connections slot) and nowhere else: it is always active.
+        SELECT pg_catalog.count(*) FILTER (WHERE a.backend_type OPERATOR(pg_catalog.=) 'client backend') AS client,
+               pg_catalog.count(*) FILTER (WHERE a.backend_type OPERATOR(pg_catalog.=) 'client backend'
+                                             AND a.state OPERATOR(pg_catalog.=) 'active' AND NOT a.self) AS active,
+               pg_catalog.count(*) FILTER (WHERE a.state OPERATOR(pg_catalog.~~) 'idle in transaction%') AS idle_in_transaction,
+               COALESCE(pg_catalog.max(EXTRACT(EPOCH FROM (GREATEST(pg_catalog.clock_timestamp(), a.state_change) OPERATOR(pg_catalog.-) a.state_change)))
+                          FILTER (WHERE a.state OPERATOR(pg_catalog.~~) 'idle in transaction%'), 0) AS idle_in_transaction_max_seconds,
+               pg_catalog.count(*) FILTER (WHERE a.wait_event_type OPERATOR(pg_catalog.=) 'Lock' AND NOT a.self) AS lock_waiting,
+               COALESCE(pg_catalog.max(EXTRACT(EPOCH FROM (GREATEST(pg_catalog.clock_timestamp(), a.xact_start) OPERATOR(pg_catalog.-) a.xact_start)))
+                          FILTER (WHERE a.backend_type OPERATOR(pg_catalog.=) 'client backend' AND NOT a.self), 0) AS max_xact_age_seconds
+          FROM (SELECT b.backend_type, b.state, b.state_change, b.wait_event_type, b.xact_start,
+                       (b.pid OPERATOR(pg_catalog.=) pg_catalog.pg_backend_pid()) AS self
+                  FROM pg_catalog.pg_stat_activity b) a
+      metrics:
+        - client:
+            usage: "GAUGE"
+            description: "Client backends: the connections max_connections limits (the exporter's own included, it holds a slot)"
+        - active:
+            usage: "GAUGE"
+            description: "Client backends running a statement, the exporter's own excluded"
+        - idle_in_transaction:
+            usage: "GAUGE"
+            description: "Backends idle inside an open transaction (aborted ones included)"
+        - idle_in_transaction_max_seconds:
+            usage: "GAUGE"
+            description: "Longest time a backend has been idle in transaction"
+        - lock_waiting:
+            usage: "GAUGE"
+            description: "Backends waiting on a heavyweight lock"
+        - max_xact_age_seconds:
+            usage: "GAUGE"
+            description: "Age of the oldest open client transaction, the exporter's own excluded"
+
+    pgtoolbox_connections:
+      runonserver: ">=14.0.0"
+      predicate_query: |
+        SELECT pg_catalog.set_config('statement_timeout', '1000', true) OPERATOR(pg_catalog.<>) ''
+           AND pg_catalog.set_config('lock_timeout', '100', true) OPERATOR(pg_catalog.<>) ''
+           AND pg_catalog.set_config('max_parallel_workers_per_gather', '0', true) OPERATOR(pg_catalog.<>) ''
+      query: |
+        SELECT COALESCE(a.datname, '') AS datname,
+               COALESCE(a.application_name, '') AS application_name,
+               COALESCE(a.state, '') AS state,
+               pg_catalog.count(*) AS sessions,
+               pg_catalog.max(EXTRACT(EPOCH FROM (GREATEST(pg_catalog.clock_timestamp(), a.state_change) OPERATOR(pg_catalog.-) a.state_change))) AS max_state_age_seconds
+          FROM pg_catalog.pg_stat_activity a
+         WHERE a.backend_type OPERATOR(pg_catalog.=) 'client backend'
+           AND a.pid OPERATOR(pg_catalog.<>) pg_catalog.pg_backend_pid()
+         GROUP BY 1, 2, 3
+         ORDER BY pg_catalog.count(*) DESC, 1, 2, 3
+         LIMIT 40
+      metrics:
+        - datname:
+            usage: "LABEL"
+            description: "Database"
+        - application_name:
+            usage: "LABEL"
+            description: "application_name"
+        - state:
+            usage: "LABEL"
+            description: "Backend state"
+        - sessions:
+            usage: "GAUGE"
+            description: "Client backends in this group, the exporter's own excluded (the 40 largest groups; pgtoolbox_backends_client has the total)"
+        - max_state_age_seconds:
+            usage: "GAUGE"
+            description: "Longest time a backend of the group has been in this state"
+
+    pgtoolbox_statements:
+      primary: true
+      runonserver: ">=14.0.0"
+      predicate_query: |
+        SELECT pg_catalog.set_config('statement_timeout', '1000', true) OPERATOR(pg_catalog.<>) ''
+           AND pg_catalog.set_config('lock_timeout', '100', true) OPERATOR(pg_catalog.<>) ''
+           AND pg_catalog.set_config('max_parallel_workers_per_gather', '0', true) OPERATOR(pg_catalog.<>) ''
+           AND 'pg_stat_statements' OPERATOR(pg_catalog.=) ANY (pg_catalog.string_to_array(
+                 pg_catalog.replace(pg_catalog.current_setting('shared_preload_libraries'), ' ', ''), ','))
+           AND EXISTS (SELECT 1 FROM pg_catalog.pg_extension e
+                         JOIN pg_catalog.pg_namespace n ON n.oid OPERATOR(pg_catalog.=) e.extnamespace
+                        WHERE e.extname OPERATOR(pg_catalog.=) 'pg_stat_statements'
+                          AND n.nspname OPERATOR(pg_catalog.=) 'public'
+                          AND CAST(pg_catalog.string_to_array(e.extversion, '.') AS pg_catalog.int4[])
+                              OPERATOR(pg_catalog.>=) ARRAY[1, 9])
+      query: |
+        WITH s AS (
+          SELECT p.userid, p.dbid, p.queryid,
+                 pg_catalog.sum(p.calls) AS calls,
+                 pg_catalog.sum(p.total_exec_time) AS total_exec_time,
+                 pg_catalog.sum(p.rows) AS rows,
+                 pg_catalog.sum(p.shared_blks_hit) AS shared_blks_hit,
+                 pg_catalog.sum(p.shared_blks_read) AS shared_blks_read
+            FROM public.pg_stat_statements(false) p
+           WHERE p.queryid IS NOT NULL
+           GROUP BY p.userid, p.dbid, p.queryid
+        ), ranked AS (
+          (SELECT * FROM s ORDER BY s.total_exec_time DESC, s.queryid LIMIT 40)
+          UNION
+          (SELECT * FROM s WHERE s.calls OPERATOR(pg_catalog.>) 0
+            ORDER BY s.total_exec_time OPERATOR(pg_catalog./) s.calls DESC, s.queryid LIMIT 20)
+        )
+        SELECT CAST(r.queryid AS pg_catalog.text) AS queryid,
+               COALESCE(d.datname, CAST(r.dbid AS pg_catalog.text)) AS datname,
+               COALESCE(u.rolname, CAST(r.userid AS pg_catalog.text)) AS rolname,
+               r.calls,
+               r.total_exec_time AS total_exec_time_ms,
+               r.total_exec_time OPERATOR(pg_catalog./) NULLIF(r.calls, 0) AS mean_exec_time_ms,
+               r.rows,
+               r.shared_blks_hit,
+               r.shared_blks_read
+          FROM ranked r
+          LEFT JOIN pg_catalog.pg_database d ON d.oid OPERATOR(pg_catalog.=) r.dbid
+          LEFT JOIN pg_catalog.pg_roles u ON u.oid OPERATOR(pg_catalog.=) r.userid
+         ORDER BY r.total_exec_time DESC, r.queryid
+         LIMIT 60
+      metrics:
+        - queryid:
+            usage: "LABEL"
+            description: "pg_stat_statements queryid; the statement text stays in the database"
+        - datname:
+            usage: "LABEL"
+            description: "Database the statement ran in"
+        - rolname:
+            usage: "LABEL"
+            description: "Role that ran the statement"
+        - calls:
+            usage: "COUNTER"
+            description: "Times executed since the statistics reset"
+        - total_exec_time_ms:
+            usage: "COUNTER"
+            description: "Total execution time in milliseconds"
+        - mean_exec_time_ms:
+            usage: "GAUGE"
+            description: "Mean execution time in milliseconds since the statistics reset"
+        - rows:
+            usage: "COUNTER"
+            description: "Rows retrieved or affected"
+        - shared_blks_hit:
+            usage: "COUNTER"
+            description: "Shared buffer hits"
+        - shared_blks_read:
+            usage: "COUNTER"
+            description: "Shared blocks read from outside shared buffers"
+
+    pgtoolbox_statements_info:
+      primary: true
+      runonserver: ">=14.0.0"
+      predicate_query: |
+        SELECT pg_catalog.set_config('statement_timeout', '1000', true) OPERATOR(pg_catalog.<>) ''
+           AND pg_catalog.set_config('lock_timeout', '100', true) OPERATOR(pg_catalog.<>) ''
+           AND pg_catalog.set_config('max_parallel_workers_per_gather', '0', true) OPERATOR(pg_catalog.<>) ''
+           AND 'pg_stat_statements' OPERATOR(pg_catalog.=) ANY (pg_catalog.string_to_array(
+                 pg_catalog.replace(pg_catalog.current_setting('shared_preload_libraries'), ' ', ''), ','))
+           AND EXISTS (SELECT 1 FROM pg_catalog.pg_extension e
+                         JOIN pg_catalog.pg_namespace n ON n.oid OPERATOR(pg_catalog.=) e.extnamespace
+                        WHERE e.extname OPERATOR(pg_catalog.=) 'pg_stat_statements'
+                          AND n.nspname OPERATOR(pg_catalog.=) 'public'
+                          AND CAST(pg_catalog.string_to_array(e.extversion, '.') AS pg_catalog.int4[])
+                              OPERATOR(pg_catalog.>=) ARRAY[1, 9])
+      query: |
+        SELECT i.dealloc,
+               EXTRACT(EPOCH FROM i.stats_reset) AS stats_reset_time,
+               CAST(pg_catalog.current_setting('pg_stat_statements.max') AS pg_catalog.float8) AS max
+          FROM public.pg_stat_statements_info i
+      metrics:
+        - dealloc:
+            usage: "COUNTER"
+            description: "Times pg_stat_statements evicted its least-executed entries because it was full"
+        - stats_reset_time:
+            usage: "GAUGE"
+            description: "When all pg_stat_statements statistics were last reset (epoch)"
+        - max:
+            usage: "GAUGE"
+            description: "pg_stat_statements.max: the statements tracked before eviction"
+
+    pgtoolbox_indexes:
+      primary: true
+      runonserver: ">=14.0.0"
+      target_databases:
+        - "*"
+      predicate_query: |
+        SELECT pg_catalog.set_config('statement_timeout', '1000', true) OPERATOR(pg_catalog.<>) ''
+           AND pg_catalog.set_config('lock_timeout', '100', true) OPERATOR(pg_catalog.<>) ''
+           AND pg_catalog.set_config('max_parallel_workers_per_gather', '0', true) OPERATOR(pg_catalog.<>) ''
+      query: |
+        -- Unused and invalid indexes, one pass over pg_index. Sizes come from
+        -- relpages, no lock taken; table names are looked up for the rows
+        -- reported only.
+        WITH cons AS MATERIALIZED (
+          -- pg_constraint has no index on conindid: read it once. An FK's
+          -- conindid is the referenced table's unique index.
+          SELECT DISTINCT con.conindid
+            FROM pg_catalog.pg_constraint con
+           WHERE con.conindid OPERATOR(pg_catalog.<>) 0
+             AND con.contype OPERATOR(pg_catalog.=) ANY (ARRAY['u', 'x', 'f']::pg_catalog."char"[])
+        ), found AS (
+          SELECT c.*, pg_catalog.row_number() OVER (PARTITION BY c.kind ORDER BY c.relpages DESC, c.indexrelid) AS rank
+            FROM (SELECT i.indexrelid, i.indrelid, i.indisunique, ci.relpages, n.nspname, ci.relname AS index_name,
+                         (cons.conindid IS NOT NULL OR i.indisprimary OR i.indisexclusion OR i.indisreplident) AS protected,
+                         -- Partitioned indexes (relkind I) have no scans of their own.
+                         CASE WHEN NOT i.indisvalid THEN 'invalid'
+                              WHEN NOT i.indisunique AND NOT i.indisprimary AND NOT i.indisexclusion AND NOT i.indisreplident
+                               AND cons.conindid IS NULL AND ci.relkind OPERATOR(pg_catalog.<>) 'I'
+                               AND pg_catalog.pg_stat_get_numscans(i.indexrelid) OPERATOR(pg_catalog.=) 0 THEN 'unused'
+                         END AS kind
+                    FROM pg_catalog.pg_index i
+                    JOIN pg_catalog.pg_class ci ON ci.oid OPERATOR(pg_catalog.=) i.indexrelid
+                    JOIN pg_catalog.pg_namespace n ON n.oid OPERATOR(pg_catalog.=) ci.relnamespace
+                    LEFT JOIN cons ON cons.conindid OPERATOR(pg_catalog.=) i.indexrelid
+                   WHERE n.nspname OPERATOR(pg_catalog.<>) ALL (ARRAY['pg_catalog', 'information_schema', 'pg_toast'])
+                     AND n.nspname OPERATOR(pg_catalog.!~~) 'pg\_temp\_%'
+                     AND n.nspname OPERATOR(pg_catalog.!~~) 'pg\_toast\_temp\_%') c
+           WHERE c.kind IS NOT NULL
+        )
+        SELECT pg_catalog.current_database() AS datname,
+               f.kind,
+               f.nspname AS schema,
+               t.relname AS "table",
+               f.index_name AS index,
+               (CAST(f.relpages AS pg_catalog.int8)
+                 OPERATOR(pg_catalog.*) CAST(pg_catalog.current_setting('block_size') AS pg_catalog.int8)) AS size_bytes,
+               pg_catalog.pg_stat_get_numscans(f.indexrelid) AS scans,
+               CASE WHEN f.indisunique THEN 1 ELSE 0 END AS "unique",
+               CASE WHEN f.protected THEN 1 ELSE 0 END AS backs_constraint,
+               -- Its leading columns are exactly a foreign key's: it serves the
+               -- FK check when the referenced row changes, which may be rare,
+               -- so 0 scans does not make it unused.
+               CASE WHEN EXISTS (
+                 SELECT 1 FROM pg_catalog.pg_constraint fk
+                  WHERE fk.contype OPERATOR(pg_catalog.=) 'f'
+                    AND fk.conrelid OPERATOR(pg_catalog.=) f.indrelid
+                    AND fk.conkey OPERATOR(pg_catalog.<@) k.keys[0:(pg_catalog.array_length(fk.conkey, 1) OPERATOR(pg_catalog.-) 1)]
+                    AND k.keys[0:(pg_catalog.array_length(fk.conkey, 1) OPERATOR(pg_catalog.-) 1)] OPERATOR(pg_catalog.<@) fk.conkey)
+               THEN 1 ELSE 0 END AS fk_support
+          FROM found f
+          JOIN pg_catalog.pg_class t ON t.oid OPERATOR(pg_catalog.=) f.indrelid
+          CROSS JOIN LATERAL (SELECT CAST(x.indkey AS pg_catalog.int2[]) AS keys
+                                FROM pg_catalog.pg_index x WHERE x.indexrelid OPERATOR(pg_catalog.=) f.indexrelid) k
+         WHERE f.rank OPERATOR(pg_catalog.<=) 15
+         ORDER BY f.kind, f.relpages DESC, f.indexrelid
+         LIMIT 30
+      metrics:
+        - datname:
+            usage: "LABEL"
+            description: "Name of the database"
+        - kind:
+            usage: "LABEL"
+            description: "unused (no scan since the statistics reset, neither unique nor backing a constraint) or invalid"
+        - schema:
+            usage: "LABEL"
+            description: "Schema of the table"
+        - table:
+            usage: "LABEL"
+            description: "Table of the index"
+        - index:
+            usage: "LABEL"
+            description: "Name of the index"
+        - size_bytes:
+            usage: "GAUGE"
+            description: "Estimated size: relpages as of the last VACUUM or ANALYZE, times block_size"
+        - scans:
+            usage: "GAUGE"
+            description: "Index scans on this instance since the statistics reset"
+        - unique:
+            usage: "GAUGE"
+            description: "1 for a unique index"
+        - backs_constraint:
+            usage: "GAUGE"
+            description: "1 when the index backs a constraint (primary key, unique, exclusion, the target of a foreign key) or is the replica identity"
+        - fk_support:
+            usage: "GAUGE"
+            description: "1 when the index's leading columns are a foreign key's: it serves the check when referenced rows change, so few scans are expected"
+
+    pgtoolbox_index_duplicates:
+      # Apart from pgtoolbox_indexes so that, on a database whose catalog makes
+      # one of them slow, the other still reports.
+      primary: true
+      runonserver: ">=14.0.0"
+      target_databases:
+        - "*"
+      predicate_query: |
+        SELECT pg_catalog.set_config('statement_timeout', '1000', true) OPERATOR(pg_catalog.<>) ''
+           AND pg_catalog.set_config('lock_timeout', '100', true) OPERATOR(pg_catalog.<>) ''
+           AND pg_catalog.set_config('max_parallel_workers_per_gather', '0', true) OPERATOR(pg_catalog.<>) ''
+      query: |
+        -- Indexes with the same table, columns, operator classes, collations,
+        -- options, expressions and predicate. No pg_get_expr (it takes
+        -- AccessShareLock on the table): expressions and predicates compare as
+        -- md5 of their stored node trees, :location (the offset in the CREATE
+        -- statement) stripped. Grouped from pg_index alone; only the indexes
+        -- sharing their columns with another are looked up further.
+        WITH cons AS MATERIALIZED (
+          -- The constraints an index backs. pg_constraint has no index on
+          -- conindid: it is read once. An FK's conindid is the referenced
+          -- table's unique index; a primary key is known from indisprimary,
+          -- unless deferrable.
+          SELECT con.conindid,
+                 pg_catalog.bool_or(con.contype OPERATOR(pg_catalog.<>) 'f' AND con.condeferrable) AS deferrable,
+                 pg_catalog.bool_or(con.contype OPERATOR(pg_catalog.<>) 'f' AND con.condeferred) AS deferred
+            FROM pg_catalog.pg_constraint con
+           WHERE con.conindid OPERATOR(pg_catalog.<>) 0
+             AND (con.contype OPERATOR(pg_catalog.=) ANY (ARRAY['u', 'x', 'f']::pg_catalog."char"[])
+                  OR (con.contype OPERATOR(pg_catalog.=) 'p' AND con.condeferrable))
+           GROUP BY con.conindid
+        ), peers AS (
+          -- One pass, hashed: the groups of more than one index, by member.
+          SELECT pg_catalog.array_agg(i.indexrelid) AS members
+            FROM pg_catalog.pg_index i
+           WHERE i.indisvalid
+           GROUP BY i.indrelid, CAST(i.indkey AS pg_catalog.int2[]), i.indclass, i.indcollation,
+                    CAST(i.indoption AS pg_catalog.int2[])
+          HAVING pg_catalog.count(*) OPERATOR(pg_catalog.>) 1
+        ), same_columns AS (
+          -- indnullsnotdistinct exists from 15: read through to_jsonb so the
+          -- query parses on 14.
+          SELECT i.indexrelid, i.indrelid, i.indisunique, i.indisprimary,
+                 CAST(i.indkey AS pg_catalog.int2[]) AS keys, i.indclass, i.indcollation,
+                 CAST(i.indoption AS pg_catalog.int2[]) AS options,
+                 n.nspname, ci.relname AS index_name, ci.relpages,
+                 pg_catalog.pg_stat_get_numscans(i.indexrelid) AS scans,
+                 (c.conindid IS NOT NULL OR i.indisprimary OR i.indisexclusion OR i.indisreplident) AS protected,
+                 COALESCE(pg_catalog.md5(pg_catalog.regexp_replace(CAST(i.indexprs AS pg_catalog.text), ' :location -?[0-9]+', '', 'g')), '') AS exprs,
+                 COALESCE(pg_catalog.md5(pg_catalog.regexp_replace(CAST(i.indpred AS pg_catalog.text), ' :location -?[0-9]+', '', 'g')), '') AS pred,
+                 pg_catalog.concat_ws(',', i.indisunique, i.indisexclusion, COALESCE(c.deferrable, false), COALESCE(c.deferred, false),
+                   COALESCE(pg_catalog.to_jsonb(i) OPERATOR(pg_catalog.->>) 'indnullsnotdistinct', 'false')) AS semantics
+            FROM peers p
+           CROSS JOIN LATERAL pg_catalog.unnest(p.members) AS m(indexrelid)
+            JOIN pg_catalog.pg_index i ON i.indexrelid OPERATOR(pg_catalog.=) m.indexrelid
+            JOIN pg_catalog.pg_class ci ON ci.oid OPERATOR(pg_catalog.=) i.indexrelid
+            JOIN pg_catalog.pg_namespace n ON n.oid OPERATOR(pg_catalog.=) ci.relnamespace
+            LEFT JOIN cons c ON c.conindid OPERATOR(pg_catalog.=) i.indexrelid
+           WHERE n.nspname OPERATOR(pg_catalog.<>) ALL (ARRAY['pg_catalog', 'information_schema', 'pg_toast'])
+             AND n.nspname OPERATOR(pg_catalog.!~~) 'pg\_temp\_%'
+             AND n.nspname OPERATOR(pg_catalog.!~~) 'pg\_toast\_temp\_%'
+        ), dup AS (
+          -- Keep the index that backs a constraint (PK, UNIQUE, EXCLUDE, the
+          -- target of an FK, the replica identity), then a unique one, then the
+          -- most scanned. A unique index only duplicates one that enforces the
+          -- same thing (NULLS NOT DISTINCT, deferrability, exclusion); a plain
+          -- index duplicates any.
+          SELECT s.*,
+                 pg_catalog.first_value(s.index_name) OVER w AS keep,
+                 pg_catalog.first_value(s.semantics) OVER w AS keep_semantics,
+                 pg_catalog.first_value(s.protected) OVER w AS keep_protected,
+                 pg_catalog.count(*) OVER w AS copies
+            FROM same_columns s
+          WINDOW w AS (
+                   PARTITION BY s.indrelid, s.keys, s.indclass, s.indcollation, s.options, s.exprs, s.pred
+                   ORDER BY s.protected DESC, s.indisprimary DESC, s.indisunique DESC, s.scans DESC, s.indexrelid
+                   ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
+        )
+        SELECT pg_catalog.current_database() AS datname,
+               d.nspname AS schema,
+               t.relname AS "table",
+               d.index_name AS index,
+               d.keep AS duplicate_of,
+               (CAST(d.relpages AS pg_catalog.int8)
+                 OPERATOR(pg_catalog.*) CAST(pg_catalog.current_setting('block_size') AS pg_catalog.int8)) AS size_bytes,
+               d.scans,
+               CASE WHEN d.indisunique THEN 1 ELSE 0 END AS "unique",
+               CASE WHEN d.protected THEN 1 ELSE 0 END AS backs_constraint,
+               CASE WHEN d.protected THEN 0 ELSE 1 END AS droppable
+          FROM dup d
+          JOIN pg_catalog.pg_class t ON t.oid OPERATOR(pg_catalog.=) d.indrelid
+         WHERE d.copies OPERATOR(pg_catalog.>) 1 AND d.index_name OPERATOR(pg_catalog.<>) d.keep
+           AND (NOT d.indisunique OR d.semantics OPERATOR(pg_catalog.=) d.keep_semantics)
+         ORDER BY d.relpages DESC, d.indexrelid
+         LIMIT 15
+      metrics:
+        - datname:
+            usage: "LABEL"
+            description: "Name of the database"
+        - schema:
+            usage: "LABEL"
+            description: "Schema of the table"
+        - table:
+            usage: "LABEL"
+            description: "Table of the index"
+        - index:
+            usage: "LABEL"
+            description: "Name of the duplicate index"
+        - duplicate_of:
+            usage: "LABEL"
+            description: "The index with the same definition and semantics that would be kept (one backing a constraint first)"
+        - size_bytes:
+            usage: "GAUGE"
+            description: "Estimated size: relpages as of the last VACUUM or ANALYZE, times block_size"
+        - scans:
+            usage: "GAUGE"
+            description: "Index scans on this instance since the statistics reset"
+        - unique:
+            usage: "GAUGE"
+            description: "1 for a unique index"
+        - backs_constraint:
+            usage: "GAUGE"
+            description: "1 when the index backs a constraint (primary key, unique, exclusion, the target of a foreign key) or is the replica identity"
+        - droppable:
+            usage: "GAUGE"
+            description: "0 when the duplicate backs a constraint too: both do, so the pair is reported but neither can simply be dropped"

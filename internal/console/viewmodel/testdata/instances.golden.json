@@ -1,0 +1,142 @@
+{
+  "ref": {
+    "namespace": "team-a",
+    "name": "billing",
+    "uid": "4d2f1e0a-1b2c-4d3e-8f90-a1b2c3d4e5f6"
+  },
+  "generatedAt": "2026-10-29T12:00:00Z",
+  "sweep": {
+    "source": "instanceStatus",
+    "state": "live",
+    "since": "2026-10-29T09:00:00Z",
+    "health": "ok"
+  },
+  "items": [
+    {
+      "name": "billing-1",
+      "health": "critical",
+      "role": {
+        "operator": "primary",
+        "label": "primary",
+        "live": "unknown"
+      },
+      "pod": {
+        "phase": "Running",
+        "ready": false,
+        "node": "node-a",
+        "restarts": 4,
+        "waiting": "CrashLoopBackOff",
+        "image": "ghcr.io/cloudnative-pg/postgresql:18.1-system-trixie",
+        "createdAt": "2026-09-29T12:00:00Z",
+        "provenance": {
+          "origin": "kubernetes",
+          "source": "Pod",
+          "observedAt": "2026-10-29T11:56:00Z",
+          "stale": true,
+          "staleReason": "pod watch lost: connection refused"
+        }
+      },
+      "statusRead": {
+        "state": "unreachable",
+        "reason": "not reachable from this console: dial tcp 10.0.0.11:8000: i/o timeout",
+        "at": "2026-10-29T11:59:52Z",
+        "since": "2026-10-29T11:58:20Z"
+      },
+      "live": {
+        "isPrimary": true,
+        "timelineId": 3,
+        "currentLsn": "0/9000060",
+        "archivingWal": true,
+        "instanceManagerVersion": "1.30.1",
+        "provenance": {
+          "origin": "instance",
+          "source": "/pg/status",
+          "observedAt": "2026-10-29T11:58:20Z",
+          "stale": true,
+          "staleReason": "last read failed"
+        }
+      },
+      "series": [
+        {
+          "key": "readyWalFiles",
+          "unit": "files",
+          "points": [
+            {
+              "at": "2026-10-29T11:57:50Z",
+              "value": 0
+            },
+            {
+              "at": "2026-10-29T11:58:20Z",
+              "value": 2
+            },
+            {
+              "at": "2026-10-29T11:58:50Z",
+              "value": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "billing-2",
+      "health": "unknown",
+      "role": {
+        "operator": "replica",
+        "label": "replica",
+        "live": "unknown"
+      },
+      "pod": {
+        "phase": "Running",
+        "ready": true,
+        "node": "node-b",
+        "restarts": 0,
+        "provenance": {
+          "origin": "kubernetes",
+          "source": "Pod",
+          "observedAt": "2026-10-29T11:56:00Z",
+          "stale": true,
+          "staleReason": "pod watch lost: connection refused"
+        }
+      },
+      "statusRead": {
+        "state": "notVerifiable",
+        "reason": "status port not verifiable: CA not in the console's bundle",
+        "at": "2026-10-29T11:59:52Z",
+        "since": "2026-10-29T09:00:00Z"
+      }
+    },
+    {
+      "name": "billing-3",
+      "health": "warning",
+      "role": {
+        "operator": "replica",
+        "label": "replica",
+        "live": "unknown"
+      },
+      "pod": {
+        "phase": "Running",
+        "ready": true,
+        "node": "node-c",
+        "restarts": 0,
+        "provenance": {
+          "origin": "kubernetes",
+          "source": "Pod",
+          "observedAt": "2026-10-29T11:56:00Z"
+        }
+      },
+      "statusRead": {
+        "state": "noTLS",
+        "reason": "status port without TLS (Pod created before CNPG 1.24): restart the instance",
+        "at": "2026-10-29T11:59:52Z",
+        "since": "2026-10-29T09:00:00Z"
+      }
+    }
+  ],
+  "blindSpots": [
+    {
+      "id": "instances.isFencedNotReported",
+      "panel": "instances",
+      "text": "A direct /pg/status read never carries isFenced; fencing is read from the cnpg.io/fencedInstances annotation."
+    }
+  ]
+}

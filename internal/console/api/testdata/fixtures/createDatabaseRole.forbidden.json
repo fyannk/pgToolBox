@@ -1,0 +1,6 @@
+{
+  "title": "Forbidden",
+  "status": 403,
+  "detail": "you may not create databaseroles.postgresql.cnpg.io in namespace team-a: ask for the pgtoolbox-console-operator role there"
+}
+

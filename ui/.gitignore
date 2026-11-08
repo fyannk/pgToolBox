@@ -1,0 +1,14 @@
+node_modules/
+dist/
+dist-harness/
+storybook-static/
+src/paraglide/
+test-results/
+playwright-report/
+.vitest-attachments/
+__screenshots__/*-actual*
+__screenshots__/*-diff*
+project.inlang/cache/
+project.inlang/README.md
+project.inlang/.gitignore
+.vitest/

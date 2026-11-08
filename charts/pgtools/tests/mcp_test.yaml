@@ -1,0 +1,203 @@
+# The MCP endpoint: off by default; on, the console reads
+# MCP_ENABLED. It needs a configured public URL (the endpoint advertises
+# only that origin). writeTools adds the write tools and is refused without enabled.
+suite: console mcp endpoint
+release:
+  name: pgc
+  namespace: team-a
+templates:
+  - templates/console/deployment.yaml
+tests:
+  - it: renders no MCP variable by default
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content: {name: MCP_ENABLED}
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content: {name: MCP_WRITE_TOOLS}
+          any: true
+
+  - it: turns the endpoint on
+    set: {console.mcp.enabled: true, console.publicURL: "https://console.example"}
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: MCP_ENABLED, value: "true"}
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content: {name: MCP_WRITE_TOOLS}
+          any: true
+
+  - it: takes the public URL from the exposure host
+    set: {console.mcp.enabled: true, console.exposure.host: console.example}
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: MCP_ENABLED, value: "true"}
+
+  - it: refuses the endpoint without a public URL
+    set: {console.mcp.enabled: true}
+    asserts:
+      - failedTemplate:
+          errorMessage: "console.mcp.enabled needs console.publicURL or console.exposure.host: the MCP endpoint advertises only its configured origin, never one taken from a request"
+
+  - it: passes the write-tools switch with the endpoint
+    set: {console.mcp: {enabled: true, writeTools: true}, console.publicURL: "https://console.example"}
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: MCP_WRITE_TOOLS, value: "true"}
+
+  - it: refuses write tools without the endpoint
+    set: {console.mcp.writeTools: true}
+    asserts:
+      - failedTemplate:
+          errorMessage: console.mcp.writeTools requires console.mcp.enabled
+
+  - it: refuses an unknown MCP value
+    set: {console.mcp.readOnly: true}
+    asserts:
+      - failedTemplate: {}
+
+  # The tuning knobs: rendered only with the endpoint and only when set; the
+  # console's own defaults apply otherwise (internal/console/config/mcp.go).
+  - it: renders no tuning knob by default
+    set: {console.mcp.enabled: true, console.publicURL: "https://console.example"}
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content: {name: MCP_MAX_RESULT_BYTES}
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content: {name: MCP_CALL_TIMEOUT}
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content: {name: MCP_OAUTH_ACCESS_TTL}
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content: {name: MCP_OAUTH_CLIENT_METADATA_HOSTS}
+          any: true
+
+  - it: renders every tuning knob that is set
+    set:
+      console.publicURL: "https://console.example"
+      console.mcp:
+        enabled: true
+        maxResultBytes: 1048576
+        callTimeout: 45s
+        oauthAccessTTL: 15m
+        oauthClientMetadataHosts: [claude.ai, chatgpt.com]
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: MCP_MAX_RESULT_BYTES, value: "1048576"}
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: MCP_CALL_TIMEOUT, value: 45s}
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: MCP_OAUTH_ACCESS_TTL, value: 15m}
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: MCP_OAUTH_CLIENT_METADATA_HOSTS, value: "claude.ai,chatgpt.com"}
+
+  - it: ignores the tuning knobs while the endpoint is off
+    set:
+      console.mcp:
+        maxResultBytes: 1048576
+        callTimeout: 45s
+        oauthAccessTTL: 15m
+        oauthClientMetadataHosts: [claude.ai]
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content: {name: MCP_MAX_RESULT_BYTES}
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content: {name: MCP_CALL_TIMEOUT}
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content: {name: MCP_OAUTH_ACCESS_TTL}
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content: {name: MCP_OAUTH_CLIENT_METADATA_HOSTS}
+          any: true
+
+  # Client ID metadata documents: off by default (the console would fetch
+  # from the Internet); the switch is rendered only with the endpoint.
+  - it: leaves client ID metadata documents off by default
+    set: {console.mcp.enabled: true, console.publicURL: "https://console.example"}
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content: {name: MCP_OAUTH_CLIENT_METADATA_DOCUMENTS}
+          any: true
+
+  - it: turns client ID metadata documents on with their hosts
+    set:
+      console.publicURL: "https://console.example"
+      console.mcp:
+        enabled: true
+        oauthClientMetadataDocuments: true
+        oauthClientMetadataHosts: [claude.ai]
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: MCP_OAUTH_CLIENT_METADATA_DOCUMENTS, value: "true"}
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: MCP_OAUTH_CLIENT_METADATA_HOSTS, value: claude.ai}
+
+  - it: turns client ID metadata documents on without a host list (any public address)
+    set:
+      console.publicURL: "https://console.example"
+      console.mcp: {enabled: true, oauthClientMetadataDocuments: true}
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: MCP_OAUTH_CLIENT_METADATA_DOCUMENTS, value: "true"}
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content: {name: MCP_OAUTH_CLIENT_METADATA_HOSTS}
+          any: true
+
+  - it: ignores client ID metadata documents while the endpoint is off
+    set: {console.mcp.oauthClientMetadataDocuments: true}
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content: {name: MCP_OAUTH_CLIENT_METADATA_DOCUMENTS}
+          any: true
+
+  - it: refuses a client ID metadata documents switch that is not a boolean
+    set: {console.mcp.oauthClientMetadataDocuments: "yes"}
+    asserts:
+      - failedTemplate: {}
+
+  - it: refuses a result cap below the console's minimum
+    set: {console.mcp.maxResultBytes: 1024}
+    asserts:
+      - failedTemplate: {}
+
+  - it: refuses a result cap above the console's maximum
+    set: {console.mcp.maxResultBytes: 8388608}
+    asserts:
+      - failedTemplate: {}
+
+  - it: refuses a call timeout that is not a duration
+    set: {console.mcp.callTimeout: "20"}
+    asserts:
+      - failedTemplate: {}
+
+  - it: refuses a metadata host that is not a DNS name
+    set: {console.mcp.oauthClientMetadataHosts: ["https://claude.ai"]}
+    asserts:
+      - failedTemplate: {}

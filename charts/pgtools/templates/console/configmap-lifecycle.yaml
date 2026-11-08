@@ -1,0 +1,27 @@
+{{- if and .Values.console.enabled (not .Values.console.lifecycle.configMapName) }}
+{{- $name := include "pgtools.console.lifecycle" . }}
+{{- $existing := lookup "v1" "ConfigMap" .Release.Namespace $name }}
+{{- $kept := and $existing (eq (dig "metadata" "annotations" "pgtoolbox.fyannk.dev/user-managed" "" $existing) "true") }}
+# The end-of-life table the console's diagnostics read (mounted as a file,
+# reloaded on change). The chart's own table unless the ConfigMap is
+# annotated pgtoolbox.fyannk.dev/user-managed=true, in which case what is in it is
+# rendered back unchanged.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "pgtools.console.labels" . | nindent 4 }}
+  {{- if $kept }}
+  annotations:
+    pgtoolbox.fyannk.dev/user-managed: "true"
+  {{- end }}
+data:
+  {{- if $kept }}
+  {{- toYaml $existing.data | nindent 2 }}
+  {{- else }}
+  lifecycle.json: |
+    {{- .Files.Get "files/lifecycle.json" | nindent 4 }}
+  {{- end }}
+{{- end }}

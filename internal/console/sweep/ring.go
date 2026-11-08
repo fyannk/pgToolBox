@@ -1,0 +1,91 @@
+// Copyright 2026 The pgToolBox Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package sweep
+
+import (
+	"time"
+
+	"github.com/fyannk/pgToolBox/internal/console/viewmodel"
+	"github.com/fyannk/pgToolBox/pkg/cnpgstatus"
+)
+
+// sample is one ring entry; a nil value is a gap (the read failed).
+type sample struct {
+	at    time.Time
+	value *float64
+}
+
+// ring keeps the samples of one series younger than the retention. It is
+// bounded by retention / interval: one sample per sweep.
+type ring struct {
+	samples []sample
+}
+
+func (r *ring) push(at time.Time, value *float64, retention time.Duration) {
+	r.samples = append(r.samples, sample{at: at, value: value})
+	cut := 0
+	for cut < len(r.samples) && at.Sub(r.samples[cut].at) > retention {
+		cut++
+	}
+	if cut > 0 {
+		r.samples = append(r.samples[:0], r.samples[cut:]...)
+	}
+}
+
+func (r *ring) points() []viewmodel.Point {
+	out := make([]viewmodel.Point, 0, len(r.samples))
+	for _, s := range r.samples {
+		p := viewmodel.Point{At: s.at}
+		if s.value != nil {
+			v := *s.value
+			p.Value = &v
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
+// Series keys of the status-derived rings.
+const (
+	SeriesLagBytes      = "lagBytes"
+	SeriesReadyWALFiles = "readyWalFiles"
+)
+
+var seriesUnits = map[string]string{SeriesLagBytes: "bytes", SeriesReadyWALFiles: "files"}
+
+// parseLSN reads PostgreSQL's "X/Y" LSN text.
+func parseLSN(s string) (uint64, bool) { return cnpgstatus.ParseLSN(s) }
+
+// LagBytes is a replica's replay distance behind the primary's current
+// position, both as last read; false when either is unknown or the
+// replica reads ahead (a sweep that read them at different instants).
+func LagBytes(primaryCurrent, replicaReplay string) (int64, bool) {
+	p, ok := parseLSN(primaryCurrent)
+	if !ok {
+		return 0, false
+	}
+	r, ok := parseLSN(replicaReplay)
+	if !ok {
+		return 0, false
+	}
+	if r > p {
+		return 0, true
+	}
+	diff := p - r
+	if diff > 1<<62 {
+		return 0, false
+	}
+	return int64(diff), true
+}

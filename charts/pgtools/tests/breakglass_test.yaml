@@ -1,0 +1,117 @@
+suite: break-glass identity
+templates:
+  - templates/console/breakglass.yaml
+release:
+  name: pgc
+  namespace: team-a
+tests:
+  - it: renders nothing by default
+    asserts:
+      - hasDocuments: {count: 0}
+
+  - it: renders a token-less ServiceAccount when enabled
+    set: {console.breakGlass.enabled: true}
+    documentIndex: 0
+    asserts:
+      - isKind: {of: ServiceAccount}
+      - equal: {path: metadata.name, value: pgtoolbox-console-breakglass}
+      - equal: {path: automountServiceAccountToken, value: false}
+
+  - it: binds it to pgtoolbox-console-operator in every watched namespace, and only by RoleBinding
+    set:
+      console.breakGlass.enabled: true
+      console.watchNamespaces: [team-a, team-b]
+    asserts:
+      - hasDocuments: {count: 3}
+      - isKind: {of: RoleBinding}
+        documentIndex: 1
+      - equal: {path: metadata.namespace, value: team-a}
+        documentIndex: 1
+      - equal: {path: metadata.namespace, value: team-b}
+        documentIndex: 2
+      - equal: {path: roleRef, value: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: pgtoolbox-console-operator}}
+        documentIndex: 2
+      - equal: {path: subjects, value: [{kind: ServiceAccount, name: pgtoolbox-console-breakglass, namespace: team-a}]}
+        documentIndex: 2
+
+  - it: the default roleKind is ClusterRole and renders no Role (same objects as before roleKind existed)
+    set:
+      console.breakGlass.enabled: true
+      console.watchNamespaces: [team-a, team-b]
+    asserts:
+      - hasDocuments: {count: 3}
+      - isKind: {of: ServiceAccount}
+        documentIndex: 0
+      - isKind: {of: RoleBinding}
+        documentIndex: 1
+      - isKind: {of: RoleBinding}
+        documentIndex: 2
+      - equal: {path: roleRef, value: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: pgtoolbox-console-operator}}
+        documentIndex: 1
+
+  - it: roleKind ClusterRole spelled out renders the same three documents
+    set:
+      console.breakGlass.enabled: true
+      console.breakGlass.roleKind: ClusterRole
+      console.watchNamespaces: [team-a, team-b]
+    asserts:
+      - hasDocuments: {count: 3}
+      - equal: {path: roleRef.kind, value: ClusterRole}
+        documentIndex: 2
+
+  - it: roleKind Role renders a Role and a RoleBinding to it in every watched namespace
+    set:
+      console.breakGlass.enabled: true
+      console.breakGlass.roleKind: Role
+      console.watchNamespaces: [team-a, team-b]
+    asserts:
+      - hasDocuments: {count: 5}
+      - isKind: {of: Role}
+        documentIndex: 1
+      - equal: {path: metadata.namespace, value: team-a}
+        documentIndex: 1
+      - isKind: {of: RoleBinding}
+        documentIndex: 2
+      - equal: {path: roleRef, value: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: pgtoolbox-console-breakglass}}
+        documentIndex: 2
+      - isKind: {of: Role}
+        documentIndex: 3
+      - equal: {path: metadata.namespace, value: team-b}
+        documentIndex: 3
+      - equal: {path: roleRef, value: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: pgtoolbox-console-breakglass}}
+        documentIndex: 4
+      - equal: {path: subjects, value: [{kind: ServiceAccount, name: pgtoolbox-console-breakglass, namespace: team-a}]}
+        documentIndex: 4
+
+  - it: the Role leaves out the operator's kinds when they are not served (a namespace admin cannot grant verbs it lacks)
+    set:
+      console.breakGlass.enabled: true
+      console.breakGlass.roleKind: Role
+      console.rbac.operatorKinds: "false"
+    documentIndex: 1
+    asserts:
+      - isKind: {of: Role}
+      - notContains: {path: rules, content: {apiGroups: [pgtoolbox.fyannk.dev], resources: [pgadmins], verbs: [get]}}
+      - contains: {path: rules, content: {apiGroups: [rbac.authorization.k8s.io], resources: [rolebindings], verbs: [create]}}
+      - contains: {path: rules, content: {apiGroups: [""], resources: [pods/log], verbs: [get]}}
+
+  - it: the Role carries the operator's kinds when they are served
+    set:
+      console.breakGlass.enabled: true
+      console.breakGlass.roleKind: Role
+      console.rbac.operatorKinds: "true"
+    documentIndex: 1
+    asserts:
+      - contains: {path: rules, content: {apiGroups: [pgtoolbox.fyannk.dev], resources: [pgadmins], verbs: [get]}}
+      - contains: {path: rules, content: {apiGroups: [pgtoolbox.fyannk.dev], resources: [pgaccessrequests], verbs: [create, get, list, watch]}}
+      - contains: {path: rules, content: {apiGroups: [pgtoolbox.fyannk.dev], resources: [pgaccessrequests/status], verbs: [update]}}
+
+  - it: rejects an unknown roleKind
+    set: {console.breakGlass.enabled: true, console.breakGlass.roleKind: ClusterRoleBinding}
+    asserts:
+      - failedTemplate: {}
+
+  - it: rejects a malformed ServiceAccount name
+    set: {console.breakGlass.enabled: true, console.breakGlass.serviceAccountName: Bad_Name}
+    asserts:
+      - failedTemplate: {}

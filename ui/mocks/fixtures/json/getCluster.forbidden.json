@@ -1,0 +1,6 @@
+{
+  "title": "Forbidden",
+  "status": 403,
+  "detail": "you may not get clusters.postgresql.cnpg.io/billing in namespace team-a: ask for the pgtoolbox-console-viewer role there"
+}
+

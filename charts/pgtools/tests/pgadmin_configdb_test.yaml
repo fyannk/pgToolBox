@@ -1,0 +1,191 @@
+# pgadmin.configDatabase.existingSecret: the settings database is a PostgreSQL
+# database whose URI the team's Secret holds. No PVC, no pre-upgrade backup,
+# the URI only ever reaches the Pod as a secretKeyRef, and the Role does not
+# name the Secret (the kubelet reads it).
+suite: pgadmin settings database
+templates:
+  - templates/pgadmin/deployment.yaml
+  - templates/pgadmin/pvc.yaml
+  - templates/pgadmin/rbac.yaml
+release:
+  name: pgc
+  namespace: team-a
+set:
+  pgadmin.enabled: true
+  pgadmin.auth.oidc:
+    issuerURL: https://idp.example.com/realms/corp
+    clientID: pgadmin
+    clientSecret: {existingSecret: pgadmin-oidc}
+  pgadmin.servers:
+    - {cluster: orders, endpoint: rw, credentials: {application: {secret: orders-app}}}
+tests:
+  - it: without it, SQLite on a PVC and the pre-upgrade backup
+    asserts:
+      - template: templates/pgadmin/pvc.yaml
+        isKind: {of: PersistentVolumeClaim}
+      - template: templates/pgadmin/deployment.yaml
+        equal:
+          path: spec.template.spec.volumes[0].persistentVolumeClaim.claimName
+          value: pgc-pgadmin
+      - template: templates/pgadmin/deployment.yaml
+        contains:
+          path: spec.template.spec.initContainers
+          any: true
+          content:
+            name: pre-upgrade-backup
+      - template: templates/pgadmin/deployment.yaml
+        notContains:
+          path: spec.template.spec.containers[0].env
+          any: true
+          content:
+            name: PGADMIN_CONFIG_CONFIG_DATABASE_URI_FILE
+
+  - it: with it, no PVC is rendered
+    set:
+      pgadmin.configDatabase.existingSecret: pgadmin-settings-db
+    asserts:
+      - template: templates/pgadmin/pvc.yaml
+        hasDocuments: {count: 0}
+      - template: templates/pgadmin/deployment.yaml
+        hasDocuments: {count: 1}
+
+  - it: with it, the settings volume is a sized emptyDir
+    set:
+      pgadmin.configDatabase.existingSecret: pgadmin-settings-db
+      pgadmin.storage.size: 2Gi
+    template: templates/pgadmin/deployment.yaml
+    asserts:
+      - equal:
+          path: spec.template.spec.volumes[0]
+          value:
+            name: settings
+            emptyDir: {sizeLimit: 2Gi}
+      - notExists:
+          path: spec.template.spec.volumes[0].persistentVolumeClaim
+
+  - it: with it, no pre-upgrade backup and the registration does not wait for a SQLite file
+    set:
+      pgadmin.configDatabase.existingSecret: pgadmin-settings-db
+    template: templates/pgadmin/deployment.yaml
+    asserts:
+      - notContains:
+          path: spec.template.spec.initContainers
+          any: true
+          content:
+            name: pre-upgrade-backup
+      - equal: {path: 'spec.template.spec.initContainers[2].name', value: registration}
+      - contains:
+          path: spec.template.spec.initContainers[2].command
+          content: --config-database-uri-env
+      - notContains:
+          path: spec.template.spec.initContainers[2].command
+          content: --settings-db
+
+  - it: with it, an init container writes the URI to a file and pgAdmin reads the file
+    set:
+      pgadmin.configDatabase.existingSecret: pgadmin-settings-db
+    template: templates/pgadmin/deployment.yaml
+    asserts:
+      - equal: {path: 'spec.template.spec.initContainers[1].name', value: config-database-uri}
+      - equal:
+          path: spec.template.spec.initContainers[1].command
+          value:
+            - /opt/pgtoolbox/bin/manager
+            - pgadmin-config-uri
+            - --env
+            - PGTOOLBOX_CONFIG_DATABASE_URI
+            - --out
+            - /run/pgadmin/config_database_uri
+      - equal:
+          path: spec.template.spec.initContainers[1].env
+          value:
+            - name: PGTOOLBOX_CONFIG_DATABASE_URI
+              valueFrom:
+                secretKeyRef: {name: pgadmin-settings-db, key: CONFIG_DATABASE_URI}
+      - contains:
+          path: spec.template.spec.initContainers[1].volumeMounts
+          content: {name: run, mountPath: /run/pgadmin}
+      # pgAdmin gets the file only: the image refuses VAR and VAR_FILE together.
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PGADMIN_CONFIG_CONFIG_DATABASE_URI_FILE
+            value: /run/pgadmin/config_database_uri
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          any: true
+          content:
+            name: PGADMIN_CONFIG_CONFIG_DATABASE_URI
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          any: true
+          content:
+            name: PGTOOLBOX_CONFIG_DATABASE_URI
+      # The registration sidecar keeps the raw URI by secretKeyRef.
+      - contains:
+          path: spec.template.spec.initContainers[2].env
+          content:
+            name: PGTOOLBOX_CONFIG_DATABASE_URI
+            valueFrom:
+              secretKeyRef: {name: pgadmin-settings-db, key: CONFIG_DATABASE_URI}
+      # The passfile-sync sidecar never sees it.
+      - notContains:
+          path: spec.template.spec.containers[1].env
+          any: true
+          content:
+            name: PGTOOLBOX_CONFIG_DATABASE_URI
+
+  - it: with it, a custom key is used
+    set:
+      pgadmin.configDatabase.existingSecret: pgadmin-settings-db
+      pgadmin.configDatabase.key: uri
+    template: templates/pgadmin/deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.initContainers[1].env
+          content:
+            name: PGTOOLBOX_CONFIG_DATABASE_URI
+            valueFrom:
+              secretKeyRef: {name: pgadmin-settings-db, key: uri}
+
+  - it: with it, the Role does not name the settings database Secret
+    set:
+      pgadmin.configDatabase.existingSecret: pgadmin-settings-db
+    template: templates/pgadmin/rbac.yaml
+    documentIndex: 0
+    asserts:
+      - equal:
+          path: rules
+          value:
+            - {apiGroups: [postgresql.cnpg.io], resources: [clusters], resourceNames: [orders], verbs: [get, watch]}
+            - {apiGroups: [""], resources: [secrets], resourceNames: [orders-app, orders-ca], verbs: [get, watch]}
+
+  - it: still one replica with Recreate
+    set:
+      pgadmin.configDatabase.existingSecret: pgadmin-settings-db
+    template: templates/pgadmin/deployment.yaml
+    asserts:
+      - equal: {path: spec.replicas, value: 1}
+      - equal: {path: spec.strategy, value: {type: Recreate}}
+
+  - it: refuses a Secret name that is not a DNS name (schema)
+    set:
+      pgadmin.configDatabase.existingSecret: "Not_A_Name"
+    template: templates/pgadmin/deployment.yaml
+    asserts:
+      - failedTemplate: {}
+
+  - it: refuses a key with a slash (schema)
+    set:
+      pgadmin.configDatabase.existingSecret: pgadmin-settings-db
+      pgadmin.configDatabase.key: "a/b"
+    template: templates/pgadmin/deployment.yaml
+    asserts:
+      - failedTemplate: {}
+
+  - it: refuses an inline URI field (schema; the URI is never a value)
+    set:
+      pgadmin.configDatabase.uri: "postgresql://pgadmin:pw@db/pgadmin"
+    template: templates/pgadmin/deployment.yaml
+    asserts:
+      - failedTemplate: {}

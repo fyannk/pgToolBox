@@ -1,0 +1,103 @@
+# OpenTelemetry tracing: off by default; on with an endpoint,
+# the console reads the SDK's OTEL_* variables, and the exporter headers (an
+# API key) are a mounted Secret key, never a value in the Deployment.
+suite: console tracing
+release:
+  name: pgc
+  namespace: team-a
+templates:
+  - templates/console/deployment.yaml
+tests:
+  - it: renders no tracing variable or volume by default
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content: {name: OTEL_EXPORTER_OTLP_ENDPOINT}
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content: {name: TRACING_INCLUDE_PAYLOADS}
+          any: true
+      - notContains:
+          path: spec.template.spec.volumes
+          content: {name: tracing-headers}
+          any: true
+
+  - it: renders nothing but an endpoint for a bare endpoint
+    set: {console.tracing.endpoint: "http://jaeger-collector.monitoring:4318"}
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: OTEL_EXPORTER_OTLP_ENDPOINT, value: "http://jaeger-collector.monitoring:4318"}
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content: {name: OTEL_TRACES_SAMPLER}
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content: {name: TRACING_HEADERS_FILE}
+          any: true
+
+  - it: renders every setting and mounts the headers Secret key
+    set:
+      console.tracing:
+        endpoint: https://api.smith.langchain.com/otel
+        headersSecret: {existingSecret: langsmith, key: otlp-headers}
+        serviceName: pgtoolbox-console-team-a
+        sampler: parentbased_traceidratio
+        samplerArg: "0.25"
+        includePayloads: true
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: OTEL_SERVICE_NAME, value: pgtoolbox-console-team-a}
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: OTEL_TRACES_SAMPLER, value: parentbased_traceidratio}
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: OTEL_TRACES_SAMPLER_ARG, value: "0.25"}
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: TRACING_HEADERS_FILE, value: /var/run/console/tracing/otlp-headers}
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: TRACING_INCLUDE_PAYLOADS, value: "true"}
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content: {name: OTEL_EXPORTER_OTLP_HEADERS}
+          any: true
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content: {name: tracing-headers, mountPath: /var/run/console/tracing, readOnly: true}
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: tracing-headers
+            secret:
+              secretName: langsmith
+              items:
+                - {key: otlp-headers, path: otlp-headers}
+
+  - it: mounts no headers without an endpoint
+    set: {console.tracing.headersSecret.existingSecret: langsmith}
+    asserts:
+      - notContains:
+          path: spec.template.spec.volumes
+          content: {name: tracing-headers}
+          any: true
+
+  - it: refuses an endpoint that is not an http(s) URL
+    set: {console.tracing.endpoint: "tempo:4318"}
+    asserts:
+      - failedTemplate: {}
+
+  - it: refuses a sampler the SDK does not implement
+    set: {console.tracing: {endpoint: "http://tempo:4318", sampler: jaeger_remote}}
+    asserts:
+      - failedTemplate: {}
+
+  - it: refuses a ratio above one
+    set: {console.tracing: {endpoint: "http://tempo:4318", samplerArg: "2"}}
+    asserts:
+      - failedTemplate: {}

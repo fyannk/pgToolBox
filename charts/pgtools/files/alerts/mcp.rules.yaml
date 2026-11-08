@@ -1,0 +1,89 @@
+# Alerts on the console's MCP endpoint and its OAuth server (docs/site/docs/console/alerts.md).
+# Plain Prometheus rule groups: the chart wraps them in a PrometheusRule
+# (console.metrics.prometheusRule.enabled) and `make rules-test` runs
+# hack/rules/mcp.rules.test.yaml against this file with promtool.
+#
+# Error outcomes of pgtoolbox_console_mcp_calls_total are `error`, `timeout` and a 5xx
+# status; 401, 403 and `unauthenticated` are refusals, other 4xx are the
+# caller's mistakes, `confirmation_requested`, `declined` and `unconfirmed` are
+# the write-tool handshake. A ratio alert needs a minimum rate: one failed call
+# in a quiet hour is not an incident.
+groups:
+  - name: pgtoolbox-console-mcp
+    rules:
+      - alert: PgToolBoxConsoleMCPHighErrorRatio
+        expr: |
+          (
+            sum by (namespace) (rate(pgtoolbox_console_mcp_calls_total{outcome=~"error|timeout|5.."}[10m]))
+            /
+            sum by (namespace) (rate(pgtoolbox_console_mcp_calls_total[10m]))
+          ) > 0.1
+          and
+          sum by (namespace) (rate(pgtoolbox_console_mcp_calls_total[10m])) > 0.05
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "More than 10% of the MCP tool calls of the console in {{ $labels.namespace }} fail"
+          description: "Tool calls ended in error, timeout or a 5xx status over the last 10 minutes. Assistants get an error text instead of an answer."
+          runbook_url: "https://github.com/fyannk/pgToolBox/src/branch/main/docs/site/docs/console/alerts.md#pgtoolboxconsolemcphigherrorratio"
+      - alert: PgToolBoxConsoleMCPCallTimeouts
+        expr: sum by (namespace, tool) (increase(pgtoolbox_console_mcp_calls_total{outcome="timeout"}[15m])) >= 3
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "MCP calls to {{ $labels.tool }} keep hitting the call timeout in {{ $labels.namespace }}"
+          description: "Calls to the tool {{ $labels.tool }} ran past the MCP call timeout at least three times in the last 15 minutes."
+          runbook_url: "https://github.com/fyannk/pgToolBox/src/branch/main/docs/site/docs/console/alerts.md#pgtoolboxconsolemcpcalltimeouts"
+      - alert: PgToolBoxConsoleMCPUnauthenticatedCalls
+        expr: sum by (namespace) (increase(pgtoolbox_console_mcp_calls_total{outcome="unauthenticated"}[15m])) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "MCP tool calls reached the handler without a signed-in person in {{ $labels.namespace }}"
+          description: "Tool calls carried no principal. The bearer check in front of the endpoint should refuse them first, so this is a defect or a bypass, not an expired token."
+          runbook_url: "https://github.com/fyannk/pgToolBox/src/branch/main/docs/site/docs/console/alerts.md#pgtoolboxconsolemcpunauthenticatedcalls"
+      - alert: PgToolBoxConsoleMCPResultsTruncated
+        expr: |
+          (
+            sum by (namespace, tool) (rate(pgtoolbox_console_mcp_result_truncated_total[30m]))
+            /
+            sum by (namespace, tool) (rate(pgtoolbox_console_mcp_result_bytes_count[30m]))
+          ) > 0.25
+          and
+          sum by (namespace, tool) (rate(pgtoolbox_console_mcp_result_bytes_count[30m])) > 0.005
+        for: 1h
+        labels:
+          severity: info
+        annotations:
+          summary: "A quarter of the results of {{ $labels.tool }} are cut to fit the response cap in {{ $labels.namespace }}"
+          description: "Over a quarter of the successful {{ $labels.tool }} results were truncated over the last 30 minutes. The assistant reads a partial answer."
+          runbook_url: "https://github.com/fyannk/pgToolBox/src/branch/main/docs/site/docs/console/alerts.md#pgtoolboxconsolemcpresultstruncated"
+  - name: pgtoolbox-console-mcp-oauth
+    rules:
+      - alert: PgToolBoxConsoleMCPOAuthTokenFailures
+        expr: |
+          (
+            sum by (namespace) (rate(pgtoolbox_console_mcp_oauth_requests_total{endpoint="token",outcome!="ok"}[10m]))
+            /
+            sum by (namespace) (rate(pgtoolbox_console_mcp_oauth_requests_total{endpoint="token"}[10m]))
+          ) > 0.25
+          and
+          sum by (namespace) (rate(pgtoolbox_console_mcp_oauth_requests_total{endpoint="token"}[10m])) > 0.02
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Over a quarter of the MCP token requests of the console in {{ $labels.namespace }} fail"
+          description: "Requests to the token endpoint failed (refused, revoked, replayed, throttled, busy or error) over the last 10 minutes. Assistants cannot connect or refresh."
+          runbook_url: "https://github.com/fyannk/pgToolBox/src/branch/main/docs/site/docs/console/alerts.md#pgtoolboxconsolemcpoauthtokenfailures"
+      - alert: PgToolBoxConsoleMCPOAuthCodeReplayed
+        expr: sum by (namespace) (increase(pgtoolbox_console_mcp_oauth_requests_total{endpoint="token",outcome="replayed"}[15m])) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "An MCP authorization code was presented twice in {{ $labels.namespace }}"
+          description: "An authorization code was redeemed a second time in the last 15 minutes. The console revoked the grant the first redemption bought: a stolen code, or a client that retried badly."
+          runbook_url: "https://github.com/fyannk/pgToolBox/src/branch/main/docs/site/docs/console/alerts.md#pgtoolboxconsolemcpoauthcodereplayed"

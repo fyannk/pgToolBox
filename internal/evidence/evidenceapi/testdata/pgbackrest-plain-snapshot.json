@@ -1,0 +1,218 @@
+{
+  "api_version": "evidence.pgtoolbox.fyannk.dev/v1alpha1",
+  "kind": "RepositoryEvidenceSnapshot",
+  "producer": {
+    "name": "evidence-agent",
+    "version": "1.0.0"
+  },
+  "producer_instance": "0123456789abcdef0123456789abcdef",
+  "producer_epoch": 3,
+  "identity": {
+    "cluster": {
+      "namespace": "database-team",
+      "uid": "2f12b7d1-7e8d-4c37-a68f-233efc5f3191",
+      "name": null
+    },
+    "repository": {
+      "provider": "s3",
+      "format": "pgbackrest",
+      "destination_fingerprint": "sha256:d82d9cc29cfb4912b3c51ac1950d2ee6d0b05030be913d4e046425c771e90b16",
+      "scope": {
+        "kind": "stanza",
+        "name": "demo"
+      }
+    }
+  },
+  "revision": 1,
+  "evidence_generation": 1,
+  "started_at": "2026-11-07T09:00:00Z",
+  "completed_at": "2026-11-07T09:00:00Z",
+  "last_attempt_at": "2026-11-07T09:00:00Z",
+  "completeness": "complete",
+  "stale": false,
+  "state": "healthy",
+  "reason": {
+    "code": "snapshot-healthy",
+    "message": "pgBackRest catalog, chains, WAL, timelines and recovery coverage evaluated"
+  },
+  "capabilities": [
+    {
+      "id": "catalog-listing",
+      "support": "supported",
+      "state": "healthy",
+      "reason": {
+        "code": "capability-catalog-listing-healthy",
+        "message": "every backup is usable"
+      }
+    },
+    {
+      "id": "dependency-chain-validation",
+      "support": "supported",
+      "state": "healthy",
+      "reason": {
+        "code": "capability-dependency-chain-validation-healthy",
+        "message": "every prior and reference is present and consistent"
+      }
+    },
+    {
+      "id": "encrypted-metadata",
+      "support": "supported",
+      "state": "healthy",
+      "reason": {
+        "code": "capability-encrypted-metadata-healthy",
+        "message": "the repository is not encrypted"
+      }
+    },
+    {
+      "id": "object-inventory",
+      "support": "supported",
+      "state": "healthy",
+      "reason": {
+        "code": "capability-object-inventory-healthy",
+        "message": "complete object listing"
+      }
+    },
+    {
+      "id": "observed-recovery-coverage",
+      "support": "supported",
+      "state": "healthy",
+      "reason": {
+        "code": "capability-observed-recovery-coverage-healthy",
+        "message": "every usable backup reaches the newest archived WAL"
+      }
+    },
+    {
+      "id": "retention-expectation-comparison",
+      "support": "supported",
+      "state": "unknown",
+      "reason": {
+        "code": "capability-retention-expectation-comparison-unknown",
+        "message": "no retention expectation is configured"
+      }
+    },
+    {
+      "id": "structural-artifact-validation",
+      "support": "supported",
+      "state": "healthy",
+      "reason": {
+        "code": "capability-structural-artifact-validation-healthy",
+        "message": "every backup is usable"
+      }
+    },
+    {
+      "id": "timeline-history-traversal",
+      "support": "supported",
+      "state": "healthy",
+      "reason": {
+        "code": "capability-timeline-history-traversal-healthy",
+        "message": "timeline history evaluated"
+      }
+    },
+    {
+      "id": "wal-continuity",
+      "support": "supported",
+      "state": "healthy",
+      "reason": {
+        "code": "capability-wal-continuity-healthy",
+        "message": "WAL continuity evaluated"
+      }
+    }
+  ],
+  "inventory": {
+    "known": true,
+    "object_count": 46,
+    "stored_bytes": 5526855,
+    "unscoped_object_count": 0,
+    "pages_examined": 1,
+    "objects_examined": 46,
+    "last_failure_category": null
+  },
+  "details": {
+    "type": "pgbackrest/v1alpha1",
+    "pgbackrest": {
+      "stanza": "demo",
+      "archive_stanza": "demo",
+      "repository": 1,
+      "repository_format": 5,
+      "encrypted": false,
+      "pgbackrest_version": "2.60.0",
+      "database": {
+        "db_id": 1,
+        "system_id": "7705338956479107096",
+        "version": "17",
+        "postgresql_version": 170000
+      },
+      "archive_ids": [
+        "17-1"
+      ],
+      "wal_segment_size_bytes": 16777216,
+      "wal_segment_size_source": "backup-lsn",
+      "backup_items": 4,
+      "wal_range_items": 2,
+      "wal_gap_items": 0,
+      "recovery_path_items": 4,
+      "usable_backups": 4,
+      "backup_states": {
+        "healthy": 4,
+        "warning": 0,
+        "unhealthy": 0,
+        "unknown": 0
+      },
+      "wal_counts": {
+        "segment": 25,
+        "partial": 0,
+        "history": 1,
+        "backup_history": 8,
+        "unknown": 0,
+        "duplicate": 0
+      },
+      "catalog": {
+        "state": "healthy",
+        "reason": {
+          "code": "catalog-healthy",
+          "message": "every backup is usable"
+        }
+      },
+      "wal": {
+        "state": "healthy",
+        "reason": {
+          "code": "wal-healthy",
+          "message": "WAL continuity evaluated"
+        }
+      },
+      "timeline": {
+        "state": "healthy",
+        "reason": {
+          "code": "timeline-healthy",
+          "message": "timeline history evaluated"
+        }
+      },
+      "coverage": {
+        "state": "healthy",
+        "reason": {
+          "code": "coverage-healthy",
+          "message": "every usable backup reaches the newest archived WAL"
+        }
+      },
+      "recovery_window": {
+        "oldest_backup": "20261107-081046F",
+        "start_at": "2026-11-07T08:10:54Z",
+        "newest_backup": "20261107-081046F_20261107-081114I",
+        "newest_stop_at": "2026-11-07T08:11:17Z",
+        "end_timeline": 2,
+        "end_wal": "000000020000000000000014",
+        "end_lsn": "0/15000000",
+        "end_receipt_at": "2026-11-07T08:11:21Z",
+        "usable_backups": 4,
+        "assumption_codes": [
+          "window-end-at-segment-upload-time"
+        ]
+      },
+      "latest_archive_receipt_at": "2026-11-07T08:11:21Z",
+      "ranges_truncated": false,
+      "diagnostics_truncated": false,
+      "findings": [],
+      "findings_truncated": false
+    }
+  }
+}

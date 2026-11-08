@@ -1,0 +1,199 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  annotations:
+    pgtoolbox.fyannk.dev/spec-hash: sha256:cc5468b703e6fb571354ec499b16191ff5e63d66da326b84cc3e698e5fceccdc
+  labels:
+    app.kubernetes.io/component: evidence-agent
+    app.kubernetes.io/instance: orders
+    app.kubernetes.io/managed-by: pgtoolbox
+    app.kubernetes.io/name: evidence-agent
+    app.kubernetes.io/part-of: pgtoolbox
+    pgtoolbox.fyannk.dev/evidenceagent: orders
+    pgtoolbox.fyannk.dev/reconcile: "true"
+  name: orders-evidence-agent
+  namespace: team-a
+  ownerReferences:
+  - apiVersion: pgtoolbox.fyannk.dev/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: EvidenceAgent
+    name: orders
+    uid: 4d7c6c1e-8a51-4c43-9a0e-2b1d5f6e7a80
+spec:
+  progressDeadlineSeconds: 300
+  replicas: 1
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: orders
+      app.kubernetes.io/name: evidence-agent
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+    type: RollingUpdate
+  template:
+    metadata:
+      annotations:
+        pgtoolbox.fyannk.dev/producer-epoch: "3"
+      labels:
+        app.kubernetes.io/component: evidence-agent
+        app.kubernetes.io/instance: orders
+        app.kubernetes.io/managed-by: pgtoolbox
+        app.kubernetes.io/name: evidence-agent
+        app.kubernetes.io/part-of: pgtoolbox
+        pgtoolbox.fyannk.dev/evidenceagent: orders
+        pgtoolbox.fyannk.dev/reconcile: "true"
+    spec:
+      automountServiceAccountToken: false
+      containers:
+      - env:
+        - name: RUNTIME_MODE
+          value: agent
+        - name: AWS_EC2_METADATA_DISABLED
+          value: "true"
+        - name: LISTEN_ADDR
+          value: :8443
+        - name: TLS_CERT_FILE
+          value: /var/run/secrets/pgtoolbox.fyannk.dev/serving/tls.crt
+        - name: TLS_KEY_FILE
+          value: /var/run/secrets/pgtoolbox.fyannk.dev/serving/tls.key
+        - name: AGENT_NAME
+          value: orders
+        - name: AGENT_NAMESPACE
+          value: team-a
+        - name: PRODUCER_EPOCH
+          value: "3"
+        - name: CNPG_CLUSTER_NAMESPACE
+          value: team-a
+        - name: CNPG_CLUSTER_UID
+          value: 2f12b7d1-7e8d-4c37-a68f-233efc5f3191
+        - name: CNPG_CLUSTER_NAME
+          value: orders
+        - name: REPOSITORY_FORMAT
+          value: barman-cloud
+        - name: PROVIDER
+          value: azure
+        - name: DESTINATION_PATH
+          value: azure://backups/team-a
+        - name: BARMAN_SERVER_NAMES
+          value: orders
+        - name: CATALOG_REFRESH_INTERVAL
+          value: 5m0s
+        - name: ENDPOINT_URL
+          value: https://azurite.storage.svc:10000
+        - name: ENDPOINT_CA_FILE
+          value: /var/run/secrets/pgtoolbox.fyannk.dev/endpoint-ca/ca.crt
+        - name: AZURE_STORAGE_ACCOUNT
+          value: devstoreaccount1
+        - name: STORE_CREDENTIAL_MODE
+          value: connection-string-file
+        - name: AZURE_STORAGE_CONNECTION_STRING_FILE
+          value: /var/run/secrets/pgtoolbox.fyannk.dev/store/connection-string
+        image: registry.example/pgtoolbox-evidence-agent@sha256:0000000000000000000000000000000000000000000000000000000000000000
+        imagePullPolicy: IfNotPresent
+        livenessProbe:
+          failureThreshold: 3
+          httpGet:
+            path: /healthz
+            port: https
+            scheme: HTTPS
+          periodSeconds: 20
+          timeoutSeconds: 3
+        name: evidence-agent
+        ports:
+        - containerPort: 8443
+          name: https
+          protocol: TCP
+        readinessProbe:
+          failureThreshold: 3
+          httpGet:
+            path: /healthz
+            port: https
+            scheme: HTTPS
+          periodSeconds: 10
+          timeoutSeconds: 3
+        resources:
+          limits:
+            memory: 512Mi
+          requests:
+            cpu: 50m
+            memory: 64Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+        volumeMounts:
+        - mountPath: /var/run/secrets/pgtoolbox.fyannk.dev/serving
+          name: serving-certificate
+          readOnly: true
+        - mountPath: /var/run/secrets/pgtoolbox.fyannk.dev/store
+          name: store-credentials
+          readOnly: true
+        - mountPath: /tmp
+          name: tmp
+        - mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+          name: kube-api-access
+          readOnly: true
+        - mountPath: /var/run/secrets/pgtoolbox.fyannk.dev/endpoint-ca
+          name: endpoint-ca
+          readOnly: true
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      serviceAccountName: orders-evidence-agent
+      terminationGracePeriodSeconds: 30
+      volumes:
+      - name: serving-certificate
+        secret:
+          defaultMode: 292
+          items:
+          - key: tls.crt
+            path: tls.crt
+          - key: tls.key
+            path: tls.key
+          secretName: orders-evidence-agent-tls
+      - name: store-credentials
+        projected:
+          defaultMode: 292
+          sources:
+          - secret:
+              items:
+              - key: AZURE_CONNECTION_STRING
+                path: connection-string
+              name: azurite
+      - emptyDir:
+          sizeLimit: 64Mi
+        name: tmp
+      - name: kube-api-access
+        projected:
+          defaultMode: 292
+          sources:
+          - serviceAccountToken:
+              expirationSeconds: 3600
+              path: token
+          - configMap:
+              items:
+              - key: ca.crt
+                path: ca.crt
+              name: kube-root-ca.crt
+          - downwardAPI:
+              items:
+              - fieldRef:
+                  apiVersion: v1
+                  fieldPath: metadata.namespace
+                path: namespace
+      - name: endpoint-ca
+        secret:
+          defaultMode: 292
+          items:
+          - key: ca.crt
+            path: ca.crt
+          secretName: azurite-ca
+status: {}

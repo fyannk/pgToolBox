@@ -1,0 +1,456 @@
+# The operator chart: the operator is on by default (the console
+# left for pgtools; operator.enabled=false renders nothing). The operator renders its Deployment, ClusterRole, CRDs (kept on
+# uninstall), the two user ClusterRoles, the two console ClusterRoles a
+# PgToolBoxConsole is bound to and, on request, the metrics pieces.
+suite: the operator
+templates:
+  - templates/operator/deployment.yaml
+  - templates/operator/clusterrole.yaml
+  - templates/operator/crds.yaml
+  - templates/operator/user-clusterroles.yaml
+  - templates/operator/console-clusterroles.yaml
+  - templates/operator/metrics-reader.yaml
+  - templates/operator/metrics.yaml
+  - templates/operator/namespace.yaml
+  - templates/operator/poddisruptionbudget.yaml
+  - templates/operator/networkpolicy.yaml
+  - templates/operator/admissionpolicy.yaml
+release:
+  name: pgtoolbox
+  namespace: pgtoolbox
+tests:
+  - it: renders nothing of the operator when turned off
+    set: {operator.enabled: false}
+    asserts:
+      - hasDocuments: {count: 0}
+
+  - it: renders the operator Deployment when enabled
+    set: {operator.enabled: true}
+    template: templates/operator/deployment.yaml
+    asserts:
+      - isKind: {of: Deployment}
+
+  - it: renders the manager ClusterRole when enabled
+    set: {operator.enabled: true}
+    template: templates/operator/clusterrole.yaml
+    asserts:
+      - isKind: {of: ClusterRole}
+
+  - it: renders every CRD of the group when enabled, each with the keep policy
+    set: {operator.enabled: true}
+    template: templates/operator/crds.yaml
+    asserts:
+      # EvidenceAgent, PgAccessRequest, PgAdminAccess, PgAdmin, PgToolBoxConsole.
+      - hasDocuments: {count: 5}
+      - equal: {path: 'metadata.annotations["helm.sh/resource-policy"]', value: keep}
+        documentIndex: 0
+      - equal: {path: 'metadata.annotations["helm.sh/resource-policy"]', value: keep}
+        documentIndex: 1
+      - equal: {path: 'metadata.annotations["helm.sh/resource-policy"]', value: keep}
+        documentIndex: 2
+      - equal: {path: 'metadata.annotations["helm.sh/resource-policy"]', value: keep}
+        documentIndex: 3
+      - equal: {path: 'metadata.annotations["helm.sh/resource-policy"]', value: keep}
+        documentIndex: 4
+
+  - it: runs the agent image of the same release unless told otherwise
+    set: {operator.enabled: true}
+    template: templates/operator/deployment.yaml
+    asserts:
+      - contains:
+          path: "spec.template.spec.containers[0].args"
+          content: "--default-evidence-agent-image=ghcr.io/fyannk/pgtoolbox-evidence-agent:0.1.0"
+      - notExists: {path: "spec.template.spec.containers[0].env[?(@.name=='PGADMIN_IMAGE')]"}
+
+  - it: runs, for a PgToolBoxConsole that names no image, the console of the same release
+    set: {operator.enabled: true}
+    template: templates/operator/deployment.yaml
+    asserts:
+      - contains:
+          path: "spec.template.spec.containers[0].args"
+          content: "--default-console-image=ghcr.io/fyannk/pgtoolbox-console:0.1.0"
+
+  - it: pins that console by digest, the digest winning over the tag
+    set:
+      operator.enabled: true
+      operator.console.image.tag: "9.9.9"
+      operator.console.image.digest: sha256:1111111111111111111111111111111111111111111111111111111111111111
+      operator.console.imageRepositories: [mirror.example.org/]
+    template: templates/operator/deployment.yaml
+    asserts:
+      - contains:
+          path: "spec.template.spec.containers[0].args"
+          content: "--default-console-image=ghcr.io/fyannk/pgtoolbox-console@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+      - contains: {path: "spec.template.spec.containers[0].args", content: "--console-image-repositories=mirror.example.org/"}
+
+  - it: ships the three console ClusterRoles the operator binds, under fixed names
+    set: {operator.enabled: true}
+    template: templates/operator/console-clusterroles.yaml
+    asserts:
+      - hasDocuments: {count: 3}
+      - equal: {path: metadata.name, value: pgtoolbox-console}
+        documentIndex: 0
+      - equal: {path: metadata.name, value: pgtoolbox-console-pod-logs}
+        documentIndex: 1
+      - contains: {path: rules, content: {apiGroups: [""], resources: [pods/log], verbs: [get]}}
+        documentIndex: 1
+      - equal: {path: metadata.name, value: pgtoolbox-console-restore-drills}
+        documentIndex: 2
+      - equal:
+          path: rules
+          value: [{apiGroups: [postgresql.cnpg.io], resources: [clusters], verbs: [delete, get, list, watch]}, {apiGroups: [pgtoolbox.fyannk.dev], resources: [restoredrills], verbs: [teardown]}]
+        documentIndex: 2
+
+  - it: passes the agent image, its allow-list, the pgAdmin image and the configuration
+    set:
+      operator.enabled: true
+      operator.evidenceAgent.image: reg.example.org/agent@sha256:abc
+      operator.evidenceAgent.imageRepositories: [reg.example.org/agent, mirror.example.org/]
+      operator.pgAdmin.image: reg.example.org/pgadmin:9
+      operator.pgAdmin.imageRepositories: [reg.example.org/pgadmin, mirror.example.org/]
+      operator.oauthProxyImage: reg.example.org/oauth-proxy:4
+      operator.config.watchNamespaces: [a, b]
+      operator.config.maxConcurrentReconciles: 3
+      operator.config.reconciliationTimeout: 1m
+      operator.config.upgradeBackupsKept: 2
+    template: templates/operator/deployment.yaml
+    asserts:
+      - contains: {path: "spec.template.spec.containers[0].args", content: "--default-evidence-agent-image=reg.example.org/agent@sha256:abc"}
+      - contains: {path: "spec.template.spec.containers[0].args", content: "--evidence-agent-image-repositories=reg.example.org/agent,mirror.example.org/"}
+      - contains: {path: "spec.template.spec.containers[0].args", content: "--pgadmin-image-repositories=reg.example.org/pgadmin,mirror.example.org/"}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: PGADMIN_IMAGE, value: reg.example.org/pgadmin:9}}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: OAUTH_PROXY_IMAGE, value: reg.example.org/oauth-proxy:4}}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: WATCH_NAMESPACES, value: "a,b"}}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: MAX_CONCURRENT_RECONCILES, value: "3"}}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: RECONCILIATION_TIMEOUT, value: 1m}}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: UPGRADE_BACKUPS_KEPT, value: "2"}}
+
+  - it: sets no allow-list by default (the default image's repository alone is allowed)
+    set: {operator.enabled: true}
+    template: templates/operator/deployment.yaml
+    asserts:
+      - notContains: {path: "spec.template.spec.containers[0].args", content: "--pgadmin-image-repositories=", any: true}
+      - notContains: {path: "spec.template.spec.containers[0].args", content: "--evidence-agent-image-repositories=", any: true}
+
+  - it: renders the two user ClusterRoles and the aggregated read with fixed names and no binding
+    set: {operator.enabled: true}
+    template: templates/operator/user-clusterroles.yaml
+    asserts:
+      - hasDocuments: {count: 3}
+      - isKind: {of: ClusterRole}
+      - equal: {path: metadata.name, value: pgtoolbox-console-viewer}
+        documentIndex: 0
+      - equal: {path: metadata.name, value: pgtoolbox-console-operator}
+        documentIndex: 1
+      - equal: {path: metadata.name, value: pgtoolbox-aggregate-to-admin}
+        documentIndex: 2
+
+  - it: gives pgAdmin to the operator role alone, and writes to neither viewer nor anything else
+    set: {operator.enabled: true}
+    template: templates/operator/user-clusterroles.yaml
+    asserts:
+      - contains:
+          path: rules
+          content: {apiGroups: [pgtoolbox.fyannk.dev], resources: [pgadmins], verbs: [get]}
+        documentIndex: 1
+      - notContains:
+          path: rules
+          content: {apiGroups: [pgtoolbox.fyannk.dev], resources: [pgadmins], verbs: [get]}
+        documentIndex: 0
+      - contains:
+          path: rules
+          content: {apiGroups: [postgresql.cnpg.io], resources: [clusters, clusters/status], verbs: [patch]}
+        documentIndex: 1
+      - contains:
+          path: rules
+          content: {apiGroups: [postgresql.cnpg.io], resources: [backups], verbs: [create]}
+        documentIndex: 1
+
+  - it: omits the user roles when asked
+    set: {operator.enabled: true, operator.userRoles.create: false}
+    template: templates/operator/user-clusterroles.yaml
+    asserts:
+      - hasDocuments: {count: 0}
+
+  - it: renders no metrics piece by default
+    set: {operator.enabled: true}
+    templates: [templates/operator/metrics.yaml, templates/operator/metrics-reader.yaml]
+    asserts:
+      - hasDocuments: {count: 0}
+
+  - it: renders a Service and a ServiceMonitor on the metrics port
+    set: {operator.enabled: true, operator.metrics.serviceMonitor.enabled: true}
+    template: templates/operator/metrics.yaml
+    asserts:
+      - hasDocuments: {count: 2}
+      - isKind: {of: Service}
+        documentIndex: 0
+      - equal: {path: "spec.ports[0].port", value: 8080}
+        documentIndex: 0
+      - isKind: {of: ServiceMonitor}
+        documentIndex: 1
+      - equal: {path: "spec.endpoints[0].port", value: metrics}
+        documentIndex: 1
+
+  - it: scrapes the ServiceMonitor over https with the scraper's token, skipping verification of the self-signed default
+    set: {operator.enabled: true, operator.metrics.serviceMonitor.enabled: true}
+    template: templates/operator/metrics.yaml
+    documentIndex: 1
+    asserts:
+      - equal: {path: "spec.endpoints[0].scheme", value: https}
+      - equal: {path: "spec.endpoints[0].bearerTokenFile", value: /var/run/secrets/kubernetes.io/serviceaccount/token}
+      - equal: {path: "spec.endpoints[0].tlsConfig", value: {insecureSkipVerify: true}}
+
+  - it: verifies the endpoint against the CA when one is given
+    set:
+      operator.enabled: true
+      operator.metrics.serviceMonitor.enabled: true
+      operator.metrics.tls.caSecret.name: metrics-ca
+    template: templates/operator/metrics.yaml
+    documentIndex: 1
+    asserts:
+      - equal:
+          path: "spec.endpoints[0].tlsConfig"
+          value: {ca: {secret: {name: metrics-ca, key: ca.crt}}, serverName: pgtoolbox-metrics.pgtoolbox.svc}
+
+  - it: renders a PodMonitor over https with a token from a Secret
+    set:
+      operator.enabled: true
+      operator.metrics.podMonitor.enabled: true
+      operator.metrics.podMonitor.bearerTokenSecret.name: scrape-token
+    template: templates/operator/metrics.yaml
+    asserts:
+      - isKind: {of: PodMonitor}
+      - equal: {path: "spec.podMetricsEndpoints[0].port", value: metrics}
+      - equal: {path: "spec.podMetricsEndpoints[0].scheme", value: https}
+      - equal: {path: "spec.podMetricsEndpoints[0].authorization", value: {type: Bearer, credentials: {name: scrape-token, key: token}}}
+
+  - it: refuses a PodMonitor that cannot send a token
+    set: {operator.enabled: true, operator.metrics.podMonitor.enabled: true}
+    template: templates/operator/metrics.yaml
+    asserts:
+      - failedTemplate: {}
+
+  - it: mounts the metrics certificate Secret and points the operator at it
+    set: {operator.enabled: true, operator.metrics.tls.certSecret: metrics-tls}
+    template: templates/operator/deployment.yaml
+    asserts:
+      - contains: {path: "spec.template.spec.containers[0].args", content: "--metrics-cert-dir=/var/run/pgtoolbox/metrics-cert"}
+      - contains: {path: "spec.template.spec.containers[0].volumeMounts", content: {name: metrics-cert, mountPath: /var/run/pgtoolbox/metrics-cert, readOnly: true}}
+      - equal: {path: "spec.template.spec.volumes[0].secret.secretName", value: metrics-tls}
+
+  - it: passes no certificate flag by default (self-signed)
+    set: {operator.enabled: true}
+    template: templates/operator/deployment.yaml
+    asserts:
+      - notContains: {path: "spec.template.spec.containers[0].args", content: "--metrics-cert-dir=/var/run/pgtoolbox/metrics-cert"}
+      - notExists: {path: spec.template.spec.volumes}
+
+  - it: gives the pods a 40 s grace period and a soft spread across nodes by default
+    set: {operator.enabled: true}
+    template: templates/operator/deployment.yaml
+    asserts:
+      - equal: {path: spec.template.spec.terminationGracePeriodSeconds, value: 40}
+      - equal: {path: "spec.template.spec.topologySpreadConstraints[0].whenUnsatisfiable", value: ScheduleAnyway}
+      - notExists: {path: spec.template.spec.priorityClassName}
+
+  - it: takes the priority class, the spread and the placement from the values
+    set:
+      operator.enabled: true
+      operator.priorityClassName: system-cluster-critical
+      operator.topologySpreadConstraints: [{maxSkew: 2, topologyKey: zone, whenUnsatisfiable: DoNotSchedule}]
+      operator.nodeSelector: {kubernetes.io/os: linux}
+    template: templates/operator/deployment.yaml
+    asserts:
+      - equal: {path: spec.template.spec.priorityClassName, value: system-cluster-critical}
+      - equal: {path: spec.template.spec.topologySpreadConstraints, value: [{maxSkew: 2, topologyKey: zone, whenUnsatisfiable: DoNotSchedule}]}
+      - equal: {path: spec.template.spec.nodeSelector, value: {kubernetes.io/os: linux}}
+
+  - it: rejects a grace period below the lease renew deadline
+    set: {operator.terminationGracePeriodSeconds: 30}
+    template: templates/operator/deployment.yaml
+    asserts:
+      - failedTemplate: {}
+
+  - it: keeps one replica up through a drain
+    set: {operator.enabled: true}
+    template: templates/operator/poddisruptionbudget.yaml
+    asserts:
+      - isKind: {of: PodDisruptionBudget}
+      - equal: {path: spec.minAvailable, value: 1}
+      - equal: {path: spec.unhealthyPodEvictionPolicy, value: AlwaysAllow}
+
+  - it: renders no budget for a single replica or when disabled
+    set: {operator.enabled: true, replicaCount: 1}
+    templates: [templates/operator/poddisruptionbudget.yaml]
+    asserts:
+      - hasDocuments: {count: 0}
+
+  - it: labels the namespace it creates with restricted Pod Security
+    set: {operator.enabled: true, namespace.create: true}
+    template: templates/operator/namespace.yaml
+    asserts:
+      - equal: {path: 'metadata.labels["pod-security.kubernetes.io/enforce"]', value: restricted}
+      - equal: {path: 'metadata.labels["pod-security.kubernetes.io/audit"]', value: restricted}
+      - equal: {path: 'metadata.labels["pod-security.kubernetes.io/warn"]', value: restricted}
+
+  - it: renders no operator NetworkPolicy and no admission policy by default
+    set: {operator.enabled: true}
+    templates: [templates/operator/networkpolicy.yaml, templates/operator/admissionpolicy.yaml]
+    asserts:
+      - hasDocuments: {count: 0}
+
+  - it: renders the operator NetworkPolicy on request, scrapers on the metrics port only
+    set:
+      operator.enabled: true
+      operator.networkPolicy.enabled: true
+      operator.networkPolicy.apiServer.mode: any
+      operator.networkPolicy.ingress.metricsFrom: [{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: monitoring}}}]
+    template: templates/operator/networkpolicy.yaml
+    asserts:
+      - equal: {path: spec.policyTypes, value: [Ingress, Egress]}
+      - equal:
+          path: spec.ingress
+          value:
+            - from: [{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: monitoring}}}]
+              ports: [{port: metrics, protocol: TCP}]
+      - lengthEqual: {path: spec.egress, count: 2}
+
+  - it: admits nothing on ingress when no scraper is listed, and adds extra egress
+    set:
+      operator.enabled: true
+      operator.networkPolicy.enabled: true
+      operator.networkPolicy.apiServer.mode: any
+      operator.networkPolicy.extraEgress: [{ports: [{port: 8443, protocol: TCP}]}]
+    template: templates/operator/networkpolicy.yaml
+    asserts:
+      - notExists: {path: spec.ingress}
+      - lengthEqual: {path: spec.egress, count: 3}
+
+  - it: fails rather than guess the API server addresses
+    set: {operator.enabled: true, operator.networkPolicy.enabled: true}
+    template: templates/operator/networkpolicy.yaml
+    asserts:
+      - failedTemplate: {}
+
+  - it: renders the image-override admission policy and its binding on request
+    set:
+      operator.enabled: true
+      operator.admissionPolicy.enabled: true
+      operator.admissionPolicy.imageOverride.allowedUsers: [platform-bot]
+      operator.admissionPolicy.validationActions: [Deny, Audit]
+    template: templates/operator/admissionpolicy.yaml
+    asserts:
+      - hasDocuments: {count: 2}
+      - isKind: {of: ValidatingAdmissionPolicy}
+        documentIndex: 0
+      - equal: {path: "spec.matchConstraints.resourceRules[0].resources", value: [pgadmins, evidenceagents, pgtoolboxconsoles]}
+        documentIndex: 0
+      - equal: {path: "spec.variables[0].expression", value: '["platform-bot"]'}
+        documentIndex: 0
+      - equal: {path: "spec.variables[3].expression", value: '["system:masters"]'}
+        documentIndex: 0
+      - lengthEqual: {path: spec.validations, count: 3}
+        documentIndex: 0
+      - matchRegex: {path: "spec.validations[1].expression", pattern: "evidenceagents.*spec.workloadIdentity"}
+        documentIndex: 0
+      # The image rule must not start to apply to a PgToolBoxConsole (its image is bounded by the operator's allow-list).
+      - matchRegex: {path: "spec.validations[0].expression", pattern: "^request.resource.resource == 'pgtoolboxconsoles' \\|\\|"}
+        documentIndex: 0
+      - isKind: {of: ValidatingAdmissionPolicyBinding}
+        documentIndex: 1
+      - equal: {path: spec.validationActions, value: [Deny, Audit]}
+        documentIndex: 1
+
+  - it: requires get on every Secret a PgToolBoxConsole or a PgAdmin references
+    set:
+      operator.enabled: true
+      operator.admissionPolicy.enabled: true
+    template: templates/operator/admissionpolicy.yaml
+    documentIndex: 0
+    asserts:
+      - equal: {path: "spec.variables[4].name", value: secretRefs}
+      - equal: {path: "spec.variables[5].name", value: oldSecretRefs}
+      # Every Secret-bearing field of api/v1alpha1, optional ones behind has().
+      - matchRegex: {path: "spec.variables[4].expression", pattern: "has\\(object.spec.auth.oidc\\)"}
+      - matchRegex: {path: "spec.variables[4].expression", pattern: "auth.openshift.clientSecretRef"}
+      - matchRegex: {path: "spec.variables[4].expression", pattern: "prometheus.tokenSecretRef"}
+      - matchRegex: {path: "spec.variables[4].expression", pattern: "digest.delivery.chatWebhookSecretRef"}
+      - matchRegex: {path: "spec.variables[4].expression", pattern: "digest.delivery.webhookSecretRef"}
+      - matchRegex: {path: "spec.variables[4].expression", pattern: "digest.delivery.smtp.passwordSecretRef"}
+      - matchRegex: {path: "spec.variables[4].expression", pattern: "auth.oauth2.clientSecretRef"}
+      - matchRegex: {path: "spec.variables[4].expression", pattern: "auth.openshiftOAuthProxy.image.pullSecrets"}
+      - matchRegex: {path: "spec.variables[4].expression", pattern: "exposure.tls.certificateSecretRef"}
+      - matchRegex: {path: "spec.variables[4].expression", pattern: "'image.pullSecrets'"}
+      - matchRegex: {path: "spec.variables[5].expression", pattern: "^oldObject == null \\? \\[\\] : \\("}
+      - matchRegex: {path: "spec.variables[5].expression", pattern: "oldObject.spec.prometheus.tokenSecretRef"}
+      - matchRegex:
+          path: "spec.validations[2].expression"
+          pattern: "authorizer.group\\(''\\).resource\\('secrets'\\).namespace\\(object.metadata.namespace\\).name\\(r.n\\).check\\('get'\\).allowed\\(\\)"
+      - matchRegex: {path: "spec.validations[2].expression", pattern: "oldObject != null && r in variables.oldSecretRefs"}
+      - equal: {path: "spec.validations[2].reason", value: Forbidden}
+      - equal: {path: "spec.matchConstraints.resourceRules[0].operations", value: [CREATE, UPDATE]}
+
+  - it: renders the metrics reader and binds it to the named scraper only
+    set:
+      operator.enabled: true
+      operator.metrics.readerClusterRole: true
+      operator.metrics.readerSubjects: [{name: prometheus-k8s, namespace: monitoring}]
+    template: templates/operator/metrics-reader.yaml
+    asserts:
+      - equal: {path: rules, value: [{nonResourceURLs: [/metrics], verbs: [get]}]}
+        documentIndex: 0
+      - equal: {path: subjects, value: [{kind: ServiceAccount, name: prometheus-k8s, namespace: monitoring}]}
+        documentIndex: 1
+
+  - it: rejects a misspelt operator key
+    set: {operator.evidenceAgnet.image: x}
+    template: templates/operator/deployment.yaml
+    asserts:
+      - failedTemplate: {}
+
+  - it: rejects a misspelt top-level key
+    set: {replicaCout: 3}
+    template: templates/operator/deployment.yaml
+    asserts:
+      - failedTemplate: {}
+
+  - it: pins the operator image by digest when one is given, the digest winning over the tag
+    set:
+      operator.enabled: true
+      image.tag: "9.9.9"
+      image.digest: sha256:0000000000000000000000000000000000000000000000000000000000000001
+    template: templates/operator/deployment.yaml
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: ghcr.io/fyannk/pgtoolbox-operator@sha256:0000000000000000000000000000000000000000000000000000000000000001
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --operator-image=ghcr.io/fyannk/pgtoolbox-operator@sha256:0000000000000000000000000000000000000000000000000000000000000001
+
+  - it: rejects a digest that is not sha256
+    set: {operator.enabled: true, image.digest: "latest"}
+    template: templates/operator/deployment.yaml
+    asserts:
+      - failedTemplate: {}
+
+  - it: derives the container ports and the probe ports from the bind addresses
+    template: templates/operator/deployment.yaml
+    set:
+      operator.enabled: true
+      metricsBindAddress: ":8443"
+      healthProbeBindAddress: ":9440"
+    asserts:
+      - equal: {path: "spec.template.spec.containers[0].ports[0].containerPort", value: 8443}
+      - equal: {path: "spec.template.spec.containers[0].ports[1].containerPort", value: 9440}
+      - equal: {path: "spec.template.spec.containers[0].livenessProbe.httpGet.port", value: 9440}
+      - equal: {path: "spec.template.spec.containers[0].readinessProbe.httpGet.port", value: 9440}
+
+  - it: keeps 8080 and 8081 by default
+    template: templates/operator/deployment.yaml
+    set: {operator.enabled: true}
+    asserts:
+      - equal: {path: "spec.template.spec.containers[0].ports[0].containerPort", value: 8080}
+      - equal: {path: "spec.template.spec.containers[0].ports[1].containerPort", value: 8081}
+      - equal: {path: "spec.template.spec.containers[0].livenessProbe.httpGet.port", value: 8081}

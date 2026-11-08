@@ -1,0 +1,6 @@
+{
+  "title": "Not Implemented",
+  "status": 501,
+  "detail": "creating the database role: not available on this CloudNativePG minor (generated DatabaseRole passwords need CloudNativePG 1.31 or later)"
+}
+

@@ -1,0 +1,42 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: 64m
+    pgtoolbox.fyannk.dev/spec-hash: 2d9aa251a865c1dd
+  labels:
+    app.kubernetes.io/component: pgadmin
+    app.kubernetes.io/instance: web
+    app.kubernetes.io/managed-by: pgtoolbox
+    app.kubernetes.io/name: pgadmin
+    app.kubernetes.io/part-of: pgtoolbox
+    pgtoolbox.fyannk.dev/pgadmin: web
+    pgtoolbox.fyannk.dev/reconcile: "true"
+  name: web-pgadmin
+  namespace: team-a
+  ownerReferences:
+  - apiVersion: pgtoolbox.fyannk.dev/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: PgAdmin
+    name: web
+    uid: pga-uid
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: pgadmin.example.com
+    http:
+      paths:
+      - backend:
+          service:
+            name: web-pgadmin
+            port:
+              name: http
+        path: /
+        pathType: Prefix
+  tls:
+  - hosts:
+    - pgadmin.example.com
+    secretName: pgadmin-tls
+status:
+  loadBalancer: {}

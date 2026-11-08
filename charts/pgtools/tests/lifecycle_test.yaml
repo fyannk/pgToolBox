@@ -1,0 +1,42 @@
+suite: the lifecycle table
+templates:
+  - templates/console/configmap-lifecycle.yaml
+  - templates/console/deployment.yaml
+release:
+  name: pgc
+  namespace: team-a
+tests:
+  - it: creates the lifecycle ConfigMap from the table the chart ships
+    template: templates/console/configmap-lifecycle.yaml
+    asserts:
+      - equal: {path: metadata.name, value: pgc-console-lifecycle}
+      - exists: {path: 'data["lifecycle.json"]'}
+      - notExists: {path: metadata.annotations}
+
+  - it: mounts it as a directory, optional, and points the console at the file
+    template: templates/console/deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: LIFECYCLE_FILE, value: /var/run/console/lifecycle/lifecycle.json}
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content: {name: lifecycle, mountPath: /var/run/console/lifecycle, readOnly: true}
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: lifecycle
+            configMap:
+              name: pgc-console-lifecycle
+              optional: true
+              items: [{key: lifecycle.json, path: lifecycle.json}]
+
+  - it: creates nothing for a ConfigMap the user names, and mounts that one
+    set: {console.lifecycle.configMapName: team-lifecycle}
+    asserts:
+      - hasDocuments: {count: 0}
+        template: templates/console/configmap-lifecycle.yaml
+      - equal:
+          path: "spec.template.spec.volumes[?(@.name=='lifecycle')].configMap.name"
+          value: team-lifecycle
+        template: templates/console/deployment.yaml

@@ -1,0 +1,142 @@
+{{- if .Values.operator.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "pgtoolbox.fullname" . }}
+  namespace: {{ include "pgtoolbox.namespace" . }}
+  labels:
+    {{- include "pgtoolbox.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "pgtoolbox.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "pgtoolbox.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "pgtoolbox.fullname" . }}
+      terminationGracePeriodSeconds: {{ .Values.operator.terminationGracePeriodSeconds }}
+      {{- with .Values.operator.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      {{- with .Values.operator.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.operator.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.operator.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml .Values.operator.topologySpreadConstraints | nindent 8 }}
+      {{- else if gt (int .Values.replicaCount) 1 }}
+      # Replicas prefer different nodes; a single-node cluster still schedules.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              {{- include "pgtoolbox.selectorLabels" . | nindent 14 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+      - name: manager
+        image: {{ include "pgtoolbox.image" . | quote }}
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        args:
+        {{- if .Values.leaderElection }}
+        - --leader-elect
+        {{- end }}
+        - --metrics-bind-address={{ .Values.metricsBindAddress }}
+        - --health-probe-bind-address={{ .Values.healthProbeBindAddress }}
+        - --operator-image={{ include "pgtoolbox.image" . }}
+        - --default-evidence-agent-image={{ include "pgtoolbox.evidenceAgentImage" . }}
+        {{- with .Values.operator.evidenceAgent.imageRepositories }}
+        - --evidence-agent-image-repositories={{ join "," . }}
+        {{- end }}
+        - --default-console-image={{ include "pgtoolbox.consoleImage" . }}
+        {{- /* dig: values reused from a release before operator.console existed lack the key */}}
+        {{- with dig "console" "imageRepositories" list .Values.operator }}
+        - --console-image-repositories={{ join "," . }}
+        {{- end }}
+        {{- with .Values.operator.pgAdmin.imageRepositories }}
+        - --pgadmin-image-repositories={{ join "," . }}
+        {{- end }}
+        {{- if .Values.operator.metrics.tls.certSecret }}
+        - --metrics-cert-dir=/var/run/pgtoolbox/metrics-cert
+        {{- end }}
+        env:
+        # The operator's own namespace: where it reads its ConfigMap and Secret.
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        {{- with .Values.operator.pgAdmin.image }}
+        - name: PGADMIN_IMAGE
+          value: {{ . | quote }}
+        {{- end }}
+        {{- with .Values.operator.oauthProxyImage }}
+        - name: OAUTH_PROXY_IMAGE
+          value: {{ . | quote }}
+        {{- end }}
+        {{- $cfg := .Values.operator.config }}
+        {{- with $cfg.watchNamespaces }}
+        - name: WATCH_NAMESPACES
+          value: {{ join "," . | quote }}
+        {{- end }}
+        {{- if $cfg.maxConcurrentReconciles }}
+        - name: MAX_CONCURRENT_RECONCILES
+          value: {{ $cfg.maxConcurrentReconciles | quote }}
+        {{- end }}
+        {{- with $cfg.reconciliationTimeout }}
+        - name: RECONCILIATION_TIMEOUT
+          value: {{ . | quote }}
+        {{- end }}
+        {{- if $cfg.upgradeBackupsKept }}
+        - name: UPGRADE_BACKUPS_KEPT
+          value: {{ $cfg.upgradeBackupsKept | quote }}
+        {{- end }}
+        ports:
+        - containerPort: {{ include "pgtoolbox.bindPort" .Values.metricsBindAddress }}
+          name: metrics
+          protocol: TCP
+        - containerPort: {{ include "pgtoolbox.bindPort" .Values.healthProbeBindAddress }}
+          name: probes
+          protocol: TCP
+        securityContext:
+          {{- toYaml .Values.securityContext | nindent 10 }}
+        livenessProbe:
+          {{- include "pgtoolbox.probe" (dict "probe" .Values.livenessProbe "addr" .Values.healthProbeBindAddress) | nindent 10 }}
+        readinessProbe:
+          {{- include "pgtoolbox.probe" (dict "probe" .Values.readinessProbe "addr" .Values.healthProbeBindAddress) | nindent 10 }}
+        resources:
+          {{- toYaml .Values.resources | nindent 10 }}
+        {{- if .Values.operator.metrics.tls.certSecret }}
+        volumeMounts:
+        - name: metrics-cert
+          mountPath: /var/run/pgtoolbox/metrics-cert
+          readOnly: true
+        {{- end }}
+      {{- if .Values.operator.metrics.tls.certSecret }}
+      volumes:
+      - name: metrics-cert
+        secret:
+          secretName: {{ .Values.operator.metrics.tls.certSecret }}
+          items:
+          - {key: tls.crt, path: tls.crt}
+          - {key: tls.key, path: tls.key}
+      {{- end }}
+
+{{- end }}

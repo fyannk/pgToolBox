@@ -1,0 +1,48 @@
+# pgAdmin without the operator: OIDC sign-in, an Ingress, the
+# optional NetworkPolicy, and one server of each credential kind.
+console:
+  pgadmin:
+    url: https://pgadmin.example.org
+pgadmin:
+  enabled: true
+  admins: [alice@example.org]
+  auth:
+    provider: oidc
+    oidc:
+      issuerURL: https://idp.example.org/realms/corp
+      clientID: pgadmin
+      clientSecret: {existingSecret: pgadmin-oidc}
+      requiredClaims: {groups: [dba]}
+  exposure:
+    type: ingress
+    host: pgadmin.example.org
+    ingress: {className: nginx, tls: {enabled: true, secretName: pgadmin-tls}}
+    routerNamespace: ingress-nginx
+  networkPolicy:
+    enabled: true
+    apiServer: {mode: addresses, addresses: [10.0.0.1], ports: [6443]}
+  servers:
+    - cluster: orders
+      endpoint: rw
+      credentials:
+        application: {secret: orders-app}
+    - cluster: orders
+      endpoint: ro
+      credentials:
+        databaseRole: {name: orders-reporting, secret: orders-reporting-password}
+    - cluster: orders
+      endpoint: pooler:orders-pool
+      credentials:
+        superuser: {secret: orders-superuser}
+    - cluster: billing
+      endpoint: rw
+      database: billing
+      user: billing_owner
+      caConfigMap: billing-ca-crt
+      credentials: {secret: billing-owner}
+    - cluster: legacy
+      endpoint: rw
+      database: app
+      user: alice
+      caSecret: legacy-server-ca
+      credentials: none

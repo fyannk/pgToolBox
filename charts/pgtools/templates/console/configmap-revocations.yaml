@@ -1,0 +1,13 @@
+{{- if and .Values.console.enabled .Values.console.rbac.create }}
+# The revocation list every replica watches. Created empty; the
+# console writes it with the user's authority or an admin edits it; `helm
+# upgrade` never overwrites entries it did not render.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "pgtools.console.revocations" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "pgtools.console.labels" . | nindent 4 }}
+data: {}
+{{- end }}

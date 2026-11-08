@@ -1,0 +1,191 @@
+{{define "base-head"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}} — pgToolBox console</title>
+<style>{{.CSS}}</style>
+</head>
+<body>
+<main class="card">
+<header class="brand"><img class="mark" src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHJvbGU9ImltZyIgdmlld0JveD0iMTEwIDEwOCA4MDAgODAwIj4KICA8dGl0bGU+cGdDb25zb2xlPC90aXRsZT4KICA8ZGVmcz4KICAgIDxyYWRpYWxHcmFkaWVudCBpZD0ic2ciIGN4PSI1MDAiIGN5PSI2NDYuMCIgcj0iNDA1LjAiIGdyYWRpZW50VW5pdHM9InVzZXJTcGFjZU9uVXNlIj4KICAgICAgPHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjMmY1YTEwIi8+PHN0b3Agb2Zmc2V0PSIxIiBzdG9wLWNvbG9yPSIjMTEzYzAwIi8+CiAgICA8L3JhZGlhbEdyYWRpZW50PgogICAgPGxpbmVhckdyYWRpZW50IGlkPSJsaW5lYXJHcmFkaWVudDEzIiA+IDxzdG9wIHN0eWxlPSJzdG9wLWNvbG9yOiM1ZThhMmE7c3RvcC1vcGFjaXR5OjE7IiBvZmZzZXQ9IjAiIGlkPSJzdG9wMTMiIC8+IDxzdG9wIHN0eWxlPSJzdG9wLWNvbG9yOiNlNmYwYzg7c3RvcC1vcGFjaXR5OjE7IiBvZmZzZXQ9IjEiIGlkPSJzdG9wMTQiIC8+IDwvbGluZWFyR3JhZGllbnQ+IDxsaW5lYXJHcmFkaWVudCBpZD0ibGluZWFyR3JhZGllbnQxMSIgPiA8c3RvcCBzdHlsZT0ic3RvcC1jb2xvcjojM2U2NTE2O3N0b3Atb3BhY2l0eToxOyIgb2Zmc2V0PSIwLjQ1NTMyMzQ5IiBpZD0ic3RvcDExIiAvPiA8c3RvcCBzdHlsZT0ic3RvcC1jb2xvcjojOWZjMjVhO3N0b3Atb3BhY2l0eToxOyIgb2Zmc2V0PSIxIiBpZD0ic3RvcDEyIiAvPiA8L2xpbmVhckdyYWRpZW50PiA8bGluZWFyR3JhZGllbnQgaHJlZj0iI2xpbmVhckdyYWRpZW50MTEiIGlkPSJsaW5lYXJHcmFkaWVudDEyIiB4MT0iNDYyLjY0NDU0IiB5MT0iMzg2LjIxNjMiIHgyPSI1NTYuNTA0ODkiIHkyPSIzODYuMjE2MyIgZ3JhZGllbnRVbml0cz0idXNlclNwYWNlT25Vc2UiIC8+IDxsaW5lYXJHcmFkaWVudCBocmVmPSIjbGluZWFyR3JhZGllbnQxMyIgaWQ9ImxpbmVhckdyYWRpZW50MTQiIHgxPSIxOS4zOTQxMzYiIHkxPSIyMjguMzE1NDgiIHgyPSI4NDMuNzEzOTUiIHkyPSIyMjguMzE1NDgiIGdyYWRpZW50VW5pdHM9InVzZXJTcGFjZU9uVXNlIiAvPgogIDwvZGVmcz4KICA8ZyB0cmFuc2Zvcm09InRyYW5zbGF0ZSgxNzUuMiAxMTguMCkgc2NhbGUoMC44KSI+CiAgICA8cGF0aCBzdHlsZT0iZmlsbDojMGIyNDAwIiBkPSJNIDI1MS44MjA0NSwxMjQuMzg0MDQgQyAxOTAuMDIyMTEsMTI0LjE5ODQ0IDEyNS4yNDQ1MiwxMjUuNDk4MjIgNzAuMDEwMDEyLDE1Ny4wMTkwMSAzMS4zODUwNiwxNzMuNjY0MSA4LjE4ODE0ODIsMjE3LjA2MzQgMTcuMTA5MTM3LDI1OC4zNDIwNCAzMS44MTgzMjIsMzM0LjIyNDY1IDkxLjE3MDY4MywzOTQuMTE2NiAxNTYuNDIxMzksNDMxLjA2MDU4IGMgMjguNjkxMTEsMTYuMzM3MzEgNjYuMDk5MDQsMTUuODU0ODQgOTEuOTM4NDcsLTUuODIyNzEgMjQuMzc0NjcsLTE5LjQwNDM0IDM3LjUxNTYsLTUwLjkwOTExIDQzLjE4NzY3LC04MC44MTM0NyA0LjI2NjgyLC0xMy45OTY3OSAtMy4yMDk5LC02OS4zNjI1NCA5LjQ2MzQ1LC0zMi44MDkzNyAxNy44OTgwMSwzNS45NjQ0NiA0MC43MjE4OCw3Ni4zMDUyNCA4MC42ODQyNiw5MC40NTgwOCAzMi4zNjYwOCwxMi40MzU2MSA0Ny4wNjU0MywtMjkuNTYxOTQgNjguNjk5NDgsLTQ1LjYyMzkyIDIzLjE1MDk1LC0yNy40MTM0MSA2MC43NDc2MywtMTkuODEzMDggODEuNTUwODMsMy4wNzE1MyA2OS4xOTM0Nyw2NC40MzY5NSAxNjUuODUxNDYsNzcuNTkzOTUgMjQzLjI4ODU0LDM0LjMwNTE5IDQwLjcxNjA1LC0yNi40MDQ2NCA3OS45MzAyOCwtNzIuMTc4MDYgNjkuNTA5MDUsLTEyNC4wNzI3OSAtNC44Mzg2MiwtMzIuNzQwNjQgLTUxLjM4ODMzLC0zNS4zNTU5IC02MS4xMjMxMSwtNC45NDYxMyAtMTIuOTg3OTcsMjMuMTMzNCAtMjYuMTYxOTEsNTEuOTI3MzIgLTU2LjQ0OTI3LDU0LjI0ODg2IC0xNy45MTU4OCwtMi4yNjkzOSAtMTcuODc1NzcsMTkuMzc4NTIgLTMwLjcyMzI3LDI2Ljg1NzI2IDIuNjI1ODUsLTE3LjUwNTkxIDMuMTE4ODYsLTIzLjg3NjQ5IC0wLjQ3MzYsLTI3LjE3ODUzIC00LjQ2MTI4LC00LjEwMDYzIC04LjgxMDA2LC03LjQzNjc4IC0xNS4zODIzOSwtOS44Nzc1MiAtMTYuMjYxMiwtNi4wMzg4NSAtMjMuNTk0MzEsMTEuNDMwNjQgLTQwLjQ3NzU1LDE3Ljk2NTk3IC02Ljc3Mjc1LC0wLjQ2MzMyIDE3LjQ1NDI4LC0xOS40MjY5OCAxNy42ODEzNSwtMzAuMDQ5MTYgMC4yNjU5OCwtMTIuNDQyODYgLTI2LjM1NzMxLC0yOC4wNjEwNiAtMzcuOTQ4MTQsLTMwLjc2MDc5IC04Ljk4NjExLC0xLjIyODYxIC00MS42MjMwMSwyOS4xNzcxNSAtMzUuMDcxMTcsMjEuNzMzNDEgMTkuMTUzMTYsLTIxLjc2MDUgMjQuNDMxNDksLTM3LjYxNjMgMTkuNTgzMTUsLTUzLjY0MDIzIEMgNTU1LjMwMDgxLDcxLjk2NjcwMSA0NjUuNzYxMSwtNi44MjQ5MzA2IDMzNS45MzE5NiwxNy45ODk4OCBjIC01Ny4zNzA3MSwxMS41NTgyMzUgLTExMi43NTIsNDEuMDg1MjYxIC0xNDkuODc2MzEsODYuOTgxNTkgMjIuNTU4NzQsMy44NzQwMyA0NC45NjcyNCw5LjY5OTMxIDY1Ljc2NDgsMTkuNDEyNTcgeiIgaWQ9InBhdGgxMSIgLz4gPHBhdGggc3R5bGU9ImZpbGw6dXJsKCNsaW5lYXJHcmFkaWVudDE0KSIgZD0ibSAyNjYuNzIyNDIsMTI2LjkxNjkxIGMgLTU3LjgzNTkyLDQuMzAwMDggLTEzNS45OTk5LDEuMTQ0IC0xOTEuMTE4MzE3LDMyLjQzMjYzIC0zOC42MjQ5NTIsMTYuNjQ1MDkgLTYzLjMwNTczMSw1Ni4wNjQ5MyAtNTQuMzg0NzQxLDk3LjM0MzU3IDE0LjcwOTE4NSw3NS44ODI2MSA3MS45MDMxOTUsMTMyLjgwNjgyIDEzNy4xNTM4OTgsMTY5Ljc1MDggMjguNjkxMTEsMTYuMzM3MzEgNjAuOTcyOTUsMTYuNjY0MjMgODYuODEyMzgsLTUuMDEzMzIgMjQuMzc0NjcsLTE5LjQwNDM0IDM1LjM1NzI1LC00NS41MTMyNCA0MS4wMjkzMiwtNzUuNDE3NiA0LjI2NjgyLC0xMy45OTY3OSAxLjY0NjM5LC03OS42MTQ3IDE0LjMxOTc0LC00My4wNjE1MyAxOC4xNjc4MSwzNC42MTU0OSA0Mi4wNzA4NSw4MS4xNjE1MyA4Mi4wMzMyMyw5NS4zMTQzNyAzMi4zNjYwOCwxMi40MzU2MSA0MC44NjAxNywtMjQuNzA1NjUgNjIuNDk0MjIsLTQwLjc2NzYzIDkuODAyMTcsLTExLjYwNjkxIDIwLjc0MDc1LC0xOS40NjcwNiAzMy44NTMxLC0yMS42OTA5NSAxNy44NTY2NiwtMy4wMjg1NCAzNi43ODE4MywyLjkzMzg2IDQ4Ljc3NjkxLDE2LjEyOTA3IDI1LjIwNjYyLDIzLjQ3Mzg2IDUzLjU4NjQ4LDQzLjAxMTkzIDg1Ljg2ODIxLDUzLjExMjI3IDQ2LjI2OTMzLDE0LjQ3Njc5IDEwNS43NzU5MSwxNi41ODAzIDE1Ni4wNzEzNiwtMTEuMjUyODUgNDAuNzE2MDUsLTI2LjQwNDY0IDgyLjg5ODAxLC02Ny44NjEzNiA3Mi40NzY3OCwtMTE5Ljc1NjA5IC00LjgzODYyLC0zMi43NDA2NCAtNDYuMjYyMjUsLTM2LjQzNTA3IC01NS45OTcwMywtNi4wMjUzIC0xMi45ODc5NywyMy4xMzM0IC0yNS44OTIxMSw1MC44NDgxNCAtNTYuMTc5NDcsNTMuMTY5NjggLTE3LjkxNTg4LC0yLjI2OTM5IC0yMy41NDE0NCwyMy42OTUyMiAtMzYuMzg4OTQsMzEuMTczOTYgMi42MjU4NSwtMTcuNTA1OTEgNS4wMDc0MSwtMjguMTkzMTkgMS40MTQ5NSwtMzEuNDk1MjMgLTQuNDYxMjgsLTQuMTAwNjMgLTkuOTMxNiwtOC40Mzk2NSAtMTYuNzMxMzUsLTEwLjE0NzMxIC0xNS40NTE4MiwtMy44ODA1IC0yOS43OTk1NywyMS45NTI2IC00Mi4wOTYzMiwyMC4xMjQzMiAtNi43NzI3NSwtNS41ODk0MSAxNi4xMDUzMSwtMjIuOTM0MyAxNy45NTExNSwtMzMuMjg2NjkgMi4xODQ2MSwtMTIuMjUyNDcgLTIyLjA0MDYxLC0yNC41NTM3NCAtMzMuNjMxNDQsLTI3LjI1MzQ3IC04Ljk4NjExLC0xLjIyODYxIC0yOC45MTUxNywyOS4wMDc5IC0zOC4wMzg5LDE4LjIyNjA5IC00LjAwNjk4LC00LjczNTE3IDE1LjE1NDQxLC0xNy44MzUwMyAxOC4xMzkzOCwtMzUuNjQwMTcgMC42MjczNSwtMy43NDIxMiAtNDYuMzk3NzgsLTI2NC4yMzQ0OTcgLTI1Ny41NDA2MywtMjMxLjY4ODI5OSAtNTcuMzcwNzEsMTEuNTU4MjMgLTExMS4yNjgxMywzNS44MjQyOCAtMTQ4LjM5MjQ0LDgxLjcyMDYxOSAyMi41NTg3NCwzLjg3NDAzIDUxLjk4MTg4LDEzLjY3ODc3IDcyLjEwNDk1LDIzLjk5OTA2IHoiIGlkPSJwYXRoMTEtNiIgLz4gPHBhdGggc3R5bGU9ImZpbGw6IzIyNDIwYSIgZD0ibSA0ODEuMTQ5NTMsMzUyLjI4Njc3IGMgLTcuMDkwMDksNi4xOTk3NSAtMTYuMDUyNiwxNC45MDcwMSAtMjEuMTc1ODEsMjMuNjU1ODcgMzQuNTMxNyw0NS45MDcyMSA3OC4zNDUzOCw1MS4zNDQ2NCAxMDAuMzQ2NjMsMzYuMDU2MSAtMzEuMDcwODgsLTExLjg3MjQ4IC03Mi4zNTkzMSwtNTguMzUxOTMgLTc5LjE3MDgyLC01OS43MTE5NyB6IiBpZD0icGF0aDEzIiAvPiA8cGF0aCBzdHlsZT0iZmlsbDp1cmwoI2xpbmVhckdyYWRpZW50MTIpIiBkPSJtIDQ4Mi4xMDM0LDM1NC41NzYwNSBjIC03LjA5MDA5LDYuMTk5NzUgLTE0LjMzNTY1LDEyLjA0NTQxIC0xOS40NTg4NiwyMC43OTQyNyAzNC41MzE3LDQ1LjkwNzIxIDc2LjI0Njg4LDQ4LjI5MjI3IDkzLjg2MDM1LDM2LjQzNzY1IC0zMS4yNjE2NSwtMTMuMDE3MTIgLTY3LjU4OTk4LC01NS44NzE4OCAtNzQuNDAxNDksLTU3LjIzMTkyIHoiIGlkPSJwYXRoMTIiIC8+IDxwYXRoIHN0eWxlPSJmaWxsOiM0YTdhMWYiIGQ9Im0gMjY2LjcyMjQyLDEyNi45MTY5MSBjIC0xMTIuOTM2NjEsMTIuMjU4MzEgLTEzNC4wOTIxNywxNi42Nzg5MyAtMTgwLjEzMDE3NCwzNC4zMjQ0OCAtMzguNjI0OTUyLDE2LjY0NTA5IC03NC4yOTM4NzQsNTQuMTczMDggLTY1LjM3Mjg4NCw5NS40NTE3MiAxNC43MDkxODUsNzUuODgyNjEgNzEuOTAzMTk1LDEzMi44MDY4MiAxMzcuMTUzODk4LDE2OS43NTA4IDI4LjY5MTExLDE2LjMzNzMxIDYwLjk3Mjk1LDE2LjY2NDIzIDg2LjgxMjM4LC01LjAxMzMyIDI0LjM3NDY3LC0xOS40MDQzNCAzNS4zNTcyNSwtNDUuNTEzMjQgNDEuMDI5MzIsLTc1LjQxNzYgNC4yNjY4MiwtMTMuOTk2NzkgMS42NDYzOSwtNzkuNjE0NyAxNC4zMTk3NCwtNDMuMDYxNTMgMTguMTY3ODEsMzQuNjE1NDkgNDIuMDcwODUsODEuMTYxNTMgODIuMDMzMjMsOTUuMzE0MzcgMzIuMzY2MDgsMTIuNDM1NjEgNDAuODYwMTcsLTI0LjcwNTY1IDYyLjQ5NDIyLC00MC43Njc2MyA5LjgwMjE3LC0xMS42MDY5MSAyMC43NDA3NSwtMTkuNDY3MDYgMzMuODUzMSwtMjEuNjkwOTUgMTcuODU2NjYsLTMuMDI4NTQgMzYuNzgxODMsMi45MzM4NiA0OC43NzY5MSwxNi4xMjkwNyAyNS4yMDY2MiwyMy40NzM4NiA1My41ODY0OCw0My4wMTE5MyA4NS44NjgyMSw1My4xMTIyNyA0Ni4yNjkzMywxNC40NzY3OSAxMDUuNzc1OTEsMTYuNTgwMyAxNTYuMDcxMzYsLTExLjI1Mjg1IDQwLjcxNjA1LC0yNi40MDQ2NCA3Ni40MzA5LC01OS4xNDMzMiA2OC45Nzc0MSwtMTE1LjYyNDU0IC00LjgzODYyLC0zMi43NDA2NCAtMzguNDA3ODMsLTM3LjE5MDIzIC00OC4xNDI2MSwtNi43ODA0NiAtMTIuOTg3OTcsMjMuMTMzNCAtMzAuODc5MzMsNTYuMDk3MjEgLTYxLjE2NjY5LDU4LjQxODc1IC0xMi41MiwtMTEuMTcyNTkgLTIyLjM2OTY4LDEyLjkxMTQxIC0zNS4yMTcxOCwyMC4zOTAxNSAyLjYyNTg1LC0xNy41MDU5MSA0LjczNzYxLC0yMy4wNjcxMSAxLjE0NTE1LC0yNi4zNjkxNSAtNC40NjEyOCwtNC4xMDA2MyAtMTUuMDU3NjgsLTguNzA5NDQgLTIxLjg1NzQzLC0xMC40MTcxIC0xNS40NTE4MiwtMy44ODA1IC0yMy44NjQxLDE3LjkwNTY5IC0zNi4xNjA4NSwxNi4wNzc0MSAtNi43NzI3NSwtNS41ODk0MSAxMC45NzkyMiwtMTUuMTEwMjggMTIuODI1MDYsLTI1LjQ2MjY3IDIuMTg0NjEsLTEyLjI1MjQ3IC0yMy42NTkzNywtMjcuMTE2NzggLTM1LjI1MDIsLTI5LjgxNjUxIC04Ljk4NjExLC0xLjIyODYxIC0yMi45MzU0LDI0LjQ0MjU2IC0zMi4wNTkxMywxMy42NjA3NSAtNC4wMDY5OCwtNC43MzUxNyAyMC42NDg3NiwtMjAuNDM3NjcgMTQuNTY4NTgsLTM1LjM4NzU1IEMgNTI1LjQ3NTM4LDc1Ljg5ODQ3OCA0NzAuNzgyNjgsMTcuNzkxMzE1IDM0NS42ODA3MywyOS4yMDk3IDI4OC4zMTAwMiw0MC43Njc5MyAyMzQuMDMxMDYsNTUuODc2ODczIDE5Ni45MDY3NSwxMDEuNzczMjEgYyAyMi41NTg3NCwzLjg3NDAzIDQ5LjY5MjYsMTEuMzg5NDkgNjkuODE1NjcsMjUuMTQzNyB6IiBpZD0icGF0aDEiIC8+IDxlbGxpcHNlIHN0eWxlPSJmaWxsOiNkY2U5YjQ7ZmlsbC1vcGFjaXR5OjEiIGlkPSJwYXRoMTQiIGN4PSI0MzMuOTYzNDEiIGN5PSIyNTIuNzI5NCIgcng9IjM5LjY1OTY5OCIgcnk9IjQwLjQwMTYzIiAvPiA8cGF0aCBzdHlsZT0iZmlsbDojMGIyNDAwIiBkPSJtIDQxMi40NDAxNCwyNzMuOTczOTUgYyAtMC42MTA4LC00Ni4zMjMyNCAyMC4wMTUxOSwtNjYuNjU1ODQgNTEuODE5NjgsLTEyLjczNzgzIC00Ni44MjUzNSwtMjguNjUxNjcgLTM5LjgxMjQ5LDIuMzMzMDggLTUxLjgxOTY4LDEyLjczNzgzIHoiIGlkPSJwYXRoMTYiIC8+CiAgPC9nPgogIDxyZWN0IHg9IjIyMCIgeT0iNDMwIiB3aWR0aD0iNTYwIiBoZWlnaHQ9IjQ1MCIgcng9IjMwIiBmaWxsPSJ1cmwoI3NnKSIgc3Ryb2tlPSIjMGIyNDAwIiBzdHJva2Utd2lkdGg9IjE0Ii8+CiAgPHBhdGggZD0iTTIyNyA1MDhINzczIiBzdHJva2U9IiMwYjI0MDAiIHN0cm9rZS13aWR0aD0iMTAiLz4KICA8cGF0aCBkPSJNMzAwIDYwMGw5MCA3Mi05MCA3MiIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZTZlNGQ2IiBzdHJva2Utd2lkdGg9IjM0IiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KICA8cmVjdCB4PSI0MzAiIHk9IjcxMiIgd2lkdGg9IjEyMCIgaGVpZ2h0PSI0MCIgcng9IjYiIGZpbGw9IiM5ZmMyNWEiLz4KICA8cmVjdCB4PSIyMzIiIHk9IjQ0MiIgd2lkdGg9IjUzNiIgaGVpZ2h0PSI0MjYiIHJ4PSIyMCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjOWZjMjVhIiBzdHJva2Utd2lkdGg9IjUiLz4KPC9zdmc+Cg==" alt=""><span class="wordmark"><span class="pg">pg</span>Console<span class="cursor" aria-hidden="true">▍</span></span></header>
+{{end}}
+
+{{define "base-foot"}}
+</main>
+<footer class="foot">pgToolBox console</footer>
+</body>
+</html>
+{{end}}
+
+{{define "login"}}
+{{template "base-head" .}}
+{{with .Content}}
+<h1>Sign in</h1>
+{{if .Notice}}<p class="alert">{{.Notice}}</p>{{end}}
+{{$rd := .RedirectTo}}
+{{range .Buttons}}
+<a class="button-link" href="{{.Path}}?rd={{$rd}}">{{.Label}}</a>
+{{end}}
+{{if .Token}}
+{{if .Buttons}}<p class="or">or</p>{{end}}
+<details{{if not .Buttons}} open{{end}}>
+<summary>Sign in with an access token</summary>
+<form method="post" action="/auth/token">
+<input type="hidden" name="rd" value="{{$rd}}">
+<label for="token">Kubernetes API token</label>
+<textarea id="token" name="token" rows="4" autocomplete="off" spellcheck="false" required></textarea>
+<p class="hint">For break-glass access: <code>kubectl create token pgtoolbox-console-breakglass --duration=1h</code>.
+Everything you do is recorded as that token's identity; the console never stores it beyond your session.</p>
+<button type="submit">Sign in</button>
+</form>
+</details>
+{{end}}
+{{end}}
+{{template "base-foot" .}}
+{{end}}
+
+{{define "denied"}}
+{{template "base-head" .}}
+{{with .Content}}
+<h1>Access denied</h1>
+{{if .Subject}}<p>You are signed in as <strong>{{.Subject}}</strong>.</p>{{end}}
+<p>{{.Message}}</p>
+<p>Access to this console is granted by Kubernetes RBAC in the namespaces it watches: ask whoever may create
+RoleBindings there for the <code>pgtoolbox-console-viewer</code> or <code>pgtoolbox-console-operator</code> ClusterRole.</p>
+<p><a class="button-link" href="/auth/login">Sign in with another identity</a></p>
+{{end}}
+{{template "base-foot" .}}
+{{end}}
+
+{{define "error"}}
+{{template "base-head" .}}
+{{with .Content}}
+<h1>{{.Title}}</h1>
+<p>{{.Message}}</p>
+<p><a href="/auth/login">Back to sign-in</a></p>
+{{end}}
+{{template "base-foot" .}}
+{{end}}
+
+{{define "signed-out"}}
+{{template "base-head" .}}
+{{with .Content}}
+{{if .Confirm}}
+<h1>Sign out</h1>
+<p>You are signed in as <strong>{{.Subject}}</strong>.</p>
+<form method="post" action="/logout">
+<button type="submit">Sign out</button>
+{{if .Disconnect}}<button type="submit" name="disconnect" value="assistants" class="secondary">Sign out and disconnect my assistants</button>{{end}}
+</form>
+{{if .Disconnect}}<p>Signing out does not disconnect the assistants (MCP clients) you connected to this console: they keep
+working until you disconnect them, here or on the <a href="/assistants">Assistants</a> page.</p>{{end}}
+<p><a href="/">Back to the console</a></p>
+{{else}}
+<h1>Signed out</h1>
+<p>You have been signed out of this console. Signing out of your identity provider, if you want to, is done there.</p>
+<p><a class="button-link" href="/auth/login">Sign in again</a></p>
+{{end}}
+{{end}}
+{{template "base-foot" .}}
+{{end}}
+
+{{define "noscript"}}
+{{template "base-head" .}}
+{{with .Content}}
+<h1>JavaScript is required</h1>
+<p>The console interface is a script application served from this console only; it loads nothing from
+elsewhere. Enable JavaScript for this site and reload.</p>
+<p><a href="/">Reload the console</a></p>
+{{end}}
+{{template "base-foot" .}}
+{{end}}
+
+{{define "consent"}}
+{{template "base-head" .}}
+{{with .Content}}
+<h1>Connect an assistant</h1>
+<p>You are signed in as <strong>{{.Subject}}</strong>.</p>
+<p class="alert">The application below asks to use this console on your behalf. Its name is what it says about
+itself: the console has not verified it. Approve only if you started this connection yourself, just now.</p>
+<p>Application: <strong>{{.ClientName}}</strong> (unverified){{if .ClientURL}}, described at <code>{{.ClientURL}}</code>{{end}}</p>
+<p>It receives the answer at: <code>{{.RedirectHost}}</code> (a program on your own computer, at this port and path)</p>
+<p>Console: <code>{{.Console}}</code></p>
+<p>Access: <strong>{{.Access}}</strong>, as you: it sees exactly the Clusters you may see{{if .Operate}}, and may ask
+you to confirm the operations you are allowed to run{{end}}.</p>
+<p>For: {{.Lifetime}}. You can disconnect it at any time from the console's Assistants page.</p>
+<form method="post" action="{{.Action}}">
+<input type="hidden" name="request" value="{{.Request}}">
+{{if .Operate}}<fieldset>
+<legend>Access</legend>
+<label><input type="radio" name="access" value="read" checked> Read-only</label>
+<label><input type="radio" name="access" value="operate"> Read and operate</label>
+</fieldset>
+<p class="alert">Read and operate lets <strong>{{.ClientName}}</strong> (a name it chose itself) ask to back up, reload,
+restart and switch over the Clusters you may operate. A backup or a reload is confirmed in the application's own
+dialog, which the application could answer by itself: choose read and operate only for an application you trust
+with that. A restart or a switchover is confirmed only on a page of this console, signed in as you.</p>{{end}}
+<div class="decision">
+<button type="submit" name="decision" value="deny">Deny</button>
+<button type="submit" name="decision" value="approve" class="armed">Approve</button>
+</div>
+</form>
+{{end}}
+{{template "base-foot" .}}
+{{end}}
+
+{{define "mcp-confirm"}}
+{{template "base-head" .}}
+{{with .Content}}
+<h1>Confirm: {{.Title}}</h1>
+<p>You are signed in as <strong>{{.Subject}}</strong>.</p>
+<p class="alert">An assistant connected to this console as you asks to run this operation. Its name is what it says
+about itself: the console has not verified it. Approve only if you asked for this operation, just now.</p>
+<p>Assistant: <strong>{{.Assistant}}</strong> (unverified)</p>
+<p>Asked with: {{.Credential}}, at {{.Asked}} UTC.</p>
+<p>Operation: <strong>{{.Title}}</strong> on <code>{{.Namespace}}/{{.Name}}</code>{{if .Instance}}, instance
+<code>{{.Instance}}</code>{{end}}</p>
+{{if .From}}<p>Primary: <code>{{.From}}</code> now, <code>{{.Instance}}</code> after.</p>{{end}}
+<p>{{.Summary}}</p>
+<p>{{.Consequence}}</p>
+<p>Expected duration: {{.Duration}}. This page expires at {{.Expires}} UTC.</p>
+{{if .Problem}}<p class="alert">{{.Problem}}</p>{{end}}
+<form method="post" action="{{.Action}}">
+<input type="hidden" name="r" value="{{.Request}}">
+<label for="confirmation">Type <strong>{{.Typed}}</strong> to confirm</label>
+<input type="text" id="confirmation" name="confirmation" autocomplete="off" spellcheck="false" maxlength="253">
+<div class="decision">
+<button type="submit" name="decision" value="deny">Decline</button>
+<button type="submit" name="decision" value="approve" class="armed">Approve</button>
+</div>
+</form>
+{{end}}
+{{template "base-foot" .}}
+{{end}}
+
+{{define "notice"}}
+{{template "base-head" .}}
+{{with .Content}}
+<h1>{{.Title}}</h1>
+<p>{{.Message}}</p>
+{{end}}
+{{template "base-foot" .}}
+{{end}}
+
+{{define "continue"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="refresh" content="0;url={{.Content.Target}}">
+<title>{{.Title}} — pgToolBox console</title>
+<style>{{.CSS}}</style>
+</head>
+<body>
+<main class="card">
+<h1>Continuing</h1>
+<p><a class="button-link" href="{{.Content.Target}}">Continue</a></p>
+</main>
+</body>
+</html>
+{{end}}

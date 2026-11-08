@@ -1,0 +1,146 @@
+# Two replicas, rolling. This base keeps history in memory; for
+# persistent history use the pgtools chart (a StatefulSet, one claim per replica).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pgtoolbox-console
+  labels:
+    app.kubernetes.io/name: pgtoolbox-console
+    app.kubernetes.io/component: console
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: pgtoolbox-console
+      app.kubernetes.io/component: console
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: pgtoolbox-console
+        app.kubernetes.io/component: console
+    spec:
+      serviceAccountName: pgtoolbox-console
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: console
+        image: pgtoolbox-console
+        env:
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        # Must equal the namespace this is applied to: it is the namespace the
+        # Role above exists in. Set it with a kustomize patch.
+        - name: WATCH_NAMESPACES
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: LISTEN_ADDR
+          value: ":3000"
+        - name: PROBE_LISTEN_ADDR
+          value: ":3001"
+        - name: AUTH_PROVIDER
+          value: token
+        - name: SESSION_KEY_FILE
+          value: /var/run/console/session/session-key
+        - name: SESSION_IDLE_TIMEOUT
+          value: 1h
+        # The end-of-life table, from the optional pgtoolbox-console-lifecycle ConfigMap
+        # (create it to override; reloaded on change). Absent, the table built
+        # into the console applies.
+        - name: LIFECYCLE_FILE
+          value: /var/run/console/lifecycle/lifecycle.json
+        - name: REVOCATION_CONFIGMAP
+          value: pgtoolbox-console-revocations
+        - name: STATE_CONFIGMAP
+          value: pgtoolbox-console-state
+        - name: INSTANCE_STATUS_CA_FILE
+          value: /var/run/console/instance-ca/ca.crt
+        # <dir>/<namespace>/token per watched namespace (one here).
+        # Optional, not set here: PROMETHEUS_URL (+ PROMETHEUS_TOKEN_FILE,
+        # PROMETHEUS_CA_FILE, PROMETHEUS_NAMESPACED, PROMETHEUS_RANGE) turn on the
+        # PromQL source of the metrics charts; add them with a kustomize patch
+        # (the chart renders them from console.prometheus.*).
+        - name: LOG_STREAM_ENABLED
+          value: "true"
+        - name: LOG_MATCH_MAX_AGE
+          value: 6h
+        - name: EVIDENCE_TOKEN_DIR
+          value: /var/run/secrets/pgtoolbox.fyannk.dev/evidence-agent
+        ports:
+        - name: http
+          containerPort: 3000
+          protocol: TCP
+        - name: probes
+          containerPort: 3001
+          protocol: TCP
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: [ALL]
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: probes
+          periodSeconds: 20
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: probes
+          periodSeconds: 10
+        resources:
+          requests: {cpu: 50m, memory: 128Mi}
+          limits: {cpu: "1", memory: 512Mi}
+        volumeMounts:
+        - {name: tmp, mountPath: /tmp}
+        - {name: kube-api-access, mountPath: /var/run/secrets/kubernetes.io/serviceaccount, readOnly: true}
+        - {name: session, mountPath: /var/run/console/session, readOnly: true}
+        - {name: instance-ca, mountPath: /var/run/console/instance-ca, readOnly: true}
+        - {name: lifecycle, mountPath: /var/run/console/lifecycle, readOnly: true}
+        - {name: evidence-agent-token, mountPath: /var/run/secrets/pgtoolbox.fyannk.dev/evidence-agent, readOnly: true}
+      volumes:
+      - name: tmp
+        emptyDir: {}
+      - name: kube-api-access
+        projected:
+          sources:
+          - serviceAccountToken: {path: token, expirationSeconds: 3600}
+          - configMap:
+              name: kube-root-ca.crt
+              items: [{key: ca.crt, path: ca.crt}]
+          - downwardAPI:
+              items:
+              - {path: namespace, fieldRef: {fieldPath: metadata.namespace}}
+      - name: session
+        secret:
+          secretName: pgtoolbox-console-session
+          items: [{key: session-key, path: session-key}]
+      - name: instance-ca
+        configMap:
+          name: pgtoolbox-console-instance-ca
+          optional: true
+          items: [{key: ca.crt, path: ca.crt}]
+      - name: lifecycle
+        configMap:
+          name: pgtoolbox-console-lifecycle
+          optional: true
+          items: [{key: lifecycle.json, path: lifecycle.json}]
+      # The bound token for the EvidenceAgent channel: audience-
+      # restricted, rotated by the kubelet, no Secret.
+      - name: evidence-agent-token
+        projected:
+          sources:
+          # The audience and the path carry the namespace the console is applied
+          # to (the one WATCH_NAMESPACES names): kustomization.yaml replaces the
+          # shipped "pgtoolbox-console" in both with the namespace set on the base.
+          - serviceAccountToken: {audience: pgtoolbox-evidence-agent/pgtoolbox-console, path: pgtoolbox-console/token, expirationSeconds: 3600}

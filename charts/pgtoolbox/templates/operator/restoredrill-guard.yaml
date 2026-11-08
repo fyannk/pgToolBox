@@ -1,0 +1,56 @@
+{{- $guard := .Values.operator.restoreDrillGuard.enabled }}
+{{- if and .Values.operator.enabled (or (eq (toString $guard) "true") (and (eq (toString $guard) "auto") (.Capabilities.APIVersions.Has "admissionregistration.k8s.io/v1/ValidatingAdmissionPolicy"))) }}
+# Generated from config/admission/restore_drill_guard.yaml by hack/sync-manifests.sh; do not edit.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: pgtoolbox-console-restore-drills
+  labels:
+    app.kubernetes.io/part-of: pgtoolbox
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+    - apiGroups:
+      - postgresql.cnpg.io
+      apiVersions:
+      - '*'
+      operations:
+      - DELETE
+      resources:
+      - clusters
+  matchConditions:
+  # A ServiceAccount of the Cluster's own namespace whose name is a
+  # console's (PgToolBoxConsole WorkloadName: it contains "console").
+  - name: console-service-account
+    expression: >-
+      request.userInfo.username.startsWith('system:serviceaccount:' + request.namespace + ':') &&
+      request.userInfo.username.split(':')[3].contains('console')
+  variables:
+  # Bound to the drills ClusterRole in this namespace.
+  - name: drillTeardown
+    expression: >-
+      authorizer.group('pgtoolbox.fyannk.dev').resource('restoredrills').namespace(request.namespace).check('teardown').allowed()
+  validations:
+  - expression: >-
+      !variables.drillTeardown ||
+      (has(oldObject.metadata.labels) &&
+      'pgtoolbox.fyannk.dev/drill-owner' in oldObject.metadata.labels &&
+      oldObject.metadata.labels['pgtoolbox.fyannk.dev/drill-owner'] == request.namespace &&
+      'pgtoolbox.fyannk.dev/restore-drill-of' in oldObject.metadata.labels &&
+      has(oldObject.metadata.annotations) &&
+      'pgtoolbox.fyannk.dev/restore-drill-seal' in oldObject.metadata.annotations)
+    message: a console's ServiceAccount may delete only the restore drill Clusters it created (drill-owner label, drill label, drill seal)
+    reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: pgtoolbox-console-restore-drills
+  labels:
+    app.kubernetes.io/part-of: pgtoolbox
+spec:
+  policyName: pgtoolbox-console-restore-drills
+  validationActions:
+  - Deny
+{{- end }}
