@@ -74,9 +74,11 @@ export const PickClient: Story = {
     await expect(canvas.getByRole("tab", { name: /VS Code/ })).toHaveAttribute("aria-selected", "true");
     // No add command for the generic clients: the configuration file only.
     await expect(canvas.getByText(/has no add command/)).toBeVisible();
-    // Its check is in words (Go's checkNote): read, not copied.
+    // Its check is in words (Go's checkNote): read, not copied. Base UI hides
+    // the previous panel a render after the new tab is selected, so the Codex
+    // panel's copy button can still be there for a frame: wait for it to go.
     await expect(canvas.getByText(/shows as connected once you have signed in/)).toBeVisible();
-    await expect(canvas.queryByRole("button", { name: /^Copy the check/ })).toBeNull();
+    await waitFor(() => expect(canvas.queryByRole("button", { name: /^Copy the check/ })).toBeNull());
     // Its prompt pack is the AGENTS.md section, where Go says it goes.
     await expect(canvas.getByRole("link", { name: "Download AGENTS.md" })).toHaveAttribute(
       "href",
