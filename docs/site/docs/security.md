@@ -115,17 +115,23 @@ the custom resource alone would therefore let anyone who may edit a `PgToolBoxCo
 read any Secret of the namespace by pointing the console at a server they run.
 
 **Editing a `PgToolBoxConsole` or a `PgAdmin` requires `get` on every Secret it
-references.** The rule is part of the operator chart's optional
-`ValidatingAdmissionPolicy`, which asks the API server's authorizer, as the
+references.** The rule is part of the operator chart's
+`ValidatingAdmissionPolicy` (on by default), which asks the API server's authorizer, as the
 requesting user, whether that user may `get` each named Secret, and refuses the
 request otherwise (reason `Forbidden`, message "editing a PgToolBoxConsole or a PgAdmin
 requires get on every Secret it references").
 
-- **Enable it** with `operator.admissionPolicy.enabled=true` (Kubernetes 1.30 or
-  newer; off by default; `validationActions` selects `Deny`, `Warn` and/or
-  `Audit`, `Deny` alone enforces). On a cluster where the policy is off, grant
+- **It is on by default** in the operator chart (`operator.admissionPolicy.enabled`;
+  `validationActions` selects `Deny`, `Warn` and/or `Audit`, `Deny` alone enforces).
+  It is the only check of this rule: where the policy is off, grant
   `create`/`update` on `pgtoolboxconsoles` and `pgadmins` only to people you would trust
   with every Secret of the namespace.
+- **kustomize (`config/default`) and the OLM bundle do not apply it.** The policy is
+  rendered from the chart's values (the image and workload-identity allow-lists), and
+  OLM cannot ship an admission policy. On those installs, render it from the chart
+  and apply it yourself:
+  `helm template pgtoolbox charts/pgtoolbox --set operator.enabled=true --show-only templates/operator/admissionpolicy.yaml | kubectl apply -f -`,
+  or apply the same trust rule as above.
 - **On update, only new or changed references are checked.** The operator's own
   writes (finalizers) and edits that leave the references alone keep working on
   objects that exist already, and a Secret already referenced at a field is no
@@ -153,7 +159,8 @@ in view.
 | **The OpenShift sign-in using the ServiceAccount's projected token as client secret is not yet verified on a live cluster.** | If OpenShift rejects it, sign-in fails with `invalid_client`. | Use a long-lived token Secret ([checklist](console/openshift.md#manual-checklist), step 5). |
 | **The pgAdmin container's root filesystem is writable.** | An attacker with code execution in the container can write to its filesystem. | Restricted Pod Security, no capabilities, optional NetworkPolicy; read-only is an image change on the roadmap. |
 | **Shared pgAdmin servers carry one identity per role.** | PostgreSQL's logs cannot name the person behind a shared server. | The Kubernetes API audit log names who opened pgAdmin on OpenShift; per-person roles are a roadmap item. |
-| **The operator's ClusterRole is broad**: it holds Secret, Role and RoleBinding verbs because it creates the Secrets and Roles of the workloads it runs. | A compromised operator can read and write Secrets in every namespace its ClusterRole reaches, which is the whole cluster. | Run the operator in a dedicated namespace and restrict who can alter its Deployment. `operator.config.watchNamespaces` narrows what it reconciles, not what its ClusterRole allows. |
+| **The operator's ServiceAccount is effectively cluster-admin.** Its ClusterRole holds Secret, ServiceAccount, Deployment, Role and RoleBinding verbs and `bind` on named ClusterRoles in every namespace, because it creates the Secrets, accounts and Roles of the workloads it runs. | Whoever obtains its token (a compromised operator, or anyone who can exec into its Pod, edit its Deployment or read a token of its ServiceAccount) can read every Secret, and run a Deployment as any ServiceAccount, in every namespace: treat it as cluster-admin. | Run the operator in a namespace of its own where only cluster administrators hold any right; restrict `pods/exec`, Deployment edits and `serviceaccounts/token` there. `operator.config.watchNamespaces` narrows what it reconciles, not what its ClusterRole allows; one operator per cluster is the supported layout. |
+| **`pgtoolbox-console-operator` is effectively database-superuser.** `patch clusters` covers the whole `Cluster` spec (`enableSuperuserAccess`, `managed.roles`, `postgresql.parameters`). | Its holder, and the grantee of an `operator` access request, can become the superuser of the namespace's Clusters. | Grant and approve it as you would the `postgres` password ([authorization](console/authorization.md#the-two-clusterroles)). |
 
 ## Network
 

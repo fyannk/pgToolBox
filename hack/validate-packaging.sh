@@ -348,6 +348,7 @@ bundle_dir = pathlib.Path("deploy/olm/bundle/manifests")
 for name, src, olm_file, helm_name in (
         ("pgtoolbox-console-viewer", "config/rbac/pgtoolbox_console_viewer_clusterrole.yaml", "pgtoolbox-console-viewer_rbac.authorization.k8s.io_v1_clusterrole.yaml", "pgtoolbox-console-viewer"),
         ("pgtoolbox-console-operator", "config/rbac/pgtoolbox_console_operator_clusterrole.yaml", "pgtoolbox-console-operator_rbac.authorization.k8s.io_v1_clusterrole.yaml", "pgtoolbox-console-operator"),
+        ("pgtoolbox-console-approver", "config/rbac/pgtoolbox_console_approver_clusterrole.yaml", "pgtoolbox-console-approver_rbac.authorization.k8s.io_v1_clusterrole.yaml", "pgtoolbox-console-approver"),
         ("pgtoolbox-aggregate-to-admin", "config/rbac/pgtoolbox_aggregate_to_admin_clusterrole.yaml", "pgtoolbox-aggregate-to-admin_rbac.authorization.k8s.io_v1_clusterrole.yaml", "pgtoolbox-aggregate-to-admin"),
         ("pgtoolbox-console", "config/rbac/pgtoolbox_console_clusterrole.yaml", "pgtoolbox-console_rbac.authorization.k8s.io_v1_clusterrole.yaml", "pgtoolbox-console"),
         ("pgtoolbox-console-pod-logs", "config/rbac/pgtoolbox_console_pod_logs_clusterrole.yaml", "pgtoolbox-console-pod-logs_rbac.authorization.k8s.io_v1_clusterrole.yaml", "pgtoolbox-console-pod-logs"),
@@ -375,6 +376,10 @@ for src_doc in guard_src:
     helm_doc = next((d for d in guard_helm if d["kind"] == src_doc["kind"] and d["metadata"]["name"] == src_doc["metadata"]["name"]), None)
     if helm_doc is None or helm_doc["spec"] != src_doc["spec"]:
         problems.append(f"Helm {src_doc['kind']} {src_doc['metadata']['name']}: missing or different from config/admission/restore_drill_guard.yaml — run make manifests")
+for src_doc in guard_src:
+    kust_doc = next((d for d in kust_docs if d["kind"] == src_doc["kind"] and d["metadata"]["name"] == src_doc["metadata"]["name"]), None)
+    if kust_doc is None or kust_doc["spec"] != src_doc["spec"] or "namespace" in kust_doc["metadata"]:
+        problems.append(f"kustomize config/default: {src_doc['kind']} {src_doc['metadata']['name']} missing, different from config/admission or namespaced")
 if any("admissionregistration" in f.read_text() for f in bundle_dir.glob("*.yaml")):
     problems.append("the OLM bundle carries an admission policy, which OLM does not install")
 guard_policy = next((d for d in guard_src if d["kind"] == "ValidatingAdmissionPolicy"), None)
@@ -402,16 +407,32 @@ EXPECTED_WRITES = [
     {"apiGroups": ["postgresql.cnpg.io"], "resources": ["backups"], "verbs": ["create"]},
     {"apiGroups": ["postgresql.cnpg.io"], "resources": ["databaseroles"], "verbs": ["create"]},
     {"apiGroups": ["postgresql.cnpg.io"], "resources": ["clusters", "clusters/status"], "verbs": ["patch"]},
-    # Deciding a PgAccessRequest: record the decision, and create the
-    # RoleBinding as the approver (the API server's escalation check holds
-    # because the approver holds every rule of either ClusterRole here).
-    {"apiGroups": ["pgtoolbox.fyannk.dev"], "resources": ["pgaccessrequests/status"], "verbs": ["update"]},
-    {"apiGroups": ["rbac.authorization.k8s.io"], "resources": ["rolebindings"], "verbs": ["create"]},
 ]
 extra = [r for r in operator_role if r not in viewer]
 if sorted(json.dumps(r, sort_keys=True) for r in extra) != sorted(json.dumps(r, sort_keys=True) for r in EXPECTED_WRITES + [
         {"apiGroups": ["pgtoolbox.fyannk.dev"], "resources": ["pgadmins"], "verbs": ["get"]}]):
-    problems.append(f"pgtoolbox-console-operator must be the viewer plus exactly create backups, create databaseroles, patch clusters and clusters/status, get pgadmins, update pgaccessrequests/status, create rolebindings; extra rules are {extra}")
+    problems.append(f"pgtoolbox-console-operator must be the viewer plus exactly create backups, create databaseroles, patch clusters and clusters/status, get pgadmins; extra rules are {extra}")
+# Deciding a PgAccessRequest is the approver's alone. pgtoolbox-console-operator
+# is what an approved request grants, time-boxed: holding create rolebindings or
+# update pgaccessrequests/status, a grantee could bind themselves a second,
+# permanent RoleBinding or approve other people's requests.
+for rule in viewer + operator_role:
+    if "rolebindings" in rule.get("resources", []) or "pgaccessrequests/status" in rule.get("resources", []) or "clusterroles" in rule.get("resources", []):
+        problems.append(f"a grantable console role holds {rule}: deciding access is pgtoolbox-console-approver's")
+approver_role = load("config/rbac/pgtoolbox_console_approver_clusterrole.yaml")["rules"]
+EXPECTED_APPROVER = [
+    {"apiGroups": ["pgtoolbox.fyannk.dev"], "resources": ["pgaccessrequests"], "verbs": ["get", "list", "watch"]},
+    {"apiGroups": ["pgtoolbox.fyannk.dev"], "resources": ["pgaccessrequests/status"], "verbs": ["update"]},
+    {"apiGroups": ["rbac.authorization.k8s.io"], "resources": ["rolebindings"], "verbs": ["create"]},
+    # bind on exactly the two grantable roles: the escalation check passes
+    # without the approver holding them, and nothing else can be bound this way.
+    {"apiGroups": ["rbac.authorization.k8s.io"], "resources": ["clusterroles"],
+     "resourceNames": ["pgtoolbox-console-operator", "pgtoolbox-console-viewer"], "verbs": ["bind"]},
+]
+if approver_role != EXPECTED_APPROVER:
+    problems.append(f"pgtoolbox-console-approver must be exactly {EXPECTED_APPROVER}; it is {approver_role}")
+if "pgtoolbox-console-approver" in pathlib.Path("api/v1alpha1/pgaccessrequest_funcs.go").read_text():
+    problems.append("api/v1alpha1/pgaccessrequest_funcs.go names pgtoolbox-console-approver: no PgAccessRequest may grant it")
 if [r for r in viewer if r not in operator_role]:
     problems.append("pgtoolbox-console-operator must contain every rule of pgtoolbox-console-viewer")
 # Promote lists the Cluster's pods as the caller, so both roles must be able to.
@@ -421,7 +442,7 @@ for label, rules in (("pgtoolbox-console-viewer", viewer), ("pgtoolbox-console-o
 for rule in viewer + operator_role:
     if "secrets" in rule.get("resources", []) or "*" in rule.get("resources", []) or "*" in rule.get("apiGroups", []):
         problems.append(f"a user ClusterRole grants {rule}: no Secret and no wildcard")
-if any(d["kind"] == "ClusterRoleBinding" and d["roleRef"]["name"] in ("pgtoolbox-console-viewer", "pgtoolbox-console-operator")
+if any(d["kind"] == "ClusterRoleBinding" and d["roleRef"]["name"] in ("pgtoolbox-console-viewer", "pgtoolbox-console-operator", "pgtoolbox-console-approver")
        for d in helm_full + kust_docs):
     problems.append("a ClusterRoleBinding to a user ClusterRole is rendered: people are bound per namespace by whoever may create RoleBindings")
 
@@ -454,8 +475,10 @@ if pods["Helm"] and not any(a.startswith("--default-evidence-agent-image=") for 
 
 # 11c. Availability and hardening of the operator pods:
 #      grace period, PodDisruptionBudget and Pod Security labels agree in the three
-#      renderings; the optional pieces (NetworkPolicy, ValidatingAdmissionPolicy) are
-#      never on by default; the monitors speak HTTPS because the endpoint does.
+#      renderings; the NetworkPolicy is never on by default; the admission policy is
+#      on by default (it is the only check that an editor may read the Secrets a
+#      PgToolBoxConsole or PgAdmin references); the monitors speak HTTPS because the
+#      endpoint does.
 grace = {label: pod.get("terminationGracePeriodSeconds") for label, pod in pods.items() if pod}
 if len(set(grace.values())) != 1 or (set(grace.values()) and min(v or 0 for v in grace.values()) < 40):
     problems.append(f"manager terminationGracePeriodSeconds must be the same and >= 40 in Helm, kustomize and OLM, got {grace}")
@@ -483,8 +506,11 @@ for label, labels in (("Helm", helm_ns_labels), ("kustomize", kust_ns_labels), (
         problems.append(f"{label} namespace does not carry restricted Pod Security labels enforce/audit/warn")
 
 for doc in helm_docs:
-    if doc["kind"] in ("NetworkPolicy", "ValidatingAdmissionPolicy", "ValidatingAdmissionPolicyBinding"):
+    if doc["kind"] == "NetworkPolicy":
         problems.append(f"operator.enabled renders a {doc['kind']} by default: it is the installing admin's choice, never on by default")
+default_vap = [d["metadata"]["name"] for d in helm_docs if d["kind"] in ("ValidatingAdmissionPolicy", "ValidatingAdmissionPolicyBinding")]
+if sorted(default_vap) != ["pgtoolbox-image-override", "pgtoolbox-image-override"]:
+    problems.append(f"operator.enabled must render the admission policy and its binding by default (the Secret-reference rule has no other check); renders {default_vap}")
 for doc in helm_full:
     if doc["kind"] in ("ServiceMonitor", "PodMonitor"):
         endpoints = doc["spec"].get("endpoints") or doc["spec"].get("podMetricsEndpoints")

@@ -1,6 +1,7 @@
 # Default values for pgtoolbox: the operator.
 #
-# One operator per cluster, or per set of namespaces (operator.config.watchNamespaces).
+# One operator per cluster: a single instance. operator.config.watchNamespaces narrows
+# its caches, not its RBAC: the ClusterRole still grants every namespace.
 # It reconciles the v1alpha1 kinds PgToolBoxConsole, PgAdmin and EvidenceAgent, and
 # decides PgAccessRequests. The team tools without the operator (the console,
 # the evidence agent, pgAdmin) are the pgtools chart.
@@ -24,7 +25,7 @@ fullnameOverride: ""
 # PgAdmin, PgAdminAccess, PgAccessRequest and EvidenceAgent. The flat keys
 # further down (image, replicaCount, ...) are the operator's pod settings.
 # One operator per cluster: it owns cluster-scoped objects (the CRDs, the manager
-# ClusterRole, the two user ClusterRoles).
+# ClusterRole, the three user ClusterRoles).
 # ==========================================================================
 operator:
   # -- Render the operator: its Deployment, ClusterRole, leader-election Role, the
@@ -76,6 +77,17 @@ operator:
     # repository only. Set it to your mirror when the image values point at
     # one.
     imageRepositories: []
+  # exposure: what a PgAdmin's or a PgToolBoxConsole's spec.exposure may
+  # publish. Whoever may create those kinds otherwise picks the hostname the
+  # cluster's router or gateway serves, a name another team or a login page
+  # may own.
+  exposure:
+    # -- DNS suffixes `spec.exposure.hostname` must fall under (the suffix
+    # itself or a name below it), e.g. `[apps.example.com]`
+    # (`EXPOSURE_ALLOWED_HOST_SUFFIXES`). A hostname outside them is refused
+    # (ConfigurationValid=False, reason HostnameNotAllowed) and what was
+    # published under it withdrawn. Empty: any hostname.
+    allowedHostSuffixes: []
   # -- Image of the OpenShift oauth-proxy in front of pgAdmin
   # (`OAUTH_PROXY_IMAGE`). Empty: the compiled-in default. On OpenShift, set
   # the release payload's own image so that a mirrored registry serves it.
@@ -86,7 +98,9 @@ operator:
   # readable from the pgtoolbox-operator-config ConfigMap/Secret.
   config:
     # -- Namespaces the operator watches (`WATCH_NAMESPACES`). Empty: every
-    # namespace the ClusterRole allows.
+    # namespace the ClusterRole allows. It narrows the caches only: the manager
+    # ClusterRole is still bound cluster-wide, so this does not make a second
+    # operator release for other namespaces possible.
     watchNamespaces: []
     # -- Reconciles the operator runs in parallel (`MAX_CONCURRENT_RECONCILES`). 0
     # keeps the operator's default.
@@ -177,13 +191,13 @@ operator:
     enabled: false
     apiServer:
       # -- How egress to the API server is allowed. `addresses`: the addresses of
-      # the `kubernetes` Endpoints, looked up at install time or taken from
+      # the `kubernetes` EndpointSlice, looked up at install time or taken from
       # `apiServer.addresses`. `any`: any address on `apiServer.ports`, the
       # fallback for API servers behind a load balancer whose address is not in
-      # the Endpoints.
+      # the EndpointSlice.
       mode: addresses
       # -- API server IP addresses to allow when `apiServer.mode` is `addresses`
-      # and the Endpoints lookup is unavailable (`helm template`, GitOps
+      # and the EndpointSlice lookup is unavailable (`helm template`, GitOps
       # renderers).
       addresses: []
       # -- Ports of the API server that egress is allowed to.
@@ -207,19 +221,17 @@ operator:
   # restoreDrillGuard: the restore-drill delete guard (config/admission), a
   # ValidatingAdmissionPolicy that lets a console's ServiceAccount bound to
   # the drills ClusterRole delete only the drill Clusters it sealed.
-  # Kubernetes 1.30+ (admissionregistration.k8s.io/v1 policies); on 1.28 and
-  # 1.29 nothing enforces it, and the docs recommend keeping restore drills
-  # off there. auto: rendered when the cluster serves the API (helm install,
+  # admissionregistration.k8s.io/v1 policies, served on every supported
+  # Kubernetes (1.34+). auto: rendered when the cluster serves the API (helm install,
   # or helm template --api-versions / --kube-version); true: always (a GitOps
   # render without discovery); false: never.
   restoreDrillGuard:
     # -- Render the restore-drill delete guard. `auto`: when the cluster serves
     # the policy API (`helm install`, or `helm template --api-versions`);
-    # `true`: always (a GitOps render without discovery); `false`: never. Needs
-    # Kubernetes 1.30 or newer to be enforced.
+    # `true`: always (a GitOps render without discovery); `false`: never.
     enabled: auto
 
-  # admissionPolicy: an optional ValidatingAdmissionPolicy (CEL, no webhook)
+  # admissionPolicy: a ValidatingAdmissionPolicy (CEL, no webhook)
   # for rules that need the request's identity, which the CRD's own
   # CEL cannot see. spec.image on a PgAdmin or an EvidenceAgent (which runs with
   # object-store credentials or database credentials) may be set only by the
@@ -229,12 +241,18 @@ operator:
   # Secret it references (SMTP password, webhook URLs, OIDC client secret,
   # Prometheus token, pull and TLS Secrets), asked of the API server's
   # authorizer as the requesting user; on update only references that are new
-  # or changed are checked.
-  # Needs Kubernetes 1.30+ (admissionregistration.k8s.io/v1 policies). Off by default.
+  # or changed are checked. Without it the Secret rule has no other
+  # enforcement: whoever may edit a PgToolBoxConsole or a PgAdmin could have
+  # the operator mount any Secret of the namespace into a workload that sends
+  # it where the spec says. On by default (admissionregistration.k8s.io/v1,
+  # served on every supported Kubernetes, 1.34+); turn it off only where
+  # create/update on those kinds is held by people trusted with every Secret
+  # of their namespace.
   admissionPolicy:
-    # -- Render the optional ValidatingAdmissionPolicy for rules that need the
-    # request's identity. Needs Kubernetes 1.30 or newer.
-    enabled: false
+    # -- Render the ValidatingAdmissionPolicy for rules that need the request's
+    # identity (image override, workload identity, Secret references). On by
+    # default; `false` leaves the Secret-reference rule unenforced.
+    enabled: true
     # -- Validation actions of the policy binding: `Deny`, `Warn` and/or `Audit`.
     # Only `Deny` blocks a request.
     validationActions: [Deny]
@@ -257,9 +275,11 @@ operator:
   # RoleBinding: pgtoolbox-console-viewer (read the CNPG kinds, pods,
   # events, logs) and pgtoolbox-console-operator (viewer plus create backups, patch
   # clusters and their status, get pgadmins: whoever may open pgAdmin holds the
-  # offered credentials). The chart renders no binding for them.
+  # offered credentials), and pgtoolbox-console-approver (decides
+  # PgAccessRequests: create rolebindings, update their status, bind on the two
+  # other roles; no request can grant it). The chart renders no binding for them.
   userRoles:
-    # -- Render the `pgtoolbox-console-viewer` and `pgtoolbox-console-operator` ClusterRoles. The
+    # -- Render the `pgtoolbox-console-viewer`, `pgtoolbox-console-operator` and `pgtoolbox-console-approver` ClusterRoles. The
     # chart renders no binding for them: bind them per namespace with a
     # RoleBinding.
     create: true

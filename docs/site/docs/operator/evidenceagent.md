@@ -191,7 +191,7 @@ A GCS `applicationCredentials` must be a service account key
 endpoints the JSON names, and are refused.
 
 **Who may set it.** `spec.workloadIdentity` lends the agent a cloud role. With the
-operator chart's `operator.admissionPolicy.enabled`, only
+operator chart's `operator.admissionPolicy.enabled` (the default), only
 `admissionPolicy.workloadIdentity.allowedUsers` and `allowedGroups` (default group
 `system:masters`) may add or change it (see [the operator page](index.md#networkpolicy-and-admission-policy)).
 

@@ -112,11 +112,12 @@ redacted).
 
 | Key | Chart value | Default | |
 |---|---|---|---|
-| `WATCH_NAMESPACES` | `operator.config.watchNamespaces` | empty: every namespace the ClusterRole allows | Comma list; restricts the caches. |
+| `WATCH_NAMESPACES` | `operator.config.watchNamespaces` | empty: every namespace the ClusterRole allows | Comma list; restricts the caches, not the RBAC: the ClusterRole stays cluster-wide, and one operator per cluster is the only supported layout. |
 | `POD_NAMESPACE` | downward API | | Where the operator runs. |
 | `OPERATOR_IMAGE` | `image.*` | baked in at build | Copied into pgAdmin Pods for the credential sidecar. |
 | `PGADMIN_IMAGE` | `operator.pgAdmin.image` | the hardened, digest-pinned image compiled in | |
 | `PGADMIN_IMAGE_REPOSITORIES` | `operator.pgAdmin.imageRepositories` | each image's default repository only | The [allow-list](images.md) for `PgAdmin` images. |
+| `EXPOSURE_ALLOWED_HOST_SUFFIXES` | `operator.exposure.allowedHostSuffixes` | empty: any hostname | Comma list of DNS suffixes a `PgAdmin`'s or a `PgToolBoxConsole`'s `spec.exposure.hostname` must fall under (the suffix or a name below it). Outside them: `ConfigurationValid=False`, reason `HostnameNotAllowed`, and the Route, Ingress or HTTPRoute already published is withdrawn. Without it, whoever may create those kinds chooses which name the cluster's router or gateway serves. |
 | `OAUTH_PROXY_IMAGE` | `operator.oauthProxyImage` | `quay.io/openshift/origin-oauth-proxy:4.18`, pinned by digest | On OpenShift use the release payload's. |
 | `MAX_CONCURRENT_RECONCILES` | `operator.config.maxConcurrentReconciles` | `4` | Per controller. |
 | `RECONCILIATION_TIMEOUT` | `operator.config.reconciliationTimeout` | `2m` | Bounds one reconcile. |
@@ -148,11 +149,11 @@ Both are optional and **off by default**, because each is the installing admin's
 decision, never the product's.
 
 - `operator.networkPolicy.enabled`: egress to DNS, the API server (looked up from
-  the `kubernetes` Endpoints at install time, or `apiServer.mode: any` or
+  the `kubernetes` EndpointSlice at install time, or `apiServer.mode: any` or
   `addresses`) and `extraEgress`; ingress only from `ingress.metricsFrom`, on the
   metrics port.
-- `operator.admissionPolicy.enabled`: a `ValidatingAdmissionPolicy` (CEL, no
-  webhook, Kubernetes 1.30 or newer). Three rules: only `imageOverride.allowedUsers`
+- `operator.admissionPolicy.enabled` (default `true`; not applied by kustomize or OLM):
+  a `ValidatingAdmissionPolicy` (CEL, no webhook). Three rules: only `imageOverride.allowedUsers`
   and `allowedGroups` (default group `system:masters`) may set `spec.image` on a
   `PgAdmin` or `EvidenceAgent`, everyone else getting the operator's default
   image; and only `workloadIdentity.allowedUsers` and `allowedGroups` (same

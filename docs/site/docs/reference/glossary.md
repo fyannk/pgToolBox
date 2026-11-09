@@ -18,7 +18,7 @@ both are given: the screen's words first, the API's value in `code`.
 A `PgAccessRequest`: a person asks, in one namespace, for one of the two shipped
 ClusterRoles (`viewer` binds `pgtoolbox-console-viewer`, `operator` binds
 `pgtoolbox-console-operator`). Someone who may create RoleBindings there and update the
-request's status approves it; the console then creates the RoleBinding with that
+request's status (`pgtoolbox-console-approver`, which no request grants) approves it; the console then creates the RoleBinding with that
 person's own token. A grant always covers every Cluster of the namespace. See
 [Access requests](../console/access-requests.md).
 

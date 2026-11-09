@@ -129,7 +129,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	pgToolBoxConsoleKinds, err := setupPgToolBoxConsole(ctx, mgr, consoleFeatures)
+	pgToolBoxConsoleKinds, err := setupPgToolBoxConsole(ctx, mgr, consoleFeatures, pgAdminPrepared.Config.ExposureAllowedHostSuffixes)
 	if err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "PgToolBoxConsole")
 		os.Exit(1)

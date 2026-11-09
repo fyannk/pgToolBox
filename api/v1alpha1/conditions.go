@@ -85,6 +85,11 @@ const (
 	// repositories (--evidence-agent-image-repositories,
 	// --pgadmin-image-repositories).
 	ReasonImageNotAllowed Reason = "ImageNotAllowed"
+	// ReasonHostnameNotAllowed: spec.exposure.hostname is outside the
+	// operator's allow-list of host suffixes
+	// (EXPOSURE_ALLOWED_HOST_SUFFIXES), so the operator publishes no Route,
+	// Ingress or HTTPRoute for it.
+	ReasonHostnameNotAllowed Reason = "HostnameNotAllowed"
 
 	// Workload facts, copied from the child.
 	ReasonRolloutInProgress Reason = "RolloutInProgress"
@@ -129,6 +134,7 @@ var commonReasons = []Reason{
 	ReasonConfigMapNotFound,
 	ReasonClusterNotFound,
 	ReasonImageNotAllowed,
+	ReasonHostnameNotAllowed,
 	ReasonRolloutInProgress,
 	ReasonRolloutStuck,
 	ReasonPodUnschedulable,

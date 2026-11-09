@@ -8,6 +8,7 @@ resources:
 - leader_election_role_binding.yaml
 - pgtoolbox_console_viewer_clusterrole.yaml
 - pgtoolbox_console_operator_clusterrole.yaml
+- pgtoolbox_console_approver_clusterrole.yaml
 - pgtoolbox_aggregate_to_admin_clusterrole.yaml
 - metrics_reader_clusterrole.yaml
 - pgtoolbox_console_clusterrole.yaml

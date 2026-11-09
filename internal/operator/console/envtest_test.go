@@ -77,6 +77,11 @@ func newEnvtestSuite(t *testing.T) *envtestSuite {
 		CRDDirectoryPaths:     []string{filepath.Join("..", "..", "..", "config", "crd", "bases"), crds},
 		ErrorIfCRDPathMissing: true,
 	}
+	// OpenShift enables OwnerReferencesPermissionEnforcement: an owner
+	// reference with blockOwnerDeletion is admitted only from whoever may
+	// update the owner's finalizers. kind does not enable it, so it is
+	// enabled here, where the operator identity creates every child.
+	environment.ControlPlane.GetAPIServer().Configure().Append("enable-admission-plugins", "OwnerReferencesPermissionEnforcement")
 	config, err := environment.Start()
 	if err != nil {
 		t.Fatalf("start envtest: %v", err)
@@ -566,6 +571,34 @@ func TestPgToolBoxConsoleReconcilerOnEnvtest(t *testing.T) {
 		must(t, s.admin.Update(ctx, console))
 		s.reconcile(ctx, t, "console")
 		assertCondition(t, s.console(ctx, t, "console"), pgtoolboxv1alpha1.ConditionConfigurationValid, metav1.ConditionTrue, pgtoolboxv1alpha1.ReasonAsExpected)
+	})
+
+	t.Run("a hostname outside the allowed suffixes is refused and its Ingress withdrawn", func(t *testing.T) {
+		console := s.console(ctx, t, "console")
+		console.Spec.Exposure = pgtoolboxv1alpha1.ExposureSpec{Type: pgtoolboxv1alpha1.ExposureTypeIngress, Hostname: "login.corp.example.com"}
+		must(t, s.admin.Update(ctx, console))
+		// Published before the operator had an allow-list.
+		s.reconcile(ctx, t, "console")
+		must(t, s.admin.Get(ctx, client.ObjectKey{Namespace: suiteNamespace, Name: console.WorkloadName()}, &networkingv1.Ingress{}))
+
+		s.reconciler.AllowedHostSuffixes = []string{"apps.example.com"}
+		defer func() { s.reconciler.AllowedHostSuffixes = nil }()
+		s.reconcile(ctx, t, "console")
+		refused := s.console(ctx, t, "console")
+		assertCondition(t, refused, pgtoolboxv1alpha1.ConditionConfigurationValid, metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonHostnameNotAllowed)
+		assertCondition(t, refused, pgtoolboxv1alpha1.ConditionStalled, metav1.ConditionTrue, pgtoolboxv1alpha1.ReasonHostnameNotAllowed)
+		s.absent(ctx, t, "console", &networkingv1.Ingress{})
+
+		refused.Spec.Exposure.Hostname = "console.team-a.apps.example.com"
+		must(t, s.admin.Update(ctx, refused))
+		s.reconcile(ctx, t, "console")
+		assertCondition(t, s.console(ctx, t, "console"), pgtoolboxv1alpha1.ConditionConfigurationValid, metav1.ConditionTrue, pgtoolboxv1alpha1.ReasonAsExpected)
+		must(t, s.admin.Get(ctx, client.ObjectKey{Namespace: suiteNamespace, Name: console.WorkloadName()}, &networkingv1.Ingress{}))
+
+		back := s.console(ctx, t, "console")
+		back.Spec.Exposure = pgtoolboxv1alpha1.ExposureSpec{}
+		must(t, s.admin.Update(ctx, back))
+		s.reconcile(ctx, t, "console")
 	})
 
 	t.Run("a referenced ConfigMap that does not exist stalls and is looked for again", func(t *testing.T) {

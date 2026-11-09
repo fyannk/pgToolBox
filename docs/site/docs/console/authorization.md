@@ -107,7 +107,8 @@ its own ServiceAccount. For the usual cases use the two ClusterRoles below.
 
 ### The two ClusterRoles
 
-The operator half (and the OLM bundle, and `config/rbac`) ships two ClusterRoles.
+The operator half (and the OLM bundle, and `config/rbac`) ships two ClusterRoles people
+are bound to, and a third that decides access requests.
 **Bind them per namespace with a RoleBinding.** The product renders no
 ClusterRoleBinding for them, and a cluster-wide binding would grant nothing beyond
 a console's watched namespaces anyway.
@@ -122,12 +123,24 @@ kubectl -n team-a create rolebinding ops-team \
 | ClusterRole | Grants | For |
 |---|---|---|
 | `pgtoolbox-console-viewer` | `get`/`list`/`watch` on the CloudNativePG kinds (`clusters`, `backups`, `scheduledbackups`, `poolers`, `databases`, `databaseroles`, `publications`, `subscriptions`, `failoverquorums`, `imagecatalogs`), `objectstores`, and pods, services, PVCs and events; `get` on `pods/log`. | People who look. |
-| `pgtoolbox-console-operator` | Everything in the viewer, plus `create backups`, `patch clusters` and `clusters/status`, and `get pgadmins`. | People who operate. |
+| `pgtoolbox-console-operator` | Everything in the viewer, plus `create backups`, `create databaseroles`, `patch clusters` and `clusters/status`, and `get pgadmins`. | People who operate. |
+| `pgtoolbox-console-approver` | `get`/`list`/`watch` on PgAccessRequests, `update` on their status, `create rolebindings`, and `bind` on exactly the two roles above. | People who decide [access requests](./access-requests.md#who-may-do-what). No request can grant it. |
 
 Neither role touches a Secret. `get pgadmins` is in the second role only, on
 purpose: **whoever may open pgAdmin holds the credentials of every role it
 offers** (see [pgAdmin](../operator/pgadmin.md#who-may-open-it)). The chart
 renders the roles with `operator.userRoles.create` (default `true`).
+
+:::warning `pgtoolbox-console-operator` is effectively database-superuser
+`patch clusters` lets its holder rewrite the whole `Cluster` spec, not only the
+annotations reload and restart touch: `enableSuperuserAccess`, `managed.roles`,
+`postgresql.parameters` (`archive_command`, `shared_preload_libraries`, ...),
+`bootstrap` and the images. CloudNativePG applies them as the superuser, so whoever
+holds the role can become the superuser of every Cluster of the namespace or run
+code in its instances. `get pgadmins` and `create databaseroles` add to that. Grant
+it, and approve access requests for the `operator` capability, only to people you
+would give the `postgres` password.
+:::
 
 A third ClusterRole, `pgtoolbox-aggregate-to-admin`, is bound to nobody: it adds
 `get`/`list`/`watch` on PgAdmins, EvidenceAgents and PgAccessRequests, `create` on

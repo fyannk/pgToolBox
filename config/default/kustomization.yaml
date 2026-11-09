@@ -12,8 +12,14 @@ resources:
 - ../crd
 - ../rbac
 - ../manager
+- ../admission
 
 images:
 - name: controller
   newName: ghcr.io/fyannk/pgtoolbox-operator
   newTag: 0.1.0
+
+# The admission policies are cluster-scoped, which this kustomize's schema
+# does not know: undo the namespace set above (the API server would clear it).
+transformers:
+- cluster-scoped-policies.yaml

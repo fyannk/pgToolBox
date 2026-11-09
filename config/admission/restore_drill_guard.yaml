@@ -1,17 +1,25 @@
-# The restore-drill delete guard, Kubernetes 1.30+.
+# The restore-drill delete guard.
 #
 # A console the operator runs holds, with spec.restoreDrills.enabled,
 # get/list/watch/delete on clusters.postgresql.cnpg.io in its namespace
 # (pgtoolbox-console-restore-drills): the console deletes only the drill
 # Clusters it sealed, but a Pod run as its ServiceAccount could delete any
-# Cluster there. This policy enforces the console's own check on the API
-# server: a console ServiceAccount of the request's namespace that holds the
-# role's marker (teardown on restoredrills.pgtoolbox.fyannk.dev) may delete
-# a Cluster only when it carries the drill-owner label of that namespace,
-# the restore-drill-of label and the drill seal annotation.
+# Cluster there. Two policies enforce the console's own check on the API
+# server, as the pgtools chart's restoredrills-admissionpolicy.yaml does:
 #
-# Parameterless on purpose: a PgToolBoxConsole parameter would be looked up in the
-# request's namespace, and a missing one must not mean "allow".
+# - pgtoolbox-console-restore-drills, parameterless on purpose (a missing
+#   parameter must not mean "allow"): any ServiceAccount of the request's
+#   namespace that holds the drills role's marker (teardown on
+#   restoredrills.pgtoolbox.fyannk.dev), whatever its name, may delete a
+#   Cluster only when it carries the drill-owner label of that namespace, the
+#   restore-drill-of label and the drill seal annotation.
+# - pgtoolbox-console-restore-drill-prefix, one evaluation per PgToolBoxConsole
+#   of the namespace: that console's exact ServiceAccount (its WorkloadName:
+#   the name when it contains "console", otherwise <name>-console) may delete
+#   a Cluster only when its name starts with that console's drill prefix
+#   (spec.restoreDrills.prefix, default drill-). It reads PgToolBoxConsoles as
+#   parameters, so it fails open (failurePolicy Ignore, no console: nothing to
+#   check) and the first policy stays the hard guard.
 #
 # Hand-written source of truth: hack/sync-manifests.sh copies it into the
 # Helm chart, and hack/validate-packaging.sh compares them.
@@ -34,12 +42,11 @@ spec:
       resources:
       - clusters
   matchConditions:
-  # A ServiceAccount of the Cluster's own namespace whose name is a
-  # console's (PgToolBoxConsole WorkloadName: it contains "console").
-  - name: console-service-account
+  # A ServiceAccount of the Cluster's own namespace, whatever its name: the
+  # drills role's marker, not a naming convention, says it is a console.
+  - name: namespace-service-account
     expression: >-
-      request.userInfo.username.startsWith('system:serviceaccount:' + request.namespace + ':') &&
-      request.userInfo.username.split(':')[3].contains('console')
+      request.userInfo.username.startsWith('system:serviceaccount:' + request.namespace + ':')
   variables:
   # Bound to the drills ClusterRole in this namespace.
   - name: drillTeardown
@@ -65,5 +72,61 @@ metadata:
     app.kubernetes.io/part-of: pgtoolbox
 spec:
   policyName: pgtoolbox-console-restore-drills
+  validationActions:
+  - Deny
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: pgtoolbox-console-restore-drill-prefix
+  labels:
+    app.kubernetes.io/part-of: pgtoolbox
+spec:
+  failurePolicy: Ignore
+  paramKind:
+    apiVersion: pgtoolbox.fyannk.dev/v1alpha1
+    kind: PgToolBoxConsole
+  matchConstraints:
+    resourceRules:
+    - apiGroups:
+      - postgresql.cnpg.io
+      apiVersions:
+      - '*'
+      operations:
+      - DELETE
+      resources:
+      - clusters
+  matchConditions:
+  - name: namespace-service-account
+    expression: >-
+      request.userInfo.username.startsWith('system:serviceaccount:' + request.namespace + ':')
+  variables:
+  # The console's ServiceAccount: PgToolBoxConsole.WorkloadName().
+  - name: account
+    expression: >-
+      'system:serviceaccount:' + params.metadata.namespace + ':' +
+      (params.metadata.name.contains('console') ? params.metadata.name : params.metadata.name + '-console')
+  - name: prefix
+    expression: >-
+      has(params.spec.restoreDrills) && has(params.spec.restoreDrills.prefix) && params.spec.restoreDrills.prefix != '' ?
+      params.spec.restoreDrills.prefix : 'drill-'
+  validations:
+  - expression: >-
+      request.userInfo.username != variables.account ||
+      oldObject.metadata.name.startsWith(variables.prefix)
+    message: a console's ServiceAccount may delete only Clusters named with its restore drill prefix
+    reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: pgtoolbox-console-restore-drill-prefix
+  labels:
+    app.kubernetes.io/part-of: pgtoolbox
+spec:
+  policyName: pgtoolbox-console-restore-drill-prefix
+  paramRef:
+    selector: {}
+    parameterNotFoundAction: Allow
   validationActions:
   - Deny

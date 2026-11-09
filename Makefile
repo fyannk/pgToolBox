@@ -31,9 +31,9 @@ CONTROLLER_GEN ?= $(call tool,controller-gen,go run sigs.k8s.io/controller-tools
 SETUP_ENVTEST ?= $(call tool,setup-envtest,go run sigs.k8s.io/controller-runtime/tools/setup-envtest@v$(call mise_v,go:sigs.k8s.io/controller-runtime/tools/setup-envtest))
 
 # envtest control planes. The API CEL rules must pass on the oldest Kubernetes
-# the OLM bundle declares (minKubeVersion); the console's kube layer is
-# exercised on the newest the e2e uses.
-ENVTEST_K8S_VERSION_API ?= 1.28.x
+# the OLM bundle declares (minKubeVersion) and the charts' kubeVersion; the
+# console's kube layer is exercised on the newest the e2e uses.
+ENVTEST_K8S_VERSION_API ?= 1.34.1
 ENVTEST_K8S_VERSION_CONSOLE ?= 1.34.1
 
 # Go modules in this tree: the root and the nested evidence module (go.work).

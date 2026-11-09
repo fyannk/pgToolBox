@@ -48,6 +48,32 @@ kubectl apply -k config/default
 ```
 
 This creates the `pgtoolbox` namespace, the CRDs under `config/crd`, the RBAC
-under `config/rbac` (including the `pgtoolbox-console-viewer` and `pgtoolbox-console-operator`
-ClusterRoles) and the manager Deployment. Generated files (`config/crd/bases`,
+under `config/rbac` (including the `pgtoolbox-console-viewer`, `pgtoolbox-console-operator` and `pgtoolbox-console-approver`
+ClusterRoles), the manager Deployment and the
+[restore-drill delete guard](../console/restore-drills.md#the-delete-guard)
+(`config/admission`). Generated files (`config/crd/bases`,
 `config/rbac/role.yaml`) come from `make manifests`; do not edit them.
+
+:::danger `kubectl delete -k config/default` deletes every pgToolBox object
+Unlike the chart, `config/default` does not keep the CRDs: deleting the kustomization
+deletes the CRDs, hence every `PgToolBoxConsole`, `PgAdmin`, `PgAdminAccess`,
+`EvidenceAgent` and `PgAccessRequest` in the cluster, and the namespace `pgtoolbox`.
+To remove only the operator, delete its Deployment (`kubectl -n pgtoolbox delete
+deployment pgtoolbox`), or build without the CRDs. Either
+way the operator leaves the `pgtoolbox-evidence-agent` ClusterRole and
+ClusterRoleBinding it created for the evidence agents; delete them by name when you
+remove pgToolBox for good.
+:::
+
+`config/default` does **not** apply the operator chart's admission policy (the
+`ValidatingAdmissionPolicy` behind `operator.admissionPolicy.enabled`, on by default in
+the chart). That policy is the only check that whoever edits a `PgToolBoxConsole` or a
+`PgAdmin` may `get` the Secrets it references, and that only the allowed users set
+`spec.image` or `spec.workloadIdentity`. Render it from the chart and apply it, or grant
+`create`/`update` on those kinds only to people trusted with every Secret of their
+namespace (see [security](../security.md)):
+
+```bash
+helm template pgtoolbox charts/pgtoolbox --set operator.enabled=true \
+  --show-only templates/operator/admissionpolicy.yaml | kubectl apply -f -
+```

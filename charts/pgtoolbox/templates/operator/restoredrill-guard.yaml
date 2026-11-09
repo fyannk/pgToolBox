@@ -20,12 +20,11 @@ spec:
       resources:
       - clusters
   matchConditions:
-  # A ServiceAccount of the Cluster's own namespace whose name is a
-  # console's (PgToolBoxConsole WorkloadName: it contains "console").
-  - name: console-service-account
+  # A ServiceAccount of the Cluster's own namespace, whatever its name: the
+  # drills role's marker, not a naming convention, says it is a console.
+  - name: namespace-service-account
     expression: >-
-      request.userInfo.username.startsWith('system:serviceaccount:' + request.namespace + ':') &&
-      request.userInfo.username.split(':')[3].contains('console')
+      request.userInfo.username.startsWith('system:serviceaccount:' + request.namespace + ':')
   variables:
   # Bound to the drills ClusterRole in this namespace.
   - name: drillTeardown
@@ -51,6 +50,62 @@ metadata:
     app.kubernetes.io/part-of: pgtoolbox
 spec:
   policyName: pgtoolbox-console-restore-drills
+  validationActions:
+  - Deny
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: pgtoolbox-console-restore-drill-prefix
+  labels:
+    app.kubernetes.io/part-of: pgtoolbox
+spec:
+  failurePolicy: Ignore
+  paramKind:
+    apiVersion: pgtoolbox.fyannk.dev/v1alpha1
+    kind: PgToolBoxConsole
+  matchConstraints:
+    resourceRules:
+    - apiGroups:
+      - postgresql.cnpg.io
+      apiVersions:
+      - '*'
+      operations:
+      - DELETE
+      resources:
+      - clusters
+  matchConditions:
+  - name: namespace-service-account
+    expression: >-
+      request.userInfo.username.startsWith('system:serviceaccount:' + request.namespace + ':')
+  variables:
+  # The console's ServiceAccount: PgToolBoxConsole.WorkloadName().
+  - name: account
+    expression: >-
+      'system:serviceaccount:' + params.metadata.namespace + ':' +
+      (params.metadata.name.contains('console') ? params.metadata.name : params.metadata.name + '-console')
+  - name: prefix
+    expression: >-
+      has(params.spec.restoreDrills) && has(params.spec.restoreDrills.prefix) && params.spec.restoreDrills.prefix != '' ?
+      params.spec.restoreDrills.prefix : 'drill-'
+  validations:
+  - expression: >-
+      request.userInfo.username != variables.account ||
+      oldObject.metadata.name.startsWith(variables.prefix)
+    message: a console's ServiceAccount may delete only Clusters named with its restore drill prefix
+    reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: pgtoolbox-console-restore-drill-prefix
+  labels:
+    app.kubernetes.io/part-of: pgtoolbox
+spec:
+  policyName: pgtoolbox-console-restore-drill-prefix
+  paramRef:
+    selector: {}
+    parameterNotFoundAction: Allow
   validationActions:
   - Deny
 {{- end }}

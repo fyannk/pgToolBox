@@ -26,6 +26,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -1224,5 +1225,72 @@ func TestPublishConflictIsReturnedNotOverwritten(t *testing.T) {
 	}
 	if evs := h.events(); len(evs) != 0 {
 		t.Fatalf("a refused write emitted %v", evs)
+	}
+}
+
+// TestReconcileHostnameAllowList: with EXPOSURE_ALLOWED_HOST_SUFFIXES set, a
+// spec.exposure.hostname outside them stalls with HostnameNotAllowed, and
+// the Ingress already published under it is withdrawn; inside them, or with
+// no list, the Ingress is published.
+func TestReconcileHostnameAllowList(t *testing.T) {
+	ingress := func(hostname string) func() *pgtoolboxv1alpha1.PgAdmin {
+		return func() *pgtoolboxv1alpha1.PgAdmin {
+			p := oauth2PgAdmin()
+			p.Spec.Exposure = pgtoolboxv1alpha1.ExposureSpec{Type: pgtoolboxv1alpha1.ExposureTypeIngress, Hostname: hostname}
+			return p
+		}
+	}
+	for _, tt := range []struct {
+		name     string
+		pgadmin  func() *pgtoolboxv1alpha1.PgAdmin
+		suffixes []string
+		want     pgtoolboxv1alpha1.Reason
+	}{
+		{name: "no list keeps any hostname", pgadmin: ingress("login.corp.example.com"), want: pgtoolboxv1alpha1.ReasonAsExpected},
+		{name: "under a suffix", pgadmin: ingress("pgadmin.team-a.apps.example.com"), suffixes: []string{"apps.example.com"}, want: pgtoolboxv1alpha1.ReasonAsExpected},
+		{name: "clusterIP publishes no name", pgadmin: oauth2PgAdmin, suffixes: []string{"apps.example.com"}, want: pgtoolboxv1alpha1.ReasonAsExpected},
+		{name: "another team's name", pgadmin: ingress("login.corp.example.com"), suffixes: []string{"apps.example.com"}, want: pgtoolboxv1alpha1.ReasonHostnameNotAllowed},
+		{name: "a look-alike of a suffix", pgadmin: ingress("evilapps.example.com"), suffixes: []string{"apps.example.com"}, want: pgtoolboxv1alpha1.ReasonHostnameNotAllowed},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			p := tt.pgadmin()
+			h := newHarness(t, nil, baseObjects(p)...)
+			// Published before the list existed.
+			if err := h.reconcile(p.Name); err != nil {
+				t.Fatal(err)
+			}
+			if p.Spec.Exposure.Type == pgtoolboxv1alpha1.ExposureTypeIngress {
+				if err := h.client.Get(context.Background(), client.ObjectKey{Namespace: testNamespace, Name: p.Name + "-pgadmin"}, &networkingv1.Ingress{}); err != nil {
+					t.Fatalf("no Ingress before the allow-list: %v", err)
+				}
+			}
+			h.r.Config.ExposureAllowedHostSuffixes = tt.suffixes
+			if err := h.reconcile(p.Name); err != nil {
+				t.Fatal(err)
+			}
+			got := h.pgadmin(p.Name)
+			ingressErr := h.client.Get(context.Background(), client.ObjectKey{Namespace: testNamespace, Name: p.Name + "-pgadmin"}, &networkingv1.Ingress{})
+			if tt.want == pgtoolboxv1alpha1.ReasonAsExpected {
+				expectCondition(t, got, "ConfigurationValid", metav1.ConditionTrue, tt.want)
+				if p.Spec.Exposure.Type == pgtoolboxv1alpha1.ExposureTypeIngress && ingressErr != nil {
+					t.Fatalf("an allowed hostname is not published: %v", ingressErr)
+				}
+				return
+			}
+			expectCondition(t, got, "ConfigurationValid", metav1.ConditionFalse, tt.want)
+			expectCondition(t, got, "Stalled", metav1.ConditionTrue, tt.want)
+			if !apierrors.IsNotFound(ingressErr) {
+				t.Fatalf("the Ingress under a refused hostname was not withdrawn: %v", ingressErr)
+			}
+			warnings := 0
+			for _, e := range h.events() {
+				if strings.HasPrefix(e, "Warning HostnameNotAllowed") {
+					warnings++
+				}
+			}
+			if warnings != 1 {
+				t.Errorf("HostnameNotAllowed Warnings = %d, want 1", warnings)
+			}
+		})
 	}
 }

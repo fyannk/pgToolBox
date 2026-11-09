@@ -547,7 +547,7 @@ extra network boundary. Two limits, stated plainly:
    (and `networkPolicy.ingress.extraFrom`) on the console port. With nothing
    exposed and no extra peer, no ingress is admitted at all.
 
-The API-server egress uses the addresses of the `kubernetes` Endpoints, looked up
+The API-server egress uses the addresses of the `kubernetes` EndpointSlice, looked up
 at install time. Where the lookup is not possible (`helm template`, `--dry-run`)
 the chart **fails** rather than guess; set `networkPolicy.apiServer.addresses`,
 or `mode: any` (any address on 443/6443), the documented fallback for API servers

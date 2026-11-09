@@ -6,11 +6,12 @@
 # oauth-proxy in front of pgAdmin checks exactly that verb
 # (--openshift-sar get pgadmins/<name>).
 #
-# Access requests: an operator decides the namespace's PgAccessRequests through
-# the console, which creates the RoleBinding to pgtoolbox-console-viewer or pgtoolbox-console-operator
-# with the approver's own token (create rolebindings; the API server's escalation
-# check passes because the approver holds every rule of either role here) and records
-# the decision (update pgaccessrequests/status).
+# Access requests: this role does NOT decide them. An approved PgAccessRequest
+# binds this role (time-boxed), so it must hold neither `create rolebindings` nor
+# `update pgaccessrequests/status`: a grantee could otherwise bind themselves a
+# second, permanent RoleBinding or approve other people's requests. Deciding
+# is pgtoolbox-console-approver's (pgtoolbox_console_approver_clusterrole.yaml),
+# which no request can grant.
 #
 # Bound per namespace with a RoleBinding; the product renders no ClusterRoleBinding.
 # Hand-written source of truth, see pgtoolbox_console_viewer_clusterrole.yaml.
@@ -72,18 +73,6 @@ rules:
   - get
   - list
   - watch
-- apiGroups:
-  - pgtoolbox.fyannk.dev
-  resources:
-  - pgaccessrequests/status
-  verbs:
-  - update
-- apiGroups:
-  - rbac.authorization.k8s.io
-  resources:
-  - rolebindings
-  verbs:
-  - create
 - apiGroups:
   - barmancloud.cnpg.io
   resources:

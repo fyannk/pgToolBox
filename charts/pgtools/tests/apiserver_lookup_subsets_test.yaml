@@ -1,7 +1,7 @@
-# The lookup keeps the addresses and the ports of every subset of the
-# kubernetes Endpoints: a control plane whose endpoints serve on two ports
-# (two subsets) loses no egress to the API server.
-suite: API server lookup across subsets
+# The lookup keeps every ready address and every port of the kubernetes
+# EndpointSlice: a control plane serving on two ports loses no egress to the
+# API server, and an endpoint marked not ready is left out.
+suite: API server lookup across endpoints
 templates:
   - templates/console/networkpolicy.yaml
 release:
@@ -9,21 +9,28 @@ release:
   namespace: team-a
 kubernetesProvider:
   scheme:
-    "v1/Endpoints": {gvr: {group: "", version: v1, resource: endpoints}, namespaced: true}
+    "discovery.k8s.io/v1/EndpointSlice": {gvr: {group: discovery.k8s.io, version: v1, resource: endpointslices}, namespaced: true}
   # Floats: the fake client deep-copies JSON numbers (float64) only.
   objects:
-    - apiVersion: v1
-      kind: Endpoints
+    - apiVersion: discovery.k8s.io/v1
+      kind: EndpointSlice
       metadata: {name: kubernetes, namespace: default}
-      subsets:
-        - addresses: [{ip: 10.0.0.1}, {ip: 10.0.0.2}]
-          ports: [{name: https, port: 6443.0, protocol: TCP}]
-        - addresses: [{ip: 10.0.0.3}]
-          ports: [{name: https, port: 443.0, protocol: TCP}]
+      addressType: IPv4
+      endpoints:
+        - addresses: [10.0.0.1]
+          conditions: {ready: true}
+        - addresses: [10.0.0.2]
+        - addresses: [10.0.0.3]
+          conditions: {ready: true}
+        - addresses: [10.0.0.9]
+          conditions: {ready: false}
+      ports:
+        - {name: https, port: 6443.0, protocol: TCP}
+        - {name: https-alt, port: 443.0, protocol: TCP}
 set:
   console.networkPolicy.enabled: true
 tests:
-  - it: allows every subset's addresses on every subset's ports
+  - it: allows every ready address on every port
     asserts:
       - contains:
           path: spec.egress
