@@ -71,6 +71,10 @@ func (r *Reconciler) writeStatus(ctx context.Context, p *pgtoolboxv1alpha1.PgAdm
 	desired := *p.Status.DeepCopy()
 	original := p.DeepCopy()
 	original.Status = *before.DeepCopy()
+	// Past the loop's context: a loop cancelled by ReconciliationTimeout
+	// still publishes.
+	ctx, cancel := reconcile.StatusContext(ctx)
+	defer cancel()
 	first := true
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		if !first {

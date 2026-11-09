@@ -72,7 +72,9 @@ func (r *Reconciler) publish(ctx context.Context, agent *pgtoolboxv1alpha1.Evide
 	}
 	// Optimistic lock: a status computed from a stale read is refused
 	// (Conflict) and the request retried with backoff, never written.
-	if err := r.Client.Status().Patch(ctx, agent, client.MergeFromWithOptions(original, client.MergeFromWithOptimisticLock{}),
+	statusCtx, cancel := reconcile.StatusContext(ctx)
+	defer cancel()
+	if err := r.Client.Status().Patch(statusCtx, agent, client.MergeFromWithOptions(original, client.MergeFromWithOptimisticLock{}),
 		client.FieldOwner(reconcile.StatusFieldOwner)); err != nil {
 		if apierrors.IsNotFound(err) {
 			return reported

@@ -16,6 +16,7 @@ package accessrequest
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -274,6 +275,44 @@ func TestReconcileErrorStillPublishesStatus(t *testing.T) {
 	reconciler := &Reconciler{Client: c, Recorder: events.NewFakeRecorder(8), Now: func() time.Time { return testNow }}
 	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(r)}); err == nil {
 		t.Fatal("a failed read returned no error")
+	}
+	got := &pgtoolboxv1alpha1.PgAccessRequest{}
+	if err := c.Get(context.Background(), client.ObjectKeyFromObject(r), got); err != nil {
+		t.Fatal(err)
+	}
+	if ready := condition(t, got, pgtoolboxv1alpha1.ConditionReady); ready.Status != metav1.ConditionFalse || ready.Reason != pgtoolboxv1alpha1.ReasonReconcileError.String() {
+		t.Fatalf("Ready = %+v", ready)
+	}
+}
+
+// TestReconcileTimedOutStillPublishesStatus: ReconciliationTimeout cancels
+// the loop's context mid-loop; the status write, past that context, still
+// lands (a client honouring its context refuses calls on a done one).
+func TestReconcileTimedOutStillPublishesStatus(t *testing.T) {
+	r := request(pgtoolboxv1alpha1.AccessPhaseApproved)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	c := fake.NewClientBuilder().WithScheme(testScheme(t)).WithStatusSubresource(&pgtoolboxv1alpha1.PgAccessRequest{}).WithObjects(r).
+		WithInterceptorFuncs(interceptor.Funcs{
+			List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+				if _, ok := list.(*rbacv1.RoleBindingList); ok {
+					cancel()
+				}
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+				return c.List(ctx, list, opts...)
+			},
+			SubResourcePatch: func(ctx context.Context, c client.Client, sub string, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+				return c.SubResource(sub).Patch(ctx, obj, patch, opts...)
+			},
+		}).Build()
+	reconciler := &Reconciler{Client: c, Recorder: events.NewFakeRecorder(8), Now: func() time.Time { return testNow }}
+	if _, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(r)}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("the cancelled loop returned %v", err)
 	}
 	got := &pgtoolboxv1alpha1.PgAccessRequest{}
 	if err := c.Get(context.Background(), client.ObjectKeyFromObject(r), got); err != nil {
