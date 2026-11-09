@@ -487,7 +487,7 @@ func evaluatePath(backup Backup, wal ServerWAL, timeline uint32, start, required
 			return path
 		}
 		if edge.SwitchPosition > position {
-			frontier, receipt, state, stop, reason = reachPosition(wal, current, position, edge.SwitchPosition-1)
+			frontier, receipt, state, stop, reason = reachPosition(wal, current, position, edge.SwitchPosition-1, childHasWAL(wal, edge))
 			path.FrontierTimeline, path.FrontierPosition, path.FrontierReceipt = current, frontier, receipt
 			path.FrontierWAL, _ = WALName(current, frontier, wal.SegmentSize)
 			if state != evidence.Healthy {
@@ -496,6 +496,14 @@ func evaluatePath(backup Backup, wal ServerWAL, timeline uint32, start, required
 			}
 		}
 		if !rangeContains(wal.Ranges, edge.Child, edge.SwitchPosition) {
+			// Later child segments prove the switch segment was written and
+			// is not on its way any more (archiving is in segment order), so
+			// it is lost; with no later child WAL the promotion may be minutes
+			// old and the segment still filling.
+			if childHasWAL(wal, edge) {
+				path.State, path.Stop, path.Reason = evidence.Unhealthy, CoverageGapLimited, "timeline switch segment is missing on the child timeline while later child segments are archived: it is lost"
+				return path
+			}
 			path.State, path.Stop, path.Reason = evidence.Unknown, CoverageUnknownLimited, "timeline switch segment is not observed on the child timeline"
 			return path
 		}
@@ -505,7 +513,7 @@ func evaluatePath(backup Backup, wal ServerWAL, timeline uint32, start, required
 	// segment: the backup's own timeline, or the child when the backup
 	// ended inside the switch segment.
 	if position <= requiredEnd {
-		frontier, receipt, state, stop, reason = reachPosition(wal, current, position, requiredEnd)
+		frontier, receipt, state, stop, reason = reachPosition(wal, current, position, requiredEnd, false)
 		path.FrontierTimeline, path.FrontierPosition, path.FrontierReceipt = current, frontier, receipt
 		path.FrontierWAL, _ = WALName(current, frontier, wal.SegmentSize)
 		if state != evidence.Healthy {
@@ -521,7 +529,22 @@ func evaluatePath(backup Backup, wal ServerWAL, timeline uint32, start, required
 	return path
 }
 
-func reachPosition(wal ServerWAL, timeline uint32, start, required uint64) (uint64, time.Time, evidence.State, CoverageStop, string) {
+// childHasWAL reports whether the child of a timeline switch has archived WAL
+// from its switch segment on. Its history and that WAL prove the parent
+// closed: no server writes the parent's segments before the switch any more,
+// so one that is missing is lost, not in flight. Without child WAL the
+// promotion may be minutes old and the parent's last segments still on
+// their way, which stays unknown.
+func childHasWAL(wal ServerWAL, edge HistoryEdge) bool {
+	return slices.ContainsFunc(wal.Ranges, func(value WALRange) bool {
+		return value.Timeline == edge.Child && value.End >= edge.SwitchPosition
+	})
+}
+
+// reachPosition walks timeline from start to required. closed says the
+// timeline can receive no more WAL up to required (childHasWAL), so WAL
+// missing at its end is lost.
+func reachPosition(wal ServerWAL, timeline uint32, start, required uint64, closed bool) (uint64, time.Time, evidence.State, CoverageStop, string) {
 	ranges := rangesForTimeline(wal.Ranges, timeline)
 	for index, value := range ranges {
 		if start < value.Start {
@@ -546,6 +569,9 @@ func reachPosition(wal ServerWAL, timeline uint32, start, required uint64) (uint
 				return value.End, value.EndReceipt, evidence.Warning, CoverageCandidateLimited, "candidate required WAL gap stops coverage"
 			}
 			return value.End, value.EndReceipt, evidence.Unknown, CoverageUnknownLimited, "unclassified WAL discontinuity stops coverage"
+		}
+		if closed {
+			return value.End, value.EndReceipt, evidence.Unhealthy, CoverageGapLimited, "WAL before the timeline switch is missing and the child timeline has WAL: it is lost"
 		}
 		return value.End, value.EndReceipt, evidence.Unknown, CoverageUnknownLimited, "required backup consistency WAL was not observed"
 	}
@@ -588,10 +614,21 @@ func backupRange(backup Backup) (uint32, uint64, uint64, error) {
 	return beginTimeline, begin, end, nil
 }
 
+// branchBeforeBackup reports whether the child of edge branched before the
+// backup was consistent, so that the backup cannot be recovered onto it.
+// pg_backup_stop returns the end of the backup-end record: recovery is
+// consistent once it has replayed the bytes before the end LSN. The history's
+// switchpoint is the first byte of the child; the parent holds every byte
+// before it (tliOfPointInHistory: begin <= ptr < end), and PostgreSQL checks
+// minRecoveryPoint - 1 against the requested timeline at startup
+// (InitWalRecovery). So a backup that ends exactly at the switchpoint
+// follows the child; it branched before the backup only when the switchpoint
+// is before the end LSN. pgbackrest's evaluatePath uses the same rule.
+// Without an end LSN the switch segment decides, conservatively.
 func branchBeforeBackup(edge HistoryEdge, backup Backup, end uint64) bool {
 	if backup.EndLSN != "" {
 		endLSN, err := ParseLSN(backup.EndLSN)
-		return err != nil || edge.SwitchLSN <= endLSN
+		return err != nil || edge.SwitchLSN < endLSN
 	}
 	return edge.SwitchPosition <= end
 }

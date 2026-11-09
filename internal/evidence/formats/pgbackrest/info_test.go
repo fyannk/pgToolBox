@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -170,7 +171,9 @@ func TestBackupEntryParserFollowsInfoBackupFields(t *testing.T) {
 		"missing required size":            {label, strings.Replace(valid, `"backup-info-size":24601678,`, "", 1)},
 		"missing an option":                {label, strings.Replace(valid, `"option-online":true,`, "", 1)},
 		"lower-case WAL name":              {label, strings.Replace(valid, "000000010000000000000008", "00000001000000000000000a", 1)},
-		"LSN with a leading zero":          {label, strings.Replace(valid, "0/8000028", "0/08000028", 1)},
+		"LSN with a short padded low half": {label, strings.Replace(valid, "0/8000028", "0/0800028", 1)},
+		"LSN with a padded high half":      {label, strings.Replace(valid, "0/8000028", "00/8000028", 1)},
+		"LSN with a nine-digit low half":   {label, strings.Replace(valid, "0/8000028", "0/008000028", 1)},
 		"prior that is not a label":        {label, strings.Replace(valid, `"backup-prior":"20261107-081046F"`, `"backup-prior":"x"`, 1)},
 		"reference that is not a label":    {label, strings.Replace(valid, `["20261107-081046F"]`, `["../x"]`, 1)},
 		"stop before start":                {label, strings.Replace(valid, "1794038159", "1794038150", 1)},
@@ -186,6 +189,52 @@ func TestBackupEntryParserFollowsInfoBackupFields(t *testing.T) {
 		if _, err := parseBackupEntry(test.label, test.raw); !errors.Is(err, errMalformedINI) {
 			t.Errorf("%s: parseBackupEntry() error = %v", name, err)
 		}
+	}
+}
+
+// TestLSNSpellings: PostgreSQL 19 prints LSNs as %X/%08X; the reader
+// accepts both spellings and keeps the evidence in the %X/%X one.
+func TestLSNSpellings(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		value      string
+		normalized string
+		lsn        uint64
+		ok         bool
+	}{
+		{value: "0/0", normalized: "0/0", ok: true},
+		{value: "0/8000028", normalized: "0/8000028", lsn: 0x8000028, ok: true},
+		{value: "0/08000028", normalized: "0/8000028", lsn: 0x8000028, ok: true},
+		{value: "0/00000000", normalized: "0/0", ok: true},
+		{value: "1/0000A0B0", normalized: "1/A0B0", lsn: 0x1_0000A0B0, ok: true},
+		{value: "FFFFFFFF/FFFFFFFF", normalized: "FFFFFFFF/FFFFFFFF", lsn: math.MaxUint64, ok: true},
+		{value: "0/0800028"},   // padded, but not to eight digits
+		{value: "00/8000028"},  // the high half is never padded
+		{value: "0/008000028"}, // more than eight digits
+		{value: "0/08000028 "},
+		{value: "0/0800002a"}, // lower case
+		{value: "08000028"},
+		{value: "0/"},
+		{value: ""},
+	} {
+		lsn, ok := ParseLSN(test.value)
+		normalized, okNormalized := normalizeLSN(test.value)
+		if ok != test.ok || okNormalized != test.ok || lsn != test.lsn || normalized != test.normalized {
+			t.Errorf("%q: ParseLSN = %#x, %v; normalizeLSN = %q, %v", test.value, lsn, ok, normalized, okNormalized)
+		}
+	}
+}
+
+func TestBackupEntryAndManifestNormalizePaddedLSNs(t *testing.T) {
+	t.Parallel()
+	const label = "20261107-081046F_20261107-081101D"
+	raw := `{"backrest-format":5,"backrest-version":"2.60.0","backup-archive-start":"000000010000000000000008","backup-archive-stop":"000000010000000000000009","backup-error":false,"backup-info-repo-size":3551751,"backup-info-repo-size-delta":730489,"backup-info-size":24601678,"backup-info-size-delta":2261250,"backup-lsn-start":"0/08000028","backup-lsn-stop":"0/09009A88","backup-prior":"20261107-081046F","backup-reference":["20261107-081046F"],"backup-timestamp-start":1794038156,"backup-timestamp-stop":1794038159,"backup-type":"diff","db-id":1,"option-archive-check":true,"option-archive-copy":false,"option-backup-standby":false,"option-checksum-page":false,"option-compress":true,"option-hardlink":false,"option-online":true}`
+	backup, err := parseBackupEntry(label, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if backup.LSNStart != "0/8000028" || backup.LSNStop != "0/9009A88" {
+		t.Fatalf("LSNs %q %q", backup.LSNStart, backup.LSNStop)
 	}
 }
 

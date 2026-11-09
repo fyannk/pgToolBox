@@ -176,3 +176,29 @@ func FuzzParseHistory(f *testing.F) {
 		}
 	})
 }
+
+// FuzzParseLSN: an accepted LSN is %X/%X or PostgreSQL 19's %X/%08X, and
+// normalizes to the one %X/%X spelling of the same position.
+func FuzzParseLSN(f *testing.F) {
+	for _, seed := range []string{"0/0", "0/8000028", "0/08000028", "FFFFFFFF/FFFFFFFF", "1/0000A0B0", "00/1", "0/0800028", "0/008000028", "/", "0/zz"} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, value string) {
+		lsn, ok := ParseLSN(value)
+		normalized, okNormalized := normalizeLSN(value)
+		if ok != okNormalized || ok != canonicalLSN(value) {
+			t.Fatalf("%q: ParseLSN %v, normalizeLSN %v, canonicalLSN %v", value, ok, okNormalized, canonicalLSN(value))
+		}
+		if !ok {
+			return
+		}
+		again, okAgain := ParseLSN(normalized)
+		high, low, _ := strings.Cut(normalized, "/")
+		if !okAgain || again != lsn || (len(high) > 1 && high[0] == '0') || (len(low) > 1 && low[0] == '0') {
+			t.Fatalf("%q normalized to %q (%#x, %v), parsed %#x", value, normalized, again, okAgain, lsn)
+		}
+		if _, padded, _ := strings.Cut(value, "/"); padded != low && len(padded) != 8 {
+			t.Fatalf("%q: a padded low half of %d digits was accepted", value, len(padded))
+		}
+	})
+}

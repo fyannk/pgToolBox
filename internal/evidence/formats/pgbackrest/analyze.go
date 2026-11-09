@@ -118,7 +118,12 @@ const (
 	// CoverageFrontier means the walk reached the newest contiguous segment of
 	// the target timeline.
 	CoverageFrontier CoverageStop = "frontier"
-	// CoverageGapLimited means the walk stopped at a gap (WALGap).
+	// CoverageCandidateLimited means the walk stopped at a candidate gap
+	// (seen by this scan only; it may still fill).
+	CoverageCandidateLimited CoverageStop = "candidate-limited"
+	// CoverageGapLimited means the walk stopped at a confirmed gap, or at WAL
+	// that is proven lost (a backup's own WAL, or WAL before a timeline
+	// switch whose child has WAL).
 	CoverageGapLimited CoverageStop = "gap-limited"
 	// CoverageUnknownLimited means the walk could not be evaluated.
 	CoverageUnknownLimited CoverageStop = "unknown-limited"
@@ -144,6 +149,13 @@ type RecoveryPath struct {
 	// is on another branch, or its timeline branched before it was
 	// consistent); the path then follows the backup's own timeline.
 	OffTarget bool
+	// SwitchInFlight is true when the target timeline's history is archived
+	// but none of its WAL is yet, and nothing in the archive proves WAL lost:
+	// a promotion archives NNNNNNNN.history at once and its first segment
+	// only once it fills or archive_timeout passes. The path then stops on
+	// the parent (State warning, Stop unknown-limited) and the backup is
+	// judged on the parent timeline up to the switch.
+	SwitchInFlight bool
 }
 
 // ManifestCheck is the outcome of reading one backup's manifest.
@@ -463,7 +475,10 @@ func analyzeBackups(ctx context.Context, reader store.Reader, listed map[string]
 	})
 	for index := range reports {
 		backup := &reports[index]
-		if backup.ChainState != evidence.Healthy || !backup.Path.Consistent || backup.Path.OffTarget || backup.Path.State == evidence.Unknown || backup.Path.FrontierTimeline != backup.Path.TargetTimeline {
+		// A switch in flight judges the backup on the parent timeline, up
+		// to the switch.
+		reachesTarget := backup.Path.FrontierTimeline == backup.Path.TargetTimeline || backup.Path.SwitchInFlight
+		if backup.ChainState != evidence.Healthy || !backup.Path.Consistent || backup.Path.OffTarget || backup.Path.State == evidence.Unknown || !reachesTarget {
 			continue
 		}
 		usable := backup.Manifest.State == evidence.Healthy && dependenciesVerified[index]
@@ -730,6 +745,8 @@ func evaluatePath(backup Backup, wal ArchiveWAL, histories []TimelineHistory, hi
 		target = max(target, history.Timeline)
 	}
 	path := RecoveryPath{TargetTimeline: target, StartWAL: backup.ArchiveStart, ConsistentWAL: backup.ArchiveStop}
+	// childEmpty: the target timeline is known only from its history file.
+	childEmpty := target != startTimeline && !slices.ContainsFunc(wal.Ranges, func(value WALRange) bool { return value.Timeline == target })
 	type leg struct {
 		timeline uint32
 		last     uint64 // last position read from this timeline; MaxUint64 on the target
@@ -746,10 +763,21 @@ func evaluatePath(backup Backup, wal ArchiveWAL, histories []TimelineHistory, hi
 		}
 		edges := histories[index].Edges
 		first := slices.IndexFunc(edges, func(edge HistoryEdge) bool { return edge.Parent == startTimeline })
+		// A backup can follow the child when its stop LSN is not after the
+		// switchpoint. pg_backup_stop returns the end of the backup-end
+		// record, so recovery is consistent once it has replayed the bytes
+		// before the stop LSN; the history's switchpoint is the first byte
+		// of the child, and the parent holds every byte before it
+		// (tliOfPointInHistory: begin <= ptr < end). PostgreSQL checks the
+		// same thing at startup with minRecoveryPoint - 1 against the
+		// requested timeline (InitWalRecovery, "requested timeline does not
+		// contain minimum recovery point"), so stop == switchpoint is on the
+		// child's history: the backup branches before it only when stop >
+		// switchpoint. barmancloud.branchBeforeBackup follows the same rule.
 		switch {
 		case first < 0:
 			offTarget = fmt.Sprintf("timeline %d is not an ancestor of timeline %d", startTimeline, target)
-		case !okLSN || stopLSN > edges[first].SwitchLSN:
+		case branchesBeforeStop(edges[first].SwitchLSN, stopLSN, okLSN):
 			offTarget = fmt.Sprintf("timeline %d branched before the backup reached consistency", edges[first].Child)
 		}
 		legs = legs[:0]
@@ -769,13 +797,18 @@ func evaluatePath(backup Backup, wal ArchiveWAL, histories []TimelineHistory, hi
 			legs = append(legs, leg{timeline: target, last: math.MaxUint64})
 		}
 	}
+	childEmpty = childEmpty && offTarget == ""
 	position := startPosition
-	for _, current := range legs {
+	for index, current := range legs {
 		path.Timelines = append(path.Timelines, current.timeline)
 		if current.last != math.MaxUint64 && position > current.last {
 			continue
 		}
 		run, found := rangeAt(wal.Ranges, current.timeline, position)
+		if !found && childEmpty && current.timeline == target {
+			// The parent legs reached the switch; the child has no WAL yet.
+			return switchInFlight(path, target, position, stopPosition, wal.SegmentSize)
+		}
 		if !found {
 			// On a later leg the frontier stays where the previous leg ended
 			// (SwitchPosition-1 on the parent): the child has nothing yet.
@@ -786,7 +819,8 @@ func evaluatePath(backup Backup, wal ArchiveWAL, histories []TimelineHistory, hi
 					path.FrontierWAL, _ = WALName(current.timeline, position-1, wal.SegmentSize)
 				}
 			}
-			path.Stop, path.State = CoverageGapLimited, missingState(wal.Gaps, current.timeline, position)
+			path.State = missingState(wal.Gaps, current.timeline, position)
+			path.Stop = gapStop(path.State)
 			path.Reason = fmt.Sprintf("segment %s is not archived", mustWALName(current.timeline, position, wal.SegmentSize))
 			path.Consistent = position > stopPosition
 			return inconsistentPath(path)
@@ -795,8 +829,15 @@ func evaluatePath(backup Backup, wal ArchiveWAL, histories []TimelineHistory, hi
 		if current.last == math.MaxUint64 {
 			break
 		}
+		if run.End < current.last && childEmpty && index == len(legs)-2 && run.End >= stopPosition && !rangeAfter(wal.Ranges, current.timeline, run.End) {
+			// The parent's tail before the switch is not archived yet and the
+			// child has nothing: nothing proves the parent closed, so its
+			// last segments may still be on their way.
+			return switchInFlight(path, target, run.End+1, stopPosition, wal.SegmentSize)
+		}
 		if run.End < current.last {
-			path.Stop, path.State = CoverageGapLimited, missingState(wal.Gaps, current.timeline, run.End+1)
+			path.State = missingState(wal.Gaps, current.timeline, run.End+1)
+			path.Stop = gapStop(path.State)
 			path.Reason = fmt.Sprintf("segment %s is not archived; the backup recovers only to %s on timeline %d", mustWALName(current.timeline, run.End+1, wal.SegmentSize), run.Last, current.timeline)
 			path.Consistent = run.End >= stopPosition
 			return inconsistentPath(path)
@@ -818,11 +859,12 @@ func evaluatePath(backup Backup, wal ArchiveWAL, histories []TimelineHistory, hi
 	path.Stop = CoverageFrontier
 	path.State, path.Reason = evidence.Healthy, "WAL is contiguous from the backup to the newest segment of the target timeline"
 	if gap, ok := gapAfter(wal.Gaps, path.FrontierTimeline, path.FrontierPosition); ok {
-		path.Stop, path.Reason = CoverageGapLimited, fmt.Sprintf("WAL is contiguous to %s; a %s gap follows", path.FrontierWAL, gap.Status)
+		path.Reason = fmt.Sprintf("WAL is contiguous to %s; a %s gap follows", path.FrontierWAL, gap.Status)
 		path.State = evidence.Warning
 		if gap.Status == GapConfirmed {
 			path.State = evidence.Unhealthy
 		}
+		path.Stop = gapStop(path.State)
 	}
 	if offTarget != "" {
 		path.OffTarget = true
@@ -834,18 +876,56 @@ func evaluatePath(backup Backup, wal ArchiveWAL, histories []TimelineHistory, hi
 	return path
 }
 
+// branchesBeforeStop reports whether a timeline that branched at switchLSN
+// left a backup that stopped at stopLSN behind (see evaluatePath); an
+// unknown stop LSN branches, which keeps the backup off the child.
+func branchesBeforeStop(switchLSN, stopLSN uint64, stopKnown bool) bool {
+	return !stopKnown || stopLSN > switchLSN
+}
+
+// switchInFlight ends a walk whose next position, missing, is the switch
+// segment of a target timeline that has no archived WAL yet, or the parent's
+// tail just before it. The frontier stays where the walk was.
+func switchInFlight(path RecoveryPath, target uint32, missing, stopPosition uint64, segmentSize int64) RecoveryPath {
+	path.SwitchInFlight = true
+	path.Stop, path.State = CoverageUnknownLimited, evidence.Warning
+	path.Consistent = path.FrontierTimeline != 0 && path.FrontierPosition >= stopPosition && missing > stopPosition
+	if path.Consistent {
+		path.Reason = fmt.Sprintf("timeline %d's history is archived but its WAL is not yet (the switch may be in flight); the backup recovers to %s on timeline %d", target, path.FrontierWAL, path.FrontierTimeline)
+	} else {
+		path.Reason = fmt.Sprintf("timeline %d's history is archived but its WAL is not yet (the switch may be in flight); segment %s, which the backup needs to reach consistency on it, is not archived yet", target, mustWALName(target, missing, segmentSize))
+	}
+	return path
+}
+
+// rangeAfter reports whether the timeline has archived WAL after position.
+func rangeAfter(ranges []WALRange, timeline uint32, position uint64) bool {
+	return slices.ContainsFunc(ranges, func(value WALRange) bool { return value.Timeline == timeline && value.End > position })
+}
+
 // inconsistentPath makes a walk that stopped before the backup's
 // archive-stop unhealthy whatever the gap: pgBackRest finishes a backup only
 // once that WAL is archived, so it is lost, not in flight.
 func inconsistentPath(path RecoveryPath) RecoveryPath {
 	if !path.Consistent {
-		path.State = evidence.Unhealthy
+		path.State, path.Stop = evidence.Unhealthy, CoverageGapLimited
 		path.Reason = "WAL the backup needs to reach consistency is missing: " + path.Reason
 		if index := strings.Index(path.Reason, "; the backup recovers only"); index >= 0 {
 			path.Reason = path.Reason[:index]
 		}
 	}
 	return path
+}
+
+// gapStop is the stop of a walk that ended at a missing position of the
+// given state: a candidate gap (warning) may still fill, as the wire
+// contract's candidate-limited says; anything else is a confirmed gap or
+// proven loss.
+func gapStop(state evidence.State) CoverageStop {
+	if state == evidence.Warning {
+		return CoverageCandidateLimited
+	}
+	return CoverageGapLimited
 }
 
 // missingState is the state of a walk that stopped at a missing position: a
@@ -959,6 +1039,11 @@ func rollup(report Report) (evidence.State, string) {
 	}
 	if len(report.Findings) > 0 {
 		return evidence.Warning, "a recovery window exists; see the warnings"
+	}
+	for _, backup := range report.Backups {
+		if backup.Usable && backup.Path.SwitchInFlight {
+			return evidence.Warning, "a recovery window exists; a timeline switch is not archived yet"
+		}
 	}
 	return evidence.Healthy, "a recovery window exists and every check passed"
 }
