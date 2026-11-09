@@ -67,7 +67,9 @@ WORKDIR /workspace
 ENV GOWORK=off
 COPY go.mod go.sum ./
 COPY pkg/evidence/go.mod pkg/evidence/go.mod
-RUN go mod download
+# A proxy error (stream reset, 5xx) is retried with backoff rather than failing
+# the image; go.sum still verifies every module.
+RUN for i in 1 2 3 4 5; do go mod download && exit 0; echo "go mod download failed (attempt $i/5)" >&2; sleep $((i * 10)); done; exit 1
 COPY internal/console/docsbundle internal/console/docsbundle
 COPY hack/docsbundle hack/docsbundle
 COPY charts/pgtoolbox/Chart.yaml charts/pgtoolbox/Chart.yaml
@@ -84,7 +86,9 @@ ENV GOWORK=off
 # Module files first for dependency caching.
 COPY go.mod go.sum ./
 COPY pkg/evidence/go.mod pkg/evidence/go.mod
-RUN go mod download
+# A proxy error (stream reset, 5xx) is retried with backoff rather than failing
+# the image; go.sum still verifies every module.
+RUN for i in 1 2 3 4 5; do go mod download && exit 0; echo "go mod download failed (attempt $i/5)" >&2; sleep $((i * 10)); done; exit 1
 
 COPY api api
 COPY cmd cmd
