@@ -22,6 +22,7 @@ package exposure
 import (
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	routev1 "github.com/openshift/api/route/v1"
@@ -281,3 +282,25 @@ func HTTPRouteFact(route *gatewayv1.HTTPRoute) Fact {
 	}
 	return Fact{metav1.ConditionUnknown, pgtoolboxv1alpha1.ReasonReconciling, "no Gateway has reported on the HTTPRoute yet"}
 }
+
+// HostnameAllowed reports whether hostname may be published under the
+// operator's allow-list of host suffixes: a suffix allows itself and every
+// name below it (example.com allows example.com and a.example.com, never
+// badexample.com). An empty list allows every hostname, as does an empty
+// hostname (nothing is published under a name). Names compare
+// case-insensitively, a trailing dot ignored.
+func HostnameAllowed(hostname string, suffixes []string) bool {
+	if len(suffixes) == 0 || hostname == "" {
+		return true
+	}
+	host := normalizeHost(hostname)
+	for _, suffix := range suffixes {
+		suffix = normalizeHost(strings.TrimPrefix(suffix, "."))
+		if suffix != "" && (host == suffix || strings.HasSuffix(host, "."+suffix)) {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeHost(name string) string { return strings.ToLower(strings.TrimSuffix(name, ".")) }

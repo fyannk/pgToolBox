@@ -1651,6 +1651,7 @@ _Appears in:_
 | `ConfigMapNotFound` | ReasonConfigMapNotFound names a referenced ConfigMap that does not<br />exist.<br /> |
 | `ClusterNotFound` | ReasonClusterNotFound names a referenced CloudNativePG Cluster that<br />does not exist in the namespace (an EvidenceAgent's<br />spec.clusterRef, a PgAdmin's spec.clusterRefs).<br /> |
 | `ImageNotAllowed` | ReasonImageNotAllowed: the image a CR names (spec.image, an<br />oauth-proxy image) is outside the operator's allow-list of<br />repositories (--evidence-agent-image-repositories,<br />--pgadmin-image-repositories).<br /> |
+| `HostnameNotAllowed` | ReasonHostnameNotAllowed: spec.exposure.hostname is outside the<br />operator's allow-list of host suffixes<br />(EXPOSURE_ALLOWED_HOST_SUFFIXES), so the operator publishes no Route,<br />Ingress or HTTPRoute for it.<br /> |
 | `RolloutInProgress` | Workload facts, copied from the child.<br /> |
 | `RolloutStuck` |  |
 | `PodUnschedulable` |  |

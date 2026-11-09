@@ -74,6 +74,13 @@ type Config struct {
 	// create a PgAdmin chooses which image holds the offered credentials,
 	// so the choice is bounded here, by the operator's installer.
 	PgAdminImageRepositories []string
+	// ExposureAllowedHostSuffixes are the DNS suffixes a PgAdmin's or a
+	// PgToolBoxConsole's spec.exposure.hostname must fall under (the suffix
+	// itself or a name below it). Empty: any hostname, as before. Whoever
+	// may create those kinds otherwise chooses which name the cluster's
+	// router or gateway publishes, a name another team or a login page
+	// may own.
+	ExposureAllowedHostSuffixes []string
 	// MaxConcurrentReconciles per controller.
 	MaxConcurrentReconciles int
 	// ReconciliationTimeout bounds one Reconcile call.
@@ -131,6 +138,13 @@ var fields = []field{
 	{
 		"PGADMIN_IMAGE_REPOSITORIES", func(c *Config, v string) error { c.PgAdminImageRepositories = splitList(v); return nil },
 		func(c *Config) string { return strings.Join(c.PgAdminImageRepositories, ",") },
+	},
+	{
+		"EXPOSURE_ALLOWED_HOST_SUFFIXES", func(c *Config, v string) error {
+			c.ExposureAllowedHostSuffixes = splitList(strings.ToLower(v))
+			return nil
+		},
+		func(c *Config) string { return strings.Join(c.ExposureAllowedHostSuffixes, ",") },
 	},
 	{
 		"MAX_CONCURRENT_RECONCILES", intSetter(func(c *Config) *int { return &c.MaxConcurrentReconciles }),
@@ -259,6 +273,12 @@ func (c *Config) validate() []error {
 	for _, namespace := range c.WatchNamespaces {
 		if errs := validation.IsDNS1123Label(namespace); len(errs) > 0 {
 			problems = append(problems, fmt.Errorf("WATCH_NAMESPACES: %q: %s", namespace, strings.Join(errs, ", ")))
+		}
+	}
+	for _, suffix := range c.ExposureAllowedHostSuffixes {
+		name := strings.TrimSuffix(strings.TrimPrefix(suffix, "."), ".")
+		if errs := validation.IsDNS1123Subdomain(name); len(errs) > 0 {
+			problems = append(problems, fmt.Errorf("EXPOSURE_ALLOWED_HOST_SUFFIXES: %q: %s", suffix, strings.Join(errs, ", ")))
 		}
 	}
 	if c.OperatorImage == "" {

@@ -7,6 +7,7 @@ CrashLoopBackOff
 GatewayAPIUnavailable
 GatewayNotFound
 HostnameConflict
+HostnameNotAllowed
 ImageNotAllowed
 ImagePullFailed
 Initializing

@@ -117,6 +117,7 @@ redacted).
 | `OPERATOR_IMAGE` | `image.*` | baked in at build | Copied into pgAdmin Pods for the credential sidecar. |
 | `PGADMIN_IMAGE` | `operator.pgAdmin.image` | the hardened, digest-pinned image compiled in | |
 | `PGADMIN_IMAGE_REPOSITORIES` | `operator.pgAdmin.imageRepositories` | each image's default repository only | The [allow-list](images.md) for `PgAdmin` images. |
+| `EXPOSURE_ALLOWED_HOST_SUFFIXES` | `operator.exposure.allowedHostSuffixes` | empty: any hostname | Comma list of DNS suffixes a `PgAdmin`'s or a `PgToolBoxConsole`'s `spec.exposure.hostname` must fall under (the suffix or a name below it). Outside them: `ConfigurationValid=False`, reason `HostnameNotAllowed`, and the Route, Ingress or HTTPRoute already published is withdrawn. Without it, whoever may create those kinds chooses which name the cluster's router or gateway serves. |
 | `OAUTH_PROXY_IMAGE` | `operator.oauthProxyImage` | `quay.io/openshift/origin-oauth-proxy:4.18`, pinned by digest | On OpenShift use the release payload's. |
 | `MAX_CONCURRENT_RECONCILES` | `operator.config.maxConcurrentReconciles` | `4` | Per controller. |
 | `RECONCILIATION_TIMEOUT` | `operator.config.reconciliationTimeout` | `2m` | Bounds one reconcile. |

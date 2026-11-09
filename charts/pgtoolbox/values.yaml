@@ -76,6 +76,17 @@ operator:
     # repository only. Set it to your mirror when the image values point at
     # one.
     imageRepositories: []
+  # exposure: what a PgAdmin's or a PgToolBoxConsole's spec.exposure may
+  # publish. Whoever may create those kinds otherwise picks the hostname the
+  # cluster's router or gateway serves, a name another team or a login page
+  # may own.
+  exposure:
+    # -- DNS suffixes `spec.exposure.hostname` must fall under (the suffix
+    # itself or a name below it), e.g. `[apps.example.com]`
+    # (`EXPOSURE_ALLOWED_HOST_SUFFIXES`). A hostname outside them is refused
+    # (ConfigurationValid=False, reason HostnameNotAllowed) and what was
+    # published under it withdrawn. Empty: any hostname.
+    allowedHostSuffixes: []
   # -- Image of the OpenShift oauth-proxy in front of pgAdmin
   # (`OAUTH_PROXY_IMAGE`). Empty: the compiled-in default. On OpenShift, set
   # the release payload's own image so that a mirrored registry serves it.
