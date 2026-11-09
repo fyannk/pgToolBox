@@ -12,3 +12,9 @@
 .container > svg {
   max-width: 100%;
 }
+
+/* fyannk/design: 1 px borders, no shadows on the page. Mermaid's base
+   theme drops a shadow under nodes, notes and actors. */
+.container svg * {
+  filter: none !important;
+}
