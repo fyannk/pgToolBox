@@ -144,6 +144,13 @@ type RecoveryPath struct {
 	// is on another branch, or its timeline branched before it was
 	// consistent); the path then follows the backup's own timeline.
 	OffTarget bool
+	// SwitchInFlight is true when the target timeline's history is archived
+	// but none of its WAL is yet, and nothing in the archive proves WAL lost:
+	// a promotion archives NNNNNNNN.history at once and its first segment
+	// only once it fills or archive_timeout passes. The path then stops on
+	// the parent (State warning, Stop unknown-limited) and the backup is
+	// judged on the parent timeline up to the switch.
+	SwitchInFlight bool
 }
 
 // ManifestCheck is the outcome of reading one backup's manifest.
@@ -463,7 +470,10 @@ func analyzeBackups(ctx context.Context, reader store.Reader, listed map[string]
 	})
 	for index := range reports {
 		backup := &reports[index]
-		if backup.ChainState != evidence.Healthy || !backup.Path.Consistent || backup.Path.OffTarget || backup.Path.State == evidence.Unknown || backup.Path.FrontierTimeline != backup.Path.TargetTimeline {
+		// A switch in flight judges the backup on the parent timeline, up
+		// to the switch.
+		reachesTarget := backup.Path.FrontierTimeline == backup.Path.TargetTimeline || backup.Path.SwitchInFlight
+		if backup.ChainState != evidence.Healthy || !backup.Path.Consistent || backup.Path.OffTarget || backup.Path.State == evidence.Unknown || !reachesTarget {
 			continue
 		}
 		usable := backup.Manifest.State == evidence.Healthy && dependenciesVerified[index]
@@ -730,6 +740,8 @@ func evaluatePath(backup Backup, wal ArchiveWAL, histories []TimelineHistory, hi
 		target = max(target, history.Timeline)
 	}
 	path := RecoveryPath{TargetTimeline: target, StartWAL: backup.ArchiveStart, ConsistentWAL: backup.ArchiveStop}
+	// childEmpty: the target timeline is known only from its history file.
+	childEmpty := target != startTimeline && !slices.ContainsFunc(wal.Ranges, func(value WALRange) bool { return value.Timeline == target })
 	type leg struct {
 		timeline uint32
 		last     uint64 // last position read from this timeline; MaxUint64 on the target
@@ -769,13 +781,18 @@ func evaluatePath(backup Backup, wal ArchiveWAL, histories []TimelineHistory, hi
 			legs = append(legs, leg{timeline: target, last: math.MaxUint64})
 		}
 	}
+	childEmpty = childEmpty && offTarget == ""
 	position := startPosition
-	for _, current := range legs {
+	for index, current := range legs {
 		path.Timelines = append(path.Timelines, current.timeline)
 		if current.last != math.MaxUint64 && position > current.last {
 			continue
 		}
 		run, found := rangeAt(wal.Ranges, current.timeline, position)
+		if !found && childEmpty && current.timeline == target {
+			// The parent legs reached the switch; the child has no WAL yet.
+			return switchInFlight(path, target, position, stopPosition, wal.SegmentSize)
+		}
 		if !found {
 			// On a later leg the frontier stays where the previous leg ended
 			// (SwitchPosition-1 on the parent): the child has nothing yet.
@@ -794,6 +811,12 @@ func evaluatePath(backup Backup, wal ArchiveWAL, histories []TimelineHistory, hi
 		path.FrontierTimeline, path.FrontierPosition, path.FrontierWAL, path.FrontierReceipt = current.timeline, run.End, run.Last, run.EndReceipt
 		if current.last == math.MaxUint64 {
 			break
+		}
+		if run.End < current.last && childEmpty && index == len(legs)-2 && run.End >= stopPosition && !rangeAfter(wal.Ranges, current.timeline, run.End) {
+			// The parent's tail before the switch is not archived yet and the
+			// child has nothing: nothing proves the parent closed, so its
+			// last segments may still be on their way.
+			return switchInFlight(path, target, run.End+1, stopPosition, wal.SegmentSize)
 		}
 		if run.End < current.last {
 			path.Stop, path.State = CoverageGapLimited, missingState(wal.Gaps, current.timeline, run.End+1)
@@ -832,6 +855,26 @@ func evaluatePath(backup Backup, wal ArchiveWAL, histories []TimelineHistory, hi
 		}
 	}
 	return path
+}
+
+// switchInFlight ends a walk whose next position, missing, is the switch
+// segment of a target timeline that has no archived WAL yet, or the parent's
+// tail just before it. The frontier stays where the walk was.
+func switchInFlight(path RecoveryPath, target uint32, missing, stopPosition uint64, segmentSize int64) RecoveryPath {
+	path.SwitchInFlight = true
+	path.Stop, path.State = CoverageUnknownLimited, evidence.Warning
+	path.Consistent = path.FrontierTimeline != 0 && path.FrontierPosition >= stopPosition && missing > stopPosition
+	if path.Consistent {
+		path.Reason = fmt.Sprintf("timeline %d's history is archived but its WAL is not yet (the switch may be in flight); the backup recovers to %s on timeline %d", target, path.FrontierWAL, path.FrontierTimeline)
+	} else {
+		path.Reason = fmt.Sprintf("timeline %d's history is archived but its WAL is not yet (the switch may be in flight); segment %s, which the backup needs to reach consistency on it, is not archived yet", target, mustWALName(target, missing, segmentSize))
+	}
+	return path
+}
+
+// rangeAfter reports whether the timeline has archived WAL after position.
+func rangeAfter(ranges []WALRange, timeline uint32, position uint64) bool {
+	return slices.ContainsFunc(ranges, func(value WALRange) bool { return value.Timeline == timeline && value.End > position })
 }
 
 // inconsistentPath makes a walk that stopped before the backup's
@@ -959,6 +1002,11 @@ func rollup(report Report) (evidence.State, string) {
 	}
 	if len(report.Findings) > 0 {
 		return evidence.Warning, "a recovery window exists; see the warnings"
+	}
+	for _, backup := range report.Backups {
+		if backup.Usable && backup.Path.SwitchInFlight {
+			return evidence.Warning, "a recovery window exists; a timeline switch is not archived yet"
+		}
 	}
 	return evidence.Healthy, "a recovery window exists and every check passed"
 }

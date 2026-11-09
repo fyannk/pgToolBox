@@ -147,10 +147,15 @@ func assess(reports []BackupReport, dependencies dependencyManifests, backup Bac
 	switch {
 	case path.State == evidence.Unknown || path.TargetTimeline == 0:
 		add(UnusableWALUnknown, evidence.Unknown, path.Reason)
+	case !path.Consistent && path.SwitchInFlight:
+		// The WAL is on its way, not lost.
+		add(UnusableWALToConsistency, evidence.Warning, path.Reason)
 	case !path.Consistent:
 		add(UnusableWALToConsistency, evidence.Unhealthy, path.Reason)
 	case path.OffTarget:
 		add(UnusableOffTargetTimeline, evidence.Warning, path.Reason)
+	case path.SwitchInFlight:
+		// Usable on the parent timeline up to the switch.
 	case path.FrontierTimeline != path.TargetTimeline:
 		add(UnusableWALToTargetTimeline, stateOr(path.State, evidence.Unhealthy), path.Reason)
 	}
@@ -324,10 +329,12 @@ func (r Report) coverageAspect() Aspect {
 	if r.Window == nil {
 		return Aspect{evidence.Unknown, "no usable backup to recover from"}
 	}
-	state := evidence.Healthy
+	state, inFlight, gapLimited := evidence.Healthy, false, false
 	for _, backup := range r.Backups {
 		if backup.Usable {
 			state = Conservative(state, backup.Path.State)
+			inFlight = inFlight || backup.Path.SwitchInFlight
+			gapLimited = gapLimited || backup.Path.State == evidence.Warning && !backup.Path.SwitchInFlight
 		}
 	}
 	reason := map[evidence.State]string{
@@ -336,6 +343,9 @@ func (r Report) coverageAspect() Aspect {
 		evidence.Unhealthy: "a recovery path stops at a confirmed WAL gap",
 		evidence.Unknown:   "a recovery path is unknown",
 	}[state]
+	if state == evidence.Warning && inFlight && !gapLimited {
+		reason = "a timeline switch is not archived yet: recovery paths stop on the parent timeline"
+	}
 	if slices.ContainsFunc(r.Findings, func(finding Finding) bool { return finding.Code == FindingStanzaSplit }) {
 		state = Conservative(state, evidence.Warning)
 		reason = "the WAL is under another stanza: a restore must name it"

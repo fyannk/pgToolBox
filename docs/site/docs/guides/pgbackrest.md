@@ -146,6 +146,15 @@ repository's labels (Dalibo's `status.backupName`, Opera's `status.backupId`),
 the stanza against the plugin's retention, and the findings. A confirmed hole in
 the WAL is critical, ends the window before it, and names the missing range.
 
+Right after a failover or a switchover, PostgreSQL archives the new timeline's
+`.history` file at once, but the new timeline's first segment only once it fills
+or `archive_timeout` passes (five minutes on CloudNativePG). Until it arrives,
+the backups of the previous timeline stay usable, the window ends just before
+the switch, and the stanza is a warning ("a timeline switch is not archived
+yet"), not a loss. A backup that stopped inside the switch segment waits for it.
+Once the new timeline has WAL, a missing segment before the switch, or the
+switch segment missing while later ones exist, is reported as lost again.
+
 ## Restore drills
 
 [Restore drills](../console/restore-drills.md#pgbackrest-clusters) recover the
