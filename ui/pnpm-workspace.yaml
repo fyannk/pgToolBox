@@ -11,3 +11,9 @@ strictDepBuilds: true
 # dependency already installed; denied, nothing else runs at install time.
 allowBuilds:
   esbuild: false
+
+# GHSA-g3hv-75wg-m249 (minimatch globparts amplification) is fixed in 11.0.1;
+# glob 13, under Storybook's react-docgen plugin, still asks for ^10. Drop
+# this when Storybook's dependency tree reaches minimatch 11 by itself.
+overrides:
+  "minimatch@>=7 <11.0.1": 11.0.4
