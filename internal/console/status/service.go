@@ -420,22 +420,22 @@ func (s *Service) pruneLastKeys(watched map[string]bool) {
 
 // gathered is everything the cache holds about one Cluster.
 type gathered struct {
-	key       cache.ClusterKey
-	cluster   *cnpgv1.Cluster
-	pods      []*corev1.Pod
-	events    []*corev1.Event
-	backups   []*cnpgv1.Backup
+	key     cache.ClusterKey
+	cluster *cnpgv1.Cluster
+	pods    []*corev1.Pod
+	events  []*corev1.Event
+	backups []*cnpgv1.Backup
 	// priorBackups name this Cluster but predate it (created before
 	// it, or owned by a Cluster with another UID): a recreated Cluster
 	// must not inherit them as its recency, topology or timeline.
 	priorBackups []*cnpgv1.Backup
-	scheduled []*cnpgv1.ScheduledBackup
-	poolers   []*cnpgv1.Pooler
-	lease     *coordinationv1.Lease
-	quorum    *cnpgv1.FailoverQuorum
-	store     *unstructured.Unstructured
-	swept     sweep.Snapshot
-	hasSweep  bool
+	scheduled    []*cnpgv1.ScheduledBackup
+	poolers      []*cnpgv1.Pooler
+	lease        *coordinationv1.Lease
+	quorum       *cnpgv1.FailoverQuorum
+	store        *unstructured.Unstructured
+	swept        sweep.Snapshot
+	hasSweep     bool
 	// volumesReported: an instance reported its volumes recently (the
 	// fork's volumeUsages or cnpg_disk_* metrics).
 	volumesReported bool
@@ -443,8 +443,11 @@ type gathered struct {
 	// of this Cluster recently: its forecasts are missing, not flat.
 	volumesRefused bool
 	version        cnpgstatus.Version
-	minor          cnpgstatus.Minor
-	readable       map[string]bool
+	// upgradeInFlight names an instance manager / operator annotation
+	// version mismatch (cnpgstatus.UpgradeInFlight), or is empty.
+	upgradeInFlight string
+	minor           cnpgstatus.Minor
+	readable        map[string]bool
 	// failed names the readable sources whose read failed this time:
 	// their lists are empty because nothing was read, not because
 	// nothing exists.
@@ -593,14 +596,16 @@ func (s *Service) gather(ctx context.Context, key cache.ClusterKey, withEvents b
 			g.volumesRefused = s.opts.Trends.RefusedFor(key.Namespace, key.Name, since)
 		}
 	}
-	g.version = cnpgstatus.DetectVersion(cnpgstatus.VersionEvidence{
+	versionEvidence := cnpgstatus.VersionEvidence{
 		InstanceManagerVersions: managerVersions(g),
 		InstancePods:            g.pods,
 		Cluster:                 cluster,
 		LeaseServed:             leaseObserved(g),
 		DatabaseRolesServed:     s.cache.Served(cache.SourceDatabaseRoles),
 		FailoverQuorumsServed:   s.cache.Served(cache.SourceFailoverQuorums),
-	})
+	}
+	g.version = cnpgstatus.DetectVersion(versionEvidence)
+	g.upgradeInFlight = cnpgstatus.UpgradeInFlight(versionEvidence)
 	g.minor = g.version.Minor
 	return g, nil
 }

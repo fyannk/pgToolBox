@@ -375,6 +375,11 @@ export function OverviewView({ data, wiring }: { data: ClusterOverviewView; wiri
             CNPG <Reported value={data.version.cnpg} /> ({data.version.confidence})
           </span>
         )}
+        {data.version.upgradeInFlight && (
+          <span className="font-semibold" title={data.version.upgradeInFlight}>
+            {m.version_upgrade_in_flight({ detail: data.version.upgradeInFlight })}
+          </span>
+        )}
         <span className="text-muted">
           {m.generated_at()} <Time iso={data.generatedAt} />
         </span>

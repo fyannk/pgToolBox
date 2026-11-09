@@ -198,6 +198,9 @@ func versionInfo(g *gathered, run *diag.Run) viewmodel.VersionInfo {
 		Confidence: viewmodel.VersionConfidence(g.version.Confidence),
 		DetectedBy: g.version.DetectedBy,
 		Image:      g.cluster.Status.Image,
+		// UpgradeInFlight: the instance managers and the operator's
+		// cnpg.io/operatorVersion annotation disagree.
+		UpgradeInFlight: g.upgradeInFlight,
 	}
 	if v.Confidence == "" {
 		v.Confidence = viewmodel.VersionUnknown

@@ -44,9 +44,9 @@
             "detail": "applied false: role \"reporter\" does not exist"
           },
           {
-            "origin": "console-parsed from Kubernetes-observed image",
-            "object": "Pod/orders-1 init container bootstrap-controller",
-            "detail": "operator bootstrap image \"ghcr.io/cloudnative-pg/cloudnative-pg:1.30.0\""
+            "origin": "instance-reported",
+            "object": "Cluster instances",
+            "detail": "CloudNativePG 1.30.0 from instanceManagerVersion"
           }
         ],
         "link": "objects",

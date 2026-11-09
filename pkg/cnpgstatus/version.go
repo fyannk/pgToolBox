@@ -27,7 +27,9 @@ import (
 const (
 	// ConfidenceReported: an instance manager said so on /pg/status.
 	ConfidenceReported = "reported"
-	// ConfidenceImage: read from the operator image tag in a Pod.
+	// ConfidenceImage: written by the operator on an instance Pod, as
+	// its cnpg.io/operatorVersion annotation or its bootstrap-controller
+	// init image tag.
 	ConfidenceImage = "image"
 	// ConfidenceInferred: a commit-hash match or a feature floor.
 	ConfidenceInferred = "inferred"
@@ -64,12 +66,31 @@ var releaseCommits = []struct{ commit, version string }{
 	{"2a35abb4628f209d149825ef3c38011e0701ff2f", "1.30.1"},
 }
 
+// operatorVersionAnnotation is utils.OperatorVersionAnnotationName
+// (pkg/utils/labels_annotations.go v1.30.0 and v1.30.1:159). The operator
+// puts it on every instance Pod: it is one of the Cluster's fixed
+// inherited annotations (api/v1/cluster_funcs.go GetFixedInheritedAnnotations,
+// v1.30.0 and v1.30.1:666-668: utils.SetOperatorVersion(&meta,
+// versions.Version)), applied when the Pod is created
+// (internal/controller/cluster_create.go v1.30.1:1587, and :1324 of
+// cluster_funcs.go for the other children) and re-applied by the instance
+// metadata reconciler whenever it differs (pkg/reconciler/instance/metadata.go
+// v1.30.1:96-120). So it follows an operator upgrade without a Pod
+// restart, while instanceManagerVersion moves only when the instance
+// manager is replaced. The Cluster's author can override it:
+// spec.inheritedMetadata.annotations is copied over the fixed set
+// (cluster_funcs.go v1.30.1:670-674), which is why it ranks below the
+// instances' own report.
+const operatorVersionAnnotation = "cnpg.io/operatorVersion"
+
 // VersionEvidence is everything DetectVersion may use. Never a Pod or
 // Cluster label: app.kubernetes.io/version is the PostgreSQL major. The
-// console reads no ConfigMap, so the cnpg.io/operatorVersion annotation
-// (set only on the cnpg-default-monitoring ConfigMap, the CA Secrets and
-// major-upgrade Jobs: internal/controller/cluster_create.go v1.30.0:865-972,
-// pkg/reconciler/majorupgrade/reconciler.go:249) is not an input.
+// cnpg.io/operatorVersion annotation is read from the instance Pods
+// (see operatorVersionAnnotation); the console reads no ConfigMap, and
+// the same annotation on the monitoring ConfigMap, the CA Secrets and
+// major-upgrade Jobs (internal/controller/cluster_create.go
+// v1.30.0:865-972, pkg/reconciler/majorupgrade/reconciler.go:249) is not
+// an input.
 type VersionEvidence struct {
 	// InstanceManagerVersions are /pg/status instanceManagerVersion values
 	// of the instances read (pkg/management/postgres/probes.go v1.30.0:45:
@@ -112,10 +133,12 @@ type featureFloor struct {
 // DetectVersion answers "which CNPG version?" by ranking the evidence:
 //
 //  1. the highest instanceManagerVersion reported;
-//  2. the highest bootstrap-controller init image tag (lags after an
+//  2. the highest cnpg.io/operatorVersion annotation on the instance
+//     Pods (follows the operator without a Pod restart);
+//  3. the highest bootstrap-controller init image tag (lags after an
 //     in-place operator upgrade until Pods are recreated);
-//  3. status.cloudNativePGCommitHash against the release-commit table;
-//  4. feature floors: operatorCertificateFingerprint, condition
+//  4. status.cloudNativePGCommitHash against the release-commit table;
+//  5. feature floors: operatorCertificateFingerprint, condition
 //     Initialized, the primary Lease, the databaseroles CRD (>=1.30,
 //     cluster_types.go v1.30.0:1086/1185);
 //     ConsistentSystemID and failoverquorums (>=1.27); PLANNED 1.31:
@@ -157,10 +180,57 @@ func minorOrEmpty(version string) Minor {
 	return m
 }
 
-// rankedVersion applies steps 1-3.
+// UpgradeInFlight reports instance managers that run another version
+// than the operator's cnpg.io/operatorVersion annotation on the instance
+// Pods: an operator upgrade not yet rolled to every instance (or rolled
+// back). It names both sides, such as "instanceManagerVersion 1.30.0;
+// cnpg.io/operatorVersion 1.30.1", and is empty when they agree or
+// either side is missing (missing is no evidence of a mismatch).
+func UpgradeInFlight(e VersionEvidence) string {
+	seen := map[string]semver{}
+	for _, raw := range e.InstanceManagerVersions {
+		if v, ok := parseSemver(strings.TrimSpace(raw)); ok {
+			seen[v.String()] = v
+		}
+	}
+	annotated, _, ok := highest(operatorAnnotations(e.InstancePods))
+	if !ok || len(seen) == 0 {
+		return ""
+	}
+	if _, same := seen[annotated.String()]; same && len(seen) == 1 {
+		return ""
+	}
+	reported := make([]semver, 0, len(seen))
+	for _, v := range seen {
+		reported = append(reported, v)
+	}
+	sort.Slice(reported, func(i, j int) bool { return reported[i].less(reported[j]) })
+	names := make([]string, len(reported))
+	for i, v := range reported {
+		names[i] = v.String()
+	}
+	return "instanceManagerVersion " + strings.Join(names, ", ") + "; " + operatorVersionAnnotation + " " + annotated.String()
+}
+
+func operatorAnnotations(pods []*corev1.Pod) []string {
+	var out []string
+	for _, pod := range pods {
+		if pod != nil {
+			if v, ok := pod.Annotations[operatorVersionAnnotation]; ok {
+				out = append(out, v)
+			}
+		}
+	}
+	return out
+}
+
+// rankedVersion applies steps 1-4.
 func rankedVersion(e VersionEvidence) Version {
 	if v, detail, ok := highest(e.InstanceManagerVersions); ok {
 		return Version{Version: v.String(), Minor: minorOrEmpty(v.String()), Confidence: ConfidenceReported, DetectedBy: "instanceManagerVersion" + detail}
+	}
+	if v, detail, ok := highest(operatorAnnotations(e.InstancePods)); ok {
+		return Version{Version: v.String(), Minor: minorOrEmpty(v.String()), Confidence: ConfidenceImage, DetectedBy: operatorVersionAnnotation + " annotation" + detail}
 	}
 	var tags []string
 	for _, pod := range e.InstancePods {
@@ -250,7 +320,7 @@ func commitVersion(hash string) (string, bool) {
 	return "", false
 }
 
-// highestFloor applies step 4. Floors below the supported minors are returned too (as
+// highestFloor applies step 5. Floors below the supported minors are returned too (as
 // "1.27"), so that a cluster with only 1.27-era evidence still reads as
 // ">=1.27" instead of nothing.
 func highestFloor(e VersionEvidence) featureFloor {

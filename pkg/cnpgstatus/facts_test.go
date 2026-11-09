@@ -416,13 +416,55 @@ func TestStatusServerName(t *testing.T) {
 	}
 }
 
-func TestDetectVersion(t *testing.T) {
-	podWithInit := func(name, image string) *corev1.Pod {
-		return &corev1.Pod{
-			ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app.kubernetes.io/version": "17"}},
-			Spec:       corev1.PodSpec{InitContainers: []corev1.Container{{Name: name, Image: image}}},
-		}
+func podWithInit(name, image string) *corev1.Pod {
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app.kubernetes.io/version": "17"}},
+		Spec:       corev1.PodSpec{InitContainers: []corev1.Container{{Name: name, Image: image}}},
 	}
+}
+
+func annotated(pod *corev1.Pod, version string) *corev1.Pod {
+	pod.Annotations = map[string]string{"cnpg.io/operatorVersion": version}
+	return pod
+}
+
+func TestUpgradeInFlight(t *testing.T) {
+	pods := func(versions ...string) []*corev1.Pod {
+		out := make([]*corev1.Pod, 0, len(versions))
+		for _, v := range versions {
+			out = append(out, annotated(podWithInit("other", ""), v))
+		}
+		return out
+	}
+	tests := []struct {
+		name string
+		e    VersionEvidence
+		want string
+	}{
+		{"agree", VersionEvidence{InstanceManagerVersions: []string{"1.30.1", "1.30.1"}, InstancePods: pods("1.30.1", "1.30.1")}, ""},
+		{"no annotation is no evidence", VersionEvidence{InstanceManagerVersions: []string{"1.30.0"}}, ""},
+		{"no instance manager reading is no evidence", VersionEvidence{InstancePods: pods("1.30.1")}, ""},
+		{
+			"operator ahead of every instance",
+			VersionEvidence{InstanceManagerVersions: []string{"1.30.0"}, InstancePods: pods("1.30.1")},
+			"instanceManagerVersion 1.30.0; cnpg.io/operatorVersion 1.30.1",
+		},
+		{
+			"half rolled",
+			VersionEvidence{InstanceManagerVersions: []string{"1.30.1", "1.30.0", "garbage"}, InstancePods: pods("1.30.1", "1.30.1")},
+			"instanceManagerVersion 1.30.0, 1.30.1; cnpg.io/operatorVersion 1.30.1",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := UpgradeInFlight(tt.e); got != tt.want {
+				t.Errorf("UpgradeInFlight() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDetectVersion(t *testing.T) {
 	fingerprint := &cnpgv1.Cluster{Status: cnpgv1.ClusterStatus{OperatorCertificateFingerprint: "ab:cd"}}
 	tests := []struct {
 		name string
@@ -452,6 +494,16 @@ func TestDetectVersion(t *testing.T) {
 		{"garbage ignored, short version accepted, image not consulted", VersionEvidence{
 			InstanceManagerVersions: []string{"latest", "1.30", "\x00", strings.Repeat("1", 100)},
 			InstancePods:            []*corev1.Pod{podWithInit("bootstrap-controller", "ghcr.io/cloudnative-pg/cloudnative-pg:1.29.2")},
+		}, Version{"1.30.0", Minor130, ConfidenceReported, "instanceManagerVersion"}},
+		{"operatorVersion annotation ranks above the lagging init image", VersionEvidence{InstancePods: []*corev1.Pod{
+			annotated(podWithInit("bootstrap-controller", "ghcr.io/cloudnative-pg/cloudnative-pg:1.30.0"), "1.30.1"),
+		}}, Version{"1.30.1", Minor130, ConfidenceImage, "cnpg.io/operatorVersion annotation"}},
+		{"operatorVersion annotation mixed takes highest, garbage ignored", VersionEvidence{InstancePods: []*corev1.Pod{
+			annotated(podWithInit("other", ""), "1.30.0"), annotated(podWithInit("other", ""), "1.30.1"), annotated(podWithInit("other", ""), "main"),
+		}}, Version{"1.30.1", Minor130, ConfidenceImage, "cnpg.io/operatorVersion annotation (mixed: 1.30.0, 1.30.1)"}},
+		{"instanceManagerVersion ranks above the annotation", VersionEvidence{
+			InstanceManagerVersions: []string{"1.30.0"},
+			InstancePods:            []*corev1.Pod{annotated(podWithInit("other", ""), "1.30.1")},
 		}, Version{"1.30.0", Minor130, ConfidenceReported, "instanceManagerVersion"}},
 		{"image tag", VersionEvidence{InstancePods: []*corev1.Pod{
 			nil,

@@ -1462,5 +1462,6 @@
   "backup_predates_cluster_hint": "Created before this Cluster, or owned by another Cluster of the same name: not counted in its recency, topology or timeline.",
   "backup_overdue_schedule": "overdue: a scheduled run was missed",
   "backup_overdue_default": "overdue: older than 7 days, and no backup cadence is known",
-  "backup_no_cadence_known": "no backup cadence known: warning after 7 days"
+  "backup_no_cadence_known": "no backup cadence known: warning after 7 days",
+  "version_upgrade_in_flight": "CNPG upgrade in progress: {detail}"
 }

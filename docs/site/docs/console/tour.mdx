@@ -79,6 +79,16 @@ warnings. When the phase is not healthy, the overview also explains
 [why the operator is waiting](index.md#why-the-operator-waits). The last
 panels list the sources the page rests on and what you may do here.
 
+The CloudNativePG version in the header comes from one detector, which the
+diagnostics use as well. It tries these sources in order: the
+`instanceManagerVersion` the instances report, the operator's
+`cnpg.io/operatorVersion` annotation on the instance Pods, the
+`bootstrap-controller` image tag, the commit hash in the Cluster status, and
+last the feature floors. The operator rewrites the annotation as soon as it is
+upgraded, but the instance managers change only when they are replaced. While
+the two disagree, the header says "CNPG upgrade in progress" and names both
+versions.
+
 ## Instances
 
 <Screen

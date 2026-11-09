@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fyannk/pgToolBox/pkg/cnpgstatus"
 	"github.com/fyannk/pgToolBox/pkg/cnpgstatus/observe"
 )
 
@@ -222,5 +223,45 @@ func TestCNPGVersionOutlivesThePods(t *testing.T) {
 	in.Pods.LastOperatorImage = ""
 	if _, ok := versionFacts(in)[ComponentCNPG]; ok {
 		t.Error("a version was invented with nothing to read it from")
+	}
+}
+
+// TestCNPGVersionComesFromTheDetector: the console's one detector,
+// when it names an exact version, is the version every pinned rule is
+// gated on, above the first Pod's bootstrap image (which lags an
+// in-place operator upgrade). A floor such as ">=1.30" gates nothing,
+// and the image is then the fallback.
+func TestCNPGVersionComesFromTheDetector(t *testing.T) {
+	t.Parallel()
+	lagging := observe.PodsSnapshot{Pods: []observe.PodFacts{{
+		Name: "orders-1",
+		Containers: []observe.ContainerFacts{{
+			Name: "bootstrap-controller", Init: true, Image: "ghcr.io/cloudnative-pg/cloudnative-pg:1.29.2",
+		}},
+	}}}
+	tests := []struct {
+		name        string
+		detected    *cnpgstatus.Version
+		wantVersion string
+		wantOrigin  string
+	}{
+		{"reported", &cnpgstatus.Version{Version: "1.30.1", Confidence: cnpgstatus.ConfidenceReported, DetectedBy: "instanceManagerVersion"}, "1.30.1", "instance-reported"},
+		{"annotation", &cnpgstatus.Version{Version: "1.30.1", Confidence: cnpgstatus.ConfidenceImage, DetectedBy: "cnpg.io/operatorVersion annotation"}, "1.30.1", "operator-written on the instance Pods"},
+		{"a floor falls back to the image", &cnpgstatus.Version{Version: ">=1.30", Confidence: cnpgstatus.ConfidenceInferred, DetectedBy: "feature:primary Lease"}, "1.29.2", "console-parsed from Kubernetes-observed image"},
+		{"unknown falls back to the image", &cnpgstatus.Version{Confidence: cnpgstatus.ConfidenceUnknown}, "1.29.2", "console-parsed from Kubernetes-observed image"},
+		{"no detector answer falls back to the image", nil, "1.29.2", "console-parsed from Kubernetes-observed image"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			in := Input{Now: now, HasPods: true, Pods: lagging}
+			if tt.detected != nil {
+				in.HasCNPGVersion, in.CNPGVersion = true, *tt.detected
+			}
+			got := versionFacts(in)[ComponentCNPG]
+			if got.Version != tt.wantVersion || got.Origin != tt.wantOrigin {
+				t.Errorf("CloudNativePG = %+v, want %s (%s)", got, tt.wantVersion, tt.wantOrigin)
+			}
+		})
 	}
 }

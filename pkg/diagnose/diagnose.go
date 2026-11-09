@@ -39,6 +39,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/fyannk/pgToolBox/pkg/cnpgstatus"
 	"github.com/fyannk/pgToolBox/pkg/cnpgstatus/evidence"
 	"github.com/fyannk/pgToolBox/pkg/cnpgstatus/history"
 	"github.com/fyannk/pgToolBox/pkg/cnpgstatus/insight"
@@ -413,6 +414,14 @@ type Input struct {
 	// observed fact that arrives by poll rather than by watch.
 	KubeVersion    observe.KubeVersionSnapshot
 	HasKubeVersion bool
+	// CNPGVersion is the console's one CloudNativePG version detector's
+	// answer (cnpgstatus.DetectVersion: instanceManagerVersion, then the
+	// Pods' cnpg.io/operatorVersion annotation, then the bootstrap
+	// image, the commit hash and feature floors). When it names an exact
+	// version, every rule pinned to CloudNativePG is gated on it, so the
+	// findings and the overview never disagree on the version.
+	CNPGVersion    cnpgstatus.Version
+	HasCNPGVersion bool
 	// Quotas are the namespace's ResourceQuota objects, with usage and
 	// exhaustion as the API server reports them. They are what lets a
 	// refusal name the quota that made it.

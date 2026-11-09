@@ -25,4 +25,6 @@ export interface VersionInfo {
   image?: string;
   /** Reported PostgreSQL major version. */
   postgresMajor?: number;
+  /** Instance managers and the operator's Pod annotation disagree: an upgrade in progress. */
+  upgradeInFlight?: string;
 }

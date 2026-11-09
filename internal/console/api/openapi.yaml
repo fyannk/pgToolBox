@@ -7286,6 +7286,9 @@ components:
           description: Reported PostgreSQL major version.
           format: int64
           type: integer
+        upgradeInFlight:
+          description: "Instance managers and the operator's Pod annotation disagree: an upgrade in progress."
+          type: string
       required:
         - confidence
       type: object

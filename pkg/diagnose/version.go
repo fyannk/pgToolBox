@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fyannk/pgToolBox/pkg/cnpgstatus"
 	"github.com/fyannk/pgToolBox/pkg/cnpgstatus/observe"
 )
 
@@ -103,6 +104,16 @@ func versionFacts(in Input) VersionFacts {
 		}
 	}
 
+	// The console's version detector, when it has an exact answer, is
+	// the CloudNativePG version: it ranks the instance managers' own
+	// report and the operator's Pod annotation above the init image,
+	// which lags an in-place operator upgrade. The image, Job and
+	// retained-image readings below are the fallbacks for an Input that
+	// carries no detector answer.
+	if v, ok := detectedCNPG(in); ok {
+		facts[ComponentCNPG] = v
+	}
+
 	if in.HasPods {
 		if pod, container, version, ok := memberContainerVersion(in, barmanSidecarContainer); ok {
 			facts[ComponentBarman] = ComponentVersion{
@@ -117,12 +128,14 @@ func versionFacts(in Input) VersionFacts {
 		// in, so that image's tag is the operator version — observed on
 		// the workload itself, not on the operator's Deployment, which
 		// lives outside this console's namespaced authority.
-		if pod, container, version, ok := memberContainerVersion(in, bootstrapControllerContainer); ok {
-			facts[ComponentCNPG] = ComponentVersion{
-				Version: version,
-				Origin:  "console-parsed from Kubernetes-observed image",
-				Object:  fmt.Sprintf("Pod/%s init container %s", pod, container.Name),
-				Detail:  fmt.Sprintf("operator bootstrap image %q", container.Image),
+		if _, known := facts[ComponentCNPG]; !known {
+			if pod, container, version, ok := memberContainerVersion(in, bootstrapControllerContainer); ok {
+				facts[ComponentCNPG] = ComponentVersion{
+					Version: version,
+					Origin:  "console-parsed from Kubernetes-observed image",
+					Object:  fmt.Sprintf("Pod/%s init container %s", pod, container.Name),
+					Detail:  fmt.Sprintf("operator bootstrap image %q", container.Image),
+				}
 			}
 		}
 	}
@@ -170,6 +183,33 @@ func versionFacts(in Input) VersionFacts {
 	}
 
 	return facts
+}
+
+// detectedCNPG turns the detector's answer into a version fact, when it
+// is an exact version (a floor such as ">=1.30" gates nothing: a pinned
+// rule needs a number).
+func detectedCNPG(in Input) (ComponentVersion, bool) {
+	if !in.HasCNPGVersion {
+		return ComponentVersion{}, false
+	}
+	v := in.CNPGVersion
+	fields, ok := parseVersion(v.Version)
+	if !ok || len(fields) < 3 {
+		return ComponentVersion{}, false
+	}
+	origin := "console-inferred"
+	switch v.Confidence {
+	case cnpgstatus.ConfidenceReported:
+		origin = "instance-reported"
+	case cnpgstatus.ConfidenceImage:
+		origin = "operator-written on the instance Pods"
+	}
+	return ComponentVersion{
+		Version: joinVersion(fields),
+		Origin:  origin,
+		Object:  "Cluster instances",
+		Detail:  "CloudNativePG " + v.Version + " from " + v.DetectedBy,
+	}, true
 }
 
 // barmanSidecarContainer is the container name the Barman Cloud plugin

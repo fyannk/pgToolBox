@@ -86,7 +86,7 @@
         "id": "diagnostics",
         "health": "ok",
         "label": "Diagnostics",
-        "detail": "0 critical, 0 high, 0 warning, 0 note; 144 checks could not run",
+        "detail": "0 critical, 0 high, 0 warning, 0 note; 78 checks could not run",
         "provenance": {
           "origin": "console",
           "source": "diagnostics",
@@ -314,14 +314,22 @@
     "cnpgMinor": "1.30",
     "confidence": "reported",
     "detectedBy": "instanceManagerVersion",
-    "image": "ghcr.io/cloudnative-pg/postgresql:18.1"
+    "image": "ghcr.io/cloudnative-pg/postgresql:18.1",
+    "components": [
+      {
+        "component": "CloudNativePG",
+        "version": "1.30.0",
+        "source": "Cluster instances",
+        "support": "unlisted"
+      }
+    ]
   },
   "findings": {
     "critical": 0,
     "high": 0,
     "warning": 0,
     "note": 0,
-    "unavailable": 144,
+    "unavailable": 78,
     "runAt": "2026-10-29T12:00:00Z"
   },
   "sources": [
