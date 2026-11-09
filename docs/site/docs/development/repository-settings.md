@@ -34,6 +34,17 @@ Do not add the individual jobs: a job skipped by the path filter would not repor
 would block the merge. Allow the Actions bot (`github-actions`) and Dependabot to
 merge, so that auto-merge can complete.
 
+## Tags and the `release` environment
+
+Settings, Rules, Rulesets, New tag ruleset. Target tags matching `v*` and
+`pkg/evidence/v*` (fnmatch patterns: `v0.1.0` and `v0.1.0-rc.1` both match), with
+**Restrict updates** and **Restrict deletions** on, so a published tag never moves.
+
+Settings, Environments, `release`: deployment branches and tags, **Selected branches
+and tags**, add the tag patterns `v*` and `pkg/evidence/v*` (and no branch); required
+reviewer: the maintainer. `release.yml`'s first job runs in this environment, so a
+dispatch from a branch never starts and nothing is built before the approval.
+
 ## Pages
 
 Settings, Pages, Build and deployment, Source: **GitHub Actions**. The `github-pages`
@@ -77,7 +88,10 @@ The first release creates the packages under `github.com/fyannk?tab=packages`:
 visibility to public**, and confirm the package is linked to the repository (the
 `org.opencontainers.image.source` label does that). Until a package is public, an
 anonymous `docker pull`, `helm pull` and the Security page's published-image scan
-all fail with "not found".
+all fail with "not found". `release.yml` checks this itself: before it publishes the
+release it asks for every pushed digest with no credentials, and if any is private it
+fails naming the packages and leaves the release a draft. Make them public, then use
+**Re-run failed jobs** on the run.
 
 ## Releasing
 

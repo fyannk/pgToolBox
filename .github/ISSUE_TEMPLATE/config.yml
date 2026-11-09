@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability (private)
+    url: https://github.com/fyannk/pgToolBox/security/advisories/new
+    about: Do not open a public issue for a vulnerability. Use a private security advisory; see SECURITY.md.
+  - name: Documentation
+    url: https://fyannk.github.io/pgToolBox/
+    about: Installation, operations, the reference and the troubleshooting guides.
