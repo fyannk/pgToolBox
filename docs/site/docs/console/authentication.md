@@ -62,7 +62,7 @@ sequenceDiagram
     B->>I: sign in
     I-->>B: 302 /auth/oidc/callback?code&state
     B->>C: callback, with the flow cookie
-    Note over C: flow cookie cleared, rate limit,<br/>state compared
+    Note over C: flow cookie cleared, state compared,<br/>then rate limit
     C->>I: exchange code + verifier
     I-->>C: ID token, refresh token
     Note over C: signature, nonce, email_verified
@@ -148,10 +148,14 @@ delete it afterwards.
   before the request reaches the session check.
   `SameSite` alone does not protect on OpenShift, where every Route under
   `*.apps.<domain>` is the same site.
-- **Rate limit.** Sign-in attempts are limited to ten a minute per client address
-  per replica (a burst of ten). Behind an edge, set `TRUSTED_PROXY_HOPS` (0 to 8)
-  to the number of proxies whose `X-Forwarded-*` headers to trust, or the limiter
-  sees only the edge's address.
+- **Rate limit.** Sign-in attempts are limited to ten a minute per replica (a
+  burst of ten): an OAuth callback per client address, charged only once its flow
+  cookie and state match (a callback without them costs the console nothing and is
+  refused for free), and a pasted token per token (keyed on a digest of it), so a
+  caller who shares your address cannot spend your budget. Behind an edge, set
+  `TRUSTED_PROXY_HOPS` (0 to 8) to the number of proxies whose `X-Forwarded-*`
+  headers to trust, or the limiter sees only the edge's address; the `pgtools`
+  chart sets 1 when `console.exposure.type` is not `none`.
 - **Sign-out** is `POST /logout` (`GET /logout` shows the confirmation page). It
   clears the cookie, drops the cached identity and refuses that session until its
   absolute expiry: on this replica at once, and on the others within about a

@@ -16,7 +16,9 @@ package auth
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -303,9 +305,6 @@ func (h *Handler) handleCallback(w http.ResponseWriter, r *http.Request, p oauth
 	// line is lost.
 	h.codec.clearLogin(w)
 	q := r.URL.Query()
-	if !h.allowSignIn(w, r, p.name()) {
-		return
-	}
 	if e := q.Get("error"); e != "" {
 		if len(e) > maxIdPErrorLen {
 			e = e[:maxIdPErrorLen]
@@ -320,6 +319,14 @@ func (h *Handler) handleCallback(w http.ResponseWriter, r *http.Request, p oauth
 	}
 	if subtle.ConstantTimeCompare([]byte(q.Get("state")), []byte(f.State)) != 1 {
 		h.fail(w, r, p.name(), &loginError{http.StatusBadRequest, "Sign-in state mismatch; please try again.", nil})
+		return
+	}
+	// The budget is charged only once the flow cookie and its state
+	// match: a callback without them costs nothing (no code exchange, no
+	// SelfSubjectReview), and charging it would let anyone who shares the
+	// victim's address key (every user, behind a proxy not counted in
+	// trustedProxyHops) lock the sign-in with junk callbacks.
+	if !h.allowSignIn(w, r, p.name(), ClientKey(r, h.cfg.TrustedProxyHops)) {
 		return
 	}
 	code := q.Get("code")
@@ -354,9 +361,6 @@ func (h *Handler) handleToken(w http.ResponseWriter, r *http.Request) {
 		ErrorPage(w, http.StatusForbidden, "This form can only be submitted from the console's own sign-in page.")
 		return
 	}
-	if !h.allowSignIn(w, r, ProviderToken) {
-		return
-	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxFormBytes)
 	if err := r.ParseForm(); err != nil {
 		ErrorPage(w, http.StatusBadRequest, "The form could not be read.")
@@ -367,16 +371,30 @@ func (h *Handler) handleToken(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, ProviderToken, &loginError{http.StatusBadRequest, "That is not a token: paste the output of kubectl create token.", nil})
 		return
 	}
+	// The budget is the token's own, keyed on its digest: retrying one
+	// token is bounded, and a caller who shares the victim's address
+	// cannot spend the victim's budget without the victim's token.
+	if !h.allowSignIn(w, r, ProviderToken, tokenAttemptKey(tok)) {
+		return
+	}
 	h.complete(w, r, ProviderToken, tokenSet{token: tok, expiry: pastedTokenExpiry(tok)}, r.PostForm.Get("rd"))
 }
 
-// allowSignIn spends one sign-in attempt of the client's budget.
-func (h *Handler) allowSignIn(w http.ResponseWriter, r *http.Request, provider string) bool {
-	if h.attempts.Allow(ClientKey(r, h.cfg.TrustedProxyHops)) {
+// allowSignIn spends one sign-in attempt of key's budget.
+func (h *Handler) allowSignIn(w http.ResponseWriter, r *http.Request, provider, key string) bool {
+	if h.attempts.Allow(key) {
 		return true
 	}
-	h.fail(w, r, provider, &loginError{http.StatusTooManyRequests, "Too many sign-in attempts from this address; wait a minute and try again.", nil})
+	h.fail(w, r, provider, &loginError{http.StatusTooManyRequests, "Too many sign-in attempts; wait a minute and try again.", nil})
 	return false
+}
+
+// tokenAttemptKey is the sign-in budget key of a pasted token: a
+// digest, so the limiter never holds the token itself, in a key space
+// ("token:") that no address key can collide with.
+func tokenAttemptKey(tok string) string {
+	sum := sha256.Sum256([]byte(tok))
+	return "token:" + hex.EncodeToString(sum[:16])
 }
 
 // normalizePastedToken trims a pasted token and an optional "Bearer "
