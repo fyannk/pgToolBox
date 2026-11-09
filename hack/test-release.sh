@@ -38,6 +38,10 @@ check() { (cd "${repo}" && ./hack/release.sh check "$@"); }
 
 changelog "## [${version}] - Unreleased"
 expect 1 'still says Unreleased' -- check "v${version}"
+# The dry run reports an open section instead of refusing it, but a real
+# release (REQUIRE_TAG=1) still refuses it.
+expect 0 'note: .*still says Unreleased' -- env ALLOW_UNRELEASED=1 bash -c 'cd "$1" && ./hack/release.sh check "$2"' _ "${repo}" "v${version}"
+expect 1 'still says Unreleased' -- env ALLOW_UNRELEASED=1 REQUIRE_TAG=1 bash -c 'cd "$1" && ./hack/release.sh check "$2"' _ "${repo}" "v${version}"
 changelog "## [${version}] - 2026-11-09"
 expect 0 'ok: semver' -- check "v${version}"
 changelog "## [${version}]"

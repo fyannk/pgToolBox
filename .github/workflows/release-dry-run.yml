@@ -44,7 +44,11 @@ jobs:
         with:
           tools: go helm kubectl
           mise-cache: "false"
+      # The CHANGELOG section is dated when the tag is cut, so the rehearsal
+      # reports an open one rather than refusing it; release.yml does not.
       - name: Check semver, chart versions and CHANGELOG
+        env:
+          ALLOW_UNRELEASED: "1"
         run: |
           set -euo pipefail
           ./hack/release.sh check

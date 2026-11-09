@@ -10,7 +10,8 @@
 #
 #   release.sh check [TAG]      semver, chart versions, a dated CHANGELOG section
 #                               (an "Unreleased" heading is refused for a final
-#                               tag; v0.1.0-rc.N may use the open 0.1.0 section) and, when
+#                               tag unless ALLOW_UNRELEASED=1, the dry run's
+#                               rehearsal; v0.1.0-rc.N may use the open 0.1.0 section) and, when
 #                               the tag exists, that it is annotated (REQUIRE_TAG=1
 #                               insists it exists; REQUIRE_MAIN=1 insists its commit
 #                               is on origin/main)
@@ -122,8 +123,15 @@ cmd_check() {
   [[ -n "${heading}" ]] || die "CHANGELOG.md has no '## [${version}]' section"
   # The heading of the release being cut carries its date. A release candidate
   # may use the still-open section of its final version.
+  # ALLOW_UNRELEASED=1 is the dry run on a pull request, where the open
+  # section is the normal state: it is reported, not refused. A real release
+  # (REQUIRE_TAG=1) never takes it.
   if [[ "${heading}" == *[Uu]nreleased* ]] && { [[ "${version}" == "${core}" ]] || [[ "${heading}" == "## [${version}]"* ]]; }; then
-    die "CHANGELOG.md heading '${heading}' still says Unreleased; date it ('## [${version}] - $(date -u +%F)') before tagging ${tag}"
+    if [[ "${ALLOW_UNRELEASED:-0}" == "1" && "${REQUIRE_TAG:-0}" != "1" ]]; then
+      echo "note: CHANGELOG.md heading '${heading}' still says Unreleased; it must be dated before tagging ${tag}"
+    else
+      die "CHANGELOG.md heading '${heading}' still says Unreleased; date it ('## [${version}] - $(date -u +%F)') before tagging ${tag}"
+    fi
   fi
 
   if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
