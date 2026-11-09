@@ -161,7 +161,7 @@ const config: Config = {
         src: 'img/logo.svg',
         srcDark: 'img/logo.svg',
         href: 'https://github.com/fyannk/pgToolBox',
-        width: 56,
+        width: 24,
       },
       copyright: `Copyright © 2026 The pgToolBox Authors. Apache-2.0 licensed.`,
       links: [

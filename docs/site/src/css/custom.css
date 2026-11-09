@@ -90,6 +90,56 @@
   border-top: 1px solid var(--fy-border);
 }
 
+/* A compact footer: the link columns sit side by side at their own width,
+   and the mark and the copyright share one line. */
+.footer {
+  font-size: var(--fy-text-sm);
+  padding: 1.25rem var(--ifm-spacing-horizontal);
+}
+
+.footer__links {
+  column-gap: 3rem;
+  justify-content: flex-start;
+  margin-bottom: 0.75rem;
+}
+
+.footer__col {
+  flex: 0 0 auto;
+  max-width: none;
+  width: auto;
+}
+
+.footer__title {
+  font-size: var(--fy-text-sm);
+  margin-bottom: 0.25rem;
+}
+
+.footer__item {
+  padding: 0.1rem 0;
+}
+
+.footer__bottom {
+  align-items: center;
+  border-top: 1px solid var(--fy-border);
+  display: flex;
+  gap: 0.75rem;
+  justify-content: flex-start;
+  padding-top: 0.75rem;
+}
+
+.footer__bottom > .margin-bottom--sm {
+  margin: 0 !important;
+}
+
+.footer__logo {
+  margin: 0;
+  max-width: 1.5rem;
+}
+
+.footer__copyright {
+  font-size: var(--fy-text-xs);
+}
+
 .navbar {
   border-bottom: 1px solid var(--fy-border);
 }
@@ -319,12 +369,6 @@ code {
   padding: 1.25rem 1.5rem;
 }
 
-/* The text grows with very wide screens (16px up to 1600px wide, 19px from
-   2560px), so a large monitor gets a larger page, not a smaller one. */
-html {
-  font-size: clamp(16px, 0.3vw + 11.2px, 19px);
-}
-
 /* A Mermaid diagram that cannot shrink to the column without illegible
    labels scrolls inside its own box (src/client/mermaid-scale.ts). */
 .docusaurus-mermaid-container {
@@ -483,4 +527,16 @@ html {
 .ptb-sec__score {
   font-family: var(--fy-font-mono);
   font-size: var(--fy-text-lg);
+}
+
+/* Infima spaces the stacked footer columns of a narrow screen by three
+   vertical units each. */
+@media (max-width: 996px) {
+  .footer__col {
+    margin-bottom: 0.75rem;
+  }
+
+  .footer__copyright {
+    text-align: left;
+  }
 }
