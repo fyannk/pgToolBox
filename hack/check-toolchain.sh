@@ -35,5 +35,20 @@ for f in .github/workflows/*.yml; do
     fi
   done
 done
-[ "$status" = 0 ] && echo "toolchain consistent (go $want, cosign $cosign_want)"
+# The Dockerfile installs pnpm from its release tarballs, by URL and checksum:
+# every URL must carry the version mise.toml pins (a bump updates the checksums
+# with it, from the release's assets).
+pnpm_want=$(awk -F'"' '$2 == "pnpm" { print $4; exit }' mise.toml)
+pnpm_have=$(sed -n 's|.*/pnpm/pnpm/releases/download/v\([0-9.]*\)/.*|\1|p' Dockerfile | sort -u)
+for v in $pnpm_have; do
+  if [ "$v" != "$pnpm_want" ]; then
+    echo "Dockerfile: pnpm v$v, mise.toml pins pnpm $pnpm_want" >&2
+    status=1
+  fi
+done
+grep -q "/pnpm/pnpm/releases/download/v$pnpm_want/" Dockerfile || {
+  echo "Dockerfile: no pnpm $pnpm_want release download" >&2
+  status=1
+}
+[ "$status" = 0 ] && echo "toolchain consistent (go $want, cosign $cosign_want, pnpm $pnpm_want)"
 exit "$status"
