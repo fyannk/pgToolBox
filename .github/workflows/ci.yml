@@ -79,7 +79,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
     permissions:
       contents: read # check out the repository
     steps:
@@ -102,7 +102,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.workflows == 'true' || needs.changes.outputs.docker == 'true' || needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
     permissions:
       contents: read # check out the repository
     steps:
@@ -138,7 +138,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.go == 'true' || needs.changes.outputs.charts == 'true' || needs.changes.outputs.docs == 'true' || needs.changes.outputs.console == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 10
     permissions:
       contents: read # check out the repository
     steps:
@@ -167,7 +167,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
     permissions:
       contents: read # check out the repository
     steps:
@@ -186,13 +186,19 @@ jobs:
           make build test
 
   race-fuzz:
-    name: Race detector and fuzz smoke runs
+    name: ${{ matrix.target == 'test-race' && 'Race detector' || 'Fuzz smoke runs' }}
     needs: changes
     if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 25
     permissions:
       contents: read # check out the repository
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [test-race, test-fuzz]
+    env:
+      TARGET: ${{ matrix.target }}
     steps:
       - name: Check out the repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -203,19 +209,20 @@ jobs:
         with:
           tools: go
           go-cache: "true"
+          go-cache-scope: ${{ matrix.target }}
       # FUZZ_TIME is seconds per target: a smoke run on every change, not a
       # campaign. `FUZZ_TIME=10m make test-fuzz` is the campaign.
-      - name: Race detector, then every fuzz target for a few seconds
+      - name: The race detector, or every fuzz target for a few seconds
         run: |
           set -euo pipefail
-          make test-race test-fuzz
+          make "${TARGET}"
 
   envtest:
     name: Envtest (CRD rules, reconcilers, operator wiring)
     needs: changes
     if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 20
     permissions:
       contents: read # check out the repository
     steps:
@@ -242,7 +249,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.console == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 15
     permissions:
       contents: read # check out the repository
     steps:
@@ -267,7 +274,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.ui == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 20
     permissions:
       contents: read # check out the repository
     env:
@@ -304,7 +311,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.ui == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 15
     permissions:
       contents: read # check out the repository
     env:
@@ -341,7 +348,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.headlamp == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 10
     permissions:
       contents: read # check out the repository
     env:
@@ -366,7 +373,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.docs == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
     permissions:
       contents: read # check out the repository
     steps:
@@ -408,7 +415,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.charts == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 10
     permissions:
       contents: read # check out the repository
     steps:
@@ -462,7 +469,7 @@ jobs:
         image: [operator, console, evidence-agent]
     env:
       IMAGE: pgtoolbox-${{ matrix.image }}:prebuilt
-      ARCHIVE: ${{ runner.temp }}/pgtoolbox-${{ matrix.image }}.tar
+      ARCHIVE_NAME: pgtoolbox-${{ matrix.image }}.tar
       CACHE_TO: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && format('type=gha,mode=max,ignore-error=true,scope=image-{0}', matrix.image) || '' }}
     steps:
       - name: Check out the repository
@@ -480,7 +487,7 @@ jobs:
           build-args: |
             VERSION=ci
           tags: ${{ env.IMAGE }}
-          outputs: type=docker,dest=${{ env.ARCHIVE }}
+          outputs: type=docker,dest=${{ runner.temp }}/${{ env.ARCHIVE_NAME }}
           cache-from: type=gha,scope=image-${{ matrix.image }}
           cache-to: ${{ env.CACHE_TO }}
       - name: Build linux/arm64
@@ -497,7 +504,7 @@ jobs:
       - name: Load the linux/amd64 image
         run: |
           set -euo pipefail
-          docker load --input "${ARCHIVE}"
+          docker load --input "${RUNNER_TEMP}/${ARCHIVE_NAME}"
       # Numeric non-root user, exec-form entrypoint, OCI labels, a licence, no
       # shell, no setuid binary, and a start under an arbitrary UID in group 0
       # with a read-only root filesystem and every capability dropped.
@@ -520,7 +527,7 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: e2e-image-${{ matrix.image }}
-          path: ${{ env.ARCHIVE }}
+          path: ${{ runner.temp }}/${{ env.ARCHIVE_NAME }}
           retention-days: 1
           compression-level: 1
           if-no-files-found: error
@@ -530,7 +537,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.charts == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
     permissions:
       contents: read # check out the repository
     steps:
@@ -548,7 +555,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.evidence == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 15
     permissions:
       contents: read # check out the repository
     env:
@@ -584,7 +591,7 @@ jobs:
     with:
       target: test-e2e-console
       tools: go kind kubectl
-      timeout: 40
+      timeout: 25
 
   e2e-chart:
     name: E2E chart (two team consoles, RBAC proof, ct install)
@@ -596,7 +603,7 @@ jobs:
     with:
       target: test-e2e-chart
       tools: go kind kubectl helm aqua:helm/chart-testing
-      timeout: 60
+      timeout: 30
 
   e2e-chart-netpol:
     name: E2E chart (NetworkPolicy on Calico)
@@ -608,7 +615,7 @@ jobs:
     with:
       target: test-e2e-chart-netpol
       tools: go kind kubectl helm aqua:helm/chart-testing
-      timeout: 50
+      timeout: 30
 
   e2e-evidenceagent:
     name: E2E EvidenceAgent
@@ -620,7 +627,7 @@ jobs:
     with:
       target: test-e2e-evidenceagent
       tools: go kind kubectl helm
-      timeout: 40
+      timeout: 25
 
   e2e-pgadmin:
     name: E2E PgAdmin
@@ -632,7 +639,7 @@ jobs:
     with:
       target: test-e2e-pgadmin
       tools: go kind kubectl
-      timeout: 40
+      timeout: 25
 
   e2e-access:
     name: E2E access requests
@@ -644,7 +651,7 @@ jobs:
     with:
       target: test-e2e-access
       tools: go kind kubectl helm
-      timeout: 40
+      timeout: 25
 
   e2e-team:
     name: E2E team mode (pgtools without the operator)
@@ -656,19 +663,26 @@ jobs:
     with:
       target: test-e2e-team
       tools: go kind kubectl helm
-      timeout: 60
+      timeout: 25
 
+  # One job per plugin cell: the two cells are independent, and together they
+  # were the longest job of the run.
   e2e-pgbackrest:
-    name: E2E pgBackRest (two plugins, MinIO over TLS)
+    name: E2E pgBackRest ${{ matrix.cell }} (MinIO over TLS)
     needs: [changes, images]
     if: needs.changes.outputs.charts == 'true' || needs.changes.outputs.console == 'true' || needs.changes.outputs.evidence == 'true' || needs.changes.outputs.operator == 'true'
     permissions:
       contents: read # the called workflow checks out the repository
+    strategy:
+      fail-fast: false
+      matrix:
+        cell: [dalibo, opera]
     uses: ./.github/workflows/e2e-kind.yml
     with:
       target: test-e2e-pgbackrest
+      variant: ${{ matrix.cell }}
       tools: go kind kubectl helm
-      timeout: 75
+      timeout: 45
 
   olm-scorecard:
     name: OLM scorecard (basic and olm suites)
@@ -681,7 +695,7 @@ jobs:
       target: scorecard
       images: false
       tools: go kind kubectl github:operator-framework/operator-sdk
-      timeout: 30
+      timeout: 15
 
   # ------------------------------------------------------------------ gate
 

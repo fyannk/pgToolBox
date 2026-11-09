@@ -19,6 +19,15 @@ grant with a comment saying why), `persist-credentials: false` on checkout, no
 `set -euo pipefail`, one concurrency group per workflow. `make lint-workflows` runs
 actionlint and zizmor and must stay clean.
 
+Caches (`.github/actions/toolchain`) are written only by runs on `main` (push,
+nightly, dispatch) and restored everywhere: a cache a pull request writes would be
+visible to that pull request alone and would push `main`'s out of the repository's
+10 GB budget. The Go module cache is keyed by `go.sum`; each job has its own Go
+build and golangci-lint cache, refreshed daily; the image layers go to the `gha`
+cache from the `images` job on `main`. mise itself is pinned in the action, so a
+new mise release cannot change a job overnight. Each image is built once per run,
+in `images`, and the e2e jobs load that archive instead of building their own.
+
 ## The workflows
 
 | Workflow | Runs on | What |
@@ -41,7 +50,7 @@ actionlint and zizmor and must stay clean.
 | `lint` | `lint` | golangci-lint on both modules (build-tagged e2e and envtest code included), gofumpt/gci, `go vet`, and the repository checks (`hack/check-*.sh`: headers, read-only boundary, dependency closure, layering, toolchain, documented settings) |
 | `lint-files` | `lint-workflows lint-docker lint-shell` | actionlint, zizmor, hadolint, shellcheck |
 | `generated` | `verify-generated` | deepcopy code, CRDs, RBAC and their Helm/OLM copies, OpenAPI and fixtures, the check and API references and the insight pack regenerate to the committed files |
-| `test`, `race-fuzz` | `build test`, `test-race test-fuzz` | unit tests; the race detector; every fuzz target for a few seconds |
+| `test`, `race-fuzz` | `build test`; `test-race` and `test-fuzz`, one job each | unit tests; the race detector; every fuzz target for a few seconds |
 | `envtest` | `test-envtest` and the operator suites | CRD CEL rules, reconcilers and the operator binary on a real API server |
 | `console-core` | `verify-pins test-console-core test-e2e-console-authz test-bounds` | the informer cache per CloudNativePG minor, the write path, SubjectAccessReview semantics, read-model pins, bounded resources |
 | `ui`, `ui-e2e` | `ui-check ui-audit`, `ui-e2e` | Biome, knip, tsc, tokens, Vitest, stories with axe, build, size budgets, `pnpm generate:check`; Playwright with axe and screenshots in the baseline image |
@@ -50,7 +59,7 @@ actionlint and zizmor and must stay clean.
 | `packaging` | `chart-gates bundle-validate kustomize-validate` | helm lint and template, helm-unittest, ct lint, kubeconform, kube-linter, alert rules, README values, Helm vs kustomize vs OLM field by field, `operator-sdk bundle validate` |
 | `images` | `hack/image-profile.sh` and the container tests | each image is built once per run, for `linux/amd64` and `linux/arm64`; the amd64 image is held to the container profile (below) and handed to every `e2e-*` job as an artifact |
 | `olm-images`, `evidence-integration` | `bundle-build catalog-build`, `test-evidence-integration` | the OLM images build; Barman and pgBackRest fixtures and S3, Azure and GCS provider parity |
-| `e2e-*`, `olm-scorecard` | `test-e2e-<scenario>`, `scorecard` | kind scenarios: console, chart (and with NetworkPolicy), EvidenceAgent, PgAdmin, access requests, team mode, pgBackRest, and the OLM scorecard; each loads the archives of `images` and runs with `PREBUILT_IMAGES=1`, so its `make docker-build*` steps only tag them |
+| `e2e-*`, `olm-scorecard` | `test-e2e-<scenario>`, `scorecard` | kind scenarios: console, chart (and with NetworkPolicy), EvidenceAgent, PgAdmin, access requests, team mode, pgBackRest (one job per plugin cell, `E2E_VARIANT`), and the OLM scorecard; each loads the archives of `images` and runs with `PREBUILT_IMAGES=1`, so its `make docker-build*` steps only tag them |
 | `ci-ok` | none | passes when every job passed or was skipped on purpose |
 
 **The container profile** (`hack/image-profile.sh`, plus the console's and the
@@ -175,7 +184,7 @@ opened. Pin only versions that have been published for at least two weeks.
 
 ## The release
 
-A release is an annotated tag on a commit of `main`, pushed by the maintainer.
+A release is an annotated tag on a commit of `main`, pushed by the maintainer. `v*` and `pkg/evidence/v*` tags are protected by a ruleset (they cannot be moved or deleted), and `release.yml` runs its first job in the `release` environment, which admits only those tags and waits for the maintainer's approval: nothing is built or pushed before that approval, and a dispatch from a branch never starts. Every image's signature and provenance are verified in the workflow, with the commands the release page gives users, before anything points at them.
 `ci.yml` has no tag trigger: the tagged commit already had its run when it reached
 `main`, and `release.yml` waits for the `ci-ok` and `security-gate` checks of that
 exact commit instead of starting another. The logic is in `hack/release.sh`; the

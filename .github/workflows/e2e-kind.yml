@@ -27,6 +27,11 @@ on:
         required: false
         type: number
         default: 45
+      variant:
+        description: One part of the scenario, for a scenario that splits across jobs (exported as E2E_VARIANT; test-e2e-pgbackrest reads it as its cell)
+        required: false
+        type: string
+        default: ""
       images:
         description: Load the e2e-image-* artifacts of the calling run (false for a scenario that runs none of this repository's images)
         required: false
@@ -37,13 +42,14 @@ permissions: {}
 
 jobs:
   e2e:
-    name: ${{ inputs.target }}
+    name: ${{ inputs.target }}${{ inputs.variant && format(' ({0})', inputs.variant) || '' }}
     runs-on: ubuntu-latest
     timeout-minutes: ${{ inputs.timeout }}
     permissions:
       contents: read # check out the repository
     env:
       TARGET: ${{ inputs.target }}
+      E2E_VARIANT: ${{ inputs.variant }}
       # The scripts refuse to touch ~/.kube/config when this is set.
       E2E_REQUIRE_KUBECONFIG: "1"
     steps:
@@ -86,7 +92,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: e2e-${{ inputs.target }}
+          name: e2e-${{ inputs.target }}${{ inputs.variant && format('-{0}', inputs.variant) || '' }}
           path: artifacts
           retention-days: 7
           if-no-files-found: ignore

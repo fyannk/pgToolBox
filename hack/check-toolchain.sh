@@ -35,20 +35,30 @@ for f in .github/workflows/*.yml; do
     fi
   done
 done
-# The Dockerfile installs pnpm from its release tarballs, by URL and checksum:
+# The Dockerfiles install pnpm from its release tarballs, by URL and checksum:
 # every URL must carry the version mise.toml pins (a bump updates the checksums
 # with it, from the release's assets).
 pnpm_want=$(awk -F'"' '$2 == "pnpm" { print $4; exit }' mise.toml)
-pnpm_have=$(sed -n 's|.*/pnpm/pnpm/releases/download/v\([0-9.]*\)/.*|\1|p' Dockerfile | sort -u)
-for v in $pnpm_have; do
-  if [ "$v" != "$pnpm_want" ]; then
-    echo "Dockerfile: pnpm v$v, mise.toml pins pnpm $pnpm_want" >&2
+for f in Dockerfile ui/e2e.Dockerfile; do
+  pnpm_have=$(sed -n 's|.*/pnpm/pnpm/releases/download/v\([0-9.]*\)/.*|\1|p' "$f" | sort -u)
+  for v in $pnpm_have; do
+    if [ "$v" != "$pnpm_want" ]; then
+      echo "$f: pnpm v$v, mise.toml pins pnpm $pnpm_want" >&2
+      status=1
+    fi
+  done
+  grep -q "/pnpm/pnpm/releases/download/v$pnpm_want/" "$f" || {
+    echo "$f: no pnpm $pnpm_want release download" >&2
     status=1
-  fi
+  }
 done
-grep -q "/pnpm/pnpm/releases/download/v$pnpm_want/" Dockerfile || {
-  echo "Dockerfile: no pnpm $pnpm_want release download" >&2
+# The Playwright image the UI suite runs in carries the version of
+# @playwright/test: a mismatch fails at run time with missing browsers.
+pw_want=$(sed -n 's/.*"@playwright\/test": *"[~^]\{0,1\}\([0-9.]*\)".*/\1/p' ui/package.json)
+pw_have=$(sed -n 's|^FROM mcr.microsoft.com/playwright:v\([0-9.]*\)-.*|\1|p' ui/e2e.Dockerfile)
+if [ "$pw_want" != "$pw_have" ]; then
+  echo "ui/e2e.Dockerfile: Playwright $pw_have, ui/package.json pins @playwright/test $pw_want" >&2
   status=1
-}
-[ "$status" = 0 ] && echo "toolchain consistent (go $want, cosign $cosign_want, pnpm $pnpm_want)"
+fi
+[ "$status" = 0 ] && echo "toolchain consistent (go $want, cosign $cosign_want, pnpm $pnpm_want, playwright $pw_want)"
 exit "$status"

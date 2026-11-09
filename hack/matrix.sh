@@ -111,9 +111,11 @@ cmd_run() {
     # main. Best effort, which is why the cell is non-blocking.
     command -v kubectl >/dev/null || die "kubectl is needed to render CNPG main"
     manifest="${TMPDIR:-/tmp}/cnpg-main-$$.yaml"
-    kubectl kustomize "https://github.com/cloudnative-pg/cloudnative-pg//config/default?ref=main" \
-      | sed 's#image: controller:latest#image: ghcr.io/cloudnative-pg/cloudnative-pg-testing:main#' > "${manifest}"
-    trap 'rm -f "${manifest}"' EXIT
+    trap 'rm -f "${manifest}" "${manifest}.raw"' EXIT
+    # shellcheck source=hack/lib/net.sh
+    source "${repo_root}/hack/lib/net.sh"
+    retry 5 kubectl kustomize "https://github.com/cloudnative-pg/cloudnative-pg//config/default?ref=main" -o "${manifest}.raw"
+    sed 's#image: controller:latest#image: ghcr.io/cloudnative-pg/cloudnative-pg-testing:main#' "${manifest}.raw" > "${manifest}"
   fi
   local todo=("${scenario}")
   [[ "${scenario}" != all ]] || todo=("${scenarios[@]}")

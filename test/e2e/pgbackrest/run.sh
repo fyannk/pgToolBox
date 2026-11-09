@@ -614,11 +614,15 @@ chart_gap_checks() {
   check -check console-gap -console "${RELEASE}" -timeout 5m
 }
 
-run_cell dalibo
-run_cell opera
+# PGBR_FLAVORS (or E2E_VARIANT, which CI sets) picks the cells: CI runs one per
+# job, in parallel; by hand both run, one after the other, on one kind cluster.
+read -r -a flavors <<<"${PGBR_FLAVORS:-${E2E_VARIANT:-dalibo opera}}"
+for flavor in "${flavors[@]}"; do
+  [[ "${flavor}" =~ ^(dalibo|opera)$ ]] || fail "PGBR_FLAVORS: unknown cell '${flavor}' (dalibo, opera)"
+done
+for flavor in "${flavors[@]}"; do run_cell "${flavor}"; done
 phase "the chart agents see the missing WAL too (scan every 5 minutes, a gap needs two scans)"
-chart_gap_checks dalibo
-chart_gap_checks opera
+for flavor in "${flavors[@]}"; do chart_gap_checks "${flavor}"; done
 
 phase "done"
-log "pgBackRest e2e passed: Dalibo ${DALIBO_PLUGIN_VERSION} and Opera ${OPERA_PLUGIN_VERSION}"
+log "pgBackRest e2e passed (${flavors[*]}): Dalibo ${DALIBO_PLUGIN_VERSION}, Opera ${OPERA_PLUGIN_VERSION}"
