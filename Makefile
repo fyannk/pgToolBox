@@ -313,6 +313,7 @@ test-hack: ## Tests of the hack/ scripts (the security report generator; throwaw
 	python3 hack/security_report_test.py
 	./hack/evidence/test-verify-signing-key.sh
 	./hack/lib/test-net.sh
+	./hack/test-release.sh
 
 .PHONY: lint-workflows
 lint-workflows: ## actionlint and zizmor on .github (workflows and the local action).
