@@ -26,7 +26,7 @@ pgToolBox shows the real state of [CloudNativePG](https://cloudnative-pg.io)
 clusters to the people who run them, one team console per namespace, and lets
 those who hold the right RBAC act on them. A small, optional operator adds a
 managed pgAdmin per team, and a read-only evidence agent checks what the backup
-repository actually holds. It runs on Kubernetes 1.28 or later and on
+repository actually holds. It runs on Kubernetes 1.34 or later and on
 OpenShift, for CloudNativePG 1.30 or later.
 
 > [!IMPORTANT]

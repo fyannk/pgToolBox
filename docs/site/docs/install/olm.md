@@ -13,7 +13,7 @@ The OLM bundle installs **the operator only**. The console is installed from the
 | Package | `pgtoolbox` |
 | Channel | `alpha` (the default and only channel) |
 | Install modes | `AllNamespaces` only. `OwnNamespace`, `SingleNamespace` and `MultiNamespace` are not supported: the bundle does not map OLM's `olm.targetNamespaces` to the operator's `WATCH_NAMESPACES`, so the operator would watch every namespace whatever the OperatorGroup says. To scope it to some namespaces, install the [chart](chart.md) with `operator.config.watchNamespaces` |
-| Minimum Kubernetes | 1.28 |
+| Minimum Kubernetes | 1.34 |
 | Owned CRDs | `pgadmins`, `pgadminaccesses`, `evidenceagents`, `pgtoolboxconsoles` and `pgaccessrequests` (all `.pgtoolbox.fyannk.dev`, `v1alpha1`) |
 | Suggested namespace | `pgtoolbox`, labelled Pod Security `restricted` (enforce, audit, warn) |
 | Also ships | the `pgtoolbox-console-viewer`, `pgtoolbox-console-operator`, `pgtoolbox-console-approver` and metrics-reader ClusterRoles, a PodDisruptionBudget |

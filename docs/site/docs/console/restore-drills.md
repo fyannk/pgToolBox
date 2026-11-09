@@ -312,9 +312,6 @@ administrator included, is not concerned.
   install, so it is **opt-in**: a cluster admin sets
   `console.restoreDrills.admissionPolicy.create: true` (or applies the rendered
   policy). Do it wherever drills are on.
-- **Kubernetes 1.28 and 1.29** have no such policy: nothing but the console's own
-  check and the drill namespace's contents limits the teardown grant there. Keep
-  drills off, or in a namespace of drills only.
 
 Your RBAC must still let you `create clusters` in the drill namespace. The
 shipped `pgtoolbox-console-operator` ClusterRole does not grant it; give it to the people
