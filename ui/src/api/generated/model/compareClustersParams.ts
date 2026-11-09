@@ -7,28 +7,28 @@
  */
 
 export type CompareClustersParams = {
-/**
- * Namespace of the left Cluster.
- * @maxLength 63
- * @pattern ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
- */
-leftNamespace: string;
-/**
- * Name of the left Cluster.
- * @maxLength 253
- * @pattern ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
- */
-leftName: string;
-/**
- * Namespace of the right Cluster.
- * @maxLength 63
- * @pattern ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
- */
-rightNamespace: string;
-/**
- * Name of the right Cluster.
- * @maxLength 253
- * @pattern ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
- */
-rightName: string;
+  /**
+   * Namespace of the left Cluster.
+   * @maxLength 63
+   * @pattern ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+   */
+  leftNamespace: string;
+  /**
+   * Name of the left Cluster.
+   * @maxLength 253
+   * @pattern ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+   */
+  leftName: string;
+  /**
+   * Namespace of the right Cluster.
+   * @maxLength 63
+   * @pattern ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+   */
+  rightNamespace: string;
+  /**
+   * Name of the right Cluster.
+   * @maxLength 253
+   * @pattern ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+   */
+  rightName: string;
 };

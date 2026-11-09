@@ -7,8 +7,6 @@
  */
 
 export type GetInsightBlockingParams = {
-/**
- * Read the primary's exporter again first (at most once a second per Cluster, and ten times in ten seconds per user; the exporter itself caches for the Cluster's metricsQueriesTTL).
- */
-refresh?: boolean;
+  /** Read the primary's exporter again first (at most once a second per Cluster, and ten times in ten seconds per user; the exporter itself caches for the Cluster's metricsQueriesTTL). */
+  refresh?: boolean;
 };

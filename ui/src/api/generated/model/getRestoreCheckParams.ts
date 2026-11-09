@@ -7,8 +7,6 @@
  */
 
 export type GetRestoreCheckParams = {
-/**
- * The restore target, RFC 3339 (UTC recommended).
- */
-at: string;
+  /** The restore target, RFC 3339 (UTC recommended). */
+  at: string;
 };

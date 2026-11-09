@@ -8,10 +8,10 @@
 import type { GetTopologyFoldItem } from './getTopologyFoldItem.ts';
 
 export type GetTopologyParams = {
-/**
- * Frames to draw folded.
- * @maxItems 4
- * @nullable
- */
-fold?: GetTopologyFoldItem[] | null;
+  /**
+   * Frames to draw folded.
+   * @maxItems 4
+   * @nullable
+   */
+  fold?: GetTopologyFoldItem[] | null;
 };

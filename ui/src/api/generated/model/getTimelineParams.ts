@@ -8,24 +8,20 @@
 import type { GetTimelineKindItem } from './getTimelineKindItem.ts';
 
 export type GetTimelineParams = {
-/**
- * Start of the window (RFC 3339, UTC); default 24 hours before to.
- */
-from?: string;
-/**
- * End of the window, exclusive (RFC 3339, UTC); default now.
- */
-to?: string;
-/**
- * Kinds to keep, comma-separated; none keeps every kind.
- * @maxItems 9
- * @nullable
- */
-kind?: GetTimelineKindItem[] | null;
-/**
- * Most entries returned, newest first (default 500).
- * @minimum 0
- * @maximum 2000
- */
-limit?: number;
+  /** Start of the window (RFC 3339, UTC); default 24 hours before to. */
+  from?: string;
+  /** End of the window, exclusive (RFC 3339, UTC); default now. */
+  to?: string;
+  /**
+   * Kinds to keep, comma-separated; none keeps every kind.
+   * @maxItems 9
+   * @nullable
+   */
+  kind?: GetTimelineKindItem[] | null;
+  /**
+   * Most entries returned, newest first (default 500).
+   * @minimum 0
+   * @maximum 2000
+   */
+  limit?: number;
 };
