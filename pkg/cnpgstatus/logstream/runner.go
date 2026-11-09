@@ -59,8 +59,13 @@ type Source interface {
 	Follow(ctx context.Context, pod, container string) (io.ReadCloser, error)
 }
 
-// Clock is the injected time source.
-type Clock interface{ Now() time.Time }
+// Clock is the injected time source: the instants the sinks are given
+// and the reconnect backoff's waits.
+type Clock interface {
+	Now() time.Time
+	// After is time.After on this clock.
+	After(d time.Duration) <-chan time.Time
+}
 
 // Runner follows every member container continuously and offers each
 // line to the sinks.
@@ -172,9 +177,17 @@ func (r *Runner) follow(ctx context.Context, member Member) {
 
 	backoff := reconnectMin
 	for ctx.Err() == nil {
-		reason, err := r.readOnce(ctx, member)
+		reason, attachedAt, err := r.readOnce(ctx, member)
 		if ctx.Err() != nil {
 			return
+		}
+		// A stream that stayed attached longer than the shortest wait was
+		// a working connection, not part of a failing streak: the next
+		// reconnect starts from the shortest wait again. Without the reset
+		// one bad hour would leave every later restart of the container
+		// read two minutes late.
+		if !attachedAt.IsZero() && r.clock.Now().Sub(attachedAt) > reconnectMin {
+			backoff = reconnectMin
 		}
 		if err != nil {
 			r.logger.Info("log stream ended",
@@ -193,7 +206,7 @@ func (r *Runner) follow(ctx context.Context, member Member) {
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(backoff):
+		case <-r.clock.After(backoff):
 		}
 		if backoff *= 2; backoff > reconnectMax {
 			backoff = reconnectMax
@@ -202,20 +215,22 @@ func (r *Runner) follow(ctx context.Context, member Member) {
 }
 
 // readOnce consumes one stream to its end, returning the reason the
-// record is now broken along with any error.
-func (r *Runner) readOnce(ctx context.Context, member Member) (reason string, err error) {
+// record is now broken, the instant the stream attached (zero when it
+// never opened) and any error.
+func (r *Runner) readOnce(ctx context.Context, member Member) (reason string, attachedAt time.Time, err error) {
 	stream, err := r.source.Follow(ctx, member.Pod, member.Container)
 	if err != nil {
-		return "stream could not be opened; nothing from this container was observed", err
+		return "stream could not be opened; nothing from this container was observed", time.Time{}, err
 	}
 	defer func() { _ = stream.Close() }()
-	r.sink.Attached(member.Pod, member.Container, r.clock.Now())
+	attachedAt = r.clock.Now()
+	r.sink.Attached(member.Pod, member.Container, attachedAt)
 
 	scanner := bufio.NewScanner(stream)
 	scanner.Buffer(make([]byte, 0, 4096), maxLineBytes)
 	for scanner.Scan() {
 		if ctx.Err() != nil {
-			return "stream stopped", ctx.Err()
+			return "stream stopped", attachedAt, ctx.Err()
 		}
 		r.sink.Observe(Line{
 			Pod: member.Pod, Container: member.Container,
@@ -225,9 +240,9 @@ func (r *Runner) readOnce(ctx context.Context, member Member) (reason string, er
 	// A line longer than the buffer stops the scanner, which is its own
 	// kind of break and worth naming separately from a plain end.
 	if err := scanner.Err(); err != nil {
-		return "stream interrupted; a line may have exceeded the read bound", err
+		return "stream interrupted; a line may have exceeded the read bound", attachedAt, err
 	}
-	return "stream ended; lines emitted before it was reopened were not observed", nil
+	return "stream ended; lines emitted before it was reopened were not observed", attachedAt, nil
 }
 
 // Opener opens one container's stream. The Kubernetes client implements

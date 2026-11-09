@@ -236,3 +236,59 @@ func TestRefreshInsightSharesReadSlots(t *testing.T) {
 		t.Fatalf("err = %v, reads = %d", err, hits.Load())
 	}
 }
+
+// TestCutExpositionLeavesSumsOut is the negative of a truncated read:
+// a sum whose label sets straddle the cut is not recorded at the part
+// before it (a low connections count, a counter that reads as reset),
+// while a gauge folded by Max is kept.
+func TestCutExpositionLeavesSumsOut(t *testing.T) {
+	p := newPKI(t, "orders-rw.team-a.svc")
+	padding := strings.Repeat("# padding padding padding padding padding padding padding padding\n", (maxMetricsBody/64)+10)
+	body := func(cut bool) string {
+		head := "cnpg_backends_total{datname=\"a\"} 5\ncnpg_backends_max_tx_duration_seconds 3\n"
+		tail := "cnpg_backends_total{datname=\"b\"} 7\n"
+		if cut {
+			return head + padding + tail
+		}
+		return head + tail
+	}
+	for _, tc := range []struct {
+		name            string
+		cut             bool
+		wantConnections *float64
+	}{
+		{"whole exposition", false, ptrTo(12.0)},
+		{"cut exposition", true, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			port, _ := exporterServer(t, p, true, func() string { return body(tc.cut) })
+			roster := staticRoster{{
+				Key: key, ServerName: "orders-rw.team-a.svc", MetricsTLS: true,
+				Pods: []PodTarget{{Name: "orders-1", UID: "u1", IP: "127.0.0.1", StatusPortTLS: true}},
+			}}
+			now := time.Date(2026, 11, 3, 10, 0, 0, 0, time.UTC)
+			s := insightSweeper(roster, bundleFile(t, p.caPEM), port, func() time.Time { return now })
+			s.SweepOnce(context.Background())
+			last := func(series string) *float64 {
+				_, byInstance := s.Metrics(key).Range(series, 0)
+				values := byInstance["orders-1"]
+				if len(values) == 0 {
+					return nil
+				}
+				return values[len(values)-1]
+			}
+			got := last("connections")
+			switch {
+			case tc.wantConnections == nil && got != nil:
+				t.Fatalf("connections recorded %v from a cut exposition", *got)
+			case tc.wantConnections != nil && (got == nil || *got != *tc.wantConnections):
+				t.Fatalf("connections = %v, want %v", got, *tc.wantConnections)
+			}
+			if v := last("max-tx-duration"); v == nil || *v != 3 {
+				t.Fatalf("max-tx-duration = %v, want 3 (a Max gauge survives the cut)", v)
+			}
+		})
+	}
+}
+
+func ptrTo[T any](v T) *T { return &v }

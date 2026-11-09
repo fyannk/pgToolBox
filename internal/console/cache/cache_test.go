@@ -28,6 +28,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	crcache "sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
@@ -187,6 +188,85 @@ func TestClusterOf(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := clusterOf(context.Background(), reader, tt.obj); got != tt.want {
 				t.Errorf("clusterOf = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// syncInformer is an informer that only answers HasSynced.
+type syncInformer struct {
+	crcache.Informer
+	synced bool
+}
+
+func (i syncInformer) HasSynced() bool { return i.synced }
+
+// gatedReader is a cache reader whose informers report synced, and
+// whose Get may block the way a cache's Get does before the target
+// informer has synced: until its context ends.
+type gatedReader struct {
+	client.Reader
+	synced bool
+	block  bool
+	gets   int
+}
+
+func (r *gatedReader) GetInformer(context.Context, client.Object, ...crcache.InformerGetOption) (crcache.Informer, error) {
+	return syncInformer{synced: r.synced}, nil
+}
+
+func (r *gatedReader) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+	r.gets++
+	if r.block {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	return r.Reader.Get(ctx, key, obj, opts...)
+}
+
+// TestEventAttributionNeverWaitsForAnInformer is the handler's bound:
+// an event on a pod whose informer has not synced, or whose lookup
+// would block, is attributed to nobody (the namespace is published
+// whole) at once, instead of holding the Event informer's handler until
+// the Pod informer syncs.
+func TestEventAttributionNeverWaitsForAnInformer(t *testing.T) {
+	t.Parallel()
+	scheme, err := NewScheme()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "a", Name: "orders-1", Labels: map[string]string{ClusterLabel: "orders"}}}
+	event := &corev1.Event{ObjectMeta: metav1.ObjectMeta{Namespace: "a", Name: "e"}, InvolvedObject: corev1.ObjectReference{Kind: "Pod", Name: "orders-1"}}
+	cases := []struct {
+		name     string
+		synced   bool
+		block    bool
+		want     string
+		wantGets int
+	}{
+		{"synced informer", true, false, "orders", 1},
+		{"informer not synced", false, true, "", 0},
+		{"lookup blocks", true, true, "", 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			reader := &gatedReader{
+				Reader: fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod.DeepCopy()).Build(),
+				synced: tc.synced, block: tc.block,
+			}
+			start := time.Now()
+			// No deadline on the handler's context: the bound is the
+			// attribution's own.
+			got := clusterOf(context.Background(), reader, event)
+			if got != tc.want {
+				t.Errorf("clusterOf = %q, want %q", got, tc.want)
+			}
+			if reader.gets != tc.wantGets {
+				t.Errorf("Get calls = %d, want %d", reader.gets, tc.wantGets)
+			}
+			if elapsed := time.Since(start); elapsed > 10*attributionTimeout {
+				t.Errorf("attribution took %s", elapsed)
 			}
 		})
 	}

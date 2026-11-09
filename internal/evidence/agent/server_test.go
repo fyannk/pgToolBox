@@ -251,6 +251,83 @@ func TestServePlainServesHTTPAndNoTLS(t *testing.T) {
 	}
 }
 
+// TestServeLetsARequestInFlightComplete is the drain's contract: the
+// shutdown signal does not cancel the context of a request already
+// being served, which completes before Serve returns.
+func TestServeLetsARequestInFlightComplete(t *testing.T) {
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	entered, release := make(chan struct{}), make(chan struct{})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- ServePlain(ctx, listener, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			close(entered)
+			<-release
+			if request.Context().Err() != nil {
+				writer.WriteHeader(http.StatusServiceUnavailable)
+				return
+			}
+			writer.WriteHeader(http.StatusNoContent)
+		}))
+	}()
+	client := &http.Client{Timeout: 10 * time.Second}
+	defer client.CloseIdleConnections()
+	type result struct {
+		status int
+		err    error
+	}
+	inflight := make(chan result, 1)
+	go func() {
+		response, err := client.Do(getRequest(t, "http://"+listener.Addr().String()+"/evidence"))
+		if err != nil {
+			inflight <- result{err: err}
+			return
+		}
+		_ = response.Body.Close()
+		inflight <- result{status: response.StatusCode}
+	}()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the request did not reach the handler")
+	}
+	cancel()
+	// Shutdown has begun once the listener refuses new connections.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		conn, err := (&net.Dialer{Timeout: time.Second}).DialContext(t.Context(), "tcp", listener.Addr().String())
+		if err != nil {
+			break
+		}
+		_ = conn.Close()
+		if time.Now().After(deadline) {
+			t.Fatal("the listener stayed open after the shutdown signal")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	close(release)
+	select {
+	case got := <-inflight:
+		if got.err != nil || got.status != http.StatusNoContent {
+			t.Fatalf("request in flight = %d, %v (503: its context was cancelled by the signal)", got.status, got.err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the request in flight did not complete")
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("ServePlain after the drain = %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("ServePlain did not stop")
+	}
+}
+
 // getRequest builds a GET bound to the test's context, so a request still in
 // flight when the test ends is cancelled with it.
 func getRequest(t testing.TB, url string) *http.Request {

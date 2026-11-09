@@ -16,7 +16,9 @@ package auth
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -60,6 +62,16 @@ const (
 	signInBurst     = 10
 	maxLimiterKeys  = 10000
 	maxIdPErrorLen  = 200
+	// The token form's process-wide bound. Its per-token budget cannot
+	// stop a flood of distinct junk tokens, each of which would cost one
+	// SelfSubjectReview, so every pasted token also spends one shared
+	// token. A burst of 40 lets a whole team sign in at once at the start
+	// of an incident; 20 a second refills it within two seconds and is
+	// far more than people pasting tokens by hand, while capping what
+	// this replica can make the API server review at 20 a second.
+	tokenReviewsPerSecond = 20
+	tokenReviewsBurst     = 40
+	tokenReviewsKey       = "token-form"
 )
 
 // Principal is the signed-in user of one request.
@@ -136,6 +148,8 @@ type Handler struct {
 	refreshes singleflight.Group
 	now       func() time.Time
 	attempts  *RateLimiter
+	// tokenReviews is the token form's process-wide bound (one key).
+	tokenReviews *RateLimiter
 
 	// loggedOut holds sessions signed out on this replica until their
 	// absolute expiry: a copy of the cookie stops working here at once.
@@ -205,19 +219,20 @@ func newHandler(o Options, providers []oauthProvider) *Handler {
 		}
 	}
 	return &Handler{
-		grantOIDC:   grantOIDC,
-		cfg:         o.Config,
-		codec:       o.Codec,
-		identity:    o.Identity,
-		revocations: o.Revocations,
-		audit:       &Auditor{Logger: log, TrustedProxyHops: o.Config.TrustedProxyHops},
-		log:         log,
-		oauth:       providers,
-		token:       slices.Contains(o.Config.Providers, ProviderToken),
-		now:         time.Now,
-		attempts:    NewRateLimiter(signInPerMinute, signInBurst, maxLimiterKeys),
-		loggedOut:   map[string]time.Time{},
-		signOuts:    o.SignOuts,
+		grantOIDC:    grantOIDC,
+		cfg:          o.Config,
+		codec:        o.Codec,
+		identity:     o.Identity,
+		revocations:  o.Revocations,
+		audit:        &Auditor{Logger: log, TrustedProxyHops: o.Config.TrustedProxyHops},
+		log:          log,
+		oauth:        providers,
+		token:        slices.Contains(o.Config.Providers, ProviderToken),
+		now:          time.Now,
+		attempts:     NewRateLimiter(signInPerMinute, signInBurst, maxLimiterKeys),
+		tokenReviews: NewRateLimiter(tokenReviewsPerSecond*60, tokenReviewsBurst, 1),
+		loggedOut:    map[string]time.Time{},
+		signOuts:     o.SignOuts,
 	}
 }
 
@@ -303,9 +318,6 @@ func (h *Handler) handleCallback(w http.ResponseWriter, r *http.Request, p oauth
 	// line is lost.
 	h.codec.clearLogin(w)
 	q := r.URL.Query()
-	if !h.allowSignIn(w, r, p.name()) {
-		return
-	}
 	if e := q.Get("error"); e != "" {
 		if len(e) > maxIdPErrorLen {
 			e = e[:maxIdPErrorLen]
@@ -320,6 +332,14 @@ func (h *Handler) handleCallback(w http.ResponseWriter, r *http.Request, p oauth
 	}
 	if subtle.ConstantTimeCompare([]byte(q.Get("state")), []byte(f.State)) != 1 {
 		h.fail(w, r, p.name(), &loginError{http.StatusBadRequest, "Sign-in state mismatch; please try again.", nil})
+		return
+	}
+	// The budget is charged only once the flow cookie and its state
+	// match: a callback without them costs nothing (no code exchange, no
+	// SelfSubjectReview), and charging it would let anyone who shares the
+	// victim's address key (every user, behind a proxy not counted in
+	// trustedProxyHops) lock the sign-in with junk callbacks.
+	if !h.allowSignIn(w, r, p.name(), ClientKey(r, h.cfg.TrustedProxyHops)) {
 		return
 	}
 	code := q.Get("code")
@@ -354,9 +374,6 @@ func (h *Handler) handleToken(w http.ResponseWriter, r *http.Request) {
 		ErrorPage(w, http.StatusForbidden, "This form can only be submitted from the console's own sign-in page.")
 		return
 	}
-	if !h.allowSignIn(w, r, ProviderToken) {
-		return
-	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxFormBytes)
 	if err := r.ParseForm(); err != nil {
 		ErrorPage(w, http.StatusBadRequest, "The form could not be read.")
@@ -367,16 +384,36 @@ func (h *Handler) handleToken(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, ProviderToken, &loginError{http.StatusBadRequest, "That is not a token: paste the output of kubectl create token.", nil})
 		return
 	}
+	// The budget is the token's own, keyed on its digest: retrying one
+	// token is bounded, and a caller who shares the victim's address
+	// cannot spend the victim's budget without the victim's token.
+	if !h.allowSignIn(w, r, ProviderToken, tokenAttemptKey(tok)) {
+		return
+	}
+	// Then the process-wide bound, before anything reaches the API
+	// server: a token refused by its own budget spends none of it.
+	if !h.tokenReviews.Allow(tokenReviewsKey) {
+		h.fail(w, r, ProviderToken, &loginError{http.StatusTooManyRequests, "The console is receiving too many token sign-ins; wait a few seconds and try again.", nil})
+		return
+	}
 	h.complete(w, r, ProviderToken, tokenSet{token: tok, expiry: pastedTokenExpiry(tok)}, r.PostForm.Get("rd"))
 }
 
-// allowSignIn spends one sign-in attempt of the client's budget.
-func (h *Handler) allowSignIn(w http.ResponseWriter, r *http.Request, provider string) bool {
-	if h.attempts.Allow(ClientKey(r, h.cfg.TrustedProxyHops)) {
+// allowSignIn spends one sign-in attempt of key's budget.
+func (h *Handler) allowSignIn(w http.ResponseWriter, r *http.Request, provider, key string) bool {
+	if h.attempts.Allow(key) {
 		return true
 	}
-	h.fail(w, r, provider, &loginError{http.StatusTooManyRequests, "Too many sign-in attempts from this address; wait a minute and try again.", nil})
+	h.fail(w, r, provider, &loginError{http.StatusTooManyRequests, "Too many sign-in attempts; wait a minute and try again.", nil})
 	return false
+}
+
+// tokenAttemptKey is the sign-in budget key of a pasted token: a
+// digest, so the limiter never holds the token itself, in a key space
+// ("token:") that no address key can collide with.
+func tokenAttemptKey(tok string) string {
+	sum := sha256.Sum256([]byte(tok))
+	return "token:" + hex.EncodeToString(sum[:16])
 }
 
 // normalizePastedToken trims a pasted token and an optional "Bearer "

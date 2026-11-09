@@ -456,7 +456,30 @@ func (s *Sweeper) readMetrics(ctx context.Context, target Target, tlsConfig *tls
 	if err != nil {
 		return nil, nil, nil
 	}
+	if truncated {
+		dropCutAggregates(metrics.Instance, series, instants)
+	}
 	return series, instants, parseInsight(body, truncated)
+}
+
+// dropCutAggregates removes the entries a cut exposition can only state
+// wrong. A sum over the label sets that came before the cut is
+// understated by whatever followed it, and a counter read low once
+// looks like a reset to everything that charts its rate, whatever its
+// fold: such entries are left out (a gap) rather than recorded wrong. A
+// gauge folded by Max keeps the largest value read, a lower bound that
+// the next whole read corrects without inventing a reset.
+func dropCutAggregates(catalog metrics.Catalog, series, instants map[string]float64) {
+	for _, def := range catalog.Series {
+		if def.Aggregate == metrics.Sum || def.Kind == metrics.Counter {
+			delete(series, def.Key)
+		}
+	}
+	for _, def := range catalog.Instants {
+		if def.Aggregate == metrics.Sum {
+			delete(instants, def.Key)
+		}
+	}
 }
 
 // bodyLimit is the exposition bound of one pod: maxPackMetricsBody when

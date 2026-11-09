@@ -17,17 +17,13 @@ package api
 import (
 	"context"
 	"fmt"
-	"io"
 	"net/http"
-	"net/http/httptest"
-	"strings"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
 	pgtoolboxv1alpha1 "github.com/fyannk/pgToolBox/api/v1alpha1"
-	"github.com/fyannk/pgToolBox/internal/console/auth"
 	"github.com/fyannk/pgToolBox/internal/console/authz"
 	"github.com/fyannk/pgToolBox/internal/console/ops"
 	"github.com/fyannk/pgToolBox/internal/console/viewmodel/fixtures"
@@ -252,23 +248,12 @@ func generateAccessFixtures(out map[string][]byte) ([]Fixture, error) {
 		if method == "" {
 			method = http.MethodGet
 		}
-		var reqBody io.Reader
-		if c.body != "" {
-			reqBody = strings.NewReader(c.body)
-		}
-		r := httptest.NewRequestWithContext(auth.WithPrincipal(context.Background(), FixturePrincipal()), method, c.path, reqBody)
-		if c.body != "" {
-			r.Header.Set("Content-Type", "application/json")
-			r.Header.Set(auth.RequestHeader, "1")
-		}
-		w := httptest.NewRecorder()
-		h.ServeHTTP(w, r)
-		body, err := indent(w.Body.Bytes())
+		code, body, err := serveFixture(h, method, c.path, c.body, c.body != "")
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", c.file, err)
 		}
 		out["testdata/fixtures/"+c.file] = body
-		manifest = append(manifest, Fixture{File: c.file, OperationID: c.op, Method: method, Path: c.path, Status: w.Code, Scenario: c.scenario, Body: c.body})
+		manifest = append(manifest, Fixture{File: c.file, OperationID: c.op, Method: method, Path: c.path, Status: code, Scenario: c.scenario, Body: c.body})
 	}
 	return manifest, nil
 }

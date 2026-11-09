@@ -539,41 +539,65 @@ func clusterOf(ctx context.Context, c client.Reader, obj client.Object) string {
 	return ""
 }
 
+// attributionTimeout bounds one cache lookup made to attribute an event.
+// The lookup runs inside the Event informer's handler, so a wait here
+// holds every later event back; it is in memory and answers at once
+// when the target informer has synced, and anything slower is treated
+// as an unknown attribution.
+const attributionTimeout = 100 * time.Millisecond
+
+// syncedInformers is the part of the informer cache that says whether a
+// kind's informer has synced without waiting for it.
+type syncedInformers interface {
+	GetInformer(ctx context.Context, obj client.Object, opts ...crcache.InformerGetOption) (crcache.Informer, error)
+}
+
 // eventCluster resolves an event's involved object through the cache;
-// the lookup is in memory and bounded by the event's own fields.
+// the lookup is in memory and bounded by the event's own fields. It
+// never waits for an informer: a cache's Get blocks until the target
+// kind has synced, and this runs in another informer's handler, so a
+// kind not synced yet (or a lookup slower than attributionTimeout) is
+// an unknown attribution ("": the namespace is published whole).
 func eventCluster(ctx context.Context, c client.Reader, event *corev1.Event) string {
 	ref := event.InvolvedObject
 	key := types.NamespacedName{Namespace: event.Namespace, Name: ref.Name}
+	var (
+		target  client.Object
+		cluster func() string
+	)
 	switch ref.Kind {
 	case "Cluster":
 		return ref.Name
 	case "Pod":
 		pod := &corev1.Pod{}
-		if c.Get(ctx, key, pod) == nil {
-			return pod.Labels[ClusterLabel]
-		}
+		target, cluster = pod, func() string { return pod.Labels[ClusterLabel] }
 	case "PersistentVolumeClaim":
 		pvc := &corev1.PersistentVolumeClaim{}
-		if c.Get(ctx, key, pvc) == nil {
-			return pvc.Labels[ClusterLabel]
-		}
+		target, cluster = pvc, func() string { return pvc.Labels[ClusterLabel] }
 	case "Backup":
 		backup := &cnpgv1.Backup{}
-		if c.Get(ctx, key, backup) == nil {
-			return backup.Spec.Cluster.Name
-		}
+		target, cluster = backup, func() string { return backup.Spec.Cluster.Name }
 	case "ScheduledBackup":
 		scheduled := &cnpgv1.ScheduledBackup{}
-		if c.Get(ctx, key, scheduled) == nil {
-			return scheduled.Spec.Cluster.Name
-		}
+		target, cluster = scheduled, func() string { return scheduled.Spec.Cluster.Name }
 	case "Pooler":
 		pooler := &cnpgv1.Pooler{}
-		if c.Get(ctx, key, pooler) == nil {
-			return pooler.Spec.Cluster.Name
+		target, cluster = pooler, func() string { return pooler.Spec.Cluster.Name }
+	default:
+		return ""
+	}
+	lookupCtx, cancel := context.WithTimeout(ctx, attributionTimeout)
+	defer cancel()
+	if informers, ok := c.(syncedInformers); ok {
+		informer, err := informers.GetInformer(lookupCtx, target, crcache.BlockUntilSynced(false))
+		if err != nil || !informer.HasSynced() {
+			return ""
 		}
 	}
-	return ""
+	if c.Get(lookupCtx, key, target) != nil {
+		return ""
+	}
+	return cluster()
 }
 
 // Generation is the stamp of the latest change published for the

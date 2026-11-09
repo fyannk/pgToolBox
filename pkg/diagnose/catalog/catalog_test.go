@@ -15,6 +15,7 @@
 package catalog
 
 import (
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -147,10 +148,15 @@ func TestLogRulesMirrorTheCatalog(t *testing.T) {
 // date its claim stops being safe to assert unreviewed, and this fails
 // once that date passes.
 //
-// Failing the build is the point. The alternative is a console that
-// keeps telling operators a supported version is unsupported, or says
-// nothing about one that no longer is — and either is worse than a red
-// test with a name that says exactly what to go and read.
+// Failing CI is the point. The alternative is a console that keeps
+// telling operators a supported version is unsupported, or says nothing
+// about one that no longer is — and either is worse than a red test
+// with a name that says exactly what to go and read.
+//
+// The gate fails only where reviewDatesEnv is set (CI's main and
+// scheduled jobs): a plain `go test` of a released tree, built after the
+// date, logs the overdue review instead of failing, because the people
+// building a tarball are not the people who can move the date.
 func TestDatedKnowledgeIsStillInReview(t *testing.T) {
 	t.Parallel()
 	today := time.Now().UTC().Truncate(24 * time.Hour)
@@ -162,7 +168,11 @@ func TestDatedKnowledgeIsStillInReview(t *testing.T) {
 			return
 		}
 		if days > 0 {
-			t.Errorf("%s was to be reviewed by %s, %d days ago: %s", what, date, days, whatToDo)
+			report := t.Logf
+			if enforceReviewDates() {
+				report = t.Errorf
+			}
+			report("%s was to be reviewed by %s, %d days ago: %s", what, date, days, whatToDo)
 		}
 	}
 
@@ -190,6 +200,13 @@ func TestDatedKnowledgeIsStillInReview(t *testing.T) {
 			", verify the catalog's strings against any new tree, widen the spans it covers, "+
 			"and set the next review date")
 }
+
+// reviewDatesEnv turns an overdue review date from a logged warning
+// into a test failure. CI sets it on main and on the scheduled run.
+const reviewDatesEnv = "PGTOOLBOX_ENFORCE_REVIEW_DATES"
+
+// enforceReviewDates reports whether reviewDatesEnv asks for the gate.
+func enforceReviewDates() bool { return os.Getenv(reviewDatesEnv) == "1" }
 
 // overdueDays is how many days past its review date a claim is, as of
 // the given day. Zero or less is in date: a review due *by* the

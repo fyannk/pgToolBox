@@ -106,7 +106,12 @@ type Options struct {
 	Broker *sse.Broker
 	// ShutdownTimeout bounds the drain.
 	ShutdownTimeout time.Duration
-	Log             *slog.Logger
+	// ShutdownDelay is how long the console keeps serving, not ready,
+	// after the shutdown signal and before it stops accepting: the time
+	// the endpoints controller and the edge take to stop sending it new
+	// requests (SHUTDOWN_DELAY). Zero closes the listener at once.
+	ShutdownDelay time.Duration
+	Log           *slog.Logger
 }
 
 // Authenticator registers its public sign-in endpoints and guards every
@@ -292,6 +297,9 @@ func (s *Server) Run(ctx context.Context) error {
 	return s.Serve(ctx, ln, probe)
 }
 
+// newHTTPServer bases request contexts on ctx, which outlives the
+// shutdown signal: a request in flight is cancelled only when the drain
+// gives up on it, not when the drain begins.
 func (s *Server) newHTTPServer(ctx context.Context, h http.Handler) *http.Server {
 	return &http.Server{
 		Handler:           h,
@@ -315,14 +323,42 @@ func (s *Server) serve(srv *http.Server, ln net.Listener) error {
 	return srv.ServeTLS(ln, s.o.TLSCertFile, s.o.TLSKeyFile)
 }
 
+// endOnDrain ends the long-lived streams (the event stream, pod log
+// follows) when the drain begins, since the drain would otherwise wait
+// for them until its timeout; every other request keeps its context
+// until it completes or the drain gives up.
+func endOnDrain(drain context.Context, h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != PathStream && !isLogStream(r.URL.Path) {
+			h.ServeHTTP(w, r)
+			return
+		}
+		ctx, cancel := context.WithCancel(r.Context())
+		defer cancel()
+		stop := context.AfterFunc(drain, cancel)
+		defer stop()
+		// ctx is the request's own, cancelled early by drain: the
+		// linter cannot see through context.AfterFunc.
+		h.ServeHTTP(w, r.WithContext(ctx)) //nolint:contextcheck // derived from r.Context() above
+	})
+}
+
 // Serve is Run on existing listeners; probe may be nil.
+//
+// The shutdown sequence: ctx ends; /readyz answers not ready
+// (SetDraining) while the listener keeps serving for ShutdownDelay; the
+// streams end; Shutdown stops accepting and waits up to ShutdownTimeout
+// for the requests in flight, whose contexts are cancelled only after
+// it returns.
 func (s *Server) Serve(ctx context.Context, ln, probe net.Listener) error {
-	srv := s.newHTTPServer(ctx, s.handler)
+	reqCtx, cancelRequests := context.WithCancel(context.WithoutCancel(ctx))
+	defer cancelRequests()
+	srv := s.newHTTPServer(reqCtx, endOnDrain(ctx, s.handler))
 	errc := make(chan error, 2)
 	go func() { errc <- s.serve(srv, ln) }()
 	var psrv *http.Server
 	if probe != nil {
-		psrv = s.newHTTPServer(ctx, s.probes)
+		psrv = s.newHTTPServer(reqCtx, s.probes)
 		psrv.ReadTimeout, psrv.WriteTimeout = 5*time.Second, 10*time.Second
 		go func() { errc <- s.serve(psrv, probe) }()
 		s.o.Log.Info("probe listener", "addr", probe.Addr().String(), "tls", s.o.TLSCertFile != "")
@@ -337,20 +373,38 @@ func (s *Server) Serve(ctx context.Context, ln, probe net.Listener) error {
 		return fmt.Errorf("console listener: %w", err)
 	case <-ctx.Done():
 	}
-	s.o.Log.Info("shutting down", "timeout", s.o.ShutdownTimeout)
+	s.o.Log.Info("shutting down", "delay", s.o.ShutdownDelay, "timeout", s.o.ShutdownTimeout)
 	s.o.Ready.SetDraining()
+	if s.o.ShutdownDelay > 0 {
+		// Keep accepting while the endpoints and the edge catch up with
+		// not-ready; a listener closed first refuses requests still routed
+		// here.
+		t := time.NewTimer(s.o.ShutdownDelay)
+		select {
+		case <-t.C:
+		case err := <-errc:
+			t.Stop()
+			s.o.Log.Warn("listener ended during the shutdown delay", "error", err)
+		}
+	}
 	if s.o.Broker != nil {
 		s.o.Broker.Close()
 	}
-	sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.o.ShutdownTimeout)
+	sctx, cancel := context.WithTimeout(reqCtx, s.o.ShutdownTimeout)
 	defer cancel()
 	// Probes keep answering while the main listener drains, so the kubelet
-	// sees not-ready (the context is done) rather than a refused port.
+	// sees not-ready rather than a refused port.
 	err := srv.Shutdown(sctx)
 	if psrv != nil {
 		_ = psrv.Shutdown(sctx)
 	}
+	// What the drain gave up on is cancelled now, and closed.
+	cancelRequests()
 	if err != nil {
+		_ = srv.Close()
+		if psrv != nil {
+			_ = psrv.Close()
+		}
 		return fmt.Errorf("graceful shutdown: %w", err)
 	}
 	return nil
