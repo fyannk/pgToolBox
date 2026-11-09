@@ -17,8 +17,9 @@ publishing permission, pushing and signing nothing.
 
 The order matters for what you verify: the images are pushed and signed first,
 then everything that names them is rewritten to their digests before it is built
-and signed itself. The images are scanned by digest before `latest` moves and
-before the release becomes visible. The full sequence is on
+and signed itself. The images are scanned by digest, on both platforms, before `latest` moves and
+before the release becomes visible, and the release is published only once every
+pushed digest can be pulled anonymously. The full sequence is on
 [CI and releases](development/ci.md#the-release).
 
 ```mermaid
@@ -52,7 +53,7 @@ pre-release (a version with a `-` part such as `0.2.0-rc.1` is one: the GitHub
 release is marked pre-release and no floating tag moves), never from `main`, and
 only after the pushed digests passed the scan. The release page attaches the two
 charts, the two installer manifests (their images pinned by digest), one SPDX SBOM
-per image, `digests.txt` (every reference with its digest), `SHA256SUMS` (a
+per image and platform (`sbom-<image>-amd64.spdx.json`, `-arm64`), `digests.txt` (every reference with its digest), `SHA256SUMS` (a
 checksum of every other attached file) and `SHA256SUMS.sigstore.json` (its keyless
 signature); its notes are the matching `CHANGELOG.md` section followed by the
 conventional commits since the previous release.
