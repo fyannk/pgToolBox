@@ -144,6 +144,7 @@ test-fuzz: ## Fuzz the trust-boundary parsers (FUZZ_TIME per target).
 	$(call fuzz,./internal/evidence/formats/pgbackrest,FuzzDecrypt)
 	$(call fuzz,./internal/evidence/formats/pgbackrest,FuzzParseWALName)
 	$(call fuzz,./internal/evidence/formats/pgbackrest,FuzzParseHistory)
+	$(call fuzz,./internal/evidence/formats/pgbackrest,FuzzParseLSN)
 	$(call fuzz,./internal/evidence/provider/cursor,FuzzCodec)
 	$(call fuzz,./internal/evidence/evidenceapi,FuzzBackupInfoProjection)
 	$(call fuzz,./internal/evidence/config,FuzzCheckConnectionString)
