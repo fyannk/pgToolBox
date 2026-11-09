@@ -41,6 +41,7 @@ import (
 	"github.com/fyannk/pgToolBox/internal/console/ops"
 	"github.com/fyannk/pgToolBox/internal/console/podlogs"
 	"github.com/fyannk/pgToolBox/internal/console/server"
+	"github.com/fyannk/pgToolBox/internal/console/sharedstate"
 	"github.com/fyannk/pgToolBox/internal/console/sse"
 	"github.com/fyannk/pgToolBox/internal/console/status"
 	"github.com/fyannk/pgToolBox/internal/console/viewmodel"
@@ -379,12 +380,14 @@ var (
 )
 
 // NewDrills assembles restore drills, or returns nil when they are off.
-// owner is the console's identity (its namespace); secrets are the
-// session secrets the drill seal's keys derive from; persist is the
-// history journal when history is persistent (nil keeps records in
-// memory).
+// owner is the console's identity (its namespace); secrets are what the
+// drill seal's keys derive from (HKDF, ops.DrillKeyLabel): the seal's own
+// key file (RESTORE_DRILL_SEAL_KEY_FILE) when one is configured, else the
+// session secrets; persist is the history journal when history is
+// persistent; keeper keeps finished drills' outcomes otherwise (the
+// shared-state ConfigMap; nil keeps them in memory).
 func NewDrills(cfg config.Console, read *status.Service, consoleConfig *rest.Config, owner string, secrets [][]byte,
-	persist drills.Persister, log *slog.Logger,
+	persist drills.Persister, keeper drills.Keeper, log *slog.Logger,
 ) (*Drills, error) {
 	if !cfg.RestoreDrill.Enabled {
 		return nil, nil //nolint:nilnil // disabled is a valid, explicit outcome
@@ -402,6 +405,9 @@ func NewDrills(cfg config.Console, read *status.Service, consoleConfig *rest.Con
 	}
 	log = log.With("component", "restore-drills")
 	store := drills.NewStore(persist, log, time.Now())
+	if persist == nil && keeper != nil {
+		store.SetKeeper(keeper)
+	}
 	reaper := ops.NewDrillReaper(c, owner, keys, cfg.APIRequestTimeout)
 	read.SetDrills(&status.DrillsView{Records: store, Namespace: cfg.RestoreDrill.Namespace, TimeLimit: cfg.RestoreDrill.TimeLimit})
 	return &Drills{
@@ -409,6 +415,62 @@ func NewDrills(cfg config.Console, read *status.Service, consoleConfig *rest.Con
 		cfg: cfg.RestoreDrill, selector: cfg.ClusterSelector, owner: owner, keys: keys, read: read,
 	}, nil
 }
+
+// SharedDrillKeeper keeps finished drills' outcomes in the console's
+// shared-state ConfigMap (drills.Keeper).
+type SharedDrillKeeper struct{ Store *sharedstate.Store }
+
+// NewSharedDrillKeeper returns a keeper over store, or nil when no
+// ConfigMap is configured. It starts the record of drills now when the
+// ConfigMap holds none yet.
+func NewSharedDrillKeeper(store *sharedstate.Store, now time.Time) drills.Keeper {
+	if !store.Enabled() {
+		return nil
+	}
+	store.StartKeepingDrills(now)
+	return SharedDrillKeeper{Store: store}
+}
+
+// KeepDrill implements drills.Keeper.
+func (k SharedDrillKeeper) KeepDrill(r drills.Kept) {
+	unix := func(t time.Time) int64 {
+		if t.IsZero() {
+			return 0
+		}
+		return t.Unix()
+	}
+	k.Store.KeepDrill(sharedstate.DrillResult{
+		Namespace: r.Drill.Namespace, Name: r.Drill.Name, SourceNamespace: r.Source.Namespace, Source: r.Source.Name,
+		Backup: r.Backup, BackupLabel: r.BackupLabel, Result: string(r.Result), Reason: r.Reason,
+		StartedAt: unix(r.StartedAt), Deadline: unix(r.Deadline), HealthyAt: unix(r.HealthyAt), FinishedAt: unix(r.FinishedAt),
+	})
+}
+
+// KeptDrills implements drills.Keeper.
+func (k SharedDrillKeeper) KeptDrills() []drills.Kept {
+	at := func(u int64) time.Time {
+		if u == 0 {
+			return time.Time{}
+		}
+		return time.Unix(u, 0).UTC()
+	}
+	results := k.Store.KeptDrills()
+	out := make([]drills.Kept, 0, len(results))
+	for _, r := range results {
+		out = append(out, drills.Kept{
+			Drill: drills.Key{Namespace: r.Namespace, Name: r.Name}, Source: drills.SourceKey{Namespace: r.SourceNamespace, Name: r.Source},
+			Backup: r.Backup, BackupLabel: r.BackupLabel, Result: viewmodel.DrillResult(r.Result), Reason: r.Reason,
+			StartedAt: at(r.StartedAt), Deadline: at(r.Deadline), HealthyAt: at(r.HealthyAt), FinishedAt: at(r.FinishedAt),
+		})
+	}
+	return out
+}
+
+// KeepsDrills implements drills.Keeper.
+func (k SharedDrillKeeper) KeepsDrills() bool { return k.Store.KeepsDrills() }
+
+// KeptSince implements drills.Keeper.
+func (k SharedDrillKeeper) KeptSince() time.Time { return k.Store.DrillsKeptSince() }
 
 func (d *Drills) options(az *authz.Authorizer) *operations.DrillOptions {
 	r := d.cfg

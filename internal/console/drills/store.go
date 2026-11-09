@@ -66,6 +66,9 @@ type Record struct {
 	// or labels changed): it was not deleted, and never will be by the
 	// console. TeardownError says so.
 	LeftInPlace bool `json:"leftInPlace,omitempty"`
+	// Restored marks a record rebuilt from the keeper after a restart:
+	// its outcome and times are kept, its checks are not.
+	Restored bool `json:"-"`
 }
 
 // Finished reports a decided result.
@@ -83,6 +86,29 @@ type Persister interface {
 	DeleteDrill(key string) error
 }
 
+// Kept is the outcome of one finished drill as a Keeper holds it: no
+// check detail, no credential.
+type Kept struct {
+	Drill                 Key
+	Source                SourceKey
+	Backup, BackupLabel   string
+	Result                viewmodel.DrillResult
+	Reason                string
+	StartedAt, Deadline   time.Time
+	HealthyAt, FinishedAt time.Time
+}
+
+// Keeper keeps the outcome of finished drills across restarts when the
+// history is not persistent (the console's shared-state ConfigMap).
+type Keeper interface {
+	KeepDrill(Kept)
+	KeptDrills() []Kept
+	// KeepsDrills reports whether what it keeps survives a restart.
+	KeepsDrills() bool
+	// KeptSince is when it started keeping, zero when unknown.
+	KeptSince() time.Time
+}
+
 // Bounds of the store: per source and in total. Drills are rare (a
 // person starts each), so these hold years of manual drills.
 const (
@@ -95,6 +121,7 @@ type Store struct {
 	mu      sync.RWMutex
 	records map[Key]Record
 	persist Persister
+	keeper  Keeper
 	logger  *slog.Logger
 	// since is when the record became complete (RecordedSince).
 	since time.Time
@@ -138,14 +165,41 @@ func NewStore(persist Persister, logger *slog.Logger, now time.Time) *Store {
 	return s
 }
 
+// SetKeeper adds a keeper of finished drills' outcomes, used when the
+// history is not persistent. Call it before the store is shared.
+func (s *Store) SetKeeper(k Keeper) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.keeper = k
+}
+
 // RecordedSince is when the record became complete: every drill this
 // console ran from then on is in it, or a newer passed drill of the same
 // source is (the bounds never drop a source's newest pass). Before it,
-// the record says nothing.
-func (s *Store) RecordedSince() time.Time { return s.since }
+// the record says nothing. With a keeper and no journal, it is when the
+// keeper started keeping, when that is earlier.
+func (s *Store) RecordedSince() time.Time {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.persist == nil && s.keeper != nil && s.keeper.KeepsDrills() {
+		if at := s.keeper.KeptSince(); !at.IsZero() && at.Before(s.since) {
+			return at.UTC()
+		}
+	}
+	return s.since
+}
 
-// Persistent reports whether records survive a restart.
-func (s *Store) Persistent() bool { return s.persist != nil }
+// Persistent reports whether records survive a restart: in the history
+// journal, or, for finished drills' outcomes, in the keeper.
+func (s *Store) Persistent() bool { return s.persist != nil || s.Kept() }
+
+// Kept reports that, without a journal, the outcomes of finished drills
+// survive a restart in the keeper (their check detail does not).
+func (s *Store) Kept() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.persist == nil && s.keeper != nil && s.keeper.KeepsDrills()
+}
 
 func storeKey(k Key) string { return k.Namespace + "/" + k.Name }
 
@@ -156,7 +210,34 @@ func (s *Store) Put(r Record) {
 	defer s.mu.Unlock()
 	s.records[r.Drill] = r
 	s.mirror(r)
+	if s.keeper != nil && r.Finished() {
+		s.keeper.KeepDrill(Kept{
+			Drill: r.Drill, Source: r.Source, Backup: r.Backup, BackupLabel: r.BackupLabel,
+			Result: r.Result, Reason: r.Reason, StartedAt: r.StartedAt, Deadline: r.Deadline,
+			HealthyAt: r.HealthyAt, FinishedAt: r.FinishedAt,
+		})
+	}
 	s.enforce(r.Source)
+}
+
+// keptLocked are the keeper's outcomes of drills this store holds no
+// record of (finished before a restart), as records.
+func (s *Store) keptLocked(match func(SourceKey) bool) []Record {
+	if s.keeper == nil {
+		return nil
+	}
+	var out []Record
+	for _, k := range s.keeper.KeptDrills() {
+		if _, held := s.records[k.Drill]; held || !match(k.Source) {
+			continue
+		}
+		out = append(out, Record{
+			Drill: k.Drill, Source: k.Source, Backup: k.Backup, BackupLabel: k.BackupLabel,
+			StartedAt: k.StartedAt, Deadline: k.Deadline, HealthyAt: k.HealthyAt, FinishedAt: k.FinishedAt,
+			Result: k.Result, Reason: k.Reason, Restored: true,
+		})
+	}
+	return out
 }
 
 // Get returns the record of one drill.
@@ -177,6 +258,7 @@ func (s *Store) Source(src SourceKey) []Record {
 			out = append(out, r)
 		}
 	}
+	out = append(out, s.keptLocked(func(k SourceKey) bool { return k == src })...)
 	sortNewest(out)
 	return out
 }
@@ -189,6 +271,7 @@ func (s *Store) All() []Record {
 	for _, r := range s.records {
 		out = append(out, r)
 	}
+	out = append(out, s.keptLocked(func(SourceKey) bool { return true })...)
 	sortNewest(out)
 	return out
 }
@@ -293,6 +376,7 @@ func View(r Record) viewmodel.RestoreDrill {
 		RestoredBytes: r.RestoredBytes, SourceBytes: r.SourceBytes, Timeline: r.Timeline,
 		Result: r.Result, Health: viewmodel.DrillHealth(r.Result), Reason: r.Reason,
 		Checks: slices.Clone(r.Checks), TeardownError: r.TeardownError,
+		ChecksNotKept: r.Restored,
 	}
 	if v.Result == "" {
 		v.Result = viewmodel.DrillRunning

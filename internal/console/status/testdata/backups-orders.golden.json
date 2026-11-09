@@ -10,6 +10,10 @@
     "lastCompletedAt": "2026-10-29T07:00:00Z",
     "configured": true,
     "pluginBased": true,
+    "cadence": {
+      "basis": "default",
+      "thresholdSeconds": 604800
+    },
     "provenance": {
       "origin": "operator",
       "source": "Backup.status",
@@ -212,6 +216,7 @@
   },
   "drills": {
     "enabled": false,
+    "windowDays": 90,
     "items": [],
     "scope": "restore drills are not enabled on this console (RESTORE_DRILL_ENABLED)",
     "notChecked": []

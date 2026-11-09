@@ -60,7 +60,8 @@ func (s *Service) Input(ctx context.Context, key cache.ClusterKey) (diagnose.Inp
 	}
 	now := s.now().UTC()
 	facts := kube.NewFacts(key.Namespace, key.Name)
-	in := diagnose.Input{Now: now}
+	// The one CNPG version detector gates every version-pinned rule.
+	in := diagnose.Input{Now: now, CNPGVersion: g.version, HasCNPGVersion: true}
 
 	stale := func(source string) bool {
 		return s.cache.Source(key.Namespace, source).State == viewmodel.SourceStale

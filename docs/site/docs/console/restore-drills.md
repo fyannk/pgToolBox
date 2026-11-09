@@ -258,10 +258,17 @@ The teardown grant is the one delete the console holds, and it is narrow:
 - an opt-in Role in the drill namespace with `get`, `list`, `watch` and
   `delete` on `clusters.postgresql.cnpg.io`, and nothing else;
 - the console deletes only Clusters carrying its drill labels **and** a seal: an
-  HMAC over the namespace, the name and the drill record, keyed from the
-  console's session secret. Labels alone are not enough: anyone who can create a
-  Cluster can copy labels, nobody without the session secret can forge the seal.
-  A Cluster that is not sealed by this console is never touched;
+  HMAC over the namespace, the name and the drill record. Labels alone are not
+  enough: anyone who can create a Cluster can copy labels, but nobody without
+  the seal's key can forge the seal. A Cluster that this console did not seal
+  is never touched. By default the key is derived (HKDF with its own label)
+  from the console's session secret, so whoever can read the session Secret can
+  forge a seal. To give the seal a key of its own, mount a Secret of its own
+  and point `RESTORE_DRILL_SEAL_KEY_FILE` at it. The file holds one key per line,
+  at least 32 bytes each: the first seals, and all of them verify. Keep that
+  Secret readable by the console alone. When you switch keys, a drill that is
+  still running under the old key no longer verifies, so the console leaves it
+  in place and does not delete it;
 - the delete carries the drill's UID as a precondition, so a Cluster recreated
   under the same name is not deleted by mistake.
 
@@ -399,6 +406,7 @@ are turned off.
 | `RESTORE_DRILL_STORAGE_SIZE`, `_STORAGE_CLASS` | empty | The drill's volume. Empty: the source's. |
 | `RESTORE_DRILL_SERVER_CA` | `own` | `own`, `source` or `secret`: [which CA signs a drill](#which-ca-signs-a-drill). `source` needs `RESTORE_DRILL_NAMESPACE` unset. |
 | `RESTORE_DRILL_SERVER_CA_SECRET` | empty | The CA Secret of `secret`, in every drill namespace; only with `secret`. |
+| `RESTORE_DRILL_SEAL_KEY_FILE` | empty | Absolute path of a mounted file of the drill seal's own keys, one per line. Empty: the keys derive from the session secret. |
 
 ## A drill in another namespace
 
@@ -462,10 +470,17 @@ in the source's namespace, with the source's configuration.
 ## Where results are kept
 
 With persistent history (`history.persistent`), drill results survive restarts
-in the history journal; otherwise they live in memory, and a running drill is
-still found and torn down after a restart (the seal is verified, not the memory).
-The console keeps the last 50 drills per Cluster, and never drops a Cluster's
-newest passed drill to stay within that bound.
+in the history journal, checks included. Without it, the outcome of each
+finished drill goes to the console's shared-state ConfigMap
+(`STATE_CONFIGMAP`): the drill, its source, the backup, the result, its times
+and the console's reason, but no check detail and nothing secret. After a
+restart such a drill shows "its checks were not kept". With neither the
+journal nor the ConfigMap (none is configured, or it is missing or forbidden),
+results live in this replica's memory only, and the panel says "drill history
+lost at restart". In every case a running drill is still found and torn down
+after a restart: the console verifies the seal, not its memory. The console
+keeps the last 50 drills per Cluster (and 500 in the ConfigMap), and never
+drops a Cluster's newest passed drill to stay within that bound.
 
 ## The overdue-drill note
 
@@ -477,6 +492,7 @@ console's record holds no passed drill of it in the last 90 days.
 
 The note claims nothing the record cannot back. The record is complete only
 from the moment it started: the console's start when results live in memory,
+the day the ConfigMap started keeping drill outcomes when results are kept there,
 the day the history journal started keeping drills when history is persistent
 (the journal records that day once), or the console's start again when a stored
 record could not be read. Until that start is 90 days old, the check reports

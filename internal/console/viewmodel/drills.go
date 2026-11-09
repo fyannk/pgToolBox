@@ -64,10 +64,20 @@ type RestoreDrills struct {
 	SizeTolerancePercent int `json:"sizeTolerancePercent,omitempty"`
 	// LastPassedAt is when the newest passed drill was judged.
 	LastPassedAt *time.Time `json:"lastPassedAt,omitempty"`
+	// RestoreTested: a drill of this Cluster passed within WindowDays.
+	// Without it, "structurally usable" evidence is "not restore-tested".
+	RestoreTested bool `json:"restoreTested,omitempty"`
+	// WindowDays is how recent a passed drill must be
+	// (diagnose.DrillWindow).
+	WindowDays int `json:"windowDays,omitempty"`
 	// Items are the drills, newest first (running ones included).
 	Items []RestoreDrill `json:"items"`
 	// Scope says where the record lives and how long it lasts.
 	Scope string `json:"scope"`
+	// LostAtRestart: neither the history journal nor the shared-state
+	// ConfigMap keeps the record, so a console restart loses every
+	// finished drill. The screen says so rather than "no drill".
+	LostAtRestart bool `json:"lostAtRestart,omitempty"`
 	// NotChecked lists what a passed drill does not prove.
 	NotChecked []string `json:"notChecked"`
 }
@@ -109,6 +119,10 @@ type RestoreDrill struct {
 	// TeardownError is set while the console could not delete the drill
 	// Cluster (the teardown Role missing, for instance).
 	TeardownError string `json:"teardownError,omitempty"`
+	// ChecksNotKept: the drill finished before the console restarted;
+	// its outcome and times were kept in the shared state, its checks
+	// were not.
+	ChecksNotKept bool `json:"checksNotKept,omitempty"`
 }
 
 // DrillCheck is one check, attributed to where it was read.

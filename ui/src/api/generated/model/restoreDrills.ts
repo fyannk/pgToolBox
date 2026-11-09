@@ -12,10 +12,13 @@ export interface RestoreDrills {
   /** @nullable */
   items: RestoreDrill[] | null;
   lastPassedAt?: string;
+  lostAtRestart?: boolean;
   namespace?: string;
   /** @nullable */
   notChecked: string[] | null;
+  restoreTested?: boolean;
   scope: string;
   sizeTolerancePercent?: number;
   timeLimitSeconds?: number;
+  windowDays?: number;
 }

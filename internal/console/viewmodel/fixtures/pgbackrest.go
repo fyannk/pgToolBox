@@ -153,7 +153,7 @@ func BackupsPgBackRest() viewmodel.Backups {
 			Complete:    true,
 			Provenance:  evidenceProv("EvidenceAgent billing-evidence /api/v1alpha1/recovery-paths"),
 		},
-		Drills:  viewmodel.RestoreDrills{Items: []viewmodel.RestoreDrill{}, Scope: RestoreDrills().Scope, NotChecked: RestoreDrills().NotChecked},
+		Drills:  viewmodel.RestoreDrills{Items: []viewmodel.RestoreDrill{}, Scope: RestoreDrills().Scope, NotChecked: RestoreDrills().NotChecked, WindowDays: 90},
 		Sources: []viewmodel.SourceState{src("backups", since(3*time.Hour)), src("scheduledBackups", since(3*time.Hour)), src("evidence", since(time.Hour))},
 		BlindSpots: []viewmodel.BlindSpot{{
 			ID: "backups.pluginNotReported", Panel: "backups",

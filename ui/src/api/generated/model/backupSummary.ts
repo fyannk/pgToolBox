@@ -6,12 +6,14 @@
  * OpenAPI spec version: v1
  */
 import type { Archiving } from './archiving.ts';
+import type { BackupCadence } from './backupCadence.ts';
 import type { BackupSummaryHealth } from './backupSummaryHealth.ts';
 import type { Provenance } from './provenance.ts';
 import type { RecoveryWindow } from './recoveryWindow.ts';
 
 export interface BackupSummary {
   archiving: Archiving;
+  cadence?: BackupCadence;
   /** The Cluster declares a backup method or schedule. */
   configured: boolean;
   health: BackupSummaryHealth;

@@ -253,7 +253,11 @@ func (s *Service) Backups(ctx context.Context, namespace, name string) (viewmode
 		BlindSpots: panelBlindSpots(g, "backups"),
 	}
 	evidence := s.evidenceFor(ctx, g)
-	backups := slices.Clone(g.backups)
+	prior := make(map[*cnpgv1.Backup]bool, len(g.priorBackups))
+	for _, b := range g.priorBackups {
+		prior[b] = true
+	}
+	backups := slices.Concat(g.backups, g.priorBackups)
 	sort.SliceStable(backups, func(i, j int) bool {
 		return backups[i].CreationTimestamp.After(backups[j].CreationTimestamp.Time)
 	})
@@ -263,10 +267,10 @@ func (s *Service) Backups(ctx context.Context, namespace, name string) (viewmode
 			Name: b.Name, Phase: r.Phase, Health: health(r.Reading.Class), Known: r.Reading.Known, Terminal: r.Reading.Terminal,
 			Method: r.Method, PluginName: r.PluginName, Instance: r.PodName, Online: r.Online, BackupID: r.BackupID, Error: r.Error,
 			CreatedAt: r.CreatedAt, StartedAt: r.StartedAt, StoppedAt: r.StoppedAt, NotReportedWhileRunning: r.NotReportedWhileRunning,
-			Repository: evidence.presence(r),
+			Repository: evidence.presence(r), PredatesCluster: prior[b],
 			Provenance: s.provenance(namespace, cache.SourceBackups, viewmodel.OriginOperator, "Backup.status", now),
 		}
-		if cfg.PgBackRest != nil {
+		if cfg.PgBackRest != nil && !prior[b] {
 			row.PgBackRest = evidence.pgbackrestRef(b.Name, r)
 		}
 		if owner := ownerOfKind(b.OwnerReferences, "ScheduledBackup"); owner != "" {
@@ -286,6 +290,7 @@ func (s *Service) Backups(ctx context.Context, namespace, name string) (viewmode
 	out.Method.PgBackRest = pgbackrestMethod(cfg.PgBackRest, evidence.result.Snapshot)
 	out.Evidence = evidence.view
 	out.RecoveryTimeline = s.recoveryTimeline(evidence, out.Summary, out.Items, recoveryFactsOf(g, now))
+	out.RecoveryTimeline.RestoreTested = out.Drills.RestoreTested
 	out.Sources = append(out.Sources, evidence.source)
 	return out, nil
 }

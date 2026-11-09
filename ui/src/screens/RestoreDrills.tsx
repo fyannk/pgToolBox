@@ -101,6 +101,7 @@ function DrillItem({ d }: { d: RestoreDrill }) {
           {m.drill_teardown_error({ error: d.teardownError })}
         </p>
       )}
+      {d.checksNotKept && <p className="text-caption text-muted">{m.drill_checks_not_kept()}</p>}
       <ul className="flex flex-col gap-1 text-label" aria-label={m.drill_checks()}>
         {(d.checks ?? []).map((c) => (
           <li key={c.name} className="flex flex-wrap items-center gap-2" data-check={c.name}>
@@ -175,7 +176,13 @@ export function RestoreDrillsPanel({ drills, offer, actor, onRequest }: Props) {
               </ul>
             </div>
           )}
-          <p className="text-caption text-muted">{drills.scope}</p>
+          {drills.lostAtRestart ? (
+            <p className="health rounded-control px-3 py-1.5 text-label" data-health="warning">
+              {drills.scope}
+            </p>
+          ) : (
+            <p className="text-caption text-muted">{drills.scope}</p>
+          )}
         </>
       )}
     </Panel>

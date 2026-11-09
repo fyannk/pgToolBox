@@ -196,6 +196,17 @@ WAL bytes, and never runs a restore. The latest point is bounded by when the las
 segment *reached* the repository. The newest transactions may still exist only on
 the instance, especially while archiving fails.
 
+Unless a [restore drill](restore-drills.md) of the Cluster passed in the last 90
+days (the window of the `restore-drill-overdue` check), the bar, the evidence
+counts and the restore check also say "not restore-tested".
+
+When the newest edge is uncertain (the newest span is not covered, or the recent
+end is unknown or not restorable), the panel suggests two queries to copy and run
+on the primary yourself: `SELECT * FROM pg_stat_archiver;` shows what PostgreSQL
+last archived and last failed to archive, and `SELECT pg_switch_wal();` forces
+the current segment out to the archive. After that, refresh the evidence. The
+console is read-only, so it runs neither query.
+
 ### Without repository evidence
 
 The operator's or plugin's own window (`serverRecoveryWindow`, or the in-tree

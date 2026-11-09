@@ -34,6 +34,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/yaml"
+
+	"github.com/fyannk/pgToolBox/internal/console/auth"
 )
 
 var updateGolden = flag.Bool("update", false, "rewrite the golden files")
@@ -486,5 +488,39 @@ func TestDrillServerCASecretFor(t *testing.T) {
 				t.Errorf("certificates = %+v, want serverCASecret %s only", c.Spec.Certificates, tt.secret)
 			}
 		})
+	}
+}
+
+// TestDrillSealKeyFileIsNotTheSessionSecret: with the seal's own key
+// file (RESTORE_DRILL_SEAL_KEY_FILE), a seal forged from the session
+// secret, the one a reader of the session Secret can derive, does not
+// verify, so it cannot make the console delete a Cluster.
+func TestDrillSealKeyFileIsNotTheSessionSecret(t *testing.T) {
+	t.Parallel()
+	session := [][]byte{bytes.Repeat([]byte("s"), 32)}
+	sealFile := [][]byte{bytes.Repeat([]byte("k"), 32)}
+	fromSession, err := auth.PurposeKeys(session, DrillKeyLabel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	own, err := auth.PurposeKeys(sealFile, DrillKeyLabel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	forged, err := DrillCluster(drillRequest(t, pluginSource()), fromSession)
+	if err != nil {
+		t.Fatal(err)
+	}
+	forged.CreationTimestamp = metav1.NewTime(drillTime.Add(3 * time.Second))
+	if _, err := VerifyDrill(forged, "team-a", own); !errors.Is(err, ErrNotOurDrill) {
+		t.Fatalf("a seal derived from the session secret verified against the seal's own key: %v", err)
+	}
+	sealed, err := DrillCluster(drillRequest(t, pluginSource()), own)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealed.CreationTimestamp = forged.CreationTimestamp
+	if _, err := VerifyDrill(sealed, "team-a", own); err != nil {
+		t.Fatalf("the seal's own key does not verify its seal: %v", err)
 	}
 }

@@ -296,6 +296,13 @@ func TestLoadRestoreDrill(t *testing.T) {
 		d.MemoryRequest != "1Gi" || d.MemoryLimit != "2Gi" || d.CPURequest != "500m" || d.StorageSize != "20Gi" || d.StorageClass != "fast.ssd" || d.MaxConcurrent != 5 {
 		t.Errorf("set = %+v", d)
 	}
+	if d.SealKeyFile != "" {
+		t.Errorf("seal key file = %q, want the session-derived default", d.SealKeyFile)
+	}
+	if cfg, err := LoadConsole(lookupOf(with(EnvRestoreDrillSealKeyFile, "/etc/pgconsole/drill-seal/../drill-seal/keys"))); err != nil ||
+		cfg.RestoreDrill.SealKeyFile != "/etc/pgconsole/drill-seal/keys" {
+		t.Errorf("seal key file = %q, %v", cfg.RestoreDrill.SealKeyFile, err)
+	}
 	if info := cfg.Info(); info[EnvRestoreDrillEnabled] != "true" || info[EnvRestoreDrillNamespace] != "drills" ||
 		info[EnvRestoreDrillServerCA] != DrillServerCAOwn {
 		t.Errorf("info = %v", info)
@@ -338,6 +345,7 @@ func TestLoadRestoreDrill(t *testing.T) {
 		{"source CA in a drill namespace", EnvRestoreDrillServerCA, with(EnvRestoreDrillServerCA, "source", EnvRestoreDrillNamespace, "drills")},
 		{"secret mode without a Secret", EnvRestoreDrillServerCASecret, with(EnvRestoreDrillServerCA, "secret")},
 		{"a Secret without secret mode", EnvRestoreDrillServerCASecret, with(EnvRestoreDrillServerCASecret, "drill-ca")},
+		{"relative seal key file", EnvRestoreDrillSealKeyFile, with(EnvRestoreDrillSealKeyFile, "seal/keys")},
 		{"Secret name shape", EnvRestoreDrillServerCASecret, with(EnvRestoreDrillServerCA, "secret", EnvRestoreDrillServerCASecret, "Drill_CA")},
 		{"needs operations", EnvRestoreDrillEnabled, with(EnvRestoreDrillEnabled, "true", EnvOperationsEnabled, "false")},
 	}

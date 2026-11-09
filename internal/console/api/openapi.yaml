@@ -419,6 +419,26 @@ components:
           format: int64
           type: integer
       type: object
+    BackupCadence:
+      additionalProperties: false
+      properties:
+        basis:
+          enum:
+            - schedule
+            - default
+          type: string
+        intervalSeconds:
+          format: int64
+          type: integer
+        overdue:
+          type: boolean
+        thresholdSeconds:
+          format: int64
+          type: integer
+      required:
+        - basis
+        - thresholdSeconds
+      type: object
     BackupMethod:
       additionalProperties: false
       properties:
@@ -447,6 +467,8 @@ components:
     BackupRecency:
       additionalProperties: false
       properties:
+        cadence:
+          $ref: "#/components/schemas/BackupCadence"
         configured:
           description: The Cluster declares a backup method or schedule.
           type: boolean
@@ -523,6 +545,8 @@ components:
           type: string
         pluginName:
           type: string
+        predatesCluster:
+          type: boolean
         provenance:
           $ref: "#/components/schemas/Provenance"
         repository:
@@ -555,6 +579,8 @@ components:
       properties:
         archiving:
           $ref: "#/components/schemas/Archiving"
+        cadence:
+          $ref: "#/components/schemas/BackupCadence"
         configured:
           description: The Cluster declares a backup method or schedule.
           type: boolean
@@ -5687,6 +5713,8 @@ components:
           $ref: "#/components/schemas/Provenance"
         reason:
           type: string
+        restoreTested:
+          type: boolean
         segments:
           description: "Time-ordered spans: covered ones and the holes between them."
           items:
@@ -5972,6 +6000,8 @@ components:
           type:
             - array
             - "null"
+        checksNotKept:
+          type: boolean
         deadline:
           format: date-time
           type: string
@@ -6048,6 +6078,8 @@ components:
         lastPassedAt:
           format: date-time
           type: string
+        lostAtRestart:
+          type: boolean
         namespace:
           type: string
         notChecked:
@@ -6056,12 +6088,17 @@ components:
           type:
             - array
             - "null"
+        restoreTested:
+          type: boolean
         scope:
           type: string
         sizeTolerancePercent:
           format: int64
           type: integer
         timeLimitSeconds:
+          format: int64
+          type: integer
+        windowDays:
           format: int64
           type: integer
       required:
@@ -7260,6 +7297,9 @@ components:
           description: Reported PostgreSQL major version.
           format: int64
           type: integer
+        upgradeInFlight:
+          description: "Instance managers and the operator's Pod annotation disagree: an upgrade in progress."
+          type: string
       required:
         - confidence
       type: object

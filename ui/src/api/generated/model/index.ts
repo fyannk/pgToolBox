@@ -30,6 +30,8 @@ export * from './assistantClientSetupId.ts';
 export * from './assistantSetupView.ts';
 export * from './assistantSetupViewAccess.ts';
 export * from './autoGrow.ts';
+export * from './backupCadence.ts';
+export * from './backupCadenceBasis.ts';
 export * from './backupMethod.ts';
 export * from './backupRecency.ts';
 export * from './backupRecencyHealth.ts';

@@ -299,22 +299,37 @@ func run(ctx context.Context, lookup func(string) (string, bool), logOut io.Writ
 }
 
 // restoreDrills assembles the restore drills when RESTORE_DRILL_ENABLED is
-// set: the seal's keys derive from the session secret (so every replica
-// verifies what any of them created), and the record lives in the history
-// journal when history is persistent.
+// set: the seal's keys derive from its own key file when
+// RESTORE_DRILL_SEAL_KEY_FILE is set, else from the session secret (so
+// every replica verifies what any of them created); the record lives in
+// the history journal when history is persistent, and finished drills'
+// outcomes in the shared-state ConfigMap otherwise.
 func restoreDrills(s Settings, rm *readmodel.ReadModel, restConfig *rest.Config, log *slog.Logger) (*wiring.Drills, error) {
 	if !s.Console.RestoreDrill.Enabled {
 		return nil, nil //nolint:nilnil // disabled is a valid, explicit outcome
 	}
-	secrets, err := auth.LoadSecrets(s.Auth.SessionSecretFile)
-	if err != nil {
-		return nil, err
+	var secrets [][]byte
+	var err error
+	if path := s.Console.RestoreDrill.SealKeyFile; path != "" {
+		if secrets, err = auth.LoadSecrets(path); err != nil {
+			return nil, fmt.Errorf("restore drill seal key (%s): %w", config.EnvRestoreDrillSealKeyFile, err)
+		}
+	} else {
+		if secrets, err = auth.LoadSecrets(s.Auth.SessionSecretFile); err != nil {
+			return nil, err
+		}
+		log.Warn("restore drill seals derive from the session secret: whoever reads that Secret can forge a seal; set " +
+			config.EnvRestoreDrillSealKeyFile + " to give the seal its own key")
 	}
 	var persist drills.Persister
 	if j := rm.History.DrillJournal(); j != nil {
 		persist = j
 	}
-	return wiring.NewDrills(s.Console, rm.Status, restConfig, s.Auth.Namespace, secrets, persist, log)
+	var keeper drills.Keeper
+	if persist == nil && rm.Shared != nil {
+		keeper = wiring.NewSharedDrillKeeper(rm.Shared, time.Now())
+	}
+	return wiring.NewDrills(s.Console, rm.Status, restConfig, s.Auth.Namespace, secrets, persist, keeper, log)
 }
 
 // grants is the shared MCP grant index, or nil (see signOuts).
