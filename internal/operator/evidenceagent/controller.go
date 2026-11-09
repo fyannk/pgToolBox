@@ -47,9 +47,6 @@ import (
 	evidencev1alpha1 "github.com/fyannk/pgToolBox/pkg/evidence/v1alpha1"
 )
 
-// FieldOwner is the server-side-apply field manager of every write.
-const FieldOwner = "pgtoolbox-operator"
-
 // +kubebuilder:rbac:groups=pgtoolbox.fyannk.dev,resources=evidenceagents,verbs=get;list;watch
 // +kubebuilder:rbac:groups=pgtoolbox.fyannk.dev,resources=evidenceagents/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch
@@ -230,7 +227,7 @@ func (r *Reconciler) apply(ctx context.Context, agent *pgtoolboxv1alpha1.Evidenc
 	if err != nil {
 		return fmt.Errorf("encode %T apply: %w", desired, err)
 	}
-	if err := r.Client.Patch(ctx, desired, client.RawPatch(types.ApplyPatchType, data), client.FieldOwner(FieldOwner), client.ForceOwnership); err != nil {
+	if err := r.Client.Patch(ctx, desired, client.RawPatch(types.ApplyPatchType, data), client.FieldOwner(reconcile.FieldOwner), client.ForceOwnership); err != nil {
 		return fmt.Errorf("apply %s %s: %w", desired.GetObjectKind().GroupVersionKind().Kind, desired.GetName(), err)
 	}
 	return nil
