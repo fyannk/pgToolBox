@@ -99,7 +99,8 @@ type Load =
   | {kind: 'error'; reason: string}
   | {kind: 'ready'; results: Results};
 
-const GLYPH: Record<Status, string> = {ok: '✓', 'not-run': '○', failed: '✕'};
+// The design's status glyphs: healthy ●, failing ■, unknown ○ (never colour alone).
+const GLYPH: Record<Status, string> = {ok: '●', 'not-run': '○', failed: '■'};
 
 function StatusWord({status, label}: {status: Status; label: string}): React.ReactElement {
   return (

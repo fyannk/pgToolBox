@@ -1,28 +1,61 @@
-# pgToolBox
+<p align="center">
+  <img src="docs/site/static/img/logo.svg" width="140" alt="pgToolBox logo: an elephant peeking over a toolbox bearing an ermine">
+</p>
 
-![licence](https://img.shields.io/badge/licence-Apache--2.0-0064b5?style=for-the-badge)
-![cloudnativepg](https://img.shields.io/badge/CloudNativePG-1.30%2B-0064b5?style=for-the-badge)
-![platforms](https://img.shields.io/badge/Kubernetes%20%7C%20OpenShift-amd64%20%7C%20arm64-555555?style=for-the-badge)
-[![docs](https://img.shields.io/badge/docs-fyannk.github.io-555555?style=for-the-badge)](https://fyannk.github.io/pgToolBox/)
+<h1 align="center">pgToolBox</h1>
 
-> A per-team console, a small operator and a read-only evidence agent for CloudNativePG clusters.
+<p align="center">
+  <strong>See the real state of your CloudNativePG clusters, as the operator, the Pods and each instance report it.</strong><br>
+  The Kubernetes API server decides what each person sees and may do; the console holds no authority of its own.
+</p>
+
+<p align="center">
+  <a href="https://fyannk.github.io/pgToolBox/"><img src="https://img.shields.io/badge/docs-fyannk.github.io-090c0a?style=flat-square&labelColor=1b231d" alt="Documentation"></a>
+  <a href="https://github.com/fyannk/pgToolBox/actions/workflows/ci.yml"><img src="https://github.com/fyannk/pgToolBox/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
+  <a href="https://fyannk.github.io/pgToolBox/security/"><img src="https://img.shields.io/badge/security_report-every_push-090c0a?style=flat-square&labelColor=1b231d" alt="Security scan results"></a>
+  <a href="https://www.bestpractices.dev/projects/16490"><img src="https://img.shields.io/cii/level/16490?style=flat-square&label=openssf%20best%20practices&labelColor=1b231d&color=090c0a" alt="OpenSSF Best Practices"></a>
+  <a href="https://scorecard.dev/viewer/?uri=github.com/fyannk/pgToolBox"><img src="https://img.shields.io/ossf-scorecard/github.com/fyannk/pgToolBox?style=flat-square&label=openssf%20scorecard&labelColor=1b231d&color=090c0a" alt="OpenSSF Scorecard"></a>
+  <a href="https://fyannk.github.io/pgToolBox/docs/release/"><img src="https://img.shields.io/badge/signed-cosign-090c0a?style=flat-square&labelColor=1b231d" alt="Signed with cosign"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-090c0a?style=flat-square&labelColor=1b231d" alt="Apache-2.0 license"></a>
+  <img src="https://img.shields.io/badge/CloudNativePG-1.30%2B-090c0a?style=flat-square&logo=postgresql&logoColor=b3bf3a&labelColor=1b231d" alt="CloudNativePG 1.30 or later">
+  <img src="https://img.shields.io/badge/Go-1.27-090c0a?style=flat-square&logo=go&logoColor=b3bf3a&labelColor=1b231d" alt="Go 1.27">
+  <img src="https://img.shields.io/badge/status-0.x_pre--1.0-090c0a?style=flat-square&labelColor=1b231d" alt="Pre-1.0">
+</p>
 
 pgToolBox shows the real state of [CloudNativePG](https://cloudnative-pg.io)
-clusters to the people who run them, and lets those who hold the right RBAC act
-on them. It holds no authority of its own: the Kubernetes API server decides what
-each person sees and may do, and every write is sent with that person's token, so
-the API server's audit log names who did what.
+clusters to the people who run them, one team console per namespace, and lets
+those who hold the right RBAC act on them. A small, optional operator adds a
+managed pgAdmin per team, and a read-only evidence agent checks what the backup
+repository actually holds. It runs on Kubernetes 1.28 or later and on
+OpenShift, for CloudNativePG 1.30 or later.
 
-## What it is
+> [!IMPORTANT]
+> pgToolBox reports what it can read and says where each fact comes from; it
+> does not prove that a backup restores. The evidence agent's strongest claim
+> is that a backup is structurally usable, and a check that could not run is
+> shown as not run, never as passed. It runs no SQL, reads no Secret from the
+> console, and holds no role model of its own.
 
-| | |
-|---|---|
-| **For** | Teams that run PostgreSQL with CloudNativePG 1.30 or later, on Kubernetes 1.28 or later or on OpenShift. |
-| **Shows** | Each Cluster as the operator, its Pods and each instance's own `/pg/status` report describe it: health with the source of every fact, replication, storage forecasts, backups checked against the repository, diagnostics, history, timeline, logs and metrics. |
-| **Does** | Four operations (backup, reload, restart, promote), off unless enabled, plus opt-in restore drills and time-bound access requests. |
-| **Does not** | Run SQL, read Secrets, hold object-store credentials in the console, or keep a role model of its own. There is no cluster-wide console: a console reaches the namespaces it watches and nothing else. |
+> [!NOTE]
+> An independent, personal project. It is not affiliated with, endorsed by or
+> sponsored by the CloudNativePG project, the PostgreSQL project, the pgAdmin
+> project, or any company.
 
-## Components and images
+## Why use it?
+
+- **Every fact has a source**: health, replication, storage forecasts and
+  backups, each attributed to the operator, the Pod or the instance's own
+  `/pg/status`.
+- **No authority of its own**: every read is a SelfSubjectAccessReview and every
+  write is sent with the signed-in person's token, so the audit log names who
+  did what.
+- **Backups checked against the repository**: the evidence agent reads Barman
+  Cloud and pgBackRest repositories, read-only, and tells the console what is
+  really there.
+- **Small blast radius**: one console per team, Roles only in the namespaces it
+  watches, no Secret verb.
+
+## What is included
 
 | Component | What it is | Image |
 |---|---|---|
@@ -62,7 +95,29 @@ helm install pgtoolbox oci://ghcr.io/fyannk/charts/pgtoolbox \
   --version 0.1.0 --namespace pgtoolbox --create-namespace
 ```
 
-## Security model
+## Project status
+
+Pre-1.0. The custom resources are `pgtoolbox.fyannk.dev/v1alpha1`, and a field
+can change between minor releases; every such change is announced in
+[CHANGELOG.md](CHANGELOG.md). Pin an exact version, or better a digest.
+
+## Documentation
+
+[fyannk.github.io/pgToolBox](https://fyannk.github.io/pgToolBox/): installation,
+the console and its configuration, the operator and its kinds, the evidence
+agent, the security model, what the console may do, and the generated reference
+(CRD fields, diagnostics checks). The site is built from `docs/site`
+(`make docs`). [ARCHITECTURE.md](ARCHITECTURE.md) explains how the code fits
+together, package by package.
+
+## Contributing
+
+Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) first; for
+larger changes, open an issue before writing code. `make help` lists the
+targets, `make doctor` checks the toolchain against `mise.toml`, and
+`make check` runs what CI runs without Docker or kind.
+
+## Security
 
 - **The API server authorizes.** Every read is a SelfSubjectAccessReview sent with
   the signed-in person's token; every write is sent with that token. The console's own
@@ -81,29 +136,13 @@ helm install pgtoolbox oci://ghcr.io/fyannk/charts/pgtoolbox \
 - **Signed releases.** Images and charts are signed by digest and carry an SBOM
   and provenance attestations.
 
-[SECURITY.md](SECURITY.md) says how to report a vulnerability; the
+The
 [security model](https://fyannk.github.io/pgToolBox/docs/security/) page has the
 full picture, and the [security scan results](https://fyannk.github.io/pgToolBox/security/)
 page shows the latest run of every scanner.
 
-## Documentation
+Report vulnerabilities privately, as described in [SECURITY.md](SECURITY.md).
 
-[fyannk.github.io/pgToolBox](https://fyannk.github.io/pgToolBox/): installation,
-the console and its configuration, the operator and its kinds, the evidence
-agent, the security model, what the console may do, and the generated reference
-(CRD fields, diagnostics checks). The site is built from `docs/site`
-(`make docs`). [ARCHITECTURE.md](ARCHITECTURE.md) explains how the code fits
-together, package by package.
+## License
 
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md). `make help` lists the targets, `make
-doctor` checks the toolchain against `mise.toml`, and `make check` runs what CI
-runs without Docker or kind. The pipeline is described in
-[docs/site/docs/development/ci.md](docs/site/docs/development/ci.md) and the
-repository settings it relies on in
-[docs/site/docs/development/repository-settings.md](docs/site/docs/development/repository-settings.md).
-
-## Licence
-
-[Apache 2.0](LICENSE).
+Apache-2.0. See [LICENSE](LICENSE).
