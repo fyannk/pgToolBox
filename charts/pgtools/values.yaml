@@ -1472,10 +1472,11 @@ pgadmin:
       extraFrom: []
 
   # -- Group that owns pgAdmin's volume. `null` (the default): 5050, except on
-  # OpenShift (the API server serves `security.openshift.io/v1`), whose
-  # restricted-v2 SCC assigns its own range and refuses a fixed one. An
-  # explicit value always wins. A `helm template` render for OpenShift needs
-  # `--api-versions security.openshift.io/v1` (Argo CD passes the cluster's).
+  # OpenShift (the API server serves `security.openshift.io/v1`, or
+  # `auth.provider` is `openshift`), whose restricted-v2 SCC assigns its own
+  # range and refuses a fixed one. `0`: none. An explicit value always wins. A
+  # client-side `helm template` for OpenShift with another provider needs
+  # `--api-versions security.openshift.io/v1` or `fsGroup: 0`.
   fsGroup: null
   # -- Resource requests and limits of the pgadmin container (the operator's
   # defaults); the small sidecars have their own fixed ones.

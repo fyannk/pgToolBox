@@ -269,6 +269,19 @@ tests:
       - notExists: {path: spec.template.spec.securityContext.fsGroup}
       - notExists: {path: spec.template.spec.securityContext.fsGroupChangePolicy}
 
+  - it: reads the OpenShift oauth-proxy as OpenShift, for a client-side render
+    set:
+      pgadmin.auth.provider: openshift
+      pgadmin.exposure.type: route
+    asserts:
+      - notExists: {path: spec.template.spec.securityContext.fsGroup}
+      - notExists: {path: spec.template.spec.securityContext.fsGroupChangePolicy}
+
+  - it: renders no fsGroup for 0, off OpenShift too
+    set: {pgadmin.fsGroup: 0}
+    asserts:
+      - notExists: {path: spec.template.spec.securityContext.fsGroup}
+
   - it: keeps an explicit fsGroup, on OpenShift too
     set: {pgadmin.fsGroup: 1000690000}
     capabilities:
