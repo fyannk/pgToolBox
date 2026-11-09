@@ -1,0 +1,10 @@
+apiVersion: builtin
+kind: PatchTransformer
+metadata:
+  name: cluster-scoped-policies
+target:
+  group: admissionregistration.k8s.io
+  kind: ValidatingAdmissionPolicy|ValidatingAdmissionPolicyBinding
+patch: |-
+  - op: remove
+    path: /metadata/namespace

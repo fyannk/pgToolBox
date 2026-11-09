@@ -271,7 +271,7 @@ Consequences to weigh before you turn drills on:
   grant is usable by anyone who may create Pods in that namespace (they can run
   a Pod as the console's ServiceAccount). The seal protects against the console
   deleting the wrong Cluster, not against such a person; the
-  [delete guard](#the-delete-guard) does, on Kubernetes 1.30+.
+  [delete guard](#the-delete-guard) does.
 - **A dedicated drill namespace is strongly recommended.** With the pgtools chart,
   set `restoreDrills.namespace` to a namespace that holds drills only: the
   teardown grant then reaches drills only, whatever happens to the guard. With a
@@ -291,20 +291,26 @@ Consequences to weigh before you turn drills on:
 
 ## The delete guard
 
-On Kubernetes 1.30 and later, a ValidatingAdmissionPolicy holds a console's
-ServiceAccount, on the API server, to what the console itself checks: it may
-delete a `clusters.postgresql.cnpg.io` only when the Cluster carries this
-console's `drill-owner` label, a `restore-drill-of` label and a drill seal
-annotation (and, with the pgtools chart, the drill prefix). Anybody else, an
-administrator included, is not concerned.
+A ValidatingAdmissionPolicy holds a console's ServiceAccount, on the API server,
+to what the console itself checks: it may delete a `clusters.postgresql.cnpg.io`
+only when the Cluster carries this console's `drill-owner` label, a
+`restore-drill-of` label and a drill seal annotation, and its name starts with
+the console's drill prefix (`spec.restoreDrills.prefix`, default `drill-`).
+Anybody else, an administrator included, is not concerned.
 
 - **Operator** (`pgtoolbox` chart): rendered with the operator when the cluster
   serves `admissionregistration.k8s.io/v1` policies
   (`operator.restoreDrillGuard.enabled: auto`; `true` renders it without
-  discovery, for `helm template` and GitOps). It applies to a console
-  ServiceAccount bound to the shipped `pgtoolbox-console-restore-drills`
-  ClusterRole, which carries a marker rule for that purpose
-  (`teardown` on `restoredrills.pgtoolbox.fyannk.dev`, which no API serves).
+  discovery, for `helm template` and GitOps). Two policies: the label and seal
+  check applies to any ServiceAccount of the namespace bound to the shipped
+  `pgtoolbox-console-restore-drills` ClusterRole, whatever its name (the role
+  carries a marker rule for that purpose: `teardown` on
+  `restoredrills.pgtoolbox.fyannk.dev`, which no API serves); the prefix check
+  reads the namespace's PgToolBoxConsoles as parameters and applies to each
+  console's exact ServiceAccount. The second fails open (no console, or the CRD
+  gone), the first never does.
+- **kustomize**: `config/default` includes `config/admission`, so
+  `kubectl apply -k config/default` applies the guard too.
 - **OLM**: a bundle cannot carry an admission policy. A cluster admin applies it
   with `kubectl apply -k config/admission` (or the file
   `config/admission/restore_drill_guard.yaml` of the release).

@@ -376,6 +376,10 @@ for src_doc in guard_src:
     helm_doc = next((d for d in guard_helm if d["kind"] == src_doc["kind"] and d["metadata"]["name"] == src_doc["metadata"]["name"]), None)
     if helm_doc is None or helm_doc["spec"] != src_doc["spec"]:
         problems.append(f"Helm {src_doc['kind']} {src_doc['metadata']['name']}: missing or different from config/admission/restore_drill_guard.yaml — run make manifests")
+for src_doc in guard_src:
+    kust_doc = next((d for d in kust_docs if d["kind"] == src_doc["kind"] and d["metadata"]["name"] == src_doc["metadata"]["name"]), None)
+    if kust_doc is None or kust_doc["spec"] != src_doc["spec"] or "namespace" in kust_doc["metadata"]:
+        problems.append(f"kustomize config/default: {src_doc['kind']} {src_doc['metadata']['name']} missing, different from config/admission or namespaced")
 if any("admissionregistration" in f.read_text() for f in bundle_dir.glob("*.yaml")):
     problems.append("the OLM bundle carries an admission policy, which OLM does not install")
 guard_policy = next((d for d in guard_src if d["kind"] == "ValidatingAdmissionPolicy"), None)

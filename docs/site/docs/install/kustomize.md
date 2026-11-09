@@ -49,7 +49,9 @@ kubectl apply -k config/default
 
 This creates the `pgtoolbox` namespace, the CRDs under `config/crd`, the RBAC
 under `config/rbac` (including the `pgtoolbox-console-viewer`, `pgtoolbox-console-operator` and `pgtoolbox-console-approver`
-ClusterRoles) and the manager Deployment. Generated files (`config/crd/bases`,
+ClusterRoles), the manager Deployment and the
+[restore-drill delete guard](../console/restore-drills.md#the-delete-guard)
+(`config/admission`). Generated files (`config/crd/bases`,
 `config/rbac/role.yaml`) come from `make manifests`; do not edit them.
 
 `config/default` does **not** apply the operator chart's admission policy (the
