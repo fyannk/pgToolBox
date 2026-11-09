@@ -144,7 +144,9 @@ stop to the receipt of the last contiguous WAL segment, each backup as full,
 differential or incremental with its chain, the Backup objects joined to the
 repository's labels (Dalibo's `status.backupName`, Opera's `status.backupId`),
 the stanza against the plugin's retention, and the findings. A confirmed hole in
-the WAL is critical, ends the window before it, and names the missing range.
+the WAL is critical, ends the window before it, and names the missing range. A
+gap only one scan has seen is a candidate: a warning, drawn as unconfirmed rather
+than missing, until the next complete scan confirms it or it fills.
 
 Right after a failover or a switchover, PostgreSQL archives the new timeline's
 `.history` file at once, but the new timeline's first segment only once it fills

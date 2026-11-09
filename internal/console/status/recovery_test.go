@@ -154,6 +154,14 @@ func TestRecoveryTimelineStates(t *testing.T) {
 			[]answer{{30 * time.Hour, "covered", "b1"}, {10 * time.Hour, "gap", ""}},
 		},
 		{
+			// pgBackRest and Barman stop a path candidate-limited at a gap one
+			// scan saw: the recent end is unconfirmed, not missing.
+			"a candidate gap at the recent end warns, it is not missing WAL",
+			timelineFixture{paths: []evidence.RecoveryPath{tlPath("b1", 48*time.Hour, 20*time.Hour, candidate)}},
+			facts, "warning",
+			[]answer{{30 * time.Hour, "covered", "b1"}, {10 * time.Hour, "unknown", ""}},
+		},
+		{
 			"a candidate gap inside warns",
 			timelineFixture{paths: []evidence.RecoveryPath{tlPath("b1", 48*time.Hour, 30*time.Hour, candidate), tlPath("b2", 24*time.Hour, time.Minute, frontier)}},
 			facts, "warning",

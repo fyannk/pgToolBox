@@ -118,7 +118,12 @@ const (
 	// CoverageFrontier means the walk reached the newest contiguous segment of
 	// the target timeline.
 	CoverageFrontier CoverageStop = "frontier"
-	// CoverageGapLimited means the walk stopped at a gap (WALGap).
+	// CoverageCandidateLimited means the walk stopped at a candidate gap
+	// (seen by this scan only; it may still fill).
+	CoverageCandidateLimited CoverageStop = "candidate-limited"
+	// CoverageGapLimited means the walk stopped at a confirmed gap, or at WAL
+	// that is proven lost (a backup's own WAL, or WAL before a timeline
+	// switch whose child has WAL).
 	CoverageGapLimited CoverageStop = "gap-limited"
 	// CoverageUnknownLimited means the walk could not be evaluated.
 	CoverageUnknownLimited CoverageStop = "unknown-limited"
@@ -814,7 +819,8 @@ func evaluatePath(backup Backup, wal ArchiveWAL, histories []TimelineHistory, hi
 					path.FrontierWAL, _ = WALName(current.timeline, position-1, wal.SegmentSize)
 				}
 			}
-			path.Stop, path.State = CoverageGapLimited, missingState(wal.Gaps, current.timeline, position)
+			path.State = missingState(wal.Gaps, current.timeline, position)
+			path.Stop = gapStop(path.State)
 			path.Reason = fmt.Sprintf("segment %s is not archived", mustWALName(current.timeline, position, wal.SegmentSize))
 			path.Consistent = position > stopPosition
 			return inconsistentPath(path)
@@ -830,7 +836,8 @@ func evaluatePath(backup Backup, wal ArchiveWAL, histories []TimelineHistory, hi
 			return switchInFlight(path, target, run.End+1, stopPosition, wal.SegmentSize)
 		}
 		if run.End < current.last {
-			path.Stop, path.State = CoverageGapLimited, missingState(wal.Gaps, current.timeline, run.End+1)
+			path.State = missingState(wal.Gaps, current.timeline, run.End+1)
+			path.Stop = gapStop(path.State)
 			path.Reason = fmt.Sprintf("segment %s is not archived; the backup recovers only to %s on timeline %d", mustWALName(current.timeline, run.End+1, wal.SegmentSize), run.Last, current.timeline)
 			path.Consistent = run.End >= stopPosition
 			return inconsistentPath(path)
@@ -852,11 +859,12 @@ func evaluatePath(backup Backup, wal ArchiveWAL, histories []TimelineHistory, hi
 	path.Stop = CoverageFrontier
 	path.State, path.Reason = evidence.Healthy, "WAL is contiguous from the backup to the newest segment of the target timeline"
 	if gap, ok := gapAfter(wal.Gaps, path.FrontierTimeline, path.FrontierPosition); ok {
-		path.Stop, path.Reason = CoverageGapLimited, fmt.Sprintf("WAL is contiguous to %s; a %s gap follows", path.FrontierWAL, gap.Status)
+		path.Reason = fmt.Sprintf("WAL is contiguous to %s; a %s gap follows", path.FrontierWAL, gap.Status)
 		path.State = evidence.Warning
 		if gap.Status == GapConfirmed {
 			path.State = evidence.Unhealthy
 		}
+		path.Stop = gapStop(path.State)
 	}
 	if offTarget != "" {
 		path.OffTarget = true
@@ -900,13 +908,24 @@ func rangeAfter(ranges []WALRange, timeline uint32, position uint64) bool {
 // once that WAL is archived, so it is lost, not in flight.
 func inconsistentPath(path RecoveryPath) RecoveryPath {
 	if !path.Consistent {
-		path.State = evidence.Unhealthy
+		path.State, path.Stop = evidence.Unhealthy, CoverageGapLimited
 		path.Reason = "WAL the backup needs to reach consistency is missing: " + path.Reason
 		if index := strings.Index(path.Reason, "; the backup recovers only"); index >= 0 {
 			path.Reason = path.Reason[:index]
 		}
 	}
 	return path
+}
+
+// gapStop is the stop of a walk that ended at a missing position of the
+// given state: a candidate gap (warning) may still fill, as the wire
+// contract's candidate-limited says; anything else is a confirmed gap or
+// proven loss.
+func gapStop(state evidence.State) CoverageStop {
+	if state == evidence.Warning {
+		return CoverageCandidateLimited
+	}
+	return CoverageGapLimited
 }
 
 // missingState is the state of a walk that stopped at a missing position: a
