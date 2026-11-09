@@ -467,7 +467,7 @@ console:
         # `addresses` (only `apiServer.addresses`).
         mode: any
         # -- API server IP addresses to allow when `apiServer.mode` is `addresses`
-        # and the Endpoints lookup is unavailable (`helm template`, GitOps
+        # and the EndpointSlice lookup is unavailable (`helm template`, GitOps
         # renderers).
         addresses: []
         # -- Ports of the API server that egress is allowed to.
@@ -752,17 +752,17 @@ console:
     apiServer:
       # -- How egress to the API server is allowed. `addresses`: the addresses of
       # the addresses you list in `apiServer.addresses`, or, with
-      # `apiServer.lookup`, those of the `kubernetes` Endpoints read at install time (deprecated default, see `apiServer.lookup`). `any`: any address on `apiServer.ports`, the
+      # `apiServer.lookup`, those of the `kubernetes` EndpointSlice read at install time (deprecated default, see `apiServer.lookup`). `any`: any address on `apiServer.ports`, the
       # fallback for API servers behind a load balancer whose address is not in
-      # the Endpoints.
+      # the EndpointSlice.
       mode: addresses
       # -- API server IP addresses to allow when `apiServer.mode` is `addresses`:
-      # the ClusterIP and endpoints of `kubectl get endpoints kubernetes -n default`
+      # the ClusterIP and endpoints of `kubectl get endpointslice kubernetes -n default`
       # (a namespace admin usually cannot read that object: ask the cluster admin).
       addresses: []
       # -- With `mode: addresses` and no `addresses`, read them from the `kubernetes`
-      # Endpoints of the `default` namespace at install time. On in this minor so
-      # existing installs keep working; it needs a user allowed to `get` `endpoints` in
+      # EndpointSlice of the `default` namespace at install time. On in this minor so
+      # existing installs keep working; it needs a user allowed to `get` `endpointslices.discovery.k8s.io` in
       # `default` (a namespace admin usually is not: Helm then stops with a Forbidden
       # error), and `helm template` / `--dry-run` have no cluster. NOTES warns while it
       # is used. The NEXT MINOR DEFAULTS IT TO false: list `addresses`, set
@@ -1074,17 +1074,17 @@ evidence:
     apiServer:
       # -- How egress to the API server is allowed. `addresses`: the addresses of
       # the addresses you list in `apiServer.addresses`, or, with
-      # `apiServer.lookup`, those of the `kubernetes` Endpoints read at install time (deprecated default, see `apiServer.lookup`). `any`: any address on `apiServer.ports`, the
+      # `apiServer.lookup`, those of the `kubernetes` EndpointSlice read at install time (deprecated default, see `apiServer.lookup`). `any`: any address on `apiServer.ports`, the
       # fallback for API servers behind a load balancer whose address is not in
-      # the Endpoints.
+      # the EndpointSlice.
       mode: addresses
       # -- API server IP addresses to allow when `apiServer.mode` is `addresses`:
-      # the ClusterIP and endpoints of `kubectl get endpoints kubernetes -n default`
+      # the ClusterIP and endpoints of `kubectl get endpointslice kubernetes -n default`
       # (a namespace admin usually cannot read that object: ask the cluster admin).
       addresses: []
       # -- With `mode: addresses` and no `addresses`, read them from the `kubernetes`
-      # Endpoints of the `default` namespace at install time. On in this minor so
-      # existing installs keep working; it needs a user allowed to `get` `endpoints` in
+      # EndpointSlice of the `default` namespace at install time. On in this minor so
+      # existing installs keep working; it needs a user allowed to `get` `endpointslices.discovery.k8s.io` in
       # `default` (a namespace admin usually is not: Helm then stops with a Forbidden
       # error), and `helm template` / `--dry-run` have no cluster. NOTES warns while it
       # is used. The NEXT MINOR DEFAULTS IT TO false: list `addresses`, set
@@ -1429,17 +1429,17 @@ pgadmin:
     apiServer:
       # -- How egress to the API server is allowed. `addresses`: the addresses of
       # the addresses you list in `apiServer.addresses`, or, with
-      # `apiServer.lookup`, those of the `kubernetes` Endpoints read at install time (deprecated default, see `apiServer.lookup`). `any`: any address on `apiServer.ports`, the
+      # `apiServer.lookup`, those of the `kubernetes` EndpointSlice read at install time (deprecated default, see `apiServer.lookup`). `any`: any address on `apiServer.ports`, the
       # fallback for API servers behind a load balancer whose address is not in
-      # the Endpoints.
+      # the EndpointSlice.
       mode: addresses
       # -- API server IP addresses to allow when `apiServer.mode` is `addresses`:
-      # the ClusterIP and endpoints of `kubectl get endpoints kubernetes -n default`
+      # the ClusterIP and endpoints of `kubectl get endpointslice kubernetes -n default`
       # (a namespace admin usually cannot read that object: ask the cluster admin).
       addresses: []
       # -- With `mode: addresses` and no `addresses`, read them from the `kubernetes`
-      # Endpoints of the `default` namespace at install time. On in this minor so
-      # existing installs keep working; it needs a user allowed to `get` `endpoints` in
+      # EndpointSlice of the `default` namespace at install time. On in this minor so
+      # existing installs keep working; it needs a user allowed to `get` `endpointslices.discovery.k8s.io` in
       # `default` (a namespace admin usually is not: Helm then stops with a Forbidden
       # error), and `helm template` / `--dry-run` have no cluster. NOTES warns while it
       # is used. The NEXT MINOR DEFAULTS IT TO false: list `addresses`, set

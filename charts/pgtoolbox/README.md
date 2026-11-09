@@ -57,7 +57,7 @@ enforce/audit/warn labels on the namespace the chart creates).
 Two optional pieces, **both off by default**:
 
 - `operator.networkPolicy.enabled`: egress to DNS, the API server (looked up from the
-  `kubernetes` Endpoints at install time, or `apiServer.mode: any` / `addresses`) and
+  `kubernetes` EndpointSlice at install time, or `apiServer.mode: any` / `addresses`) and
   `extraEgress`; ingress only from `ingress.metricsFrom`, on the metrics port. Whether
   to have one is the installing admin's decision, never the product's.
 - `operator.admissionPolicy.enabled` (default `true`): a `ValidatingAdmissionPolicy` (CEL,
@@ -148,8 +148,8 @@ authority on what is accepted.
 | operator.nodeSelector | object | `{}` | Node selector of the pods. |
 | operator.tolerations | list | `[]` | Tolerations of the pods. |
 | operator.networkPolicy.enabled | bool | `false` | Render a NetworkPolicy for the operator pods. Off by default: whether the cluster enforces policies, and whether the operator namespace wants one, is the installing admin's decision. Egress is DNS and the API server (plus `extraEgress`); ingress is the scrapers in `ingress.metricsFrom`, on the metrics port. |
-| operator.networkPolicy.apiServer.mode | string | `"addresses"` | How egress to the API server is allowed. `addresses`: the addresses of the `kubernetes` Endpoints, looked up at install time or taken from `apiServer.addresses`. `any`: any address on `apiServer.ports`, the fallback for API servers behind a load balancer whose address is not in the Endpoints. |
-| operator.networkPolicy.apiServer.addresses | list | `[]` | API server IP addresses to allow when `apiServer.mode` is `addresses` and the Endpoints lookup is unavailable (`helm template`, GitOps renderers). |
+| operator.networkPolicy.apiServer.mode | string | `"addresses"` | How egress to the API server is allowed. `addresses`: the addresses of the `kubernetes` EndpointSlice, looked up at install time or taken from `apiServer.addresses`. `any`: any address on `apiServer.ports`, the fallback for API servers behind a load balancer whose address is not in the EndpointSlice. |
+| operator.networkPolicy.apiServer.addresses | list | `[]` | API server IP addresses to allow when `apiServer.mode` is `addresses` and the EndpointSlice lookup is unavailable (`helm template`, GitOps renderers). |
 | operator.networkPolicy.apiServer.ports | list | `[443,6443]` | Ports of the API server that egress is allowed to. |
 | operator.networkPolicy.dns.namespace | string | `"kube-system"` | Namespace of the cluster DNS pods that egress is allowed to. |
 | operator.networkPolicy.dns.podLabels | object | `{"k8s-app":"kube-dns"}` | Labels that select the cluster DNS pods. |

@@ -188,13 +188,13 @@ operator:
     enabled: false
     apiServer:
       # -- How egress to the API server is allowed. `addresses`: the addresses of
-      # the `kubernetes` Endpoints, looked up at install time or taken from
+      # the `kubernetes` EndpointSlice, looked up at install time or taken from
       # `apiServer.addresses`. `any`: any address on `apiServer.ports`, the
       # fallback for API servers behind a load balancer whose address is not in
-      # the Endpoints.
+      # the EndpointSlice.
       mode: addresses
       # -- API server IP addresses to allow when `apiServer.mode` is `addresses`
-      # and the Endpoints lookup is unavailable (`helm template`, GitOps
+      # and the EndpointSlice lookup is unavailable (`helm template`, GitOps
       # renderers).
       addresses: []
       # -- Ports of the API server that egress is allowed to.

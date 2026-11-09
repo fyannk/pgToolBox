@@ -149,7 +149,7 @@ Both are optional and **off by default**, because each is the installing admin's
 decision, never the product's.
 
 - `operator.networkPolicy.enabled`: egress to DNS, the API server (looked up from
-  the `kubernetes` Endpoints at install time, or `apiServer.mode: any` or
+  the `kubernetes` EndpointSlice at install time, or `apiServer.mode: any` or
   `addresses`) and `extraEgress`; ingress only from `ingress.metricsFrom`, on the
   metrics port.
 - `operator.admissionPolicy.enabled` (default `true`; not applied by kustomize or OLM):

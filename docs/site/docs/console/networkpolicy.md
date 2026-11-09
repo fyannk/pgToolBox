@@ -87,10 +87,10 @@ compares the agent's label and port with the constants the operator uses.
 
 The API-server egress allows the addresses you give in
 `networkPolicy.apiServer.addresses` (the ClusterIP and endpoints shown by
-`kubectl get endpoints kubernetes -n default`). With none listed and
+`kubectl get endpointslice kubernetes -n default`). With none listed and
 `networkPolicy.apiServer.lookup: true`, **the default in this minor**, the chart
-reads the `kubernetes` Endpoints at install time. That needs `get` on
-`endpoints` in the `default` namespace, which a namespace admin usually lacks:
+reads the `kubernetes` EndpointSlice at install time. That needs `get` on
+`endpointslices.discovery.k8s.io` in the `default` namespace, which a namespace admin usually lacks:
 Helm's `lookup` returns every error but "not found", so the install then stops
 with a Forbidden error. NOTES prints a warning while the lookup is used.
 `helm template` and `--dry-run` have no cluster to ask.

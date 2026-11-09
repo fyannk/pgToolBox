@@ -70,9 +70,10 @@ func TestNetworkPolicy(t *testing.T) {
 	instB := standIn(t, "team-b", "inst-b", map[string]string{"cnpg.io/podRole": "instance", "cnpg.io/cluster": "billing"}, 8000, 9187)
 	evidenceB := standIn(t, "team-b", "evidence-b", map[string]string{"app.kubernetes.io/name": "evidence-agent"}, 8443)
 
-	api, err := clientset.CoreV1().Endpoints("default").Get(ctx(), "kubernetes", metav1.GetOptions{})
-	if err != nil || len(api.Subsets) == 0 || len(api.Subsets[0].Addresses) == 0 {
-		t.Fatalf("the kubernetes Endpoints: %v", err)
+	// The API server's own EndpointSlice, which the chart looks up.
+	api, err := clientset.DiscoveryV1().EndpointSlices("default").Get(ctx(), "kubernetes", metav1.GetOptions{})
+	if err != nil || len(api.Endpoints) == 0 || len(api.Endpoints[0].Addresses) == 0 || len(api.Ports) == 0 || api.Ports[0].Port == nil {
+		t.Fatalf("the kubernetes EndpointSlice: %v", err)
 	}
 	apiSvc, err := clientset.CoreV1().Services("default").Get(ctx(), "kubernetes", metav1.GetOptions{})
 	if err != nil {
@@ -85,7 +86,7 @@ func TestNetworkPolicy(t *testing.T) {
 		{"team-a pooler :9127", poolerA, 9127, true},
 		{"team-a evidence agent :8443", evidenceA, 8443, true},
 		{"API server (Service)", apiSvc.Spec.ClusterIP, int(apiSvc.Spec.Ports[0].Port), true},
-		{"API server (endpoint)", api.Subsets[0].Addresses[0].IP, int(api.Subsets[0].Ports[0].Port), true},
+		{"API server (endpoint)", api.Endpoints[0].Addresses[0], int(*api.Ports[0].Port), true},
 		{"DNS", "", 0, true},
 		{"team-a instance :8080 (a port the policy does not name)", instA, 8080, false},
 		{"team-a other pod :8000 (not an instance)", otherA, 8000, false},
@@ -116,7 +117,7 @@ func TestNetworkPolicy(t *testing.T) {
 	})
 
 	t.Run("with networkPolicy.enabled only what the console needs is reachable", func(t *testing.T) {
-		// The API server addresses come from the `kubernetes` Endpoints at install
+		// The API server addresses come from the `kubernetes` EndpointSlice at install
 		// time: no addresses are given, so the chart's lookup is exercised for real.
 		a.install(t, "--set", "console.networkPolicy.enabled=true")
 		np, err := clientset.NetworkingV1().NetworkPolicies("team-a").Get(ctx(), a.fullname(), metav1.GetOptions{})
@@ -134,8 +135,8 @@ func TestNetworkPolicy(t *testing.T) {
 				}
 			}
 		}
-		if want := api.Subsets[0].Addresses[0].IP + "/32"; len(cidrs) != 1 || cidrs[0] != want {
-			t.Errorf("API-server egress = %v, want [%s] (looked up from the kubernetes Endpoints)", cidrs, want)
+		if want := api.Endpoints[0].Addresses[0] + "/32"; len(cidrs) != 1 || cidrs[0] != want {
+			t.Errorf("API-server egress = %v, want [%s] (looked up from the kubernetes EndpointSlice)", cidrs, want)
 		}
 
 		pod := consolePods(t, a)[0]

@@ -1,0 +1,40 @@
+# operator.networkPolicy.apiServer.mode=addresses with no addresses listed reads
+# the API server's own EndpointSlice (discovery.k8s.io/v1) at install time.
+suite: operator NetworkPolicy API server lookup
+templates:
+  - templates/operator/networkpolicy.yaml
+release:
+  name: pgtoolbox
+  namespace: pgtoolbox
+kubernetesProvider:
+  scheme:
+    "discovery.k8s.io/v1/EndpointSlice": {gvr: {group: discovery.k8s.io, version: v1, resource: endpointslices}, namespaced: true}
+  # Floats: the fake client deep-copies JSON numbers (float64) only.
+  objects:
+    - apiVersion: discovery.k8s.io/v1
+      kind: EndpointSlice
+      metadata: {name: kubernetes, namespace: default}
+      addressType: IPv4
+      endpoints:
+        - addresses: [10.0.0.1]
+          conditions: {ready: true}
+        - addresses: [10.0.0.2]
+        - addresses: [10.0.0.9]
+          conditions: {ready: false}
+      ports:
+        - {name: https, port: 6443.0, protocol: TCP}
+set:
+  operator.enabled: true
+  operator.networkPolicy.enabled: true
+  operator.networkPolicy.apiServer.mode: addresses
+tests:
+  - it: allows the ready addresses of the kubernetes EndpointSlice on its port
+    asserts:
+      - contains:
+          path: spec.egress
+          content:
+            to:
+              - {ipBlock: {cidr: 10.0.0.1/32}}
+              - {ipBlock: {cidr: 10.0.0.2/32}}
+            ports:
+              - {port: 6443, protocol: TCP}
