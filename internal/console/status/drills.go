@@ -230,10 +230,16 @@ func (s *Service) drillsBlock(namespace, name string) viewmodel.RestoreDrills {
 			out.LastPassedAt = &t
 		}
 	}
-	if d.Records.Persistent() {
+	switch {
+	case d.Records.Kept():
+		out.Scope = "outcomes kept in this console's shared-state ConfigMap (bounded to the " + strconv.Itoa(drills.MaxPerSource) +
+			" newest drills per Cluster); the checks of a drill that finished before a restart are not kept: enable persistent history to keep them"
+	case d.Records.Persistent():
 		out.Scope = "kept in this console's persistent history (bounded to the " + strconv.Itoa(drills.MaxPerSource) + " newest drills per Cluster)"
-	} else {
-		out.Scope = "kept in this console replica's memory since it started; enable persistent history to keep drill results across restarts"
+	default:
+		out.LostAtRestart = true
+		out.Scope = "drill history lost at restart: kept in this console replica's memory since it started; " +
+			"enable persistent history or the shared-state ConfigMap to keep drill results across restarts"
 	}
 	return out
 }

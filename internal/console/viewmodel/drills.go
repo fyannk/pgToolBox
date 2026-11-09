@@ -68,6 +68,10 @@ type RestoreDrills struct {
 	Items []RestoreDrill `json:"items"`
 	// Scope says where the record lives and how long it lasts.
 	Scope string `json:"scope"`
+	// LostAtRestart: neither the history journal nor the shared-state
+	// ConfigMap keeps the record, so a console restart loses every
+	// finished drill. The screen says so rather than "no drill".
+	LostAtRestart bool `json:"lostAtRestart,omitempty"`
 	// NotChecked lists what a passed drill does not prove.
 	NotChecked []string `json:"notChecked"`
 }
@@ -109,6 +113,10 @@ type RestoreDrill struct {
 	// TeardownError is set while the console could not delete the drill
 	// Cluster (the teardown Role missing, for instance).
 	TeardownError string `json:"teardownError,omitempty"`
+	// ChecksNotKept: the drill finished before the console restarted;
+	// its outcome and times were kept in the shared state, its checks
+	// were not.
+	ChecksNotKept bool `json:"checksNotKept,omitempty"`
 }
 
 // DrillCheck is one check, attributed to where it was read.

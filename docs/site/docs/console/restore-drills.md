@@ -462,10 +462,17 @@ in the source's namespace, with the source's configuration.
 ## Where results are kept
 
 With persistent history (`history.persistent`), drill results survive restarts
-in the history journal; otherwise they live in memory, and a running drill is
-still found and torn down after a restart (the seal is verified, not the memory).
-The console keeps the last 50 drills per Cluster, and never drops a Cluster's
-newest passed drill to stay within that bound.
+in the history journal, checks included. Without it, the outcome of each
+finished drill goes to the console's shared-state ConfigMap
+(`STATE_CONFIGMAP`): the drill, its source, the backup, the result, its times
+and the console's reason, but no check detail and nothing secret. After a
+restart such a drill shows "its checks were not kept". With neither the
+journal nor the ConfigMap (none is configured, or it is missing or forbidden),
+results live in this replica's memory only, and the panel says "drill history
+lost at restart". In every case a running drill is still found and torn down
+after a restart: the console verifies the seal, not its memory. The console
+keeps the last 50 drills per Cluster (and 500 in the ConfigMap), and never
+drops a Cluster's newest passed drill to stay within that bound.
 
 ## The overdue-drill note
 
@@ -477,6 +484,7 @@ console's record holds no passed drill of it in the last 90 days.
 
 The note claims nothing the record cannot back. The record is complete only
 from the moment it started: the console's start when results live in memory,
+the day the ConfigMap started keeping drill outcomes when results are kept there,
 the day the history journal started keeping drills when history is persistent
 (the journal records that day once), or the console's start again when a stored
 record could not be read. Until that start is 90 days old, the check reports

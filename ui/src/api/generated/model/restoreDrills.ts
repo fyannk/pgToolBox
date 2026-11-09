@@ -12,6 +12,7 @@ export interface RestoreDrills {
   /** @nullable */
   items: RestoreDrill[] | null;
   lastPassedAt?: string;
+  lostAtRestart?: boolean;
   namespace?: string;
   /** @nullable */
   notChecked: string[] | null;

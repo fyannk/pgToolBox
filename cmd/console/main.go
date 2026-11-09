@@ -277,8 +277,9 @@ func run(ctx context.Context, lookup func(string) (string, bool), logOut io.Writ
 
 // restoreDrills assembles the restore drills when RESTORE_DRILL_ENABLED is
 // set: the seal's keys derive from the session secret (so every replica
-// verifies what any of them created), and the record lives in the history
-// journal when history is persistent.
+// verifies what any of them created); the record lives in
+// the history journal when history is persistent, and finished drills'
+// outcomes in the shared-state ConfigMap otherwise.
 func restoreDrills(s Settings, rm *readmodel.ReadModel, restConfig *rest.Config, log *slog.Logger) (*wiring.Drills, error) {
 	if !s.Console.RestoreDrill.Enabled {
 		return nil, nil //nolint:nilnil // disabled is a valid, explicit outcome
@@ -291,7 +292,11 @@ func restoreDrills(s Settings, rm *readmodel.ReadModel, restConfig *rest.Config,
 	if j := rm.History.DrillJournal(); j != nil {
 		persist = j
 	}
-	return wiring.NewDrills(s.Console, rm.Status, restConfig, s.Auth.Namespace, secrets, persist, log)
+	var keeper drills.Keeper
+	if persist == nil && rm.Shared != nil {
+		keeper = wiring.NewSharedDrillKeeper(rm.Shared, time.Now())
+	}
+	return wiring.NewDrills(s.Console, rm.Status, restConfig, s.Auth.Namespace, secrets, persist, keeper, log)
 }
 
 // grants is the shared MCP grant index, or nil (see signOuts).

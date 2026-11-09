@@ -16,6 +16,7 @@ export interface RestoreDrill {
   backupStoppedAt?: string;
   /** @nullable */
   checks: DrillCheck[] | null;
+  checksNotKept?: boolean;
   deadline: string;
   drill: ClusterRef;
   durationSeconds?: number;

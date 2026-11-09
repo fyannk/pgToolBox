@@ -17,6 +17,7 @@ package status
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -89,6 +90,9 @@ func TestDrillReads(t *testing.T) {
 	if !d.Enabled || d.Namespace != "team-a" || d.TimeLimitSeconds != 7200 || len(d.Items) != 1 || d.Items[0].Result != viewmodel.DrillPassed ||
 		d.LastPassedAt == nil || !d.LastPassedAt.Equal(now.Add(-49*time.Minute)) || *d.Items[0].DurationSeconds != 600 || len(d.NotChecked) == 0 {
 		t.Errorf("enabled block = %+v", d)
+	}
+	if !d.LostAtRestart || !strings.Contains(d.Scope, "drill history lost at restart") {
+		t.Errorf("an in-memory record must say it is lost at restart: %v %q", d.LostAtRestart, d.Scope)
 	}
 	in, ok := svc.Input(ctx, cache.ClusterKey{Namespace: "team-a", Name: "orders"})
 	if dr := in.Drills; !ok || !in.HasDrills || dr.Persistent || !dr.RecordedSince.Equal(now) || dr.Recorded != 1 ||
