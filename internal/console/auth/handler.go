@@ -62,6 +62,16 @@ const (
 	signInBurst     = 10
 	maxLimiterKeys  = 10000
 	maxIdPErrorLen  = 200
+	// The token form's process-wide bound. Its per-token budget cannot
+	// stop a flood of distinct junk tokens, each of which would cost one
+	// SelfSubjectReview, so every pasted token also spends one shared
+	// token. A burst of 40 lets a whole team sign in at once at the start
+	// of an incident; 20 a second refills it within two seconds and is
+	// far more than people pasting tokens by hand, while capping what
+	// this replica can make the API server review at 20 a second.
+	tokenReviewsPerSecond = 20
+	tokenReviewsBurst     = 40
+	tokenReviewsKey       = "token-form"
 )
 
 // Principal is the signed-in user of one request.
@@ -138,6 +148,8 @@ type Handler struct {
 	refreshes singleflight.Group
 	now       func() time.Time
 	attempts  *RateLimiter
+	// tokenReviews is the token form's process-wide bound (one key).
+	tokenReviews *RateLimiter
 
 	// loggedOut holds sessions signed out on this replica until their
 	// absolute expiry: a copy of the cookie stops working here at once.
@@ -207,19 +219,20 @@ func newHandler(o Options, providers []oauthProvider) *Handler {
 		}
 	}
 	return &Handler{
-		grantOIDC:   grantOIDC,
-		cfg:         o.Config,
-		codec:       o.Codec,
-		identity:    o.Identity,
-		revocations: o.Revocations,
-		audit:       &Auditor{Logger: log, TrustedProxyHops: o.Config.TrustedProxyHops},
-		log:         log,
-		oauth:       providers,
-		token:       slices.Contains(o.Config.Providers, ProviderToken),
-		now:         time.Now,
-		attempts:    NewRateLimiter(signInPerMinute, signInBurst, maxLimiterKeys),
-		loggedOut:   map[string]time.Time{},
-		signOuts:    o.SignOuts,
+		grantOIDC:    grantOIDC,
+		cfg:          o.Config,
+		codec:        o.Codec,
+		identity:     o.Identity,
+		revocations:  o.Revocations,
+		audit:        &Auditor{Logger: log, TrustedProxyHops: o.Config.TrustedProxyHops},
+		log:          log,
+		oauth:        providers,
+		token:        slices.Contains(o.Config.Providers, ProviderToken),
+		now:          time.Now,
+		attempts:     NewRateLimiter(signInPerMinute, signInBurst, maxLimiterKeys),
+		tokenReviews: NewRateLimiter(tokenReviewsPerSecond*60, tokenReviewsBurst, 1),
+		loggedOut:    map[string]time.Time{},
+		signOuts:     o.SignOuts,
 	}
 }
 
@@ -375,6 +388,12 @@ func (h *Handler) handleToken(w http.ResponseWriter, r *http.Request) {
 	// token is bounded, and a caller who shares the victim's address
 	// cannot spend the victim's budget without the victim's token.
 	if !h.allowSignIn(w, r, ProviderToken, tokenAttemptKey(tok)) {
+		return
+	}
+	// Then the process-wide bound, before anything reaches the API
+	// server: a token refused by its own budget spends none of it.
+	if !h.tokenReviews.Allow(tokenReviewsKey) {
+		h.fail(w, r, ProviderToken, &loginError{http.StatusTooManyRequests, "The console is receiving too many token sign-ins; wait a few seconds and try again.", nil})
 		return
 	}
 	h.complete(w, r, ProviderToken, tokenSet{token: tok, expiry: pastedTokenExpiry(tok)}, r.PostForm.Get("rd"))

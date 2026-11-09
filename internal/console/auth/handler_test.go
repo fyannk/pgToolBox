@@ -17,6 +17,7 @@ package auth
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -488,6 +489,58 @@ func TestJunkSignInsDoNotLockOutOthers(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// TestDistinctJunkTokensAreBoundedProcessWide is the negative of the
+// per-token key: a flood of distinct junk tokens, each with a budget of
+// its own, still makes at most the shared bucket's worth of
+// SelfSubjectReviews, and a legitimate token signs in again once the
+// bucket refills.
+func TestDistinctJunkTokensAreBoundedProcessWide(t *testing.T) {
+	t.Parallel()
+	env := newTestEnv(t, ProviderToken)
+	now := time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC)
+	var mu sync.Mutex
+	env.h.tokenReviews.now = func() time.Time {
+		mu.Lock()
+		defer mu.Unlock()
+		return now
+	}
+	b := env.browser(t)
+	calls := env.rev.calls
+	refused := 0
+	const flood = 3 * tokenReviewsBurst
+	for i := range flood {
+		w := b.do(http.MethodPost, "/auth/token", url.Values{"token": {fmt.Sprintf("junk-%d", i)}}, sameOriginForm)
+		switch w.Code {
+		case http.StatusTooManyRequests:
+			refused++
+		case http.StatusForbidden:
+		default:
+			t.Fatalf("junk token %d = %d", i, w.Code)
+		}
+	}
+	if reviews := env.rev.calls - calls; reviews > tokenReviewsBurst {
+		t.Fatalf("%d distinct junk tokens made %d reviews, want at most %d", flood, reviews, tokenReviewsBurst)
+	}
+	if refused != flood-tokenReviewsBurst {
+		t.Fatalf("%d refused, want %d", refused, flood-tokenReviewsBurst)
+	}
+	// Exhausted: a legitimate token is refused without a review.
+	calls = env.rev.calls
+	if w := b.do(http.MethodPost, "/auth/token", url.Values{"token": {"sa-token"}}, sameOriginForm); w.Code != http.StatusTooManyRequests {
+		t.Fatalf("legitimate token on an empty bucket = %d", w.Code)
+	}
+	if env.rev.calls != calls {
+		t.Fatal("a refused token still reached the API server")
+	}
+	// One refill interval later it signs in.
+	mu.Lock()
+	now = now.Add(time.Second / tokenReviewsPerSecond)
+	mu.Unlock()
+	if w := env.browser(t).do(http.MethodPost, "/auth/token", url.Values{"token": {"sa-token"}}, sameOriginForm); w.Code != http.StatusFound {
+		t.Fatalf("legitimate token after the refill = %d: %s", w.Code, w.Body)
 	}
 }
 

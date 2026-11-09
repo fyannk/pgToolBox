@@ -152,7 +152,10 @@ delete it afterwards.
   burst of ten): an OAuth callback per client address, charged only once its flow
   cookie and state match (a callback without them costs the console nothing and is
   refused for free), and a pasted token per token (keyed on a digest of it), so a
-  caller who shares your address cannot spend your budget. Behind an edge, set
+  caller who shares your address cannot spend your budget. Pasted tokens also
+  share one bound per replica, 20 a second with a burst of 40, so a flood of
+  distinct junk tokens cannot make the console ask the API server more than that;
+  over it the form answers 429 without asking. Behind an edge, set
   `TRUSTED_PROXY_HOPS` (0 to 8) to the number of proxies whose `X-Forwarded-*`
   headers to trust, or the limiter sees only the edge's address; the `pgtools`
   chart sets 1 when `console.exposure.type` is not `none`.
