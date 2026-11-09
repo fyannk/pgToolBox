@@ -123,7 +123,7 @@ type Reconciler struct {
 	// AllowedHostSuffixes are the DNS suffixes spec.exposure.hostname must
 	// fall under (EXPOSURE_ALLOWED_HOST_SUFFIXES). Empty: any hostname.
 	AllowedHostSuffixes []string
-	Features                 Features
+	Features            Features
 	// Random fills the generated session key; crypto/rand by default.
 	Random func(max *big.Int) (*big.Int, error)
 }
