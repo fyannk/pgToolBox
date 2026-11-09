@@ -4,12 +4,13 @@
 #
 # The access-request scenario on kind: the operator and the
 # console built from the working tree, the PgAccessRequest CRD and the two
-# console ClusterRoles from config/, people signed in with pasted
+# console ClusterRoles from config/ (viewer, operator, approver), people signed in with pasted
 # ServiceAccount tokens. It proves on a real API server what envtest cannot:
-# the console writes as the person (a viewer asks, cannot decide; an operator
-# approves and the RoleBinding really grants), four eyes, the operator
-# deleting the grant at expiry and on revocation, and the garbage collector
-# deleting it with its request.
+# the console writes as the person (a viewer asks, cannot decide; an approver
+# approves and the RoleBinding really grants; the grantee of
+# pgtoolbox-console-operator can neither decide nor bind itself a lasting grant),
+# four eyes, the operator deleting the grant at expiry (leaving no access) and on
+# revocation, and the garbage collector deleting it with its request.
 #
 #   CLUSTER_NAME=ptb-e2e-access-local ./test/e2e/access/run.sh
 #   KEEP_CLUSTER=true leaves the cluster up. Artifacts land in artifacts/e2e-access/.
@@ -94,7 +95,7 @@ log "installing the CRDs, the console ClusterRoles and the operator"
 kubectl apply --server-side -f test/crds/cnpg-1.30/ > /dev/null
 kubectl apply --server-side -f config/crd/bases/ > /dev/null
 kubectl apply --server-side -f config/rbac/role.yaml -f config/rbac/pgtoolbox_console_viewer_clusterrole.yaml \
-  -f config/rbac/pgtoolbox_console_operator_clusterrole.yaml > /dev/null
+  -f config/rbac/pgtoolbox_console_operator_clusterrole.yaml -f config/rbac/pgtoolbox_console_approver_clusterrole.yaml > /dev/null
 kubectl create namespace pgtoolbox-access > /dev/null
 kubectl create namespace "$NS" > /dev/null
 sed -e "s|@MANAGER_IMG@|$MANAGER_IMG|g" -e "s|@NS@|$NS|g" test/e2e/access/testdata/operator.yaml | kubectl apply --server-side -f - > /dev/null
@@ -228,8 +229,8 @@ spec:
   ports:
     - {name: http, port: 3000, targetPort: http}
 ---
-# The people: victor views (and may ask), alice and bob operate (and decide),
-# nobody holds nothing.
+# The people: victor views (and may ask), alice views and decides
+# (pgtoolbox-console-approver, holding neither role she grants), nobody holds nothing.
 apiVersion: v1
 kind: ServiceAccount
 metadata: {name: victor, namespace: $NS}
@@ -250,8 +251,14 @@ subjects: [{kind: ServiceAccount, name: victor, namespace: $NS}]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
-metadata: {name: operator-alice, namespace: $NS}
-roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: pgtoolbox-console-operator}
+metadata: {name: viewer-alice, namespace: $NS}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: pgtoolbox-console-viewer}
+subjects: [{kind: ServiceAccount, name: alice, namespace: $NS}]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: approver-alice, namespace: $NS}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: pgtoolbox-console-approver}
 subjects: [{kind: ServiceAccount, name: alice, namespace: $NS}]
 YAML
 
@@ -327,6 +334,7 @@ synced_is() {
 no_binding() { ! kubectl -n "$NS" get rolebinding "pgaccess-$1" > /dev/null 2>&1; }
 can_patch() { [ "$(kubectl auth can-i patch clusters.postgresql.cnpg.io -n "$NS" --as="system:serviceaccount:$NS:$1")" = "yes" ]; }
 cannot_patch() { ! can_patch "$1"; }
+can_bind() { [ "$(kubectl auth can-i create rolebindings -n "$NS" --as="system:serviceaccount:$NS:$1")" = "yes" ]; }
 
 base_path="/api/v1/namespaces/$NS/access-requests"
 expires=$(date -u -d '+100 seconds' '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u -v+100S '+%Y-%m-%dT%H:%M:%SZ')
@@ -358,6 +366,14 @@ contains "\"decidedBy\":\"system:serviceaccount:$NS:alice\"" "the approver is re
 contains '"phase":"Approved"' "approve answer"
 wait_for "RoleBinding pgaccess-$first grants victor" 30 can_patch victor
 wait_for "the operator reports $first granted" 60 synced_is "$first" AccessGranted
+# The grant is pgtoolbox-console-operator, time-boxed: it must not let victor
+# keep it (a RoleBinding of his own) or hand out access (approve anyone).
+can_bind victor && fail "victor, granted pgtoolbox-console-operator, may create RoleBindings"
+log "ok: the grantee may not create RoleBindings"
+api 201 "alice asks for operator" alice POST "$base_path" '{"capability":"operator","justification":"INC-2"}'
+others=$(name_of)
+api 403 "victor, granted operator, approves another request" victor POST "$base_path/$others/approve" '{}'
+api 403 "victor, granted operator, denies another request" victor POST "$base_path/$others/deny" '{"note":"no"}'
 
 api 201 "alice asks for herself" alice POST "$base_path" '{"capability":"viewer","justification":"mine"}'
 own=$(name_of)

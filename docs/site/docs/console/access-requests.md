@@ -20,7 +20,7 @@ in one namespace:
 | `capability` | ClusterRole bound | What it allows |
 |---|---|---|
 | `viewer` | `pgtoolbox-console-viewer` | See the namespace's Clusters, their pods, events and logs; ask for more. |
-| `operator` | `pgtoolbox-console-operator` | The viewer's rights, plus the console's operations (backup, restart, reload, promote), opening pgAdmin, and deciding the namespace's access requests. |
+| `operator` | `pgtoolbox-console-operator` | The viewer's rights, plus the console's operations (backup, restart, reload, promote) and opening pgAdmin. It does **not** decide access requests: a time-boxed grantee could otherwise bind themselves a second, permanent RoleBinding, or approve someone else. |
 
 **A grant always covers every Cluster of the namespace.** A request may name a
 Cluster (`spec.cluster`) to tell the decider what it is for, but Kubernetes RBAC
@@ -35,8 +35,21 @@ If that is too much, put the Cluster in a namespace of its own.
 |---|---|---|
 | Ask (create a request, see the ones naming you) | `create pgaccessrequests` | `pgtoolbox-console-viewer` |
 | See every request | `list pgaccessrequests` | `pgtoolbox-console-viewer` |
-| Approve or deny | `create rolebindings` and `update pgaccessrequests/status` | `pgtoolbox-console-operator`, the namespace's `admin` |
-| Revoke | `update pgaccessrequests/status` | `pgtoolbox-console-operator`, the namespace's `admin` |
+| Approve or deny | `create rolebindings`, `update pgaccessrequests/status`, and `bind` on the role granted (or its every rule) | `pgtoolbox-console-approver`, the namespace's `admin` |
+| Revoke | `update pgaccessrequests/status` | `pgtoolbox-console-approver`, the namespace's `admin` |
+
+`pgtoolbox-console-approver` is the deciding role, and no request can grant it
+(a request's `capability` is `viewer` or `operator`). It holds `bind` on exactly
+`pgtoolbox-console-viewer` and `pgtoolbox-console-operator`, so an approver need not
+hold the roles they grant; whoever holds it may bind either role to anyone in the
+namespace, themselves included, so give it to the people who already own the
+namespace's access, next to `pgtoolbox-console-viewer` (which lets the console show
+them the namespace):
+
+```bash
+kubectl -n team-a create rolebinding team-a-leads-approver \
+  --clusterrole=pgtoolbox-console-approver --group=team-a-leads
+```
 
 The console asks the API server (a SelfSubjectAccessReview, with your token) before it shows a button
 or attempts a write, and answers 403 for anything you may not do. It then writes

@@ -1,0 +1,53 @@
+# The role of a person who decides the namespace's PgAccessRequests through the
+# console. The console creates the RoleBinding to pgtoolbox-console-viewer or
+# pgtoolbox-console-operator with the approver's own token (create rolebindings),
+# and the API server's escalation check passes through `bind` on exactly those
+# two ClusterRoles: an approver need not hold the roles they grant. It then
+# records the decision (update pgaccessrequests/status) and reads the request it
+# judges (get, list, watch pgaccessrequests).
+#
+# No PgAccessRequest can grant this role: a request's capability is viewer or
+# operator, and nothing maps it here. Whoever holds it may bind either console
+# role to anyone in the namespace, themselves included, so bind it only to the
+# people who already own access to the namespace (a team lead, the namespace
+# admin), alongside pgtoolbox-console-viewer so that the console shows them the
+# namespace.
+#
+# Bound per namespace with a RoleBinding; the product renders no ClusterRoleBinding.
+# Hand-written source of truth, see pgtoolbox_console_viewer_clusterrole.yaml.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: pgtoolbox-console-approver
+  labels:
+    app.kubernetes.io/part-of: pgtoolbox
+rules:
+- apiGroups:
+  - pgtoolbox.fyannk.dev
+  resources:
+  - pgaccessrequests
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - pgtoolbox.fyannk.dev
+  resources:
+  - pgaccessrequests/status
+  verbs:
+  - update
+- apiGroups:
+  - rbac.authorization.k8s.io
+  resources:
+  - rolebindings
+  verbs:
+  - create
+- apiGroups:
+  - rbac.authorization.k8s.io
+  resources:
+  - clusterroles
+  resourceNames:
+  - pgtoolbox-console-operator
+  - pgtoolbox-console-viewer
+  verbs:
+  - bind

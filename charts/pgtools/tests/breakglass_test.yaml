@@ -92,7 +92,7 @@ tests:
     asserts:
       - isKind: {of: Role}
       - notContains: {path: rules, content: {apiGroups: [pgtoolbox.fyannk.dev], resources: [pgadmins], verbs: [get]}}
-      - contains: {path: rules, content: {apiGroups: [rbac.authorization.k8s.io], resources: [rolebindings], verbs: [create]}}
+      - notContains: {path: rules, content: {apiGroups: [rbac.authorization.k8s.io], resources: [rolebindings], verbs: [create]}}
       - contains: {path: rules, content: {apiGroups: [""], resources: [pods/log], verbs: [get]}}
 
   - it: the Role carries the operator's kinds when they are served
@@ -104,7 +104,9 @@ tests:
     asserts:
       - contains: {path: rules, content: {apiGroups: [pgtoolbox.fyannk.dev], resources: [pgadmins], verbs: [get]}}
       - contains: {path: rules, content: {apiGroups: [pgtoolbox.fyannk.dev], resources: [pgaccessrequests], verbs: [create, get, list, watch]}}
-      - contains: {path: rules, content: {apiGroups: [pgtoolbox.fyannk.dev], resources: [pgaccessrequests/status], verbs: [update]}}
+      # Like pgtoolbox-console-operator, break-glass decides no access request.
+      - notContains: {path: rules, content: {apiGroups: [pgtoolbox.fyannk.dev], resources: [pgaccessrequests/status], verbs: [update]}}
+      - notContains: {path: rules, content: {apiGroups: [rbac.authorization.k8s.io], resources: [rolebindings], verbs: [create]}}
 
   - it: rejects an unknown roleKind
     set: {console.breakGlass.enabled: true, console.breakGlass.roleKind: ClusterRoleBinding}

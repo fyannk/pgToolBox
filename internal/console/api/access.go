@@ -230,9 +230,9 @@ func registerAccess(a huma.API, d Deps) {
 		kind              decisionKind
 	}{
 		{OpApproveAccessRequest, "Approve an access request", "Pessimistic, as you: the console creates the RoleBinding the request resolves to " +
-			"(the API server refuses it unless you hold every rule of the ClusterRole: its escalation check), then records you in " +
+			"(the API server refuses it unless you may bind the ClusterRole or hold its every rule: its escalation check), then records you in " +
 			"status.decidedBy with an update locked to the version it read. You need create rolebindings and update " +
-			"pgaccessrequests/status in the namespace (pgtoolbox-console-operator grants both). 403: you may not, or the request names you " +
+			"pgaccessrequests/status in the namespace (pgtoolbox-console-approver grants both, with bind on the two console roles). 403: you may not, or the request names you " +
 			"(nobody approves their own request). 409: the request is no longer Pending, has expired, or changed since it was read.", decideApprove},
 		{OpDenyAccessRequest, "Deny an access request", "Records the refusal and your note (required) in status, as you. Needs the same " +
 			"rights as approving. 409: the request is no longer Pending. 422: no note.", decideDeny},
@@ -523,7 +523,7 @@ func decideAccess(ctx context.Context, d Deps, p *auth.Principal, in *AccessPath
 		dec = askAll(ctx, d.Authz, p.User, bindAttr(in.Namespace), statusAttr(in.Namespace, in.Name))
 	}
 	if !dec.Allowed {
-		what := "create rolebindings and update pgaccessrequests/status in namespace " + in.Namespace + ": deciding access requests takes the pgtoolbox-console-operator role there"
+		what := "create rolebindings and update pgaccessrequests/status in namespace " + in.Namespace + ": deciding access requests takes the pgtoolbox-console-approver role there"
 		if kind == decideRevoke {
 			what = "update pgaccessrequests/" + in.Name + "/status in namespace " + in.Namespace
 		}

@@ -15,7 +15,8 @@ The Role's rules are those of the pgtoolbox-console-operator ClusterRole
 hack/validate-packaging.sh compares them so they cannot drift. The pgtoolbox.fyannk.dev
 rules are left out unless the operator's kinds are served (console.rbac.operatorKinds):
 Kubernetes refuses to create a Role that grants a verb its creator lacks, and a
-namespace admin holds none on kinds that are not installed.
+namespace admin holds none on kinds that are not installed. Like that ClusterRole, it
+decides no PgAccessRequest: approving is pgtoolbox-console-approver's.
 */ -}}
 {{- $kind := .Values.console.breakGlass.roleKind | default "ClusterRole" }}
 {{- if not (has $kind (list "ClusterRole" "Role")) }}
@@ -60,13 +61,7 @@ rules:
   - apiGroups: [pgtoolbox.fyannk.dev]
     resources: [pgaccessrequests]
     verbs: [create, get, list, watch]
-  - apiGroups: [pgtoolbox.fyannk.dev]
-    resources: [pgaccessrequests/status]
-    verbs: [update]
   {{- end }}
-  - apiGroups: [rbac.authorization.k8s.io]
-    resources: [rolebindings]
-    verbs: [create]
   - apiGroups: [barmancloud.cnpg.io]
     resources: [objectstores]
     verbs: [get, list, watch]

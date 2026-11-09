@@ -40,7 +40,8 @@ import (
 
 // The suite runs on a real API server with RBAC: the operator is a user
 // bound to exactly the generated manager ClusterRole, the people are users
-// bound per namespace to the two console ClusterRoles of config/rbac. What
+// bound per namespace to the console ClusterRoles of config/rbac (the approver
+// to pgtoolbox-console-approver alone, the viewer to pgtoolbox-console-viewer). What
 // a fake client cannot show is shown here: the escalation check on the
 // RoleBinding an approver creates, the verbs each role really holds, the
 // status CEL rules, and an operator that can delete a grant but never make
@@ -50,6 +51,9 @@ const (
 	envApprover = "oidc:alice@corp.example"
 	envViewer   = "oidc:victor@corp.example"
 	envNS       = "team-a"
+	// envApproverRole is config/rbac/pgtoolbox_console_approver_clusterrole.yaml:
+	// it holds neither console role, only bind on them.
+	envApproverRole = "pgtoolbox-console-approver"
 )
 
 type envSuite struct {
@@ -91,7 +95,7 @@ func newEnvSuite(t *testing.T) *envSuite {
 	admin := as("")
 	ctx := context.Background()
 	mustEnv(t, admin.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: envNS}}))
-	for _, file := range []string{"role.yaml", "pgtoolbox_console_viewer_clusterrole.yaml", "pgtoolbox_console_operator_clusterrole.yaml"} {
+	for _, file := range []string{"role.yaml", "pgtoolbox_console_viewer_clusterrole.yaml", "pgtoolbox_console_operator_clusterrole.yaml", "pgtoolbox_console_approver_clusterrole.yaml"} {
 		raw, err := os.ReadFile(filepath.Join("..", "..", "..", "config", "rbac", file)) // #nosec G304 -- repository manifest
 		if err != nil {
 			t.Fatal(err)
@@ -107,7 +111,7 @@ func newEnvSuite(t *testing.T) *envSuite {
 		RoleRef:    rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "ClusterRole", Name: "manager-role"},
 		Subjects:   []rbacv1.Subject{{Kind: rbacv1.UserKind, APIGroup: rbacv1.GroupName, Name: envOperator}},
 	}))
-	for user, role := range map[string]string{envApprover: pgtoolboxv1alpha1.ClusterRoleOperator, envViewer: pgtoolboxv1alpha1.ClusterRoleViewer} {
+	for user, role := range map[string]string{envApprover: envApproverRole, envViewer: pgtoolboxv1alpha1.ClusterRoleViewer} {
 		mustEnv(t, admin.Create(ctx, &rbacv1.RoleBinding{
 			ObjectMeta: metav1.ObjectMeta{Namespace: envNS, Name: role + "-" + strings.Split(strings.TrimPrefix(user, "oidc:"), "@")[0]},
 			RoleRef:    rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "ClusterRole", Name: role},
@@ -210,6 +214,33 @@ func TestAccessRequestEnvtest(t *testing.T) {
 		}
 	})
 
+	t.Run("a grantee of pgtoolbox-console-operator cannot outlive or extend the grant", func(t *testing.T) {
+		// A second, permanent binding to themselves.
+		keep := got.DesiredRoleBinding()
+		keep.Name, keep.OwnerReferences = "victor-forever", nil
+		if err := s.viewer.Create(ctx, keep); !apierrors.IsForbidden(err) {
+			t.Fatalf("the grantee creating a RoleBinding = %v, want Forbidden", err)
+		}
+		// Approving somebody else's request.
+		other := &pgtoolboxv1alpha1.PgAccessRequest{
+			ObjectMeta: metav1.ObjectMeta{Namespace: envNS, Name: "mallory-operator"},
+			Spec: pgtoolboxv1alpha1.PgAccessRequestSpec{
+				Subject:    pgtoolboxv1alpha1.AccessSubject{Kind: pgtoolboxv1alpha1.AccessSubjectUser, Name: "oidc:mallory@corp.example"},
+				Capability: pgtoolboxv1alpha1.AccessCapabilityOperator, Justification: "INC-4212",
+			},
+		}
+		mustEnv(t, s.admin.Create(ctx, other))
+		pending := s.reconcile(ctx, t, other.Name)
+		if err := approve(ctx, s.viewer, pending, envViewer, s.now); !apierrors.IsForbidden(err) {
+			t.Fatalf("the grantee approving another request = %v, want Forbidden", err)
+		}
+		pending.Status.Phase = pgtoolboxv1alpha1.AccessPhaseDenied
+		pending.Status.DecidedBy, pending.Status.DecidedAt, pending.Status.Note = envViewer, &metav1.Time{Time: s.now}, "no"
+		if err := s.viewer.Status().Update(ctx, pending); !apierrors.IsForbidden(err) {
+			t.Fatalf("the grantee deciding another request = %v, want Forbidden", err)
+		}
+	})
+
 	t.Run("status CEL keeps a decision a decision", func(t *testing.T) {
 		back := got.DeepCopy()
 		back.Status.Phase = pgtoolboxv1alpha1.AccessPhasePending
@@ -237,6 +268,12 @@ func TestAccessRequestEnvtest(t *testing.T) {
 		err := s.admin.Get(ctx, client.ObjectKey{Namespace: envNS, Name: got.RoleBindingName()}, &rbacv1.RoleBinding{})
 		if !apierrors.IsNotFound(err) {
 			t.Fatalf("RoleBinding after expiry: %v", err)
+		}
+		// And the access is gone with it.
+		cluster := &cnpgv1.Cluster{ObjectMeta: metav1.ObjectMeta{Namespace: envNS, Name: "missing"}}
+		err = s.viewer.Patch(ctx, cluster, client.RawPatch("application/merge-patch+json", []byte(`{"metadata":{"annotations":{"a":"b"}}}`)))
+		if !apierrors.IsForbidden(err) {
+			t.Fatalf("the expired grantee's patch = %v, want Forbidden", err)
 		}
 	})
 

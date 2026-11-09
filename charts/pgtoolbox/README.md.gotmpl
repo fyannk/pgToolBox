@@ -34,7 +34,7 @@ not delete every `PgToolBoxConsole`, `PgAdmin` and `EvidenceAgent`), and the two
 | `operator.config.*` | `WATCH_NAMESPACES`, `MAX_CONCURRENT_RECONCILES`, `RECONCILIATION_TIMEOUT`, `UPGRADE_BACKUPS_KEPT` | the operator's own defaults |
 | `operator.metrics.serviceMonitor` / `podMonitor` | a metrics Service + ServiceMonitor / a PodMonitor | off |
 | `operator.metrics.readerClusterRole` / `readerSubjects` | `<release>-metrics-reader`, bound to the named scrapers only | off |
-| `operator.userRoles.create` | `pgtoolbox-console-viewer`, `pgtoolbox-console-operator` | `true` |
+| `operator.userRoles.create` | `pgtoolbox-console-viewer`, `pgtoolbox-console-operator`, `pgtoolbox-console-approver` | `true` |
 | `operator.userRoles.aggregateToAdmin` | `pgtoolbox-aggregate-to-admin`: read on PgAdmins, EvidenceAgents and PgAccessRequests `create` on PgAccessRequests and `update` on their status (deciding a request), aggregated into the built-in `admin` role, not `edit`, so a namespace admin can bind `pgtoolbox-console-viewer` / `pgtoolbox-console-operator` to their team (a namespace admin can then install a `pgtools` console that links to them) | `true` |
 
 The operator serves `/metrics` over HTTPS and authenticates every scrape: the
@@ -78,8 +78,10 @@ binding. `pgtoolbox-console-viewer` reads the CNPG kinds, pods, services, PVCs, 
 `pods/log`; `pgtoolbox-console-operator` adds `create backups`, `patch clusters`,
 `patch clusters/status`, `get pgadmins` (pgAdmin is dba-only: whoever may open it
 holds the credentials of every role it offers), `create databaseroles` (a person's own
-DatabaseRole, written with their token) and, for access requests,
-`create pgaccessrequests` / `update pgaccessrequests/status` / `create rolebindings`.
+DatabaseRole, written with their token) and `create pgaccessrequests`. Deciding access
+requests is `pgtoolbox-console-approver`'s alone (`update pgaccessrequests/status`,
+`create rolebindings`, `bind` on the two other roles): an approved request binds
+`pgtoolbox-console-operator`, so that role must not be able to extend or hand out access.
 Neither touches a Secret.
 
 **Cross-namespace pgAdmin.** A `PgAdminAccess` grants a `PgAdmin` of another

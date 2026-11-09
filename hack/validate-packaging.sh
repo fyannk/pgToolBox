@@ -348,6 +348,7 @@ bundle_dir = pathlib.Path("deploy/olm/bundle/manifests")
 for name, src, olm_file, helm_name in (
         ("pgtoolbox-console-viewer", "config/rbac/pgtoolbox_console_viewer_clusterrole.yaml", "pgtoolbox-console-viewer_rbac.authorization.k8s.io_v1_clusterrole.yaml", "pgtoolbox-console-viewer"),
         ("pgtoolbox-console-operator", "config/rbac/pgtoolbox_console_operator_clusterrole.yaml", "pgtoolbox-console-operator_rbac.authorization.k8s.io_v1_clusterrole.yaml", "pgtoolbox-console-operator"),
+        ("pgtoolbox-console-approver", "config/rbac/pgtoolbox_console_approver_clusterrole.yaml", "pgtoolbox-console-approver_rbac.authorization.k8s.io_v1_clusterrole.yaml", "pgtoolbox-console-approver"),
         ("pgtoolbox-aggregate-to-admin", "config/rbac/pgtoolbox_aggregate_to_admin_clusterrole.yaml", "pgtoolbox-aggregate-to-admin_rbac.authorization.k8s.io_v1_clusterrole.yaml", "pgtoolbox-aggregate-to-admin"),
         ("pgtoolbox-console", "config/rbac/pgtoolbox_console_clusterrole.yaml", "pgtoolbox-console_rbac.authorization.k8s.io_v1_clusterrole.yaml", "pgtoolbox-console"),
         ("pgtoolbox-console-pod-logs", "config/rbac/pgtoolbox_console_pod_logs_clusterrole.yaml", "pgtoolbox-console-pod-logs_rbac.authorization.k8s.io_v1_clusterrole.yaml", "pgtoolbox-console-pod-logs"),
@@ -402,16 +403,32 @@ EXPECTED_WRITES = [
     {"apiGroups": ["postgresql.cnpg.io"], "resources": ["backups"], "verbs": ["create"]},
     {"apiGroups": ["postgresql.cnpg.io"], "resources": ["databaseroles"], "verbs": ["create"]},
     {"apiGroups": ["postgresql.cnpg.io"], "resources": ["clusters", "clusters/status"], "verbs": ["patch"]},
-    # Deciding a PgAccessRequest: record the decision, and create the
-    # RoleBinding as the approver (the API server's escalation check holds
-    # because the approver holds every rule of either ClusterRole here).
-    {"apiGroups": ["pgtoolbox.fyannk.dev"], "resources": ["pgaccessrequests/status"], "verbs": ["update"]},
-    {"apiGroups": ["rbac.authorization.k8s.io"], "resources": ["rolebindings"], "verbs": ["create"]},
 ]
 extra = [r for r in operator_role if r not in viewer]
 if sorted(json.dumps(r, sort_keys=True) for r in extra) != sorted(json.dumps(r, sort_keys=True) for r in EXPECTED_WRITES + [
         {"apiGroups": ["pgtoolbox.fyannk.dev"], "resources": ["pgadmins"], "verbs": ["get"]}]):
-    problems.append(f"pgtoolbox-console-operator must be the viewer plus exactly create backups, create databaseroles, patch clusters and clusters/status, get pgadmins, update pgaccessrequests/status, create rolebindings; extra rules are {extra}")
+    problems.append(f"pgtoolbox-console-operator must be the viewer plus exactly create backups, create databaseroles, patch clusters and clusters/status, get pgadmins; extra rules are {extra}")
+# Deciding a PgAccessRequest is the approver's alone. pgtoolbox-console-operator
+# is what an approved request grants, time-boxed: holding create rolebindings or
+# update pgaccessrequests/status, a grantee could bind themselves a second,
+# permanent RoleBinding or approve other people's requests.
+for rule in viewer + operator_role:
+    if "rolebindings" in rule.get("resources", []) or "pgaccessrequests/status" in rule.get("resources", []) or "clusterroles" in rule.get("resources", []):
+        problems.append(f"a grantable console role holds {rule}: deciding access is pgtoolbox-console-approver's")
+approver_role = load("config/rbac/pgtoolbox_console_approver_clusterrole.yaml")["rules"]
+EXPECTED_APPROVER = [
+    {"apiGroups": ["pgtoolbox.fyannk.dev"], "resources": ["pgaccessrequests"], "verbs": ["get", "list", "watch"]},
+    {"apiGroups": ["pgtoolbox.fyannk.dev"], "resources": ["pgaccessrequests/status"], "verbs": ["update"]},
+    {"apiGroups": ["rbac.authorization.k8s.io"], "resources": ["rolebindings"], "verbs": ["create"]},
+    # bind on exactly the two grantable roles: the escalation check passes
+    # without the approver holding them, and nothing else can be bound this way.
+    {"apiGroups": ["rbac.authorization.k8s.io"], "resources": ["clusterroles"],
+     "resourceNames": ["pgtoolbox-console-operator", "pgtoolbox-console-viewer"], "verbs": ["bind"]},
+]
+if approver_role != EXPECTED_APPROVER:
+    problems.append(f"pgtoolbox-console-approver must be exactly {EXPECTED_APPROVER}; it is {approver_role}")
+if "pgtoolbox-console-approver" in pathlib.Path("api/v1alpha1/pgaccessrequest_funcs.go").read_text():
+    problems.append("api/v1alpha1/pgaccessrequest_funcs.go names pgtoolbox-console-approver: no PgAccessRequest may grant it")
 if [r for r in viewer if r not in operator_role]:
     problems.append("pgtoolbox-console-operator must contain every rule of pgtoolbox-console-viewer")
 # Promote lists the Cluster's pods as the caller, so both roles must be able to.
@@ -421,7 +438,7 @@ for label, rules in (("pgtoolbox-console-viewer", viewer), ("pgtoolbox-console-o
 for rule in viewer + operator_role:
     if "secrets" in rule.get("resources", []) or "*" in rule.get("resources", []) or "*" in rule.get("apiGroups", []):
         problems.append(f"a user ClusterRole grants {rule}: no Secret and no wildcard")
-if any(d["kind"] == "ClusterRoleBinding" and d["roleRef"]["name"] in ("pgtoolbox-console-viewer", "pgtoolbox-console-operator")
+if any(d["kind"] == "ClusterRoleBinding" and d["roleRef"]["name"] in ("pgtoolbox-console-viewer", "pgtoolbox-console-operator", "pgtoolbox-console-approver")
        for d in helm_full + kust_docs):
     problems.append("a ClusterRoleBinding to a user ClusterRole is rendered: people are bound per namespace by whoever may create RoleBindings")
 

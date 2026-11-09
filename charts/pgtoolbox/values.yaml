@@ -257,9 +257,11 @@ operator:
   # RoleBinding: pgtoolbox-console-viewer (read the CNPG kinds, pods,
   # events, logs) and pgtoolbox-console-operator (viewer plus create backups, patch
   # clusters and their status, get pgadmins: whoever may open pgAdmin holds the
-  # offered credentials). The chart renders no binding for them.
+  # offered credentials), and pgtoolbox-console-approver (decides
+  # PgAccessRequests: create rolebindings, update their status, bind on the two
+  # other roles; no request can grant it). The chart renders no binding for them.
   userRoles:
-    # -- Render the `pgtoolbox-console-viewer` and `pgtoolbox-console-operator` ClusterRoles. The
+    # -- Render the `pgtoolbox-console-viewer`, `pgtoolbox-console-operator` and `pgtoolbox-console-approver` ClusterRoles. The
     # chart renders no binding for them: bind them per namespace with a
     # RoleBinding.
     create: true

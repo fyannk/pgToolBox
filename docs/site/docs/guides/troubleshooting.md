@@ -243,7 +243,7 @@ flowchart TB
   tried -->|"409: not Pending"| decided["someone decided meanwhile: reload"]
 ```
 
-- **Who may decide**: `pgtoolbox-console-operator` or the namespace's `admin`, in the
+- **Who may decide**: `pgtoolbox-console-approver` or the namespace's `admin`, in the
   request's namespace, and never the person the request names (their user, their
   ServiceAccount or a group they are in). See
   [Access requests](../console/access-requests.md#who-may-do-what).

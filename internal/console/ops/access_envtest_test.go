@@ -40,11 +40,12 @@ import (
 )
 
 // The access-request write path on a real API server, with the people
-// bound to the repository's own pgtoolbox-console-viewer and pgtoolbox-console-operator
-// ClusterRoles: token passthrough (no token, no write), the viewer asking
-// and refused when deciding, the operator's approval passing the
-// RoleBinding escalation check, the decision locked to the version read,
-// and an approval retried after its status write failed.
+// bound to the repository's own pgtoolbox-console-viewer, pgtoolbox-console-operator
+// and pgtoolbox-console-approver ClusterRoles: token passthrough (no token, no
+// write), the viewer asking and refused when deciding, the approver's approval
+// passing the RoleBinding escalation check through bind (holding neither role),
+// the grantee of pgtoolbox-console-operator still unable to decide, the decision
+// locked to the version read, and an approval retried after its status write failed.
 func TestAccessWriterOnEnvtest(t *testing.T) {
 	if os.Getenv("KUBEBUILDER_ASSETS") == "" {
 		t.Skip("KUBEBUILDER_ASSETS unset; run through make test-envtest-access")
@@ -75,7 +76,7 @@ func TestAccessWriterOnEnvtest(t *testing.T) {
 		}
 	}
 	must(admin.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "team-a"}}))
-	for _, file := range []string{"pgtoolbox_console_viewer_clusterrole.yaml", "pgtoolbox_console_operator_clusterrole.yaml"} {
+	for _, file := range []string{"pgtoolbox_console_viewer_clusterrole.yaml", "pgtoolbox_console_operator_clusterrole.yaml", "pgtoolbox_console_approver_clusterrole.yaml"} {
 		raw, err := os.ReadFile(filepath.Join("..", "..", "..", "config", "rbac", file)) // #nosec G304 -- repository manifest
 		must(err)
 		role := &rbacv1.ClusterRole{}
@@ -96,7 +97,8 @@ func TestAccessWriterOnEnvtest(t *testing.T) {
 		must(err)
 		return tr.Status.Token
 	}
-	dba, app := token("dba", pgtoolboxv1alpha1.ClusterRoleOperator), token("app", pgtoolboxv1alpha1.ClusterRoleViewer)
+	const approverRole = "pgtoolbox-console-approver"
+	dba, app := token("dba", approverRole), token("app", pgtoolboxv1alpha1.ClusterRoleViewer)
 	uc, err := NewAccessUserClient(auth.UserConfig(cfg))
 	must(err)
 	w := NewAccessWriter(uc, 10*time.Second)
@@ -139,7 +141,7 @@ func TestAccessWriterOnEnvtest(t *testing.T) {
 		}
 	})
 
-	t.Run("the operator approves as themselves", func(t *testing.T) {
+	t.Run("the approver approves as themselves", func(t *testing.T) {
 		r, err := w.ReadAccessRequest(as(dba), "team-a", created.Name)
 		must(err)
 		stale := r.DeepCopy()
@@ -156,9 +158,22 @@ func TestAccessWriterOnEnvtest(t *testing.T) {
 		if err := w.RecordDecision(as(dba), stale); status(err) != http.StatusConflict {
 			t.Fatalf("a decision on a stale read: %v", err)
 		}
-		// The grant is real: app may now decide too.
-		if _, err := w.CreateAccessRequest(as(app), newRequest()); err != nil {
+		// The grant is real, and it is not the approver's: app, now
+		// pgtoolbox-console-operator, may ask again but decides nothing, so
+		// it can neither bind itself a grant that outlives this one nor
+		// approve anyone.
+		next, err := w.CreateAccessRequest(as(app), newRequest())
+		if err != nil {
 			t.Fatal(err)
+		}
+		if err := w.CreateGrant(as(app), next); status(err) != http.StatusForbidden {
+			t.Fatalf("the grantee creating a RoleBinding: %v", err)
+		}
+		next.Status.Phase = pgtoolboxv1alpha1.AccessPhaseApproved
+		next.Status.DecidedBy, next.Status.DecidedAt = "system:serviceaccount:team-a:app", &metav1.Time{Time: time.Now()}
+		next.Status.RoleBinding, next.Status.ClusterRole = next.RoleBindingName(), pgtoolboxv1alpha1.ClusterRoleOperator
+		if err := w.RecordDecision(as(app), next); status(err) != http.StatusForbidden {
+			t.Fatalf("the grantee recording a decision: %v", err)
 		}
 	})
 
@@ -170,10 +185,10 @@ func TestAccessWriterOnEnvtest(t *testing.T) {
 		foreign.RoleRef.Name = pgtoolboxv1alpha1.ClusterRoleViewer
 		must(admin.Create(t.Context(), foreign))
 		// An approver who may read RoleBindings is told; one who may not
-		// (pgtoolbox-console-operator) proceeds, and the operator reports the
+		// (pgtoolbox-console-approver) proceeds, and the operator reports the
 		// grant missing: it never trusts a binding the request does not
 		// control.
-		reader := token("reader", pgtoolboxv1alpha1.ClusterRoleOperator)
+		reader := token("reader", approverRole)
 		must(admin.Create(t.Context(), &rbacv1.Role{
 			ObjectMeta: metav1.ObjectMeta{Namespace: "team-a", Name: "read-bindings"},
 			Rules:      []rbacv1.PolicyRule{{APIGroups: []string{rbacv1.GroupName}, Resources: []string{"rolebindings"}, Verbs: []string{"get"}}},
@@ -187,7 +202,7 @@ func TestAccessWriterOnEnvtest(t *testing.T) {
 			t.Fatalf("grant over a foreign binding, as a reader: %v", err)
 		}
 		if err := w.CreateGrant(as(dba), r); err != nil {
-			t.Fatalf("grant over a foreign binding, as pgtoolbox-console-operator: %v", err)
+			t.Fatalf("grant over a foreign binding, as pgtoolbox-console-approver: %v", err)
 		}
 		got := &rbacv1.RoleBinding{}
 		must(admin.Get(t.Context(), client.ObjectKeyFromObject(foreign), got))

@@ -16,7 +16,7 @@ The OLM bundle installs **the operator only**. The console is installed from the
 | Minimum Kubernetes | 1.28 |
 | Owned CRDs | `pgadmins`, `pgadminaccesses`, `evidenceagents`, `pgtoolboxconsoles` and `pgaccessrequests` (all `.pgtoolbox.fyannk.dev`, `v1alpha1`) |
 | Suggested namespace | `pgtoolbox`, labelled Pod Security `restricted` (enforce, audit, warn) |
-| Also ships | the `pgtoolbox-console-viewer`, `pgtoolbox-console-operator` and metrics-reader ClusterRoles, a PodDisruptionBudget |
+| Also ships | the `pgtoolbox-console-viewer`, `pgtoolbox-console-operator`, `pgtoolbox-console-approver` and metrics-reader ClusterRoles, a PodDisruptionBudget |
 
 The bundle image is `ghcr.io/fyannk/pgtoolbox-bundle:<version>` and
 the file-based catalog image `ghcr.io/fyannk/pgtoolbox-catalog:<version>`.
