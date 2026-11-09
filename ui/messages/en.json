@@ -1464,5 +1464,8 @@
   "backup_overdue_default": "overdue: older than 7 days, and no backup cadence is known",
   "backup_no_cadence_known": "no backup cadence known: warning after 7 days",
   "version_upgrade_in_flight": "CNPG upgrade in progress: {detail}",
-  "drill_checks_not_kept": "Finished before the console restarted: its outcome and times were kept, its checks were not."
+  "drill_checks_not_kept": "Finished before the console restarted: its outcome and times were kept, its checks were not.",
+  "not_restore_tested": "Not restore-tested: no restore drill of this Cluster passed in the last {days} days.",
+  "pitr_edge_hint_archiver": "The newest restore point is uncertain. On the primary, check what PostgreSQL last archived:",
+  "pitr_edge_hint_switch": "Then force a WAL switch on the primary, so the current segment is archived, and refresh the evidence:"
 }

@@ -214,7 +214,15 @@ function FactRow({ label, fact }: { label: string; fact: EvidenceFact }) {
  * says why ("not verifiable: audience mismatch (…)", "not verifiable: status
  * not written by the operator (…)"), which the generic word cannot.
  */
-function EvidencePanel({ e }: { e: EvidenceCheck }) {
+function EvidencePanel({
+  e,
+  restoreTested,
+  windowDays,
+}: {
+  e: EvidenceCheck;
+  restoreTested: boolean;
+  windowDays: number;
+}) {
   const r = e.repository;
   const reasonFirst = Boolean(e.reason) && (e.state === "unavailable" || e.state === "stale");
   return (
@@ -250,10 +258,17 @@ function EvidencePanel({ e }: { e: EvidenceCheck }) {
               {r.backups === undefined ? (
                 <Reported value={undefined} />
               ) : (
-                m.evidence_counts_value({
-                  backups: String(r.backups),
-                  usable: r.structurallyUsable === undefined ? m.not_reported() : String(r.structurallyUsable),
-                })
+                <>
+                  {m.evidence_counts_value({
+                    backups: String(r.backups),
+                    usable: r.structurallyUsable === undefined ? m.not_reported() : String(r.structurallyUsable),
+                  })}
+                  {!restoreTested && (
+                    <span className="block text-caption font-semibold">
+                      {m.not_restore_tested({ days: String(windowDays) })}
+                    </span>
+                  )}
+                </>
               )}
             </Fact>
             <Fact label={m.evidence_repo_only()}>
@@ -313,11 +328,15 @@ export function BackupsView({ data, drillOffer, actor, onRequest }: ViewProps) {
             )}
             <Provenance provenance={meth.provenance} />
           </Panel>
-          <EvidencePanel e={data.evidence} />
+          <EvidencePanel
+            e={data.evidence}
+            restoreTested={data.drills.restoreTested ?? false}
+            windowDays={data.drills.windowDays ?? 90}
+          />
         </div>
       </div>
       {data.evidence.repository?.pgbackrest && <PgBackRestRepository p={data.evidence.repository.pgbackrest} />}
-      <RecoveryWindowPanel t={data.recoveryTimeline} cluster={data.ref} />
+      <RecoveryWindowPanel t={data.recoveryTimeline} cluster={data.ref} windowDays={data.drills.windowDays ?? 90} />
       {data.drills && (
         <RestoreDrillsPanel drills={data.drills} offer={drillOffer} actor={actor} onRequest={onRequest} />
       )}

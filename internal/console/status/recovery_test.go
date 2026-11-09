@@ -16,6 +16,8 @@ package status
 
 import (
 	"context"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -48,6 +50,10 @@ func TestRestoreCheckReadsTheTimeline(t *testing.T) {
 		}
 		if got.Answer != c.answer || got.BackupID != c.backupID || got.Basis != "evidence" || len(got.Caveats) < 2 || got.Text == "" {
 			t.Errorf("%s: %+v", c.name, got)
+		}
+		// No drill is recorded for orders here: never restore-tested.
+		if !slices.ContainsFunc(got.Caveats, func(c string) bool { return strings.HasPrefix(c, "Not restore-tested") }) {
+			t.Errorf("%s: caveats %q do not say the restore was not tested", c.name, got.Caveats)
 		}
 	}
 	got, err := svc.RestoreCheck(ctx, "team-a", "billing", now)

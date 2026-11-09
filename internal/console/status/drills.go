@@ -206,11 +206,15 @@ func (s *Service) PgBackRestTarget(namespace, name string) (opstate.PgBackRestTa
 }
 
 // drillsBlock is the restore-drill block of a Cluster's Backups screen.
-func (s *Service) drillsBlock(namespace, name string) viewmodel.RestoreDrills {
+func (s *Service) drillsBlock(namespace, name string) (out viewmodel.RestoreDrills) {
 	s.mu.RLock()
 	d := s.opts.Drills
 	s.mu.RUnlock()
-	out := viewmodel.RestoreDrills{Items: []viewmodel.RestoreDrill{}, NotChecked: []string{}}
+	out = viewmodel.RestoreDrills{Items: []viewmodel.RestoreDrill{}, NotChecked: []string{}, WindowDays: int(diagnose.DrillWindow / (24 * time.Hour))}
+	defer func() {
+		// The same window as the restore-drill-overdue check.
+		out.RestoreTested = out.LastPassedAt != nil && s.now().Sub(*out.LastPassedAt) <= diagnose.DrillWindow
+	}()
 	if d == nil || d.Records == nil {
 		out.Scope = "restore drills are not enabled on this console (RESTORE_DRILL_ENABLED)"
 		return out

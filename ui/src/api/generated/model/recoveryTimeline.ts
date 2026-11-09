@@ -25,6 +25,7 @@ export interface RecoveryTimeline {
   markers: RecoveryMarker[] | null;
   provenance: Provenance;
   reason?: string;
+  restoreTested?: boolean;
   /**
      * Time-ordered spans: covered ones and the holes between them.
      * @nullable

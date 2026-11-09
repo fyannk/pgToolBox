@@ -41,8 +41,11 @@ type RecoveryTimeline struct {
 	Assumptions []string `json:"assumptions"`
 	// Complete is false when a collection was cut at a bound: what is
 	// shown is then a lower bound of the coverage.
-	Complete   bool       `json:"complete"`
-	Provenance Provenance `json:"provenance"`
+	Complete bool `json:"complete"`
+	// RestoreTested: a restore drill of this Cluster passed within the
+	// drill window. False, every covered span is "not restore-tested".
+	RestoreTested bool       `json:"restoreTested,omitempty"`
+	Provenance    Provenance `json:"provenance"`
 }
 
 // RecoverySegment is one span of the bar.

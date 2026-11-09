@@ -91,6 +91,20 @@ func TestDrillReads(t *testing.T) {
 		d.LastPassedAt == nil || !d.LastPassedAt.Equal(now.Add(-49*time.Minute)) || *d.Items[0].DurationSeconds != 600 || len(d.NotChecked) == 0 {
 		t.Errorf("enabled block = %+v", d)
 	}
+	if !d.RestoreTested || d.WindowDays != 90 || !b.RecoveryTimeline.RestoreTested {
+		t.Errorf("a drill passed 49 minutes ago: restoreTested %v (window %d), timeline %v", d.RestoreTested, d.WindowDays, b.RecoveryTimeline.RestoreTested)
+	}
+	old := drills.NewStore(nil, nil, now)
+	old.Put(drills.Record{
+		Drill: drills.Key{Namespace: "team-a", Name: "drill-orders-0"}, Source: drills.SourceKey{Namespace: "team-a", Name: "orders"},
+		StartedAt: now.Add(-91 * 24 * time.Hour), Deadline: now.Add(-91*24*time.Hour + time.Hour), FinishedAt: now.Add(-91*24*time.Hour + 30*time.Minute),
+		Result: viewmodel.DrillPassed,
+	})
+	svc.SetDrills(&DrillsView{Records: old, TimeLimit: 2 * time.Hour})
+	if b, _ := svc.Backups(ctx, "team-a", "orders"); b.Drills.RestoreTested || b.RecoveryTimeline.RestoreTested || b.Drills.LastPassedAt == nil {
+		t.Errorf("a pass 91 days ago is outside the window: %+v", b.Drills)
+	}
+	svc.SetDrills(&DrillsView{Records: store, TimeLimit: 2 * time.Hour})
 	if !d.LostAtRestart || !strings.Contains(d.Scope, "drill history lost at restart") {
 		t.Errorf("an in-memory record must say it is lost at restart: %v %q", d.LostAtRestart, d.Scope)
 	}

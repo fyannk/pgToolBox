@@ -64,6 +64,12 @@ type RestoreDrills struct {
 	SizeTolerancePercent int `json:"sizeTolerancePercent,omitempty"`
 	// LastPassedAt is when the newest passed drill was judged.
 	LastPassedAt *time.Time `json:"lastPassedAt,omitempty"`
+	// RestoreTested: a drill of this Cluster passed within WindowDays.
+	// Without it, "structurally usable" evidence is "not restore-tested".
+	RestoreTested bool `json:"restoreTested,omitempty"`
+	// WindowDays is how recent a passed drill must be
+	// (diagnose.DrillWindow).
+	WindowDays int `json:"windowDays,omitempty"`
 	// Items are the drills, newest first (running ones included).
 	Items []RestoreDrill `json:"items"`
 	// Scope says where the record lives and how long it lasts.

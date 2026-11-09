@@ -642,6 +642,10 @@ func restoreCheck(b viewmodel.Backups, at time.Time) viewmodel.RestoreCheck {
 		if b.Summary.Archiving.Health == viewmodel.HealthCritical {
 			out.Caveats = append(out.Caveats, "WAL archiving is failing: the newest WAL is on the instance, not in the repository.")
 		}
+		if !b.Drills.RestoreTested {
+			out.Caveats = append(out.Caveats, "Not restore-tested: no restore drill of this Cluster passed in the last "+
+				strconv.Itoa(b.Drills.WindowDays)+" days.")
+		}
 	}
 	switch {
 	case t.Basis == "none" || t.Earliest == nil || t.Latest == nil:

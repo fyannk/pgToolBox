@@ -5713,6 +5713,8 @@ components:
           $ref: "#/components/schemas/Provenance"
         reason:
           type: string
+        restoreTested:
+          type: boolean
         segments:
           description: "Time-ordered spans: covered ones and the holes between them."
           items:
@@ -6086,12 +6088,17 @@ components:
           type:
             - array
             - "null"
+        restoreTested:
+          type: boolean
         scope:
           type: string
         sizeTolerancePercent:
           format: int64
           type: integer
         timeLimitSeconds:
+          format: int64
+          type: integer
+        windowDays:
           format: int64
           type: integer
       required:

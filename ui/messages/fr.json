@@ -1464,5 +1464,8 @@
   "backup_overdue_default": "en retard : plus de 7 jours, et aucune cadence de sauvegarde n'est connue",
   "backup_no_cadence_known": "aucune cadence de sauvegarde connue : alerte après 7 jours",
   "version_upgrade_in_flight": "mise à jour de CNPG en cours : {detail}",
-  "drill_checks_not_kept": "Terminé avant le redémarrage de la console : son résultat et ses heures ont été conservés, pas ses vérifications."
+  "drill_checks_not_kept": "Terminé avant le redémarrage de la console : son résultat et ses heures ont été conservés, pas ses vérifications.",
+  "not_restore_tested": "Restauration non testée : aucun exercice de restauration de ce Cluster n'a réussi ces {days} derniers jours.",
+  "pitr_edge_hint_archiver": "Le point de restauration le plus récent est incertain. Sur le primaire, vérifiez ce que PostgreSQL a archivé en dernier :",
+  "pitr_edge_hint_switch": "Puis forcez un changement de WAL sur le primaire, pour que le segment courant soit archivé, et rafraîchissez les preuves :"
 }

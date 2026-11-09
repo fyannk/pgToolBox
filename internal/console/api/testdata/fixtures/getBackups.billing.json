@@ -418,6 +418,7 @@
   },
   "drills": {
     "enabled": false,
+    "windowDays": 90,
     "items": [],
     "scope": "kept in this console's persistent history (bounded to the 50 newest drills per Cluster)",
     "notChecked": [

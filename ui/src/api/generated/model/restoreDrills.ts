@@ -16,7 +16,9 @@ export interface RestoreDrills {
   namespace?: string;
   /** @nullable */
   notChecked: string[] | null;
+  restoreTested?: boolean;
   scope: string;
   sizeTolerancePercent?: number;
   timeLimitSeconds?: number;
+  windowDays?: number;
 }
