@@ -21,7 +21,7 @@
 # versions mise.toml pins; the lockfile is frozen and the workspace's
 # allowBuilds/minimumReleaseAge rules apply, so no dependency script runs.
 # ui/dist: index.html, content-hashed assets/ and their .br/.gz siblings.
-FROM --platform=$BUILDPLATFORM node:24.22.1-bookworm-slim@sha256:be8204d4bd327363357f532187b752ff62759c31bedf98e9e18fc08c9cbd605c AS ui
+FROM --platform=$BUILDPLATFORM node:26.12.1-bookworm-slim@sha256:88e480776c6149ff1d098cd304f44bf18057fb5d284a3329b78162d29821e28c AS ui
 WORKDIR /ui
 ENV CI=1
 RUN npm install --global --no-fund --no-audit pnpm@12.16.1
@@ -38,7 +38,7 @@ RUN pnpm i18n && pnpm build
 # baselines first), then hack/docsbundle writes the Markdown pages and the BM25
 # index. Build host platform: the output is architecture-independent. A failure
 # fails the image build, so a release image never ships without it.
-FROM --platform=$BUILDPLATFORM node:24.22.1-bookworm-slim@sha256:be8204d4bd327363357f532187b752ff62759c31bedf98e9e18fc08c9cbd605c AS docs-site
+FROM --platform=$BUILDPLATFORM node:26.12.1-bookworm-slim@sha256:88e480776c6149ff1d098cd304f44bf18057fb5d284a3329b78162d29821e28c AS docs-site
 WORKDIR /repo/docs/site
 ENV CI=1 DO_NOT_TRACK=1
 COPY docs/site/package.json docs/site/package-lock.json ./
