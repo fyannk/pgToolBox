@@ -284,8 +284,9 @@ func ParseSampleLine(line string) (name, labels string, value float64, ok bool) 
 
 // ParseLabels reads a whole label block into a map, at most maxLabels
 // pairs and each value cut to maxValue bytes. ok is false for a
-// malformed block (an unterminated value, a pair without '=' or a
-// value without quotes), which the caller drops as a malformed line.
+// malformed block (an unterminated value, a pair without '=', a value
+// without quotes or a name that is not a Prometheus label name), which
+// the caller drops as a malformed line.
 func ParseLabels(labels string, maxLabels, maxValue int) (map[string]string, bool) {
 	out := map[string]string{}
 	for i := 0; i < len(labels); {
@@ -303,6 +304,9 @@ func ParseLabels(labels string, maxLabels, maxValue int) (map[string]string, boo
 			return nil, false
 		}
 		name := strings.TrimSpace(labels[start:i])
+		if !validLabelName(name) {
+			return nil, false
+		}
 		i++ // the '='
 		if i >= len(labels) || labels[i] != '"' {
 			return nil, false
@@ -333,4 +337,23 @@ func ParseLabels(labels string, maxLabels, maxValue int) (map[string]string, boo
 		out[name] = value.String()
 	}
 	return out, true
+}
+
+// validLabelName reports whether name is a Prometheus label name,
+// [a-zA-Z_][a-zA-Z0-9_]*: what an exporter writes, so anything else is
+// a block the parser has misread and must not key a label under.
+func validLabelName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		switch {
+		case c == '_', c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z':
+		case c >= '0' && c <= '9' && i > 0:
+		default:
+			return false
+		}
+	}
+	return true
 }
