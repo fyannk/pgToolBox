@@ -55,6 +55,10 @@
   --ifm-global-radius: var(--fy-radius-md);
   --ifm-code-border-radius: var(--fy-radius-sm);
   --ifm-button-border-radius: var(--fy-radius-md);
+  /* Infima caps the page at 1320px whatever the screen, which leaves a
+     narrow strip on a large monitor and makes every wide table and
+     diagram scroll; let the page grow with the screen instead. */
+  --ifm-container-width-xl: 100%;
   --ifm-global-shadow-lw: none;
   --ifm-global-shadow-md: none;
   --ifm-navbar-shadow: none;
@@ -315,6 +319,12 @@ code {
   padding: 1.25rem 1.5rem;
 }
 
+/* The text grows with very wide screens (16px up to 1600px wide, 19px from
+   2560px), so a large monitor gets a larger page, not a smaller one. */
+html {
+  font-size: clamp(16px, 0.3vw + 11.2px, 19px);
+}
+
 /* A Mermaid diagram that cannot shrink to the column without illegible
    labels scrolls inside its own box (src/client/mermaid-scale.ts). */
 .docusaurus-mermaid-container {
@@ -327,7 +337,7 @@ code {
 .ptb-sec {
   box-sizing: border-box;
   margin: 0 auto;
-  max-width: 75rem;
+  max-width: 120rem;
   /* The layout's wrapper is a flex row: without this the widest table sets
      the page's width and the whole page scrolls sideways on a phone. */
   min-width: 0;
