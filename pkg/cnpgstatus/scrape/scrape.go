@@ -12,151 +12,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package scrape polls the instance pods' Prometheus metrics endpoints
-// and feeds the curated samples into the metrics store.
-//
-// Targets come from the pod watch the console already runs — the same
-// membership-verified roster every other screen trusts — so scraping
-// adds no RBAC and invents no discovery. Each sweep GETs every running
-// instance's metrics endpoint, parses only the catalog's allowlisted
-// names, and records what the exporter claimed. A pod that cannot be
-// reached simply contributes nothing that sweep: the hole reads back as
-// a gap, and the failure is logged once per state change rather than
-// once per sweep (AGENTS.md rule 6: logs are bounded).
+// Package scrape parses the instance and pooler exporters' Prometheus
+// text exposition into the curated catalog's samples. It is the
+// trust-boundary parser: the console's sweep (internal/console/sweep)
+// does the reading, and only the catalog's allowlisted names are ever
+// folded; everything else in the body is skipped unread.
 package scrape
 
 import (
 	"bufio"
-	"context"
-	"fmt"
 	"io"
-	"log/slog"
 	"math"
-	"net"
-	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/fyannk/pgToolBox/pkg/cnpgstatus/metrics"
-	"github.com/fyannk/pgToolBox/pkg/cnpgstatus/observe"
 	"github.com/fyannk/pgToolBox/pkg/redact"
 )
-
-const (
-	// InstancePort is the CloudNativePG instance exporter's port.
-	InstancePort = "9187"
-	// PoolerPort is the PgBouncer exporter's port on a pooler pod.
-	PoolerPort = "9127"
-	// maxBody bounds one scrape response; the default exporter payload
-	// is well under this, and anything larger is cut, not buffered.
-	maxBody = 2 << 20
-	// requestTimeout bounds one scrape request.
-	requestTimeout = 5 * time.Second
-)
-
-// PodsSource supplies the scrape targets.
-type PodsSource interface {
-	CurrentPods() (observe.PodsSnapshot, bool)
-}
-
-// Collector sweeps one roster's metrics endpoints on a fixed cadence.
-type Collector struct {
-	source   PodsSource
-	store    *metrics.Store
-	catalog  metrics.Catalog
-	clock    observe.Clock
-	logger   *slog.Logger
-	interval time.Duration
-	client   *http.Client
-	// port is the metrics port dialed on every target; fixed to the
-	// CloudNativePG default, overridden only by tests.
-	port string
-	// failing tracks which instances the previous sweeps could not
-	// reach, so reachability changes log once instead of every sweep.
-	failing map[string]bool
-}
-
-// New builds a collector polling at the given interval.
-// New builds a collector for one roster: its pods, its store, and the
-// port its exporter answers on. The catalog comes from the store, so a
-// collector can only ever record keys that store can hold.
-func New(source PodsSource, store *metrics.Store, port string, interval time.Duration, clock observe.Clock, logger *slog.Logger) *Collector {
-	if port == "" {
-		port = InstancePort
-	}
-	return &Collector{
-		source:   source,
-		store:    store,
-		catalog:  store.Catalog(),
-		clock:    clock,
-		logger:   logger,
-		interval: interval,
-		client:   &http.Client{Timeout: requestTimeout},
-		port:     port,
-		failing:  map[string]bool{},
-	}
-}
-
-// Run sweeps until the context ends.
-func (c *Collector) Run(ctx context.Context) error {
-	for {
-		if err := c.clock.Wait(ctx, c.interval); err != nil {
-			return err
-		}
-		c.sweep(ctx)
-	}
-}
-
-// sweep scrapes every running instance once. All samples of one sweep
-// share one timestamp, which is what lets the read side align the
-// instances on a single time axis.
-func (c *Collector) sweep(ctx context.Context) {
-	snap, ok := c.source.CurrentPods()
-	if !ok {
-		return
-	}
-	at := c.clock.Now()
-	for _, pod := range snap.Pods {
-		if pod.IP == "" || pod.Deleting {
-			continue
-		}
-		values, instants, err := c.scrapeOne(ctx, pod.IP)
-		if err != nil {
-			if !c.failing[pod.Name] {
-				c.failing[pod.Name] = true
-				c.logger.Info("metrics scrape failed",
-					slog.String("instance", pod.Name),
-					slog.String("category", redact.Safe(err)))
-			}
-			continue
-		}
-		if c.failing[pod.Name] {
-			delete(c.failing, pod.Name)
-			c.logger.Info("metrics scrape recovered", slog.String("instance", pod.Name))
-		}
-		c.store.Observe(pod.Name, at, values, instants)
-	}
-}
-
-// scrapeOne fetches and parses one instance's endpoint.
-func (c *Collector) scrapeOne(ctx context.Context, ip string) (series, instants map[string]float64, err error) {
-	url := "http://" + net.JoinHostPort(ip, c.port) + "/metrics"
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, nil, redact.NewError("metrics scrape", redact.CategoryInternal, err)
-	}
-	resp, err := c.client.Do(req)
-	if err != nil {
-		return nil, nil, redact.NewError("metrics scrape", redact.CategoryUnavailable, err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return nil, nil, redact.NewError("metrics scrape", redact.CategoryUnavailable,
-			fmt.Errorf("status %d", resp.StatusCode))
-	}
-	return ParseCatalog(c.catalog, io.LimitReader(resp.Body, maxBody))
-}
 
 // target is one catalog entry's claim on a metric name. Several entries
 // may claim the same name — cnpg_collector_pg_wal carries the segment

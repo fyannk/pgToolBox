@@ -15,20 +15,8 @@
 package scrape
 
 import (
-	"bytes"
-	"context"
-	"errors"
-	"log/slog"
-	"net"
-	"net/http"
-	"net/http/httptest"
 	"strings"
-	"sync"
 	"testing"
-	"time"
-
-	"github.com/fyannk/pgToolBox/pkg/cnpgstatus/metrics"
-	"github.com/fyannk/pgToolBox/pkg/cnpgstatus/observe"
 )
 
 const exporterPayload = `# HELP cnpg_backends_total Number of backends
@@ -131,87 +119,6 @@ func TestParseMatchesWholeLabelNames(t *testing.T) {
 	}
 	if _, ok := instants["wal-segments"]; ok {
 		t.Error("a label whose name merely ends in the wanted one matched")
-	}
-}
-
-// staticPods serves a fixed roster.
-type staticPods struct{ snap observe.PodsSnapshot }
-
-func (s staticPods) CurrentPods() (observe.PodsSnapshot, bool) { return s.snap, true }
-
-// sweepClock fires the wait immediately a bounded number of times.
-type sweepClock struct {
-	mu     sync.Mutex
-	sweeps int
-	now    time.Time
-}
-
-func (c *sweepClock) Now() time.Time {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.now = c.now.Add(10 * time.Second)
-	return c.now
-}
-
-func (c *sweepClock) Wait(ctx context.Context, _ time.Duration) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.sweeps == 0 {
-		return context.Canceled
-	}
-	c.sweeps--
-	return ctx.Err()
-}
-
-func testLogger() (*slog.Logger, *bytes.Buffer) {
-	var buf bytes.Buffer
-	return slog.New(slog.NewJSONHandler(&buf, nil)), &buf
-}
-
-func exporterServer(t *testing.T, payload string) (ip, port string, close func()) {
-	t.Helper()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(payload))
-	}))
-	host, port, err := net.SplitHostPort(strings.TrimPrefix(srv.URL, "http://"))
-	if err != nil {
-		t.Fatalf("split: %v", err)
-	}
-	return host, port, srv.Close
-}
-
-func TestCollectorSweepsRunningPodsAndLogsOncePerStateChange(t *testing.T) {
-	ip, port, closeSrv := exporterServer(t, exporterPayload)
-	defer closeSrv()
-
-	source := staticPods{snap: observe.PodsSnapshot{Pods: []observe.PodFacts{
-		{Name: "orders-1", IP: ip},
-		{Name: "orders-2", IP: "203.0.113.1"}, // unreachable, TEST-NET
-		{Name: "orders-3"},                    // no IP yet: skipped silently
-	}}}
-	store := metrics.NewStore(metrics.Instance, metrics.Limits{Interval: 10 * time.Second})
-	logger, logs := testLogger()
-	c := New(source, store, InstancePort, 10*time.Second, &sweepClock{sweeps: 2, now: time.Unix(1700000000, 0)}, logger)
-	c.port = port
-	c.client.Timeout = 500 * time.Millisecond
-
-	if err := c.Run(context.Background()); !errors.Is(err, context.Canceled) {
-		t.Fatalf("Run: %v", err)
-	}
-
-	if got := store.Instances(); len(got) != 1 || got[0] != "orders-1" {
-		t.Fatalf("instances = %v, want only the reachable orders-1", got)
-	}
-	times, byInstance := store.Range("connections", metrics.TierRaw)
-	if len(times) != 2 || *byInstance["orders-1"][0] != 7 {
-		t.Fatalf("stored range = %v %v", times, byInstance)
-	}
-	// Two failing sweeps for orders-2 log one line, not two.
-	if got := strings.Count(logs.String(), "metrics scrape failed"); got != 1 {
-		t.Fatalf("failure logged %d times across two sweeps, want once\n%s", got, logs.String())
-	}
-	if strings.Contains(logs.String(), "orders-3") {
-		t.Fatal("a pod without an IP was treated as a failure")
 	}
 }
 
