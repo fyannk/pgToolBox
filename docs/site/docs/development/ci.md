@@ -19,18 +19,27 @@ grant with a comment saying why), `persist-credentials: false` on checkout, no
 `set -euo pipefail`, one concurrency group per workflow. `make lint-workflows` runs
 actionlint and zizmor and must stay clean.
 
+Caches (`.github/actions/toolchain`) are written only by runs on `main` (push,
+nightly, dispatch) and restored everywhere: a cache a pull request writes would be
+visible to that pull request alone and would push `main`'s out of the repository's
+10 GB budget. The Go module cache is keyed by `go.sum`; each job has its own Go
+build and golangci-lint cache, refreshed daily; the image layers go to the `gha`
+cache from the `images` job on `main`. mise itself is pinned in the action, so a
+new mise release cannot change a job overnight. Each image is built once per run,
+in `images`, and the e2e jobs load that archive instead of building their own.
+
 ## The workflows
 
 | Workflow | Runs on | What |
 |---|---|---|
 | `ci.yml` | pull request, push to `main`, nightly at 04:17 UTC, by hand | The single pipeline. Its last job, `ci-ok`, is the required check. |
-| `e2e-kind.yml` | called by `ci.yml` | One kind scenario on a fresh runner (reusable workflow). |
+| `e2e-kind.yml` | called by `ci.yml` | One kind scenario on a fresh runner, with the images of the run loaded (reusable workflow). |
 | `security.yml` | pull request, push to `main`, daily at 03:37 UTC, by hand | CodeQL, govulncheck, osv-scanner, npm audit, grype on the images, gitleaks, gosec, zizmor, kube-linter. Its last job, `security-gate`, is the required check. |
 | `scorecard.yml` | push to `main`, weekly on Tuesday, by hand | OpenSSF Scorecard, published and uploaded to code scanning. |
 | `pages.yml` | when `security.yml` finishes on `main`, nightly at 04:47 UTC, by hand, after a release | Builds the documentation, renders the Security page, deploys both to GitHub Pages. |
 | `release.yml` | tag `v*` or `pkg/evidence/v*`; by hand for an existing tag | The release. It checks out and runs nothing but the tagged commit, and restores no cache. |
 | `release-dry-run.yml` | a pull request touching the release files; weekly on Sunday | The release's build as a dry run: nothing pushed or signed, no write permission. |
-| `matrix.yml` | nightly at 01:41 UTC, by hand | The end-to-end scenarios on Kubernetes 1.34 and 1.36 × CloudNativePG 1.30.1, plus CloudNativePG `main` (non-blocking). |
+| `matrix.yml` | nightly at 01:41 UTC, by hand | The end-to-end scenarios on Kubernetes 1.34 and 1.36 × CloudNativePG 1.30.1, plus CloudNativePG `main` (non-blocking): one job per Kubernetes × CloudNativePG × scenario, all at once, on the images built once for the run. |
 | `image-watch.yml` | nightly at 04:23 UTC | Scans the latest published images and keeps one tracking issue for fixable criticals. |
 | `automerge.yml` | Dependabot pull requests | Arms auto-merge for patch and minor updates. |
 
@@ -41,16 +50,16 @@ actionlint and zizmor and must stay clean.
 | `lint` | `lint` | golangci-lint on both modules (build-tagged e2e and envtest code included), gofumpt/gci, `go vet`, and the repository checks (`hack/check-*.sh`: headers, read-only boundary, dependency closure, layering, toolchain, documented settings) |
 | `lint-files` | `lint-workflows lint-docker lint-shell` | actionlint, zizmor, hadolint, shellcheck |
 | `generated` | `verify-generated` | deepcopy code, CRDs, RBAC and their Helm/OLM copies, OpenAPI and fixtures, the check and API references and the insight pack regenerate to the committed files |
-| `test`, `race-fuzz` | `build test`, `test-race test-fuzz` | unit tests; the race detector; every fuzz target for a few seconds |
+| `test`, `race-fuzz` | `build test`; `test-race` and `test-fuzz`, one job each | unit tests; the race detector; every fuzz target for a few seconds |
 | `envtest` | `test-envtest` and the operator suites | CRD CEL rules, reconcilers and the operator binary on a real API server |
 | `console-core` | `verify-pins test-console-core test-e2e-console-authz test-bounds` | the informer cache per CloudNativePG minor, the write path, SubjectAccessReview semantics, read-model pins, bounded resources |
 | `ui`, `ui-e2e` | `ui-check ui-audit`, `ui-e2e` | Biome, knip, tsc, tokens, Vitest, stories with axe, build, size budgets, `pnpm generate:check`; Playwright with axe and screenshots in the baseline image |
 | `headlamp` | `headlamp-check` | the Headlamp plugin builds and tests |
 | `docs` | `docs`, `docs-spell`, `docs-links` | the site builds with broken links failing it, generated references are current, spelling; external links are reported, not enforced |
 | `packaging` | `chart-gates bundle-validate kustomize-validate` | helm lint and template, helm-unittest, ct lint, kubeconform, kube-linter, alert rules, README values, Helm vs kustomize vs OLM field by field, `operator-sdk bundle validate` |
-| `images` | `hack/image-profile.sh` and the container tests | each image builds for `linux/amd64` and `linux/arm64`, then the amd64 image is held to the container profile (below) |
+| `images` | `hack/image-profile.sh` and the container tests | each image is built once per run, for `linux/amd64` and `linux/arm64`; the amd64 image is held to the container profile (below) and handed to every `e2e-*` job as an artifact |
 | `olm-images`, `evidence-integration` | `bundle-build catalog-build`, `test-evidence-integration` | the OLM images build; Barman and pgBackRest fixtures and S3, Azure and GCS provider parity |
-| `e2e-*`, `olm-scorecard` | `test-e2e-<scenario>`, `scorecard` | kind scenarios: console, chart (and with NetworkPolicy), EvidenceAgent, PgAdmin, access requests, team mode, pgBackRest, and the OLM scorecard |
+| `e2e-*`, `olm-scorecard` | `test-e2e-<scenario>`, `scorecard` | kind scenarios: console, chart (and with NetworkPolicy), EvidenceAgent, PgAdmin, access requests, team mode, pgBackRest (one job per plugin cell, `E2E_VARIANT`), and the OLM scorecard; each loads the archives of `images` and runs with `PREBUILT_IMAGES=1`, so its `make docker-build*` steps only tag them |
 | `ci-ok` | none | passes when every job passed or was skipped on purpose |
 
 **The container profile** (`hack/image-profile.sh`, plus the console's and the
@@ -175,7 +184,7 @@ opened. Pin only versions that have been published for at least two weeks.
 
 ## The release
 
-A release is an annotated tag on a commit of `main`, pushed by the maintainer.
+A release is an annotated tag on a commit of `main`, pushed by the maintainer. `v*` and `pkg/evidence/v*` tags are protected by a ruleset (they cannot be moved or deleted), and `release.yml` runs its first job in the `release` environment, which admits only those tags and waits for the maintainer's approval: nothing is built or pushed before that approval, and a dispatch from a branch never starts. Every image's signature and provenance are verified in the workflow, with the commands the release page gives users, before anything points at them.
 `ci.yml` has no tag trigger: the tagged commit already had its run when it reached
 `main`, and `release.yml` waits for the `ci-ok` and `security-gate` checks of that
 exact commit instead of starting another. The logic is in `hack/release.sh`; the

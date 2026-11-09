@@ -39,15 +39,19 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${repo_root}"
 
+# shellcheck source=hack/lib/net.sh
+source hack/lib/net.sh
+
 mode="${1:-}"
 case "${mode}" in scope | netpol) ;; *) echo "usage: $0 scope|netpol" >&2; exit 2 ;; esac
 
 # Pinned so a failure is the chart's, never a moving platform underneath.
 KIND_NODE_IMAGE="${KIND_NODE_IMAGE:-kindest/node:v1.34.0}"
-CNPG_VERSION="${CNPG_VERSION:-1.30.0}"
-CNPG_MANIFEST="${CNPG_MANIFEST:-https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-${CNPG_VERSION%.*}/releases/cnpg-${CNPG_VERSION}.yaml}"
-CALICO_VERSION="${CALICO_VERSION:-v3.32.2}"
-CALICO_MANIFEST="${CALICO_MANIFEST:-https://raw.githubusercontent.com/projectcalico/calico/${CALICO_VERSION}/manifests/calico.yaml}"
+# Versions and the sha256 of their manifests: hack/lib/net.sh (an overridden URL is not checksummed).
+CNPG_VERSION="${CNPG_VERSION:-${CNPG_DEFAULT_VERSION}}"
+CNPG_MANIFEST="${CNPG_MANIFEST:-$(cnpg_manifest_url "${CNPG_VERSION}")}"
+CALICO_VERSION="${CALICO_VERSION:-${CALICO_DEFAULT_VERSION}}"
+CALICO_MANIFEST="${CALICO_MANIFEST:-$(calico_manifest_url "${CALICO_VERSION}")}"
 PROBE_IMAGE="${PROBE_IMAGE:-busybox:1.37}"
 # dex v2.45.1, the multi-arch index digest. Pulled, then tagged with a local
 # name so that the node loads it without a registry (imagePullPolicy: Never).
@@ -127,12 +131,12 @@ kind_load() {
 }
 
 ensure_image() { # pull only what the host does not have
-  docker image inspect "$1" >/dev/null 2>&1 || docker pull --quiet --platform "${KIND_IMAGE_PLATFORM}" "$1" >/dev/null
+  docker image inspect "$1" >/dev/null 2>&1 || pull_image "${KIND_IMAGE_PLATFORM}" "$1"
 }
 
 # pull_dex pulls the pinned dex and tags it ${DEX_LOCAL}.
 pull_dex() {
-  docker pull --quiet --platform "${KIND_IMAGE_PLATFORM}" "${DEX_REF}" >/dev/null
+  pull_image "${KIND_IMAGE_PLATFORM}" "${DEX_REF}"
   docker tag "${DEX_REF}" "${DEX_LOCAL}"
 }
 
@@ -253,7 +257,7 @@ fi
 if [[ "${mode}" == netpol ]]; then
   log "installing Calico ${CALICO_VERSION}"
   work="$(mktemp -d "${TMPDIR:-/tmp}/ptb-chart-e2e.XXXXXX")"
-  curl --fail --silent --show-error --location --retry 3 -o "${work}/calico.yaml" "${CALICO_MANIFEST}"
+  fetch_manifest "${CALICO_MANIFEST}" "${work}/calico.yaml"
   images="$(awk '$1 == "image:" { print $2 }' "${work}/calico.yaml" | sort -u)"
   # Side-loaded: the node needs no registry route, and the host's Docker cache
   # makes a re-run fast.
@@ -269,7 +273,7 @@ fi
 
 log "installing the CloudNativePG CRDs ${CNPG_VERSION} (no operator: the console only reads them)"
 work="$(mktemp -d "${TMPDIR:-/tmp}/ptb-chart-e2e.XXXXXX")"
-curl --fail --silent --show-error --location --retry 3 -o "${work}/cnpg.yaml" "${CNPG_MANIFEST}"
+fetch_manifest "${CNPG_MANIFEST}" "${work}/cnpg.yaml"
 awk -v RS='\n---\n' -v ORS='\n---\n' '/(^|\n)kind: CustomResourceDefinition(\n|$)/' "${work}/cnpg.yaml" >"${work}/crds.yaml"
 crds="$(grep -c '^kind: CustomResourceDefinition$' "${work}/crds.yaml" || true)"
 ((crds >= 10)) || { echo "[e2e-chart] expected the CNPG CRDs in ${CNPG_MANIFEST}, found ${crds}" >&2; exit 1; }

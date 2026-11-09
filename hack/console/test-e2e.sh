@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env bash
 # End-to-end boot test of the console on kind: a real API server and the
 # pinned CloudNativePG release, the console deployed with the shape
 # charts/pgtools renders (a Role in the watched namespace, the
@@ -14,8 +14,11 @@
 # Artifacts land in artifacts/e2e/.
 set -eu
 
+# shellcheck source=hack/lib/net.sh
+source hack/lib/net.sh
+
 KIND_NODE_IMAGE="${KIND_NODE_IMAGE:-kindest/node:v1.34.0}"
-CNPG_MANIFEST="${CNPG_MANIFEST:-https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-1.30/releases/cnpg-1.30.0.yaml}"
+CNPG_MANIFEST="${CNPG_MANIFEST:-$(cnpg_manifest_url "${CNPG_DEFAULT_VERSION}")}"
 # Overridable so that two runs sharing one Docker daemon do not delete each
 # other's cluster.
 CLUSTER_NAME="${CLUSTER_NAME:-pgtoolbox-console-e2e}"
@@ -71,7 +74,7 @@ kind delete cluster --name "$CLUSTER_NAME" > /dev/null 2>&1 || true
 hack/kind-create.sh --name "$CLUSTER_NAME" --image "$KIND_NODE_IMAGE" --config hack/kind/ci.yaml --wait 120s > /dev/null
 
 log "installing CloudNativePG"
-kubectl apply --server-side -f "$CNPG_MANIFEST" > /dev/null
+apply_manifest "$CNPG_MANIFEST" --server-side > /dev/null
 kubectl -n cnpg-system rollout status deployment/cnpg-controller-manager --timeout=300s > /dev/null
 
 log "creating the target cluster"

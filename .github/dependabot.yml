@@ -74,6 +74,7 @@ updates:
     directories:
       - /
       - /deploy/olm
+      - /ui # e2e.Dockerfile: the Playwright image (a bump re-renders the baselines)
     schedule:
       interval: weekly
       day: monday

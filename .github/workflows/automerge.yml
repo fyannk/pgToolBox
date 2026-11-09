@@ -7,12 +7,15 @@ name: Dependabot auto-merge
 # resolved-thread requirement a human merge faces still apply. Major upgrades
 # are left for a person to read the changelog.
 #
-# pull_request_target, not pull_request: a workflow triggered by Dependabot on
-# pull_request gets a read-only token and could not enable auto-merge. No step
-# here checks out the pull request, so the elevated token never meets anything
-# the branch wrote.
+# pull_request, not pull_request_target: GitHub blocks pull_request_target on
+# public repositories by default, and it is not needed. A pull_request run that
+# Dependabot triggers gets a read-only token unless the job asks for more with
+# `permissions:`, which this one does (GitHub's documented pattern). Nothing
+# here checks out the pull request, and the job runs only when both the author
+# and the sender of the event are Dependabot, so a person's push to the branch
+# never runs it with a write token.
 on:
-  pull_request_target: # zizmor: ignore[dangerous-triggers] no checkout; gated on Dependabot author and sender, see above
+  pull_request:
     types:
       - opened
       - reopened

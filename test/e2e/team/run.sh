@@ -129,7 +129,7 @@ as_admin() { kubectl --as="${ADMIN}" -n "${NS}" "$@"; }
 helm_admin() { helm --kube-as-user "${ADMIN}" --namespace "${NS}" "$@"; }
 
 log "pulling ${PGADMIN_IMAGE} and building the operator, console and evidence agent images"
-docker pull --quiet --platform "${KIND_IMAGE_PLATFORM}" "${PGADMIN_IMAGE}" >/dev/null
+pull_image "${KIND_IMAGE_PLATFORM}" "${PGADMIN_IMAGE}"
 # The operator image is only the carrier of the binary pgAdmin's init container and
 # sidecar run (pgadmin.tools.image); the operator is never deployed.
 make docker-build docker-build-console docker-build-evidence \

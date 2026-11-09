@@ -6,12 +6,14 @@
 # `make test-e2e-matrix` both use this file, so a cell run by hand is the cell CI
 # runs.
 #
-#   hack/matrix.sh plan                  print the matrix as {"include":[...]} JSON
+#   hack/matrix.sh plan                  print the matrix as {"include":[...]} JSON,
+#                                        one row per Kubernetes x CNPG x scenario
 #   hack/matrix.sh run <scenario>        run one scenario for the cell in the environment
 #
 # Environment for `plan` (strings, never interpolated by the workflow):
 #   KUBERNETES   all (default) | 1.34 | 1.36
 #   CNPG         all (default) | 1.30.1 | main
+#   SCENARIO     all (default) | console | evidenceagent | pgadmin
 #   NIGHTLY      true adds the `main` CNPG cell to `all` (non-blocking)
 # Environment for `run`: NODE_IMAGE and CNPG_MANIFEST (printed by `plan`, or give
 # K8S and CNPG and they are derived), plus what the scenario's own script reads.
@@ -59,8 +61,13 @@ cnpg_manifest() { # version | main
 die() { echo "matrix: $*" >&2; exit 2; }
 
 cmd_plan() {
-  local want_k="${KUBERNETES:-all}" want_c="${CNPG:-all}" nightly="${NIGHTLY:-false}"
-  local k c rows=() blocking
+  local want_k="${KUBERNETES:-all}" want_c="${CNPG:-all}" want_s="${SCENARIO:-all}" nightly="${NIGHTLY:-false}"
+  local k c s rows=() blocking
+  local todo=("${want_s}")
+  [[ "${want_s}" != all ]] || todo=("${scenarios[@]}")
+  for s in "${todo[@]}"; do
+    [[ -n "${scenario_target[${s}]:-}" ]] || die "SCENARIO must be all or one of ${scenarios[*]}, got '${s}'"
+  done
   [[ "${want_k}" == all || -n "${node_image[${want_k}]:-}" ]] || die "KUBERNETES must be all or one of ${k8s_versions[*]}, got '${want_k}'"
   [[ "${want_c}" =~ ^(all|main|[0-9]+\.[0-9]+\.[0-9]+)$ ]] || die "CNPG must be all, main or X.Y.Z, got '${want_c}'"
   local cnpgs=("${cnpg_versions[@]}")
@@ -75,7 +82,11 @@ cmd_plan() {
         blocking=false
         [[ "${k}" == "${k8s_versions[-1]}" || "${want_k}" != all ]] || continue
       fi
-      rows+=("{\"name\":\"k8s-${k}-cnpg-${c}\",\"k8s\":\"${k}\",\"node_image\":\"${node_image[${k}]}\",\"cnpg\":\"${c}\",\"cnpg_manifest\":\"$(cnpg_manifest "${c}")\",\"experimental\":$([[ ${blocking} == true ]] && echo false || echo true)}")
+      # One row per scenario: on hosted runners each gets its own runner and
+      # kind cluster, and they all run at once.
+      for s in "${todo[@]}"; do
+        rows+=("{\"name\":\"k8s-${k}-cnpg-${c}-${s}\",\"k8s\":\"${k}\",\"node_image\":\"${node_image[${k}]}\",\"cnpg\":\"${c}\",\"cnpg_manifest\":\"$(cnpg_manifest "${c}")\",\"scenario\":\"${s}\",\"experimental\":$([[ ${blocking} == true ]] && echo false || echo true)}")
+      done
     done
   done
   ((${#rows[@]})) || die "no cell selected"
@@ -100,9 +111,11 @@ cmd_run() {
     # main. Best effort, which is why the cell is non-blocking.
     command -v kubectl >/dev/null || die "kubectl is needed to render CNPG main"
     manifest="${TMPDIR:-/tmp}/cnpg-main-$$.yaml"
-    kubectl kustomize "https://github.com/cloudnative-pg/cloudnative-pg//config/default?ref=main" \
-      | sed 's#image: controller:latest#image: ghcr.io/cloudnative-pg/cloudnative-pg-testing:main#' > "${manifest}"
-    trap 'rm -f "${manifest}"' EXIT
+    trap 'rm -f "${manifest}" "${manifest}.raw"' EXIT
+    # shellcheck source=hack/lib/net.sh
+    source "${repo_root}/hack/lib/net.sh"
+    retry 5 kubectl kustomize "https://github.com/cloudnative-pg/cloudnative-pg//config/default?ref=main" -o "${manifest}.raw"
+    sed 's#image: controller:latest#image: ghcr.io/cloudnative-pg/cloudnative-pg-testing:main#' "${manifest}.raw" > "${manifest}"
   fi
   local todo=("${scenario}")
   [[ "${scenario}" != all ]] || todo=("${scenarios[@]}")
@@ -110,7 +123,8 @@ cmd_run() {
   for s in "${todo[@]}"; do
     [[ -n "${scenario_target[${s}]:-}" ]] || die "unknown scenario '${s}'"
     echo "== cell: ${image} + ${manifest} :: ${s}"
-    # The cells of one run go one after another: one kind cluster at a time.
+    # Run by hand, the scenarios of `all` go one after another on this machine;
+    # CI runs one scenario per runner (`plan` gives each its own row).
     if ! KIND_NODE_IMAGE="${image}" CNPG_MANIFEST="${manifest}" \
       timeout "${E2E_TIMEOUT:-30m}" make "${scenario_target[${s}]}"; then
       status=1

@@ -3,6 +3,11 @@ description: >-
   Install the tools mise.toml pins (the single source of tool versions) and
   restore the dependency caches, so every job starts the same way.
 
+# Caches are written only by runs on main (push, nightly, dispatch): a cache a
+# pull request writes is visible to that pull request alone, so it would only
+# take room in the repository's 10 GB budget and push out the caches main
+# needs. Pull requests restore what main wrote.
+
 inputs:
   tools:
     description: >-
@@ -13,39 +18,110 @@ inputs:
     description: Cache the installed tools between runs ("true" or "false"). The release workflow turns it off so that nothing a pull request wrote is installed into a release.
     default: "true"
   go-cache:
-    description: Restore and save the Go build, module and golangci-lint caches ("true" or "false").
+    description: Restore (and on main save) the Go module cache and this job's Go build and golangci-lint caches ("true" or "false").
     default: "false"
+  go-cache-scope:
+    description: Name of the Go build cache; empty means the calling job's id. Jobs that compile the same packages with the same flags may share one.
+    default: ""
   node-cache:
-    description: Restore and save the npm and pnpm stores, keyed by the lockfiles ("true" or "false").
+    description: Restore (and on main save) the npm and pnpm stores and the Playwright browsers, keyed by the lockfiles ("true" or "false").
     default: "false"
+
+outputs:
+  node-cache-hit:
+    description: '"true" when the node cache was restored on its exact key'
+    value: ${{ steps.node-save.outputs.cache-hit || steps.node-restore.outputs.cache-hit }}
 
 runs:
   using: composite
   steps:
+    - name: Decide whether this run writes caches
+      id: plan
+      shell: bash
+      env:
+        REF: ${{ github.ref }}
+        EVENT: ${{ github.event_name }}
+        SCOPE: ${{ inputs.go-cache-scope || github.job }}
+      run: |
+        set -euo pipefail
+        save=false
+        if [[ "${REF}" == refs/heads/main && "${EVENT}" =~ ^(push|schedule|workflow_dispatch)$ ]]; then save=true; fi
+        {
+          echo "save=${save}"
+          # One build cache per scope per day: refreshed daily on main,
+          # restored from the newest one otherwise.
+          echo "day=$(date -u +%Y-%m-%d)"
+          echo "scope=${SCOPE}"
+        } >> "${GITHUB_OUTPUT}"
+
+    # mise itself is pinned: an unpinned action installs the newest mise, and
+    # 2026.11.4 changed how go: tools install, which broke a job overnight.
     - name: Install the pinned tools (mise.toml)
       uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
       with:
+        version: "2026.11.4"
         install_args: ${{ inputs.tools }}
         cache: ${{ inputs.mise-cache }}
+        cache_save: ${{ steps.plan.outputs.save }}
 
-    # The key carries the lockfiles, so a dependency bump starts a fresh cache
-    # and an unchanged tree restores the previous one. restore-keys falls back
-    # to the newest cache of the same OS, which is still mostly warm.
-    - name: Go caches
-      if: inputs.go-cache == 'true'
+    # Modules depend on go.sum only; the build and lint caches on the
+    # toolchain and the job. Each is restored with a prefix fallback, so a
+    # bumped go.sum or a new day still starts warm.
+    - name: Go module cache (restore and save)
+      if: inputs.go-cache == 'true' && steps.plan.outputs.save == 'true'
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/go/pkg/mod
+        key: gomod-${{ runner.os }}-${{ hashFiles('go.sum', 'pkg/evidence/go.sum') }}
+        restore-keys: |
+          gomod-${{ runner.os }}-
+    - name: Go module cache (restore)
+      if: inputs.go-cache == 'true' && steps.plan.outputs.save != 'true'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/go/pkg/mod
+        key: gomod-${{ runner.os }}-${{ hashFiles('go.sum', 'pkg/evidence/go.sum') }}
+        restore-keys: |
+          gomod-${{ runner.os }}-
+    - name: Go build cache (restore and save)
+      if: inputs.go-cache == 'true' && steps.plan.outputs.save == 'true'
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: |
           ~/.cache/go-build
-          ~/go/pkg/mod
           ~/.cache/golangci-lint
-        key: go-${{ runner.os }}-${{ hashFiles('go.sum', 'pkg/evidence/go.sum', 'mise.toml') }}
+        key: gobuild-${{ runner.os }}-${{ steps.plan.outputs.scope }}-${{ hashFiles('mise.toml') }}-${{ steps.plan.outputs.day }}
         restore-keys: |
-          go-${{ runner.os }}-
+          gobuild-${{ runner.os }}-${{ steps.plan.outputs.scope }}-${{ hashFiles('mise.toml') }}-
+    - name: Go build cache (restore)
+      if: inputs.go-cache == 'true' && steps.plan.outputs.save != 'true'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          ~/.cache/go-build
+          ~/.cache/golangci-lint
+        key: gobuild-${{ runner.os }}-${{ steps.plan.outputs.scope }}-${{ hashFiles('mise.toml') }}-${{ steps.plan.outputs.day }}
+        restore-keys: |
+          gobuild-${{ runner.os }}-${{ steps.plan.outputs.scope }}-${{ hashFiles('mise.toml') }}-
 
-    - name: Node caches
-      if: inputs.node-cache == 'true'
+    # The key carries the lockfiles, so a dependency bump starts a fresh cache
+    # and an unchanged tree restores the previous one.
+    - name: Node caches (restore and save)
+      id: node-save
+      if: inputs.node-cache == 'true' && steps.plan.outputs.save == 'true'
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          ~/.npm
+          ~/.local/share/pnpm/store
+          ~/.cache/ms-playwright
+        key: node-${{ runner.os }}-${{ hashFiles('ui/pnpm-lock.yaml', 'docs/site/package-lock.json', 'headlamp/package-lock.json') }}
+        restore-keys: |
+          node-${{ runner.os }}-
+    - name: Node caches (restore)
+      id: node-restore
+      if: inputs.node-cache == 'true' && steps.plan.outputs.save != 'true'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: |
           ~/.npm

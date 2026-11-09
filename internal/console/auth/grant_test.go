@@ -15,7 +15,9 @@
 package auth
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -44,8 +46,19 @@ func TestSealPurposeIsBoundToItsPurposeAndKey(t *testing.T) {
 	if err := other.OpenPurpose("mcp-code", s, &got); err == nil {
 		t.Error("opened under another key")
 	}
-	if err := c.OpenPurpose("mcp-code", s[:len(s)-2]+"AA", &got); err == nil {
-		t.Error("a tampered value opened")
+	// Flip one bit of the sealed bytes, not of the text: a textual edit can be
+	// a no-op (the value may already end with it) or fail in base64 before the
+	// AEAD is reached.
+	raw, err := base64.RawURLEncoding.DecodeString(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, i := range []int{0, len(raw) / 2, len(raw) - 1} {
+		tampered := bytes.Clone(raw)
+		tampered[i] ^= 0x01
+		if err := c.OpenPurpose("mcp-code", base64.RawURLEncoding.EncodeToString(tampered), &got); err == nil {
+			t.Errorf("a value tampered at byte %d of %d opened", i, len(raw))
+		}
 	}
 }
 

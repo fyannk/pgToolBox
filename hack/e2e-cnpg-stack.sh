@@ -11,11 +11,15 @@
 # The pins live here, under hack/, in one place a bump touches. The caller sets CLUSTER_NAME, runs from the repository root and
 # creates the kind cluster itself.
 
+# shellcheck source=hack/lib/net.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/net.sh"
+
 KIND_NODE_IMAGE="${KIND_NODE_IMAGE:-kindest/node:v1.34.0}"
-CNPG_VERSION="${CNPG_VERSION:-1.30.0}"
-CNPG_MANIFEST="${CNPG_MANIFEST:-https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-${CNPG_VERSION%.*}/releases/cnpg-${CNPG_VERSION}.yaml}"
+# The CloudNativePG and cert-manager defaults, and the sha256 each is checked against, are in hack/lib/net.sh.
+CNPG_VERSION="${CNPG_VERSION:-${CNPG_DEFAULT_VERSION}}"
+CNPG_MANIFEST="${CNPG_MANIFEST:-$(cnpg_manifest_url "${CNPG_VERSION}")}"
 BARMAN_PLUGIN_MANIFEST="${BARMAN_PLUGIN_MANIFEST:-https://github.com/cloudnative-pg/plugin-barman-cloud/releases/latest/download/manifest.yaml}"
-CERT_MANAGER_MANIFEST="${CERT_MANAGER_MANIFEST:-https://github.com/cert-manager/cert-manager/releases/download/v1.16.2/cert-manager.yaml}"
+CERT_MANAGER_MANIFEST="${CERT_MANAGER_MANIFEST:-$(cert_manager_manifest_url "${CERT_MANAGER_DEFAULT_VERSION}")}"
 KIND_IMAGE_PLATFORM="${KIND_IMAGE_PLATFORM:-linux/amd64}"
 
 log() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
@@ -37,7 +41,7 @@ kind_load() {
 # (test/e2e/pgbackrest/run.sh installs the pgBackRest plugins on top).
 install_cnpg_base() {
   log "installing CloudNativePG ${CNPG_VERSION} and cert-manager"
-  kubectl apply --server-side -f "${CNPG_MANIFEST}"
+  apply_manifest "${CNPG_MANIFEST}" --server-side
   # Longer leader-election leases (integer seconds; CloudNativePG 1.30
   # internal/cmd/manager/controller/cmd.go): on a loaded CI
   # runner the default 15 s lease is lost, the manager restarts, and its webhook
@@ -52,7 +56,7 @@ install_cnpg_base() {
   done
   kubectl -n cnpg-system rollout status deployment/cnpg-controller-manager --timeout=300s
   kubectl -n cnpg-system wait --for=condition=Available deployment/cnpg-controller-manager --timeout=300s
-  kubectl apply --server-side -f "${CERT_MANAGER_MANIFEST}"
+  apply_manifest "${CERT_MANAGER_MANIFEST}" --server-side
   local deployment
   for deployment in cert-manager cert-manager-webhook cert-manager-cainjector; do
     kubectl -n cert-manager rollout status "deployment/${deployment}" --timeout=300s
@@ -66,15 +70,20 @@ install_cnpg_stack() {
   log "installing the Barman Cloud Plugin and MinIO"
   # cert-manager's webhook answers a little after its Deployment is Available,
   # and the plugin manifest carries cert-manager objects: retry until it does.
-  local i
+  # The manifest is "latest", so there is no checksum to pin; it is fetched once, with retries.
+  local i barman_file
+  barman_file="$(mktemp "${TMPDIR:-/tmp}/barman-plugin.XXXXXX")"
+  fetch_url "${BARMAN_PLUGIN_MANIFEST}" "${barman_file}" || return 1
   for i in $(seq 1 12); do
-    kubectl apply --server-side -f "${BARMAN_PLUGIN_MANIFEST}" && break
+    kubectl apply --server-side -f "${barman_file}" && break
     if ((i == 12)); then
       log "the Barman Cloud plugin manifest did not apply: cert-manager's webhook never answered"
+      rm -f "${barman_file}"
       return 1
     fi
     sleep 10
   done
+  rm -f "${barman_file}"
   kubectl -n cnpg-system rollout status deployment/barman-cloud --timeout=300s
   kubectl apply --server-side -f test/e2e/testdata/minio.yaml
   kubectl -n minio rollout status deployment/minio --timeout=300s
