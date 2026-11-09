@@ -419,7 +419,7 @@ jobs:
       - name: Install the pinned tools
         uses: ./.github/actions/toolchain
         with:
-          tools: helm kubectl aqua:yannh/kubeconform github:stackrox/kube-linter github:helm-unittest/helm-unittest aqua:helm/chart-testing go:github.com/norwoodj/helm-docs/cmd/helm-docs aqua:prometheus/prometheus github:operator-framework/operator-sdk
+          tools: go helm kubectl aqua:yannh/kubeconform github:stackrox/kube-linter github:helm-unittest/helm-unittest aqua:helm/chart-testing go:github.com/norwoodj/helm-docs/cmd/helm-docs aqua:prometheus/prometheus github:operator-framework/operator-sdk
       # validate-packaging reads YAML with PyYAML and ct lint wants yamllint.
       - name: Python packages for the chart gates
         run: |
