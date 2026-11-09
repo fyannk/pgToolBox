@@ -54,10 +54,11 @@ the list is `ConfigurationValid=False` with reason `ImageNotAllowed` and nothing
 rendered. With no `spec.image` the default is used; for an `EvidenceAgent` with no
 default either, the reason is `ImageRequired`.
 
-### The admission policy (opt-in)
+### The admission policy
 
-`operator.admissionPolicy.enabled` renders a `ValidatingAdmissionPolicy` (CEL, no
-webhook, Kubernetes 1.30 or newer) under which only the listed users and groups
+`operator.admissionPolicy.enabled` (on by default in the chart; kustomize and OLM do not
+apply it, see [security](../security.md)) renders a `ValidatingAdmissionPolicy` (CEL, no
+webhook) under which only the listed users and groups
 may set `spec.image` on a `PgAdmin` or an `EvidenceAgent`. Everyone else uses the
 operator's default. It adds the requester's identity, which the allow-list cannot
 see.

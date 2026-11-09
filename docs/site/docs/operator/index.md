@@ -151,8 +151,8 @@ decision, never the product's.
   the `kubernetes` Endpoints at install time, or `apiServer.mode: any` or
   `addresses`) and `extraEgress`; ingress only from `ingress.metricsFrom`, on the
   metrics port.
-- `operator.admissionPolicy.enabled`: a `ValidatingAdmissionPolicy` (CEL, no
-  webhook, Kubernetes 1.30 or newer). Three rules: only `imageOverride.allowedUsers`
+- `operator.admissionPolicy.enabled` (default `true`; not applied by kustomize or OLM):
+  a `ValidatingAdmissionPolicy` (CEL, no webhook). Three rules: only `imageOverride.allowedUsers`
   and `allowedGroups` (default group `system:masters`) may set `spec.image` on a
   `PgAdmin` or `EvidenceAgent`, everyone else getting the operator's default
   image; and only `workloadIdentity.allowedUsers` and `allowedGroups` (same

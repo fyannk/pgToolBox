@@ -60,8 +60,8 @@ Two optional pieces, **both off by default**:
   `kubernetes` Endpoints at install time, or `apiServer.mode: any` / `addresses`) and
   `extraEgress`; ingress only from `ingress.metricsFrom`, on the metrics port. Whether
   to have one is the installing admin's decision, never the product's.
-- `operator.admissionPolicy.enabled`: a `ValidatingAdmissionPolicy` (CEL, no webhook,
-  Kubernetes 1.30+) under which only `imageOverride.allowedUsers` and `allowedGroups`
+- `operator.admissionPolicy.enabled` (default `true`): a `ValidatingAdmissionPolicy` (CEL,
+  no webhook) under which only `imageOverride.allowedUsers` and `allowedGroups`
   may set `spec.image` on a `PgAdmin` or `EvidenceAgent` (the operator's default image
   is used otherwise), and only `workloadIdentity.allowedUsers` and `allowedGroups` may
   add or change `spec.workloadIdentity` on an `EvidenceAgent` (it lends the agent a

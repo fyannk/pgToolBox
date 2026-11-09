@@ -113,17 +113,23 @@ the custom resource alone would therefore let anyone who may edit a `PgToolBoxCo
 read any Secret of the namespace by pointing the console at a server they run.
 
 **Editing a `PgToolBoxConsole` or a `PgAdmin` requires `get` on every Secret it
-references.** The rule is part of the operator chart's optional
-`ValidatingAdmissionPolicy`, which asks the API server's authorizer, as the
+references.** The rule is part of the operator chart's
+`ValidatingAdmissionPolicy` (on by default), which asks the API server's authorizer, as the
 requesting user, whether that user may `get` each named Secret, and refuses the
 request otherwise (reason `Forbidden`, message "editing a PgToolBoxConsole or a PgAdmin
 requires get on every Secret it references").
 
-- **Enable it** with `operator.admissionPolicy.enabled=true` (Kubernetes 1.30 or
-  newer; off by default; `validationActions` selects `Deny`, `Warn` and/or
-  `Audit`, `Deny` alone enforces). On a cluster where the policy is off, grant
+- **It is on by default** in the operator chart (`operator.admissionPolicy.enabled`;
+  `validationActions` selects `Deny`, `Warn` and/or `Audit`, `Deny` alone enforces).
+  It is the only check of this rule: where the policy is off, grant
   `create`/`update` on `pgtoolboxconsoles` and `pgadmins` only to people you would trust
   with every Secret of the namespace.
+- **kustomize (`config/default`) and the OLM bundle do not apply it.** The policy is
+  rendered from the chart's values (the image and workload-identity allow-lists), and
+  OLM cannot ship an admission policy. On those installs, render it from the chart
+  and apply it yourself:
+  `helm template pgtoolbox charts/pgtoolbox --set operator.enabled=true --show-only templates/operator/admissionpolicy.yaml | kubectl apply -f -`,
+  or apply the same trust rule as above.
 - **On update, only new or changed references are checked.** The operator's own
   writes (finalizers) and edits that leave the references alone keep working on
   objects that exist already, and a Secret already referenced at a field is no

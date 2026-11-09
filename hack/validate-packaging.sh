@@ -471,8 +471,10 @@ if pods["Helm"] and not any(a.startswith("--default-evidence-agent-image=") for 
 
 # 11c. Availability and hardening of the operator pods:
 #      grace period, PodDisruptionBudget and Pod Security labels agree in the three
-#      renderings; the optional pieces (NetworkPolicy, ValidatingAdmissionPolicy) are
-#      never on by default; the monitors speak HTTPS because the endpoint does.
+#      renderings; the NetworkPolicy is never on by default; the admission policy is
+#      on by default (it is the only check that an editor may read the Secrets a
+#      PgToolBoxConsole or PgAdmin references); the monitors speak HTTPS because the
+#      endpoint does.
 grace = {label: pod.get("terminationGracePeriodSeconds") for label, pod in pods.items() if pod}
 if len(set(grace.values())) != 1 or (set(grace.values()) and min(v or 0 for v in grace.values()) < 40):
     problems.append(f"manager terminationGracePeriodSeconds must be the same and >= 40 in Helm, kustomize and OLM, got {grace}")
@@ -500,8 +502,11 @@ for label, labels in (("Helm", helm_ns_labels), ("kustomize", kust_ns_labels), (
         problems.append(f"{label} namespace does not carry restricted Pod Security labels enforce/audit/warn")
 
 for doc in helm_docs:
-    if doc["kind"] in ("NetworkPolicy", "ValidatingAdmissionPolicy", "ValidatingAdmissionPolicyBinding"):
+    if doc["kind"] == "NetworkPolicy":
         problems.append(f"operator.enabled renders a {doc['kind']} by default: it is the installing admin's choice, never on by default")
+default_vap = [d["metadata"]["name"] for d in helm_docs if d["kind"] in ("ValidatingAdmissionPolicy", "ValidatingAdmissionPolicyBinding")]
+if sorted(default_vap) != ["pgtoolbox-image-override", "pgtoolbox-image-override"]:
+    problems.append(f"operator.enabled must render the admission policy and its binding by default (the Secret-reference rule has no other check); renders {default_vap}")
 for doc in helm_full:
     if doc["kind"] in ("ServiceMonitor", "PodMonitor"):
         endpoints = doc["spec"].get("endpoints") or doc["spec"].get("podMetricsEndpoints")

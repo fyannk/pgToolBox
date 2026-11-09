@@ -51,3 +51,16 @@ This creates the `pgtoolbox` namespace, the CRDs under `config/crd`, the RBAC
 under `config/rbac` (including the `pgtoolbox-console-viewer`, `pgtoolbox-console-operator` and `pgtoolbox-console-approver`
 ClusterRoles) and the manager Deployment. Generated files (`config/crd/bases`,
 `config/rbac/role.yaml`) come from `make manifests`; do not edit them.
+
+`config/default` does **not** apply the operator chart's admission policy (the
+`ValidatingAdmissionPolicy` behind `operator.admissionPolicy.enabled`, on by default in
+the chart). That policy is the only check that whoever edits a `PgToolBoxConsole` or a
+`PgAdmin` may `get` the Secrets it references, and that only the allowed users set
+`spec.image` or `spec.workloadIdentity`. Render it from the chart and apply it, or grant
+`create`/`update` on those kinds only to people trusted with every Secret of their
+namespace (see [security](../security.md)):
+
+```bash
+helm template pgtoolbox charts/pgtoolbox --set operator.enabled=true \
+  --show-only templates/operator/admissionpolicy.yaml | kubectl apply -f -
+```

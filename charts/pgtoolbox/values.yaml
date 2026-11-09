@@ -207,19 +207,17 @@ operator:
   # restoreDrillGuard: the restore-drill delete guard (config/admission), a
   # ValidatingAdmissionPolicy that lets a console's ServiceAccount bound to
   # the drills ClusterRole delete only the drill Clusters it sealed.
-  # Kubernetes 1.30+ (admissionregistration.k8s.io/v1 policies); on 1.28 and
-  # 1.29 nothing enforces it, and the docs recommend keeping restore drills
-  # off there. auto: rendered when the cluster serves the API (helm install,
+  # admissionregistration.k8s.io/v1 policies, served on every supported
+  # Kubernetes (1.34+). auto: rendered when the cluster serves the API (helm install,
   # or helm template --api-versions / --kube-version); true: always (a GitOps
   # render without discovery); false: never.
   restoreDrillGuard:
     # -- Render the restore-drill delete guard. `auto`: when the cluster serves
     # the policy API (`helm install`, or `helm template --api-versions`);
-    # `true`: always (a GitOps render without discovery); `false`: never. Needs
-    # Kubernetes 1.30 or newer to be enforced.
+    # `true`: always (a GitOps render without discovery); `false`: never.
     enabled: auto
 
-  # admissionPolicy: an optional ValidatingAdmissionPolicy (CEL, no webhook)
+  # admissionPolicy: a ValidatingAdmissionPolicy (CEL, no webhook)
   # for rules that need the request's identity, which the CRD's own
   # CEL cannot see. spec.image on a PgAdmin or an EvidenceAgent (which runs with
   # object-store credentials or database credentials) may be set only by the
@@ -229,12 +227,18 @@ operator:
   # Secret it references (SMTP password, webhook URLs, OIDC client secret,
   # Prometheus token, pull and TLS Secrets), asked of the API server's
   # authorizer as the requesting user; on update only references that are new
-  # or changed are checked.
-  # Needs Kubernetes 1.30+ (admissionregistration.k8s.io/v1 policies). Off by default.
+  # or changed are checked. Without it the Secret rule has no other
+  # enforcement: whoever may edit a PgToolBoxConsole or a PgAdmin could have
+  # the operator mount any Secret of the namespace into a workload that sends
+  # it where the spec says. On by default (admissionregistration.k8s.io/v1,
+  # served on every supported Kubernetes, 1.34+); turn it off only where
+  # create/update on those kinds is held by people trusted with every Secret
+  # of their namespace.
   admissionPolicy:
-    # -- Render the optional ValidatingAdmissionPolicy for rules that need the
-    # request's identity. Needs Kubernetes 1.30 or newer.
-    enabled: false
+    # -- Render the ValidatingAdmissionPolicy for rules that need the request's
+    # identity (image override, workload identity, Secret references). On by
+    # default; `false` leaves the Secret-reference rule unenforced.
+    enabled: true
     # -- Validation actions of the policy binding: `Deny`, `Warn` and/or `Audit`.
     # Only `Deny` blocks a request.
     validationActions: [Deny]

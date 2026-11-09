@@ -60,8 +60,8 @@ Two optional pieces, **both off by default**:
   `kubernetes` Endpoints at install time, or `apiServer.mode: any` / `addresses`) and
   `extraEgress`; ingress only from `ingress.metricsFrom`, on the metrics port. Whether
   to have one is the installing admin's decision, never the product's.
-- `operator.admissionPolicy.enabled`: a `ValidatingAdmissionPolicy` (CEL, no webhook,
-  Kubernetes 1.30+) under which only `imageOverride.allowedUsers` and `allowedGroups`
+- `operator.admissionPolicy.enabled` (default `true`): a `ValidatingAdmissionPolicy` (CEL,
+  no webhook) under which only `imageOverride.allowedUsers` and `allowedGroups`
   may set `spec.image` on a `PgAdmin` or `EvidenceAgent` (the operator's default image
   is used otherwise), and only `workloadIdentity.allowedUsers` and `allowedGroups` may
   add or change `spec.workloadIdentity` on an `EvidenceAgent` (it lends the agent a
@@ -155,8 +155,8 @@ authority on what is accepted.
 | operator.networkPolicy.dns.ports | list | `[53]` | Ports of the cluster DNS pods (TCP and UDP). OpenShift DNS pods listen on 5353: use `[5353]` there. |
 | operator.networkPolicy.ingress.metricsFrom | list | `[]` | Peers allowed to scrape the metrics port, as raw NetworkPolicy `from` items. Empty: no ingress on that port. |
 | operator.networkPolicy.extraEgress | list | `[]` | Extra egress rules, as raw NetworkPolicy `egress` items (an egress proxy, a webhook or mail server, a Prometheus outside the watched namespaces). |
-| operator.restoreDrillGuard.enabled | string | `"auto"` | Render the restore-drill delete guard. `auto`: when the cluster serves the policy API (`helm install`, or `helm template --api-versions`); `true`: always (a GitOps render without discovery); `false`: never. Needs Kubernetes 1.30 or newer to be enforced. |
-| operator.admissionPolicy.enabled | bool | `false` | Render the optional ValidatingAdmissionPolicy for rules that need the request's identity. Needs Kubernetes 1.30 or newer. |
+| operator.restoreDrillGuard.enabled | string | `"auto"` | Render the restore-drill delete guard. `auto`: when the cluster serves the policy API (`helm install`, or `helm template --api-versions`); `true`: always (a GitOps render without discovery); `false`: never. |
+| operator.admissionPolicy.enabled | bool | `true` | Render the ValidatingAdmissionPolicy for rules that need the request's identity (image override, workload identity, Secret references). On by default; `false` leaves the Secret-reference rule unenforced. |
 | operator.admissionPolicy.validationActions | list | `["Deny"]` | Validation actions of the policy binding: `Deny`, `Warn` and/or `Audit`. Only `Deny` blocks a request. |
 | operator.admissionPolicy.imageOverride.allowedUsers | list | `[]` | Users allowed to set `spec.image` on a PgAdmin or an EvidenceAgent. Everyone else gets the operator's default image. |
 | operator.admissionPolicy.imageOverride.allowedGroups | list | `["system:masters"]` | Groups allowed to set `spec.image` on a PgAdmin or an EvidenceAgent. |

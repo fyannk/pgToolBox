@@ -1,6 +1,6 @@
 {{- if and .Values.operator.enabled .Values.operator.admissionPolicy.enabled }}
 {{- /*
-OPTIONAL, OFF BY DEFAULT: a ValidatingAdmissionPolicy, evaluated by
+ON BY DEFAULT (operator.admissionPolicy.enabled): a ValidatingAdmissionPolicy, evaluated by
 the API server in CEL, with no webhook to keep available. The CRDs' own CEL cannot
 see who is asking; this one rule needs it. spec.image on a PgAdmin or an
 EvidenceAgent replaces the operator's vetted default image, so only the listed
