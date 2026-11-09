@@ -22,6 +22,9 @@ PGADMIN_IMAGE="${PGADMIN_IMAGE:-ghcr.io/fyannk/pgadmin:9.18-hardened}"
 MANAGER_IMG="${MANAGER_IMG:-pgtoolbox-operator:e2e-pgadmin}"
 KIND_IMAGE_PLATFORM="${KIND_IMAGE_PLATFORM:-linux/amd64}"
 
+# shellcheck source=hack/lib/net.sh
+source hack/lib/net.sh
+
 log() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 
 for tool in kind kubectl docker go; do
@@ -55,14 +58,14 @@ if [[ "${REUSE_CLUSTER:-}" != "1" ]]; then
   hack/kind-create.sh --name "${CLUSTER_NAME}" --image "${KIND_NODE_IMAGE}" --config hack/kind/ci.yaml --wait 300s
 
   log "installing CloudNativePG ${CNPG_VERSION}"
-  kubectl apply --server-side -f "${CNPG_MANIFEST}"
+  apply_manifest "${CNPG_MANIFEST}" --server-side
   kubectl -n cnpg-system wait --for=condition=Available deployment/cnpg-controller-manager --timeout=300s
 
   log "building the operator image"
   make docker-build OPERATOR_IMG="${MANAGER_IMG}" VERSION=e2e
   kind_load "${MANAGER_IMG}"
   log "side-loading ${PGADMIN_IMAGE}"
-  docker pull --quiet --platform "${KIND_IMAGE_PLATFORM}" "${PGADMIN_IMAGE}"
+  pull_image "${KIND_IMAGE_PLATFORM}" "${PGADMIN_IMAGE}"
   kind_load "${PGADMIN_IMAGE}"
 
   log "installing the operator (CRDs, generated RBAC)"

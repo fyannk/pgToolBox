@@ -192,17 +192,8 @@ wait_for() {
   echo "[pgbackrest] ok: ${what}"
 }
 
-# retry <attempts> <command...>: CloudNativePG's webhook can be briefly away (a
-# manager restart on a loaded host).
-retry() {
-  local attempts=$1 n
-  shift
-  for ((n = 1; n <= attempts; n++)); do
-    "$@" && return 0
-    ((n == attempts)) || sleep 10
-  done
-  return 1
-}
+# retry <attempts> <command...> is in hack/lib/net.sh: CloudNativePG's webhook can
+# be briefly away (a manager restart on a loaded host), so the applies below use it.
 
 as_admin() { kubectl --as="${ADMIN}" -n "${NS}" "$@"; }
 helm_admin() { helm --kube-as-user "${ADMIN}" --namespace "${NS}" "$@"; }

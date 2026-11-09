@@ -27,6 +27,9 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${repo_root}"
 
+# shellcheck source=hack/lib/net.sh
+source hack/lib/net.sh
+
 gating=(basic-check-spec olm-bundle-validation olm-crds-have-validation olm-crds-have-resources)
 reporting=(olm-spec-descriptors olm-status-descriptors)
 
@@ -83,7 +86,7 @@ if ((own_cluster)); then
   # host's Docker cache makes a re-run fast.
   images="$(awk '$1 == "image:" { print $2 }' deploy/olm/bundle/tests/scorecard/config.yaml | sort -u)"
   for image in ${images}; do
-    docker image inspect "${image}" >/dev/null 2>&1 || docker pull --quiet --platform linux/amd64 "${image}" >/dev/null
+    docker image inspect "${image}" >/dev/null 2>&1 || pull_image linux/amd64 "${image}"
     docker save --platform linux/amd64 "${image}" 2>/dev/null >"${TMPDIR:-/tmp}/scorecard-image.$$" \
       || docker save "${image}" >"${TMPDIR:-/tmp}/scorecard-image.$$"
     kind load image-archive "${TMPDIR:-/tmp}/scorecard-image.$$" --name "${CLUSTER_NAME}"

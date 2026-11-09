@@ -312,6 +312,7 @@ validate-packaging: ## Compare Helm, kustomize and OLM field by field (CRDs, RBA
 test-hack: ## Tests of the hack/ scripts (the security report generator; throwaway gpg keys).
 	python3 hack/security_report_test.py
 	./hack/evidence/test-verify-signing-key.sh
+	./hack/lib/test-net.sh
 
 .PHONY: lint-workflows
 lint-workflows: ## actionlint and zizmor on .github (workflows and the local action).

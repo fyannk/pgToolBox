@@ -31,11 +31,7 @@ OPERA_SIDECAR_IMAGE="${OPERA_SIDECAR_IMAGE:-docker.io/operasoftware/cnpg-plugin-
 
 # fetch_plugin_manifest <url> <sha256> <file>: download and verify.
 fetch_plugin_manifest() {
-  curl -fsSL --retry 3 --max-time 120 -o "$3" "$1"
-  if ! echo "$2  $3" | sha256sum -c --status; then
-    echo "the manifest $1 is not the pinned one (sha256 $(sha256sum "$3" | cut -d' ' -f1), want $2)" >&2
-    return 1
-  fi
+  fetch_verified "$1" "$3" "$2"
 }
 
 # render_pgbackrest_plugins <dir>: writes <dir>/dalibo.yaml and <dir>/opera.yaml.
