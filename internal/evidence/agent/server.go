@@ -142,7 +142,10 @@ func serve(ctx context.Context, listener net.Listener, handler http.Handler, cer
 	if ctx == nil || listener == nil || handler == nil {
 		return errors.New("agent server configuration is invalid")
 	}
-	runtimeCtx, cancelRuntime := context.WithCancel(ctx)
+	// Request contexts outlive the shutdown signal: a request in flight
+	// is cancelled only when the drain gives up on it (or has finished),
+	// never when the drain begins.
+	runtimeCtx, cancelRuntime := context.WithCancel(context.WithoutCancel(ctx))
 	defer cancelRuntime()
 	server := &http.Server{
 		Handler:           handler,
@@ -170,9 +173,11 @@ func serve(ctx context.Context, listener net.Listener, handler http.Handler, cer
 		}
 		return err
 	case <-ctx.Done():
-		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), serverShutdown)
+		shutdownCtx, cancel := context.WithTimeout(runtimeCtx, serverShutdown)
 		defer cancel()
-		if err := server.Shutdown(shutdownCtx); err != nil {
+		err := server.Shutdown(shutdownCtx)
+		cancelRuntime()
+		if err != nil {
 			_ = server.Close()
 			return err
 		}
