@@ -51,6 +51,12 @@ kubectl -n team-a create rolebinding team-a-leads-approver \
   --clusterrole=pgtoolbox-console-approver --group=team-a-leads
 ```
 
+Approving a request for the `operator` capability hands out database-superuser
+power, not a console button: `pgtoolbox-console-operator` can `patch clusters`, and a
+`Cluster` spec decides who the superuser is and what the instances run (see
+[the ClusterRoles](./authorization.md#the-two-clusterroles)). Decide it as you would
+a request for the `postgres` password; time-box it with the request's duration.
+
 The console asks the API server (a SelfSubjectAccessReview, with your token) before it shows a button
 or attempts a write, and answers 403 for anything you may not do. It then writes
 **with your own token**: the API server authorizes the write, applies its

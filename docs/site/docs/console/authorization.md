@@ -131,6 +131,17 @@ purpose: **whoever may open pgAdmin holds the credentials of every role it
 offers** (see [pgAdmin](../operator/pgadmin.md#who-may-open-it)). The chart
 renders the roles with `operator.userRoles.create` (default `true`).
 
+:::warning `pgtoolbox-console-operator` is effectively database-superuser
+`patch clusters` lets its holder rewrite the whole `Cluster` spec, not only the
+annotations reload and restart touch: `enableSuperuserAccess`, `managed.roles`,
+`postgresql.parameters` (`archive_command`, `shared_preload_libraries`, ...),
+`bootstrap` and the images. CloudNativePG applies them as the superuser, so whoever
+holds the role can become the superuser of every Cluster of the namespace or run
+code in its instances. `get pgadmins` and `create databaseroles` add to that. Grant
+it, and approve access requests for the `operator` capability, only to people you
+would give the `postgres` password.
+:::
+
 A third ClusterRole, `pgtoolbox-aggregate-to-admin`, is bound to nobody: it adds
 `get`/`list`/`watch` on PgAdmins, EvidenceAgents and PgAccessRequests, `create` on
 PgAccessRequests and `update` on their status, to the built-in `admin` role

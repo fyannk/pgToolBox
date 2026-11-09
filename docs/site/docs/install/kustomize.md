@@ -54,6 +54,17 @@ ClusterRoles), the manager Deployment and the
 (`config/admission`). Generated files (`config/crd/bases`,
 `config/rbac/role.yaml`) come from `make manifests`; do not edit them.
 
+:::danger `kubectl delete -k config/default` deletes every pgToolBox object
+Unlike the chart, `config/default` does not keep the CRDs: deleting the kustomization
+deletes the CRDs, hence every `PgToolBoxConsole`, `PgAdmin`, `PgAdminAccess`,
+`EvidenceAgent` and `PgAccessRequest` in the cluster, and the namespace `pgtoolbox`.
+To remove only the operator, delete its Deployment (`kubectl -n pgtoolbox delete
+deployment pgtoolbox`), or build without the CRDs. Either
+way the operator leaves the `pgtoolbox-evidence-agent` ClusterRole and
+ClusterRoleBinding it created for the evidence agents; delete them by name when you
+remove pgToolBox for good.
+:::
+
 `config/default` does **not** apply the operator chart's admission policy (the
 `ValidatingAdmissionPolicy` behind `operator.admissionPolicy.enabled`, on by default in
 the chart). That policy is the only check that whoever edits a `PgToolBoxConsole` or a
