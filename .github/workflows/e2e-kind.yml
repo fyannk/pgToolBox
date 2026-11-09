@@ -3,7 +3,7 @@ name: E2E on kind
 # One kind scenario on a fresh runner: the reusable half of ci.yml's e2e jobs.
 # A hosted runner is disposable and has Docker, so the scenario scripts run
 # unchanged: they create a kind cluster, run the suite and delete the cluster.
-# The images are not built here: ci.yml's e2e-images job built them once for
+# The images are not built here: ci.yml's images job built them once for
 # the run, and with PREBUILT_IMAGES set the scripts' `make docker-build*` calls
 # only tag the archives loaded below. Each scenario gets its own runner and its
 # own cluster, which is also why nothing here takes a lock.

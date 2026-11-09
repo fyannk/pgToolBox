@@ -62,7 +62,7 @@ jobs:
           export NIGHTLY
           echo "matrix=$(./hack/matrix.sh plan)" >> "${GITHUB_OUTPUT}"
 
-  # The same build as ci.yml's e2e-images job, from the same gha cache.
+  # The same linux/amd64 build as ci.yml's images job, from the cache main writes.
   images:
     name: Image ${{ matrix.image }} (linux/amd64, for kind)
     runs-on: ubuntu-latest

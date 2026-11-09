@@ -48,10 +48,9 @@ actionlint and zizmor and must stay clean.
 | `headlamp` | `headlamp-check` | the Headlamp plugin builds and tests |
 | `docs` | `docs`, `docs-spell`, `docs-links` | the site builds with broken links failing it, generated references are current, spelling; external links are reported, not enforced |
 | `packaging` | `chart-gates bundle-validate kustomize-validate` | helm lint and template, helm-unittest, ct lint, kubeconform, kube-linter, alert rules, README values, Helm vs kustomize vs OLM field by field, `operator-sdk bundle validate` |
-| `images` | `hack/image-profile.sh` and the container tests | each image builds for `linux/amd64` and `linux/arm64`, then the amd64 image is held to the container profile (below) |
-| `e2e-images` | none (`docker/build-push-action`) | operator, console and evidence agent built once for `linux/amd64` from the same layer cache as `images`, and handed to every `e2e-*` job as artifacts |
+| `images` | `hack/image-profile.sh` and the container tests | each image is built once per run, for `linux/amd64` and `linux/arm64`; the amd64 image is held to the container profile (below) and handed to every `e2e-*` job as an artifact |
 | `olm-images`, `evidence-integration` | `bundle-build catalog-build`, `test-evidence-integration` | the OLM images build; Barman and pgBackRest fixtures and S3, Azure and GCS provider parity |
-| `e2e-*`, `olm-scorecard` | `test-e2e-<scenario>`, `scorecard` | kind scenarios: console, chart (and with NetworkPolicy), EvidenceAgent, PgAdmin, access requests, team mode, pgBackRest, and the OLM scorecard; each loads the `e2e-images` archives and runs with `PREBUILT_IMAGES=1`, so its `make docker-build*` steps only tag them |
+| `e2e-*`, `olm-scorecard` | `test-e2e-<scenario>`, `scorecard` | kind scenarios: console, chart (and with NetworkPolicy), EvidenceAgent, PgAdmin, access requests, team mode, pgBackRest, and the OLM scorecard; each loads the archives of `images` and runs with `PREBUILT_IMAGES=1`, so its `make docker-build*` steps only tag them |
 | `ci-ok` | none | passes when every job passed or was skipped on purpose |
 
 **The container profile** (`hack/image-profile.sh`, plus the console's and the

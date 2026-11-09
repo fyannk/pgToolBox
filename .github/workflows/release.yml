@@ -51,10 +51,17 @@ env:
   OWNER: ${{ github.repository_owner }}
 
 jobs:
+  # The release environment admits only refs that are v* or pkg/evidence/v*
+  # tags (repository protected-tag ruleset: no update, no deletion) and waits
+  # for the maintainer's approval, once, here: every publishing job needs this
+  # one. A dispatch from a branch therefore never starts, and every signature
+  # names release.yml@refs/tags/..., which is what the verification on the
+  # release page requires.
   prepare:
     name: Resolve and verify the release
     runs-on: ubuntu-latest
-    timeout-minutes: 200
+    environment: release
+    timeout-minutes: 70
     permissions:
       contents: read # check out the repository and read the release list
       checks: read # read the check runs of the tagged commit
@@ -129,7 +136,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           SHA: ${{ steps.resolve.outputs.sha }}
-          CI_WAIT_ATTEMPTS: "240"
+          CI_WAIT_ATTEMPTS: "120" # 60 minutes: main's run of the commit is normally done before the tag
         run: |
           set -euo pipefail
           ./hack/release.sh wait-ci "${SHA}"
@@ -205,6 +212,20 @@ jobs:
         run: |
           set -euo pipefail
           cosign sign --yes "${IMAGE_REF}@${DIGEST}"
+      # What a user runs (release page), run here: a signature or attestation
+      # that does not verify fails the release before anything points at it.
+      - name: Verify the signature and the provenance
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cosign verify "${IMAGE_REF}@${DIGEST}" \
+            --certificate-identity-regexp "^https://github.com/${GITHUB_REPOSITORY}/\.github/workflows/release\.yml@refs/tags/" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com > /dev/null
+          gh attestation verify "oci://${IMAGE_REF}@${DIGEST}" --repo "${GITHUB_REPOSITORY}" \
+            --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/release.yml" > /dev/null
+          echo "verified ${IMAGE_REF}@${DIGEST}"
       - name: Record the digest
         env:
           DIGEST: ${{ steps.build.outputs.digest }}

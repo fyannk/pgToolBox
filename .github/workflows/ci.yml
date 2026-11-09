@@ -441,12 +441,19 @@ jobs:
 
   # ----------------------------------------------------------------- images
 
+  # One build per image per run. The linux/amd64 image is held to the
+  # container profile here and handed, as an archive, to every e2e scenario
+  # (e2e-kind.yml loads it), so the e2e jobs run the bytes this job checked and
+  # none of them builds an image. linux/arm64 is built to prove it builds; the
+  # Go stages cross-compile, so there is no emulation. Layers come from the gha
+  # cache, which only main writes (a pull request's cache would serve that pull
+  # request alone and push main's out of the 10 GB budget).
   images:
     name: Image ${{ matrix.image }} (multi-arch build, container profile)
     needs: changes
-    if: needs.changes.outputs.docker == 'true'
+    if: needs.changes.outputs.docker == 'true' || needs.changes.outputs.charts == 'true' || needs.changes.outputs.console == 'true' || needs.changes.outputs.evidence == 'true' || needs.changes.outputs.operator == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 25
     permissions:
       contents: read # check out the repository
     strategy:
@@ -454,7 +461,9 @@ jobs:
       matrix:
         image: [operator, console, evidence-agent]
     env:
-      IMAGE: pgtoolbox-${{ matrix.image }}:ci
+      IMAGE: pgtoolbox-${{ matrix.image }}:prebuilt
+      ARCHIVE: ${{ runner.temp }}/pgtoolbox-${{ matrix.image }}.tar
+      CACHE_TO: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && format('type=gha,mode=max,ignore-error=true,scope=image-{0}', matrix.image) || '' }}
     steps:
       - name: Check out the repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -462,23 +471,7 @@ jobs:
           persist-credentials: false
       - name: Set up Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-      # The Go stages cross-compile and the runtime stage only copies, so both
-      # architectures build natively with no emulation. Nothing is pushed.
-      - name: Build for linux/amd64 and linux/arm64
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-        with:
-          context: .
-          target: ${{ matrix.image }}
-          platforms: linux/amd64,linux/arm64
-          build-args: |
-            VERSION=ci
-          push: false
-          cache-from: type=gha,scope=image-${{ matrix.image }}
-          cache-to: type=gha,mode=max,scope=image-${{ matrix.image }}
-      # The same build again for the runner's architecture, loaded into the
-      # daemon: every layer comes from the cache above, so this is the image
-      # that was just built, not a second one.
-      - name: Load the linux/amd64 image
+      - name: Build linux/amd64 into an archive
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
@@ -486,9 +479,25 @@ jobs:
           platforms: linux/amd64
           build-args: |
             VERSION=ci
-          load: true
           tags: ${{ env.IMAGE }}
+          outputs: type=docker,dest=${{ env.ARCHIVE }}
           cache-from: type=gha,scope=image-${{ matrix.image }}
+          cache-to: ${{ env.CACHE_TO }}
+      - name: Build linux/arm64
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          target: ${{ matrix.image }}
+          platforms: linux/arm64
+          build-args: |
+            VERSION=ci
+          push: false
+          cache-from: type=gha,scope=image-${{ matrix.image }}
+          cache-to: ${{ env.CACHE_TO }}
+      - name: Load the linux/amd64 image
+        run: |
+          set -euo pipefail
+          docker load --input "${ARCHIVE}"
       # Numeric non-root user, exec-form entrypoint, OCI labels, a licence, no
       # shell, no setuid binary, and a start under an arbitrary UID in group 0
       # with a read-only root filesystem and every capability dropped.
@@ -507,48 +516,11 @@ jobs:
           set -euo pipefail
           ./hack/evidence/test-container.sh "${IMAGE}"
           ./hack/evidence/test-agent-container.sh "${IMAGE}"
-
-  # The images every e2e scenario runs, built once per CI run for the runner's
-  # architecture and handed to the scenarios as artifacts: eight scenarios used
-  # to build them eight times, each download of the Go modules one more chance
-  # of a proxy error. The layers come from (and feed) the gha cache the images
-  # job uses, so this is the image that job checks.
-  e2e-images:
-    name: E2E image ${{ matrix.image }} (linux/amd64, for kind)
-    needs: changes
-    if: needs.changes.outputs.charts == 'true' || needs.changes.outputs.console == 'true' || needs.changes.outputs.evidence == 'true' || needs.changes.outputs.operator == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    permissions:
-      contents: read # check out the repository
-    strategy:
-      fail-fast: false
-      matrix:
-        image: [operator, console, evidence-agent]
-    steps:
-      - name: Check out the repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Set up Buildx
-        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-      - name: Build linux/amd64 into an archive
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-        with:
-          context: .
-          target: ${{ matrix.image }}
-          platforms: linux/amd64
-          build-args: |
-            VERSION=e2e
-          tags: pgtoolbox-${{ matrix.image }}:prebuilt
-          outputs: type=docker,dest=${{ runner.temp }}/pgtoolbox-${{ matrix.image }}.tar
-          cache-from: type=gha,scope=image-${{ matrix.image }}
-          cache-to: type=gha,mode=max,scope=image-${{ matrix.image }}
-      - name: Hand the image to the scenarios
+      - name: Hand the image to the e2e scenarios
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: e2e-image-${{ matrix.image }}
-          path: ${{ runner.temp }}/pgtoolbox-${{ matrix.image }}.tar
+          path: ${{ env.ARCHIVE }}
           retention-days: 1
           compression-level: 1
           if-no-files-found: error
@@ -599,12 +571,12 @@ jobs:
   # ------------------------------------------------------------ kind e2e
   #
   # Each scenario is one reusable workflow call (e2e-kind.yml): a fresh runner,
-  # a fresh kind cluster, one make target, the images of e2e-images. They run
+  # a fresh kind cluster, one make target, the images of the images job. They run
   # in parallel; a runner is disposable, so nothing needs a lock or a sweep.
 
   e2e-console:
     name: E2E console
-    needs: [changes, e2e-images]
+    needs: [changes, images]
     if: needs.changes.outputs.console == 'true'
     permissions:
       contents: read # the called workflow checks out the repository
@@ -616,7 +588,7 @@ jobs:
 
   e2e-chart:
     name: E2E chart (two team consoles, RBAC proof, ct install)
-    needs: [changes, e2e-images]
+    needs: [changes, images]
     if: needs.changes.outputs.charts == 'true' || needs.changes.outputs.console == 'true'
     permissions:
       contents: read # the called workflow checks out the repository
@@ -628,7 +600,7 @@ jobs:
 
   e2e-chart-netpol:
     name: E2E chart (NetworkPolicy on Calico)
-    needs: [changes, e2e-images]
+    needs: [changes, images]
     if: needs.changes.outputs.charts == 'true'
     permissions:
       contents: read # the called workflow checks out the repository
@@ -640,7 +612,7 @@ jobs:
 
   e2e-evidenceagent:
     name: E2E EvidenceAgent
-    needs: [changes, e2e-images]
+    needs: [changes, images]
     if: needs.changes.outputs.operator == 'true' || needs.changes.outputs.evidence == 'true'
     permissions:
       contents: read # the called workflow checks out the repository
@@ -652,7 +624,7 @@ jobs:
 
   e2e-pgadmin:
     name: E2E PgAdmin
-    needs: [changes, e2e-images]
+    needs: [changes, images]
     if: needs.changes.outputs.operator == 'true'
     permissions:
       contents: read # the called workflow checks out the repository
@@ -664,7 +636,7 @@ jobs:
 
   e2e-access:
     name: E2E access requests
-    needs: [changes, e2e-images]
+    needs: [changes, images]
     if: needs.changes.outputs.operator == 'true' || needs.changes.outputs.console == 'true'
     permissions:
       contents: read # the called workflow checks out the repository
@@ -676,7 +648,7 @@ jobs:
 
   e2e-team:
     name: E2E team mode (pgtools without the operator)
-    needs: [changes, e2e-images]
+    needs: [changes, images]
     if: needs.changes.outputs.charts == 'true' || needs.changes.outputs.console == 'true' || needs.changes.outputs.evidence == 'true' || needs.changes.outputs.operator == 'true'
     permissions:
       contents: read # the called workflow checks out the repository
@@ -688,7 +660,7 @@ jobs:
 
   e2e-pgbackrest:
     name: E2E pgBackRest (two plugins, MinIO over TLS)
-    needs: [changes, e2e-images]
+    needs: [changes, images]
     if: needs.changes.outputs.charts == 'true' || needs.changes.outputs.console == 'true' || needs.changes.outputs.evidence == 'true' || needs.changes.outputs.operator == 'true'
     permissions:
       contents: read # the called workflow checks out the repository
@@ -731,7 +703,6 @@ jobs:
       - docs
       - packaging
       - images
-      - e2e-images
       - olm-images
       - evidence-integration
       - e2e-console
