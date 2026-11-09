@@ -123,6 +123,18 @@ restore to this time?". [Restore drills](restore-drills.md) restore the latest
 backup into a throwaway Cluster and report what they checked and what they
 did not.
 
+A `Backup` names its Cluster only by `spec.cluster.name`, so a Cluster deleted
+and recreated under the same name still finds the old ones. A `Backup` created
+before the Cluster, or owned by a Cluster with another UID, is listed and
+marked "predates this Cluster", and it counts in none of this Cluster's
+last backup, wiring diagram or recovery bar.
+
+"Last backup" turns to warning when it is overdue: older than twice the period
+of the most frequent active `ScheduledBackup` (the operator's own
+`lastScheduleTime` to `nextScheduleTime`), or, when no period is known, older
+than 7 days. The panel then says "no backup cadence known", so one old backup
+is never ok forever.
+
 ## Storage
 
 <Screen

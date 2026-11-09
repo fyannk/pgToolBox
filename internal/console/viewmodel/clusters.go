@@ -164,8 +164,31 @@ type BackupRecency struct {
 	// PluginBased reports CNPG-I plugin archiving (barman-cloud plugin):
 	// the deprecated in-tree recoverability fields are then never set
 	// and are rendered "not reported by plugin-based backups".
-	PluginBased bool       `json:"pluginBased,omitempty" doc:"Backups go through a CNPG-I plugin."`
-	Provenance  Provenance `json:"provenance"`
+	PluginBased bool `json:"pluginBased,omitempty" doc:"Backups go through a CNPG-I plugin."`
+	// Cadence is the age past which the last completed backup is
+	// overdue: twice the ScheduledBackup period when one is known, a
+	// conservative default otherwise. Absent when no backup is
+	// configured or Backups were not read.
+	Cadence    *BackupCadence `json:"cadence,omitempty"`
+	Provenance Provenance     `json:"provenance"`
+}
+
+// BackupCadence is the age threshold of the last completed backup.
+type BackupCadence struct {
+	// Basis is "schedule" when the threshold comes from a
+	// ScheduledBackup's lastScheduleTime/nextScheduleTime period, or
+	// "default" when no cadence is known and the console applies its
+	// conservative default.
+	Basis string `json:"basis" enum:"schedule,default"`
+	// IntervalSeconds is the shortest observed schedule period; zero
+	// on the default basis.
+	IntervalSeconds int64 `json:"intervalSeconds,omitempty"`
+	// ThresholdSeconds is the age after which the last completed backup
+	// is overdue.
+	ThresholdSeconds int64 `json:"thresholdSeconds"`
+	// Overdue: the last completed backup is older than the threshold,
+	// or none completed and the Cluster is older than it.
+	Overdue bool `json:"overdue,omitempty"`
 }
 
 // FindingCounts summarises the latest diagnostics run.

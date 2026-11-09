@@ -284,6 +284,9 @@ func (s *Service) backupRecency(g *gathered) viewmodel.BackupRecency {
 	if r.LastFailedAt != nil && r.LastCompletedAt != nil && !r.LastFailedAt.After(*r.LastCompletedAt) {
 		r.LastFailedAt = nil
 	}
+	if r.Configured {
+		r.Cadence = backupCadence(g, s.now().UTC(), r.LastCompletedAt)
+	}
 	switch {
 	case !r.Configured:
 		r.Health = viewmodel.HealthInfo
@@ -291,10 +294,50 @@ func (s *Service) backupRecency(g *gathered) viewmodel.BackupRecency {
 		r.Health = viewmodel.HealthWarning
 	case r.LastCompletedAt == nil:
 		r.Health = viewmodel.HealthWarning
+	case r.Cadence != nil && r.Cadence.Overdue:
+		r.Health = viewmodel.HealthWarning
 	default:
 		r.Health = viewmodel.HealthOK
 	}
 	return r
+}
+
+// defaultBackupThreshold is the age past which a last completed backup
+// is overdue when no schedule period is known: a week, conservative
+// enough for a weekly full, so a configured Cluster is never "ok"
+// forever on one old backup.
+const defaultBackupThreshold = 7 * 24 * time.Hour
+
+// backupCadence derives the overdue threshold. The period is the
+// operator's own: ScheduledBackup.status.nextScheduleTime minus
+// lastScheduleTime (CNPG sets both on each run: scheduledbackup_controller.go
+// v1.30.0 and v1.30.1:389-390; the first reconcile sets only the next one,
+// line 306, so the period is unknown until a run), the shortest over the
+// active schedules. Twice the period absorbs one late or retried run.
+func backupCadence(g *gathered, now time.Time, last *time.Time) *viewmodel.BackupCadence {
+	var period time.Duration
+	for _, sb := range g.scheduled {
+		if (sb.Spec.Suspend != nil && *sb.Spec.Suspend) || sb.Status.LastScheduleTime == nil || sb.Status.NextScheduleTime == nil {
+			continue
+		}
+		d := sb.Status.NextScheduleTime.Sub(sb.Status.LastScheduleTime.Time)
+		if d > 0 && (period == 0 || d < period) {
+			period = d
+		}
+	}
+	c := &viewmodel.BackupCadence{Basis: "default", ThresholdSeconds: int64(defaultBackupThreshold / time.Second)}
+	if period > 0 {
+		threshold := max(2*period, period+time.Hour)
+		c = &viewmodel.BackupCadence{Basis: "schedule", IntervalSeconds: int64(period / time.Second), ThresholdSeconds: int64(threshold / time.Second)}
+	}
+	threshold := time.Duration(c.ThresholdSeconds) * time.Second
+	switch {
+	case last != nil:
+		c.Overdue = now.Sub(*last) > threshold
+	case !g.cluster.CreationTimestamp.IsZero():
+		c.Overdue = now.Sub(g.cluster.CreationTimestamp.Time) > threshold
+	}
+	return c
 }
 
 func backupDetail(r viewmodel.BackupRecency, now time.Time) string {
@@ -307,6 +350,12 @@ func backupDetail(r viewmodel.BackupRecency, now time.Time) string {
 		return "failed " + age(now, *r.LastFailedAt) + " ago, after the last completed one"
 	case r.LastCompletedAt == nil:
 		return "no completed Backup observed"
+	case r.Cadence != nil && r.Cadence.Overdue && r.Cadence.Basis == "schedule":
+		return "completed " + age(now, *r.LastCompletedAt) + " ago, overdue: the schedule runs every " +
+			age(now, now.Add(-time.Duration(r.Cadence.IntervalSeconds)*time.Second))
+	case r.Cadence != nil && r.Cadence.Overdue:
+		return "completed " + age(now, *r.LastCompletedAt) + " ago, older than " +
+			age(now, now.Add(-time.Duration(r.Cadence.ThresholdSeconds)*time.Second)) + " (no backup cadence known)"
 	default:
 		return "completed " + age(now, *r.LastCompletedAt) + " ago"
 	}

@@ -62,6 +62,11 @@ const backupColumns: Columns<BackupRow> = bc.columns([
             observedAt={b.provenance.observedAt}
           />
           {b.phase && !b.known && <span className="text-caption text-muted">{m.phase_not_in_table()}</span>}
+          {b.predatesCluster && (
+            <span className="text-caption font-semibold" title={m.backup_predates_cluster_hint()}>
+              {m.backup_predates_cluster()}
+            </span>
+          )}
           {b.error && <span className="text-caption">{b.error}</span>}
           {b.notReportedWhileRunning && b.notReportedWhileRunning.length > 0 && (
             <span className="text-caption text-muted">

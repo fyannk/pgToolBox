@@ -592,7 +592,7 @@ func recoveryMarkers(items []evidence.BackupItem, rows []viewmodel.BackupRow) []
 		out = append(out, m)
 	}
 	for _, row := range rows {
-		if !row.Terminal || row.Health != viewmodel.HealthCritical {
+		if !row.Terminal || row.Health != viewmodel.HealthCritical || row.PredatesCluster {
 			continue
 		}
 		at := row.StoppedAt

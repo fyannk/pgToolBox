@@ -419,6 +419,26 @@ components:
           format: int64
           type: integer
       type: object
+    BackupCadence:
+      additionalProperties: false
+      properties:
+        basis:
+          enum:
+            - schedule
+            - default
+          type: string
+        intervalSeconds:
+          format: int64
+          type: integer
+        overdue:
+          type: boolean
+        thresholdSeconds:
+          format: int64
+          type: integer
+      required:
+        - basis
+        - thresholdSeconds
+      type: object
     BackupMethod:
       additionalProperties: false
       properties:
@@ -447,6 +467,8 @@ components:
     BackupRecency:
       additionalProperties: false
       properties:
+        cadence:
+          $ref: "#/components/schemas/BackupCadence"
         configured:
           description: The Cluster declares a backup method or schedule.
           type: boolean
@@ -523,6 +545,8 @@ components:
           type: string
         pluginName:
           type: string
+        predatesCluster:
+          type: boolean
         provenance:
           $ref: "#/components/schemas/Provenance"
         repository:
@@ -555,6 +579,8 @@ components:
       properties:
         archiving:
           $ref: "#/components/schemas/Archiving"
+        cadence:
+          $ref: "#/components/schemas/BackupCadence"
         configured:
           description: The Cluster declares a backup method or schedule.
           type: boolean

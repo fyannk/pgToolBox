@@ -1457,5 +1457,10 @@
   "col_chain": "Chaîne",
   "col_usable": "Utilisable",
   "col_backup_object": "Objet Backup",
-  "drill_backup_label": "Sauvegarde pgBackRest restaurée"
+  "drill_backup_label": "Sauvegarde pgBackRest restaurée",
+  "backup_predates_cluster": "antérieure à ce Cluster",
+  "backup_predates_cluster_hint": "Créée avant ce Cluster, ou appartenant à un autre Cluster du même nom : ni sa récence, ni sa topologie, ni sa chronologie n'en tiennent compte.",
+  "backup_overdue_schedule": "en retard : une exécution planifiée a été manquée",
+  "backup_overdue_default": "en retard : plus de 7 jours, et aucune cadence de sauvegarde n'est connue",
+  "backup_no_cadence_known": "aucune cadence de sauvegarde connue : alerte après 7 jours"
 }

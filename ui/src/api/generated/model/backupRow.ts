@@ -28,6 +28,7 @@ export interface BackupRow {
   pgbackrest?: PgBackRestBackupRef;
   phase?: string;
   pluginName?: string;
+  predatesCluster?: boolean;
   provenance: Provenance;
   repository: BackupRowRepository;
   schedule?: string;

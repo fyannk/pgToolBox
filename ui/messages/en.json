@@ -1457,5 +1457,10 @@
   "col_chain": "Chain",
   "col_usable": "Usable",
   "col_backup_object": "Backup object",
-  "drill_backup_label": "pgBackRest backup restored"
+  "drill_backup_label": "pgBackRest backup restored",
+  "backup_predates_cluster": "predates this Cluster",
+  "backup_predates_cluster_hint": "Created before this Cluster, or owned by another Cluster of the same name: not counted in its recency, topology or timeline.",
+  "backup_overdue_schedule": "overdue: a scheduled run was missed",
+  "backup_overdue_default": "overdue: older than 7 days, and no backup cadence is known",
+  "backup_no_cadence_known": "no backup cadence known: warning after 7 days"
 }
