@@ -341,18 +341,24 @@ check: lint test test-race test-fuzz test-envtest test-envtest-admissionpolicy t
 # platform): make docker-build-console DOCKER_BUILD_EXTRA='--platform linux/arm64'.
 DOCKER_BUILD_EXTRA ?=
 DOCKER_BUILD = docker buildx build --load $(DOCKER_BUILD_EXTRA) --build-arg VERSION=$(VERSION) --build-arg IMG=$(OPERATOR_IMG)
+# PREBUILT_IMAGES=1: the images were built once for the whole CI run and loaded
+# into the daemon as pgtoolbox-<target>:prebuilt (ci.yml's e2e-images job); the
+# docker-build targets then only tag them, so every e2e scenario runs the same
+# bytes and none rebuilds them. The e2e manifests pass --operator-image, so the
+# IMG default baked into the operator binary is not what they run.
+image_build = $(if $(PREBUILT_IMAGES),docker image inspect pgtoolbox-$(1):prebuilt >/dev/null && docker tag pgtoolbox-$(1):prebuilt $(2),$(DOCKER_BUILD) --target $(1) -t $(2) .)
 
 .PHONY: docker-build
 docker-build: ## Build the operator image for the host platform (loaded locally).
-	$(DOCKER_BUILD) --target operator -t $(OPERATOR_IMG) .
+	$(call image_build,operator,$(OPERATOR_IMG))
 
 .PHONY: docker-build-console
 docker-build-console: ## Build the console image.
-	$(DOCKER_BUILD) --target console -t $(CONSOLE_IMG) .
+	$(call image_build,console,$(CONSOLE_IMG))
 
 .PHONY: docker-build-evidence
 docker-build-evidence: ## Build the evidence agent image.
-	$(DOCKER_BUILD) --target evidence-agent -t $(EVIDENCE_IMG) .
+	$(call image_build,evidence-agent,$(EVIDENCE_IMG))
 
 .PHONY: docker-build-all
 docker-build-all: docker-build docker-build-console docker-build-evidence ## Build every Go image for the host platform.

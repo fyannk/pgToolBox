@@ -24,13 +24,13 @@ actionlint and zizmor and must stay clean.
 | Workflow | Runs on | What |
 |---|---|---|
 | `ci.yml` | pull request, push to `main`, nightly at 04:17 UTC, by hand | The single pipeline. Its last job, `ci-ok`, is the required check. |
-| `e2e-kind.yml` | called by `ci.yml` | One kind scenario on a fresh runner (reusable workflow). |
+| `e2e-kind.yml` | called by `ci.yml` | One kind scenario on a fresh runner, with the images of the run loaded (reusable workflow). |
 | `security.yml` | pull request, push to `main`, daily at 03:37 UTC, by hand | CodeQL, govulncheck, osv-scanner, npm audit, grype on the images, gitleaks, gosec, zizmor, kube-linter. Its last job, `security-gate`, is the required check. |
 | `scorecard.yml` | push to `main`, weekly on Tuesday, by hand | OpenSSF Scorecard, published and uploaded to code scanning. |
 | `pages.yml` | when `security.yml` finishes on `main`, nightly at 04:47 UTC, by hand, after a release | Builds the documentation, renders the Security page, deploys both to GitHub Pages. |
 | `release.yml` | tag `v*` or `pkg/evidence/v*`; by hand for an existing tag | The release. It checks out and runs nothing but the tagged commit, and restores no cache. |
 | `release-dry-run.yml` | a pull request touching the release files; weekly on Sunday | The release's build as a dry run: nothing pushed or signed, no write permission. |
-| `matrix.yml` | nightly at 01:41 UTC, by hand | The end-to-end scenarios on Kubernetes 1.34 and 1.36 × CloudNativePG 1.30.1, plus CloudNativePG `main` (non-blocking). |
+| `matrix.yml` | nightly at 01:41 UTC, by hand | The end-to-end scenarios on Kubernetes 1.34 and 1.36 × CloudNativePG 1.30.1, plus CloudNativePG `main` (non-blocking): one job per Kubernetes × CloudNativePG × scenario, all at once, on the images built once for the run. |
 | `image-watch.yml` | nightly at 04:23 UTC | Scans the latest published images and keeps one tracking issue for fixable criticals. |
 | `automerge.yml` | Dependabot pull requests | Arms auto-merge for patch and minor updates. |
 
@@ -49,8 +49,9 @@ actionlint and zizmor and must stay clean.
 | `docs` | `docs`, `docs-spell`, `docs-links` | the site builds with broken links failing it, generated references are current, spelling; external links are reported, not enforced |
 | `packaging` | `chart-gates bundle-validate kustomize-validate` | helm lint and template, helm-unittest, ct lint, kubeconform, kube-linter, alert rules, README values, Helm vs kustomize vs OLM field by field, `operator-sdk bundle validate` |
 | `images` | `hack/image-profile.sh` and the container tests | each image builds for `linux/amd64` and `linux/arm64`, then the amd64 image is held to the container profile (below) |
+| `e2e-images` | none (`docker/build-push-action`) | operator, console and evidence agent built once for `linux/amd64` from the same layer cache as `images`, and handed to every `e2e-*` job as artifacts |
 | `olm-images`, `evidence-integration` | `bundle-build catalog-build`, `test-evidence-integration` | the OLM images build; Barman and pgBackRest fixtures and S3, Azure and GCS provider parity |
-| `e2e-*`, `olm-scorecard` | `test-e2e-<scenario>`, `scorecard` | kind scenarios: console, chart (and with NetworkPolicy), EvidenceAgent, PgAdmin, access requests, team mode, pgBackRest, and the OLM scorecard |
+| `e2e-*`, `olm-scorecard` | `test-e2e-<scenario>`, `scorecard` | kind scenarios: console, chart (and with NetworkPolicy), EvidenceAgent, PgAdmin, access requests, team mode, pgBackRest, and the OLM scorecard; each loads the `e2e-images` archives and runs with `PREBUILT_IMAGES=1`, so its `make docker-build*` steps only tag them |
 | `ci-ok` | none | passes when every job passed or was skipped on purpose |
 
 **The container profile** (`hack/image-profile.sh`, plus the console's and the

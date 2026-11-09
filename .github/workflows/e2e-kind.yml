@@ -2,9 +2,11 @@ name: E2E on kind
 
 # One kind scenario on a fresh runner: the reusable half of ci.yml's e2e jobs.
 # A hosted runner is disposable and has Docker, so the scenario scripts run
-# unchanged (they build the images from the working tree, create a kind
-# cluster, run the suite and delete the cluster). Each scenario gets its own
-# runner and its own cluster, which is also why nothing here takes a lock.
+# unchanged: they create a kind cluster, run the suite and delete the cluster.
+# The images are not built here: ci.yml's e2e-images job built them once for
+# the run, and with PREBUILT_IMAGES set the scripts' `make docker-build*` calls
+# only tag the archives loaded below. Each scenario gets its own runner and its
+# own cluster, which is also why nothing here takes a lock.
 #
 # The inputs reach the shell only through env: they are never interpolated
 # into a script.
@@ -25,6 +27,11 @@ on:
         required: false
         type: number
         default: 45
+      images:
+        description: Load the e2e-image-* artifacts of the calling run (false for a scenario that runs none of this repository's images)
+        required: false
+        type: boolean
+        default: true
 
 permissions: {}
 
@@ -53,6 +60,22 @@ jobs:
         run: |
           set -euo pipefail
           echo "KUBECONFIG=${RUNNER_TEMP}/kubeconfig" >> "${GITHUB_ENV}"
+      - name: Download the images of this run
+        if: inputs.images
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: e2e-image-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/images
+      - name: Load the images
+        if: inputs.images
+        run: |
+          set -euo pipefail
+          for archive in "${RUNNER_TEMP}"/images/pgtoolbox-*.tar; do
+            docker load --input "${archive}"
+          done
+          rm -rf "${RUNNER_TEMP}/images"
+          echo "PREBUILT_IMAGES=1" >> "${GITHUB_ENV}"
       - name: Run the scenario
         run: |
           set -euo pipefail
@@ -67,12 +90,3 @@ jobs:
           path: artifacts
           retention-days: 7
           if-no-files-found: ignore
-      - name: Delete leftover kind clusters
-        if: always()
-        run: |
-          set -euo pipefail
-          if command -v kind >/dev/null; then
-            kind get clusters 2>/dev/null | while read -r name; do
-              kind delete cluster --name "${name}" || true
-            done
-          fi
