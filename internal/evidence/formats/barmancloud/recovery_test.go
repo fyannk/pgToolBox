@@ -225,7 +225,14 @@ func TestRecoveryCoverageCrossesFailoverWhosePartialSwitchSegmentIsUnused(t *tes
 		{name: "backup ends inside the switch segment", history: "1\t0/30000A0\tpromoted\n", begin: 1, end: 3, endLSN: "0/3000050", ranges: []WALRange{walRange(1, 1, 2), walRange(2, 3, 5)}, state: evidence.Healthy, frontier: 5, frontierTL: 2},
 		{name: "backup begins and ends inside the switch segment", history: "1\t0/30000A0\tpromoted\n", begin: 3, end: 3, endLSN: "0/3000050", ranges: []WALRange{walRange(1, 1, 2), walRange(2, 3, 5)}, state: evidence.Healthy, frontier: 5, frontierTL: 2},
 		{name: "child switch segment missing", history: "1\t0/30000A0\tpromoted\n", begin: 1, end: 1, ranges: []WALRange{walRange(1, 1, 2), walRange(2, 4, 5)}, state: evidence.Unknown, frontier: 2, frontierTL: 1, ownTimelineOK: true},
-		{name: "parent segment before the switch missing", history: "1\t0/30000A0\tpromoted\n", begin: 1, end: 1, ranges: []WALRange{walRange(1, 1, 1), walRange(2, 3, 5)}, state: evidence.Unknown, frontier: 1, frontierTL: 1, ownTimelineOK: true},
+		// The child's history and WAL from its switch segment on prove the
+		// parent closed: its missing segment before the switch is lost.
+		{name: "parent segment before the switch missing", history: "1\t0/30000A0\tpromoted\n", begin: 1, end: 1, ranges: []WALRange{walRange(1, 1, 1), walRange(2, 3, 5)}, state: evidence.Unhealthy, frontier: 1, frontierTL: 1, ownTimelineOK: true},
+		{name: "parent segment before the switch missing, child WAL only after its switch segment", history: "1\t0/30000A0\tpromoted\n", begin: 1, end: 1, ranges: []WALRange{walRange(1, 1, 1), walRange(2, 4, 5)}, state: evidence.Unhealthy, frontier: 1, frontierTL: 1, ownTimelineOK: true},
+		// Without child WAL the promotion may be minutes old and the
+		// parent's last segment still on its way: unknown, not lost.
+		{name: "parent segment before the switch missing, child has no WAL yet", history: "1\t0/30000A0\tpromoted\n", begin: 1, end: 1, ranges: []WALRange{walRange(1, 1, 1)}, state: evidence.Unknown, frontier: 1, frontierTL: 1, ownTimelineOK: true},
+		{name: "history archived, child switch segment not yet", history: "1\t0/30000A0\tpromoted\n", begin: 1, end: 1, ranges: []WALRange{walRange(1, 1, 2)}, state: evidence.Unknown, frontier: 2, frontierTL: 1, ownTimelineOK: true},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
