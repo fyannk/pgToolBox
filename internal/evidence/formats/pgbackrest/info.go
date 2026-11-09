@@ -368,6 +368,7 @@ func parseBackupEntry(label, raw string) (Backup, error) {
 			return backup, malformed(field.name)
 		}
 	}
+	backup.LSNStart, backup.LSNStop = normalizedOptionalLSN(backup.LSNStart), normalizedOptionalLSN(backup.LSNStop)
 	if referenceRaw, ok := fields["backup-reference"]; ok {
 		if err := json.Unmarshal(referenceRaw, &backup.Reference); err != nil || len(backup.Reference) > MaxBackups {
 			return backup, malformed("backup-reference")
@@ -584,14 +585,37 @@ func canonicalWALName(value string) bool {
 	return len(value) == 24 && upperHex(value)
 }
 
-// canonicalLSN is PostgreSQL's %X/%X spelling, as pgBackRest stores it.
+// canonicalLSN accepts the two spellings PostgreSQL prints: %X/%X (up to
+// PostgreSQL 18) and %X/%08X (PostgreSQL 19 zero-pads the low half). The
+// high half is never padded, and a padded low half has exactly eight digits;
+// any other leading zero is not something PostgreSQL or pgBackRest writes.
 func canonicalLSN(value string) bool {
 	high, low, ok := strings.Cut(value, "/")
 	return ok && len(high) >= 1 && len(high) <= 8 && len(low) >= 1 && len(low) <= 8 && upperHex(high) && upperHex(low) &&
-		(len(high) == 1 || high[0] != '0') && (len(low) == 1 || low[0] != '0')
+		(len(high) == 1 || high[0] != '0') && (len(low) == 1 || len(low) == 8 || low[0] != '0')
 }
 
-// ParseLSN parses a %X/%X LSN.
+// normalizeLSN returns a valid LSN in the %X/%X spelling, so the evidence and
+// the comparisons between backup.info and a manifest do not depend on the
+// PostgreSQL version that printed it; ok is false for an invalid LSN.
+func normalizeLSN(value string) (string, bool) {
+	lsn, ok := ParseLSN(value)
+	if !ok {
+		return "", false
+	}
+	return fmt.Sprintf("%X/%X", lsn>>32, lsn&0xFFFFFFFF), true
+}
+
+// normalizedOptionalLSN normalizes an LSN that canonicalLSN already accepted;
+// an empty value stays empty.
+func normalizedOptionalLSN(value string) string {
+	if normalized, ok := normalizeLSN(value); ok {
+		return normalized
+	}
+	return value
+}
+
+// ParseLSN parses an LSN in either spelling canonicalLSN accepts.
 func ParseLSN(value string) (uint64, bool) {
 	if !canonicalLSN(value) {
 		return 0, false

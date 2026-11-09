@@ -123,6 +123,14 @@ func TestParseManifestRefusesMalformedSummary(t *testing.T) {
 	if _, err := ParseManifest(bytes.NewReader(extra)); err != nil {
 		t.Errorf("extra key: ParseManifest() = %v", err)
 	}
+	// PostgreSQL 19 pads the low half (%X/%08X); the manifest keeps the
+	// %X/%X spelling backup.info is compared in.
+	padded := rewriteINI(t, data, func(body string) string {
+		return strings.Replace(body, `backup-lsn-start="0/8000028"`, `backup-lsn-start="0/08000028"`, 1)
+	})
+	if manifest, err := ParseManifest(bytes.NewReader(padded)); err != nil || manifest.LSNStart != "0/8000028" {
+		t.Errorf("padded LSN: ParseManifest() = %+v, %v", manifest, err)
+	}
 	reversed := rewriteINI(t, data, func(body string) string {
 		return strings.Replace(body, "backup-timestamp-start=", "backup-timestamp-start=9", 1)
 	})

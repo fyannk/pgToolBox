@@ -98,6 +98,7 @@ func ParseManifest(source io.Reader) (*Manifest, error) {
 			return nil, malformed(field.name)
 		}
 	}
+	manifest.LSNStart, manifest.LSNStop = normalizedOptionalLSN(manifest.LSNStart), normalizedOptionalLSN(manifest.LSNStop)
 	if raw, ok := fields["backup-reference"]; ok {
 		var joined string
 		if json.Unmarshal(raw, &joined) != nil {
