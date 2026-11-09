@@ -64,9 +64,11 @@ func BlindSpots(c *cnpgv1.Cluster, backups BackupConfig) []BlindSpot {
 				"sync_state per standby and FailoverQuorum.status (when quorum failover is enabled) are the evidence.",
 		},
 		{
-			// pkg/postgres/status.go: no isFenced at v1.30.0;
-			// main:107-111 adds it, "never populated in the instance
-			// manager" (filled operator-side, client/remote/instance.go main:137).
+			// pkg/postgres/status.go: no isFenced at v1.30.0; v1.30.1:107-111
+			// (and main) add it, "never populated in the instance
+			// manager": the operator fills it from the annotation
+			// (pkg/management/postgres/webserver/client/remote/instance.go
+			// v1.30.1:139), so /pg/status never carries it in either.
 			ID:    BlindSpotIsFencedNotReported,
 			Panel: "instances",
 			Text: "Whether an instance is fenced comes from the cnpg.io/fencedInstances annotation (intent); " +
