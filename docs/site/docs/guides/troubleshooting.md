@@ -130,7 +130,7 @@ runs two init containers, the `registration` native sidecar, `pgadmin`, and
 ```mermaid
 flowchart TB
   start["pgAdmin Pod failing"] --> exists{"a Pod exists?"}
-  exists -->|"no: ReplicaSet FailedCreate"| scc["OpenShift restricted SCC: set pgadmin.fsGroup: null"]
+  exists -->|"no: ReplicaSet FailedCreate"| scc["OpenShift restricted SCC: leave pgadmin.fsGroup null (render with --api-versions security.openshift.io/v1)"]
   exists -->|yes| which{"which container restarts?"}
   which -->|"install-passfile-sync, pre-upgrade-backup"| init["Init:CrashLoopBackOff: read its termination message"]
   which -->|registration| reglog{"its log"}

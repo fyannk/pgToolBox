@@ -1,5 +1,6 @@
 # pgAdmin without the operator on OpenShift: the oauth-proxy, a re-encrypting
-# Route, no fixed fsGroup (the restricted SCC assigns one).
+# Route; fsGroup left null, so none where the API server serves
+# security.openshift.io/v1 (the restricted SCC assigns one).
 pgadmin:
   enabled: true
   auth:
