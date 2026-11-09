@@ -43,7 +43,8 @@
     "webpack-dev-middleware": "7.4.6",
     "vitest": "4.1.12",
     "@vitest/mocker": "4.1.12",
-    "minimatch@>=7 <11.0.1": "11.0.4"
+    "minimatch@>=7 <11.0.1": "11.0.4",
+    "glob@>=9 <14.0.2": "14.0.3"
   },
   "devDependencies": {
     "@kinvolk/headlamp-plugin": "0.14.0"
