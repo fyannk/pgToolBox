@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -127,7 +128,7 @@ func TestApplierRefusesForeignObjectOutsideTheCache(t *testing.T) {
 func TestApplierCreatesAndIsIdempotent(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	c := fake.NewClientBuilder().WithScheme(scheme).Build()
+	c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&appsv1.Deployment{}).Build()
 	applier := Applier{Client: c, APIReader: c, Scheme: scheme}
 	desired := func() *appsv1.Deployment {
 		return &appsv1.Deployment{
@@ -176,5 +177,30 @@ func TestStallErrorIsErrStalled(t *testing.T) {
 	var stall *StallError
 	if !errors.As(err, &stall) || stall.Reason != pgtoolboxv1alpha1.ReasonResourceNotOwned || stall.Message != "Service x taken" {
 		t.Fatalf("stall = %+v", stall)
+	}
+}
+
+type contextKey struct{}
+
+// TestStatusContext: the status write's context survives the loop's
+// cancellation, keeps its values, and has its own deadline.
+func TestStatusContext(t *testing.T) {
+	loop, cancelLoop := context.WithCancel(context.WithValue(context.Background(), contextKey{}, "logger"))
+	cancelLoop()
+	ctx, cancel := StatusContext(loop)
+	defer cancel()
+	if ctx.Err() != nil {
+		t.Fatalf("the status context is done with the loop's: %v", ctx.Err())
+	}
+	if ctx.Value(contextKey{}) != "logger" {
+		t.Fatal("the status context lost the loop's values")
+	}
+	deadline, ok := ctx.Deadline()
+	if !ok || time.Until(deadline) > StatusWriteTimeout {
+		t.Fatalf("deadline %v, %v; want one within %v", deadline, ok, StatusWriteTimeout)
+	}
+	cancel()
+	if ctx.Err() == nil {
+		t.Fatal("cancel does not end the status context")
 	}
 }

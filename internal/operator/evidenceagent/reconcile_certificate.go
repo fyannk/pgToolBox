@@ -73,7 +73,7 @@ func (r *Reconciler) reconcileOperatorCA(ctx context.Context, agent *pgtoolboxv1
 			Data:       map[string][]byte{caCertKey: generated.Cert, caKeyKey: generated.Key},
 		}
 		// Get-before-Create for a create-once object.
-		if err := r.Client.Create(ctx, secret, client.FieldOwner(FieldOwner)); err != nil {
+		if err := r.Client.Create(ctx, secret, client.FieldOwner(reconcile.FieldOwner)); err != nil {
 			return certificateState{}, fmt.Errorf("create the evidence agent CA: %w", err)
 		}
 		ca = &generated

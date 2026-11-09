@@ -25,6 +25,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -44,6 +45,20 @@ const FieldOwner = "pgtoolbox"
 
 // StatusFieldOwner is the field manager of status writes.
 const StatusFieldOwner = "pgtoolbox-status"
+
+// StatusWriteTimeout bounds a loop's status write, which runs past the
+// loop's own deadline (StatusContext).
+const StatusWriteTimeout = 10 * time.Second
+
+// StatusContext is the context of a loop's status write. It is not
+// cancelled with the reconcile context: controller-runtime's
+// ReconciliationTimeout cancels that one, and a loop that ran out of time
+// must still publish Ready=False with why, never leave the previous
+// Ready=True in place. Its own short deadline keeps the write bounded;
+// values (the logger) are kept.
+func StatusContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), StatusWriteTimeout)
+}
 
 // ErrNextLoop says a concern is waiting for something a watch will report
 // (a Pod becoming Ready, a Job finishing): the reconcile stops there,

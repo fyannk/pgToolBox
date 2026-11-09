@@ -196,3 +196,49 @@ func TestSetConditionRefusesUnknownReasonsAndBoundsMessages(t *testing.T) {
 		t.Fatalf("condition = %s / %d bytes", got.Reason, len(got.Message))
 	}
 }
+
+// TestPublishAfterTheLoopTimedOut: ReconciliationTimeout cancels the
+// loop's context; the status write still happens (a client that honours
+// its context, like the real one, refuses calls on a done one), so a
+// loop that ran out of time publishes Ready=False instead of leaving the
+// previous Ready=True.
+func TestPublishAfterTheLoopTimedOut(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := pgtoolboxv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	stored := testAgent()
+	initializeConditions(stored)
+	for _, aspect := range aspectConditions {
+		setCondition(stored, aspect, metav1.ConditionTrue, pgtoolboxv1alpha1.ReasonAsExpected, "")
+	}
+	setCondition(stored, pgtoolboxv1alpha1.ConditionReady, metav1.ConditionTrue, pgtoolboxv1alpha1.ReasonAsExpected, "")
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(stored).WithStatusSubresource(stored).
+		WithInterceptorFuncs(interceptor.Funcs{
+			SubResourcePatch: func(ctx context.Context, c client.Client, sub string, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+				return c.SubResource(sub).Patch(ctx, obj, patch, opts...)
+			},
+		}).Build()
+	r := &Reconciler{Client: c, APIReader: c, Recorder: events.NewFakeRecorder(16)}
+	agent := &pgtoolboxv1alpha1.EvidenceAgent{}
+	if err := c.Get(context.Background(), client.ObjectKeyFromObject(stored), agent); err != nil {
+		t.Fatal(err)
+	}
+	original := agent.DeepCopy()
+	loop, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := r.publish(loop, agent, original, conditions.Outcome{Err: loop.Err()})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("publish returned %v, want the loop's error", err)
+	}
+	written := &pgtoolboxv1alpha1.EvidenceAgent{}
+	if err := c.Get(context.Background(), client.ObjectKeyFromObject(stored), written); err != nil {
+		t.Fatal(err)
+	}
+	if ready := condition(written, pgtoolboxv1alpha1.ConditionReady); ready.Status != metav1.ConditionFalse {
+		t.Fatalf("stored Ready = %+v, want False after a timed-out loop", ready)
+	}
+}

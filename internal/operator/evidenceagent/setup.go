@@ -26,6 +26,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
@@ -64,6 +65,9 @@ func ManagedSelector() labels.Selector {
 // app.kubernetes.io/managed-by=pgtoolbox, which the other controllers
 // stamp too, so the informers the manager shares stay complete for all of
 // them.
+// The agent Pods are cached on the same selector (the PgAdmin controller
+// filters Pods on it too), so the namespace's other Pods never enter the
+// cache.
 // Secrets and ConfigMaps are never cached for content (the manager's
 // Client.Cache.DisableFor) and are watched metadata-only; the ConfigMap
 // metadata informer is filtered too (the CA bundle ConfigMap is the only
@@ -73,6 +77,7 @@ func CacheByObject() map[client.Object]cache.ByObject {
 	managed := cache.ByObject{Label: ManagedSelector()}
 	return map[client.Object]cache.ByObject{
 		&corev1.ConfigMap{}:          managed,
+		&corev1.Pod{}:                managed,
 		&appsv1.Deployment{}:         managed,
 		&corev1.Service{}:            managed,
 		&corev1.ServiceAccount{}:     managed,
@@ -153,6 +158,11 @@ func (r *Reconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager) err
 		Owns(&corev1.ServiceAccount{}).
 		Owns(&corev1.Secret{}, builder.OnlyMetadata).
 		Owns(&corev1.ConfigMap{}, builder.OnlyMetadata).
+		// The agent Pods (owned by the ReplicaSet, so mapped by label): an
+		// image that cannot be pulled or a crash loop is WorkloadReady's
+		// reason at once, not when the Deployment's progress deadline
+		// passes.
+		Watches(&corev1.Pod{}, handler.EnqueueRequestsFromMapFunc(agentForPod)).
 		Watches(&rbacv1.ClusterRole{}, handler.EnqueueRequestsFromMapFunc(r.anyAgent), builder.WithPredicates(singleton)).
 		Watches(&rbacv1.ClusterRoleBinding{}, handler.EnqueueRequestsFromMapFunc(r.anyAgent), builder.WithPredicates(singleton)).
 		// CNPG kinds are not ours, so not label-filtered. Clusters are
@@ -184,6 +194,17 @@ func (r *Reconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager) err
 		b = b.WatchesMetadata(object, handler.EnqueueRequestsFromMapFunc(r.agentsForPgBackRest(optional.gvk.Kind)), builder.WithPredicates(specChanged))
 	}
 	return b.Complete(r)
+}
+
+// agentForPod maps an agent Pod to its EvidenceAgent by the labels the
+// operator stamps on the Pod template; any other Pod maps to nothing.
+func agentForPod(_ context.Context, object client.Object) []reconcile.Request {
+	podLabels := object.GetLabels()
+	name := podLabels[pgtoolboxv1alpha1.LabelEvidenceAgent]
+	if name == "" || podLabels["app.kubernetes.io/name"] != componentName {
+		return nil
+	}
+	return []reconcile.Request{{NamespacedName: types.NamespacedName{Namespace: object.GetNamespace(), Name: name}}}
 }
 
 // pgBackRestObjectOf indexes an EvidenceAgent by the Stanza or Archive its

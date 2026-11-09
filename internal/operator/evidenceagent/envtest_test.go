@@ -244,6 +244,13 @@ func TestEvidenceAgentReconcilerOnEnvtest(t *testing.T) {
 			if owner := metav1.GetControllerOf(object); owner == nil || owner.UID != agent.UID {
 				t.Fatalf("%T %s is not controlled by the agent", object, name)
 			}
+			// One field manager for every child the operator writes, the
+			// one the PgAdmin and PgToolBoxConsole controllers use.
+			for _, entry := range object.GetManagedFields() {
+				if entry.Manager != reconcile.FieldOwner {
+					t.Fatalf("%T %s has field manager %q, want only %q", object, name, entry.Manager, reconcile.FieldOwner)
+				}
+			}
 		}
 		binding := &rbacv1.ClusterRoleBinding{}
 		must(t, s.admin.Get(ctx, client.ObjectKey{Name: ClusterRoleBindingName}, binding))

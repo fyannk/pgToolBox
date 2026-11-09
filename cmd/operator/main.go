@@ -104,11 +104,8 @@ func main() {
 		LeaderElection:         enableLeaderElection,
 		LeaderElectionID:       "pgtoolbox.pgtoolbox.fyannk.dev",
 	}
-	evidenceAgentCacheOptions(&managerOptions)
-	pgAdminManagerOptions(&managerOptions, pgAdminPrepared)
-	accessRequestCacheOptions(&managerOptions)
 	consoleFeatures := pgToolBoxConsoleFeatures(pgAdminPrepared)
-	pgToolBoxConsoleCacheOptions(&managerOptions, consoleFeatures)
+	managerCacheOptions(&managerOptions, pgAdminPrepared, consoleFeatures)
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), managerOptions)
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
