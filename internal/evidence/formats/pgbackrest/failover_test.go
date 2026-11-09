@@ -409,3 +409,44 @@ func withoutBackup(t testing.TB, repository *fixtureRepository, label string) *f
 	}
 	return result
 }
+
+// TestStopAtTheSwitchpointFollowsTheChild: recovery is consistent once it has
+// replayed the bytes before the stop LSN, and the parent holds every byte
+// before the switchpoint, so a backup that stops exactly at the switchpoint
+// (as the fixture's 081105I does, at 0/E000050) recovers onto the child; one
+// byte later, it does not.
+func TestStopAtTheSwitchpointFollowsTheChild(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		switchLSN, stopLSN uint64
+		stopKnown          bool
+		branches           bool
+	}{
+		{switchLSN: 0xE000050, stopLSN: 0xE000050, stopKnown: true, branches: false},
+		{switchLSN: 0xE000051, stopLSN: 0xE000050, stopKnown: true, branches: false},
+		{switchLSN: 0xE00004F, stopLSN: 0xE000050, stopKnown: true, branches: true},
+		{switchLSN: 0xE000050, stopKnown: false, branches: true},
+	} {
+		if got := branchesBeforeStop(test.switchLSN, test.stopLSN, test.stopKnown); got != test.branches {
+			t.Errorf("switch %#x, stop %#x (known %v): branches %v", test.switchLSN, test.stopLSN, test.stopKnown, got)
+		}
+	}
+	plain := loadFixture(t, fixtureRoot, "plain")
+	for _, test := range []struct {
+		switchpoint string
+		offTarget   bool
+	}{
+		{switchpoint: "0/E000050"},
+		{switchpoint: "0/E000051"},
+		{switchpoint: "0/E00004F", offTarget: true},
+	} {
+		report := analyzeFixture(t, plain.with(switchHistoryKey, []byte("1\t"+test.switchpoint+"\tno recovery target specified\n")), "plain")
+		backup := backupLabelled(t, report, incrAtSwitch)
+		if backup.Backup.LSNStop != "0/E000050" || backup.Path.OffTarget != test.offTarget {
+			t.Fatalf("switch at %s: stop %s, path %+v", test.switchpoint, backup.Backup.LSNStop, backup.Path)
+		}
+		if !test.offTarget && (!backup.Usable || backup.Path.FrontierTimeline != 2) {
+			t.Fatalf("switch at %s: path %+v", test.switchpoint, backup.Path)
+		}
+	}
+}

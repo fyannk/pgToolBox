@@ -233,6 +233,9 @@ func TestRecoveryCoverageCrossesFailoverWhosePartialSwitchSegmentIsUnused(t *tes
 		// parent's last segment still on its way: unknown, not lost.
 		{name: "parent segment before the switch missing, child has no WAL yet", history: "1\t0/30000A0\tpromoted\n", begin: 1, end: 1, ranges: []WALRange{walRange(1, 1, 1)}, state: evidence.Unknown, frontier: 1, frontierTL: 1, ownTimelineOK: true},
 		{name: "history archived, child switch segment not yet", history: "1\t0/30000A0\tpromoted\n", begin: 1, end: 1, ranges: []WALRange{walRange(1, 1, 2)}, state: evidence.Unknown, frontier: 2, frontierTL: 1, ownTimelineOK: true},
+		// The backup ends exactly at the switchpoint: every byte it needs is
+		// before the child's first byte, so it follows the child.
+		{name: "backup ends at the switchpoint", history: "1\t0/3000050\tpromoted\n", begin: 1, end: 3, endLSN: "0/3000050", ranges: []WALRange{walRange(1, 1, 2), walRange(2, 3, 5)}, state: evidence.Healthy, frontier: 5, frontierTL: 2},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -258,6 +261,42 @@ func TestRecoveryCoverageCrossesFailoverWhosePartialSwitchSegmentIsUnused(t *tes
 				t.Fatalf("Validate() = %v", err)
 			}
 		})
+	}
+}
+
+// TestBranchBeforeBackupAtTheSwitchpoint pins the end LSN == switchpoint edge
+// to PostgreSQL's rule (see branchBeforeBackup): the backup follows the child.
+func TestBranchBeforeBackupAtTheSwitchpoint(t *testing.T) {
+	t.Parallel()
+	edge := HistoryEdge{Parent: 1, Child: 2, SwitchLSN: 0x3000050, SwitchPosition: 3}
+	for _, test := range []struct {
+		name     string
+		endLSN   string
+		end      uint64
+		branches bool
+	}{
+		{name: "ends before the switchpoint", endLSN: "0/300004F", end: 3},
+		{name: "ends at the switchpoint", endLSN: "0/3000050", end: 3},
+		{name: "ends one byte after the switchpoint", endLSN: "0/3000051", end: 3, branches: true},
+		{name: "ends in a later segment", endLSN: "0/4000028", end: 4, branches: true},
+		{name: "unparsable end LSN", endLSN: "0/zz", end: 3, branches: true},
+		{name: "no end LSN, ends before the switch segment", end: 2},
+		{name: "no end LSN, ends in the switch segment", end: 3, branches: true},
+	} {
+		if got := branchBeforeBackup(edge, Backup{EndLSN: test.endLSN}, test.end); got != test.branches {
+			t.Errorf("%s: branchBeforeBackup() = %v", test.name, got)
+		}
+	}
+	// One byte after the switchpoint, the child is not a recovery target.
+	backup := recoveryBackup(time.Now().UTC(), 1, 3)
+	backup.EndLSN = "0/3000051"
+	wal := ServerWAL{Server: "alpha", State: evidence.Healthy, PostgreSQLVersion: 180000, SegmentSize: 16 << 20, Ranges: []WALRange{walRange(1, 1, 3), walRange(2, 3, 5)}}
+	objects := []HistoryObject{{Key: "alpha/wals/00000002.history", Server: "alpha", Name: "00000002.history", Compression: "none", Timeline: 2}}
+	catalog := AnalyzeRecovery(context.Background(), historyFake("1\t0/3000050\tpromoted\n"), []Backup{backup}, WALCatalog{Servers: []ServerWAL{wal}}, objects, false, RecoveryOptions{})
+	for _, path := range catalog.Servers[0].Paths {
+		if path.TargetTimeline == 2 {
+			t.Fatalf("a backup that ends after the switchpoint has a path to the child: %#v", path)
+		}
 	}
 }
 

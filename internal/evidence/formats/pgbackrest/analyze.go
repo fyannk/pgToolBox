@@ -758,10 +758,21 @@ func evaluatePath(backup Backup, wal ArchiveWAL, histories []TimelineHistory, hi
 		}
 		edges := histories[index].Edges
 		first := slices.IndexFunc(edges, func(edge HistoryEdge) bool { return edge.Parent == startTimeline })
+		// A backup can follow the child when its stop LSN is not after the
+		// switchpoint. pg_backup_stop returns the end of the backup-end
+		// record, so recovery is consistent once it has replayed the bytes
+		// before the stop LSN; the history's switchpoint is the first byte
+		// of the child, and the parent holds every byte before it
+		// (tliOfPointInHistory: begin <= ptr < end). PostgreSQL checks the
+		// same thing at startup with minRecoveryPoint - 1 against the
+		// requested timeline (InitWalRecovery, "requested timeline does not
+		// contain minimum recovery point"), so stop == switchpoint is on the
+		// child's history: the backup branches before it only when stop >
+		// switchpoint. barmancloud.branchBeforeBackup follows the same rule.
 		switch {
 		case first < 0:
 			offTarget = fmt.Sprintf("timeline %d is not an ancestor of timeline %d", startTimeline, target)
-		case !okLSN || stopLSN > edges[first].SwitchLSN:
+		case branchesBeforeStop(edges[first].SwitchLSN, stopLSN, okLSN):
 			offTarget = fmt.Sprintf("timeline %d branched before the backup reached consistency", edges[first].Child)
 		}
 		legs = legs[:0]
@@ -855,6 +866,13 @@ func evaluatePath(backup Backup, wal ArchiveWAL, histories []TimelineHistory, hi
 		}
 	}
 	return path
+}
+
+// branchesBeforeStop reports whether a timeline that branched at switchLSN
+// left a backup that stopped at stopLSN behind (see evaluatePath); an
+// unknown stop LSN branches, which keeps the backup off the child.
+func branchesBeforeStop(switchLSN, stopLSN uint64, stopKnown bool) bool {
+	return !stopKnown || stopLSN > switchLSN
 }
 
 // switchInFlight ends a walk whose next position, missing, is the switch

@@ -606,10 +606,21 @@ func backupRange(backup Backup) (uint32, uint64, uint64, error) {
 	return beginTimeline, begin, end, nil
 }
 
+// branchBeforeBackup reports whether the child of edge branched before the
+// backup was consistent, so that the backup cannot be recovered onto it.
+// pg_backup_stop returns the end of the backup-end record: recovery is
+// consistent once it has replayed the bytes before the end LSN. The history's
+// switchpoint is the first byte of the child; the parent holds every byte
+// before it (tliOfPointInHistory: begin <= ptr < end), and PostgreSQL checks
+// minRecoveryPoint - 1 against the requested timeline at startup
+// (InitWalRecovery). So a backup that ends exactly at the switchpoint
+// follows the child; it branched before the backup only when the switchpoint
+// is before the end LSN. pgbackrest's evaluatePath uses the same rule.
+// Without an end LSN the switch segment decides, conservatively.
 func branchBeforeBackup(edge HistoryEdge, backup Backup, end uint64) bool {
 	if backup.EndLSN != "" {
 		endLSN, err := ParseLSN(backup.EndLSN)
-		return err != nil || edge.SwitchLSN <= endLSN
+		return err != nil || edge.SwitchLSN < endLSN
 	}
 	return edge.SwitchPosition <= end
 }
