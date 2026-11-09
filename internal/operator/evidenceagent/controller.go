@@ -52,6 +52,10 @@ const FieldOwner = "pgtoolbox-operator"
 
 // +kubebuilder:rbac:groups=pgtoolbox.fyannk.dev,resources=evidenceagents,verbs=get;list;watch
 // +kubebuilder:rbac:groups=pgtoolbox.fyannk.dev,resources=evidenceagents/status,verbs=get;update;patch
+// Controller owner references set blockOwnerDeletion, which an API server
+// enforcing OwnerReferencesPermissionEnforcement (OpenShift) allows only to
+// whoever may update the owner's finalizers.
+// +kubebuilder:rbac:groups=pgtoolbox.fyannk.dev,resources=evidenceagents/finalizers,verbs=update
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups="",resources=services;serviceaccounts,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete

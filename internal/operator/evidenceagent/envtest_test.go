@@ -73,6 +73,11 @@ func newEnvtestSuite(t *testing.T) *envtestSuite {
 		},
 		ErrorIfCRDPathMissing: true,
 	}
+	// OpenShift enables OwnerReferencesPermissionEnforcement: an owner
+	// reference with blockOwnerDeletion is admitted only from whoever may
+	// update the owner's finalizers. kind does not enable it, so it is
+	// enabled here, where the operator identity creates every child.
+	environment.ControlPlane.GetAPIServer().Configure().Append("enable-admission-plugins", "OwnerReferencesPermissionEnforcement")
 	config, err := environment.Start()
 	if err != nil {
 		t.Fatalf("start envtest: %v", err)

@@ -164,6 +164,15 @@ rules:
 - apiGroups:
   - pgtoolbox.fyannk.dev
   resources:
+  - evidenceagents/finalizers
+  - pgadminaccesses/finalizers
+  - pgadmins/finalizers
+  - pgtoolboxconsoles/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - pgtoolbox.fyannk.dev
+  resources:
   - evidenceagents/status
   - pgaccessrequests/status
   - pgadmins/status
@@ -171,14 +180,6 @@ rules:
   verbs:
   - get
   - patch
-  - update
-- apiGroups:
-  - pgtoolbox.fyannk.dev
-  resources:
-  - pgadminaccesses/finalizers
-  - pgadmins/finalizers
-  - pgtoolboxconsoles/finalizers
-  verbs:
   - update
 - apiGroups:
   - pgtoolbox.fyannk.dev
