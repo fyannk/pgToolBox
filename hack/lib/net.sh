@@ -16,7 +16,8 @@
 #                                      pinned default), then kubectl apply -f
 #
 # Knobs: RETRY_BASE_DELAY (seconds, default 2, doubled per attempt),
-# RETRY_MAX_DELAY (default 60), FETCH_ATTEMPTS (default 5), FETCH_MAX_TIME
+# RETRY_MAX_DELAY (default 60), FETCH_ATTEMPTS (default 7: about two minutes of
+# backoff, which outlasts a short outage of GitHub release downloads), FETCH_MAX_TIME
 # (seconds per curl, default 120).
 #
 # Pins. A caller that overrides a manifest (CNPG_MANIFEST from hack/matrix.sh,
@@ -80,13 +81,13 @@ retry() {
 
 # pull_image <platform> <ref>: docker pull, retried (registry rate limits and resets).
 pull_image() {
-  retry "${FETCH_ATTEMPTS:-5}" docker pull --quiet --platform "$1" "$2" >/dev/null
+  retry "${FETCH_ATTEMPTS:-7}" docker pull --quiet --platform "$1" "$2" >/dev/null
 }
 
 # fetch_url <url> <file>: a failed fetch leaves no partial file behind.
 fetch_url() {
   local url=$1 file=$2
-  retry "${FETCH_ATTEMPTS:-5}" curl --fail --silent --show-error --location \
+  retry "${FETCH_ATTEMPTS:-7}" curl --fail --silent --show-error --location \
     --connect-timeout 20 --max-time "${FETCH_MAX_TIME:-120}" -o "${file}" "${url}" ||
     {
       rm -f "${file}"
