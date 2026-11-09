@@ -27,6 +27,7 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -1197,4 +1198,31 @@ func TestReconcileTimedOutStillPublishes(t *testing.T) {
 	got := h.pgadmin("team")
 	expectCondition(t, got, "Ready", metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonReconcileError)
 	expectCondition(t, got, "Progressing", metav1.ConditionTrue, pgtoolboxv1alpha1.ReasonReconciling)
+}
+
+// TestPublishConflictIsReturnedNotOverwritten: a status computed from a
+// stale read is refused, returned for backoff, and the newer object stays
+// as it is (the shared conflict policy of every controller).
+func TestPublishConflictIsReturnedNotOverwritten(t *testing.T) {
+	p := oauth2PgAdmin()
+	h := newHarness(t, nil, baseObjects(p)...)
+	stale := h.pgadmin("team")
+	// Someone else writes the object after the loop read it.
+	fresh := stale.DeepCopy()
+	fresh.Annotations = map[string]string{"touched": "yes"}
+	if err := h.client.Update(context.Background(), fresh); err != nil {
+		t.Fatal(err)
+	}
+	before := stale.Status.DeepCopy()
+	stale.Status.URL = "http://stale/"
+	err := h.r.publish(context.Background(), stale, before, false, nil)
+	if !apierrors.IsConflict(err) {
+		t.Fatalf("publish of a stale read returned %v, want a Conflict", err)
+	}
+	if got := h.pgadmin("team"); got.Status.URL == "http://stale/" {
+		t.Fatal("a status computed from a stale read was written")
+	}
+	if evs := h.events(); len(evs) != 0 {
+		t.Fatalf("a refused write emitted %v", evs)
+	}
 }
