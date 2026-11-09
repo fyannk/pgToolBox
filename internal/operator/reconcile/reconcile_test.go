@@ -128,7 +128,7 @@ func TestApplierRefusesForeignObjectOutsideTheCache(t *testing.T) {
 func TestApplierCreatesAndIsIdempotent(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
-	c := fake.NewClientBuilder().WithScheme(scheme).Build()
+	c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&appsv1.Deployment{}).Build()
 	applier := Applier{Client: c, APIReader: c, Scheme: scheme}
 	desired := func() *appsv1.Deployment {
 		return &appsv1.Deployment{

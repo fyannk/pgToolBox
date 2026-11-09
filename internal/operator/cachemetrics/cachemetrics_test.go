@@ -60,7 +60,7 @@ func TestCollectorCountsPerKindAndManaged(t *testing.T) {
 		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "user", Namespace: "team"}},
 		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "other", Namespace: "team"}},
 	}
-	reader := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).WithInterceptorFuncs(interceptor.Funcs{
+	reader := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&appsv1.Deployment{}).WithObjects(objects...).WithInterceptorFuncs(interceptor.Funcs{
 		List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
 			if _, ok := list.(*corev1.ServiceList); ok {
 				return errors.New("the cache is not started")

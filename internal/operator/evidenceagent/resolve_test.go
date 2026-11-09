@@ -70,7 +70,7 @@ func TestResolveRecordsTheObjectStoreAndGatesOnTheProbe(t *testing.T) {
 	store.SetGroupVersionKind(discovery.ObjectStoreGVK)
 	store.SetNamespace("team-a")
 	store.SetName("store")
-	reader := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cluster).Build()
+	reader := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&cnpgv1.Cluster{}).WithObjects(cluster).Build()
 	if err := reader.Create(context.Background(), store); err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +123,7 @@ func TestResolveInTreeNeedsNoObjectStoreAPI(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "orders", Namespace: "team-a"},
 		Spec:       pgtoolboxv1alpha1.EvidenceAgentSpec{ClusterRef: pgtoolboxv1alpha1.LocalObjectReference{Name: "orders"}},
 	}
-	r := &Reconciler{APIReader: fake.NewClientBuilder().WithScheme(scheme).WithObjects(cluster).Build()}
+	r := &Reconciler{APIReader: fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&cnpgv1.Cluster{}).WithObjects(cluster).Build()}
 	// Without spec.allowedSecrets the Cluster's own configuration (which
 	// whoever may patch the Cluster writes) names no Secret the agent reads.
 	if _, whyNot, err := r.resolve(context.Background(), agent); err != nil || whyNot == nil ||
@@ -193,7 +193,7 @@ func TestResolveAppliesTheAuthorsPolicy(t *testing.T) {
 			store.SetGroupVersionKind(discovery.ObjectStoreGVK)
 			store.SetNamespace("team-a")
 			store.SetName("store")
-			reader := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cluster).Build()
+			reader := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&cnpgv1.Cluster{}).WithObjects(cluster).Build()
 			if err := reader.Create(context.Background(), store); err != nil {
 				t.Fatal(err)
 			}
@@ -251,7 +251,7 @@ func TestResolvePgBackRestGatesOnTheProbeAndRecordsTheObject(t *testing.T) {
 	archive.SetGroupVersionKind(discovery.ArchiveGVK)
 	archive.SetNamespace("team-a")
 	archive.SetName("orders-archive")
-	reader := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cluster).Build()
+	reader := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&cnpgv1.Cluster{}).WithObjects(cluster).Build()
 	if err := reader.Create(context.Background(), archive); err != nil {
 		t.Fatal(err)
 	}
@@ -322,7 +322,7 @@ func TestPgBackRestWatchMapsBackThroughStatus(t *testing.T) {
 		}
 		return agent
 	}
-	c := fake.NewClientBuilder().WithScheme(scheme).
+	c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&pgtoolboxv1alpha1.EvidenceAgent{}).
 		WithObjects(named("orders", "Stanza"), named("billing", "Archive"), named("barman", "")).
 		WithIndex(&pgtoolboxv1alpha1.EvidenceAgent{}, indexPgBackRest, pgBackRestObjectOf).Build()
 	r := &Reconciler{Client: c}

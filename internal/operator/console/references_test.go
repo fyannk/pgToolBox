@@ -248,7 +248,7 @@ func TestCheckReferences(t *testing.T) {
 
 	t.Run("all present", func(t *testing.T) {
 		t.Parallel()
-		reader := fake.NewClientBuilder().WithScheme(scheme).
+		reader := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&pgtoolboxv1alpha1.PgToolBoxConsole{}).
 			WithObjects(userSecret("prom-token"), userSecret("chat"), userSecret("webhook"), userSecret("smtp"), userSecret("tracing-headers"),
 				userConfigMap("prom-ca"), userConfigMap("instance-bundle"), userConfigMap("eol-table")).Build()
 		r := &Reconciler{APIReader: reader}
@@ -263,7 +263,7 @@ func TestCheckReferences(t *testing.T) {
 
 	t.Run("missing ones stall, each named with its field", func(t *testing.T) {
 		t.Parallel()
-		reader := fake.NewClientBuilder().WithScheme(scheme).WithObjects(userSecret("chat"), userSecret("smtp")).Build()
+		reader := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&pgtoolboxv1alpha1.PgToolBoxConsole{}).WithObjects(userSecret("chat"), userSecret("smtp")).Build()
 		r := &Reconciler{APIReader: reader}
 		console := everyReferenceConsole(pgtoolboxv1alpha1.PgToolBoxConsoleAuthToken)
 		err := r.checkReferences(ctx, console)
@@ -292,7 +292,7 @@ func TestCheckReferences(t *testing.T) {
 
 	t.Run("Secrets present, missing ConfigMaps stall with ConfigMapNotFound", func(t *testing.T) {
 		t.Parallel()
-		reader := fake.NewClientBuilder().WithScheme(scheme).
+		reader := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&pgtoolboxv1alpha1.PgToolBoxConsole{}).
 			WithObjects(userSecret("oidc-client"), userSecret("oidc-grant-client"), userSecret("prom-token"), userSecret("chat"), userSecret("webhook"), userSecret("smtp"), userSecret("tracing-headers"),
 				userConfigMap("prom-ca")).Build()
 		r := &Reconciler{APIReader: reader}
@@ -322,7 +322,7 @@ func TestCheckReferences(t *testing.T) {
 
 	t.Run("an API error is returned, not reported as missing", func(t *testing.T) {
 		t.Parallel()
-		reader := fake.NewClientBuilder().WithScheme(scheme).WithInterceptorFuncs(interceptor.Funcs{
+		reader := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&pgtoolboxv1alpha1.PgToolBoxConsole{}).WithInterceptorFuncs(interceptor.Funcs{
 			Get: func(context.Context, client.WithWatch, client.ObjectKey, client.Object, ...client.GetOption) error {
 				return apierrors.NewForbidden(schema.GroupResource{Resource: "secrets"}, "chat", errors.New("denied"))
 			},
@@ -347,7 +347,7 @@ func TestForSecret(t *testing.T) {
 	other.Spec.Prometheus = &pgtoolboxv1alpha1.PgToolBoxConsolePrometheusSpec{URL: "https://prometheus.example", TokenSecretRef: keyRef("pg-a-ca")}
 	elsewhere := everyReferenceConsole(pgtoolboxv1alpha1.PgToolBoxConsoleAuthToken)
 	elsewhere.Namespace = "team-b"
-	c := fake.NewClientBuilder().WithScheme(cnpgScheme(t)).
+	c := fake.NewClientBuilder().WithScheme(cnpgScheme(t)).WithStatusSubresource(&pgtoolboxv1alpha1.PgToolBoxConsole{}).
 		WithObjects(mounting, other, elsewhere, testCluster("pg-a", nil, "")).
 		WithIndex(&pgtoolboxv1alpha1.PgToolBoxConsole{}, indexReferencedSecret, referencedSecretNames).
 		WithIndex(&cnpgv1.Cluster{}, indexServerCASecret, func(object client.Object) []string {

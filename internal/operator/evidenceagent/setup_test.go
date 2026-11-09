@@ -126,7 +126,7 @@ func TestPodFactsReadsTheWatchedCache(t *testing.T) {
 		})},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			cached := fake.NewClientBuilder().WithScheme(scheme).WithObjects(tc.pod).Build()
+			cached := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&corev1.Pod{}).WithObjects(tc.pod).Build()
 			live := fake.NewClientBuilder().WithScheme(scheme).WithInterceptorFuncs(interceptor.Funcs{
 				List: func(context.Context, client.WithWatch, client.ObjectList, ...client.ListOption) error {
 					return errors.New("a live List of Pods")
