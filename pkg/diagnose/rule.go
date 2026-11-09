@@ -82,8 +82,10 @@ type Rule struct {
 	//
 	// The console verifies the operator's strings against the operator's
 	// source, and this is the same discipline turned on its own claims:
-	// the catalog's tests fail once the date passes, so a stale boundary
-	// stops the build instead of quietly telling operators that a
+	// the catalog's review gate fails CI once the date passes (it runs
+	// with PGTOOLBOX_ENFORCE_REVIEW_DATES=1; a plain go test of a released
+	// tree only logs it), so a stale boundary stops the pipeline instead
+	// of quietly telling operators that a
 	// supported version is unsupported, or worse, saying nothing about
 	// one that is. Empty means the rule states nothing that expires —
 	// a phase, an event reason and a log line are true until the string

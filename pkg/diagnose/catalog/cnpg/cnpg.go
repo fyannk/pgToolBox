@@ -67,7 +67,8 @@ var VerifiedReleases = []string{"1.30.0", "1.30.1"}
 // catalog claims in the releases named above; nothing proves the list
 // is still the current set, because a release the console has never
 // heard of looks exactly like no release at all. On this date the
-// catalog's tests fail until someone checks what CloudNativePG has
+// catalog's review gate fails in CI (PGTOOLBOX_ENFORCE_REVIEW_DATES=1;
+// a plain go test only logs it) until someone checks what CloudNativePG has
 // shipped since — and either verifies it and widens the spans, or moves
 // the date on having looked.
 const VerifiedReviewBy = "2026-11-30"
