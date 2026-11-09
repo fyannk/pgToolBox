@@ -51,6 +51,9 @@ type AppOptions struct {
 	// TLSCertFile/TLSKeyFile enable HTTPS on the main listener.
 	TLSCertFile string
 	TLSKeyFile  string
+	// ShutdownDelay keeps the listener open, not ready, after the
+	// shutdown signal (SHUTDOWN_DELAY).
+	ShutdownDelay time.Duration
 
 	Source api.Source
 	// Logs, Operator and Features complete the API; nil Logs or Operator serve 501.
@@ -266,6 +269,7 @@ func RunApp(ctx context.Context, o AppOptions) error {
 		Addr: o.ListenAddr, ProbeAddr: o.ProbeAddr, TLSCertFile: o.TLSCertFile, TLSKeyFile: o.TLSKeyFile,
 		Auth: authHandler, PublicURL: o.Auth.PublicURL, API: apiHandler, UI: o.UI,
 		Ready: ready, Broker: o.Broker, Metrics: metrics, Log: o.Log, MCP: mcpEndpoint, Tracing: o.Tracing,
+		ShutdownDelay: o.ShutdownDelay,
 	})
 	supCtx, stopRunners := context.WithCancel(ctx)
 	var wg sync.WaitGroup
