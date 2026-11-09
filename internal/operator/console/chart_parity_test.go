@@ -336,6 +336,18 @@ func TestDeploymentMatchesTheChart(t *testing.T) {
 			},
 		},
 		{
+			// The drill seal's own keys: the same file, the same mount.
+			name: "restore drills with the seal's own keys",
+			sets: []string{"console.restoreDrills.enabled=true", "console.restoreDrills.sealKey.existingSecret=drill-seal"},
+			mutate: func(c *pgtoolboxv1alpha1.PgToolBoxConsole) {
+				inMemory(c)
+				adminBundle(c)
+				c.Spec.RestoreDrills = &pgtoolboxv1alpha1.PgToolBoxConsoleRestoreDrillsSpec{
+					Enabled: true, SealKeySecretRef: &pgtoolboxv1alpha1.SecretKeyReference{Name: "drill-seal", Key: "keys"},
+				}
+			},
+		},
+		{
 			// The operator's mirror follows drills created later: their own CA.
 			name: "restore drills with the operator's instance CA mirror",
 			sets: []string{"console.restoreDrills.enabled=true", "console.restoreDrills.serverCA.mode=own", "console.instanceStatus.caBundleConfigMap=console-instance-ca"},

@@ -264,7 +264,9 @@ The teardown grant is the one delete the console holds, and it is narrow:
   is never touched. By default the key is derived (HKDF with its own label)
   from the console's session secret, so whoever can read the session Secret can
   forge a seal. To give the seal a key of its own, mount a Secret of its own
-  and point `RESTORE_DRILL_SEAL_KEY_FILE` at it. The file holds one key per line,
+  and point `RESTORE_DRILL_SEAL_KEY_FILE` at it: `console.restoreDrills.sealKey`
+  with the pgtools chart, `spec.restoreDrills.sealKeySecretRef` with a
+  `PgToolBoxConsole` ([configuration](#configuration)). The file holds one key per line,
   at least 32 bytes each: the first seals, and all of them verify. Keep that
   Secret readable by the console alone. When you switch keys, a drill that is
   still running under the old key no longer verifies, so the console leaves it
@@ -354,6 +356,9 @@ console:
       mode: auto        # secret when secret is set, else source when namespace
                         # is empty, else own
       secret: ""        # a CA Secret in every drill namespace, for mode secret
+    sealKey:            # the seal's own keys (RESTORE_DRILL_SEAL_KEY_FILE)
+      existingSecret: drill-seal  # empty: derived from the session secret
+      key: keys
     networkPolicy:
       enabled: true
       apiServer: { mode: addresses, addresses: [10.0.0.1] }
@@ -369,6 +374,15 @@ Enabling drills renders a `<release>-restore-drills` Role and RoleBinding and a
 every watched namespace when `namespace` is empty), and, with
 `admissionPolicy.create`, the cluster-scoped delete guard.
 
+`sealKey.existingSecret` names a Secret of the release namespace that you create,
+for example with `kubectl create secret generic drill-seal
+--from-literal=keys="$(openssl rand -base64 48)"`. The chart mounts its `key`
+read-only at `/var/run/console/restore-drill-seal/` and sets
+`RESTORE_DRILL_SEAL_KEY_FILE`; the console reads no Secret through the API and
+reads the file once at start, so a changed key takes effect at the next restart.
+To rotate, put the new key on the first line, keep the old one below it until the
+drills sealed with it are gone, and restart the console.
+
 ### PgToolBoxConsole
 
 ```yaml
@@ -381,6 +395,7 @@ spec:
     maxConcurrent: 3
     storage:
       size: 50Gi
+    sealKeySecretRef: { name: drill-seal, key: keys }  # omitted: derived from the session secret
     networkPolicy:
       apiServerCIDRs: [10.0.0.1/32]
       objectStore: [{ ipBlock: { cidr: 192.0.2.10/32 } }]

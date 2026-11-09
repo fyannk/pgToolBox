@@ -131,7 +131,7 @@ rolled to Pods that would wait in `ContainerCreating`.
 
 | References | Reason | Picked up |
 |---|---|---|
-| Secrets: `auth.oidc.clientSecretRef` (with the `oidc` provider), `auth.openshift.clientSecretRef` (with `openshift`), `prometheus.tokenSecretRef`, the digest's `chatWebhookSecretRef`, `webhookSecretRef` and `smtp.passwordSecretRef` | `SecretNotFound` | as soon as the Secret is created (the operator watches Secret metadata) |
+| Secrets: `auth.oidc.clientSecretRef` (with the `oidc` provider), `auth.openshift.clientSecretRef` (with `openshift`), `prometheus.tokenSecretRef`, the digest's `chatWebhookSecretRef`, `webhookSecretRef` and `smtp.passwordSecretRef`, `restoreDrills.sealKeySecretRef` (with drills on) | `SecretNotFound` | as soon as the Secret is created (the operator watches Secret metadata) |
 | ConfigMaps: `auth.oidc.caConfigMapRef`, `auth.openshift.caConfigMapRef`, `prometheus.caConfigMapRef`, `instanceCABundleRef`, `lifecycleConfigMapRef` | `ConfigMapNotFound` | within two minutes: the operator caches only its own ConfigMaps, so it looks again rather than wait for an event |
 
 Missing Secrets are reported first. `instanceCABundleRef` and

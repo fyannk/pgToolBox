@@ -68,6 +68,7 @@ func everyReferenceConsole(provider pgtoolboxv1alpha1.PgToolBoxConsoleAuthProvid
 		SMTP:                 &pgtoolboxv1alpha1.PgToolBoxConsoleDigestSMTPSpec{Address: "smtp.example:587", Username: "digest", PasswordSecretRef: keyRef("smtp")},
 	}
 	c.Spec.Tracing = &pgtoolboxv1alpha1.PgToolBoxConsoleTracingSpec{Endpoint: "http://collector.example:4318", HeadersSecretRef: keyRef("tracing-headers")}
+	c.Spec.RestoreDrills = &pgtoolboxv1alpha1.PgToolBoxConsoleRestoreDrillsSpec{Enabled: true, SealKeySecretRef: keyRef("drill-seal")}
 	return c
 }
 
@@ -88,15 +89,15 @@ func TestReferencedSecrets(t *testing.T) {
 		"nothing referenced": {console: &pgtoolboxv1alpha1.PgToolBoxConsole{}},
 		"token sign-in mounts no provider Secret": {
 			console: everyReferenceConsole(pgtoolboxv1alpha1.PgToolBoxConsoleAuthToken),
-			want:    []string{"prom-token", "chat", "webhook", "smtp", "tracing-headers"},
+			want:    []string{"prom-token", "chat", "webhook", "smtp", "tracing-headers", "drill-seal"},
 		},
 		"oidc": {
 			console: everyReferenceConsole(pgtoolboxv1alpha1.PgToolBoxConsoleAuthOIDC),
-			want:    []string{"oidc-client", "oidc-grant-client", "prom-token", "chat", "webhook", "smtp", "tracing-headers"},
+			want:    []string{"oidc-client", "oidc-grant-client", "prom-token", "chat", "webhook", "smtp", "tracing-headers", "drill-seal"},
 		},
 		"openshift": {
 			console: everyReferenceConsole(pgtoolboxv1alpha1.PgToolBoxConsoleAuthOpenShift),
-			want:    []string{"openshift-client", "prom-token", "chat", "webhook", "smtp", "tracing-headers"},
+			want:    []string{"openshift-client", "prom-token", "chat", "webhook", "smtp", "tracing-headers", "drill-seal"},
 		},
 		"smtp without a username mounts no password": {
 			console: func() *pgtoolboxv1alpha1.PgToolBoxConsole {
@@ -104,9 +105,18 @@ func TestReferencedSecrets(t *testing.T) {
 				c.Spec.Digest.Delivery.SMTP.Username = ""
 				c.Spec.Prometheus.TokenSecretRef = nil
 				c.Spec.Tracing = nil
+				c.Spec.RestoreDrills.SealKeySecretRef = nil
 				return c
 			}(),
 			want: []string{"chat", "webhook"},
+		},
+		"a drill seal key with drills off mounts nothing": {
+			console: func() *pgtoolboxv1alpha1.PgToolBoxConsole {
+				c := everyReferenceConsole(pgtoolboxv1alpha1.PgToolBoxConsoleAuthToken)
+				c.Spec.RestoreDrills.Enabled = false
+				return c
+			}(),
+			want: []string{"prom-token", "chat", "webhook", "smtp", "tracing-headers"},
 		},
 	}
 	for name, tc := range cases {
@@ -249,7 +259,7 @@ func TestCheckReferences(t *testing.T) {
 	t.Run("all present", func(t *testing.T) {
 		t.Parallel()
 		reader := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&pgtoolboxv1alpha1.PgToolBoxConsole{}).
-			WithObjects(userSecret("prom-token"), userSecret("chat"), userSecret("webhook"), userSecret("smtp"), userSecret("tracing-headers"),
+			WithObjects(userSecret("prom-token"), userSecret("chat"), userSecret("webhook"), userSecret("smtp"), userSecret("tracing-headers"), userSecret("drill-seal"),
 				userConfigMap("prom-ca"), userConfigMap("instance-bundle"), userConfigMap("eol-table")).Build()
 		r := &Reconciler{APIReader: reader}
 		console := everyReferenceConsole(pgtoolboxv1alpha1.PgToolBoxConsoleAuthToken)
@@ -293,7 +303,7 @@ func TestCheckReferences(t *testing.T) {
 	t.Run("Secrets present, missing ConfigMaps stall with ConfigMapNotFound", func(t *testing.T) {
 		t.Parallel()
 		reader := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&pgtoolboxv1alpha1.PgToolBoxConsole{}).
-			WithObjects(userSecret("oidc-client"), userSecret("oidc-grant-client"), userSecret("prom-token"), userSecret("chat"), userSecret("webhook"), userSecret("smtp"), userSecret("tracing-headers"),
+			WithObjects(userSecret("oidc-client"), userSecret("oidc-grant-client"), userSecret("prom-token"), userSecret("chat"), userSecret("webhook"), userSecret("smtp"), userSecret("tracing-headers"), userSecret("drill-seal"),
 				userConfigMap("prom-ca")).Build()
 		r := &Reconciler{APIReader: reader}
 		console := everyReferenceConsole(pgtoolboxv1alpha1.PgToolBoxConsoleAuthOIDC)

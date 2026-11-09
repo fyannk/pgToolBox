@@ -36,6 +36,8 @@
 {{- $prom := $c.prometheus }}
 {{- $promSecret := $prom.token.secret.name }}
 {{- $promProjected := $prom.token.projected.enabled }}
+{{- /* The drill seal's own keys, mounted only when drills are on. */}}
+{{- $drillSeal := and $c.restoreDrills.enabled ($c.restoreDrills.sealKey).existingSecret }}
 {{- if or $promSecret $promProjected $prom.caConfigMap $prom.namespaced $prom.range }}
 {{- $_ := required "console.prometheus.url is required by the other console.prometheus values" $prom.url }}
 {{- end }}
@@ -400,6 +402,10 @@ spec:
             - name: RESTORE_DRILL_SERVER_CA_SECRET
               value: {{ required "console.restoreDrills.serverCA.secret is required with serverCA.mode=secret" .serverCA.secret | quote }}
             {{- end }}
+            {{- with (.sealKey).existingSecret }}
+            - name: RESTORE_DRILL_SEAL_KEY_FILE
+              value: /var/run/console/restore-drill-seal/{{ $c.restoreDrills.sealKey.key }}
+            {{- end }}
             {{- end }}
             {{- end }}
             {{- with $c.monitoringURL }}
@@ -539,6 +545,11 @@ spec:
             - name: session
               mountPath: /var/run/console/session
               readOnly: true
+            {{- if $drillSeal }}
+            - name: restore-drill-seal
+              mountPath: /var/run/console/restore-drill-seal
+              readOnly: true
+            {{- end }}
             {{- if $oidc }}
             - name: oidc
               mountPath: /var/run/console/oidc
@@ -674,6 +685,15 @@ spec:
             items:
               - key: {{ $c.auth.sessionKey.key }}
                 path: {{ $c.auth.sessionKey.key }}
+        {{- if $drillSeal }}
+        # The drill seal's own keys, read once at start.
+        - name: restore-drill-seal
+          secret:
+            secretName: {{ $c.restoreDrills.sealKey.existingSecret }}
+            items:
+              - key: {{ $c.restoreDrills.sealKey.key }}
+                path: {{ $c.restoreDrills.sealKey.key }}
+        {{- end }}
         {{- if $dl.chat.existingSecret }}
         - name: digest-chat
           secret:

@@ -102,6 +102,72 @@ tests:
     asserts:
       - contains: {path: "spec.template.spec.containers[0].env", content: {name: RESTORE_DRILL_SERVER_CA, value: own}}
 
+  # The drill seal's own keys (RESTORE_DRILL_SEAL_KEY_FILE): a Secret of its
+  # own, mounted read-only as a directory; unset, the keys derive from the
+  # session secret and nothing is mounted.
+  - it: mounts the drill seal's own keys when a Secret is named
+    template: templates/console/deployment.yaml
+    set: {console.restoreDrills: {enabled: true, sealKey: {existingSecret: drill-seal, key: seal-keys}}}
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: RESTORE_DRILL_SEAL_KEY_FILE, value: /var/run/console/restore-drill-seal/seal-keys}
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content: {name: restore-drill-seal, mountPath: /var/run/console/restore-drill-seal, readOnly: true}
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: restore-drill-seal
+            secret: {secretName: drill-seal, items: [{key: seal-keys, path: seal-keys}]}
+
+  - it: defaults the seal key's key to keys
+    template: templates/console/deployment.yaml
+    set: {console.restoreDrills: {enabled: true, sealKey: {existingSecret: drill-seal}}}
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: RESTORE_DRILL_SEAL_KEY_FILE, value: /var/run/console/restore-drill-seal/keys}
+
+  - it: derives the seal's keys from the session secret when no Secret is named
+    template: templates/console/deployment.yaml
+    set: {console.restoreDrills.enabled: true}
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content: {name: RESTORE_DRILL_SEAL_KEY_FILE}
+          any: true
+      - notContains:
+          path: spec.template.spec.volumes
+          content: {name: restore-drill-seal}
+          any: true
+
+  - it: mounts no seal key while drills are off
+    template: templates/console/deployment.yaml
+    set: {console.restoreDrills: {enabled: false, sealKey: {existingSecret: drill-seal}}}
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content: {name: RESTORE_DRILL_SEAL_KEY_FILE}
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content: {name: restore-drill-seal}
+          any: true
+      - notContains:
+          path: spec.template.spec.volumes
+          content: {name: restore-drill-seal}
+          any: true
+
+  - it: renders with reused values from before sealKey
+    template: templates/console/deployment.yaml
+    set: {console.restoreDrills: {enabled: true, sealKey: null}}
+    asserts:
+      - notContains:
+          path: spec.template.spec.volumes
+          content: {name: restore-drill-seal}
+          any: true
+
   - it: refuses the source's CA for drills in another namespace
     template: templates/console/deployment.yaml
     set:

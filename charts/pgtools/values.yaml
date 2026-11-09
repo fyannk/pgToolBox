@@ -451,6 +451,17 @@ console:
       # `secret` (and `auto`); its `ca.crt` must be in
       # `instanceStatus.caBundleConfigMap`.
       secret: ""
+    # sealKey: the drill seal's own keys (RESTORE_DRILL_SEAL_KEY_FILE). The
+    # console deletes only the drill Clusters it sealed with an HMAC; by
+    # default the HMAC key derives from the session secret, so whoever reads
+    # the session Secret can forge a seal. Name an existing Secret of the
+    # release namespace whose `key` holds one key per line (at least 32 bytes
+    # each; the first seals, all verify), readable by the console alone. The
+    # chart mounts it read-only; the console never reads it through the API.
+    # -- The drill seal's own keys, mounted as a file
+    # (`RESTORE_DRILL_SEAL_KEY_FILE`): `{existingSecret: name, key: keys}`.
+    # Empty `existingSecret`: the keys derive from the session secret.
+    sealKey: {existingSecret: "", key: keys}
     # networkPolicy: the drill Pods' policy, in every drill namespace, ON with
     # drills (a promoted drill is a live copy of a production database: the
     # extensions the console cannot neutralise must not reach the network).
