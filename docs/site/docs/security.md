@@ -66,7 +66,9 @@ what the design guarantees and, as plainly, what it does not.
   token bound to the agent namespace's own audience; the agent checks
   it with TokenReview and SubjectAccessReview ([details](evidence-agent.md#the-channel)).
 - **Operator to workloads**: server-side objects the operator owns; a metadata-only
-  view of Secrets; `ResourceNotOwned` instead of adopting.
+  view of Secrets, cached without annotations (so not kubectl's
+  `last-applied-configuration`, which holds the data) and with only the labels the
+  operator reads; `ResourceNotOwned` instead of adopting.
 - **pgAdmin to PostgreSQL**: `verify-full`, SCRAM with channel binding.
 - **Metrics**: authenticated and authorized by token on both the operator and the
   console.
