@@ -111,6 +111,9 @@ const config: Config = {
       },
     ],
     colorMode: {
+      // Dark is the primary theme of fyannk/design; a reader's own
+      // preference still wins.
+      defaultMode: 'dark',
       respectPrefersColorScheme: true,
     },
     navbar: {

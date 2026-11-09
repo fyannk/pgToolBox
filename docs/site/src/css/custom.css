@@ -352,7 +352,7 @@ html {
 }
 
 .ptb-sec__lede {
-  max-width: 75ch;
+  max-width: 65ch;
 }
 
 .ptb-sec__muted {
@@ -390,6 +390,8 @@ html {
 
 .ptb-sec__table {
   display: table;
+  /* Tables, names and numbers are set in mono (fyannk/design). */
+  font-family: var(--fy-font-mono);
   font-size: var(--fy-text-sm);
   margin: 0;
   width: 100%;
@@ -440,7 +442,12 @@ html {
   color: var(--fy-ok);
 }
 
-.ptb-sec__status--not-run,
+/* A scanner that did not run is unknown, not failing: muted, as the design
+   draws unknown and stale states. */
+.ptb-sec__status--not-run {
+  color: var(--fy-text-muted);
+}
+
 .ptb-sec__status--failed {
   color: var(--fy-crit);
 }
