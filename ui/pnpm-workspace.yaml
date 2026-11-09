@@ -17,3 +17,5 @@ allowBuilds:
 # this when Storybook's dependency tree reaches minimatch 11 by itself.
 overrides:
   "minimatch@>=7 <11.0.1": 11.0.4
+  # GHSA-3g3m-2fjr-6pw4 (glob AbortSignal bypass) is fixed in 14.0.2.
+  "glob@>=9 <14.0.2": 14.0.3
