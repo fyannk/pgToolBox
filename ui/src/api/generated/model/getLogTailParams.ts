@@ -7,20 +7,18 @@
  */
 
 export type GetLogTailParams = {
-/**
- * Container; default postgres.
- * @maxLength 63
- * @pattern ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
- */
-container?: string;
-/**
- * The previous (crashed) container's log.
- */
-previous?: boolean;
-/**
- * Lines to read; default 500. The byte bound may cut fewer.
- * @minimum 1
- * @maximum 2000
- */
-tailLines?: number;
+  /**
+   * Container; default postgres.
+   * @maxLength 63
+   * @pattern ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+   */
+  container?: string;
+  /** The previous (crashed) container's log. */
+  previous?: boolean;
+  /**
+   * Lines to read; default 500. The byte bound may cut fewer.
+   * @minimum 1
+   * @maximum 2000
+   */
+  tailLines?: number;
 };

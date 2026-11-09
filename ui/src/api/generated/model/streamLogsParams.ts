@@ -7,10 +7,10 @@
  */
 
 export type StreamLogsParams = {
-/**
- * Container; default postgres.
- * @maxLength 63
- * @pattern ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
- */
-container?: string;
+  /**
+   * Container; default postgres.
+   * @maxLength 63
+   * @pattern ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+   */
+  container?: string;
 };

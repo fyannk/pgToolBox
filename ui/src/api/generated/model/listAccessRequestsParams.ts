@@ -7,10 +7,10 @@
  */
 
 export type ListAccessRequestsParams = {
-/**
- * Only this watched namespace.
- * @maxLength 63
- * @pattern ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
- */
-namespace?: string;
+  /**
+   * Only this watched namespace.
+   * @maxLength 63
+   * @pattern ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+   */
+  namespace?: string;
 };
