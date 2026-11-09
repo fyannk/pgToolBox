@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"sort"
 	"strings"
 	"time"
@@ -281,23 +280,12 @@ func Generate() (map[string][]byte, error) {
 		if method == "" {
 			method = http.MethodGet
 		}
-		var reqBody io.Reader
-		if c.body != "" {
-			reqBody = strings.NewReader(c.body)
-		}
-		r := httptest.NewRequestWithContext(auth.WithPrincipal(context.Background(), FixturePrincipal()), method, c.path, reqBody)
-		if c.body != "" {
-			r.Header.Set("Content-Type", "application/json")
-			r.Header.Set(auth.RequestHeader, "1")
-		}
-		w := httptest.NewRecorder()
-		h.ServeHTTP(w, r)
-		body, err := indent(w.Body.Bytes())
+		code, body, err := serveFixture(h, method, c.path, c.body, c.body != "")
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", c.file, err)
 		}
 		out["testdata/fixtures/"+c.file] = body
-		manifest = append(manifest, Fixture{File: c.file, OperationID: c.op, Method: method, Path: c.path, Status: w.Code, Scenario: c.scenario, Body: c.body})
+		manifest = append(manifest, Fixture{File: c.file, OperationID: c.op, Method: method, Path: c.path, Status: code, Scenario: c.scenario, Body: c.body})
 	}
 	accessManifest, err := generateAccessFixtures(out)
 	if err != nil {
@@ -330,6 +318,66 @@ func Generate() (map[string][]byte, error) {
 	}
 	out["testdata/fixtures/manifest.json"] = append(b, '\n')
 	return out, nil
+}
+
+// serveFixture runs one fixture request through h as the fixture
+// principal and returns the status and the indented body. It builds the
+// request the way net/http/httptest would (host example.com, a
+// documentation remote address) without importing it: the generator is
+// linked into the console's package, and httptest has no place in the
+// console binary. unsafe marks a request with a JSON body and the CSRF
+// header.
+func serveFixture(h http.Handler, method, path, body string, unsafe bool) (int, []byte, error) {
+	var reqBody io.Reader
+	if body != "" {
+		reqBody = strings.NewReader(body)
+	}
+	r, err := http.NewRequestWithContext(auth.WithPrincipal(context.Background(), FixturePrincipal()), method, "http://example.com"+path, reqBody)
+	if err != nil {
+		return 0, nil, err
+	}
+	r.RequestURI, r.RemoteAddr = path, "192.0.2.1:1234"
+	if unsafe {
+		if body != "" {
+			r.Header.Set("Content-Type", "application/json")
+		}
+		r.Header.Set(auth.RequestHeader, "1")
+	}
+	w := &fixtureRecorder{header: http.Header{}}
+	h.ServeHTTP(w, r)
+	out, err := indent(w.body.Bytes())
+	return w.status(), out, err
+}
+
+// fixtureRecorder is the part of httptest.ResponseRecorder the
+// generator reads: the status and the body.
+type fixtureRecorder struct {
+	header http.Header
+	code   int
+	body   bytes.Buffer
+}
+
+func (w *fixtureRecorder) Header() http.Header { return w.header }
+
+func (w *fixtureRecorder) WriteHeader(code int) {
+	if w.code == 0 {
+		w.code = code
+	}
+}
+
+func (w *fixtureRecorder) Write(b []byte) (int, error) {
+	w.WriteHeader(http.StatusOK)
+	return w.body.Write(b)
+}
+
+// Flush lets a handler that flushes run unchanged.
+func (w *fixtureRecorder) Flush() { w.WriteHeader(http.StatusOK) }
+
+func (w *fixtureRecorder) status() int {
+	if w.code == 0 {
+		return http.StatusOK
+	}
+	return w.code
 }
 
 func indent(b []byte) ([]byte, error) {

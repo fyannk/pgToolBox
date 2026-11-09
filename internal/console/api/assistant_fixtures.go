@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"net/http/httptest"
 	"time"
 
 	"github.com/fyannk/pgToolBox/internal/console/auth"
@@ -114,18 +113,12 @@ func generateAssistantFixtures(out map[string][]byte) ([]Fixture, error) {
 			d.Features.MCP, d.Features.MCPWriteTools = false, false
 		}
 		h, _ := New(d)
-		r := httptest.NewRequestWithContext(auth.WithPrincipal(context.Background(), FixturePrincipal()), c.method, c.path, nil)
-		if c.method != http.MethodGet {
-			r.Header.Set(auth.RequestHeader, "1")
-		}
-		w := httptest.NewRecorder()
-		h.ServeHTTP(w, r)
-		body, err := indent(w.Body.Bytes())
+		code, body, err := serveFixture(h, c.method, c.path, "", c.method != http.MethodGet)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", c.file, err)
 		}
 		out["testdata/fixtures/"+c.file] = body
-		manifest = append(manifest, Fixture{File: c.file, OperationID: c.op, Method: c.method, Path: c.path, Status: w.Code, Scenario: c.scenario})
+		manifest = append(manifest, Fixture{File: c.file, OperationID: c.op, Method: c.method, Path: c.path, Status: code, Scenario: c.scenario})
 	}
 	return manifest, nil
 }
