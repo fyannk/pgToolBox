@@ -172,11 +172,14 @@ func cleanName(n string) string {
 		}
 		return r
 	}, strings.TrimSpace(n))
-	n = strings.Join(strings.Fields(n), " ")
+	// Truncation drops what the grant index will not store (invalid
+	// UTF-8, U+FFFD), so the empty check comes after it: a name made only
+	// of such runes is no name.
+	n = sharedstate.TruncateClientName(strings.Join(strings.Fields(n), " "))
 	if n == "" {
 		return defaultName
 	}
-	return sharedstate.TruncateClientName(n)
+	return n
 }
 
 // parseLoopback admits a loopback redirect URI (RFC 8252 §7.3): http, the
