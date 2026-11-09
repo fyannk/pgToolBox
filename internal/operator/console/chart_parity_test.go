@@ -46,11 +46,14 @@ func renderChart(t *testing.T, sets ...string) map[string][]byte {
 	if _, err := exec.LookPath("helm"); err != nil {
 		t.Skip("helm is not installed")
 	}
-	args := make([]string, 0, 9+2*len(sets))
+	args := make([]string, 0, 11+2*len(sets))
 	// A PgToolBoxConsole exists only where the operator runs, so the chart renders as
 	// on a cluster that serves its kinds (console.rbac.operatorKinds: auto).
 	args = append(args, "template", "console", filepath.Join("..", "..", "..", "charts", "pgtools"), "--namespace", "team-a",
-		"--api-versions", "pgtoolbox.fyannk.dev/v1alpha1", "--set", "console.fullnameOverride=console")
+		"--api-versions", "pgtoolbox.fyannk.dev/v1alpha1", "--set", "console.fullnameOverride=console",
+		// The operator renders no insight pack, so its console reads the
+		// name of deploy/insight-pack; the chart's own is per release.
+		"--set", "insightPack.configMapName=pgtoolbox-insight-pack")
 	for _, set := range sets {
 		args = append(args, "--set", set)
 	}

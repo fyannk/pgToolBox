@@ -144,6 +144,19 @@ StatefulSet whose replicas each have their own history volume.
 {{- printf "%s-state" (include "pgtools.console.fullname" .) -}}
 {{- end -}}
 
+{{/* The insight pack's ConfigMap: per release when the chart creates it,
+     else the name of deploy/insight-pack/insight-pack.yaml. */}}
+{{- define "pgtools.insightPack.configMapName" -}}
+{{- $p := .Values.insightPack -}}
+{{- if $p.configMapName -}}
+{{- $p.configMapName -}}
+{{- else if $p.enabled -}}
+{{- printf "%s-insight-pack" .Release.Name -}}
+{{- else -}}
+pgtoolbox-insight-pack
+{{- end -}}
+{{- end -}}
+
 {{- define "pgtools.console.lifecycle" -}}
 {{- .Values.console.lifecycle.configMapName | default (printf "%s-lifecycle" (include "pgtools.console.fullname" .)) -}}
 {{- end -}}

@@ -762,7 +762,7 @@ if console_helm and console_kust:
         else:
             # Values that are not release-specific must agree too.
             for name in sorted(henv):
-                if name in ("WATCH_NAMESPACES", "REVOCATION_CONFIGMAP", "STATE_CONFIGMAP", "SESSION_KEY_FILE"):
+                if name in ("WATCH_NAMESPACES", "REVOCATION_CONFIGMAP", "STATE_CONFIGMAP", "INSIGHT_PACK_CONFIGMAP", "SESSION_KEY_FILE"):
                     continue
                 if henv[name] != kenv[name]:
                     problems.append(f"console env {name}: Helm {henv[name]} != kustomize {kenv[name]}")

@@ -1,14 +1,16 @@
 suite: the insight pack
 templates:
   - templates/insight/configmap-insight-pack.yaml
+  - templates/console/deployment.yaml
 release:
   name: pgc
   namespace: team-a
 tests:
   - it: creates the pack in the release namespace by default, versioned, reloadable
+    template: templates/insight/configmap-insight-pack.yaml
     asserts:
       - hasDocuments: {count: 1}
-      - equal: {path: metadata.name, value: pgtoolbox-insight-pack}
+      - equal: {path: metadata.name, value: pgc-insight-pack}
       - equal: {path: metadata.namespace, value: team-a}
       - equal: {path: 'metadata.labels["cnpg.io/reload"]', value: ""}
       - equal: {path: 'metadata.labels["pgtoolbox.fyannk.dev/insight-pack-version"]', value: "1"}
@@ -17,6 +19,7 @@ tests:
       - matchRegex: {path: data.queries, pattern: "pgtoolbox_statements:"}
 
   - it: follows the console's watched namespaces
+    template: templates/insight/configmap-insight-pack.yaml
     set:
       console.watchNamespaces: [team-a, team-b]
     asserts:
@@ -25,6 +28,7 @@ tests:
         documentIndex: 1
 
   - it: takes its own namespace list over the console's
+    template: templates/insight/configmap-insight-pack.yaml
     set:
       console.watchNamespaces: [team-a, team-b]
       insightPack.namespaces: [team-c]
@@ -33,6 +37,7 @@ tests:
       - equal: {path: metadata.namespace, value: team-c}
 
   - it: leaves out the namespaces whose teams apply the pack themselves
+    template: templates/insight/configmap-insight-pack.yaml
     set:
       console.watchNamespaces: [team-a, team-b]
       insightPack.skipNamespaces: [team-a]
@@ -41,13 +46,69 @@ tests:
       - equal: {path: metadata.namespace, value: team-b}
 
   - it: renders with reused values from before skipNamespaces
+    template: templates/insight/configmap-insight-pack.yaml
     set:
       insightPack.skipNamespaces: null
     asserts:
       - hasDocuments: {count: 1}
 
   - it: creates nothing when disabled
+    template: templates/insight/configmap-insight-pack.yaml
     set:
       insightPack.enabled: false
     asserts:
       - hasDocuments: {count: 0}
+
+  # The name is per release so that two releases in one namespace do not
+  # collide, and the console matches the same name (INSIGHT_PACK_CONFIGMAP).
+  - it: names the pack after another release
+    template: templates/insight/configmap-insight-pack.yaml
+    release: {name: other}
+    asserts:
+      - equal: {path: metadata.name, value: other-insight-pack}
+
+  - it: takes an explicit name, the default one included
+    template: templates/insight/configmap-insight-pack.yaml
+    set:
+      insightPack.configMapName: pgtoolbox-insight-pack
+    asserts:
+      - equal: {path: metadata.name, value: pgtoolbox-insight-pack}
+
+  - it: tells the console the release's pack name
+    template: templates/console/deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: INSIGHT_PACK_CONFIGMAP, value: pgc-insight-pack}
+
+  - it: tells the console an explicit pack name
+    template: templates/console/deployment.yaml
+    set:
+      insightPack.configMapName: team-pack
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: INSIGHT_PACK_CONFIGMAP, value: team-pack}
+
+  - it: points the console at deploy/insight-pack's name when the chart creates no pack
+    template: templates/console/deployment.yaml
+    set:
+      insightPack.enabled: false
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: INSIGHT_PACK_CONFIGMAP, value: pgtoolbox-insight-pack}
+
+  - it: refuses a pack name that is no ConfigMap name
+    template: templates/insight/configmap-insight-pack.yaml
+    set:
+      insightPack.configMapName: Not_A/Name
+    asserts:
+      - failedTemplate: {}
+
+  - it: renders with reused values from before configMapName
+    template: templates/insight/configmap-insight-pack.yaml
+    set:
+      insightPack.configMapName: null
+    asserts:
+      - equal: {path: metadata.name, value: pgc-insight-pack}

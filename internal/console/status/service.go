@@ -98,6 +98,9 @@ type Options struct {
 	// AllowClusterCatalogs mirrors ALLOW_CLUSTER_CATALOGS: the opt-in
 	// ClusterImageCatalog read is configured.
 	AllowClusterCatalogs bool
+	// InsightPackConfigMap is the insight pack's ConfigMap name
+	// (INSIGHT_PACK_CONFIGMAP); empty is insight.ConfigMapName.
+	InsightPackConfigMap string
 	// Evidence is the repository-evidence reader; nil reads none.
 	Evidence evidence.Reader
 	// KubeVersion is the API server version poller's latest snapshot;

@@ -201,7 +201,8 @@ severity is the worst of its findings. See
 
 ### Insight pack
 
-A set of CloudNativePG custom queries (the ConfigMap `pgtoolbox-insight-pack`) that
+A set of CloudNativePG custom queries (a ConfigMap: `<release>-insight-pack` from the
+pgtools chart, `pgtoolbox-insight-pack` from `deploy/insight-pack`) that
 a team opts its Cluster into. The instances' own exporters run them and the console
 reads the results from `:9187/metrics`, so the console still never connects to
 PostgreSQL. It feeds the Insight screens: wraparound and vacuum, blocking, query

@@ -35,6 +35,7 @@ import (
 	"github.com/fyannk/pgToolBox/internal/operator/exposure"
 	"github.com/fyannk/pgToolBox/internal/operator/metadata"
 	"github.com/fyannk/pgToolBox/internal/operator/specs"
+	"github.com/fyannk/pgToolBox/pkg/cnpgstatus/insight"
 	"github.com/fyannk/pgToolBox/pkg/lifecycletable"
 )
 
@@ -600,6 +601,9 @@ func consoleEnv(c *pgtoolboxv1alpha1.PgToolBoxConsole) []corev1.EnvVar {
 		env("LIFECYCLE_FILE", lifecycleDir+"/"+lifecycletable.Key),
 		env("REVOCATION_CONFIGMAP", c.RevocationsConfigMapName()),
 		env("STATE_CONFIGMAP", c.StateConfigMapName()),
+		// The operator renders no insight pack: a team applies
+		// deploy/insight-pack/insight-pack.yaml, whose name this is.
+		env("INSIGHT_PACK_CONFIGMAP", insight.ConfigMapName),
 		// Read from the filesystem and reloaded on change; the console reads
 		// no Secret and no ConfigMap through the API for this.
 		env("INSTANCE_STATUS_CA_FILE", instanceCADir+"/ca.crt"),

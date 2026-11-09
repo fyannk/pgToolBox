@@ -96,7 +96,7 @@ func TestInsightGolden(t *testing.T) {
 	tr := insight.NewTracker()
 	tr.Observe("orders-1", now, realReading(t), true)
 	tr.Observe("orders-2", now, insight.Reading{}, false)
-	v := Build(optedIn(true), tr.Snapshot(now), true, 30*time.Second, now)
+	v := Build(optedIn(true), "", tr.Snapshot(now), true, 30*time.Second, now)
 	golden(t, "insight-orders", v)
 
 	if v.Pack.State != "enabled" || v.Pack.Referenced == nil || !*v.Pack.Referenced {
@@ -165,7 +165,7 @@ func TestInsightDataAge(t *testing.T) {
 	r.ExporterUpdatedAt = &ran
 	tr := insight.NewTracker()
 	tr.Observe("orders-1", now, r, true)
-	v := Build(optedIn(true), tr.Snapshot(now), true, 30*time.Second, now)
+	v := Build(optedIn(true), "", tr.Snapshot(now), true, 30*time.Second, now)
 	b := v.Blocking.Instances[0]
 	if b.DataAgeSeconds != 40 || !b.Provenance.ObservedAt.Equal(ran) || !v.Wraparound.Provenance.ObservedAt.Equal(ran) {
 		t.Errorf("data age = %v, observed at %v", b.DataAgeSeconds, b.Provenance.ObservedAt)
@@ -181,7 +181,7 @@ func TestConnectionShareUsesUsableSlots(t *testing.T) {
 	}}
 	tr := insight.NewTracker()
 	tr.Observe("orders-1", now, r, true)
-	c := Build(optedIn(true), tr.Snapshot(now), true, 30*time.Second, now).Connections.Instances[0]
+	c := Build(optedIn(true), "", tr.Snapshot(now), true, 30*time.Second, now).Connections.Instances[0]
 	if c.Usable == nil || *c.Usable != 95 || c.Share == nil || *c.Share != client/95 || c.Health != viewmodel.HealthCritical {
 		t.Errorf("connections = usable %v share %v health %s", c.Usable, c.Share, c.Health)
 	}
@@ -200,11 +200,11 @@ func TestFleetCutAfterFiltering(t *testing.T) {
 		tr.Observe(name+"-1", now, r, true)
 		return FleetCluster{Ref: viewmodel.ClusterRef{Namespace: "team-a", Name: name}, Snapshot: tr.Snapshot(now), Has: true, Interval: time.Minute}
 	}
-	f := Fleet([]FleetCluster{cluster("a", 50)}, now)
+	f := Fleet([]FleetCluster{cluster("a", 50)}, "", now)
 	if len(f.Top) != 50 || f.TopTotal != 50 || f.TopTruncated {
 		t.Errorf("under the bound: %d of %d, truncated %v", len(f.Top), f.TopTotal, f.TopTruncated)
 	}
-	f = Fleet([]FleetCluster{cluster("a", 50), cluster("b", 50), cluster("c", 50)}, now)
+	f = Fleet([]FleetCluster{cluster("a", 50), cluster("b", 50), cluster("c", 50)}, "", now)
 	if len(f.Top) != FleetTopStatements || f.TopTotal != 150 || !f.TopTruncated {
 		t.Errorf("over the bound: %d of %d, truncated %v", len(f.Top), f.TopTotal, f.TopTruncated)
 	}
@@ -238,7 +238,7 @@ func TestInsightPackStates(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			v := Build(c.cluster, c.snap, c.has, 30*time.Second, now)
+			v := Build(c.cluster, "", c.snap, c.has, 30*time.Second, now)
 			if v.Pack.State != c.state || !strings.Contains(v.Pack.Text, c.text) {
 				t.Fatalf("pack = %s %q", v.Pack.State, v.Pack.Text)
 			}
@@ -252,13 +252,68 @@ func TestInsightPackStates(t *testing.T) {
 		})
 	}
 	// The not-opted-in view carries the spec change as a blind spot.
-	v := Build(optedIn(false), one(insight.Reading{}), true, 30*time.Second, now)
+	v := Build(optedIn(false), "", one(insight.Reading{}), true, 30*time.Second, now)
 	found := false
 	for _, b := range v.BlindSpots {
 		found = found || (b.ID == "insight.notEnabled" && strings.Contains(b.Text, insight.SpecChange))
 	}
 	if !found {
 		t.Errorf("blind spots = %+v", v.BlindSpots)
+	}
+}
+
+// TestInsightPackConfigMapName: a console told the pack's ConfigMap has
+// another name (INSIGHT_PACK_CONFIGMAP, the pgtools chart's per-release
+// name) recognises a Cluster referencing that name, not the default, and
+// names it in every opt-in instruction.
+func TestInsightPackConfigMapName(t *testing.T) {
+	silent := func() insight.Snapshot {
+		tr := insight.NewTracker()
+		tr.Observe("orders-1", now, insight.Reading{}, true)
+		return tr.Snapshot(now)
+	}
+	referencing := func(name string) *cnpgv1.Cluster {
+		c := optedIn(false)
+		c.Spec.Monitoring = &cnpgv1.MonitoringConfiguration{CustomQueriesConfigMap: []machineryapi.ConfigMapKeySelector{
+			{LocalObjectReference: machineryapi.LocalObjectReference{Name: name}, Key: insight.ConfigMapKey},
+		}}
+		return c
+	}
+	cases := []struct {
+		name, configMap string
+		cluster         *cnpgv1.Cluster
+		wantName        string
+		wantReferenced  bool
+	}{
+		{"default name, default reference", "", referencing(insight.ConfigMapName), insight.ConfigMapName, true},
+		{"release name, its reference", "pgc-insight-pack", referencing("pgc-insight-pack"), "pgc-insight-pack", true},
+		// Another release's pack (or the default one) is not this console's.
+		{"release name, the default reference", "pgc-insight-pack", referencing(insight.ConfigMapName), "pgc-insight-pack", false},
+		{"default name, a release's reference", "", referencing("pgc-insight-pack"), insight.ConfigMapName, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			v := Build(c.cluster, c.configMap, silent(), true, 30*time.Second, now)
+			if v.Pack.ConfigMap != c.wantName || v.Pack.SpecChange != insight.SpecChangeFor(c.wantName) ||
+				!strings.Contains(v.Pack.SpecChange, "name: "+c.wantName+",") {
+				t.Fatalf("pack ConfigMap %q, spec change %q; want %q", v.Pack.ConfigMap, v.Pack.SpecChange, c.wantName)
+			}
+			if v.Pack.Referenced == nil || *v.Pack.Referenced != c.wantReferenced {
+				t.Fatalf("referenced = %v, want %v", v.Pack.Referenced, c.wantReferenced)
+			}
+			if !strings.Contains(v.Pack.Text, c.wantName) {
+				t.Errorf("pack text %q does not name %s", v.Pack.Text, c.wantName)
+			}
+			if !c.wantReferenced {
+				found := false
+				for _, b := range v.BlindSpots {
+					found = found || (b.ID == "insight.notEnabled" && strings.Contains(b.Text, v.Pack.SpecChange))
+				}
+				if !found {
+					t.Errorf("blind spots %+v do not carry %q", v.BlindSpots, v.Pack.SpecChange)
+				}
+			}
+		})
 	}
 }
 
@@ -269,7 +324,7 @@ func TestInsightCutExposition(t *testing.T) {
 	r.Truncated = append(r.Truncated, insight.TruncatedExposition)
 	tr := insight.NewTracker()
 	tr.Observe("orders-1", now, r, true)
-	v := Build(optedIn(true), tr.Snapshot(now), true, 30*time.Second, now)
+	v := Build(optedIn(true), "", tr.Snapshot(now), true, 30*time.Second, now)
 	if v.Pack.State != "enabled" || v.Pack.Health != viewmodel.HealthWarning || !strings.Contains(v.Pack.Text, "cut") {
 		t.Errorf("pack = %s %s %q", v.Pack.State, v.Pack.Health, v.Pack.Text)
 	}
@@ -286,7 +341,7 @@ func TestInsightCutExposition(t *testing.T) {
 func TestInsightStaleReading(t *testing.T) {
 	tr := insight.NewTracker()
 	tr.Observe("orders-1", now.Add(-10*time.Minute), realReading(t), true)
-	v := Build(optedIn(true), tr.Snapshot(now), true, 30*time.Second, now)
+	v := Build(optedIn(true), "", tr.Snapshot(now), true, 30*time.Second, now)
 	if !v.Wraparound.Provenance.Stale || !strings.Contains(v.Wraparound.Provenance.StaleReason, "10m0s") {
 		t.Errorf("a ten-minute-old reading must read as stale: %+v", v.Wraparound.Provenance)
 	}

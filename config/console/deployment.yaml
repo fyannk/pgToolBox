@@ -63,6 +63,10 @@ spec:
           value: pgtoolbox-console-revocations
         - name: STATE_CONFIGMAP
           value: pgtoolbox-console-state
+        # The insight pack's ConfigMap the Clusters opt in with: the name of
+        # deploy/insight-pack/insight-pack.yaml.
+        - name: INSIGHT_PACK_CONFIGMAP
+          value: pgtoolbox-insight-pack
         - name: INSTANCE_STATUS_CA_FILE
           value: /var/run/console/instance-ca/ca.crt
         # <dir>/<namespace>/token per watched namespace (one here).

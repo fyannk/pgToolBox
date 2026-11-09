@@ -273,6 +273,10 @@ spec:
             # forbidden, each replica keeps its own.
             - name: STATE_CONFIGMAP
               value: {{ include "pgtools.console.state" . | quote }}
+            # The insight pack's ConfigMap the Clusters opt in with; the
+            # console reads no ConfigMap for it.
+            - name: INSIGHT_PACK_CONFIGMAP
+              value: {{ include "pgtools.insightPack.configMapName" . | quote }}
             {{- if $c.instanceStatus.caBundleConfigMap }}
             # Read from the filesystem and reloaded on change; the console
             # reads no Secret and no ConfigMap through the API for this.

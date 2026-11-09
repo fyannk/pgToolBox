@@ -193,6 +193,7 @@ func New(cfg config.Console, restConfig *rest.Config, logger *slog.Logger, id Id
 	statusOpts := status.Options{
 		Cache: manager, EventsMaxAge: cfg.EventsMaxAge, EventsMaxPerCluster: cfg.EventsMaxPerCluster,
 		AllowClusterCatalogs: cfg.AllowClusterCatalogs,
+		InsightPackConfigMap: cfg.InsightPackConfigMap,
 		Console:              status.ConsoleInfo{Version: id.Version, Namespace: id.Namespace},
 		Logger:               logger.With(slog.String("component", "status")),
 		Trends:               trends, TrendsPersistent: trendsJournal != nil,

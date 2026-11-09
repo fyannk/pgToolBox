@@ -924,17 +924,25 @@ console:
 # The insight pack: CloudNativePG custom queries that let the
 # console show wraparound, vacuum health, blocking, connections,
 # pg_stat_statements top-N and index hygiene without connecting to
-# PostgreSQL itself. The chart creates the ConfigMap pgtoolbox-insight-pack
-# in each namespace below; nothing changes on any Cluster until its team adds
-#   spec.monitoring.customQueriesConfigMap: [{name: pgtoolbox-insight-pack, key: queries}]
+# PostgreSQL itself. The chart creates the ConfigMap <release>-insight-pack
+# (configMapName) in each namespace below, so that two releases in one
+# namespace do not collide; nothing changes on any Cluster until its team adds
+#   spec.monitoring.customQueriesConfigMap: [{name: <release>-insight-pack, key: queries}]
 # to the Cluster. The queries run as CloudNativePG's metrics user, read-only,
 # each with a 1 s statement_timeout; their cost is in the documentation.
 # ==========================================================================
 insightPack:
-  # -- Create the ConfigMap `pgtoolbox-insight-pack` of CloudNativePG custom
+  # -- Create the ConfigMap `<release>-insight-pack` of CloudNativePG custom
   # queries. Nothing changes on a Cluster until its team adds it to
   # `spec.monitoring.customQueriesConfigMap`.
   enabled: true
+  # -- Name of the pack's ConfigMap, which the console matches against the
+  # Clusters' `customQueriesConfigMap` and names in its opt-in instructions
+  # (`INSIGHT_PACK_CONFIGMAP`). Empty: `<release>-insight-pack` with the pack
+  # enabled, else `pgtoolbox-insight-pack` (the name of
+  # `deploy/insight-pack/insight-pack.yaml`). Set `pgtoolbox-insight-pack` to
+  # keep the name of a pack the teams already reference.
+  configMapName: ""
   # -- Namespaces that get the ConfigMap. Empty: `console.watchNamespaces`, or the
   # release namespace.
   namespaces: []

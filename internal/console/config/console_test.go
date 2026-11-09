@@ -58,6 +58,7 @@ func TestLoadConsoleDefaults(t *testing.T) {
 		{"no cluster catalogs", cfg.AllowClusterCatalogs, false},
 		{"log level", cfg.LogLevel, "info"},
 		{"evidence on", cfg.Evidence.Enabled, true},
+		{"insight pack ConfigMap", cfg.InsightPackConfigMap, "pgtoolbox-insight-pack"},
 		{"evidence interval", cfg.Evidence.Interval, time.Minute},
 		{"evidence token default", cfg.Evidence.TokenDirectory, ""},
 		{"operations on", cfg.OperationsEnabled, true},
@@ -93,6 +94,7 @@ func TestLoadConsoleChartEnvironment(t *testing.T) {
 		EnvHistoryPath:          "/var/lib/console/history.db",
 		EnvPgAdminURL:           "https://pgadmin.apps.example.com/",
 		EnvStateConfigMap:       "pgtoolbox-console-state",
+		EnvInsightPackConfigMap: "pgc-insight-pack",
 	}
 	cfg, err := LoadConsole(lookupOf(env))
 	if err != nil {
@@ -112,6 +114,9 @@ func TestLoadConsoleChartEnvironment(t *testing.T) {
 	}
 	if cfg.StateConfigMap != "pgtoolbox-console-state" {
 		t.Errorf("state ConfigMap = %q", cfg.StateConfigMap)
+	}
+	if cfg.InsightPackConfigMap != "pgc-insight-pack" || cfg.Info()[EnvInsightPackConfigMap] != "pgc-insight-pack" {
+		t.Errorf("insight pack ConfigMap = %q", cfg.InsightPackConfigMap)
 	}
 	if cfg.PgAdminURL != "https://pgadmin.apps.example.com/" {
 		t.Errorf("pgAdmin link = %q", cfg.PgAdminURL)
@@ -198,6 +203,9 @@ func TestLoadConsoleRejects(t *testing.T) {
 		{"protocol-relative pgAdmin link", base(map[string]string{EnvPgAdminURL: "//evil.example.com/"}), EnvPgAdminURL},
 		{"pgAdmin link with user information", base(map[string]string{EnvPgAdminURL: "https://u:p@pgadmin.example.com/"}), EnvPgAdminURL},
 		{"state ConfigMap that is no name", base(map[string]string{EnvStateConfigMap: "Not_A/Name"}), EnvStateConfigMap},
+		{"insight pack ConfigMap that is no name", base(map[string]string{EnvInsightPackConfigMap: "Not_A/Name"}), EnvInsightPackConfigMap},
+		{"insight pack ConfigMap with upper case", base(map[string]string{EnvInsightPackConfigMap: "PGC-insight-pack"}), EnvInsightPackConfigMap},
+		{"insight pack ConfigMap too long", base(map[string]string{EnvInsightPackConfigMap: strings.Repeat("a", 254)}), EnvInsightPackConfigMap},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   annotations:
-    pgtoolbox.fyannk.dev/spec-hash: c805b13f1807aa1a
+    pgtoolbox.fyannk.dev/spec-hash: 149ae8a79ac1cc0f
   labels:
     app.kubernetes.io/component: console
     app.kubernetes.io/instance: console
@@ -81,6 +81,8 @@ spec:
           value: console-revocations
         - name: STATE_CONFIGMAP
           value: console-state
+        - name: INSIGHT_PACK_CONFIGMAP
+          value: pgtoolbox-insight-pack
         - name: INSTANCE_STATUS_CA_FILE
           value: /var/run/console/instance-ca/ca.crt
         - name: EVIDENCE_TOKEN_DIR

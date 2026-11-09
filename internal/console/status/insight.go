@@ -38,7 +38,7 @@ func (s *Service) Insight(ctx context.Context, namespace, name string) (viewmode
 		return viewmodel.Insight{}, err
 	}
 	snap, has, interval := s.insightSnapshot(g.sweepKey())
-	out := insightview.Build(g.cluster, snap, has, interval, s.now().UTC())
+	out := insightview.Build(g.cluster, s.opts.InsightPackConfigMap, snap, has, interval, s.now().UTC())
 	out.Sources = []viewmodel.SourceState{s.insightSource(has)}
 	return out, nil
 }
@@ -64,7 +64,7 @@ func (s *Service) InsightBlocking(ctx context.Context, namespace, name string, r
 	}
 	snap, has, interval := s.insightSnapshot(g.sweepKey())
 	now := s.now().UTC()
-	out := insightview.Build(g.cluster, snap, has, interval, now).Blocking
+	out := insightview.Build(g.cluster, s.opts.InsightPackConfigMap, snap, has, interval, now).Blocking
 	out.RefreshedAt = refreshedAt
 	if refreshErr != nil && out.Available {
 		reason := refreshErr.Error()
@@ -93,7 +93,7 @@ func (s *Service) FleetStatements(ctx context.Context, visible func([]viewmodel.
 		snap, has, interval := s.insightSnapshot(sweep.Key{Namespace: ref.Namespace, Name: ref.Name})
 		clusters = append(clusters, insightview.FleetCluster{Ref: ref, Snapshot: snap, Has: has, Interval: interval})
 	}
-	return insightview.Fleet(clusters, s.now().UTC()), nil
+	return insightview.Fleet(clusters, s.opts.InsightPackConfigMap, s.now().UTC()), nil
 }
 
 // insightSnapshot is the sweep's insight state of one Cluster: has is

@@ -94,10 +94,14 @@ func unsupported(r insight.Reading) bool {
 }
 
 // Build converts one Cluster's insight snapshot. cluster may be
-// nil (the fleet view does not read it); has is false when exporters
-// are not scraped; interval is the sweep cadence, which decides when a
-// reading is stale.
-func Build(cluster *cnpgv1.Cluster, snap insight.Snapshot, has bool, interval time.Duration, now time.Time) viewmodel.Insight {
+// nil (the fleet view does not read it); configMap is the name of the
+// pack's ConfigMap (INSIGHT_PACK_CONFIGMAP; empty is
+// insight.ConfigMapName); has is false when exporters are not scraped;
+// interval is the sweep cadence, which decides when a reading is stale.
+func Build(cluster *cnpgv1.Cluster, configMap string, snap insight.Snapshot, has bool, interval time.Duration, now time.Time) viewmodel.Insight {
+	if configMap == "" {
+		configMap = insight.ConfigMapName
+	}
 	out := viewmodel.Insight{
 		GeneratedAt: now,
 		Wraparound:  viewmodel.InsightWraparound{Limits: []viewmodel.InsightSetting{}, Assumed: []string{}, Databases: []viewmodel.InsightDatabase{}, Tables: []viewmodel.InsightTable{}, Vacuums: []viewmodel.InsightVacuum{}, PreparedXacts: []viewmodel.InsightPreparedXacts{}},
@@ -116,11 +120,11 @@ func Build(cluster *cnpgv1.Cluster, snap insight.Snapshot, has bool, interval ti
 		out.Ref = viewmodel.ClusterRef{Namespace: cluster.Namespace, Name: cluster.Name, UID: string(cluster.UID)}
 		params = cluster.Spec.PostgresConfiguration.Parameters
 	}
-	out.Pack = packState(cluster, snap, has)
+	out.Pack = packState(cluster, configMap, snap, has)
 	if out.Pack.State == "notEnabled" {
 		out.BlindSpots = append(out.BlindSpots, viewmodel.BlindSpot{
 			ID: "insight.notEnabled", Panel: "insight",
-			Text: "The insight pack is not enabled on this Cluster, so none of these panels has data. Opt in with " + insight.SpecChange + ".",
+			Text: "The insight pack is not enabled on this Cluster, so none of these panels has data. Opt in with " + out.Pack.SpecChange + ".",
 		})
 	}
 	fresh := 3 * interval
@@ -259,16 +263,16 @@ func presentReadings(snap insight.Snapshot) []insight.InstanceReading {
 }
 
 // packState is the detection verdict.
-func packState(cluster *cnpgv1.Cluster, snap insight.Snapshot, has bool) viewmodel.InsightPack {
+func packState(cluster *cnpgv1.Cluster, configMap string, snap insight.Snapshot, has bool) viewmodel.InsightPack {
 	p := viewmodel.InsightPack{
-		Expected: strconv.Itoa(insight.PackVersion), ConfigMap: insight.ConfigMapName, Key: insight.ConfigMapKey,
-		SpecChange: insight.SpecChange, Instances: []viewmodel.InsightPackInstance{}, QueryErrors: []viewmodel.InsightQueryError{},
+		Expected: strconv.Itoa(insight.PackVersion), ConfigMap: configMap, Key: insight.ConfigMapKey,
+		SpecChange: insight.SpecChangeFor(configMap), Instances: []viewmodel.InsightPackInstance{}, QueryErrors: []viewmodel.InsightQueryError{},
 	}
 	if cluster != nil {
 		referenced := false
 		if m := cluster.Spec.Monitoring; m != nil {
 			for _, c := range m.CustomQueriesConfigMap {
-				if c.Name == insight.ConfigMapName && c.Key == insight.ConfigMapKey {
+				if c.Name == configMap && c.Key == insight.ConfigMapKey {
 					referenced = true
 				}
 			}
@@ -335,11 +339,11 @@ func packState(cluster *cnpgv1.Cluster, snap insight.Snapshot, has bool) viewmod
 			"the instance exports more than the console reads (many databases or custom queries)."
 	case present == 0 && p.Referenced != nil && *p.Referenced:
 		p.State, p.Health = "notEnabled", viewmodel.HealthWarning
-		p.Text = "The Cluster lists the pack's ConfigMap but no instance reports it: the ConfigMap " + insight.ConfigMapName +
+		p.Text = "The Cluster lists the pack's ConfigMap but no instance reports it: the ConfigMap " + configMap +
 			" may be missing from this namespace, or its key is not " + insight.ConfigMapKey + "."
 	case present == 0:
 		p.State, p.Health = "notEnabled", viewmodel.HealthInfo
-		p.Text = "The insight pack is not enabled on this Cluster. Opt in with " + insight.SpecChange + "."
+		p.Text = "The insight pack is not enabled on this Cluster. Opt in with " + p.SpecChange + "."
 	case old == present:
 		p.State, p.Health = "unsupported", viewmodel.HealthInfo
 		p.Text = "The instances run PostgreSQL 13 or earlier: the insight pack supports PostgreSQL 14 and later, and reports only its version here."
@@ -737,14 +741,14 @@ type FleetCluster struct {
 // Fleet is the team-wide query insight of the given Clusters: the
 // caller passes only those the user may see, so the cut to
 // FleetTopStatements is taken over the visible statements.
-func Fleet(clusters []FleetCluster, now time.Time) viewmodel.FleetStatements {
+func Fleet(clusters []FleetCluster, configMap string, now time.Time) viewmodel.FleetStatements {
 	out := viewmodel.FleetStatements{
 		GeneratedAt: now, Clusters: []viewmodel.FleetClusterStatement{},
 		Regressions: []viewmodel.FleetRegression{}, Top: []viewmodel.FleetStatement{},
 		BlindSpots: BlindSpots("fleet"),
 	}
 	for _, c := range clusters {
-		v := Build(nil, c.Snapshot, c.Has, c.Interval, now)
+		v := Build(nil, configMap, c.Snapshot, c.Has, c.Interval, now)
 		out.Clusters = append(out.Clusters, viewmodel.FleetClusterStatement{
 			Ref: c.Ref, State: v.Pack.State, Statements: v.Statements.Available,
 			Comparable: v.Statements.Comparable, ComparisonText: v.Statements.ComparisonText,

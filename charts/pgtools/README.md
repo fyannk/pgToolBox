@@ -8,7 +8,7 @@ Clusters, in its own namespace, installed by whoever administers that namespace.
 | Tool | Values | Default | What it installs |
 |---|---|---|---|
 | **console** | `console.enabled` | `true` | the console: one Deployment or StatefulSet (a StatefulSet with `console.history.persistent`), watching `console.watchNamespaces` |
-| **insight pack** | `insightPack.enabled` | `true` | the ConfigMap `pgtoolbox-insight-pack` of CloudNativePG custom queries in each watched namespace; a Cluster uses it only once its team opts in ([below](#the-insight-pack)) |
+| **insight pack** | `insightPack.enabled` | `true` | the ConfigMap `<release>-insight-pack` of CloudNativePG custom queries in each watched namespace; a Cluster uses it only once its team opts in ([below](#the-insight-pack)) |
 | **evidence agents** | `evidence.agents` | none | one backup-evidence agent per listed Cluster: a Deployment, a Service, a ServiceAccount and a Role ([below](#evidence-agents-without-the-operator)) |
 | **pgAdmin** | `pgadmin.enabled` | `false` | one pgAdmin for the team: a Deployment, with the servers declared in `pgadmin.servers` ([below](#pgadmin-without-the-operator)) |
 
@@ -292,7 +292,7 @@ the ServiceMonitor). With the NetworkPolicy on, list the scraper's namespace in
 ## The insight pack
 
 `insightPack.enabled` (default `true`) creates the ConfigMap
-`pgtoolbox-insight-pack` in each namespace of `insightPack.namespaces` (default:
+`<release>-insight-pack` (`insightPack.configMapName`) in each namespace of `insightPack.namespaces` (default:
 `console.watchNamespaces`, else the release namespace). It holds CloudNativePG
 custom queries for wraparound, vacuum health, blocking, connections,
 `pg_stat_statements` and index hygiene, which the console reads from the
@@ -304,8 +304,15 @@ by adding one line to the Cluster:
 ```yaml
 spec:
   monitoring:
-    customQueriesConfigMap: [{name: pgtoolbox-insight-pack, key: queries}]
+    customQueriesConfigMap: [{name: <release>-insight-pack, key: queries}]
 ```
+
+The name is per release so that two releases in one namespace do not collide;
+the chart tells its console the same name (`INSIGHT_PACK_CONFIGMAP`), which the
+console matches against the Cluster and shows in its opt-in line. Set
+`insightPack.configMapName: pgtoolbox-insight-pack` to keep the name of
+`deploy/insight-pack/insight-pack.yaml`, which the console also expects when
+`insightPack.enabled` is `false`.
 
 The ConfigMap carries `cnpg.io/reload`, so a chart upgrade that changes the pack
 reloads it on the instances, and its version as the label and annotation
@@ -618,7 +625,7 @@ The chart sets these environment variables; the console binary reads them
 `OIDC_REQUIRE_EMAIL_VERIFIED` when false, `OIDC_GRANT_CLIENT_ID` and
 `OIDC_GRANT_CLIENT_SECRET_FILE` with `oidc.grantClient`), `PUBLIC_URL`, `SESSION_MAX_AGE`,
 `AUTH_TOKEN_LOGIN` when false, `IDP_TIMEOUT`, `COOKIE_SECURE`,
-`TRUSTED_PROXY_HOPS`, `TLS_CERT_FILE`/`TLS_KEY_FILE`, `REVOCATION_CONFIGMAP`, `INSTANCE_STATUS_CA_FILE`,
+`TRUSTED_PROXY_HOPS`, `TLS_CERT_FILE`/`TLS_KEY_FILE`, `REVOCATION_CONFIGMAP`, `INSIGHT_PACK_CONFIGMAP`, `INSTANCE_STATUS_CA_FILE`,
 `ALLOW_CLUSTER_CATALOGS`, `ALLOW_LOGS`, `LOG_STREAM_ENABLED`, `LOG_MATCH_MAX_AGE`, `EVIDENCE_ENABLED` when false, `EVIDENCE_TOKEN_DIR`, `EVIDENCE_AGENTS_FILE`, `EVIDENCE_INTERVAL`, `OPERATIONS_ENABLED` when false, `RESTORE_DRILL_*` with `restoreDrills.enabled`, `MONITORING_URL`, `PROMETHEUS_URL`, `PROMETHEUS_TOKEN_FILE`, `PROMETHEUS_CA_FILE`, `PROMETHEUS_NAMESPACED`, `PROMETHEUS_RANGE`, `HISTORY_ENABLED`, `HISTORY_PATH`,
 `POD_NAMESPACE`, and with `auth.provider=openshift` `OPENSHIFT_CLIENT_ID`,
 `OPENSHIFT_CLIENT_SECRET_FILE`, `OPENSHIFT_DISCOVERY_URL`, `OPENSHIFT_SCOPES` and
@@ -994,7 +1001,8 @@ authority on what is accepted.
 | console.extraEnv | list | `[]` | Extra environment variables of the console container, as plain EnvVar objects. |
 | console.extraVolumes | list | `[]` | Extra volumes of the console pod. |
 | console.extraVolumeMounts | list | `[]` | Extra volume mounts of the console container. |
-| insightPack.enabled | bool | `true` | Create the ConfigMap `pgtoolbox-insight-pack` of CloudNativePG custom queries. Nothing changes on a Cluster until its team adds it to `spec.monitoring.customQueriesConfigMap`. |
+| insightPack.enabled | bool | `true` | Create the ConfigMap `<release>-insight-pack` of CloudNativePG custom queries. Nothing changes on a Cluster until its team adds it to `spec.monitoring.customQueriesConfigMap`. |
+| insightPack.configMapName | string | `""` | Name of the pack's ConfigMap, which the console matches against the Clusters' `customQueriesConfigMap` and names in its opt-in instructions (`INSIGHT_PACK_CONFIGMAP`). Empty: `<release>-insight-pack` with the pack enabled, else `pgtoolbox-insight-pack` (the name of `deploy/insight-pack/insight-pack.yaml`). Set `pgtoolbox-insight-pack` to keep the name of a pack the teams already reference. |
 | insightPack.namespaces | list | `[]` | Namespaces that get the ConfigMap. Empty: `console.watchNamespaces`, or the release namespace. |
 | insightPack.skipNamespaces | list | `[]` | Namespaces left out because their teams apply the pack's ConfigMap themselves. Helm will not take over a ConfigMap it did not create, so an install over a hand-applied one fails until its namespace is listed here. |
 | evidence.agents | list | `[]` | One evidence agent per listed Cluster of the release namespace. Each entry takes `cluster`, `secrets`, `objectStore`, `stanza`, `archive`, `pgbackrest`, `serviceAccountName`, `allowInsecureEndpoint`, `workloadIdentity`, `resources`, `image`, `nodeSelector`, `tolerations` and `affinity`; see the README. |
