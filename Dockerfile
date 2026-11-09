@@ -16,6 +16,18 @@
 # and reached through the replace in go.mod (GOWORK=off), so the build needs no
 # git and no credentials.
 
+# pnpm, the version mise.toml pins (hack/check-toolchain.sh holds them
+# together), from its GitHub release and checked against the release's sha256.
+# The npm package is only a shim that fetches this same native binary at install
+# time, so installing it with npm would pin nothing but the shim. One stage per
+# build architecture; BuildKit builds only the one the ui stage selects.
+FROM scratch AS pnpm-amd64
+ADD --checksum=sha256:565ff81174a14f6f7bd5d84c1b17e51031a80230d370a1fe24be5d16bd02a825 https://github.com/pnpm/pnpm/releases/download/v12.16.1/pnpm-linux-x64.tar.gz /pnpm.tar.gz
+FROM scratch AS pnpm-arm64
+ADD --checksum=sha256:f5847699e5d528f8f8e9bcfb385e58cb9fba7482af1b1aa7b70737be42277f81 https://github.com/pnpm/pnpm/releases/download/v12.16.1/pnpm-linux-arm64.tar.gz /pnpm.tar.gz
+# hadolint ignore=DL3006
+FROM pnpm-${BUILDARCH} AS pnpm
+
 # The console SPA. Built once on the build host's
 # platform: the output is architecture-independent. Node and pnpm are the
 # versions mise.toml pins; the lockfile is frozen and the workspace's
@@ -24,7 +36,9 @@
 FROM --platform=$BUILDPLATFORM node:24.22.1-bookworm-slim@sha256:be8204d4bd327363357f532187b752ff62759c31bedf98e9e18fc08c9cbd605c AS ui
 WORKDIR /ui
 ENV CI=1
-RUN npm install --global --no-fund --no-audit pnpm@12.16.1
+RUN --mount=from=pnpm,target=/pnpm \
+    mkdir /opt/pnpm && tar -xzf /pnpm/pnpm.tar.gz -C /opt/pnpm \
+    && ln -s /opt/pnpm/pnpm /usr/local/bin/pnpm && pnpm --version
 COPY ui/package.json ui/pnpm-lock.yaml ui/pnpm-workspace.yaml ./
 COPY ui/tokens/package.json tokens/package.json
 RUN pnpm install --frozen-lockfile
