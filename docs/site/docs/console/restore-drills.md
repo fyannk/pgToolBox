@@ -258,10 +258,17 @@ The teardown grant is the one delete the console holds, and it is narrow:
 - an opt-in Role in the drill namespace with `get`, `list`, `watch` and
   `delete` on `clusters.postgresql.cnpg.io`, and nothing else;
 - the console deletes only Clusters carrying its drill labels **and** a seal: an
-  HMAC over the namespace, the name and the drill record, keyed from the
-  console's session secret. Labels alone are not enough: anyone who can create a
-  Cluster can copy labels, nobody without the session secret can forge the seal.
-  A Cluster that is not sealed by this console is never touched;
+  HMAC over the namespace, the name and the drill record. Labels alone are not
+  enough: anyone who can create a Cluster can copy labels, but nobody without
+  the seal's key can forge the seal. A Cluster that this console did not seal
+  is never touched. By default the key is derived (HKDF with its own label)
+  from the console's session secret, so whoever can read the session Secret can
+  forge a seal. To give the seal a key of its own, mount a Secret of its own
+  and point `RESTORE_DRILL_SEAL_KEY_FILE` at it. The file holds one key per line,
+  at least 32 bytes each: the first seals, and all of them verify. Keep that
+  Secret readable by the console alone. When you switch keys, a drill that is
+  still running under the old key no longer verifies, so the console leaves it
+  in place and does not delete it;
 - the delete carries the drill's UID as a precondition, so a Cluster recreated
   under the same name is not deleted by mistake.
 
@@ -399,6 +406,7 @@ are turned off.
 | `RESTORE_DRILL_STORAGE_SIZE`, `_STORAGE_CLASS` | empty | The drill's volume. Empty: the source's. |
 | `RESTORE_DRILL_SERVER_CA` | `own` | `own`, `source` or `secret`: [which CA signs a drill](#which-ca-signs-a-drill). `source` needs `RESTORE_DRILL_NAMESPACE` unset. |
 | `RESTORE_DRILL_SERVER_CA_SECRET` | empty | The CA Secret of `secret`, in every drill namespace; only with `secret`. |
+| `RESTORE_DRILL_SEAL_KEY_FILE` | empty | Absolute path of a mounted file of the drill seal's own keys, one per line. Empty: the keys derive from the session secret. |
 
 ## A drill in another namespace
 
