@@ -247,9 +247,13 @@ spec:
             - name: COOKIE_SECURE
               value: {{ . | quote }}
             {{- end }}
-            {{- if $c.trustedProxyHops }}
+            {{- $hops := $c.trustedProxyHops }}
+            {{- if kindIs "invalid" $hops }}
+            {{- $hops = ternary 0 1 (eq $c.exposure.type "none") }}
+            {{- end }}
+            {{- if $hops }}
             - name: TRUSTED_PROXY_HOPS
-              value: {{ $c.trustedProxyHops | quote }}
+              value: {{ $hops | quote }}
             {{- end }}
             {{- if $c.tls.secretName }}
             - name: TLS_CERT_FILE

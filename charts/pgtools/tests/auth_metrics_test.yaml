@@ -35,6 +35,23 @@ tests:
       - contains: {path: "spec.template.spec.containers[0].env", content: {name: AUTH_TOKEN_LOGIN, value: "false"}}
       - contains: {path: "spec.template.spec.containers[0].env", content: {name: IDP_TIMEOUT, value: 10s}}
 
+  - it: trusts the edge's hop when the console is exposed
+    template: templates/console/deployment.yaml
+    set: {console.exposure.type: ingress, console.exposure.host: pgc.example.org}
+    asserts:
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: TRUSTED_PROXY_HOPS, value: "1"}}
+
+  - it: trusts no hop when the console is not exposed
+    template: templates/console/deployment.yaml
+    asserts:
+      - notExists: {path: "spec.template.spec.containers[0].env[?(@.name=='TRUSTED_PROXY_HOPS')]"}
+
+  - it: keeps an explicit 0 behind an exposure
+    template: templates/console/deployment.yaml
+    set: {console.exposure.type: route, console.exposure.host: pgc.apps.example.org, console.trustedProxyHops: 0}
+    asserts:
+      - notExists: {path: "spec.template.spec.containers[0].env[?(@.name=='TRUSTED_PROXY_HOPS')]"}
+
   - it: derives PUBLIC_URL from the exposure host
     template: templates/console/deployment.yaml
     set: {console.exposure.type: route, console.exposure.host: pgc.apps.example.org}
