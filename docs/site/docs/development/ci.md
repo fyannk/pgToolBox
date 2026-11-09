@@ -24,7 +24,8 @@ nightly, dispatch) and restored everywhere: a cache a pull request writes would 
 visible to that pull request alone and would push `main`'s out of the repository's
 10 GB budget. The Go module cache is keyed by `go.sum`; each job has its own Go
 build and golangci-lint cache, refreshed daily; the image layers go to the `gha`
-cache from the `images` job on `main`. mise itself is pinned in the action, so a
+cache from the `images` job of the nightly run on `main` (each export is several GB,
+so once a day, not on every merge). mise itself is pinned in the action, so a
 new mise release cannot change a job overnight. Each image is built once per run,
 in `images`, and the e2e jobs load that archive instead of building their own.
 
