@@ -387,7 +387,7 @@ jobs:
           golangci-lint run --enable-only gosec --output.sarif.path results/gosec-root.sarif --output.text.path /dev/null ./... || status=$?
           if (( status > 1 )); then exit "${status}"; fi
           status=0
-          (cd pkg/evidence && golangci-lint run --config ../../.golangci.yml --enable-only gosec --output.sarif.path ../../results/gosec-evidence.sarif --output.text.path /dev/null ./...) || status=$?
+          (cd pkg/evidence && golangci-lint run --config ../../.golangci.yml --enable-only gosec --output.sarif.path "${GITHUB_WORKSPACE}/results/gosec-evidence.sarif" --output.text.path /dev/null ./...) || status=$?
           if (( status > 1 )); then exit "${status}"; fi
           for module in root evidence; do
             target="${module/evidence/pkg/evidence}"
