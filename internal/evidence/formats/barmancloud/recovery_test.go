@@ -224,7 +224,9 @@ func TestRecoveryCoverageCrossesFailoverWhosePartialSwitchSegmentIsUnused(t *tes
 		{name: "boundary switch, parent ends complete before the switch segment", history: "1\t0/3000000\tpromoted\n", begin: 1, end: 1, ranges: []WALRange{walRange(1, 1, 2), walRange(2, 3, 5)}, state: evidence.Healthy, frontier: 5, frontierTL: 2, ownTimelineOK: true},
 		{name: "backup ends inside the switch segment", history: "1\t0/30000A0\tpromoted\n", begin: 1, end: 3, endLSN: "0/3000050", ranges: []WALRange{walRange(1, 1, 2), walRange(2, 3, 5)}, state: evidence.Healthy, frontier: 5, frontierTL: 2},
 		{name: "backup begins and ends inside the switch segment", history: "1\t0/30000A0\tpromoted\n", begin: 3, end: 3, endLSN: "0/3000050", ranges: []WALRange{walRange(1, 1, 2), walRange(2, 3, 5)}, state: evidence.Healthy, frontier: 5, frontierTL: 2},
-		{name: "child switch segment missing", history: "1\t0/30000A0\tpromoted\n", begin: 1, end: 1, ranges: []WALRange{walRange(1, 1, 2), walRange(2, 4, 5)}, state: evidence.Unknown, frontier: 2, frontierTL: 1, ownTimelineOK: true},
+		// Later child segments prove the switch segment lost, as pgBackRest
+		// reports it.
+		{name: "child switch segment missing while later child segments exist", history: "1\t0/30000A0\tpromoted\n", begin: 1, end: 1, ranges: []WALRange{walRange(1, 1, 2), walRange(2, 4, 5)}, state: evidence.Unhealthy, frontier: 2, frontierTL: 1, ownTimelineOK: true},
 		// The child's history and WAL from its switch segment on prove the
 		// parent closed: its missing segment before the switch is lost.
 		{name: "parent segment before the switch missing", history: "1\t0/30000A0\tpromoted\n", begin: 1, end: 1, ranges: []WALRange{walRange(1, 1, 1), walRange(2, 3, 5)}, state: evidence.Unhealthy, frontier: 1, frontierTL: 1, ownTimelineOK: true},
@@ -256,6 +258,36 @@ func TestRecoveryCoverageCrossesFailoverWhosePartialSwitchSegmentIsUnused(t *tes
 			own := findPath(t, server.Paths, 1)
 			if (own.State == evidence.Healthy) != test.ownTimelineOK {
 				t.Fatalf("own timeline path = state %s reason %q", own.State, own.Reason)
+			}
+			if err := catalog.Validate(); err != nil {
+				t.Fatalf("Validate() = %v", err)
+			}
+		})
+	}
+}
+
+// TestMissingChildSwitchSegmentIsLostOnlyOnceTheChildHasLaterWAL: the child's
+// switch segment missing is in flight while the child has no WAL, and lost
+// (unhealthy, gap-limited) once later child segments are archived.
+func TestMissingChildSwitchSegmentIsLostOnlyOnceTheChildHasLaterWAL(t *testing.T) {
+	t.Parallel()
+	objects := []HistoryObject{{Key: "alpha/wals/00000002.history", Server: "alpha", Name: "00000002.history", Compression: "none", Timeline: 2}}
+	for name, test := range map[string]struct {
+		ranges []WALRange
+		state  evidence.State
+		stop   CoverageStop
+	}{
+		"later child segments archived": {ranges: []WALRange{walRange(1, 1, 2), walRange(2, 4, 5)}, state: evidence.Unhealthy, stop: CoverageGapLimited},
+		"no child segment yet":          {ranges: []WALRange{walRange(1, 1, 2)}, state: evidence.Unknown, stop: CoverageUnknownLimited},
+		"switch segment archived":       {ranges: []WALRange{walRange(1, 1, 2), walRange(2, 3, 5)}, state: evidence.Healthy, stop: CoverageFrontier},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			wal := ServerWAL{Server: "alpha", State: evidence.Healthy, PostgreSQLVersion: 180000, SegmentSize: 16 << 20, Ranges: test.ranges}
+			catalog := AnalyzeRecovery(context.Background(), historyFake("1\t0/30000A0\tpromoted\n"), []Backup{recoveryBackup(time.Now().UTC(), 1, 1)}, WALCatalog{Servers: []ServerWAL{wal}}, objects, false, RecoveryOptions{})
+			path := findPath(t, catalog.Servers[0].Paths, 2)
+			if path.State != test.state || path.Stop != test.stop || path.FrontierTimeline == 0 {
+				t.Fatalf("path %#v", path)
 			}
 			if err := catalog.Validate(); err != nil {
 				t.Fatalf("Validate() = %v", err)

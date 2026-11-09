@@ -496,6 +496,14 @@ func evaluatePath(backup Backup, wal ServerWAL, timeline uint32, start, required
 			}
 		}
 		if !rangeContains(wal.Ranges, edge.Child, edge.SwitchPosition) {
+			// Later child segments prove the switch segment was written and
+			// is not on its way any more (archiving is in segment order), so
+			// it is lost; with no later child WAL the promotion may be minutes
+			// old and the segment still filling.
+			if childHasWAL(wal, edge) {
+				path.State, path.Stop, path.Reason = evidence.Unhealthy, CoverageGapLimited, "timeline switch segment is missing on the child timeline while later child segments are archived: it is lost"
+				return path
+			}
 			path.State, path.Stop, path.Reason = evidence.Unknown, CoverageUnknownLimited, "timeline switch segment is not observed on the child timeline"
 			return path
 		}
