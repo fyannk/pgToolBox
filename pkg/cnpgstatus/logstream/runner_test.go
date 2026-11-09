@@ -29,6 +29,93 @@ type fixedClock struct{ t time.Time }
 
 func (c fixedClock) Now() time.Time { return c.t }
 
+func (fixedClock) After(d time.Duration) <-chan time.Time { return time.After(d) }
+
+// steppedClock is a clock the test moves: After records the wait it was
+// asked for and fires at once, so a backoff sequence runs without
+// sleeping and can be read back.
+type steppedClock struct {
+	mu    sync.Mutex
+	now   time.Time
+	waits []time.Duration
+}
+
+func (c *steppedClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.now
+}
+
+func (c *steppedClock) advance(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.now = c.now.Add(d)
+}
+
+func (c *steppedClock) After(d time.Duration) <-chan time.Time {
+	c.mu.Lock()
+	c.waits = append(c.waits, d)
+	at := c.now.Add(d)
+	c.now = at
+	c.mu.Unlock()
+	ch := make(chan time.Time, 1)
+	ch <- at
+	return ch
+}
+
+func (c *steppedClock) recorded() []time.Duration {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]time.Duration(nil), c.waits...)
+}
+
+// attempt is one scripted Follow: a failure to open, or a stream that
+// stays attached for lasts before it ends.
+type attempt struct {
+	fail  bool
+	lasts time.Duration
+}
+
+// timedSource plays attempts in order on a steppedClock and cancels
+// the follower once they are used up.
+type timedSource struct {
+	clock    *steppedClock
+	attempts []attempt
+	done     context.CancelFunc
+
+	mu sync.Mutex
+	n  int
+}
+
+func (s *timedSource) Members() []Member { return nil }
+
+func (s *timedSource) Follow(context.Context, string, string) (io.ReadCloser, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.n >= len(s.attempts) {
+		s.done()
+		return nil, errors.New("script exhausted")
+	}
+	a := s.attempts[s.n]
+	s.n++
+	if a.fail {
+		return nil, errors.New("refused")
+	}
+	return io.NopCloser(&clockedReader{clock: s.clock, lasts: a.lasts}), nil
+}
+
+// clockedReader ends after advancing the clock by lasts: the stream
+// stayed attached that long.
+type clockedReader struct {
+	clock *steppedClock
+	lasts time.Duration
+}
+
+func (r *clockedReader) Read([]byte) (int, error) {
+	r.clock.advance(r.lasts)
+	return 0, io.EOF
+}
+
 // scriptedSource hands out one stream per call, then errors.
 type scriptedSource struct {
 	members []Member
@@ -321,4 +408,68 @@ func TestRunnerDropsCoverageForAContainerThatLeaves(t *testing.T) {
 	})
 	cancel()
 	<-done
+}
+
+// TestBackoffResetsAfterAWorkingStream pins the reconnect schedule:
+// failures double the wait up to the cap, a stream that stayed attached
+// longer than the shortest wait starts the schedule over, and one that
+// ended at once does not.
+func TestBackoffResetsAfterAWorkingStream(t *testing.T) {
+	t.Parallel()
+	fail := attempt{fail: true}
+	cases := []struct {
+		name     string
+		attempts []attempt
+		want     []time.Duration
+	}{
+		{
+			name:     "failures double up to the cap",
+			attempts: []attempt{fail, fail, fail, fail, fail, fail, fail, fail},
+			want:     []time.Duration{2 * time.Second, 4 * time.Second, 8 * time.Second, 16 * time.Second, 32 * time.Second, 64 * time.Second, reconnectMax, reconnectMax},
+		},
+		{
+			name:     "a stream attached for an hour resets the wait",
+			attempts: []attempt{fail, fail, fail, {lasts: time.Hour}, fail},
+			want:     []time.Duration{2 * time.Second, 4 * time.Second, 8 * time.Second, reconnectMin, 4 * time.Second},
+		},
+		{
+			name:     "a stream that ends at once keeps the streak",
+			attempts: []attempt{fail, fail, {lasts: 0}, fail},
+			want:     []time.Duration{2 * time.Second, 4 * time.Second, 8 * time.Second, 16 * time.Second},
+		},
+		{
+			name:     "exactly the shortest wait is not yet a working stream",
+			attempts: []attempt{fail, {lasts: reconnectMin}},
+			want:     []time.Duration{2 * time.Second, 4 * time.Second},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			clk := &steppedClock{now: time.Date(2026, 11, 9, 0, 0, 0, 0, time.UTC)}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			source := &timedSource{clock: clk, attempts: tc.attempts, done: cancel}
+			runner := NewRunner(source, &recordingSink{}, clk, quietLogger())
+			finished := make(chan struct{})
+			go func() {
+				defer close(finished)
+				runner.follow(ctx, Member{Pod: "orders-1", Container: "postgres"})
+			}()
+			select {
+			case <-finished:
+			case <-time.After(10 * time.Second):
+				t.Fatal("the follower did not stop when the script ended")
+			}
+			got := clk.recorded()
+			if len(got) != len(tc.want) {
+				t.Fatalf("waits = %v, want %v", got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Fatalf("waits = %v, want %v", got, tc.want)
+				}
+			}
+		})
+	}
 }
