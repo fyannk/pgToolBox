@@ -1,6 +1,6 @@
 apiVersion: v2
 name: pgtoolbox
-description: The pgToolBox operator for CloudNativePG - reconciles PgToolBoxConsole, PgAdmin and EvidenceAgent, once per cluster or per set of namespaces.
+description: The pgToolBox operator for CloudNativePG - reconciles PgToolBoxConsole, PgAdmin and EvidenceAgent, as a single instance per cluster.
 type: application
 # Kubernetes 1.34 or newer, as the product documents (CloudNativePG 1.30
 # supports 1.34 to 1.36). The pre-release suffix keeps managed distributions

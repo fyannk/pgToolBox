@@ -3,9 +3,11 @@
 # pgtoolbox Helm chart
 
 The pgToolBox **operator**: it reconciles `PgToolBoxConsole`, `PgAdmin` and
-`EvidenceAgent`, once per cluster or per set of namespaces. It owns cluster-scoped
-objects (the CRDs, its ClusterRole, the two user ClusterRoles), so a cluster
-administrator installs it.
+`EvidenceAgent`, as a single instance per cluster. It owns cluster-scoped
+objects (the CRDs, its ClusterRole, the three user ClusterRoles), so a cluster
+administrator installs it. `operator.config.watchNamespaces` narrows what the
+operator caches, not what its ClusterRole grants: a second operator release for
+another set of namespaces is not supported.
 
 A team that has no operator, or does not want one, installs its tools with the
 **pgtools** chart instead (`charts/pgtools`): the console in its own namespace, with
@@ -20,7 +22,7 @@ helm install pgtoolbox charts/pgtoolbox --namespace pgtoolbox --create-namespace
 It renders the operator Deployment, its generated ClusterRole (the rules of
 `config/rbac/role.yaml`, copied by `make manifests`), the leader-election Role, the
 CRDs from `operator-crds/` (with `helm.sh/resource-policy: keep`: uninstalling must
-not delete every `PgToolBoxConsole`, `PgAdmin` and `EvidenceAgent`), and the two user ClusterRoles.
+not delete every `PgToolBoxConsole`, `PgAdmin` and `EvidenceAgent`), and the three user ClusterRoles.
 
 | Value | Becomes | Default |
 |---|---|---|
@@ -70,7 +72,7 @@ Two optional pieces, **both off by default**:
   requesting user; on update only references that are new or changed), so nobody can have
   the operator mount a Secret they cannot read. `validationActions` selects Deny, Warn and/or Audit.
 
-### The two user ClusterRoles
+### The three user ClusterRoles
 
 Bind them **per namespace** with a RoleBinding (`kubectl -n team-a create rolebinding
 alice --clusterrole=pgtoolbox-console-viewer --user=alice@example.com`). The chart renders no

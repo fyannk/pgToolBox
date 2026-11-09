@@ -112,7 +112,7 @@ redacted).
 
 | Key | Chart value | Default | |
 |---|---|---|---|
-| `WATCH_NAMESPACES` | `operator.config.watchNamespaces` | empty: every namespace the ClusterRole allows | Comma list; restricts the caches. |
+| `WATCH_NAMESPACES` | `operator.config.watchNamespaces` | empty: every namespace the ClusterRole allows | Comma list; restricts the caches, not the RBAC: the ClusterRole stays cluster-wide, and one operator per cluster is the only supported layout. |
 | `POD_NAMESPACE` | downward API | | Where the operator runs. |
 | `OPERATOR_IMAGE` | `image.*` | baked in at build | Copied into pgAdmin Pods for the credential sidecar. |
 | `PGADMIN_IMAGE` | `operator.pgAdmin.image` | the hardened, digest-pinned image compiled in | |

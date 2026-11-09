@@ -3,9 +3,11 @@
 # pgtoolbox Helm chart
 
 The pgToolBox **operator**: it reconciles `PgToolBoxConsole`, `PgAdmin` and
-`EvidenceAgent`, once per cluster or per set of namespaces. It owns cluster-scoped
-objects (the CRDs, its ClusterRole, the two user ClusterRoles), so a cluster
-administrator installs it.
+`EvidenceAgent`, as a single instance per cluster. It owns cluster-scoped
+objects (the CRDs, its ClusterRole, the three user ClusterRoles), so a cluster
+administrator installs it. `operator.config.watchNamespaces` narrows what the
+operator caches, not what its ClusterRole grants: a second operator release for
+another set of namespaces is not supported.
 
 A team that has no operator, or does not want one, installs its tools with the
 **pgtools** chart instead (`charts/pgtools`): the console in its own namespace, with
@@ -20,7 +22,7 @@ helm install pgtoolbox charts/pgtoolbox --namespace pgtoolbox --create-namespace
 It renders the operator Deployment, its generated ClusterRole (the rules of
 `config/rbac/role.yaml`, copied by `make manifests`), the leader-election Role, the
 CRDs from `operator-crds/` (with `helm.sh/resource-policy: keep`: uninstalling must
-not delete every `PgToolBoxConsole`, `PgAdmin` and `EvidenceAgent`), and the two user ClusterRoles.
+not delete every `PgToolBoxConsole`, `PgAdmin` and `EvidenceAgent`), and the three user ClusterRoles.
 
 | Value | Becomes | Default |
 |---|---|---|
@@ -70,7 +72,7 @@ Two optional pieces, **both off by default**:
   requesting user; on update only references that are new or changed), so nobody can have
   the operator mount a Secret they cannot read. `validationActions` selects Deny, Warn and/or Audit.
 
-### The two user ClusterRoles
+### The three user ClusterRoles
 
 Bind them **per namespace** with a RoleBinding (`kubectl -n team-a create rolebinding
 alice --clusterrole=pgtoolbox-console-viewer --user=alice@example.com`). The chart renders no
@@ -126,7 +128,7 @@ authority on what is accepted.
 | operator.pgAdmin.imageRepositories | list | `[]` | Repositories a PgAdmin's `spec.image` and its oauth-proxy image may name, exact or as a prefix ending in `/`. Empty: each image's default repository only. Set it to your mirror when the image values point at one. |
 | operator.exposure.allowedHostSuffixes | list | `[]` | DNS suffixes `spec.exposure.hostname` must fall under (the suffix itself or a name below it), e.g. `[apps.example.com]` (`EXPOSURE_ALLOWED_HOST_SUFFIXES`). A hostname outside them is refused (ConfigurationValid=False, reason HostnameNotAllowed) and what was published under it withdrawn. Empty: any hostname. |
 | operator.oauthProxyImage | string | `""` | Image of the OpenShift oauth-proxy in front of pgAdmin (`OAUTH_PROXY_IMAGE`). Empty: the compiled-in default. On OpenShift, set the release payload's own image so that a mirrored registry serves it. |
-| operator.config.watchNamespaces | list | `[]` | Namespaces the operator watches (`WATCH_NAMESPACES`). Empty: every namespace the ClusterRole allows. |
+| operator.config.watchNamespaces | list | `[]` | Namespaces the operator watches (`WATCH_NAMESPACES`). Empty: every namespace the ClusterRole allows. It narrows the caches only: the manager ClusterRole is still bound cluster-wide, so this does not make a second operator release for other namespaces possible. |
 | operator.config.maxConcurrentReconciles | int | `0` | Reconciles the operator runs in parallel (`MAX_CONCURRENT_RECONCILES`). 0 keeps the operator's default. |
 | operator.config.reconciliationTimeout | string | `""` | Time limit of one reconcile, a Go duration (`RECONCILIATION_TIMEOUT`). Empty keeps the operator's default. |
 | operator.config.upgradeBackupsKept | int | `0` | Pre-upgrade backups kept per PgAdmin (`UPGRADE_BACKUPS_KEPT`). 0 keeps the operator's default, 3. |

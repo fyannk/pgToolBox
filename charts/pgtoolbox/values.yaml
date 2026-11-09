@@ -1,6 +1,7 @@
 # Default values for pgtoolbox: the operator.
 #
-# One operator per cluster, or per set of namespaces (operator.config.watchNamespaces).
+# One operator per cluster: a single instance. operator.config.watchNamespaces narrows
+# its caches, not its RBAC: the ClusterRole still grants every namespace.
 # It reconciles the v1alpha1 kinds PgToolBoxConsole, PgAdmin and EvidenceAgent, and
 # decides PgAccessRequests. The team tools without the operator (the console,
 # the evidence agent, pgAdmin) are the pgtools chart.
@@ -24,7 +25,7 @@ fullnameOverride: ""
 # PgAdmin, PgAdminAccess, PgAccessRequest and EvidenceAgent. The flat keys
 # further down (image, replicaCount, ...) are the operator's pod settings.
 # One operator per cluster: it owns cluster-scoped objects (the CRDs, the manager
-# ClusterRole, the two user ClusterRoles).
+# ClusterRole, the three user ClusterRoles).
 # ==========================================================================
 operator:
   # -- Render the operator: its Deployment, ClusterRole, leader-election Role, the
@@ -97,7 +98,9 @@ operator:
   # readable from the pgtoolbox-operator-config ConfigMap/Secret.
   config:
     # -- Namespaces the operator watches (`WATCH_NAMESPACES`). Empty: every
-    # namespace the ClusterRole allows.
+    # namespace the ClusterRole allows. It narrows the caches only: the manager
+    # ClusterRole is still bound cluster-wide, so this does not make a second
+    # operator release for other namespaces possible.
     watchNamespaces: []
     # -- Reconciles the operator runs in parallel (`MAX_CONCURRENT_RECONCILES`). 0
     # keeps the operator's default.
