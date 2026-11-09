@@ -53,7 +53,7 @@ import (
 // +kubebuilder:rbac:groups="",resources=services;serviceaccounts,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch
-// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list
+// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles;clusterrolebindings,verbs=get;list;watch;create
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles;clusterrolebindings,verbs=update;patch,resourceNames=pgtoolbox-evidence-agent
 // +kubebuilder:rbac:groups=authentication.k8s.io,resources=tokenreviews,verbs=create
@@ -359,10 +359,11 @@ func (r *Reconciler) missingSecrets(ctx context.Context, agent *pgtoolboxv1alpha
 }
 
 // podFacts copies the agent Pod's blocking fact into a reason: the
-// scheduler's Unschedulable, an image pull failure, a crash loop.
+// scheduler's Unschedulable, an image pull failure, a crash loop. The Pods
+// are read from the cache, whose Pod informer the controller watches.
 func (r *Reconciler) podFacts(ctx context.Context, agent *pgtoolboxv1alpha1.EvidenceAgent) (pgtoolboxv1alpha1.Reason, string, error) {
 	var pods corev1.PodList
-	if err := r.APIReader.List(ctx, &pods, client.InNamespace(agent.Namespace), client.MatchingLabelsSelector{Selector: labels.SelectorFromSet(selectorLabels(agent))}); err != nil {
+	if err := r.Client.List(ctx, &pods, client.InNamespace(agent.Namespace), client.MatchingLabelsSelector{Selector: labels.SelectorFromSet(selectorLabels(agent))}); err != nil {
 		return "", "", fmt.Errorf("list agent Pods: %w", err)
 	}
 	for i := range pods.Items {
