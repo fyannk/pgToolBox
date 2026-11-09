@@ -306,6 +306,7 @@ func structuralState(ctx context.Context, reader store.Reader, backup Backup) (e
 		}
 	}
 	seen := make(map[string]struct{}, len(backup.Artifacts))
+	empty := false
 	for _, key := range backup.Artifacts {
 		if _, duplicate := seen[key]; duplicate {
 			return evidence.Unknown, "duplicate backup artifact listing"
@@ -315,8 +316,43 @@ func structuralState(ctx context.Context, reader store.Reader, backup Backup) (e
 		if err != nil || object.Key != key || object.Size < 0 {
 			return evidence.Unknown, "backup artifact could not be confirmed"
 		}
+		empty = empty || object.Size < minimumArtifactBytes(path.Base(key))
+	}
+	// Decided once every artifact is confirmed: an unconfirmed or duplicate
+	// listing says the catalog itself is not known.
+	if empty {
+		return evidence.Unhealthy, "a backup data artifact is smaller than any tar archive can be"
 	}
 	return evidence.Healthy, "all discovered backup data artifacts are stat-able"
+}
+
+// minimumArtifactBytes is a lower bound on the size of one Barman Cloud data
+// artifact: each one, every _NNNN part included, is a complete tar stream
+// (barman-cloud-backup closes one tar and opens the next at
+// --max-archive-size), and a tar stream ends with two 512-byte zero blocks.
+// A compressed artifact is bounded by its codec's smallest possible frame:
+// gzip's 10-byte header and 8-byte trailer, bzip2's 4-byte header and
+// 10-byte end-of-stream marker, the 10-byte snappy framing stream
+// identifier, and lz4's 4-byte magic, 3-byte minimal frame descriptor and
+// 4-byte end mark. The bounds are far below any real artifact, so the floor
+// only refuses objects that cannot be an archive at all (an empty upload);
+// it says nothing about the content. The file's own extension decides, as
+// barman-cloud writes compression=None for a gzip backup.
+func minimumArtifactBytes(name string) int64 {
+	switch {
+	case strings.HasSuffix(name, ".tar"):
+		return 1024
+	case strings.HasSuffix(name, ".tar.gz"):
+		return 18
+	case strings.HasSuffix(name, ".tar.bz2"):
+		return 14
+	case strings.HasSuffix(name, ".tar.lz4"):
+		return 11
+	case strings.HasSuffix(name, ".tar.snappy"):
+		return 10
+	default:
+		return 1
+	}
 }
 
 func backupInfoKey(key string) (string, string, bool) {

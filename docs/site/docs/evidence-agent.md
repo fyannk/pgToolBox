@@ -111,7 +111,10 @@ sequenceDiagram
 - **The agent serves from memory.** A request never reaches the object store: the
   agent answers from the last publication of its background scan, which reads
   only listed `backup.info` files and timeline history files and stats the backup
-  objects it found. A scan that fails leaves the previous publication in place.
+  objects it found. A Barman data artifact smaller than any archive of its kind
+  (1024 bytes for a `.tar`, 18 for a `.tar.gz`: an empty upload) makes its backup
+  unusable; the size says nothing more about the content. A scan that fails
+  leaves the previous publication in place.
 - **The console reads one publication.** Every page request names the snapshot's
   `revision`; a page from another revision means the agent published in the
   meantime, and the console starts again from the snapshot, once. Any other

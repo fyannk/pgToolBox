@@ -271,7 +271,7 @@ func TestScannerPublishesBarmanCatalogOnlyAfterArtifactConfirmation(t *testing.T
 		ListFunc: func(context.Context, store.ListRequest) (store.Page, error) {
 			return store.Page{Objects: []store.Object{
 				{Key: "alpha/base/20260727/backup.info"},
-				{Key: "alpha/base/20260727/data.tar.gz", Size: 8},
+				{Key: "alpha/base/20260727/data.tar.gz", Size: 4096},
 				{Key: "alpha/wals/0000000100000000/000000010000000000000001", Size: 16 << 20},
 			}}, nil
 		},
@@ -279,7 +279,7 @@ func TestScannerPublishesBarmanCatalogOnlyAfterArtifactConfirmation(t *testing.T
 			return io.NopCloser(strings.NewReader("status=DONE\nsize=8\ncompression=gzip\nversion=180000\nxlog_segment_size=16777216\nbegin_wal=000000010000000000000001\nend_wal=000000010000000000000001\n")), nil
 		},
 		StatFunc: func(context.Context, string) (store.Object, error) {
-			return store.Object{Key: "alpha/base/20260727/data.tar.gz", Size: 8}, nil
+			return store.Object{Key: "alpha/base/20260727/data.tar.gz", Size: 4096}, nil
 		},
 	}
 	scanner, cache, _ := newTestScanner(t, reader, 10, 10, 2, time.Now)
@@ -299,10 +299,10 @@ func TestScannerConfinesBarmanAnalysisToConfiguredServer(t *testing.T) {
 		ListFunc: func(context.Context, store.ListRequest) (store.Page, error) {
 			return store.Page{Objects: []store.Object{
 				{Key: "alpha/base/id/backup.info"},
-				{Key: "alpha/base/id/data.tar", Size: 8},
+				{Key: "alpha/base/id/data.tar", Size: 4096},
 				{Key: "alpha/wals/0000000100000000/000000010000000000000001", Size: 16 << 20},
 				{Key: "beta/base/id/backup.info"},
-				{Key: "beta/base/id/data.tar", Size: 8},
+				{Key: "beta/base/id/data.tar", Size: 4096},
 				{Key: "beta/wals/0000000100000000/000000010000000000000001", Size: 16 << 20},
 			}}, nil
 		},
@@ -316,7 +316,7 @@ func TestScannerConfinesBarmanAnalysisToConfiguredServer(t *testing.T) {
 			if !strings.HasPrefix(key, "alpha/") {
 				t.Fatalf("statted out-of-scope key %q", key)
 			}
-			return store.Object{Key: key, Size: 8}, nil
+			return store.Object{Key: key, Size: 4096}, nil
 		},
 	}
 	scanner, cache, _ := newTestScanner(t, reader, 10, 10, 2, time.Now)
@@ -341,7 +341,7 @@ func TestScannerIncompleteRefreshNeitherConfirmsNorClearsBarmanGap(t *testing.T)
 			}
 			objects := []store.Object{
 				{Key: "alpha/base/id/backup.info"},
-				{Key: "alpha/base/id/data.tar", Size: 8},
+				{Key: "alpha/base/id/data.tar", Size: 4096},
 				{Key: "alpha/wals/0000000100000000/000000010000000000000001", Size: 16 << 20},
 				{Key: "alpha/wals/0000000100000000/000000010000000000000004", Size: 16 << 20},
 			}
@@ -358,7 +358,7 @@ func TestScannerIncompleteRefreshNeitherConfirmsNorClearsBarmanGap(t *testing.T)
 			return io.NopCloser(strings.NewReader("status=DONE\nsize=8\nversion=180000\nxlog_segment_size=16777216\n")), nil
 		},
 		StatFunc: func(_ context.Context, key string) (store.Object, error) {
-			return store.Object{Key: key, Size: 8}, nil
+			return store.Object{Key: key, Size: 4096}, nil
 		},
 	}
 	scanner, cache, _ := newTestScanner(t, reader, 20, 20, 10, time.Now)
@@ -404,7 +404,7 @@ func TestScannerPublishesBarmanTimelineAndObservedRecoveryCoverage(t *testing.T)
 		ListFunc: func(context.Context, store.ListRequest) (store.Page, error) {
 			return store.Page{Objects: []store.Object{
 				{Key: "alpha/base/id/backup.info"},
-				{Key: "alpha/base/id/data.tar", Size: 8},
+				{Key: "alpha/base/id/data.tar", Size: 4096},
 				{Key: "alpha/wals/0000000100000000/000000010000000000000001", LastModified: now.Add(-4 * time.Minute)},
 				{Key: "alpha/wals/0000000100000000/000000010000000000000002", LastModified: now.Add(-3 * time.Minute)},
 				{Key: "alpha/wals/00000002.history", LastModified: now.Add(-2 * time.Minute)},
@@ -418,7 +418,9 @@ func TestScannerPublishesBarmanTimelineAndObservedRecoveryCoverage(t *testing.T)
 			}
 			return io.NopCloser(strings.NewReader("status=DONE\nsize=8\nversion=180000\nxlog_segment_size=16777216\ntimeline=1\nbegin_wal=000000010000000000000001\nend_wal=000000010000000000000001\nend_xlog=0/01000000\n")), nil
 		},
-		StatFunc: func(_ context.Context, key string) (store.Object, error) { return store.Object{Key: key, Size: 8}, nil },
+		StatFunc: func(_ context.Context, key string) (store.Object, error) {
+			return store.Object{Key: key, Size: 4096}, nil
+		},
 	}
 	scanner, cache, _ := newTestScanner(t, reader, 20, 20, 10, func() time.Time { return now })
 	scanner.analyzeBarmanCatalog = true
@@ -443,7 +445,7 @@ func TestScannerPublishesDespiteAControlCharacterKeyUnderWALs(t *testing.T) {
 		ListFunc: func(context.Context, store.ListRequest) (store.Page, error) {
 			return store.Page{Objects: []store.Object{
 				{Key: "alpha/base/id/backup.info"},
-				{Key: "alpha/base/id/data.tar", Size: 8},
+				{Key: "alpha/base/id/data.tar", Size: 4096},
 				{Key: "alpha/wals/0000000100000000/000000010000000000000001", LastModified: now.Add(-time.Minute)},
 				{Key: "alpha/wals/0000000100000000/\x1b[2Jevil", LastModified: now},
 			}}, nil
@@ -451,7 +453,9 @@ func TestScannerPublishesDespiteAControlCharacterKeyUnderWALs(t *testing.T) {
 		OpenFunc: func(context.Context, store.OpenRequest) (io.ReadCloser, error) {
 			return io.NopCloser(strings.NewReader("status=DONE\nsize=8\nversion=180000\nxlog_segment_size=16777216\ntimeline=1\nbegin_wal=000000010000000000000001\nend_wal=000000010000000000000001\nend_xlog=0/01000000\n")), nil
 		},
-		StatFunc: func(_ context.Context, key string) (store.Object, error) { return store.Object{Key: key, Size: 8}, nil },
+		StatFunc: func(_ context.Context, key string) (store.Object, error) {
+			return store.Object{Key: key, Size: 4096}, nil
+		},
 	}
 	scanner, cache, _ := newTestScanner(t, reader, 20, 20, 10, func() time.Time { return now })
 	scanner.analyzeBarmanCatalog = true
