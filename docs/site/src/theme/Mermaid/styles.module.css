@@ -18,3 +18,10 @@
 .container svg * {
   filter: none !important;
 }
+
+/* Mermaid sizes a label's box from its own measure of the text; where the
+   browser lays the text out wider than measured, a foreignObject would clip
+   it. Let it overflow instead: a label may touch its border, never be cut. */
+.container svg foreignObject {
+  overflow: visible;
+}

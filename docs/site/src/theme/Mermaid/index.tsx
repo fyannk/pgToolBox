@@ -29,8 +29,11 @@ const FONT = '"IBM Plex Sans", system-ui, sans-serif';
 
 // Mermaid derives shades from these, so they are colours, not var(--fy-*).
 const PALETTE = {
-  dark: {bg: '#040604', surface: '#090c0a', raised: '#0f1410', border: '#737b6b', text: '#e6e4d6', muted: '#9ca393', accent: '#b3bf3a'},
-  light: {bg: '#f2f1e8', surface: '#fbfaf3', raised: '#ffffff', border: '#b9bba8', text: '#14200f', muted: '#4f5a48', accent: '#4f6b0e'},
+  // node: the accent mixed 15% into the surface; edge: the accent 60% over
+  // the page. The lichen green is the design's one accent, so the diagrams
+  // carry it as a tint and never as a status colour.
+  dark: {bg: '#040604', surface: '#090c0a', raised: '#0f1410', border: '#737b6b', text: '#e6e4d6', muted: '#9ca393', accent: '#b3bf3a', node: '#232711', edge: '#6d7524'},
+  light: {bg: '#f2f1e8', surface: '#fbfaf3', raised: '#ffffff', border: '#b9bba8', text: '#14200f', muted: '#4f5a48', accent: '#4f6b0e', node: '#e6e9d8', edge: '#839653'},
 };
 
 function designed(config: {theme?: string}): object {
@@ -44,9 +47,9 @@ function designed(config: {theme?: string}): object {
       fontSize: '15px',
       darkMode: config.theme === 'dark',
       background: c.bg,
-      primaryColor: c.surface,
+      primaryColor: c.node,
       primaryTextColor: c.text,
-      primaryBorderColor: c.border,
+      primaryBorderColor: c.edge,
       secondaryColor: c.raised,
       secondaryTextColor: c.text,
       secondaryBorderColor: c.border,
@@ -62,22 +65,22 @@ function designed(config: {theme?: string}): object {
       nodeTextColor: c.text,
       noteBkgColor: c.raised,
       noteTextColor: c.text,
-      noteBorderColor: c.border,
-      actorBkg: c.surface,
-      actorBorder: c.border,
+      noteBorderColor: c.edge,
+      actorBkg: c.node,
+      actorBorder: c.edge,
       actorTextColor: c.text,
       actorLineColor: c.muted,
       signalColor: c.muted,
       signalTextColor: c.text,
-      labelBoxBkgColor: c.surface,
-      labelBoxBorderColor: c.border,
+      labelBoxBkgColor: c.node,
+      labelBoxBorderColor: c.edge,
       labelTextColor: c.text,
       loopTextColor: c.text,
-      activationBkgColor: c.raised,
-      activationBorderColor: c.border,
+      activationBkgColor: c.node,
+      activationBorderColor: c.edge,
       sequenceNumberColor: c.bg,
       stateLabelColor: c.text,
-      stateBkg: c.surface,
+      stateBkg: c.node,
       altBackground: c.raised,
       transitionColor: c.muted,
       transitionLabelColor: c.text,
