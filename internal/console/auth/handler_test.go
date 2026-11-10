@@ -760,6 +760,12 @@ func TestTokenSprayFromOneAddressDoesNotStarveAnother(t *testing.T) {
 func TestTokenSprayDoesNotResetAddressBudgets(t *testing.T) {
 	t.Parallel()
 	env := newTestEnv(t, ProviderOIDC, ProviderToken)
+	// The limiters' clock stands still: the spray takes seconds under
+	// -race, and a refill during it would hide a reset.
+	frozen := time.Now()
+	for _, l := range []*RateLimiter{env.h.attempts, env.h.tokenAttempts, env.h.tokenAddresses, env.h.tokenReviews} {
+		l.now = func() time.Time { return frozen }
+	}
 	b := env.browser(t)
 	for range signInBurst {
 		if w := b.oidcLogin("/clusters"); w.Code != http.StatusFound {
