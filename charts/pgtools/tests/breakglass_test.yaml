@@ -91,7 +91,7 @@ tests:
     documentIndex: 1
     asserts:
       - isKind: {of: Role}
-      - notContains: {path: rules, content: {apiGroups: [pgtoolbox.fyannk.dev], resources: [pgadmins], verbs: [get]}}
+      - notContains: {path: rules, content: {apiGroups: [pgtoolbox.fyannk.dev], resources: [pgadmins], verbs: [connect, get]}}
       - notContains: {path: rules, content: {apiGroups: [rbac.authorization.k8s.io], resources: [rolebindings], verbs: [create]}}
       - contains: {path: rules, content: {apiGroups: [""], resources: [pods/log], verbs: [get]}}
 
@@ -102,7 +102,7 @@ tests:
       console.rbac.operatorKinds: "true"
     documentIndex: 1
     asserts:
-      - contains: {path: rules, content: {apiGroups: [pgtoolbox.fyannk.dev], resources: [pgadmins], verbs: [get]}}
+      - contains: {path: rules, content: {apiGroups: [pgtoolbox.fyannk.dev], resources: [pgadmins], verbs: [connect, get]}}
       - contains: {path: rules, content: {apiGroups: [pgtoolbox.fyannk.dev], resources: [pgaccessrequests], verbs: [create, get, list, watch]}}
       # Like pgtoolbox-console-operator, break-glass decides no access request.
       - notContains: {path: rules, content: {apiGroups: [pgtoolbox.fyannk.dev], resources: [pgaccessrequests/status], verbs: [update]}}
