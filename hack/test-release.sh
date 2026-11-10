@@ -317,6 +317,23 @@ grep -q ' chart-digests.txt$' "${work}/sums/SHA256SUMS" || fail "SHA256SUMS lack
 echo "ok: hack/release.sh"
 cd "${root}"
 
+# ---- prune-caches: closed-PR refs, stale members of a family and the budget.
+cat > "${work}/caches.json" <<'JSON'
+[{"id":1,"key":"gobuild-Linux-e2e-aaaaaaaaaaaaaaaaaaaa","ref":"refs/heads/main","size_in_bytes":100,"last_accessed_at":"2026-11-01T00:00:00Z"},
+ {"id":2,"key":"gobuild-Linux-e2e-bbbbbbbbbbbbbbbbbbbb","ref":"refs/heads/main","size_in_bytes":100,"last_accessed_at":"2026-11-02T00:00:00Z"},
+ {"id":3,"key":"gobuild-Linux-e2e-cccccccccccccccccccc","ref":"refs/heads/main","size_in_bytes":100,"last_accessed_at":"2026-11-03T00:00:00Z"},
+ {"id":4,"key":"gobuild-Linux-docs-aaaaaaaaaaaaaaaaaaaa","ref":"refs/pull/7/merge","size_in_bytes":100,"last_accessed_at":"2026-11-03T00:00:00Z"},
+ {"id":5,"key":"gobuild-Linux-docs-bbbbbbbbbbbbbbbbbbbb","ref":"refs/pull/8/merge","size_in_bytes":100,"last_accessed_at":"2026-11-03T00:00:00Z"},
+ {"id":6,"key":"buildkit-blob-1-sha256:0123","ref":"refs/heads/main","size_in_bytes":3000000,"last_accessed_at":"2026-11-04T00:00:00Z"},
+ {"id":7,"key":"buildkit-blob-1-sha256:0124","ref":"refs/heads/main","size_in_bytes":3000000,"last_accessed_at":"2026-11-05T00:00:00Z"}]
+JSON
+echo 8 > "${work}/open.txt"
+got="$(BUDGET_MB=5 ./hack/prune-caches.sh select "${work}/caches.json" "${work}/open.txt" | tr '\n' ' ')"
+[[ "${got}" == "1 4 6 " ]] || fail "prune-caches selected '${got}', want '1 4 6 ' (oldest of a family of 3, closed PR 7, LRU over the budget)"
+got="$(./hack/prune-caches.sh select "${work}/caches.json" "${work}/open.txt" | tr '\n' ' ')"
+[[ "${got}" == "1 4 " ]] || fail "prune-caches without budget pressure selected '${got}', want '1 4 '"
+echo "ok: prune-caches"
+
 # ---- retry: the bounded loop the workflow's verify step shares with
 # verify-published; a command that never succeeds fails after VERIFY_ATTEMPTS.
 export VERIFY_SLEEP=0 VERIFY_ATTEMPTS=2
