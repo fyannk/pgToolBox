@@ -11,6 +11,11 @@ import type { Provenance } from './provenance.ts';
 export interface Archiving {
   conditionStatus?: string;
   health: ArchivingHealth;
+  /** pg_stat_archiver.last_archived_time on the archiving instance, its own report. */
+  lastArchivedAt?: string;
+  lastArchivedWal?: string;
+  /** pg_stat_archiver.last_failed_time on the archiving instance, its own report. */
+  lastFailedAt?: string;
   lastFailedWal?: string;
   liveArchiving?: boolean;
   message?: string;

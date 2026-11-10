@@ -108,6 +108,11 @@ type RehearsalInput struct {
 	// spec.postgresql.parameters, verbatim; empty when not declared
 	// (PostgreSQL's default, on). CloudNativePG does not set it.
 	SynchronousCommit string
+	// SweepStale says why the instance readings are too old to rest a
+	// "no loss" answer on (the caller's staleness rule); empty when they
+	// are fresh. Whether commits waited for the candidate is a fact about
+	// the sweep, so a stale sweep turns "none" into "unknown".
+	SweepStale string
 }
 
 // Rehearsal outcomes.
@@ -536,6 +541,10 @@ func rehearsalLoss(out *Rehearsal, in RehearsalInput, c RehearsalCandidate, prim
 			return ClassUnknown
 		case level == "off" || level == "local":
 			out.DataLossText += " But synchronous_commit is " + level + " in the Cluster's parameters: commits do not wait for any standby."
+		case in.SweepStale != "":
+			out.DataLoss = LossUnknown
+			out.DataLossText += " But " + in.SweepStale + ": whether that still holds is not known."
+			return ClassUnknown
 		default:
 			out.DataLoss = LossNone
 			if level == "remote_write" {

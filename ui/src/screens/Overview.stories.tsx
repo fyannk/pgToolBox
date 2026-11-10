@@ -34,7 +34,11 @@ export const FailingOverDarkCompact = darkCompact(FailingOver);
 
 export const Healthy: Story = {
   args: { data: healthyOverview },
-  play: async ({ canvas }) => {
+  play: async ({ canvas, canvasElement }) => {
+    // The archiver's own last archived WAL, with its time and its source.
+    const last = canvasElement.querySelector("[data-last-archived]") as HTMLElement;
+    await expect(last).toHaveTextContent(/00000003000000000000002A/);
+    await expect(last).toHaveTextContent(/own report/);
     await expect(canvas.getByRole("complementary", { name: "What this console cannot see here" })).toBeVisible();
     // The failover rehearsal is one line here, with the reasoning on Replication.
     await expect(canvas.getByRole("link", { name: "See the reasoning" })).toHaveAttribute(

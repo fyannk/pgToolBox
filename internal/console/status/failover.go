@@ -42,6 +42,9 @@ func (s *Service) failover(g *gathered, now time.Time) viewmodel.FailoverRehears
 		Hibernated:        cnpgstatus.Hibernation(g.cluster).State == cnpgstatus.HibernationHibernated,
 		SynchronousCommit: declaredParameter(g.cluster.Spec.PostgresConfiguration.Parameters, "synchronous_commit"),
 	}
+	if sweepStale(g, now) {
+		in.SweepStale = sweepStaleReason
+	}
 	for _, name := range members(g) {
 		inst := cnpgstatus.RehearsalInstance{Name: name}
 		if swept, ok := g.swept.Instances[name]; ok {
@@ -78,6 +81,9 @@ func (s *Service) failover(g *gathered, now time.Time) viewmodel.FailoverRehears
 	}
 	// The inference is stale when the primary's or the candidate's own
 	// report is: the distance then describes the past.
+	if in.SweepStale != "" {
+		out.Provenance.Stale, out.Provenance.StaleReason = true, in.SweepStale
+	}
 	for _, name := range []string{in.Primary, r.Candidate} {
 		if inst, ok := g.swept.Instances[name]; name != "" && ok && inst.State != viewmodel.StatusReadOK {
 			out.Provenance.Stale, out.Provenance.StaleReason = true, name+": "+inst.Reason

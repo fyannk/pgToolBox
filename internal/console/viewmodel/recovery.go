@@ -61,6 +61,20 @@ type RecoverySegment struct {
 	// from (the newest one that reaches it).
 	BackupID string `json:"backupId,omitempty"`
 	Text     string `json:"text,omitempty"`
+	// Code and Params say Text for translation (see Phrase).
+	Code   string            `json:"code,omitempty" doc:"Stable code of Text, for translation; a code the client does not know shows Text."`
+	Params map[string]string `json:"params,omitempty" doc:"Values Text names (see Phrase)."`
+}
+
+// Phrase is a sentence the console wrote: Text in English, and Code and
+// Params so that a client can say it in its reader's language. Codes are
+// stable and the list grows; a client shows Text for a code it does not
+// know. Params keys ending in "At" are RFC 3339 instants, keys ending in
+// "Seconds" whole seconds; any other value is shown as written.
+type Phrase struct {
+	Code   string            `json:"code"`
+	Params map[string]string `json:"params,omitempty" doc:"Keys ending in At are RFC 3339 instants, keys ending in Seconds whole seconds; others are shown as written."`
+	Text   string            `json:"text"`
 }
 
 // RecoveryMarker is one base backup on the bar.
@@ -84,11 +98,14 @@ type RestoreCheck struct {
 	// restore point, or after the latest one as of the agent's last
 	// read), gap (inside a hole), reported
 	// (only the operator's unverified window covers it), unknown.
-	Answer   string `json:"answer" enum:"covered,notCovered,gap,reported,unknown"`
-	Text     string `json:"text"`
-	BackupID string `json:"backupId,omitempty" doc:"The base backup to restore from, when covered."`
-	Basis    string `json:"basis" enum:"evidence,reported,none"`
+	Answer string `json:"answer" enum:"covered,notCovered,gap,reported,unknown"`
+	Text   string `json:"text"`
+	// Code and Params say Text for translation (see Phrase).
+	Code     string            `json:"code,omitempty" doc:"Stable code of Text, for translation; a code the client does not know shows Text."`
+	Params   map[string]string `json:"params,omitempty" doc:"Values Text names (see Phrase)."`
+	BackupID string            `json:"backupId,omitempty" doc:"The base backup to restore from, when covered."`
+	Basis    string            `json:"basis" enum:"evidence,reported,none"`
 	// Caveats are what the answer does not prove.
-	Caveats    []string   `json:"caveats"`
+	Caveats    []Phrase   `json:"caveats"`
 	Provenance Provenance `json:"provenance"`
 }

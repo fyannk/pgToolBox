@@ -1635,20 +1635,29 @@ export const getBackupsOrders = {
         "to": "2026-10-24T16:08:00Z",
         "kind": "covered",
         "backupId": "20261023T070800",
-        "text": "Structurally covered: base backup 20261023T070800 and contiguous archived WAL."
+        "text": "Structurally covered: base backup 20261023T070800 and contiguous archived WAL.",
+        "code": "recovery.segment.covered",
+        "params": {
+          "backupId": "20261023T070800"
+        }
       },
       {
         "from": "2026-10-24T16:08:00Z",
         "to": "2026-10-25T07:08:00Z",
         "kind": "missingWAL",
-        "text": "WAL is missing from the repository: no restore target in this span."
+        "text": "WAL is missing from the repository: no restore target in this span.",
+        "code": "recovery.segment.missingWAL"
       },
       {
         "from": "2026-10-25T07:08:00Z",
         "to": "2026-10-29T11:59:15Z",
         "kind": "covered",
         "backupId": "20261029T070001",
-        "text": "Structurally covered: base backup 20261029T070001 and contiguous archived WAL."
+        "text": "Structurally covered: base backup 20261029T070001 and contiguous archived WAL.",
+        "code": "recovery.segment.covered",
+        "params": {
+          "backupId": "20261029T070001"
+        }
       }
     ],
     "markers": [
@@ -2496,6 +2505,8 @@ export const getClusterOrders = {
       "conditionStatus": "True",
       "reason": "ContinuousArchivingSuccess",
       "liveArchiving": true,
+      "lastArchivedWal": "00000003000000000000002A",
+      "lastArchivedAt": "2026-10-29T11:58:50Z",
       "readyWalFiles": 0,
       "provenance": {
         "origin": "instance",
@@ -4993,11 +5004,21 @@ export const getRestoreCheckOrders = {
   "at": "2026-10-29T10:00:00Z",
   "answer": "covered",
   "text": "Structurally covered: restore from base backup 20261029T070001 and replay the archived WAL to this time.",
+  "code": "recovery.check.covered",
+  "params": {
+    "backupId": "20261029T070001"
+  },
   "backupId": "20261029T070001",
   "basis": "evidence",
   "caveats": [
-    "Judged from WAL segment names in the repository: the WAL bytes were not read and no restore was run.",
-    "The latest restore point is bounded by when the last contiguous segment reached the repository; the newest transactions may still be only on the instance."
+    {
+      "code": "recovery.caveat.segmentNames",
+      "text": "Judged from WAL segment names in the repository: the WAL bytes were not read and no restore was run."
+    },
+    {
+      "code": "recovery.caveat.latestBounded",
+      "text": "The latest restore point is bounded by when the last contiguous segment reached the repository; the newest transactions may still be only on the instance."
+    }
   ],
   "provenance": {
     "origin": "evidence",

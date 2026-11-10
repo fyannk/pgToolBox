@@ -789,10 +789,11 @@ func (s *Service) backupSummary(g *gathered, now time.Time) viewmodel.BackupSumm
 			Reason: archiving.Reason, Message: bound(archiving.Message), Provenance: s.archivingProvenance(g, now),
 		},
 	}
-	if live := primaryArchiver(g); live != nil {
+	if live := primaryArchiverReading(g); live != nil {
 		archivingWAL, ready := live.IsArchivingWAL, live.ReadyWALFiles
 		summary.Archiving.LiveArchiving, summary.Archiving.ReadyWALFiles = &archivingWAL, &ready
-		summary.Archiving.LastFailedWAL = live.LastFailedWAL
+		summary.Archiving.LastFailedWAL, summary.Archiving.LastArchivedWAL = live.LastFailedWAL, live.LastArchivedWAL
+		summary.Archiving.LastArchivedAt, summary.Archiving.LastFailedAt = utc(live.LastArchivedWALTime), utc(live.LastFailedWALTime)
 	}
 	if cfg.PluginBased {
 		summary.NotReported = append([]string(nil), cfg.NotReported...)

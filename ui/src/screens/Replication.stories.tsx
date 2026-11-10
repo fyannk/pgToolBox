@@ -57,6 +57,35 @@ export const FailoverUnknown: Story = {
     await expect(canvas.getByText("No replica reported.")).toBeVisible();
   },
 };
+/**
+ * The sweep the rehearsal rests on is older than three sweep intervals: Go
+ * no longer says "none" (unknown), and the panel shows the sweep's age.
+ */
+export const FailoverStaleSweep: Story = {
+  args: {
+    data: {
+      ...replication,
+      failover: {
+        ...replication.failover,
+        dataLoss: "unknown",
+        health: "unknown",
+        dataLossText:
+          "The primary reported orders-2 as a synchronous standby (sync_state sync): commits waited for it. But the sweep has not completed for three intervals: whether that still holds is not known.",
+        provenance: {
+          ...replication.failover.provenance,
+          observedAt: "2026-10-29T11:50:00Z",
+          stale: true,
+          staleReason: "the sweep has not completed for three intervals",
+        },
+      },
+    },
+  },
+  play: async ({ canvasElement }) => {
+    const asOf = canvasElement.querySelector("[data-loss-as-of]") as HTMLElement;
+    await expect(asOf).toHaveTextContent(/as of the sweep/);
+    await expect(asOf).toHaveTextContent(/three intervals/);
+  },
+};
 /** Every instance fenced: the operator promotes none. */
 export const FailoverBlocked: Story = {
   args: {

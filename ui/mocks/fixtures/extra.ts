@@ -7,7 +7,9 @@ import type {
   Metrics,
   Operation,
   OperationAccepted,
+  RecoverySegment,
   RecoveryTimeline,
+  RestoreCheck,
   Storage,
   VolumeForecast,
 } from "../../src/api/generated/model";
@@ -268,6 +270,72 @@ export const recoveryReportedOnly = {
   markers: markers.filter((mk) => mk.source === "backupObject"),
   provenance: { origin: "operator", source: "Cluster.status", observedAt: "2026-10-29T11:59:58Z" },
 } satisfies RecoveryTimeline;
+
+/**
+ * No evidence agent and WAL archiving failing since 08:10: the operator's
+ * window ends at the last base backup; the primary's own pg_stat_archiver
+ * says WAL after 08:10 is likely not in the repository (Go's wording,
+ * internal/console/status/recovery.go reportedTail).
+ */
+export const recoveryReportedArchivingFailing = {
+  ...recoveryReportedOnly,
+  latest: "2026-10-29T07:08:00Z",
+  segments: [
+    { ...(recoveryReportedOnly.segments[0] as RecoverySegment), to: "2026-10-29T07:08:00Z" },
+    {
+      from: "2026-10-29T07:08:00Z",
+      to: "2026-10-29T08:10:00Z",
+      kind: "unknown",
+      code: "recovery.reportedTail.beforeArchivedFailing",
+      params: {
+        windowOrigin: "operator",
+        endAt: "2026-10-29T07:08:00Z",
+        archivedAt: "2026-10-29T08:10:00Z",
+        ageSeconds: "8",
+      },
+      text: "After the last base backup the operator reports (2026-10-29T07:08:00Z): the operator does not report the archived WAL beyond it. The primary last archived a segment at 2026-10-29T08:10:00Z, after this time (its own report on /pg/status, read 1 min ago), but WAL archiving is failing: this time's WAL may be in the repository; deploy an evidence agent to place it.",
+    },
+    {
+      from: "2026-10-29T08:10:00Z",
+      to: "2026-10-29T12:00:00Z",
+      kind: "unknown",
+      code: "recovery.reportedTail.afterArchivedFailing",
+      params: {
+        windowOrigin: "operator",
+        endAt: "2026-10-29T07:08:00Z",
+        archivedAt: "2026-10-29T08:10:00Z",
+        ageSeconds: "8",
+      },
+      text: "After the last base backup the operator reports (2026-10-29T07:08:00Z): the operator does not report the archived WAL beyond it. WAL archiving is failing: WAL after the primary's last archived segment (2026-10-29T08:10:00Z, its own report on /pg/status, read 1 min ago) is likely not in the repository.",
+    },
+  ],
+} satisfies RecoveryTimeline;
+
+/** The restore check's answer for 11:55 on that window: unknown, never covered, with the archiving caveat. */
+export const restoreCheckArchivingFailing: RestoreCheck = {
+  ref: { namespace: "team-a", name: "orders" },
+  generatedAt: NOW,
+  at: "2026-10-29T11:55:00Z",
+  answer: "unknown",
+  basis: "reported",
+  code: "recovery.reportedTail.afterArchivedFailing",
+  params: recoveryReportedArchivingFailing.segments[2]?.params,
+  text: recoveryReportedArchivingFailing.segments[2]?.text ?? "",
+  caveats: [
+    {
+      code: "recovery.caveat.archivingFailingSince",
+      params: { archivedAt: "2026-10-29T08:10:00Z" },
+      text: "WAL archiving is failing: the primary last archived a segment at 2026-10-29T08:10:00Z; newer WAL is on the instance, not in the repository.",
+    },
+    {
+      code: "recovery.caveat.notRestoreTested",
+      params: { days: "90" },
+      text: "Not restore-tested: no restore drill of this Cluster passed in the last 90 days.",
+    },
+    { code: "recovery.caveat.fromTheFuture", text: "A caveat this SPA does not know yet, shown in Go's English." },
+  ],
+  provenance: recoveryReportedOnly.provenance,
+};
 
 /** Neither evidence nor an operator window: nothing to draw, Go says why. */
 export const recoveryNone = {

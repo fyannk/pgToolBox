@@ -6,11 +6,16 @@
  * OpenAPI spec version: v1
  */
 import type { RecoverySegmentKind } from './recoverySegmentKind.ts';
+import type { RecoverySegmentParams } from './recoverySegmentParams.ts';
 
 export interface RecoverySegment {
   backupId?: string;
+  /** Stable code of Text, for translation; a code the client does not know shows Text. */
+  code?: string;
   from: string;
   kind: RecoverySegmentKind;
+  /** Values Text names (see Phrase). */
+  params?: RecoverySegmentParams;
   text?: string;
   to: string;
 }

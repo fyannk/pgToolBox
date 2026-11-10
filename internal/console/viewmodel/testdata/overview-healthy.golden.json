@@ -300,6 +300,8 @@
       "conditionStatus": "True",
       "reason": "ContinuousArchivingSuccess",
       "liveArchiving": true,
+      "lastArchivedWal": "00000003000000000000002A",
+      "lastArchivedAt": "2026-10-29T11:58:50Z",
       "readyWalFiles": 0,
       "provenance": {
         "origin": "instance",
