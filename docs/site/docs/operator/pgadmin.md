@@ -131,7 +131,9 @@ is equivalent to reading those Secrets.
   with `get pgadmins` to let people open pgAdmin, add `connect`.
   The proxy runs the review **at sign-in only**, so its session is bounded:
   **one hour** by default (`--cookie-expire=1h`; the proxy's own default is
-  168h), `spec.auth.openshiftOAuthProxy.sessionMaxAge` to change it (5m to 12h).
+  168h), `spec.auth.openshiftOAuthProxy.sessionMaxAge` to change it (5m to 12h;
+  on a `PgAdmin` that offers credentials, raising it takes `get` on the
+  namespace's Secrets, like widening who may sign in, and lowering it does not).
   When it ends the proxy signs the person in again, silently while their
   OpenShift session lasts, and reviews `connect` again: a revoked access (an
   expired [access request](../console/access-requests.md), a removed
@@ -366,8 +368,13 @@ pgAdmin's SQLite database and storage directory live on this volume.
 CloudNativePG Cluster of the same namespace (pgAdmin's `CONFIG_DATABASE_URI`)
 instead of SQLite. The operator owns a `DatabaseRole` (`<name>-pgadmin-config`)
 whose password **CloudNativePG generates** into `<name>-pgadmin-config-password`,
-and a `Database` (`pgadmin_<name>` by default, `configDatabase.database` otherwise)
-owned by that role, both kept in PostgreSQL when the `PgAdmin` is deleted. The
+and a `Database` (`pgadmin_<name>` by default, `configDatabase.database` otherwise,
+which must start with `pgadmin_`) owned by that role, both kept in PostgreSQL when
+the `PgAdmin` is deleted. CloudNativePG adopts a role of that name that already
+exists in PostgreSQL and resets its password and memberships, so do not create
+`pgadmin_*` roles by hand. The role's login reaches whoever opens pgAdmin: with the
+admission policy, creating a `PgAdmin` with `configDatabase` takes `get` on the
+namespace's Secrets, like offering credentials. The
 password never passes through the operator: `passfile-sync` (a native sidecar in
 this mode, so pgAdmin starts once the credentials are written) puts it in the Pod's
 `pgpass`, and the URI pgAdmin gets carries no password, only `verify-full` against

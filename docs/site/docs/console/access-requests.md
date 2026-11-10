@@ -128,7 +128,10 @@ its RoleBinding through the garbage collector (the binding's owner reference).
   authorizations, not access already open. The console keeps a positive
   authorization for up to 10 s and an identity for up to 30 s; on OpenShift,
   pgAdmin's oauth-proxy checks the right to connect at sign-in only, so a
-  pgAdmin session opened before the expiry lasts up to **one hour**; and
+  pgAdmin session opened before the expiry lasts for the session lifetime,
+  **1 h by default, up to the PgAdmin's `auth.openshiftOAuthProxy.sessionMaxAge`**
+  (at most 12 h; raising it takes `get` on the namespace's Secrets when the
+  PgAdmin offers credentials); and
   pgAdmin's open database connections and websockets last until they close.
   To end an `operator` grant at once, delete the Secret
   `<name>-pgadmin-proxy-cookie` (the operator generates a new one) and then the

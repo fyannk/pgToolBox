@@ -413,7 +413,7 @@ tests:
         documentIndex: 0
       - equal: {path: "spec.variables[3].expression", value: '["system:masters"]'}
         documentIndex: 0
-      - lengthEqual: {path: spec.validations, count: 6}
+      - lengthEqual: {path: spec.validations, count: 7}
         documentIndex: 0
       - matchRegex: {path: "spec.validations[1].expression", pattern: "evidenceagents.*spec.workloadIdentity"}
         documentIndex: 0
@@ -491,6 +491,27 @@ tests:
       - matchRegex: {path: "spec.variables[10].expression", pattern: "oldObject.spec.admins"}
       - notMatchRegex: {path: "spec.variables[10].expression", pattern: "displayName"}
       - matchRegex: {path: "spec.validations[5].expression", pattern: "variables.pgadminAudienceKept\\) \\|\\|"}
+      # The settings database is a credential source; a longer proxy session is a wider audience.
+      - matchRegex: {path: "spec.validations[5].expression", pattern: "&& !has\\(object.spec.configDatabase\\)\\) \\|\\|"}
+      - matchRegex: {path: "spec.validations[5].expression", pattern: "object.spec.configDatabase == oldObject.spec.configDatabase"}
+      - matchRegex: {path: "spec.variables[10].expression", pattern: "duration\\(has\\(object.spec.auth.openshiftOAuthProxy.sessionMaxAge\\)"}
+
+  - it: requires create on the exposure kind for annotations an ingress controller runs
+    set:
+      operator.enabled: true
+      operator.admissionPolicy.enabled: true
+    template: templates/operator/admissionpolicy.yaml
+    documentIndex: 0
+    asserts:
+      - equal: {path: "spec.variables[15].name", value: exposureType}
+      - equal: {path: "spec.variables[17].name", value: exposureAnnotationsKept}
+      - matchRegex: {path: "spec.variables[17].expression", pattern: "contains\\('snippet'\\)"}
+      - matchRegex: {path: "spec.variables[17].expression", pattern: "startsWith\\('nginx.ingress.kubernetes.io/auth-'\\)"}
+      - matchRegex: {path: "spec.variables[17].expression", pattern: "r.target == 'All' \\|\\| r.target == 'Exposure'"}
+      - matchRegex:
+          path: "spec.validations[6].expression"
+          pattern: "^variables.exposureAnnotationsKept \\|\\| authorizer.group\\(.*'networking.k8s.io'\\).resource\\(.*'ingresses'\\).*check\\('create'\\).allowed\\(\\)$"
+      - equal: {path: "spec.validations[6].reason", value: Forbidden}
 
   - it: requires create on the console ServiceAccount's token to project it to Prometheus
     set:

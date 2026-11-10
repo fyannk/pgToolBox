@@ -102,7 +102,8 @@ spec:
           (has(object.spec.auth.oauth2.scopes) ? object.spec.auth.oauth2.scopes : []) == (has(oldObject.spec.auth.oauth2.scopes) ? oldObject.spec.auth.oauth2.scopes : []))) &&
         (!has(object.spec.auth.openshiftOAuthProxy) || (
           has(object.spec.auth.openshiftOAuthProxy.image) == has(oldObject.spec.auth.openshiftOAuthProxy.image) &&
-          (!has(object.spec.auth.openshiftOAuthProxy.image) || object.spec.auth.openshiftOAuthProxy.image == oldObject.spec.auth.openshiftOAuthProxy.image))) &&
+          (!has(object.spec.auth.openshiftOAuthProxy.image) || object.spec.auth.openshiftOAuthProxy.image == oldObject.spec.auth.openshiftOAuthProxy.image) &&
+          duration(has(object.spec.auth.openshiftOAuthProxy.sessionMaxAge) ? string(object.spec.auth.openshiftOAuthProxy.sessionMaxAge) : '1h') <= duration(has(oldObject.spec.auth.openshiftOAuthProxy.sessionMaxAge) ? string(oldObject.spec.auth.openshiftOAuthProxy.sessionMaxAge) : '1h'))) &&
         (has(object.spec.admins) ? object.spec.admins : []) == (has(oldObject.spec.admins) ? oldObject.spec.admins : [])
         )
     - name: credentialKinds
@@ -130,6 +131,46 @@ spec:
         oldObject == null || request.resource.resource != 'pgadmins' ? [] : (
         (has(oldObject.spec.clusterRefs) ? oldObject.spec.clusterRefs.map(r, string(r.name)) : []) +
         (has(oldObject.spec.clusterSelector) ? ['selector'] : [])
+        )
+    - name: exposureType
+      expression: >-
+        request.resource.resource == 'evidenceagents' || !has(object.spec.exposure) || !has(object.spec.exposure.type) ? 'clusterIP' : string(object.spec.exposure.type)
+    - name: oldExposureType
+      expression: >-
+        oldObject == null ? '' : request.resource.resource == 'evidenceagents' || !has(oldObject.spec.exposure) || !has(oldObject.spec.exposure.type) ? 'clusterIP' : string(oldObject.spec.exposure.type)
+    - name: exposureAnnotationsKept
+      expression: >-
+        variables.exposureType == 'clusterIP' || (
+        (!has(object.spec.exposure.annotations) || object.spec.exposure.annotations.all(k,
+          !(k.contains('snippet') ||
+        k.startsWith('nginx.ingress.kubernetes.io/auth-') ||
+        k == 'nginx.ingress.kubernetes.io/enable-global-auth' ||
+        k == 'nginx.ingress.kubernetes.io/satisfy' ||
+        k.startsWith('nginx.ingress.kubernetes.io/mirror-') ||
+        k == 'nginx.ingress.kubernetes.io/proxy-ssl-secret' ||
+        k.startsWith('haproxy-ingress.github.io/config-') ||
+        k.startsWith('haproxy-ingress.github.io/auth-') ||
+        k.startsWith('haproxy.org/auth-') ||
+        k == 'traefik.ingress.kubernetes.io/router.middlewares' ||
+        k == 'konghq.com/plugins') ||
+          (variables.oldExposureType == variables.exposureType && has(oldObject.spec.exposure.annotations) &&
+           k in oldObject.spec.exposure.annotations && oldObject.spec.exposure.annotations[k] == object.spec.exposure.annotations[k]))) &&
+        (!has(object.spec.metadataPropagation) || object.spec.metadataPropagation.all(r,
+          !(r.target == 'All' || r.target == 'Exposure') || !has(r.annotations) || r.annotations.all(k,
+            !(k.contains('snippet') ||
+        k.startsWith('nginx.ingress.kubernetes.io/auth-') ||
+        k == 'nginx.ingress.kubernetes.io/enable-global-auth' ||
+        k == 'nginx.ingress.kubernetes.io/satisfy' ||
+        k.startsWith('nginx.ingress.kubernetes.io/mirror-') ||
+        k == 'nginx.ingress.kubernetes.io/proxy-ssl-secret' ||
+        k.startsWith('haproxy-ingress.github.io/config-') ||
+        k.startsWith('haproxy-ingress.github.io/auth-') ||
+        k.startsWith('haproxy.org/auth-') ||
+        k == 'traefik.ingress.kubernetes.io/router.middlewares' ||
+        k == 'konghq.com/plugins') ||
+            (variables.oldExposureType == variables.exposureType && has(oldObject.spec.metadataPropagation) &&
+             oldObject.spec.metadataPropagation.exists(o, (o.target == 'All' || o.target == 'Exposure') && has(o.annotations) &&
+               k in o.annotations && o.annotations[k] == r.annotations[k])))))
         )
   validations:
     - expression: >-
@@ -175,15 +216,25 @@ spec:
       reason: Forbidden
     - expression: >-
         request.resource.resource != 'pgadmins' ||
-        variables.credentialKinds.size() == 0 ||
-        variables.credentialSources.size() == 0 ||
+        ((variables.credentialKinds.size() == 0 || variables.credentialSources.size() == 0) && !has(object.spec.configDatabase)) ||
         (oldObject != null &&
         variables.credentialKinds.all(k, k in variables.oldCredentialKinds) &&
         variables.credentialSources.all(s, s in variables.oldCredentialSources) &&
         (!has(object.spec.clusterSelector) || (has(oldObject.spec.clusterSelector) && object.spec.clusterSelector == oldObject.spec.clusterSelector)) &&
+        (!has(object.spec.configDatabase) || (has(oldObject.spec.configDatabase) && object.spec.configDatabase == oldObject.spec.configDatabase)) &&
         variables.pgadminAudienceKept) ||
         authorizer.group('').resource('secrets').namespace(object.metadata.namespace).check('get').allowed()
-      message: a PgAdmin that offers the credentials of Clusters of its namespace (spec.credentials) requires get on the Secrets of the namespace, since whoever opens pgAdmin holds them; adding a credential kind or a Cluster, or changing who may sign in (spec.auth, spec.admins), is checked again
+      message: a PgAdmin that offers the credentials of Clusters of its namespace (spec.credentials) or keeps its settings on one (spec.configDatabase, whose login role pgAdmin holds) requires get on the Secrets of the namespace, since whoever opens pgAdmin holds them; adding a credential kind or a Cluster, changing who may sign in (spec.auth, spec.admins) or raising the OpenShift proxy's sessionMaxAge is checked again
+      reason: Forbidden
+    # An ingress controller reads some annotations as configuration
+    # (snippets, external authentication, mirroring, middlewares): the
+    # operator would write them on the Ingress, Route or HTTPRoute for an
+    # editor who may not create one. Adding or changing one takes create on
+    # that kind in the namespace.
+    - expression: >-
+        variables.exposureAnnotationsKept ||
+        authorizer.group(variables.exposureType == 'route' ? 'route.openshift.io' : variables.exposureType == 'gateway' ? 'gateway.networking.k8s.io' : 'networking.k8s.io').resource(variables.exposureType == 'route' ? 'routes' : variables.exposureType == 'gateway' ? 'httproutes' : 'ingresses').namespace(object.metadata.namespace).check('create').allowed()
+      message: an exposure annotation that an ingress controller reads as configuration (a snippet, external or basic authentication, mirroring, a middleware or plugin; see the security documentation) requires create on the exposure kind (ingresses, routes or httproutes) in the namespace; adding or changing one, or changing the exposure type, is checked again
       reason: Forbidden
 
 

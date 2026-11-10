@@ -104,18 +104,54 @@ operator therefore:
 
 - offers the **application user and applied `DatabaseRole`s only**, with privileged
   credentials behind an explicit `credentials.superuser: true`, and (admission
-  policy) lets only someone who may `get` the namespace's Secrets ask for them;
+  policy) lets only someone who may `get` the namespace's Secrets ask for them,
+  widen who may sign in (`spec.auth` but its display name, `spec.admins`), raise
+  the OpenShift proxy's `sessionMaxAge`, or put the settings database on a Cluster
+  of the namespace (`configDatabase`);
 - gates opening it by identity (`requiredClaims` on Kubernetes,
   `connect pgadmins/<name>` on OpenShift, a verb that neither `view` nor `edit`
   carries, even where OLM aggregates `get` on its CRDs into `view`), and makes
   `pgtoolbox-console-operator` the only user role that grants that verb (besides the
-  namespace `admin`), and bounds the OpenShift oauth-proxy's session to one hour
-  because it reviews `connect` at sign-in only;
+  namespace `admin`), and bounds the OpenShift oauth-proxy's session (it reviews
+  `connect` at sign-in only) to the session lifetime, 1 h by default, up to
+  `auth.openshiftOAuthProxy.sessionMaxAge`; raising it is checked like widening
+  who may sign in (below);
+- with `configDatabase`, creates a login role on that Cluster, whose password the
+  pgAdmin Pod holds: setting it is checked like offering credentials, and its
+  name must start with `pgadmin_`, because CloudNativePG adopts a role of that
+  name that already exists in PostgreSQL and resets its password and
+  memberships;
 - keeps passwords out of the operator, out of the Pod spec, out of
   pgAdmin's file manager and off disk (a memory-backed volume);
 - reports, but does not enforce, whether the Pod's egress is confined.
 
 Details: [PgAdmin](operator/pgadmin.md).
+
+## Exposure annotations that configure the ingress controller
+
+`spec.exposure.annotations`, and the annotations of `metadataPropagation` rules
+whose target is `All` or `Exposure`, land on the Ingress, Route or HTTPRoute the
+operator writes. Some annotations are configuration an ingress controller runs:
+written by the operator, they would let an editor who may not create an Ingress
+inject proxy configuration or send pgAdmin's and the console's traffic, cookies
+included, to a server they run. The admission policy (on by default) therefore
+requires **`create` on the exposure kind** (`ingresses`, `routes` or `httproutes`
+in the namespace) to add or change one of these, or to switch an object carrying
+one from `clusterIP` to an exposure:
+
+| Keys | Controller |
+|---|---|
+| any key containing `snippet` (`configuration-snippet`, `server-snippet`, `auth-snippet`, `stream-snippet`, `nginx.org/*-snippets`, `haproxy.org/*-config-snippet`) | every controller with snippets |
+| `nginx.ingress.kubernetes.io/auth-*`, `enable-global-auth`, `satisfy`, `mirror-*`, `proxy-ssl-secret` | ingress-nginx |
+| `haproxy-ingress.github.io/config-*`, `haproxy-ingress.github.io/auth-*`, `haproxy.org/auth-*` | HAProxy |
+| `traefik.ingress.kubernetes.io/router.middlewares` | Traefik |
+| `konghq.com/plugins` | Kong |
+
+A kept annotation with the same value, on an object exposed the same way, is not
+checked again; other annotations (timeouts, body size, affinity) are not checked.
+**Limit:** this is a deny-list of known keys, not every controller's; where the
+policy is off the operator writes what the spec says, so grant `pgadmins` and
+`pgtoolboxconsoles` writes only to people you would let create the Ingress.
 
 ## Secret references need `get`
 
@@ -251,7 +287,7 @@ in view.
 | **Who may write `evidenceagents/status` in a namespace can receive that namespace's evidence token.** The console calls an agent only when the operator's field manager wrote `status.endpoint` and `status.caBundle`, but a writer can name itself after the operator. | Read access to the backup metadata of that same namespace's agents only: each namespace has its own token audience. | Grant `update`/`patch` on `evidenceagents/status` to the operator only. Details on [the evidence agent](evidence-agent.md#trust). |
 | **Sign-out does not revoke the token** at the identity provider or OpenShift's OAuth server. | A copied token works until it expires. | Short token lifetimes at the IdP; the console's [revocation list](console/authentication.md#revoking-sessions) ends *console* sessions. |
 | **The console caches a positive identity for 30 s and a positive SAR for 10 s.** | A revoked person may keep seeing views for up to that long; writes stop at once. | None needed; stated for incident response. |
-| **An expired or revoked access request does not end access already open.** Deleting the RoleBinding stops new authorizations only. | Up to the console's caches above (10 s per SAR, 30 s per identity) in the console; up to **1 h** in pgAdmin on OpenShift, whose oauth-proxy checks access at sign-in only and keeps its cookie that long; and as long as they last, pgAdmin's open database connections and websockets. | For an incident, delete the PgAdmin's `<name>-pgadmin-proxy-cookie` Secret and then its Pod (this ends every pgAdmin session of it), and terminate the user's backends in PostgreSQL ([access requests](console/access-requests.md#lifecycle)). |
+| **An expired or revoked access request does not end access already open.** Deleting the RoleBinding stops new authorizations only. | Up to the console's caches above (10 s per SAR, 30 s per identity) in the console; in pgAdmin on OpenShift, whose oauth-proxy checks access at sign-in only, for the session lifetime: **1 h by default, up to `auth.openshiftOAuthProxy.sessionMaxAge`**; and as long as they last, pgAdmin's open database connections and websockets. | For an incident, delete the PgAdmin's `<name>-pgadmin-proxy-cookie` Secret and then its Pod (this ends every pgAdmin session of it), and terminate the user's backends in PostgreSQL ([access requests](console/access-requests.md#lifecycle)). |
 | **The four-eyes check covers the console's approval path only.** Approvers hold `create rolebindings` and `bind` on both roles. | An approver can bind `pgtoolbox-console-operator` to themselves directly with `kubectl`, with no request and no second person; the operator does not see such a binding. | Grant `pgtoolbox-console-approver` only to people trusted with the namespace's access; watch RoleBindings to the two roles in the API server's audit log. |
 | **`/metrics` on the console's probe port is plain HTTP when the console has no certificate.** | A scraper's token crosses the pod network in clear text. | Set `console.tls.secretName`: the probe port, `/metrics` included, is then HTTPS with the console's certificate ([metrics](console/metrics.md)). |
 | **The OpenShift sign-in using the ServiceAccount's projected token as client secret is not yet verified on a live cluster.** | If OpenShift rejects it, sign-in fails with `invalid_client`. | Use a long-lived token Secret ([checklist](console/openshift.md#manual-checklist), step 5). |
