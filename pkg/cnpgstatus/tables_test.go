@@ -123,8 +123,8 @@ func TestClassifyPhase(t *testing.T) {
 		{"setting up primary progressing", Minor130, cnpgv1.PhaseFirstPrimary, PhaseReading{Class: ClassProgressing, Known: true}},
 		{"unknown minor uses 1.30", "1.28", cnpgv1.PhaseDefinitionInvalid, PhaseReading{Class: ClassCritical, Known: true}},
 		{"unknown minor, unknown phase", "", "Something else", PhaseReading{Class: ClassWarning, Known: false}},
-		{"garbage minor, healthy", "garbage", cnpgv1.PhaseHealthy, PhaseReading{Class: ClassOK, Known: true}},
-		{"undetected minor, healthy", "", cnpgv1.PhaseHealthy, PhaseReading{Class: ClassOK, Known: true}},
+		{"garbage minor, healthy is capped", "garbage", cnpgv1.PhaseHealthy, PhaseReading{Class: ClassWarning, Known: true, Reason: "CNPG version not detected: phase read against the CNPG 1.30 table, not verified for this operator"}},
+		{"undetected minor, healthy is capped", "", cnpgv1.PhaseHealthy, PhaseReading{Class: ClassWarning, Known: true, Reason: "CNPG version not detected: phase read against the CNPG 1.30 table, not verified for this operator"}},
 		// A kept string can change its meaning in a minor the table was
 		// not verified at: healthy is capped at warning there, with the
 		// reason; non-ok rows keep their class.
@@ -136,7 +136,7 @@ func TestClassifyPhase(t *testing.T) {
 		{"newer 1.32 switchover stays progressing", "1.32", cnpgv1.PhaseSwitchover, PhaseReading{Class: ClassProgressing, Known: true}},
 		{"newer 1.32 unknown phase stays warning", "1.32", "Cluster is dancing", PhaseReading{Class: ClassWarning, Known: false}},
 		{"verified 1.30 healthy is ok", Minor130, cnpgv1.PhaseHealthy, PhaseReading{Class: ClassOK, Known: true}},
-		{"patch-level string is not a minor", "1.32.0", cnpgv1.PhaseHealthy, PhaseReading{Class: ClassOK, Known: true}},
+		{"patch-level string is not a minor: capped as undetected", "1.32.0", cnpgv1.PhaseHealthy, PhaseReading{Class: ClassWarning, Known: true, Reason: "CNPG version not detected: phase read against the CNPG 1.30 table, not verified for this operator"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -216,32 +216,35 @@ func TestClassifyCondition(t *testing.T) {
 		typ, status, reason string
 		want                ConditionReading
 	}{
-		{"ready true", Minor130, false, "Ready", "True", "ClusterIsReady", ConditionReading{ClassOK, true}},
-		{"ready false", Minor130, false, "Ready", "False", "ClusterIsNotReady", ConditionReading{ClassWarning, true}},
-		{"ready unknown", Minor130, false, "Ready", "Unknown", "", ConditionReading{ClassUnknown, true}},
-		{"garbage status", Minor130, false, "Ready", "yes", "", ConditionReading{ClassUnknown, false}},
-		{"empty status", Minor130, false, "Ready", "", "", ConditionReading{ClassUnknown, false}},
-		{"archiving failing", Minor130, false, "ContinuousArchiving", "False", "ContinuousArchivingFailing", ConditionReading{ClassCritical, true}},
-		{"backup started", Minor130, false, "LastBackupSucceeded", "False", "BackupStarted", ConditionReading{ClassProgressing, true}},
-		{"backup failed", Minor130, false, "LastBackupSucceeded", "False", "LastBackupFailed", ConditionReading{ClassWarning, true}},
-		{"system id mismatch", Minor130, false, "ConsistentSystemID", "False", "Mismatch", ConditionReading{ClassCritical, true}},
-		{"system id not found", Minor130, false, "ConsistentSystemID", "False", "NotFound", ConditionReading{ClassWarning, true}},
-		{"initialized pending", Minor130, false, "Initialized", "False", "BootstrapPending", ConditionReading{ClassProgressing, true}},
-		{"1.29 has no table and reads 1.30", "1.29", false, "Initialized", "True", "BootstrapCompleted", ConditionReading{ClassOK, true}},
-		{"topology under 1.30 is foreign", Minor130, false, "SyncReplicationTopologySatisfied", "False", "InsufficientCrossDomainReplicas", ConditionReading{ClassInfo, false}},
-		{"topology under 1.31", Minor131, false, "SyncReplicationTopologySatisfied", "False", "InsufficientCrossDomainReplicas", ConditionReading{ClassWarning, true}},
-		{"hibernated", Minor130, false, "cnpg.io/hibernation", "True", "Hibernated", ConditionReading{ClassInactive, true}},
-		{"hibernating", Minor130, false, "cnpg.io/hibernation", "False", "DeletingPods", ConditionReading{ClassProgressing, true}},
-		{"hibernation waits", Minor130, false, "cnpg.io/hibernation", "False", "WaitingForHealthy", ConditionReading{ClassWarning, true}},
-		{"hibernation wrong value", Minor130, false, "cnpg.io/hibernation", "False", "WrongAnnotationValue", ConditionReading{ClassWarning, true}},
-		{"unknown type", Minor130, false, "SomethingNew", "True", "", ConditionReading{ClassInfo, false}},
-		{"unknown type, unknown status", Minor130, false, "SomethingNew", "Unknown", "", ConditionReading{ClassInfo, false}},
-		{"fork type without pin", Minor130, false, "VolumeExpansionRefused", "True", "", ConditionReading{ClassWarning, false}},
-		{"fork type pinned", Minor130, true, "VolumeExpansionRefused", "True", "", ConditionReading{ClassWarning, true}},
-		{"fork type cleared, pinned", Minor131, true, "TopologyUnavailable", "False", "", ConditionReading{ClassOK, true}},
-		{"fork type unknown status", Minor130, false, "VolumeAutoGrowStopped", "Unknown", "", ConditionReading{ClassUnknown, false}},
-		{"unknown minor uses 1.30", "1.32", false, "Initialized", "True", "", ConditionReading{ClassOK, true}},
-		{"unknown minor, 1.31 type", "", false, "SyncReplicationTopologySatisfied", "True", "", ConditionReading{ClassInfo, false}},
+		{"ready true", Minor130, false, "Ready", "True", "ClusterIsReady", ConditionReading{Class: ClassOK, Known: true}},
+		{"ready false", Minor130, false, "Ready", "False", "ClusterIsNotReady", ConditionReading{Class: ClassWarning, Known: true}},
+		{"ready unknown", Minor130, false, "Ready", "Unknown", "", ConditionReading{Class: ClassUnknown, Known: true}},
+		{"garbage status", Minor130, false, "Ready", "yes", "", ConditionReading{Class: ClassUnknown, Known: false}},
+		{"empty status", Minor130, false, "Ready", "", "", ConditionReading{Class: ClassUnknown, Known: false}},
+		{"archiving failing", Minor130, false, "ContinuousArchiving", "False", "ContinuousArchivingFailing", ConditionReading{Class: ClassCritical, Known: true}},
+		{"backup started", Minor130, false, "LastBackupSucceeded", "False", "BackupStarted", ConditionReading{Class: ClassProgressing, Known: true}},
+		{"backup failed", Minor130, false, "LastBackupSucceeded", "False", "LastBackupFailed", ConditionReading{Class: ClassWarning, Known: true}},
+		{"system id mismatch", Minor130, false, "ConsistentSystemID", "False", "Mismatch", ConditionReading{Class: ClassCritical, Known: true}},
+		{"system id not found", Minor130, false, "ConsistentSystemID", "False", "NotFound", ConditionReading{Class: ClassWarning, Known: true}},
+		{"initialized pending", Minor130, false, "Initialized", "False", "BootstrapPending", ConditionReading{Class: ClassProgressing, Known: true}},
+		{"1.29 has no table and reads 1.30, capped", "1.29", false, "Initialized", "True", "BootstrapCompleted", ConditionReading{Class: ClassWarning, Known: true, Reason: "condition table not verified for CNPG 1.29"}},
+		{"topology under 1.30 is foreign", Minor130, false, "SyncReplicationTopologySatisfied", "False", "InsufficientCrossDomainReplicas", ConditionReading{Class: ClassInfo, Known: false}},
+		{"topology under 1.31", Minor131, false, "SyncReplicationTopologySatisfied", "False", "InsufficientCrossDomainReplicas", ConditionReading{Class: ClassWarning, Known: true}},
+		{"hibernated", Minor130, false, "cnpg.io/hibernation", "True", "Hibernated", ConditionReading{Class: ClassInactive, Known: true}},
+		{"hibernating", Minor130, false, "cnpg.io/hibernation", "False", "DeletingPods", ConditionReading{Class: ClassProgressing, Known: true}},
+		{"hibernation waits", Minor130, false, "cnpg.io/hibernation", "False", "WaitingForHealthy", ConditionReading{Class: ClassWarning, Known: true}},
+		{"hibernation wrong value", Minor130, false, "cnpg.io/hibernation", "False", "WrongAnnotationValue", ConditionReading{Class: ClassWarning, Known: true}},
+		{"unknown type", Minor130, false, "SomethingNew", "True", "", ConditionReading{Class: ClassInfo, Known: false}},
+		{"unknown type, unknown status", Minor130, false, "SomethingNew", "Unknown", "", ConditionReading{Class: ClassInfo, Known: false}},
+		{"fork type without pin", Minor130, false, "VolumeExpansionRefused", "True", "", ConditionReading{Class: ClassWarning, Known: false}},
+		{"fork type pinned", Minor130, true, "VolumeExpansionRefused", "True", "", ConditionReading{Class: ClassWarning, Known: true}},
+		{"fork type cleared, pinned", Minor131, true, "TopologyUnavailable", "False", "", ConditionReading{Class: ClassOK, Known: true}},
+		{"fork type unknown status", Minor130, false, "VolumeAutoGrowStopped", "Unknown", "", ConditionReading{Class: ClassUnknown, Known: false}},
+		{"unknown minor uses 1.30, capped", "1.32", false, "Initialized", "True", "", ConditionReading{Class: ClassWarning, Known: true, Reason: "condition table not verified for CNPG 1.32"}},
+		{"planned 1.31: ok capped", Minor131, false, "Ready", "True", "ClusterIsReady", ConditionReading{Class: ClassWarning, Known: true, Reason: "condition table not verified for CNPG 1.31"}},
+		{"undetected minor: ok capped", "", false, "Ready", "True", "ClusterIsReady", ConditionReading{Class: ClassWarning, Known: true, Reason: "CNPG version not detected: condition read against the CNPG 1.30 table, not verified for this operator"}},
+		{"undetected minor: critical kept", "", false, "ContinuousArchiving", "False", "ContinuousArchivingFailing", ConditionReading{Class: ClassCritical, Known: true}},
+		{"unknown minor, 1.31 type", "", false, "SyncReplicationTopologySatisfied", "True", "", ConditionReading{Class: ClassInfo, Known: false}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -324,8 +327,8 @@ func TestNamedMinorCapsAnUnsupportedVersion(t *testing.T) {
 		{"1.30.1", "1.30", ClassOK},
 		{"v1.32.0", "1.32", ClassWarning},
 		{">=1.30", "1.30", ClassOK},
-		{"", "", ClassOK},
-		{"not-a-version", "", ClassOK},
+		{"", "", ClassWarning},
+		{"not-a-version", "", ClassWarning},
 	} {
 		got := NamedMinor(tc.version)
 		if got != tc.want {
