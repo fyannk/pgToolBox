@@ -346,7 +346,7 @@ func projectRecoveryPaths(source inventory.Snapshot, server string) []evidencev1
 		}
 		result = append(result, evidencev1alpha1.BarmanRecoveryPath{
 			Server: server, BackupID: path.BackupID, TargetTimeline: uint64(path.TargetTimeline), State: evidencev1alpha1.State(path.State),
-			Reason: typedReason("coverage-path-"+string(path.State), path.Reason), Stop: evidencev1alpha1.CoverageStop(path.Stop),
+			Reason: typedReason(pathReasonCode(path.State, path.OffTarget), path.Reason), Stop: evidencev1alpha1.CoverageStop(path.Stop),
 			LowerBoundAt: timePointer(path.LowerBound), StartTimeline: positiveUint32Pointer(path.StartTimeline), StartPosition: positionPointer(path.StartTimeline, path.StartPosition), StartWAL: stringPointer(path.StartWAL),
 			FrontierTimeline: positiveUint32Pointer(path.FrontierTimeline), FrontierPosition: positionPointer(path.FrontierTimeline, path.FrontierPosition), FrontierWAL: stringPointer(path.FrontierWAL), FrontierReceiptAt: timePointer(path.FrontierReceipt),
 			AssumptionCodes: assumptionCodes(path.Assumptions), OffTarget: path.OffTarget,
@@ -428,6 +428,16 @@ func stateReason(state evidence.State, prefix, message, fallback string) evidenc
 		state = evidence.Unknown
 	}
 	return evidencev1alpha1.StateReason{State: evidencev1alpha1.State(state), Reason: typedReason(prefix+"-"+string(state), messageOr(message, fallback))}
+}
+
+// pathReasonCode is a recovery path's reason code: the one that says a
+// restore must name the target timeline when a default restore does not
+// follow the path, else its state's.
+func pathReasonCode(state evidence.State, offTarget bool) string {
+	if offTarget {
+		return evidencev1alpha1.ReasonPathNeedsTargetTimeline
+	}
+	return "coverage-path-" + string(state)
 }
 
 func typedReason(code, message string) evidencev1alpha1.Reason {

@@ -343,7 +343,7 @@ func (c *Collector) Analyze(ctx context.Context, reader store.Reader) Report {
 	report.Database = &current
 	report.ArchiveIDs = archiveInfo.ArchiveIDs()
 
-	report.SegmentSize, report.SegmentSizeSource = InferSegmentSize(backupInfo.Backups)
+	report.SegmentSize, report.SegmentSizeSource = InferSegmentSize(backupInfo.Backups, collector.SegmentNames())
 	if report.SegmentSize == 0 {
 		findings.add(FindingWALUnknown, SeverityError, "backup/"+options.Stanza+"/backup.info", "no WAL segment size agrees with every backup's LSN range")
 	}
@@ -749,11 +749,17 @@ func evaluatePath(backup Backup, wal ArchiveWAL, histories []TimelineHistory, hi
 		archive.Observe(value.Timeline)
 	}
 	for _, history := range histories {
-		status := pgtimeline.Invalid
-		if history.State == evidence.Healthy {
-			status = pgtimeline.Valid
+		if history.State != evidence.Healthy {
+			// pgBackRest keeps a history row it could not establish as
+			// unreadable: the probe stops there, undecided.
+			archive.History(history.Timeline, pgtimeline.Unreadable)
+			continue
 		}
-		archive.History(history.Timeline, status)
+		ancestors := make([]uint32, 0, len(history.Edges))
+		for _, edge := range history.Edges {
+			ancestors = append(ancestors, edge.Parent)
+		}
+		archive.History(history.Timeline, pgtimeline.Valid, ancestors...)
 	}
 	target := archive.Newest()
 	path := RecoveryPath{TargetTimeline: target, StartWAL: backup.ArchiveStart, ConsistentWAL: backup.ArchiveStop}
@@ -761,7 +767,7 @@ func evaluatePath(backup Backup, wal ArchiveWAL, histories []TimelineHistory, hi
 		switch {
 		case historyTruncated:
 			return withTarget(unknownPath("timeline history files were not all read"), path)
-		case resolution.StopStatus == pgtimeline.Invalid:
+		case resolution.StopStatus == pgtimeline.Unreadable:
 			return withTarget(unknownPath(fmt.Sprintf("the history of timeline %d is missing or unreadable", resolution.Stop)), path)
 		default:
 			return withTarget(unknownPath(fmt.Sprintf("the history of timeline %d is missing: %s", resolution.Stop, resolution.OwnReason())), path)
@@ -1039,8 +1045,12 @@ func recoveryWindow(backups []BackupReport, segmentSize int64, source SegmentSiz
 		}
 	}
 	window.Assumptions = []string{"the window ends at the end of the last contiguous segment; its time is the segment's upload time, not a commit time"}
-	if source == SegmentSizeAssumed {
+	switch source {
+	case SegmentSizeAssumed:
 		window.Assumptions = append(window.Assumptions, "the WAL segment size is assumed to be the 16 MiB default: the backups' LSNs do not decide it")
+	case SegmentSizeFromNames:
+		window.Assumptions = append(window.Assumptions, "the WAL segment size is inferred from the archive's segment names: the backups' LSNs do not decide it")
+	case SegmentSizeFromLSN:
 	}
 	return window
 }

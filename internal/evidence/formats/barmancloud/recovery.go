@@ -21,6 +21,7 @@ import (
 	"compress/gzip"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"slices"
 	"sort"
@@ -104,11 +105,14 @@ type RecoveryPath struct {
 	StartWAL, FrontierWAL           string
 	FrontierReceipt                 time.Time
 	Assumptions                     []string
-	// OffTarget is true on a backup's own-timeline path when the backup
-	// cannot reach the newest timeline (its timeline branched off before the
-	// backup was consistent, or is not an ancestor of the newest one): a
-	// default restore (recovery_target_timeline 'latest') fails from it, so
-	// the path is never Healthy and a restore must name the timeline.
+	// OffTarget is true when a default restore (recovery_target_timeline
+	// 'latest') does not follow the path, so it is never Healthy and a
+	// restore must name its target timeline: on a backup's own-timeline
+	// path, the timeline 'latest' resolves to left the backup behind (it
+	// branched off before the backup was consistent, or does not descend
+	// from the backup's timeline); on a path toward a newer timeline, that
+	// timeline is not on the history of the one 'latest' resolves to (a
+	// sibling branch).
 	OffTarget bool
 }
 
@@ -259,8 +263,66 @@ func AnalyzeRecovery(ctx context.Context, reader store.Reader, backups []Backup,
 	return result
 }
 
-// reasonHistoryMissing is the reason of a history row the archive lacks.
-const reasonHistoryMissing = "required timeline history is missing"
+// Reasons of history rows the shared resolver reads a status from.
+const (
+	// reasonHistoryMissing is the reason of a history row the archive lacks.
+	reasonHistoryMissing = "required timeline history is missing"
+	// reasonHistoryUnreadable is the reason of a listed history that could
+	// not be read: whether recovery can fetch it is unknown.
+	reasonHistoryUnreadable = "timeline history could not be read"
+)
+
+// narrowHistories weighs each listed history that is not valid against
+// the resolutions of 'latest' from the lowest timeline and from every
+// structurally usable backup: one a resolution needs (the history recovery
+// reads, or the unreadable one the probe stops at) leaves the timeline
+// evidence unknown; any other is only probed for existence, which its
+// listing proves, so it is a warning that names the file, and does not
+// hide coverage.
+func narrowHistories(state evidence.State, reason string, wal ServerWAL, backups []Backup, histories []TimelineHistory, low uint32) (evidence.State, string) {
+	archive := timelineArchive(wal, backups, histories, false)
+	resolutions := make([]pgtimeline.Resolution, 0, len(backups)+1)
+	if low != 0 {
+		resolutions = append(resolutions, archive.Latest(low))
+	}
+	for _, backup := range backups {
+		if backup.State == evidence.Healthy {
+			resolutions = append(resolutions, archive.Latest(backupTimeline(backup)))
+		}
+	}
+	unneeded, named := "", false
+	for _, history := range histories {
+		if history.State == evidence.Healthy || history.Key == "" && history.Reason == reasonHistoryMissing {
+			continue
+		}
+		label := historyLabel(history) + ": " + history.Reason
+		if slices.ContainsFunc(resolutions, func(value pgtimeline.Resolution) bool { return value.Needs(history.Timeline) }) || len(resolutions) == 0 {
+			if state != evidence.Unknown {
+				state, reason = evidence.Unknown, "timeline ancestry contains missing or invalid evidence"
+			}
+			if !named {
+				reason, named = pgtimeline.Join(reason, label), true
+			}
+			continue
+		}
+		if unneeded == "" {
+			unneeded = label + "; no default restore reads it"
+		}
+	}
+	if unneeded != "" && state == evidence.Healthy {
+		state, reason = evidence.Warning, unneeded
+	}
+	return state, reason
+}
+
+// historyLabel names a history row by its file name, without the
+// repository prefix.
+func historyLabel(history TimelineHistory) string {
+	if history.Key != "" {
+		return history.Key[strings.LastIndexByte(history.Key, '/')+1:]
+	}
+	return fmt.Sprintf("%08X.history", history.Timeline)
+}
 
 func analyzeHistories(ctx context.Context, reader store.Reader, wal ServerWAL, objects []HistoryObject, truncated bool, backups []Backup) ([]TimelineHistory, evidence.State, string) {
 	if truncated {
@@ -276,7 +338,6 @@ func analyzeHistories(ctx context.Context, reader store.Reader, wal ServerWAL, o
 	}
 	result := make([]TimelineHistory, 0, len(byTimeline))
 	allEdges := make(map[uint32]HistoryEdge)
-	knownChildren := make(map[uint32]bool)
 	state, reason := evidence.Healthy, "all required timeline histories parsed"
 	timelines := make([]uint32, 0, len(byTimeline))
 	for timeline := range byTimeline {
@@ -297,7 +358,7 @@ func analyzeHistories(ctx context.Context, reader store.Reader, wal ServerWAL, o
 			}
 			switch {
 			case readErr != nil:
-				history.Reason = "timeline history could not be read"
+				history.Reason = reasonHistoryUnreadable
 			case parseErr != nil:
 				history.Reason = "timeline history is malformed"
 			case !historyEdgesAgree(history.Edges, allEdges):
@@ -308,25 +369,20 @@ func analyzeHistories(ctx context.Context, reader store.Reader, wal ServerWAL, o
 				history.Reason = "child WAL range disagrees with timeline switchpoint"
 			default:
 				history.State, history.Reason = evidence.Healthy, "timeline ancestry parsed"
-				for _, edge := range history.Edges {
-					knownChildren[edge.Child] = true
-				}
 			}
-		}
-		if history.State != evidence.Healthy {
-			state, reason = evidence.Unknown, "timeline ancestry contains missing or invalid evidence"
 		}
 		result = append(result, history)
 	}
 	// A timeline with WAL and no history file of its own is required when a
 	// default restore must probe it (it is above the lowest timeline a
-	// backup or the WAL starts on). At the lowest timeline itself a later
-	// history naming it as a parent is enough: recovery reads that later
-	// history, not this one.
+	// backup or the WAL starts on). The lowest timeline's own history is
+	// never probed, and recovery reads a start timeline's history only to
+	// learn its parents: readTimeLineHistory takes an absent file as "no
+	// parents", so its absence is not a gap.
 	low := lowestTimeline(wal, backups)
 	missing := make([]uint32, 0)
 	for timeline := range observed {
-		if timeline > 1 && len(byTimeline[timeline]) == 0 && (timeline > low || !knownChildren[timeline]) {
+		if timeline > 1 && len(byTimeline[timeline]) == 0 && timeline > low {
 			missing = append(missing, timeline)
 		}
 	}
@@ -343,6 +399,7 @@ func analyzeHistories(ctx context.Context, reader store.Reader, wal ServerWAL, o
 			state, reason = evidence.Unknown, resolution.OwnReason()
 		}
 	}
+	state, reason = narrowHistories(state, reason, wal, backups, result, low)
 	slices.Sort(missing)
 	for _, timeline := range missing {
 		if len(result) >= MaxHistoryFiles {
@@ -452,10 +509,18 @@ func timelineArchive(wal ServerWAL, backups []Backup, histories []TimelineHistor
 	for _, history := range histories {
 		switch {
 		case history.State == evidence.Healthy:
-			archive.History(history.Timeline, pgtimeline.Valid)
+			ancestors := make([]uint32, 0, len(history.Edges))
+			for _, edge := range history.Edges {
+				ancestors = append(ancestors, edge.Parent)
+			}
+			archive.History(history.Timeline, pgtimeline.Valid, ancestors...)
 		case history.Key == "" && history.Reason == reasonHistoryMissing:
 			archive.History(history.Timeline, pgtimeline.Absent)
+		case history.Reason == reasonHistoryUnreadable:
+			archive.History(history.Timeline, pgtimeline.Unreadable)
 		default:
+			// Listed and read, or listed twice: the probe of 'latest'
+			// counts it, but its ancestry is not established.
 			archive.History(history.Timeline, pgtimeline.Invalid)
 		}
 	}
@@ -527,7 +592,13 @@ func recoveryPaths(backups []Backup, wal ServerWAL, histories []TimelineHistory,
 				}
 				seenTargets[edge.Child] = true
 				path := evaluatePath(backup, wal, startTimeline, start, end, edge.Child, edges[:edgeIndex+1])
-				if !resolution.Reaches(edge.Child) {
+				switch {
+				case resolution.Reaches(edge.Child):
+				case resolution.Elsewhere(edge.Child):
+					// A sibling of the line a default restore follows: a
+					// restore toward it must name it.
+					markElsewhere(&path, resolution.NeedsReason(edge.Child))
+				default:
 					capUnknown(&path, resolution.BeyondReason(edge.Child))
 				}
 				result = append(result, path)
@@ -548,6 +619,9 @@ func recoveryPaths(backups []Backup, wal ServerWAL, histories []TimelineHistory,
 		for _, target := range observedTargets {
 			path := unknownPath(backup, "observed target timeline is not connected by valid history evidence")
 			path.TargetTimeline = target
+			if resolution.Elsewhere(target) {
+				markElsewhere(&path, resolution.NeedsReason(target))
+			}
 			result = append(result, path)
 			if len(result) >= MaxRecoveryPaths {
 				limitedPath(result, backup)
@@ -593,6 +667,20 @@ func markOffTarget(path *RecoveryPath, backup Backup, startTimeline uint32, end 
 		return
 	}
 	path.Reason = pgtimeline.Join(path.Reason, reason+"; a restore must name timeline "+strconv.FormatUint(uint64(startTimeline), 10))
+}
+
+// markElsewhere flags a path toward a timeline a default restore does not
+// follow (it is not on the history of the timeline 'latest' resolves to):
+// the path is at most a warning, off target, and its reason names the
+// targetTLI a restore must give. A path that is already not healthy keeps
+// its reason and gains this one.
+func markElsewhere(path *RecoveryPath, reason string) {
+	path.OffTarget = true
+	if path.State == evidence.Healthy {
+		path.State, path.Reason = evidence.Warning, reason
+		return
+	}
+	path.Reason = pgtimeline.Join(path.Reason, reason)
 }
 
 func sortRecoveryPaths(result []RecoveryPath) {
@@ -824,12 +912,24 @@ func coverageRollup(paths []RecoveryPath) (evidence.State, string) {
 	if len(paths) == 0 {
 		return evidence.Unknown, "no structurally usable backup recovery anchors"
 	}
+	// A backup's own path is its lowest target; an off-target path above it
+	// is an alternative a restore must name, beside the line a default
+	// restore follows, and does not weigh on the roll-up.
+	own := make(map[string]uint32)
+	for _, path := range paths {
+		if current, ok := own[path.BackupID]; !ok || path.TargetTimeline < current {
+			own[path.BackupID] = path.TargetTimeline
+		}
+	}
 	state, offTarget := evidence.Healthy, false
 	backups, behind := make(map[string]bool), make(map[string]bool)
 	for _, path := range paths {
+		backups[path.BackupID] = true
+		if path.OffTarget && path.TargetTimeline > own[path.BackupID] {
+			continue
+		}
 		state = conservativeRecoveryState(state, path.State)
 		offTarget = offTarget || path.OffTarget
-		backups[path.BackupID] = true
 		if path.OffTarget {
 			behind[path.BackupID] = true
 		}
@@ -1056,8 +1156,8 @@ func (c RecoveryCatalog) Validate() error {
 			if path.Server != server.Server || path.BackupID == "" || len(path.BackupID) > 256 || strings.IndexFunc(path.BackupID, unicode.IsControl) >= 0 || !validEvidenceState(path.State) || !boundedWALText(path.Reason) || (path.Stop != CoverageFrontier && path.Stop != CoverageCandidateLimited && path.Stop != CoverageGapLimited && path.Stop != CoverageUnknownLimited) || !utcOrZero(path.LowerBound) || !utcOrZero(path.FrontierReceipt) || len(path.Assumptions) > 8 || !optionalWALName(path.StartWAL) || !optionalWALName(path.FrontierWAL) {
 				return errors.New("invalid Barman recovery path")
 			}
-			if path.OffTarget && (path.State == evidence.Healthy || path.StartTimeline != 0 && path.TargetTimeline != path.StartTimeline) {
-				return errors.New("an off-target Barman recovery path is never healthy and follows the backup's own timeline")
+			if path.OffTarget && path.State == evidence.Healthy {
+				return errors.New("an off-target Barman recovery path is never healthy")
 			}
 			if pathIndex > 0 && (server.Paths[pathIndex-1].BackupID > path.BackupID || (server.Paths[pathIndex-1].BackupID == path.BackupID && server.Paths[pathIndex-1].TargetTimeline >= path.TargetTimeline)) {
 				return errors.New("unsorted or duplicate Barman recovery paths")

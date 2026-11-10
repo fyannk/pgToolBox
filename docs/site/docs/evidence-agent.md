@@ -53,15 +53,52 @@ too. A history file that is listed but cannot be read, is malformed or is over
 the size bound, or a listing of history files cut at its bound, leaves the
 timeline a default restore follows undecided. No path is then healthy.
 
-The console applies two further limits to the recovery paths it receives, for
-both formats. Each limit leaves the recovery window without covered spans and
-gives the reason in its place:
+Recovery then reads one history file, the one of the timeline `latest`
+resolved to, and follows the ancestry it lists. A timeline that is not on it
+is a sibling branch: a default restore never follows it, even when its number
+is lower. Its path is off target (`off_target: true`, reason code
+`coverage-path-needs-target-timeline`), at most a warning, and its reason says
+which `targetTLI` a restore toward it must give; for Barman such a sibling path
+does not weigh on the coverage conclusion. For example, timeline 2 forked after
+the backup ended and timeline 3 is a point-in-time restore forked before it
+ended: `latest` resolves to 3, which leaves the backup's timeline before the
+backup was consistent, so the default restore fails; both the own-timeline
+path and the path to timeline 2 are warnings, and only `targetTLI: 2` (or the
+backup's own timeline) restores. pgBackRest judges a backup toward the newest
+timeline only, so it gives the same answer for that path.
 
-- the agent's timeline conclusion is not healthy, so the timeline a default
-  restore follows is not established;
-- the agent does not declare the `recovery-timeline-latest` feature in
-  `producer.features`, which means it is an older build that may call a path
-  healthy when a default restore does not follow it.
+Because the probe only tests that a history file exists, a listed history whose
+content is malformed, duplicated or contradictory still counts as present. Only
+the history recovery reads (that of the timeline `latest` resolves to) and a
+history the probe stops at because it cannot be read decide the timeline
+conclusion; for Barman, a bad history no default restore reads (an old branch)
+makes the timeline conclusion a warning that names the file, and hides no
+coverage. A backup's own timeline needs no history file: PostgreSQL reads an
+absent one as "no parents".
+
+For pgBackRest, which stores the WAL segment size nowhere, the size comes from
+the backups' LSNs (`backup-lsn`); when they do not decide it, from the archive's
+segment names (`wal-names`): a segment number rules out every size with fewer
+segments per log, and the number at which a log rolls over to the next (`FF`
+for 16 MiB) names one size. Only when neither decides is the 16 MiB default
+assumed (`assumed-default`), and never when a segment name rules it out.
+
+The console applies further limits to the recovery paths it receives, for
+both formats. The first two leave the recovery window without covered spans and give
+the reason in its place:
+
+- the agent's timeline conclusion is unknown or unhealthy, so the timeline a
+  default restore follows is not established (a timeline warning, about a
+  history no default restore reads, limits nothing and is kept as a warning);
+- the agent does not declare the `recovery-timeline-latest` and
+  `recovery-timeline-ancestry` features in `producer.features`, which means it
+  is an older build that may call a path healthy when a default restore does
+  not follow it.
+
+A third limit keeps the spans: no path claims more than the agent's own
+coverage conclusion, so when that conclusion is not healthy (for example "a
+default restore succeeds from none" of the backups), a path that reads healthy
+is shown as a warning.
 
 A Cluster backed up through a pgBackRest plugin is read the same way, as one
 stanza of one repository; see

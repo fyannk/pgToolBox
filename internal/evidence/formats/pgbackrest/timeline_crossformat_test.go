@@ -280,6 +280,94 @@ func TestTimelineLatestAgreesAcrossFormats(t *testing.T) {
 	}
 }
 
+// ancestryScenario is a backup on timeline 1 (segments 1 to 3, end LSN
+// 0/3000100) and two newer timelines whose histories decide the line a
+// default restore follows.
+func ancestryScenario(history2, history3 string, segments map[uint32][]uint64) timelineScenario {
+	return timelineScenario{
+		begin: 1, end: 3, endLSN: "0/3000100", segments: segments,
+		histories: map[uint32]string{2: history2, 3: history3},
+		faults:    map[uint32]historyFault{},
+	}
+}
+
+// The round-4 layouts (P1-6): timeline 2 forked from timeline 1 after the
+// backup ended; timeline 3 is linear (from 2), a sibling forked from 1
+// after the backup ended, or a sibling forked from 1 before it ended.
+func linearScenario() timelineScenario {
+	return ancestryScenario("1\t0/5000050\tfailover\n", "1\t0/5000050\tfailover\n2\t0/7000050\tfailover\n",
+		map[uint32][]uint64{1: {1, 2, 3, 4, 5}, 2: {5, 6, 7}, 3: {7, 8, 9}})
+}
+
+func siblingAfterEndScenario() timelineScenario {
+	return ancestryScenario("1\t0/5000050\tfailover\n", "1\t0/4000050\tpitr\n",
+		map[uint32][]uint64{1: {1, 2, 3, 4, 5}, 2: {5, 6, 7}, 3: {4, 5, 6}})
+}
+
+func siblingBeforeEndScenario() timelineScenario {
+	return ancestryScenario("1\t0/5000050\tfailover\n", "1\t0/2000050\tpitr\n",
+		map[uint32][]uint64{1: {1, 2, 3, 4, 5}, 2: {5, 6, 7}, 3: {2, 3, 4}})
+}
+
+// TestTimelineAncestryAgreesAcrossFormats: recovery reads the history of
+// the timeline 'latest' resolves to and follows only the ancestry it
+// lists. A sibling branch with a lower number is not on it: Barman's path
+// toward it is off target, at most a warning, and names the targetTLI a
+// restore must give. pgBackRest evaluates only toward the newest timeline,
+// so it is unaffected; both agree on that path. The reproduction (sibling
+// forked before the backup ended): only targetTLI 2 restores the backup,
+// and no path may read as healthy.
+func TestTimelineAncestryAgreesAcrossFormats(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name     string
+		scenario timelineScenario
+		// states of the Barman paths by target timeline (absent: no path)
+		paths     map[uint32]evidence.State
+		elsewhere []uint32 // Barman paths off target because a sibling
+		pgTarget  uint32
+		pgState   evidence.State
+		pgOff     bool
+		coverage  evidence.State
+	}{
+		{name: "linear", scenario: linearScenario(), paths: map[uint32]evidence.State{1: evidence.Healthy, 2: evidence.Healthy, 3: evidence.Healthy}, pgTarget: 3, pgState: evidence.Healthy, coverage: evidence.Healthy},
+		{name: "sibling forked after the backup", scenario: siblingAfterEndScenario(), paths: map[uint32]evidence.State{1: evidence.Healthy, 2: evidence.Warning, 3: evidence.Healthy}, elsewhere: []uint32{2}, pgTarget: 3, pgState: evidence.Healthy, coverage: evidence.Healthy},
+		{name: "sibling forked before the backup ended", scenario: siblingBeforeEndScenario(), paths: map[uint32]evidence.State{1: evidence.Warning, 2: evidence.Warning}, elsewhere: []uint32{2}, pgTarget: 1, pgState: evidence.Warning, pgOff: true, coverage: evidence.Warning},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			server := test.scenario.barman(t)
+			if server.TimelineState != evidence.Healthy {
+				t.Fatalf("Barman timeline %s %q", server.TimelineState, server.TimelineReason)
+			}
+			got := make(map[uint32]evidence.State)
+			for _, path := range server.Paths {
+				got[path.TargetTimeline] = path.State
+				sibling := slices.Contains(test.elsewhere, path.TargetTimeline)
+				if sibling && (!path.OffTarget || !strings.Contains(path.Reason, fmt.Sprintf("needs targetTLI %d", path.TargetTimeline))) {
+					t.Errorf("Barman path to sibling timeline %d: off-target %v %q", path.TargetTimeline, path.OffTarget, path.Reason)
+				}
+				if !sibling && path.TargetTimeline != 1 && path.OffTarget {
+					t.Errorf("Barman path to timeline %d off target: %q", path.TargetTimeline, path.Reason)
+				}
+			}
+			if !maps.Equal(got, test.paths) {
+				t.Fatalf("Barman paths %v, want %v: %+v", got, test.paths, server.Paths)
+			}
+			if server.CoverageState != test.coverage {
+				t.Fatalf("Barman coverage %s %q, want %s", server.CoverageState, server.CoverageReason, test.coverage)
+			}
+			pg := test.scenario.pgbackrest(t)
+			if pg.TargetTimeline != test.pgTarget || pg.State != test.pgState || pg.OffTarget != test.pgOff {
+				t.Fatalf("pgBackRest path to %d %s off-target %v %q, want %d %s %v", pg.TargetTimeline, pg.State, pg.OffTarget, pg.Reason, test.pgTarget, test.pgState, test.pgOff)
+			}
+			if got[pg.TargetTimeline] != pg.State {
+				t.Fatalf("Barman path to timeline %d is %s, pgBackRest's %s", pg.TargetTimeline, got[pg.TargetTimeline], pg.State)
+			}
+		})
+	}
+}
+
 // claimRank orders what a path state claims about coverage: healthy
 // claims the most, warning less, unknown and unhealthy claim none.
 func claimRank(state evidence.State) int {
@@ -346,6 +434,9 @@ func TestRemovingEvidenceNeverStrengthensAClaim(t *testing.T) {
 			s.segments[2] = []uint64{3, 4, 5}
 			return s
 		}(),
+		"linear ancestry":                  linearScenario(),
+		"sibling forked after the backup":  siblingAfterEndScenario(),
+		"sibling forked before the backup": siblingBeforeEndScenario(),
 		"backup follows timeline 2": func() timelineScenario {
 			s := newestUnreadableScenario(historyOK, false)
 			s.endLSN = "0/3000050"
@@ -374,9 +465,17 @@ func TestRemovingEvidenceNeverStrengthensAClaim(t *testing.T) {
 				for _, path := range barmanBase.Paths {
 					before[path.TargetTimeline] = path
 				}
+				// PostgreSQL's own non-monotone case: removing a history file
+				// can settle 'latest' on a lower timeline, which a default
+				// restore then really follows (without 00000003.history a
+				// sibling timeline 2 is the latest). The Barman timeline
+				// evidence is then not healthy (a history the probe needs is
+				// missing), so the console takes no path as coverage.
+				lowered := strings.HasPrefix(name, "without history") && barman.TimelineState != evidence.Healthy
 				for _, path := range barman.Paths {
 					prior, ok := before[path.TargetTimeline]
 					switch {
+					case lowered:
 					case !ok && claimRank(path.State) > 0:
 						t.Errorf("new Barman path to timeline %d claims %s: %q", path.TargetTimeline, path.State, path.Reason)
 					case ok && claimRank(path.State) > claimRank(prior.State):

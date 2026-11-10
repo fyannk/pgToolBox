@@ -453,7 +453,7 @@ func applyPGBackRestConstraints(owner, field string, schema jsonSchema) {
 	case field == "WALSegmentSizeBytes":
 		setEnum(schema, walSegmentSizes())
 	case field == "WALSegmentSizeSource":
-		setEnum(schema, []any{evidencev1alpha1.SegmentSizeFromBackupLSN, evidencev1alpha1.SegmentSizeAssumedDefault})
+		setEnum(schema, []any{evidencev1alpha1.SegmentSizeFromBackupLSN, evidencev1alpha1.SegmentSizeFromWALNames, evidencev1alpha1.SegmentSizeAssumedDefault})
 	case field == "Timeline" || field == "TargetTimeline" || field == "EndTimeline" || field == "FrontierTimeline" || field == "SegmentCount" || field == "FirstObservedGeneration" || field == "DBID" || field == "UsableBackups" && owner == "PGBackRestRecoveryWindow":
 		setPositive(schema)
 	case field == "Timelines":

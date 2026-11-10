@@ -157,6 +157,10 @@ type Recovery struct {
 	// that roll-up is not healthy: it says why no path places a restore
 	// point better than the console can from the paths alone.
 	CoverageReason string
+	// TimelineWarning is the agent's timeline warning, which caps no path:
+	// a history file that no default restore reads is invalid (the reason
+	// names the file).
+	TimelineWarning string
 }
 
 // RecoveryPath is one backup's observed coverage toward a timeline.
@@ -184,9 +188,11 @@ type RecoveryPath struct {
 	// its backup's consistency point (pgBackRest paths state it); nil
 	// when the console must work it out from positions (Barman).
 	Consistent *bool
-	// OffTarget is true when the agent proved the backup cannot reach the
-	// newest timeline: the path follows the backup's own timeline, which a
-	// default restore (recovery_target_timeline 'latest') does not.
+	// OffTarget is true when the agent proved a default restore
+	// (recovery_target_timeline 'latest') does not follow the path: on the
+	// backup's own timeline, the newest timeline left the backup behind;
+	// on a newer one, that timeline is a sibling of the line a default
+	// restore follows. A restore along it must name TargetTimeline.
 	OffTarget bool
 }
 
