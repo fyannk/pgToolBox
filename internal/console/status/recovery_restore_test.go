@@ -25,6 +25,7 @@ import (
 	"github.com/fyannk/pgToolBox/internal/console/evidence"
 	"github.com/fyannk/pgToolBox/internal/console/sweep"
 	"github.com/fyannk/pgToolBox/internal/console/viewmodel"
+	"github.com/fyannk/pgToolBox/pkg/cnpgstatus"
 	"github.com/fyannk/pgToolBox/pkg/cnpgstatus/instancestatus"
 	evidencev1alpha1 "github.com/fyannk/pgToolBox/pkg/evidence/v1alpha1"
 )
@@ -45,7 +46,7 @@ func TestReportedRestoreCheckReadsTheArchiver(t *testing.T) {
 	healthy := viewmodel.Archiving{Health: viewmodel.HealthOK, Reason: "ContinuousArchivingSuccess", LastArchivedAt: ago(5 * time.Minute), Provenance: instance}
 	failing := viewmodel.Archiving{Health: viewmodel.HealthCritical, Reason: "ContinuousArchivingFailing", LastArchivedAt: ago(4 * time.Hour), Provenance: instance}
 	backlog := failing
-	backlog.Health, backlog.Reason = viewmodel.HealthWarning, "FailureWithBacklog"
+	backlog.Health, backlog.Reason = viewmodel.HealthWarning, cnpgstatus.ArchivingReasonFailureWithBacklog
 	failingUnread := failing
 	failingUnread.LastArchivedAt = nil
 	staleHealthy := healthy

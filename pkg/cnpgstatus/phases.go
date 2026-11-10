@@ -196,21 +196,47 @@ type PhaseReading struct {
 	Reason string `json:"reason,omitempty"`
 }
 
-// phaseVerifiedMinors are the minors whose phase table was read at a
-// released tag and is checked there by make verify-pins-cnpgstatus
-// (pins_test.go verifiedReleases: 1.30 at v1.30.0). 1.31 is planned: its
-// rows were read at upstream main (21e24f6), not at a 1.31 tag.
-var phaseVerifiedMinors = []Minor{Minor130}
+// verifiedMinors are the minors whose phase and condition tables were
+// read at a released tag and are checked there by make
+// verify-pins-cnpgstatus (pins_test.go verifiedReleases: 1.30 at
+// v1.30.0). 1.31 is planned: its rows were read at upstream main
+// (21e24f6), not at a 1.31 tag.
+var verifiedMinors = []Minor{Minor130}
 
-// phaseVerified reports whether minor's phase table was verified at a
+// tableVerified reports whether minor's tables were verified at a
 // released tag.
-func phaseVerified(minor Minor) bool {
-	for _, verified := range phaseVerifiedMinors {
+func tableVerified(minor Minor) bool {
+	for _, verified := range verifiedMinors {
 		if minor == verified {
 			return true
 		}
 	}
 	return false
+}
+
+// TableMinor is the minor whose tables answer for minor: minor itself
+// when it has tables, else the newest released one (1.30) — what a label
+// naming "the table" must name.
+func TableMinor(minor Minor) Minor {
+	if minor.supported() {
+		return minor
+	}
+	return newestReleased
+}
+
+// capReason says why an ok reading of minor's table is capped at
+// warning; empty when minor's table was verified at a released tag. An
+// empty or unparseable minor (the version was not detected) is capped
+// too: the operator may run any minor, so nothing says the newest
+// released table is its own.
+func capReason(kind string, minor Minor) string {
+	switch {
+	case tableVerified(minor):
+		return ""
+	case namesMinor(minor):
+		return kind + " table not verified for CNPG " + string(minor)
+	}
+	return "CNPG version not detected: " + kind + " read against the CNPG " + string(newestReleased) + " table, not verified for this operator"
 }
 
 // PhaseTable returns the rows of minor's table in source order. An
@@ -233,22 +259,21 @@ func PhaseTable(minor Minor) []PhaseEntry {
 // status could not be read). A phase absent from the minor's table is a
 // warning, not known: the text is new or foreign and is shown verbatim.
 // An unsupported minor is evaluated against the newest released table
-// (1.30); a phase found there is known, any other is not.
+// (1.30, TableMinor); a phase found there is known, any other is not.
 //
 // The phase is a free sentence: a later minor can keep a string and
 // change what it means. So a row the table reads as ok is capped at
-// warning, with a "phase table not verified for CNPG <minor>" reason,
-// whenever minor names a CloudNativePG minor whose table was not
-// verified at a released tag (the planned 1.31, a newer 1.32, the
-// unsupported 1.29). Rows that are not ok keep their class: a warning or
-// a critical is never made to look better. An empty or unparseable
-// minor (the version was not detected) is read against the newest
-// released table without a cap, because nothing says it differs from it.
+// warning, with Reason saying why (capReason), whenever minor is not a
+// minor whose table was verified at a released tag: the planned 1.31, a
+// newer 1.32, the unsupported 1.29, and an empty or unparseable minor
+// (the version was not detected). Rows that are not ok keep their
+// class: a warning or a critical is never made to look better.
 func ClassifyPhase(minor Minor, phase string) PhaseReading {
 	reading := classifyPhaseRow(minor, phase)
-	if reading.Known && reading.Class == ClassOK && namesMinor(minor) && !phaseVerified(minor) {
-		reading.Class = ClassWarning
-		reading.Reason = "phase table not verified for CNPG " + string(minor)
+	if reading.Known && reading.Class == ClassOK {
+		if why := capReason("phase", minor); why != "" {
+			reading.Class, reading.Reason = ClassWarning, why
+		}
 	}
 	return reading
 }
@@ -269,6 +294,11 @@ func classifyPhaseRow(minor Minor, phase string) PhaseReading {
 	}
 	return PhaseReading{Class: ClassWarning, Known: false}
 }
+
+// NamesMinor reports whether m is a MAJOR.MINOR CloudNativePG minor,
+// supported or not, rather than empty or garbage (the version was not
+// detected): a capped reading says which of the two capped it.
+func NamesMinor(m Minor) bool { return namesMinor(m) }
 
 // namesMinor reports whether m is a MAJOR.MINOR CloudNativePG minor,
 // supported or not, rather than empty or garbage.

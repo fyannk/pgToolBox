@@ -181,9 +181,26 @@ func (s *Service) phase(g *gathered) viewmodel.Phase {
 		Reason:     bound(g.cluster.Status.PhaseReason),
 		Health:     health(reading.Class),
 		Known:      reading.Known,
+		Cap:        tableCap("phase", g.phaseMinor, reading.Reason),
 		Since:      s.phaseSince(g),
 		Provenance: s.provenance(g.key.Namespace, cache.SourceClusters, viewmodel.OriginOperator, "Cluster.status.phase", s.now().UTC()),
 	}
+}
+
+// tableCap says why a phase or condition reading of kind ("phase",
+// "condition") was capped below its table's class; nil when it was not.
+// The minor named is the one the version detection gave, or, when none
+// was detected, the table the reading was made against.
+func tableCap(kind string, minor cnpgstatus.Minor, reason string) *viewmodel.Phrase {
+	if reason == "" {
+		return nil
+	}
+	if cnpgstatus.NamesMinor(minor) {
+		p := say(kind+".cap.unverifiedMinor", reason, map[string]string{"minor": string(minor)})
+		return &p
+	}
+	p := say(kind+".cap.undetectedMinor", reason, map[string]string{"table": string(cnpgstatus.TableMinor(minor))})
+	return &p
 }
 
 func primarySummary(c *cnpgv1.Cluster) viewmodel.PrimarySummary {
@@ -431,7 +448,9 @@ var waitCauses = map[string]bool{
 
 func waitingFor(g *gathered, warnings []viewmodel.EventRow) *viewmodel.OperatorWaiting {
 	phase := cnpgstatus.ClassifyPhase(g.phaseMinor, g.cluster.Status.Phase)
-	if phase.Class == cnpgstatus.ClassOK {
+	if phase.Class == cnpgstatus.ClassOK || phase.Reason != "" {
+		// A capped reading is an ok row of an unverified table: the
+		// operator is not waiting because of it.
 		return nil
 	}
 	w := &viewmodel.OperatorWaiting{PhaseReason: bound(g.cluster.Status.PhaseReason), Causes: []viewmodel.EventRow{}, Reasons: []viewmodel.WaitReason{}}
@@ -488,10 +507,10 @@ func blindSpots(g *gathered) []viewmodel.BlindSpot {
 func conditions(g *gathered) []viewmodel.Condition {
 	out := make([]viewmodel.Condition, 0, len(g.cluster.Status.Conditions))
 	for _, c := range g.cluster.Status.Conditions {
-		reading := cnpgstatus.ClassifyCondition(g.minor, c.Type, string(c.Status), c.Reason)
+		reading := cnpgstatus.ClassifyCondition(g.phaseMinor, c.Type, string(c.Status), c.Reason)
 		cond := viewmodel.Condition{
 			Type: c.Type, Status: string(c.Status), Reason: bound(c.Reason), Message: bound(c.Message),
-			Health: health(reading.Class), Known: reading.Known,
+			Health: health(reading.Class), Known: reading.Known, Cap: tableCap("condition", g.phaseMinor, reading.Reason),
 		}
 		if !c.LastTransitionTime.IsZero() {
 			t := c.LastTransitionTime.UTC()

@@ -22,6 +22,7 @@ import { FailoverSummary } from "./Failover";
 import { Fact, Facts, Panel } from "./Panel";
 import { PersonalServerFor } from "./PersonalServer";
 import { QueryState } from "./QueryState";
+import { phraseText } from "./recoveryPhrase";
 import { sourceStateWord } from "./sources";
 import { StatusReadHint, statusReadWord } from "./statusRead";
 import { TopologyPanel } from "./Topology";
@@ -383,6 +384,11 @@ export function OverviewView({ data, wiring }: { data: ClusterOverviewView; wiri
           )}
         </span>
         {data.phase.text && !data.phase.known && <span className="text-muted">{m.phase_unknown_to_table()}</span>}
+        {data.phase.cap && (
+          <span className="text-muted" data-phase-cap={data.phase.cap.code}>
+            {phraseText(data.phase.cap.code, data.phase.cap.params, data.phase.cap.text)}
+          </span>
+        )}
         {data.phase.since && (
           <span className="text-muted">
             {m.since()} <Time iso={data.phase.since} />
@@ -452,6 +458,11 @@ export function OverviewView({ data, wiring }: { data: ClusterOverviewView; wiri
                   {c.reason && <code className="font-code">{c.reason}</code>}
                   {c.lastTransition && <Time iso={c.lastTransition} className="text-muted" />}
                   {!c.known && <span className="text-muted">{m.condition_unknown_type()}</span>}
+                  {c.cap && (
+                    <span className="text-muted" data-condition-cap={c.cap.code}>
+                      {phraseText(c.cap.code, c.cap.params, c.cap.text)}
+                    </span>
+                  )}
                 </span>
                 {c.message && <span>{c.message}</span>}
               </li>

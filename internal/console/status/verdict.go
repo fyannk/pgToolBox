@@ -56,24 +56,15 @@ func (s *Service) verdict(g *gathered, run *diag.Run) viewmodel.Verdict {
 	var items []viewmodel.Contributor
 	add := func(c viewmodel.Contributor) { items = append(items, c) }
 
-	phase := cnpgstatus.ClassifyPhase(g.phaseMinor, g.cluster.Status.Phase)
-	phaseText := g.cluster.Status.Phase
-	if phaseText == "" {
-		phaseText = "not reported"
-	} else if !phase.Known {
-		phaseText += " (not in the CNPG " + string(minorOrNewest(g.minor)) + " table)"
-	}
-	if phase.Reason != "" {
-		phaseText += " (" + phase.Reason + ")"
-	}
+	phase, phaseText := phaseDetail(g.phaseMinor, g.cluster.Status.Phase)
 	add(viewmodel.Contributor{ID: "phase", Health: health(phase.Class), Label: "Phase", Detail: phaseText, Provenance: operator("Cluster.status.phase")})
 
 	ready := conditionOf(g.cluster, "Ready")
 	if ready == nil {
 		add(viewmodel.Contributor{ID: "readyCondition", Health: viewmodel.HealthUnknown, Label: "Ready condition", Detail: "not reported", Provenance: operator("Cluster.status.conditions[Ready]")})
 	} else {
-		reading := cnpgstatus.ClassifyCondition(g.minor, ready.Type, string(ready.Status), ready.Reason)
-		add(viewmodel.Contributor{ID: "readyCondition", Health: health(reading.Class), Label: "Ready condition", Detail: string(ready.Status) + reasonSuffix(ready.Reason), Provenance: operator("Cluster.status.conditions[Ready]")})
+		reading := cnpgstatus.ClassifyCondition(g.phaseMinor, ready.Type, string(ready.Status), ready.Reason)
+		add(viewmodel.Contributor{ID: "readyCondition", Health: health(reading.Class), Label: "Ready condition", Detail: string(ready.Status) + reasonSuffix(ready.Reason) + reasonSuffix(reading.Reason), Provenance: operator("Cluster.status.conditions[Ready]")})
 	}
 
 	counts := s.instanceCounts(g)
@@ -137,12 +128,18 @@ func rankOf(h viewmodel.Health) int {
 	return len(viewmodel.AllHealth)
 }
 
-func minorOrNewest(m cnpgstatus.Minor) cnpgstatus.Minor {
-	if m != "" {
-		return m
+// phaseDetail classifies phase for minor and says it for the verdict:
+// a phase outside the table names the table it was read against (the
+// minor's own, or the newest released one), and a capped one why.
+func phaseDetail(minor cnpgstatus.Minor, phase string) (cnpgstatus.PhaseReading, string) {
+	reading := cnpgstatus.ClassifyPhase(minor, phase)
+	text := phase
+	if text == "" {
+		text = "not reported"
+	} else if !reading.Known {
+		text += " (not in the CNPG " + string(cnpgstatus.TableMinor(minor)) + " table)"
 	}
-	minors := cnpgstatus.SupportedMinors()
-	return minors[len(minors)-1]
+	return reading, text + reasonSuffix(reading.Reason)
 }
 
 func reasonSuffix(reason string) string {
@@ -235,8 +232,7 @@ func podReady(pod *corev1.Pod) bool {
 // (internal/management/controller/instance_controller.go v1.30.0:1333,
 // v1.30.1:1397). Every instance fills the archiver fields from
 // pg_stat_archiver (pkg/management/postgres/probes.go v1.30.0 and
-// v1.30.1:272, fillArchiverStatus). Without a readable currentPrimary,
-// the instance that reports itself primary, the first by name, stands in.
+// v1.30.1:272, fillArchiverStatus).
 func primaryArchiver(g *gathered) *cnpgstatus.ArchiverLive {
 	r := primaryArchiverReading(g)
 	if r == nil {
@@ -245,24 +241,19 @@ func primaryArchiver(g *gathered) *cnpgstatus.ArchiverLive {
 	return &cnpgstatus.ArchiverLive{IsArchivingWAL: r.IsArchivingWAL, LastFailedWAL: r.LastFailedWAL, ReadyWALFiles: r.ReadyWALFiles}
 }
 
-// primaryArchiverReading is the archiving instance's whole reading, chosen
-// as primaryArchiver chooses it; nil when none was read.
+// primaryArchiverReading is status.currentPrimary's whole reading; nil
+// when currentPrimary is not set or its /pg/status was not read. No other
+// instance stands in, not even one reporting itself primary: during a
+// failover or a split brain that one is not the archiver the operator
+// names, and its pg_stat_archiver says nothing about the WAL the
+// repository receives. Unread, the archiver is unknown.
 func primaryArchiverReading(g *gathered) *instancestatus.Reading {
-	if name := g.cluster.Status.CurrentPrimary; name != "" {
-		if inst, ok := g.swept.Instances[name]; ok && inst.State == viewmodel.StatusReadOK && inst.Reading != nil {
-			return inst.Reading
-		}
+	name := g.cluster.Status.CurrentPrimary
+	if name == "" {
+		return nil
 	}
-	names := make([]string, 0, len(g.swept.Instances))
-	for name := range g.swept.Instances {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	for _, name := range names {
-		inst := g.swept.Instances[name]
-		if inst.State == viewmodel.StatusReadOK && inst.Reading != nil && inst.Reading.IsPrimary {
-			return inst.Reading
-		}
+	if inst, ok := g.swept.Instances[name]; ok && inst.State == viewmodel.StatusReadOK && inst.Reading != nil {
+		return inst.Reading
 	}
 	return nil
 }

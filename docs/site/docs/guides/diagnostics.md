@@ -219,9 +219,15 @@ The Cluster phase is a free sentence, and a later CloudNativePG minor can keep a
 string while changing what it means. The phase table is verified at the 1.30.0 tag.
 On any other minor the console detects (the planned 1.31, read at upstream main; a
 newer one; 1.29), a phase the table reads as healthy is shown as a warning with the
-reason "phase table not verified for CNPG 1.x". Phases that are not healthy keep
-their colour, and a phase that is not in the table is shown as written, as a
-warning.
+reason "phase table not verified for CNPG 1.x", on the phase chip and in the
+verdict. When no CNPG version is detected, the phase is read against the 1.30
+table and a healthy one is capped the same way ("CNPG version not detected").
+Cluster conditions follow the same rule: an ok condition (`Ready=True`) of an
+unverified or undetected minor is shown as a warning with the reason; fork
+condition types rest on the fork pin, not the minor. Phases and conditions that
+are not healthy keep their colour, and a phase that is not in the table is shown
+as written, as a warning, naming the table it was read against (1.30 for an
+undetected or unsupported minor).
 
 ## Backup schedule cadence
 

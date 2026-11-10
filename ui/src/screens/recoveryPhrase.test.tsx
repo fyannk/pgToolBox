@@ -6,7 +6,7 @@ import { restoreCheckArchivingFailing } from "../../mocks/fixtures/extra";
 import { overwriteGetLocale } from "../paraglide/runtime.js";
 import { renderInFrame } from "../testing/render";
 import { RestoreAnswer } from "./RecoveryWindow";
-import { phraseText } from "./recoveryPhrase";
+import { phraseText, reasonsText } from "./recoveryPhrase";
 
 afterEach(() => overwriteGetLocale(() => "en"));
 
@@ -55,4 +55,64 @@ test("restore answer in French: the answer, its caveats and an unknown caveat in
   expect(el.querySelector('[data-caveat="recovery.caveat.fromTheFuture"]')?.textContent).toBe(
     "A caveat this SPA does not know yet, shown in Go's English.",
   );
+});
+
+test("the reasons, the backlog, the end of WAL and the caps are said in French", () => {
+  overwriteGetLocale(() => "fr");
+  const cases: [string, Record<string, string> | undefined, RegExp][] = [
+    ["recovery.reason.archiveBacklog", { segments: "12" }, /^12 segments WAL attendent/],
+    ["recovery.segment.archiveBacklog", { segments: "12" }, /^12 segments WAL attendent/],
+    ["recovery.segment.afterLastReadFailing", { scannedAt: "2026-10-29T11:50:00Z" }, /l’archivage des WAL échoue/],
+    [
+      "recovery.reportedTail.afterArchivedBacklog",
+      { endAt: "2026-10-29T07:08:00Z", archivedAt: "2026-10-29T11:55:00Z", segments: "12" },
+      /12 segments WAL attendent/,
+    ],
+    [
+      "recovery.segment.walEnd",
+      { endAt: "2026-10-29T11:58:00Z", marginSeconds: "300" },
+      /restaurez jusqu’à la fin des WAL/,
+    ],
+    [
+      "timeline.reason.needsTarget",
+      { timeline: "12", gap: "unreadable", gapTimeline: "11" },
+      /^la timeline 12 demande un targetTLI explicite ; l’historique 11 est illisible/,
+    ],
+    [
+      "timeline.reason.latestStops",
+      { latest: "2", newest: "4", gap: "missing", gapTimeline: "3" },
+      /s’arrête sur la timeline 2 : l’historique 3 est manquant/,
+    ],
+    ["phase.cap.undetectedMinor", { table: "1.30" }, /^version de CNPG non détectée/],
+    ["condition.cap.unverifiedMinor", { minor: "1.31" }, /non vérifiée pour CNPG 1\.31/],
+  ];
+  for (const [code, params, want] of cases) {
+    const said = phraseText(code, params, "Go's English.");
+    expect(said, code).toMatch(want);
+  }
+  // A gap kind this SPA does not know keeps Go's English.
+  expect(phraseText("timeline.reason.latestUnknown", { gap: "fromTheFuture" }, "Go's English.")).toBe("Go's English.");
+});
+
+test("a no-window answer says each reason in French, and names a history file", async () => {
+  overwriteGetLocale(() => "fr");
+  const r = {
+    ...tail,
+    answer: "unknown" as const,
+    code: "recovery.check.noWindow",
+    params: { reason: "no repository evidence" },
+    text: "No restore window is known for this cluster: no repository evidence.",
+    reasons: [
+      { code: "recovery.reason.noEvidence", text: "no repository evidence" },
+      { code: "recovery.reason.fromTheFuture", text: "an English reason" },
+    ],
+    historyFile: "00000005.history",
+  };
+  expect(reasonsText(r.reasons, "joined")).toBe("aucune preuve du dépôt; an English reason");
+  const screen = await renderInFrame(<RestoreAnswer r={r} />);
+  const el = screen.container;
+  expect(el.querySelector("[data-answer-code]")?.textContent).toBe(
+    "Aucune fenêtre de restauration n’est connue pour ce cluster : aucune preuve du dépôt; an English reason.",
+  );
+  expect(el.querySelector("[data-history-file]")?.textContent).toMatch(/00000005\.history/);
 });

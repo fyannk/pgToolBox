@@ -23,6 +23,7 @@ import (
 
 	"github.com/fyannk/pgToolBox/internal/console/evidence"
 	"github.com/fyannk/pgToolBox/internal/console/viewmodel"
+	"github.com/fyannk/pgToolBox/pkg/cnpgstatus"
 	evidencev1alpha1 "github.com/fyannk/pgToolBox/pkg/evidence/v1alpha1"
 )
 
@@ -45,6 +46,12 @@ const (
 	failureLookback = 24 * time.Hour
 	// maximumMarkers bounds the backups drawn on the bar.
 	maximumMarkers = 200
+	// walEndFloor is the narrowest band before the newest restore point
+	// marked as the end of the WAL: the frontier is when the last
+	// segment reached the repository, not the last commit in it, so a
+	// target in the last archive_timeout (at least this much) may be
+	// after the last commit the archive holds.
+	walEndFloor = time.Minute
 )
 
 // Segment kinds.
@@ -54,6 +61,7 @@ const (
 	segmentCandidateGap = "candidateGap"
 	segmentUnknown      = "unknown"
 	segmentReported     = "reported"
+	segmentWALEnd       = "walEnd"
 )
 
 // The caveats every evidence answer carries: the agent's own limits.
@@ -86,28 +94,55 @@ type recoveryFacts struct {
 	now time.Time
 	// archiveTimeout is the Cluster's archive_timeout; 0 when disabled.
 	archiveTimeout time.Duration
-	// lastFailedWAL is when the primary last failed to archive a segment
-	// (/pg/status); nil when unknown or never.
+	// lastFailedWAL is the newest failure to archive a segment any
+	// readable instance reports (/pg/status); nil when unknown or never.
 	lastFailedWAL *time.Time
+	// failing is the archiving fact read as failing (archivingFailing).
+	failing bool
+	// backlog is the archiver's readyWalFiles when it is at or above
+	// cnpgstatus.ArchiveBacklogThreshold; 0 otherwise or when unread.
+	backlog int
 }
 
-// recoveryFactsOf reads the facts from a gathered Cluster.
-func recoveryFactsOf(g *gathered, now time.Time) recoveryFacts {
-	f := recoveryFacts{now: now, archiveTimeout: defaultArchiveTimeout}
+// recoveryFactsOf reads the facts from a gathered Cluster and its
+// archiving fact (the backups summary's, so both agree).
+func recoveryFactsOf(g *gathered, arch viewmodel.Archiving, now time.Time) recoveryFacts {
+	f := recoveryFacts{now: now, archiveTimeout: defaultArchiveTimeout, failing: archivingFailing(arch)}
 	if g.cluster != nil {
 		if v, ok := g.cluster.Spec.PostgresConfiguration.Parameters["archive_timeout"]; ok {
 			if d, parsed := postgresDuration(v); parsed {
 				f.archiveTimeout = d
 			}
 		}
-	}
-	for _, inst := range g.swept.Instances {
-		if inst.State == viewmodel.StatusReadOK && inst.Reading != nil && inst.Reading.IsPrimary && inst.Reading.LastFailedWALTime != nil {
-			at := inst.Reading.LastFailedWALTime.UTC()
-			f.lastFailedWAL = &at
+		if arch.ReadyWALFiles != nil && *arch.ReadyWALFiles >= cnpgstatus.ArchiveBacklogThreshold(g.cluster) {
+			f.backlog = *arch.ReadyWALFiles
 		}
 	}
+	f.lastFailedWAL = newestArchiveFailure(g)
 	return f
+}
+
+// newestArchiveFailure is the newest pg_stat_archiver last_failed_time
+// any instance read in good standing reports, each clamped to when it
+// was read. Not only the current primary's: after a failover the
+// failure is on the former primary, whose statistics survive a clean
+// demotion, and the WAL it failed to archive is still what reached the
+// repository late. A replica that never archived reports none.
+func newestArchiveFailure(g *gathered) *time.Time {
+	var newest *time.Time
+	for _, inst := range g.swept.Instances {
+		if inst.State != viewmodel.StatusReadOK || inst.Reading == nil || inst.Reading.LastFailedWALTime == nil {
+			continue
+		}
+		at := inst.Reading.LastFailedWALTime.UTC()
+		if observed := inst.Reading.ObservedAt; !observed.IsZero() && at.After(observed) {
+			at = observed.UTC()
+		}
+		if newest == nil || at.After(*newest) {
+			newest = &at
+		}
+	}
+	return newest
 }
 
 // postgresDuration parses a PostgreSQL time setting in seconds (the unit
@@ -149,20 +184,23 @@ func (f recoveryFacts) frontierMargin() time.Duration {
 func (s *Service) recoveryTimeline(ev clusterEvidence, summary viewmodel.BackupSummary, rows []viewmodel.BackupRow, facts recoveryFacts) viewmodel.RecoveryTimeline {
 	out := viewmodel.RecoveryTimeline{
 		Basis: "none", State: string(evidencev1alpha1.Unknown), Segments: []viewmodel.RecoverySegment{}, Markers: []viewmodel.RecoveryMarker{},
-		Assumptions: []string{}, Provenance: ev.view.Provenance,
+		Assumptions: []string{}, Reasons: []viewmodel.Phrase{}, Provenance: ev.view.Provenance,
 	}
 	rec := ev.result.Recovery
 	if ev.result.Snapshot != nil && rec.State == evidence.RecoveryAvailable {
 		out.Basis = "evidence"
 		out.Provenance.Source = "EvidenceAgent " + ev.result.Agent + " " + evidencev1alpha1.RecoveryPathsPath
-		stale := ""
+		var stale *viewmodel.Phrase
 		switch {
 		case rec.Stale:
-			stale = "the recovery paths could not be read again (" + rec.StaleReason + "): these are the last good ones"
+			p := say("recovery.reason.pathsStale", "the recovery paths could not be read again ("+rec.StaleReason+"): these are the last good ones",
+				map[string]string{"detail": rec.StaleReason})
+			stale = &p
 		case ev.view.Provenance.Stale:
-			stale = "the repository evidence is stale: " + ev.view.Reason
+			p := say("recovery.reason.evidenceStale", "the repository evidence is stale: "+ev.view.Reason, map[string]string{"detail": ev.view.Reason})
+			stale = &p
 		}
-		out.Provenance.Stale = out.Provenance.Stale || stale != ""
+		out.Provenance.Stale = out.Provenance.Stale || stale != nil
 		in := timelineInput{
 			rec: rec, backups: ev.result.Backups, facts: facts, stale: stale,
 			scannedAt: scannedAt(ev.result), refresh: ev.result.RefreshInterval,
@@ -170,7 +208,7 @@ func (s *Service) recoveryTimeline(ev clusterEvidence, summary viewmodel.BackupS
 		evidenceTimeline(&out, in)
 		out.Complete = rec.Complete && ev.result.BackupsComplete
 		if !ev.result.BackupsComplete {
-			out.Reason = joinReason(out.Reason, "the backup collection was cut at a bound: older backups may exist")
+			addReason(&out, say("recovery.reason.backupsCut", "the backup collection was cut at a bound: older backups may exist", nil))
 		}
 	} else {
 		reason := recoveryUnavailableReason(ev)
@@ -181,11 +219,11 @@ func (s *Service) recoveryTimeline(ev clusterEvidence, summary viewmodel.BackupS
 			out.Segments = append(out.Segments, segment(first, last, segmentReported, say("recovery.segment.reported",
 				"Reported by "+w.Provenance.Source+"; not verified against the repository.", map[string]string{"source": w.Provenance.Source})))
 			if facts.now.After(last) {
-				out.Segments = append(out.Segments, reportedTail(w.Provenance, summary.Archiving, last, facts.now)...)
+				out.Segments = append(out.Segments, reportedTail(w.Provenance, summary.Archiving, facts, last)...)
 			}
-			reason = joinReason("the window is the operator's report, not repository evidence", reason)
+			addReason(&out, say("recovery.reason.reportedWindow", "the window is the operator's report, not repository evidence", nil))
 		}
-		out.Reason = reason
+		addReason(&out, reason)
 	}
 	out.Markers = recoveryMarkers(ev.result.Backups, rows)
 	return out
@@ -201,17 +239,33 @@ func scannedAt(r evidence.Result) *time.Time {
 }
 
 // recoveryUnavailableReason says why there is no evidence timeline.
-func recoveryUnavailableReason(ev clusterEvidence) string {
+func recoveryUnavailableReason(ev clusterEvidence) viewmodel.Phrase {
 	switch {
 	case ev.result.Snapshot == nil:
 		if ev.view.Reason != "" {
-			return "no repository evidence: " + ev.view.Reason
+			return say("recovery.reason.noEvidenceBecause", "no repository evidence: "+ev.view.Reason, map[string]string{"detail": ev.view.Reason})
 		}
-		return "no repository evidence"
+		return say("recovery.reason.noEvidence", "no repository evidence", nil)
 	case ev.result.Recovery.Reason != "":
-		return ev.result.Recovery.Reason
+		return evidenceReason("recovery.reason.pathsNotCoverage", ev.result.Recovery.Reason)
 	}
-	return "the evidence agent published no recovery paths"
+	return say("recovery.reason.noPaths", "the evidence agent published no recovery paths", nil)
+}
+
+// addReason appends p to the timeline's reasons; Reason is their English
+// texts joined, as before the codes.
+func addReason(out *viewmodel.RecoveryTimeline, p viewmodel.Phrase) {
+	if p.Text == "" {
+		return
+	}
+	out.Reasons = append(out.Reasons, p)
+	out.Reason = joinReason(out.Reason, p.Text)
+}
+
+// setReason replaces the timeline's reasons with p.
+func setReason(out *viewmodel.RecoveryTimeline, p viewmodel.Phrase) {
+	out.Reasons, out.Reason = out.Reasons[:0], ""
+	addReason(out, p)
 }
 
 // interval is one path's covered span and what stops it.
@@ -226,8 +280,8 @@ type timelineInput struct {
 	rec     evidence.Recovery
 	backups []evidence.BackupItem
 	facts   recoveryFacts
-	// stale says why the evidence is stale; empty when fresh.
-	stale     string
+	// stale says why the evidence is stale; nil when fresh.
+	stale     *viewmodel.Phrase
 	scannedAt *time.Time
 	refresh   time.Duration
 }
@@ -287,9 +341,16 @@ func evidenceTimeline(out *viewmodel.RecoveryTimeline, in timelineInput) {
 	out.TargetTimeline = target
 	spans, undrawn := recoverySpans(out, in, target)
 	if len(spans) == 0 {
-		out.State, out.Reason = string(evidencev1alpha1.Unknown), orDefault(in.rec.CoverageReason,
-			"no recovery path reaches its base backup's consistency point: the evidence cannot place a restore point")
-		out.Reason = joinReason(out.Reason, in.stale)
+		out.State = string(evidencev1alpha1.Unknown)
+		if in.rec.CoverageReason != "" {
+			setReason(out, evidenceReason("recovery.reason.agentCoverage", in.rec.CoverageReason))
+		} else {
+			setReason(out, say("recovery.reason.noConsistentPath",
+				"no recovery path reaches its base backup's consistency point: the evidence cannot place a restore point", nil))
+		}
+		if in.stale != nil {
+			addReason(out, *in.stale)
+		}
 		return
 	}
 	runs := mergeSpans(spans)
@@ -298,6 +359,9 @@ func evidenceTimeline(out *viewmodel.RecoveryTimeline, in timelineInput) {
 	first, last := runs[0].from, runs[len(runs)-1].to
 	out.Earliest, out.Latest = &first, &last
 	tail := runs[len(runs)-1].stop
+	if tail == evidencev1alpha1.CoverageFrontier {
+		walEnd(out, in.facts, last, margin)
+	}
 	failedRecently := markEdges(out, in, first, last, margin)
 	tailSegment(out, in, last, tail)
 	if !in.rec.Complete {
@@ -313,7 +377,7 @@ func evidenceTimeline(out *viewmodel.RecoveryTimeline, in timelineInput) {
 	}
 	sort.SliceStable(out.Segments, func(i, j int) bool { return out.Segments[i].From.Before(out.Segments[j].From) })
 	timelineVerdict(out, in, timelineFindings{
-		tail: tail, holes: holes, candidates: candidates, failedRecently: failedRecently, orphan: orphan, undrawn: undrawn,
+		tail: tail, holes: holes, candidates: candidates, failedRecently: failedRecently, backlog: in.facts.backlog, orphan: orphan, undrawn: undrawn,
 	})
 }
 
@@ -424,6 +488,15 @@ func markEdges(out *viewmodel.RecoveryTimeline, in timelineInput, first, last ti
 			"WAL archiving failed at "+f.Format(time.RFC3339)+": WAL that reaches the repository after a failure holds older commits than its arrival time says, so the arrival time overstates how recent a restore can be.",
 			map[string]string{"failedAt": rfc3339(*f)}))
 	}
+	if n := in.facts.backlog; n > 0 {
+		// Segments wait on the primary: the newest one archived was
+		// finished, and its commits made, before it reached the
+		// repository by however long the backlog has held, which the
+		// instance does not report; the same lookback as a failure.
+		uncertain(out, last.Add(-failureLookback), last, say("recovery.segment.archiveBacklog",
+			strconv.Itoa(n)+" WAL segments are waiting to be archived on the primary: segments reach the repository late, so the arrival time of the newest overstates how recent a restore can be.",
+			map[string]string{"segments": strconv.Itoa(n)}))
+	}
 	purge := in.refresh
 	if purge <= 0 {
 		purge = evidence.DefaultAgentRefreshInterval
@@ -435,6 +508,25 @@ func markEdges(out *viewmodel.RecoveryTimeline, in timelineInput, first, last ti
 		"Within "+humanDuration(purge)+" of the oldest restore point: a retention purge since the repository was last read may have removed this base backup.",
 		map[string]string{"marginSeconds": secondsParam(purge)}))
 	return failedRecently
+}
+
+// walEnd marks the band just before the newest restore point where the
+// archived WAL ends: the frontier is when the last segment reached the
+// repository, not the last commit it holds, which is up to one
+// archive_timeout older (walEndFloor at least; the whole margin when
+// archive_timeout is disabled). A recovery_target_time after that last
+// commit stops recovery with "recovery ended before configured recovery
+// target was reached", so the band says to restore to the end of WAL
+// instead. Drawn before the other edges, which then leave it as it is.
+func walEnd(out *viewmodel.RecoveryTimeline, f recoveryFacts, last time.Time, margin time.Duration) {
+	band := margin
+	if f.archiveTimeout > 0 {
+		band = min(max(f.archiveTimeout, walEndFloor), margin)
+	}
+	uncertainAs(out, segmentWALEnd, last.Add(-band), last, say("recovery.segment.walEnd",
+		"WAL ends near here: the newest archived segment reached the repository at "+rfc3339(last)+", and its last commit may be up to "+humanDuration(band)+
+			" older. A recovery_target_time after the last commit fails with \"recovery ended before configured recovery target was reached\"; to restore everything archived, restore to the end of WAL (no recovery target).",
+		map[string]string{"endAt": rfc3339(last), "marginSeconds": secondsParam(band)}))
 }
 
 // tailSegment draws the time after the newest restore point: only a
@@ -458,8 +550,24 @@ func tailSegment(out *viewmodel.RecoveryTimeline, in timelineInput, last time.Ti
 		_, p = holeOf(tail)
 	case !in.rec.Complete:
 		p = say("recovery.segment.collectionCut", "The recovery path collection was cut at a bound: newer coverage may exist.", nil)
-	case in.stale != "":
+	case in.stale != nil:
 		p = say("recovery.segment.evidenceStale", "The repository evidence is stale: newer WAL may have reached the repository since.", nil)
+	case in.facts.failing && in.scannedAt != nil:
+		p = say("recovery.segment.afterLastReadFailing",
+			"Not in the repository when it was last read ("+in.scannedAt.UTC().Format(time.RFC3339)+"), and WAL archiving is failing: this time's WAL is likely not in the repository.",
+			map[string]string{"scannedAt": rfc3339(*in.scannedAt)})
+	case in.facts.failing:
+		p = say("recovery.segment.afterFrontierFailing", "After the newest archived WAL the evidence shows, and WAL archiving is failing: this time's WAL is likely not in the repository.", nil)
+	case in.facts.backlog > 0 && in.scannedAt != nil:
+		n := strconv.Itoa(in.facts.backlog)
+		p = say("recovery.segment.afterLastReadBacklog",
+			"Not in the repository when it was last read ("+in.scannedAt.UTC().Format(time.RFC3339)+"), and "+n+" WAL segments are waiting to be archived on the primary: this time's WAL is likely still only on the primary.",
+			map[string]string{"scannedAt": rfc3339(*in.scannedAt), "segments": n})
+	case in.facts.backlog > 0:
+		n := strconv.Itoa(in.facts.backlog)
+		p = say("recovery.segment.afterFrontierBacklog",
+			"After the newest archived WAL the evidence shows, and "+n+" WAL segments are waiting to be archived on the primary: this time's WAL is likely still only on the primary.",
+			map[string]string{"segments": n})
 	case in.scannedAt != nil:
 		p = say("recovery.segment.afterLastRead",
 			"Not in the repository when it was last read ("+in.scannedAt.UTC().Format(time.RFC3339)+"): WAL archived since may cover this time.",
@@ -474,7 +582,7 @@ func tailSegment(out *viewmodel.RecoveryTimeline, in timelineInput, last time.Ti
 // verdict is critical, or the primary's last attempt failed with WAL
 // waiting (cnpgstatus.Archiving's FailureWithBacklog).
 func archivingFailing(a viewmodel.Archiving) bool {
-	return a.Health == viewmodel.HealthCritical || a.Reason == "FailureWithBacklog"
+	return a.Health == viewmodel.HealthCritical || a.Reason == cnpgstatus.ArchivingReasonFailureWithBacklog
 }
 
 // reportedTail draws the time after a reported window's end. The end is
@@ -482,34 +590,50 @@ func archivingFailing(a viewmodel.Archiving) bool {
 // base backup), so the time after it is never "not covered"; what the
 // console can add is the archiving instance's own pg_stat_archiver
 // report: last_archived_time says up to when WAL was reaching the
-// repository, and a failing archiver that WAL after it likely is not.
-// A restore "may well be possible" only before the last archived WAL
-// time and with archiving healthy and fresh.
-func reportedTail(window viewmodel.Provenance, arch viewmodel.Archiving, last, now time.Time) []viewmodel.RecoverySegment {
+// repository, and a failing or backlogged archiver that WAL after it
+// likely is not. A restore "may well be possible" only before the last
+// archived WAL time and with archiving healthy, fresh and keeping up.
+// last_archived_time is the instance's clock: a time after the console
+// read it is clamped to the reading.
+func reportedTail(window viewmodel.Provenance, arch viewmodel.Archiving, facts recoveryFacts, last time.Time) []viewmodel.RecoverySegment {
+	now := facts.now
 	origin, prefix := "operator", "After the last base backup the operator reports ("+rfc3339(last)+"): the operator does not report the archived WAL beyond it. "
 	if window.Origin == viewmodel.OriginEvidence {
 		origin, prefix = "evidence", "After the end of the window the evidence agent reported ("+rfc3339(last)+"): without the agent's recovery paths the console cannot place this time. "
 	}
 	failing := archivingFailing(arch)
-	healthy := !failing && arch.Health == viewmodel.HealthOK && !arch.Provenance.Stale
+	backlog := facts.backlog > 0 && !failing
+	healthy := !failing && !backlog && arch.Health == viewmodel.HealthOK && !arch.Provenance.Stale
+	archived := arch.LastArchivedAt
+	if archived != nil && arch.Provenance.ObservedAt != nil && archived.After(*arch.Provenance.ObservedAt) {
+		clamped := arch.Provenance.ObservedAt.UTC()
+		archived = &clamped
+	}
+	segments := strconv.Itoa(facts.backlog)
 	params := func() map[string]string {
 		p := map[string]string{"windowOrigin": origin, "endAt": rfc3339(last)}
-		if arch.LastArchivedAt != nil {
-			p["archivedAt"] = rfc3339(*arch.LastArchivedAt)
+		if archived != nil {
+			p["archivedAt"] = rfc3339(*archived)
 		}
 		if arch.Provenance.ObservedAt != nil {
 			p["ageSeconds"] = secondsParam(max(now.Sub(*arch.Provenance.ObservedAt), 0))
+		}
+		if backlog {
+			p["segments"] = segments
 		}
 		return p
 	}
 	unknownSeg := func(from, to time.Time, code, text string) viewmodel.RecoverySegment {
 		return segment(from, to, segmentUnknown, say("recovery.reportedTail."+code, prefix+text, params()))
 	}
-	archived := arch.LastArchivedAt
 	if archived == nil {
-		if failing {
+		switch {
+		case failing:
 			return []viewmodel.RecoverySegment{unknownSeg(last, now, "archivedUnknownFailing",
 				"WAL archiving is failing and the primary's last archived WAL time is not known: this time's WAL is likely not in the repository.")}
+		case backlog:
+			return []viewmodel.RecoverySegment{unknownSeg(last, now, "archivedUnknownBacklog",
+				segments+" WAL segments are waiting to be archived on the primary and its last archived WAL time is not known: this time's WAL may still be only on the primary.")}
 		}
 		return []viewmodel.RecoverySegment{unknownSeg(last, now, "archivedUnknown",
 			"The primary's last archived WAL time is not known (its /pg/status was not read, or it reports none): the console cannot say whether this time's WAL reached the repository; deploy an evidence agent to place it.")}
@@ -529,16 +653,23 @@ func reportedTail(window viewmodel.Provenance, arch viewmodel.Archiving, last, n
 		case failing:
 			segs = append(segs, unknownSeg(last, to, "beforeArchivedFailing",
 				"The primary last archived a segment at "+at+", after this time ("+report+"), but WAL archiving is failing: this time's WAL may be in the repository; deploy an evidence agent to place it."))
+		case backlog:
+			segs = append(segs, unknownSeg(last, to, "beforeArchivedBacklog",
+				"The primary last archived a segment at "+at+", after this time ("+report+"), with "+segments+" segments waiting to be archived: the archiver is behind, so this time's WAL may not be in the repository yet; deploy an evidence agent to place it."))
 		default:
 			segs = append(segs, unknownSeg(last, to, "beforeArchivedUnconfirmed",
 				"The primary last archived a segment at "+at+", after this time ("+report+"), but WAL archiving is not confirmed healthy: this time's WAL may be in the repository; deploy an evidence agent to place it."))
 		}
 	}
 	if from := maxTime(last, *archived); now.After(from) {
-		if failing {
+		switch {
+		case failing:
 			segs = append(segs, unknownSeg(from, now, "afterArchivedFailing",
 				"WAL archiving is failing: WAL after the primary's last archived segment ("+at+", "+report+") is likely not in the repository."))
-		} else {
+		case backlog:
+			segs = append(segs, unknownSeg(from, now, "afterArchivedBacklog",
+				segments+" WAL segments are waiting to be archived on the primary: WAL after its last archived segment ("+at+", "+report+") is likely still only on the primary."))
+		default:
 			segs = append(segs, unknownSeg(from, now, "afterArchived",
 				"This time is after the primary's last archived segment ("+at+", "+report+"): its WAL may still be only on the primary."))
 		}
@@ -551,46 +682,71 @@ type timelineFindings struct {
 	tail              evidencev1alpha1.CoverageStop
 	holes, candidates int
 	failedRecently    bool
-	orphan            uint64
-	undrawn           int
+	// backlog is the archiver's waiting segments, 0 when keeping up.
+	backlog int
+	orphan  uint64
+	undrawn int
 }
 
 // timelineVerdict states the bar's state and reason, the gravest finding
 // first: a cut collection, missing WAL at the end, an unconfirmed end,
-// holes, candidate gaps, a recent archiving failure, an orphan timeline,
-// stale evidence.
+// holes, candidate gaps, a recent archiving failure, an archive backlog,
+// an orphan timeline, stale evidence.
 func timelineVerdict(out *viewmodel.RecoveryTimeline, in timelineInput, f timelineFindings) {
+	warning := string(evidencev1alpha1.Warning)
 	switch {
 	case !in.rec.Complete:
-		out.State, out.Reason = string(evidencev1alpha1.Unknown), "the recovery path collection was cut at a bound: the restore target timeline cannot be told"
+		out.State = string(evidencev1alpha1.Unknown)
+		setReason(out, say("recovery.reason.pathsCut", "the recovery path collection was cut at a bound: the restore target timeline cannot be told", nil))
 	case f.tail == evidencev1alpha1.CoverageGapLimited:
-		out.State, out.Reason = string(evidencev1alpha1.Unhealthy), "WAL is missing after the latest restore point: recent times are not restorable from the repository"
+		out.State = string(evidencev1alpha1.Unhealthy)
+		setReason(out, say("recovery.reason.missingAfterLatest", "WAL is missing after the latest restore point: recent times are not restorable from the repository", nil))
 	case f.tail != evidencev1alpha1.CoverageFrontier:
-		out.State = string(evidencev1alpha1.Warning)
+		out.State = warning
 		_, p := holeOf(f.tail)
-		out.Reason = p.Text
+		setReason(out, p)
 	case f.holes > 0:
-		out.State, out.Reason = string(evidencev1alpha1.Warning), "the window has holes where WAL is missing"
+		out.State = warning
+		setReason(out, say("recovery.reason.holes", "the window has holes where WAL is missing", nil))
 	case f.candidates > 0:
-		out.State, out.Reason = string(evidencev1alpha1.Warning), "the window has candidate gaps a second scan has not confirmed yet"
+		out.State = warning
+		setReason(out, say("recovery.reason.candidateGaps", "the window has candidate gaps a second scan has not confirmed yet", nil))
 	case f.failedRecently:
-		out.State, out.Reason = string(evidencev1alpha1.Warning), "WAL archiving failed recently: the newest restore points are uncertain"
+		out.State = warning
+		setReason(out, say("recovery.reason.failedRecently", "WAL archiving failed recently: the newest restore points are uncertain", nil))
+	case f.backlog > 0:
+		out.State = warning
+		n := strconv.Itoa(f.backlog)
+		setReason(out, say("recovery.reason.archiveBacklog", n+" WAL segments are waiting to be archived on the primary: the newest restore points are uncertain",
+			map[string]string{"segments": n}))
 	case f.orphan > 0:
-		out.State, out.Reason = string(evidencev1alpha1.Warning), "timeline "+strconv.FormatUint(f.orphan, 10)+" is in the archive but not connected by valid history: a restore cannot follow it"
-	case in.stale != "":
-		out.State = string(evidencev1alpha1.Warning)
+		out.State = warning
+		tl := strconv.FormatUint(f.orphan, 10)
+		setReason(out, say("recovery.reason.orphanTimeline", "timeline "+tl+" is in the archive but not connected by valid history: a restore cannot follow it",
+			map[string]string{"timeline": tl}))
+	case in.stale != nil:
+		out.State = warning
+		setReason(out, viewmodel.Phrase{})
 	default:
 		out.State = string(evidencev1alpha1.Healthy)
+		setReason(out, viewmodel.Phrase{})
 	}
-	out.Reason = joinReason(out.Reason, in.stale)
+	if in.stale != nil {
+		addReason(out, *in.stale)
+	}
 	if f.undrawn > 0 && out.Reason == "" {
-		out.Reason = "some backups have no observed recovery path past their consistency point"
+		addReason(out, say("recovery.reason.undrawn", "some backups have no observed recovery path past their consistency point", nil))
 	}
 }
 
 // uncertain turns the covered part of [from, to] into an unknown
 // segment saying p, splitting the covered segments it overlaps.
 func uncertain(out *viewmodel.RecoveryTimeline, from, to time.Time, p viewmodel.Phrase) {
+	uncertainAs(out, segmentUnknown, from, to, p)
+}
+
+// uncertainAs is uncertain with the segment kind given.
+func uncertainAs(out *viewmodel.RecoveryTimeline, kind string, from, to time.Time, p viewmodel.Phrase) {
 	if !to.After(from) {
 		return
 	}
@@ -605,7 +761,7 @@ func uncertain(out *viewmodel.RecoveryTimeline, from, to time.Time, p viewmodel.
 			before.To = from
 			segs = append(segs, before)
 		}
-		mid := segment(maxTime(seg.From, from), minTime(seg.To, to), segmentUnknown, p)
+		mid := segment(maxTime(seg.From, from), minTime(seg.To, to), kind, p)
 		segs = append(segs, mid)
 		if seg.To.After(to) {
 			after := seg
@@ -757,6 +913,7 @@ func restoreCheck(b viewmodel.Backups, at time.Time) viewmodel.RestoreCheck {
 	t := b.RecoveryTimeline
 	out := viewmodel.RestoreCheck{
 		Ref: b.Ref, GeneratedAt: b.GeneratedAt, At: at, Basis: t.Basis, Caveats: restoreCaveats(b), Provenance: t.Provenance,
+		HistoryFile: timelineHistoryFile(b),
 	}
 	answer := func(a string, p viewmodel.Phrase) viewmodel.RestoreCheck {
 		out.Answer, out.Text, out.Code, out.Params = a, p.Text, p.Code, p.Params
@@ -765,6 +922,7 @@ func restoreCheck(b viewmodel.Backups, at time.Time) viewmodel.RestoreCheck {
 	switch {
 	case t.Basis == "none" || t.Earliest == nil || t.Latest == nil:
 		reason := orDefault(t.Reason, "no evidence")
+		out.Reasons = t.Reasons
 		return answer("unknown", say("recovery.check.noWindow", "No restore window is known for this cluster: "+reason+".", map[string]string{"reason": reason}))
 	case at.Before(*t.Earliest) && t.Basis == "evidence" && !t.Complete:
 		return answer("unknown", say("recovery.check.beforeEarliestCut",
@@ -815,6 +973,26 @@ func restoreCheck(b viewmodel.Backups, at time.Time) viewmodel.RestoreCheck {
 		}
 	}
 	return answer("unknown", say("recovery.check.notPlaced", "The evidence does not place this time.", nil))
+}
+
+// timelineHistoryFile is the history file the timeline's reasons or the
+// repository's timeline evidence name as missing or unreadable: the
+// check shows it, since one such file can withhold every restore point.
+func timelineHistoryFile(b viewmodel.Backups) string {
+	texts := make([]string, 0, len(b.RecoveryTimeline.Reasons)+2)
+	for _, r := range b.RecoveryTimeline.Reasons {
+		if f := r.Params["historyFile"]; f != "" {
+			return f
+		}
+		texts = append(texts, r.Text)
+	}
+	if b.Evidence.Repository != nil {
+		if p := b.Evidence.Repository.Timeline.Phrase; p != nil && p.Params["historyFile"] != "" {
+			return p.Params["historyFile"]
+		}
+		texts = append(texts, b.Evidence.Repository.Timeline.Message, b.Evidence.Repository.Coverage.Message)
+	}
+	return historyFileIn(texts...)
 }
 
 // restoreCaveats are what an answer does not prove: the evidence's own

@@ -5,6 +5,7 @@
  * The JSON API of the pgToolBox console, the CloudNativePG observation console. Every operation acts as the signed-in user: the console asks the Kubernetes API server (SelfSubjectAccessReview, with your own token) before it reads anything on your behalf. Unsafe methods require the header X-PgToolBox-Request: 1 and a same-origin request.
  * OpenAPI spec version: v1
  */
+import type { Phrase } from './phrase.ts';
 import type { Provenance } from './provenance.ts';
 import type { RecoveryMarker } from './recoveryMarker.ts';
 import type { RecoverySegment } from './recoverySegment.ts';
@@ -25,6 +26,11 @@ export interface RecoveryTimeline {
   markers: RecoveryMarker[] | null;
   provenance: Provenance;
   reason?: string;
+  /**
+     * The parts of reason, in order, each a Phrase a client can translate; reason is their English texts joined with '; '.
+     * @nullable
+     */
+  reasons?: Phrase[] | null;
   restoreTested?: boolean;
   /**
      * Time-ordered spans: covered ones and the holes between them.

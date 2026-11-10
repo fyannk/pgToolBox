@@ -101,6 +101,10 @@ type Phase struct {
 	// Known is false for a phase absent from the table of the observed
 	// CNPG minor.
 	Known bool `json:"known" doc:"The phase is in the table of the observed CNPG minor."`
+	// Cap says why Health is below the table's class: the phase is an ok
+	// row of a table not verified for the minor the operator runs (or the
+	// version was not detected). Absent when not capped.
+	Cap *Phrase `json:"cap,omitempty" doc:"Why Health is capped below the table's ok: the table was not verified for the detected CNPG minor, or no minor was detected."`
 	// Since is the console's own clock: when it first saw this phase.
 	// A floor, since the console may have started after the phase began.
 	Since      *time.Time `json:"since,omitempty" doc:"When the console first saw this phase (a lower bound)."`

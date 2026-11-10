@@ -23,9 +23,16 @@ export interface RestoreCheck {
   /** Stable code of Text, for translation; a code the client does not know shows Text. */
   code?: string;
   generatedAt: string;
+  /** A timeline history file (such as 00000003.history) the evidence names as missing or unreadable; coverage may rest on it. */
+  historyFile?: string;
   /** Values Text names (see Phrase). */
   params?: RestoreCheckParams;
   provenance: Provenance;
+  /**
+     * Why no restore window is known (the timeline's reasons), when the answer rests on that.
+     * @nullable
+     */
+  reasons?: Phrase[] | null;
   ref: ClusterRef;
   text: string;
 }

@@ -144,6 +144,7 @@ test-fuzz: ## Fuzz the trust-boundary parsers (FUZZ_TIME per target).
 	$(call fuzz,./pkg/cnpgstatus/scrape,FuzzParseCatalog)
 	$(call fuzz,./pkg/cnpgstatus/scrape,FuzzParseLabels)
 	$(call fuzz,./pkg/cnpgstatus/logstream,FuzzMatcherObserve)
+	$(call fuzz,./pkg/diagnose,FuzzRunsPerDay)
 	$(call fuzz,./internal/evidence/formats/barmancloud,FuzzParseBackupInfo)
 	$(call fuzz,./internal/evidence/formats/barmancloud,FuzzParseTimelineHistory)
 	$(call fuzz,./internal/evidence/formats/barmancloud,FuzzParseWALName)

@@ -344,6 +344,27 @@ func TestRehearsalHonesty(t *testing.T) {
 	}
 }
 
+func TestAsyncRehearsalOnAStaleSweepIsUnknown(t *testing.T) {
+	t.Parallel()
+	caughtUp := func(stale string) RehearsalInput {
+		return RehearsalInput{Primary: "db-1", SweepStale: stale, Instances: []RehearsalInstance{
+			primaryInst(instancestatus.Standby{ApplicationName: "db-2"}),
+			replica("db-2", "0/5000000", "0/5000000", "n2"),
+		}}
+	}
+	fresh := Rehearse(caughtUp(""))
+	if fresh.Class != ClassOK {
+		t.Fatalf("fresh caught-up async replica: class %s, want ok (%s)", fresh.Class, fresh.DataLossText)
+	}
+	stale := Rehearse(caughtUp("the sweep has not completed for three intervals"))
+	if stale.Class != ClassUnknown {
+		t.Errorf("stale caught-up async replica: class %s, want unknown (%s)", stale.Class, stale.DataLossText)
+	}
+	if !strings.Contains(stale.DataLossText, "whether it still has is not known") {
+		t.Errorf("stale data loss text %q does not say the distance is unknown", stale.DataLossText)
+	}
+}
+
 func TestSynchronousCommitLevel(t *testing.T) {
 	t.Parallel()
 	for v, want := range map[string]string{"": "on", "ON": "on", "yes": "on", "1": "on", "0": "off", "No": "off", "remote_apply": "remote_apply", "REMOTE_WRITE": "remote_write", "local": "local"} {

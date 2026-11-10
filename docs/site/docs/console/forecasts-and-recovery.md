@@ -231,9 +231,28 @@ window is split at that instant, and each span says what the archiver supports:
 
 | Archiving (overview) | Before the last archived WAL time | After it |
 |---|---|---|
-| healthy, and the sweep fresh | "a restore to this time may well be possible" | its WAL "may still be only on the primary" |
+| healthy, keeping up, and the sweep fresh | "a restore to this time may well be possible" | its WAL "may still be only on the primary" |
 | failing (`ContinuousArchiving` critical, or a failure with backlog) | its WAL "may be in the repository" | its WAL "is likely not in the repository" |
+| behind: N segments waiting (`readyWalFiles` at the backlog threshold), no failure | "N segments waiting": its WAL "may not be in the repository yet" | "N WAL segments are waiting": its WAL "is likely still only on the primary" |
 | anything else (unknown, stale) | its WAL "may be in the repository" | its WAL "may still be only on the primary" |
+
+The archiver is `status.currentPrimary` (the designated primary in a replica
+cluster). When that instance was not read, archiving is unknown: no other
+instance that reports itself primary stands in for it. A `last_archived_time`
+later than the sweep that read it (an instance clock running ahead) is read as
+the sweep's time.
+
+**The backlog threshold** is 3 waiting segments, or one more than the in-tree
+`wal.maxParallel` when that is larger. PostgreSQL hands the archiver one finished
+segment at a time, so an archiver that keeps up shows zero or one `.ready` file
+(two on a switch caught mid-copy). A backlog at the threshold turns the WAL
+archiving contributor to a warning (`ArchiveBacklog`), even while
+`ContinuousArchiving` is `True`: a hung or slow `archive_command` fails nothing.
+The diagnostics findings on the same count (`cnpg-wal-archive-backlog`,
+`cnpg-instance-archive-backlog`) fire much later, at 32 segments, so a screen
+with the finding never shows archiving as healthy. A stalled archiver needs no
+rule of its own: with `archive_timeout` set, written WAL completes a segment
+within it, and a segment the archiver does not take shows up in the count.
 
 The last archived time is when PostgreSQL archived a segment, not the newest
 commit in it, so even "may well be possible" is an `unknown` answer: an evidence
@@ -282,9 +301,23 @@ segments, so the bar and the answer always agree:
   is 0): segment names cannot place the target;
 - the oldest restore point, within the agent's refresh interval plus the age of
   its last scan: a retention purge may have removed that backup since;
-- after a WAL archiving failure the primary reported (`lastFailedWALTime`) in
-  the day before the latest point, the day before the failure: WAL that arrives
-  after an outage carries older commits than its arrival time.
+- after a WAL archiving failure an instance reported (`lastFailedWALTime`, the
+  newest over every instance read, so a former primary's failure survives a
+  failover) in the day before the latest point, the day before the failure: WAL
+  that arrives after an outage carries older commits than its arrival time;
+- while segments wait to be archived on the primary (the backlog threshold
+  above), the day before the latest point, with the count: the segments reach
+  the repository late, and the instance does not say since when, so the arrival
+  time of the newest overstates how recent a restore can be. The window is then
+  a warning, never healthy.
+
+Inside the end-of-archived-WAL edge, the last `archive_timeout` before the
+latest point (at least one minute; the whole edge when `archive_timeout` is 0)
+is drawn as **end of the archived WAL** (`walEnd`, a warning band). The latest
+point is when the last segment *reached* the repository, not its last commit: a
+`recovery_target_time` after that commit makes PostgreSQL stop with "recovery
+ended before configured recovery target was reached". To restore everything the
+repository holds, restore to the end of WAL (no recovery target) instead.
 
 After the latest point the answer is never `notCovered`. Missing WAL confirmed
 after the newest path is a `gap`. Otherwise the answer is `unknown`: a fresh and
@@ -292,7 +325,9 @@ complete frontier is a fact about the agent's scan, not about now. WAL written
 just after the frontier may have sat in a segment that was not archived yet
 when the agent read the repository (`archive_timeout`), and it may have arrived
 since. The answer then says the time was "not in the repository when it was
-last read" and names the scan time. A time later than now gets the answer for
+last read" and names the scan time; while archiving fails it says that time's
+WAL "is likely not in the repository", and with a backlog that it "is likely
+still only on the primary". A time later than now gets the answer for
 now. After a path that stops at unknown evidence, from stale evidence, when a
 collection was cut, or on the reported basis (whose end is the last base backup),
 it is also `unknown`.
@@ -301,5 +336,13 @@ On the reported basis, a window that comes from the evidence agent's own
 `recovery_window` (pgBackRest without recovery paths) is named as the agent's,
 not the operator's. Every sentence of the timeline, the answer and its caveats
 carries a stable code and its values, so the console says it in the reader's
-language, with Go's English kept for a code the interface does not know yet. Stale evidence is never shown as healthy. When reading
+language, with Go's English kept for a code the interface does not know yet.
+The timeline's reasons are sent as such phrases too, one per part. The evidence
+agent writes its own reasons in English: the console recognises the agent's
+timeline reasons ("timeline N needs an explicit targetTLI", "a default restore
+stops on timeline N", a history file missing or unreadable) and says them in the
+reader's language; any other reason of the agent's is shown as written. When the
+evidence names a timeline history file as missing or unreadable (one such file
+can withhold every restore point), the restore check names it, for example
+`00000005.history`. Stale evidence is never shown as healthy. When reading
 the paths fails, the last good ones are kept and marked stale.
