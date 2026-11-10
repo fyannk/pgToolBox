@@ -1,0 +1,3 @@
+# opm reads every file under the catalog root as catalog content; the Go module
+# that pins opm and grpc_health_probe for catalog.Dockerfile is not.
+/opm/

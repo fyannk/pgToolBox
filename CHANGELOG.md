@@ -72,7 +72,10 @@ OpenShift.
   weekly, `verify-release.yml` pulls every image and both charts with no
   credentials and verifies signatures and attestations. A failed candidate is
   superseded by the next one (`-rc.N+1`), never moved. The images are not claimed
-  to be bit-for-bit reproducible.
+  to be bit-for-bit reproducible. The catalog image builds opm and
+  `grpc_health_probe` from source (opm v1.74.0) with the repository's Go and
+  dependency versions, since the upstream opm image ships fixable high
+  vulnerabilities.
 - **The restore check without an evidence agent** reads the primary's last
   archived WAL time: "may well be possible" only while archiving is healthy, and
   "likely not in the repository" when it fails. With an agent, a time between
