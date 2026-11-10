@@ -202,6 +202,18 @@ func TestEnvtestWorkloadIdentityAdmission(t *testing.T) {
 			RoleRef:    rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "Role", Name: "mint-console-tokens"},
 			Subjects:   []rbacv1.Subject{{Kind: rbacv1.UserKind, APIGroup: rbacv1.GroupName, Name: "minter"}},
 		},
+		// exposer may create Ingresses (not Routes) and read no Secret.
+		&rbacv1.Role{
+			ObjectMeta: metav1.ObjectMeta{Name: "create-ingresses", Namespace: namespace},
+			Rules: []rbacv1.PolicyRule{{
+				APIGroups: []string{"networking.k8s.io"}, Resources: []string{"ingresses"}, Verbs: []string{"create"},
+			}},
+		},
+		&rbacv1.RoleBinding{
+			ObjectMeta: metav1.ObjectMeta{Name: "create-ingresses", Namespace: namespace},
+			RoleRef:    rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "Role", Name: "create-ingresses"},
+			Subjects:   []rbacv1.Subject{{Kind: rbacv1.UserKind, APIGroup: rbacv1.GroupName, Name: "exposer"}},
+		},
 		policy, binding,
 	} {
 		if err := root.Create(t.Context(), object); err != nil {
@@ -346,6 +358,9 @@ spec:
 	t.Run("evidence agent allowed secrets", func(t *testing.T) { testAllowedSecrets(t, root, as) })
 	t.Run("pgadmin cluster credentials", func(t *testing.T) { testPgAdminCredentials(t, root, as) })
 	t.Run("pgadmin sign-in audience", func(t *testing.T) { testPgAdminAudience(t, root, as) })
+	t.Run("pgadmin settings database", func(t *testing.T) { testPgAdminConfigDatabase(t, root, as) })
+	t.Run("pgadmin proxy session lifetime", func(t *testing.T) { testPgAdminSessionMaxAge(t, root, as) })
+	t.Run("exposure annotations", func(t *testing.T) { testExposureAnnotations(t, root, as) })
 	t.Run("prometheus projected token", func(t *testing.T) { testPrometheusProjectedToken(t, root, as) })
 }
 
@@ -1007,6 +1022,285 @@ func testPrometheusProjectedToken(t *testing.T, root client.Client, as func(stri
 					t.Fatalf("minter: %v, want admitted", err)
 				}
 			})
+		}
+	})
+}
+
+// testPgAdminConfigDatabase: spec.configDatabase makes the operator create a
+// login DatabaseRole on that Cluster whose password the pgAdmin Pod holds
+// and offers: it is a credential source, whatever spec.credentials says and
+// even when every other Cluster is of another namespace.
+func testPgAdminConfigDatabase(t *testing.T, root client.Client, as func(string, ...string) client.Client) {
+	create := func(t *testing.T, c client.Client, u *unstructured.Unstructured) error {
+		t.Helper()
+		t.Cleanup(func() { _ = root.Delete(context.Background(), u) })
+		return c.Create(t.Context(), u)
+	}
+	none := "  credentials: {application: false, databaseRoles: false}\n"
+	settings := "  configDatabase: {clusterRef: {name: orders}, database: pgadmin_reporting}\n"
+	t.Run("without get on the namespace's Secrets it is refused", func(t *testing.T) {
+		credentialsRefused(t, create(t, as("mallory"), pgadminOffering(t, "cd-refs", "  clusterRefs: [{name: orders}]\n", none+settings)))
+		credentialsRefused(t, create(t, as("mallory"), pgadminOffering(t, "cd-cross", "  crossNamespaceClusterRefs: [{namespace: team-b, name: orders}]\n", settings)))
+		credentialsRefused(t, create(t, as("reader"), pgadminOffering(t, "cd-reader", "  clusterRefs: [{name: orders}]\n", none+settings)))
+	})
+	t.Run("a reader of the namespace's Secrets may", func(t *testing.T) {
+		if err := create(t, as("nsreader"), pgadminOffering(t, "cd-ns", "  clusterRefs: [{name: orders}]\n", none+settings)); err != nil {
+			t.Fatalf("error = %v, want admitted", err)
+		}
+	})
+	t.Run("on update, an unrelated edit passes and a wider audience is checked", func(t *testing.T) {
+		u := pgadminOffering(t, "cd-update", "  clusterRefs: [{name: orders}]\n", none+settings)
+		if err := create(t, root, u); err != nil {
+			t.Fatal(err)
+		}
+		if err := root.Get(t.Context(), client.ObjectKeyFromObject(u), u); err != nil {
+			t.Fatal(err)
+		}
+		edit := u.DeepCopy()
+		if err := unstructured.SetNestedStringSlice(edit.Object, []string{"rw", "ro"}, "spec", "endpoints"); err != nil {
+			t.Fatal(err)
+		}
+		if err := as("mallory").Update(t.Context(), edit); err != nil {
+			t.Fatalf("unrelated edit: %v, want admitted", err)
+		}
+		if err := root.Get(t.Context(), client.ObjectKeyFromObject(u), u); err != nil {
+			t.Fatal(err)
+		}
+		if err := unstructured.SetNestedStringSlice(u.Object, []string{"mallory@evil.example"}, "spec", "admins"); err != nil {
+			t.Fatal(err)
+		}
+		credentialsRefused(t, as("mallory").Update(t.Context(), u))
+	})
+}
+
+// testPgAdminSessionMaxAge: the OpenShift proxy reviews access at sign-in
+// only, so its session lifetime bounds how long a revoked person keeps
+// pgAdmin. Raising it (above the 1h default when unset) is checked like
+// widening the audience; lowering it is free.
+func testPgAdminSessionMaxAge(t *testing.T, root client.Client, as func(string, ...string) client.Client) {
+	seed := func(t *testing.T, name, proxy string) *unstructured.Unstructured {
+		t.Helper()
+		u := object(t, `apiVersion: pgtoolbox.fyannk.dev/v1alpha1
+kind: PgAdmin
+metadata: {name: `+name+`, namespace: default}
+spec:
+  clusterRefs: [{name: orders}]
+  auth:
+    openshiftOAuthProxy: `+proxy+`
+`)
+		t.Cleanup(func() { _ = root.Delete(context.Background(), u) })
+		if err := root.Create(t.Context(), u); err != nil {
+			t.Fatal(err)
+		}
+		if err := root.Get(t.Context(), client.ObjectKeyFromObject(u), u); err != nil {
+			t.Fatal(err)
+		}
+		return u
+	}
+	set := func(t *testing.T, u *unstructured.Unstructured, value string) *unstructured.Unstructured {
+		t.Helper()
+		changed := u.DeepCopy()
+		if err := unstructured.SetNestedField(changed.Object, value, "spec", "auth", "openshiftOAuthProxy", "sessionMaxAge"); err != nil {
+			t.Fatal(err)
+		}
+		return changed
+	}
+	for _, tc := range []struct {
+		name, proxy, value string
+		ok                 bool
+	}{
+		{"unset to 12h", "{}", "12h", false},
+		{"unset to 61m", "{}", "61m", false},
+		{"unset to 1h", "{}", "1h", true},
+		{"unset to 30m", "{}", "30m", true},
+		{"30m to 45m", "{sessionMaxAge: 30m}", "45m", false},
+		{"8h to 2h", "{sessionMaxAge: 8h}", "2h", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			u := seed(t, "sm-"+strings.ReplaceAll(strings.ReplaceAll(tc.name, " ", "-"), "unset", "u"), tc.proxy)
+			err := as("mallory").Update(t.Context(), set(t, u, tc.value))
+			if tc.ok {
+				if err != nil {
+					t.Fatalf("error = %v, want admitted", err)
+				}
+				return
+			}
+			credentialsRefused(t, err)
+			if err := as("nsreader").Update(t.Context(), set(t, u, tc.value)); err != nil {
+				t.Fatalf("a reader of the namespace's Secrets: %v, want admitted", err)
+			}
+		})
+	}
+	t.Run("a PgAdmin offering no credentials is unaffected", func(t *testing.T) {
+		u := object(t, `apiVersion: pgtoolbox.fyannk.dev/v1alpha1
+kind: PgAdmin
+metadata: {name: sm-none, namespace: default}
+spec:
+  clusterRefs: [{name: orders}]
+  credentials: {application: false, databaseRoles: false}
+  auth:
+    openshiftOAuthProxy: {}
+`)
+		t.Cleanup(func() { _ = root.Delete(context.Background(), u) })
+		if err := root.Create(t.Context(), u); err != nil {
+			t.Fatal(err)
+		}
+		if err := root.Get(t.Context(), client.ObjectKeyFromObject(u), u); err != nil {
+			t.Fatal(err)
+		}
+		if err := as("mallory").Update(t.Context(), set(t, u, "12h")); err != nil {
+			t.Fatalf("error = %v, want admitted", err)
+		}
+	})
+}
+
+// exposureRefused is a Forbidden that names the exposure annotation rule.
+func exposureRefused(t *testing.T, err error) {
+	t.Helper()
+	if !apierrors.IsForbidden(err) || !strings.Contains(err.Error(), "an exposure annotation that an ingress controller reads as configuration") {
+		t.Fatalf("error = %v, want a Forbidden naming the exposure annotation rule", err)
+	}
+}
+
+// testExposureAnnotations: the operator writes spec.exposure.annotations,
+// and the annotations of metadataPropagation rules for All or Exposure, on
+// the Ingress, Route or HTTPRoute. Those an ingress controller reads as
+// configuration (snippets, external authentication, mirroring, middlewares)
+// take create on that kind: mallory may not create Ingresses, exposer may
+// create Ingresses only.
+func testExposureAnnotations(t *testing.T, root client.Client, as func(string, ...string) client.Client) {
+	create := func(t *testing.T, c client.Client, u *unstructured.Unstructured) error {
+		t.Helper()
+		t.Cleanup(func() { _ = root.Delete(context.Background(), u) })
+		return c.Create(t.Context(), u)
+	}
+	pgadmin := func(name, extra string) *unstructured.Unstructured {
+		return pgadminOffering(t, name, "  clusterRefs: [{name: orders}]\n", "  credentials: {application: false, databaseRoles: false}\n"+extra)
+	}
+	ingress := func(annotations string) string {
+		return "  exposure:\n    type: ingress\n    hostname: pgadmin.example.com\n    annotations: " + annotations + "\n"
+	}
+	for _, key := range []string{
+		"nginx.ingress.kubernetes.io/configuration-snippet",
+		"nginx.ingress.kubernetes.io/server-snippet",
+		"nginx.org/location-snippets",
+		"haproxy.org/backend-config-snippet",
+		"nginx.ingress.kubernetes.io/auth-url",
+		"nginx.ingress.kubernetes.io/auth-tls-secret",
+		"nginx.ingress.kubernetes.io/enable-global-auth",
+		"nginx.ingress.kubernetes.io/satisfy",
+		"nginx.ingress.kubernetes.io/mirror-target",
+		"nginx.ingress.kubernetes.io/proxy-ssl-secret",
+		"haproxy-ingress.github.io/config-backend",
+		"haproxy-ingress.github.io/auth-url",
+		"traefik.ingress.kubernetes.io/router.middlewares",
+		"konghq.com/plugins",
+	} {
+		t.Run(key, func(t *testing.T) {
+			name := "ea-" + strings.NewReplacer(".", "-", "/", "-").Replace(key)
+			if len(name) > 40 {
+				name = strings.TrimRight(name[:40], "-")
+			}
+			exposureRefused(t, create(t, as("mallory"), pgadmin(name, ingress("{"+key+": x}"))))
+		})
+	}
+	t.Run("other annotations pass", func(t *testing.T) {
+		if err := create(t, as("mallory"), pgadmin("ea-benign", ingress("{nginx.ingress.kubernetes.io/proxy-body-size: 8m, nginx.ingress.kubernetes.io/affinity: cookie}"))); err != nil {
+			t.Fatalf("error = %v, want admitted", err)
+		}
+	})
+	t.Run("a user who may create Ingresses may set them", func(t *testing.T) {
+		if err := create(t, as("exposer"), pgadmin("ea-exposer", ingress("{nginx.ingress.kubernetes.io/auth-url: https://auth.example.com}"))); err != nil {
+			t.Fatalf("error = %v, want admitted", err)
+		}
+		// Ingresses are not Routes.
+		exposureRefused(t, create(t, as("exposer"), pgadmin("ea-exposer-route",
+			"  exposure:\n    type: route\n    hostname: pgadmin.example.com\n    annotations: {haproxy.org/auth-realm: x}\n")))
+	})
+	t.Run("metadataPropagation for All or Exposure is checked, for other targets not", func(t *testing.T) {
+		expose := "  exposure: {type: ingress, hostname: pgadmin.example.com}\n"
+		rule := func(target string) string {
+			return expose + "  metadataPropagation:\n  - target: " + target + "\n    annotations: {nginx.ingress.kubernetes.io/configuration-snippet: x}\n"
+		}
+		exposureRefused(t, create(t, as("mallory"), pgadmin("ea-mp-exposure", rule("Exposure"))))
+		exposureRefused(t, create(t, as("mallory"), pgadmin("ea-mp-all", rule("All"))))
+		if err := create(t, as("mallory"), pgadmin("ea-mp-pod", rule("Pod"))); err != nil {
+			t.Fatalf("target Pod: %v, want admitted", err)
+		}
+	})
+	t.Run("a PgToolBoxConsole is checked too", func(t *testing.T) {
+		exposureRefused(t, create(t, as("mallory"), consoleWith(t, "ea-console", ingress("{nginx.ingress.kubernetes.io/server-snippet: x}"))))
+	})
+	t.Run("a clusterIP object renders no exposure object; exposing it later is checked", func(t *testing.T) {
+		u := pgadmin("ea-later", "  exposure:\n    annotations: {nginx.ingress.kubernetes.io/configuration-snippet: x}\n")
+		if err := create(t, as("mallory"), u); err != nil {
+			t.Fatalf("clusterIP: %v, want admitted", err)
+		}
+		if err := root.Get(t.Context(), client.ObjectKeyFromObject(u), u); err != nil {
+			t.Fatal(err)
+		}
+		if err := unstructured.SetNestedField(u.Object, "ingress", "spec", "exposure", "type"); err != nil {
+			t.Fatal(err)
+		}
+		if err := unstructured.SetNestedField(u.Object, "pgadmin.example.com", "spec", "exposure", "hostname"); err != nil {
+			t.Fatal(err)
+		}
+		exposureRefused(t, as("mallory").Update(t.Context(), u))
+	})
+	t.Run("on update a kept annotation passes and a changed one is checked", func(t *testing.T) {
+		u := pgadmin("ea-update", ingress("{nginx.ingress.kubernetes.io/auth-url: https://auth.example.com}"))
+		if err := create(t, root, u); err != nil {
+			t.Fatal(err)
+		}
+		if err := root.Get(t.Context(), client.ObjectKeyFromObject(u), u); err != nil {
+			t.Fatal(err)
+		}
+		edit := u.DeepCopy()
+		if err := unstructured.SetNestedStringSlice(edit.Object, []string{"rw", "ro"}, "spec", "endpoints"); err != nil {
+			t.Fatal(err)
+		}
+		if err := as("mallory").Update(t.Context(), edit); err != nil {
+			t.Fatalf("unrelated edit: %v, want admitted", err)
+		}
+		if err := root.Get(t.Context(), client.ObjectKeyFromObject(u), u); err != nil {
+			t.Fatal(err)
+		}
+		if err := unstructured.SetNestedField(u.Object, "https://auth.attacker.example", "spec", "exposure", "annotations", "nginx.ingress.kubernetes.io/auth-url"); err != nil {
+			t.Fatal(err)
+		}
+		exposureRefused(t, as("mallory").Update(t.Context(), u))
+	})
+	t.Run("the largest annotation set stays within the CEL cost budget", func(t *testing.T) {
+		annotations := func(rule int) map[string]any {
+			out := map[string]any{}
+			for i := range 32 {
+				out[fmt.Sprintf("%s.example/%02d-%02d-%s-snippet", strings.Repeat("d", 240), rule, i, strings.Repeat("k", 40))] = strings.Repeat("v", 200)
+			}
+			return out
+		}
+		rules := make([]any, 0, 8)
+		for r := range 8 {
+			rules = append(rules, map[string]any{"target": "All", "annotations": annotations(r)})
+		}
+		u := pgadmin("ea-cost", "  exposure: {type: ingress, hostname: pgadmin.example.com}\n")
+		if err := unstructured.SetNestedSlice(u.Object, rules, "spec", "metadataPropagation"); err != nil {
+			t.Fatal(err)
+		}
+		if err := unstructured.SetNestedField(u.Object, annotations(9), "spec", "exposure", "annotations"); err != nil {
+			t.Fatal(err)
+		}
+		if err := create(t, as("exposer"), u); err != nil {
+			t.Fatalf("create: %v, want admitted", err)
+		}
+		if err := root.Get(t.Context(), client.ObjectKeyFromObject(u), u); err != nil {
+			t.Fatal(err)
+		}
+		// Everything kept: every annotation is compared with every old rule.
+		if err := unstructured.SetNestedStringSlice(u.Object, []string{"rw", "ro"}, "spec", "endpoints"); err != nil {
+			t.Fatal(err)
+		}
+		if err := as("mallory").Update(t.Context(), u); err != nil {
+			t.Fatalf("update: %v, want admitted", err)
 		}
 	})
 }

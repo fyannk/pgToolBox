@@ -603,27 +603,29 @@ var pgadminAudience = []string{
 	"auth.oauth2.usernameClaim",
 	"auth.oauth2.scopes",
 	"auth.openshiftOAuthProxy.image",
+	// Raising it keeps a revoked person in pgAdmin longer; the check lets
+	// it go down only.
+	"auth.openshiftOAuthProxy.sessionMaxAge",
 	"admins",
 }
 
 // pgadminNotAudience: every other field of a PgAdmin, each with why it does
 // not decide who reaches the credentials, or which rule does.
 var pgadminNotAudience = map[string]string{
-	"auth.oauth2.displayName":                "the login button's label",
-	"auth.openshiftOAuthProxy.sessionMaxAge": "how long a session lasts (5m to 12h by CEL), not who gets one: the proxy's access review still decides at sign-in",
-	"clusterRefs":                            "what is offered: the credentials rule's sources",
-	"clusterSelector":                        "what is offered: the credentials rule's sources",
-	"credentials":                            "what is offered: the credentials rule's kinds",
-	"crossNamespaceClusterRefs":              "the PgAdminAccess grant of the target namespace decides",
-	"endpoints":                              "which Services of the same Clusters",
-	"image":                                  "the imageOverride rule",
-	"storage":                                "pgAdmin's volume",
-	"configDatabase":                         "where pgAdmin keeps its own configuration",
-	"replicas":                               "how many Pods",
-	"exposure":                               "how pgAdmin is reached; spec.auth still decides who signs in",
-	"networkPolicy":                          "which addresses reach the port; spec.auth still decides who signs in",
-	"resources":                              "compute resources",
-	"metadataPropagation":                    "labels and annotations",
+	"auth.oauth2.displayName":   "the login button's label",
+	"clusterRefs":               "what is offered: the credentials rule's sources",
+	"clusterSelector":           "what is offered: the credentials rule's sources",
+	"credentials":               "what is offered: the credentials rule's kinds",
+	"crossNamespaceClusterRefs": "the PgAdminAccess grant of the target namespace decides",
+	"endpoints":                 "which Services of the same Clusters",
+	"image":                     "the imageOverride rule",
+	"storage":                   "pgAdmin's volume",
+	"configDatabase":            "a credential source of the credentials rule (pgadminClusterFields), immutable by CEL",
+	"replicas":                  "how many Pods",
+	"exposure":                  "how pgAdmin is reached; spec.auth still decides who signs in",
+	"networkPolicy":             "which addresses reach the port; spec.auth still decides who signs in",
+	"resources":                 "compute resources",
+	"metadataPropagation":       "labels and annotations",
 }
 
 // TestPgAdminAudienceFieldsClassified fails when a field of a PgAdmin is
@@ -674,6 +676,68 @@ func TestPgAdminAudienceFieldsClassified(t *testing.T) {
 	for p := range pgadminNotAudience {
 		if !slices.ContainsFunc(fieldsBeside(t, spec, ""), func(l string) bool { return underAny(l, []string{p}) }) {
 			t.Errorf("pgadminNotAudience lists spec.%s, which the API does not declare", p)
+		}
+	}
+}
+
+// pgadminClusterFields: every field of a PgAdmin that names a Cluster, and
+// what the credentials rule does with it. A Cluster of the namespace is a
+// credential source: the operator hands pgAdmin a login of it (the
+// credentials offered, or the settings database's own role), so the rule
+// reads the field; one of another namespace is the PgAdminAccess grant's.
+var pgadminClusterFields = map[string]string{
+	"clusterRefs":               "source",
+	"clusterSelector":           "source",
+	"configDatabase.clusterRef": "source",
+	"crossNamespaceClusterRefs": "grant",
+}
+
+// TestPgAdminClusterFieldsAreCredentialSources fails when a field of a
+// PgAdmin that names a Cluster is not classified, or is a source the
+// credentials rule (its validation and the credentialSources helper) does
+// not read: a new field through which the operator acts on a Cluster of the
+// namespace cannot slip past the rule, as configDatabase once did.
+func TestPgAdminClusterFieldsAreCredentialSources(t *testing.T) {
+	tpl, err := os.ReadFile(filepath.Join("..", "..", "..", "charts", "pgtoolbox", "templates", "_admissionpolicy.tpl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, sources, ok := strings.Cut(string(tpl), `{{- define "pgtoolbox.admission.credentialSources" -}}`)
+	if !ok {
+		t.Fatal("no pgtoolbox.admission.credentialSources helper")
+	}
+	sources, _, _ = strings.Cut(sources, "{{- end }}")
+	policy, err := os.ReadFile(filepath.Join("..", "..", "..", "charts", "pgtoolbox", "templates", "operator", "admissionpolicy.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, _, ok := strings.Cut(string(policy), "offers the credentials of Clusters of its namespace (spec.credentials)")
+	if !ok {
+		t.Fatal("no credentials validation in the policy")
+	}
+	validation := before[strings.LastIndex(before, "- expression:"):]
+	rule := sources + validation
+
+	spec := reflect.TypeFor[pgtoolboxv1alpha1.PgAdminSpec]()
+	for _, leaf := range fieldsBeside(t, spec, "") {
+		if !strings.Contains(strings.ToLower(leaf), "cluster") {
+			continue
+		}
+		if !underAny(leaf, slices.Collect(maps.Keys(pgadminClusterFields))) {
+			t.Errorf("spec.%s names a Cluster: classify it in pgadminClusterFields (a credential source of the credentials rule, or a grant's)", leaf)
+		}
+	}
+	for path, kind := range pgadminClusterFields {
+		if !slices.ContainsFunc(fieldsBeside(t, spec, ""), func(l string) bool { return underAny(l, []string{path}) }) {
+			t.Errorf("pgadminClusterFields lists spec.%s, which the API does not declare", path)
+		}
+		top, _, _ := strings.Cut(path, ".")
+		reads := strings.Contains(rule, ".spec."+top)
+		switch {
+		case kind == "source" && !reads:
+			t.Errorf("the credentials rule does not read spec.%s, a credential source", path)
+		case kind == "grant" && reads:
+			t.Errorf("the credentials rule reads spec.%s, which the PgAdminAccess grant decides", path)
 		}
 	}
 }

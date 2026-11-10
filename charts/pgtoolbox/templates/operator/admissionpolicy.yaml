@@ -36,10 +36,20 @@ default, the superuser on request). Their Secrets are named by the Cluster,
 not by the PgAdmin, so the policy cannot name them: creating a PgAdmin that
 offers credentials of Clusters of its namespace, or widening what it offers
 (a credential kind, a Cluster, the selector), requires `get` on the Secrets of
-the namespace. So does changing who may sign in to such a PgAdmin (spec.auth
-but its display name, spec.admins): widening the audience hands the same
+the namespace. So does spec.configDatabase (the operator creates a login role
+on that Cluster and hands its password to the pgAdmin Pod, which offers it),
+and changing who may sign in to such a PgAdmin (spec.auth but its display
+name, spec.admins) or raising the OpenShift proxy's sessionMaxAge: widening
+the audience, or how long a revoked person keeps a session, hands the same
 credentials to more people. Cross-namespace Clusters are the PgAdminAccess
 grant's decision.
+
+Sixth rule: spec.exposure.annotations and metadataPropagation rules for All
+or Exposure land on the Ingress, Route or HTTPRoute the operator writes. The
+annotations an ingress controller reads as configuration (snippets, external
+authentication, mirroring, middlewares; pgtoolbox.admission.exposureAnnotationDenied)
+require create on that kind in the namespace: the operator must not write for
+an editor what the editor could not write.
 
 Fifth rule: spec.prometheus.projectedToken sends the console ServiceAccount's
 own token to spec.prometheus.url. Setting it, or changing where it goes (URL,
@@ -120,6 +130,15 @@ spec:
         oldObject == null || request.resource.resource != 'pgadmins' ? [] : (
         {{- include "pgtoolbox.admission.credentialSources" "oldObject" | nindent 8 }}
         )
+    - name: exposureType
+      expression: >-
+        request.resource.resource == 'evidenceagents' || !has(object.spec.exposure) || !has(object.spec.exposure.type) ? 'clusterIP' : string(object.spec.exposure.type)
+    - name: oldExposureType
+      expression: >-
+        oldObject == null ? '' : request.resource.resource == 'evidenceagents' || !has(oldObject.spec.exposure) || !has(oldObject.spec.exposure.type) ? 'clusterIP' : string(oldObject.spec.exposure.type)
+    - name: exposureAnnotationsKept
+      expression: >-
+        {{- include "pgtoolbox.admission.exposureAnnotationsKept" . | nindent 8 }}
   validations:
     - expression: >-
         request.resource.resource == 'pgtoolboxconsoles' ||
@@ -164,15 +183,25 @@ spec:
       reason: Forbidden
     - expression: >-
         request.resource.resource != 'pgadmins' ||
-        variables.credentialKinds.size() == 0 ||
-        variables.credentialSources.size() == 0 ||
+        ((variables.credentialKinds.size() == 0 || variables.credentialSources.size() == 0) && !has(object.spec.configDatabase)) ||
         (oldObject != null &&
         variables.credentialKinds.all(k, k in variables.oldCredentialKinds) &&
         variables.credentialSources.all(s, s in variables.oldCredentialSources) &&
         (!has(object.spec.clusterSelector) || (has(oldObject.spec.clusterSelector) && object.spec.clusterSelector == oldObject.spec.clusterSelector)) &&
+        (!has(object.spec.configDatabase) || (has(oldObject.spec.configDatabase) && object.spec.configDatabase == oldObject.spec.configDatabase)) &&
         variables.pgadminAudienceKept) ||
         authorizer.group('').resource('secrets').namespace(object.metadata.namespace).check('get').allowed()
-      message: a PgAdmin that offers the credentials of Clusters of its namespace (spec.credentials) requires get on the Secrets of the namespace, since whoever opens pgAdmin holds them; adding a credential kind or a Cluster, or changing who may sign in (spec.auth, spec.admins), is checked again
+      message: a PgAdmin that offers the credentials of Clusters of its namespace (spec.credentials) or keeps its settings on one (spec.configDatabase, whose login role pgAdmin holds) requires get on the Secrets of the namespace, since whoever opens pgAdmin holds them; adding a credential kind or a Cluster, changing who may sign in (spec.auth, spec.admins) or raising the OpenShift proxy's sessionMaxAge is checked again
+      reason: Forbidden
+    # An ingress controller reads some annotations as configuration
+    # (snippets, external authentication, mirroring, middlewares): the
+    # operator would write them on the Ingress, Route or HTTPRoute for an
+    # editor who may not create one. Adding or changing one takes create on
+    # that kind in the namespace.
+    - expression: >-
+        variables.exposureAnnotationsKept ||
+        authorizer.group(variables.exposureType == 'route' ? 'route.openshift.io' : variables.exposureType == 'gateway' ? 'gateway.networking.k8s.io' : 'networking.k8s.io').resource(variables.exposureType == 'route' ? 'routes' : variables.exposureType == 'gateway' ? 'httproutes' : 'ingresses').namespace(object.metadata.namespace).check('create').allowed()
+      message: an exposure annotation that an ingress controller reads as configuration (a snippet, external or basic authentication, mirroring, a middleware or plugin; see the security documentation) requires create on the exposure kind (ingresses, routes or httproutes) in the namespace; adding or changing one, or changing the exposure type, is checked again
       reason: Forbidden
 ---
 apiVersion: admissionregistration.k8s.io/v1

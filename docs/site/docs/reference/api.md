@@ -773,7 +773,7 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `clusterRef` _[LocalObjectReference](#localobjectreference)_ | The Cluster, in this namespace. |  |  |
-| `database` _string_ | The database, and the role that owns it. Defaults to<br />pgadmin_&lt;PgAdmin name, dashes as underscores>. |  | MaxLength: 63 <br />Pattern: `^[a-z_][a-z0-9_]*$` <br />Optional: \{\} <br /> |
+| `database` _string_ | The database, and the role that owns it. Defaults to<br />pgadmin_&lt;PgAdmin name, dashes as underscores>; a name given here<br />starts with pgadmin_ too. CloudNativePG adopts a role of that name<br />that already exists in PostgreSQL and resets its password and<br />memberships: the prefix keeps the PgAdmin off the roles a DBA or an<br />application created. |  | MaxLength: 63 <br />Pattern: `^pgadmin_[a-z0-9_]+$` <br />Optional: \{\} <br /> |
 
 
 #### PgAdminCredentialsSpec

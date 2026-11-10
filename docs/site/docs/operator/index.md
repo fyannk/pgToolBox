@@ -154,17 +154,22 @@ decision, never the product's.
   metrics port.
 - `operator.admissionPolicy.enabled` (default `true`; kustomize opts in with
   `config/components/admission`, OLM cannot ship it):
-  a `ValidatingAdmissionPolicy` (CEL, no webhook). Four rules: only `imageOverride.allowedUsers`
+  a `ValidatingAdmissionPolicy` (CEL, no webhook). Its rules: only `imageOverride.allowedUsers`
   and `allowedGroups` (default group `system:masters`) may set `spec.image` on a
   `PgAdmin` or `EvidenceAgent`, everyone else getting the operator's default
   image; and only `workloadIdentity.allowedUsers` and `allowedGroups` (same
   default) may add or change `spec.workloadIdentity` on an `EvidenceAgent`, which
   lends the agent a cloud role; a third, the Secret rule: creating or editing a
   `PgToolBoxConsole`, `PgAdmin` or `EvidenceAgent` requires `get` on every Secret it
-  references, again when the place a kept Secret is sent changes; and a fourth: a
-  `PgAdmin` that offers the credentials of Clusters of its namespace requires `get`
-  on the namespace's Secrets (see
-  [Security](../security.md#secret-references-need-get)).
+  references, again when the place a kept Secret is sent changes; a fourth: a
+  `PgAdmin` that offers the credentials of Clusters of its namespace, or keeps its
+  settings on one (`configDatabase`), requires `get` on the namespace's Secrets,
+  again when it widens who may sign in or raises the proxy's `sessionMaxAge` (see
+  [Security](../security.md#secret-references-need-get)); a fifth: a projected
+  Prometheus token takes `create serviceaccounts/token`; and a sixth: an exposure
+  annotation an ingress controller reads as configuration (snippets, external
+  authentication, middlewares) requires `create` on the exposure kind (see
+  [Security](../security.md#exposure-annotations-that-configure-the-ingress-controller)).
   `validationActions` selects `Deny`, `Warn` and/or `Audit`; `Deny` alone enforces.
   See [images](images.md) for why.
 
