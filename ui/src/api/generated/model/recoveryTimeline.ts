@@ -19,6 +19,9 @@ export interface RecoveryTimeline {
   basis: RecoveryTimelineBasis;
   complete: boolean;
   earliest?: string;
+  /** The end of the newest covered span once every uncertain edge is drawn: the newest instant a restore check answers covered. Absent when no span is covered. */
+  lastSafeTarget?: string;
+  /** When the newest contiguous WAL segment reached the repository (evidence basis), or the reported window's end: a receipt time, not a safe restore target (see lastSafeTarget). */
   latest?: string;
   /**
      * Base backups on the bar: completed, failed or incomplete.

@@ -18,11 +18,13 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/events"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
@@ -72,5 +74,19 @@ func TestPublishAfterTheLoopTimedOut(t *testing.T) {
 	}
 	if ready := meta.FindStatusCondition(written.Status.Conditions, pgtoolboxv1alpha1.ConditionReady); ready == nil || ready.Status != metav1.ConditionFalse {
 		t.Fatalf("stored Ready = %+v, want False after a timed-out loop", ready)
+	}
+}
+
+// TestResultFor: a failing reconcile returns its error alone, never a
+// RequeueAfter beside it (controller-runtime would warn on every failure
+// and ignore the result anyway); a successful one keeps its look again.
+func TestResultFor(t *testing.T) {
+	t.Parallel()
+	later := ctrl.Result{RequeueAfter: 5 * time.Minute}
+	if result, err := resultFor(later, errors.New("boom")); err == nil || result != (ctrl.Result{}) {
+		t.Errorf("with an error: %+v, %v; want the zero result and the error", result, err)
+	}
+	if result, err := resultFor(later, nil); err != nil || result != later {
+		t.Errorf("without an error: %+v, %v; want %+v", result, err, later)
 	}
 }

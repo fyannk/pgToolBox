@@ -434,6 +434,9 @@ func applyPGBackRestConstraints(owner, field string, schema jsonSchema) {
 		replaceSchema(schema, jsonSchema{"type": "string", "enum": []string{evidencev1alpha1.PGBackRestFull, evidencev1alpha1.PGBackRestDifferential, evidencev1alpha1.PGBackRestIncremental}})
 	case strings.HasSuffix(field, "WAL") || field == "ArchiveStart" || field == "ArchiveStop":
 		setText(schema, 24, walNamePattern)
+	case owner == "PGBackRestRecoveryWindow" && field == "EndLSN":
+		setText(schema, 17, lsnPattern)
+		schema["description"] = "Exclusive upper bound: the first LSN past the end of end_wal, which the archive does not hold. Not a restore target (recovery_target_lsn) and not the last commit; replay ends at or before it."
 	case strings.HasSuffix(field, "LSN"):
 		setText(schema, 17, lsnPattern)
 	case field == "SystemID":

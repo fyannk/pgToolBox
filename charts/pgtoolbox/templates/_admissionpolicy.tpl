@@ -63,9 +63,13 @@ request.resource.resource == 'pgtoolboxconsoles' && has({{ $o }}.spec.prometheus
   string({{ $o }}.spec.prometheus.url) + ' ' + (has({{ $o }}.spec.prometheus.caConfigMapRef) ? string({{ $o }}.spec.prometheus.caConfigMapRef.name) : '') + ' ' + (has({{ $o }}.spec.prometheus.tokenAudience) ? string({{ $o }}.spec.prometheus.tokenAudience) : '') : ''
 {{- end }}
 
-{{- /* Whether an UPDATE of a PgAdmin leaves who may sign in, and who becomes
-pgAdmin administrator, as it was: every field of spec.auth but the cosmetic
-auth.oauth2.displayName, and spec.admins. TestPgAdminAudienceFieldsClassified
+{{- /* Whether an UPDATE of a PgAdmin leaves who may sign in, who becomes
+pgAdmin administrator, and how long a revoked person keeps a session, as it
+was: every field of spec.auth but the cosmetic auth.oauth2.displayName, and
+spec.admins. The OpenShift proxy's sessionMaxAge (1h when unset) may only go
+down: a longer session keeps a person whose access was revoked in pgAdmin
+longer, so raising it is checked like widening the audience.
+TestPgAdminAudienceFieldsClassified
 in internal/operator/admissionpolicy fails when a field of spec.auth is
 neither compared here nor listed as cosmetic. */ -}}
 {{- define "pgtoolbox.admission.pgadminAudienceKept" -}}
@@ -81,6 +85,53 @@ has(object.spec.auth.openshiftOAuthProxy) == has(oldObject.spec.auth.openshiftOA
   (has(object.spec.auth.oauth2.scopes) ? object.spec.auth.oauth2.scopes : []) == (has(oldObject.spec.auth.oauth2.scopes) ? oldObject.spec.auth.oauth2.scopes : []))) &&
 (!has(object.spec.auth.openshiftOAuthProxy) || (
   has(object.spec.auth.openshiftOAuthProxy.image) == has(oldObject.spec.auth.openshiftOAuthProxy.image) &&
-  (!has(object.spec.auth.openshiftOAuthProxy.image) || object.spec.auth.openshiftOAuthProxy.image == oldObject.spec.auth.openshiftOAuthProxy.image))) &&
+  (!has(object.spec.auth.openshiftOAuthProxy.image) || object.spec.auth.openshiftOAuthProxy.image == oldObject.spec.auth.openshiftOAuthProxy.image) &&
+  duration(has(object.spec.auth.openshiftOAuthProxy.sessionMaxAge) ? string(object.spec.auth.openshiftOAuthProxy.sessionMaxAge) : '1h') <= duration(has(oldObject.spec.auth.openshiftOAuthProxy.sessionMaxAge) ? string(oldObject.spec.auth.openshiftOAuthProxy.sessionMaxAge) : '1h'))) &&
 (has(object.spec.admins) ? object.spec.admins : []) == (has(oldObject.spec.admins) ? oldObject.spec.admins : [])
+{{- end }}
+
+{{- /* Whether the annotation key `.` (a CEL expression) is one an ingress
+controller reads as configuration that changes who reaches the workload or
+where its traffic goes: configuration snippets of any controller (keys that
+contain "snippet": ingress-nginx's configuration-, server-, auth- and
+stream-snippet, NGINX Inc's server- and location-snippets, HAProxy's
+backend- and frontend-config-snippet), ingress-nginx's external and basic
+authentication (auth-*), its global-authentication opt-out and satisfy,
+request mirroring (mirror-*) and upstream client certificate
+(proxy-ssl-secret); haproxy-ingress's raw configuration (config-*) and auth-*;
+Traefik's router middlewares; Kong's plugins. The list is documented in
+docs/site/docs/security.md; a controller's other annotations (timeouts,
+body size, affinity, rewrite) pass. */ -}}
+{{- define "pgtoolbox.admission.exposureAnnotationDenied" -}}
+({{ . }}.contains('snippet') ||
+{{ . }}.startsWith('nginx.ingress.kubernetes.io/auth-') ||
+{{ . }} == 'nginx.ingress.kubernetes.io/enable-global-auth' ||
+{{ . }} == 'nginx.ingress.kubernetes.io/satisfy' ||
+{{ . }}.startsWith('nginx.ingress.kubernetes.io/mirror-') ||
+{{ . }} == 'nginx.ingress.kubernetes.io/proxy-ssl-secret' ||
+{{ . }}.startsWith('haproxy-ingress.github.io/config-') ||
+{{ . }}.startsWith('haproxy-ingress.github.io/auth-') ||
+{{ . }}.startsWith('haproxy.org/auth-') ||
+{{ . }} == 'traefik.ingress.kubernetes.io/router.middlewares' ||
+{{ . }} == 'konghq.com/plugins')
+{{- end }}
+
+{{- /* Whether every denied annotation (pgtoolbox.admission.exposureAnnotationDenied)
+that object puts on its exposure object (spec.exposure.annotations, and the
+annotations of the metadataPropagation rules for All or Exposure) was there,
+with the same value, before, on an object exposed the same way. A
+clusterIP object renders no exposure object. */ -}}
+{{- define "pgtoolbox.admission.exposureAnnotationsKept" -}}
+variables.exposureType == 'clusterIP' || (
+(!has(object.spec.exposure.annotations) || object.spec.exposure.annotations.all(k,
+  !{{ include "pgtoolbox.admission.exposureAnnotationDenied" "k" }} ||
+  (variables.oldExposureType == variables.exposureType && has(oldObject.spec.exposure.annotations) &&
+   k in oldObject.spec.exposure.annotations && oldObject.spec.exposure.annotations[k] == object.spec.exposure.annotations[k]))) &&
+(!has(object.spec.metadataPropagation) || object.spec.metadataPropagation.all(r,
+  !(r.target == 'All' || r.target == 'Exposure') || !has(r.annotations) || r.annotations.all(k,
+    !{{ include "pgtoolbox.admission.exposureAnnotationDenied" "k" }} ||
+    (variables.oldExposureType == variables.exposureType && has(oldObject.spec.metadataPropagation) &&
+     oldObject.spec.metadataPropagation.exists(o, (o.target == 'All' || o.target == 'Exposure') && has(o.annotations) &&
+       k in o.annotations && o.annotations[k] == r.annotations[k])))))
+)
 {{- end }}

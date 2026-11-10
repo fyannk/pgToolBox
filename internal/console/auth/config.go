@@ -261,6 +261,11 @@ func LoadConfig(getenv Getenv) (Config, error) {
 			cfg.TrustedProxy.CIDRs = cidrs
 		}
 	}
+	// No proxy declared, yet published under a URL other clients reach:
+	// the peer may be a proxy (an Ingress of one's own in front of a
+	// clusterIP exposure, a load balancer that rewrites the source), so
+	// its address is not taken for a client's.
+	cfg.TrustedProxy.PeerShared = cfg.TrustedProxy.Hops == 0 && cfg.PublicURL != "" && !loopbackURL(cfg.PublicURL)
 	if err := cfg.Validate(); err != nil {
 		errs = append(errs, err)
 	}
@@ -275,13 +280,14 @@ func (c *Config) Warnings() []string {
 	case c.TrustedProxy.Hops > 0 && len(c.TrustedProxy.CIDRs) == 0:
 		out = append(out, "TRUSTED_PROXY_HOPS is set without TRUSTED_PROXY_CIDRS: X-Forwarded-For is ignored, "+
 			"because any peer that reaches the console directly could forge it. Every client behind the proxy then "+
-			"shares the proxy's address, so the per-address sign-in budgets are off and only the process-wide ones "+
-			"(40 at once, 20 a second, per path) bound sign-ins, and the audit log names the proxy; list the proxies' "+
+			"shares the proxy's address, so the per-address sign-in budgets are off and only the per-replica ones "+
+			"bound sign-ins, and the audit log names the proxy; list the proxies' "+
 			"addresses in TRUSTED_PROXY_CIDRS (0.0.0.0/0,::/0 only when a NetworkPolicy admits nothing but the proxies)")
 	case c.TrustedProxy.Hops == 0 && c.PublicURL != "" && !loopbackURL(c.PublicURL):
-		out = append(out, "TRUSTED_PROXY_HOPS is 0 with a non-loopback PUBLIC_URL: if a proxy sits in front, every "+
-			"client shares its address, and one address's sign-in budget (20 pasted tokens a minute) locks token "+
-			"sign-in for everyone; set TRUSTED_PROXY_HOPS and TRUSTED_PROXY_CIDRS to the proxies in front")
+		out = append(out, "TRUSTED_PROXY_HOPS is 0 with a non-loopback PUBLIC_URL: the direct peer may be a proxy "+
+			"the console was not told about, so its address is treated as shared: the per-address sign-in budgets "+
+			"are off, only the per-replica ones bound sign-ins, and the audit log names the peer; set "+
+			"TRUSTED_PROXY_HOPS and TRUSTED_PROXY_CIDRS to the proxies in front")
 	}
 	return out
 }
@@ -466,6 +472,7 @@ func (c *Config) Info() map[string]string {
 		"public_url":              c.PublicURL,
 		"trusted_proxy_hops":      strconv.Itoa(c.TrustedProxy.Hops),
 		"trusted_proxy_cidrs":     c.TrustedProxy.String(),
+		"trusted_proxy_shared":    strconv.FormatBool(c.TrustedProxy.SharedClientKey()),
 		"idp_timeout":             c.IdPTimeout.String(),
 		"revocation_configmap":    c.RevocationConfigMap,
 		"oidc_issuer_url":         c.OIDC.IssuerURL,

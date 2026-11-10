@@ -245,6 +245,10 @@ type ArchiveWAL struct {
 	DiagnosticsTruncated bool
 	RangesTruncated      bool
 	LatestArchiveReceipt time.Time
+	// SegmentSizeUnproven is the stanza's SegmentSizeInference.Unproven: a
+	// crossing to the next log id, or a timeline switch position, holds
+	// only at the inferred size.
+	SegmentSizeUnproven bool `json:",omitempty"`
 }
 
 type rawRange struct {
@@ -603,6 +607,22 @@ func segmentsPerLog(size int64) uint64 {
 	return (uint64(1) << 32) / uint64(size)
 }
 
+// SegmentSizeInference is what InferSegmentSize derived.
+type SegmentSizeInference struct {
+	// Size is the WAL segment size in bytes; 0 when no size fits.
+	Size   int64
+	Source SegmentSizeSource
+	// Unproven is true when a smaller size is still possible: the backups'
+	// LSNs do not rule it out, and segment names only ever rule out larger
+	// sizes. Contiguity inside a log id holds at any size, but a crossing
+	// from the last segment of a log id to segment 0 of the next is
+	// contiguous only at the inferred size: at a smaller one, the
+	// segments past the inferred rollover are missing.
+	Unproven bool
+	// Problem says why Size is 0.
+	Problem string
+}
+
 // InferSegmentSize derives the WAL segment size from the backups: for every
 // candidate size, a backup's archive-start must be the segment of its
 // lsn-start, and archive-stop the segment of lsn-stop. pgBackRest does not
@@ -610,9 +630,12 @@ func segmentsPerLog(size int64) uint64 {
 // and the archive's segment names are the only evidence the repository
 // holds. When the backups leave more than one size, the names narrow them
 // (SegmentSizeFromNames); the 16 MiB default is assumed only when it is
-// still possible and nothing decides. It returns 0 when no size fits, or
-// when the evidence leaves several and rules the default out.
-func InferSegmentSize(backups []Backup, names SegmentNames) (int64, SegmentSizeSource) {
+// still possible and nothing decides. A rollover the names show at a
+// segment number no size ends a log at (segments missing at the end of a
+// log id) falls back to the default, or to the largest possible size,
+// unproven: the crossing then reads as a gap, never as contiguous WAL. The
+// size is 0 when no size fits the backups' LSNs and the names together.
+func InferSegmentSize(backups []Backup, names SegmentNames) SegmentSizeInference {
 	var candidates []int64
 	for size := MinWALSegmentSize; size <= MaxWALSegmentSize; size <<= 1 {
 		fits := true
@@ -635,25 +658,39 @@ func InferSegmentSize(backups []Backup, names SegmentNames) (int64, SegmentSizeS
 	possible := slices.DeleteFunc(slices.Clone(candidates), func(size int64) bool {
 		return names.Seen && uint64(names.MaxSegment) >= segmentsPerLog(size)
 	})
+	chosen := func(size int64, source SegmentSizeSource) SegmentSizeInference {
+		// possible is sorted ascending: a smaller size is still possible
+		// unless size is its first.
+		return SegmentSizeInference{Size: size, Source: source, Unproven: possible[0] < size}
+	}
 	switch {
-	case len(candidates) == 1 && len(possible) == 1:
-		return candidates[0], SegmentSizeFromLSN
+	case len(possible) == 0 && len(candidates) == 0:
+		return SegmentSizeInference{Problem: "no WAL segment size agrees with every backup's LSN range"}
+	case len(possible) == 0:
+		return SegmentSizeInference{Problem: "no WAL segment size the backups' LSN ranges allow has room for the archive's highest segment number"}
+	case len(candidates) == 1:
+		return chosen(candidates[0], SegmentSizeFromLSN)
 	case len(possible) == 1:
-		return possible[0], SegmentSizeFromNames
+		return chosen(possible[0], SegmentSizeFromNames)
 	}
 	// Every rollover the names show must agree on one size; segments
 	// missing at the end of a log would make a rollover look early, so a
 	// disagreement decides nothing.
 	if len(names.Rollovers) > 0 && !slices.ContainsFunc(names.Rollovers, func(value uint32) bool { return value != names.Rollovers[0] }) {
 		if index := slices.IndexFunc(possible, func(size int64) bool { return segmentsPerLog(size) == uint64(names.Rollovers[0])+1 }); index >= 0 {
-			return possible[index], SegmentSizeFromNames
+			return chosen(possible[index], SegmentSizeFromNames)
 		}
-		return 0, ""
+		// No size ends a log at that segment: segments are missing at the
+		// end of a log id. The default, when possible, shows the crossing
+		// as a gap.
+		if !slices.Contains(possible, DefaultWALSegmentSize) {
+			return SegmentSizeInference{Problem: fmt.Sprintf("the archive's segment names roll over to the next log id after segment %02X, where no possible WAL segment size ends a log (segments are missing at the end of a log id), and rule the 16 MiB default out", names.Rollovers[0])}
+		}
 	}
 	if slices.Contains(possible, DefaultWALSegmentSize) {
-		return DefaultWALSegmentSize, SegmentSizeAssumed
+		return chosen(DefaultWALSegmentSize, SegmentSizeAssumed)
 	}
-	return 0, ""
+	return SegmentSizeInference{Problem: "the archive's segment names leave several WAL segment sizes and rule the 16 MiB default out"}
 }
 
 func walNameHoldsLSN(name, lsnText string, segmentSize int64) bool {

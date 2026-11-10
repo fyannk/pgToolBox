@@ -11,4 +11,4 @@ headlamp-check: ## Headlamp plugin: npm ci, lint, tsc, unit tests, build (headla
 
 .PHONY: headlamp-build
 headlamp-build: ## Build the Headlamp plugin into headlamp/dist (copy it into Headlamp's plugins directory).
-	cd headlamp && npm ci --no-audit --no-fund && npm run build
+	cd headlamp && npm ci --ignore-scripts --no-audit --no-fund && npm run build

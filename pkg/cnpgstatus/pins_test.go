@@ -34,8 +34,23 @@ const operatorModule = "github.com/cloudnative-pg/cloudnative-pg"
 
 // verifiedReleases maps each released minor to the tag its table was
 // read at. 1.31 is planned (upstream main) and has no release to fetch.
+// 1.30 is read at 1.30.1: the failover rehearsal follows its election
+// (fenced instances ranked last, no election when all are fenced, the
+// quorum checked again before promoting), which 1.30.0 does not have
+// (TestElectionRulesAreAbsentAt1300).
 var verifiedReleases = map[Minor]string{
-	Minor130: "1.30.0",
+	Minor130: "1.30.1",
+}
+
+// electionPins are what failover.go follows from 1.30.1 on.
+var electionPins = []string{
+	"IsFenced bool `json:\"isFenced,omitempty\"`",
+	"case list.Items[i].IsFenced && !list.Items[j].IsFenced:",
+	"if mostAdvancedInstance.IsFenced {",
+	"ErrQuorumCheckFailed = fmt.Errorf(",
+	"if cluster.Status.TargetPrimary == apiv1.PendingFailoverMarker && cluster.IsFailoverQuorumActive() {",
+	// annotations.go: an unparsable fencedInstances is no fencing.
+	"func (cluster *Cluster) IsInstanceFenced(instance string) bool {",
 }
 
 // belowFloorRelease is the newest release below the support floor
@@ -91,6 +106,7 @@ func TestTablePinsExistInVerifiedReleases(t *testing.T) {
 			"AS is_archiving", "WHERE application_name ~ $1 AND usename = $2",
 		)
 		if minor.atLeast(Minor130) {
+			literals = append(literals, electionPins...)
 			literals = append(literals, `json:"operatorCertificateFingerprint,omitempty"`, "func (r *ClusterReconciler) reconcilePrimaryLease", "type DatabaseRoleSpec struct")
 		}
 		for _, literal := range literals {
@@ -99,6 +115,17 @@ func TestTablePinsExistInVerifiedReleases(t *testing.T) {
 			}
 		}
 		t.Logf("v%s: %d literals verified against %d bytes", release, len(literals), len(corpus))
+	}
+}
+
+// TestElectionRulesAreAbsentAt1300: the rehearsal's patch gate is
+// right only if 1.30.0 really lacks the 1.30.1 election rules.
+func TestElectionRulesAreAbsentAt1300(t *testing.T) {
+	corpus := operatorSources(t, "1.30.0")
+	for _, absent := range electionPins[:5] {
+		if bytes.Contains(corpus, []byte(absent)) {
+			t.Errorf("v1.30.0 already contains %q: the rehearsal's 1.30.1 gate is wrong", absent)
+		}
 	}
 }
 

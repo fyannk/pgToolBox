@@ -773,7 +773,7 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `clusterRef` _[LocalObjectReference](#localobjectreference)_ | The Cluster, in this namespace. |  |  |
-| `database` _string_ | The database, and the role that owns it. Defaults to<br />pgadmin_&lt;PgAdmin name, dashes as underscores>. |  | MaxLength: 63 <br />Pattern: `^[a-z_][a-z0-9_]*$` <br />Optional: \{\} <br /> |
+| `database` _string_ | The database, and the role that owns it. Defaults to<br />pgadmin_&lt;PgAdmin name, dashes as underscores>; a name given here<br />starts with pgadmin_ too. CloudNativePG adopts a role of that name<br />that already exists in PostgreSQL and resets its password and<br />memberships: the prefix keeps the PgAdmin off the roles a DBA or an<br />application created. |  | MaxLength: 63 <br />Pattern: `^pgadmin_[a-z0-9_]+$` <br />Optional: \{\} <br /> |
 
 
 #### PgAdminCredentialsSpec
@@ -1276,7 +1276,7 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `enabled` _boolean_ | Whether the operator renders it. Omitted: true for route exposure,<br />and for ingress and gateway exposure when from is set. |  | Optional: \{\} <br /> |
-| `from` _[PgToolBoxConsolePolicyPeer](#pgtoolboxconsolepolicypeer) array_ | Who may reach the console port: the router, ingress controller or<br />gateway Pods. For route exposure the namespaces labelled<br />policy-group.network.openshift.io/ingress (the OpenShift routers,<br />host-network ones included) are always admitted, and from adds to<br />them. Required for ingress and gateway. Every peer listed is trusted<br />to write X-Forwarded-For unless trustedProxy.cidrs narrows it; a peer<br />that admits everyone (an empty namespaceSelector, an empty<br />podSelector alone, an ipBlock of /0) turns that trust off. The probe<br />port (health and /metrics) stays open to scrapers; it never reads the<br />header. |  | MaxItems: 16 <br />Optional: \{\} <br /> |
+| `from` _[PgToolBoxConsolePolicyPeer](#pgtoolboxconsolepolicypeer) array_ | Who may reach the console port: the router, ingress controller or<br />gateway Pods. For route exposure the namespaces labelled<br />policy-group.network.openshift.io/ingress (the OpenShift routers,<br />host-network ones included) are always admitted, and from adds to<br />them. Required for ingress and gateway. Every peer listed is trusted<br />to write X-Forwarded-For unless trustedProxy.cidrs narrows it; a peer<br />that admits (nearly) everyone (a namespaceSelector, or a podSelector<br />alone, that pins no label value; an ipBlock wider than /8 or /32 or<br />holding a whole private range) turns that trust off. The probe<br />port (health and /metrics) stays open to scrapers; it never reads the<br />header. |  | MaxItems: 16 <br />Optional: \{\} <br /> |
 
 
 #### PgToolBoxConsoleExposureSpec
@@ -1394,6 +1394,61 @@ _Appears in:_
 | `cluster` _string_ | The Cluster's name. |  | MaxLength: 253 <br /> |
 | `secret` _string_ | The server CA Secret read: status.certificates.serverCASecret, else<br />spec.certificates.serverCASecret, else &lt;cluster>-ca. |  | MaxLength: 253 <br />Optional: \{\} <br /> |
 | `reason` _[Reason](#reason)_ | Why: SecretNotFound, SecretKeyMissing (no ca.crt), InstanceCAInvalid<br />(ca.crt holds no PEM certificate) or InstanceCABundleFull. |  | MaxLength: 64 <br /> |
+
+
+#### PgToolBoxConsoleLabelRequirement
+
+
+
+PgToolBoxConsoleLabelRequirement is one matchExpressions entry.
+
+
+
+_Appears in:_
+- [PgToolBoxConsoleLabelSelector](#pgtoolboxconsolelabelselector)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `key` _string_ | The label key ([prefix/]name). |  | MaxLength: 317 <br />MinLength: 1 <br />Pattern: `^([a-z0-9]([-a-z0-9]*[a-z0-9])?([.][a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]\{0,61\}[A-Za-z0-9])?$` <br /> |
+| `operator` _[LabelSelectorOperator](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.34/#labelselectoroperator-v1-meta)_ | In, NotIn, Exists or DoesNotExist. |  | Enum: [In NotIn Exists DoesNotExist] <br /> |
+| `values` _[PgToolBoxConsoleLabelValue](#pgtoolboxconsolelabelvalue) array_ | The values, for In and NotIn. |  | MaxItems: 16 <br />MaxLength: 63 <br />Pattern: `^(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])?$` <br />Optional: \{\} <br /> |
+
+
+#### PgToolBoxConsoleLabelSelector
+
+
+
+PgToolBoxConsoleLabelSelector is a label selector, bounded and checked
+here so that the API server never refuses the NetworkPolicy rendered from
+it: label keys and values in their syntax, operators from the four the
+API knows, values only (and always) for In and NotIn.
+
+
+
+_Appears in:_
+- [PgToolBoxConsolePolicyPeer](#pgtoolboxconsolepolicypeer)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `matchLabels` _object (keys:string, values:[PgToolBoxConsoleLabelValue](#pgtoolboxconsolelabelvalue))_ | Labels the object must carry, with these values. |  | MaxProperties: 16 <br />Optional: \{\} <br /> |
+| `matchExpressions` _[PgToolBoxConsoleLabelRequirement](#pgtoolboxconsolelabelrequirement) array_ | Requirements the object's labels must meet, all of them. |  | MaxItems: 16 <br />Optional: \{\} <br /> |
+
+
+#### PgToolBoxConsoleLabelValue
+
+_Underlying type:_ _string_
+
+PgToolBoxConsoleLabelValue is a label value: at most 63 characters,
+alphanumeric at both ends, '-', '_' and '.' inside.
+
+_Validation:_
+- MaxLength: 63
+- Pattern: `^(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])?$`
+
+_Appears in:_
+- [PgToolBoxConsoleLabelRequirement](#pgtoolboxconsolelabelrequirement)
+- [PgToolBoxConsoleLabelSelector](#pgtoolboxconsolelabelselector)
+
 
 
 #### PgToolBoxConsoleLifecycleKeeper
@@ -1553,9 +1608,9 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `podSelector` _[LabelSelector](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.34/#labelselector-v1-meta)_ | Pods (of this namespace, or of the namespaces namespaceSelector<br />selects). Empty with no namespaceSelector: every Pod of this<br />namespace, which ExposureConfined reports as broad. |  | Optional: \{\} <br /> |
-| `namespaceSelector` _[LabelSelector](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.34/#labelselector-v1-meta)_ | Namespaces. Empty: every namespace, which ExposureConfined reports<br />as broad. |  | Optional: \{\} <br /> |
-| `ipBlock` _[PgToolBoxConsoleIPBlock](#pgtoolboxconsoleipblock)_ | Addresses: a CIDR, less the except CIDRs inside it. Alone in its<br />peer. A /0 is broad. |  | Optional: \{\} <br /> |
+| `podSelector` _[PgToolBoxConsoleLabelSelector](#pgtoolboxconsolelabelselector)_ | Pods (of this namespace, or of the namespaces namespaceSelector<br />selects). Pinning no label value (no matchLabels, no In) with no<br />namespaceSelector: (nearly) every Pod of this namespace, which<br />ExposureConfined reports as broad. |  | Optional: \{\} <br /> |
+| `namespaceSelector` _[PgToolBoxConsoleLabelSelector](#pgtoolboxconsolelabelselector)_ | Namespaces. Pinning no label value (no matchLabels, no In):<br />(nearly) every namespace, which ExposureConfined reports as broad. |  | Optional: \{\} <br /> |
+| `ipBlock` _[PgToolBoxConsoleIPBlock](#pgtoolboxconsoleipblock)_ | Addresses: a CIDR, less the except CIDRs inside it. Alone in its<br />peer. Wider than /8 (IPv4) or /32 (IPv6), or holding a whole private<br />range, is broad. |  | Optional: \{\} <br /> |
 
 
 #### PgToolBoxConsolePrometheusSpec
@@ -1701,7 +1756,7 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `hops` _integer_ | How many proxies append to X-Forwarded-For: 2 for a load balancer<br />that appends in front of the router. 0 ignores the header. Omitted:<br />1 when an exposure object is published, else 0. |  | Maximum: 8 <br />Minimum: 0 <br />Optional: \{\} <br /> |
-| `cidrs` _string array_ | The proxies' own addresses, as the console sees them (the router or<br />ingress controller Pods; the nodes for a host-network router). The<br />header is read only from a peer inside one. Omitted: with the<br />NetworkPolicy rendered, any peer it admits (every other Pod is<br />refused by the network); without it, none, and the header is<br />ignored: every client behind the proxy then shares its address, and<br />so one sign-in budget. |  | MaxItems: 32 <br />items:MaxLength: 49 <br />items:XValidation: \{isCIDR(self) trustedProxy.cidrs entries must be CIDRs  FieldValueInvalid  &lt;nil>\} <br />Optional: \{\} <br /> |
+| `cidrs` _string array_ | The proxies' own addresses, as the console sees them (the router or<br />ingress controller Pods; the nodes for a host-network router). The<br />header is read only from a peer inside one. Omitted: with the<br />NetworkPolicy rendered, any peer it admits (every other Pod is<br />refused by the network); without it, none, and the header is<br />ignored: every client behind the proxy then shares its address, and<br />no per-address sign-in budget applies (only the per-flow, per-token<br />and per-replica bounds). |  | MaxItems: 32 <br />items:MaxLength: 49 <br />items:XValidation: \{isCIDR(self) trustedProxy.cidrs entries must be CIDRs  FieldValueInvalid  &lt;nil>\} <br />Optional: \{\} <br /> |
 
 
 #### PropagationTarget
@@ -1820,8 +1875,9 @@ _Appears in:_
 | `InstanceCAInvalid` | ReasonInstanceCAInvalid: a Cluster's server CA Secret has a ca.crt<br />that holds no PEM certificate.<br /> |
 | `InstanceCABundleFull` | ReasonInstanceCABundleFull: the mirrored bundle reached the size a<br />ConfigMap can hold; the Clusters after it (by name) are left out.<br /> |
 | `ExposureOpen` | ReasonExposureOpen: ExposureConfined=False, the console is exposed<br />without its ingress NetworkPolicy, so any Pod can reach its port.<br /> |
-| `ExposurePeersBroad` | ReasonExposurePeersBroad: ExposureConfined=False, a networkPolicy.from<br />peer admits every namespace (an empty namespaceSelector), every Pod<br />of the console's namespace (an empty podSelector alone) or every<br />address (an ipBlock of prefix length 0): its peers are not the<br />proxies, so the console trusts none of them with X-Forwarded-For.<br /> |
+| `ExposurePeersBroad` | ReasonExposurePeersBroad: ExposureConfined=False, a networkPolicy.from<br />peer admits (nearly) every namespace (a namespaceSelector that pins<br />no label value), every Pod of the console's namespace (such a<br />podSelector alone), or the Pod network or every address (an ipBlock<br />wider than /8 or /32, holding a whole private range, or a console<br />Pod's address): its peers are not the proxies, so the console trusts<br />none of them with X-Forwarded-For.<br /> |
 | `ExposurePolicyBypassed` | ReasonExposurePolicyBypassed: ExposureConfined=False, another<br />NetworkPolicy of the namespace admits peers the exposure does not<br />list to the console port (NetworkPolicies add up), or there were too<br />many to check: the console trusts none of the peers with<br />X-Forwarded-For.<br /> |
+| `ExposurePolicyInvalid` | ReasonExposurePolicyInvalid: ConfigurationValid=False, the API<br />server refused the ingress NetworkPolicy rendered from<br />spec.exposure.networkPolicy (a selector or block the CRD could not<br />check). Looked at again every five minutes and on every spec change.<br /> |
 
 
 #### SecretKeyReference
@@ -1956,6 +2012,8 @@ by `docs/site/crd-ref-docs/cel-rules.awk`.
 - `PgToolBoxConsoleExposureSpec`: networkPolicy.enabled needs networkPolicy.from for ingress and gateway exposure: the controller's namespace is not known
 - `PgToolBoxConsolePolicyPeer`: each networkPolicy.from peer needs podSelector, namespaceSelector or ipBlock
 - `PgToolBoxConsolePolicyPeer`: a networkPolicy.from peer with ipBlock may not also have podSelector or namespaceSelector
+- `PgToolBoxConsoleLabelSelector`: matchLabels keys must be label keys ([prefix/]name, name at most 63 characters)
+- `PgToolBoxConsoleLabelRequirement`: values are required for In and NotIn and forbidden for Exists and DoesNotExist
 - `PgToolBoxConsoleIPBlock`: networkPolicy.from ipBlock.except entries must be CIDRs strictly inside ipBlock.cidr
 - `PgToolBoxConsoleIPBlock.cidr`: networkPolicy.from ipBlock.cidr must be a CIDR
 - `PgToolBoxConsoleSpec`: auth.oidc is required with auth.provider=oidc

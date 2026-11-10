@@ -59,8 +59,8 @@ func TestSharedAddressRegistrations(t *testing.T) {
 			t.Fatalf("%d registrations through the shared address refused after %d: the per-address budget was charged", refused, created)
 		}
 	}
-	// The bucket refills at 2 a second; the loop takes far less than 10 s.
-	if refused == 0 || created > registrationsBurst+20 {
+	// The bucket refills at 10 a second; the loop takes far less than 5 s.
+	if refused == 0 || created > registrationsBurst+50 {
 		t.Fatalf("a flood of %d made %d registrations, want about the process-wide burst %d", 4*registrationsBurst, created, registrationsBurst)
 	}
 }
@@ -87,6 +87,40 @@ func TestSharedAddressTokenRequests(t *testing.T) {
 	}
 	if throttledAt < 0 {
 		t.Fatalf("%d junk token requests were never throttled", 4*tokenRequestsBurst)
+	}
+}
+
+// TestJunkTokenRequestsDoNotStarveARefresh is round 5's P1-1 on the
+// token endpoint: a flood of junk refresh tokens through the shared
+// address, far past every bucket's burst, does not refuse a connected
+// client's refresh. Junk spends the bucket of tokens that do not open;
+// only a token this console sealed spends the redemption bucket. The
+// negative: junk is still throttled once its own bucket is empty.
+func TestJunkTokenRequestsDoNotStarveARefresh(t *testing.T) {
+	t.Parallel()
+	c := &clock{now: t0}
+	f := newSessions(t, c, secretA)
+	r := newReplica(t, f, memoryStore(c), c, func(o *Options) { o.TrustedProxy = auth.ProxyTrust{Hops: 1} })
+	id, tok := r.connect(t)
+	junk := url.Values{"grant_type": {"refresh_token"}, "refresh_token": {"pgc_rt_junk"}, "client_id": {id}}.Encode()
+	throttled := 0
+	for range 3 * (tokenRequestsBurst + unknownTokenRequestsBurst) {
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, console+PathToken, strings.NewReader(junk))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.RemoteAddr = proxyAddr
+		if r.do(req).Code == http.StatusTooManyRequests {
+			throttled++
+		}
+	}
+	if throttled == 0 {
+		t.Fatal("a junk flood was never throttled")
+	}
+	form := refreshForm(id, tok.Refresh)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, console+PathToken, strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.RemoteAddr = proxyAddr
+	if w := r.do(req); w.Code != http.StatusOK {
+		t.Fatalf("a connected client's refresh after the flood = %d, want 200: %s", w.Code, w.Body)
 	}
 }
 

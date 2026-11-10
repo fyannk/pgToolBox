@@ -25,6 +25,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 func prefixes(t *testing.T, cidrs ...string) []netip.Prefix {
@@ -148,7 +149,7 @@ func TestConfigWarnings(t *testing.T) {
 		want  string
 	}{
 		{name: "hops without CIDRs", trust: ProxyTrust{Hops: 1}, url: "https://c.example", want: "X-Forwarded-For is ignored"},
-		{name: "no hops behind a public URL", url: "https://c.example", want: "locks token sign-in for everyone"},
+		{name: "no hops behind a public URL", url: "https://c.example", want: "treated as shared"},
 		{name: "no hops on loopback", url: "http://localhost:8080"},
 		{name: "no hops on a loopback address", url: "http://127.0.0.1:8080"},
 		{name: "no hops and no public URL", url: ""},
@@ -238,6 +239,9 @@ func TestBearerReviewsShareTheProcessBucket(t *testing.T) {
 	env := newTestEnv(t, ProviderToken)
 	cached := NewCachedReviewer(env.rev, 0, 0)
 	env.h.identity = cached
+	// The bucket's clock stands still: at 100 a second a slow run would
+	// refill it during the spray.
+	useClock(&stepClock{now: time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)}, env.h.tokenReviews)
 	if _, err := env.h.BearerPrincipal(t.Context(), "sa-token"); err != nil {
 		t.Fatalf("a valid bearer: %v", err)
 	}

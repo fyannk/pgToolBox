@@ -290,9 +290,13 @@ type PgAdminConfigDatabaseSpec struct {
 	ClusterRef LocalObjectReference `json:"clusterRef"`
 
 	// The database, and the role that owns it. Defaults to
-	// pgadmin_<PgAdmin name, dashes as underscores>.
+	// pgadmin_<PgAdmin name, dashes as underscores>; a name given here
+	// starts with pgadmin_ too. CloudNativePG adopts a role of that name
+	// that already exists in PostgreSQL and resets its password and
+	// memberships: the prefix keeps the PgAdmin off the roles a DBA or an
+	// application created.
 	// +kubebuilder:validation:MaxLength=63
-	// +kubebuilder:validation:Pattern=`^[a-z_][a-z0-9_]*$`
+	// +kubebuilder:validation:Pattern=`^pgadmin_[a-z0-9_]+$`
 	// +optional
 	Database string `json:"database,omitempty"`
 }

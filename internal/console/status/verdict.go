@@ -21,6 +21,7 @@ import (
 
 	cnpgv1 "github.com/cloudnative-pg/api/pkg/api/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"github.com/fyannk/pgToolBox/internal/console/cache"
 	"github.com/fyannk/pgToolBox/internal/console/diag"
@@ -238,7 +239,43 @@ func primaryArchiver(g *gathered) *cnpgstatus.ArchiverLive {
 	if r == nil {
 		return nil
 	}
-	return &cnpgstatus.ArchiverLive{IsArchivingWAL: r.IsArchivingWAL, LastFailedWAL: r.LastFailedWAL, ReadyWALFiles: r.ReadyWALFiles}
+	return &cnpgstatus.ArchiverLive{
+		IsArchivingWAL: r.IsArchivingWAL, LastFailedWAL: r.LastFailedWAL, ReadyWALFiles: r.ReadyWALFiles,
+		ObservedAt: r.ObservedAt, Earlier: earlierReady(g, g.cluster.Status.CurrentPrimary, r.ObservedAt),
+		PluginMaxParallel: pluginMaxParallel(g),
+	}
+}
+
+// earlierReady are the instance's readyWalFiles samples before the
+// reading taken at observed, oldest first.
+func earlierReady(g *gathered, instance string, observed time.Time) []cnpgstatus.ReadySample {
+	var out []cnpgstatus.ReadySample
+	for _, p := range g.readyRings[instance] {
+		if !p.At.Before(observed) {
+			continue
+		}
+		s := cnpgstatus.ReadySample{At: p.At}
+		if p.Value != nil {
+			n := int(*p.Value)
+			s.Files = &n
+		}
+		out = append(out, s)
+	}
+	return out
+}
+
+// pluginMaxParallel is the barman-cloud ObjectStore's
+// spec.configuration.wal.maxParallel (0 when unset); nil when the
+// ObjectStore was not read.
+func pluginMaxParallel(g *gathered) *int {
+	if g.store == nil {
+		return nil
+	}
+	n := 0
+	if v, found, err := unstructured.NestedInt64(g.store.Object, "spec", "configuration", "wal", "maxParallel"); err == nil && found && v > 0 && v < 1<<16 {
+		n = int(v)
+	}
+	return &n
 }
 
 // primaryArchiverReading is status.currentPrimary's whole reading; nil

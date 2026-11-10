@@ -276,6 +276,10 @@ function translate(code: string, p: Params): string | undefined {
       return segments ? m.rp_segment_after_frontier_backlog({ segments }) : undefined;
     case "recovery.segment.archiveBacklog":
       return segments ? m.rp_segment_archive_backlog({ segments }) : undefined;
+    case "recovery.segment.archiveBacklogSince": {
+      const since = instant(p, "sinceAt");
+      return segments && since ? m.rp_segment_archive_backlog_since({ segments, since }) : undefined;
+    }
     case "recovery.segment.walEnd": {
       const end = instant(p, "endAt");
       return end && margin ? m.rp_segment_wal_end({ end, margin }) : undefined;

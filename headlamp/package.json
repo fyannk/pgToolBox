@@ -20,7 +20,7 @@
     "package": "headlamp-plugin package",
     "tsc": "headlamp-plugin tsc",
     "test": "CI=true headlamp-plugin test",
-    "check": "npm ci --no-audit --no-fund && npm run lint && npm run tsc && npm run test && npm run build"
+    "check": "npm ci --ignore-scripts --no-audit --no-fund && npm run lint && npm run tsc && npm run test && npm run build"
   },
   "keywords": [
     "headlamp",

@@ -54,8 +54,8 @@ RUN pnpm i18n && pnpm build
 FROM --platform=$BUILDPLATFORM node:24.22.1-bookworm-slim@sha256:be8204d4bd327363357f532187b752ff62759c31bedf98e9e18fc08c9cbd605c AS docs-site
 WORKDIR /repo/docs/site
 ENV CI=1 DO_NOT_TRACK=1
-COPY docs/site/package.json docs/site/package-lock.json ./
-RUN for i in 1 2 3 4 5; do npm ci --no-audit --no-fund && exit 0; echo "npm ci failed (attempt $i/5)" >&2; sleep $((i * 10)); done; exit 1
+COPY docs/site/package.json docs/site/package-lock.json docs/site/.npmrc ./
+RUN for i in 1 2 3 4 5; do npm ci --ignore-scripts --no-audit --no-fund && exit 0; echo "npm ci failed (attempt $i/5)" >&2; sleep $((i * 10)); done; exit 1
 COPY docs/site/ ./
 # The site reads the chart version and the tour's baselines from outside docs/site.
 COPY charts/pgtoolbox/Chart.yaml /repo/charts/pgtoolbox/Chart.yaml

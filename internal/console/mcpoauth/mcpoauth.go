@@ -150,14 +150,32 @@ const (
 	decisionsPerMinute = 10
 	decisionsBurst     = 5
 	maxLimiterKeys     = 10000
-	// The token and registration endpoints' process-wide bounds (one key):
+	// The token and registration endpoints' per-replica bounds (one key):
 	// what bounds them when the client address is shared and no
-	// per-address budget is charged (auth.BudgetKey). A burst lets every
-	// client of a team refresh at once.
-	tokenRequestsPerSecond = 20
-	tokenRequestsBurst     = 40
-	registrationsPerMinute = 120
-	registrationsBurst     = 30
+	// per-address budget is charged (auth.BudgetKey).
+	//
+	// tokenRequests is spent only by a request whose code or refresh
+	// token opens under this console's key, which no unauthenticated
+	// sender can forge: a junk flood never reaches it, so a known
+	// client's refresh is never refused for someone else's junk. A burst
+	// lets every client of a team refresh at once; it bounds the IdP
+	// refreshes, SelfSubjectReviews and grant-index writes a redemption
+	// makes. unknownTokenRequests is spent by every other request (a
+	// code or refresh token that does not open): it costs a form parse
+	// and an authenticated decryption, and the bucket bounds only the
+	// audit lines a flood writes.
+	tokenRequestsPerSecond        = 20
+	tokenRequestsBurst            = 40
+	unknownTokenRequestsPerSecond = 20
+	unknownTokenRequestsBurst     = 40
+	// Registration stores nothing (the client is sealed in its ID) and
+	// every registration is unauthenticated, so its bucket is sized to
+	// bound this replica's work and audit lines, not to ration clients:
+	// 10 a second (burst 120). A client registers once and keeps its
+	// client_id; above that rate a sender refuses new registrations on
+	// this replica, never a registered client's sign-in or refresh.
+	registrationsPerMinute = 600
+	registrationsBurst     = 120
 	processKey             = "process"
 	// userKeyPurpose keys the grant index's user hashes.
 	userKeyPurpose = "mcp-grant-user"
@@ -236,10 +254,12 @@ type Server struct {
 	audit    *auth.Auditor
 	requests *auth.RateLimiter
 	registry *auth.RateLimiter
-	// tokenRequests and registrations are the process-wide buckets.
-	tokenRequests *auth.RateLimiter
-	registrations *auth.RateLimiter
-	decisions     *auth.RateLimiter
+	// tokenRequests, unknownTokenRequests and registrations are the
+	// per-replica buckets.
+	tokenRequests        *auth.RateLimiter
+	unknownTokenRequests *auth.RateLimiter
+	registrations        *auth.RateLimiter
+	decisions            *auth.RateLimiter
 
 	mu      sync.Mutex
 	touched map[string]time.Time
@@ -295,13 +315,14 @@ func New(o Options) (*Server, error) {
 	}
 	s := &Server{
 		o: o, codec: o.Sessions.Codec(),
-		audit:         &auth.Auditor{Logger: o.Log, TrustedProxy: o.TrustedProxy},
-		requests:      auth.NewRateLimiter(requestsPerMinute, requestsBurst, maxLimiterKeys),
-		registry:      auth.NewRateLimiter(registersPerMinute, registersBurst, maxLimiterKeys),
-		tokenRequests: auth.NewRateLimiter(tokenRequestsPerSecond*60, tokenRequestsBurst, 1),
-		registrations: auth.NewRateLimiter(registrationsPerMinute, registrationsBurst, 1),
-		decisions:     auth.NewRateLimiter(decisionsPerMinute, decisionsBurst, maxLimiterKeys),
-		touched:       map[string]time.Time{},
+		audit:                &auth.Auditor{Logger: o.Log, TrustedProxy: o.TrustedProxy},
+		requests:             auth.NewRateLimiter(requestsPerMinute, requestsBurst, maxLimiterKeys).Named(auth.BucketOAuthRequests),
+		registry:             auth.NewRateLimiter(registersPerMinute, registersBurst, maxLimiterKeys).Named(auth.BucketOAuthRegistry),
+		tokenRequests:        auth.NewRateLimiter(tokenRequestsPerSecond*60, tokenRequestsBurst, 1).Named(auth.BucketOAuthTokens),
+		unknownTokenRequests: auth.NewRateLimiter(unknownTokenRequestsPerSecond*60, unknownTokenRequestsBurst, 1).Named(auth.BucketOAuthUnknownTokens),
+		registrations:        auth.NewRateLimiter(registrationsPerMinute, registrationsBurst, 1).Named(auth.BucketOAuthRegistrations),
+		decisions:            auth.NewRateLimiter(decisionsPerMinute, decisionsBurst, maxLimiterKeys).Named(auth.BucketOAuthDecisions),
+		touched:              map[string]time.Time{},
 	}
 	if len(s.userKeys("probe")) == 0 {
 		return nil, errors.New("mcpoauth: the session codec derives no keys")

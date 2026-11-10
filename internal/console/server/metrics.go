@@ -45,7 +45,7 @@ import (
 func MetricsFilter(identity auth.IdentityReviewer, az *authz.Authorizer) metricsserver.Filter {
 	// A scrape every few seconds is plenty; beyond that each request
 	// would cost the API server a review.
-	limiter := auth.NewRateLimiter(60, 10, 1000)
+	limiter := auth.NewRateLimiter(60, 10, 1000).Named(auth.BucketMetricsScrapes)
 	return func(log logr.Logger, h http.Handler) (http.Handler, error) {
 		if identity == nil || az == nil {
 			return nil, errors.New("metrics filter needs an identity reviewer and an authorizer")

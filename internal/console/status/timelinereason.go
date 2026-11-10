@@ -112,7 +112,10 @@ func timelinePhrase(msg string) (viewmodel.Phrase, bool) {
 		if m[1] != m[2] {
 			return viewmodel.Phrase{}, false
 		}
-		p["timeline"], p["historyFile"] = m[1], historyFileOf(m[1])
+		p["timeline"] = m[1]
+		if f := historyFileOf(m[1]); f != "" {
+			p["historyFile"] = f
+		}
 		return say("timeline.reason.historyMissingNoFollow", msg, p), true
 	case reNeedsTarget.MatchString(msg):
 		m := reNeedsTarget.FindStringSubmatch(msg)

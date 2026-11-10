@@ -41,9 +41,13 @@ func RecoveryTimeline() viewmodel.RecoveryTimeline {
 	markers = append(markers, viewmodel.RecoveryMarker{At: *ago(4*time.Hour + 52*time.Minute), BackupID: "20261029T070001", Kind: "completed", Source: "repository"})
 	earliest, latest := daily(7), *ago(45 * time.Second)
 	holeFrom, holeTo := daily(5).Add(9*time.Hour), daily(4)
+	// The newest edge as the read model draws it: within three
+	// archive_timeouts of the newest receipt the target is unknown, and
+	// the last archive_timeout is where the archived WAL ends.
+	safe, walEnd := latest.Add(-15*time.Minute), latest.Add(-5*time.Minute)
 	return viewmodel.RecoveryTimeline{
 		Basis: "evidence", State: "warning", Reason: "the window has holes where WAL is missing",
-		Earliest: &earliest, Latest: &latest, TargetTimeline: 3,
+		Earliest: &earliest, Latest: &latest, LastSafeTarget: &safe, TargetTimeline: 3,
 		Segments: []viewmodel.RecoverySegment{
 			{
 				From: earliest, To: holeFrom, Kind: "covered", BackupID: daily(6).Format("20060102T150405"),
@@ -52,9 +56,20 @@ func RecoveryTimeline() viewmodel.RecoveryTimeline {
 			},
 			{From: holeFrom, To: holeTo, Kind: "missingWAL", Text: "WAL is missing from the repository: no restore target in this span.", Code: "recovery.segment.missingWAL"},
 			{
-				From: holeTo, To: latest, Kind: "covered", BackupID: "20261029T070001",
+				From: holeTo, To: safe, Kind: "covered", BackupID: "20261029T070001",
 				Text: "Structurally covered: base backup 20261029T070001 and contiguous archived WAL.",
 				Code: "recovery.segment.covered", Params: map[string]string{"backupId": "20261029T070001"},
+			},
+			{
+				From: safe, To: walEnd, Kind: "unknown",
+				Text: "Within 15 min of the end of the archived WAL: segment names cannot tell whether this target's WAL is archived yet.",
+				Code: "recovery.segment.nearEnd", Params: map[string]string{"marginSeconds": "900"},
+			},
+			{
+				From: walEnd, To: latest, Kind: "walEnd",
+				Text: "WAL ends near here: the newest archived segment reached the repository at " + latest.UTC().Format(time.RFC3339) +
+					", and its last commit may be up to 5 min older. A recovery_target_time after the last commit fails with \"recovery ended before configured recovery target was reached\"; to restore everything archived, restore to the end of WAL (no recovery target).",
+				Code: "recovery.segment.walEnd", Params: map[string]string{"endAt": latest.UTC().Format(time.RFC3339), "marginSeconds": "300"},
 			},
 		},
 		Markers:     markers,

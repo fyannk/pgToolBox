@@ -78,7 +78,13 @@ then `go get github.com/fyannk/pgToolBox/pkg/evidence@vX.Y.Z`.
 anything is pushed: a dated CHANGELOG section, an annotated tag, and `ci-ok` and
 `security-gate` green **on the tagged commit**. Check runs must exist on that commit;
 a commit merged with the Actions token starts none, and `automerge.yml` dispatches
-them (see [CI](development/ci.md#when-a-release-fails)).
+them only on its 30-minute schedule, while `wait-ci` gives up after about two minutes
+of empty polls. Checklist before pushing a tag:
+
+1. `gh workflow run ci.yml --ref main` and `gh workflow run security.yml --ref main`
+   if the commit has no check run yet; wait for green.
+2. `make release-preflight TAG=vX.Y.Z` passes.
+3. Only then push the tag (see [CI](development/ci.md#when-a-release-fails)).
 
 ## Verify
 

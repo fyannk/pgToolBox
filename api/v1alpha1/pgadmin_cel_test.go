@@ -97,6 +97,14 @@ func TestPgAdminCEL(t *testing.T) {
 		{name: "configDatabase with a bad database name", mutate: func(s, _ map[string]any) {
 			s["configDatabase"] = map[string]any{"clusterRef": map[string]any{"name": "settings"}, "database": "pg-admin"}
 		}, wantErr: "configDatabase.database"},
+		// CloudNativePG adopts an existing role of that name and resets its
+		// password: an application's role is out of reach.
+		{name: "configDatabase on an application's role", mutate: func(s, _ map[string]any) {
+			s["configDatabase"] = map[string]any{"clusterRef": map[string]any{"name": "settings"}, "database": "reporting"}
+		}, wantErr: "configDatabase.database"},
+		{name: "configDatabase with a pgadmin_ name", mutate: func(s, _ map[string]any) {
+			s["configDatabase"] = map[string]any{"clusterRef": map[string]any{"name": "settings"}, "database": "pgadmin_settings"}
+		}},
 		{name: "empty clusterRefs", mutate: func(s, _ map[string]any) { s["clusterRefs"] = []any{} }, wantErr: "clusterRefs"},
 		{name: "cluster ref with an uppercase name", mutate: func(s, _ map[string]any) { s["clusterRefs"] = []any{map[string]any{"name": "Orders"}} }, wantErr: "clusterRefs[0].name"},
 		{name: "pooler endpoint", mutate: func(s, _ map[string]any) { s["endpoints"] = []any{"rw", "pooler:orders-pooler"} }},

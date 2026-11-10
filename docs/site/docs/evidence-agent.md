@@ -67,6 +67,14 @@ path and the path to timeline 2 are warnings, and only `targetTLI: 2` (or the
 backup's own timeline) restores. pgBackRest judges a backup toward the newest
 timeline only, so it gives the same answer for that path.
 
+A Barman path toward an ancestor of the timeline `latest` resolves to ends
+where that line leaves it: a default restore reads the child's segments from
+the switch on, as pgBackRest's walk does. For example, timeline 2 forked from 1
+at `0/3000000` and timeline 3 from 2 at `0/5000000`: the path to timeline 2
+reaches at most segment 4 of timeline 2, even when timeline 2 holds WAL up to
+segment 9, and its reason says that the later WAL on timeline 2 needs
+`targetTLI: 2`.
+
 Because the probe only tests that a history file exists, a listed history whose
 content is malformed, duplicated or contradictory still counts as present. Only
 the history recovery reads (that of the timeline `latest` resolves to) and a
@@ -82,6 +90,19 @@ segment names (`wal-names`): a segment number rules out every size with fewer
 segments per log, and the number at which a log rolls over to the next (`FF`
 for 16 MiB) names one size. Only when neither decides is the 16 MiB default
 assumed (`assumed-default`), and never when a segment name rules it out.
+Segment names only ever rule out larger sizes, and segments missing at the end
+of a log look like an early rollover (16 MiB WAL with `X:40` to `X:FF` missing
+reads like 64 MiB). So unless the backups' LSNs, or the smallest size, prove
+it, a size taken from the names or the default is not trusted across a
+rollover: a path that crosses into the next log id, or a timeline switch, is at
+most a warning whose reason names the inferred size, with a `WALUnknown`
+warning finding. A rollover at a segment number where no size ends a log falls
+back to the default, which reports the missing segments as a gap; when the
+default is ruled out too, the size is not established and the stanza is unknown.
+
+The recovery window's `end_lsn` is an exclusive upper bound: the first LSN
+past the last contiguous segment, which the archive does not hold. It is not a
+restore target, and not the last commit; replay ends at or before it.
 
 The console applies further limits to the recovery paths it receives, for
 both formats. The first two leave the recovery window without covered spans and give

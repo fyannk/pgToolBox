@@ -256,11 +256,16 @@ console:
   # router. The console reads `X-Forwarded-For` only from a peer inside one,
   # so that a Pod calling the Service directly cannot name a new address on
   # every request and escape the per-address sign-in budgets. Empty: every
-  # peer when `networkPolicy.enabled` and an exposure is set (the policy then
-  # admits only the router namespace and `networkPolicy.ingress.extraFrom`,
-  # all of them trusted); otherwise none, and the header is ignored: every
-  # client then shares the proxy's address, and so one sign-in budget (the
-  # console warns at start).
+  # peer when `networkPolicy.enabled`, an exposure is set and
+  # `networkPolicy.ingress.extraFrom` is empty (the policy then admits only
+  # the router namespace); otherwise none, and the header is ignored: every
+  # client then shares the proxy's address, so no per-address budget applies,
+  # only the per-flow, per-token and per-replica bounds (the console warns at
+  # start). NetworkPolicies add up and the chart cannot see the others: one
+  # that admits more Pods to the console port (an `allow-same-namespace`, the
+  # OpenShift project template's) lets them forge the header under the
+  # any-peer trust. List the proxies here where such a policy exists, and on
+  # OpenShift.
   trustedProxyCIDRs: []
   # tls.secretName: serve HTTPS on `port` from a kubernetes.io/tls Secret that is
   # mounted as files (the console reads no Secret through the API). Point the edge
@@ -830,7 +835,9 @@ console:
     extraEgress: []
     ingress:
       # -- Extra ingress peers (monitoring, a test client), as raw NetworkPolicy
-      # `from` items.
+      # `from` items, on the console port. They are not the router: with any,
+      # no peer is trusted with `X-Forwarded-For` unless `trustedProxyCIDRs`
+      # names the proxies.
       extraFrom: []
       # -- Peers allowed to scrape `/metrics`, as raw NetworkPolicy `from` items
       # (for example the monitoring namespace). Empty: no ingress on the

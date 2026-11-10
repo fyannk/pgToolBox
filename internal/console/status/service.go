@@ -439,6 +439,9 @@ type gathered struct {
 	store        *unstructured.Unstructured
 	swept        sweep.Snapshot
 	hasSweep     bool
+	// readyRings are the sweep's readyWalFiles samples of the archiving
+	// instance and of every instance reporting an archive failure.
+	readyRings map[string][]viewmodel.Point
 	// volumesReported: an instance reported its volumes recently (the
 	// fork's volumeUsages or cnpg_disk_* metrics).
 	volumesReported bool
@@ -596,6 +599,7 @@ func (s *Service) gather(ctx context.Context, key cache.ClusterKey, withEvents b
 	}
 	if sw := s.sweeper(); sw != nil {
 		g.swept, g.hasSweep = sw.Snapshot(g.sweepKey())
+		g.readyRings = readyRings(sw, g)
 		if s.opts.Trends != nil {
 			since := s.now().Add(-max(3*g.swept.Interval, 5*time.Minute))
 			g.volumesReported = s.opts.Trends.Reported(key.Namespace, key.Name, since)
@@ -615,6 +619,28 @@ func (s *Service) gather(ctx context.Context, key cache.ClusterKey, withEvents b
 	g.minor = g.version.Minor
 	g.phaseMinor = cnpgstatus.NamedMinor(g.version.Version)
 	return g, nil
+}
+
+// readyRings reads the readyWalFiles rings the archiving facts need: the
+// current primary's (a backlog counts only when it persists across
+// sweeps) and those of the instances reporting an archive failure
+// (whether the archiver caught up since).
+func readyRings(sw Sweep, g *gathered) map[string][]viewmodel.Point {
+	out := map[string][]viewmodel.Point{}
+	for name, inst := range g.swept.Instances {
+		if inst.State != viewmodel.StatusReadOK || inst.Reading == nil {
+			continue
+		}
+		if name != g.cluster.Status.CurrentPrimary && inst.Reading.LastFailedWALTime == nil {
+			continue
+		}
+		for _, series := range sw.Series(g.sweepKey(), name) {
+			if series.Key == sweep.SeriesReadyWALFiles {
+				out[name] = series.Points
+			}
+		}
+	}
+	return out
 }
 
 // isMember is the membership rule: the label selected the pod, but

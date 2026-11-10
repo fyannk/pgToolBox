@@ -292,6 +292,13 @@ contains and how to verify it is on [Release and verification](../release.md).
   section for a final tag, an annotated tag if it exists, and `ci-ok` and
   `security-gate` successful on the commit (the tag's, else `HEAD`). If it fails,
   nothing was pushed that needs undoing.
+- **Pruning is off by default.** The `prune` job runs only when the repository
+  variable `PRUNE_GHCR` is `true` (`PRUNE_GHCR_DRY_RUN=true` logs without deleting).
+  A deletion cannot be undone and `verify` runs after it: a signature or attestation
+  linked to its image only through the OCI `subject` field could be taken for an
+  orphan. Enable it after a release has verified cleanly with it off, and read one
+  dry-run log first. The action never touches tagged versions here
+  (`delete-ghost-images` stays off).
 - **A failed prune does not hide the verification.** `verify` runs whenever the release
   job succeeded. `prune` deletes package versions, which needs *admin* rights on a
   package owned by a user account (the Actions token's `packages: write` is enough
@@ -307,7 +314,7 @@ After the prune, `verify-release.yml` pulls the release the way a user does, wit
 credentials (`hack/release.sh verify-published vX.Y.Z`); the same check runs weekly
 against the latest stable release.
 
-After a release, a `prune` job deletes the untagged versions the pushes leave in GHCR
+When enabled (see above), a `prune` job deletes the untagged versions the pushes leave in GHCR
 (`delete-untagged` with `validate`, so a manifest that a tagged index, a signature
 or an attestation references is kept). It never enables ghost-image deletion: that
 mode can delete tagged release versions.

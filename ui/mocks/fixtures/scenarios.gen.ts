@@ -1628,6 +1628,7 @@ export const getBackupsOrders = {
     "reason": "the window has holes where WAL is missing",
     "earliest": "2026-10-22T07:08:00Z",
     "latest": "2026-10-29T11:59:15Z",
+    "lastSafeTarget": "2026-10-29T11:44:15Z",
     "targetTimeline": 3,
     "segments": [
       {
@@ -1650,13 +1651,34 @@ export const getBackupsOrders = {
       },
       {
         "from": "2026-10-25T07:08:00Z",
-        "to": "2026-10-29T11:59:15Z",
+        "to": "2026-10-29T11:44:15Z",
         "kind": "covered",
         "backupId": "20261029T070001",
         "text": "Structurally covered: base backup 20261029T070001 and contiguous archived WAL.",
         "code": "recovery.segment.covered",
         "params": {
           "backupId": "20261029T070001"
+        }
+      },
+      {
+        "from": "2026-10-29T11:44:15Z",
+        "to": "2026-10-29T11:54:15Z",
+        "kind": "unknown",
+        "text": "Within 15 min of the end of the archived WAL: segment names cannot tell whether this target's WAL is archived yet.",
+        "code": "recovery.segment.nearEnd",
+        "params": {
+          "marginSeconds": "900"
+        }
+      },
+      {
+        "from": "2026-10-29T11:54:15Z",
+        "to": "2026-10-29T11:59:15Z",
+        "kind": "walEnd",
+        "text": "WAL ends near here: the newest archived segment reached the repository at 2026-10-29T11:59:15Z, and its last commit may be up to 5 min older. A recovery_target_time after the last commit fails with \"recovery ended before configured recovery target was reached\"; to restore everything archived, restore to the end of WAL (no recovery target).",
+        "code": "recovery.segment.walEnd",
+        "params": {
+          "endAt": "2026-10-29T11:59:15Z",
+          "marginSeconds": "300"
         }
       }
     ],

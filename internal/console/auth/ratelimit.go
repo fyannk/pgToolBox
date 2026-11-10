@@ -19,6 +19,8 @@ import (
 	"net/netip"
 	"sync"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 // RateLimiter is a token bucket per key (a client address), bounded in
@@ -31,6 +33,9 @@ type RateLimiter struct {
 	burst float64
 	max   int
 	now   func() time.Time
+	// throttled counts refusals (pgtoolbox_console_throttled_requests_total)
+	// when the limiter is Named; nil counts nothing.
+	throttled prometheus.Counter
 
 	mu      sync.Mutex
 	buckets map[string]*bucket
@@ -49,11 +54,30 @@ func NewRateLimiter(perMinute, burst, maxKeys int) *RateLimiter {
 	}
 }
 
+// Named labels the limiter's refusals with bucket in
+// pgtoolbox_console_throttled_requests_total. bucket is one of the
+// Bucket* constants: the label set is fixed, never derived from a
+// request. It returns l, for chaining after NewRateLimiter.
+func (l *RateLimiter) Named(bucket string) *RateLimiter {
+	l.throttled = throttledRequests.WithLabelValues(bucket)
+	return l
+}
+
 // Allow takes one token for key.
 func (l *RateLimiter) Allow(key string) bool {
 	if l == nil {
 		return true
 	}
+	if l.take(key) {
+		return true
+	}
+	if l.throttled != nil {
+		l.throttled.Inc()
+	}
+	return false
+}
+
+func (l *RateLimiter) take(key string) bool {
 	now := l.now()
 	l.mu.Lock()
 	defer l.mu.Unlock()

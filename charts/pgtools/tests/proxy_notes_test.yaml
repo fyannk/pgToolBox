@@ -29,3 +29,15 @@ tests:
       console.networkPolicy.apiServer.mode: any
     asserts:
       - notMatchRegexRaw: {pattern: "X-Forwarded-For is IGNORED"}
+
+  - it: warns when extraFrom admits more than the router
+    set:
+      console.exposure.type: ingress
+      console.exposure.host: pgc.example.org
+      console.networkPolicy.enabled: true
+      console.networkPolicy.apiServer.mode: any
+      console.networkPolicy.ingress.extraFrom: [{podSelector: {}}]
+    asserts:
+      - matchRegexRaw: {pattern: "X-Forwarded-For is IGNORED"}
+      - matchRegexRaw: {pattern: "extraFrom admits peers that are not the router"}
+      - notMatchRegexRaw: {pattern: "one sign-in budget"}

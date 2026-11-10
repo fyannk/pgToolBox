@@ -46,8 +46,10 @@ flowchart TB
 The notes under the sentence, in reading order: the failover quorum does not
 apply to a replica cluster; `spec.failoverDelay` when it is set; a replica
 cluster promotes a new designated primary; an unreadable
-`cnpg.io/fencedInstances` annotation; and the instances the console could not
-read.
+`cnpg.io/fencedInstances` annotation (CloudNativePG reads it as no fencing, so
+every instance runs and may be promoted); the fencing and quorum rules that are
+new in CloudNativePG 1.30.1, when the operator is 1.30.0 or its patch version is
+not known (below); and the instances the console could not read.
 
 ## The candidate: CloudNativePG's own order
 
@@ -64,6 +66,15 @@ the outcome is `blocked`. When the first replica the console read is fenced but 
 replica it could not read is not, the operator may well promote that one: the
 outcome is `unknown`, not `blocked`. A replica that reports itself as a primary is
 named: the operator would sort it first, and what it does then is not guessed.
+
+Ranking fenced instances last, skipping the election when every instance is
+fenced, and checking the failover quorum a second time just before the
+promotion are CloudNativePG **1.30.1** behaviour; 1.30.0 checks the quorum only
+when the failover starts and may rank a fenced instance first, which cannot be
+promoted while fenced. The rehearsal follows 1.30.1. When the detected version
+is 1.30.0, or the console knows only the minor (a floor such as `>=1.30`), an
+answer on a Cluster with fenced instances is not certain, and the notes say
+which rule is 1.30.1's.
 
 ## Distance behind
 
