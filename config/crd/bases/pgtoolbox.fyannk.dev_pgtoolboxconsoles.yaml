@@ -576,8 +576,9 @@ spec:
                           host-network ones included) are always admitted, and from adds to
                           them. Required for ingress and gateway. Every peer listed is trusted
                           to write X-Forwarded-For unless trustedProxy.cidrs narrows it; a peer
-                          that admits everyone (an empty namespaceSelector, an empty
-                          podSelector alone, an ipBlock of /0) turns that trust off. The probe
+                          that admits (nearly) everyone (a namespaceSelector, or a podSelector
+                          alone, that pins no label value; an ipBlock wider than /8 or /32 or
+                          holding a whole private range) turns that trust off. The probe
                           port (health and /metrics) stays open to scrapers; it never reads the
                           header.
                         items:
@@ -589,7 +590,8 @@ spec:
                             ipBlock:
                               description: |-
                                 Addresses: a CIDR, less the except CIDRs inside it. Alone in its
-                                peer. A /0 is broad.
+                                peer. Wider than /8 (IPv4) or /32 (IPv6), or holding a whole private
+                                range, is broad.
                               properties:
                                 cidr:
                                   description: The block, as a CIDR (10.0.0.0/8, fd00::/64).
@@ -626,101 +628,152 @@ spec:
                                   && cidr(e).prefixLength() > cidr(self.cidr).prefixLength()))'
                             namespaceSelector:
                               description: |-
-                                Namespaces. Empty: every namespace, which ExposureConfined reports
-                                as broad.
+                                Namespaces. Pinning no label value (no matchLabels, no In):
+                                (nearly) every namespace, which ExposureConfined reports as broad.
                               properties:
                                 matchExpressions:
-                                  description: matchExpressions is a list of label
-                                    selector requirements. The requirements are ANDed.
+                                  description: Requirements the object's labels must
+                                    meet, all of them.
                                   items:
-                                    description: |-
-                                      A label selector requirement is a selector that contains values, a key, and an operator that
-                                      relates the key and values.
+                                    description: PgToolBoxConsoleLabelRequirement
+                                      is one matchExpressions entry.
                                     properties:
                                       key:
-                                        description: key is the label key that the
-                                          selector applies to.
+                                        description: The label key ([prefix/]name).
+                                        maxLength: 317
+                                        minLength: 1
+                                        pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?([.][a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?$
                                         type: string
                                       operator:
-                                        description: |-
-                                          operator represents a key's relationship to a set of values.
-                                          Valid operators are In, NotIn, Exists and DoesNotExist.
+                                        description: In, NotIn, Exists or DoesNotExist.
+                                        enum:
+                                        - In
+                                        - NotIn
+                                        - Exists
+                                        - DoesNotExist
                                         type: string
                                       values:
-                                        description: |-
-                                          values is an array of string values. If the operator is In or NotIn,
-                                          the values array must be non-empty. If the operator is Exists or DoesNotExist,
-                                          the values array must be empty. This array is replaced during a strategic
-                                          merge patch.
+                                        description: The values, for In and NotIn.
                                         items:
+                                          description: |-
+                                            PgToolBoxConsoleLabelValue is a label value: at most 63 characters,
+                                            alphanumeric at both ends, '-', '_' and '.' inside.
+                                          maxLength: 63
+                                          pattern: ^(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])?$
                                           type: string
+                                        maxItems: 16
                                         type: array
                                         x-kubernetes-list-type: atomic
                                     required:
                                     - key
                                     - operator
                                     type: object
+                                    x-kubernetes-validations:
+                                    - message: values are required for In and NotIn
+                                        and forbidden for Exists and DoesNotExist
+                                      reason: FieldValueInvalid
+                                      rule: 'self.operator in [''In'', ''NotIn'']
+                                        ? (has(self.values) && size(self.values) >
+                                        0) : (!has(self.values) || size(self.values)
+                                        == 0)'
+                                  maxItems: 16
                                   type: array
                                   x-kubernetes-list-type: atomic
                                 matchLabels:
                                   additionalProperties:
+                                    description: |-
+                                      PgToolBoxConsoleLabelValue is a label value: at most 63 characters,
+                                      alphanumeric at both ends, '-', '_' and '.' inside.
+                                    maxLength: 63
+                                    pattern: ^(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])?$
                                     type: string
-                                  description: |-
-                                    matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
-                                    map is equivalent to an element of matchExpressions, whose key field is "key", the
-                                    operator is "In", and the values array contains only "value". The requirements are ANDed.
+                                  description: Labels the object must carry, with
+                                    these values.
+                                  maxProperties: 16
                                   type: object
                               type: object
-                              x-kubernetes-map-type: atomic
+                              x-kubernetes-validations:
+                              - fieldPath: .matchLabels
+                                message: matchLabels keys must be label keys ([prefix/]name,
+                                  name at most 63 characters)
+                                reason: FieldValueInvalid
+                                rule: '!has(self.matchLabels) || self.matchLabels.all(k,
+                                  k.matches(''^([a-z0-9]([-a-z0-9]*[a-z0-9])?([.][a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?$''))'
                             podSelector:
                               description: |-
                                 Pods (of this namespace, or of the namespaces namespaceSelector
-                                selects). Empty with no namespaceSelector: every Pod of this
-                                namespace, which ExposureConfined reports as broad.
+                                selects). Pinning no label value (no matchLabels, no In) with no
+                                namespaceSelector: (nearly) every Pod of this namespace, which
+                                ExposureConfined reports as broad.
                               properties:
                                 matchExpressions:
-                                  description: matchExpressions is a list of label
-                                    selector requirements. The requirements are ANDed.
+                                  description: Requirements the object's labels must
+                                    meet, all of them.
                                   items:
-                                    description: |-
-                                      A label selector requirement is a selector that contains values, a key, and an operator that
-                                      relates the key and values.
+                                    description: PgToolBoxConsoleLabelRequirement
+                                      is one matchExpressions entry.
                                     properties:
                                       key:
-                                        description: key is the label key that the
-                                          selector applies to.
+                                        description: The label key ([prefix/]name).
+                                        maxLength: 317
+                                        minLength: 1
+                                        pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?([.][a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?$
                                         type: string
                                       operator:
-                                        description: |-
-                                          operator represents a key's relationship to a set of values.
-                                          Valid operators are In, NotIn, Exists and DoesNotExist.
+                                        description: In, NotIn, Exists or DoesNotExist.
+                                        enum:
+                                        - In
+                                        - NotIn
+                                        - Exists
+                                        - DoesNotExist
                                         type: string
                                       values:
-                                        description: |-
-                                          values is an array of string values. If the operator is In or NotIn,
-                                          the values array must be non-empty. If the operator is Exists or DoesNotExist,
-                                          the values array must be empty. This array is replaced during a strategic
-                                          merge patch.
+                                        description: The values, for In and NotIn.
                                         items:
+                                          description: |-
+                                            PgToolBoxConsoleLabelValue is a label value: at most 63 characters,
+                                            alphanumeric at both ends, '-', '_' and '.' inside.
+                                          maxLength: 63
+                                          pattern: ^(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])?$
                                           type: string
+                                        maxItems: 16
                                         type: array
                                         x-kubernetes-list-type: atomic
                                     required:
                                     - key
                                     - operator
                                     type: object
+                                    x-kubernetes-validations:
+                                    - message: values are required for In and NotIn
+                                        and forbidden for Exists and DoesNotExist
+                                      reason: FieldValueInvalid
+                                      rule: 'self.operator in [''In'', ''NotIn'']
+                                        ? (has(self.values) && size(self.values) >
+                                        0) : (!has(self.values) || size(self.values)
+                                        == 0)'
+                                  maxItems: 16
                                   type: array
                                   x-kubernetes-list-type: atomic
                                 matchLabels:
                                   additionalProperties:
+                                    description: |-
+                                      PgToolBoxConsoleLabelValue is a label value: at most 63 characters,
+                                      alphanumeric at both ends, '-', '_' and '.' inside.
+                                    maxLength: 63
+                                    pattern: ^(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])?$
                                     type: string
-                                  description: |-
-                                    matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
-                                    map is equivalent to an element of matchExpressions, whose key field is "key", the
-                                    operator is "In", and the values array contains only "value". The requirements are ANDed.
+                                  description: Labels the object must carry, with
+                                    these values.
+                                  maxProperties: 16
                                   type: object
                               type: object
-                              x-kubernetes-map-type: atomic
+                              x-kubernetes-validations:
+                              - fieldPath: .matchLabels
+                                message: matchLabels keys must be label keys ([prefix/]name,
+                                  name at most 63 characters)
+                                reason: FieldValueInvalid
+                                rule: '!has(self.matchLabels) || self.matchLabels.all(k,
+                                  k.matches(''^([a-z0-9]([-a-z0-9]*[a-z0-9])?([.][a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?$''))'
                           type: object
                           x-kubernetes-validations:
                           - message: each networkPolicy.from peer needs podSelector,
@@ -775,7 +828,8 @@ spec:
                           NetworkPolicy rendered, any peer it admits (every other Pod is
                           refused by the network); without it, none, and the header is
                           ignored: every client behind the proxy then shares its address, and
-                          so one sign-in budget.
+                          no per-address sign-in budget applies (only the per-flow, per-token
+                          and per-replica bounds).
                         items:
                           maxLength: 49
                           type: string

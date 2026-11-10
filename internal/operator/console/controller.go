@@ -160,7 +160,17 @@ func (r *Reconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.
 		// rather than wait for a watch.
 		result.RequeueAfter = stallRetries[stalled.Reason]
 	}
-	return result, r.publish(ctx, console, original, conditions.Outcome{Err: err, Converged: err == nil})
+	return resultFor(result, r.publish(ctx, console, original, conditions.Outcome{Err: err, Converged: err == nil}))
+}
+
+// resultFor is what Reconcile returns: with an error, the error alone
+// (controller-runtime backs off, and warns of a result returned beside an
+// error); else the result.
+func resultFor(result ctrl.Result, err error) (ctrl.Result, error) {
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	return result, nil
 }
 
 // loopState is what one reconcile asks of the next beyond its status: a
@@ -176,10 +186,11 @@ func (l *loopState) after(d time.Duration) {
 	}
 }
 
-// policyRecheck is how often a console that trusts every peer of its
-// NetworkPolicy looks again at the namespace's other NetworkPolicies: the
-// operator caches only its own (every informer is label-filtered), so a
-// policy someone adds is seen by this look, not by a watch.
+// policyRecheck is how often a console whose trust depends on the
+// namespace's other NetworkPolicies (it trusts every peer of its own, or
+// another one admits more) looks at them again: the operator caches only
+// its own (every informer is label-filtered), so a policy someone adds, or
+// removes, is seen by this look, not by a watch.
 const policyRecheck = 5 * time.Minute
 
 // networkPolicyListLimit bounds the uncached list of the namespace's
@@ -192,11 +203,14 @@ const roleMissingRetry = 2 * time.Minute
 
 // stallRetries are the stalls looked at again, and how often: a shipped
 // ClusterRole (the installer's, not in the operator's cache) and a user's
-// ConfigMap (the ConfigMap cache is label-filtered). Every other stall
+// ConfigMap (the ConfigMap cache is label-filtered), and an ingress
+// NetworkPolicy the API server refused. Every other stall
 // waits for a watch.
 var stallRetries = map[pgtoolboxv1alpha1.Reason]time.Duration{
 	pgtoolboxv1alpha1.ReasonConsoleRoleMissing: roleMissingRetry,
 	pgtoolboxv1alpha1.ReasonConfigMapNotFound:  configMapMissingRetry,
+	// An admission policy, not only the schema, may be what refused it.
+	pgtoolboxv1alpha1.ReasonExposurePolicyInvalid: policyRecheck,
 }
 
 //nolint:gocyclo,cyclop,funlen // the console's children, in dependency order.
@@ -218,7 +232,7 @@ func (r *Reconciler) reconcile(ctx context.Context, console *pgtoolboxv1alpha1.P
 		if err := r.withdrawExposure(ctx, console); err != nil {
 			return err
 		}
-		setExposureConfined(console, false, "")
+		setExposureConfined(console, false, confinement{})
 		return r.invalid(console, pgtoolboxv1alpha1.ReasonHostnameNotAllowed, fmt.Sprintf(
 			"spec.exposure.hostname %s is not under the operator's allowed host suffixes (EXPOSURE_ALLOWED_HOST_SUFFIXES: %s)",
 			spec.Hostname, strings.Join(r.AllowedHostSuffixes, ", ")))
@@ -326,18 +340,24 @@ func (r *Reconciler) reconcile(ctx context.Context, console *pgtoolboxv1alpha1.P
 	// admits; its removal only once no Pod of the workload trusts them any
 	// more (withdrawExposurePolicy).
 	policy := buildExposureNetworkPolicy(console, exposed)
-	bypass := ""
+	var found confinement
 	if policy != nil {
 		if err := applier.Apply(ctx, policy); err != nil {
+			if apierrors.IsInvalid(err) {
+				// The CRD checks what it can; what the API server still
+				// refuses waits for a new spec (watched), not a retry.
+				return r.invalid(console, pgtoolboxv1alpha1.ReasonExposurePolicyInvalid, fmt.Sprintf(
+					"the API server refused NetworkPolicy %s rendered from spec.exposure.networkPolicy: %s", policy.Name, err))
+			}
 			return r.notOwned(console, err)
 		}
-		if bypass, err = r.exposureBypass(ctx, console, policy.Spec.Ingress[0].From); err != nil {
+		if found, err = r.exposureConfinement(ctx, console, policy.Spec.Ingress[0].From); err != nil {
 			return err
 		}
 	}
-	setExposureConfined(console, exposed, bypass)
-	in := deploymentInputs{Image: image, OpenShift: r.Features.OpenShift, Exposed: exposed, PolicyBypass: bypass}
-	if trust := effectiveProxyTrust(console, exposed, bypass); slices.Equal(trust.CIDRs, anyPeer) {
+	setExposureConfined(console, exposed, found)
+	in := deploymentInputs{Image: image, OpenShift: r.Features.OpenShift, Exposed: exposed, Confinement: found}
+	if trust := effectiveProxyTrust(console, exposed, found); trust.EveryPeer || found.Bypass != "" {
 		loop.after(policyRecheck)
 	}
 
@@ -391,28 +411,44 @@ func (r *Reconciler) reconcileWorkload(ctx context.Context, console *pgtoolboxv1
 	return &facts, r.deleteIfOwned(ctx, console, previous, console.WorkloadName())
 }
 
-// exposureBypass is policyBypass on the namespace's NetworkPolicies, read
+// exposureConfinement looks at what the spec does not say: the console
+// Pods (read uncached, as for the policy's withdrawal) for an ipBlock that
+// holds their addresses, and the namespace's NetworkPolicies, read
 // uncached (the operator's informer holds only its own) and bounded: more
 // than networkPolicyListLimit, and the rest could not be checked, which
-// counts as a bypass. ours are the peers of the exposure's policy.
-func (r *Reconciler) exposureBypass(ctx context.Context, console *pgtoolboxv1alpha1.PgToolBoxConsole, ours []networkingv1.NetworkPolicyPeer) (string, error) {
+// counts as a bypass. ours are the peers of the exposure's policy; for a
+// Route the routers' older namespace label counts as theirs.
+func (r *Reconciler) exposureConfinement(ctx context.Context, console *pgtoolboxv1alpha1.PgToolBoxConsole, ours []networkingv1.NetworkPolicyPeer) (confinement, error) {
+	var pods corev1.PodList
+	if err := r.APIReader.List(ctx, &pods, client.InNamespace(console.Namespace), client.MatchingLabels(selectorLabels(console))); err != nil {
+		return confinement{}, fmt.Errorf("list console Pods: %w", err)
+	}
+	found := confinement{Broad: podNetworkBlock(ours, pods.Items)}
 	var policies networkingv1.NetworkPolicyList
 	if err := r.APIReader.List(ctx, &policies, client.InNamespace(console.Namespace), client.Limit(networkPolicyListLimit)); err != nil {
-		return "", fmt.Errorf("list the NetworkPolicies of namespace %s: %w", console.Namespace, err)
+		return confinement{}, fmt.Errorf("list the NetworkPolicies of namespace %s: %w", console.Namespace, err)
 	}
 	if policies.Continue != "" || len(policies.Items) > networkPolicyListLimit {
-		return fmt.Sprintf("more than %d NetworkPolicies in the namespace: the others could not be checked", networkPolicyListLimit), nil
+		found.Bypass = fmt.Sprintf("more than %d NetworkPolicies in the namespace: the others could not be checked", networkPolicyListLimit)
+		return found, nil
 	}
-	podLabels := objectMeta(console, "", pgtoolboxv1alpha1.PropagationTargetPod).Labels
-	return policyBypass(policies.Items, exposurePolicyName(console), podLabels, ours), nil
+	podLabels := []map[string]string{objectMeta(console, "", pgtoolboxv1alpha1.PropagationTargetPod).Labels}
+	for i := range pods.Items {
+		podLabels = append(podLabels, pods.Items[i].Labels)
+	}
+	if console.Spec.Exposure.TypeOrDefault() == pgtoolboxv1alpha1.ExposureTypeRoute {
+		ours = append(slices.Clip(ours), legacyRouterPeer())
+	}
+	found.Bypass = policyBypass(policies.Items, exposurePolicyName(console), podLabels, ours)
+	return found, nil
 }
 
 // withdrawExposurePolicy deletes the console's ingress NetworkPolicy once
 // it confines no Pod that trusts every peer: the workload's rollout is
 // complete (facts: the controller saw the generation, every replica is
 // updated and available, a StatefulSet's revisions agree) and no console
-// Pod, terminating ones included, still has the any-peer
-// TRUSTED_PROXY_CIDRS. Until then the policy stays; the workload's status
+// Pod, terminating ones included, still carries the operator's any-peer
+// grant (annotationTrustsEveryPeer). Until then the policy stays; the workload's status
 // and its Pods are watched, so their next change brings the next look.
 func (r *Reconciler) withdrawExposurePolicy(ctx context.Context, console *pgtoolboxv1alpha1.PgToolBoxConsole, facts *workloadFacts) error {
 	name := exposurePolicyName(console)

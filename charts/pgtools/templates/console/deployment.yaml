@@ -257,9 +257,12 @@ spec:
             - name: TRUSTED_PROXY_HOPS
               value: {{ $hops | quote }}
             {{- /* The proxies' addresses; with none listed, every peer only
-            when the NetworkPolicy admits nothing but the router (and extraFrom). */}}
+            when the chart's NetworkPolicy admits nothing but the router: no
+            extraFrom (its peers are not the proxies, and a broad one would
+            let any Pod forge the header). The chart cannot see the other
+            NetworkPolicies of the namespace, which add up: see values.yaml. */}}
             {{- $cidrs := $c.trustedProxyCIDRs }}
-            {{- if and (not $cidrs) $c.networkPolicy.enabled (ne $c.exposure.type "none") }}
+            {{- if and (not $cidrs) $c.networkPolicy.enabled (ne $c.exposure.type "none") (not $c.networkPolicy.ingress.extraFrom) }}
             {{- $cidrs = list "0.0.0.0/0" "::/0" }}
             {{- end }}
             {{- with $cidrs }}

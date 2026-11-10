@@ -235,10 +235,17 @@ Set `console.publicURL` (or `exposure.host`, from which it is derived) so cookie
 redirects and the CSRF check use the right origin. To serve HTTPS from the pod,
 point `console.tls.secretName` at a `kubernetes.io/tls` Secret; it is mounted as
 files. Behind an edge, name the edge's addresses in `console.trustedProxyCIDRs`
-(or enable `console.networkPolicy`, which admits only the router namespace and
-trusts it): without either the console ignores `X-Forwarded-For`, and every
-client shares the edge's address and sign-in budget. `console.trustedProxyHops`
-(default 1 when exposed) counts the proxies in front.
+(or enable `console.networkPolicy` with no `ingress.extraFrom`: it then admits
+only the router namespace and trusts every peer it admits). Without either, or
+with `extraFrom` (its peers are not the router), the console ignores
+`X-Forwarded-For`: every client shares the edge's address, so no per-address
+sign-in budget applies, only the per-flow, per-token and per-replica bounds
+([rate limits](authentication.md#sessions)). NetworkPolicies add up, and the
+chart cannot see the namespace's others: one that admits more Pods to the
+console port (an `allow-same-namespace`, the OpenShift project template's)
+lets them forge the header under the any-peer trust, so list the proxies in
+`trustedProxyCIDRs` where such a policy exists, and on OpenShift.
+`console.trustedProxyHops` (default 1 when exposed) counts the proxies in front.
 
 ## What else can be switched
 

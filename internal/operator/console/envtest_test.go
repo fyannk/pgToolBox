@@ -644,7 +644,7 @@ func TestPgToolBoxConsoleReconcilerOnEnvtest(t *testing.T) {
 		}
 
 		open.Spec.Exposure.NetworkPolicy = &pgtoolboxv1alpha1.PgToolBoxConsoleExposurePolicySpec{From: []pgtoolboxv1alpha1.PgToolBoxConsolePolicyPeer{{
-			NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"kubernetes.io/metadata.name": "ingress-nginx"}},
+			NamespaceSelector: &pgtoolboxv1alpha1.PgToolBoxConsoleLabelSelector{MatchLabels: map[string]pgtoolboxv1alpha1.PgToolBoxConsoleLabelValue{"kubernetes.io/metadata.name": "ingress-nginx"}},
 		}}}
 		must(t, s.admin.Update(ctx, open))
 		s.reconcile(ctx, t, "console")
@@ -682,6 +682,10 @@ func TestPgToolBoxConsoleReconcilerOnEnvtest(t *testing.T) {
 		}
 		must(t, s.admin.Create(ctx, sameNamespace))
 		s.reconcile(ctx, t, "console")
+		// Its removal is seen by the same look again (no watch reports it).
+		if result := s.reconcile(ctx, t, "console"); result.RequeueAfter != policyRecheck {
+			t.Fatalf("RequeueAfter = %s while another policy bypasses the exposure's, want %s", result.RequeueAfter, policyRecheck)
+		}
 		bypassed := s.console(ctx, t, "console")
 		assertCondition(t, bypassed, pgtoolboxv1alpha1.ConditionExposureConfined, metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonExposurePolicyBypassed)
 		if got := proxyEnv(); got["TRUSTED_PROXY_CIDRS"] != "" {
@@ -693,6 +697,24 @@ func TestPgToolBoxConsoleReconcilerOnEnvtest(t *testing.T) {
 		if got := proxyEnv(); got["TRUSTED_PROXY_CIDRS"] != "0.0.0.0/0,::/0" {
 			t.Fatalf("allow-same-namespace removed: %v, want every admitted peer trusted again", got)
 		}
+
+		// A selector the CRD lets through but the API server refuses in
+		// the NetworkPolicy (a label-key prefix longer than a DNS subdomain):
+		// a named stall, looked at again in five minutes, not a hot loop.
+		refused := s.console(ctx, t, "console")
+		refused.Spec.Exposure.NetworkPolicy.From = append(refused.Spec.Exposure.NetworkPolicy.From, pgtoolboxv1alpha1.PgToolBoxConsolePolicyPeer{
+			PodSelector: &pgtoolboxv1alpha1.PgToolBoxConsoleLabelSelector{MatchLabels: map[string]pgtoolboxv1alpha1.PgToolBoxConsoleLabelValue{strings.Repeat("a", 254) + "/x": "y"}},
+		})
+		must(t, s.admin.Update(ctx, refused))
+		if result := s.reconcile(ctx, t, "console"); result.RequeueAfter != policyRecheck {
+			t.Fatalf("RequeueAfter = %s on a refused NetworkPolicy, want %s", result.RequeueAfter, policyRecheck)
+		}
+		assertCondition(t, s.console(ctx, t, "console"), pgtoolboxv1alpha1.ConditionConfigurationValid, metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonExposurePolicyInvalid)
+		fixed := s.console(ctx, t, "console")
+		fixed.Spec.Exposure.NetworkPolicy.From = fixed.Spec.Exposure.NetworkPolicy.From[:1]
+		must(t, s.admin.Update(ctx, fixed))
+		s.reconcile(ctx, t, "console")
+		assertCondition(t, s.console(ctx, t, "console"), pgtoolboxv1alpha1.ConditionConfigurationValid, metav1.ConditionTrue, pgtoolboxv1alpha1.ReasonAsExpected)
 
 		// A Route without the Route API (this API server serves none) is
 		// not published: nothing is in front, so nothing is trusted and no
@@ -722,7 +744,10 @@ func TestPgToolBoxConsoleReconcilerOnEnvtest(t *testing.T) {
 		// say) keeps the policy.
 		completeRollout(ctx, t, s, "console")
 		oldPod := &corev1.Pod{
-			ObjectMeta: metav1.ObjectMeta{Name: "console-old", Namespace: suiteNamespace, Labels: selectorLabels(console)},
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "console-old", Namespace: suiteNamespace, Labels: selectorLabels(console),
+				Annotations: map[string]string{annotationTrustsEveryPeer: "true"},
+			},
 			Spec: corev1.PodSpec{Containers: []corev1.Container{{
 				Name: "console", Image: "registry.example/pgtoolbox-console:1.2.0",
 				Env: []corev1.EnvVar{{Name: "TRUSTED_PROXY_CIDRS", Value: "0.0.0.0/0,::/0"}},
@@ -732,8 +757,14 @@ func TestPgToolBoxConsoleReconcilerOnEnvtest(t *testing.T) {
 		s.reconcile(ctx, t, "console")
 		s.get(ctx, t, console.WorkloadName()+"-ingress", &networkingv1.NetworkPolicy{})
 		must(t, s.admin.Delete(ctx, oldPod, client.GracePeriodSeconds(0)))
+		// A Pod whose any-peer trust is the user's own trustedProxy.cidrs
+		// (the same TRUSTED_PROXY_CIDRS, no grant) does not hold it back.
+		userPod := oldPod.DeepCopy()
+		userPod.Name, userPod.Annotations, userPod.ResourceVersion, userPod.UID = "console-user", nil, "", ""
+		must(t, s.admin.Create(ctx, userPod))
 		s.reconcile(ctx, t, "console")
 		s.absent(ctx, t, console.WorkloadName()+"-ingress", &networkingv1.NetworkPolicy{})
+		must(t, s.admin.Delete(ctx, userPod, client.GracePeriodSeconds(0)))
 
 		back := s.console(ctx, t, "console")
 		back.Spec.Exposure = pgtoolboxv1alpha1.PgToolBoxConsoleExposureSpec{}

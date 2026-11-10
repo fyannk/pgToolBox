@@ -45,10 +45,12 @@ const (
 	// without its ingress NetworkPolicy, so any Pod can reach its port.
 	ReasonExposureOpen Reason = "ExposureOpen"
 	// ReasonExposurePeersBroad: ExposureConfined=False, a networkPolicy.from
-	// peer admits every namespace (an empty namespaceSelector), every Pod
-	// of the console's namespace (an empty podSelector alone) or every
-	// address (an ipBlock of prefix length 0): its peers are not the
-	// proxies, so the console trusts none of them with X-Forwarded-For.
+	// peer admits (nearly) every namespace (a namespaceSelector that pins
+	// no label value), every Pod of the console's namespace (such a
+	// podSelector alone), or the Pod network or every address (an ipBlock
+	// wider than /8 or /32, holding a whole private range, or a console
+	// Pod's address): its peers are not the proxies, so the console trusts
+	// none of them with X-Forwarded-For.
 	ReasonExposurePeersBroad Reason = "ExposurePeersBroad"
 	// ReasonExposurePolicyBypassed: ExposureConfined=False, another
 	// NetworkPolicy of the namespace admits peers the exposure does not
@@ -56,6 +58,11 @@ const (
 	// many to check: the console trusts none of the peers with
 	// X-Forwarded-For.
 	ReasonExposurePolicyBypassed Reason = "ExposurePolicyBypassed"
+	// ReasonExposurePolicyInvalid: ConfigurationValid=False, the API
+	// server refused the ingress NetworkPolicy rendered from
+	// spec.exposure.networkPolicy (a selector or block the CRD could not
+	// check). Looked at again every five minutes and on every spec change.
+	ReasonExposurePolicyInvalid Reason = "ExposurePolicyInvalid"
 )
 
 // ConditionExposureConfined is advisory and gates nothing (it never enters
@@ -65,7 +72,8 @@ const (
 // else in the namespace admits more; False with ExposureOpen when it is
 // not rendered (ingress or gateway exposure without networkPolicy.from, or
 // networkPolicy.enabled=false), ExposurePeersBroad when a peer of from
-// admits everyone, ExposurePolicyBypassed when another NetworkPolicy does.
+// admits (nearly) everyone, ExposurePolicyBypassed when another
+// NetworkPolicy does.
 // Removed when nothing is published, the hostname stall included. The
 // message says which peers the console believes about X-Forwarded-For.
 // Whether the CNI enforces NetworkPolicies cannot be observed: True says
@@ -128,7 +136,8 @@ type PgToolBoxConsoleTrustedProxySpec struct {
 	// NetworkPolicy rendered, any peer it admits (every other Pod is
 	// refused by the network); without it, none, and the header is
 	// ignored: every client behind the proxy then shares its address, and
-	// so one sign-in budget.
+	// no per-address sign-in budget applies (only the per-flow, per-token
+	// and per-replica bounds).
 	// +kubebuilder:validation:MaxItems=32
 	// +kubebuilder:validation:items:MaxLength=49
 	// +kubebuilder:validation:items:XValidation:rule="isCIDR(self)",message="trustedProxy.cidrs entries must be CIDRs",reason=FieldValueInvalid
@@ -151,8 +160,9 @@ type PgToolBoxConsoleExposurePolicySpec struct {
 	// host-network ones included) are always admitted, and from adds to
 	// them. Required for ingress and gateway. Every peer listed is trusted
 	// to write X-Forwarded-For unless trustedProxy.cidrs narrows it; a peer
-	// that admits everyone (an empty namespaceSelector, an empty
-	// podSelector alone, an ipBlock of /0) turns that trust off. The probe
+	// that admits (nearly) everyone (a namespaceSelector, or a podSelector
+	// alone, that pins no label value; an ipBlock wider than /8 or /32 or
+	// holding a whole private range) turns that trust off. The probe
 	// port (health and /metrics) stays open to scrapers; it never reads the
 	// header.
 	// +kubebuilder:validation:MaxItems=16
@@ -167,20 +177,66 @@ type PgToolBoxConsoleExposurePolicySpec struct {
 // +kubebuilder:validation:XValidation:rule="!has(self.ipBlock) || (!has(self.podSelector) && !has(self.namespaceSelector))",message="a networkPolicy.from peer with ipBlock may not also have podSelector or namespaceSelector",reason=FieldValueForbidden
 type PgToolBoxConsolePolicyPeer struct {
 	// Pods (of this namespace, or of the namespaces namespaceSelector
-	// selects). Empty with no namespaceSelector: every Pod of this
-	// namespace, which ExposureConfined reports as broad.
+	// selects). Pinning no label value (no matchLabels, no In) with no
+	// namespaceSelector: (nearly) every Pod of this namespace, which
+	// ExposureConfined reports as broad.
 	// +optional
-	PodSelector *metav1.LabelSelector `json:"podSelector,omitempty"`
+	PodSelector *PgToolBoxConsoleLabelSelector `json:"podSelector,omitempty"`
 
-	// Namespaces. Empty: every namespace, which ExposureConfined reports
-	// as broad.
+	// Namespaces. Pinning no label value (no matchLabels, no In):
+	// (nearly) every namespace, which ExposureConfined reports as broad.
 	// +optional
-	NamespaceSelector *metav1.LabelSelector `json:"namespaceSelector,omitempty"`
+	NamespaceSelector *PgToolBoxConsoleLabelSelector `json:"namespaceSelector,omitempty"`
 
 	// Addresses: a CIDR, less the except CIDRs inside it. Alone in its
-	// peer. A /0 is broad.
+	// peer. Wider than /8 (IPv4) or /32 (IPv6), or holding a whole private
+	// range, is broad.
 	// +optional
 	IPBlock *PgToolBoxConsoleIPBlock `json:"ipBlock,omitempty"`
+}
+
+// PgToolBoxConsoleLabelSelector is a label selector, bounded and checked
+// here so that the API server never refuses the NetworkPolicy rendered from
+// it: label keys and values in their syntax, operators from the four the
+// API knows, values only (and always) for In and NotIn.
+// +kubebuilder:validation:XValidation:rule="!has(self.matchLabels) || self.matchLabels.all(k, k.matches('^([a-z0-9]([-a-z0-9]*[a-z0-9])?([.][a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?$'))",message="matchLabels keys must be label keys ([prefix/]name, name at most 63 characters)",fieldPath=".matchLabels",reason=FieldValueInvalid
+type PgToolBoxConsoleLabelSelector struct {
+	// Labels the object must carry, with these values.
+	// +kubebuilder:validation:MaxProperties=16
+	// +optional
+	MatchLabels map[string]PgToolBoxConsoleLabelValue `json:"matchLabels,omitempty"`
+
+	// Requirements the object's labels must meet, all of them.
+	// +kubebuilder:validation:MaxItems=16
+	// +listType=atomic
+	// +optional
+	MatchExpressions []PgToolBoxConsoleLabelRequirement `json:"matchExpressions,omitempty"`
+}
+
+// PgToolBoxConsoleLabelValue is a label value: at most 63 characters,
+// alphanumeric at both ends, '-', '_' and '.' inside.
+// +kubebuilder:validation:MaxLength=63
+// +kubebuilder:validation:Pattern=`^(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])?$`
+type PgToolBoxConsoleLabelValue string
+
+// PgToolBoxConsoleLabelRequirement is one matchExpressions entry.
+// +kubebuilder:validation:XValidation:rule="self.operator in ['In', 'NotIn'] ? (has(self.values) && size(self.values) > 0) : (!has(self.values) || size(self.values) == 0)",message="values are required for In and NotIn and forbidden for Exists and DoesNotExist",reason=FieldValueInvalid
+type PgToolBoxConsoleLabelRequirement struct {
+	// The label key ([prefix/]name).
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=317
+	// +kubebuilder:validation:Pattern=`^([a-z0-9]([-a-z0-9]*[a-z0-9])?([.][a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?$`
+	Key string `json:"key"`
+
+	// In, NotIn, Exists or DoesNotExist.
+	// +kubebuilder:validation:Enum=In;NotIn;Exists;DoesNotExist
+	Operator metav1.LabelSelectorOperator `json:"operator"`
+
+	// The values, for In and NotIn.
+	// +kubebuilder:validation:MaxItems=16
+	// +listType=atomic
+	// +optional
+	Values []PgToolBoxConsoleLabelValue `json:"values,omitempty"`
 }
 
 // PgToolBoxConsoleIPBlock is a NetworkPolicy ipBlock.
