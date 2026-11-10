@@ -27,7 +27,7 @@
 #                               its own images are referenced by digest (tag kept
 #                               in a comment)
 #   release.sh pin-refs FILE DIGESTS VERSION
-#                               rewrite repo:VERSION to repo@digest in a bundle,
+#                               rewrite repo:VERSION (or the tree's core version) to repo@digest in a bundle,
 #                               catalog or manifest file
 #   release.sh verify-pins DIR DIGESTS
 #                               render a pinned chart and fail on any own image not
@@ -62,6 +62,8 @@
 #   CI_WAIT_ATTEMPTS, CI_WAIT_SLEEP   wait-ci polling (120 x 30 s)
 #   DRY_RUN_FAKE_DIGESTS=1   dry-run: skip the image builds and use placeholder
 #                            digests, to exercise the pinning and packaging only
+#   DRY_RUN_TAG        dry-run: rehearse this tag (v0.1.0-rc.1) against the tree
+#                      instead of the chart's version
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -302,21 +304,35 @@ evidence.image.digest=${agent#*@} # ${agent%@*}:${version}"
   mv "${tmp}" "${values}"
 }
 
-# pin-refs: repo:VERSION -> repo@digest for every image DIGESTS names, anywhere
-# in FILE (CSV annotation, deployment, args, relatedImages; the catalog's
-# bundle image).
+# pin-refs: repo:TAG -> repo@digest for every image DIGESTS names, anywhere in
+# FILE (CSV annotation, deployment, args, relatedImages; the catalog's bundle
+# image). The committed tree carries the CORE version (0.1.0) while a release
+# candidate pushes 0.1.0-rc.1, so TAG is the core of VERSION or VERSION itself,
+# whichever the tree carries. Loud by design: a file in which nothing was
+# pinned, or where a reference to an own repository is left on a tag, is an
+# error, never a silent no-op (the rc once published bundles that named tags
+# that were never pushed).
 cmd_pin_refs() {
-  local file="${1:?usage: release.sh pin-refs FILE DIGESTS VERSION}" digests="${2:?}" version="${3:?}" ref repo esc_repo esc_v esc_ref
+  local file="${1:?usage: release.sh pin-refs FILE DIGESTS VERSION}" digests="${2:?}" version="${3:?}" ref repo esc_repo grep_repo esc_ref tags core pinned=0 left
   [[ -f "${file}" && -f "${digests}" ]] || die "pin-refs: ${file} or ${digests} is missing"
-  esc_v="${version//./\\.}"
+  core="${version%%-*}"
+  tags="${version//./\\.}"
+  [[ "${core}" == "${version}" ]] || tags="${tags}|${core//./\\.}"
   while read -r ref; do
     [[ -n "${ref}" ]] || continue
     repo="${ref%@*}"
     esc_repo="$(printf '%s' "${repo}" | sed 's/[.[\*^$/]/\\&/g')"
+    grep_repo="$(printf '%s' "${repo}" | sed 's/[.[\*^$]/\\&/g')"
     esc_ref="$(printf '%s' "${ref}" | sed 's/[&/\]/\\&/g')"
     # The tag must end at a delimiter: 1.0.0 must not match inside 1.0.0-rc.1.
-    sed -i -E "s/${esc_repo}:${esc_v}([^0-9A-Za-z._-]|\$)/${esc_ref}\\1/g" "${file}"
+    if grep -qE "${grep_repo}:(${tags})([^0-9A-Za-z._-]|\$)" "${file}"; then
+      sed -i -E "s/${esc_repo}:(${tags})([^0-9A-Za-z._-]|\$)/${esc_ref}\\2/g" "${file}"
+      pinned=$((pinned + 1))
+    fi
+    left="$(grep -nE "${grep_repo}:[0-9A-Za-z]" "${file}" || true)"
+    [[ -z "${left}" ]] || die "pin-refs: ${file} still references ${repo} by a tag other than ${tags//\\/} (expected the tree to carry ${core}):"$'\n'"${left}"
   done < "${digests}"
+  ((pinned > 0)) || die "pin-refs: ${file} references none of the images in ${digests} at ${tags//\\/}; nothing was pinned"
 }
 
 # verify-pins: render a pinned chart and require each own image at exactly the
@@ -414,7 +430,7 @@ cmd_install_manifests() {
 cmd_sums() {
   cd "${out_dir}"
   local -a names
-  mapfile -t names < <(ls -1 pgtoolbox-*.tgz pgtools-*.tgz install-*.yaml sbom-*.spdx.json digests.txt 2>/dev/null | LC_ALL=C sort)
+  mapfile -t names < <(ls -1 pgtoolbox-*.tgz pgtools-*.tgz install-*.yaml sbom-*.spdx.json digests.txt chart-digests.txt 2>/dev/null | LC_ALL=C sort)
   [[ ${#names[@]} -gt 0 ]] || die "nothing to checksum in ${out_dir}"
   sha256sum "${names[@]}" > SHA256SUMS
   echo "SHA256SUMS lists ${#names[@]} files"
@@ -516,6 +532,11 @@ cmd_dry_run() {
   local version entry name repo_name context file target platforms ref archive digest
   for tool in jq helm; do command -v "${tool}" >/dev/null || die "${tool} is not on PATH"; done
   version="$(chart_field version)"
+  # DRY_RUN_TAG=v0.1.0-rc.1 rehearses a release candidate against this tree.
+  if [[ -n "${DRY_RUN_TAG:-}" ]]; then
+    [[ "${DRY_RUN_TAG}" =~ ${semver_re} ]] || die "DRY_RUN_TAG must be semantic and start with v: ${DRY_RUN_TAG}"
+    version="${DRY_RUN_TAG#v}"
+  fi
   mkdir -p "${out_dir}"
   : > "${out_dir}/digests.txt"
   # Global, not local: the EXIT trap runs after this function has returned.

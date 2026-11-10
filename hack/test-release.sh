@@ -107,5 +107,59 @@ out="$(GRYPE_STUB=unauthorized ./hack/release.sh scan-digests "${work}/ok.txt" 2
 out="$(GRYPE_STUB=clean ./hack/release.sh scan-digests "${work}/ok.txt" 2>&1)"
 grep -q 'linux/amd64' <<<"${out}" && grep -q 'linux/arm64' <<<"${out}" || fail "scan did not cover both platforms"
 
+# ---- pin-refs, install-manifests and the bundle/catalog pinning, for the
+# final version and for a release candidate cut from the same tree (which
+# carries the core version): fake digests, the real committed files.
+digests="${work}/digests.txt"
+: > "${digests}"
+for n in operator console evidence-agent bundle catalog; do
+  printf 'ghcr.io/fyannk/pgtoolbox-%s@sha256:%064d\n' "${n}" "${#n}" >> "${digests}"
+done
+tree="$(sed -n 's/^version: *"\{0,1\}\([^"]*\)"\{0,1\} *$/\1/p' charts/pgtoolbox/Chart.yaml)"
+for v in "${tree}" "${tree}-rc.1"; do
+  d="${work}/pin-${v}"
+  rm -rf "${d}"
+  mkdir -p "${d}"
+  cp -r deploy/olm/bundle "${d}/bundle"
+  cp -r deploy/olm/catalog "${d}/catalog"
+  while IFS= read -r f; do ./hack/release.sh pin-refs "${f}" "${digests}" "${v}"; done \
+    < <(grep -rlE 'ghcr\.io/[^/]+/pgtoolbox-' "${d}/bundle")
+  ! grep -rEq 'ghcr\.io/[^/ ]+/pgtoolbox-[a-z-]+:[0-9]' "${d}/bundle" || fail "bundle for ${v} still has a tag reference"
+  grep -rq 'pgtoolbox-operator@sha256:' "${d}/bundle" || fail "bundle for ${v} pins no operator digest"
+  # The catalog names the bundle, pinned with the digests so far.
+  while IFS= read -r f; do ./hack/release.sh pin-refs "${f}" "${digests}" "${v}"; done \
+    < <(grep -rlE 'ghcr\.io/[^/]+/pgtoolbox-' "${d}/catalog")
+  grep -rq 'pgtoolbox-bundle@sha256:' "${d}/catalog" || fail "catalog for ${v} pins no bundle digest"
+  if command -v kubectl >/dev/null; then
+    OUT_DIR="${d}/out" ./hack/release.sh install-manifests "${digests}" "${v}" >/dev/null \
+      || fail "install-manifests failed for ${v}"
+    grep -q 'pgtoolbox-console@sha256:' "${d}/out/install-console.yaml" || fail "install-console.yaml for ${v} is not pinned"
+  else
+    echo "note: kubectl is not on PATH; install-manifests not exercised for ${v}"
+  fi
+done
+# Negative: a tree on another version pins nothing, and that is an error.
+printf 'image: ghcr.io/fyannk/pgtoolbox-operator:9.9.9\n' > "${work}/other.yaml"
+expect 1 'still references' -- ./hack/release.sh pin-refs "${work}/other.yaml" "${digests}" "${tree}-rc.1"
+printf 'image: docker.io/library/busybox:1\n' > "${work}/none.yaml"
+expect 1 'nothing was pinned' -- ./hack/release.sh pin-refs "${work}/none.yaml" "${digests}" "${tree}-rc.1"
+# Negative: a reference left on another tag beside a pinned one is an error.
+printf 'a: ghcr.io/fyannk/pgtoolbox-operator:%s\nb: ghcr.io/fyannk/pgtoolbox-operator:latest\n' "${tree}" > "${work}/left.yaml"
+expect 1 'still references' -- ./hack/release.sh pin-refs "${work}/left.yaml" "${digests}" "${tree}-rc.1"
+# The dry run rehearses an rc end to end with placeholder digests.
+if command -v helm >/dev/null && command -v jq >/dev/null; then
+  OUT_DIR="${work}/dry" DRY_RUN_FAKE_DIGESTS=1 DRY_RUN_TAG="v${tree}-rc.1" ./hack/release.sh dry-run >/dev/null \
+    || fail "dry-run of v${tree}-rc.1 failed"
+  [[ -f "${work}/dry/pgtoolbox-${tree}-rc.1.tgz" ]] || fail "dry-run did not package the rc chart"
+else
+  echo "note: helm or jq missing; the rc dry run was not exercised"
+fi
+# SHA256SUMS covers chart-digests.txt.
+mkdir -p "${work}/sums"
+printf x > "${work}/sums/digests.txt"
+printf y > "${work}/sums/chart-digests.txt"
+OUT_DIR="${work}/sums" ./hack/release.sh sums >/dev/null
+grep -q ' chart-digests.txt$' "${work}/sums/SHA256SUMS" || fail "SHA256SUMS lacks chart-digests.txt"
+
 echo "ok: hack/release.sh"
 cd "${root}"
