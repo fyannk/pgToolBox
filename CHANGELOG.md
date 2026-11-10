@@ -76,6 +76,18 @@ OpenShift.
   `grpc_health_probe` from source (opm v1.74.0) with the repository's Go and
   dependency versions, since the upstream opm image ships fixable high
   vulnerabilities.
+- **Release gates that hold on every commit.** Merges made by auto-merge start no
+  workflow of their own, so `automerge.yml` now dispatches the full `ci.yml` and
+  `security.yml` on `main` for a commit that has no run (after the merge, and every
+  30 minutes as a net); `make release-preflight TAG=vX.Y.Z` checks the dated
+  CHANGELOG, the annotated tag and green `ci-ok` and `security-gate` on the tagged
+  commit before the tag is pushed. A nested-module release is never marked latest, a
+  release candidate never is either, and the product's stable release is. The
+  signature and attestation check of each image is retried, `npm ci` and `pnpm
+  install` in the image build are retried, and the anonymous verification still runs
+  when the prune fails. The envtest suites run on Kubernetes 1.35 and 1.36 in the
+  nightly and dispatched runs (1.34 on every change). Dependabot proposes the
+  Playwright npm packages as one group, and the e2e image moves with them.
 - **The restore check without an evidence agent** reads the primary's last
   archived WAL time: "may well be possible" only while archiving is healthy, and
   "likely not in the repository" when it fails. With an agent, a time between

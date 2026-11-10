@@ -123,11 +123,33 @@ release it asks for every pushed digest with no credentials, and if any is priva
 fails naming the packages and leaves the release a draft. Make them public, then use
 **Re-run failed jobs** on the run.
 
+Pruning (`release.yml`, job `prune`) deletes untagged versions with the Actions
+token. On a package owned by a user account that token may lack the right to delete
+versions: give the repository **Admin** on each package (Package settings, Manage
+Actions access), or prune by hand. A failed prune does not stop `verify`.
+
+## Repository topics and release immutability
+
+Not set by the repository; do these as the owner.
+
+- **Topics** (About, gear icon): `cloudnativepg`, `postgresql`, `kubernetes`,
+  `openshift`, `operator`, `observability`, `backup`, `barman`, `pgbackrest`,
+  `helm`, `golang`, `mcp`. They are what the repository is found by.
+- **Immutable releases** (Settings, General, Releases, *Enable release
+  immutability*): turn on **after the first release is published** (tag and assets
+  then cannot be changed or deleted, and the release gets an attestation). Not before:
+  `release.yml` creates the release as a draft, uploads the assets and publishes it
+  last, which immutability allows, but a failed release candidate's release would be
+  locked as soon as it is published. Check afterwards with
+  `gh release verify vX.Y.Z`.
+
 ## Releasing
 
 Nothing in the workflows pushes a tag. A release is cut by a person:
 
-1. `make release-check TAG=vX.Y.Z` and `make release-dry-run` on a clean `main`.
+1. `make release-check TAG=vX.Y.Z` and `make release-dry-run` on a clean `main`, then
+   `make release-preflight TAG=vX.Y.Z` (dated CHANGELOG, `ci-ok` and `security-gate`
+   green on the commit to tag: check runs must exist on the tagged commit).
 2. `git tag -a vX.Y.Z -m "pgToolBox X.Y.Z"` and `git push origin vX.Y.Z`.
 3. `release.yml` waits for `ci-ok` and `security-gate` on that commit, then publishes.
    If it waits for a commit that has no run, dispatch `ci.yml` and `security.yml` on
