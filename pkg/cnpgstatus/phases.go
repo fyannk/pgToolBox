@@ -14,6 +14,8 @@
 
 package cnpgstatus
 
+import "strings"
+
 // Cluster.status.phase is a free sentence, not an enum. The table below
 // lists every phase constant of api/v1/cluster_types.go at each
 // supported tag; all of them reach the status through
@@ -188,6 +190,27 @@ type PhaseReading struct {
 	// Known is false when the phase is not in the minor's table: the UI
 	// shows the text verbatim with a warning, never ok or critical.
 	Known bool `json:"known"`
+	// Reason is set when the class was capped below the table's: the
+	// phase is in the table, but the table was not verified against the
+	// minor the operator runs, so its healthy meaning is not asserted.
+	Reason string `json:"reason,omitempty"`
+}
+
+// phaseVerifiedMinors are the minors whose phase table was read at a
+// released tag and is checked there by make verify-pins-cnpgstatus
+// (pins_test.go verifiedReleases: 1.30 at v1.30.0). 1.31 is planned: its
+// rows were read at upstream main (21e24f6), not at a 1.31 tag.
+var phaseVerifiedMinors = []Minor{Minor130}
+
+// phaseVerified reports whether minor's phase table was verified at a
+// released tag.
+func phaseVerified(minor Minor) bool {
+	for _, verified := range phaseVerifiedMinors {
+		if minor == verified {
+			return true
+		}
+	}
+	return false
 }
 
 // PhaseTable returns the rows of minor's table in source order. An
@@ -211,7 +234,28 @@ func PhaseTable(minor Minor) []PhaseEntry {
 // warning, not known: the text is new or foreign and is shown verbatim.
 // An unsupported minor is evaluated against the newest released table
 // (1.30); a phase found there is known, any other is not.
+//
+// The phase is a free sentence: a later minor can keep a string and
+// change what it means. So a row the table reads as ok is capped at
+// warning, with a "phase table not verified for CNPG <minor>" reason,
+// whenever minor names a CloudNativePG minor whose table was not
+// verified at a released tag (the planned 1.31, a newer 1.32, the
+// unsupported 1.29). Rows that are not ok keep their class: a warning or
+// a critical is never made to look better. An empty or unparseable
+// minor (the version was not detected) is read against the newest
+// released table without a cap, because nothing says it differs from it.
 func ClassifyPhase(minor Minor, phase string) PhaseReading {
+	reading := classifyPhaseRow(minor, phase)
+	if reading.Known && reading.Class == ClassOK && namesMinor(minor) && !phaseVerified(minor) {
+		reading.Class = ClassWarning
+		reading.Reason = "phase table not verified for CNPG " + string(minor)
+	}
+	return reading
+}
+
+// classifyPhaseRow is the table's own reading of phase, without the cap
+// for an unverified minor.
+func classifyPhaseRow(minor Minor, phase string) PhaseReading {
 	if phase == "" {
 		return PhaseReading{Class: ClassUnknown, Known: false}
 	}
@@ -224,4 +268,14 @@ func ClassifyPhase(minor Minor, phase string) PhaseReading {
 		}
 	}
 	return PhaseReading{Class: ClassWarning, Known: false}
+}
+
+// namesMinor reports whether m is a MAJOR.MINOR CloudNativePG minor,
+// supported or not, rather than empty or garbage.
+func namesMinor(m Minor) bool {
+	if m == "" || strings.Count(string(m), ".") != 1 {
+		return false
+	}
+	v, ok := parseSemver(string(m))
+	return ok && v.minorString() == m
 }
