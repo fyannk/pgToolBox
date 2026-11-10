@@ -22,7 +22,9 @@ created before the policy was turned on keep working, and a Secret that was
 already referenced at that field, sent to the same place, is no new
 disclosure. A reference moved to another field is "new"; so is a kept
 reference whose destination changed (the issuer, Prometheus URL, SMTP
-address, tracing endpoint or image repository it is sent to). The lists
+address, tracing endpoint or image repository it is sent to, the CA it is
+trusted with, the Cluster, ObjectStore and pgBackRest endpoint an agent sends
+its allowedSecrets to). The lists
 (_admissionpolicy.tpl) follow api/v1alpha1: TestSecretRefPolicyCoversTheAPI
 in internal/operator/admissionpolicy walks the Go types and fails on a
 missing path, a missing has() guard or a missing destination; the envtest
@@ -34,7 +36,16 @@ default, the superuser on request). Their Secrets are named by the Cluster,
 not by the PgAdmin, so the policy cannot name them: creating a PgAdmin that
 offers credentials of Clusters of its namespace, or widening what it offers
 (a credential kind, a Cluster, the selector), requires `get` on the Secrets of
-the namespace. Cross-namespace Clusters are the PgAdminAccess grant's decision.
+the namespace. So does changing who may sign in to such a PgAdmin (spec.auth
+but its display name, spec.admins): widening the audience hands the same
+credentials to more people. Cross-namespace Clusters are the PgAdminAccess
+grant's decision.
+
+Fifth rule: spec.prometheus.projectedToken sends the console ServiceAccount's
+own token to spec.prometheus.url. Setting it, or changing where it goes (URL,
+CA ConfigMap, audience), requires create on serviceaccounts/token for that
+ServiceAccount (<name>, or <name>-console when the name does not contain
+"console"; PgToolBoxConsole.WorkloadName), the power to mint the same token.
 */ -}}
 {{- $ap := .Values.operator.admissionPolicy }}
 {{- $io := $ap.imageOverride }}
@@ -73,6 +84,22 @@ spec:
     - name: newSecretRefs
       expression: >-
         variables.secretRefs.filter(r, !(oldObject != null && r in variables.oldSecretRefs))
+    - name: prometheusTokenTo
+      expression: >-
+        {{- include "pgtoolbox.admission.prometheusTokenTo" "object" | nindent 8 }}
+    - name: oldPrometheusTokenTo
+      expression: >-
+        oldObject == null ? '' : (
+        {{- include "pgtoolbox.admission.prometheusTokenTo" "oldObject" | nindent 8 }}
+        )
+    - name: consoleServiceAccount
+      expression: >-
+        object.metadata.name.contains('console') ? object.metadata.name : object.metadata.name + '-console'
+    - name: pgadminAudienceKept
+      expression: >-
+        request.resource.resource == 'pgadmins' && (
+        {{- include "pgtoolbox.admission.pgadminAudienceKept" . | nindent 8 }}
+        )
     - name: credentialKinds
       expression: >-
         request.resource.resource != 'pgadmins' ? [] : (
@@ -126,6 +153,15 @@ spec:
         authorizer.group('').resource('secrets').namespace(object.metadata.namespace).name(r.n).check('get').allowed())
       message: editing a PgToolBoxConsole, a PgAdmin or an EvidenceAgent requires get on every Secret it references (a Secret reference you may not read is refused, whichever field names it, and a kept reference whose destination changed is checked again)
       reason: Forbidden
+    # The projected Prometheus token is the console ServiceAccount's own
+    # token: sending it to a new URL (or trusting a new CA, or another
+    # audience) takes what minting it takes.
+    - expression: >-
+        variables.prometheusTokenTo == '' ||
+        (oldObject != null && variables.prometheusTokenTo == variables.oldPrometheusTokenTo) ||
+        authorizer.group('').resource('serviceaccounts').subresource('token').namespace(object.metadata.namespace).name(variables.consoleServiceAccount).check('create').allowed()
+      message: a PgToolBoxConsole that sends its projected ServiceAccount token to Prometheus (spec.prometheus.projectedToken) requires create on serviceaccounts/token for the console's ServiceAccount; changing the URL, the CA ConfigMap or the audience is checked again
+      reason: Forbidden
     - expression: >-
         request.resource.resource != 'pgadmins' ||
         variables.credentialKinds.size() == 0 ||
@@ -133,9 +169,10 @@ spec:
         (oldObject != null &&
         variables.credentialKinds.all(k, k in variables.oldCredentialKinds) &&
         variables.credentialSources.all(s, s in variables.oldCredentialSources) &&
-        (!has(object.spec.clusterSelector) || (has(oldObject.spec.clusterSelector) && object.spec.clusterSelector == oldObject.spec.clusterSelector))) ||
+        (!has(object.spec.clusterSelector) || (has(oldObject.spec.clusterSelector) && object.spec.clusterSelector == oldObject.spec.clusterSelector)) &&
+        variables.pgadminAudienceKept) ||
         authorizer.group('').resource('secrets').namespace(object.metadata.namespace).check('get').allowed()
-      message: a PgAdmin that offers the credentials of Clusters of its namespace (spec.credentials) requires get on the Secrets of the namespace, since whoever opens pgAdmin holds them; adding a credential kind or a Cluster is checked again
+      message: a PgAdmin that offers the credentials of Clusters of its namespace (spec.credentials) requires get on the Secrets of the namespace, since whoever opens pgAdmin holds them; adding a credential kind or a Cluster, or changing who may sign in (spec.auth, spec.admins), is checked again
       reason: Forbidden
 ---
 apiVersion: admissionregistration.k8s.io/v1

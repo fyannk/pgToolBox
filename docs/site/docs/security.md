@@ -152,18 +152,24 @@ or an EvidenceAgent requires get on every Secret it references").
   keep what they reference until they are edited to reference something else:
   review them when you enable it.
 - **The policy pairs a reference with where it is sent.** Keeping a reference and
-  changing its destination is a new reference, checked again:
-  `auth.oidc.issuerURL` for both OIDC client secrets, `prometheus.url` for
-  `prometheus.tokenSecretRef`, `digest.delivery.smtp.address` for the SMTP
-  password, `tracing.endpoint` for `tracing.headersSecretRef`,
-  `auth.oauth2.issuerURL` for the PgAdmin client secret, and the image's
-  `repository` for its `pullSecrets`. The other references name no destination in
-  the spec: the digest webhooks keep their URL inside the Secret, the OpenShift
-  client secret goes to the cluster's own OAuth server, the seal keys and the
-  Ingress certificate are sent nowhere. **Limit:** what the policy compares is the
-  destination field. A CA ConfigMap (`caConfigMapRef`), a DNS record or a proxy
-  that changes where that same URL leads is not seen; so do not let people who
-  may not read a Secret edit the CA ConfigMaps of the objects that send it.
+  changing its destination is a new reference, checked again. The destination is
+  every field that decides where the Secret goes and whom it is trusted with:
+  `auth.oidc.issuerURL` and `auth.oidc.caConfigMapRef` for both OIDC client
+  secrets, `auth.openshift.caConfigMapRef` for the OpenShift client secret,
+  `prometheus.url` and `prometheus.caConfigMapRef` for `prometheus.tokenSecretRef`,
+  `digest.delivery.smtp.address` and `tls` for the SMTP password,
+  `tracing.endpoint` for `tracing.headersSecretRef`, `auth.oauth2.issuerURL` for
+  the PgAdmin client secret, and the image's `repository` for its `pullSecrets`.
+  For an `EvidenceAgent`'s `allowedSecrets` it is `clusterRef`, `objectStoreRef`,
+  `allowInsecureEndpoint` and `pgbackrest.repository`, `endpoint` and
+  `endpointCA`. The other references name no destination in the spec: the digest
+  webhooks keep their URL inside the Secret, the seal keys and the Ingress
+  certificate are sent nowhere. A test classifies every field beside a reference
+  as a destination or not, with a reason, and fails on a new one.
+  **Limit:** what the policy compares is the fields, not what they lead to.
+  Editing the CA ConfigMap itself, the `ObjectStore`, `Stanza` or `Archive` an
+  agent reads, a DNS record or a proxy is not seen; so do not let people who may
+  not read a Secret edit those objects.
 - **More than two new references at once** need `get` on every Secret of the
   namespace. An authorizer check costs most of a CEL expression's runtime
   budget, so the policy checks one or two added references name by name, and a
@@ -207,8 +213,30 @@ and `connect pgadmins` but no `get secrets` could ask for `superuser: true` and
 open pgAdmin with the superuser's password. `crossNamespaceClusterRefs` are
 outside the rule: the `PgAdminAccess` grant of the target namespace, created by
 its owner, decides them (privileged credentials only with `allowPrivileged`).
+Changing who may sign in to such a `PgAdmin` is checked the same way, since it
+hands the same credentials to other people: any change to `spec.auth` (the
+issuer, client, required claims, username claim and scopes of `oauth2`, a switch
+between `oauth2` and `openshiftOAuthProxy`, the proxy's image) or to
+`spec.admins`. Only `auth.oauth2.displayName`, a button label, is left out; a
+test fails when a new `PgAdmin` field is not classified. A `PgAdmin` that offers
+no credentials is not concerned.
 Message: "a PgAdmin that offers the credentials of Clusters of its namespace
 (spec.credentials) requires get on the Secrets of the namespace".
+
+**A `PgToolBoxConsole` that projects its ServiceAccount token to Prometheus
+requires `create` on that ServiceAccount's token.** `spec.prometheus.projectedToken`
+sends the console ServiceAccount's own token to `spec.prometheus.url`; with the
+default audience (the API server's, which OpenShift's thanos-querier expects),
+whoever runs that URL can use it against the API server for up to an hour. So
+setting it, or changing the `url`, `caConfigMapRef` or `tokenAudience` it goes
+with, requires `create` on `serviceaccounts/token` for the console's
+ServiceAccount (the console's name, or `<name>-console` when the name does not
+contain `console`): the power to mint the same token. Reading Secrets does not
+qualify. Set `spec.prometheus.tokenAudience` when your Prometheus front accepts
+a dedicated audience: the token is then useless against the API server.
+Message: "a PgToolBoxConsole that sends its projected ServiceAccount token to
+Prometheus (spec.prometheus.projectedToken) requires create on
+serviceaccounts/token for the console's ServiceAccount".
 
 ## Known limitations
 

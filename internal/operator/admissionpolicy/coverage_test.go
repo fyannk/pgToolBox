@@ -15,6 +15,7 @@
 package admissionpolicy
 
 import (
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -55,10 +56,14 @@ var (
 	// so (path below spec -> what they name). Empty today.
 	secretNamesByDeclaration = map[string]string{}
 
-	refRe           = `'n': string\(\{\{ \$o \}\}\.spec\.([A-Za-z0-9.]+)\.name\)`
-	destRe          = `'d': (''|string\(\{\{ \$o \}\}\.spec\.([A-Za-z0-9.]+)\))`
-	singleEntryRe   = regexp.MustCompile(`\{'p': '([^']+)', ` + refRe + `, ` + destRe + `\}`)
-	listEntryRe     = regexp.MustCompile(`\{\{ \$o \}\}\.spec\.([A-Za-z0-9.]+)\.map\(s, \{'p': '([^']+)', 'n': string\(s(\.name)?\), ` + destRe + `\}\)`)
+	refRe = `'n': string\(\{\{ \$o \}\}\.spec\.([A-Za-z0-9.]+)\.name\)`
+	// 'd' runs to the end of its map; "{{ $o }}" is always followed by
+	// ".spec", so the first "}" followed by "]" or ")" closes the entry.
+	destRe          = `'d': (.*?)\}`
+	singleEntryRe   = regexp.MustCompile(`\{'p': '([^']+)', ` + refRe + `, ` + destRe + `\]`)
+	listEntryRe     = regexp.MustCompile(`\{\{ \$o \}\}\.spec\.([A-Za-z0-9.]+)\.map\(s, \{'p': '([^']+)', 'n': string\(s(\.name)?\), ` + destRe + `\)`)
+	hasRe           = regexp.MustCompile(`has\(\{\{ \$o \}\}\.spec\.[A-Za-z0-9.]+\)`)
+	readRe          = regexp.MustCompile(`\{\{ \$o \}\}\.spec\.([A-Za-z0-9.]+)`)
 	resourceSplitRe = regexp.MustCompile(`request\.resource\.resource == '([a-z]+)' \?`)
 )
 
@@ -83,7 +88,7 @@ func secretFields(t reflect.Type) []secretField {
 			if name != "" {
 				path = strings.TrimPrefix(prefix+"."+name, ".")
 			}
-			opt := maps(optional)
+			opt := copyOptional(optional)
 			if name != "" && (f.Type.Kind() == reflect.Pointer || f.Type.Kind() == reflect.Map || strings.Contains(opts, "omitempty")) {
 				opt[path] = true
 			}
@@ -122,7 +127,7 @@ func secretFields(t reflect.Type) []secretField {
 	return out
 }
 
-func maps(m map[string]bool) map[string]bool {
+func copyOptional(m map[string]bool) map[string]bool {
 	out := make(map[string]bool, len(m)+1)
 	for k, v := range m {
 		out[k] = v
@@ -133,8 +138,21 @@ func maps(m map[string]bool) map[string]bool {
 // policyEntry is one extraction of the Secret-reference helper.
 type policyEntry struct {
 	line string
-	dest string // the spec path the destination is read from; "" for none
-	name bool   // reads a bare string (string(s)), not s.name
+	dest []string // the spec paths the destination is read from, sorted; none for ''
+	name bool     // reads a bare string (string(s)), not s.name
+}
+
+// destPaths is the spec paths a destination expression reads, has() guards
+// aside, sorted and without duplicates.
+func destPaths(expr string) []string {
+	var out []string
+	for _, m := range readRe.FindAllStringSubmatch(hasRe.ReplaceAllString(expr, ""), -1) {
+		if !slices.Contains(out, m[1]) {
+			out = append(out, m[1])
+		}
+	}
+	slices.Sort(out)
+	return out
 }
 
 // policyEntries reads the Secret-reference helper of the operator chart: per
@@ -162,47 +180,187 @@ func policyEntries(t *testing.T) map[string]map[string]policyEntry {
 			if m[1] != m[2] {
 				t.Errorf("%s: entry %q reads spec.%s", resource, m[1], m[2])
 			}
-			out[resource][m[1]] = policyEntry{line: line, dest: m[4]}
+			out[resource][m[1]] = policyEntry{line: line, dest: destPaths(m[3])}
 		}
 		for _, m := range listEntryRe.FindAllStringSubmatch(line, -1) {
 			if m[1] != m[2] {
 				t.Errorf("%s: list entry %q maps spec.%s", resource, m[2], m[1])
 			}
-			out[resource][m[2]] = policyEntry{line: line, dest: m[5], name: m[3] == ""}
+			out[resource][m[2]] = policyEntry{line: line, dest: destPaths(m[4]), name: m[3] == ""}
 		}
 	}
 	return out
 }
 
-// destinations: where each workload sends a Secret it is given, for every
-// reference whose destination the spec names. The policy pairs the
-// reference with it, so a kept reference sent somewhere else is checked
-// again. A reference not listed here has no destination in the spec, and
-// noDestination says why.
-var destinations = map[string]map[string]string{
+// destinations: everything that decides where each workload sends a Secret
+// it is given, and whom it trusts there, for every reference whose
+// destination the spec names. The policy pairs the reference with all of
+// it, so a kept reference sent somewhere else is checked again. A reference
+// not listed here has no destination in the spec, and noDestination says
+// why.
+var destinations = map[string]map[string][]string{
 	"pgtoolboxconsoles": {
-		"auth.oidc.clientSecretRef":              "auth.oidc.issuerURL",
-		"auth.oidc.grantClient.clientSecretRef":  "auth.oidc.issuerURL",
-		"prometheus.tokenSecretRef":              "prometheus.url",
-		"digest.delivery.smtp.passwordSecretRef": "digest.delivery.smtp.address",
-		"tracing.headersSecretRef":               "tracing.endpoint",
-		"image.pullSecrets":                      "image.repository",
+		"auth.oidc.clientSecretRef":              {"auth.oidc.issuerURL", "auth.oidc.caConfigMapRef.name"},
+		"auth.oidc.grantClient.clientSecretRef":  {"auth.oidc.issuerURL", "auth.oidc.caConfigMapRef.name"},
+		"auth.openshift.clientSecretRef":         {"auth.openshift.caConfigMapRef.name"},
+		"prometheus.tokenSecretRef":              {"prometheus.url", "prometheus.caConfigMapRef.name"},
+		"digest.delivery.smtp.passwordSecretRef": {"digest.delivery.smtp.address", "digest.delivery.smtp.tls"},
+		"tracing.headersSecretRef":               {"tracing.endpoint"},
+		"image.pullSecrets":                      {"image.repository"},
 	},
 	"pgadmins": {
-		"auth.oauth2.clientSecretRef":                "auth.oauth2.issuerURL",
-		"auth.openshiftOAuthProxy.image.pullSecrets": "auth.openshiftOAuthProxy.image.repository",
-		"image.pullSecrets":                          "image.repository",
+		"auth.oauth2.clientSecretRef":                {"auth.oauth2.issuerURL"},
+		"auth.openshiftOAuthProxy.image.pullSecrets": {"auth.openshiftOAuthProxy.image.repository"},
+		"image.pullSecrets":                          {"image.repository"},
 	},
-	"evidenceagents": {},
+	"evidenceagents": {
+		"allowedSecrets": {
+			"clusterRef.name", "objectStoreRef.name", "allowInsecureEndpoint",
+			"pgbackrest.repository", "pgbackrest.endpoint", "pgbackrest.endpointCA.name", "pgbackrest.endpointCA.key",
+		},
+	},
 }
 
 var noDestination = map[string]string{
-	"auth.openshift.clientSecretRef":       "sent to the cluster's own OAuth server, found from the API server",
 	"digest.delivery.chatWebhookSecretRef": "the Secret holds the URL itself",
 	"digest.delivery.webhookSecretRef":     "the Secret holds the URL itself",
 	"restoreDrills.sealKeySecretRef":       "a key the console keeps, sent nowhere",
 	"exposure.tls.certificateSecretRef":    "served by the Ingress, sent nowhere",
-	"allowedSecrets":                       "sent to the object store the Cluster's backup configuration names, which its editors choose and the backup plugin already sends them to",
+}
+
+// notDestination: per reference with a destination, the fields beside it
+// (below the struct that holds it; a path prefix covers what is below it)
+// that do not decide where it is sent, each with why. Together with
+// destinations it classifies every such field, so a new field beside a
+// reference (an insecure switch, a second CA) fails the coverage test until
+// somebody says whether it moves the Secret.
+var notDestination = map[string]map[string]map[string]string{
+	"pgtoolboxconsoles": {
+		"auth.oidc.clientSecretRef": {
+			"auth.oidc.clientID":             "names the client to the same issuer",
+			"auth.oidc.redirectURL":          "where the browser returns with a code; the client secret is not sent there",
+			"auth.oidc.scopes":               "what is asked of the same issuer",
+			"auth.oidc.requireEmailVerified": "a check of the ID token, not a destination",
+			"auth.oidc.grantClient":          "a reference of its own",
+		},
+		"auth.oidc.grantClient.clientSecretRef": {
+			"auth.oidc.grantClient.clientID": "names the client to the same issuer",
+		},
+		"auth.openshift.clientSecretRef": {},
+		"prometheus.tokenSecretRef": {
+			"prometheus.projectedToken": "the other token source, refused beside tokenSecretRef by the CRD",
+			"prometheus.tokenAudience":  "applies to the projected token only",
+			"prometheus.namespaced":     "a query parameter",
+			"prometheus.range":          "the charts' window",
+		},
+		"digest.delivery.smtp.passwordSecretRef": {
+			"digest.delivery.smtp.username": "sent with the password, to the same server",
+			"digest.delivery.smtp.from":     "a mail header",
+			"digest.delivery.smtp.to":       "mail recipients; the password is not in the mail",
+		},
+		"tracing.headersSecretRef": {
+			"tracing.serviceName":     "a span attribute",
+			"tracing.sampler":         "which spans are sent, not where",
+			"tracing.samplerArg":      "which spans are sent, not where",
+			"tracing.includePayloads": "span content, not where it is sent",
+		},
+		"image.pullSecrets": {
+			"image.tag":        "which image of the same repository",
+			"image.digest":     "which image of the same repository",
+			"image.pullPolicy": "when the kubelet pulls, not from where",
+		},
+	},
+	"pgadmins": {
+		"auth.oauth2.clientSecretRef": {
+			"auth.oauth2.clientID":       "names the client to the same issuer",
+			"auth.oauth2.requiredClaims": "who may sign in: the credentials rule's audience check",
+			"auth.oauth2.usernameClaim":  "who may sign in: the credentials rule's audience check",
+			"auth.oauth2.scopes":         "what is asked of the same issuer",
+			"auth.oauth2.displayName":    "a button label",
+		},
+		"auth.openshiftOAuthProxy.image.pullSecrets": {
+			"auth.openshiftOAuthProxy.image.tag":        "which image of the same repository",
+			"auth.openshiftOAuthProxy.image.digest":     "which image of the same repository",
+			"auth.openshiftOAuthProxy.image.pullPolicy": "when the kubelet pulls, not from where",
+		},
+		"image.pullSecrets": {
+			"image.tag":        "which image of the same repository",
+			"image.digest":     "which image of the same repository",
+			"image.pullPolicy": "when the kubelet pulls, not from where",
+		},
+	},
+	"evidenceagents": {
+		"allowedSecrets": {
+			"serverName":       "a key prefix inside the repository the Cluster and ObjectStore name",
+			"image":            "the agent image: the imageOverride rule and the operator's repository allow-list",
+			"resources":        "compute resources",
+			"refreshInterval":  "how often, not where",
+			"exposure":         "how the console reaches the agent (clusterIP only)",
+			"tls":              "the agent's serving certificate",
+			"workloadIdentity": "the Pod's cloud identity: the workloadIdentity rule",
+		},
+	},
+}
+
+// fieldsBeside lists the leaf fields of the struct at parent (a path below
+// spec, "" for spec itself): JSON paths below spec, through pointers and
+// structs of the API package; lists, maps and other types are leaves.
+func fieldsBeside(t *testing.T, spec reflect.Type, parent string) []string {
+	t.Helper()
+	cur := spec
+	if parent != "" {
+		for _, seg := range strings.Split(parent, ".") {
+			for cur.Kind() == reflect.Pointer {
+				cur = cur.Elem()
+			}
+			f, ok := fieldByJSON(cur, seg)
+			if !ok {
+				t.Fatalf("spec.%s: no field %q in %s", parent, seg, cur)
+			}
+			cur = f.Type
+		}
+	}
+	var out []string
+	var walk func(t reflect.Type, prefix string)
+	walk = func(t reflect.Type, prefix string) {
+		for t.Kind() == reflect.Pointer {
+			t = t.Elem()
+		}
+		for i := range t.NumField() {
+			f := t.Field(i)
+			name, _, _ := strings.Cut(f.Tag.Get("json"), ",")
+			if name == "-" || name == "" || !f.IsExported() {
+				continue
+			}
+			path := strings.TrimPrefix(prefix+"."+name, ".")
+			ft := f.Type
+			for ft.Kind() == reflect.Pointer {
+				ft = ft.Elem()
+			}
+			if ft.Kind() == reflect.Struct && ft.PkgPath() == apiPkg {
+				walk(ft, path)
+				continue
+			}
+			out = append(out, path)
+		}
+	}
+	walk(cur, parent)
+	return out
+}
+
+func fieldByJSON(t reflect.Type, name string) (reflect.StructField, bool) {
+	for i := range t.NumField() {
+		f := t.Field(i)
+		if n, _, _ := strings.Cut(f.Tag.Get("json"), ","); n == name {
+			return f, true
+		}
+	}
+	return reflect.StructField{}, false
+}
+
+// underAny reports whether path is one of prefixes or below one.
+func underAny(path string, prefixes []string) bool {
+	return slices.ContainsFunc(prefixes, func(p string) bool { return path == p || strings.HasPrefix(path, p+".") })
 }
 
 // notCovered: the Secret references of an EvidenceAgent the policy does not
@@ -300,20 +458,44 @@ func TestSecretRefPolicyCoversTheAPI(t *testing.T) {
 			wantDest, hasDest := destinations[resource][f.path]
 			_, why := noDestination[f.path]
 			switch {
-			case hasDest && e.dest != wantDest:
-				t.Errorf("%s: spec.%s is sent to spec.%s, the policy pairs it with %q", resource, f.path, wantDest, e.dest)
+			case hasDest && !slices.Equal(e.dest, slices.Sorted(slices.Values(wantDest))):
+				t.Errorf("%s: spec.%s is sent to %v, the policy pairs it with %v", resource, f.path, wantDest, e.dest)
 			case !hasDest && !why:
 				t.Errorf("%s: spec.%s: say where it is sent (destinations) or why the spec names no destination (noDestination)", resource, f.path)
-			case !hasDest && e.dest != "":
-				t.Errorf("%s: spec.%s has no destination but the policy pairs it with spec.%s", resource, f.path, e.dest)
+			case !hasDest && len(e.dest) != 0:
+				t.Errorf("%s: spec.%s has no destination but the policy pairs it with %v", resource, f.path, e.dest)
 			}
-			if hasDest {
-				// The destination is read beside the reference: every optional
-				// field on its way must be guarded on that line too.
-				for prefix := range optionalAlong(t, spec, wantDest) {
+			if !hasDest {
+				continue
+			}
+			// The destination is read beside the reference: every optional
+			// field on its way must be guarded on that line too.
+			for _, d := range wantDest {
+				for prefix := range optionalAlong(t, spec, d) {
 					if !strings.Contains(e.line, "has({{ $o }}.spec."+prefix+")") {
-						t.Errorf("%s: the destination spec.%s of spec.%s is read without has() on the optional spec.%s", resource, wantDest, f.path, prefix)
+						t.Errorf("%s: the destination spec.%s of spec.%s is read without has() on the optional spec.%s", resource, d, f.path, prefix)
 					}
+				}
+			}
+			// Every field beside the reference is a destination or says why not.
+			parent := ""
+			if i := strings.LastIndex(f.path, "."); i >= 0 {
+				parent = f.path[:i]
+			}
+			beside, classified := notDestination[resource][f.path]
+			if !classified {
+				t.Errorf("%s: spec.%s: classify the fields beside it (notDestination)", resource, f.path)
+			}
+			reasons := slices.Collect(maps.Keys(beside))
+			for _, leaf := range fieldsBeside(t, spec, parent) {
+				if underAny(leaf, []string{f.path}) || underAny(leaf, wantDest) || underAny(leaf, reasons) {
+					continue
+				}
+				t.Errorf("%s: spec.%s is beside spec.%s: say whether it decides where that Secret is sent (destinations) or why not (notDestination)", resource, leaf, f.path)
+			}
+			for p := range beside {
+				if !slices.ContainsFunc(fieldsBeside(t, spec, parent), func(l string) bool { return underAny(l, []string{p}) }) {
+					t.Errorf("%s: notDestination lists spec.%s beside spec.%s, which the API does not declare", resource, p, f.path)
 				}
 			}
 		}
@@ -406,5 +588,91 @@ func TestSecretFieldsWalker(t *testing.T) {
 	}
 	if !gotBlind["allowedSecrets"].optional["allowedSecrets"] || !gotBlind["tenants{}.clientSecretRef"].optional["tenants"] {
 		t.Errorf("walker optional marks wrong: %+v", gotBlind)
+	}
+}
+
+// pgadminAudience: the fields of a PgAdmin that decide who may sign in to
+// pgAdmin, or who becomes its administrator, and so who holds the Cluster
+// credentials it offers. The credentials rule compares each (a path prefix
+// covers what is below it) between the old and the new object.
+var pgadminAudience = []string{
+	"auth.oauth2.issuerURL",
+	"auth.oauth2.clientID",
+	"auth.oauth2.clientSecretRef",
+	"auth.oauth2.requiredClaims",
+	"auth.oauth2.usernameClaim",
+	"auth.oauth2.scopes",
+	"auth.openshiftOAuthProxy.image",
+	"admins",
+}
+
+// pgadminNotAudience: every other field of a PgAdmin, each with why it does
+// not decide who reaches the credentials, or which rule does.
+var pgadminNotAudience = map[string]string{
+	"auth.oauth2.displayName":   "the login button's label",
+	"clusterRefs":               "what is offered: the credentials rule's sources",
+	"clusterSelector":           "what is offered: the credentials rule's sources",
+	"credentials":               "what is offered: the credentials rule's kinds",
+	"crossNamespaceClusterRefs": "the PgAdminAccess grant of the target namespace decides",
+	"endpoints":                 "which Services of the same Clusters",
+	"image":                     "the imageOverride rule",
+	"storage":                   "pgAdmin's volume",
+	"configDatabase":            "where pgAdmin keeps its own configuration",
+	"replicas":                  "how many Pods",
+	"exposure":                  "how pgAdmin is reached; spec.auth still decides who signs in",
+	"networkPolicy":             "which addresses reach the port; spec.auth still decides who signs in",
+	"resources":                 "compute resources",
+	"metadataPropagation":       "labels and annotations",
+}
+
+// TestPgAdminAudienceFieldsClassified fails when a field of a PgAdmin is
+// neither compared by the credentials rule's audience check
+// (pgtoolbox.admission.pgadminAudienceKept) nor listed with why it does not
+// widen who holds the credentials: a new sign-in field cannot slip past the
+// rule unclassified.
+func TestPgAdminAudienceFieldsClassified(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "charts", "pgtoolbox", "templates", "_admissionpolicy.tpl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, body, ok := strings.Cut(string(raw), `{{- define "pgtoolbox.admission.pgadminAudienceKept" -}}`)
+	if !ok {
+		t.Fatal("no pgtoolbox.admission.pgadminAudienceKept helper")
+	}
+	body, _, _ = strings.Cut(body, "{{- end }}")
+
+	spec := reflect.TypeFor[pgtoolboxv1alpha1.PgAdminSpec]()
+	for _, leaf := range fieldsBeside(t, spec, "") {
+		audience := underAny(leaf, pgadminAudience)
+		_, other := pgadminNotAudience[leaf]
+		other = other || underAny(leaf, slices.Collect(maps.Keys(pgadminNotAudience)))
+		switch {
+		case audience && other:
+			t.Errorf("spec.%s is both an audience field and not one", leaf)
+		case !audience && !other:
+			t.Errorf("spec.%s: say whether it decides who signs in to pgAdmin (pgadminAudience) or why not (pgadminNotAudience)", leaf)
+		}
+	}
+	for _, p := range pgadminAudience {
+		optional := optionalAlong(t, spec, p)
+		for _, side := range []string{"object", "oldObject"} {
+			read := side + ".spec." + p
+			if !strings.Contains(body, read+" ") && !strings.Contains(body, read+")") {
+				t.Errorf("the audience check does not compare %s", read)
+			}
+			if optional[p] && !strings.Contains(body, "has("+read+")") {
+				t.Errorf("the audience check reads the optional %s without has()", read)
+			}
+		}
+	}
+	for _, p := range []string{"auth.oauth2", "auth.openshiftOAuthProxy"} {
+		if !strings.Contains(body, "has(object.spec."+p+") == has(oldObject.spec."+p+")") {
+			t.Errorf("the audience check does not compare whether spec.%s is set", p)
+		}
+	}
+	for p := range pgadminNotAudience {
+		if !slices.ContainsFunc(fieldsBeside(t, spec, ""), func(l string) bool { return underAny(l, []string{p}) }) {
+			t.Errorf("pgadminNotAudience lists spec.%s, which the API does not declare", p)
+		}
 	}
 }
