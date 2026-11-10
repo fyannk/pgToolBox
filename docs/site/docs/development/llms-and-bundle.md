@@ -57,7 +57,8 @@ The console's [MCP endpoint](../console/mcp.md) serves it through its
 documentation tools and `docs://` resources.
 
 `make docs-bundle` builds the site and writes `internal/console/docsbundle/data`:
-the pages of `docs/` under `pages/` and the index as `index.bin`, under 1 MiB in
+the pages of `docs/` under `pages/` (except this development section, which documents building pgToolBox rather
+than running it) and the index as `index.bin`, under 1 MiB in
 all, byte-for-byte reproducible from the same pages.
 
 The files are generated and not committed (only `data/.keep` is, so that
