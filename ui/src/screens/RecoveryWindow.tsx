@@ -15,6 +15,7 @@ import { formatUtcMinute, isoToUtcInput, utcInputToIso } from "../ds/time";
 import { m } from "../paraglide/messages.js";
 import { Panel } from "./Panel";
 import { type BarSpan, recoveryBarLayout } from "./recoveryBar";
+import { phraseText } from "./recoveryPhrase";
 
 type SpanKind = RecoverySegment["kind"];
 
@@ -26,7 +27,8 @@ const STATE_HEALTH: Record<RecoveryTimeline["state"], string> = {
   unknown: "unknown",
 };
 
-function spanWord(k: SpanKind): string {
+/** origin: who reported a "reported" span (the operator, or the evidence agent without recovery paths). */
+function spanWord(k: SpanKind, origin?: string): string {
   switch (k) {
     case "covered":
       return m.span_covered();
@@ -35,7 +37,7 @@ function spanWord(k: SpanKind): string {
     case "candidateGap":
       return m.span_candidate_gap();
     case "reported":
-      return m.span_reported();
+      return origin === "evidence" ? m.span_reported_agent() : m.span_reported();
     default:
       return m.span_unknown();
   }
@@ -125,8 +127,12 @@ function MarkerSwatch({ kind }: { kind: RecoveryMarker["kind"] }) {
   );
 }
 
-function spanLine(s: BarSpan | RecoverySegment): string {
-  const head = m.span_line({ from: formatUtcMinute(s.from), to: formatUtcMinute(s.to), kind: spanWord(s.kind) });
+function spanLine(s: BarSpan | RecoverySegment, origin?: string): string {
+  const head = m.span_line({
+    from: formatUtcMinute(s.from),
+    to: formatUtcMinute(s.to),
+    kind: spanWord(s.kind, origin),
+  });
   const backup = s.backupId ? ` ${m.span_backup({ id: s.backupId })}` : "";
   return `${head}${backup}`;
 }
@@ -177,7 +183,11 @@ function Bar({ t, hatch }: { t: RecoveryTimeline; hatch: string }) {
             vectorEffect="non-scaling-stroke"
             data-kind={s.kind}
           >
-            <title>{s.text ? `${spanLine(s)} — ${s.text}` : spanLine(s)}</title>
+            <title>
+              {s.text
+                ? `${spanLine(s, t.provenance.origin)} — ${phraseText(s.code, s.params, s.text)}`
+                : spanLine(s, t.provenance.origin)}
+            </title>
           </rect>
         ))}
         {layout.markers.map((mk) => (
@@ -214,7 +224,7 @@ function Bar({ t, hatch }: { t: RecoveryTimeline; hatch: string }) {
         {kinds.map((k) => (
           <li key={k} className="flex items-center gap-1.5">
             <Swatch kind={k} hatch={hatch} />
-            {spanWord(k)}
+            {spanWord(k, t.provenance.origin)}
           </li>
         ))}
         {markerKinds.map((k) => (
@@ -228,7 +238,7 @@ function Bar({ t, hatch }: { t: RecoveryTimeline; hatch: string }) {
   );
 }
 
-function answerWord(a: RestoreCheck["answer"]): string {
+function answerWord(a: RestoreCheck["answer"], origin?: string): string {
   switch (a) {
     case "covered":
       return m.answer_covered();
@@ -237,13 +247,13 @@ function answerWord(a: RestoreCheck["answer"]): string {
     case "gap":
       return m.answer_gap();
     case "reported":
-      return m.answer_reported();
+      return origin === "evidence" ? m.answer_reported_agent() : m.answer_reported();
     default:
       return m.answer_unknown();
   }
 }
 
-function RestoreAnswer({ r }: { r: RestoreCheck }) {
+export function RestoreAnswer({ r }: { r: RestoreCheck }) {
   return (
     <div
       className="flex flex-col gap-1 rounded-control border border-line p-3"
@@ -251,9 +261,11 @@ function RestoreAnswer({ r }: { r: RestoreCheck }) {
       data-answer={r.answer}
     >
       <p className="m-0 font-semibold">
-        {m.answer_heading({ at: formatUtcMinute(r.at), answer: answerWord(r.answer) })}
+        {m.answer_heading({ at: formatUtcMinute(r.at), answer: answerWord(r.answer, r.provenance.origin) })}
       </p>
-      <p className="m-0 text-label">{r.text}</p>
+      <p className="m-0 text-label" data-answer-code={r.code}>
+        {phraseText(r.code, r.params, r.text)}
+      </p>
       {r.backupId && (
         <p className="m-0 text-label">
           {m.answer_backup()} <code className="font-code">{r.backupId}</code>
@@ -264,7 +276,9 @@ function RestoreAnswer({ r }: { r: RestoreCheck }) {
           <p className="m-0 text-label">{m.answer_caveats()}</p>
           <ul className="m-0 flex flex-col gap-0.5 pl-5 text-label text-muted">
             {(r.caveats ?? []).map((c) => (
-              <li key={c}>{c}</li>
+              <li key={`${c.code}-${c.text}`} data-caveat={c.code}>
+                {phraseText(c.code, c.params, c.text)}
+              </li>
             ))}
           </ul>
         </>
@@ -346,21 +360,23 @@ function RestoreCheckForm({ cluster, initial }: { cluster: ClusterRef; initial?:
 /**
  * The edge of the window is uncertain when the evidence cannot place the
  * newest restorable point: the newest span is not covered, or the
- * recent end is not restorable or unknown.
+ * recent end is not restorable or unknown. A reported window's end is
+ * never a WAL frontier: its edge is always uncertain.
  */
 function uncertainEdge(t: RecoveryTimeline): boolean {
+  if (t.basis === "reported") return true;
   if (t.basis !== "evidence") return false;
   const last = (t.segments ?? []).at(-1);
   return t.state === "unhealthy" || t.state === "unknown" || (last !== undefined && last.kind !== "covered");
 }
 
-/** What a DBA can check by hand at an uncertain edge; the console runs none of it. */
-function PitrEdgeHint() {
+/** What a DBA can check by hand at an uncertain edge; the console runs none of it. Without an agent there is no evidence to refresh. */
+function PitrEdgeHint({ basis }: { basis: RecoveryTimeline["basis"] }) {
   return (
-    <div className="flex flex-col gap-1 text-label" data-pitr-edge-hint="">
+    <div className="flex flex-col gap-1 text-label" data-pitr-edge-hint={basis}>
       <p className="m-0">{m.pitr_edge_hint_archiver()}</p>
       <CopyCode code="SELECT * FROM pg_stat_archiver;" label="pg_stat_archiver" />
-      <p className="m-0">{m.pitr_edge_hint_switch()}</p>
+      <p className="m-0">{basis === "reported" ? m.pitr_edge_hint_switch_reported() : m.pitr_edge_hint_switch()}</p>
       <CopyCode code="SELECT pg_switch_wal();" label="pg_switch_wal" />
     </div>
   );
@@ -412,9 +428,9 @@ export function RecoveryWindowPanel({
       {segments.length > 0 && (
         <ol aria-label={m.recovery_spans()} className="m-0 flex flex-col gap-1 pl-5 text-label">
           {segments.map((s) => (
-            <li key={`${s.from}-${s.kind}`} data-kind={s.kind}>
-              {spanLine(s)}
-              {s.text && <span className="text-muted"> — {s.text}</span>}
+            <li key={`${s.from}-${s.kind}`} data-kind={s.kind} data-code={s.code}>
+              {spanLine(s, t.provenance.origin)}
+              {s.text && <span className="text-muted"> — {phraseText(s.code, s.params, s.text)}</span>}
             </li>
           ))}
         </ol>
@@ -440,7 +456,7 @@ export function RecoveryWindowPanel({
           ))}
         </ul>
       )}
-      {uncertainEdge(t) && <PitrEdgeHint />}
+      {uncertainEdge(t) && <PitrEdgeHint basis={t.basis} />}
       <p className="m-0 text-caption text-muted">{m.recovery_strongest()}</p>
       {t.basis !== "none" && !t.restoreTested && (
         <p className="m-0 text-label font-semibold" data-restore-tested="false">

@@ -45,9 +45,17 @@ func RecoveryTimeline() viewmodel.RecoveryTimeline {
 		Basis: "evidence", State: "warning", Reason: "the window has holes where WAL is missing",
 		Earliest: &earliest, Latest: &latest, TargetTimeline: 3,
 		Segments: []viewmodel.RecoverySegment{
-			{From: earliest, To: holeFrom, Kind: "covered", BackupID: daily(6).Format("20060102T150405"), Text: "Structurally covered: base backup " + daily(6).Format("20060102T150405") + " and contiguous archived WAL."},
-			{From: holeFrom, To: holeTo, Kind: "missingWAL", Text: "WAL is missing from the repository: no restore target in this span."},
-			{From: holeTo, To: latest, Kind: "covered", BackupID: "20261029T070001", Text: "Structurally covered: base backup 20261029T070001 and contiguous archived WAL."},
+			{
+				From: earliest, To: holeFrom, Kind: "covered", BackupID: daily(6).Format("20060102T150405"),
+				Text: "Structurally covered: base backup " + daily(6).Format("20060102T150405") + " and contiguous archived WAL.",
+				Code: "recovery.segment.covered", Params: map[string]string{"backupId": daily(6).Format("20060102T150405")},
+			},
+			{From: holeFrom, To: holeTo, Kind: "missingWAL", Text: "WAL is missing from the repository: no restore target in this span.", Code: "recovery.segment.missingWAL"},
+			{
+				From: holeTo, To: latest, Kind: "covered", BackupID: "20261029T070001",
+				Text: "Structurally covered: base backup 20261029T070001 and contiguous archived WAL.",
+				Code: "recovery.segment.covered", Params: map[string]string{"backupId": "20261029T070001"},
+			},
 		},
 		Markers:     markers,
 		Assumptions: []string{"segment-name-presence-only", "wal-bytes-and-restore-not-verified"},
@@ -60,11 +68,13 @@ func RecoveryTimeline() viewmodel.RecoveryTimeline {
 func RestoreCheck() viewmodel.RestoreCheck {
 	return viewmodel.RestoreCheck{
 		Ref: ordersRef, GeneratedAt: Now, At: Now.Add(-2 * time.Hour), Answer: "covered", BackupID: "20261029T070001",
-		Text:  "Structurally covered: restore from base backup 20261029T070001 and replay the archived WAL to this time.",
-		Basis: "evidence",
-		Caveats: []string{
-			"Judged from WAL segment names in the repository: the WAL bytes were not read and no restore was run.",
-			"The latest restore point is bounded by when the last contiguous segment reached the repository; the newest transactions may still be only on the instance.",
+		Text:   "Structurally covered: restore from base backup 20261029T070001 and replay the archived WAL to this time.",
+		Code:   "recovery.check.covered",
+		Params: map[string]string{"backupId": "20261029T070001"},
+		Basis:  "evidence",
+		Caveats: []viewmodel.Phrase{
+			{Code: "recovery.caveat.segmentNames", Text: "Judged from WAL segment names in the repository: the WAL bytes were not read and no restore was run."},
+			{Code: "recovery.caveat.latestBounded", Text: "The latest restore point is bounded by when the last contiguous segment reached the repository; the newest transactions may still be only on the instance."},
 		},
 		Provenance: evidenceProv("EvidenceAgent orders-evidence /api/v1alpha1/recovery-paths"),
 	}

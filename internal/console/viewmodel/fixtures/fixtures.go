@@ -159,6 +159,7 @@ func HealthyOverview() viewmodel.ClusterOverview {
 			Archiving: viewmodel.Archiving{
 				Health: viewmodel.HealthOK, ConditionStatus: "True", Reason: "ContinuousArchivingSuccess",
 				LiveArchiving: new(true), ReadyWALFiles: new(0), Provenance: instanceProv(),
+				LastArchivedWAL: "00000003000000000000002A", LastArchivedAt: ago(70 * time.Second),
 			},
 			RecoveryWindow:  &viewmodel.RecoveryWindow{First: ago(7 * 24 * time.Hour), Last: ago(40 * time.Second), Provenance: viewmodel.Provenance{Origin: viewmodel.OriginOperator, Source: "ObjectStore.status.serverRecoveryWindow[orders]", ObservedAt: ago(2 * time.Second)}},
 			NextScheduledAt: new(Now.Add(19 * time.Hour)),

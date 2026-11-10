@@ -8,11 +8,21 @@
   "at": "2026-10-29T10:00:00Z",
   "answer": "covered",
   "text": "Structurally covered: restore from base backup 20261029T070001 and replay the archived WAL to this time.",
+  "code": "recovery.check.covered",
+  "params": {
+    "backupId": "20261029T070001"
+  },
   "backupId": "20261029T070001",
   "basis": "evidence",
   "caveats": [
-    "Judged from WAL segment names in the repository: the WAL bytes were not read and no restore was run.",
-    "The latest restore point is bounded by when the last contiguous segment reached the repository; the newest transactions may still be only on the instance."
+    {
+      "code": "recovery.caveat.segmentNames",
+      "text": "Judged from WAL segment names in the repository: the WAL bytes were not read and no restore was run."
+    },
+    {
+      "code": "recovery.caveat.latestBounded",
+      "text": "The latest restore point is bounded by when the last contiguous segment reached the repository; the newest transactions may still be only on the instance."
+    }
   ],
   "provenance": {
     "origin": "evidence",

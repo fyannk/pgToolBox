@@ -206,8 +206,10 @@ When the newest edge is uncertain (the newest span is not covered, or the recent
 end is unknown or not restorable), the panel suggests two queries to copy and run
 on the primary yourself: `SELECT * FROM pg_stat_archiver;` shows what PostgreSQL
 last archived and last failed to archive, and `SELECT pg_switch_wal();` forces
-the current segment out to the archive. After that, refresh the evidence. The
-console is read-only, so it runs neither query.
+the current segment out to the archive. After that, refresh the evidence (or,
+without an agent, check `pg_stat_archiver` again). The panel always shows them on
+the reported basis, whose end is never a WAL frontier. The console is read-only,
+so it runs neither query.
 
 ### Without repository evidence
 
@@ -218,9 +220,26 @@ covered.
 The end of that window is the **last base backup**
 (`serverRecoveryWindow[].lastSuccessfulBackupTime`), not the end of the archived
 WAL: the operator does not report how far archived WAL reaches beyond it. The bar
-and the overview label it so, and the time from it to now is drawn **unknown**.
-With healthy archiving those hours are usually restorable; an evidence agent is
-what can place them.
+and the overview label it so, and the time from it to now is drawn **unknown**,
+never covered and never "not covered".
+
+What the console can add there is the archiving instance's own report on
+`/pg/status` (`pg_stat_archiver.last_archived_time`, shown on the overview as
+"Last archived WAL", with the age of the sweep that read it). The time after the
+window is split at that instant, and each span says what the archiver supports:
+
+| Archiving (overview) | Before the last archived WAL time | After it |
+|---|---|---|
+| healthy, and the sweep fresh | "a restore to this time may well be possible" | its WAL "may still be only on the primary" |
+| failing (`ContinuousArchiving` critical, or a failure with backlog) | its WAL "may be in the repository" | its WAL "is likely not in the repository" |
+| anything else (unknown, stale) | its WAL "may be in the repository" | its WAL "may still be only on the primary" |
+
+The last archived time is when PostgreSQL archived a segment, not the newest
+commit in it, so even "may well be possible" is an `unknown` answer: an evidence
+agent is what can place the time. When the archiver was not read, the span says
+the time is not known. Failing archiving also adds a caveat that names the last
+archived time. The sweep counts as stale after three sweep intervals, the same
+rule as the "Instance self-reports" contributor.
 
 ### Can I restore to…?
 
@@ -241,16 +260,15 @@ flowchart TB
   segment -->|covered| covered["covered: name the base backup"]
   segment -->|"missing WAL or candidate gap"| gap["gap"]
   segment -->|"unknown edge"| unknown
-  segment -->|none| after{"after the latest point?"}
-  after -->|yes| notcovered
-  after -->|no| unknown
+  segment -->|"none, later than now"| tail["the answer for now"]
+  segment -->|none| unknown
 ```
 
 The answer is one of:
 
 - `covered`: name the base backup to restore from;
-- `notCovered`: before the earliest point, or (repository evidence only) after
-  the latest point and before the agent last read the repository;
+- `notCovered`: before the earliest point (a confirmed hole after the latest
+  point is a `gap`);
 - `gap`;
 - `reported`: only the unverified window covers the time;
 - `unknown`.
@@ -267,11 +285,20 @@ segments, so the bar and the answer always agree:
   the day before the latest point, the day before the failure: WAL that arrives
   after an outage carries older commits than its arrival time.
 
-After the latest point the answer is `notCovered` only when the newest path
-reaches the archive frontier, the evidence is fresh and complete, and the time is
-before the agent last read the repository: that is a fact about the scan. From
-the last read to now it is `unknown`, since WAL archived since may cover it.
-After a path that stops at unknown evidence, from stale evidence, when a
+After the latest point the answer is never `notCovered`. Missing WAL confirmed
+after the newest path is a `gap`. Otherwise the answer is `unknown`: a fresh and
+complete frontier is a fact about the agent's scan, not about now. WAL written
+just after the frontier may have sat in a segment that was not archived yet
+when the agent read the repository (`archive_timeout`), and it may have arrived
+since. The answer then says the time was "not in the repository when it was
+last read" and names the scan time. A time later than now gets the answer for
+now. After a path that stops at unknown evidence, from stale evidence, when a
 collection was cut, or on the reported basis (whose end is the last base backup),
-it is `unknown`. Stale evidence is never shown as healthy. When reading
+it is also `unknown`.
+
+On the reported basis, a window that comes from the evidence agent's own
+`recovery_window` (pgBackRest without recovery paths) is named as the agent's,
+not the operator's. Every sentence of the timeline, the answer and its caveats
+carries a stable code and its values, so the console says it in the reader's
+language, with Go's English kept for a code the interface does not know yet. Stale evidence is never shown as healthy. When reading
 the paths fails, the last good ones are kept and marked stale.
