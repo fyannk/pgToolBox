@@ -286,15 +286,18 @@ func TestArchiving(t *testing.T) {
 		{"not configured", clusterWith(nil), nil, ClassInfo, "NotConfigured"},
 		{"configured, no condition", plugin(nil), nil, ClassUnknown, "NoCondition"},
 		{"configured, no condition, live archiving", plugin(nil), &ArchiverLive{IsArchivingWAL: true}, ClassOK, "LiveArchiving"},
-		{"ok", plugin(nil, ok), nil, ClassOK, "ContinuousArchivingSuccess"},
+		{"ok from the condition alone is not confirmed", plugin(nil, ok), nil, ClassUnknown, ArchivingReasonPrimaryUnread},
 		{"idle primary with one old failure stays ok", plugin(nil, ok), &ArchiverLive{IsArchivingWAL: false, LastFailedWAL: "000000010000000000000003"}, ClassOK, "ContinuousArchivingSuccess"},
 		{"never archived stays ok", plugin(nil, ok), &ArchiverLive{}, ClassOK, "ContinuousArchivingSuccess"},
 		{"failure with backlog", plugin(nil, ok), &ArchiverLive{LastFailedWAL: "000000010000000000000003", ReadyWALFiles: 12}, ClassWarning, "FailureWithBacklog"},
 		{"failing", plugin(nil, failing), nil, ClassCritical, "ContinuousArchivingFailing"},
 		{"two segments waiting stays ok", plugin(nil, ok), &ArchiverLive{IsArchivingWAL: true, ReadyWALFiles: 2}, ClassOK, "ContinuousArchivingSuccess"},
-		{"backlog without a failure", plugin(nil, ok), &ArchiverLive{IsArchivingWAL: true, ReadyWALFiles: 3}, ClassWarning, ArchivingReasonBacklog},
-		{"hung archiver: backlog, no attempt finished", plugin(nil, ok), &ArchiverLive{ReadyWALFiles: 40}, ClassWarning, ArchivingReasonBacklog},
-		{"no condition, live archiving with a backlog", plugin(nil), &ArchiverLive{IsArchivingWAL: true, ReadyWALFiles: 5}, ClassWarning, ArchivingReasonBacklog},
+		{"one sweep at the threshold is not a backlog", plugin(nil, ok), &ArchiverLive{IsArchivingWAL: true, ReadyWALFiles: 3}, ClassOK, "ContinuousArchivingSuccess"},
+		{"backlog without a failure", plugin(nil, ok), &ArchiverLive{IsArchivingWAL: true, ReadyWALFiles: 3, Earlier: readyRun(3), PluginMaxParallel: ptrInt(0)}, ClassWarning, ArchivingReasonBacklog},
+		{"hung archiver: backlog, no attempt finished", plugin(nil, ok), &ArchiverLive{ReadyWALFiles: 40, Earlier: readyRun(35), PluginMaxParallel: ptrInt(0)}, ClassWarning, ArchivingReasonBacklog},
+		{"no condition, live archiving with a backlog", plugin(nil), &ArchiverLive{IsArchivingWAL: true, ReadyWALFiles: 5, Earlier: readyRun(5), PluginMaxParallel: ptrInt(0)}, ClassWarning, ArchivingReasonBacklog},
+		{"unknown plugin parallelism: steady backlog is not one", plugin(nil, ok), &ArchiverLive{IsArchivingWAL: true, ReadyWALFiles: 6, Earlier: readyRun(6, 6, 6)}, ClassOK, "ContinuousArchivingSuccess"},
+		{"unknown plugin parallelism: growing backlog is one", plugin(nil, ok), &ArchiverLive{IsArchivingWAL: true, ReadyWALFiles: 9, Earlier: readyRun(5, 7)}, ClassWarning, ArchivingReasonBacklog},
 		{"backlog while failing stays critical", plugin(nil, failing), &ArchiverLive{ReadyWALFiles: 40}, ClassCritical, "ContinuousArchivingFailing"},
 		{"failing, live recovered", plugin(nil, failing), &ArchiverLive{IsArchivingWAL: true}, ClassWarning, "RecoveredSinceFailure"},
 		{"condition unknown", plugin(nil, cond(ConditionContinuousArchiving, "Unknown", "")), nil, ClassUnknown, ""},
@@ -681,12 +684,12 @@ func TestArchiveBacklogThresholdFollowsParallelArchiving(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := Archiving(tt.cluster, &ArchiverLive{IsArchivingWAL: true, ReadyWALFiles: tt.ready}).Class; got != tt.wantClass {
+			if got := Archiving(tt.cluster, &ArchiverLive{IsArchivingWAL: true, ReadyWALFiles: tt.ready, Earlier: readyRun(tt.ready)}).Class; got != tt.wantClass {
 				t.Errorf("Archiving(ready %d) = %q, want %q", tt.ready, got, tt.wantClass)
 			}
 		})
 	}
-	if got := ArchiveBacklogThreshold(nil); got != ArchiveBacklogSegments {
+	if got := ArchiveBacklogThreshold(nil, nil); got != ArchiveBacklogSegments {
 		t.Errorf("ArchiveBacklogThreshold(nil) = %d", got)
 	}
 }

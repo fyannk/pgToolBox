@@ -34,7 +34,14 @@ type RecoveryTimeline struct {
 	Reasons []Phrase `json:"reasons,omitempty" doc:"The parts of reason, in order, each a Phrase a client can translate; reason is their English texts joined with '; '."`
 	// Earliest and Latest bound the restorable span; absent when unknown.
 	Earliest *time.Time `json:"earliest,omitempty"`
-	Latest   *time.Time `json:"latest,omitempty"`
+	// Latest is when the newest contiguous WAL reached the repository
+	// (evidence) or the reported window's end: a receipt time, not a
+	// restore target.
+	Latest *time.Time `json:"latest,omitempty" doc:"When the newest contiguous WAL segment reached the repository (evidence basis), or the reported window's end: a receipt time, not a safe restore target (see lastSafeTarget)."`
+	// LastSafeTarget is the end of the newest covered span, once every
+	// uncertain edge is drawn: the newest instant the check answers
+	// "covered". Absent when nothing is covered.
+	LastSafeTarget *time.Time `json:"lastSafeTarget,omitempty" doc:"The end of the newest covered span once every uncertain edge is drawn: the newest instant a restore check answers covered. Absent when no span is covered."`
 	// TargetTimeline is the timeline the paths recover to (the newest).
 	TargetTimeline uint64            `json:"targetTimeline,omitempty"`
 	Segments       []RecoverySegment `json:"segments" doc:"Time-ordered spans: covered ones and the holes between them."`
