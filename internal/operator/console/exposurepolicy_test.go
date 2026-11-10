@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -186,6 +187,23 @@ func TestBroadPeer(t *testing.T) {
 		{"every pod of the namespace", networkingv1.NetworkPolicyPeer{PodSelector: all}, true},
 		{"every IPv4 address", networkingv1.NetworkPolicyPeer{IPBlock: &networkingv1.IPBlock{CIDR: "0.0.0.0/0", Except: []string{"10.0.0.0/8"}}}, true},
 		{"every IPv6 address", networkingv1.NetworkPolicyPeer{IPBlock: &networkingv1.IPBlock{CIDR: "::/0"}}, true},
+		// IPv6 Pod networks: unique-local blocks wider than a /64 (the
+		// fc00::/7 entry of the IPv4 rule could never match: no IPv6
+		// block wider than a /32 gets that far).
+		{"a kind IPv6 Pod network /48", networkingv1.NetworkPolicyPeer{IPBlock: &networkingv1.IPBlock{CIDR: "fd00:10:244::/48"}}, true},
+		{"a unique-local /56", networkingv1.NetworkPolicyPeer{IPBlock: &networkingv1.IPBlock{CIDR: "fd12:3456:789a:100::/56"}}, true},
+		{"a unique-local /32", networkingv1.NetworkPolicyPeer{IPBlock: &networkingv1.IPBlock{CIDR: "fd00::/32"}}, true},
+		{"a unique-local /64", networkingv1.NetworkPolicyPeer{IPBlock: &networkingv1.IPBlock{CIDR: "fd00:10:244:1::/64"}}, false},
+		{"a unique-local /120", networkingv1.NetworkPolicyPeer{IPBlock: &networkingv1.IPBlock{CIDR: "fd00:10:244:1::/120"}}, false},
+		{"a global IPv6 /48", networkingv1.NetworkPolicyPeer{IPBlock: &networkingv1.IPBlock{CIDR: "2001:db8:1::/48"}}, false},
+		// Namespace labels many namespaces share pin nothing of the
+		// proxies'.
+		{"namespaces of a Pod Security level", networkingv1.NetworkPolicyPeer{NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"pod-security.kubernetes.io/enforce": "restricted"}}}, true},
+		{"namespaces of a Pod Security level by In", networkingv1.NetworkPolicyPeer{NamespaceSelector: expr("pod-security.kubernetes.io/audit", metav1.LabelSelectorOpIn, "restricted", "baseline")}, true},
+		{"namespaces of a level, labelled pods", networkingv1.NetworkPolicyPeer{NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"pod-security.kubernetes.io/enforce": "restricted"}}, PodSelector: some}, true},
+		{"namespaces with the SCC label sync", networkingv1.NetworkPolicyPeer{NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"security.openshift.io/scc.podSecurityLabelSync": "true"}}}, true},
+		{"namespaces of a run level", networkingv1.NetworkPolicyPeer{NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"openshift.io/run-level": "0"}}}, true},
+		{"a named namespace of a level", networkingv1.NetworkPolicyPeer{NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"pod-security.kubernetes.io/enforce": "restricted", "kubernetes.io/metadata.name": "ingress-nginx"}}}, false},
 		{"an unparsable block", networkingv1.NetworkPolicyPeer{IPBlock: &networkingv1.IPBlock{CIDR: "nope"}}, true},
 	}
 	for _, tc := range cases {
@@ -329,24 +347,90 @@ func TestPodNetworkBlock(t *testing.T) {
 	block := func(cidr string, except ...string) []networkingv1.NetworkPolicyPeer {
 		return []networkingv1.NetworkPolicyPeer{nginxPeer, {IPBlock: &networkingv1.IPBlock{CIDR: cidr, Except: except}}}
 	}
+	pending := []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Name: "console-0"}, Status: corev1.PodStatus{Phase: corev1.PodPending}}}
 	cases := []struct {
-		name  string
-		peers []networkingv1.NetworkPolicyPeer
-		pods  []corev1.Pod
-		broad bool
+		name       string
+		peers      []networkingv1.NetworkPolicyPeer
+		pods       []corev1.Pod
+		broad      bool
+		unverified bool
 	}{
-		{"no block", []networkingv1.NetworkPolicyPeer{nginxPeer}, pods, false},
-		{"the node network", block("192.168.10.0/24"), pods, false},
-		{"the Pod network", block("10.244.0.0/16"), pods, true},
-		{"the Pod network, IPv6", block("fd00:10:244::/64"), pods, true},
-		{"the Pod network, the Pod's range excepted", block("10.244.0.0/16", "10.244.1.0/24"), []corev1.Pod{{Status: corev1.PodStatus{PodIPs: []corev1.PodIP{{IP: "10.244.1.7"}}}}}, false},
-		{"no Pod has an address yet", block("10.244.0.0/16"), []corev1.Pod{{}}, false},
+		{"no block", []networkingv1.NetworkPolicyPeer{nginxPeer}, pods, false, false},
+		{"the node network", block("192.168.10.0/24"), pods, false, false},
+		{"the Pod network", block("10.244.0.0/16"), pods, true, false},
+		{"the Pod network, IPv6", block("fd00:10:244::/64"), pods, true, false},
+		{"the Pod network, the Pod's range excepted", block("10.244.0.0/16", "10.244.1.0/24"), []corev1.Pod{{Status: corev1.PodStatus{PodIPs: []corev1.PodIP{{IP: "10.244.1.7"}}}}}, false, false},
+		// Fail closed: without an address the block may be the Pod
+		// network, so it is not trusted (it used to be, until the Pod
+		// had its address: a grant, a rollout, a withdrawal).
+		{"the first Pod is Pending", block("10.244.0.0/16"), pending, false, true},
+		{"scaled from zero", block("192.168.10.0/24"), nil, false, true},
+		{"no block, no Pod", []networkingv1.NetworkPolicyPeer{nginxPeer}, nil, false, false},
+		{"one Pod has an address, a new one is Pending", block("192.168.10.0/24"), append(slices.Clone(pending), pods...), false, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if got := podNetworkBlock(tc.peers, tc.pods); (got != "") != tc.broad {
-				t.Errorf("podNetworkBlock = %q, want broad %v", got, tc.broad)
+			broad, unverified := podNetworkBlock(tc.peers, tc.pods)
+			if (broad != "") != tc.broad || (unverified != "") != tc.unverified {
+				t.Errorf("podNetworkBlock = %q, %q, want broad %v, unverified %v", broad, unverified, tc.broad, tc.unverified)
+			}
+		})
+	}
+}
+
+// TestUnverifiedTrustsNoPeer: peers that could not be checked yet turn
+// ExposureConfined False (ExposureTrustUnverified) and grant no any-peer
+// trust, so the template carries no grant.
+func TestUnverifiedTrustsNoPeer(t *testing.T) {
+	t.Parallel()
+	c := &pgtoolboxv1alpha1.PgToolBoxConsole{ObjectMeta: metav1.ObjectMeta{Name: "console", Namespace: "team-a"}}
+	c.Spec.Exposure.Type, c.Spec.Exposure.Hostname = pgtoolboxv1alpha1.ExposureTypeIngress, "console.example"
+	c.Spec.Exposure.NetworkPolicy = &pgtoolboxv1alpha1.PgToolBoxConsoleExposurePolicySpec{From: []pgtoolboxv1alpha1.PgToolBoxConsolePolicyPeer{nginxSpecPeer}}
+	found := confinement{Unverified: "no console Pod has an address yet"}
+	if trust := effectiveProxyTrust(c, true, found); trust.EveryPeer || len(trust.CIDRs) != 0 {
+		t.Fatalf("trust = %+v while unverified, want no trusted peer", trust)
+	}
+	fact := exposureConfinedFact(c, true, found)
+	if fact.Status != metav1.ConditionFalse || fact.Reason != pgtoolboxv1alpha1.ReasonExposureTrustUnverified || !strings.Contains(fact.Message, found.Unverified) {
+		t.Fatalf("ExposureConfined = %+v", fact)
+	}
+	template := podTemplate(c, deploymentInputs{Exposed: true, Confinement: found})
+	if _, ok := template.Annotations[annotationTrustsEveryPeer]; ok {
+		t.Fatal("the template carries the any-peer grant while the peers are unverified")
+	}
+}
+
+// TestPeersWiden: a peer the live policy does not cover widens it; the
+// same peers, fewer, or a narrower namespace do not.
+func TestPeersWiden(t *testing.T) {
+	t.Parallel()
+	ns := func(labels map[string]string) networkingv1.NetworkPolicyPeer {
+		return networkingv1.NetworkPolicyPeer{NamespaceSelector: &metav1.LabelSelector{MatchLabels: labels}}
+	}
+	a := ns(map[string]string{"kubernetes.io/metadata.name": "a"})
+	b := ns(map[string]string{"kubernetes.io/metadata.name": "b"})
+	aNarrow := networkingv1.NetworkPolicyPeer{NamespaceSelector: a.NamespaceSelector, PodSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "proxy"}}}
+	block := networkingv1.NetworkPolicyPeer{IPBlock: &networkingv1.IPBlock{CIDR: "192.168.10.0/24"}}
+	cases := []struct {
+		name        string
+		peers, live []networkingv1.NetworkPolicyPeer
+		widen       bool
+	}{
+		{"unchanged", []networkingv1.NetworkPolicyPeer{a}, []networkingv1.NetworkPolicyPeer{a}, false},
+		{"a peer removed", []networkingv1.NetworkPolicyPeer{a}, []networkingv1.NetworkPolicyPeer{a, b}, false},
+		{"narrowed to some Pods", []networkingv1.NetworkPolicyPeer{aNarrow}, []networkingv1.NetworkPolicyPeer{a}, false},
+		{"a namespace added", []networkingv1.NetworkPolicyPeer{a, b}, []networkingv1.NetworkPolicyPeer{a}, true},
+		{"a namespace swapped", []networkingv1.NetworkPolicyPeer{b}, []networkingv1.NetworkPolicyPeer{a}, true},
+		{"a block added", []networkingv1.NetworkPolicyPeer{a, block}, []networkingv1.NetworkPolicyPeer{a}, true},
+		{"from some Pods to the namespace", []networkingv1.NetworkPolicyPeer{a}, []networkingv1.NetworkPolicyPeer{aNarrow}, true},
+		{"no live peers", []networkingv1.NetworkPolicyPeer{a}, nil, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := peersWiden(tc.peers, tc.live); got != tc.widen {
+				t.Errorf("peersWiden = %v, want %v", got, tc.widen)
 			}
 		})
 	}

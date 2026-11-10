@@ -58,6 +58,14 @@ const (
 	// many to check: the console trusts none of the peers with
 	// X-Forwarded-For.
 	ReasonExposurePolicyBypassed Reason = "ExposurePolicyBypassed"
+	// ReasonExposureTrustUnverified: ExposureConfined=False, the
+	// networkPolicy.from peers could not be checked yet, or are held back:
+	// an ipBlock peer while no console Pod has an address to check it
+	// against, more console Pods than one bounded list returns, or a
+	// widened from that waits until no console Pod trusts every peer any
+	// more. The console trusts none of the peers with X-Forwarded-For
+	// meanwhile.
+	ReasonExposureTrustUnverified Reason = "ExposureTrustUnverified"
 	// ReasonExposurePolicyInvalid: ConfigurationValid=False, the API
 	// server refused the ingress NetworkPolicy rendered from
 	// spec.exposure.networkPolicy (a selector or block the CRD could not
@@ -73,7 +81,8 @@ const (
 // not rendered (ingress or gateway exposure without networkPolicy.from, or
 // networkPolicy.enabled=false), ExposurePeersBroad when a peer of from
 // admits (nearly) everyone, ExposurePolicyBypassed when another
-// NetworkPolicy does.
+// NetworkPolicy does, ExposureTrustUnverified while the peers could not be
+// checked yet or a widened from is held back.
 // Removed when nothing is published, the hostname stall included. The
 // message says which peers the console believes about X-Forwarded-For.
 // Whether the CNI enforces NetworkPolicies cannot be observed: True says
@@ -161,8 +170,13 @@ type PgToolBoxConsoleExposurePolicySpec struct {
 	// them. Required for ingress and gateway. Every peer listed is trusted
 	// to write X-Forwarded-For unless trustedProxy.cidrs narrows it; a peer
 	// that admits (nearly) everyone (a namespaceSelector, or a podSelector
-	// alone, that pins no label value; an ipBlock wider than /8 or /32 or
-	// holding a whole private range) turns that trust off. The probe
+	// alone, that pins no label value; a namespaceSelector that pins only
+	// labels many namespaces share, pod-security.kubernetes.io/*; an
+	// ipBlock wider than /8 or /32, holding a whole private IPv4 range, or
+	// a unique-local IPv6 block wider than /64) turns that trust off, and
+	// an ipBlock peer is trusted only once a console Pod has an address to
+	// check it against. A wider from is applied only once no console Pod
+	// trusts every peer any more. The probe
 	// port (health and /metrics) stays open to scrapers; it never reads the
 	// header.
 	// +kubebuilder:validation:MaxItems=16
@@ -183,14 +197,19 @@ type PgToolBoxConsolePolicyPeer struct {
 	// +optional
 	PodSelector *PgToolBoxConsoleLabelSelector `json:"podSelector,omitempty"`
 
-	// Namespaces. Pinning no label value (no matchLabels, no In):
-	// (nearly) every namespace, which ExposureConfined reports as broad.
+	// Namespaces. Pinning no label value (no matchLabels, no In), or only
+	// labels many namespaces share (pod-security.kubernetes.io/*,
+	// security.openshift.io/*, openshift.io/run-level): (nearly) every
+	// namespace, which ExposureConfined reports as broad. A label any
+	// namespace owner may set on their own namespace is not told apart:
+	// pin one only an installer can set (kubernetes.io/metadata.name).
 	// +optional
 	NamespaceSelector *PgToolBoxConsoleLabelSelector `json:"namespaceSelector,omitempty"`
 
 	// Addresses: a CIDR, less the except CIDRs inside it. Alone in its
-	// peer. Wider than /8 (IPv4) or /32 (IPv6), or holding a whole private
-	// range, is broad.
+	// peer. Wider than /8 (IPv4) or /32 (IPv6), holding a whole private
+	// IPv4 range, a unique-local (fc00::/7) block wider than /64, or one
+	// holding a console Pod's address, is broad.
 	// +optional
 	IPBlock *PgToolBoxConsoleIPBlock `json:"ipBlock,omitempty"`
 }

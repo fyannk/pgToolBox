@@ -577,8 +577,13 @@ spec:
                           them. Required for ingress and gateway. Every peer listed is trusted
                           to write X-Forwarded-For unless trustedProxy.cidrs narrows it; a peer
                           that admits (nearly) everyone (a namespaceSelector, or a podSelector
-                          alone, that pins no label value; an ipBlock wider than /8 or /32 or
-                          holding a whole private range) turns that trust off. The probe
+                          alone, that pins no label value; a namespaceSelector that pins only
+                          labels many namespaces share, pod-security.kubernetes.io/*; an
+                          ipBlock wider than /8 or /32, holding a whole private IPv4 range, or
+                          a unique-local IPv6 block wider than /64) turns that trust off, and
+                          an ipBlock peer is trusted only once a console Pod has an address to
+                          check it against. A wider from is applied only once no console Pod
+                          trusts every peer any more. The probe
                           port (health and /metrics) stays open to scrapers; it never reads the
                           header.
                         items:
@@ -590,8 +595,9 @@ spec:
                             ipBlock:
                               description: |-
                                 Addresses: a CIDR, less the except CIDRs inside it. Alone in its
-                                peer. Wider than /8 (IPv4) or /32 (IPv6), or holding a whole private
-                                range, is broad.
+                                peer. Wider than /8 (IPv4) or /32 (IPv6), holding a whole private
+                                IPv4 range, a unique-local (fc00::/7) block wider than /64, or one
+                                holding a console Pod's address, is broad.
                               properties:
                                 cidr:
                                   description: The block, as a CIDR (10.0.0.0/8, fd00::/64).
@@ -628,8 +634,12 @@ spec:
                                   && cidr(e).prefixLength() > cidr(self.cidr).prefixLength()))'
                             namespaceSelector:
                               description: |-
-                                Namespaces. Pinning no label value (no matchLabels, no In):
-                                (nearly) every namespace, which ExposureConfined reports as broad.
+                                Namespaces. Pinning no label value (no matchLabels, no In), or only
+                                labels many namespaces share (pod-security.kubernetes.io/*,
+                                security.openshift.io/*, openshift.io/run-level): (nearly) every
+                                namespace, which ExposureConfined reports as broad. A label any
+                                namespace owner may set on their own namespace is not told apart:
+                                pin one only an installer can set (kubernetes.io/metadata.name).
                               properties:
                                 matchExpressions:
                                   description: Requirements the object's labels must

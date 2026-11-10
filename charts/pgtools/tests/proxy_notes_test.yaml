@@ -41,3 +41,29 @@ tests:
       - matchRegexRaw: {pattern: "X-Forwarded-For is IGNORED"}
       - matchRegexRaw: {pattern: "extraFrom admits peers that are not the router"}
       - notMatchRegexRaw: {pattern: "one sign-in budget"}
+
+  - it: warns on OpenShift behind the NetworkPolicy, and names trustedProxyCIDRs
+    capabilities:
+      apiVersions: [route.openshift.io/v1]
+    set:
+      console.exposure.type: route
+      console.exposure.host: pgc.apps.example.org
+      console.networkPolicy.enabled: true
+      console.networkPolicy.apiServer.mode: any
+    asserts:
+      - matchRegexRaw: {pattern: "X-Forwarded-For is IGNORED"}
+      - matchRegexRaw: {pattern: "this is OpenShift"}
+      - matchRegexRaw: {pattern: "console.trustedProxyCIDRs"}
+      - notMatchRegexRaw: {pattern: "or enable console.networkPolicy"}
+
+  - it: says nothing on OpenShift once the proxies are named
+    capabilities:
+      apiVersions: [route.openshift.io/v1]
+    set:
+      console.exposure.type: route
+      console.exposure.host: pgc.apps.example.org
+      console.networkPolicy.enabled: true
+      console.networkPolicy.apiServer.mode: any
+      console.trustedProxyCIDRs: [10.128.0.0/14]
+    asserts:
+      - notMatchRegexRaw: {pattern: "X-Forwarded-For is IGNORED"}
