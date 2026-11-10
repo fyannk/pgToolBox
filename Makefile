@@ -466,6 +466,7 @@ test-fuzz-console-api: ## Fuzz the console's sign-in and API parsers.
 	$(call fuzz,./internal/console/auth,FuzzCheckRequest)
 	$(call fuzz,./internal/console/auth,FuzzParseRevocationList)
 	$(call fuzz,./internal/console/auth,FuzzNormalizePastedToken)
+	$(call fuzz,./internal/console/auth,FuzzClientIP)
 	$(call fuzz,./internal/console/api,FuzzClusterPath)
 
 test-fuzz: test-fuzz-console-api test-fuzz-evidence-agent test-fuzz-operator

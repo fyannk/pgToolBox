@@ -263,3 +263,41 @@ func TestBearerReviewsShareTheProcessBucket(t *testing.T) {
 		t.Fatalf("the token form after a bearer spray = %d, want 429", w.Code)
 	}
 }
+
+// FuzzClientIP: X-Forwarded-For is attacker-written. Whatever it holds,
+// a peer outside the trusted CIDRs is the client, and otherwise the
+// answer is the peer or an address taken from the header.
+func FuzzClientIP(f *testing.F) {
+	f.Add("10.128.0.5:4000", "203.0.113.7", 1)
+	f.Add("10.244.3.17:4000", "198.18.0.1, 10.129.0.9", 2)
+	f.Add("[::ffff:10.128.0.5]:1", "[2001:db8::1]:443,evil,,", 8)
+	trust := ProxyTrust{CIDRs: []netip.Prefix{netip.MustParsePrefix("10.128.0.0/14")}}
+	f.Fuzz(func(t *testing.T, peer, xff string, hops int) {
+		trust := trust
+		trust.Hops = hops
+		r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", nil)
+		r.RemoteAddr = peer
+		r.Header.Set("X-Forwarded-For", xff)
+		got := clientIP(r, trust)
+		untrusted := clientIP(r, ProxyTrust{Hops: hops})
+		if p, ok := parseHop(peer); ok && (!trust.Enabled() || !trust.trusts(p)) && got != untrusted {
+			t.Fatalf("untrusted peer %q: clientIP = %q, want the peer %q", peer, got, untrusted)
+		}
+		if got == untrusted {
+			return
+		}
+		if _, err := netip.ParseAddr(got); err != nil {
+			t.Fatalf("clientIP = %q, not an address", got)
+		}
+		if !strings.Contains(xff, strings.TrimPrefix(got, "::ffff:")) && !strings.Contains(strings.ToLower(xff), got) {
+			// The answer is normalised (unmapped, lower case, zone dropped);
+			// it must still come from the header.
+			if a, ok := parseHop(got); !ok || !slices.ContainsFunc(strings.Split(xff, ","), func(e string) bool {
+				h, ok := parseHop(e)
+				return ok && h == a
+			}) {
+				t.Fatalf("clientIP = %q, neither the peer nor an entry of %q", got, xff)
+			}
+		}
+	})
+}
