@@ -17,7 +17,6 @@ package auth
 import (
 	"context"
 	"log/slog"
-	"net"
 	"net/http"
 	"strings"
 	"unicode"
@@ -62,8 +61,8 @@ const maxUserAgent = 256
 // Auditor writes the audit trail.
 type Auditor struct {
 	Logger *slog.Logger
-	// TrustedProxyHops is how many proxies append to X-Forwarded-For.
-	TrustedProxyHops int
+	// TrustedProxy is which X-Forwarded-For entries are believed.
+	TrustedProxy ProxyTrust
 }
 
 // Log writes one audit line for r. attrs are slog key/value pairs and must
@@ -72,7 +71,7 @@ func (a *Auditor) Log(ctx context.Context, r *http.Request, event string, attrs 
 	if a == nil || a.Logger == nil {
 		return
 	}
-	a.Record(ctx, ClientOf(r, a.TrustedProxyHops), event, attrs...)
+	a.Record(ctx, ClientOf(r, a.TrustedProxy), event, attrs...)
 }
 
 // Client is who sent a request, as the audit trail names them.
@@ -81,14 +80,14 @@ type Client struct {
 	UserAgent string
 }
 
-// ClientOf is r's client, honouring the trusted proxy hops; the user
-// agent is bounded.
-func ClientOf(r *http.Request, trustedProxyHops int) Client {
+// ClientOf is r's client, honouring the trusted proxies; the user agent
+// is bounded.
+func ClientOf(r *http.Request, trust ProxyTrust) Client {
 	ua := r.UserAgent()
 	if len(ua) > maxUserAgent {
 		ua = ua[:maxUserAgent]
 	}
-	return Client{IP: clientIP(r, trustedProxyHops), UserAgent: ua}
+	return Client{IP: clientIP(r, trust), UserAgent: ua}
 }
 
 // Record writes one audit line for a request that is no longer at hand
@@ -166,39 +165,4 @@ func LogSafe(s string) string {
 		return r
 	}, s)
 	return strings.ReplaceAll(strings.ReplaceAll(s, "\r", `\r`), "\n", `\n`)
-}
-
-// clientIP returns the client's address: the
-// direct peer, or behind N trusted reverse proxies the entry N positions
-// from the right of X-Forwarded-For. Entries further left were written by
-// the client and are never read; a chain shorter than N, or an entry that
-// is not an address, yields the peer.
-func clientIP(r *http.Request, hops int) string {
-	peer := r.RemoteAddr
-	if host, _, err := net.SplitHostPort(peer); err == nil {
-		peer = host
-	}
-	if hops <= 0 {
-		return peer
-	}
-	var chain []string
-	for _, v := range r.Header.Values("X-Forwarded-For") {
-		for part := range strings.SplitSeq(v, ",") {
-			if part = strings.TrimSpace(part); part != "" {
-				chain = append(chain, part)
-			}
-		}
-	}
-	if len(chain) < hops {
-		return peer
-	}
-	candidate := chain[len(chain)-hops]
-	if host, _, err := net.SplitHostPort(candidate); err == nil {
-		candidate = host
-	}
-	ip := net.ParseIP(strings.Trim(candidate, "[]"))
-	if ip == nil {
-		return peer
-	}
-	return ip.String()
 }

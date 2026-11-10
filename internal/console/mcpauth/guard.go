@@ -19,6 +19,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -66,8 +67,8 @@ type Options struct {
 	// PublicURL is the console's external origin (AUTH_PUBLIC_URL); empty
 	// derives it from each request, like the CSRF check.
 	PublicURL string
-	// TrustedProxyHops is how many proxies append to X-Forwarded-For.
-	TrustedProxyHops int
+	// TrustedProxy is which X-Forwarded-For entries are believed.
+	TrustedProxy auth.ProxyTrust
 	// Audit receives mcp.denied lines.
 	Audit *auth.Auditor
 	// Calls is the per-user budget; nil is DefaultCallsPerMinute/Burst.
@@ -153,7 +154,7 @@ func WithClient(ctx context.Context, c auth.Client) context.Context {
 func (g *Guard) Wrap(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
-		client := auth.ClientOf(r, g.o.TrustedProxyHops)
+		client := auth.ClientOf(r, g.o.TrustedProxy)
 		if o := r.Header.Get("Origin"); o != "" && !auth.SameOrigin(o, auth.ExpectedOrigin(r, g.o.PublicURL)) {
 			g.deny(r, client, "", "cross-origin request")
 			http.Error(w, "cross-origin requests to the MCP endpoint are refused", http.StatusForbidden)
@@ -170,13 +171,17 @@ func (g *Guard) Wrap(next http.Handler) http.Handler {
 			return
 		}
 		digest := sha256.Sum256([]byte(token))
-		if !g.isKnown(digest) && !g.o.Attempts.Allow(auth.ClientKey(r, g.o.TrustedProxyHops)) {
+		if !g.isKnown(digest) && !g.o.Attempts.Allow(auth.ClientKey(r, g.o.TrustedProxy)) {
 			g.deny(r, client, "", "address budget")
 			tooMany(w, "too many unrecognised tokens from this address; wait a minute")
 			return
 		}
 		p, err := g.o.Authenticator.Authenticate(WithResource(r.Context(), ResourceURL(r, g.o.PublicURL)), token)
 		switch {
+		case errors.Is(err, auth.ErrReviewsBusy):
+			g.deny(r, client, "", "review budget")
+			tooMany(w, "the console is reviewing too many tokens; wait a few seconds")
+			return
 		case err != nil && refused(err):
 			g.forget(digest)
 			g.deny(r, client, "", reason(err))

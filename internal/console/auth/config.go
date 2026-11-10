@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/url"
 	"os"
 	"slices"
@@ -67,7 +68,7 @@ const (
 // AUTH_PROVIDER, SESSION_KEY_FILE, SESSION_IDLE_TIMEOUT, OIDC_*,
 // REVOCATION_CONFIGMAP, POD_NAMESPACE) plus optional variables with safe
 // defaults (AUTH_TOKEN_LOGIN, PUBLIC_URL, SESSION_MAX_AGE, COOKIE_SECURE,
-// TRUSTED_PROXY_HOPS, IDP_TIMEOUT, OIDC_CA_FILE,
+// TRUSTED_PROXY_HOPS, TRUSTED_PROXY_CIDRS, IDP_TIMEOUT, OIDC_CA_FILE,
 // OIDC_REQUIRE_EMAIL_VERIFIED, OIDC_GRANT_CLIENT_*, OPENSHIFT_*). OIDC_GROUPS_CLAIM is not
 // read: groups come from the API server's SelfSubjectReview. It holds file paths, never
 // secret values: secrets are read by LoadSecrets at start.
@@ -90,10 +91,11 @@ type Config struct {
 	// When set, OAuth redirect URIs and the Origin check use it; when
 	// empty they are derived from the request.
 	PublicURL string
-	// TrustedProxyHops is how many reverse proxies in front of the
-	// console append to X-Forwarded-For; the audit log's client address
-	// is read that many entries from the right.
-	TrustedProxyHops int
+	// TrustedProxy is how many reverse proxies in front of the console
+	// append to X-Forwarded-For and which peers are those proxies
+	// (TRUSTED_PROXY_HOPS, TRUSTED_PROXY_CIDRS): the client address of
+	// the audit log and of every per-address budget. See ProxyTrust.
+	TrustedProxy ProxyTrust
 	// IdPTimeout bounds every call to an identity provider.
 	IdPTimeout time.Duration
 	// RevocationConfigMap names the ConfigMap in Namespace that lists
@@ -245,16 +247,56 @@ func LoadConfig(getenv Getenv) (Config, error) {
 	}
 	if v := str("TRUSTED_PROXY_HOPS", ""); v != "" {
 		n, err := strconv.Atoi(v)
-		if err != nil || n < 0 || n > 8 {
+		if err != nil || n < 0 || n > maxProxyHops {
 			errs = append(errs, fmt.Errorf("TRUSTED_PROXY_HOPS=%q must be an integer between 0 and 8", v))
 		} else {
-			cfg.TrustedProxyHops = n
+			cfg.TrustedProxy.Hops = n
+		}
+	}
+	if v := str("TRUSTED_PROXY_CIDRS", ""); v != "" {
+		cidrs, err := ParseProxyCIDRs(v)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("TRUSTED_PROXY_CIDRS: %w", err))
+		} else {
+			cfg.TrustedProxy.CIDRs = cidrs
 		}
 	}
 	if err := cfg.Validate(); err != nil {
 		errs = append(errs, err)
 	}
 	return cfg, errors.Join(errs...)
+}
+
+// Warnings are the start-time warnings of a configuration that works but
+// weakens a protection; the console logs each one.
+func (c *Config) Warnings() []string {
+	var out []string
+	switch {
+	case c.TrustedProxy.Hops > 0 && len(c.TrustedProxy.CIDRs) == 0:
+		out = append(out, "TRUSTED_PROXY_HOPS is set without TRUSTED_PROXY_CIDRS: X-Forwarded-For is ignored, "+
+			"because any peer that reaches the console directly could forge it. Every client behind the proxy then "+
+			"shares the proxy's address, and so one sign-in budget; list the proxies' addresses in "+
+			"TRUSTED_PROXY_CIDRS (0.0.0.0/0,::/0 only when a NetworkPolicy admits nothing but the proxies)")
+	case c.TrustedProxy.Hops == 0 && c.PublicURL != "" && !loopbackURL(c.PublicURL):
+		out = append(out, "TRUSTED_PROXY_HOPS is 0 with a non-loopback PUBLIC_URL: if a proxy sits in front, every "+
+			"client shares its address, and one address's sign-in budget (20 pasted tokens a minute) locks token "+
+			"sign-in for everyone; set TRUSTED_PROXY_HOPS and TRUSTED_PROXY_CIDRS to the proxies in front")
+	}
+	return out
+}
+
+// loopbackURL reports whether u names a loopback host.
+func loopbackURL(u string) bool {
+	parsed, err := url.Parse(u)
+	if err != nil {
+		return false
+	}
+	host := parsed.Hostname()
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // Validate checks the configuration without touching the filesystem or
@@ -421,7 +463,8 @@ func (c *Config) Info() map[string]string {
 		"session_max_age":         c.MaxAge.String(),
 		"session_idle_timeout":    c.IdleTimeout.String(),
 		"public_url":              c.PublicURL,
-		"trusted_proxy_hops":      strconv.Itoa(c.TrustedProxyHops),
+		"trusted_proxy_hops":      strconv.Itoa(c.TrustedProxy.Hops),
+		"trusted_proxy_cidrs":     c.TrustedProxy.String(),
 		"idp_timeout":             c.IdPTimeout.String(),
 		"revocation_configmap":    c.RevocationConfigMap,
 		"oidc_issuer_url":         c.OIDC.IssuerURL,

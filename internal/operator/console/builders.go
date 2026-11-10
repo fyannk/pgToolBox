@@ -415,6 +415,10 @@ type deploymentInputs struct {
 	Image specs.ResolvedImage
 	// OpenShift: the platform assigns UIDs and fsGroups.
 	OpenShift bool
+	// Exposed: a Route, Ingress or HTTPRoute is published in front of
+	// the console in this reconcile (not merely requested: the Route and
+	// Gateway APIs may be unavailable).
+	Exposed bool
 }
 
 // env is one environment variable, in the chart's order.
@@ -501,7 +505,7 @@ func buildStatefulSet(c *pgtoolboxv1alpha1.PgToolBoxConsole, in deploymentInputs
 func podTemplate(c *pgtoolboxv1alpha1.PgToolBoxConsole, in deploymentInputs) corev1.PodTemplateSpec {
 	persistent := c.HistoryPersistent()
 	mounts, volumes := consoleVolumes(c)
-	container := consoleContainer(c, in, consoleEnv(c), mounts)
+	container := consoleContainer(c, in, consoleEnv(c, in), mounts)
 	replicas := c.EffectiveReplicas()
 	podMeta := objectMeta(c, "", pgtoolboxv1alpha1.PropagationTargetPod)
 	podSpec := corev1.PodSpec{
@@ -575,7 +579,7 @@ func consoleContainer(c *pgtoolboxv1alpha1.PgToolBoxConsole, in deploymentInputs
 // consoleEnv is the console container's environment, in the chart's
 // order. Capabilities that default on are written only when turned off;
 // the files the console reads are named by path, never by content.
-func consoleEnv(c *pgtoolboxv1alpha1.PgToolBoxConsole) []corev1.EnvVar {
+func consoleEnv(c *pgtoolboxv1alpha1.PgToolBoxConsole, in deploymentInputs) []corev1.EnvVar {
 	envs := []corev1.EnvVar{
 		{Name: "POD_NAMESPACE", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.namespace"}}},
 		// Never empty and never "all namespaces": the console reads its own
@@ -594,7 +598,7 @@ func consoleEnv(c *pgtoolboxv1alpha1.PgToolBoxConsole) []corev1.EnvVar {
 		env("SESSION_KEY_FILE", runDir+"/session/"+sessionKey),
 		env("SESSION_IDLE_TIMEOUT", durationEnv(&metav1.Duration{Duration: c.SessionIdleTimeout()})),
 	)
-	envs = append(envs, authEnv(c)...)
+	envs = append(envs, authEnv(c, in.Exposed)...)
 	envs = append(envs,
 		// The end-of-life table, mounted from the lifecycle ConfigMap and
 		// reloaded on change; absent, the built-in table applies.
@@ -644,7 +648,7 @@ func consoleEnv(c *pgtoolboxv1alpha1.PgToolBoxConsole) []corev1.EnvVar {
 
 // authEnv is the sign-in provider's settings (OIDC or OpenShift), then
 // the session and token-login settings and the public URL.
-func authEnv(c *pgtoolboxv1alpha1.PgToolBoxConsole) []corev1.EnvVar {
+func authEnv(c *pgtoolboxv1alpha1.PgToolBoxConsole, exposed bool) []corev1.EnvVar {
 	provider := c.AuthProvider()
 	oidc := c.Spec.Auth.OIDC
 	openshift := c.Spec.Auth.OpenShift
@@ -694,14 +698,11 @@ func authEnv(c *pgtoolboxv1alpha1.PgToolBoxConsole) []corev1.EnvVar {
 		envs = append(envs, env("PUBLIC_URL", publicURL))
 	}
 	// Behind the Route, Ingress or Gateway the console sees the proxy's
-	// address: it trusts one X-Forwarded-For hop so that the sign-in
-	// budgets are charged per client, not shared by every user. Without an
-	// exposure nothing is in front, and a forwarded header is the caller's
-	// own claim (the default, 0, ignores it).
-	if c.Spec.Exposure.TypeOrDefault() != pgtoolboxv1alpha1.ExposureTypeClusterIP {
-		envs = append(envs, env("TRUSTED_PROXY_HOPS", "1"))
-	}
-	return envs
+	// address: it reads X-Forwarded-For, from the proxies only, so that the
+	// sign-in budgets are charged per client, not shared by every user.
+	// Without a published exposure nothing is in front, and a forwarded
+	// header is the caller's own claim (the default, 0, ignores it).
+	return append(envs, proxyEnv(effectiveProxyTrust(c, exposed))...)
 }
 
 // prometheusEnv is the Prometheus settings, nil without Prometheus. The
@@ -1008,7 +1009,7 @@ func consoleURL(c *pgtoolboxv1alpha1.PgToolBoxConsole) string {
 	if url := c.EffectivePublicURL(); url != "" {
 		return strings.TrimSuffix(url, "/") + "/"
 	}
-	if url := exposure.URL(&c.Spec.Exposure); url != "" {
+	if url := exposure.URL(&c.Spec.Exposure.ExposureSpec); url != "" {
 		return url
 	}
 	return fmt.Sprintf("http://%s.%s.svc/", c.WorkloadName(), c.Namespace)

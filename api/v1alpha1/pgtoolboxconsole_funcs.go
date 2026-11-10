@@ -31,6 +31,7 @@ var pgToolBoxConsoleReasons = []Reason{
 	ReasonInstanceCAMissing,
 	ReasonInstanceCAInvalid,
 	ReasonInstanceCABundleFull,
+	ReasonExposureOpen,
 }
 
 func init() {

@@ -551,6 +551,164 @@ spec:
                     - message: label keys under pgtoolbox.fyannk.dev/ are reserved
                       reason: FieldValueForbidden
                       rule: self.all(k, !k.startsWith('pgtoolbox.fyannk.dev/'))
+                  networkPolicy:
+                    description: |-
+                      The ingress NetworkPolicy around the console Pods: only the router,
+                      ingress controller or gateway reaches the console port. Omitted: on
+                      for route exposure (the OpenShift router namespaces carry
+                      policy-group.network.openshift.io/ingress), and for ingress and
+                      gateway exposure only once from names the controller's namespace;
+                      ExposureConfined says which. Never rendered for clusterIP.
+                    properties:
+                      enabled:
+                        description: |-
+                          Whether the operator renders it. Omitted: true for route exposure,
+                          and for ingress and gateway exposure when from is set.
+                        type: boolean
+                      from:
+                        description: |-
+                          Who may reach the console port: the router, ingress controller or
+                          gateway Pods. Omitted for route exposure: the namespaces labelled
+                          policy-group.network.openshift.io/ingress (the OpenShift routers,
+                          host-network ones included). Required for ingress and gateway. Every
+                          peer listed is trusted to write X-Forwarded-For unless
+                          trustedProxy.cidrs narrows it. The probe port (health and /metrics)
+                          stays open to scrapers; it never reads the header.
+                        items:
+                          description: |-
+                            NetworkPolicyPeer describes a peer to allow traffic to/from. Only certain combinations of
+                            fields are allowed
+                          properties:
+                            ipBlock:
+                              description: |-
+                                ipBlock defines policy on a particular IPBlock. If this field is set then
+                                neither of the other fields can be.
+                              properties:
+                                cidr:
+                                  description: |-
+                                    cidr is a string representing the IPBlock
+                                    Valid examples are "192.168.1.0/24" or "2001:db8::/64"
+                                  type: string
+                                except:
+                                  description: |-
+                                    except is a slice of CIDRs that should not be included within an IPBlock
+                                    Valid examples are "192.168.1.0/24" or "2001:db8::/64"
+                                    Except values will be rejected if they are outside the cidr range
+                                  items:
+                                    type: string
+                                  type: array
+                                  x-kubernetes-list-type: atomic
+                              required:
+                              - cidr
+                              type: object
+                            namespaceSelector:
+                              description: |-
+                                namespaceSelector selects namespaces using cluster-scoped labels. This field follows
+                                standard label selector semantics; if present but empty, it selects all namespaces.
+
+                                If podSelector is also set, then the NetworkPolicyPeer as a whole selects
+                                the pods matching podSelector in the namespaces selected by namespaceSelector.
+                                Otherwise it selects all pods in the namespaces selected by namespaceSelector.
+                              properties:
+                                matchExpressions:
+                                  description: matchExpressions is a list of label
+                                    selector requirements. The requirements are ANDed.
+                                  items:
+                                    description: |-
+                                      A label selector requirement is a selector that contains values, a key, and an operator that
+                                      relates the key and values.
+                                    properties:
+                                      key:
+                                        description: key is the label key that the
+                                          selector applies to.
+                                        type: string
+                                      operator:
+                                        description: |-
+                                          operator represents a key's relationship to a set of values.
+                                          Valid operators are In, NotIn, Exists and DoesNotExist.
+                                        type: string
+                                      values:
+                                        description: |-
+                                          values is an array of string values. If the operator is In or NotIn,
+                                          the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                                          the values array must be empty. This array is replaced during a strategic
+                                          merge patch.
+                                        items:
+                                          type: string
+                                        type: array
+                                        x-kubernetes-list-type: atomic
+                                    required:
+                                    - key
+                                    - operator
+                                    type: object
+                                  type: array
+                                  x-kubernetes-list-type: atomic
+                                matchLabels:
+                                  additionalProperties:
+                                    type: string
+                                  description: |-
+                                    matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                                    map is equivalent to an element of matchExpressions, whose key field is "key", the
+                                    operator is "In", and the values array contains only "value". The requirements are ANDed.
+                                  type: object
+                              type: object
+                              x-kubernetes-map-type: atomic
+                            podSelector:
+                              description: |-
+                                podSelector is a label selector which selects pods. This field follows standard label
+                                selector semantics; if present but empty, it selects all pods.
+
+                                If namespaceSelector is also set, then the NetworkPolicyPeer as a whole selects
+                                the pods matching podSelector in the Namespaces selected by NamespaceSelector.
+                                Otherwise it selects the pods matching podSelector in the policy's own namespace.
+                              properties:
+                                matchExpressions:
+                                  description: matchExpressions is a list of label
+                                    selector requirements. The requirements are ANDed.
+                                  items:
+                                    description: |-
+                                      A label selector requirement is a selector that contains values, a key, and an operator that
+                                      relates the key and values.
+                                    properties:
+                                      key:
+                                        description: key is the label key that the
+                                          selector applies to.
+                                        type: string
+                                      operator:
+                                        description: |-
+                                          operator represents a key's relationship to a set of values.
+                                          Valid operators are In, NotIn, Exists and DoesNotExist.
+                                        type: string
+                                      values:
+                                        description: |-
+                                          values is an array of string values. If the operator is In or NotIn,
+                                          the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                                          the values array must be empty. This array is replaced during a strategic
+                                          merge patch.
+                                        items:
+                                          type: string
+                                        type: array
+                                        x-kubernetes-list-type: atomic
+                                    required:
+                                    - key
+                                    - operator
+                                    type: object
+                                  type: array
+                                  x-kubernetes-list-type: atomic
+                                matchLabels:
+                                  additionalProperties:
+                                    type: string
+                                  description: |-
+                                    matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                                    map is equivalent to an element of matchExpressions, whose key field is "key", the
+                                    operator is "In", and the values array contains only "value". The requirements are ANDed.
+                                  type: object
+                              type: object
+                              x-kubernetes-map-type: atomic
+                          type: object
+                        maxItems: 16
+                        type: array
+                    type: object
                   tls:
                     description: |-
                       TLS for route and ingress exposure. A Route always terminates TLS at
@@ -573,6 +731,44 @@ spec:
                         - name
                         type: object
                     type: object
+                  trustedProxy:
+                    description: |-
+                      The reverse proxies in front of the console: how many append to
+                      X-Forwarded-For and which peers they are (TRUSTED_PROXY_HOPS,
+                      TRUSTED_PROXY_CIDRS). The console reads the header only from a peer
+                      it trusts, so the per-address sign-in budgets and the audit trail's
+                      client_ip follow each client. Omitted: one hop when an exposure
+                      object is published; trusted peers per networkPolicy.
+                    properties:
+                      cidrs:
+                        description: |-
+                          The proxies' own addresses, as the console sees them (the router or
+                          ingress controller Pods; the nodes for a host-network router). The
+                          header is read only from a peer inside one. Omitted: with the
+                          NetworkPolicy rendered, any peer it admits (every other Pod is
+                          refused by the network); without it, none, and the header is
+                          ignored: every client behind the proxy then shares its address, and
+                          so one sign-in budget.
+                        items:
+                          maxLength: 49
+                          type: string
+                          x-kubernetes-validations:
+                          - message: trustedProxy.cidrs entries must be CIDRs
+                            reason: FieldValueInvalid
+                            rule: isCIDR(self)
+                        maxItems: 32
+                        type: array
+                        x-kubernetes-list-type: set
+                      hops:
+                        description: |-
+                          How many proxies append to X-Forwarded-For: 2 for a load balancer
+                          that appends in front of the router. 0 ignores the header. Omitted:
+                          1 when an exposure object is published, else 0.
+                        format: int32
+                        maximum: 8
+                        minimum: 0
+                        type: integer
+                    type: object
                   type:
                     default: clusterIP
                     description: The exposure mechanism.
@@ -584,6 +780,14 @@ spec:
                     type: string
                 type: object
                 x-kubernetes-validations:
+                - fieldPath: .networkPolicy.from
+                  message: 'networkPolicy.enabled needs networkPolicy.from for ingress
+                    and gateway exposure: the controller''s namespace is not known'
+                  reason: FieldValueRequired
+                  rule: '!has(self.networkPolicy) || !has(self.networkPolicy.enabled)
+                    || !self.networkPolicy.enabled || (has(self.type) && self.type
+                    == ''route'') || (has(self.networkPolicy.from) && size(self.networkPolicy.from)
+                    > 0)'
                 - fieldPath: .hostname
                   message: hostname is required for route, ingress and gateway exposure
                   reason: FieldValueRequired
@@ -1456,7 +1660,7 @@ spec:
                 description: |-
                   Conditions: Ready (summary), ConfigurationValid, WorkloadReady,
                   ExposureReady, Progressing, Stalled and the advisory
-                  InstanceCABundleComplete.
+                  InstanceCABundleComplete and ExposureConfined.
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.

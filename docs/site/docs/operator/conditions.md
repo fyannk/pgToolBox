@@ -164,7 +164,10 @@ ConfigMaps are in the operator's label-filtered cache.
 | `WorkloadReady` | `RolloutInProgress`, `RolloutStuck`, `ReplicaFailure`, `SecretKeyMissing`, `PodUnschedulable`, `ImagePullFailed`, `CrashLoopBackOff`, `PodNotReady`. |
 | `ExposureReady` | As for `PgAdmin`: `NotAdmitted`, `NotAccepted`, `RouteAPIUnavailable`, `GatewayAPIUnavailable`; `NotRequested` (True) for `clusterIP`. |
 
-`InstanceCABundleComplete` is advisory and **never enters `Ready`**: a Cluster
+`InstanceCABundleComplete` and `ExposureConfined` are advisory and **never enter
+`Ready`**. `ExposureConfined` is present only while an exposure is published
+([trusted proxies](console.md#trusted-proxies-and-the-ingress-networkpolicy)).
+For `InstanceCABundleComplete`, a Cluster
 whose CA is missing reads "not verifiable" in the console, the console itself
 keeps running. It is present only while the operator mirrors the
 [instance CA bundle](console.md#the-instance-ca-bundle) (`spec.instanceCABundleRef`
@@ -173,6 +176,7 @@ omitted); `status.instanceCABundle` lists the Clusters left out.
 | Condition | `True` | `False` |
 |---|---|---|
 | `InstanceCABundleComplete` | the server CA of every selected Cluster is in `<name>-instance-ca` (or no Cluster is selected) | `InstanceCAMissing`, naming each Cluster and why; `ResourceNotOwned` when a ConfigMap that is not this console's already has the bundle's name |
+| `ExposureConfined` | the `<name>-ingress` NetworkPolicy admits only the router, ingress controller or gateway to the console port (present only while a Route, Ingress or HTTPRoute is published) | `ExposureOpen`, naming why no policy is rendered and what the console does with `X-Forwarded-For` |
 
 ## PgAccessRequest
 
@@ -270,6 +274,7 @@ Reasons are registered once, by owner. `common` reasons are shared by every kind
 | `InstanceCAMissing` | `InstanceCABundleComplete=False`: at least one selected Cluster's server CA is not in the mirrored bundle; `status.instanceCABundle.missing` gives each Cluster, its CA Secret and the reason (`SecretNotFound`, `SecretKeyMissing` for a Secret without `ca.crt`, `InstanceCAInvalid`, `InstanceCABundleFull`). |
 | `InstanceCAInvalid` | A Cluster's server CA Secret has a `ca.crt` with no PEM certificate in it. |
 | `InstanceCABundleFull` | The mirrored bundle reached the size a ConfigMap holds (several hundred distinct CAs); the Clusters after it, by name, are left out. |
+| `ExposureOpen` | `ExposureConfined=False`: the console is exposed without its ingress NetworkPolicy (an Ingress or a Gateway without `spec.exposure.networkPolicy.from`, or `networkPolicy.enabled: false`), so any Pod can reach its port; the message says which peers the console believes about `X-Forwarded-For`. |
 
 ### pgaccessrequest
 

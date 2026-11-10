@@ -39,6 +39,16 @@ warning naming what is missing at start:
   kubectl -n {{ .Release.Namespace }} create rolebinding {{ include "pgtools.console.state" . }} \
     --role={{ include "pgtools.console.state" . }} --serviceaccount={{ .Release.Namespace }}:{{ include "pgtools.console.fullname" . }}
 {{- end }}
+{{- $hops := .Values.console.trustedProxyHops }}
+{{- if kindIs "invalid" $hops }}{{ $hops = ternary 0 1 (eq .Values.console.exposure.type "none") }}{{ end }}
+{{- if and $hops (not .Values.console.trustedProxyCIDRs) (not (and .Values.console.networkPolicy.enabled (ne .Values.console.exposure.type "none"))) }}
+
+X-Forwarded-For is IGNORED: no trusted proxy is named (console.trustedProxyCIDRs),
+and without console.networkPolicy any Pod could reach the console directly and
+forge it. Every client then shares the proxy's address, and so one sign-in budget.
+List the router's or ingress controller's addresses in console.trustedProxyCIDRs,
+or enable console.networkPolicy.
+{{- end }}
 {{- if eq .Values.console.exposure.type "none" }}
 
 Not exposed. Reach it with:  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "pgtools.console.fullname" . }} 8080:{{ .Values.console.service.port }}

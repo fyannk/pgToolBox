@@ -72,6 +72,12 @@ what the design guarantees and, as plainly, what it does not.
 - **pgAdmin to PostgreSQL**: `verify-full`, SCRAM with channel binding.
 - **Metrics**: authenticated and authorized by token on both the operator and the
   console.
+- **Client addresses**: `X-Forwarded-For` is believed only from the proxies
+  named in `TRUSTED_PROXY_CIDRS`, else ignored, so a Pod that reaches the console
+  directly cannot escape the per-address sign-in budgets or forge `client_ip`;
+  the operator renders an ingress NetworkPolicy for a published Route (and for an
+  Ingress or Gateway that names its controller) and only then trusts every
+  admitted peer ([details](operator/console.md#trusted-proxies-and-the-ingress-networkpolicy)).
 
 ## Writes: token passthrough, never impersonation
 
@@ -218,7 +224,9 @@ in view.
 
 ## Network
 
-NetworkPolicies are optional everywhere and off by default. RBAC and SubjectAccessReview
+NetworkPolicies are optional and off by default, except the console's ingress
+policy, which the operator renders for a published Route and for an Ingress or
+Gateway that names its controller in `spec.exposure.networkPolicy.from`. RBAC and SubjectAccessReview
 are the isolation the product guarantees; a policy is an additional boundary where
 your CNI enforces one. See [console](console/networkpolicy.md),
 [operator](operator/index.md#networkpolicy-and-admission-policy) and

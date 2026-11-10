@@ -149,8 +149,8 @@ func (h *Handler) Codec() *Codec { return h.codec }
 // PublicURL is the configured external origin ("" derives it per request).
 func (h *Handler) PublicURL() string { return h.cfg.PublicURL }
 
-// TrustedProxyHops is how many proxies append to X-Forwarded-For.
-func (h *Handler) TrustedProxyHops() int { return h.cfg.TrustedProxyHops }
+// TrustedProxy is which X-Forwarded-For entries are believed.
+func (h *Handler) TrustedProxy() ProxyTrust { return h.cfg.TrustedProxy }
 
 // Review asks the API server whose token this is (SelfSubjectReview,
 // positive answers cached). ErrTokenRejected: the API server refuses it.

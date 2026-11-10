@@ -103,7 +103,7 @@ func addressKey(ip string) string {
 }
 
 // ClientKey is the rate-limit key of r's client, honouring the trusted
-// proxy hops.
-func ClientKey(r *http.Request, trustedProxyHops int) string {
-	return addressKey(clientIP(r, trustedProxyHops))
+// proxies.
+func ClientKey(r *http.Request, trust ProxyTrust) string {
+	return addressKey(clientIP(r, trust))
 }

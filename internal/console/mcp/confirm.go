@@ -82,7 +82,7 @@ func confirmView(pg confirmPage, sealed, problem string) auth.MCPConfirmView {
 
 // handleConfirmPage shows the confirmation to the person it was asked of.
 func (e *Endpoint) handleConfirmPage(w http.ResponseWriter, r *http.Request) {
-	if !e.pageViews.Allow(auth.ClientKey(r, e.o.TrustedProxyHops)) {
+	if !e.pageViews.Allow(auth.ClientKey(r, e.o.TrustedProxy)) {
 		auth.ErrorPage(w, http.StatusTooManyRequests, "Too many confirmation pages from this address; wait a minute.")
 		return
 	}
@@ -177,7 +177,7 @@ func (e *Endpoint) handleConfirmAnswer(w http.ResponseWriter, r *http.Request) {
 		auth.ErrorPage(w, http.StatusServiceUnavailable, "Your answer could not be recorded; nothing was done. Ask the assistant again.")
 		return
 	}
-	e.audit.Record(r.Context(), auth.ClientOf(r, e.o.TrustedProxyHops), auth.AuditMCPConfirm,
+	e.audit.Record(r.Context(), auth.ClientOf(r, e.o.TrustedProxy), auth.AuditMCPConfirm,
 		"user", pg.User, "session", sess.Principal.SessionID, "outcome", outcome, "operation", string(pg.Kind),
 		"namespace", pg.Namespace, "cluster", pg.Name, "target", pg.Instance, "assistant", pg.Assistant,
 		"confirmation", confirmID(pg.Nonce))

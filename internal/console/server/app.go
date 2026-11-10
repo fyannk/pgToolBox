@@ -196,7 +196,7 @@ func RunApp(ctx context.Context, o AppOptions) error {
 		Source: o.Source, Authz: az, Broker: o.Broker, Sessions: authHandler,
 		Logs: o.Logs, Operator: operator, DatabaseRoles: databaseRoles, Features: o.Features, Access: access,
 		PgAdminURL: o.PgAdminURL, Log: o.Log, PublicURL: o.Auth.PublicURL,
-		ClientOf: func(r *http.Request) auth.Client { return auth.ClientOf(r, o.Auth.TrustedProxyHops) },
+		ClientOf: func(r *http.Request) auth.Client { return auth.ClientOf(r, o.Auth.TrustedProxy) },
 	}
 	var (
 		oauthServer *mcpoauth.Server
@@ -224,7 +224,7 @@ func RunApp(ctx context.Context, o AppOptions) error {
 	if o.MCP.Enabled {
 		e, err := mcp.New(mcp.Options{
 			Reads: reads, Authenticator: mcpAuthenticator(oauthServer, authHandler), OAuth: mcpOAuth(oauthServer),
-			PublicURL: o.Auth.PublicURL, TrustedProxyHops: o.Auth.TrustedProxyHops, Docs: o.MCP.Docs,
+			PublicURL: o.Auth.PublicURL, TrustedProxy: o.Auth.TrustedProxy, Docs: o.MCP.Docs,
 			Attempts:   authHandler.AttemptLimiter(),
 			WriteTools: o.MCP.WriteTools, Sealer: authHandler.Codec(), Confirmations: index, Sessions: authHandler,
 			MaxResultBytes: o.MCP.MaxResultBytes, CallTimeout: o.MCP.CallTimeout,
@@ -238,7 +238,7 @@ func RunApp(ctx context.Context, o AppOptions) error {
 			return err
 		}
 	}
-	metrics, err := MetricsHandler(identity, az, logr.FromSlogHandler(o.Log.Handler()), o.Auth.TrustedProxyHops)
+	metrics, err := MetricsHandler(identity, az, logr.FromSlogHandler(o.Log.Handler()))
 	if err != nil {
 		return err
 	}
@@ -271,10 +271,21 @@ func RunApp(ctx context.Context, o AppOptions) error {
 		Ready: ready, Broker: o.Broker, Metrics: metrics, Log: o.Log, MCP: mcpEndpoint, Tracing: o.Tracing,
 		ShutdownDelay: o.ShutdownDelay,
 	})
-	supCtx, stopRunners := context.WithCancel(ctx)
+	return serveThenStop(ctx, sup.Run, srv.Run)
+}
+
+// serveThenStop serves until ctx ends and the drain is over, and only
+// then stops the runners. The runners (the informer cache, the
+// invalidations that feed the event stream, the revocation list) run on a
+// context the shutdown signal does not end: the event and log streams
+// stay open for the shutdown delay, while the Service still routes to
+// this Pod, and a stream whose feed had already stopped would freeze
+// silently instead of ending.
+func serveThenStop(ctx context.Context, runners func(context.Context), serve func(context.Context) error) error {
+	runCtx, stopRunners := context.WithCancel(context.WithoutCancel(ctx))
 	var wg sync.WaitGroup
-	wg.Go(func() { sup.Run(supCtx) })
-	err = srv.Run(ctx)
+	wg.Go(func() { runners(runCtx) })
+	err := serve(ctx)
 	stopRunners()
 	wg.Wait()
 	return err

@@ -79,6 +79,9 @@ it (`<name>`, or `<name>-console` when the name does not already say console):
 - the lifecycle ConfigMap (below);
 - unless `spec.instanceCABundleRef` is set, the instance CA bundle
   `<name>-instance-ca` (below);
+- for a published exposure, the `<name>-ingress` NetworkPolicy that admits only
+  the router, ingress controller or gateway to the console port
+  ([trusted proxies](#trusted-proxies-and-the-ingress-networkpolicy));
 - the Route, Ingress or HTTPRoute of `spec.exposure`, with a one-hour timeout for the
   console's event stream and cookie affinity (`pgtoolbox-console-replica`) on an Ingress
   (ingress-nginx's annotations, and Traefik's on the Service) or a Route, so a
@@ -261,11 +264,53 @@ repository must be on `--console-image-repositories` (chart
 `operator.console.imageRepositories`), else `ImageNotAllowed`; see
 [images](images.md).
 
+## Trusted proxies and the ingress NetworkPolicy
+
+The console reads `X-Forwarded-For` only from a peer it trusts
+([client address](../console/authentication.md#sessions)), so that a
+Pod calling the Service directly cannot pose as a new client on every request.
+The operator follows the exposure it **publishes**, not the one requested: a
+Route without the Route API, an HTTPRoute without the Gateway API, or a hostname
+refused by `EXPOSURE_ALLOWED_HOST_SUFFIXES` puts nothing in front, so nothing is
+trusted.
+
+| `spec.exposure` | NetworkPolicy `<name>-ingress` | `TRUSTED_PROXY_HOPS` / `TRUSTED_PROXY_CIDRS` | `ExposureConfined` |
+|---|---|---|---|
+| `clusterIP` | none | none | absent |
+| `route` (published) | on by default: the console port admits only namespaces labelled `policy-group.network.openshift.io/ingress` (the OpenShift routers, host-network ones included) | `1` / `0.0.0.0/0,::/0` | `True` |
+| `ingress`, `gateway` with `networkPolicy.from` | the console port admits only `from` | `1` / `0.0.0.0/0,::/0` | `True` |
+| `ingress`, `gateway` without `from` | none: the controller's namespace differs per installation, so no default is safe | `1` / none: the header is ignored | `False`, `ExposureOpen` |
+| `networkPolicy.enabled: false` | none | `1` / none | `False`, `ExposureOpen` |
+
+- `spec.exposure.networkPolicy.from` lists the router, ingress controller or
+  gateway Pods (NetworkPolicy peers, at most 16), for example
+  `[{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: ingress-nginx}}}]`.
+  Every peer listed is trusted to write `X-Forwarded-For`. `enabled: true` without
+  `from` is refused for ingress and gateway.
+- In-cluster clients that call the Service directly (an MCP agent in a Pod, a
+  `kubectl port-forward` goes through the kubelet and is not affected) are cut
+  off by the policy: add them to `from`, which replaces the Route's default, so
+  list the routers' namespace selector too. They are then trusted to write
+  `X-Forwarded-For` as well; name the routers in `trustedProxy.cidrs` when that
+  matters.
+- The probe port (health and `/metrics`) stays open to any source: kubelets and
+  Prometheus reach it, and it never reads `X-Forwarded-For`. Egress is not
+  policed by this policy.
+- `spec.exposure.trustedProxy.hops` (0 to 8, default 1 when published) counts
+  the proxies that append to the header: 2 for a load balancer in front of the
+  router. `trustedProxy.cidrs` names them by address instead of trusting every
+  admitted peer, and is the way to keep per-client budgets without the policy
+  (an Ingress whose controller's addresses you know).
+- A NetworkPolicy is a boundary only where the CNI enforces it; the operator
+  cannot tell. Where it does not, prefer `trustedProxy.cidrs`.
+- While the console is stalled on `HostnameNotAllowed` the operator withdraws
+  the exposure but leaves the workload and this policy as they were, so a stale
+  `0.0.0.0/0` trust is never left without its policy.
+- The advisory `ExposureConfined` never enters `Ready`; its message says which
+  peers the console believes.
+
 ## Not in the custom resource
 
-Kept chart-only for now: the console's own NetworkPolicy, the metrics
+Kept chart-only for now: the console's own egress NetworkPolicy, the metrics
 ServiceMonitor, TLS on the Service, the break-glass settings, the IdP timeout
-and the cookie flags. Use the chart where you need them. Trusted proxy hops
-follow the exposure, as in the chart: `TRUSTED_PROXY_HOPS=1` for a Route,
-Ingress or Gateway (one hop, so that sign-in budgets are per client), and none
-for `clusterIP`. A second proxy in front of the exposure needs the chart.
+and the cookie flags. Use the chart where you need them.

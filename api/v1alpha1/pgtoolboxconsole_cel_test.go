@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -49,7 +50,7 @@ func TestPgToolBoxConsoleCEL(t *testing.T) {
 		{name: "minimal"},
 		{name: "oidc on an ingress", mutate: func(p *pgtoolboxv1alpha1.PgToolBoxConsole) {
 			oidc(p)
-			p.Spec.Exposure = pgtoolboxv1alpha1.ExposureSpec{Type: pgtoolboxv1alpha1.ExposureTypeIngress, Hostname: "console.example"}
+			p.Spec.Exposure.ExposureSpec = pgtoolboxv1alpha1.ExposureSpec{Type: pgtoolboxv1alpha1.ExposureTypeIngress, Hostname: "console.example"}
 		}},
 		{name: "oidc without its settings", mutate: func(p *pgtoolboxv1alpha1.PgToolBoxConsole) {
 			p.Spec.Auth.Provider = pgtoolboxv1alpha1.PgToolBoxConsoleAuthOIDC
@@ -68,8 +69,29 @@ func TestPgToolBoxConsoleCEL(t *testing.T) {
 		}, wantErr: "oidc.grantClient.clientID must differ from oidc.clientID"},
 		{name: "openshift with a route", mutate: func(p *pgtoolboxv1alpha1.PgToolBoxConsole) {
 			p.Spec.Auth.Provider = pgtoolboxv1alpha1.PgToolBoxConsoleAuthOpenShift
-			p.Spec.Exposure = pgtoolboxv1alpha1.ExposureSpec{Type: pgtoolboxv1alpha1.ExposureTypeRoute, Hostname: "console.apps.example"}
+			p.Spec.Exposure.ExposureSpec = pgtoolboxv1alpha1.ExposureSpec{Type: pgtoolboxv1alpha1.ExposureTypeRoute, Hostname: "console.apps.example"}
 		}},
+		{name: "route with its default policy and named proxies", mutate: func(p *pgtoolboxv1alpha1.PgToolBoxConsole) {
+			p.Spec.Exposure.ExposureSpec = pgtoolboxv1alpha1.ExposureSpec{Type: pgtoolboxv1alpha1.ExposureTypeRoute, Hostname: "console.apps.example"}
+			p.Spec.Exposure.NetworkPolicy = &pgtoolboxv1alpha1.PgToolBoxConsoleExposurePolicySpec{Enabled: new(true)}
+			p.Spec.Exposure.TrustedProxy = &pgtoolboxv1alpha1.PgToolBoxConsoleTrustedProxySpec{Hops: new(int32(2)), CIDRs: []string{"10.128.0.0/14", "fd00::/64"}}
+		}},
+		{name: "ingress policy without peers", mutate: func(p *pgtoolboxv1alpha1.PgToolBoxConsole) {
+			p.Spec.Exposure.ExposureSpec = pgtoolboxv1alpha1.ExposureSpec{Type: pgtoolboxv1alpha1.ExposureTypeIngress, Hostname: "console.example"}
+			p.Spec.Exposure.NetworkPolicy = &pgtoolboxv1alpha1.PgToolBoxConsoleExposurePolicySpec{Enabled: new(true)}
+		}, wantErr: "networkPolicy.enabled needs networkPolicy.from"},
+		{name: "ingress policy with its controller's namespace", mutate: func(p *pgtoolboxv1alpha1.PgToolBoxConsole) {
+			p.Spec.Exposure.ExposureSpec = pgtoolboxv1alpha1.ExposureSpec{Type: pgtoolboxv1alpha1.ExposureTypeIngress, Hostname: "console.example"}
+			p.Spec.Exposure.NetworkPolicy = &pgtoolboxv1alpha1.PgToolBoxConsoleExposurePolicySpec{Enabled: new(true), From: []networkingv1.NetworkPolicyPeer{{
+				NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"kubernetes.io/metadata.name": "ingress-nginx"}},
+			}}}
+		}},
+		{name: "trusted proxy that is not a CIDR", mutate: func(p *pgtoolboxv1alpha1.PgToolBoxConsole) {
+			p.Spec.Exposure.TrustedProxy = &pgtoolboxv1alpha1.PgToolBoxConsoleTrustedProxySpec{CIDRs: []string{"the-router"}}
+		}, wantErr: "trustedProxy.cidrs entries must be CIDRs"},
+		{name: "too many trusted hops", mutate: func(p *pgtoolboxv1alpha1.PgToolBoxConsole) {
+			p.Spec.Exposure.TrustedProxy = &pgtoolboxv1alpha1.PgToolBoxConsoleTrustedProxySpec{Hops: new(int32(9))}
+		}, wantErr: "spec.exposure.trustedProxy.hops"},
 		{name: "openshift with nowhere to return to", mutate: func(p *pgtoolboxv1alpha1.PgToolBoxConsole) {
 			p.Spec.Auth.Provider = pgtoolboxv1alpha1.PgToolBoxConsoleAuthOpenShift
 		}, wantErr: "needs publicURL or exposure.hostname"},

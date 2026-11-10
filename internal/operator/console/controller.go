@@ -292,12 +292,27 @@ func (r *Reconciler) reconcile(ctx context.Context, console *pgtoolboxv1alpha1.P
 	} else if err := r.deleteIfOwned(ctx, console, &policyv1.PodDisruptionBudget{}, console.WorkloadName()); err != nil {
 		return err
 	}
-	if err := r.applyExposure(ctx, console); err != nil {
+	exposed, err := r.applyExposure(ctx, console)
+	if err != nil {
 		return err
 	}
+	// The ingress policy before the workload that trusts every peer it
+	// admits; its removal after the workload that no longer does.
+	policy := buildExposureNetworkPolicy(console, exposed)
+	if policy != nil {
+		if err := applier.Apply(ctx, policy); err != nil {
+			return r.notOwned(console, err)
+		}
+	}
+	setExposureConfined(console, exposed)
 
-	if err := r.reconcileWorkload(ctx, console, deploymentInputs{Image: image, OpenShift: r.Features.OpenShift}); err != nil {
+	if err := r.reconcileWorkload(ctx, console, deploymentInputs{Image: image, OpenShift: r.Features.OpenShift, Exposed: exposed}); err != nil {
 		return err
+	}
+	if policy == nil {
+		if err := r.deleteIfOwned(ctx, console, &networkingv1.NetworkPolicy{}, exposurePolicyName(console)); err != nil {
+			return err
+		}
 	}
 	r.observeExposure(ctx, console)
 	console.Status.URL = consoleURL(console)
@@ -477,38 +492,44 @@ func (r *Reconciler) deleteIfOwned(ctx context.Context, console *pgtoolboxv1alph
 }
 
 // applyExposure writes the exposure object of the requested type and deletes
-// the others this console owns.
-func (r *Reconciler) applyExposure(ctx context.Context, console *pgtoolboxv1alpha1.PgToolBoxConsole) error {
-	spec := &console.Spec.Exposure
+// the others this console owns. It reports whether an exposure object is
+// published: not for clusterIP, nor for a Route or an HTTPRoute whose API
+// is unavailable.
+func (r *Reconciler) applyExposure(ctx context.Context, console *pgtoolboxv1alpha1.PgToolBoxConsole) (bool, error) {
+	spec := &console.Spec.Exposure.ExposureSpec
 	kind := spec.TypeOrDefault()
 	target := exposureTarget(console)
 	applier := r.applier()
+	exposed := false
 	if kind == pgtoolboxv1alpha1.ExposureTypeIngress {
 		if err := applier.Apply(ctx, exposure.Ingress(spec, target)); err != nil {
-			return r.notOwned(console, err)
+			return false, r.notOwned(console, err)
 		}
+		exposed = true
 	} else if err := r.deleteIfOwned(ctx, console, &networkingv1.Ingress{}, console.WorkloadName()); err != nil {
-		return err
+		return false, err
 	}
 	if r.Features.Routes.Usable() {
 		if kind == pgtoolboxv1alpha1.ExposureTypeRoute {
 			if err := applier.Apply(ctx, exposure.Route(spec, target)); err != nil {
-				return r.notOwned(console, err)
+				return false, r.notOwned(console, err)
 			}
+			exposed = true
 		} else if err := r.deleteIfOwned(ctx, console, &routev1.Route{}, console.WorkloadName()); err != nil {
-			return err
+			return false, err
 		}
 	}
 	if r.Features.Gateways.Usable() {
 		if kind == pgtoolboxv1alpha1.ExposureTypeGateway {
 			if err := applier.Apply(ctx, exposure.HTTPRoute(spec, target)); err != nil {
-				return r.notOwned(console, err)
+				return false, r.notOwned(console, err)
 			}
+			exposed = true
 		} else if err := r.deleteIfOwned(ctx, console, &gatewayv1.HTTPRoute{}, console.WorkloadName()); err != nil {
-			return err
+			return false, err
 		}
 	}
-	return nil
+	return exposed, nil
 }
 
 // withdrawExposure deletes every exposure object this console owns.

@@ -96,8 +96,8 @@ type Options struct {
 	// names no authorization server.
 	OAuth OAuthServer
 	// PublicURL is the console's external origin (AUTH_PUBLIC_URL).
-	PublicURL        string
-	TrustedProxyHops int
+	PublicURL    string
+	TrustedProxy auth.ProxyTrust
 	// Docs is the embedded documentation bundle; nil registers no docs
 	// tools or resources.
 	Docs Docs
@@ -210,7 +210,7 @@ func New(o Options) (*Endpoint, error) {
 		o.Version = "dev"
 	}
 	e := &Endpoint{
-		o: o, audit: &auth.Auditor{Logger: o.Log, TrustedProxyHops: o.TrustedProxyHops},
+		o: o, audit: &auth.Auditor{Logger: o.Log, TrustedProxy: o.TrustedProxy},
 		writes:      auth.NewRateLimiter(o.WritesPerMinute, o.WritesPerMinute, maxBudgetKeys),
 		pageViews:   auth.NewRateLimiter(pageViewsPerMinute, pageViewsPerMinute, maxBudgetKeys),
 		pageAnswers: auth.NewRateLimiter(pageAnswersPerMinute, pageAnswersPerMinute, maxBudgetKeys),
@@ -268,7 +268,7 @@ func New(o Options) (*Endpoint, error) {
 		return &sdkauth.TokenInfo{UserID: p.User.Name, Extra: map[string]any{extraPrincipal: p, extraClient: client}}, nil
 	}, &sdkauth.RequireBearerTokenOptions{AllowMissingExpiration: true})
 	e.guard = mcpauth.NewGuard(mcpauth.Options{
-		Authenticator: o.Authenticator, PublicURL: o.PublicURL, TrustedProxyHops: o.TrustedProxyHops,
+		Authenticator: o.Authenticator, PublicURL: o.PublicURL, TrustedProxy: o.TrustedProxy,
 		Audit: e.audit, Calls: o.Calls, Attempts: o.Attempts, MaxBodyBytes: maxRequestBody, Log: o.Log, Now: o.Now,
 	})
 	e.http = e.guard.Wrap(carry(stream))
