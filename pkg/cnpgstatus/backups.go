@@ -228,6 +228,13 @@ const (
 	ArchivingReasonFailureWithBacklog    = "FailureWithBacklog"
 	ArchivingReasonBacklog               = "ArchiveBacklog"
 	ArchivingReasonPrimaryUnread         = "PrimaryUnread"
+	// ArchivingReasonHibernated: the Cluster is hibernated, so no
+	// primary runs to read or to archive.
+	ArchivingReasonHibernated = "Hibernated"
+	// ArchivingReasonBacklogUnconfirmed: readyWalFiles is at the backlog
+	// threshold, but the console has too few sweeps to tell a backlog
+	// that persists from a burst (ArchiveBacklog.Unconfirmed).
+	ArchivingReasonBacklogUnconfirmed = "ArchiveBacklogUnconfirmed"
 )
 
 // ArchiveBacklogSegments is the floor of the readyWalFiles count at
@@ -274,7 +281,10 @@ type ArchivingReading struct {
 //     True while segments pile up). An idle primary with an old failure
 //     (isArchivingWAL=false, no backlog) is not made worse than ok by
 //     that alone. With the primary unread: unknown PrimaryUnread, with
-//     the condition's age (the condition alone confirms nothing now).
+//     the condition's age (the condition alone confirms nothing now),
+//     or unknown Hibernated when the Cluster is hibernated. A count at
+//     the backlog threshold that too few sweeps saw to judge is unknown
+//     ArchiveBacklogUnconfirmed, never ok.
 //   - Condition False: critical, unless the live archiver shows a
 //     success after the failure: warning (the condition catches up on
 //     the next archive).
@@ -300,7 +310,19 @@ func Archiving(c *cnpgv1.Cluster, primary *ArchiverLive) ArchivingReading {
 			Message: "cnpg.io/skipWalArchiving is enabled: PostgreSQL does not archive WAL",
 		}
 	}
-	backlog := ArchiveBacklogOf(c, primary).Behind()
+	b := ArchiveBacklogOf(c, primary)
+	backlog := b.Behind()
+	hibernated := primary == nil && Hibernation(c).State == HibernationHibernated
+	unconfirmed := func(reading ArchivingReading) ArchivingReading {
+		if b.Unconfirmed == 0 {
+			return reading
+		}
+		reading.Class = ClassUnknown
+		reading.Reason = ArchivingReasonBacklogUnconfirmed
+		reading.Message = strconv.Itoa(b.Unconfirmed) + " WAL segments are waiting to be archived on the primary, and the console has not swept it long enough to tell a backlog that persists from a burst"
+		return reading
+	}
+	hibernatedMessage := "the Cluster is hibernated: no instance runs, so nothing archives WAL, and whether every segment written before it reached the repository is not confirmed"
 	backlogReading := func(reading ArchivingReading) ArchivingReading {
 		reading.Class = ClassWarning
 		reading.Reason = ArchivingReasonBacklog
@@ -315,7 +337,10 @@ func Archiving(c *cnpgv1.Cluster, primary *ArchiverLive) ArchivingReading {
 			if backlog {
 				return backlogReading(ArchivingReading{})
 			}
-			return ArchivingReading{Class: ClassOK, Reason: ArchivingReasonLiveArchiving, Message: "the primary reports WAL archiving; the operator has not written ContinuousArchiving yet"}
+			return unconfirmed(ArchivingReading{Class: ClassOK, Reason: ArchivingReasonLiveArchiving, Message: "the primary reports WAL archiving; the operator has not written ContinuousArchiving yet"})
+		}
+		if hibernated {
+			return ArchivingReading{Class: ClassUnknown, Reason: ArchivingReasonHibernated, Message: hibernatedMessage}
 		}
 		return ArchivingReading{Class: ClassUnknown, Reason: ArchivingReasonNoCondition, Message: "a WAL archiver is configured but ContinuousArchiving is not reported"}
 	}
@@ -328,6 +353,10 @@ func Archiving(c *cnpgv1.Cluster, primary *ArchiverLive) ArchivingReading {
 	case statusTrue:
 		reading.Class = ClassOK
 		switch {
+		case hibernated:
+			reading.Class = ClassUnknown
+			reading.Reason = ArchivingReasonHibernated
+			reading.Message = "ContinuousArchiving is True" + since(condition.LastTransitionTime.Time) + ", but " + hibernatedMessage
 		case primary == nil:
 			// The condition changes only when an archive_command's
 			// outcome changes: written by an instance that may be gone,
@@ -342,6 +371,8 @@ func Archiving(c *cnpgv1.Cluster, primary *ArchiverLive) ArchivingReading {
 			reading.Message = "the primary's last archive attempt failed (" + bound(primary.LastFailedWAL, maxAnnotationValue) + ") and WAL files are waiting"
 		case backlog:
 			reading = backlogReading(reading)
+		default:
+			reading = unconfirmed(reading)
 		}
 	case statusFalse:
 		reading.Class = ClassCritical

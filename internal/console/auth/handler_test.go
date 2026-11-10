@@ -588,10 +588,11 @@ type sharedSignOuts struct {
 	ids map[string]time.Time
 }
 
-func (s *sharedSignOuts) RecordSignOut(sid string, until time.Time) {
+func (s *sharedSignOuts) RecordSignOut(sid, _ string, until time.Time) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.ids[sid] = until
+	return true
 }
 
 func (s *sharedSignOuts) SignedOut(sid string) bool {
@@ -657,7 +658,7 @@ func TestStillValid(t *testing.T) {
 		t.Fatal("an API server outage ended the stream")
 	}
 	env.rev.down = false
-	env.h.markLoggedOut("s1", time.Now().Add(time.Hour))
+	env.h.markLoggedOut("s1", "", time.Now().Add(time.Hour))
 	if env.h.StillValid(t.Context(), p) {
 		t.Fatal("a signed-out session stayed valid")
 	}

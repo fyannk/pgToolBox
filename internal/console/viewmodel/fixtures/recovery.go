@@ -47,7 +47,7 @@ func RecoveryTimeline() viewmodel.RecoveryTimeline {
 	safe, walEnd := latest.Add(-15*time.Minute), latest.Add(-5*time.Minute)
 	return viewmodel.RecoveryTimeline{
 		Basis: "evidence", State: "warning", Reason: "the window has holes where WAL is missing",
-		Earliest: &earliest, Latest: &latest, LastSafeTarget: &safe, TargetTimeline: 3,
+		Earliest: &earliest, Latest: &latest, NewestCoveredTarget: &safe, TargetTimeline: 3,
 		Segments: []viewmodel.RecoverySegment{
 			{
 				From: earliest, To: holeFrom, Kind: "covered", BackupID: daily(6).Format("20060102T150405"),

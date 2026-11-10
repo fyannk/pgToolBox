@@ -136,7 +136,13 @@ cat > "${stubs}/gh" <<'STUB'
 # The check-runs listing, already reduced by --jq: name, status, conclusion,
 # started_at, id (tab separated). GH_STUB_RUNS names the file that holds it.
 case "$1" in
-  api) [[ -z "${GH_STUB_RUNS:-}" ]] || cat "${GH_STUB_RUNS}" ;;
+  api)
+    # actions/runs: path, event, status, conclusion, id (GH_STUB_WF); the
+    # check-runs listing otherwise (GH_STUB_RUNS).
+    case "$*" in
+      *actions/runs*) [[ -z "${GH_STUB_WF:-}" ]] || cat "${GH_STUB_WF}" ;;
+      *) [[ -z "${GH_STUB_RUNS:-}" ]] || cat "${GH_STUB_RUNS}" ;;
+    esac ;;
   attestation)
     # Fails the first GH_STUB_FAILS calls (an attestation that lags the push).
     n="$(cat "${GH_STUB_COUNT}" 2>/dev/null || echo 0)"
@@ -165,6 +171,7 @@ chmod +x "${stubs}/curl" "${stubs}/grype" "${stubs}/gh" "${stubs}/docker" "${stu
 printf 'ghcr.io/o/pgtoolbox-operator@sha256:%064d\nghcr.io/o/charts/pgtools@sha256:%064d\n' 1 2 > "${work}/ok.txt"
 printf 'ghcr.io/o/pgtoolbox-operator@sha256:%064d\nghcr.io/o/private-thing@sha256:%064d\nghcr.io/o/charts/privatechart@sha256:%064d\n' 1 2 3 > "${work}/mixed.txt"
 export PATH="${stubs}:${PATH}"
+export CHECK_PUBLIC_ATTEMPTS=1 CHECK_PUBLIC_SLEEP=0
 expect 0 'every digest is publicly pullable' -- ./hack/release.sh check-public "${work}/ok.txt"
 expect 1 'private-thing' -- ./hack/release.sh check-public "${work}/mixed.txt"
 expect 1 'charts/privatechart' -- ./hack/release.sh check-public "${work}/ok.txt" "${work}/mixed.txt"
@@ -174,7 +181,10 @@ expect 1 'Re-run failed jobs' -- ./hack/release.sh check-public "${work}/mixed.t
 # in; a commit with no check run at all fails fast with the dispatch hint.
 runs="${work}/runs.tsv"
 tab() { printf '%s\t%s\t%s\t%s\t%s\n' "$@"; }
-export GH_STUB_RUNS="${runs}" CI_WAIT_SLEEP=0 CI_WAIT_ATTEMPTS=3 CI_WAIT_EMPTY_ATTEMPTS=2
+wfruns="${work}/wf.tsv"
+# Full-tier runs of both workflows (a dispatch), unless a test says otherwise.
+{ tab ci.yml workflow_dispatch completed success 5; tab security.yml schedule completed success 6; } > "${wfruns}"
+export GH_STUB_RUNS="${runs}" GH_STUB_WF="${wfruns}" CI_WAIT_SLEEP=0 CI_WAIT_ATTEMPTS=3 CI_WAIT_EMPTY_ATTEMPTS=2
 # An old failure followed (by id) by a green re-run, listed newest first.
 { tab ci-ok completed success 2026-11-10T10:00:00Z 20; tab ci-ok completed failure 2026-11-10T09:00:00Z 10; tab security-gate completed success 2026-11-10T09:00:00Z 11; } > "${runs}"
 expect 0 'green on' -- ./hack/release.sh wait-ci deadbeef
@@ -189,7 +199,7 @@ expect 1 'did not finish' -- ./hack/release.sh wait-ci deadbeef
 expect 1 'gh workflow run security.yml --ref main' -- ./hack/release.sh wait-ci deadbeef
 # preflight: one poll, no waiting; a green pair on a dated CHANGELOG passes,
 # a missing check run or an Unreleased heading fails before any tag is pushed.
-pre() { (cd "${repo}" && GH_STUB_RUNS="${runs}" ./hack/release.sh preflight "$@"); }
+pre() { (cd "${repo}" && ./hack/release.sh preflight "$@"); }
 changelog "## [${version}] - 2026-11-09"
 { tab ci-ok completed success 2026-11-10T10:00:00Z 20; tab security-gate completed success 2026-11-10T10:00:00Z 21; } > "${runs}"
 expect 0 'ok: preflight' -- pre "v${version}" deadbeef
@@ -322,3 +332,66 @@ grep -q 'docs/site/.npmrc' "${root}/Dockerfile" || fail "Dockerfile: docs-site m
 grep -q "vars.PRUNE_GHCR == 'true'" "${root}/.github/workflows/release.yml" || fail "release.yml: prune must stay opt-in (PRUNE_GHCR)"
 if grep -rn "release.md.*When a release fails" "${root}/.github/workflows"; then fail "workflows point at release.md for 'When a release fails'; it lives in development/ci.md"; fi
 echo "ok: chart sources, Dockerfile retries"
+
+# ---- full tier: a green ci-ok from a push to main (path-filtered, so a docs-only
+# commit skipped the images, e2e and OLM jobs) is not enough; the tagged commit
+# needs a workflow_dispatch or schedule run of both workflows.
+export GH_STUB_RUNS="${runs}" GH_STUB_WF="${wfruns}" CI_WAIT_SLEEP=0 CI_WAIT_ATTEMPTS=3 CI_WAIT_EMPTY_ATTEMPTS=2
+changelog "## [${version}] - 2026-11-09"
+{ tab ci-ok completed success 2026-11-10T10:00:00Z 20; tab security-gate completed success 2026-11-10T10:00:00Z 21; } > "${runs}"
+{ tab ci.yml push completed success 5; tab security.yml push completed success 6; } > "${wfruns}"
+expect 1 'no full-tier run of ci.yml' -- ./hack/release.sh wait-ci deadbeef
+expect 1 'gh workflow run ci.yml --ref main' -- ./hack/release.sh wait-ci deadbeef
+expect 1 'no full-tier run of ci.yml' -- pre "v${version}" deadbeef
+{ tab ci.yml workflow_dispatch completed success 5; tab security.yml push completed success 6; } > "${wfruns}"
+expect 1 'no full-tier run of security.yml' -- ./hack/release.sh wait-ci deadbeef
+# A dispatch that failed after an earlier green one: the newest full-tier run counts.
+{ tab ci.yml workflow_dispatch completed success 5; tab ci.yml workflow_dispatch completed failure 9; tab security.yml schedule completed success 6; } > "${wfruns}"
+expect 1 'full-tier run of ci.yml on deadbeef ended failure' -- ./hack/release.sh wait-ci deadbeef
+# A dispatch still running keeps wait-ci waiting.
+{ tab ci.yml workflow_dispatch in_progress "" 9; tab ci.yml workflow_dispatch completed success 5; tab security.yml schedule completed success 6; } > "${wfruns}"
+expect 1 'did not finish' -- ./hack/release.sh wait-ci deadbeef
+{ tab ci.yml workflow_dispatch completed success 5; tab security.yml schedule completed success 6; } > "${wfruns}"
+expect 0 'full-tier .* green on deadbeef' -- ./hack/release.sh wait-ci deadbeef
+expect 0 'ok: preflight' -- pre "v${version}" deadbeef
+
+# ---- check-public polls: a package made public while the run waits goes green.
+cat > "${stubs}/curl" <<'STUB'
+#!/usr/bin/env bash
+# Manifests answer 404 until the counter file reaches CURL_STUB_FLIP polls.
+for a in "$@"; do
+  case "${a}" in
+    *"/token?"*) echo '{"token":"t"}'; exit 0 ;;
+    *"/manifests/"*)
+      n="$(cat "${CURL_STUB_COUNT}" 2>/dev/null || echo 0)"; echo $((n + 1)) > "${CURL_STUB_COUNT}"
+      if ((n >= ${CURL_STUB_FLIP:-0})); then echo 200; else echo 404; fi
+      exit 0 ;;
+  esac
+done
+exit 22
+STUB
+printf 'ghcr.io/o/pgtoolbox-operator@sha256:%064d\n' 1 > "${work}/one.txt"
+export CURL_STUB_COUNT="${work}/curl-count" CHECK_PUBLIC_SLEEP=0 CHECK_PUBLIC_ATTEMPTS=3
+echo 0 > "${CURL_STUB_COUNT}"
+CURL_STUB_FLIP=1 expect 0 'every digest is publicly pullable' -- ./hack/release.sh check-public "${work}/one.txt"
+echo 0 > "${CURL_STUB_COUNT}"
+CURL_STUB_FLIP=99 expect 1 'Re-run failed jobs' -- ./hack/release.sh check-public "${work}/one.txt"
+echo 0 > "${CURL_STUB_COUNT}"
+CURL_STUB_FLIP=99 expect 1 'packages/container/pgtoolbox-operator/settings' -- ./hack/release.sh check-public "${work}/one.txt"
+
+# ---- image labels: metadata-action's defaults (the repository's name and
+# description) replace the Dockerfile labels, so every metadata step of the
+# release must set its own title and description, distinct from the others.
+titles="$(awk '
+  /uses: docker\/metadata-action@/ { inmeta = 1; next }
+  inmeta && /org\.opencontainers\.image\.title=/ { sub(/.*image\.title=/, ""); print }
+  inmeta && /^      - name:/ { inmeta = 0 }
+' .github/workflows/release.yml)"
+[[ "$(wc -l <<<"${titles}")" -ge 3 ]] || fail "release.yml: every metadata-action step must set org.opencontainers.image.title: ${titles}"
+[[ -z "$(sort <<<"${titles}" | uniq -d)" ]] || fail "release.yml: metadata-action titles are not distinct: ${titles}"
+[[ "$(grep -c 'org.opencontainers.image.description=' .github/workflows/release.yml)" -ge 3 ]] || fail "release.yml: metadata-action steps must set a description"
+for t in "pgToolBox operator" "pgToolBox console" "pgToolBox evidence agent"; do
+  grep -q "title: ${t}$" .github/workflows/release.yml || fail "release.yml: no matrix title '${t}'"
+  grep -q "image.title=\"${t}\"" Dockerfile || fail "Dockerfile does not label '${t}'"
+done
+echo "release tests passed"

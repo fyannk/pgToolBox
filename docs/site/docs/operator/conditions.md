@@ -176,7 +176,7 @@ omitted); `status.instanceCABundle` lists the Clusters left out.
 | Condition | `True` | `False` |
 |---|---|---|
 | `InstanceCABundleComplete` | the server CA of every selected Cluster is in `<name>-instance-ca` (or no Cluster is selected) | `InstanceCAMissing`, naming each Cluster and why; `ResourceNotOwned` when a ConfigMap that is not this console's already has the bundle's name |
-| `ExposureConfined` | the `<name>-ingress` NetworkPolicy admits only the router, ingress controller or gateway to the console port (present only while a Route, Ingress or HTTPRoute is published) | `ExposureOpen` (no policy rendered), `ExposurePeersBroad` (a peer of `from` admits (nearly) everyone), `ExposurePolicyBypassed` (another NetworkPolicy admits more to the console port); the message says what the console does with `X-Forwarded-For` |
+| `ExposureConfined` | the `<name>-ingress` NetworkPolicy admits only the router, ingress controller or gateway to the console port (present only while a Route, Ingress or HTTPRoute is published) | `ExposureOpen` (no policy rendered), `ExposurePeersBroad` (a peer of `from` admits (nearly) everyone), `ExposurePolicyBypassed` (another NetworkPolicy admits more to the console port), `ExposureTrustUnverified` (the peers could not be checked yet, or a widened `from` waits for the any-peer trust to go); the message says what the console does with `X-Forwarded-For` |
 
 ## PgAccessRequest
 
@@ -275,9 +275,10 @@ Reasons are registered once, by owner. `common` reasons are shared by every kind
 | `InstanceCAInvalid` | A Cluster's server CA Secret has a `ca.crt` with no PEM certificate in it. |
 | `InstanceCABundleFull` | The mirrored bundle reached the size a ConfigMap holds (several hundred distinct CAs); the Clusters after it, by name, are left out. |
 | `ExposureOpen` | `ExposureConfined=False`: the console is exposed without its ingress NetworkPolicy (an Ingress or a Gateway without `spec.exposure.networkPolicy.from`, or `networkPolicy.enabled: false`), so any Pod can reach its port; the message says which peers the console believes about `X-Forwarded-For`. |
-| `ExposurePeersBroad` | `ExposureConfined=False`: a peer of `spec.exposure.networkPolicy.from` admits (nearly) every namespace (a `namespaceSelector` that pins no label value), every Pod of the namespace (such a `podSelector` alone), the Pod network or every address (an `ipBlock` wider than `/8` or `/32`, holding a whole private range, or holding a console Pod's address), so the console trusts no peer with `X-Forwarded-For`. |
+| `ExposurePeersBroad` | `ExposureConfined=False`: a peer of `spec.exposure.networkPolicy.from` admits (nearly) every namespace (a `namespaceSelector` that pins no label value, or only `pod-security.kubernetes.io/*`-like shared labels), every Pod of the namespace (such a `podSelector` alone), the Pod network or every address (an `ipBlock` wider than `/8` or `/32`, holding a whole private IPv4 range, a unique-local IPv6 block wider than `/64`, or holding a console Pod's address), so the console trusts no peer with `X-Forwarded-For`. |
 | `ExposurePolicyInvalid` | `ConfigurationValid=False`: the API server refused the ingress NetworkPolicy rendered from `spec.exposure.networkPolicy` (what the CRD could not check, such as a label-key prefix longer than 253 characters); the message carries its answer. Retried every five minutes and on every change of the spec. |
 | `ExposurePolicyBypassed` | `ExposureConfined=False`: another NetworkPolicy of the namespace admits, to the console port, peers the exposure does not list (NetworkPolicies add up), or there were more than 250 to check; the console trusts no peer with `X-Forwarded-For`. |
+| `ExposureTrustUnverified` | `ExposureConfined=False`: the peers of `networkPolicy.from` could not be checked yet (an `ipBlock` peer while no console Pod has an address, more than 250 console Pods), or a wider `from` is held back until no console Pod trusts every peer; the console trusts no peer with `X-Forwarded-For` meanwhile. |
 
 ### pgaccessrequest
 

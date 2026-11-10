@@ -264,7 +264,7 @@ jobs:
             VERSION=ci
           load: true
           tags: ${{ env.NAME }}:ci
-          cache-from: type=gha,scope=image-${{ matrix.image }}
+          cache-from: type=gha,scope=image-${{ matrix.image }}-amd64
       - name: Scan
         run: |
           set -euo pipefail

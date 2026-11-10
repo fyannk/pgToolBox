@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	cnpgv1 "github.com/cloudnative-pg/api/pkg/api/v1"
+	corev1 "k8s.io/api/core/v1"
 
 	"github.com/fyannk/pgToolBox/pkg/cnpgstatus/instancestatus"
 )
@@ -425,5 +426,45 @@ func TestRehearsalFencingIsGatedOn1301(t *testing.T) {
 	quorum.OperatorVersion = "1.30.1"
 	if notes := strings.Join(Rehearse(quorum).Notes, " | "); strings.Contains(notes, "1.30.1") {
 		t.Errorf("1.30.1 quorum notes %q", notes)
+	}
+}
+
+// TestElectionVersionIsTheOperators: the election runs in the operator,
+// so a rolled-back operator beside a newer instance manager rehearses
+// the older rules, and an unknown operator version is not certain.
+func TestElectionVersionIsTheOperators(t *testing.T) {
+	t.Parallel()
+	pod := func(annotation string) *corev1.Pod {
+		p := &corev1.Pod{}
+		if annotation != "" {
+			p.Annotations = map[string]string{operatorVersionAnnotation: annotation}
+		}
+		return p
+	}
+	commit := &cnpgv1.Cluster{Status: cnpgv1.ClusterStatus{CommitHash: "2a35abb46"}}
+	async := SyncReading{Mode: SyncModeNone}
+	some := FencingReading{State: FencingSome, Instances: []string{"db-3"}}
+	instances := []RehearsalInstance{primaryInst(), replica("db-2", "0/4000000", "0/4000000", "n2"), replica("db-3", "0/5000000", "0/5000000", "n3")}
+	for _, tc := range []struct {
+		name    string
+		e       VersionEvidence
+		want    string
+		certain bool
+	}{
+		{"operator rolled back to 1.30.0, primary on the 1.30.1 manager", VersionEvidence{InstanceManagerVersions: []string{"1.30.1"}, InstancePods: []*corev1.Pod{pod("1.30.0")}}, "1.30.0", false},
+		{"operator upgraded, managers not rolled yet", VersionEvidence{InstanceManagerVersions: []string{"1.30.0", "1.30.1"}, InstancePods: []*corev1.Pod{pod("1.30.1")}}, "1.30.0", false},
+		{"both 1.30.1", VersionEvidence{InstanceManagerVersions: []string{"1.30.1"}, InstancePods: []*corev1.Pod{pod("1.30.1")}}, "1.30.1", true},
+		{"only the instance managers report: the operator's patch is not known", VersionEvidence{InstanceManagerVersions: []string{"1.30.1"}, InstancePods: []*corev1.Pod{pod("")}}, "", false},
+		{"the operator's commit hash", VersionEvidence{InstanceManagerVersions: []string{"1.30.1"}, Cluster: commit}, "1.30.1", true},
+		{"a minor-only annotation keeps the patch unknown", VersionEvidence{InstancePods: []*corev1.Pod{pod("1.30")}}, "1.30", false},
+	} {
+		got := ElectionVersion(tc.e)
+		if got != tc.want {
+			t.Errorf("%s: ElectionVersion = %q, want %q", tc.name, got, tc.want)
+		}
+		r := Rehearse(RehearsalInput{Primary: "db-1", Sync: async, OperatorVersion: got, Fencing: some, Instances: instances})
+		if r.Certain != tc.certain {
+			t.Errorf("%s: certain %v, want %v (notes %q)", tc.name, r.Certain, tc.certain, r.Notes)
+		}
 	}
 }

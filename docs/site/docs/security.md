@@ -94,10 +94,14 @@ what the design guarantees and, as plainly, what it does not.
     the API server refuses, at most 100 a second. Above that, new token
     sign-ins and new raw bearers are refused; an MCP client whose token the
     replica accepted before re-reviews from a bucket of its own;
-  - junk `/mcp/oauth/token` requests: a form parse and a failed decryption
-    each; they never reach the bucket of codes and refresh tokens the console
-    sealed, so connected clients keep refreshing; past 20 a second they get
-    `429` and no audit line;
+  - junk `/mcp/oauth/token` requests, and codes or refresh tokens the console
+    sealed but that no longer buy anything (expired, another client's, a
+    failed PKCE check, a revoked person or grant, a spent code replayed): a
+    form parse and a decryption each; they never reach the bucket connected
+    clients refresh from, so holding a token once is not a way to starve
+    them; past 20 a second they get `429` and no audit line. A live grant
+    spends a bucket of its own (6 at once, 12 a minute) before the shared
+    one, so one grant refreshing in a loop cannot starve the others either;
   - `/mcp/oauth/register`: up to 10 a second sealed and audited; above that,
     new registrations wait. Registered clients are unaffected.
 
@@ -156,27 +160,50 @@ Details: [PgAdmin](operator/pgadmin.md).
 
 `spec.exposure.annotations`, and the annotations of `metadataPropagation` rules
 whose target is `All` or `Exposure`, land on the Ingress, Route or HTTPRoute the
-operator writes. Some annotations are configuration an ingress controller runs:
-written by the operator, they would let an editor who may not create an Ingress
-inject proxy configuration or send pgAdmin's and the console's traffic, cookies
-included, to a server they run. The admission policy (on by default) therefore
-requires **`create` on the exposure kind** (`ingresses`, `routes` or `httproutes`
-in the namespace) to add or change one of these, or to switch an object carrying
-one from `clusterIP` to an exposure:
+operator writes; rules whose target is `All` or `Service` land on the Service it
+routes to, where Kong and HAProxy read some of the same keys. Some annotations
+are configuration an ingress controller runs: written by the operator, they
+would let an editor who may not create an Ingress inject proxy configuration,
+claim a host outside `EXPOSURE_ALLOWED_HOST_SUFFIXES` (the operator checks only
+`spec.exposure.hostname`), open the console to other networks, or send pgAdmin's
+and the console's traffic, cookies included, to a server they run. The admission
+policy (on by default) therefore requires **`create` on the exposure kind**
+(`ingresses`, `routes` or `httproutes` in the namespace) to add or change one of
+these keys, or to switch an object carrying one from `clusterIP` to an exposure.
+In the table, `name*` is every key that starts with `name`:
 
-| Keys | Controller |
-|---|---|
-| any key containing `snippet` (`configuration-snippet`, `server-snippet`, `auth-snippet`, `stream-snippet`, `nginx.org/*-snippets`, `haproxy.org/*-config-snippet`) | every controller with snippets |
-| `nginx.ingress.kubernetes.io/auth-*`, `enable-global-auth`, `satisfy`, `mirror-*`, `proxy-ssl-secret` | ingress-nginx |
-| `haproxy-ingress.github.io/config-*`, `haproxy-ingress.github.io/auth-*`, `haproxy.org/auth-*` | HAProxy |
-| `traefik.ingress.kubernetes.io/router.middlewares` | Traefik |
-| `konghq.com/plugins` | Kong |
+| Prefix | Keys | Controller | What they change |
+|---|---|---|---|
+| (any) | `*snippet*` | every controller with snippets | raw proxy configuration |
+| `nginx.ingress.kubernetes.io/` | `auth-*`, `mirror-*`, `canary*`, `cors-*`, `proxy-redirect-*`, `enable-global-auth`, `satisfy`, `proxy-ssl-secret`, `server-alias`, `permanent-redirect`, `temporal-redirect`, `app-root`, `default-backend`, `custom-http-errors`, `whitelist-source-range`, `allowlist-source-range`, `denylist-source-range`, `enable-cors` | ingress-nginx | authentication, extra hosts, source ranges, redirects, another backend, traffic split, cross-origin access |
+| `alb.ingress.kubernetes.io/` | `actions.*`, `conditions.*`, `auth-*`, `scheme`, `group.name`, `group.order`, `inbound-cidrs`, `security-groups`, `listen-ports` | AWS Load Balancer Controller | internet-facing scheme, a shared load balancer, source ranges, routing actions, authentication |
+| `haproxy-ingress.github.io/` | `config-*`, `auth-*`, `cors-*`, `allowlist-source-range`, `whitelist-source-range`, `denylist-source-range`, `redirect-from`, `redirect-to`, `app-root` | haproxy-ingress | raw configuration, authentication, source ranges, redirects |
+| `haproxy.org/` | `auth-*`, `cors-*`, `allow-list`, `whitelist`, `deny-list`, `blacklist`, `request-redirect`, `route-acl` | HAProxy Kubernetes Ingress | authentication, source ranges, redirects, routing |
+| `haproxy.router.openshift.io/` | `ip_whitelist`, `ip_allowlist` | OpenShift router | source ranges |
+| `traefik.ingress.kubernetes.io/` | `router.middlewares`, `router.entrypoints` | Traefik | middlewares, which entry point (network) serves it |
+| `konghq.com/` | `plugins`, `host-aliases` | Kong | plugins, extra hosts |
 
-A kept annotation with the same value, on an object exposed the same way, is not
-checked again; other annotations (timeouts, body size, affinity) are not checked.
-**Limit:** this is a deny-list of known keys, not every controller's; where the
-policy is off the operator writes what the spec says, so grant `pgadmins` and
-`pgtoolboxconsoles` writes only to people you would let create the Ingress.
+A kept annotation with the same value, on a rule reaching the same objects and
+an object exposed the same way, is not checked again. Keys that tune how a
+request reaches the workload's own Service are not checked: timeouts, body size,
+affinity, `rewrite-target`, `use-regex`, `upstream-vhost`, `backend-protocol`
+(they can break the route, not move it). The Service the operator renders is
+always `ClusterIP` (written with server-side apply), so the cloud load-balancer
+keys (`service.beta.kubernetes.io/*`) do nothing on it. Choosing the exposure is
+not gated: `spec.exposure.type`, the hostname (under
+`EXPOSURE_ALLOWED_HOST_SUFFIXES`), `ingressClassName` and the Gateway `parentRef`
+(which the Gateway's `allowedRoutes` accepts or not) are what an editor is
+allowed to set; restrict the classes and Gateways a namespace may use where the
+platform provides them.
+
+**Limits:** this is a deny-list of known keys, not every controller's. A
+controller run with a custom annotation prefix (ingress-nginx
+`--annotations-prefix`, for example) reads keys this list does not name. A
+`clusterIP` object renders no exposure, so its Service annotations are not
+checked; an Ingress someone else creates for that Service makes its controller
+read them. Where the policy is off the operator writes what the spec says. Grant
+`pgadmins` and `pgtoolboxconsoles` writes only to people you would let create
+the Ingress.
 
 ## Secret references need `get`
 

@@ -62,9 +62,11 @@ func (s *Server) handleToken(w http.ResponseWriter, r *http.Request) {
 	// per-replica buckets apply (a client_id is public, so a budget per
 	// client would let anyone spend another's). Those are charged once
 	// the code or refresh token has been opened (redeemCode,
-	// redeemRefresh): a token this console sealed spends tokenRequests,
-	// anything else unknownTokenRequests, so junk never refuses a known
-	// client's refresh.
+	// redeemRefresh): a token this console sealed that passes the checks
+	// that cost nothing spends its grant's bucket and tokenRequests;
+	// anything else (junk, or a sealed token expired, revoked or replayed)
+	// unknownTokenRequests, so neither junk nor a token once held refuses
+	// a known client's refresh.
 	if key, perAddress := auth.BudgetKey(r, s.o.TrustedProxy); perAddress && !s.requests.Allow(key) {
 		requests.WithLabelValues("token", "throttled").Inc()
 		w.Header().Set("Retry-After", "30")
@@ -136,24 +138,35 @@ func (s *Server) redeemCode(r *http.Request) (tokenResponse, grantBase, *tokenFa
 	if !s.open(codePrefix, purposeCode, f.Get("code"), &c) {
 		return tokenResponse{}, grantBase{}, s.unknownToken(invalidGrant("the code is not one this console issued"))
 	}
-	if failure := s.chargeToken(); failure != nil {
-		return tokenResponse{}, grantBase{}, failure
-	}
+	// The checks that cost nothing come first, and a code they refuse
+	// spends the bucket of unknown tokens: a code once held (a revoked
+	// person's, one copied from a log) replayed in a loop never spends the
+	// bucket connected clients refresh from.
 	now := s.o.Now().UTC()
+	var refusal *tokenFailure
 	switch {
 	case now.Unix() >= c.Expiry:
-		return tokenResponse{}, c.grantBase, invalidGrant("the code expired")
+		refusal = invalidGrant("the code expired")
 	case f.Get("client_id") != c.Client:
-		return tokenResponse{}, c.grantBase, invalidGrant("the code was issued to another client")
+		refusal = invalidGrant("the code was issued to another client")
 	case f.Get("redirect_uri") != c.RedirectURI:
-		return tokenResponse{}, c.grantBase, invalidGrant("redirect_uri differs from the authorization request's")
+		refusal = invalidGrant("redirect_uri differs from the authorization request's")
 	case f.Get("resource") != "" && !sameResource(f.Get("resource"), c.Resource):
-		return tokenResponse{}, c.grantBase, &tokenFailure{http.StatusBadRequest, "invalid_target", "the code was issued for " + c.Resource, "refused"}
+		refusal = &tokenFailure{http.StatusBadRequest, "invalid_target", "the code was issued for " + c.Resource, "refused"}
 	case !verifyPKCE(f.Get("code_verifier"), c.Challenge):
-		return tokenResponse{}, c.grantBase, invalidGrant("the PKCE code_verifier does not match the challenge")
+		refusal = invalidGrant("the PKCE code_verifier does not match the challenge")
 	case s.o.Sessions.Revoked(c.Subject, time.Unix(c.IssuedAt, 0), c.ID, c.Session):
-		return tokenResponse{}, c.grantBase, &tokenFailure{http.StatusBadRequest, "invalid_grant", "the sign-in this code came from is revoked", "revoked"}
-	case !s.o.Store.GrantsUsable():
+		refusal = &tokenFailure{http.StatusBadRequest, "invalid_grant", "the sign-in this code came from is revoked", "revoked"}
+	case s.o.Store.GrantRevoked(c.ID):
+		refusal = &tokenFailure{http.StatusBadRequest, "invalid_grant", "the code was already used; the grant it bought is revoked", "replayed"}
+	}
+	if refusal != nil {
+		return tokenResponse{}, c.grantBase, s.unknownToken(refusal)
+	}
+	if failure := s.chargeToken(c.ID); failure != nil {
+		return tokenResponse{}, c.grantBase, failure
+	}
+	if !s.o.Store.GrantsUsable() {
 		return tokenResponse{}, c.grantBase, unavailable()
 	}
 	key := s.userKey(c.Subject)
@@ -193,9 +206,15 @@ func (s *Server) redeemCode(r *http.Request) (tokenResponse, grantBase, *tokenFa
 	return resp, c.grantBase, failure
 }
 
-// chargeToken spends one request of the bucket of tokens this console
-// sealed; nil when there was one.
-func (s *Server) chargeToken() *tokenFailure {
+// chargeToken spends one request of grant's own bucket, then one of the
+// bucket of tokens this console sealed; nil when there were both. The
+// grant ID is sealed in the code or refresh token, so no sender spends
+// another grant's bucket, and the per-grant bucket keeps one live grant
+// (a holder replaying its own fresh tokens) from emptying the shared one.
+func (s *Server) chargeToken(grant string) *tokenFailure {
+	if !s.grantTokenRequests.Allow(grant) {
+		return throttled("this grant is making too many token requests; retry in a few seconds")
+	}
 	if s.tokenRequests.Allow(processKey) {
 		return nil
 	}
@@ -232,24 +251,33 @@ func (s *Server) redeemRefresh(r *http.Request) (tokenResponse, grantBase, *toke
 	if !s.open(refreshPrefix, purposeRefresh, f.Get("refresh_token"), &rt) || rt.ID == "" {
 		return tokenResponse{}, grantBase{}, s.unknownToken(invalidGrant("the refresh token is not one this console issued"))
 	}
-	if failure := s.chargeToken(); failure != nil {
-		return tokenResponse{}, grantBase{}, failure
-	}
+	// As for a code: a refresh token the cheap checks refuse (expired,
+	// another client's, of a revoked or unknown grant) spends the bucket
+	// of unknown tokens, so a revoked person replaying an old refresh
+	// token never refuses a connected client's refresh.
 	now := s.o.Now().UTC()
 	issued := time.Unix(rt.IssuedAt, 0).UTC()
+	key := s.userKey(rt.Subject)
+	var refusal *tokenFailure
 	switch {
 	case now.Unix() >= rt.Expiry:
-		return tokenResponse{}, rt.grantBase, invalidGrant("the grant expired; connect the application again")
+		refusal = invalidGrant("the grant expired; connect the application again")
 	case f.Get("client_id") != rt.Client:
-		return tokenResponse{}, rt.grantBase, invalidGrant("the refresh token was issued to another client")
+		refusal = invalidGrant("the refresh token was issued to another client")
 	case !s.o.Store.GrantsUsable():
 		return tokenResponse{}, rt.grantBase, unavailable()
 	case s.o.Store.GrantRevoked(rt.ID) || s.o.Sessions.Revoked(rt.Subject, issued, rt.ID, rt.Session):
-		return tokenResponse{}, rt.grantBase, &tokenFailure{http.StatusBadRequest, "invalid_grant", "the grant is revoked", "revoked"}
+		refusal = &tokenFailure{http.StatusBadRequest, "invalid_grant", "the grant is revoked", "revoked"}
+	default:
+		if _, known := s.o.Store.Grant(rt.ID); !known && !s.withinGrace(rt.TokenIssued, now) {
+			refusal = &tokenFailure{http.StatusBadRequest, "invalid_grant", "the grant is not known to this console (revoked, or lost); connect the application again", "revoked"}
+		}
 	}
-	key := s.userKey(rt.Subject)
-	if _, known := s.o.Store.Grant(rt.ID); !known && !s.withinGrace(rt.TokenIssued, now) {
-		return tokenResponse{}, rt.grantBase, &tokenFailure{http.StatusBadRequest, "invalid_grant", "the grant is not known to this console (revoked, or lost); connect the application again", "revoked"}
+	if refusal != nil {
+		return tokenResponse{}, rt.grantBase, s.unknownToken(refusal)
+	}
+	if failure := s.chargeToken(rt.ID); failure != nil {
+		return tokenResponse{}, rt.grantBase, failure
 	}
 	up, failure := s.freshUpstream(r.Context(), rt.grantBase, rt.Upstream, now)
 	if failure != nil {

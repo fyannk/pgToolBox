@@ -168,6 +168,19 @@ jobs:
       fail-fast: false
       matrix:
         image: [operator, console, evidence-agent]
+        # Per-image OCI title and description, passed to metadata-action below:
+        # its defaults (the repository's name and description) would replace the
+        # Dockerfile's labels and make the three images read alike.
+        include:
+          - image: operator
+            title: pgToolBox operator
+            description: Kubernetes operator that deploys the pgToolBox access stack for CloudNativePG clusters
+          - image: console
+            title: pgToolBox console
+            description: Operational console for one CloudNativePG cluster
+          - image: evidence-agent
+            title: pgToolBox evidence agent
+            description: Read-only viewer and evidence producer for a PostgreSQL backup repository
     env:
       IMAGE_REF: ghcr.io/${{ github.repository_owner }}/pgtoolbox-${{ matrix.image }}
     steps:
@@ -195,6 +208,8 @@ jobs:
           images: ${{ env.IMAGE_REF }}
           tags: type=raw,value=${{ needs.prepare.outputs.version }}
           labels: |
+            org.opencontainers.image.title=${{ matrix.title }}
+            org.opencontainers.image.description=${{ matrix.description }}
             org.opencontainers.image.created=${{ needs.prepare.outputs.created }}
       # The version tag only. `latest` moves after the scan, in the release job.
       - name: Build and push (linux/amd64, linux/arm64)
@@ -334,6 +349,8 @@ jobs:
           images: ghcr.io/${{ github.repository_owner }}/pgtoolbox-bundle
           tags: type=raw,value=${{ needs.prepare.outputs.version }}
           labels: |
+            org.opencontainers.image.title=pgToolBox OLM bundle
+            org.opencontainers.image.description=Operator Lifecycle Manager bundle of the pgToolBox operator
             org.opencontainers.image.created=${{ needs.prepare.outputs.created }}
       - name: Build and push the bundle
         id: bundle
@@ -377,6 +394,8 @@ jobs:
           images: ghcr.io/${{ github.repository_owner }}/pgtoolbox-catalog
           tags: type=raw,value=${{ needs.prepare.outputs.version }}
           labels: |
+            org.opencontainers.image.title=pgToolBox OLM catalog
+            org.opencontainers.image.description=Operator Lifecycle Manager file-based catalog that serves the pgToolBox bundle
             org.opencontainers.image.created=${{ needs.prepare.outputs.created }}
       - name: Build and push the catalog
         id: catalog
@@ -520,7 +539,7 @@ jobs:
     name: Move latest, create the GitHub release
     needs: [prepare, publish, scan]
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 55 # includes up to 20 minutes of waiting for package visibility
     permissions:
       contents: write # create the release and upload its assets
       packages: write # move the latest tag of a stable release

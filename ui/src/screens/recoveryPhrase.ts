@@ -184,6 +184,18 @@ function recoveryReason(code: string, p: Params): string | undefined {
       return m.rp_reason_failed_recently();
     case "recovery.reason.archiveBacklog":
       return segments ? m.rp_reason_archive_backlog({ segments }) : undefined;
+    case "recovery.reason.archiverUnread":
+      return m.rp_reason_archiver_unread();
+    case "recovery.reason.archiverHibernated":
+      return m.rp_reason_archiver_hibernated();
+    case "recovery.reason.pathNotHealthy": {
+      const state = evidenceStateWord(p?.state);
+      const id = p?.backupId;
+      if (!state || !id) return undefined;
+      return detail
+        ? m.rp_reason_path_not_healthy({ id, state, detail })
+        : m.rp_reason_path_not_healthy_bare({ id, state });
+    }
     case "recovery.reason.orphanTimeline":
       return p?.timeline ? m.rp_reason_orphan_timeline({ timeline: p.timeline }) : undefined;
     case "recovery.reason.undrawn":
@@ -277,8 +289,21 @@ function translate(code: string, p: Params): string | undefined {
     case "recovery.segment.archiveBacklog":
       return segments ? m.rp_segment_archive_backlog({ segments }) : undefined;
     case "recovery.segment.archiveBacklogSince": {
-      const since = instant(p, "sinceAt");
-      return segments && since ? m.rp_segment_archive_backlog_since({ segments, since }) : undefined;
+      const quiet = instant(p, "quietAt");
+      return segments && quiet ? m.rp_segment_archive_backlog_since({ segments, quiet }) : undefined;
+    }
+    case "recovery.segment.archiverUnread":
+      return m.rp_segment_archiver_unread();
+    case "recovery.segment.archiverUnreadSince": {
+      const quiet = instant(p, "quietAt");
+      return quiet ? m.rp_segment_archiver_unread_since({ quiet }) : undefined;
+    }
+    case "recovery.segment.pathNotHealthy": {
+      const state = evidenceStateWord(p?.state);
+      if (!state || !id) return undefined;
+      return p?.detail
+        ? m.rp_segment_path_not_healthy({ id, state, detail: p.detail })
+        : m.rp_segment_path_not_healthy_bare({ id, state });
     }
     case "recovery.segment.walEnd": {
       const end = instant(p, "endAt");
@@ -316,6 +341,8 @@ function translate(code: string, p: Params): string | undefined {
       return m.rp_caveat_window_stale();
     case "recovery.caveat.archivingFailing":
       return m.rp_caveat_archiving_failing();
+    case "recovery.caveat.archiverUnread":
+      return m.rp_caveat_archiver_unread();
     case "recovery.caveat.archivingFailingSince": {
       const archived = instant(p, "archivedAt");
       return archived ? m.rp_caveat_archiving_failing_since({ archived }) : undefined;

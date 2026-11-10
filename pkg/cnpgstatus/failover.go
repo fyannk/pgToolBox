@@ -117,9 +117,10 @@ type RehearsalInput struct {
 	// spec.postgresql.parameters, verbatim; empty when not declared
 	// (PostgreSQL's default, on). CloudNativePG does not set it.
 	SynchronousCommit string
-	// OperatorVersion is the detected CloudNativePG version (Version's
-	// Version: "1.30.1", a floor such as ">=1.30", or ""): the fencing
-	// rules and the second quorum check are 1.30.1's.
+	// OperatorVersion is the version of the operator that runs the
+	// election (ElectionVersion: "1.30.1", or "" when the operator's own
+	// version is not known): the fencing rules and the second quorum
+	// check are 1.30.1's.
 	OperatorVersion string
 	// SweepStale says why the instance readings are too old to rest a
 	// "no loss" answer on (the caller's staleness rule); empty when they

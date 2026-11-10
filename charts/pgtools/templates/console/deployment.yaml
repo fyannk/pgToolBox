@@ -259,10 +259,12 @@ spec:
             {{- /* The proxies' addresses; with none listed, every peer only
             when the chart's NetworkPolicy admits nothing but the router: no
             extraFrom (its peers are not the proxies, and a broad one would
-            let any Pod forge the header). The chart cannot see the other
-            NetworkPolicies of the namespace, which add up: see values.yaml. */}}
+            let any Pod forge the header), and not on OpenShift (its project
+            template admits the namespace's Pods). The chart cannot see the
+            other NetworkPolicies of the namespace, which add up: see
+            values.yaml and pgtools.console.trustsEveryPeer. */}}
             {{- $cidrs := $c.trustedProxyCIDRs }}
-            {{- if and (not $cidrs) $c.networkPolicy.enabled (ne $c.exposure.type "none") (not $c.networkPolicy.ingress.extraFrom) }}
+            {{- if include "pgtools.console.trustsEveryPeer" . }}
             {{- $cidrs = list "0.0.0.0/0" "::/0" }}
             {{- end }}
             {{- with $cidrs }}

@@ -72,6 +72,7 @@
 #                      (default dist/release)
 #   REGISTRY           default ghcr.io
 #   CI_WAIT_ATTEMPTS, CI_WAIT_SLEEP   wait-ci polling (120 x 30 s)
+#   CHECK_PUBLIC_ATTEMPTS, CHECK_PUBLIC_SLEEP   check-public polling (20 x 60 s)
 #   CI_WAIT_EMPTY_ATTEMPTS  wait-ci: polls with no check run at all before it
 #                      fails with the dispatch hint (default 4)
 #   DRY_RUN_FAKE_DIGESTS=1   dry-run: skip the image builds and use placeholder
@@ -214,6 +215,9 @@ cmd_check_module() {
 # when a check ran more than once (a re-run, a dispatch) the newest run counts:
 # the highest check-run id of that name.
 #
+# Green is not enough: see full_tier_state, which also demands a full-tier run
+# (dispatch or schedule) of both workflows on the tagged commit.
+#
 # A commit that carries no check run at all was merged by a token whose events
 # start no workflow (the automerge token): waiting 60 minutes would not change
 # that, so after CI_WAIT_EMPTY_ATTEMPTS polls (default 4) it fails with the
@@ -246,12 +250,39 @@ cmd_wait_ci() {
     [[ -z "${failed}" ]] || die "CI failed on ${sha}:${failed}"
     if [[ -z "${missing}" ]]; then
       echo "ci-ok and security-gate are green on ${sha}"
-      return 0
+      full_tier_state "${sha}" && return 0
     fi
     echo "waiting for${missing} on ${sha} (${attempt}/${attempts}); dispatch ci.yml and security.yml on the commit if no run exists"
     sleep "${CI_WAIT_SLEEP:-30}"
   done
   die "CI did not finish on ${sha} in time"
+}
+
+# full_tier_state SHA: ci.yml and security.yml must each have a FULL-tier run
+# on SHA, that is one started by workflow_dispatch or schedule. A push to main
+# runs only the job families its diff touches (hack/changed-paths.sh), so the
+# ci-ok of a docs-only commit (the CHANGELOG-dating one) is green with the
+# images, e2e and OLM jobs skipped, and a release must never rest on it. The
+# newest full-tier run of each workflow counts. Returns 0 when both succeeded,
+# 1 while one is still running (the caller keeps waiting), and dies when one
+# failed or none exists (waiting would not change that).
+full_tier_state() {
+  local sha="$1" wf runs state pending=""
+  runs="$(gh api --paginate "repos/${repo}/actions/runs?head_sha=${sha}&per_page=100" --jq '.workflow_runs[] | [(.path | split("@")[0] | split("/") | last), .event, .status, (.conclusion // ""), .id] | @tsv')"
+  for wf in ci.yml security.yml; do
+    state="$(LC_ALL=C sort -t$'\t' -k5,5n <<<"${runs}" | awk -F'\t' -v w="${wf}" '$1 == w && ($2 == "workflow_dispatch" || $2 == "schedule") { c = ($3 == "completed" ? $4 : "pending") } END { print c }')"
+    case "${state}" in
+      success) ;;
+      pending) pending+=" ${wf}" ;;
+      "") die "${sha} has no full-tier run of ${wf} (a push to main runs only the job families its diff touches, so its ci-ok may have skipped the images, e2e and OLM jobs): run \`gh workflow run ci.yml --ref main\` and \`gh workflow run security.yml --ref main\` on this exact head, wait for green, then tag" ;;
+      *) die "the full-tier run of ${wf} on ${sha} ended ${state}" ;;
+    esac
+  done
+  if [[ -n "${pending}" ]]; then
+    echo "waiting for the full-tier run of${pending} on ${sha}"
+    return 1
+  fi
+  echo "ok: full-tier (dispatch or schedule) ci.yml and security.yml runs are green on ${sha}"
 }
 
 # ------------------------------------------------------------ preflight ---
@@ -501,7 +532,33 @@ cmd_sums() {
 cmd_check_public() {
   [[ $# -gt 0 ]] || die "usage: release.sh check-public FILE..."
   command -v curl >/dev/null || die "curl is not on PATH"
-  local ref name digest path token status private=() accept
+  # A package flipped to public while the run waits turns it green: poll every
+  # CHECK_PUBLIC_SLEEP seconds (60) up to CHECK_PUBLIC_ATTEMPTS times (20).
+  local attempts="${CHECK_PUBLIC_ATTEMPTS:-20}" attempt pkg
+  local -a private=()
+  for attempt in $(seq 1 "${attempts}"); do
+    check_public_once "$@" && { echo "ok: every digest is publicly pullable"; return 0; }
+    if ((attempt < attempts)); then
+      echo "waiting for visibility changes (${attempt}/${attempts}); set each package to public here:"
+      for pkg in "${private[@]}"; do
+        echo "  https://github.com/users/${repo%%/*}/packages/container/${pkg//\//%2F}/settings"
+      done
+      sleep "${CHECK_PUBLIC_SLEEP:-60}"
+    fi
+  done
+  {
+    echo "::error::these packages cannot be pulled anonymously; the release stays a draft:"
+    printf '%s\n' "${private[@]}" | LC_ALL=C sort -u | sed 's/^/  - /'
+    echo "Make each package public (github.com/${repo%%/*}?tab=packages, Package settings, Change visibility), then use 'Re-run failed jobs' on this workflow run."
+  } >&2
+  return 1
+}
+
+# check_public_once FILE...: one anonymous pull of every digest; fills the
+# caller's `private` array with the package names that failed, returns 1 then.
+check_public_once() {
+  local ref name digest path token status accept
+  private=()
   accept="application/vnd.oci.image.index.v1+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.docker.distribution.manifest.v2+json"
   while read -r ref; do
     [[ -n "${ref}" ]] || continue
@@ -522,15 +579,7 @@ cmd_check_public() {
       private+=("${path#*/}") # the package name: the path below the owner
     fi
   done < <(cat "$@")
-  if ((${#private[@]} > 0)); then
-    {
-      echo "::error::these packages cannot be pulled anonymously; the release stays a draft:"
-      printf '%s\n' "${private[@]}" | LC_ALL=C sort -u | sed 's/^/  - /'
-      echo "Make each package public (github.com/${repo%%/*}?tab=packages, Package settings, Change visibility), then use 'Re-run failed jobs' on this workflow run."
-    } >&2
-    return 1
-  fi
-  echo "ok: every digest is publicly pullable"
+  ((${#private[@]} == 0))
 }
 
 # -------------------------------------------------------- scan-digests ---

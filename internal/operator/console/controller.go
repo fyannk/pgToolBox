@@ -36,6 +36,7 @@ package console
 import (
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math/big"
@@ -53,6 +54,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
@@ -197,6 +199,12 @@ const policyRecheck = 5 * time.Minute
 // NetworkPolicies; more than that, and the trust is not granted.
 const networkPolicyListLimit = 250
 
+// podListLimit bounds the uncached lists of a console's Pods (far more
+// than any console runs: a list that returns more, or a continue token,
+// counts as Pods that could not be checked, which grants no trust and
+// withdraws no policy).
+const podListLimit = networkPolicyListLimit
+
 // roleMissingRetry is how often a console stalled on a missing shipped
 // ClusterRole looks for it again.
 const roleMissingRetry = 2 * time.Minute
@@ -332,27 +340,44 @@ func (r *Reconciler) reconcile(ctx context.Context, console *pgtoolboxv1alpha1.P
 	} else if err := r.deleteIfOwned(ctx, console, &policyv1.PodDisruptionBudget{}, console.WorkloadName()); err != nil {
 		return err
 	}
+	// The ingress policy the exposure will need, checked by the API server
+	// (a dry run, admission included) before anything is published: a
+	// refused one stalls with nothing new exposed.
+	if policy := buildExposureNetworkPolicy(console, r.exposureUsable(console)); policy != nil {
+		if err := r.dryRunApply(ctx, policy); err != nil {
+			if apierrors.IsInvalid(err) {
+				return r.exposurePolicyRefused(ctx, console, policy.Name, err)
+			}
+			return fmt.Errorf("dry-run NetworkPolicy %s: %w", policy.Name, err)
+		}
+	}
 	exposed, err := r.applyExposure(ctx, console)
 	if err != nil {
 		return err
 	}
 	// The ingress policy before the workload that trusts every peer it
 	// admits; its removal only once no Pod of the workload trusts them any
-	// more (withdrawExposurePolicy).
+	// more (withdrawExposurePolicy), and its widening likewise
+	// (heldWidening).
 	policy := buildExposureNetworkPolicy(console, exposed)
 	var found confinement
 	if policy != nil {
-		if err := applier.Apply(ctx, policy); err != nil {
-			if apierrors.IsInvalid(err) {
-				// The CRD checks what it can; what the API server still
-				// refuses waits for a new spec (watched), not a retry.
-				return r.invalid(console, pgtoolboxv1alpha1.ReasonExposurePolicyInvalid, fmt.Sprintf(
-					"the API server refused NetworkPolicy %s rendered from spec.exposure.networkPolicy: %s", policy.Name, err))
-			}
-			return r.notOwned(console, err)
-		}
-		if found, err = r.exposureConfinement(ctx, console, policy.Spec.Ingress[0].From); err != nil {
+		held, err := r.heldWidening(ctx, console, policy)
+		if err != nil {
 			return err
+		}
+		if held != "" {
+			found.Unverified = held
+		} else {
+			if err := applier.Apply(ctx, policy); err != nil {
+				if apierrors.IsInvalid(err) {
+					return r.exposurePolicyRefused(ctx, console, policy.Name, err)
+				}
+				return r.notOwned(console, err)
+			}
+			if found, err = r.exposureConfinement(ctx, console, policy.Spec.Ingress[0].From); err != nil {
+				return err
+			}
 		}
 	}
 	setExposureConfined(console, exposed, found)
@@ -419,11 +444,15 @@ func (r *Reconciler) reconcileWorkload(ctx context.Context, console *pgtoolboxv1
 // counts as a bypass. ours are the peers of the exposure's policy; for a
 // Route the routers' older namespace label counts as theirs.
 func (r *Reconciler) exposureConfinement(ctx context.Context, console *pgtoolboxv1alpha1.PgToolBoxConsole, ours []networkingv1.NetworkPolicyPeer) (confinement, error) {
-	var pods corev1.PodList
-	if err := r.APIReader.List(ctx, &pods, client.InNamespace(console.Namespace), client.MatchingLabels(selectorLabels(console))); err != nil {
-		return confinement{}, fmt.Errorf("list console Pods: %w", err)
+	pods, complete, err := r.consolePods(ctx, console)
+	if err != nil {
+		return confinement{}, err
 	}
-	found := confinement{Broad: podNetworkBlock(ours, pods.Items)}
+	if !complete {
+		return confinement{Unverified: fmt.Sprintf("more than %d console Pods: their addresses and labels could not all be checked", podListLimit)}, nil
+	}
+	var found confinement
+	found.Broad, found.Unverified = podNetworkBlock(ours, pods)
 	var policies networkingv1.NetworkPolicyList
 	if err := r.APIReader.List(ctx, &policies, client.InNamespace(console.Namespace), client.Limit(networkPolicyListLimit)); err != nil {
 		return confinement{}, fmt.Errorf("list the NetworkPolicies of namespace %s: %w", console.Namespace, err)
@@ -433,8 +462,8 @@ func (r *Reconciler) exposureConfinement(ctx context.Context, console *pgtoolbox
 		return found, nil
 	}
 	podLabels := []map[string]string{objectMeta(console, "", pgtoolboxv1alpha1.PropagationTargetPod).Labels}
-	for i := range pods.Items {
-		podLabels = append(podLabels, pods.Items[i].Labels)
+	for i := range pods {
+		podLabels = append(podLabels, pods[i].Labels)
 	}
 	if console.Spec.Exposure.TypeOrDefault() == pgtoolboxv1alpha1.ExposureTypeRoute {
 		ours = append(slices.Clip(ours), legacyRouterPeer())
@@ -462,16 +491,94 @@ func (r *Reconciler) withdrawExposurePolicy(ctx context.Context, console *pgtool
 	if facts == nil || !facts.rolloutComplete() {
 		return nil
 	}
-	var pods corev1.PodList
-	if err := r.APIReader.List(ctx, &pods, client.InNamespace(console.Namespace), client.MatchingLabels(selectorLabels(console))); err != nil {
-		return fmt.Errorf("list console Pods: %w", err)
+	pods, complete, err := r.consolePods(ctx, console)
+	if err != nil || !complete {
+		// Pods that could not all be listed may trust every peer: the
+		// policy stays.
+		return err
 	}
-	for i := range pods.Items {
-		if trustsAllPeers(&pods.Items[i]) {
-			return nil
-		}
+	if slices.ContainsFunc(pods, func(pod corev1.Pod) bool { return trustsAllPeers(&pod) }) {
+		return nil
 	}
 	return r.deleteIfOwned(ctx, console, &networkingv1.NetworkPolicy{}, name)
+}
+
+// consolePods lists the console's Pods past the cache (a Pod the informer
+// has not delivered yet still counts), bounded by podListLimit; complete
+// is false when there were more.
+func (r *Reconciler) consolePods(ctx context.Context, console *pgtoolboxv1alpha1.PgToolBoxConsole) (pods []corev1.Pod, complete bool, err error) {
+	var list corev1.PodList
+	if err := r.APIReader.List(ctx, &list, client.InNamespace(console.Namespace), client.MatchingLabels(selectorLabels(console)), client.Limit(podListLimit)); err != nil {
+		return nil, false, fmt.Errorf("list console Pods: %w", err)
+	}
+	return list.Items, list.Continue == "" && len(list.Items) <= podListLimit, nil
+}
+
+// heldWidening says why policy is not applied yet, "" when it may be: it
+// would admit a source the console's live ingress NetworkPolicy does not
+// (peersWiden) while a console Pod may still trust every peer on the
+// operator's grant (everyPeerTrustInForce). The workload is then rendered
+// without the grant; once its rollout is through and no Pod carries it,
+// the wider policy is applied (the workload's status and its Pods are
+// watched, so their changes bring the next look). A narrowing change is
+// applied at once.
+func (r *Reconciler) heldWidening(ctx context.Context, console *pgtoolboxv1alpha1.PgToolBoxConsole, policy *networkingv1.NetworkPolicy) (string, error) {
+	live := &networkingv1.NetworkPolicy{}
+	if err := r.Client.Get(ctx, client.ObjectKeyFromObject(policy), live); err != nil {
+		return "", client.IgnoreNotFound(err)
+	}
+	if !metav1.IsControlledBy(live, console) {
+		return "", nil // the apply reports it as not owned
+	}
+	var livePeers []networkingv1.NetworkPolicyPeer
+	if len(live.Spec.Ingress) > 0 {
+		livePeers = live.Spec.Ingress[0].From
+	}
+	if !peersWiden(policy.Spec.Ingress[0].From, livePeers) {
+		return "", nil
+	}
+	trusted, err := r.everyPeerTrustInForce(ctx, console)
+	if err != nil || !trusted {
+		return "", err
+	}
+	return "networkPolicy.from admits more than the policy in force, which is kept until no console Pod trusts every peer any more (a rollout without the grant), then widened", nil
+}
+
+// everyPeerTrustInForce: a console Pod may believe X-Forwarded-For from
+// every peer on the operator's grant. A workload of the console carries
+// the grant in its template, or its controller has not seen its latest
+// template yet (a Pod may still be created from an older one), or a
+// console Pod, terminating ones included, carries it; Pods that could not
+// all be listed count as one that does.
+func (r *Reconciler) everyPeerTrustInForce(ctx context.Context, console *pgtoolboxv1alpha1.PgToolBoxConsole) (bool, error) {
+	key := client.ObjectKey{Namespace: console.Namespace, Name: console.WorkloadName()}
+	for _, workload := range []client.Object{&appsv1.Deployment{}, &appsv1.StatefulSet{}} {
+		if err := r.Client.Get(ctx, key, workload); err != nil {
+			if apierrors.IsNotFound(err) {
+				continue
+			}
+			return false, err
+		}
+		if !metav1.IsControlledBy(workload, console) {
+			continue
+		}
+		var template *corev1.PodTemplateSpec
+		var observed int64
+		switch w := workload.(type) {
+		case *appsv1.Deployment:
+			template, observed = &w.Spec.Template, w.Status.ObservedGeneration
+		case *appsv1.StatefulSet:
+			template, observed = &w.Spec.Template, w.Status.ObservedGeneration
+		}
+		if template.Annotations[annotationTrustsEveryPeer] == "true" || observed < workload.GetGeneration() {
+			return true, nil
+		}
+	}
+	pods, complete, err := r.consolePods(ctx, console)
+	if err != nil {
+		return false, err
+	}
+	return !complete || slices.ContainsFunc(pods, func(pod corev1.Pod) bool { return trustsAllPeers(&pod) }), nil
 }
 
 // replaceOnClaimChange deletes the console's StatefulSet, orphaning its
@@ -652,6 +759,93 @@ func (r *Reconciler) applyExposure(ctx context.Context, console *pgtoolboxv1alph
 		}
 	}
 	return exposed, nil
+}
+
+// exposureUsable: applyExposure would publish an exposure object (its
+// type is not clusterIP, and its API is served).
+func (r *Reconciler) exposureUsable(console *pgtoolboxv1alpha1.PgToolBoxConsole) bool {
+	switch console.Spec.Exposure.TypeOrDefault() {
+	case pgtoolboxv1alpha1.ExposureTypeIngress:
+		return true
+	case pgtoolboxv1alpha1.ExposureTypeRoute:
+		return r.Features.Routes.Usable()
+	case pgtoolboxv1alpha1.ExposureTypeGateway:
+		return r.Features.Gateways.Usable()
+	default:
+		return false
+	}
+}
+
+// dryRunApply sends desired as Apply would, server-side and dry-run: the
+// API server validates it, admission included, and stores nothing.
+func (r *Reconciler) dryRunApply(ctx context.Context, desired client.Object) error {
+	raw, err := json.Marshal(desired)
+	if err != nil {
+		return fmt.Errorf("marshal %T apply patch: %w", desired, err)
+	}
+	probe, ok := desired.DeepCopyObject().(client.Object)
+	if !ok {
+		return fmt.Errorf("%T is not a client.Object", desired)
+	}
+	return r.Client.Patch(ctx, probe, client.RawPatch(types.ApplyPatchType, raw),
+		client.FieldOwner(reconcile.FieldOwner), client.ForceOwnership, client.DryRunAll)
+}
+
+// exposurePolicyRefused stalls on an ingress NetworkPolicy the API server
+// refused. The CRD checks what it can; what the API server still refuses
+// (or an admission policy) is looked at again on every spec change and
+// every policyRecheck (stallRetries). Nothing new is published (the dry
+// run comes first), so what is in force is the earlier spec's: with this
+// console's own policy in force, ExposureConfined still describes it;
+// without one, and an exposure object of this console published,
+// ExposureConfined says it is open; with nothing published it goes.
+func (r *Reconciler) exposurePolicyRefused(ctx context.Context, console *pgtoolboxv1alpha1.PgToolBoxConsole, name string, refusal error) error {
+	stall := r.invalid(console, pgtoolboxv1alpha1.ReasonExposurePolicyInvalid, fmt.Sprintf(
+		"the API server refused NetworkPolicy %s rendered from spec.exposure.networkPolicy: %s", name, refusal))
+	live := &networkingv1.NetworkPolicy{}
+	err := r.Client.Get(ctx, client.ObjectKey{Namespace: console.Namespace, Name: name}, live)
+	switch {
+	case err == nil && metav1.IsControlledBy(live, console):
+		return stall
+	case err != nil && !apierrors.IsNotFound(err):
+		return err
+	}
+	published, err := r.exposurePublished(ctx, console)
+	if err != nil {
+		return err
+	}
+	if !published {
+		setExposureConfined(console, false, confinement{})
+		return stall
+	}
+	setCondition(console, pgtoolboxv1alpha1.ConditionExposureConfined, metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonExposureOpen,
+		"no ingress NetworkPolicy is in force (the API server refused NetworkPolicy "+name+"): any Pod can reach the console port; the console Pods keep the X-Forwarded-For trust they were rendered with, never every peer (that needs the policy)")
+	return stall
+}
+
+// exposurePublished: an exposure object (Ingress, Route, HTTPRoute) of
+// this console exists.
+func (r *Reconciler) exposurePublished(ctx context.Context, console *pgtoolboxv1alpha1.PgToolBoxConsole) (bool, error) {
+	objects := []client.Object{&networkingv1.Ingress{}}
+	if r.Features.Routes.Usable() {
+		objects = append(objects, &routev1.Route{})
+	}
+	if r.Features.Gateways.Usable() {
+		objects = append(objects, &gatewayv1.HTTPRoute{})
+	}
+	key := client.ObjectKey{Namespace: console.Namespace, Name: console.WorkloadName()}
+	for _, object := range objects {
+		if err := r.Client.Get(ctx, key, object); err != nil {
+			if apierrors.IsNotFound(err) {
+				continue
+			}
+			return false, err
+		}
+		if metav1.IsControlledBy(object, console) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // withdrawExposure deletes every exposure object this console owns.

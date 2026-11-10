@@ -434,8 +434,14 @@ func TestRemovingEvidenceNeverStrengthensAClaim(t *testing.T) {
 			s.segments[2] = []uint64{3, 4, 5}
 			return s
 		}(),
-		"linear ancestry":                  linearScenario(),
-		"ancestor runs past the switch":    ancestorLeftScenario(),
+		"linear ancestry":                linearScenario(),
+		"ancestor runs past the switch":  ancestorLeftScenario(),
+		"parent tail lost before switch": parentTailLostScenario(),
+		"parent tail present before switch": func() timelineScenario {
+			s := parentTailLostScenario()
+			s.segments[1] = []uint64{1, 2, 3, 4}
+			return s
+		}(),
 		"sibling forked after the backup":  siblingAfterEndScenario(),
 		"sibling forked before the backup": siblingBeforeEndScenario(),
 		"backup follows timeline 2": func() timelineScenario {
@@ -612,5 +618,48 @@ func TestAncestorPathStopsWhereTheDefaultRestoreLeaves(t *testing.T) {
 				t.Fatalf("Barman coverage %s %q", server.CoverageState, server.CoverageReason)
 			}
 		})
+	}
+}
+
+// parentTailLostScenario is the round-6 reproduction (P2): timeline 2
+// forked at 0/5000000 and already has WAL from its switch segment on, but
+// timeline 1 is archived only to segment 2. Segments 3 and 4 were written
+// by the old primary and are lost.
+func parentTailLostScenario() timelineScenario {
+	return timelineScenario{
+		begin: 1, end: 1, endLSN: "0/1000100",
+		segments:  map[uint32][]uint64{1: {1, 2}, 2: {5, 6, 7}},
+		histories: map[uint32]string{2: "1\t0/5000000\tfailover\n"},
+		faults:    map[uint32]historyFault{},
+	}
+}
+
+// TestLostParentTailAgreesAcrossFormats: a parent timeline's segments
+// missing before a switch whose child already has WAL are lost. pgBackRest
+// (toward the newest timeline) and every Barman path, the ancestor path
+// toward timeline 1 included, read unhealthy and name the first missing
+// segment; none claims the archive frontier.
+func TestLostParentTailAgreesAcrossFormats(t *testing.T) {
+	t.Parallel()
+	scenario := parentTailLostScenario()
+	missing := "segment " + crossName(t, 1, 3) + " "
+	pg := scenario.pgbackrest(t)
+	if pg.State != evidence.Unhealthy || pg.Stop != CoverageGapLimited || !strings.Contains(pg.Reason, missing) {
+		t.Fatalf("pgBackRest path to %d %s %s %q", pg.TargetTimeline, pg.State, pg.Stop, pg.Reason)
+	}
+	server := scenario.barman(t)
+	if len(server.Paths) != 2 {
+		t.Fatalf("Barman paths %+v", server.Paths)
+	}
+	for _, path := range server.Paths {
+		if path.State != pg.State || string(path.Stop) != string(pg.Stop) || !strings.Contains(path.Reason, missing) || strings.Contains(path.Reason, "archive frontier") {
+			t.Errorf("Barman path to %d %s %s %q, pgBackRest %s %q", path.TargetTimeline, path.State, path.Stop, path.Reason, pg.State, pg.Reason)
+		}
+		if path.FrontierTimeline != 1 || path.FrontierPosition != 2 {
+			t.Errorf("Barman path to %d frontier %d/%d, want 1/2", path.TargetTimeline, path.FrontierTimeline, path.FrontierPosition)
+		}
+	}
+	if server.CoverageState != evidence.Unhealthy {
+		t.Errorf("Barman coverage %s %q", server.CoverageState, server.CoverageReason)
 	}
 }

@@ -183,7 +183,7 @@
     "reason": "the window has holes where WAL is missing",
     "earliest": "2026-10-22T07:08:00Z",
     "latest": "2026-10-29T11:59:15Z",
-    "lastSafeTarget": "2026-10-29T11:44:15Z",
+    "newestCoveredTarget": "2026-10-29T11:44:15Z",
     "targetTimeline": 3,
     "segments": [
       {

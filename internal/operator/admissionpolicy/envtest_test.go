@@ -1204,6 +1204,80 @@ func testExposureAnnotations(t *testing.T, root client.Client, as func(string, .
 			exposureRefused(t, create(t, as("mallory"), pgadmin(name, ingress("{"+key+": x}"))))
 		})
 	}
+	// Every entry of pgtoolbox.admission.exposureDenyList, the list the
+	// security documentation's table shows (TestExposureDenyListDocumented).
+	for i, entry := range exposureDenyList(t) {
+		key := entry.example()
+		t.Run("deny list "+string(entry), func(t *testing.T) {
+			exposureRefused(t, create(t, as("mallory"), pgadmin(fmt.Sprintf("ea-deny-%02d", i), ingress("{"+key+": x}"))))
+		})
+	}
+	t.Run("keys that tune the route to the workload's own Service pass", func(t *testing.T) {
+		for i, key := range []string{
+			"nginx.ingress.kubernetes.io/rewrite-target",
+			"nginx.ingress.kubernetes.io/use-regex",
+			"nginx.ingress.kubernetes.io/upstream-vhost",
+			"nginx.ingress.kubernetes.io/backend-protocol",
+			"nginx.ingress.kubernetes.io/proxy-read-timeout",
+			"alb.ingress.kubernetes.io/healthcheck-path",
+			"alb.ingress.kubernetes.io/target-type",
+			"haproxy.router.openshift.io/timeout",
+			"haproxy.router.openshift.io/rewrite-target",
+			"traefik.ingress.kubernetes.io/router.priority",
+			"konghq.com/strip-path",
+			"kubernetes.io/ingress.class",
+		} {
+			if err := create(t, as("mallory"), pgadmin(fmt.Sprintf("ea-free-%02d", i), ingress("{"+key+": x}"))); err != nil {
+				t.Errorf("%s: %v, want admitted", key, err)
+			}
+		}
+	})
+	t.Run("metadataPropagation for the Service is checked", func(t *testing.T) {
+		expose := "  exposure: {type: ingress, hostname: pgadmin.example.com}\n"
+		rule := func(annotations string) string {
+			return expose + "  metadataPropagation:\n  - target: Service\n    annotations: " + annotations + "\n"
+		}
+		// Kong reads plugins on the Service an Ingress routes to, HAProxy
+		// its backend configuration.
+		exposureRefused(t, create(t, as("mallory"), pgadmin("ea-svc-kong", rule("{konghq.com/plugins: steal}"))))
+		exposureRefused(t, create(t, as("mallory"), pgadmin("ea-svc-haproxy", rule("{haproxy.org/backend-config-snippet: x}"))))
+		exposureRefused(t, create(t, as("mallory"), consoleWith(t, "ea-svc-console", rule("{konghq.com/plugins: steal}"))))
+		if err := create(t, as("mallory"), pgadmin("ea-svc-benign", rule("{traefik.ingress.kubernetes.io/service.sticky.cookie: 'true'}"))); err != nil {
+			t.Fatalf("benign Service annotation: %v, want admitted", err)
+		}
+		if err := create(t, as("exposer"), pgadmin("ea-svc-exposer", rule("{konghq.com/plugins: rate-limit}"))); err != nil {
+			t.Fatalf("exposer: %v, want admitted", err)
+		}
+		// clusterIP: nothing the operator writes routes to the Service.
+		if err := create(t, as("mallory"), pgadmin("ea-svc-clusterip", "  metadataPropagation:\n  - target: Service\n    annotations: {konghq.com/plugins: x}\n")); err != nil {
+			t.Fatalf("clusterIP: %v, want admitted", err)
+		}
+	})
+	t.Run("a kept Service annotation passes; moved to another target it is checked", func(t *testing.T) {
+		u := pgadmin("ea-svc-kept", "  exposure: {type: ingress, hostname: pgadmin.example.com}\n  metadataPropagation:\n  - target: Service\n    annotations: {konghq.com/plugins: rate-limit}\n")
+		if err := create(t, root, u); err != nil {
+			t.Fatal(err)
+		}
+		if err := root.Get(t.Context(), client.ObjectKeyFromObject(u), u); err != nil {
+			t.Fatal(err)
+		}
+		edit := u.DeepCopy()
+		if err := unstructured.SetNestedStringSlice(edit.Object, []string{"rw", "ro"}, "spec", "endpoints"); err != nil {
+			t.Fatal(err)
+		}
+		if err := as("mallory").Update(t.Context(), edit); err != nil {
+			t.Fatalf("unrelated edit: %v, want admitted", err)
+		}
+		if err := root.Get(t.Context(), client.ObjectKeyFromObject(u), u); err != nil {
+			t.Fatal(err)
+		}
+		rules, _, _ := unstructured.NestedSlice(u.Object, "spec", "metadataPropagation")
+		rules[0].(map[string]any)["target"] = "Exposure"
+		if err := unstructured.SetNestedSlice(u.Object, rules, "spec", "metadataPropagation"); err != nil {
+			t.Fatal(err)
+		}
+		exposureRefused(t, as("mallory").Update(t.Context(), u))
+	})
 	t.Run("other annotations pass", func(t *testing.T) {
 		if err := create(t, as("mallory"), pgadmin("ea-benign", ingress("{nginx.ingress.kubernetes.io/proxy-body-size: 8m, nginx.ingress.kubernetes.io/affinity: cookie}"))); err != nil {
 			t.Fatalf("error = %v, want admitted", err)
@@ -1301,6 +1375,46 @@ func testExposureAnnotations(t *testing.T, root client.Client, as func(string, .
 		}
 		if err := as("mallory").Update(t.Context(), u); err != nil {
 			t.Fatalf("update: %v, want admitted", err)
+		}
+	})
+	t.Run("the costliest keys of the deny list stay within the CEL cost budget", func(t *testing.T) {
+		// A denied key matched last in the longest controller branch (after
+		// the substring scan, the exact keys and every other prefix), and a
+		// key of that branch that is denied by nothing.
+		annotations := func(rule int, prefix string) map[string]any {
+			out := map[string]any{}
+			for i := range 32 {
+				out[fmt.Sprintf("%s%02d-%02d-%s", prefix, rule, i, strings.Repeat("k", 280))] = strings.Repeat("v", 200)
+			}
+			return out
+		}
+		for i, prefix := range []string{"nginx.ingress.kubernetes.io/proxy-redirect-", "nginx.ingress.kubernetes.io/x-", "konghq.com/x-"} {
+			t.Run(prefix, func(t *testing.T) {
+				rules := make([]any, 0, 8)
+				for r := range 8 {
+					target := []string{"All", "Exposure", "Service"}[r%3]
+					rules = append(rules, map[string]any{"target": target, "annotations": annotations(r, prefix)})
+				}
+				u := pgadmin(fmt.Sprintf("ea-costliest-%d", i), "  exposure: {type: ingress, hostname: pgadmin.example.com}\n")
+				if err := unstructured.SetNestedSlice(u.Object, rules, "spec", "metadataPropagation"); err != nil {
+					t.Fatal(err)
+				}
+				if err := unstructured.SetNestedField(u.Object, annotations(9, prefix), "spec", "exposure", "annotations"); err != nil {
+					t.Fatal(err)
+				}
+				if err := create(t, as("exposer"), u); err != nil {
+					t.Fatalf("create: %v, want admitted", err)
+				}
+				if err := root.Get(t.Context(), client.ObjectKeyFromObject(u), u); err != nil {
+					t.Fatal(err)
+				}
+				if err := unstructured.SetNestedStringSlice(u.Object, []string{"rw", "ro"}, "spec", "endpoints"); err != nil {
+					t.Fatal(err)
+				}
+				if err := as("mallory").Update(t.Context(), u); err != nil {
+					t.Fatalf("update: %v, want admitted", err)
+				}
+			})
 		}
 	})
 }

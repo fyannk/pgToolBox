@@ -143,33 +143,27 @@ spec:
         variables.exposureType == 'clusterIP' || (
         (!has(object.spec.exposure.annotations) || object.spec.exposure.annotations.all(k,
           !(k.contains('snippet') ||
-        k.startsWith('nginx.ingress.kubernetes.io/auth-') ||
-        k == 'nginx.ingress.kubernetes.io/enable-global-auth' ||
-        k == 'nginx.ingress.kubernetes.io/satisfy' ||
-        k.startsWith('nginx.ingress.kubernetes.io/mirror-') ||
-        k == 'nginx.ingress.kubernetes.io/proxy-ssl-secret' ||
-        k.startsWith('haproxy-ingress.github.io/config-') ||
-        k.startsWith('haproxy-ingress.github.io/auth-') ||
-        k.startsWith('haproxy.org/auth-') ||
-        k == 'traefik.ingress.kubernetes.io/router.middlewares' ||
-        k == 'konghq.com/plugins') ||
+        k.startsWith('nginx.ingress.kubernetes.io/') && (k in ['nginx.ingress.kubernetes.io/enable-global-auth', 'nginx.ingress.kubernetes.io/satisfy', 'nginx.ingress.kubernetes.io/proxy-ssl-secret', 'nginx.ingress.kubernetes.io/server-alias', 'nginx.ingress.kubernetes.io/permanent-redirect', 'nginx.ingress.kubernetes.io/temporal-redirect', 'nginx.ingress.kubernetes.io/app-root', 'nginx.ingress.kubernetes.io/default-backend', 'nginx.ingress.kubernetes.io/custom-http-errors', 'nginx.ingress.kubernetes.io/whitelist-source-range', 'nginx.ingress.kubernetes.io/allowlist-source-range', 'nginx.ingress.kubernetes.io/denylist-source-range', 'nginx.ingress.kubernetes.io/enable-cors'] || k.startsWith('nginx.ingress.kubernetes.io/auth-') || k.startsWith('nginx.ingress.kubernetes.io/mirror-') || k.startsWith('nginx.ingress.kubernetes.io/canary') || k.startsWith('nginx.ingress.kubernetes.io/cors-') || k.startsWith('nginx.ingress.kubernetes.io/proxy-redirect-')) ||
+        k.startsWith('alb.ingress.kubernetes.io/') && (k in ['alb.ingress.kubernetes.io/scheme', 'alb.ingress.kubernetes.io/group.name', 'alb.ingress.kubernetes.io/group.order', 'alb.ingress.kubernetes.io/inbound-cidrs', 'alb.ingress.kubernetes.io/security-groups', 'alb.ingress.kubernetes.io/listen-ports'] || k.startsWith('alb.ingress.kubernetes.io/actions.') || k.startsWith('alb.ingress.kubernetes.io/conditions.') || k.startsWith('alb.ingress.kubernetes.io/auth-')) ||
+        k.startsWith('haproxy-ingress.github.io/') && (k in ['haproxy-ingress.github.io/allowlist-source-range', 'haproxy-ingress.github.io/whitelist-source-range', 'haproxy-ingress.github.io/denylist-source-range', 'haproxy-ingress.github.io/redirect-from', 'haproxy-ingress.github.io/redirect-to', 'haproxy-ingress.github.io/app-root'] || k.startsWith('haproxy-ingress.github.io/config-') || k.startsWith('haproxy-ingress.github.io/auth-') || k.startsWith('haproxy-ingress.github.io/cors-')) ||
+        k.startsWith('haproxy.org/') && (k in ['haproxy.org/allow-list', 'haproxy.org/whitelist', 'haproxy.org/deny-list', 'haproxy.org/blacklist', 'haproxy.org/request-redirect', 'haproxy.org/route-acl'] || k.startsWith('haproxy.org/auth-') || k.startsWith('haproxy.org/cors-')) ||
+        k.startsWith('haproxy.router.openshift.io/') && (k in ['haproxy.router.openshift.io/ip_whitelist', 'haproxy.router.openshift.io/ip_allowlist']) ||
+        k.startsWith('traefik.ingress.kubernetes.io/') && (k in ['traefik.ingress.kubernetes.io/router.middlewares', 'traefik.ingress.kubernetes.io/router.entrypoints']) ||
+        k.startsWith('konghq.com/') && (k in ['konghq.com/plugins', 'konghq.com/host-aliases'])) ||
           (variables.oldExposureType == variables.exposureType && has(oldObject.spec.exposure.annotations) &&
            k in oldObject.spec.exposure.annotations && oldObject.spec.exposure.annotations[k] == object.spec.exposure.annotations[k]))) &&
         (!has(object.spec.metadataPropagation) || object.spec.metadataPropagation.all(r,
-          !(r.target == 'All' || r.target == 'Exposure') || !has(r.annotations) || r.annotations.all(k,
+          !(r.target in ['All', 'Exposure', 'Service']) || !has(r.annotations) || r.annotations.all(k,
             !(k.contains('snippet') ||
-        k.startsWith('nginx.ingress.kubernetes.io/auth-') ||
-        k == 'nginx.ingress.kubernetes.io/enable-global-auth' ||
-        k == 'nginx.ingress.kubernetes.io/satisfy' ||
-        k.startsWith('nginx.ingress.kubernetes.io/mirror-') ||
-        k == 'nginx.ingress.kubernetes.io/proxy-ssl-secret' ||
-        k.startsWith('haproxy-ingress.github.io/config-') ||
-        k.startsWith('haproxy-ingress.github.io/auth-') ||
-        k.startsWith('haproxy.org/auth-') ||
-        k == 'traefik.ingress.kubernetes.io/router.middlewares' ||
-        k == 'konghq.com/plugins') ||
+        k.startsWith('nginx.ingress.kubernetes.io/') && (k in ['nginx.ingress.kubernetes.io/enable-global-auth', 'nginx.ingress.kubernetes.io/satisfy', 'nginx.ingress.kubernetes.io/proxy-ssl-secret', 'nginx.ingress.kubernetes.io/server-alias', 'nginx.ingress.kubernetes.io/permanent-redirect', 'nginx.ingress.kubernetes.io/temporal-redirect', 'nginx.ingress.kubernetes.io/app-root', 'nginx.ingress.kubernetes.io/default-backend', 'nginx.ingress.kubernetes.io/custom-http-errors', 'nginx.ingress.kubernetes.io/whitelist-source-range', 'nginx.ingress.kubernetes.io/allowlist-source-range', 'nginx.ingress.kubernetes.io/denylist-source-range', 'nginx.ingress.kubernetes.io/enable-cors'] || k.startsWith('nginx.ingress.kubernetes.io/auth-') || k.startsWith('nginx.ingress.kubernetes.io/mirror-') || k.startsWith('nginx.ingress.kubernetes.io/canary') || k.startsWith('nginx.ingress.kubernetes.io/cors-') || k.startsWith('nginx.ingress.kubernetes.io/proxy-redirect-')) ||
+        k.startsWith('alb.ingress.kubernetes.io/') && (k in ['alb.ingress.kubernetes.io/scheme', 'alb.ingress.kubernetes.io/group.name', 'alb.ingress.kubernetes.io/group.order', 'alb.ingress.kubernetes.io/inbound-cidrs', 'alb.ingress.kubernetes.io/security-groups', 'alb.ingress.kubernetes.io/listen-ports'] || k.startsWith('alb.ingress.kubernetes.io/actions.') || k.startsWith('alb.ingress.kubernetes.io/conditions.') || k.startsWith('alb.ingress.kubernetes.io/auth-')) ||
+        k.startsWith('haproxy-ingress.github.io/') && (k in ['haproxy-ingress.github.io/allowlist-source-range', 'haproxy-ingress.github.io/whitelist-source-range', 'haproxy-ingress.github.io/denylist-source-range', 'haproxy-ingress.github.io/redirect-from', 'haproxy-ingress.github.io/redirect-to', 'haproxy-ingress.github.io/app-root'] || k.startsWith('haproxy-ingress.github.io/config-') || k.startsWith('haproxy-ingress.github.io/auth-') || k.startsWith('haproxy-ingress.github.io/cors-')) ||
+        k.startsWith('haproxy.org/') && (k in ['haproxy.org/allow-list', 'haproxy.org/whitelist', 'haproxy.org/deny-list', 'haproxy.org/blacklist', 'haproxy.org/request-redirect', 'haproxy.org/route-acl'] || k.startsWith('haproxy.org/auth-') || k.startsWith('haproxy.org/cors-')) ||
+        k.startsWith('haproxy.router.openshift.io/') && (k in ['haproxy.router.openshift.io/ip_whitelist', 'haproxy.router.openshift.io/ip_allowlist']) ||
+        k.startsWith('traefik.ingress.kubernetes.io/') && (k in ['traefik.ingress.kubernetes.io/router.middlewares', 'traefik.ingress.kubernetes.io/router.entrypoints']) ||
+        k.startsWith('konghq.com/') && (k in ['konghq.com/plugins', 'konghq.com/host-aliases'])) ||
             (variables.oldExposureType == variables.exposureType && has(oldObject.spec.metadataPropagation) &&
-             oldObject.spec.metadataPropagation.exists(o, (o.target == 'All' || o.target == 'Exposure') && has(o.annotations) &&
+             oldObject.spec.metadataPropagation.exists(o, (o.target == 'All' || o.target == r.target) && has(o.annotations) &&
                k in o.annotations && o.annotations[k] == r.annotations[k])))))
         )
   validations:
@@ -227,14 +221,14 @@ spec:
       message: a PgAdmin that offers the credentials of Clusters of its namespace (spec.credentials) or keeps its settings on one (spec.configDatabase, whose login role pgAdmin holds) requires get on the Secrets of the namespace, since whoever opens pgAdmin holds them; adding a credential kind or a Cluster, changing who may sign in (spec.auth, spec.admins) or raising the OpenShift proxy's sessionMaxAge is checked again
       reason: Forbidden
     # An ingress controller reads some annotations as configuration
-    # (snippets, external authentication, mirroring, middlewares): the
-    # operator would write them on the Ingress, Route or HTTPRoute for an
-    # editor who may not create one. Adding or changing one takes create on
+    # (pgtoolbox.admission.exposureDenyList): the operator would write them
+    # on the Ingress, Route, HTTPRoute or Service for an editor who may not
+    # create the exposure object. Adding or changing one takes create on
     # that kind in the namespace.
     - expression: >-
         variables.exposureAnnotationsKept ||
         authorizer.group(variables.exposureType == 'route' ? 'route.openshift.io' : variables.exposureType == 'gateway' ? 'gateway.networking.k8s.io' : 'networking.k8s.io').resource(variables.exposureType == 'route' ? 'routes' : variables.exposureType == 'gateway' ? 'httproutes' : 'ingresses').namespace(object.metadata.namespace).check('create').allowed()
-      message: an exposure annotation that an ingress controller reads as configuration (a snippet, external or basic authentication, mirroring, a middleware or plugin; see the security documentation) requires create on the exposure kind (ingresses, routes or httproutes) in the namespace; adding or changing one, or changing the exposure type, is checked again
+      message: an exposure annotation that an ingress controller reads as configuration (a snippet, authentication, a source range, a redirect, a canary, an extra host, a load-balancer scheme or group, mirroring, a middleware or plugin; see the security documentation), on the exposure object or the Service, requires create on the exposure kind (ingresses, routes or httproutes) in the namespace; adding or changing one, or changing the exposure type, is checked again
       reason: Forbidden
 
 

@@ -64,14 +64,36 @@ const (
 	minIPv6BlockBits = 32
 )
 
-// privateRanges are the address ranges a Pod network is cut from: an
-// ipBlock that holds a whole one admits the Pods, not only the proxies.
+// privateRanges are the IPv4 ranges a Pod network is cut from: an ipBlock
+// that holds a whole one admits the Pods, not only the proxies.
 var privateRanges = []netip.Prefix{
 	netip.MustParsePrefix("10.0.0.0/8"),
 	netip.MustParsePrefix("172.16.0.0/12"),
 	netip.MustParsePrefix("192.168.0.0/16"),
 	netip.MustParsePrefix("100.64.0.0/10"),
-	netip.MustParsePrefix("fc00::/7"),
+}
+
+// uniqueLocal is where IPv6 Pod networks are cut from (fd00:10:244::/56 on
+// kind, a /48 or /56 elsewhere). It is wider than any ipBlock may be
+// (minIPv6BlockBits), so the IPv6 rule is another one: a block inside it
+// wider than a /64 (a single subnet, the narrowest a Pod network is) is
+// broad.
+var uniqueLocal = netip.MustParsePrefix("fc00::/7")
+
+const minUniqueLocalBlockBits = 64
+
+// sharedNamespaceKeys are namespace label keys whose values many
+// namespaces share, set by the platform or by any namespace owner (Pod
+// Security admission levels, OpenShift's SCC label sync and run level): a
+// namespaceSelector that pins only these selects every namespace of a
+// level, not the proxies'. Keys ending in "/" are prefixes. Other labels a
+// namespace owner may set on their own namespace (a tenant label of
+// Capsule or Rancher, say) cannot be told apart from an installer's: a
+// peer that pins one is the user's to keep narrow.
+var sharedNamespaceKeys = []string{
+	"pod-security.kubernetes.io/",
+	"security.openshift.io/",
+	"openshift.io/run-level",
 }
 
 // confinement is what the reconciler found, beyond the spec, that keeps
@@ -84,6 +106,11 @@ type confinement struct {
 	// Bypass names another NetworkPolicy that admits more (policyBypass),
 	// "" when none.
 	Bypass string
+	// Unverified says why the peers could not be checked, or are not in
+	// force yet, "" when they were: no console Pod has an address while an
+	// ipBlock peer needs one, more console Pods than could be listed, or a
+	// widened networkPolicy.from held back until no Pod trusts every peer.
+	Unverified string
 }
 
 // exposurePolicyName is the console's ingress NetworkPolicy.
@@ -136,19 +163,23 @@ func routerPeer() networkingv1.NetworkPolicyPeer {
 // (no matchLabels and no In expression: only Exists, NotIn, DoesNotExist,
 // or nothing), because a key alone is on nearly everything
 // (kubernetes.io/metadata.name is on every namespace) and an absent value
-// is the default. Broad are then a namespaceSelector that is (Pods of
+// is the default; a namespaceSelector is broad too when it pins only
+// sharedNamespaceKeys (pod-security.kubernetes.io/enforce=restricted is on
+// most namespaces). Broad are then a namespaceSelector that is (Pods of
 // nearly every namespace, whatever the podSelector: any namespace owner
 // can label a Pod), a podSelector that is, alone (nearly every Pod of the
-// console's namespace), and an ipBlock wider than /8 (IPv4) or /32 (IPv6)
-// or holding a whole private range (10/8, 172.16/12, 192.168/16,
-// 100.64/10, fc00::/7: where Pod networks are cut from). An ipBlock
-// holding a console Pod's own address is found by the reconciler
-// (podNetworkBlock).
+// console's namespace), and an ipBlock wider than /8 (IPv4) or /32 (IPv6),
+// holding a whole private IPv4 range (10/8, 172.16/12, 192.168/16,
+// 100.64/10: where Pod networks are cut from), or inside fc00::/7 and
+// wider than a /64. An ipBlock holding a console Pod's own address is
+// found by the reconciler (podNetworkBlock).
 func broadPeer(peers []networkingv1.NetworkPolicyPeer) string {
 	for i, peer := range peers {
 		switch {
 		case peer.NamespaceSelector != nil && !pinsValue(peer.NamespaceSelector):
 			return fmt.Sprintf("peer %d has a namespaceSelector that pins no label value: it admits Pods of (nearly) every namespace", i)
+		case peer.NamespaceSelector != nil && !pinsValueOf(peer.NamespaceSelector, distinctNamespaceKey):
+			return fmt.Sprintf("peer %d has a namespaceSelector that pins only labels many namespaces share (%s): it admits Pods of every namespace that carries them", i, strings.Join(sharedNamespaceKeys, ", "))
 		case peer.NamespaceSelector == nil && peer.PodSelector != nil && !pinsValue(peer.PodSelector):
 			return fmt.Sprintf("peer %d has a podSelector alone that pins no label value: it admits (nearly) every Pod of the namespace", i)
 		case peer.IPBlock != nil:
@@ -163,11 +194,28 @@ func broadPeer(peers []networkingv1.NetworkPolicyPeer) string {
 // pinsValue: the selector requires a label to hold one of named values
 // (a matchLabels entry, or an In expression).
 func pinsValue(s *metav1.LabelSelector) bool {
-	if len(s.MatchLabels) > 0 {
-		return true
+	return pinsValueOf(s, func(string) bool { return true })
+}
+
+// pinsValueOf: the selector pins the value of a label whose key counts.
+func pinsValueOf(s *metav1.LabelSelector, counts func(key string) bool) bool {
+	for key := range s.MatchLabels {
+		if counts(key) {
+			return true
+		}
 	}
 	return slices.ContainsFunc(s.MatchExpressions, func(e metav1.LabelSelectorRequirement) bool {
-		return e.Operator == metav1.LabelSelectorOpIn
+		return e.Operator == metav1.LabelSelectorOpIn && counts(e.Key)
+	})
+}
+
+// distinctNamespaceKey: key is not one of sharedNamespaceKeys.
+func distinctNamespaceKey(key string) bool {
+	return !slices.ContainsFunc(sharedNamespaceKeys, func(shared string) bool {
+		if strings.HasSuffix(shared, "/") {
+			return strings.HasPrefix(key, shared)
+		}
+		return key == shared
 	})
 }
 
@@ -187,8 +235,14 @@ func broadBlock(block *networkingv1.IPBlock) string {
 	if prefix.Bits() < limit {
 		return fmt.Sprintf("it is wider than /%d and admits (nearly) every address", limit)
 	}
+	if prefix.Addr().Is6() {
+		if uniqueLocal.Contains(prefix.Addr()) && prefix.Bits() < minUniqueLocalBlockBits {
+			return fmt.Sprintf("it is a unique-local block (%s) wider than /%d, the size IPv6 Pod networks are cut to", uniqueLocal, minUniqueLocalBlockBits)
+		}
+		return ""
+	}
 	for _, private := range privateRanges {
-		if private.Addr().Is4() == prefix.Addr().Is4() && prefix.Bits() <= private.Bits() && prefix.Contains(private.Addr()) {
+		if prefix.Bits() <= private.Bits() && prefix.Contains(private.Addr()) {
 			return "it holds the whole private range " + private.String() + ", where Pod networks are cut from"
 		}
 	}
@@ -197,8 +251,22 @@ func broadBlock(block *networkingv1.IPBlock) string {
 
 // podNetworkBlock names the first ipBlock peer that admits the address of
 // a console Pod (its except entries aside), "" when none: such a block
-// admits the Pod network, every Pod of the cluster, not the proxies.
-func podNetworkBlock(peers []networkingv1.NetworkPolicyPeer, pods []corev1.Pod) string {
+// admits the Pod network, every Pod of the cluster, not the proxies. With
+// an ipBlock peer and no console Pod address to check it against (the
+// first Pod is Pending, the workload scales from zero), unverified says
+// so: until a Pod has an address the block may be the Pod network, so no
+// peer is trusted (fail closed; the Pod's address arrives on a watched
+// Pod update).
+func podNetworkBlock(peers []networkingv1.NetworkPolicyPeer, pods []corev1.Pod) (broad, unverified string) {
+	var addrs []netip.Addr
+	var names []string
+	for p := range pods {
+		for _, ip := range pods[p].Status.PodIPs {
+			if addr, err := netip.ParseAddr(ip.IP); err == nil {
+				addrs, names = append(addrs, addr), append(names, pods[p].Name)
+			}
+		}
+	}
 	for i, peer := range peers {
 		if peer.IPBlock == nil {
 			continue
@@ -207,17 +275,25 @@ func podNetworkBlock(peers []networkingv1.NetworkPolicyPeer, pods []corev1.Pod) 
 		if err != nil {
 			continue // broadPeer reports it
 		}
-		for p := range pods {
-			for _, ip := range pods[p].Status.PodIPs {
-				addr, err := netip.ParseAddr(ip.IP)
-				if err != nil || !block.Contains(addr) || excepted(peer.IPBlock.Except, addr) {
-					continue
-				}
-				return fmt.Sprintf("peer %d has ipBlock %s, which holds the address of console Pod %s: it admits the Pod network", i, peer.IPBlock.CIDR, pods[p].Name)
+		if len(addrs) == 0 {
+			if unverified == "" {
+				unverified = fmt.Sprintf("no console Pod has an address yet, so ipBlock %s (peer %d) cannot be told apart from the Pod network: no peer is trusted until one has", peer.IPBlock.CIDR, i)
+			}
+			continue
+		}
+		for a, addr := range addrs {
+			if block.Contains(addr) && !excepted(peer.IPBlock.Except, addr) {
+				return fmt.Sprintf("peer %d has ipBlock %s, which holds the address of console Pod %s: it admits the Pod network", i, peer.IPBlock.CIDR, names[a]), ""
 			}
 		}
 	}
-	return ""
+	return "", unverified
+}
+
+// peersWiden: the policy with peers would admit a source that the one
+// with live does not (a peer live does not cover: coveredBy).
+func peersWiden(peers, live []networkingv1.NetworkPolicyPeer) bool {
+	return slices.ContainsFunc(peers, func(peer networkingv1.NetworkPolicyPeer) bool { return !coveredBy(peer, live) })
 }
 
 func excepted(except []string, addr netip.Addr) bool {
@@ -455,6 +531,12 @@ func exposureConfinedFact(c *pgtoolboxv1alpha1.PgToolBoxConsole, exposed bool, f
 			return &conditionFact{
 				Status: metav1.ConditionFalse, Reason: pgtoolboxv1alpha1.ReasonExposurePolicyBypassed,
 				Message: found.Bypass + " (NetworkPolicies add up): NetworkPolicy " + exposurePolicyName(c) + " does not confine it; " + believed,
+			}
+		}
+		if found.Unverified != "" {
+			return &conditionFact{
+				Status: metav1.ConditionFalse, Reason: pgtoolboxv1alpha1.ReasonExposureTrustUnverified,
+				Message: "NetworkPolicy " + exposurePolicyName(c) + ": " + found.Unverified + "; " + believed,
 			}
 		}
 		return &conditionFact{

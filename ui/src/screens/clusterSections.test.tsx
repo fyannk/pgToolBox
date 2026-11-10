@@ -113,20 +113,24 @@ test("backups: the recovery bar has a text twin listing every span", async () =>
   expect(items[1]?.element().textContent).toMatch(/WAL missing — WAL is missing from the repository/);
 });
 
-test("backups: the window's end is the WAL received, and the last safe target is named apart", async () => {
+test("backups: the window's end is the WAL received, and the newest covered target is named apart", async () => {
   const t = backups.recoveryTimeline;
-  if (!t.lastSafeTarget || !t.latest) throw new Error("fixture has no last safe target");
+  if (!t.newestCoveredTarget || !t.latest) throw new Error("fixture has no newest covered target");
   const screen = await renderInFrame(<BackupsView data={backups} />);
   const received = screen.container.querySelector("[data-wal-received]")?.textContent ?? "";
-  const safe = screen.container.querySelector("[data-last-safe-target]")?.textContent ?? "";
+  const target = screen.container.querySelector("[data-newest-covered-target]");
+  const covered = target?.textContent ?? "";
   expect(received).toMatch(/^WAL received until /);
-  expect(safe).toMatch(/^last safe target /);
-  expect(safe).not.toBe(received.replace("WAL received until", "last safe target"));
+  expect(covered).toMatch(/^newest covered target /);
+  expect(covered).not.toBe(received.replace("WAL received until", "newest covered target"));
+  // Never "safe": structurally covered is the strongest claim, and the hint says it is not restore-tested.
+  expect(screen.container.textContent).not.toMatch(/safe target/);
+  expect(target?.getAttribute("title")).toMatch(/Not restore-tested/);
   expect(screen.container.textContent).not.toMatch(/latest 2026/);
   const none = await renderInFrame(
-    <BackupsView data={{ ...backups, recoveryTimeline: { ...t, lastSafeTarget: undefined } }} />,
+    <BackupsView data={{ ...backups, recoveryTimeline: { ...t, newestCoveredTarget: undefined } }} />,
   );
-  expect(none.container.querySelector("[data-last-safe-target]")).toBeNull();
+  expect(none.container.querySelector("[data-newest-covered-target]")).toBeNull();
 });
 
 test("backups: an operator-only window is hatched, labelled unverified, never called covered", async () => {
