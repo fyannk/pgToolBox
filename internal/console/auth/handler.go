@@ -93,8 +93,11 @@ const (
 	// maxKnownBearers bounds the bearers remembered as accepted (a
 	// digest and an expiry each); knownBearerTTL is how long one is
 	// remembered when its own expiry is unknown (an opaque token).
-	maxKnownBearers = 4096
-	knownBearerTTL  = time.Hour
+	// maxKnownBearersPerSubject bounds one person's share of it, so a
+	// person minting tokens evicts only their own.
+	maxKnownBearers           = 4096
+	maxKnownBearersPerSubject = 16
+	knownBearerTTL            = time.Hour
 	// The token form's per-address budget, charged before the shared
 	// bucket so that one address cannot drain everyone's break-glass
 	// sign-ins: at 20 a minute a single address takes a fraction of the
@@ -306,7 +309,7 @@ func newHandler(o Options, providers []oauthProvider) *Handler {
 		knownReviews:    NewRateLimiter(knownReviewsPerSecond*60, knownReviewsBurst, 1).Named(BucketKnownReviews),
 		codeExchanges:   NewRateLimiter(codeExchangesPerSecond*60, codeExchangesBurst, 1).Named(BucketCodeExchanges),
 		exchangeReviews: NewRateLimiter(exchangeReviewsPerSecond*60, exchangeReviewsBurst, 1).Named(BucketExchangeReviews),
-		knownBearers:    newKnownTokens(maxKnownBearers),
+		knownBearers:    newKnownTokens(maxKnownBearers, maxKnownBearersPerSubject),
 		flows:           newSpentFlows(maxSpentFlows),
 		loggedOut:       map[string]time.Time{},
 		signOuts:        o.SignOuts,
