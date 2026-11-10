@@ -410,3 +410,47 @@ func TestUnreadPrimaryKeepsItsRing(t *testing.T) {
 		t.Errorf("quiet sweep %v, want the ring's empty reading at %s", q, now.Add(-30*time.Second))
 	}
 }
+
+// TestOneMissedPrimaryReadDoesNotFlicker (round 7, DBA P2-1): one sweep
+// that failed to read the primary keeps its last good reading from the
+// sweep before, so archiving and the recovery bar do not flip to unknown
+// and back; a second miss in a row, or a reading older than one sweep,
+// is unread.
+func TestOneMissedPrimaryReadDoesNotFlicker(t *testing.T) {
+	const interval = 30 * time.Second
+	swept := now.Add(-5 * time.Second)
+	c := inTreeCluster()
+	c.Status.Conditions = []metav1.Condition{{Type: cnpgstatus.ConditionContinuousArchiving, Status: metav1.ConditionTrue, Reason: "ContinuousArchivingSuccess"}}
+	for _, tc := range []struct {
+		name     string
+		state    viewmodel.StatusReadState
+		observed time.Time
+		since    time.Time
+		read     bool
+	}{
+		{name: "read now", state: viewmodel.StatusReadOK, observed: swept, since: swept.Add(-time.Hour), read: true},
+		{name: "one miss: the sweep before stands", state: viewmodel.StatusReadUnreachable, observed: swept.Add(-interval), since: swept, read: true},
+		{name: "one miss with ticker jitter", state: viewmodel.StatusReadUnreachable, observed: swept.Add(-interval - 10*time.Second), since: swept, read: true},
+		{name: "two misses in a row", state: viewmodel.StatusReadUnreachable, observed: swept.Add(-2 * interval), since: swept.Add(-interval), read: false},
+		{name: "the failure began earlier", state: viewmodel.StatusReadUnreachable, observed: swept.Add(-interval), since: swept.Add(-interval), read: false},
+		{name: "a reading much older than the sweep", state: viewmodel.StatusReadBadResponse, observed: swept.Add(-10 * time.Minute), since: swept, read: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := instancestatus.Reading{IsPrimary: true, IsArchivingWAL: true, ObservedAt: tc.observed}
+			g := &gathered{cluster: c, swept: sweep.Snapshot{SweptAt: swept, Interval: interval, Instances: map[string]sweep.Instance{
+				"db-2": {State: tc.state, Since: tc.since, Reading: &r},
+			}}}
+			reading := cnpgstatus.Archiving(c, primaryArchiver(g))
+			if tc.read && (reading.Class != cnpgstatus.ClassOK || primaryArchiverReading(g) == nil) {
+				t.Errorf("archiving %+v, want ok on the last good reading", reading)
+			}
+			if !tc.read && (reading.Class != cnpgstatus.ClassUnknown || reading.Reason != cnpgstatus.ArchivingReasonPrimaryUnread) {
+				t.Errorf("archiving %+v, want unknown PrimaryUnread", reading)
+			}
+			arch := viewmodel.Archiving{Health: health(reading.Class), Reason: reading.Reason}
+			if facts := recoveryFactsOf(g, arch, now); facts.archiverUnread == tc.read {
+				t.Errorf("archiver unread %t, want %t", facts.archiverUnread, !tc.read)
+			}
+		})
+	}
+}

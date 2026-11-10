@@ -280,7 +280,11 @@ screens read it as a backlog until enough sweeps can tell.
 With `ContinuousArchiving` `True` but the archiving instance not read, archiving
 is `unknown` (`PrimaryUnread`), with the time the condition last changed: the
 condition is written only when an `archive_command`'s outcome changes, so on its
-own it does not say that WAL reaches the repository now. A hibernated Cluster
+own it does not say that WAL reaches the repository now. One missed read (a
+timeout, a slow answer) does not flip it: the same pod's reading from the sweep
+before stands, with its own time as provenance, so the bar does not flicker. A
+second miss in a row, or a restarted pod (a new UID has no last reading), is
+unread. A hibernated Cluster
 reads `unknown` (`Hibernated`): no instance runs, and nothing confirms that every
 segment written before hibernation reached the repository. A replica cluster's
 archiver is its designated primary, a standby (`isPrimary` false) that archives
