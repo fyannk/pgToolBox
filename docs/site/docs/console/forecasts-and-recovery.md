@@ -377,7 +377,11 @@ segments, so the bar and the answer always agree:
   Cluster hibernated): the same band, from the newest sweep that read it with
   nothing waiting, else the day before the latest point. Nothing says how long
   the newest archived WAL waited on the primary, so the window is a warning and
-  every answer carries the caveat "the primary's archiver was not read";
+  every answer carries the caveat "the primary's archiver was not read". A
+  hibernated Cluster's window is `unknown` instead: it writes no WAL and runs no
+  archiver, so there is nothing to act on, but nothing confirms that the WAL
+  written before it reached the repository; it stays `unknown`, not amber, for
+  as long as it sleeps;
 - while the archiver is a designated primary (`ArchiveBacklogNotReported`):
   the day before the latest point, with its own reason and caveat, since no
   sweep can show that nothing waited on it;

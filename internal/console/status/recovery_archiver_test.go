@@ -144,6 +144,8 @@ func TestUnreadArchiverIsNotHealthy(t *testing.T) {
 		wantCode   string
 		wantFrom   time.Time
 		wantReason string
+		// wantState is the window's state; warning when empty.
+		wantState string
 	}{
 		{
 			name: "unread, the ring read it empty an hour ago", arch: unread, earlier: []float64{0, 0, 2, -1},
@@ -165,7 +167,10 @@ func TestUnreadArchiverIsNotHealthy(t *testing.T) {
 		},
 		{
 			name: "hibernated", arch: viewmodel.Archiving{Health: viewmodel.HealthUnknown, Reason: cnpgstatus.ArchivingReasonHibernated},
+			// Round 7, DBA P2-4: a hibernated Cluster is unknown, not a
+			// warning that stays amber for as long as it sleeps.
 			wantCode: "recovery.segment.archiverUnread", wantFrom: last.Add(-failureLookback), wantReason: "recovery.reason.archiverHibernated",
+			wantState: string(evidencev1alpha1.Unknown),
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -182,8 +187,12 @@ func TestUnreadArchiverIsNotHealthy(t *testing.T) {
 				t.Fatalf("facts do not say the archiver is unread: %+v", facts)
 			}
 			tl := svc.recoveryTimeline(fx.evidence(), viewmodel.BackupSummary{Archiving: tc.arch}, nil, facts)
-			if tl.State != string(evidencev1alpha1.Warning) || len(tl.Reasons) == 0 || tl.Reasons[0].Code != tc.wantReason {
-				t.Errorf("state %s reasons %+v, want warning %s", tl.State, tl.Reasons, tc.wantReason)
+			wantState := tc.wantState
+			if wantState == "" {
+				wantState = string(evidencev1alpha1.Warning)
+			}
+			if tl.State != wantState || len(tl.Reasons) == 0 || tl.Reasons[0].Code != tc.wantReason {
+				t.Errorf("state %s reasons %+v, want %s %s", tl.State, tl.Reasons, wantState, tc.wantReason)
 			}
 			band := edgeBand(tl, "recovery.segment.archiverUnread", "recovery.segment.archiverUnreadSince")
 			if band == nil || band.Code != tc.wantCode || !band.From.Equal(tc.wantFrom) {

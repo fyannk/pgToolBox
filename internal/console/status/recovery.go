@@ -1085,7 +1085,11 @@ func timelineVerdict(out *viewmodel.RecoveryTimeline, in timelineInput, f timeli
 		out.State = warning
 		setReason(out, say("recovery.reason.archiverNotReported", "the archiving instance is a designated primary, which does not report its archive backlog: how late recent WAL reached the repository is not known, so the newest restore points are uncertain", nil))
 	case f.hibernated:
-		out.State = warning
+		// A hibernated Cluster writes no WAL and runs no archiver: nothing
+		// is going wrong that a warning would ask to act on, and nothing
+		// confirms that the WAL written before it reached the repository.
+		// The newest restore points are unknown until it wakes up.
+		out.State = string(evidencev1alpha1.Unknown)
 		setReason(out, say("recovery.reason.archiverHibernated", "the Cluster is hibernated: whether the WAL written before it reached the repository is not confirmed, so the newest restore points are uncertain", nil))
 	case f.archiverUnread:
 		out.State = warning
