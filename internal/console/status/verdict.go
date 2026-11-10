@@ -56,12 +56,15 @@ func (s *Service) verdict(g *gathered, run *diag.Run) viewmodel.Verdict {
 	var items []viewmodel.Contributor
 	add := func(c viewmodel.Contributor) { items = append(items, c) }
 
-	phase := cnpgstatus.ClassifyPhase(g.minor, g.cluster.Status.Phase)
+	phase := cnpgstatus.ClassifyPhase(g.phaseMinor, g.cluster.Status.Phase)
 	phaseText := g.cluster.Status.Phase
 	if phaseText == "" {
 		phaseText = "not reported"
 	} else if !phase.Known {
 		phaseText += " (not in the CNPG " + string(minorOrNewest(g.minor)) + " table)"
+	}
+	if phase.Reason != "" {
+		phaseText += " (" + phase.Reason + ")"
 	}
 	add(viewmodel.Contributor{ID: "phase", Health: health(phase.Class), Label: "Phase", Detail: phaseText, Provenance: operator("Cluster.status.phase")})
 
@@ -193,7 +196,7 @@ func (s *Service) instanceCounts(g *gathered) viewmodel.InstanceCounts {
 		counts.Health = viewmodel.HealthOK
 	case *counts.Ready == 0 && desired > 0:
 		counts.Health = viewmodel.HealthCritical
-	case cnpgstatus.ClassifyPhase(g.minor, g.cluster.Status.Phase).Class == cnpgstatus.ClassProgressing:
+	case cnpgstatus.ClassifyPhase(g.phaseMinor, g.cluster.Status.Phase).Class == cnpgstatus.ClassProgressing:
 		counts.Health = viewmodel.HealthProgressing
 	default:
 		counts.Health = viewmodel.HealthWarning

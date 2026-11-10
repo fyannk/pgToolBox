@@ -311,3 +311,28 @@ func TestConditionTableShape(t *testing.T) {
 		}
 	}
 }
+
+// TestNamedMinorCapsAnUnsupportedVersion: the console classifies phases
+// with the minor the detected version names, so a newer CloudNativePG
+// without tables is capped instead of read as an undetected version.
+func TestNamedMinorCapsAnUnsupportedVersion(t *testing.T) {
+	for _, tc := range []struct {
+		version string
+		want    Minor
+		class   Class
+	}{
+		{"1.30.1", "1.30", ClassOK},
+		{"v1.32.0", "1.32", ClassWarning},
+		{">=1.30", "1.30", ClassOK},
+		{"", "", ClassOK},
+		{"not-a-version", "", ClassOK},
+	} {
+		got := NamedMinor(tc.version)
+		if got != tc.want {
+			t.Fatalf("NamedMinor(%q) = %q, want %q", tc.version, got, tc.want)
+		}
+		if c := ClassifyPhase(got, cnpgv1.PhaseHealthy).Class; c != tc.class {
+			t.Fatalf("ClassifyPhase(NamedMinor(%q), healthy) = %v, want %v", tc.version, c, tc.class)
+		}
+	}
+}

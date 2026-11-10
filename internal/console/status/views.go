@@ -175,7 +175,7 @@ func ref(c *cnpgv1.Cluster) viewmodel.ClusterRef {
 }
 
 func (s *Service) phase(g *gathered) viewmodel.Phase {
-	reading := cnpgstatus.ClassifyPhase(g.minor, g.cluster.Status.Phase)
+	reading := cnpgstatus.ClassifyPhase(g.phaseMinor, g.cluster.Status.Phase)
 	return viewmodel.Phase{
 		Text:       bound(g.cluster.Status.Phase),
 		Reason:     bound(g.cluster.Status.PhaseReason),
@@ -430,7 +430,7 @@ var waitCauses = map[string]bool{
 }
 
 func waitingFor(g *gathered, warnings []viewmodel.EventRow) *viewmodel.OperatorWaiting {
-	phase := cnpgstatus.ClassifyPhase(g.minor, g.cluster.Status.Phase)
+	phase := cnpgstatus.ClassifyPhase(g.phaseMinor, g.cluster.Status.Phase)
 	if phase.Class == cnpgstatus.ClassOK {
 		return nil
 	}
