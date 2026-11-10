@@ -134,6 +134,25 @@ helm_drill_guard="charts/pgtoolbox/templates/operator/restoredrill-guard.yaml"
   grep -v '^#' config/admission/restore_drill_guard.yaml
   echo '{{- end }}'
 } > "${helm_drill_guard}"
+# 2e. The operator chart's admission policy (image and workload-identity
+#     allow-lists, Secret references, PgAdmin credentials) as a kustomize
+#     component, config/components/admission: the chart is the source (the
+#     allow-lists are values), rendered with its defaults; the release-specific
+#     labels are dropped so the copy does not change with the version. OLM
+#     cannot carry it.
+admission_component="config/components/admission/admission_policy.yaml"
+{
+  echo '# Generated from charts/pgtoolbox/templates/operator/admissionpolicy.yaml (default'
+  echo '# values) by hack/sync-manifests.sh; do not edit. To change the allow-lists, patch'
+  echo '# spec.variables in your overlay, or render the chart with your values.'
+  helm template pgtoolbox charts/pgtoolbox --namespace pgtoolbox --set operator.enabled=true \
+      --show-only templates/operator/admissionpolicy.yaml \
+    | sed -e '/^# Source: /d' \
+          -e '/^    app.kubernetes.io\/instance: /d' \
+          -e '/^    app.kubernetes.io\/version: /d' \
+          -e '/^    app.kubernetes.io\/managed-by: /d' \
+          -e '/^    helm.sh\/chart: /d'
+} > "${admission_component}"
 helm_console_roles="charts/pgtoolbox/templates/operator/console-clusterroles.yaml"
 {
   echo '{{- if .Values.operator.enabled }}'

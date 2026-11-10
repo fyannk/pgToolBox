@@ -17,6 +17,7 @@ The OLM bundle installs **the operator only**. The console is installed from the
 | Owned CRDs | `pgadmins`, `pgadminaccesses`, `evidenceagents`, `pgtoolboxconsoles` and `pgaccessrequests` (all `.pgtoolbox.fyannk.dev`, `v1alpha1`) |
 | Suggested namespace | `pgtoolbox`, labelled Pod Security `restricted` (enforce, audit, warn) |
 | Also ships | the `pgtoolbox-console-viewer`, `pgtoolbox-console-operator`, `pgtoolbox-console-approver` and metrics-reader ClusterRoles, a PodDisruptionBudget |
+| Does not ship | the admission policies (OLM cannot install them): [apply them yourself](#admission-policies) |
 
 The bundle image is `ghcr.io/fyannk/pgtoolbox-bundle:<version>` and
 the file-based catalog image `ghcr.io/fyannk/pgtoolbox-catalog:<version>`.
@@ -27,6 +28,42 @@ subscribe to package `pgtoolbox`.
 The CSV lists every image the operator can run in `relatedImages`, so
 `oc mirror` and `oc adm catalog mirror` mirror them for a disconnected cluster.
 Check the list against the [images the operator uses](../operator/images.md).
+
+## Admission policies
+
+:::warning The bundle carries no admission policy
+OLM cannot install a `ValidatingAdmissionPolicy`, so an OLM install has **none** of
+the checks the operator chart applies by default:
+
+- only the listed users and groups may set `spec.image` on a `PgAdmin` or an
+  `EvidenceAgent`, or `spec.workloadIdentity` on an `EvidenceAgent`;
+- whoever creates or edits a `PgToolBoxConsole`, a `PgAdmin` or an `EvidenceAgent`
+  must be able to `get` every Secret it references (again when the place a kept
+  Secret is sent changes);
+- whoever makes a `PgAdmin` offer the credentials of Clusters of its namespace must
+  be able to `get` the namespace's Secrets;
+- the [restore-drill delete guard](../console/restore-drills.md#the-delete-guard).
+
+Without them, grant `create`/`update` on `pgtoolboxconsoles`, `pgadmins` and
+`evidenceagents` only to people you would trust with every Secret of their
+namespace. (OLM's own `-edit` role, aggregated to `edit`, grants exactly that, so on
+OLM every `edit` user of a namespace is such a person.)
+:::
+
+Apply them yourself, once per cluster, after the operator. Either from the chart
+(set `operator.admissionPolicy.imageOverride` and `workloadIdentity` to your
+allow-lists):
+
+```bash
+helm template pgtoolbox charts/pgtoolbox --set operator.enabled=true \
+  --show-only templates/operator/admissionpolicy.yaml \
+  --show-only templates/operator/restoredrill-guard.yaml \
+  --set operator.restoreDrillGuard.enabled=true | kubectl apply -f -
+```
+
+or from the kustomize copies, rendered from the chart's defaults (allow-lists:
+the group `system:masters`): `kubectl apply -f config/components/admission/admission_policy.yaml`
+and `kubectl apply -k config/admission`. See [security](../security.md#secret-references-need-get).
 
 ## Who can open pgAdmin
 

@@ -65,15 +65,40 @@ ClusterRoleBinding it created for the evidence agents; delete them by name when 
 remove pgToolBox for good.
 :::
 
+### The admission policy
+
 `config/default` does **not** apply the operator chart's admission policy (the
 `ValidatingAdmissionPolicy` behind `operator.admissionPolicy.enabled`, on by default in
-the chart). That policy is the only check that whoever edits a `PgToolBoxConsole` or a
-`PgAdmin` may `get` the Secrets it references, and that only the allowed users set
-`spec.image` or `spec.workloadIdentity`. Render it from the chart and apply it, or grant
-`create`/`update` on those kinds only to people trusted with every Secret of their
-namespace (see [security](../security.md)):
+the chart). That policy is the only check that whoever edits a `PgToolBoxConsole`, a
+`PgAdmin` or an `EvidenceAgent` may `get` the Secrets it references, that whoever makes
+a `PgAdmin` offer Cluster credentials may `get` the namespace's Secrets, and that only
+the allowed users set `spec.image` or `spec.workloadIdentity` (see
+[security](../security.md#secret-references-need-get)). Opt in with the component
+`config/components/admission`, from an overlay:
+
+```yaml
+# kustomization.yaml of your overlay
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+- ../../config/default
+components:
+- ../../config/components/admission
+```
+
+The component is the chart's policy rendered with the chart's defaults (`make
+manifests` regenerates it, `make validate-packaging` compares it with the chart):
+the allow-lists of `spec.image` and `spec.workloadIdentity` hold the group
+`system:masters` only. To list your own users and groups, patch the variables
+`allowedUsers`, `allowedGroups`, `identityUsers` and `identityGroups` of the
+`ValidatingAdmissionPolicy` `pgtoolbox-image-override` in your overlay (each is a
+CEL list literal, for example `'["platform-team"]'`), or render the chart with your
+values instead:
 
 ```bash
 helm template pgtoolbox charts/pgtoolbox --set operator.enabled=true \
   --show-only templates/operator/admissionpolicy.yaml | kubectl apply -f -
 ```
+
+Without it, grant `create`/`update` on those kinds only to people trusted with every
+Secret of their namespace.

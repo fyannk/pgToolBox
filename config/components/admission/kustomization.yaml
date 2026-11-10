@@ -1,0 +1,17 @@
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+# The operator chart's ValidatingAdmissionPolicy and its binding (opt in):
+# who may set spec.image and spec.workloadIdentity, get on every Secret a
+# PgToolBoxConsole, PgAdmin or EvidenceAgent references, and get on the
+# namespace's Secrets for a PgAdmin that offers Cluster credentials.
+# admission_policy.yaml is rendered from the chart with its default values by
+# make manifests (hack/sync-manifests.sh); make validate-packaging compares the
+# two. Use it from an overlay of config/default:
+#
+#   resources: [../../config/default]
+#   components: [../../config/components/admission]
+#
+# See docs/site/docs/install/kustomize.md.
+resources:
+- admission_policy.yaml
