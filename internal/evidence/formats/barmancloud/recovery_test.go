@@ -19,6 +19,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"slices"
@@ -39,6 +40,9 @@ import (
 // validHistory is the history of timeline 3 after two promotions, each in
 // the middle of a segment (switch segments 2 and 4), as CNPG failovers are.
 const validHistory = "1\t0/020000A0\tfirst branch\n2\t0/040000A0\tsecond branch\n"
+
+// validHistory2 is timeline 2's own history, consistent with validHistory.
+const validHistory2 = "1\t0/020000A0\tfirst branch\n"
 
 func TestTimelineHistoryParserUsesExactPostgreSQLSwitchpoints(t *testing.T) {
 	t.Parallel()
@@ -175,8 +179,12 @@ func TestRecoveryCoverageTraversesValidHistoryAndStopsAtRelevantGaps(t *testing.
 	now := time.Date(2026, 7, 27, 12, 0, 0, 0, time.UTC)
 	backup := recoveryBackup(now, 1, 1)
 	wal := recoveryWAL()
-	reader := historyFake(validHistory)
-	catalog := AnalyzeRecovery(context.Background(), reader, []Backup{backup}, WALCatalog{Servers: []ServerWAL{wal}}, []HistoryObject{{Key: "alpha/wals/00000003.history", Server: "alpha", Name: "00000003.history", Compression: "none", Timeline: 3}}, false, RecoveryOptions{})
+	reader := historyFiles(map[string]string{"alpha/wals/00000002.history": validHistory2, "alpha/wals/00000003.history": validHistory})
+	objects := []HistoryObject{
+		{Key: "alpha/wals/00000002.history", Server: "alpha", Name: "00000002.history", Compression: "none", Timeline: 2},
+		{Key: "alpha/wals/00000003.history", Server: "alpha", Name: "00000003.history", Compression: "none", Timeline: 3},
+	}
+	catalog := AnalyzeRecovery(context.Background(), reader, []Backup{backup}, WALCatalog{Servers: []ServerWAL{wal}}, objects, false, RecoveryOptions{})
 	server := catalog.Servers[0]
 	if server.TimelineState != evidence.Healthy || server.CoverageState != evidence.Warning || len(server.Paths) != 3 {
 		t.Fatalf("valid graph = %#v", server)
@@ -194,7 +202,7 @@ func TestRecoveryCoverageTraversesValidHistoryAndStopsAtRelevantGaps(t *testing.
 		t.Fatalf("candidate path = %#v", path)
 	}
 	wal.Gaps[0].Status = GapConfirmed
-	catalog = AnalyzeRecovery(context.Background(), reader, []Backup{backup}, WALCatalog{Servers: []ServerWAL{wal}}, []HistoryObject{{Key: "alpha/wals/00000003.history", Server: "alpha", Name: "00000003.history", Compression: "none", Timeline: 3}}, false, RecoveryOptions{})
+	catalog = AnalyzeRecovery(context.Background(), reader, []Backup{backup}, WALCatalog{Servers: []ServerWAL{wal}}, objects, false, RecoveryOptions{})
 	path = findPath(t, catalog.Servers[0].Paths, 3)
 	if path.State != evidence.Unhealthy || path.Stop != CoverageGapLimited {
 		t.Fatalf("confirmed path = %#v", path)
@@ -492,6 +500,18 @@ func historyFake(content string) store.Reader {
 	}}
 }
 
+// historyFiles serves each history key its own content; any other key is
+// not found.
+func historyFiles(files map[string]string) store.Reader {
+	return &storetest.Fake{OpenFunc: func(_ context.Context, request store.OpenRequest) (io.ReadCloser, error) {
+		content, ok := files[request.Key]
+		if !ok {
+			return nil, errors.New("not found")
+		}
+		return io.NopCloser(bytes.NewReader([]byte(content))), nil
+	}}
+}
+
 func findPath(t *testing.T, paths []RecoveryPath, timeline uint32) RecoveryPath {
 	t.Helper()
 	for _, path := range paths {
@@ -624,5 +644,104 @@ func TestOwnTimelinePathIsOffTargetWhenTheNewestTimelineLeftTheBackupBehind(t *t
 	catalog := RecoveryCatalog{Servers: []ServerRecovery{{Server: "alpha", TimelineState: evidence.Healthy, CoverageState: evidence.Healthy, Retention: RetentionSummary{State: evidence.Healthy}, Paths: []RecoveryPath{{Server: "alpha", BackupID: "b", TargetTimeline: 1, State: evidence.Healthy, Stop: CoverageFrontier, OffTarget: true}}}}}
 	if err := catalog.Validate(); err == nil {
 		t.Fatal("healthy off-target path accepted")
+	}
+}
+
+// TestMissingMiddleHistoryIsNotHealthyCoverage is the round-3 reproduction
+// (P1-3): with 00000003.history present and 00000002.history absent,
+// PostgreSQL's 'latest' probe stops at timeline 1, so no path to timeline 2
+// or 3 is a default restore and none may read as healthy.
+func TestMissingMiddleHistoryIsNotHealthyCoverage(t *testing.T) {
+	t.Parallel()
+	backup := recoveryBackup(time.Now().UTC(), 1, 1)
+	backup.EndLSN = "0/1000100"
+	wal := ServerWAL{Server: "alpha", State: evidence.Healthy, PostgreSQLVersion: 180000, SegmentSize: 16 << 20, Ranges: []WALRange{walRange(1, 1, 1), walRange(2, 2, 3), walRange(3, 4, 6)}}
+	objects := make([]HistoryObject, 0, 2)
+	objects = append(objects, HistoryObject{Key: "alpha/wals/00000003.history", Server: "alpha", Name: "00000003.history", Compression: "none", Timeline: 3})
+	catalog := AnalyzeRecovery(context.Background(), historyFake("1\t0/2000050\tfirst\n2\t0/4000050\tsecond\n"), []Backup{backup}, WALCatalog{Servers: []ServerWAL{wal}}, objects, false, RecoveryOptions{})
+	if err := catalog.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	server := catalog.Servers[0]
+	if server.TimelineState != evidence.Unknown || !strings.Contains(server.TimelineReason, "history 2 is missing") {
+		t.Fatalf("timeline = %s %q", server.TimelineState, server.TimelineReason)
+	}
+	if server.CoverageState == evidence.Healthy {
+		t.Fatalf("coverage = %s %q", server.CoverageState, server.CoverageReason)
+	}
+	if index := slices.IndexFunc(server.Histories, func(h TimelineHistory) bool { return h.Timeline == 2 }); index < 0 || server.Histories[index].State != evidence.Unknown {
+		t.Fatalf("no missing-history row for timeline 2: %+v", server.Histories)
+	}
+	for _, path := range server.Paths {
+		if path.State == evidence.Healthy || path.State == evidence.Warning {
+			t.Errorf("path to timeline %d is %s: %q", path.TargetTimeline, path.State, path.Reason)
+		}
+	}
+	if path := findPath(t, server.Paths, 3); !strings.Contains(path.Reason, "needs an explicit targetTLI; history 2 is missing") {
+		t.Fatalf("path to timeline 3 reason %q", path.Reason)
+	}
+	// The same archive with the middle history: every path is healthy.
+	files := historyFiles(map[string]string{"alpha/wals/00000002.history": "1\t0/2000050\tfirst\n", "alpha/wals/00000003.history": "1\t0/2000050\tfirst\n2\t0/4000050\tsecond\n"})
+	objects = append(objects, HistoryObject{Key: "alpha/wals/00000002.history", Server: "alpha", Name: "00000002.history", Compression: "none", Timeline: 2})
+	catalog = AnalyzeRecovery(context.Background(), files, []Backup{backup}, WALCatalog{Servers: []ServerWAL{wal}}, objects, false, RecoveryOptions{})
+	if server := catalog.Servers[0]; server.TimelineState != evidence.Healthy || server.CoverageState != evidence.Healthy {
+		t.Fatalf("complete archive: timeline %s %q, coverage %s %q", server.TimelineState, server.TimelineReason, server.CoverageState, server.CoverageReason)
+	}
+}
+
+// TestUnreadableNewestHistoryNeverStrengthensTheOwnPath is the round-3
+// reproduction (P1-4): timeline 2 branched one byte before the backup
+// ended and has no WAL yet. With its history valid the own path is an
+// off-target warning; a history that fails to read, is malformed, is over
+// the bound, or a truncated listing, must not turn it healthy.
+func TestUnreadableNewestHistoryNeverStrengthensTheOwnPath(t *testing.T) {
+	t.Parallel()
+	objects := []HistoryObject{{Key: "alpha/wals/00000002.history", Server: "alpha", Name: "00000002.history", Compression: "none", Timeline: 2}}
+	failing := &storetest.Fake{OpenFunc: func(context.Context, store.OpenRequest) (io.ReadCloser, error) {
+		return nil, errors.New("503 service unavailable")
+	}}
+	for _, test := range []struct {
+		name      string
+		reader    store.Reader
+		truncated bool
+		state     evidence.State
+	}{
+		{name: "valid history", reader: historyFake("1\t0/3000050\tpromoted\n"), state: evidence.Warning},
+		{name: "history read fails", reader: failing, state: evidence.Unknown},
+		{name: "history malformed", reader: historyFake("not a history"), state: evidence.Unknown},
+		{name: "history over the size bound", reader: historyFake(strings.Repeat("#", int(MaxHistoryObjectBytes)+1)), state: evidence.Unknown},
+		{name: "history listing truncated", reader: historyFake("1\t0/3000050\tpromoted\n"), truncated: true, state: evidence.Unknown},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			backup := recoveryBackup(time.Now().UTC(), 1, 3)
+			backup.EndLSN = "0/3000051"
+			wal := ServerWAL{Server: "alpha", State: evidence.Healthy, PostgreSQLVersion: 180000, SegmentSize: 16 << 20, Ranges: []WALRange{walRange(1, 1, 3)}}
+			catalog := AnalyzeRecovery(context.Background(), test.reader, []Backup{backup}, WALCatalog{Servers: []ServerWAL{wal}}, objects, test.truncated, RecoveryOptions{})
+			if err := catalog.Validate(); err != nil {
+				t.Fatal(err)
+			}
+			server := catalog.Servers[0]
+			own := findPath(t, server.Paths, 1)
+			if own.State != test.state || server.CoverageState == evidence.Healthy {
+				t.Fatalf("own path %s %q, coverage %s, want %s", own.State, own.Reason, server.CoverageState, test.state)
+			}
+		})
+	}
+}
+
+// TestOffTargetReasonSurvivesAnUnhealthyPath: a path that is already not
+// healthy keeps its own reason and gains the off-target one, which names
+// the timeline a restore must ask for.
+func TestOffTargetReasonSurvivesAnUnhealthyPath(t *testing.T) {
+	t.Parallel()
+	backup := recoveryBackup(time.Now().UTC(), 1, 3)
+	backup.EndLSN = "0/3000051"
+	wal := ServerWAL{Server: "alpha", State: evidence.Healthy, PostgreSQLVersion: 180000, SegmentSize: 16 << 20, Ranges: []WALRange{walRange(1, 1, 2), walRange(2, 3, 5)}}
+	objects := []HistoryObject{{Key: "alpha/wals/00000002.history", Server: "alpha", Name: "00000002.history", Compression: "none", Timeline: 2}}
+	catalog := AnalyzeRecovery(context.Background(), historyFake("1\t0/3000050\tpromoted\n"), []Backup{backup}, WALCatalog{Servers: []ServerWAL{wal}}, objects, false, RecoveryOptions{})
+	own := findPath(t, catalog.Servers[0].Paths, 1)
+	if !own.OffTarget || own.State == evidence.Healthy || !strings.Contains(own.Reason, "consistency WAL") || !strings.Contains(own.Reason, "a restore must name timeline 1") {
+		t.Fatalf("own path %s off-target %v %q", own.State, own.OffTarget, own.Reason)
 	}
 }

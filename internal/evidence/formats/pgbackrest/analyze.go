@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/fyannk/pgToolBox/internal/evidence/evidence"
+	pgtimeline "github.com/fyannk/pgToolBox/internal/evidence/formats/timeline"
 	"github.com/fyannk/pgToolBox/internal/evidence/store"
 	evidencev1alpha1 "github.com/fyannk/pgToolBox/pkg/evidence/v1alpha1"
 )
@@ -737,14 +738,35 @@ func evaluatePath(backup Backup, wal ArchiveWAL, histories []TimelineHistory, hi
 	if errStart != nil || errStop != nil || stopTimeline != startTimeline || stopPosition < startPosition {
 		return unknownPath("the backup's WAL range is not on one timeline")
 	}
-	target := startTimeline
+	// The target is the timeline a default restore follows
+	// (recovery_target_timeline 'latest'): PostgreSQL's probe of consecutive
+	// history files from the backup's timeline, shared with Barman Cloud. A
+	// newer timeline that probe cannot be shown to reach leaves the path
+	// unknown.
+	archive := pgtimeline.NewArchive(historyTruncated)
+	archive.Observe(startTimeline)
 	for _, value := range wal.Ranges {
-		target = max(target, value.Timeline)
+		archive.Observe(value.Timeline)
 	}
 	for _, history := range histories {
-		target = max(target, history.Timeline)
+		status := pgtimeline.Invalid
+		if history.State == evidence.Healthy {
+			status = pgtimeline.Valid
+		}
+		archive.History(history.Timeline, status)
 	}
+	target := archive.Newest()
 	path := RecoveryPath{TargetTimeline: target, StartWAL: backup.ArchiveStart, ConsistentWAL: backup.ArchiveStop}
+	if resolution := archive.Latest(startTimeline); !resolution.Complete() {
+		switch {
+		case historyTruncated:
+			return withTarget(unknownPath("timeline history files were not all read"), path)
+		case resolution.StopStatus == pgtimeline.Invalid:
+			return withTarget(unknownPath(fmt.Sprintf("the history of timeline %d is missing or unreadable", resolution.Stop)), path)
+		default:
+			return withTarget(unknownPath(fmt.Sprintf("the history of timeline %d is missing: %s", resolution.Stop, resolution.OwnReason())), path)
+		}
+	}
 	// childEmpty: the target timeline is known only from its history file.
 	childEmpty := target != startTimeline && !slices.ContainsFunc(wal.Ranges, func(value WALRange) bool { return value.Timeline == target })
 	type leg struct {
@@ -754,13 +776,8 @@ func evaluatePath(backup Backup, wal ArchiveWAL, histories []TimelineHistory, hi
 	legs := []leg{{timeline: target, last: math.MaxUint64}}
 	offTarget := ""
 	if target != startTimeline {
-		if historyTruncated {
-			return withTarget(unknownPath("timeline history files were not all read"), path)
-		}
-		index := slices.IndexFunc(histories, func(value TimelineHistory) bool { return value.Timeline == target })
-		if index < 0 || histories[index].State != evidence.Healthy {
-			return withTarget(unknownPath(fmt.Sprintf("the history of timeline %d is missing or unreadable", target)), path)
-		}
+		// The resolution is complete: the target's history is valid.
+		index := slices.IndexFunc(histories, func(value TimelineHistory) bool { return value.Timeline == target && value.State == evidence.Healthy })
 		edges := histories[index].Edges
 		first := slices.IndexFunc(edges, func(edge HistoryEdge) bool { return edge.Parent == startTimeline })
 		// A backup can follow the child when its stop LSN is not after the
@@ -823,7 +840,7 @@ func evaluatePath(backup Backup, wal ArchiveWAL, histories []TimelineHistory, hi
 			path.Stop = gapStop(path.State)
 			path.Reason = fmt.Sprintf("segment %s is not archived", mustWALName(current.timeline, position, wal.SegmentSize))
 			path.Consistent = position > stopPosition
-			return inconsistentPath(path)
+			return markOffTarget(inconsistentPath(path), offTarget, startTimeline)
 		}
 		path.FrontierTimeline, path.FrontierPosition, path.FrontierWAL, path.FrontierReceipt = current.timeline, run.End, run.Last, run.EndReceipt
 		if current.last == math.MaxUint64 {
@@ -840,7 +857,7 @@ func evaluatePath(backup Backup, wal ArchiveWAL, histories []TimelineHistory, hi
 			path.Stop = gapStop(path.State)
 			path.Reason = fmt.Sprintf("segment %s is not archived; the backup recovers only to %s on timeline %d", mustWALName(current.timeline, run.End+1, wal.SegmentSize), run.Last, current.timeline)
 			path.Consistent = run.End >= stopPosition
-			return inconsistentPath(path)
+			return markOffTarget(inconsistentPath(path), offTarget, startTimeline)
 		}
 		// Recovery leaves this timeline at the switch segment: whatever the
 		// parent holds from S on (a .partial, or another branch) is not read.
@@ -854,7 +871,7 @@ func evaluatePath(backup Backup, wal ArchiveWAL, histories []TimelineHistory, hi
 	path.Consistent = path.FrontierPosition >= stopPosition
 	if !path.Consistent {
 		path.Stop, path.State, path.Reason = CoverageGapLimited, evidence.Unhealthy, "WAL to consistency is not archived"
-		return path
+		return markOffTarget(path, offTarget, startTimeline)
 	}
 	path.Stop = CoverageFrontier
 	path.State, path.Reason = evidence.Healthy, "WAL is contiguous from the backup to the newest segment of the target timeline"
@@ -866,13 +883,24 @@ func evaluatePath(backup Backup, wal ArchiveWAL, histories []TimelineHistory, hi
 		}
 		path.Stop = gapStop(path.State)
 	}
-	if offTarget != "" {
-		path.OffTarget = true
-		path.Reason = offTarget + "; the backup recovers only on its own timeline, which a restore must name"
-		if path.State == evidence.Healthy {
-			path.State = evidence.Warning
-		}
+	return markOffTarget(path, offTarget, startTimeline)
+}
+
+// markOffTarget flags a path whose backup cannot reach the target timeline
+// (offTarget says why; empty when it can). The path is then at most a
+// warning, and a path that is already not healthy keeps its own reason
+// beside the off-target one, as barmancloud's markOffTarget does.
+func markOffTarget(path RecoveryPath, offTarget string, startTimeline uint32) RecoveryPath {
+	if offTarget == "" {
+		return path
 	}
+	path.OffTarget = true
+	if path.State == evidence.Healthy {
+		path.State = evidence.Warning
+		path.Reason = offTarget + "; the backup recovers only on its own timeline, which a restore must name"
+		return path
+	}
+	path.Reason = pgtimeline.Join(path.Reason, fmt.Sprintf("%s; a restore must name timeline %d", offTarget, startTimeline))
 	return path
 }
 
