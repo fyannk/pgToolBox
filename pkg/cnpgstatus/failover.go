@@ -555,6 +555,12 @@ func rehearsalLoss(out *Rehearsal, in RehearsalInput, c RehearsalCandidate, prim
 		}
 	}
 	if c.BehindBytes != nil && *c.BehindBytes == 0 {
+		if in.SweepStale != "" {
+			// Caught up at a sweep too old to rest on: the distance now
+			// is not known, whatever it was then.
+			out.DataLossText += " The replica had received everything at the last sweep, but " + in.SweepStale + ": whether it still has is not known."
+			return ClassUnknown
+		}
 		return ClassOK
 	}
 	return ClassWarning
