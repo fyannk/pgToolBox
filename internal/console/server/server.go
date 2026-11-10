@@ -324,7 +324,8 @@ func (s *Server) serve(srv *http.Server, ln net.Listener) error {
 }
 
 // endOnDrain ends the long-lived streams (the event stream, pod log
-// follows) when the drain begins, since the drain would otherwise wait
+// follows) when drain ends, as the drain begins (after the shutdown
+// delay, during which they keep running), since it would otherwise wait
 // for them until its timeout; every other request keeps its context
 // until it completes or the drain gives up.
 func endOnDrain(drain context.Context, h http.Handler) http.Handler {
@@ -346,14 +347,19 @@ func endOnDrain(drain context.Context, h http.Handler) http.Handler {
 // Serve is Run on existing listeners; probe may be nil.
 //
 // The shutdown sequence: ctx ends; /readyz answers not ready
-// (SetDraining) while the listener keeps serving for ShutdownDelay; the
-// streams end; Shutdown stops accepting and waits up to ShutdownTimeout
+// (SetDraining) while the listener keeps serving, streams included, for
+// ShutdownDelay; the streams end; Shutdown stops accepting and waits up to ShutdownTimeout
 // for the requests in flight, whose contexts are cancelled only after
 // it returns.
 func (s *Server) Serve(ctx context.Context, ln, probe net.Listener) error {
 	reqCtx, cancelRequests := context.WithCancel(context.WithoutCancel(ctx))
 	defer cancelRequests()
-	srv := s.newHTTPServer(reqCtx, endOnDrain(ctx, s.handler))
+	// The streams end when the drain begins, after the delay: ending them
+	// at the signal would cut every viewer off while this replica still
+	// receives traffic, and their reconnects would land here again.
+	drain, beginDrain := context.WithCancel(reqCtx)
+	defer beginDrain()
+	srv := s.newHTTPServer(reqCtx, endOnDrain(drain, s.handler))
 	errc := make(chan error, 2)
 	go func() { errc <- s.serve(srv, ln) }()
 	var psrv *http.Server
@@ -387,6 +393,7 @@ func (s *Server) Serve(ctx context.Context, ln, probe net.Listener) error {
 			s.o.Log.Warn("listener ended during the shutdown delay", "error", err)
 		}
 	}
+	beginDrain()
 	if s.o.Broker != nil {
 		s.o.Broker.Close()
 	}
