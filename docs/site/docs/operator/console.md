@@ -304,8 +304,9 @@ trusted.
   ```
 
   Without `from` an Ingress or a Gateway has no policy and the console ignores
-  `X-Forwarded-For`: every user behind the controller shares its address, hence
-  one sign-in budget. `enabled: true` without `from` is refused for ingress and
+  `X-Forwarded-For`: every user behind the controller shares its address, so the
+  console charges no per-address sign-in budget and only its per-replica bounds
+  apply. `enabled: true` without `from` is refused for ingress and
   gateway. Each peer needs a `podSelector`, a `namespaceSelector` or an
   `ipBlock` (alone in its peer, a CIDR whose `except` entries lie inside it):
   the CRD refuses the rest, which the API server would refuse in the policy.
@@ -358,12 +359,16 @@ trusted.
   peers the console believes.
 - Sign-in budgets follow the trust. With CIDRs (rows with `0.0.0.0/0,::/0` or
   `trustedProxy.cidrs`) each client keeps its own: ten OAuth callbacks and twenty
-  pasted tokens a minute per address, under a per-replica bound of 20 a second
-  (burst 40) per path. With hops and no CIDRs (`ExposureOpen`) every client has
-  the proxy's address, so the console charges no per-address budget: callbacks
-  are single-use and share the per-replica bound, pasted tokens have a budget per
-  token and the same bound, and the audit log names the proxy instead of the
-  client ([rate limits](../console/authentication.md#sessions)).
+  pasted tokens a minute per address, under per-replica bounds sized to protect
+  the API server and the IdP (100 code exchanges and 100 reviews of unknown
+  tokens a second). With hops and no CIDRs (`ExposureOpen`), or with no hops
+  behind a public URL (a clusterIP exposure behind an Ingress of your own),
+  every client may have the proxy's address, so the console charges no
+  per-address budget: callbacks are single-use and share the per-replica bounds,
+  pasted tokens have a budget per token and the same bounds, and the audit log
+  names the proxy instead of the client. A flood from one sender then refuses
+  new sign-ins only above those bounds
+  ([rate limits](../console/authentication.md#sessions)).
 
 ## Not in the custom resource
 
