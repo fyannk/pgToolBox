@@ -287,7 +287,8 @@ func evidenceTimeline(out *viewmodel.RecoveryTimeline, in timelineInput) {
 	out.TargetTimeline = target
 	spans, undrawn := recoverySpans(out, in, target)
 	if len(spans) == 0 {
-		out.State, out.Reason = string(evidencev1alpha1.Unknown), "no recovery path reaches its base backup's consistency point: the evidence cannot place a restore point"
+		out.State, out.Reason = string(evidencev1alpha1.Unknown), orDefault(in.rec.CoverageReason,
+			"no recovery path reaches its base backup's consistency point: the evidence cannot place a restore point")
 		out.Reason = joinReason(out.Reason, in.stale)
 		return
 	}

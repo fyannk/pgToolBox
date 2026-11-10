@@ -91,5 +91,11 @@ OpenShift.
   Secrets. A kustomize component (`config/components/admission`) ships the same
   policies; the OLM bundle has none, as its page says. On OpenShift, pgAdmin's
   OAuth proxy sessions last one hour.
+- **Recovery evidence follows `recovery_target_timeline 'latest'`** as PostgreSQL
+  resolves it, in both formats: a missing middle history file, or an unreadable
+  newest one, no longer reads as healthy coverage, and an off-target path names
+  the timeline a restore must ask for. Snapshots carry `producer.features`; the
+  console takes no coverage from an agent without `recovery-timeline-latest`, or
+  whose timeline evidence is not healthy.
 
 [0.1.0]: https://github.com/fyannk/pgToolBox/releases/tag/v0.1.0

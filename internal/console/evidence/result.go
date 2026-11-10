@@ -153,6 +153,10 @@ type Recovery struct {
 	// good ones, of an earlier publication; StaleReason says why.
 	Stale       bool
 	StaleReason string
+	// CoverageReason is the agent's own coverage roll-up reason, set when
+	// that roll-up is not healthy: it says why no path places a restore
+	// point better than the console can from the paths alone.
+	CoverageReason string
 }
 
 // RecoveryPath is one backup's observed coverage toward a timeline.

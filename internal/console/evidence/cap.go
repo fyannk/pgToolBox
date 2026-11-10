@@ -47,6 +47,9 @@ func capRecovery(snapshot *evidencev1alpha1.RepositoryEvidenceSnapshot, rec Reco
 	if rec.State != RecoveryAvailable {
 		return rec
 	}
+	if coverage := snapshotCoverage(snapshot); coverage.State != evidencev1alpha1.Healthy {
+		rec.CoverageReason = boundedReason(coverage.Reason.Message, "")
+	}
 	reason, short := "", ""
 	if !snapshot.Producer.Has(evidencev1alpha1.FeatureRecoveryTimelineLatest) {
 		reason, short = reasonProducerPredatesTimelineLatest, "the agent predates "+string(evidencev1alpha1.FeatureRecoveryTimelineLatest)
@@ -88,6 +91,18 @@ func snapshotTimeline(snapshot *evidencev1alpha1.RepositoryEvidenceSnapshot) evi
 		return snapshot.Details.BarmanCloud.Timeline
 	case snapshot.Details.PGBackRest != nil:
 		return snapshot.Details.PGBackRest.Timeline
+	}
+	return evidencev1alpha1.StateReason{State: evidencev1alpha1.Unknown}
+}
+
+// snapshotCoverage is the publication's coverage roll-up, by format.
+func snapshotCoverage(snapshot *evidencev1alpha1.RepositoryEvidenceSnapshot) evidencev1alpha1.StateReason {
+	switch {
+	case snapshot.Details.Unknown():
+	case snapshot.Details.BarmanCloud != nil:
+		return snapshot.Details.BarmanCloud.Coverage
+	case snapshot.Details.PGBackRest != nil:
+		return snapshot.Details.PGBackRest.Coverage
 	}
 	return evidencev1alpha1.StateReason{State: evidencev1alpha1.Unknown}
 }

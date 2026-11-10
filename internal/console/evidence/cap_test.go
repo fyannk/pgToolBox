@@ -118,6 +118,22 @@ func TestCapRecovery(t *testing.T) {
 	}
 }
 
+// TestCapRecoveryCarriesTheCoverageReason: when the agent's coverage
+// roll-up is not healthy, its reason reaches the read model, which says it
+// instead of a generic "no path reaches consistency".
+func TestCapRecoveryCarriesTheCoverageReason(t *testing.T) {
+	t.Parallel()
+	snapshot := fixtureSnapshot(t)
+	if got := capRecovery(&snapshot, Recovery{State: RecoveryAvailable, Paths: capFixturePaths()}); snapshot.Details.BarmanCloud.Coverage.State == evidencev1alpha1.Healthy && got.CoverageReason != "" {
+		t.Fatalf("a healthy coverage carried a reason: %q", got.CoverageReason)
+	}
+	want := "no backup on or before the newest timeline's branch point"
+	snapshot.Details.BarmanCloud.Coverage = evidencev1alpha1.StateReason{State: evidencev1alpha1.Unknown, Reason: evidencev1alpha1.Reason{Code: "coverage-unknown", Message: want}}
+	if got := capRecovery(&snapshot, Recovery{State: RecoveryAvailable, Paths: capFixturePaths()}); got.CoverageReason != want {
+		t.Fatalf("coverage reason %q, want %q", got.CoverageReason, want)
+	}
+}
+
 // TestRunnerCapsRecoveryOfAnOlderAgent: the cap is applied at ingest, so
 // the read model receives an uncertain Recovery from an agent that does not
 // declare recovery-timeline-latest.
