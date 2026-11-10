@@ -102,6 +102,15 @@ func TestPgAdminCEL(t *testing.T) {
 		{name: "pooler endpoint", mutate: func(s, _ map[string]any) { s["endpoints"] = []any{"rw", "pooler:orders-pooler"} }},
 		{name: "unknown endpoint", mutate: func(s, _ map[string]any) { s["endpoints"] = []any{"primary"} }, wantErr: "endpoints[0]"},
 		{name: "no auth mode", mutate: func(s, _ map[string]any) { s["auth"] = map[string]any{} }, wantErr: "exactly one of oauth2 and openshiftOAuthProxy"},
+		{name: "oauth-proxy session of 8h", mutate: func(s, _ map[string]any) {
+			s["auth"] = map[string]any{"openshiftOAuthProxy": map[string]any{"sessionMaxAge": "8h"}}
+		}},
+		{name: "oauth-proxy session too short", mutate: func(s, _ map[string]any) {
+			s["auth"] = map[string]any{"openshiftOAuthProxy": map[string]any{"sessionMaxAge": "1m"}}
+		}, wantErr: "sessionMaxAge must be between 5m and 12h"},
+		{name: "oauth-proxy session too long", mutate: func(s, _ map[string]any) {
+			s["auth"] = map[string]any{"openshiftOAuthProxy": map[string]any{"sessionMaxAge": "13h"}}
+		}, wantErr: "sessionMaxAge must be between 5m and 12h"},
 		{name: "both auth modes", mutate: func(s, _ map[string]any) {
 			s["auth"].(map[string]any)["openshiftOAuthProxy"] = map[string]any{}
 		}, wantErr: "exactly one of oauth2 and openshiftOAuthProxy"},

@@ -2619,6 +2619,7 @@
             {
               "enum": [
                 "backup-lsn",
+                "wal-names",
                 "assumed-default"
               ],
               "type": "string"

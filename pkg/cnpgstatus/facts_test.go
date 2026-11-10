@@ -21,6 +21,7 @@ import (
 	"time"
 
 	cnpgv1 "github.com/cloudnative-pg/api/pkg/api/v1"
+	barmanapi "github.com/cloudnative-pg/barman-cloud/pkg/api"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -290,6 +291,11 @@ func TestArchiving(t *testing.T) {
 		{"never archived stays ok", plugin(nil, ok), &ArchiverLive{}, ClassOK, "ContinuousArchivingSuccess"},
 		{"failure with backlog", plugin(nil, ok), &ArchiverLive{LastFailedWAL: "000000010000000000000003", ReadyWALFiles: 12}, ClassWarning, "FailureWithBacklog"},
 		{"failing", plugin(nil, failing), nil, ClassCritical, "ContinuousArchivingFailing"},
+		{"two segments waiting stays ok", plugin(nil, ok), &ArchiverLive{IsArchivingWAL: true, ReadyWALFiles: 2}, ClassOK, "ContinuousArchivingSuccess"},
+		{"backlog without a failure", plugin(nil, ok), &ArchiverLive{IsArchivingWAL: true, ReadyWALFiles: 3}, ClassWarning, ArchivingReasonBacklog},
+		{"hung archiver: backlog, no attempt finished", plugin(nil, ok), &ArchiverLive{ReadyWALFiles: 40}, ClassWarning, ArchivingReasonBacklog},
+		{"no condition, live archiving with a backlog", plugin(nil), &ArchiverLive{IsArchivingWAL: true, ReadyWALFiles: 5}, ClassWarning, ArchivingReasonBacklog},
+		{"backlog while failing stays critical", plugin(nil, failing), &ArchiverLive{ReadyWALFiles: 40}, ClassCritical, "ContinuousArchivingFailing"},
 		{"failing, live recovered", plugin(nil, failing), &ArchiverLive{IsArchivingWAL: true}, ClassWarning, "RecoveredSinceFailure"},
 		{"condition unknown", plugin(nil, cond(ConditionContinuousArchiving, "Unknown", "")), nil, ClassUnknown, ""},
 		{"skip annotation", plugin(map[string]string{AnnotationSkipWalArchiving: "enabled"}, ok), nil, ClassWarning, "ArchivingSkipped"},
@@ -650,5 +656,37 @@ func TestBlindSpots(t *testing.T) {
 			t.Errorf("duplicate blind spot %q", id)
 		}
 		seen[id] = true
+	}
+}
+
+func TestArchiveBacklogThresholdFollowsParallelArchiving(t *testing.T) {
+	inTree := func(parallel int) *cnpgv1.Cluster {
+		c := clusterWith(nil, cond(ConditionContinuousArchiving, "True", "ContinuousArchivingSuccess"))
+		c.Spec.Backup = &cnpgv1.BackupConfiguration{BarmanObjectStore: &cnpgv1.BarmanObjectStoreConfiguration{}}
+		if parallel > 0 {
+			c.Spec.Backup.BarmanObjectStore.Wal = &barmanapi.WalBackupConfiguration{MaxParallel: parallel}
+		}
+		return c
+	}
+	tests := []struct {
+		name      string
+		cluster   *cnpgv1.Cluster
+		ready     int
+		wantClass Class
+	}{
+		{"nil cluster uses the floor", nil, ArchiveBacklogSegments, ClassUnknown},
+		{"default parallelism: three is a backlog", inTree(0), 3, ClassWarning},
+		{"maxParallel 8: eight in flight is not a backlog", inTree(8), 8, ClassOK},
+		{"maxParallel 8: nine is", inTree(8), 9, ClassWarning},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := Archiving(tt.cluster, &ArchiverLive{IsArchivingWAL: true, ReadyWALFiles: tt.ready}).Class; got != tt.wantClass {
+				t.Errorf("Archiving(ready %d) = %q, want %q", tt.ready, got, tt.wantClass)
+			}
+		})
+	}
+	if got := ArchiveBacklogThreshold(nil); got != ArchiveBacklogSegments {
+		t.Errorf("ArchiveBacklogThreshold(nil) = %d", got)
 	}
 }

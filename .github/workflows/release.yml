@@ -234,11 +234,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          cosign verify "${IMAGE_REF}@${DIGEST}" \
+          # The Sigstore entry and the attestation can lag the push by a minute:
+          # the same bounded retry as verify-published (VERIFY_ATTEMPTS x VERIFY_SLEEP).
+          ./hack/release.sh retry cosign verify "${IMAGE_REF}@${DIGEST}" \
             --certificate-identity-regexp "^https://github.com/${GITHUB_REPOSITORY}/\.github/workflows/release\.yml@refs/tags/" \
-            --certificate-oidc-issuer https://token.actions.githubusercontent.com > /dev/null
-          gh attestation verify "oci://${IMAGE_REF}@${DIGEST}" --repo "${GITHUB_REPOSITORY}" \
-            --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/release.yml" > /dev/null
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com
+          ./hack/release.sh retry gh attestation verify "oci://${IMAGE_REF}@${DIGEST}" --repo "${GITHUB_REPOSITORY}" \
+            --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/release.yml"
           echo "verified ${IMAGE_REF}@${DIGEST}"
       - name: Record the digest
         env:
@@ -579,7 +581,12 @@ jobs:
             gh release delete "${TAG}" --yes
           fi
           flags=(--draft --verify-tag --title "pgToolBox ${TAG}" --notes-file notes.md)
-          [[ "${PRERELEASE}" != "true" ]] || flags+=(--prerelease)
+          # latest is the product's stable release only; a candidate never is.
+          if [[ "${PRERELEASE}" == "true" ]]; then
+            flags+=(--prerelease --latest=false)
+          else
+            flags+=(--latest)
+          fi
           gh release create "${TAG}" "${flags[@]}" \
             dist/release/pgtoolbox-*.tgz dist/release/pgtools-*.tgz \
             dist/release/install-*.yaml dist/release/sbom-*.spdx.json \
@@ -605,7 +612,13 @@ jobs:
             docker buildx imagetools create --tag "${name}:latest" "${ref}"
           done < dist/release/digests.txt
       - name: Publish the release
-        run: gh release edit "${TAG}" --draft=false
+        run: |
+          set -euo pipefail
+          if [[ "${PRERELEASE}" == "true" ]]; then
+            gh release edit "${TAG}" --draft=false --latest=false
+          else
+            gh release edit "${TAG}" --draft=false --latest
+          fi
 
   module:
     name: Release the nested module
@@ -642,6 +655,9 @@ jobs:
           } > notes.md
           flags=(--verify-tag --title "pkg/evidence v${VERSION}" --notes-file notes.md)
           [[ "${PRERELEASE}" != "true" ]] || flags+=(--prerelease)
+          # The nested module is never the repository's "latest release": that
+          # badge and /releases/latest belong to the product release.
+          flags+=(--latest=false)
           gh release create "${TAG}" "${flags[@]}"
 
   pages:
@@ -696,8 +712,10 @@ jobs:
   # against the latest stable release.
   verify:
     name: Verify the published release anonymously
-    needs: [prepare, prune]
-    if: needs.prepare.outputs.kind == 'product'
+    needs: [prepare, release, prune]
+    # always(): a failed prune (it needs package admin rights on a user-owned
+    # package) must not skip the verification of a release that was published.
+    if: always() && needs.release.result == 'success' && needs.prepare.outputs.kind == 'product'
     permissions:
       contents: read # check out the repository, read the release list
     uses: ./.github/workflows/verify-release.yml

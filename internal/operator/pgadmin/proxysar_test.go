@@ -17,11 +17,13 @@ package pgadmin
 import (
 	"bytes"
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	authorizationv1 "github.com/openshift/api/authorization/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	pgtoolboxv1alpha1 "github.com/fyannk/pgToolBox/api/v1alpha1"
 )
@@ -165,5 +167,32 @@ func TestOAuthProxySessionIsBounded(t *testing.T) {
 	d, err := time.ParseDuration(expire[0])
 	if err != nil || d <= 0 || d > time.Hour {
 		t.Fatalf("--cookie-expire=%s (%v), want a positive duration of at most 1h", expire[0], err)
+	}
+}
+
+// TestOAuthProxySessionMaxAge: spec.auth.openshiftOAuthProxy.sessionMaxAge
+// sets --cookie-expire, written the way the chart writes durations; omitted,
+// one hour.
+func TestOAuthProxySessionMaxAge(t *testing.T) {
+	cases := []struct {
+		name string
+		set  *metav1.Duration
+		want string
+	}{
+		{"default", nil, "1h"},
+		{"hours", &metav1.Duration{Duration: 8 * time.Hour}, "8h"},
+		{"minutes", &metav1.Duration{Duration: 90 * time.Minute}, "90m"},
+		{"seconds", &metav1.Duration{Duration: 5*time.Minute + 30*time.Second}, "5m30s"},
+		{"zero falls back", &metav1.Duration{}, "1h"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := openshiftPgAdmin()
+			p.Spec.Auth.OpenShiftOAuthProxy.SessionMaxAge = tc.set
+			c := oauthProxyContainer(p, testInputs(p, true))
+			if !slices.Contains(c.Args, "--cookie-expire="+tc.want) {
+				t.Errorf("args %v, want --cookie-expire=%s", c.Args, tc.want)
+			}
+		})
 	}
 }

@@ -30,6 +30,8 @@ type RecoveryTimeline struct {
 	// gaps inside), unhealthy (the recent end is not restorable), unknown.
 	State  string `json:"state" enum:"healthy,warning,unhealthy,unknown"`
 	Reason string `json:"reason,omitempty"`
+	// Reasons are the parts of Reason, in order, each with its code.
+	Reasons []Phrase `json:"reasons,omitempty" doc:"The parts of reason, in order, each a Phrase a client can translate; reason is their English texts joined with '; '."`
 	// Earliest and Latest bound the restorable span; absent when unknown.
 	Earliest *time.Time `json:"earliest,omitempty"`
 	Latest   *time.Time `json:"latest,omitempty"`
@@ -42,6 +44,12 @@ type RecoveryTimeline struct {
 	// Complete is false when a collection was cut at a bound: what is
 	// shown is then a lower bound of the coverage.
 	Complete bool `json:"complete"`
+	// OffTarget are the spans paths a default restore does not follow
+	// reach, each with the timeline a restore along it must name.
+	OffTarget []OffTargetSpan `json:"offTarget,omitempty" doc:"Spans that off-target recovery paths reach (a sibling timeline, or the backup's own timeline left behind): not covered by a default restore, restorable only by naming targetTimeline."`
+	// TimelineWarning is the evidence's timeline warning: a history file
+	// no default restore reads is invalid. It caps nothing.
+	TimelineWarning *Phrase `json:"timelineWarning,omitempty" doc:"The evidence's timeline warning (a history file no default restore reads is invalid, named in params.historyFile when known); it caps no coverage."`
 	// RestoreTested: a restore drill of this Cluster passed within the
 	// drill window. False, every covered span is "not restore-tested".
 	RestoreTested bool       `json:"restoreTested,omitempty"`
@@ -55,8 +63,10 @@ type RecoverySegment struct {
 	// Kind: covered (structurally restorable), missingWAL (a confirmed
 	// hole in the archive), candidateGap (a hole seen once, not yet
 	// confirmed), unknown (the evidence cannot tell), reported (the
-	// operator's window, not verified).
-	Kind string `json:"kind" enum:"covered,missingWAL,candidateGap,unknown,reported"`
+	// operator's window, not verified), walEnd (just before the newest
+	// restore point: the archived WAL ends here, and a target after its
+	// last commit is not reached; restore to the end of WAL).
+	Kind string `json:"kind" enum:"covered,missingWAL,candidateGap,unknown,reported,walEnd"`
 	// BackupID is the base backup a restore into a covered span starts
 	// from (the newest one that reaches it).
 	BackupID string `json:"backupId,omitempty"`
@@ -75,6 +85,18 @@ type Phrase struct {
 	Code   string            `json:"code"`
 	Params map[string]string `json:"params,omitempty" doc:"Keys ending in At are RFC 3339 instants, keys ending in Seconds whole seconds; others are shown as written."`
 	Text   string            `json:"text"`
+}
+
+// OffTargetSpan is what one off-target recovery path reaches.
+type OffTargetSpan struct {
+	From           time.Time `json:"from"`
+	To             time.Time `json:"to"`
+	BackupID       string    `json:"backupId"`
+	TargetTimeline uint64    `json:"targetTimeline" doc:"The timeline a restore along this path must name (recovery_target_timeline)."`
+	Text           string    `json:"text"`
+	// Code and Params say Text for translation (see Phrase).
+	Code   string            `json:"code,omitempty" doc:"Stable code of Text, for translation."`
+	Params map[string]string `json:"params,omitempty" doc:"Values Text names (see Phrase)."`
 }
 
 // RecoveryMarker is one base backup on the bar.
@@ -105,6 +127,11 @@ type RestoreCheck struct {
 	Params   map[string]string `json:"params,omitempty" doc:"Values Text names (see Phrase)."`
 	BackupID string            `json:"backupId,omitempty" doc:"The base backup to restore from, when covered."`
 	Basis    string            `json:"basis" enum:"evidence,reported,none"`
+	// Reasons say why no window is known, when the answer is that.
+	Reasons []Phrase `json:"reasons,omitempty" doc:"Why no restore window is known (the timeline's reasons), when the answer rests on that."`
+	// HistoryFile is a timeline history file the evidence names as
+	// missing or unreadable: one such file can withhold all coverage.
+	HistoryFile string `json:"historyFile,omitempty" doc:"A timeline history file (such as 00000003.history) the evidence names as missing or unreadable; coverage may rest on it."`
 	// Caveats are what the answer does not prove.
 	Caveats    []Phrase   `json:"caveats"`
 	Provenance Provenance `json:"provenance"`

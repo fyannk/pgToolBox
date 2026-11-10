@@ -6,8 +6,11 @@
  * OpenAPI spec version: v1
  */
 import type { ConditionHealth } from './conditionHealth.ts';
+import type { Phrase } from './phrase.ts';
 
 export interface Condition {
+  /** Why Health is capped below the table's ok: the table was not verified for the detected CNPG minor, or no minor was detected. */
+  cap?: Phrase;
   health: ConditionHealth;
   known: boolean;
   lastTransition?: string;

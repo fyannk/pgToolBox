@@ -46,6 +46,15 @@
     "basis": "none",
     "state": "unknown",
     "reason": "no repository evidence: the Cluster declares no backup method an evidence agent could read",
+    "reasons": [
+      {
+        "code": "recovery.reason.noEvidenceBecause",
+        "params": {
+          "detail": "the Cluster declares no backup method an evidence agent could read"
+        },
+        "text": "no repository evidence: the Cluster declares no backup method an evidence agent could read"
+      }
+    ],
     "segments": [],
     "markers": [],
     "assumptions": [],

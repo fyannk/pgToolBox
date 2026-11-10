@@ -17,6 +17,8 @@ package v1alpha1
 import (
 	"strings"
 	"time"
+
+	networkingv1 "k8s.io/api/networking/v1"
 )
 
 // CataloguePgToolBoxConsole is the owner name of the PgToolBoxConsole reasons in
@@ -32,6 +34,8 @@ var pgToolBoxConsoleReasons = []Reason{
 	ReasonInstanceCAInvalid,
 	ReasonInstanceCABundleFull,
 	ReasonExposureOpen,
+	ReasonExposurePeersBroad,
+	ReasonExposurePolicyBypassed,
 }
 
 func init() {
@@ -201,4 +205,16 @@ func (c *PgToolBoxConsole) SessionIdleTimeout() time.Duration {
 		return t.Duration
 	}
 	return time.Hour
+}
+
+// NetworkPolicyPeer is the peer as a NetworkPolicy writes it, deep-copied.
+func (p *PgToolBoxConsolePolicyPeer) NetworkPolicyPeer() networkingv1.NetworkPolicyPeer {
+	peer := networkingv1.NetworkPolicyPeer{
+		PodSelector:       p.PodSelector.DeepCopy(),
+		NamespaceSelector: p.NamespaceSelector.DeepCopy(),
+	}
+	if p.IPBlock != nil {
+		peer.IPBlock = &networkingv1.IPBlock{CIDR: p.IPBlock.CIDR, Except: append([]string(nil), p.IPBlock.Except...)}
+	}
+	return peer
 }

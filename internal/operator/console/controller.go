@@ -39,6 +39,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"slices"
 	"strings"
 	"time"
 
@@ -150,8 +151,9 @@ func (r *Reconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.
 	if console.Annotations[pgtoolboxv1alpha1.AnnotationReconcile] == pgtoolboxv1alpha1.ReconcileSkip {
 		return ctrl.Result{}, r.publish(ctx, console, original, conditions.Outcome{Paused: true})
 	}
-	err := r.reconcile(ctx, console)
-	result := ctrl.Result{}
+	loop := &loopState{}
+	err := r.reconcile(ctx, console, loop)
+	result := ctrl.Result{RequeueAfter: loop.requeueAfter}
 	var stalled *reconcile.StallError
 	if errors.As(err, &stalled) {
 		// A stall on something the caches do not hold: look again later
@@ -160,6 +162,29 @@ func (r *Reconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.
 	}
 	return result, r.publish(ctx, console, original, conditions.Outcome{Err: err, Converged: err == nil})
 }
+
+// loopState is what one reconcile asks of the next beyond its status: a
+// look again after a while, for what no watch reports.
+type loopState struct {
+	requeueAfter time.Duration
+}
+
+// after asks for a look again within d (the sooner of the asks wins).
+func (l *loopState) after(d time.Duration) {
+	if l.requeueAfter == 0 || d < l.requeueAfter {
+		l.requeueAfter = d
+	}
+}
+
+// policyRecheck is how often a console that trusts every peer of its
+// NetworkPolicy looks again at the namespace's other NetworkPolicies: the
+// operator caches only its own (every informer is label-filtered), so a
+// policy someone adds is seen by this look, not by a watch.
+const policyRecheck = 5 * time.Minute
+
+// networkPolicyListLimit bounds the uncached list of the namespace's
+// NetworkPolicies; more than that, and the trust is not granted.
+const networkPolicyListLimit = 250
 
 // roleMissingRetry is how often a console stalled on a missing shipped
 // ClusterRole looks for it again.
@@ -175,7 +200,7 @@ var stallRetries = map[pgtoolboxv1alpha1.Reason]time.Duration{
 }
 
 //nolint:gocyclo,cyclop,funlen // the console's children, in dependency order.
-func (r *Reconciler) reconcile(ctx context.Context, console *pgtoolboxv1alpha1.PgToolBoxConsole) error {
+func (r *Reconciler) reconcile(ctx context.Context, console *pgtoolboxv1alpha1.PgToolBoxConsole, loop *loopState) error {
 	image := specs.ResolveImage(console.Spec.Image, r.DefaultImage)
 	switch {
 	case image.Reference == "":
@@ -187,12 +212,13 @@ func (r *Reconciler) reconcile(ctx context.Context, console *pgtoolboxv1alpha1.P
 	}
 	// The hostname allow-list: withdraw what this console published, then
 	// stall, so that nothing is published under a name the installer did
-	// not allow.
+	// not allow. ExposureConfined goes with it (nothing is published).
 	if spec := &console.Spec.Exposure; spec.TypeOrDefault() != pgtoolboxv1alpha1.ExposureTypeClusterIP &&
 		!exposure.HostnameAllowed(spec.Hostname, r.AllowedHostSuffixes) {
 		if err := r.withdrawExposure(ctx, console); err != nil {
 			return err
 		}
+		setExposureConfined(console, false, "")
 		return r.invalid(console, pgtoolboxv1alpha1.ReasonHostnameNotAllowed, fmt.Sprintf(
 			"spec.exposure.hostname %s is not under the operator's allowed host suffixes (EXPOSURE_ALLOWED_HOST_SUFFIXES: %s)",
 			spec.Hostname, strings.Join(r.AllowedHostSuffixes, ", ")))
@@ -297,20 +323,30 @@ func (r *Reconciler) reconcile(ctx context.Context, console *pgtoolboxv1alpha1.P
 		return err
 	}
 	// The ingress policy before the workload that trusts every peer it
-	// admits; its removal after the workload that no longer does.
+	// admits; its removal only once no Pod of the workload trusts them any
+	// more (withdrawExposurePolicy).
 	policy := buildExposureNetworkPolicy(console, exposed)
+	bypass := ""
 	if policy != nil {
 		if err := applier.Apply(ctx, policy); err != nil {
 			return r.notOwned(console, err)
 		}
+		if bypass, err = r.exposureBypass(ctx, console, policy.Spec.Ingress[0].From); err != nil {
+			return err
+		}
 	}
-	setExposureConfined(console, exposed)
+	setExposureConfined(console, exposed, bypass)
+	in := deploymentInputs{Image: image, OpenShift: r.Features.OpenShift, Exposed: exposed, PolicyBypass: bypass}
+	if trust := effectiveProxyTrust(console, exposed, bypass); slices.Equal(trust.CIDRs, anyPeer) {
+		loop.after(policyRecheck)
+	}
 
-	if err := r.reconcileWorkload(ctx, console, deploymentInputs{Image: image, OpenShift: r.Features.OpenShift, Exposed: exposed}); err != nil {
+	facts, err := r.reconcileWorkload(ctx, console, in)
+	if err != nil {
 		return err
 	}
 	if policy == nil {
-		if err := r.deleteIfOwned(ctx, console, &networkingv1.NetworkPolicy{}, exposurePolicyName(console)); err != nil {
+		if err := r.withdrawExposurePolicy(ctx, console, facts); err != nil {
 			return err
 		}
 	}
@@ -327,29 +363,79 @@ func (r *Reconciler) reconcile(ctx context.Context, console *pgtoolboxv1alpha1.P
 // Deployment, or a switch of history.persistent), is deleted once the new
 // workload has a replica available: until then both serve, behind the
 // same Service, each on its own volumes.
-func (r *Reconciler) reconcileWorkload(ctx context.Context, console *pgtoolboxv1alpha1.PgToolBoxConsole, in deploymentInputs) error {
+//
+// It returns the workload's facts, nil while a StatefulSet is being
+// replaced (nothing was applied).
+func (r *Reconciler) reconcileWorkload(ctx context.Context, console *pgtoolboxv1alpha1.PgToolBoxConsole, in deploymentInputs) (*workloadFacts, error) {
 	desired := buildWorkload(console, in)
 	if set, ok := desired.(*appsv1.StatefulSet); ok {
 		replacing, err := r.replaceOnClaimChange(ctx, console, set)
 		if err != nil || replacing {
-			return err
+			return nil, err
 		}
 	}
 	if err := r.applier().Apply(ctx, desired); err != nil {
-		return r.notOwned(console, err)
+		return nil, r.notOwned(console, err)
 	}
 	facts := workloadFactsOf(desired)
 	if err := r.observeWorkload(ctx, console, facts); err != nil {
-		return err
+		return nil, err
 	}
 	if facts.Available < 1 {
-		return nil
+		return &facts, nil
 	}
 	var previous client.Object = &appsv1.StatefulSet{}
 	if facts.Kind == "StatefulSet" {
 		previous = &appsv1.Deployment{}
 	}
-	return r.deleteIfOwned(ctx, console, previous, console.WorkloadName())
+	return &facts, r.deleteIfOwned(ctx, console, previous, console.WorkloadName())
+}
+
+// exposureBypass is policyBypass on the namespace's NetworkPolicies, read
+// uncached (the operator's informer holds only its own) and bounded: more
+// than networkPolicyListLimit, and the rest could not be checked, which
+// counts as a bypass. ours are the peers of the exposure's policy.
+func (r *Reconciler) exposureBypass(ctx context.Context, console *pgtoolboxv1alpha1.PgToolBoxConsole, ours []networkingv1.NetworkPolicyPeer) (string, error) {
+	var policies networkingv1.NetworkPolicyList
+	if err := r.APIReader.List(ctx, &policies, client.InNamespace(console.Namespace), client.Limit(networkPolicyListLimit)); err != nil {
+		return "", fmt.Errorf("list the NetworkPolicies of namespace %s: %w", console.Namespace, err)
+	}
+	if policies.Continue != "" || len(policies.Items) > networkPolicyListLimit {
+		return fmt.Sprintf("more than %d NetworkPolicies in the namespace: the others could not be checked", networkPolicyListLimit), nil
+	}
+	podLabels := objectMeta(console, "", pgtoolboxv1alpha1.PropagationTargetPod).Labels
+	return policyBypass(policies.Items, exposurePolicyName(console), podLabels, ours), nil
+}
+
+// withdrawExposurePolicy deletes the console's ingress NetworkPolicy once
+// it confines no Pod that trusts every peer: the workload's rollout is
+// complete (facts: the controller saw the generation, every replica is
+// updated and available, a StatefulSet's revisions agree) and no console
+// Pod, terminating ones included, still has the any-peer
+// TRUSTED_PROXY_CIDRS. Until then the policy stays; the workload's status
+// and its Pods are watched, so their next change brings the next look.
+func (r *Reconciler) withdrawExposurePolicy(ctx context.Context, console *pgtoolboxv1alpha1.PgToolBoxConsole, facts *workloadFacts) error {
+	name := exposurePolicyName(console)
+	existing := &networkingv1.NetworkPolicy{}
+	if err := r.Client.Get(ctx, client.ObjectKey{Namespace: console.Namespace, Name: name}, existing); err != nil {
+		return client.IgnoreNotFound(err)
+	}
+	if !metav1.IsControlledBy(existing, console) {
+		return nil
+	}
+	if facts == nil || !facts.rolloutComplete() {
+		return nil
+	}
+	var pods corev1.PodList
+	if err := r.APIReader.List(ctx, &pods, client.InNamespace(console.Namespace), client.MatchingLabels(selectorLabels(console))); err != nil {
+		return fmt.Errorf("list console Pods: %w", err)
+	}
+	for i := range pods.Items {
+		if trustsAllPeers(&pods.Items[i]) {
+			return nil
+		}
+	}
+	return r.deleteIfOwned(ctx, console, &networkingv1.NetworkPolicy{}, name)
 }
 
 // replaceOnClaimChange deletes the console's StatefulSet, orphaning its
@@ -600,6 +686,17 @@ type workloadFacts struct {
 	// Failure and Stuck are a Deployment's ReplicaFailure and
 	// Progressing=False messages; a StatefulSet reports neither.
 	Failure, Stuck string
+	// RevisionsDiffer: a StatefulSet's current and update revisions are
+	// not the same yet (a Pod deleted mid-rollout comes back at the old
+	// one).
+	RevisionsDiffer bool
+}
+
+// rolloutComplete: the controller saw the latest generation, and every
+// desired replica, and no other, is updated and available.
+func (w workloadFacts) rolloutComplete() bool {
+	return w.Kind != "" && !w.RevisionsDiffer && w.ObservedGeneration >= w.Generation &&
+		w.Replicas == w.Desired && w.Updated == w.Desired && w.Available >= w.Desired
 }
 
 func workloadFactsOf(object client.Object) workloadFacts {
@@ -622,6 +719,7 @@ func workloadFactsOf(object client.Object) workloadFacts {
 		return workloadFacts{
 			Kind: "StatefulSet", Name: w.Name, Generation: w.Generation, ObservedGeneration: w.Status.ObservedGeneration,
 			Desired: ptrValue(w.Spec.Replicas, 1), Replicas: w.Status.Replicas, Updated: w.Status.UpdatedReplicas, Available: w.Status.AvailableReplicas,
+			RevisionsDiffer: w.Status.UpdateRevision != "" && w.Status.CurrentRevision != w.Status.UpdateRevision,
 		}
 	}
 	return workloadFacts{}

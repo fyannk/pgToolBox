@@ -74,7 +74,10 @@ what the design guarantees and, as plainly, what it does not.
   console.
 - **Client addresses**: `X-Forwarded-For` is believed only from the proxies
   named in `TRUSTED_PROXY_CIDRS`, else ignored, so a Pod that reaches the console
-  directly cannot escape the per-address sign-in budgets or forge `client_ip`;
+  directly cannot escape the per-address sign-in budgets or forge `client_ip`.
+  Without trusted CIDRs behind a declared proxy every client has the proxy's
+  address, so no per-address budget is charged and only the per-replica bounds
+  (20 a second, burst 40, per sign-in path) limit sign-ins;
   the operator renders an ingress NetworkPolicy for a published Route (and for an
   Ingress or Gateway that names its controller) and only then trusts every
   admitted peer ([details](operator/console.md#trusted-proxies-and-the-ingress-networkpolicy)).
@@ -152,18 +155,24 @@ or an EvidenceAgent requires get on every Secret it references").
   keep what they reference until they are edited to reference something else:
   review them when you enable it.
 - **The policy pairs a reference with where it is sent.** Keeping a reference and
-  changing its destination is a new reference, checked again:
-  `auth.oidc.issuerURL` for both OIDC client secrets, `prometheus.url` for
-  `prometheus.tokenSecretRef`, `digest.delivery.smtp.address` for the SMTP
-  password, `tracing.endpoint` for `tracing.headersSecretRef`,
-  `auth.oauth2.issuerURL` for the PgAdmin client secret, and the image's
-  `repository` for its `pullSecrets`. The other references name no destination in
-  the spec: the digest webhooks keep their URL inside the Secret, the OpenShift
-  client secret goes to the cluster's own OAuth server, the seal keys and the
-  Ingress certificate are sent nowhere. **Limit:** what the policy compares is the
-  destination field. A CA ConfigMap (`caConfigMapRef`), a DNS record or a proxy
-  that changes where that same URL leads is not seen; so do not let people who
-  may not read a Secret edit the CA ConfigMaps of the objects that send it.
+  changing its destination is a new reference, checked again. The destination is
+  every field that decides where the Secret goes and whom it is trusted with:
+  `auth.oidc.issuerURL` and `auth.oidc.caConfigMapRef` for both OIDC client
+  secrets, `auth.openshift.caConfigMapRef` for the OpenShift client secret,
+  `prometheus.url` and `prometheus.caConfigMapRef` for `prometheus.tokenSecretRef`,
+  `digest.delivery.smtp.address` and `tls` for the SMTP password,
+  `tracing.endpoint` for `tracing.headersSecretRef`, `auth.oauth2.issuerURL` for
+  the PgAdmin client secret, and the image's `repository` for its `pullSecrets`.
+  For an `EvidenceAgent`'s `allowedSecrets` it is `clusterRef`, `objectStoreRef`,
+  `allowInsecureEndpoint` and `pgbackrest.repository`, `endpoint` and
+  `endpointCA`. The other references name no destination in the spec: the digest
+  webhooks keep their URL inside the Secret, the seal keys and the Ingress
+  certificate are sent nowhere. A test classifies every field beside a reference
+  as a destination or not, with a reason, and fails on a new one.
+  **Limit:** what the policy compares is the fields, not what they lead to.
+  Editing the CA ConfigMap itself, the `ObjectStore`, `Stanza` or `Archive` an
+  agent reads, a DNS record or a proxy is not seen; so do not let people who may
+  not read a Secret edit those objects.
 - **More than two new references at once** need `get` on every Secret of the
   namespace. An authorizer check costs most of a CEL expression's runtime
   budget, so the policy checks one or two added references name by name, and a
@@ -207,8 +216,30 @@ and `connect pgadmins` but no `get secrets` could ask for `superuser: true` and
 open pgAdmin with the superuser's password. `crossNamespaceClusterRefs` are
 outside the rule: the `PgAdminAccess` grant of the target namespace, created by
 its owner, decides them (privileged credentials only with `allowPrivileged`).
+Changing who may sign in to such a `PgAdmin` is checked the same way, since it
+hands the same credentials to other people: any change to `spec.auth` (the
+issuer, client, required claims, username claim and scopes of `oauth2`, a switch
+between `oauth2` and `openshiftOAuthProxy`, the proxy's image) or to
+`spec.admins`. Only `auth.oauth2.displayName`, a button label, is left out; a
+test fails when a new `PgAdmin` field is not classified. A `PgAdmin` that offers
+no credentials is not concerned.
 Message: "a PgAdmin that offers the credentials of Clusters of its namespace
 (spec.credentials) requires get on the Secrets of the namespace".
+
+**A `PgToolBoxConsole` that projects its ServiceAccount token to Prometheus
+requires `create` on that ServiceAccount's token.** `spec.prometheus.projectedToken`
+sends the console ServiceAccount's own token to `spec.prometheus.url`; with the
+default audience (the API server's, which OpenShift's thanos-querier expects),
+whoever runs that URL can use it against the API server for up to an hour. So
+setting it, or changing the `url`, `caConfigMapRef` or `tokenAudience` it goes
+with, requires `create` on `serviceaccounts/token` for the console's
+ServiceAccount (the console's name, or `<name>-console` when the name does not
+contain `console`): the power to mint the same token. Reading Secrets does not
+qualify. Set `spec.prometheus.tokenAudience` when your Prometheus front accepts
+a dedicated audience: the token is then useless against the API server.
+Message: "a PgToolBoxConsole that sends its projected ServiceAccount token to
+Prometheus (spec.prometheus.projectedToken) requires create on
+serviceaccounts/token for the console's ServiceAccount".
 
 ## Known limitations
 
@@ -220,6 +251,8 @@ in view.
 | **Who may write `evidenceagents/status` in a namespace can receive that namespace's evidence token.** The console calls an agent only when the operator's field manager wrote `status.endpoint` and `status.caBundle`, but a writer can name itself after the operator. | Read access to the backup metadata of that same namespace's agents only: each namespace has its own token audience. | Grant `update`/`patch` on `evidenceagents/status` to the operator only. Details on [the evidence agent](evidence-agent.md#trust). |
 | **Sign-out does not revoke the token** at the identity provider or OpenShift's OAuth server. | A copied token works until it expires. | Short token lifetimes at the IdP; the console's [revocation list](console/authentication.md#revoking-sessions) ends *console* sessions. |
 | **The console caches a positive identity for 30 s and a positive SAR for 10 s.** | A revoked person may keep seeing views for up to that long; writes stop at once. | None needed; stated for incident response. |
+| **An expired or revoked access request does not end access already open.** Deleting the RoleBinding stops new authorizations only. | Up to the console's caches above (10 s per SAR, 30 s per identity) in the console; up to **1 h** in pgAdmin on OpenShift, whose oauth-proxy checks access at sign-in only and keeps its cookie that long; and as long as they last, pgAdmin's open database connections and websockets. | For an incident, delete the PgAdmin's `<name>-pgadmin-proxy-cookie` Secret and then its Pod (this ends every pgAdmin session of it), and terminate the user's backends in PostgreSQL ([access requests](console/access-requests.md#lifecycle)). |
+| **The four-eyes check covers the console's approval path only.** Approvers hold `create rolebindings` and `bind` on both roles. | An approver can bind `pgtoolbox-console-operator` to themselves directly with `kubectl`, with no request and no second person; the operator does not see such a binding. | Grant `pgtoolbox-console-approver` only to people trusted with the namespace's access; watch RoleBindings to the two roles in the API server's audit log. |
 | **`/metrics` on the console's probe port is plain HTTP when the console has no certificate.** | A scraper's token crosses the pod network in clear text. | Set `console.tls.secretName`: the probe port, `/metrics` included, is then HTTPS with the console's certificate ([metrics](console/metrics.md)). |
 | **The OpenShift sign-in using the ServiceAccount's projected token as client secret is not yet verified on a live cluster.** | If OpenShift rejects it, sign-in fails with `invalid_client`. | Use a long-lived token Secret ([checklist](console/openshift.md#manual-checklist), step 5). |
 | **The pgAdmin container's root filesystem is writable.** | An attacker with code execution in the container can write to its filesystem. | Restricted Pod Security, no capabilities, optional NetworkPolicy; read-only is an image change on the roadmap. |

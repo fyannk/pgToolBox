@@ -289,7 +289,7 @@ func (s *Service) Backups(ctx context.Context, namespace, name string) (viewmode
 	}
 	out.Method.PgBackRest = pgbackrestMethod(cfg.PgBackRest, evidence.result.Snapshot)
 	out.Evidence = evidence.view
-	out.RecoveryTimeline = s.recoveryTimeline(evidence, out.Summary, out.Items, recoveryFactsOf(g, now))
+	out.RecoveryTimeline = s.recoveryTimeline(evidence, out.Summary, out.Items, recoveryFactsOf(g, out.Summary.Archiving, now))
 	out.RecoveryTimeline.RestoreTested = out.Drills.RestoreTested
 	out.Sources = append(out.Sources, evidence.source)
 	return out, nil

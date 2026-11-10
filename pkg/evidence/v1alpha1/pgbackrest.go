@@ -63,11 +63,13 @@ const (
 	PGBackRestIncremental  = "incr"
 )
 
-// The WAL segment size sources: the backups' LSN ranges decide it, or the
-// 16 MiB default is assumed because they cannot (pgBackRest stores the size
-// nowhere in the repository).
+// The WAL segment size sources: the backups' LSN ranges decide it, the
+// archive's segment names do (the segment number at which a log id rolls
+// over), or the 16 MiB default is assumed because neither can (pgBackRest
+// stores the size nowhere in the repository).
 const (
 	SegmentSizeFromBackupLSN   = "backup-lsn"
+	SegmentSizeFromWALNames    = "wal-names"
 	SegmentSizeAssumedDefault  = "assumed-default"
 	maxPGBackRestFindings      = 200
 	maxPGBackRestArchiveIDs    = 256
@@ -486,7 +488,7 @@ func (s PGBackRestSummary) validate() error {
 			return errors.New("invalid or duplicate pgBackRest archive id")
 		}
 	}
-	if (s.WALSegmentSizeBytes == nil) != (s.WALSegmentSizeSource == nil) || s.WALSegmentSizeBytes != nil && (!validWALSegmentSize(*s.WALSegmentSizeBytes) || *s.WALSegmentSizeSource != SegmentSizeFromBackupLSN && *s.WALSegmentSizeSource != SegmentSizeAssumedDefault) {
+	if (s.WALSegmentSizeBytes == nil) != (s.WALSegmentSizeSource == nil) || s.WALSegmentSizeBytes != nil && (!validWALSegmentSize(*s.WALSegmentSizeBytes) || !slices.Contains([]string{SegmentSizeFromBackupLSN, SegmentSizeFromWALNames, SegmentSizeAssumedDefault}, *s.WALSegmentSizeSource)) {
 		return errors.New("invalid pgBackRest WAL segment size")
 	}
 	for _, result := range []StateReason{s.Catalog, s.WAL, s.Timeline, s.Coverage} {

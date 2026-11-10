@@ -72,6 +72,14 @@ catalog tags follow it. The nested evidence module (`pkg/evidence`) is tagged
 separately, `pkg/evidence/vX.Y.Z`, and only when the wire contract changes; consumers
 then `go get github.com/fyannk/pgToolBox/pkg/evidence@vX.Y.Z`.
 
+## Before the tag
+
+`make release-preflight TAG=vX.Y.Z` answers what the release workflow will ask, before
+anything is pushed: a dated CHANGELOG section, an annotated tag, and `ci-ok` and
+`security-gate` green **on the tagged commit**. Check runs must exist on that commit;
+a commit merged with the Actions token starts none, and `automerge.yml` dispatches
+them (see [CI](development/ci.md#when-a-release-fails)).
+
 ## Verify
 
 Every image, the bundle, the catalog and both charts are **signed by digest** with

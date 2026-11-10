@@ -15,6 +15,7 @@
 package pgbackrest
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -103,10 +104,67 @@ func TestInferSegmentSizeFromBackupLSNs(t *testing.T) {
 		}},
 	}
 	for _, test := range tests {
-		size, source := InferSegmentSize(test.backups)
+		size, source := InferSegmentSize(test.backups, SegmentNames{})
 		if size != test.size || source != test.source {
 			t.Errorf("%s: InferSegmentSize() = %d, %q", test.name, size, source)
 		}
+	}
+}
+
+// TestInferSegmentSizeFromSegmentNames (round 4, P2-4): when the backups'
+// LSNs do not decide the size, the archive's names do: a segment number
+// rules out every size with fewer segments per log, and the number at
+// which a log id rolls over names one size. Ambiguous names decide
+// nothing, and never override a size the LSNs decided.
+func TestInferSegmentSizeFromSegmentNames(t *testing.T) {
+	t.Parallel()
+	undecided := []Backup{{ArchiveStart: "000000010000000000000000", LSNStart: "0/28", ArchiveStop: "000000010000000000000000", LSNStop: "0/100"}}
+	decided64 := []Backup{{ArchiveStart: "000000010000000000000003", LSNStart: "0/C000028", ArchiveStop: "000000010000000000000003", LSNStop: "0/C100000"}}
+	for _, test := range []struct {
+		name    string
+		backups []Backup
+		names   SegmentNames
+		size    int64
+		source  SegmentSizeSource
+	}{
+		{name: "no names", backups: undecided, size: 16 << 20, source: SegmentSizeAssumed},
+		{name: "names within any size", backups: undecided, names: SegmentNames{Seen: true, MaxSegment: 3}, size: 16 << 20, source: SegmentSizeAssumed},
+		{name: "16 MiB rollover", backups: undecided, names: SegmentNames{Seen: true, MaxSegment: 0xFF, Rollovers: []uint32{0xFF, 0xFF}}, size: 16 << 20, source: SegmentSizeFromNames},
+		{name: "64 MiB rollover", backups: undecided, names: SegmentNames{Seen: true, MaxSegment: 0x3F, Rollovers: []uint32{0x3F}}, size: 64 << 20, source: SegmentSizeFromNames},
+		{name: "1 GiB rollover", backups: undecided, names: SegmentNames{Seen: true, MaxSegment: 3, Rollovers: []uint32{3}}, size: 1 << 30, source: SegmentSizeFromNames},
+		// Segment 0x100 is impossible at 16 MiB: the default is never
+		// assumed against the names.
+		{name: "past the 16 MiB rollover, 1 MiB rollover", backups: undecided, names: SegmentNames{Seen: true, MaxSegment: 0xFFF, Rollovers: []uint32{0xFFF}}, size: 1 << 20, source: SegmentSizeFromNames},
+		{name: "past the 16 MiB rollover, no rollover", backups: undecided, names: SegmentNames{Seen: true, MaxSegment: 0x1FF}},
+		{name: "only 1 MiB fits the names", backups: undecided, names: SegmentNames{Seen: true, MaxSegment: 0x800}, size: 1 << 20, source: SegmentSizeFromNames},
+		{name: "rollovers disagree", backups: undecided, names: SegmentNames{Seen: true, MaxSegment: 0xFF, Rollovers: []uint32{0xFF, 0x7F}}, size: 16 << 20, source: SegmentSizeAssumed},
+		{name: "rollover names no size", backups: undecided, names: SegmentNames{Seen: true, MaxSegment: 0x80, Rollovers: []uint32{0x80}}},
+		{name: "LSNs decide, names agree", backups: decided64, names: SegmentNames{Seen: true, MaxSegment: 0x3F, Rollovers: []uint32{0x3F}}, size: 64 << 20, source: SegmentSizeFromLSN},
+		{name: "LSNs decide, names contradict", backups: decided64, names: SegmentNames{Seen: true, MaxSegment: 0xFF}},
+	} {
+		size, source := InferSegmentSize(test.backups, test.names)
+		if size != test.size || source != test.source {
+			t.Errorf("%s: InferSegmentSize() = %d, %q; want %d, %q", test.name, size, source, test.size, test.source)
+		}
+	}
+}
+
+// TestCollectorSegmentNames: the collector reports the highest segment
+// number and each rollover to the next log id on the same timeline.
+func TestCollectorSegmentNames(t *testing.T) {
+	t.Parallel()
+	collector := NewWALCollector()
+	for _, name := range []string{
+		"0000000100000000000000FE", "0000000100000000000000FF", "000000010000000100000000", "000000010000000100000001",
+		// A gap across a log boundary is no rollover; another timeline is not either.
+		"000000010000000200000005", "000000010000000300000001",
+		"0000000200000003000000FF", "000000030000000400000000",
+	} {
+		collector.Add(store.Object{Key: "archive/demo/17-1/" + name[:16] + "/" + name + "-0123456789abcdef0123456789abcdef01234567.gz", Size: 1, LastModified: time.Unix(1, 0).UTC()})
+	}
+	got := collector.SegmentNames()
+	if !got.Seen || got.MaxSegment != 0xFF || !slices.Equal(got.Rollovers, []uint32{0xFF}) {
+		t.Fatalf("SegmentNames() = %+v", got)
 	}
 }
 

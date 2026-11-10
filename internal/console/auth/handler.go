@@ -57,7 +57,8 @@ const (
 	// refresh token from several concurrent requests.
 	SessionPath = "/api/v1/session"
 	// Sign-in budget per client address: every attempt costs the API
-	// server a SelfSubjectReview.
+	// server a SelfSubjectReview. It is charged only when the client
+	// address is a client's (ProxyTrust.SharedClientKey is false).
 	signInPerMinute = 10
 	signInBurst     = 10
 	maxLimiterKeys  = 10000
@@ -80,6 +81,16 @@ const (
 	// address room for another.
 	tokenAddressPerMinute = 20
 	tokenAddressBurst     = 20
+	// The OAuth callbacks' process-wide bound, sized like the token
+	// form's: every validated callback costs a code exchange with the
+	// identity provider and a SelfSubjectReview. It is what bounds the
+	// callbacks when the client address is shared (the per-address
+	// budget is not charged then): a burst of 40 lets a team sign in at
+	// once, 20 a second caps what junk codes on self-started flows make
+	// this replica send to the IdP and the API server.
+	codeExchangesPerSecond = 20
+	codeExchangesBurst     = 40
+	codeExchangesKey       = "code-exchange"
 )
 
 // Principal is the signed-in user of one request.
@@ -164,8 +175,10 @@ type Handler struct {
 	tokenAttempts  *RateLimiter
 	tokenAddresses *RateLimiter
 	// tokenReviews is the process-wide bound (one key) of the token form
-	// and of the raw bearers the MCP endpoint reviews.
-	tokenReviews *RateLimiter
+	// and of the raw bearers the MCP endpoint reviews; codeExchanges that
+	// of the OAuth callbacks.
+	tokenReviews  *RateLimiter
+	codeExchanges *RateLimiter
 	// flows are the sign-in flows already used on this replica.
 	flows *spentFlows
 
@@ -254,6 +267,7 @@ func newHandler(o Options, providers []oauthProvider) *Handler {
 		tokenAttempts:  NewRateLimiter(signInPerMinute, signInBurst, maxLimiterKeys),
 		tokenAddresses: NewRateLimiter(tokenAddressPerMinute, tokenAddressBurst, maxLimiterKeys),
 		tokenReviews:   NewRateLimiter(tokenReviewsPerSecond*60, tokenReviewsBurst, 1),
+		codeExchanges:  NewRateLimiter(codeExchangesPerSecond*60, codeExchangesBurst, 1),
 		flows:          newSpentFlows(maxSpentFlows),
 		loggedOut:      map[string]time.Time{},
 		signOuts:       o.SignOuts,
@@ -364,12 +378,21 @@ func (h *Handler) handleCallback(w http.ResponseWriter, r *http.Request, p oauth
 		h.fail(w, r, p.name(), &loginError{http.StatusBadRequest, "This sign-in was already used; please start again.", nil})
 		return
 	}
-	// The budget is charged only once the flow cookie and its state
+	// The budgets are charged only once the flow cookie and its state
 	// match: a callback without them costs nothing (no code exchange, no
-	// SelfSubjectReview), and charging it would let anyone who shares the
-	// victim's address key (every user, behind a proxy not counted in
-	// trustedProxyHops) lock the sign-in with junk callbacks.
-	if !h.allowSignIn(w, r, p.name(), h.attempts, ClientKey(r, h.cfg.TrustedProxy)) {
+	// SelfSubjectReview). That alone does not protect a shared address:
+	// anyone can start a flow (GET /auth/<provider>/login) and call its
+	// callback with a junk code, and each such flow passes the checks
+	// above once. So the per-address budget is charged only when the
+	// address is a client's; behind proxies the console does not trust
+	// (SharedClientKey) every user has the proxy's address, and the
+	// callbacks are bounded instead by their single use (spend below) and
+	// the process-wide bucket.
+	if key, ok := h.addressBudget(r); ok && !h.allowSignIn(w, r, p.name(), h.attempts, key) {
+		return
+	}
+	if !h.codeExchanges.Allow(codeExchangesKey) {
+		h.fail(w, r, p.name(), &loginError{http.StatusTooManyRequests, "The console is receiving too many sign-ins; wait a few seconds and try again.", nil})
 		return
 	}
 	if !h.flows.spend(p.name(), f.State, time.Unix(f.Expiry, 0), h.now()) {
@@ -423,9 +446,11 @@ func (h *Handler) handleToken(w http.ResponseWriter, r *http.Request) {
 	if !h.allowSignIn(w, r, ProviderToken, h.tokenAttempts, tokenAttemptKey(tok)) {
 		return
 	}
-	// Then the sender's address: distinct junk tokens from one address
-	// stop there, and cannot drain the shared bucket below.
-	if !h.allowSignIn(w, r, ProviderToken, h.tokenAddresses, ClientKey(r, h.cfg.TrustedProxy)) {
+	// Then the sender's address, when it is a client's: distinct junk
+	// tokens from one address stop there, and cannot drain the shared
+	// bucket below. A shared address (SharedClientKey) is not charged:
+	// one sender would spend it for everyone behind the proxy.
+	if key, ok := h.addressBudget(r); ok && !h.allowSignIn(w, r, ProviderToken, h.tokenAddresses, key) {
 		return
 	}
 	// Then the process-wide bound, before anything reaches the API
@@ -435,6 +460,13 @@ func (h *Handler) handleToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.complete(w, r, ProviderToken, tokenSet{token: tok, expiry: pastedTokenExpiry(tok)}, r.PostForm.Get("rd"))
+}
+
+// addressBudget returns the per-address budget key of r's client, and
+// false when the client address is shared by every client behind an
+// untrusted proxy: such a key is not charged by the sign-in paths.
+func (h *Handler) addressBudget(r *http.Request) (string, bool) {
+	return BudgetKey(r, h.cfg.TrustedProxy)
 }
 
 // allowSignIn spends one sign-in attempt of key's budget in limiter.

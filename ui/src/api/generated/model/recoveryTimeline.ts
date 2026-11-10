@@ -5,6 +5,8 @@
  * The JSON API of the pgToolBox console, the CloudNativePG observation console. Every operation acts as the signed-in user: the console asks the Kubernetes API server (SelfSubjectAccessReview, with your own token) before it reads anything on your behalf. Unsafe methods require the header X-PgToolBox-Request: 1 and a same-origin request.
  * OpenAPI spec version: v1
  */
+import type { OffTargetSpan } from './offTargetSpan.ts';
+import type { Phrase } from './phrase.ts';
 import type { Provenance } from './provenance.ts';
 import type { RecoveryMarker } from './recoveryMarker.ts';
 import type { RecoverySegment } from './recoverySegment.ts';
@@ -23,8 +25,18 @@ export interface RecoveryTimeline {
      * @nullable
      */
   markers: RecoveryMarker[] | null;
+  /**
+     * Spans that off-target recovery paths reach (a sibling timeline, or the backup's own timeline left behind): not covered by a default restore, restorable only by naming targetTimeline.
+     * @nullable
+     */
+  offTarget?: OffTargetSpan[] | null;
   provenance: Provenance;
   reason?: string;
+  /**
+     * The parts of reason, in order, each a Phrase a client can translate; reason is their English texts joined with '; '.
+     * @nullable
+     */
+  reasons?: Phrase[] | null;
   restoreTested?: boolean;
   /**
      * Time-ordered spans: covered ones and the holes between them.
@@ -34,4 +46,6 @@ export interface RecoveryTimeline {
   state: RecoveryTimelineState;
   /** @minimum 0 */
   targetTimeline?: number;
+  /** The evidence's timeline warning (a history file no default restore reads is invalid, named in params.historyFile when known); it caps no coverage. */
+  timelineWarning?: Phrase;
 }

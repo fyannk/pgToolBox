@@ -239,7 +239,7 @@ its lifetime, or your identity provider refuses to renew its sign-in.
   key. A registration that also lists URIs the console does not admit (VS Code
   adds `https://vscode.dev/redirect` beside its loopback one) is kept with its
   loopback URIs only; one with none is refused. 10 registrations a minute per
-  address.
+  address, and 120 a minute (bursts of 30) per replica.
 - **Client ID metadata documents** (an HTTPS URL as `client_id`), with
   `MCP_OAUTH_CLIENT_METADATA_DOCUMENTS=true`. The console then fetches the
   document at that URL, fenced: `https` only, never to a private, loopback,
@@ -564,6 +564,9 @@ not the value). The confirmation link is never logged.
 | Requests per user | 120 a minute, bursts of 60; past it, `429` with `Retry-After`. |
 | Requests in flight per user | 4; past it, `429`. |
 | Unrecognised tokens per client address | The sign-in form's budget, shared with it: 10 a minute per replica. A token accepted in the last 30 seconds does not count. The client address is the peer's unless it is a trusted proxy ([client address](authentication.md#sessions)). |
+| OAuth endpoints | Authorization requests and token requests: 60 a minute per client address, bursts of 30; token requests also 20 a second per replica, bursts of 40. Registrations: above. |
+| Confirmation pages | 30 loads a minute per client address; answers 10 a minute per person. |
+| Behind a shared address | With `TRUSTED_PROXY_HOPS` and no `TRUSTED_PROXY_CIDRS` every client has the proxy's address, so no per-address budget above is charged (one sender would spend it for everyone). Instead: unrecognised tokens 10 a minute **per token**, under the per-replica review bound; authorization requests and confirmation pages per signed-in person (anonymous ones only reach the sign-in); token requests and registrations by their per-replica bounds only. |
 | Raw API-server tokens reviewed | The token form's per-replica bound, shared with it: 20 a second, bursts of 40, charged after the address budget; a token whose answer is cached (30 s) does not count. Past it, `429` with `Retry-After`. |
 | Result size | `MCP_MAX_RESULT_BYTES`. The longest lists are shortened first (their first items kept, in the API's order), then strings over 2 KiB; the result's `truncated` object names what was cut. |
 | Call time | `MCP_CALL_TIMEOUT`. |

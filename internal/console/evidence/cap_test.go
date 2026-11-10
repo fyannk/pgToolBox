@@ -50,6 +50,9 @@ func TestCapRecovery(t *testing.T) {
 	}
 	pgbackrest := func(t *testing.T) *evidencev1alpha1.RepositoryEvidenceSnapshot {
 		snapshot, _, _ := pgbackrestFixture(t)
+		// The fixture's coverage is a warning; the roll-up cap has its own
+		// test.
+		snapshot.Details.PGBackRest.Coverage.State = evidencev1alpha1.Healthy
 		return &snapshot
 	}
 	for _, test := range []struct {
@@ -58,10 +61,16 @@ func TestCapRecovery(t *testing.T) {
 		mutate   func(*evidencev1alpha1.RepositoryEvidenceSnapshot)
 		capped   bool
 		reason   string
+		warning  string
 	}{
 		{name: "Barman, current producer, healthy timeline", snapshot: barman},
 		{name: "pgBackRest, current producer, healthy timeline", snapshot: pgbackrest},
 		{name: "Barman, producer without recovery-timeline-latest", snapshot: barman, mutate: func(s *evidencev1alpha1.RepositoryEvidenceSnapshot) { s.Producer.Features = nil }, capped: true, reason: "older build"},
+		// A producer that resolves 'latest' but not its ancestry may call
+		// a sibling branch healthy (round 4, P1-6).
+		{name: "Barman, producer without recovery-timeline-ancestry", snapshot: barman, mutate: func(s *evidencev1alpha1.RepositoryEvidenceSnapshot) {
+			s.Producer.Features = []evidencev1alpha1.Feature{evidencev1alpha1.FeatureRecoveryTimelineLatest}
+		}, capped: true, reason: "older build"},
 		{name: "pgBackRest, producer without recovery-timeline-latest", snapshot: pgbackrest, mutate: func(s *evidencev1alpha1.RepositoryEvidenceSnapshot) {
 			s.Producer.Features = []evidencev1alpha1.Feature{"future-guarantee"}
 		}, capped: true, reason: "older build"},
@@ -71,9 +80,15 @@ func TestCapRecovery(t *testing.T) {
 		{name: "pgBackRest, timeline unknown", snapshot: pgbackrest, mutate: func(s *evidencev1alpha1.RepositoryEvidenceSnapshot) {
 			s.Details.PGBackRest.Timeline = evidencev1alpha1.StateReason{State: evidencev1alpha1.Unknown, Reason: evidencev1alpha1.Reason{Code: "timeline-unknown", Message: "a timeline history file is missing or unreadable"}}
 		}, capped: true, reason: "timeline evidence is unknown"},
+		// A history no default restore reads is invalid: a warning that
+		// names the file, kept beside the paths, capping none (round 4,
+		// P2-2).
 		{name: "Barman, timeline warning", snapshot: barman, mutate: func(s *evidencev1alpha1.RepositoryEvidenceSnapshot) {
-			s.Details.BarmanCloud.Timeline.State = evidencev1alpha1.Warning
-		}, capped: true, reason: "timeline evidence is warning"},
+			s.Details.BarmanCloud.Timeline = evidencev1alpha1.StateReason{State: evidencev1alpha1.Warning, Reason: evidencev1alpha1.Reason{Code: "timeline-warning", Message: "00000002.history: timeline history is malformed; no default restore reads it"}}
+		}, warning: "00000002.history"},
+		{name: "Barman, timeline unhealthy", snapshot: barman, mutate: func(s *evidencev1alpha1.RepositoryEvidenceSnapshot) {
+			s.Details.BarmanCloud.Timeline.State = evidencev1alpha1.Unhealthy
+		}, capped: true, reason: "timeline evidence is unhealthy"},
 		{name: "no details", snapshot: barman, mutate: func(s *evidencev1alpha1.RepositoryEvidenceSnapshot) { s.Details.BarmanCloud = nil }, capped: true, reason: "timeline evidence is unknown"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -90,6 +105,9 @@ func TestCapRecovery(t *testing.T) {
 			if !test.capped {
 				if got.State != RecoveryAvailable || got.Paths[0].State != evidencev1alpha1.Healthy || got.Paths[0].FrontierReceiptAt == nil {
 					t.Fatalf("an uncapped recovery changed: %+v", got)
+				}
+				if !strings.Contains(got.TimelineWarning, test.warning) || (test.warning == "") != (got.TimelineWarning == "") {
+					t.Fatalf("timeline warning %q, want %q", got.TimelineWarning, test.warning)
 				}
 				return
 			}
@@ -115,6 +133,47 @@ func TestCapRecovery(t *testing.T) {
 		if got := capRecovery(&snapshot, Recovery{State: state, Reason: "kept"}); got.State != state || got.Reason != "kept" {
 			t.Errorf("a %s recovery was capped: %+v", state, got)
 		}
+	}
+}
+
+// TestCapRecoveryAtTheCoverageRollup (round 4): no path claims more than
+// the agent's own coverage roll-up. When the agent says a default restore
+// succeeds from no backup (a warning), a path that reads healthy is drawn
+// as a warning, keeping its frontier and its reason; an unknown roll-up
+// (conservative over every backup) caps a healthy path at a warning too,
+// never lower; a healthy roll-up changes nothing.
+func TestCapRecoveryAtTheCoverageRollup(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name  string
+		state evidencev1alpha1.State
+		want  evidencev1alpha1.State
+	}{
+		{name: "healthy roll-up", state: evidencev1alpha1.Healthy, want: evidencev1alpha1.Healthy},
+		{name: "warning roll-up", state: evidencev1alpha1.Warning, want: evidencev1alpha1.Warning},
+		{name: "unknown roll-up", state: evidencev1alpha1.Unknown, want: evidencev1alpha1.Warning},
+		{name: "unhealthy roll-up", state: evidencev1alpha1.Unhealthy, want: evidencev1alpha1.Warning},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			snapshot := fixtureSnapshot(t)
+			snapshot.Details.BarmanCloud.Coverage = evidencev1alpha1.StateReason{State: test.state, Reason: evidencev1alpha1.Reason{Code: "coverage-" + string(test.state), Message: "no backup on or before the newest timeline's branch point: a default restore succeeds from none"}}
+			in := Recovery{State: RecoveryAvailable, Complete: true, Paths: capFixturePaths()}
+			got := capRecovery(&snapshot, in)
+			if in.Paths[0].State != evidencev1alpha1.Healthy {
+				t.Fatal("capRecovery changed its input")
+			}
+			healthy := got.Paths[0]
+			if got.State != RecoveryAvailable || healthy.State != test.want || healthy.FrontierReceiptAt == nil || !strings.HasPrefix(healthy.Reason.Message, in.Paths[0].Reason.Message) {
+				t.Fatalf("recovery %s, healthy path %+v", got.State, healthy)
+			}
+			if test.state != evidencev1alpha1.Healthy && !strings.Contains(healthy.Reason.Message, "succeeds from none") {
+				t.Fatalf("capped path does not carry the roll-up reason: %q", healthy.Reason.Message)
+			}
+			if got.Paths[1].State != evidencev1alpha1.Warning || got.Paths[2].State != evidencev1alpha1.Unhealthy {
+				t.Fatalf("the warning or the proven loss changed: %+v", got.Paths)
+			}
+		})
 	}
 }
 

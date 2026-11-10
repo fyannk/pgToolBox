@@ -28,13 +28,13 @@ spec:
     - name: secretRefs
       expression: >-
         request.resource.resource == 'pgtoolboxconsoles' ? (
-          (has(object.spec.auth) && has(object.spec.auth.oidc) ? [{'p': 'auth.oidc.clientSecretRef', 'n': string(object.spec.auth.oidc.clientSecretRef.name), 'd': string(object.spec.auth.oidc.issuerURL)}] : []) +
-          (has(object.spec.auth) && has(object.spec.auth.oidc) && has(object.spec.auth.oidc.grantClient) ? [{'p': 'auth.oidc.grantClient.clientSecretRef', 'n': string(object.spec.auth.oidc.grantClient.clientSecretRef.name), 'd': string(object.spec.auth.oidc.issuerURL)}] : []) +
-          (has(object.spec.auth) && has(object.spec.auth.openshift) && has(object.spec.auth.openshift.clientSecretRef) ? [{'p': 'auth.openshift.clientSecretRef', 'n': string(object.spec.auth.openshift.clientSecretRef.name), 'd': ''}] : []) +
-          (has(object.spec.prometheus) && has(object.spec.prometheus.tokenSecretRef) ? [{'p': 'prometheus.tokenSecretRef', 'n': string(object.spec.prometheus.tokenSecretRef.name), 'd': string(object.spec.prometheus.url)}] : []) +
+          (has(object.spec.auth) && has(object.spec.auth.oidc) ? [{'p': 'auth.oidc.clientSecretRef', 'n': string(object.spec.auth.oidc.clientSecretRef.name), 'd': string(object.spec.auth.oidc.issuerURL) + ' ' + (has(object.spec.auth.oidc.caConfigMapRef) ? string(object.spec.auth.oidc.caConfigMapRef.name) : '')}] : []) +
+          (has(object.spec.auth) && has(object.spec.auth.oidc) && has(object.spec.auth.oidc.grantClient) ? [{'p': 'auth.oidc.grantClient.clientSecretRef', 'n': string(object.spec.auth.oidc.grantClient.clientSecretRef.name), 'd': string(object.spec.auth.oidc.issuerURL) + ' ' + (has(object.spec.auth.oidc.caConfigMapRef) ? string(object.spec.auth.oidc.caConfigMapRef.name) : '')}] : []) +
+          (has(object.spec.auth) && has(object.spec.auth.openshift) && has(object.spec.auth.openshift.clientSecretRef) ? [{'p': 'auth.openshift.clientSecretRef', 'n': string(object.spec.auth.openshift.clientSecretRef.name), 'd': (has(object.spec.auth.openshift.caConfigMapRef) ? string(object.spec.auth.openshift.caConfigMapRef.name) : '')}] : []) +
+          (has(object.spec.prometheus) && has(object.spec.prometheus.tokenSecretRef) ? [{'p': 'prometheus.tokenSecretRef', 'n': string(object.spec.prometheus.tokenSecretRef.name), 'd': string(object.spec.prometheus.url) + ' ' + (has(object.spec.prometheus.caConfigMapRef) ? string(object.spec.prometheus.caConfigMapRef.name) : '')}] : []) +
           (has(object.spec.digest) && has(object.spec.digest.delivery) && has(object.spec.digest.delivery.chatWebhookSecretRef) ? [{'p': 'digest.delivery.chatWebhookSecretRef', 'n': string(object.spec.digest.delivery.chatWebhookSecretRef.name), 'd': ''}] : []) +
           (has(object.spec.digest) && has(object.spec.digest.delivery) && has(object.spec.digest.delivery.webhookSecretRef) ? [{'p': 'digest.delivery.webhookSecretRef', 'n': string(object.spec.digest.delivery.webhookSecretRef.name), 'd': ''}] : []) +
-          (has(object.spec.digest) && has(object.spec.digest.delivery) && has(object.spec.digest.delivery.smtp) && has(object.spec.digest.delivery.smtp.passwordSecretRef) ? [{'p': 'digest.delivery.smtp.passwordSecretRef', 'n': string(object.spec.digest.delivery.smtp.passwordSecretRef.name), 'd': string(object.spec.digest.delivery.smtp.address)}] : []) +
+          (has(object.spec.digest) && has(object.spec.digest.delivery) && has(object.spec.digest.delivery.smtp) && has(object.spec.digest.delivery.smtp.passwordSecretRef) ? [{'p': 'digest.delivery.smtp.passwordSecretRef', 'n': string(object.spec.digest.delivery.smtp.passwordSecretRef.name), 'd': string(object.spec.digest.delivery.smtp.address) + ' ' + (has(object.spec.digest.delivery.smtp.tls) ? string(object.spec.digest.delivery.smtp.tls) : '')}] : []) +
           (has(object.spec.tracing) && has(object.spec.tracing.headersSecretRef) ? [{'p': 'tracing.headersSecretRef', 'n': string(object.spec.tracing.headersSecretRef.name), 'd': string(object.spec.tracing.endpoint)}] : []) +
           (has(object.spec.restoreDrills) && has(object.spec.restoreDrills.sealKeySecretRef) ? [{'p': 'restoreDrills.sealKeySecretRef', 'n': string(object.spec.restoreDrills.sealKeySecretRef.name), 'd': ''}] : []) +
           (has(object.spec.exposure) && has(object.spec.exposure.tls) && has(object.spec.exposure.tls.certificateSecretRef) ? [{'p': 'exposure.tls.certificateSecretRef', 'n': string(object.spec.exposure.tls.certificateSecretRef.name), 'd': ''}] : []) +
@@ -45,19 +45,19 @@ spec:
           (has(object.spec.exposure) && has(object.spec.exposure.tls) && has(object.spec.exposure.tls.certificateSecretRef) ? [{'p': 'exposure.tls.certificateSecretRef', 'n': string(object.spec.exposure.tls.certificateSecretRef.name), 'd': ''}] : []) +
           (has(object.spec.image) && has(object.spec.image.pullSecrets) ? object.spec.image.pullSecrets.map(s, {'p': 'image.pullSecrets', 'n': string(s.name), 'd': string(object.spec.image.repository)}) : [])
         ) : request.resource.resource == 'evidenceagents' ? (
-          (has(object.spec.allowedSecrets) ? object.spec.allowedSecrets.map(s, {'p': 'allowedSecrets', 'n': string(s), 'd': ''}) : [])
+          (has(object.spec.allowedSecrets) ? object.spec.allowedSecrets.map(s, {'p': 'allowedSecrets', 'n': string(s), 'd': string(object.spec.clusterRef.name) + ' ' + (has(object.spec.objectStoreRef) ? string(object.spec.objectStoreRef.name) : '') + ' ' + (has(object.spec.allowInsecureEndpoint) && object.spec.allowInsecureEndpoint ? 'insecure' : '') + ' ' + (has(object.spec.pgbackrest) ? 'pgbackrest ' + (has(object.spec.pgbackrest.repository) ? string(object.spec.pgbackrest.repository) : '1') + ' ' + (has(object.spec.pgbackrest.endpoint) ? string(object.spec.pgbackrest.endpoint) : '') + ' ' + (has(object.spec.pgbackrest.endpointCA) ? string(object.spec.pgbackrest.endpointCA.name) + ' ' + string(object.spec.pgbackrest.endpointCA.key) : '') : '')}) : [])
         ) : []
     - name: oldSecretRefs
       expression: >-
         oldObject == null ? [] : (
         request.resource.resource == 'pgtoolboxconsoles' ? (
-          (has(oldObject.spec.auth) && has(oldObject.spec.auth.oidc) ? [{'p': 'auth.oidc.clientSecretRef', 'n': string(oldObject.spec.auth.oidc.clientSecretRef.name), 'd': string(oldObject.spec.auth.oidc.issuerURL)}] : []) +
-          (has(oldObject.spec.auth) && has(oldObject.spec.auth.oidc) && has(oldObject.spec.auth.oidc.grantClient) ? [{'p': 'auth.oidc.grantClient.clientSecretRef', 'n': string(oldObject.spec.auth.oidc.grantClient.clientSecretRef.name), 'd': string(oldObject.spec.auth.oidc.issuerURL)}] : []) +
-          (has(oldObject.spec.auth) && has(oldObject.spec.auth.openshift) && has(oldObject.spec.auth.openshift.clientSecretRef) ? [{'p': 'auth.openshift.clientSecretRef', 'n': string(oldObject.spec.auth.openshift.clientSecretRef.name), 'd': ''}] : []) +
-          (has(oldObject.spec.prometheus) && has(oldObject.spec.prometheus.tokenSecretRef) ? [{'p': 'prometheus.tokenSecretRef', 'n': string(oldObject.spec.prometheus.tokenSecretRef.name), 'd': string(oldObject.spec.prometheus.url)}] : []) +
+          (has(oldObject.spec.auth) && has(oldObject.spec.auth.oidc) ? [{'p': 'auth.oidc.clientSecretRef', 'n': string(oldObject.spec.auth.oidc.clientSecretRef.name), 'd': string(oldObject.spec.auth.oidc.issuerURL) + ' ' + (has(oldObject.spec.auth.oidc.caConfigMapRef) ? string(oldObject.spec.auth.oidc.caConfigMapRef.name) : '')}] : []) +
+          (has(oldObject.spec.auth) && has(oldObject.spec.auth.oidc) && has(oldObject.spec.auth.oidc.grantClient) ? [{'p': 'auth.oidc.grantClient.clientSecretRef', 'n': string(oldObject.spec.auth.oidc.grantClient.clientSecretRef.name), 'd': string(oldObject.spec.auth.oidc.issuerURL) + ' ' + (has(oldObject.spec.auth.oidc.caConfigMapRef) ? string(oldObject.spec.auth.oidc.caConfigMapRef.name) : '')}] : []) +
+          (has(oldObject.spec.auth) && has(oldObject.spec.auth.openshift) && has(oldObject.spec.auth.openshift.clientSecretRef) ? [{'p': 'auth.openshift.clientSecretRef', 'n': string(oldObject.spec.auth.openshift.clientSecretRef.name), 'd': (has(oldObject.spec.auth.openshift.caConfigMapRef) ? string(oldObject.spec.auth.openshift.caConfigMapRef.name) : '')}] : []) +
+          (has(oldObject.spec.prometheus) && has(oldObject.spec.prometheus.tokenSecretRef) ? [{'p': 'prometheus.tokenSecretRef', 'n': string(oldObject.spec.prometheus.tokenSecretRef.name), 'd': string(oldObject.spec.prometheus.url) + ' ' + (has(oldObject.spec.prometheus.caConfigMapRef) ? string(oldObject.spec.prometheus.caConfigMapRef.name) : '')}] : []) +
           (has(oldObject.spec.digest) && has(oldObject.spec.digest.delivery) && has(oldObject.spec.digest.delivery.chatWebhookSecretRef) ? [{'p': 'digest.delivery.chatWebhookSecretRef', 'n': string(oldObject.spec.digest.delivery.chatWebhookSecretRef.name), 'd': ''}] : []) +
           (has(oldObject.spec.digest) && has(oldObject.spec.digest.delivery) && has(oldObject.spec.digest.delivery.webhookSecretRef) ? [{'p': 'digest.delivery.webhookSecretRef', 'n': string(oldObject.spec.digest.delivery.webhookSecretRef.name), 'd': ''}] : []) +
-          (has(oldObject.spec.digest) && has(oldObject.spec.digest.delivery) && has(oldObject.spec.digest.delivery.smtp) && has(oldObject.spec.digest.delivery.smtp.passwordSecretRef) ? [{'p': 'digest.delivery.smtp.passwordSecretRef', 'n': string(oldObject.spec.digest.delivery.smtp.passwordSecretRef.name), 'd': string(oldObject.spec.digest.delivery.smtp.address)}] : []) +
+          (has(oldObject.spec.digest) && has(oldObject.spec.digest.delivery) && has(oldObject.spec.digest.delivery.smtp) && has(oldObject.spec.digest.delivery.smtp.passwordSecretRef) ? [{'p': 'digest.delivery.smtp.passwordSecretRef', 'n': string(oldObject.spec.digest.delivery.smtp.passwordSecretRef.name), 'd': string(oldObject.spec.digest.delivery.smtp.address) + ' ' + (has(oldObject.spec.digest.delivery.smtp.tls) ? string(oldObject.spec.digest.delivery.smtp.tls) : '')}] : []) +
           (has(oldObject.spec.tracing) && has(oldObject.spec.tracing.headersSecretRef) ? [{'p': 'tracing.headersSecretRef', 'n': string(oldObject.spec.tracing.headersSecretRef.name), 'd': string(oldObject.spec.tracing.endpoint)}] : []) +
           (has(oldObject.spec.restoreDrills) && has(oldObject.spec.restoreDrills.sealKeySecretRef) ? [{'p': 'restoreDrills.sealKeySecretRef', 'n': string(oldObject.spec.restoreDrills.sealKeySecretRef.name), 'd': ''}] : []) +
           (has(oldObject.spec.exposure) && has(oldObject.spec.exposure.tls) && has(oldObject.spec.exposure.tls.certificateSecretRef) ? [{'p': 'exposure.tls.certificateSecretRef', 'n': string(oldObject.spec.exposure.tls.certificateSecretRef.name), 'd': ''}] : []) +
@@ -68,12 +68,43 @@ spec:
           (has(oldObject.spec.exposure) && has(oldObject.spec.exposure.tls) && has(oldObject.spec.exposure.tls.certificateSecretRef) ? [{'p': 'exposure.tls.certificateSecretRef', 'n': string(oldObject.spec.exposure.tls.certificateSecretRef.name), 'd': ''}] : []) +
           (has(oldObject.spec.image) && has(oldObject.spec.image.pullSecrets) ? oldObject.spec.image.pullSecrets.map(s, {'p': 'image.pullSecrets', 'n': string(s.name), 'd': string(oldObject.spec.image.repository)}) : [])
         ) : request.resource.resource == 'evidenceagents' ? (
-          (has(oldObject.spec.allowedSecrets) ? oldObject.spec.allowedSecrets.map(s, {'p': 'allowedSecrets', 'n': string(s), 'd': ''}) : [])
+          (has(oldObject.spec.allowedSecrets) ? oldObject.spec.allowedSecrets.map(s, {'p': 'allowedSecrets', 'n': string(s), 'd': string(oldObject.spec.clusterRef.name) + ' ' + (has(oldObject.spec.objectStoreRef) ? string(oldObject.spec.objectStoreRef.name) : '') + ' ' + (has(oldObject.spec.allowInsecureEndpoint) && oldObject.spec.allowInsecureEndpoint ? 'insecure' : '') + ' ' + (has(oldObject.spec.pgbackrest) ? 'pgbackrest ' + (has(oldObject.spec.pgbackrest.repository) ? string(oldObject.spec.pgbackrest.repository) : '1') + ' ' + (has(oldObject.spec.pgbackrest.endpoint) ? string(oldObject.spec.pgbackrest.endpoint) : '') + ' ' + (has(oldObject.spec.pgbackrest.endpointCA) ? string(oldObject.spec.pgbackrest.endpointCA.name) + ' ' + string(oldObject.spec.pgbackrest.endpointCA.key) : '') : '')}) : [])
         ) : []
         )
     - name: newSecretRefs
       expression: >-
         variables.secretRefs.filter(r, !(oldObject != null && r in variables.oldSecretRefs))
+    - name: prometheusTokenTo
+      expression: >-
+        request.resource.resource == 'pgtoolboxconsoles' && has(object.spec.prometheus) && has(object.spec.prometheus.projectedToken) && object.spec.prometheus.projectedToken ?
+          string(object.spec.prometheus.url) + ' ' + (has(object.spec.prometheus.caConfigMapRef) ? string(object.spec.prometheus.caConfigMapRef.name) : '') + ' ' + (has(object.spec.prometheus.tokenAudience) ? string(object.spec.prometheus.tokenAudience) : '') : ''
+    - name: oldPrometheusTokenTo
+      expression: >-
+        oldObject == null ? '' : (
+        request.resource.resource == 'pgtoolboxconsoles' && has(oldObject.spec.prometheus) && has(oldObject.spec.prometheus.projectedToken) && oldObject.spec.prometheus.projectedToken ?
+          string(oldObject.spec.prometheus.url) + ' ' + (has(oldObject.spec.prometheus.caConfigMapRef) ? string(oldObject.spec.prometheus.caConfigMapRef.name) : '') + ' ' + (has(oldObject.spec.prometheus.tokenAudience) ? string(oldObject.spec.prometheus.tokenAudience) : '') : ''
+        )
+    - name: consoleServiceAccount
+      expression: >-
+        object.metadata.name.contains('console') ? object.metadata.name : object.metadata.name + '-console'
+    - name: pgadminAudienceKept
+      expression: >-
+        request.resource.resource == 'pgadmins' && (
+        oldObject != null &&
+        has(object.spec.auth.oauth2) == has(oldObject.spec.auth.oauth2) &&
+        has(object.spec.auth.openshiftOAuthProxy) == has(oldObject.spec.auth.openshiftOAuthProxy) &&
+        (!has(object.spec.auth.oauth2) || (
+          object.spec.auth.oauth2.issuerURL == oldObject.spec.auth.oauth2.issuerURL &&
+          object.spec.auth.oauth2.clientID == oldObject.spec.auth.oauth2.clientID &&
+          object.spec.auth.oauth2.clientSecretRef == oldObject.spec.auth.oauth2.clientSecretRef &&
+          object.spec.auth.oauth2.requiredClaims == oldObject.spec.auth.oauth2.requiredClaims &&
+          (has(object.spec.auth.oauth2.usernameClaim) ? object.spec.auth.oauth2.usernameClaim : '') == (has(oldObject.spec.auth.oauth2.usernameClaim) ? oldObject.spec.auth.oauth2.usernameClaim : '') &&
+          (has(object.spec.auth.oauth2.scopes) ? object.spec.auth.oauth2.scopes : []) == (has(oldObject.spec.auth.oauth2.scopes) ? oldObject.spec.auth.oauth2.scopes : []))) &&
+        (!has(object.spec.auth.openshiftOAuthProxy) || (
+          has(object.spec.auth.openshiftOAuthProxy.image) == has(oldObject.spec.auth.openshiftOAuthProxy.image) &&
+          (!has(object.spec.auth.openshiftOAuthProxy.image) || object.spec.auth.openshiftOAuthProxy.image == oldObject.spec.auth.openshiftOAuthProxy.image))) &&
+        (has(object.spec.admins) ? object.spec.admins : []) == (has(oldObject.spec.admins) ? oldObject.spec.admins : [])
+        )
     - name: credentialKinds
       expression: >-
         request.resource.resource != 'pgadmins' ? [] : (
@@ -133,6 +164,15 @@ spec:
         authorizer.group('').resource('secrets').namespace(object.metadata.namespace).name(r.n).check('get').allowed())
       message: editing a PgToolBoxConsole, a PgAdmin or an EvidenceAgent requires get on every Secret it references (a Secret reference you may not read is refused, whichever field names it, and a kept reference whose destination changed is checked again)
       reason: Forbidden
+    # The projected Prometheus token is the console ServiceAccount's own
+    # token: sending it to a new URL (or trusting a new CA, or another
+    # audience) takes what minting it takes.
+    - expression: >-
+        variables.prometheusTokenTo == '' ||
+        (oldObject != null && variables.prometheusTokenTo == variables.oldPrometheusTokenTo) ||
+        authorizer.group('').resource('serviceaccounts').subresource('token').namespace(object.metadata.namespace).name(variables.consoleServiceAccount).check('create').allowed()
+      message: a PgToolBoxConsole that sends its projected ServiceAccount token to Prometheus (spec.prometheus.projectedToken) requires create on serviceaccounts/token for the console's ServiceAccount; changing the URL, the CA ConfigMap or the audience is checked again
+      reason: Forbidden
     - expression: >-
         request.resource.resource != 'pgadmins' ||
         variables.credentialKinds.size() == 0 ||
@@ -140,9 +180,10 @@ spec:
         (oldObject != null &&
         variables.credentialKinds.all(k, k in variables.oldCredentialKinds) &&
         variables.credentialSources.all(s, s in variables.oldCredentialSources) &&
-        (!has(object.spec.clusterSelector) || (has(oldObject.spec.clusterSelector) && object.spec.clusterSelector == oldObject.spec.clusterSelector))) ||
+        (!has(object.spec.clusterSelector) || (has(oldObject.spec.clusterSelector) && object.spec.clusterSelector == oldObject.spec.clusterSelector)) &&
+        variables.pgadminAudienceKept) ||
         authorizer.group('').resource('secrets').namespace(object.metadata.namespace).check('get').allowed()
-      message: a PgAdmin that offers the credentials of Clusters of its namespace (spec.credentials) requires get on the Secrets of the namespace, since whoever opens pgAdmin holds them; adding a credential kind or a Cluster is checked again
+      message: a PgAdmin that offers the credentials of Clusters of its namespace (spec.credentials) requires get on the Secrets of the namespace, since whoever opens pgAdmin holds them; adding a credential kind or a Cluster, or changing who may sign in (spec.auth, spec.admins), is checked again
       reason: Forbidden
 
 

@@ -76,6 +76,18 @@ OpenShift.
   `grpc_health_probe` from source (opm v1.74.0) with the repository's Go and
   dependency versions, since the upstream opm image ships fixable high
   vulnerabilities.
+- **Release gates that hold on every commit.** Merges made by auto-merge start no
+  workflow of their own, so `automerge.yml` now dispatches the full `ci.yml` and
+  `security.yml` on `main` for a commit that has no run (after the merge, and every
+  30 minutes as a net); `make release-preflight TAG=vX.Y.Z` checks the dated
+  CHANGELOG, the annotated tag and green `ci-ok` and `security-gate` on the tagged
+  commit before the tag is pushed. A nested-module release is never marked latest, a
+  release candidate never is either, and the product's stable release is. The
+  signature and attestation check of each image is retried, `npm ci` and `pnpm
+  install` in the image build are retried, and the anonymous verification still runs
+  when the prune fails. The envtest suites run on Kubernetes 1.35 and 1.36 in the
+  nightly and dispatched runs (1.34 on every change). Dependabot proposes the
+  Playwright npm packages as one group, and the e2e image moves with them.
 - **The restore check without an evidence agent** reads the primary's last
   archived WAL time: "may well be possible" only while archiving is healthy, and
   "likely not in the repository" when it fails. With an agent, a time between
@@ -108,5 +120,44 @@ OpenShift.
   by the advisory `ExposureConfined` condition. MCP bearer reviews share the
   process-wide review budget, streams keep their feed through the shutdown
   drain, and the console warns at start about hops 0 behind a public URL.
+- **Sign-in budgets behind a shared proxy address.** Behind a proxy declared
+  without `TRUSTED_PROXY_CIDRS`, junk callbacks on self-started OIDC flows, junk
+  pasted tokens, or floods of the MCP and OAuth endpoints no longer lock everyone
+  out: sign-ins are bounded per flow, per token, per person and per replica (20/s,
+  burst 40) instead of per shared address. The docs say what stays open after an
+  access request expires (the console's caches, the pgAdmin session, open
+  connections) and that the four-eyes check covers only the console's path.
+- **Exposure trust is confined, or withdrawn.** A PgToolBoxConsole trusts every
+  peer's `X-Forwarded-For` only while no other NetworkPolicy or broad `from` peer
+  reopens its port (new reasons `ExposurePolicyBypassed`, `ExposurePeersBroad`),
+  and keeps its ingress policy until the rollout to a narrower trust completes.
+  `networkPolicy.from` peers are checked by CEL and, on a Route, add to the
+  OpenShift routers; the sample names ingress-nginx. The `pgtools` chart's
+  policies admit host-network routers by their policy-group label. `PgAdmin`
+  `spec.auth.openshiftOAuthProxy.sessionMaxAge` (5m to 12h, default 1h) sets the
+  pgAdmin session lifetime.
+- **Admission policy, round four.** Changing the sign-in settings (`spec.auth`,
+  `spec.admins`) of a PgAdmin that offers Cluster credentials needs `get` on the
+  namespace's Secrets; CA ConfigMaps, the SMTP TLS mode and an EvidenceAgent's
+  Cluster, ObjectStore and pgBackRest endpoint count as part of a Secret's
+  destination; pointing `spec.prometheus.projectedToken` at a new URL needs
+  `create` on the console's `serviceaccounts/token`. `spec.prometheus.tokenAudience`
+  gives that token a dedicated audience.
+- **Recovery evidence follows the timeline ancestry.** Barman Cloud no longer
+  shows a sibling timeline as covered by a default restore: a sibling path is off
+  target with "needs targetTLI N", which the recovery panel and restore check
+  show. The console caps paths at the agent's own coverage conclusion and requires
+  agents with `recovery-timeline-ancestry`; a malformed history no default restore
+  reads is a warning naming the file instead of hiding all coverage; an absent
+  history of the lowest timeline is no longer a gap; the pgBackRest WAL segment
+  size is inferred from segment names before 16 MiB is assumed.
+- **An archive backlog is not "healthy".** Archiving shows Warning
+  `ArchiveBacklog` once segments wait, and recovery screens widen the newest edge
+  and name the count. The restore check says archiving is failing after the
+  agent's last read, keeps archive failures across a failover, reads the archiver
+  from `currentPrimary` only, clamps the instance clock, and adds an end-of-WAL
+  band advising "restore to end of WAL". Phase and condition caps cover undetected
+  or unverified CloudNativePG minors and say why; recovery and timeline reasons
+  are translated.
 
 [0.1.0]: https://github.com/fyannk/pgToolBox/releases/tag/v0.1.0

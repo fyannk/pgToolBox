@@ -124,6 +124,23 @@ its RoleBinding through the garbage collector (the binding's owner reference).
 - **Expiry**: with `spec.expiresAt`, the operator deletes the RoleBinding at that
   time and marks the request `Expired`. A pending request past its expiry can no
   longer be approved. Without it, the grant lasts until revoked.
+- **What expiry and revocation do not end**: deleting the RoleBinding stops new
+  authorizations, not access already open. The console keeps a positive
+  authorization for up to 10 s and an identity for up to 30 s; on OpenShift,
+  pgAdmin's oauth-proxy checks the right to connect at sign-in only, so a
+  pgAdmin session opened before the expiry lasts up to **one hour**; and
+  pgAdmin's open database connections and websockets last until they close.
+  To end an `operator` grant at once, delete the Secret
+  `<name>-pgadmin-proxy-cookie` (the operator generates a new one) and then the
+  pgAdmin Pod: every pgAdmin session of that PgAdmin ends, not only the user's.
+  Restarting the Pod alone closes the connections but keeps the cookie valid.
+  Terminate the user's backends in PostgreSQL (`pg_terminate_backend`) too.
+- **Four eyes on the console path only**: the console and the operator refuse
+  self-approval, but an approver holds `create rolebindings` and `bind` on both
+  roles, so they can bind `pgtoolbox-console-operator` to themselves with
+  `kubectl create rolebinding`, no request involved, and the operator never sees
+  it. Treat `pgtoolbox-console-approver` as the right to grant yourself access,
+  and audit RoleBindings to the two roles at the API server.
 - **Deleting the request** deletes its RoleBinding (owner reference, garbage
   collector).
 

@@ -72,6 +72,18 @@ class Gate(unittest.TestCase):
         self.assertEqual(len(sr.violations(m, None, "push")), 2)
 
 
+class AcceptedFile(unittest.TestCase):
+    def test_repository_file_parses_and_covers_the_opm_findings(self):
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "security-accepted.txt")
+        accepted = sr.load_accepted(path)
+        for ident in ("GO-2026-5064", "GO-2026-5338", "GO-2026-5622", "GO-2026-6791"):
+            reason = accepted.get(("grype", ident, "github.com/containerd/containerd"), "")
+            self.assertIn("go list -deps", reason, ident)
+        self.assertIn(("grype", "GHSA-685w-q87j-wqw3", "github.com/docker/distribution"), accepted)
+        for key, reason in accepted.items():
+            self.assertGreater(len(reason.split()), 5, "a reason must say how it was shown: %r" % (key,))
+
+
 class Results(unittest.TestCase):
     """results.json is the Security page's view model: its honesty rules are tested here."""
 

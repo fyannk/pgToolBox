@@ -16,3 +16,18 @@ spec:
   exposure:
     type: ingress
     hostname: console.team-a.example.com
+    # Who may reach the console port: the ingress controller's Pods (here the
+    # community ingress-nginx in its usual namespace; adjust both selectors to
+    # yours). The operator then renders the console-ingress NetworkPolicy and
+    # trusts X-Forwarded-For from these peers only, so each client keeps its own
+    # sign-in budget. Without from, nothing confines the port and the header is
+    # ignored: every user behind the controller shares one address and one
+    # budget (ExposureConfined=False, ExposureOpen).
+    networkPolicy:
+      from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ingress-nginx

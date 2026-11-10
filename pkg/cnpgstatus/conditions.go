@@ -145,6 +145,10 @@ type ConditionReading struct {
 	// is not True/False/Unknown, or for a fork type read without a fork
 	// pin.
 	Known bool `json:"known"`
+	// Reason is set when the class was capped below the table's, as for
+	// phases: the type and reason are in the table, but the table was
+	// not verified against the minor the operator runs.
+	Reason string `json:"reason,omitempty"`
 }
 
 // ConditionTable returns the rules of minor's table: the upstream types
@@ -189,12 +193,25 @@ func ClassifyCondition(minor Minor, conditionType, status, reason string) Condit
 //     still change before upstream adopts them.
 //   - An unsupported minor is evaluated against the newest released
 //     table (1.30); types outside it are not known.
+//   - A known ok reading is capped at warning, with Reason, when minor's
+//     table was not verified at a released tag (an empty minor
+//     included), as ClassifyPhase caps phases.
 func ClassifyConditionPinned(minor Minor, fork bool, conditionType, status, reason string) ConditionReading {
-	if !minor.supported() {
-		minor = newestReleased
+	reading, isFork := classifyConditionRow(TableMinor(minor), fork, conditionType, status, reason)
+	// A fork type's rows were read at the fork's branch, not at a minor:
+	// the fork pin, not the minor, is what they rest on.
+	if reading.Known && reading.Class == ClassOK && !isFork {
+		if why := capReason("condition", minor); why != "" {
+			reading.Class, reading.Reason = ClassWarning, why
+		}
 	}
+	return reading
+}
+
+// classifyConditionRow is the table's own reading, without the cap for
+// an unverified minor; minor has tables. isFork reports a fork type.
+func classifyConditionRow(minor Minor, fork bool, conditionType, status, reason string) (reading ConditionReading, isFork bool) {
 	var typeRules []ConditionRule
-	isFork := false
 	for _, rule := range conditionRules {
 		if rule.Type != conditionType {
 			continue
@@ -209,27 +226,27 @@ func ClassifyConditionPinned(minor Minor, fork bool, conditionType, status, reas
 		}
 	}
 	if len(typeRules) == 0 {
-		return ConditionReading{Class: ClassInfo, Known: false}
+		return ConditionReading{Class: ClassInfo, Known: false}, isFork
 	}
 	known := !isFork || fork
 	switch status {
 	case statusTrue, statusFalse:
 	case statusUnknown:
-		return ConditionReading{Class: ClassUnknown, Known: known}
+		return ConditionReading{Class: ClassUnknown, Known: known}, isFork
 	default:
-		return ConditionReading{Class: ClassUnknown, Known: false}
+		return ConditionReading{Class: ClassUnknown, Known: false}, isFork
 	}
 	for _, rule := range typeRules {
 		if rule.Status == status && rule.Reason == reason {
-			return ConditionReading{Class: rule.Class, Known: known}
+			return ConditionReading{Class: rule.Class, Known: known}, isFork
 		}
 	}
 	for _, rule := range typeRules {
 		if rule.Status == status && rule.Reason == anyReason {
-			return ConditionReading{Class: rule.Class, Known: known}
+			return ConditionReading{Class: rule.Class, Known: known}, isFork
 		}
 	}
 	// Every known type has a wildcard row for True and False; reaching
 	// here means the table lost one, which the tests forbid.
-	return ConditionReading{Class: ClassUnknown, Known: false}
+	return ConditionReading{Class: ClassUnknown, Known: false}, isFork
 }

@@ -222,6 +222,18 @@ type Producer struct {
 type Feature string
 
 const (
+	// FeatureRecoveryTimelineAncestry means recovery paths follow the
+	// ancestry PostgreSQL reads with recovery_target_timeline 'latest': the
+	// history of the timeline 'latest' resolves to lists the timelines a
+	// default restore follows, and a path toward any other (a sibling
+	// branch, even with a lower number) is flagged off_target with the
+	// reason code ReasonPathNeedsTargetTimeline, at most a warning. The
+	// probe counts a listed history whose content is invalid (PostgreSQL
+	// tests existence only), and a timeline evidence warning names a history
+	// no default restore reads. A consumer that reads paths from a producer
+	// without it caps them, since such a producer may call a sibling path
+	// healthy.
+	FeatureRecoveryTimelineAncestry Feature = "recovery-timeline-ancestry"
 	// FeatureRecoveryTimelineLatest means recovery paths are judged against the
 	// timeline PostgreSQL's recovery_target_timeline 'latest' resolves to
 	// (the probe of consecutive history files from the backup's timeline);
@@ -239,7 +251,7 @@ const maxProducerFeatures = 32
 // ProducerFeatures are the features this version of the contract defines,
 // sorted: what a producer built from it guarantees.
 func ProducerFeatures() []Feature {
-	return []Feature{FeatureRecoveryTimelineLatest}
+	return []Feature{FeatureRecoveryTimelineAncestry, FeatureRecoveryTimelineLatest}
 }
 
 // Has reports whether the producer declares feature.
@@ -514,6 +526,13 @@ type BarmanWALGap struct {
 	LastObservedGeneration  uint64    `json:"last_observed_generation"`
 }
 
+// ReasonPathNeedsTargetTimeline is the reason code of an off-target
+// recovery path, Barman Cloud and pgBackRest alike: a default restore
+// does not follow it, and a restore along it must set
+// recovery_target_timeline to the path's target timeline (the message
+// says which, in words).
+const ReasonPathNeedsTargetTimeline = "coverage-path-needs-target-timeline"
+
 // CoverageStop identifies why an observed recovery path ends.
 type CoverageStop string
 
@@ -548,11 +567,15 @@ type BarmanRecoveryPath struct {
 	FrontierWAL       *string      `json:"frontier_wal"`
 	FrontierReceiptAt *time.Time   `json:"frontier_receipt_at"`
 	AssumptionCodes   []string     `json:"assumption_codes"`
-	// OffTarget is true when the backup cannot reach the newest timeline
-	// (its timeline branched off before the backup was consistent, or is not
-	// an ancestor of the newest one): the path follows the backup's own
-	// timeline, which a restore must name (recovery_target_timeline), and is
-	// never Healthy. Additive: producers before it never send it.
+	// OffTarget is true when a default restore (recovery_target_timeline
+	// 'latest') does not follow the path, which a restore must then name
+	// (recovery_target_timeline: TargetTimeline); the path is never Healthy
+	// and its reason code is ReasonPathNeedsTargetTimeline. On the backup's
+	// own timeline: the timeline 'latest' resolves to branched off before
+	// the backup was consistent, or does not descend from it. On a newer
+	// timeline (with recovery-timeline-ancestry): that timeline is not on
+	// the history of the one 'latest' resolves to (a sibling branch).
+	// Additive: producers before it never send it.
 	OffTarget bool `json:"off_target,omitempty"`
 }
 
@@ -983,8 +1006,8 @@ func (p BarmanRecoveryPath) Validate() error {
 	if !completePosition(p.StartTimeline, p.StartPosition, p.StartWAL) || !completePosition(p.FrontierTimeline, p.FrontierPosition, p.FrontierWAL) {
 		return errors.New("incomplete Barman recovery path positions")
 	}
-	if p.OffTarget && (p.State == Healthy || p.StartTimeline != nil && *p.StartTimeline != p.TargetTimeline) {
-		return errors.New("an off-target Barman recovery path is never healthy and follows the backup's own timeline")
+	if p.OffTarget && p.State == Healthy {
+		return errors.New("an off-target Barman recovery path is never healthy")
 	}
 	for index, code := range p.AssumptionCodes {
 		if invalidReason(Reason{Code: code, Message: "bounded"}) || index > 0 && p.AssumptionCodes[index-1] >= code {

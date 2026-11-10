@@ -19,6 +19,13 @@
 #                               path, semver, annotated, zero requirements
 #   release.sh wait-ci SHA      wait for the ci-ok and security-gate checks of a
 #                               commit to succeed (gh api; needs GH_TOKEN)
+#   release.sh preflight TAG [SHA]
+#                               everything a tag needs before it is pushed: the
+#                               CHANGELOG section is dated (final tag), an existing
+#                               tag is annotated, and ci-ok and security-gate are
+#                               already green on SHA (default: the tag's commit,
+#                               else HEAD); one poll, no waiting
+#   release.sh retry CMD...     run CMD, bounded by VERIFY_ATTEMPTS and VERIFY_SLEEP
 #   release.sh notes VERSION    the CHANGELOG section of a version, as notes
 #   release.sh commits TAG     the conventional commits since the previous tag of the
 #                               same line, grouped by type, as Markdown
@@ -245,6 +252,27 @@ cmd_wait_ci() {
     sleep "${CI_WAIT_SLEEP:-30}"
   done
   die "CI did not finish on ${sha} in time"
+}
+
+# ------------------------------------------------------------ preflight ---
+# The checks a maintainer runs before `git push origin vX.Y.Z`: the same ones
+# the release workflow makes (check, wait-ci) but answered at once, so a tag is
+# never pushed to a commit the workflow would then refuse. Check runs must exist
+# on the tagged SHA: a commit merged by the Actions token starts none (the
+# automerge workflow dispatches ci.yml and security.yml for that reason); if
+# there are none, dispatch both on the commit.
+cmd_preflight() {
+  local tag="${1:?usage: release.sh preflight TAG [SHA]}" sha="${2:-}"
+  ALLOW_UNRELEASED=0 cmd_check "${tag}"
+  if [[ -z "${sha}" ]]; then
+    if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+      sha="$(git rev-list -n 1 "refs/tags/${tag}")"
+    else
+      sha="$(git rev-parse HEAD)"
+    fi
+  fi
+  CI_WAIT_ATTEMPTS=1 CI_WAIT_EMPTY_ATTEMPTS=1 CI_WAIT_SLEEP=0 cmd_wait_ci "${sha}"
+  echo "ok: preflight ${tag} on ${sha}"
 }
 
 # ---------------------------------------------------------------- notes ---
@@ -705,6 +733,8 @@ case "${1:-}" in
   check) shift; cmd_check "$@" ;;
   check-module) shift; cmd_check_module "$@" ;;
   wait-ci) shift; cmd_wait_ci "$@" ;;
+  retry) shift; retry "$@" ;;
+  preflight) shift; cmd_preflight "$@" ;;
   notes) shift; cmd_notes "$@" ;;
   commits) shift; cmd_commits "$@" ;;
   sums) shift; cmd_sums "$@" ;;

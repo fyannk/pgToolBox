@@ -242,8 +242,9 @@ func TestEvidenceAPIErrorCodesAreClosed(t *testing.T) {
 }
 
 // TestBarmanRecoveryPathOffTargetIsNeverHealthy: a path that cannot reach the
-// newest timeline (the default restore target) is at most a warning and
-// follows the backup's own timeline; off_target is additive (omitted when
+// newest timeline (the default restore target), or toward a sibling of
+// the line a default restore follows, is at most a warning; off_target is
+// additive (omitted when
 // false, so older consumers read the same bytes).
 func TestBarmanRecoveryPathOffTargetIsNeverHealthy(t *testing.T) {
 	t.Parallel()
@@ -259,9 +260,16 @@ func TestBarmanRecoveryPathOffTargetIsNeverHealthy(t *testing.T) {
 	if err := base().Validate(); err != nil {
 		t.Fatalf("off-target warning path rejected: %v", err)
 	}
+	// A path toward a sibling timeline that a default restore does not
+	// follow is off target too (recovery-timeline-ancestry).
+	sibling := base()
+	sibling.TargetTimeline, sibling.Reason.Code = two, ReasonPathNeedsTargetTimeline
+	if err := sibling.Validate(); err != nil {
+		t.Fatalf("off-target path toward a sibling timeline rejected: %v", err)
+	}
 	for name, mutate := range map[string]func(*BarmanRecoveryPath){
-		"healthy off target":             func(p *BarmanRecoveryPath) { p.State = Healthy },
-		"off target toward another line": func(p *BarmanRecoveryPath) { p.TargetTimeline = two },
+		"healthy off target":                  func(p *BarmanRecoveryPath) { p.State = Healthy },
+		"healthy off target toward a sibling": func(p *BarmanRecoveryPath) { p.State, p.TargetTimeline = Healthy, two },
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -317,7 +325,7 @@ func TestSnapshotProducerFeatures(t *testing.T) {
 			}
 		})
 	}
-	if (Producer{}).Has(FeatureRecoveryTimelineLatest) || !(Producer{Features: ProducerFeatures()}).Has(FeatureRecoveryTimelineLatest) {
+	if (Producer{}).Has(FeatureRecoveryTimelineLatest) || !(Producer{Features: ProducerFeatures()}).Has(FeatureRecoveryTimelineLatest) || !(Producer{Features: ProducerFeatures()}).Has(FeatureRecoveryTimelineAncestry) {
 		t.Fatal("Has does not report the declared features")
 	}
 	if !slices.IsSorted(ProducerFeatures()) {

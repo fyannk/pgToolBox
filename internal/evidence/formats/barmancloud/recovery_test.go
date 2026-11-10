@@ -745,3 +745,96 @@ func TestOffTargetReasonSurvivesAnUnhealthyPath(t *testing.T) {
 		t.Fatalf("own path %s off-target %v %q", own.State, own.OffTarget, own.Reason)
 	}
 }
+
+// TestAbsentHistoryOfTheLowestTimelineIsNotAGap (round 4, P2-3): a backup
+// on timeline 2 with no 00000002.history, and nothing newer, restores:
+// recovery never probes the start timeline's history and
+// readTimeLineHistory takes an absent one as "no parents". A missing
+// history above the lowest timeline still is a gap.
+func TestAbsentHistoryOfTheLowestTimelineIsNotAGap(t *testing.T) {
+	t.Parallel()
+	const segment = 16 << 20
+	begin, _ := WALName(2, 1, segment)
+	end, _ := WALName(2, 3, segment)
+	backup := Backup{Server: "alpha", ID: "backup", State: evidence.Healthy, BeginWAL: begin, EndWAL: end, EndLSN: "0/3000100", SegmentSize: segment, PostgreSQLVersion: 180000, Timeline: 2, EndAt: time.Now().UTC()}
+	for _, test := range []struct {
+		name     string
+		ranges   []WALRange
+		timeline evidence.State
+		coverage evidence.State
+		missing  bool
+	}{
+		{name: "only the backup's timeline", ranges: []WALRange{walRange(2, 1, 5)}, timeline: evidence.Healthy, coverage: evidence.Healthy},
+		{name: "a newer timeline without its history", ranges: []WALRange{walRange(2, 1, 5), walRange(3, 5, 6)}, timeline: evidence.Unknown, coverage: evidence.Unknown, missing: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			wal := ServerWAL{Server: "alpha", State: evidence.Healthy, PostgreSQLVersion: 180000, SegmentSize: segment, Ranges: test.ranges}
+			catalog := AnalyzeRecovery(context.Background(), historyFiles(nil), []Backup{backup}, WALCatalog{Servers: []ServerWAL{wal}}, nil, false, RecoveryOptions{})
+			if err := catalog.Validate(); err != nil {
+				t.Fatal(err)
+			}
+			server := catalog.Servers[0]
+			if server.TimelineState != test.timeline || server.CoverageState != test.coverage {
+				t.Fatalf("timeline %s %q, coverage %s %q", server.TimelineState, server.TimelineReason, server.CoverageState, server.CoverageReason)
+			}
+			if slices.ContainsFunc(server.Histories, func(h TimelineHistory) bool { return h.Timeline == 2 }) {
+				t.Fatalf("a missing-history row for the backup's own timeline: %+v", server.Histories)
+			}
+			if got := slices.ContainsFunc(server.Histories, func(h TimelineHistory) bool { return h.Timeline == 3 && h.Reason == reasonHistoryMissing }); got != test.missing {
+				t.Fatalf("missing row for timeline 3 = %v: %+v", got, server.Histories)
+			}
+		})
+	}
+}
+
+// TestOnlyTheHistoriesRecoveryReadsDecideTheTimeline (round 4, P2-2): the
+// probe of 'latest' tests existence only and recovery reads one history,
+// that of the timeline it resolves to. A malformed history of an old
+// sibling branch is a warning that names the file and hides no coverage;
+// a bad history recovery reads, or an unreadable one the probe stops at,
+// leaves the timeline unknown and names the file.
+func TestOnlyTheHistoriesRecoveryReadsDecideTheTimeline(t *testing.T) {
+	t.Parallel()
+	backup := recoveryBackup(time.Now().UTC(), 1, 3)
+	backup.EndLSN = "0/3000100"
+	wal := ServerWAL{Server: "alpha", State: evidence.Healthy, PostgreSQLVersion: 180000, SegmentSize: 16 << 20, Ranges: []WALRange{walRange(1, 1, 5), walRange(3, 4, 6)}}
+	objects := []HistoryObject{
+		{Key: "alpha/wals/00000002.history", Server: "alpha", Name: "00000002.history", Compression: "none", Timeline: 2},
+		{Key: "alpha/wals/00000003.history", Server: "alpha", Name: "00000003.history", Compression: "none", Timeline: 3},
+	}
+	for _, test := range []struct {
+		name     string
+		files    map[string]string
+		timeline evidence.State
+		file     string
+		path3    evidence.State
+	}{
+		{name: "every history valid", files: map[string]string{"alpha/wals/00000002.history": "1\t0/5000050\told\n", "alpha/wals/00000003.history": "1\t0/4000050\tpitr\n"}, timeline: evidence.Healthy, path3: evidence.Healthy},
+		{name: "old sibling malformed", files: map[string]string{"alpha/wals/00000002.history": "not a history", "alpha/wals/00000003.history": "1\t0/4000050\tpitr\n"}, timeline: evidence.Warning, file: "00000002.history", path3: evidence.Healthy},
+		{name: "old sibling unreadable", files: map[string]string{"alpha/wals/00000003.history": "1\t0/4000050\tpitr\n"}, timeline: evidence.Unknown, file: "00000002.history", path3: evidence.Unknown},
+		{name: "latest malformed", files: map[string]string{"alpha/wals/00000002.history": "1\t0/5000050\told\n", "alpha/wals/00000003.history": "not a history"}, timeline: evidence.Unknown, file: "00000003.history"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			catalog := AnalyzeRecovery(context.Background(), historyFiles(test.files), []Backup{backup}, WALCatalog{Servers: []ServerWAL{wal}}, objects, false, RecoveryOptions{})
+			if err := catalog.Validate(); err != nil {
+				t.Fatal(err)
+			}
+			server := catalog.Servers[0]
+			if server.TimelineState != test.timeline || !strings.Contains(server.TimelineReason, test.file) {
+				t.Fatalf("timeline %s %q, want %s naming %q", server.TimelineState, server.TimelineReason, test.timeline, test.file)
+			}
+			if test.path3 != "" {
+				if path := findPath(t, server.Paths, 3); path.State != test.path3 {
+					t.Fatalf("path to timeline 3 %s %q, want %s", path.State, path.Reason, test.path3)
+				}
+			}
+			for _, path := range server.Paths {
+				if test.timeline == evidence.Unknown && path.State == evidence.Healthy {
+					t.Errorf("path to timeline %d healthy under unknown timeline evidence: %q", path.TargetTimeline, path.Reason)
+				}
+			}
+		})
+	}
+}

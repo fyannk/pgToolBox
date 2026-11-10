@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -171,7 +172,21 @@ func (g *Guard) Wrap(next http.Handler) http.Handler {
 			return
 		}
 		digest := sha256.Sum256([]byte(token))
-		if !g.isKnown(digest) && !g.o.Attempts.Allow(auth.ClientKey(r, g.o.TrustedProxy)) {
+		// An unrecognised bearer spends its address's budget; behind a
+		// proxy the console does not trust every client has that address,
+		// so the bearer's own (by digest) instead: retrying one token is
+		// bounded, and distinct junk tokens are bounded by the
+		// authenticator's process-wide review bucket (ErrReviewsBusy).
+		key, perAddress := auth.BudgetKey(r, g.o.TrustedProxy)
+		if !perAddress {
+			key = "mcp-bearer:" + hex.EncodeToString(digest[:16])
+		}
+		if !g.isKnown(digest) && !g.o.Attempts.Allow(key) {
+			if !perAddress {
+				g.deny(r, client, "", "token budget")
+				tooMany(w, "this token was refused too often; wait a minute")
+				return
+			}
 			g.deny(r, client, "", "address budget")
 			tooMany(w, "too many unrecognised tokens from this address; wait a minute")
 			return

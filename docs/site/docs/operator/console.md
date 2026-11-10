@@ -277,22 +277,60 @@ trusted.
 | `spec.exposure` | NetworkPolicy `<name>-ingress` | `TRUSTED_PROXY_HOPS` / `TRUSTED_PROXY_CIDRS` | `ExposureConfined` |
 |---|---|---|---|
 | `clusterIP` | none | none | absent |
-| `route` (published) | on by default: the console port admits only namespaces labelled `policy-group.network.openshift.io/ingress` (the OpenShift routers, host-network ones included) | `1` / `0.0.0.0/0,::/0` | `True` |
+| `route` (published) | on by default: the console port admits namespaces labelled `policy-group.network.openshift.io/ingress` (the OpenShift routers, host-network ones included), plus `from` | `1` / `0.0.0.0/0,::/0` | `True` |
 | `ingress`, `gateway` with `networkPolicy.from` | the console port admits only `from` | `1` / `0.0.0.0/0,::/0` | `True` |
+| a peer of `from` admits everyone | rendered as written | `1` / none: the header is ignored | `False`, `ExposurePeersBroad` |
+| another NetworkPolicy admits more to the console port | rendered | `1` / none | `False`, `ExposurePolicyBypassed` |
 | `ingress`, `gateway` without `from` | none: the controller's namespace differs per installation, so no default is safe | `1` / none: the header is ignored | `False`, `ExposureOpen` |
 | `networkPolicy.enabled: false` | none | `1` / none | `False`, `ExposureOpen` |
 
 - `spec.exposure.networkPolicy.from` lists the router, ingress controller or
-  gateway Pods (NetworkPolicy peers, at most 16), for example
-  `[{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: ingress-nginx}}}]`.
-  Every peer listed is trusted to write `X-Forwarded-For`. `enabled: true` without
-  `from` is refused for ingress and gateway.
-- In-cluster clients that call the Service directly (an MCP agent in a Pod, a
-  `kubectl port-forward` goes through the kubelet and is not affected) are cut
-  off by the policy: add them to `from`, which replaces the Route's default, so
-  list the routers' namespace selector too. They are then trusted to write
-  `X-Forwarded-For` as well; name the routers in `trustedProxy.cidrs` when that
-  matters.
+  gateway Pods (NetworkPolicy peers, at most 16). For the community
+  ingress-nginx:
+
+  ```yaml
+  spec:
+    exposure:
+      type: ingress
+      hostname: console.team-a.example.com
+      networkPolicy:
+        from:
+          - namespaceSelector:
+              matchLabels:
+                kubernetes.io/metadata.name: ingress-nginx
+            podSelector:
+              matchLabels:
+                app.kubernetes.io/name: ingress-nginx
+  ```
+
+  Without `from` an Ingress or a Gateway has no policy and the console ignores
+  `X-Forwarded-For`: every user behind the controller shares its address, hence
+  one sign-in budget. `enabled: true` without `from` is refused for ingress and
+  gateway. Each peer needs a `podSelector`, a `namespaceSelector` or an
+  `ipBlock` (alone in its peer, a CIDR whose `except` entries lie inside it):
+  the CRD refuses the rest, which the API server would refuse in the policy.
+- **Every peer admitted is trusted to write `X-Forwarded-For`**, and so can
+  choose the address its requests are charged to. List the proxies only, or
+  name them in `trustedProxy.cidrs`, which then is the trust whatever the
+  policy admits. A peer that admits everyone (an empty `namespaceSelector`,
+  an empty `podSelector` alone, an `ipBlock` of `/0`) turns the any-peer trust
+  off and reports `ExposurePeersBroad`.
+- **NetworkPolicies add up.** Another policy of the namespace that selects the
+  console Pods and admits, to the console port, a peer `from` does not list
+  (an `allow-same-namespace` policy, an allow-all) lets that peer in whatever
+  this one says. The operator lists the namespace's NetworkPolicies (at most
+  250; more counts as unverifiable), and when one does, trusts no peer and
+  reports `ExposurePolicyBypassed` with its name. A peer counts as the
+  exposure's only when it is written exactly as in `from`. The operator caches
+  only its own policies, so it looks again every five minutes while it trusts
+  every peer: a policy added in between is seen within that time.
+- **A Route turns the policy on**, and with it cuts every in-cluster client of
+  the Service's `http` port that is not a router: a debug Pod, an in-cluster
+  MCP or AI client, a synthetic probe calling `/`. Add them to `from`; on a
+  Route `from` adds to the routers, it never replaces them. They are then
+  trusted to write `X-Forwarded-For` as well; name the routers in
+  `trustedProxy.cidrs` when that matters. `kubectl port-forward` goes through
+  the kubelet and is not affected.
 - The probe port (health and `/metrics`) stays open to any source: kubelets and
   Prometheus reach it, and it never reads `X-Forwarded-For`. Egress is not
   policed by this policy.
@@ -301,13 +339,31 @@ trusted.
   router. `trustedProxy.cidrs` names them by address instead of trusting every
   admitted peer, and is the way to keep per-client budgets without the policy
   (an Ingress whose controller's addresses you know).
-- A NetworkPolicy is a boundary only where the CNI enforces it; the operator
-  cannot tell. Where it does not, prefer `trustedProxy.cidrs`.
+- A NetworkPolicy is a boundary only where the CNI enforces it, and the
+  operator cannot observe that: `ExposureConfined=True` says what is declared,
+  not what the network does. On a CNI that does not enforce policies (kindnet,
+  flannel alone), any Pod can write `X-Forwarded-For` under the any-peer trust:
+  set `trustedProxy.cidrs`, or `trustedProxy.hops: 0`.
+- When the policy goes (the exposure or `networkPolicy` changes), the operator
+  first rolls the workload to the narrower trust and deletes the policy only
+  once the rollout is complete (every replica updated and available, no other
+  left) and no console Pod, terminating ones included, still trusts every peer;
+  until then it keeps the policy (the workload and its Pods are watched, so it
+  looks again as the rollout progresses).
 - While the console is stalled on `HostnameNotAllowed` the operator withdraws
   the exposure but leaves the workload and this policy as they were, so a stale
-  `0.0.0.0/0` trust is never left without its policy.
+  `0.0.0.0/0` trust is never left without its policy; `ExposureConfined` is
+  removed, as nothing is published.
 - The advisory `ExposureConfined` never enters `Ready`; its message says which
   peers the console believes.
+- Sign-in budgets follow the trust. With CIDRs (rows with `0.0.0.0/0,::/0` or
+  `trustedProxy.cidrs`) each client keeps its own: ten OAuth callbacks and twenty
+  pasted tokens a minute per address, under a per-replica bound of 20 a second
+  (burst 40) per path. With hops and no CIDRs (`ExposureOpen`) every client has
+  the proxy's address, so the console charges no per-address budget: callbacks
+  are single-use and share the per-replica bound, pasted tokens have a budget per
+  token and the same bound, and the audit log names the proxy instead of the
+  client ([rate limits](../console/authentication.md#sessions)).
 
 ## Not in the custom resource
 

@@ -419,6 +419,11 @@ type deploymentInputs struct {
 	// the console in this reconcile (not merely requested: the Route and
 	// Gateway APIs may be unavailable).
 	Exposed bool
+	// PolicyBypass is why the exposure's NetworkPolicy does not confine
+	// the console port (another NetworkPolicy admits more peers, or there
+	// were too many to check), "" when it does: any-peer trust of
+	// X-Forwarded-For is granted only then.
+	PolicyBypass string
 }
 
 // env is one environment variable, in the chart's order.
@@ -598,7 +603,7 @@ func consoleEnv(c *pgtoolboxv1alpha1.PgToolBoxConsole, in deploymentInputs) []co
 		env("SESSION_KEY_FILE", runDir+"/session/"+sessionKey),
 		env("SESSION_IDLE_TIMEOUT", durationEnv(&metav1.Duration{Duration: c.SessionIdleTimeout()})),
 	)
-	envs = append(envs, authEnv(c, in.Exposed)...)
+	envs = append(envs, authEnv(c, in.Exposed, in.PolicyBypass)...)
 	envs = append(envs,
 		// The end-of-life table, mounted from the lifecycle ConfigMap and
 		// reloaded on change; absent, the built-in table applies.
@@ -647,8 +652,10 @@ func consoleEnv(c *pgtoolboxv1alpha1.PgToolBoxConsole, in deploymentInputs) []co
 }
 
 // authEnv is the sign-in provider's settings (OIDC or OpenShift), then
-// the session and token-login settings and the public URL.
-func authEnv(c *pgtoolboxv1alpha1.PgToolBoxConsole, exposed bool) []corev1.EnvVar {
+// the session and token-login settings, the public URL and the proxy
+// trust (bypass: another NetworkPolicy admits more peers, see
+// policyBypass).
+func authEnv(c *pgtoolboxv1alpha1.PgToolBoxConsole, exposed bool, bypass string) []corev1.EnvVar {
 	provider := c.AuthProvider()
 	oidc := c.Spec.Auth.OIDC
 	openshift := c.Spec.Auth.OpenShift
@@ -702,7 +709,7 @@ func authEnv(c *pgtoolboxv1alpha1.PgToolBoxConsole, exposed bool) []corev1.EnvVa
 	// sign-in budgets are charged per client, not shared by every user.
 	// Without a published exposure nothing is in front, and a forwarded
 	// header is the caller's own claim (the default, 0, ignores it).
-	return append(envs, proxyEnv(effectiveProxyTrust(c, exposed))...)
+	return append(envs, proxyEnv(effectiveProxyTrust(c, exposed, bypass))...)
 }
 
 // prometheusEnv is the Prometheus settings, nil without Prometheus. The
@@ -769,7 +776,7 @@ func consoleVolumes(c *pgtoolboxv1alpha1.PgToolBoxConsole) ([]corev1.VolumeMount
 			v.add("prometheus-token", runDir+"/prometheus", secretVolume("prometheus-token", prom.TokenSecretRef.Name, prom.TokenSecretRef.Key))
 		case prom.ProjectedToken:
 			v.add("prometheus-token", runDir+"/prometheus", corev1.Volume{Name: "prometheus-token", VolumeSource: corev1.VolumeSource{Projected: &corev1.ProjectedVolumeSource{
-				Sources: []corev1.VolumeProjection{{ServiceAccountToken: &corev1.ServiceAccountTokenProjection{ExpirationSeconds: new(int64(3600)), Path: tokenKey}}},
+				Sources: []corev1.VolumeProjection{{ServiceAccountToken: &corev1.ServiceAccountTokenProjection{Audience: prom.TokenAudience, ExpirationSeconds: new(int64(3600)), Path: tokenKey}}},
 			}}})
 		}
 		if prom.CAConfigMapRef != nil {

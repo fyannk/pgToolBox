@@ -869,6 +869,7 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `image` _[ImageSpec](#imagespec)_ | The oauth-proxy image. Omitted, the operator's default. |  | Optional: \{\} <br /> |
+| `sessionMaxAge` _[Duration](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.34/#duration-v1-meta)_ | How long an oauth-proxy session lasts (--cookie-expire). The proxy<br />reviews connect at sign-in only, so this bounds how long a revoked<br />person keeps pgAdmin open; when it ends the proxy signs the person in<br />again, silently while their OpenShift session lasts, but a request<br />in flight (a form being posted) can be lost. Default 1h. |  | Optional: \{\} <br /> |
 
 
 #### PgAdminReference
@@ -1275,7 +1276,7 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `enabled` _boolean_ | Whether the operator renders it. Omitted: true for route exposure,<br />and for ingress and gateway exposure when from is set. |  | Optional: \{\} <br /> |
-| `from` _[NetworkPolicyPeer](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.34/#networkpolicypeer-v1-networking) array_ | Who may reach the console port: the router, ingress controller or<br />gateway Pods. Omitted for route exposure: the namespaces labelled<br />policy-group.network.openshift.io/ingress (the OpenShift routers,<br />host-network ones included). Required for ingress and gateway. Every<br />peer listed is trusted to write X-Forwarded-For unless<br />trustedProxy.cidrs narrows it. The probe port (health and /metrics)<br />stays open to scrapers; it never reads the header. |  | MaxItems: 16 <br />Optional: \{\} <br /> |
+| `from` _[PgToolBoxConsolePolicyPeer](#pgtoolboxconsolepolicypeer) array_ | Who may reach the console port: the router, ingress controller or<br />gateway Pods. For route exposure the namespaces labelled<br />policy-group.network.openshift.io/ingress (the OpenShift routers,<br />host-network ones included) are always admitted, and from adds to<br />them. Required for ingress and gateway. Every peer listed is trusted<br />to write X-Forwarded-For unless trustedProxy.cidrs narrows it; a peer<br />that admits everyone (an empty namespaceSelector, an empty<br />podSelector alone, an ipBlock of /0) turns that trust off. The probe<br />port (health and /metrics) stays open to scrapers; it never reads the<br />header. |  | MaxItems: 16 <br />Optional: \{\} <br /> |
 
 
 #### PgToolBoxConsoleExposureSpec
@@ -1301,7 +1302,7 @@ _Appears in:_
 | `annotations` _object (keys:string, values:string)_ | Annotations added to the exposure object; keys under<br />pgtoolbox.fyannk.dev/ are rejected. |  | MaxProperties: 32 <br />Optional: \{\} <br /> |
 | `labels` _object (keys:string, values:string)_ | Labels added to the exposure object under the operator's own<br />identity labels, which always win. Ingress controllers and OpenShift<br />router shards select by label; keys under pgtoolbox.fyannk.dev/ are<br />rejected. |  | MaxProperties: 32 <br />Optional: \{\} <br /> |
 | `trustedProxy` _[PgToolBoxConsoleTrustedProxySpec](#pgtoolboxconsoletrustedproxyspec)_ | The reverse proxies in front of the console: how many append to<br />X-Forwarded-For and which peers they are (TRUSTED_PROXY_HOPS,<br />TRUSTED_PROXY_CIDRS). The console reads the header only from a peer<br />it trusts, so the per-address sign-in budgets and the audit trail's<br />client_ip follow each client. Omitted: one hop when an exposure<br />object is published; trusted peers per networkPolicy. |  | Optional: \{\} <br /> |
-| `networkPolicy` _[PgToolBoxConsoleExposurePolicySpec](#pgtoolboxconsoleexposurepolicyspec)_ | The ingress NetworkPolicy around the console Pods: only the router,<br />ingress controller or gateway reaches the console port. Omitted: on<br />for route exposure (the OpenShift router namespaces carry<br />policy-group.network.openshift.io/ingress), and for ingress and<br />gateway exposure only once from names the controller's namespace;<br />ExposureConfined says which. Never rendered for clusterIP. |  | Optional: \{\} <br /> |
+| `networkPolicy` _[PgToolBoxConsoleExposurePolicySpec](#pgtoolboxconsoleexposurepolicyspec)_ | The ingress NetworkPolicy around the console Pods: only the router,<br />ingress controller or gateway reaches the console port. Omitted: on<br />for route exposure (the OpenShift router namespaces carry<br />policy-group.network.openshift.io/ingress), and for ingress and<br />gateway exposure only once from names the controller's namespace;<br />ExposureConfined says which. Never rendered for clusterIP. Every<br />in-cluster client of the Service's http port (a debug Pod, an<br />in-cluster MCP client) is then refused unless from lists it, and is<br />trusted with X-Forwarded-For once listed. |  | Optional: \{\} <br /> |
 
 
 #### PgToolBoxConsoleHistorySpec
@@ -1320,6 +1321,23 @@ _Appears in:_
 | `persistent` _boolean_ | Keep the history on a volume per replica, across restarts: the<br />console is a StatefulSet whose claim template makes<br />history-&lt;console>-&lt;ordinal> for each replica. false: history in<br />memory, a Deployment. Default true. | true | Optional: \{\} <br /> |
 | `size` _[Quantity](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.34/#quantity-resource-api)_ | Size of each replica's history volume. Default 1Gi, which holds the<br />default retention of a console of a few hundred instances. A change<br />replaces the StatefulSet (its Pods keep running) and applies to<br />volumes made later; grow an existing one by editing its claim. |  | Optional: \{\} <br /> |
 | `storageClassName` _string_ | StorageClass of the history volumes. Omitted: the cluster default.<br />Like size, a change applies to volumes made later. |  | MaxLength: 253 <br />Optional: \{\} <br /> |
+
+
+#### PgToolBoxConsoleIPBlock
+
+
+
+PgToolBoxConsoleIPBlock is a NetworkPolicy ipBlock.
+
+
+
+_Appears in:_
+- [PgToolBoxConsolePolicyPeer](#pgtoolboxconsolepolicypeer)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `cidr` _string_ | The block, as a CIDR (10.0.0.0/8, fd00::/64). |  | MaxLength: 49 <br /> |
+| `except` _string array_ | CIDRs inside cidr that are not admitted. |  | MaxItems: 16 <br />items:MaxLength: 49 <br />items:XValidation: \{isCIDR(self) networkPolicy.from ipBlock.except entries must be CIDRs  FieldValueInvalid  &lt;nil>\} <br />Optional: \{\} <br /> |
 
 
 #### PgToolBoxConsoleInstanceCABundleStatus
@@ -1520,6 +1538,26 @@ _Appears in:_
 | `caConfigMapRef` _[LocalObjectReference](#localobjectreference)_ | A ConfigMap with ca.crt trusting the OAuth server. Omitted: the<br />service CA OpenShift publishes in every namespace. |  | Optional: \{\} <br /> |
 
 
+#### PgToolBoxConsolePolicyPeer
+
+
+
+PgToolBoxConsolePolicyPeer is a NetworkPolicyPeer, bounded so that the
+API server checks it here rather than refuse the policy the operator
+renders from it.
+
+
+
+_Appears in:_
+- [PgToolBoxConsoleExposurePolicySpec](#pgtoolboxconsoleexposurepolicyspec)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `podSelector` _[LabelSelector](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.34/#labelselector-v1-meta)_ | Pods (of this namespace, or of the namespaces namespaceSelector<br />selects). Empty with no namespaceSelector: every Pod of this<br />namespace, which ExposureConfined reports as broad. |  | Optional: \{\} <br /> |
+| `namespaceSelector` _[LabelSelector](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.34/#labelselector-v1-meta)_ | Namespaces. Empty: every namespace, which ExposureConfined reports<br />as broad. |  | Optional: \{\} <br /> |
+| `ipBlock` _[PgToolBoxConsoleIPBlock](#pgtoolboxconsoleipblock)_ | Addresses: a CIDR, less the except CIDRs inside it. Alone in its<br />peer. A /0 is broad. |  | Optional: \{\} <br /> |
+
+
 #### PgToolBoxConsolePrometheusSpec
 
 
@@ -1536,6 +1574,7 @@ _Appears in:_
 | `url` _string_ | The Prometheus (or Thanos querier) URL. |  | MaxLength: 512 <br />Pattern: `^https?://` <br /> |
 | `tokenSecretRef` _[SecretKeyReference](#secretkeyreference)_ | A Secret key holding a bearer token, mounted as a file. |  | Optional: \{\} <br /> |
 | `projectedToken` _boolean_ | Present the console's own ServiceAccount token, projected and rotated<br />by the kubelet (what the OpenShift thanos-querier accepts once the<br />ServiceAccount may view metrics). |  | Optional: \{\} <br /> |
+| `tokenAudience` _string_ | The audience of the projected token. Omitted: the API server's own<br />audience, which a TokenReview-based proxy (OpenShift's thanos-querier<br />behind kube-rbac-proxy) expects; such a token is also accepted by the<br />API server itself, so only a Prometheus you trust may receive it. Set<br />it when the server checks a dedicated audience: the token is then<br />useless against the API server. |  | MaxLength: 256 <br />MinLength: 1 <br />Pattern: `^[^\s]+$` <br />Optional: \{\} <br /> |
 | `caConfigMapRef` _[LocalObjectReference](#localobjectreference)_ | A ConfigMap with ca.crt that signed the server certificate. Omitted:<br />the system roots. |  | Optional: \{\} <br /> |
 | `namespaced` _boolean_ | Add namespace=&lt;ns> to each query, as OpenShift's tenancy port requires. |  | Optional: \{\} <br /> |
 | `range` _[Duration](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.34/#duration-v1-meta)_ | The charts' window. Omitted: 1h. |  | Optional: \{\} <br /> |
@@ -1781,6 +1820,8 @@ _Appears in:_
 | `InstanceCAInvalid` | ReasonInstanceCAInvalid: a Cluster's server CA Secret has a ca.crt<br />that holds no PEM certificate.<br /> |
 | `InstanceCABundleFull` | ReasonInstanceCABundleFull: the mirrored bundle reached the size a<br />ConfigMap can hold; the Clusters after it (by name) are left out.<br /> |
 | `ExposureOpen` | ReasonExposureOpen: ExposureConfined=False, the console is exposed<br />without its ingress NetworkPolicy, so any Pod can reach its port.<br /> |
+| `ExposurePeersBroad` | ReasonExposurePeersBroad: ExposureConfined=False, a networkPolicy.from<br />peer admits every namespace (an empty namespaceSelector), every Pod<br />of the console's namespace (an empty podSelector alone) or every<br />address (an ipBlock of prefix length 0): its peers are not the<br />proxies, so the console trusts none of them with X-Forwarded-For.<br /> |
+| `ExposurePolicyBypassed` | ReasonExposurePolicyBypassed: ExposureConfined=False, another<br />NetworkPolicy of the namespace admits peers the exposure does not<br />list to the console port (NetworkPolicies add up), or there were too<br />many to check: the console trusts none of the peers with<br />X-Forwarded-For.<br /> |
 
 
 #### SecretKeyReference
@@ -1910,8 +1951,13 @@ by `docs/site/crd-ref-docs/cel-rules.awk`.
 - `PgAdminStorageSpec.storageClassName`: storageClassName is immutable
 - `PgAdminAuthSpec`: exactly one of oauth2 and openshiftOAuthProxy is required
 - `PgAdminOAuth2Spec.requiredClaims`: claim names are 1-64 characters of letters, digits and _.:-
+- `PgAdminOpenShiftOAuthProxySpec.sessionMaxAge`: sessionMaxAge must be between 5m and 12h
 - `PgAdmin`: metadata.name must be a DNS-1035 label of at most 40 characters (it prefixes generated object names)
 - `PgToolBoxConsoleExposureSpec`: networkPolicy.enabled needs networkPolicy.from for ingress and gateway exposure: the controller's namespace is not known
+- `PgToolBoxConsolePolicyPeer`: each networkPolicy.from peer needs podSelector, namespaceSelector or ipBlock
+- `PgToolBoxConsolePolicyPeer`: a networkPolicy.from peer with ipBlock may not also have podSelector or namespaceSelector
+- `PgToolBoxConsoleIPBlock`: networkPolicy.from ipBlock.except entries must be CIDRs strictly inside ipBlock.cidr
+- `PgToolBoxConsoleIPBlock.cidr`: networkPolicy.from ipBlock.cidr must be a CIDR
 - `PgToolBoxConsoleSpec`: auth.oidc is required with auth.provider=oidc
 - `PgToolBoxConsoleSpec`: auth.provider=openshift needs publicURL or exposure.hostname: OpenShift redirects only to the callback the ServiceAccount lists
 - `PgToolBoxConsoleSpec`: mcp needs publicURL or exposure.hostname: the MCP endpoint advertises only its configured origin
@@ -1930,6 +1976,7 @@ by `docs/site/crd-ref-docs/cel-rules.awk`.
 - `PgToolBoxConsoleMCPSpec.oauthAccessTTL`: mcp.oauthAccessTTL must be between 10s and 1h
 - `PgToolBoxConsoleTracingSpec`: tracing.samplerArg needs a traceidratio sampler
 - `PgToolBoxConsoleRestoreDrillsSpec.timeLimit`: restoreDrills.timeLimit must be between 10m and 24h
+- `PgToolBoxConsolePrometheusSpec`: prometheus.tokenAudience applies to projectedToken only
 - `PgToolBoxConsolePrometheusSpec`: prometheus.url must be https when a token is configured: the token is never sent in clear
 - `PgToolBoxConsolePrometheusSpec.range`: prometheus.range must be between 5m and 24h
 - `PgToolBoxConsoleDigestSpec.retention`: digest.retention must be between 24h and 8784h

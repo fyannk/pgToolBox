@@ -42,7 +42,7 @@ tests:
     asserts:
       - notExists: {path: spec.ingress}
 
-  - it: admits ingress from the router namespace only, on the console port
+  - it: admits the OpenShift routers only for a Route, host-network ones included, on the console port
     set:
       console.networkPolicy.enabled: true
       console.networkPolicy.apiServer.addresses: [10.96.0.1]
@@ -53,7 +53,24 @@ tests:
           value:
             - from:
                 - namespaceSelector:
-                    matchLabels: {kubernetes.io/metadata.name: openshift-ingress}
+                    matchLabels: {policy-group.network.openshift.io/ingress: ""}
+              ports:
+                - {port: http, protocol: TCP}
+
+  - it: admits the ingress controller's namespace by name for an Ingress
+    set:
+      console.networkPolicy.enabled: true
+      console.networkPolicy.apiServer.addresses: [10.96.0.1]
+      console.exposure.type: ingress
+      console.exposure.host: console.example.com
+      console.exposure.routerNamespace: ingress-nginx
+    asserts:
+      - equal:
+          path: spec.ingress
+          value:
+            - from:
+                - namespaceSelector:
+                    matchLabels: {kubernetes.io/metadata.name: ingress-nginx}
               ports:
                 - {port: http, protocol: TCP}
 

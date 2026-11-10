@@ -44,15 +44,32 @@ const (
 	// ReasonExposureOpen: ExposureConfined=False, the console is exposed
 	// without its ingress NetworkPolicy, so any Pod can reach its port.
 	ReasonExposureOpen Reason = "ExposureOpen"
+	// ReasonExposurePeersBroad: ExposureConfined=False, a networkPolicy.from
+	// peer admits every namespace (an empty namespaceSelector), every Pod
+	// of the console's namespace (an empty podSelector alone) or every
+	// address (an ipBlock of prefix length 0): its peers are not the
+	// proxies, so the console trusts none of them with X-Forwarded-For.
+	ReasonExposurePeersBroad Reason = "ExposurePeersBroad"
+	// ReasonExposurePolicyBypassed: ExposureConfined=False, another
+	// NetworkPolicy of the namespace admits peers the exposure does not
+	// list to the console port (NetworkPolicies add up), or there were too
+	// many to check: the console trusts none of the peers with
+	// X-Forwarded-For.
+	ReasonExposurePolicyBypassed Reason = "ExposurePolicyBypassed"
 )
 
 // ConditionExposureConfined is advisory and gates nothing (it never enters
 // Ready): present only while an exposure object is published. True when
 // the operator renders the ingress NetworkPolicy that admits only the
-// router, ingress controller or gateway to the console port; False with
-// ExposureOpen when it does not (ingress or gateway exposure without
-// networkPolicy.from, or networkPolicy.enabled=false). The message says
-// which peers the console believes about X-Forwarded-For.
+// router, ingress controller or gateway to the console port and nothing
+// else in the namespace admits more; False with ExposureOpen when it is
+// not rendered (ingress or gateway exposure without networkPolicy.from, or
+// networkPolicy.enabled=false), ExposurePeersBroad when a peer of from
+// admits everyone, ExposurePolicyBypassed when another NetworkPolicy does.
+// Removed when nothing is published, the hostname stall included. The
+// message says which peers the console believes about X-Forwarded-For.
+// Whether the CNI enforces NetworkPolicies cannot be observed: True says
+// what is declared, not what the network does.
 const ConditionExposureConfined = "ExposureConfined"
 
 // ConditionInstanceCABundleComplete is advisory and gates nothing (it never
@@ -86,7 +103,10 @@ type PgToolBoxConsoleExposureSpec struct {
 	// for route exposure (the OpenShift router namespaces carry
 	// policy-group.network.openshift.io/ingress), and for ingress and
 	// gateway exposure only once from names the controller's namespace;
-	// ExposureConfined says which. Never rendered for clusterIP.
+	// ExposureConfined says which. Never rendered for clusterIP. Every
+	// in-cluster client of the Service's http port (a debug Pod, an
+	// in-cluster MCP client) is then refused unless from lists it, and is
+	// trusted with X-Forwarded-For once listed.
 	// +optional
 	NetworkPolicy *PgToolBoxConsoleExposurePolicySpec `json:"networkPolicy,omitempty"`
 }
@@ -126,15 +146,58 @@ type PgToolBoxConsoleExposurePolicySpec struct {
 	Enabled *bool `json:"enabled,omitempty"`
 
 	// Who may reach the console port: the router, ingress controller or
-	// gateway Pods. Omitted for route exposure: the namespaces labelled
+	// gateway Pods. For route exposure the namespaces labelled
 	// policy-group.network.openshift.io/ingress (the OpenShift routers,
-	// host-network ones included). Required for ingress and gateway. Every
-	// peer listed is trusted to write X-Forwarded-For unless
-	// trustedProxy.cidrs narrows it. The probe port (health and /metrics)
-	// stays open to scrapers; it never reads the header.
+	// host-network ones included) are always admitted, and from adds to
+	// them. Required for ingress and gateway. Every peer listed is trusted
+	// to write X-Forwarded-For unless trustedProxy.cidrs narrows it; a peer
+	// that admits everyone (an empty namespaceSelector, an empty
+	// podSelector alone, an ipBlock of /0) turns that trust off. The probe
+	// port (health and /metrics) stays open to scrapers; it never reads the
+	// header.
 	// +kubebuilder:validation:MaxItems=16
 	// +optional
-	From []networkingv1.NetworkPolicyPeer `json:"from,omitempty"`
+	From []PgToolBoxConsolePolicyPeer `json:"from,omitempty"`
+}
+
+// PgToolBoxConsolePolicyPeer is a NetworkPolicyPeer, bounded so that the
+// API server checks it here rather than refuse the policy the operator
+// renders from it.
+// +kubebuilder:validation:XValidation:rule="has(self.podSelector) || has(self.namespaceSelector) || has(self.ipBlock)",message="each networkPolicy.from peer needs podSelector, namespaceSelector or ipBlock",reason=FieldValueRequired
+// +kubebuilder:validation:XValidation:rule="!has(self.ipBlock) || (!has(self.podSelector) && !has(self.namespaceSelector))",message="a networkPolicy.from peer with ipBlock may not also have podSelector or namespaceSelector",reason=FieldValueForbidden
+type PgToolBoxConsolePolicyPeer struct {
+	// Pods (of this namespace, or of the namespaces namespaceSelector
+	// selects). Empty with no namespaceSelector: every Pod of this
+	// namespace, which ExposureConfined reports as broad.
+	// +optional
+	PodSelector *metav1.LabelSelector `json:"podSelector,omitempty"`
+
+	// Namespaces. Empty: every namespace, which ExposureConfined reports
+	// as broad.
+	// +optional
+	NamespaceSelector *metav1.LabelSelector `json:"namespaceSelector,omitempty"`
+
+	// Addresses: a CIDR, less the except CIDRs inside it. Alone in its
+	// peer. A /0 is broad.
+	// +optional
+	IPBlock *PgToolBoxConsoleIPBlock `json:"ipBlock,omitempty"`
+}
+
+// PgToolBoxConsoleIPBlock is a NetworkPolicy ipBlock.
+// +kubebuilder:validation:XValidation:rule="!has(self.except) || (isCIDR(self.cidr) && self.except.all(e, isCIDR(e) && cidr(self.cidr).containsCIDR(e) && cidr(e).prefixLength() > cidr(self.cidr).prefixLength()))",message="networkPolicy.from ipBlock.except entries must be CIDRs strictly inside ipBlock.cidr",fieldPath=".except",reason=FieldValueInvalid
+type PgToolBoxConsoleIPBlock struct {
+	// The block, as a CIDR (10.0.0.0/8, fd00::/64).
+	// +kubebuilder:validation:MaxLength=49
+	// +kubebuilder:validation:XValidation:rule="isCIDR(self)",message="networkPolicy.from ipBlock.cidr must be a CIDR",reason=FieldValueInvalid
+	CIDR string `json:"cidr"`
+
+	// CIDRs inside cidr that are not admitted.
+	// +kubebuilder:validation:MaxItems=16
+	// +kubebuilder:validation:items:MaxLength=49
+	// +kubebuilder:validation:items:XValidation:rule="isCIDR(self)",message="networkPolicy.from ipBlock.except entries must be CIDRs",reason=FieldValueInvalid
+	// +listType=atomic
+	// +optional
+	Except []string `json:"except,omitempty"`
 }
 
 // PgToolBoxConsoleAuthProvider selects how people sign in to the console.
@@ -672,6 +735,7 @@ type PgToolBoxConsoleDrillStorage struct {
 }
 
 // PgToolBoxConsolePrometheusSpec is the Prometheus HTTP API the charts query.
+// +kubebuilder:validation:XValidation:rule="!has(self.tokenAudience) || (has(self.projectedToken) && self.projectedToken)",message="prometheus.tokenAudience applies to projectedToken only",fieldPath=".tokenAudience",reason=FieldValueInvalid
 // +kubebuilder:validation:XValidation:rule="(!has(self.tokenSecretRef) && (!has(self.projectedToken) || !self.projectedToken)) || self.url.startsWith('https://')",message="prometheus.url must be https when a token is configured: the token is never sent in clear",fieldPath=".url",reason=FieldValueInvalid
 type PgToolBoxConsolePrometheusSpec struct {
 	// The Prometheus (or Thanos querier) URL.
@@ -688,6 +752,18 @@ type PgToolBoxConsolePrometheusSpec struct {
 	// ServiceAccount may view metrics).
 	// +optional
 	ProjectedToken bool `json:"projectedToken,omitempty"`
+
+	// The audience of the projected token. Omitted: the API server's own
+	// audience, which a TokenReview-based proxy (OpenShift's thanos-querier
+	// behind kube-rbac-proxy) expects; such a token is also accepted by the
+	// API server itself, so only a Prometheus you trust may receive it. Set
+	// it when the server checks a dedicated audience: the token is then
+	// useless against the API server.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=256
+	// +kubebuilder:validation:Pattern=`^[^\s]+$`
+	// +optional
+	TokenAudience string `json:"tokenAudience,omitempty"`
 
 	// A ConfigMap with ca.crt that signed the server certificate. Omitted:
 	// the system roots.

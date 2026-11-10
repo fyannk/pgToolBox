@@ -249,6 +249,43 @@ jobs:
           set -euo pipefail
           make test-envtest test-envtest-evidenceagent test-envtest-admissionpolicy test-envtest-operator test-envtest-manager
 
+  # The envtest suites on the rest of the supported range (Kubernetes 1.34 to
+  # 1.36; the job above runs the oldest, 1.34.1). Not on pull requests: three
+  # control planes per change buy little, and a new Kubernetes minor changes
+  # the API server, not this repository. The nightly run and a dispatch (the
+  # release's) cover it, and ci-ok counts a failure here.
+  envtest-k8s:
+    name: Envtest on Kubernetes ${{ matrix.k8s }}
+    needs: changes
+    if: needs.changes.outputs.go == 'true' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read # check out the repository
+    strategy:
+      fail-fast: false
+      matrix:
+        # Versions setup-envtest publishes; the Makefile's
+        # ENVTEST_K8S_VERSION_API and ENVTEST_K8S_VERSION_CONSOLE take them.
+        k8s: ["1.35.0", "1.36.2"]
+    env:
+      ENVTEST_K8S_VERSION_API: ${{ matrix.k8s }}
+      ENVTEST_K8S_VERSION_CONSOLE: ${{ matrix.k8s }}
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the pinned tools
+        uses: ./.github/actions/toolchain
+        with:
+          tools: go helm go:sigs.k8s.io/controller-tools/cmd/controller-gen go:sigs.k8s.io/controller-runtime/tools/setup-envtest
+          go-cache: "true"
+      - name: Envtest suites
+        run: |
+          set -euo pipefail
+          make test-envtest test-envtest-evidenceagent test-envtest-admissionpolicy test-envtest-operator test-envtest-manager
+
   console-core:
     name: Console core (envtest per CloudNativePG minor, authz, bounds, pins)
     needs: changes
@@ -716,6 +753,7 @@ jobs:
       - test
       - race-fuzz
       - envtest
+      - envtest-k8s
       - console-core
       - ui
       - ui-e2e

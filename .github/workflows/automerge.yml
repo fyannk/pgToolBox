@@ -14,17 +14,29 @@ name: Dependabot auto-merge
 # here checks out the pull request, and the job runs only when both the author
 # and the sender of the event are Dependabot, so a person's push to the branch
 # never runs it with a write token.
+#
+# Second job, `dispatch-main-checks`: a merge made by auto-merge carries the
+# Actions token's identity, and GitHub starts no push or pull_request run for
+# an event that token causes (workflow_dispatch is the documented exception).
+# So the merge commit would have no ci-ok and no security-gate check run and
+# `release.sh wait-ci` would refuse a tag on it. After a merge, and every
+# 30 minutes as a net for a merge this event missed, the job dispatches ci.yml
+# (every family: a dispatch fails open in hack/changed-paths.sh) and
+# security.yml on main when ci.yml has not run for the commit yet.
 on:
   pull_request:
     types:
       - opened
       - reopened
       - synchronize
+      - closed
+  schedule:
+    - cron: "*/30 * * * *"
 
 permissions: {}
 
 concurrency:
-  group: automerge-${{ github.event.pull_request.number }}
+  group: automerge-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 
 jobs:
@@ -34,6 +46,8 @@ jobs:
     # still Dependabot even when a person pushed the commit that fired the
     # event, and this job holds a write token under pull_request_target.
     if: >-
+      github.event_name == 'pull_request' &&
+      github.event.action != 'closed' &&
       github.event.pull_request.user.login == 'dependabot[bot]' &&
       github.event.sender.login == 'dependabot[bot]' &&
       github.event.pull_request.base.ref == 'main'
@@ -51,11 +65,13 @@ jobs:
 
       # An allowlist rather than "not major": if update-type is ever empty or
       # carries a value this workflow has not seen, the gate closes instead of
-      # arming a merge nobody chose.
+      # arming a merge nobody chose. The Playwright group is never queued: its
+      # bump needs the screenshot baselines re-rendered by a person.
       - name: Queue patch and minor updates
         if: >-
-          steps.metadata.outputs.update-type == 'version-update:semver-patch' ||
-          steps.metadata.outputs.update-type == 'version-update:semver-minor'
+          steps.metadata.outputs.dependency-group != 'playwright' &&
+          (steps.metadata.outputs.update-type == 'version-update:semver-patch' ||
+          steps.metadata.outputs.update-type == 'version-update:semver-minor')
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -65,11 +81,45 @@ jobs:
 
       - name: Say why the bump was left alone
         if: >-
-          steps.metadata.outputs.update-type != 'version-update:semver-patch' &&
-          steps.metadata.outputs.update-type != 'version-update:semver-minor'
+          steps.metadata.outputs.dependency-group == 'playwright' ||
+          (steps.metadata.outputs.update-type != 'version-update:semver-patch' &&
+          steps.metadata.outputs.update-type != 'version-update:semver-minor')
         env:
           NAMES: ${{ steps.metadata.outputs.dependency-names }}
           UPDATE_TYPE: ${{ steps.metadata.outputs.update-type }}
         run: |
           set -euo pipefail
           echo "::notice::${NAMES} has update-type '${UPDATE_TYPE}', which is outside the auto-merge allowlist. Left for manual review."
+
+  dispatch-main-checks:
+    name: Run the checks on main
+    # A merged pull request of Dependabot's, or the schedule. Merges by a
+    # person start their own push run and need nothing from here.
+    if: >-
+      github.event_name == 'schedule' ||
+      (github.event.action == 'closed' &&
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
+      github.event.pull_request.base.ref == 'main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write # list this commit's runs and dispatch two workflows
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+      MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha || github.sha }}
+    steps:
+      - name: Dispatch ci.yml and security.yml when the commit has no run
+        run: |
+          set -euo pipefail
+          # Any event counts: a push run, a dispatch, the nightly. Only a commit
+          # with none gets one, so a normal merge by a person is left alone.
+          existing="$(gh run list --workflow ci.yml --commit "${MERGE_SHA}" --json databaseId --jq 'length')"
+          if [[ "${existing}" != "0" ]]; then
+            echo "ci.yml already ran for ${MERGE_SHA}; nothing to dispatch"
+            exit 0
+          fi
+          echo "no ci.yml run for ${MERGE_SHA}; dispatching ci.yml and security.yml on main"
+          gh workflow run ci.yml --ref main
+          gh workflow run security.yml --ref main

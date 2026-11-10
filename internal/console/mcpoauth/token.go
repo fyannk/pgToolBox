@@ -57,10 +57,20 @@ func invalidGrant(desc string) *tokenFailure {
 
 func (s *Server) handleToken(w http.ResponseWriter, r *http.Request) {
 	client := auth.ClientOf(r, s.o.TrustedProxy)
-	if !s.requests.Allow(auth.ClientKey(r, s.o.TrustedProxy)) {
+	// Per client address when it is a client's; behind a proxy the
+	// console does not trust every client has that address, and only the
+	// process-wide bucket below applies (a client_id is public, so a
+	// budget per client would let anyone spend another's).
+	if key, perAddress := auth.BudgetKey(r, s.o.TrustedProxy); perAddress && !s.requests.Allow(key) {
 		requests.WithLabelValues("token", "throttled").Inc()
 		w.Header().Set("Retry-After", "30")
 		writeError(w, http.StatusTooManyRequests, "slow_down", "too many token requests from this address")
+		return
+	}
+	if !s.tokenRequests.Allow(processKey) {
+		requests.WithLabelValues("token", "throttled").Inc()
+		w.Header().Set("Retry-After", "5")
+		writeError(w, http.StatusTooManyRequests, "slow_down", "the console is receiving too many token requests; retry in a few seconds")
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxFormBytes)

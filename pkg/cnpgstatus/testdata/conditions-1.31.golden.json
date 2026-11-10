@@ -208,12 +208,14 @@
       "status": "True",
       "reason": "",
       "upstream": {
-        "class": "ok",
-        "known": true
+        "class": "warning",
+        "known": true,
+        "reason": "condition table not verified for CNPG 1.31"
       },
       "forkPinned": {
-        "class": "ok",
-        "known": true
+        "class": "warning",
+        "known": true,
+        "reason": "condition table not verified for CNPG 1.31"
       }
     },
     {
@@ -260,12 +262,14 @@
       "status": "True",
       "reason": "",
       "upstream": {
-        "class": "ok",
-        "known": true
+        "class": "warning",
+        "known": true,
+        "reason": "condition table not verified for CNPG 1.31"
       },
       "forkPinned": {
-        "class": "ok",
-        "known": true
+        "class": "warning",
+        "known": true,
+        "reason": "condition table not verified for CNPG 1.31"
       }
     },
     {
@@ -312,12 +316,14 @@
       "status": "True",
       "reason": "",
       "upstream": {
-        "class": "ok",
-        "known": true
+        "class": "warning",
+        "known": true,
+        "reason": "condition table not verified for CNPG 1.31"
       },
       "forkPinned": {
-        "class": "ok",
-        "known": true
+        "class": "warning",
+        "known": true,
+        "reason": "condition table not verified for CNPG 1.31"
       }
     },
     {
@@ -364,12 +370,14 @@
       "status": "True",
       "reason": "",
       "upstream": {
-        "class": "ok",
-        "known": true
+        "class": "warning",
+        "known": true,
+        "reason": "condition table not verified for CNPG 1.31"
       },
       "forkPinned": {
-        "class": "ok",
-        "known": true
+        "class": "warning",
+        "known": true,
+        "reason": "condition table not verified for CNPG 1.31"
       }
     },
     {
@@ -416,12 +424,14 @@
       "status": "True",
       "reason": "",
       "upstream": {
-        "class": "ok",
-        "known": true
+        "class": "warning",
+        "known": true,
+        "reason": "condition table not verified for CNPG 1.31"
       },
       "forkPinned": {
-        "class": "ok",
-        "known": true
+        "class": "warning",
+        "known": true,
+        "reason": "condition table not verified for CNPG 1.31"
       }
     },
     {
@@ -468,12 +478,14 @@
       "status": "True",
       "reason": "",
       "upstream": {
-        "class": "ok",
-        "known": true
+        "class": "warning",
+        "known": true,
+        "reason": "condition table not verified for CNPG 1.31"
       },
       "forkPinned": {
-        "class": "ok",
-        "known": true
+        "class": "warning",
+        "known": true,
+        "reason": "condition table not verified for CNPG 1.31"
       }
     },
     {

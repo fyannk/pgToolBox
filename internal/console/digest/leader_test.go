@@ -134,12 +134,16 @@ func TestElectedDeliveryOnlyByTheLeaderAndNoResendOnFailover(t *testing.T) {
 		}
 		return false
 	})
-	// B, following, shows the leader's delivery from the shared mark.
-	for _, c := range b.Status().Channels {
-		if c.Channel == "chat" && (c.LastSuccess == nil || c.DigestID != id) {
-			t.Fatalf("B's chat state %+v: want A's delivery", c)
+	// B, following, shows the leader's delivery from the shared mark. The
+	// leader writes the mark after the channel returns, so wait for it.
+	waitFor(t, "B showing A's chat delivery", func() bool {
+		for _, c := range b.Status().Channels {
+			if c.Channel == "chat" {
+				return c.LastSuccess != nil && c.DigestID == id
+			}
 		}
-	}
+		return false
+	})
 	stopA()
 
 	// Failover: B leads. Chat was marked: not sent again. Mail was not:

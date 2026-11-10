@@ -119,6 +119,20 @@ func newEnvtestSuite(t *testing.T) *envtestSuite {
 	}
 }
 
+// completeRollout writes the status a StatefulSet controller would once
+// every replica runs the current template (envtest runs no controller).
+func completeRollout(ctx context.Context, t *testing.T, s *envtestSuite, name string) {
+	t.Helper()
+	set := &appsv1.StatefulSet{}
+	s.get(ctx, t, name, set)
+	replicas := ptrValue(set.Spec.Replicas, 1)
+	set.Status = appsv1.StatefulSetStatus{
+		ObservedGeneration: set.Generation, Replicas: replicas, ReadyReplicas: replicas, CurrentReplicas: replicas,
+		UpdatedReplicas: replicas, AvailableReplicas: replicas, CurrentRevision: "r", UpdateRevision: "r",
+	}
+	must(t, s.admin.Status().Update(ctx, set))
+}
+
 // installShippedRoles creates the console ClusterRoles the way an
 // operator installation does, from config/rbac.
 func (s *envtestSuite) installShippedRoles(ctx context.Context, t *testing.T) {
@@ -586,6 +600,10 @@ func TestPgToolBoxConsoleReconcilerOnEnvtest(t *testing.T) {
 		s.reconcile(ctx, t, "console")
 		refused := s.console(ctx, t, "console")
 		assertCondition(t, refused, pgtoolboxv1alpha1.ConditionConfigurationValid, metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonHostnameNotAllowed)
+		// Nothing is published any more: ExposureConfined goes with it.
+		if got := meta.FindStatusCondition(refused.Status.Conditions, pgtoolboxv1alpha1.ConditionExposureConfined); got != nil {
+			t.Fatalf("ExposureConfined = %+v on a withdrawn exposure, want none", got)
+		}
 		assertCondition(t, refused, pgtoolboxv1alpha1.ConditionStalled, metav1.ConditionTrue, pgtoolboxv1alpha1.ReasonHostnameNotAllowed)
 		s.absent(ctx, t, "console", &networkingv1.Ingress{})
 
@@ -625,7 +643,7 @@ func TestPgToolBoxConsoleReconcilerOnEnvtest(t *testing.T) {
 			t.Fatalf("without a policy: %v, want one hop and no trusted peer", got)
 		}
 
-		open.Spec.Exposure.NetworkPolicy = &pgtoolboxv1alpha1.PgToolBoxConsoleExposurePolicySpec{From: []networkingv1.NetworkPolicyPeer{{
+		open.Spec.Exposure.NetworkPolicy = &pgtoolboxv1alpha1.PgToolBoxConsoleExposurePolicySpec{From: []pgtoolboxv1alpha1.PgToolBoxConsolePolicyPeer{{
 			NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"kubernetes.io/metadata.name": "ingress-nginx"}},
 		}}}
 		must(t, s.admin.Update(ctx, open))
@@ -640,12 +658,40 @@ func TestPgToolBoxConsoleReconcilerOnEnvtest(t *testing.T) {
 		if got := proxyEnv(); got["TRUSTED_PROXY_CIDRS"] != "0.0.0.0/0,::/0" {
 			t.Fatalf("behind the policy: %v, want every admitted peer trusted", got)
 		}
-		// Byte-stable: a second reconcile rewrites neither.
+		// Byte-stable: a second reconcile rewrites neither. Another
+		// NetworkPolicy may appear unseen (only the operator's own are
+		// cached): the console looks again.
 		before := policy.ResourceVersion
-		s.reconcile(ctx, t, "console")
+		if result := s.reconcile(ctx, t, "console"); result.RequeueAfter != policyRecheck {
+			t.Fatalf("RequeueAfter = %s while every peer is trusted, want %s", result.RequeueAfter, policyRecheck)
+		}
 		s.get(ctx, t, console.WorkloadName()+"-ingress", policy)
 		if policy.ResourceVersion != before {
 			t.Fatal("an unchanged PgToolBoxConsole rewrote its NetworkPolicy")
+		}
+
+		// Another NetworkPolicy that admits the namespace to every port
+		// reopens the console port (NetworkPolicies add up): no peer is
+		// trusted any more.
+		sameNamespace := &networkingv1.NetworkPolicy{
+			ObjectMeta: metav1.ObjectMeta{Name: "allow-same-namespace", Namespace: suiteNamespace},
+			Spec: networkingv1.NetworkPolicySpec{
+				PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress},
+				Ingress:     []networkingv1.NetworkPolicyIngressRule{{From: []networkingv1.NetworkPolicyPeer{{PodSelector: &metav1.LabelSelector{}}}}},
+			},
+		}
+		must(t, s.admin.Create(ctx, sameNamespace))
+		s.reconcile(ctx, t, "console")
+		bypassed := s.console(ctx, t, "console")
+		assertCondition(t, bypassed, pgtoolboxv1alpha1.ConditionExposureConfined, metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonExposurePolicyBypassed)
+		if got := proxyEnv(); got["TRUSTED_PROXY_CIDRS"] != "" {
+			t.Fatalf("with allow-same-namespace: %v, want no trusted peer", got)
+		}
+		must(t, s.admin.Delete(ctx, sameNamespace))
+		s.reconcile(ctx, t, "console")
+		assertCondition(t, s.console(ctx, t, "console"), pgtoolboxv1alpha1.ConditionExposureConfined, metav1.ConditionTrue, pgtoolboxv1alpha1.ReasonAsExpected)
+		if got := proxyEnv(); got["TRUSTED_PROXY_CIDRS"] != "0.0.0.0/0,::/0" {
+			t.Fatalf("allow-same-namespace removed: %v, want every admitted peer trusted again", got)
 		}
 
 		// A Route without the Route API (this API server serves none) is
@@ -662,10 +708,32 @@ func TestPgToolBoxConsoleReconcilerOnEnvtest(t *testing.T) {
 		if meta.FindStatusCondition(unpublished.Status.Conditions, pgtoolboxv1alpha1.ConditionExposureConfined) != nil {
 			t.Fatal("ExposureConfined on a Route that is not published")
 		}
-		s.absent(ctx, t, console.WorkloadName()+"-ingress", &networkingv1.NetworkPolicy{})
 		if got := proxyEnv(); len(got) != 0 {
 			t.Fatalf("a Route that is not published: %v, want no trusted proxy", got)
 		}
+		// The rollout has not happened (envtest runs no controller): the
+		// old Pods still trust every peer, so the policy stays. The
+		// workload's status and its Pods are watched: no polling.
+		if result := s.reconcile(ctx, t, "console"); result.RequeueAfter != 0 {
+			t.Fatalf("RequeueAfter = %s during the rollout, want none (watched)", result.RequeueAfter)
+		}
+		s.get(ctx, t, console.WorkloadName()+"-ingress", &networkingv1.NetworkPolicy{})
+		// Rolled out, but a Pod that still trusts every peer (terminating,
+		// say) keeps the policy.
+		completeRollout(ctx, t, s, "console")
+		oldPod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: "console-old", Namespace: suiteNamespace, Labels: selectorLabels(console)},
+			Spec: corev1.PodSpec{Containers: []corev1.Container{{
+				Name: "console", Image: "registry.example/pgtoolbox-console:1.2.0",
+				Env: []corev1.EnvVar{{Name: "TRUSTED_PROXY_CIDRS", Value: "0.0.0.0/0,::/0"}},
+			}}},
+		}
+		must(t, s.admin.Create(ctx, oldPod))
+		s.reconcile(ctx, t, "console")
+		s.get(ctx, t, console.WorkloadName()+"-ingress", &networkingv1.NetworkPolicy{})
+		must(t, s.admin.Delete(ctx, oldPod, client.GracePeriodSeconds(0)))
+		s.reconcile(ctx, t, "console")
+		s.absent(ctx, t, console.WorkloadName()+"-ingress", &networkingv1.NetworkPolicy{})
 
 		back := s.console(ctx, t, "console")
 		back.Spec.Exposure = pgtoolboxv1alpha1.PgToolBoxConsoleExposureSpec{}

@@ -24,6 +24,7 @@ import { BackupLabel, PgBackRestMethodFacts, PgBackRestRepository } from "./PgBa
 import { QueryState } from "./QueryState";
 import { RecoveryWindowPanel } from "./RecoveryWindow";
 import { RestoreDrillsPanel } from "./RestoreDrills";
+import { phraseText } from "./recoveryPhrase";
 
 const when = (iso?: string) => (iso ? <Time iso={iso} /> : <Reported value={undefined} />);
 
@@ -202,7 +203,7 @@ function FactRow({ label, fact }: { label: string; fact: EvidenceFact }) {
       <span className="flex flex-wrap items-center gap-2">
         <StatusChip health={fact.health} label={fact.state} size="sm" />
         {fact.code && <code className="font-code text-caption">{fact.code}</code>}
-        {fact.message && <span>{fact.message}</span>}
+        {fact.message && <span>{phraseText(fact.phrase?.code, fact.phrase?.params, fact.message)}</span>}
       </span>
     </Fact>
   );
