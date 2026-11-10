@@ -236,15 +236,19 @@ redirects and the CSRF check use the right origin. To serve HTTPS from the pod,
 point `console.tls.secretName` at a `kubernetes.io/tls` Secret; it is mounted as
 files. Behind an edge, name the edge's addresses in `console.trustedProxyCIDRs`
 (or enable `console.networkPolicy` with no `ingress.extraFrom`: it then admits
-only the router namespace and trusts every peer it admits). Without either, or
-with `extraFrom` (its peers are not the router), the console ignores
+only the router namespace and trusts every peer it admits; not on OpenShift,
+below). Without either, or with `extraFrom` (its peers are not the router), the
+console ignores
 `X-Forwarded-For`: every client shares the edge's address, so no per-address
 sign-in budget applies, only the per-flow, per-token and per-replica bounds
 ([rate limits](authentication.md#sessions)). NetworkPolicies add up, and the
 chart cannot see the namespace's others: one that admits more Pods to the
 console port (an `allow-same-namespace`, the OpenShift project template's)
 lets them forge the header under the any-peer trust, so list the proxies in
-`trustedProxyCIDRs` where such a policy exists, and on OpenShift.
+`trustedProxyCIDRs` where such a policy exists. On OpenShift (the Route API is
+served, or `exposure.type` is `route`) the project template adds
+`allow-from-same-namespace`, so the chart never trusts every peer there: without
+`trustedProxyCIDRs` the header is ignored and the install notes say so.
 `console.trustedProxyHops` (default 1 when exposed) counts the proxies in front.
 
 ## What else can be switched
