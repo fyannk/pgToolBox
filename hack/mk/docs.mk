@@ -72,7 +72,7 @@ DOCS_BUNDLE_VERSION = $(shell sed -n 's/^version: *//p' charts/pgtoolbox/Chart.y
 
 .PHONY: docs-build
 docs-build: ## Build the documentation site (typecheck, the llms plugin and script tests, Mermaid parse, screenshots copy, build; fails on a broken link). Writes docs/site/build.
-	cd docs/site && npm ci && npm run typecheck && npm test && npm run check:mermaid && npm run build
+	cd docs/site && npm ci --ignore-scripts && npm run typecheck && npm test && npm run check:mermaid && npm run build
 
 .PHONY: docs-bundle
 docs-bundle: docs-build ## Write the console's embedded documentation bundle (Markdown pages and BM25 index; git-ignored) from the built site.
@@ -88,4 +88,4 @@ docs: crd-ref-docs-check docs-reasons-check docs-env-check docs-bundle test-docs
 
 .PHONY: docs-serve
 docs-serve: ## Serve the documentation site locally with live reload (http://localhost:3000/).
-	cd docs/site && npm ci && npm run start
+	cd docs/site && npm ci --ignore-scripts && npm run start
