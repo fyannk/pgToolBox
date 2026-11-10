@@ -280,12 +280,14 @@ trusted.
 | `route` (published) | on by default: the console port admits namespaces labelled `policy-group.network.openshift.io/ingress` (the OpenShift routers, host-network ones included), plus `from` | `1` / `0.0.0.0/0,::/0` | `True` |
 | `ingress`, `gateway` with `networkPolicy.from` | the console port admits only `from` | `1` / `0.0.0.0/0,::/0` | `True` |
 | a peer of `from` admits (nearly) everyone | rendered as written | `1` / none: the header is ignored | `False`, `ExposurePeersBroad` |
-| the API server refuses the rendered policy | checked by a dry run first: the previous one stays, and no exposure is published or changed | unchanged (the workload is not rolled) | `ConfigurationValid=False`, `ExposurePolicyInvalid`, retried every five minutes; `ExposureConfined` still describes the policy in force, or says `ExposureOpen` when none is and an exposure is published |
+| the API server refuses the rendered policy (its schema, or an admission policy or webhook that denies it) | checked by a dry run first (skipped while the policy in force already is the rendered one): the previous one stays, and no exposure is published or changed | unchanged (the workload is not rolled) | `ConfigurationValid=False`, `ExposurePolicyInvalid`, retried every five minutes; `ExposureConfined` still describes the policy in force, or says `ExposureOpen` when none is and an exposure is published |
 | another NetworkPolicy admits more to the console port | rendered | `1` / none | `False`, `ExposurePolicyBypassed` |
-| an `ipBlock` peer and no console Pod address yet (first Pod Pending, scale from zero), or more than 250 console Pods | rendered | `1` / none until a Pod address is known | `False`, `ExposureTrustUnverified` |
+| an `ipBlock` peer and no console Pod address yet, never verified (creation, or blocks no earlier Pod address checked), or more than 250 console Pods | rendered | `1` / none until a Pod address is known | `False`, `ExposureTrustUnverified` |
+| an `ipBlock` peer, the only Pod replaced or scaled from zero after an earlier Pod address verified the same blocks | rendered | unchanged: `1` / `0.0.0.0/0,::/0` (the workload is not rolled) | `True` |
 | `from` widens while a Pod trusts every peer | the previous one stays until the rollout without the grant is through, then widens | `1` / none during that rollout | `False`, `ExposureTrustUnverified` |
 | `ingress`, `gateway` without `from` | none: the controller's namespace differs per installation, so no default is safe | `1` / none: the header is ignored | `False`, `ExposureOpen` |
 | `networkPolicy.enabled: false` | none | `1` / none | `False`, `ExposureOpen` |
+| the policy goes (exposure or `networkPolicy` turned off) while a Pod may still trust every peer | kept until the rollout without the grant is through and no Pod carries it | `1` / none | `False`, `ExposurePolicyKept`, naming a Pod stuck terminating |
 
 - `spec.exposure.networkPolicy.from` lists the router, ingress controller or
   gateway Pods (NetworkPolicy peers, at most 16). For the community
@@ -334,11 +336,23 @@ trusted.
   (IPv6), holding a whole private IPv4 range (`10.0.0.0/8`, `172.16.0.0/12`,
   `192.168.0.0/16`, `100.64.0.0/10`, where Pod networks are cut from), a
   unique-local IPv6 block (inside `fc00::/7`) wider than `/64` (kind's
-  `fd00:10:244::/56`, a `/48`), or holding a console Pod's own address. That
-  last check needs a Pod address: while no console Pod has one (the first Pod
-  is Pending, the workload scales from zero) an `ipBlock` peer is not trusted
+  `fd00:10:244::/56`, a `/48`), holding a console Pod's own address, or
+  overlapping a Node's `spec.podCIDRs` (the Pods of that node: the operator
+  lists the Nodes, uncached, at most 10,000, and keeps what it read for a
+  minute; CNIs that do not allocate from `spec.podCIDRs`, such as Calico or
+  Cilium's cluster pool, leave it empty, and the console Pods' own addresses
+  are then the only check). An installation that does not grant the operator
+  `list` on `nodes` skips that check and says so in the `ExposureConfined`
+  message. The console-Pod check needs a Pod address: at creation, while no
+  console Pod has one, an `ipBlock` peer is not trusted
   (`ExposureTrustUnverified`), and the trust comes with the Pod's address
-  (one more rollout), never before it. With at most 16 peers of at most a
+  (one more rollout), never before it. The template then records which
+  blocks were verified (the Pod annotation
+  `pgtoolbox.fyannk.dev/trusted-ipblocks`, a hash), so that when the only Pod
+  is replaced, or the workload scales from zero, the new Pod keeps the trust
+  while it has no address (the Pod network does not change) instead of
+  rolling again; changing the blocks (narrowing included) needs a new check,
+  and so a Pod address. With at most 16 peers of at most a
   `/8` each, blocks together never cover every address either. `except`
   entries are not counted: a false alarm is the safe side. Labels that a
   namespace owner may set on their own namespace (a tenant label of Capsule
@@ -353,7 +367,10 @@ trusted.
   the operator keeps the policy in force, rolls the workload without the
   grant (`ExposureTrustUnverified`), and widens the policy once that is
   through; the trust is then granted again if the new peers allow it.
-  Narrowing applies at once.
+  Narrowing applies at once. A Pod stuck terminating with the grant (a lost
+  node, a stuck finalizer) holds the widening until it is gone: the message
+  names it and when its deletion was asked, so it can be force-deleted, and
+  the operator looks again every five minutes besides watching it.
 - **NetworkPolicies add up.** Another policy of the namespace that selects the
   console Pods and admits, to the console port, a peer `from` does not list
   (an `allow-same-namespace` policy, an allow-all) lets that peer in whatever
@@ -407,8 +424,10 @@ trusted.
   any-peer grant (the Pod annotation `pgtoolbox.fyannk.dev/trusts-every-peer`;
   `trustedProxy.cidrs` of `0.0.0.0/0,::/0` is your own trust and does not hold
   the policy back);
-  until then it keeps the policy (the workload and its Pods are watched, so it
-  looks again as the rollout progresses).
+  until then it keeps the policy and says so (`ExposureConfined=False`,
+  `ExposurePolicyKept`, present while the policy is kept even with nothing
+  published; a Pod stuck terminating is named), and the workload and its Pods
+  are watched, so it looks again as the rollout progresses.
 - While the console is stalled on `HostnameNotAllowed` the operator withdraws
   the exposure but leaves the workload and this policy as they were, so a stale
   `0.0.0.0/0` trust is never left without its policy; `ExposureConfined` is

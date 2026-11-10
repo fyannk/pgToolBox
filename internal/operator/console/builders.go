@@ -549,6 +549,11 @@ func podTemplate(c *pgtoolboxv1alpha1.PgToolBoxConsole, in deploymentInputs) cor
 			podMeta.Annotations = map[string]string{}
 		}
 		podMeta.Annotations[annotationTrustsEveryPeer] = "true"
+		// The ipBlocks a Pod address verified, so that a Pod coming up
+		// without one keeps the grant (Reconciler.verifiedEarlier).
+		if blocks := trustedBlocksHash(exposurePolicyPeers(c, in.Exposed)); blocks != "" {
+			podMeta.Annotations[annotationTrustedBlocks] = blocks
+		}
 	}
 	return corev1.PodTemplateSpec{
 		ObjectMeta: metav1.ObjectMeta{Labels: podMeta.Labels, Annotations: podMeta.Annotations},

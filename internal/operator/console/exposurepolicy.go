@@ -15,6 +15,8 @@
 package console
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"net/netip"
 	"slices"
@@ -55,6 +57,17 @@ var anyPeer = []string{"0.0.0.0/0", "::/0"}
 // TRUSTED_PROXY_CIDRS written in trustedProxy.cidrs is the user's own
 // trust and holds the policy back from nothing.
 const annotationTrustsEveryPeer = pgtoolboxv1alpha1.ReservedKeyPrefix + "trusts-every-peer"
+
+// annotationTrustedBlocks sits beside annotationTrustsEveryPeer when the
+// policy has ipBlock peers: the hash of the blocks (trustedBlocksHash) a
+// console Pod's address showed not to be the Pod network when the grant
+// was made. While no console Pod has an address (the only one is
+// replaced, the workload scales from zero), a template that carries the
+// grant for the same blocks keeps it: the Pod network does not change, so
+// the earlier check still holds, and dropping the grant would roll the
+// Pod that is coming up, which a single-replica StatefulSet would do
+// forever. With no such template (creation), the blocks are not trusted.
+const annotationTrustedBlocks = pgtoolboxv1alpha1.ReservedKeyPrefix + "trusted-ipblocks"
 
 // The narrowest ipBlock that still counts as broad is one bit wider than
 // these: a /7 (IPv4) or a /31 (IPv6). With at most 16 peers of at most a
@@ -111,6 +124,16 @@ type confinement struct {
 	// ipBlock peer needs one, more console Pods than could be listed, or a
 	// widened networkPolicy.from held back until no Pod trusts every peer.
 	Unverified string
+	// Note says what was not checked without withholding the trust (the
+	// Nodes' podCIDRs, when the operator may not list them), "" when
+	// nothing: it goes into the condition message only.
+	Note string
+}
+
+// clear: nothing found keeps the policy from confining the console port
+// (a Note is not a finding).
+func (f confinement) clear() bool {
+	return f.Broad == "" && f.Bypass == "" && f.Unverified == ""
 }
 
 // exposurePolicyName is the console's ingress NetworkPolicy.
@@ -277,7 +300,7 @@ func podNetworkBlock(peers []networkingv1.NetworkPolicyPeer, pods []corev1.Pod) 
 		}
 		if len(addrs) == 0 {
 			if unverified == "" {
-				unverified = fmt.Sprintf("no console Pod has an address yet, so ipBlock %s (peer %d) cannot be told apart from the Pod network: no peer is trusted until one has", peer.IPBlock.CIDR, i)
+				unverified = fmt.Sprintf(noPodAddress+", so ipBlock %s (peer %d) cannot be told apart from the Pod network: no peer is trusted until one has", peer.IPBlock.CIDR, i)
 			}
 			continue
 		}
@@ -288,6 +311,73 @@ func podNetworkBlock(peers []networkingv1.NetworkPolicyPeer, pods []corev1.Pod) 
 		}
 	}
 	return "", unverified
+}
+
+// noPodAddress is podNetworkBlock's unverified when no console Pod has an
+// address: the one case an earlier check may stand in for
+// (trustedBlocksHash).
+const noPodAddress = "no console Pod has an address yet"
+
+// nodePodCIDRs are a Node's spec.podCIDRs.
+type nodePodCIDRs struct {
+	Name  string
+	CIDRs []netip.Prefix
+}
+
+// nodeNetworkBlock names the first ipBlock peer that overlaps a Node's
+// podCIDR, "" when none: such a block admits the Pods of that node,
+// wherever the console Pods run (podNetworkBlock sees only their own
+// addresses). An except entry that holds the whole podCIDR excepts it.
+// CNIs that do not allocate from spec.podCIDRs (Calico, Cilium's cluster
+// pool) leave it empty: the console Pods' own addresses are then the only
+// check.
+func nodeNetworkBlock(peers []networkingv1.NetworkPolicyPeer, nodes []nodePodCIDRs) string {
+	for i, peer := range peers {
+		if peer.IPBlock == nil {
+			continue
+		}
+		block, err := netip.ParsePrefix(peer.IPBlock.CIDR)
+		if err != nil {
+			continue // broadPeer reports it
+		}
+		block = block.Masked()
+		for _, node := range nodes {
+			for _, cidr := range node.CIDRs {
+				if block.Overlaps(cidr) && !exceptedPrefix(peer.IPBlock.Except, cidr) {
+					return fmt.Sprintf("peer %d has ipBlock %s, which overlaps the Pod range %s of Node %s: it admits the Pods of that node", i, peer.IPBlock.CIDR, cidr, node.Name)
+				}
+			}
+		}
+	}
+	return ""
+}
+
+// exceptedPrefix: one of except holds the whole of cidr.
+func exceptedPrefix(except []string, cidr netip.Prefix) bool {
+	return slices.ContainsFunc(except, func(entry string) bool {
+		prefix, err := netip.ParsePrefix(entry)
+		return err == nil && prefix.Bits() <= cidr.Bits() && prefix.Masked().Contains(cidr.Addr())
+	})
+}
+
+// trustedBlocksHash identifies the ipBlock peers of peers (CIDR and except
+// entries, in any order), "" when there are none.
+func trustedBlocksHash(peers []networkingv1.NetworkPolicyPeer) string {
+	var blocks []string
+	for _, peer := range peers {
+		if peer.IPBlock == nil {
+			continue
+		}
+		except := slices.Clone(peer.IPBlock.Except)
+		slices.Sort(except)
+		blocks = append(blocks, peer.IPBlock.CIDR+" except "+strings.Join(except, ","))
+	}
+	if len(blocks) == 0 {
+		return ""
+	}
+	slices.Sort(blocks)
+	sum := sha256.Sum256([]byte(strings.Join(blocks, "\n")))
+	return hex.EncodeToString(sum[:16])
 }
 
 // peersWiden: the policy with peers would admit a source that the one
@@ -453,7 +543,7 @@ func effectiveProxyTrust(c *pgtoolboxv1alpha1.PgToolBoxConsole, exposed bool, fo
 		}
 		return trust
 	}
-	if peers := exposurePolicyPeers(c, exposed); peers != nil && broadPeer(peers) == "" && found == (confinement{}) {
+	if peers := exposurePolicyPeers(c, exposed); peers != nil && broadPeer(peers) == "" && found.clear() {
 		trust.CIDRs = append(trust.CIDRs, anyPeer...)
 		trust.EveryPeer = true
 	}
@@ -504,6 +594,15 @@ func buildExposureNetworkPolicy(c *pgtoolboxv1alpha1.PgToolBoxConsole, exposed b
 // is published (the condition is then removed). found is what the
 // reconciler saw of the live Pods and the other NetworkPolicies.
 func exposureConfinedFact(c *pgtoolboxv1alpha1.PgToolBoxConsole, exposed bool, found confinement) *conditionFact {
+	fact := exposureConfinedFindings(c, exposed, found)
+	if fact != nil && found.Note != "" {
+		fact.Message += "; " + found.Note
+	}
+	return fact
+}
+
+// exposureConfinedFindings is exposureConfinedFact without the note.
+func exposureConfinedFindings(c *pgtoolboxv1alpha1.PgToolBoxConsole, exposed bool, found confinement) *conditionFact {
 	if !exposed {
 		return nil
 	}
