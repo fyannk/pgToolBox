@@ -170,13 +170,21 @@ const (
 	// unknownTokenRequests too: holding a sealed token once is not a
 	// licence to spend the bucket of connected clients. One that passes
 	// them spends its grant's bucket (keyed by the sealed grant ID, which
-	// no sender forges) before tokenRequests, so one live grant cannot
-	// empty the shared bucket either: a client refreshes once an access
-	// token lifetime, far below grantTokenRequestsPerMinute.
+	// no sender forges), then its person's (keyed by the sealed subject,
+	// the name the API server reported at consent), before tokenRequests:
+	// one live grant cannot empty the shared bucket, nor can one person's
+	// MaxGrantsPerUser grants, nor a handful of people (or ServiceAccounts
+	// one namespace admin mints) refreshing at the per-grant ceiling. A
+	// client refreshes once an access token lifetime, far below either.
+	// The person's bucket is two grants' worth: emptying the shared
+	// bucket takes some fifty identities the API server accepts, each
+	// audited under its own name.
 	tokenRequestsPerSecond        = 20
 	tokenRequestsBurst            = 40
 	grantTokenRequestsPerMinute   = 12
 	grantTokenRequestsBurst       = 6
+	subjectTokenRequestsPerMinute = 2 * grantTokenRequestsPerMinute
+	subjectTokenRequestsBurst     = 2 * grantTokenRequestsBurst
 	unknownTokenRequestsPerSecond = 20
 	unknownTokenRequestsBurst     = 40
 	// Registration stores nothing (the client is sealed in its ID) and
@@ -269,11 +277,13 @@ type Server struct {
 	// per-replica buckets.
 	tokenRequests        *auth.RateLimiter
 	unknownTokenRequests *auth.RateLimiter
-	// grantTokenRequests is the per-grant bucket charged before
-	// tokenRequests, bounded at maxLimiterKeys grants.
-	grantTokenRequests *auth.RateLimiter
-	registrations      *auth.RateLimiter
-	decisions          *auth.RateLimiter
+	// grantTokenRequests is the per-grant bucket and subjectTokenRequests
+	// the per-person bucket, charged in that order before tokenRequests,
+	// bounded at maxLimiterKeys grants and people.
+	grantTokenRequests   *auth.RateLimiter
+	subjectTokenRequests *auth.RateLimiter
+	registrations        *auth.RateLimiter
+	decisions            *auth.RateLimiter
 
 	mu      sync.Mutex
 	touched map[string]time.Time
@@ -327,16 +337,18 @@ func New(o Options) (*Server, error) {
 	if o.ClientMetadataDocuments && o.Fetcher == nil {
 		o.Fetcher = NewFetcher(FetcherOptions{Now: o.Now, AllowedHosts: o.ClientMetadataHosts})
 	}
+	// Every bucket refills on the console's clock (Options.Now).
 	s := &Server{
 		o: o, codec: o.Sessions.Codec(),
 		audit:                &auth.Auditor{Logger: o.Log, TrustedProxy: o.TrustedProxy},
-		requests:             auth.NewRateLimiter(requestsPerMinute, requestsBurst, maxLimiterKeys).Named(auth.BucketOAuthRequests),
-		registry:             auth.NewRateLimiter(registersPerMinute, registersBurst, maxLimiterKeys).Named(auth.BucketOAuthRegistry),
-		tokenRequests:        auth.NewRateLimiter(tokenRequestsPerSecond*60, tokenRequestsBurst, 1).Named(auth.BucketOAuthTokens),
-		unknownTokenRequests: auth.NewRateLimiter(unknownTokenRequestsPerSecond*60, unknownTokenRequestsBurst, 1).Named(auth.BucketOAuthUnknownTokens),
+		requests:             auth.NewRateLimiter(requestsPerMinute, requestsBurst, maxLimiterKeys).Named(auth.BucketOAuthRequests).Clock(o.Now),
+		registry:             auth.NewRateLimiter(registersPerMinute, registersBurst, maxLimiterKeys).Named(auth.BucketOAuthRegistry).Clock(o.Now),
+		tokenRequests:        auth.NewRateLimiter(tokenRequestsPerSecond*60, tokenRequestsBurst, 1).Named(auth.BucketOAuthTokens).Clock(o.Now),
+		unknownTokenRequests: auth.NewRateLimiter(unknownTokenRequestsPerSecond*60, unknownTokenRequestsBurst, 1).Named(auth.BucketOAuthUnknownTokens).Clock(o.Now),
 		grantTokenRequests:   auth.NewRateLimiter(grantTokenRequestsPerMinute, grantTokenRequestsBurst, maxLimiterKeys).Named(auth.BucketOAuthGrantTokens).Clock(o.Now),
-		registrations:        auth.NewRateLimiter(registrationsPerMinute, registrationsBurst, 1).Named(auth.BucketOAuthRegistrations),
-		decisions:            auth.NewRateLimiter(decisionsPerMinute, decisionsBurst, maxLimiterKeys).Named(auth.BucketOAuthDecisions),
+		subjectTokenRequests: auth.NewRateLimiter(subjectTokenRequestsPerMinute, subjectTokenRequestsBurst, maxLimiterKeys).Named(auth.BucketOAuthSubjectTokens).Clock(o.Now),
+		registrations:        auth.NewRateLimiter(registrationsPerMinute, registrationsBurst, 1).Named(auth.BucketOAuthRegistrations).Clock(o.Now),
+		decisions:            auth.NewRateLimiter(decisionsPerMinute, decisionsBurst, maxLimiterKeys).Named(auth.BucketOAuthDecisions).Clock(o.Now),
 		touched:              map[string]time.Time{},
 	}
 	if len(s.userKeys("probe")) == 0 {
