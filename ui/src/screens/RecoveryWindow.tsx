@@ -221,9 +221,13 @@ function Bar({ t, hatch }: { t: RecoveryTimeline; hatch: string }) {
       <div className="flex justify-between gap-2 text-caption text-muted">
         <span>{t.earliest ? m.recovery_earliest({ at: formatUtcMinute(t.earliest) }) : null}</span>
         <span className="flex flex-wrap justify-end gap-x-3">
-          {t.lastSafeTarget && (
-            <span className="font-medium text-fg" data-last-safe-target="">
-              {m.recovery_last_safe_target({ at: formatUtcMinute(t.lastSafeTarget) })}
+          {t.newestCoveredTarget && (
+            <span
+              className="font-medium text-fg"
+              data-newest-covered-target=""
+              title={m.recovery_newest_covered_hint()}
+            >
+              {m.recovery_newest_covered_target({ at: formatUtcMinute(t.newestCoveredTarget) })}
             </span>
           )}
           {t.latest ? (

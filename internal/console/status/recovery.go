@@ -111,12 +111,19 @@ type recoveryFacts struct {
 	// failing is the archiving fact read as failing (archivingFailing).
 	failing bool
 	// backlog is the archiver's readyWalFiles when the backlog persists
-	// across sweeps (cnpgstatus.ArchiveBacklogOf); 0 otherwise or when
-	// unread.
+	// across sweeps, or is at the threshold with too few sweeps kept to
+	// judge it (cnpgstatus.ArchiveBacklogOf, Segments or Unconfirmed); 0
+	// otherwise or when unread.
 	backlog int
-	// backlogSince is the first sweep that saw the persistent backlog;
-	// nil when it began before the sweeps the console keeps.
-	backlogSince *time.Time
+	// archiverUnread: the archiving fact rests on no reading of the
+	// primary's archiver (archiverUnread); hibernated says why.
+	archiverUnread, hibernated bool
+	// quiet are the sweeps, oldest first, that read the current primary's
+	// archiver with no .ready file at all, since it became primary: at
+	// each, nothing waited to be archived. A reading of a few files
+	// proves nothing (a slow archiver can hold them for long), and a
+	// failed read is no reading.
+	quiet []time.Time
 }
 
 // recoveryFactsOf reads the facts from a gathered Cluster and its
@@ -131,12 +138,16 @@ func recoveryFactsOf(g *gathered, arch viewmodel.Archiving, now time.Time) recov
 			f.archiveTimeout = d
 		}
 	}
-	if b := cnpgstatus.ArchiveBacklogOf(g.cluster, primaryArchiver(g)); b.Behind() {
+	f.archiverUnread, f.hibernated = archiverUnread(arch), arch.Reason == cnpgstatus.ArchivingReasonHibernated
+	live := primaryArchiver(g)
+	switch b := cnpgstatus.ArchiveBacklogOf(g.cluster, live); {
+	case b.Behind():
 		f.backlog = b.Segments
-		if !b.Since.IsZero() {
-			since := b.Since
-			f.backlogSince = &since
-		}
+	case b.Unconfirmed > 0:
+		f.backlog = b.Unconfirmed
+	}
+	if f.backlog > 0 || f.archiverUnread {
+		f.quiet = quietSweeps(g, live)
 	}
 	var failedOn string
 	f.lastFailedWAL, failedOn = newestArchiveFailure(g)
@@ -144,6 +155,57 @@ func recoveryFactsOf(g *gathered, arch viewmodel.Archiving, now time.Time) recov
 		f.caughtUpBy = caughtUpBy(g, failedOn)
 	}
 	return f
+}
+
+// archiverUnread reads the archiving fact as resting on no reading of
+// the primary's archiver: unknown because the primary was not read
+// (PrimaryUnread), the Cluster is hibernated, or no condition is written
+// and the primary was not read either.
+func archiverUnread(a viewmodel.Archiving) bool {
+	switch a.Reason {
+	case cnpgstatus.ArchivingReasonPrimaryUnread, cnpgstatus.ArchivingReasonHibernated:
+		return true
+	case cnpgstatus.ArchivingReasonNoCondition:
+		return a.LiveArchiving == nil
+	}
+	return false
+}
+
+// quietSweeps are the sweeps, oldest first, before the current reading
+// (live; every kept sweep when the primary is unread) that read the
+// current primary with no .ready file, from when it became primary
+// (status.currentPrimaryTimestamp, when it parses): a reading taken
+// while it was a replica says nothing of the archiver then.
+func quietSweeps(g *gathered, live *cnpgstatus.ArchiverLive) []time.Time {
+	var promoted time.Time
+	if t, err := time.Parse(time.RFC3339Nano, g.cluster.Status.CurrentPrimaryTimestamp); err == nil {
+		promoted = t.UTC()
+	}
+	var out []time.Time
+	for _, p := range g.readyRings[g.cluster.Status.CurrentPrimary] {
+		if p.Value == nil || *p.Value != 0 || p.At.Before(promoted) || (live != nil && !p.At.Before(live.ObservedAt)) {
+			continue
+		}
+		out = append(out, p.At.UTC())
+	}
+	return out
+}
+
+// quietBy is the newest quiet sweep at or before by (the scan, else now):
+// the archiver had nothing waiting then, so every segment completed by
+// then was in the repository when the agent read it. Nil when none is.
+func (f recoveryFacts) quietBy(by *time.Time) *time.Time {
+	bound := f.now
+	if by != nil {
+		bound = *by
+	}
+	for i := len(f.quiet) - 1; i >= 0; i-- {
+		if !f.quiet[i].After(bound) {
+			q := f.quiet[i]
+			return &q
+		}
+	}
+	return nil
 }
 
 // newestArchiveFailure is the newest pg_stat_archiver last_failed_time
@@ -354,6 +416,30 @@ type interval struct {
 	from, to time.Time
 	backupID string
 	stop     evidencev1alpha1.CoverageStop
+	// degraded is the path when the agent does not rate it healthy
+	// though it reaches its frontier (degradedPath); nil otherwise.
+	degraded *evidence.RecoveryPath
+}
+
+// degradedPath reports a path that reaches its frontier but that the
+// agent rates below healthy: an unproven pgBackRest segment size across
+// a log id or timeline switch, or the console's cap at a roll-up that
+// is not healthy (internal/console/evidence capAtRollup). Its span is
+// drawn, but not as covered. A path stopped short has the state of its
+// stop (a gap is unhealthy, a candidate gap a warning), and the span up
+// to the stop is covered.
+func degradedPath(p evidence.RecoveryPath) bool {
+	return p.Stop == evidencev1alpha1.CoverageFrontier && p.State != evidencev1alpha1.Healthy
+}
+
+// pathNotHealthy says why a degraded path's span is not covered: lead,
+// the agent's reason in parentheses when it gave one, then tail.
+func pathNotHealthy(code string, p evidence.RecoveryPath, lead, tail string) viewmodel.Phrase {
+	text := lead
+	if p.Reason.Message != "" {
+		text += " (" + p.Reason.Message + ")"
+	}
+	return say(code, text+tail, map[string]string{"backupId": p.BackupID, "state": string(p.State), "detail": p.Reason.Message})
 }
 
 // timelineInput is the evidence a timeline is drawn from.
@@ -509,9 +595,24 @@ func evidenceTimeline(out *viewmodel.RecoveryTimeline, in timelineInput) {
 		}
 	}
 	sort.SliceStable(out.Segments, func(i, j int) bool { return out.Segments[i].From.Before(out.Segments[j].From) })
-	out.LastSafeTarget = lastCovered(out.Segments)
+	var degraded *evidence.RecoveryPath
+	newestDegraded := false
+	for _, sp := range spans {
+		if sp.degraded == nil {
+			continue
+		}
+		if degraded == nil || sp.to.After(*degraded.FrontierReceiptAt) {
+			degraded = sp.degraded
+		}
+		newestDegraded = newestDegraded || sp.to.Equal(last)
+	}
+	if !newestDegraded {
+		// The newest span's path is not rated healthy: no target is named.
+		out.NewestCoveredTarget = lastCovered(out.Segments)
+	}
 	timelineVerdict(out, in, timelineFindings{
-		tail: tail, holes: holes, candidates: candidates, failedRecently: failedRecently, backlog: in.facts.backlog, orphan: orphan, undrawn: undrawn,
+		tail: tail, holes: holes, candidates: candidates, failedRecently: failedRecently, backlog: in.facts.backlog,
+		archiverUnread: in.facts.archiverUnread, hibernated: in.facts.hibernated, degraded: degraded, orphan: orphan, undrawn: undrawn,
 	})
 }
 
@@ -544,7 +645,12 @@ func recoverySpans(out *viewmodel.RecoveryTimeline, in timelineInput, target uin
 			undrawn++
 			continue
 		}
-		spans = append(spans, interval{from: p.LowerBoundAt.UTC(), to: p.FrontierReceiptAt.UTC(), backupID: p.BackupID, stop: p.Stop})
+		sp := interval{from: p.LowerBoundAt.UTC(), to: p.FrontierReceiptAt.UTC(), backupID: p.BackupID, stop: p.Stop}
+		if degradedPath(p) {
+			path := p
+			sp.degraded = &path
+		}
+		spans = append(spans, sp)
 	}
 	for a := range assumptions {
 		out.Assumptions = append(out.Assumptions, a)
@@ -554,7 +660,8 @@ func recoverySpans(out *viewmodel.RecoveryTimeline, in timelineInput, target uin
 }
 
 // lastCovered is the end of the newest covered segment: the newest
-// instant a restore check answers "covered"; nil when none is.
+// instant a restore check answers "covered" (the newest covered target);
+// nil when none is.
 func lastCovered(segs []viewmodel.RecoverySegment) *time.Time {
 	var last *time.Time
 	for i := range segs {
@@ -597,6 +704,11 @@ func mergeSpans(spans []interval) []interval {
 func drawRuns(out *viewmodel.RecoveryTimeline, spans, runs []interval, margin time.Duration) (holes, candidates int) {
 	for i, r := range runs {
 		for _, piece := range coveredPieces(spans, r.from, r.to) {
+			if p := piece.degraded; p != nil {
+				out.Segments = append(out.Segments, segment(piece.from, piece.to, segmentUnknown, pathNotHealthy("recovery.segment.pathNotHealthy", *p,
+					"Base backup "+p.BackupID+"'s recovery path reaches here, but the evidence agent rates it "+string(p.State), ": not counted as covered.")))
+				continue
+			}
 			seg := segment(piece.from, piece.to, segmentCovered, say("recovery.segment.covered",
 				"Structurally covered: base backup "+piece.backupID+" and contiguous archived WAL.", map[string]string{"backupId": piece.backupID}))
 			seg.BackupID = piece.backupID
@@ -644,7 +756,10 @@ func markEdges(out *viewmodel.RecoveryTimeline, in timelineInput, first, last ti
 			map[string]string{"failedAt": rfc3339(*f)}))
 	}
 	if n := in.facts.backlog; n > 0 {
-		backlogEdge(out, in.facts, n, last)
+		backlogEdge(out, in.facts, n, last, in.scannedAt)
+	}
+	if in.facts.archiverUnread {
+		archiverUnreadEdge(out, in.facts, last, in.scannedAt)
 	}
 	purge := in.refresh
 	if purge <= 0 {
@@ -670,24 +785,42 @@ func caughtUpBefore(by *time.Time, last time.Time) bool {
 // backlogEdge marks the newest edge while n segments wait on the primary
 // across sweeps: a segment archived during the backlog reached the
 // repository late, its commits older than its receipt by however long
-// it waited. From when the backlog was first seen, less one sweep (it
-// began at most one sweep earlier) and one archive_timeout (the commits
-// of the segment finished then); from failureLookback before the end
-// when it began before the sweeps the console keeps, or archive_timeout
-// is disabled.
-func backlogEdge(out *viewmodel.RecoveryTimeline, f recoveryFacts, n int, last time.Time) {
+// it waited. From the newest sweep, at or before the scan, that read no
+// .ready file on the primary, less one archive_timeout: nothing waited
+// then, so every segment completed by then (all commits up to one
+// archive_timeout before it) was in the repository when it was read.
+// From failureLookback before the end when no kept sweep read zero, the
+// sweep period is not known, or archive_timeout is disabled.
+func backlogEdge(out *viewmodel.RecoveryTimeline, f recoveryFacts, n int, last time.Time, scanned *time.Time) {
 	segments := strconv.Itoa(n)
-	if f.backlogSince == nil || f.archiveTimeout <= 0 {
+	quiet := f.quietBy(scanned)
+	if quiet == nil || f.archiveTimeout <= 0 || f.sweepInterval <= 0 {
 		uncertain(out, last.Add(-failureLookback), last, say("recovery.segment.archiveBacklog",
-			segments+" WAL segments are waiting to be archived on the primary, since before the sweeps the console keeps: segments reach the repository late, so the arrival time of the newest overstates how recent a restore can be.",
+			segments+" WAL segments are waiting to be archived on the primary, and no sweep the console keeps saw it with none waiting: segments reach the repository late, so the arrival time of the newest overstates how recent a restore can be.",
 			map[string]string{"segments": segments}))
 		return
 	}
-	since := f.backlogSince.UTC()
-	from := since.Add(-f.sweepInterval - f.archiveTimeout)
-	uncertain(out, from, last, say("recovery.segment.archiveBacklogSince",
-		segments+" WAL segments have been waiting to be archived on the primary since "+rfc3339(since)+" or a little before: WAL archived since then reached the repository late, so its arrival time overstates how recent a restore can be.",
-		map[string]string{"segments": segments, "sinceAt": rfc3339(since)}))
+	uncertain(out, quiet.Add(-f.archiveTimeout), last, say("recovery.segment.archiveBacklogSince",
+		segments+" WAL segments are waiting to be archived on the primary, which last had none waiting at "+rfc3339(*quiet)+": WAL archived since then may have reached the repository late, so its arrival time overstates how recent a restore can be.",
+		map[string]string{"segments": segments, "quietAt": rfc3339(*quiet)}))
+}
+
+// archiverUnreadEdge marks the newest edge while the primary's archiver
+// is not read (or the Cluster is hibernated): nothing says how long the
+// WAL that reached the repository waited on the primary first. From the
+// newest sweep, at or before the scan, that read no .ready file on it,
+// less one archive_timeout (as backlogEdge); else from failureLookback
+// before the end.
+func archiverUnreadEdge(out *viewmodel.RecoveryTimeline, f recoveryFacts, last time.Time, scanned *time.Time) {
+	quiet := f.quietBy(scanned)
+	if quiet == nil || f.archiveTimeout <= 0 || f.sweepInterval <= 0 {
+		uncertain(out, last.Add(-failureLookback), last, say("recovery.segment.archiverUnread",
+			"The primary's archiver is not read, and no sweep the console keeps saw it with nothing waiting: WAL that reached the repository may have waited on the primary first, so its arrival time may overstate how recent a restore can be.", nil))
+		return
+	}
+	uncertain(out, quiet.Add(-f.archiveTimeout), last, say("recovery.segment.archiverUnreadSince",
+		"The primary's archiver is not read now; it last had nothing waiting at "+rfc3339(*quiet)+": WAL archived after that may have waited on the primary first, so its arrival time may overstate how recent a restore can be.",
+		map[string]string{"quietAt": rfc3339(*quiet)}))
 }
 
 // walEnd marks the band just before the newest restore point where the
@@ -864,8 +997,13 @@ type timelineFindings struct {
 	failedRecently    bool
 	// backlog is the archiver's waiting segments, 0 when keeping up.
 	backlog int
-	orphan  uint64
-	undrawn int
+	// archiverUnread, hibernated: the primary's archiver is not read.
+	archiverUnread, hibernated bool
+	// degraded is the newest drawn path the agent does not rate healthy
+	// though it reaches its frontier; nil when none is.
+	degraded *evidence.RecoveryPath
+	orphan   uint64
+	undrawn  int
 }
 
 // timelineVerdict states the bar's state and reason, the gravest finding
@@ -891,6 +1029,10 @@ func timelineVerdict(out *viewmodel.RecoveryTimeline, in timelineInput, f timeli
 	case f.candidates > 0:
 		out.State = warning
 		setReason(out, say("recovery.reason.candidateGaps", "the window has candidate gaps a second scan has not confirmed yet", nil))
+	case f.degraded != nil:
+		out.State = warning
+		setReason(out, pathNotHealthy("recovery.reason.pathNotHealthy", *f.degraded,
+			"the recovery path from base backup "+f.degraded.BackupID+" reaches the archive frontier, but the evidence agent rates it "+string(f.degraded.State), ""))
 	case f.failedRecently:
 		out.State = warning
 		setReason(out, say("recovery.reason.failedRecently", "WAL archiving failed recently: the newest restore points are uncertain", nil))
@@ -899,6 +1041,12 @@ func timelineVerdict(out *viewmodel.RecoveryTimeline, in timelineInput, f timeli
 		n := strconv.Itoa(f.backlog)
 		setReason(out, say("recovery.reason.archiveBacklog", n+" WAL segments are waiting to be archived on the primary: the newest restore points are uncertain",
 			map[string]string{"segments": n}))
+	case f.hibernated:
+		out.State = warning
+		setReason(out, say("recovery.reason.archiverHibernated", "the Cluster is hibernated: whether the WAL written before it reached the repository is not confirmed, so the newest restore points are uncertain", nil))
+	case f.archiverUnread:
+		out.State = warning
+		setReason(out, say("recovery.reason.archiverUnread", "the primary's archiver was not read: how late recent WAL reached the repository is not known, so the newest restore points are uncertain", nil))
 	case f.orphan > 0:
 		out.State = warning
 		tl := strconv.FormatUint(f.orphan, 10)
@@ -983,7 +1131,9 @@ func maxTime(a, b time.Time) time.Time {
 // and names, for each piece, the newest backup (latest lower bound) whose
 // own span covers the whole piece: the backup CloudNativePG restores
 // from when no backupID is given, and one whose WAL is known to reach
-// the piece. Adjacent pieces of the same backup are joined.
+// the piece. A path the agent rates healthy is preferred; a piece only a
+// degraded path covers carries that path (degraded). Adjacent pieces of
+// the same backup are joined.
 func coveredPieces(spans []interval, from, to time.Time) []interval {
 	edges := []time.Time{from, to}
 	for _, sp := range spans {
@@ -1005,18 +1155,28 @@ func coveredPieces(spans []interval, from, to time.Time) []interval {
 			if sp.from.After(a) || sp.to.Before(b) {
 				continue
 			}
-			if best < 0 || sp.from.After(spans[best].from) || (sp.from.Equal(spans[best].from) && sp.backupID > spans[best].backupID) {
+			if best < 0 {
+				best = j
+				continue
+			}
+			if healthy, bestHealthy := sp.degraded == nil, spans[best].degraded == nil; healthy != bestHealthy {
+				if healthy {
+					best = j
+				}
+				continue
+			}
+			if sp.from.After(spans[best].from) || (sp.from.Equal(spans[best].from) && sp.backupID > spans[best].backupID) {
 				best = j
 			}
 		}
 		if best < 0 {
 			continue
 		}
-		if n := len(out); n > 0 && out[n-1].backupID == spans[best].backupID && out[n-1].to.Equal(a) {
+		if n := len(out); n > 0 && out[n-1].backupID == spans[best].backupID && out[n-1].to.Equal(a) && (out[n-1].degraded == nil) == (spans[best].degraded == nil) {
 			out[n-1].to = b
 			continue
 		}
-		out = append(out, interval{from: a, to: b, backupID: spans[best].backupID})
+		out = append(out, interval{from: a, to: b, backupID: spans[best].backupID, degraded: spans[best].degraded})
 	}
 	return out
 }
@@ -1187,8 +1347,8 @@ func timelineHistoryFile(b viewmodel.Backups) string {
 }
 
 // restoreCaveats are what an answer does not prove: the evidence's own
-// limits, a stale or cut basis, failing archiving and the absence of a
-// passed restore drill.
+// limits, a stale or cut basis, failing or unread archiving and the
+// absence of a passed restore drill.
 func restoreCaveats(b viewmodel.Backups) []viewmodel.Phrase {
 	t := b.RecoveryTimeline
 	out := []viewmodel.Phrase{}
@@ -1225,6 +1385,9 @@ func restoreCaveats(b viewmodel.Backups) []viewmodel.Phrase {
 		} else {
 			out = append(out, say("recovery.caveat.archivingFailing", "WAL archiving is failing: the newest WAL is on the instance, not in the repository.", nil))
 		}
+	} else if archiverUnread(a) {
+		out = append(out, say("recovery.caveat.archiverUnread",
+			"The primary's archiver was not read: how long the newest archived WAL waited on the primary is not known, so the newest restore points may be later than the WAL in the repository.", nil))
 	}
 	if !b.Drills.RestoreTested {
 		days := strconv.Itoa(b.Drills.WindowDays)

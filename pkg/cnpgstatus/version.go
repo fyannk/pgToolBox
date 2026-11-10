@@ -212,6 +212,48 @@ func UpgradeInFlight(e VersionEvidence) string {
 	return "instanceManagerVersion " + strings.Join(names, ", ") + "; " + operatorVersionAnnotation + " " + annotated.String()
 }
 
+// ElectionVersion is the version whose failover election the rehearsal
+// follows. The election runs in the operator (the instance manager only
+// reports positions), and the operator's own version is the
+// cnpg.io/operatorVersion annotation on the instance Pods or
+// status.cloudNativePGCommitHash; DetectVersion ranks the highest
+// instanceManagerVersion first, which after an operator rollback (a
+// primary kept on the newer instance manager by primaryUpdateStrategy
+// supervised) names rules the operator does not run. So it is the
+// lowest of the operator-side versions and the reported ones, verbatim
+// (electionRulesOf reads the patch from the text). Empty when no
+// operator-side version parses: the operator's patch is then not known.
+func ElectionVersion(e VersionEvidence) string {
+	operator := operatorAnnotations(e.InstancePods)
+	if e.Cluster != nil {
+		if v, ok := commitVersion(e.Cluster.Status.CommitHash); ok {
+			operator = append(operator, v)
+		}
+	}
+	lowest, found, operatorSide := "", semver{}, false
+	consider := func(raw string, fromOperator bool) {
+		raw = strings.TrimSpace(raw)
+		v, ok := parseSemver(raw)
+		if !ok {
+			return
+		}
+		operatorSide = operatorSide || fromOperator
+		if lowest == "" || v.less(found) {
+			lowest, found = raw, v
+		}
+	}
+	for _, raw := range operator {
+		consider(raw, true)
+	}
+	if !operatorSide {
+		return ""
+	}
+	for _, raw := range e.InstanceManagerVersions {
+		consider(raw, false)
+	}
+	return lowest
+}
+
 func operatorAnnotations(pods []*corev1.Pod) []string {
 	var out []string
 	for _, pod := range pods {

@@ -5776,12 +5776,8 @@ components:
         earliest:
           format: date-time
           type: string
-        lastSafeTarget:
-          description: "The end of the newest covered span once every uncertain edge is drawn: the newest instant a restore check answers covered. Absent when no span is covered."
-          format: date-time
-          type: string
         latest:
-          description: "When the newest contiguous WAL segment reached the repository (evidence basis), or the reported window's end: a receipt time, not a safe restore target (see lastSafeTarget)."
+          description: "When the newest contiguous WAL segment reached the repository (evidence basis), or the reported window's end: a receipt time, not a restore target (see newestCoveredTarget)."
           format: date-time
           type: string
         markers:
@@ -5791,6 +5787,10 @@ components:
           type:
             - array
             - "null"
+        newestCoveredTarget:
+          description: "The end of the newest covered span once every uncertain edge is drawn: the newest instant a restore check answers covered. Structurally covered only, not restore-tested. Absent when no span is covered, or when the newest span's path is not rated healthy."
+          format: date-time
+          type: string
         offTarget:
           description: "Spans that off-target recovery paths reach (a sibling timeline, or the backup's own timeline left behind): not covered by a default restore, restorable only by naming targetTimeline."
           items:

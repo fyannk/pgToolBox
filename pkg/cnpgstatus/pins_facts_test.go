@@ -73,6 +73,13 @@ func TestFactPinsExistInVerifiedReleases(t *testing.T) {
 			`cluster.Status.Phase = apiv1.PhaseSwitchover`, "func checkClusterHasDifferentRestartAnnotation",
 			`"ClusterIsHibernated"`, `"ClusterHasNoBackupExecutorPlugin"`, `"ClusterHasBackupConfigured"`,
 			`"ClusterHasNoVolumeSnapshotSection"`, `"ClusterHasNoBarmanSection"`,
+			// backlog.go WALArchiver: the archiver is the first enabled
+			// isWALArchiver plugin, else the in-tree object store, and
+			// every enabled plugin is still asked first.
+			"if plugin.IsEnabled() && plugin.IsWALArchiver != nil && *plugin.IsWALArchiver {",
+			"if err := archiveWALViaPlugins(ctx, cluster, pgData, walName); err != nil {",
+			`if cluster.GetEnabledWALArchivePluginName() != "" {`,
+			"if cluster.Spec.Backup == nil || cluster.Spec.Backup.BarmanObjectStore == nil {",
 			// The pooler phases, the backup definition phase and
 			// DatabaseRole arrived in 1.30, the support floor.
 			`BackupPhaseDefinitionInvalid = "invalid backup definition"`,

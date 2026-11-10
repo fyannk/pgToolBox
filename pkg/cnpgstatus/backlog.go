@@ -56,26 +56,68 @@ func ArchiveBacklogThreshold(c *cnpgv1.Cluster, pluginMaxParallel *int) int {
 // archiverThreshold is ArchiveBacklogThreshold and whether the
 // archiver's parallelism is known: the in-tree archiver's always is; the
 // barman-cloud plugin's when its ObjectStore was read; another plugin's
-// never (the console reads none of their objects).
+// never (the console reads none of their objects). The archiver is
+// CloudNativePG's (WALArchiver): an enabled plugin with isWALArchiver,
+// else the in-tree object store, else the first backup plugin.
 func archiverThreshold(c *cnpgv1.Cluster, pluginMaxParallel *int) (int, bool) {
 	threshold := ArchiveBacklogSegments
 	if c == nil {
 		return threshold, true
 	}
-	if c.Spec.Backup != nil && c.Spec.Backup.BarmanObjectStore != nil {
+	archiver := WALArchiver(c)
+	switch {
+	case archiver.InTree:
 		if wal := c.Spec.Backup.BarmanObjectStore.Wal; wal != nil {
 			threshold = max(threshold, wal.MaxParallel+1)
 		}
 		return threshold, true
-	}
-	backups := Backups(c)
-	if !backups.PluginBased {
+	case archiver.Plugin == "":
 		return threshold, true
-	}
-	if backups.PluginName != BarmanCloudPlugin || pluginMaxParallel == nil {
+	case archiver.Plugin != BarmanCloudPlugin || pluginMaxParallel == nil:
 		return threshold, false
 	}
 	return max(threshold, *pluginMaxParallel+1), true
+}
+
+// Archiver names the component that archives a Cluster's WAL.
+type Archiver struct {
+	// Plugin is the archiving plugin's name; empty for the in-tree
+	// archiver or none.
+	Plugin string
+	// Parameters are that plugin's spec.plugins[].parameters.
+	Parameters map[string]string
+	// InTree is the in-tree Barman object store (spec.backup.barmanObjectStore).
+	InTree bool
+}
+
+// WALArchiver is the component that archives c's WAL, by the instance
+// manager's own rule (pkg/management/postgres/archiver/archiver.go
+// v1.30.1:174, :297): the first enabled plugin with isWALArchiver true
+// (api/v1/cluster_funcs.go v1.30.1:1594-1601,
+// GetEnabledWALArchivePluginName; enabled unless spec.plugins[].enabled
+// is false, :411-416); without one, the in-tree barmanObjectStore; and
+// without that, the first backup plugin (IsBackupPlugin), which the
+// instance manager still asks to archive for compatibility with the old
+// API (archiver.go v1.30.1:165-170). A Cluster that archives nowhere has
+// the zero value.
+func WALArchiver(c *cnpgv1.Cluster) Archiver {
+	if c == nil {
+		return Archiver{}
+	}
+	for _, plugin := range c.Spec.Plugins {
+		if (plugin.Enabled == nil || *plugin.Enabled) && plugin.IsWALArchiver != nil && *plugin.IsWALArchiver {
+			return Archiver{Plugin: plugin.Name, Parameters: plugin.Parameters}
+		}
+	}
+	if c.Spec.Backup != nil && c.Spec.Backup.BarmanObjectStore != nil {
+		return Archiver{InTree: true}
+	}
+	for _, plugin := range c.Spec.Plugins {
+		if IsBackupPlugin(plugin) {
+			return Archiver{Plugin: plugin.Name, Parameters: plugin.Parameters}
+		}
+	}
+	return Archiver{}
 }
 
 // ArchiveBacklog is the archiver's backlog as the sweeps saw it.
@@ -88,11 +130,10 @@ type ArchiveBacklog struct {
 	// ParallelismKnown says whether Threshold follows the archiver's
 	// declared parallelism; when not, the backlog must also grow.
 	ParallelismKnown bool `json:"parallelismKnown"`
-	// Since is the first sweep of the run at the threshold: the backlog
-	// began at most one sweep interval before it. Zero when the run
-	// reaches back to the oldest sweep kept, so when it began is not
-	// known.
-	Since time.Time `json:"since,omitzero"`
+	// Unconfirmed is the current readyWalFiles when it is at the
+	// threshold but the sweeps kept are too few to tell a persistent
+	// backlog from a burst (a console that just started); 0 otherwise.
+	Unconfirmed int `json:"unconfirmed,omitempty"`
 }
 
 // Behind reports a backlog that persists.
@@ -104,7 +145,9 @@ func (b ArchiveBacklog) Behind() bool { return b.Segments > 0 }
 // threshold ends the run). With the parallelism known the run must span
 // BacklogSweeps sweeps; without it, BacklogSweepsUnknownParallelism
 // sweeps whose newest readings never shrink and end larger than they
-// began. A nil reading is no backlog.
+// began. A run too short that reaches back to the oldest sweep kept is
+// Unconfirmed: nothing kept says it is a burst. A nil reading is no
+// backlog.
 func ArchiveBacklogOf(c *cnpgv1.Cluster, live *ArchiverLive) ArchiveBacklog {
 	var pluginMaxParallel *int
 	if live != nil {
@@ -134,15 +177,15 @@ func ArchiveBacklogOf(c *cnpgv1.Cluster, live *ArchiverLive) ArchiveBacklog {
 		need = BacklogSweepsUnknownParallelism
 	}
 	if len(run) < need {
+		if reachedOldest {
+			out.Unconfirmed = live.ReadyWALFiles
+		}
 		return out
 	}
 	if !known && !growing(run[:need]) {
 		return out
 	}
 	out.Segments = live.ReadyWALFiles
-	if !reachedOldest {
-		out.Since = run[len(run)-1].At.UTC()
-	}
 	return out
 }
 
