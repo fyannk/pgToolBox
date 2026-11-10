@@ -141,7 +141,9 @@ type WaitInput struct {
 // stale PVC list must not contradict it.
 func WaitReasons(in WaitInput) []WaitReason {
 	c := in.Cluster
-	if c == nil || ClassifyPhase(in.Minor, c.Status.Phase).Class == ClassOK {
+	// The table's own class: a healthy phase capped to warning because
+	// the minor's table is unverified does not mean the operator waits.
+	if c == nil || classifyPhaseRow(in.Minor, c.Status.Phase).Class == ClassOK {
 		return nil
 	}
 	pods := slices.Clone(in.Pods)
