@@ -19,6 +19,7 @@ import (
 	"time"
 
 	networkingv1 "k8s.io/api/networking/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // CataloguePgToolBoxConsole is the owner name of the PgToolBoxConsole reasons in
@@ -36,6 +37,7 @@ var pgToolBoxConsoleReasons = []Reason{
 	ReasonExposureOpen,
 	ReasonExposurePeersBroad,
 	ReasonExposurePolicyBypassed,
+	ReasonExposurePolicyInvalid,
 }
 
 func init() {
@@ -210,11 +212,33 @@ func (c *PgToolBoxConsole) SessionIdleTimeout() time.Duration {
 // NetworkPolicyPeer is the peer as a NetworkPolicy writes it, deep-copied.
 func (p *PgToolBoxConsolePolicyPeer) NetworkPolicyPeer() networkingv1.NetworkPolicyPeer {
 	peer := networkingv1.NetworkPolicyPeer{
-		PodSelector:       p.PodSelector.DeepCopy(),
-		NamespaceSelector: p.NamespaceSelector.DeepCopy(),
+		PodSelector:       p.PodSelector.LabelSelector(),
+		NamespaceSelector: p.NamespaceSelector.LabelSelector(),
 	}
 	if p.IPBlock != nil {
 		peer.IPBlock = &networkingv1.IPBlock{CIDR: p.IPBlock.CIDR, Except: append([]string(nil), p.IPBlock.Except...)}
 	}
 	return peer
+}
+
+// LabelSelector is the selector as the API writes it, nil for nil.
+func (s *PgToolBoxConsoleLabelSelector) LabelSelector() *metav1.LabelSelector {
+	if s == nil {
+		return nil
+	}
+	selector := &metav1.LabelSelector{}
+	if s.MatchLabels != nil {
+		selector.MatchLabels = make(map[string]string, len(s.MatchLabels))
+		for k, v := range s.MatchLabels {
+			selector.MatchLabels[k] = string(v)
+		}
+	}
+	for _, e := range s.MatchExpressions {
+		requirement := metav1.LabelSelectorRequirement{Key: e.Key, Operator: e.Operator}
+		for _, v := range e.Values {
+			requirement.Values = append(requirement.Values, string(v))
+		}
+		selector.MatchExpressions = append(selector.MatchExpressions, requirement)
+	}
+	return selector
 }

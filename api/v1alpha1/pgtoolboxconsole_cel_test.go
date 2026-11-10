@@ -82,7 +82,7 @@ func TestPgToolBoxConsoleCEL(t *testing.T) {
 		{name: "ingress policy with its controller's namespace", mutate: func(p *pgtoolboxv1alpha1.PgToolBoxConsole) {
 			p.Spec.Exposure.ExposureSpec = pgtoolboxv1alpha1.ExposureSpec{Type: pgtoolboxv1alpha1.ExposureTypeIngress, Hostname: "console.example"}
 			p.Spec.Exposure.NetworkPolicy = &pgtoolboxv1alpha1.PgToolBoxConsoleExposurePolicySpec{Enabled: new(true), From: []pgtoolboxv1alpha1.PgToolBoxConsolePolicyPeer{{
-				NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"kubernetes.io/metadata.name": "ingress-nginx"}},
+				NamespaceSelector: &pgtoolboxv1alpha1.PgToolBoxConsoleLabelSelector{MatchLabels: map[string]pgtoolboxv1alpha1.PgToolBoxConsoleLabelValue{"kubernetes.io/metadata.name": "ingress-nginx"}},
 			}}}
 		}},
 		{name: "a peer that selects nothing", mutate: func(p *pgtoolboxv1alpha1.PgToolBoxConsole) {
@@ -95,7 +95,7 @@ func TestPgToolBoxConsoleCEL(t *testing.T) {
 		}, wantErr: "networkPolicy.from ipBlock.cidr must be a CIDR"},
 		{name: "an ipBlock with a pod selector", mutate: func(p *pgtoolboxv1alpha1.PgToolBoxConsole) {
 			p.Spec.Exposure.ExposureSpec = pgtoolboxv1alpha1.ExposureSpec{Type: pgtoolboxv1alpha1.ExposureTypeIngress, Hostname: "console.example"}
-			p.Spec.Exposure.NetworkPolicy = &pgtoolboxv1alpha1.PgToolBoxConsoleExposurePolicySpec{From: []pgtoolboxv1alpha1.PgToolBoxConsolePolicyPeer{{IPBlock: &pgtoolboxv1alpha1.PgToolBoxConsoleIPBlock{CIDR: "10.0.0.0/8"}, PodSelector: &metav1.LabelSelector{}}}}
+			p.Spec.Exposure.NetworkPolicy = &pgtoolboxv1alpha1.PgToolBoxConsoleExposurePolicySpec{From: []pgtoolboxv1alpha1.PgToolBoxConsolePolicyPeer{{IPBlock: &pgtoolboxv1alpha1.PgToolBoxConsoleIPBlock{CIDR: "10.0.0.0/8"}, PodSelector: &pgtoolboxv1alpha1.PgToolBoxConsoleLabelSelector{}}}}
 		}, wantErr: "may not also have podSelector or namespaceSelector"},
 		{name: "an except outside the block", mutate: func(p *pgtoolboxv1alpha1.PgToolBoxConsole) {
 			p.Spec.Exposure.ExposureSpec = pgtoolboxv1alpha1.ExposureSpec{Type: pgtoolboxv1alpha1.ExposureTypeIngress, Hostname: "console.example"}
@@ -117,6 +117,27 @@ func TestPgToolBoxConsoleCEL(t *testing.T) {
 			p.Spec.Exposure.ExposureSpec = pgtoolboxv1alpha1.ExposureSpec{Type: pgtoolboxv1alpha1.ExposureTypeIngress, Hostname: "console.example"}
 			p.Spec.Exposure.NetworkPolicy = &pgtoolboxv1alpha1.PgToolBoxConsoleExposurePolicySpec{From: []pgtoolboxv1alpha1.PgToolBoxConsolePolicyPeer{{IPBlock: &pgtoolboxv1alpha1.PgToolBoxConsoleIPBlock{CIDR: "fd00::/64"}}}}
 		}},
+		{name: "a selector operator the API does not know", mutate: selectorPeer(pgtoolboxv1alpha1.PgToolBoxConsoleLabelRequirement{Key: "app", Operator: "Equals", Values: []pgtoolboxv1alpha1.PgToolBoxConsoleLabelValue{"x"}}), wantErr: "Unsupported value"},
+		{name: "In without values", mutate: selectorPeer(pgtoolboxv1alpha1.PgToolBoxConsoleLabelRequirement{Key: "app", Operator: metav1.LabelSelectorOpIn}), wantErr: "values are required for In and NotIn"},
+		{name: "Exists with values", mutate: selectorPeer(pgtoolboxv1alpha1.PgToolBoxConsoleLabelRequirement{Key: "app", Operator: metav1.LabelSelectorOpExists, Values: []pgtoolboxv1alpha1.PgToolBoxConsoleLabelValue{"x"}}), wantErr: "forbidden for Exists and DoesNotExist"},
+		{name: "an expression key that is not a label key", mutate: selectorPeer(pgtoolboxv1alpha1.PgToolBoxConsoleLabelRequirement{Key: "not a key", Operator: metav1.LabelSelectorOpExists}), wantErr: "matchExpressions[0].key"},
+		{name: "an expression value that is not a label value", mutate: selectorPeer(pgtoolboxv1alpha1.PgToolBoxConsoleLabelRequirement{Key: "app", Operator: metav1.LabelSelectorOpNotIn, Values: []pgtoolboxv1alpha1.PgToolBoxConsoleLabelValue{"-x"}}), wantErr: "values[0]"},
+		{name: "valid expressions", mutate: selectorPeer(
+			pgtoolboxv1alpha1.PgToolBoxConsoleLabelRequirement{Key: "kubernetes.io/metadata.name", Operator: metav1.LabelSelectorOpIn, Values: []pgtoolboxv1alpha1.PgToolBoxConsoleLabelValue{"ingress-nginx"}},
+			pgtoolboxv1alpha1.PgToolBoxConsoleLabelRequirement{Key: "restricted", Operator: metav1.LabelSelectorOpDoesNotExist},
+		)},
+		{name: "a matchLabels key that is not a label key", mutate: func(p *pgtoolboxv1alpha1.PgToolBoxConsole) {
+			p.Spec.Exposure.ExposureSpec = pgtoolboxv1alpha1.ExposureSpec{Type: pgtoolboxv1alpha1.ExposureTypeIngress, Hostname: "console.example"}
+			p.Spec.Exposure.NetworkPolicy = &pgtoolboxv1alpha1.PgToolBoxConsoleExposurePolicySpec{From: []pgtoolboxv1alpha1.PgToolBoxConsolePolicyPeer{{
+				PodSelector: &pgtoolboxv1alpha1.PgToolBoxConsoleLabelSelector{MatchLabels: map[string]pgtoolboxv1alpha1.PgToolBoxConsoleLabelValue{"app/x/y": "z"}},
+			}}}
+		}, wantErr: "matchLabels keys must be label keys"},
+		{name: "a matchLabels value that is not a label value", mutate: func(p *pgtoolboxv1alpha1.PgToolBoxConsole) {
+			p.Spec.Exposure.ExposureSpec = pgtoolboxv1alpha1.ExposureSpec{Type: pgtoolboxv1alpha1.ExposureTypeIngress, Hostname: "console.example"}
+			p.Spec.Exposure.NetworkPolicy = &pgtoolboxv1alpha1.PgToolBoxConsoleExposurePolicySpec{From: []pgtoolboxv1alpha1.PgToolBoxConsolePolicyPeer{{
+				PodSelector: &pgtoolboxv1alpha1.PgToolBoxConsoleLabelSelector{MatchLabels: map[string]pgtoolboxv1alpha1.PgToolBoxConsoleLabelValue{"app": "a b"}},
+			}}}
+		}, wantErr: "matchLabels.app"},
 		{name: "trusted proxy that is not a CIDR", mutate: func(p *pgtoolboxv1alpha1.PgToolBoxConsole) {
 			p.Spec.Exposure.TrustedProxy = &pgtoolboxv1alpha1.PgToolBoxConsoleTrustedProxySpec{CIDRs: []string{"the-router"}}
 		}, wantErr: "trustedProxy.cidrs entries must be CIDRs"},
@@ -408,3 +429,14 @@ func TestPgToolBoxConsoleSchemaDefaults(t *testing.T) {
 }
 
 func drillCap(n int32) *int32 { return &n }
+
+// selectorPeer sets an ingress exposure whose one peer selects Pods by
+// these expressions.
+func selectorPeer(requirements ...pgtoolboxv1alpha1.PgToolBoxConsoleLabelRequirement) func(*pgtoolboxv1alpha1.PgToolBoxConsole) {
+	return func(p *pgtoolboxv1alpha1.PgToolBoxConsole) {
+		p.Spec.Exposure.ExposureSpec = pgtoolboxv1alpha1.ExposureSpec{Type: pgtoolboxv1alpha1.ExposureTypeIngress, Hostname: "console.example"}
+		p.Spec.Exposure.NetworkPolicy = &pgtoolboxv1alpha1.PgToolBoxConsoleExposurePolicySpec{From: []pgtoolboxv1alpha1.PgToolBoxConsolePolicyPeer{{
+			PodSelector: &pgtoolboxv1alpha1.PgToolBoxConsoleLabelSelector{MatchExpressions: requirements},
+		}}}
+	}
+}

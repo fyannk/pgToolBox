@@ -48,7 +48,11 @@ compares the chart, the kustomize bases and the OLM bundle field by field):
   budget; with it, only those peers reach the console port and are believed
   ([trusted proxies](../operator/console.md#trusted-proxies-and-the-ingress-networkpolicy)).
   With the chart alone, set `console.trustedProxyCIDRs` (or
-  `console.networkPolicy.enabled`) instead.
+  `console.networkPolicy.enabled` without `ingress.extraFrom`) instead. On
+  OpenShift, set the routers' addresses in `trustedProxy.cidrs`
+  (`console.trustedProxyCIDRs`): the default project template's
+  `allow-same-namespace` policy admits every Pod of the namespace to the
+  console port, which turns the any-peer trust off.
 - **People need RoleBindings.** Nobody sees a Cluster until RBAC says so
   ([the two ClusterRoles](../console/authorization.md#the-two-clusterroles)).
 - The console needs no cluster-scoped object: an admin of the team's namespace

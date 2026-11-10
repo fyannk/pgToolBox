@@ -419,11 +419,12 @@ type deploymentInputs struct {
 	// the console in this reconcile (not merely requested: the Route and
 	// Gateway APIs may be unavailable).
 	Exposed bool
-	// PolicyBypass is why the exposure's NetworkPolicy does not confine
-	// the console port (another NetworkPolicy admits more peers, or there
-	// were too many to check), "" when it does: any-peer trust of
-	// X-Forwarded-For is granted only then.
-	PolicyBypass string
+	// Confinement is what the reconciler found that keeps the exposure's
+	// NetworkPolicy from confining the console port (another NetworkPolicy
+	// admits more peers, or there were too many to check; an ipBlock holds
+	// a console Pod's address), the zero value when nothing does: any-peer
+	// trust of X-Forwarded-For is granted only then.
+	Confinement confinement
 }
 
 // env is one environment variable, in the chart's order.
@@ -541,6 +542,14 @@ func podTemplate(c *pgtoolboxv1alpha1.PgToolBoxConsole, in deploymentInputs) cor
 			}},
 		}}
 	}
+	if effectiveProxyTrust(c, in.Exposed, in.Confinement).EveryPeer {
+		// The operator's grant, which holds its NetworkPolicy until no Pod
+		// carries it (withdrawExposurePolicy).
+		if podMeta.Annotations == nil {
+			podMeta.Annotations = map[string]string{}
+		}
+		podMeta.Annotations[annotationTrustsEveryPeer] = "true"
+	}
 	return corev1.PodTemplateSpec{
 		ObjectMeta: metav1.ObjectMeta{Labels: podMeta.Labels, Annotations: podMeta.Annotations},
 		Spec:       podSpec,
@@ -603,7 +612,7 @@ func consoleEnv(c *pgtoolboxv1alpha1.PgToolBoxConsole, in deploymentInputs) []co
 		env("SESSION_KEY_FILE", runDir+"/session/"+sessionKey),
 		env("SESSION_IDLE_TIMEOUT", durationEnv(&metav1.Duration{Duration: c.SessionIdleTimeout()})),
 	)
-	envs = append(envs, authEnv(c, in.Exposed, in.PolicyBypass)...)
+	envs = append(envs, authEnv(c, in.Exposed, in.Confinement)...)
 	envs = append(envs,
 		// The end-of-life table, mounted from the lifecycle ConfigMap and
 		// reloaded on change; absent, the built-in table applies.
@@ -653,9 +662,8 @@ func consoleEnv(c *pgtoolboxv1alpha1.PgToolBoxConsole, in deploymentInputs) []co
 
 // authEnv is the sign-in provider's settings (OIDC or OpenShift), then
 // the session and token-login settings, the public URL and the proxy
-// trust (bypass: another NetworkPolicy admits more peers, see
-// policyBypass).
-func authEnv(c *pgtoolboxv1alpha1.PgToolBoxConsole, exposed bool, bypass string) []corev1.EnvVar {
+// trust (found: what keeps the NetworkPolicy from confining the port).
+func authEnv(c *pgtoolboxv1alpha1.PgToolBoxConsole, exposed bool, found confinement) []corev1.EnvVar {
 	provider := c.AuthProvider()
 	oidc := c.Spec.Auth.OIDC
 	openshift := c.Spec.Auth.OpenShift
@@ -709,7 +717,7 @@ func authEnv(c *pgtoolboxv1alpha1.PgToolBoxConsole, exposed bool, bypass string)
 	// sign-in budgets are charged per client, not shared by every user.
 	// Without a published exposure nothing is in front, and a forwarded
 	// header is the caller's own claim (the default, 0, ignores it).
-	return append(envs, proxyEnv(effectiveProxyTrust(c, exposed, bypass))...)
+	return append(envs, proxyEnv(effectiveProxyTrust(c, exposed, found))...)
 }
 
 // prometheusEnv is the Prometheus settings, nil without Prometheus. The
