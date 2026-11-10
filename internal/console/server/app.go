@@ -271,10 +271,21 @@ func RunApp(ctx context.Context, o AppOptions) error {
 		Ready: ready, Broker: o.Broker, Metrics: metrics, Log: o.Log, MCP: mcpEndpoint, Tracing: o.Tracing,
 		ShutdownDelay: o.ShutdownDelay,
 	})
-	supCtx, stopRunners := context.WithCancel(ctx)
+	return serveThenStop(ctx, sup.Run, srv.Run)
+}
+
+// serveThenStop serves until ctx ends and the drain is over, and only
+// then stops the runners. The runners (the informer cache, the
+// invalidations that feed the event stream, the revocation list) run on a
+// context the shutdown signal does not end: the event and log streams
+// stay open for the shutdown delay, while the Service still routes to
+// this Pod, and a stream whose feed had already stopped would freeze
+// silently instead of ending.
+func serveThenStop(ctx context.Context, runners func(context.Context), serve func(context.Context) error) error {
+	runCtx, stopRunners := context.WithCancel(context.WithoutCancel(ctx))
 	var wg sync.WaitGroup
-	wg.Go(func() { sup.Run(supCtx) })
-	err = srv.Run(ctx)
+	wg.Go(func() { runners(runCtx) })
+	err := serve(ctx)
 	stopRunners()
 	wg.Wait()
 	return err
