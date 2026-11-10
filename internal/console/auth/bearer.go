@@ -87,9 +87,17 @@ func (h *Handler) BearerPrincipal(ctx context.Context, token string) (*Principal
 	// already charged its sender's address or the token's own budget). A
 	// flood of distinct junk bearers therefore cannot fail a known
 	// client's re-review. A token whose answer is cached spends nothing.
+	//
+	// A known token spends its person's share of knownReviews first (the
+	// name the API server gave when it accepted the token), so several
+	// identities each minting maxKnownBearersPerSubject tokens cannot keep
+	// knownReviews empty for everyone else.
 	if !h.reviewCached(tok) {
 		bucket, key := h.tokenReviews, tokenReviewsKey
-		if h.knownBearers.known(tok, h.now()) {
+		if subject, known := h.knownBearers.subjectOf(tok, h.now()); known {
+			if !h.knownSubjectReviews.Allow(subject) {
+				return nil, ErrReviewsBusy
+			}
 			bucket, key = h.knownReviews, knownReviewsKey
 		}
 		if !bucket.Allow(key) {

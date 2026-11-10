@@ -65,11 +65,17 @@ const (
 	// BucketKnownReviews: re-reviews of raw bearers this replica accepted
 	// before, per replica.
 	BucketKnownReviews = "known_reviews"
+	// BucketKnownReviewsSubject: the same re-reviews, per person the API
+	// server named (charged before known_reviews).
+	BucketKnownReviewsSubject = "known_reviews_subject"
 	// BucketCodeExchanges: OAuth code exchanges with the IdP, per replica.
 	BucketCodeExchanges = "code_exchanges"
 	// BucketExchangeReviews: SelfSubjectReviews of tokens the IdP has just
 	// issued, per replica.
 	BucketExchangeReviews = "exchange_reviews"
+	// BucketExchangeReviewsSubject: the same reviews, per person the IdP
+	// vouched for (OIDC; charged before exchange_reviews).
+	BucketExchangeReviewsSubject = "exchange_reviews_subject"
 	// MCP endpoint: calls per user, writes per user, confirmation pages.
 	BucketMCPCalls       = "mcp_calls"
 	BucketMCPAttempts    = "mcp_attempts"
@@ -82,6 +88,7 @@ const (
 	BucketOAuthTokens        = "oauth_tokens"         // #nosec G101 -- a metric label, not a credential
 	BucketOAuthUnknownTokens = "oauth_unknown_tokens" // #nosec G101 -- a metric label, not a credential
 	BucketOAuthGrantTokens   = "oauth_grant_tokens"   // #nosec G101 -- a metric label, not a credential
+	BucketOAuthSubjectTokens = "oauth_subject_tokens" // #nosec G101 -- a metric label, not a credential
 	BucketOAuthRegistrations = "oauth_registrations"
 	BucketOAuthDecisions     = "oauth_decisions"
 	// BucketMetricsScrapes: /metrics per client address.

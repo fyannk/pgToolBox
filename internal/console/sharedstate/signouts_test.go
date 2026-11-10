@@ -28,17 +28,30 @@ import (
 	corev1 "k8s.io/api/core/v1"
 )
 
+// tag stands for the keyed tag the sign-in layer seals in a session.
+func tag(person string) string {
+	sum := sha256.Sum256([]byte("test-tag\x00" + person))
+	return hex.EncodeToString(sum[:SubjectTagLen/2])
+}
+
 // One person signing in and out in a loop within their sessions'
 // lifetime (two entries a sign-out) used to grow the sessions document
 // past the API server's 1 MiB, after which every write of the ConfigMap
-// failed. They now forget only their own oldest sign-outs.
+// failed. They now fill only their own share, and what it holds stays:
+// their later sign-outs are refused (and counted), never another
+// person's dropped.
 func TestOnePersonsSignOutsAreBounded(t *testing.T) {
 	clock := &testClock{now: t0}
 	s := New(Options{Name: "console-state", Now: clock.Now})
-	s.RecordSignOut("victim-session", "bob", t0.Add(time.Hour))
+	s.RecordSignOut("victim-session", tag("bob"), t0.Add(12*time.Hour))
+	refusedBefore := testutil.ToFloat64(signOutsRefused.WithLabelValues(refusedSubject))
 	for i := range 6700 {
-		s.RecordSignOut(fmt.Sprintf("session-%d", i), "mallory", t0.Add(12*time.Hour+time.Duration(i)*time.Second))
-		s.RecordSignOut(fmt.Sprintf("bearer-%d", i), "mallory", t0.Add(12*time.Hour+time.Duration(i)*time.Second))
+		clock.Add(time.Second)
+		s.RecordSignOut(fmt.Sprintf("session-%d", i), tag("mallory"), t0.Add(12*time.Hour+time.Duration(i)*time.Second))
+		s.RecordSignOut(fmt.Sprintf("bearer-%d", i), tag("mallory"), t0.Add(12*time.Hour+time.Duration(i)*time.Second))
+	}
+	if got := testutil.ToFloat64(signOutsRefused.WithLabelValues(refusedSubject)) - refusedBefore; got != 2*6700-MaxSignOutsPerSubject {
+		t.Errorf("refusals counted: %v, want %d", got, 2*6700-MaxSignOutsPerSubject)
 	}
 	s.mu.Lock()
 	s.pruneLocked()
@@ -53,8 +66,8 @@ func TestOnePersonsSignOutsAreBounded(t *testing.T) {
 	if !s.SignedOut("victim-session") {
 		t.Error("another person's sign-out was dropped")
 	}
-	if !s.SignedOut("session-6699") || !s.SignedOut("bearer-6699") || s.SignedOut("session-0") {
-		t.Error("a person's latest sign-outs must be the ones kept")
+	if !s.SignedOut("session-0") || !s.SignedOut("bearer-0") || s.SignedOut("session-6699") {
+		t.Error("a person's first sign-outs must be the ones kept: the document never drops what it holds")
 	}
 }
 
@@ -85,11 +98,11 @@ func TestSignOutsAtTheSizeLimit(t *testing.T) {
 	refusedBefore := testutil.ToFloat64(signOutsRefused.WithLabelValues("budget"))
 	for i := range MaxSignOuts {
 		// Many people, a few sign-outs each, all within their bounds.
-		if !s.RecordSignOut(fmt.Sprintf("s-%d", i), fmt.Sprint("person-", i/8), t0.Add(time.Hour+time.Duration(i)*time.Second)) {
+		if !s.RecordSignOut(fmt.Sprintf("s-%d", i), tag(fmt.Sprint("person-", i/8)), t0.Add(time.Hour+time.Duration(i)*time.Second)) {
 			t.Fatalf("sign-out %d refused below MaxSignOuts", i)
 		}
 	}
-	if s.RecordSignOut("late", "person-late", t0.Add(2*time.Hour)) {
+	if s.RecordSignOut("late", tag("person-late"), t0.Add(2*time.Hour)) {
 		t.Fatal("a sign-out past MaxSignOuts was reported shared")
 	}
 	if got := testutil.ToFloat64(signOutsRefused.WithLabelValues("budget")) - refusedBefore; got != 1 {
@@ -106,12 +119,12 @@ func TestSignOutsAtTheSizeLimit(t *testing.T) {
 		size += len(k) + len(v)
 	}
 	t.Logf("sessions document %d bytes, ConfigMap data %d bytes", len(api.data(KeySessions)), size)
-	if len(api.data(KeySessions)) > 120<<10 {
-		t.Errorf("a full sessions document is %d bytes, more than 120 KiB", len(api.data(KeySessions)))
+	if len(api.data(KeySessions)) > 170<<10 {
+		t.Errorf("a full sessions document is %d bytes, more than 170 KiB", len(api.data(KeySessions)))
 	}
 	// Room again once the oldest ends.
 	clock.Add(time.Hour + time.Second)
-	if !s.RecordSignOut("later", "person-late", t0.Add(3*time.Hour)) {
+	if !s.RecordSignOut("later", tag("person-late"), t0.Add(3*time.Hour)) {
 		t.Error("a sign-out refused after the document made room")
 	}
 }
@@ -129,8 +142,8 @@ func TestCappedSignOutsConverge(t *testing.T) {
 		s.mu.Unlock()
 	}
 	for i := range MaxSignOutsPerSubject {
-		a.RecordSignOut(fmt.Sprint("a-", i), "mallory", t0.Add(time.Hour+time.Duration(2*i)*time.Second))
-		b.RecordSignOut(fmt.Sprint("b-", i), "mallory", t0.Add(time.Hour+time.Duration(2*i+1)*time.Second))
+		a.RecordSignOut(fmt.Sprint("a-", i), tag("mallory"), t0.Add(time.Hour+time.Duration(2*i)*time.Second))
+		b.RecordSignOut(fmt.Sprint("b-", i), tag("mallory"), t0.Add(time.Hour+time.Duration(2*i+1)*time.Second))
 	}
 	a.mu.Lock()
 	cmA := a.desiredLocked()

@@ -59,19 +59,26 @@ func newKnownTokens(maxTokens, perSubject int) *knownTokens {
 }
 
 func (k *knownTokens) known(tok string, now time.Time) bool {
+	_, ok := k.subjectOf(tok, now)
+	return ok
+}
+
+// subjectOf reports whether tok is known and unexpired, and then the name
+// the API server gave for it when it was accepted.
+func (k *knownTokens) subjectOf(tok string, now time.Time) (string, bool) {
 	key := sha256.Sum256([]byte(tok))
 	k.mu.Lock()
 	defer k.mu.Unlock()
 	e, ok := k.all[key]
 	if !ok {
-		return false
+		return "", false
 	}
 	t := e.Value.(*knownToken)
 	if !now.Before(t.until) {
-		return false
+		return "", false
 	}
 	k.touchLocked(e)
-	return true
+	return t.subject, true
 }
 
 func (k *knownTokens) touchLocked(e *list.Element) {
