@@ -76,6 +76,13 @@ makes the timeline conclusion a warning that names the file, and hides no
 coverage. A backup's own timeline needs no history file: PostgreSQL reads an
 absent one as "no parents".
 
+For pgBackRest, which stores the WAL segment size nowhere, the size comes from
+the backups' LSNs (`backup-lsn`); when they do not decide it, from the archive's
+segment names (`wal-names`): a segment number rules out every size with fewer
+segments per log, and the number at which a log rolls over to the next (`FF`
+for 16 MiB) names one size. Only when neither decides is the 16 MiB default
+assumed (`assumed-default`), and never when a segment name rules it out.
+
 The console applies further limits to the recovery paths it receives, for
 both formats. The first two leave the recovery window without covered spans and give
 the reason in its place:

@@ -343,7 +343,7 @@ func (c *Collector) Analyze(ctx context.Context, reader store.Reader) Report {
 	report.Database = &current
 	report.ArchiveIDs = archiveInfo.ArchiveIDs()
 
-	report.SegmentSize, report.SegmentSizeSource = InferSegmentSize(backupInfo.Backups)
+	report.SegmentSize, report.SegmentSizeSource = InferSegmentSize(backupInfo.Backups, collector.SegmentNames())
 	if report.SegmentSize == 0 {
 		findings.add(FindingWALUnknown, SeverityError, "backup/"+options.Stanza+"/backup.info", "no WAL segment size agrees with every backup's LSN range")
 	}
@@ -1045,8 +1045,12 @@ func recoveryWindow(backups []BackupReport, segmentSize int64, source SegmentSiz
 		}
 	}
 	window.Assumptions = []string{"the window ends at the end of the last contiguous segment; its time is the segment's upload time, not a commit time"}
-	if source == SegmentSizeAssumed {
+	switch source {
+	case SegmentSizeAssumed:
 		window.Assumptions = append(window.Assumptions, "the WAL segment size is assumed to be the 16 MiB default: the backups' LSNs do not decide it")
+	case SegmentSizeFromNames:
+		window.Assumptions = append(window.Assumptions, "the WAL segment size is inferred from the archive's segment names: the backups' LSNs do not decide it")
+	case SegmentSizeFromLSN:
 	}
 	return window
 }

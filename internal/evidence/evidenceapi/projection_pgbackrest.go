@@ -46,6 +46,7 @@ const validationEpoch = 1
 var pgbackrestAssumptionCodes = map[string]string{
 	"the window ends at the end of the last contiguous segment; its time is the segment's upload time, not a commit time": "window-end-at-segment-upload-time",
 	"the WAL segment size is assumed to be the 16 MiB default: the backups' LSNs do not decide it":                        "wal-segment-size-assumed-default",
+	"the WAL segment size is inferred from the archive's segment names: the backups' LSNs do not decide it":               "wal-segment-size-from-wal-names",
 }
 
 // pathAssumptionCodes are what every pgBackRest recovery path assumes: it

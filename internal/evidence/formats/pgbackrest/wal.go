@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"math"
 	"regexp"
 	"slices"
@@ -549,18 +550,69 @@ const (
 	// SegmentSizeFromLSN means exactly one segment size makes every backup's
 	// archive-start/stop name the segment of its lsn-start/stop.
 	SegmentSizeFromLSN SegmentSizeSource = "backup-lsn"
+	// SegmentSizeFromNames means the backups' LSNs leave more than one size
+	// and the archive's segment names decide it: the highest segment
+	// number seen in a log id rules out every size with fewer segments per
+	// log, and the segment number at which each log id rolls over to the
+	// next (0xFF for 16 MiB) names one size.
+	SegmentSizeFromNames SegmentSizeSource = "wal-names"
 	// SegmentSizeAssumed means the backups do not decide it (none has an LSN
 	// range past the first segment of a log) and the 16 MiB default is
 	// assumed. pgBackRest records the size nowhere in the repository.
 	SegmentSizeAssumed SegmentSizeSource = "assumed-default"
 )
 
+// SegmentNames is what an archive's segment names say about the WAL
+// segment size, which they encode only as the number of segments per log
+// id (4 GiB / size).
+type SegmentNames struct {
+	// Seen is true when at least one segment name was listed.
+	Seen bool
+	// MaxSegment is the highest segment number seen in any log id: a size
+	// with no more segments per log than that is impossible.
+	MaxSegment uint32
+	// Rollovers are the last segment numbers of log ids followed, on the
+	// same timeline, by segment 0 of the next log id: with contiguous WAL,
+	// each is the number of segments per log minus one.
+	Rollovers []uint32
+}
+
+// SegmentNames gathers the segment-name evidence of every archive id the
+// collector saw.
+func (c *WALCollector) SegmentNames() SegmentNames {
+	var result SegmentNames
+	for _, key := range slices.Sorted(maps.Keys(c.archives)) {
+		ranges := c.archives[key].ranges
+		for index, value := range ranges {
+			result.Seen = true
+			result.MaxSegment = max(result.MaxSegment, value.end)
+			if index+1 < len(ranges) {
+				next := ranges[index+1]
+				if next.timeline == value.timeline && value.log != math.MaxUint32 && next.log == value.log+1 && next.start == 0 {
+					result.Rollovers = append(result.Rollovers, value.end)
+				}
+			}
+		}
+	}
+	return result
+}
+
+// segmentsPerLog is the number of segments in one log id at size.
+func segmentsPerLog(size int64) uint64 {
+	// #nosec G115 -- callers pass a power of two from 1 MiB to 1 GiB.
+	return (uint64(1) << 32) / uint64(size)
+}
+
 // InferSegmentSize derives the WAL segment size from the backups: for every
 // candidate size, a backup's archive-start must be the segment of its
 // lsn-start, and archive-stop the segment of lsn-stop. pgBackRest does not
-// store the size (it reads it from pg_control when it runs), so this is the
-// only evidence the repository holds. It returns 0 when no size fits.
-func InferSegmentSize(backups []Backup) (int64, SegmentSizeSource) {
+// store the size (it reads it from pg_control when it runs), so the backups
+// and the archive's segment names are the only evidence the repository
+// holds. When the backups leave more than one size, the names narrow them
+// (SegmentSizeFromNames); the 16 MiB default is assumed only when it is
+// still possible and nothing decides. It returns 0 when no size fits, or
+// when the evidence leaves several and rules the default out.
+func InferSegmentSize(backups []Backup, names SegmentNames) (int64, SegmentSizeSource) {
 	var candidates []int64
 	for size := MinWALSegmentSize; size <= MaxWALSegmentSize; size <<= 1 {
 		fits := true
@@ -578,14 +630,30 @@ func InferSegmentSize(backups []Backup) (int64, SegmentSizeSource) {
 			candidates = append(candidates, size)
 		}
 	}
+	// A segment number at or past a size's segments per log is impossible
+	// at that size, whatever the backups say.
+	possible := slices.DeleteFunc(slices.Clone(candidates), func(size int64) bool {
+		return names.Seen && uint64(names.MaxSegment) >= segmentsPerLog(size)
+	})
 	switch {
-	case len(candidates) == 1:
+	case len(candidates) == 1 && len(possible) == 1:
 		return candidates[0], SegmentSizeFromLSN
-	case slices.Contains(candidates, DefaultWALSegmentSize):
-		return DefaultWALSegmentSize, SegmentSizeAssumed
-	default:
+	case len(possible) == 1:
+		return possible[0], SegmentSizeFromNames
+	}
+	// Every rollover the names show must agree on one size; segments
+	// missing at the end of a log would make a rollover look early, so a
+	// disagreement decides nothing.
+	if len(names.Rollovers) > 0 && !slices.ContainsFunc(names.Rollovers, func(value uint32) bool { return value != names.Rollovers[0] }) {
+		if index := slices.IndexFunc(possible, func(size int64) bool { return segmentsPerLog(size) == uint64(names.Rollovers[0])+1 }); index >= 0 {
+			return possible[index], SegmentSizeFromNames
+		}
 		return 0, ""
 	}
+	if slices.Contains(possible, DefaultWALSegmentSize) {
+		return DefaultWALSegmentSize, SegmentSizeAssumed
+	}
+	return 0, ""
 }
 
 func walNameHoldsLSN(name, lsnText string, segmentSize int64) bool {
