@@ -58,6 +58,10 @@ type timelineScenario struct {
 	histories  map[uint32]string
 	faults     map[uint32]historyFault
 	truncated  bool
+	// gapStatus, when set, records every hole between two runs of a
+	// timeline as a gap of that status (both formats); unset, the archive
+	// has no gaps recorded.
+	gapStatus GapStatus
 }
 
 func (s timelineScenario) clone() timelineScenario {
@@ -102,6 +106,34 @@ func (s timelineScenario) ranges(t testing.TB) []WALRange {
 	return out
 }
 
+// gaps are the holes between consecutive runs of each timeline, recorded as
+// gapStatus; none when gapStatus is unset.
+func (s timelineScenario) gaps(t testing.TB) []WALGap {
+	t.Helper()
+	if s.gapStatus == "" {
+		return nil
+	}
+	var out []WALGap
+	ranges := s.ranges(t)
+	for index := 0; index+1 < len(ranges); index++ {
+		left, right := ranges[index], ranges[index+1]
+		if left.Timeline != right.Timeline {
+			continue
+		}
+		first, last := left.End+1, right.Start-1
+		gap := WALGap{
+			Timeline: left.Timeline, Start: first, End: last, Count: last - first + 1,
+			First: crossName(t, left.Timeline, first), Last: crossName(t, left.Timeline, last), Status: s.gapStatus,
+			FirstObservedGeneration: 1, LastObservedGeneration: 2,
+		}
+		if s.gapStatus == GapCandidate {
+			gap.LastObservedGeneration = 1
+		}
+		out = append(out, gap)
+	}
+	return out
+}
+
 func (s timelineScenario) newestVisible() uint32 {
 	var newest uint32
 	for timeline, values := range s.segments {
@@ -118,7 +150,7 @@ func (s timelineScenario) newestVisible() uint32 {
 // pgbackrest evaluates the backup's path as pgBackRest reads the archive.
 func (s timelineScenario) pgbackrest(t testing.TB) RecoveryPath {
 	t.Helper()
-	wal := ArchiveWAL{State: evidence.Healthy, SegmentSize: crossSegment, Ranges: s.ranges(t)}
+	wal := ArchiveWAL{State: evidence.Healthy, SegmentSize: crossSegment, Ranges: s.ranges(t), Gaps: s.gaps(t)}
 	histories := make([]TimelineHistory, 0, len(s.histories))
 	for _, timeline := range slices.Sorted(maps.Keys(s.histories)) {
 		history := TimelineHistory{ArchiveID: "17-1", Key: fmt.Sprintf("archive/demo/17-1/%08X.history", timeline), Timeline: timeline}
@@ -147,6 +179,13 @@ func (s timelineScenario) barman(t testing.TB) barmancloud.ServerRecovery {
 	server := barmancloud.ServerWAL{Server: "demo", State: evidence.Healthy, PostgreSQLVersion: 170000, SegmentSize: crossSegment}
 	for _, value := range s.ranges(t) {
 		server.Ranges = append(server.Ranges, barmancloud.WALRange(value))
+	}
+	for _, value := range s.gaps(t) {
+		gap := barmancloud.WALGap{
+			Timeline: value.Timeline, Start: value.Start, End: value.End, Count: value.Count, First: value.First, Last: value.Last,
+			Status: barmancloud.GapStatus(value.Status), FirstObservedGeneration: value.FirstObservedGeneration, LastObservedGeneration: value.LastObservedGeneration,
+		}
+		server.Gaps = append(server.Gaps, gap)
 	}
 	backup := barmancloud.Backup{
 		Server: "demo", ID: "b", State: evidence.Healthy, BeginWAL: crossName(t, 1, s.begin), EndWAL: crossName(t, 1, s.end),
