@@ -756,9 +756,13 @@ console:
       # -- Gateways the HTTPRoute attaches to, as Gateway API `parentRefs`:
       # `[{name: gw, namespace: infra}]`.
       parentRefs: []
-    # -- Namespace the ingress router runs in, the one place the NetworkPolicy
-    # lets reach the Pod: `openshift-ingress` on OpenShift, `ingress-nginx` for
-    # the community controller. Used only when the NetworkPolicy is enabled.
+    # -- Namespace the ingress controller runs in, the one place the
+    # NetworkPolicy lets reach the Pod for `ingress` and `httpRoute` exposure:
+    # `ingress-nginx` for the community controller. Not used for `route`: the
+    # policy then admits the namespaces labelled
+    # `policy-group.network.openshift.io/ingress`, which the OpenShift routers,
+    # host-network ones included, carry. Used only when the NetworkPolicy is
+    # enabled.
     routerNamespace: openshift-ingress
 
   # networkPolicy: a policy TEMPLATE, off by default and never on by default.
@@ -1445,9 +1449,13 @@ pgadmin:
       # -- Gateways the HTTPRoute attaches to, as Gateway API `parentRefs`:
       # `[{name: gw, namespace: infra}]`.
       parentRefs: []
-    # -- Namespace the ingress router runs in, the one place the NetworkPolicy
-    # lets reach the Pod: `openshift-ingress` on OpenShift, `ingress-nginx` for
-    # the community controller. Used only when the NetworkPolicy is enabled.
+    # -- Namespace the ingress controller runs in, the one place the
+    # NetworkPolicy lets reach the Pod for `ingress` and `httpRoute` exposure:
+    # `ingress-nginx` for the community controller. Not used for `route`: the
+    # policy then admits the namespaces labelled
+    # `policy-group.network.openshift.io/ingress`, which the OpenShift routers,
+    # host-network ones included, carry. Used only when the NetworkPolicy is
+    # enabled.
     routerNamespace: openshift-ingress
 
   # networkPolicy: a policy TEMPLATE, off by default and never on by default

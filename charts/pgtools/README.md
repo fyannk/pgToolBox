@@ -550,8 +550,10 @@ extra network boundary. Two limits, stated plainly:
 2. **It is derived from `watchNamespaces`, never from a request**, and lists the
    console's real egress only: the watched Clusters' instance pods
    (`:8000` status, `:9187` metrics), their poolers (`:9127`), the EvidenceAgent
-   pods, the API server and DNS; ingress only from `console.exposure.routerNamespace`
-   (and `networkPolicy.ingress.extraFrom`) on the console port. With nothing
+   pods, the API server and DNS; ingress only from the routers (the
+   `policy-group.network.openshift.io/ingress` namespaces for a Route,
+   `console.exposure.routerNamespace` otherwise) and
+   `networkPolicy.ingress.extraFrom`, on the console port. With nothing
    exposed and no extra peer, no ingress is admitted at all.
 
 The API-server egress uses the addresses of the `kubernetes` EndpointSlice, looked up
@@ -962,7 +964,7 @@ authority on what is accepted.
 | console.exposure.route.annotations | object | `{}` | Annotations of the OpenShift Route. |
 | console.exposure.route.termination | string | `"edge"` | TLS termination of the Route: `edge`, `reencrypt` or `passthrough`. |
 | console.exposure.httpRoute.parentRefs | list | `[]` | Gateways the HTTPRoute attaches to, as Gateway API `parentRefs`: `[{name: gw, namespace: infra}]`. |
-| console.exposure.routerNamespace | string | `"openshift-ingress"` | Namespace the ingress router runs in, the one place the NetworkPolicy lets reach the Pod: `openshift-ingress` on OpenShift, `ingress-nginx` for the community controller. Used only when the NetworkPolicy is enabled. |
+| console.exposure.routerNamespace | string | `"openshift-ingress"` | Namespace the ingress controller runs in, the one place the NetworkPolicy lets reach the Pod for `ingress` and `httpRoute` exposure: `ingress-nginx` for the community controller. Not used for `route`: the policy then admits the namespaces labelled `policy-group.network.openshift.io/ingress`, which the OpenShift routers, host-network ones included, carry. Used only when the NetworkPolicy is enabled. |
 | console.networkPolicy.enabled | bool | `false` | Render a NetworkPolicy for these pods. Off by default: whether the cluster enforces policies, and whether this namespace wants one, is the installing admin's decision. |
 | console.networkPolicy.apiServer.mode | string | `"addresses"` | How egress to the API server is allowed. `addresses`: the addresses of the addresses you list in `apiServer.addresses`, or, with `apiServer.lookup`, those of the `kubernetes` EndpointSlice read at install time (deprecated default, see `apiServer.lookup`). `any`: any address on `apiServer.ports`, the fallback for API servers behind a load balancer whose address is not in the EndpointSlice. |
 | console.networkPolicy.apiServer.addresses | list | `[]` | API server IP addresses to allow when `apiServer.mode` is `addresses`: the ClusterIP and endpoints of `kubectl get endpointslice kubernetes -n default` (a namespace admin usually cannot read that object: ask the cluster admin). |
@@ -1075,7 +1077,7 @@ authority on what is accepted.
 | pgadmin.exposure.route.annotations | object | `{}` | Annotations of the OpenShift Route. |
 | pgadmin.exposure.route.termination | string | `""` | Route TLS termination: `edge` or `reencrypt`. Empty: `reencrypt` with `auth.provider: openshift`, otherwise `edge`. |
 | pgadmin.exposure.httpRoute.parentRefs | list | `[]` | Gateways the HTTPRoute attaches to, as Gateway API `parentRefs`: `[{name: gw, namespace: infra}]`. |
-| pgadmin.exposure.routerNamespace | string | `"openshift-ingress"` | Namespace the ingress router runs in, the one place the NetworkPolicy lets reach the Pod: `openshift-ingress` on OpenShift, `ingress-nginx` for the community controller. Used only when the NetworkPolicy is enabled. |
+| pgadmin.exposure.routerNamespace | string | `"openshift-ingress"` | Namespace the ingress controller runs in, the one place the NetworkPolicy lets reach the Pod for `ingress` and `httpRoute` exposure: `ingress-nginx` for the community controller. Not used for `route`: the policy then admits the namespaces labelled `policy-group.network.openshift.io/ingress`, which the OpenShift routers, host-network ones included, carry. Used only when the NetworkPolicy is enabled. |
 | pgadmin.networkPolicy.enabled | bool | `false` | Render a NetworkPolicy for these pods. Off by default: whether the cluster enforces policies, and whether this namespace wants one, is the installing admin's decision. |
 | pgadmin.networkPolicy.apiServer.mode | string | `"addresses"` | How egress to the API server is allowed. `addresses`: the addresses of the addresses you list in `apiServer.addresses`, or, with `apiServer.lookup`, those of the `kubernetes` EndpointSlice read at install time (deprecated default, see `apiServer.lookup`). `any`: any address on `apiServer.ports`, the fallback for API servers behind a load balancer whose address is not in the EndpointSlice. |
 | pgadmin.networkPolicy.apiServer.addresses | list | `[]` | API server IP addresses to allow when `apiServer.mode` is `addresses`: the ClusterIP and endpoints of `kubectl get endpointslice kubernetes -n default` (a namespace admin usually cannot read that object: ask the cluster admin). |

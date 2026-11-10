@@ -33,9 +33,13 @@ helm install console oci://ghcr.io/fyannk/charts/pgtools \
 `PUBLIC_URL` defaults to `https://<exposure.host>`. The Route gets the HAProxy
 timeout annotation the live stream needs (`console.exposure.sse.timeout`).
 
-For a NetworkPolicy on OpenShift set `console.exposure.routerNamespace` to
-`openshift-ingress` (the default) and `console.networkPolicy.dns` to the
+For a NetworkPolicy on OpenShift set `console.networkPolicy.dns` to the
 `openshift-dns` namespace on port `5353`; see [NetworkPolicy](networkpolicy.md).
+With `console.exposure.type: route` the policy admits the namespaces labelled
+`policy-group.network.openshift.io/ingress`, which covers host-network routers
+too (OVN-Kubernetes matches their traffic to that label, not to the
+`openshift-ingress` namespace name); `console.exposure.routerNamespace` is not
+used then.
 
 ## Manual checklist
 

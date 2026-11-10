@@ -62,7 +62,7 @@ flowchart LR
 | Egress | The API server | `networkPolicy.apiServer.ports` (443, 6443) |
 | Egress | DNS | `networkPolicy.dns` (53, UDP and TCP) |
 | Egress | `networkPolicy.extraEgress`, raw NetworkPolicy egress rules | as you list them |
-| Ingress | The router namespace `console.exposure.routerNamespace` (when `console.exposure.type` is not `none`) and `networkPolicy.ingress.extraFrom` | the console port (`console.port`, 3000) |
+| Ingress | For `console.exposure.type: route`, the namespaces labelled `policy-group.network.openshift.io/ingress` (the OpenShift routers, host-network ones included); for `ingress` and `httpRoute`, the namespace `console.exposure.routerNamespace`; and `networkPolicy.ingress.extraFrom` | the console port (`console.port`, 3000) |
 | Ingress | `networkPolicy.ingress.metricsFrom` | the probe port (`console.probePort`, 3001), for `/metrics` |
 
 With nothing exposed and no extra peer, no ingress is admitted at all. Kubelet
@@ -109,7 +109,10 @@ names these ways out. The same applies to `evidence.networkPolicy` and
 ## OpenShift
 
 Set `networkPolicy.dns.namespace` to `openshift-dns` and `networkPolicy.dns.ports`
-to `[5353]`; leave `console.exposure.routerNamespace` at `openshift-ingress`.
+to `[5353]`. A Route admits the routers by the
+`policy-group.network.openshift.io/ingress` namespace label (host-network
+routers included), so `console.exposure.routerNamespace` is not used; the same
+holds for `pgadmin.exposure.routerNamespace`.
 
 ## Verification
 

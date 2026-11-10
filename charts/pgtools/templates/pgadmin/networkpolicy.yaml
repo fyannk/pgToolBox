@@ -50,7 +50,13 @@ spec:
   {{- if or (ne $p.exposure.type "none") $np.ingress.extraFrom }}
   ingress:
     - from:
-        {{- if ne $p.exposure.type "none" }}
+        {{- if eq $p.exposure.type "route" }}
+        {{- /* The OpenShift routers, host-network ones included (see the
+        console's policy). */}}
+        - namespaceSelector:
+            matchLabels:
+              policy-group.network.openshift.io/ingress: ""
+        {{- else if ne $p.exposure.type "none" }}
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: {{ $p.exposure.routerNamespace | quote }}
