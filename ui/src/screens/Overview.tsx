@@ -193,6 +193,11 @@ export function BackupsPanel({ b }: { b: ClusterOverviewView["backups"] }) {
             <>
               {b.recoveryWindow.first ? <Time iso={b.recoveryWindow.first} /> : m.not_reported()}
               {" → "}
+              {b.recoveryWindow.last && b.recoveryWindow.provenance.origin === "operator" && (
+                // serverRecoveryWindow's lastSuccessfulBackupTime is the last
+                // base backup, not the end of the archived WAL.
+                <span className="text-muted">{m.backup_window_last_base_backup()} </span>
+              )}
               {b.recoveryWindow.last ? <Time iso={b.recoveryWindow.last} /> : m.not_reported()}
             </>
           ) : notReported.length > 0 ? (

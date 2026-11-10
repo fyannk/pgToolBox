@@ -2,6 +2,7 @@ import { expect, test, vi } from "vitest";
 import {
   admin,
   backups,
+  healthyOverview,
   metrics,
   objects,
   operationsOperator,
@@ -17,6 +18,7 @@ import { BackupsView } from "./Backups";
 import { MetricsView } from "./Metrics";
 import { ObjectsView } from "./Objects";
 import { OperationsView } from "./Operations";
+import { BackupsPanel } from "./Overview";
 import { ReplicationView } from "./Replication";
 import { StorageView } from "./Storage";
 
@@ -174,4 +176,29 @@ test("backups: a Backup of an earlier Cluster of the same name is listed and lab
   await expect.element(screen.getByText("predates this Cluster")).toBeVisible();
   const plain = await renderInFrame(<BackupsView data={backups} />);
   expect(plain.container.textContent).not.toContain("predates this Cluster");
+});
+
+test("backups: an operator-only window ends at the last base backup, never called the end of the archived WAL", async () => {
+  const screen = await renderInFrame(<BackupsView data={{ ...backups, recoveryTimeline: recoveryReportedOnly }} />);
+  await expect.element(screen.getByText(/^last base backup .*, not the end of the archived WAL$/)).toBeVisible();
+  expect(screen.container.textContent).not.toMatch(/latest 2026/);
+});
+
+test("overview: the operator's window end is labelled the last base backup", async () => {
+  const reported = {
+    ...healthyOverview.backups,
+    recoveryWindow: {
+      first: "2026-10-22T07:08:00Z",
+      last: "2026-10-29T06:00:00Z",
+      provenance: { origin: "operator" as const, source: "ObjectStore.status.serverRecoveryWindow[orders]" },
+    },
+  };
+  const screen = await renderInFrame(<BackupsPanel b={reported} />);
+  await expect.element(screen.getByText("last base backup")).toBeVisible();
+  const fromAgent = {
+    ...reported,
+    recoveryWindow: { ...reported.recoveryWindow, provenance: { origin: "evidence" as const } },
+  };
+  const agent = await renderInFrame(<BackupsPanel b={fromAgent} />);
+  expect(agent.container.textContent).not.toContain("last base backup");
 });

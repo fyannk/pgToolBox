@@ -163,6 +163,11 @@ func (s *Service) recoveryTimeline(ev clusterEvidence, summary viewmodel.BackupS
 				From: first, To: last, Kind: segmentReported,
 				Text: "Reported by " + w.Provenance.Source + "; not verified against the repository.",
 			})
+			if facts.now.After(last) {
+				out.Segments = append(out.Segments, viewmodel.RecoverySegment{
+					From: last, To: facts.now, Kind: segmentUnknown, Text: reportedTailText(w.Provenance),
+				})
+			}
 			reason = joinReason("the window is the operator's report, not repository evidence", reason)
 		}
 		out.Reason = reason
@@ -417,7 +422,28 @@ func tailSegment(out *viewmodel.RecoveryTimeline, in timelineInput, last time.Ti
 		out.Segments = append(out.Segments, viewmodel.RecoverySegment{From: last, To: in.facts.now, Kind: segmentUnknown, Text: "The recovery path collection was cut at a bound: newer coverage may exist."})
 	case in.stale != "":
 		out.Segments = append(out.Segments, viewmodel.RecoverySegment{From: last, To: in.facts.now, Kind: segmentUnknown, Text: "The repository evidence is stale: newer WAL may have reached the repository since."})
+	case in.scannedAt != nil && in.facts.now.After(maxTime(last, *in.scannedAt)):
+		// Fresh and complete, the frontier is a fact about the scan, not
+		// about now: WAL archived since may cover the time after it.
+		from := maxTime(last, *in.scannedAt)
+		out.Segments = append(out.Segments, viewmodel.RecoverySegment{
+			From: from, To: in.facts.now, Kind: segmentUnknown,
+			Text: "After the repository was last read (" + in.scannedAt.UTC().Format(time.RFC3339) + "): WAL archived since may cover this time.",
+		})
 	}
+}
+
+// reportedTailText says why the time after a reported window's end is
+// unknown, by who reported the window.
+func reportedTailText(p viewmodel.Provenance) string {
+	if p.Origin == viewmodel.OriginOperator {
+		// ObjectStore.status.serverRecoveryWindow[].lastSuccessfulBackupTime
+		// is the last base backup, not the end of the archived WAL.
+		return "After the last base backup the operator reports: the operator does not report the archived WAL beyond it, " +
+			"so a restore to this time may well be possible; deploy an evidence agent to place it."
+	}
+	return "After the end of the window the evidence agent reported: WAL archived since may cover this time, " +
+		"and without the agent's recovery paths the console cannot place it."
 }
 
 // timelineFindings are what the drawing found that decides the verdict.
@@ -659,6 +685,10 @@ func restoreCheck(b viewmodel.Backups, at time.Time) viewmodel.RestoreCheck {
 		return out
 	case t.Basis == "reported" && !at.After(*t.Latest):
 		out.Answer, out.Text = "reported", "Inside the window the operator reports; no repository evidence confirms it."
+		return out
+	case t.Basis == "reported":
+		// The reported end is not a WAL frontier: never notCovered.
+		out.Answer, out.Text = "unknown", reportedTailText(t.Provenance)
 		return out
 	}
 	for _, seg := range t.Segments {

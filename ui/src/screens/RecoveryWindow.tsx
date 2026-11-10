@@ -202,7 +202,13 @@ function Bar({ t, hatch }: { t: RecoveryTimeline; hatch: string }) {
       </svg>
       <div className="flex justify-between gap-2 text-caption text-muted">
         <span>{t.earliest ? m.recovery_earliest({ at: formatUtcMinute(t.earliest) }) : null}</span>
-        <span>{t.latest ? m.recovery_latest({ at: formatUtcMinute(t.latest) }) : null}</span>
+        <span>
+          {t.latest
+            ? t.basis === "reported" && t.provenance.origin === "operator"
+              ? m.recovery_last_base_backup({ at: formatUtcMinute(t.latest) })
+              : m.recovery_latest({ at: formatUtcMinute(t.latest) })
+            : null}
+        </span>
       </div>
       <ul aria-label={m.recovery_legend()} className="m-0 flex list-none flex-wrap gap-x-4 gap-y-1 p-0 text-caption">
         {kinds.map((k) => (

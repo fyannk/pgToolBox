@@ -180,6 +180,12 @@
         "to": "2026-10-29T11:58:00Z",
         "kind": "unknown",
         "text": "Within 15 min of the end of the archived WAL: segment names cannot tell whether this target's WAL is archived yet."
+      },
+      {
+        "from": "2026-10-29T11:59:20Z",
+        "to": "2026-10-29T12:00:00Z",
+        "kind": "unknown",
+        "text": "After the repository was last read (2026-10-29T11:59:20Z): WAL archived since may cover this time."
       }
     ],
     "markers": [
