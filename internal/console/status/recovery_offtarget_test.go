@@ -80,8 +80,10 @@ func TestSiblingPathNeedsItsTimeline(t *testing.T) {
 	latest := tlPath("b1", 48*time.Hour, 30*time.Hour, evidencev1alpha1.CoverageFrontier)
 	latest.TargetTimeline, latest.StartTimeline, latest.FrontierTimeline = 3, pu64(3), pu64(3)
 	sibling := tlPath("b2", 20*time.Hour, 2*time.Hour, evidencev1alpha1.CoverageFrontier)
-	sibling.State, sibling.Reason = evidencev1alpha1.Warning, evidencev1alpha1.Reason{Code: evidencev1alpha1.ReasonPathNeedsTargetTimeline,
-		Message: "a default restore follows timeline 3, whose history does not lead through timeline 2: needs targetTLI 2"}
+	sibling.State, sibling.Reason = evidencev1alpha1.Warning, evidencev1alpha1.Reason{
+		Code:    evidencev1alpha1.ReasonPathNeedsTargetTimeline,
+		Message: "a default restore follows timeline 3, whose history does not lead through timeline 2: needs targetTLI 2",
+	}
 	ev := timelineFixture{paths: []evidence.RecoveryPath{latest, sibling}}.evidence()
 	tl := (&Service{}).recoveryTimeline(ev, viewmodel.BackupSummary{}, nil, recoveryFacts{now: now, archiveTimeout: defaultArchiveTimeout})
 	if tl.TargetTimeline != 3 || len(tl.OffTarget) != 1 || tl.OffTarget[0].TargetTimeline != 2 || tl.OffTarget[0].BackupID != "b2" {

@@ -211,8 +211,11 @@ func TestTimelineReasonsAreTranslatable(t *testing.T) {
 		{"timeline ancestry contains missing or invalid evidence", "timeline.reason.ancestryInvalid", "", nil},
 		{"timeline ancestry contains missing or invalid evidence; 00000003.history: timeline history is malformed", "timeline.reason.ancestryInvalid", "00000003.history", map[string]string{"problem": "malformed"}},
 		{"00000002.history: timeline history is malformed; no default restore reads it", "timeline.reason.unneededInvalid", "00000002.history", map[string]string{"problem": "malformed"}},
-		{"the agent's timeline evidence is unknown (timeline ancestry contains missing or invalid evidence; 00000005.history: timeline history could not be read): no recovery path is shown as coverage until the timeline a default restore follows is established",
-			"recovery.reason.timelineNotEstablished", "00000005.history", map[string]string{"state": "unknown", "inner": "timeline.reason.ancestryInvalid", "problem": "unreadable"}},
+		{
+			"the agent's timeline evidence is unknown (timeline ancestry contains missing or invalid evidence; 00000005.history: timeline history could not be read): no recovery path is shown as coverage until the timeline a default restore follows is established",
+			"recovery.reason.timelineNotEstablished", "00000005.history",
+			map[string]string{"state": "unknown", "inner": "timeline.reason.ancestryInvalid", "problem": "unreadable"},
+		},
 		{agentPredatesReason, "recovery.reason.agentPredates", "", nil},
 		{"the timeline a default restore follows is unknown: timeline history files were not all read", "timeline.reason.latestUnknown", "", map[string]string{"gap": "notAllRead"}},
 		{"a default restore (recovery_target_timeline 'latest') stops on timeline 2: history 3 is missing; timeline 4 needs an explicit targetTLI", "timeline.reason.latestStops", "00000003.history", map[string]string{"latest": "2", "newest": "4", "gap": "missing", "gapTimeline": "3"}},
@@ -228,9 +231,11 @@ func TestTimelineReasonsAreTranslatable(t *testing.T) {
 			}
 		}
 	}
-	for _, msg := range []string{"", "history 3 is missing: no restore can follow timeline 4", "history 3 is missing; extra",
+	for _, msg := range []string{
+		"", "history 3 is missing: no restore can follow timeline 4", "history 3 is missing; extra",
 		"a default restore follows timeline 3, whose history does not lead through timeline 2: needs targetTLI 4",
-		"00000002.history: something else; no default restore reads it"} {
+		"00000002.history: something else; no default restore reads it",
+	} {
 		if p, ok := timelinePhrase(msg); ok {
 			t.Errorf("%q recognised as %+v", msg, p)
 		}
