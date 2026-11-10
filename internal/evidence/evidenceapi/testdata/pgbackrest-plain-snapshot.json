@@ -3,7 +3,10 @@
   "kind": "RepositoryEvidenceSnapshot",
   "producer": {
     "name": "evidence-agent",
-    "version": "1.0.0"
+    "version": "1.0.0",
+    "features": [
+      "recovery-timeline-latest"
+    ]
   },
   "producer_instance": "0123456789abcdef0123456789abcdef",
   "producer_epoch": 3,

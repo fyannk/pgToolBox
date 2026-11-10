@@ -558,7 +558,7 @@ func generateGoldens() ([]Artifact, error) {
 	snapshot := evidencev1alpha1.RepositoryEvidenceSnapshot{
 		APIVersion:       evidencev1alpha1.APIVersion,
 		Kind:             evidencev1alpha1.SnapshotKind,
-		Producer:         evidencev1alpha1.Producer{Name: evidencev1alpha1.ProducerName, Version: "1.0.0"},
+		Producer:         evidencev1alpha1.Producer{Name: evidencev1alpha1.ProducerName, Version: "1.0.0", Features: evidencev1alpha1.ProducerFeatures()},
 		ProducerInstance: "0123456789abcdef0123456789abcdef",
 		ProducerEpoch:    7,
 		Identity: evidencev1alpha1.Identity{

@@ -1346,6 +1346,9 @@
       ],
       "type": "string"
     },
+    "Feature": {
+      "type": "string"
+    },
     "GapStatus": {
       "enum": [
         "candidate",
@@ -2998,6 +3001,12 @@
     "Producer": {
       "additionalProperties": true,
       "properties": {
+        "features": {
+          "items": {
+            "$ref": "#/$defs/Feature"
+          },
+          "type": "array"
+        },
         "name": {
           "const": "evidence-agent"
         },

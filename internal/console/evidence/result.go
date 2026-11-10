@@ -132,6 +132,12 @@ const (
 	RecoveryUnavailable = "unavailable"
 	// RecoveryNotScanned: the agent has no completed scan yet.
 	RecoveryNotScanned = "notScanned"
+	// RecoveryUncertain: the paths were read but the console does not
+	// take them as coverage (an older agent, or a timeline a default
+	// restore follows that is not established; capRecovery); Reason says
+	// why. The paths are kept, capped: none healthy, none with a frontier
+	// receipt to draw a covered span to.
+	RecoveryUncertain = "uncertain"
 )
 
 // Recovery is the agent's observed recovery coverage: from each backup,

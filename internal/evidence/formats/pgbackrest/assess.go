@@ -325,8 +325,17 @@ func (r Report) timelineAspect() Aspect {
 	return Aspect{evidence.Healthy, "timeline history evaluated"}
 }
 
+// NoBackupOnNewestTimeline is the coverage reason when every backup is left
+// behind by the newest timeline: none is on its history before the branch
+// point, so a default restore succeeds from none of them. Barman Cloud
+// uses the same text.
+const NoBackupOnNewestTimeline = "no backup on or before the newest timeline's branch point: a default restore succeeds from none, and a restore must name an older timeline"
+
 func (r Report) coverageAspect() Aspect {
 	if r.Window == nil {
+		if len(r.Backups) > 0 && !slices.ContainsFunc(r.Backups, func(backup BackupReport) bool { return !backup.Path.OffTarget }) {
+			return Aspect{evidence.Unknown, NoBackupOnNewestTimeline}
+		}
 		return Aspect{evidence.Unknown, "no usable backup to recover from"}
 	}
 	state, inFlight, gapLimited := evidence.Healthy, false, false

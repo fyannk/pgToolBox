@@ -17,6 +17,8 @@ package v1alpha1
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -278,5 +280,47 @@ func TestBarmanRecoveryPathOffTargetIsNeverHealthy(t *testing.T) {
 	}
 	if bytes.Contains(encoded, []byte("off_target")) {
 		t.Fatalf("off_target is not omitted when false: %s", encoded)
+	}
+}
+
+// TestSnapshotProducerFeatures: the producer's features are an open,
+// bounded, sorted vocabulary; a snapshot without them (an older producer)
+// stays valid, and the consumer asks Has for what it relies on.
+func TestSnapshotProducerFeatures(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name     string
+		features []Feature
+		valid    bool
+	}{
+		{name: "none, an older producer", valid: true},
+		{name: "this contract's", features: ProducerFeatures(), valid: true},
+		{name: "a future feature is ignored", features: []Feature{"future-guarantee", FeatureRecoveryTimelineLatest}, valid: true},
+		{name: "unsorted", features: []Feature{FeatureRecoveryTimelineLatest, "future-guarantee"}},
+		{name: "duplicate", features: []Feature{FeatureRecoveryTimelineLatest, FeatureRecoveryTimelineLatest}},
+		{name: "not a code", features: []Feature{"Recovery Timeline"}},
+		{name: "empty", features: []Feature{""}},
+		{name: "too many", features: func() []Feature {
+			var out []Feature
+			for index := range maxProducerFeatures + 1 {
+				out = append(out, Feature(fmt.Sprintf("feature-%03d", index)))
+			}
+			return out
+		}()},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			snapshot := validSnapshot(t)
+			snapshot.Producer.Features = test.features
+			if err := snapshot.Validate(); (err == nil) != test.valid {
+				t.Fatalf("Validate() = %v, want valid %v", err, test.valid)
+			}
+		})
+	}
+	if (Producer{}).Has(FeatureRecoveryTimelineLatest) || !(Producer{Features: ProducerFeatures()}).Has(FeatureRecoveryTimelineLatest) {
+		t.Fatal("Has does not report the declared features")
+	}
+	if !slices.IsSorted(ProducerFeatures()) {
+		t.Fatal("ProducerFeatures is not sorted")
 	}
 }
