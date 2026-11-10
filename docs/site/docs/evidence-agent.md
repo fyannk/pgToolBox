@@ -36,7 +36,32 @@ default CloudNativePG restore (`recovery_target_timeline` `latest`) fails from
 it, so the path is at most a warning and a restore from it must name the
 timeline. Barman Cloud and pgBackRest give such a path the same state; for
 Barman the coverage conclusion is then not healthy (it takes the worst path),
-for pgBackRest the backup is not counted as usable.
+for pgBackRest the backup is not counted as usable. A path that is already not
+healthy (WAL missing, for example) keeps its own reason and gains the
+off-target one, which names the timeline a restore must ask for. When every
+backup is left behind like this, coverage says that no backup is on or before
+the newest timeline's branch point.
+
+Both formats resolve the newest timeline as PostgreSQL resolves
+`recovery_target_timeline` `latest`: from the backup's timeline they probe the
+history file of the next timeline, then the one after, and stop at the first
+one the archive does not have. A timeline above a missing history file is not
+where a default restore goes, however much WAL it has. Its recovery paths are
+unknown ("timeline 3 needs an explicit targetTLI; history 2 is missing"), the
+timeline conclusion is unknown, and the backup's own-timeline path is unknown
+too. A history file that is listed but cannot be read, is malformed or is over
+the size bound, or a listing of history files cut at its bound, leaves the
+timeline a default restore follows undecided. No path is then healthy.
+
+The console applies two further limits to the recovery paths it receives, for
+both formats. Each limit leaves the recovery window without covered spans and
+gives the reason in its place:
+
+- the agent's timeline conclusion is not healthy, so the timeline a default
+  restore follows is not established;
+- the agent does not declare the `recovery-timeline-latest` feature in
+  `producer.features`, which means it is an older build that may call a path
+  healthy when a default restore does not follow it.
 
 A Cluster backed up through a pgBackRest plugin is read the same way, as one
 stanza of one repository; see
