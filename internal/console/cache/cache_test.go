@@ -18,16 +18,21 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 
 	cnpgv1 "github.com/cloudnative-pg/api/pkg/api/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/rest"
+	toolscache "k8s.io/client-go/tools/cache"
 	crcache "sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -186,33 +191,23 @@ func TestClusterOf(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := clusterOf(context.Background(), reader, tt.obj); got != tt.want {
+			if got := clusterOf(context.Background(), reader, allSynced, tt.obj); got != tt.want {
 				t.Errorf("clusterOf = %q, want %q", got, tt.want)
 			}
 		})
 	}
 }
 
-// syncInformer is an informer that only answers HasSynced.
-type syncInformer struct {
-	crcache.Informer
-	synced bool
-}
+// allSynced is an epoch whose every kind is planned and synced.
+func allSynced(client.Object) bool { return true }
 
-func (i syncInformer) HasSynced() bool { return i.synced }
-
-// gatedReader is a cache reader whose informers report synced, and
-// whose Get may block the way a cache's Get does before the target
-// informer has synced: until its context ends.
+// gatedReader is a cache reader whose Get may block the way a cache's
+// Get does before the target informer has synced: until its context
+// ends.
 type gatedReader struct {
 	client.Reader
-	synced bool
-	block  bool
-	gets   int
-}
-
-func (r *gatedReader) GetInformer(context.Context, client.Object, ...crcache.InformerGetOption) (crcache.Informer, error) {
-	return syncInformer{synced: r.synced}, nil
+	block bool
+	gets  int
 }
 
 func (r *gatedReader) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
@@ -253,12 +248,12 @@ func TestEventAttributionNeverWaitsForAnInformer(t *testing.T) {
 			t.Parallel()
 			reader := &gatedReader{
 				Reader: fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod.DeepCopy()).Build(),
-				synced: tc.synced, block: tc.block,
+				block:  tc.block,
 			}
 			start := time.Now()
 			// No deadline on the handler's context: the bound is the
 			// attribution's own.
-			got := clusterOf(context.Background(), reader, event)
+			got := clusterOf(context.Background(), reader, func(client.Object) bool { return tc.synced }, event)
 			if got != tc.want {
 				t.Errorf("clusterOf = %q, want %q", got, tc.want)
 			}
@@ -351,5 +346,61 @@ func TestClusterStorageKeepsOnlyAutoGrow(t *testing.T) {
 	}
 	if other, _ := ClusterStorageTransform("not an object"); other != "not an object" {
 		t.Error("a non-object was changed")
+	}
+}
+
+// TestEventAttributionStartsNoUnplannedInformer: an Event about a kind
+// the plan left out (Poolers without their RBAC) is attributed to
+// nobody, and the real informer cache is never asked for that kind's
+// informer, which it would create and start, unfiltered, despite
+// ReaderFailOnMissingInformer.
+func TestEventAttributionStartsNoUnplannedInformer(t *testing.T) {
+	t.Parallel()
+	scheme, err := NewScheme()
+	if err != nil {
+		t.Fatal(err)
+	}
+	podGVK := corev1.SchemeGroupVersion.WithKind("Pod")
+	poolerGVK := cnpgv1.SchemeGroupVersion.WithKind("Pooler")
+	mapper := meta.NewDefaultRESTMapper(nil)
+	mapper.Add(podGVK, meta.RESTScopeNamespace)
+	mapper.Add(poolerGVK, meta.RESTScopeNamespace)
+	var created sync.Map
+	c, err := crcache.New(&rest.Config{Host: "https://127.0.0.1:1"}, crcache.Options{
+		Scheme: scheme, Mapper: mapper, ReaderFailOnMissingInformer: true,
+		NewInformer: func(lw toolscache.ListerWatcher, obj runtime.Object, resync time.Duration, idx toolscache.Indexers) toolscache.SharedIndexInformer {
+			created.Store(reflect.TypeOf(obj).String(), true)
+			return toolscache.NewSharedIndexInformer(lw, obj, resync, idx)
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The plan: Pods only, as build gets them.
+	planned := plannedInformers{}
+	podInformer, err := c.GetInformer(t.Context(), &corev1.Pod{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	planned.add(&corev1.Pod{}, podInformer)
+
+	for _, kind := range []string{"Pooler", "Pod", "Backup", "ScheduledBackup", "PersistentVolumeClaim"} {
+		event := &corev1.Event{ObjectMeta: metav1.ObjectMeta{Namespace: "a", Name: "e"}, InvolvedObject: corev1.ObjectReference{Kind: kind, Name: "x"}}
+		if got := clusterOf(t.Context(), c, planned.synced, event); got != "" {
+			t.Errorf("event on a %s attributed to %q", kind, got)
+		}
+	}
+	var kinds []string
+	created.Range(func(k, _ any) bool { kinds = append(kinds, k.(string)); return true })
+	if len(kinds) != 1 || kinds[0] != "*v1.Pod" {
+		t.Fatalf("informers created %v, want only the planned *v1.Pod", kinds)
+	}
+	// The cache would have started one had it been asked: the path the
+	// handler no longer takes.
+	if _, err := c.GetInformer(t.Context(), &cnpgv1.Pooler{}, crcache.BlockUntilSynced(false)); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := created.Load("*v1.Pooler"); !ok {
+		t.Fatal("the cache did not create a Pooler informer on GetInformer: the test proves nothing")
 	}
 }

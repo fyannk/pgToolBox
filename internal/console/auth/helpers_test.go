@@ -323,6 +323,8 @@ type browser struct {
 	t   *testing.T
 	env *testEnv
 	jar map[string]*http.Cookie
+	// addr is the client's address (host:port); "" keeps httptest's.
+	addr string
 }
 
 func (e *testEnv) browser(t *testing.T) *browser {
@@ -340,6 +342,9 @@ func (b *browser) do(method, target string, body url.Values, hdr map[string]stri
 	}
 	for k, v := range hdr {
 		r.Header.Set(k, v)
+	}
+	if b.addr != "" {
+		r.RemoteAddr = b.addr
 	}
 	for _, c := range b.jar {
 		r.AddCookie(c)

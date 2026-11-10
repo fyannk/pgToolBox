@@ -62,7 +62,7 @@ sequenceDiagram
     B->>I: sign in
     I-->>B: 302 /auth/oidc/callback?code&state
     B->>C: callback, with the flow cookie
-    Note over C: flow cookie cleared, state compared,<br/>then rate limit
+    Note over C: flow cookie cleared, state compared,<br/>replay refused, then rate limit
     C->>I: exchange code + verifier
     I-->>C: ID token, refresh token
     Note over C: signature, nonce, email_verified
@@ -148,17 +148,30 @@ delete it afterwards.
   before the request reaches the session check.
   `SameSite` alone does not protect on OpenShift, where every Route under
   `*.apps.<domain>` is the same site.
+- **Single-use flows.** A sign-in flow is used once on the server, not only
+  because the browser drops its cookie: the replica that accepts a callback
+  remembers a SHA-256 of the flow's state until the flow expires (ten minutes),
+  and a replayed cookie and state are refused before any budget is charged and
+  before any code exchange. The memory is per replica (at most 10,000 flows):
+  behind several replicas a flow can be replayed once on each other replica,
+  each time charged to the sender's own budget.
 - **Rate limit.** Sign-in attempts are limited to ten a minute per replica (a
   burst of ten): an OAuth callback per client address, charged only once its flow
   cookie and state match (a callback without them costs the console nothing and is
-  refused for free), and a pasted token per token (keyed on a digest of it), so a
-  caller who shares your address cannot spend your budget. Pasted tokens also
-  share one bound per replica, 20 a second with a burst of 40, so a flood of
-  distinct junk tokens cannot make the console ask the API server more than that;
-  over it the form answers 429 without asking. Behind an edge, set
-  `TRUSTED_PROXY_HOPS` (0 to 8) to the number of proxies whose `X-Forwarded-*`
-  headers to trust, or the limiter sees only the edge's address; the `pgtools`
-  chart sets 1 when `console.exposure.type` is not `none`.
+  refused for free). A pasted token is charged three budgets in turn, and a
+  refusal by one spends none of the next: the token's own (ten a minute, keyed on
+  a digest of it), so retrying one token does not spend its address; the sender's
+  address (twenty a minute, a budget of the token form only, so junk tokens never
+  lock the OAuth sign-in), so distinct junk tokens from one address stop there;
+  and one bound per replica, 20 a second with a burst of 40, so a flood from many
+  addresses cannot make the console ask the API server more than that. Over any
+  of them the form answers 429 without asking. Each key space has a table of its
+  own, so a spray that fills one (10,000 keys) resets only that one.
+  Behind an edge, set `TRUSTED_PROXY_HOPS` (0 to 8) to the number of proxies
+  whose `X-Forwarded-*` headers to trust, or the limiter sees only the edge's
+  address and every user shares one budget; the `pgtools` chart sets 1 when
+  `console.exposure.type` is not `none`, and the operator sets 1 when a
+  `PgToolBoxConsole`'s `spec.exposure.type` is `route`, `ingress` or `gateway`.
 - **Sign-out** is `POST /logout` (`GET /logout` shows the confirmation page). It
   clears the cookie, drops the cached identity and refuses that session until its
   absolute expiry: on this replica at once, and on the others within about a

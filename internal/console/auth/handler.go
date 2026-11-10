@@ -72,6 +72,14 @@ const (
 	tokenReviewsPerSecond = 20
 	tokenReviewsBurst     = 40
 	tokenReviewsKey       = "token-form"
+	// The token form's per-address budget, charged before the shared
+	// bucket so that one address cannot drain everyone's break-glass
+	// sign-ins: at 20 a minute a single address takes a fraction of the
+	// bucket's 20 a second. It is twice the per-token budget, so that
+	// retrying one token until its own budget runs out still leaves the
+	// address room for another.
+	tokenAddressPerMinute = 20
+	tokenAddressBurst     = 20
 )
 
 // Principal is the signed-in user of one request.
@@ -147,9 +155,18 @@ type Handler struct {
 	token     bool
 	refreshes singleflight.Group
 	now       func() time.Time
-	attempts  *RateLimiter
+	// Each key space has a table of its own, so that a spray of one kind
+	// of key, which resets its table once full, never resets another's.
+	// attempts is the per-address budget of the OAuth callbacks (and of
+	// the MCP endpoint's unrecognised bearers); tokenAttempts is per
+	// pasted-token digest and tokenAddresses per address of the token form.
+	attempts       *RateLimiter
+	tokenAttempts  *RateLimiter
+	tokenAddresses *RateLimiter
 	// tokenReviews is the token form's process-wide bound (one key).
 	tokenReviews *RateLimiter
+	// flows are the sign-in flows already used on this replica.
+	flows *spentFlows
 
 	// loggedOut holds sessions signed out on this replica until their
 	// absolute expiry: a copy of the cookie stops working here at once.
@@ -219,20 +236,23 @@ func newHandler(o Options, providers []oauthProvider) *Handler {
 		}
 	}
 	return &Handler{
-		grantOIDC:    grantOIDC,
-		cfg:          o.Config,
-		codec:        o.Codec,
-		identity:     o.Identity,
-		revocations:  o.Revocations,
-		audit:        &Auditor{Logger: log, TrustedProxyHops: o.Config.TrustedProxyHops},
-		log:          log,
-		oauth:        providers,
-		token:        slices.Contains(o.Config.Providers, ProviderToken),
-		now:          time.Now,
-		attempts:     NewRateLimiter(signInPerMinute, signInBurst, maxLimiterKeys),
-		tokenReviews: NewRateLimiter(tokenReviewsPerSecond*60, tokenReviewsBurst, 1),
-		loggedOut:    map[string]time.Time{},
-		signOuts:     o.SignOuts,
+		grantOIDC:      grantOIDC,
+		cfg:            o.Config,
+		codec:          o.Codec,
+		identity:       o.Identity,
+		revocations:    o.Revocations,
+		audit:          &Auditor{Logger: log, TrustedProxyHops: o.Config.TrustedProxyHops},
+		log:            log,
+		oauth:          providers,
+		token:          slices.Contains(o.Config.Providers, ProviderToken),
+		now:            time.Now,
+		attempts:       NewRateLimiter(signInPerMinute, signInBurst, maxLimiterKeys),
+		tokenAttempts:  NewRateLimiter(signInPerMinute, signInBurst, maxLimiterKeys),
+		tokenAddresses: NewRateLimiter(tokenAddressPerMinute, tokenAddressBurst, maxLimiterKeys),
+		tokenReviews:   NewRateLimiter(tokenReviewsPerSecond*60, tokenReviewsBurst, 1),
+		flows:          newSpentFlows(maxSpentFlows),
+		loggedOut:      map[string]time.Time{},
+		signOuts:       o.SignOuts,
 	}
 }
 
@@ -334,12 +354,22 @@ func (h *Handler) handleCallback(w http.ResponseWriter, r *http.Request, p oauth
 		h.fail(w, r, p.name(), &loginError{http.StatusBadRequest, "Sign-in state mismatch; please try again.", nil})
 		return
 	}
+	// A flow is used once, whatever the browser does with the cookie: a
+	// replayed cookie and state are refused here, before the budget.
+	if h.flows.spent(p.name(), f.State, h.now()) {
+		h.fail(w, r, p.name(), &loginError{http.StatusBadRequest, "This sign-in was already used; please start again.", nil})
+		return
+	}
 	// The budget is charged only once the flow cookie and its state
 	// match: a callback without them costs nothing (no code exchange, no
 	// SelfSubjectReview), and charging it would let anyone who shares the
 	// victim's address key (every user, behind a proxy not counted in
 	// trustedProxyHops) lock the sign-in with junk callbacks.
-	if !h.allowSignIn(w, r, p.name(), ClientKey(r, h.cfg.TrustedProxyHops)) {
+	if !h.allowSignIn(w, r, p.name(), h.attempts, ClientKey(r, h.cfg.TrustedProxyHops)) {
+		return
+	}
+	if !h.flows.spend(p.name(), f.State, time.Unix(f.Expiry, 0), h.now()) {
+		h.fail(w, r, p.name(), &loginError{http.StatusBadRequest, "This sign-in was already used; please start again.", nil})
 		return
 	}
 	code := q.Get("code")
@@ -384,14 +414,18 @@ func (h *Handler) handleToken(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, ProviderToken, &loginError{http.StatusBadRequest, "That is not a token: paste the output of kubectl create token.", nil})
 		return
 	}
-	// The budget is the token's own, keyed on its digest: retrying one
-	// token is bounded, and a caller who shares the victim's address
-	// cannot spend the victim's budget without the victim's token.
-	if !h.allowSignIn(w, r, ProviderToken, tokenAttemptKey(tok)) {
+	// The token's own budget first, keyed on its digest: retrying one
+	// token is bounded without spending its sender's address budget.
+	if !h.allowSignIn(w, r, ProviderToken, h.tokenAttempts, tokenAttemptKey(tok)) {
+		return
+	}
+	// Then the sender's address: distinct junk tokens from one address
+	// stop there, and cannot drain the shared bucket below.
+	if !h.allowSignIn(w, r, ProviderToken, h.tokenAddresses, ClientKey(r, h.cfg.TrustedProxyHops)) {
 		return
 	}
 	// Then the process-wide bound, before anything reaches the API
-	// server: a token refused by its own budget spends none of it.
+	// server: a token refused by either budget spends none of it.
 	if !h.tokenReviews.Allow(tokenReviewsKey) {
 		h.fail(w, r, ProviderToken, &loginError{http.StatusTooManyRequests, "The console is receiving too many token sign-ins; wait a few seconds and try again.", nil})
 		return
@@ -399,9 +433,9 @@ func (h *Handler) handleToken(w http.ResponseWriter, r *http.Request) {
 	h.complete(w, r, ProviderToken, tokenSet{token: tok, expiry: pastedTokenExpiry(tok)}, r.PostForm.Get("rd"))
 }
 
-// allowSignIn spends one sign-in attempt of key's budget.
-func (h *Handler) allowSignIn(w http.ResponseWriter, r *http.Request, provider, key string) bool {
-	if h.attempts.Allow(key) {
+// allowSignIn spends one sign-in attempt of key's budget in limiter.
+func (h *Handler) allowSignIn(w http.ResponseWriter, r *http.Request, provider string, limiter *RateLimiter, key string) bool {
+	if limiter.Allow(key) {
 		return true
 	}
 	h.fail(w, r, provider, &loginError{http.StatusTooManyRequests, "Too many sign-in attempts; wait a minute and try again.", nil})

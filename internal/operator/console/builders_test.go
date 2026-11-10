@@ -83,6 +83,7 @@ func TestWorkloadGolden(t *testing.T) {
 					ClientSecretRef: &pgtoolboxv1alpha1.SecretKeyReference{Name: "oauth", Key: "secret"},
 					CAConfigMapRef:  &pgtoolboxv1alpha1.LocalObjectReference{Name: "oauth-ca"},
 				}
+				c.Spec.Exposure.Type = pgtoolboxv1alpha1.ExposureTypeRoute
 				c.Spec.Exposure.Hostname = "console.apps.example"
 				c.Spec.Evidence.Interval = &metav1.Duration{Duration: 10 * time.Minute}
 				c.Spec.Prometheus = &pgtoolboxv1alpha1.PgToolBoxConsolePrometheusSpec{
@@ -243,6 +244,36 @@ func TestMCPEnv(t *testing.T) {
 			}
 			if !slices.Equal(got, tc.want) {
 				t.Errorf("env %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestTrustedProxyHops: an exposed console trusts the one hop of its
+// Route, Ingress or Gateway, so that each client has its own sign-in
+// budget; an unexposed one trusts no forwarded header.
+func TestTrustedProxyHops(t *testing.T) {
+	t.Parallel()
+	cases := map[pgtoolboxv1alpha1.ExposureType]string{
+		"":                                      "",
+		pgtoolboxv1alpha1.ExposureTypeClusterIP: "",
+		pgtoolboxv1alpha1.ExposureTypeRoute:     "1",
+		pgtoolboxv1alpha1.ExposureTypeIngress:   "1",
+		pgtoolboxv1alpha1.ExposureTypeGateway:   "1",
+	}
+	for typ, want := range cases {
+		t.Run(string(typ), func(t *testing.T) {
+			t.Parallel()
+			c := &pgtoolboxv1alpha1.PgToolBoxConsole{}
+			c.Spec.Exposure = pgtoolboxv1alpha1.ExposureSpec{Type: typ, Hostname: "console.example"}
+			got, n := "", 0
+			for _, e := range consoleEnv(c) {
+				if e.Name == "TRUSTED_PROXY_HOPS" {
+					got, n = e.Value, n+1
+				}
+			}
+			if got != want || n > 1 {
+				t.Errorf("TRUSTED_PROXY_HOPS = %q (%d times), want %q", got, n, want)
 			}
 		})
 	}

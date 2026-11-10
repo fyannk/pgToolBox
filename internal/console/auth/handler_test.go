@@ -18,9 +18,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -512,6 +514,9 @@ func TestDistinctJunkTokensAreBoundedProcessWide(t *testing.T) {
 	refused := 0
 	const flood = 3 * tokenReviewsBurst
 	for i := range flood {
+		// Each from an address of its own, so that only the shared bucket
+		// bounds them (one address is stopped sooner by its own budget).
+		b.addr = fmt.Sprintf("10.1.%d.%d:4711", i/256, i%256)
 		w := b.do(http.MethodPost, "/auth/token", url.Values{"token": {fmt.Sprintf("junk-%d", i)}}, sameOriginForm)
 		switch w.Code {
 		case http.StatusTooManyRequests:
@@ -674,5 +679,101 @@ func TestCrossSiteRequestsDoNotSlideIdleTimer(t *testing.T) {
 	b.do(http.MethodGet, "/api/v1/whoami", nil, map[string]string{"Sec-Fetch-Site": "same-site"})
 	if b.jar["__Host-pgtoolbox-console-0"].Value != before {
 		t.Fatal("a same-site (neighbour application) request slid the idle timer")
+	}
+}
+
+// TestReplayedCallbackIsRefusedWithoutCharging: the flow cookie is
+// cleared by the callback, but a client that ignores that and replays
+// the cookie and state with junk codes is refused by the server, before
+// the sign-in budget and without a token exchange.
+func TestReplayedCallbackIsRefusedWithoutCharging(t *testing.T) {
+	t.Parallel()
+	for _, outcome := range []string{"signed in", "refused by the IdP"} {
+		t.Run(outcome, func(t *testing.T) {
+			t.Parallel()
+			env := newTestEnv(t, ProviderOIDC)
+			b := env.browser(t)
+			w := b.get("/auth/oidc/login?rd=/clusters")
+			state := env.idp.authorize(t, w.Header().Get("Location"))
+			flow := maps.Clone(b.jar)
+			code := "c1"
+			if outcome != "signed in" {
+				env.idp.badNonce = true
+			}
+			first := b.get("/auth/oidc/callback?code=" + code + "&state=" + url.QueryEscape(state))
+			if (outcome == "signed in") != (first.Code == http.StatusFound) {
+				t.Fatalf("first callback = %d: %s", first.Code, first.Body)
+			}
+			env.idp.badNonce = false
+			exchanges := env.idp.tokens
+			replayer := env.browser(t)
+			for i := range 3 * signInBurst {
+				replayer.jar = maps.Clone(flow)
+				w := replayer.get("/auth/oidc/callback?code=junk-" + strconv.Itoa(i) + "&state=" + url.QueryEscape(state))
+				if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "already used") {
+					t.Fatalf("replay %d = %d: %s", i, w.Code, w.Body)
+				}
+			}
+			if env.idp.tokens != exchanges {
+				t.Fatalf("replays made %d token exchanges", env.idp.tokens-exchanges)
+			}
+			// The first callback spent one attempt and the replays none:
+			// the rest of the burst still signs in from this address.
+			for i := range signInBurst - 1 {
+				if w := env.browser(t).oidcLogin("/clusters"); w.Code != http.StatusFound {
+					t.Fatalf("sign-in %d after the replays = %d: %s", i, w.Code, w.Body)
+				}
+			}
+		})
+	}
+}
+
+// TestTokenSprayFromOneAddressDoesNotStarveAnother: distinct junk tokens
+// from one address stop at that address's budget and leave the shared
+// bucket to everyone else's break-glass sign-ins.
+func TestTokenSprayFromOneAddressDoesNotStarveAnother(t *testing.T) {
+	t.Parallel()
+	env := newTestEnvWith(t, func(c *Config) { c.TrustedProxyHops = 1 }, ProviderToken)
+	attacker := env.browser(t)
+	calls := env.rev.calls
+	for i := range 3 * tokenReviewsBurst {
+		hdr := maps.Clone(sameOriginForm)
+		hdr["X-Forwarded-For"] = "203.0.113.7"
+		w := attacker.do(http.MethodPost, "/auth/token", url.Values{"token": {fmt.Sprintf("junk-%d", i)}}, hdr)
+		if w.Code != http.StatusForbidden && w.Code != http.StatusTooManyRequests {
+			t.Fatalf("junk token %d = %d", i, w.Code)
+		}
+	}
+	if reviews := env.rev.calls - calls; reviews > tokenAddressBurst {
+		t.Fatalf("one address made %d reviews, want at most %d", reviews, tokenAddressBurst)
+	}
+	hdr := maps.Clone(sameOriginForm)
+	hdr["X-Forwarded-For"] = "198.51.100.9"
+	if w := env.browser(t).do(http.MethodPost, "/auth/token", url.Values{"token": {"sa-token"}}, hdr); w.Code != http.StatusFound {
+		t.Fatalf("another address's token after the spray = %d: %s", w.Code, w.Body)
+	}
+}
+
+// TestTokenSprayDoesNotResetAddressBudgets: enough distinct tokens to
+// fill a limiter table reset the token table, never the address budgets
+// of the callbacks (which the MCP endpoint shares).
+func TestTokenSprayDoesNotResetAddressBudgets(t *testing.T) {
+	t.Parallel()
+	env := newTestEnv(t, ProviderOIDC, ProviderToken)
+	b := env.browser(t)
+	for range signInBurst {
+		if w := b.oidcLogin("/clusters"); w.Code != http.StatusFound {
+			t.Fatalf("sign-in = %d", w.Code)
+		}
+	}
+	if w := b.oidcLogin("/clusters"); w.Code != http.StatusTooManyRequests {
+		t.Fatalf("callback over budget = %d", w.Code)
+	}
+	sprayer := env.browser(t)
+	for i := range maxLimiterKeys + 1 {
+		sprayer.do(http.MethodPost, "/auth/token", url.Values{"token": {"junk-" + strconv.Itoa(i)}}, sameOriginForm)
+	}
+	if w := b.oidcLogin("/clusters"); w.Code != http.StatusTooManyRequests {
+		t.Fatalf("callback budget after a token spray = %d, want it still spent", w.Code)
 	}
 }

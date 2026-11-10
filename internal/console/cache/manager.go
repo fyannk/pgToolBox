@@ -358,6 +358,12 @@ func (m *Manager) build(ctx context.Context, p plan) error {
 	}
 	epochCtx, cancel := context.WithCancel(ctx)
 	informers := map[string]crcache.Informer{}
+	// planned is this epoch's typed informers by Go type, complete before
+	// the cache starts and never written after: the Event handler asks it
+	// whether a kind it attributes through is planned and synced, and
+	// never asks the cache, whose GetInformer would start an unplanned,
+	// unfiltered informer for a kind the plan left out.
+	planned := plannedInformers{}
 	rec := newRecorder(m.tap, m.seed)
 	seeds := map[*sourceRecorder]toolscache.ResourceEventHandlerRegistration{}
 	for _, kind := range watched {
@@ -367,7 +373,7 @@ func (m *Manager) build(ctx context.Context, p plan) error {
 			return fmt.Errorf("cache: informer for %s: %w", kind.Source, err)
 		}
 		source := rec.source(kind, p[kind.Source])
-		registration, err := informer.AddEventHandler(m.handler(epochCtx, c, source))
+		registration, err := informer.AddEventHandler(m.handler(epochCtx, c, planned.synced, source))
 		if err != nil {
 			cancel()
 			return fmt.Errorf("cache: event handler for %s: %w", kind.Source, err)
@@ -376,6 +382,7 @@ func (m *Manager) build(ctx context.Context, p plan) error {
 			seeds[source] = registration
 		}
 		informers[kind.Source] = informer
+		planned.add(kind.Prototype(), informer)
 	}
 	// From here on this epoch's lists and watches account for every
 	// change: the previous epoch stops recording (it keeps serving reads
@@ -486,7 +493,7 @@ func (m *Manager) sourceOf(obj runtime.Object) string {
 }
 
 // handler publishes the Cluster each changed object belongs to.
-func (m *Manager) handler(ctx context.Context, c client.Reader, rec *sourceRecorder) toolscache.ResourceEventHandler {
+func (m *Manager) handler(ctx context.Context, c client.Reader, synced syncedKind, rec *sourceRecorder) toolscache.ResourceEventHandler {
 	publish := func(obj any, deleted, initial bool) {
 		if tombstone, ok := obj.(toolscache.DeletedFinalStateUnknown); ok {
 			obj = tombstone.Obj
@@ -496,7 +503,7 @@ func (m *Manager) handler(ctx context.Context, c client.Reader, rec *sourceRecor
 			return
 		}
 		rec.deliver(object, deleted, initial)
-		m.hub.publish(ClusterKey{Namespace: object.GetNamespace(), Name: clusterOf(ctx, c, object)})
+		m.hub.publish(ClusterKey{Namespace: object.GetNamespace(), Name: clusterOf(ctx, c, synced, object)})
 	}
 	return toolscache.ResourceEventHandlerDetailedFuncs{
 		AddFunc:    func(obj any, initial bool) { publish(obj, false, initial) },
@@ -506,7 +513,7 @@ func (m *Manager) handler(ctx context.Context, c client.Reader, rec *sourceRecor
 }
 
 // clusterOf attributes an object to its Cluster, "" when it cannot.
-func clusterOf(ctx context.Context, c client.Reader, obj client.Object) string {
+func clusterOf(ctx context.Context, c client.Reader, synced syncedKind, obj client.Object) string {
 	switch o := obj.(type) {
 	case *cnpgv1.Cluster:
 		return o.Name
@@ -531,7 +538,7 @@ func clusterOf(ctx context.Context, c client.Reader, obj client.Object) string {
 			return o.GetName()
 		}
 	case *corev1.Event:
-		return eventCluster(ctx, c, o)
+		return eventCluster(ctx, c, synced, o)
 	}
 	if name := obj.GetLabels()[ClusterLabel]; name != "" {
 		return name
@@ -546,19 +553,35 @@ func clusterOf(ctx context.Context, c client.Reader, obj client.Object) string {
 // as an unknown attribution.
 const attributionTimeout = 100 * time.Millisecond
 
-// syncedInformers is the part of the informer cache that says whether a
-// kind's informer has synced without waiting for it.
-type syncedInformers interface {
-	GetInformer(ctx context.Context, obj client.Object, opts ...crcache.InformerGetOption) (crcache.Informer, error)
+// syncedKind reports whether the epoch planned an informer for obj's
+// kind and it has synced, without waiting and without asking the cache
+// (a GetInformer would start an informer the plan left out).
+type syncedKind func(obj client.Object) bool
+
+// plannedInformers are an epoch's typed informers by Go type (the
+// unstructured Cluster informer is left out: attribution looks up typed
+// objects only).
+type plannedInformers map[reflect.Type]crcache.Informer
+
+func (p plannedInformers) add(prototype client.Object, informer crcache.Informer) {
+	if _, raw := prototype.(*unstructured.Unstructured); !raw {
+		p[reflect.TypeOf(prototype)] = informer
+	}
+}
+
+func (p plannedInformers) synced(obj client.Object) bool {
+	informer, ok := p[reflect.TypeOf(obj)]
+	return ok && informer.HasSynced()
 }
 
 // eventCluster resolves an event's involved object through the cache;
 // the lookup is in memory and bounded by the event's own fields. It
 // never waits for an informer: a cache's Get blocks until the target
 // kind has synced, and this runs in another informer's handler, so a
-// kind not synced yet (or a lookup slower than attributionTimeout) is
-// an unknown attribution ("": the namespace is published whole).
-func eventCluster(ctx context.Context, c client.Reader, event *corev1.Event) string {
+// kind not synced yet, a kind this epoch did not plan (a Pooler without
+// its RBAC), or a lookup slower than attributionTimeout is an unknown
+// attribution ("": the namespace is published whole).
+func eventCluster(ctx context.Context, c client.Reader, synced syncedKind, event *corev1.Event) string {
 	ref := event.InvolvedObject
 	key := types.NamespacedName{Namespace: event.Namespace, Name: ref.Name}
 	var (
@@ -586,14 +609,11 @@ func eventCluster(ctx context.Context, c client.Reader, event *corev1.Event) str
 	default:
 		return ""
 	}
+	if synced == nil || !synced(target) {
+		return ""
+	}
 	lookupCtx, cancel := context.WithTimeout(ctx, attributionTimeout)
 	defer cancel()
-	if informers, ok := c.(syncedInformers); ok {
-		informer, err := informers.GetInformer(lookupCtx, target, crcache.BlockUntilSynced(false))
-		if err != nil || !informer.HasSynced() {
-			return ""
-		}
-	}
 	if c.Get(lookupCtx, key, target) != nil {
 		return ""
 	}
