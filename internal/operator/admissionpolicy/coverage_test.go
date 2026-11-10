@@ -609,20 +609,21 @@ var pgadminAudience = []string{
 // pgadminNotAudience: every other field of a PgAdmin, each with why it does
 // not decide who reaches the credentials, or which rule does.
 var pgadminNotAudience = map[string]string{
-	"auth.oauth2.displayName":   "the login button's label",
-	"clusterRefs":               "what is offered: the credentials rule's sources",
-	"clusterSelector":           "what is offered: the credentials rule's sources",
-	"credentials":               "what is offered: the credentials rule's kinds",
-	"crossNamespaceClusterRefs": "the PgAdminAccess grant of the target namespace decides",
-	"endpoints":                 "which Services of the same Clusters",
-	"image":                     "the imageOverride rule",
-	"storage":                   "pgAdmin's volume",
-	"configDatabase":            "where pgAdmin keeps its own configuration",
-	"replicas":                  "how many Pods",
-	"exposure":                  "how pgAdmin is reached; spec.auth still decides who signs in",
-	"networkPolicy":             "which addresses reach the port; spec.auth still decides who signs in",
-	"resources":                 "compute resources",
-	"metadataPropagation":       "labels and annotations",
+	"auth.oauth2.displayName":                "the login button's label",
+	"auth.openshiftOAuthProxy.sessionMaxAge": "how long a session lasts (5m to 12h by CEL), not who gets one: the proxy's access review still decides at sign-in",
+	"clusterRefs":                            "what is offered: the credentials rule's sources",
+	"clusterSelector":                        "what is offered: the credentials rule's sources",
+	"credentials":                            "what is offered: the credentials rule's kinds",
+	"crossNamespaceClusterRefs":              "the PgAdminAccess grant of the target namespace decides",
+	"endpoints":                              "which Services of the same Clusters",
+	"image":                                  "the imageOverride rule",
+	"storage":                                "pgAdmin's volume",
+	"configDatabase":                         "where pgAdmin keeps its own configuration",
+	"replicas":                               "how many Pods",
+	"exposure":                               "how pgAdmin is reached; spec.auth still decides who signs in",
+	"networkPolicy":                          "which addresses reach the port; spec.auth still decides who signs in",
+	"resources":                              "compute resources",
+	"metadataPropagation":                    "labels and annotations",
 }
 
 // TestPgAdminAudienceFieldsClassified fails when a field of a PgAdmin is
