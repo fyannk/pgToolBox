@@ -40,8 +40,14 @@ type SourceKey struct{ Namespace, Name string }
 // Record is the console's record of one drill: the creation record the
 // drill carries (sealed) plus what the console observed and decided.
 type Record struct {
-	Drill           Key       `json:"drill"`
-	Source          SourceKey `json:"source"`
+	Drill  Key       `json:"drill"`
+	Source SourceKey `json:"source"`
+	// SourceUID is the source Cluster's metadata.uid when the drill
+	// started: a Cluster deleted and recreated under the same name is
+	// another Cluster, and its drills are not this one's. Empty on
+	// records written before it was kept.
+	SourceUID string `json:"sourceUID,omitempty"`
+	// UID is the drill Cluster's own metadata.uid.
 	UID             string    `json:"uid,omitempty"`
 	Backup          string    `json:"backup,omitempty"`
 	BackupLabel     string    `json:"backupLabel,omitempty"`
@@ -91,6 +97,7 @@ type Persister interface {
 type Kept struct {
 	Drill                 Key
 	Source                SourceKey
+	SourceUID             string
 	Backup, BackupLabel   string
 	Result                viewmodel.DrillResult
 	Reason                string
@@ -212,7 +219,7 @@ func (s *Store) Put(r Record) {
 	s.mirror(r)
 	if s.keeper != nil && r.Finished() {
 		s.keeper.KeepDrill(Kept{
-			Drill: r.Drill, Source: r.Source, Backup: r.Backup, BackupLabel: r.BackupLabel,
+			Drill: r.Drill, Source: r.Source, SourceUID: r.SourceUID, Backup: r.Backup, BackupLabel: r.BackupLabel,
 			Result: r.Result, Reason: r.Reason, StartedAt: r.StartedAt, Deadline: r.Deadline,
 			HealthyAt: r.HealthyAt, FinishedAt: r.FinishedAt,
 		})
@@ -232,7 +239,7 @@ func (s *Store) keptLocked(match func(SourceKey) bool) []Record {
 			continue
 		}
 		out = append(out, Record{
-			Drill: k.Drill, Source: k.Source, Backup: k.Backup, BackupLabel: k.BackupLabel,
+			Drill: k.Drill, Source: k.Source, SourceUID: k.SourceUID, Backup: k.Backup, BackupLabel: k.BackupLabel,
 			StartedAt: k.StartedAt, Deadline: k.Deadline, HealthyAt: k.HealthyAt, FinishedAt: k.FinishedAt,
 			Result: k.Result, Reason: k.Reason, Restored: true,
 		})
@@ -276,11 +283,59 @@ func (s *Store) All() []Record {
 	return out
 }
 
-// LastPassed is when the newest passed drill of src was judged.
+// Live is the identity of the live source Cluster a record must belong
+// to: its metadata.uid and creationTimestamp. Zero fields are unknown and
+// filter nothing.
+type Live struct {
+	UID       string
+	CreatedAt time.Time
+}
+
+// Of reports whether r is a drill of the live Cluster: the same source
+// UID when both are known; otherwise (a record written before the source
+// UID was kept) a drill that started no earlier than the Cluster was
+// created. A Cluster deleted and recreated under the same name does not
+// inherit the drills of the one before it.
+func (r Record) Of(live Live) bool {
+	if r.SourceUID != "" && live.UID != "" {
+		return r.SourceUID == live.UID
+	}
+	if live.CreatedAt.IsZero() {
+		return true
+	}
+	at := r.StartedAt
+	if at.IsZero() {
+		at = r.FinishedAt
+	}
+	// creationTimestamp has a resolution of one second.
+	return !at.Before(live.CreatedAt.Truncate(time.Second))
+}
+
+// SourceOf returns the records of src that belong to the live Cluster,
+// newest first.
+func (s *Store) SourceOf(src SourceKey, live Live) []Record {
+	all := s.Source(src)
+	out := all[:0]
+	for _, r := range all {
+		if r.Of(live) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// LastPassed is when the newest passed drill of src was judged, whatever
+// Cluster of that name it ran for (LastPassedOf filters).
 func (s *Store) LastPassed(src SourceKey) (time.Time, bool) {
+	return s.LastPassedOf(src, Live{})
+}
+
+// LastPassedOf is when the newest passed drill of the live Cluster src
+// names was judged.
+func (s *Store) LastPassedOf(src SourceKey, live Live) (time.Time, bool) {
 	var last time.Time
 	found := false
-	for _, r := range s.Source(src) {
+	for _, r := range s.SourceOf(src, live) {
 		if r.Result == viewmodel.DrillPassed && (!found || r.FinishedAt.After(last)) {
 			last, found = r.FinishedAt, true
 		}

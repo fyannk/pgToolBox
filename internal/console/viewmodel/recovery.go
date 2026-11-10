@@ -80,8 +80,9 @@ type RestoreCheck struct {
 	GeneratedAt time.Time  `json:"generatedAt"`
 	At          time.Time  `json:"at"`
 	// Answer: covered (structurally: a base backup and contiguous
-	// archived WAL span the time), notCovered (before the earliest or
-	// after the latest restore point), gap (inside a hole), reported
+	// archived WAL span the time), notCovered (before the earliest
+	// restore point, or after the latest one as of the agent's last
+	// read), gap (inside a hole), reported
 	// (only the operator's unverified window covers it), unknown.
 	Answer   string `json:"answer" enum:"covered,notCovered,gap,reported,unknown"`
 	Text     string `json:"text"`

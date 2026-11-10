@@ -116,7 +116,7 @@ func (s *Supervisor) Run(ctx context.Context) error {
 // persistent history).
 func FromMeta(k Key, m ops.DrillMeta) Record {
 	return Record{
-		Drill: k, Source: SourceKey{Namespace: m.SourceNamespace, Name: m.Source},
+		Drill: k, Source: SourceKey{Namespace: m.SourceNamespace, Name: m.Source}, SourceUID: m.SourceUID,
 		Backup: m.Backup, BackupLabel: m.BackupLabel, BackupStoppedAt: m.BackupStoppedAt, StartedAt: m.StartedAt, Deadline: m.Deadline,
 		SourceBytes: m.SourceBytes,
 	}

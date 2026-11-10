@@ -248,7 +248,7 @@ func (s *Service) Backups(ctx context.Context, namespace, name string) (viewmode
 			Provenance:        s.provenance(namespace, cache.SourceClusters, viewmodel.OriginOperator, "Cluster.spec.backup / Cluster.spec.plugins", now),
 		},
 		Items: []viewmodel.BackupRow{}, Schedules: []viewmodel.ScheduleRow{},
-		Drills:     s.drillsBlock(namespace, name),
+		Drills:     s.drillsBlock(namespace, name, liveSource(g.cluster)),
 		Sources:    g.markFailed(s.pickSources(namespace, cache.SourceBackups, cache.SourceScheduledBackups, cache.SourceObjectStores)),
 		BlindSpots: panelBlindSpots(g, "backups"),
 	}

@@ -668,3 +668,51 @@ func TestKeeperKeepsFinishedDrillsAcrossARestart(t *testing.T) {
 		t.Errorf("a keeper that keeps nothing: persistent %v since %v", unkept.Persistent(), unkept.RecordedSince())
 	}
 }
+
+// TestRecordOfTheLiveCluster: a Cluster deleted and recreated under the
+// same name does not inherit the drills of the one before it, whether
+// the record carries the source UID or (an older record) only its times;
+// the source UID survives a restart through the keeper and the seal.
+func TestRecordOfTheLiveCluster(t *testing.T) {
+	created := t0.Add(-time.Hour)
+	cases := []struct {
+		name string
+		rec  func(Record) Record
+		live Live
+		want bool
+	}{
+		{"same UID", func(r Record) Record { r.SourceUID = "u1"; return r }, Live{UID: "u1", CreatedAt: created}, true},
+		{"recreated: another UID", func(r Record) Record { r.SourceUID = "u0"; return r }, Live{UID: "u1", CreatedAt: t0.Add(-48 * time.Hour)}, false},
+		{"older record started after creation", func(r Record) Record { return r }, Live{UID: "u1", CreatedAt: created}, true},
+		{"older record started before creation", func(r Record) Record { return r }, Live{UID: "u1", CreatedAt: t0.Add(time.Hour)}, false},
+		{"older record, creation within the same second", func(r Record) Record { return r }, Live{UID: "u1", CreatedAt: t0.Add(500 * time.Millisecond)}, true},
+		{"older record without a start judged by its finish", func(r Record) Record {
+			r.StartedAt, r.FinishedAt = time.Time{}, t0.Add(-2*time.Hour)
+			return r
+		}, Live{CreatedAt: created}, false},
+		{"nothing known of the live Cluster", func(r Record) Record { r.SourceUID = "u0"; return r }, Live{}, true},
+	}
+	for _, c := range cases {
+		if got := c.rec(running()).Of(c.live); got != c.want {
+			t.Errorf("%s: Of = %v, want %v", c.name, got, c.want)
+		}
+	}
+
+	keeper := &memKeeper{kept: map[Key]Kept{}, keeps: true}
+	before := NewStore(nil, nil, t0)
+	before.SetKeeper(keeper)
+	r := running()
+	r.SourceUID, r.Result, r.FinishedAt = "u0", viewmodel.DrillPassed, t0.Add(25*time.Minute)
+	before.Put(r)
+	after := NewStore(nil, nil, t0.Add(time.Hour))
+	after.SetKeeper(keeper)
+	if _, ok := after.LastPassedOf(r.Source, Live{UID: "u1"}); ok {
+		t.Error("a recreated Cluster inherits a pass kept across a restart")
+	}
+	if at, ok := after.LastPassedOf(r.Source, Live{UID: "u0"}); !ok || !at.Equal(r.FinishedAt) {
+		t.Errorf("the same Cluster lost its pass: %v %v", at, ok)
+	}
+	if got := FromMeta(r.Drill, ops.DrillMeta{SourceNamespace: "team-a", Source: "orders", SourceUID: "u0"}); got.SourceUID != "u0" {
+		t.Errorf("FromMeta dropped the source UID: %+v", got)
+	}
+}

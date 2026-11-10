@@ -34,8 +34,9 @@ import (
 // not an event.
 const (
 	// lagSeconds is the replication lag a replica must be behind by.
-	// Five minutes is far past a write burst and is the recovery window
-	// a failover to that replica would discard.
+	// Five minutes is far past a write burst. It is replay lag: received
+	// WAL is replayed before a promotion completes, so it is the time a
+	// failover to that replica would spend catching up, not data lost.
 	lagSeconds = 300
 	// lagHeld is how long the lag must hold.
 	lagHeld = 15 * time.Minute
@@ -73,8 +74,12 @@ func replicationRules() []diagnose.Rule {
 				"and its lag has stayed past the threshold across the whole retained " +
 				"window. A replica replaying the archive on its way up looks the same " +
 				"for a while, which is why all three readings are required and why the " +
-				"lag has to hold. Until it streams again it is not a failover " +
-				"candidate, and any synchronous commit waiting on it waits forever.",
+				"lag has to hold. Until it streams again it falls further behind: " +
+				"promoted, it would lack every commit it did not receive. Under " +
+				"synchronous replication it acknowledges no commit, so commits wait " +
+				"when too few other standbys stream to meet the synchronous number " +
+				"(dataDurability preferred lowers that number only for replicas the " +
+				"operator itself sees as unhealthy).",
 			When: diagnose.AllOf{Of: []diagnose.Condition{
 				diagnose.InstantNonZero{Key: "in-recovery"},
 				diagnose.InstantZero{Key: "wal-receiver-up"},
@@ -97,9 +102,14 @@ func replicationRules() []diagnose.Rule {
 			Describes: "a replica whose lag has stayed past the threshold",
 			Summary:   "A replica's lag has stayed past the threshold across the retained window.",
 			Detail: "Lag is how far behind the primary a replica's replay has fallen, in " +
-				"seconds of transaction time. Held rather than spiked, it is the " +
-				"data a failover to this replica would discard, and it means the " +
-				"replica cannot apply WAL as fast as the primary produces it.",
+				"seconds of transaction time (zero once replay has caught up with " +
+				"what was received). Held rather than spiked, it means the replica " +
+				"cannot apply WAL as fast as the primary produces it. It is not by " +
+				"itself data a failover would lose: WAL already received is replayed " +
+				"before the promotion completes, so replay lag costs promotion time. " +
+				"What a failover would lose is WAL the replica has not received; the " +
+				"\"If the primary failed now\" panel reads that from the received " +
+				"positions.",
 			When: diagnose.SeriesAbove{Key: "replication-lag", Threshold: lagSeconds, For: lagHeld},
 			// The same instance's stopped receiver explains its lag; a
 			// lag on another instance is its own story.

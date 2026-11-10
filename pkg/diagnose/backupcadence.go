@@ -37,11 +37,14 @@ const observedWindow = 24 * time.Hour
 // more often than its author can plausibly have meant.
 //
 // The mistake it catches is the five-field cron habit. CloudNativePG
-// takes a six-field expression, seconds first, so someone intending
-// "daily at 02:00" and writing the crontab they know — 0 2 * * * — is
-// one field short. Add the field they did not know about and the
-// expression becomes 0 2 * * * *, which is valid, passes the operator's
-// validation, and means every hour at two minutes past.
+// validates and runs a schedule with github.com/robfig/cron v1
+// cron.Parse (Second | Minute | Hour | Dom | Month | DowOptional; the
+// ScheduledBackup webhook and controller, verified on 1.29 and 1.30), so
+// seconds come first and the day of week is optional. Someone intending
+// "daily at 02:00" and writing the crontab they know — 0 2 * * * — gets
+// second 0, minute 2, every hour, every day: valid, accepted by the
+// operator's validation, and hourly. Writing 0 2 * * * * (adding the
+// seconds field at the wrong end) lands on the same schedule.
 //
 // Nothing then looks wrong. The cluster is healthy, backups are
 // succeeding, and a terabyte-scale base backup is running twenty-four
@@ -99,9 +102,11 @@ func (d backupCadenceDetector) finding(in Input, schedule observe.ScheduledBacku
 		Severity: SeverityHigh,
 		Summary: fmt.Sprintf(
 			"ScheduledBackup %s is set to run %d times a day.", schedule.Name, perDay),
-		Detail: "A six-field CloudNativePG cron starts with seconds, so a five-field " +
-			"expression written from habit shifts every field and usually lands on " +
-			"an hourly or faster schedule. Nothing reports this as unhealthy: the " +
+		Detail: "A CloudNativePG schedule starts with seconds and makes the day of " +
+			"week optional, so a five-field crontab written from habit (0 2 * * * " +
+			"meant as 02:00 daily) is read as second, minute, hour, day of month, " +
+			"month and usually lands on an hourly or faster schedule. Nothing " +
+			"reports this as unhealthy: the " +
 			"backups succeed, and a full base backup simply runs at that rate, " +
 			"consuming storage, egress and IO until someone notices the cost.",
 		Evidence: []Evidence{{
@@ -157,10 +162,15 @@ func countRecentBackups(catalog observe.BackupsSnapshot, schedule string, now ti
 // would teach operators to ignore the screen.
 func runsPerDay(expr string) (int, bool) {
 	fields := strings.Fields(expr)
-	if len(fields) != 6 {
-		// Five fields is the mistake this detector is named for, but an
-		// expression that short is refused by the operator's validation
-		// and so cannot be running. Anything else is unrecognised.
+	switch len(fields) {
+	case 6:
+	case 5:
+		// robfig/cron v1 cron.Parse, the operator's parser, accepts five
+		// fields as second minute hour day-of-month month and fills the
+		// optional day of week with "*": 0 2 * * * is hourly. This is the
+		// shape the detector is named for.
+		fields = append(fields, "*")
+	default:
 		return 0, false
 	}
 	seconds, secondsOK := fieldRate(fields[0], 60)
