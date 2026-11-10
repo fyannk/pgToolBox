@@ -1,0 +1,43 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  labels:
+    app.kubernetes.io/component: console
+    app.kubernetes.io/instance: console
+    app.kubernetes.io/managed-by: pgtoolbox
+    app.kubernetes.io/name: pgtoolbox-console
+    app.kubernetes.io/part-of: pgtoolbox
+    pgtoolbox.fyannk.dev/console: console
+    pgtoolbox.fyannk.dev/reconcile: "true"
+  name: console-ingress
+  namespace: team-a
+  ownerReferences:
+  - apiVersion: pgtoolbox.fyannk.dev/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: PgToolBoxConsole
+    name: console
+    uid: u
+spec:
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: ingress-nginx
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: ingress-nginx
+    ports:
+    - port: http
+      protocol: TCP
+  - ports:
+    - port: probes
+      protocol: TCP
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: console
+      app.kubernetes.io/instance: console
+      app.kubernetes.io/name: pgtoolbox-console
+      pgtoolbox.fyannk.dev/console: console
+  policyTypes:
+  - Ingress

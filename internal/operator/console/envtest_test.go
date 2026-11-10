@@ -575,7 +575,7 @@ func TestPgToolBoxConsoleReconcilerOnEnvtest(t *testing.T) {
 
 	t.Run("a hostname outside the allowed suffixes is refused and its Ingress withdrawn", func(t *testing.T) {
 		console := s.console(ctx, t, "console")
-		console.Spec.Exposure = pgtoolboxv1alpha1.ExposureSpec{Type: pgtoolboxv1alpha1.ExposureTypeIngress, Hostname: "login.corp.example.com"}
+		console.Spec.Exposure.ExposureSpec = pgtoolboxv1alpha1.ExposureSpec{Type: pgtoolboxv1alpha1.ExposureTypeIngress, Hostname: "login.corp.example.com"}
 		must(t, s.admin.Update(ctx, console))
 		// Published before the operator had an allow-list.
 		s.reconcile(ctx, t, "console")
@@ -596,9 +596,88 @@ func TestPgToolBoxConsoleReconcilerOnEnvtest(t *testing.T) {
 		must(t, s.admin.Get(ctx, client.ObjectKey{Namespace: suiteNamespace, Name: console.WorkloadName()}, &networkingv1.Ingress{}))
 
 		back := s.console(ctx, t, "console")
-		back.Spec.Exposure = pgtoolboxv1alpha1.ExposureSpec{}
+		back.Spec.Exposure = pgtoolboxv1alpha1.PgToolBoxConsoleExposureSpec{}
 		must(t, s.admin.Update(ctx, back))
 		s.reconcile(ctx, t, "console")
+	})
+
+	t.Run("an Ingress behind its NetworkPolicy trusts only the peers the policy admits", func(t *testing.T) {
+		proxyEnv := func() map[string]string {
+			set := &appsv1.StatefulSet{}
+			s.get(ctx, t, "console", set)
+			got := map[string]string{}
+			for _, e := range set.Spec.Template.Spec.Containers[0].Env {
+				if strings.HasPrefix(e.Name, "TRUSTED_PROXY_") {
+					got[e.Name] = e.Value
+				}
+			}
+			return got
+		}
+		console := s.console(ctx, t, "console")
+		console.Spec.Exposure.ExposureSpec = pgtoolboxv1alpha1.ExposureSpec{Type: pgtoolboxv1alpha1.ExposureTypeIngress, Hostname: "console.example"}
+		must(t, s.admin.Update(ctx, console))
+		s.reconcile(ctx, t, "console")
+		// No peer named: no policy, and the console ignores the header.
+		open := s.console(ctx, t, "console")
+		assertCondition(t, open, pgtoolboxv1alpha1.ConditionExposureConfined, metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonExposureOpen)
+		s.absent(ctx, t, console.WorkloadName()+"-ingress", &networkingv1.NetworkPolicy{})
+		if got := proxyEnv(); got["TRUSTED_PROXY_HOPS"] != "1" || got["TRUSTED_PROXY_CIDRS"] != "" {
+			t.Fatalf("without a policy: %v, want one hop and no trusted peer", got)
+		}
+
+		open.Spec.Exposure.NetworkPolicy = &pgtoolboxv1alpha1.PgToolBoxConsoleExposurePolicySpec{From: []networkingv1.NetworkPolicyPeer{{
+			NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"kubernetes.io/metadata.name": "ingress-nginx"}},
+		}}}
+		must(t, s.admin.Update(ctx, open))
+		s.reconcile(ctx, t, "console")
+		confined := s.console(ctx, t, "console")
+		assertCondition(t, confined, pgtoolboxv1alpha1.ConditionExposureConfined, metav1.ConditionTrue, pgtoolboxv1alpha1.ReasonAsExpected)
+		policy := &networkingv1.NetworkPolicy{}
+		s.get(ctx, t, console.WorkloadName()+"-ingress", policy)
+		if !metav1.IsControlledBy(policy, confined) || len(policy.Spec.Ingress) != 2 || len(policy.Spec.Ingress[0].From) != 1 {
+			t.Fatalf("NetworkPolicy owners %v, ingress %v", policy.OwnerReferences, policy.Spec.Ingress)
+		}
+		if got := proxyEnv(); got["TRUSTED_PROXY_CIDRS"] != "0.0.0.0/0,::/0" {
+			t.Fatalf("behind the policy: %v, want every admitted peer trusted", got)
+		}
+		// Byte-stable: a second reconcile rewrites neither.
+		before := policy.ResourceVersion
+		s.reconcile(ctx, t, "console")
+		s.get(ctx, t, console.WorkloadName()+"-ingress", policy)
+		if policy.ResourceVersion != before {
+			t.Fatal("an unchanged PgToolBoxConsole rewrote its NetworkPolicy")
+		}
+
+		// A Route without the Route API (this API server serves none) is
+		// not published: nothing is in front, so nothing is trusted and no
+		// policy is rendered, whatever the spec asks for.
+		route := s.console(ctx, t, "console")
+		route.Spec.Exposure = pgtoolboxv1alpha1.PgToolBoxConsoleExposureSpec{
+			ExposureSpec: pgtoolboxv1alpha1.ExposureSpec{Type: pgtoolboxv1alpha1.ExposureTypeRoute, Hostname: "console.apps.example"},
+		}
+		must(t, s.admin.Update(ctx, route))
+		s.reconcile(ctx, t, "console")
+		unpublished := s.console(ctx, t, "console")
+		assertCondition(t, unpublished, pgtoolboxv1alpha1.ConditionExposureReady, metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonRouteAPIUnavailable)
+		if meta.FindStatusCondition(unpublished.Status.Conditions, pgtoolboxv1alpha1.ConditionExposureConfined) != nil {
+			t.Fatal("ExposureConfined on a Route that is not published")
+		}
+		s.absent(ctx, t, console.WorkloadName()+"-ingress", &networkingv1.NetworkPolicy{})
+		if got := proxyEnv(); len(got) != 0 {
+			t.Fatalf("a Route that is not published: %v, want no trusted proxy", got)
+		}
+
+		back := s.console(ctx, t, "console")
+		back.Spec.Exposure = pgtoolboxv1alpha1.PgToolBoxConsoleExposureSpec{}
+		must(t, s.admin.Update(ctx, back))
+		s.reconcile(ctx, t, "console")
+		s.absent(ctx, t, console.WorkloadName()+"-ingress", &networkingv1.NetworkPolicy{})
+		if meta.FindStatusCondition(s.console(ctx, t, "console").Status.Conditions, pgtoolboxv1alpha1.ConditionExposureConfined) != nil {
+			t.Fatal("ExposureConfined stays on an unexposed console")
+		}
+		if got := proxyEnv(); len(got) != 0 {
+			t.Fatalf("unexposed: %v, want no trusted proxy", got)
+		}
 	})
 
 	t.Run("a referenced ConfigMap that does not exist stalls and is looked for again", func(t *testing.T) {

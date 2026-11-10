@@ -339,7 +339,7 @@ ExposureSpec configures access to a workload from outside its Service.
 _Appears in:_
 - [EvidenceAgentSpec](#evidenceagentspec)
 - [PgAdminSpec](#pgadminspec)
-- [PgToolBoxConsoleSpec](#pgtoolboxconsolespec)
+- [PgToolBoxConsoleExposureSpec](#pgtoolboxconsoleexposurespec)
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
@@ -362,6 +362,7 @@ ExposureTLSSpec configures TLS for route and ingress exposure.
 
 _Appears in:_
 - [ExposureSpec](#exposurespec)
+- [PgToolBoxConsoleExposureSpec](#pgtoolboxconsoleexposurespec)
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
@@ -379,6 +380,7 @@ _Validation:_
 
 _Appears in:_
 - [ExposureSpec](#exposurespec)
+- [PgToolBoxConsoleExposureSpec](#pgtoolboxconsoleexposurespec)
 
 | Field | Description |
 | --- | --- |
@@ -398,6 +400,7 @@ GatewayExposureSpec configures the HTTPRoute parent reference.
 
 _Appears in:_
 - [ExposureSpec](#exposurespec)
+- [PgToolBoxConsoleExposureSpec](#pgtoolboxconsoleexposurespec)
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
@@ -1257,6 +1260,50 @@ _Appears in:_
 | `interval` _[Duration](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.34/#duration-v1-meta)_ | How often each agent is asked again. Omitted: the console's default. |  | Optional: \{\} <br /> |
 
 
+#### PgToolBoxConsoleExposurePolicySpec
+
+
+
+PgToolBoxConsoleExposurePolicySpec configures the console's ingress
+NetworkPolicy.
+
+
+
+_Appears in:_
+- [PgToolBoxConsoleExposureSpec](#pgtoolboxconsoleexposurespec)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `enabled` _boolean_ | Whether the operator renders it. Omitted: true for route exposure,<br />and for ingress and gateway exposure when from is set. |  | Optional: \{\} <br /> |
+| `from` _[NetworkPolicyPeer](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.34/#networkpolicypeer-v1-networking) array_ | Who may reach the console port: the router, ingress controller or<br />gateway Pods. Omitted for route exposure: the namespaces labelled<br />policy-group.network.openshift.io/ingress (the OpenShift routers,<br />host-network ones included). Required for ingress and gateway. Every<br />peer listed is trusted to write X-Forwarded-For unless<br />trustedProxy.cidrs narrows it. The probe port (health and /metrics)<br />stays open to scrapers; it never reads the header. |  | MaxItems: 16 <br />Optional: \{\} <br /> |
+
+
+#### PgToolBoxConsoleExposureSpec
+
+
+
+PgToolBoxConsoleExposureSpec is the console's exposure: the common
+ExposureSpec, plus who the console believes about the client's address
+and who may reach its port.
+
+
+
+_Appears in:_
+- [PgToolBoxConsoleSpec](#pgtoolboxconsolespec)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `type` _[ExposureType](#exposuretype)_ | The exposure mechanism. | clusterIP | Enum: [clusterIP route ingress gateway] <br />Optional: \{\} <br /> |
+| `hostname` _string_ | The external hostname. Required for route, ingress and gateway. |  | MaxLength: 253 <br />Pattern: `^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$` <br />Optional: \{\} <br /> |
+| `tls` _[ExposureTLSSpec](#exposuretlsspec)_ | TLS for route and ingress exposure. A Route always terminates TLS at<br />the edge; an Ingress uses certificateSecretRef, or the controller's<br />default certificate when it is omitted. For gateway exposure TLS<br />terminates at the Gateway listener. |  | Optional: \{\} <br /> |
+| `ingressClassName` _string_ | IngressClass name, for ingress exposure only. |  | MaxLength: 253 <br />Optional: \{\} <br /> |
+| `gateway` _[GatewayExposureSpec](#gatewayexposurespec)_ | Gateway API attachment, for gateway exposure only. |  | Optional: \{\} <br /> |
+| `annotations` _object (keys:string, values:string)_ | Annotations added to the exposure object; keys under<br />pgtoolbox.fyannk.dev/ are rejected. |  | MaxProperties: 32 <br />Optional: \{\} <br /> |
+| `labels` _object (keys:string, values:string)_ | Labels added to the exposure object under the operator's own<br />identity labels, which always win. Ingress controllers and OpenShift<br />router shards select by label; keys under pgtoolbox.fyannk.dev/ are<br />rejected. |  | MaxProperties: 32 <br />Optional: \{\} <br /> |
+| `trustedProxy` _[PgToolBoxConsoleTrustedProxySpec](#pgtoolboxconsoletrustedproxyspec)_ | The reverse proxies in front of the console: how many append to<br />X-Forwarded-For and which peers they are (TRUSTED_PROXY_HOPS,<br />TRUSTED_PROXY_CIDRS). The console reads the header only from a peer<br />it trusts, so the per-address sign-in budgets and the audit trail's<br />client_ip follow each client. Omitted: one hop when an exposure<br />object is published; trusted peers per networkPolicy. |  | Optional: \{\} <br /> |
+| `networkPolicy` _[PgToolBoxConsoleExposurePolicySpec](#pgtoolboxconsoleexposurepolicyspec)_ | The ingress NetworkPolicy around the console Pods: only the router,<br />ingress controller or gateway reaches the console port. Omitted: on<br />for route exposure (the OpenShift router namespaces carry<br />policy-group.network.openshift.io/ingress), and for ingress and<br />gateway exposure only once from names the controller's namespace;<br />ExposureConfined says which. Never rendered for clusterIP. |  | Optional: \{\} <br /> |
+
+
 #### PgToolBoxConsoleHistorySpec
 
 
@@ -1539,7 +1586,7 @@ _Appears in:_
 | `clusterSelector` _[LabelSelector](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.34/#labelselector-v1-meta)_ | Narrows the Clusters shown to those this selector matches, on top of<br />what each user's own RBAC allows. Omitted: every Cluster of the<br />namespace. |  | Optional: \{\} <br /> |
 | `auth` _[PgToolBoxConsoleAuthSpec](#pgtoolboxconsoleauthspec)_ | How people sign in. | \{ provider:token \} | Optional: \{\} <br /> |
 | `publicURL` _string_ | The URL people type, https://host. Used for cookies, redirects and the<br />OpenShift callback. Defaults to https://&lt;exposure.hostname>. |  | MaxLength: 512 <br />Pattern: `^https://[a-z0-9]([-a-z0-9.]*[a-z0-9])?(:[0-9]\{1,5\})?/?$` <br />Optional: \{\} <br /> |
-| `exposure` _[ExposureSpec](#exposurespec)_ | Exposure of the console. The console streams events over SSE; the<br />operator sets the long edge timeouts it knows for each type. | \{ type:clusterIP \} | Optional: \{\} <br /> |
+| `exposure` _[PgToolBoxConsoleExposureSpec](#pgtoolboxconsoleexposurespec)_ | Exposure of the console. The console streams events over SSE; the<br />operator sets the long edge timeouts it knows for each type. | \{ type:clusterIP \} | Optional: \{\} <br /> |
 | `instanceCABundleRef` _[LocalObjectReference](#localobjectreference)_ | The CA bundle the console verifies each instance's /pg/status with:<br />a ConfigMap with the key ca.crt holding the PEM server CAs of the<br />namespace's Clusters. Omitted (recommended): the operator keeps<br />&lt;name>-instance-ca itself, copying only the public ca.crt of each<br />selected Cluster's server CA Secret, and follows CloudNativePG's CA<br />renewals and Clusters coming and going; the console still reads no<br />Secret. Set: the console mounts the named ConfigMap, which you keep<br />current yourself (CloudNativePG renews its self-signed CA every 90<br />days, so a one-off copy expires). A Cluster missing from the bundle<br />is shown as "not verifiable", never read unverified. |  | Optional: \{\} <br /> |
 | `lifecycleConfigMapRef` _[LocalObjectReference](#localobjectreference)_ | The end-of-life table the diagnostics read. Omitted, the operator<br />creates &lt;console>-lifecycle with its built-in table and keeps it at<br />the operator's table until someone edits it (or annotates it<br />pgtoolbox.fyannk.dev/user-managed=true); from then on it is left<br />alone. Set, the console reads that ConfigMap (key lifecycle.json) and<br />the operator creates none. |  | Optional: \{\} <br /> |
 | `evidence` _[PgToolBoxConsoleEvidenceSpec](#pgtoolboxconsoleevidencespec)_ | Repository evidence from the namespace's EvidenceAgents. |  | Optional: \{\} <br /> |
@@ -1574,7 +1621,7 @@ _Appears in:_
 | `image` _string_ | The image reference the console runs. |  | MaxLength: 512 <br />Optional: \{\} <br /> |
 | `lifecycle` _[PgToolBoxConsoleLifecycleStatus](#pgtoolboxconsolelifecyclestatus)_ | The ConfigMap the console reads its end-of-life table from, and who<br />keeps it: Operator (the operator's table, updated with the operator),<br />User (edited or annotated user-managed, left alone) or Referenced<br />(spec.lifecycleConfigMapRef). |  | Optional: \{\} <br /> |
 | `instanceCABundle` _[PgToolBoxConsoleInstanceCABundleStatus](#pgtoolboxconsoleinstancecabundlestatus)_ | The instance CA bundle the console mounts, who keeps it and, when the<br />operator does, how many Clusters it covers and which are missing. |  | Optional: \{\} <br /> |
-| `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.34/#condition-v1-meta) array_ | Conditions: Ready (summary), ConfigurationValid, WorkloadReady,<br />ExposureReady, Progressing, Stalled and the advisory<br />InstanceCABundleComplete. |  | MaxItems: 16 <br />Optional: \{\} <br /> |
+| `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.34/#condition-v1-meta) array_ | Conditions: Ready (summary), ConfigurationValid, WorkloadReady,<br />ExposureReady, Progressing, Stalled and the advisory<br />InstanceCABundleComplete and ExposureConfined. |  | MaxItems: 16 <br />Optional: \{\} <br /> |
 
 
 #### PgToolBoxConsoleTracingSpec
@@ -1598,6 +1645,24 @@ _Appears in:_
 | `sampler` _string_ | The sampler (OTEL_TRACES_SAMPLER). Default parentbased_always_on: a<br />request the caller traces is traced. |  | Enum: [always_on always_off traceidratio parentbased_always_on parentbased_always_off parentbased_traceidratio] <br />Optional: \{\} <br /> |
 | `samplerArg` _string_ | The ratio of the traceidratio samplers (OTEL_TRACES_SAMPLER_ARG),<br />from "0" to "1". |  | Pattern: `^(0(\.[0-9]\{1,6\})?\|1(\.0\{1,6\})?)$` <br />Optional: \{\} <br /> |
 | `includePayloads` _boolean_ | Add MCP tool arguments and results to the tool spans, redacted and<br />capped (TRACING_INCLUDE_PAYLOADS). Default false; tokens never. |  | Optional: \{\} <br /> |
+
+
+#### PgToolBoxConsoleTrustedProxySpec
+
+
+
+PgToolBoxConsoleTrustedProxySpec says which X-Forwarded-For entries the
+console believes.
+
+
+
+_Appears in:_
+- [PgToolBoxConsoleExposureSpec](#pgtoolboxconsoleexposurespec)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `hops` _integer_ | How many proxies append to X-Forwarded-For: 2 for a load balancer<br />that appends in front of the router. 0 ignores the header. Omitted:<br />1 when an exposure object is published, else 0. |  | Maximum: 8 <br />Minimum: 0 <br />Optional: \{\} <br /> |
+| `cidrs` _string array_ | The proxies' own addresses, as the console sees them (the router or<br />ingress controller Pods; the nodes for a host-network router). The<br />header is read only from a peer inside one. Omitted: with the<br />NetworkPolicy rendered, any peer it admits (every other Pod is<br />refused by the network); without it, none, and the header is<br />ignored: every client behind the proxy then shares its address, and<br />so one sign-in budget. |  | MaxItems: 32 <br />items:MaxLength: 49 <br />items:XValidation: \{isCIDR(self) trustedProxy.cidrs entries must be CIDRs  FieldValueInvalid  &lt;nil>\} <br />Optional: \{\} <br /> |
 
 
 #### PropagationTarget
@@ -1715,6 +1780,7 @@ _Appears in:_
 | `InstanceCAMissing` | ReasonInstanceCAMissing: InstanceCABundleComplete=False, at least<br />one selected Cluster's server CA is not in the mirrored bundle;<br />status.instanceCABundle.missing says which and why.<br /> |
 | `InstanceCAInvalid` | ReasonInstanceCAInvalid: a Cluster's server CA Secret has a ca.crt<br />that holds no PEM certificate.<br /> |
 | `InstanceCABundleFull` | ReasonInstanceCABundleFull: the mirrored bundle reached the size a<br />ConfigMap can hold; the Clusters after it (by name) are left out.<br /> |
+| `ExposureOpen` | ReasonExposureOpen: ExposureConfined=False, the console is exposed<br />without its ingress NetworkPolicy, so any Pod can reach its port.<br /> |
 
 
 #### SecretKeyReference
@@ -1845,6 +1911,7 @@ by `docs/site/crd-ref-docs/cel-rules.awk`.
 - `PgAdminAuthSpec`: exactly one of oauth2 and openshiftOAuthProxy is required
 - `PgAdminOAuth2Spec.requiredClaims`: claim names are 1-64 characters of letters, digits and _.:-
 - `PgAdmin`: metadata.name must be a DNS-1035 label of at most 40 characters (it prefixes generated object names)
+- `PgToolBoxConsoleExposureSpec`: networkPolicy.enabled needs networkPolicy.from for ingress and gateway exposure: the controller's namespace is not known
 - `PgToolBoxConsoleSpec`: auth.oidc is required with auth.provider=oidc
 - `PgToolBoxConsoleSpec`: auth.provider=openshift needs publicURL or exposure.hostname: OpenShift redirects only to the callback the ServiceAccount lists
 - `PgToolBoxConsoleSpec`: mcp needs publicURL or exposure.hostname: the MCP endpoint advertises only its configured origin

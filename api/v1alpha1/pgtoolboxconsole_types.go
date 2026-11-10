@@ -41,7 +41,19 @@ const (
 	// ReasonInstanceCABundleFull: the mirrored bundle reached the size a
 	// ConfigMap can hold; the Clusters after it (by name) are left out.
 	ReasonInstanceCABundleFull Reason = "InstanceCABundleFull"
+	// ReasonExposureOpen: ExposureConfined=False, the console is exposed
+	// without its ingress NetworkPolicy, so any Pod can reach its port.
+	ReasonExposureOpen Reason = "ExposureOpen"
 )
+
+// ConditionExposureConfined is advisory and gates nothing (it never enters
+// Ready): present only while an exposure object is published. True when
+// the operator renders the ingress NetworkPolicy that admits only the
+// router, ingress controller or gateway to the console port; False with
+// ExposureOpen when it does not (ingress or gateway exposure without
+// networkPolicy.from, or networkPolicy.enabled=false). The message says
+// which peers the console believes about X-Forwarded-For.
+const ConditionExposureConfined = "ExposureConfined"
 
 // ConditionInstanceCABundleComplete is advisory and gates nothing (it never
 // enters Ready): present only while the operator mirrors the instance CA
@@ -52,6 +64,78 @@ const (
 // Cluster missing from the bundle as "not verifiable", never reads it
 // unverified.
 const ConditionInstanceCABundleComplete = "InstanceCABundleComplete"
+
+// PgToolBoxConsoleExposureSpec is the console's exposure: the common
+// ExposureSpec, plus who the console believes about the client's address
+// and who may reach its port.
+// +kubebuilder:validation:XValidation:rule="!has(self.networkPolicy) || !has(self.networkPolicy.enabled) || !self.networkPolicy.enabled || (has(self.type) && self.type == 'route') || (has(self.networkPolicy.from) && size(self.networkPolicy.from) > 0)",message="networkPolicy.enabled needs networkPolicy.from for ingress and gateway exposure: the controller's namespace is not known",fieldPath=".networkPolicy.from",reason=FieldValueRequired
+type PgToolBoxConsoleExposureSpec struct {
+	ExposureSpec `json:",inline"`
+
+	// The reverse proxies in front of the console: how many append to
+	// X-Forwarded-For and which peers they are (TRUSTED_PROXY_HOPS,
+	// TRUSTED_PROXY_CIDRS). The console reads the header only from a peer
+	// it trusts, so the per-address sign-in budgets and the audit trail's
+	// client_ip follow each client. Omitted: one hop when an exposure
+	// object is published; trusted peers per networkPolicy.
+	// +optional
+	TrustedProxy *PgToolBoxConsoleTrustedProxySpec `json:"trustedProxy,omitempty"`
+
+	// The ingress NetworkPolicy around the console Pods: only the router,
+	// ingress controller or gateway reaches the console port. Omitted: on
+	// for route exposure (the OpenShift router namespaces carry
+	// policy-group.network.openshift.io/ingress), and for ingress and
+	// gateway exposure only once from names the controller's namespace;
+	// ExposureConfined says which. Never rendered for clusterIP.
+	// +optional
+	NetworkPolicy *PgToolBoxConsoleExposurePolicySpec `json:"networkPolicy,omitempty"`
+}
+
+// PgToolBoxConsoleTrustedProxySpec says which X-Forwarded-For entries the
+// console believes.
+type PgToolBoxConsoleTrustedProxySpec struct {
+	// How many proxies append to X-Forwarded-For: 2 for a load balancer
+	// that appends in front of the router. 0 ignores the header. Omitted:
+	// 1 when an exposure object is published, else 0.
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=8
+	// +optional
+	Hops *int32 `json:"hops,omitempty"`
+
+	// The proxies' own addresses, as the console sees them (the router or
+	// ingress controller Pods; the nodes for a host-network router). The
+	// header is read only from a peer inside one. Omitted: with the
+	// NetworkPolicy rendered, any peer it admits (every other Pod is
+	// refused by the network); without it, none, and the header is
+	// ignored: every client behind the proxy then shares its address, and
+	// so one sign-in budget.
+	// +kubebuilder:validation:MaxItems=32
+	// +kubebuilder:validation:items:MaxLength=49
+	// +kubebuilder:validation:items:XValidation:rule="isCIDR(self)",message="trustedProxy.cidrs entries must be CIDRs",reason=FieldValueInvalid
+	// +listType=set
+	// +optional
+	CIDRs []string `json:"cidrs,omitempty"`
+}
+
+// PgToolBoxConsoleExposurePolicySpec configures the console's ingress
+// NetworkPolicy.
+type PgToolBoxConsoleExposurePolicySpec struct {
+	// Whether the operator renders it. Omitted: true for route exposure,
+	// and for ingress and gateway exposure when from is set.
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// Who may reach the console port: the router, ingress controller or
+	// gateway Pods. Omitted for route exposure: the namespaces labelled
+	// policy-group.network.openshift.io/ingress (the OpenShift routers,
+	// host-network ones included). Required for ingress and gateway. Every
+	// peer listed is trusted to write X-Forwarded-For unless
+	// trustedProxy.cidrs narrows it. The probe port (health and /metrics)
+	// stays open to scrapers; it never reads the header.
+	// +kubebuilder:validation:MaxItems=16
+	// +optional
+	From []networkingv1.NetworkPolicyPeer `json:"from,omitempty"`
+}
 
 // PgToolBoxConsoleAuthProvider selects how people sign in to the console.
 // +kubebuilder:validation:Enum=token;oidc;openshift
@@ -119,7 +203,7 @@ type PgToolBoxConsoleSpec struct {
 	// operator sets the long edge timeouts it knows for each type.
 	// +kubebuilder:default={type: clusterIP}
 	// +optional
-	Exposure ExposureSpec `json:"exposure,omitempty"`
+	Exposure PgToolBoxConsoleExposureSpec `json:"exposure,omitempty"`
 
 	// The CA bundle the console verifies each instance's /pg/status with:
 	// a ConfigMap with the key ca.crt holding the PEM server CAs of the
@@ -764,7 +848,7 @@ type PgToolBoxConsoleStatus struct {
 
 	// Conditions: Ready (summary), ConfigurationValid, WorkloadReady,
 	// ExposureReady, Progressing, Stalled and the advisory
-	// InstanceCABundleComplete.
+	// InstanceCABundleComplete and ExposureConfined.
 	// +listType=map
 	// +listMapKey=type
 	// +kubebuilder:validation:MaxItems=16
