@@ -379,6 +379,8 @@ spec:
             - --tls-key=/etc/tls/private/tls.key
             - --cookie-secret-file=/etc/proxy/cookie/cookie-secret
             - --cookie-secure=true
+            # The SubjectAccessReview runs at sign-in only: bound the session (default 168h).
+            - --cookie-expire=1h
             - --pass-user-headers=true
             - --skip-provider-button=true
           ports:
