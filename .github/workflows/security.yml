@@ -5,7 +5,8 @@ name: Security
 #   CodeQL         go, javascript-typescript and actions, to code scanning
 #   govulncheck    Go call graph, both modules
 #   osv-scanner    npm and Go lockfiles
-#   grype          the three images, built from this commit
+#   grype          the five images (operator, console, evidence agent, OLM
+#                  bundle and catalog), built from this commit
 #   grype          the latest published images (once a release exists)
 #   gitleaks       secrets in the whole history
 #   gosec          golangci-lint's gosec rules, both modules
@@ -213,7 +214,30 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        image: [operator, console, evidence-agent]
+        # The bundle and the catalog are built as the release builds them (the
+        # committed tree carries tags where the release pins digests), so a
+        # fixable critical in the pinned opm base stops here, not in a release.
+        include:
+          - image: operator
+            context: .
+            file: Dockerfile
+            target: operator
+          - image: console
+            context: .
+            file: Dockerfile
+            target: console
+          - image: evidence-agent
+            context: .
+            file: Dockerfile
+            target: evidence-agent
+          - image: bundle
+            context: deploy/olm/bundle
+            file: deploy/olm/bundle.Dockerfile
+            target: ""
+          - image: catalog
+            context: deploy/olm/catalog
+            file: deploy/olm/catalog.Dockerfile
+            target: ""
     env:
       NAME: pgtoolbox-${{ matrix.image }}
     steps:
@@ -232,8 +256,9 @@ jobs:
       - name: Build the image from this commit
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
-          context: .
-          target: ${{ matrix.image }}
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
+          target: ${{ matrix.target }}
           platforms: linux/amd64
           build-args: |
             VERSION=ci
@@ -553,7 +578,7 @@ jobs:
       - name: Merge, publish and decide
         run: |
           set -euo pipefail
-          expect="grype:pgtoolbox-operator,grype:pgtoolbox-console,grype:pgtoolbox-evidence-agent,govulncheck:root,govulncheck:pkg/evidence,osv-scanner,gitleaks,gosec:root,gosec:pkg/evidence,zizmor,kube-linter:pgtoolbox,kube-linter:pgtools"
+          expect="grype:pgtoolbox-operator,grype:pgtoolbox-console,grype:pgtoolbox-evidence-agent,grype:pgtoolbox-bundle,grype:pgtoolbox-catalog,govulncheck:root,govulncheck:pkg/evidence,osv-scanner,gitleaks,gosec:root,gosec:pkg/evidence,zizmor,kube-linter:pgtoolbox,kube-linter:pgtools"
           if [[ "${EVENT}" != "pull_request" ]]; then
             expect+=",grype:published-pgtoolbox-operator,grype:published-pgtoolbox-console,grype:published-pgtoolbox-evidence-agent"
           fi

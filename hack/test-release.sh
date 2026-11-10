@@ -60,6 +60,52 @@ expect 0 'ok: semver' -- check "v${version}-rc.1"
 expect 1 'tag says' -- check "v9.9.9-rc.1"
 expect 1 'semantic' -- check "0.1.0"
 
+# A failed release candidate is never moved or deleted (the tag ruleset allows
+# neither): it is superseded by the next one. With rc.1 already tagged, rc.2 of
+# the same tree passes the check, and so does the final version.
+git -C "${repo}" init -q
+git -C "${repo}" config user.email t@example.com
+git -C "${repo}" config user.name t
+git -C "${repo}" config commit.gpgsign false
+git -C "${repo}" config tag.gpgsign false
+changelog "## [${version}] - Unreleased"
+git -C "${repo}" add -A
+git -C "${repo}" commit -q -m "chore: scratch"
+git -C "${repo}" tag -a "v${version}-rc.1" -m rc1
+expect 0 'ok: semver' -- check "v${version}-rc.2"
+expect 0 'is an annotated tag' -- check "v${version}-rc.1"
+git -C "${repo}" tag "v${version}-rc.3" # lightweight: refused
+expect 1 'must be annotated' -- check "v${version}-rc.3"
+git -C "${repo}" tag -d "v${version}-rc.3" >/dev/null
+
+# ---- commits: the notes of a final tag cover everything since the previous
+# FINAL tag (release candidates included); a candidate starts at the previous
+# tag of any kind.
+crepo="${work}/commits"
+mkdir -p "${crepo}/hack"
+cp hack/release.sh "${crepo}/hack/"
+git -C "${crepo}" init -q
+git -C "${crepo}" config user.email t@example.com
+git -C "${crepo}" config user.name t
+git -C "${crepo}" config tag.gpgsign false
+git -C "${crepo}" config commit.gpgsign false
+cc() { git -C "${crepo}" commit -q --allow-empty -m "$1"; }
+cc "feat: before everything"; git -C "${crepo}" tag -a v0.0.1 -m x
+cc "feat: in the first candidate"; git -C "${crepo}" tag -a v0.1.0-rc.1 -m x
+cc "fix: between the candidates"; git -C "${crepo}" tag -a v0.1.0-rc.2 -m x
+cc "docs: after the last candidate"; git -C "${crepo}" tag -a v0.1.0 -m x
+commits() { (cd "${crepo}" && ./hack/release.sh commits "$1"); }
+out="$(commits v0.1.0)"
+for want in "in the first candidate" "between the candidates" "after the last candidate"; do
+  grep -q "${want}" <<<"${out}" || fail "notes of v0.1.0 lack '${want}': ${out}"
+done
+! grep -q "before everything" <<<"${out}" || fail "notes of v0.1.0 reach back past v0.0.1: ${out}"
+out="$(commits v0.1.0-rc.2)"
+grep -q "between the candidates" <<<"${out}" || fail "notes of rc.2 lack its own commit: ${out}"
+! grep -q "in the first candidate" <<<"${out}" || fail "notes of rc.2 repeat rc.1's commits: ${out}"
+out="$(commits v0.1.0-rc.1)"
+grep -q "in the first candidate" <<<"${out}" && ! grep -q "before everything" <<<"${out}" || fail "notes of rc.1 start at the wrong tag: ${out}"
+
 # ---- check-public and scan-digests: stubs first on PATH.
 stubs="${work}/stubs"
 mkdir -p "${stubs}"
@@ -85,7 +131,36 @@ case "${GRYPE_STUB}" in
   clean) echo '{"matches":[]}' ;;
 esac
 STUB
-chmod +x "${stubs}/curl" "${stubs}/grype"
+cat > "${stubs}/gh" <<'STUB'
+#!/usr/bin/env bash
+# The check-runs listing, already reduced by --jq: name, status, conclusion,
+# started_at, id (tab separated). GH_STUB_RUNS names the file that holds it.
+case "$1" in
+  api) [[ -z "${GH_STUB_RUNS:-}" ]] || cat "${GH_STUB_RUNS}" ;;
+  attestation)
+    # Fails the first GH_STUB_FAILS calls (an attestation that lags the push).
+    n="$(cat "${GH_STUB_COUNT}" 2>/dev/null || echo 0)"
+    echo $((n + 1)) > "${GH_STUB_COUNT}"
+    ((n >= ${GH_STUB_FAILS:-0})) || exit 1 ;;
+  *) exit 1 ;;
+esac
+STUB
+cat > "${stubs}/docker" <<'STUB'
+#!/usr/bin/env bash
+[[ -z "${DOCKER_STUB_FAIL:-}" ]] || { echo "denied" >&2; exit 1; }
+printf '"sha256:%064d"\n' 7
+STUB
+cat > "${stubs}/helm" <<'STUB'
+#!/usr/bin/env bash
+if [[ "$1" == pull ]]; then printf 'Pulled: x\nDigest: sha256:%064d\n' 8; exit 0; fi
+# Everything else (template, package) is the real helm.
+PATH="${PATH#*:}" exec helm "$@"
+STUB
+cat > "${stubs}/cosign" <<'STUB'
+#!/usr/bin/env bash
+[[ -z "${COSIGN_STUB_FAIL:-}" ]] || { echo "no matching signatures" >&2; exit 1; }
+STUB
+chmod +x "${stubs}/curl" "${stubs}/grype" "${stubs}/gh" "${stubs}/docker" "${stubs}/helm" "${stubs}/cosign"
 
 printf 'ghcr.io/o/pgtoolbox-operator@sha256:%064d\nghcr.io/o/charts/pgtools@sha256:%064d\n' 1 2 > "${work}/ok.txt"
 printf 'ghcr.io/o/pgtoolbox-operator@sha256:%064d\nghcr.io/o/private-thing@sha256:%064d\nghcr.io/o/charts/privatechart@sha256:%064d\n' 1 2 3 > "${work}/mixed.txt"
@@ -94,6 +169,39 @@ expect 0 'every digest is publicly pullable' -- ./hack/release.sh check-public "
 expect 1 'private-thing' -- ./hack/release.sh check-public "${work}/mixed.txt"
 expect 1 'charts/privatechart' -- ./hack/release.sh check-public "${work}/ok.txt" "${work}/mixed.txt"
 expect 1 'Re-run failed jobs' -- ./hack/release.sh check-public "${work}/mixed.txt"
+
+# ---- wait-ci: the newest run of a check counts, whatever order it is listed
+# in; a commit with no check run at all fails fast with the dispatch hint.
+runs="${work}/runs.tsv"
+tab() { printf '%s\t%s\t%s\t%s\t%s\n' "$@"; }
+export GH_STUB_RUNS="${runs}" CI_WAIT_SLEEP=0 CI_WAIT_ATTEMPTS=3 CI_WAIT_EMPTY_ATTEMPTS=2
+# An old failure followed (by id) by a green re-run, listed newest first.
+{ tab ci-ok completed success 2026-11-10T10:00:00Z 20; tab ci-ok completed failure 2026-11-10T09:00:00Z 10; tab security-gate completed success 2026-11-10T09:00:00Z 11; } > "${runs}"
+expect 0 'green on' -- ./hack/release.sh wait-ci deadbeef
+# An old success followed by a newer failure, listed oldest first.
+{ tab ci-ok completed success 2026-11-10T09:00:00Z 10; tab ci-ok completed failure 2026-11-10T10:00:00Z 20; tab security-gate completed success 2026-11-10T09:00:00Z 11; } > "${runs}"
+expect 1 'CI failed on deadbeef: ci-ok=failure' -- ./hack/release.sh wait-ci deadbeef
+# A newer run still in progress hides the older green one.
+{ tab ci-ok in_progress "" 2026-11-10T10:00:00Z 20; tab ci-ok completed success 2026-11-10T09:00:00Z 10; tab security-gate completed success 2026-11-10T09:00:00Z 11; } > "${runs}"
+expect 1 'did not finish' -- ./hack/release.sh wait-ci deadbeef
+# No check run at all: fail fast, with the command that fixes it.
+: > "${runs}"
+expect 1 'dispatch ci.yml and security.yml on deadbeef' -- ./hack/release.sh wait-ci deadbeef
+unset GH_STUB_RUNS CI_WAIT_SLEEP CI_WAIT_ATTEMPTS CI_WAIT_EMPTY_ATTEMPTS
+
+# ---- verify-published: anonymous pulls, then signature and attestation of
+# every image and chart, the attestation retried while it lags the push.
+export GH_STUB_COUNT="${work}/gh-count" VERIFY_SLEEP=0 VERIFY_ATTEMPTS=3
+rm -f "${GH_STUB_COUNT}"
+expect 0 'ok: ghcr.io/fyannk/charts/pgtools:0.1.0' -- ./hack/release.sh verify-published v0.1.0
+rm -f "${GH_STUB_COUNT}"
+GH_STUB_FAILS=2 expect 0 'ok: ghcr.io/fyannk/pgtoolbox-catalog:0.1.0' -- ./hack/release.sh verify-published v0.1.0
+rm -f "${GH_STUB_COUNT}"
+GH_STUB_FAILS=99 expect 1 'does not verify' -- ./hack/release.sh verify-published v0.1.0
+COSIGN_STUB_FAIL=1 expect 1 'does not verify' -- ./hack/release.sh verify-published v0.1.0
+DOCKER_STUB_FAIL=1 expect 1 'cannot be pulled anonymously' -- ./hack/release.sh verify-published v0.1.0
+expect 1 'not a release tag' -- ./hack/release.sh verify-published 0.1.0
+unset GH_STUB_COUNT VERIFY_SLEEP VERIFY_ATTEMPTS
 
 export GITHUB_STEP_SUMMARY="${work}/summary.md"
 GRYPE_STUB=clean expect 0 'no fixable critical' -- ./hack/release.sh scan-digests "${work}/ok.txt"
@@ -148,8 +256,11 @@ printf 'a: ghcr.io/fyannk/pgtoolbox-operator:%s\nb: ghcr.io/fyannk/pgtoolbox-ope
 expect 1 'still references' -- ./hack/release.sh pin-refs "${work}/left.yaml" "${digests}" "${tree}-rc.1"
 # The dry run rehearses an rc end to end with placeholder digests.
 if command -v helm >/dev/null && command -v jq >/dev/null; then
-  OUT_DIR="${work}/dry" DRY_RUN_FAKE_DIGESTS=1 DRY_RUN_TAG="v${tree}-rc.1" ./hack/release.sh dry-run >/dev/null \
-    || fail "dry-run of v${tree}-rc.1 failed"
+  # The bundle and the catalog are pinned (on copies) in fake-digest mode too.
+  dry="$(OUT_DIR="${work}/dry" DRY_RUN_FAKE_DIGESTS=1 DRY_RUN_TAG="v${tree}-rc.1" ./hack/release.sh dry-run 2>&1)" \
+    || fail "dry-run of v${tree}-rc.1 failed: ${dry}"
+  grep -q 'DRY-RUN pinned bundle' <<<"${dry}" && grep -q 'DRY-RUN pinned catalog' <<<"${dry}" \
+    || fail "the fake-digest dry run did not pin the bundle and the catalog: ${dry}"
   [[ -f "${work}/dry/pgtoolbox-${tree}-rc.1.tgz" ]] || fail "dry-run did not package the rc chart"
 else
   echo "note: helm or jq missing; the rc dry run was not exercised"
