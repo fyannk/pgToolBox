@@ -16,8 +16,10 @@ package diagnose
 
 import (
 	"fmt"
-	"strings"
+	stdbits "math/bits"
 	"time"
+
+	"github.com/robfig/cron"
 
 	"github.com/fyannk/pgToolBox/pkg/cnpgstatus/observe"
 )
@@ -81,11 +83,11 @@ func (d backupCadenceDetector) Detect(in Input) ([]Finding, string) {
 		if schedule.Suspended != nil && *schedule.Suspended {
 			continue
 		}
-		perDay, ok := runsPerDay(schedule.Schedule)
+		perDay, everyDay, ok := runsPerDay(schedule.Schedule)
 		if !ok || perDay < cadenceAlarm {
 			continue
 		}
-		findings = append(findings, d.finding(in, schedule, perDay))
+		findings = append(findings, d.finding(in, schedule, perDay, everyDay))
 	}
 	return findings, ""
 }
@@ -94,14 +96,18 @@ func (d backupCadenceDetector) Detect(in Input) ([]Finding, string) {
 // verbatim. It says what both numbers are and lets the reader conclude —
 // the escalation is in the severity and in naming the cost, not in
 // inventing a claim about intent.
-func (d backupCadenceDetector) finding(in Input, schedule observe.ScheduledBackupFacts, perDay int) Finding {
+func (d backupCadenceDetector) finding(in Input, schedule observe.ScheduledBackupFacts, perDay int, everyDay bool) Finding {
 	observed := countRecentBackups(in.Backups, schedule.Name, in.Now)
+	rate := fmt.Sprintf("%d times a day", perDay)
+	if !everyDay {
+		rate += " on the days it runs"
+	}
 	finding := Finding{
 		ID:       "backup-cadence/" + schedule.Name,
 		Subject:  EntityRef{Kind: "ScheduledBackup", Name: schedule.Name},
 		Severity: SeverityHigh,
 		Summary: fmt.Sprintf(
-			"ScheduledBackup %s is set to run %d times a day.", schedule.Name, perDay),
+			"ScheduledBackup %s is set to run %s.", schedule.Name, rate),
 		Detail: "A CloudNativePG schedule starts with seconds and makes the day of " +
 			"week optional, so a five-field crontab written from habit (0 2 * * * " +
 			"meant as 02:00 daily) is read as second, minute, hour, day of month, " +
@@ -151,70 +157,112 @@ func countRecentBackups(catalog observe.BackupsSnapshot, schedule string, now ti
 	return count
 }
 
-// runsPerDay reports how many times a CloudNativePG cron expression fires
-// in a day, and whether it could be read at all.
+// cronModule is the cron library, at the exact version, that
+// CloudNativePG validates and runs ScheduledBackup schedules with: its
+// go.mod requires it on every verified release (1.30.0, 1.30.1) and
+// internal/controller/scheduledbackup_controller.go and
+// internal/webhook/v1/scheduledbackup_webhook.go call its cron.Parse.
+// The console imports the same version, so a schedule reads here exactly
+// as the operator reads it; make verify-pins fails when a CloudNativePG
+// release moves to another one.
+const cronModule = "github.com/robfig/cron v1.2.0"
+
+// CronModule is the cron library requirement the cadence detector shares
+// with the operator, exported for the catalog's pin verification.
+func CronModule() string { return cronModule }
+
+// day is the period a rate is expressed in.
+const day = 24 * time.Hour
+
+// cronFirstSecond is the starting point used to ask the schedule whether
+// it fires at all. Any instant works; a fixed one keeps the answer
+// deterministic.
+var cronFirstSecond = time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC)
+
+// runsPerDay reports how many times a CloudNativePG schedule fires on a
+// day it runs, whether it runs every day, and whether it could be read at
+// all.
 //
-// This is deliberately not a cron library. It answers one question —
-// roughly how often — for the shapes that actually appear in a schedule
-// field, and returns false for anything it does not fully understand
-// rather than guessing. A wrong "not ok" costs a finding nobody sees; a
-// wrong rate would put a critical alarm on a correct schedule, which
-// would teach operators to ignore the screen.
-func runsPerDay(expr string) (int, bool) {
-	fields := strings.Fields(expr)
-	switch len(fields) {
-	case 6:
-	case 5:
-		// robfig/cron v1 cron.Parse, the operator's parser, accepts five
-		// fields as second minute hour day-of-month month and fills the
-		// optional day of week with "*": 0 2 * * * is hourly. This is the
-		// shape the detector is named for.
-		fields = append(fields, "*")
-	default:
-		return 0, false
+// It parses with the operator's own parser (robfig/cron v1 cron.Parse:
+// seconds first, day of week optional, descriptors such as @hourly and
+// @every 30m), so a five-field crontab is read exactly as the operator
+// reads it. The count is exact rather than estimated:
+//
+//   - a field schedule fires at every combination of its selected
+//     seconds, minutes and hours on each day its day-of-month, month and
+//     day-of-week fields select, so a run day carries the product of the
+//     three counts. Restricting the days does not make the hours above
+//     them less frequent: 0 2 * * 1-5, the weekday crontab, is read as
+//     every hour in January to May, and those days run twenty-four
+//     backups each;
+//   - an @every schedule fires once per delay, so a day holds as many
+//     whole delays as fit in it (@every 30m: 48).
+//
+// Anything it cannot read (a parse error, a schedule that never fires
+// such as 0 0 0 30 2 *, an unknown schedule type) returns ok false: a
+// wrong "not ok" costs a finding nobody sees; a wrong rate would put an
+// alarm on a correct schedule, which would teach operators to ignore the
+// screen.
+func runsPerDay(expr string) (perDay int, everyDay, ok bool) {
+	// The string is parsed verbatim, as the operator parses it.
+	parsed, err := cron.Parse(expr)
+	if err != nil {
+		return 0, false, false
 	}
-	seconds, secondsOK := fieldRate(fields[0], 60)
-	minutes, minutesOK := fieldRate(fields[1], 60)
-	hours, hoursOK := fieldRate(fields[2], 24)
-	if !secondsOK || !minutesOK || !hoursOK {
-		return 0, false
-	}
-	// Day-of-month, month and day-of-week only ever reduce the rate, so
-	// treating them as "every" keeps this an upper bound. A schedule
-	// restricted to Sundays is not reported as running daily, because a
-	// restricted field makes the fields above it no more frequent.
-	if !isEvery(fields[3]) || !isEvery(fields[4]) || !isEvery(fields[5]) {
-		return 0, false
-	}
-	return seconds * minutes * hours, true
-}
-
-// fieldRate reports how many values one field selects out of its range.
-// It understands the shapes CloudNativePG schedules actually use: a
-// single value, a wildcard, and a wildcard step.
-func fieldRate(field string, span int) (int, bool) {
-	switch {
-	case field == "*":
-		return span, true
-	case strings.HasPrefix(field, "*/"):
-		step := 0
-		if _, err := fmt.Sscanf(field, "*/%d", &step); err != nil || step <= 0 || step > span {
-			return 0, false
+	switch schedule := parsed.(type) {
+	case *cron.SpecSchedule:
+		if schedule.Next(cronFirstSecond).IsZero() {
+			// No date satisfies it (the 30th of February): it never runs.
+			return 0, false, false
 		}
-		return (span + step - 1) / step, true
-	case !strings.ContainsAny(field, ",-/"):
-		value := 0
-		if _, err := fmt.Sscanf(field, "%d", &value); err != nil {
-			return 0, false
+		perDay = bitCount(schedule.Second, 0, 59) *
+			bitCount(schedule.Minute, 0, 59) *
+			bitCount(schedule.Hour, 0, 23)
+		return perDay, firesEveryDay(schedule), true
+	case cron.ConstantDelaySchedule:
+		if schedule.Delay <= 0 {
+			return 0, false, false
 		}
-		return 1, true
+		return int(day / schedule.Delay), true, true
 	default:
-		// Lists and ranges are legitimate and rare here; counting them
-		// correctly is more surface than the question warrants, so the
-		// detector declines rather than approximates.
-		return 0, false
+		return 0, false, false
 	}
 }
 
-// isEvery reports the unrestricted wildcard.
-func isEvery(field string) bool { return field == "*" }
+// firesEveryDay reports whether the day fields select every calendar
+// day, using robfig/cron v1's own day rule: when either the day of month
+// or the day of week was written as a wildcard both must match, otherwise
+// either one is enough.
+func firesEveryDay(schedule *cron.SpecSchedule) bool {
+	if !allSet(schedule.Month, 1, 12) {
+		return false
+	}
+	domAll := allSet(schedule.Dom, 1, 31)
+	dowAll := allSet(schedule.Dow, 0, 6)
+	if isWildcard(schedule.Dom) || isWildcard(schedule.Dow) {
+		return domAll && dowAll
+	}
+	return domAll || dowAll
+}
+
+// wildcardBit is the bit robfig/cron v1 sets on a field written as * or
+// ?; it is not a value and is masked out of every count.
+const wildcardBit = uint64(1) << 63
+
+func isWildcard(bits uint64) bool { return bits&wildcardBit != 0 }
+
+// rangeMask returns the bits of the values low..high.
+func rangeMask(low, high uint) uint64 {
+	return (^uint64(0) >> (63 - high)) &^ ((uint64(1) << low) - 1)
+}
+
+// bitCount counts the values a field selects within its bounds.
+func bitCount(bits uint64, low, high uint) int {
+	return stdbits.OnesCount64(bits & rangeMask(low, high))
+}
+
+// allSet reports whether a field selects every value within its bounds.
+func allSet(bits uint64, low, high uint) bool {
+	mask := rangeMask(low, high)
+	return bits&mask == mask
+}

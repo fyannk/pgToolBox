@@ -39,6 +39,7 @@ require (
 	github.com/openshift/api v0.0.0-20261103105328-7912bdb54653
 	github.com/pierrec/lz4/v4 v4.1.33
 	github.com/prometheus/client_golang v1.25.0
+	github.com/robfig/cron v1.2.0
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	github.com/ulikunitz/xz v0.5.17
 	go.etcd.io/bbolt v1.5.0

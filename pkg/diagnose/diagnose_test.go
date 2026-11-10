@@ -41,31 +41,104 @@ func schedule(name, expr string) observe.ScheduledBackupFacts {
 
 // TestRunsPerDayReadsTheSixFieldCron pins the arithmetic the whole
 // finding rests on, including the case it exists for: a five-field
-// expression written from habit is read seconds first and is hourly.
+// expression written from habit is read seconds first and is hourly. The
+// parser is the operator's own (robfig/cron v1 cron.Parse), so the table
+// covers what it accepts: five and six fields, every descriptor, @every,
+// lists, ranges, steps and names; and what it refuses, which declines.
 func TestRunsPerDayReadsTheSixFieldCron(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		expr string
-		want int
-		ok   bool
+		expr     string
+		want     int
+		everyDay bool
+		ok       bool
 	}{
-		{"0 0 2 * * *", 1, true},              // daily at 02:00, written correctly
-		{"0 2 * * * *", 24, true},             // the mistake: every hour at 02 past
-		{"0 0 */6 * * *", 4, true},            // every six hours
-		{"*/30 * * * * *", 60 * 2 * 24, true}, // every thirty seconds
-		{"0 2 * * *", 24, true},               // five fields: robfig/cron v1 reads seconds first, dow "*"
-		{"0 0 2 * *", 1, true},                // five fields, seconds first: daily at 02:00
-		{"0 0 2 1 *", 0, false},               // five fields, restricted day of month: declines
-		{"0 2 * *", 0, false},                 // four fields: the operator refuses it
-		{"0 0 2 * * 0", 0, false},             // restricted weekday: declines
-		{"0 0 1,13 * * *", 0, false},          // list: declines rather than guesses
-		{"", 0, false},
-		{"garbage", 0, false},
+		// Six fields.
+		{"0 0 2 * * *", 1, true, true},              // daily at 02:00, written correctly
+		{"0 2 * * * *", 24, true, true},             // the mistake: every hour at 02 past
+		{"0 0 */6 * * *", 4, true, true},            // every six hours
+		{"0 0 */4 * * *", 6, true, true},            // every four hours: at the alarm
+		{"*/30 * * * * *", 60 * 2 * 24, true, true}, // every thirty seconds
+		{"* * * * * *", 86400, true, true},          // every second
+		{"0 0 1,13 * * *", 2, true, true},           // list
+		{"0 0 1-3 * * *", 3, true, true},            // range
+		{"0 0 8-18/2 * * *", 6, true, true},         // stepped range: 8,10,...,18
+		{"0 30 3/6 * * *", 4, true, true},           // N/step means N-max/step: 3,9,15,21
+		{"0 0,30 * * * *", 48, true, true},          // minute list, every hour
+		{"0 0 2 * * 0", 1, false, true},             // Sundays at 02:00
+		{"0 0 * * * sun", 24, false, true},          // hourly on Sundays: each run day has 24
+		{"0 0 2 1 * *", 1, false, true},             // monthly on the 1st
+		{"0 0 2 * jan-jun *", 1, false, true},       // half the year
+		{"0 0 2 1-31 * *", 1, true, true},           // every day of month, explicitly
+		{"0 0 2 1-31 * 0", 1, true, true},           // neither field a wildcard: either matches, so every day
+		{"0 0 2 1 * ?", 1, false, true},             // ? is a wildcard: both must match
+		// Five fields: robfig/cron v1 reads second minute hour dom month.
+		{"0 2 * * *", 24, true, true},    // the crontab habit for 02:00 daily: hourly
+		{"0 0 2 * *", 1, true, true},     // seconds first: daily at 02:00
+		{"0 2 * * 1-5", 24, false, true}, // the weekday crontab: hourly, January to May
+		{"0 0 2 1 *", 1, false, true},    // restricted day of month
+		{"*/5 * * * *", 12 * 1440, true, true},
+		// Descriptors.
+		{"@yearly", 1, false, true},
+		{"@annually", 1, false, true},
+		{"@monthly", 1, false, true},
+		{"@weekly", 1, false, true},
+		{"@daily", 1, true, true},
+		{"@midnight", 1, true, true},
+		{"@hourly", 24, true, true},
+		{"@every 30m", 48, true, true},
+		{"@every 1h", 24, true, true},
+		{"@every 1h30m", 16, true, true},
+		{"@every 7h", 3, true, true},
+		{"@every 24h", 1, true, true},
+		{"@every 48h", 0, true, true},
+		{"@every 1s", 86400, true, true},
+		{"@every 500ms", 86400, true, true}, // the parser rounds up to a second
+		// Refused by the operator's parser, or never firing: declines.
+		{"0 2 * *", 0, false, false},         // four fields
+		{"0 0 2 * * * *", 0, false, false},   // seven fields
+		{"0 0 30 2 *", 0, false, false},      // five fields: hour 30 is out of range
+		{"0 0 0 30 2 *", 0, false, false},    // the 30th of February never comes
+		{"0 0 25 * * *", 0, false, false},    // hour out of range
+		{"0 0 5-1 * * *", 0, false, false},   // reversed range
+		{"0 0 */0 * * *", 0, false, false},   // zero step
+		{"0 0 1-2-3 * * *", 0, false, false}, // two hyphens
+		{"@fortnightly", 0, false, false},    // unknown descriptor
+		{"@every soon", 0, false, false},     // bad duration
+		{" @hourly", 0, false, false},        // the operator does not trim
+		{"", 0, false, false},
+		{"garbage", 0, false, false},
 	}
 	for _, tc := range cases {
-		got, ok := runsPerDay(tc.expr)
-		if ok != tc.ok || (ok && got != tc.want) {
-			t.Errorf("runsPerDay(%q) = %d, %v; want %d, %v", tc.expr, got, ok, tc.want, tc.ok)
+		got, everyDay, ok := runsPerDay(tc.expr)
+		if ok != tc.ok || (ok && (got != tc.want || everyDay != tc.everyDay)) {
+			t.Errorf("runsPerDay(%q) = %d, %v, %v; want %d, %v, %v",
+				tc.expr, got, everyDay, ok, tc.want, tc.everyDay, tc.ok)
+		}
+	}
+}
+
+// TestCadenceReportsRestrictedDays is the regression test of the
+// declined weekday crontab: 0 2 * * 1-5 was skipped because a restricted
+// field was not understood, yet the operator runs it hourly through
+// January to May. The summary says the rate holds on the days it runs.
+func TestCadenceReportsRestrictedDays(t *testing.T) {
+	t.Parallel()
+	result := Run(input([]observe.ScheduledBackupFacts{
+		schedule("weekdays", "0 2 * * 1-5"),
+		schedule("every-half-hour", "@every 30m"),
+		schedule("nightly", "@daily"),
+	}, nil))
+	if len(result.Findings) != 2 {
+		t.Fatalf("findings = %+v, want weekdays and every-half-hour", result.Findings)
+	}
+	summaries := result.Findings[0].Summary + "\n" + result.Findings[1].Summary
+	for _, want := range []string{
+		"weekdays is set to run 24 times a day on the days it runs.",
+		"every-half-hour is set to run 48 times a day.",
+	} {
+		if !strings.Contains(summaries, want) {
+			t.Errorf("summaries %q do not contain %q", summaries, want)
 		}
 	}
 }

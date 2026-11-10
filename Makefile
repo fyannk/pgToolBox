@@ -282,7 +282,7 @@ audit: ## npm audit of the docs site.
 # instead of silently never matching; the inverse runs beside it.
 .PHONY: verify-pins
 verify-pins: ## Verify the diagnostics catalog's CNPG pins against upstream sources.
-	go test -tags catalogpins -count=1 -run 'TestPinnedStringsExistInVerifiedReleases|TestEveryUpstreamSignalIsDecided' ./pkg/diagnose/catalog/
+	go test -tags catalogpins -count=1 -run 'TestPinnedStringsExistInVerifiedReleases|TestEveryUpstreamSignalIsDecided|TestCronParserMatchesTheOperator' ./pkg/diagnose/catalog/
 
 .PHONY: catalog-docs
 catalog-docs: ## Regenerate docs/site/docs/reference/checks.md from the catalog.
