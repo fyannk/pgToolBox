@@ -538,19 +538,6 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      # latest is a promise that this is a stable release that passed the scan.
-      # It points at the digest that was signed, so nothing new needs signing.
-      - name: Move latest (stable releases only)
-        if: needs.prepare.outputs.prerelease != 'true'
-        run: |
-          set -euo pipefail
-          while read -r ref; do
-            name="${ref%@*}"
-            case "${name}" in
-              *pgtoolbox-bundle | *pgtoolbox-catalog) continue ;;
-            esac
-            docker buildx imagetools create --tag "${name}:latest" "${ref}"
-          done < dist/release/digests.txt
       - name: Write the release notes
         run: |
           set -euo pipefail
@@ -582,13 +569,27 @@ jobs:
           gh release create "${TAG}" "${flags[@]}" \
             dist/release/pgtoolbox-*.tgz dist/release/pgtools-*.tgz \
             dist/release/install-*.yaml dist/release/sbom-*.spdx.json \
-            dist/release/digests.txt dist/release/SHA256SUMS dist/release/SHA256SUMS.sigstore.json
+            dist/release/digests.txt dist/release/chart-digests.txt dist/release/SHA256SUMS dist/release/SHA256SUMS.sigstore.json
       # A release that points at packages nobody can pull is not a release.
       # New GHCR packages start private; if any digest is not publicly pullable
       # this step fails and the release stays a draft. Recovery: make the named
       # packages public, then "Re-run failed jobs" on this run.
       - name: Check that every digest is publicly pullable
         run: ./hack/release.sh check-public dist/release/digests.txt dist/release/chart-digests.txt
+      # latest is a promise that this is a stable release that passed the scan
+      # and whose packages are public. It moves last, after the visibility check,
+      # and points at the digest that was signed, so nothing new needs signing.
+      - name: Move latest (stable releases only)
+        if: needs.prepare.outputs.prerelease != 'true'
+        run: |
+          set -euo pipefail
+          while read -r ref; do
+            name="${ref%@*}"
+            case "${name}" in
+              *pgtoolbox-bundle | *pgtoolbox-catalog) continue ;;
+            esac
+            docker buildx imagetools create --tag "${name}:latest" "${ref}"
+          done < dist/release/digests.txt
       - name: Publish the release
         run: gh release edit "${TAG}" --draft=false
 
