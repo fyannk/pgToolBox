@@ -105,7 +105,12 @@ default is ruled out too, the size is not established and the stanza is unknown.
 
 The recovery window's `end_lsn` is an exclusive upper bound: the first LSN
 past the last contiguous segment, which the archive does not hold. It is not a
-restore target, and not the last commit; replay ends at or before it.
+restore target, and not the last commit; replay ends at or before it. For
+pgBackRest it is computed at the WAL segment size the agent settled on: when
+that size is the default or read from segment names rather than proven by the
+backups' LSNs, the window's assumptions say so
+(`wal-segment-size-assumed-default`, `wal-segment-size-from-wal-names`) and
+`end_lsn` is only as good as that size.
 
 The console applies further limits to the recovery paths it receives, for
 both formats. The first two leave the recovery window without covered spans and give
