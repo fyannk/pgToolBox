@@ -375,14 +375,24 @@ segments, so the bar and the answer always agree:
   when the agent read it, while segments archived since may have reached it
   late. A reading of one or two files proves nothing (a slow archiver can hold
   them for long), and a failed read is no reading, so a run of failed reads
-  widens the band, never narrows it. When no sweep the console keeps
-  (`RING_RETENTION`, one hour by default; a console that just started keeps
-  none) read zero, the sweep period is not known, or `archive_timeout` is 0,
-  the band is the day before the latest point. The window is then a warning,
-  never healthy;
+  widens the band, never narrows it. A busy primary may never read zero, so a
+  sweep with files waiting bounds the start too, from the primary's WAL
+  positions the sweep keeps: at a sweep with *k* `.ready` files and the write
+  position in segment *S*, every segment before *S−k* was archived; segment
+  *S−k* switched after the newest earlier sweep whose position had not reached
+  the start of *S−k+1*, and a commit in it is at most one `archive_timeout`
+  older than its switch. The band then starts one `archive_timeout` before
+  that earlier sweep, when that is later than the quiet-sweep bound. The WAL
+  segment size comes from the primary's own report (its current WAL file name
+  against its position); when that does not settle a single size, this bound is
+  not used. When no sweep the console keeps (`RING_RETENTION`, one hour by
+  default; a console that just started keeps none) gives either bound, the
+  sweep period is not known, or `archive_timeout` is 0, the band is the day
+  before the latest point. The window is then a warning, never healthy;
 - while the primary's archiver is not read (archiving `PrimaryUnread`, or the
   Cluster hibernated): the same band, from the newest sweep that read it with
-  nothing waiting, else the day before the latest point. Nothing says how long
+  nothing waiting or the WAL-position bound above, else the day before the
+  latest point. Nothing says how long
   the newest archived WAL waited on the primary, so the window is a warning and
   every answer carries the caveat "the primary's archiver was not read". A
   hibernated Cluster's window is `unknown` instead: it writes no WAL and runs no

@@ -442,6 +442,10 @@ type gathered struct {
 	// readyRings are the sweep's readyWalFiles samples of the archiving
 	// instance and of every instance reporting an archive failure.
 	readyRings map[string][]viewmodel.Point
+	// lsnRing is the current primary's WAL position ring (sweep
+	// SeriesCurrentLSN), read with its readyRings entry: the recovery
+	// facts bound a backlog's onset with both.
+	lsnRing []viewmodel.Point
 	// volumesReported: an instance reported its volumes recently (the
 	// fork's volumeUsages or cnpg_disk_* metrics).
 	volumesReported bool
@@ -602,7 +606,7 @@ func (s *Service) gather(ctx context.Context, key cache.ClusterKey, withEvents b
 	}
 	if sw := s.sweeper(); sw != nil {
 		g.swept, g.hasSweep = sw.Snapshot(g.sweepKey())
-		g.readyRings = readyRings(sw, g)
+		g.readyRings, g.lsnRing = readyRings(sw, g)
 		if s.opts.Trends != nil {
 			since := s.now().Add(-max(3*g.swept.Interval, 5*time.Minute))
 			g.volumesReported = s.opts.Trends.Reported(key.Namespace, key.Name, since)
@@ -630,21 +634,25 @@ func (s *Service) gather(ctx context.Context, key cache.ClusterKey, withEvents b
 // persists across sweeps, and while the primary is unread its earlier
 // sweeps can still bound the recovery band), and those of the instances
 // read now that report an archive failure (whether the archiver caught up
-// since). A failed read is a gap in the ring, never a reading.
-func readyRings(sw Sweep, g *gathered) map[string][]viewmodel.Point {
-	out := map[string][]viewmodel.Point{}
+// since). A failed read is a gap in the ring, never a reading. lsn is the
+// current primary's WAL position ring.
+func readyRings(sw Sweep, g *gathered) (out map[string][]viewmodel.Point, lsn []viewmodel.Point) {
+	out = map[string][]viewmodel.Point{}
 	for name, inst := range g.swept.Instances {
 		read := inst.State == viewmodel.StatusReadOK && inst.Reading != nil
 		if name != g.cluster.Status.CurrentPrimary && (!read || inst.Reading.LastFailedWALTime == nil) {
 			continue
 		}
 		for _, series := range sw.Series(g.sweepKey(), name) {
-			if series.Key == sweep.SeriesReadyWALFiles {
+			switch {
+			case series.Key == sweep.SeriesReadyWALFiles:
 				out[name] = series.Points
+			case series.Key == sweep.SeriesCurrentLSN && name == g.cluster.Status.CurrentPrimary:
+				lsn = series.Points
 			}
 		}
 	}
-	return out
+	return out, lsn
 }
 
 // isMember is the membership rule: the label selected the pod, but

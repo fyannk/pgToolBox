@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -651,7 +652,7 @@ func (s *Service) instanceRows(g *gathered, withSeries bool) []viewmodel.Instanc
 		}
 		if withSeries {
 			if sw := s.sweeper(); sw != nil {
-				row.Series = sw.Series(g.sweepKey(), pod.Name)
+				row.Series = sparklines(sw.Series(g.sweepKey(), pod.Name))
 			}
 		}
 		row.Health = instanceHealth(row)
@@ -958,4 +959,10 @@ func eventRow(e *corev1.Event) viewmodel.EventRow {
 		row.Health = viewmodel.HealthWarning
 	}
 	return row
+}
+
+// sparklines are the series an instance row draws: the primary's WAL
+// position ring is read by the recovery facts only.
+func sparklines(series []viewmodel.Series) []viewmodel.Series {
+	return slices.DeleteFunc(series, func(s viewmodel.Series) bool { return s.Key == sweep.SeriesCurrentLSN })
 }

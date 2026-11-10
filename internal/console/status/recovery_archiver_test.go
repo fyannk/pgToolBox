@@ -15,6 +15,7 @@
 package status
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -405,7 +406,7 @@ func TestUnreadPrimaryKeepsItsRing(t *testing.T) {
 			"db-3": {State: viewmodel.StatusReadOK, Reading: &instancestatus.Reading{}},
 		}},
 	}
-	rings := readyRings(fakeSweep{}, g)
+	rings, _ := readyRings(fakeSweep{}, g)
 	if _, ok := rings["db-2"]; !ok {
 		t.Fatalf("the unread primary's ring is not read: %+v", rings)
 	}
@@ -461,5 +462,117 @@ func TestOneMissedPrimaryReadDoesNotFlicker(t *testing.T) {
 				t.Errorf("archiver unread %t, want %t", facts.archiverUnread, !tc.read)
 			}
 		})
+	}
+}
+
+// busyPrimary is a primary with 16 MiB segments that never reads zero
+// .ready files: over 60 sweeps (30 min, one every 30 s, before read) it
+// switches a segment every 10 sweeps and keeps ready files waiting. Its
+// reading names its current WAL file, from which the segment size
+// follows.
+func busyPrimary(read time.Time, ready int) (instancestatus.Reading, []viewmodel.Point, []viewmodel.Point) {
+	const size, base = 16 << 20, 1300
+	position := func(i int) uint64 { return uint64(base+i/10)*size + uint64(i)*4096 }
+	var counts, lsns []float64
+	for i := range 60 {
+		counts = append(counts, float64(ready))
+		lsns = append(lsns, float64(position(i)))
+	}
+	current := position(60)
+	segno := current / size
+	r := instancestatus.Reading{
+		IsPrimary: true, IsArchivingWAL: true, ReadyWALFiles: ready, ObservedAt: read,
+		CurrentLSN: fmt.Sprintf("%X/%X", current>>32, current&0xFFFFFFFF), CurrentWAL: fmt.Sprintf("%08X%08X%08X", 1, segno/256, segno%256),
+	}
+	return r, ring(read, counts...), ring(read, lsns...)
+}
+
+// TestBusyPrimaryBacklogBoundByPositions (round 7, DBA P2-2): a busy
+// primary may never read zero .ready files, which left a day-long band.
+// At a sweep with k files waiting and the position in segment S, every
+// segment before S-k was archived; S-k switched after the newest sweep
+// whose position had not reached the start of S-k+1, and a commit in it
+// is at most one archive_timeout older than its switch. The band starts
+// there, for a backlog and for an unread primary; without the positions,
+// or with a segment size the reading does not settle, it stays a day.
+func TestBusyPrimaryBacklogBoundByPositions(t *testing.T) {
+	svc := &Service{}
+	read := now.Add(-30 * time.Second)
+	at := func(i int) time.Time { return read.Add(-time.Duration(60-i) * 30 * time.Second) }
+	// The newest sweep (i=59, segment base+5, 3 waiting) finds the start
+	// of segment base+3 not reached at i=29 (segment base+2).
+	wantFrom := at(29).Add(-defaultArchiveTimeout)
+	last := now.Add(-time.Minute)
+	fx := timelineFixture{paths: []evidence.RecoveryPath{tlPath("b1", 48*time.Hour, time.Minute, evidencev1alpha1.CoverageFrontier)}}
+	for _, tc := range []struct {
+		name      string
+		unread    bool
+		positions bool
+		badWAL    bool
+		wantCode  string
+		wantFrom  time.Time
+	}{
+		{name: "backlog, positions known", positions: true, wantCode: "recovery.segment.archiveBacklogBound", wantFrom: wantFrom},
+		{name: "unread, positions known", unread: true, positions: true, wantCode: "recovery.segment.archiverUnreadBound", wantFrom: wantFrom},
+		{name: "backlog, no position ring", wantCode: "recovery.segment.archiveBacklog", wantFrom: last.Add(-failureLookback)},
+		{name: "backlog, the segment size is not settled", positions: true, badWAL: true, wantCode: "recovery.segment.archiveBacklog", wantFrom: last.Add(-failureLookback)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, ready, lsns := busyPrimary(read, 3)
+			if tc.badWAL {
+				r.CurrentWAL = "000000010000000000000000"
+			}
+			inst := sweep.Instance{State: viewmodel.StatusReadOK, Reading: &r}
+			arch := viewmodel.Archiving{Health: viewmodel.HealthWarning, Reason: cnpgstatus.ArchivingReasonBacklog}
+			if tc.unread {
+				inst.State = viewmodel.StatusReadUnreachable
+				arch = viewmodel.Archiving{Health: viewmodel.HealthUnknown, Reason: cnpgstatus.ArchivingReasonPrimaryUnread}
+			}
+			g := &gathered{
+				cluster:    inTreeCluster(),
+				swept:      sweep.Snapshot{SweptAt: now, Interval: 30 * time.Second, Instances: map[string]sweep.Instance{"db-2": inst}},
+				readyRings: map[string][]viewmodel.Point{"db-2": ready},
+			}
+			if tc.positions {
+				g.lsnRing = lsns
+			}
+			facts := recoveryFactsOf(g, arch, now)
+			tl := svc.recoveryTimeline(fx.evidence(), viewmodel.BackupSummary{Archiving: arch}, nil, facts)
+			band := edgeBand(tl, "recovery.segment.archiveBacklog", "recovery.segment.archiveBacklogSince", "recovery.segment.archiveBacklogBound",
+				"recovery.segment.archiverUnread", "recovery.segment.archiverUnreadSince", "recovery.segment.archiverUnreadBound")
+			if band == nil || band.Code != tc.wantCode || !band.From.Equal(tc.wantFrom) {
+				t.Fatalf("band %+v, want %s from %s (backlog %d, bounds %+v)", band, tc.wantCode, tc.wantFrom, facts.backlog, facts.bounds)
+			}
+			b := viewmodel.Backups{RecoveryTimeline: tl, Summary: viewmodel.BackupSummary{Archiving: arch}, GeneratedAt: now}
+			if got := restoreCheck(b, tc.wantFrom.Add(time.Second)); got.Answer == "covered" {
+				t.Errorf("just inside the band: %+v", got)
+			}
+			if got := restoreCheck(b, tc.wantFrom.Add(-time.Minute)); got.Answer != "covered" {
+				t.Errorf("before the band: %+v", got)
+			}
+		})
+	}
+}
+
+// TestWALSegmentSize: the size the current WAL file name and position
+// agree on, at a segment boundary too (pg_walfile_name names the file
+// before); none when several sizes fit or the name does not parse.
+func TestWALSegmentSize(t *testing.T) {
+	for _, tc := range []struct {
+		lsn, wal string
+		want     uint64
+	}{
+		{"5/2A000100", "00000001000000050000002A", 16 << 20},
+		{"5/2B000000", "00000001000000050000002A", 16 << 20},
+		{"5/2A000100", "0000000100000005000002A0", 1 << 20},
+		{"5/40000100", "000000010000000500000001", 1 << 30},
+		{"5/00000100", "000000010000000500000000", 0},
+		{"5/2A000100", "not-a-wal-file-name-0000", 0},
+		{"5/2A000100", "00000001000000060000002A", 0},
+	} {
+		got, ok := walSegmentSize(&instancestatus.Reading{CurrentLSN: tc.lsn, CurrentWAL: tc.wal})
+		if got != tc.want || ok != (tc.want != 0) {
+			t.Errorf("walSegmentSize(%s, %s) = %d %t, want %d", tc.lsn, tc.wal, got, ok, tc.want)
+		}
 	}
 }

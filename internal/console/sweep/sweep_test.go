@@ -292,7 +292,7 @@ func TestSinceAndLastGoodReading(t *testing.T) {
 	}
 
 	series := s.Series(key, "orders-2")
-	if len(series) != 2 {
+	if len(series) != 3 {
 		t.Fatalf("series = %+v", series)
 	}
 	for _, sr := range series {
@@ -307,6 +307,13 @@ func TestSinceAndLastGoodReading(t *testing.T) {
 			for _, p := range sr.Points {
 				if p.Value != nil {
 					t.Errorf("readyWalFiles of a replica: %+v", sr.Points)
+				}
+			}
+		case SeriesCurrentLSN:
+			// A replica's position is not the WAL its archiver has.
+			for _, p := range sr.Points {
+				if p.Value != nil {
+					t.Errorf("WAL position of a replica: %+v", sr.Points)
 				}
 			}
 		case SeriesLagBytes:

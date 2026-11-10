@@ -302,6 +302,16 @@ function translate(code: string, p: Params): string | undefined {
       const quiet = instant(p, "quietAt");
       return quiet ? m.rp_segment_archiver_unread_since({ quiet }) : undefined;
     }
+    case "recovery.segment.archiveBacklogBound": {
+      const read = instant(p, "readAt");
+      const bound = instant(p, "boundAt");
+      return segments && read && bound ? m.rp_segment_archive_backlog_bound({ segments, read, bound }) : undefined;
+    }
+    case "recovery.segment.archiverUnreadBound": {
+      const read = instant(p, "readAt");
+      const bound = instant(p, "boundAt");
+      return read && bound ? m.rp_segment_archiver_unread_bound({ read, bound }) : undefined;
+    }
     case "recovery.segment.pathNotHealthy": {
       const state = evidenceStateWord(p?.state);
       if (!state || !id) return undefined;

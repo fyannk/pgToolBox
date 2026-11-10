@@ -24,6 +24,7 @@ import (
 	"github.com/fyannk/pgToolBox/internal/console/evidence"
 	"github.com/fyannk/pgToolBox/internal/console/viewmodel"
 	"github.com/fyannk/pgToolBox/pkg/cnpgstatus"
+	"github.com/fyannk/pgToolBox/pkg/cnpgstatus/instancestatus"
 	evidencev1alpha1 "github.com/fyannk/pgToolBox/pkg/evidence/v1alpha1"
 )
 
@@ -126,6 +127,17 @@ type recoveryFacts struct {
 	// proves nothing (a slow archiver can hold them for long), and a
 	// failed read is no reading.
 	quiet []time.Time
+	// bounds are, for the sweeps that read the current primary with
+	// .ready files waiting, the time before which every commit was
+	// archived by then (archivedBounds); empty when the WAL positions or
+	// the segment size are not known.
+	bounds []archivedBound
+}
+
+// archivedBound says that by the sweep at readAt every commit before
+// before was in WAL the archiver had archived.
+type archivedBound struct {
+	readAt, before time.Time
 }
 
 // recoveryFactsOf reads the facts from a gathered Cluster and its
@@ -151,6 +163,7 @@ func recoveryFactsOf(g *gathered, arch viewmodel.Archiving, now time.Time) recov
 	}
 	if f.backlog > 0 || f.archiverUnread {
 		f.quiet = quietSweeps(g, live)
+		f.bounds = archivedBounds(g, f.archiveTimeout)
 	}
 	var failedOn string
 	f.lastFailedWAL, failedOn = newestArchiveFailure(g)
@@ -195,6 +208,130 @@ func quietSweeps(g *gathered, live *cnpgstatus.ArchiverLive) []time.Time {
 		out = append(out, p.At.UTC())
 	}
 	return out
+}
+
+// archivedBounds bound a backlog's onset on a busy primary, which may
+// never read zero .ready files. At a sweep T that read k .ready files
+// with the write position in segment S, the archiver had archived every
+// segment before S-k by T: the .ready files are the newest completed
+// segments it has not been asked to finish with (PostgreSQL archives in
+// order, and segments a parallel archiver uploaded ahead stay .ready, so
+// k only overcounts). A commit in a later segment is at most one
+// archive_timeout older than that segment's switch (archive_timeout
+// forces the switch once anything was written), and segment S-k switched
+// after any sweep T' at which the position had not reached the start of
+// S-k+1. So by T every commit before T' - archive_timeout was archived.
+// T' is the newest such sweep at or before T, both since the instance
+// became primary; a failed read is no T or T' (it only widens). Empty
+// without the position ring, the segment size, or archive_timeout.
+func archivedBounds(g *gathered, archiveTimeout time.Duration) []archivedBound {
+	primary := g.cluster.Status.CurrentPrimary
+	size, ok := walSegmentSize(g.swept.Instances[primary].Reading)
+	if !ok || archiveTimeout <= 0 || len(g.lsnRing) == 0 {
+		return nil
+	}
+	var promoted time.Time
+	if t, err := time.Parse(time.RFC3339Nano, g.cluster.Status.CurrentPrimaryTimestamp); err == nil {
+		promoted = t.UTC()
+	}
+	type sample struct {
+		at  time.Time
+		lsn uint64
+	}
+	var positions []sample // oldest first
+	byAt := map[time.Time]uint64{}
+	for _, p := range g.lsnRing {
+		if p.Value == nil || *p.Value < 0 || p.At.Before(promoted) {
+			continue
+		}
+		v := uint64(*p.Value)
+		positions = append(positions, sample{at: p.At, lsn: v})
+		byAt[p.At] = v
+	}
+	var out []archivedBound
+	for _, p := range g.readyRings[primary] {
+		if p.Value == nil || *p.Value < 1 || p.At.Before(promoted) {
+			continue
+		}
+		lsn, read := byAt[p.At]
+		if !read {
+			continue
+		}
+		k := uint64(*p.Value)
+		segment := lsn / size
+		if segment+1 <= k {
+			continue
+		}
+		// The start of segment S-k+1: S-k is finished once the position
+		// reaches it.
+		start := (segment - k + 1) * size
+		for i := len(positions) - 1; i >= 0; i-- {
+			if positions[i].at.After(p.At) {
+				continue
+			}
+			if positions[i].lsn < start {
+				out = append(out, archivedBound{readAt: p.At.UTC(), before: positions[i].at.Add(-archiveTimeout).UTC()})
+				break
+			}
+		}
+	}
+	return out
+}
+
+// boundBy is the latest bound from a sweep at or before by (the scan,
+// else now): the most recent time before which every commit was in the
+// repository when the agent read it. Nil when there is none.
+func (f recoveryFacts) boundBy(by *time.Time) *archivedBound {
+	limit := f.now
+	if by != nil {
+		limit = *by
+	}
+	var best *archivedBound
+	for i := range f.bounds {
+		b := f.bounds[i]
+		if b.readAt.After(limit) {
+			continue
+		}
+		if best == nil || b.before.After(best.before) {
+			best = &b
+		}
+	}
+	return best
+}
+
+// walSegmentSize is the WAL segment size a reading's current WAL file
+// name and position agree on: the one power of two from 1 MiB to 1 GiB
+// (PostgreSQL's range) for which pg_walfile_name(pg_current_wal_lsn())
+// names that file (at a segment boundary it names the one before). False
+// when the reading is missing, the name does not parse, or more than one
+// size fits (a position early in its log id), so a guess never narrows a
+// band.
+func walSegmentSize(r *instancestatus.Reading) (uint64, bool) {
+	if r == nil || len(r.CurrentWAL) != 24 {
+		return 0, false
+	}
+	lsn, ok := cnpgstatus.ParseLSN(r.CurrentLSN)
+	if !ok {
+		return 0, false
+	}
+	logID, err1 := strconv.ParseUint(r.CurrentWAL[8:16], 16, 32)
+	seg, err2 := strconv.ParseUint(r.CurrentWAL[16:24], 16, 32)
+	if err1 != nil || err2 != nil {
+		return 0, false
+	}
+	var found uint64
+	for size := uint64(1) << 20; size <= 1<<30; size <<= 1 {
+		perLog := (uint64(1) << 32) / size
+		named := logID*perLog + seg
+		if seg >= perLog || (named != lsn/size && (lsn == 0 || named != (lsn-1)/size)) {
+			continue
+		}
+		if found != 0 {
+			return 0, false
+		}
+		found = size
+	}
+	return found, found != 0
 }
 
 // quietBy is the newest quiet sweep at or before by (the scan, else now):
@@ -819,11 +956,20 @@ func caughtUpBefore(by *time.Time, last time.Time) bool {
 // .ready file on the primary, less one archive_timeout: nothing waited
 // then, so every segment completed by then (all commits up to one
 // archive_timeout before it) was in the repository when it was read.
-// From failureLookback before the end when no kept sweep read zero, the
-// sweep period is not known, or archive_timeout is disabled.
+// A busy primary may never read zero: a sweep with files waiting bounds
+// the onset too, by the WAL positions (archivedBounds), and the later of
+// the two bounds is drawn. From failureLookback before the end when
+// neither exists, the sweep period is not known, or archive_timeout is
+// disabled.
 func backlogEdge(out *viewmodel.RecoveryTimeline, f recoveryFacts, n int, last time.Time, scanned *time.Time) {
 	segments := strconv.Itoa(n)
 	quiet := f.quietBy(scanned)
+	if b := f.boundBy(scanned); b != nil && f.archiveTimeout > 0 && f.sweepInterval > 0 && (quiet == nil || b.before.After(quiet.Add(-f.archiveTimeout))) {
+		uncertain(out, b.before, last, say("recovery.segment.archiveBacklogBound",
+			segments+" WAL segments are waiting to be archived on the primary; by its reading at "+rfc3339(b.readAt)+" every commit before "+rfc3339(b.before)+" was archived: WAL archived since then may have reached the repository late, so its arrival time overstates how recent a restore can be.",
+			map[string]string{"segments": segments, "readAt": rfc3339(b.readAt), "boundAt": rfc3339(b.before)}))
+		return
+	}
 	if quiet == nil || f.archiveTimeout <= 0 || f.sweepInterval <= 0 {
 		uncertain(out, last.Add(-failureLookback), last, say("recovery.segment.archiveBacklog",
 			segments+" WAL segments are waiting to be archived on the primary, and no sweep the console keeps saw it with none waiting: segments reach the repository late, so the arrival time of the newest overstates how recent a restore can be.",
@@ -850,6 +996,12 @@ func archiverUnreadEdge(out *viewmodel.RecoveryTimeline, f recoveryFacts, last t
 		return
 	}
 	quiet := f.quietBy(scanned)
+	if b := f.boundBy(scanned); b != nil && f.archiveTimeout > 0 && f.sweepInterval > 0 && (quiet == nil || b.before.After(quiet.Add(-f.archiveTimeout))) {
+		uncertain(out, b.before, last, say("recovery.segment.archiverUnreadBound",
+			"The primary's archiver is not read now; by its reading at "+rfc3339(b.readAt)+" every commit before "+rfc3339(b.before)+" was archived: WAL archived after that may have waited on the primary first, so its arrival time may overstate how recent a restore can be.",
+			map[string]string{"readAt": rfc3339(b.readAt), "boundAt": rfc3339(b.before)}))
+		return
+	}
 	if quiet == nil || f.archiveTimeout <= 0 || f.sweepInterval <= 0 {
 		uncertain(out, last.Add(-failureLookback), last, say("recovery.segment.archiverUnread",
 			"The primary's archiver is not read, and no sweep the console keeps saw it with nothing waiting: WAL that reached the repository may have waited on the primary first, so its arrival time may overstate how recent a restore can be.", nil))
