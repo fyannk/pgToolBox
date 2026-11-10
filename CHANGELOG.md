@@ -54,7 +54,10 @@ OpenShift.
   credentials.
 - **Install paths**: the `pgtoolbox` chart (the operator and its CRDs), the
   `pgtools` chart (a team's console, evidence agents and pgAdmin, without the
-  operator), kustomize, and an OLM bundle and catalog. Images for `linux/amd64`
+  operator), kustomize, and an OLM bundle and catalog. With
+  `operator.config.watchNamespaces`, the Helm chart binds the operator's
+  namespaced rules (Secrets included) per namespace, keeping only cluster-scoped
+  rules cluster-wide. Images for `linux/amd64`
   and `linux/arm64`: `ghcr.io/fyannk/pgtoolbox-operator`,
   `ghcr.io/fyannk/pgtoolbox-console` and `ghcr.io/fyannk/pgtoolbox-evidence-agent`.
 - The custom resources are `pgtoolbox.fyannk.dev/v1alpha1`.
@@ -137,7 +140,7 @@ OpenShift.
   policies admit host-network routers by their policy-group label. `PgAdmin`
   `spec.auth.openshiftOAuthProxy.sessionMaxAge` (5m to 12h, default 1h) sets the
   pgAdmin session lifetime.
-- **Admission policy, round four.** Changing the sign-in settings (`spec.auth`,
+- **Admission policy, sign-in settings.** Changing the sign-in settings (`spec.auth`,
   `spec.admins`) of a PgAdmin that offers Cluster credentials needs `get` on the
   namespace's Secrets; CA ConfigMaps, the SMTP TLS mode and an EvidenceAgent's
   Cluster, ObjectStore and pgBackRest endpoint count as part of a Secret's
@@ -155,8 +158,15 @@ OpenShift.
   inferred or assumed never proves a log-id rollover or timeline switch (at most
   a warning). A Barman path toward an ancestor of `latest` ends where the default
   restore leaves it, and one whose WAL stops before the switch while the child
-  already has WAL reads unhealthy, naming the lost segment. The pgBackRest window `end_lsn` is shown as an exclusive
-  upper bound, not a restore target.
+  already has WAL reads unhealthy, naming the segment missing from the
+  repository and saying the former primary may still hold it (CloudNativePG
+  archives it before that instance rejoins: do not delete that instance or its
+  volume), in both formats; native fuzz targets check that removing a segment or
+  a history file never moves a frontier forward. One degraded old backup no
+  longer greys out newer covered spans: the console caps paths only for roll-up
+  reasons no path explains, and lists the agent's coverage reason on the recovery
+  bar. The pgBackRest window `end_lsn` is shown as an exclusive upper bound, not a
+  restore target.
 - **An archive backlog is not "healthy".** Archiving shows Warning
   `ArchiveBacklog` once segments keep waiting across sweeps (the threshold follows
   CloudNativePG's WAL archiver, `isWALArchiver`, and its ObjectStore's
@@ -167,7 +177,13 @@ OpenShift.
   and no target reads covered, while the primary's archiver is unread, the Cluster
   is hibernated, or the agent rates a frontier path below healthy; archiving with an
   unread primary, a hibernated Cluster or too few sweeps after a restart is
-  unknown, not ok. The restore check says archiving is failing after the
+  unknown, not ok. A replica cluster's designated primary, which reports no WAL
+  waiting, reads unknown (`ArchiveBacklogNotReported`), never ok; a backlog that
+  holds at the threshold while nothing is archived is flagged even when the
+  archiver's parallelism is unknown; a busy primary's band is bounded by its WAL
+  positions, one missed read of the primary does not flicker the bar, the
+  end-of-WAL band allows one sweep for archive latency, and a hibernated Cluster's
+  window is unknown. The restore check says archiving is failing after the
   agent's last read, keeps archive failures across a failover, reads the archiver
   from `currentPrimary` only, clamps the instance clock, and adds an end-of-WAL
   band advising "restore to end of WAL". Phase and condition caps cover undetected
@@ -185,7 +201,15 @@ OpenShift.
   so the state ConfigMap stays under 1 MiB
   (`pgtoolbox_console_shared_state_bytes`,
   `pgtoolbox_console_shared_state_signouts_refused_total`); one person cannot fill
-  the set of known MCP bearers.
+  the set of known MCP bearers. A sign-out counts against the person sealed in
+  the session at sign-in (an HMAC tag); the state ConfigMap never drops a
+  sign-out it holds and refuses new ones past its bounds (`reason` `subject`,
+  `unnamed` or `budget`), and a dead token-only session is not shared. The MCP
+  token endpoint, known-bearer reviews and OIDC exchange reviews each have a
+  per-person share (`oauth_subject_tokens`, `known_reviews_subject`,
+  `exchange_reviews_subject`); a replayed refresh token is refused before the
+  review; store-outage refusals are bounded; each replica's signed-out table is
+  bounded.
 - **Exposure trust.** The pgtools chart trusts every peer only when
   `networkPolicy.ingress.extraFrom` is empty. `networkPolicy.from` selectors are
   validated by the CRD, and a policy the API server refuses stalls with
@@ -199,7 +223,15 @@ OpenShift.
   every peer. Unique-local IPv6 blocks wider than /64 and namespace selectors
   pinning only shared labels are broad; a refused NetworkPolicy is caught by a
   dry run before anything is exposed. On OpenShift the pgtools chart trusts no
-  peer unless `console.trustedProxyCIDRs` is set.
+  peer unless `console.trustedProxyCIDRs` is set, and `console.platform`
+  (`auto`, `kubernetes`, `openshift`) makes that hold under offline `helm
+  template`. A single-replica console with an ipBlock peer no longer restarts in
+  a loop: the verified blocks are kept while no Pod has an address. An ipBlock
+  overlapping a Node's podCIDR is broad (the operator gains `list` on Nodes); an
+  admission policy or webhook that denies the console's NetworkPolicy stalls with
+  `ExposurePolicyInvalid`; the dry run is skipped when nothing changed; a Pod
+  stuck terminating that holds an exposure change is named
+  (`ExposurePolicyKept`).
 - **Admission.** A PgAdmin with `configDatabase` needs `get` on the
   namespace's Secrets and its database must start with `pgadmin_` (CloudNativePG
   adopts and resets an existing role); raising `sessionMaxAge` counts as widening
