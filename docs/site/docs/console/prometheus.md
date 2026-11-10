@@ -50,6 +50,14 @@ lets whatever receives it act as the console's ServiceAccount against the API
 server. When your Prometheus front lets you configure the accepted audience
 (kube-rbac-proxy `--auth-token-audiences`), use a dedicated audience instead.
 
+On a `PgToolBoxConsole`, `spec.prometheus.projectedToken: true` mounts that token
+for you, and `spec.prometheus.tokenAudience` sets its audience. Omitted, the token
+carries the API server's audience, which OpenShift's thanos-querier expects. The
+operator's admission policy treats the projected token as a credential: setting
+`projectedToken`, or changing the `url`, the `caConfigMapRef` or the
+`tokenAudience` it goes with, requires `create` on `serviceaccounts/token` for the
+console's ServiceAccount ([security](../security.md#secret-references-need-get)).
+
 ### OpenShift
 
 On OpenShift, query `thanos-querier` on its tenancy port:

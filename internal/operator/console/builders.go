@@ -769,7 +769,7 @@ func consoleVolumes(c *pgtoolboxv1alpha1.PgToolBoxConsole) ([]corev1.VolumeMount
 			v.add("prometheus-token", runDir+"/prometheus", secretVolume("prometheus-token", prom.TokenSecretRef.Name, prom.TokenSecretRef.Key))
 		case prom.ProjectedToken:
 			v.add("prometheus-token", runDir+"/prometheus", corev1.Volume{Name: "prometheus-token", VolumeSource: corev1.VolumeSource{Projected: &corev1.ProjectedVolumeSource{
-				Sources: []corev1.VolumeProjection{{ServiceAccountToken: &corev1.ServiceAccountTokenProjection{ExpirationSeconds: new(int64(3600)), Path: tokenKey}}},
+				Sources: []corev1.VolumeProjection{{ServiceAccountToken: &corev1.ServiceAccountTokenProjection{Audience: prom.TokenAudience, ExpirationSeconds: new(int64(3600)), Path: tokenKey}}},
 			}}})
 		}
 		if prom.CAConfigMapRef != nil {

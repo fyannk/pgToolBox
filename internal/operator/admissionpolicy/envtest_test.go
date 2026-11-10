@@ -188,6 +188,20 @@ func TestEnvtestWorkloadIdentityAdmission(t *testing.T) {
 			RoleRef:    rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "Role", Name: "read-all"},
 			Subjects:   []rbacv1.Subject{{Kind: rbacv1.UserKind, APIGroup: rbacv1.GroupName, Name: "nsreader"}},
 		},
+		// minter may mint tokens of the ServiceAccounts of a few consoles
+		// (what the projected Prometheus token rule asks), and read no Secret.
+		&rbacv1.Role{
+			ObjectMeta: metav1.ObjectMeta{Name: "mint-console-tokens", Namespace: namespace},
+			Rules: []rbacv1.PolicyRule{{
+				APIGroups: []string{""}, Resources: []string{"serviceaccounts/token"}, Verbs: []string{"create"},
+				ResourceNames: []string{"pt-ok-console", "pt-console-x", "pt-move-console"},
+			}},
+		},
+		&rbacv1.RoleBinding{
+			ObjectMeta: metav1.ObjectMeta{Name: "mint-console-tokens", Namespace: namespace},
+			RoleRef:    rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "Role", Name: "mint-console-tokens"},
+			Subjects:   []rbacv1.Subject{{Kind: rbacv1.UserKind, APIGroup: rbacv1.GroupName, Name: "minter"}},
+		},
 		policy, binding,
 	} {
 		if err := root.Create(t.Context(), object); err != nil {
@@ -331,6 +345,8 @@ spec:
 	t.Run("secret destinations", func(t *testing.T) { testSecretDestinations(t, root, as) })
 	t.Run("evidence agent allowed secrets", func(t *testing.T) { testAllowedSecrets(t, root, as) })
 	t.Run("pgadmin cluster credentials", func(t *testing.T) { testPgAdminCredentials(t, root, as) })
+	t.Run("pgadmin sign-in audience", func(t *testing.T) { testPgAdminAudience(t, root, as) })
+	t.Run("prometheus projected token", func(t *testing.T) { testPrometheusProjectedToken(t, root, as) })
 }
 
 // refused is a Forbidden that names the Secret rule.
@@ -530,7 +546,7 @@ func testSecretDestinations(t *testing.T, root client.Client, as func(string, ..
 	for _, tc := range []struct {
 		name, kind, spec string
 		dest             []string
-		to               string
+		to               any
 	}{
 		{"tracing", "console", "  tracing:\n    endpoint: https://collector.example.com\n    headersSecretRef: {name: SECRET, key: headers}\n", []string{"spec", "tracing", "endpoint"}, "https://collector.attacker.example"},
 		{"oidc", "console", "  auth:\n    provider: oidc\n    oidc:\n      issuerURL: https://idp.example.com\n      clientID: c\n      clientSecretRef: {name: SECRET}\n", []string{"spec", "auth", "oidc", "issuerURL"}, "https://idp.attacker.example"},
@@ -538,12 +554,29 @@ func testSecretDestinations(t *testing.T, root client.Client, as func(string, ..
 		{"prometheus", "console", "  prometheus:\n    url: https://prometheus.example.com\n    tokenSecretRef: {name: SECRET, key: token}\n", []string{"spec", "prometheus", "url"}, "https://prometheus.attacker.example"},
 		{"registry", "console", "  image:\n    repository: registry.example.com/console\n    tag: v1\n    pullSecrets: [{name: SECRET}]\n", []string{"spec", "image", "repository"}, "registry.attacker.example/console"},
 		{"pgadmin-oauth2", "pgadmin", strings.Replace(pgadminOAuth, "%s", "SECRET", 1), []string{"spec", "auth", "oauth2", "issuerURL"}, "https://idp.attacker.example"},
+		// The CA a destination is trusted with is part of it: a new CA lets
+		// whoever it certifies stand in for the same URL.
+		{"oidc-ca", "console", "  auth:\n    provider: oidc\n    oidc:\n      issuerURL: https://idp.example.com\n      clientID: c\n      clientSecretRef: {name: SECRET}\n", []string{"spec", "auth", "oidc", "caConfigMapRef", "name"}, "attacker-ca"},
+		{"oidc-grant-ca", "console", "  auth:\n    provider: oidc\n    oidc:\n      issuerURL: https://idp.example.com\n      clientID: c\n      clientSecretRef: {name: readable}\n      grantClient:\n        clientID: g\n        clientSecretRef: {name: SECRET}\n      caConfigMapRef: {name: idp-ca}\n", []string{"spec", "auth", "oidc", "caConfigMapRef", "name"}, "attacker-ca"},
+		{"openshift-ca", "console", "  publicURL: https://c.example.com\n  auth:\n    provider: openshift\n    openshift:\n      clientSecretRef: {name: SECRET, key: token}\n", []string{"spec", "auth", "openshift", "caConfigMapRef", "name"}, "attacker-ca"},
+		{"prometheus-ca", "console", "  prometheus:\n    url: https://prometheus.example.com\n    tokenSecretRef: {name: SECRET, key: token}\n", []string{"spec", "prometheus", "caConfigMapRef", "name"}, "attacker-ca"},
+		{"smtp-tls", "console", "  history: {persistent: true}\n  digest:\n    enabled: true\n    delivery:\n      smtp:\n        address: smtp.example.com:587\n        from: a@example.com\n        to: [a@example.com]\n        username: u\n        passwordSecretRef: {name: SECRET, key: password}\n", []string{"spec", "digest", "delivery", "smtp", "tls"}, "tls"},
+		// What decides where an EvidenceAgent sends the Secrets it may read.
+		{"agent-cluster", "agent", "  clusterRef: {name: orders}\n  allowedSecrets: [SECRET]\n", []string{"spec", "clusterRef", "name"}, "billing"},
+		{"agent-objectstore", "agent", "  clusterRef: {name: orders}\n  allowedSecrets: [SECRET]\n", []string{"spec", "objectStoreRef", "name"}, "attacker-store"},
+		{"agent-insecure", "agent", "  clusterRef: {name: orders}\n  allowedSecrets: [SECRET]\n", []string{"spec", "allowInsecureEndpoint"}, true},
+		{"agent-pgbackrest-endpoint", "agent", "  clusterRef: {name: orders}\n  allowedSecrets: [SECRET]\n  pgbackrest: {endpoint: s3.example.com}\n", []string{"spec", "pgbackrest", "endpoint"}, "s3.attacker.example"},
+		{"agent-pgbackrest-repository", "agent", "  clusterRef: {name: orders}\n  allowedSecrets: [SECRET]\n  pgbackrest: {repository: 1}\n", []string{"spec", "pgbackrest", "repository"}, int64(2)},
+		{"agent-pgbackrest-ca", "agent", "  clusterRef: {name: orders}\n  allowedSecrets: [SECRET]\n  pgbackrest: {}\n", []string{"spec", "pgbackrest", "endpointCA"}, map[string]any{"name": "attacker-ca", "key": "ca.crt"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			build := func(name, secret string) *unstructured.Unstructured {
 				spec := strings.ReplaceAll(tc.spec, "SECRET", secret)
-				if tc.kind == "pgadmin" {
+				switch tc.kind {
+				case "pgadmin":
 					return pgadminWith(t, name, spec, "")
+				case "agent":
+					return object(t, "apiVersion: pgtoolbox.fyannk.dev/v1alpha1\nkind: EvidenceAgent\nmetadata: {name: "+name+", namespace: default}\nspec:\n"+spec)
 				}
 				return consoleWith(t, name, spec)
 			}
@@ -623,6 +656,22 @@ func testAllowedSecrets(t *testing.T, root client.Client, as func(string, ...str
 		}
 		if err := create(t, root, agent("as-root-many", names...)); err != nil {
 			t.Fatalf("16 allowedSecrets from the cluster admin: %v, want admitted", err)
+		}
+		// The longest destination (every pgBackRest field) on 16 names,
+		// compared old against new on an update that moves all of them.
+		full := agent("as-nsreader-full", names...)
+		full.Spec.PgBackRest = &pgtoolboxv1alpha1.EvidenceAgentPgBackRestSpec{
+			Repository: 7, Endpoint: strings.Repeat("s", 60) + ".example.com:9000",
+			EndpointCA: &pgtoolboxv1alpha1.SecretKeyReference{Name: strings.Repeat("c", 200), Key: strings.Repeat("k", 200)},
+		}
+		full.Spec.AllowInsecureEndpoint = true
+		nsreader := as("nsreader")
+		if err := create(t, nsreader, full); err != nil {
+			t.Fatalf("16 allowedSecrets with a full pgBackRest destination: %v, want admitted", err)
+		}
+		full.Spec.PgBackRest.Endpoint = strings.Repeat("t", 60) + ".example.com:9000"
+		if err := nsreader.Update(t.Context(), full); err != nil {
+			t.Fatalf("moving 16 allowedSecrets: %v, want admitted", err)
 		}
 		// More than two added at once needs get on every Secret of the
 		// namespace: a reader of some names adds them two at a time.
@@ -704,7 +753,8 @@ func testPgAdminCredentials(t *testing.T, root client.Client, as func(string, ..
 		}
 		mallory := as("mallory")
 		u := seed(t, "cr-update", refs, "")
-		if err := unstructured.SetNestedStringSlice(u.Object, []string{"someone@example.com"}, "spec", "admins"); err != nil {
+		// An edit that leaves the offer and the audience alone passes.
+		if err := unstructured.SetNestedStringSlice(u.Object, []string{"rw", "ro"}, "spec", "endpoints"); err != nil {
 			t.Fatal(err)
 		}
 		admitted(t, mallory.Update(t.Context(), u))
@@ -729,5 +779,234 @@ func testPgAdminCredentials(t *testing.T, root client.Client, as func(string, ..
 			t.Fatal(err)
 		}
 		credentialsRefused(t, mallory.Update(t.Context(), u))
+	})
+}
+
+// testPgAdminAudience: who may sign in to a PgAdmin that offers Cluster
+// credentials decides who holds them. Widening it (the required claims, the
+// username claim, the scopes, the client, pgAdmin's administrators, the
+// OpenShift proxy) is checked like widening the offer; the button label is
+// not, and neither is a PgAdmin that offers nothing.
+func testPgAdminAudience(t *testing.T, root client.Client, as func(string, ...string) client.Client) {
+	seed := func(t *testing.T, manifest string) *unstructured.Unstructured {
+		t.Helper()
+		u := object(t, manifest)
+		t.Cleanup(func() { _ = root.Delete(context.Background(), u) })
+		if err := root.Create(t.Context(), u); err != nil {
+			t.Fatal(err)
+		}
+		if err := root.Get(t.Context(), client.ObjectKeyFromObject(u), u); err != nil {
+			t.Fatal(err)
+		}
+		return u
+	}
+	oauth := func(name, credentials string) string {
+		return `apiVersion: pgtoolbox.fyannk.dev/v1alpha1
+kind: PgAdmin
+metadata: {name: ` + name + `, namespace: default}
+spec:
+  clusterRefs: [{name: orders}]
+` + credentials + `  auth:
+    oauth2:
+      issuerURL: https://idp.example.com/realms/corp
+      clientID: pgadmin
+      clientSecretRef: {name: readable}
+      requiredClaims: {groups: [dba]}
+`
+	}
+	superuser := "  credentials: {superuser: true}\n"
+	for _, tc := range []struct {
+		name  string
+		path  []string
+		value any
+	}{
+		{"requiredClaims", []string{"spec", "auth", "oauth2", "requiredClaims"}, map[string]any{"email": []any{"mallory@evil.example"}}},
+		{"usernameClaim", []string{"spec", "auth", "oauth2", "usernameClaim"}, "preferred_username"},
+		{"scopes", []string{"spec", "auth", "oauth2", "scopes"}, []any{"openid", "email", "profile", "groups"}},
+		{"admins", []string{"spec", "admins"}, []any{"mallory@evil.example"}},
+		{"clientID", []string{"spec", "auth", "oauth2", "clientID"}, "another-client"},
+	} {
+		t.Run("changing "+tc.name+" of a PgAdmin offering credentials", func(t *testing.T) {
+			name := "au-" + strings.ToLower(tc.name)
+			u := seed(t, oauth(name, superuser))
+			if err := unstructured.SetNestedField(u.Object, tc.value, tc.path...); err != nil {
+				t.Fatal(err)
+			}
+			// reader may read the client Secret but not every Secret of the
+			// namespace: the refusal is the credentials rule's.
+			credentialsRefused(t, as("mallory").Update(t.Context(), u.DeepCopy()))
+			credentialsRefused(t, as("reader").Update(t.Context(), u.DeepCopy()))
+			if err := as("nsreader").Update(t.Context(), u.DeepCopy()); err != nil {
+				t.Fatalf("a reader of the namespace's Secrets: %v, want admitted", err)
+			}
+		})
+	}
+	t.Run("the default credentials are covered too", func(t *testing.T) {
+		u := seed(t, oauth("au-default", ""))
+		if err := unstructured.SetNestedField(u.Object, map[string]any{"groups": []any{"everyone"}}, "spec", "auth", "oauth2", "requiredClaims"); err != nil {
+			t.Fatal(err)
+		}
+		credentialsRefused(t, as("mallory").Update(t.Context(), u))
+	})
+	t.Run("the button label is cosmetic", func(t *testing.T) {
+		u := seed(t, oauth("au-display", superuser))
+		if err := unstructured.SetNestedField(u.Object, "Sign in with Corp", "spec", "auth", "oauth2", "displayName"); err != nil {
+			t.Fatal(err)
+		}
+		if err := as("mallory").Update(t.Context(), u); err != nil {
+			t.Fatalf("changing displayName: %v, want admitted", err)
+		}
+	})
+	t.Run("a PgAdmin offering no credentials is unaffected", func(t *testing.T) {
+		u := seed(t, oauth("au-none", "  credentials: {application: false, databaseRoles: false}\n"))
+		if err := unstructured.SetNestedField(u.Object, map[string]any{"groups": []any{"everyone"}}, "spec", "auth", "oauth2", "requiredClaims"); err != nil {
+			t.Fatal(err)
+		}
+		if err := unstructured.SetNestedStringSlice(u.Object, []string{"mallory@evil.example"}, "spec", "admins"); err != nil {
+			t.Fatal(err)
+		}
+		if err := as("mallory").Update(t.Context(), u); err != nil {
+			t.Fatalf("widening a PgAdmin that offers nothing: %v, want admitted", err)
+		}
+	})
+	t.Run("changing or switching to the OpenShift proxy is checked", func(t *testing.T) {
+		u := seed(t, `apiVersion: pgtoolbox.fyannk.dev/v1alpha1
+kind: PgAdmin
+metadata: {name: au-proxy, namespace: default}
+spec:
+  clusterRefs: [{name: orders}]
+  credentials: {superuser: true}
+  auth:
+    openshiftOAuthProxy: {}
+`)
+		if err := unstructured.SetNestedField(u.Object, map[string]any{"repository": "registry.attacker.example/proxy", "tag": "v1"}, "spec", "auth", "openshiftOAuthProxy", "image"); err != nil {
+			t.Fatal(err)
+		}
+		credentialsRefused(t, as("mallory").Update(t.Context(), u))
+
+		u = seed(t, oauth("au-switch", superuser))
+		if err := unstructured.SetNestedField(u.Object, map[string]any{"openshiftOAuthProxy": map[string]any{}}, "spec", "auth"); err != nil {
+			t.Fatal(err)
+		}
+		credentialsRefused(t, as("mallory").Update(t.Context(), u))
+	})
+	t.Run("the largest audience change stays within the CEL cost budget", func(t *testing.T) {
+		claims := map[string]any{}
+		for i := range 8 {
+			values := make([]any, 0, 16)
+			for j := range 16 {
+				values = append(values, fmt.Sprintf("%02d-%02d-%s", i, j, strings.Repeat("v", 240)))
+			}
+			claims[fmt.Sprintf("claim-%d", i)] = values
+		}
+		admins := make([]any, 0, 32)
+		for i := range 32 {
+			admins = append(admins, fmt.Sprintf("admin-%02d@%s.example", i, strings.Repeat("d", 200)))
+		}
+		u := object(t, oauth("au-cost", superuser))
+		if err := unstructured.SetNestedField(u.Object, claims, "spec", "auth", "oauth2", "requiredClaims"); err != nil {
+			t.Fatal(err)
+		}
+		if err := unstructured.SetNestedSlice(u.Object, admins, "spec", "admins"); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = root.Delete(context.Background(), u) })
+		nsreader := as("nsreader")
+		if err := nsreader.Create(t.Context(), u); err != nil {
+			t.Fatalf("create: %v, want admitted", err)
+		}
+		// Same size, a value of every claim changed: compared in full.
+		changed := map[string]any{}
+		for k, v := range claims {
+			values := append([]any(nil), v.([]any)...)
+			values[15] = "changed-" + strings.Repeat("w", 240)
+			changed[k] = values
+		}
+		if err := unstructured.SetNestedField(u.Object, changed, "spec", "auth", "oauth2", "requiredClaims"); err != nil {
+			t.Fatal(err)
+		}
+		if err := nsreader.Update(t.Context(), u); err != nil {
+			t.Fatalf("update: %v, want admitted", err)
+		}
+	})
+}
+
+// tokenRefused is a Forbidden that names the projected Prometheus token rule.
+func tokenRefused(t *testing.T, err error) {
+	t.Helper()
+	if !apierrors.IsForbidden(err) || !strings.Contains(err.Error(), "requires create on serviceaccounts/token") {
+		t.Fatalf("error = %v, want a Forbidden naming the projected token rule", err)
+	}
+}
+
+// testPrometheusProjectedToken: spec.prometheus.projectedToken sends the
+// console ServiceAccount's own token to spec.prometheus.url; setting it, or
+// sending it elsewhere, takes the power to mint that token. minter may mint
+// the tokens of pt-ok-console, pt-console-x and pt-move-console only.
+func testPrometheusProjectedToken(t *testing.T, root client.Client, as func(string, ...string) client.Client) {
+	prom := "  prometheus:\n    url: https://prometheus.example.com\n    projectedToken: true\n"
+	create := func(t *testing.T, c client.Client, u *unstructured.Unstructured) error {
+		t.Helper()
+		t.Cleanup(func() { _ = root.Delete(context.Background(), u) })
+		return c.Create(t.Context(), u)
+	}
+	t.Run("a user who may not mint the token cannot project it", func(t *testing.T) {
+		tokenRefused(t, create(t, as("mallory"), consoleWith(t, "pt-mallory", "  prometheus:\n    url: https://attacker.example/\n    projectedToken: true\n")))
+		// Reading every Secret is not minting a token.
+		tokenRefused(t, create(t, as("nsreader"), consoleWith(t, "pt-nsreader", prom)))
+		// Minting another console's token does not help.
+		tokenRefused(t, create(t, as("minter"), consoleWith(t, "pt-other", prom)))
+	})
+	t.Run("a user who may mint the console's token can", func(t *testing.T) {
+		if err := create(t, as("minter"), consoleWith(t, "pt-ok", prom)); err != nil {
+			t.Fatalf("pt-ok (ServiceAccount pt-ok-console): %v, want admitted", err)
+		}
+		// A name that contains "console" is the ServiceAccount's name.
+		if err := create(t, as("minter"), consoleWith(t, "pt-console-x", prom)); err != nil {
+			t.Fatalf("pt-console-x (ServiceAccount pt-console-x): %v, want admitted", err)
+		}
+	})
+	t.Run("a console without a projected token is not concerned", func(t *testing.T) {
+		if err := create(t, as("mallory"), consoleWith(t, "pt-none", "  prometheus:\n    url: https://prometheus.example.com\n")); err != nil {
+			t.Fatalf("error = %v, want admitted", err)
+		}
+	})
+	t.Run("on update, sending it somewhere else is checked again", func(t *testing.T) {
+		u := consoleWith(t, "pt-move", prom)
+		if err := create(t, root, u); err != nil {
+			t.Fatal(err)
+		}
+		for _, tc := range []struct {
+			name  string
+			path  []string
+			value any
+			ok    bool
+		}{
+			{"an unrelated edit", []string{"spec", "prometheus", "namespaced"}, true, true},
+			{"the URL", []string{"spec", "prometheus", "url"}, "https://prometheus.attacker.example", false},
+			{"the CA", []string{"spec", "prometheus", "caConfigMapRef"}, map[string]any{"name": "attacker-ca"}, false},
+			{"the audience", []string{"spec", "prometheus", "tokenAudience"}, "attacker", false},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				if err := root.Get(t.Context(), client.ObjectKeyFromObject(u), u); err != nil {
+					t.Fatal(err)
+				}
+				changed := u.DeepCopy()
+				if err := unstructured.SetNestedField(changed.Object, tc.value, tc.path...); err != nil {
+					t.Fatal(err)
+				}
+				err := as("mallory").Update(t.Context(), changed.DeepCopy())
+				if tc.ok {
+					if err != nil {
+						t.Fatalf("error = %v, want admitted", err)
+					}
+					return
+				}
+				tokenRefused(t, err)
+				if err := as("minter").Update(t.Context(), changed); err != nil {
+					t.Fatalf("minter: %v, want admitted", err)
+				}
+			})
+		}
 	})
 }

@@ -102,6 +102,12 @@ func TestPgToolBoxConsoleCEL(t *testing.T) {
 		{name: "prometheus projected token", mutate: func(p *pgtoolboxv1alpha1.PgToolBoxConsole) {
 			p.Spec.Prometheus = &pgtoolboxv1alpha1.PgToolBoxConsolePrometheusSpec{URL: "https://thanos-querier:9091", ProjectedToken: true, Namespaced: true}
 		}},
+		{name: "prometheus projected token with an audience", mutate: func(p *pgtoolboxv1alpha1.PgToolBoxConsole) {
+			p.Spec.Prometheus = &pgtoolboxv1alpha1.PgToolBoxConsolePrometheusSpec{URL: "https://prometheus:9091", ProjectedToken: true, TokenAudience: "prometheus.example.com"}
+		}},
+		{name: "prometheus audience without a projected token", mutate: func(p *pgtoolboxv1alpha1.PgToolBoxConsole) {
+			p.Spec.Prometheus = &pgtoolboxv1alpha1.PgToolBoxConsolePrometheusSpec{URL: "https://prometheus:9091", TokenAudience: "prometheus.example.com"}
+		}, wantErr: "applies to projectedToken only"},
 		{name: "prometheus token in clear", mutate: func(p *pgtoolboxv1alpha1.PgToolBoxConsole) {
 			p.Spec.Prometheus = &pgtoolboxv1alpha1.PgToolBoxConsolePrometheusSpec{URL: "http://prometheus:9090", ProjectedToken: true}
 		}, wantErr: "token is never sent in clear"},
