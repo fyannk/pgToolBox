@@ -298,8 +298,16 @@ func TestSinceAndLastGoodReading(t *testing.T) {
 	for _, sr := range series {
 		switch sr.Key {
 		case SeriesReadyWALFiles:
-			if len(sr.Points) != 3 || sr.Points[0].Value == nil || *sr.Points[0].Value != 3 || sr.Points[1].Value != nil {
-				t.Errorf("%s points = %+v, want value then gaps", sr.Key, sr.Points)
+			// A replica reports no readyWalFiles (CloudNativePG counts
+			// them only on a primary): its 3 is no reading, a gap like
+			// the failed reads (round 7, CNPG P1).
+			if len(sr.Points) != 3 {
+				t.Errorf("%s points = %+v, want three samples", sr.Key, sr.Points)
+			}
+			for _, p := range sr.Points {
+				if p.Value != nil {
+					t.Errorf("readyWalFiles of a replica: %+v", sr.Points)
+				}
 			}
 		case SeriesLagBytes:
 			// No primary was read, so the replica's lag is unknown, never 0.

@@ -188,6 +188,8 @@ function recoveryReason(code: string, p: Params): string | undefined {
       return m.rp_reason_archiver_unread();
     case "recovery.reason.archiverHibernated":
       return m.rp_reason_archiver_hibernated();
+    case "recovery.reason.archiverNotReported":
+      return m.rp_reason_archiver_not_reported();
     case "recovery.reason.pathNotHealthy": {
       const state = evidenceStateWord(p?.state);
       const id = p?.backupId;
@@ -294,6 +296,8 @@ function translate(code: string, p: Params): string | undefined {
     }
     case "recovery.segment.archiverUnread":
       return m.rp_segment_archiver_unread();
+    case "recovery.segment.archiverNotReported":
+      return m.rp_segment_archiver_not_reported();
     case "recovery.segment.archiverUnreadSince": {
       const quiet = instant(p, "quietAt");
       return quiet ? m.rp_segment_archiver_unread_since({ quiet }) : undefined;
@@ -343,6 +347,8 @@ function translate(code: string, p: Params): string | undefined {
       return m.rp_caveat_archiving_failing();
     case "recovery.caveat.archiverUnread":
       return m.rp_caveat_archiver_unread();
+    case "recovery.caveat.archiverNotReported":
+      return m.rp_caveat_archiver_not_reported();
     case "recovery.caveat.archivingFailingSince": {
       const archived = instant(p, "archivedAt");
       return archived ? m.rp_caveat_archiving_failing_since({ archived }) : undefined;

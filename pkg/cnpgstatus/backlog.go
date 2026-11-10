@@ -134,6 +134,9 @@ type ArchiveBacklog struct {
 	// threshold but the sweeps kept are too few to tell a persistent
 	// backlog from a burst (a console that just started); 0 otherwise.
 	Unconfirmed int `json:"unconfirmed,omitempty"`
+	// NotReported: the archiver does not report readyWalFiles
+	// (ArchiverLive.ReadyNotReported), so no backlog can be seen.
+	NotReported bool `json:"notReported,omitempty"`
 }
 
 // Behind reports a backlog that persists.
@@ -147,7 +150,8 @@ func (b ArchiveBacklog) Behind() bool { return b.Segments > 0 }
 // sweeps whose newest readings never shrink and end larger than they
 // began. A run too short that reaches back to the oldest sweep kept is
 // Unconfirmed: nothing kept says it is a burst. A nil reading is no
-// backlog.
+// backlog; a reading that does not report readyWalFiles (a designated
+// primary) is NotReported, never a count.
 func ArchiveBacklogOf(c *cnpgv1.Cluster, live *ArchiverLive) ArchiveBacklog {
 	var pluginMaxParallel *int
 	if live != nil {
@@ -155,6 +159,10 @@ func ArchiveBacklogOf(c *cnpgv1.Cluster, live *ArchiverLive) ArchiveBacklog {
 	}
 	threshold, known := archiverThreshold(c, pluginMaxParallel)
 	out := ArchiveBacklog{Threshold: threshold, ParallelismKnown: known}
+	if live != nil && live.ReadyNotReported {
+		out.NotReported = true
+		return out
+	}
 	if live == nil || live.ReadyWALFiles < threshold {
 		return out
 	}

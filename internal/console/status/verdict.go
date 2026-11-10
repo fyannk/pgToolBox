@@ -233,14 +233,16 @@ func podReady(pod *corev1.Pod) bool {
 // (internal/management/controller/instance_controller.go v1.30.0:1333,
 // v1.30.1:1397). Every instance fills the archiver fields from
 // pg_stat_archiver (pkg/management/postgres/probes.go v1.30.0 and
-// v1.30.1:272, fillArchiverStatus).
+// v1.30.1:272, fillArchiverStatus), but readyWalFiles only a primary
+// (probes.go v1.30.1:461-463): a designated primary's is not reported
+// (ReadyNotReported).
 func primaryArchiver(g *gathered) *cnpgstatus.ArchiverLive {
 	r := primaryArchiverReading(g)
 	if r == nil {
 		return nil
 	}
 	return &cnpgstatus.ArchiverLive{
-		IsArchivingWAL: r.IsArchivingWAL, LastFailedWAL: r.LastFailedWAL, ReadyWALFiles: r.ReadyWALFiles,
+		IsArchivingWAL: r.IsArchivingWAL, LastFailedWAL: r.LastFailedWAL, ReadyWALFiles: r.ReadyWALFiles, ReadyNotReported: !r.IsPrimary,
 		ObservedAt: r.ObservedAt, Earlier: earlierReady(g, g.cluster.Status.CurrentPrimary, r.ObservedAt),
 		PluginMaxParallel: pluginMaxParallel(g),
 	}

@@ -116,8 +116,9 @@ type recoveryFacts struct {
 	// otherwise or when unread.
 	backlog int
 	// archiverUnread: the archiving fact rests on no reading of the
-	// primary's archiver (archiverUnread); hibernated says why.
-	archiverUnread, hibernated bool
+	// primary's archiver (archiverUnread); hibernated or notReported (a
+	// designated primary, which reports no readyWalFiles) says why.
+	archiverUnread, hibernated, notReported bool
 	// quiet are the sweeps, oldest first, that read the current primary's
 	// archiver with no .ready file at all, since it became primary: at
 	// each, nothing waited to be archived. A reading of a few files
@@ -139,6 +140,7 @@ func recoveryFactsOf(g *gathered, arch viewmodel.Archiving, now time.Time) recov
 		}
 	}
 	f.archiverUnread, f.hibernated = archiverUnread(arch), arch.Reason == cnpgstatus.ArchivingReasonHibernated
+	f.notReported = arch.Reason == cnpgstatus.ArchivingReasonBacklogNotReported
 	live := primaryArchiver(g)
 	switch b := cnpgstatus.ArchiveBacklogOf(g.cluster, live); {
 	case b.Behind():
@@ -159,11 +161,13 @@ func recoveryFactsOf(g *gathered, arch viewmodel.Archiving, now time.Time) recov
 
 // archiverUnread reads the archiving fact as resting on no reading of
 // the primary's archiver: unknown because the primary was not read
-// (PrimaryUnread), the Cluster is hibernated, or no condition is written
-// and the primary was not read either.
+// (PrimaryUnread), the Cluster is hibernated, the archiver is a
+// designated primary that reports no readyWalFiles
+// (ArchiveBacklogNotReported), or no condition is written and the
+// primary was not read either.
 func archiverUnread(a viewmodel.Archiving) bool {
 	switch a.Reason {
-	case cnpgstatus.ArchivingReasonPrimaryUnread, cnpgstatus.ArchivingReasonHibernated:
+	case cnpgstatus.ArchivingReasonPrimaryUnread, cnpgstatus.ArchivingReasonHibernated, cnpgstatus.ArchivingReasonBacklogNotReported:
 		return true
 	case cnpgstatus.ArchivingReasonNoCondition:
 		return a.LiveArchiving == nil
@@ -245,10 +249,12 @@ func newestArchiveFailure(g *gathered) (*time.Time, string) {
 // shows a success after the failure (last_archived_time after
 // last_failed_time: PostgreSQL archives segments in order, so the failed
 // one is in the repository). The archiver caught up at or before that
-// sweep. Nil when it has not caught up, or nothing shows it.
+// sweep. Nil when it has not caught up, or nothing shows it: an instance
+// that is not a primary now (a demoted former primary, a designated
+// primary) reports no readyWalFiles, so its 0 says nothing.
 func caughtUpBy(g *gathered, instance string) *time.Time {
 	inst, ok := g.swept.Instances[instance]
-	if !ok || inst.Reading == nil {
+	if !ok || inst.Reading == nil || !inst.Reading.IsPrimary {
 		return nil
 	}
 	r := inst.Reading
@@ -617,7 +623,7 @@ func evidenceTimeline(out *viewmodel.RecoveryTimeline, in timelineInput) {
 	}
 	timelineVerdict(out, in, timelineFindings{
 		tail: tail, holes: holes, candidates: candidates, failedRecently: failedRecently, backlog: in.facts.backlog,
-		archiverUnread: in.facts.archiverUnread, hibernated: in.facts.hibernated, degraded: degraded, orphan: orphan, undrawn: undrawn,
+		archiverUnread: in.facts.archiverUnread, hibernated: in.facts.hibernated, notReported: in.facts.notReported, degraded: degraded, orphan: orphan, undrawn: undrawn,
 	})
 	if in.rec.CoverageReason != "" {
 		// The agent's roll-up (the worst over every backup) is said beside
@@ -823,6 +829,13 @@ func backlogEdge(out *viewmodel.RecoveryTimeline, f recoveryFacts, n int, last t
 // less one archive_timeout (as backlogEdge); else from failureLookback
 // before the end.
 func archiverUnreadEdge(out *viewmodel.RecoveryTimeline, f recoveryFacts, last time.Time, scanned *time.Time) {
+	if f.notReported {
+		// A designated primary never reports readyWalFiles: no sweep can
+		// say nothing waited on it.
+		uncertain(out, last.Add(-failureLookback), last, say("recovery.segment.archiverNotReported",
+			"The archiving instance is a designated primary, which does not report how many WAL segments wait to be archived: WAL that reached the repository may have waited on it first, so its arrival time may overstate how recent a restore can be.", nil))
+		return
+	}
 	quiet := f.quietBy(scanned)
 	if quiet == nil || f.archiveTimeout <= 0 || f.sweepInterval <= 0 {
 		uncertain(out, last.Add(-failureLookback), last, say("recovery.segment.archiverUnread",
@@ -1008,8 +1021,9 @@ type timelineFindings struct {
 	failedRecently    bool
 	// backlog is the archiver's waiting segments, 0 when keeping up.
 	backlog int
-	// archiverUnread, hibernated: the primary's archiver is not read.
-	archiverUnread, hibernated bool
+	// archiverUnread, hibernated, notReported: the primary's archiver is
+	// not read, or reports no readyWalFiles.
+	archiverUnread, hibernated, notReported bool
 	// degraded is the newest drawn path the agent does not rate healthy
 	// though it reaches its frontier; nil when none is.
 	degraded *evidence.RecoveryPath
@@ -1052,6 +1066,9 @@ func timelineVerdict(out *viewmodel.RecoveryTimeline, in timelineInput, f timeli
 		n := strconv.Itoa(f.backlog)
 		setReason(out, say("recovery.reason.archiveBacklog", n+" WAL segments are waiting to be archived on the primary: the newest restore points are uncertain",
 			map[string]string{"segments": n}))
+	case f.notReported:
+		out.State = warning
+		setReason(out, say("recovery.reason.archiverNotReported", "the archiving instance is a designated primary, which does not report its archive backlog: how late recent WAL reached the repository is not known, so the newest restore points are uncertain", nil))
 	case f.hibernated:
 		out.State = warning
 		setReason(out, say("recovery.reason.archiverHibernated", "the Cluster is hibernated: whether the WAL written before it reached the repository is not confirmed, so the newest restore points are uncertain", nil))
@@ -1396,6 +1413,9 @@ func restoreCaveats(b viewmodel.Backups) []viewmodel.Phrase {
 		} else {
 			out = append(out, say("recovery.caveat.archivingFailing", "WAL archiving is failing: the newest WAL is on the instance, not in the repository.", nil))
 		}
+	} else if a.Reason == cnpgstatus.ArchivingReasonBacklogNotReported {
+		out = append(out, say("recovery.caveat.archiverNotReported",
+			"The archiving instance is a designated primary, which does not report its archive backlog: how long the newest archived WAL waited on it is not known, so restore points near the newest edge may not be in the repository.", nil))
 	} else if archiverUnread(a) {
 		out = append(out, say("recovery.caveat.archiverUnread",
 			"The primary's archiver was not read: how long the newest archived WAL waited on the primary is not known, so the newest restore points may be later than the WAL in the repository.", nil))

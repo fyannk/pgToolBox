@@ -217,3 +217,30 @@ func TestArchivingTooFewSweepsIsNotOK(t *testing.T) {
 		t.Errorf("no condition, first sweep, 500 ready: %+v", got)
 	}
 }
+
+// TestArchivingDesignatedPrimaryIsNotOK (round 7, CNPG P1): a replica
+// cluster's designated primary archives (archive_mode=always) but its
+// /pg/status carries no readyWalFiles (probes.go v1.30.1:461-463), so its
+// 0 is no reading: with ContinuousArchiving True archiving is unknown
+// ArchiveBacklogNotReported, never ok, and no backlog is read from it.
+func TestArchivingDesignatedPrimaryIsNotOK(t *testing.T) {
+	c := clusterWith(nil, cond(ConditionContinuousArchiving, "True", "ContinuousArchivingSuccess"))
+	c.Spec.Backup = &cnpgv1.BackupConfiguration{BarmanObjectStore: &cnpgv1.BarmanObjectStoreConfiguration{}}
+	live := &ArchiverLive{IsArchivingWAL: true, ReadyNotReported: true, ObservedAt: backlogNow, Earlier: readyRun(0, 0, 0)}
+	if got := Archiving(c, live); got.Class != ClassUnknown || got.Reason != ArchivingReasonBacklogNotReported || !strings.Contains(got.Message, "designated primary") {
+		t.Errorf("designated primary, condition True: %+v", got)
+	}
+	if b := ArchiveBacklogOf(c, live); !b.NotReported || b.Behind() || b.Unconfirmed != 0 {
+		t.Errorf("backlog of a designated primary: %+v", b)
+	}
+	noCondition := clusterWith(nil)
+	noCondition.Spec.Backup = c.Spec.Backup
+	if got := Archiving(noCondition, live); got.Class != ClassUnknown || got.Reason != ArchivingReasonBacklogNotReported {
+		t.Errorf("designated primary, no condition: %+v", got)
+	}
+	// A true primary with the same zero is ok.
+	live.ReadyNotReported = false
+	if got := Archiving(c, live); got.Class != ClassOK {
+		t.Errorf("primary, zero ready: %+v", got)
+	}
+}

@@ -282,7 +282,15 @@ is `unknown` (`PrimaryUnread`), with the time the condition last changed: the
 condition is written only when an `archive_command`'s outcome changes, so on its
 own it does not say that WAL reaches the repository now. A hibernated Cluster
 reads `unknown` (`Hibernated`): no instance runs, and nothing confirms that every
-segment written before hibernation reached the repository.
+segment written before hibernation reached the repository. A replica cluster's
+archiver is its designated primary, a standby (`isPrimary` false) that archives
+with `archive_mode=always`; CloudNativePG counts `.ready` files only on a primary
+(`pkg/management/postgres/probes.go` v1.30.1), so its `/pg/status` carries no
+`readyWalFiles`. The console records no sample for it (nor for any standby) and
+reads archiving as `unknown` (`ArchiveBacklogNotReported`), never `ok`: a
+backlog cannot be seen there. A standby's zeros, including those of a pod that
+was a designated primary before a replica-cluster promotion, are never read as a
+quiet sweep or as an archiver that caught up.
 The diagnostics findings on the same count (`cnpg-wal-archive-backlog`,
 `cnpg-instance-archive-backlog`) fire much later, at 32 segments, so a screen
 with the finding never shows archiving as healthy. A stalled archiver shows up in
@@ -366,6 +374,9 @@ segments, so the bar and the answer always agree:
   nothing waiting, else the day before the latest point. Nothing says how long
   the newest archived WAL waited on the primary, so the window is a warning and
   every answer carries the caveat "the primary's archiver was not read";
+- while the archiver is a designated primary (`ArchiveBacklogNotReported`):
+  the day before the latest point, with its own reason and caveat, since no
+  sweep can show that nothing waited on it;
 - a recovery path that reaches its frontier but that the evidence agent rates
   below healthy (a pgBackRest WAL segment size not proven across a log id or a
   timeline switch, or a path capped because the agent's coverage roll-up says

@@ -20,6 +20,7 @@ import (
 	"time"
 
 	cnpgv1 "github.com/cloudnative-pg/api/pkg/api/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/fyannk/pgToolBox/internal/console/evidence"
 	"github.com/fyannk/pgToolBox/internal/console/sweep"
@@ -311,5 +312,65 @@ func TestObjectStoreNameFollowsTheArchiver(t *testing.T) {
 	c := &cnpgv1.Cluster{Spec: cnpgv1.ClusterSpec{Plugins: []cnpgv1.PluginConfiguration{barman("backups", false), {Name: cnpgstatus.PgBackRestDaliboPlugin, IsWALArchiver: &yes}}}}
 	if got := cnpgstatus.ArchiveBacklogThreshold(c, pint(16)); got != cnpgstatus.ArchiveBacklogSegments {
 		t.Errorf("threshold %d with pgBackRest archiving, want %d", got, cnpgstatus.ArchiveBacklogSegments)
+	}
+}
+
+// TestDesignatedPrimaryArchiverIsNotOK (round 7, CNPG P1 and P2-2): a
+// replica cluster's designated primary (status.currentPrimary, isPrimary
+// false) archives but reports no readyWalFiles, so its 0 is no reading:
+// with ContinuousArchiving True archiving is not ok, the recovery band is
+// the day before the latest point with its own reason and caveat, and
+// neither its zeros nor a demoted former primary's count toward a quiet
+// sweep or a catch-up.
+func TestDesignatedPrimaryArchiverIsNotOK(t *testing.T) {
+	svc := &Service{}
+	fx := timelineFixture{paths: []evidence.RecoveryPath{tlPath("b1", 48*time.Hour, 10*time.Minute, evidencev1alpha1.CoverageFrontier)}}
+	last := now.Add(-10 * time.Minute)
+	read := now.Add(-30 * time.Second)
+	failed, archived := now.Add(-2*time.Hour), now.Add(-time.Hour)
+	c := inTreeCluster()
+	c.Status.Conditions = []metav1.Condition{{Type: cnpgstatus.ConditionContinuousArchiving, Status: metav1.ConditionTrue, Reason: "ContinuousArchivingSuccess"}}
+	r := instancestatus.Reading{IsPrimary: false, IsArchivingWAL: true, ObservedAt: read}
+	g := &gathered{
+		cluster: c,
+		swept:   sweep.Snapshot{Interval: 30 * time.Second, Instances: map[string]sweep.Instance{"db-2": {State: viewmodel.StatusReadOK, Reading: &r}}},
+		// Zeros a former sweep recorded (before the sweep stopped recording
+		// a standby's count) must not read as quiet.
+		readyRings: map[string][]viewmodel.Point{"db-2": ring(read, 0, 0, 0, 0)},
+	}
+	reading := cnpgstatus.Archiving(c, primaryArchiver(g))
+	if reading.Class == cnpgstatus.ClassOK || reading.Reason != cnpgstatus.ArchivingReasonBacklogNotReported {
+		t.Fatalf("archiving of a designated primary: %+v", reading)
+	}
+	arch := viewmodel.Archiving{Health: health(reading.Class), Reason: reading.Reason, ConditionStatus: reading.ConditionStatus}
+	facts := recoveryFactsOf(g, arch, now)
+	if !facts.archiverUnread || !facts.notReported {
+		t.Fatalf("facts %+v: want the archiver unread and not reported", facts)
+	}
+	tl := svc.recoveryTimeline(fx.evidence(), viewmodel.BackupSummary{Archiving: arch}, nil, facts)
+	if tl.State == string(evidencev1alpha1.Healthy) || len(tl.Reasons) == 0 || tl.Reasons[0].Code != "recovery.reason.archiverNotReported" {
+		t.Errorf("state %s reasons %+v", tl.State, tl.Reasons)
+	}
+	band := edgeBand(tl, "recovery.segment.archiverNotReported")
+	if band == nil || !band.From.Equal(last.Add(-failureLookback)) {
+		t.Fatalf("band %+v, want the day before the latest point", band)
+	}
+	b := viewmodel.Backups{RecoveryTimeline: tl, Summary: viewmodel.BackupSummary{Archiving: arch}, GeneratedAt: now}
+	got := restoreCheck(b, now.Add(-2*time.Hour))
+	if got.Answer == "covered" || !slices.ContainsFunc(got.Caveats, func(p viewmodel.Phrase) bool { return p.Code == "recovery.caveat.archiverNotReported" }) {
+		t.Errorf("two hours ago on a designated primary: %+v", got)
+	}
+	if got := restoreCheck(b, now.Add(-30*time.Hour)); got.Answer != "covered" {
+		t.Errorf("before the band: %+v", got)
+	}
+	// An instance that is not a primary now shows no catch-up from its
+	// failure: its 0 ready files are no reading.
+	r.LastFailedWALTime, r.LastArchivedWALTime = &failed, &archived
+	if by := caughtUpBy(g, "db-2"); by != nil {
+		t.Errorf("caught up by %v on a standby's zeros", by)
+	}
+	r.IsPrimary = true
+	if by := caughtUpBy(g, "db-2"); by == nil {
+		t.Errorf("a primary below the threshold since its failure shows no catch-up")
 	}
 }

@@ -581,8 +581,14 @@ func (s *Sweeper) pushRings(cs *clusterState, snap Snapshot, at time.Time) {
 		}
 		var lag, ready *float64
 		if inst.State == viewmodel.StatusReadOK && inst.Reading != nil {
-			files := float64(inst.Reading.ReadyWALFiles)
-			ready = &files
+			if inst.Reading.IsPrimary {
+				// CloudNativePG counts .ready files only on a primary
+				// (probes.go v1.30.1:461-463 returns before
+				// GetWALArchiveCounters, :520): a standby's 0, a replica
+				// cluster's designated primary included, is no reading.
+				files := float64(inst.Reading.ReadyWALFiles)
+				ready = &files
+			}
 			if !inst.Reading.IsPrimary {
 				if bytes, ok := LagBytes(primaryLSN, inst.Reading.ReplayLSN); ok {
 					v := float64(bytes)

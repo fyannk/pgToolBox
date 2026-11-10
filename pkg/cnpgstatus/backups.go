@@ -209,6 +209,13 @@ type ArchiverLive struct {
 	// none are kept. A backlog counts only when it persists across them
 	// (ArchiveBacklogOf).
 	Earlier []ReadySample `json:"earlier,omitempty"`
+	// ReadyNotReported: the archiving instance is not a primary by its own
+	// report (isPrimary false: a replica cluster's designated primary,
+	// which archives with archive_mode=always), and CloudNativePG fills
+	// readyWalFiles only on a primary (pkg/management/postgres/probes.go
+	// v1.30.1:461-463 returns before GetWALArchiveCounters at :520), so
+	// ReadyWALFiles is no reading (ArchivingReasonBacklogNotReported).
+	ReadyNotReported bool `json:"readyNotReported,omitempty"`
 	// PluginMaxParallel is the barman-cloud plugin's ObjectStore
 	// spec.configuration.wal.maxParallel (0 when unset) when the caller
 	// read that ObjectStore; nil when it did not, or the archiver is not
@@ -235,6 +242,10 @@ const (
 	// threshold, but the console has too few sweeps to tell a backlog
 	// that persists from a burst (ArchiveBacklog.Unconfirmed).
 	ArchivingReasonBacklogUnconfirmed = "ArchiveBacklogUnconfirmed"
+	// ArchivingReasonBacklogNotReported: the archiving instance is a
+	// designated primary (ArchiverLive.ReadyNotReported), which does not
+	// report readyWalFiles, so a backlog cannot be seen.
+	ArchivingReasonBacklogNotReported = "ArchiveBacklogNotReported"
 )
 
 // ArchiveBacklogSegments is the floor of the readyWalFiles count at
@@ -284,13 +295,16 @@ type ArchivingReading struct {
 //     the condition's age (the condition alone confirms nothing now),
 //     or unknown Hibernated when the Cluster is hibernated. A count at
 //     the backlog threshold that too few sweeps saw to judge is unknown
-//     ArchiveBacklogUnconfirmed, never ok.
+//     ArchiveBacklogUnconfirmed, never ok. A designated primary (a
+//     replica cluster's archiver) reports no readyWalFiles, so no backlog
+//     can be seen on it: unknown ArchiveBacklogNotReported, never ok.
 //   - Condition False: critical, unless the live archiver shows a
 //     success after the failure: warning (the condition catches up on
 //     the next archive).
 //   - Condition absent while configured: unknown, or ok when the live
 //     archiver is archiving (warning ArchiveBacklog with a persistent
-//     backlog).
+//     backlog, unknown ArchiveBacklogNotReported on a designated
+//     primary).
 //   - Condition Unknown: unknown.
 //
 // The stalled archiver whose last_archived_time ages while WAL is
@@ -322,6 +336,13 @@ func Archiving(c *cnpgv1.Cluster, primary *ArchiverLive) ArchivingReading {
 		reading.Message = strconv.Itoa(b.Unconfirmed) + " WAL segments are waiting to be archived on the primary, and the console has not swept it long enough to tell a backlog that persists from a burst"
 		return reading
 	}
+	notReported := primary != nil && primary.ReadyNotReported
+	notReportedReading := func(reading ArchivingReading) ArchivingReading {
+		reading.Class = ClassUnknown
+		reading.Reason = ArchivingReasonBacklogNotReported
+		reading.Message = "the archiving instance is a designated primary, which does not report readyWalFiles: whether WAL waits to be archived on it is not known"
+		return reading
+	}
 	hibernatedMessage := "the Cluster is hibernated: no instance runs, so nothing archives WAL, and whether every segment written before it reached the repository is not confirmed"
 	backlogReading := func(reading ArchivingReading) ArchivingReading {
 		reading.Class = ClassWarning
@@ -334,6 +355,9 @@ func Archiving(c *cnpgv1.Cluster, primary *ArchiverLive) ArchivingReading {
 			return ArchivingReading{Class: ClassInfo, Reason: ArchivingReasonNotConfigured, Message: "no WAL archiver is configured"}
 		}
 		if primary != nil && primary.IsArchivingWAL {
+			if notReported {
+				return notReportedReading(ArchivingReading{})
+			}
 			if backlog {
 				return backlogReading(ArchivingReading{})
 			}
@@ -369,6 +393,8 @@ func Archiving(c *cnpgv1.Cluster, primary *ArchiverLive) ArchivingReading {
 			reading.Class = ClassWarning
 			reading.Reason = ArchivingReasonFailureWithBacklog
 			reading.Message = "the primary's last archive attempt failed (" + bound(primary.LastFailedWAL, maxAnnotationValue) + ") and WAL files are waiting"
+		case notReported:
+			reading = notReportedReading(reading)
 		case backlog:
 			reading = backlogReading(reading)
 		default:

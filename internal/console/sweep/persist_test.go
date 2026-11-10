@@ -42,7 +42,7 @@ func roundTrip(t *testing.T, in PersistedState) PersistedState {
 	return out
 }
 
-// restartFixture sweeps one replica pod twice (read, then failing) and
+// restartFixture sweeps one primary pod twice (read, then failing) and
 // returns its snapshot, the failure's "since" and a way to build a
 // second sweeper on the same server, as the console after a restart.
 type restartFixture struct {
@@ -61,7 +61,8 @@ func newRestartFixture(t *testing.T) restartFixture {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			return
 		}
-		_, _ = fmt.Fprintf(w, report, false, "0/2000000", 3)
+		// A primary: only a primary reports readyWalFiles.
+		_, _ = fmt.Fprintf(w, report, true, "0/2000000", 3)
 	})
 	bundle := bundleFile(t, good.caPEM)
 	mk := func(roster Roster, now *time.Time) *Sweeper {

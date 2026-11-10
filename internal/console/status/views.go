@@ -810,7 +810,11 @@ func (s *Service) backupSummary(g *gathered, now time.Time) viewmodel.BackupSumm
 	}
 	if live := primaryArchiverReading(g); live != nil {
 		archivingWAL, ready := live.IsArchivingWAL, live.ReadyWALFiles
-		summary.Archiving.LiveArchiving, summary.Archiving.ReadyWALFiles = &archivingWAL, &ready
+		summary.Archiving.LiveArchiving = &archivingWAL
+		if live.IsPrimary {
+			// A designated primary reports no readyWalFiles.
+			summary.Archiving.ReadyWALFiles = &ready
+		}
 		summary.Archiving.LastFailedWAL, summary.Archiving.LastArchivedWAL = live.LastFailedWAL, live.LastArchivedWAL
 		summary.Archiving.LastArchivedAt, summary.Archiving.LastFailedAt = utc(live.LastArchivedWALTime), utc(live.LastFailedWALTime)
 	}
