@@ -571,3 +571,58 @@ func TestUnknownPathTargetsTheBackupTimeline(t *testing.T) {
 		t.Fatalf("limited path = %#v, want the replaced path's target kept", paths[1])
 	}
 }
+
+// TestOwnTimelinePathIsOffTargetWhenTheNewestTimelineLeftTheBackupBehind: a
+// backup whose timeline branched off before it was consistent cannot follow
+// the newest timeline, which is what a default restore (CloudNativePG,
+// recovery_target_timeline 'latest') asks for. Its own-timeline path is then
+// at most a warning, flagged OffTarget, and coverage is not healthy;
+// pgBackRest reports the same input the same way.
+func TestOwnTimelinePathIsOffTargetWhenTheNewestTimelineLeftTheBackupBehind(t *testing.T) {
+	t.Parallel()
+	const segment = 16 << 20
+	objects := []HistoryObject{{Key: "alpha/wals/00000002.history", Server: "alpha", Name: "00000002.history", Compression: "none", Timeline: 2}}
+	for _, test := range []struct {
+		name      string
+		history   string
+		endLSN    string
+		ranges    []WALRange
+		objects   []HistoryObject
+		state     evidence.State
+		offTarget bool
+		coverage  evidence.State
+		paths     int
+	}{
+		{name: "timeline 2 branched one byte before the backup end", history: "1\t0/3000050\tpromoted\n", endLSN: "0/3000051", ranges: []WALRange{walRange(1, 1, 3), walRange(2, 3, 5)}, objects: objects, state: evidence.Warning, offTarget: true, coverage: evidence.Warning, paths: 1},
+		{name: "off target and the own timeline misses WAL to consistency", history: "1\t0/3000050\tpromoted\n", endLSN: "0/3000051", ranges: []WALRange{walRange(1, 1, 2), walRange(2, 3, 5)}, objects: objects, state: evidence.Unknown, offTarget: true, coverage: evidence.Unknown, paths: 1},
+		{name: "backup ends at the switchpoint and follows the child", history: "1\t0/3000050\tpromoted\n", endLSN: "0/3000050", ranges: []WALRange{walRange(1, 1, 3), walRange(2, 3, 5)}, objects: objects, state: evidence.Healthy, coverage: evidence.Healthy, paths: 2},
+		{name: "no newer timeline", endLSN: "0/3000051", ranges: []WALRange{walRange(1, 1, 5)}, state: evidence.Healthy, coverage: evidence.Healthy, paths: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			backup := recoveryBackup(time.Now().UTC(), 1, 3)
+			backup.EndLSN = test.endLSN
+			wal := ServerWAL{Server: "alpha", State: evidence.Healthy, PostgreSQLVersion: 180000, SegmentSize: segment, Ranges: test.ranges}
+			catalog := AnalyzeRecovery(context.Background(), historyFake(test.history), []Backup{backup}, WALCatalog{Servers: []ServerWAL{wal}}, test.objects, false, RecoveryOptions{})
+			server := catalog.Servers[0]
+			own := findPath(t, server.Paths, 1)
+			if own.State != test.state || own.OffTarget != test.offTarget || len(server.Paths) != test.paths {
+				t.Fatalf("own path = state %s off-target %v reason %q; %d paths", own.State, own.OffTarget, own.Reason, len(server.Paths))
+			}
+			if server.CoverageState != test.coverage {
+				t.Fatalf("coverage = %s %q", server.CoverageState, server.CoverageReason)
+			}
+			if test.state == evidence.Warning && !strings.Contains(own.Reason, "own timeline") {
+				t.Fatalf("off-target reason does not say a restore must name the timeline: %q", own.Reason)
+			}
+			if err := catalog.Validate(); err != nil {
+				t.Fatalf("Validate() = %v", err)
+			}
+		})
+	}
+	// The catalog validator refuses a healthy off-target path.
+	catalog := RecoveryCatalog{Servers: []ServerRecovery{{Server: "alpha", TimelineState: evidence.Healthy, CoverageState: evidence.Healthy, Retention: RetentionSummary{State: evidence.Healthy}, Paths: []RecoveryPath{{Server: "alpha", BackupID: "b", TargetTimeline: 1, State: evidence.Healthy, Stop: CoverageFrontier, OffTarget: true}}}}}
+	if err := catalog.Validate(); err == nil {
+		t.Fatal("healthy off-target path accepted")
+	}
+}

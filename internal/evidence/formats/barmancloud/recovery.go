@@ -103,6 +103,12 @@ type RecoveryPath struct {
 	StartWAL, FrontierWAL           string
 	FrontierReceipt                 time.Time
 	Assumptions                     []string
+	// OffTarget is true on a backup's own-timeline path when the backup
+	// cannot reach the newest timeline (its timeline branched off before the
+	// backup was consistent, or is not an ancestor of the newest one): a
+	// default restore (recovery_target_timeline 'latest') fails from it, so
+	// the path is never Healthy and a restore must name the timeline.
+	OffTarget bool
 }
 
 // RetentionSummary describes the visible backups of one server and, when an
@@ -388,6 +394,7 @@ func recoveryPaths(backups []Backup, wal ServerWAL, histories []TimelineHistory)
 		sortRecoveryPaths(result)
 		return result
 	}
+	newest := newestTimeline(wal, histories)
 	for _, backup := range backups {
 		if backup.State != evidence.Healthy {
 			continue
@@ -398,6 +405,7 @@ func recoveryPaths(backups []Backup, wal ServerWAL, histories []TimelineHistory)
 			continue
 		}
 		own := evaluatePath(backup, wal, startTimeline, start, end, startTimeline, nil)
+		markOffTarget(&own, backup, startTimeline, end, newest, histories)
 		result = append(result, own)
 		seenTargets := map[uint32]bool{startTimeline: true}
 		notApplicableTargets := make(map[uint32]bool)
@@ -448,6 +456,52 @@ func recoveryPaths(backups []Backup, wal ServerWAL, histories []TimelineHistory)
 	}
 	sortRecoveryPaths(result)
 	return result
+}
+
+// newestTimeline is the newest timeline the archive shows, in its WAL or
+// its history files: the one a default restore follows.
+func newestTimeline(wal ServerWAL, histories []TimelineHistory) uint32 {
+	var newest uint32
+	for timeline := range observedTimelines(wal) {
+		newest = max(newest, timeline)
+	}
+	for _, history := range histories {
+		newest = max(newest, history.Timeline)
+	}
+	return newest
+}
+
+// markOffTarget flags a backup's own-timeline path when the newest timeline
+// is proven unreachable from the backup: the newest timeline's history is
+// valid and either does not descend from the backup's timeline or branched
+// from it before the backup was consistent (branchBeforeBackup, the rule
+// pgBackRest's evaluatePath also follows). A newest timeline whose history
+// is missing or invalid proves nothing here; its own unknown path says so.
+// The path is then at most a warning: it recovers only on its own
+// timeline, which a restore must name.
+func markOffTarget(path *RecoveryPath, backup Backup, startTimeline uint32, end uint64, newest uint32, histories []TimelineHistory) {
+	if newest <= startTimeline {
+		return
+	}
+	index := slices.IndexFunc(histories, func(value TimelineHistory) bool { return value.Timeline == newest })
+	if index < 0 || histories[index].State != evidence.Healthy {
+		return
+	}
+	reason := ""
+	edges, ok := descendantEdges(histories[index].Edges, startTimeline)
+	switch {
+	case !ok || len(edges) == 0:
+		reason = "timeline " + strconv.FormatUint(uint64(startTimeline), 10) + " is not an ancestor of timeline " + strconv.FormatUint(uint64(newest), 10)
+	case branchBeforeBackup(edges[0], backup, end):
+		reason = "timeline " + strconv.FormatUint(uint64(edges[0].Child), 10) + " branched before the backup reached consistency"
+	default:
+		return
+	}
+	path.OffTarget = true
+	if path.State == evidence.Healthy {
+		path.State = evidence.Warning
+		path.Reason = reason + "; the backup recovers only on its own timeline, which a restore must name"
+	}
 }
 
 func sortRecoveryPaths(result []RecoveryPath) {
@@ -673,9 +727,13 @@ func coverageRollup(paths []RecoveryPath) (evidence.State, string) {
 	if len(paths) == 0 {
 		return evidence.Unknown, "no structurally usable backup recovery anchors"
 	}
-	state := evidence.Healthy
+	state, offTarget := evidence.Healthy, false
 	for _, path := range paths {
 		state = conservativeRecoveryState(state, path.State)
+		offTarget = offTarget || path.OffTarget
+	}
+	if state == evidence.Warning && offTarget {
+		return state, "one or more backups recover only on their own timeline, not the newest one, or stop at a candidate required gap"
 	}
 	switch state {
 	case evidence.Unknown:
@@ -887,6 +945,9 @@ func (c RecoveryCatalog) Validate() error {
 		for pathIndex, path := range server.Paths {
 			if path.Server != server.Server || path.BackupID == "" || len(path.BackupID) > 256 || strings.IndexFunc(path.BackupID, unicode.IsControl) >= 0 || !validEvidenceState(path.State) || !boundedWALText(path.Reason) || (path.Stop != CoverageFrontier && path.Stop != CoverageCandidateLimited && path.Stop != CoverageGapLimited && path.Stop != CoverageUnknownLimited) || !utcOrZero(path.LowerBound) || !utcOrZero(path.FrontierReceipt) || len(path.Assumptions) > 8 || !optionalWALName(path.StartWAL) || !optionalWALName(path.FrontierWAL) {
 				return errors.New("invalid Barman recovery path")
+			}
+			if path.OffTarget && (path.State == evidence.Healthy || path.StartTimeline != 0 && path.TargetTimeline != path.StartTimeline) {
+				return errors.New("an off-target Barman recovery path is never healthy and follows the backup's own timeline")
 			}
 			if pathIndex > 0 && (server.Paths[pathIndex-1].BackupID > path.BackupID || (server.Paths[pathIndex-1].BackupID == path.BackupID && server.Paths[pathIndex-1].TargetTimeline >= path.TargetTimeline)) {
 				return errors.New("unsorted or duplicate Barman recovery paths")
