@@ -1418,7 +1418,7 @@ func restoreCaveats(b viewmodel.Backups) []viewmodel.Phrase {
 			"The archiving instance is a designated primary, which does not report its archive backlog: how long the newest archived WAL waited on it is not known, so restore points near the newest edge may not be in the repository.", nil))
 	} else if archiverUnread(a) {
 		out = append(out, say("recovery.caveat.archiverUnread",
-			"The primary's archiver was not read: how long the newest archived WAL waited on the primary is not known, so the newest restore points may be later than the WAL in the repository.", nil))
+			"The primary's archiver was not read: how long the newest archived WAL waited on the primary is not known, so it may hold commits older than its arrival in the repository suggests, and restore points near the newest edge may not be in the repository.", nil))
 	}
 	if !b.Drills.RestoreTested {
 		days := strconv.Itoa(b.Drills.WindowDays)

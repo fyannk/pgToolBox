@@ -16,6 +16,7 @@ package status
 
 import (
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -196,7 +197,12 @@ func TestUnreadArchiverIsNotHealthy(t *testing.T) {
 			if got.Answer == "covered" {
 				t.Errorf("20 min before the frontier with the archiver unread: %+v", got)
 			}
-			if !slices.ContainsFunc(got.Caveats, func(p viewmodel.Phrase) bool { return p.Code == "recovery.caveat.archiverUnread" }) {
+			if !slices.ContainsFunc(got.Caveats, func(p viewmodel.Phrase) bool {
+				// The newest archived WAL may hold older commits than its
+				// arrival says (round 7, DBA P2-3: the copy was inverted).
+				return p.Code == "recovery.caveat.archiverUnread" && strings.Contains(p.Text, "older than its arrival") &&
+					!strings.Contains(p.Text, "later than the WAL")
+			}) {
 				t.Errorf("no archiverUnread caveat: %+v", got.Caveats)
 			}
 		})
