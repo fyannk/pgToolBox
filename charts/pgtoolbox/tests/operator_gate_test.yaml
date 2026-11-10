@@ -413,7 +413,7 @@ tests:
         documentIndex: 0
       - equal: {path: "spec.variables[3].expression", value: '["system:masters"]'}
         documentIndex: 0
-      - lengthEqual: {path: spec.validations, count: 4}
+      - lengthEqual: {path: spec.validations, count: 5}
         documentIndex: 0
       - matchRegex: {path: "spec.validations[1].expression", pattern: "evidenceagents.*spec.workloadIdentity"}
         documentIndex: 0
@@ -447,11 +447,21 @@ tests:
       - matchRegex: {path: "spec.variables[4].expression", pattern: "'image.pullSecrets'"}
       - matchRegex: {path: "spec.variables[5].expression", pattern: "^oldObject == null \\? \\[\\] : \\("}
       - matchRegex: {path: "spec.variables[5].expression", pattern: "oldObject.spec.prometheus.tokenSecretRef"}
+      # Added references only; one or two name by name, more with one
+      # namespace-wide check (an authorizer check costs most of the CEL budget).
+      - equal: {path: "spec.variables[6].name", value: newSecretRefs}
+      - matchRegex: {path: "spec.variables[6].expression", pattern: "oldObject != null && r in variables.oldSecretRefs"}
       - matchRegex:
           path: "spec.validations[2].expression"
-          pattern: "authorizer.group\\(''\\).resource\\('secrets'\\).namespace\\(object.metadata.namespace\\).name\\(r.n\\).check\\('get'\\).allowed\\(\\)"
-      - matchRegex: {path: "spec.validations[2].expression", pattern: "oldObject != null && r in variables.oldSecretRefs"}
+          pattern: "^variables.newSecretRefs.size\\(\\) <= 2 \\|\\| authorizer.group\\(''\\).resource\\('secrets'\\).namespace\\(object.metadata.namespace\\).check\\('get'\\).allowed\\(\\)"
       - equal: {path: "spec.validations[2].reason", value: Forbidden}
+      - matchRegex:
+          path: "spec.validations[3].expression"
+          pattern: "variables.newSecretRefs.size\\(\\) > 2 \\|\\|"
+      - matchRegex:
+          path: "spec.validations[3].expression"
+          pattern: "authorizer.group\\(''\\).resource\\('secrets'\\).namespace\\(object.metadata.namespace\\).name\\(r.n\\).check\\('get'\\).allowed\\(\\)"
+      - equal: {path: "spec.validations[3].reason", value: Forbidden}
       - equal: {path: "spec.matchConstraints.resourceRules[0].operations", value: [CREATE, UPDATE]}
       # A kept reference whose destination changed is a new reference.
       - matchRegex: {path: "spec.variables[4].expression", pattern: "'d': string\\(object.spec.tracing.endpoint\\)"}
@@ -466,13 +476,13 @@ tests:
     template: templates/operator/admissionpolicy.yaml
     documentIndex: 0
     asserts:
-      - equal: {path: "spec.variables[6].name", value: credentialKinds}
-      - equal: {path: "spec.variables[7].name", value: credentialSources}
-      - matchRegex: {path: "spec.variables[6].expression", pattern: "'superuser'"}
+      - equal: {path: "spec.variables[7].name", value: credentialKinds}
+      - equal: {path: "spec.variables[8].name", value: credentialSources}
+      - matchRegex: {path: "spec.variables[7].expression", pattern: "'superuser'"}
       - matchRegex:
-          path: "spec.validations[3].expression"
+          path: "spec.validations[4].expression"
           pattern: "authorizer.group\\(''\\).resource\\('secrets'\\).namespace\\(object.metadata.namespace\\).check\\('get'\\).allowed\\(\\)"
-      - equal: {path: "spec.validations[3].reason", value: Forbidden}
+      - equal: {path: "spec.validations[4].reason", value: Forbidden}
 
   - it: renders the metrics reader and binds it to the named scraper only
     set:
