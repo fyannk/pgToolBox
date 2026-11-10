@@ -27,6 +27,9 @@ var backlogNow = time.Date(2026, 11, 10, 3, 0, 0, 0, time.UTC)
 
 func ptrInt(v int) *int { return &v }
 
+// archivedAgo is a last_archived_time d before backlogNow.
+func archivedAgo(d time.Duration) *time.Time { t := backlogNow.Add(-d); return &t }
+
 // readyRun is the earlier sweeps, oldest first, one every 30 s up to
 // 30 s before backlogNow; a negative count is a failed read.
 func readyRun(counts ...int) []ReadySample {
@@ -80,11 +83,18 @@ func TestArchiveBacklogOf(t *testing.T) {
 		{"barman plugin maxParallel 8: six ready on one sweep", barman, &ArchiverLive{ReadyWALFiles: 6, Earlier: readyRun(2, 1), PluginMaxParallel: ptrInt(8)}, 0, 9, true, 0},
 		{"barman plugin maxParallel 8: six ready on every sweep", barman, &ArchiverLive{ReadyWALFiles: 6, Earlier: readyRun(2, 6, 8, 5), PluginMaxParallel: ptrInt(8)}, 0, 9, true, 0},
 		{"barman plugin maxParallel 8: a persistent backlog above it", barman, &ArchiverLive{ReadyWALFiles: 14, Earlier: readyRun(0, 3, 10, 12), PluginMaxParallel: ptrInt(8)}, 14, 9, true, 0},
-		{"barman plugin, ObjectStore unread: steady handful", barman, &ArchiverLive{ReadyWALFiles: 6, Earlier: readyRun(0, 5, 7, 6)}, 0, 3, false, 0},
+		{"barman plugin, ObjectStore unread: steady handful", barman, &ArchiverLive{ReadyWALFiles: 6, Earlier: readyRun(0, 5, 7, 6), LastArchivedAt: archivedAgo(10 * time.Second)}, 0, 3, false, 0},
+		// Round 7, DBA P2-5: a steady count over the sweeps while nothing
+		// is archived (last_archived_time not after the oldest of them, or
+		// none reported) is a hung archiver, not a healthy parallel one.
+		{"barman plugin, ObjectStore unread: steady, nothing archived since", barman, &ArchiverLive{ReadyWALFiles: 6, Earlier: readyRun(0, 5, 7, 6), LastArchivedAt: archivedAgo(10 * time.Minute)}, 6, 3, false, 0},
+		{"barman plugin, ObjectStore unread: steady, archived at the oldest sweep", barman, &ArchiverLive{ReadyWALFiles: 6, Earlier: readyRun(0, 5, 7, 6), LastArchivedAt: archivedAgo(60 * time.Second)}, 6, 3, false, 0},
+		{"barman plugin, ObjectStore unread: steady, archived after the oldest sweep", barman, &ArchiverLive{ReadyWALFiles: 6, Earlier: readyRun(0, 5, 7, 6), LastArchivedAt: archivedAgo(59 * time.Second)}, 0, 3, false, 0},
+		{"pgBackRest plugin: steady, never archived", plugin(PgBackRestDaliboPlugin), &ArchiverLive{ReadyWALFiles: 5, Earlier: readyRun(0, 5, 5)}, 5, 3, false, 0},
 		{"barman plugin, ObjectStore unread: two sweeps are not enough", barman, &ArchiverLive{ReadyWALFiles: 8, Earlier: readyRun(0, 6)}, 0, 3, false, 0},
 		{"barman plugin, ObjectStore unread: two sweeps kept, unconfirmed", barman, &ArchiverLive{ReadyWALFiles: 8, Earlier: readyRun(6)}, 0, 3, false, 8},
 		{"barman plugin, ObjectStore unread: growing over three sweeps", barman, &ArchiverLive{ReadyWALFiles: 9, Earlier: readyRun(0, 6, 6)}, 9, 3, false, 0},
-		{"pgBackRest plugin: parallelism never known", plugin(PgBackRestDaliboPlugin), &ArchiverLive{ReadyWALFiles: 5, Earlier: readyRun(0, 5, 5)}, 0, 3, false, 0},
+		{"pgBackRest plugin: parallelism never known", plugin(PgBackRestDaliboPlugin), &ArchiverLive{ReadyWALFiles: 5, Earlier: readyRun(0, 5, 5), LastArchivedAt: archivedAgo(5 * time.Second)}, 0, 3, false, 0},
 		// CloudNativePG's archiver is the isWALArchiver plugin, not the
 		// first backup plugin: a backups-only barman-cloud entry with its
 		// ObjectStore at maxParallel 16 does not raise pgBackRest's threshold.
@@ -101,6 +111,9 @@ func TestArchiveBacklogOf(t *testing.T) {
 			}
 			if got.Behind() != (tt.segments > 0) {
 				t.Errorf("Behind() = %v", got.Behind())
+			}
+			if got.StalledSince != nil && (!got.Behind() || tt.known) {
+				t.Errorf("StalledSince = %v without a backlog of unknown parallelism", got.StalledSince)
 			}
 		})
 	}
@@ -242,5 +255,27 @@ func TestArchivingDesignatedPrimaryIsNotOK(t *testing.T) {
 	live.ReadyNotReported = false
 	if got := Archiving(c, live); got.Class != ClassOK {
 		t.Errorf("primary, zero ready: %+v", got)
+	}
+}
+
+// TestArchivingStalledArchiverUnderUnknownParallelism (round 7, DBA
+// P2-5): a count held at the threshold over three sweeps, with no
+// segment archived since the oldest of them, is a stalled archiver:
+// warning ArchiveBacklog, the message naming since when.
+func TestArchivingStalledArchiverUnderUnknownParallelism(t *testing.T) {
+	c := clusterWith(nil, cond(ConditionContinuousArchiving, "True", "ContinuousArchivingSuccess"))
+	c.Spec.Plugins = []cnpgv1.PluginConfiguration{{Name: PgBackRestDaliboPlugin}}
+	live := &ArchiverLive{IsArchivingWAL: true, ReadyWALFiles: 500, Earlier: readyRun(500, 500), ObservedAt: backlogNow, LastArchivedAt: archivedAgo(time.Hour)}
+	b := ArchiveBacklogOf(c, live)
+	if want := backlogNow.Add(-time.Minute); !b.Behind() || b.StalledSince == nil || !b.StalledSince.Equal(want) {
+		t.Fatalf("backlog %+v, want stalled since %s", b, want)
+	}
+	if got := Archiving(c, live); got.Class != ClassWarning || got.Reason != ArchivingReasonBacklog || !strings.Contains(got.Message, "stalled") || !strings.Contains(got.Message, "2026-11-10T02:59:00Z") {
+		t.Errorf("Archiving = %+v", got)
+	}
+	// The archiver archived a segment since: a steady handful, ok.
+	live.LastArchivedAt = archivedAgo(10 * time.Second)
+	if got := Archiving(c, live); got.Class != ClassOK {
+		t.Errorf("archiving that progresses: %+v", got)
 	}
 }

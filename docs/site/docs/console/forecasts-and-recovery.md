@@ -300,8 +300,15 @@ The diagnostics findings on the same count (`cnpg-wal-archive-backlog`,
 with the finding never shows archiving as healthy. A stalled archiver shows up in
 the count: with `archive_timeout` set, written WAL completes a segment within
 it, and a segment the archiver does not take is a `.ready` file. On an idle
-primary that writes nothing, a hung archiver can hold a steady count that the
-growth rule (unknown parallelism) does not flag.
+primary that writes little, a hung archiver holds a steady count rather than a
+growing one, so under unknown parallelism a count at the threshold over three
+sweeps that did not grow is also a backlog when the archiver archived nothing
+over them: its `last_archived_time` (pg_stat_archiver, the instance's clock) is
+not after the oldest of those sweeps, or it reports none. The message then says
+the archiver is stalled and since when. A healthy parallel archiver archives a
+segment each time PostgreSQL asks for one, so its time moves; an instance clock
+running more than a sweep behind the console's could still make a healthy one
+read as stalled.
 
 The last archived time is when PostgreSQL archived a segment, not the newest
 commit in it, so even "may well be possible" is an `unknown` answer: an evidence

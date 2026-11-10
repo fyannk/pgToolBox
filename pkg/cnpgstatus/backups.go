@@ -202,6 +202,9 @@ type ArchiverLive struct {
 	IsArchivingWAL bool   `json:"isArchivingWAL"`
 	LastFailedWAL  string `json:"lastFailedWAL,omitempty"`
 	ReadyWALFiles  int    `json:"readyWalFiles"`
+	// LastArchivedAt is pg_stat_archiver's last_archived_time (the
+	// instance's clock); nil when it reports none.
+	LastArchivedAt *time.Time `json:"lastArchivedAt,omitempty"`
 	// ObservedAt is when this reading was taken (the sweep's read).
 	ObservedAt time.Time `json:"observedAt,omitzero"`
 	// Earlier are the same instance's readyWalFiles at the sweeps before
@@ -348,6 +351,10 @@ func Archiving(c *cnpgv1.Cluster, primary *ArchiverLive) ArchivingReading {
 		reading.Class = ClassWarning
 		reading.Reason = ArchivingReasonBacklog
 		reading.Message = strconv.Itoa(primary.ReadyWALFiles) + " WAL segments are waiting to be archived on the primary: the archiver is behind"
+		if b.StalledSince != nil {
+			reading.Message = strconv.Itoa(primary.ReadyWALFiles) + " WAL segments have waited to be archived on the primary over " + strconv.Itoa(BacklogSweepsUnknownParallelism) +
+				" sweeps, and it archived none since " + b.StalledSince.UTC().Format(time.RFC3339) + ": the archiver is stalled"
+		}
 		return reading
 	}
 	if condition == nil {
