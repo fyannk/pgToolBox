@@ -55,7 +55,7 @@ Operator in the test clusters).
 | `pgtoolbox_console_runner_restarts_total{runner}` | Restarts of background runners. |
 | `pgtoolbox_console_state_snapshot_last_success_timestamp_seconds{part}`, `pgtoolbox_console_state_snapshot_bytes{part}`, `pgtoolbox_console_state_snapshot_errors_total{part}` | The [state snapshots](configuration.md#what-survives-a-restart) beside a persistent history: when each part was last written, its size, and failed writes. Alert on an age past a few minutes. |
 | `pgtoolbox_console_shared_state_writes_total{outcome}`, `pgtoolbox_console_shared_state_mode{mode}` | Writes of the state ConfigMap (`written`, `conflict`, `failed`) and its mode (`1` for the current one of `pending`, `live`, `missing`, `forbidden`, `failing`). Alert on `increase(...{outcome="failed"}[10m]) > 0` or a mode other than `live` held for ten minutes: sign-outs and spent MCP codes stop replicating and MCP token requests are refused. |
-| `pgtoolbox_console_shared_state_bytes{document}`, `pgtoolbox_console_shared_state_signouts_refused_total{reason}` | The size of each document of the state ConfigMap (the API server refuses the object past 1 MiB; the console keeps the sum near 768 KiB), and sign-outs the sessions document did not keep: `subject` (a person past 32 entries, 16 sign-outs, loses their own oldest), `budget` (the document full at 1,536 entries: the sign-out is refused on its own replica only). Alert on any `budget` increase. |
+| `pgtoolbox_console_shared_state_bytes{document}`, `pgtoolbox_console_shared_state_signouts_refused_total{reason}` | The size of each document of the state ConfigMap (the API server refuses the object past 1 MiB; the console keeps the sum near 768 KiB), and sign-outs the sessions document did not keep: sign-outs refused on their own replica only, a stored one is never dropped: `subject` (a person at 32 entries, 16 sign-outs), `unnamed` (sessions that name nobody, 128 entries together), `budget` (the document full at 1,536 entries). Alert on any `budget` increase. |
 | `pgtoolbox_console_digest_leader` | `1` on the replica holding the [digest Lease](timeline-and-digest.md#daily-digest), the one that delivers, else `0`. Summed over the replicas it is `1`; alert when it stays `0` with a delivery channel set (the Lease is forbidden or failing: no digest is sent). |
 | `pgtoolbox_console_volume_trend_series`, `pgtoolbox_console_volume_trend_refused_total` | Volume series the trend store holds, and new ones turned away at `VOLUME_TREND_MAX_SERIES` (those volumes have no forecast; alert on any increase). |
 
@@ -73,10 +73,12 @@ carries):
 | `token_form_token`, `token_form_address` | The token form, per pasted token and per client address |
 | `code_exchanges` | OAuth code exchanges with the IdP, per replica |
 | `exchange_reviews` | Reviews of tokens the IdP has just issued, per replica |
+| `exchange_reviews_subject` | The same, per person the IdP vouched for (OIDC: 12 a minute, bursts of 6), charged first |
 | `token_reviews` | Reviews of tokens the replica never accepted (token form, raw MCP bearers), per replica |
 | `known_reviews` | Re-reviews of raw MCP bearers the replica accepted before, per replica |
+| `known_reviews_subject` | The same, per person the API server named (32 a minute, bursts of 16), charged first |
 | `mcp_calls`, `mcp_attempts`, `mcp_writes`, `mcp_page_views`, `mcp_page_answers` | The [MCP endpoint's budgets](mcp.md#budgets) |
-| `oauth_requests`, `oauth_registry`, `oauth_tokens`, `oauth_unknown_tokens`, `oauth_grant_tokens`, `oauth_registrations`, `oauth_decisions` | The MCP authorization server's budgets (`oauth_grant_tokens`: per grant) |
+| `oauth_requests`, `oauth_registry`, `oauth_tokens`, `oauth_unknown_tokens`, `oauth_grant_tokens`, `oauth_subject_tokens`, `oauth_registrations`, `oauth_decisions` | The MCP authorization server's budgets (`oauth_grant_tokens`: per grant; `oauth_subject_tokens`: per person) |
 | `metrics_scrapes` | `/metrics` per client address |
 
 A per-address bucket rising is one client retrying. A per-replica bucket

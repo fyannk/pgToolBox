@@ -100,8 +100,11 @@ what the design guarantees and, as plainly, what it does not.
     form parse and a decryption each; they never reach the bucket connected
     clients refresh from, so holding a token once is not a way to starve
     them; past 20 a second they get `429` and no audit line. A live grant
-    spends a bucket of its own (6 at once, 12 a minute) before the shared
-    one, so one grant refreshing in a loop cannot starve the others either;
+    spends a bucket of its own (6 at once, 12 a minute), then its person's
+    (12 at once, 24 a minute), before the shared one, so neither one grant
+    refreshing in a loop nor one person's grants nor a handful of identities
+    can starve the others; a replayed refresh token is refused before any of
+    them;
   - `/mcp/oauth/register`: up to 10 a second sealed and audited; above that,
     new registrations wait. Registered clients are unaffected.
 
