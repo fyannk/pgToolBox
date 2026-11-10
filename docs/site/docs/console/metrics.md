@@ -75,7 +75,7 @@ carries):
 | `token_reviews` | Reviews of tokens the replica never accepted (token form, raw MCP bearers), per replica |
 | `known_reviews` | Re-reviews of raw MCP bearers the replica accepted before, per replica |
 | `mcp_calls`, `mcp_attempts`, `mcp_writes`, `mcp_page_views`, `mcp_page_answers` | The [MCP endpoint's budgets](mcp.md#budgets) |
-| `oauth_requests`, `oauth_registry`, `oauth_tokens`, `oauth_unknown_tokens`, `oauth_registrations`, `oauth_decisions` | The MCP authorization server's budgets |
+| `oauth_requests`, `oauth_registry`, `oauth_tokens`, `oauth_unknown_tokens`, `oauth_grant_tokens`, `oauth_registrations`, `oauth_decisions` | The MCP authorization server's budgets (`oauth_grant_tokens`: per grant) |
 | `metrics_scrapes` | `/metrics` per client address |
 
 A per-address bucket rising is one client retrying. A per-replica bucket
