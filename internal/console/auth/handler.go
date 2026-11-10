@@ -233,7 +233,9 @@ type Handler struct {
 // SignOutStore shares signed-out sessions between replicas
 // (internal/console/sharedstate). It keeps a hash of the ID, never the ID.
 type SignOutStore interface {
-	RecordSignOut(sid string, until time.Time)
+	// RecordSignOut shares sid, of subject (empty when unknown), until
+	// it would have ended; false when the store is full and did not.
+	RecordSignOut(sid, subject string, until time.Time) bool
 	SignedOut(sid string) bool
 }
 
@@ -623,10 +625,10 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 		if hook := h.signOutHookFn(); hook != nil && user != "" && r.PostFormValue("disconnect") == "assistants" {
 			hook(r.Context(), ClientOf(r, h.cfg.TrustedProxy), user)
 		}
-		h.markLoggedOut(s.ID, s.AbsoluteExpiry(h.codec.Limits()))
+		h.markLoggedOut(s.ID, user, s.AbsoluteExpiry(h.codec.Limits()))
 		// The session's token is refused as a raw bearer too (the MCP
 		// endpoint), until the session would have ended.
-		h.markLoggedOut(BearerReference(s.Token), s.AbsoluteExpiry(h.codec.Limits()))
+		h.markLoggedOut(BearerReference(s.Token), user, s.AbsoluteExpiry(h.codec.Limits()))
 	}
 	h.codec.ClearSession(w)
 	h.codec.clearLogin(w)
@@ -818,7 +820,11 @@ func (p *Principal) String() string {
 	return fmt.Sprintf("%s via %s (session %s)", p.User.Name, p.Provider, p.SessionID)
 }
 
-func (h *Handler) markLoggedOut(sid string, until time.Time) {
+// markLoggedOut refuses sid on this replica until it would have ended,
+// and shares it with the others. The shared document bounds each
+// person's sign-outs and its own size (sharedstate.MaxSignOuts); a
+// sign-out it refuses is still refused here.
+func (h *Handler) markLoggedOut(sid, subject string, until time.Time) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	now := h.now()
@@ -829,7 +835,7 @@ func (h *Handler) markLoggedOut(sid string, until time.Time) {
 	}
 	h.loggedOut[sid] = until
 	if h.signOuts != nil {
-		h.signOuts.RecordSignOut(sid, until)
+		h.signOuts.RecordSignOut(sid, subject, until)
 	}
 }
 

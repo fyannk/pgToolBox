@@ -121,6 +121,20 @@ const (
 	// maxDigestID and maxChannel bound the two parts of a mark's key.
 	maxDigestID = 64
 	maxChannel  = 16
+	// MaxSignOutsPerSubject bounds the sign-outs one person holds in the
+	// sessions document (two entries a sign-out: the session and its
+	// token as a raw bearer): past it the entries of that person that end
+	// first are dropped, so one person signing in and out in a loop
+	// forgets only their own oldest sign-outs, never another person's.
+	MaxSignOutsPerSubject = 32
+	// MaxSignOuts bounds the sessions document (75 bytes an entry, so
+	// some 112 KiB; with a full grants index, 680 KiB, the ConfigMap stays
+	// well under the API server's 1 MiB): past it the sign-outs that end last are refused
+	// (kept on the replica that recorded them, not shared), counted in
+	// pgtoolbox_console_shared_state_signouts_refused_total and logged
+	// once per episode, rather than growing the ConfigMap past what the
+	// API server accepts and failing every write.
+	MaxSignOuts = 1536
 )
 
 // Fact kinds, the first segment of a key.
@@ -171,11 +185,20 @@ type fact struct {
 	Since int64  `json:"t"`
 }
 
+// signOut is one entry of the sessions document: its expiry (Unix
+// seconds) and a short tag of the person it belongs to, empty when the
+// API server did not name them; the tag only groups a person's entries
+// for MaxSignOutsPerSubject.
+type signOut struct {
+	Expiry  int64  `json:"e"`
+	Subject string `json:"u,omitempty"`
+}
+
 type sessionsDoc struct {
 	Version int `json:"version"`
 	// SignedOut maps the hex SHA-256 of a session ID to the session's
 	// absolute expiry (Unix seconds).
-	SignedOut map[string]int64 `json:"signedOut"`
+	SignedOut map[string]signOut `json:"signedOut"`
 }
 
 type sinceDoc struct {
@@ -207,7 +230,7 @@ type Store struct {
 	opts Options
 
 	mu        sync.Mutex
-	signedOut map[string]int64
+	signedOut map[string]signOut
 	facts     map[string]fact
 	// sent holds the digest delivery marks, keyed "<digest ID>/<channel>".
 	sent map[string]int64
@@ -234,7 +257,10 @@ type Store struct {
 	// overBudget is set while the budget forces entries out (logged once
 	// per episode).
 	overBudget bool
-	wake       chan struct{}
+	// signOutsFull is set while MaxSignOuts refuses sign-outs (logged
+	// once per episode).
+	signOutsFull bool
+	wake         chan struct{}
 }
 
 // New builds a store; nothing is read until Run.
@@ -261,7 +287,7 @@ func New(opts Options) *Store {
 		opts.DigestRetention = DefaultDigestRetention
 	}
 	s := &Store{
-		opts: opts, signedOut: map[string]int64{}, facts: map[string]fact{}, sent: map[string]int64{}, grants: map[string]grantEntry{}, codes: map[string]codeEntry{}, drills: map[string]DrillResult{}, byObject: map[string]map[string]struct{}{},
+		opts: opts, signedOut: map[string]signOut{}, facts: map[string]fact{}, sent: map[string]int64{}, grants: map[string]grantEntry{}, codes: map[string]codeEntry{}, drills: map[string]DrillResult{}, byObject: map[string]map[string]struct{}{},
 		foreign: map[string]bool{}, mode: modePending, since: opts.Now().UTC(), wake: make(chan struct{}, 1),
 	}
 	if opts.Name == "" {
@@ -280,26 +306,133 @@ func hashState(state string) string {
 	return hex.EncodeToString(sum[:8])
 }
 
-// sessionHash is what is stored of a session ID.
+// sessionHash is what is stored of a session ID: 128 bits of its hash
+// (a session ID is 128 random bits; the hash need only tell sessions
+// apart, and short keys keep MaxSignOuts small in bytes).
 func sessionHash(sid string) string {
 	sum := sha256.Sum256([]byte(sid))
-	return hex.EncodeToString(sum[:])
+	return hex.EncodeToString(sum[:16])
 }
 
 // ---------------------------------------------------------------- sessions
 
-// RecordSignOut shares a signed-out session until its absolute expiry.
-func (s *Store) RecordSignOut(sid string, until time.Time) {
+// subjectTag is what is stored of a person's name: 64 bits of a hash,
+// enough to group their entries, too few to stand for the name.
+func subjectTag(subject string) string {
+	if subject == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte("pgtoolbox-signout-subject\x00" + subject))
+	return hex.EncodeToString(sum[:8])
+}
+
+func validSubjectTag(tag string) bool {
+	if tag == "" {
+		return true
+	}
+	if len(tag) != 16 {
+		return false
+	}
+	_, err := hex.DecodeString(tag)
+	return err == nil
+}
+
+// RecordSignOut shares a signed-out session of subject (empty when the
+// API server did not name the person) until its absolute expiry. It
+// reports false when the sessions document is full and the sign-out is
+// not shared (MaxSignOuts): the caller still refuses the session itself.
+func (s *Store) RecordSignOut(sid, subject string, until time.Time) bool {
 	if s == nil || sid == "" {
-		return
+		return true
 	}
 	h := sessionHash(sid)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if until.Unix() > s.signedOut[h] {
-		s.signedOut[h] = until.Unix()
-		s.changedLocked(true)
+	if prev, ok := s.signedOut[h]; ok && until.Unix() <= prev.Expiry {
+		return true
 	}
+	s.signedOut[h] = signOut{Expiry: until.Unix(), Subject: subjectTag(subject)}
+	byPerson, byBudget := s.capSignOutsLocked()
+	if byPerson > 0 {
+		signOutsRefused.WithLabelValues("subject").Add(float64(byPerson))
+	}
+	if _, kept := s.signedOut[h]; !kept || byBudget > 0 {
+		signOutsRefused.WithLabelValues("budget").Add(float64(max(byBudget, 1)))
+		if !s.signOutsFull {
+			s.signOutsFull = true
+			s.opts.Logger.Warn("shared state: the sessions document is full; new sign-outs are refused by this replica only, "+
+				"and a copy of a signed-out cookie is accepted by the other replicas until it expires",
+				slog.String("configmap", s.opts.Name), slog.Int("max", MaxSignOuts))
+		}
+		if !kept {
+			return false
+		}
+	}
+	s.changedLocked(true)
+	return true
+}
+
+// capSignOutsLocked applies the bounds of the sessions document: each
+// person keeps the MaxSignOutsPerSubject entries that end last, and the
+// document the MaxSignOuts that end first. Both orders are total (ties
+// by hash), so every replica that merges the same entries keeps the same
+// ones and a union never brings back what a bound dropped. It returns
+// how many entries each bound dropped.
+func (s *Store) capSignOutsLocked() (byPerson, byBudget int) {
+	if len(s.signedOut) <= MaxSignOutsPerSubject && len(s.signedOut) <= MaxSignOuts {
+		return 0, 0
+	}
+	type entry struct {
+		hash string
+		signOut
+	}
+	persons := map[string][]entry{}
+	for h, e := range s.signedOut {
+		if e.Subject != "" {
+			persons[e.Subject] = append(persons[e.Subject], entry{h, e})
+		}
+	}
+	for _, list := range persons {
+		if len(list) <= MaxSignOutsPerSubject {
+			continue
+		}
+		sort.Slice(list, func(i, j int) bool {
+			if list[i].Expiry != list[j].Expiry {
+				return list[i].Expiry > list[j].Expiry
+			}
+			return list[i].hash < list[j].hash
+		})
+		for _, e := range list[MaxSignOutsPerSubject:] {
+			delete(s.signedOut, e.hash)
+			byPerson++
+		}
+	}
+	if len(s.signedOut) > MaxSignOuts {
+		// Ended sign-outs make room first.
+		now := s.opts.Now().Unix()
+		for h, e := range s.signedOut {
+			if e.Expiry <= now {
+				delete(s.signedOut, h)
+			}
+		}
+	}
+	if len(s.signedOut) > MaxSignOuts {
+		all := make([]entry, 0, len(s.signedOut))
+		for h, e := range s.signedOut {
+			all = append(all, entry{h, e})
+		}
+		sort.Slice(all, func(i, j int) bool {
+			if all[i].Expiry != all[j].Expiry {
+				return all[i].Expiry < all[j].Expiry
+			}
+			return all[i].hash < all[j].hash
+		})
+		for _, e := range all[MaxSignOuts:] {
+			delete(s.signedOut, e.hash)
+			byBudget++
+		}
+	}
+	return byPerson, byBudget
 }
 
 // SignedOut reports whether a replica signed the session out.
@@ -310,8 +443,8 @@ func (s *Store) SignedOut(sid string) bool {
 	h := sessionHash(sid)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	exp, ok := s.signedOut[h]
-	return ok && s.opts.Now().Unix() < exp
+	e, ok := s.signedOut[h]
+	return ok && s.opts.Now().Unix() < e.Expiry
 }
 
 // ------------------------------------------------------------------- since
@@ -539,7 +672,7 @@ func validFact(key string, f fact) bool {
 }
 
 func validSessionHash(h string) bool {
-	if len(h) != 64 {
+	if len(h) != 32 {
 		return false
 	}
 	_, err := hex.DecodeString(h)
@@ -578,9 +711,9 @@ func (s *Store) mergeLocked(cm *corev1.ConfigMap) {
 		case json.Unmarshal([]byte(raw), &doc) != nil:
 			s.opts.Logger.Warn("shared state: the sessions document does not parse; it will be rewritten", slog.String("configmap", s.opts.Name))
 		case len(doc.SignedOut) <= maxEntries:
-			for h, exp := range doc.SignedOut {
-				if validSessionHash(h) && exp > s.signedOut[h] {
-					s.signedOut[h] = exp
+			for h, e := range doc.SignedOut {
+				if validSessionHash(h) && validSubjectTag(e.Subject) && e.Expiry > s.signedOut[h].Expiry {
+					s.signedOut[h] = e
 				}
 			}
 		}
@@ -640,10 +773,15 @@ func (s *Store) mergeLocked(cm *corev1.ConfigMap) {
 // complete), and, over the budget, the oldest facts.
 func (s *Store) pruneLocked() {
 	now := s.opts.Now()
-	for h, exp := range s.signedOut {
-		if exp <= now.Unix() {
+	for h, e := range s.signedOut {
+		if e.Expiry <= now.Unix() {
 			delete(s.signedOut, h)
 		}
+	}
+	s.capSignOutsLocked()
+	if s.signOutsFull && len(s.signedOut) < MaxSignOuts {
+		s.signOutsFull = false
+		s.opts.Logger.Info("shared state: the sessions document has room for sign-outs again", slog.String("configmap", s.opts.Name))
 	}
 	s.pruneGrantsLocked(now.Unix())
 	keepSent := now.Add(-s.opts.DigestRetention - sentSlack).Unix()
@@ -672,8 +810,10 @@ func (s *Store) pruneLocked() {
 }
 
 // budgetLocked drops the facts with the oldest "since" until the
-// documents fit the budget. Sign-outs are never dropped: forgetting one
-// would let a copied cookie back in; nor are delivery marks, which the
+// documents fit the budget. Sign-outs are not dropped here (forgetting
+// one would let a copied cookie back in): their own bounds
+// (capSignOutsLocked) keep the sessions document within MaxSignOuts; nor
+// are delivery marks, which the
 // retention bounds (a few a day) and whose loss would send a digest
 // twice; nor are drill results, bounded by count (drills.go).
 func (s *Store) budgetLocked() {
@@ -737,8 +877,9 @@ var documentKeys = []string{KeySessions, KeySince, KeyDigests, KeyGrants, KeyDri
 
 func (s *Store) encodedSizeLocked() int {
 	n := 0
-	for _, doc := range s.encodeLocked() {
+	for key, doc := range s.encodeLocked() {
 		n += len(doc)
+		sharedBytes.WithLabelValues(key).Set(float64(len(doc)))
 	}
 	return n
 }
