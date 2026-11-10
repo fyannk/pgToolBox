@@ -60,5 +60,19 @@ if [ "$pw_want" != "$pw_have" ]; then
   echo "ui/e2e.Dockerfile: Playwright $pw_have, ui/package.json pins @playwright/test $pw_want" >&2
   status=1
 fi
+# The playwright npm package moves with @playwright/test.
+pw_pkg=$(sed -n 's/.*"playwright": *"[~^]\{0,1\}\([0-9.]*\)".*/\1/p' ui/package.json)
+if [ "$pw_pkg" != "$pw_want" ]; then
+  echo "ui/package.json: playwright $pw_pkg, @playwright/test $pw_want" >&2
+  status=1
+fi
+# envtest covers the whole supported Kubernetes range: the Makefile's default
+# (the oldest, 1.34) on every change, the rest in ci.yml's nightly matrix.
+for minor in 1.34 1.35 1.36; do
+  grep -Eq "(ENVTEST_K8S_VERSION_API \?= |k8s: \[.*\")${minor}\." Makefile .github/workflows/ci.yml || {
+    echo "envtest does not cover Kubernetes $minor (Makefile default or ci.yml envtest-k8s matrix)" >&2
+    status=1
+  }
+done
 [ "$status" = 0 ] && echo "toolchain consistent (go $want, cosign $cosign_want, pnpm $pnpm_want, playwright $pw_want)"
 exit "$status"
