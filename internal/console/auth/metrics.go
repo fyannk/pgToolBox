@@ -73,6 +73,9 @@ const (
 	// BucketExchangeReviews: SelfSubjectReviews of tokens the IdP has just
 	// issued, per replica.
 	BucketExchangeReviews = "exchange_reviews"
+	// BucketExchangeReviewsSubject: the same reviews, per person the IdP
+	// vouched for (OIDC; charged before exchange_reviews).
+	BucketExchangeReviewsSubject = "exchange_reviews_subject"
 	// MCP endpoint: calls per user, writes per user, confirmation pages.
 	BucketMCPCalls       = "mcp_calls"
 	BucketMCPAttempts    = "mcp_attempts"

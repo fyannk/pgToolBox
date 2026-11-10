@@ -16,6 +16,7 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -23,6 +24,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/fyannk/pgToolBox/internal/console/authz"
 )
 
 // taggedSignOuts records what is shared, with the person's tag.
@@ -218,5 +221,93 @@ func TestLoggedOutIsBounded(t *testing.T) {
 	}
 	if !h.SignedOut("victim") || !h.SignedOut("p-299") {
 		t.Error("a full table must forget the sign-outs that end first")
+	}
+}
+
+// Several people, each with maxKnownBearersPerSubject known tokens
+// re-reviewed as fast as they can, used to keep knownReviews empty: a
+// known client's re-review was refused. Each person now spends their own
+// share first.
+func TestKnownBearersOfManyPeopleDoNotStarveAnother(t *testing.T) {
+	t.Parallel()
+	env := newTestEnv(t, ProviderToken)
+	clock := &stepClock{now: time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)}
+	useClock(clock, env.h.tokenReviews, env.h.knownReviews, env.h.knownSubjectReviews)
+	const people = 8
+	tokens := make([]string, 0, people*maxKnownBearersPerSubject)
+	env.rev.mu.Lock()
+	for p := range people {
+		for k := range maxKnownBearersPerSubject {
+			tok := fmt.Sprintf("p%d-t%d", p, k)
+			env.rev.users[tok] = authz.User{Name: fmt.Sprintf("system:serviceaccount:team:sa%d", p)}
+			tokens = append(tokens, tok)
+		}
+	}
+	env.rev.users["victim-token"] = authz.User{Name: "bob"}
+	env.rev.mu.Unlock()
+	for _, tok := range append(tokens, "victim-token") {
+		clock.Advance(20 * time.Millisecond)
+		if _, err := env.h.BearerPrincipal(t.Context(), tok); err != nil {
+			t.Fatalf("first use of %s: %v", tok, err)
+		}
+	}
+	refused := 0
+	for round := range 30 {
+		clock.Advance(time.Second)
+		for _, tok := range tokens {
+			_, _ = env.h.BearerPrincipal(t.Context(), tok)
+		}
+		// Every person's burst at once is past the shared burst for a
+		// few seconds; the sustained flood is what must starve no one.
+		if round < 5 {
+			continue
+		}
+		if _, err := env.h.BearerPrincipal(t.Context(), "victim-token"); errors.Is(err, ErrReviewsBusy) {
+			refused++
+		} else if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if refused > 0 {
+		t.Errorf("a known client's re-review was refused %d of 25 times under %d people's known tokens", refused, people)
+	}
+}
+
+// One IdP account signing in again and again (silent re-authorisation)
+// spends its own share of the exchange reviews, not the team's.
+func TestOneIdPAccountCannotDrainExchangeReviews(t *testing.T) {
+	t.Parallel()
+	env := newTestEnv(t, ProviderOIDC)
+	clock := &stepClock{now: time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)}
+	useClock(clock, env.h.exchangeSubjectReviews, env.h.exchangeReviews)
+	env.idp.mu.Lock()
+	env.idp.subject = "mallory"
+	env.idp.mu.Unlock()
+	// Each sign-in from an address of its own, so the per-address budget
+	// stays out of it.
+	from := func(i int) *browser {
+		b := env.browser(t)
+		b.addr = fmt.Sprintf("198.51.100.%d:1234", i+1)
+		return b
+	}
+	ok, throttled := 0, 0
+	for i := range 3 * exchangeSubjectReviewsBurst {
+		switch w := from(i).oidcLogin("/clusters"); w.Code {
+		case http.StatusFound:
+			ok++
+		case http.StatusTooManyRequests:
+			throttled++
+		default:
+			t.Fatalf("sign-in = %d", w.Code)
+		}
+	}
+	if ok != exchangeSubjectReviewsBurst || throttled == 0 {
+		t.Errorf("one account signed in %d times (%d throttled), want its burst of %d", ok, throttled, exchangeSubjectReviewsBurst)
+	}
+	env.idp.mu.Lock()
+	env.idp.subject = "bob"
+	env.idp.mu.Unlock()
+	if w := from(200).oidcLogin("/clusters"); w.Code != http.StatusFound {
+		t.Errorf("another person's sign-in = %d", w.Code)
 	}
 }

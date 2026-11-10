@@ -90,6 +90,13 @@ const (
 	knownReviewsPerSecond = 20
 	knownReviewsBurst     = 40
 	knownReviewsKey       = "known-bearer"
+	// knownSubjectReviews: one person's share of knownReviews, charged
+	// before it: maxKnownBearersPerSubject tokens each re-reviewed once an
+	// identity-cache lifetime (30 s) is 32 a minute; past that a person
+	// waits, and emptying knownReviews takes some forty identities the
+	// API server accepts.
+	knownSubjectReviewsPerMinute = 2 * maxKnownBearersPerSubject
+	knownSubjectReviewsBurst     = maxKnownBearersPerSubject
 	// maxKnownBearers bounds the bearers remembered as accepted (a
 	// digest and an expiry each); knownBearerTTL is how long one is
 	// remembered when its own expiry is unknown (an opaque token).
@@ -122,6 +129,12 @@ const (
 	exchangeReviewsPerSecond = 20
 	exchangeReviewsBurst     = 40
 	exchangeReviewsKey       = "exchange-review"
+	// exchangeSubjectReviews: one person's share of exchangeReviews, keyed
+	// by the IdP-verified issuer and subject of the ID token (OIDC only:
+	// an OpenShift token names nobody before the review), so one account
+	// signing in silently in a loop cannot keep a team from signing in.
+	exchangeSubjectReviewsPerMinute = 12
+	exchangeSubjectReviewsBurst     = 6
 	// maxLoggedOut bounds the sessions this replica refuses as signed
 	// out (loggedOut), maxLoggedOutPerSubject one person's share of it
 	// (their own earliest-ending go first), maxLoggedOutUnnamed that of
@@ -220,6 +233,10 @@ type Handler struct {
 	knownReviews    *RateLimiter
 	codeExchanges   *RateLimiter
 	exchangeReviews *RateLimiter
+	// knownSubjectReviews and exchangeSubjectReviews are the per-person
+	// shares of knownReviews and exchangeReviews, charged before them.
+	knownSubjectReviews    *RateLimiter
+	exchangeSubjectReviews *RateLimiter
 	// knownBearers are the raw bearers this replica accepted, by digest,
 	// until their expiry: their re-reviews spend knownReviews.
 	knownBearers *knownTokens
@@ -320,11 +337,15 @@ func newHandler(o Options, providers []oauthProvider) *Handler {
 		knownReviews:    NewRateLimiter(knownReviewsPerSecond*60, knownReviewsBurst, 1).Named(BucketKnownReviews),
 		codeExchanges:   NewRateLimiter(codeExchangesPerSecond*60, codeExchangesBurst, 1).Named(BucketCodeExchanges),
 		exchangeReviews: NewRateLimiter(exchangeReviewsPerSecond*60, exchangeReviewsBurst, 1).Named(BucketExchangeReviews),
-		knownBearers:    newKnownTokens(maxKnownBearers, maxKnownBearersPerSubject),
-		flows:           newSpentFlows(maxSpentFlows),
-		loggedOut:       map[string]loggedOutEntry{},
-		loggedOutMax:    maxLoggedOut,
-		signOuts:        o.SignOuts,
+		knownSubjectReviews: NewRateLimiter(knownSubjectReviewsPerMinute, knownSubjectReviewsBurst, maxLimiterKeys).
+			Named(BucketKnownReviewsSubject),
+		exchangeSubjectReviews: NewRateLimiter(exchangeSubjectReviewsPerMinute, exchangeSubjectReviewsBurst, maxLimiterKeys).
+			Named(BucketExchangeReviewsSubject),
+		knownBearers: newKnownTokens(maxKnownBearers, maxKnownBearersPerSubject),
+		flows:        newSpentFlows(maxSpentFlows),
+		loggedOut:    map[string]loggedOutEntry{},
+		loggedOutMax: maxLoggedOut,
+		signOuts:     o.SignOuts,
 	}
 }
 
@@ -475,7 +496,12 @@ func (h *Handler) handleCallback(w http.ResponseWriter, r *http.Request, p oauth
 		return
 	}
 	// The IdP issued a token: only now is a SelfSubjectReview spent, from
-	// a bucket that no junk code reaches.
+	// a bucket that no junk code reaches, after the person's own share of
+	// it when the IdP named them.
+	if ts.identity != "" && !h.exchangeSubjectReviews.Allow(ts.identity) {
+		h.fail(w, r, p.name(), &loginError{http.StatusTooManyRequests, "You are signing in too often; wait a minute and try again.", nil})
+		return
+	}
 	if !h.exchangeReviews.Allow(exchangeReviewsKey) {
 		h.fail(w, r, p.name(), &loginError{http.StatusTooManyRequests, "The console is receiving too many sign-ins; wait a few seconds and try again.", nil})
 		return
