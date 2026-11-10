@@ -37,7 +37,7 @@ in `images`, and the e2e jobs load that archive instead of building their own.
 | `e2e-kind.yml` | called by `ci.yml` | One kind scenario on a fresh runner, with the images of the run loaded (reusable workflow). |
 | `security.yml` | pull request, push to `main`, daily at 03:37 UTC, by hand | CodeQL, govulncheck, osv-scanner, npm audit, grype on the five images (operator, console, evidence agent, OLM bundle and catalog), gitleaks, gosec, zizmor, kube-linter. Its last job, `security-gate`, is the required check. |
 | `scorecard.yml` | push to `main`, weekly on Tuesday, by hand | OpenSSF Scorecard, published and uploaded to code scanning. |
-| `pages.yml` | when `security.yml` finishes on `main`, nightly at 04:47 UTC, by hand, after a release | Builds the documentation, renders the Security page, deploys both to GitHub Pages. |
+| `pages.yml` | when `security.yml` finishes on `main`, nightly at 04:47 UTC, by hand, after a release (building the tag) | Builds the documentation, renders the Security page, deploys both to GitHub Pages. |
 | `release.yml` | tag `v*` or `pkg/evidence/v*`; by hand for an existing tag | The release. It checks out and runs nothing but the tagged commit, and restores no cache. |
 | `release-dry-run.yml` | a pull request touching the release files; weekly on Sunday, or by hand with a tag to rehearse | The release's build as a dry run, plus a release-candidate rehearsal of the pinning (placeholder digests): nothing pushed or signed, no write permission. |
 | `verify-release.yml` | called by `release.yml` after the prune; weekly on Monday; by hand | Pulls every image and both charts of a published release by tag **with no registry credentials** and verifies each signature and attestation by digest (`hack/release.sh verify-published`). The weekly run looks at the latest stable release and does nothing until one exists. |
@@ -208,10 +208,10 @@ sequenceDiagram
   R->>R: SBOMs, installer manifests, SHA256SUMS signed keyless
   R->>G: grype every digest on both platforms: a fixable critical stops here, a registry error is reported as one
   R->>G: move latest (stable releases only)
-  R->>H: draft release with the CHANGELOG notes and commits, files attached
+  R->>H: draft release with the CHANGELOG notes and a commit-log link, files attached
   R->>G: anonymous HEAD of every pushed digest: any private package leaves the release a draft
   R->>H: publish the release
-  R->>R: dispatch pages.yml on main, prune untagged GHCR versions
+  R->>R: dispatch pages.yml on main (docs_ref = the tag), prune untagged GHCR versions
   R->>G: verify-release.yml: pull by tag with no credentials, cosign verify, gh attestation verify, helm pull
 ```
 
@@ -270,11 +270,13 @@ contains and how to verify it is on [Release and verification](../release.md).
   tag ruleset ("Protect release tags") allows neither an update nor a deletion and has
   no bypass, on purpose. Fix the cause on `main`, then tag `vX.Y.Z-rc.N+1` on the new
   commit. `make release-check TAG=vX.Y.Z-rc.2` accepts that: the tree still says
-  `X.Y.Z`, the open `## [X.Y.Z]` section serves every candidate, and the notes of a
-  candidate start at the previous tag of any kind. The abandoned candidate's packages
+  `X.Y.Z`, the `## [X.Y.Z]` section serves every candidate (open in a rehearsal,
+  dated in a real cut: `release-preflight` and the workflow refuse `Unreleased`),
+  and the compare link of a candidate starts at the previous tag of any kind. The abandoned candidate's packages
   and (draft) release can be deleted by hand in the GitHub UI; its tag stays.
-- **The final tag is cut once.** Its notes list every commit since the previous
-  *stable* tag, candidates included.
+- **The final tag is cut once, on the candidate's commit.** Its notes are the CHANGELOG
+  section and a link to the commits since the previous *stable* tag (the history for
+  the first release), candidates included.
 - **Check runs must exist on the tagged commit.** `wait-ci` needs `ci-ok` and
   `security-gate` to be green on the commit the tag points at. A merge made with the
   Actions token (auto-merged Dependabot pull requests) starts no push run, so that

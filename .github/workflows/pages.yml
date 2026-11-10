@@ -25,6 +25,12 @@ on:
   schedule:
     - cron: "47 4 * * *"
   workflow_dispatch:
+    inputs:
+      docs_ref:
+        description: Ref whose documentation is built (default branch when empty); release.yml passes the release tag
+        required: false
+        default: ""
+        type: string
 
 permissions: {}
 
@@ -53,11 +59,14 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       REPO: ${{ github.repository }}
     steps:
-      # The default branch, never the commit a workflow_run event names.
-      - name: Check out main
+      # The default branch, never the commit a workflow_run event names; after a
+      # release, the release tag (docs_ref), so the site shows the released
+      # documentation even when main has moved on. The ref is only ever a
+      # checkout input, never part of a command.
+      - name: Check out main (or the release tag)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.repository.default_branch }}
+          ref: ${{ inputs.docs_ref || github.event.repository.default_branch }}
           persist-credentials: false
       - name: Install the pinned tools
         uses: ./.github/actions/toolchain

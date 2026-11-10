@@ -56,6 +56,13 @@ changelog "## [${version}-rc.1] - Unreleased"
 expect 1 'still says Unreleased' -- check "v${version}-rc.1"
 changelog "## [${version}-rc.1] - 2026-11-09"
 expect 0 'ok: semver' -- check "v${version}-rc.1"
+# A candidate that is really cut (REQUIRE_TAG) or preflighted (REQUIRE_DATED)
+# needs the dated section too: rc and final share one commit, so the date is
+# in the tree before rc.1, never in a commit between them.
+changelog "## [${version}] - Unreleased"
+expect 1 'still says Unreleased' -- env REQUIRE_DATED=1 bash -c 'cd "$1" && ./hack/release.sh check "$2"' _ "${repo}" "v${version}-rc.1"
+changelog "## [${version}] - 2026-11-09"
+expect 0 'ok: semver' -- env REQUIRE_DATED=1 bash -c 'cd "$1" && ./hack/release.sh check "$2"' _ "${repo}" "v${version}-rc.1"
 # Charts that match neither the rc nor its core version are refused.
 expect 1 'tag says' -- check "v9.9.9-rc.1"
 expect 1 'semantic' -- check "0.1.0"
@@ -105,6 +112,13 @@ grep -q "between the candidates" <<<"${out}" || fail "notes of rc.2 lack its own
 ! grep -q "in the first candidate" <<<"${out}" || fail "notes of rc.2 repeat rc.1's commits: ${out}"
 out="$(commits v0.1.0-rc.1)"
 grep -q "in the first candidate" <<<"${out}" && ! grep -q "before everything" <<<"${out}" || fail "notes of rc.1 start at the wrong tag: ${out}"
+
+# commits-link: a link, never the log; the first release links the history.
+link() { (cd "${crepo}" && ./hack/release.sh commits-link "$1"); }
+out="$(link v0.1.0)"
+grep -q 'compare/v0.0.1...v0.1.0' <<<"${out}" && ! grep -q "feat:" <<<"${out}" || fail "commits-link of v0.1.0: ${out}"
+out="$(link v0.0.1)"
+grep -q 'commits/v0.0.1' <<<"${out}" || fail "commits-link of the first tag: ${out}"
 
 # ---- check-public and scan-digests: stubs first on PATH.
 stubs="${work}/stubs"
@@ -176,6 +190,8 @@ expect 0 'every digest is publicly pullable' -- ./hack/release.sh check-public "
 expect 1 'private-thing' -- ./hack/release.sh check-public "${work}/mixed.txt"
 expect 1 'charts/privatechart' -- ./hack/release.sh check-public "${work}/ok.txt" "${work}/mixed.txt"
 expect 1 'Re-run failed jobs' -- ./hack/release.sh check-public "${work}/mixed.txt"
+# While it waits, one ::notice names the settings page of each private package.
+expect 1 '::notice title=Make these GHCR packages public::.*packages/container/private-thing/settings' -- ./hack/release.sh check-public "${work}/mixed.txt"
 
 # ---- wait-ci: the newest run of a check counts, whatever order it is listed
 # in; a commit with no check run at all fails fast with the dispatch hint.
@@ -212,6 +228,7 @@ expect 1 'make release-preflight TAG=<tag>' -- pre "v${version}" deadbeef
 { tab ci-ok completed success 2026-11-10T10:00:00Z 20; tab security-gate completed success 2026-11-10T10:00:00Z 21; } > "${runs}"
 changelog "## [${version}] - Unreleased"
 expect 1 'still says Unreleased' -- pre "v${version}" deadbeef
+expect 1 'still says Unreleased' -- pre "v${version}-rc.1" deadbeef
 unset GH_STUB_RUNS CI_WAIT_SLEEP CI_WAIT_ATTEMPTS CI_WAIT_EMPTY_ATTEMPTS
 
 # ---- verify-published: anonymous pulls, then signature and attestation of
@@ -310,6 +327,10 @@ expect 1 'attempt 2/2 failed' -- ./hack/release.sh retry false
 # release is latest only for a stable tag. (A release that takes the badge from
 # the product is what `gh release create` does by default for the newest one.)
 wf="${root}/.github/workflows/release.yml"
+# wait-ci (full_tier_state) calls the actions runs API in the prepare job.
+awk '/^  prepare:/ {on=1} on && /^  images:/ {exit} on && /actions: read/ {f=1} END {exit !f}' "${wf}" || fail "release.yml: prepare lacks actions: read (hack/release.sh full_tier_state lists workflow runs)"
+grep -q 'docs_ref=refs/tags/' "${wf}" || fail "release.yml: the Pages dispatch does not build the release tag"
+! grep -q 'release.sh commits "${TAG}"' <(sed -n '/Write the release notes/,/Create the draft/p' "${wf}") || fail "release.yml: product notes paste the whole commit log"
 grep -q -- 'flags+=(--latest=false)' "${wf}" || fail "release.yml: module release does not pass --latest=false"
 grep -q -- 'flags+=(--prerelease --latest=false)' "${wf}" || fail "release.yml: product rc does not pass --latest=false"
 grep -q -- 'flags+=(--latest)' "${wf}" || fail "release.yml: stable product release does not pass --latest"
