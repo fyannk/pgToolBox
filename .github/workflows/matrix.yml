@@ -90,7 +90,7 @@ jobs:
             VERSION=e2e
           tags: pgtoolbox-${{ matrix.image }}:prebuilt
           outputs: type=docker,dest=${{ runner.temp }}/pgtoolbox-${{ matrix.image }}.tar
-          cache-from: type=gha,scope=image-${{ matrix.image }}
+          cache-from: type=gha,scope=image-${{ matrix.image }}-amd64
       - name: Hand the image to the cells
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

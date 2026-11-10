@@ -513,7 +513,9 @@ jobs:
     env:
       IMAGE: pgtoolbox-${{ matrix.image }}:prebuilt
       ARCHIVE_NAME: pgtoolbox-${{ matrix.image }}.tar
-      CACHE_TO: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && format('type=gha,mode=max,ignore-error=true,scope=image-{0}', matrix.image) || '' }}
+      # One cache scope per architecture: the two builds export different layers.
+      CACHE_TO_AMD64: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && format('type=gha,mode=max,ignore-error=true,scope=image-{0}-amd64', matrix.image) || '' }}
+      CACHE_TO_ARM64: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && format('type=gha,mode=max,ignore-error=true,scope=image-{0}-arm64', matrix.image) || '' }}
     steps:
       - name: Check out the repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -531,8 +533,8 @@ jobs:
             VERSION=ci
           tags: ${{ env.IMAGE }}
           outputs: type=docker,dest=${{ runner.temp }}/${{ env.ARCHIVE_NAME }}
-          cache-from: type=gha,scope=image-${{ matrix.image }}
-          cache-to: ${{ env.CACHE_TO }}
+          cache-from: type=gha,scope=image-${{ matrix.image }}-amd64
+          cache-to: ${{ env.CACHE_TO_AMD64 }}
       - name: Build linux/arm64
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
@@ -542,8 +544,8 @@ jobs:
           build-args: |
             VERSION=ci
           push: false
-          cache-from: type=gha,scope=image-${{ matrix.image }}
-          cache-to: ${{ env.CACHE_TO }}
+          cache-from: type=gha,scope=image-${{ matrix.image }}-arm64
+          cache-to: ${{ env.CACHE_TO_ARM64 }}
       - name: Load the linux/amd64 image
         run: |
           set -euo pipefail
