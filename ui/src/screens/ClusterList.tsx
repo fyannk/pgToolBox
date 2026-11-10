@@ -13,6 +13,7 @@ import { StatusChip } from "../ds/patterns/StatusChip/StatusChip";
 import { formatUtc, Time } from "../ds/time";
 import { m } from "../paraglide/messages.js";
 import { QueryState } from "./QueryState";
+import { phraseText } from "./recoveryPhrase";
 import { sourceStateWord } from "./sources";
 
 const col = columnHelper<ClusterRow>();
@@ -107,7 +108,14 @@ const columns: Columns<ClusterRow> = col.columns([
     cell: (c) => {
       const p = c.row.original.phase;
       return p.text ? (
-        <StatusChip health={p.health} label={p.text} variant="text" size="sm" className="max-w-40" title={p.text} />
+        <StatusChip
+          health={p.health}
+          label={p.text}
+          variant="text"
+          size="sm"
+          className="max-w-40"
+          title={p.cap ? `${p.text} — ${phraseText(p.cap.code, p.cap.params, p.cap.text)}` : p.text}
+        />
       ) : (
         <Reported value={p.text} />
       );

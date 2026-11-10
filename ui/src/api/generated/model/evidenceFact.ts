@@ -6,11 +6,14 @@
  * OpenAPI spec version: v1
  */
 import type { EvidenceFactHealth } from './evidenceFactHealth.ts';
+import type { Phrase } from './phrase.ts';
 
 export interface EvidenceFact {
   code?: string;
   health: EvidenceFactHealth;
   message?: string;
+  /** Message as a translatable Phrase, when the console recognises its shape; absent otherwise. */
+  phrase?: Phrase;
   /** The agent's state, verbatim. */
   state?: string;
 }

@@ -31,6 +31,9 @@ function reportedTail(kind: string, p: Params): string | undefined {
     p?.windowOrigin === "evidence" ? m.rp_tail_prefix_evidence({ end }) : m.rp_tail_prefix_operator({ end });
   if (kind === "archivedUnknown") return `${prefix} ${m.rp_tail_archived_unknown()}`;
   if (kind === "archivedUnknownFailing") return `${prefix} ${m.rp_tail_archived_unknown_failing()}`;
+  const segments = p?.segments;
+  if (kind === "archivedUnknownBacklog")
+    return segments ? `${prefix} ${m.rp_tail_archived_unknown_backlog({ segments })}` : undefined;
   const archived = instant(p, "archivedAt");
   if (!archived) return undefined;
   const age = seconds(p, "ageSeconds");
@@ -43,6 +46,10 @@ function reportedTail(kind: string, p: Params): string | undefined {
       return `${prefix} ${m.rp_tail_before_archived_failing(args)}`;
     case "beforeArchivedUnconfirmed":
       return `${prefix} ${m.rp_tail_before_archived_unconfirmed(args)}`;
+    case "beforeArchivedBacklog":
+      return segments ? `${prefix} ${m.rp_tail_before_archived_backlog({ ...args, segments })}` : undefined;
+    case "afterArchivedBacklog":
+      return segments ? `${prefix} ${m.rp_tail_after_archived_backlog({ ...args, segments })}` : undefined;
     case "afterArchived":
       return `${prefix} ${m.rp_tail_after_archived(args)}`;
     case "afterArchivedFailing":
@@ -52,8 +59,110 @@ function reportedTail(kind: string, p: Params): string | undefined {
   }
 }
 
+/** A timeline gap (Gap in the agent's timeline package) from its kind and timeline. */
+function timelineGap(p: Params): string | undefined {
+  const timeline = p?.gapTimeline;
+  switch (p?.gap) {
+    case "unreadable":
+      return timeline ? m.tl_gap_unreadable({ timeline }) : undefined;
+    case "missing":
+      return timeline ? m.tl_gap_missing({ timeline }) : undefined;
+    case "notAllRead":
+      return m.tl_gap_not_all_read();
+    default:
+      return undefined;
+  }
+}
+
+/** The agent's timeline reasons, recognised by the console (timelinereason.go). */
+function timelineReason(code: string, p: Params): string | undefined {
+  const timeline = p?.timeline;
+  if (code === "timeline.reason.historyMissingNoFollow")
+    return timeline ? m.tl_reason_history_missing_no_follow({ timeline }) : undefined;
+  const gap = timelineGap(p);
+  if (!gap) return undefined;
+  switch (code) {
+    case "timeline.reason.needsTarget":
+      return timeline ? m.tl_reason_needs_target({ timeline, gap }) : undefined;
+    case "timeline.reason.latestUnknown":
+      return m.tl_reason_latest_unknown({ gap });
+    case "timeline.reason.latestStops":
+      return p?.latest && p.newest ? m.tl_reason_latest_stops({ latest: p.latest, newest: p.newest, gap }) : undefined;
+    default:
+      return undefined;
+  }
+}
+
+/** Why a phase or condition reading was capped below its table's ok. */
+function tableCap(code: string, p: Params): string | undefined {
+  const minor = p?.minor;
+  const table = p?.table;
+  switch (code) {
+    case "phase.cap.unverifiedMinor":
+      return minor ? m.cap_phase_unverified({ minor }) : undefined;
+    case "phase.cap.undetectedMinor":
+      return table ? m.cap_phase_undetected({ table }) : undefined;
+    case "condition.cap.unverifiedMinor":
+      return minor ? m.cap_condition_unverified({ minor }) : undefined;
+    case "condition.cap.undetectedMinor":
+      return table ? m.cap_condition_undetected({ table }) : undefined;
+    default:
+      return undefined;
+  }
+}
+
+/** The recovery timeline's reasons (recovery.reason.*). */
+function recoveryReason(code: string, p: Params): string | undefined {
+  const detail = p?.detail;
+  const segments = p?.segments;
+  switch (code) {
+    case "recovery.reason.backupsCut":
+      return m.rp_reason_backups_cut();
+    case "recovery.reason.reportedWindow":
+      return m.rp_reason_reported_window();
+    case "recovery.reason.noEvidence":
+      return m.rp_reason_no_evidence();
+    case "recovery.reason.noEvidenceBecause":
+      return detail ? m.rp_reason_no_evidence_because({ detail }) : undefined;
+    case "recovery.reason.noPaths":
+      return m.rp_reason_no_paths();
+    case "recovery.reason.pathsNotCoverage":
+    case "recovery.reason.agentCoverage":
+      // The evidence's own sentence, in its words.
+      return detail ? m.rp_reason_from_evidence({ detail }) : undefined;
+    case "recovery.reason.noConsistentPath":
+      return m.rp_reason_no_consistent_path();
+    case "recovery.reason.pathsStale":
+      return detail ? m.rp_reason_paths_stale({ detail }) : undefined;
+    case "recovery.reason.evidenceStale":
+      return detail ? m.rp_reason_evidence_stale({ detail }) : undefined;
+    case "recovery.reason.pathsCut":
+      return m.rp_reason_paths_cut();
+    case "recovery.reason.missingAfterLatest":
+      return m.rp_reason_missing_after_latest();
+    case "recovery.reason.holes":
+      return m.rp_reason_holes();
+    case "recovery.reason.candidateGaps":
+      return m.rp_reason_candidate_gaps();
+    case "recovery.reason.failedRecently":
+      return m.rp_reason_failed_recently();
+    case "recovery.reason.archiveBacklog":
+      return segments ? m.rp_reason_archive_backlog({ segments }) : undefined;
+    case "recovery.reason.orphanTimeline":
+      return p?.timeline ? m.rp_reason_orphan_timeline({ timeline: p.timeline }) : undefined;
+    case "recovery.reason.undrawn":
+      return m.rp_reason_undrawn();
+    default:
+      return undefined;
+  }
+}
+
 function translate(code: string, p: Params): string | undefined {
   if (code.startsWith("recovery.reportedTail.")) return reportedTail(code.slice("recovery.reportedTail.".length), p);
+  if (code.startsWith("recovery.reason.")) return recoveryReason(code, p);
+  if (code.startsWith("timeline.reason.")) return timelineReason(code, p);
+  if (code.startsWith("phase.cap.") || code.startsWith("condition.cap.")) return tableCap(code, p);
+  const segments = p?.segments;
   const id = p?.backupId;
   const margin = seconds(p, "marginSeconds");
   switch (code) {
@@ -93,6 +202,24 @@ function translate(code: string, p: Params): string | undefined {
     }
     case "recovery.segment.afterFrontier":
       return m.rp_segment_after_frontier();
+    case "recovery.segment.afterLastReadFailing": {
+      const scanned = instant(p, "scannedAt");
+      return scanned ? m.rp_segment_after_last_read_failing({ scanned }) : undefined;
+    }
+    case "recovery.segment.afterFrontierFailing":
+      return m.rp_segment_after_frontier_failing();
+    case "recovery.segment.afterLastReadBacklog": {
+      const scanned = instant(p, "scannedAt");
+      return scanned && segments ? m.rp_segment_after_last_read_backlog({ scanned, segments }) : undefined;
+    }
+    case "recovery.segment.afterFrontierBacklog":
+      return segments ? m.rp_segment_after_frontier_backlog({ segments }) : undefined;
+    case "recovery.segment.archiveBacklog":
+      return segments ? m.rp_segment_archive_backlog({ segments }) : undefined;
+    case "recovery.segment.walEnd": {
+      const end = instant(p, "endAt");
+      return end && margin ? m.rp_segment_wal_end({ end, margin }) : undefined;
+    }
     case "recovery.check.noWindow":
       // The reason is Go's own sentence, shown as written.
       return p?.reason ? m.rp_check_no_window({ reason: p.reason }) : undefined;
@@ -139,4 +266,22 @@ function translate(code: string, p: Params): string | undefined {
 /** A Go sentence in the reader's language; Go's English text when the code or a value is not known here. */
 export function phraseText(code: string | undefined, params: Params, text: string | undefined): string {
   return (code ? translate(code, params) : undefined) ?? text ?? "";
+}
+
+type Said = { code?: string; params?: Record<string, string>; text?: string };
+
+/**
+ * A reason Go joined from phrases ("; " between them): each part in the
+ * reader's language when Go sent the parts, else Go's joined English.
+ */
+export function reasonsText(reasons: readonly Said[] | null | undefined, joined: string | undefined): string {
+  if (!reasons || reasons.length === 0) return joined ?? "";
+  return reasons.map((r) => phraseText(r.code, r.params, r.text)).join("; ");
+}
+
+/** The restore check's sentence: "no window" says the timeline's reasons, each translated. */
+export function restoreAnswerText(r: Said & { reasons?: readonly Said[] | null }): string {
+  if (r.code === "recovery.check.noWindow" && r.reasons && r.reasons.length > 0)
+    return m.rp_check_no_window({ reason: reasonsText(r.reasons, r.params?.reason) });
+  return phraseText(r.code, r.params, r.text);
 }

@@ -6,9 +6,12 @@
  * OpenAPI spec version: v1
  */
 import type { PhaseHealth } from './phaseHealth.ts';
+import type { Phrase } from './phrase.ts';
 import type { Provenance } from './provenance.ts';
 
 export interface Phase {
+  /** Why Health is capped below the table's ok: the table was not verified for the detected CNPG minor, or no minor was detected. */
+  cap?: Phrase;
   /** Class of the phase from the per-minor table. */
   health: PhaseHealth;
   /** The phase is in the table of the observed CNPG minor. */

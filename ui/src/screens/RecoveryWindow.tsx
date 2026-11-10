@@ -15,7 +15,7 @@ import { formatUtcMinute, isoToUtcInput, utcInputToIso } from "../ds/time";
 import { m } from "../paraglide/messages.js";
 import { Panel } from "./Panel";
 import { type BarSpan, recoveryBarLayout } from "./recoveryBar";
-import { phraseText } from "./recoveryPhrase";
+import { phraseText, reasonsText, restoreAnswerText } from "./recoveryPhrase";
 
 type SpanKind = RecoverySegment["kind"];
 
@@ -38,6 +38,8 @@ function spanWord(k: SpanKind, origin?: string): string {
       return m.span_candidate_gap();
     case "reported":
       return origin === "evidence" ? m.span_reported_agent() : m.span_reported();
+    case "walEnd":
+      return m.span_wal_end();
     default:
       return m.span_unknown();
   }
@@ -79,8 +81,14 @@ const SPAN_CLASS: Record<SpanKind, string> = {
   candidateGap: "fill-health-warning-bg stroke-health-warning-icon",
   unknown: "fill-health-unknown-bg stroke-health-unknown-icon",
   reported: "stroke-muted",
+  walEnd: "fill-health-warning-icon stroke-health-warning-icon",
 };
-const SPAN_DASH: Partial<Record<SpanKind, string>> = { candidateGap: "6 3", unknown: "2 3", reported: "4 2" };
+const SPAN_DASH: Partial<Record<SpanKind, string>> = {
+  candidateGap: "6 3",
+  unknown: "2 3",
+  reported: "4 2",
+  walEnd: "1 1",
+};
 const MARKER_CLASS: Record<RecoveryMarker["kind"], string> = {
   completed: "stroke-fg",
   failed: "stroke-health-critical-icon",
@@ -264,8 +272,13 @@ export function RestoreAnswer({ r }: { r: RestoreCheck }) {
         {m.answer_heading({ at: formatUtcMinute(r.at), answer: answerWord(r.answer, r.provenance.origin) })}
       </p>
       <p className="m-0 text-label" data-answer-code={r.code}>
-        {phraseText(r.code, r.params, r.text)}
+        {restoreAnswerText(r)}
       </p>
+      {r.historyFile && (
+        <p className="health m-0 rounded-control px-3 py-1.5 text-label" data-health="warning" data-history-file="">
+          {m.rp_check_history_file({ file: r.historyFile })}
+        </p>
+      )}
       {r.backupId && (
         <p className="m-0 text-label">
           {m.answer_backup()} <code className="font-code">{r.backupId}</code>
@@ -416,7 +429,7 @@ export function RecoveryWindowPanel({
       </div>
       {t.reason && (
         <p className="m-0 text-label" data-recovery-reason="">
-          {t.reason}
+          {reasonsText(t.reasons, t.reason)}
         </p>
       )}
       {t.basis !== "none" && <Bar t={t} hatch={hatch} />}

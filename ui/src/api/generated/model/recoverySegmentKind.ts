@@ -15,4 +15,5 @@ export const RecoverySegmentKind = {
   candidateGap: 'candidateGap',
   unknown: 'unknown',
   reported: 'reported',
+  walEnd: 'walEnd',
 } as const;
