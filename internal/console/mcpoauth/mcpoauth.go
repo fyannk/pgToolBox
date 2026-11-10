@@ -272,8 +272,8 @@ type Server struct {
 	// grantTokenRequests is the per-grant bucket charged before
 	// tokenRequests, bounded at maxLimiterKeys grants.
 	grantTokenRequests *auth.RateLimiter
-	registrations        *auth.RateLimiter
-	decisions            *auth.RateLimiter
+	registrations      *auth.RateLimiter
+	decisions          *auth.RateLimiter
 
 	mu      sync.Mutex
 	touched map[string]time.Time

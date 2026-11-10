@@ -50,7 +50,7 @@ type ProxyTrust struct {
 	// non-loopback PUBLIC_URL, so something (a Service, an Ingress the
 	// operator did not render, a cloud load balancer) may stand between
 	// the clients and the Pod, and every client may then have its
-	// address. FromEnv sets it; the per-address budgets are then off as
+	// address. LoadConfig sets it; the per-address budgets are then off as
 	// with Hops and no CIDRs (SharedClientKey).
 	PeerShared bool
 }
