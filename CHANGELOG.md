@@ -73,5 +73,23 @@ OpenShift.
   credentials and verifies signatures and attestations. A failed candidate is
   superseded by the next one (`-rc.N+1`), never moved. The images are not claimed
   to be bit-for-bit reproducible.
+- **The restore check without an evidence agent** reads the primary's last
+  archived WAL time: "may well be possible" only while archiving is healthy, and
+  "likely not in the repository" when it fails. With an agent, a time between
+  its WAL frontier and its scan is unknown, not "not covered". Restore-check and
+  recovery-window sentences are translated; the Overview shows the last archived
+  WAL; the failover data-loss answer shows the age of its sweep and is unknown
+  when the sweep is stale.
+- **Backup cadence** is read with CloudNativePG's own cron parser (robfig/cron
+  v1.2.0), so descriptors, `@every`, lists, ranges and day-restricted schedules
+  are checked. On a CloudNativePG minor whose phase table was not verified, a
+  healthy phase reads as a warning. Restore-drill pruning keeps the newest pass
+  of a recreated Cluster.
+- **Admission policy**: an EvidenceAgent's `allowedSecrets` needs `get` on those
+  Secrets; a kept Secret reference whose destination changes is checked again;
+  a PgAdmin that offers Cluster credentials needs `get` on the namespace's
+  Secrets. A kustomize component (`config/components/admission`) ships the same
+  policies; the OLM bundle has none, as its page says. On OpenShift, pgAdmin's
+  OAuth proxy sessions last one hour.
 
 [0.1.0]: https://github.com/fyannk/pgToolBox/releases/tag/v0.1.0
