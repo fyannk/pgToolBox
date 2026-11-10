@@ -6,8 +6,10 @@ The pgToolBox **operator**: it reconciles `PgToolBoxConsole`, `PgAdmin` and
 `EvidenceAgent`, as a single instance per cluster. It owns cluster-scoped
 objects (the CRDs, its ClusterRole, the three user ClusterRoles), so a cluster
 administrator installs it. `operator.config.watchNamespaces` narrows what the
-operator caches, not what its ClusterRole grants: a second operator release for
-another set of namespaces is not supported.
+operator caches and, in the Helm chart, where its ClusterRole is bound: a
+RoleBinding per listed namespace, plus a cluster-wide binding of the
+cluster-scoped rules alone. A second operator release for another set of
+namespaces is not supported (CRDs and cluster-scoped names collide).
 
 A team that has no operator, or does not want one, installs its tools with the
 **pgtools** chart instead (`charts/pgtools`): the console in its own namespace, with
