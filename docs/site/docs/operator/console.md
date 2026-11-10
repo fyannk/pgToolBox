@@ -264,5 +264,8 @@ repository must be on `--console-image-repositories` (chart
 ## Not in the custom resource
 
 Kept chart-only for now: the console's own NetworkPolicy, the metrics
-ServiceMonitor, TLS on the Service, the break-glass settings, trusted proxy hops,
-the IdP timeout and the cookie flags. Use the chart where you need them.
+ServiceMonitor, TLS on the Service, the break-glass settings, the IdP timeout
+and the cookie flags. Use the chart where you need them. Trusted proxy hops
+follow the exposure, as in the chart: `TRUSTED_PROXY_HOPS=1` for a Route,
+Ingress or Gateway (one hop, so that sign-in budgets are per client), and none
+for `clusterIP`. A second proxy in front of the exposure needs the chart.
