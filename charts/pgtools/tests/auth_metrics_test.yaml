@@ -52,6 +52,32 @@ tests:
     asserts:
       - contains: {path: "spec.template.spec.containers[0].env", content: {name: TRUSTED_PROXY_CIDRS, value: "0.0.0.0/0,::/0"}}
 
+  # extraFrom peers are not the router, and a broad one ({podSelector: {}})
+  # would admit every Pod of the namespace: none is trusted unless named.
+  - it: trusts no peer when extraFrom admits more than the router
+    template: templates/console/deployment.yaml
+    set:
+      console.exposure.type: ingress
+      console.exposure.host: pgc.example.org
+      console.networkPolicy.enabled: true
+      console.networkPolicy.apiServer.mode: any
+      console.networkPolicy.ingress.extraFrom: [{podSelector: {}}]
+    asserts:
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: TRUSTED_PROXY_HOPS, value: "1"}}
+      - notExists: {path: "spec.template.spec.containers[0].env[?(@.name=='TRUSTED_PROXY_CIDRS')]"}
+
+  - it: trusts the named proxies beside extraFrom
+    template: templates/console/deployment.yaml
+    set:
+      console.exposure.type: route
+      console.exposure.host: pgc.apps.example.org
+      console.networkPolicy.enabled: true
+      console.networkPolicy.apiServer.mode: any
+      console.networkPolicy.ingress.extraFrom: [{ipBlock: {cidr: 0.0.0.0/0}}]
+      console.trustedProxyCIDRs: [10.128.0.0/14]
+    asserts:
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: TRUSTED_PROXY_CIDRS, value: "10.128.0.0/14"}}
+
   - it: trusts the named proxies
     template: templates/console/deployment.yaml
     set:

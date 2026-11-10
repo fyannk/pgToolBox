@@ -41,13 +41,20 @@ warning naming what is missing at start:
 {{- end }}
 {{- $hops := .Values.console.trustedProxyHops }}
 {{- if kindIs "invalid" $hops }}{{ $hops = ternary 0 1 (eq .Values.console.exposure.type "none") }}{{ end }}
-{{- if and $hops (not .Values.console.trustedProxyCIDRs) (not (and .Values.console.networkPolicy.enabled (ne .Values.console.exposure.type "none"))) }}
+{{- if and $hops (not .Values.console.trustedProxyCIDRs) (not (and .Values.console.networkPolicy.enabled (ne .Values.console.exposure.type "none") (not .Values.console.networkPolicy.ingress.extraFrom))) }}
 
 X-Forwarded-For is IGNORED: no trusted proxy is named (console.trustedProxyCIDRs),
+{{- if .Values.console.networkPolicy.ingress.extraFrom }}
+and console.networkPolicy.ingress.extraFrom admits peers that are not the router,
+which could reach the console directly and forge it.
+{{- else }}
 and without console.networkPolicy any Pod could reach the console directly and
-forge it. Every client then shares the proxy's address, and so one sign-in budget.
-List the router's or ingress controller's addresses in console.trustedProxyCIDRs,
-or enable console.networkPolicy.
+forge it.
+{{- end }}
+Every client then shares the proxy's address: no per-address sign-in budget
+applies, only the per-flow, per-token and per-replica bounds.
+List the router's or ingress controller's addresses in console.trustedProxyCIDRs
+{{- if not .Values.console.networkPolicy.ingress.extraFrom }}, or enable console.networkPolicy{{ end }}.
 {{- end }}
 {{- if eq .Values.console.exposure.type "none" }}
 
