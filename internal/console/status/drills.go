@@ -205,8 +205,17 @@ func (s *Service) PgBackRestTarget(namespace, name string) (opstate.PgBackRestTa
 	}, ""
 }
 
+// liveSource is the identity a drill record must match to count for c:
+// a Cluster recreated under the same name inherits no drill.
+func liveSource(c *cnpgv1.Cluster) drills.Live {
+	if c == nil {
+		return drills.Live{}
+	}
+	return drills.Live{UID: string(c.UID), CreatedAt: c.CreationTimestamp.UTC()}
+}
+
 // drillsBlock is the restore-drill block of a Cluster's Backups screen.
-func (s *Service) drillsBlock(namespace, name string) (out viewmodel.RestoreDrills) {
+func (s *Service) drillsBlock(namespace, name string, live drills.Live) (out viewmodel.RestoreDrills) {
 	s.mu.RLock()
 	d := s.opts.Drills
 	s.mu.RUnlock()
@@ -227,7 +236,7 @@ func (s *Service) drillsBlock(namespace, name string) (out viewmodel.RestoreDril
 	out.TimeLimitSeconds = int64(d.TimeLimit / time.Second)
 	out.SizeTolerancePercent = drills.SizeTolerancePercent
 	out.NotChecked = append(out.NotChecked, drills.NotChecked...)
-	for _, r := range d.Records.Source(drills.SourceKey{Namespace: namespace, Name: name}) {
+	for _, r := range d.Records.SourceOf(drills.SourceKey{Namespace: namespace, Name: name}, live) {
 		out.Items = append(out.Items, drills.View(r))
 		if r.Result == viewmodel.DrillPassed && out.LastPassedAt == nil {
 			t := r.FinishedAt.UTC()
@@ -263,8 +272,8 @@ func (s *Service) diagnoseDrills(c *cnpgv1.Cluster) (diagnose.DrillsSnapshot, bo
 		out.Drillable = err == nil
 	}
 	src := drills.SourceKey{Namespace: c.Namespace, Name: c.Name}
-	out.Recorded = len(d.Records.Source(src))
-	if at, ok := d.Records.LastPassed(src); ok {
+	out.Recorded = len(d.Records.SourceOf(src, liveSource(c)))
+	if at, ok := d.Records.LastPassedOf(src, liveSource(c)); ok {
 		out.LastPassedAt = at.UTC()
 	}
 	return out, true

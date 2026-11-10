@@ -48,6 +48,7 @@ type DrillResult struct {
 	Name            string `json:"name"`
 	SourceNamespace string `json:"srcNs"`
 	Source          string `json:"src"`
+	SourceUID       string `json:"srcUid,omitempty"`
 	Backup          string `json:"backup,omitempty"`
 	BackupLabel     string `json:"label,omitempty"`
 	Result          string `json:"result"`
@@ -79,7 +80,7 @@ func validDrill(key string, r DrillResult) bool {
 	name := func(s string) bool { return s != "" && len(s) <= maxDrillName }
 	return name(r.Namespace) && name(r.Name) && name(r.SourceNamespace) && name(r.Source) &&
 		key == drillKey(r.Namespace, r.Name) && finishedResults[r.Result] &&
-		len(r.Backup) <= maxDrillName && len(r.BackupLabel) <= maxDrillName &&
+		len(r.Backup) <= maxDrillName && len(r.SourceUID) <= maxDrillName && len(r.BackupLabel) <= maxDrillName &&
 		len(r.Reason) <= maxDrillReason && utf8.ValidString(r.Reason) &&
 		r.StartedAt > 0 && r.FinishedAt >= r.StartedAt
 }

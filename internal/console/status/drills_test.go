@@ -17,6 +17,7 @@ package status
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -27,6 +28,7 @@ import (
 	"github.com/fyannk/pgToolBox/internal/console/drills"
 	"github.com/fyannk/pgToolBox/internal/console/sweep"
 	"github.com/fyannk/pgToolBox/internal/console/viewmodel"
+	"github.com/fyannk/pgToolBox/pkg/diagnose"
 )
 
 func TestDrillReads(t *testing.T) {
@@ -112,6 +114,49 @@ func TestDrillReads(t *testing.T) {
 	if dr := in.Drills; !ok || !in.HasDrills || dr.Persistent || !dr.RecordedSince.Equal(now) || dr.Recorded != 1 ||
 		!dr.LastPassedAt.Equal(now.Add(-49*time.Minute)) {
 		t.Errorf("diagnostics drills = %+v (%v, %v)", in.Drills, in.HasDrills, ok)
+	}
+}
+
+// TestRecreatedClusterInheritsNoDrill: a Cluster deleted and recreated
+// under the same name (another UID) is not restore-tested by the drill
+// of the one before it, and the diagnostics see no pass either, so
+// restore-drill-overdue fires.
+func TestRecreatedClusterInheritsNoDrill(t *testing.T) {
+	ctx := context.Background()
+	svc := newService(ctx, t, nil)
+	store := drills.NewStore(nil, nil, now.Add(-100*24*time.Hour))
+	store.Put(drills.Record{
+		Drill: drills.Key{Namespace: "team-a", Name: "drill-orders-1"}, Source: drills.SourceKey{Namespace: "team-a", Name: "orders"},
+		SourceUID: "uid-of-the-deleted-orders",
+		StartedAt: now.Add(-time.Hour), Deadline: now.Add(time.Hour), HealthyAt: now.Add(-50 * time.Minute), FinishedAt: now.Add(-49 * time.Minute),
+		Result: viewmodel.DrillPassed,
+	})
+	svc.SetDrills(&DrillsView{Records: store, TimeLimit: 2 * time.Hour})
+	b, err := svc.Backups(ctx, "team-a", "orders")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.Drills.RestoreTested || b.RecoveryTimeline.RestoreTested || b.Drills.LastPassedAt != nil || len(b.Drills.Items) != 0 {
+		t.Errorf("the recreated Cluster inherits the old drill: %+v", b.Drills)
+	}
+	in, ok := svc.Input(ctx, cache.ClusterKey{Namespace: "team-a", Name: "orders"})
+	if !ok || !in.HasDrills || !in.Drills.LastPassedAt.IsZero() || in.Drills.Recorded != 0 {
+		t.Fatalf("diagnostics drills = %+v", in.Drills)
+	}
+	in.Drills.Drillable = true // the fixture's recovery source is ops' concern
+	if res := diagnose.Run(in); !slices.ContainsFunc(res.Findings, func(f diagnose.Finding) bool { return f.ID == "restore-drill-overdue" }) {
+		t.Errorf("restore-drill-overdue does not fire: %+v", res.Findings)
+	}
+
+	// The same Cluster (same UID) keeps its pass.
+	store.Put(drills.Record{
+		Drill: drills.Key{Namespace: "team-a", Name: "drill-orders-2"}, Source: drills.SourceKey{Namespace: "team-a", Name: "orders"},
+		SourceUID: string(ordersUID),
+		StartedAt: now.Add(-time.Hour), Deadline: now.Add(time.Hour), FinishedAt: now.Add(-40 * time.Minute),
+		Result: viewmodel.DrillPassed,
+	})
+	if b, _ := svc.Backups(ctx, "team-a", "orders"); !b.Drills.RestoreTested || len(b.Drills.Items) != 1 {
+		t.Errorf("the live Cluster's own pass is not counted: %+v", b.Drills)
 	}
 }
 

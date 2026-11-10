@@ -488,6 +488,7 @@ func (s *Service) writeDrill(ctx context.Context, id *ID, now time.Time) (viewmo
 	if d.Records != nil {
 		rec := drills.FromMeta(drills.Key{Namespace: ns, Name: obj.Name}, meta)
 		rec.Source = drills.SourceKey{Namespace: c.Namespace, Name: c.Name}
+		rec.SourceUID = string(c.UID)
 		rec.UID = string(uid)
 		rec.Result = viewmodel.DrillRunning
 		d.Records.Put(rec)
