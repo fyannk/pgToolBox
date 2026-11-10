@@ -231,8 +231,8 @@ func matchRedirect(registered []string, given string) (string, bool) {
 
 // handleRegister is dynamic client registration (RFC 7591).
 func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
-	client := auth.ClientOf(r, s.o.TrustedProxyHops)
-	if !s.registry.Allow(auth.ClientKey(r, s.o.TrustedProxyHops)) {
+	client := auth.ClientOf(r, s.o.TrustedProxy)
+	if !s.registry.Allow(auth.ClientKey(r, s.o.TrustedProxy)) {
 		requests.WithLabelValues("register", "throttled").Inc()
 		w.Header().Set("Retry-After", "60")
 		writeError(w, http.StatusTooManyRequests, "slow_down", "too many registrations from this address; wait a minute")

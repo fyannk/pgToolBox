@@ -38,7 +38,11 @@ import (
 // answer is the same. The scraper then needs get on the non-resource URL
 // /metrics (the chart's metrics-reader ClusterRole), checked with a
 // SelfSubjectAccessReview sent with the scraper's own token.
-func MetricsFilter(identity auth.IdentityReviewer, az *authz.Authorizer, trustedProxyHops int) metricsserver.Filter {
+//
+// The probe listener it is served on is never behind a reverse proxy
+// (Prometheus scrapes the Pod), so X-Forwarded-For is never read here: the
+// per-address budget is the scraper's own address.
+func MetricsFilter(identity auth.IdentityReviewer, az *authz.Authorizer) metricsserver.Filter {
 	// A scrape every few seconds is plenty; beyond that each request
 	// would cost the API server a review.
 	limiter := auth.NewRateLimiter(60, 10, 1000)
@@ -47,7 +51,7 @@ func MetricsFilter(identity auth.IdentityReviewer, az *authz.Authorizer, trusted
 			return nil, errors.New("metrics filter needs an identity reviewer and an authorizer")
 		}
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if !limiter.Allow(auth.ClientKey(r, trustedProxyHops)) {
+			if !limiter.Allow(auth.ClientKey(r, auth.ProxyTrust{})) {
 				http.Error(w, "Too Many Requests", http.StatusTooManyRequests)
 				return
 			}
@@ -92,6 +96,6 @@ func bearer(h string) (string, bool) {
 
 // MetricsHandler serves the controller-runtime registry, where every
 // console metric is registered, behind MetricsFilter.
-func MetricsHandler(identity auth.IdentityReviewer, az *authz.Authorizer, log logr.Logger, trustedProxyHops int) (http.Handler, error) {
-	return MetricsFilter(identity, az, trustedProxyHops)(log, promhttp.HandlerFor(crmetrics.Registry, promhttp.HandlerOpts{}))
+func MetricsHandler(identity auth.IdentityReviewer, az *authz.Authorizer, log logr.Logger) (http.Handler, error) {
+	return MetricsFilter(identity, az)(log, promhttp.HandlerFor(crmetrics.Registry, promhttp.HandlerOpts{}))
 }

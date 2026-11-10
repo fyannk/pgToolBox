@@ -156,7 +156,7 @@ func (s *Server) redirectTo(w http.ResponseWriter, r *http.Request, redirectURI 
 }
 
 func (s *Server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
-	if !s.requests.Allow(auth.ClientKey(r, s.o.TrustedProxyHops)) {
+	if !s.requests.Allow(auth.ClientKey(r, s.o.TrustedProxy)) {
 		requests.WithLabelValues("authorize", "throttled").Inc()
 		auth.ErrorPage(w, http.StatusTooManyRequests, "Too many authorization requests from this address; wait a minute and try again.")
 		return
@@ -299,7 +299,7 @@ func (s *Server) handleDecision(w http.ResponseWriter, r *http.Request) {
 		auth.ErrorPage(w, http.StatusServiceUnavailable, "Too many connections in progress; retry in a minute.")
 		return
 	}
-	client := auth.ClientOf(r, s.o.TrustedProxyHops)
+	client := auth.ClientOf(r, s.o.TrustedProxy)
 	if r.PostForm.Get("decision") != "approve" {
 		requests.WithLabelValues("authorize", "denied").Inc()
 		s.audit.Record(r.Context(), client, auth.AuditMCPGrant, "outcome", "denied", "user", cr.Subject, "client", cr.Name, "session", cr.Session)
@@ -346,7 +346,7 @@ func (s *Server) completeGrant(w http.ResponseWriter, r *http.Request, pending s
 		return
 	}
 	if user.Name != p.Subject {
-		s.audit.Record(r.Context(), auth.ClientOf(r, s.o.TrustedProxyHops), auth.AuditMCPGrant, "outcome", "refused",
+		s.audit.Record(r.Context(), auth.ClientOf(r, s.o.TrustedProxy), auth.AuditMCPGrant, "outcome", "refused",
 			"user", p.Subject, "client", p.Name, "reason", "the identity provider signed in another person")
 		auth.ErrorPage(w, http.StatusForbidden, "The identity provider signed in another person than the one who approved; start the connection from the application again.")
 		return
@@ -358,7 +358,7 @@ func (s *Server) completeGrant(w http.ResponseWriter, r *http.Request, pending s
 	// Signed out between Approve and the IdP's answer: the approval went
 	// with the session.
 	if s.o.Sessions.SignedOut(p.Session) {
-		s.audit.Record(r.Context(), auth.ClientOf(r, s.o.TrustedProxyHops), auth.AuditMCPGrant, "outcome", "refused",
+		s.audit.Record(r.Context(), auth.ClientOf(r, s.o.TrustedProxy), auth.AuditMCPGrant, "outcome", "refused",
 			"user", p.Subject, "client", p.Name, "reason", "signed out before the connection completed")
 		auth.ErrorPage(w, http.StatusForbidden, "You signed out of the console after approving this connection; start it from the application again.")
 		return
@@ -392,7 +392,7 @@ func (s *Server) answerCode(w http.ResponseWriter, r *http.Request, p pendingGra
 		return
 	}
 	requests.WithLabelValues("authorize", "approved").Inc()
-	s.audit.Record(r.Context(), auth.ClientOf(r, s.o.TrustedProxyHops), auth.AuditMCPGrant, "outcome", "approved", "user", p.Subject,
+	s.audit.Record(r.Context(), auth.ClientOf(r, s.o.TrustedProxy), auth.AuditMCPGrant, "outcome", "approved", "user", p.Subject,
 		"grant", p.ID, "client", p.Name, "scope", p.Scope, "session", p.Session, "redirect_host", hostOf(p.RedirectURI),
 		"own_idp_tokens", up.Refresh != "")
 	s.redirectTo(w, r, p.RedirectURI, url.Values{"code": {sealed}, "state": {p.State}})

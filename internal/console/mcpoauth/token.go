@@ -56,8 +56,8 @@ func invalidGrant(desc string) *tokenFailure {
 }
 
 func (s *Server) handleToken(w http.ResponseWriter, r *http.Request) {
-	client := auth.ClientOf(r, s.o.TrustedProxyHops)
-	if !s.requests.Allow(auth.ClientKey(r, s.o.TrustedProxyHops)) {
+	client := auth.ClientOf(r, s.o.TrustedProxy)
+	if !s.requests.Allow(auth.ClientKey(r, s.o.TrustedProxy)) {
 		requests.WithLabelValues("token", "throttled").Inc()
 		w.Header().Set("Retry-After", "30")
 		writeError(w, http.StatusTooManyRequests, "slow_down", "too many token requests from this address")

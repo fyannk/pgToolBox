@@ -198,8 +198,8 @@ type Options struct {
 	// PublicURL is the console's external origin (AUTH_PUBLIC_URL),
 	// required: the issuer and the resource are never derived from a
 	// request's Host or forwarded headers, which a client chooses.
-	PublicURL        string
-	TrustedProxyHops int
+	PublicURL    string
+	TrustedProxy auth.ProxyTrust
 	// WriteTools is MCP_WRITE_TOOLS: consent then offers "read and
 	// operate".
 	WriteTools bool
@@ -283,7 +283,7 @@ func New(o Options) (*Server, error) {
 	}
 	s := &Server{
 		o: o, codec: o.Sessions.Codec(),
-		audit:     &auth.Auditor{Logger: o.Log, TrustedProxyHops: o.TrustedProxyHops},
+		audit:     &auth.Auditor{Logger: o.Log, TrustedProxy: o.TrustedProxy},
 		requests:  auth.NewRateLimiter(requestsPerMinute, requestsBurst, maxLimiterKeys),
 		registry:  auth.NewRateLimiter(registersPerMinute, registersBurst, maxLimiterKeys),
 		decisions: auth.NewRateLimiter(decisionsPerMinute, decisionsBurst, maxLimiterKeys),

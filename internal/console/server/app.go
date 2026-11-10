@@ -196,7 +196,7 @@ func RunApp(ctx context.Context, o AppOptions) error {
 		Source: o.Source, Authz: az, Broker: o.Broker, Sessions: authHandler,
 		Logs: o.Logs, Operator: operator, DatabaseRoles: databaseRoles, Features: o.Features, Access: access,
 		PgAdminURL: o.PgAdminURL, Log: o.Log, PublicURL: o.Auth.PublicURL,
-		ClientOf: func(r *http.Request) auth.Client { return auth.ClientOf(r, o.Auth.TrustedProxyHops) },
+		ClientOf: func(r *http.Request) auth.Client { return auth.ClientOf(r, o.Auth.TrustedProxy) },
 	}
 	var (
 		oauthServer *mcpoauth.Server
@@ -224,7 +224,7 @@ func RunApp(ctx context.Context, o AppOptions) error {
 	if o.MCP.Enabled {
 		e, err := mcp.New(mcp.Options{
 			Reads: reads, Authenticator: mcpAuthenticator(oauthServer, authHandler), OAuth: mcpOAuth(oauthServer),
-			PublicURL: o.Auth.PublicURL, TrustedProxyHops: o.Auth.TrustedProxyHops, Docs: o.MCP.Docs,
+			PublicURL: o.Auth.PublicURL, TrustedProxy: o.Auth.TrustedProxy, Docs: o.MCP.Docs,
 			Attempts:   authHandler.AttemptLimiter(),
 			WriteTools: o.MCP.WriteTools, Sealer: authHandler.Codec(), Confirmations: index, Sessions: authHandler,
 			MaxResultBytes: o.MCP.MaxResultBytes, CallTimeout: o.MCP.CallTimeout,
@@ -238,7 +238,7 @@ func RunApp(ctx context.Context, o AppOptions) error {
 			return err
 		}
 	}
-	metrics, err := MetricsHandler(identity, az, logr.FromSlogHandler(o.Log.Handler()), o.Auth.TrustedProxyHops)
+	metrics, err := MetricsHandler(identity, az, logr.FromSlogHandler(o.Log.Handler()))
 	if err != nil {
 		return err
 	}

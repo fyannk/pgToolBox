@@ -451,7 +451,7 @@ func TestMetricsFilter(t *testing.T) {
 	t.Parallel()
 	az := authz.NewAuthorizer(sar{"prometheus": true}, authz.Options{})
 	ident := reviewer{"prom-token": {Name: "prometheus"}, "user-token": {Name: "jane"}, "flaky-token": {Name: "flaky"}}
-	h, err := MetricsFilter(ident, az, 0)(logrDiscard(), http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	h, err := MetricsFilter(ident, az)(logrDiscard(), http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, "pgtoolbox_console_up 1")
 	}))
 	if err != nil {

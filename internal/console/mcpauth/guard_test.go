@@ -19,9 +19,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"strings"
 	"testing"
 
@@ -49,6 +51,8 @@ func (c *checker) BearerPrincipal(_ context.Context, token string) (*auth.Princi
 		return nil, errors.New("dial tcp: connection refused")
 	case token == "revoked":
 		return nil, auth.ErrBearerRevoked
+	case token == "busy":
+		return nil, auth.ErrReviewsBusy
 	case strings.HasPrefix(token, "good-"):
 		return &auth.Principal{User: authz.User{Name: strings.TrimPrefix(token, "good-")}, SessionID: auth.BearerReference(token)}, nil
 	}
@@ -118,6 +122,7 @@ func TestGuard(t *testing.T) {
 		{name: "a revoked token", hdr: bearerHdr("revoked"), code: 401, challenge: `error_description="the token is revoked"`, denied: "revoked"},
 		{name: "token sign-in off", off: true, hdr: bearerHdr("good-dba"), code: 401, challenge: `error="invalid_token"`, denied: "not a token this console accepts"},
 		{name: "API server down is not a refusal", down: true, hdr: bearerHdr("good-dba"), code: 503},
+		{name: "the shared review bucket is spent", hdr: bearerHdr("busy"), code: 429, body: "too many tokens", denied: "review budget"},
 		{name: "accepted", hdr: bearerHdr("good-dba"), code: 200, body: "dba|client"},
 		{name: "scheme is case-insensitive", hdr: map[string]string{"Authorization": "bearer good-dba"}, code: 200, body: "dba|client"},
 		{name: "same origin is accepted", hdr: map[string]string{"Authorization": "Bearer good-dba", "Origin": publicURL}, code: 200},
@@ -207,6 +212,25 @@ func TestGuardBudgets(t *testing.T) {
 		}
 		if w := env.do(t, bearerHdr("good-dba")); w.Code != 200 {
 			t.Errorf("the known token after the guesses = %d", w.Code)
+		}
+	})
+	t.Run("per peer, whatever X-Forwarded-For an untrusted peer claims", func(t *testing.T) {
+		t.Parallel()
+		env := newGuardEnv(t, func(o *Options) {
+			o.Attempts = auth.NewRateLimiter(1, 2, 100)
+			o.TrustedProxy = auth.ProxyTrust{Hops: 1, CIDRs: []netip.Prefix{netip.MustParsePrefix("10.128.0.0/14")}}
+		})
+		codes := make([]int, 0, 3)
+		for i := range 3 {
+			hdr := bearerHdr(fmt.Sprintf("forged-%d", i))
+			hdr["X-Forwarded-For"] = fmt.Sprintf("198.18.0.%d", i)
+			codes = append(codes, env.do(t, hdr).Code)
+		}
+		if codes[2] != http.StatusTooManyRequests {
+			t.Fatalf("guesses with a fresh forged address each = %v, want the third over the peer's budget", codes)
+		}
+		if strings.Contains(env.logs.String(), "198.18.0.") {
+			t.Errorf("a forged address reached the audit trail: %s", env.logs)
 		}
 	})
 	t.Run("a refused token is forgotten", func(t *testing.T) {
