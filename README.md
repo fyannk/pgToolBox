@@ -75,11 +75,20 @@ All images are built for `linux/amd64` and `linux/arm64`.
 
 ## Quick start
 
+Pick the version first: the newest one on the
+[releases page](https://github.com/fyannk/pgToolBox/releases). A release
+candidate (`X.Y.Z-rc.N`) is listed there too and installs only with its exact
+version; the stable `X.Y.Z` appears when the final tag is published.
+
+```bash
+VERSION=X.Y.Z   # e.g. 0.1.0, or 0.1.0-rc.1 while only a candidate exists
+```
+
 A team console, signing in with a pasted token:
 
 ```bash
 helm install console oci://ghcr.io/fyannk/charts/pgtools \
-  --version 0.1.0 --namespace team-a \
+  --version "${VERSION}" --namespace team-a \
   --set console.auth.provider=token
 ```
 
@@ -92,7 +101,7 @@ The operator, once per cluster:
 
 ```bash
 helm install pgtoolbox oci://ghcr.io/fyannk/charts/pgtoolbox \
-  --version 0.1.0 --namespace pgtoolbox --create-namespace
+  --version "${VERSION}" --namespace pgtoolbox --create-namespace
 ```
 
 ## Project status

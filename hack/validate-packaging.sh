@@ -119,22 +119,22 @@ else:
     except (ValueError, KeyError) as err:
         problems.append(f"alm-examples is not usable: {err}")
 
-# 6. The chart's icon URL names a release tag on purpose: a chart pinned to
-#    a version must not have its artwork change underneath it. The cost is
-#    that the reference goes stale silently — helm lint only checks that an
-#    icon exists, so a release that forgets it ships the previous release's
-#    logo and nothing complains.
+# 6. The chart's icon URL names `main`, not a release tag. A tag-pinned URL
+#    404s for the whole life of a release candidate (the final tag does not
+#    exist yet) and would have to be bumped by hand at every release; the logo
+#    changes rarely and a moved logo is harmless. helm lint only checks that an
+#    icon exists, so this checks that it is one that resolves.
 icon = chart.get("icon", "")
 if not icon:
     problems.append("chart has no icon: registries that render one show a placeholder")
 else:
-    match = re.search(r"raw\.githubusercontent\.com/fyannk/pgToolBox/(v[^/]+)/", icon)
+    match = re.search(r"raw\.githubusercontent\.com/fyannk/pgToolBox/([^/]+)/", icon)
     if not match:
-        problems.append(f"chart icon URL names no release tag, so it can drift: {icon}")
-    elif match.group(1) != f"v{chart['appVersion']}":
+        problems.append(f"chart icon URL is not a raw.githubusercontent.com/fyannk/pgToolBox URL: {icon}")
+    elif match.group(1) != "main":
         problems.append(
-            f"chart icon URL points at {match.group(1)} but the chart is "
-            f"v{chart['appVersion']} — bump the tag in Chart.yaml's icon:")
+            f"chart icon URL points at {match.group(1)}, which does not exist during a release "
+            f"candidate (the final tag is cut after it); point it at main: {icon}")
 
 # 7. The changelog is the one release artifact no tool generates, so it is
 #    the one most easily left describing the previous version.
@@ -143,7 +143,7 @@ for field in ("version", "appVersion"):
     if str(tools_chart[field]) != str(chart[field]):
         problems.append(f"charts/pgtools {field} {tools_chart[field]} != charts/pgtoolbox {field} {chart[field]}: the two charts release as one version")
 if tools_chart.get("icon") != chart.get("icon"):
-    problems.append("charts/pgtools icon differs from charts/pgtoolbox's: both carry the release tag")
+    problems.append("charts/pgtools icon differs from charts/pgtoolbox's: both carry the same URL")
 if f"## [{csv_version}]" not in changelog:
     problems.append(f"CHANGELOG.md has no '## [{csv_version}]' section for the version being shipped")
 
@@ -165,7 +165,7 @@ for version in set(published):
             f"but Chart.yaml's version is {chart['version']}")
 
 #    And the two Chart.yaml versions move together here, which the checks
-#    above assume: the icon tag and the CSV are compared against appVersion
+#    above assume: the CSV is compared against appVersion
 #    while the documented install is compared against version, so a chart
 #    whose fields diverged would be checked against two different releases.
 if str(chart["version"]) != str(chart["appVersion"]):
