@@ -358,7 +358,7 @@ func (b *browser) build(noKeepAlive bool) *http.Client {
 			// POST (which Go does not retry) with EOF/reset. Drop idle
 			// connections well before the server does.
 			IdleConnTimeout: 30 * time.Second,
-			TLSClientConfig:   &tls.Config{RootCAs: b.roots, MinVersion: tls.VersionTLS12},
+			TLSClientConfig: &tls.Config{RootCAs: b.roots, MinVersion: tls.VersionTLS12},
 			DialContext: func(c context.Context, network, addr string) (net.Conn, error) {
 				if to, ok := b.hosts[addr]; ok {
 					addr = to
