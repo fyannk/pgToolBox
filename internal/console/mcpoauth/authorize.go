@@ -156,7 +156,11 @@ func (s *Server) redirectTo(w http.ResponseWriter, r *http.Request, redirectURI 
 }
 
 func (s *Server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
-	if !s.requests.Allow(auth.ClientKey(r, s.o.TrustedProxy)) {
+	// Per client address, or, when the address is shared by every client
+	// behind a proxy the console does not trust, per signed-in person once
+	// the session is known (an anonymous request only goes to the sign-in).
+	key, perAddress := auth.BudgetKey(r, s.o.TrustedProxy)
+	if perAddress && !s.requests.Allow(key) {
 		requests.WithLabelValues("authorize", "throttled").Inc()
 		auth.ErrorPage(w, http.StatusTooManyRequests, "Too many authorization requests from this address; wait a minute and try again.")
 		return
@@ -179,6 +183,11 @@ func (s *Server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 		}
 		// LoginURL keeps rd a same-origin path (auth.SafeRedirect).
 		http.Redirect(w, r, auth.LoginURL(r.URL.RequestURI()), http.StatusFound) // #nosec G710 -- same-origin target
+		return
+	}
+	if !perAddress && !s.requests.Allow("user:"+s.userKey(sess.Principal.User.Name)) {
+		requests.WithLabelValues("authorize", "throttled").Inc()
+		auth.ErrorPage(w, http.StatusTooManyRequests, "Too many authorization requests; wait a minute and try again.")
 		return
 	}
 	// A request in error is answered with a page, never a redirect to the

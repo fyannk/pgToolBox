@@ -466,10 +466,7 @@ func (h *Handler) handleToken(w http.ResponseWriter, r *http.Request) {
 // false when the client address is shared by every client behind an
 // untrusted proxy: such a key is not charged by the sign-in paths.
 func (h *Handler) addressBudget(r *http.Request) (string, bool) {
-	if h.cfg.TrustedProxy.SharedClientKey() {
-		return "", false
-	}
-	return ClientKey(r, h.cfg.TrustedProxy), true
+	return BudgetKey(r, h.cfg.TrustedProxy)
 }
 
 // allowSignIn spends one sign-in attempt of key's budget in limiter.

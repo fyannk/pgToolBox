@@ -43,7 +43,8 @@ const PathConfirm = "/mcp/confirm"
 const (
 	// maxBudgetKeys bounds the confirmation budgets' tables.
 	maxBudgetKeys = 4096
-	// pageViewsPerMinute bounds page loads per client address.
+	// pageViewsPerMinute bounds page loads per client address (per person
+	// when the address is shared, auth.BudgetKey).
 	pageViewsPerMinute = 30
 	// pageAnswersPerMinute bounds answers per person.
 	pageAnswersPerMinute = 10
@@ -82,13 +83,22 @@ func confirmView(pg confirmPage, sealed, problem string) auth.MCPConfirmView {
 
 // handleConfirmPage shows the confirmation to the person it was asked of.
 func (e *Endpoint) handleConfirmPage(w http.ResponseWriter, r *http.Request) {
-	if !e.pageViews.Allow(auth.ClientKey(r, e.o.TrustedProxy)) {
+	// Page loads are budgeted per client address, or, behind a proxy the
+	// console does not trust (every client then has its address), per
+	// signed-in person once the session is known: an anonymous load only
+	// redirects to the sign-in, which has budgets of its own.
+	key, perAddress := auth.BudgetKey(r, e.o.TrustedProxy)
+	if perAddress && !e.pageViews.Allow(key) {
 		auth.ErrorPage(w, http.StatusTooManyRequests, "Too many confirmation pages from this address; wait a minute.")
 		return
 	}
 	sess, _, err := e.o.Sessions.CurrentSession(w, r)
 	if err != nil {
 		auth.ErrorPage(w, http.StatusServiceUnavailable, "The Kubernetes API server could not be reached to check your session; please retry.")
+		return
+	}
+	if !perAddress && sess != nil && !e.pageViews.Allow("user:"+e.userKey(sess.Principal.User.Name)) {
+		auth.ErrorPage(w, http.StatusTooManyRequests, "Too many confirmation pages; wait a minute.")
 		return
 	}
 	if sess == nil {
