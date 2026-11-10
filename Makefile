@@ -552,7 +552,8 @@ test-fuzz-console: ## Fuzz the console's trust-boundary parsers (/pg/status body
 
 .PHONY: verify-pins-cnpgstatus
 verify-pins-cnpgstatus: ## Verify the read model's per-minor tables against the verified CNPG releases (module cache).
-	go test -tags catalogpins -count=1 -run 'TestTablePinsExistInVerifiedReleases|TestEveryUpstreamPhaseIsInTheTable|TestFeatureFloorsAreAbsentBelowTheFloor|TestElectionRulesAreAbsentAt1300' ./pkg/cnpgstatus/
+	@# No -run filter: a pin test added later must not be skipped by a stale list (two were).
+	go test -tags catalogpins -count=1 ./pkg/cnpgstatus/
 
 .PHONY: test-console-core
 test-console-core: test-envtest-console test-fuzz-console verify-pins-cnpgstatus ## Everything the console core adds beyond make test (envtest per minor, fuzz, pins).
