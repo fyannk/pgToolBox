@@ -2,6 +2,6 @@
 # add a word to ignore-words-list only when it is correct in this product.
 [codespell]
 skip = node_modules,build,.docusaurus,package-lock.json,*.svg,*.min.*,docs/site/docs/reference/api.md,docs/site/docs/reference/checks.md
-# ro/rw: the CNPG service suffixes; ba/fo: abbreviations in tables; ot: object-store shorthand.
-ignore-words-list = ro,rw,ba,fo,ot,te,nd,statics,crate,hist,afile,sinc
+# ro/rw: the CNPG service suffixes; ba/fo: abbreviations in tables; ot: object-store shorthand; notin: the NotIn selector operator.
+ignore-words-list = ro,rw,ba,fo,ot,te,nd,statics,crate,hist,afile,sinc,notin
 check-filenames =
