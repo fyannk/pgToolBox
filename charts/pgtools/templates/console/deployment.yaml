@@ -256,6 +256,16 @@ spec:
             {{- if $hops }}
             - name: TRUSTED_PROXY_HOPS
               value: {{ $hops | quote }}
+            {{- /* The proxies' addresses; with none listed, every peer only
+            when the NetworkPolicy admits nothing but the router (and extraFrom). */}}
+            {{- $cidrs := $c.trustedProxyCIDRs }}
+            {{- if and (not $cidrs) $c.networkPolicy.enabled (ne $c.exposure.type "none") }}
+            {{- $cidrs = list "0.0.0.0/0" "::/0" }}
+            {{- end }}
+            {{- with $cidrs }}
+            - name: TRUSTED_PROXY_CIDRS
+              value: {{ join "," . | quote }}
+            {{- end }}
             {{- end }}
             {{- if $c.tls.secretName }}
             - name: TLS_CERT_FILE

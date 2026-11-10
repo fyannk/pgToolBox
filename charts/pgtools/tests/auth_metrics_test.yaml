@@ -35,11 +35,41 @@ tests:
       - contains: {path: "spec.template.spec.containers[0].env", content: {name: AUTH_TOKEN_LOGIN, value: "false"}}
       - contains: {path: "spec.template.spec.containers[0].env", content: {name: IDP_TIMEOUT, value: 10s}}
 
-  - it: trusts the edge's hop when the console is exposed
+  - it: trusts the edge's hop when the console is exposed, but no peer without a policy (the header is ignored)
     template: templates/console/deployment.yaml
     set: {console.exposure.type: ingress, console.exposure.host: pgc.example.org}
     asserts:
       - contains: {path: "spec.template.spec.containers[0].env", content: {name: TRUSTED_PROXY_HOPS, value: "1"}}
+      - notExists: {path: "spec.template.spec.containers[0].env[?(@.name=='TRUSTED_PROXY_CIDRS')]"}
+
+  - it: trusts every peer only behind the NetworkPolicy that admits nothing but the router
+    template: templates/console/deployment.yaml
+    set:
+      console.exposure.type: ingress
+      console.exposure.host: pgc.example.org
+      console.networkPolicy.enabled: true
+      console.networkPolicy.apiServer.mode: any
+    asserts:
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: TRUSTED_PROXY_CIDRS, value: "0.0.0.0/0,::/0"}}
+
+  - it: trusts the named proxies
+    template: templates/console/deployment.yaml
+    set:
+      console.exposure.type: ingress
+      console.exposure.host: pgc.example.org
+      console.networkPolicy.enabled: true
+      console.networkPolicy.apiServer.mode: any
+      console.trustedProxyHops: 2
+      console.trustedProxyCIDRs: [10.128.0.0/14, "fd00::/64"]
+    asserts:
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: TRUSTED_PROXY_HOPS, value: "2"}}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: TRUSTED_PROXY_CIDRS, value: "10.128.0.0/14,fd00::/64"}}
+
+  - it: names no peer when no hop is trusted
+    template: templates/console/deployment.yaml
+    set: {console.trustedProxyCIDRs: [10.0.0.0/8]}
+    asserts:
+      - notExists: {path: "spec.template.spec.containers[0].env[?(@.name=='TRUSTED_PROXY_CIDRS')]"}
 
   - it: trusts no hop when the console is not exposed
     template: templates/console/deployment.yaml
