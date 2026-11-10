@@ -797,8 +797,21 @@ func evaluatePath(backup Backup, wal ServerWAL, timeline uint32, start, required
 		limit = leave.SwitchPosition - 1
 	}
 	frontier, receipt, state, stop, reason = contiguousFrontier(wal, current, position, limit)
-	if leave != nil && state == evidence.Healthy && frontier == limit {
-		reason = leaveReason(wal, current, *leave)
+	if leave != nil && state == evidence.Healthy {
+		switch {
+		case frontier == limit:
+			reason = leaveReason(wal, current, *leave)
+		case childHasWAL(wal, *leave):
+			// The child has WAL from its switch segment on, so this
+			// timeline is closed before the switch: its segments after
+			// the frontier were written and are lost, not in flight
+			// (reachPosition with closed). pgBackRest's parent leg says
+			// the same.
+			missing, _ := WALName(current, frontier+1, wal.SegmentSize)
+			state, stop = evidence.Unhealthy, CoverageGapLimited
+			reason = "segment " + missing + " is not archived while timeline " + strconv.FormatUint(uint64(leave.Child), 10) +
+				" already has WAL after the switch: it is lost"
+		}
 	}
 	path.FrontierTimeline, path.FrontierPosition, path.FrontierReceipt = current, frontier, receipt
 	path.FrontierWAL, _ = WALName(current, frontier, wal.SegmentSize)
@@ -860,7 +873,8 @@ func reachPosition(wal ServerWAL, timeline uint32, start, required uint64, close
 			return value.End, value.EndReceipt, evidence.Unknown, CoverageUnknownLimited, "unclassified WAL discontinuity stops coverage"
 		}
 		if closed {
-			return value.End, value.EndReceipt, evidence.Unhealthy, CoverageGapLimited, "WAL before the timeline switch is missing and the child timeline has WAL: it is lost"
+			missing, _ := WALName(timeline, value.End+1, wal.SegmentSize)
+			return value.End, value.EndReceipt, evidence.Unhealthy, CoverageGapLimited, "segment " + missing + " before the timeline switch is not archived and the child timeline has WAL: it is lost"
 		}
 		return value.End, value.EndReceipt, evidence.Unknown, CoverageUnknownLimited, "required backup consistency WAL was not observed"
 	}

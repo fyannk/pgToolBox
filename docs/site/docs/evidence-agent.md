@@ -73,7 +73,10 @@ the switch on, as pgBackRest's walk does. For example, timeline 2 forked from 1
 at `0/3000000` and timeline 3 from 2 at `0/5000000`: the path to timeline 2
 reaches at most segment 4 of timeline 2, even when timeline 2 holds WAL up to
 segment 9, and its reason says that the later WAL on timeline 2 needs
-`targetTLI: 2`.
+`targetTLI: 2`. When the ancestor's WAL stops before that switch while the
+child already holds WAL from its switch segment on, the missing segments were
+written and are lost: the ancestor path is unhealthy and names the first
+missing segment, as pgBackRest does, rather than reaching the archive frontier.
 
 Because the probe only tests that a history file exists, a listed history whose
 content is malformed, duplicated or contradictory still counts as present. Only
