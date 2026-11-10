@@ -658,7 +658,7 @@ func TestStillValid(t *testing.T) {
 		t.Fatal("an API server outage ended the stream")
 	}
 	env.rev.down = false
-	env.h.markLoggedOut("s1", "", time.Now().Add(time.Hour))
+	env.h.markLoggedOut("s1", "", time.Now().Add(time.Hour), true)
 	if env.h.StillValid(t.Context(), p) {
 		t.Fatal("a signed-out session stayed valid")
 	}

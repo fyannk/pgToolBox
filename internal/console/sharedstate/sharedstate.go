@@ -18,8 +18,9 @@
 // (<console>-state, STATE_CONFIGMAP):
 //
 //   - signed-out sessions: the SHA-256 of each session ID signed out on
-//     any replica, with the session's absolute expiry. A copy of the
-//     cookie of a signed-out session is refused by every replica, and
+//     any replica, with the session's absolute expiry, when it was
+//     recorded and a keyed hash of the person (signouts below). A copy of
+//     the cookie of a signed-out session is refused by every replica, and
 //     after a restart, until it would have expired anyway. The session
 //     ID itself is never written.
 //   - "since" times: when an instance's status read entered its state,
@@ -121,19 +122,28 @@ const (
 	// maxDigestID and maxChannel bound the two parts of a mark's key.
 	maxDigestID = 64
 	maxChannel  = 16
-	// MaxSignOutsPerSubject bounds the sign-outs one person holds in the
-	// sessions document (two entries a sign-out: the session and its
-	// token as a raw bearer): past it the entries of that person that end
-	// first are dropped, so one person signing in and out in a loop
-	// forgets only their own oldest sign-outs, never another person's.
+	// The sessions document is bounded three ways, and every bound
+	// refuses what arrives once it is reached: a sign-out the document
+	// holds is never dropped for a newer one (signOutOrder). A refused
+	// sign-out is still refused by the replica that recorded it, is
+	// counted in pgtoolbox_console_shared_state_signouts_refused_total
+	// (reason subject, unnamed or budget) and, for the budget, logged once
+	// per episode.
+	//
+	// MaxSignOutsPerSubject bounds one person's entries (two a sign-out:
+	// the session and its token as a raw bearer), so one person signing
+	// in and out in a loop fills only their own share. The person is the
+	// one the session was signed in as (sealed in the cookie), not what
+	// the API server says at sign-out, so a token revoked before signing
+	// out still counts against its owner.
 	MaxSignOutsPerSubject = 32
-	// MaxSignOuts bounds the sessions document (75 bytes an entry, so
-	// some 112 KiB; with a full grants index, 680 KiB, the ConfigMap stays
-	// well under the API server's 1 MiB): past it the sign-outs that end last are refused
-	// (kept on the replica that recorded them, not shared), counted in
-	// pgtoolbox_console_shared_state_signouts_refused_total and logged
-	// once per episode, rather than growing the ConfigMap past what the
-	// API server accepts and failing every write.
+	// MaxUnnamedSignOuts bounds the entries of sessions that name nobody
+	// (a session sealed without its person's tag), all together.
+	MaxUnnamedSignOuts = 4 * MaxSignOutsPerSubject
+	// MaxSignOuts bounds the sessions document (some 105 bytes an entry,
+	// so about 160 KiB; with a full grants index the ConfigMap stays under
+	// the API server's 1 MiB), rather than growing the ConfigMap past what
+	// the API server accepts and failing every write.
 	MaxSignOuts = 1536
 )
 
@@ -185,13 +195,28 @@ type fact struct {
 	Since int64  `json:"t"`
 }
 
-// signOut is one entry of the sessions document: its expiry (Unix
-// seconds) and a short tag of the person it belongs to, empty when the
-// API server did not name them; the tag only groups a person's entries
-// for MaxSignOutsPerSubject.
+// signOut is one entry of the sessions document: its expiry and when it
+// was first recorded (Unix seconds), and the keyed tag of the person it
+// belongs to (SubjectTag), empty when the session named nobody; the tag
+// only groups a person's entries for MaxSignOutsPerSubject.
 type signOut struct {
-	Expiry  int64  `json:"e"`
-	Subject string `json:"u,omitempty"`
+	Expiry   int64  `json:"e"`
+	Recorded int64  `json:"r,omitempty"`
+	Subject  string `json:"u,omitempty"`
+}
+
+// mergeSignOut folds two observations of one session's sign-out: the
+// latest expiry, the earliest recording (an entry without one counts as
+// recorded first, as signOutBefore orders it), and a tag when either has
+// one (the smaller when they differ). It is commutative, associative and
+// idempotent, so replicas folding the same observations in any order
+// hold the same entry.
+func mergeSignOut(a, b signOut) signOut {
+	out := signOut{Expiry: max(a.Expiry, b.Expiry), Recorded: min(a.Recorded, b.Recorded), Subject: a.Subject}
+	if out.Subject == "" || (b.Subject != "" && b.Subject < out.Subject) {
+		out.Subject = b.Subject
+	}
+	return out
 }
 
 type sessionsDoc struct {
@@ -316,123 +341,181 @@ func sessionHash(sid string) string {
 
 // ---------------------------------------------------------------- sessions
 
-// subjectTag is what is stored of a person's name: 64 bits of a hash,
-// enough to group their entries, too few to stand for the name.
-func subjectTag(subject string) string {
-	if subject == "" {
-		return ""
-	}
-	sum := sha256.Sum256([]byte("pgtoolbox-signout-subject\x00" + subject))
-	return hex.EncodeToString(sum[:8])
-}
+// SubjectTagLen is the length of a person's tag in the sessions
+// document: the 32-hex keyed hash the sign-in layer derives from the
+// person's name and the session secret (auth.Codec.KeyedHashes), so
+// that reading the ConfigMap cannot test a guessed name.
+const SubjectTagLen = 32
 
 func validSubjectTag(tag string) bool {
 	if tag == "" {
 		return true
 	}
-	if len(tag) != 16 {
+	if len(tag) != SubjectTagLen {
 		return false
 	}
 	_, err := hex.DecodeString(tag)
 	return err == nil
 }
 
-// RecordSignOut shares a signed-out session of subject (empty when the
-// API server did not name the person) until its absolute expiry. It
-// reports false when the sessions document is full and the sign-out is
-// not shared (MaxSignOuts): the caller still refuses the session itself.
-func (s *Store) RecordSignOut(sid, subject string, until time.Time) bool {
+// Reasons a sign-out is not kept (signOutsRefused).
+const (
+	refusedSubject = "subject"
+	refusedUnnamed = "unnamed"
+	refusedBudget  = "budget"
+)
+
+// RecordSignOut shares a signed-out session until its absolute expiry.
+// tag is the person's keyed tag sealed in the session (SubjectTagLen hex;
+// anything else, empty included, files it with the sessions that name
+// nobody). It reports false when a bound of the sessions document
+// refuses it (it is not shared): the caller still refuses the session
+// itself. A sign-out the document holds is never dropped to make room.
+func (s *Store) RecordSignOut(sid, tag string, until time.Time) bool {
 	if s == nil || sid == "" {
 		return true
+	}
+	if !validSubjectTag(tag) {
+		tag = ""
 	}
 	h := sessionHash(sid)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if prev, ok := s.signedOut[h]; ok && until.Unix() <= prev.Expiry {
+	pruned := s.pruneSignOutsLocked()
+	if prev, ok := s.signedOut[h]; ok {
+		if until.Unix() > prev.Expiry {
+			prev.Expiry = until.Unix()
+			s.signedOut[h] = prev
+			s.changedLocked(true)
+		} else if pruned {
+			s.changedLocked(false)
+		}
 		return true
 	}
-	s.signedOut[h] = signOut{Expiry: until.Unix(), Subject: subjectTag(subject)}
-	byPerson, byBudget := s.capSignOutsLocked()
-	if byPerson > 0 {
-		signOutsRefused.WithLabelValues("subject").Add(float64(byPerson))
-	}
-	if _, kept := s.signedOut[h]; !kept || byBudget > 0 {
-		signOutsRefused.WithLabelValues("budget").Add(float64(max(byBudget, 1)))
-		if !s.signOutsFull {
+	e := signOut{Expiry: until.Unix(), Recorded: s.opts.Now().Unix(), Subject: tag}
+	if reason := s.admitSignOutLocked(tag); reason != "" {
+		signOutsRefused.WithLabelValues(reason).Inc()
+		if reason == refusedBudget && !s.signOutsFull {
 			s.signOutsFull = true
 			s.opts.Logger.Warn("shared state: the sessions document is full; new sign-outs are refused by this replica only, "+
 				"and a copy of a signed-out cookie is accepted by the other replicas until it expires",
 				slog.String("configmap", s.opts.Name), slog.Int("max", MaxSignOuts))
 		}
-		if !kept {
-			return false
+		if pruned {
+			s.changedLocked(false)
 		}
+		return false
 	}
+	s.signedOut[h] = e
 	s.changedLocked(true)
 	return true
 }
 
-// capSignOutsLocked applies the bounds of the sessions document: each
-// person keeps the MaxSignOutsPerSubject entries that end last, and the
-// document the MaxSignOuts that end first. Both orders are total (ties
-// by hash), so every replica that merges the same entries keeps the same
-// ones and a union never brings back what a bound dropped. It returns
-// how many entries each bound dropped.
-func (s *Store) capSignOutsLocked() (byPerson, byBudget int) {
-	if len(s.signedOut) <= MaxSignOutsPerSubject && len(s.signedOut) <= MaxSignOuts {
-		return 0, 0
+// admitSignOutLocked returns why a new entry of tag would not be kept,
+// or "". The document is always capped (planSignOutCaps drops nothing
+// from it), so the new entry is kept without dropping anything exactly
+// when its person's share and the document both have room: otherwise
+// the bounds would drop it, or one already held that sorts after it (the
+// same second, a larger hash), and the new one is refused instead: what
+// the document holds stays.
+func (s *Store) admitSignOutLocked(tag string) string {
+	limit, reason := MaxSignOutsPerSubject, refusedSubject
+	if tag == "" {
+		limit, reason = MaxUnnamedSignOuts, refusedUnnamed
+	}
+	held := 0
+	for _, e := range s.signedOut {
+		if e.Subject == tag {
+			held++
+		}
+	}
+	switch {
+	case held >= limit:
+		return reason
+	case len(s.signedOut) >= MaxSignOuts:
+		return refusedBudget
+	}
+	return ""
+}
+
+// pruneSignOutsLocked drops the sign-outs that ended, reporting whether
+// there were any.
+func (s *Store) pruneSignOutsLocked() bool {
+	now := s.opts.Now().Unix()
+	pruned := false
+	for h, e := range s.signedOut {
+		if e.Expiry <= now {
+			delete(s.signedOut, h)
+			pruned = true
+		}
+	}
+	return pruned
+}
+
+// signOutBefore is the one order every bound of the sessions document
+// keeps by: recorded first, then by hash. A bound keeps the entries that
+// come first in it, so what was recorded earlier is never dropped for
+// what arrived later, and, the order being total and the same for every
+// bound, replicas that merge the same entries in any order keep the same
+// ones (a union of capped documents caps to what the union of the
+// uncapped ones does).
+func signOutBefore(ah string, a signOut, bh string, b signOut) bool {
+	if a.Recorded != b.Recorded {
+		return a.Recorded < b.Recorded
+	}
+	return ah < bh
+}
+
+// planSignOutCaps returns the entries of m the bounds drop, by hash, with
+// the bound that drops each: per person MaxSignOutsPerSubject, the
+// entries naming nobody MaxUnnamedSignOuts together, then the document
+// MaxSignOuts; each keeps what comes first in signOutBefore.
+func planSignOutCaps(m map[string]signOut) map[string]string {
+	if len(m) <= MaxSignOutsPerSubject {
+		return nil
 	}
 	type entry struct {
 		hash string
 		signOut
 	}
-	persons := map[string][]entry{}
-	for h, e := range s.signedOut {
-		if e.Subject != "" {
-			persons[e.Subject] = append(persons[e.Subject], entry{h, e})
+	all := make([]entry, 0, len(m))
+	for h, e := range m {
+		all = append(all, entry{h, e})
+	}
+	sort.Slice(all, func(i, j int) bool { return signOutBefore(all[i].hash, all[i].signOut, all[j].hash, all[j].signOut) })
+	dropped := map[string]string{}
+	held := map[string]int{}
+	kept := 0
+	for _, e := range all {
+		limit, reason := MaxSignOutsPerSubject, refusedSubject
+		if e.Subject == "" {
+			limit, reason = MaxUnnamedSignOuts, refusedUnnamed
+		}
+		switch {
+		case held[e.Subject] >= limit:
+			dropped[e.hash] = reason
+		case kept >= MaxSignOuts:
+			// Counted against its person all the same: the order is the
+			// same for every bound, so an entry the budget drops would be
+			// dropped after its person's earlier ones in any case.
+			held[e.Subject]++
+			dropped[e.hash] = refusedBudget
+		default:
+			held[e.Subject]++
+			kept++
 		}
 	}
-	for _, list := range persons {
-		if len(list) <= MaxSignOutsPerSubject {
-			continue
-		}
-		sort.Slice(list, func(i, j int) bool {
-			if list[i].Expiry != list[j].Expiry {
-				return list[i].Expiry > list[j].Expiry
-			}
-			return list[i].hash < list[j].hash
-		})
-		for _, e := range list[MaxSignOutsPerSubject:] {
-			delete(s.signedOut, e.hash)
-			byPerson++
-		}
+	return dropped
+}
+
+// capSignOutsLocked applies the bounds of the sessions document to what
+// a merge brought in, and returns how many entries they dropped.
+func (s *Store) capSignOutsLocked() int {
+	dropped := planSignOutCaps(s.signedOut)
+	for h := range dropped {
+		delete(s.signedOut, h)
 	}
-	if len(s.signedOut) > MaxSignOuts {
-		// Ended sign-outs make room first.
-		now := s.opts.Now().Unix()
-		for h, e := range s.signedOut {
-			if e.Expiry <= now {
-				delete(s.signedOut, h)
-			}
-		}
-	}
-	if len(s.signedOut) > MaxSignOuts {
-		all := make([]entry, 0, len(s.signedOut))
-		for h, e := range s.signedOut {
-			all = append(all, entry{h, e})
-		}
-		sort.Slice(all, func(i, j int) bool {
-			if all[i].Expiry != all[j].Expiry {
-				return all[i].Expiry < all[j].Expiry
-			}
-			return all[i].hash < all[j].hash
-		})
-		for _, e := range all[MaxSignOuts:] {
-			delete(s.signedOut, e.hash)
-			byBudget++
-		}
-	}
-	return byPerson, byBudget
+	return len(dropped)
 }
 
 // SignedOut reports whether a replica signed the session out.
@@ -712,9 +795,13 @@ func (s *Store) mergeLocked(cm *corev1.ConfigMap) {
 			s.opts.Logger.Warn("shared state: the sessions document does not parse; it will be rewritten", slog.String("configmap", s.opts.Name))
 		case len(doc.SignedOut) <= maxEntries:
 			for h, e := range doc.SignedOut {
-				if validSessionHash(h) && validSubjectTag(e.Subject) && e.Expiry > s.signedOut[h].Expiry {
-					s.signedOut[h] = e
+				if !validSessionHash(h) || !validSubjectTag(e.Subject) {
+					continue
 				}
+				if prev, ok := s.signedOut[h]; ok {
+					e = mergeSignOut(prev, e)
+				}
+				s.signedOut[h] = e
 			}
 		}
 	}
@@ -773,11 +860,7 @@ func (s *Store) mergeLocked(cm *corev1.ConfigMap) {
 // complete), and, over the budget, the oldest facts.
 func (s *Store) pruneLocked() {
 	now := s.opts.Now()
-	for h, e := range s.signedOut {
-		if e.Expiry <= now.Unix() {
-			delete(s.signedOut, h)
-		}
-	}
+	s.pruneSignOutsLocked()
 	s.capSignOutsLocked()
 	if s.signOutsFull && len(s.signedOut) < MaxSignOuts {
 		s.signOutsFull = false

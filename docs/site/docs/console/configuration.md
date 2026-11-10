@@ -194,7 +194,7 @@ others wrote:
 
 | Key | What it holds |
 |---|---|
-| `sessions.json` | signed-out sessions, as the SHA-256 of the session ID with its expiry; a sign-out on one replica is refused by every other, and pruned once expired |
+| `sessions.json` | signed-out sessions, as the SHA-256 of the session ID with its expiry, when it was recorded and an HMAC tag of the person; a sign-out on one replica is refused by every other, and pruned once expired; past its bounds new sign-outs are refused, never stored ones dropped ([sign-out](authentication.md#sessions)) |
 | `since.json` | when each state began: an instance's `/pg/status` result, a Cluster's phase, a diagnostics finding; keyed by object UID, the earliest time wins, a changed state replaces it, and entries go when their object does |
 | `digests.json` | which [digest](timeline-and-digest.md#daily-digest) went to which channel and when (`<digest id>/<channel>`): the earliest time wins, kept for the digest retention plus two days, so a replica taking over the delivery never sends one twice |
 

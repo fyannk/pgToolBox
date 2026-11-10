@@ -36,7 +36,7 @@ var (
 	}, []string{"document"})
 	signOutsRefused = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "pgtoolbox_console_shared_state_signouts_refused_total",
-		Help: "Sign-outs the sessions document did not keep: subject (a person past their own bound, their oldest dropped), budget (the document full, the sign-out kept by its replica only).",
+		Help: "Sign-outs the sessions document refused (each still refused by the replica that recorded it; a sign-out the document holds is never dropped): subject (a person at their own bound), unnamed (the sessions that name nobody at theirs), budget (the document full).",
 	}, []string{"reason"})
 )
 
