@@ -563,7 +563,8 @@ not the value). The confirmation link is never logged.
 |---|---|
 | Requests per user | 120 a minute, bursts of 60; past it, `429` with `Retry-After`. |
 | Requests in flight per user | 4; past it, `429`. |
-| Unrecognised tokens per client address | The sign-in form's budget, shared with it: 10 a minute per replica. A token accepted in the last 30 seconds does not count. |
+| Unrecognised tokens per client address | The sign-in form's budget, shared with it: 10 a minute per replica. A token accepted in the last 30 seconds does not count. The client address is the peer's unless it is a trusted proxy ([client address](authentication.md#sessions)). |
+| Raw API-server tokens reviewed | The token form's per-replica bound, shared with it: 20 a second, bursts of 40, charged after the address budget; a token whose answer is cached (30 s) does not count. Past it, `429` with `Retry-After`. |
 | Result size | `MCP_MAX_RESULT_BYTES`. The longest lists are shortened first (their first items kept, in the API's order), then strings over 2 KiB; the result's `truncated` object names what was cut. |
 | Call time | `MCP_CALL_TIMEOUT`. |
 | Request body | 64 KiB, one JSON-RPC message (no batch). |

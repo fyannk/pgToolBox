@@ -234,7 +234,11 @@ shared, so only the charts may differ between two reloads.
 Set `console.publicURL` (or `exposure.host`, from which it is derived) so cookies,
 redirects and the CSRF check use the right origin. To serve HTTPS from the pod,
 point `console.tls.secretName` at a `kubernetes.io/tls` Secret; it is mounted as
-files. Behind an edge, set `console.trustedProxyHops`.
+files. Behind an edge, name the edge's addresses in `console.trustedProxyCIDRs`
+(or enable `console.networkPolicy`, which admits only the router namespace and
+trusts it): without either the console ignores `X-Forwarded-For`, and every
+client shares the edge's address and sign-in budget. `console.trustedProxyHops`
+(default 1 when exposed) counts the proxies in front.
 
 ## What else can be switched
 
@@ -260,7 +264,7 @@ files. Behind an edge, set `console.trustedProxyHops`.
 | `RESYNC_PERIOD`, `REPROBE_INTERVAL`, `API_REQUEST_TIMEOUT` | `10h`, `5m`, `10s` | Informer safety resync; how often optional APIs are probed again; one API request. |
 | `LOG_LEVEL` | | `debug`, `info`, `warn` or `error`. |
 | `LISTEN_ADDR`, `PROBE_LISTEN_ADDR` | `:3000`, `:3001` | The probe listener carries `/healthz`, `/readyz` and [`/metrics`](metrics.md). |
-| `SHUTDOWN_DELAY` | `3s` | On SIGTERM the console answers not ready at once but keeps serving for this long (0s to 10s), so the endpoints and the edge stop routing to it before its listener closes. Requests in flight then have 25 s to complete; the event stream and log follows keep running through the delay and end when the drain begins. Delay plus drain must stay under the pod's `terminationGracePeriodSeconds` (30 s by default). |
+| `SHUTDOWN_DELAY` | `3s` | On SIGTERM the console answers not ready at once but keeps serving for this long (0s to 10s), so the endpoints and the edge stop routing to it before its listener closes. Requests in flight then have 25 s to complete; the event stream and log follows keep running through the delay and end when the drain begins; the informers and the change feed behind them keep running until the drain is over, so a stream open during the delay still receives updates. Delay plus drain must stay under the pod's `terminationGracePeriodSeconds` (30 s by default). |
 
 Optional APIs (Routes, Gateway API, the barman-cloud `ObjectStore` kind) are
 probed at start and re-probed every `REPROBE_INTERVAL`; the console degrades
