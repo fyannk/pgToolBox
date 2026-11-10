@@ -174,6 +174,19 @@ func TestEnvtestWorkloadIdentityAdmission(t *testing.T) {
 			RoleRef:    rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "Role", Name: "read-readable"},
 			Subjects:   []rbacv1.Subject{{Kind: rbacv1.UserKind, APIGroup: rbacv1.GroupName, Name: "reader"}},
 		},
+		// nsreader may read every Secret of the namespace (what admin and
+		// edit grant).
+		&rbacv1.Role{
+			ObjectMeta: metav1.ObjectMeta{Name: "read-all", Namespace: namespace},
+			Rules: []rbacv1.PolicyRule{{
+				APIGroups: []string{""}, Resources: []string{"secrets"}, Verbs: []string{"get"},
+			}},
+		},
+		&rbacv1.RoleBinding{
+			ObjectMeta: metav1.ObjectMeta{Name: "read-all", Namespace: namespace},
+			RoleRef:    rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "Role", Name: "read-all"},
+			Subjects:   []rbacv1.Subject{{Kind: rbacv1.UserKind, APIGroup: rbacv1.GroupName, Name: "nsreader"}},
+		},
 		policy, binding,
 	} {
 		if err := root.Create(t.Context(), object); err != nil {
@@ -298,6 +311,7 @@ kind: PgAdmin
 metadata: {name: team-a, namespace: default}
 spec:
   clusterRefs: [{name: orders}]
+  credentials: {application: false, databaseRoles: false}
   auth:
     oauth2:
       issuerURL: https://idp.example.com/realms/corp
@@ -313,6 +327,9 @@ spec:
 	})
 
 	t.Run("secret references", func(t *testing.T) { testSecretRefs(t, root, as) })
+	t.Run("secret destinations", func(t *testing.T) { testSecretDestinations(t, root, as) })
+	t.Run("evidence agent allowed secrets", func(t *testing.T) { testAllowedSecrets(t, root, as) })
+	t.Run("pgadmin cluster credentials", func(t *testing.T) { testPgAdminCredentials(t, root, as) })
 }
 
 // refused is a Forbidden that names the Secret rule.
@@ -338,6 +355,9 @@ func consoleWith(t *testing.T, name, spec string) *unstructured.Unstructured {
 	return object(t, "apiVersion: pgtoolbox.fyannk.dev/v1alpha1\nkind: PgToolBoxConsole\nmetadata: {name: "+name+", namespace: default}\nspec:\n"+spec)
 }
 
+// pgadminWith returns a PgAdmin offering no Cluster credentials (the
+// credentials rule has its own cases, pgadminOffering), with the auth and
+// extra spec fragments.
 func pgadminWith(t *testing.T, name, auth, extra string) *unstructured.Unstructured {
 	t.Helper()
 	return object(t, `apiVersion: pgtoolbox.fyannk.dev/v1alpha1
@@ -345,8 +365,22 @@ kind: PgAdmin
 metadata: {name: `+name+`, namespace: default}
 spec:
   clusterRefs: [{name: orders}]
+  credentials: {application: false, databaseRoles: false}
   auth:
 `+auth+extra)
+}
+
+// pgadminOffering returns a PgAdmin that names no Secret (OpenShift
+// oauth-proxy, default images) with the sources and credentials fragments.
+func pgadminOffering(t *testing.T, name, sources, credentials string) *unstructured.Unstructured {
+	t.Helper()
+	return object(t, `apiVersion: pgtoolbox.fyannk.dev/v1alpha1
+kind: PgAdmin
+metadata: {name: `+name+`, namespace: default}
+spec:
+`+sources+credentials+`  auth:
+    openshiftOAuthProxy: {}
+`)
 }
 
 const pgadminOAuth = `    oauth2:
@@ -484,5 +518,197 @@ func testSecretRefs(t *testing.T, root client.Client, as func(string, ...string)
 		if err := reader.Update(t.Context(), c); err != nil {
 			t.Fatalf("error = %v, want admitted", err)
 		}
+	})
+}
+
+// testSecretDestinations: a reference kept as it was but sent somewhere else
+// (the issuer, the Prometheus URL, the mail server, the tracing endpoint, the
+// image registry) is a new reference: whoever changes the destination must
+// be able to read the Secret.
+func testSecretDestinations(t *testing.T, root client.Client, as func(string, ...string) client.Client) {
+	for _, tc := range []struct {
+		name, kind, spec string
+		dest             []string
+		to               string
+	}{
+		{"tracing", "console", "  tracing:\n    endpoint: https://collector.example.com\n    headersSecretRef: {name: SECRET, key: headers}\n", []string{"spec", "tracing", "endpoint"}, "https://collector.attacker.example"},
+		{"oidc", "console", "  auth:\n    provider: oidc\n    oidc:\n      issuerURL: https://idp.example.com\n      clientID: c\n      clientSecretRef: {name: SECRET}\n", []string{"spec", "auth", "oidc", "issuerURL"}, "https://idp.attacker.example"},
+		{"smtp", "console", "  history: {persistent: true}\n  digest:\n    enabled: true\n    delivery:\n      smtp:\n        address: smtp.example.com:587\n        from: a@example.com\n        to: [a@example.com]\n        username: u\n        passwordSecretRef: {name: SECRET, key: password}\n", []string{"spec", "digest", "delivery", "smtp", "address"}, "smtp.attacker.example:587"},
+		{"prometheus", "console", "  prometheus:\n    url: https://prometheus.example.com\n    tokenSecretRef: {name: SECRET, key: token}\n", []string{"spec", "prometheus", "url"}, "https://prometheus.attacker.example"},
+		{"registry", "console", "  image:\n    repository: registry.example.com/console\n    tag: v1\n    pullSecrets: [{name: SECRET}]\n", []string{"spec", "image", "repository"}, "registry.attacker.example/console"},
+		{"pgadmin-oauth2", "pgadmin", strings.Replace(pgadminOAuth, "%s", "SECRET", 1), []string{"spec", "auth", "oauth2", "issuerURL"}, "https://idp.attacker.example"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			build := func(name, secret string) *unstructured.Unstructured {
+				spec := strings.ReplaceAll(tc.spec, "SECRET", secret)
+				if tc.kind == "pgadmin" {
+					return pgadminWith(t, name, spec, "")
+				}
+				return consoleWith(t, name, spec)
+			}
+			for _, user := range []string{"mallory", "reader"} {
+				// Seeded by the cluster admin with a Secret user may not read.
+				u := build("d-"+tc.name+"-"+user, "unreadable")
+				t.Cleanup(func() { _ = root.Delete(context.Background(), u) })
+				if err := root.Create(t.Context(), u); err != nil {
+					t.Fatal(err)
+				}
+				c := as(user)
+				if err := c.Get(t.Context(), client.ObjectKeyFromObject(u), u); err != nil {
+					t.Fatal(err)
+				}
+				if err := unstructured.SetNestedField(u.Object, tc.to, tc.dest...); err != nil {
+					t.Fatal(err)
+				}
+				refused(t, c.Update(t.Context(), u))
+			}
+			// With a Secret the user may read, the same move is admitted: the
+			// refusal above is the Secret rule's.
+			u := build("d-"+tc.name+"-ok", "readable")
+			t.Cleanup(func() { _ = root.Delete(context.Background(), u) })
+			if err := root.Create(t.Context(), u); err != nil {
+				t.Fatal(err)
+			}
+			reader := as("reader")
+			if err := reader.Get(t.Context(), client.ObjectKeyFromObject(u), u); err != nil {
+				t.Fatal(err)
+			}
+			if err := unstructured.SetNestedField(u.Object, tc.to, tc.dest...); err != nil {
+				t.Fatal(err)
+			}
+			if err := reader.Update(t.Context(), u); err != nil {
+				t.Fatalf("moving a readable Secret: %v, want admitted", err)
+			}
+		})
+	}
+}
+
+// testAllowedSecrets: spec.allowedSecrets of an EvidenceAgent is the agent
+// editor's consent that the agent read those Secrets; it means something
+// only from somebody who may read them.
+func testAllowedSecrets(t *testing.T, root client.Client, as func(string, ...string) client.Client) {
+	agent := func(name string, secrets ...string) *pgtoolboxv1alpha1.EvidenceAgent {
+		a := evidenceAgent(name)
+		a.Spec.AllowedSecrets = secrets
+		return a
+	}
+	create := func(t *testing.T, c client.Client, a *pgtoolboxv1alpha1.EvidenceAgent) error {
+		t.Helper()
+		t.Cleanup(func() { _ = root.Delete(context.Background(), a) })
+		return c.Create(t.Context(), a)
+	}
+	t.Run("a Secret the user may not read is refused", func(t *testing.T) {
+		refused(t, create(t, as("mallory"), agent("as-mallory", "unreadable")))
+		refused(t, create(t, as("reader"), agent("as-reader-mixed", "readable", "unreadable")))
+	})
+	t.Run("Secrets the user may read are admitted", func(t *testing.T) {
+		if err := create(t, as("reader"), agent("as-reader", "readable")); err != nil {
+			t.Fatalf("error = %v, want admitted", err)
+		}
+		if err := create(t, as("mallory"), agent("as-none")); err != nil {
+			t.Fatalf("no allowedSecrets: %v, want admitted", err)
+		}
+	})
+	t.Run("on update only an added name is checked", func(t *testing.T) {
+		a := agent("as-update", "unreadable")
+		if err := create(t, root, a); err != nil {
+			t.Fatal(err)
+		}
+		mallory := as("mallory")
+		if err := mallory.Get(t.Context(), client.ObjectKeyFromObject(a), a); err != nil {
+			t.Fatal(err)
+		}
+		a.Spec.RefreshInterval = &metav1.Duration{Duration: 2 * time.Minute}
+		if err := mallory.Update(t.Context(), a); err != nil {
+			t.Fatalf("an edit that leaves allowedSecrets alone: %v", err)
+		}
+		a.Spec.AllowedSecrets = append(a.Spec.AllowedSecrets, "other-unreadable")
+		refused(t, mallory.Update(t.Context(), a))
+	})
+}
+
+// credentialsRefused is a Forbidden that names the PgAdmin credentials rule.
+func credentialsRefused(t *testing.T, err error) {
+	t.Helper()
+	if !apierrors.IsForbidden(err) || !strings.Contains(err.Error(), "offers the credentials of Clusters of its namespace") {
+		t.Fatalf("error = %v, want a Forbidden naming the PgAdmin credentials rule", err)
+	}
+}
+
+// testPgAdminCredentials: whoever opens a PgAdmin holds the credentials of
+// the Clusters it registers, whose Secrets the Cluster names: offering them
+// requires get on the Secrets of the namespace. A role with create pgadmins
+// and connect but no get secrets cannot reach the superuser that way.
+func testPgAdminCredentials(t *testing.T, root client.Client, as func(string, ...string) client.Client) {
+	create := func(t *testing.T, c client.Client, u *unstructured.Unstructured) error {
+		t.Helper()
+		t.Cleanup(func() { _ = root.Delete(context.Background(), u) })
+		return c.Create(t.Context(), u)
+	}
+	admitted := func(t *testing.T, err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatalf("error = %v, want admitted", err)
+		}
+	}
+	refs := "  clusterRefs: [{name: orders}]\n"
+	none := "  credentials: {application: false, databaseRoles: false}\n"
+	superuser := "  credentials: {application: false, databaseRoles: false, superuser: true}\n"
+
+	t.Run("superuser without get on the namespace's Secrets is refused", func(t *testing.T) {
+		credentialsRefused(t, create(t, as("mallory"), pgadminOffering(t, "cr-super", refs, superuser)))
+		// get on one named Secret is not get on the Cluster's.
+		credentialsRefused(t, create(t, as("reader"), pgadminOffering(t, "cr-super-r", refs, superuser)))
+	})
+	t.Run("the default credentials (application, DatabaseRoles) are refused too", func(t *testing.T) {
+		credentialsRefused(t, create(t, as("mallory"), pgadminOffering(t, "cr-default", refs, "")))
+		credentialsRefused(t, create(t, as("mallory"), pgadminOffering(t, "cr-selector", "  clusterSelector: {matchLabels: {team: a}}\n", "")))
+	})
+	t.Run("a PgAdmin offering nothing, or Clusters of other namespaces only, is admitted", func(t *testing.T) {
+		admitted(t, create(t, as("mallory"), pgadminOffering(t, "cr-none", refs, none)))
+		admitted(t, create(t, as("mallory"), pgadminOffering(t, "cr-cross", "  crossNamespaceClusterRefs: [{namespace: team-b, name: orders}]\n", superuser)))
+	})
+	t.Run("a user who may read the namespace's Secrets may offer them", func(t *testing.T) {
+		admitted(t, create(t, as("nsreader"), pgadminOffering(t, "cr-ns", refs, superuser)))
+	})
+	t.Run("on update only a wider offer is checked", func(t *testing.T) {
+		seed := func(t *testing.T, name, sources, credentials string) *unstructured.Unstructured {
+			t.Helper()
+			u := pgadminOffering(t, name, sources, credentials)
+			if err := create(t, root, u); err != nil {
+				t.Fatal(err)
+			}
+			if err := as("mallory").Get(t.Context(), client.ObjectKeyFromObject(u), u); err != nil {
+				t.Fatal(err)
+			}
+			return u
+		}
+		mallory := as("mallory")
+		u := seed(t, "cr-update", refs, "")
+		if err := unstructured.SetNestedStringSlice(u.Object, []string{"someone@example.com"}, "spec", "admins"); err != nil {
+			t.Fatal(err)
+		}
+		admitted(t, mallory.Update(t.Context(), u))
+		// Narrowing is no new disclosure.
+		if err := unstructured.SetNestedField(u.Object, false, "spec", "credentials", "databaseRoles"); err != nil {
+			t.Fatal(err)
+		}
+		admitted(t, mallory.Update(t.Context(), u))
+		if err := unstructured.SetNestedField(u.Object, true, "spec", "credentials", "superuser"); err != nil {
+			t.Fatal(err)
+		}
+		credentialsRefused(t, mallory.Update(t.Context(), u))
+
+		u = seed(t, "cr-update-ref", refs, "")
+		if err := unstructured.SetNestedSlice(u.Object, []any{map[string]any{"name": "orders"}, map[string]any{"name": "billing"}}, "spec", "clusterRefs"); err != nil {
+			t.Fatal(err)
+		}
+		credentialsRefused(t, mallory.Update(t.Context(), u))
+
+		u = seed(t, "cr-update-sel", "  clusterSelector: {matchLabels: {team: a}}\n", "")
+		if err := unstructured.SetNestedStringMap(u.Object, map[string]string{"team": "b"}, "spec", "clusterSelector", "matchLabels"); err != nil {
+			t.Fatal(err)
+		}
+		credentialsRefused(t, mallory.Update(t.Context(), u))
 	})
 }
