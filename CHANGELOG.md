@@ -97,5 +97,13 @@ OpenShift.
   the timeline a restore must ask for. Snapshots carry `producer.features`; the
   console takes no coverage from an agent without `recovery-timeline-latest`, or
   whose timeline evidence is not healthy.
+- **Client addresses behind a proxy**: `X-Forwarded-For` is read only from peers
+  in `TRUSTED_PROXY_CIDRS`; hops without CIDRs ignore it, so a pod in the cluster
+  cannot forge its address. `spec.exposure.trustedProxy` sets hops and CIDRs, and
+  an exposed console gets an ingress NetworkPolicy (by default behind a Route,
+  with `spec.exposure.networkPolicy.from` behind an Ingress or Gateway), reported
+  by the advisory `ExposureConfined` condition. MCP bearer reviews share the
+  process-wide review budget, streams keep their feed through the shutdown
+  drain, and the console warns at start about hops 0 behind a public URL.
 
 [0.1.0]: https://github.com/fyannk/pgToolBox/releases/tag/v0.1.0
