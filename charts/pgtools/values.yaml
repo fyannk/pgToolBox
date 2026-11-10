@@ -268,6 +268,15 @@ console:
   # lets them forge the header under the any-peer trust. List the proxies
   # here where such a policy exists, and on OpenShift.
   trustedProxyCIDRs: []
+  # -- Platform the chart renders for: `auto` (detect OpenShift from the API
+  # server: `route.openshift.io/v1`), `kubernetes` or `openshift`. `openshift`
+  # keeps the console from trusting `X-Forwarded-For` from every peer (see
+  # `trustedProxyCIDRs`). Set it with a client-side `helm template` or
+  # `helm install --dry-run=client`, which have no API server to ask: the chart
+  # then sees no Route API even for OpenShift, unless you pass
+  # `--api-versions route.openshift.io/v1`. A `route` exposure always counts as
+  # OpenShift.
+  platform: auto
   # tls.secretName: serve HTTPS on `port` from a kubernetes.io/tls Secret that is
   # mounted as files (the console reads no Secret through the API). Point the edge
   # at it with the usual backend-protocol setting of your controller.
@@ -1526,7 +1535,9 @@ pgadmin:
   # `auth.provider` is `openshift`), whose restricted-v2 SCC assigns its own
   # range and refuses a fixed one. `0`: none. An explicit value always wins. A
   # client-side `helm template` for OpenShift with another provider needs
-  # `--api-versions security.openshift.io/v1` or `fsGroup: 0`.
+  # `--api-versions security.openshift.io/v1` or `fsGroup: 0`; the console's
+  # NetworkPolicy and proxy trust need `--api-versions route.openshift.io/v1`
+  # or `console.platform: openshift`.
   fsGroup: null
   # -- Resource requests and limits of the pgadmin container (the operator's
   # defaults); the small sidecars have their own fixed ones.

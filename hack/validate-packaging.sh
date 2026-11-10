@@ -333,6 +333,36 @@ if all(v is not None for v in rules.values()):
 helm_full = render(["helm", "template", "pgtoolbox", "charts/pgtoolbox", "--namespace", "pgtoolbox",
                     "-f", "charts/pgtoolbox/ci/operator-values.yaml"])
 
+# With operator.config.watchNamespaces the Helm chart binds the manager ClusterRole by
+# RoleBinding per namespace and a second ClusterRole, bound cluster-wide, carries the
+# cluster-scoped rules alone. That second role is hand-written, so it is derived here
+# from the generated manager role: every rule on a cluster-scoped resource (reduced to
+# those resources) must be in it, and nothing else; otherwise the operator would lose a
+# permission (a RoleBinding cannot grant a cluster-scoped resource) or gain one.
+CLUSTER_SCOPED = {"clusterroles", "clusterrolebindings", "tokenreviews", "subjectaccessreviews",
+                  "securitycontextconstraints", "nodes", "namespaces", "persistentvolumes",
+                  "customresourcedefinitions", "validatingadmissionpolicies"}
+scoped_manager = [d for d in helm_full if d["kind"] == "ClusterRole" and d["metadata"]["name"].endswith("-manager-role")]
+scoped_cluster = [d for d in helm_full if d["kind"] == "ClusterRole" and d["metadata"]["name"].endswith("-manager-cluster-role")]
+if len(scoped_manager) != 1 or len(scoped_cluster) != 1:
+    problems.append("Helm with watchNamespaces must render one manager ClusterRole and one manager-cluster-role")
+else:
+    expected = []
+    for r in scoped_manager[0]["rules"]:
+        res = [x for x in r.get("resources", []) if x in CLUSTER_SCOPED]
+        if res:
+            expected.append({**r, "resources": res})
+        elif r.get("apiGroups") == ["discovery.k8s.io"] and r.get("resources") == ["endpointslices"]:
+            expected.append(r)  # one named object in the default namespace: needs the cluster-wide grant
+    if norm_rules(expected) != norm_rules(scoped_cluster[0]["rules"]):
+        problems.append("charts/pgtoolbox clusterrole-cluster-scoped.yaml differs from the cluster-scoped rules of the manager role")
+    cluster_bindings = [d for d in helm_full if d["kind"] == "ClusterRoleBinding" and d["metadata"]["name"].endswith("-manager")]
+    if len(cluster_bindings) != 1 or not cluster_bindings[0]["roleRef"]["name"].endswith("-manager-cluster-role"):
+        problems.append("Helm with watchNamespaces must bind only the cluster-scoped role cluster-wide")
+    bound = sorted(d["metadata"]["namespace"] for d in helm_full if d["kind"] == "RoleBinding" and d["metadata"]["name"].endswith("-manager"))
+    if bound != ["team-a", "team-b"]:
+        problems.append(f"Helm with watchNamespaces binds the manager role in {bound}, expected [team-a, team-b]")
+
 
 # The leader-election Role.
 le_kust = load("config/rbac/leader_election_role.yaml")["rules"]

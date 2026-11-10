@@ -98,9 +98,14 @@ operator:
   # readable from the pgtoolbox-operator-config ConfigMap/Secret.
   config:
     # -- Namespaces the operator watches (`WATCH_NAMESPACES`). Empty: every
-    # namespace the ClusterRole allows. It narrows the caches only: the manager
-    # ClusterRole is still bound cluster-wide, so this does not make a second
-    # operator release for other namespaces possible.
+    # namespace the ClusterRole allows. Set, it narrows the caches and the RBAC:
+    # the manager ClusterRole is bound by a RoleBinding in each listed namespace
+    # (they must exist at install time), so the operator holds Secrets, workloads
+    # and RBAC objects only there, and a second ClusterRole with the cluster-scoped
+    # rules alone (TokenReview, SubjectAccessReview, ClusterRoles it binds) is
+    # bound cluster-wide. Empty: the whole role is a ClusterRoleBinding. A second
+    # operator release for other namespaces still collides on the cluster-scoped
+    # names and the CRDs.
     watchNamespaces: []
     # -- Reconciles the operator runs in parallel (`MAX_CONCURRENT_RECONCILES`). 0
     # keeps the operator's default.

@@ -388,6 +388,10 @@
           "minimum": 0,
           "maximum": 8
         },
+        "platform": {
+          "type": "string",
+          "enum": ["auto", "kubernetes", "openshift"]
+        },
         "trustedProxyCIDRs": {
           "type": "array",
           "maxItems": 32,
