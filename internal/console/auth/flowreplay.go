@@ -23,7 +23,10 @@ import (
 // maxSpentFlows bounds the sign-in flows a replica remembers as used.
 // A flow lives loginFlowMaxAge (ten minutes); 10,000 is far more than a
 // team signs in in that time, and is reached only by callbacks that
-// have each passed a sign-in budget.
+// have each passed the process-wide bucket (codeExchangesPerSecond, so
+// at most 12,000 in a flow's lifetime): the set is full only under a
+// sustained flood, and then forgets the flow that expires first.
+// Starting a flow adds nothing here: the flow lives in its sealed cookie.
 const maxSpentFlows = 10000
 
 // spentFlows remembers the sign-in flows whose callback this replica
@@ -35,7 +38,7 @@ const maxSpentFlows = 10000
 //
 // The memory is this replica's: behind several replicas a flow can be
 // replayed once on each of the others, each such replay still charged
-// to its sender's budget. Nothing about the flow is kept but its digest.
+// to that replica's budgets. Nothing about the flow is kept but its digest.
 type spentFlows struct {
 	max int
 

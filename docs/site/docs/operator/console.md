@@ -308,6 +308,14 @@ trusted.
   `0.0.0.0/0` trust is never left without its policy.
 - The advisory `ExposureConfined` never enters `Ready`; its message says which
   peers the console believes.
+- Sign-in budgets follow the trust. With CIDRs (rows with `0.0.0.0/0,::/0` or
+  `trustedProxy.cidrs`) each client keeps its own: ten OAuth callbacks and twenty
+  pasted tokens a minute per address, under a per-replica bound of 20 a second
+  (burst 40) per path. With hops and no CIDRs (`ExposureOpen`) every client has
+  the proxy's address, so the console charges no per-address budget: callbacks
+  are single-use and share the per-replica bound, pasted tokens have a budget per
+  token and the same bound, and the audit log names the proxy instead of the
+  client ([rate limits](../console/authentication.md#sessions)).
 
 ## Not in the custom resource
 
