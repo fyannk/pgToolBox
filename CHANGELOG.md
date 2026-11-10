@@ -65,5 +65,13 @@ OpenShift.
   and installer manifests are pinned by digest from the tree's core version, a
   pin that changes nothing fails the release, and `latest` moves only after the
   packages are verified public.
+- **Release verification.** The notes of the final tag list every commit since the
+  previous stable tag (release candidates included); the OLM bundle and catalog
+  images are scanned on every pull request and push, not first in the release; the
+  release rehearsal pins the bundle and catalog on every run; after the prune, and
+  weekly, `verify-release.yml` pulls every image and both charts with no
+  credentials and verifies signatures and attestations. A failed candidate is
+  superseded by the next one (`-rc.N+1`), never moved. The images are not claimed
+  to be bit-for-bit reproducible.
 
 [0.1.0]: https://github.com/fyannk/pgToolBox/releases/tag/v0.1.0

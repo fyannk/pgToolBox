@@ -45,6 +45,8 @@ flowchart LR
 | Helm chart, the team tools | `oci://ghcr.io/fyannk/charts/pgtools`, version `X.Y.Z` | `cosign verify`, `gh attestation verify` on the chart reference |
 | Installer manifests | `install-operator.yaml`, `install-console.yaml` on the release page | `SHA256SUMS` + `SHA256SUMS.sigstore.json` |
 
+The release workflow verifies each signature and attestation as it makes them; once the packages are in their final state, `verify-release.yml` repeats the check as an anonymous user would (pull by tag with no credentials, `cosign verify`, `gh attestation verify`, `helm pull`), and does so again every week against the latest stable release.
+
 Images are multi-architecture (`linux/amd64`, `linux/arm64`) with BuildKit's SBOM and
 `mode=max` provenance, OCI labels (title, source, version, revision, created,
 licenses) and Go built with `-trimpath -ldflags "-s -w"`. Images carry the exact
