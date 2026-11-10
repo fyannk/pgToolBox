@@ -180,7 +180,17 @@ toward the newest timeline a path could follow. A timeline seen in the archive
 but not connected by valid history is reported, not used as the target, and an
 off-target path (a backup that cannot reach the newest timeline, or a path
 toward a sibling branch that a default restore does not follow) is neither the
-target nor drawn.
+target nor drawn. A sibling may have a lower or a higher number than the
+timeline `latest` resolves to: what counts is the ancestry, not the number.
+What an off-target path still reaches is listed under the bar as "restorable
+only by naming a timeline", with the base backup and the `targetTLI` a restore
+along it must give (`recovery_target_timeline: 'N'`); a restore check on such a
+time, when no default restore covers it, carries that hint as a caveat.
+
+A timeline warning from the agent (a history file no default restore reads is
+malformed) hides no coverage: it is shown above the bar with the file name and
+added to every answer's caveats, since a restore that names that timeline would
+fail.
 
 - **Covered** spans: each path covers from its base backup's end to the
   archive-receipt time of the last contiguous WAL segment. Only a path whose WAL
