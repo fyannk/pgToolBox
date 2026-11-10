@@ -293,6 +293,12 @@ func TestRehearsalHonesty(t *testing.T) {
 		{"sync, synchronous_commit local", syncPair("Local"), RehearsalPromote, LossUpTo, "", "synchronous_commit is local", false},
 		{"sync, synchronous_commit false (a boolean spelling)", syncPair("false"), RehearsalPromote, LossUpTo, "", "synchronous_commit is off", false},
 		{"sync, remote_write: written, not flushed", syncPair("remote_write"), RehearsalPromote, LossNone, "", "not flushed", false},
+		// "None" is a fact about the sweep: an old sweep cannot carry it.
+		{"sync, but the sweep is stale", func() RehearsalInput {
+			in := syncPair("")
+			in.SweepStale = "the sweep has not completed for three intervals"
+			return in
+		}(), RehearsalPromote, LossUnknown, "unknown data loss", "whether that still holds is not known", false},
 		{"sync, synchronous_commit padded: PostgreSQL refuses it", syncPair(" on"), RehearsalPromote, LossUnknown, "unknown data loss", "does not accept", false},
 		{
 			"read replica fenced, an unread one open: cannot tell",

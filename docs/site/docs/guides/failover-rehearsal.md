@@ -98,6 +98,12 @@ Even then the claim is "for transactions using the cluster default": a role, a d
 a session or a transaction can lower `synchronous_commit`, which the console cannot see.
 The panel lists this as a blind spot.
 
+The claim is a fact about one sweep of `/pg/status`, so the panel shows that sweep's
+age next to the data-loss answer ("as of the sweep ..."). When the last sweep is older
+than three sweep intervals (the console's one staleness rule for the sweep, also used by
+the "Instance self-reports" contributor), the rehearsal is marked stale and "none"
+becomes "unknown".
+
 N for the live quorum is the `FailoverQuorum`'s `standbyNames` when the object exists.
 Without it, N is an upper bound (every replica of the Cluster, the declared
 `standbyNamesPre`/`standbyNamesPost`, and the standbys the primary reports in quorum),
