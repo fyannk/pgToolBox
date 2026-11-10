@@ -213,6 +213,16 @@ func (s *Store) mergeDrillsLocked(raw string) {
 // boundDrillsLocked drops the oldest results beyond the bounds, keeping
 // each source's newest pass: dropping it would turn "passed 40 days ago"
 // into "no pass recorded".
+//
+// A source is a Cluster, not a name: a Cluster deleted and recreated
+// under its name has a new UID, and a pass of its predecessor (a drill of
+// an older backup, finished later) must not stand in for, or push out,
+// the recreated Cluster's own newest pass. So the newest pass is kept per
+// namespace, name and source UID; results that carry no UID form one
+// group per namespace and name, as before. The per-source count stays per
+// namespace and name, and at most maxDrillsPerSource passes of one name
+// are protected (the newest), so recreating a Cluster cannot grow the
+// document past its bounds.
 func (s *Store) boundDrillsLocked() {
 	keys := make([]string, 0, len(s.drills))
 	for key := range s.drills {
@@ -226,13 +236,22 @@ func (s *Store) boundDrillsLocked() {
 		}
 		return keys[i] < keys[j]
 	})
-	newestPass := map[string]string{}
+	passOf := map[string]bool{}
+	protected := map[string]bool{}
+	protectedPerSource := map[string]int{}
 	for _, key := range keys {
 		r := s.drills[key]
-		src := drillKey(r.SourceNamespace, r.Source)
-		if _, ok := newestPass[src]; !ok && r.Result == string(viewmodel.DrillPassed) {
-			newestPass[src] = key
+		if r.Result != string(viewmodel.DrillPassed) {
+			continue
 		}
+		src := drillKey(r.SourceNamespace, r.Source)
+		incarnation := src + "/" + r.SourceUID
+		if passOf[incarnation] || protectedPerSource[src] >= maxDrillsPerSource {
+			continue
+		}
+		passOf[incarnation] = true
+		protected[key] = true
+		protectedPerSource[src]++
 	}
 	perSource := map[string]int{}
 	total := 0
@@ -241,7 +260,7 @@ func (s *Store) boundDrillsLocked() {
 		src := drillKey(r.SourceNamespace, r.Source)
 		perSource[src]++
 		total++
-		if (perSource[src] > maxDrillsPerSource || total > maxDrills) && newestPass[src] != key {
+		if (perSource[src] > maxDrillsPerSource || total > maxDrills) && !protected[key] {
 			delete(s.drills, key)
 			perSource[src]--
 			total--

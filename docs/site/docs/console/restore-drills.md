@@ -498,7 +498,10 @@ results live in this replica's memory only, and the panel says "drill history
 lost at restart". In every case a running drill is still found and torn down
 after a restart: the console verifies the seal, not its memory. The console
 keeps the last 50 drills per Cluster (and 500 in the ConfigMap), and never
-drops a Cluster's newest passed drill to stay within that bound.
+drops a Cluster's newest passed drill to stay within that bound. A Cluster that
+was deleted and recreated under its name is a different source: the newest pass
+of each one (told apart by UID) is kept, up to 50 passes per name, so a drill of the
+predecessor's backup never pushes out the recreated Cluster's own pass.
 
 ## The overdue-drill note
 
