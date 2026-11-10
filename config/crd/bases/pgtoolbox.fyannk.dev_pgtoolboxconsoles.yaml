@@ -1127,6 +1127,18 @@ spec:
                       reason: FieldValueInvalid
                       rule: duration(self) >= duration('5m') && duration(self) <=
                         duration('24h')
+                  tokenAudience:
+                    description: |-
+                      The audience of the projected token. Omitted: the API server's own
+                      audience, which a TokenReview-based proxy (OpenShift's thanos-querier
+                      behind kube-rbac-proxy) expects; such a token is also accepted by the
+                      API server itself, so only a Prometheus you trust may receive it. Set
+                      it when the server checks a dedicated audience: the token is then
+                      useless against the API server.
+                    maxLength: 256
+                    minLength: 1
+                    pattern: ^[^\s]+$
+                    type: string
                   tokenSecretRef:
                     description: A Secret key holding a bearer token, mounted as a
                       file.
@@ -1156,6 +1168,11 @@ spec:
                 - url
                 type: object
                 x-kubernetes-validations:
+                - fieldPath: .tokenAudience
+                  message: prometheus.tokenAudience applies to projectedToken only
+                  reason: FieldValueInvalid
+                  rule: '!has(self.tokenAudience) || (has(self.projectedToken) &&
+                    self.projectedToken)'
                 - fieldPath: .url
                   message: 'prometheus.url must be https when a token is configured:
                     the token is never sent in clear'

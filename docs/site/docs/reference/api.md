@@ -1536,6 +1536,7 @@ _Appears in:_
 | `url` _string_ | The Prometheus (or Thanos querier) URL. |  | MaxLength: 512 <br />Pattern: `^https?://` <br /> |
 | `tokenSecretRef` _[SecretKeyReference](#secretkeyreference)_ | A Secret key holding a bearer token, mounted as a file. |  | Optional: \{\} <br /> |
 | `projectedToken` _boolean_ | Present the console's own ServiceAccount token, projected and rotated<br />by the kubelet (what the OpenShift thanos-querier accepts once the<br />ServiceAccount may view metrics). |  | Optional: \{\} <br /> |
+| `tokenAudience` _string_ | The audience of the projected token. Omitted: the API server's own<br />audience, which a TokenReview-based proxy (OpenShift's thanos-querier<br />behind kube-rbac-proxy) expects; such a token is also accepted by the<br />API server itself, so only a Prometheus you trust may receive it. Set<br />it when the server checks a dedicated audience: the token is then<br />useless against the API server. |  | MaxLength: 256 <br />MinLength: 1 <br />Pattern: `^[^\s]+$` <br />Optional: \{\} <br /> |
 | `caConfigMapRef` _[LocalObjectReference](#localobjectreference)_ | A ConfigMap with ca.crt that signed the server certificate. Omitted:<br />the system roots. |  | Optional: \{\} <br /> |
 | `namespaced` _boolean_ | Add namespace=&lt;ns> to each query, as OpenShift's tenancy port requires. |  | Optional: \{\} <br /> |
 | `range` _[Duration](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.34/#duration-v1-meta)_ | The charts' window. Omitted: 1h. |  | Optional: \{\} <br /> |
@@ -1930,6 +1931,7 @@ by `docs/site/crd-ref-docs/cel-rules.awk`.
 - `PgToolBoxConsoleMCPSpec.oauthAccessTTL`: mcp.oauthAccessTTL must be between 10s and 1h
 - `PgToolBoxConsoleTracingSpec`: tracing.samplerArg needs a traceidratio sampler
 - `PgToolBoxConsoleRestoreDrillsSpec.timeLimit`: restoreDrills.timeLimit must be between 10m and 24h
+- `PgToolBoxConsolePrometheusSpec`: prometheus.tokenAudience applies to projectedToken only
 - `PgToolBoxConsolePrometheusSpec`: prometheus.url must be https when a token is configured: the token is never sent in clear
 - `PgToolBoxConsolePrometheusSpec.range`: prometheus.range must be between 5m and 24h
 - `PgToolBoxConsoleDigestSpec.retention`: digest.retention must be between 24h and 8784h

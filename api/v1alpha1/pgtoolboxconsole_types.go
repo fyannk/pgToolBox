@@ -672,6 +672,7 @@ type PgToolBoxConsoleDrillStorage struct {
 }
 
 // PgToolBoxConsolePrometheusSpec is the Prometheus HTTP API the charts query.
+// +kubebuilder:validation:XValidation:rule="!has(self.tokenAudience) || (has(self.projectedToken) && self.projectedToken)",message="prometheus.tokenAudience applies to projectedToken only",fieldPath=".tokenAudience",reason=FieldValueInvalid
 // +kubebuilder:validation:XValidation:rule="(!has(self.tokenSecretRef) && (!has(self.projectedToken) || !self.projectedToken)) || self.url.startsWith('https://')",message="prometheus.url must be https when a token is configured: the token is never sent in clear",fieldPath=".url",reason=FieldValueInvalid
 type PgToolBoxConsolePrometheusSpec struct {
 	// The Prometheus (or Thanos querier) URL.
@@ -688,6 +689,18 @@ type PgToolBoxConsolePrometheusSpec struct {
 	// ServiceAccount may view metrics).
 	// +optional
 	ProjectedToken bool `json:"projectedToken,omitempty"`
+
+	// The audience of the projected token. Omitted: the API server's own
+	// audience, which a TokenReview-based proxy (OpenShift's thanos-querier
+	// behind kube-rbac-proxy) expects; such a token is also accepted by the
+	// API server itself, so only a Prometheus you trust may receive it. Set
+	// it when the server checks a dedicated audience: the token is then
+	// useless against the API server.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=256
+	// +kubebuilder:validation:Pattern=`^[^\s]+$`
+	// +optional
+	TokenAudience string `json:"tokenAudience,omitempty"`
 
 	// A ConfigMap with ca.crt that signed the server certificate. Omitted:
 	// the system roots.
