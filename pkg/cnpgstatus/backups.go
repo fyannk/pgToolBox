@@ -15,6 +15,8 @@
 package cnpgstatus
 
 import (
+	"strconv"
+
 	cnpgv1 "github.com/cloudnative-pg/api/pkg/api/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 )
@@ -201,14 +203,53 @@ type ArchiverLive struct {
 	ReadyWALFiles  int    `json:"readyWalFiles"`
 }
 
+// The reasons Archiving infers itself, beside the condition's own: a
+// caller that branches on one compares against these, never a literal.
+const (
+	ArchivingReasonNoCluster             = "NoCluster"
+	ArchivingReasonNotConfigured         = "NotConfigured"
+	ArchivingReasonSkipped               = "ArchivingSkipped"
+	ArchivingReasonNoCondition           = "NoCondition"
+	ArchivingReasonLiveArchiving         = "LiveArchiving"
+	ArchivingReasonRecoveredSinceFailure = "RecoveredSinceFailure"
+	ArchivingReasonFailureWithBacklog    = "FailureWithBacklog"
+	ArchivingReasonBacklog               = "ArchiveBacklog"
+)
+
+// ArchiveBacklogSegments is how many segments may wait to be archived
+// (readyWalFiles) before the archiver counts as behind: at least three.
+// PostgreSQL's archiver hands the archive_command one finished segment
+// at a time, so a keeping-up archiver shows zero or one .ready file, two
+// on a segment switch caught mid-copy; a third is a segment that waited
+// a whole archive cycle. With in-tree parallel archiving
+// (wal.maxParallel) the archiver takes several at once and the
+// threshold is one above that number (ArchiveBacklogThreshold). The
+// waiting segments are WAL the repository does not hold yet, so
+// recovery screens read any backlog at or above it as "the newest
+// restore points are not established". The diagnostics findings on the
+// same count (cnpg-wal-archive-backlog, cnpg-instance-archive-backlog)
+// fire much later, at 32: by then the recovery screens already say it.
+const ArchiveBacklogSegments = 3
+
+// ArchiveBacklogThreshold is the readyWalFiles count at which c's
+// archiver is behind: ArchiveBacklogSegments, or one above the in-tree
+// wal.maxParallel when that is larger. A plugin's parallelism is
+// declared on its own object, which the console does not read.
+func ArchiveBacklogThreshold(c *cnpgv1.Cluster) int {
+	threshold := ArchiveBacklogSegments
+	if c != nil && c.Spec.Backup != nil && c.Spec.Backup.BarmanObjectStore != nil && c.Spec.Backup.BarmanObjectStore.Wal != nil {
+		threshold = max(threshold, c.Spec.Backup.BarmanObjectStore.Wal.MaxParallel+1)
+	}
+	return threshold
+}
+
 // ArchivingReading is the WAL-archiving verdict.
 type ArchivingReading struct {
 	Class           Class  `json:"class"`
 	ConditionStatus string `json:"conditionStatus,omitempty"`
 	// Reason is the condition's reason, or the console's inference when
-	// the condition is absent or overridden by the live archiver
-	// (NotConfigured, ArchivingSkipped, NoCondition, LiveArchiving,
-	// RecoveredSinceFailure, FailureWithBacklog).
+	// the condition is absent or overridden by the live archiver (the
+	// ArchivingReason constants).
 	Reason  string `json:"reason,omitempty"`
 	Message string `json:"message,omitempty"`
 }
@@ -222,36 +263,55 @@ type ArchivingReading struct {
 //   - cnpg.io/skipWalArchiving=enabled: warning (EscapeHatches carries
 //     the critical flag).
 //   - Condition True: ok, unless the live archiver shows the last
-//     attempt failed with WAL waiting (ready files > 0): warning. An idle
-//     primary with an old failure (isArchivingWAL=false, no backlog) is
-//     not made worse than ok by that alone.
+//     attempt failed with WAL waiting (ready files > 0): warning
+//     FailureWithBacklog; or, without a failure, a backlog at
+//     ArchiveBacklogThreshold: warning ArchiveBacklog (a hung or slow
+//     archive_command fails nothing, and the condition stays True while
+//     segments pile up). An idle primary with an old failure
+//     (isArchivingWAL=false, no backlog) is not made worse than ok by
+//     that alone.
 //   - Condition False: critical, unless the live archiver shows a
 //     success after the failure: warning (the condition catches up on
 //     the next archive).
 //   - Condition absent while configured: unknown, or ok when the live
-//     archiver is archiving.
+//     archiver is archiving (warning ArchiveBacklog with a backlog).
 //   - Condition Unknown: unknown.
+//
+// The stalled archiver whose last_archived_time ages while WAL is
+// written needs no rule of its own: with archive_timeout set, written
+// WAL completes a segment within it, and a segment the archiver does
+// not take is a .ready file, so the stall shows as the backlog.
 func Archiving(c *cnpgv1.Cluster, primary *ArchiverLive) ArchivingReading {
 	if c == nil {
-		return ArchivingReading{Class: ClassUnknown, Reason: "NoCluster"}
+		return ArchivingReading{Class: ClassUnknown, Reason: ArchivingReasonNoCluster}
 	}
 	backups := Backups(c)
 	condition := meta.FindStatusCondition(c.Status.Conditions, ConditionContinuousArchiving)
 	if c.Annotations[AnnotationSkipWalArchiving] == valueEnabled {
 		return ArchivingReading{
 			Class:   ClassWarning,
-			Reason:  "ArchivingSkipped",
+			Reason:  ArchivingReasonSkipped,
 			Message: "cnpg.io/skipWalArchiving is enabled: PostgreSQL does not archive WAL",
 		}
 	}
+	backlog := primary != nil && primary.ReadyWALFiles >= ArchiveBacklogThreshold(c)
+	backlogReading := func(reading ArchivingReading) ArchivingReading {
+		reading.Class = ClassWarning
+		reading.Reason = ArchivingReasonBacklog
+		reading.Message = strconv.Itoa(primary.ReadyWALFiles) + " WAL segments are waiting to be archived on the primary: the archiver is behind"
+		return reading
+	}
 	if condition == nil {
 		if !walArchivingConfigured(c, backups) {
-			return ArchivingReading{Class: ClassInfo, Reason: "NotConfigured", Message: "no WAL archiver is configured"}
+			return ArchivingReading{Class: ClassInfo, Reason: ArchivingReasonNotConfigured, Message: "no WAL archiver is configured"}
 		}
 		if primary != nil && primary.IsArchivingWAL {
-			return ArchivingReading{Class: ClassOK, Reason: "LiveArchiving", Message: "the primary reports WAL archiving; the operator has not written ContinuousArchiving yet"}
+			if backlog {
+				return backlogReading(ArchivingReading{})
+			}
+			return ArchivingReading{Class: ClassOK, Reason: ArchivingReasonLiveArchiving, Message: "the primary reports WAL archiving; the operator has not written ContinuousArchiving yet"}
 		}
-		return ArchivingReading{Class: ClassUnknown, Reason: "NoCondition", Message: "a WAL archiver is configured but ContinuousArchiving is not reported"}
+		return ArchivingReading{Class: ClassUnknown, Reason: ArchivingReasonNoCondition, Message: "a WAL archiver is configured but ContinuousArchiving is not reported"}
 	}
 	reading := ArchivingReading{
 		ConditionStatus: string(condition.Status),
@@ -261,16 +321,19 @@ func Archiving(c *cnpgv1.Cluster, primary *ArchiverLive) ArchivingReading {
 	switch condition.Status {
 	case statusTrue:
 		reading.Class = ClassOK
-		if primary != nil && !primary.IsArchivingWAL && primary.LastFailedWAL != "" && primary.ReadyWALFiles > 0 {
+		switch {
+		case primary != nil && !primary.IsArchivingWAL && primary.LastFailedWAL != "" && primary.ReadyWALFiles > 0:
 			reading.Class = ClassWarning
-			reading.Reason = "FailureWithBacklog"
+			reading.Reason = ArchivingReasonFailureWithBacklog
 			reading.Message = "the primary's last archive attempt failed (" + bound(primary.LastFailedWAL, maxAnnotationValue) + ") and WAL files are waiting"
+		case backlog:
+			reading = backlogReading(reading)
 		}
 	case statusFalse:
 		reading.Class = ClassCritical
 		if primary != nil && primary.IsArchivingWAL {
 			reading.Class = ClassWarning
-			reading.Reason = "RecoveredSinceFailure"
+			reading.Reason = ArchivingReasonRecoveredSinceFailure
 		}
 	default:
 		reading.Class = ClassUnknown
