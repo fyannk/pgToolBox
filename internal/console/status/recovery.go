@@ -46,11 +46,12 @@ const (
 	failureLookback = 24 * time.Hour
 	// maximumMarkers bounds the backups drawn on the bar.
 	maximumMarkers = 200
-	// walEndFloor is the narrowest band before the newest restore point
-	// marked as the end of the WAL: the frontier is when the last
-	// segment reached the repository, not the last commit in it, so a
-	// target in the last archive_timeout (at least this much) may be
-	// after the last commit the archive holds.
+	// walEndFloor is the narrowest archive latency allowance of the band
+	// before the newest restore point marked as the end of the WAL
+	// (archiveLatencyAllowance): the frontier is when the last segment
+	// reached the repository, not the last commit in it, so a target in
+	// the last archive_timeout plus that latency may be after the last
+	// commit the archive holds.
 	walEndFloor = time.Minute
 	// cappedPathCode is the reason code the evidence reader gives a path
 	// it capped to unknown (internal/console/evidence capCode).
@@ -306,6 +307,17 @@ func postgresDuration(v string) (time.Duration, bool) {
 		return 0, false
 	}
 	return time.Duration(n) * unit, true
+}
+
+// archiveLatencyAllowance is how long the console allows between a
+// segment's switch and its receipt in the repository when the archiver
+// keeps up: one sweep period (the archiver had no backlog the sweeps
+// saw, and a backlog widens the newest edge on its own), walEndFloor
+// when the period is not known, never less. A slower archiver held
+// below the backlog threshold can exceed it; the near-end margin still
+// covers most of that.
+func (f recoveryFacts) archiveLatencyAllowance() time.Duration {
+	return max(f.sweepInterval, walEndFloor)
 }
 
 // frontierMargin is how close to the end of the archived WAL (or to a
@@ -849,16 +861,18 @@ func archiverUnreadEdge(out *viewmodel.RecoveryTimeline, f recoveryFacts, last t
 
 // walEnd marks the band just before the newest restore point where the
 // archived WAL ends: the frontier is when the last segment reached the
-// repository, not the last commit it holds, which is up to one
-// archive_timeout older (walEndFloor at least; the whole margin when
-// archive_timeout is disabled). A recovery_target_time after that last
+// repository, not the last commit it holds. That commit can be one
+// archive_timeout before the segment switched, and the receipt is the
+// switch plus the archiver's latency, so the band is archive_timeout plus
+// a latency allowance (archiveLatencyAllowance); the whole margin when
+// archive_timeout is disabled. A recovery_target_time after that last
 // commit stops recovery with "recovery ended before configured recovery
 // target was reached", so the band says to restore to the end of WAL
 // instead. Drawn before the other edges, which then leave it as it is.
 func walEnd(out *viewmodel.RecoveryTimeline, f recoveryFacts, last time.Time, margin time.Duration) {
 	band := margin
 	if f.archiveTimeout > 0 {
-		band = min(max(f.archiveTimeout, walEndFloor), margin)
+		band = f.archiveTimeout + f.archiveLatencyAllowance()
 	}
 	uncertainAs(out, segmentWALEnd, last.Add(-band), last, say("recovery.segment.walEnd",
 		"WAL ends near here: the newest archived segment reached the repository at "+rfc3339(last)+", and its last commit may be up to "+humanDuration(band)+

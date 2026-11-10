@@ -336,20 +336,26 @@ func TestReportedTailClampsTheInstanceClock(t *testing.T) {
 }
 
 // TestWALEndBand: just before the newest restore point the bar says the
-// archived WAL ends there and how to restore to its end; the band is one
-// archive_timeout wide (a floor of walEndFloor), inside the near-end
-// margin.
+// archived WAL ends there and how to restore to its end. The last commit
+// can be one archive_timeout before the segment switched, and the receipt
+// is the switch plus the archiver's latency (round 7, CNPG P2-3), so the
+// band is archive_timeout plus one sweep period (walEndFloor when the
+// period is not known, never less); the whole margin with archive_timeout
+// disabled.
 func TestWALEndBand(t *testing.T) {
 	svc := &Service{}
 	fx := timelineFixture{paths: []evidence.RecoveryPath{tlPath("b1", 48*time.Hour, 30*time.Minute, evidencev1alpha1.CoverageFrontier)}}
 	for _, tc := range []struct {
-		timeout, want time.Duration
+		timeout, interval, want time.Duration
 	}{
-		{defaultArchiveTimeout, defaultArchiveTimeout},
-		{10 * time.Second, walEndFloor},
-		{0, unboundedFrontierMargin},
+		{defaultArchiveTimeout, 0, defaultArchiveTimeout + walEndFloor},
+		{defaultArchiveTimeout, 30 * time.Second, defaultArchiveTimeout + walEndFloor},
+		{defaultArchiveTimeout, 2 * time.Minute, defaultArchiveTimeout + 2*time.Minute},
+		{10 * time.Minute, 5 * time.Minute, 15 * time.Minute},
+		{10 * time.Second, 0, 10*time.Second + walEndFloor},
+		{0, 30 * time.Second, unboundedFrontierMargin},
 	} {
-		tl := svc.recoveryTimeline(fx.evidence(), viewmodel.BackupSummary{}, nil, recoveryFacts{now: now, archiveTimeout: tc.timeout})
+		tl := svc.recoveryTimeline(fx.evidence(), viewmodel.BackupSummary{}, nil, recoveryFacts{now: now, archiveTimeout: tc.timeout, sweepInterval: tc.interval})
 		var band *viewmodel.RecoverySegment
 		for i := range tl.Segments {
 			if tl.Segments[i].Kind == segmentWALEnd {
@@ -357,10 +363,10 @@ func TestWALEndBand(t *testing.T) {
 			}
 		}
 		if band == nil {
-			t.Fatalf("timeout %s: no walEnd band: %+v", tc.timeout, tl.Segments)
+			t.Fatalf("timeout %s, sweep %s: no walEnd band: %+v", tc.timeout, tc.interval, tl.Segments)
 		}
 		if !band.To.Equal(*tl.Latest) || band.To.Sub(band.From) != tc.want {
-			t.Errorf("timeout %s: band %s..%s, want %s wide ending at %s", tc.timeout, band.From, band.To, tc.want, tl.Latest)
+			t.Errorf("timeout %s, sweep %s: band %s..%s, want %s wide ending at %s", tc.timeout, tc.interval, band.From, band.To, tc.want, tl.Latest)
 		}
 		got := restoreCheck(viewmodel.Backups{RecoveryTimeline: tl, GeneratedAt: now}, tl.Latest.Add(-walEndFloor/2))
 		if got.Answer != "unknown" || got.Code != "recovery.segment.walEnd" || !strings.Contains(got.Text, "recovery ended before configured recovery target was reached") {

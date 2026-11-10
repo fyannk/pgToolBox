@@ -386,9 +386,12 @@ segments, so the bar and the answer always agree:
   of another backup (an old backup stopped at a gap, one unknown path) is
   listed as a reason of the window and greys out nothing.
 
-Inside the end-of-archived-WAL edge, the last `archive_timeout` before the
-latest point (at least one minute; the whole edge when `archive_timeout` is 0)
-is drawn as **end of the archived WAL** (`walEnd`, a warning band). The latest
+Inside the end-of-archived-WAL edge, the last `archive_timeout` plus an
+allowance for the archiver's latency (one sweep interval, at least one minute)
+before the latest point (the whole edge when `archive_timeout` is 0) is drawn
+as **end of the archived WAL** (`walEnd`, a warning band): the last commit can
+be one `archive_timeout` before its segment switched, and the segment reached
+the repository some time after the switch. The latest
 point is when the last segment *reached* the repository, not its last commit, so
 the bar labels it **WAL received until**, and names apart the **newest covered
 target** (`newestCoveredTarget`): the end of the newest covered span once every
