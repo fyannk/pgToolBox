@@ -113,9 +113,13 @@ type FencingReading struct {
 // Fencing reads cnpg.io/fencedInstances with the semantics of
 // internal/console/kube/convert.go parseFencedInstances and CNPG's
 // GetFencedInstances (pkg/utils/fencing.go v1.30.0:52-64): absent or
-// empty is no fencing; a value that is not a JSON array of strings is
-// unreadable (the operator then fails the reconcile, so the state is
-// unknown, not "none"); "*" anywhere in the list fences every instance.
+// empty is no fencing; "*" anywhere in the list fences every instance.
+// A value that is not a JSON array of strings is unreadable here, though
+// CloudNativePG reads it as no fencing: GetFencedInstances fails and
+// Cluster.IsInstanceFenced (api/v1/cluster_funcs.go v1.30.1:859) answers
+// false, so the instance manager runs PostgreSQL and the election ranks
+// the instance as unfenced. The console keeps "unreadable", not "none":
+// whoever wrote the annotation meant some fencing that is not happening.
 // A nil Cluster is unreadable.
 func Fencing(c *cnpgv1.Cluster) FencingReading {
 	if c == nil {
