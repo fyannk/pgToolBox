@@ -224,6 +224,8 @@ export * from './monitoringState.ts';
 export * from './namespaceState.ts';
 export * from './objectRef.ts';
 export * from './objects.ts';
+export * from './offTargetSpan.ts';
+export * from './offTargetSpanParams.ts';
 export * from './operation.ts';
 export * from './operationAccepted.ts';
 export * from './operationAcceptedKind.ts';

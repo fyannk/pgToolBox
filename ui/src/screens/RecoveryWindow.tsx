@@ -432,6 +432,12 @@ export function RecoveryWindowPanel({
           {reasonsText(t.reasons, t.reason)}
         </p>
       )}
+      {t.timelineWarning && (
+        <p className="health m-0 rounded-control px-3 py-1.5 text-label" data-health="warning" data-timeline-warning="">
+          <span className="font-semibold">{m.recovery_timeline_warning()}:</span>{" "}
+          {phraseText(t.timelineWarning.code, t.timelineWarning.params, t.timelineWarning.text)}
+        </p>
+      )}
       {t.basis !== "none" && <Bar t={t} hatch={hatch} />}
       {t.basis === "evidence" && !t.complete && (
         <p className="health m-0 rounded-control px-3 py-1.5 text-label" data-health="unknown">
@@ -447,6 +453,19 @@ export function RecoveryWindowPanel({
             </li>
           ))}
         </ol>
+      )}
+      {(t.offTarget ?? []).length > 0 && (
+        <div className="flex flex-col gap-1 text-label" data-off-target="">
+          <p className="m-0 font-semibold">{m.recovery_off_target()}</p>
+          <ul className="m-0 flex flex-col gap-0.5 pl-5">
+            {(t.offTarget ?? []).map((o) => (
+              <li key={`${o.backupId}-${o.targetTimeline}`} data-target-timeline={o.targetTimeline}>
+                {formatUtcMinute(o.from)} → {formatUtcMinute(o.to)}{" "}
+                <span className="text-muted">— {phraseText(o.code, o.params, o.text)}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
       {markers.length > 0 && (
         <details className="text-label">

@@ -5,6 +5,7 @@
 // value it needs that is missing, shows Go's English text: never a blank
 // and never a guess.
 import { formatDuration } from "../ds/format";
+import { healthWord } from "../ds/health";
 import { formatUtcMinute } from "../ds/time";
 import { m } from "../paraglide/messages.js";
 
@@ -63,6 +64,8 @@ function reportedTail(kind: string, p: Params): string | undefined {
 function timelineGap(p: Params): string | undefined {
   const timeline = p?.gapTimeline;
   switch (p?.gap) {
+    case "invalid":
+      return timeline ? m.tl_gap_invalid({ timeline }) : undefined;
     case "unreadable":
       return timeline ? m.tl_gap_unreadable({ timeline }) : undefined;
     case "missing":
@@ -74,11 +77,43 @@ function timelineGap(p: Params): string | undefined {
   }
 }
 
+/** A history row's problem (barmancloud narrowHistories), from its code. */
+function historyProblem(code: string | undefined): string | undefined {
+  switch (code) {
+    case "duplicate":
+      return m.tl_problem_duplicate();
+    case "unreadable":
+      return m.tl_problem_unreadable();
+    case "malformed":
+      return m.tl_problem_malformed();
+    case "contradictory":
+      return m.tl_problem_contradictory();
+    case "cyclic":
+      return m.tl_problem_cyclic();
+    case "rangeDisagrees":
+      return m.tl_problem_range_disagrees();
+    default:
+      return undefined;
+  }
+}
+
 /** The agent's timeline reasons, recognised by the console (timelinereason.go). */
 function timelineReason(code: string, p: Params): string | undefined {
   const timeline = p?.timeline;
+  const file = p?.historyFile;
   if (code === "timeline.reason.historyMissingNoFollow")
     return timeline ? m.tl_reason_history_missing_no_follow({ timeline }) : undefined;
+  if (code === "timeline.reason.needsTargetSibling")
+    return timeline && p?.latest ? m.tl_reason_needs_target_sibling({ latest: p.latest, timeline }) : undefined;
+  if (code === "timeline.reason.ancestryInvalid") {
+    if (!p?.problem) return m.tl_reason_ancestry_invalid();
+    const problem = historyProblem(p.problem);
+    return file && problem ? m.tl_reason_ancestry_invalid_file({ file, problem }) : undefined;
+  }
+  if (code === "timeline.reason.unneededInvalid") {
+    const problem = historyProblem(p?.problem);
+    return file && problem ? m.tl_reason_unneeded_invalid({ file, problem }) : undefined;
+  }
   const gap = timelineGap(p);
   if (!gap) return undefined;
   switch (code) {
@@ -128,6 +163,7 @@ function recoveryReason(code: string, p: Params): string | undefined {
       return m.rp_reason_no_paths();
     case "recovery.reason.pathsNotCoverage":
     case "recovery.reason.agentCoverage":
+    case "recovery.reason.timelineWarning":
       // The evidence's own sentence, in its words.
       return detail ? m.rp_reason_from_evidence({ detail }) : undefined;
     case "recovery.reason.noConsistentPath":
@@ -152,6 +188,30 @@ function recoveryReason(code: string, p: Params): string | undefined {
       return p?.timeline ? m.rp_reason_orphan_timeline({ timeline: p.timeline }) : undefined;
     case "recovery.reason.undrawn":
       return m.rp_reason_undrawn();
+    case "recovery.reason.agentPredates":
+      return m.rp_reason_agent_predates();
+    case "recovery.reason.timelineNotEstablished": {
+      const state = evidenceStateWord(p?.state);
+      if (!state) return undefined;
+      if (!detail) return m.rp_reason_timeline_not_established_bare({ state });
+      // The agent's own reason inside, said too when the console knew it.
+      const inner = (p?.inner ? translate(p.inner, p) : undefined) ?? detail;
+      return m.rp_reason_timeline_not_established({ state, detail: inner });
+    }
+    default:
+      return undefined;
+  }
+}
+
+/** The evidence agent's state word, in the reader's language. */
+function evidenceStateWord(state: string | undefined): string | undefined {
+  switch (state) {
+    case "unknown":
+      return healthWord("unknown");
+    case "unhealthy":
+      return healthWord("critical");
+    case "warning":
+      return healthWord("warning");
     default:
       return undefined;
   }
@@ -256,6 +316,11 @@ function translate(code: string, p: Params): string | undefined {
       const archived = instant(p, "archivedAt");
       return archived ? m.rp_caveat_archiving_failing_since({ archived }) : undefined;
     }
+    case "recovery.offTarget.needsTarget":
+      return id && p?.timeline ? m.rp_off_target_needs_target({ id, timeline: p.timeline }) : undefined;
+    case "recovery.caveat.timelineWarning":
+      if (p?.historyFile) return m.rp_caveat_timeline_warning_file({ file: p.historyFile });
+      return p?.detail ? m.rp_caveat_timeline_warning({ detail: p.detail }) : undefined;
     case "recovery.caveat.notRestoreTested":
       return p?.days ? m.not_restore_tested({ days: p.days }) : undefined;
     default:
