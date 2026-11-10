@@ -19,17 +19,19 @@ name: Dependabot auto-merge
 # Actions token's identity, and GitHub starts no push or pull_request run for
 # an event that token causes (workflow_dispatch is the documented exception).
 # So the merge commit would have no ci-ok and no security-gate check run and
-# `release.sh wait-ci` would refuse a tag on it. After a merge, and every
-# 30 minutes as a net for a merge this event missed, the job dispatches ci.yml
-# (every family: a dispatch fails open in hack/changed-paths.sh) and
-# security.yml on main when ci.yml has not run for the commit yet.
+# `release.sh wait-ci` would refuse a tag on it. The same token causes no
+# `pull_request: closed` run either (observed: no run after auto-merges), so
+# there is no closed trigger; the 30-minute schedule is the only mechanism.
+# Every 30 minutes the job dispatches ci.yml (every family: a dispatch fails
+# open in hack/changed-paths.sh) and security.yml on main when either has no
+# run for the head of main yet. A tag pushed sooner than that must wait or
+# dispatch both by hand (docs/site/docs/release.md).
 on:
   pull_request:
     types:
       - opened
       - reopened
       - synchronize
-      - closed
   schedule:
     - cron: "*/30 * * * *"
 
@@ -44,10 +46,9 @@ jobs:
     name: Queue for merge on green
     # Author and sender both, not author alone: on synchronize the author is
     # still Dependabot even when a person pushed the commit that fired the
-    # event, and this job holds a write token under pull_request_target.
+    # event, and this job holds a write token.
     if: >-
       github.event_name == 'pull_request' &&
-      github.event.action != 'closed' &&
       github.event.pull_request.user.login == 'dependabot[bot]' &&
       github.event.sender.login == 'dependabot[bot]' &&
       github.event.pull_request.base.ref == 'main'
@@ -93,33 +94,30 @@ jobs:
 
   dispatch-main-checks:
     name: Run the checks on main
-    # A merged pull request of Dependabot's, or the schedule. Merges by a
-    # person start their own push run and need nothing from here.
-    if: >-
-      github.event_name == 'schedule' ||
-      (github.event.action == 'closed' &&
-      github.event.pull_request.merged == true &&
-      github.event.pull_request.user.login == 'dependabot[bot]' &&
-      github.event.pull_request.base.ref == 'main')
+    # The schedule only: a merge by a person starts its own push run, and a
+    # merge by the Actions token starts no closed-event run to hook into.
+    if: github.event_name == 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
-      actions: write # list this commit's runs and dispatch two workflows
+      actions: write # list the runs of main's head and dispatch two workflows
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       GH_REPO: ${{ github.repository }}
-      MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha || github.sha }}
+      MERGE_SHA: ${{ github.sha }}
     steps:
-      - name: Dispatch ci.yml and security.yml when the commit has no run
+      - name: Dispatch the workflow that has no run for the commit
         run: |
           set -euo pipefail
-          # Any event counts: a push run, a dispatch, the nightly. Only a commit
-          # with none gets one, so a normal merge by a person is left alone.
-          existing="$(gh run list --workflow ci.yml --commit "${MERGE_SHA}" --json databaseId --jq 'length')"
-          if [[ "${existing}" != "0" ]]; then
-            echo "ci.yml already ran for ${MERGE_SHA}; nothing to dispatch"
-            exit 0
-          fi
-          echo "no ci.yml run for ${MERGE_SHA}; dispatching ci.yml and security.yml on main"
-          gh workflow run ci.yml --ref main
-          gh workflow run security.yml --ref main
+          # Any event counts: a push run, a dispatch, the nightly. Each of the
+          # two workflows is checked on its own: a commit with a ci.yml run but
+          # no security.yml run would still lack security-gate.
+          for wf in ci.yml security.yml; do
+            existing="$(gh run list --workflow "${wf}" --commit "${MERGE_SHA}" --json databaseId --jq 'length')"
+            if [[ "${existing}" != "0" ]]; then
+              echo "${wf} already ran for ${MERGE_SHA}; nothing to dispatch"
+              continue
+            fi
+            echo "no ${wf} run for ${MERGE_SHA}; dispatching it on main"
+            gh workflow run "${wf}" --ref main
+          done

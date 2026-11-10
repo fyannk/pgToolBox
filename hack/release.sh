@@ -228,7 +228,7 @@ cmd_wait_ci() {
     if [[ -z "${runs}" ]]; then
       empty=$((empty + 1))
       if ((empty >= empty_limit)); then
-        die "no check run exists for ${sha} (merged with a token that starts no workflow?): dispatch ci.yml and security.yml on ${sha} (Actions, Run workflow, on the tagged commit), then re-run this job"
+        die "no check run exists for ${sha} (merged with a token that starts no workflow, or the 30-minute net has not run yet): run \`gh workflow run ci.yml --ref main\` and \`gh workflow run security.yml --ref main\`, wait for green, and run \`make release-preflight TAG=<tag>\` BEFORE pushing the tag"
       fi
     else
       empty=0

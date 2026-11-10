@@ -186,7 +186,7 @@ expect 1 'CI failed on deadbeef: ci-ok=failure' -- ./hack/release.sh wait-ci dea
 expect 1 'did not finish' -- ./hack/release.sh wait-ci deadbeef
 # No check run at all: fail fast, with the command that fixes it.
 : > "${runs}"
-expect 1 'dispatch ci.yml and security.yml on deadbeef' -- ./hack/release.sh wait-ci deadbeef
+expect 1 'gh workflow run security.yml --ref main' -- ./hack/release.sh wait-ci deadbeef
 # preflight: one poll, no waiting; a green pair on a dated CHANGELOG passes,
 # a missing check run or an Unreleased heading fails before any tag is pushed.
 pre() { (cd "${repo}" && GH_STUB_RUNS="${runs}" ./hack/release.sh preflight "$@"); }
@@ -197,6 +197,8 @@ expect 0 'ok: preflight' -- pre "v${version}" deadbeef
 expect 1 'did not finish' -- pre "v${version}" deadbeef
 : > "${runs}"
 expect 1 'no check run exists for deadbeef' -- pre "v${version}" deadbeef
+expect 1 'gh workflow run security.yml --ref main' -- pre "v${version}" deadbeef
+expect 1 'make release-preflight TAG=<tag>' -- pre "v${version}" deadbeef
 { tab ci-ok completed success 2026-11-10T10:00:00Z 20; tab security-gate completed success 2026-11-10T10:00:00Z 21; } > "${runs}"
 changelog "## [${version}] - Unreleased"
 expect 1 'still says Unreleased' -- pre "v${version}" deadbeef
@@ -312,5 +314,11 @@ for c in pgtoolbox pgtools; do
 done
 # ---- Dockerfile: network installs are retried like go mod download.
 grep -q 'pnpm install --frozen-lockfile && exit 0' "${root}/Dockerfile" || fail "Dockerfile: pnpm install is not retried"
-grep -q 'npm ci --no-audit --no-fund && exit 0' "${root}/Dockerfile" || fail "Dockerfile: npm ci is not retried"
+grep -q 'npm ci --ignore-scripts --no-audit --no-fund && exit 0' "${root}/Dockerfile" || fail "Dockerfile: npm ci is not retried"
+for d in docs/site headlamp; do
+  grep -q '^ignore-scripts=true' "${root}/${d}/.npmrc" || fail "${d}/.npmrc must set ignore-scripts=true (install scripts of npm dependencies)"
+done
+grep -q 'docs/site/.npmrc' "${root}/Dockerfile" || fail "Dockerfile: docs-site must copy .npmrc before npm ci"
+grep -q "vars.PRUNE_GHCR == 'true'" "${root}/.github/workflows/release.yml" || fail "release.yml: prune must stay opt-in (PRUNE_GHCR)"
+if grep -rn "release.md.*When a release fails" "${root}/.github/workflows"; then fail "workflows point at release.md for 'When a release fails'; it lives in development/ci.md"; fi
 echo "ok: chart sources, Dockerfile retries"

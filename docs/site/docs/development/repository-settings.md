@@ -105,9 +105,29 @@ Settings, Actions, General:
   (workflows request more per job and say why).
 - Allow GitHub Actions to create and approve pull requests: off.
 - Fork pull request workflows: require approval for first-time contributors.
-- Allowed actions: allow actions created by GitHub, and the owners listed in
-  `.github/workflows` (verified creators); every `uses:` is already pinned to a
-  commit.
+- Allowed actions (owner step; the API default is `all`): set
+  `allowed_actions` to **selected** (Settings, Actions, General, "Allow
+  enterprise/owner, and select non-owner, actions"). Tick "Allow actions created by
+  GitHub" (covers `actions/*` and `github/codeql-action/*`) and paste the list
+  below into "Allow specified actions and reusable workflows". With "Require actions
+  to be pinned to a full-length commit SHA" on, every `uses:` is already compliant.
+  The list is generated from the workflows; regenerate it after a Dependabot bump:
+
+  ```bash
+  grep -rhoE 'uses: [^./][^ ]+@[0-9a-f]{40}' .github/workflows | sed 's/uses: //' | sort -u | grep -vE '^(actions|github)/'
+  ```
+
+  Allow-list at this commit (`owner/repo@sha`, the SHA is what makes it exact):
+
+  - `anchore/sbom-action/download-syft@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c`
+  - `dataaxiom/ghcr-cleanup-action@d52806a0dc70b430571a37da1fde39733ffd640f`
+  - `dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98`
+  - `docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc`
+  - `docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6`
+  - `docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302`
+  - `docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069`
+  - `ossf/scorecard-action@fa7117db83c52d787ae5a89f350999701505d78e`
+  - `sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6`
 
 ## Packages
 
@@ -123,7 +143,9 @@ release it asks for every pushed digest with no credentials, and if any is priva
 fails naming the packages and leaves the release a draft. Make them public, then use
 **Re-run failed jobs** on the run.
 
-Pruning (`release.yml`, job `prune`) deletes untagged versions with the Actions
+Pruning (`release.yml`, job `prune`) is opt-in: set the repository variable
+`PRUNE_GHCR` to `true` (Settings, Secrets and variables, Actions, Variables) once a
+release has verified without it. It deletes untagged versions with the Actions
 token. On a package owned by a user account that token may lack the right to delete
 versions: give the repository **Admin** on each package (Package settings, Manage
 Actions access), or prune by hand. A failed prune does not stop `verify`.

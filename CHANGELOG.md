@@ -159,5 +159,13 @@ OpenShift.
   band advising "restore to end of WAL". Phase and condition caps cover undetected
   or unverified CloudNativePG minors and say why; recovery and timeline reasons
   are translated.
+- **Release pipeline hardening.** GHCR pruning is opt-in (repository variable
+  `PRUNE_GHCR`) so a release cannot turn red after it is public; the 30-minute net
+  now dispatches `ci.yml` and `security.yml` independently (the dead
+  `pull_request: closed` trigger is gone); `wait-ci` names the exact dispatch
+  commands and the checklist says to run `make release-preflight` before pushing a
+  tag; npm installs of the docs site and the Headlamp plugin run with
+  `ignore-scripts` and a minimum release age; the actions allow-list for the
+  repository is documented.
 
 [0.1.0]: https://github.com/fyannk/pgToolBox/releases/tag/v0.1.0

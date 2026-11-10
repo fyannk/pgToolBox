@@ -29,7 +29,7 @@ name: Release
 # No cache is read or written here: a release is built from the tagged commit
 # alone. The digest and release-file artifacts expire after 7 days: past that, a
 # failed run cannot be finished, and the next release candidate (rc.N+1)
-# supersedes it. After the prune, verify-release.yml pulls everything with no
+# supersedes it. After the optional prune, verify-release.yml pulls everything with no
 # credentials and verifies it.
 on:
   push:
@@ -37,7 +37,7 @@ on:
   # Republishing for a tag that already exists. A published release is left as
   # it is. To finish a run that failed part-way, use "Re-run failed jobs" on
   # that run, not a new dispatch: a new run rebuilds the images and publishes
-  # new digests under the same tag (see docs/site/docs/release.md).
+  # new digests under the same tag (see docs/site/docs/development/ci.md#when-a-release-fails).
   workflow_dispatch:
     inputs:
       tag:
@@ -308,7 +308,7 @@ jobs:
       - name: Say what to do when the artifacts are gone
         if: failure() && steps.collect-digests.outcome == 'failure'
         run: |
-          echo "::error::The digest or release-file artifacts of this run are kept 7 days and are gone. A re-run after that cannot reuse them, and a new run of the same tag would push NEW digests under it. Cut the next release candidate instead (rc.N+1, never move or delete a tag): see docs/site/docs/release.md, 'When a release fails'."
+          echo "::error::The digest or release-file artifacts of this run are kept 7 days and are gone. A re-run after that cannot reuse them, and a new run of the same tag would push NEW digests under it. Cut the next release candidate instead (rc.N+1, never move or delete a tag): see docs/site/docs/development/ci.md#when-a-release-fails."
       - name: Write digests.txt
         run: |
           set -euo pipefail
@@ -508,7 +508,7 @@ jobs:
       - name: Say what to do when the artifacts are gone
         if: failure() && steps.collect-files.outcome == 'failure'
         run: |
-          echo "::error::The digest or release-file artifacts of this run are kept 7 days and are gone. A re-run after that cannot reuse them, and a new run of the same tag would push NEW digests under it. Cut the next release candidate instead (rc.N+1, never move or delete a tag): see docs/site/docs/release.md, 'When a release fails'."
+          echo "::error::The digest or release-file artifacts of this run are kept 7 days and are gone. A re-run after that cannot reuse them, and a new run of the same tag would push NEW digests under it. Cut the next release candidate instead (rc.N+1, never move or delete a tag): see docs/site/docs/development/ci.md#when-a-release-fails."
       # SECURITY.md: a fixable critical blocks the release (exit 1). A registry
       # or authentication error is a different failure (exit 2) and says so.
       # Both platforms of every image are scanned. Everything else is listed in
@@ -545,7 +545,7 @@ jobs:
       - name: Say what to do when the artifacts are gone
         if: failure() && steps.collect-files.outcome == 'failure'
         run: |
-          echo "::error::The digest or release-file artifacts of this run are kept 7 days and are gone. A re-run after that cannot reuse them, and a new run of the same tag would push NEW digests under it. Cut the next release candidate instead (rc.N+1, never move or delete a tag): see docs/site/docs/release.md, 'When a release fails'."
+          echo "::error::The digest or release-file artifacts of this run are kept 7 days and are gone. A re-run after that cannot reuse them, and a new run of the same tag would push NEW digests under it. Cut the next release candidate instead (rc.N+1, never move or delete a tag): see docs/site/docs/development/ci.md#when-a-release-fails."
       - name: Set up Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: Log in to GHCR
@@ -681,9 +681,18 @@ jobs:
 
   # Each push orphans the untagged manifests a retag replaced. Prune only what no
   # tagged index, signature or attestation references.
+  #
+  # Opt-in: set the repository variable PRUNE_GHCR to "true". It is off by
+  # default because a prune cannot be undone and verify runs after it: a
+  # signature or attestation that is linked to its image only through the OCI
+  # `subject` field (a referrer, not a tag) could be taken for an orphan by the
+  # action, and the release would turn red after it is public. Enable it once
+  # a release has verified cleanly with it off, and look at one run's log
+  # first (dry-run: set PRUNE_GHCR_DRY_RUN to "true").
   prune:
     name: Prune untagged ${{ matrix.package }}
     needs: [prepare, release]
+    if: vars.PRUNE_GHCR == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -705,6 +714,7 @@ jobs:
           package: ${{ matrix.package }}
           delete-untagged: true
           validate: true
+          dry-run: ${{ vars.PRUNE_GHCR_DRY_RUN == 'true' }}
 
   # The release as a stranger sees it, once the packages are in their final
   # state (pruned): pull by tag with no credentials, verify the signature and
@@ -713,8 +723,8 @@ jobs:
   verify:
     name: Verify the published release anonymously
     needs: [prepare, release, prune]
-    # always(): a failed prune (it needs package admin rights on a user-owned
-    # package) must not skip the verification of a release that was published.
+    # always(): a skipped (the default) or failed prune (it needs package admin
+    # rights on a user-owned package) must not skip the verification of a release that was published.
     if: always() && needs.release.result == 'success' && needs.prepare.outputs.kind == 'product'
     permissions:
       contents: read # check out the repository, read the release list
