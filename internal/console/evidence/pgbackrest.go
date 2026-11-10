@@ -109,6 +109,7 @@ func (s agentSession) pgbackrestRecoveryPaths(ctx context.Context, snapshot *evi
 			BackupID: item.Label, TargetTimeline: item.TargetTimeline, State: item.State, Reason: item.Reason, Stop: item.Stop,
 			LowerBoundAt: stops[item.Label], FrontierReceiptAt: item.FrontierReceiptAt, Assumptions: slices.Clone(item.AssumptionCodes),
 			FrontierTimeline: item.FrontierTimeline, FrontierPosition: item.FrontierPosition, Consistent: &item.Consistent,
+			OffTarget: item.OffTarget,
 		}
 		if len(item.Timelines) > 0 {
 			start := item.Timelines[0]

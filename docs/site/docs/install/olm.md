@@ -28,5 +28,17 @@ The CSV lists every image the operator can run in `relatedImages`, so
 `oc mirror` and `oc adm catalog mirror` mirror them for a disconnected cluster.
 Check the list against the [images the operator uses](../operator/images.md).
 
+## Who can open pgAdmin
+
+OLM renders, for each CRD it owns, roles aggregated into the built-in ones:
+`get`/`list`/`watch` into `view`, the writes into `edit`, `*` into `admin`. So
+every `view` user of a namespace may `get` its `PgAdmin` objects. Opening a
+pgAdmin is a different verb, `connect pgadmins/<name>`, which the OpenShift
+oauth-proxy in front of pgAdmin checks and which neither `view` nor `edit`
+carries. It is granted by `pgtoolbox-console-operator` (bind it per namespace
+to the DBAs) and by `admin` (through OLM's `*` role and
+`pgtoolbox-aggregate-to-admin`). See
+[who may open pgAdmin](../operator/pgadmin.md#who-may-open-it).
+
 `make bundle-validate` runs `operator-sdk bundle validate` with the operator
 framework suite on every pull request; the OLM scorecard is not run yet.

@@ -17,6 +17,8 @@ package authz
 import (
 	"context"
 	"errors"
+
+	pgtoolboxv1alpha1 "github.com/fyannk/pgToolBox/api/v1alpha1"
 )
 
 // API groups and resources the console asks about.
@@ -89,9 +91,10 @@ func (a *Authorizer) ClusterCapabilities(ctx context.Context, u User, namespace,
 }
 
 // PgAdminAccess asks whether u may open the pgAdmin of PgAdmin <name>
-// (get pgadmins/<name>; dba-only by the chart's ClusterRoles).
+// (connect pgadmins/<name>, the verb the OpenShift oauth-proxy checks;
+// dba-only by the chart's ClusterRoles).
 func (a *Authorizer) PgAdminAccess(ctx context.Context, u User, namespace, name string) Decision {
-	return a.Allowed(ctx, u, Attributes{Namespace: namespace, Verb: "get", Group: PgToolBoxGroup, Resource: "pgadmins", Name: name})
+	return a.Allowed(ctx, u, Attributes{Namespace: namespace, Verb: pgtoolboxv1alpha1.PgAdminConnectVerb, Group: PgToolBoxGroup, Resource: "pgadmins", Name: name})
 }
 
 // ObjectRef names one namespaced object.

@@ -360,8 +360,8 @@ type PgAdminStorageSpec struct {
 
 // PgAdminAuthSpec selects the single sign-on mode: pgAdmin's native OAuth2
 // against the platform's identity provider (Kubernetes), or the OpenShift
-// oauth-proxy in front of pgAdmin, which admits only users that may get
-// this PgAdmin (OpenShift).
+// oauth-proxy in front of pgAdmin, which admits only users that may connect
+// to this PgAdmin (OpenShift).
 // +kubebuilder:validation:XValidation:rule="has(self.oauth2) != has(self.openshiftOAuthProxy)",message="exactly one of oauth2 and openshiftOAuthProxy is required",reason=FieldValueInvalid
 type PgAdminAuthSpec struct {
 	// pgAdmin's native OAuth2 / OpenID Connect sign-in.
@@ -369,7 +369,8 @@ type PgAdminAuthSpec struct {
 	OAuth2 *PgAdminOAuth2Spec `json:"oauth2,omitempty"`
 
 	// The OpenShift oauth-proxy, authorizing with a SubjectAccessReview
-	// "get pgadmins/<name>" (granted by the pgtoolbox-console-operator role).
+	// "connect pgadmins/<name>" (granted by the pgtoolbox-console-operator
+	// role; not get, which the view role carries on OLM).
 	// +optional
 	OpenShiftOAuthProxy *PgAdminOpenShiftOAuthProxySpec `json:"openshiftOAuthProxy,omitempty"`
 }

@@ -199,6 +199,63 @@ func TestGracefulShutdownEndsStreams(t *testing.T) {
 	}
 }
 
+// TestStreamsOutliveTheShutdownDelay: the event stream keeps running
+// while the replica, not ready, still receives traffic for the delay,
+// and ends when the drain begins rather than at the signal.
+func TestStreamsOutliveTheShutdownDelay(t *testing.T) {
+	t.Parallel()
+	const delay = 400 * time.Millisecond
+	streaming := make(chan struct{})
+	ended := make(chan time.Time, 1)
+	api := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_ = http.NewResponseController(w).Flush()
+		close(streaming)
+		<-r.Context().Done()
+		ended <- time.Now()
+	})
+	s := New(Options{Auth: testAuth(t), API: api, Ready: &Readiness{}, ShutdownTimeout: 5 * time.Second, ShutdownDelay: delay})
+	s.handler = securityHeaders(writeDeadline(api))
+	var lc net.ListenConfig
+	ln, err := lc.Listen(t.Context(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() { done <- s.Serve(ctx, ln, nil) }()
+	go func() {
+		resp, err := http.Get("http://" + ln.Addr().String() + PathStream) //nolint:noctx // test client
+		if err == nil {
+			_, _ = io.Copy(io.Discard, resp.Body)
+			_ = resp.Body.Close()
+		}
+	}()
+	select {
+	case <-streaming:
+	case <-time.After(5 * time.Second):
+		t.Fatal("stream did not open")
+	}
+	signalled := time.Now()
+	cancel()
+	select {
+	case at := <-ended:
+		if lived := at.Sub(signalled); lived < delay*3/4 {
+			t.Fatalf("the stream ended %s after the signal, inside the %s delay", lived, delay)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the stream never ended")
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Serve = %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("shutdown hung on an open stream")
+	}
+}
+
 // TestGracefulShutdownLetsRequestsInFlightComplete is the drain's
 // contract: the shutdown signal makes the console not ready, keeps the
 // listener open for the delay, and lets a request already in flight run

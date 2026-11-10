@@ -58,5 +58,12 @@ OpenShift.
   and `linux/arm64`: `ghcr.io/fyannk/pgtoolbox-operator`,
   `ghcr.io/fyannk/pgtoolbox-console` and `ghcr.io/fyannk/pgtoolbox-evidence-agent`.
 - The custom resources are `pgtoolbox.fyannk.dev/v1alpha1`.
+- **Opening a pgAdmin** behind the OpenShift OAuth proxy takes the `connect`
+  verb on `pgadmins/<name>` (granted by `pgtoolbox-console-operator` and by
+  `admin`), not `get`, which OLM gives to every `view` user.
+- **Release candidates** (`v0.1.0-rc.N`) publish end to end: the bundle, catalog
+  and installer manifests are pinned by digest from the tree's core version, a
+  pin that changes nothing fails the release, and `latest` moves only after the
+  packages are verified public.
 
 [0.1.0]: https://github.com/fyannk/pgToolBox/releases/tag/v0.1.0

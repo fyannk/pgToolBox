@@ -41,7 +41,11 @@ func TestRestoreCheckReadsTheTimeline(t *testing.T) {
 		{"inside the newer covered span", now.Add(-3 * time.Hour), "covered", "20261029T060000"},
 		{"just before the end of the archive", now.Add(-10 * time.Minute), "unknown", ""},
 		{"just before the hole", now.Add(-20*time.Hour - 5*time.Minute), "unknown", ""},
-		{"after the newest archived WAL", now, "notCovered", ""},
+		// The archive ends at -2min and the agent last read it at -40s: in
+		// between, the WAL had not reached the repository when it was read.
+		{"after the newest archived WAL, before the last read", now.Add(-90 * time.Second), "notCovered", ""},
+		// After the last read, the evidence says nothing about now.
+		{"after the last read of the repository", now, "unknown", ""},
 	}
 	for _, c := range cases {
 		got, err := svc.RestoreCheck(ctx, "team-a", "orders", c.at)
@@ -222,6 +226,14 @@ func TestRecoveryTimelineStates(t *testing.T) {
 			[]answer{{45 * time.Hour, "unknown", ""}, {30 * time.Hour, "covered", "b1"}, {0, "unknown", ""}},
 		},
 		{
+			// The frontier is a fact about the scan: WAL archived since
+			// may cover the time after it, so that span is not notCovered.
+			"a fresh frontier read a while ago leaves the time since unknown",
+			timelineFixture{paths: []evidence.RecoveryPath{tlPath("b1", 48*time.Hour, 30*time.Minute, frontier)}, scannedAt: now.Add(-10 * time.Minute)},
+			facts, "healthy",
+			[]answer{{20 * time.Minute, "notCovered", ""}, {5 * time.Minute, "unknown", ""}, {0, "unknown", ""}, {2 * time.Hour, "covered", "b1"}},
+		},
+		{
 			"a recent archiving failure makes the newest day unknown",
 			timelineFixture{paths: overlapping},
 			recoveryFacts{now: now, archiveTimeout: defaultArchiveTimeout, lastFailedWAL: ago(2 * time.Hour)},
@@ -271,15 +283,29 @@ func TestRecoveryTimelineStates(t *testing.T) {
 	}
 
 	t.Run("the operator's window is drawn as reported, never covered", func(t *testing.T) {
-		first, last := now.Add(-48*time.Hour), now.Add(-time.Minute)
-		summary := viewmodel.BackupSummary{RecoveryWindow: &viewmodel.RecoveryWindow{First: &first, Last: &last, Provenance: viewmodel.Provenance{Source: "ObjectStore.status.serverRecoveryWindow"}}}
+		first, last := now.Add(-48*time.Hour), now.Add(-6*time.Hour)
+		summary := viewmodel.BackupSummary{RecoveryWindow: &viewmodel.RecoveryWindow{First: &first, Last: &last, Provenance: viewmodel.Provenance{
+			Origin: viewmodel.OriginOperator, Source: "ObjectStore.status.serverRecoveryWindow",
+		}}}
 		got := svc.recoveryTimeline(clusterEvidence{}, summary, nil, facts)
-		if got.Basis != "reported" || len(got.Segments) != 1 || got.Segments[0].Kind != segmentReported || got.State != "unknown" {
+		if got.Basis != "reported" || len(got.Segments) != 2 || got.Segments[0].Kind != segmentReported || got.State != "unknown" {
 			t.Fatalf("%+v", got)
 		}
-		check := restoreCheck(viewmodel.Backups{RecoveryTimeline: got}, now.Add(-time.Hour))
+		if tail := got.Segments[1]; tail.Kind != segmentUnknown || !tail.From.Equal(last) || !tail.To.Equal(now) {
+			t.Errorf("the time after the last base backup is not unknown: %+v", tail)
+		}
+		check := restoreCheck(viewmodel.Backups{RecoveryTimeline: got}, now.Add(-7*time.Hour))
 		if check.Answer != "reported" {
 			t.Errorf("check = %+v", check)
+		}
+		// lastSuccessfulBackupTime is the last base backup, not the WAL
+		// frontier: with healthy archiving the hours after it are
+		// restorable, so the check must not say notCovered.
+		for _, at := range []time.Time{now.Add(-time.Hour), now, now.Add(time.Hour)} {
+			check = restoreCheck(viewmodel.Backups{RecoveryTimeline: got}, at)
+			if check.Answer != "unknown" || !strings.Contains(check.Text, "last base backup") || !strings.Contains(check.Text, "evidence agent") {
+				t.Errorf("after the last base backup (%s): %+v", at, check)
+			}
 		}
 	})
 }

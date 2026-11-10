@@ -24,6 +24,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	humasse "github.com/danielgtaylor/huma/v2/sse"
 
+	pgtoolboxv1alpha1 "github.com/fyannk/pgToolBox/api/v1alpha1"
 	"github.com/fyannk/pgToolBox/internal/console/auth"
 	"github.com/fyannk/pgToolBox/internal/console/authz"
 	"github.com/fyannk/pgToolBox/internal/console/operations"
@@ -375,7 +376,7 @@ func pgAdminLinks(ctx context.Context, d Deps, p *auth.Principal, ns, name strin
 		links = nil
 	}
 	for _, l := range links {
-		if d.Authz.Allowed(ctx, p.User, authz.Attributes{Namespace: ns, Verb: "get", Group: authz.PgToolBoxGroup, Resource: "pgadmins", Name: l.Name}).Allowed {
+		if d.Authz.Allowed(ctx, p.User, authz.Attributes{Namespace: ns, Verb: pgtoolboxv1alpha1.PgAdminConnectVerb, Group: authz.PgToolBoxGroup, Resource: "pgadmins", Name: l.Name}).Allowed {
 			out = append(out, l)
 		}
 	}

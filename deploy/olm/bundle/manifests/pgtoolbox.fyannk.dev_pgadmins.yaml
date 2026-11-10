@@ -178,7 +178,8 @@ spec:
                   openshiftOAuthProxy:
                     description: |-
                       The OpenShift oauth-proxy, authorizing with a SubjectAccessReview
-                      "get pgadmins/<name>" (granted by the pgtoolbox-console-operator role).
+                      "connect pgadmins/<name>" (granted by the pgtoolbox-console-operator
+                      role; not get, which the view role carries on OLM).
                     properties:
                       image:
                         description: The oauth-proxy image. Omitted, the operator's

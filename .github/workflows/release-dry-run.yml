@@ -17,6 +17,12 @@ on:
       - mise.toml
   schedule:
     - cron: "23 3 * * 0"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to rehearse in the full build, e.g. v0.1.0-rc.1 (empty: the chart's version)"
+        required: false
+        default: ""
 
 # Nothing is granted by default; each job states what it needs.
 permissions: {}
@@ -49,10 +55,45 @@ jobs:
       - name: Check semver, chart versions and CHANGELOG
         env:
           ALLOW_UNRELEASED: "1"
+          REHEARSE_TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
-          ./hack/release.sh check
+          ./hack/release.sh check ${REHEARSE_TAG:+"${REHEARSE_TAG}"}
       - name: Build the images, pin and package the charts and manifests
+        env:
+          REHEARSE_TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
-          make release-dry-run
+          make release-dry-run TAG="${REHEARSE_TAG}"
+
+  # A release candidate is cut from the tree of its final version (the tree says
+  # 0.1.0, the images and charts say 0.1.0-rc.1). The pinning of that mismatch
+  # is what once broke a -rc tag after the images were pushed, so it is
+  # rehearsed on every run, with placeholder digests: no image build.
+  rc-rehearsal:
+    name: Dry run of a release candidate (pinning and packaging)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read # check out the repository
+    steps:
+      - name: Check out the repository with its tags
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install the pinned tools
+        uses: ./.github/actions/toolchain
+        with:
+          tools: go helm kubectl
+          mise-cache: "false"
+      - name: Rehearse the release candidate of the tree's version
+        env:
+          ALLOW_UNRELEASED: "1"
+          DRY_RUN_FAKE_DIGESTS: "1"
+        run: |
+          set -euo pipefail
+          core="$(sed -n 's/^version: *"\{0,1\}\([^"]*\)"\{0,1\} *$/\1/p' charts/pgtoolbox/Chart.yaml)"
+          core="${core%%-*}"
+          ./hack/release.sh check "v${core}-rc.1"
+          make release-dry-run TAG="v${core}-rc.1"

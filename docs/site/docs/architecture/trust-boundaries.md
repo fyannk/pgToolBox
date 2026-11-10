@@ -142,7 +142,7 @@ known limit.
   to a memory-backed volume.
 - **Opening pgAdmin is holding those passwords**, so the browser side is gated by
   identity: pgAdmin's own OIDC sign-in with `requiredClaims`, or on OpenShift the
-  `oauth-proxy` asking for `get pgadmins/<name>`.
+  `oauth-proxy` asking for `connect pgadmins/<name>`.
 
 See [pgAdmin is a credential-holder](../security.md#pgadmin-is-a-credential-holder).
 

@@ -498,6 +498,12 @@ type BarmanRecoveryPath struct {
 	FrontierWAL       *string      `json:"frontier_wal"`
 	FrontierReceiptAt *time.Time   `json:"frontier_receipt_at"`
 	AssumptionCodes   []string     `json:"assumption_codes"`
+	// OffTarget is true when the backup cannot reach the newest timeline
+	// (its timeline branched off before the backup was consistent, or is not
+	// an ancestor of the newest one): the path follows the backup's own
+	// timeline, which a restore must name (recovery_target_timeline), and is
+	// never Healthy. Additive: producers before it never send it.
+	OffTarget bool `json:"off_target,omitempty"`
 }
 
 // PageHeader is the common generation-consistent collection envelope.
@@ -926,6 +932,9 @@ func (p BarmanRecoveryPath) Validate() error {
 	}
 	if !completePosition(p.StartTimeline, p.StartPosition, p.StartWAL) || !completePosition(p.FrontierTimeline, p.FrontierPosition, p.FrontierWAL) {
 		return errors.New("incomplete Barman recovery path positions")
+	}
+	if p.OffTarget && (p.State == Healthy || p.StartTimeline != nil && *p.StartTimeline != p.TargetTimeline) {
+		return errors.New("an off-target Barman recovery path is never healthy and follows the backup's own timeline")
 	}
 	for index, code := range p.AssumptionCodes {
 		if invalidReason(Reason{Code: code, Message: "bounded"}) || index > 0 && p.AssumptionCodes[index-1] >= code {

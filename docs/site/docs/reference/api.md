@@ -724,8 +724,8 @@ _Appears in:_
 
 PgAdminAuthSpec selects the single sign-on mode: pgAdmin's native OAuth2
 against the platform's identity provider (Kubernetes), or the OpenShift
-oauth-proxy in front of pgAdmin, which admits only users that may get
-this PgAdmin (OpenShift).
+oauth-proxy in front of pgAdmin, which admits only users that may connect
+to this PgAdmin (OpenShift).
 
 
 
@@ -735,7 +735,7 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `oauth2` _[PgAdminOAuth2Spec](#pgadminoauth2spec)_ | pgAdmin's native OAuth2 / OpenID Connect sign-in. |  | Optional: \{\} <br /> |
-| `openshiftOAuthProxy` _[PgAdminOpenShiftOAuthProxySpec](#pgadminopenshiftoauthproxyspec)_ | The OpenShift oauth-proxy, authorizing with a SubjectAccessReview<br />"get pgadmins/&lt;name>" (granted by the pgtoolbox-console-operator role). |  | Optional: \{\} <br /> |
+| `openshiftOAuthProxy` _[PgAdminOpenShiftOAuthProxySpec](#pgadminopenshiftoauthproxyspec)_ | The OpenShift oauth-proxy, authorizing with a SubjectAccessReview<br />"connect pgadmins/&lt;name>" (granted by the pgtoolbox-console-operator<br />role; not get, which the view role carries on OLM). |  | Optional: \{\} <br /> |
 
 
 #### PgAdminClusterReference

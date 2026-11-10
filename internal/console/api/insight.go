@@ -107,7 +107,7 @@ func (l *refreshLimiter) allow(user string) bool {
 // open: a statement's text, and ending a backend, are done there.
 type InsightView struct {
 	viewmodel.Insight
-	PgAdmins       []viewmodel.PgAdminLink `json:"pgAdmins" doc:"pgAdmins this Cluster is registered in that you may open (get pgadmins/<name>)."`
+	PgAdmins       []viewmodel.PgAdminLink `json:"pgAdmins" doc:"pgAdmins this Cluster is registered in that you may open (connect pgadmins/<name>)."`
 	PgAdminsUnread bool                    `json:"pgAdminsUnread,omitempty" doc:"The console could not read the PgAdmins: pgAdmins may be incomplete."`
 }
 

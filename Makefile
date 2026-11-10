@@ -426,8 +426,8 @@ release-check-module: ## Check a nested-module tag (pkg/evidence/vX.Y.Z): module
 	./hack/release.sh check-module $(TAG)
 
 .PHONY: release-dry-run
-release-dry-run: ## Build every release image (amd64+arm64) into OCI archives, pin and package the charts and manifests into dist/release; nothing is pushed or signed. DRY_RUN_FAKE_DIGESTS=1 skips the image builds.
-	GITHUB_REPOSITORY=$(GITHUB_REPOSITORY) ./hack/release.sh dry-run
+release-dry-run: ## Build every release image (amd64+arm64) into OCI archives, pin and package the charts and manifests into dist/release; nothing is pushed or signed. DRY_RUN_FAKE_DIGESTS=1 skips the image builds; TAG=v0.1.0-rc.1 rehearses a release candidate.
+	GITHUB_REPOSITORY=$(GITHUB_REPOSITORY) DRY_RUN_TAG=$(TAG) ./hack/release.sh dry-run
 
 .PHONY: verify-image
 verify-image: ## Verify the keyless signature and the provenance of IMAGE (a tag or, better, a digest) with cosign and gh.

@@ -177,7 +177,9 @@ source that is off, not a fault.
 
 The bar is drawn from the [evidence agent's](../evidence-agent.md) recovery paths,
 toward the newest timeline a path could follow. A timeline seen in the archive
-but not connected by valid history is reported, not used as the target.
+but not connected by valid history is reported, not used as the target, and an
+off-target path (a backup that cannot reach the newest timeline) is neither the
+target nor drawn.
 
 - **Covered** spans: each path covers from its base backup's end to the
   archive-receipt time of the last contiguous WAL segment. Only a path whose WAL
@@ -213,6 +215,13 @@ The operator's or plugin's own window (`serverRecoveryWindow`, or the in-tree
 recoverability points) is drawn hatched as **reported**. It is never drawn as
 covered.
 
+The end of that window is the **last base backup**
+(`serverRecoveryWindow[].lastSuccessfulBackupTime`), not the end of the archived
+WAL: the operator does not report how far archived WAL reaches beyond it. The bar
+and the overview label it so, and the time from it to now is drawn **unknown**.
+With healthy archiving those hours are usually restorable; an evidence agent is
+what can place them.
+
 ### Can I restore to…?
 
 `GET /api/v1/namespaces/{ns}/clusters/{name}/backups/restore-check?at=<RFC 3339>`
@@ -227,6 +236,7 @@ flowchart TB
   before -->|yes| notcovered["notCovered"]
   before -->|no| basis{"basis: reported only?"}
   basis -->|"yes, and not after the latest point"| reported["reported"]
+  basis -->|"yes, after the latest point"| unknown
   basis -->|no| segment{"segment holding the time"}
   segment -->|covered| covered["covered: name the base backup"]
   segment -->|"missing WAL or candidate gap"| gap["gap"]
@@ -239,7 +249,8 @@ flowchart TB
 The answer is one of:
 
 - `covered`: name the base backup to restore from;
-- `notCovered`: before the earliest or after the latest point;
+- `notCovered`: before the earliest point, or (repository evidence only) after
+  the latest point and before the agent last read the repository;
 - `gap`;
 - `reported`: only the unverified window covers the time;
 - `unknown`.
@@ -257,7 +268,10 @@ segments, so the bar and the answer always agree:
   after an outage carries older commits than its arrival time.
 
 After the latest point the answer is `notCovered` only when the newest path
-reaches the archive frontier and the evidence is fresh and complete. After a
-path that stops at unknown evidence, from stale evidence, or when a collection
-was cut, it is `unknown`. Stale evidence is never shown as healthy. When reading
+reaches the archive frontier, the evidence is fresh and complete, and the time is
+before the agent last read the repository: that is a fact about the scan. From
+the last read to now it is `unknown`, since WAL archived since may cover it.
+After a path that stops at unknown evidence, from stale evidence, when a
+collection was cut, or on the reported basis (whose end is the last base backup),
+it is `unknown`. Stale evidence is never shown as healthy. When reading
 the paths fails, the last good ones are kept and marked stale.

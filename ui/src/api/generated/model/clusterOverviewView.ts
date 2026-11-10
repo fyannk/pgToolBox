@@ -51,7 +51,7 @@ export interface ClusterOverviewView {
   instances: InstanceCounts;
   labels?: ClusterOverviewViewLabels;
   /**
-     * pgAdmins this Cluster is registered in that you may open (get pgadmins/<name>).
+     * pgAdmins this Cluster is registered in that you may open (connect pgadmins/<name>).
      * @nullable
      */
   pgAdmins: PgAdminLink[] | null;

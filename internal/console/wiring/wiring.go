@@ -440,7 +440,7 @@ func (k SharedDrillKeeper) KeepDrill(r drills.Kept) {
 		return t.Unix()
 	}
 	k.Store.KeepDrill(sharedstate.DrillResult{
-		Namespace: r.Drill.Namespace, Name: r.Drill.Name, SourceNamespace: r.Source.Namespace, Source: r.Source.Name,
+		Namespace: r.Drill.Namespace, Name: r.Drill.Name, SourceNamespace: r.Source.Namespace, Source: r.Source.Name, SourceUID: r.SourceUID,
 		Backup: r.Backup, BackupLabel: r.BackupLabel, Result: string(r.Result), Reason: r.Reason,
 		StartedAt: unix(r.StartedAt), Deadline: unix(r.Deadline), HealthyAt: unix(r.HealthyAt), FinishedAt: unix(r.FinishedAt),
 	})
@@ -458,7 +458,7 @@ func (k SharedDrillKeeper) KeptDrills() []drills.Kept {
 	out := make([]drills.Kept, 0, len(results))
 	for _, r := range results {
 		out = append(out, drills.Kept{
-			Drill: drills.Key{Namespace: r.Namespace, Name: r.Name}, Source: drills.SourceKey{Namespace: r.SourceNamespace, Name: r.Source},
+			Drill: drills.Key{Namespace: r.Namespace, Name: r.Name}, Source: drills.SourceKey{Namespace: r.SourceNamespace, Name: r.Source}, SourceUID: r.SourceUID,
 			Backup: r.Backup, BackupLabel: r.BackupLabel, Result: viewmodel.DrillResult(r.Result), Reason: r.Reason,
 			StartedAt: at(r.StartedAt), Deadline: at(r.Deadline), HealthyAt: at(r.HealthyAt), FinishedAt: at(r.FinishedAt),
 		})

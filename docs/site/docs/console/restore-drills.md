@@ -155,7 +155,7 @@ stateDiagram-v2
   before a verdict, or stopped verifying as this console's drill. The console
   reads the Cluster by name before concluding; a drill Cluster missing from the
   cache for less than two minutes after its creation is not judged.
-- The record keeps: the source and the backup restored (with its end time), the
+- The record keeps: the source (its namespace, name and UID) and the backup restored (with its end time), the
   start, deadline, healthy, promotion, verdict and teardown times, the timeline
   the drill was promoted on, the source and restored sizes, each check's outcome
   and text, the reason of a failure, and the last teardown error. A replica or
@@ -517,6 +517,12 @@ record could not be read. Until that start is 90 days old, the check reports
 that it cannot judge, as a switched-off source, rather than "no drill". So a
 console without persistent history only reaches a verdict after 90 days of
 uptime. Drills run by hand, or by another console, are not in the record.
+
+A drill counts only for the Cluster it ran against. A Cluster deleted and
+recreated under the same name is another Cluster: drills recorded with the old
+one's UID are not shown for it, do not make it restore-tested and do not hold
+the note back. A record kept before the source UID was recorded counts only
+when the drill started after the live Cluster's `creationTimestamp`.
 
 While a drill runs, its Cluster appears in the fleet like any other, and
 diagnostics about backups (it has none, on purpose) may show for it.

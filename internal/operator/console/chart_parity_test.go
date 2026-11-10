@@ -188,6 +188,16 @@ func TestDeploymentMatchesTheChart(t *testing.T) {
 	}{
 		{name: "in-memory history (the chart's default)", mutate: inMemory},
 		{
+			// Behind an Ingress both trust one forwarded hop, so that the
+			// sign-in budgets are per client rather than one for everyone.
+			name: "exposed through an Ingress",
+			sets: []string{"console.exposure.type=ingress", "console.exposure.host=console.example"},
+			mutate: func(c *pgtoolboxv1alpha1.PgToolBoxConsole) {
+				inMemory(c)
+				c.Spec.Exposure = pgtoolboxv1alpha1.ExposureSpec{Type: pgtoolboxv1alpha1.ExposureTypeIngress, Hostname: "console.example"}
+			},
+		},
+		{
 			name: "persistent history (the operator's default) of a set size and class",
 			sets: []string{"console.history.persistent=true", "console.history.size=4Gi", "console.history.storageClassName=fast"},
 			mutate: func(c *pgtoolboxv1alpha1.PgToolBoxConsole) {

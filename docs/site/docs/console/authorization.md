@@ -78,7 +78,7 @@ ones that could not be checked; they read `false` until the API server answers.
 | Reload, restart | `patch clusters.postgresql.cnpg.io/<name>`. |
 | Promote | `patch clusters.postgresql.cnpg.io/<name>/status`. |
 | "Operations" as a whole | all three of `patch clusters`, `patch clusters/status` and `create backups`. |
-| Open pgAdmin | `get pgadmins.pgtoolbox.fyannk.dev/<name>`. |
+| Open pgAdmin | `connect pgadmins.pgtoolbox.fyannk.dev/<name>` (a verb of its own: `get` is in `view` on OLM). |
 
 A Cluster the person may not `get` answers **403 whether it exists or not**, so
 the API is no oracle for what exists. A Cluster in a namespace the console does
@@ -123,10 +123,10 @@ kubectl -n team-a create rolebinding ops-team \
 | ClusterRole | Grants | For |
 |---|---|---|
 | `pgtoolbox-console-viewer` | `get`/`list`/`watch` on the CloudNativePG kinds (`clusters`, `backups`, `scheduledbackups`, `poolers`, `databases`, `databaseroles`, `publications`, `subscriptions`, `failoverquorums`, `imagecatalogs`), `objectstores`, and pods, services, PVCs and events; `get` on `pods/log`. | People who look. |
-| `pgtoolbox-console-operator` | Everything in the viewer, plus `create backups`, `create databaseroles`, `patch clusters` and `clusters/status`, and `get pgadmins`. | People who operate. |
+| `pgtoolbox-console-operator` | Everything in the viewer, plus `create backups`, `create databaseroles`, `patch clusters` and `clusters/status`, and `connect` and `get` on `pgadmins`. | People who operate. |
 | `pgtoolbox-console-approver` | `get`/`list`/`watch` on PgAccessRequests, `update` on their status, `create rolebindings`, and `bind` on exactly the two roles above. | People who decide [access requests](./access-requests.md#who-may-do-what). No request can grant it. |
 
-Neither role touches a Secret. `get pgadmins` is in the second role only, on
+Neither role touches a Secret. `connect pgadmins` is in the second role only, on
 purpose: **whoever may open pgAdmin holds the credentials of every role it
 offers** (see [pgAdmin](../operator/pgadmin.md#who-may-open-it)). The chart
 renders the roles with `operator.userRoles.create` (default `true`).
@@ -137,7 +137,7 @@ annotations reload and restart touch: `enableSuperuserAccess`, `managed.roles`,
 `postgresql.parameters` (`archive_command`, `shared_preload_libraries`, ...),
 `bootstrap` and the images. CloudNativePG applies them as the superuser, so whoever
 holds the role can become the superuser of every Cluster of the namespace or run
-code in its instances. `get pgadmins` and `create databaseroles` add to that. Grant
+code in its instances. `connect pgadmins` and `create databaseroles` add to that. Grant
 it, and approve access requests for the `operator` capability, only to people you
 would give the `postgres` password.
 :::
