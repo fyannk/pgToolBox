@@ -2164,6 +2164,7 @@
           "uniqueItems": true
         },
         "end_lsn": {
+          "description": "Exclusive upper bound: the first LSN past the end of end_wal, which the archive does not hold. Not a restore target (recovery_target_lsn) and not the last commit; replay ends at or before it.",
           "maxLength": 17,
           "minLength": 1,
           "pattern": "^[0-9A-F]{1,8}/[0-9A-F]{1,8}$",

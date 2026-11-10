@@ -196,12 +196,16 @@ type PGBackRestWALCounts struct {
 // end of the last contiguous WAL segment. The end is a WAL position; its
 // time is only the upload time of that segment.
 type PGBackRestRecoveryWindow struct {
-	OldestBackup    string     `json:"oldest_backup"`
-	StartAt         time.Time  `json:"start_at"`
-	NewestBackup    string     `json:"newest_backup"`
-	NewestStopAt    time.Time  `json:"newest_stop_at"`
-	EndTimeline     uint64     `json:"end_timeline"`
-	EndWAL          string     `json:"end_wal"`
+	OldestBackup string    `json:"oldest_backup"`
+	StartAt      time.Time `json:"start_at"`
+	NewestBackup string    `json:"newest_backup"`
+	NewestStopAt time.Time `json:"newest_stop_at"`
+	EndTimeline  uint64    `json:"end_timeline"`
+	EndWAL       string    `json:"end_wal"`
+	// EndLSN is an exclusive upper bound: the first LSN past the end of
+	// EndWAL, which the archive does not hold. It is not a restore target
+	// (recovery_target_lsn) and not the last commit; replay ends at or
+	// before it.
 	EndLSN          string     `json:"end_lsn"`
 	EndReceiptAt    *time.Time `json:"end_receipt_at"`
 	UsableBackups   uint64     `json:"usable_backups"`

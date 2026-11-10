@@ -66,7 +66,7 @@
       {{else}}<p>backup.info lists no backup.</p>{{end}}
       {{with .Window}}
       <h4>Recovery window</h4>
-      <dl><dt>Oldest usable backup</dt><dd>{{.Oldest}} (consistent from {{.Start}})</dd><dt>Newest usable backup</dt><dd>{{.Newest}} (stopped {{.NewestStop}})</dd><dt>Window end</dt><dd><code>{{.EndWAL}}</code> at LSN <code>{{.EndLSN}}</code>, received {{.EndReceipt}}</dd><dt>Usable backups</dt><dd>{{.Usable}}</dd><dt>Assumptions</dt><dd>{{.Assumptions}}</dd></dl>
+      <dl><dt>Oldest usable backup</dt><dd>{{.Oldest}} (consistent from {{.Start}})</dd><dt>Newest usable backup</dt><dd>{{.Newest}} (stopped {{.NewestStop}})</dd><dt>Window end</dt><dd>end of segment <code>{{.EndWAL}}</code>, received {{.EndReceipt}}; upper bound <code>{{.EndLSN}}</code> (exclusive: the first LSN past the archived WAL, not a restore target)</dd><dt>Usable backups</dt><dd>{{.Usable}}</dd><dt>Assumptions</dt><dd>{{.Assumptions}}</dd></dl>
       {{else}}<p>No recovery window: no usable backup reaches the archived WAL.</p>{{end}}
       {{if .Findings}}
       <h4>Findings</h4>
