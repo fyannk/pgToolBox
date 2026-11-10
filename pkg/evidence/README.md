@@ -15,7 +15,10 @@ unauthenticated `/healthz` and `/readyz`. It provides:
 - exact health, readiness, snapshot, error, and collection wire types for the
   Barman Cloud and pgBackRest profiles; every snapshot carries a
   `producer_instance` (one per process) and a `producer_epoch` (the deployed
-  configuration);
+  configuration), and its producer declares the semantic guarantees of its
+  build in `producer.features` (an open, sorted list; a consumer checks the
+  ones it relies on, such as `recovery-timeline-latest`, and treats a
+  producer without one as an older build);
 - conservative validators for states, nullable evidence, deterministic order,
   and bounds; the Barman profile reads S3, Azure Blob Storage or Google Cloud
   Storage (`provider` is `s3`, `azure` or `gcs`);

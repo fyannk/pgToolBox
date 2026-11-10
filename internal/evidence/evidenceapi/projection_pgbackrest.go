@@ -118,7 +118,7 @@ func projectPGBackRestSnapshot(source inventory.Snapshot, options Options, canon
 	return evidencev1alpha1.RepositoryEvidenceSnapshot{
 		APIVersion:       evidencev1alpha1.APIVersion,
 		Kind:             evidencev1alpha1.SnapshotKind,
-		Producer:         evidencev1alpha1.Producer{Name: evidencev1alpha1.ProducerName, Version: options.ProducerVersion},
+		Producer:         evidencev1alpha1.Producer{Name: evidencev1alpha1.ProducerName, Version: options.ProducerVersion, Features: evidencev1alpha1.ProducerFeatures()},
 		ProducerInstance: options.ProducerInstance,
 		Identity: evidencev1alpha1.Identity{
 			Cluster: evidencev1alpha1.ClusterIdentity{Namespace: options.ClusterNamespace, UID: options.ClusterUID, Name: cloneString(options.ClusterName)},
