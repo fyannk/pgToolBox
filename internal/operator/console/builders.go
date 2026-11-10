@@ -693,6 +693,14 @@ func authEnv(c *pgtoolboxv1alpha1.PgToolBoxConsole) []corev1.EnvVar {
 	if publicURL := c.EffectivePublicURL(); publicURL != "" {
 		envs = append(envs, env("PUBLIC_URL", publicURL))
 	}
+	// Behind the Route, Ingress or Gateway the console sees the proxy's
+	// address: it trusts one X-Forwarded-For hop so that the sign-in
+	// budgets are charged per client, not shared by every user. Without an
+	// exposure nothing is in front, and a forwarded header is the caller's
+	// own claim (the default, 0, ignores it).
+	if c.Spec.Exposure.TypeOrDefault() != pgtoolboxv1alpha1.ExposureTypeClusterIP {
+		envs = append(envs, env("TRUSTED_PROXY_HOPS", "1"))
+	}
 	return envs
 }
 
