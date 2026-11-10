@@ -25,7 +25,6 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
-	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/yaml"
@@ -259,7 +258,7 @@ func TestMCPEnv(t *testing.T) {
 // refused) trusts nothing: nothing is in front.
 func TestTrustedProxy(t *testing.T) {
 	t.Parallel()
-	ingressFrom := []networkingv1.NetworkPolicyPeer{{NamespaceSelector: &metav1.LabelSelector{
+	ingressFrom := []pgtoolboxv1alpha1.PgToolBoxConsolePolicyPeer{{NamespaceSelector: &metav1.LabelSelector{
 		MatchLabels: map[string]string{"kubernetes.io/metadata.name": "ingress-nginx"},
 	}}}
 	cases := []struct {
@@ -268,6 +267,7 @@ func TestTrustedProxy(t *testing.T) {
 		exposed     bool
 		trusted     *pgtoolboxv1alpha1.PgToolBoxConsoleTrustedProxySpec
 		policy      *pgtoolboxv1alpha1.PgToolBoxConsoleExposurePolicySpec
+		bypass      string
 		hops, cidrs string
 	}{
 		{name: "clusterIP", typ: pgtoolboxv1alpha1.ExposureTypeClusterIP},
@@ -279,9 +279,33 @@ func TestTrustedProxy(t *testing.T) {
 		{name: "ingress behind its policy", typ: pgtoolboxv1alpha1.ExposureTypeIngress, exposed: true, policy: &pgtoolboxv1alpha1.PgToolBoxConsoleExposurePolicySpec{From: ingressFrom}, hops: "1", cidrs: "0.0.0.0/0,::/0"},
 		{
 			name: "gateway with its proxies named", typ: pgtoolboxv1alpha1.ExposureTypeGateway, exposed: true,
-			trusted: &pgtoolboxv1alpha1.PgToolBoxConsoleTrustedProxySpec{Hops: new(int32(2)), CIDRs: []string{"10.128.3.4/14", "fd00::1"}},
+			trusted: &pgtoolboxv1alpha1.PgToolBoxConsoleTrustedProxySpec{Hops: new(int32(2)), CIDRs: []string{"10.128.3.4/14", "fd00::1/128"}},
 			policy:  &pgtoolboxv1alpha1.PgToolBoxConsoleExposurePolicySpec{From: ingressFrom},
 			hops:    "2", cidrs: "10.128.0.0/14,fd00::1/128",
+		},
+		{
+			// CEL refuses a bare address; one that reaches the operator
+			// anyway is never trusted.
+			name: "an entry that is not a CIDR is dropped", typ: pgtoolboxv1alpha1.ExposureTypeIngress, exposed: true,
+			trusted: &pgtoolboxv1alpha1.PgToolBoxConsoleTrustedProxySpec{CIDRs: []string{"fd00::1", "10.1.0.0/16"}},
+			hops:    "1", cidrs: "10.1.0.0/16",
+		},
+		{
+			name: "another NetworkPolicy admits more peers: none trusted", typ: pgtoolboxv1alpha1.ExposureTypeIngress, exposed: true,
+			policy: &pgtoolboxv1alpha1.PgToolBoxConsoleExposurePolicySpec{From: ingressFrom}, bypass: "NetworkPolicy allow-same-namespace admits every source", hops: "1",
+		},
+		{
+			name: "a peer of every namespace: none trusted", typ: pgtoolboxv1alpha1.ExposureTypeIngress, exposed: true,
+			policy: &pgtoolboxv1alpha1.PgToolBoxConsoleExposurePolicySpec{From: []pgtoolboxv1alpha1.PgToolBoxConsolePolicyPeer{{NamespaceSelector: &metav1.LabelSelector{}}}}, hops: "1",
+		},
+		{
+			name: "a peer of every address on a Route: none trusted", typ: pgtoolboxv1alpha1.ExposureTypeRoute, exposed: true,
+			policy: &pgtoolboxv1alpha1.PgToolBoxConsoleExposurePolicySpec{From: []pgtoolboxv1alpha1.PgToolBoxConsolePolicyPeer{{IPBlock: &pgtoolboxv1alpha1.PgToolBoxConsoleIPBlock{CIDR: "::/0"}}}}, hops: "1",
+		},
+		{
+			name: "explicit cidrs stand whatever else admits the port", typ: pgtoolboxv1alpha1.ExposureTypeIngress, exposed: true,
+			trusted: &pgtoolboxv1alpha1.PgToolBoxConsoleTrustedProxySpec{CIDRs: []string{"10.1.0.0/16"}}, bypass: "NetworkPolicy x admits every source",
+			hops: "1", cidrs: "10.1.0.0/16",
 		},
 		{name: "hops 0 ignores the header", typ: pgtoolboxv1alpha1.ExposureTypeRoute, exposed: true, trusted: &pgtoolboxv1alpha1.PgToolBoxConsoleTrustedProxySpec{Hops: new(int32(0))}},
 		{
@@ -296,7 +320,7 @@ func TestTrustedProxy(t *testing.T) {
 			c.Spec.Exposure.ExposureSpec = pgtoolboxv1alpha1.ExposureSpec{Type: tc.typ, Hostname: "console.example"}
 			c.Spec.Exposure.TrustedProxy, c.Spec.Exposure.NetworkPolicy = tc.trusted, tc.policy
 			got := map[string]string{}
-			for _, e := range consoleEnv(c, deploymentInputs{Exposed: tc.exposed}) {
+			for _, e := range consoleEnv(c, deploymentInputs{Exposed: tc.exposed, PolicyBypass: tc.bypass}) {
 				if strings.HasPrefix(e.Name, "TRUSTED_PROXY_") {
 					if _, dup := got[e.Name]; dup {
 						t.Fatalf("%s rendered twice", e.Name)

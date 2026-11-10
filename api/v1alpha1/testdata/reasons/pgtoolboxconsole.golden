@@ -1,6 +1,8 @@
 ConsoleImageRequired
 ConsoleRoleMissing
 ExposureOpen
+ExposurePeersBroad
+ExposurePolicyBypassed
 InstanceCABundleFull
 InstanceCAInvalid
 InstanceCAMissing

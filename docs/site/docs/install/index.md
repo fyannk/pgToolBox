@@ -38,6 +38,17 @@ compares the chart, the kustomize bases and the OLM bundle field by field):
   CA renewals ([how](../console/configuration.md#the-instance-ca-bundle)).
 - **Sign-in needs a decision**: `token` works everywhere; SSO needs the API server
   to trust your identity provider ([details](../console/authentication.md)).
+- **Behind an Ingress or a Gateway, name the controller.** A `PgToolBoxConsole`
+  with `exposure.type: ingress` or `gateway` needs
+  `exposure.networkPolicy.from` naming the controller's Pods (for the community
+  ingress-nginx: `namespaceSelector` `kubernetes.io/metadata.name: ingress-nginx`
+  and `podSelector` `app.kubernetes.io/name: ingress-nginx`, as in
+  `config/samples/pgtoolboxconsole.yaml`). Without it the console ignores
+  `X-Forwarded-For` and every user behind the controller shares one sign-in
+  budget; with it, only those peers reach the console port and are believed
+  ([trusted proxies](../operator/console.md#trusted-proxies-and-the-ingress-networkpolicy)).
+  With the chart alone, set `console.trustedProxyCIDRs` (or
+  `console.networkPolicy.enabled`) instead.
 - **People need RoleBindings.** Nobody sees a Cluster until RBAC says so
   ([the two ClusterRoles](../console/authorization.md#the-two-clusterroles)).
 - The console needs no cluster-scoped object: an admin of the team's namespace
