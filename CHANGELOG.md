@@ -196,5 +196,13 @@ OpenShift.
   tag; npm installs of the docs site and the Headlamp plugin run with
   `ignore-scripts` and a minimum release age; the actions allow-list for the
   repository is documented.
+- **Release gates, round 6.** `wait-ci` and `release-preflight` accept only a
+  `workflow_dispatch` or `schedule` run of `ci.yml` and `security.yml` on the tagged
+  commit, because a docs-only push to main skips the image, e2e and OLM jobs; each
+  image carries its own OCI title and description (the repository's had replaced
+  them); the verify docs name cosign v3 as the minimum; the docs say a pushed tag
+  cannot be deleted; the CI image cache has one scope per architecture; the
+  anonymous-pull check polls for 20 minutes so package visibility can be flipped
+  during the run.
 
 [0.1.0]: https://github.com/fyannk/pgToolBox/releases/tag/v0.1.0

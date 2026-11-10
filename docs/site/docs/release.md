@@ -81,10 +81,27 @@ a commit merged with the Actions token starts none, and `automerge.yml` dispatch
 them only on its 30-minute schedule, while `wait-ci` gives up after about two minutes
 of empty polls. Checklist before pushing a tag:
 
-1. `gh workflow run ci.yml --ref main` and `gh workflow run security.yml --ref main`
-   if the commit has no check run yet; wait for green.
+1. Dispatch both on the exact head you will tag, whatever the last run says:
+   `gh workflow run ci.yml --ref main` and `gh workflow run security.yml --ref main`.
+   A push to main runs only the job families its diff touches, so the `ci-ok` of a
+   docs-only commit (the one that dates the CHANGELOG) is green with the image, e2e
+   and OLM jobs skipped; `wait-ci` and `release-preflight` therefore accept only a
+   run started by `workflow_dispatch` or `schedule` (the full tier) on the tagged
+   commit. Wait for green.
 2. `make release-preflight TAG=vX.Y.Z` passes.
-3. Only then push the tag (see [CI](development/ci.md#when-a-release-fails)).
+3. Cut a stable tag only from a commit whose release candidate was verified: tag
+   `vX.Y.Z-rc.N` first, let the whole workflow and `verify-release.yml` pass, then
+   tag the same commit as `vX.Y.Z`.
+4. Only then push the tag (see [CI](development/ci.md#when-a-release-fails)).
+
+### Tags cannot be deleted
+
+The tag ruleset has no bypass actor, on purpose: a pushed tag can be neither moved
+nor deleted, not even by the owner, unless the ruleset itself is edited first. A
+mis-pushed stable tag is therefore not a typo you can undo. While its artifacts are
+within the retention window of the workflow they can be dealt with by editing the
+ruleset deliberately; past that window the answer is the next candidate,
+`vX.Y.Z-rc.N+1`, never a re-pushed tag.
 
 ## Verify
 
@@ -98,7 +115,8 @@ and `mode=max` provenance, which describe the build and are trustworthy once you
 have verified the image digest they are attached to.
 
 ```bash
-# cosign v2.6 or newer, and the GitHub CLI for the attestation.
+# cosign v3 or newer (v3.1.4 is the version the workflow signs with and the one
+# this is tested against; v2 is not supported), and the GitHub CLI for the attestation.
 IMAGE=ghcr.io/fyannk/pgtoolbox-console
 DIGEST=sha256:...   # from digests.txt on the release page, or: docker buildx imagetools inspect $IMAGE:X.Y.Z
 

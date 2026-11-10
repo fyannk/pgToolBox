@@ -140,7 +140,9 @@ visibility to public**, and confirm the package is linked to the repository (the
 anonymous `docker pull`, `helm pull` and the Security page's published-image scan
 all fail with "not found". `release.yml` checks this itself: before it publishes the
 release it asks for every pushed digest with no credentials, and if any is private it
-fails naming the packages and leaves the release a draft. Make them public, then use
+prints each package's settings URL and keeps polling (every minute, for about 20
+minutes), so making them public while the run waits turns it green. After that it
+fails naming the packages and leaves the release a draft: make them public, then use
 **Re-run failed jobs** on the run.
 
 Pruning (`release.yml`, job `prune`) is opt-in: set the repository variable
