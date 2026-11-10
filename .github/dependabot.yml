@@ -14,7 +14,6 @@ updates:
     directories:
       - /
       - /pkg/evidence
-      - /deploy/olm/catalog/opm
     schedule:
       interval: weekly
       day: monday
@@ -47,6 +46,36 @@ updates:
           - minor
           - patch
 
+  # The opm module is a tool pin (deploy/olm/catalog/opm/tools.go): its direct
+  # requirements are opm and grpc-health-probe, and everything else follows the
+  # versions opm releases with. Updating the indirect requirements one by one
+  # (k8s.io/api, docker/distribution v3, ...) cannot be resolved without moving
+  # opm, which failed with dependency_file_not_resolvable. Only the direct ones
+  # are proposed; the quarterly toolchain day moves opm itself
+  # (docs/site/docs/development/ci.md).
+  - package-ecosystem: gomod
+    directory: /deploy/olm/catalog/opm
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:35"
+      timezone: Europe/Paris
+    open-pull-requests-limit: 2
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: "build(deps)"
+    allow:
+      - dependency-type: direct
+    groups:
+      opm-tools:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+
   - package-ecosystem: npm
     directories:
       - /ui
@@ -63,10 +92,23 @@ updates:
     commit-message:
       prefix: "build(deps)"
     groups:
+      # The Playwright packages move together and with the image of
+      # ui/e2e.Dockerfile (docker ignores that image below: npm drives it).
+      # A bump re-renders the screenshot baselines, so automerge.yml leaves
+      # this group to a person: bump the image tag and digest, run
+      # `make ui-e2e-update`, review the image diff.
+      playwright:
+        applies-to: version-updates
+        patterns:
+          - "@playwright/test"
+          - "playwright"
       npm-routine:
         applies-to: version-updates
         patterns:
           - "*"
+        exclude-patterns:
+          - "@playwright/test"
+          - "playwright"
         update-types:
           - minor
           - patch
@@ -75,7 +117,7 @@ updates:
     directories:
       - /
       - /deploy/olm
-      - /ui # e2e.Dockerfile: the Playwright image (a bump re-renders the baselines)
+      - /ui # e2e.Dockerfile: the Playwright image, kept in step with npm by hack/check-toolchain.sh
     schedule:
       interval: weekly
       day: monday
@@ -86,6 +128,10 @@ updates:
       default-days: 7
     commit-message:
       prefix: "build(deps)"
+    ignore:
+      # Versioned with @playwright/test (the `playwright` npm group); a lone
+      # image bump fails hack/check-toolchain.sh and the baselines.
+      - dependency-name: "mcr.microsoft.com/playwright"
     groups:
       container-routine:
         applies-to: version-updates

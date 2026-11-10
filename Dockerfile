@@ -40,7 +40,7 @@ RUN --mount=from=pnpm,target=/pnpm \
     && ln -s /opt/pnpm/pnpm /usr/local/bin/pnpm && pnpm --version
 COPY ui/package.json ui/pnpm-lock.yaml ui/pnpm-workspace.yaml ./
 COPY ui/tokens/package.json tokens/package.json
-RUN pnpm install --frozen-lockfile
+RUN for i in 1 2 3 4 5; do pnpm install --frozen-lockfile && exit 0; echo "pnpm install failed (attempt $i/5)" >&2; sleep $((i * 10)); done; exit 1
 COPY ui/ ./
 RUN pnpm i18n && pnpm build
 
@@ -55,7 +55,7 @@ FROM --platform=$BUILDPLATFORM node:24.22.1-bookworm-slim@sha256:be8204d4bd32736
 WORKDIR /repo/docs/site
 ENV CI=1 DO_NOT_TRACK=1
 COPY docs/site/package.json docs/site/package-lock.json ./
-RUN npm ci --no-audit --no-fund
+RUN for i in 1 2 3 4 5; do npm ci --no-audit --no-fund && exit 0; echo "npm ci failed (attempt $i/5)" >&2; sleep $((i * 10)); done; exit 1
 COPY docs/site/ ./
 # The site reads the chart version and the tour's baselines from outside docs/site.
 COPY charts/pgtoolbox/Chart.yaml /repo/charts/pgtoolbox/Chart.yaml

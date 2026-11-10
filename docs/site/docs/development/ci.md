@@ -275,10 +275,33 @@ contains and how to verify it is on [Release and verification](../release.md).
   and (draft) release can be deleted by hand in the GitHub UI; its tag stays.
 - **The final tag is cut once.** Its notes list every commit since the previous
   *stable* tag, candidates included.
-- **A merge by the automerge token has no CI run.** `wait-ci` then stops after a few
-  polls with the command to use (dispatch `ci.yml` and `security.yml` on the commit),
-  rather than waiting for an hour. When a check ran several times, the newest run
-  counts.
+- **Check runs must exist on the tagged commit.** `wait-ci` needs `ci-ok` and
+  `security-gate` to be green on the commit the tag points at. A merge made with the
+  Actions token (auto-merged Dependabot pull requests) starts no push run, so that
+  commit would have none. `automerge.yml` therefore dispatches `ci.yml` (every job
+  family: a dispatch fails open in `hack/changed-paths.sh`) and `security.yml` on `main`
+  after such a merge, and every 30 minutes for any `main` commit that still has no
+  `ci.yml` run. The run lands on the head of `main` when it starts, so it covers a
+  commit only while `main` has not moved past it; tag the commit the checks ran on.
+  `wait-ci` still stops after a few polls on a commit with no run at all, with the
+  command to use (dispatch both workflows on `main`). When a check ran several times,
+  the newest run counts.
+- **Ask before tagging: `make release-preflight TAG=vX.Y.Z`** (`SHA=` to name the
+  commit; needs `gh` and `GH_TOKEN`). It checks, in one poll and with no waiting, what
+  the workflow would check: semver and chart versions, a *dated* `CHANGELOG.md`
+  section for a final tag, an annotated tag if it exists, and `ci-ok` and
+  `security-gate` successful on the commit (the tag's, else `HEAD`). If it fails,
+  nothing was pushed that needs undoing.
+- **A failed prune does not hide the verification.** `verify` runs whenever the release
+  job succeeded. `prune` deletes package versions, which needs *admin* rights on a
+  package owned by a user account (the Actions token's `packages: write` is enough
+  only for packages linked to the repository with Actions access: see
+  [repository settings](repository-settings.md#packages)); when it fails, the
+  untagged versions stay until someone prunes them by hand.
+- **Charts carry the source annotation.** `helm push` stamps
+  `org.opencontainers.image.source` on the OCI artifact from the first entry of
+  `sources` in `Chart.yaml` (the repository); `hack/test-release.sh` fails if that
+  entry changes, since Helm 3 has no `--annotations` flag on `push`.
 
 After the prune, `verify-release.yml` pulls the release the way a user does, without
 credentials (`hack/release.sh verify-published vX.Y.Z`); the same check runs weekly
