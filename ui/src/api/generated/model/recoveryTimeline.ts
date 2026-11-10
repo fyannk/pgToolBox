@@ -19,15 +19,15 @@ export interface RecoveryTimeline {
   basis: RecoveryTimelineBasis;
   complete: boolean;
   earliest?: string;
-  /** The end of the newest covered span once every uncertain edge is drawn: the newest instant a restore check answers covered. Absent when no span is covered. */
-  lastSafeTarget?: string;
-  /** When the newest contiguous WAL segment reached the repository (evidence basis), or the reported window's end: a receipt time, not a safe restore target (see lastSafeTarget). */
+  /** When the newest contiguous WAL segment reached the repository (evidence basis), or the reported window's end: a receipt time, not a restore target (see newestCoveredTarget). */
   latest?: string;
   /**
      * Base backups on the bar: completed, failed or incomplete.
      * @nullable
      */
   markers: RecoveryMarker[] | null;
+  /** The end of the newest covered span once every uncertain edge is drawn: the newest instant a restore check answers covered. Structurally covered only, not restore-tested. Absent when no span is covered, or when the newest span's path is not rated healthy. */
+  newestCoveredTarget?: string;
   /**
      * Spans that off-target recovery paths reach (a sibling timeline, or the backup's own timeline left behind): not covered by a default restore, restorable only by naming targetTimeline.
      * @nullable

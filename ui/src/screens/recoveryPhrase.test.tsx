@@ -61,11 +61,34 @@ test("the reasons, the backlog, the end of WAL and the caps are said in French",
   overwriteGetLocale(() => "fr");
   const cases: [string, Record<string, string> | undefined, RegExp][] = [
     ["recovery.reason.archiveBacklog", { segments: "12" }, /^12 segments WAL attendent/],
-    ["recovery.segment.archiveBacklog", { segments: "12" }, /^12 segments WAL attendent .*depuis avant les relevés/],
+    [
+      "recovery.segment.archiveBacklog",
+      { segments: "12" },
+      /^12 segments WAL attendent .*aucun relevé que la console conserve/,
+    ],
     [
       "recovery.segment.archiveBacklogSince",
-      { segments: "30", sinceAt: "2026-10-29T11:40:00Z" },
-      /^30 segments WAL attendent d’être archivés sur le primaire depuis le 29 oct\. 2026, 11:40 UTC/,
+      { segments: "30", quietAt: "2026-10-29T11:40:00Z" },
+      /^30 segments WAL attendent d’être archivés sur le primaire, qui n’en avait aucun en attente le 29 oct\. 2026, 11:40 UTC/,
+    ],
+    ["recovery.reason.archiverUnread", undefined, /^l’archiveur du primaire n’a pas été lu/],
+    ["recovery.reason.archiverHibernated", undefined, /^le cluster est en hibernation/],
+    ["recovery.segment.archiverUnread", undefined, /^L’archiveur du primaire n’est pas lu, et aucun relevé/],
+    [
+      "recovery.segment.archiverUnreadSince",
+      { quietAt: "2026-10-29T11:40:00Z" },
+      /il n’avait rien en attente le 29 oct\. 2026, 11:40 UTC/,
+    ],
+    ["recovery.caveat.archiverUnread", undefined, /^L’archiveur du primaire n’a pas été lu/],
+    [
+      "recovery.segment.pathNotHealthy",
+      { backupId: "b1", state: "warning", detail: "segment size not proven" },
+      /^Le chemin de restauration de la sauvegarde de base b1 atteint ce point, .* \(segment size not proven\) : non compté comme couvert\.$/,
+    ],
+    [
+      "recovery.reason.pathNotHealthy",
+      { backupId: "b1", state: "warning", detail: "" },
+      /^le chemin de restauration de la sauvegarde de base b1 atteint la frontière de l’archive, mais l’agent de preuves le juge [^(]+$/,
     ],
     ["recovery.segment.afterLastReadFailing", { scannedAt: "2026-10-29T11:50:00Z" }, /l’archivage des WAL échoue/],
     [

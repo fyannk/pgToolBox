@@ -696,8 +696,14 @@ func leaseObserved(g *gathered) *bool {
 }
 
 // objectStoreName is the barman-cloud plugin's ObjectStore of the
-// Cluster's WAL archiver, from spec.plugins[].parameters.barmanObjectName.
+// Cluster's WAL archiver, from spec.plugins[].parameters.barmanObjectName:
+// the archiver CloudNativePG names (cnpgstatus.WALArchiver) when it is
+// the barman-cloud plugin, so its wal.maxParallel is the one read; else
+// the first enabled barman-cloud or isWALArchiver entry that names one.
 func objectStoreName(cluster *cnpgv1.Cluster) string {
+	if a := cnpgstatus.WALArchiver(cluster); a.Plugin == cnpgstatus.BarmanCloudPlugin && a.Parameters["barmanObjectName"] != "" {
+		return a.Parameters["barmanObjectName"]
+	}
 	for _, plugin := range cluster.Spec.Plugins {
 		if plugin.Enabled != nil && !*plugin.Enabled {
 			continue

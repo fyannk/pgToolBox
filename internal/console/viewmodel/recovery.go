@@ -37,11 +37,12 @@ type RecoveryTimeline struct {
 	// Latest is when the newest contiguous WAL reached the repository
 	// (evidence) or the reported window's end: a receipt time, not a
 	// restore target.
-	Latest *time.Time `json:"latest,omitempty" doc:"When the newest contiguous WAL segment reached the repository (evidence basis), or the reported window's end: a receipt time, not a safe restore target (see lastSafeTarget)."`
-	// LastSafeTarget is the end of the newest covered span, once every
+	Latest *time.Time `json:"latest,omitempty" doc:"When the newest contiguous WAL segment reached the repository (evidence basis), or the reported window's end: a receipt time, not a restore target (see newestCoveredTarget)."`
+	// NewestCoveredTarget is the end of the newest covered span, once every
 	// uncertain edge is drawn: the newest instant the check answers
-	// "covered". Absent when nothing is covered.
-	LastSafeTarget *time.Time `json:"lastSafeTarget,omitempty" doc:"The end of the newest covered span once every uncertain edge is drawn: the newest instant a restore check answers covered. Absent when no span is covered."`
+	// "covered" (structurally: not restore-tested). Absent when nothing is
+	// covered, or when the newest span's path is not rated healthy.
+	NewestCoveredTarget *time.Time `json:"newestCoveredTarget,omitempty" doc:"The end of the newest covered span once every uncertain edge is drawn: the newest instant a restore check answers covered. Structurally covered only, not restore-tested. Absent when no span is covered, or when the newest span's path is not rated healthy."`
 	// TargetTimeline is the timeline the paths recover to (the newest).
 	TargetTimeline uint64            `json:"targetTimeline,omitempty"`
 	Segments       []RecoverySegment `json:"segments" doc:"Time-ordered spans: covered ones and the holes between them."`

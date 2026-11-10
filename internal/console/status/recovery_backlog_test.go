@@ -173,11 +173,19 @@ func TestRecoveryBandsFollowTheArchiver(t *testing.T) {
 		{
 			name: "persistent growing backlog: a band from its onset", cluster: inTreeCluster(),
 			reading: instancestatus.Reading{IsPrimary: true, ReadyWALFiles: 30, IsArchivingWAL: true, LastArchivedWALTime: &archivedAfter},
-			// Below the threshold until 20 min ago (40 samples before read), then growing.
-			earlier:     append(steady(80, 1), 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 29, 29, 29, 29, 29, 29, 29, 29, 29, 29, 29, 29, 29, 29, 29),
+			// Empty until 20 min ago (40 samples before read), then growing.
+			earlier:     append(steady(80, 0), 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 29, 29, 29, 29, 29, 29, 29, 29, 29, 29, 29, 29, 29, 29, 29),
 			wantCovered: true, wantCode: "recovery.segment.archiveBacklogSince",
-			// Onset 20 min before the reading, less one sweep and one archive_timeout.
+			// The last empty sweep, 20 min 30 s before the reading, less one archive_timeout.
 			wantFrom: read.Add(-20*time.Minute - 30*time.Second - defaultArchiveTimeout),
+		},
+		{
+			name: "persistent growing backlog after sweeps of one file: no onset, a day's band", cluster: inTreeCluster(),
+			reading: instancestatus.Reading{IsPrimary: true, ReadyWALFiles: 30, IsArchivingWAL: true, LastArchivedWALTime: &archivedAfter},
+			// One file waiting is no proof the archiver kept up.
+			earlier:  append(steady(80, 1), 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 29, 29, 29, 29, 29, 29, 29, 29, 29, 29, 29, 29, 29, 29, 29),
+			wantCode: "recovery.segment.archiveBacklog",
+			wantFrom: now.Add(-10*time.Minute - failureLookback),
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -209,7 +217,7 @@ func TestRecoveryBandsFollowTheArchiver(t *testing.T) {
 				t.Errorf("band %+v, want %s", band, tc.wantCode)
 			case band != nil && !tc.wantFrom.IsZero() && !band.From.Equal(tc.wantFrom):
 				t.Errorf("band from %s, want %s", band.From, tc.wantFrom)
-			case band != nil && band.Code == "recovery.segment.archiveBacklogSince" && band.Params["segments"] != "30":
+			case band != nil && strings.HasPrefix(band.Code, "recovery.segment.archiveBacklog") && band.Params["segments"] != "30":
 				t.Errorf("band params %+v", band.Params)
 			}
 			if tc.wantCovered && tc.wantCode == "" && tl.State != string(evidencev1alpha1.Healthy) {
@@ -219,25 +227,25 @@ func TestRecoveryBandsFollowTheArchiver(t *testing.T) {
 	}
 }
 
-// TestLastSafeTargetIsTheNewestCovered: the window names the newest
+// TestNewestCoveredTargetIsTheNewestCovered: the window names the newest
 // instant the check answers covered, before the uncertain edge.
-func TestLastSafeTargetIsTheNewestCovered(t *testing.T) {
+func TestNewestCoveredTargetIsTheNewestCovered(t *testing.T) {
 	svc := &Service{}
 	fx := timelineFixture{paths: []evidence.RecoveryPath{tlPath("b1", 48*time.Hour, 10*time.Minute, evidencev1alpha1.CoverageFrontier)}}
 	tl := svc.recoveryTimeline(fx.evidence(), viewmodel.BackupSummary{}, nil, recoveryFacts{now: now, archiveTimeout: defaultArchiveTimeout})
 	want := tl.Latest.Add(-minimumFrontierMargin)
-	if tl.LastSafeTarget == nil || !tl.LastSafeTarget.Equal(want) {
-		t.Fatalf("last safe target %v, want %s", tl.LastSafeTarget, want)
+	if tl.NewestCoveredTarget == nil || !tl.NewestCoveredTarget.Equal(want) {
+		t.Fatalf("newest covered target %v, want %s", tl.NewestCoveredTarget, want)
 	}
 	b := viewmodel.Backups{RecoveryTimeline: tl, GeneratedAt: now}
-	if got := restoreCheck(b, *tl.LastSafeTarget); got.Answer != "covered" {
-		t.Errorf("at the last safe target: %+v", got)
+	if got := restoreCheck(b, *tl.NewestCoveredTarget); got.Answer != "covered" {
+		t.Errorf("at the newest covered target: %+v", got)
 	}
-	if got := restoreCheck(b, tl.LastSafeTarget.Add(time.Second)); got.Answer == "covered" {
-		t.Errorf("after the last safe target: %+v", got)
+	if got := restoreCheck(b, tl.NewestCoveredTarget.Add(time.Second)); got.Answer == "covered" {
+		t.Errorf("after the newest covered target: %+v", got)
 	}
-	if none := svc.recoveryTimeline(clusterEvidence{}, viewmodel.BackupSummary{}, nil, recoveryFacts{now: now}); none.LastSafeTarget != nil {
-		t.Errorf("no evidence, last safe target %v", none.LastSafeTarget)
+	if none := svc.recoveryTimeline(clusterEvidence{}, viewmodel.BackupSummary{}, nil, recoveryFacts{now: now}); none.NewestCoveredTarget != nil {
+		t.Errorf("no evidence, newest covered target %v", none.NewestCoveredTarget)
 	}
 }
 
