@@ -412,7 +412,7 @@ func projectPGBackRestPaths(report pgbackrest.Report) []evidencev1alpha1.PGBackR
 		}
 		item := evidencev1alpha1.PGBackRestRecoveryPath{
 			Stanza: report.Stanza, Label: backup.Backup.Label, ArchiveID: stringPointer(backup.ArchiveID), TargetTimeline: uint64(path.TargetTimeline),
-			State: evidencev1alpha1.State(path.State), Reason: typedReason("coverage-path-"+string(path.State), messageOr(path.Reason, "recovery path evaluated")),
+			State: evidencev1alpha1.State(path.State), Reason: typedReason(pathReasonCode(path.State, path.OffTarget), messageOr(path.Reason, "recovery path evaluated")),
 			Stop: evidencev1alpha1.CoverageStop(path.Stop), Timelines: make([]uint64, 0, len(path.Timelines)),
 			StartWAL: stringPointer(path.StartWAL), ConsistentWAL: stringPointer(path.ConsistentWAL), Consistent: path.Consistent, OffTarget: path.OffTarget,
 			FrontierTimeline: positiveUint32Pointer(path.FrontierTimeline), FrontierPosition: positionPointer(path.FrontierTimeline, path.FrontierPosition),

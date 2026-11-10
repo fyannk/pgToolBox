@@ -5,6 +5,7 @@
     "name": "evidence-agent",
     "version": "1.0.0",
     "features": [
+      "recovery-timeline-ancestry",
       "recovery-timeline-latest"
     ]
   },

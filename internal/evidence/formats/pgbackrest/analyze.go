@@ -749,11 +749,17 @@ func evaluatePath(backup Backup, wal ArchiveWAL, histories []TimelineHistory, hi
 		archive.Observe(value.Timeline)
 	}
 	for _, history := range histories {
-		status := pgtimeline.Invalid
-		if history.State == evidence.Healthy {
-			status = pgtimeline.Valid
+		if history.State != evidence.Healthy {
+			// pgBackRest keeps a history row it could not establish as
+			// unreadable: the probe stops there, undecided.
+			archive.History(history.Timeline, pgtimeline.Unreadable)
+			continue
 		}
-		archive.History(history.Timeline, status)
+		ancestors := make([]uint32, 0, len(history.Edges))
+		for _, edge := range history.Edges {
+			ancestors = append(ancestors, edge.Parent)
+		}
+		archive.History(history.Timeline, pgtimeline.Valid, ancestors...)
 	}
 	target := archive.Newest()
 	path := RecoveryPath{TargetTimeline: target, StartWAL: backup.ArchiveStart, ConsistentWAL: backup.ArchiveStop}
@@ -761,7 +767,7 @@ func evaluatePath(backup Backup, wal ArchiveWAL, histories []TimelineHistory, hi
 		switch {
 		case historyTruncated:
 			return withTarget(unknownPath("timeline history files were not all read"), path)
-		case resolution.StopStatus == pgtimeline.Invalid:
+		case resolution.StopStatus == pgtimeline.Unreadable:
 			return withTarget(unknownPath(fmt.Sprintf("the history of timeline %d is missing or unreadable", resolution.Stop)), path)
 		default:
 			return withTarget(unknownPath(fmt.Sprintf("the history of timeline %d is missing: %s", resolution.Stop, resolution.OwnReason())), path)
