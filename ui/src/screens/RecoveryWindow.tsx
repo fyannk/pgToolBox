@@ -220,12 +220,19 @@ function Bar({ t, hatch }: { t: RecoveryTimeline; hatch: string }) {
       </svg>
       <div className="flex justify-between gap-2 text-caption text-muted">
         <span>{t.earliest ? m.recovery_earliest({ at: formatUtcMinute(t.earliest) }) : null}</span>
-        <span>
-          {t.latest
-            ? t.basis === "reported" && t.provenance.origin === "operator"
-              ? m.recovery_last_base_backup({ at: formatUtcMinute(t.latest) })
-              : m.recovery_latest({ at: formatUtcMinute(t.latest) })
-            : null}
+        <span className="flex flex-wrap justify-end gap-x-3">
+          {t.lastSafeTarget && (
+            <span className="font-medium text-fg" data-last-safe-target="">
+              {m.recovery_last_safe_target({ at: formatUtcMinute(t.lastSafeTarget) })}
+            </span>
+          )}
+          {t.latest ? (
+            <span data-wal-received="">
+              {t.basis === "reported" && t.provenance.origin === "operator"
+                ? m.recovery_last_base_backup({ at: formatUtcMinute(t.latest) })
+                : m.recovery_latest({ at: formatUtcMinute(t.latest) })}
+            </span>
+          ) : null}
         </span>
       </div>
       <ul aria-label={m.recovery_legend()} className="m-0 flex list-none flex-wrap gap-x-4 gap-y-1 p-0 text-caption">
@@ -282,6 +289,11 @@ export function RestoreAnswer({ r }: { r: RestoreCheck }) {
       {r.backupId && (
         <p className="m-0 text-label">
           {m.answer_backup()} <code className="font-code">{r.backupId}</code>
+        </p>
+      )}
+      {r.answer === "covered" && (
+        <p className="m-0 text-label" data-target-timeline-latest="">
+          {m.answer_target_timeline()}
         </p>
       )}
       {(r.caveats ?? []).length > 0 && (
@@ -372,7 +384,8 @@ function RestoreCheckForm({ cluster, initial }: { cluster: ClusterRef; initial?:
  */
 /**
  * The edge of the window is uncertain when the evidence cannot place the
- * newest restorable point: the newest span is not covered, or the
+ * newest restorable point: the newest span is neither covered nor the
+ * end of the archived WAL (which every frontier ends with), or the
  * recent end is not restorable or unknown. A reported window's end is
  * never a WAL frontier: its edge is always uncertain.
  */
@@ -380,7 +393,11 @@ function uncertainEdge(t: RecoveryTimeline): boolean {
   if (t.basis === "reported") return true;
   if (t.basis !== "evidence") return false;
   const last = (t.segments ?? []).at(-1);
-  return t.state === "unhealthy" || t.state === "unknown" || (last !== undefined && last.kind !== "covered");
+  return (
+    t.state === "unhealthy" ||
+    t.state === "unknown" ||
+    (last !== undefined && last.kind !== "covered" && last.kind !== "walEnd")
+  );
 }
 
 /** What a DBA can check by hand at an uncertain edge; the console runs none of it. Without an agent there is no evidence to refresh. */

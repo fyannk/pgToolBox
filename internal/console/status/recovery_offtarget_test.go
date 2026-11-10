@@ -139,3 +139,27 @@ func TestTimelineWarningIsShownNotCapped(t *testing.T) {
 		t.Errorf("no timeline warning caveat: %+v", got.Caveats)
 	}
 }
+
+// TestRecoverySpansSkipOffTargetAndCappedPaths: defensively, a path on
+// the target's number flagged off-target, or capped by the console with
+// a receipt left on it, is never drawn as covered.
+func TestRecoverySpansSkipOffTargetAndCappedPaths(t *testing.T) {
+	t.Parallel()
+	onTarget := tlPath("b1", 48*time.Hour, 30*time.Hour, evidencev1alpha1.CoverageFrontier)
+	sibling := tlPath("b2", 20*time.Hour, time.Hour, evidencev1alpha1.CoverageFrontier)
+	sibling.OffTarget = true
+	capped := tlPath("b3", 20*time.Hour, time.Hour, evidencev1alpha1.CoverageUnknownLimited)
+	capped.Reason.Code = cappedPathCode
+	for _, extra := range []evidence.RecoveryPath{sibling, capped} {
+		ev := timelineFixture{paths: []evidence.RecoveryPath{onTarget, extra}}.evidence()
+		tl := (&Service{}).recoveryTimeline(ev, viewmodel.BackupSummary{}, nil, recoveryFacts{now: now, archiveTimeout: defaultArchiveTimeout})
+		if tl.Latest == nil || !tl.Latest.Equal(*onTarget.FrontierReceiptAt) {
+			t.Errorf("%s: latest %v, want only %s's frontier", extra.BackupID, tl.Latest, onTarget.BackupID)
+		}
+		for _, seg := range tl.Segments {
+			if seg.Kind == segmentCovered && seg.BackupID == extra.BackupID {
+				t.Errorf("%s drawn as covered: %+v", extra.BackupID, seg)
+			}
+		}
+	}
+}

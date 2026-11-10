@@ -28,24 +28,33 @@ import (
 
 // The failover rehearsal: "if the primary died now", which instance
 // CloudNativePG would promote and what it would cost, from the facts
-// the console already holds. It follows the operator's own election
-// (identical at v1.30.0 and main):
+// the console already holds. It follows the operator's own election as
+// of v1.30.1 (unchanged on main):
 //
 //   - pkg/postgres/status.go PostgresqlStatusList.Less sorts instances:
 //     those whose status could not be read last, then fenced ones after
-//     the rest, then primaries first, then replicas by received LSN
-//     (descending), replay LSN (descending) and pod name;
+//     the rest (new in 1.30.1: IsFenced), then primaries first, then
+//     replicas by received LSN (descending), replay LSN (descending) and
+//     pod name;
 //   - internal/controller/replicas.go reconcileTargetPrimaryForNonReplicaCluster
 //     promotes the first of that list unless it is fenced (every
-//     instance fenced: no election) or has no status, after
-//     spec.failoverDelay;
+//     instance fenced: no election, new in 1.30.1) or has no status,
+//     after spec.failoverDelay;
 //   - with the failover quorum active (spec.postgresql.synchronous.
 //     failoverQuorum), internal/controller/replicas_quorum.go
 //     evaluateQuorumCheckWithStatus allows the failover only when
 //     R + W > N: N the FailoverQuorum's standbyNames, W its
 //     standbyNumber, R the names among them whose status was read and
 //     whose pod is ready. A missing object, a non-positive number or an
-//     empty list refuses the failover.
+//     empty list refuses the failover. The check runs when the failover
+//     starts and, from 1.30.1, again just before the promotion
+//     (ErrQuorumCheckFailed).
+//
+// v1.30.0 has neither fenced rule nor the second quorum check: the
+// operator may rank a fenced instance first. On a Cluster whose operator
+// is detected at 1.30.0, or whose patch the console cannot tell, an
+// answer that rests on fencing is not certain, and the notes say which
+// rule is 1.30.1's (electionRulesOf).
 //
 // The console's view of an instance is its own sweep, not the
 // operator's: an instance the console could not read is "not known",
@@ -108,6 +117,10 @@ type RehearsalInput struct {
 	// spec.postgresql.parameters, verbatim; empty when not declared
 	// (PostgreSQL's default, on). CloudNativePG does not set it.
 	SynchronousCommit string
+	// OperatorVersion is the detected CloudNativePG version (Version's
+	// Version: "1.30.1", a floor such as ">=1.30", or ""): the fencing
+	// rules and the second quorum check are 1.30.1's.
+	OperatorVersion string
 	// SweepStale says why the instance readings are too old to rest a
 	// "no loss" answer on (the caller's staleness rule); empty when they
 	// are fresh. Whether commits waited for the candidate is a fact about
@@ -199,6 +212,36 @@ type Rehearsal struct {
 	SameNodeAsPrimary []string `json:"sameNodeAsPrimary,omitempty"`
 	// Notes are the qualifications, in reading order.
 	Notes []string `json:"notes,omitempty"`
+}
+
+// electionRules says which election of the 1.30 line the operator runs.
+type electionRules int
+
+const (
+	// electionPatchUnknown: the version is a floor, unknown, or a
+	// pre-release of 1.30.1.
+	electionPatchUnknown electionRules = iota
+	// election1300 is v1.30.0: fenced instances are not ranked last, an
+	// all-fenced Cluster still elects, the quorum is checked once.
+	election1300
+	// election1301 is v1.30.1 and later.
+	election1301
+)
+
+// electionRulesOf reads the detected version, exact to the patch only.
+func electionRulesOf(version string) electionRules {
+	v, ok := parseSemver(version)
+	core, _, _ := strings.Cut(strings.TrimPrefix(version, "v"), "-")
+	if !ok || strings.Count(core, ".") != 2 {
+		return electionPatchUnknown
+	}
+	switch first := (semver{major: 1, minor: 30, patch: 1}); {
+	case !v.less(first):
+		return election1301
+	case v.major == 1 && v.minor == 30 && v.patch == 0:
+		return election1300
+	}
+	return electionPatchUnknown
 }
 
 // Rehearse answers "if the primary died now".
@@ -404,7 +447,23 @@ func rehearsalNotes(out *Rehearsal, in RehearsalInput, unread []string) {
 	}
 	if in.Fencing.State == FencingUnreadable {
 		out.Certain = false
-		out.Notes = append(out.Notes, "The cnpg.io/fencedInstances annotation is not readable: the operator refuses to reconcile until it is fixed.")
+		out.Notes = append(out.Notes, "The cnpg.io/fencedInstances annotation is not readable: CloudNativePG reads it as no fencing, so every instance runs and may be promoted, whatever fencing was meant.")
+	}
+	rules := electionRulesOf(in.OperatorVersion)
+	if fenced := in.Fencing.State == FencingSome || in.Fencing.State == FencingAll; fenced && rules != election1301 {
+		out.Certain = false
+		if rules == election1300 {
+			out.Notes = append(out.Notes, "CloudNativePG 1.30.0 neither ranks fenced instances last nor skips the election when every instance is fenced (both from 1.30.1): the operator may pick a fenced instance, which cannot be promoted while fenced.")
+		} else {
+			out.Notes = append(out.Notes, "Ranking fenced instances last and skipping the election when every instance is fenced are CloudNativePG 1.30.1 behaviour, and the console does not know the operator's patch version: 1.30.0 may pick a fenced instance, which cannot be promoted while fenced.")
+		}
+	}
+	if in.Sync.FailoverQuorum && !in.ReplicaCluster && rules != election1301 {
+		if rules == election1300 {
+			out.Notes = append(out.Notes, "CloudNativePG 1.30.0 checks the failover quorum only when the failover starts; from 1.30.1 it checks it again just before promoting.")
+		} else {
+			out.Notes = append(out.Notes, "The failover quorum is checked when the failover starts; from CloudNativePG 1.30.1 it is checked again just before promoting (the operator's patch version is not known).")
+		}
 	}
 	if len(unread) > 0 {
 		out.Certain = false

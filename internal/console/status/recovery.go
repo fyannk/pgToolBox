@@ -52,6 +52,9 @@ const (
 	// target in the last archive_timeout (at least this much) may be
 	// after the last commit the archive holds.
 	walEndFloor = time.Minute
+	// cappedPathCode is the reason code the evidence reader gives a path
+	// it capped to unknown (internal/console/evidence capCode).
+	cappedPathCode = "coverage-path-unknown"
 )
 
 // Segment kinds.
@@ -94,43 +97,72 @@ type recoveryFacts struct {
 	now time.Time
 	// archiveTimeout is the Cluster's archive_timeout; 0 when disabled.
 	archiveTimeout time.Duration
+	// sweepInterval is the instance sweep's period; 0 when unknown.
+	sweepInterval time.Duration
 	// lastFailedWAL is the newest failure to archive a segment any
 	// readable instance reports (/pg/status); nil when unknown or never.
 	lastFailedWAL *time.Time
+	// caughtUpBy is a sweep by which the archiver that reported
+	// lastFailedWAL had caught up since: its last_archived_time is after
+	// its last_failed_time, and from that sweep on every reading had
+	// fewer .ready files than the backlog threshold. Nil when it has not
+	// caught up, or the console cannot tell.
+	caughtUpBy *time.Time
 	// failing is the archiving fact read as failing (archivingFailing).
 	failing bool
-	// backlog is the archiver's readyWalFiles when it is at or above
-	// cnpgstatus.ArchiveBacklogThreshold; 0 otherwise or when unread.
+	// backlog is the archiver's readyWalFiles when the backlog persists
+	// across sweeps (cnpgstatus.ArchiveBacklogOf); 0 otherwise or when
+	// unread.
 	backlog int
+	// backlogSince is the first sweep that saw the persistent backlog;
+	// nil when it began before the sweeps the console keeps.
+	backlogSince *time.Time
 }
 
 // recoveryFactsOf reads the facts from a gathered Cluster and its
 // archiving fact (the backups summary's, so both agree).
 func recoveryFactsOf(g *gathered, arch viewmodel.Archiving, now time.Time) recoveryFacts {
-	f := recoveryFacts{now: now, archiveTimeout: defaultArchiveTimeout, failing: archivingFailing(arch)}
-	if g.cluster != nil {
-		if v, ok := g.cluster.Spec.PostgresConfiguration.Parameters["archive_timeout"]; ok {
-			if d, parsed := postgresDuration(v); parsed {
-				f.archiveTimeout = d
-			}
-		}
-		if arch.ReadyWALFiles != nil && *arch.ReadyWALFiles >= cnpgstatus.ArchiveBacklogThreshold(g.cluster) {
-			f.backlog = *arch.ReadyWALFiles
+	f := recoveryFacts{now: now, archiveTimeout: defaultArchiveTimeout, failing: archivingFailing(arch), sweepInterval: g.swept.Interval}
+	if g.cluster == nil {
+		return f
+	}
+	if v, ok := g.cluster.Spec.PostgresConfiguration.Parameters["archive_timeout"]; ok {
+		if d, parsed := postgresDuration(v); parsed {
+			f.archiveTimeout = d
 		}
 	}
-	f.lastFailedWAL = newestArchiveFailure(g)
+	if b := cnpgstatus.ArchiveBacklogOf(g.cluster, primaryArchiver(g)); b.Behind() {
+		f.backlog = b.Segments
+		if !b.Since.IsZero() {
+			since := b.Since
+			f.backlogSince = &since
+		}
+	}
+	var failedOn string
+	f.lastFailedWAL, failedOn = newestArchiveFailure(g)
+	if f.lastFailedWAL != nil {
+		f.caughtUpBy = caughtUpBy(g, failedOn)
+	}
 	return f
 }
 
 // newestArchiveFailure is the newest pg_stat_archiver last_failed_time
 // any instance read in good standing reports, each clamped to when it
-// was read. Not only the current primary's: after a failover the
-// failure is on the former primary, whose statistics survive a clean
-// demotion, and the WAL it failed to archive is still what reached the
-// repository late. A replica that never archived reports none.
-func newestArchiveFailure(g *gathered) *time.Time {
+// was read, and the instance that reports it. Not only the current
+// primary's: after a failover the failure is on the former primary,
+// whose statistics survive a clean demotion, and the WAL it failed to
+// archive is still what reached the repository late. A replica that
+// never archived reports none.
+func newestArchiveFailure(g *gathered) (*time.Time, string) {
 	var newest *time.Time
-	for _, inst := range g.swept.Instances {
+	var instance string
+	names := make([]string, 0, len(g.swept.Instances))
+	for name := range g.swept.Instances {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		inst := g.swept.Instances[name]
 		if inst.State != viewmodel.StatusReadOK || inst.Reading == nil || inst.Reading.LastFailedWALTime == nil {
 			continue
 		}
@@ -139,14 +171,54 @@ func newestArchiveFailure(g *gathered) *time.Time {
 			at = observed.UTC()
 		}
 		if newest == nil || at.After(*newest) {
-			newest = &at
+			newest, instance = &at, name
 		}
 	}
-	return newest
+	return newest, instance
+}
+
+// caughtUpBy is the earliest sweep after the instance's archive failure
+// from which every reading of it, the current one included, had fewer
+// .ready files than the backlog threshold, provided its current reading
+// shows a success after the failure (last_archived_time after
+// last_failed_time: PostgreSQL archives segments in order, so the failed
+// one is in the repository). The archiver caught up at or before that
+// sweep. Nil when it has not caught up, or nothing shows it.
+func caughtUpBy(g *gathered, instance string) *time.Time {
+	inst, ok := g.swept.Instances[instance]
+	if !ok || inst.Reading == nil {
+		return nil
+	}
+	r := inst.Reading
+	if r.LastFailedWALTime == nil || r.LastArchivedWALTime == nil || !r.LastArchivedWALTime.After(*r.LastFailedWALTime) || r.ObservedAt.IsZero() {
+		return nil
+	}
+	failed := r.LastFailedWALTime.UTC()
+	threshold := cnpgstatus.ArchiveBacklogThreshold(g.cluster, pluginMaxParallel(g))
+	if r.ReadyWALFiles >= threshold || !r.ObservedAt.After(failed) {
+		return nil
+	}
+	by := r.ObservedAt.UTC()
+	samples := earlierReady(g, instance, r.ObservedAt)
+	for i := len(samples) - 1; i >= 0; i-- {
+		s := samples[i]
+		if !s.At.After(failed) {
+			break
+		}
+		if s.Files == nil {
+			continue
+		}
+		if *s.Files >= threshold {
+			break
+		}
+		by = s.At.UTC()
+	}
+	return &by
 }
 
 // postgresDuration parses a PostgreSQL time setting in seconds (the unit
-// of archive_timeout): a bare number, or a number with ms, s, min, h or d.
+// of archive_timeout): a bare number, or a number with us, ms, s, min, h
+// or d (PostgreSQL's time units).
 func postgresDuration(v string) (time.Duration, bool) {
 	v = strings.TrimSpace(v)
 	i := 0
@@ -160,7 +232,7 @@ func postgresDuration(v string) (time.Duration, bool) {
 	if err != nil {
 		return 0, false
 	}
-	units := map[string]time.Duration{"": time.Second, "ms": time.Millisecond, "s": time.Second, "min": time.Minute, "h": time.Hour, "d": 24 * time.Hour}
+	units := map[string]time.Duration{"": time.Second, "us": time.Microsecond, "ms": time.Millisecond, "s": time.Second, "min": time.Minute, "h": time.Hour, "d": 24 * time.Hour}
 	unit, ok := units[strings.TrimSpace(v[i:])]
 	if !ok {
 		return 0, false
@@ -437,12 +509,14 @@ func evidenceTimeline(out *viewmodel.RecoveryTimeline, in timelineInput) {
 		}
 	}
 	sort.SliceStable(out.Segments, func(i, j int) bool { return out.Segments[i].From.Before(out.Segments[j].From) })
+	out.LastSafeTarget = lastCovered(out.Segments)
 	timelineVerdict(out, in, timelineFindings{
 		tail: tail, holes: holes, candidates: candidates, failedRecently: failedRecently, backlog: in.facts.backlog, orphan: orphan, undrawn: undrawn,
 	})
 }
 
-// recoverySpans is, for each path toward the target timeline, the span
+// recoverySpans is, for each path toward the target timeline that a
+// default restore follows and the console did not cap, the span
 // of restore points it proves: from its lower bound to its frontier's
 // receipt, once it reached its base backup's consistency point. undrawn
 // counts the paths that prove none. The paths' assumptions are listed on
@@ -454,13 +528,19 @@ func recoverySpans(out *viewmodel.RecoveryTimeline, in timelineInput, target uin
 	}
 	assumptions := map[string]bool{}
 	for _, p := range in.rec.Paths {
-		if p.TargetTimeline != target || p.FrontierTimeline == nil {
+		if p.TargetTimeline != target || p.FrontierTimeline == nil || offTarget(p) {
+			// An off-target path toward the target's number is a sibling a
+			// default restore does not follow: listed by offTargetSpans,
+			// never drawn as covered.
 			continue
 		}
 		for _, a := range p.Assumptions {
 			assumptions[a] = true
 		}
-		if p.LowerBoundAt == nil || p.FrontierReceiptAt == nil || !p.FrontierReceiptAt.After(*p.LowerBoundAt) || !reachedConsistency(p, ends) {
+		if p.Reason.Code == cappedPathCode || p.LowerBoundAt == nil || p.FrontierReceiptAt == nil || !p.FrontierReceiptAt.After(*p.LowerBoundAt) || !reachedConsistency(p, ends) {
+			// A path the console capped (its timeline evidence is not
+			// established) loses its receipt there; it is skipped by its
+			// code too, should a receipt ever survive the cap.
 			undrawn++
 			continue
 		}
@@ -471,6 +551,19 @@ func recoverySpans(out *viewmodel.RecoveryTimeline, in timelineInput, target uin
 	}
 	sort.Strings(out.Assumptions)
 	return spans, undrawn
+}
+
+// lastCovered is the end of the newest covered segment: the newest
+// instant a restore check answers "covered"; nil when none is.
+func lastCovered(segs []viewmodel.RecoverySegment) *time.Time {
+	var last *time.Time
+	for i := range segs {
+		if segs[i].Kind == segmentCovered && (last == nil || segs[i].To.After(*last)) {
+			to := segs[i].To.UTC()
+			last = &to
+		}
+	}
+	return last
 }
 
 // mergeSpans sorts the spans (earliest first, longest first on a tie) and
@@ -529,10 +622,11 @@ func drawRuns(out *viewmodel.RecoveryTimeline, spans, runs []interval, margin ti
 
 // markEdges makes both ends of the window uncertain. The newest edge: the
 // last segment's commits are older than its receipt, by up to the
-// archive_timeout an idle primary allows, and further after a recent
-// archiving failure (failedRecently). The oldest edge: a retention purge
-// can remove the oldest backup at any moment; the evidence shows it at
-// most one scan later.
+// archive_timeout an idle primary allows, and further after an archiving
+// failure the archiver has not caught up from before the newest segment
+// reached the repository (failedRecently), or while a backlog persists.
+// The oldest edge: a retention purge can remove the oldest backup at any
+// moment; the evidence shows it at most one scan later.
 func markEdges(out *viewmodel.RecoveryTimeline, in timelineInput, first, last time.Time, margin time.Duration) (failedRecently bool) {
 	marginText := say("recovery.segment.nearEnd",
 		"Within "+humanDuration(margin)+" of the end of the archived WAL: segment names cannot tell whether this target's WAL is archived yet.",
@@ -542,7 +636,7 @@ func markEdges(out *viewmodel.RecoveryTimeline, in timelineInput, first, last ti
 			"Near the end of the archived WAL with archive_timeout disabled: nothing bounds how old the newest archived commit is.", nil)
 	}
 	uncertain(out, last.Add(-margin), last, marginText)
-	if f := in.facts.lastFailedWAL; f != nil && f.After(last.Add(-failureLookback)) {
+	if f := in.facts.lastFailedWAL; f != nil && f.After(last.Add(-failureLookback)) && !caughtUpBefore(in.facts.caughtUpBy, last) {
 		failedRecently = true
 		from := minTime(*f, last).Add(-failureLookback)
 		uncertain(out, from, last, say("recovery.segment.archivingFailed",
@@ -550,13 +644,7 @@ func markEdges(out *viewmodel.RecoveryTimeline, in timelineInput, first, last ti
 			map[string]string{"failedAt": rfc3339(*f)}))
 	}
 	if n := in.facts.backlog; n > 0 {
-		// Segments wait on the primary: the newest one archived was
-		// finished, and its commits made, before it reached the
-		// repository by however long the backlog has held, which the
-		// instance does not report; the same lookback as a failure.
-		uncertain(out, last.Add(-failureLookback), last, say("recovery.segment.archiveBacklog",
-			strconv.Itoa(n)+" WAL segments are waiting to be archived on the primary: segments reach the repository late, so the arrival time of the newest overstates how recent a restore can be.",
-			map[string]string{"segments": strconv.Itoa(n)}))
+		backlogEdge(out, in.facts, n, last)
 	}
 	purge := in.refresh
 	if purge <= 0 {
@@ -569,6 +657,37 @@ func markEdges(out *viewmodel.RecoveryTimeline, in timelineInput, first, last ti
 		"Within "+humanDuration(purge)+" of the oldest restore point: a retention purge since the repository was last read may have removed this base backup.",
 		map[string]string{"marginSeconds": secondsParam(purge)}))
 	return failedRecently
+}
+
+// caughtUpBefore reports an archiver that had caught up from its failure
+// by a sweep no later than last, the newest segment's receipt: that
+// segment, and every one before it, reached the repository after the
+// catch-up, so its receipt bounds its commits as without a failure.
+func caughtUpBefore(by *time.Time, last time.Time) bool {
+	return by != nil && !by.After(last)
+}
+
+// backlogEdge marks the newest edge while n segments wait on the primary
+// across sweeps: a segment archived during the backlog reached the
+// repository late, its commits older than its receipt by however long
+// it waited. From when the backlog was first seen, less one sweep (it
+// began at most one sweep earlier) and one archive_timeout (the commits
+// of the segment finished then); from failureLookback before the end
+// when it began before the sweeps the console keeps, or archive_timeout
+// is disabled.
+func backlogEdge(out *viewmodel.RecoveryTimeline, f recoveryFacts, n int, last time.Time) {
+	segments := strconv.Itoa(n)
+	if f.backlogSince == nil || f.archiveTimeout <= 0 {
+		uncertain(out, last.Add(-failureLookback), last, say("recovery.segment.archiveBacklog",
+			segments+" WAL segments are waiting to be archived on the primary, since before the sweeps the console keeps: segments reach the repository late, so the arrival time of the newest overstates how recent a restore can be.",
+			map[string]string{"segments": segments}))
+		return
+	}
+	since := f.backlogSince.UTC()
+	from := since.Add(-f.sweepInterval - f.archiveTimeout)
+	uncertain(out, from, last, say("recovery.segment.archiveBacklogSince",
+		segments+" WAL segments have been waiting to be archived on the primary since "+rfc3339(since)+" or a little before: WAL archived since then reached the repository late, so its arrival time overstates how recent a restore can be.",
+		map[string]string{"segments": segments, "sinceAt": rfc3339(since)}))
 }
 
 // walEnd marks the band just before the newest restore point where the

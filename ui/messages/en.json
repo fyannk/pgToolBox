@@ -1197,7 +1197,7 @@
   "recovery_basis_none": "No recovery window",
   "recovery_basis_reported": "Reported by the operator, not verified against the repository",
   "recovery_earliest": "earliest {at}",
-  "recovery_latest": "latest {at}",
+  "recovery_latest": "WAL received until {at}",
   "recovery_last_base_backup": "last base backup {at}, not the end of the archived WAL",
   "recovery_legend": "Legend",
   "recovery_lower_bound": "Lower bound: the evidence collection stopped at a limit, so the window may be larger than shown.",
@@ -1520,7 +1520,7 @@
   "failover_loss_as_of": "as of the sweep",
   "span_wal_end": "end of the archived WAL",
   "rp_segment_wal_end": "WAL ends near here: the newest archived segment reached the repository at {end}, and its last commit may be up to {margin} older. A recovery_target_time after the last commit fails with \"recovery ended before configured recovery target was reached\"; to restore everything archived, restore to the end of WAL (no recovery target).",
-  "rp_segment_archive_backlog": "{segments} WAL segments are waiting to be archived on the primary: segments reach the repository late, so the arrival time of the newest overstates how recent a restore can be.",
+  "rp_segment_archive_backlog": "{segments} WAL segments are waiting to be archived on the primary, since before the sweeps the console keeps: segments reach the repository late, so the arrival time of the newest overstates how recent a restore can be.",
   "rp_segment_after_last_read_failing": "Not in the repository when it was last read ({scanned}), and WAL archiving is failing: this time's WAL is likely not in the repository.",
   "rp_segment_after_frontier_failing": "After the newest archived WAL the evidence shows, and WAL archiving is failing: this time's WAL is likely not in the repository.",
   "rp_segment_after_last_read_backlog": "Not in the repository when it was last read ({scanned}), and {segments} WAL segments are waiting to be archived on the primary: this time's WAL is likely still only on the primary.",
@@ -1575,5 +1575,8 @@
   "rp_caveat_timeline_warning_file": "The evidence reports the timeline history file {file}, which no default restore reads, as invalid: the coverage shown does not rest on it, but a restore that names its timeline would fail.",
   "rp_caveat_timeline_warning": "The evidence reports a timeline history file no default restore reads as invalid ({detail}): the coverage shown does not rest on it, but a restore that names its timeline would fail.",
   "recovery_off_target": "Restorable only by naming a timeline",
-  "recovery_timeline_warning": "Timeline warning"
+  "recovery_timeline_warning": "Timeline warning",
+  "recovery_last_safe_target": "last safe target {at}",
+  "rp_segment_archive_backlog_since": "{segments} WAL segments have been waiting to be archived on the primary since {since} or a little before: WAL archived since then reached the repository late, so its arrival time overstates how recent a restore can be.",
+  "answer_target_timeline": "Default recovery_target_timeline 'latest': a restore that names no timeline follows this one."
 }

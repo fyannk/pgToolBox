@@ -20,6 +20,7 @@ import (
 	"time"
 
 	cnpgv1 "github.com/cloudnative-pg/api/pkg/api/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"github.com/fyannk/pgToolBox/internal/console/evidence"
 	"github.com/fyannk/pgToolBox/internal/console/sweep"
@@ -32,40 +33,211 @@ import (
 func pint(v int) *int { return &v }
 
 // TestRecoveryFactsReadTheBacklog: the primary's readyWalFiles enters the
-// facts at cnpgstatus.ArchiveBacklogThreshold and not below; the newest
-// archiving failure is taken over every readable instance (a former
-// primary's survives a failover), clamped to when it was read.
+// facts only when it persists across sweeps at
+// cnpgstatus.ArchiveBacklogThreshold; the newest archiving failure is
+// taken over every readable instance (a former primary's survives a
+// failover), clamped to when it was read.
 func TestRecoveryFactsReadTheBacklog(t *testing.T) {
 	observed := now.Add(-time.Minute)
 	future := now.Add(time.Hour)
 	older := now.Add(-3 * time.Hour)
-	g := &gathered{
-		cluster: &cnpgv1.Cluster{Status: cnpgv1.ClusterStatus{CurrentPrimary: "db-2"}},
-		swept: sweep.Snapshot{Instances: map[string]sweep.Instance{
-			// The former primary: a replica now, its failure kept.
-			"db-1": {State: viewmodel.StatusReadOK, Reading: &instancestatus.Reading{ObservedAt: observed, LastFailedWALTime: &future}},
-			"db-2": {State: viewmodel.StatusReadOK, Reading: &instancestatus.Reading{IsPrimary: true, ObservedAt: observed, LastFailedWALTime: &older}},
-		}},
-	}
 	for _, tc := range []struct {
-		ready *int
-		want  int
+		name    string
+		ready   int
+		earlier []float64
+		want    int
 	}{
-		{nil, 0},
-		{pint(cnpgstatus.ArchiveBacklogSegments - 1), 0},
-		{pint(cnpgstatus.ArchiveBacklogSegments), cnpgstatus.ArchiveBacklogSegments},
-		{pint(40), 40},
+		{"below the threshold", cnpgstatus.ArchiveBacklogSegments - 1, []float64{9, 9}, 0},
+		{"one sweep at the threshold", cnpgstatus.ArchiveBacklogSegments, []float64{0, 1}, 0},
+		{"two sweeps at the threshold", cnpgstatus.ArchiveBacklogSegments, []float64{0, 3}, cnpgstatus.ArchiveBacklogSegments},
+		{"a large persistent backlog", 40, []float64{0, 20, 30}, 40},
 	} {
-		f := recoveryFactsOf(g, viewmodel.Archiving{Health: viewmodel.HealthOK, ReadyWALFiles: tc.ready}, now)
+		g := &gathered{
+			cluster: inTreeCluster(),
+			swept: sweep.Snapshot{Interval: 30 * time.Second, Instances: map[string]sweep.Instance{
+				// The former primary: a replica now, its failure kept.
+				"db-1": {State: viewmodel.StatusReadOK, Reading: &instancestatus.Reading{ObservedAt: observed, LastFailedWALTime: &future}},
+				"db-2": {State: viewmodel.StatusReadOK, Reading: &instancestatus.Reading{IsPrimary: true, ObservedAt: observed, LastFailedWALTime: &older, ReadyWALFiles: tc.ready}},
+			}},
+			readyRings: map[string][]viewmodel.Point{"db-2": ring(observed, tc.earlier...)},
+		}
+		f := recoveryFactsOf(g, viewmodel.Archiving{Health: viewmodel.HealthOK}, now)
 		if f.backlog != tc.want {
-			t.Errorf("ready %v: backlog %d, want %d", tc.ready, f.backlog, tc.want)
+			t.Errorf("%s: backlog %d, want %d", tc.name, f.backlog, tc.want)
 		}
 		if f.lastFailedWAL == nil || !f.lastFailedWAL.Equal(observed) {
-			t.Errorf("lastFailedWAL %v, want the former primary's, clamped to %s", f.lastFailedWAL, observed)
+			t.Errorf("%s: lastFailedWAL %v, want the former primary's, clamped to %s", tc.name, f.lastFailedWAL, observed)
+		}
+		if f.sweepInterval != 30*time.Second {
+			t.Errorf("%s: sweep interval %s", tc.name, f.sweepInterval)
 		}
 	}
+	g := &gathered{cluster: inTreeCluster()}
 	if f := recoveryFactsOf(g, viewmodel.Archiving{Health: viewmodel.HealthCritical}, now); !f.failing {
 		t.Error("critical archiving is not failing in the facts")
+	}
+}
+
+// inTreeCluster archives with the in-tree Barman object store (serial),
+// db-2 its primary.
+func inTreeCluster() *cnpgv1.Cluster {
+	return &cnpgv1.Cluster{
+		Spec:   cnpgv1.ClusterSpec{Backup: &cnpgv1.BackupConfiguration{BarmanObjectStore: &cnpgv1.BarmanObjectStoreConfiguration{}}},
+		Status: cnpgv1.ClusterStatus{CurrentPrimary: "db-2"},
+	}
+}
+
+// ring is a readyWalFiles ring of one sample every 30 s before at,
+// oldest first; a negative value is a failed read.
+func ring(at time.Time, values ...float64) []viewmodel.Point {
+	out := make([]viewmodel.Point, 0, len(values))
+	for i, v := range values {
+		p := viewmodel.Point{At: at.Add(-time.Duration(len(values)-i) * 30 * time.Second)}
+		if v >= 0 {
+			value := v
+			p.Value = &value
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
+// TestRecoveryBandsFollowTheArchiver is the round-5 table: a band at
+// the newest edge only while the archiver is behind, from when it fell
+// behind, and never for a failure it has caught up from.
+func TestRecoveryBandsFollowTheArchiver(t *testing.T) {
+	svc := &Service{}
+	frontier := evidencev1alpha1.CoverageFrontier
+	// The frontier reached the repository 10 min ago; the question is
+	// 01:39 at 03:00, a target 81 min before now.
+	fx := timelineFixture{paths: []evidence.RecoveryPath{tlPath("b1", 48*time.Hour, 10*time.Minute, frontier)}}
+	read := now.Add(-30 * time.Second)
+	target := now.Add(-81 * time.Minute)
+	steady := func(n int, v float64) []float64 {
+		out := make([]float64, n)
+		for i := range out {
+			out[i] = v
+		}
+		return out
+	}
+	plugin := func(maxParallel int) (*cnpgv1.Cluster, *unstructured.Unstructured) {
+		c := &cnpgv1.Cluster{
+			Spec:   cnpgv1.ClusterSpec{Plugins: []cnpgv1.PluginConfiguration{{Name: cnpgstatus.BarmanCloudPlugin, Parameters: map[string]string{"barmanObjectName": "store"}}}},
+			Status: cnpgv1.ClusterStatus{CurrentPrimary: "db-2"},
+		}
+		store := &unstructured.Unstructured{Object: map[string]any{"spec": map[string]any{"configuration": map[string]any{"wal": map[string]any{"maxParallel": int64(maxParallel)}}}}}
+		return c, store
+	}
+	failedAt := now.Add(-2 * time.Hour)
+	archivedAfter := now.Add(-time.Minute)
+	archivedBefore := now.Add(-3 * time.Hour)
+	type scenario struct {
+		name    string
+		cluster *cnpgv1.Cluster
+		store   *unstructured.Unstructured
+		reading instancestatus.Reading
+		earlier []float64
+		// wantCovered: the 01:39 question is answered covered.
+		wantCovered bool
+		wantCode    string
+		wantFrom    time.Time
+	}
+	pc, ps := plugin(8)
+	for _, tc := range []scenario{
+		{
+			name: "transient 503 two hours ago, caught up since", cluster: inTreeCluster(),
+			reading: instancestatus.Reading{IsPrimary: true, ReadyWALFiles: 1, LastFailedWALTime: &failedAt, LastArchivedWALTime: &archivedAfter, IsArchivingWAL: true},
+			earlier: steady(120, 1), wantCovered: true,
+		},
+		{
+			name: "caught up only after the frontier reached the repository", cluster: inTreeCluster(),
+			reading: instancestatus.Reading{IsPrimary: true, ReadyWALFiles: 1, LastFailedWALTime: &failedAt, LastArchivedWALTime: &archivedAfter, IsArchivingWAL: true},
+			// Behind until 6 min ago, below the threshold since.
+			earlier: append(steady(108, 40), steady(11, 1)...), wantCode: "recovery.segment.archivingFailed",
+		},
+		{
+			name: "still failing", cluster: inTreeCluster(),
+			reading: instancestatus.Reading{IsPrimary: true, ReadyWALFiles: 1, LastFailedWALTime: &failedAt, LastArchivedWALTime: &archivedBefore},
+			earlier: steady(120, 1), wantCode: "recovery.segment.archivingFailed",
+		},
+		{
+			name: "bulk load: barman plugin maxParallel 8, six ready on one sweep", cluster: pc, store: ps,
+			reading: instancestatus.Reading{IsPrimary: true, ReadyWALFiles: 6, IsArchivingWAL: true, LastArchivedWALTime: &archivedAfter},
+			earlier: steady(120, 1), wantCovered: true,
+		},
+		{
+			name: "barman plugin maxParallel 8, six to eight ready on every sweep", cluster: pc, store: ps,
+			reading: instancestatus.Reading{IsPrimary: true, ReadyWALFiles: 6, IsArchivingWAL: true, LastArchivedWALTime: &archivedAfter},
+			earlier: append(steady(60, 8), steady(60, 6)...), wantCovered: true,
+		},
+		{
+			name: "persistent growing backlog: a band from its onset", cluster: inTreeCluster(),
+			reading: instancestatus.Reading{IsPrimary: true, ReadyWALFiles: 30, IsArchivingWAL: true, LastArchivedWALTime: &archivedAfter},
+			// Below the threshold until 20 min ago (40 samples before read), then growing.
+			earlier:     append(steady(80, 1), 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 29, 29, 29, 29, 29, 29, 29, 29, 29, 29, 29, 29, 29, 29, 29),
+			wantCovered: true, wantCode: "recovery.segment.archiveBacklogSince",
+			// Onset 20 min before the reading, less one sweep and one archive_timeout.
+			wantFrom: read.Add(-20*time.Minute - 30*time.Second - defaultArchiveTimeout),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := tc.reading
+			r.ObservedAt = read
+			g := &gathered{
+				cluster: tc.cluster, store: tc.store,
+				swept:      sweep.Snapshot{Interval: 30 * time.Second, Instances: map[string]sweep.Instance{"db-2": {State: viewmodel.StatusReadOK, Reading: &r}}},
+				readyRings: map[string][]viewmodel.Point{"db-2": ring(read, tc.earlier...)},
+			}
+			// The summary's archiving carries the count too: one reading of
+			// it is never enough.
+			facts := recoveryFactsOf(g, viewmodel.Archiving{Health: viewmodel.HealthOK, ReadyWALFiles: pint(r.ReadyWALFiles)}, now)
+			tl := svc.recoveryTimeline(fx.evidence(), viewmodel.BackupSummary{}, nil, facts)
+			got := restoreCheck(viewmodel.Backups{RecoveryTimeline: tl, GeneratedAt: now}, target)
+			if (got.Answer == "covered") != tc.wantCovered {
+				t.Errorf("01:39 answer %q (%s), want covered %v; facts %+v", got.Answer, got.Code, tc.wantCovered, facts)
+			}
+			var band *viewmodel.RecoverySegment
+			for i, seg := range tl.Segments {
+				if seg.Code == "recovery.segment.archivingFailed" || strings.HasPrefix(seg.Code, "recovery.segment.archiveBacklog") {
+					band = &tl.Segments[i]
+				}
+			}
+			switch {
+			case tc.wantCode == "" && band != nil:
+				t.Errorf("unexpected band %+v", *band)
+			case tc.wantCode != "" && (band == nil || band.Code != tc.wantCode):
+				t.Errorf("band %+v, want %s", band, tc.wantCode)
+			case band != nil && !tc.wantFrom.IsZero() && !band.From.Equal(tc.wantFrom):
+				t.Errorf("band from %s, want %s", band.From, tc.wantFrom)
+			case band != nil && band.Code == "recovery.segment.archiveBacklogSince" && band.Params["segments"] != "30":
+				t.Errorf("band params %+v", band.Params)
+			}
+			if tc.wantCovered && tc.wantCode == "" && tl.State != string(evidencev1alpha1.Healthy) {
+				t.Errorf("state %s (%s)", tl.State, tl.Reason)
+			}
+		})
+	}
+}
+
+// TestLastSafeTargetIsTheNewestCovered: the window names the newest
+// instant the check answers covered, before the uncertain edge.
+func TestLastSafeTargetIsTheNewestCovered(t *testing.T) {
+	svc := &Service{}
+	fx := timelineFixture{paths: []evidence.RecoveryPath{tlPath("b1", 48*time.Hour, 10*time.Minute, evidencev1alpha1.CoverageFrontier)}}
+	tl := svc.recoveryTimeline(fx.evidence(), viewmodel.BackupSummary{}, nil, recoveryFacts{now: now, archiveTimeout: defaultArchiveTimeout})
+	want := tl.Latest.Add(-minimumFrontierMargin)
+	if tl.LastSafeTarget == nil || !tl.LastSafeTarget.Equal(want) {
+		t.Fatalf("last safe target %v, want %s", tl.LastSafeTarget, want)
+	}
+	b := viewmodel.Backups{RecoveryTimeline: tl, GeneratedAt: now}
+	if got := restoreCheck(b, *tl.LastSafeTarget); got.Answer != "covered" {
+		t.Errorf("at the last safe target: %+v", got)
+	}
+	if got := restoreCheck(b, tl.LastSafeTarget.Add(time.Second)); got.Answer == "covered" {
+		t.Errorf("after the last safe target: %+v", got)
+	}
+	if none := svc.recoveryTimeline(clusterEvidence{}, viewmodel.BackupSummary{}, nil, recoveryFacts{now: now}); none.LastSafeTarget != nil {
+		t.Errorf("no evidence, last safe target %v", none.LastSafeTarget)
 	}
 }
 

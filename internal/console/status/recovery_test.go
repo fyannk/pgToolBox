@@ -315,7 +315,7 @@ func TestRecoveryTimelineStates(t *testing.T) {
 
 func TestPostgresDuration(t *testing.T) {
 	//nolint:gocritic // mapKey: the padded " 90 s " is the input under test (whitespace around number and unit is accepted).
-	for in, want := range map[string]time.Duration{"5min": 5 * time.Minute, "300": 300 * time.Second, "1h": time.Hour, "0": 0, " 90 s ": 90 * time.Second, "500ms": 500 * time.Millisecond} {
+	for in, want := range map[string]time.Duration{"5min": 5 * time.Minute, "300": 300 * time.Second, "1h": time.Hour, "0": 0, " 90 s ": 90 * time.Second, "500ms": 500 * time.Millisecond, "300000000us": 5 * time.Minute} {
 		if got, ok := postgresDuration(in); !ok || got != want {
 			t.Errorf("%q = %s %v", in, got, ok)
 		}

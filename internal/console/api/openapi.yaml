@@ -5776,7 +5776,12 @@ components:
         earliest:
           format: date-time
           type: string
+        lastSafeTarget:
+          description: "The end of the newest covered span once every uncertain edge is drawn: the newest instant a restore check answers covered. Absent when no span is covered."
+          format: date-time
+          type: string
         latest:
+          description: "When the newest contiguous WAL segment reached the repository (evidence basis), or the reported window's end: a receipt time, not a safe restore target (see lastSafeTarget)."
           format: date-time
           type: string
         markers:

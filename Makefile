@@ -145,6 +145,8 @@ test-fuzz: ## Fuzz the trust-boundary parsers (FUZZ_TIME per target).
 	$(call fuzz,./pkg/cnpgstatus/scrape,FuzzParseLabels)
 	$(call fuzz,./pkg/cnpgstatus/logstream,FuzzMatcherObserve)
 	$(call fuzz,./pkg/diagnose,FuzzRunsPerDay)
+	$(call fuzz,./internal/console/status,FuzzTimelinePhrase)
+	$(call fuzz,./internal/console/status,FuzzHistoryFileIn)
 	$(call fuzz,./internal/evidence/formats/barmancloud,FuzzParseBackupInfo)
 	$(call fuzz,./internal/evidence/formats/barmancloud,FuzzParseTimelineHistory)
 	$(call fuzz,./internal/evidence/formats/barmancloud,FuzzParseWALName)
@@ -550,7 +552,7 @@ test-fuzz-console: ## Fuzz the console's trust-boundary parsers (/pg/status body
 
 .PHONY: verify-pins-cnpgstatus
 verify-pins-cnpgstatus: ## Verify the read model's per-minor tables against the verified CNPG releases (module cache).
-	go test -tags catalogpins -count=1 -run 'TestTablePinsExistInVerifiedReleases|TestEveryUpstreamPhaseIsInTheTable|TestFeatureFloorsAreAbsentBelowTheFloor' ./pkg/cnpgstatus/
+	go test -tags catalogpins -count=1 -run 'TestTablePinsExistInVerifiedReleases|TestEveryUpstreamPhaseIsInTheTable|TestFeatureFloorsAreAbsentBelowTheFloor|TestElectionRulesAreAbsentAt1300' ./pkg/cnpgstatus/
 
 .PHONY: test-console-core
 test-console-core: test-envtest-console test-fuzz-console verify-pins-cnpgstatus ## Everything the console core adds beyond make test (envtest per minor, fuzz, pins).

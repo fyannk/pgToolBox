@@ -113,6 +113,22 @@ test("backups: the recovery bar has a text twin listing every span", async () =>
   expect(items[1]?.element().textContent).toMatch(/WAL missing — WAL is missing from the repository/);
 });
 
+test("backups: the window's end is the WAL received, and the last safe target is named apart", async () => {
+  const t = backups.recoveryTimeline;
+  if (!t.lastSafeTarget || !t.latest) throw new Error("fixture has no last safe target");
+  const screen = await renderInFrame(<BackupsView data={backups} />);
+  const received = screen.container.querySelector("[data-wal-received]")?.textContent ?? "";
+  const safe = screen.container.querySelector("[data-last-safe-target]")?.textContent ?? "";
+  expect(received).toMatch(/^WAL received until /);
+  expect(safe).toMatch(/^last safe target /);
+  expect(safe).not.toBe(received.replace("WAL received until", "last safe target"));
+  expect(screen.container.textContent).not.toMatch(/latest 2026/);
+  const none = await renderInFrame(
+    <BackupsView data={{ ...backups, recoveryTimeline: { ...t, lastSafeTarget: undefined } }} />,
+  );
+  expect(none.container.querySelector("[data-last-safe-target]")).toBeNull();
+});
+
 test("backups: an operator-only window is hatched, labelled unverified, never called covered", async () => {
   const screen = await renderInFrame(<BackupsView data={{ ...backups, recoveryTimeline: recoveryReportedOnly }} />);
   expect(screen.container.querySelector('rect[data-kind="reported"]')?.getAttribute("fill")).toMatch(/^url\(#hatch/);
