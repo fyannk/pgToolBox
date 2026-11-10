@@ -75,12 +75,37 @@ what the design guarantees and, as plainly, what it does not.
 - **Client addresses**: `X-Forwarded-For` is believed only from the proxies
   named in `TRUSTED_PROXY_CIDRS`, else ignored, so a Pod that reaches the console
   directly cannot escape the per-address sign-in budgets or forge `client_ip`.
-  Without trusted CIDRs behind a declared proxy every client has the proxy's
-  address, so no per-address budget is charged and only the per-replica bounds
-  (20 a second, burst 40, per sign-in path) limit sign-ins;
+  Without trusted CIDRs behind a declared proxy, or with no proxy declared
+  behind a public URL, every client may have the proxy's address, so no
+  per-address budget is charged and only the per-replica bounds limit sign-ins;
   the operator renders an ingress NetworkPolicy for a published Route (and for an
   Ingress or Gateway that names its controller) and only then trusts every
   admitted peer ([details](operator/console.md#trusted-proxies-and-the-ingress-networkpolicy)).
+
+- **What an unauthenticated flood still costs.** The per-replica bounds
+  protect the API server and the identity provider, and are kept apart from
+  what a genuine sign-in needs once it has proved something, so junk cannot
+  starve people below these rates (per replica):
+  - junk OAuth callbacks: a refused code exchange each, at most 100 a second
+    to the IdP, and no SelfSubjectReview (that is charged only after a
+    successful exchange). Above 100 a second new OAuth sign-ins are refused
+    while the flood lasts;
+  - junk pasted tokens and unknown MCP bearers: a SelfSubjectReview each that
+    the API server refuses, at most 100 a second. Above that, new token
+    sign-ins and new raw bearers are refused; an MCP client whose token the
+    replica accepted before re-reviews from a bucket of its own;
+  - junk `/mcp/oauth/token` requests: a form parse and a failed decryption
+    each; they never reach the bucket of codes and refresh tokens the console
+    sealed, so connected clients keep refreshing; past 20 a second they get
+    `429` and no audit line;
+  - `/mcp/oauth/register`: up to 10 a second sealed and audited; above that,
+    new registrations wait. Registered clients are unaffected.
+
+  Open sessions, connected MCP clients and issued grants keep working in every
+  case. Each refusal is counted in
+  `pgtoolbox_console_throttled_requests_total{bucket}`; alert on a sustained
+  rate (see [metrics](console/metrics.md#throttled-requests)) and name the
+  proxies so per-address budgets stop a single sender first.
 
 ## Writes: token passthrough, never impersonation
 

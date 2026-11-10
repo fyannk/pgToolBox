@@ -98,10 +98,10 @@ type Guard struct {
 // NewGuard fills the defaults.
 func NewGuard(o Options) *Guard {
 	if o.Calls == nil {
-		o.Calls = auth.NewRateLimiter(DefaultCallsPerMinute, DefaultCallsBurst, maxBudgetKeys)
+		o.Calls = auth.NewRateLimiter(DefaultCallsPerMinute, DefaultCallsBurst, maxBudgetKeys).Named(auth.BucketMCPCalls)
 	}
 	if o.Attempts == nil {
-		o.Attempts = auth.NewRateLimiter(DefaultAttemptsPerMinute, DefaultAttemptsBurst, maxBudgetKeys)
+		o.Attempts = auth.NewRateLimiter(DefaultAttemptsPerMinute, DefaultAttemptsBurst, maxBudgetKeys).Named(auth.BucketMCPAttempts)
 	}
 	if o.Log == nil {
 		o.Log = slog.New(slog.DiscardHandler)

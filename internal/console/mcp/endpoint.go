@@ -211,9 +211,9 @@ func New(o Options) (*Endpoint, error) {
 	}
 	e := &Endpoint{
 		o: o, audit: &auth.Auditor{Logger: o.Log, TrustedProxy: o.TrustedProxy},
-		writes:      auth.NewRateLimiter(o.WritesPerMinute, o.WritesPerMinute, maxBudgetKeys),
-		pageViews:   auth.NewRateLimiter(pageViewsPerMinute, pageViewsPerMinute, maxBudgetKeys),
-		pageAnswers: auth.NewRateLimiter(pageAnswersPerMinute, pageAnswersPerMinute, maxBudgetKeys),
+		writes:      auth.NewRateLimiter(o.WritesPerMinute, o.WritesPerMinute, maxBudgetKeys).Named(auth.BucketMCPWrites),
+		pageViews:   auth.NewRateLimiter(pageViewsPerMinute, pageViewsPerMinute, maxBudgetKeys).Named(auth.BucketMCPPageViews),
+		pageAnswers: auth.NewRateLimiter(pageAnswersPerMinute, pageAnswersPerMinute, maxBudgetKeys).Named(auth.BucketMCPPageAnswers),
 	}
 	instructions, description := Instructions, "Read-only view of the CloudNativePG Clusters you may see, through this console."
 	if e.writeTools() {

@@ -45,6 +45,14 @@ type ProxyTrust struct {
 	Hops int
 	// CIDRs are the proxies' own addresses.
 	CIDRs []netip.Prefix
+	// PeerShared says the direct peer is not known to be the client:
+	// no proxy is declared (Hops 0) but the console is published under a
+	// non-loopback PUBLIC_URL, so something (a Service, an Ingress the
+	// operator did not render, a cloud load balancer) may stand between
+	// the clients and the Pod, and every client may then have its
+	// address. FromEnv sets it; the per-address budgets are then off as
+	// with Hops and no CIDRs (SharedClientKey).
+	PeerShared bool
 }
 
 // trusts reports whether addr is a trusted proxy.
@@ -56,13 +64,17 @@ func (p ProxyTrust) trusts(addr netip.Addr) bool {
 // Enabled reports whether X-Forwarded-For is read at all.
 func (p ProxyTrust) Enabled() bool { return p.Hops > 0 && len(p.CIDRs) > 0 }
 
-// SharedClientKey reports whether ClientKey names a shared address
+// SharedClientKey reports whether ClientKey may name a shared address
 // rather than a client: proxies are declared (Hops) but none is trusted
 // (no CIDRs), so X-Forwarded-For is ignored and every client behind the
-// proxies has the proxy's address. A per-address budget then is one
-// budget for everyone, which anyone can spend, so the sign-in paths do
-// not charge it (see Handler.addressBudget).
-func (p ProxyTrust) SharedClientKey() bool { return p.Hops > 0 && len(p.CIDRs) == 0 }
+// proxies has the proxy's address; or none is declared while the console
+// is published under a non-loopback URL (PeerShared), where a proxy the
+// console was not told about would do the same. A per-address budget
+// then is one budget for everyone, which anyone can spend, so the
+// sign-in paths do not charge it (see Handler.addressBudget).
+func (p ProxyTrust) SharedClientKey() bool {
+	return (p.Hops > 0 && len(p.CIDRs) == 0) || (p.Hops == 0 && p.PeerShared)
+}
 
 // String lists the CIDRs, comma-separated (pgtoolbox_console_config_info).
 func (p ProxyTrust) String() string {

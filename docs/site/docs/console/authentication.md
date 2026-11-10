@@ -152,37 +152,57 @@ delete it afterwards.
   because the browser drops its cookie: the replica that accepts a callback
   remembers a SHA-256 of the flow's state until the flow expires (ten minutes),
   and a replayed cookie and state are refused before any budget is charged and
-  before any code exchange. The memory is per replica (at most 10,000 flows):
+  before any code exchange. The memory is per replica (at most what the
+  code-exchange bound admits in ten minutes, about 60,000 digests):
   behind several replicas a flow can be replayed once on each other replica,
   each time charged to that replica's budgets. Starting a flow stores nothing on
   the server (the flow lives in its sealed cookie), so starting many costs only
   the sealing.
-- **Rate limit.** Sign-in attempts are limited per replica. An OAuth callback is
-  charged only once its flow cookie and state match (a callback without them costs
-  the console nothing and is refused for free), and then to two budgets: its
-  client address's (ten a minute, a burst of ten) and one bound per replica for
-  every callback (20 a second, a burst of 40, so a whole team can sign in at
-  once), which caps the code exchanges and SelfSubjectReviews junk codes can
-  cause. A pasted token is charged three budgets in turn, and a
-  refusal by one spends none of the next: the token's own (ten a minute, keyed on
-  a digest of it), so retrying one token does not spend its address; the sender's
-  address (twenty a minute, a budget of the token form only, so junk tokens never
-  lock the OAuth sign-in), so distinct junk tokens from one address stop there;
-  and one bound per replica, 20 a second with a burst of 40, so a flood from many
-  addresses cannot make the console ask the API server more than that. Over any
-  of them the form answers 429 without asking. **When the client address is
-  shared** (`TRUSTED_PROXY_HOPS` without `TRUSTED_PROXY_CIDRS`, below), no
-  per-address budget is charged, on either path: every client behind the proxy
-  has its address, and anyone could spend that budget for everyone by starting
-  flows of their own and calling their callbacks with junk codes. Callbacks are
-  then bounded by their single use and the per-replica bound, pasted tokens by
-  their own budget and the per-replica bound; a flood above 20 a second still
-  delays everyone's sign-in on that replica until it stops, so name the proxies.
-  Each key space has a table of its
-  own, so a spray that fills one (10,000 keys) resets only that one.
-  Raw API-server tokens presented as MCP bearers spend the same per-replica
-  bound after their address's budget (an answer still cached costs nothing), so
-  the two doors together never review more than 20 tokens a second.
+- **Rate limit.** Sign-in attempts are limited per client address and per
+  replica. The per-replica bounds protect the API server and the identity
+  provider; they are not meant to ration people, so the ones an
+  unauthenticated sender can reach are large, and the ones a genuine sign-in
+  needs once it has proved something are separate, so junk never reaches them.
+  - An **OAuth callback** is charged only once its flow cookie and state match
+    (a callback without them costs the console nothing). It then spends its
+    client address's budget (ten a minute, a burst of ten) and the replica's
+    code-exchange bound (100 a second, a burst of 200), which caps the requests
+    junk codes make the console send to the IdP; the IdP's own rate limit is the
+    real bound on what it accepts. Only a **successful** exchange spends a
+    SelfSubjectReview, from a bound of its own (20 a second, a burst of 40, so a
+    whole team can sign in at once): a junk code costs one refused exchange and
+    nothing else.
+  - A **pasted token** is charged three budgets in turn, and a refusal by one
+    spends none of the next: the token's own (ten a minute, keyed on a digest of
+    it), so retrying one token does not spend its address; the sender's address
+    (twenty a minute, a budget of the token form only, so junk tokens never lock
+    the OAuth sign-in), so distinct junk tokens from one address stop there; and
+    the replica's bound on reviews of tokens it has never accepted (100 a
+    second, a burst of 200), which caps what a flood from many addresses makes
+    the API server authenticate.
+  - Over any budget the console answers 429 without asking anyone, and counts it
+    in `pgtoolbox_console_throttled_requests_total{bucket}`
+    ([metrics](metrics.md)).
+
+  **When the client address is shared** (hops without CIDRs, or hops 0 behind
+  a public URL, below), no per-address budget is charged, on either path: every
+  client behind the proxy has its address, and anyone could spend that budget
+  for everyone. Callbacks are then bounded by their single use and the
+  per-replica bounds, pasted tokens by their own budget and the per-replica
+  bound. **What a flood can still do**: one sender making more than 100 junk
+  callbacks a second refuses new OAuth sign-ins on that replica while it lasts,
+  and makes the console send up to 100 refused token requests a second to the
+  IdP; more than 100 junk tokens a second refuses new token sign-ins. Sessions
+  already open, MCP clients already connected and grants already issued keep
+  working. Name the proxies, so each client keeps its own budget.
+  Each key space has a table of its own, so a spray that fills one (10,000
+  keys) resets only that one.
+  Raw API-server tokens presented as MCP bearers spend the token form's bound
+  the first time, after their address's (or, behind a shared address, their
+  own) budget. A bearer this replica accepted before is remembered by a digest
+  (at most 4,096, until it expires, an hour at most) and its re-review, once
+  its 30-second cached answer ends, spends a bound of its own (20 a second, a
+  burst of 40): a flood of junk bearers cannot fail a connected client.
 - **Client address.** Every per-address budget and the audit trail's
   `client_ip` use the direct peer, unless the peer is a trusted proxy.
   `TRUSTED_PROXY_HOPS` (0 to 8) is how many proxies append to
@@ -197,11 +217,12 @@ delete it afterwards.
   safe only where a NetworkPolicy admits nothing but the proxies; the operator
   and the chart write it only then. With hops but no CIDRs the console knows
   the address is shared and drops the per-address budgets (above). With hops 0
-  it cannot know: if a proxy sits in front anyway, every client behind it
-  shares its address and one budget, and twenty junk tokens a minute from
-  anyone lock the token form for everyone. The console warns at start in
-  both cases, hops without CIDRs and hops 0 with a `PUBLIC_URL` that is not
-  loopback. The `pgtools` chart sets one hop when `console.exposure.type` is
+  and a `PUBLIC_URL` that is not loopback it cannot know either (a clusterIP
+  exposure behind an Ingress of your own, a load balancer that rewrites the
+  source address), so it treats the peer's address as shared in the same way.
+  Per-address budgets apply only with trusted CIDRs, or with hops 0 on a
+  loopback `PUBLIC_URL` (or none). The console warns at start in both shared
+  cases. The `pgtools` chart sets one hop when `console.exposure.type` is
   not `none` (`console.trustedProxyHops`, `console.trustedProxyCIDRs`); the
   operator [follows the published exposure](../operator/console.md#trusted-proxies-and-the-ingress-networkpolicy).
 - **Sign-out** is `POST /logout` (`GET /logout` shows the confirmation page). It

@@ -72,6 +72,12 @@ var proxyModes = []struct {
 		name: "hops without CIDRs, the proxy's address shared", shared: true,
 		tweak: func(c *Config) { c.TrustedProxy = ProxyTrust{Hops: 1} },
 	},
+	{
+		// Round 5's P2-1: a clusterIP exposure behind an Ingress of one's
+		// own; LoadConfig sets PeerShared (TestHopsZeroBehindAPublicURL).
+		name: "hops 0 behind a public URL, the peer's address shared", shared: true,
+		tweak: func(c *Config) { c.TrustedProxy = ProxyTrust{PeerShared: true} },
+	},
 }
 
 func withHeaders(a, b map[string]string) map[string]string {

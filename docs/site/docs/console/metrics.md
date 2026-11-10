@@ -43,6 +43,7 @@ Operator in the test clusters).
 | `pgtoolbox_console_mcp_result_bytes{tool}`, `pgtoolbox_console_mcp_result_truncated_total{tool}` | Size of the successful MCP results, and how many were cut to the response cap (`MCP_MAX_RESULT_BYTES`). |
 | `pgtoolbox_console_mcp_oauth_requests_total{endpoint,outcome}` | Requests to the MCP authorization server by endpoint (`register`, `authorize`, `token`, `revoke`, `client_metadata`) and outcome. |
 | `pgtoolbox_console_logins_total{provider,outcome}` | Sign-in attempts. |
+| `pgtoolbox_console_throttled_requests_total{bucket}` | Requests refused by a budget ([throttled requests](#throttled-requests)). |
 | `pgtoolbox_console_session_rejections_total{reason}` | Refused sessions: `expired`, `revoked`, `token_rejected`, `malformed`. |
 | `pgtoolbox_console_token_refreshes_total{outcome}` | OIDC refreshes. |
 | `pgtoolbox_console_revocation_list_valid` | `0` when the last revocation list was refused (the previous one stays in force). |
@@ -58,6 +59,40 @@ Operator in the test clusters).
 | `pgtoolbox_console_volume_trend_series`, `pgtoolbox_console_volume_trend_refused_total` | Volume series the trend store holds, and new ones turned away at `VOLUME_TREND_MAX_SERIES` (those volumes have no forecast; alert on any increase). |
 
 The MCP series have a [dashboard and alerts](alerts.md) in the `pgtools` chart.
+
+## Throttled requests
+
+`pgtoolbox_console_throttled_requests_total{bucket}` counts the requests a
+budget refused, with a fixed set of `bucket` values (never anything a request
+carries):
+
+| `bucket` | Budget |
+|---|---|
+| `sign_in_address` | OAuth callbacks and unrecognised MCP bearers, per client address |
+| `token_form_token`, `token_form_address` | The token form, per pasted token and per client address |
+| `code_exchanges` | OAuth code exchanges with the IdP, per replica |
+| `exchange_reviews` | Reviews of tokens the IdP has just issued, per replica |
+| `token_reviews` | Reviews of tokens the replica never accepted (token form, raw MCP bearers), per replica |
+| `known_reviews` | Re-reviews of raw MCP bearers the replica accepted before, per replica |
+| `mcp_calls`, `mcp_attempts`, `mcp_writes`, `mcp_page_views`, `mcp_page_answers` | The [MCP endpoint's budgets](mcp.md#budgets) |
+| `oauth_requests`, `oauth_registry`, `oauth_tokens`, `oauth_unknown_tokens`, `oauth_registrations`, `oauth_decisions` | The MCP authorization server's budgets |
+| `metrics_scrapes` | `/metrics` per client address |
+
+A per-address bucket rising is one client retrying. A per-replica bucket
+rising (`code_exchanges`, `token_reviews`, `oauth_unknown_tokens`,
+`oauth_registrations`) is a flood that new sign-ins on that replica are now
+waiting behind; `exchange_reviews`, `known_reviews` or `oauth_tokens` rising
+means genuine sign-ins or clients themselves are being refused. A starting
+point for an alert:
+
+```promql
+sum by (namespace, bucket) (
+  rate(pgtoolbox_console_throttled_requests_total{bucket=~"code_exchanges|exchange_reviews|token_reviews|known_reviews|oauth_tokens"}[5m])
+) > 1
+```
+
+held for ten minutes. What such a flood can and cannot do is in
+[security](../security.md).
 
 `forbidden` informer outcomes are the quickest way to see a Role that does not
 match what the console expects.

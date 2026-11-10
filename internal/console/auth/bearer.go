@@ -80,15 +80,26 @@ func (h *Handler) BearerPrincipal(ctx context.Context, token string) (*Principal
 	if !ok {
 		return nil, ErrMalformedBearer
 	}
-	// A token the API server has to be asked about spends one review of
-	// the process-wide bucket the token form also spends (the caller has
-	// already charged its sender's address): distinct junk bearers cannot
-	// make this replica review more than 20 tokens a second. A token whose
-	// answer is cached costs the API server nothing and spends nothing.
-	if !h.reviewCached(tok) && !h.tokenReviews.Allow(tokenReviewsKey) {
-		return nil, ErrReviewsBusy
+	// A token the API server has to be asked about spends one review: of
+	// knownReviews when this replica accepted it before (an MCP client's
+	// token once its cached answer ends), which no junk reaches; otherwise
+	// of the per-replica bucket the token form also spends (the caller has
+	// already charged its sender's address or the token's own budget). A
+	// flood of distinct junk bearers therefore cannot fail a known
+	// client's re-review. A token whose answer is cached spends nothing.
+	if !h.reviewCached(tok) {
+		bucket, key := h.tokenReviews, tokenReviewsKey
+		if h.knownBearers.known(tok, h.now()) {
+			bucket, key = h.knownReviews, knownReviewsKey
+		}
+		if !bucket.Allow(key) {
+			return nil, ErrReviewsBusy
+		}
 	}
 	u, err := h.identity.Review(ctx, tok)
+	if errors.Is(err, ErrTokenRejected) {
+		h.knownBearers.forget(tok)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -117,6 +128,11 @@ func (h *Handler) BearerPrincipal(ctx context.Context, token string) (*Principal
 	if !expiry.IsZero() {
 		p.Expiry, p.AbsoluteExpiry = expiry, expiry
 	}
+	until := now.Add(knownBearerTTL)
+	if !expiry.IsZero() && expiry.Before(until) {
+		until = expiry
+	}
+	h.knownBearers.remember(tok, until, now)
 	return p, nil
 }
 
