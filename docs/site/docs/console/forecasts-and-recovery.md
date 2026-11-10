@@ -177,7 +177,9 @@ source that is off, not a fault.
 
 The bar is drawn from the [evidence agent's](../evidence-agent.md) recovery paths,
 toward the newest timeline a path could follow. A timeline seen in the archive
-but not connected by valid history is reported, not used as the target.
+but not connected by valid history is reported, not used as the target, and an
+off-target path (a backup that cannot reach the newest timeline) is neither the
+target nor drawn.
 
 - **Covered** spans: each path covers from its base backup's end to the
   archive-receipt time of the last contiguous WAL segment. Only a path whose WAL
