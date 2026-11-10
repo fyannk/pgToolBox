@@ -435,6 +435,7 @@ func TestRemovingEvidenceNeverStrengthensAClaim(t *testing.T) {
 			return s
 		}(),
 		"linear ancestry":                  linearScenario(),
+		"ancestor runs past the switch":    ancestorLeftScenario(),
 		"sibling forked after the backup":  siblingAfterEndScenario(),
 		"sibling forked before the backup": siblingBeforeEndScenario(),
 		"backup follows timeline 2": func() timelineScenario {
@@ -535,5 +536,81 @@ func TestCoverageSaysNoBackupIsOnTheNewestTimeline(t *testing.T) {
 	}
 	if NoBackupOnNewestTimeline != barmancloud.NoBackupOnNewestTimeline {
 		t.Fatal("the two formats word the same fact differently")
+	}
+}
+
+// ancestorLeftScenario is the round-5 reproduction (P2-1): a backup on
+// timeline 1, timeline 2 forked at 0/3000000 and timeline 3 forked from 2
+// at 0/5000000. Timeline 2 holds WAL up to segment 9, but a default restore
+// (latest: timeline 3) leaves it at 0/5000000: segments 5 to 9 of timeline
+// 2 are replayed only by a restore that names targetTLI 2.
+func ancestorLeftScenario() timelineScenario {
+	return timelineScenario{
+		begin: 1, end: 1, endLSN: "0/1000100",
+		segments:  map[uint32][]uint64{1: {1, 2}, 2: {3, 4, 5, 6, 7, 8, 9}, 3: {5, 6}},
+		histories: map[uint32]string{2: "1\t0/3000000\tfailover\n", 3: "1\t0/3000000\tfailover\n2\t0/5000000\tfailover\n"},
+		faults:    map[uint32]historyFault{},
+	}
+}
+
+// TestAncestorPathStopsWhereTheDefaultRestoreLeaves: a Barman path toward
+// an ancestor of the timeline 'latest' resolves to ends at the switch where
+// that line leaves it, as pgBackRest's parent legs end at SwitchPosition-1;
+// its reason names the targetTLI the later WAL needs. Both formats agree
+// on the path toward the newest timeline.
+func TestAncestorPathStopsWhereTheDefaultRestoreLeaves(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name     string
+		scenario timelineScenario
+		// frontier position of the Barman path toward each ancestor
+		ancestors map[uint32]uint64
+		needs     map[uint32]bool // ancestors whose reason names targetTLI
+	}{
+		{name: "timeline 2 runs past the switch", scenario: ancestorLeftScenario(), ancestors: map[uint32]uint64{1: 2, 2: 4}, needs: map[uint32]bool{2: true}},
+		{name: "linear, each parent holds its switch segment", scenario: linearScenario(), ancestors: map[uint32]uint64{1: 4, 2: 6}, needs: map[uint32]bool{1: true, 2: true}},
+		{name: "a gap after the switch is not on the path", scenario: func() timelineScenario {
+			s := ancestorLeftScenario()
+			s.segments[2] = []uint64{3, 4, 7, 8, 9}
+			return s
+		}(), ancestors: map[uint32]uint64{1: 2, 2: 4}, needs: map[uint32]bool{2: true}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			server := test.scenario.barman(t)
+			pg := test.scenario.pgbackrest(t)
+			if pg.State != evidence.Healthy || pg.TargetTimeline != 3 {
+				t.Fatalf("pgBackRest path to %d %s %q", pg.TargetTimeline, pg.State, pg.Reason)
+			}
+			seen := 0
+			for _, path := range server.Paths {
+				if path.TargetTimeline == pg.TargetTimeline {
+					seen++
+					if path.State != pg.State || path.FrontierTimeline != pg.FrontierTimeline || path.FrontierPosition != pg.FrontierPosition {
+						t.Errorf("Barman path to %d %s at %d/%d, pgBackRest %s at %d/%d", path.TargetTimeline, path.State, path.FrontierTimeline, path.FrontierPosition, pg.State, pg.FrontierTimeline, pg.FrontierPosition)
+					}
+					continue
+				}
+				want, ok := test.ancestors[path.TargetTimeline]
+				if !ok {
+					t.Errorf("unexpected Barman path to %d: %+v", path.TargetTimeline, path)
+					continue
+				}
+				seen++
+				if path.State != evidence.Healthy || path.OffTarget || path.FrontierTimeline != path.TargetTimeline || path.FrontierPosition != want {
+					t.Errorf("Barman path to ancestor %d %s off-target %v at %d/%d %q, want healthy at %d/%d", path.TargetTimeline, path.State, path.OffTarget, path.FrontierTimeline, path.FrontierPosition, path.Reason, path.TargetTimeline, want)
+				}
+				needs := fmt.Sprintf("needs targetTLI %d", path.TargetTimeline)
+				if strings.Contains(path.Reason, needs) != test.needs[path.TargetTimeline] {
+					t.Errorf("Barman path to ancestor %d reason %q, names %q: want %v", path.TargetTimeline, path.Reason, needs, test.needs[path.TargetTimeline])
+				}
+			}
+			if seen != len(test.ancestors)+1 {
+				t.Fatalf("Barman paths %+v", server.Paths)
+			}
+			if server.CoverageState != evidence.Healthy {
+				t.Fatalf("Barman coverage %s %q", server.CoverageState, server.CoverageReason)
+			}
+		})
 	}
 }
