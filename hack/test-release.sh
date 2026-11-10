@@ -187,6 +187,19 @@ expect 1 'did not finish' -- ./hack/release.sh wait-ci deadbeef
 # No check run at all: fail fast, with the command that fixes it.
 : > "${runs}"
 expect 1 'dispatch ci.yml and security.yml on deadbeef' -- ./hack/release.sh wait-ci deadbeef
+# preflight: one poll, no waiting; a green pair on a dated CHANGELOG passes,
+# a missing check run or an Unreleased heading fails before any tag is pushed.
+pre() { (cd "${repo}" && GH_STUB_RUNS="${runs}" ./hack/release.sh preflight "$@"); }
+changelog "## [${version}] - 2026-11-09"
+{ tab ci-ok completed success 2026-11-10T10:00:00Z 20; tab security-gate completed success 2026-11-10T10:00:00Z 21; } > "${runs}"
+expect 0 'ok: preflight' -- pre "v${version}" deadbeef
+{ tab ci-ok completed success 2026-11-10T10:00:00Z 20; } > "${runs}"
+expect 1 'did not finish' -- pre "v${version}" deadbeef
+: > "${runs}"
+expect 1 'no check run exists for deadbeef' -- pre "v${version}" deadbeef
+{ tab ci-ok completed success 2026-11-10T10:00:00Z 20; tab security-gate completed success 2026-11-10T10:00:00Z 21; } > "${runs}"
+changelog "## [${version}] - Unreleased"
+expect 1 'still says Unreleased' -- pre "v${version}" deadbeef
 unset GH_STUB_RUNS CI_WAIT_SLEEP CI_WAIT_ATTEMPTS CI_WAIT_EMPTY_ATTEMPTS
 
 # ---- verify-published: anonymous pulls, then signature and attestation of
@@ -274,3 +287,30 @@ grep -q ' chart-digests.txt$' "${work}/sums/SHA256SUMS" || fail "SHA256SUMS lack
 
 echo "ok: hack/release.sh"
 cd "${root}"
+
+# ---- retry: the bounded loop the workflow's verify step shares with
+# verify-published; a command that never succeeds fails after VERIFY_ATTEMPTS.
+export VERIFY_SLEEP=0 VERIFY_ATTEMPTS=2
+expect 0 '' -- ./hack/release.sh retry true
+expect 1 'attempt 2/2 failed' -- ./hack/release.sh retry false
+
+# ---- release.yml: the nested module's release is never "latest"; the product
+# release is latest only for a stable tag. (A release that takes the badge from
+# the product is what `gh release create` does by default for the newest one.)
+wf="${root}/.github/workflows/release.yml"
+grep -q -- 'flags+=(--latest=false)' "${wf}" || fail "release.yml: module release does not pass --latest=false"
+grep -q -- 'flags+=(--prerelease --latest=false)' "${wf}" || fail "release.yml: product rc does not pass --latest=false"
+grep -q -- 'flags+=(--latest)' "${wf}" || fail "release.yml: stable product release does not pass --latest"
+grep -q -- 'gh release edit "${TAG}" --draft=false --latest$' "${wf}" || fail "release.yml: publishing a stable release does not pass --latest"
+echo "ok: release.yml latest flags"
+
+# ---- Chart.yaml: helm push stamps org.opencontainers.image.source from the
+# first entry of `sources`, so it must be this repository.
+for c in pgtoolbox pgtools; do
+  first="$(awk '/^sources:/ { on = 1; next } on && /^ *- / { print $2; exit }' "${root}/charts/${c}/Chart.yaml")"
+  [[ "${first}" == "https://github.com/fyannk/pgToolBox" ]] || fail "charts/${c}/Chart.yaml: first source is '${first}', want the repository (OCI image.source annotation)"
+done
+# ---- Dockerfile: network installs are retried like go mod download.
+grep -q 'pnpm install --frozen-lockfile && exit 0' "${root}/Dockerfile" || fail "Dockerfile: pnpm install is not retried"
+grep -q 'npm ci --no-audit --no-fund && exit 0' "${root}/Dockerfile" || fail "Dockerfile: npm ci is not retried"
+echo "ok: chart sources, Dockerfile retries"

@@ -35,6 +35,10 @@ SETUP_ENVTEST ?= $(call tool,setup-envtest,go run sigs.k8s.io/controller-runtime
 # console's kube layer is exercised on the newest the e2e uses.
 ENVTEST_K8S_VERSION_API ?= 1.34.1
 ENVTEST_K8S_VERSION_CONSOLE ?= 1.34.1
+# The supported range is Kubernetes 1.34 to 1.36. PRs run the oldest; the
+# nightly run and a dispatch run 1.35.0 and 1.36.2 (ci.yml, envtest-k8s). The
+# same on a laptop: make test-envtest ENVTEST_K8S_VERSION_API=1.36.2
+# ENVTEST_K8S_VERSION_CONSOLE=1.36.2 (`setup-envtest list` shows what exists).
 
 # Go modules in this tree: the root and the nested evidence module (go.work).
 EVIDENCE_MODULE = pkg/evidence
@@ -421,6 +425,10 @@ COSIGN_OIDC_ISSUER ?= https://token.actions.githubusercontent.com
 .PHONY: release-check
 release-check: ## Check semver, annotated tag, chart versions and CHANGELOG for TAG (default: the chart's version). REQUIRE_TAG=1 insists the tag exists.
 	REQUIRE_TAG=$(REQUIRE_TAG) ./hack/release.sh check $(TAG)
+
+.PHONY: release-preflight
+release-preflight: ## Before pushing TAG: dated CHANGELOG, annotated tag, ci-ok and security-gate green on the tagged SHA (gh; needs GH_TOKEN). SHA=... overrides the commit.
+	./hack/release.sh preflight $(TAG) $(SHA)
 
 .PHONY: release-check-module
 release-check-module: ## Check a nested-module tag (pkg/evidence/vX.Y.Z): module path, semver, annotation, same commit rules.
