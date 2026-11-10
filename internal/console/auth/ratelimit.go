@@ -102,6 +102,18 @@ func addressKey(ip string) string {
 	return p.String()
 }
 
+// BudgetKey is the per-address budget key of r's client, and false when
+// the address is shared by every client behind proxies the console does
+// not trust (ProxyTrust.SharedClientKey): such a key must not be
+// charged, since one sender would spend it for everyone. Callers bound
+// that case per token, person or flow, and by a process-wide bucket.
+func BudgetKey(r *http.Request, trust ProxyTrust) (string, bool) {
+	if trust.SharedClientKey() {
+		return "", false
+	}
+	return ClientKey(r, trust), true
+}
+
 // ClientKey is the rate-limit key of r's client, honouring the trusted
 // proxies.
 func ClientKey(r *http.Request, trust ProxyTrust) string {

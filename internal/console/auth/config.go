@@ -275,8 +275,9 @@ func (c *Config) Warnings() []string {
 	case c.TrustedProxy.Hops > 0 && len(c.TrustedProxy.CIDRs) == 0:
 		out = append(out, "TRUSTED_PROXY_HOPS is set without TRUSTED_PROXY_CIDRS: X-Forwarded-For is ignored, "+
 			"because any peer that reaches the console directly could forge it. Every client behind the proxy then "+
-			"shares the proxy's address, and so one sign-in budget; list the proxies' addresses in "+
-			"TRUSTED_PROXY_CIDRS (0.0.0.0/0,::/0 only when a NetworkPolicy admits nothing but the proxies)")
+			"shares the proxy's address, so the per-address sign-in budgets are off and only the process-wide ones "+
+			"(40 at once, 20 a second, per path) bound sign-ins, and the audit log names the proxy; list the proxies' "+
+			"addresses in TRUSTED_PROXY_CIDRS (0.0.0.0/0,::/0 only when a NetworkPolicy admits nothing but the proxies)")
 	case c.TrustedProxy.Hops == 0 && c.PublicURL != "" && !loopbackURL(c.PublicURL):
 		out = append(out, "TRUSTED_PROXY_HOPS is 0 with a non-loopback PUBLIC_URL: if a proxy sits in front, every "+
 			"client shares its address, and one address's sign-in budget (20 pasted tokens a minute) locks token "+

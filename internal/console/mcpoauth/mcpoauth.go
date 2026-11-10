@@ -150,6 +150,15 @@ const (
 	decisionsPerMinute = 10
 	decisionsBurst     = 5
 	maxLimiterKeys     = 10000
+	// The token and registration endpoints' process-wide bounds (one key):
+	// what bounds them when the client address is shared and no
+	// per-address budget is charged (auth.BudgetKey). A burst lets every
+	// client of a team refresh at once.
+	tokenRequestsPerSecond = 20
+	tokenRequestsBurst     = 40
+	registrationsPerMinute = 120
+	registrationsBurst     = 30
+	processKey             = "process"
 	// userKeyPurpose keys the grant index's user hashes.
 	userKeyPurpose = "mcp-grant-user"
 )
@@ -222,12 +231,15 @@ type Options struct {
 
 // Server is the authorization server.
 type Server struct {
-	o         Options
-	codec     *auth.Codec
-	audit     *auth.Auditor
-	requests  *auth.RateLimiter
-	registry  *auth.RateLimiter
-	decisions *auth.RateLimiter
+	o        Options
+	codec    *auth.Codec
+	audit    *auth.Auditor
+	requests *auth.RateLimiter
+	registry *auth.RateLimiter
+	// tokenRequests and registrations are the process-wide buckets.
+	tokenRequests *auth.RateLimiter
+	registrations *auth.RateLimiter
+	decisions     *auth.RateLimiter
 
 	mu      sync.Mutex
 	touched map[string]time.Time
@@ -283,11 +295,13 @@ func New(o Options) (*Server, error) {
 	}
 	s := &Server{
 		o: o, codec: o.Sessions.Codec(),
-		audit:     &auth.Auditor{Logger: o.Log, TrustedProxy: o.TrustedProxy},
-		requests:  auth.NewRateLimiter(requestsPerMinute, requestsBurst, maxLimiterKeys),
-		registry:  auth.NewRateLimiter(registersPerMinute, registersBurst, maxLimiterKeys),
-		decisions: auth.NewRateLimiter(decisionsPerMinute, decisionsBurst, maxLimiterKeys),
-		touched:   map[string]time.Time{},
+		audit:         &auth.Auditor{Logger: o.Log, TrustedProxy: o.TrustedProxy},
+		requests:      auth.NewRateLimiter(requestsPerMinute, requestsBurst, maxLimiterKeys),
+		registry:      auth.NewRateLimiter(registersPerMinute, registersBurst, maxLimiterKeys),
+		tokenRequests: auth.NewRateLimiter(tokenRequestsPerSecond*60, tokenRequestsBurst, 1),
+		registrations: auth.NewRateLimiter(registrationsPerMinute, registrationsBurst, 1),
+		decisions:     auth.NewRateLimiter(decisionsPerMinute, decisionsBurst, maxLimiterKeys),
+		touched:       map[string]time.Time{},
 	}
 	if len(s.userKeys("probe")) == 0 {
 		return nil, errors.New("mcpoauth: the session codec derives no keys")

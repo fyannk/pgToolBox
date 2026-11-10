@@ -56,6 +56,14 @@ func (p ProxyTrust) trusts(addr netip.Addr) bool {
 // Enabled reports whether X-Forwarded-For is read at all.
 func (p ProxyTrust) Enabled() bool { return p.Hops > 0 && len(p.CIDRs) > 0 }
 
+// SharedClientKey reports whether ClientKey names a shared address
+// rather than a client: proxies are declared (Hops) but none is trusted
+// (no CIDRs), so X-Forwarded-For is ignored and every client behind the
+// proxies has the proxy's address. A per-address budget then is one
+// budget for everyone, which anyone can spend, so the sign-in paths do
+// not charge it (see Handler.addressBudget).
+func (p ProxyTrust) SharedClientKey() bool { return p.Hops > 0 && len(p.CIDRs) == 0 }
+
 // String lists the CIDRs, comma-separated (pgtoolbox_console_config_info).
 func (p ProxyTrust) String() string {
 	parts := make([]string, len(p.CIDRs))

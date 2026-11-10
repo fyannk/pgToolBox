@@ -74,7 +74,10 @@ what the design guarantees and, as plainly, what it does not.
   console.
 - **Client addresses**: `X-Forwarded-For` is believed only from the proxies
   named in `TRUSTED_PROXY_CIDRS`, else ignored, so a Pod that reaches the console
-  directly cannot escape the per-address sign-in budgets or forge `client_ip`;
+  directly cannot escape the per-address sign-in budgets or forge `client_ip`.
+  Without trusted CIDRs behind a declared proxy every client has the proxy's
+  address, so no per-address budget is charged and only the per-replica bounds
+  (20 a second, burst 40, per sign-in path) limit sign-ins;
   the operator renders an ingress NetworkPolicy for a published Route (and for an
   Ingress or Gateway that names its controller) and only then trusts every
   admitted peer ([details](operator/console.md#trusted-proxies-and-the-ingress-networkpolicy)).
@@ -220,6 +223,8 @@ in view.
 | **Who may write `evidenceagents/status` in a namespace can receive that namespace's evidence token.** The console calls an agent only when the operator's field manager wrote `status.endpoint` and `status.caBundle`, but a writer can name itself after the operator. | Read access to the backup metadata of that same namespace's agents only: each namespace has its own token audience. | Grant `update`/`patch` on `evidenceagents/status` to the operator only. Details on [the evidence agent](evidence-agent.md#trust). |
 | **Sign-out does not revoke the token** at the identity provider or OpenShift's OAuth server. | A copied token works until it expires. | Short token lifetimes at the IdP; the console's [revocation list](console/authentication.md#revoking-sessions) ends *console* sessions. |
 | **The console caches a positive identity for 30 s and a positive SAR for 10 s.** | A revoked person may keep seeing views for up to that long; writes stop at once. | None needed; stated for incident response. |
+| **An expired or revoked access request does not end access already open.** Deleting the RoleBinding stops new authorizations only. | Up to the console's caches above (10 s per SAR, 30 s per identity) in the console; up to **1 h** in pgAdmin on OpenShift, whose oauth-proxy checks access at sign-in only and keeps its cookie that long; and as long as they last, pgAdmin's open database connections and websockets. | For an incident, delete the PgAdmin's `<name>-pgadmin-proxy-cookie` Secret and then its Pod (this ends every pgAdmin session of it), and terminate the user's backends in PostgreSQL ([access requests](console/access-requests.md#lifecycle)). |
+| **The four-eyes check covers the console's approval path only.** Approvers hold `create rolebindings` and `bind` on both roles. | An approver can bind `pgtoolbox-console-operator` to themselves directly with `kubectl`, with no request and no second person; the operator does not see such a binding. | Grant `pgtoolbox-console-approver` only to people trusted with the namespace's access; watch RoleBindings to the two roles in the API server's audit log. |
 | **`/metrics` on the console's probe port is plain HTTP when the console has no certificate.** | A scraper's token crosses the pod network in clear text. | Set `console.tls.secretName`: the probe port, `/metrics` included, is then HTTPS with the console's certificate ([metrics](console/metrics.md)). |
 | **The OpenShift sign-in using the ServiceAccount's projected token as client secret is not yet verified on a live cluster.** | If OpenShift rejects it, sign-in fails with `invalid_client`. | Use a long-lived token Secret ([checklist](console/openshift.md#manual-checklist), step 5). |
 | **The pgAdmin container's root filesystem is writable.** | An attacker with code execution in the container can write to its filesystem. | Restricted Pod Security, no capabilities, optional NetworkPolicy; read-only is an image change on the roadmap. |
