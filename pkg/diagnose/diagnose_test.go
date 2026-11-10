@@ -41,7 +41,7 @@ func schedule(name, expr string) observe.ScheduledBackupFacts {
 
 // TestRunsPerDayReadsTheSixFieldCron pins the arithmetic the whole
 // finding rests on, including the case it exists for: a five-field
-// expression written from habit gains a field and becomes hourly.
+// expression written from habit is read seconds first and is hourly.
 func TestRunsPerDayReadsTheSixFieldCron(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -53,7 +53,10 @@ func TestRunsPerDayReadsTheSixFieldCron(t *testing.T) {
 		{"0 2 * * * *", 24, true},             // the mistake: every hour at 02 past
 		{"0 0 */6 * * *", 4, true},            // every six hours
 		{"*/30 * * * * *", 60 * 2 * 24, true}, // every thirty seconds
-		{"0 2 * * *", 0, false},               // five fields: the operator refuses it
+		{"0 2 * * *", 24, true},               // five fields: robfig/cron v1 reads seconds first, dow "*"
+		{"0 0 2 * *", 1, true},                // five fields, seconds first: daily at 02:00
+		{"0 0 2 1 *", 0, false},               // five fields, restricted day of month: declines
+		{"0 2 * *", 0, false},                 // four fields: the operator refuses it
 		{"0 0 2 * * 0", 0, false},             // restricted weekday: declines
 		{"0 0 1,13 * * *", 0, false},          // list: declines rather than guesses
 		{"", 0, false},
@@ -113,6 +116,20 @@ func TestCadenceReportsTheShiftedSchedule(t *testing.T) {
 	// It proposes; it never remediates.
 	if finding.Link != "/backups" {
 		t.Errorf("link = %q, want a screen", finding.Link)
+	}
+}
+
+// TestCadenceReportsTheFiveFieldCrontab is the regression test of the
+// five-field habit: robfig/cron v1, the operator's parser, accepts
+// 0 2 * * * as second 0, minute 2, every hour, so the finding fires.
+func TestCadenceReportsTheFiveFieldCrontab(t *testing.T) {
+	t.Parallel()
+	result := Run(input([]observe.ScheduledBackupFacts{schedule("orders-nightly", "0 2 * * *")}, nil))
+	if len(result.Findings) != 1 || !strings.Contains(result.Findings[0].Summary, "24 times a day") {
+		t.Fatalf("findings = %+v, want one at 24 a day", result.Findings)
+	}
+	if !strings.Contains(result.Findings[0].Evidence[0].Detail, `"0 2 * * *"`) {
+		t.Errorf("schedule not quoted verbatim: %q", result.Findings[0].Evidence[0].Detail)
 	}
 }
 
