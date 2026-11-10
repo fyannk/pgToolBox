@@ -65,8 +65,9 @@ OpenShift.
   and installer manifests are pinned by digest from the tree's core version, a
   pin that changes nothing fails the release, and `latest` moves only after the
   packages are verified public.
-- **Release verification.** The notes of the final tag list every commit since the
-  previous stable tag (release candidates included); the OLM bundle and catalog
+- **Release verification.** The notes of a release are its CHANGELOG section and a
+  link to the commit log (the compare view, or the history for the first release),
+  not the log pasted in; the OLM bundle and catalog
   images are scanned on every pull request and push, not first in the release; the
   release rehearsal pins the bundle and catalog on every run; after the prune, and
   weekly, `verify-release.yml` pulls every image and both charts with no
@@ -223,6 +224,14 @@ OpenShift.
   them); the verify docs name cosign v3 as the minimum; the docs say a pushed tag
   cannot be deleted; the CI image cache has one scope per architecture; the
   anonymous-pull check polls for 20 minutes so package visibility can be flipped
-  during the run.
+  during the run and, while it waits, names the settings page of every private
+  package in a `::notice`. A release candidate and its final tag are cut on the
+  same commit with the CHANGELOG already dated (`release-preflight` and the
+  workflow refuse `Unreleased` for a candidate too); the release's `prepare` job
+  holds `actions: read`, which the full-tier check needs; Pages after a release
+  builds the tag; a daily `cache-prune.yml` keeps the Actions cache under its
+  limit; `verify-pins-cnpgstatus` runs every pin test; the repository-settings page
+  matches the live rulesets; the e2e clients drop idle connections before the
+  console closes them.
 
 [0.1.0]: https://github.com/fyannk/pgToolBox/releases/tag/v0.1.0
