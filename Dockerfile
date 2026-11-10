@@ -121,8 +121,9 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -trimpat
 # --operator-image.
 #
 # The labels are the ones a plain `docker build` can know. The release
-# workflow overrides them through hack/release.sh, which also supplies the
-# revision; a local build has no commit to claim.
+# workflow (docker/metadata-action) sets title and description per image, the
+# same words as below, and adds revision and created; a local build has no
+# commit to claim.
 FROM gcr.io/distroless/static-debian13:nonroot@sha256:25ac8f0c3b2334a9eb05452266bd4697864a8c8ef0ef71e5e6480d7f92868329 AS operator
 ARG VERSION=development
 LABEL org.opencontainers.image.title="pgToolBox operator" \
