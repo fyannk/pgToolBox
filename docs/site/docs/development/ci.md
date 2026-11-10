@@ -113,7 +113,7 @@ normalised result that `hack/security_report.py` merges.
 
 | Scanner | Looks at | Blocks |
 |---|---|---|
-| CodeQL (go, javascript-typescript, actions) | the source | code scanning results, through the ruleset |
+| CodeQL (go, javascript-typescript, actions) | the source | code scanning results, in the Security tab (the ruleset does not require them; `security-gate` does the gating) |
 | govulncheck | both Go modules, by call graph | any reachable vulnerability |
 | osv-scanner | `ui/pnpm-lock.yaml`, `docs/site/package-lock.json`, `headlamp/package-lock.json`, both `go.mod` | a fixable critical; on a pull request a new fixable high |
 | `npm audit` | the docs site and the SPA's runtime dependencies | any advisory not in `hack/npm-audit-accepted.txt` |

@@ -14,14 +14,24 @@ once, after the first push, and again if the repository is ever recreated.
 
 Settings, Rules, Rulesets, New branch ruleset. Target the default branch.
 
+The ruleset "Protect main" as it is configured (`gh api repos/fyannk/pgToolBox/rulesets`),
+with no bypass actor:
+
 | Rule | Setting |
 |---|---|
 | Restrict deletions, block force pushes | on |
-| Require a pull request before merging | on; 0 required approvals while one person maintains it; require conversation resolution |
-| Require status checks to pass | on; "Require branches to be up to date" on; the checks below |
-| Require code scanning results | on; tool CodeQL, security alerts "High or higher", alerts "Errors" |
-| Require linear history | on (squash merges, which is what `automerge.yml` uses) |
-| Require signed commits | optional |
+| Require a pull request before merging | on; 0 required approvals while one person maintains it; require conversation resolution; merge, squash and rebase allowed (`automerge.yml` squashes) |
+| Require status checks to pass | on, the two checks below; "Require branches to be up to date" **off** (`do_not_enforce_on_create` on) |
+
+Not enabled today, each an optional owner toggle (none is needed for the release
+process, and each costs something):
+
+| Optional rule | Trade-off |
+|---|---|
+| Require branches to be up to date | Every merge would need a re-run of `ci-ok` on the new base; with one maintainer and the weekly and per-merge full runs on `main`, the cost outweighs it |
+| Require code scanning results (CodeQL, "High or higher") | CodeQL runs in `security.yml`, whose `security-gate` already fails on what matters; this rule would add a second, slower gate on the same alerts |
+| Require linear history | Only a policy: `automerge.yml` squashes and the maintainer's merges are squash too, but the rule would refuse a merge commit |
+| Require signed commits | Optional; the bot's squash commits are signed by GitHub |
 
 **Required status checks** (the names are the jobs' names):
 
