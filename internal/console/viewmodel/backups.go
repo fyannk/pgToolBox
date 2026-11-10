@@ -337,4 +337,7 @@ type EvidenceFact struct {
 	Health  Health `json:"health" enum:"ok,progressing,warning,critical,inactive,unknown,info"`
 	Code    string `json:"code,omitempty"`
 	Message string `json:"message,omitempty"`
+	// Phrase is Message as a translatable sentence, when the console
+	// recognises its shape (the timeline reasons); absent otherwise.
+	Phrase *Phrase `json:"phrase,omitempty" doc:"Message as a translatable Phrase, when the console recognises its shape; absent otherwise."`
 }

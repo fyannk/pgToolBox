@@ -55,7 +55,11 @@ func evidenceHealth(s evidencev1alpha1.State) viewmodel.Health {
 }
 
 func evidenceFact(s evidencev1alpha1.State, r evidencev1alpha1.Reason) viewmodel.EvidenceFact {
-	return viewmodel.EvidenceFact{State: string(s), Health: evidenceHealth(s), Code: bound(r.Code), Message: bound(r.Message)}
+	f := viewmodel.EvidenceFact{State: string(s), Health: evidenceHealth(s), Code: bound(r.Code), Message: bound(r.Message)}
+	if p, ok := timelinePhrase(f.Message); ok {
+		f.Phrase = &p
+	}
+	return f
 }
 
 // utc is a time in UTC, or nil.

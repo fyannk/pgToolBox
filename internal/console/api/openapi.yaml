@@ -1296,6 +1296,9 @@ components:
     Condition:
       additionalProperties: false
       properties:
+        cap:
+          $ref: "#/components/schemas/Phrase"
+          description: "Why Health is capped below the table's ok: the table was not verified for the detected CNPG minor, or no minor was detected."
         health:
           enum:
             - ok
@@ -2179,6 +2182,9 @@ components:
           type: string
         message:
           type: string
+        phrase:
+          $ref: "#/components/schemas/Phrase"
+          description: Message as a translatable Phrase, when the console recognises its shape; absent otherwise.
         state:
           description: The agent's state, verbatim.
           type: string
@@ -5138,6 +5144,9 @@ components:
     Phase:
       additionalProperties: false
       properties:
+        cap:
+          $ref: "#/components/schemas/Phrase"
+          description: "Why Health is capped below the table's ok: the table was not verified for the detected CNPG minor, or no minor was detected."
         health:
           description: Class of the phase from the per-minor table.
           enum:
@@ -5697,6 +5706,7 @@ components:
             - candidateGap
             - unknown
             - reported
+            - walEnd
           type: string
         params:
           additionalProperties:
@@ -5747,6 +5757,13 @@ components:
           $ref: "#/components/schemas/Provenance"
         reason:
           type: string
+        reasons:
+          description: The parts of reason, in order, each a Phrase a client can translate; reason is their English texts joined with '; '.
+          items:
+            $ref: "#/components/schemas/Phrase"
+          type:
+            - array
+            - "null"
         restoreTested:
           type: boolean
         segments:
@@ -6005,6 +6022,9 @@ components:
         generatedAt:
           format: date-time
           type: string
+        historyFile:
+          description: A timeline history file (such as 00000003.history) the evidence names as missing or unreadable; coverage may rest on it.
+          type: string
         params:
           additionalProperties:
             type: string
@@ -6012,6 +6032,13 @@ components:
           type: object
         provenance:
           $ref: "#/components/schemas/Provenance"
+        reasons:
+          description: Why no restore window is known (the timeline's reasons), when the answer rests on that.
+          items:
+            $ref: "#/components/schemas/Phrase"
+          type:
+            - array
+            - "null"
         ref:
           $ref: "#/components/schemas/ClusterRef"
         text:

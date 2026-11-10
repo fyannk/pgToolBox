@@ -104,6 +104,8 @@ type Condition struct {
 	// Known is false for a condition type the table of the observed
 	// minor does not list.
 	Known bool `json:"known"`
+	// Cap says why Health is below the table's class, as Phase.Cap.
+	Cap *Phrase `json:"cap,omitempty" doc:"Why Health is capped below the table's ok: the table was not verified for the detected CNPG minor, or no minor was detected."`
 }
 
 // OperatorWaiting is "why is the operator waiting?".
