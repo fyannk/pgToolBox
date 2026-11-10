@@ -869,6 +869,7 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `image` _[ImageSpec](#imagespec)_ | The oauth-proxy image. Omitted, the operator's default. |  | Optional: \{\} <br /> |
+| `sessionMaxAge` _[Duration](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.34/#duration-v1-meta)_ | How long an oauth-proxy session lasts (--cookie-expire). The proxy<br />reviews connect at sign-in only, so this bounds how long a revoked<br />person keeps pgAdmin open; when it ends the proxy signs the person in<br />again, silently while their OpenShift session lasts, but a request<br />in flight (a form being posted) can be lost. Default 1h. |  | Optional: \{\} <br /> |
 
 
 #### PgAdminReference
@@ -1949,6 +1950,7 @@ by `docs/site/crd-ref-docs/cel-rules.awk`.
 - `PgAdminStorageSpec.storageClassName`: storageClassName is immutable
 - `PgAdminAuthSpec`: exactly one of oauth2 and openshiftOAuthProxy is required
 - `PgAdminOAuth2Spec.requiredClaims`: claim names are 1-64 characters of letters, digits and _.:-
+- `PgAdminOpenShiftOAuthProxySpec.sessionMaxAge`: sessionMaxAge must be between 5m and 12h
 - `PgAdmin`: metadata.name must be a DNS-1035 label of at most 40 characters (it prefixes generated object names)
 - `PgToolBoxConsoleExposureSpec`: networkPolicy.enabled needs networkPolicy.from for ingress and gateway exposure: the controller's namespace is not known
 - `PgToolBoxConsolePolicyPeer`: each networkPolicy.from peer needs podSelector, namespaceSelector or ipBlock
