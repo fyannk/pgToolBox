@@ -260,6 +260,16 @@ func (c *CachedReviewer) Review(ctx context.Context, token string) (authz.User, 
 	return u, nil
 }
 
+// Cached reports whether token's identity is cached and fresh.
+func (c *CachedReviewer) Cached(token string) bool {
+	key := sha256.Sum256([]byte(token))
+	now := c.now()
+	c.mu.Lock()
+	e, ok := c.entries[key]
+	c.mu.Unlock()
+	return ok && now.Before(e.exp)
+}
+
 // Forget drops the cached identity of token (sign-out).
 func (c *CachedReviewer) Forget(token string) {
 	key := sha256.Sum256([]byte(token))

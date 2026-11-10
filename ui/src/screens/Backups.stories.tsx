@@ -7,11 +7,12 @@ import {
   recoveryHealthy,
   recoveryMixedHoles,
   recoveryNone,
+  recoveryReportedArchivingFailing,
   recoveryReportedOnly,
 } from "../../mocks/fixtures/extra";
 import { handlersFor } from "../../mocks/handlers";
 import type { OperationOffer, RestoreDrill } from "../api/generated/model";
-import { compact, dark, darkCompact } from "../testing/variants";
+import { compact, dark, darkCompact, french } from "../testing/variants";
 import { BackupsScreen, BackupsView } from "./Backups";
 
 /** How the Cluster backs up, recency and archiving, every Backup and schedule, and the repository evidence cross-check (the agent's conclusions, never a restore promise). */
@@ -113,6 +114,31 @@ export const RecoveryReportedOnly: Story = {
   },
 };
 export const RecoveryReportedOnlyDarkCompact = darkCompact(RecoveryReportedOnly);
+/**
+ * No evidence agent and WAL archiving failing: after the last base backup
+ * the time is unknown, and after the primary's last archived segment its
+ * WAL is likely not in the repository. The archiver hint shows, without
+ * "refresh the evidence" (there is no agent).
+ */
+export const RecoveryReportedArchivingFailing: Story = {
+  args: { data: { ...backups, recoveryTimeline: recoveryReportedArchivingFailing } },
+  play: async ({ canvas, canvasElement }) => {
+    const spans = within(canvas.getByRole("list", { name: "Spans of the recovery window" }));
+    await expect(spans.getByText(/is likely not in the repository\.$/)).toBeVisible();
+    await expect(spans.queryByText(/may well be possible/)).toBeNull();
+    await expect(canvasElement.querySelector('[data-pitr-edge-hint="reported"]')).not.toBeNull();
+    await expect(canvas.getByText(/check pg_stat_archiver again:$/)).toBeVisible();
+  },
+};
+/** The same in French: Go's sentences are said from their codes, not shown in English. */
+export const RecoveryReportedArchivingFailingFrench: Story = french({
+  args: RecoveryReportedArchivingFailing.args,
+  play: async ({ canvas }) => {
+    const spans = within(canvas.getByRole("list", { name: "Intervalles de la fenêtre de restauration" }));
+    await expect(spans.getByText(/ne sont probablement pas dans le dépôt\.$/)).toBeVisible();
+    await expect(spans.queryByText(/likely not in the repository/)).toBeNull();
+  },
+});
 /** Neither evidence nor an operator window: no bar, Go's reason. */
 export const RecoveryNone: Story = {
   args: { data: { ...backups, recoveryTimeline: recoveryNone } },

@@ -65,5 +65,48 @@ OpenShift.
   and installer manifests are pinned by digest from the tree's core version, a
   pin that changes nothing fails the release, and `latest` moves only after the
   packages are verified public.
+- **Release verification.** The notes of the final tag list every commit since the
+  previous stable tag (release candidates included); the OLM bundle and catalog
+  images are scanned on every pull request and push, not first in the release; the
+  release rehearsal pins the bundle and catalog on every run; after the prune, and
+  weekly, `verify-release.yml` pulls every image and both charts with no
+  credentials and verifies signatures and attestations. A failed candidate is
+  superseded by the next one (`-rc.N+1`), never moved. The images are not claimed
+  to be bit-for-bit reproducible. The catalog image builds opm and
+  `grpc_health_probe` from source (opm v1.74.0) with the repository's Go and
+  dependency versions, since the upstream opm image ships fixable high
+  vulnerabilities.
+- **The restore check without an evidence agent** reads the primary's last
+  archived WAL time: "may well be possible" only while archiving is healthy, and
+  "likely not in the repository" when it fails. With an agent, a time between
+  its WAL frontier and its scan is unknown, not "not covered". Restore-check and
+  recovery-window sentences are translated; the Overview shows the last archived
+  WAL; the failover data-loss answer shows the age of its sweep and is unknown
+  when the sweep is stale.
+- **Backup cadence** is read with CloudNativePG's own cron parser (robfig/cron
+  v1.2.0), so descriptors, `@every`, lists, ranges and day-restricted schedules
+  are checked. On a CloudNativePG minor whose phase table was not verified, a
+  healthy phase reads as a warning. Restore-drill pruning keeps the newest pass
+  of a recreated Cluster.
+- **Admission policy**: an EvidenceAgent's `allowedSecrets` needs `get` on those
+  Secrets; a kept Secret reference whose destination changes is checked again;
+  a PgAdmin that offers Cluster credentials needs `get` on the namespace's
+  Secrets. A kustomize component (`config/components/admission`) ships the same
+  policies; the OLM bundle has none, as its page says. On OpenShift, pgAdmin's
+  OAuth proxy sessions last one hour.
+- **Recovery evidence follows `recovery_target_timeline 'latest'`** as PostgreSQL
+  resolves it, in both formats: a missing middle history file, or an unreadable
+  newest one, no longer reads as healthy coverage, and an off-target path names
+  the timeline a restore must ask for. Snapshots carry `producer.features`; the
+  console takes no coverage from an agent without `recovery-timeline-latest`, or
+  whose timeline evidence is not healthy.
+- **Client addresses behind a proxy**: `X-Forwarded-For` is read only from peers
+  in `TRUSTED_PROXY_CIDRS`; hops without CIDRs ignore it, so a pod in the cluster
+  cannot forge its address. `spec.exposure.trustedProxy` sets hops and CIDRs, and
+  an exposed console gets an ingress NetworkPolicy (by default behind a Route,
+  with `spec.exposure.networkPolicy.from` behind an Ingress or Gateway), reported
+  by the advisory `ExposureConfined` condition. MCP bearer reviews share the
+  process-wide review budget, streams keep their feed through the shutdown
+  drain, and the console warns at start about hops 0 behind a public URL.
 
 [0.1.0]: https://github.com/fyannk/pgToolBox/releases/tag/v0.1.0

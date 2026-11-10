@@ -67,6 +67,36 @@ Settings, Code security:
   updates come from `.github/dependabot.yml`.
 - **Secret scanning** and **push protection**: enable.
 
+### The Scorecard alerts on the Security tab
+
+`scorecard.yml` uploads OpenSSF Scorecard's SARIF, so four checks appear as code
+scanning alerts. They describe the project's situation rather than a flaw to patch;
+each is listed here with what it means and whether it should stay open. Dismissing
+is a write to the repository, so the maintainer does it (the workflow never does).
+
+| Rule | What it says | Why it fires | Suggested handling |
+|---|---|---|---|
+| `CodeReviewID` | Changes are not approved by a second person | One maintainer; pull requests are checked by CI, not by another human | Dismiss, `won't fix`: stays true until there is a second maintainer |
+| `MaintainedID` | The project is young or inactive | Scorecard scores a repository under 90 days old as unmaintained, whatever the activity | Dismiss, `false positive`; it clears itself, re-check after 90 days |
+| `VulnerabilitiesID` | Known vulnerabilities in dependencies (OSV) | The same advisories the `osv-scanner` job gates; accepted ones are listed with a reason in `hack/security-accepted.txt` | Do not dismiss blindly: open the alert, and dismiss only advisories that file accepts |
+| `BranchProtectionID` | Branch protection is weaker than Scorecard's ideal | The `main` ruleset is read with a token that cannot see rulesets; required approvals are 0 for the reason in `CodeReviewID` | Dismiss, `won't fix`, after checking the ruleset matches the table above |
+
+List them with their numbers, then dismiss one (reasons accepted by the API are
+`false positive`, `won't fix`, `used in tests`):
+
+```bash
+gh api 'repos/fyannk/pgToolBox/code-scanning/alerts?state=open&tool_name=Scorecard' \
+  --jq '.[] | [.number, .rule.id, .most_recent_instance.location.path] | @tsv'
+
+gh api --method PATCH repos/fyannk/pgToolBox/code-scanning/alerts/NUMBER \
+  -f state=dismissed -f dismissed_reason="won't fix" \
+  -f dismissed_comment='Single maintainer; see docs/site/docs/development/repository-settings.md'
+```
+
+Check the reasons above against the alerts' own text before dismissing (they are
+Scorecard's assessment on the day, and the table is the maintainer's reading of it),
+and review the dismissed ones once the repository is 90 days old.
+
 ## Actions
 
 Settings, Actions, General:

@@ -450,7 +450,10 @@ type gathered struct {
 	// version mismatch (cnpgstatus.UpgradeInFlight), or is empty.
 	upgradeInFlight string
 	minor           cnpgstatus.Minor
-	readable        map[string]bool
+	// phaseMinor is the minor the detected version names, supported or
+	// not, so ClassifyPhase caps a healthy phase on an unverified minor.
+	phaseMinor cnpgstatus.Minor
+	readable   map[string]bool
 	// failed names the readable sources whose read failed this time:
 	// their lists are empty because nothing was read, not because
 	// nothing exists.
@@ -610,6 +613,7 @@ func (s *Service) gather(ctx context.Context, key cache.ClusterKey, withEvents b
 	g.version = cnpgstatus.DetectVersion(versionEvidence)
 	g.upgradeInFlight = cnpgstatus.UpgradeInFlight(versionEvidence)
 	g.minor = g.version.Minor
+	g.phaseMinor = cnpgstatus.NamedMinor(g.version.Version)
 	return g, nil
 }
 

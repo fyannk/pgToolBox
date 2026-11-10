@@ -147,45 +147,70 @@
         "from": "2026-10-28T06:00:00Z",
         "to": "2026-10-28T06:05:40Z",
         "kind": "unknown",
-        "text": "Within 6 min of the oldest restore point: a retention purge since the repository was last read may have removed this base backup."
+        "text": "Within 6 min of the oldest restore point: a retention purge since the repository was last read may have removed this base backup.",
+        "code": "recovery.segment.purgeEdge",
+        "params": {
+          "marginSeconds": "340"
+        }
       },
       {
         "from": "2026-10-28T06:05:40Z",
         "to": "2026-10-28T15:45:00Z",
         "kind": "covered",
         "backupId": "20261028T060000",
-        "text": "Structurally covered: base backup 20261028T060000 and contiguous archived WAL."
+        "text": "Structurally covered: base backup 20261028T060000 and contiguous archived WAL.",
+        "code": "recovery.segment.covered",
+        "params": {
+          "backupId": "20261028T060000"
+        }
       },
       {
         "from": "2026-10-28T15:45:00Z",
         "to": "2026-10-28T16:00:00Z",
         "kind": "unknown",
-        "text": "Within 15 min of a hole in the archived WAL: segment names cannot place this target on either side."
+        "text": "Within 15 min of a hole in the archived WAL: segment names cannot place this target on either side.",
+        "code": "recovery.segment.nearHole",
+        "params": {
+          "marginSeconds": "900"
+        }
       },
       {
         "from": "2026-10-28T16:00:00Z",
         "to": "2026-10-29T06:00:00Z",
         "kind": "missingWAL",
-        "text": "WAL is missing from the repository: no restore target in this span."
+        "text": "WAL is missing from the repository: no restore target in this span.",
+        "code": "recovery.segment.missingWAL"
       },
       {
         "from": "2026-10-29T06:00:00Z",
         "to": "2026-10-29T11:43:00Z",
         "kind": "covered",
         "backupId": "20261029T060000",
-        "text": "Structurally covered: base backup 20261029T060000 and contiguous archived WAL."
+        "text": "Structurally covered: base backup 20261029T060000 and contiguous archived WAL.",
+        "code": "recovery.segment.covered",
+        "params": {
+          "backupId": "20261029T060000"
+        }
       },
       {
         "from": "2026-10-29T11:43:00Z",
         "to": "2026-10-29T11:58:00Z",
         "kind": "unknown",
-        "text": "Within 15 min of the end of the archived WAL: segment names cannot tell whether this target's WAL is archived yet."
+        "text": "Within 15 min of the end of the archived WAL: segment names cannot tell whether this target's WAL is archived yet.",
+        "code": "recovery.segment.nearEnd",
+        "params": {
+          "marginSeconds": "900"
+        }
       },
       {
-        "from": "2026-10-29T11:59:20Z",
+        "from": "2026-10-29T11:58:00Z",
         "to": "2026-10-29T12:00:00Z",
         "kind": "unknown",
-        "text": "After the repository was last read (2026-10-29T11:59:20Z): WAL archived since may cover this time."
+        "text": "Not in the repository when it was last read (2026-10-29T11:59:20Z): WAL archived since may cover this time.",
+        "code": "recovery.segment.afterLastRead",
+        "params": {
+          "scannedAt": "2026-10-29T11:59:20Z"
+        }
       }
     ],
     "markers": [

@@ -35,11 +35,12 @@ in `images`, and the e2e jobs load that archive instead of building their own.
 |---|---|---|
 | `ci.yml` | pull request, push to `main`, nightly at 04:17 UTC, by hand | The single pipeline. Its last job, `ci-ok`, is the required check. |
 | `e2e-kind.yml` | called by `ci.yml` | One kind scenario on a fresh runner, with the images of the run loaded (reusable workflow). |
-| `security.yml` | pull request, push to `main`, daily at 03:37 UTC, by hand | CodeQL, govulncheck, osv-scanner, npm audit, grype on the images, gitleaks, gosec, zizmor, kube-linter. Its last job, `security-gate`, is the required check. |
+| `security.yml` | pull request, push to `main`, daily at 03:37 UTC, by hand | CodeQL, govulncheck, osv-scanner, npm audit, grype on the five images (operator, console, evidence agent, OLM bundle and catalog), gitleaks, gosec, zizmor, kube-linter. Its last job, `security-gate`, is the required check. |
 | `scorecard.yml` | push to `main`, weekly on Tuesday, by hand | OpenSSF Scorecard, published and uploaded to code scanning. |
 | `pages.yml` | when `security.yml` finishes on `main`, nightly at 04:47 UTC, by hand, after a release | Builds the documentation, renders the Security page, deploys both to GitHub Pages. |
 | `release.yml` | tag `v*` or `pkg/evidence/v*`; by hand for an existing tag | The release. It checks out and runs nothing but the tagged commit, and restores no cache. |
 | `release-dry-run.yml` | a pull request touching the release files; weekly on Sunday, or by hand with a tag to rehearse | The release's build as a dry run, plus a release-candidate rehearsal of the pinning (placeholder digests): nothing pushed or signed, no write permission. |
+| `verify-release.yml` | called by `release.yml` after the prune; weekly on Monday; by hand | Pulls every image and both charts of a published release by tag **with no registry credentials** and verifies each signature and attestation by digest (`hack/release.sh verify-published`). The weekly run looks at the latest stable release and does nothing until one exists. |
 | `matrix.yml` | nightly at 01:41 UTC, by hand | The end-to-end scenarios on Kubernetes 1.34 and 1.36 × CloudNativePG 1.30.1, plus CloudNativePG `main` (non-blocking): one job per Kubernetes × CloudNativePG × scenario, all at once, on the images built once for the run. |
 | `image-watch.yml` | nightly at 04:23 UTC | Scans the latest published images and keeps one tracking issue for fixable criticals. |
 | `automerge.yml` | Dependabot pull requests | Arms auto-merge for patch and minor updates. |
@@ -116,7 +117,7 @@ normalised result that `hack/security_report.py` merges.
 | govulncheck | both Go modules, by call graph | any reachable vulnerability |
 | osv-scanner | `ui/pnpm-lock.yaml`, `docs/site/package-lock.json`, `headlamp/package-lock.json`, both `go.mod` | a fixable critical; on a pull request a new fixable high |
 | `npm audit` | the docs site and the SPA's runtime dependencies | any advisory not in `hack/npm-audit-accepted.txt` |
-| grype | the three images, built from the commit | a fixable critical; on a pull request a new fixable high |
+| grype | the five images (the OLM bundle and catalog included), built from the commit | a fixable critical; on a pull request a new fixable high |
 | grype | the latest published images, by digest | reported (the nightly `image-watch.yml` keeps an issue) |
 | gitleaks | the whole history | any secret (paths that hold canary tokens on purpose are in `.gitleaks.toml`) |
 | gosec (golangci-lint) | both Go modules | reported; `make lint` is the gate |
@@ -211,6 +212,7 @@ sequenceDiagram
   R->>G: anonymous HEAD of every pushed digest: any private package leaves the release a draft
   R->>H: publish the release
   R->>R: dispatch pages.yml on main, prune untagged GHCR versions
+  R->>G: verify-release.yml: pull by tag with no credentials, cosign verify, gh attestation verify, helm pull
 ```
 
 Before the tag: `make release-check TAG=vX.Y.Z` (semver, both charts' version, the
@@ -235,16 +237,19 @@ anonymous pull, and only then tag the final version. The tag patterns `v*` and
 `pkg/evidence/v*` of the tag ruleset and of the `release` environment cover
 release candidates.
 
-Image builds take `SOURCE_DATE_EPOCH` and the `created` label from the tagged
-commit's time, and the scan and the SBOMs cover both `linux/amd64` and
-`linux/arm64` (one `sbom-<image>-<arch>.spdx.json` each).
+The `created` label of every image is the tagged commit's time, so two builds of one
+tag carry the same label. The images are **not** claimed to be bit-for-bit
+reproducible: BuildKit's `mode=max` provenance records the build itself, so two builds
+of one commit differ in it, and no `SOURCE_DATE_EPOCH` rewriting of layer timestamps is
+wired. The scan and the SBOMs cover both `linux/amd64` and `linux/arm64` (one
+`sbom-<image>-<arch>.spdx.json` each).
 
 If the release job stops at the anonymous-pull check, the images, charts, bundle and
 catalog are already pushed and signed, and the release is a draft that names the
 packages to open. Make them public, then **Re-run failed jobs**.
 
 A pull request that touches the release files, and the weekly schedule, run the same
-build as a dry run with version `0.0.0-dryrun`: nothing is pushed or signed. A tag
+build as a dry run: nothing is pushed or signed. A tag
 `pkg/evidence/vX.Y.Z` releases the nested evidence module instead: the module
 checks, green CI, and a release with no images (`make release-check-module
 TAG=pkg/evidence/vX.Y.Z` first). A failed run is finished with
@@ -253,6 +258,31 @@ images and moves the tag to new digests, while a re-run of the failed jobs reuse
 digests the earlier jobs already pushed and signed. The `tag` input of a dispatch is
 for a tag whose run is gone; a release that is already published is left as it is. What a release
 contains and how to verify it is on [Release and verification](../release.md).
+
+### When a release fails
+
+- **Finish it with Re-run failed jobs, while the artifacts live.** The digests and the
+  release files travel between jobs as artifacts kept **7 days**. Inside that window a
+  re-run reuses what was already pushed and signed. After it, a re-run cannot find
+  them (the failing step says so), and a new run of the same tag would push new
+  digests under it: do not.
+- **A failed release candidate is never moved or deleted; it is superseded.** The
+  tag ruleset ("Protect release tags") allows neither an update nor a deletion and has
+  no bypass, on purpose. Fix the cause on `main`, then tag `vX.Y.Z-rc.N+1` on the new
+  commit. `make release-check TAG=vX.Y.Z-rc.2` accepts that: the tree still says
+  `X.Y.Z`, the open `## [X.Y.Z]` section serves every candidate, and the notes of a
+  candidate start at the previous tag of any kind. The abandoned candidate's packages
+  and (draft) release can be deleted by hand in the GitHub UI; its tag stays.
+- **The final tag is cut once.** Its notes list every commit since the previous
+  *stable* tag, candidates included.
+- **A merge by the automerge token has no CI run.** `wait-ci` then stops after a few
+  polls with the command to use (dispatch `ci.yml` and `security.yml` on the commit),
+  rather than waiting for an hour. When a check ran several times, the newest run
+  counts.
+
+After the prune, `verify-release.yml` pulls the release the way a user does, without
+credentials (`hack/release.sh verify-published vX.Y.Z`); the same check runs weekly
+against the latest stable release.
 
 After a release, a `prune` job deletes the untagged versions the pushes leave in GHCR
 (`delete-untagged` with `validate`, so a manifest that a tagged index, a signature

@@ -118,8 +118,9 @@
       "since": "1.30",
       "source": "api/v1/cluster_types.go PhaseHealthy (v1.30.0:730, main:741)",
       "reading": {
-        "class": "ok",
-        "known": true
+        "class": "warning",
+        "known": true,
+        "reason": "phase table not verified for CNPG 1.31"
       }
     },
     {

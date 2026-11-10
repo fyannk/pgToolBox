@@ -119,22 +119,22 @@ else:
     except (ValueError, KeyError) as err:
         problems.append(f"alm-examples is not usable: {err}")
 
-# 6. The chart's icon URL names a release tag on purpose: a chart pinned to
-#    a version must not have its artwork change underneath it. The cost is
-#    that the reference goes stale silently — helm lint only checks that an
-#    icon exists, so a release that forgets it ships the previous release's
-#    logo and nothing complains.
+# 6. The chart's icon URL names `main`, not a release tag. A tag-pinned URL
+#    404s for the whole life of a release candidate (the final tag does not
+#    exist yet) and would have to be bumped by hand at every release; the logo
+#    changes rarely and a moved logo is harmless. helm lint only checks that an
+#    icon exists, so this checks that it is one that resolves.
 icon = chart.get("icon", "")
 if not icon:
     problems.append("chart has no icon: registries that render one show a placeholder")
 else:
-    match = re.search(r"raw\.githubusercontent\.com/fyannk/pgToolBox/(v[^/]+)/", icon)
+    match = re.search(r"raw\.githubusercontent\.com/fyannk/pgToolBox/([^/]+)/", icon)
     if not match:
-        problems.append(f"chart icon URL names no release tag, so it can drift: {icon}")
-    elif match.group(1) != f"v{chart['appVersion']}":
+        problems.append(f"chart icon URL is not a raw.githubusercontent.com/fyannk/pgToolBox URL: {icon}")
+    elif match.group(1) != "main":
         problems.append(
-            f"chart icon URL points at {match.group(1)} but the chart is "
-            f"v{chart['appVersion']} — bump the tag in Chart.yaml's icon:")
+            f"chart icon URL points at {match.group(1)}, which does not exist during a release "
+            f"candidate (the final tag is cut after it); point it at main: {icon}")
 
 # 7. The changelog is the one release artifact no tool generates, so it is
 #    the one most easily left describing the previous version.
@@ -143,7 +143,7 @@ for field in ("version", "appVersion"):
     if str(tools_chart[field]) != str(chart[field]):
         problems.append(f"charts/pgtools {field} {tools_chart[field]} != charts/pgtoolbox {field} {chart[field]}: the two charts release as one version")
 if tools_chart.get("icon") != chart.get("icon"):
-    problems.append("charts/pgtools icon differs from charts/pgtoolbox's: both carry the release tag")
+    problems.append("charts/pgtools icon differs from charts/pgtoolbox's: both carry the same URL")
 if f"## [{csv_version}]" not in changelog:
     problems.append(f"CHANGELOG.md has no '## [{csv_version}]' section for the version being shipped")
 
@@ -165,7 +165,7 @@ for version in set(published):
             f"but Chart.yaml's version is {chart['version']}")
 
 #    And the two Chart.yaml versions move together here, which the checks
-#    above assume: the icon tag and the CSV are compared against appVersion
+#    above assume: the CSV is compared against appVersion
 #    while the documented install is compared against version, so a chart
 #    whose fields diverged would be checked against two different releases.
 if str(chart["version"]) != str(chart["appVersion"]):
@@ -382,6 +382,29 @@ for src_doc in guard_src:
         problems.append(f"kustomize config/default: {src_doc['kind']} {src_doc['metadata']['name']} missing, different from config/admission or namespaced")
 if any("admissionregistration" in f.read_text() for f in bundle_dir.glob("*.yaml")):
     problems.append("the OLM bundle carries an admission policy, which OLM does not install")
+# The operator chart's admission policy (image and workload-identity allow-lists,
+# Secret references, PgAdmin credentials). Helm renders it by default; kustomize
+# ships it as the opt-in component config/components/admission, a render of the
+# chart's defaults that must say exactly what the chart says; config/default
+# leaves it out on purpose (opt-in) and the OLM bundle cannot carry it (checked
+# above), which docs/site/docs/install/olm.md must say.
+comp_dir = pathlib.Path("config/components/admission")
+comp_kust = load(comp_dir / "kustomization.yaml") if (comp_dir / "kustomization.yaml").exists() else {}
+if comp_kust.get("kind") != "Component" or comp_kust.get("resources") != ["admission_policy.yaml"]:
+    problems.append("config/components/admission/kustomization.yaml must be a kustomize Component listing admission_policy.yaml")
+comp_docs = [d for d in yaml.safe_load_all(open(comp_dir / "admission_policy.yaml")) if d] if (comp_dir / "admission_policy.yaml").exists() else []
+helm_vap = [d for d in helm_docs if d["kind"] in ("ValidatingAdmissionPolicy", "ValidatingAdmissionPolicyBinding")]
+if sorted((d["kind"], d["metadata"]["name"]) for d in comp_docs) != sorted((d["kind"], d["metadata"]["name"]) for d in helm_vap):
+    problems.append(f"config/components/admission renders {[(d['kind'], d['metadata']['name']) for d in comp_docs]}, Helm {[(d['kind'], d['metadata']['name']) for d in helm_vap]} — run make manifests")
+for doc in helm_vap:
+    comp_doc = next((d for d in comp_docs if d["kind"] == doc["kind"] and d["metadata"]["name"] == doc["metadata"]["name"]), None)
+    if comp_doc is not None and (comp_doc["spec"] != doc["spec"] or "namespace" in comp_doc["metadata"]):
+        problems.append(f"config/components/admission: {doc['kind']} {doc['metadata']['name']} differs from the Helm render or is namespaced — run make manifests")
+if any(d["kind"] in ("ValidatingAdmissionPolicy", "ValidatingAdmissionPolicyBinding") and d["metadata"]["name"].endswith("image-override") for d in kust_docs):
+    problems.append("kustomize config/default applies the operator chart's admission policy: it is the opt-in component config/components/admission")
+olm_doc = pathlib.Path("docs/site/docs/install/olm.md").read_text()
+if "config/components/admission" not in olm_doc or "templates/operator/admissionpolicy.yaml" not in olm_doc:
+    problems.append("docs/site/docs/install/olm.md must say the admission policies are not in the bundle and how to apply them")
 guard_policy = next((d for d in guard_src if d["kind"] == "ValidatingAdmissionPolicy"), None)
 drills_rules = load("config/rbac/pgtoolbox_console_restore_drills_clusterrole.yaml")["rules"]
 marker = {"apiGroups": ["pgtoolbox.fyannk.dev"], "resources": ["restoredrills"], "verbs": ["teardown"]}
@@ -1270,4 +1293,4 @@ if [ "${fail}" -ne 0 ]; then
   echo "packaging is inconsistent"
   exit 1
 fi
-echo "packaging is consistent: Helm, kustomize and OLM agree on CRDs, RBAC, deployment, versions and images (the operator, charts/pgtoolbox), and Helm and kustomize on the console (charts/pgtools)"
+echo "packaging is consistent: Helm, kustomize and OLM agree on CRDs, RBAC, deployment, versions and images (the operator, charts/pgtoolbox); Helm and kustomize agree on the admission policies (config/admission, the opt-in config/components/admission), which the OLM bundle does not carry; Helm and kustomize agree on the console (charts/pgtools)"

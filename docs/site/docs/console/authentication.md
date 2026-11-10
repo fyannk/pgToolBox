@@ -167,11 +167,28 @@ delete it afterwards.
   addresses cannot make the console ask the API server more than that. Over any
   of them the form answers 429 without asking. Each key space has a table of its
   own, so a spray that fills one (10,000 keys) resets only that one.
-  Behind an edge, set `TRUSTED_PROXY_HOPS` (0 to 8) to the number of proxies
-  whose `X-Forwarded-*` headers to trust, or the limiter sees only the edge's
-  address and every user shares one budget; the `pgtools` chart sets 1 when
-  `console.exposure.type` is not `none`, and the operator sets 1 when a
-  `PgToolBoxConsole`'s `spec.exposure.type` is `route`, `ingress` or `gateway`.
+  Raw API-server tokens presented as MCP bearers spend the same per-replica
+  bound after their address's budget (an answer still cached costs nothing), so
+  the two doors together never review more than 20 tokens a second.
+- **Client address.** Every per-address budget and the audit trail's
+  `client_ip` use the direct peer, unless the peer is a trusted proxy.
+  `TRUSTED_PROXY_HOPS` (0 to 8) is how many proxies append to
+  `X-Forwarded-For`; `TRUSTED_PROXY_CIDRS` (comma-separated CIDRs, at most 32)
+  is who they are. The header is read only from a peer inside one of those
+  CIDRs, walked from the right for at most the hops, and the first address that
+  is not a trusted proxy is the client. **Hops without CIDRs trust no peer and
+  the header is ignored**: any Pod that reaches the console's port directly
+  could otherwise name a new address on every request, escape every
+  per-address budget, drain the shared review bound for everyone and forge
+  `client_ip` in the audit trail. `0.0.0.0/0,::/0` trusts every peer and is
+  safe only where a NetworkPolicy admits nothing but the proxies; the operator
+  and the chart write it only then. Without a trusted proxy every client behind
+  the edge shares its address, and so one budget: twenty junk tokens a minute
+  from anyone lock the token form for everyone. The console warns at start in
+  both cases, hops without CIDRs and hops 0 with a `PUBLIC_URL` that is not
+  loopback. The `pgtools` chart sets one hop when `console.exposure.type` is
+  not `none` (`console.trustedProxyHops`, `console.trustedProxyCIDRs`); the
+  operator [follows the published exposure](../operator/console.md#trusted-proxies-and-the-ingress-networkpolicy).
 - **Sign-out** is `POST /logout` (`GET /logout` shows the confirmation page). It
   clears the cookie, drops the cached identity and refuses that session until its
   absolute expiry: on this replica at once, and on the others within about a
@@ -247,6 +264,7 @@ The chart sets these; the binary reads them. Unlisted settings are in
 | `SESSION_KEY_FILE` | none (required) | See above. |
 | `SESSION_IDLE_TIMEOUT`, `SESSION_MAX_AGE` | `1h`, `12h` | |
 | `PUBLIC_URL`, `COOKIE_SECURE`, `TRUSTED_PROXY_HOPS` | empty, `true`, `0` | |
+| `TRUSTED_PROXY_CIDRS` | empty | The proxies whose `X-Forwarded-For` is read; empty trusts none ([client address](#sessions)). |
 | `IDP_TIMEOUT` | `10s` | |
 | `REVOCATION_CONFIGMAP`, `POD_NAMESPACE` | | The ConfigMap name and the console's namespace. |
 | `OIDC_*`, `OPENSHIFT_*` | | As above and on the [OpenShift page](openshift.md). |

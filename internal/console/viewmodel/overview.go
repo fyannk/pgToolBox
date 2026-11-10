@@ -206,6 +206,15 @@ type Archiving struct {
 	// failure reads false.
 	LiveArchiving *bool  `json:"liveArchiving,omitempty"`
 	LastFailedWAL string `json:"lastFailedWal,omitempty"`
+	// LastArchivedWAL and LastArchivedAt are the archiving instance's
+	// pg_stat_archiver last_archived_wal and last_archived_time, its own
+	// report as of Provenance.ObservedAt; absent when not read or when it
+	// never archived. The time is when the segment was archived, so WAL
+	// written after it may still be only on the instance.
+	LastArchivedWAL string     `json:"lastArchivedWal,omitempty"`
+	LastArchivedAt  *time.Time `json:"lastArchivedAt,omitempty" doc:"pg_stat_archiver.last_archived_time on the archiving instance, its own report."`
+	// LastFailedAt is pg_stat_archiver.last_failed_time, the same way.
+	LastFailedAt *time.Time `json:"lastFailedAt,omitempty" doc:"pg_stat_archiver.last_failed_time on the archiving instance, its own report."`
 	// ReadyWALFiles is the archive backlog on the primary.
 	ReadyWALFiles *int       `json:"readyWalFiles,omitempty"`
 	Provenance    Provenance `json:"provenance"`

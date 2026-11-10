@@ -132,7 +132,8 @@ In short:
 - Licence header on every Go file, from `hack/boilerplate/`:
   `Copyright 2026 The pgToolBox Authors.` Generated files are skipped.
 - Generated files (`zz_generated.*`, `config/crd/bases`, the Helm and OLM copies
-  of the CRDs and the manager Role, `internal/console/api/openapi.yaml` and its
+  of the CRDs and the manager Role, the kustomize admission component
+  `config/components/admission/admission_policy.yaml`, `internal/console/api/openapi.yaml` and its
   fixtures, `docs/site/docs/reference/checks.md`,
   `docs/site/docs/reference/api.md`, `deploy/insight-pack/insight-pack.yaml`, the
   evidence schemas and goldens under `pkg/evidence/v1alpha*`,

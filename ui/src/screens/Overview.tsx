@@ -230,6 +230,21 @@ export function BackupsPanel({ b }: { b: ClusterOverviewView["backups"] }) {
         <Fact label={m.archiving_backlog()}>
           <Reported value={arch.readyWalFiles} />
         </Fact>
+        <Fact label={m.archiving_last_archived()}>
+          {arch.lastArchivedAt ? (
+            // pg_stat_archiver.last_archived_time, the archiving instance's
+            // own report as of the provenance below.
+            <span className="flex flex-col" data-last-archived="">
+              <span>
+                <Time iso={arch.lastArchivedAt} past />
+                {arch.lastArchivedWal && <code className="ml-2 font-code text-caption">{arch.lastArchivedWal}</code>}
+              </span>
+              <span className="text-caption text-muted">{m.archiving_last_archived_source()}</span>
+            </span>
+          ) : (
+            <Reported value={undefined} />
+          )}
+        </Fact>
         <Fact label={m.archiving_last_failed()}>
           <Reported value={arch.lastFailedWal} />
         </Fact>

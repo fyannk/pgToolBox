@@ -175,7 +175,7 @@ func ref(c *cnpgv1.Cluster) viewmodel.ClusterRef {
 }
 
 func (s *Service) phase(g *gathered) viewmodel.Phase {
-	reading := cnpgstatus.ClassifyPhase(g.minor, g.cluster.Status.Phase)
+	reading := cnpgstatus.ClassifyPhase(g.phaseMinor, g.cluster.Status.Phase)
 	return viewmodel.Phase{
 		Text:       bound(g.cluster.Status.Phase),
 		Reason:     bound(g.cluster.Status.PhaseReason),
@@ -430,7 +430,7 @@ var waitCauses = map[string]bool{
 }
 
 func waitingFor(g *gathered, warnings []viewmodel.EventRow) *viewmodel.OperatorWaiting {
-	phase := cnpgstatus.ClassifyPhase(g.minor, g.cluster.Status.Phase)
+	phase := cnpgstatus.ClassifyPhase(g.phaseMinor, g.cluster.Status.Phase)
 	if phase.Class == cnpgstatus.ClassOK {
 		return nil
 	}
@@ -789,10 +789,11 @@ func (s *Service) backupSummary(g *gathered, now time.Time) viewmodel.BackupSumm
 			Reason: archiving.Reason, Message: bound(archiving.Message), Provenance: s.archivingProvenance(g, now),
 		},
 	}
-	if live := primaryArchiver(g); live != nil {
+	if live := primaryArchiverReading(g); live != nil {
 		archivingWAL, ready := live.IsArchivingWAL, live.ReadyWALFiles
 		summary.Archiving.LiveArchiving, summary.Archiving.ReadyWALFiles = &archivingWAL, &ready
-		summary.Archiving.LastFailedWAL = live.LastFailedWAL
+		summary.Archiving.LastFailedWAL, summary.Archiving.LastArchivedWAL = live.LastFailedWAL, live.LastArchivedWAL
+		summary.Archiving.LastArchivedAt, summary.Archiving.LastFailedAt = utc(live.LastArchivedWALTime), utc(live.LastFailedWALTime)
 	}
 	if cfg.PluginBased {
 		summary.NotReported = append([]string(nil), cfg.NotReported...)

@@ -190,20 +190,29 @@
         "to": "2026-10-24T16:08:00Z",
         "kind": "covered",
         "backupId": "20261023T070800",
-        "text": "Structurally covered: base backup 20261023T070800 and contiguous archived WAL."
+        "text": "Structurally covered: base backup 20261023T070800 and contiguous archived WAL.",
+        "code": "recovery.segment.covered",
+        "params": {
+          "backupId": "20261023T070800"
+        }
       },
       {
         "from": "2026-10-24T16:08:00Z",
         "to": "2026-10-25T07:08:00Z",
         "kind": "missingWAL",
-        "text": "WAL is missing from the repository: no restore target in this span."
+        "text": "WAL is missing from the repository: no restore target in this span.",
+        "code": "recovery.segment.missingWAL"
       },
       {
         "from": "2026-10-25T07:08:00Z",
         "to": "2026-10-29T11:59:15Z",
         "kind": "covered",
         "backupId": "20261029T070001",
-        "text": "Structurally covered: base backup 20261029T070001 and contiguous archived WAL."
+        "text": "Structurally covered: base backup 20261029T070001 and contiguous archived WAL.",
+        "code": "recovery.segment.covered",
+        "params": {
+          "backupId": "20261029T070001"
+        }
       }
     ],
     "markers": [

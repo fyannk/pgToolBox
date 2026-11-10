@@ -43,6 +43,11 @@
 #   release.sh scan-digests FILE
 #                               grype every digest on each platform; exit 1 for a
 #                               fixable critical, exit 2 when the scan itself failed
+#   release.sh verify-published TAG
+#                               what a user does, with no registry credentials:
+#                               pull every image and chart of the release by tag,
+#                               cosign verify and gh attestation verify each by
+#                               digest (retried: attestations lag the push)
 #   release.sh sums             write SHA256SUMS over the release files in OUT_DIR
 #   release.sh dry-run          build everything a release builds without pushing,
 #                               signing or attesting; print the digests
@@ -60,6 +65,8 @@
 #                      (default dist/release)
 #   REGISTRY           default ghcr.io
 #   CI_WAIT_ATTEMPTS, CI_WAIT_SLEEP   wait-ci polling (120 x 30 s)
+#   CI_WAIT_EMPTY_ATTEMPTS  wait-ci: polls with no check run at all before it
+#                      fails with the dispatch hint (default 4)
 #   DRY_RUN_FAKE_DIGESTS=1   dry-run: skip the image builds and use placeholder
 #                            digests, to exercise the pinning and packaging only
 #   DRY_RUN_TAG        dry-run: rehearse this tag (v0.1.0-rc.1) against the tree
@@ -197,16 +204,32 @@ cmd_check_module() {
 # The two checks a release needs on the tagged commit: the pipeline's final
 # job (ci-ok, which aggregates every other job) and the security gate. Either
 # may have run for a push to main, a pull request's merge or a manual dispatch;
-# the newest run of each counts.
+# when a check ran more than once (a re-run, a dispatch) the newest run counts:
+# the highest check-run id of that name.
+#
+# A commit that carries no check run at all was merged by a token whose events
+# start no workflow (the automerge token): waiting 60 minutes would not change
+# that, so after CI_WAIT_EMPTY_ATTEMPTS polls (default 4) it fails with the
+# command that fixes it.
 cmd_wait_ci() {
   local sha="${1:?usage: release.sh wait-ci SHA}"
   command -v gh >/dev/null || die "gh is not on PATH"
+  local attempts="${CI_WAIT_ATTEMPTS:-120}" empty_limit="${CI_WAIT_EMPTY_ATTEMPTS:-4}" empty=0
   local attempt runs name conclusion missing failed
-  for attempt in $(seq 1 "${CI_WAIT_ATTEMPTS:-120}"); do
-    runs="$(gh api --paginate "repos/${repo}/commits/${sha}/check-runs?per_page=100" --jq '.check_runs[] | [.name, .status, (.conclusion // "")] | @tsv')"
+  for attempt in $(seq 1 "${attempts}"); do
+    runs="$(gh api --paginate "repos/${repo}/commits/${sha}/check-runs?per_page=100" --jq '.check_runs[] | [.name, .status, (.conclusion // ""), (.started_at // ""), .id] | @tsv')"
+    if [[ -z "${runs}" ]]; then
+      empty=$((empty + 1))
+      if ((empty >= empty_limit)); then
+        die "no check run exists for ${sha} (merged with a token that starts no workflow?): dispatch ci.yml and security.yml on ${sha} (Actions, Run workflow, on the tagged commit), then re-run this job"
+      fi
+    else
+      empty=0
+    fi
     missing="" failed=""
     for name in ci-ok security-gate; do
-      conclusion="$(awk -F'\t' -v n="${name}" '$1 == n { c = ($2 == "completed" ? $3 : "pending") } END { print c }' <<<"${runs}")"
+      # The newest by check-run id, whatever order the API listed them in.
+      conclusion="$(LC_ALL=C sort -t$'\t' -k5,5n <<<"${runs}" | awk -F'\t' -v n="${name}" '$1 == n { c = ($2 == "completed" ? $3 : "pending") } END { print c }')"
       case "${conclusion}" in
         success) ;;
         "" | pending) missing+=" ${name}" ;;
@@ -218,7 +241,7 @@ cmd_wait_ci() {
       echo "ci-ok and security-gate are green on ${sha}"
       return 0
     fi
-    echo "waiting for${missing} on ${sha} (${attempt}/${CI_WAIT_ATTEMPTS:-120}); dispatch ci.yml and security.yml on the commit if no run exists"
+    echo "waiting for${missing} on ${sha} (${attempt}/${attempts}); dispatch ci.yml and security.yml on the commit if no run exists"
     sleep "${CI_WAIT_SLEEP:-30}"
   done
   die "CI did not finish on ${sha} in time"
@@ -370,7 +393,12 @@ cmd_commits() {
     "${evidence_module_dir}"/v*) match="${evidence_module_dir}/v*" ;;
     *) match="v*" ;;
   esac
-  previous="$(git describe --tags --abbrev=0 --match "${match}" "${tag}^" 2>/dev/null || true)"
+  # A final tag starts after the previous FINAL tag, so the notes of v0.1.0 list
+  # everything since v0.0.x, release candidates included; a release candidate
+  # starts after the previous tag of any kind.
+  local -a exclude=()
+  [[ "${tag}" == *-* ]] || exclude=(--exclude '*-*')
+  previous="$(git describe --tags --abbrev=0 --match "${match}" ${exclude[@]+"${exclude[@]}"} "${tag}^" 2>/dev/null || true)"
   # The module's tag pattern must not match the product's, and vice versa.
   if [[ "${match}" == "v*" && "${previous}" == */* ]]; then previous=""; fi
   range="${previous:+${previous}..}${tag}"
@@ -520,6 +548,75 @@ cmd_scan_digests() {
   return "${status}"
 }
 
+# ----------------------------------------------------- verify-published ---
+# The release as an anonymous user sees it. No docker login and no registry
+# token is used or read here: the pulls are what a stranger's pull is. The
+# GitHub token (GH_TOKEN) only lets `gh attestation verify` call the API.
+# Signatures are keyless (the release workflow's identity), as release.yml
+# makes them, so the same identity pattern is checked.
+# VERIFY_ATTEMPTS and VERIFY_SLEEP retry each check (the attestation and the
+# Sigstore entry can lag the push by a minute).
+retry() {
+  local attempt
+  for attempt in $(seq 1 "${VERIFY_ATTEMPTS:-5}"); do
+    "$@" > /dev/null && return 0
+    echo "  attempt ${attempt}/${VERIFY_ATTEMPTS:-5} failed: $*" >&2
+    ((attempt == ${VERIFY_ATTEMPTS:-5})) || sleep "${VERIFY_SLEEP:-20}"
+  done
+  return 1
+}
+
+cmd_verify_published() {
+  local tag="${1:?usage: release.sh verify-published vX.Y.Z}" version ref digest entry name out chart status=0
+  [[ "${tag}" =~ ${semver_re} ]] || die "verify-published: not a release tag: ${tag}"
+  version="${tag#v}"
+  for tool in docker cosign gh helm; do command -v "${tool}" >/dev/null || die "verify-published: ${tool} is not on PATH"; done
+  local identity="^https://github.com/${repo}/\\.github/workflows/release\\.yml@refs/tags/"
+  local issuer="https://token.actions.githubusercontent.com" work
+  work="$(mktemp -d)"
+  for entry in "${images[@]}"; do
+    IFS='|' read -r name ref _ <<<"${entry}"
+    ref="${prefix}/${ref}"
+    if ! digest="$(docker buildx imagetools inspect "${ref}:${version}" --format '{{json .Manifest.Digest}}' 2> "${work}/err" | tr -d '"')" || [[ ! "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+      cat "${work}/err" >&2
+      echo "::error::${ref}:${version} cannot be pulled anonymously"
+      status=1
+      continue
+    fi
+    if retry cosign verify "${ref}@${digest}" --certificate-identity-regexp "${identity}" --certificate-oidc-issuer "${issuer}" \
+      && retry gh attestation verify "oci://${ref}@${digest}" --repo "${repo}" --signer-workflow "${repo}/.github/workflows/release.yml"; then
+      echo "ok: ${ref}:${version} (${digest})"
+    else
+      echo "::error::${ref}:${version} (${digest}) does not verify"
+      status=1
+    fi
+  done
+  for chart in "${chart_dirs[@]}"; do
+    chart="${prefix}/charts/$(basename "${chart}")"
+    if ! out="$(helm pull "oci://${chart}" --version "${version}" --destination "${work}" 2>&1)"; then
+      echo "${out}" >&2
+      echo "::error::${chart}:${version} cannot be pulled anonymously"
+      status=1
+      continue
+    fi
+    digest="$(sed -n 's/^Digest: *//p' <<<"${out}")"
+    if [[ ! "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+      echo "::error::helm pull printed no digest for ${chart}:${version}"
+      status=1
+      continue
+    fi
+    if retry cosign verify "${chart}@${digest}" --certificate-identity-regexp "${identity}" --certificate-oidc-issuer "${issuer}" \
+      && retry gh attestation verify "oci://${chart}@${digest}" --repo "${repo}" --signer-workflow "${repo}/.github/workflows/release.yml"; then
+      echo "ok: ${chart}:${version} (${digest})"
+    else
+      echo "::error::${chart}:${version} (${digest}) does not verify"
+      status=1
+    fi
+  done
+  rm -rf "${work}"
+  return "${status}"
+}
+
 # -------------------------------------------------------------- dry-run ---
 # Everything a release builds, without a registry: the images are exported to
 # OCI archives (multi-arch, so the arm64 build is exercised), the bundle and
@@ -554,20 +651,27 @@ cmd_dry_run() {
   for entry in "${images[@]}"; do
     IFS='|' read -r name repo_name context file target platforms <<<"${entry}"
     ref="${prefix}/${repo_name}"
+    # The bundle names the operator and the agent, the catalog names the
+    # bundle: both are built from a copy that carries the digests so far (the
+    # same loop as release.yml's publish job). It runs with placeholder digests
+    # too, on the copy, so the pinning of a release candidate is rehearsed on
+    # every run without an image build.
+    if [[ "${name}" == bundle || "${name}" == catalog ]]; then
+      rm -rf "${work}/pinned-${name}"
+      cp -r "${context}" "${work}/pinned-${name}"
+      while IFS= read -r f; do
+        cmd_pin_refs "${f}" "${out_dir}/digests.txt" "${version}"
+      done < <(grep -rlE "${prefix//./\.}/pg[a-z-]+" "${work}/pinned-${name}" || true)
+      if grep -rnE "${prefix//./\.}/pgtoolbox-[a-z-]+:[0-9A-Za-z]" "${work}/pinned-${name}"; then
+        die "dry-run: the pinned ${name} still references an own image by tag"
+      fi
+      echo "DRY-RUN pinned ${name}: no own image left on a tag"
+      context="${work}/pinned-${name}"
+    fi
     if [[ "${DRY_RUN_FAKE_DIGESTS:-0}" == 1 ]]; then
       digest="sha256:$(printf '%s' "${name}" | sha256sum | cut -d' ' -f1)"
       echo "DRY-RUN (placeholder) ${ref}@${digest}"
     else
-      if [[ "${name}" == bundle || "${name}" == catalog ]]; then
-        # The bundle names the operator and the agent, the catalog names the
-        # bundle: both are built from a copy that carries the digests so far.
-        rm -rf "${work}/pinned-${name}"
-        cp -r "${context}" "${work}/pinned-${name}"
-        while IFS= read -r f; do
-          cmd_pin_refs "${f}" "${out_dir}/digests.txt" "${version}"
-        done < <(grep -rlE "${prefix//./\.}/pg[a-z-]+" "${work}/pinned-${name}" || true)
-        context="${work}/pinned-${name}"
-      fi
       archive="${out_dir}/${name}.oci.tar"
       local -a args=(buildx build --platform "${platforms}" -f "${file}" --build-arg "VERSION=${version}"
         --build-arg "IMG=${prefix}/pgtoolbox-operator:${version}" --output "type=oci,dest=${archive},name=${ref}:${version}")
@@ -606,6 +710,7 @@ case "${1:-}" in
   sums) shift; cmd_sums "$@" ;;
   check-public) shift; cmd_check_public "$@" ;;
   scan-digests) shift; cmd_scan_digests "$@" ;;
+  verify-published) shift; cmd_verify_published "$@" ;;
   dry-run) shift; cmd_dry_run "$@" ;;
   *) sed -n '5,50p' "${BASH_SOURCE[0]}" >&2; exit 2 ;;
 esac

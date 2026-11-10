@@ -302,6 +302,16 @@ components:
             - unknown
             - info
           type: string
+        lastArchivedAt:
+          description: pg_stat_archiver.last_archived_time on the archiving instance, its own report.
+          format: date-time
+          type: string
+        lastArchivedWal:
+          type: string
+        lastFailedAt:
+          description: pg_stat_archiver.last_failed_time on the archiving instance, its own report.
+          format: date-time
+          type: string
         lastFailedWal:
           type: string
         liveArchiving:
@@ -5159,6 +5169,22 @@ components:
         - known
         - provenance
       type: object
+    Phrase:
+      additionalProperties: false
+      properties:
+        code:
+          type: string
+        params:
+          additionalProperties:
+            type: string
+          description: Keys ending in At are RFC 3339 instants, keys ending in Seconds whole seconds; others are shown as written.
+          type: object
+        text:
+          type: string
+      required:
+        - code
+        - text
+      type: object
     Playbook:
       additionalProperties: false
       properties:
@@ -5658,6 +5684,9 @@ components:
       properties:
         backupId:
           type: string
+        code:
+          description: Stable code of Text, for translation; a code the client does not know shows Text.
+          type: string
         from:
           format: date-time
           type: string
@@ -5669,6 +5698,11 @@ components:
             - unknown
             - reported
           type: string
+        params:
+          additionalProperties:
+            type: string
+          description: Values Text names (see Phrase).
+          type: object
         text:
           type: string
         to:
@@ -5961,13 +5995,21 @@ components:
           type: string
         caveats:
           items:
-            type: string
+            $ref: "#/components/schemas/Phrase"
           type:
             - array
             - "null"
+        code:
+          description: Stable code of Text, for translation; a code the client does not know shows Text.
+          type: string
         generatedAt:
           format: date-time
           type: string
+        params:
+          additionalProperties:
+            type: string
+          description: Values Text names (see Phrase).
+          type: object
         provenance:
           $ref: "#/components/schemas/Provenance"
         ref:

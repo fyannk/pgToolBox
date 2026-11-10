@@ -107,23 +107,36 @@ func TestClassifyPhase(t *testing.T) {
 		phase string
 		want  PhaseReading
 	}{
-		{"healthy", Minor130, cnpgv1.PhaseHealthy, PhaseReading{ClassOK, true}},
-		{"healthy by its literal", Minor130, "Cluster in healthy state", PhaseReading{ClassOK, true}},
-		{"empty is unknown", Minor130, "", PhaseReading{ClassUnknown, false}},
-		{"empty with unknown minor", "", "", PhaseReading{ClassUnknown, false}},
-		{"unknown phase stays warning", Minor130, "Cluster is dancing", PhaseReading{ClassWarning, false}},
-		{"case matters", Minor130, "cluster in healthy state", PhaseReading{ClassWarning, false}},
-		{"trailing space is foreign", Minor130, "Cluster in healthy state ", PhaseReading{ClassWarning, false}},
-		{"1.29 has no table and reads 1.30", "1.29", cnpgv1.PhaseDefinitionInvalid, PhaseReading{ClassCritical, true}},
-		{"1.30 phase under 1.30", Minor130, cnpgv1.PhaseDefinitionInvalid, PhaseReading{ClassCritical, true}},
-		{"1.30 phase under 1.31", Minor131, cnpgv1.PhaseDefinitionInvalid, PhaseReading{ClassCritical, true}},
-		{"failover critical", Minor130, cnpgv1.PhaseFailOver, PhaseReading{ClassCritical, true}},
-		{"switchover progressing", Minor130, cnpgv1.PhaseSwitchover, PhaseReading{ClassProgressing, true}},
-		{"waiting for user warning", Minor130, cnpgv1.PhaseWaitingForUser, PhaseReading{ClassWarning, true}},
-		{"setting up primary progressing", Minor130, cnpgv1.PhaseFirstPrimary, PhaseReading{ClassProgressing, true}},
-		{"unknown minor uses 1.30", "1.28", cnpgv1.PhaseDefinitionInvalid, PhaseReading{ClassCritical, true}},
-		{"unknown minor, unknown phase", "", "Something else", PhaseReading{ClassWarning, false}},
-		{"garbage minor, healthy", "garbage", cnpgv1.PhaseHealthy, PhaseReading{ClassOK, true}},
+		{"healthy", Minor130, cnpgv1.PhaseHealthy, PhaseReading{Class: ClassOK, Known: true}},
+		{"healthy by its literal", Minor130, "Cluster in healthy state", PhaseReading{Class: ClassOK, Known: true}},
+		{"empty is unknown", Minor130, "", PhaseReading{Class: ClassUnknown, Known: false}},
+		{"empty with unknown minor", "", "", PhaseReading{Class: ClassUnknown, Known: false}},
+		{"unknown phase stays warning", Minor130, "Cluster is dancing", PhaseReading{Class: ClassWarning, Known: false}},
+		{"case matters", Minor130, "cluster in healthy state", PhaseReading{Class: ClassWarning, Known: false}},
+		{"trailing space is foreign", Minor130, "Cluster in healthy state ", PhaseReading{Class: ClassWarning, Known: false}},
+		{"1.29 has no table and reads 1.30", "1.29", cnpgv1.PhaseDefinitionInvalid, PhaseReading{Class: ClassCritical, Known: true}},
+		{"1.30 phase under 1.30", Minor130, cnpgv1.PhaseDefinitionInvalid, PhaseReading{Class: ClassCritical, Known: true}},
+		{"1.30 phase under 1.31", Minor131, cnpgv1.PhaseDefinitionInvalid, PhaseReading{Class: ClassCritical, Known: true}},
+		{"failover critical", Minor130, cnpgv1.PhaseFailOver, PhaseReading{Class: ClassCritical, Known: true}},
+		{"switchover progressing", Minor130, cnpgv1.PhaseSwitchover, PhaseReading{Class: ClassProgressing, Known: true}},
+		{"waiting for user warning", Minor130, cnpgv1.PhaseWaitingForUser, PhaseReading{Class: ClassWarning, Known: true}},
+		{"setting up primary progressing", Minor130, cnpgv1.PhaseFirstPrimary, PhaseReading{Class: ClassProgressing, Known: true}},
+		{"unknown minor uses 1.30", "1.28", cnpgv1.PhaseDefinitionInvalid, PhaseReading{Class: ClassCritical, Known: true}},
+		{"unknown minor, unknown phase", "", "Something else", PhaseReading{Class: ClassWarning, Known: false}},
+		{"garbage minor, healthy", "garbage", cnpgv1.PhaseHealthy, PhaseReading{Class: ClassOK, Known: true}},
+		{"undetected minor, healthy", "", cnpgv1.PhaseHealthy, PhaseReading{Class: ClassOK, Known: true}},
+		// A kept string can change its meaning in a minor the table was
+		// not verified at: healthy is capped at warning there, with the
+		// reason; non-ok rows keep their class.
+		{"planned 1.31 healthy is capped", Minor131, cnpgv1.PhaseHealthy, PhaseReading{Class: ClassWarning, Known: true, Reason: "phase table not verified for CNPG 1.31"}},
+		{"newer 1.32 healthy is capped", "1.32", cnpgv1.PhaseHealthy, PhaseReading{Class: ClassWarning, Known: true, Reason: "phase table not verified for CNPG 1.32"}},
+		{"2.0 healthy is capped", "2.0", cnpgv1.PhaseHealthy, PhaseReading{Class: ClassWarning, Known: true, Reason: "phase table not verified for CNPG 2.0"}},
+		{"1.29 healthy is capped", "1.29", cnpgv1.PhaseHealthy, PhaseReading{Class: ClassWarning, Known: true, Reason: "phase table not verified for CNPG 1.29"}},
+		{"newer 1.32 failover stays critical", "1.32", cnpgv1.PhaseFailOver, PhaseReading{Class: ClassCritical, Known: true}},
+		{"newer 1.32 switchover stays progressing", "1.32", cnpgv1.PhaseSwitchover, PhaseReading{Class: ClassProgressing, Known: true}},
+		{"newer 1.32 unknown phase stays warning", "1.32", "Cluster is dancing", PhaseReading{Class: ClassWarning, Known: false}},
+		{"verified 1.30 healthy is ok", Minor130, cnpgv1.PhaseHealthy, PhaseReading{Class: ClassOK, Known: true}},
+		{"patch-level string is not a minor", "1.32.0", cnpgv1.PhaseHealthy, PhaseReading{Class: ClassOK, Known: true}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -295,6 +308,31 @@ func TestConditionTableShape(t *testing.T) {
 	for _, rule := range ConditionTable(Minor130, false) {
 		if rule.Fork != "" {
 			t.Errorf("fork rule %q in the unpinned table", rule.Type)
+		}
+	}
+}
+
+// TestNamedMinorCapsAnUnsupportedVersion: the console classifies phases
+// with the minor the detected version names, so a newer CloudNativePG
+// without tables is capped instead of read as an undetected version.
+func TestNamedMinorCapsAnUnsupportedVersion(t *testing.T) {
+	for _, tc := range []struct {
+		version string
+		want    Minor
+		class   Class
+	}{
+		{"1.30.1", "1.30", ClassOK},
+		{"v1.32.0", "1.32", ClassWarning},
+		{">=1.30", "1.30", ClassOK},
+		{"", "", ClassOK},
+		{"not-a-version", "", ClassOK},
+	} {
+		got := NamedMinor(tc.version)
+		if got != tc.want {
+			t.Fatalf("NamedMinor(%q) = %q, want %q", tc.version, got, tc.want)
+		}
+		if c := ClassifyPhase(got, cnpgv1.PhaseHealthy).Class; c != tc.class {
+			t.Fatalf("ClassifyPhase(NamedMinor(%q), healthy) = %v, want %v", tc.version, c, tc.class)
 		}
 	}
 }

@@ -494,6 +494,7 @@ func (s agentSession) fetch(ctx context.Context, agent *pgtoolboxv1alpha1.Eviden
 			}
 		}
 		if err == nil {
+			collection.recovery = capRecovery(snapshot, collection.recovery)
 			return snapshot, collection, nil
 		}
 		if kindOf(err) != failurePublicationChanged {

@@ -21,6 +21,7 @@ import (
 	"maps"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"net/url"
 	"strconv"
 	"strings"
@@ -733,7 +734,11 @@ func TestReplayedCallbackIsRefusedWithoutCharging(t *testing.T) {
 // bucket to everyone else's break-glass sign-ins.
 func TestTokenSprayFromOneAddressDoesNotStarveAnother(t *testing.T) {
 	t.Parallel()
-	env := newTestEnvWith(t, func(c *Config) { c.TrustedProxyHops = 1 }, ProviderToken)
+	// Both clients come through the same trusted proxy (httptest's
+	// peer, 192.0.2.1), which names each one in X-Forwarded-For.
+	env := newTestEnvWith(t, func(c *Config) {
+		c.TrustedProxy = ProxyTrust{Hops: 1, CIDRs: []netip.Prefix{netip.MustParsePrefix("192.0.2.1/32")}}
+	}, ProviderToken)
 	attacker := env.browser(t)
 	calls := env.rev.calls
 	for i := range 3 * tokenReviewsBurst {

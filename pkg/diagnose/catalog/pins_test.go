@@ -77,6 +77,47 @@ func TestPinnedStringsExistInVerifiedReleases(t *testing.T) {
 	}
 }
 
+// TestCronParserMatchesTheOperator pins the backup-cadence detector's
+// parser to the operator's. The detector reads a ScheduledBackup schedule
+// with robfig/cron v1 cron.Parse because that is what CloudNativePG
+// validates and runs it with; that only holds while both require the same
+// version. Every verified release's go.mod must require it, its
+// ScheduledBackup controller and webhook must still call cron.Parse, and
+// this repository's go.mod must require the same version.
+func TestCronParserMatchesTheOperator(t *testing.T) {
+	want := diagnose.CronModule()
+	ours, err := os.ReadFile(filepath.Join("..", "..", "..", "go.mod"))
+	if err != nil {
+		t.Fatalf("read this repository's go.mod: %v", err)
+	}
+	if !bytes.Contains(ours, []byte("\t"+want+"\n")) {
+		t.Errorf("this repository's go.mod does not require %s", want)
+	}
+	for _, release := range cnpg.VerifiedReleases {
+		dir := operatorModuleDir(t, release)
+		gomod, err := os.ReadFile(filepath.Join(dir, "go.mod")) // #nosec G304 -- module cache tree the Go toolchain just verified.
+		if err != nil {
+			t.Fatalf("%s: read go.mod: %v", release, err)
+		}
+		if !bytes.Contains(gomod, []byte("\t"+want+"\n")) {
+			t.Errorf("%s: the operator's go.mod does not require %s; re-verify the cadence detector against its cron parser", release, want)
+		}
+		for _, file := range []string{
+			"internal/controller/scheduledbackup_controller.go",
+			"internal/webhook/v1/scheduledbackup_webhook.go",
+		} {
+			source, err := os.ReadFile(filepath.Join(dir, file)) // #nosec G304 -- module cache tree the Go toolchain just verified.
+			if err != nil {
+				t.Errorf("%s: read %s: %v", release, file, err)
+				continue
+			}
+			if !bytes.Contains(source, []byte(`"github.com/robfig/cron"`)) || !bytes.Contains(source, []byte("cron.Parse(")) {
+				t.Errorf("%s: %s no longer parses schedules with robfig/cron cron.Parse", release, file)
+			}
+		}
+	}
+}
+
 // cnpgPin returns the rule's CloudNativePG requirement, if any.
 func cnpgPin(rule diagnose.Rule) (diagnose.Requirement, bool) {
 	for _, requirement := range rule.Requires {
@@ -138,12 +179,9 @@ func conditionLiterals(when diagnose.Condition) []string {
 	return nil
 }
 
-// operatorSources fetches one release of the operator module and
-// concatenates its Go sources (tests excluded) and its YAML — the
-// default monitoring queries live there — into one searchable corpus.
-// The download goes through the Go module proxy and its checksum
-// database, so the tree is the release's, not whatever a mirror served.
-func operatorSources(t *testing.T, release string) []byte {
+// operatorModuleDir downloads one CloudNativePG release through the Go
+// module proxy and returns its directory in the module cache.
+func operatorModuleDir(t *testing.T, release string) string {
 	t.Helper()
 	cmd := exec.CommandContext(t.Context(), "go", "mod", "download", "-json", operatorModule+"@v"+release)
 	// Outside any module on purpose: the download must not touch this
@@ -165,8 +203,14 @@ func operatorSources(t *testing.T, release string) []byte {
 	if info.Error != "" || info.Dir == "" {
 		t.Fatalf("download %s@v%s: %s", operatorModule, release, info.Error)
 	}
+	return info.Dir
+}
+
+func operatorSources(t *testing.T, release string) []byte {
+	t.Helper()
+	dir := operatorModuleDir(t, release)
 	var corpus bytes.Buffer
-	err = filepath.WalkDir(info.Dir, func(path string, entry fs.DirEntry, err error) error {
+	err := filepath.WalkDir(dir, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}

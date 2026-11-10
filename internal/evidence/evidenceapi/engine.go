@@ -455,6 +455,7 @@ func cloneSnapshot(snapshot evidencev1alpha1.RepositoryEvidenceSnapshot) evidenc
 	snapshot.CompletedAt = clonePointer(snapshot.CompletedAt)
 	snapshot.LastAttemptAt = clonePointer(snapshot.LastAttemptAt)
 	snapshot.Capabilities = slices.Clone(snapshot.Capabilities)
+	snapshot.Producer.Features = slices.Clone(snapshot.Producer.Features)
 	snapshot.Inventory.ObjectCount = clonePointer(snapshot.Inventory.ObjectCount)
 	snapshot.Inventory.StoredBytes = clonePointer(snapshot.Inventory.StoredBytes)
 	snapshot.Inventory.UnscopedObjectCount = clonePointer(snapshot.Inventory.UnscopedObjectCount)

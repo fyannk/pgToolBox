@@ -6,9 +6,11 @@
  * OpenAPI spec version: v1
  */
 import type { ClusterRef } from './clusterRef.ts';
+import type { Phrase } from './phrase.ts';
 import type { Provenance } from './provenance.ts';
 import type { RestoreCheckAnswer } from './restoreCheckAnswer.ts';
 import type { RestoreCheckBasis } from './restoreCheckBasis.ts';
+import type { RestoreCheckParams } from './restoreCheckParams.ts';
 
 export interface RestoreCheck {
   answer: RestoreCheckAnswer;
@@ -17,8 +19,12 @@ export interface RestoreCheck {
   backupId?: string;
   basis: RestoreCheckBasis;
   /** @nullable */
-  caveats: string[] | null;
+  caveats: Phrase[] | null;
+  /** Stable code of Text, for translation; a code the client does not know shows Text. */
+  code?: string;
   generatedAt: string;
+  /** Values Text names (see Phrase). */
+  params?: RestoreCheckParams;
   provenance: Provenance;
   ref: ClusterRef;
   text: string;

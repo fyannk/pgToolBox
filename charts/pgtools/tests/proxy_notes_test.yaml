@@ -1,0 +1,31 @@
+# NOTES.txt says when X-Forwarded-For is ignored: hops are trusted, but no
+# proxy is named and no NetworkPolicy keeps other Pods off the port.
+suite: trusted proxy notes
+templates:
+  - templates/NOTES.txt
+release:
+  name: pgc
+  namespace: team-a
+tests:
+  - it: says nothing when the console is not exposed
+    asserts:
+      - notMatchRegexRaw: {pattern: "X-Forwarded-For is IGNORED"}
+
+  - it: warns behind an exposure with no named proxy and no policy
+    set: {console.exposure.type: ingress, console.exposure.host: pgc.example.org}
+    asserts:
+      - matchRegexRaw: {pattern: "X-Forwarded-For is IGNORED"}
+
+  - it: says nothing once the proxies are named
+    set: {console.exposure.type: ingress, console.exposure.host: pgc.example.org, console.trustedProxyCIDRs: [10.128.0.0/14]}
+    asserts:
+      - notMatchRegexRaw: {pattern: "X-Forwarded-For is IGNORED"}
+
+  - it: says nothing behind the NetworkPolicy
+    set:
+      console.exposure.type: ingress
+      console.exposure.host: pgc.example.org
+      console.networkPolicy.enabled: true
+      console.networkPolicy.apiServer.mode: any
+    asserts:
+      - notMatchRegexRaw: {pattern: "X-Forwarded-For is IGNORED"}

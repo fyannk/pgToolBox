@@ -152,14 +152,18 @@ decision, never the product's.
   the `kubernetes` EndpointSlice at install time, or `apiServer.mode: any` or
   `addresses`) and `extraEgress`; ingress only from `ingress.metricsFrom`, on the
   metrics port.
-- `operator.admissionPolicy.enabled` (default `true`; not applied by kustomize or OLM):
-  a `ValidatingAdmissionPolicy` (CEL, no webhook). Three rules: only `imageOverride.allowedUsers`
+- `operator.admissionPolicy.enabled` (default `true`; kustomize opts in with
+  `config/components/admission`, OLM cannot ship it):
+  a `ValidatingAdmissionPolicy` (CEL, no webhook). Four rules: only `imageOverride.allowedUsers`
   and `allowedGroups` (default group `system:masters`) may set `spec.image` on a
   `PgAdmin` or `EvidenceAgent`, everyone else getting the operator's default
   image; and only `workloadIdentity.allowedUsers` and `allowedGroups` (same
   default) may add or change `spec.workloadIdentity` on an `EvidenceAgent`, which
-  lends the agent a cloud role; and a third, the Secret rule: creating or editing a
-  `PgToolBoxConsole` or `PgAdmin` requires `get` on every Secret it references (see
+  lends the agent a cloud role; a third, the Secret rule: creating or editing a
+  `PgToolBoxConsole`, `PgAdmin` or `EvidenceAgent` requires `get` on every Secret it
+  references, again when the place a kept Secret is sent changes; and a fourth: a
+  `PgAdmin` that offers the credentials of Clusters of its namespace requires `get`
+  on the namespace's Secrets (see
   [Security](../security.md#secret-references-need-get)).
   `validationActions` selects `Deny`, `Warn` and/or `Audit`; `Deny` alone enforces.
   See [images](images.md) for why.

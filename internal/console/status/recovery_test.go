@@ -42,8 +42,9 @@ func TestRestoreCheckReadsTheTimeline(t *testing.T) {
 		{"just before the end of the archive", now.Add(-10 * time.Minute), "unknown", ""},
 		{"just before the hole", now.Add(-20*time.Hour - 5*time.Minute), "unknown", ""},
 		// The archive ends at -2min and the agent last read it at -40s: in
-		// between, the WAL had not reached the repository when it was read.
-		{"after the newest archived WAL, before the last read", now.Add(-90 * time.Second), "notCovered", ""},
+		// between, the WAL had not reached the repository when it was read,
+		// but a segment open at the scan may have been archived since.
+		{"after the newest archived WAL, before the last read", now.Add(-90 * time.Second), "unknown", ""},
 		// After the last read, the evidence says nothing about now.
 		{"after the last read of the repository", now, "unknown", ""},
 	}
@@ -56,7 +57,9 @@ func TestRestoreCheckReadsTheTimeline(t *testing.T) {
 			t.Errorf("%s: %+v", c.name, got)
 		}
 		// No drill is recorded for orders here: never restore-tested.
-		if !slices.ContainsFunc(got.Caveats, func(c string) bool { return strings.HasPrefix(c, "Not restore-tested") }) {
+		if !slices.ContainsFunc(got.Caveats, func(c viewmodel.Phrase) bool {
+			return strings.HasPrefix(c.Text, "Not restore-tested") && c.Code == "recovery.caveat.notRestoreTested"
+		}) {
 			t.Errorf("%s: caveats %q do not say the restore was not tested", c.name, got.Caveats)
 		}
 	}
@@ -153,7 +156,7 @@ func TestRecoveryTimelineStates(t *testing.T) {
 				{time.Hour, "covered", "b2"},
 				{48*time.Hour - time.Minute, "unknown", ""}, // a purge may have removed b1
 				{10 * time.Minute, "unknown", ""},           // the newest edge
-				{0, "notCovered", ""},
+				{0, "unknown", ""},                          // after the frontier: WAL archived since may cover it
 				{49 * time.Hour, "notCovered", ""},
 			},
 		},
@@ -231,7 +234,7 @@ func TestRecoveryTimelineStates(t *testing.T) {
 			"a fresh frontier read a while ago leaves the time since unknown",
 			timelineFixture{paths: []evidence.RecoveryPath{tlPath("b1", 48*time.Hour, 30*time.Minute, frontier)}, scannedAt: now.Add(-10 * time.Minute)},
 			facts, "healthy",
-			[]answer{{20 * time.Minute, "notCovered", ""}, {5 * time.Minute, "unknown", ""}, {0, "unknown", ""}, {2 * time.Hour, "covered", "b1"}},
+			[]answer{{20 * time.Minute, "unknown", ""}, {5 * time.Minute, "unknown", ""}, {0, "unknown", ""}, {2 * time.Hour, "covered", "b1"}},
 		},
 		{
 			"a recent archiving failure makes the newest day unknown",
@@ -303,7 +306,7 @@ func TestRecoveryTimelineStates(t *testing.T) {
 		// restorable, so the check must not say notCovered.
 		for _, at := range []time.Time{now.Add(-time.Hour), now, now.Add(time.Hour)} {
 			check = restoreCheck(viewmodel.Backups{RecoveryTimeline: got}, at)
-			if check.Answer != "unknown" || !strings.Contains(check.Text, "last base backup") || !strings.Contains(check.Text, "evidence agent") {
+			if check.Answer != "unknown" || !strings.Contains(check.Text, "last base backup") || check.Code == "" {
 				t.Errorf("after the last base backup (%s): %+v", at, check)
 			}
 		}

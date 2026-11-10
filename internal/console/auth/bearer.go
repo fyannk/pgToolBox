@@ -37,6 +37,9 @@ var (
 	// ErrBearerExpired is a JWT whose exp has passed: refused even while
 	// the API server's answer about it is still cached.
 	ErrBearerExpired = errors.New("the token has expired")
+	// ErrReviewsBusy: the process-wide budget of token reviews, which the
+	// token form and raw bearers share, is spent; the caller answers 429.
+	ErrReviewsBusy = errors.New("the console is reviewing too many tokens; retry in a few seconds")
 )
 
 // BearerProvider is the Principal.Provider of a raw bearer token.
@@ -77,6 +80,14 @@ func (h *Handler) BearerPrincipal(ctx context.Context, token string) (*Principal
 	if !ok {
 		return nil, ErrMalformedBearer
 	}
+	// A token the API server has to be asked about spends one review of
+	// the process-wide bucket the token form also spends (the caller has
+	// already charged its sender's address): distinct junk bearers cannot
+	// make this replica review more than 20 tokens a second. A token whose
+	// answer is cached costs the API server nothing and spends nothing.
+	if !h.reviewCached(tok) && !h.tokenReviews.Allow(tokenReviewsKey) {
+		return nil, ErrReviewsBusy
+	}
 	u, err := h.identity.Review(ctx, tok)
 	if err != nil {
 		return nil, err
@@ -107,6 +118,13 @@ func (h *Handler) BearerPrincipal(ctx context.Context, token string) (*Principal
 		p.Expiry, p.AbsoluteExpiry = expiry, expiry
 	}
 	return p, nil
+}
+
+// reviewCached reports whether the identity of tok is cached, so that
+// reviewing it again sends nothing to the API server.
+func (h *Handler) reviewCached(tok string) bool {
+	c, ok := h.identity.(*CachedReviewer)
+	return ok && c.Cached(tok)
 }
 
 // BearerReference is the audit reference of a raw bearer token: a short

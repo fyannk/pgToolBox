@@ -160,6 +160,19 @@ func atoiStrict(s string) (int, bool) {
 	return n, true
 }
 
+// NamedMinor maps a version to the minor it names, supported or not:
+// "1.32.0" gives "1.32", a feature floor ">=1.30" gives "1.30". A version
+// that does not parse gives "". ClassifyPhase takes it so that a newer
+// minor without tables is capped rather than read as undetected.
+func NamedMinor(version string) Minor {
+	version = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(version), ">="))
+	v, ok := parseSemver(version)
+	if !ok {
+		return ""
+	}
+	return v.minorString()
+}
+
 // MinorOf maps a version to its supported minor: "1.30.1" and "v1.30.1"
 // give "1.30", a feature floor ">=1.30" gives "1.30". A version whose
 // minor has no table, or that does not parse, gives false.

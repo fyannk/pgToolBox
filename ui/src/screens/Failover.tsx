@@ -6,6 +6,7 @@ import { BlindSpots } from "../ds/patterns/BlindSpots/BlindSpots";
 import { type Columns, columnHelper, DataTable } from "../ds/patterns/DataTable/DataTable";
 import { Provenance } from "../ds/patterns/Provenance/Provenance";
 import { StatusChip } from "../ds/patterns/StatusChip/StatusChip";
+import { Time } from "../ds/time";
 import { m } from "../paraglide/messages.js";
 import { Fact, Facts, Panel } from "./Panel";
 
@@ -153,6 +154,13 @@ export function FailoverPanel({ f }: { f: FailoverRehearsal }) {
         <Fact label={m.failover_data_loss()}>
           <span className="flex flex-col">
             <span>{lossWord(f.dataLoss)}</span>
+            {f.provenance.observedAt && (
+              // Every loss answer rests on one sweep of /pg/status: its age is part of the answer.
+              <span className="text-caption text-muted" data-loss-as-of="">
+                {m.failover_loss_as_of()} <Time iso={f.provenance.observedAt} past />
+                {f.provenance.stale && f.provenance.staleReason && <> ({f.provenance.staleReason})</>}
+              </span>
+            )}
             {f.dataLossText && <span className="text-caption text-muted">{f.dataLossText}</span>}
           </span>
         </Fact>

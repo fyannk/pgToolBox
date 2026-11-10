@@ -148,6 +148,7 @@ test-fuzz: ## Fuzz the trust-boundary parsers (FUZZ_TIME per target).
 	$(call fuzz,./internal/evidence/formats/pgbackrest,FuzzParseWALName)
 	$(call fuzz,./internal/evidence/formats/pgbackrest,FuzzParseHistory)
 	$(call fuzz,./internal/evidence/formats/pgbackrest,FuzzParseLSN)
+	$(call fuzz,./internal/evidence/formats/timeline,FuzzLatest)
 	$(call fuzz,./internal/evidence/provider/cursor,FuzzCodec)
 	$(call fuzz,./internal/evidence/evidenceapi,FuzzBackupInfoProjection)
 	$(call fuzz,./internal/evidence/config,FuzzCheckConnectionString)
@@ -282,7 +283,7 @@ audit: ## npm audit of the docs site.
 # instead of silently never matching; the inverse runs beside it.
 .PHONY: verify-pins
 verify-pins: ## Verify the diagnostics catalog's CNPG pins against upstream sources.
-	go test -tags catalogpins -count=1 -run 'TestPinnedStringsExistInVerifiedReleases|TestEveryUpstreamSignalIsDecided' ./pkg/diagnose/catalog/
+	go test -tags catalogpins -count=1 -run 'TestPinnedStringsExistInVerifiedReleases|TestEveryUpstreamSignalIsDecided|TestCronParserMatchesTheOperator' ./pkg/diagnose/catalog/
 
 .PHONY: catalog-docs
 catalog-docs: ## Regenerate docs/site/docs/reference/checks.md from the catalog.
@@ -466,6 +467,7 @@ test-fuzz-console-api: ## Fuzz the console's sign-in and API parsers.
 	$(call fuzz,./internal/console/auth,FuzzCheckRequest)
 	$(call fuzz,./internal/console/auth,FuzzParseRevocationList)
 	$(call fuzz,./internal/console/auth,FuzzNormalizePastedToken)
+	$(call fuzz,./internal/console/auth,FuzzClientIP)
 	$(call fuzz,./internal/console/api,FuzzClusterPath)
 
 test-fuzz: test-fuzz-console-api test-fuzz-evidence-agent test-fuzz-operator

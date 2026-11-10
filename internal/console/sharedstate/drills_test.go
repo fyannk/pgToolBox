@@ -143,6 +143,67 @@ func TestDrillResultsMergeAndBounds(t *testing.T) {
 	}
 }
 
+// TestDrillResultsKeepTheRecreatedClusterOwnPass is the regression test
+// of pruning by name: orders was deleted and recreated (a new UID). A
+// drill of the predecessor's backup finished after the recreated
+// Cluster's only pass, and a run of failures then filled the bound. The
+// newest pass was kept per namespace and name, so the predecessor's pass
+// stood in for the source and the recreated Cluster's own pass was
+// dropped, turning its "passed" into "no pass recorded".
+func TestDrillResultsKeepTheRecreatedClusterOwnPass(t *testing.T) {
+	s := newStore(nil, &testClock{now: t0}, nil)
+	own := passed("drill-own-pass", t0.Add(-100*24*time.Hour))
+	own.SourceUID = "uid-new"
+	s.KeepDrill(own)
+	predecessor := passed("drill-predecessor-pass", t0.Add(-90*24*time.Hour))
+	predecessor.SourceUID = "uid-old"
+	s.KeepDrill(predecessor)
+	legacy := passed("drill-no-uid-pass", t0.Add(-95*24*time.Hour))
+	s.KeepDrill(legacy)
+	for i := range maxDrillsPerSource + 5 {
+		r := passed(fmt.Sprintf("drill-%03d", i), t0.Add(time.Duration(i)*time.Hour))
+		r.SourceUID, r.Result = "uid-new", "failed"
+		s.KeepDrill(r)
+	}
+	names := map[string]bool{}
+	for _, r := range s.KeptDrills() {
+		names[r.Name] = true
+	}
+	for _, want := range []string{"drill-own-pass", "drill-predecessor-pass", "drill-no-uid-pass"} {
+		if !names[want] {
+			t.Errorf("%s was dropped for the bound; each incarnation keeps its newest pass", want)
+		}
+	}
+	if got := len(s.KeptDrills()); got != maxDrillsPerSource+3 {
+		t.Errorf("kept %d, want the bound plus one newest pass per incarnation", got)
+	}
+	if names["drill-004"] || !names["drill-005"] || !names[fmt.Sprintf("drill-%03d", maxDrillsPerSource+4)] {
+		t.Error("want the oldest failures dropped first, the newest kept")
+	}
+}
+
+// TestDrillResultsProtectedPassesAreBounded: recreating a Cluster again
+// and again cannot keep more passes of one name than the per-source bound.
+func TestDrillResultsProtectedPassesAreBounded(t *testing.T) {
+	s := newStore(nil, &testClock{now: t0}, nil)
+	for i := range maxDrillsPerSource + 10 {
+		r := passed(fmt.Sprintf("drill-%03d", i), t0.Add(time.Duration(i)*time.Hour))
+		r.SourceUID = fmt.Sprintf("uid-%03d", i)
+		s.KeepDrill(r)
+	}
+	kept := s.KeptDrills()
+	if len(kept) != maxDrillsPerSource {
+		t.Errorf("kept %d passes of one name, want the bound %d", len(kept), maxDrillsPerSource)
+	}
+	names := map[string]bool{}
+	for _, r := range kept {
+		names[r.Name] = true
+	}
+	if names["drill-000"] || !names[fmt.Sprintf("drill-%03d", maxDrillsPerSource+9)] {
+		t.Error("want the newest incarnations' passes kept")
+	}
+}
+
 func TestDrillResultsNotKeptWithoutAConfigMap(t *testing.T) {
 	for name, setup := range map[string]func(*apiServer){
 		"missing":   func(a *apiServer) { a.cm = nil },

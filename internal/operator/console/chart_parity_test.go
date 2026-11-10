@@ -26,6 +26,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -169,6 +170,12 @@ func containerFacts(spec *corev1.PodSpec) (env []string, mounts []mountFact, vol
 	return env, mounts, volumes
 }
 
+// exposed is what the reconciler passes: the chart has no API to probe,
+// so a requested exposure is a published one.
+func exposed(c *pgtoolboxv1alpha1.PgToolBoxConsole) bool {
+	return c.Spec.Exposure.TypeOrDefault() != pgtoolboxv1alpha1.ExposureTypeClusterIP
+}
+
 // inMemory is the chart's default history, which a PgToolBoxConsole must ask for.
 func inMemory(c *pgtoolboxv1alpha1.PgToolBoxConsole) { c.Spec.History.Persistent = new(false) }
 
@@ -188,13 +195,43 @@ func TestDeploymentMatchesTheChart(t *testing.T) {
 	}{
 		{name: "in-memory history (the chart's default)", mutate: inMemory},
 		{
-			// Behind an Ingress both trust one forwarded hop, so that the
-			// sign-in budgets are per client rather than one for everyone.
+			// Behind an Ingress both render one forwarded hop and no trusted
+			// peer: without a NetworkPolicy any Pod could forge the header,
+			// so the console ignores it.
 			name: "exposed through an Ingress",
 			sets: []string{"console.exposure.type=ingress", "console.exposure.host=console.example"},
 			mutate: func(c *pgtoolboxv1alpha1.PgToolBoxConsole) {
 				inMemory(c)
-				c.Spec.Exposure = pgtoolboxv1alpha1.ExposureSpec{Type: pgtoolboxv1alpha1.ExposureTypeIngress, Hostname: "console.example"}
+				c.Spec.Exposure.ExposureSpec = pgtoolboxv1alpha1.ExposureSpec{Type: pgtoolboxv1alpha1.ExposureTypeIngress, Hostname: "console.example"}
+			},
+		},
+		{
+			// Behind an Ingress and its NetworkPolicy both trust every peer
+			// the policy admits: only the router reaches the port.
+			name: "exposed through an Ingress behind its NetworkPolicy",
+			sets: []string{
+				"console.exposure.type=ingress", "console.exposure.host=console.example", "console.networkPolicy.enabled=true",
+				"console.exposure.routerNamespace=ingress-nginx", "console.networkPolicy.apiServer.mode=any",
+			},
+			mutate: func(c *pgtoolboxv1alpha1.PgToolBoxConsole) {
+				inMemory(c)
+				c.Spec.Exposure.ExposureSpec = pgtoolboxv1alpha1.ExposureSpec{Type: pgtoolboxv1alpha1.ExposureTypeIngress, Hostname: "console.example"}
+				c.Spec.Exposure.NetworkPolicy = &pgtoolboxv1alpha1.PgToolBoxConsoleExposurePolicySpec{From: []networkingv1.NetworkPolicyPeer{{
+					NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"kubernetes.io/metadata.name": "ingress-nginx"}},
+				}}}
+			},
+		},
+		{
+			// Two proxies, named by address.
+			name: "exposed behind two named proxies",
+			sets: []string{
+				"console.exposure.type=ingress", "console.exposure.host=console.example",
+				"console.trustedProxyHops=2", "console.trustedProxyCIDRs={10.128.0.0/14,fd00::/64}",
+			},
+			mutate: func(c *pgtoolboxv1alpha1.PgToolBoxConsole) {
+				inMemory(c)
+				c.Spec.Exposure.ExposureSpec = pgtoolboxv1alpha1.ExposureSpec{Type: pgtoolboxv1alpha1.ExposureTypeIngress, Hostname: "console.example"}
+				c.Spec.Exposure.TrustedProxy = &pgtoolboxv1alpha1.PgToolBoxConsoleTrustedProxySpec{Hops: new(int32(2)), CIDRs: []string{"10.128.0.0/14", "fd00::/64"}}
 			},
 		},
 		{
@@ -380,12 +417,12 @@ func TestDeploymentMatchesTheChart(t *testing.T) {
 			var chartPod, ourPod *corev1.PodTemplateSpec
 			if console.HistoryPersistent() {
 				chart := chartObject[appsv1.StatefulSet](t, docs, "StatefulSet/console")
-				ours := buildStatefulSet(console, deploymentInputs{Image: specs.ResolveImage(nil, chart.Spec.Template.Spec.Containers[0].Image)})
+				ours := buildStatefulSet(console, deploymentInputs{Image: specs.ResolveImage(nil, chart.Spec.Template.Spec.Containers[0].Image), Exposed: exposed(console)})
 				compareStatefulSets(t, ours, chart)
 				chartPod, ourPod = &chart.Spec.Template, &ours.Spec.Template
 			} else {
 				chart := chartObject[appsv1.Deployment](t, docs, "Deployment/console")
-				ours := buildDeployment(console, deploymentInputs{Image: specs.ResolveImage(nil, chart.Spec.Template.Spec.Containers[0].Image)})
+				ours := buildDeployment(console, deploymentInputs{Image: specs.ResolveImage(nil, chart.Spec.Template.Spec.Containers[0].Image), Exposed: exposed(console)})
 				if got, want := ours.Spec.Strategy, chart.Spec.Strategy; got.Type != want.Type ||
 					got.RollingUpdate.MaxSurge.String() != want.RollingUpdate.MaxSurge.String() ||
 					got.RollingUpdate.MaxUnavailable.String() != want.RollingUpdate.MaxUnavailable.String() {

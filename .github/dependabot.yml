@@ -14,6 +14,7 @@ updates:
     directories:
       - /
       - /pkg/evidence
+      - /deploy/olm/catalog/opm
     schedule:
       interval: weekly
       day: monday

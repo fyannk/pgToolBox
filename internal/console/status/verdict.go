@@ -24,9 +24,9 @@ import (
 
 	"github.com/fyannk/pgToolBox/internal/console/cache"
 	"github.com/fyannk/pgToolBox/internal/console/diag"
-	"github.com/fyannk/pgToolBox/internal/console/sweep"
 	"github.com/fyannk/pgToolBox/internal/console/viewmodel"
 	"github.com/fyannk/pgToolBox/pkg/cnpgstatus"
+	"github.com/fyannk/pgToolBox/pkg/cnpgstatus/instancestatus"
 	"github.com/fyannk/pgToolBox/pkg/diagnose"
 )
 
@@ -56,12 +56,15 @@ func (s *Service) verdict(g *gathered, run *diag.Run) viewmodel.Verdict {
 	var items []viewmodel.Contributor
 	add := func(c viewmodel.Contributor) { items = append(items, c) }
 
-	phase := cnpgstatus.ClassifyPhase(g.minor, g.cluster.Status.Phase)
+	phase := cnpgstatus.ClassifyPhase(g.phaseMinor, g.cluster.Status.Phase)
 	phaseText := g.cluster.Status.Phase
 	if phaseText == "" {
 		phaseText = "not reported"
 	} else if !phase.Known {
 		phaseText += " (not in the CNPG " + string(minorOrNewest(g.minor)) + " table)"
+	}
+	if phase.Reason != "" {
+		phaseText += " (" + phase.Reason + ")"
 	}
 	add(viewmodel.Contributor{ID: "phase", Health: health(phase.Class), Label: "Phase", Detail: phaseText, Provenance: operator("Cluster.status.phase")})
 
@@ -193,7 +196,7 @@ func (s *Service) instanceCounts(g *gathered) viewmodel.InstanceCounts {
 		counts.Health = viewmodel.HealthOK
 	case *counts.Ready == 0 && desired > 0:
 		counts.Health = viewmodel.HealthCritical
-	case cnpgstatus.ClassifyPhase(g.minor, g.cluster.Status.Phase).Class == cnpgstatus.ClassProgressing:
+	case cnpgstatus.ClassifyPhase(g.phaseMinor, g.cluster.Status.Phase).Class == cnpgstatus.ClassProgressing:
 		counts.Health = viewmodel.HealthProgressing
 	default:
 		counts.Health = viewmodel.HealthWarning
@@ -235,12 +238,19 @@ func podReady(pod *corev1.Pod) bool {
 // v1.30.1:272, fillArchiverStatus). Without a readable currentPrimary,
 // the instance that reports itself primary, the first by name, stands in.
 func primaryArchiver(g *gathered) *cnpgstatus.ArchiverLive {
-	live := func(inst sweep.Instance) *cnpgstatus.ArchiverLive {
-		return &cnpgstatus.ArchiverLive{IsArchivingWAL: inst.Reading.IsArchivingWAL, LastFailedWAL: inst.Reading.LastFailedWAL, ReadyWALFiles: inst.Reading.ReadyWALFiles}
+	r := primaryArchiverReading(g)
+	if r == nil {
+		return nil
 	}
+	return &cnpgstatus.ArchiverLive{IsArchivingWAL: r.IsArchivingWAL, LastFailedWAL: r.LastFailedWAL, ReadyWALFiles: r.ReadyWALFiles}
+}
+
+// primaryArchiverReading is the archiving instance's whole reading, chosen
+// as primaryArchiver chooses it; nil when none was read.
+func primaryArchiverReading(g *gathered) *instancestatus.Reading {
 	if name := g.cluster.Status.CurrentPrimary; name != "" {
 		if inst, ok := g.swept.Instances[name]; ok && inst.State == viewmodel.StatusReadOK && inst.Reading != nil {
-			return live(inst)
+			return inst.Reading
 		}
 	}
 	names := make([]string, 0, len(g.swept.Instances))
@@ -251,10 +261,19 @@ func primaryArchiver(g *gathered) *cnpgstatus.ArchiverLive {
 	for _, name := range names {
 		inst := g.swept.Instances[name]
 		if inst.State == viewmodel.StatusReadOK && inst.Reading != nil && inst.Reading.IsPrimary {
-			return live(inst)
+			return inst.Reading
 		}
 	}
 	return nil
+}
+
+// sweepStaleReason is why a reading of the sweep is stale.
+const sweepStaleReason = "the sweep has not completed for three intervals"
+
+// sweepStale is the console's one staleness rule for the status sweep:
+// its last completed sweep is older than three sweep intervals.
+func sweepStale(g *gathered, now time.Time) bool {
+	return g.hasSweep && g.swept.Interval > 0 && now.Sub(g.swept.SweptAt) > 3*g.swept.Interval
 }
 
 func archivingDetail(a cnpgstatus.ArchivingReading) string {
@@ -273,7 +292,11 @@ func archivingDetail(a cnpgstatus.ArchivingReading) string {
 func (s *Service) archivingProvenance(g *gathered, now time.Time) viewmodel.Provenance {
 	if primaryArchiver(g) != nil {
 		at := g.swept.SweptAt
-		return viewmodel.Provenance{Origin: viewmodel.OriginInstance, Source: "/pg/status", ObservedAt: &at}
+		p := viewmodel.Provenance{Origin: viewmodel.OriginInstance, Source: "/pg/status", ObservedAt: &at}
+		if sweepStale(g, now) {
+			p.Stale, p.StaleReason = true, sweepStaleReason
+		}
+		return p
 	}
 	return s.provenance(g.key.Namespace, cache.SourceClusters, viewmodel.OriginOperator, "Cluster.status.conditions[ContinuousArchiving]", now)
 }
@@ -316,8 +339,8 @@ func (s *Service) statusReadContributor(g *gathered, now time.Time) viewmodel.Co
 	default:
 		c.Health = viewmodel.HealthUnknown
 	}
-	if now.Sub(at) > 3*g.swept.Interval && g.swept.Interval > 0 {
-		c.Provenance.Stale, c.Provenance.StaleReason = true, "the sweep has not completed for three intervals"
+	if sweepStale(g, now) {
+		c.Provenance.Stale, c.Provenance.StaleReason = true, sweepStaleReason
 		c.Health = viewmodel.HealthUnknown
 	}
 	return c

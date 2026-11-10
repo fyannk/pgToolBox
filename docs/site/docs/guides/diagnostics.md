@@ -215,6 +215,33 @@ reworded upstream message fails the build instead of silently never matching.
 Some of the console's own knowledge expires on a calendar (an end-of-life rule): the
 catalog's tests fail once that date passes, naming what to go and read.
 
+The Cluster phase is a free sentence, and a later CloudNativePG minor can keep a
+string while changing what it means. The phase table is verified at the 1.30.0 tag.
+On any other minor the console detects (the planned 1.31, read at upstream main; a
+newer one; 1.29), a phase the table reads as healthy is shown as a warning with the
+reason "phase table not verified for CNPG 1.x". Phases that are not healthy keep
+their colour, and a phase that is not in the table is shown as written, as a
+warning.
+
+## Backup schedule cadence
+
+`backup-cadence` reports a `ScheduledBackup` whose schedule starts a base backup
+six times a day or more. CloudNativePG reads a schedule with
+`github.com/robfig/cron` v1.2.0 `cron.Parse`: seconds come first and the day of
+week is optional. The console uses the same parser at the same version, so
+a five-field crontab written from habit reads the way the operator reads it:
+`0 2 * * *` means second 0, minute 2, every hour. `make verify-pins` fails when a
+verified CloudNativePG release requires another version of the library.
+
+The rate is counted exactly, not estimated. It covers six and five fields, lists,
+ranges, steps, names, `?`, and every descriptor: `@hourly` is 24 a day, `@every 30m`
+48, and `@daily`, `@weekly`, `@monthly` and `@yearly` once on the days they run.
+A schedule that runs on some days only is counted on the days it runs, and the
+finding says so. The crontab habit `0 2 * * 1-5` ("weekdays at 02:00") becomes
+every hour from January to May, which is 24 backups on each of those days.
+A schedule the parser refuses, or one that never fires (`0 0 0 30 2 *`), is not
+reported here: `cnpg-schedule-invalid` covers those.
+
 ## Adding to the catalog
 
 A new check is a catalog rule or a detector in `pkg/diagnose`, with a golden

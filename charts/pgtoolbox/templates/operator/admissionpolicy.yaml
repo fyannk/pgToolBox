@@ -9,23 +9,32 @@ its ServiceAccount to a cloud identity (and is the opt-in to use it), so it
 has its own list. The operator's own writes are status-subresource updates,
 which this policy does not match.
 
-Third rule: whoever may edit a PgToolBoxConsole or a PgAdmin
-could otherwise name any Secret of its namespace in a Secret reference
-(SMTP password, webhook URL, OIDC client secret, Prometheus token, pull
-secret, ...) and have the operator mount it into a workload that sends it to
-a server the editor chose. The CRDs' CEL cannot ask the API server who may
-read a Secret; the `authorizer` of a policy can: every Secret the spec names
-must be one the requesting user may `get`. On UPDATE only the references that
-are new or changed are checked: the operator's own metadata writes (finalizers,
-annotations) and unrelated edits of an object created before the policy was
-turned on keep working, and a Secret that was already referenced at that
-field is no new disclosure. A reference moved to another field is "new".
-The lists (_admissionpolicy.tpl) follow api/v1alpha1: every SecretKeyReference,
-SecretKeySelector and Secret-named LocalObjectReference (pullSecrets,
-certificateSecretRef). TestSecretRefPolicyCoversTheAPI in
-internal/operator/admissionpolicy walks the Go types and fails on a missing
-path or a missing has() guard; the envtest there evaluates each field.
-EvidenceAgents are not covered (that test lists why for each of their fields).
+Third rule: whoever may edit a PgToolBoxConsole, a PgAdmin or an
+EvidenceAgent could otherwise name any Secret of its namespace in a Secret
+reference (SMTP password, webhook URL, OIDC client secret, Prometheus token,
+pull secret, the agent's allowedSecrets, ...) and have the operator mount it
+into a workload that sends it to a server the editor chose. The CRDs' CEL
+cannot ask the API server who may read a Secret; the `authorizer` of a policy
+can: every Secret the spec names must be one the requesting user may `get`. On
+UPDATE only the references that are new or changed are checked: the operator's
+own metadata writes (finalizers, annotations) and unrelated edits of an object
+created before the policy was turned on keep working, and a Secret that was
+already referenced at that field, sent to the same place, is no new
+disclosure. A reference moved to another field is "new"; so is a kept
+reference whose destination changed (the issuer, Prometheus URL, SMTP
+address, tracing endpoint or image repository it is sent to). The lists
+(_admissionpolicy.tpl) follow api/v1alpha1: TestSecretRefPolicyCoversTheAPI
+in internal/operator/admissionpolicy walks the Go types and fails on a
+missing path, a missing has() guard or a missing destination; the envtest
+there evaluates each field.
+
+Fourth rule: a PgAdmin hands whoever opens it the credentials of the Clusters
+it registers (spec.credentials: the application user and DatabaseRoles by
+default, the superuser on request). Their Secrets are named by the Cluster,
+not by the PgAdmin, so the policy cannot name them: creating a PgAdmin that
+offers credentials of Clusters of its namespace, or widening what it offers
+(a credential kind, a Cluster, the selector), requires `get` on the Secrets of
+the namespace. Cross-namespace Clusters are the PgAdminAccess grant's decision.
 */ -}}
 {{- $ap := .Values.operator.admissionPolicy }}
 {{- $io := $ap.imageOverride }}
@@ -61,6 +70,29 @@ spec:
         oldObject == null ? [] : (
         {{- include "pgtoolbox.admission.secretRefs" "oldObject" | nindent 8 }}
         )
+    - name: newSecretRefs
+      expression: >-
+        variables.secretRefs.filter(r, !(oldObject != null && r in variables.oldSecretRefs))
+    - name: credentialKinds
+      expression: >-
+        request.resource.resource != 'pgadmins' ? [] : (
+        {{- include "pgtoolbox.admission.credentialKinds" "object" | nindent 8 }}
+        )
+    - name: credentialSources
+      expression: >-
+        request.resource.resource != 'pgadmins' ? [] : (
+        {{- include "pgtoolbox.admission.credentialSources" "object" | nindent 8 }}
+        )
+    - name: oldCredentialKinds
+      expression: >-
+        oldObject == null || request.resource.resource != 'pgadmins' ? [] : (
+        {{- include "pgtoolbox.admission.credentialKinds" "oldObject" | nindent 8 }}
+        )
+    - name: oldCredentialSources
+      expression: >-
+        oldObject == null || request.resource.resource != 'pgadmins' ? [] : (
+        {{- include "pgtoolbox.admission.credentialSources" "oldObject" | nindent 8 }}
+        )
   validations:
     - expression: >-
         request.resource.resource == 'pgtoolboxconsoles' ||
@@ -78,11 +110,32 @@ spec:
         request.userInfo.groups.exists(g, g in variables.identityGroups)
       message: spec.workloadIdentity may be set only by the users and groups the platform team listed in the operator chart (operator.admissionPolicy.workloadIdentity)
       reason: Forbidden
+    # An authorizer check costs most of an expression's CEL runtime budget
+    # (about two fit), so the rule is two validations: a change that adds
+    # more than two Secret references needs get on every Secret of the
+    # namespace (one check), and one that adds one or two is checked name
+    # by name (get on the namespace's Secrets covers those names too).
     - expression: >-
-        variables.secretRefs.all(r,
-        (oldObject != null && r in variables.oldSecretRefs) ||
+        variables.newSecretRefs.size() <= 2 ||
+        authorizer.group('').resource('secrets').namespace(object.metadata.namespace).check('get').allowed()
+      message: editing a PgToolBoxConsole, a PgAdmin or an EvidenceAgent requires get on every Secret it references; a change that adds more than two Secret references at once requires get on every Secret of the namespace (a kept reference whose destination changed counts as added)
+      reason: Forbidden
+    - expression: >-
+        variables.newSecretRefs.size() == 0 || variables.newSecretRefs.size() > 2 ||
+        variables.newSecretRefs.all(r,
         authorizer.group('').resource('secrets').namespace(object.metadata.namespace).name(r.n).check('get').allowed())
-      message: editing a PgToolBoxConsole or a PgAdmin requires get on every Secret it references (a Secret reference you may not read is refused, whichever field names it)
+      message: editing a PgToolBoxConsole, a PgAdmin or an EvidenceAgent requires get on every Secret it references (a Secret reference you may not read is refused, whichever field names it, and a kept reference whose destination changed is checked again)
+      reason: Forbidden
+    - expression: >-
+        request.resource.resource != 'pgadmins' ||
+        variables.credentialKinds.size() == 0 ||
+        variables.credentialSources.size() == 0 ||
+        (oldObject != null &&
+        variables.credentialKinds.all(k, k in variables.oldCredentialKinds) &&
+        variables.credentialSources.all(s, s in variables.oldCredentialSources) &&
+        (!has(object.spec.clusterSelector) || (has(oldObject.spec.clusterSelector) && object.spec.clusterSelector == oldObject.spec.clusterSelector))) ||
+        authorizer.group('').resource('secrets').namespace(object.metadata.namespace).check('get').allowed()
+      message: a PgAdmin that offers the credentials of Clusters of its namespace (spec.credentials) requires get on the Secrets of the namespace, since whoever opens pgAdmin holds them; adding a credential kind or a Cluster is checked again
       reason: Forbidden
 ---
 apiVersion: admissionregistration.k8s.io/v1

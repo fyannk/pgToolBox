@@ -199,7 +199,7 @@ func projectSnapshot(source inventory.Snapshot, options Options, canonical evide
 		APIVersion: evidencev1alpha1.APIVersion,
 		Kind:       evidencev1alpha1.SnapshotKind,
 		Producer: evidencev1alpha1.Producer{
-			Name: evidencev1alpha1.ProducerName, Version: options.ProducerVersion,
+			Name: evidencev1alpha1.ProducerName, Version: options.ProducerVersion, Features: evidencev1alpha1.ProducerFeatures(),
 		},
 		ProducerInstance: options.ProducerInstance,
 		// The handler stamps the deployed epoch on every served copy; the

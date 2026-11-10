@@ -163,7 +163,8 @@ type Handler struct {
 	attempts       *RateLimiter
 	tokenAttempts  *RateLimiter
 	tokenAddresses *RateLimiter
-	// tokenReviews is the token form's process-wide bound (one key).
+	// tokenReviews is the process-wide bound (one key) of the token form
+	// and of the raw bearers the MCP endpoint reviews.
 	tokenReviews *RateLimiter
 	// flows are the sign-in flows already used on this replica.
 	flows *spentFlows
@@ -229,6 +230,9 @@ func newHandler(o Options, providers []oauthProvider) *Handler {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
+	for _, warning := range o.Config.Warnings() {
+		log.Warn(warning)
+	}
 	var grantOIDC *oidcProvider
 	for _, p := range providers {
 		if op, ok := p.(*oidcProvider); ok {
@@ -241,7 +245,7 @@ func newHandler(o Options, providers []oauthProvider) *Handler {
 		codec:          o.Codec,
 		identity:       o.Identity,
 		revocations:    o.Revocations,
-		audit:          &Auditor{Logger: log, TrustedProxyHops: o.Config.TrustedProxyHops},
+		audit:          &Auditor{Logger: log, TrustedProxy: o.Config.TrustedProxy},
 		log:            log,
 		oauth:          providers,
 		token:          slices.Contains(o.Config.Providers, ProviderToken),
@@ -365,7 +369,7 @@ func (h *Handler) handleCallback(w http.ResponseWriter, r *http.Request, p oauth
 	// SelfSubjectReview), and charging it would let anyone who shares the
 	// victim's address key (every user, behind a proxy not counted in
 	// trustedProxyHops) lock the sign-in with junk callbacks.
-	if !h.allowSignIn(w, r, p.name(), h.attempts, ClientKey(r, h.cfg.TrustedProxyHops)) {
+	if !h.allowSignIn(w, r, p.name(), h.attempts, ClientKey(r, h.cfg.TrustedProxy)) {
 		return
 	}
 	if !h.flows.spend(p.name(), f.State, time.Unix(f.Expiry, 0), h.now()) {
@@ -421,7 +425,7 @@ func (h *Handler) handleToken(w http.ResponseWriter, r *http.Request) {
 	}
 	// Then the sender's address: distinct junk tokens from one address
 	// stop there, and cannot drain the shared bucket below.
-	if !h.allowSignIn(w, r, ProviderToken, h.tokenAddresses, ClientKey(r, h.cfg.TrustedProxyHops)) {
+	if !h.allowSignIn(w, r, ProviderToken, h.tokenAddresses, ClientKey(r, h.cfg.TrustedProxy)) {
 		return
 	}
 	// Then the process-wide bound, before anything reaches the API
@@ -541,7 +545,7 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 		// no longer accepts disconnects nothing (the grants then fail on
 		// their own, carrying the same identity).
 		if hook := h.signOutHookFn(); hook != nil && user != "" && r.PostFormValue("disconnect") == "assistants" {
-			hook(r.Context(), ClientOf(r, h.cfg.TrustedProxyHops), user)
+			hook(r.Context(), ClientOf(r, h.cfg.TrustedProxy), user)
 		}
 		h.markLoggedOut(s.ID, s.AbsoluteExpiry(h.codec.Limits()))
 		// The session's token is refused as a raw bearer too (the MCP

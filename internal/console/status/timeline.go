@@ -240,7 +240,7 @@ func (s *Service) timelineEntries(g *gathered, from, to time.Time) (entries []vi
 		res := j.Query(timeline.Query{Namespace: g.key.Namespace, Cluster: g.key.Name, From: from, To: to})
 		oldest, evicted = res.Oldest, res.Evicted
 		for i := range res.Events {
-			entries = append(entries, journalEntry(&res.Events[i], g.minor))
+			entries = append(entries, journalEntry(&res.Events[i], g.phaseMinor))
 		}
 	}
 	if h := s.historyReader(); h != nil {

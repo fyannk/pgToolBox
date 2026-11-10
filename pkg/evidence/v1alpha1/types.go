@@ -210,6 +210,56 @@ type Capability struct {
 type Producer struct {
 	Name    string `json:"name"`
 	Version string `json:"version"`
+	// Features are the semantic guarantees this build gives beyond the
+	// fields it sends (sorted, unique): a consumer checks the ones its
+	// reading relies on, and treats a producer without one as an older
+	// build. Values it does not know are ignored. Additive: producers
+	// before it never send it.
+	Features []Feature `json:"features,omitempty"`
+}
+
+// Feature names one semantic guarantee of a producer build.
+type Feature string
+
+const (
+	// FeatureRecoveryTimelineLatest means recovery paths are judged against the
+	// timeline PostgreSQL's recovery_target_timeline 'latest' resolves to
+	// (the probe of consecutive history files from the backup's timeline);
+	// a path the probe cannot be shown to reach is never healthy, and a
+	// path that cannot reach the newest timeline is flagged off_target. A
+	// consumer that reads paths from a producer without it caps them, since
+	// such a producer may call a path healthy that a default restore does
+	// not follow.
+	FeatureRecoveryTimelineLatest Feature = "recovery-timeline-latest"
+)
+
+// maxProducerFeatures bounds Producer.Features.
+const maxProducerFeatures = 32
+
+// ProducerFeatures are the features this version of the contract defines,
+// sorted: what a producer built from it guarantees.
+func ProducerFeatures() []Feature {
+	return []Feature{FeatureRecoveryTimelineLatest}
+}
+
+// Has reports whether the producer declares feature.
+func (p Producer) Has(feature Feature) bool {
+	return slices.Contains(p.Features, feature)
+}
+
+func (p Producer) validate() error {
+	if p.Name != ProducerName || invalidText(p.Version, 64) {
+		return errors.New("snapshot producer is invalid")
+	}
+	if len(p.Features) > maxProducerFeatures {
+		return errors.New("snapshot producer declares too many features")
+	}
+	for index, feature := range p.Features {
+		if invalidReason(Reason{Code: string(feature), Message: "bounded"}) || index > 0 && p.Features[index-1] >= feature {
+			return errors.New("snapshot producer features must be bounded, unique and sorted")
+		}
+	}
+	return nil
 }
 
 // ClusterIdentity is operator-injected correlation input. Name is display-only.
@@ -710,8 +760,8 @@ func (s RepositoryEvidenceSnapshot) Validate() error {
 	if s.APIVersion != APIVersion || s.Kind != SnapshotKind {
 		return errors.New("snapshot has an incompatible version or kind")
 	}
-	if s.Producer.Name != ProducerName || invalidText(s.Producer.Version, 64) {
-		return errors.New("snapshot producer is invalid")
+	if err := s.Producer.validate(); err != nil {
+		return err
 	}
 	if !ValidProducerInstance(s.ProducerInstance) {
 		return errors.New("snapshot producer instance is invalid")

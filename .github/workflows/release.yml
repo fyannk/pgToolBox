@@ -27,7 +27,10 @@ name: Release
 # release-check and make release-dry-run run it on a laptop.
 #
 # No cache is read or written here: a release is built from the tagged commit
-# alone.
+# alone. The digest and release-file artifacts expire after 7 days: past that, a
+# failed run cannot be finished, and the next release candidate (rc.N+1)
+# supersedes it. After the prune, verify-release.yml pulls everything with no
+# credentials and verifies it.
 on:
   push:
     tags: ["v*", "pkg/evidence/v*"]
@@ -75,7 +78,6 @@ jobs:
       sha: ${{ steps.resolve.outputs.sha }}
       prerelease: ${{ steps.resolve.outputs.prerelease }}
       published: ${{ steps.resolve.outputs.published }}
-      source_date_epoch: ${{ steps.resolve.outputs.source_date_epoch }}
       created: ${{ steps.resolve.outputs.created }}
     steps:
       - name: Check out the repository with its tags
@@ -113,7 +115,9 @@ jobs:
           version="${tag##*/v}"
           prerelease=false
           [[ "${version}" != *-* ]] || prerelease=true
-          # The tagged commit's time, for reproducible image timestamps.
+          # The tagged commit's time: the `created` label, so two builds of a
+          # tag carry the same one. Images are NOT bit-for-bit reproducible
+          # (BuildKit provenance mode=max records the build itself).
           source_date_epoch="$(git log -1 --format=%ct "${sha}")"
           created="$(date -u -d "@${source_date_epoch}" +%Y-%m-%dT%H:%M:%SZ)"
           published=false
@@ -124,7 +128,7 @@ jobs:
           {
             echo "mode=publish"; echo "kind=${kind}"; echo "tag=${tag}"; echo "version=${version}"
             echo "sha=${sha}"; echo "prerelease=${prerelease}"; echo "published=${published}"
-            echo "source_date_epoch=${source_date_epoch}"; echo "created=${created}"
+            echo "created=${created}"
           } >> "${GITHUB_OUTPUT}"
       - name: Check semver, annotated tag on main, chart versions and CHANGELOG
         env:
@@ -161,7 +165,7 @@ jobs:
       id-token: write # keyless cosign signature and build provenance
       attestations: write # GitHub artifact attestations
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
         image: [operator, console, evidence-agent]
     env:
@@ -203,7 +207,6 @@ jobs:
           build-args: |
             VERSION=${{ needs.prepare.outputs.version }}
             IMG=ghcr.io/${{ github.repository_owner }}/pgtoolbox-operator:${{ needs.prepare.outputs.version }}
-            SOURCE_DATE_EPOCH=${{ needs.prepare.outputs.source_date_epoch }}
           pull: true
           push: true
           provenance: mode=max
@@ -294,11 +297,16 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Collect the image digests
+        id: collect-digests
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: digest-*
           path: digests
           merge-multiple: true
+      - name: Say what to do when the artifacts are gone
+        if: failure() && steps.collect-digests.outcome == 'failure'
+        run: |
+          echo "::error::The digest or release-file artifacts of this run are kept 7 days and are gone. A re-run after that cannot reuse them, and a new run of the same tag would push NEW digests under it. Cut the next release candidate instead (rc.N+1, never move or delete a tag): see docs/site/docs/release.md, 'When a release fails'."
       - name: Write digests.txt
         run: |
           set -euo pipefail
@@ -332,8 +340,6 @@ jobs:
           context: olm/bundle
           file: deploy/olm/bundle.Dockerfile
           platforms: linux/amd64,linux/arm64
-          build-args: |
-            SOURCE_DATE_EPOCH=${{ needs.prepare.outputs.source_date_epoch }}
           push: true
           provenance: mode=max
           sbom: true
@@ -377,8 +383,6 @@ jobs:
           context: olm/catalog
           file: deploy/olm/catalog.Dockerfile
           platforms: linux/amd64,linux/arm64
-          build-args: |
-            SOURCE_DATE_EPOCH=${{ needs.prepare.outputs.source_date_epoch }}
           push: true
           provenance: mode=max
           sbom: true
@@ -494,10 +498,15 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Collect the release files
+        id: collect-files
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-files
           path: dist/release
+      - name: Say what to do when the artifacts are gone
+        if: failure() && steps.collect-files.outcome == 'failure'
+        run: |
+          echo "::error::The digest or release-file artifacts of this run are kept 7 days and are gone. A re-run after that cannot reuse them, and a new run of the same tag would push NEW digests under it. Cut the next release candidate instead (rc.N+1, never move or delete a tag): see docs/site/docs/release.md, 'When a release fails'."
       # SECURITY.md: a fixable critical blocks the release (exit 1). A registry
       # or authentication error is a different failure (exit 2) and says so.
       # Both platforms of every image are scanned. Everything else is listed in
@@ -526,10 +535,15 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Collect the release files
+        id: collect-files
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-files
           path: dist/release
+      - name: Say what to do when the artifacts are gone
+        if: failure() && steps.collect-files.outcome == 'failure'
+        run: |
+          echo "::error::The digest or release-file artifacts of this run are kept 7 days and are gone. A re-run after that cannot reuse them, and a new run of the same tag would push NEW digests under it. Cut the next release candidate instead (rc.N+1, never move or delete a tag): see docs/site/docs/release.md, 'When a release fails'."
       - name: Set up Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: Log in to GHCR
@@ -675,3 +689,17 @@ jobs:
           package: ${{ matrix.package }}
           delete-untagged: true
           validate: true
+
+  # The release as a stranger sees it, once the packages are in their final
+  # state (pruned): pull by tag with no credentials, verify the signature and
+  # the attestation of every image and chart. The same workflow runs weekly
+  # against the latest stable release.
+  verify:
+    name: Verify the published release anonymously
+    needs: [prepare, prune]
+    if: needs.prepare.outputs.kind == 'product'
+    permissions:
+      contents: read # check out the repository, read the release list
+    uses: ./.github/workflows/verify-release.yml
+    with:
+      tag: ${{ needs.prepare.outputs.tag }}

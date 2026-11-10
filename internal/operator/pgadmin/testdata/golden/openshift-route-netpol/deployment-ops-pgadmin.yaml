@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   annotations:
-    pgtoolbox.fyannk.dev/spec-hash: 864f3d0177c68bd9
+    pgtoolbox.fyannk.dev/spec-hash: b3d503e11395592f
   labels:
     app.kubernetes.io/component: pgadmin
     app.kubernetes.io/instance: ops
@@ -35,7 +35,7 @@ spec:
   template:
     metadata:
       annotations:
-        pgtoolbox.fyannk.dev/spec-hash: 864f3d0177c68bd9
+        pgtoolbox.fyannk.dev/spec-hash: b3d503e11395592f
         sidecar.istio.io/inject: "false"
       labels:
         app.kubernetes.io/component: pgadmin
@@ -212,6 +212,7 @@ spec:
         - --tls-key=/etc/tls/private/tls.key
         - --cookie-secret-file=/etc/proxy/cookie/cookie-secret
         - --cookie-secure=true
+        - --cookie-expire=1h
         - --pass-user-headers=true
         - --skip-provider-button=true
         image: quay.io/openshift/origin-oauth-proxy:4.18

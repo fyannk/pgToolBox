@@ -54,7 +54,7 @@ func grantIndex(o AppOptions) GrantIndex {
 // MCP endpoint then accepts raw API-server tokens only.
 func newOAuthServer(o AppOptions, h *auth.Handler, store mcpoauth.GrantStore) (*mcpoauth.Server, error) {
 	s, err := mcpoauth.New(mcpoauth.Options{
-		Sessions: h, Store: store, PublicURL: o.Auth.PublicURL, TrustedProxyHops: o.Auth.TrustedProxyHops,
+		Sessions: h, Store: store, PublicURL: o.Auth.PublicURL, TrustedProxy: o.Auth.TrustedProxy,
 		WriteTools: o.MCP.WriteTools, AccessTTL: o.MCP.AccessTTL, ClientMetadataDocuments: o.MCP.ClientMetadataDocuments,
 		ClientMetadataHosts: o.MCP.ClientMetadataHosts, Log: o.Log,
 	})

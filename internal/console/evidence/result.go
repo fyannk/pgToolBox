@@ -132,6 +132,12 @@ const (
 	RecoveryUnavailable = "unavailable"
 	// RecoveryNotScanned: the agent has no completed scan yet.
 	RecoveryNotScanned = "notScanned"
+	// RecoveryUncertain: the paths were read but the console does not
+	// take them as coverage (an older agent, or a timeline a default
+	// restore follows that is not established; capRecovery); Reason says
+	// why. The paths are kept, capped: none healthy, none with a frontier
+	// receipt to draw a covered span to.
+	RecoveryUncertain = "uncertain"
 )
 
 // Recovery is the agent's observed recovery coverage: from each backup,
@@ -147,6 +153,10 @@ type Recovery struct {
 	// good ones, of an earlier publication; StaleReason says why.
 	Stale       bool
 	StaleReason string
+	// CoverageReason is the agent's own coverage roll-up reason, set when
+	// that roll-up is not healthy: it says why no path places a restore
+	// point better than the console can from the paths alone.
+	CoverageReason string
 }
 
 // RecoveryPath is one backup's observed coverage toward a timeline.
