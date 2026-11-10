@@ -155,7 +155,11 @@ the backups of the previous timeline stay usable, the window ends just before
 the switch, and the stanza is a warning ("a timeline switch is not archived
 yet"), not a loss. A backup that stopped inside the switch segment waits for it.
 Once the new timeline has WAL, a missing segment before the switch, or the
-switch segment missing while later ones exist, is reported as lost again.
+switch segment missing while later ones exist, is critical again. A segment
+missing before the switch may still be on the former primary's volume:
+CloudNativePG archives it when that instance restarts, before it rejoins, so the
+reason says not to delete that instance or its PersistentVolumeClaim (see
+[the evidence agent](../evidence-agent.md)).
 
 ## Restore drills
 

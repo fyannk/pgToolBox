@@ -126,7 +126,8 @@ test-race: ## Unit tests with the race detector.
 # or be refused; a credential must reach libpq's service and password files
 # exactly or not at all; the level parser stays closed; the redaction boundary
 # emits a category and never a cause; every evidence format parser returns a
-# typed error rather than a panic.
+# typed error rather than a panic; and taking a WAL segment or a history file
+# out of an archive never makes either format's recovery path reach further.
 .PHONY: test-fuzz
 test-fuzz: ## Fuzz the trust-boundary parsers (FUZZ_TIME per target).
 	$(call fuzz,./internal/backupresolve,FuzzParseDestination)
@@ -155,6 +156,8 @@ test-fuzz: ## Fuzz the trust-boundary parsers (FUZZ_TIME per target).
 	$(call fuzz,./internal/evidence/formats/pgbackrest,FuzzParseWALName)
 	$(call fuzz,./internal/evidence/formats/pgbackrest,FuzzParseHistory)
 	$(call fuzz,./internal/evidence/formats/pgbackrest,FuzzParseLSN)
+	$(call fuzz,./internal/evidence/formats/pgbackrest,FuzzRecoveryFrontierMonotoneSegment)
+	$(call fuzz,./internal/evidence/formats/pgbackrest,FuzzRecoveryFrontierMonotoneHistory)
 	$(call fuzz,./internal/evidence/formats/pgbackrest,FuzzInferSegmentSize)
 	$(call fuzz,./internal/evidence/formats/timeline,FuzzLatest)
 	$(call fuzz,./internal/evidence/provider/cursor,FuzzCodec)

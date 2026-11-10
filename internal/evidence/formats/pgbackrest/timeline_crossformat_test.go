@@ -28,6 +28,7 @@ import (
 
 	"github.com/fyannk/pgToolBox/internal/evidence/evidence"
 	"github.com/fyannk/pgToolBox/internal/evidence/formats/barmancloud"
+	pgtimeline "github.com/fyannk/pgToolBox/internal/evidence/formats/timeline"
 	"github.com/fyannk/pgToolBox/internal/evidence/store"
 	"github.com/fyannk/pgToolBox/internal/evidence/store/storetest"
 )
@@ -57,6 +58,10 @@ type timelineScenario struct {
 	histories  map[uint32]string
 	faults     map[uint32]historyFault
 	truncated  bool
+	// gapStatus, when set, records every hole between two runs of a
+	// timeline as a gap of that status (both formats); unset, the archive
+	// has no gaps recorded.
+	gapStatus GapStatus
 }
 
 func (s timelineScenario) clone() timelineScenario {
@@ -101,6 +106,34 @@ func (s timelineScenario) ranges(t testing.TB) []WALRange {
 	return out
 }
 
+// gaps are the holes between consecutive runs of each timeline, recorded as
+// gapStatus; none when gapStatus is unset.
+func (s timelineScenario) gaps(t testing.TB) []WALGap {
+	t.Helper()
+	if s.gapStatus == "" {
+		return nil
+	}
+	var out []WALGap
+	ranges := s.ranges(t)
+	for index := 0; index+1 < len(ranges); index++ {
+		left, right := ranges[index], ranges[index+1]
+		if left.Timeline != right.Timeline {
+			continue
+		}
+		first, last := left.End+1, right.Start-1
+		gap := WALGap{
+			Timeline: left.Timeline, Start: first, End: last, Count: last - first + 1,
+			First: crossName(t, left.Timeline, first), Last: crossName(t, left.Timeline, last), Status: s.gapStatus,
+			FirstObservedGeneration: 1, LastObservedGeneration: 2,
+		}
+		if s.gapStatus == GapCandidate {
+			gap.LastObservedGeneration = 1
+		}
+		out = append(out, gap)
+	}
+	return out
+}
+
 func (s timelineScenario) newestVisible() uint32 {
 	var newest uint32
 	for timeline, values := range s.segments {
@@ -117,7 +150,7 @@ func (s timelineScenario) newestVisible() uint32 {
 // pgbackrest evaluates the backup's path as pgBackRest reads the archive.
 func (s timelineScenario) pgbackrest(t testing.TB) RecoveryPath {
 	t.Helper()
-	wal := ArchiveWAL{State: evidence.Healthy, SegmentSize: crossSegment, Ranges: s.ranges(t)}
+	wal := ArchiveWAL{State: evidence.Healthy, SegmentSize: crossSegment, Ranges: s.ranges(t), Gaps: s.gaps(t)}
 	histories := make([]TimelineHistory, 0, len(s.histories))
 	for _, timeline := range slices.Sorted(maps.Keys(s.histories)) {
 		history := TimelineHistory{ArchiveID: "17-1", Key: fmt.Sprintf("archive/demo/17-1/%08X.history", timeline), Timeline: timeline}
@@ -146,6 +179,13 @@ func (s timelineScenario) barman(t testing.TB) barmancloud.ServerRecovery {
 	server := barmancloud.ServerWAL{Server: "demo", State: evidence.Healthy, PostgreSQLVersion: 170000, SegmentSize: crossSegment}
 	for _, value := range s.ranges(t) {
 		server.Ranges = append(server.Ranges, barmancloud.WALRange(value))
+	}
+	for _, value := range s.gaps(t) {
+		gap := barmancloud.WALGap{
+			Timeline: value.Timeline, Start: value.Start, End: value.End, Count: value.Count, First: value.First, Last: value.Last,
+			Status: barmancloud.GapStatus(value.Status), FirstObservedGeneration: value.FirstObservedGeneration, LastObservedGeneration: value.LastObservedGeneration,
+		}
+		server.Gaps = append(server.Gaps, gap)
 	}
 	backup := barmancloud.Backup{
 		Server: "demo", ID: "b", State: evidence.Healthy, BeginWAL: crossName(t, 1, s.begin), EndWAL: crossName(t, 1, s.end),
@@ -624,7 +664,8 @@ func TestAncestorPathStopsWhereTheDefaultRestoreLeaves(t *testing.T) {
 // parentTailLostScenario is the round-6 reproduction (P2): timeline 2
 // forked at 0/5000000 and already has WAL from its switch segment on, but
 // timeline 1 is archived only to segment 2. Segments 3 and 4 were written
-// by the old primary and are lost.
+// by the old primary and are not in the repository; that primary's volume
+// may still hold them (CloudNativePG archives them before it rejoins).
 func parentTailLostScenario() timelineScenario {
 	return timelineScenario{
 		begin: 1, end: 1, endLSN: "0/1000100",
@@ -634,11 +675,24 @@ func parentTailLostScenario() timelineScenario {
 	}
 }
 
+// assertFormerPrimaryHint fails unless reason says the segment may still be
+// on the former primary, within the wire bound, and does not call it lost
+// (round 7, P2-1: a DBA who reads "lost" may delete the very volume that
+// holds it).
+func assertFormerPrimaryHint(t *testing.T, format, reason string) {
+	t.Helper()
+	if !strings.Contains(reason, "is not in the repository") || !strings.HasSuffix(reason, pgtimeline.FormerPrimaryMayHold) ||
+		strings.Contains(reason, "lost") || len(reason) > pgtimeline.MaxReasonBytes {
+		t.Errorf("%s reason %q (%d bytes): want the former primary hint whole, no \"lost\"", format, reason, len(reason))
+	}
+}
+
 // TestLostParentTailAgreesAcrossFormats: a parent timeline's segments
-// missing before a switch whose child already has WAL are lost. pgBackRest
-// (toward the newest timeline) and every Barman path, the ancestor path
-// toward timeline 1 included, read unhealthy and name the first missing
-// segment; none claims the archive frontier.
+// missing before a switch whose child already has WAL are not in the
+// repository. pgBackRest (toward the newest timeline) and every Barman
+// path, the ancestor path toward timeline 1 included, read unhealthy, name
+// the first missing segment and say the former primary may still hold it;
+// none claims the archive frontier.
 func TestLostParentTailAgreesAcrossFormats(t *testing.T) {
 	t.Parallel()
 	scenario := parentTailLostScenario()
@@ -647,11 +701,13 @@ func TestLostParentTailAgreesAcrossFormats(t *testing.T) {
 	if pg.State != evidence.Unhealthy || pg.Stop != CoverageGapLimited || !strings.Contains(pg.Reason, missing) {
 		t.Fatalf("pgBackRest path to %d %s %s %q", pg.TargetTimeline, pg.State, pg.Stop, pg.Reason)
 	}
+	assertFormerPrimaryHint(t, "pgBackRest", pg.Reason)
 	server := scenario.barman(t)
 	if len(server.Paths) != 2 {
 		t.Fatalf("Barman paths %+v", server.Paths)
 	}
 	for _, path := range server.Paths {
+		assertFormerPrimaryHint(t, fmt.Sprintf("Barman path to %d", path.TargetTimeline), path.Reason)
 		if path.State != pg.State || string(path.Stop) != string(pg.Stop) || !strings.Contains(path.Reason, missing) || strings.Contains(path.Reason, "archive frontier") {
 			t.Errorf("Barman path to %d %s %s %q, pgBackRest %s %q", path.TargetTimeline, path.State, path.Stop, path.Reason, pg.State, pg.Reason)
 		}
@@ -662,4 +718,72 @@ func TestLostParentTailAgreesAcrossFormats(t *testing.T) {
 	if server.CoverageState != evidence.Unhealthy {
 		t.Errorf("Barman coverage %s %q", server.CoverageState, server.CoverageReason)
 	}
+}
+
+// TestFormerPrimaryHintOnEveryParentTail covers the other shapes of a parent
+// tail missing before a switch whose child has WAL: the backup's own
+// consistency WAL in that tail, and an intermediate timeline with none of
+// its WAL. Each stays unhealthy and carries the former primary hint whole;
+// a gap the parent's later WAL closes, and a child with no WAL yet, do not.
+func TestFormerPrimaryHintOnEveryParentTail(t *testing.T) {
+	t.Parallel()
+	t.Run("backup consistency WAL in the lost tail", func(t *testing.T) {
+		t.Parallel()
+		scenario := parentTailLostScenario()
+		scenario.end, scenario.endLSN = 3, "0/3000100"
+		pg := scenario.pgbackrest(t)
+		if pg.State != evidence.Unhealthy || pg.Consistent {
+			t.Fatalf("pgBackRest %s consistent %v %q", pg.State, pg.Consistent, pg.Reason)
+		}
+		assertFormerPrimaryHint(t, "pgBackRest", pg.Reason)
+		if !strings.HasPrefix(pg.Reason, "WAL the backup needs to reach consistency is missing: ") || strings.Contains(pg.Reason, "recovers only") {
+			t.Errorf("pgBackRest reason %q", pg.Reason)
+		}
+		for _, path := range scenario.barman(t).Paths {
+			if path.State != evidence.Unhealthy {
+				t.Errorf("Barman path to %d %s %q", path.TargetTimeline, path.State, path.Reason)
+			}
+			assertFormerPrimaryHint(t, fmt.Sprintf("Barman path to %d", path.TargetTimeline), path.Reason)
+		}
+	})
+	t.Run("intermediate timeline holds none of its WAL", func(t *testing.T) {
+		t.Parallel()
+		scenario := timelineScenario{
+			begin: 1, end: 1, endLSN: "0/1000100",
+			segments: map[uint32][]uint64{1: {1, 2}, 3: {5, 6}},
+			histories: map[uint32]string{
+				2: "1\t0/3000000\tfailover\n",
+				3: "1\t0/3000000\tfailover\n2\t0/5000000\tfailover\n",
+			},
+			faults: map[uint32]historyFault{},
+		}
+		pg := scenario.pgbackrest(t)
+		if pg.State != evidence.Unhealthy || pg.Stop != CoverageGapLimited || !strings.Contains(pg.Reason, crossName(t, 2, 3)) {
+			t.Fatalf("pgBackRest %s %s %q", pg.State, pg.Stop, pg.Reason)
+		}
+		assertFormerPrimaryHint(t, "pgBackRest", pg.Reason)
+	})
+	t.Run("a gap the parent's later WAL closes is not a former primary tail", func(t *testing.T) {
+		t.Parallel()
+		scenario := parentTailLostScenario()
+		scenario.segments = map[uint32][]uint64{1: {1, 2, 4}, 2: {5, 6, 7}}
+		pg := scenario.pgbackrest(t)
+		if pg.State != evidence.Unhealthy || strings.Contains(pg.Reason, pgtimeline.FormerPrimaryMayHold) {
+			t.Fatalf("pgBackRest %s %q", pg.State, pg.Reason)
+		}
+	})
+	t.Run("child with no WAL yet stays in flight", func(t *testing.T) {
+		t.Parallel()
+		scenario := parentTailLostScenario()
+		scenario.segments = map[uint32][]uint64{1: {1, 2}}
+		pg := scenario.pgbackrest(t)
+		if pg.State == evidence.Unhealthy || strings.Contains(pg.Reason, pgtimeline.FormerPrimaryMayHold) {
+			t.Fatalf("pgBackRest %s %q", pg.State, pg.Reason)
+		}
+		for _, path := range scenario.barman(t).Paths {
+			if strings.Contains(path.Reason, pgtimeline.FormerPrimaryMayHold) {
+				t.Errorf("Barman path to %d %q", path.TargetTimeline, path.Reason)
+			}
+		}
+	})
 }

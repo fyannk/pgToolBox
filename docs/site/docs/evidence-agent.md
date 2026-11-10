@@ -75,8 +75,18 @@ reaches at most segment 4 of timeline 2, even when timeline 2 holds WAL up to
 segment 9, and its reason says that the later WAL on timeline 2 needs
 `targetTLI: 2`. When the ancestor's WAL stops before that switch while the
 child already holds WAL from its switch segment on, the missing segments were
-written and are lost: the ancestor path is unhealthy and names the first
-missing segment, as pgBackRest does, rather than reaching the archive frontier.
+written and are not in the repository: the ancestor path is unhealthy and names
+the first missing segment, as pgBackRest does, rather than reaching the archive
+frontier.
+
+Such segments are not proven gone. A primary that crashed with segments still
+waiting to be archived (`.ready`) keeps them on its volume, and CloudNativePG
+archives every waiting segment when that instance restarts, before `pg_rewind`
+and before it rejoins as a replica. The reason says so: until the next scan sees
+the segments, a restore past them fails, but **do not delete the former primary
+or its PersistentVolumeClaim** (for example with `kubectl cnpg destroy`): that
+is what would make the loss permanent. Once the instance has rejoined and the
+segments are archived, the next scan reads the path as healthy.
 
 Because the probe only tests that a history file exists, a listed history whose
 content is malformed, duplicated or contradictory still counts as present. Only
