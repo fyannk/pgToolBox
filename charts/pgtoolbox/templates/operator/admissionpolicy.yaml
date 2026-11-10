@@ -45,11 +45,17 @@ credentials to more people. Cross-namespace Clusters are the PgAdminAccess
 grant's decision.
 
 Sixth rule: spec.exposure.annotations and metadataPropagation rules for All
-or Exposure land on the Ingress, Route or HTTPRoute the operator writes. The
-annotations an ingress controller reads as configuration (snippets, external
-authentication, mirroring, middlewares; pgtoolbox.admission.exposureAnnotationDenied)
-require create on that kind in the namespace: the operator must not write for
-an editor what the editor could not write.
+or Exposure land on the Ingress, Route or HTTPRoute the operator writes, rules
+for All or Service on the Service it routes to. The annotations an ingress
+controller reads as configuration that changes who reaches the workload, which
+host it claims or where its traffic goes (snippets, external authentication,
+source ranges, redirects, canaries, extra hosts, load-balancer scheme and
+groups, mirroring, middlewares, plugins; the data list
+pgtoolbox.admission.exposureDenyList) require create on the exposure kind in
+the namespace: the operator must not write for an editor what the editor could
+not write. The exposure type, hostname (EXPOSURE_ALLOWED_HOST_SUFFIXES),
+ingressClassName and Gateway parentRef are not gated: choosing the exposure is
+what an editor is allowed to do.
 
 Fifth rule: spec.prometheus.projectedToken sends the console ServiceAccount's
 own token to spec.prometheus.url. Setting it, or changing where it goes (URL,
@@ -194,14 +200,14 @@ spec:
       message: a PgAdmin that offers the credentials of Clusters of its namespace (spec.credentials) or keeps its settings on one (spec.configDatabase, whose login role pgAdmin holds) requires get on the Secrets of the namespace, since whoever opens pgAdmin holds them; adding a credential kind or a Cluster, changing who may sign in (spec.auth, spec.admins) or raising the OpenShift proxy's sessionMaxAge is checked again
       reason: Forbidden
     # An ingress controller reads some annotations as configuration
-    # (snippets, external authentication, mirroring, middlewares): the
-    # operator would write them on the Ingress, Route or HTTPRoute for an
-    # editor who may not create one. Adding or changing one takes create on
+    # (pgtoolbox.admission.exposureDenyList): the operator would write them
+    # on the Ingress, Route, HTTPRoute or Service for an editor who may not
+    # create the exposure object. Adding or changing one takes create on
     # that kind in the namespace.
     - expression: >-
         variables.exposureAnnotationsKept ||
         authorizer.group(variables.exposureType == 'route' ? 'route.openshift.io' : variables.exposureType == 'gateway' ? 'gateway.networking.k8s.io' : 'networking.k8s.io').resource(variables.exposureType == 'route' ? 'routes' : variables.exposureType == 'gateway' ? 'httproutes' : 'ingresses').namespace(object.metadata.namespace).check('create').allowed()
-      message: an exposure annotation that an ingress controller reads as configuration (a snippet, external or basic authentication, mirroring, a middleware or plugin; see the security documentation) requires create on the exposure kind (ingresses, routes or httproutes) in the namespace; adding or changing one, or changing the exposure type, is checked again
+      message: an exposure annotation that an ingress controller reads as configuration (a snippet, authentication, a source range, a redirect, a canary, an extra host, a load-balancer scheme or group, mirroring, a middleware or plugin; see the security documentation), on the exposure object or the Service, requires create on the exposure kind (ingresses, routes or httproutes) in the namespace; adding or changing one, or changing the exposure type, is checked again
       reason: Forbidden
 ---
 apiVersion: admissionregistration.k8s.io/v1

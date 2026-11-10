@@ -507,7 +507,11 @@ tests:
       - equal: {path: "spec.variables[17].name", value: exposureAnnotationsKept}
       - matchRegex: {path: "spec.variables[17].expression", pattern: "contains\\('snippet'\\)"}
       - matchRegex: {path: "spec.variables[17].expression", pattern: "startsWith\\('nginx.ingress.kubernetes.io/auth-'\\)"}
-      - matchRegex: {path: "spec.variables[17].expression", pattern: "r.target == 'All' \\|\\| r.target == 'Exposure'"}
+      - matchRegex: {path: "spec.variables[17].expression", pattern: "r.target in \\['All', 'Exposure', 'Service'\\]"}
+      - matchRegex: {path: "spec.variables[17].expression", pattern: "'nginx.ingress.kubernetes.io/server-alias'"}
+      - matchRegex: {path: "spec.variables[17].expression", pattern: "'alb.ingress.kubernetes.io/scheme'"}
+      - matchRegex: {path: "spec.variables[17].expression", pattern: "'haproxy.router.openshift.io/ip_allowlist'"}
+      - matchRegex: {path: "spec.variables[17].expression", pattern: "o.target == 'All' \\|\\| o.target == r.target"}
       - matchRegex:
           path: "spec.validations[6].expression"
           pattern: "^variables.exposureAnnotationsKept \\|\\| authorizer.group\\(.*'networking.k8s.io'\\).resource\\(.*'ingresses'\\).*check\\('create'\\).allowed\\(\\)$"
