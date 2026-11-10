@@ -150,15 +150,44 @@ OpenShift.
   agents with `recovery-timeline-ancestry`; a malformed history no default restore
   reads is a warning naming the file instead of hiding all coverage; an absent
   history of the lowest timeline is no longer a gap; the pgBackRest WAL segment
-  size is inferred from segment names before 16 MiB is assumed.
+  size is inferred from segment names before 16 MiB is assumed, and a size only
+  inferred or assumed never proves a log-id rollover or timeline switch (at most
+  a warning). A Barman path toward an ancestor of `latest` ends where the default
+  restore leaves it. The pgBackRest window `end_lsn` is shown as an exclusive
+  upper bound, not a restore target.
 - **An archive backlog is not "healthy".** Archiving shows Warning
-  `ArchiveBacklog` once segments wait, and recovery screens widen the newest edge
-  and name the count. The restore check says archiving is failing after the
+  `ArchiveBacklog` once segments keep waiting across sweeps (the threshold follows
+  the barman-cloud ObjectStore's `wal.maxParallel`), and recovery screens widen
+  the newest edge from the backlog's onset and name the count; a failure band is
+  dropped once the archiver caught up. The window's end reads "WAL received
+  until", beside a separate last safe target; archiving with an unread primary is
+  unknown, not ok. The restore check says archiving is failing after the
   agent's last read, keeps archive failures across a failover, reads the archiver
   from `currentPrimary` only, clamps the instance clock, and adds an end-of-WAL
   band advising "restore to end of WAL". Phase and condition caps cover undetected
   or unverified CloudNativePG minors and say why; recovery and timeline reasons
-  are translated.
+  are translated. The failover rehearsal follows CloudNativePG 1.30.1's election
+  and says when 1.30.0 differs.
+- **Sign-in under a flood.** Behind a shared proxy address, unauthenticated junk
+  (bad OAuth codes, unknown tokens, MCP token and registration requests) no
+  longer spends the budgets genuine sign-ins, known MCP clients and token
+  refreshes use; the per-replica caps protect the IdP and the API server. With
+  `TRUSTED_PROXY_HOPS=0` and a public URL the peer address counts as shared.
+  `pgtoolbox_console_throttled_requests_total{bucket}` counts refusals.
+- **Exposure trust, round five.** The pgtools chart trusts every peer only when
+  `networkPolicy.ingress.extraFrom` is empty. `networkPolicy.from` selectors are
+  validated by the CRD, and a policy the API server refuses stalls with
+  `ExposurePolicyInvalid`. More broad peers are detected (selectors pinning no
+  value, wide, private-range or Pod-network ipBlocks), other policies are matched
+  against live Pod labels and rechecked while they bypass ours, OpenShift's
+  allow-from-openshift-ingress is not a bypass, and the operator's own any-peer
+  trust is marked on the Pod template.
+- **Admission, round five.** A PgAdmin with `configDatabase` needs `get` on the
+  namespace's Secrets and its database must start with `pgadmin_` (CloudNativePG
+  adopts and resets an existing role); raising `sessionMaxAge` counts as widening
+  the audience; exposure annotations an ingress controller runs as configuration
+  (snippets, `auth-*`, mirroring, middlewares, plugins) need `create` on the
+  exposure kind.
 - **Release pipeline hardening.** GHCR pruning is opt-in (repository variable
   `PRUNE_GHCR`) so a release cannot turn red after it is public; the 30-minute net
   now dispatches `ci.yml` and `security.yml` independently (the dead
