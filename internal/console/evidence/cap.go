@@ -200,6 +200,7 @@ func severity(state evidencev1alpha1.State) int {
 		return 1
 	case evidencev1alpha1.Unhealthy:
 		return 2
+	case evidencev1alpha1.Unknown:
 	}
 	return 3
 }

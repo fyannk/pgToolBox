@@ -473,7 +473,7 @@ func TestOneMissedPrimaryReadDoesNotFlicker(t *testing.T) {
 func busyPrimary(read time.Time, ready int) (instancestatus.Reading, []viewmodel.Point, []viewmodel.Point) {
 	const size, base = 16 << 20, 1300
 	position := func(i int) uint64 { return uint64(base+i/10)*size + uint64(i)*4096 }
-	var counts, lsns []float64
+	counts, lsns := make([]float64, 0, 60), make([]float64, 0, 60)
 	for i := range 60 {
 		counts = append(counts, float64(ready))
 		lsns = append(lsns, float64(position(i)))

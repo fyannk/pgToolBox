@@ -244,7 +244,7 @@ func primaryArchiver(g *gathered) *cnpgstatus.ArchiverLive {
 	return &cnpgstatus.ArchiverLive{
 		IsArchivingWAL: r.IsArchivingWAL, LastFailedWAL: r.LastFailedWAL, ReadyWALFiles: r.ReadyWALFiles, ReadyNotReported: !r.IsPrimary,
 		LastArchivedAt: r.LastArchivedWALTime,
-		ObservedAt: r.ObservedAt, Earlier: earlierReady(g, g.cluster.Status.CurrentPrimary, r.ObservedAt),
+		ObservedAt:     r.ObservedAt, Earlier: earlierReady(g, g.cluster.Status.CurrentPrimary, r.ObservedAt),
 		PluginMaxParallel: pluginMaxParallel(g),
 	}
 }
