@@ -94,12 +94,14 @@ Whoever can open a pgAdmin holds the credentials of every role it offers. The
 operator therefore:
 
 - offers the **application user and applied `DatabaseRole`s only**, with privileged
-  credentials behind an explicit `credentials.superuser: true`;
+  credentials behind an explicit `credentials.superuser: true`, and (admission
+  policy) lets only someone who may `get` the namespace's Secrets ask for them;
 - gates opening it by identity (`requiredClaims` on Kubernetes,
   `connect pgadmins/<name>` on OpenShift, a verb that neither `view` nor `edit`
   carries, even where OLM aggregates `get` on its CRDs into `view`), and makes
   `pgtoolbox-console-operator` the only user role that grants that verb (besides the
-  namespace `admin`);
+  namespace `admin`), and bounds the OpenShift oauth-proxy's session to one hour
+  because it reviews `connect` at sign-in only;
 - keeps passwords out of the operator, out of the Pod spec, out of
   pgAdmin's file manager and off disk (a memory-backed volume);
 - reports, but does not enforce, whether the Pod's egress is confined.
@@ -108,58 +110,94 @@ Details: [PgAdmin](operator/pgadmin.md).
 
 ## Secret references need `get`
 
-A `PgToolBoxConsole` or a `PgAdmin` names Secrets of its own namespace: the SMTP
-password, the chat and generic webhook URLs of the digest, the OIDC or OpenShift
-client secrets, the Prometheus bearer token, the tracing exporter's headers, the
-restore-drill seal keys, an Ingress certificate, image pull secrets. The operator mounts them into the workload, and the workload sends them
-where the spec says (an SMTP host, a webhook URL, an identity provider). RBAC on
-the custom resource alone would therefore let anyone who may edit a `PgToolBoxConsole`
-read any Secret of the namespace by pointing the console at a server they run.
+A `PgToolBoxConsole`, a `PgAdmin` or an `EvidenceAgent` names Secrets of its own
+namespace: the SMTP password, the chat and generic webhook URLs of the digest,
+the OIDC or OpenShift client secrets, the Prometheus bearer token, the tracing
+exporter's headers, the restore-drill seal keys, an Ingress certificate, image
+pull secrets, the Secrets an evidence agent may read (`spec.allowedSecrets`). The
+operator mounts them into the workload, and the workload sends them where the
+spec says (an SMTP host, a webhook URL, an identity provider). RBAC on the custom
+resource alone would therefore let anyone who may edit a `PgToolBoxConsole` read
+any Secret of the namespace by pointing the console at a server they run.
 
-**Editing a `PgToolBoxConsole` or a `PgAdmin` requires `get` on every Secret it
-references.** The rule is part of the operator chart's
+**Editing a `PgToolBoxConsole`, a `PgAdmin` or an `EvidenceAgent` requires `get` on
+every Secret it references.** The rule is part of the operator chart's
 `ValidatingAdmissionPolicy` (on by default), which asks the API server's authorizer, as the
 requesting user, whether that user may `get` each named Secret, and refuses the
-request otherwise (reason `Forbidden`, message "editing a PgToolBoxConsole or a PgAdmin
-requires get on every Secret it references").
+request otherwise (reason `Forbidden`, message "editing a PgToolBoxConsole, a PgAdmin
+or an EvidenceAgent requires get on every Secret it references").
 
 - **It is on by default** in the operator chart (`operator.admissionPolicy.enabled`;
   `validationActions` selects `Deny`, `Warn` and/or `Audit`, `Deny` alone enforces).
   It is the only check of this rule: where the policy is off, grant
-  `create`/`update` on `pgtoolboxconsoles` and `pgadmins` only to people you would trust
-  with every Secret of the namespace.
-- **kustomize (`config/default`) and the OLM bundle do not apply it.** The policy is
-  rendered from the chart's values (the image and workload-identity allow-lists), and
-  OLM cannot ship an admission policy. On those installs, render it from the chart
-  and apply it yourself:
+  `create`/`update` on `pgtoolboxconsoles`, `pgadmins` and `evidenceagents` only to
+  people you would trust with every Secret of the namespace.
+- **kustomize applies it only when you opt in, and the OLM bundle cannot ship it.**
+  kustomize: add the component `config/components/admission` (the chart's policy
+  with its default allow-lists, see [kustomize](install/kustomize.md#the-admission-policy)).
+  OLM: render it from the chart and apply it yourself (see [OLM](install/olm.md#admission-policies)):
   `helm template pgtoolbox charts/pgtoolbox --set operator.enabled=true --show-only templates/operator/admissionpolicy.yaml | kubectl apply -f -`,
   or apply the same trust rule as above.
 - **On update, only new or changed references are checked.** The operator's own
   writes (finalizers) and edits that leave the references alone keep working on
-  objects that exist already, and a Secret already referenced at a field is no
-  new disclosure. Moving a Secret to another field, or renaming it, is a change.
-  Objects created before the policy was turned on keep what they reference until
-  they are edited to reference something else: review them when you enable it.
-- **What is covered**: every Secret reference in the two kinds. On a
+  objects that exist already, and a Secret already referenced at a field, and
+  sent to the same place, is no new disclosure. Moving a Secret to another field,
+  or renaming it, is a change. Objects created before the policy was turned on
+  keep what they reference until they are edited to reference something else:
+  review them when you enable it.
+- **The policy pairs a reference with where it is sent.** Keeping a reference and
+  changing its destination is a new reference, checked again:
+  `auth.oidc.issuerURL` for both OIDC client secrets, `prometheus.url` for
+  `prometheus.tokenSecretRef`, `digest.delivery.smtp.address` for the SMTP
+  password, `tracing.endpoint` for `tracing.headersSecretRef`,
+  `auth.oauth2.issuerURL` for the PgAdmin client secret, and the image's
+  `repository` for its `pullSecrets`. The other references name no destination in
+  the spec: the digest webhooks keep their URL inside the Secret, the OpenShift
+  client secret goes to the cluster's own OAuth server, the seal keys and the
+  Ingress certificate are sent nowhere. **Limit:** what the policy compares is the
+  destination field. A CA ConfigMap (`caConfigMapRef`), a DNS record or a proxy
+  that changes where that same URL leads is not seen; so do not let people who
+  may not read a Secret edit the CA ConfigMaps of the objects that send it.
+- **What is covered**: every Secret reference in the three kinds. On a
   `PgToolBoxConsole`: `auth.oidc.clientSecretRef`,
   `auth.oidc.grantClient.clientSecretRef`, `auth.openshift.clientSecretRef`,
   `prometheus.tokenSecretRef`, `digest.delivery.*`, `tracing.headersSecretRef`,
   `restoreDrills.sealKeySecretRef`, `exposure.tls.certificateSecretRef` and
   `image.pullSecrets`. On a `PgAdmin`: `auth.oauth2.clientSecretRef`,
-  `exposure.tls.certificateSecretRef` and the `pullSecrets` of both images. A
-  test walks the API types and fails when a new Secret reference is missing
-  from the policy. The credentials of the Clusters a `PgAdmin` offers are not
-  Secret references of the spec: they come from the CloudNativePG Cluster and
-  are gated by RBAC on the Cluster and on the `pgadmins` object
-  ([pgAdmin](#pgadmin-is-a-credential-holder)).
-- **What is not covered: `EvidenceAgent`.** Its Secret references send nothing
-  to a host the editor chooses. `pgbackrest.endpointCA` is a CA bundle the agent
-  only trusts, and the agent reads it only if `spec.allowedSecrets` lists it too.
-  `image.pullSecrets` goes to the kubelet for `spec.image`, which only the
-  `imageOverride` allow-list may set. `exposure.tls.certificateSecretRef` cannot
-  be set, since an agent is `clusterIP` only. The Secrets the agent reads for
-  the repository are named by the Cluster and the `ObjectStore`, `Stanza` or
-  `Archive`, and limited to `spec.allowedSecrets` ([evidence agent](evidence-agent.md)).
+  `exposure.tls.certificateSecretRef` and the `pullSecrets` of both images. On an
+  `EvidenceAgent`: each name of `spec.allowedSecrets`. The list is what the agent
+  editor consents to the agent reading; it means something only from somebody who
+  may read those Secrets. A test walks the API types (typed references, core/v1
+  Secret types, map values, and string fields named after Secrets) and fails when
+  a new Secret reference is missing from the policy or has no stated destination.
+- **What is not covered on an `EvidenceAgent`.** `pgbackrest.endpointCA` is a CA
+  bundle the agent only trusts, and the agent reads it only if `spec.allowedSecrets`
+  lists it too. `image.pullSecrets` goes to the kubelet for `spec.image`, which only
+  the `imageOverride` allow-list may set. `exposure.tls.certificateSecretRef` cannot
+  be set, since an agent is `clusterIP` only. The Secrets the agent reads for the
+  repository are named by the Cluster and the `ObjectStore`, `Stanza` or `Archive`,
+  and limited to `spec.allowedSecrets` ([evidence agent](evidence-agent.md)). An
+  empty `allowedSecrets` (the deprecated behaviour, barman-cloud `ObjectStore`
+  only) lets the agent read what the `ObjectStore` names, which the backup plugin
+  already sends to the endpoint the `ObjectStore`'s editors chose.
+
+**A `PgAdmin` that offers Cluster credentials requires `get` on the Secrets of its
+namespace.** Whoever opens pgAdmin holds the credentials it offers
+(`spec.credentials`: the application user and `DatabaseRole`s by default, the
+superuser with `superuser: true`). Their Secrets are named by the CloudNativePG
+Cluster, not by the `PgAdmin`, so the policy cannot list them by name. It asks
+instead whether the requesting user may `get` Secrets in the namespace (any
+name): a Role with `get` on a few named Secrets does not qualify. The rule
+applies when a `PgAdmin` is created with a credential kind on and a Cluster of
+its namespace (`clusterRefs` or `clusterSelector`), and on an update that turns a
+kind on, adds a Cluster or changes the selector. Narrowing, and edits that leave
+the offer alone, are not checked. Without it, a custom role with `create pgadmins`
+and `connect pgadmins` but no `get secrets` could ask for `superuser: true` and
+open pgAdmin with the superuser's password. `crossNamespaceClusterRefs` are
+outside the rule: the `PgAdminAccess` grant of the target namespace, created by
+its owner, decides them (privileged credentials only with `allowPrivileged`).
+Message: "a PgAdmin that offers the credentials of Clusters of its namespace
+(spec.credentials) requires get on the Secrets of the namespace".
 
 ## Known limitations
 

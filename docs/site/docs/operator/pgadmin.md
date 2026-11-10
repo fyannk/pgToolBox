@@ -78,6 +78,12 @@ credential becomes one shared server per endpoint.
 | `databaseRoles` | `true` | `DatabaseRole`s of the Cluster that CloudNativePG reports applied, with the password Secret at the version it applied. |
 | `superuser` | **`false`** | The privileged credentials: the superuser (when the Cluster enables superuser access) and any role that is superuser, `createrole`, `bypassrls` or `replication`, or a member (directly or through roles the Cluster declares) of a `pg_*` role, the superuser, the application owner or another privileged role. |
 
+**Who may ask for them.** With the operator chart's admission policy, creating a
+`PgAdmin` that offers credentials of Clusters of its own namespace, or widening
+the offer (turning on a kind, adding a Cluster, changing the selector), requires
+`get` on the namespace's Secrets: the person who decides what pgAdmin hands out
+must be able to read it already ([security](../security.md#secret-references-need-get)).
+
 A privileged role is offered **only** with `superuser: true`. A credential the
 Cluster has but this `PgAdmin` does not offer appears in `status.servers` as
 `NotOffered` with the reason.
@@ -123,6 +129,13 @@ is equivalent to reading those Secrets.
   pgAdmin. A `PgAdmin` created before this change asked for `get`; the operator
   rolls its Deployment to the new check on upgrade. If you bound a custom role
   with `get pgadmins` to let people open pgAdmin, add `connect`.
+  The proxy runs the review **at sign-in only**, so its session is bounded to
+  **one hour** (`--cookie-expire=1h`; the proxy's own default is 168h). After
+  that the proxy signs the person in again, silently while their OpenShift
+  session lasts, and reviews `connect` again: a revoked access (an expired
+  [access request](../console/access-requests.md), a removed RoleBinding) closes
+  pgAdmin within the hour. pgAdmin's own session, and connections it holds open,
+  end with it only once the next request reaches the proxy.
 - On **Kubernetes** pgAdmin's own OAuth2 sign-in is the gate, and the identity
   provider, not RBAC, decides who gets in. `requiredClaims` is therefore
   **required** (1 to 8 claims) and must name the same people as the namespace's

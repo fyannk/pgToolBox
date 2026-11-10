@@ -355,6 +355,11 @@ func pyBool(v bool) string {
 	return "False"
 }
 
+// proxySessionMaxAge bounds an oauth-proxy session, hence how long a person
+// whose connect was revoked keeps pgAdmin open: the next sign-in, silent
+// while the OpenShift OAuth session lasts, runs the review again.
+const proxySessionMaxAge = "1h"
+
 // proxySAR is the SubjectAccessReview the oauth-proxy asks for each user, in
 // the shape it posts as is to authorization.openshift.io/v1
 // subjectaccessreviews (the group field is resourceAPIGroup there; an
@@ -384,6 +389,12 @@ func oauthProxyContainer(p *pgtoolboxv1alpha1.PgAdmin, in buildInputs) corev1.Co
 			"--tls-key=" + proxyTLSMountPath + "/tls.key",
 			"--cookie-secret-file=" + proxyCookiePath + "/" + "cookie-secret",
 			"--cookie-secure=true",
+			// The proxy runs the SubjectAccessReview at sign-in only (its
+			// cookie refresh revalidates the OpenShift token, not the
+			// review), and its default session lasts 168h: without a bound,
+			// a revoked connect (an expired access request, a removed
+			// RoleBinding) would keep pgAdmin open for a week.
+			"--cookie-expire=" + proxySessionMaxAge,
 			"--pass-user-headers=true",
 			"--skip-provider-button=true",
 		},

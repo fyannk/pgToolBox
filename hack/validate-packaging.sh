@@ -382,6 +382,29 @@ for src_doc in guard_src:
         problems.append(f"kustomize config/default: {src_doc['kind']} {src_doc['metadata']['name']} missing, different from config/admission or namespaced")
 if any("admissionregistration" in f.read_text() for f in bundle_dir.glob("*.yaml")):
     problems.append("the OLM bundle carries an admission policy, which OLM does not install")
+# The operator chart's admission policy (image and workload-identity allow-lists,
+# Secret references, PgAdmin credentials). Helm renders it by default; kustomize
+# ships it as the opt-in component config/components/admission, a render of the
+# chart's defaults that must say exactly what the chart says; config/default
+# leaves it out on purpose (opt-in) and the OLM bundle cannot carry it (checked
+# above), which docs/site/docs/install/olm.md must say.
+comp_dir = pathlib.Path("config/components/admission")
+comp_kust = load(comp_dir / "kustomization.yaml") if (comp_dir / "kustomization.yaml").exists() else {}
+if comp_kust.get("kind") != "Component" or comp_kust.get("resources") != ["admission_policy.yaml"]:
+    problems.append("config/components/admission/kustomization.yaml must be a kustomize Component listing admission_policy.yaml")
+comp_docs = [d for d in yaml.safe_load_all(open(comp_dir / "admission_policy.yaml")) if d] if (comp_dir / "admission_policy.yaml").exists() else []
+helm_vap = [d for d in helm_docs if d["kind"] in ("ValidatingAdmissionPolicy", "ValidatingAdmissionPolicyBinding")]
+if sorted((d["kind"], d["metadata"]["name"]) for d in comp_docs) != sorted((d["kind"], d["metadata"]["name"]) for d in helm_vap):
+    problems.append(f"config/components/admission renders {[(d['kind'], d['metadata']['name']) for d in comp_docs]}, Helm {[(d['kind'], d['metadata']['name']) for d in helm_vap]} — run make manifests")
+for doc in helm_vap:
+    comp_doc = next((d for d in comp_docs if d["kind"] == doc["kind"] and d["metadata"]["name"] == doc["metadata"]["name"]), None)
+    if comp_doc is not None and (comp_doc["spec"] != doc["spec"] or "namespace" in comp_doc["metadata"]):
+        problems.append(f"config/components/admission: {doc['kind']} {doc['metadata']['name']} differs from the Helm render or is namespaced — run make manifests")
+if any(d["kind"] in ("ValidatingAdmissionPolicy", "ValidatingAdmissionPolicyBinding") and d["metadata"]["name"].endswith("image-override") for d in kust_docs):
+    problems.append("kustomize config/default applies the operator chart's admission policy: it is the opt-in component config/components/admission")
+olm_doc = pathlib.Path("docs/site/docs/install/olm.md").read_text()
+if "config/components/admission" not in olm_doc or "templates/operator/admissionpolicy.yaml" not in olm_doc:
+    problems.append("docs/site/docs/install/olm.md must say the admission policies are not in the bundle and how to apply them")
 guard_policy = next((d for d in guard_src if d["kind"] == "ValidatingAdmissionPolicy"), None)
 drills_rules = load("config/rbac/pgtoolbox_console_restore_drills_clusterrole.yaml")["rules"]
 marker = {"apiGroups": ["pgtoolbox.fyannk.dev"], "resources": ["restoredrills"], "verbs": ["teardown"]}
@@ -1270,4 +1293,4 @@ if [ "${fail}" -ne 0 ]; then
   echo "packaging is inconsistent"
   exit 1
 fi
-echo "packaging is consistent: Helm, kustomize and OLM agree on CRDs, RBAC, deployment, versions and images (the operator, charts/pgtoolbox), and Helm and kustomize on the console (charts/pgtools)"
+echo "packaging is consistent: Helm, kustomize and OLM agree on CRDs, RBAC, deployment, versions and images (the operator, charts/pgtoolbox); Helm and kustomize agree on the admission policies (config/admission, the opt-in config/components/admission), which the OLM bundle does not carry; Helm and kustomize agree on the console (charts/pgtools)"

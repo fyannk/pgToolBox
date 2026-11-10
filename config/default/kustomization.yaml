@@ -13,6 +13,9 @@ resources:
 - ../rbac
 - ../manager
 - ../admission
+# The operator chart's admission policy (image and workload-identity
+# allow-lists, Secret references) is opt-in here: add
+# `components: [../components/admission]` in an overlay.
 
 images:
 - name: controller

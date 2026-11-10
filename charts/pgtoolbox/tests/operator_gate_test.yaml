@@ -413,7 +413,7 @@ tests:
         documentIndex: 0
       - equal: {path: "spec.variables[3].expression", value: '["system:masters"]'}
         documentIndex: 0
-      - lengthEqual: {path: spec.validations, count: 3}
+      - lengthEqual: {path: spec.validations, count: 4}
         documentIndex: 0
       - matchRegex: {path: "spec.validations[1].expression", pattern: "evidenceagents.*spec.workloadIdentity"}
         documentIndex: 0
@@ -425,7 +425,7 @@ tests:
       - equal: {path: spec.validationActions, value: [Deny, Audit]}
         documentIndex: 1
 
-  - it: requires get on every Secret a PgToolBoxConsole or a PgAdmin references
+  - it: requires get on every Secret a PgToolBoxConsole, a PgAdmin or an EvidenceAgent references
     set:
       operator.enabled: true
       operator.admissionPolicy.enabled: true
@@ -453,6 +453,26 @@ tests:
       - matchRegex: {path: "spec.validations[2].expression", pattern: "oldObject != null && r in variables.oldSecretRefs"}
       - equal: {path: "spec.validations[2].reason", value: Forbidden}
       - equal: {path: "spec.matchConstraints.resourceRules[0].operations", value: [CREATE, UPDATE]}
+      # A kept reference whose destination changed is a new reference.
+      - matchRegex: {path: "spec.variables[4].expression", pattern: "'d': string\\(object.spec.tracing.endpoint\\)"}
+      - matchRegex: {path: "spec.variables[4].expression", pattern: "'d': string\\(object.spec.auth.oauth2.issuerURL\\)"}
+      # The EvidenceAgent's allowedSecrets.
+      - matchRegex: {path: "spec.variables[4].expression", pattern: "object.spec.allowedSecrets.map\\(s, \\{'p': 'allowedSecrets', 'n': string\\(s\\)"}
+
+  - it: requires get on the namespace's Secrets for a PgAdmin offering Cluster credentials
+    set:
+      operator.enabled: true
+      operator.admissionPolicy.enabled: true
+    template: templates/operator/admissionpolicy.yaml
+    documentIndex: 0
+    asserts:
+      - equal: {path: "spec.variables[6].name", value: credentialKinds}
+      - equal: {path: "spec.variables[7].name", value: credentialSources}
+      - matchRegex: {path: "spec.variables[6].expression", pattern: "'superuser'"}
+      - matchRegex:
+          path: "spec.validations[3].expression"
+          pattern: "authorizer.group\\(''\\).resource\\('secrets'\\).namespace\\(object.metadata.namespace\\).check\\('get'\\).allowed\\(\\)"
+      - equal: {path: "spec.validations[3].reason", value: Forbidden}
 
   - it: renders the metrics reader and binds it to the named scraper only
     set:
