@@ -452,6 +452,9 @@ type gathered struct {
 	// upgradeInFlight names an instance manager / operator annotation
 	// version mismatch (cnpgstatus.UpgradeInFlight), or is empty.
 	upgradeInFlight string
+	// electionVersion is the version whose failover election applies
+	// (cnpgstatus.ElectionVersion): the operator's, never above it.
+	electionVersion string
 	minor           cnpgstatus.Minor
 	// phaseMinor is the minor the detected version names, supported or
 	// not, so ClassifyPhase caps a healthy phase on an unverified minor.
@@ -616,6 +619,7 @@ func (s *Service) gather(ctx context.Context, key cache.ClusterKey, withEvents b
 	}
 	g.version = cnpgstatus.DetectVersion(versionEvidence)
 	g.upgradeInFlight = cnpgstatus.UpgradeInFlight(versionEvidence)
+	g.electionVersion = cnpgstatus.ElectionVersion(versionEvidence)
 	g.minor = g.version.Minor
 	g.phaseMinor = cnpgstatus.NamedMinor(g.version.Version)
 	return g, nil

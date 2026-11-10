@@ -41,7 +41,7 @@ func (s *Service) failover(g *gathered, now time.Time) viewmodel.FailoverRehears
 		FailoverDelay:     g.cluster.Spec.FailoverDelay,
 		Hibernated:        cnpgstatus.Hibernation(g.cluster).State == cnpgstatus.HibernationHibernated,
 		SynchronousCommit: declaredParameter(g.cluster.Spec.PostgresConfiguration.Parameters, "synchronous_commit"),
-		OperatorVersion:   g.version.Version,
+		OperatorVersion:   g.electionVersion,
 	}
 	if sweepStale(g, now) {
 		in.SweepStale = sweepStaleReason
