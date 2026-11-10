@@ -34,6 +34,10 @@ var (
 		Name: "pgtoolbox_console_token_refreshes_total",
 		Help: "OIDC token refreshes by outcome (success, failure).",
 	}, []string{"outcome"})
+	throttledRequests = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "pgtoolbox_console_throttled_requests_total",
+		Help: "Requests refused by a budget, by bucket (a fixed set: the Bucket* names of internal/console/auth).",
+	}, []string{"bucket"})
 	revocationValid = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "pgtoolbox_console_revocation_list_valid",
 		Help: "1 when the last revocation list read parsed, 0 when it was refused (the previous one stays in force).",
@@ -41,5 +45,44 @@ var (
 )
 
 func init() {
-	crmetrics.Registry.MustRegister(logins, sessionRejections, tokenRefreshes, revocationValid)
+	crmetrics.Registry.MustRegister(logins, sessionRejections, tokenRefreshes, throttledRequests, revocationValid)
 }
+
+// The buckets of pgtoolbox_console_throttled_requests_total. The set is
+// closed: a limiter is Named with one of these, never with anything a
+// request carries, so the metric's cardinality is fixed.
+const (
+	// BucketSignInAddress: OAuth callbacks (and unrecognised MCP bearers)
+	// per client address.
+	BucketSignInAddress = "sign_in_address"
+	// BucketTokenFormToken and BucketTokenFormAddress: the token form per
+	// pasted token and per client address.
+	BucketTokenFormToken   = "token_form_token"
+	BucketTokenFormAddress = "token_form_address" // #nosec G101 -- a metric label, not a credential
+	// BucketTokenReviews: SelfSubjectReviews of tokens the console has not
+	// accepted before (pasted tokens, unknown raw bearers), per replica.
+	BucketTokenReviews = "token_reviews"
+	// BucketKnownReviews: re-reviews of raw bearers this replica accepted
+	// before, per replica.
+	BucketKnownReviews = "known_reviews"
+	// BucketCodeExchanges: OAuth code exchanges with the IdP, per replica.
+	BucketCodeExchanges = "code_exchanges"
+	// BucketExchangeReviews: SelfSubjectReviews of tokens the IdP has just
+	// issued, per replica.
+	BucketExchangeReviews = "exchange_reviews"
+	// MCP endpoint: calls per user, writes per user, confirmation pages.
+	BucketMCPCalls       = "mcp_calls"
+	BucketMCPAttempts    = "mcp_attempts"
+	BucketMCPWrites      = "mcp_writes"
+	BucketMCPPageViews   = "mcp_page_views"
+	BucketMCPPageAnswers = "mcp_page_answers"
+	// MCP authorization server.
+	BucketOAuthRequests      = "oauth_requests"
+	BucketOAuthRegistry      = "oauth_registry"
+	BucketOAuthTokens        = "oauth_tokens"         // #nosec G101 -- a metric label, not a credential
+	BucketOAuthUnknownTokens = "oauth_unknown_tokens" // #nosec G101 -- a metric label, not a credential
+	BucketOAuthRegistrations = "oauth_registrations"
+	BucketOAuthDecisions     = "oauth_decisions"
+	// BucketMetricsScrapes: /metrics per client address.
+	BucketMetricsScrapes = "metrics_scrapes"
+)

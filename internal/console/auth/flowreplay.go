@@ -21,13 +21,13 @@ import (
 )
 
 // maxSpentFlows bounds the sign-in flows a replica remembers as used.
-// A flow lives loginFlowMaxAge (ten minutes); 10,000 is far more than a
-// team signs in in that time, and is reached only by callbacks that
-// have each passed the process-wide bucket (codeExchangesPerSecond, so
-// at most 12,000 in a flow's lifetime): the set is full only under a
-// sustained flood, and then forgets the flow that expires first.
+// A flow lives loginFlowMaxAge (ten minutes), and only callbacks that
+// passed the per-replica exchange bucket are remembered, so the set
+// holds at most what that bucket admits in a flow's lifetime (60,200
+// digests and expiries, a few MB): it is never full of live flows, and
+// a full set first forgets the expired ones.
 // Starting a flow adds nothing here: the flow lives in its sealed cookie.
-const maxSpentFlows = 10000
+const maxSpentFlows = codeExchangesPerSecond*int(loginFlowMaxAge/time.Second) + codeExchangesBurst
 
 // spentFlows remembers the sign-in flows whose callback this replica
 // has accepted, by a digest of provider and state, until the flow's own

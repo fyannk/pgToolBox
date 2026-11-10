@@ -59,18 +59,16 @@ func (s *Server) handleToken(w http.ResponseWriter, r *http.Request) {
 	client := auth.ClientOf(r, s.o.TrustedProxy)
 	// Per client address when it is a client's; behind a proxy the
 	// console does not trust every client has that address, and only the
-	// process-wide bucket below applies (a client_id is public, so a
-	// budget per client would let anyone spend another's).
+	// per-replica buckets apply (a client_id is public, so a budget per
+	// client would let anyone spend another's). Those are charged once
+	// the code or refresh token has been opened (redeemCode,
+	// redeemRefresh): a token this console sealed spends tokenRequests,
+	// anything else unknownTokenRequests, so junk never refuses a known
+	// client's refresh.
 	if key, perAddress := auth.BudgetKey(r, s.o.TrustedProxy); perAddress && !s.requests.Allow(key) {
 		requests.WithLabelValues("token", "throttled").Inc()
 		w.Header().Set("Retry-After", "30")
 		writeError(w, http.StatusTooManyRequests, "slow_down", "too many token requests from this address")
-		return
-	}
-	if !s.tokenRequests.Allow(processKey) {
-		requests.WithLabelValues("token", "throttled").Inc()
-		w.Header().Set("Retry-After", "5")
-		writeError(w, http.StatusTooManyRequests, "slow_down", "the console is receiving too many token requests; retry in a few seconds")
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxFormBytes)
@@ -111,6 +109,13 @@ func (s *Server) handleToken(w http.ResponseWriter, r *http.Request) {
 	if base.ID != "" {
 		attrs = append(attrs, "grant", base.ID, "user", base.Subject, "client", base.Name)
 	}
+	if failure != nil && failure.outcome == "throttled" {
+		// Not audited: a flood would otherwise write a line per request.
+		requests.WithLabelValues("token", failure.outcome).Inc()
+		w.Header().Set("Retry-After", "5")
+		writeError(w, failure.status, failure.code, failure.desc)
+		return
+	}
 	if failure != nil {
 		requests.WithLabelValues("token", failure.outcome).Inc()
 		s.audit.Record(r.Context(), client, auth.AuditMCPToken, append(attrs, "outcome", failure.outcome, "reason", failure.desc)...)
@@ -129,7 +134,10 @@ func (s *Server) redeemCode(r *http.Request) (tokenResponse, grantBase, *tokenFa
 	f := r.PostForm
 	var c authorizationCode
 	if !s.open(codePrefix, purposeCode, f.Get("code"), &c) {
-		return tokenResponse{}, grantBase{}, invalidGrant("the code is not one this console issued")
+		return tokenResponse{}, grantBase{}, s.unknownToken(invalidGrant("the code is not one this console issued"))
+	}
+	if failure := s.chargeToken(); failure != nil {
+		return tokenResponse{}, grantBase{}, failure
 	}
 	now := s.o.Now().UTC()
 	switch {
@@ -185,6 +193,29 @@ func (s *Server) redeemCode(r *http.Request) (tokenResponse, grantBase, *tokenFa
 	return resp, c.grantBase, failure
 }
 
+// chargeToken spends one request of the bucket of tokens this console
+// sealed; nil when there was one.
+func (s *Server) chargeToken() *tokenFailure {
+	if s.tokenRequests.Allow(processKey) {
+		return nil
+	}
+	return throttled("the console is receiving too many token requests; retry in a few seconds")
+}
+
+// unknownToken spends one request of the bucket of codes and refresh
+// tokens that do not open, and returns refusal, or a throttled answer
+// (not audited) when that bucket is empty.
+func (s *Server) unknownToken(refusal *tokenFailure) *tokenFailure {
+	if s.unknownTokenRequests.Allow(processKey) {
+		return refusal
+	}
+	return throttled("the console is receiving too many invalid token requests; retry in a few seconds")
+}
+
+func throttled(desc string) *tokenFailure {
+	return &tokenFailure{http.StatusTooManyRequests, "slow_down", desc, "throttled"}
+}
+
 // unavailable: the grant index cannot be trusted right now.
 func unavailable() *tokenFailure {
 	return &tokenFailure{http.StatusServiceUnavailable, "temporarily_unavailable", errIndexUnavailable.Error(), "error"}
@@ -199,7 +230,10 @@ func (s *Server) redeemRefresh(r *http.Request) (tokenResponse, grantBase, *toke
 	f := r.PostForm
 	var rt refreshToken
 	if !s.open(refreshPrefix, purposeRefresh, f.Get("refresh_token"), &rt) || rt.ID == "" {
-		return tokenResponse{}, grantBase{}, invalidGrant("the refresh token is not one this console issued")
+		return tokenResponse{}, grantBase{}, s.unknownToken(invalidGrant("the refresh token is not one this console issued"))
+	}
+	if failure := s.chargeToken(); failure != nil {
+		return tokenResponse{}, grantBase{}, failure
 	}
 	now := s.o.Now().UTC()
 	issued := time.Unix(rt.IssuedAt, 0).UTC()
