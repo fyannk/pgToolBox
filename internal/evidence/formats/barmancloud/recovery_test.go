@@ -236,9 +236,10 @@ func TestRecoveryCoverageCrossesFailoverWhosePartialSwitchSegmentIsUnused(t *tes
 		// reports it.
 		{name: "child switch segment missing while later child segments exist", history: "1\t0/30000A0\tpromoted\n", begin: 1, end: 1, ranges: []WALRange{walRange(1, 1, 2), walRange(2, 4, 5)}, state: evidence.Unhealthy, frontier: 2, frontierTL: 1, ownTimelineOK: true},
 		// The child's history and WAL from its switch segment on prove the
-		// parent closed: its missing segment before the switch is lost.
-		{name: "parent segment before the switch missing", history: "1\t0/30000A0\tpromoted\n", begin: 1, end: 1, ranges: []WALRange{walRange(1, 1, 1), walRange(2, 3, 5)}, state: evidence.Unhealthy, frontier: 1, frontierTL: 1, ownTimelineOK: true},
-		{name: "parent segment before the switch missing, child WAL only after its switch segment", history: "1\t0/30000A0\tpromoted\n", begin: 1, end: 1, ranges: []WALRange{walRange(1, 1, 1), walRange(2, 4, 5)}, state: evidence.Unhealthy, frontier: 1, frontierTL: 1, ownTimelineOK: true},
+		// parent closed: its missing segment before the switch is lost, on
+		// the path toward the child and on the one toward the parent alike.
+		{name: "parent segment before the switch missing", history: "1\t0/30000A0\tpromoted\n", begin: 1, end: 1, ranges: []WALRange{walRange(1, 1, 1), walRange(2, 3, 5)}, state: evidence.Unhealthy, frontier: 1, frontierTL: 1},
+		{name: "parent segment before the switch missing, child WAL only after its switch segment", history: "1\t0/30000A0\tpromoted\n", begin: 1, end: 1, ranges: []WALRange{walRange(1, 1, 1), walRange(2, 4, 5)}, state: evidence.Unhealthy, frontier: 1, frontierTL: 1},
 		// Without child WAL the promotion may be minutes old and the
 		// parent's last segment still on its way: unknown, not lost.
 		{name: "parent segment before the switch missing, child has no WAL yet", history: "1\t0/30000A0\tpromoted\n", begin: 1, end: 1, ranges: []WALRange{walRange(1, 1, 1)}, state: evidence.Unknown, frontier: 1, frontierTL: 1, ownTimelineOK: true},
@@ -834,6 +835,122 @@ func TestOnlyTheHistoriesRecoveryReadsDecideTheTimeline(t *testing.T) {
 				if test.timeline == evidence.Unknown && path.State == evidence.Healthy {
 					t.Errorf("path to timeline %d healthy under unknown timeline evidence: %q", path.TargetTimeline, path.Reason)
 				}
+			}
+		})
+	}
+}
+
+// TestLeaveEdgeStopsAncestorPathsAtTheSwitch covers leaveEdge: a path toward
+// an ancestor of the timeline 'latest' resolves to ends at the last segment
+// before the switch where a default restore leaves it, names the targetTLI
+// its later WAL needs, and reads a parent tail missing before a switch whose
+// child already has WAL as lost.
+func TestLeaveEdgeStopsAncestorPathsAtTheSwitch(t *testing.T) {
+	t.Parallel()
+	objects := []HistoryObject{
+		{Key: "alpha/wals/00000002.history", Server: "alpha", Name: "00000002.history", Compression: "none", Timeline: 2},
+		{Key: "alpha/wals/00000003.history", Server: "alpha", Name: "00000003.history", Compression: "none", Timeline: 3},
+	}
+	type want struct {
+		state    evidence.State
+		frontier uint64 // on the target timeline
+		reason   string
+		absent   string // the reason must not say this
+	}
+	for _, test := range []struct {
+		name   string
+		h2, h3 string
+		ranges []WALRange
+		end    uint64
+		paths  map[uint32]want
+	}{
+		{
+			// Round-5 reproduction: timeline 2 runs to segment 9, but a
+			// default restore leaves it at 0/5000000 for timeline 3.
+			name: "ancestor runs past the switch", h2: "1\t0/3000000\tx\n", h3: "1\t0/3000000\tx\n2\t0/5000000\tx\n",
+			ranges: []WALRange{walRange(1, 1, 2), walRange(2, 3, 9), walRange(3, 5, 6)}, end: 1,
+			paths: map[uint32]want{
+				1: {state: evidence.Healthy, frontier: 2, reason: "leaves timeline 1 at 0/3000000 for timeline 2", absent: "needs targetTLI"},
+				2: {state: evidence.Healthy, frontier: 4, reason: "its later WAL needs targetTLI 2"},
+				3: {state: evidence.Healthy, frontier: 6},
+			},
+		},
+		{
+			// Mid-segment switches: segment 3 (5) is the child's, the
+			// parent's own copy is a .partial recovery never reads.
+			name: "mid-segment switches", h2: "1\t0/3000050\tx\n", h3: "1\t0/3000050\tx\n2\t0/5000050\tx\n",
+			ranges: []WALRange{walRange(1, 1, 2), walRange(2, 3, 9), walRange(3, 5, 6)}, end: 1,
+			paths: map[uint32]want{
+				1: {state: evidence.Healthy, frontier: 2, reason: "leaves timeline 1 at 0/3000050 for timeline 2"},
+				2: {state: evidence.Healthy, frontier: 4, reason: "its later WAL needs targetTLI 2"},
+				3: {state: evidence.Healthy, frontier: 6},
+			},
+		},
+		{
+			// Split brain: the old primary kept archiving timeline 1 past
+			// the switch; a default restore does not read it.
+			name: "split-brain parent", h2: "1\t0/3000000\tx\n",
+			ranges: []WALRange{walRange(1, 1, 8), walRange(2, 3, 5)}, end: 1,
+			paths: map[uint32]want{
+				1: {state: evidence.Healthy, frontier: 2, reason: "its later WAL needs targetTLI 1"},
+				2: {state: evidence.Healthy, frontier: 5},
+			},
+		},
+		{
+			// Round-6 P2: segments 3 and 4 of timeline 1 are lost (timeline
+			// 2 already has WAL from its switch segment on); the path toward
+			// timeline 1 must not read as reaching the archive frontier.
+			name: "parent tail lost before the switch", h2: "1\t0/5000000\tx\n",
+			ranges: []WALRange{walRange(1, 1, 2), walRange(2, 5, 7)}, end: 1,
+			paths: map[uint32]want{
+				1: {state: evidence.Unhealthy, frontier: 2, reason: "segment 000000010000000000000003 is not archived", absent: "archive frontier"},
+				2: {state: evidence.Unhealthy, frontier: 2},
+			},
+		},
+		{
+			// The same tail with no child WAL yet: the promotion may be
+			// minutes old and the parent's last segments still on their way.
+			name: "parent tail not archived, child empty", h2: "1\t0/5000000\tx\n",
+			ranges: []WALRange{walRange(1, 1, 2)}, end: 1,
+			paths: map[uint32]want{
+				1: {state: evidence.Healthy, frontier: 2},
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			backup := recoveryBackup(time.Now().UTC(), 1, test.end)
+			wal := ServerWAL{Server: "alpha", State: evidence.Healthy, PostgreSQLVersion: 180000, SegmentSize: 16 << 20, Ranges: test.ranges}
+			files := map[string]string{"alpha/wals/00000002.history": test.h2}
+			histories := objects[:1]
+			if test.h3 != "" {
+				files["alpha/wals/00000003.history"] = test.h3
+				histories = objects
+			}
+			catalog := AnalyzeRecovery(context.Background(), historyFiles(files), []Backup{backup}, WALCatalog{Servers: []ServerWAL{wal}}, histories, false, RecoveryOptions{})
+			if err := catalog.Validate(); err != nil {
+				t.Fatal(err)
+			}
+			server := catalog.Servers[0]
+			seen := 0
+			for _, path := range server.Paths {
+				expected, ok := test.paths[path.TargetTimeline]
+				if !ok {
+					if path.State == evidence.Healthy {
+						t.Errorf("unexpected healthy path to timeline %d: %q", path.TargetTimeline, path.Reason)
+					}
+					continue
+				}
+				seen++
+				if path.State != expected.state || path.FrontierPosition != expected.frontier || path.OffTarget {
+					t.Errorf("path to timeline %d %s at %d/%d off-target %v %q, want %s at %d", path.TargetTimeline, path.State, path.FrontierTimeline, path.FrontierPosition, path.OffTarget, path.Reason, expected.state, expected.frontier)
+				}
+				if !strings.Contains(path.Reason, expected.reason) || (expected.absent != "" && strings.Contains(path.Reason, expected.absent)) {
+					t.Errorf("path to timeline %d reason %q, want %q without %q", path.TargetTimeline, path.Reason, expected.reason, expected.absent)
+				}
+			}
+			if seen != len(test.paths) {
+				t.Fatalf("paths %+v, want timelines %v", server.Paths, test.paths)
 			}
 		})
 	}

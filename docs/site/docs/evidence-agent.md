@@ -73,7 +73,10 @@ the switch on, as pgBackRest's walk does. For example, timeline 2 forked from 1
 at `0/3000000` and timeline 3 from 2 at `0/5000000`: the path to timeline 2
 reaches at most segment 4 of timeline 2, even when timeline 2 holds WAL up to
 segment 9, and its reason says that the later WAL on timeline 2 needs
-`targetTLI: 2`.
+`targetTLI: 2`. When the ancestor's WAL stops before that switch while the
+child already holds WAL from its switch segment on, the missing segments were
+written and are lost: the ancestor path is unhealthy and names the first
+missing segment, as pgBackRest does, rather than reaching the archive frontier.
 
 Because the probe only tests that a history file exists, a listed history whose
 content is malformed, duplicated or contradictory still counts as present. Only
@@ -102,7 +105,12 @@ default is ruled out too, the size is not established and the stanza is unknown.
 
 The recovery window's `end_lsn` is an exclusive upper bound: the first LSN
 past the last contiguous segment, which the archive does not hold. It is not a
-restore target, and not the last commit; replay ends at or before it.
+restore target, and not the last commit; replay ends at or before it. For
+pgBackRest it is computed at the WAL segment size the agent settled on: when
+that size is the default or read from segment names rather than proven by the
+backups' LSNs, the window's assumptions say so
+(`wal-segment-size-assumed-default`, `wal-segment-size-from-wal-names`) and
+`end_lsn` is only as good as that size.
 
 The console applies further limits to the recovery paths it receives, for
 both formats. The first two leave the recovery window without covered spans and give
