@@ -39,6 +39,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"strings"
 	"time"
 
 	routev1 "github.com/openshift/api/route/v1"
@@ -119,7 +120,10 @@ type Reconciler struct {
 	// (exact, or a prefix ending in "/"). Empty: the default image's
 	// repository only.
 	AllowedImageRepositories []string
-	Features                 Features
+	// AllowedHostSuffixes are the DNS suffixes spec.exposure.hostname must
+	// fall under (EXPOSURE_ALLOWED_HOST_SUFFIXES). Empty: any hostname.
+	AllowedHostSuffixes []string
+	Features            Features
 	// Random fills the generated session key; crypto/rand by default.
 	Random func(max *big.Int) (*big.Int, error)
 }
@@ -180,6 +184,18 @@ func (r *Reconciler) reconcile(ctx context.Context, console *pgtoolboxv1alpha1.P
 	case console.Spec.Image != nil && !specs.ImageAllowed(console.Spec.Image.Repository, r.AllowedImageRepositories, r.DefaultImage):
 		return r.invalid(console, pgtoolboxv1alpha1.ReasonImageNotAllowed, fmt.Sprintf(
 			"spec.image repository %s is not in the operator's allow-list (--console-image-repositories)", console.Spec.Image.Repository))
+	}
+	// The hostname allow-list: withdraw what this console published, then
+	// stall, so that nothing is published under a name the installer did
+	// not allow.
+	if spec := &console.Spec.Exposure; spec.TypeOrDefault() != pgtoolboxv1alpha1.ExposureTypeClusterIP &&
+		!exposure.HostnameAllowed(spec.Hostname, r.AllowedHostSuffixes) {
+		if err := r.withdrawExposure(ctx, console); err != nil {
+			return err
+		}
+		return r.invalid(console, pgtoolboxv1alpha1.ReasonHostnameNotAllowed, fmt.Sprintf(
+			"spec.exposure.hostname %s is not under the operator's allowed host suffixes (EXPOSURE_ALLOWED_HOST_SUFFIXES: %s)",
+			spec.Hostname, strings.Join(r.AllowedHostSuffixes, ", ")))
 	}
 	roles := []string{ConsoleClusterRole}
 	if console.PodLogsAllowed() {
@@ -489,6 +505,25 @@ func (r *Reconciler) applyExposure(ctx context.Context, console *pgtoolboxv1alph
 				return r.notOwned(console, err)
 			}
 		} else if err := r.deleteIfOwned(ctx, console, &gatewayv1.HTTPRoute{}, console.WorkloadName()); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// withdrawExposure deletes every exposure object this console owns.
+func (r *Reconciler) withdrawExposure(ctx context.Context, console *pgtoolboxv1alpha1.PgToolBoxConsole) error {
+	name := console.WorkloadName()
+	if err := r.deleteIfOwned(ctx, console, &networkingv1.Ingress{}, name); err != nil {
+		return err
+	}
+	if r.Features.Routes.Usable() {
+		if err := r.deleteIfOwned(ctx, console, &routev1.Route{}, name); err != nil {
+			return err
+		}
+	}
+	if r.Features.Gateways.Usable() {
+		if err := r.deleteIfOwned(ctx, console, &gatewayv1.HTTPRoute{}, name); err != nil {
 			return err
 		}
 	}

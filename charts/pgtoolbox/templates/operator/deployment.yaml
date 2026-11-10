@@ -91,6 +91,11 @@ spec:
         - name: OAUTH_PROXY_IMAGE
           value: {{ . | quote }}
         {{- end }}
+        {{- /* dig: values reused from a release before operator.exposure existed lack the key */}}
+        {{- with dig "exposure" "allowedHostSuffixes" list .Values.operator }}
+        - name: EXPOSURE_ALLOWED_HOST_SUFFIXES
+          value: {{ join "," . | quote }}
+        {{- end }}
         {{- $cfg := .Values.operator.config }}
         {{- with $cfg.watchNamespaces }}
         - name: WATCH_NAMESPACES

@@ -98,6 +98,9 @@ type Options struct {
 	// AllowClusterCatalogs mirrors ALLOW_CLUSTER_CATALOGS: the opt-in
 	// ClusterImageCatalog read is configured.
 	AllowClusterCatalogs bool
+	// InsightPackConfigMap is the insight pack's ConfigMap name
+	// (INSIGHT_PACK_CONFIGMAP); empty is insight.ConfigMapName.
+	InsightPackConfigMap string
 	// Evidence is the repository-evidence reader; nil reads none.
 	Evidence evidence.Reader
 	// KubeVersion is the API server version poller's latest snapshot;
@@ -420,18 +423,22 @@ func (s *Service) pruneLastKeys(watched map[string]bool) {
 
 // gathered is everything the cache holds about one Cluster.
 type gathered struct {
-	key       cache.ClusterKey
-	cluster   *cnpgv1.Cluster
-	pods      []*corev1.Pod
-	events    []*corev1.Event
-	backups   []*cnpgv1.Backup
-	scheduled []*cnpgv1.ScheduledBackup
-	poolers   []*cnpgv1.Pooler
-	lease     *coordinationv1.Lease
-	quorum    *cnpgv1.FailoverQuorum
-	store     *unstructured.Unstructured
-	swept     sweep.Snapshot
-	hasSweep  bool
+	key     cache.ClusterKey
+	cluster *cnpgv1.Cluster
+	pods    []*corev1.Pod
+	events  []*corev1.Event
+	backups []*cnpgv1.Backup
+	// priorBackups name this Cluster but predate it (created before
+	// it, or owned by a Cluster with another UID): a recreated Cluster
+	// must not inherit them as its recency, topology or timeline.
+	priorBackups []*cnpgv1.Backup
+	scheduled    []*cnpgv1.ScheduledBackup
+	poolers      []*cnpgv1.Pooler
+	lease        *coordinationv1.Lease
+	quorum       *cnpgv1.FailoverQuorum
+	store        *unstructured.Unstructured
+	swept        sweep.Snapshot
+	hasSweep     bool
 	// volumesReported: an instance reported its volumes recently (the
 	// fork's volumeUsages or cnpg_disk_* metrics).
 	volumesReported bool
@@ -439,8 +446,11 @@ type gathered struct {
 	// of this Cluster recently: its forecasts are missing, not flat.
 	volumesRefused bool
 	version        cnpgstatus.Version
-	minor          cnpgstatus.Minor
-	readable       map[string]bool
+	// upgradeInFlight names an instance manager / operator annotation
+	// version mismatch (cnpgstatus.UpgradeInFlight), or is empty.
+	upgradeInFlight string
+	minor           cnpgstatus.Minor
+	readable        map[string]bool
 	// failed names the readable sources whose read failed this time:
 	// their lists are empty because nothing was read, not because
 	// nothing exists.
@@ -522,6 +532,10 @@ func (s *Service) gather(ctx context.Context, key cache.ClusterKey, withEvents b
 		g.readFailed(cache.SourceBackups, err)
 		if err == nil {
 			for i := range list.Items {
+				if predatesCluster(&list.Items[i], cluster) {
+					g.priorBackups = append(g.priorBackups, &list.Items[i])
+					continue
+				}
 				g.backups = append(g.backups, &list.Items[i])
 			}
 		}
@@ -585,14 +599,16 @@ func (s *Service) gather(ctx context.Context, key cache.ClusterKey, withEvents b
 			g.volumesRefused = s.opts.Trends.RefusedFor(key.Namespace, key.Name, since)
 		}
 	}
-	g.version = cnpgstatus.DetectVersion(cnpgstatus.VersionEvidence{
+	versionEvidence := cnpgstatus.VersionEvidence{
 		InstanceManagerVersions: managerVersions(g),
 		InstancePods:            g.pods,
 		Cluster:                 cluster,
 		LeaseServed:             leaseObserved(g),
 		DatabaseRolesServed:     s.cache.Served(cache.SourceDatabaseRoles),
 		FailoverQuorumsServed:   s.cache.Served(cache.SourceFailoverQuorums),
-	})
+	}
+	g.version = cnpgstatus.DetectVersion(versionEvidence)
+	g.upgradeInFlight = cnpgstatus.UpgradeInFlight(versionEvidence)
 	g.minor = g.version.Minor
 	return g, nil
 }
@@ -601,6 +617,25 @@ func (s *Service) gather(ctx context.Context, key cache.ClusterKey, withEvents b
 // labels are freely settable, so the controller owner reference must name
 // this Cluster (a pooler pod is controlled by its Deployment and is not
 // an instance).
+// predatesCluster reports a Backup that names this Cluster
+// (spec.cluster.name, the index) but belongs to an earlier Cluster of the
+// same name: it was created before this Cluster, or a Cluster owner
+// reference carries another UID. CNPG sets no owner on a manual Backup
+// and the ScheduledBackup (or the Cluster, backupOwnerReference: cluster)
+// on a scheduled one, so the UID test applies only when that owner is a
+// Cluster.
+func predatesCluster(b *cnpgv1.Backup, cluster *cnpgv1.Cluster) bool {
+	if !cluster.CreationTimestamp.IsZero() && b.CreationTimestamp.Before(&cluster.CreationTimestamp) {
+		return true
+	}
+	for _, ref := range b.OwnerReferences {
+		if ref.Kind == "Cluster" && ref.UID != "" && cluster.UID != "" && ref.UID != cluster.UID {
+			return true
+		}
+	}
+	return false
+}
+
 func isMember(pod *corev1.Pod, cluster *cnpgv1.Cluster) bool {
 	ref := metav1.GetControllerOf(pod)
 	return ref != nil && ref.Kind == "Cluster" && ref.Name == cluster.Name &&

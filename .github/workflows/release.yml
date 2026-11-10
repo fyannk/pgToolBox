@@ -31,8 +31,10 @@ name: Release
 on:
   push:
     tags: ["v*", "pkg/evidence/v*"]
-  # Republishing for a tag that already exists (a failed run). A published
-  # release is left as it is.
+  # Republishing for a tag that already exists. A published release is left as
+  # it is. To finish a run that failed part-way, use "Re-run failed jobs" on
+  # that run, not a new dispatch: a new run rebuilds the images and publishes
+  # new digests under the same tag (see docs/site/docs/release.md).
   workflow_dispatch:
     inputs:
       tag:
@@ -44,7 +46,7 @@ on:
 permissions: {}
 
 concurrency:
-  group: release-${{ inputs.tag || github.ref }}
+  group: release-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 env:
@@ -73,6 +75,8 @@ jobs:
       sha: ${{ steps.resolve.outputs.sha }}
       prerelease: ${{ steps.resolve.outputs.prerelease }}
       published: ${{ steps.resolve.outputs.published }}
+      source_date_epoch: ${{ steps.resolve.outputs.source_date_epoch }}
+      created: ${{ steps.resolve.outputs.created }}
     steps:
       - name: Check out the repository with its tags
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -109,6 +113,9 @@ jobs:
           version="${tag##*/v}"
           prerelease=false
           [[ "${version}" != *-* ]] || prerelease=true
+          # The tagged commit's time, for reproducible image timestamps.
+          source_date_epoch="$(git log -1 --format=%ct "${sha}")"
+          created="$(date -u -d "@${source_date_epoch}" +%Y-%m-%dT%H:%M:%SZ)"
           published=false
           if [[ "$(gh release view "${tag}" --repo "${GITHUB_REPOSITORY}" --json isDraft --jq '.isDraft == false' 2>/dev/null || true)" == "true" ]]; then
             published=true
@@ -117,6 +124,7 @@ jobs:
           {
             echo "mode=publish"; echo "kind=${kind}"; echo "tag=${tag}"; echo "version=${version}"
             echo "sha=${sha}"; echo "prerelease=${prerelease}"; echo "published=${published}"
+            echo "source_date_epoch=${source_date_epoch}"; echo "created=${created}"
           } >> "${GITHUB_OUTPUT}"
       - name: Check semver, annotated tag on main, chart versions and CHANGELOG
         env:
@@ -182,6 +190,8 @@ jobs:
         with:
           images: ${{ env.IMAGE_REF }}
           tags: type=raw,value=${{ needs.prepare.outputs.version }}
+          labels: |
+            org.opencontainers.image.created=${{ needs.prepare.outputs.created }}
       # The version tag only. `latest` moves after the scan, in the release job.
       - name: Build and push (linux/amd64, linux/arm64)
         id: build
@@ -193,6 +203,7 @@ jobs:
           build-args: |
             VERSION=${{ needs.prepare.outputs.version }}
             IMG=ghcr.io/${{ github.repository_owner }}/pgtoolbox-operator:${{ needs.prepare.outputs.version }}
+            SOURCE_DATE_EPOCH=${{ needs.prepare.outputs.source_date_epoch }}
           pull: true
           push: true
           provenance: mode=max
@@ -312,6 +323,8 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository_owner }}/pgtoolbox-bundle
           tags: type=raw,value=${{ needs.prepare.outputs.version }}
+          labels: |
+            org.opencontainers.image.created=${{ needs.prepare.outputs.created }}
       - name: Build and push the bundle
         id: bundle
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
@@ -319,6 +332,8 @@ jobs:
           context: olm/bundle
           file: deploy/olm/bundle.Dockerfile
           platforms: linux/amd64,linux/arm64
+          build-args: |
+            SOURCE_DATE_EPOCH=${{ needs.prepare.outputs.source_date_epoch }}
           push: true
           provenance: mode=max
           sbom: true
@@ -353,6 +368,8 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository_owner }}/pgtoolbox-catalog
           tags: type=raw,value=${{ needs.prepare.outputs.version }}
+          labels: |
+            org.opencontainers.image.created=${{ needs.prepare.outputs.created }}
       - name: Build and push the catalog
         id: catalog
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
@@ -360,6 +377,8 @@ jobs:
           context: olm/catalog
           file: deploy/olm/catalog.Dockerfile
           platforms: linux/amd64,linux/arm64
+          build-args: |
+            SOURCE_DATE_EPOCH=${{ needs.prepare.outputs.source_date_epoch }}
           push: true
           provenance: mode=max
           sbom: true
@@ -391,8 +410,13 @@ jobs:
           rm "${OUT_DIR}/image-digests.txt"
       - name: Push and sign the charts
         id: charts
+        env:
+          GHCR_ACTOR: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
+          # Explicit: Helm's fallback to the docker credentials is not relied on.
+          printf '%s' "${GHCR_TOKEN}" | helm registry login ghcr.io --username "${GHCR_ACTOR}" --password-stdin
           for chart in pgtoolbox pgtools; do
             helm push "${OUT_DIR}/${chart}-${VERSION}.tgz" "oci://ghcr.io/${OWNER,,}/charts" 2>&1 | tee push.log
             digest="$(sed -n 's/^Digest: *//p' push.log)"
@@ -414,7 +438,7 @@ jobs:
           subject-name: ghcr.io/${{ github.repository_owner }}/charts/pgtools
           subject-digest: ${{ steps.charts.outputs.pgtools }}
           push-to-registry: true
-      # One SPDX SBOM per image, taken from the registry by digest.
+      # One SPDX SBOM per image and platform, taken from the registry by digest.
       - name: SBOMs
         env:
           SYFT: ${{ steps.syft.outputs.cmd }}
@@ -423,7 +447,9 @@ jobs:
           while read -r ref; do
             name="${ref##*/}"
             name="${name%@*}"
-            "${SYFT}" "registry:${ref}" -o "spdx-json=${OUT_DIR}/sbom-${name}.spdx.json" -q
+            for platform in linux/amd64 linux/arm64; do
+              "${SYFT}" "registry:${ref}" --platform "${platform}" -o "spdx-json=${OUT_DIR}/sbom-${name}-${platform#linux/}.spdx.json" -q
+            done
           done < "${OUT_DIR}/digests.txt"
       - name: Checksums, signed keyless
         run: |
@@ -460,33 +486,24 @@ jobs:
         with:
           tools: aqua:anchore/grype
           mise-cache: "false"
+      # New GHCR packages are private: without a login the scanner gets a 401.
+      - name: Log in to GHCR
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       - name: Collect the release files
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-files
           path: dist/release
-      # SECURITY.md: a fixable critical blocks the release. Everything else is
-      # listed in the job log and on the Security page, not hidden.
-      - name: Scan every image by digest
-        run: |
-          set -euo pipefail
-          status=0
-          {
-            echo "## Published image scan"
-            echo
-          } >> "${GITHUB_STEP_SUMMARY}"
-          while read -r ref; do
-            echo "== ${ref}"
-            grype "registry:${ref}" -o table | tail -n 40 || true
-            if ! grype "registry:${ref}" --only-fixed --fail-on critical -q -o json > /dev/null; then
-              echo "::error::${ref} has a fixable critical vulnerability"
-              echo "- ${ref}: fixable critical" >> "${GITHUB_STEP_SUMMARY}"
-              status=1
-            else
-              echo "- ${ref}: no fixable critical" >> "${GITHUB_STEP_SUMMARY}"
-            fi
-          done < dist/release/digests.txt
-          exit "${status}"
+      # SECURITY.md: a fixable critical blocks the release (exit 1). A registry
+      # or authentication error is a different failure (exit 2) and says so.
+      # Both platforms of every image are scanned. Everything else is listed in
+      # the job log and on the Security page, not hidden.
+      - name: Scan every image by digest and platform
+        run: ./hack/release.sh scan-digests dist/release/digests.txt
 
   release:
     name: Move latest, create the GitHub release
@@ -553,16 +570,27 @@ jobs:
           } > notes.md
       # A draft first: the release becomes visible only when every file is
       # attached, so a failed upload never leaves a half-published release.
-      - name: Create the release
+      - name: Create the draft release
         run: |
           set -euo pipefail
+          # A re-run after the visibility check failed finds its own draft.
+          if [[ "$(gh release view "${TAG}" --json isDraft --jq .isDraft 2>/dev/null || true)" == "true" ]]; then
+            gh release delete "${TAG}" --yes
+          fi
           flags=(--draft --verify-tag --title "pgToolBox ${TAG}" --notes-file notes.md)
           [[ "${PRERELEASE}" != "true" ]] || flags+=(--prerelease)
           gh release create "${TAG}" "${flags[@]}" \
             dist/release/pgtoolbox-*.tgz dist/release/pgtools-*.tgz \
             dist/release/install-*.yaml dist/release/sbom-*.spdx.json \
             dist/release/digests.txt dist/release/SHA256SUMS dist/release/SHA256SUMS.sigstore.json
-          gh release edit "${TAG}" --draft=false
+      # A release that points at packages nobody can pull is not a release.
+      # New GHCR packages start private; if any digest is not publicly pullable
+      # this step fails and the release stays a draft. Recovery: make the named
+      # packages public, then "Re-run failed jobs" on this run.
+      - name: Check that every digest is publicly pullable
+        run: ./hack/release.sh check-public dist/release/digests.txt dist/release/chart-digests.txt
+      - name: Publish the release
+        run: gh release edit "${TAG}" --draft=false
 
   module:
     name: Release the nested module

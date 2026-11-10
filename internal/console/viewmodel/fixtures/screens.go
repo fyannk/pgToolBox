@@ -157,11 +157,18 @@ func Backups() viewmodel.Backups {
 			},
 			Provenance: evidenceProv("EvidenceAgent orders-evidence /api/v1alpha1/snapshot"),
 		},
-		RecoveryTimeline: RecoveryTimeline(),
+		RecoveryTimeline: restoreTested(RecoveryTimeline()),
 		Drills:           RestoreDrills(),
 		Sources:          []viewmodel.SourceState{src("backups", since(3*time.Hour)), src("scheduledBackups", since(3*time.Hour)), src("objectStores", since(3*time.Hour)), src("evidence", since(time.Hour))},
 		BlindSpots:       []viewmodel.BlindSpot{pluginBackupBlindSpot},
 	}
+}
+
+// restoreTested marks a timeline whose Cluster passed a drill recently,
+// as the Backups screen does from its drill record.
+func restoreTested(t viewmodel.RecoveryTimeline) viewmodel.RecoveryTimeline {
+	t.RestoreTested = true
+	return t
 }
 
 // RestoreDrills is orders' drill record: one passed yesterday (14 min,
@@ -178,7 +185,7 @@ func RestoreDrills() viewmodel.RestoreDrills {
 	)
 	return viewmodel.RestoreDrills{
 		Enabled: true, Namespace: "team-a", TimeLimitSeconds: 7200, SizeTolerancePercent: 10,
-		LastPassedAt: ago(23*time.Hour + 46*time.Minute),
+		LastPassedAt: ago(23*time.Hour + 46*time.Minute), RestoreTested: true, WindowDays: 90,
 		Items: []viewmodel.RestoreDrill{
 			{
 				Drill: drillRef("drill-orders-2610281200"), Source: ordersRef, Backup: "orders-daily-20261028070000", BackupStoppedAt: ago(28*time.Hour + 52*time.Minute),

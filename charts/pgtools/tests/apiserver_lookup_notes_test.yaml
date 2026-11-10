@@ -9,13 +9,14 @@ release:
   namespace: team-a
 kubernetesProvider:
   scheme:
-    "v1/Endpoints": {gvr: {group: "", version: v1, resource: endpoints}, namespaced: true}
+    "discovery.k8s.io/v1/EndpointSlice": {gvr: {group: discovery.k8s.io, version: v1, resource: endpointslices}, namespaced: true}
   objects:
-    - apiVersion: v1
-      kind: Endpoints
+    - apiVersion: discovery.k8s.io/v1
+      kind: EndpointSlice
       metadata: {name: kubernetes, namespace: default}
-      subsets:
-        - addresses: [{ip: 10.96.0.1}]
+      addressType: IPv4
+      endpoints:
+        - addresses: [10.96.0.1]
 
 set:
   console.networkPolicy.enabled: true
@@ -32,7 +33,7 @@ tests:
       - contains:
           path: spec.egress
           content:
-            # The fake Endpoints carry no ports, hence null.
+            # The fake EndpointSlice carries no ports, hence null.
             to: [{ipBlock: {cidr: 10.96.0.1/32}}]
             ports: null
 

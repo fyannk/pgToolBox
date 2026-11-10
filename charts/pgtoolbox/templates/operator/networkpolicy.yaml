@@ -12,17 +12,21 @@ node and are not subject to it.
 {{- if eq $np.apiServer.mode "addresses" }}
 {{- $addresses = $np.apiServer.addresses }}
 {{- if not $addresses }}
-{{- $ep := lookup "v1" "Endpoints" "default" "kubernetes" }}
-{{- if $ep }}
-{{- range $subset := $ep.subsets }}
-{{- range $a := $subset.addresses }}{{ $addresses = append $addresses $a.ip }}{{ end }}
-{{- $ports = list }}
-{{- range $p := $subset.ports }}{{ $ports = append $ports $p.port }}{{ end }}
+{{- /* The API server's own EndpointSlice (discovery.k8s.io/v1; v1 Endpoints is deprecated since 1.33). */}}
+{{- $slice := lookup "discovery.k8s.io/v1" "EndpointSlice" "default" "kubernetes" }}
+{{- if and $slice $slice.endpoints }}
+{{- range $e := $slice.endpoints }}
+{{- if not (and $e.conditions (eq (toString $e.conditions.ready) "false")) }}
+{{- range $a := $e.addresses }}{{ $addresses = append $addresses $a }}{{ end }}
 {{- end }}
+{{- end }}
+{{- $ports = list }}
+{{- range $p := $slice.ports }}{{ $ports = append $ports $p.port }}{{ end }}
+{{- $addresses = $addresses | uniq }}
 {{- end }}
 {{- end }}
 {{- if not $addresses }}
-{{- fail "operator.networkPolicy.apiServer.mode=addresses found no API server address: the lookup of the `kubernetes` Endpoints returned none (helm template and --dry-run have no cluster). Set operator.networkPolicy.apiServer.addresses, or mode: any." }}
+{{- fail "operator.networkPolicy.apiServer.mode=addresses found no API server address: the lookup of the `kubernetes` EndpointSlice in `default` returned none (helm template and --dry-run have no cluster). Set operator.networkPolicy.apiServer.addresses, or mode: any." }}
 {{- end }}
 {{- end }}
 apiVersion: networking.k8s.io/v1

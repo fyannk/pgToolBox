@@ -3,7 +3,7 @@ templates:
   - templates/operator/user-clusterroles.yaml
 tests:
   - it: aggregates what the user roles hold on pgToolBox's kinds into admin, not edit or view
-    documentIndex: 2
+    documentIndex: 3
     asserts:
       - isKind: {of: ClusterRole}
       - equal: {path: metadata.name, value: pgtoolbox-aggregate-to-admin}
@@ -26,4 +26,4 @@ tests:
   - it: can be left out
     set: {operator.userRoles.aggregateToAdmin: false}
     asserts:
-      - hasDocuments: {count: 2}
+      - hasDocuments: {count: 3}

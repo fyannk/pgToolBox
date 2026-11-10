@@ -224,8 +224,20 @@ func TestRecoveryCoverageCrossesFailoverWhosePartialSwitchSegmentIsUnused(t *tes
 		{name: "boundary switch, parent ends complete before the switch segment", history: "1\t0/3000000\tpromoted\n", begin: 1, end: 1, ranges: []WALRange{walRange(1, 1, 2), walRange(2, 3, 5)}, state: evidence.Healthy, frontier: 5, frontierTL: 2, ownTimelineOK: true},
 		{name: "backup ends inside the switch segment", history: "1\t0/30000A0\tpromoted\n", begin: 1, end: 3, endLSN: "0/3000050", ranges: []WALRange{walRange(1, 1, 2), walRange(2, 3, 5)}, state: evidence.Healthy, frontier: 5, frontierTL: 2},
 		{name: "backup begins and ends inside the switch segment", history: "1\t0/30000A0\tpromoted\n", begin: 3, end: 3, endLSN: "0/3000050", ranges: []WALRange{walRange(1, 1, 2), walRange(2, 3, 5)}, state: evidence.Healthy, frontier: 5, frontierTL: 2},
-		{name: "child switch segment missing", history: "1\t0/30000A0\tpromoted\n", begin: 1, end: 1, ranges: []WALRange{walRange(1, 1, 2), walRange(2, 4, 5)}, state: evidence.Unknown, frontier: 2, frontierTL: 1, ownTimelineOK: true},
-		{name: "parent segment before the switch missing", history: "1\t0/30000A0\tpromoted\n", begin: 1, end: 1, ranges: []WALRange{walRange(1, 1, 1), walRange(2, 3, 5)}, state: evidence.Unknown, frontier: 1, frontierTL: 1, ownTimelineOK: true},
+		// Later child segments prove the switch segment lost, as pgBackRest
+		// reports it.
+		{name: "child switch segment missing while later child segments exist", history: "1\t0/30000A0\tpromoted\n", begin: 1, end: 1, ranges: []WALRange{walRange(1, 1, 2), walRange(2, 4, 5)}, state: evidence.Unhealthy, frontier: 2, frontierTL: 1, ownTimelineOK: true},
+		// The child's history and WAL from its switch segment on prove the
+		// parent closed: its missing segment before the switch is lost.
+		{name: "parent segment before the switch missing", history: "1\t0/30000A0\tpromoted\n", begin: 1, end: 1, ranges: []WALRange{walRange(1, 1, 1), walRange(2, 3, 5)}, state: evidence.Unhealthy, frontier: 1, frontierTL: 1, ownTimelineOK: true},
+		{name: "parent segment before the switch missing, child WAL only after its switch segment", history: "1\t0/30000A0\tpromoted\n", begin: 1, end: 1, ranges: []WALRange{walRange(1, 1, 1), walRange(2, 4, 5)}, state: evidence.Unhealthy, frontier: 1, frontierTL: 1, ownTimelineOK: true},
+		// Without child WAL the promotion may be minutes old and the
+		// parent's last segment still on its way: unknown, not lost.
+		{name: "parent segment before the switch missing, child has no WAL yet", history: "1\t0/30000A0\tpromoted\n", begin: 1, end: 1, ranges: []WALRange{walRange(1, 1, 1)}, state: evidence.Unknown, frontier: 1, frontierTL: 1, ownTimelineOK: true},
+		{name: "history archived, child switch segment not yet", history: "1\t0/30000A0\tpromoted\n", begin: 1, end: 1, ranges: []WALRange{walRange(1, 1, 2)}, state: evidence.Unknown, frontier: 2, frontierTL: 1, ownTimelineOK: true},
+		// The backup ends exactly at the switchpoint: every byte it needs is
+		// before the child's first byte, so it follows the child.
+		{name: "backup ends at the switchpoint", history: "1\t0/3000050\tpromoted\n", begin: 1, end: 3, endLSN: "0/3000050", ranges: []WALRange{walRange(1, 1, 2), walRange(2, 3, 5)}, state: evidence.Healthy, frontier: 5, frontierTL: 2},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -251,6 +263,72 @@ func TestRecoveryCoverageCrossesFailoverWhosePartialSwitchSegmentIsUnused(t *tes
 				t.Fatalf("Validate() = %v", err)
 			}
 		})
+	}
+}
+
+// TestMissingChildSwitchSegmentIsLostOnlyOnceTheChildHasLaterWAL: the child's
+// switch segment missing is in flight while the child has no WAL, and lost
+// (unhealthy, gap-limited) once later child segments are archived.
+func TestMissingChildSwitchSegmentIsLostOnlyOnceTheChildHasLaterWAL(t *testing.T) {
+	t.Parallel()
+	objects := []HistoryObject{{Key: "alpha/wals/00000002.history", Server: "alpha", Name: "00000002.history", Compression: "none", Timeline: 2}}
+	for name, test := range map[string]struct {
+		ranges []WALRange
+		state  evidence.State
+		stop   CoverageStop
+	}{
+		"later child segments archived": {ranges: []WALRange{walRange(1, 1, 2), walRange(2, 4, 5)}, state: evidence.Unhealthy, stop: CoverageGapLimited},
+		"no child segment yet":          {ranges: []WALRange{walRange(1, 1, 2)}, state: evidence.Unknown, stop: CoverageUnknownLimited},
+		"switch segment archived":       {ranges: []WALRange{walRange(1, 1, 2), walRange(2, 3, 5)}, state: evidence.Healthy, stop: CoverageFrontier},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			wal := ServerWAL{Server: "alpha", State: evidence.Healthy, PostgreSQLVersion: 180000, SegmentSize: 16 << 20, Ranges: test.ranges}
+			catalog := AnalyzeRecovery(context.Background(), historyFake("1\t0/30000A0\tpromoted\n"), []Backup{recoveryBackup(time.Now().UTC(), 1, 1)}, WALCatalog{Servers: []ServerWAL{wal}}, objects, false, RecoveryOptions{})
+			path := findPath(t, catalog.Servers[0].Paths, 2)
+			if path.State != test.state || path.Stop != test.stop || path.FrontierTimeline == 0 {
+				t.Fatalf("path %#v", path)
+			}
+			if err := catalog.Validate(); err != nil {
+				t.Fatalf("Validate() = %v", err)
+			}
+		})
+	}
+}
+
+// TestBranchBeforeBackupAtTheSwitchpoint pins the end LSN == switchpoint edge
+// to PostgreSQL's rule (see branchBeforeBackup): the backup follows the child.
+func TestBranchBeforeBackupAtTheSwitchpoint(t *testing.T) {
+	t.Parallel()
+	edge := HistoryEdge{Parent: 1, Child: 2, SwitchLSN: 0x3000050, SwitchPosition: 3}
+	for _, test := range []struct {
+		name     string
+		endLSN   string
+		end      uint64
+		branches bool
+	}{
+		{name: "ends before the switchpoint", endLSN: "0/300004F", end: 3},
+		{name: "ends at the switchpoint", endLSN: "0/3000050", end: 3},
+		{name: "ends one byte after the switchpoint", endLSN: "0/3000051", end: 3, branches: true},
+		{name: "ends in a later segment", endLSN: "0/4000028", end: 4, branches: true},
+		{name: "unparsable end LSN", endLSN: "0/zz", end: 3, branches: true},
+		{name: "no end LSN, ends before the switch segment", end: 2},
+		{name: "no end LSN, ends in the switch segment", end: 3, branches: true},
+	} {
+		if got := branchBeforeBackup(edge, Backup{EndLSN: test.endLSN}, test.end); got != test.branches {
+			t.Errorf("%s: branchBeforeBackup() = %v", test.name, got)
+		}
+	}
+	// One byte after the switchpoint, the child is not a recovery target.
+	backup := recoveryBackup(time.Now().UTC(), 1, 3)
+	backup.EndLSN = "0/3000051"
+	wal := ServerWAL{Server: "alpha", State: evidence.Healthy, PostgreSQLVersion: 180000, SegmentSize: 16 << 20, Ranges: []WALRange{walRange(1, 1, 3), walRange(2, 3, 5)}}
+	objects := []HistoryObject{{Key: "alpha/wals/00000002.history", Server: "alpha", Name: "00000002.history", Compression: "none", Timeline: 2}}
+	catalog := AnalyzeRecovery(context.Background(), historyFake("1\t0/3000050\tpromoted\n"), []Backup{backup}, WALCatalog{Servers: []ServerWAL{wal}}, objects, false, RecoveryOptions{})
+	for _, path := range catalog.Servers[0].Paths {
+		if path.TargetTimeline == 2 {
+			t.Fatalf("a backup that ends after the switchpoint has a path to the child: %#v", path)
+		}
 	}
 }
 

@@ -16,6 +16,8 @@ package status
 
 import (
 	"context"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -48,6 +50,10 @@ func TestRestoreCheckReadsTheTimeline(t *testing.T) {
 		}
 		if got.Answer != c.answer || got.BackupID != c.backupID || got.Basis != "evidence" || len(got.Caveats) < 2 || got.Text == "" {
 			t.Errorf("%s: %+v", c.name, got)
+		}
+		// No drill is recorded for orders here: never restore-tested.
+		if !slices.ContainsFunc(got.Caveats, func(c string) bool { return strings.HasPrefix(c, "Not restore-tested") }) {
+			t.Errorf("%s: caveats %q do not say the restore was not tested", c.name, got.Caveats)
 		}
 	}
 	got, err := svc.RestoreCheck(ctx, "team-a", "billing", now)
@@ -152,6 +158,14 @@ func TestRecoveryTimelineStates(t *testing.T) {
 			timelineFixture{paths: []evidence.RecoveryPath{tlPath("b1", 48*time.Hour, 20*time.Hour, gap)}},
 			facts, "unhealthy",
 			[]answer{{30 * time.Hour, "covered", "b1"}, {10 * time.Hour, "gap", ""}},
+		},
+		{
+			// pgBackRest and Barman stop a path candidate-limited at a gap one
+			// scan saw: the recent end is unconfirmed, not missing.
+			"a candidate gap at the recent end warns, it is not missing WAL",
+			timelineFixture{paths: []evidence.RecoveryPath{tlPath("b1", 48*time.Hour, 20*time.Hour, candidate)}},
+			facts, "warning",
+			[]answer{{30 * time.Hour, "covered", "b1"}, {10 * time.Hour, "unknown", ""}},
 		},
 		{
 			"a candidate gap inside warns",

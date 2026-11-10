@@ -245,8 +245,12 @@ console:
   # -- Force the session cookie's `Secure` attribute (`true` or `false`). Empty
   # keeps the console's rule: Secure unless the request is plain loopback HTTP.
   cookieSecure: ""
-  # -- Reverse-proxy hops to trust for `X-Forwarded-*`. 0 trusts none.
-  trustedProxyHops: 0
+  # -- (int) Reverse-proxy hops to trust for `X-Forwarded-*`. 0 trusts none.
+  # Empty: 1 when `exposure.type` is not `none` (the Ingress, Route or gateway
+  # in front), 0 otherwise. Without the edge's hop every user shares the edge's
+  # address, and so one sign-in budget. Set it explicitly when more proxies sit
+  # in front (a CDN, a load balancer that appends to the header) or none does.
+  trustedProxyHops: null
   # tls.secretName: serve HTTPS on `port` from a kubernetes.io/tls Secret that is
   # mounted as files (the console reads no Secret through the API). Point the edge
   # at it with the usual backend-protocol setting of your controller.
@@ -447,6 +451,17 @@ console:
       # `secret` (and `auto`); its `ca.crt` must be in
       # `instanceStatus.caBundleConfigMap`.
       secret: ""
+    # sealKey: the drill seal's own keys (RESTORE_DRILL_SEAL_KEY_FILE). The
+    # console deletes only the drill Clusters it sealed with an HMAC; by
+    # default the HMAC key derives from the session secret, so whoever reads
+    # the session Secret can forge a seal. Name an existing Secret of the
+    # release namespace whose `key` holds one key per line (at least 32 bytes
+    # each; the first seals, all verify), readable by the console alone. The
+    # chart mounts it read-only; the console never reads it through the API.
+    # -- The drill seal's own keys, mounted as a file
+    # (`RESTORE_DRILL_SEAL_KEY_FILE`): `{existingSecret: name, key: keys}`.
+    # Empty `existingSecret`: the keys derive from the session secret.
+    sealKey: {existingSecret: "", key: keys}
     # networkPolicy: the drill Pods' policy, in every drill namespace, ON with
     # drills (a promoted drill is a live copy of a production database: the
     # extensions the console cannot neutralise must not reach the network).
@@ -467,7 +482,7 @@ console:
         # `addresses` (only `apiServer.addresses`).
         mode: any
         # -- API server IP addresses to allow when `apiServer.mode` is `addresses`
-        # and the Endpoints lookup is unavailable (`helm template`, GitOps
+        # and the EndpointSlice lookup is unavailable (`helm template`, GitOps
         # renderers).
         addresses: []
         # -- Ports of the API server that egress is allowed to.
@@ -752,17 +767,17 @@ console:
     apiServer:
       # -- How egress to the API server is allowed. `addresses`: the addresses of
       # the addresses you list in `apiServer.addresses`, or, with
-      # `apiServer.lookup`, those of the `kubernetes` Endpoints read at install time (deprecated default, see `apiServer.lookup`). `any`: any address on `apiServer.ports`, the
+      # `apiServer.lookup`, those of the `kubernetes` EndpointSlice read at install time (deprecated default, see `apiServer.lookup`). `any`: any address on `apiServer.ports`, the
       # fallback for API servers behind a load balancer whose address is not in
-      # the Endpoints.
+      # the EndpointSlice.
       mode: addresses
       # -- API server IP addresses to allow when `apiServer.mode` is `addresses`:
-      # the ClusterIP and endpoints of `kubectl get endpoints kubernetes -n default`
+      # the ClusterIP and endpoints of `kubectl get endpointslice kubernetes -n default`
       # (a namespace admin usually cannot read that object: ask the cluster admin).
       addresses: []
       # -- With `mode: addresses` and no `addresses`, read them from the `kubernetes`
-      # Endpoints of the `default` namespace at install time. On in this minor so
-      # existing installs keep working; it needs a user allowed to `get` `endpoints` in
+      # EndpointSlice of the `default` namespace at install time. On in this minor so
+      # existing installs keep working; it needs a user allowed to `get` `endpointslices.discovery.k8s.io` in
       # `default` (a namespace admin usually is not: Helm then stops with a Forbidden
       # error), and `helm template` / `--dry-run` have no cluster. NOTES warns while it
       # is used. The NEXT MINOR DEFAULTS IT TO false: list `addresses`, set
@@ -909,17 +924,25 @@ console:
 # The insight pack: CloudNativePG custom queries that let the
 # console show wraparound, vacuum health, blocking, connections,
 # pg_stat_statements top-N and index hygiene without connecting to
-# PostgreSQL itself. The chart creates the ConfigMap pgtoolbox-insight-pack
-# in each namespace below; nothing changes on any Cluster until its team adds
-#   spec.monitoring.customQueriesConfigMap: [{name: pgtoolbox-insight-pack, key: queries}]
+# PostgreSQL itself. The chart creates the ConfigMap <release>-insight-pack
+# (configMapName) in each namespace below, so that two releases in one
+# namespace do not collide; nothing changes on any Cluster until its team adds
+#   spec.monitoring.customQueriesConfigMap: [{name: <release>-insight-pack, key: queries}]
 # to the Cluster. The queries run as CloudNativePG's metrics user, read-only,
 # each with a 1 s statement_timeout; their cost is in the documentation.
 # ==========================================================================
 insightPack:
-  # -- Create the ConfigMap `pgtoolbox-insight-pack` of CloudNativePG custom
+  # -- Create the ConfigMap `<release>-insight-pack` of CloudNativePG custom
   # queries. Nothing changes on a Cluster until its team adds it to
   # `spec.monitoring.customQueriesConfigMap`.
   enabled: true
+  # -- Name of the pack's ConfigMap, which the console matches against the
+  # Clusters' `customQueriesConfigMap` and names in its opt-in instructions
+  # (`INSIGHT_PACK_CONFIGMAP`). Empty: `<release>-insight-pack` with the pack
+  # enabled, else `pgtoolbox-insight-pack` (the name of
+  # `deploy/insight-pack/insight-pack.yaml`). Set `pgtoolbox-insight-pack` to
+  # keep the name of a pack the teams already reference.
+  configMapName: ""
   # -- Namespaces that get the ConfigMap. Empty: `console.watchNamespaces`, or the
   # release namespace.
   namespaces: []
@@ -1074,17 +1097,17 @@ evidence:
     apiServer:
       # -- How egress to the API server is allowed. `addresses`: the addresses of
       # the addresses you list in `apiServer.addresses`, or, with
-      # `apiServer.lookup`, those of the `kubernetes` Endpoints read at install time (deprecated default, see `apiServer.lookup`). `any`: any address on `apiServer.ports`, the
+      # `apiServer.lookup`, those of the `kubernetes` EndpointSlice read at install time (deprecated default, see `apiServer.lookup`). `any`: any address on `apiServer.ports`, the
       # fallback for API servers behind a load balancer whose address is not in
-      # the Endpoints.
+      # the EndpointSlice.
       mode: addresses
       # -- API server IP addresses to allow when `apiServer.mode` is `addresses`:
-      # the ClusterIP and endpoints of `kubectl get endpoints kubernetes -n default`
+      # the ClusterIP and endpoints of `kubectl get endpointslice kubernetes -n default`
       # (a namespace admin usually cannot read that object: ask the cluster admin).
       addresses: []
       # -- With `mode: addresses` and no `addresses`, read them from the `kubernetes`
-      # Endpoints of the `default` namespace at install time. On in this minor so
-      # existing installs keep working; it needs a user allowed to `get` `endpoints` in
+      # EndpointSlice of the `default` namespace at install time. On in this minor so
+      # existing installs keep working; it needs a user allowed to `get` `endpointslices.discovery.k8s.io` in
       # `default` (a namespace admin usually is not: Helm then stops with a Forbidden
       # error), and `helm template` / `--dry-run` have no cluster. NOTES warns while it
       # is used. The NEXT MINOR DEFAULTS IT TO false: list `addresses`, set
@@ -1429,17 +1452,17 @@ pgadmin:
     apiServer:
       # -- How egress to the API server is allowed. `addresses`: the addresses of
       # the addresses you list in `apiServer.addresses`, or, with
-      # `apiServer.lookup`, those of the `kubernetes` Endpoints read at install time (deprecated default, see `apiServer.lookup`). `any`: any address on `apiServer.ports`, the
+      # `apiServer.lookup`, those of the `kubernetes` EndpointSlice read at install time (deprecated default, see `apiServer.lookup`). `any`: any address on `apiServer.ports`, the
       # fallback for API servers behind a load balancer whose address is not in
-      # the Endpoints.
+      # the EndpointSlice.
       mode: addresses
       # -- API server IP addresses to allow when `apiServer.mode` is `addresses`:
-      # the ClusterIP and endpoints of `kubectl get endpoints kubernetes -n default`
+      # the ClusterIP and endpoints of `kubectl get endpointslice kubernetes -n default`
       # (a namespace admin usually cannot read that object: ask the cluster admin).
       addresses: []
       # -- With `mode: addresses` and no `addresses`, read them from the `kubernetes`
-      # Endpoints of the `default` namespace at install time. On in this minor so
-      # existing installs keep working; it needs a user allowed to `get` `endpoints` in
+      # EndpointSlice of the `default` namespace at install time. On in this minor so
+      # existing installs keep working; it needs a user allowed to `get` `endpointslices.discovery.k8s.io` in
       # `default` (a namespace admin usually is not: Helm then stops with a Forbidden
       # error), and `helm template` / `--dry-run` have no cluster. NOTES warns while it
       # is used. The NEXT MINOR DEFAULTS IT TO false: list `addresses`, set
@@ -1471,9 +1494,13 @@ pgadmin:
       # `from` items.
       extraFrom: []
 
-  # -- Group that owns pgAdmin's volume. OpenShift's restricted SCC assigns its
-  # own range: set `null` there.
-  fsGroup: 5050
+  # -- Group that owns pgAdmin's volume. `null` (the default): 5050, except on
+  # OpenShift (the API server serves `security.openshift.io/v1`, or
+  # `auth.provider` is `openshift`), whose restricted-v2 SCC assigns its own
+  # range and refuses a fixed one. `0`: none. An explicit value always wins. A
+  # client-side `helm template` for OpenShift with another provider needs
+  # `--api-versions security.openshift.io/v1` or `fsGroup: 0`.
+  fsGroup: null
   # -- Resource requests and limits of the pgadmin container (the operator's
   # defaults); the small sidecars have their own fixed ones.
   resources:

@@ -246,7 +246,7 @@ func TestCollectInstanceCAs(t *testing.T) {
 		caSecret("pg-other-ca", map[string][]byte{"ca.crt": beta}),
 		&cnpgv1.Cluster{ObjectMeta: metav1.ObjectMeta{Name: "elsewhere", Namespace: "team-b"}},
 	}
-	c := fake.NewClientBuilder().WithScheme(cnpgScheme(t)).WithObjects(objects...).Build()
+	c := fake.NewClientBuilder().WithScheme(cnpgScheme(t)).WithStatusSubresource(&pgtoolboxv1alpha1.PgToolBoxConsole{}).WithObjects(objects...).Build()
 	console := mirrorConsole()
 	console.Spec.ClusterSelector = &metav1.LabelSelector{MatchLabels: map[string]string{"team": "a"}}
 
@@ -334,7 +334,7 @@ func TestForCASecret(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "own-bundle", Namespace: "team-a"},
 		Spec:       pgtoolboxv1alpha1.PgToolBoxConsoleSpec{InstanceCABundleRef: &pgtoolboxv1alpha1.LocalObjectReference{Name: "mine"}},
 	}
-	c := fake.NewClientBuilder().WithScheme(cnpgScheme(t)).
+	c := fake.NewClientBuilder().WithScheme(cnpgScheme(t)).WithStatusSubresource(&pgtoolboxv1alpha1.PgToolBoxConsole{}).
 		WithObjects(testCluster("pg-a", nil, ""), testCluster("pg-b", nil, "shared-ca"), mirrorConsole(), referenced,
 			&pgtoolboxv1alpha1.PgToolBoxConsole{ObjectMeta: metav1.ObjectMeta{Name: "elsewhere", Namespace: "team-b"}}).
 		WithIndex(&cnpgv1.Cluster{}, indexServerCASecret, func(object client.Object) []string {

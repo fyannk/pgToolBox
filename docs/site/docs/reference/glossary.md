@@ -18,7 +18,7 @@ both are given: the screen's words first, the API's value in `code`.
 A `PgAccessRequest`: a person asks, in one namespace, for one of the two shipped
 ClusterRoles (`viewer` binds `pgtoolbox-console-viewer`, `operator` binds
 `pgtoolbox-console-operator`). Someone who may create RoleBindings there and update the
-request's status approves it; the console then creates the RoleBinding with that
+request's status (`pgtoolbox-console-approver`, which no request grants) approves it; the console then creates the RoleBinding with that
 person's own token. A grant always covers every Cluster of the namespace. See
 [Access requests](../console/access-requests.md).
 
@@ -201,7 +201,8 @@ severity is the worst of its findings. See
 
 ### Insight pack
 
-A set of CloudNativePG custom queries (the ConfigMap `pgtoolbox-insight-pack`) that
+A set of CloudNativePG custom queries (a ConfigMap: `<release>-insight-pack` from the
+pgtools chart, `pgtoolbox-insight-pack` from `deploy/insight-pack`) that
 a team opts its Cluster into. The instances' own exporters run them and the console
 reads the results from `:9187/metrics`, so the console still never connects to
 PostgreSQL. It feeds the Insight screens: wraparound and vacuum, blocking, query

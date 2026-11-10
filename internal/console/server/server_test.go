@@ -199,6 +199,138 @@ func TestGracefulShutdownEndsStreams(t *testing.T) {
 	}
 }
 
+// TestGracefulShutdownLetsRequestsInFlightComplete is the drain's
+// contract: the shutdown signal makes the console not ready, keeps the
+// listener open for the delay, and lets a request already in flight run
+// to completion with a live context.
+func TestGracefulShutdownLetsRequestsInFlightComplete(t *testing.T) {
+	t.Parallel()
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var cancelledEarly atomic.Bool
+	slow := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/slow" {
+			_, _ = io.WriteString(w, "fast")
+			return
+		}
+		close(entered)
+		<-release
+		if r.Context().Err() != nil {
+			cancelledEarly.Store(true)
+		}
+		_, _ = io.WriteString(w, "done")
+	})
+	ready := &Readiness{}
+	s := New(Options{Auth: testAuth(t), API: slow, Ready: ready, ShutdownTimeout: 5 * time.Second, ShutdownDelay: 300 * time.Millisecond})
+	s.handler = slow
+	var lc net.ListenConfig
+	ln, err := lc.Listen(t.Context(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := "http://" + ln.Addr().String()
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() { done <- s.Serve(ctx, ln, nil) }()
+	type result struct {
+		body string
+		err  error
+	}
+	fetch := func(path string) result {
+		resp, err := http.Get(base + path) //nolint:noctx // test client
+		if err != nil {
+			return result{err: err}
+		}
+		defer func() { _ = resp.Body.Close() }()
+		b, err := io.ReadAll(resp.Body)
+		return result{string(b), err}
+	}
+	inflight := make(chan result, 1)
+	go func() { inflight <- fetch("/slow") }()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the request did not reach the handler")
+	}
+	cancel()
+	deadline := time.Now().Add(5 * time.Second)
+	for ready.Check() == nil {
+		if time.Now().After(deadline) {
+			t.Fatal("the console stayed ready after the shutdown signal")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	// Within the delay the listener still accepts.
+	if got := fetch("/fast"); got.err != nil || got.body != "fast" {
+		t.Fatalf("request during the shutdown delay = %q, %v", got.body, got.err)
+	}
+	close(release)
+	select {
+	case got := <-inflight:
+		if got.err != nil || got.body != "done" {
+			t.Fatalf("request in flight = %q, %v", got.body, got.err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the request in flight did not complete")
+	}
+	if cancelledEarly.Load() {
+		t.Fatal("the request in flight saw its context cancelled by the shutdown signal")
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Serve = %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("shutdown hung")
+	}
+}
+
+// TestGracefulShutdownCancelsWhatOutlivesTheDrain is the other side: a
+// request still running when ShutdownTimeout ends has its context
+// cancelled, and Serve says the drain was cut short.
+func TestGracefulShutdownCancelsWhatOutlivesTheDrain(t *testing.T) {
+	t.Parallel()
+	entered := make(chan struct{})
+	cancelled := make(chan struct{})
+	stuck := http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		close(entered)
+		<-r.Context().Done()
+		close(cancelled)
+	})
+	s := New(Options{Auth: testAuth(t), API: stuck, ShutdownTimeout: 100 * time.Millisecond})
+	s.handler = stuck
+	var lc net.ListenConfig
+	ln, err := lc.Listen(t.Context(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() { done <- s.Serve(ctx, ln, nil) }()
+	go func() {
+		resp, err := http.Get("http://" + ln.Addr().String() + "/stuck") //nolint:noctx // test client
+		if err == nil {
+			_ = resp.Body.Close()
+		}
+	}()
+	<-entered
+	cancel()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("Serve reported a clean drain over a request it gave up on")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("shutdown hung")
+	}
+	select {
+	case <-cancelled:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the request the drain gave up on was never cancelled")
+	}
+}
+
 type nopSender struct{}
 
 func (nopSender) Event(any) error      { return nil }

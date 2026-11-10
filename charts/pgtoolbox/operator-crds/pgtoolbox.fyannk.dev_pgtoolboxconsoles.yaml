@@ -1281,6 +1281,31 @@ spec:
                             x-kubernetes-int-or-string: true
                         type: object
                     type: object
+                  sealKeySecretRef:
+                    description: |-
+                      The drill seal's own keys (RESTORE_DRILL_SEAL_KEY_FILE): a key of a
+                      Secret in the console's namespace holding one key per line, at least
+                      32 bytes each (the first seals, all verify), mounted read-only. Keep
+                      the Secret readable by the console alone. Omitted: the keys derive
+                      from the session secret, so whoever can read the session Secret can
+                      forge a seal.
+                    properties:
+                      key:
+                        description: The key.
+                        maxLength: 253
+                        minLength: 1
+                        pattern: ^[-._a-zA-Z0-9]+$
+                        type: string
+                      name:
+                        description: The Secret name.
+                        maxLength: 253
+                        minLength: 1
+                        pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                        type: string
+                    required:
+                    - key
+                    - name
+                    type: object
                   storage:
                     description: 'The drill instance''s storage. Omitted: the source
                       Cluster''s.'

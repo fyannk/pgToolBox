@@ -1595,6 +1595,11 @@ func (in *PgToolBoxConsoleRestoreDrillsSpec) DeepCopyInto(out *PgToolBoxConsoleR
 		*out = new(int32)
 		**out = **in
 	}
+	if in.SealKeySecretRef != nil {
+		in, out := &in.SealKeySecretRef, &out.SealKeySecretRef
+		*out = new(SecretKeyReference)
+		**out = **in
+	}
 	in.NetworkPolicy.DeepCopyInto(&out.NetworkPolicy)
 }
 

@@ -7,6 +7,7 @@ import type {
   RecoveryTimeline,
   RestoreCheck,
 } from "../api/generated/model";
+import { CopyCode } from "../ds/patterns/CopyCode/CopyCode";
 import { Provenance } from "../ds/patterns/Provenance/Provenance";
 import { ErrorState, LoadingState } from "../ds/patterns/States/States";
 import { StatusChip } from "../ds/patterns/StatusChip/StatusChip";
@@ -336,7 +337,38 @@ function RestoreCheckForm({ cluster, initial }: { cluster: ClusterRef; initial?:
  * (drawn hatched and labelled unverified). The bar has a text twin: every
  * span and base backup is listed below it.
  */
-export function RecoveryWindowPanel({ t, cluster }: { t: RecoveryTimeline; cluster: ClusterRef }) {
+/**
+ * The edge of the window is uncertain when the evidence cannot place the
+ * newest restorable point: the newest span is not covered, or the
+ * recent end is not restorable or unknown.
+ */
+function uncertainEdge(t: RecoveryTimeline): boolean {
+  if (t.basis !== "evidence") return false;
+  const last = (t.segments ?? []).at(-1);
+  return t.state === "unhealthy" || t.state === "unknown" || (last !== undefined && last.kind !== "covered");
+}
+
+/** What a DBA can check by hand at an uncertain edge; the console runs none of it. */
+function PitrEdgeHint() {
+  return (
+    <div className="flex flex-col gap-1 text-label" data-pitr-edge-hint="">
+      <p className="m-0">{m.pitr_edge_hint_archiver()}</p>
+      <CopyCode code="SELECT * FROM pg_stat_archiver;" label="pg_stat_archiver" />
+      <p className="m-0">{m.pitr_edge_hint_switch()}</p>
+      <CopyCode code="SELECT pg_switch_wal();" label="pg_switch_wal" />
+    </div>
+  );
+}
+
+export function RecoveryWindowPanel({
+  t,
+  cluster,
+  windowDays,
+}: {
+  t: RecoveryTimeline;
+  cluster: ClusterRef;
+  windowDays?: number;
+}) {
   const hatch = `hatch${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;
   const segments = t.segments ?? [];
   const markers = t.markers ?? [];
@@ -402,7 +434,13 @@ export function RecoveryWindowPanel({ t, cluster }: { t: RecoveryTimeline; clust
           ))}
         </ul>
       )}
+      {uncertainEdge(t) && <PitrEdgeHint />}
       <p className="m-0 text-caption text-muted">{m.recovery_strongest()}</p>
+      {t.basis !== "none" && !t.restoreTested && (
+        <p className="m-0 text-label font-semibold" data-restore-tested="false">
+          {m.not_restore_tested({ days: String(windowDays ?? 90) })}
+        </p>
+      )}
       <Provenance provenance={t.provenance} />
       <RestoreCheckForm cluster={cluster} initial={t.latest} />
     </Panel>

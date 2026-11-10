@@ -2,7 +2,7 @@
 The API server addresses and ports of a NetworkPolicy in apiServer.mode
 "addresses", as JSON ({"addresses": [...], "ports": [...]}). Taken from
 apiServer.addresses; when that is empty and apiServer.lookup is true (the default in this minor), from the
-`kubernetes` Endpoints of the default namespace. Helm
+`kubernetes` EndpointSlice (discovery.k8s.io/v1) of the default namespace. Helm
 fails the whole render with the API server's Forbidden when the installing user
 cannot read that object, and a namespace admin usually cannot (Helm's lookup
 returns every error but NotFound). Args: dict "np" <the networkPolicy values>
@@ -12,8 +12,8 @@ returns every error but NotFound). Args: dict "np" <the networkPolicy values>
 {{- if and .np.enabled (eq .np.apiServer.mode "addresses") .np.apiServer.lookup (not .np.apiServer.addresses) }}
 
 WARNING: {{ .path }}.apiServer.lookup is on and no apiServer.addresses are set, so the chart reads the
-`kubernetes` Endpoints of the default namespace at install time. That needs `get` on `endpoints` in
-`default`, which a namespace admin usually lacks: Helm then fails with a Forbidden error. Instead:
+`kubernetes` EndpointSlice of the default namespace at install time. That needs `get` on
+`endpointslices.discovery.k8s.io` in `default`, which a namespace admin usually lacks: Helm then fails with a Forbidden error. Instead:
 list {{ .path }}.apiServer.addresses, set {{ .path }}.apiServer.mode: any, or keep lookup as a cluster admin.
 The next minor defaults {{ .path }}.apiServer.lookup to false.
 {{- end }}
@@ -23,22 +23,24 @@ The next minor defaults {{ .path }}.apiServer.lookup to false.
 {{- $addresses := .np.apiServer.addresses | default list -}}
 {{- $ports := .np.apiServer.ports -}}
 {{- if and (not $addresses) .np.apiServer.lookup -}}
-{{- $ep := lookup "v1" "Endpoints" "default" "kubernetes" -}}
-{{- if and $ep $ep.subsets -}}
-{{- /* One egress rule takes every address and every port: the ports of all
-     subsets, not the last one's, or an API server endpoint on another port
-     loses its egress. */ -}}
+{{- /* The API server's own EndpointSlice (discovery.k8s.io/v1; v1 Endpoints is
+     deprecated since 1.33). One egress rule takes every ready address and
+     every port. */ -}}
+{{- $slice := lookup "discovery.k8s.io/v1" "EndpointSlice" "default" "kubernetes" -}}
+{{- if and $slice $slice.endpoints -}}
 {{- $ports = list -}}
-{{- range $subset := $ep.subsets -}}
-{{- range $a := $subset.addresses }}{{ $addresses = append $addresses $a.ip }}{{ end -}}
-{{- range $pt := $subset.ports }}{{ $ports = append $ports $pt.port }}{{ end -}}
+{{- range $e := $slice.endpoints -}}
+{{- if not (and $e.conditions (eq (toString $e.conditions.ready) "false")) -}}
+{{- range $a := $e.addresses }}{{ $addresses = append $addresses $a }}{{ end -}}
 {{- end -}}
+{{- end -}}
+{{- range $pt := $slice.ports }}{{ $ports = append $ports $pt.port }}{{ end -}}
 {{- $addresses = $addresses | uniq -}}
 {{- $ports = $ports | uniq -}}
 {{- end -}}
 {{- end -}}
 {{- if not $addresses -}}
-{{- fail (printf "%s.apiServer.mode=addresses has no API server address to allow. Either set %s.apiServer.addresses (the ClusterIP and endpoints of `kubectl get endpoints kubernetes -n default`; a namespace admin usually cannot read that object, ask the cluster admin), or set %s.apiServer.lookup=true to read it at install time (needs a user allowed to get Endpoints in the default namespace; without that Helm stops with a Forbidden error; and helm template or --dry-run have no cluster), or use %s.apiServer.mode: any." .path .path .path .path) -}}
+{{- fail (printf "%s.apiServer.mode=addresses has no API server address to allow. Either set %s.apiServer.addresses (the ClusterIP and endpoints of `kubectl get endpointslice kubernetes -n default`; a namespace admin usually cannot read that object, ask the cluster admin), or set %s.apiServer.lookup=true to read it at install time (needs a user allowed to get EndpointSlices in the default namespace; without that Helm stops with a Forbidden error; and helm template or --dry-run have no cluster), or use %s.apiServer.mode: any." .path .path .path .path) -}}
 {{- end -}}
 {{- dict "addresses" $addresses "ports" $ports | toJson -}}
 {{- end -}}
@@ -140,6 +142,19 @@ StatefulSet whose replicas each have their own history volume.
 {{/* The state ConfigMap the console's replicas share. */}}
 {{- define "pgtools.console.state" -}}
 {{- printf "%s-state" (include "pgtools.console.fullname" .) -}}
+{{- end -}}
+
+{{/* The insight pack's ConfigMap: per release when the chart creates it,
+     else the name of deploy/insight-pack/insight-pack.yaml. */}}
+{{- define "pgtools.insightPack.configMapName" -}}
+{{- $p := .Values.insightPack -}}
+{{- if $p.configMapName -}}
+{{- $p.configMapName -}}
+{{- else if $p.enabled -}}
+{{- printf "%s-insight-pack" .Release.Name -}}
+{{- else -}}
+pgtoolbox-insight-pack
+{{- end -}}
 {{- end -}}
 
 {{- define "pgtools.console.lifecycle" -}}

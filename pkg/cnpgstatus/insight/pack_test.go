@@ -243,3 +243,18 @@ func mustParse(t *testing.T, body string) Reading {
 	}
 	return r
 }
+
+func TestSpecChangeFor(t *testing.T) {
+	cases := map[string]struct{ configMap, want string }{
+		"empty is the default":  {"", SpecChange},
+		"the default":           {ConfigMapName, SpecChange},
+		"a release's ConfigMap": {"pgc-insight-pack", "spec.monitoring.customQueriesConfigMap: [{name: pgc-insight-pack, key: queries}]"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := SpecChangeFor(tc.configMap); got != tc.want {
+				t.Fatalf("SpecChangeFor(%q) = %q, want %q", tc.configMap, got, tc.want)
+			}
+		})
+	}
+}

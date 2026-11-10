@@ -419,6 +419,26 @@ components:
           format: int64
           type: integer
       type: object
+    BackupCadence:
+      additionalProperties: false
+      properties:
+        basis:
+          enum:
+            - schedule
+            - default
+          type: string
+        intervalSeconds:
+          format: int64
+          type: integer
+        overdue:
+          type: boolean
+        thresholdSeconds:
+          format: int64
+          type: integer
+      required:
+        - basis
+        - thresholdSeconds
+      type: object
     BackupMethod:
       additionalProperties: false
       properties:
@@ -447,6 +467,8 @@ components:
     BackupRecency:
       additionalProperties: false
       properties:
+        cadence:
+          $ref: "#/components/schemas/BackupCadence"
         configured:
           description: The Cluster declares a backup method or schedule.
           type: boolean
@@ -523,6 +545,8 @@ components:
           type: string
         pluginName:
           type: string
+        predatesCluster:
+          type: boolean
         provenance:
           $ref: "#/components/schemas/Provenance"
         repository:
@@ -555,6 +579,8 @@ components:
       properties:
         archiving:
           $ref: "#/components/schemas/Archiving"
+        cadence:
+          $ref: "#/components/schemas/BackupCadence"
         configured:
           description: The Cluster declares a backup method or schedule.
           type: boolean
@@ -5687,6 +5713,8 @@ components:
           $ref: "#/components/schemas/Provenance"
         reason:
           type: string
+        restoreTested:
+          type: boolean
         segments:
           description: "Time-ordered spans: covered ones and the holes between them."
           items:
@@ -5972,6 +6000,8 @@ components:
           type:
             - array
             - "null"
+        checksNotKept:
+          type: boolean
         deadline:
           format: date-time
           type: string
@@ -6048,6 +6078,8 @@ components:
         lastPassedAt:
           format: date-time
           type: string
+        lostAtRestart:
+          type: boolean
         namespace:
           type: string
         notChecked:
@@ -6056,12 +6088,17 @@ components:
           type:
             - array
             - "null"
+        restoreTested:
+          type: boolean
         scope:
           type: string
         sizeTolerancePercent:
           format: int64
           type: integer
         timeLimitSeconds:
+          format: int64
+          type: integer
+        windowDays:
           format: int64
           type: integer
       required:
@@ -7260,6 +7297,9 @@ components:
           description: Reported PostgreSQL major version.
           format: int64
           type: integer
+        upgradeInFlight:
+          description: "Instance managers and the operator's Pod annotation disagree: an upgrade in progress."
+          type: string
       required:
         - confidence
       type: object
@@ -8223,7 +8263,7 @@ paths:
         - access
   /api/v1/namespaces/{namespace}/access-requests/{name}/approve:
     post:
-      description: "Pessimistic, as you: the console creates the RoleBinding the request resolves to (the API server refuses it unless you hold every rule of the ClusterRole: its escalation check), then records you in status.decidedBy with an update locked to the version it read. You need create rolebindings and update pgaccessrequests/status in the namespace (pgtoolbox-console-operator grants both). 403: you may not, or the request names you (nobody approves their own request). 409: the request is no longer Pending, has expired, or changed since it was read. Requires the X-PgToolBox-Request: 1 header and a same-origin request."
+      description: "Pessimistic, as you: the console creates the RoleBinding the request resolves to (the API server refuses it unless you may bind the ClusterRole or hold its every rule: its escalation check), then records you in status.decidedBy with an update locked to the version it read. You need create rolebindings and update pgaccessrequests/status in the namespace (pgtoolbox-console-approver grants both, with bind on the two console roles). 403: you may not, or the request names you (nobody approves their own request). 409: the request is no longer Pending, has expired, or changed since it was read. Requires the X-PgToolBox-Request: 1 header and a same-origin request."
       operationId: approveAccessRequest
       parameters:
         - description: Namespace of the request (one of the console's watched namespaces).

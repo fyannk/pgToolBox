@@ -29,6 +29,8 @@ import (
 
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/validation"
+
+	"github.com/fyannk/pgToolBox/pkg/cnpgstatus/insight"
 )
 
 // Variables of the console contract, as charts/pgtools sets them
@@ -85,6 +87,13 @@ const (
 	// its replicas share sign-outs and "since" times through; unset keeps
 	// both per replica.
 	EnvStateConfigMap = "STATE_CONFIGMAP"
+	// EnvInsightPackConfigMap is the name of the insight pack's ConfigMap
+	// a Cluster lists in spec.monitoring.customQueriesConfigMap to opt in
+	// (default insight.ConfigMapName, the name of
+	// deploy/insight-pack/insight-pack.yaml). The console reads no
+	// ConfigMap for it: it compares the Cluster's reference with it and
+	// names it in the opt-in instructions.
+	EnvInsightPackConfigMap = "INSIGHT_PACK_CONFIGMAP"
 	// EnvDiagnosticsInterval is the runner's safety cadence; a run also
 	// follows every change of a Cluster's inputs.
 	EnvDiagnosticsInterval = "DIAGNOSTICS_INTERVAL"
@@ -162,6 +171,9 @@ type Console struct {
 	// StateConfigMap is the shared state ConfigMap's name; empty shares
 	// nothing (the sign-out and the clocks stay per replica).
 	StateConfigMap string
+	// InsightPackConfigMap is the insight pack's ConfigMap name, never
+	// empty (INSIGHT_PACK_CONFIGMAP, default insight.ConfigMapName).
+	InsightPackConfigMap string
 
 	// History is the optional bbolt history.
 	History History
@@ -345,6 +357,14 @@ func LoadConsole(lookup Lookup) (Console, error) {
 			cfg.StateConfigMap = raw
 		}
 	}
+	cfg.InsightPackConfigMap = insight.ConfigMapName
+	if raw, ok := lookup(EnvInsightPackConfigMap); ok && raw != "" {
+		if len(validation.IsDNS1123Subdomain(raw)) != 0 {
+			fail(EnvInsightPackConfigMap, "must be a ConfigMap name (a DNS-1123 subdomain)")
+		} else {
+			cfg.InsightPackConfigMap = raw
+		}
+	}
 
 	cfg.History = history(lookup, fail)
 	cfg.Digest = digest(lookup, cfg.History, fail)
@@ -507,6 +527,7 @@ func (c Console) Info() map[string]string {
 		EnvDiagnosticsEnabled:        strconv.FormatBool(c.DiagnosticsEnabled),
 		EnvLifecycleFile:             c.LifecycleFile,
 		EnvStateConfigMap:            c.StateConfigMap,
+		EnvInsightPackConfigMap:      c.InsightPackConfigMap,
 		EnvHistoryEnabled:            strconv.FormatBool(c.History.Enabled),
 		EnvHistoryPath:               c.History.Path,
 		EnvAllowLogs:                 strconv.FormatBool(c.AllowLogs),

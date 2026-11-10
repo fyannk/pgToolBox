@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fyannk/pgToolBox/pkg/cnpgstatus"
 	"github.com/fyannk/pgToolBox/pkg/cnpgstatus/evidence"
 	"github.com/fyannk/pgToolBox/pkg/cnpgstatus/history"
 	"github.com/fyannk/pgToolBox/pkg/cnpgstatus/insight"
@@ -121,7 +122,7 @@ func everythingObserved() diagnose.Input {
 		Pods: observe.PodsSnapshot{Pods: []observe.PodFacts{{
 			Name: "orders-1",
 			Containers: []observe.ContainerFacts{
-				{Name: "bootstrap-controller", Init: true, Image: "ghcr.io/cloudnative-pg/cloudnative-pg:1.30.0"},
+				{Name: "bootstrap-controller", Init: true, Image: "ghcr.io/cloudnative-pg/cloudnative-pg:1.29.2"},
 				{Name: "postgres", Image: "ghcr.io/cloudnative-pg/postgresql:17.5", State: "waiting", Reason: "CrashLoopBackOff"},
 				{Name: "plugin-barman-cloud", Image: "ghcr.io/cloudnative-pg/plugin-barman-cloud-sidecar:v0.5.0"},
 			},
@@ -160,7 +161,14 @@ func everythingObserved() diagnose.Input {
 		}},
 		HasKubeVersion: true,
 		KubeVersion:    observe.KubeVersionSnapshot{GitVersion: "v1.33.2"},
-		HasQuotas:      true,
+		// The init image above lags an in-place operator upgrade; the
+		// detector's answer is what gates the 1.30 rules.
+		HasCNPGVersion: true,
+		CNPGVersion: cnpgstatus.Version{
+			Version: "1.30.0", Minor: cnpgstatus.Minor130, Confidence: cnpgstatus.ConfidenceReported,
+			DetectedBy: "instanceManagerVersion (mixed: 1.29.2, 1.30.0)",
+		},
+		HasQuotas: true,
 		Quotas: observe.QuotasSnapshot{Quotas: []observe.QuotaFacts{{
 			Name:      "tight",
 			Resources: []observe.QuotaResourceFacts{{Resource: "pods", Hard: "3", Used: "3", Exhausted: true}},

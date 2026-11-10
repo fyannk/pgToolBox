@@ -250,6 +250,7 @@ files. Behind an edge, set `console.trustedProxyHops`.
 | `EVIDENCE_TOKEN_DIR` | `/var/run/secrets/pgtoolbox.fyannk.dev/evidence-agent` | Directory of the projected evidence-agent tokens, one per watched namespace `N` at `<dir>/N/token` with audience `pgtoolbox-evidence-agent/N`. Set by the chart. The v2.0 variable `EVIDENCE_TOKEN_PATH` is refused at start. |
 | `DIAGNOSTICS_ENABLED`, `_INTERVAL`, `_DEBOUNCE` | `true`, `1m`, `2s` | The [background diagnostics](../guides/diagnostics.md) runner. |
 | `STATE_CONFIGMAP` | empty | The [state ConfigMap](#what-survives-a-restart) the replicas share sign-outs, "since" times and digest delivery marks through, in the console's namespace. Set by the operator and the pgtools chart; empty keeps them per replica. |
+| `INSIGHT_PACK_CONFIGMAP` | `pgtoolbox-insight-pack` | The name of the [insight pack](insight-pack.md)'s ConfigMap, a DNS-1123 subdomain: the console matches it against each Cluster's `spec.monitoring.customQueriesConfigMap` and names it in the opt-in instruction. It reads no ConfigMap for it. The pgtools chart sets its per-release name (`<release>-insight-pack`); the operator and `config/console` keep the default, the name of `deploy/insight-pack/insight-pack.yaml`. |
 | `LIFECYCLE_FILE` | empty | The end-of-life table (JSON) of PostgreSQL, Kubernetes, CloudNativePG and Barman Cloud plugin releases that the diagnostics read; reloaded when the file changes. Set by the operator and the pgtools chart to their lifecycle ConfigMap; empty or absent is the table built into the console. |
 | `EVENTS_MAX_AGE`, `EVENTS_MAX_PER_CLUSTER` | `1h`, `200` | Bound the events served. |
 | `MONITORING_URL` | empty | An https or root-relative link-out to your monitoring. |
@@ -259,6 +260,7 @@ files. Behind an edge, set `console.trustedProxyHops`.
 | `RESYNC_PERIOD`, `REPROBE_INTERVAL`, `API_REQUEST_TIMEOUT` | `10h`, `5m`, `10s` | Informer safety resync; how often optional APIs are probed again; one API request. |
 | `LOG_LEVEL` | | `debug`, `info`, `warn` or `error`. |
 | `LISTEN_ADDR`, `PROBE_LISTEN_ADDR` | `:3000`, `:3001` | The probe listener carries `/healthz`, `/readyz` and [`/metrics`](metrics.md). |
+| `SHUTDOWN_DELAY` | `3s` | On SIGTERM the console answers not ready at once but keeps serving for this long (0s to 10s), so the endpoints and the edge stop routing to it before its listener closes. Requests in flight then have 25 s to complete; the event stream and log follows end when the drain begins. Delay plus drain must stay under the pod's `terminationGracePeriodSeconds` (30 s by default). |
 
 Optional APIs (Routes, Gateway API, the barman-cloud `ObjectStore` kind) are
 probed at start and re-probed every `REPROBE_INTERVAL`; the console degrades

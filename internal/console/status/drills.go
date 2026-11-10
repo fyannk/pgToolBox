@@ -206,11 +206,15 @@ func (s *Service) PgBackRestTarget(namespace, name string) (opstate.PgBackRestTa
 }
 
 // drillsBlock is the restore-drill block of a Cluster's Backups screen.
-func (s *Service) drillsBlock(namespace, name string) viewmodel.RestoreDrills {
+func (s *Service) drillsBlock(namespace, name string) (out viewmodel.RestoreDrills) {
 	s.mu.RLock()
 	d := s.opts.Drills
 	s.mu.RUnlock()
-	out := viewmodel.RestoreDrills{Items: []viewmodel.RestoreDrill{}, NotChecked: []string{}}
+	out = viewmodel.RestoreDrills{Items: []viewmodel.RestoreDrill{}, NotChecked: []string{}, WindowDays: int(diagnose.DrillWindow / (24 * time.Hour))}
+	defer func() {
+		// The same window as the restore-drill-overdue check.
+		out.RestoreTested = out.LastPassedAt != nil && s.now().Sub(*out.LastPassedAt) <= diagnose.DrillWindow
+	}()
 	if d == nil || d.Records == nil {
 		out.Scope = "restore drills are not enabled on this console (RESTORE_DRILL_ENABLED)"
 		return out
@@ -230,10 +234,16 @@ func (s *Service) drillsBlock(namespace, name string) viewmodel.RestoreDrills {
 			out.LastPassedAt = &t
 		}
 	}
-	if d.Records.Persistent() {
+	switch {
+	case d.Records.Kept():
+		out.Scope = "outcomes kept in this console's shared-state ConfigMap (bounded to the " + strconv.Itoa(drills.MaxPerSource) +
+			" newest drills per Cluster); the checks of a drill that finished before a restart are not kept: enable persistent history to keep them"
+	case d.Records.Persistent():
 		out.Scope = "kept in this console's persistent history (bounded to the " + strconv.Itoa(drills.MaxPerSource) + " newest drills per Cluster)"
-	} else {
-		out.Scope = "kept in this console replica's memory since it started; enable persistent history to keep drill results across restarts"
+	default:
+		out.LostAtRestart = true
+		out.Scope = "drill history lost at restart: kept in this console replica's memory since it started; " +
+			"enable persistent history or the shared-state ConfigMap to keep drill results across restarts"
 	}
 	return out
 }

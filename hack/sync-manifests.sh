@@ -59,7 +59,7 @@ helm_user_roles="charts/pgtoolbox/templates/operator/user-clusterroles.yaml"
 helm_metrics_reader="charts/pgtoolbox/templates/operator/metrics-reader.yaml"
 {
   echo '{{- if and .Values.operator.enabled .Values.operator.userRoles.create }}'
-  for role in viewer operator; do
+  for role in viewer operator approver; do
     cat <<HEADER
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -156,6 +156,7 @@ for role in pgtoolbox-console pgtoolbox-console-pod-logs pgtoolbox-console-resto
 done
 cp config/rbac/pgtoolbox_console_viewer_clusterrole.yaml "${olm_manifest_dir}/pgtoolbox-console-viewer_rbac.authorization.k8s.io_v1_clusterrole.yaml"
 cp config/rbac/pgtoolbox_console_operator_clusterrole.yaml "${olm_manifest_dir}/pgtoolbox-console-operator_rbac.authorization.k8s.io_v1_clusterrole.yaml"
+cp config/rbac/pgtoolbox_console_approver_clusterrole.yaml "${olm_manifest_dir}/pgtoolbox-console-approver_rbac.authorization.k8s.io_v1_clusterrole.yaml"
 cp config/rbac/pgtoolbox_aggregate_to_admin_clusterrole.yaml "${olm_manifest_dir}/pgtoolbox-aggregate-to-admin_rbac.authorization.k8s.io_v1_clusterrole.yaml"
 # The PodDisruptionBudget, the one non-RBAC object the bundle ships beside the CSV.
 sed '/^  namespace: system$/d' config/manager/poddisruptionbudget.yaml > "${olm_manifest_dir}/pgtoolbox_policy_v1_poddisruptionbudget.yaml"

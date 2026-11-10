@@ -371,7 +371,7 @@ export const getApproveAccessRequestUrl = (namespace: string,
 }
 
 /**
- * Pessimistic, as you: the console creates the RoleBinding the request resolves to (the API server refuses it unless you hold every rule of the ClusterRole: its escalation check), then records you in status.decidedBy with an update locked to the version it read. You need create rolebindings and update pgaccessrequests/status in the namespace (pgtoolbox-console-operator grants both). 403: you may not, or the request names you (nobody approves their own request). 409: the request is no longer Pending, has expired, or changed since it was read. Requires the X-PgToolBox-Request: 1 header and a same-origin request.
+ * Pessimistic, as you: the console creates the RoleBinding the request resolves to (the API server refuses it unless you may bind the ClusterRole or hold its every rule: its escalation check), then records you in status.decidedBy with an update locked to the version it read. You need create rolebindings and update pgaccessrequests/status in the namespace (pgtoolbox-console-approver grants both, with bind on the two console roles). 403: you may not, or the request names you (nobody approves their own request). 409: the request is no longer Pending, has expired, or changed since it was read. Requires the X-PgToolBox-Request: 1 header and a same-origin request.
  * @summary Approve an access request
  */
 export const approveAccessRequest = async (namespace: string,

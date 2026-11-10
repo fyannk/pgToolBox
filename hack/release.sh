@@ -8,7 +8,10 @@
 # actions; this script holds what is not an action: the checks, the notes, the
 # digest pinning and the manifests.
 #
-#   release.sh check [TAG]      semver, chart versions, CHANGELOG section and, when
+#   release.sh check [TAG]      semver, chart versions, a dated CHANGELOG section
+#                               (an "Unreleased" heading is refused for a final
+#                               tag unless ALLOW_UNRELEASED=1, the dry run's
+#                               rehearsal; v0.1.0-rc.N may use the open 0.1.0 section) and, when
 #                               the tag exists, that it is annotated (REQUIRE_TAG=1
 #                               insists it exists; REQUIRE_MAIN=1 insists its commit
 #                               is on origin/main)
@@ -34,6 +37,12 @@
 #   release.sh install-manifests DIGESTS VERSION
 #                               render config/default and config/console into
 #                               OUT_DIR with their images pinned by digest
+#   release.sh check-public FILE...
+#                               every digest listed must be pullable anonymously
+#                               (else exit 1, naming the packages to make public)
+#   release.sh scan-digests FILE
+#                               grype every digest on each platform; exit 1 for a
+#                               fixable critical, exit 2 when the scan itself failed
 #   release.sh sums             write SHA256SUMS over the release files in OUT_DIR
 #   release.sh dry-run          build everything a release builds without pushing,
 #                               signing or attesting; print the digests
@@ -93,17 +102,36 @@ cmd_check() {
   [[ "${tag}" =~ ${semver_re} ]] || die "release tag must be semantic and start with v: ${tag}"
   local version="${tag#v}"
 
-  local chart_version app_version dir
+  # A release candidate (v0.1.0-rc.1) is cut from the tree of its final
+  # version: the charts and the CHANGELOG may carry either the rc version or the
+  # core version (0.1.0); helm package stamps the rc version on the archives.
+  local core="${version%%-*}" chart_version app_version dir
   for dir in "${chart_dirs[@]}"; do
     chart_version="$(chart_dir="${dir}" chart_field version)"
     app_version="$(chart_dir="${dir}" chart_field appVersion)"
-    if [[ "${chart_version}" != "${version}" || "${app_version}" != "${version}" ]]; then
+    if [[ ( "${chart_version}" != "${version}" && "${chart_version}" != "${core}" ) ||
+      ( "${app_version}" != "${version}" && "${app_version}" != "${core}" ) ]]; then
       die "${dir}/Chart.yaml says version=${chart_version} appVersion=${app_version}; the tag says ${version}"
     fi
   done
 
-  if ! awk -v v="${version}" 'index($0, "## [" v "]") == 1 { found = 1 } END { exit !found }' CHANGELOG.md; then
-    die "CHANGELOG.md has no '## [${version}]' section"
+  local heading
+  heading="$(changelog_heading "${version}")"
+  if [[ -z "${heading}" && "${version}" != "${core}" ]]; then
+    heading="$(changelog_heading "${core}")"
+  fi
+  [[ -n "${heading}" ]] || die "CHANGELOG.md has no '## [${version}]' section"
+  # The heading of the release being cut carries its date. A release candidate
+  # may use the still-open section of its final version.
+  # ALLOW_UNRELEASED=1 is the dry run on a pull request, where the open
+  # section is the normal state: it is reported, not refused. A real release
+  # (REQUIRE_TAG=1) never takes it.
+  if [[ "${heading}" == *[Uu]nreleased* ]] && { [[ "${version}" == "${core}" ]] || [[ "${heading}" == "## [${version}]"* ]]; }; then
+    if [[ "${ALLOW_UNRELEASED:-0}" == "1" && "${REQUIRE_TAG:-0}" != "1" ]]; then
+      echo "note: CHANGELOG.md heading '${heading}' still says Unreleased; it must be dated before tagging ${tag}"
+    else
+      die "CHANGELOG.md heading '${heading}' still says Unreleased; date it ('## [${version}] - $(date -u +%F)') before tagging ${tag}"
+    fi
   fi
 
   if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
@@ -117,6 +145,11 @@ cmd_check() {
     echo "ok: ${tag} is not tagged yet; create it with: git tag -a ${tag} -m 'pgToolBox ${version}'"
   fi
   echo "ok: semver, chart ${chart_version}/${app_version}, CHANGELOG section for ${version}"
+}
+
+# changelog_heading VERSION -> the '## [VERSION]...' line, empty when absent.
+changelog_heading() {
+  awk -v v="$1" 'index($0, "## [" v "]") == 1 { print; exit }' CHANGELOG.md
 }
 
 # A release is cut from main: the tagged commit must be reachable from it.
@@ -193,6 +226,8 @@ cmd_wait_ci() {
 cmd_notes() {
   local version="${1:?usage: release.sh notes VERSION}"
   local section
+  # A release candidate falls back to the section of its final version.
+  [[ -n "$(changelog_heading "${version}")" ]] || version="${version%%-*}"
   section="$(awk -v v="${version}" '
     index($0, "## [" v "]") == 1 { on = 1; next }
     on && index($0, "## [") == 1 { exit }
@@ -385,6 +420,90 @@ cmd_sums() {
   echo "SHA256SUMS lists ${#names[@]} files"
 }
 
+# ------------------------------------------------------------ check-public ---
+# Before a release becomes visible: every digest the workflow pushed must be
+# pullable with no credentials. A new GHCR package is private until its owner
+# makes it public, and a release that points at private packages is a release
+# nobody can install. FILES are digests.txt and chart-digests.txt style lists
+# (`host/owner/name[/sub]@sha256:...`, one per line).
+cmd_check_public() {
+  [[ $# -gt 0 ]] || die "usage: release.sh check-public FILE..."
+  command -v curl >/dev/null || die "curl is not on PATH"
+  local ref name digest path token status private=() accept
+  accept="application/vnd.oci.image.index.v1+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.docker.distribution.manifest.v2+json"
+  while read -r ref; do
+    [[ -n "${ref}" ]] || continue
+    name="${ref%@*}"
+    digest="${ref#*@}"
+    path="${name#*/}" # drop the registry host
+    # The token endpoint is asked with no credentials at all.
+    token="$(curl -fsS "https://${registry}/token?service=${registry}&scope=repository:${path}:pull" | jq -r '.token // empty' || true)"
+    status=000
+    if [[ -n "${token}" ]]; then
+      status="$(curl -sS -o /dev/null -w '%{http_code}' -I -H "Authorization: Bearer ${token}" -H "Accept: ${accept}" \
+        "https://${registry}/v2/${path}/manifests/${digest}" || true)"
+    fi
+    if [[ "${status}" == 200 ]]; then
+      echo "public: ${ref}"
+    else
+      echo "NOT PUBLIC (HTTP ${status}): ${ref}" >&2
+      private+=("${path#*/}") # the package name: the path below the owner
+    fi
+  done < <(cat "$@")
+  if ((${#private[@]} > 0)); then
+    {
+      echo "::error::these packages cannot be pulled anonymously; the release stays a draft:"
+      printf '%s\n' "${private[@]}" | LC_ALL=C sort -u | sed 's/^/  - /'
+      echo "Make each package public (github.com/${repo%%/*}?tab=packages, Package settings, Change visibility), then use 'Re-run failed jobs' on this workflow run."
+    } >&2
+    return 1
+  fi
+  echo "ok: every digest is publicly pullable"
+}
+
+# -------------------------------------------------------- scan-digests ---
+# grype on every digest of FILE, on every platform in SCAN_PLATFORMS (default
+# linux/amd64 linux/arm64). Exit 1: a fixable critical vulnerability. Exit 2:
+# the scan itself failed (a registry or authentication error, a platform the
+# image lacks), which says nothing about the image and must not read as a
+# finding. Everything else is listed, not hidden.
+cmd_scan_digests() {
+  local file="${1:?usage: release.sh scan-digests FILE}"
+  command -v grype >/dev/null || die "grype is not on PATH"
+  command -v jq >/dev/null || die "jq is not on PATH"
+  local platforms="${SCAN_PLATFORMS:-linux/amd64 linux/arm64}"
+  local ref platform json errlog critical status=0 summary="${GITHUB_STEP_SUMMARY:-/dev/null}"
+  json="$(mktemp)" errlog="$(mktemp)"
+  echo "## Published image scan" >> "${summary}"
+  echo >> "${summary}"
+  while read -r ref; do
+    [[ -n "${ref}" ]] || continue
+    for platform in ${platforms}; do
+      echo "== ${ref} (${platform})"
+      if ! grype "registry:${ref}" --platform "${platform}" -o json -q > "${json}" 2> "${errlog}" || ! jq -e '.matches' "${json}" > /dev/null 2>&1; then
+        cat "${errlog}" >&2
+        echo "::error::scan error, not a finding: grype could not scan ${ref} (${platform}); check registry access and the package's visibility"
+        echo "- ${ref} (${platform}): SCAN ERROR" >> "${summary}"
+        rm -f "${json}" "${errlog}"
+        return 2
+      fi
+      jq -r '.matches[] | [.vulnerability.severity, (.vulnerability.fix.state // "unknown"), .vulnerability.id, .artifact.name, .artifact.version] | @tsv' "${json}" \
+        | LC_ALL=C sort | uniq -c | tail -n 40 || true
+      critical="$(jq '[.matches[] | select(.vulnerability.severity == "Critical" and .vulnerability.fix.state == "fixed")] | length' "${json}")"
+      if ((critical > 0)); then
+        echo "::error::${ref} (${platform}) has ${critical} fixable critical vulnerabilities"
+        echo "- ${ref} (${platform}): ${critical} fixable critical" >> "${summary}"
+        status=1
+      else
+        echo "${ref} (${platform}): no fixable critical"
+        echo "- ${ref} (${platform}): no fixable critical" >> "${summary}"
+      fi
+    done
+  done < "${file}"
+  rm -f "${json}" "${errlog}"
+  return "${status}"
+}
+
 # -------------------------------------------------------------- dry-run ---
 # Everything a release builds, without a registry: the images are exported to
 # OCI archives (multi-arch, so the arm64 build is exercised), the bundle and
@@ -464,6 +583,8 @@ case "${1:-}" in
   notes) shift; cmd_notes "$@" ;;
   commits) shift; cmd_commits "$@" ;;
   sums) shift; cmd_sums "$@" ;;
+  check-public) shift; cmd_check_public "$@" ;;
+  scan-digests) shift; cmd_scan_digests "$@" ;;
   dry-run) shift; cmd_dry_run "$@" ;;
   *) sed -n '5,50p' "${BASH_SOURCE[0]}" >&2; exit 2 ;;
 esac

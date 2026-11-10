@@ -151,7 +151,7 @@ func TestAnalyzeSyntheticDamage(t *testing.T) {
 			variant:    "plain", state: evidence.Warning, codes: []FindingCode{FindingWALGap},
 			check: func(t *testing.T, report Report) {
 				first := backupOfType(t, report, BackupFull)
-				if first.Usable || first.Path.State != evidence.Warning || !first.Path.Consistent || first.Path.Stop != CoverageGapLimited || first.Path.FrontierWAL != full.ArchiveStop {
+				if first.Usable || first.Path.State != evidence.Warning || !first.Path.Consistent || first.Path.Stop != CoverageCandidateLimited || first.Path.FrontierWAL != full.ArchiveStop {
 					t.Fatalf("full path %+v usable %v", first.Path, first.Usable)
 				}
 				if report.Window.OldestBackup != diff.Label {
@@ -332,5 +332,58 @@ func TestAnalyzeWithoutBackups(t *testing.T) {
 	report := analyzeFixture(t, repository, "plain")
 	if report.State != evidence.Unhealthy || report.Window != nil || report.SegmentSizeSource != SegmentSizeAssumed {
 		t.Fatalf("state %s %q window %+v source %q", report.State, report.Reason, report.Window, report.SegmentSizeSource)
+	}
+}
+
+// TestGapStopFollowsTheGapLifecycle: as the wire contract says, a path stops
+// candidate-limited at a gap seen by one scan, and gap-limited only once a
+// second complete scan confirmed it (or the WAL is proven lost).
+func TestGapStopFollowsTheGapLifecycle(t *testing.T) {
+	t.Parallel()
+	plain := loadFixture(t, fixtureRoot, "plain")
+	info, _ := loadInfoPair(t, "plain")
+	full, diff := info.Backups[0], info.Backups[1]
+	for name, test := range map[string]struct {
+		missing string
+		label   string
+		state   evidence.State
+		stop    CoverageStop
+	}{
+		// The full's walk stops at the gap after its consistency point.
+		"gap after the backup": {missing: nextWAL(t, full.ArchiveStop, 1), label: full.Label},
+		// The differential's own WAL is lost whatever the gap's status:
+		// pgBackRest archived it before finishing the backup.
+		"gap inside the backup": {missing: diff.ArchiveStop, label: diff.Label, state: evidence.Unhealthy, stop: CoverageGapLimited},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			repository := plain.without(segmentKey(t, plain, test.missing))
+			first := Analyze(context.Background(), repository.reader(t), repository.objects, Options{Stanza: "demo", Generation: 1})
+			second := Analyze(context.Background(), repository.reader(t), repository.objects, Options{Stanza: "demo", Generation: 2, Previous: &first})
+			for _, scan := range []struct {
+				report Report
+				state  evidence.State
+				stop   CoverageStop
+			}{
+				{report: first, state: evidence.Warning, stop: CoverageCandidateLimited},
+				{report: second, state: evidence.Unhealthy, stop: CoverageGapLimited},
+			} {
+				if test.stop != "" {
+					scan.state, scan.stop = test.state, test.stop
+				}
+				var path RecoveryPath
+				for _, backup := range scan.report.Backups {
+					if backup.Backup.Label == test.label {
+						path = backup.Path
+					}
+				}
+				if path.State != scan.state || path.Stop != scan.stop {
+					t.Fatalf("generation %d: path %+v", scan.report.WAL[0].Gaps[0].LastObservedGeneration, path)
+				}
+			}
+			if first.WAL[0].Gaps[0].Status != GapCandidate || second.WAL[0].Gaps[0].Status != GapConfirmed {
+				t.Fatalf("gaps %+v then %+v", first.WAL[0].Gaps, second.WAL[0].Gaps)
+			}
+		})
 	}
 }

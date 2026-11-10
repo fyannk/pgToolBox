@@ -71,8 +71,9 @@ func pgToolBoxConsoleCacheOptions(options *ctrl.Options, features console.Featur
 }
 
 // setupPgToolBoxConsole registers the controller; it returns the kinds its
-// informers hold (pgtoolbox_cached_objects).
-func setupPgToolBoxConsole(ctx context.Context, mgr ctrl.Manager, features console.Features) ([]client.Object, error) {
+// informers hold (pgtoolbox_cached_objects). hostSuffixes is the loaded
+// EXPOSURE_ALLOWED_HOST_SUFFIXES, shared with the PgAdmin controller.
+func setupPgToolBoxConsole(ctx context.Context, mgr ctrl.Manager, features console.Features, hostSuffixes []string) ([]client.Object, error) {
 	setupLog.Info("PgToolBoxConsole controller", "defaultImage", defaultConsoleImage)
 	return console.CachedKinds(features), (&console.Reconciler{
 		Client:                   mgr.GetClient(),
@@ -81,6 +82,7 @@ func setupPgToolBoxConsole(ctx context.Context, mgr ctrl.Manager, features conso
 		Recorder:                 mgr.GetEventRecorder("pgtoolbox-console"),
 		DefaultImage:             defaultConsoleImage,
 		AllowedImageRepositories: splitList(consoleRepositories),
+		AllowedHostSuffixes:      hostSuffixes,
 		Features:                 features,
 	}).SetupWithManager(ctx, mgr)
 }

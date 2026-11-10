@@ -258,10 +258,19 @@ The teardown grant is the one delete the console holds, and it is narrow:
 - an opt-in Role in the drill namespace with `get`, `list`, `watch` and
   `delete` on `clusters.postgresql.cnpg.io`, and nothing else;
 - the console deletes only Clusters carrying its drill labels **and** a seal: an
-  HMAC over the namespace, the name and the drill record, keyed from the
-  console's session secret. Labels alone are not enough: anyone who can create a
-  Cluster can copy labels, nobody without the session secret can forge the seal.
-  A Cluster that is not sealed by this console is never touched;
+  HMAC over the namespace, the name and the drill record. Labels alone are not
+  enough: anyone who can create a Cluster can copy labels, but nobody without
+  the seal's key can forge the seal. A Cluster that this console did not seal
+  is never touched. By default the key is derived (HKDF with its own label)
+  from the console's session secret, so whoever can read the session Secret can
+  forge a seal. To give the seal a key of its own, mount a Secret of its own
+  and point `RESTORE_DRILL_SEAL_KEY_FILE` at it: `console.restoreDrills.sealKey`
+  with the pgtools chart, `spec.restoreDrills.sealKeySecretRef` with a
+  `PgToolBoxConsole` ([configuration](#configuration)). The file holds one key per line,
+  at least 32 bytes each: the first seals, and all of them verify. Keep that
+  Secret readable by the console alone. When you switch keys, a drill that is
+  still running under the old key no longer verifies, so the console leaves it
+  in place and does not delete it;
 - the delete carries the drill's UID as a precondition, so a Cluster recreated
   under the same name is not deleted by mistake.
 
@@ -271,7 +280,7 @@ Consequences to weigh before you turn drills on:
   grant is usable by anyone who may create Pods in that namespace (they can run
   a Pod as the console's ServiceAccount). The seal protects against the console
   deleting the wrong Cluster, not against such a person; the
-  [delete guard](#the-delete-guard) does, on Kubernetes 1.30+.
+  [delete guard](#the-delete-guard) does.
 - **A dedicated drill namespace is strongly recommended.** With the pgtools chart,
   set `restoreDrills.namespace` to a namespace that holds drills only: the
   teardown grant then reaches drills only, whatever happens to the guard. With a
@@ -291,20 +300,26 @@ Consequences to weigh before you turn drills on:
 
 ## The delete guard
 
-On Kubernetes 1.30 and later, a ValidatingAdmissionPolicy holds a console's
-ServiceAccount, on the API server, to what the console itself checks: it may
-delete a `clusters.postgresql.cnpg.io` only when the Cluster carries this
-console's `drill-owner` label, a `restore-drill-of` label and a drill seal
-annotation (and, with the pgtools chart, the drill prefix). Anybody else, an
-administrator included, is not concerned.
+A ValidatingAdmissionPolicy holds a console's ServiceAccount, on the API server,
+to what the console itself checks: it may delete a `clusters.postgresql.cnpg.io`
+only when the Cluster carries this console's `drill-owner` label, a
+`restore-drill-of` label and a drill seal annotation, and its name starts with
+the console's drill prefix (`spec.restoreDrills.prefix`, default `drill-`).
+Anybody else, an administrator included, is not concerned.
 
 - **Operator** (`pgtoolbox` chart): rendered with the operator when the cluster
   serves `admissionregistration.k8s.io/v1` policies
   (`operator.restoreDrillGuard.enabled: auto`; `true` renders it without
-  discovery, for `helm template` and GitOps). It applies to a console
-  ServiceAccount bound to the shipped `pgtoolbox-console-restore-drills`
-  ClusterRole, which carries a marker rule for that purpose
-  (`teardown` on `restoredrills.pgtoolbox.fyannk.dev`, which no API serves).
+  discovery, for `helm template` and GitOps). Two policies: the label and seal
+  check applies to any ServiceAccount of the namespace bound to the shipped
+  `pgtoolbox-console-restore-drills` ClusterRole, whatever its name (the role
+  carries a marker rule for that purpose: `teardown` on
+  `restoredrills.pgtoolbox.fyannk.dev`, which no API serves); the prefix check
+  reads the namespace's PgToolBoxConsoles as parameters and applies to each
+  console's exact ServiceAccount. The second fails open (no console, or the CRD
+  gone), the first never does.
+- **kustomize**: `config/default` includes `config/admission`, so
+  `kubectl apply -k config/default` applies the guard too.
 - **OLM**: a bundle cannot carry an admission policy. A cluster admin applies it
   with `kubectl apply -k config/admission` (or the file
   `config/admission/restore_drill_guard.yaml` of the release).
@@ -312,9 +327,6 @@ administrator included, is not concerned.
   install, so it is **opt-in**: a cluster admin sets
   `console.restoreDrills.admissionPolicy.create: true` (or applies the rendered
   policy). Do it wherever drills are on.
-- **Kubernetes 1.28 and 1.29** have no such policy: nothing but the console's own
-  check and the drill namespace's contents limits the teardown grant there. Keep
-  drills off, or in a namespace of drills only.
 
 Your RBAC must still let you `create clusters` in the drill namespace. The
 shipped `pgtoolbox-console-operator` ClusterRole does not grant it; give it to the people
@@ -344,6 +356,9 @@ console:
       mode: auto        # secret when secret is set, else source when namespace
                         # is empty, else own
       secret: ""        # a CA Secret in every drill namespace, for mode secret
+    sealKey:            # the seal's own keys (RESTORE_DRILL_SEAL_KEY_FILE)
+      existingSecret: drill-seal  # empty: derived from the session secret
+      key: keys
     networkPolicy:
       enabled: true
       apiServer: { mode: addresses, addresses: [10.0.0.1] }
@@ -359,6 +374,15 @@ Enabling drills renders a `<release>-restore-drills` Role and RoleBinding and a
 every watched namespace when `namespace` is empty), and, with
 `admissionPolicy.create`, the cluster-scoped delete guard.
 
+`sealKey.existingSecret` names a Secret of the release namespace that you create,
+for example with `kubectl create secret generic drill-seal
+--from-literal=keys="$(openssl rand -base64 48)"`. The chart mounts its `key`
+read-only at `/var/run/console/restore-drill-seal/` and sets
+`RESTORE_DRILL_SEAL_KEY_FILE`; the console reads no Secret through the API and
+reads the file once at start, so a changed key takes effect at the next restart.
+To rotate, put the new key on the first line, keep the old one below it until the
+drills sealed with it are gone, and restart the console.
+
 ### PgToolBoxConsole
 
 ```yaml
@@ -371,6 +395,7 @@ spec:
     maxConcurrent: 3
     storage:
       size: 50Gi
+    sealKeySecretRef: { name: drill-seal, key: keys }  # omitted: derived from the session secret
     networkPolicy:
       apiServerCIDRs: [10.0.0.1/32]
       objectStore: [{ ipBlock: { cidr: 192.0.2.10/32 } }]
@@ -399,6 +424,7 @@ are turned off.
 | `RESTORE_DRILL_STORAGE_SIZE`, `_STORAGE_CLASS` | empty | The drill's volume. Empty: the source's. |
 | `RESTORE_DRILL_SERVER_CA` | `own` | `own`, `source` or `secret`: [which CA signs a drill](#which-ca-signs-a-drill). `source` needs `RESTORE_DRILL_NAMESPACE` unset. |
 | `RESTORE_DRILL_SERVER_CA_SECRET` | empty | The CA Secret of `secret`, in every drill namespace; only with `secret`. |
+| `RESTORE_DRILL_SEAL_KEY_FILE` | empty | Absolute path of a mounted file of the drill seal's own keys, one per line. Empty: the keys derive from the session secret. |
 
 ## A drill in another namespace
 
@@ -462,10 +488,17 @@ in the source's namespace, with the source's configuration.
 ## Where results are kept
 
 With persistent history (`history.persistent`), drill results survive restarts
-in the history journal; otherwise they live in memory, and a running drill is
-still found and torn down after a restart (the seal is verified, not the memory).
-The console keeps the last 50 drills per Cluster, and never drops a Cluster's
-newest passed drill to stay within that bound.
+in the history journal, checks included. Without it, the outcome of each
+finished drill goes to the console's shared-state ConfigMap
+(`STATE_CONFIGMAP`): the drill, its source, the backup, the result, its times
+and the console's reason, but no check detail and nothing secret. After a
+restart such a drill shows "its checks were not kept". With neither the
+journal nor the ConfigMap (none is configured, or it is missing or forbidden),
+results live in this replica's memory only, and the panel says "drill history
+lost at restart". In every case a running drill is still found and torn down
+after a restart: the console verifies the seal, not its memory. The console
+keeps the last 50 drills per Cluster (and 500 in the ConfigMap), and never
+drops a Cluster's newest passed drill to stay within that bound.
 
 ## The overdue-drill note
 
@@ -477,6 +510,7 @@ console's record holds no passed drill of it in the last 90 days.
 
 The note claims nothing the record cannot back. The record is complete only
 from the moment it started: the console's start when results live in memory,
+the day the ConfigMap started keeping drill outcomes when results are kept there,
 the day the history journal started keeping drills when history is persistent
 (the journal records that day once), or the console's start again when a stored
 record could not be read. Until that start is 90 days old, the check reports

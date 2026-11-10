@@ -180,7 +180,12 @@ jobs:
         with:
           tools: go
           go-cache: "true"
+      # Dated knowledge (the CNPG verified-release list) fails the build once
+      # its review date passes, but only on main and the nightly run: a pull
+      # request, or a build of a released tree, only logs it.
       - name: Build and test
+        env:
+          PGTOOLBOX_ENFORCE_REVIEW_DATES: ${{ (github.event_name == 'schedule' || github.ref == 'refs/heads/main') && '1' || '' }}
         run: |
           set -euo pipefail
           make build test

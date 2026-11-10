@@ -87,7 +87,7 @@ flowchart LR
     EC[PgAdminEgressConfined] -. advisory .-> N[not in Ready]
 ```
 
-Only some `ConfigurationValid=False` reasons stall the `PgAdmin`: `ImageNotAllowed`,
+Only some `ConfigurationValid=False` reasons stall the `PgAdmin`: `ImageNotAllowed`, `HostnameNotAllowed`,
 `ResourceNotOwned`, `SecretNotFound` (the OAuth2 client Secret, without which
 pgAdmin cannot start) and the `configDatabase` problems (`DatabaseAPIUnavailable`,
 `DatabaseRoleAPIUnavailable`, `PasswordGenerationUnavailable`, and a
@@ -99,7 +99,7 @@ too.
 
 | Condition | `True` | `False` reasons | `Unknown` |
 |---|---|---|---|
-| `ConfigurationValid` | the references resolve and the offered set is within bounds | `ClusterNotFound`, `NoClusterSelected`, `PoolerNotFound`, `TooManyServers`, `SecretNotFound`, `ConfigurationInvalid` (a cross-object check the CRD cannot express), `ImageNotAllowed`, `ResourceNotOwned`, `DatabaseRoleAPIUnavailable`, `PoolerAPIUnavailable`, `GrantMissing`, `DatabaseAPIUnavailable`, `PasswordGenerationUnavailable` | `Initializing` |
+| `ConfigurationValid` | the references resolve and the offered set is within bounds | `ClusterNotFound`, `NoClusterSelected`, `PoolerNotFound`, `TooManyServers`, `SecretNotFound`, `ConfigurationInvalid` (a cross-object check the CRD cannot express), `ImageNotAllowed`, `HostnameNotAllowed`, `ResourceNotOwned`, `DatabaseRoleAPIUnavailable`, `PoolerAPIUnavailable`, `GrantMissing`, `DatabaseAPIUnavailable`, `PasswordGenerationUnavailable` | `Initializing` |
 | `WorkloadReady` | every desired replica runs the current template and is Ready | `RolloutInProgress`, `ReplicaFailure` (the Deployment cannot create a Pod, e.g. a quota), `PodUnschedulable`, `ImagePullFailed`, `CrashLoopBackOff`, `PodNotReady`, `UpgradeBackupRunning`, `UpgradeBackupFailed`, `ConfigDatabaseNotReady` | |
 | `ExposureReady` | the Route, Ingress or HTTPRoute is admitted; `NotRequested` for `clusterIP` | `NotAdmitted`, `NotAccepted`, `RouteAPIUnavailable`, `GatewayAPIUnavailable` | `Reconciling` (not observed yet) |
 | `ServersSynced` | the registered servers match the offered set | `RegistrationFailed` (the Job's fact in the message) | `PgAdminNotRunning`, `RegistrationRunning` |
@@ -160,7 +160,7 @@ ConfigMaps are in the operator's label-filtered cache.
 
 | Condition | `False` reasons |
 |---|---|
-| `ConfigurationValid` | `ConsoleImageRequired`, `ImageNotAllowed`, `ConsoleRoleMissing` (retried every two minutes), `SecretNotFound` (a Secret the console Pod mounts does not exist; the message names it and its field), `ConfigMapNotFound` (the same for a ConfigMap you name; retried every two minutes), `ResourceNotOwned`. Each is a stall; see [PgToolBoxConsole](console.md#reconcile-loop). |
+| `ConfigurationValid` | `ConsoleImageRequired`, `ImageNotAllowed`, `HostnameNotAllowed`, `ConsoleRoleMissing` (retried every two minutes), `SecretNotFound` (a Secret the console Pod mounts does not exist; the message names it and its field), `ConfigMapNotFound` (the same for a ConfigMap you name; retried every two minutes), `ResourceNotOwned`. Each is a stall; see [PgToolBoxConsole](console.md#reconcile-loop). |
 | `WorkloadReady` | `RolloutInProgress`, `RolloutStuck`, `ReplicaFailure`, `SecretKeyMissing`, `PodUnschedulable`, `ImagePullFailed`, `CrashLoopBackOff`, `PodNotReady`. |
 | `ExposureReady` | As for `PgAdmin`: `NotAdmitted`, `NotAccepted`, `RouteAPIUnavailable`, `GatewayAPIUnavailable`; `NotRequested` (True) for `clusterIP`. |
 
@@ -229,6 +229,7 @@ Reasons are registered once, by owner. `common` reasons are shared by every kind
 | `GatewayNotFound`, `HostnameConflict` | The Gateway named by `parentRef` is absent; another route claims the hostname. Registered; the current reconcilers do not set them. |
 | `RouteAPIUnavailable`, `GatewayAPIUnavailable` | The optional API the exposure needs is not served or not readable. |
 | `ImageNotAllowed` | A `spec.image` or oauth-proxy image repository is outside the operator's [allow-list](images.md) (`ConfigurationValid=False`; both kinds). |
+| `HostnameNotAllowed` | `spec.exposure.hostname` is outside the operator's `EXPOSURE_ALLOWED_HOST_SUFFIXES` (`ConfigurationValid=False` and a stall; `PgAdmin` and `PgToolBoxConsole`). What was published under the name is withdrawn. |
 | `ReconciliationFailed`, `QuotaExceeded`, `AdmissionDenied` | Event reasons: the classified Warning recorded when an error ends a reconciliation. |
 
 ### pgadmin

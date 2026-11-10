@@ -592,7 +592,7 @@ func recoveryMarkers(items []evidence.BackupItem, rows []viewmodel.BackupRow) []
 		out = append(out, m)
 	}
 	for _, row := range rows {
-		if !row.Terminal || row.Health != viewmodel.HealthCritical {
+		if !row.Terminal || row.Health != viewmodel.HealthCritical || row.PredatesCluster {
 			continue
 		}
 		at := row.StoppedAt
@@ -641,6 +641,10 @@ func restoreCheck(b viewmodel.Backups, at time.Time) viewmodel.RestoreCheck {
 		}
 		if b.Summary.Archiving.Health == viewmodel.HealthCritical {
 			out.Caveats = append(out.Caveats, "WAL archiving is failing: the newest WAL is on the instance, not in the repository.")
+		}
+		if !b.Drills.RestoreTested {
+			out.Caveats = append(out.Caveats, "Not restore-tested: no restore drill of this Cluster passed in the last "+
+				strconv.Itoa(b.Drills.WindowDays)+" days.")
 		}
 	}
 	switch {

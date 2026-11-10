@@ -106,6 +106,10 @@ type clock struct{ now func() time.Time }
 
 func (c clock) Now() time.Time { return c.now() }
 
+// After waits on the wall clock: the follower's backoff is real time
+// whatever Now is injected for the instants.
+func (clock) After(d time.Duration) <-chan time.Time { return time.After(d) }
+
 type namespaced struct {
 	ns     string
 	opener Opener

@@ -381,7 +381,10 @@
           ]
         },
         "trustedProxyHops": {
-          "type": "integer",
+          "type": [
+            "integer",
+            "null"
+          ],
           "minimum": 0,
           "maximum": 10
         },
@@ -738,6 +741,24 @@
                   "type": "string",
                   "maxLength": 253,
                   "pattern": "^$|^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$"
+                }
+              }
+            },
+            "sealKey": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "The drill seal's own keys (RESTORE_DRILL_SEAL_KEY_FILE): an existing Secret of the release namespace and its key, one seal key per line.",
+              "properties": {
+                "existingSecret": {
+                  "type": "string",
+                  "maxLength": 253,
+                  "pattern": "^$|^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$"
+                },
+                "key": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 253,
+                  "pattern": "^[-._a-zA-Z0-9]+$"
                 }
               }
             },
@@ -1631,13 +1652,19 @@
       }
     },
     "insightPack": {
-      "description": "The insight pack: the ConfigMap pgtoolbox-insight-pack of CloudNativePG custom queries, created in each namespace; a Cluster opts in with spec.monitoring.customQueriesConfigMap.",
+      "description": "The insight pack: the ConfigMap <release>-insight-pack of CloudNativePG custom queries, created in each namespace; a Cluster opts in with spec.monitoring.customQueriesConfigMap.",
       "type": "object",
       "additionalProperties": false,
       "properties": {
         "enabled": {
           "description": "Create the ConfigMap. It changes nothing on a Cluster that does not reference it.",
           "type": "boolean"
+        },
+        "configMapName": {
+          "description": "Name of the pack's ConfigMap, which the console also matches (INSIGHT_PACK_CONFIGMAP). Empty means <release>-insight-pack with the pack enabled, else pgtoolbox-insight-pack.",
+          "type": "string",
+          "maxLength": 253,
+          "pattern": "^$|^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$"
         },
         "namespaces": {
           "description": "Namespaces that get the ConfigMap. Empty means console.watchNamespaces, else the release namespace.",
@@ -2982,7 +3009,7 @@
             "integer",
             "null"
           ],
-          "minimum": 1
+          "minimum": 0
         },
         "resources": {
           "type": "object",

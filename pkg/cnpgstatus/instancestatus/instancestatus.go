@@ -17,9 +17,11 @@
 // port, the same report the operator reads to make its decisions and
 // kubectl cnpg status prints. It is the richest instance-side source the
 // console has that involves no SQL — archiver state, pending restarts,
-// replication slots, the manager's own version — and it is read the way
-// the metrics exporter is: a bounded HTTP GET to each instance pod's IP
-// on a sweep, nothing stored beyond the last report per instance.
+// replication slots, the manager's own version. This package is the
+// report's model and its trust-boundary parser (Parse); the console's
+// sweep (internal/console/sweep) does the reading: a bounded HTTP GET to
+// each instance pod's IP, nothing stored beyond the last report per
+// instance.
 //
 // The report is the instance's claim about itself, and everything here
 // is attributed as such. A pod the sweep cannot reach keeps its last
@@ -32,35 +34,16 @@
 package instancestatus
 
 import (
-	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"encoding/json"
-	"errors"
-	"fmt"
 	"io"
-	"log/slog"
-	"net"
-	"net/http"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
-	"github.com/fyannk/pgToolBox/pkg/cnpgstatus/observe"
 	"github.com/fyannk/pgToolBox/pkg/redact"
 )
 
 const (
-	// Port is the instance manager's status port.
-	Port = "8000"
-	// path is the status report's path.
-	path = "/pg/status"
-	// maxBody bounds one report; the report is a few kilobytes, and
-	// anything larger is cut, not buffered.
-	maxBody = 1 << 20
-	// requestTimeout bounds one request.
-	requestTimeout = 5 * time.Second
 	// maxStandbys and maxSlots bound the lists one report may carry.
 	maxStandbys = 64
 	maxSlots    = 64
@@ -228,280 +211,6 @@ func (s Snapshot) Instances() []string {
 	}
 	sort.Strings(names)
 	return names
-}
-
-// Store holds the current snapshot for concurrent readers.
-type Store struct {
-	mu       sync.RWMutex
-	snap     Snapshot
-	has      bool
-	interval time.Duration
-}
-
-// NewStore returns an empty store for the given sweep cadence.
-func NewStore(interval time.Duration) *Store {
-	return &Store{interval: interval, snap: Snapshot{Interval: interval}}
-}
-
-// NewDisabledStore returns a store whose one snapshot states that the
-// sweep does not run and why. No collector is started over it.
-func NewDisabledStore(interval time.Duration, reason string) *Store {
-	return &Store{
-		interval: interval,
-		has:      true,
-		snap:     Snapshot{Interval: interval, Disabled: reason, Readings: map[string]Reading{}, Failing: map[string]string{}},
-	}
-}
-
-// Disabled reports why the sweep does not run; empty when it does.
-func (s *Store) Disabled() string {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.snap.Disabled
-}
-
-// Interval is the sweep cadence.
-func (s *Store) Interval() time.Duration { return s.interval }
-
-// CurrentInstanceStatus returns the snapshot and whether a sweep has
-// published one.
-func (s *Store) CurrentInstanceStatus() (Snapshot, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.snap, s.has
-}
-
-// member is one roster entry the sweep accounts for: the pod's name
-// and identity.
-type member struct {
-	name, uid string
-}
-
-// publish replaces the snapshot with the sweep's outcome: fresh
-// readings for the instances reached, the previous reading kept beside
-// the failure for the ones not reached when it came from the same pod,
-// and instances no longer on the roster dropped.
-func (s *Store) publish(at time.Time, roster []member, fresh map[string]Reading, failing map[string]string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	next := Snapshot{
-		Generation: s.snap.Generation + 1,
-		SweptAt:    at,
-		Interval:   s.interval,
-		Readings:   make(map[string]Reading, len(roster)),
-		Failing:    make(map[string]string, len(failing)),
-	}
-	for _, m := range roster {
-		if reading, ok := fresh[m.name]; ok {
-			next.Readings[m.name] = reading
-			continue
-		}
-		if previous, ok := s.snap.Readings[m.name]; ok && previous.PodUID == m.uid {
-			next.Readings[m.name] = previous
-		}
-		if category, ok := failing[m.name]; ok {
-			next.Failing[m.name] = category
-		}
-	}
-	for name, category := range failing {
-		if _, listed := next.Failing[name]; !listed {
-			next.Failing[name] = category
-		}
-	}
-	s.snap = next
-	s.has = true
-}
-
-// PodsSource is the roster the sweep reads: the instance pods and
-// their IPs.
-type PodsSource interface {
-	CurrentPods() (observe.PodsSnapshot, bool)
-}
-
-// Collector sweeps the instance pods' status ports on a cadence.
-type Collector struct {
-	source   PodsSource
-	store    *Store
-	clock    observe.Clock
-	logger   *slog.Logger
-	interval time.Duration
-	client   *http.Client
-	port     string
-	// failing tracks which instances the previous sweep could not
-	// reach, so reachability changes log once instead of every sweep.
-	failing map[string]bool
-}
-
-// New wires a roster to a store. The port is the status port, fixed to
-// the CloudNativePG default and overridden only by tests; the TLS
-// configuration is TLSConfig's.
-func New(source PodsSource, store *Store, port string, tlsConfig *tls.Config, clock observe.Clock, logger *slog.Logger) *Collector {
-	if port == "" {
-		port = Port
-	}
-	return &Collector{
-		source:   source,
-		store:    store,
-		clock:    clock,
-		logger:   logger,
-		interval: store.Interval(),
-		client:   &http.Client{Timeout: requestTimeout, Transport: &http.Transport{TLSClientConfig: tlsConfig}},
-		port:     port,
-		failing:  map[string]bool{},
-	}
-}
-
-// TLSConfig is how the status port's certificate is judged: the chain
-// is verified against the cluster CA and the certificate must name the
-// cluster's read-write Service. The certificate is the cluster's own
-// server certificate, issued for the cluster's Services and signed by
-// the CA in the <cluster>-ca Secret, which this console never reads
-// through the API: the deployer mounts its ca.crt and names it in
-// INSTANCE_STATUS_CA_FILE.
-//
-// The status port is TLS 1.3 only upstream, so nothing older is
-// offered. An empty or certificate-free CA is refused: a TLS
-// configuration that verifies nothing is InsecureTLSConfig, and is
-// only ever chosen explicitly.
-func TLSConfig(clusterName string, caPEM []byte) (*tls.Config, error) {
-	roots := x509.NewCertPool()
-	if len(caPEM) == 0 || !roots.AppendCertsFromPEM(caPEM) {
-		return nil, redact.NewError("instance status CA", redact.CategoryInternal,
-			errors.New("no certificate found in the CA file"))
-	}
-	return &tls.Config{
-		MinVersion: tls.VersionTLS13,
-		// The name the certificate must carry: the cluster's read-write
-		// Service, checked by the standard verification against the
-		// standard chain check. The default host check against the pod
-		// IP could never pass, because the certificate names Services.
-		ServerName: clusterName + "-rw",
-		RootCAs:    roots,
-	}, nil
-}
-
-// InsecureTLSConfig accepts any certificate that names the cluster's
-// read-write Service, without verifying its chain. It ties the
-// certificate to this cluster's name rather than to any cluster, but
-// anything able to present a self-signed certificate for that name is
-// believed, and the endpoint's identity rests on the pod IP the API
-// server reported. It exists for labs and is chosen only by an explicit
-// INSTANCE_STATUS_INSECURE=true.
-func InsecureTLSConfig(clusterName string) *tls.Config {
-	serviceName := clusterName + "-rw"
-	return &tls.Config{
-		MinVersion: tls.VersionTLS13,
-		ServerName: serviceName,
-		// The built-in verification cannot run without a CA and is
-		// replaced by the name check below rather than by nothing.
-		InsecureSkipVerify: true, // #nosec G402 -- explicit opt-in; the name is still checked in VerifyConnection.
-		VerifyConnection: func(state tls.ConnectionState) error {
-			if len(state.PeerCertificates) == 0 {
-				return errors.New("the status port presented no certificate")
-			}
-			if err := state.PeerCertificates[0].VerifyHostname(serviceName); err != nil {
-				return fmt.Errorf("the status port's certificate does not name %s: %w", serviceName, err)
-			}
-			return nil
-		},
-	}
-}
-
-// Run sweeps until ctx is done.
-func (c *Collector) Run(ctx context.Context) error {
-	for {
-		if err := c.clock.Wait(ctx, c.interval); err != nil {
-			return err
-		}
-		c.sweep(ctx)
-	}
-}
-
-// sweep reads every instance pod once, inside one sweep interval. A
-// stale roster is not swept: its IPs are the last good ones, and a
-// report read from them could be another pod's; the retained reports
-// age into refusal instead. A pod without an IP has not started and a
-// deleting pod is not read; both are recorded as unread rather than
-// left out, so an incomplete sweep never reads as a complete one. A
-// pod the deadline leaves unread, and a roster cut at its bound, are
-// recorded the same way.
-func (c *Collector) sweep(ctx context.Context) {
-	snap, ok := c.source.CurrentPods()
-	if !ok || snap.Stale {
-		return
-	}
-	ctx, cancel := context.WithTimeout(ctx, c.interval)
-	defer cancel()
-	at := c.clock.Now()
-	var roster []member
-	fresh := map[string]Reading{}
-	failing := map[string]string{}
-	for _, pod := range snap.Pods {
-		roster = append(roster, member{name: pod.Name, uid: pod.UID})
-		switch {
-		case pod.Deleting:
-			failing[pod.Name] = "deleting"
-			continue
-		case pod.IP == "":
-			failing[pod.Name] = "not started"
-			continue
-		case ctx.Err() != nil:
-			failing[pod.Name] = "sweep deadline"
-			continue
-		}
-		reading, err := c.readOne(ctx, pod.StatusScheme, pod.IP)
-		if err != nil {
-			category := redact.Safe(err)
-			failing[pod.Name] = category
-			if !c.failing[pod.Name] {
-				c.failing[pod.Name] = true
-				c.logger.Info("instance status read failed",
-					slog.String("instance", pod.Name),
-					slog.String("category", category))
-			}
-			continue
-		}
-		if c.failing[pod.Name] {
-			delete(c.failing, pod.Name)
-			c.logger.Info("instance status read recovered", slog.String("instance", pod.Name))
-		}
-		reading.Instance = pod.Name
-		reading.PodUID = pod.UID
-		reading.ObservedAt = at
-		fresh[pod.Name] = reading
-	}
-	if snap.Truncated {
-		failing["(roster)"] = "more pods than the roster bound, so the sweep is incomplete"
-	}
-	c.store.publish(at, roster, fresh, failing)
-}
-
-// readOne fetches and converts one instance's report with the scheme
-// the pod spec declares (observe.PodFacts.StatusScheme): HTTPS, the
-// default when unknown, with the certificate judged as the configured
-// TLS settings say, or plain HTTP for a pre-TLS instance manager. There
-// is no fallback from one to the other: a fallback is a downgrade
-// anyone on the path can force, while the declared scheme comes from
-// the API server.
-func (c *Collector) readOne(ctx context.Context, scheme, ip string) (Reading, error) {
-	if scheme != "http" {
-		scheme = "https"
-	}
-	url := scheme + "://" + net.JoinHostPort(ip, c.port) + path
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return Reading{}, redact.NewError("instance status read", redact.CategoryInternal, err)
-	}
-	resp, err := c.client.Do(req)
-	if err != nil {
-		return Reading{}, redact.NewError("instance status read", redact.CategoryUnavailable, err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return Reading{}, redact.NewError("instance status read", redact.CategoryUnavailable,
-			fmt.Errorf("status %d", resp.StatusCode))
-	}
-	return Parse(io.LimitReader(resp.Body, maxBody))
 }
 
 // report is the subset of the instance manager's JSON the console reads.

@@ -16,6 +16,7 @@ package barmancloud
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"strings"
@@ -138,12 +139,14 @@ func TestParseBackupInfoWithholdsValuesOutsideTheEvidenceConstraints(t *testing.
 
 func TestAnalyzeMakesBackupsWithWithheldMetadataUnknown(t *testing.T) {
 	t.Parallel()
-	objects := []store.Object{{Key: "alpha/base/odd/backup.info"}, {Key: "alpha/base/odd/data.tar.gz", Size: 4}}
+	objects := []store.Object{{Key: "alpha/base/odd/backup.info"}, {Key: "alpha/base/odd/data.tar.gz", Size: 10240}}
 	reader := &storetest.Fake{
 		OpenFunc: func(_ context.Context, _ store.OpenRequest) (io.ReadCloser, error) {
 			return io.NopCloser(strings.NewReader("status=DONE\nbegin_wal=not-a-wal\n")), nil
 		},
-		StatFunc: func(_ context.Context, key string) (store.Object, error) { return store.Object{Key: key, Size: 4}, nil },
+		StatFunc: func(_ context.Context, key string) (store.Object, error) {
+			return store.Object{Key: key, Size: 10240}, nil
+		},
 	}
 	catalog := Analyze(context.Background(), reader, objects)
 	if len(catalog.Backups) != 1 || catalog.Backups[0].State != evidence.Unknown || !strings.Contains(catalog.Backups[0].Reason, "begin_wal") || strings.Contains(catalog.Backups[0].Reason, "not-a-wal") {
@@ -171,7 +174,7 @@ func TestParseBackupInfoAcceptsPinnedBarmanGeneratedGolden(t *testing.T) {
 
 func TestAnalyzeNeverMakesMalformedOrIncompleteBackupsUsable(t *testing.T) {
 	t.Parallel()
-	objects := []store.Object{{Key: "alpha/base/good/backup.info"}, {Key: "alpha/base/good/data.tar.gz", Size: 4}, {Key: "alpha/base/missing/backup.info"}, {Key: "alpha/base/bad/backup.info"}}
+	objects := []store.Object{{Key: "alpha/base/good/backup.info"}, {Key: "alpha/base/good/data.tar.gz", Size: 10240}, {Key: "alpha/base/missing/backup.info"}, {Key: "alpha/base/bad/backup.info"}}
 	metadata := map[string]string{
 		"alpha/base/good/backup.info":    "status=DONE\nsize=4\n",
 		"alpha/base/missing/backup.info": "status=DONE\n",
@@ -181,7 +184,9 @@ func TestAnalyzeNeverMakesMalformedOrIncompleteBackupsUsable(t *testing.T) {
 		OpenFunc: func(_ context.Context, request store.OpenRequest) (io.ReadCloser, error) {
 			return io.NopCloser(strings.NewReader(metadata[request.Key])), nil
 		},
-		StatFunc: func(_ context.Context, key string) (store.Object, error) { return store.Object{Key: key, Size: 4}, nil },
+		StatFunc: func(_ context.Context, key string) (store.Object, error) {
+			return store.Object{Key: key, Size: 10240}, nil
+		},
 	}
 	catalog := Analyze(context.Background(), reader, objects)
 	if len(catalog.Backups) != 3 {
@@ -213,19 +218,32 @@ func TestAnalyzePathologicalBarmanCatalogStates(t *testing.T) {
 		want     evidence.State
 		reason   string
 	}{
-		{name: "completed", metadata: "status=DONE\nmode=postgres\ncompression=gzip\n", objects: []store.Object{{Key: "alpha/base/id/backup.info"}, {Key: "alpha/base/id/data.tar.gz", Size: 4}}, want: evidence.Healthy, reason: "stat-able"},
-		{name: "cloud gzip with null compression metadata", metadata: "status=DONE\ncompression=None\n", objects: []store.Object{{Key: "alpha/base/id/backup.info"}, {Key: "alpha/base/id/data.tar.gz", Size: 4}}, want: evidence.Healthy, reason: "stat-able"},
-		{name: "started is never promoted by an artifact", metadata: "status=STARTED\nmode=postgres\n", objects: []store.Object{{Key: "alpha/base/id/backup.info"}, {Key: "alpha/base/id/data.tar", Size: 4}}, want: evidence.Warning, reason: "in progress"},
-		{name: "failed", metadata: "status=FAILED\nmode=postgres\n", objects: []store.Object{{Key: "alpha/base/id/backup.info"}, {Key: "alpha/base/id/data.tar", Size: 4}}, want: evidence.Unhealthy, reason: "failed"},
+		{name: "completed", metadata: "status=DONE\nmode=postgres\ncompression=gzip\n", objects: []store.Object{{Key: "alpha/base/id/backup.info"}, {Key: "alpha/base/id/data.tar.gz", Size: 10240}}, want: evidence.Healthy, reason: "stat-able"},
+		{name: "cloud gzip with null compression metadata", metadata: "status=DONE\ncompression=None\n", objects: []store.Object{{Key: "alpha/base/id/backup.info"}, {Key: "alpha/base/id/data.tar.gz", Size: 10240}}, want: evidence.Healthy, reason: "stat-able"},
+		{name: "started is never promoted by an artifact", metadata: "status=STARTED\nmode=postgres\n", objects: []store.Object{{Key: "alpha/base/id/backup.info"}, {Key: "alpha/base/id/data.tar", Size: 10240}}, want: evidence.Warning, reason: "in progress"},
+		{name: "failed", metadata: "status=FAILED\nmode=postgres\n", objects: []store.Object{{Key: "alpha/base/id/backup.info"}, {Key: "alpha/base/id/data.tar", Size: 10240}}, want: evidence.Unhealthy, reason: "failed"},
 		{name: "malformed", metadata: "not key value\n", objects: []store.Object{{Key: "alpha/base/id/backup.info"}}, want: evidence.Unknown, reason: "malformed"},
-		{name: "missing metadata", objects: []store.Object{{Key: "alpha/base/id/data.tar", Size: 4}}, want: evidence.Unknown, reason: "metadata is missing"},
-		{name: "missing main data", metadata: "status=DONE\nmode=postgres\n", objects: []store.Object{{Key: "alpha/base/id/backup.info"}, {Key: "alpha/base/id/16384.tar", Size: 4}}, want: evidence.Unhealthy, reason: "main-data"},
-		{name: "missing tablespace", metadata: "status=DONE\nmode=postgres\ntablespaces=[('analytics', 16384, '/ts')]\n", objects: []store.Object{{Key: "alpha/base/id/backup.info"}, {Key: "alpha/base/id/data.tar", Size: 4}}, want: evidence.Unhealthy, reason: "tablespace"},
-		{name: "split main data and tablespace", metadata: "status=DONE\nmode=postgres\ncompression=lz4\ntablespaces=[('analytics', 16384, '/ts')]\n", objects: []store.Object{{Key: "alpha/base/id/backup.info"}, {Key: "alpha/base/id/data.tar.lz4", Size: 4}, {Key: "alpha/base/id/data_0001.tar.lz4", Size: 4}, {Key: "alpha/base/id/16384.tar.lz4", Size: 4}, {Key: "alpha/base/id/16384_0001.tar.lz4", Size: 4}}, want: evidence.Healthy, reason: "stat-able"},
-		{name: "unknown compression", metadata: "status=DONE\nmode=postgres\ncompression=zstd\n", objects: []store.Object{{Key: "alpha/base/id/backup.info"}, {Key: "alpha/base/id/data.tar.zst", Size: 4}}, want: evidence.Unknown, reason: "compression is unsupported"},
-		{name: "future status", metadata: "status=COMPLETED\nmode=postgres\n", objects: []store.Object{{Key: "alpha/base/id/backup.info"}, {Key: "alpha/base/id/data.tar", Size: 4}}, want: evidence.Unknown, reason: "status is unsupported"},
-		{name: "malformed tablespace list", metadata: "status=DONE\nmode=postgres\ntablespaces=[('analytics', 16384, '/ts'), garbage]\n", objects: []store.Object{{Key: "alpha/base/id/backup.info"}, {Key: "alpha/base/id/data.tar", Size: 4}, {Key: "alpha/base/id/16384.tar", Size: 4}}, want: evidence.Unknown, reason: "metadata is malformed"},
-		{name: "duplicate object", metadata: "status=DONE\nmode=postgres\n", objects: []store.Object{{Key: "alpha/base/id/backup.info"}, {Key: "alpha/base/id/data.tar", Size: 4}, {Key: "alpha/base/id/data.tar", Size: 4}}, want: evidence.Unknown, reason: "duplicate"},
+		{name: "missing metadata", objects: []store.Object{{Key: "alpha/base/id/data.tar", Size: 10240}}, want: evidence.Unknown, reason: "metadata is missing"},
+		{name: "missing main data", metadata: "status=DONE\nmode=postgres\n", objects: []store.Object{{Key: "alpha/base/id/backup.info"}, {Key: "alpha/base/id/16384.tar", Size: 10240}}, want: evidence.Unhealthy, reason: "main-data"},
+		{name: "missing tablespace", metadata: "status=DONE\nmode=postgres\ntablespaces=[('analytics', 16384, '/ts')]\n", objects: []store.Object{{Key: "alpha/base/id/backup.info"}, {Key: "alpha/base/id/data.tar", Size: 10240}}, want: evidence.Unhealthy, reason: "tablespace"},
+		{name: "split main data and tablespace", metadata: "status=DONE\nmode=postgres\ncompression=lz4\ntablespaces=[('analytics', 16384, '/ts')]\n", objects: []store.Object{{Key: "alpha/base/id/backup.info"}, {Key: "alpha/base/id/data.tar.lz4", Size: 10240}, {Key: "alpha/base/id/data_0001.tar.lz4", Size: 10240}, {Key: "alpha/base/id/16384.tar.lz4", Size: 10240}, {Key: "alpha/base/id/16384_0001.tar.lz4", Size: 10240}}, want: evidence.Healthy, reason: "stat-able"},
+		{name: "unknown compression", metadata: "status=DONE\nmode=postgres\ncompression=zstd\n", objects: []store.Object{{Key: "alpha/base/id/backup.info"}, {Key: "alpha/base/id/data.tar.zst", Size: 10240}}, want: evidence.Unknown, reason: "compression is unsupported"},
+		{name: "future status", metadata: "status=COMPLETED\nmode=postgres\n", objects: []store.Object{{Key: "alpha/base/id/backup.info"}, {Key: "alpha/base/id/data.tar", Size: 10240}}, want: evidence.Unknown, reason: "status is unsupported"},
+		{name: "malformed tablespace list", metadata: "status=DONE\nmode=postgres\ntablespaces=[('analytics', 16384, '/ts'), garbage]\n", objects: []store.Object{{Key: "alpha/base/id/backup.info"}, {Key: "alpha/base/id/data.tar", Size: 10240}, {Key: "alpha/base/id/16384.tar", Size: 10240}}, want: evidence.Unknown, reason: "metadata is malformed"},
+		{name: "duplicate object", metadata: "status=DONE\nmode=postgres\n", objects: []store.Object{{Key: "alpha/base/id/backup.info"}, {Key: "alpha/base/id/data.tar", Size: 10240}, {Key: "alpha/base/id/data.tar", Size: 10240}}, want: evidence.Unknown, reason: "duplicate"},
+		// An artifact smaller than any archive of its kind (an empty upload)
+		// is not usable; the floors are the smallest valid stream of each.
+		{name: "empty data tar", metadata: "status=DONE\nmode=postgres\n", objects: []store.Object{{Key: "alpha/base/id/backup.info"}, {Key: "alpha/base/id/data.tar", Size: 0}}, want: evidence.Unhealthy, reason: "smaller than any tar archive"},
+		{name: "tar below two end blocks", metadata: "status=DONE\nmode=postgres\n", objects: []store.Object{{Key: "alpha/base/id/backup.info"}, {Key: "alpha/base/id/data.tar", Size: 1023}}, want: evidence.Unhealthy, reason: "smaller than any tar archive"},
+		{name: "tar of exactly two end blocks", metadata: "status=DONE\nmode=postgres\n", objects: []store.Object{{Key: "alpha/base/id/backup.info"}, {Key: "alpha/base/id/data.tar", Size: 1024}}, want: evidence.Healthy, reason: "stat-able"},
+		{name: "empty gzip artifact under null compression metadata", metadata: "status=DONE\ncompression=None\n", objects: []store.Object{{Key: "alpha/base/id/backup.info"}, {Key: "alpha/base/id/data.tar.gz", Size: 0}}, want: evidence.Unhealthy, reason: "smaller than any tar archive"},
+		{name: "gzip below header and trailer", metadata: "status=DONE\ncompression=gzip\n", objects: []store.Object{{Key: "alpha/base/id/backup.info"}, {Key: "alpha/base/id/data.tar.gz", Size: 17}}, want: evidence.Unhealthy, reason: "smaller than any tar archive"},
+		{name: "gzip of header and trailer", metadata: "status=DONE\ncompression=gzip\n", objects: []store.Object{{Key: "alpha/base/id/backup.info"}, {Key: "alpha/base/id/data.tar.gz", Size: 18}}, want: evidence.Healthy, reason: "stat-able"},
+		{name: "bzip2 below its empty stream", metadata: "status=DONE\ncompression=bzip2\n", objects: []store.Object{{Key: "alpha/base/id/backup.info"}, {Key: "alpha/base/id/data.tar.bz2", Size: 13}}, want: evidence.Unhealthy, reason: "smaller than any tar archive"},
+		{name: "snappy below its stream identifier", metadata: "status=DONE\ncompression=snappy\n", objects: []store.Object{{Key: "alpha/base/id/backup.info"}, {Key: "alpha/base/id/data.tar.snappy", Size: 9}}, want: evidence.Unhealthy, reason: "smaller than any tar archive"},
+		{name: "empty split part", metadata: "status=DONE\nmode=postgres\ncompression=lz4\n", objects: []store.Object{{Key: "alpha/base/id/backup.info"}, {Key: "alpha/base/id/data.tar.lz4", Size: 10240}, {Key: "alpha/base/id/data_0001.tar.lz4", Size: 10}}, want: evidence.Unhealthy, reason: "smaller than any tar archive"},
+		{name: "empty tablespace artifact", metadata: "status=DONE\nmode=postgres\ntablespaces=[('analytics', 16384, '/ts')]\n", objects: []store.Object{{Key: "alpha/base/id/backup.info"}, {Key: "alpha/base/id/data.tar", Size: 10240}, {Key: "alpha/base/id/16384.tar", Size: 0}}, want: evidence.Unhealthy, reason: "smaller than any tar archive"},
+		{name: "a duplicate listing stays unknown beside an empty artifact", metadata: "status=DONE\nmode=postgres\n", objects: []store.Object{{Key: "alpha/base/id/backup.info"}, {Key: "alpha/base/id/data.tar", Size: 0}, {Key: "alpha/base/id/data.tar", Size: 0}}, want: evidence.Unknown, reason: "duplicate"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -235,7 +253,12 @@ func TestAnalyzePathologicalBarmanCatalogStates(t *testing.T) {
 					return io.NopCloser(strings.NewReader(test.metadata)), nil
 				},
 				StatFunc: func(_ context.Context, key string) (store.Object, error) {
-					return store.Object{Key: key, Size: 4}, nil
+					for _, object := range test.objects {
+						if object.Key == key {
+							return object, nil
+						}
+					}
+					return store.Object{}, errors.New("not listed")
 				},
 			}
 			catalog := Analyze(context.Background(), reader, test.objects)

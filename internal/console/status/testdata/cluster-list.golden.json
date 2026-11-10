@@ -49,7 +49,7 @@
             "id": "diagnostics",
             "health": "critical",
             "label": "Diagnostics",
-            "detail": "1 critical, 0 high, 0 warning, 0 note; 144 checks could not run",
+            "detail": "2 critical, 0 high, 0 warning, 0 note; 78 checks could not run",
             "provenance": {
               "origin": "console",
               "source": "diagnostics",
@@ -94,18 +94,26 @@
         }
       },
       "findings": {
-        "critical": 1,
+        "critical": 2,
         "high": 0,
         "warning": 0,
         "note": 0,
-        "unavailable": 144,
+        "unavailable": 78,
         "runAt": "2026-10-29T12:00:00Z"
       },
       "version": {
         "cnpg": "1.30.0",
         "cnpgMinor": "1.30",
         "confidence": "reported",
-        "detectedBy": "instanceManagerVersion"
+        "detectedBy": "instanceManagerVersion",
+        "components": [
+          {
+            "component": "CloudNativePG",
+            "version": "1.30.0",
+            "source": "Cluster instances",
+            "support": "unlisted"
+          }
+        ]
       },
       "provenance": {
         "origin": "operator",
@@ -189,6 +197,10 @@
         "lastCompletedAt": "2026-10-29T07:00:00Z",
         "configured": true,
         "pluginBased": true,
+        "cadence": {
+          "basis": "default",
+          "thresholdSeconds": 604800
+        },
         "provenance": {
           "origin": "operator",
           "source": "Backup.status",
@@ -200,7 +212,7 @@
         "high": 0,
         "warning": 0,
         "note": 0,
-        "unavailable": 144,
+        "unavailable": 78,
         "runAt": "2026-10-29T12:00:00Z"
       },
       "version": {
@@ -208,7 +220,15 @@
         "cnpgMinor": "1.30",
         "confidence": "reported",
         "detectedBy": "instanceManagerVersion",
-        "image": "ghcr.io/cloudnative-pg/postgresql:18.1"
+        "image": "ghcr.io/cloudnative-pg/postgresql:18.1",
+        "components": [
+          {
+            "component": "CloudNativePG",
+            "version": "1.30.0",
+            "source": "Cluster instances",
+            "support": "unlisted"
+          }
+        ]
       },
       "provenance": {
         "origin": "operator",

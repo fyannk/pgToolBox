@@ -24,6 +24,7 @@ import (
 
 	"github.com/fyannk/pgToolBox/internal/console/cache"
 	"github.com/fyannk/pgToolBox/internal/console/diag"
+	"github.com/fyannk/pgToolBox/internal/console/sweep"
 	"github.com/fyannk/pgToolBox/internal/console/viewmodel"
 	"github.com/fyannk/pgToolBox/pkg/cnpgstatus"
 	"github.com/fyannk/pgToolBox/pkg/diagnose"
@@ -224,12 +225,33 @@ func podReady(pod *corev1.Pod) bool {
 	return false
 }
 
-// primaryArchiver is the primary's own archiver report, when the sweep
-// read it.
+// primaryArchiver is the archiving instance's own report, when the
+// sweep read it. The archiver is status.currentPrimary: the primary, or
+// in a replica cluster the designated primary, a standby (isPrimary
+// false) that the instance manager records there itself
+// (internal/management/controller/instance_controller.go v1.30.0:1333,
+// v1.30.1:1397). Every instance fills the archiver fields from
+// pg_stat_archiver (pkg/management/postgres/probes.go v1.30.0 and
+// v1.30.1:272, fillArchiverStatus). Without a readable currentPrimary,
+// the instance that reports itself primary, the first by name, stands in.
 func primaryArchiver(g *gathered) *cnpgstatus.ArchiverLive {
-	for _, inst := range g.swept.Instances {
+	live := func(inst sweep.Instance) *cnpgstatus.ArchiverLive {
+		return &cnpgstatus.ArchiverLive{IsArchivingWAL: inst.Reading.IsArchivingWAL, LastFailedWAL: inst.Reading.LastFailedWAL, ReadyWALFiles: inst.Reading.ReadyWALFiles}
+	}
+	if name := g.cluster.Status.CurrentPrimary; name != "" {
+		if inst, ok := g.swept.Instances[name]; ok && inst.State == viewmodel.StatusReadOK && inst.Reading != nil {
+			return live(inst)
+		}
+	}
+	names := make([]string, 0, len(g.swept.Instances))
+	for name := range g.swept.Instances {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		inst := g.swept.Instances[name]
 		if inst.State == viewmodel.StatusReadOK && inst.Reading != nil && inst.Reading.IsPrimary {
-			return &cnpgstatus.ArchiverLive{IsArchivingWAL: inst.Reading.IsArchivingWAL, LastFailedWAL: inst.Reading.LastFailedWAL, ReadyWALFiles: inst.Reading.ReadyWALFiles}
+			return live(inst)
 		}
 	}
 	return nil

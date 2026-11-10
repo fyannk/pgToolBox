@@ -262,6 +262,7 @@
       "wal-bytes-and-restore-not-verified"
     ],
     "complete": true,
+    "restoreTested": true,
     "provenance": {
       "origin": "evidence",
       "source": "EvidenceAgent orders-evidence /api/v1alpha1/recovery-paths",
@@ -274,6 +275,8 @@
     "timeLimitSeconds": 7200,
     "sizeTolerancePercent": 10,
     "lastPassedAt": "2026-10-28T12:14:00Z",
+    "restoreTested": true,
+    "windowDays": 90,
     "items": [
       {
         "drill": {

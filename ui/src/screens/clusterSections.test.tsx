@@ -126,3 +126,52 @@ test("backups: without any window there is no bar, only Go's reason", async () =
   await expect.element(screen.getByText("No recovery window")).toBeVisible();
   expect(screen.container.querySelector('svg[aria-label^="Recovery window from"]')).toBeNull();
 });
+
+test("backups: structurally usable evidence says 'not restore-tested' until a drill passes in the window", async () => {
+  const untested = {
+    ...backups,
+    drills: { ...backups.drills, restoreTested: false, lastPassedAt: undefined },
+    recoveryTimeline: { ...backups.recoveryTimeline, restoreTested: false },
+  };
+  const screen = await renderInFrame(<BackupsView data={untested} />);
+  expect(screen.container.querySelector('[data-restore-tested="false"]')?.textContent).toMatch(/^Not restore-tested/);
+  expect(screen.container.textContent).toMatch(/structurally usable\s*Not restore-tested/);
+
+  const tested = await renderInFrame(<BackupsView data={backups} />);
+  expect(tested.container.querySelector('[data-restore-tested="false"]')).toBeNull();
+  expect(tested.container.textContent).not.toMatch(/Not restore-tested/);
+});
+
+test("backups: an uncertain recovery edge offers the archiver checks as text only", async () => {
+  const segments = backups.recoveryTimeline.segments ?? [];
+  const last = segments.at(-1);
+  if (!last) throw new Error("fixture has no span");
+  const uncertain = {
+    ...backups,
+    recoveryTimeline: {
+      ...backups.recoveryTimeline,
+      segments: [...segments.slice(0, -1), { ...last, kind: "unknown" as const }],
+    },
+  };
+  const screen = await renderInFrame(<BackupsView data={uncertain} />);
+  const hint = screen.container.querySelector("[data-pitr-edge-hint]");
+  expect(hint?.textContent).toContain("SELECT * FROM pg_stat_archiver;");
+  expect(hint?.textContent).toContain("SELECT pg_switch_wal();");
+  expect(hint?.querySelectorAll("form, a[href]")).toHaveLength(0);
+
+  const certain = await renderInFrame(<BackupsView data={backups} />);
+  expect(certain.container.querySelector("[data-pitr-edge-hint]")).toBeNull();
+});
+
+test("backups: a Backup of an earlier Cluster of the same name is listed and labelled", async () => {
+  const first = backups.items?.[0];
+  if (!first) throw new Error("fixture has no Backup");
+  const screen = await renderInFrame(
+    <BackupsView
+      data={{ ...backups, items: [{ ...first, predatesCluster: true }, ...(backups.items ?? []).slice(1)] }}
+    />,
+  );
+  await expect.element(screen.getByText("predates this Cluster")).toBeVisible();
+  const plain = await renderInFrame(<BackupsView data={backups} />);
+  expect(plain.container.textContent).not.toContain("predates this Cluster");
+});

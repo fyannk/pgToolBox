@@ -137,7 +137,8 @@
         "FrontierWAL": "000000020000000000000014",
         "FrontierPosition": 20,
         "FrontierReceipt": "2026-11-07T08:11:22Z",
-        "OffTarget": false
+        "OffTarget": false,
+        "SwitchInFlight": false
       },
       "Usable": true
     },
@@ -222,7 +223,8 @@
         "FrontierWAL": "000000020000000000000014",
         "FrontierPosition": 20,
         "FrontierReceipt": "2026-11-07T08:11:22Z",
-        "OffTarget": false
+        "OffTarget": false,
+        "SwitchInFlight": false
       },
       "Usable": true
     },
@@ -307,7 +309,8 @@
         "FrontierWAL": "000000010000000000000012",
         "FrontierPosition": 18,
         "FrontierReceipt": "2026-11-07T08:11:10Z",
-        "OffTarget": true
+        "OffTarget": true,
+        "SwitchInFlight": false
       },
       "Usable": false
     },
@@ -393,7 +396,8 @@
         "FrontierWAL": "000000020000000000000014",
         "FrontierPosition": 20,
         "FrontierReceipt": "2026-11-07T08:11:22Z",
-        "OffTarget": false
+        "OffTarget": false,
+        "SwitchInFlight": false
       },
       "Usable": true
     }

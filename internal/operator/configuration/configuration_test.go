@@ -17,6 +17,7 @@ package configuration
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -179,5 +180,40 @@ func TestDefaultPgAdminImageIsTheHardenedBuild(t *testing.T) {
 	}
 	if !strings.Contains(DefaultPgAdminImage, "-hardened@sha256:") {
 		t.Fatalf("DefaultPgAdminImage = %s, want a hardened tag pinned by digest", DefaultPgAdminImage)
+	}
+}
+
+func TestExposureAllowedHostSuffixes(t *testing.T) {
+	for _, tc := range []struct {
+		name, value string
+		want        []string
+		invalid     bool
+	}{
+		{"unset keeps any hostname", "", nil, false},
+		{"a list, lowered, deduplicated and sorted", " Apps.Example.com, .lab.internal ,apps.example.com", []string{".lab.internal", "apps.example.com"}, false},
+		{"a trailing dot", "apps.example.com.", []string{"apps.example.com."}, false},
+		{"a wildcard is not a suffix", "*.example.com", nil, true},
+		{"a URL is not a suffix", "https://apps.example.com", nil, true},
+		{"a bare dot", ".", nil, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			values := map[string]string{"OPERATOR_IMAGE": "op:1"}
+			if tc.value != "" {
+				values["EXPOSURE_ALLOWED_HOST_SUFFIXES"] = tc.value
+			}
+			loaded, err := Load(context.Background(), newReader(t), env(values), objects)
+			if tc.invalid {
+				if err == nil || !strings.Contains(err.Error(), "EXPOSURE_ALLOWED_HOST_SUFFIXES") {
+					t.Fatalf("Load = %v, want a problem naming EXPOSURE_ALLOWED_HOST_SUFFIXES", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := loaded.Config.ExposureAllowedHostSuffixes; !slices.Equal(got, tc.want) {
+				t.Fatalf("suffixes = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }

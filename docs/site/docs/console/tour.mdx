@@ -79,6 +79,16 @@ warnings. When the phase is not healthy, the overview also explains
 [why the operator is waiting](index.md#why-the-operator-waits). The last
 panels list the sources the page rests on and what you may do here.
 
+The CloudNativePG version in the header comes from one detector, which the
+diagnostics use as well. It tries these sources in order: the
+`instanceManagerVersion` the instances report, the operator's
+`cnpg.io/operatorVersion` annotation on the instance Pods, the
+`bootstrap-controller` image tag, the commit hash in the Cluster status, and
+last the feature floors. The operator rewrites the annotation as soon as it is
+upgraded, but the instance managers change only when they are replaced. While
+the two disagree, the header says "CNPG upgrade in progress" and names both
+versions.
+
 ## Instances
 
 <Screen
@@ -122,6 +132,18 @@ shows the span a restore can target, holes included, and answers "can I
 restore to this time?". [Restore drills](restore-drills.md) restore the latest
 backup into a throwaway Cluster and report what they checked and what they
 did not.
+
+A `Backup` names its Cluster only by `spec.cluster.name`, so a Cluster deleted
+and recreated under the same name still finds the old ones. A `Backup` created
+before the Cluster, or owned by a Cluster with another UID, is listed and
+marked "predates this Cluster", and it counts in none of this Cluster's
+last backup, wiring diagram or recovery bar.
+
+"Last backup" turns to warning when it is overdue: older than twice the period
+of the most frequent active `ScheduledBackup` (the operator's own
+`lastScheduleTime` to `nextScheduleTime`), or, when no period is known, older
+than 7 days. The panel then says "no backup cadence known", so one old backup
+is never ok forever.
 
 ## Storage
 

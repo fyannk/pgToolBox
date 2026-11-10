@@ -25,8 +25,8 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -54,7 +54,11 @@ func (r *Reconciler) publish(ctx context.Context, p *pgtoolboxv1alpha1.PgAdmin, 
 	p.Status.ObservedGeneration = p.Generation
 
 	if !equality.Semantic.DeepEqual(*before, p.Status) {
-		if err := r.writeStatus(ctx, p, before); err != nil {
+		switch err := r.writeStatus(ctx, p, before); {
+		case apierrors.IsNotFound(err):
+			// Deleted meanwhile: nothing to publish, no transition to record.
+			return reported
+		case err != nil:
 			return errors.Join(reported, err)
 		}
 		conditions.RecordTransitions(r.Recorder, p, before.Conditions, p.Status.Conditions, reported, quietReasons...)
@@ -65,29 +69,23 @@ func (r *Reconciler) publish(ctx context.Context, p *pgtoolboxv1alpha1.PgAdmin, 
 	return reported
 }
 
-// writeStatus patches the status subresource with optimistic locking and
-// retries a conflict on the latest object, carrying the computed status.
+// writeStatus patches the status subresource, locked to the resourceVersion
+// the loop read (the EvidenceAgent's, PgToolBoxConsole's and
+// PgAccessRequest's policy too): a status computed from a stale read is
+// refused (Conflict) and returned, so the request is retried with backoff
+// and the status recomputed from a fresh read, never written over a newer
+// object. The write runs under StatusContext: a loop cancelled by
+// ReconciliationTimeout still publishes.
 func (r *Reconciler) writeStatus(ctx context.Context, p *pgtoolboxv1alpha1.PgAdmin, before *pgtoolboxv1alpha1.PgAdminStatus) error {
-	desired := *p.Status.DeepCopy()
 	original := p.DeepCopy()
 	original.Status = *before.DeepCopy()
-	first := true
-	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		if !first {
-			if err := r.Client.Get(ctx, client.ObjectKeyFromObject(p), original); err != nil {
-				return err
-			}
-		}
-		first = false
-		updated := original.DeepCopy()
-		updated.Status = desired
-		if err := r.Client.Status().Patch(ctx, updated, client.MergeFromWithOptions(original, client.MergeFromWithOptimisticLock{}),
-			client.FieldOwner(reconcile.StatusFieldOwner)); err != nil {
-			return err
-		}
-		p.ResourceVersion = updated.ResourceVersion
-		return nil
-	})
+	statusCtx, cancel := reconcile.StatusContext(ctx)
+	defer cancel()
+	if err := r.Client.Status().Patch(statusCtx, p, client.MergeFromWithOptions(original, client.MergeFromWithOptimisticLock{}),
+		client.FieldOwner(reconcile.StatusFieldOwner)); err != nil {
+		return fmt.Errorf("publish PgAdmin status: %w", err)
+	}
+	return nil
 }
 
 // workloadFact reads WorkloadReady from the Deployment's Pods, copying the

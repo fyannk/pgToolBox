@@ -67,7 +67,7 @@ func TestObserveWorkloadCountsAgainstTheDesiredReplicas(t *testing.T) {
 			metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonRolloutStuck,
 		},
 	}
-	r := &Reconciler{APIReader: fake.NewClientBuilder().Build()}
+	r := &Reconciler{APIReader: fake.NewClientBuilder().WithScheme(cnpgScheme(t)).WithStatusSubresource(&pgtoolboxv1alpha1.PgToolBoxConsole{}).Build()}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			c := &pgtoolboxv1alpha1.PgToolBoxConsole{}

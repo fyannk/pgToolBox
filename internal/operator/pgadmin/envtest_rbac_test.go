@@ -60,6 +60,11 @@ func startRBACEnv(t *testing.T) *rbacEnv {
 		CRDDirectoryPaths:     []string{filepath.Join("..", "..", "..", "config", "crd", "bases"), cnpgCRDs()},
 		ErrorIfCRDPathMissing: true,
 	}
+	// OpenShift enables OwnerReferencesPermissionEnforcement: an owner
+	// reference with blockOwnerDeletion is admitted only from whoever may
+	// update the owner's finalizers. kind does not enable it, so it is
+	// enabled here, where the operator identity creates every child.
+	env.ControlPlane.GetAPIServer().Configure().Append("enable-admission-plugins", "OwnerReferencesPermissionEnforcement")
 	restConfig, err := env.Start()
 	if err != nil {
 		t.Fatal(err)

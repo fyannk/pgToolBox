@@ -16,6 +16,7 @@ package status
 
 import (
 	"context"
+	"slices"
 	"time"
 
 	cnpgv1 "github.com/cloudnative-pg/api/pkg/api/v1"
@@ -182,7 +183,9 @@ func (s *Service) evidenceFor(_ context.Context, g *gathered) clusterEvidence {
 	}
 	if r.BackupsComplete {
 		known := map[string]bool{}
-		for _, b := range g.backups {
+		// A Backup of an earlier Cluster of the same name is still a
+		// Backup object: its repository entry is not repository-only.
+		for _, b := range slices.Concat(g.backups, g.priorBackups) {
 			if id := backupKey(b); id != "" {
 				known[id] = true
 			}

@@ -26,7 +26,9 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -1120,5 +1122,175 @@ func TestReconcileROFollowsTheClusterScale(t *testing.T) {
 	scale(1)
 	if row := billingRO(); row.State != pgtoolboxv1alpha1.ServerStateNotOffered {
 		t.Fatalf("back to one instance: billing ro %+v, want NotOffered", row)
+	}
+}
+
+// contextAware makes every fake-client call fail once its context is done,
+// as a real client does; cancelOnClusterList cancels the loop's context
+// mid-loop, the way ReconciliationTimeout does.
+func contextAware(cancelOnClusterList *func()) *interceptor.Funcs {
+	done := func(ctx context.Context) error { return ctx.Err() }
+	return &interceptor.Funcs{
+		Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+			if err := done(ctx); err != nil {
+				return err
+			}
+			return c.Get(ctx, key, obj, opts...)
+		},
+		List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+			if _, ok := list.(*cnpgv1.ClusterList); ok && *cancelOnClusterList != nil {
+				(*cancelOnClusterList)()
+			}
+			if err := done(ctx); err != nil {
+				return err
+			}
+			return c.List(ctx, list, opts...)
+		},
+		Patch: func(ctx context.Context, c client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
+			if err := done(ctx); err != nil {
+				return err
+			}
+			return c.Patch(ctx, obj, patch, opts...)
+		},
+		Create: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+			if err := done(ctx); err != nil {
+				return err
+			}
+			return c.Create(ctx, obj, opts...)
+		},
+		SubResourcePatch: func(ctx context.Context, c client.Client, sub string, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
+			if err := done(ctx); err != nil {
+				return err
+			}
+			return c.SubResource(sub).Patch(ctx, obj, patch, opts...)
+		},
+	}
+}
+
+// TestReconcileTimedOutStillPublishes: a loop cancelled by
+// ReconciliationTimeout still writes its status, Ready=False with why,
+// instead of leaving the previous Ready=True in place.
+func TestReconcileTimedOutStillPublishes(t *testing.T) {
+	p := oauth2PgAdmin()
+	var cancelLoop func()
+	h := newHarness(t, contextAware(&cancelLoop), baseObjects(p)...)
+	if err := h.reconcile("team"); err != nil {
+		t.Fatal(err)
+	}
+	h.markPodReady()
+	if err := h.reconcile("team"); err != nil {
+		t.Fatal(err)
+	}
+	h.finishJob(componentRegistration, false, `{"pgAdminVersion":"9.18","servers":3}`)
+	if err := h.reconcile("team"); err != nil {
+		t.Fatal(err)
+	}
+	expectCondition(t, h.pgadmin("team"), "Ready", metav1.ConditionTrue, pgtoolboxv1alpha1.ReasonAsExpected)
+	_ = h.events()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	cancelLoop = cancel
+	_, err := h.r.Reconcile(ctx, ctrl.Request{NamespacedName: types.NamespacedName{Namespace: testNamespace, Name: "team"}})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("the cancelled loop returned %v", err)
+	}
+	cancelLoop = nil
+	got := h.pgadmin("team")
+	expectCondition(t, got, "Ready", metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonReconcileError)
+	expectCondition(t, got, "Progressing", metav1.ConditionTrue, pgtoolboxv1alpha1.ReasonReconciling)
+}
+
+// TestPublishConflictIsReturnedNotOverwritten: a status computed from a
+// stale read is refused, returned for backoff, and the newer object stays
+// as it is (the shared conflict policy of every controller).
+func TestPublishConflictIsReturnedNotOverwritten(t *testing.T) {
+	p := oauth2PgAdmin()
+	h := newHarness(t, nil, baseObjects(p)...)
+	stale := h.pgadmin("team")
+	// Someone else writes the object after the loop read it.
+	fresh := stale.DeepCopy()
+	fresh.Annotations = map[string]string{"touched": "yes"}
+	if err := h.client.Update(context.Background(), fresh); err != nil {
+		t.Fatal(err)
+	}
+	before := stale.Status.DeepCopy()
+	stale.Status.URL = "http://stale/"
+	err := h.r.publish(context.Background(), stale, before, false, nil)
+	if !apierrors.IsConflict(err) {
+		t.Fatalf("publish of a stale read returned %v, want a Conflict", err)
+	}
+	if got := h.pgadmin("team"); got.Status.URL == "http://stale/" {
+		t.Fatal("a status computed from a stale read was written")
+	}
+	if evs := h.events(); len(evs) != 0 {
+		t.Fatalf("a refused write emitted %v", evs)
+	}
+}
+
+// TestReconcileHostnameAllowList: with EXPOSURE_ALLOWED_HOST_SUFFIXES set, a
+// spec.exposure.hostname outside them stalls with HostnameNotAllowed, and
+// the Ingress already published under it is withdrawn; inside them, or with
+// no list, the Ingress is published.
+func TestReconcileHostnameAllowList(t *testing.T) {
+	ingress := func(hostname string) func() *pgtoolboxv1alpha1.PgAdmin {
+		return func() *pgtoolboxv1alpha1.PgAdmin {
+			p := oauth2PgAdmin()
+			p.Spec.Exposure = pgtoolboxv1alpha1.ExposureSpec{Type: pgtoolboxv1alpha1.ExposureTypeIngress, Hostname: hostname}
+			return p
+		}
+	}
+	for _, tt := range []struct {
+		name     string
+		pgadmin  func() *pgtoolboxv1alpha1.PgAdmin
+		suffixes []string
+		want     pgtoolboxv1alpha1.Reason
+	}{
+		{name: "no list keeps any hostname", pgadmin: ingress("login.corp.example.com"), want: pgtoolboxv1alpha1.ReasonAsExpected},
+		{name: "under a suffix", pgadmin: ingress("pgadmin.team-a.apps.example.com"), suffixes: []string{"apps.example.com"}, want: pgtoolboxv1alpha1.ReasonAsExpected},
+		{name: "clusterIP publishes no name", pgadmin: oauth2PgAdmin, suffixes: []string{"apps.example.com"}, want: pgtoolboxv1alpha1.ReasonAsExpected},
+		{name: "another team's name", pgadmin: ingress("login.corp.example.com"), suffixes: []string{"apps.example.com"}, want: pgtoolboxv1alpha1.ReasonHostnameNotAllowed},
+		{name: "a look-alike of a suffix", pgadmin: ingress("evilapps.example.com"), suffixes: []string{"apps.example.com"}, want: pgtoolboxv1alpha1.ReasonHostnameNotAllowed},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			p := tt.pgadmin()
+			h := newHarness(t, nil, baseObjects(p)...)
+			// Published before the list existed.
+			if err := h.reconcile(p.Name); err != nil {
+				t.Fatal(err)
+			}
+			if p.Spec.Exposure.Type == pgtoolboxv1alpha1.ExposureTypeIngress {
+				if err := h.client.Get(context.Background(), client.ObjectKey{Namespace: testNamespace, Name: p.Name + "-pgadmin"}, &networkingv1.Ingress{}); err != nil {
+					t.Fatalf("no Ingress before the allow-list: %v", err)
+				}
+			}
+			h.r.Config.ExposureAllowedHostSuffixes = tt.suffixes
+			if err := h.reconcile(p.Name); err != nil {
+				t.Fatal(err)
+			}
+			got := h.pgadmin(p.Name)
+			ingressErr := h.client.Get(context.Background(), client.ObjectKey{Namespace: testNamespace, Name: p.Name + "-pgadmin"}, &networkingv1.Ingress{})
+			if tt.want == pgtoolboxv1alpha1.ReasonAsExpected {
+				expectCondition(t, got, "ConfigurationValid", metav1.ConditionTrue, tt.want)
+				if p.Spec.Exposure.Type == pgtoolboxv1alpha1.ExposureTypeIngress && ingressErr != nil {
+					t.Fatalf("an allowed hostname is not published: %v", ingressErr)
+				}
+				return
+			}
+			expectCondition(t, got, "ConfigurationValid", metav1.ConditionFalse, tt.want)
+			expectCondition(t, got, "Stalled", metav1.ConditionTrue, tt.want)
+			if !apierrors.IsNotFound(ingressErr) {
+				t.Fatalf("the Ingress under a refused hostname was not withdrawn: %v", ingressErr)
+			}
+			warnings := 0
+			for _, e := range h.events() {
+				if strings.HasPrefix(e, "Warning HostnameNotAllowed") {
+					warnings++
+				}
+			}
+			if warnings != 1 {
+				t.Errorf("HostnameNotAllowed Warnings = %d, want 1", warnings)
+			}
+		})
 	}
 }

@@ -171,6 +171,14 @@ export function BackupsPanel({ b }: { b: ClusterOverviewView["backups"] }) {
           ) : (
             <span className="text-muted">{m.backup_none_completed()}</span>
           )}
+          {b.cadence?.overdue && (
+            <span className="block text-caption font-semibold">
+              {b.cadence.basis === "schedule" ? m.backup_overdue_schedule() : m.backup_overdue_default()}
+            </span>
+          )}
+          {b.cadence && !b.cadence.overdue && b.cadence.basis === "default" && (
+            <span className="block text-caption text-muted">{m.backup_no_cadence_known()}</span>
+          )}
         </Fact>
         {b.lastFailedAt && (
           <Fact label={m.backup_last_failed()}>
@@ -365,6 +373,11 @@ export function OverviewView({ data, wiring }: { data: ClusterOverviewView; wiri
         ) : (
           <span className="text-muted">
             CNPG <Reported value={data.version.cnpg} /> ({data.version.confidence})
+          </span>
+        )}
+        {data.version.upgradeInFlight && (
+          <span className="font-semibold" title={data.version.upgradeInFlight}>
+            {m.version_upgrade_in_flight({ detail: data.version.upgradeInFlight })}
           </span>
         )}
         <span className="text-muted">

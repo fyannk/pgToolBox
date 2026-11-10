@@ -224,3 +224,229 @@ func TestChildWALBeforeTheSwitchContradictsTheHistory(t *testing.T) {
 		t.Fatalf("path %+v", crossing.Path)
 	}
 }
+
+const (
+	fullOnTL1    = "20261107-081046F"
+	diffOnTL1    = "20261107-081046F_20261107-081101D"
+	incrAtSwitch = "20261107-081046F_20261107-081105I"
+)
+
+// assessmentLabelled returns the assessment of the backup labelled label.
+func assessmentLabelled(t testing.TB, report Report, label string) Assessment {
+	t.Helper()
+	assessments := report.Assess()
+	for index, backup := range report.Backups {
+		if backup.Backup.Label == label {
+			return assessments[index]
+		}
+	}
+	t.Fatalf("no backup %s", label)
+	return Assessment{}
+}
+
+func backupLabelled(t testing.TB, report Report, label string) BackupReport {
+	t.Helper()
+	for _, backup := range report.Backups {
+		if backup.Backup.Label == label {
+			return backup
+		}
+	}
+	t.Fatalf("no backup %s", label)
+	return BackupReport{}
+}
+
+// TestPromotionInFlight is the archive between a promotion and its first
+// child segment: PostgreSQL archives 00000002.history at once, but the
+// child's switch segment only once it fills or archive_timeout passes (five
+// minutes on CloudNativePG). Nothing is lost: the backups of timeline 1 stay
+// usable up to the switch and the stanza is not unhealthy.
+func TestPromotionInFlight(t *testing.T) {
+	t.Parallel()
+	plain := loadFixture(t, fixtureRoot, "plain")
+	// Between the promotion and the child's first segment no backup can have
+	// run on the child, so the fixture's backup on timeline 2 goes too.
+	noChild := withoutBackup(t, plain.without(segmentKeysOn(t, plain, 2, 0)...), "20261107-081046F_20261107-081114I")
+	for name, test := range map[string]struct {
+		repository *fixtureRepository
+		endWAL     string
+		lost       []string // backups whose own WAL is gone: pgBackRest archived it before it finished them
+	}{
+		// The fixture's timeline 1 went on after the branch.
+		"history archived, child segment not yet archived": {repository: noChild, endWAL: beforeSwitchTL1},
+		// A failover: the parent ends at S-1 (its S is only a .partial).
+		"and the parent ends at the switch": {repository: noChild.without(segmentKeysOn(t, noChild, 1, 0xE)...), endWAL: beforeSwitchTL1},
+		// The parent's last segments before the switch are still being
+		// archived too: nothing proves the parent closed. The backup that
+		// starts in 0xD lost WAL pgBackRest had archived.
+		"and the parent's tail is not archived yet": {repository: noChild.without(segmentKeysOn(t, noChild, 1, 0xC)...), endWAL: "00000001000000000000000B", lost: []string{incrAtSwitch}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			report := analyzeFixture(t, test.repository, "plain")
+			subjects := make([]string, 0, len(report.Findings))
+			for _, finding := range report.Findings {
+				subjects = append(subjects, finding.Subject)
+			}
+			if report.State != evidence.Warning || !slices.Equal(subjects, test.lost) {
+				t.Fatalf("stanza %s %q, findings %+v", report.State, report.Reason, report.Findings)
+			}
+			for _, label := range []string{fullOnTL1, diffOnTL1} {
+				backup := backupLabelled(t, report, label)
+				path := backup.Path
+				if !backup.Usable || !path.SwitchInFlight || path.State != evidence.Warning || path.Stop != CoverageUnknownLimited ||
+					path.TargetTimeline != 2 || path.FrontierTimeline != 1 || path.FrontierWAL != test.endWAL || !path.Consistent || path.OffTarget {
+					t.Fatalf("%s: usable %v, path %+v", label, backup.Usable, path)
+				}
+				if assessment := assessmentLabelled(t, report, label); !assessment.Usable {
+					t.Fatalf("%s: assessment %+v", label, assessment)
+				}
+			}
+			if report.Window == nil || report.Window.EndTimeline != 1 || report.Window.EndWAL != test.endWAL || report.Window.OldestBackup != fullOnTL1 || report.Window.NewestBackup != diffOnTL1 {
+				t.Fatalf("window %+v", report.Window)
+			}
+			if aspects := report.Aspects(); aspects.Coverage.State != evidence.Warning || aspects.Coverage.Reason != "a timeline switch is not archived yet: recovery paths stop on the parent timeline" ||
+				len(test.lost) == 0 && aspects.Overall.State != evidence.Warning {
+				t.Fatalf("aspects %+v", aspects)
+			}
+		})
+	}
+
+	t.Run("the backup that stops at the switchpoint waits for the child", func(t *testing.T) {
+		t.Parallel()
+		report := analyzeFixture(t, noChild, "plain")
+		backup := backupLabelled(t, report, incrAtSwitch)
+		if backup.Usable || !backup.Path.SwitchInFlight || backup.Path.State != evidence.Warning || backup.Path.Consistent {
+			t.Fatalf("path %+v", backup.Path)
+		}
+		if assessment := assessmentLabelled(t, report, incrAtSwitch); assessment.Usable || assessment.State != evidence.Warning {
+			t.Fatalf("assessment %+v", assessment)
+		}
+		for _, finding := range report.Findings {
+			if finding.Subject == incrAtSwitch {
+				t.Fatalf("the in-flight backup has a finding: %+v", finding)
+			}
+		}
+	})
+	t.Run("a backup on the child whose WAL is gone is lost, not in flight", func(t *testing.T) {
+		t.Parallel()
+		report := analyzeFixture(t, plain.without(segmentKeysOn(t, plain, 2, 0)...), "plain")
+		backup := backupLabelled(t, report, "20261107-081046F_20261107-081114I")
+		if backup.Usable || backup.Path.SwitchInFlight || backup.Path.State != evidence.Unhealthy {
+			t.Fatalf("pgBackRest finished the backup, so its WAL was archived: %+v", backup.Path)
+		}
+		if !backupLabelled(t, report, fullOnTL1).Usable || report.State == evidence.Unhealthy {
+			t.Fatalf("stanza %s %q", report.State, report.Reason)
+		}
+	})
+}
+
+// TestLossAfterAPromotionIsStillReported: once the child has WAL, the switch
+// is no longer in flight and a missing segment is a loss or a gap.
+func TestLossAfterAPromotionIsStillReported(t *testing.T) {
+	t.Parallel()
+	plain := loadFixture(t, fixtureRoot, "plain")
+	t.Run("a gap on timeline 2 before later timeline 2 segments", func(t *testing.T) {
+		t.Parallel()
+		report := analyzeFixture(t, plain.without(segmentKey(t, plain, "000000020000000000000011")), "plain")
+		gap := slices.IndexFunc(report.Findings, func(finding Finding) bool {
+			return finding.Code == FindingWALGap && strings.HasSuffix(finding.Subject, "/000000020000000000000011")
+		})
+		if gap < 0 || report.State != evidence.Warning {
+			t.Fatalf("state %s, findings %+v", report.State, report.Findings)
+		}
+		for _, label := range []string{fullOnTL1, diffOnTL1} {
+			path := backupLabelled(t, report, label).Path
+			if path.SwitchInFlight || path.State == evidence.Healthy || path.FrontierTimeline != 2 || path.FrontierWAL != "000000020000000000000010" {
+				t.Fatalf("%s: path %+v", label, path)
+			}
+		}
+	})
+	t.Run("the child's switch segment is missing but later child segments exist", func(t *testing.T) {
+		t.Parallel()
+		report := analyzeFixture(t, plain.without(segmentKey(t, plain, switchSegmentTL2)), "plain")
+		for _, label := range []string{fullOnTL1, diffOnTL1, incrAtSwitch} {
+			if backup := backupLabelled(t, report, label); backup.Usable || backup.Path.SwitchInFlight || backup.Path.State != evidence.Unhealthy {
+				t.Fatalf("%s: path %+v", label, backup.Path)
+			}
+		}
+	})
+	t.Run("the parent's tail is missing and the child has WAL", func(t *testing.T) {
+		t.Parallel()
+		report := analyzeFixture(t, plain.without(segmentKeysOn(t, plain, 1, 0xC)...), "plain")
+		for _, label := range []string{fullOnTL1, diffOnTL1} {
+			if backup := backupLabelled(t, report, label); backup.Usable || backup.Path.SwitchInFlight || backup.Path.State != evidence.Unhealthy {
+				t.Fatalf("%s: path %+v", label, backup.Path)
+			}
+		}
+	})
+}
+
+// withoutBackup removes a backup from backup.info and its .copy (with valid
+// checksums) and its files from the listing.
+func withoutBackup(t testing.TB, repository *fixtureRepository, label string) *fixtureRepository {
+	t.Helper()
+	var keys []string
+	for _, object := range repository.objects {
+		if strings.HasPrefix(object.Key, "backup/demo/"+label+"/") {
+			keys = append(keys, object.Key)
+		}
+	}
+	result := repository.without(keys...)
+	for _, key := range []string{"backup/demo/backup.info", "backup/demo/backup.info.copy"} {
+		result = result.with(key, rewriteINI(t, repository.content[key], func(body string) string {
+			lines := strings.Split(body, "\n")
+			kept := lines[:0]
+			for _, line := range lines {
+				if !strings.HasPrefix(line, label+"=") {
+					kept = append(kept, line)
+				}
+			}
+			if len(kept) == len(lines) {
+				t.Fatalf("%s does not list %s", key, label)
+			}
+			return strings.Join(kept, "\n")
+		}))
+	}
+	return result
+}
+
+// TestStopAtTheSwitchpointFollowsTheChild: recovery is consistent once it has
+// replayed the bytes before the stop LSN, and the parent holds every byte
+// before the switchpoint, so a backup that stops exactly at the switchpoint
+// (as the fixture's 081105I does, at 0/E000050) recovers onto the child; one
+// byte later, it does not.
+func TestStopAtTheSwitchpointFollowsTheChild(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		switchLSN, stopLSN uint64
+		stopKnown          bool
+		branches           bool
+	}{
+		{switchLSN: 0xE000050, stopLSN: 0xE000050, stopKnown: true, branches: false},
+		{switchLSN: 0xE000051, stopLSN: 0xE000050, stopKnown: true, branches: false},
+		{switchLSN: 0xE00004F, stopLSN: 0xE000050, stopKnown: true, branches: true},
+		{switchLSN: 0xE000050, stopKnown: false, branches: true},
+	} {
+		if got := branchesBeforeStop(test.switchLSN, test.stopLSN, test.stopKnown); got != test.branches {
+			t.Errorf("switch %#x, stop %#x (known %v): branches %v", test.switchLSN, test.stopLSN, test.stopKnown, got)
+		}
+	}
+	plain := loadFixture(t, fixtureRoot, "plain")
+	for _, test := range []struct {
+		switchpoint string
+		offTarget   bool
+	}{
+		{switchpoint: "0/E000050"},
+		{switchpoint: "0/E000051"},
+		{switchpoint: "0/E00004F", offTarget: true},
+	} {
+		report := analyzeFixture(t, plain.with(switchHistoryKey, []byte("1\t"+test.switchpoint+"\tno recovery target specified\n")), "plain")
+		backup := backupLabelled(t, report, incrAtSwitch)
+		if backup.Backup.LSNStop != "0/E000050" || backup.Path.OffTarget != test.offTarget {
+			t.Fatalf("switch at %s: stop %s, path %+v", test.switchpoint, backup.Backup.LSNStop, backup.Path)
+		}
+		if !test.offTarget && (!backup.Usable || backup.Path.FrontierTimeline != 2) {
+			t.Fatalf("switch at %s: path %+v", test.switchpoint, backup.Path)
+		}
+	}
+}

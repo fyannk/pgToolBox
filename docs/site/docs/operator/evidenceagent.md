@@ -191,7 +191,7 @@ A GCS `applicationCredentials` must be a service account key
 endpoints the JSON names, and are refused.
 
 **Who may set it.** `spec.workloadIdentity` lends the agent a cloud role. With the
-operator chart's `operator.admissionPolicy.enabled`, only
+operator chart's `operator.admissionPolicy.enabled` (the default), only
 `admissionPolicy.workloadIdentity.allowedUsers` and `allowedGroups` (default group
 `system:masters`) may add or change it (see [the operator page](index.md#networkpolicy-and-admission-policy)).
 
@@ -250,7 +250,9 @@ flowchart TB
   and when an agent is deleted.
 - With the operator's CA, the pass requeues itself for the serving certificate's
   renewal; nothing else is timed. The controller is woken by the agent, the
-  objects it owns, its Cluster's and `ObjectStore`'s (or `Stanza`'s or `Archive`'s) spec changes, and the shared
+  objects it owns, its Pods (so an image that cannot be pulled or a crash loop is
+  `WorkloadReady`'s reason at once, not when the Deployment's progress deadline
+  passes), its Cluster's and `ObjectStore`'s (or `Stanza`'s or `Archive`'s) spec changes, and the shared
   ClusterRole and binding.
 - `ResourceNotOwned` stalls at whichever step meets a foreign object;
   an API error ends the pass with `Ready=False` and is retried with backoff.

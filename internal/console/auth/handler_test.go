@@ -17,6 +17,7 @@ package auth
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -434,11 +435,126 @@ func TestSignInRateLimit(t *testing.T) {
 		}
 	}
 	calls := env.rev.calls
-	if w := b.do(http.MethodPost, "/auth/token", url.Values{"token": {"sa-token"}}, sameOriginForm); w.Code != http.StatusTooManyRequests {
+	if w := b.do(http.MethodPost, "/auth/token", url.Values{"token": {"nope"}}, sameOriginForm); w.Code != http.StatusTooManyRequests {
 		t.Fatalf("attempt over budget = %d", w.Code)
 	}
 	if env.rev.calls != calls {
 		t.Fatal("a refused attempt still reached the API server")
+	}
+	if strings.Contains(env.logs.String(), "nope") {
+		t.Fatal("the pasted token reached the log")
+	}
+}
+
+// TestJunkSignInsDoNotLockOutOthers is the negative of the shared
+// bucket: every request here comes from one address (one Ingress hop
+// not counted in trustedProxyHops), and an attacker's junk callbacks
+// and pasted tokens must not spend the budget a legitimate user's
+// sign-in is charged against.
+func TestJunkSignInsDoNotLockOutOthers(t *testing.T) {
+	t.Parallel()
+	junk := map[string]func(b *browser) *httptest.ResponseRecorder{
+		"callbacks without a flow cookie": func(b *browser) *httptest.ResponseRecorder {
+			return b.get("/auth/oidc/callback?code=x&state=y")
+		},
+		"callbacks with a forged state": func(b *browser) *httptest.ResponseRecorder {
+			if w := b.get("/auth/oidc/login?rd=/clusters"); w.Code != http.StatusFound {
+				b.t.Fatalf("login start = %d", w.Code)
+			}
+			return b.get("/auth/oidc/callback?code=x&state=forged")
+		},
+		"pasted junk tokens": func(b *browser) *httptest.ResponseRecorder {
+			return b.do(http.MethodPost, "/auth/token", url.Values{"token": {"nope"}}, sameOriginForm)
+		},
+	}
+	legit := map[string]func(b *browser) *httptest.ResponseRecorder{
+		"oidc": func(b *browser) *httptest.ResponseRecorder { return b.oidcLogin("/clusters") },
+		"token": func(b *browser) *httptest.ResponseRecorder {
+			return b.do(http.MethodPost, "/auth/token", url.Values{"token": {"sa-token"}}, sameOriginForm)
+		},
+	}
+	for jn, attack := range junk {
+		for ln, signIn := range legit {
+			t.Run(jn+" then "+ln, func(t *testing.T) {
+				t.Parallel()
+				env := newTestEnv(t, ProviderOIDC, ProviderToken)
+				attacker := env.browser(t)
+				for i := range 3 * signInBurst {
+					if w := attack(attacker); w.Code == http.StatusFound {
+						t.Fatalf("junk attempt %d signed in", i)
+					}
+				}
+				if w := signIn(env.browser(t)); w.Code != http.StatusFound {
+					t.Fatalf("legitimate sign-in after junk = %d: %s", w.Code, w.Body)
+				}
+			})
+		}
+	}
+}
+
+// TestDistinctJunkTokensAreBoundedProcessWide is the negative of the
+// per-token key: a flood of distinct junk tokens, each with a budget of
+// its own, still makes at most the shared bucket's worth of
+// SelfSubjectReviews, and a legitimate token signs in again once the
+// bucket refills.
+func TestDistinctJunkTokensAreBoundedProcessWide(t *testing.T) {
+	t.Parallel()
+	env := newTestEnv(t, ProviderToken)
+	now := time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC)
+	var mu sync.Mutex
+	env.h.tokenReviews.now = func() time.Time {
+		mu.Lock()
+		defer mu.Unlock()
+		return now
+	}
+	b := env.browser(t)
+	calls := env.rev.calls
+	refused := 0
+	const flood = 3 * tokenReviewsBurst
+	for i := range flood {
+		w := b.do(http.MethodPost, "/auth/token", url.Values{"token": {fmt.Sprintf("junk-%d", i)}}, sameOriginForm)
+		switch w.Code {
+		case http.StatusTooManyRequests:
+			refused++
+		case http.StatusForbidden:
+		default:
+			t.Fatalf("junk token %d = %d", i, w.Code)
+		}
+	}
+	if reviews := env.rev.calls - calls; reviews > tokenReviewsBurst {
+		t.Fatalf("%d distinct junk tokens made %d reviews, want at most %d", flood, reviews, tokenReviewsBurst)
+	}
+	if refused != flood-tokenReviewsBurst {
+		t.Fatalf("%d refused, want %d", refused, flood-tokenReviewsBurst)
+	}
+	// Exhausted: a legitimate token is refused without a review.
+	calls = env.rev.calls
+	if w := b.do(http.MethodPost, "/auth/token", url.Values{"token": {"sa-token"}}, sameOriginForm); w.Code != http.StatusTooManyRequests {
+		t.Fatalf("legitimate token on an empty bucket = %d", w.Code)
+	}
+	if env.rev.calls != calls {
+		t.Fatal("a refused token still reached the API server")
+	}
+	// One refill interval later it signs in.
+	mu.Lock()
+	now = now.Add(time.Second / tokenReviewsPerSecond)
+	mu.Unlock()
+	if w := env.browser(t).do(http.MethodPost, "/auth/token", url.Values{"token": {"sa-token"}}, sameOriginForm); w.Code != http.StatusFound {
+		t.Fatalf("legitimate token after the refill = %d: %s", w.Code, w.Body)
+	}
+}
+
+func TestCallbackBudgetIsChargedAfterTheFlowValidates(t *testing.T) {
+	t.Parallel()
+	env := newTestEnv(t, ProviderOIDC)
+	b := env.browser(t)
+	for i := range signInBurst {
+		if w := b.oidcLogin("/clusters"); w.Code != http.StatusFound {
+			t.Fatalf("sign-in %d = %d", i, w.Code)
+		}
+	}
+	if w := b.oidcLogin("/clusters"); w.Code != http.StatusTooManyRequests {
+		t.Fatalf("validated callback over budget = %d", w.Code)
 	}
 }
 

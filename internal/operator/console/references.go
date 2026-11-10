@@ -103,6 +103,7 @@ func referencedSecrets(c *pgtoolboxv1alpha1.PgToolBoxConsole) []objectReference 
 	if c.TracingEnabled() {
 		refs.keyRef("spec.tracing.headersSecretRef", c.Spec.Tracing.HeadersSecretRef)
 	}
+	refs.keyRef("spec.restoreDrills.sealKeySecretRef", drillSealKeyRef(c))
 	return refs
 }
 

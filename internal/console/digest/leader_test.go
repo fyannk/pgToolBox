@@ -18,6 +18,7 @@ import (
 	"context"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/fyannk/pgToolBox/internal/console/viewmodel"
@@ -154,9 +155,14 @@ func TestElectedDeliveryOnlyByTheLeaderAndNoResendOnFailover(t *testing.T) {
 	}
 
 	// A leads again (B rolled): everything is marked, nothing is sent.
-	stopA = lead(a)
-	time.Sleep(20 * time.Millisecond)
-	stopA()
+	// The new leadership runs in a bubble so "nothing" is a settled
+	// state (every goroutine of it blocked), not a pause that happened
+	// to be too short.
+	synctest.Test(t, func(t *testing.T) {
+		stopA = lead(a)
+		synctest.Wait()
+		stopA()
+	})
 	if chatA.count() != 1 || mailA.count() != 0 {
 		t.Fatalf("A resent after taking the lead back: chat %d, mail %d", chatA.count(), mailA.count())
 	}
@@ -165,31 +171,39 @@ func TestElectedDeliveryOnlyByTheLeaderAndNoResendOnFailover(t *testing.T) {
 // A new leader waits for the shared marks before it decides what is
 // unsent: without them every channel would look unsent.
 func TestLeaderWaitsForTheSharedMarks(t *testing.T) {
-	marks := newSharedMarks()
-	marks.unknown = true
-	chat := &fakeChannel{name: "chat"}
-	s, id := replica(t, marks, chat)
-	marks.MarkDigestSent(id, "chat", t0)
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	// The instant clock makes the bounded wait pass at once, so hold the
-	// marks unknown through a clock that never advances past the bound.
-	s.o.Clock = &frozenClock{now: t0}
-	go func() { s.Lead(ctx); close(done) }()
-	time.Sleep(20 * time.Millisecond)
-	if chat.count() != 0 {
-		t.Fatal("sent before the shared marks were read")
-	}
-	marks.mu.Lock()
-	marks.unknown = false
-	marks.mu.Unlock()
-	time.Sleep(20 * time.Millisecond)
-	cancel()
-	<-done
-	s.wg.Wait()
-	if chat.count() != 0 {
-		t.Fatal("a digest marked sent by another replica was sent again")
-	}
+	// In a bubble the clock is fake: a minute of the leader's polling
+	// passes at once, and synctest.Wait makes "nothing was sent" a
+	// settled state rather than a sleep that happened to be long enough.
+	synctest.Test(t, func(t *testing.T) {
+		marks := newSharedMarks()
+		marks.unknown = true
+		chat := &fakeChannel{name: "chat"}
+		s, id := replica(t, marks, chat)
+		marks.MarkDigestSent(id, "chat", t0)
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		// The instant clock makes the bounded wait pass at once, so hold
+		// the marks unknown through a clock that never advances past the
+		// bound.
+		s.o.Clock = &frozenClock{now: t0}
+		go func() { s.Lead(ctx); close(done) }()
+		time.Sleep(time.Minute)
+		synctest.Wait()
+		if chat.count() != 0 {
+			t.Fatal("sent before the shared marks were read")
+		}
+		marks.mu.Lock()
+		marks.unknown = false
+		marks.mu.Unlock()
+		time.Sleep(time.Second)
+		synctest.Wait()
+		cancel()
+		<-done
+		s.wg.Wait()
+		if chat.count() != 0 {
+			t.Fatal("a digest marked sent by another replica was sent again")
+		}
+	})
 }
 
 // A delivery cut short by the end of the leadership is not left pending:
@@ -224,7 +238,8 @@ func mustGet(t *testing.T, s *Service, id string) viewmodel.Digest {
 	return d
 }
 
-// frozenClock waits in real time (briefly) and never advances.
+// frozenClock waits briefly (on the bubble's fake clock inside
+// synctest.Test) and never advances.
 type frozenClock struct{ now time.Time }
 
 func (c *frozenClock) Now() time.Time { return c.now }

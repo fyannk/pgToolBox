@@ -94,6 +94,21 @@ and `operator.console.image.digest` pin the operator and the console it runs for
   `EvidenceAgent` objects. Delete them yourself when you mean it. A `PgAdmin`'s
   settings volume is retained by default
   ([`retainPolicy`](../operator/pgadmin.md#storage)).
+- Uninstalling the operator also leaves the objects it created itself, which Helm
+  never knew: the cluster-scoped `pgtoolbox-evidence-agent` ClusterRole and
+  ClusterRoleBinding (created for the first `EvidenceAgent`, owned by no object), and
+  the children of every remaining `PgToolBoxConsole`, `PgAdmin` and `EvidenceAgent`
+  (their owners are kept with the CRDs). To remove everything:
+
+  ```bash
+  kubectl delete pgtoolboxconsoles,pgadmins,pgadminaccesses,evidenceagents,pgaccessrequests -A --all
+  helm uninstall pgtoolbox -n pgtoolbox
+  kubectl delete clusterrole,clusterrolebinding pgtoolbox-evidence-agent
+  kubectl get crd -o name | grep pgtoolbox.fyannk.dev | xargs kubectl delete
+  ```
+
+  The operator sets no finalizers, so the order matters only for tidiness: the
+  children of a deleted CR go through Kubernetes' garbage collector either way.
 
 ## Air-gapped installs
 

@@ -205,14 +205,17 @@ sequenceDiagram
   R->>G: bundle and catalog, rewritten to those digests, pushed, signed, attested
   R->>G: both charts, rewritten to the digests, pushed, signed, attested
   R->>R: SBOMs, installer manifests, SHA256SUMS signed keyless
-  R->>G: grype every digest: a fixable critical stops here
+  R->>G: grype every digest on both platforms: a fixable critical stops here, a registry error is reported as one
   R->>G: move latest (stable releases only)
-  R->>H: draft release with the CHANGELOG notes and commits, files attached, then published
+  R->>H: draft release with the CHANGELOG notes and commits, files attached
+  R->>G: anonymous HEAD of every pushed digest: any private package leaves the release a draft
+  R->>H: publish the release
   R->>R: dispatch pages.yml on main, prune untagged GHCR versions
 ```
 
 Before the tag: `make release-check TAG=vX.Y.Z` (semver, both charts' version, the
-CHANGELOG section; `REQUIRE_TAG=1` once the tag exists) and `make release-dry-run`
+CHANGELOG section, which must be dated: a heading that still says `Unreleased` is
+refused for a final tag; `REQUIRE_TAG=1` once the tag exists) and `make release-dry-run`
 (every image built for both architectures into OCI archives, the charts and
 manifests pinned and packaged, nothing pushed). The tag is created and pushed by a
 person:
@@ -222,12 +225,33 @@ git tag -a v0.1.0 -m "pgToolBox 0.1.0"
 git push origin v0.1.0
 ```
 
+A release candidate (`v0.1.0-rc.1`) is the rehearsal: the same workflow, a GitHub
+pre-release, and `latest` does not move. It is cut from the tree of the final
+version (charts and CHANGELOG say `0.1.0`; `release-check` accepts the open
+`## [0.1.0]` section for an `-rc.N` tag, and the archives are stamped
+`0.1.0-rc.1`). It creates the GHCR packages, which start **private**: make each one
+public (see [repository settings](repository-settings.md#packages)), check an
+anonymous pull, and only then tag the final version. The tag patterns `v*` and
+`pkg/evidence/v*` of the tag ruleset and of the `release` environment cover
+release candidates.
+
+Image builds take `SOURCE_DATE_EPOCH` and the `created` label from the tagged
+commit's time, and the scan and the SBOMs cover both `linux/amd64` and
+`linux/arm64` (one `sbom-<image>-<arch>.spdx.json` each).
+
+If the release job stops at the anonymous-pull check, the images, charts, bundle and
+catalog are already pushed and signed, and the release is a draft that names the
+packages to open. Make them public, then **Re-run failed jobs**.
+
 A pull request that touches the release files, and the weekly schedule, run the same
 build as a dry run with version `0.0.0-dryrun`: nothing is pushed or signed. A tag
 `pkg/evidence/vX.Y.Z` releases the nested evidence module instead: the module
 checks, green CI, and a release with no images (`make release-check-module
-TAG=pkg/evidence/vX.Y.Z` first). A failed run is repeated with the workflow's
-`tag` input; a release that is already published is left as it is. What a release
+TAG=pkg/evidence/vX.Y.Z` first). A failed run is finished with
+**Re-run failed jobs** on that run, not with a new dispatch: a new run rebuilds the
+images and moves the tag to new digests, while a re-run of the failed jobs reuses the
+digests the earlier jobs already pushed and signed. The `tag` input of a dispatch is
+for a tag whose run is gone; a release that is already published is left as it is. What a release
 contains and how to verify it is on [Release and verification](../release.md).
 
 After a release, a `prune` job deletes the untagged versions the pushes leave in GHCR

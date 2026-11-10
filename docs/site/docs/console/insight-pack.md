@@ -18,7 +18,7 @@ PostgreSQL (`deploy/insight-pack`, `internal/console/sweep`,
 
 ```mermaid
 flowchart LR
-  cm["ConfigMap pgtoolbox-insight-pack"] -->|"customQueriesConfigMap on the Cluster"| operator["CloudNativePG operator"]
+  cm["insight pack ConfigMap"] -->|"customQueriesConfigMap on the Cluster"| operator["CloudNativePG operator"]
   operator -->|"reloads, no restart"| exporter["instance's exporter :9187"]
   exporter -->|"pack queries, at most once per metricsQueriesTTL"| pg[("PostgreSQL, as the metrics user")]
   sweep["console sweep, every INSTANCE_STATUS_INTERVAL"] -->|"GET /metrics, bounded"| exporter
@@ -36,25 +36,39 @@ console read them.
 
 ## Opting a Cluster in
 
-The `pgtools` chart creates the ConfigMap `pgtoolbox-insight-pack` in each
+The `pgtools` chart creates the ConfigMap `<release>-insight-pack` in each
 watched namespace (`insightPack.enabled`, default `true`). Creating it changes
 nothing. A team opts in its own Cluster, without asking the platform, by adding
-one line to the Cluster:
+one line to the Cluster (here for the release `pgc`; the console's Insight screen
+shows the line with the right name):
 
 ```yaml
 spec:
   monitoring:
     customQueriesConfigMap:
-      - name: pgtoolbox-insight-pack
+      - name: pgc-insight-pack
         key: queries
 ```
 
 The operator reloads the instances' exporters. There is no restart. Without the
-chart, apply the same ConfigMap in the Cluster's namespace first:
+chart, apply the ConfigMap `pgtoolbox-insight-pack` in the Cluster's namespace
+first, and reference that name:
 
 ```bash
 kubectl apply -n team-a -f deploy/insight-pack/insight-pack.yaml
 ```
+
+**The ConfigMap's name.** The chart names the ConfigMap after the release so
+that two releases in one namespace do not collide, and tells its console the
+same name (`INSIGHT_PACK_CONFIGMAP`). The console matches that name against the
+Cluster's `customQueriesConfigMap` (a Cluster that lists another name reads as
+"not referenced") and puts it in the opt-in line. Set
+`insightPack.configMapName` to choose the name, for example
+`pgtoolbox-insight-pack` to keep the name the teams already reference. With
+`insightPack.enabled: false`, the chart's console expects
+`pgtoolbox-insight-pack`, the name of `deploy/insight-pack/insight-pack.yaml`; a
+console the operator renders, or `config/console`, does too. Whatever the name,
+the console reads the pack from the exporters, not from the ConfigMap.
 
 To opt out, remove the line. To stop shipping the ConfigMap, set
 `insightPack.enabled: false`.
@@ -62,7 +76,8 @@ To opt out, remove the line. To stop shipping the ConfigMap, set
 **ConfigMaps applied by hand.** A team that applies the ConfigMap itself, by
 hand or through its own GitOps, owns it. Helm does not take over a ConfigMap it
 did not create, so a chart install or upgrade fails on it. List those
-namespaces in `insightPack.skipNamespaces`. A hand-applied copy is also
+namespaces in `insightPack.skipNamespaces`, and give the copy the chart's name
+(or set `insightPack.configMapName` to the copy's). A hand-applied copy is also
 upgraded by hand. Until it is, the console reports that Cluster's pack as
 outdated and still shows what the older pack reports.
 

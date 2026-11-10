@@ -1514,6 +1514,7 @@ _Appears in:_
 | `resources` _[PgToolBoxConsoleDrillResources](#pgtoolboxconsoledrillresources)_ | The drill instance's CPU and memory. Omitted: the source Cluster's. |  | Optional: \{\} <br /> |
 | `storage` _[PgToolBoxConsoleDrillStorage](#pgtoolboxconsoledrillstorage)_ | The drill instance's storage. Omitted: the source Cluster's. |  | Optional: \{\} <br /> |
 | `maxConcurrent` _integer_ | The drills of this console running at once (one per source in any<br />case). Omitted: 3. |  | Maximum: 20 <br />Minimum: 1 <br />Optional: \{\} <br /> |
+| `sealKeySecretRef` _[SecretKeyReference](#secretkeyreference)_ | The drill seal's own keys (RESTORE_DRILL_SEAL_KEY_FILE): a key of a<br />Secret in the console's namespace holding one key per line, at least<br />32 bytes each (the first seals, all verify), mounted read-only. Keep<br />the Secret readable by the console alone. Omitted: the keys derive<br />from the session secret, so whoever can read the session Secret can<br />forge a seal. |  | Optional: \{\} <br /> |
 | `networkPolicy` _[PgToolBoxConsoleDrillNetworkPolicy](#pgtoolboxconsoledrillnetworkpolicy)_ | The NetworkPolicy around the drill Pods. A promoted drill is a live<br />copy of a production database: the console turns off the background<br />workers it knows (logical replication, pg_cron, TimescaleDB), and this<br />policy holds the rest to DNS, the API server and the object store. |  | Optional: \{\} <br /> |
 
 
@@ -1651,6 +1652,7 @@ _Appears in:_
 | `ConfigMapNotFound` | ReasonConfigMapNotFound names a referenced ConfigMap that does not<br />exist.<br /> |
 | `ClusterNotFound` | ReasonClusterNotFound names a referenced CloudNativePG Cluster that<br />does not exist in the namespace (an EvidenceAgent's<br />spec.clusterRef, a PgAdmin's spec.clusterRefs).<br /> |
 | `ImageNotAllowed` | ReasonImageNotAllowed: the image a CR names (spec.image, an<br />oauth-proxy image) is outside the operator's allow-list of<br />repositories (--evidence-agent-image-repositories,<br />--pgadmin-image-repositories).<br /> |
+| `HostnameNotAllowed` | ReasonHostnameNotAllowed: spec.exposure.hostname is outside the<br />operator's allow-list of host suffixes<br />(EXPOSURE_ALLOWED_HOST_SUFFIXES), so the operator publishes no Route,<br />Ingress or HTTPRoute for it.<br /> |
 | `RolloutInProgress` | Workload facts, copied from the child.<br /> |
 | `RolloutStuck` |  |
 | `PodUnschedulable` |  |
@@ -1730,6 +1732,7 @@ _Appears in:_
 - [PgToolBoxConsoleDigestSMTPSpec](#pgtoolboxconsoledigestsmtpspec)
 - [PgToolBoxConsoleOpenShiftSpec](#pgtoolboxconsoleopenshiftspec)
 - [PgToolBoxConsolePrometheusSpec](#pgtoolboxconsoleprometheusspec)
+- [PgToolBoxConsoleRestoreDrillsSpec](#pgtoolboxconsolerestoredrillsspec)
 - [PgToolBoxConsoleTracingSpec](#pgtoolboxconsoletracingspec)
 
 | Field | Description | Default | Validation |

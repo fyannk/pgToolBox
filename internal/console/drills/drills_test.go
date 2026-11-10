@@ -590,3 +590,81 @@ func checkText(r Record, name viewmodel.DrillCheckName) string {
 	}
 	return ""
 }
+
+// memKeeper is a Keeper whose contents outlive a Store, as the
+// shared-state ConfigMap outlives a console process.
+type memKeeper struct {
+	mu    sync.Mutex
+	kept  map[Key]Kept
+	since time.Time
+	keeps bool
+}
+
+func (k *memKeeper) KeepDrill(r Kept) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	k.kept[r.Drill] = r
+}
+
+func (k *memKeeper) KeptDrills() []Kept {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	out := make([]Kept, 0, len(k.kept))
+	for _, r := range k.kept {
+		out = append(out, r)
+	}
+	return out
+}
+func (k *memKeeper) KeepsDrills() bool    { return k.keeps }
+func (k *memKeeper) KeptSince() time.Time { return k.since }
+
+// TestKeeperKeepsFinishedDrillsAcrossARestart: without a journal, the
+// outcome of a finished drill survives a console restart in the keeper,
+// marked as having lost its checks; a running drill is not kept (its
+// sealed Cluster carries it), and without a keeper nothing survives.
+func TestKeeperKeepsFinishedDrillsAcrossARestart(t *testing.T) {
+	keeper := &memKeeper{kept: map[Key]Kept{}, since: t0.Add(-30 * 24 * time.Hour), keeps: true}
+	before := NewStore(nil, nil, t0)
+	before.SetKeeper(keeper)
+	r := running()
+	before.Put(r)
+	if len(keeper.KeptDrills()) != 0 {
+		t.Fatal("a running drill was kept")
+	}
+	r.Result, r.HealthyAt, r.FinishedAt = viewmodel.DrillPassed, t0.Add(20*time.Minute), t0.Add(25*time.Minute)
+	r.Checks = []viewmodel.DrillCheck{{Name: viewmodel.DrillCheckHealthy, Outcome: viewmodel.DrillCheckPassed}}
+	before.Put(r)
+
+	after := NewStore(nil, nil, t0.Add(time.Hour))
+	after.SetKeeper(keeper)
+	got := after.Source(r.Source)
+	if len(got) != 1 || got[0].Result != viewmodel.DrillPassed || !got[0].Restored || len(got[0].Checks) != 0 {
+		t.Fatalf("after a restart = %+v", got)
+	}
+	if v := View(got[0]); !v.ChecksNotKept || v.DurationSeconds == nil || *v.DurationSeconds != 20*60 {
+		t.Errorf("view = %+v", v)
+	}
+	if at, ok := after.LastPassed(r.Source); !ok || !at.Equal(r.FinishedAt) {
+		t.Errorf("last passed = %v %v", at, ok)
+	}
+	if !after.Persistent() || !after.Kept() || !after.RecordedSince().Equal(keeper.since) {
+		t.Errorf("persistent %v kept %v since %v", after.Persistent(), after.Kept(), after.RecordedSince())
+	}
+
+	// A record held in memory hides the keeper's copy (no duplicate).
+	after.Put(r)
+	if n := len(after.Source(r.Source)); n != 1 {
+		t.Errorf("%d records of one drill", n)
+	}
+
+	// A keeper that cannot keep (ConfigMap missing) is no persistence.
+	keeper.keeps = false
+	if lost := NewStore(nil, nil, t0); lost.Persistent() {
+		t.Error("a store without journal or keeper reports persistent")
+	}
+	unkept := NewStore(nil, nil, t0.Add(time.Hour))
+	unkept.SetKeeper(keeper)
+	if unkept.Persistent() || !unkept.RecordedSince().Equal(t0.Add(time.Hour)) {
+		t.Errorf("a keeper that keeps nothing: persistent %v since %v", unkept.Persistent(), unkept.RecordedSince())
+	}
+}

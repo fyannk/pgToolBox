@@ -63,7 +63,9 @@ func (r *Reconciler) publish(ctx context.Context, access, original *pgtoolboxv1a
 	if equality.Semantic.DeepEqual(original.Status, access.Status) {
 		return reported
 	}
-	if err := r.Client.Status().Patch(ctx, access, client.MergeFromWithOptions(original, client.MergeFromWithOptimisticLock{}),
+	statusCtx, cancel := reconcile.StatusContext(ctx)
+	defer cancel()
+	if err := r.Client.Status().Patch(statusCtx, access, client.MergeFromWithOptions(original, client.MergeFromWithOptimisticLock{}),
 		client.FieldOwner(reconcile.StatusFieldOwner)); err != nil {
 		if apierrors.IsNotFound(err) {
 			return reported

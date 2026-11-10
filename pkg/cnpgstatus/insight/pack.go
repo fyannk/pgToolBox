@@ -42,7 +42,9 @@ package insight
 // version is told so; the console still reads what the older pack has.
 const PackVersion = 1
 
-// ConfigMapName is the name the chart gives the pack's ConfigMap, and
+// ConfigMapName is the default name of the pack's ConfigMap (that of
+// deploy/insight-pack/insight-pack.yaml; the pgtools chart names its own
+// per release and tells the console with INSIGHT_PACK_CONFIGMAP), and
 // ConfigMapKey the key holding the queries; a Cluster opts in with
 //
 //	spec.monitoring.customQueriesConfigMap: [{name: pgtoolbox-insight-pack, key: queries}]
@@ -54,9 +56,18 @@ const (
 	VersionLabel = "pgtoolbox.fyannk.dev/insight-pack-version"
 )
 
-// SpecChange is the one-line change that opts a Cluster in, shown where
-// the pack is missing.
+// SpecChange is the one-line change that opts a Cluster in to the pack's
+// ConfigMap of the default name, shown where the pack is missing.
 const SpecChange = `spec.monitoring.customQueriesConfigMap: [{name: ` + ConfigMapName + `, key: ` + ConfigMapKey + `}]`
+
+// SpecChangeFor is SpecChange for the pack's ConfigMap named configMap;
+// an empty name is the default.
+func SpecChangeFor(configMap string) string {
+	if configMap == "" || configMap == ConfigMapName {
+		return SpecChange
+	}
+	return `spec.monitoring.customQueriesConfigMap: [{name: ` + configMap + `, key: ` + ConfigMapKey + `}]`
+}
 
 // metricPrefix starts every pack series. The exporter names a custom
 // query's metrics cnpg_<query>_<column>, and every pack query starts with

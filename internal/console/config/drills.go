@@ -15,6 +15,7 @@
 package config
 
 import (
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
@@ -73,6 +74,13 @@ const (
 	// EnvRestoreDrillServerCASecret is the CA Secret of
 	// RESTORE_DRILL_SERVER_CA=secret, in every drill namespace.
 	EnvRestoreDrillServerCASecret = "RESTORE_DRILL_SERVER_CA_SECRET" // #nosec G101 -- the name of a variable holding a Secret name, not a credential
+	// EnvRestoreDrillSealKeyFile is a mounted file of the drill seal's
+	// own keys (one per line, the first seals, all verify), from a
+	// Secret of its own. Set, anyone who can read the session Secret
+	// cannot forge a seal, so cannot make the console delete a Cluster
+	// of their choosing; unset, the keys derive from the session secret
+	// (HKDF, a distinct label), as before.
+	EnvRestoreDrillSealKeyFile = "RESTORE_DRILL_SEAL_KEY_FILE" // #nosec G101 -- the name of a variable holding a file path, not a credential
 )
 
 // The values of RESTORE_DRILL_SERVER_CA.
@@ -103,6 +111,9 @@ type RestoreDrill struct {
 	// ServerCA is RESTORE_DRILL_SERVER_CA (DrillServerCA*), and
 	// ServerCASecret the Secret of the "secret" mode.
 	ServerCA, ServerCASecret string
+	// SealKeyFile is RESTORE_DRILL_SEAL_KEY_FILE, empty when the seal's
+	// keys derive from the session secret.
+	SealKeyFile string
 }
 
 // NamespaceFor is the namespace a drill of a Cluster in source runs in.
@@ -179,6 +190,13 @@ func restoreDrill(lookup Lookup, watched []string, fail func(name, constraint st
 		}
 	}
 	d.ServerCA, d.ServerCASecret = drillServerCA(lookup, d.Namespace, fail)
+	if raw, ok := lookup(EnvRestoreDrillSealKeyFile); ok && raw != "" {
+		if !filepath.IsAbs(raw) {
+			fail(EnvRestoreDrillSealKeyFile, "must be an absolute path")
+		} else {
+			d.SealKeyFile = filepath.Clean(raw)
+		}
+	}
 	return d
 }
 
@@ -226,4 +244,5 @@ func (d RestoreDrill) info(into map[string]string) {
 	into[EnvRestoreDrillStorageClass] = d.StorageClass
 	into[EnvRestoreDrillServerCA] = d.ServerCA
 	into[EnvRestoreDrillServerCASecret] = d.ServerCASecret
+	into[EnvRestoreDrillSealKeyFile] = d.SealKeyFile
 }

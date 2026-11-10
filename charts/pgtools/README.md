@@ -8,7 +8,7 @@ Clusters, in its own namespace, installed by whoever administers that namespace.
 | Tool | Values | Default | What it installs |
 |---|---|---|---|
 | **console** | `console.enabled` | `true` | the console: one Deployment or StatefulSet (a StatefulSet with `console.history.persistent`), watching `console.watchNamespaces` |
-| **insight pack** | `insightPack.enabled` | `true` | the ConfigMap `pgtoolbox-insight-pack` of CloudNativePG custom queries in each watched namespace; a Cluster uses it only once its team opts in ([below](#the-insight-pack)) |
+| **insight pack** | `insightPack.enabled` | `true` | the ConfigMap `<release>-insight-pack` of CloudNativePG custom queries in each watched namespace; a Cluster uses it only once its team opts in ([below](#the-insight-pack)) |
 | **evidence agents** | `evidence.agents` | none | one backup-evidence agent per listed Cluster: a Deployment, a Service, a ServiceAccount and a Role ([below](#evidence-agents-without-the-operator)) |
 | **pgAdmin** | `pgadmin.enabled` | `false` | one pgAdmin for the team: a Deployment, with the servers declared in `pgadmin.servers` ([below](#pgadmin-without-the-operator)) |
 
@@ -292,7 +292,7 @@ the ServiceMonitor). With the NetworkPolicy on, list the scraper's namespace in
 ## The insight pack
 
 `insightPack.enabled` (default `true`) creates the ConfigMap
-`pgtoolbox-insight-pack` in each namespace of `insightPack.namespaces` (default:
+`<release>-insight-pack` (`insightPack.configMapName`) in each namespace of `insightPack.namespaces` (default:
 `console.watchNamespaces`, else the release namespace). It holds CloudNativePG
 custom queries for wraparound, vacuum health, blocking, connections,
 `pg_stat_statements` and index hygiene, which the console reads from the
@@ -304,8 +304,15 @@ by adding one line to the Cluster:
 ```yaml
 spec:
   monitoring:
-    customQueriesConfigMap: [{name: pgtoolbox-insight-pack, key: queries}]
+    customQueriesConfigMap: [{name: <release>-insight-pack, key: queries}]
 ```
+
+The name is per release so that two releases in one namespace do not collide;
+the chart tells its console the same name (`INSIGHT_PACK_CONFIGMAP`), which the
+console matches against the Cluster and shows in its opt-in line. Set
+`insightPack.configMapName: pgtoolbox-insight-pack` to keep the name of
+`deploy/insight-pack/insight-pack.yaml`, which the console also expects when
+`insightPack.enabled` is `false`.
 
 The ConfigMap carries `cnpg.io/reload`, so a chart upgrade that changes the pack
 reloads it on the instances, and its version as the label and annotation
@@ -547,7 +554,7 @@ extra network boundary. Two limits, stated plainly:
    (and `networkPolicy.ingress.extraFrom`) on the console port. With nothing
    exposed and no extra peer, no ingress is admitted at all.
 
-The API-server egress uses the addresses of the `kubernetes` Endpoints, looked up
+The API-server egress uses the addresses of the `kubernetes` EndpointSlice, looked up
 at install time. Where the lookup is not possible (`helm template`, `--dry-run`)
 the chart **fails** rather than guess; set `networkPolicy.apiServer.addresses`,
 or `mode: any` (any address on 443/6443), the documented fallback for API servers
@@ -618,7 +625,7 @@ The chart sets these environment variables; the console binary reads them
 `OIDC_REQUIRE_EMAIL_VERIFIED` when false, `OIDC_GRANT_CLIENT_ID` and
 `OIDC_GRANT_CLIENT_SECRET_FILE` with `oidc.grantClient`), `PUBLIC_URL`, `SESSION_MAX_AGE`,
 `AUTH_TOKEN_LOGIN` when false, `IDP_TIMEOUT`, `COOKIE_SECURE`,
-`TRUSTED_PROXY_HOPS`, `TLS_CERT_FILE`/`TLS_KEY_FILE`, `REVOCATION_CONFIGMAP`, `INSTANCE_STATUS_CA_FILE`,
+`TRUSTED_PROXY_HOPS`, `TLS_CERT_FILE`/`TLS_KEY_FILE`, `REVOCATION_CONFIGMAP`, `INSIGHT_PACK_CONFIGMAP`, `INSTANCE_STATUS_CA_FILE`,
 `ALLOW_CLUSTER_CATALOGS`, `ALLOW_LOGS`, `LOG_STREAM_ENABLED`, `LOG_MATCH_MAX_AGE`, `EVIDENCE_ENABLED` when false, `EVIDENCE_TOKEN_DIR`, `EVIDENCE_AGENTS_FILE`, `EVIDENCE_INTERVAL`, `OPERATIONS_ENABLED` when false, `RESTORE_DRILL_*` with `restoreDrills.enabled`, `MONITORING_URL`, `PROMETHEUS_URL`, `PROMETHEUS_TOKEN_FILE`, `PROMETHEUS_CA_FILE`, `PROMETHEUS_NAMESPACED`, `PROMETHEUS_RANGE`, `HISTORY_ENABLED`, `HISTORY_PATH`,
 `POD_NAMESPACE`, and with `auth.provider=openshift` `OPENSHIFT_CLIENT_ID`,
 `OPENSHIFT_CLIENT_SECRET_FILE`, `OPENSHIFT_DISCOVERY_URL`, `OPENSHIFT_SCOPES` and
@@ -879,7 +886,7 @@ authority on what is accepted.
 | console.breakGlass.roleKind | string | `"ClusterRole"` | What the RoleBinding points at. `ClusterRole` binds the `pgtoolbox-console-operator` ClusterRole, which the pgtoolbox chart (`operator.userRoles.create`) or `config/rbac` must have created. `Role` renders, in each watched namespace, a Role of the same rules (the `pgtoolbox.fyannk.dev` ones only when `console.rbac.operatorKinds` resolves to true) and binds that: for a namespace admin who installs without the operator. |
 | console.publicURL | string | `""` | URL people type, `https://host/`. Used for cookies, redirects and the OpenShift callback. Default: `https://<exposure.host>` when a host is set. |
 | console.cookieSecure | string | `""` | Force the session cookie's `Secure` attribute (`true` or `false`). Empty keeps the console's rule: Secure unless the request is plain loopback HTTP. |
-| console.trustedProxyHops | int | `0` | Reverse-proxy hops to trust for `X-Forwarded-*`. 0 trusts none. |
+| console.trustedProxyHops | int | `nil` | Reverse-proxy hops to trust for `X-Forwarded-*`. 0 trusts none. Empty: 1 when `exposure.type` is not `none` (the Ingress, Route or gateway in front), 0 otherwise. Without the edge's hop every user shares the edge's address, and so one sign-in budget. Set it explicitly when more proxies sit in front (a CDN, a load balancer that appends to the header) or none does. |
 | console.tls.secretName | string | `""` | kubernetes.io/tls Secret that makes the console serve HTTPS on `port` (mounted as files). Point the edge at it with your controller's backend-protocol setting. |
 | console.evidence.enabled | bool | `true` | Read repository evidence from the namespace's EvidenceAgents (`EVIDENCE_ENABLED`). Off, the backups screen says "disabled" instead of looking for an agent. |
 | console.evidence.interval | string | `""` | How often each agent is asked again (`EVIDENCE_INTERVAL`). Empty keeps the console's default. |
@@ -906,9 +913,10 @@ authority on what is accepted.
 | console.restoreDrills.storage | object | `{"size":"","storageClass":""}` | Storage of the drill instance: `size` and `storageClass`. Empty values keep the source Cluster's. |
 | console.restoreDrills.serverCA.mode | string | `"auto"` | CA that signs each drill's server certificate: `auto`, `source`, `secret` or `own` (see the comment above). |
 | console.restoreDrills.serverCA.secret | string | `""` | CA Secret (`ca.crt` and `ca.key`) in every drill namespace, for mode `secret` (and `auto`); its `ca.crt` must be in `instanceStatus.caBundleConfigMap`. |
+| console.restoreDrills.sealKey | object | `{"existingSecret":"","key":"keys"}` | The drill seal's own keys, mounted as a file (`RESTORE_DRILL_SEAL_KEY_FILE`): `{existingSecret: name, key: keys}`. Empty `existingSecret`: the keys derive from the session secret. |
 | console.restoreDrills.networkPolicy.enabled | bool | `true` | Render the drill Pods' NetworkPolicy in every drill namespace. On with drills: a promoted drill is a live copy of a production database, and extensions the console cannot neutralise must not reach the network. |
 | console.restoreDrills.networkPolicy.apiServer.mode | string | `"any"` | How egress to the API server is allowed: `any` (any address on `apiServer.ports`, so that the policy renders without a cluster) or `addresses` (only `apiServer.addresses`). |
-| console.restoreDrills.networkPolicy.apiServer.addresses | list | `[]` | API server IP addresses to allow when `apiServer.mode` is `addresses` and the Endpoints lookup is unavailable (`helm template`, GitOps renderers). |
+| console.restoreDrills.networkPolicy.apiServer.addresses | list | `[]` | API server IP addresses to allow when `apiServer.mode` is `addresses` and the EndpointSlice lookup is unavailable (`helm template`, GitOps renderers). |
 | console.restoreDrills.networkPolicy.apiServer.ports | list | `[443,6443]` | Ports of the API server that egress is allowed to. |
 | console.restoreDrills.networkPolicy.dns.namespace | string | `"kube-system"` | Namespace of the cluster DNS pods that egress is allowed to. |
 | console.restoreDrills.networkPolicy.dns.podLabels | object | `{"k8s-app":"kube-dns"}` | Labels that select the cluster DNS pods. |
@@ -955,9 +963,9 @@ authority on what is accepted.
 | console.exposure.httpRoute.parentRefs | list | `[]` | Gateways the HTTPRoute attaches to, as Gateway API `parentRefs`: `[{name: gw, namespace: infra}]`. |
 | console.exposure.routerNamespace | string | `"openshift-ingress"` | Namespace the ingress router runs in, the one place the NetworkPolicy lets reach the Pod: `openshift-ingress` on OpenShift, `ingress-nginx` for the community controller. Used only when the NetworkPolicy is enabled. |
 | console.networkPolicy.enabled | bool | `false` | Render a NetworkPolicy for these pods. Off by default: whether the cluster enforces policies, and whether this namespace wants one, is the installing admin's decision. |
-| console.networkPolicy.apiServer.mode | string | `"addresses"` | How egress to the API server is allowed. `addresses`: the addresses of the addresses you list in `apiServer.addresses`, or, with `apiServer.lookup`, those of the `kubernetes` Endpoints read at install time (deprecated default, see `apiServer.lookup`). `any`: any address on `apiServer.ports`, the fallback for API servers behind a load balancer whose address is not in the Endpoints. |
-| console.networkPolicy.apiServer.addresses | list | `[]` | API server IP addresses to allow when `apiServer.mode` is `addresses`: the ClusterIP and endpoints of `kubectl get endpoints kubernetes -n default` (a namespace admin usually cannot read that object: ask the cluster admin). |
-| console.networkPolicy.apiServer.lookup | bool | `true` | With `mode: addresses` and no `addresses`, read them from the `kubernetes` Endpoints of the `default` namespace at install time. On in this minor so existing installs keep working; it needs a user allowed to `get` `endpoints` in `default` (a namespace admin usually is not: Helm then stops with a Forbidden error), and `helm template` / `--dry-run` have no cluster. NOTES warns while it is used. The NEXT MINOR DEFAULTS IT TO false: list `addresses`, set `mode: any`, or keep `lookup: true` as a cluster admin. With `lookup: false` and no `addresses`, the chart refuses to render and says so. |
+| console.networkPolicy.apiServer.mode | string | `"addresses"` | How egress to the API server is allowed. `addresses`: the addresses of the addresses you list in `apiServer.addresses`, or, with `apiServer.lookup`, those of the `kubernetes` EndpointSlice read at install time (deprecated default, see `apiServer.lookup`). `any`: any address on `apiServer.ports`, the fallback for API servers behind a load balancer whose address is not in the EndpointSlice. |
+| console.networkPolicy.apiServer.addresses | list | `[]` | API server IP addresses to allow when `apiServer.mode` is `addresses`: the ClusterIP and endpoints of `kubectl get endpointslice kubernetes -n default` (a namespace admin usually cannot read that object: ask the cluster admin). |
+| console.networkPolicy.apiServer.lookup | bool | `true` | With `mode: addresses` and no `addresses`, read them from the `kubernetes` EndpointSlice of the `default` namespace at install time. On in this minor so existing installs keep working; it needs a user allowed to `get` `endpointslices.discovery.k8s.io` in `default` (a namespace admin usually is not: Helm then stops with a Forbidden error), and `helm template` / `--dry-run` have no cluster. NOTES warns while it is used. The NEXT MINOR DEFAULTS IT TO false: list `addresses`, set `mode: any`, or keep `lookup: true` as a cluster admin. With `lookup: false` and no `addresses`, the chart refuses to render and says so. |
 | console.networkPolicy.apiServer.ports | list | `[443,6443]` | Ports of the API server that egress is allowed to. |
 | console.networkPolicy.dns.namespace | string | `"kube-system"` | Namespace of the cluster DNS pods that egress is allowed to. |
 | console.networkPolicy.dns.podLabels | object | `{"k8s-app":"kube-dns"}` | Labels that select the cluster DNS pods. |
@@ -993,7 +1001,8 @@ authority on what is accepted.
 | console.extraEnv | list | `[]` | Extra environment variables of the console container, as plain EnvVar objects. |
 | console.extraVolumes | list | `[]` | Extra volumes of the console pod. |
 | console.extraVolumeMounts | list | `[]` | Extra volume mounts of the console container. |
-| insightPack.enabled | bool | `true` | Create the ConfigMap `pgtoolbox-insight-pack` of CloudNativePG custom queries. Nothing changes on a Cluster until its team adds it to `spec.monitoring.customQueriesConfigMap`. |
+| insightPack.enabled | bool | `true` | Create the ConfigMap `<release>-insight-pack` of CloudNativePG custom queries. Nothing changes on a Cluster until its team adds it to `spec.monitoring.customQueriesConfigMap`. |
+| insightPack.configMapName | string | `""` | Name of the pack's ConfigMap, which the console matches against the Clusters' `customQueriesConfigMap` and names in its opt-in instructions (`INSIGHT_PACK_CONFIGMAP`). Empty: `<release>-insight-pack` with the pack enabled, else `pgtoolbox-insight-pack` (the name of `deploy/insight-pack/insight-pack.yaml`). Set `pgtoolbox-insight-pack` to keep the name of a pack the teams already reference. |
 | insightPack.namespaces | list | `[]` | Namespaces that get the ConfigMap. Empty: `console.watchNamespaces`, or the release namespace. |
 | insightPack.skipNamespaces | list | `[]` | Namespaces left out because their teams apply the pack's ConfigMap themselves. Helm will not take over a ConfigMap it did not create, so an install over a hand-applied one fails until its namespace is listed here. |
 | evidence.agents | list | `[]` | One evidence agent per listed Cluster of the release namespace. Each entry takes `cluster`, `secrets`, `objectStore`, `stanza`, `archive`, `pgbackrest`, `serviceAccountName`, `allowInsecureEndpoint`, `workloadIdentity`, `resources`, `image`, `nodeSelector`, `tolerations` and `affinity`; see the README. |
@@ -1007,9 +1016,9 @@ authority on what is accepted.
 | evidence.token.existingSecret | string | `""` | Secret holding the shared token (key `token`, at least 32 characters). Empty: the chart creates `<release>-evidence-token` with a random value once and keeps it across upgrades. `helm template` and GitOps renderers cannot look it up: create the Secret and name it here. |
 | evidence.token.key | string | `"token"` | Key of the shared token in the Secret. |
 | evidence.networkPolicy.enabled | bool | `false` | Render a NetworkPolicy for the agent pods: they then admit only the console on their port and reach only DNS, the API server and the object store. Off by default (the installing admin's choice). |
-| evidence.networkPolicy.apiServer.mode | string | `"addresses"` | How egress to the API server is allowed. `addresses`: the addresses of the addresses you list in `apiServer.addresses`, or, with `apiServer.lookup`, those of the `kubernetes` Endpoints read at install time (deprecated default, see `apiServer.lookup`). `any`: any address on `apiServer.ports`, the fallback for API servers behind a load balancer whose address is not in the Endpoints. |
-| evidence.networkPolicy.apiServer.addresses | list | `[]` | API server IP addresses to allow when `apiServer.mode` is `addresses`: the ClusterIP and endpoints of `kubectl get endpoints kubernetes -n default` (a namespace admin usually cannot read that object: ask the cluster admin). |
-| evidence.networkPolicy.apiServer.lookup | bool | `true` | With `mode: addresses` and no `addresses`, read them from the `kubernetes` Endpoints of the `default` namespace at install time. On in this minor so existing installs keep working; it needs a user allowed to `get` `endpoints` in `default` (a namespace admin usually is not: Helm then stops with a Forbidden error), and `helm template` / `--dry-run` have no cluster. NOTES warns while it is used. The NEXT MINOR DEFAULTS IT TO false: list `addresses`, set `mode: any`, or keep `lookup: true` as a cluster admin. With `lookup: false` and no `addresses`, the chart refuses to render and says so. |
+| evidence.networkPolicy.apiServer.mode | string | `"addresses"` | How egress to the API server is allowed. `addresses`: the addresses of the addresses you list in `apiServer.addresses`, or, with `apiServer.lookup`, those of the `kubernetes` EndpointSlice read at install time (deprecated default, see `apiServer.lookup`). `any`: any address on `apiServer.ports`, the fallback for API servers behind a load balancer whose address is not in the EndpointSlice. |
+| evidence.networkPolicy.apiServer.addresses | list | `[]` | API server IP addresses to allow when `apiServer.mode` is `addresses`: the ClusterIP and endpoints of `kubectl get endpointslice kubernetes -n default` (a namespace admin usually cannot read that object: ask the cluster admin). |
+| evidence.networkPolicy.apiServer.lookup | bool | `true` | With `mode: addresses` and no `addresses`, read them from the `kubernetes` EndpointSlice of the `default` namespace at install time. On in this minor so existing installs keep working; it needs a user allowed to `get` `endpointslices.discovery.k8s.io` in `default` (a namespace admin usually is not: Helm then stops with a Forbidden error), and `helm template` / `--dry-run` have no cluster. NOTES warns while it is used. The NEXT MINOR DEFAULTS IT TO false: list `addresses`, set `mode: any`, or keep `lookup: true` as a cluster admin. With `lookup: false` and no `addresses`, the chart refuses to render and says so. |
 | evidence.networkPolicy.apiServer.ports | list | `[443,6443]` | Ports of the API server that egress is allowed to. |
 | evidence.networkPolicy.dns.namespace | string | `"kube-system"` | Namespace of the cluster DNS pods that egress is allowed to. |
 | evidence.networkPolicy.dns.podLabels | object | `{"k8s-app":"kube-dns"}` | Labels that select the cluster DNS pods. |
@@ -1067,9 +1076,9 @@ authority on what is accepted.
 | pgadmin.exposure.httpRoute.parentRefs | list | `[]` | Gateways the HTTPRoute attaches to, as Gateway API `parentRefs`: `[{name: gw, namespace: infra}]`. |
 | pgadmin.exposure.routerNamespace | string | `"openshift-ingress"` | Namespace the ingress router runs in, the one place the NetworkPolicy lets reach the Pod: `openshift-ingress` on OpenShift, `ingress-nginx` for the community controller. Used only when the NetworkPolicy is enabled. |
 | pgadmin.networkPolicy.enabled | bool | `false` | Render a NetworkPolicy for these pods. Off by default: whether the cluster enforces policies, and whether this namespace wants one, is the installing admin's decision. |
-| pgadmin.networkPolicy.apiServer.mode | string | `"addresses"` | How egress to the API server is allowed. `addresses`: the addresses of the addresses you list in `apiServer.addresses`, or, with `apiServer.lookup`, those of the `kubernetes` Endpoints read at install time (deprecated default, see `apiServer.lookup`). `any`: any address on `apiServer.ports`, the fallback for API servers behind a load balancer whose address is not in the Endpoints. |
-| pgadmin.networkPolicy.apiServer.addresses | list | `[]` | API server IP addresses to allow when `apiServer.mode` is `addresses`: the ClusterIP and endpoints of `kubectl get endpoints kubernetes -n default` (a namespace admin usually cannot read that object: ask the cluster admin). |
-| pgadmin.networkPolicy.apiServer.lookup | bool | `true` | With `mode: addresses` and no `addresses`, read them from the `kubernetes` Endpoints of the `default` namespace at install time. On in this minor so existing installs keep working; it needs a user allowed to `get` `endpoints` in `default` (a namespace admin usually is not: Helm then stops with a Forbidden error), and `helm template` / `--dry-run` have no cluster. NOTES warns while it is used. The NEXT MINOR DEFAULTS IT TO false: list `addresses`, set `mode: any`, or keep `lookup: true` as a cluster admin. With `lookup: false` and no `addresses`, the chart refuses to render and says so. |
+| pgadmin.networkPolicy.apiServer.mode | string | `"addresses"` | How egress to the API server is allowed. `addresses`: the addresses of the addresses you list in `apiServer.addresses`, or, with `apiServer.lookup`, those of the `kubernetes` EndpointSlice read at install time (deprecated default, see `apiServer.lookup`). `any`: any address on `apiServer.ports`, the fallback for API servers behind a load balancer whose address is not in the EndpointSlice. |
+| pgadmin.networkPolicy.apiServer.addresses | list | `[]` | API server IP addresses to allow when `apiServer.mode` is `addresses`: the ClusterIP and endpoints of `kubectl get endpointslice kubernetes -n default` (a namespace admin usually cannot read that object: ask the cluster admin). |
+| pgadmin.networkPolicy.apiServer.lookup | bool | `true` | With `mode: addresses` and no `addresses`, read them from the `kubernetes` EndpointSlice of the `default` namespace at install time. On in this minor so existing installs keep working; it needs a user allowed to `get` `endpointslices.discovery.k8s.io` in `default` (a namespace admin usually is not: Helm then stops with a Forbidden error), and `helm template` / `--dry-run` have no cluster. NOTES warns while it is used. The NEXT MINOR DEFAULTS IT TO false: list `addresses`, set `mode: any`, or keep `lookup: true` as a cluster admin. With `lookup: false` and no `addresses`, the chart refuses to render and says so. |
 | pgadmin.networkPolicy.apiServer.ports | list | `[443,6443]` | Ports of the API server that egress is allowed to. |
 | pgadmin.networkPolicy.dns.namespace | string | `"kube-system"` | Namespace of the cluster DNS pods that egress is allowed to. |
 | pgadmin.networkPolicy.dns.podLabels | object | `{"k8s-app":"kube-dns"}` | Labels that select the cluster DNS pods. |
@@ -1077,7 +1086,7 @@ authority on what is accepted.
 | pgadmin.networkPolicy.identityProvider.to | list | `[]` | Where the identity provider (oidc) or OAuth server (openshift) is, as raw NetworkPolicy `to` items. Empty: any address on 443. |
 | pgadmin.networkPolicy.extraEgress | list | `[]` | Extra egress rules, as raw NetworkPolicy `egress` items (an egress proxy, a webhook or mail server, a Prometheus outside the watched namespaces, a settings database that `configDatabase.cluster` does not cover). |
 | pgadmin.networkPolicy.ingress.extraFrom | list | `[]` | Extra ingress peers (monitoring, a test client), as raw NetworkPolicy `from` items. |
-| pgadmin.fsGroup | int | `5050` | Group that owns pgAdmin's volume. OpenShift's restricted SCC assigns its own range: set `null` there. |
+| pgadmin.fsGroup | string | `nil` | Group that owns pgAdmin's volume. `null` (the default): 5050, except on OpenShift (the API server serves `security.openshift.io/v1`, or `auth.provider` is `openshift`), whose restricted-v2 SCC assigns its own range and refuses a fixed one. `0`: none. An explicit value always wins. A client-side `helm template` for OpenShift with another provider needs `--api-versions security.openshift.io/v1` or `fsGroup: 0`. |
 | pgadmin.resources | object | `{"limits":{"memory":"1Gi"},"requests":{"cpu":"100m","memory":"256Mi"}}` | Resource requests and limits of the pgadmin container (the operator's defaults); the small sidecars have their own fixed ones. |
 | pgadmin.nodeSelector | object | `{}` | Node selector of the pods. |
 | pgadmin.tolerations | list | `[]` | Tolerations of the pods. |

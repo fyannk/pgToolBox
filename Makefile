@@ -31,9 +31,9 @@ CONTROLLER_GEN ?= $(call tool,controller-gen,go run sigs.k8s.io/controller-tools
 SETUP_ENVTEST ?= $(call tool,setup-envtest,go run sigs.k8s.io/controller-runtime/tools/setup-envtest@v$(call mise_v,go:sigs.k8s.io/controller-runtime/tools/setup-envtest))
 
 # envtest control planes. The API CEL rules must pass on the oldest Kubernetes
-# the OLM bundle declares (minKubeVersion); the console's kube layer is
-# exercised on the newest the e2e uses.
-ENVTEST_K8S_VERSION_API ?= 1.28.x
+# the OLM bundle declares (minKubeVersion) and the charts' kubeVersion; the
+# console's kube layer is exercised on the newest the e2e uses.
+ENVTEST_K8S_VERSION_API ?= 1.34.1
 ENVTEST_K8S_VERSION_CONSOLE ?= 1.34.1
 
 # Go modules in this tree: the root and the nested evidence module (go.work).
@@ -137,6 +137,9 @@ test-fuzz: ## Fuzz the trust-boundary parsers (FUZZ_TIME per target).
 	$(call fuzz,./pkg/redact,FuzzPayload)
 	$(call fuzz,./pkg/cnpgstatus/insight,FuzzParse)
 	$(call fuzz,./pkg/cnpgstatus/pgconf,FuzzParse)
+	$(call fuzz,./pkg/cnpgstatus/scrape,FuzzParseCatalog)
+	$(call fuzz,./pkg/cnpgstatus/scrape,FuzzParseLabels)
+	$(call fuzz,./pkg/cnpgstatus/logstream,FuzzMatcherObserve)
 	$(call fuzz,./internal/evidence/formats/barmancloud,FuzzParseBackupInfo)
 	$(call fuzz,./internal/evidence/formats/barmancloud,FuzzParseTimelineHistory)
 	$(call fuzz,./internal/evidence/formats/barmancloud,FuzzParseWALName)
@@ -144,6 +147,7 @@ test-fuzz: ## Fuzz the trust-boundary parsers (FUZZ_TIME per target).
 	$(call fuzz,./internal/evidence/formats/pgbackrest,FuzzDecrypt)
 	$(call fuzz,./internal/evidence/formats/pgbackrest,FuzzParseWALName)
 	$(call fuzz,./internal/evidence/formats/pgbackrest,FuzzParseHistory)
+	$(call fuzz,./internal/evidence/formats/pgbackrest,FuzzParseLSN)
 	$(call fuzz,./internal/evidence/provider/cursor,FuzzCodec)
 	$(call fuzz,./internal/evidence/evidenceapi,FuzzBackupInfoProjection)
 	$(call fuzz,./internal/evidence/config,FuzzCheckConnectionString)
@@ -313,6 +317,7 @@ test-hack: ## Tests of the hack/ scripts (the security report generator; throwaw
 	python3 hack/security_report_test.py
 	./hack/evidence/test-verify-signing-key.sh
 	./hack/lib/test-net.sh
+	./hack/test-release.sh
 
 .PHONY: lint-workflows
 lint-workflows: ## actionlint and zizmor on .github (workflows and the local action).

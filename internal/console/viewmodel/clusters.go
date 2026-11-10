@@ -164,8 +164,31 @@ type BackupRecency struct {
 	// PluginBased reports CNPG-I plugin archiving (barman-cloud plugin):
 	// the deprecated in-tree recoverability fields are then never set
 	// and are rendered "not reported by plugin-based backups".
-	PluginBased bool       `json:"pluginBased,omitempty" doc:"Backups go through a CNPG-I plugin."`
-	Provenance  Provenance `json:"provenance"`
+	PluginBased bool `json:"pluginBased,omitempty" doc:"Backups go through a CNPG-I plugin."`
+	// Cadence is the age past which the last completed backup is
+	// overdue: twice the ScheduledBackup period when one is known, a
+	// conservative default otherwise. Absent when no backup is
+	// configured or Backups were not read.
+	Cadence    *BackupCadence `json:"cadence,omitempty"`
+	Provenance Provenance     `json:"provenance"`
+}
+
+// BackupCadence is the age threshold of the last completed backup.
+type BackupCadence struct {
+	// Basis is "schedule" when the threshold comes from a
+	// ScheduledBackup's lastScheduleTime/nextScheduleTime period, or
+	// "default" when no cadence is known and the console applies its
+	// conservative default.
+	Basis string `json:"basis" enum:"schedule,default"`
+	// IntervalSeconds is the shortest observed schedule period; zero
+	// on the default basis.
+	IntervalSeconds int64 `json:"intervalSeconds,omitempty"`
+	// ThresholdSeconds is the age after which the last completed backup
+	// is overdue.
+	ThresholdSeconds int64 `json:"thresholdSeconds"`
+	// Overdue: the last completed backup is older than the threshold,
+	// or none completed and the Cluster is older than it.
+	Overdue bool `json:"overdue,omitempty"`
 }
 
 // FindingCounts summarises the latest diagnostics run.
@@ -207,9 +230,13 @@ type VersionInfo struct {
 	Confidence VersionConfidence `json:"confidence" enum:"reported,image,inferred,unknown"`
 	// DetectedBy names the method, such as "instanceManagerVersion",
 	// "bootstrapControllerImage", "featureProbe".
-	DetectedBy    string `json:"detectedBy,omitempty" doc:"Which source established the version."`
-	PostgresMajor *int   `json:"postgresMajor,omitempty" doc:"Reported PostgreSQL major version."`
-	Image         string `json:"image,omitempty" doc:"status.image."`
+	DetectedBy string `json:"detectedBy,omitempty" doc:"Which source established the version."`
+	// UpgradeInFlight names the instance-manager versions and the
+	// operator's cnpg.io/operatorVersion annotation when they disagree:
+	// an operator upgrade not yet rolled to every instance.
+	UpgradeInFlight string `json:"upgradeInFlight,omitempty" doc:"Instance managers and the operator's Pod annotation disagree: an upgrade in progress."`
+	PostgresMajor   *int   `json:"postgresMajor,omitempty" doc:"Reported PostgreSQL major version."`
+	Image           string `json:"image,omitempty" doc:"status.image."`
 	// Components are the versions in play, each placed in the lifecycle
 	// table, in reading order: Kubernetes, CloudNativePG, the plugin,
 	// PostgreSQL. A component the console has not observed is absent.

@@ -47,16 +47,17 @@ import (
 	evidencev1alpha1 "github.com/fyannk/pgToolBox/pkg/evidence/v1alpha1"
 )
 
-// FieldOwner is the server-side-apply field manager of every write.
-const FieldOwner = "pgtoolbox-operator"
-
 // +kubebuilder:rbac:groups=pgtoolbox.fyannk.dev,resources=evidenceagents,verbs=get;list;watch
 // +kubebuilder:rbac:groups=pgtoolbox.fyannk.dev,resources=evidenceagents/status,verbs=get;update;patch
+// Controller owner references set blockOwnerDeletion, which an API server
+// enforcing OwnerReferencesPermissionEnforcement (OpenShift) allows only to
+// whoever may update the owner's finalizers.
+// +kubebuilder:rbac:groups=pgtoolbox.fyannk.dev,resources=evidenceagents/finalizers,verbs=update
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups="",resources=services;serviceaccounts,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch
-// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list
+// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles;clusterrolebindings,verbs=get;list;watch;create
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles;clusterrolebindings,verbs=update;patch,resourceNames=pgtoolbox-evidence-agent
 // +kubebuilder:rbac:groups=authentication.k8s.io,resources=tokenreviews,verbs=create
@@ -230,7 +231,7 @@ func (r *Reconciler) apply(ctx context.Context, agent *pgtoolboxv1alpha1.Evidenc
 	if err != nil {
 		return fmt.Errorf("encode %T apply: %w", desired, err)
 	}
-	if err := r.Client.Patch(ctx, desired, client.RawPatch(types.ApplyPatchType, data), client.FieldOwner(FieldOwner), client.ForceOwnership); err != nil {
+	if err := r.Client.Patch(ctx, desired, client.RawPatch(types.ApplyPatchType, data), client.FieldOwner(reconcile.FieldOwner), client.ForceOwnership); err != nil {
 		return fmt.Errorf("apply %s %s: %w", desired.GetObjectKind().GroupVersionKind().Kind, desired.GetName(), err)
 	}
 	return nil
@@ -362,10 +363,11 @@ func (r *Reconciler) missingSecrets(ctx context.Context, agent *pgtoolboxv1alpha
 }
 
 // podFacts copies the agent Pod's blocking fact into a reason: the
-// scheduler's Unschedulable, an image pull failure, a crash loop.
+// scheduler's Unschedulable, an image pull failure, a crash loop. The Pods
+// are read from the cache, whose Pod informer the controller watches.
 func (r *Reconciler) podFacts(ctx context.Context, agent *pgtoolboxv1alpha1.EvidenceAgent) (pgtoolboxv1alpha1.Reason, string, error) {
 	var pods corev1.PodList
-	if err := r.APIReader.List(ctx, &pods, client.InNamespace(agent.Namespace), client.MatchingLabelsSelector{Selector: labels.SelectorFromSet(selectorLabels(agent))}); err != nil {
+	if err := r.Client.List(ctx, &pods, client.InNamespace(agent.Namespace), client.MatchingLabelsSelector{Selector: labels.SelectorFromSet(selectorLabels(agent))}); err != nil {
 		return "", "", fmt.Errorf("list agent Pods: %w", err)
 	}
 	for i := range pods.Items {

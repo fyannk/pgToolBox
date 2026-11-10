@@ -3,7 +3,7 @@ kind: StatefulSet
 metadata:
   annotations:
     pgtoolbox.fyannk.dev/claim-template-hash: 4229bd76cf97f0be
-    pgtoolbox.fyannk.dev/spec-hash: 47ae3a1e5e919144
+    pgtoolbox.fyannk.dev/spec-hash: 984753a9246985d9
   labels:
     app.kubernetes.io/component: console
     app.kubernetes.io/instance: console
@@ -70,6 +70,8 @@ spec:
           value: console-revocations
         - name: STATE_CONFIGMAP
           value: console-state
+        - name: INSIGHT_PACK_CONFIGMAP
+          value: pgtoolbox-insight-pack
         - name: INSTANCE_STATUS_CA_FILE
           value: /var/run/console/instance-ca/ca.crt
         - name: EVIDENCE_TOKEN_DIR

@@ -257,10 +257,42 @@ tests:
       - failedTemplate:
           errorPattern: "needs pgadmin.exposure.type=route"
 
-  - it: drops the fixed fsGroup when told to (OpenShift's SCC assigns one)
-    set: {pgadmin.fsGroup: null}
+  - it: defaults the fsGroup to 5050 off OpenShift
+    asserts:
+      - equal: {path: spec.template.spec.securityContext.fsGroup, value: 5050}
+      - equal: {path: spec.template.spec.securityContext.fsGroupChangePolicy, value: OnRootMismatch}
+
+  - it: leaves the fsGroup to OpenShift's SCC (restricted-v2 refuses a fixed one)
+    capabilities:
+      apiVersions: [security.openshift.io/v1]
     asserts:
       - notExists: {path: spec.template.spec.securityContext.fsGroup}
+      - notExists: {path: spec.template.spec.securityContext.fsGroupChangePolicy}
+
+  - it: reads the OpenShift oauth-proxy as OpenShift, for a client-side render
+    set:
+      pgadmin.auth.provider: openshift
+      pgadmin.exposure.type: route
+    asserts:
+      - notExists: {path: spec.template.spec.securityContext.fsGroup}
+      - notExists: {path: spec.template.spec.securityContext.fsGroupChangePolicy}
+
+  - it: renders no fsGroup for 0, off OpenShift too
+    set: {pgadmin.fsGroup: 0}
+    asserts:
+      - notExists: {path: spec.template.spec.securityContext.fsGroup}
+
+  - it: keeps an explicit fsGroup, on OpenShift too
+    set: {pgadmin.fsGroup: 1000690000}
+    capabilities:
+      apiVersions: [security.openshift.io/v1]
+    asserts:
+      - equal: {path: spec.template.spec.securityContext.fsGroup, value: 1000690000}
+
+  - it: keeps an explicit fsGroup off OpenShift
+    set: {pgadmin.fsGroup: 7000}
+    asserts:
+      - equal: {path: spec.template.spec.securityContext.fsGroup, value: 7000}
 
   - it: rewrites every image for a mirror
     set: {global.imageRegistry: registry.corp:5000/mirror}

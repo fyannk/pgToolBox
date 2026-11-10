@@ -498,6 +498,15 @@ type PgToolBoxConsoleRestoreDrillsSpec struct {
 	// +optional
 	MaxConcurrent *int32 `json:"maxConcurrent,omitempty"`
 
+	// The drill seal's own keys (RESTORE_DRILL_SEAL_KEY_FILE): a key of a
+	// Secret in the console's namespace holding one key per line, at least
+	// 32 bytes each (the first seals, all verify), mounted read-only. Keep
+	// the Secret readable by the console alone. Omitted: the keys derive
+	// from the session secret, so whoever can read the session Secret can
+	// forge a seal.
+	// +optional
+	SealKeySecretRef *SecretKeyReference `json:"sealKeySecretRef,omitempty"`
+
 	// The NetworkPolicy around the drill Pods. A promoted drill is a live
 	// copy of a production database: the console turns off the background
 	// workers it knows (logical replication, pg_cron, TimescaleDB), and this

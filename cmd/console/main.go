@@ -95,6 +95,18 @@ const (
 	envProbeListenAddr = "PROBE_LISTEN_ADDR"
 	envTLSCertFile     = "TLS_CERT_FILE"
 	envTLSKeyFile      = "TLS_KEY_FILE"
+	envShutdownDelay   = "SHUTDOWN_DELAY"
+)
+
+// Shutdown delay: how long the console keeps serving, not ready, after
+// SIGTERM. The default covers the endpoints controller and a typical
+// edge's resync, and keeps delay plus drain (25 s) under Kubernetes'
+// default 30 s grace period, which the pgtools chart's console
+// Deployment does not raise; a longer delay needs a longer
+// terminationGracePeriodSeconds.
+const (
+	defaultShutdownDelay = 3 * time.Second
+	maxShutdownDelay     = 10 * time.Second
 )
 
 // Settings is the whole configuration: the read side's (console core)
@@ -106,12 +118,14 @@ type Settings struct {
 	ProbeAddr   string
 	TLSCertFile string
 	TLSKeyFile  string
+	// ShutdownDelay is SHUTDOWN_DELAY.
+	ShutdownDelay time.Duration
 }
 
 // load reads and validates every variable, joining every problem.
 func load(lookup func(string) (string, bool)) (Settings, error) {
 	var errs []error
-	s := Settings{ListenAddr: ":3000", ProbeAddr: ":3001"}
+	s := Settings{ListenAddr: ":3000", ProbeAddr: ":3001", ShutdownDelay: defaultShutdownDelay}
 	c, err := config.LoadConsole(config.Lookup(lookup))
 	if err != nil {
 		errs = append(errs, err)
@@ -138,6 +152,14 @@ func load(lookup func(string) (string, bool)) (Settings, error) {
 	s.TLSCertFile, s.TLSKeyFile = get(envTLSCertFile), get(envTLSKeyFile)
 	if (s.TLSCertFile == "") != (s.TLSKeyFile == "") {
 		errs = append(errs, fmt.Errorf("%s and %s are set together or not at all", envTLSCertFile, envTLSKeyFile))
+	}
+	if v := get(envShutdownDelay); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil || d < 0 || d > maxShutdownDelay {
+			errs = append(errs, fmt.Errorf("%s=%q must be a duration between 0s and %s", envShutdownDelay, v, maxShutdownDelay))
+		} else {
+			s.ShutdownDelay = d
+		}
 	}
 	return s, errors.Join(errs...)
 }
@@ -240,13 +262,14 @@ func run(ctx context.Context, lookup func(string) (string, bool), logOut io.Writ
 	}
 	log.Info("starting pgtoolbox-console", "version", version, "watchNamespaces", s.Console.WatchNamespaces)
 	return server.RunApp(ctx, server.AppOptions{
-		RestConfig:  restConfig,
-		Auth:        s.Auth,
-		ListenAddr:  s.ListenAddr,
-		ProbeAddr:   s.ProbeAddr,
-		TLSCertFile: s.TLSCertFile,
-		TLSKeyFile:  s.TLSKeyFile,
-		Source:      source,
+		RestConfig:    restConfig,
+		Auth:          s.Auth,
+		ListenAddr:    s.ListenAddr,
+		ProbeAddr:     s.ProbeAddr,
+		TLSCertFile:   s.TLSCertFile,
+		TLSKeyFile:    s.TLSKeyFile,
+		Source:        source,
+		ShutdownDelay: s.ShutdownDelay,
 		Features: api.Features{
 			Logs: s.Console.AllowLogs, History: s.Console.History.Enabled, Metrics: s.Console.MetricsEnabled,
 			Evidence: s.Console.Evidence.Enabled, Operations: s.Console.OperationsEnabled, Digest: rm.Digest != nil,
@@ -276,22 +299,37 @@ func run(ctx context.Context, lookup func(string) (string, bool), logOut io.Writ
 }
 
 // restoreDrills assembles the restore drills when RESTORE_DRILL_ENABLED is
-// set: the seal's keys derive from the session secret (so every replica
-// verifies what any of them created), and the record lives in the history
-// journal when history is persistent.
+// set: the seal's keys derive from its own key file when
+// RESTORE_DRILL_SEAL_KEY_FILE is set, else from the session secret (so
+// every replica verifies what any of them created); the record lives in
+// the history journal when history is persistent, and finished drills'
+// outcomes in the shared-state ConfigMap otherwise.
 func restoreDrills(s Settings, rm *readmodel.ReadModel, restConfig *rest.Config, log *slog.Logger) (*wiring.Drills, error) {
 	if !s.Console.RestoreDrill.Enabled {
 		return nil, nil //nolint:nilnil // disabled is a valid, explicit outcome
 	}
-	secrets, err := auth.LoadSecrets(s.Auth.SessionSecretFile)
-	if err != nil {
-		return nil, err
+	var secrets [][]byte
+	var err error
+	if path := s.Console.RestoreDrill.SealKeyFile; path != "" {
+		if secrets, err = auth.LoadSecrets(path); err != nil {
+			return nil, fmt.Errorf("restore drill seal key (%s): %w", config.EnvRestoreDrillSealKeyFile, err)
+		}
+	} else {
+		if secrets, err = auth.LoadSecrets(s.Auth.SessionSecretFile); err != nil {
+			return nil, err
+		}
+		log.Warn("restore drill seals derive from the session secret: whoever reads that Secret can forge a seal; set " +
+			config.EnvRestoreDrillSealKeyFile + " to give the seal its own key")
 	}
 	var persist drills.Persister
 	if j := rm.History.DrillJournal(); j != nil {
 		persist = j
 	}
-	return wiring.NewDrills(s.Console, rm.Status, restConfig, s.Auth.Namespace, secrets, persist, log)
+	var keeper drills.Keeper
+	if persist == nil && rm.Shared != nil {
+		keeper = wiring.NewSharedDrillKeeper(rm.Shared, time.Now())
+	}
+	return wiring.NewDrills(s.Console, rm.Status, restConfig, s.Auth.Namespace, secrets, persist, keeper, log)
 }
 
 // grants is the shared MCP grant index, or nil (see signOuts).

@@ -3,9 +3,11 @@
 # pgtoolbox Helm chart
 
 The pgToolBox **operator**: it reconciles `PgToolBoxConsole`, `PgAdmin` and
-`EvidenceAgent`, once per cluster or per set of namespaces. It owns cluster-scoped
-objects (the CRDs, its ClusterRole, the two user ClusterRoles), so a cluster
-administrator installs it.
+`EvidenceAgent`, as a single instance per cluster. It owns cluster-scoped
+objects (the CRDs, its ClusterRole, the three user ClusterRoles), so a cluster
+administrator installs it. `operator.config.watchNamespaces` narrows what the
+operator caches, not what its ClusterRole grants: a second operator release for
+another set of namespaces is not supported.
 
 A team that has no operator, or does not want one, installs its tools with the
 **pgtools** chart instead (`charts/pgtools`): the console in its own namespace, with
@@ -20,7 +22,7 @@ helm install pgtoolbox charts/pgtoolbox --namespace pgtoolbox --create-namespace
 It renders the operator Deployment, its generated ClusterRole (the rules of
 `config/rbac/role.yaml`, copied by `make manifests`), the leader-election Role, the
 CRDs from `operator-crds/` (with `helm.sh/resource-policy: keep`: uninstalling must
-not delete every `PgToolBoxConsole`, `PgAdmin` and `EvidenceAgent`), and the two user ClusterRoles.
+not delete every `PgToolBoxConsole`, `PgAdmin` and `EvidenceAgent`), and the three user ClusterRoles.
 
 | Value | Becomes | Default |
 |---|---|---|
@@ -34,7 +36,7 @@ not delete every `PgToolBoxConsole`, `PgAdmin` and `EvidenceAgent`), and the two
 | `operator.config.*` | `WATCH_NAMESPACES`, `MAX_CONCURRENT_RECONCILES`, `RECONCILIATION_TIMEOUT`, `UPGRADE_BACKUPS_KEPT` | the operator's own defaults |
 | `operator.metrics.serviceMonitor` / `podMonitor` | a metrics Service + ServiceMonitor / a PodMonitor | off |
 | `operator.metrics.readerClusterRole` / `readerSubjects` | `<release>-metrics-reader`, bound to the named scrapers only | off |
-| `operator.userRoles.create` | `pgtoolbox-console-viewer`, `pgtoolbox-console-operator` | `true` |
+| `operator.userRoles.create` | `pgtoolbox-console-viewer`, `pgtoolbox-console-operator`, `pgtoolbox-console-approver` | `true` |
 | `operator.userRoles.aggregateToAdmin` | `pgtoolbox-aggregate-to-admin`: read on PgAdmins, EvidenceAgents and PgAccessRequests `create` on PgAccessRequests and `update` on their status (deciding a request), aggregated into the built-in `admin` role, not `edit`, so a namespace admin can bind `pgtoolbox-console-viewer` / `pgtoolbox-console-operator` to their team (a namespace admin can then install a `pgtools` console that links to them) | `true` |
 
 The operator serves `/metrics` over HTTPS and authenticates every scrape: the
@@ -57,11 +59,11 @@ enforce/audit/warn labels on the namespace the chart creates).
 Two optional pieces, **both off by default**:
 
 - `operator.networkPolicy.enabled`: egress to DNS, the API server (looked up from the
-  `kubernetes` Endpoints at install time, or `apiServer.mode: any` / `addresses`) and
+  `kubernetes` EndpointSlice at install time, or `apiServer.mode: any` / `addresses`) and
   `extraEgress`; ingress only from `ingress.metricsFrom`, on the metrics port. Whether
   to have one is the installing admin's decision, never the product's.
-- `operator.admissionPolicy.enabled`: a `ValidatingAdmissionPolicy` (CEL, no webhook,
-  Kubernetes 1.30+) under which only `imageOverride.allowedUsers` and `allowedGroups`
+- `operator.admissionPolicy.enabled` (default `true`): a `ValidatingAdmissionPolicy` (CEL,
+  no webhook) under which only `imageOverride.allowedUsers` and `allowedGroups`
   may set `spec.image` on a `PgAdmin` or `EvidenceAgent` (the operator's default image
   is used otherwise), and only `workloadIdentity.allowedUsers` and `allowedGroups` may
   add or change `spec.workloadIdentity` on an `EvidenceAgent` (it lends the agent a
@@ -70,7 +72,7 @@ Two optional pieces, **both off by default**:
   requesting user; on update only references that are new or changed), so nobody can have
   the operator mount a Secret they cannot read. `validationActions` selects Deny, Warn and/or Audit.
 
-### The two user ClusterRoles
+### The three user ClusterRoles
 
 Bind them **per namespace** with a RoleBinding (`kubectl -n team-a create rolebinding
 alice --clusterrole=pgtoolbox-console-viewer --user=alice@example.com`). The chart renders no
@@ -78,8 +80,10 @@ binding. `pgtoolbox-console-viewer` reads the CNPG kinds, pods, services, PVCs, 
 `pods/log`; `pgtoolbox-console-operator` adds `create backups`, `patch clusters`,
 `patch clusters/status`, `get pgadmins` (pgAdmin is dba-only: whoever may open it
 holds the credentials of every role it offers), `create databaseroles` (a person's own
-DatabaseRole, written with their token) and, for access requests,
-`create pgaccessrequests` / `update pgaccessrequests/status` / `create rolebindings`.
+DatabaseRole, written with their token) and `create pgaccessrequests`. Deciding access
+requests is `pgtoolbox-console-approver`'s alone (`update pgaccessrequests/status`,
+`create rolebindings`, `bind` on the two other roles): an approved request binds
+`pgtoolbox-console-operator`, so that role must not be able to extend or hand out access.
 Neither touches a Secret.
 
 **Cross-namespace pgAdmin.** A `PgAdminAccess` grants a `PgAdmin` of another
@@ -122,8 +126,9 @@ authority on what is accepted.
 | operator.console.imageRepositories | list | `[]` | Repositories a PgToolBoxConsole's `spec.image` may name, exact or as a prefix ending in `/` (`--console-image-repositories`). Empty: the default image's repository only. |
 | operator.pgAdmin.image | string | `""` | Image a PgAdmin that names none runs (`PGADMIN_IMAGE`). Empty: the hardened, digest-pinned image compiled into the operator. |
 | operator.pgAdmin.imageRepositories | list | `[]` | Repositories a PgAdmin's `spec.image` and its oauth-proxy image may name, exact or as a prefix ending in `/`. Empty: each image's default repository only. Set it to your mirror when the image values point at one. |
+| operator.exposure.allowedHostSuffixes | list | `[]` | DNS suffixes `spec.exposure.hostname` must fall under (the suffix itself or a name below it), e.g. `[apps.example.com]` (`EXPOSURE_ALLOWED_HOST_SUFFIXES`). A hostname outside them is refused (ConfigurationValid=False, reason HostnameNotAllowed) and what was published under it withdrawn. Empty: any hostname. |
 | operator.oauthProxyImage | string | `""` | Image of the OpenShift oauth-proxy in front of pgAdmin (`OAUTH_PROXY_IMAGE`). Empty: the compiled-in default. On OpenShift, set the release payload's own image so that a mirrored registry serves it. |
-| operator.config.watchNamespaces | list | `[]` | Namespaces the operator watches (`WATCH_NAMESPACES`). Empty: every namespace the ClusterRole allows. |
+| operator.config.watchNamespaces | list | `[]` | Namespaces the operator watches (`WATCH_NAMESPACES`). Empty: every namespace the ClusterRole allows. It narrows the caches only: the manager ClusterRole is still bound cluster-wide, so this does not make a second operator release for other namespaces possible. |
 | operator.config.maxConcurrentReconciles | int | `0` | Reconciles the operator runs in parallel (`MAX_CONCURRENT_RECONCILES`). 0 keeps the operator's default. |
 | operator.config.reconciliationTimeout | string | `""` | Time limit of one reconcile, a Go duration (`RECONCILIATION_TIMEOUT`). Empty keeps the operator's default. |
 | operator.config.upgradeBackupsKept | int | `0` | Pre-upgrade backups kept per PgAdmin (`UPGRADE_BACKUPS_KEPT`). 0 keeps the operator's default, 3. |
@@ -145,22 +150,22 @@ authority on what is accepted.
 | operator.nodeSelector | object | `{}` | Node selector of the pods. |
 | operator.tolerations | list | `[]` | Tolerations of the pods. |
 | operator.networkPolicy.enabled | bool | `false` | Render a NetworkPolicy for the operator pods. Off by default: whether the cluster enforces policies, and whether the operator namespace wants one, is the installing admin's decision. Egress is DNS and the API server (plus `extraEgress`); ingress is the scrapers in `ingress.metricsFrom`, on the metrics port. |
-| operator.networkPolicy.apiServer.mode | string | `"addresses"` | How egress to the API server is allowed. `addresses`: the addresses of the `kubernetes` Endpoints, looked up at install time or taken from `apiServer.addresses`. `any`: any address on `apiServer.ports`, the fallback for API servers behind a load balancer whose address is not in the Endpoints. |
-| operator.networkPolicy.apiServer.addresses | list | `[]` | API server IP addresses to allow when `apiServer.mode` is `addresses` and the Endpoints lookup is unavailable (`helm template`, GitOps renderers). |
+| operator.networkPolicy.apiServer.mode | string | `"addresses"` | How egress to the API server is allowed. `addresses`: the addresses of the `kubernetes` EndpointSlice, looked up at install time or taken from `apiServer.addresses`. `any`: any address on `apiServer.ports`, the fallback for API servers behind a load balancer whose address is not in the EndpointSlice. |
+| operator.networkPolicy.apiServer.addresses | list | `[]` | API server IP addresses to allow when `apiServer.mode` is `addresses` and the EndpointSlice lookup is unavailable (`helm template`, GitOps renderers). |
 | operator.networkPolicy.apiServer.ports | list | `[443,6443]` | Ports of the API server that egress is allowed to. |
 | operator.networkPolicy.dns.namespace | string | `"kube-system"` | Namespace of the cluster DNS pods that egress is allowed to. |
 | operator.networkPolicy.dns.podLabels | object | `{"k8s-app":"kube-dns"}` | Labels that select the cluster DNS pods. |
 | operator.networkPolicy.dns.ports | list | `[53]` | Ports of the cluster DNS pods (TCP and UDP). OpenShift DNS pods listen on 5353: use `[5353]` there. |
 | operator.networkPolicy.ingress.metricsFrom | list | `[]` | Peers allowed to scrape the metrics port, as raw NetworkPolicy `from` items. Empty: no ingress on that port. |
 | operator.networkPolicy.extraEgress | list | `[]` | Extra egress rules, as raw NetworkPolicy `egress` items (an egress proxy, a webhook or mail server, a Prometheus outside the watched namespaces). |
-| operator.restoreDrillGuard.enabled | string | `"auto"` | Render the restore-drill delete guard. `auto`: when the cluster serves the policy API (`helm install`, or `helm template --api-versions`); `true`: always (a GitOps render without discovery); `false`: never. Needs Kubernetes 1.30 or newer to be enforced. |
-| operator.admissionPolicy.enabled | bool | `false` | Render the optional ValidatingAdmissionPolicy for rules that need the request's identity. Needs Kubernetes 1.30 or newer. |
+| operator.restoreDrillGuard.enabled | string | `"auto"` | Render the restore-drill delete guard. `auto`: when the cluster serves the policy API (`helm install`, or `helm template --api-versions`); `true`: always (a GitOps render without discovery); `false`: never. |
+| operator.admissionPolicy.enabled | bool | `true` | Render the ValidatingAdmissionPolicy for rules that need the request's identity (image override, workload identity, Secret references). On by default; `false` leaves the Secret-reference rule unenforced. |
 | operator.admissionPolicy.validationActions | list | `["Deny"]` | Validation actions of the policy binding: `Deny`, `Warn` and/or `Audit`. Only `Deny` blocks a request. |
 | operator.admissionPolicy.imageOverride.allowedUsers | list | `[]` | Users allowed to set `spec.image` on a PgAdmin or an EvidenceAgent. Everyone else gets the operator's default image. |
 | operator.admissionPolicy.imageOverride.allowedGroups | list | `["system:masters"]` | Groups allowed to set `spec.image` on a PgAdmin or an EvidenceAgent. |
 | operator.admissionPolicy.workloadIdentity.allowedUsers | list | `[]` | Users allowed to set `spec.workloadIdentity` on an EvidenceAgent. |
 | operator.admissionPolicy.workloadIdentity.allowedGroups | list | `["system:masters"]` | Groups allowed to set `spec.workloadIdentity` on an EvidenceAgent. |
-| operator.userRoles.create | bool | `true` | Render the `pgtoolbox-console-viewer` and `pgtoolbox-console-operator` ClusterRoles. The chart renders no binding for them: bind them per namespace with a RoleBinding. |
+| operator.userRoles.create | bool | `true` | Render the `pgtoolbox-console-viewer`, `pgtoolbox-console-operator` and `pgtoolbox-console-approver` ClusterRoles. The chart renders no binding for them: bind them per namespace with a RoleBinding. |
 | operator.userRoles.aggregateToAdmin | bool | `true` | Render `pgtoolbox-aggregate-to-admin`, aggregated into the built-in `admin` ClusterRole (not `edit`), so a namespace admin can bind the two user roles to their team and install a pgtools console that links to the operator's objects. |
 | namespace.name | string | `"pgtoolbox"` | Name of the namespace the chart creates when `create` is true. Otherwise the release namespace is used. |
 | namespace.create | bool | `false` | Create the operator's namespace, labelled with `podSecurity`. |

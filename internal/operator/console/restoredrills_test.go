@@ -160,3 +160,68 @@ func TestRestoreDrillEnvServerCA(t *testing.T) {
 		t.Fatalf("user-kept bundle: %q, want source", got)
 	}
 }
+
+// The drill seal's own keys: a Secret named in sealKeySecretRef is mounted
+// read-only as a directory and RESTORE_DRILL_SEAL_KEY_FILE points at its
+// key; unset, or with drills off, neither is rendered and the console
+// derives the keys from the session secret.
+func TestRestoreDrillSealKey(t *testing.T) {
+	seal := &pgtoolboxv1alpha1.SecretKeyReference{Name: "drill-seal", Key: "keys"}
+	cases := map[string]struct {
+		console  *pgtoolboxv1alpha1.PgToolBoxConsole
+		wantFile string
+	}{
+		"unset": {console: drillConsole(nil)},
+		"set": {
+			console:  drillConsole(func(d *pgtoolboxv1alpha1.PgToolBoxConsoleRestoreDrillsSpec) { d.SealKeySecretRef = seal }),
+			wantFile: "/var/run/console/restore-drill-seal/keys",
+		},
+		"set with drills off": {console: drillConsole(func(d *pgtoolboxv1alpha1.PgToolBoxConsoleRestoreDrillsSpec) {
+			d.Enabled, d.SealKeySecretRef = false, seal
+		})},
+		"set with operations off": {console: func() *pgtoolboxv1alpha1.PgToolBoxConsole {
+			c := drillConsole(func(d *pgtoolboxv1alpha1.PgToolBoxConsoleRestoreDrillsSpec) { d.SealKeySecretRef = seal })
+			c.Spec.Operations = new(false)
+			return c
+		}()},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			var file string
+			for _, e := range restoreDrillEnv(tc.console) {
+				if e.Name == "RESTORE_DRILL_SEAL_KEY_FILE" {
+					file = e.Value
+				}
+			}
+			if file != tc.wantFile {
+				t.Fatalf("RESTORE_DRILL_SEAL_KEY_FILE %q, want %q", file, tc.wantFile)
+			}
+			mounts, volumes := consoleVolumes(tc.console)
+			var mount *corev1.VolumeMount
+			for i := range mounts {
+				if mounts[i].Name == "restore-drill-seal" {
+					mount = &mounts[i]
+				}
+			}
+			var volume *corev1.Volume
+			for i := range volumes {
+				if volumes[i].Name == "restore-drill-seal" {
+					volume = &volumes[i]
+				}
+			}
+			if tc.wantFile == "" {
+				if mount != nil || volume != nil {
+					t.Fatalf("seal key mounted without a seal key file: %+v %+v", mount, volume)
+				}
+				return
+			}
+			if mount == nil || !mount.ReadOnly || mount.MountPath != "/var/run/console/restore-drill-seal" || mount.SubPath != "" {
+				t.Fatalf("seal key mount %+v: want a read-only directory mount", mount)
+			}
+			if volume == nil || volume.Secret == nil || volume.Secret.SecretName != "drill-seal" ||
+				len(volume.Secret.Items) != 1 || volume.Secret.Items[0].Key != "keys" || volume.Secret.Items[0].Path != "keys" {
+				t.Fatalf("seal key volume %+v", volume)
+			}
+		})
+	}
+}

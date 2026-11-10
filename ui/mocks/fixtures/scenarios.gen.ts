@@ -15,7 +15,7 @@ export const approveAccessRequestConflict = {
 export const approveAccessRequestForbidden = {
   "title": "Forbidden",
   "status": 403,
-  "detail": "you may not create rolebindings and update pgaccessrequests/status in namespace team-a: deciding access requests takes the pgtoolbox-console-operator role there"
+  "detail": "you may not create rolebindings and update pgaccessrequests/status in namespace team-a: deciding access requests takes the pgtoolbox-console-approver role there"
 } satisfies ErrorModel;
 
 /** POST /api/v1/namespaces/team-a/access-requests/operator-k2x9p/approve → 200: 200: approved, RoleBinding created as the approver */
@@ -1402,6 +1402,7 @@ export const getBackupsBilling = {
   },
   "drills": {
     "enabled": false,
+    "windowDays": 90,
     "items": [],
     "scope": "kept in this console's persistent history (bounded to the 50 newest drills per Cluster)",
     "notChecked": [
@@ -1706,6 +1707,7 @@ export const getBackupsOrders = {
       "wal-bytes-and-restore-not-verified"
     ],
     "complete": true,
+    "restoreTested": true,
     "provenance": {
       "origin": "evidence",
       "source": "EvidenceAgent orders-evidence /api/v1alpha1/recovery-paths",
@@ -1718,6 +1720,8 @@ export const getBackupsOrders = {
     "timeLimitSeconds": 7200,
     "sizeTolerancePercent": 10,
     "lastPassedAt": "2026-10-28T12:14:00Z",
+    "restoreTested": true,
+    "windowDays": 90,
     "items": [
       {
         "drill": {

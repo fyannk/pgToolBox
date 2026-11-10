@@ -35,6 +35,7 @@ import (
 	"github.com/fyannk/pgToolBox/internal/operator/exposure"
 	"github.com/fyannk/pgToolBox/internal/operator/metadata"
 	"github.com/fyannk/pgToolBox/internal/operator/specs"
+	"github.com/fyannk/pgToolBox/pkg/cnpgstatus/insight"
 	"github.com/fyannk/pgToolBox/pkg/lifecycletable"
 )
 
@@ -77,6 +78,7 @@ const (
 	historyDir       = "/var/lib/console"
 	digestDir        = runDir + "/digest"
 	tracingDir       = runDir + "/tracing"
+	drillSealDir     = runDir + "/restore-drill-seal"
 
 	// streamTimeout keeps the console's event stream (SSE) open at the
 	// edge: the chart's exposure.sse.timeout default.
@@ -599,6 +601,9 @@ func consoleEnv(c *pgtoolboxv1alpha1.PgToolBoxConsole) []corev1.EnvVar {
 		env("LIFECYCLE_FILE", lifecycleDir+"/"+lifecycletable.Key),
 		env("REVOCATION_CONFIGMAP", c.RevocationsConfigMapName()),
 		env("STATE_CONFIGMAP", c.StateConfigMapName()),
+		// The operator renders no insight pack: a team applies
+		// deploy/insight-pack/insight-pack.yaml, whose name this is.
+		env("INSIGHT_PACK_CONFIGMAP", insight.ConfigMapName),
 		// Read from the filesystem and reloaded on change; the console reads
 		// no Secret and no ConfigMap through the API for this.
 		env("INSTANCE_STATUS_CA_FILE", instanceCADir+"/ca.crt"),
@@ -798,6 +803,10 @@ func consoleVolumes(c *pgtoolboxv1alpha1.PgToolBoxConsole) ([]corev1.VolumeMount
 	if c.TracingEnabled() && c.Spec.Tracing.HeadersSecretRef != nil {
 		ref := c.Spec.Tracing.HeadersSecretRef
 		v.add("tracing-headers", tracingDir, secretVolume("tracing-headers", ref.Name, ref.Key))
+	}
+	if ref := drillSealKeyRef(c); ref != nil {
+		// The drill seal's own keys, read once at start.
+		v.add("restore-drill-seal", drillSealDir, secretVolume("restore-drill-seal", ref.Name, ref.Key))
 	}
 	if c.HistoryPersistent() {
 		// The volume comes from the StatefulSet's claim template.
@@ -1042,7 +1051,20 @@ func restoreDrillEnv(c *pgtoolboxv1alpha1.PgToolBoxConsole) []corev1.EnvVar {
 	if d.Storage.StorageClass != "" {
 		envs = append(envs, env("RESTORE_DRILL_STORAGE_CLASS", d.Storage.StorageClass))
 	}
-	return append(envs, env("RESTORE_DRILL_SERVER_CA", drillServerCA(c)))
+	envs = append(envs, env("RESTORE_DRILL_SERVER_CA", drillServerCA(c)))
+	if ref := drillSealKeyRef(c); ref != nil {
+		envs = append(envs, env("RESTORE_DRILL_SEAL_KEY_FILE", drillSealDir+"/"+ref.Key))
+	}
+	return envs
+}
+
+// drillSealKeyRef is the Secret key of the drill seal's own keys, nil
+// when drills are off or the keys derive from the session secret.
+func drillSealKeyRef(c *pgtoolboxv1alpha1.PgToolBoxConsole) *pgtoolboxv1alpha1.SecretKeyReference {
+	if !c.RestoreDrillsEnabled() {
+		return nil
+	}
+	return c.Spec.RestoreDrills.SealKeySecretRef
 }
 
 // drillServerCA is the CA a drill's server certificate is signed with, so

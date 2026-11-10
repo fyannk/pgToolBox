@@ -79,6 +79,8 @@ func TestTablePinsExistInVerifiedReleases(t *testing.T) {
 			// version.go
 			`BootstrapControllerContainerName = "bootstrap-controller"`, `json:"instanceManagerVersion"`,
 			`json:"cloudNativePGCommitHash,omitempty"`, "type FailoverQuorum struct",
+			`OperatorVersionAnnotationName = MetadataNamespace + "/operatorVersion"`,
+			"utils.SetOperatorVersion(&meta, versions.Version)", "cluster.GetFixedInheritedAnnotations(), configuration.Current)",
 			// backups.go and blindspots.go
 			"Deprecated: the field is not set for backup plugins",
 			`json:"firstRecoverabilityPoint,omitempty"`, `json:"firstRecoverabilityPointByMethod,omitempty"`,

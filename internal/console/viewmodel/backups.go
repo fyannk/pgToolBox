@@ -120,7 +120,12 @@ type BackupRow struct {
 	// PgBackRest is the pgBackRest backup this object took: its label,
 	// type and chain; absent for other methods or before completion.
 	PgBackRest *PgBackRestBackupRef `json:"pgbackrest,omitempty"`
-	Provenance Provenance           `json:"provenance"`
+	// PredatesCluster: the Backup names this Cluster but was created
+	// before it, or is owned by a Cluster with another UID (an earlier
+	// Cluster of the same name). It counts in no recency, topology or
+	// timeline of this Cluster.
+	PredatesCluster bool       `json:"predatesCluster,omitempty"`
+	Provenance      Provenance `json:"provenance"`
 }
 
 // RepositoryPresence is whether the evidence agent saw a backup in the

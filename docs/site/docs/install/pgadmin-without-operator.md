@@ -81,7 +81,9 @@ registered within seconds, without a Pod restart. The console's topology view
 marks an `ro` Service with no replica behind it.
 
 On OpenShift, `auth.provider: openshift` puts an oauth-proxy in front of pgAdmin
-(it needs `exposure.type: route`, and `fsGroup: null` under the restricted SCC).
+(it needs `exposure.type: route`; `fsGroup` defaults to none with it, or wherever the API
+server serves `security.openshift.io/v1`, since the restricted SCC assigns the range, and
+to 5050 elsewhere; `fsGroup: 0` forces none).
 Who may pass it is an OpenShift SubjectAccessReview: by default, anyone who may
 `get secrets` in the release namespace. `auth.openshift.sar` replaces that
 question (the JSON oauth-proxy's `--openshift-sar` takes), for example

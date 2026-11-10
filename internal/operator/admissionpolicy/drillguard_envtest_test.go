@@ -118,12 +118,12 @@ func TestEnvtestRestoreDrillGuards(t *testing.T) {
 		t.Fatalf("helm template pgtools: %v\n%s", err, pgtools)
 	}
 	objects := append(append(policyDocs(t, source), policyDocs(t, drillsRole)...), policyDocs(t, pgtools)...)
-	if len(objects) != 5 {
-		t.Fatalf("%d policy objects and roles, want the two policies, their bindings and the drills ClusterRole", len(objects))
+	if len(objects) != 7 {
+		t.Fatalf("%d policy objects and roles, want the operator's two policies, the pgtools one, their bindings and the drills ClusterRole", len(objects))
 	}
 
 	env := &envtest.Environment{
-		CRDDirectoryPaths:     []string{filepath.Join(root, "test", "crds", "cnpg-1.30")},
+		CRDDirectoryPaths:     []string{filepath.Join(root, "test", "crds", "cnpg-1.30"), filepath.Join(root, "config", "crd", "bases")},
 		ErrorIfCRDPathMissing: true,
 	}
 	admin, err := env.Start()
@@ -179,6 +179,19 @@ func TestEnvtestRestoreDrillGuards(t *testing.T) {
 			RoleRef:    rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "ClusterRole", Name: "clusters-delete"},
 			Subjects:   saSubject("team-a", "backup-console"),
 		},
+		// billing-console (the PgToolBoxConsole "billing", drill prefix
+		// bill-) and drill-bot, a ServiceAccount whose name says nothing,
+		// hold the marker too.
+		&rbacv1.RoleBinding{
+			ObjectMeta: metav1.ObjectMeta{Name: "billing-console-restore-drills", Namespace: "team-a"},
+			RoleRef:    rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "ClusterRole", Name: "pgtoolbox-console-restore-drills"},
+			Subjects:   saSubject("team-a", "billing-console"),
+		},
+		&rbacv1.RoleBinding{
+			ObjectMeta: metav1.ObjectMeta{Name: "drill-bot", Namespace: "team-a"},
+			RoleRef:    rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "ClusterRole", Name: "pgtoolbox-console-restore-drills"},
+			Subjects:   saSubject("team-a", "drill-bot"),
+		},
 		// The pgtools path: release pgc in team-b, drills in drills.
 		&rbacv1.RoleBinding{
 			ObjectMeta: metav1.ObjectMeta{Name: "pgc-console-restore-drills", Namespace: "drills"},
@@ -186,6 +199,22 @@ func TestEnvtestRestoreDrillGuards(t *testing.T) {
 			Subjects:   saSubject("team-b", "pgc-console"),
 		},
 	)
+	// The prefix policy's parameters: the namespace's PgToolBoxConsoles.
+	for name, prefix := range map[string]string{"orders": "", "billing": "bill-"} {
+		console := &unstructured.Unstructured{Object: map[string]any{
+			"apiVersion": "pgtoolbox.fyannk.dev/v1alpha1", "kind": "PgToolBoxConsole",
+			"metadata": map[string]any{"name": name, "namespace": "team-a"},
+			"spec": map[string]any{
+				"auth": map[string]any{"provider": "oidc", "oidc": map[string]any{
+					"issuerURL": "https://idp.example.com", "clientID": name, "clientSecretRef": map[string]any{"name": name + "-oidc"},
+				}},
+			},
+		}}
+		if prefix != "" {
+			_ = unstructured.SetNestedField(console.Object, map[string]any{"enabled": true, "prefix": prefix}, "spec", "restoreDrills")
+		}
+		objects = append(objects, console)
+	}
 	for _, object := range objects {
 		if err := c.Create(t.Context(), object); err != nil {
 			t.Fatalf("create %T %s: %v", object, object.GetName(), err)
@@ -202,7 +231,9 @@ func TestEnvtestRestoreDrillGuards(t *testing.T) {
 		return u
 	}
 	// Both policies take effect once compiled: wait until each console is
-	// refused an unlabelled Cluster.
+	// refused an unlabelled Cluster. The probe is named under the default
+	// drill prefix, so that the prefix policy admits it and only the guard
+	// can refuse it: two denials have no defined order.
 	for _, probe := range []struct{ namespace, account string }{{"team-a", "orders-console"}, {"drills", "pgc-console"}} {
 		owner := probe.namespace
 		if probe.namespace == "drills" {
@@ -210,7 +241,7 @@ func TestEnvtestRestoreDrillGuards(t *testing.T) {
 		}
 		deadline := time.Now().Add(time.Minute)
 		for {
-			u := cnpgCluster(probe.namespace, "probe", nil, nil)
+			u := cnpgCluster(probe.namespace, "drill-guard-probe", nil, nil)
 			if err := c.Create(t.Context(), u); err != nil && !apierrors.IsAlreadyExists(err) {
 				t.Fatalf("create probe: %v", err)
 			}
@@ -226,10 +257,44 @@ func TestEnvtestRestoreDrillGuards(t *testing.T) {
 		}
 	}
 
+	// The prefix policy reads its parameters through an informer: wait
+	// until billing-console is refused a sealed drill named drill-.
+	deadline := time.Now().Add(time.Minute)
+	for {
+		u := cnpgCluster("team-a", "drill-probe", map[string]string{drillOwner: "team-a", drillOf: "orders"}, map[string]string{drillSeal: "v1.x"})
+		if err := c.Create(t.Context(), u); err != nil && !apierrors.IsAlreadyExists(err) {
+			t.Fatalf("create probe: %v", err)
+		}
+		err := as("team-a", "billing-console").Delete(t.Context(), u)
+		if apierrors.IsForbidden(err) && strings.Contains(err.Error(), "named with its restore drill prefix") {
+			_ = c.Delete(t.Context(), u)
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the prefix guard never took effect; last delete error: %v", err)
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	deniedPrefix := func(t *testing.T, err error) {
+		t.Helper()
+		if !apierrors.IsForbidden(err) || !strings.Contains(err.Error(), "named with its restore drill prefix") {
+			t.Fatalf("error = %v, want the prefix guard's Forbidden", err)
+		}
+	}
 	denied := func(t *testing.T, err error) {
 		t.Helper()
 		if !apierrors.IsForbidden(err) || !strings.Contains(err.Error(), "restore drill Clusters it created") {
 			t.Fatalf("error = %v, want the guard's Forbidden", err)
+		}
+	}
+	// deniedByEither: a delete both policies refuse (a console deleting an
+	// unprefixed production Cluster) is answered by whichever the API
+	// server evaluates first.
+	deniedByEither := func(t *testing.T, err error) {
+		t.Helper()
+		if !apierrors.IsForbidden(err) || (!strings.Contains(err.Error(), "restore drill Clusters it created") && !strings.Contains(err.Error(), "named with its restore drill prefix")) {
+			t.Fatalf("error = %v, want a restore drill guard's Forbidden", err)
 		}
 	}
 	allowed := func(t *testing.T, err error) {
@@ -246,7 +311,7 @@ func TestEnvtestRestoreDrillGuards(t *testing.T) {
 	})
 	t.Run("operator: a console cannot delete a production Cluster", func(t *testing.T) {
 		u := cluster(t, "team-a", "orders", nil, nil)
-		denied(t, as("team-a", "orders-console").Delete(t.Context(), u))
+		deniedByEither(t, as("team-a", "orders-console").Delete(t.Context(), u))
 	})
 	t.Run("operator: nor a drill without the seal", func(t *testing.T) {
 		u := cluster(t, "team-a", "drill-orders-2", map[string]string{drillOwner: "team-a", drillOf: "orders"}, nil)
@@ -255,6 +320,22 @@ func TestEnvtestRestoreDrillGuards(t *testing.T) {
 	t.Run("operator: nor another namespace's drill", func(t *testing.T) {
 		u := cluster(t, "team-a", "drill-orders-3", map[string]string{drillOwner: "team-b", drillOf: "orders"}, sealed)
 		denied(t, as("team-a", "orders-console").Delete(t.Context(), u))
+	})
+	t.Run("operator: a console deletes its sealed drill under its own prefix", func(t *testing.T) {
+		u := cluster(t, "team-a", "bill-orders-1", map[string]string{drillOwner: "team-a", drillOf: "orders"}, sealed)
+		allowed(t, as("team-a", "billing-console").Delete(t.Context(), u))
+	})
+	t.Run("operator: nor a sealed drill outside its prefix", func(t *testing.T) {
+		u := cluster(t, "team-a", "drill-orders-4", map[string]string{drillOwner: "team-a", drillOf: "orders"}, sealed)
+		deniedPrefix(t, as("team-a", "billing-console").Delete(t.Context(), u))
+	})
+	t.Run("operator: the default prefix holds for a console that sets none", func(t *testing.T) {
+		u := cluster(t, "team-a", "bill-orders-2", map[string]string{drillOwner: "team-a", drillOf: "orders"}, sealed)
+		deniedPrefix(t, as("team-a", "orders-console").Delete(t.Context(), u))
+	})
+	t.Run("operator: a marker holder is guarded whatever its name", func(t *testing.T) {
+		u := cluster(t, "team-a", "payments", nil, nil)
+		denied(t, as("team-a", "drill-bot").Delete(t.Context(), u))
 	})
 	t.Run("operator: a ServiceAccount without the drills role is not concerned", func(t *testing.T) {
 		u := cluster(t, "team-a", "orders-old", nil, nil)

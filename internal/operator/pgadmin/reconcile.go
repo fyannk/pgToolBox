@@ -39,6 +39,7 @@ import (
 
 	pgtoolboxv1alpha1 "github.com/fyannk/pgToolBox/api/v1alpha1"
 	"github.com/fyannk/pgToolBox/internal/operator/conditions"
+	"github.com/fyannk/pgToolBox/internal/operator/exposure"
 	"github.com/fyannk/pgToolBox/internal/operator/pgadmin/offer"
 	"github.com/fyannk/pgToolBox/internal/operator/reconcile"
 	"github.com/fyannk/pgToolBox/internal/operator/specs"
@@ -147,6 +148,11 @@ func (r *Reconciler) resolve(ctx context.Context, p *pgtoolboxv1alpha1.PgAdmin) 
 	}
 	in, err := r.assembleInputs(p, selected, remote, result, configDB)
 	if err != nil {
+		return buildInputs{}, offerResult{}, remoteResolution{}, err
+	}
+	// The hostname allow-list (EXPOSURE_ALLOWED_HOST_SUFFIXES): nothing is
+	// published under a name the installer did not allow.
+	if err := r.checkHostname(ctx, p); err != nil {
 		return buildInputs{}, offerResult{}, remoteResolution{}, err
 	}
 	if err := r.checkOAuth2Secret(ctx, p, &in); err != nil {
@@ -557,6 +563,25 @@ func (r *Reconciler) notOwned(p *pgtoolboxv1alpha1.PgAdmin, err error) error {
 	}
 	set(p, pgtoolboxv1alpha1.ConditionConfigurationValid, metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonResourceNotOwned, "%s", notOwned.Error())
 	return reconcile.Stall(pgtoolboxv1alpha1.ReasonResourceNotOwned, "%s", notOwned.Error())
+}
+
+// withdrawExposure deletes every exposure object this PgAdmin owns.
+func (r *Reconciler) withdrawExposure(ctx context.Context, p *pgtoolboxv1alpha1.PgAdmin) error {
+	name := namesOf(p).base
+	if err := r.deleteIfOwned(ctx, p, &networkingv1.Ingress{}, name); err != nil {
+		return err
+	}
+	if r.Features.Routes.Usable() {
+		if err := r.deleteIfOwned(ctx, p, &routev1.Route{}, name); err != nil {
+			return err
+		}
+	}
+	if r.Features.Gateways.Usable() {
+		if err := r.deleteIfOwned(ctx, p, &gatewayv1.HTTPRoute{}, name); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // applyExposure writes the exposure object of the requested type and
@@ -971,6 +996,26 @@ func unavailableWhy(result discovery.Result) string {
 		return "not probed"
 	}
 	return result.Reason
+}
+
+// checkHostname refuses a spec.exposure.hostname outside the operator's
+// host suffixes: the exposure objects this PgAdmin owns are withdrawn (one
+// published before the allow-list existed must not keep the name), then
+// ConfigurationValid=False (HostnameNotAllowed) and a stall until the spec
+// or the operator's configuration changes.
+func (r *Reconciler) checkHostname(ctx context.Context, p *pgtoolboxv1alpha1.PgAdmin) error {
+	hostname := p.Spec.Exposure.Hostname
+	if p.Spec.Exposure.TypeOrDefault() == pgtoolboxv1alpha1.ExposureTypeClusterIP ||
+		exposure.HostnameAllowed(hostname, r.Config.ExposureAllowedHostSuffixes) {
+		return nil
+	}
+	if err := r.withdrawExposure(ctx, p); err != nil {
+		return err
+	}
+	message := fmt.Sprintf("spec.exposure.hostname %s is not under the operator's allowed host suffixes (EXPOSURE_ALLOWED_HOST_SUFFIXES: %s)",
+		hostname, strings.Join(r.Config.ExposureAllowedHostSuffixes, ", "))
+	set(p, pgtoolboxv1alpha1.ConditionConfigurationValid, metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonHostnameNotAllowed, "%s", message)
+	return reconcile.Stall(pgtoolboxv1alpha1.ReasonHostnameNotAllowed, "%s", message)
 }
 
 // checkImages refuses a spec.image or oauth-proxy image outside the

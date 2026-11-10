@@ -86,6 +86,10 @@ func TestLoad(t *testing.T) {
 		{"no provider", with("AUTH_PROVIDER", "-"), "AUTH_PROVIDER"},
 		{"same listener twice", with("PROBE_LISTEN_ADDR", ":3000"), "must differ"},
 		{"half a TLS pair", with("TLS_CERT_FILE", "/tls/tls.crt"), "together"},
+		{"shutdown delay not a duration", with("SHUTDOWN_DELAY", "five"), "SHUTDOWN_DELAY"},
+		{"negative shutdown delay", with("SHUTDOWN_DELAY", "-1s"), "SHUTDOWN_DELAY"},
+		{"shutdown delay past the grace period", with("SHUTDOWN_DELAY", "30s"), "SHUTDOWN_DELAY"},
+		{"no shutdown delay", with("SHUTDOWN_DELAY", "0s"), ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -97,6 +101,8 @@ func TestLoad(t *testing.T) {
 			case tc.want != "" && (err == nil || !strings.Contains(err.Error(), tc.want)):
 				t.Fatalf("error = %v, want it to mention %s", err, tc.want)
 			case tc.want == "" && (s.ListenAddr != ":3000" || s.ProbeAddr != ":3001" || s.Auth.IdleTimeout != 8*time.Hour):
+				t.Fatalf("settings = %+v", s)
+			case tc.want == "" && tc.env["SHUTDOWN_DELAY"] == "" && s.ShutdownDelay != defaultShutdownDelay:
 				t.Fatalf("settings = %+v", s)
 			}
 		})

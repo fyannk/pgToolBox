@@ -218,14 +218,14 @@ func billingSnapshot() insight.Snapshot {
 
 // Insight is orders' insight screens.
 func Insight() viewmodel.Insight {
-	v := insightview.Build(insightCluster("orders", types.UID(ordersRef.UID), true), ordersSnapshot(), true, sweepInterval, Now)
+	v := insightview.Build(insightCluster("orders", types.UID(ordersRef.UID), true), insight.ConfigMapName, ordersSnapshot(), true, sweepInterval, Now)
 	v.Sources = []viewmodel.SourceState{src("insight", since(3*time.Hour))}
 	return v
 }
 
 // InsightNotEnabled is billing's: the Cluster has not opted in.
 func InsightNotEnabled() viewmodel.Insight {
-	v := insightview.Build(insightCluster("billing", "4d2f1e0a-1b2c-4d3e-8f90-a1b2c3d4e5f6", false), billingSnapshot(), true, sweepInterval, Now)
+	v := insightview.Build(insightCluster("billing", "4d2f1e0a-1b2c-4d3e-8f90-a1b2c3d4e5f6", false), insight.ConfigMapName, billingSnapshot(), true, sweepInterval, Now)
 	v.Sources = []viewmodel.SourceState{src("insight", since(3*time.Hour))}
 	return v
 }
@@ -247,5 +247,5 @@ func FleetStatementsOf(visible func([]viewmodel.ClusterRef) []viewmodel.ClusterR
 	for _, ref := range kept {
 		clusters = append(clusters, insightview.FleetCluster{Ref: ref, Snapshot: snaps[ref.Name], Has: true, Interval: sweepInterval})
 	}
-	return insightview.Fleet(clusters, Now)
+	return insightview.Fleet(clusters, insight.ConfigMapName, Now)
 }

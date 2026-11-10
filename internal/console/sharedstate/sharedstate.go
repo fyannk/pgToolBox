@@ -35,6 +35,10 @@
 //     times, refresh generation, revocation) and the authorization codes
 //     already redeemed, so a revoked grant, a reused refresh token or a
 //     replayed code is refused by every replica.
+//   - restore drill results (drills.go): the outcome of each finished
+//     drill (drill, source, backup, result, times, the console's reason),
+//     so a restart without a history volume does not lose the evidence
+//     that a restore was tested.
 //
 // Merge rule, the same on every replica, so they converge: for one key
 // and the same state the earliest observation wins; a different state
@@ -210,6 +214,9 @@ type Store struct {
 	// grants and codes are grants.json (grants.go).
 	grants map[string]grantEntry
 	codes  map[string]codeEntry
+	// drills and drillsSince are drills.json (drills.go).
+	drills      map[string]DrillResult
+	drillsSince int64
 	// byObject indexes the fact keys by object UID, for pruning and for
 	// a Cluster's findings.
 	byObject map[string]map[string]struct{}
@@ -254,7 +261,7 @@ func New(opts Options) *Store {
 		opts.DigestRetention = DefaultDigestRetention
 	}
 	s := &Store{
-		opts: opts, signedOut: map[string]int64{}, facts: map[string]fact{}, sent: map[string]int64{}, grants: map[string]grantEntry{}, codes: map[string]codeEntry{}, byObject: map[string]map[string]struct{}{},
+		opts: opts, signedOut: map[string]int64{}, facts: map[string]fact{}, sent: map[string]int64{}, grants: map[string]grantEntry{}, codes: map[string]codeEntry{}, drills: map[string]DrillResult{}, byObject: map[string]map[string]struct{}{},
 		foreign: map[string]bool{}, mode: modePending, since: opts.Now().UTC(), wake: make(chan struct{}, 1),
 	}
 	if opts.Name == "" {
@@ -619,6 +626,9 @@ func (s *Store) mergeLocked(cm *corev1.ConfigMap) {
 	if raw, ok := data[KeyGrants]; ok && raw != "" {
 		s.mergeGrantsLocked(raw)
 	}
+	if raw, ok := data[KeyDrills]; ok && raw != "" {
+		s.mergeDrillsLocked(raw)
+	}
 	s.pruneLocked()
 	if !s.inSyncLocked() {
 		s.changedLocked(false)
@@ -665,7 +675,7 @@ func (s *Store) pruneLocked() {
 // documents fit the budget. Sign-outs are never dropped: forgetting one
 // would let a copied cookie back in; nor are delivery marks, which the
 // retention bounds (a few a day) and whose loss would send a digest
-// twice.
+// twice; nor are drill results, bounded by count (drills.go).
 func (s *Store) budgetLocked() {
 	over := s.encodedSizeLocked() - s.opts.Budget
 	if over <= 0 {
@@ -712,11 +722,18 @@ func (s *Store) encodeLocked() map[string]string {
 	since, _ := json.Marshal(sinceDoc{Version: formatVersion, Facts: s.facts})
 	digests, _ := json.Marshal(digestsDoc{Version: formatVersion, Sent: s.sent})
 	grants, _ := json.Marshal(grantsDoc{Version: formatVersion, Grants: s.grants, Codes: s.codes})
-	return map[string]string{KeySessions: string(sessions), KeySince: string(since), KeyDigests: string(digests), KeyGrants: string(grants)}
+	out := map[string]string{KeySessions: string(sessions), KeySince: string(since), KeyDigests: string(digests), KeyGrants: string(grants)}
+	// The drills document is written only once there is something to
+	// keep, so a console without restore drills writes what it did.
+	if len(s.drills) > 0 || s.drillsSince != 0 {
+		drills, _ := json.Marshal(drillsDoc{Version: formatVersion, Since: s.drillsSince, Results: s.drills})
+		out[KeyDrills] = string(drills)
+	}
+	return out
 }
 
 // documentKeys are the ConfigMap keys this console writes.
-var documentKeys = []string{KeySessions, KeySince, KeyDigests, KeyGrants}
+var documentKeys = []string{KeySessions, KeySince, KeyDigests, KeyGrants, KeyDrills}
 
 func (s *Store) encodedSizeLocked() int {
 	n := 0

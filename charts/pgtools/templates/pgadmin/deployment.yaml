@@ -92,8 +92,16 @@ spec:
         runAsNonRoot: true
         seccompProfile:
           type: RuntimeDefault
-        {{- if $p.fsGroup }}
-        fsGroup: {{ $p.fsGroup }}
+        {{- /* fsGroup null: 5050, none on OpenShift (its SCC assigns the range: the cluster
+               serves security.openshift.io/v1, or auth.provider is openshift); 0 is none; an
+               explicit value wins */}}
+        {{- $fsGroup := $p.fsGroup }}
+        {{- $openshift := or $proxied (.Capabilities.APIVersions.Has "security.openshift.io/v1") }}
+        {{- if and (kindIs "invalid" $fsGroup) (not $openshift) }}
+        {{- $fsGroup = 5050 }}
+        {{- end }}
+        {{- if $fsGroup }}
+        fsGroup: {{ $fsGroup | int64 }}
         fsGroupChangePolicy: OnRootMismatch
         {{- end }}
       {{- with $p.imagePullSecrets }}
