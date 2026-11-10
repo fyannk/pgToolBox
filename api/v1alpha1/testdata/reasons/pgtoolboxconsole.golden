@@ -4,6 +4,7 @@ ExposureOpen
 ExposurePeersBroad
 ExposurePolicyBypassed
 ExposurePolicyInvalid
+ExposureTrustUnverified
 InstanceCABundleFull
 InstanceCAInvalid
 InstanceCAMissing

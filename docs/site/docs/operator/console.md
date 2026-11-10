@@ -280,8 +280,10 @@ trusted.
 | `route` (published) | on by default: the console port admits namespaces labelled `policy-group.network.openshift.io/ingress` (the OpenShift routers, host-network ones included), plus `from` | `1` / `0.0.0.0/0,::/0` | `True` |
 | `ingress`, `gateway` with `networkPolicy.from` | the console port admits only `from` | `1` / `0.0.0.0/0,::/0` | `True` |
 | a peer of `from` admits (nearly) everyone | rendered as written | `1` / none: the header is ignored | `False`, `ExposurePeersBroad` |
-| the API server refuses the rendered policy | the previous one stays | unchanged (the workload is not rolled) | `ConfigurationValid=False`, `ExposurePolicyInvalid`; retried every five minutes |
+| the API server refuses the rendered policy | checked by a dry run first: the previous one stays, and no exposure is published or changed | unchanged (the workload is not rolled) | `ConfigurationValid=False`, `ExposurePolicyInvalid`, retried every five minutes; `ExposureConfined` still describes the policy in force, or says `ExposureOpen` when none is and an exposure is published |
 | another NetworkPolicy admits more to the console port | rendered | `1` / none | `False`, `ExposurePolicyBypassed` |
+| an `ipBlock` peer and no console Pod address yet (first Pod Pending, scale from zero), or more than 250 console Pods | rendered | `1` / none until a Pod address is known | `False`, `ExposureTrustUnverified` |
+| `from` widens while a Pod trusts every peer | the previous one stays until the rollout without the grant is through, then widens | `1` / none during that rollout | `False`, `ExposureTrustUnverified` |
 | `ingress`, `gateway` without `from` | none: the controller's namespace differs per installation, so no default is safe | `1` / none: the header is ignored | `False`, `ExposureOpen` |
 | `networkPolicy.enabled: false` | none | `1` / none | `False`, `ExposureOpen` |
 
@@ -324,14 +326,34 @@ trusted.
   when it pins no label value (no `matchLabels` and no `In` expression; only
   `Exists`, `NotIn`, `DoesNotExist`, or nothing), since a key alone is on
   nearly everything (`kubernetes.io/metadata.name` is on every namespace).
-  Broad are a `namespaceSelector` that is, a `podSelector` that is with no
+  Broad are a `namespaceSelector` that is, or that pins only labels many
+  namespaces share (`pod-security.kubernetes.io/*`, `security.openshift.io/*`,
+  `openshift.io/run-level`: `pod-security.kubernetes.io/enforce: restricted`
+  is on most namespaces), a `podSelector` that is with no
   `namespaceSelector`, and an `ipBlock` wider than `/8` (IPv4) or `/32`
-  (IPv6), holding a whole private range (`10.0.0.0/8`, `172.16.0.0/12`,
-  `192.168.0.0/16`, `100.64.0.0/10`, `fc00::/7`, where Pod networks are cut
-  from), or holding a console Pod's own address (seen once the Pods have
-  one). With at most 16 peers of at most a `/8` each, blocks together never
-  cover every address either. `except` entries are not counted: a false alarm
-  is the safe side.
+  (IPv6), holding a whole private IPv4 range (`10.0.0.0/8`, `172.16.0.0/12`,
+  `192.168.0.0/16`, `100.64.0.0/10`, where Pod networks are cut from), a
+  unique-local IPv6 block (inside `fc00::/7`) wider than `/64` (kind's
+  `fd00:10:244::/56`, a `/48`), or holding a console Pod's own address. That
+  last check needs a Pod address: while no console Pod has one (the first Pod
+  is Pending, the workload scales from zero) an `ipBlock` peer is not trusted
+  (`ExposureTrustUnverified`), and the trust comes with the Pod's address
+  (one more rollout), never before it. With at most 16 peers of at most a
+  `/8` each, blocks together never cover every address either. `except`
+  entries are not counted: a false alarm is the safe side. Labels that a
+  namespace owner may set on their own namespace (a tenant label of Capsule
+  or Rancher, say) cannot be told from an installer's: pinning one is the
+  user's responsibility; `kubernetes.io/metadata.name` is set by the API
+  server and is the safe choice.
+- **Widening waits for the trust to go.** When `from` would admit a source
+  the policy in force does not (a peer added or swapped, a block, a
+  namespace instead of some of its Pods) while a console Pod may still trust
+  every peer (the template carries the grant, its controller has not seen
+  the latest template, or a Pod, terminating ones included, carries it),
+  the operator keeps the policy in force, rolls the workload without the
+  grant (`ExposureTrustUnverified`), and widens the policy once that is
+  through; the trust is then granted again if the new peers allow it.
+  Narrowing applies at once.
 - **NetworkPolicies add up.** Another policy of the namespace that selects the
   console Pods and admits, to the console port, a peer `from` does not list
   (an `allow-same-namespace` policy, an allow-all) lets that peer in whatever
