@@ -352,6 +352,12 @@ func (b *browser) build(noKeepAlive bool) *http.Client {
 		Timeout: 30 * time.Second,
 		Transport: &http.Transport{
 			DisableKeepAlives: noKeepAlive,
+			// The console closes idle connections after 120 s (its server's
+			// IdleTimeout); tests sleep 70 s to 3 min on token and session
+			// lifetimes, and a pooled connection reused after that sleep fails a
+			// POST (which Go does not retry) with EOF/reset. Drop idle
+			// connections well before the server does.
+			IdleConnTimeout: 30 * time.Second,
 			TLSClientConfig:   &tls.Config{RootCAs: b.roots, MinVersion: tls.VersionTLS12},
 			DialContext: func(c context.Context, network, addr string) (net.Conn, error) {
 				if to, ok := b.hosts[addr]; ok {
