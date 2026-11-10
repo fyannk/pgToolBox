@@ -188,6 +188,8 @@ function recoveryReason(code: string, p: Params): string | undefined {
       return m.rp_reason_archiver_unread();
     case "recovery.reason.archiverHibernated":
       return m.rp_reason_archiver_hibernated();
+    case "recovery.reason.archiverNotReported":
+      return m.rp_reason_archiver_not_reported();
     case "recovery.reason.pathNotHealthy": {
       const state = evidenceStateWord(p?.state);
       const id = p?.backupId;
@@ -294,9 +296,21 @@ function translate(code: string, p: Params): string | undefined {
     }
     case "recovery.segment.archiverUnread":
       return m.rp_segment_archiver_unread();
+    case "recovery.segment.archiverNotReported":
+      return m.rp_segment_archiver_not_reported();
     case "recovery.segment.archiverUnreadSince": {
       const quiet = instant(p, "quietAt");
       return quiet ? m.rp_segment_archiver_unread_since({ quiet }) : undefined;
+    }
+    case "recovery.segment.archiveBacklogBound": {
+      const read = instant(p, "readAt");
+      const bound = instant(p, "boundAt");
+      return segments && read && bound ? m.rp_segment_archive_backlog_bound({ segments, read, bound }) : undefined;
+    }
+    case "recovery.segment.archiverUnreadBound": {
+      const read = instant(p, "readAt");
+      const bound = instant(p, "boundAt");
+      return read && bound ? m.rp_segment_archiver_unread_bound({ read, bound }) : undefined;
     }
     case "recovery.segment.pathNotHealthy": {
       const state = evidenceStateWord(p?.state);
@@ -343,6 +357,8 @@ function translate(code: string, p: Params): string | undefined {
       return m.rp_caveat_archiving_failing();
     case "recovery.caveat.archiverUnread":
       return m.rp_caveat_archiver_unread();
+    case "recovery.caveat.archiverNotReported":
+      return m.rp_caveat_archiver_not_reported();
     case "recovery.caveat.archivingFailingSince": {
       const archived = instant(p, "archivedAt");
       return archived ? m.rp_caveat_archiving_failing_since({ archived }) : undefined;

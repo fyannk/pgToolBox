@@ -167,11 +167,100 @@ func TestCapRecoveryAtTheCoverageRollup(t *testing.T) {
 			if got.State != RecoveryAvailable || healthy.State != test.want || healthy.FrontierReceiptAt == nil || !strings.HasPrefix(healthy.Reason.Message, in.Paths[0].Reason.Message) {
 				t.Fatalf("recovery %s, healthy path %+v", got.State, healthy)
 			}
-			if test.state != evidencev1alpha1.Healthy && !strings.Contains(healthy.Reason.Message, "succeeds from none") {
+			if test.state != evidencev1alpha1.Healthy && (!strings.Contains(healthy.Reason.Message, "succeeds from none") || healthy.Reason.Code != RollupCapCode) {
 				t.Fatalf("capped path does not carry the roll-up reason: %q", healthy.Reason.Message)
 			}
 			if got.Paths[1].State != evidencev1alpha1.Warning || got.Paths[2].State != evidencev1alpha1.Unhealthy {
 				t.Fatalf("the warning or the proven loss changed: %+v", got.Paths)
+			}
+		})
+	}
+}
+
+// TestCapAtRollupOnlyForReasonsNoPathExplains (round 7, P1): the
+// roll-up is the worst over every backup's own path, so an old backup
+// that stops at a confirmed gap (unhealthy) or one unknown own path makes
+// it degraded without saying anything of a newer backup whose own path
+// reaches the frontier: that path stays healthy. The cap stays for what
+// no path carries: every backup off the newest timeline, a pgBackRest
+// stanza split, or a roll-up worse than every path.
+func TestCapAtRollupOnlyForReasonsNoPathExplains(t *testing.T) {
+	t.Parallel()
+	receipt := time.Date(2026, 11, 10, 8, 0, 0, 0, time.UTC)
+	path := func(id string, target uint64, state evidencev1alpha1.State, stop evidencev1alpha1.CoverageStop, offTarget bool) RecoveryPath {
+		at := receipt
+		return RecoveryPath{
+			BackupID: id, TargetTimeline: target, State: state, Stop: stop, FrontierReceiptAt: &at, OffTarget: offTarget,
+			Reason: evidencev1alpha1.Reason{Code: "coverage-path-" + string(state), Message: "own"},
+		}
+	}
+	healthy := path("new", 2, evidencev1alpha1.Healthy, evidencev1alpha1.CoverageFrontier, false)
+	oldGap := path("old", 2, evidencev1alpha1.Unhealthy, evidencev1alpha1.CoverageGapLimited, false)
+	oldUnknown := path("old", 2, evidencev1alpha1.Unknown, evidencev1alpha1.CoverageUnknownLimited, false)
+	behind := func(id string) RecoveryPath {
+		return path(id, 1, evidencev1alpha1.Warning, evidencev1alpha1.CoverageFrontier, true)
+	}
+	barman := func(t *testing.T) *evidencev1alpha1.RepositoryEvidenceSnapshot {
+		snapshot := fixtureSnapshot(t)
+		return &snapshot
+	}
+	pgbackrest := func(t *testing.T) *evidencev1alpha1.RepositoryEvidenceSnapshot {
+		snapshot, _, _ := pgbackrestFixture(t)
+		snapshot.Details.PGBackRest.ArchiveStanza = snapshot.Details.PGBackRest.Stanza
+		snapshot.Details.PGBackRest.Findings = nil
+		return &snapshot
+	}
+	for _, test := range []struct {
+		name     string
+		snapshot func(*testing.T) *evidencev1alpha1.RepositoryEvidenceSnapshot
+		mutate   func(*evidencev1alpha1.RepositoryEvidenceSnapshot)
+		rollup   evidencev1alpha1.State
+		paths    []RecoveryPath
+		capped   bool
+	}{
+		{name: "Barman, an old gap-limited backup beside a healthy one", snapshot: barman, rollup: evidencev1alpha1.Unhealthy, paths: []RecoveryPath{oldGap, healthy}},
+		{name: "Barman, an old unknown own path beside a healthy one", snapshot: barman, rollup: evidencev1alpha1.Unknown, paths: []RecoveryPath{oldUnknown, healthy}},
+		{name: "pgBackRest, an old gap-limited backup beside a healthy one", snapshot: pgbackrest, rollup: evidencev1alpha1.Unhealthy, paths: []RecoveryPath{oldGap, healthy}},
+		{name: "an unknown roll-up over healthy paths only", snapshot: barman, rollup: evidencev1alpha1.Unknown, paths: []RecoveryPath{healthy}, capped: true},
+		{name: "an unhealthy roll-up over a warning and a healthy path", snapshot: barman, rollup: evidencev1alpha1.Unhealthy, paths: []RecoveryPath{behind("old"), healthy}, capped: true},
+		{name: "every backup off the newest timeline", snapshot: barman, rollup: evidencev1alpha1.Warning, paths: []RecoveryPath{behind("old"), behind("new"), path("new", 2, evidencev1alpha1.Healthy, evidencev1alpha1.CoverageFrontier, false)}, capped: true},
+		{name: "pgBackRest stanza split", snapshot: pgbackrest, mutate: func(s *evidencev1alpha1.RepositoryEvidenceSnapshot) {
+			s.Details.PGBackRest.ArchiveStanza = s.Details.PGBackRest.Stanza + "-archive"
+		}, rollup: evidencev1alpha1.Unhealthy, paths: []RecoveryPath{oldGap, healthy}, capped: true},
+		{name: "pgBackRest StanzaSplit finding", snapshot: pgbackrest, mutate: func(s *evidencev1alpha1.RepositoryEvidenceSnapshot) {
+			s.Details.PGBackRest.Findings = []evidencev1alpha1.PGBackRestFinding{{Code: evidencev1alpha1.FindingStanzaSplit, Severity: evidencev1alpha1.FindingWarning}}
+		}, rollup: evidencev1alpha1.Warning, paths: []RecoveryPath{healthy}, capped: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			snapshot := test.snapshot(t)
+			if test.mutate != nil {
+				test.mutate(snapshot)
+			}
+			coverage := evidencev1alpha1.StateReason{State: test.rollup, Reason: evidencev1alpha1.Reason{Code: "coverage-" + string(test.rollup), Message: "one or more recovery paths cross a confirmed required gap"}}
+			if snapshot.Details.PGBackRest != nil {
+				snapshot.Details.PGBackRest.Coverage = coverage
+			} else {
+				snapshot.Details.BarmanCloud.Coverage = coverage
+			}
+			got := capRecovery(snapshot, Recovery{State: RecoveryAvailable, Complete: true, Paths: test.paths})
+			if got.State != RecoveryAvailable || got.CoverageReason != coverage.Reason.Message {
+				t.Fatalf("recovery %s, coverage reason %q", got.State, got.CoverageReason)
+			}
+			for index, p := range got.Paths {
+				in := test.paths[index]
+				if in.State != evidencev1alpha1.Healthy {
+					if p.State != in.State || p.Reason.Code != in.Reason.Code {
+						t.Errorf("path %d (%s) changed: %+v", index, in.State, p)
+					}
+					continue
+				}
+				switch {
+				case test.capped && (p.State != evidencev1alpha1.Warning || p.Reason.Code != RollupCapCode || p.FrontierReceiptAt == nil):
+					t.Errorf("path %d not capped at the roll-up: %+v", index, p)
+				case !test.capped && (p.State != evidencev1alpha1.Healthy || p.Reason != in.Reason):
+					t.Errorf("path %d capped by another backup's state: %+v", index, p)
+				}
 			}
 		})
 	}

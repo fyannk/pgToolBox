@@ -233,15 +233,18 @@ func podReady(pod *corev1.Pod) bool {
 // (internal/management/controller/instance_controller.go v1.30.0:1333,
 // v1.30.1:1397). Every instance fills the archiver fields from
 // pg_stat_archiver (pkg/management/postgres/probes.go v1.30.0 and
-// v1.30.1:272, fillArchiverStatus).
+// v1.30.1:272, fillArchiverStatus), but readyWalFiles only a primary
+// (probes.go v1.30.1:461-463): a designated primary's is not reported
+// (ReadyNotReported).
 func primaryArchiver(g *gathered) *cnpgstatus.ArchiverLive {
 	r := primaryArchiverReading(g)
 	if r == nil {
 		return nil
 	}
 	return &cnpgstatus.ArchiverLive{
-		IsArchivingWAL: r.IsArchivingWAL, LastFailedWAL: r.LastFailedWAL, ReadyWALFiles: r.ReadyWALFiles,
-		ObservedAt: r.ObservedAt, Earlier: earlierReady(g, g.cluster.Status.CurrentPrimary, r.ObservedAt),
+		IsArchivingWAL: r.IsArchivingWAL, LastFailedWAL: r.LastFailedWAL, ReadyWALFiles: r.ReadyWALFiles, ReadyNotReported: !r.IsPrimary,
+		LastArchivedAt: r.LastArchivedWALTime,
+		ObservedAt:     r.ObservedAt, Earlier: earlierReady(g, g.cluster.Status.CurrentPrimary, r.ObservedAt),
 		PluginMaxParallel: pluginMaxParallel(g),
 	}
 }
@@ -283,16 +286,38 @@ func pluginMaxParallel(g *gathered) *int {
 // instance stands in, not even one reporting itself primary: during a
 // failover or a split brain that one is not the archiver the operator
 // names, and its pg_stat_archiver says nothing about the WAL the
-// repository receives. Unread, the archiver is unknown.
+// repository receives. Unread, the archiver is unknown. One missed read
+// (a timeout, a slow answer) does not flip the archiving facts: the last
+// good reading of the same pod (the sweep keeps it only for the same pod
+// UID, so a restarted pod has none) stands while it is from the sweep
+// before (primaryReadGrace); a second miss in a row is unread.
 func primaryArchiverReading(g *gathered) *instancestatus.Reading {
 	name := g.cluster.Status.CurrentPrimary
 	if name == "" {
 		return nil
 	}
-	if inst, ok := g.swept.Instances[name]; ok && inst.State == viewmodel.StatusReadOK && inst.Reading != nil {
+	inst, ok := g.swept.Instances[name]
+	if !ok || inst.Reading == nil {
+		return nil
+	}
+	if inst.State == viewmodel.StatusReadOK {
+		return inst.Reading
+	}
+	if g.swept.Interval > 0 && !inst.Reading.ObservedAt.IsZero() && g.swept.SweptAt.Sub(inst.Reading.ObservedAt) <= primaryReadGrace(g.swept.Interval) &&
+		!inst.Since.Before(g.swept.SweptAt.Add(-g.swept.Interval/2)) {
+		// The failed state began this sweep (Since), and the reading is
+		// from the one before.
 		return inst.Reading
 	}
 	return nil
+}
+
+// primaryReadGrace is how old the primary's last good reading may be,
+// against the sweep, and still stand after a failed read: one sweep
+// period, with half a period for the ticker's jitter, so exactly one
+// missed sweep is absorbed and two are not.
+func primaryReadGrace(interval time.Duration) time.Duration {
+	return interval + interval/2
 }
 
 // sweepStaleReason is why a reading of the sweep is stale.
@@ -318,8 +343,12 @@ func archivingDetail(a cnpgstatus.ArchivingReading) string {
 }
 
 func (s *Service) archivingProvenance(g *gathered, now time.Time) viewmodel.Provenance {
-	if primaryArchiver(g) != nil {
+	if r := primaryArchiverReading(g); r != nil {
 		at := g.swept.SweptAt
+		if !r.ObservedAt.IsZero() {
+			// The reading's own time: the sweep before, after one miss.
+			at = r.ObservedAt.UTC()
+		}
 		p := viewmodel.Provenance{Origin: viewmodel.OriginInstance, Source: "/pg/status", ObservedAt: &at}
 		if sweepStale(g, now) {
 			p.Stale, p.StaleReason = true, sweepStaleReason

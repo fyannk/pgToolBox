@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -651,7 +652,7 @@ func (s *Service) instanceRows(g *gathered, withSeries bool) []viewmodel.Instanc
 		}
 		if withSeries {
 			if sw := s.sweeper(); sw != nil {
-				row.Series = sw.Series(g.sweepKey(), pod.Name)
+				row.Series = sparklines(sw.Series(g.sweepKey(), pod.Name))
 			}
 		}
 		row.Health = instanceHealth(row)
@@ -810,7 +811,11 @@ func (s *Service) backupSummary(g *gathered, now time.Time) viewmodel.BackupSumm
 	}
 	if live := primaryArchiverReading(g); live != nil {
 		archivingWAL, ready := live.IsArchivingWAL, live.ReadyWALFiles
-		summary.Archiving.LiveArchiving, summary.Archiving.ReadyWALFiles = &archivingWAL, &ready
+		summary.Archiving.LiveArchiving = &archivingWAL
+		if live.IsPrimary {
+			// A designated primary reports no readyWalFiles.
+			summary.Archiving.ReadyWALFiles = &ready
+		}
 		summary.Archiving.LastFailedWAL, summary.Archiving.LastArchivedWAL = live.LastFailedWAL, live.LastArchivedWAL
 		summary.Archiving.LastArchivedAt, summary.Archiving.LastFailedAt = utc(live.LastArchivedWALTime), utc(live.LastFailedWALTime)
 	}
@@ -954,4 +959,10 @@ func eventRow(e *corev1.Event) viewmodel.EventRow {
 		row.Health = viewmodel.HealthWarning
 	}
 	return row
+}
+
+// sparklines are the series an instance row draws: the primary's WAL
+// position ring is read by the recovery facts only.
+func sparklines(series []viewmodel.Series) []viewmodel.Series {
+	return slices.DeleteFunc(series, func(s viewmodel.Series) bool { return s.Key == sweep.SeriesCurrentLSN })
 }
