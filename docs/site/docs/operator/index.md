@@ -167,8 +167,10 @@ decision, never the product's.
   again when it widens who may sign in or raises the proxy's `sessionMaxAge` (see
   [Security](../security.md#secret-references-need-get)); a fifth: a projected
   Prometheus token takes `create serviceaccounts/token`; and a sixth: an exposure
-  annotation an ingress controller reads as configuration (snippets, external
-  authentication, middlewares) requires `create` on the exposure kind (see
+  annotation an ingress controller reads as configuration (snippets,
+  authentication, source ranges, redirects, canaries, extra hosts, load-balancer
+  scheme, middlewares, plugins), on the exposure object or on the Service through
+  `metadataPropagation`, requires `create` on the exposure kind (see
   [Security](../security.md#exposure-annotations-that-configure-the-ingress-controller)).
   `validationActions` selects `Deny`, `Warn` and/or `Audit`; `Deny` alone enforces.
   See [images](images.md) for why.

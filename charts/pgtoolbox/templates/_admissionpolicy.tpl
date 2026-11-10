@@ -90,37 +90,76 @@ has(object.spec.auth.openshiftOAuthProxy) == has(oldObject.spec.auth.openshiftOA
 (has(object.spec.admins) ? object.spec.admins : []) == (has(oldObject.spec.admins) ? oldObject.spec.admins : [])
 {{- end }}
 
-{{- /* Whether the annotation key `.` (a CEL expression) is one an ingress
-controller reads as configuration that changes who reaches the workload or
-where its traffic goes: configuration snippets of any controller (keys that
-contain "snippet": ingress-nginx's configuration-, server-, auth- and
-stream-snippet, NGINX Inc's server- and location-snippets, HAProxy's
-backend- and frontend-config-snippet), ingress-nginx's external and basic
-authentication (auth-*), its global-authentication opt-out and satisfy,
-request mirroring (mirror-*) and upstream client certificate
-(proxy-ssl-secret); haproxy-ingress's raw configuration (config-*) and auth-*;
-Traefik's router middlewares; Kong's plugins. The list is documented in
-docs/site/docs/security.md; a controller's other annotations (timeouts,
-body size, affinity, rewrite) pass. */ -}}
+{{- /* The annotation keys an ingress controller reads as configuration that
+changes who reaches the workload, which host it claims, or where its traffic
+(cookies included) goes: one list, as data, from which
+pgtoolbox.admission.exposureAnnotationDenied is rendered. `contains` matches a
+substring of any key (the configuration snippets of every controller); under
+each controller's `domain`, `keys` are exact names and `prefixes` match the
+start of the name. Keys that tune how a request reaches the workload's own
+Service (timeouts, body size, affinity, rewrite-target, use-regex,
+upstream-vhost, backend-protocol) are not listed. docs/site/docs/security.md
+has the same table: TestExposureDenyListDocumented in
+internal/operator/admissionpolicy fails when the two differ, and the envtest
+there refuses every entry. */ -}}
+{{- define "pgtoolbox.admission.exposureDenyList" -}}
+contains: [snippet]
+controllers:
+  - domain: nginx.ingress.kubernetes.io/
+    controller: ingress-nginx
+    prefixes: [auth-, mirror-, canary, cors-, proxy-redirect-]
+    keys: [enable-global-auth, satisfy, proxy-ssl-secret, server-alias, permanent-redirect, temporal-redirect, app-root, default-backend, custom-http-errors, whitelist-source-range, allowlist-source-range, denylist-source-range, enable-cors]
+  - domain: alb.ingress.kubernetes.io/
+    controller: AWS Load Balancer Controller
+    prefixes: [actions., conditions., auth-]
+    keys: [scheme, group.name, group.order, inbound-cidrs, security-groups, listen-ports]
+  - domain: haproxy-ingress.github.io/
+    controller: haproxy-ingress
+    prefixes: [config-, auth-, cors-]
+    keys: [allowlist-source-range, whitelist-source-range, denylist-source-range, redirect-from, redirect-to, app-root]
+  - domain: haproxy.org/
+    controller: HAProxy Kubernetes Ingress
+    prefixes: [auth-, cors-]
+    keys: [allow-list, whitelist, deny-list, blacklist, request-redirect, route-acl]
+  - domain: haproxy.router.openshift.io/
+    controller: OpenShift router
+    prefixes: []
+    keys: [ip_whitelist, ip_allowlist]
+  - domain: traefik.ingress.kubernetes.io/
+    controller: Traefik
+    prefixes: []
+    keys: [router.middlewares, router.entrypoints]
+  - domain: konghq.com/
+    controller: Kong
+    prefixes: []
+    keys: [plugins, host-aliases]
+{{- end }}
+
+{{- /* Whether the annotation key `.` (a CEL expression) is on the deny-list
+(pgtoolbox.admission.exposureDenyList). A key is first matched on its
+controller's domain, so a key of no listed controller costs one startsWith
+per controller. */ -}}
 {{- define "pgtoolbox.admission.exposureAnnotationDenied" -}}
-({{ . }}.contains('snippet') ||
-{{ . }}.startsWith('nginx.ingress.kubernetes.io/auth-') ||
-{{ . }} == 'nginx.ingress.kubernetes.io/enable-global-auth' ||
-{{ . }} == 'nginx.ingress.kubernetes.io/satisfy' ||
-{{ . }}.startsWith('nginx.ingress.kubernetes.io/mirror-') ||
-{{ . }} == 'nginx.ingress.kubernetes.io/proxy-ssl-secret' ||
-{{ . }}.startsWith('haproxy-ingress.github.io/config-') ||
-{{ . }}.startsWith('haproxy-ingress.github.io/auth-') ||
-{{ . }}.startsWith('haproxy.org/auth-') ||
-{{ . }} == 'traefik.ingress.kubernetes.io/router.middlewares' ||
-{{ . }} == 'konghq.com/plugins')
+{{- $k := . -}}
+{{- $list := include "pgtoolbox.admission.exposureDenyList" . | fromYaml -}}
+(
+{{- range $i, $c := $list.contains }}{{ if $i }} || {{ end }}{{ $k }}.contains('{{ $c }}'){{ end }}
+{{- range $list.controllers }}{{ $d := .domain }} ||
+{{ $k }}.startsWith('{{ $d }}') && (
+{{- $alts := list -}}
+{{- if .keys }}{{ $keys := list }}{{ range .keys }}{{ $keys = append $keys (printf "'%s%s'" $d .) }}{{ end }}{{ $alts = append $alts (printf "%s in [%s]" $k (join ", " $keys)) }}{{ end -}}
+{{- range .prefixes }}{{ $alts = append $alts (printf "%s.startsWith('%s%s')" $k $d .) }}{{ end -}}
+{{ join " || " $alts }})
+{{- end }})
 {{- end }}
 
 {{- /* Whether every denied annotation (pgtoolbox.admission.exposureAnnotationDenied)
-that object puts on its exposure object (spec.exposure.annotations, and the
-annotations of the metadataPropagation rules for All or Exposure) was there,
-with the same value, before, on an object exposed the same way. A
-clusterIP object renders no exposure object. */ -}}
+that object puts on its exposure object or its Service (spec.exposure.annotations,
+and the annotations of the metadataPropagation rules for All, Exposure or
+Service: Kong and HAProxy read some on the Service an Ingress routes to) was
+there, with the same value, before, on a rule reaching the same objects, on an
+object exposed the same way. A clusterIP object renders no exposure object,
+so nothing routes to its Service; exposing it is checked again. */ -}}
 {{- define "pgtoolbox.admission.exposureAnnotationsKept" -}}
 variables.exposureType == 'clusterIP' || (
 (!has(object.spec.exposure.annotations) || object.spec.exposure.annotations.all(k,
@@ -128,10 +167,10 @@ variables.exposureType == 'clusterIP' || (
   (variables.oldExposureType == variables.exposureType && has(oldObject.spec.exposure.annotations) &&
    k in oldObject.spec.exposure.annotations && oldObject.spec.exposure.annotations[k] == object.spec.exposure.annotations[k]))) &&
 (!has(object.spec.metadataPropagation) || object.spec.metadataPropagation.all(r,
-  !(r.target == 'All' || r.target == 'Exposure') || !has(r.annotations) || r.annotations.all(k,
+  !(r.target in ['All', 'Exposure', 'Service']) || !has(r.annotations) || r.annotations.all(k,
     !{{ include "pgtoolbox.admission.exposureAnnotationDenied" "k" }} ||
     (variables.oldExposureType == variables.exposureType && has(oldObject.spec.metadataPropagation) &&
-     oldObject.spec.metadataPropagation.exists(o, (o.target == 'All' || o.target == 'Exposure') && has(o.annotations) &&
+     oldObject.spec.metadataPropagation.exists(o, (o.target == 'All' || o.target == r.target) && has(o.annotations) &&
        k in o.annotations && o.annotations[k] == r.annotations[k])))))
 )
 {{- end }}
