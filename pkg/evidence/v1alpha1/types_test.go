@@ -238,3 +238,45 @@ func TestEvidenceAPIErrorCodesAreClosed(t *testing.T) {
 		t.Fatal("ErrorCodes exposes the internal vocabulary")
 	}
 }
+
+// TestBarmanRecoveryPathOffTargetIsNeverHealthy: a path that cannot reach the
+// newest timeline (the default restore target) is at most a warning and
+// follows the backup's own timeline; off_target is additive (omitted when
+// false, so older consumers read the same bytes).
+func TestBarmanRecoveryPathOffTargetIsNeverHealthy(t *testing.T) {
+	t.Parallel()
+	one, two := uint64(1), uint64(2)
+	position, wal := uint64(1), "000000010000000000000001"
+	base := func() BarmanRecoveryPath {
+		return BarmanRecoveryPath{
+			Server: "orders", BackupID: "b1", TargetTimeline: 1, State: Warning,
+			Reason: Reason{Code: "coverage-path-warning", Message: "bounded"}, Stop: CoverageFrontier,
+			StartTimeline: &one, StartPosition: &position, StartWAL: &wal, AssumptionCodes: []string{}, OffTarget: true,
+		}
+	}
+	if err := base().Validate(); err != nil {
+		t.Fatalf("off-target warning path rejected: %v", err)
+	}
+	for name, mutate := range map[string]func(*BarmanRecoveryPath){
+		"healthy off target":             func(p *BarmanRecoveryPath) { p.State = Healthy },
+		"off target toward another line": func(p *BarmanRecoveryPath) { p.TargetTimeline = two },
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			path := base()
+			mutate(&path)
+			if err := path.Validate(); err == nil {
+				t.Fatal("invalid off-target Barman recovery path accepted")
+			}
+		})
+	}
+	path := base()
+	path.OffTarget = false
+	encoded, err := json.Marshal(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(encoded, []byte("off_target")) {
+		t.Fatalf("off_target is not omitted when false: %s", encoded)
+	}
+}

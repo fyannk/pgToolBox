@@ -349,7 +349,7 @@ func projectRecoveryPaths(source inventory.Snapshot, server string) []evidencev1
 			Reason: typedReason("coverage-path-"+string(path.State), path.Reason), Stop: evidencev1alpha1.CoverageStop(path.Stop),
 			LowerBoundAt: timePointer(path.LowerBound), StartTimeline: positiveUint32Pointer(path.StartTimeline), StartPosition: positionPointer(path.StartTimeline, path.StartPosition), StartWAL: stringPointer(path.StartWAL),
 			FrontierTimeline: positiveUint32Pointer(path.FrontierTimeline), FrontierPosition: positionPointer(path.FrontierTimeline, path.FrontierPosition), FrontierWAL: stringPointer(path.FrontierWAL), FrontierReceiptAt: timePointer(path.FrontierReceipt),
-			AssumptionCodes: assumptionCodes(path.Assumptions),
+			AssumptionCodes: assumptionCodes(path.Assumptions), OffTarget: path.OffTarget,
 		})
 	}
 	return result

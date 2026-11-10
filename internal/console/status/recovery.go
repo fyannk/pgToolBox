@@ -215,15 +215,18 @@ type timelineInput struct {
 // targetTimeline is the newest timeline a path was evaluated toward: a
 // timeline the agent saw in the archive but could not connect by valid
 // history (a path with no frontier) is not a restore target PostgreSQL
-// can follow, so it does not move the bar; it is reported instead.
+// can follow, so it does not move the bar; it is reported instead. An
+// off-target path (the agent proved the backup cannot reach the newest
+// timeline) follows the backup's own timeline, which is not 'latest': it
+// never names the target either.
 func targetTimeline(paths []evidence.RecoveryPath) (target, orphan uint64) {
 	for _, p := range paths {
-		if p.FrontierTimeline != nil {
+		if p.FrontierTimeline != nil && !p.OffTarget {
 			target = max(target, p.TargetTimeline)
 		}
 	}
 	for _, p := range paths {
-		if p.FrontierTimeline == nil && p.TargetTimeline > target {
+		if p.FrontierTimeline == nil && !p.OffTarget && p.TargetTimeline > target {
 			orphan = max(orphan, p.TargetTimeline)
 		}
 	}

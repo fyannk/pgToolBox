@@ -29,6 +29,15 @@ A WAL finding nests under the operator's archiving condition when both are
 current, which places the repository's observation beside the operator's claim
 without merging them.
 
+A backup that cannot reach the newest timeline (its timeline branched off
+before the backup was consistent, or is not an ancestor of the newest one) gets
+an *off-target* recovery path (`off_target: true`) on its own timeline. A
+default CloudNativePG restore (`recovery_target_timeline` `latest`) fails from
+it, so the path is at most a warning and a restore from it must name the
+timeline. Barman Cloud and pgBackRest give such a path the same state; for
+Barman the coverage conclusion is then not healthy (it takes the worst path),
+for pgBackRest the backup is not counted as usable.
+
 A Cluster backed up through a pgBackRest plugin is read the same way, as one
 stanza of one repository; see
 [Clusters backed up with pgBackRest](guides/pgbackrest.md).

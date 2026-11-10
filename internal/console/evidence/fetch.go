@@ -692,6 +692,7 @@ func (s agentSession) recoveryPaths(ctx context.Context, snapshot *evidencev1alp
 			BackupID: item.BackupID, TargetTimeline: item.TargetTimeline, State: item.State, Reason: item.Reason, Stop: item.Stop,
 			LowerBoundAt: item.LowerBoundAt, FrontierReceiptAt: item.FrontierReceiptAt, Assumptions: item.AssumptionCodes,
 			StartTimeline: item.StartTimeline, FrontierTimeline: item.FrontierTimeline, FrontierPosition: item.FrontierPosition,
+			OffTarget: item.OffTarget,
 		})
 		return true
 	})

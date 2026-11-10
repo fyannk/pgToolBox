@@ -174,6 +174,10 @@ type RecoveryPath struct {
 	// its backup's consistency point (pgBackRest paths state it); nil
 	// when the console must work it out from positions (Barman).
 	Consistent *bool
+	// OffTarget is true when the agent proved the backup cannot reach the
+	// newest timeline: the path follows the backup's own timeline, which a
+	// default restore (recovery_target_timeline 'latest') does not.
+	OffTarget bool
 }
 
 // Reader is the read model's view of the evidence runner.
