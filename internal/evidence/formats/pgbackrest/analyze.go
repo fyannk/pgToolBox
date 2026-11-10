@@ -187,12 +187,14 @@ type BackupReport struct {
 // last contiguous segment. Start is a backup's backup-timestamp-stop; the end
 // is a WAL position, and EndReceipt is only the upload time of its segment.
 type RecoveryWindow struct {
-	OldestBackup  string
-	Start         time.Time
-	NewestBackup  string
-	NewestStop    time.Time
-	EndTimeline   uint32
-	EndWAL        string
+	OldestBackup string
+	Start        time.Time
+	NewestBackup string
+	NewestStop   time.Time
+	EndTimeline  uint32
+	EndWAL       string
+	// EndLSN is an exclusive upper bound: the first LSN past EndWAL, never
+	// a restore target.
 	EndLSN        string
 	EndReceipt    time.Time
 	UsableBackups int
@@ -343,9 +345,10 @@ func (c *Collector) Analyze(ctx context.Context, reader store.Reader) Report {
 	report.Database = &current
 	report.ArchiveIDs = archiveInfo.ArchiveIDs()
 
-	report.SegmentSize, report.SegmentSizeSource = InferSegmentSize(backupInfo.Backups, collector.SegmentNames())
+	inference := InferSegmentSize(backupInfo.Backups, collector.SegmentNames())
+	report.SegmentSize, report.SegmentSizeSource = inference.Size, inference.Source
 	if report.SegmentSize == 0 {
-		findings.add(FindingWALUnknown, SeverityError, "backup/"+options.Stanza+"/backup.info", "no WAL segment size agrees with every backup's LSN range")
+		findings.add(FindingWALUnknown, SeverityError, "backup/"+options.Stanza+"/backup.info", inference.Problem)
 	}
 
 	historyObjects, historyTruncated := collector.HistoryObjects()
@@ -360,6 +363,7 @@ func (c *Collector) Analyze(ctx context.Context, reader store.Reader) Report {
 	historiesByID := make(map[string][]TimelineHistory)
 	for _, archiveID := range report.ArchiveIDs {
 		wal := collector.Finish(archiveStanza, archiveID, report.SegmentSize, previousWAL[archiveID], options.Generation)
+		wal.SegmentSizeUnproven = inference.Unproven && report.SegmentSize != 0
 		walByID[archiveID] = wal
 		report.WAL = append(report.WAL, wal)
 		histories := readHistories(ctx, reader, historyObjects, archiveStanza, archiveID, archiveInfo.cipherPass, report.SegmentSize)
@@ -467,6 +471,9 @@ func analyzeBackups(ctx context.Context, reader store.Reader, listed map[string]
 		backup.Path = evaluatePath(backup.Backup, wal, historiesByID[archiveID], historyTruncated)
 		if backup.Path.State != evidence.Healthy && backup.Path.Stop == CoverageGapLimited && !backup.Path.Consistent {
 			findings.add(FindingWALGap, SeverityError, backup.Backup.Label, "WAL needed to make the backup consistent is missing")
+		}
+		if backup.Path.Reason == UnprovenSizeReason(wal.SegmentSize) {
+			findings.add(FindingWALUnknown, SeverityWarning, backup.Backup.Label, backup.Path.Reason)
 		}
 	}
 	// Usability: the chain, every manifest the backup depends on, and WAL to
@@ -889,7 +896,26 @@ func evaluatePath(backup Backup, wal ArchiveWAL, histories []TimelineHistory, hi
 		}
 		path.Stop = gapStop(path.State)
 	}
+	if path.State == evidence.Healthy && wal.SegmentSizeUnproven && (len(path.Timelines) > 1 || crossesLog(startPosition, path.FrontierPosition, wal.SegmentSize)) {
+		path.State, path.Reason = evidence.Warning, UnprovenSizeReason(wal.SegmentSize)
+	}
 	return markOffTarget(path, offTarget, startTimeline)
+}
+
+// UnprovenSizeReason is the reason of a path that is contiguous only at an
+// inferred WAL segment size a smaller one is not ruled out against: it
+// crosses into the next log id, where segments missing at the end of a log
+// would look like a rollover, or a timeline switch, whose segment position
+// depends on the size.
+func UnprovenSizeReason(segmentSize int64) string {
+	return fmt.Sprintf("WAL is contiguous only if the WAL segment size is the inferred %d MiB: the path crosses into the next log id or a timeline switch, and a smaller size is not ruled out (segments missing at the end of a log id look like a rollover)", segmentSize>>20)
+}
+
+// crossesLog reports whether a walk from one global segment position to
+// another passes from one log id to the next.
+func crossesLog(from, to uint64, segmentSize int64) bool {
+	perLog := segmentsPerLog(segmentSize)
+	return from/perLog != to/perLog
 }
 
 // markOffTarget flags a path whose backup cannot reach the target timeline

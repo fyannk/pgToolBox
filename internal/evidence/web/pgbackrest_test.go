@@ -81,7 +81,7 @@ func TestHandlerRendersPGBackRestStanzas(t *testing.T) {
 			name: "plain", variant: "plain",
 			want: []string{
 				"<h2>pgBackRest stanzas</h2>", "<h3>Stanza demo</h3>", "20261107-081046F_20261107-081101D",
-				"fixture-repo1-diff", "every backup is usable", "<h4>Recovery window</h4>", "000000020000000000000014",
+				"fixture-repo1-diff", "every backup is usable", "<h4>Recovery window</h4>", "000000020000000000000014", "upper bound", "not a restore target",
 				`<a href="/wals?server=demo%2f17-1">demo/17-1</a>`, "the repository is not encrypted",
 			},
 		},

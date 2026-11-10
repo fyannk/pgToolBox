@@ -17,12 +17,16 @@ package pgbackrest
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
+	"github.com/fyannk/pgToolBox/internal/evidence/evidence"
 	"github.com/fyannk/pgToolBox/internal/evidence/store"
 )
 
@@ -199,6 +203,86 @@ func FuzzParseLSN(f *testing.F) {
 		}
 		if _, padded, _ := strings.Cut(value, "/"); padded != low && len(padded) != 8 {
 			t.Fatalf("%q: a padded low half of %d digits was accepted", value, len(padded))
+		}
+	})
+}
+
+// fuzzSegmentNames decodes three bytes per name, on timeline 1: a log id
+// (0 to 3) and a segment number (0 to 0xFFF, every size's range).
+func fuzzSegmentNames(data []byte) []string {
+	names := []string{"000000010000000000000000"}
+	for index := 0; index+2 < len(data) && len(names) < 512; index += 3 {
+		log := uint32(data[index] & 3)
+		segment := (uint32(data[index+1])<<8 | uint32(data[index+2])) & 0xFFF
+		names = append(names, fmt.Sprintf("00000001%08X%08X", log, segment))
+	}
+	return names
+}
+
+// FuzzInferSegmentSize: whatever segment names an archive lists, the size
+// inferred from them never has fewer segments per log than the highest
+// segment number observed; a path whose WAL crosses into the next log id
+// is healthy only at a proven size (no smaller size possible); and adding
+// one segment name never turns a crossing left at warning by an unproven
+// size into a healthy one.
+func FuzzInferSegmentSize(f *testing.F) {
+	seed := func(log uint32, from, to uint32, extra ...uint32) []byte {
+		var out []byte
+		for segment := from; segment <= to; segment++ {
+			out = append(out, byte(log), byte(segment>>8), byte(segment))
+		}
+		for _, value := range extra {
+			out = append(out, byte(value>>16), byte(value>>8), byte(value))
+		}
+		return out
+	}
+	f.Add(seed(0, 1, 0x3F, 0x10000), []byte{0, 0, 0x40})
+	f.Add(seed(0, 1, 0xFF, 0x10000), []byte{1, 0, 1})
+	f.Add(seed(0, 1, 0x80, 0x10000), []byte{0, 0, 0xFF})
+	f.Add(seed(0, 1, 3, 0x10000, 0x10001), []byte{0, 0x0F, 0xFF})
+	f.Fuzz(func(t *testing.T, data, extra []byte) {
+		backup := Backup{Label: "b", ArchiveStart: "000000010000000000000000", LSNStart: "0/28", ArchiveStop: "000000010000000000000000", LSNStop: "0/100"}
+		check := func(names []string) (SegmentSizeInference, RecoveryPath) {
+			// An object store lists keys in lexical order.
+			names = slices.Compact(slices.Sorted(slices.Values(names)))
+			collector := NewWALCollector()
+			highest := uint32(0)
+			for _, name := range names {
+				collector.Add(store.Object{Key: "archive/demo/17-1/" + name[:16] + "/" + name + "-0123456789abcdef0123456789abcdef01234567.gz", Size: 1, LastModified: time.Unix(1, 0).UTC()})
+				highest = max(highest, parseHex32(name[16:24]))
+			}
+			observed := collector.SegmentNames()
+			if !observed.Seen || observed.MaxSegment != highest || slices.ContainsFunc(observed.Rollovers, func(value uint32) bool { return value > highest }) {
+				t.Fatalf("SegmentNames() = %+v for highest segment %X", observed, highest)
+			}
+			inference := InferSegmentSize([]Backup{backup}, observed)
+			if (inference.Size == 0) != (inference.Problem != "") {
+				t.Fatalf("InferSegmentSize() = %+v", inference)
+			}
+			if inference.Size == 0 {
+				return inference, RecoveryPath{}
+			}
+			if segmentsPerLog(inference.Size) <= uint64(highest) {
+				t.Fatalf("inferred %d bytes, which cannot hold segment %X", inference.Size, highest)
+			}
+			wal := collector.Finish("demo", "17-1", inference.Size, nil, 1)
+			wal.SegmentSizeUnproven = inference.Unproven
+			path := evaluatePath(backup, wal, nil, false)
+			if path.State == evidence.Healthy && inference.Unproven && crossesLog(0, path.FrontierPosition, inference.Size) {
+				t.Fatalf("healthy crossing to %s at an unproven %d bytes", path.FrontierWAL, inference.Size)
+			}
+			return inference, path
+		}
+		names := fuzzSegmentNames(data)
+		base, before := check(names)
+		more := fuzzSegmentNames(extra)
+		if len(more) < 2 {
+			return
+		}
+		next, after := check(append(slices.Clone(names), more[1]))
+		if base.Size != 0 && before.State == evidence.Warning && before.Reason == UnprovenSizeReason(base.Size) &&
+			next.Size != 0 && after.State == evidence.Healthy && crossesLog(0, after.FrontierPosition, next.Size) {
+			t.Fatalf("adding %s turned a warning crossing into a healthy one: %q -> %s", more[1], before.Reason, after.FrontierWAL)
 		}
 	})
 }

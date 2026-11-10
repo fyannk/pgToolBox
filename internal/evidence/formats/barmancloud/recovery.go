@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"slices"
 	"sort"
 	"strconv"
@@ -562,7 +563,7 @@ func recoveryPaths(backups []Backup, wal ServerWAL, histories []TimelineHistory,
 		// PostgreSQL's probe of consecutive history files, shared with
 		// pgBackRest.
 		resolution := archive.Latest(startTimeline)
-		own := evaluatePath(backup, wal, startTimeline, start, end, startTimeline, nil)
+		own := evaluatePath(backup, wal, startTimeline, start, end, startTimeline, nil, leaveEdge(resolution, histories, startTimeline, backup, end))
 		if resolution.Settled {
 			markOffTarget(&own, backup, startTimeline, end, resolution.Latest, histories)
 		}
@@ -591,7 +592,7 @@ func recoveryPaths(backups []Backup, wal ServerWAL, histories []TimelineHistory,
 					continue
 				}
 				seenTargets[edge.Child] = true
-				path := evaluatePath(backup, wal, startTimeline, start, end, edge.Child, edges[:edgeIndex+1])
+				path := evaluatePath(backup, wal, startTimeline, start, end, edge.Child, edges[:edgeIndex+1], leaveEdge(resolution, histories, edge.Child, backup, end))
 				switch {
 				case resolution.Reaches(edge.Child):
 				case resolution.Elsewhere(edge.Child):
@@ -692,7 +693,35 @@ func sortRecoveryPaths(result []RecoveryPath) {
 	})
 }
 
-func evaluatePath(backup Backup, wal ServerWAL, timeline uint32, start, requiredEnd uint64, target uint32, edges []HistoryEdge) RecoveryPath {
+// leaveEdge is the switch at which the line a default restore follows
+// (the history of the timeline 'latest' resolves to) leaves timeline, when
+// timeline is a proper ancestor of it on that line and the backup is on the
+// line at that switch. A path toward timeline then ends there: recovery
+// reads the child's segments from SwitchPosition on, so the WAL timeline
+// holds after it is replayed only by a restore that names timeline
+// (recovery_target_timeline), as pgBackRest's parent legs end at
+// SwitchPosition-1.
+func leaveEdge(resolution pgtimeline.Resolution, histories []TimelineHistory, timeline uint32, backup Backup, end uint64) *HistoryEdge {
+	if timeline == resolution.Latest || !resolution.Reaches(timeline) {
+		return nil
+	}
+	index := slices.IndexFunc(histories, func(value TimelineHistory) bool { return value.Timeline == resolution.Latest })
+	if index < 0 || histories[index].State != evidence.Healthy {
+		return nil
+	}
+	edges, ok := descendantEdges(histories[index].Edges, backupTimeline(backup))
+	if !ok || len(edges) == 0 || branchBeforeBackup(edges[0], backup, end) {
+		return nil
+	}
+	for _, edge := range edges {
+		if edge.Parent == timeline {
+			return &edge
+		}
+	}
+	return nil
+}
+
+func evaluatePath(backup Backup, wal ServerWAL, timeline uint32, start, requiredEnd uint64, target uint32, edges []HistoryEdge, leave *HistoryEdge) RecoveryPath {
 	path := RecoveryPath{Server: backup.Server, BackupID: backup.ID, TargetTimeline: target, LowerBound: backup.EndAt.UTC(), StartTimeline: timeline, StartPosition: start, StartWAL: backup.BeginWAL, Assumptions: recoveryAssumptions(backup)}
 	if wal.State == evidence.Unknown {
 		path.State, path.Stop, path.Reason = evidence.Unknown, CoverageUnknownLimited, "WAL continuity contains unknown evidence"
@@ -755,11 +784,38 @@ func evaluatePath(backup Backup, wal ServerWAL, timeline uint32, start, required
 		}
 		position = requiredEnd
 	}
-	frontier, receipt, state, stop, reason = contiguousFrontier(wal, current, position)
+	if leave != nil && leave.SwitchPosition <= position {
+		// The default restore leaves this timeline at or before the
+		// position already reached: nothing more is claimed on it.
+		path.FrontierTimeline, path.FrontierPosition = current, position
+		path.FrontierWAL, _ = WALName(current, position, wal.SegmentSize)
+		path.State, path.Stop, path.Reason = evidence.Healthy, CoverageFrontier, leaveReason(wal, current, *leave)
+		return path
+	}
+	limit := uint64(math.MaxUint64)
+	if leave != nil {
+		limit = leave.SwitchPosition - 1
+	}
+	frontier, receipt, state, stop, reason = contiguousFrontier(wal, current, position, limit)
+	if leave != nil && state == evidence.Healthy && frontier == limit {
+		reason = leaveReason(wal, current, *leave)
+	}
 	path.FrontierTimeline, path.FrontierPosition, path.FrontierReceipt = current, frontier, receipt
 	path.FrontierWAL, _ = WALName(current, frontier, wal.SegmentSize)
 	path.State, path.Stop, path.Reason = state, stop, reason
 	return path
+}
+
+// leaveReason says where a default restore leaves timeline, and that the
+// WAL the archive holds on it after that switch needs an explicit
+// targetTLI.
+func leaveReason(wal ServerWAL, timeline uint32, leave HistoryEdge) string {
+	reason := "a default restore leaves timeline " + strconv.FormatUint(uint64(timeline), 10) + " at " + formatLSN(leave.SwitchLSN) +
+		" for timeline " + strconv.FormatUint(uint64(leave.Child), 10)
+	if slices.ContainsFunc(wal.Ranges, func(value WALRange) bool { return value.Timeline == timeline && value.End >= leave.SwitchPosition }) {
+		return reason + "; its later WAL needs targetTLI " + strconv.FormatUint(uint64(timeline), 10)
+	}
+	return reason
 }
 
 // childHasWAL reports whether the child of a timeline switch has archived WAL
@@ -811,7 +867,11 @@ func reachPosition(wal ServerWAL, timeline uint32, start, required uint64, close
 	return start, time.Time{}, evidence.Unknown, CoverageUnknownLimited, "required starting WAL segment was not observed"
 }
 
-func contiguousFrontier(wal ServerWAL, timeline uint32, start uint64) (uint64, time.Time, evidence.State, CoverageStop, string) {
+// contiguousFrontier walks timeline from start to the end of its contiguous
+// archived WAL, or to limit when the range reaches it: the last segment a
+// default restore reads on the timeline before it switches to a child
+// (leaveEdge). A discontinuity after limit is not on the path.
+func contiguousFrontier(wal ServerWAL, timeline uint32, start, limit uint64) (uint64, time.Time, evidence.State, CoverageStop, string) {
 	ranges := rangesForTimeline(wal.Ranges, timeline)
 	for index, value := range ranges {
 		if start < value.Start {
@@ -819,6 +879,13 @@ func contiguousFrontier(wal ServerWAL, timeline uint32, start uint64) (uint64, t
 		}
 		if start > value.End {
 			continue
+		}
+		if value.End >= limit {
+			receipt := time.Time{}
+			if value.End == limit {
+				receipt = value.EndReceipt
+			}
+			return limit, receipt, evidence.Healthy, CoverageFrontier, ""
 		}
 		if index+1 < len(ranges) {
 			gap := gapAfter(wal.Gaps, timeline, value.End)
@@ -1197,4 +1264,9 @@ func CloneRecoveryCatalog(value RecoveryCatalog) RecoveryCatalog {
 		}
 	}
 	return result
+}
+
+// formatLSN writes an LSN as PostgreSQL prints it (%X/%X).
+func formatLSN(value uint64) string {
+	return fmt.Sprintf("%X/%X", value>>32, value&0xffffffff)
 }

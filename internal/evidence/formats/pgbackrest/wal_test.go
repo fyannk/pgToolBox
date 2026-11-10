@@ -15,6 +15,7 @@
 package pgbackrest
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -104,7 +105,8 @@ func TestInferSegmentSizeFromBackupLSNs(t *testing.T) {
 		}},
 	}
 	for _, test := range tests {
-		size, source := InferSegmentSize(test.backups, SegmentNames{})
+		got := InferSegmentSize(test.backups, SegmentNames{})
+		size, source := got.Size, got.Source
 		if size != test.size || source != test.source {
 			t.Errorf("%s: InferSegmentSize() = %d, %q", test.name, size, source)
 		}
@@ -126,25 +128,33 @@ func TestInferSegmentSizeFromSegmentNames(t *testing.T) {
 		names   SegmentNames
 		size    int64
 		source  SegmentSizeSource
+		// unproven: a smaller size is still possible
+		unproven bool
+		problem  string
 	}{
-		{name: "no names", backups: undecided, size: 16 << 20, source: SegmentSizeAssumed},
-		{name: "names within any size", backups: undecided, names: SegmentNames{Seen: true, MaxSegment: 3}, size: 16 << 20, source: SegmentSizeAssumed},
-		{name: "16 MiB rollover", backups: undecided, names: SegmentNames{Seen: true, MaxSegment: 0xFF, Rollovers: []uint32{0xFF, 0xFF}}, size: 16 << 20, source: SegmentSizeFromNames},
-		{name: "64 MiB rollover", backups: undecided, names: SegmentNames{Seen: true, MaxSegment: 0x3F, Rollovers: []uint32{0x3F}}, size: 64 << 20, source: SegmentSizeFromNames},
-		{name: "1 GiB rollover", backups: undecided, names: SegmentNames{Seen: true, MaxSegment: 3, Rollovers: []uint32{3}}, size: 1 << 30, source: SegmentSizeFromNames},
+		{name: "no names", backups: undecided, size: 16 << 20, source: SegmentSizeAssumed, unproven: true},
+		{name: "names within any size", backups: undecided, names: SegmentNames{Seen: true, MaxSegment: 3}, size: 16 << 20, source: SegmentSizeAssumed, unproven: true},
+		{name: "16 MiB rollover", backups: undecided, names: SegmentNames{Seen: true, MaxSegment: 0xFF, Rollovers: []uint32{0xFF, 0xFF}}, size: 16 << 20, source: SegmentSizeFromNames, unproven: true},
+		// Round 5: 16 MiB WAL with X:40..FF missing reads as a 64 MiB
+		// rollover; the size stays unproven so the crossing is no proof.
+		{name: "64 MiB rollover", backups: undecided, names: SegmentNames{Seen: true, MaxSegment: 0x3F, Rollovers: []uint32{0x3F}}, size: 64 << 20, source: SegmentSizeFromNames, unproven: true},
+		{name: "1 GiB rollover", backups: undecided, names: SegmentNames{Seen: true, MaxSegment: 3, Rollovers: []uint32{3}}, size: 1 << 30, source: SegmentSizeFromNames, unproven: true},
 		// Segment 0x100 is impossible at 16 MiB: the default is never
-		// assumed against the names.
+		// assumed against the names. 1 MiB is the smallest size: proven.
 		{name: "past the 16 MiB rollover, 1 MiB rollover", backups: undecided, names: SegmentNames{Seen: true, MaxSegment: 0xFFF, Rollovers: []uint32{0xFFF}}, size: 1 << 20, source: SegmentSizeFromNames},
-		{name: "past the 16 MiB rollover, no rollover", backups: undecided, names: SegmentNames{Seen: true, MaxSegment: 0x1FF}},
+		{name: "past the 16 MiB rollover, no rollover", backups: undecided, names: SegmentNames{Seen: true, MaxSegment: 0x1FF}, problem: "rule the 16 MiB default out"},
 		{name: "only 1 MiB fits the names", backups: undecided, names: SegmentNames{Seen: true, MaxSegment: 0x800}, size: 1 << 20, source: SegmentSizeFromNames},
-		{name: "rollovers disagree", backups: undecided, names: SegmentNames{Seen: true, MaxSegment: 0xFF, Rollovers: []uint32{0xFF, 0x7F}}, size: 16 << 20, source: SegmentSizeAssumed},
-		{name: "rollover names no size", backups: undecided, names: SegmentNames{Seen: true, MaxSegment: 0x80, Rollovers: []uint32{0x80}}},
+		{name: "rollovers disagree", backups: undecided, names: SegmentNames{Seen: true, MaxSegment: 0xFF, Rollovers: []uint32{0xFF, 0x7F}}, size: 16 << 20, source: SegmentSizeAssumed, unproven: true},
+		// Round 5 (Go P2-8): segments missing at the end of a log make the
+		// rollover early; the default reads the crossing as a gap.
+		{name: "rollover names no size", backups: undecided, names: SegmentNames{Seen: true, MaxSegment: 0x80, Rollovers: []uint32{0x80}}, size: 16 << 20, source: SegmentSizeAssumed, unproven: true},
+		{name: "rollover names no size, default ruled out", backups: undecided, names: SegmentNames{Seen: true, MaxSegment: 0x180, Rollovers: []uint32{0x17F}}, problem: "segments are missing at the end of a log id"},
 		{name: "LSNs decide, names agree", backups: decided64, names: SegmentNames{Seen: true, MaxSegment: 0x3F, Rollovers: []uint32{0x3F}}, size: 64 << 20, source: SegmentSizeFromLSN},
-		{name: "LSNs decide, names contradict", backups: decided64, names: SegmentNames{Seen: true, MaxSegment: 0xFF}},
+		{name: "LSNs decide, names contradict", backups: decided64, names: SegmentNames{Seen: true, MaxSegment: 0xFF}, problem: "has room for the archive's highest segment number"},
 	} {
-		size, source := InferSegmentSize(test.backups, test.names)
-		if size != test.size || source != test.source {
-			t.Errorf("%s: InferSegmentSize() = %d, %q; want %d, %q", test.name, size, source, test.size, test.source)
+		got := InferSegmentSize(test.backups, test.names)
+		if got.Size != test.size || got.Source != test.source || got.Unproven != test.unproven || !strings.Contains(got.Problem, test.problem) || (got.Size == 0) != (got.Problem != "") {
+			t.Errorf("%s: InferSegmentSize() = %+v; want %d, %q, unproven %v, problem %q", test.name, got, test.size, test.source, test.unproven, test.problem)
 		}
 	}
 }
@@ -271,5 +281,70 @@ func TestWALGapIsConfirmedOnlyByALaterScan(t *testing.T) {
 	second := scan(&first, 2)
 	if second.Gaps[0].Status != GapConfirmed || second.Gaps[0].FirstObservedGeneration != 1 || second.State != evidence.Unhealthy {
 		t.Fatalf("second scan gap = %+v, %s", second.Gaps, second.State)
+	}
+}
+
+// unprovenSizePath runs the names of one timeline-1 archive through the
+// collector, the size inference and the path walk of a backup whose WAL
+// is the first named segment, as Analyze does.
+func unprovenSizePath(t testing.TB, backup Backup, names []string) (SegmentSizeInference, ArchiveWAL, RecoveryPath) {
+	t.Helper()
+	collector := NewWALCollector()
+	for _, name := range names {
+		collector.Add(store.Object{Key: "archive/demo/17-1/" + name[:16] + "/" + name + "-0123456789abcdef0123456789abcdef01234567.gz", Size: 1, LastModified: time.Unix(1, 0).UTC()})
+	}
+	inference := InferSegmentSize([]Backup{backup}, collector.SegmentNames())
+	if inference.Size == 0 {
+		return inference, ArchiveWAL{}, unknownPath(inference.Problem)
+	}
+	wal := collector.Finish("demo", "17-1", inference.Size, nil, 1)
+	wal.SegmentSizeUnproven = inference.Unproven
+	return inference, wal, evaluatePath(backup, wal, nil, false)
+}
+
+func logNames(log uint32, from, to uint32) []string {
+	var out []string
+	for segment := from; segment <= to; segment++ {
+		out = append(out, fmt.Sprintf("00000001%08X%08X", log, segment))
+	}
+	return out
+}
+
+// TestNameInferredSizeNeverProvesARollover (round 5, P2-2): real 16 MiB
+// WAL, every backup inside segment 0 of its log id, segments 1:00..3F and
+// 2:00 archived and 1:40..FF missing. The names infer 64 MiB, at which
+// 1:3F -> 2:00 is contiguous; a smaller size is not ruled out, so the
+// crossing is at most a warning that names the assumption, never healthy.
+// A size the backups' LSNs prove keeps a healthy crossing.
+func TestNameInferredSizeNeverProvesARollover(t *testing.T) {
+	t.Parallel()
+	undecided := Backup{Label: "b", ArchiveStart: "000000010000000100000000", LSNStart: "1/28", ArchiveStop: "000000010000000100000000", LSNStop: "1/100"}
+	decided := Backup{Label: "b", ArchiveStart: "0000000100000001000000F0", LSNStart: "1/F0000028", ArchiveStop: "0000000100000001000000F0", LSNStop: "1/F0000100"}
+	for _, test := range []struct {
+		name    string
+		backup  Backup
+		names   []string
+		size    int64
+		state   evidence.State
+		reason  string
+		healthy bool
+	}{
+		{name: "64 MiB inferred, 16 MiB real", backup: undecided, names: append(logNames(1, 0, 0x3F), logNames(2, 0, 0)...), size: 64 << 20, state: evidence.Warning, reason: "inferred 64 MiB"},
+		{name: "within one log id", backup: undecided, names: logNames(1, 0, 0x3F), size: 16 << 20, state: evidence.Healthy},
+		// Go P2-8: the rollover after 1:80 names no size; the default shows
+		// the missing 1:81..FF as a gap rather than "no size agrees".
+		{name: "early rollover falls back to the default", backup: undecided, names: append(logNames(1, 0, 0x80), logNames(2, 0, 1)...), size: 16 << 20, state: evidence.Warning, reason: "gap follows"},
+		{name: "size proven by the backup's LSN", backup: decided, names: append(logNames(1, 0xF0, 0xFF), logNames(2, 0, 1)...), size: 16 << 20, state: evidence.Healthy},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			inference, wal, path := unprovenSizePath(t, test.backup, test.names)
+			if inference.Size != test.size {
+				t.Fatalf("InferSegmentSize() = %+v, want %d", inference, test.size)
+			}
+			if path.State != test.state || !strings.Contains(path.Reason, test.reason) {
+				t.Fatalf("path %s %q at %s, want %s %q; gaps %+v", path.State, path.Reason, path.FrontierWAL, test.state, test.reason, wal.Gaps)
+			}
+		})
 	}
 }
