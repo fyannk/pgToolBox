@@ -423,9 +423,11 @@ type interval struct {
 
 // degradedPath reports a path that reaches its frontier but that the
 // agent rates below healthy: an unproven pgBackRest segment size across
-// a log id or timeline switch, or the console's cap at a roll-up that
-// is not healthy (internal/console/evidence capAtRollup). Its span is
-// drawn, but not as covered. A path stopped short has the state of its
+// a log id or timeline switch, or the console's cap at a roll-up whose
+// reason no path explains (internal/console/evidence capAtRollup,
+// RollupCapCode: every backup off the newest timeline, a pgBackRest
+// stanza split). Its span is drawn, but not as covered. Another backup's
+// gap or unknown stop caps nothing: it is drawn where it is. A path stopped short has the state of its
 // stop (a gap is unhealthy, a candidate gap a warning), and the span up
 // to the stop is covered.
 func degradedPath(p evidence.RecoveryPath) bool {
@@ -596,9 +598,10 @@ func evidenceTimeline(out *viewmodel.RecoveryTimeline, in timelineInput) {
 	}
 	sort.SliceStable(out.Segments, func(i, j int) bool { return out.Segments[i].From.Before(out.Segments[j].From) })
 	var degraded *evidence.RecoveryPath
-	newestDegraded := false
+	newestDegraded, newestHealthy := false, false
 	for _, sp := range spans {
 		if sp.degraded == nil {
+			newestHealthy = newestHealthy || sp.to.Equal(last)
 			continue
 		}
 		if degraded == nil || sp.to.After(*degraded.FrontierReceiptAt) {
@@ -606,14 +609,22 @@ func evidenceTimeline(out *viewmodel.RecoveryTimeline, in timelineInput) {
 		}
 		newestDegraded = newestDegraded || sp.to.Equal(last)
 	}
-	if !newestDegraded {
-		// The newest span's path is not rated healthy: no target is named.
+	if !newestDegraded || newestHealthy {
+		// When only a path not rated healthy reaches the newest end, no
+		// target is named; a healthy path that ends there too covers it
+		// (coveredPieces prefers it).
 		out.NewestCoveredTarget = lastCovered(out.Segments)
 	}
 	timelineVerdict(out, in, timelineFindings{
 		tail: tail, holes: holes, candidates: candidates, failedRecently: failedRecently, backlog: in.facts.backlog,
 		archiverUnread: in.facts.archiverUnread, hibernated: in.facts.hibernated, degraded: degraded, orphan: orphan, undrawn: undrawn,
 	})
+	if in.rec.CoverageReason != "" {
+		// The agent's roll-up (the worst over every backup) is said beside
+		// the spans, never drawn as un-coverage: each path is drawn by its
+		// own state.
+		addReason(out, evidenceReason("recovery.reason.agentCoverage", in.rec.CoverageReason))
+	}
 }
 
 // recoverySpans is, for each path toward the target timeline that a

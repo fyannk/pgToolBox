@@ -368,9 +368,12 @@ segments, so the bar and the answer always agree:
   every answer carries the caveat "the primary's archiver was not read";
 - a recovery path that reaches its frontier but that the evidence agent rates
   below healthy (a pgBackRest WAL segment size not proven across a log id or a
-  timeline switch, or a path capped because the agent's coverage roll-up is not
-  healthy) is drawn as `unknown` with the agent's reason, never as covered; a
-  healthy path still covers what it reaches. The window is then a warning.
+  timeline switch, or a path capped because the agent's coverage roll-up says
+  something no path carries, such as a stanza split) is drawn as `unknown` with
+  the agent's reason, never as covered; a healthy path still covers what it
+  reaches. The window is then a warning. A roll-up that is not healthy because
+  of another backup (an old backup stopped at a gap, one unknown path) is
+  listed as a reason of the window and greys out nothing.
 
 Inside the end-of-archived-WAL edge, the last `archive_timeout` before the
 latest point (at least one minute; the whole edge when `archive_timeout` is 0)
@@ -380,7 +383,8 @@ the bar labels it **WAL received until**, and names apart the **newest covered
 target** (`newestCoveredTarget`): the end of the newest covered span once every
 edge above is drawn, the newest instant the check answers `covered`. It is
 structurally covered, not restore-tested (only a passed restore drill tests a
-restore), and it is left out when the newest span's path is not rated healthy. A `covered`
+restore), and it is left out when only a path not rated healthy reaches the
+newest end (a healthy path that ends there too names it). A `covered`
 answer adds that a restore that names no timeline follows the default
 `recovery_target_timeline 'latest'`. A
 `recovery_target_time` after that commit makes PostgreSQL stop with "recovery

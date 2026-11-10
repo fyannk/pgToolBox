@@ -26,9 +26,15 @@ const (
 		"as PostgreSQL does: its recovery paths are not shown as coverage; upgrade the agent"
 	reasonTimelineNotHealthy = "the agent's timeline evidence is "
 	capCode                  = "coverage-path-unknown"
-	rollupCode               = "coverage-path-warning"
 	maxCapReasonBytes        = 256
 )
+
+// RollupCapCode is the reason code of a path the console capped at a
+// warning because the agent's coverage roll-up says something no path
+// explains (capAtRollup). It is distinct from the agent's own
+// "coverage-path-warning", which a path the agent rates a warning
+// carries.
+const RollupCapCode = "coverage-rollup-cap"
 
 // requiredFeatures are the producer guarantees the console's reading of
 // recovery paths relies on: paths judged against the timeline 'latest'
@@ -48,11 +54,13 @@ var requiredFeatures = []evidencev1alpha1.Feature{evidencev1alpha1.FeatureRecove
 //     established, so no path is coverage. A timeline warning (a history
 //     file no default restore reads is invalid) caps nothing: its reason,
 //     which names the file, is kept as TimelineWarning;
-//   - no path claims more than the agent's own coverage roll-up: when that
-//     is not healthy (the agent says a default restore succeeds from no
-//     backup, or a path stops at a gap), a healthy path is at most a
-//     warning. The roll-up is conservative over every backup, so a path is
-//     not made unknown by another backup's unknown path.
+//   - no path claims more than the agent's own coverage roll-up says of
+//     every path: when the roll-up is not healthy for a reason no path
+//     explains (capAtRollup), a healthy path is at most a warning. The
+//     roll-up is the worst over every backup's own path, so a roll-up an
+//     older backup's gap or unknown stop makes unhealthy caps nothing:
+//     each path carries its own state, and the roll-up's reason is kept
+//     (CoverageReason) for the recovery bar to say beside the spans.
 //
 // A capped Recovery is RecoveryUncertain with the reason; each path is at
 // most unknown (a proven loss stays unhealthy), keeps its own reason after
@@ -82,7 +90,7 @@ func capRecovery(snapshot *evidencev1alpha1.RepositoryEvidenceSnapshot, rec Reco
 		short = "the timeline evidence is " + string(timeline.State)
 	}
 	if reason == "" {
-		return capAtRollup(rec, coverage)
+		return capAtRollup(snapshot, rec, coverage)
 	}
 	reason = boundedReason(reason, "")
 	rec.State, rec.Reason = RecoveryUncertain, reason
@@ -103,10 +111,17 @@ func capRecovery(snapshot *evidencev1alpha1.RepositoryEvidenceSnapshot, rec Reco
 }
 
 // capAtRollup makes every healthy path at most a warning when the agent's
-// coverage roll-up is not healthy; the path keeps its frontier and its own
-// reason, followed by the roll-up's.
-func capAtRollup(rec Recovery, coverage evidencev1alpha1.StateReason) Recovery {
+// coverage roll-up is not healthy for a reason no path explains
+// (rollupUnexplained); the path keeps its frontier and its own reason,
+// followed by the roll-up's. A roll-up explained by the paths caps
+// nothing: an old backup that stops at a confirmed gap, an orphan
+// timeline or one unknown own path says nothing of a newer backup whose
+// own path reaches the frontier (round 7, P1).
+func capAtRollup(snapshot *evidencev1alpha1.RepositoryEvidenceSnapshot, rec Recovery, coverage evidencev1alpha1.StateReason) Recovery {
 	if coverage.State == evidencev1alpha1.Healthy || !slices.ContainsFunc(rec.Paths, func(path RecoveryPath) bool { return path.State == evidencev1alpha1.Healthy }) {
+		return rec
+	}
+	if !rollupUnexplained(snapshot, rec.Paths, coverage.State) {
 		return rec
 	}
 	rec.Paths = slices.Clone(rec.Paths)
@@ -115,11 +130,78 @@ func capAtRollup(rec Recovery, coverage evidencev1alpha1.StateReason) Recovery {
 		if path.State != evidencev1alpha1.Healthy {
 			continue
 		}
-		path.State, path.Reason.Code = evidencev1alpha1.Warning, rollupCode
+		path.State, path.Reason.Code = evidencev1alpha1.Warning, RollupCapCode
 		path.Reason.Message = boundedReason(path.Reason.Message, "the agent's coverage is "+string(coverage.State)+": "+coverage.Reason.Message)
 		path.Assumptions = slices.Clone(path.Assumptions)
 	}
 	return rec
+}
+
+// rollupUnexplained reports a coverage roll-up whose degradation is not
+// the paths' own, so that it may bear on a path the agent rates healthy:
+//
+//   - every backup is left behind by the newest timeline (each one's
+//     lowest-target path is off target, the agent's
+//     NoBackupOnNewestTimeline rule, Barman Cloud and pgBackRest alike): a
+//     default restore succeeds from none, whatever a path says;
+//   - a pgBackRest stanza split (the WAL under another stanza than the
+//     backups, finding StanzaSplit): a restore must name that stanza;
+//   - no path is as degraded as the roll-up (an unknown roll-up over
+//     healthy and warning paths): the agent knows something the paths do
+//     not carry, so the console does not read past it.
+//
+// Otherwise the roll-up is the worst of the paths' own states, and each
+// path already says its own.
+func rollupUnexplained(snapshot *evidencev1alpha1.RepositoryEvidenceSnapshot, paths []RecoveryPath, rollup evidencev1alpha1.State) bool {
+	if noBackupOnNewestTimeline(paths) {
+		return true
+	}
+	if d := snapshot.Details.PGBackRest; d != nil && !snapshot.Details.Unknown() {
+		if d.ArchiveStanza != "" && d.Stanza != "" && d.ArchiveStanza != d.Stanza {
+			return true
+		}
+		if slices.ContainsFunc(d.Findings, func(f evidencev1alpha1.PGBackRestFinding) bool { return f.Code == evidencev1alpha1.FindingStanzaSplit }) {
+			return true
+		}
+	}
+	return !slices.ContainsFunc(paths, func(path RecoveryPath) bool { return severity(path.State) >= severity(rollup) })
+}
+
+// noBackupOnNewestTimeline reports paths of which every backup's
+// lowest-target path is off target: no backup is on the line a default
+// restore follows.
+func noBackupOnNewestTimeline(paths []RecoveryPath) bool {
+	own := map[string]uint64{}
+	for _, path := range paths {
+		if current, ok := own[path.BackupID]; !ok || path.TargetTimeline < current {
+			own[path.BackupID] = path.TargetTimeline
+		}
+	}
+	if len(own) == 0 {
+		return false
+	}
+	behind := map[string]bool{}
+	for _, path := range paths {
+		if path.TargetTimeline == own[path.BackupID] && (path.OffTarget || path.Reason.Code == evidencev1alpha1.ReasonPathNeedsTargetTimeline) {
+			behind[path.BackupID] = true
+		}
+	}
+	return len(behind) == len(own)
+}
+
+// severity orders evidence states as the agent's conservative roll-up
+// does: unknown is the worst, then unhealthy, warning and healthy. A state
+// the console does not know is the worst.
+func severity(state evidencev1alpha1.State) int {
+	switch state {
+	case evidencev1alpha1.Healthy:
+		return 0
+	case evidencev1alpha1.Warning:
+		return 1
+	case evidencev1alpha1.Unhealthy:
+		return 2
+	}
+	return 3
 }
 
 // snapshotTimeline is the publication's timeline conclusion, unknown when

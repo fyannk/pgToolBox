@@ -124,10 +124,16 @@ the reason in its place:
   is an older build that may call a path healthy when a default restore does
   not follow it.
 
-A third limit keeps the spans: no path claims more than the agent's own
-coverage conclusion, so when that conclusion is not healthy (for example "a
-default restore succeeds from none" of the backups), a path that reads healthy
-is shown as a warning.
+A third limit keeps the spans, and applies only when the agent's coverage
+conclusion is not healthy for a reason no path carries: every backup is left
+behind by the newest timeline ("a default restore succeeds from none"), the
+pgBackRest WAL is under another stanza (`StanzaSplit`), or the conclusion is
+worse than every path. A path that reads healthy is then shown as a warning.
+The conclusion is the worst over every backup's own path, so an old backup that
+stops at a confirmed gap, or one backup's unknown path, caps nothing: each path
+is drawn by its own state, the old backup's gap as a hole, and the newer
+backups' spans stay covered. The conclusion's reason is said beside the
+recovery window instead.
 
 A Cluster backed up through a pgBackRest plugin is read the same way, as one
 stanza of one repository; see
