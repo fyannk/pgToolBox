@@ -99,7 +99,7 @@ type RunnerState struct {
 }
 
 // PgAdminLink is a pgAdmin a Cluster is registered in that the caller
-// may open (get pgadmins/<name>: dba-only).
+// may open (connect pgadmins/<name>: dba-only).
 type PgAdminLink struct {
 	Name   string `json:"name"`
 	URL    string `json:"url,omitempty" doc:"status.url; absent until the operator publishes it."`

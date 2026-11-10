@@ -78,8 +78,8 @@ Bind them **per namespace** with a RoleBinding (`kubectl -n team-a create rolebi
 alice --clusterrole=pgtoolbox-console-viewer --user=alice@example.com`). The chart renders no
 binding. `pgtoolbox-console-viewer` reads the CNPG kinds, pods, services, PVCs, events and
 `pods/log`; `pgtoolbox-console-operator` adds `create backups`, `patch clusters`,
-`patch clusters/status`, `get pgadmins` (pgAdmin is dba-only: whoever may open it
-holds the credentials of every role it offers), `create databaseroles` (a person's own
+`patch clusters/status`, `connect pgadmins` (pgAdmin is dba-only: whoever may open it
+holds the credentials of every role it offers; not `get`, which OLM gives `view`), `create databaseroles` (a person's own
 DatabaseRole, written with their token) and `create pgaccessrequests`. Deciding access
 requests is `pgtoolbox-console-approver`'s alone (`update pgaccessrequests/status`,
 `create rolebindings`, `bind` on the two other roles): an approved request binds

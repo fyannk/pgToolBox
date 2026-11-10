@@ -1007,7 +1007,7 @@ components:
             type: string
           type: object
         pgAdmins:
-          description: pgAdmins this Cluster is registered in that you may open (get pgadmins/<name>).
+          description: pgAdmins this Cluster is registered in that you may open (connect pgadmins/<name>).
           items:
             $ref: "#/components/schemas/PgAdminLink"
           type:
@@ -3683,7 +3683,7 @@ components:
         pack:
           $ref: "#/components/schemas/InsightPack"
         pgAdmins:
-          description: pgAdmins this Cluster is registered in that you may open (get pgadmins/<name>).
+          description: pgAdmins this Cluster is registered in that you may open (connect pgadmins/<name>).
           items:
             $ref: "#/components/schemas/PgAdminLink"
           type:

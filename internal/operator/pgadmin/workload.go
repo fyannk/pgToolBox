@@ -355,9 +355,18 @@ func pyBool(v bool) string {
 	return "False"
 }
 
+// proxySAR is the SubjectAccessReview the oauth-proxy asks for each user, in
+// the shape it posts as is to authorization.openshift.io/v1
+// subjectaccessreviews (the group field is resourceAPIGroup there; an
+// unknown field is dropped, not refused). The verb is PgAdminConnectVerb,
+// which neither view nor edit carries.
+func proxySAR(p *pgtoolboxv1alpha1.PgAdmin) string {
+	return fmt.Sprintf(`{"namespace":%q,"verb":%q,"resourceAPIGroup":%q,"resource":"pgadmins","resourceName":%q}`,
+		p.Namespace, pgtoolboxv1alpha1.PgAdminConnectVerb, pgtoolboxv1alpha1.GroupVersion.Group, p.Name)
+}
+
 func oauthProxyContainer(p *pgtoolboxv1alpha1.PgAdmin, in buildInputs) corev1.Container {
-	sar := fmt.Sprintf(`{"namespace":%q,"resource":"pgadmins","resourceName":%q,"verb":"get","group":%q}`,
-		p.Namespace, p.Name, pgtoolboxv1alpha1.GroupVersion.Group)
+	sar := proxySAR(p)
 	return corev1.Container{
 		Name:            "oauth-proxy",
 		Image:           in.ProxyImage.Reference,
@@ -368,7 +377,7 @@ func oauthProxyContainer(p *pgtoolboxv1alpha1.PgAdmin, in buildInputs) corev1.Co
 			"--http-address=",
 			fmt.Sprintf("--upstream=http://127.0.0.1:%d", pgAdminPort),
 			"--openshift-service-account=" + namesOf(p).base,
-			// Only who may get this PgAdmin — granted by the
+			// Only who may connect to this PgAdmin — granted by the
 			// pgtoolbox-console-operator role, dba only — reaches pgAdmin.
 			"--openshift-sar=" + sar,
 			"--tls-cert=" + proxyTLSMountPath + "/tls.crt",

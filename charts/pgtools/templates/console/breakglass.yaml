@@ -57,7 +57,7 @@ rules:
   {{- if include "pgtools.console.operatorKinds" $ }}
   - apiGroups: [pgtoolbox.fyannk.dev]
     resources: [pgadmins]
-    verbs: [get]
+    verbs: [connect, get]
   - apiGroups: [pgtoolbox.fyannk.dev]
     resources: [pgaccessrequests]
     verbs: [create, get, list, watch]

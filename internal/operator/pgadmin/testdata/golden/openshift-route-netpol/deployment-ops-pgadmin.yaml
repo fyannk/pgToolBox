@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   annotations:
-    pgtoolbox.fyannk.dev/spec-hash: 43ddf35fb3ec272a
+    pgtoolbox.fyannk.dev/spec-hash: 864f3d0177c68bd9
   labels:
     app.kubernetes.io/component: pgadmin
     app.kubernetes.io/instance: ops
@@ -35,7 +35,7 @@ spec:
   template:
     metadata:
       annotations:
-        pgtoolbox.fyannk.dev/spec-hash: 43ddf35fb3ec272a
+        pgtoolbox.fyannk.dev/spec-hash: 864f3d0177c68bd9
         sidecar.istio.io/inject: "false"
       labels:
         app.kubernetes.io/component: pgadmin
@@ -207,7 +207,7 @@ spec:
         - --http-address=
         - --upstream=http://127.0.0.1:8080
         - --openshift-service-account=ops-pgadmin
-        - --openshift-sar={"namespace":"team-a","resource":"pgadmins","resourceName":"ops","verb":"get","group":"pgtoolbox.fyannk.dev"}
+        - --openshift-sar={"namespace":"team-a","verb":"connect","resourceAPIGroup":"pgtoolbox.fyannk.dev","resource":"pgadmins","resourceName":"ops"}
         - --tls-cert=/etc/tls/private/tls.crt
         - --tls-key=/etc/tls/private/tls.key
         - --cookie-secret-file=/etc/proxy/cookie/cookie-secret

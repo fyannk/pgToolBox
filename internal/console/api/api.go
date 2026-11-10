@@ -225,8 +225,8 @@ type ClusterOverviewView struct {
 	viewmodel.ClusterOverview
 	Capabilities authz.Capabilities `json:"capabilities" doc:"What the API server lets you do with this Cluster; decides which buttons exist."`
 	// PgAdmins are the pgAdmins the Cluster is registered in that you
-	// may open (get pgadmins/<name>).
-	PgAdmins []viewmodel.PgAdminLink `json:"pgAdmins" doc:"pgAdmins this Cluster is registered in that you may open (get pgadmins/<name>)."`
+	// may open (connect pgadmins/<name>).
+	PgAdmins []viewmodel.PgAdminLink `json:"pgAdmins" doc:"pgAdmins this Cluster is registered in that you may open (connect pgadmins/<name>)."`
 	// PgAdminsUnread: the PgAdmin list failed, so an empty PgAdmins is
 	// not "no pgAdmin".
 	PgAdminsUnread bool `json:"pgAdminsUnread,omitempty" doc:"The console could not read the PgAdmins: pgAdmins may be incomplete."`

@@ -292,7 +292,7 @@ The custom resource behind an [access request](#access-request). See
 ### PgAdmin
 
 The custom resource for one pgAdmin in a team namespace, registered against that
-namespace's Clusters. Whoever may open it (`get pgadmins`) holds the credentials of
+namespace's Clusters. Whoever may open it (`connect pgadmins`) holds the credentials of
 every role it offers. See [PgAdmin](../operator/pgadmin.md).
 
 ### PgAdminAccess

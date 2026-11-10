@@ -17,6 +17,8 @@
 // chart with helm template and evaluates the policy and its binding on a
 // real API server, with requests made as different users: the operator
 // chart's policy (envtest_test.go) and the pgtools chart's restore-drill
-// delete guards (drillguard_envtest_test.go). The policies themselves are
-// chart content; run the tests with make test-envtest-admissionpolicy.
+// delete guards (drillguard_envtest_test.go). coverage_test.go needs no API
+// server: it walks the API types and fails when a Secret reference is missing
+// from the operator chart's Secret rule. The policies themselves are chart
+// content; run the envtests with make test-envtest-admissionpolicy.
 package admissionpolicy

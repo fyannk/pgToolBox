@@ -24,6 +24,16 @@ import (
 // CataloguePgAdmin is the owner name of the PgAdmin reasons in Catalogue.
 const CataloguePgAdmin = "pgadmin"
 
+// PgAdminConnectVerb is the RBAC verb on pgadmins/<name> that opens that
+// pgAdmin: the OpenShift oauth-proxy asks a SubjectAccessReview for it, and
+// the console offers the link to whoever holds it. Whoever may open pgAdmin
+// holds the credentials of every role it offers, so it is not get: OLM
+// aggregates get, list and watch on an owned CRD into the built-in view
+// role. No built-in or OLM-generated role names it, except through `*`
+// (admin, which may read the namespace's Secrets anyway); it is granted by
+// pgtoolbox-console-operator and pgtoolbox-aggregate-to-admin.
+const PgAdminConnectVerb = "connect"
+
 // pgAdminReasons are the PgAdmin-specific reasons of the frozen catalogue.
 var pgAdminReasons = []Reason{
 	ReasonNoClusterSelected,

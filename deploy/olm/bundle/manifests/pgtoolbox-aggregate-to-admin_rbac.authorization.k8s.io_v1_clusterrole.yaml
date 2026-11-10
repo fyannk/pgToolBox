@@ -4,9 +4,9 @@
 # (they could create the RoleBinding a request asks for anyway), so they can
 # bind pgtoolbox-console-viewer or pgtoolbox-console-operator to their team and install a
 # pgtools console that links to these objects (Kubernetes lets a user grant
-# only what they hold). Not `edit`: `get pgadmins/<name>` is who may open pgAdmin behind
-# the OpenShift oauth-proxy, which is reading the Secrets it offers; `admin`
-# reads them already, `edit` users get it through pgtoolbox-console-operator.
+# only what they hold) and open pgAdmin (`connect pgadmins`, which the OpenShift
+# oauth-proxy checks: reading the Secrets it offers, which `admin` reads already).
+# Not `edit`: `edit` users open pgAdmin through pgtoolbox-console-operator.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -24,6 +24,12 @@ rules:
   - get
   - list
   - watch
+- apiGroups:
+  - pgtoolbox.fyannk.dev
+  resources:
+  - pgadmins
+  verbs:
+  - connect
 - apiGroups:
   - pgtoolbox.fyannk.dev
   resources:

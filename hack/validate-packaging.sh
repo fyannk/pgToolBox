@@ -410,8 +410,27 @@ EXPECTED_WRITES = [
 ]
 extra = [r for r in operator_role if r not in viewer]
 if sorted(json.dumps(r, sort_keys=True) for r in extra) != sorted(json.dumps(r, sort_keys=True) for r in EXPECTED_WRITES + [
-        {"apiGroups": ["pgtoolbox.fyannk.dev"], "resources": ["pgadmins"], "verbs": ["get"]}]):
-    problems.append(f"pgtoolbox-console-operator must be the viewer plus exactly create backups, create databaseroles, patch clusters and clusters/status, get pgadmins; extra rules are {extra}")
+        {"apiGroups": ["pgtoolbox.fyannk.dev"], "resources": ["pgadmins"], "verbs": ["connect", "get"]}]):
+    problems.append(f"pgtoolbox-console-operator must be the viewer plus exactly create backups, create databaseroles, patch clusters and clusters/status, connect and get pgadmins; extra rules are {extra}")
+# Opening pgAdmin (connect pgadmins, the OpenShift oauth-proxy's SubjectAccessReview)
+# is reading the credentials it offers: only the operator role and the share of
+# admin carry it, never a role aggregated to view or edit, nor the console's own.
+OPENS_PGADMIN = {"pgtoolbox-console-operator", "pgtoolbox-aggregate-to-admin"}
+for f in sorted(pathlib.Path("config/rbac").glob("*.yaml")):
+    for doc in yaml.safe_load_all(f.read_text()):
+        if not doc or doc.get("kind") not in ("ClusterRole", "Role"):
+            continue
+        name, labels = doc["metadata"]["name"], doc["metadata"].get("labels") or {}
+        opens = any(("pgtoolbox.fyannk.dev" in r.get("apiGroups", []) or "*" in r.get("apiGroups", [])) and
+                    ("pgadmins" in r.get("resources", []) or "*" in r.get("resources", [])) and
+                    ("connect" in r.get("verbs", []) or "*" in r.get("verbs", []))
+                    for r in doc.get("rules") or [])
+        if opens and name not in OPENS_PGADMIN:
+            problems.append(f"{f}: {name} may open pgAdmin (connect pgadmins); only {sorted(OPENS_PGADMIN)} may")
+        if opens and (labels.get("rbac.authorization.k8s.io/aggregate-to-view") or labels.get("rbac.authorization.k8s.io/aggregate-to-edit")):
+            problems.append(f"{f}: {name} is aggregated to view or edit and may open pgAdmin")
+        if name in OPENS_PGADMIN and not opens:
+            problems.append(f"{f}: {name} must grant connect on pgadmins (who opens pgAdmin)")
 # Deciding a PgAccessRequest is the approver's alone. pgtoolbox-console-operator
 # is what an approved request grants, time-boxed: holding create rolebindings or
 # update pgaccessrequests/status, a grantee could bind themselves a second,

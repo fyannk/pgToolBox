@@ -399,9 +399,24 @@ func testSecretRefs(t *testing.T, root client.Client, as func(string, ...string)
 		"auth.openshift.clientSecretRef":         "  publicURL: https://c.example.com\n  auth:\n    provider: openshift\n    openshift:\n      clientSecretRef: {name: unreadable, key: token}\n",
 		"exposure.tls.certificateSecretRef":      "  exposure:\n    type: ingress\n    hostname: c.example.com\n    tls: {certificateSecretRef: {name: unreadable}}\n",
 		"image.pullSecrets":                      "  image:\n    repository: registry.attacker.example/console\n    tag: v1\n    pullSecrets: [{name: unreadable}]\n",
+		// The console sends the headers to the endpoint the editor chose.
+		"tracing.headersSecretRef":              "  tracing:\n    endpoint: https://collector.attacker.example\n    headersSecretRef: {name: unreadable, key: headers}\n",
+		"auth.oidc.grantClient.clientSecretRef": "  auth:\n    provider: oidc\n    oidc:\n      issuerURL: https://idp.example.com\n      clientID: c\n      clientSecretRef: {name: readable}\n      grantClient:\n        clientID: g\n        clientSecretRef: {name: unreadable}\n",
+		"restoreDrills.sealKeySecretRef":        "  operations: true\n  restoreDrills:\n    enabled: true\n    sealKeySecretRef: {name: unreadable, key: keys}\n",
 	} {
 		t.Run("PgToolBoxConsole "+name, func(t *testing.T) {
-			refused(t, create(t, as("mallory"), consoleWith(t, "c-"+strings.ReplaceAll(strings.ToLower(name), ".", "-"), spec)))
+			base := "c-" + strings.ReplaceAll(strings.ToLower(name), ".", "-")
+			// A console name is at most 40 characters (CRD CEL).
+			base = strings.TrimSuffix(base[:min(len(base), 36)], "-")
+			refused(t, create(t, as("mallory"), consoleWith(t, base, spec)))
+			// reader may read every other Secret the object names: the
+			// refusal is this field's.
+			refused(t, create(t, as("reader"), consoleWith(t, base+"-r", spec)))
+			// The same object naming a Secret the user may read is admitted:
+			// the refusal above is the Secret rule's, not the CRD's.
+			if err := create(t, as("reader"), consoleWith(t, base+"-ok", strings.ReplaceAll(spec, "unreadable", "readable"))); err != nil {
+				t.Fatalf("with a readable Secret: %v, want admitted", err)
+			}
 		})
 	}
 
