@@ -1,5 +1,6 @@
 // Readable names for the API fixtures (scenarios.gen.ts) the stories, tests
 // and MSW handlers use.
+import type { Backups } from "../../src/api/generated/model";
 import * as api from "./scenarios.gen";
 
 export const clusterList = api.listClusters;
@@ -17,7 +18,12 @@ export const triage = api.getTriageBilling;
 export const session = api.getSession;
 export const vocabulary = api.getVocabulary;
 export const admin = api.getAdmin;
-export const backups = api.getBackupsOrders;
+/**
+ * orders' Backups as the API type. scenarios.gen.ts proves the body
+ * `satisfies Backups`; its inferred literal type does not assign (spans
+ * whose Phrase params have different keys widen to optional undefined).
+ */
+export const backups: Backups = api.getBackupsOrders as unknown as Backups;
 /** billing backs up with pgBackRest (Dalibo): a full → differential → incremental chain, a failed incremental, the agent's window and one finding. */
 export const backupsPgBackRest = api.getBackupsBilling;
 export const restoreCheck = api.getRestoreCheckOrders;

@@ -29,11 +29,14 @@ test("the window fills the box between a 3 % margin on each side", () => {
 test("spans and markers keep their order and their kinds; a hole stays where it is", () => {
   const layout = recoveryBarLayout(backups.recoveryTimeline);
   if (!layout) throw new Error("no layout");
-  expect(layout.spans.map((s) => s.kind)).toEqual(["covered", "missingWAL", "covered"]);
-  const [a, hole, b] = layout.spans;
-  if (!a || !hole || !b) throw new Error("three spans expected");
+  // The golden's newest edge: unknown near the end, then where the archived WAL ends.
+  expect(layout.spans.map((s) => s.kind)).toEqual(["covered", "missingWAL", "covered", "unknown", "walEnd"]);
+  const [a, hole, b, near, end] = layout.spans;
+  if (!a || !hole || !b || !near || !end) throw new Error("five spans expected");
   expect(hole.x).toBeCloseTo(a.x + a.w, 1);
   expect(b.x).toBeCloseTo(hole.x + hole.w, 1);
+  expect(near.x).toBeGreaterThanOrEqual(b.x);
+  expect(end.x).toBeGreaterThanOrEqual(near.x);
   expect(layout.markers).toHaveLength(8);
   expect(layout.markers.find((mk) => mk.kind === "failed")?.x).toBeGreaterThan(b.x);
 });

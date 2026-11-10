@@ -61,7 +61,12 @@ test("the reasons, the backlog, the end of WAL and the caps are said in French",
   overwriteGetLocale(() => "fr");
   const cases: [string, Record<string, string> | undefined, RegExp][] = [
     ["recovery.reason.archiveBacklog", { segments: "12" }, /^12 segments WAL attendent/],
-    ["recovery.segment.archiveBacklog", { segments: "12" }, /^12 segments WAL attendent/],
+    ["recovery.segment.archiveBacklog", { segments: "12" }, /^12 segments WAL attendent .*depuis avant les relevés/],
+    [
+      "recovery.segment.archiveBacklogSince",
+      { segments: "30", sinceAt: "2026-10-29T11:40:00Z" },
+      /^30 segments WAL attendent d’être archivés sur le primaire depuis le 29 oct\. 2026, 11:40 UTC/,
+    ],
     ["recovery.segment.afterLastReadFailing", { scannedAt: "2026-10-29T11:50:00Z" }, /l’archivage des WAL échoue/],
     [
       "recovery.reportedTail.afterArchivedBacklog",
@@ -159,4 +164,13 @@ test("the ancestry reasons, the off-target hint and the timeline warning are sai
   expect(phraseText("timeline.reason.unneededInvalid", { historyFile: "f", problem: "new" }, "Go's English.")).toBe(
     "Go's English.",
   );
+});
+
+test("a covered answer names the timeline a default restore follows; any other answer does not", async () => {
+  const covered = await renderInFrame(<RestoreAnswer r={{ ...tail, answer: "covered", backupId: "b1" }} />);
+  expect(covered.container.querySelector("[data-target-timeline-latest]")?.textContent).toMatch(
+    /^Default recovery_target_timeline 'latest'/,
+  );
+  const unknown = await renderInFrame(<RestoreAnswer r={tail} />);
+  expect(unknown.container.querySelector("[data-target-timeline-latest]")).toBeNull();
 });

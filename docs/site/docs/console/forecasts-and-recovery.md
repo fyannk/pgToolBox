@@ -243,7 +243,7 @@ window is split at that instant, and each span says what the archiver supports:
 |---|---|---|
 | healthy, keeping up, and the sweep fresh | "a restore to this time may well be possible" | its WAL "may still be only on the primary" |
 | failing (`ContinuousArchiving` critical, or a failure with backlog) | its WAL "may be in the repository" | its WAL "is likely not in the repository" |
-| behind: N segments waiting (`readyWalFiles` at the backlog threshold), no failure | "N segments waiting": its WAL "may not be in the repository yet" | "N WAL segments are waiting": its WAL "is likely still only on the primary" |
+| behind: N segments waiting (`readyWalFiles` at the backlog threshold on consecutive sweeps), no failure | "N segments waiting": its WAL "may not be in the repository yet" | "N WAL segments are waiting": its WAL "is likely still only on the primary" |
 | anything else (unknown, stale) | its WAL "may be in the repository" | its WAL "may still be only on the primary" |
 
 The archiver is `status.currentPrimary` (the designated primary in a replica
@@ -252,12 +252,28 @@ instance that reports itself primary stands in for it. A `last_archived_time`
 later than the sweep that read it (an instance clock running ahead) is read as
 the sweep's time.
 
-**The backlog threshold** is 3 waiting segments, or one more than the in-tree
-`wal.maxParallel` when that is larger. PostgreSQL hands the archiver one finished
-segment at a time, so an archiver that keeps up shows zero or one `.ready` file
-(two on a switch caught mid-copy). A backlog at the threshold turns the WAL
-archiving contributor to a warning (`ArchiveBacklog`), even while
-`ContinuousArchiving` is `True`: a hung or slow `archive_command` fails nothing.
+**The backlog threshold** is 3 waiting segments, or one more than the archiver's
+parallelism when that is larger: the in-tree `wal.maxParallel`, or the
+barman-cloud plugin's `ObjectStore` `spec.configuration.wal.maxParallel` (read
+with the `ObjectStore` the console already reads for the reported window). A
+serial archiver that keeps up shows zero or one `.ready` file (two on a switch
+caught mid-copy), but a parallel one does not: the in-tree archiver and the
+barman-cloud plugin upload up to `maxParallel` segments at once and leave the ones
+uploaded ahead as `.ready` until PostgreSQL asks for them, and pgBackRest's
+asynchronous `archive-push` does the same. A busy, healthy primary routinely
+shows a handful. So one reading proves nothing, and a **backlog** counts only
+when the sweep sees the count at or above the threshold on two consecutive
+sweeps (a failed read is skipped). When the console cannot know the parallelism
+(a pgBackRest plugin, or the barman-cloud plugin when its `ObjectStore` is not
+readable) it needs three sweeps, over which the count never shrinks and ends
+larger than it began. A backlog turns the WAL archiving contributor to a warning
+(`ArchiveBacklog`), even while `ContinuousArchiving` is `True`: a hung or slow
+`archive_command` fails nothing.
+
+With `ContinuousArchiving` `True` but the archiving instance not read, archiving
+is `unknown` (`PrimaryUnread`), with the time the condition last changed: the
+condition is written only when an `archive_command`'s outcome changes, so on its
+own it does not say that WAL reaches the repository now.
 The diagnostics findings on the same count (`cnpg-wal-archive-backlog`,
 `cnpg-instance-archive-backlog`) fire much later, at 32 segments, so a screen
 with the finding never shows archiving as healthy. A stalled archiver needs no
@@ -314,17 +330,31 @@ segments, so the bar and the answer always agree:
 - after a WAL archiving failure an instance reported (`lastFailedWALTime`, the
   newest over every instance read, so a former primary's failure survives a
   failover) in the day before the latest point, the day before the failure: WAL
-  that arrives after an outage carries older commits than its arrival time;
-- while segments wait to be archived on the primary (the backlog threshold
-  above), the day before the latest point, with the count: the segments reach
-  the repository late, and the instance does not say since when, so the arrival
-  time of the newest overstates how recent a restore can be. The window is then
-  a warning, never healthy.
+  that arrives after an outage carries older commits than its arrival time. The
+  band is dropped once the archiver has caught up before the latest point: its
+  `last_archived_time` is after its `last_failed_time` (PostgreSQL archives in
+  order, so the failed segment is in the repository) and every sweep from one
+  before the latest point to now saw fewer `.ready` files than the threshold.
+  A transient error (an object store's 503, retried) then leaves no trace on the
+  bar. While the archiver has not caught up, or caught up only after the newest
+  segment reached the repository, the band stays;
+- while a backlog persists on the primary (above), from the first sweep that saw
+  it, less one sweep interval and one `archive_timeout`, with the count and
+  that time: segments archived since reached the repository late, so the arrival
+  time of the newest overstates how recent a restore can be. When the backlog
+  began before the oldest sweep the console keeps (`RING_RETENTION`, one hour by default; a console that just started keeps none),
+  or `archive_timeout` is 0, the band is the day before the latest point. The
+  window is then a warning, never healthy.
 
 Inside the end-of-archived-WAL edge, the last `archive_timeout` before the
 latest point (at least one minute; the whole edge when `archive_timeout` is 0)
 is drawn as **end of the archived WAL** (`walEnd`, a warning band). The latest
-point is when the last segment *reached* the repository, not its last commit: a
+point is when the last segment *reached* the repository, not its last commit, so
+the bar labels it **WAL received until**, and names apart the **last safe
+target** (`lastSafeTarget`): the end of the newest covered span once every edge
+above is drawn, the newest instant the check answers `covered`. A `covered`
+answer adds that a restore that names no timeline follows the default
+`recovery_target_timeline 'latest'`. A
 `recovery_target_time` after that commit makes PostgreSQL stop with "recovery
 ended before configured recovery target was reached". To restore everything the
 repository holds, restore to the end of WAL (no recovery target) instead.
