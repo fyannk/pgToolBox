@@ -626,16 +626,16 @@ func (s *Service) gather(ctx context.Context, key cache.ClusterKey, withEvents b
 }
 
 // readyRings reads the readyWalFiles rings the archiving facts need: the
-// current primary's (a backlog counts only when it persists across
-// sweeps) and those of the instances reporting an archive failure
-// (whether the archiver caught up since).
+// current primary's, read now or not (a backlog counts only when it
+// persists across sweeps, and while the primary is unread its earlier
+// sweeps can still bound the recovery band), and those of the instances
+// read now that report an archive failure (whether the archiver caught up
+// since). A failed read is a gap in the ring, never a reading.
 func readyRings(sw Sweep, g *gathered) map[string][]viewmodel.Point {
 	out := map[string][]viewmodel.Point{}
 	for name, inst := range g.swept.Instances {
-		if inst.State != viewmodel.StatusReadOK || inst.Reading == nil {
-			continue
-		}
-		if name != g.cluster.Status.CurrentPrimary && inst.Reading.LastFailedWALTime == nil {
+		read := inst.State == viewmodel.StatusReadOK && inst.Reading != nil
+		if name != g.cluster.Status.CurrentPrimary && (!read || inst.Reading.LastFailedWALTime == nil) {
 			continue
 		}
 		for _, series := range sw.Series(g.sweepKey(), name) {

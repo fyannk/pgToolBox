@@ -380,3 +380,33 @@ func TestDesignatedPrimaryArchiverIsNotOK(t *testing.T) {
 		t.Errorf("a primary below the threshold since its failure shows no catch-up")
 	}
 }
+
+// TestUnreadPrimaryKeepsItsRing (round 7, CNPG P2-4): with the current
+// primary unread now, its ring is still read, so a sweep that read it
+// with nothing waiting bounds the unread band (archiverUnreadEdge's quiet
+// branch); an instance other than the primary is kept only when read now
+// with a failure to report.
+func TestUnreadPrimaryKeepsItsRing(t *testing.T) {
+	failed := now.Add(-time.Hour)
+	g := &gathered{
+		cluster: inTreeCluster(),
+		swept: sweep.Snapshot{Interval: 30 * time.Second, Instances: map[string]sweep.Instance{
+			"db-2": {State: viewmodel.StatusReadUnreachable},
+			"db-1": {State: viewmodel.StatusReadUnreachable, Reading: &instancestatus.Reading{LastFailedWALTime: &failed}},
+			"db-3": {State: viewmodel.StatusReadOK, Reading: &instancestatus.Reading{}},
+		}},
+	}
+	rings := readyRings(fakeSweep{}, g)
+	if _, ok := rings["db-2"]; !ok {
+		t.Fatalf("the unread primary's ring is not read: %+v", rings)
+	}
+	if len(rings) != 1 {
+		t.Errorf("rings of instances the facts do not use: %+v", rings)
+	}
+	g.readyRings = rings
+	unread := viewmodel.Archiving{Health: viewmodel.HealthUnknown, Reason: cnpgstatus.ArchivingReasonPrimaryUnread}
+	facts := recoveryFactsOf(g, unread, now)
+	if q := facts.quietBy(nil); q == nil || !q.Equal(now.Add(-30*time.Second)) {
+		t.Errorf("quiet sweep %v, want the ring's empty reading at %s", q, now.Add(-30*time.Second))
+	}
+}

@@ -177,10 +177,11 @@ func archiverUnread(a viewmodel.Archiving) bool {
 }
 
 // quietSweeps are the sweeps, oldest first, before the current reading
-// (live; every kept sweep when the primary is unread) that read the
-// current primary with no .ready file, from when it became primary
-// (status.currentPrimaryTimestamp, when it parses): a reading taken
-// while it was a replica says nothing of the archiver then.
+// (live; when the primary is unread now, every sweep its ring keeps,
+// service.go readyRings) that read the current primary with no .ready
+// file, from when it became primary (status.currentPrimaryTimestamp,
+// when it parses): a reading taken while it was a replica says nothing of
+// the archiver then, and a failed read is a gap, so it only widens.
 func quietSweeps(g *gathered, live *cnpgstatus.ArchiverLive) []time.Time {
 	var promoted time.Time
 	if t, err := time.Parse(time.RFC3339Nano, g.cluster.Status.CurrentPrimaryTimestamp); err == nil {
