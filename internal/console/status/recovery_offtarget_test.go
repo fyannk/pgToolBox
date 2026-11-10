@@ -70,3 +70,70 @@ func TestRecoveryTimelineDoesNotDrawAnOffTargetBackup(t *testing.T) {
 		t.Fatalf("off-target backup drawn: state %s target %d latest %v", timeline.State, timeline.TargetTimeline, timeline.Latest)
 	}
 }
+
+// TestSiblingPathNeedsItsTimeline: timeline 3 is what 'latest' resolves
+// to; a sibling path toward timeline 2 (lower number, off the ancestry)
+// is not drawn, but a time only it reaches says which targetTLI a restore
+// along it needs. A path flagged only by its reason code counts too.
+func TestSiblingPathNeedsItsTimeline(t *testing.T) {
+	t.Parallel()
+	latest := tlPath("b1", 48*time.Hour, 30*time.Hour, evidencev1alpha1.CoverageFrontier)
+	latest.TargetTimeline, latest.StartTimeline, latest.FrontierTimeline = 3, pu64(3), pu64(3)
+	sibling := tlPath("b2", 20*time.Hour, 2*time.Hour, evidencev1alpha1.CoverageFrontier)
+	sibling.State, sibling.Reason = evidencev1alpha1.Warning, evidencev1alpha1.Reason{Code: evidencev1alpha1.ReasonPathNeedsTargetTimeline,
+		Message: "a default restore follows timeline 3, whose history does not lead through timeline 2: needs targetTLI 2"}
+	ev := timelineFixture{paths: []evidence.RecoveryPath{latest, sibling}}.evidence()
+	tl := (&Service{}).recoveryTimeline(ev, viewmodel.BackupSummary{}, nil, recoveryFacts{now: now, archiveTimeout: defaultArchiveTimeout})
+	if tl.TargetTimeline != 3 || len(tl.OffTarget) != 1 || tl.OffTarget[0].TargetTimeline != 2 || tl.OffTarget[0].BackupID != "b2" {
+		t.Fatalf("target %d off-target %+v", tl.TargetTimeline, tl.OffTarget)
+	}
+	got := restoreCheck(viewmodel.Backups{RecoveryTimeline: tl, GeneratedAt: now}, now.Add(-10*time.Hour))
+	if got.Answer == "covered" {
+		t.Fatalf("a sibling-only time answered covered: %+v", got)
+	}
+	found := false
+	for _, c := range got.Caveats {
+		found = found || (c.Code == "recovery.offTarget.needsTarget" && c.Params["timeline"] == "2" && c.Params["backupId"] == "b2")
+	}
+	if !found {
+		t.Errorf("no needs-targetTLI caveat: %+v", got.Caveats)
+	}
+	if covered := restoreCheck(viewmodel.Backups{RecoveryTimeline: tl, GeneratedAt: now}, now.Add(-40*time.Hour)); covered.Answer != "covered" {
+		t.Errorf("control on the latest line: %+v", covered)
+	} else {
+		for _, c := range covered.Caveats {
+			if c.Code == "recovery.offTarget.needsTarget" {
+				t.Errorf("a covered answer carries the off-target caveat: %+v", c)
+			}
+		}
+	}
+}
+
+// TestTimelineWarningIsShownNotCapped: the agent's timeline warning (a
+// history no default restore reads is malformed) is on the timeline and
+// in every answer's caveats, names the file, and is not the history file
+// coverage rests on.
+func TestTimelineWarningIsShownNotCapped(t *testing.T) {
+	t.Parallel()
+	ev := timelineFixture{paths: []evidence.RecoveryPath{tlPath("b1", 48*time.Hour, 20*time.Hour, evidencev1alpha1.CoverageFrontier)}}.evidence()
+	ev.result.Recovery.TimelineWarning = "00000002.history: timeline history is malformed; no default restore reads it"
+	tl := (&Service{}).recoveryTimeline(ev, viewmodel.BackupSummary{}, nil, recoveryFacts{now: now, archiveTimeout: defaultArchiveTimeout})
+	if tl.State != string(evidencev1alpha1.Healthy) {
+		t.Errorf("the warning capped the window: %s", tl.State)
+	}
+	if w := tl.TimelineWarning; w == nil || w.Code != "timeline.reason.unneededInvalid" || w.Params["historyFile"] != "00000002.history" {
+		t.Fatalf("timeline warning %+v", w)
+	}
+	b := viewmodel.Backups{RecoveryTimeline: tl, GeneratedAt: now}
+	got := restoreCheck(b, now.Add(-30*time.Hour))
+	if got.Answer != "covered" || got.HistoryFile != "" {
+		t.Errorf("answer %s history file %q", got.Answer, got.HistoryFile)
+	}
+	found := false
+	for _, c := range got.Caveats {
+		found = found || (c.Code == "recovery.caveat.timelineWarning" && c.Params["historyFile"] == "00000002.history")
+	}
+	if !found {
+		t.Errorf("no timeline warning caveat: %+v", got.Caveats)
+	}
+}

@@ -205,7 +205,15 @@ func TestTimelineReasonsAreTranslatable(t *testing.T) {
 		params          map[string]string
 	}{
 		{"history 3 is missing: no restore can follow timeline 3", "timeline.reason.historyMissingNoFollow", "00000003.history", map[string]string{"timeline": "3"}},
-		{"timeline 12 needs an explicit targetTLI; history 11 is unreadable or invalid", "timeline.reason.needsTarget", "0000000B.history", map[string]string{"timeline": "12", "gap": "unreadable", "gapTimeline": "11"}},
+		{"timeline 12 needs an explicit targetTLI; history 11 is unreadable or invalid", "timeline.reason.needsTarget", "0000000B.history", map[string]string{"timeline": "12", "gap": "invalid", "gapTimeline": "11"}},
+		{"the timeline a default restore follows is unknown: history 4 is unreadable", "timeline.reason.latestUnknown", "00000004.history", map[string]string{"gap": "unreadable", "gapTimeline": "4"}},
+		{"a default restore follows timeline 3, whose history does not lead through timeline 2: needs targetTLI 2", "timeline.reason.needsTargetSibling", "", map[string]string{"latest": "3", "timeline": "2"}},
+		{"timeline ancestry contains missing or invalid evidence", "timeline.reason.ancestryInvalid", "", nil},
+		{"timeline ancestry contains missing or invalid evidence; 00000003.history: timeline history is malformed", "timeline.reason.ancestryInvalid", "00000003.history", map[string]string{"problem": "malformed"}},
+		{"00000002.history: timeline history is malformed; no default restore reads it", "timeline.reason.unneededInvalid", "00000002.history", map[string]string{"problem": "malformed"}},
+		{"the agent's timeline evidence is unknown (timeline ancestry contains missing or invalid evidence; 00000005.history: timeline history could not be read): no recovery path is shown as coverage until the timeline a default restore follows is established",
+			"recovery.reason.timelineNotEstablished", "00000005.history", map[string]string{"state": "unknown", "inner": "timeline.reason.ancestryInvalid", "problem": "unreadable"}},
+		{agentPredatesReason, "recovery.reason.agentPredates", "", nil},
 		{"the timeline a default restore follows is unknown: timeline history files were not all read", "timeline.reason.latestUnknown", "", map[string]string{"gap": "notAllRead"}},
 		{"a default restore (recovery_target_timeline 'latest') stops on timeline 2: history 3 is missing; timeline 4 needs an explicit targetTLI", "timeline.reason.latestStops", "00000003.history", map[string]string{"latest": "2", "newest": "4", "gap": "missing", "gapTimeline": "3"}},
 	} {
@@ -220,7 +228,9 @@ func TestTimelineReasonsAreTranslatable(t *testing.T) {
 			}
 		}
 	}
-	for _, msg := range []string{"", "timeline ancestry contains missing or invalid evidence", "history 3 is missing: no restore can follow timeline 4", "history 3 is missing; extra"} {
+	for _, msg := range []string{"", "history 3 is missing: no restore can follow timeline 4", "history 3 is missing; extra",
+		"a default restore follows timeline 3, whose history does not lead through timeline 2: needs targetTLI 4",
+		"00000002.history: something else; no default restore reads it"} {
 		if p, ok := timelinePhrase(msg); ok {
 			t.Errorf("%q recognised as %+v", msg, p)
 		}
@@ -252,7 +262,7 @@ func TestRestoreCheckNamesTheHistoryFile(t *testing.T) {
 	if got.Answer != "unknown" || got.Code != "recovery.check.noWindow" || got.HistoryFile != "00000005.history" {
 		t.Errorf("check %+v", got)
 	}
-	if len(got.Reasons) != 1 || got.Reasons[0].Code != "recovery.reason.pathsNotCoverage" || got.Reasons[0].Params["detail"] != reason {
+	if len(got.Reasons) != 1 || got.Reasons[0].Code != "recovery.reason.timelineNotEstablished" || got.Reasons[0].Params["detail"] != "timeline history 00000005.history could not be read" {
 		t.Errorf("reasons %+v", got.Reasons)
 	}
 	// Nothing named: no file.

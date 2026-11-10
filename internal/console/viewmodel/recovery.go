@@ -44,6 +44,12 @@ type RecoveryTimeline struct {
 	// Complete is false when a collection was cut at a bound: what is
 	// shown is then a lower bound of the coverage.
 	Complete bool `json:"complete"`
+	// OffTarget are the spans paths a default restore does not follow
+	// reach, each with the timeline a restore along it must name.
+	OffTarget []OffTargetSpan `json:"offTarget,omitempty" doc:"Spans that off-target recovery paths reach (a sibling timeline, or the backup's own timeline left behind): not covered by a default restore, restorable only by naming targetTimeline."`
+	// TimelineWarning is the evidence's timeline warning: a history file
+	// no default restore reads is invalid. It caps nothing.
+	TimelineWarning *Phrase `json:"timelineWarning,omitempty" doc:"The evidence's timeline warning (a history file no default restore reads is invalid, named in params.historyFile when known); it caps no coverage."`
 	// RestoreTested: a restore drill of this Cluster passed within the
 	// drill window. False, every covered span is "not restore-tested".
 	RestoreTested bool       `json:"restoreTested,omitempty"`
@@ -79,6 +85,18 @@ type Phrase struct {
 	Code   string            `json:"code"`
 	Params map[string]string `json:"params,omitempty" doc:"Keys ending in At are RFC 3339 instants, keys ending in Seconds whole seconds; others are shown as written."`
 	Text   string            `json:"text"`
+}
+
+// OffTargetSpan is what one off-target recovery path reaches.
+type OffTargetSpan struct {
+	From           time.Time `json:"from"`
+	To             time.Time `json:"to"`
+	BackupID       string    `json:"backupId"`
+	TargetTimeline uint64    `json:"targetTimeline" doc:"The timeline a restore along this path must name (recovery_target_timeline)."`
+	Text           string    `json:"text"`
+	// Code and Params say Text for translation (see Phrase).
+	Code   string            `json:"code,omitempty" doc:"Stable code of Text, for translation."`
+	Params map[string]string `json:"params,omitempty" doc:"Values Text names (see Phrase)."`
 }
 
 // RecoveryMarker is one base backup on the bar.

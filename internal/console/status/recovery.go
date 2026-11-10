@@ -206,6 +206,15 @@ func (s *Service) recoveryTimeline(ev clusterEvidence, summary viewmodel.BackupS
 			scannedAt: scannedAt(ev.result), refresh: ev.result.RefreshInterval,
 		}
 		evidenceTimeline(&out, in)
+		out.OffTarget = offTargetSpans(rec.Paths, ev.result.Backups)
+		if w := rec.TimelineWarning; w != "" {
+			p := evidenceReason("recovery.reason.timelineWarning", w)
+			if f := historyFileIn(w); f != "" && p.Params["historyFile"] == "" {
+				p.Params = cloneParams(p.Params)
+				p.Params["historyFile"] = f
+			}
+			out.TimelineWarning = &p
+		}
 		out.Complete = rec.Complete && ev.result.BackupsComplete
 		if !ev.result.BackupsComplete {
 			addReason(&out, say("recovery.reason.backupsCut", "the backup collection was cut at a bound: older backups may exist", nil))
@@ -290,21 +299,73 @@ type timelineInput struct {
 // timeline the agent saw in the archive but could not connect by valid
 // history (a path with no frontier) is not a restore target PostgreSQL
 // can follow, so it does not move the bar; it is reported instead. An
-// off-target path (the agent proved the backup cannot reach the newest
-// timeline) follows the backup's own timeline, which is not 'latest': it
-// never names the target either.
+// off-target path is one a default restore (recovery_target_timeline
+// 'latest') does not follow: on the backup's own timeline when 'latest'
+// left the backup behind, or on another timeline, newer or older, that
+// is a sibling of the line 'latest' follows. Either way it never names the
+// target, whatever its number; offTargetSpans lists what it reaches with
+// the targetTLI a restore along it must give.
 func targetTimeline(paths []evidence.RecoveryPath) (target, orphan uint64) {
 	for _, p := range paths {
-		if p.FrontierTimeline != nil && !p.OffTarget {
+		if p.FrontierTimeline != nil && !offTarget(p) {
 			target = max(target, p.TargetTimeline)
 		}
 	}
 	for _, p := range paths {
-		if p.FrontierTimeline == nil && !p.OffTarget && p.TargetTimeline > target {
+		if p.FrontierTimeline == nil && !offTarget(p) && p.TargetTimeline > target {
 			orphan = max(orphan, p.TargetTimeline)
 		}
 	}
 	return target, orphan
+}
+
+// offTargetSpans are the spans the off-target paths reach, each with the
+// timeline a restore along it must name (recovery_target_timeline, the
+// path's target): a default restore does not follow them, so they are
+// never drawn as covered, but a DBA can still restore along one by
+// naming the timeline. Only a path that reached its backup's consistency
+// point and kept its frontier receipt (a capped path loses it) is listed.
+func offTargetSpans(paths []evidence.RecoveryPath, backups []evidence.BackupItem) []viewmodel.OffTargetSpan {
+	ends := make(map[string]evidence.BackupItem, len(backups))
+	for _, b := range backups {
+		ends[b.ID] = b
+	}
+	var out []viewmodel.OffTargetSpan
+	for _, p := range paths {
+		if !offTarget(p) || p.FrontierTimeline == nil || p.LowerBoundAt == nil || p.FrontierReceiptAt == nil ||
+			!p.FrontierReceiptAt.After(*p.LowerBoundAt) || !reachedConsistency(p, ends) {
+			continue
+		}
+		tl := strconv.FormatUint(p.TargetTimeline, 10)
+		phrase := say("recovery.offTarget.needsTarget",
+			"Base backup "+p.BackupID+" reaches this span on timeline "+tl+", which a default restore (recovery_target_timeline 'latest') does not follow: a restore along it needs targetTLI "+tl+" (recovery_target_timeline: '"+tl+"').",
+			map[string]string{"backupId": p.BackupID, "timeline": tl})
+		out = append(out, viewmodel.OffTargetSpan{
+			From: p.LowerBoundAt.UTC(), To: p.FrontierReceiptAt.UTC(), BackupID: p.BackupID, TargetTimeline: p.TargetTimeline,
+			Code: phrase.Code, Params: phrase.Params, Text: phrase.Text,
+		})
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if !out[i].From.Equal(out[j].From) {
+			return out[i].From.Before(out[j].From)
+		}
+		return out[i].TargetTimeline < out[j].TargetTimeline
+	})
+	return out
+}
+
+// offTarget reports a path a default restore does not follow: flagged
+// off_target, or carrying the reason code that says so.
+func offTarget(p evidence.RecoveryPath) bool {
+	return p.OffTarget || p.Reason.Code == evidencev1alpha1.ReasonPathNeedsTargetTimeline
+}
+
+func cloneParams(p map[string]string) map[string]string {
+	out := make(map[string]string, len(p)+1)
+	for k, v := range p {
+		out[k] = v
+	}
+	return out
 }
 
 // reachedConsistency reports whether a path's frontier is at or past
@@ -917,6 +978,15 @@ func restoreCheck(b viewmodel.Backups, at time.Time) viewmodel.RestoreCheck {
 	}
 	answer := func(a string, p viewmodel.Phrase) viewmodel.RestoreCheck {
 		out.Answer, out.Text, out.Code, out.Params = a, p.Text, p.Code, p.Params
+		if a != "covered" {
+			// A sibling or own-timeline path a default restore does not
+			// follow may still reach the time: say which timeline to name.
+			for _, o := range t.OffTarget {
+				if !at.Before(o.From) && !at.After(o.To) {
+					out.Caveats = append(out.Caveats, viewmodel.Phrase{Code: o.Code, Params: o.Params, Text: o.Text})
+				}
+			}
+		}
 		return out
 	}
 	switch {
@@ -986,7 +1056,9 @@ func timelineHistoryFile(b viewmodel.Backups) string {
 		}
 		texts = append(texts, r.Text)
 	}
-	if b.Evidence.Repository != nil {
+	if b.Evidence.Repository != nil && b.Evidence.Repository.Timeline.State != string(evidencev1alpha1.Warning) {
+		// A timeline warning names a history no default restore reads:
+		// coverage does not rest on it (it is a caveat instead).
 		if p := b.Evidence.Repository.Timeline.Phrase; p != nil && p.Params["historyFile"] != "" {
 			return p.Params["historyFile"]
 		}
@@ -1009,6 +1081,15 @@ func restoreCaveats(b viewmodel.Backups) []viewmodel.Phrase {
 		}
 		if t.Provenance.Stale {
 			out = append(out, say("recovery.caveat.evidenceStale", "The repository evidence is stale.", nil))
+		}
+		if w := t.TimelineWarning; w != nil {
+			params := map[string]string{"detail": w.Text}
+			if f := w.Params["historyFile"]; f != "" {
+				params["historyFile"] = f
+			}
+			out = append(out, say("recovery.caveat.timelineWarning",
+				"The evidence reports a timeline history file no default restore reads as invalid ("+w.Text+"): the coverage shown does not rest on it, but a restore that names its timeline would fail.",
+				params))
 		}
 	case "reported":
 		if t.Provenance.Stale {
