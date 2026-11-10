@@ -12,6 +12,12 @@ metadata:
   name: {{ include "pgtoolbox.fullname" . }}-manager-cluster-role
 rules:
 - apiGroups:
+  - ""
+  resources:
+  - nodes
+  verbs:
+  - list
+- apiGroups:
   - authentication.k8s.io
   resources:
   - tokenreviews
