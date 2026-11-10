@@ -71,6 +71,9 @@ spec:
           (has(oldObject.spec.allowedSecrets) ? oldObject.spec.allowedSecrets.map(s, {'p': 'allowedSecrets', 'n': string(s), 'd': ''}) : [])
         ) : []
         )
+    - name: newSecretRefs
+      expression: >-
+        variables.secretRefs.filter(r, !(oldObject != null && r in variables.oldSecretRefs))
     - name: credentialKinds
       expression: >-
         request.resource.resource != 'pgadmins' ? [] : (
@@ -114,9 +117,19 @@ spec:
         request.userInfo.groups.exists(g, g in variables.identityGroups)
       message: spec.workloadIdentity may be set only by the users and groups the platform team listed in the operator chart (operator.admissionPolicy.workloadIdentity)
       reason: Forbidden
+    # An authorizer check costs most of an expression's CEL runtime budget
+    # (about two fit), so the rule is two validations: a change that adds
+    # more than two Secret references needs get on every Secret of the
+    # namespace (one check), and one that adds one or two is checked name
+    # by name (get on the namespace's Secrets covers those names too).
     - expression: >-
-        variables.secretRefs.all(r,
-        (oldObject != null && r in variables.oldSecretRefs) ||
+        variables.newSecretRefs.size() <= 2 ||
+        authorizer.group('').resource('secrets').namespace(object.metadata.namespace).check('get').allowed()
+      message: editing a PgToolBoxConsole, a PgAdmin or an EvidenceAgent requires get on every Secret it references; a change that adds more than two Secret references at once requires get on every Secret of the namespace (a kept reference whose destination changed counts as added)
+      reason: Forbidden
+    - expression: >-
+        variables.newSecretRefs.size() == 0 || variables.newSecretRefs.size() > 2 ||
+        variables.newSecretRefs.all(r,
         authorizer.group('').resource('secrets').namespace(object.metadata.namespace).name(r.n).check('get').allowed())
       message: editing a PgToolBoxConsole, a PgAdmin or an EvidenceAgent requires get on every Secret it references (a Secret reference you may not read is refused, whichever field names it, and a kept reference whose destination changed is checked again)
       reason: Forbidden

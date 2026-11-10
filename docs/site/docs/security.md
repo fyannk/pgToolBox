@@ -164,6 +164,11 @@ or an EvidenceAgent requires get on every Secret it references").
   destination field. A CA ConfigMap (`caConfigMapRef`), a DNS record or a proxy
   that changes where that same URL leads is not seen; so do not let people who
   may not read a Secret edit the CA ConfigMaps of the objects that send it.
+- **More than two new references at once** need `get` on every Secret of the
+  namespace. An authorizer check costs most of a CEL expression's runtime
+  budget, so the policy checks one or two added references name by name, and a
+  larger change with one namespace-wide check. Somebody who may read only some
+  Secrets adds them two at a time.
 - **What is covered**: every Secret reference in the three kinds. On a
   `PgToolBoxConsole`: `auth.oidc.clientSecretRef`,
   `auth.oidc.grantClient.clientSecretRef`, `auth.openshift.clientSecretRef`,

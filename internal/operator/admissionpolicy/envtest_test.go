@@ -17,6 +17,7 @@ package admissionpolicy
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -608,6 +609,24 @@ func testAllowedSecrets(t *testing.T, root client.Client, as func(string, ...str
 		if err := create(t, as("mallory"), agent("as-none")); err != nil {
 			t.Fatalf("no allowedSecrets: %v, want admitted", err)
 		}
+	})
+	t.Run("many Secrets stay within the CEL cost budget", func(t *testing.T) {
+		// One authorizer check per name exceeded the runtime cost limit
+		// at a handful of names (an e2e agent was refused); the
+		// namespace-wide check comes first.
+		names := make([]string, 0, 16)
+		for i := range 16 {
+			names = append(names, fmt.Sprintf("s-%02d", i))
+		}
+		if err := create(t, as("nsreader"), agent("as-nsreader-many", names...)); err != nil {
+			t.Fatalf("16 allowedSecrets from a namespace-wide reader: %v, want admitted", err)
+		}
+		if err := create(t, root, agent("as-root-many", names...)); err != nil {
+			t.Fatalf("16 allowedSecrets from the cluster admin: %v, want admitted", err)
+		}
+		// More than two added at once needs get on every Secret of the
+		// namespace: a reader of some names adds them two at a time.
+		refused(t, create(t, as("reader"), agent("as-reader-three", "readable", "readable-b", "readable-c")))
 	})
 	t.Run("on update only an added name is checked", func(t *testing.T) {
 		a := agent("as-update", "unreadable")
