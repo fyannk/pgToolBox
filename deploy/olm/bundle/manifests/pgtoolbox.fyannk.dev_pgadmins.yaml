@@ -241,6 +241,19 @@ spec:
                         - message: an image needs a tag, a digest or both
                           reason: FieldValueRequired
                           rule: has(self.tag) || has(self.digest)
+                      sessionMaxAge:
+                        description: |-
+                          How long an oauth-proxy session lasts (--cookie-expire). The proxy
+                          reviews connect at sign-in only, so this bounds how long a revoked
+                          person keeps pgAdmin open; when it ends the proxy signs the person in
+                          again, silently while their OpenShift session lasts, but a request
+                          in flight (a form being posted) can be lost. Default 1h.
+                        type: string
+                        x-kubernetes-validations:
+                        - message: sessionMaxAge must be between 5m and 12h
+                          reason: FieldValueInvalid
+                          rule: duration(self) >= duration('5m') && duration(self)
+                            <= duration('12h')
                     type: object
                 type: object
                 x-kubernetes-validations:

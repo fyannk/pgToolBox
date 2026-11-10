@@ -21,6 +21,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -355,10 +356,27 @@ func pyBool(v bool) string {
 	return "False"
 }
 
-// proxySessionMaxAge bounds an oauth-proxy session, hence how long a person
-// whose connect was revoked keeps pgAdmin open: the next sign-in, silent
-// while the OpenShift OAuth session lasts, runs the review again.
-const proxySessionMaxAge = "1h"
+// defaultProxySessionMaxAge bounds an oauth-proxy session, hence how long
+// a person whose connect was revoked keeps pgAdmin open: the next sign-in,
+// silent while the OpenShift OAuth session lasts, runs the review again.
+const defaultProxySessionMaxAge = time.Hour
+
+// proxySessionMaxAge is --cookie-expire: spec.auth.openshiftOAuthProxy.
+// sessionMaxAge (CEL bounds it to 5m..12h), else one hour, written the way
+// the chart writes it (1h, 90m, not 1h0m0s).
+func proxySessionMaxAge(p *pgtoolboxv1alpha1.PgAdmin) string {
+	d := defaultProxySessionMaxAge
+	if proxy := p.Spec.Auth.OpenShiftOAuthProxy; proxy != nil && proxy.SessionMaxAge != nil && proxy.SessionMaxAge.Duration > 0 {
+		d = proxy.SessionMaxAge.Duration
+	}
+	switch {
+	case d%time.Hour == 0:
+		return strconv.FormatInt(int64(d/time.Hour), 10) + "h"
+	case d%time.Minute == 0:
+		return strconv.FormatInt(int64(d/time.Minute), 10) + "m"
+	}
+	return d.String()
+}
 
 // proxySAR is the SubjectAccessReview the oauth-proxy asks for each user, in
 // the shape it posts as is to authorization.openshift.io/v1
@@ -394,7 +412,7 @@ func oauthProxyContainer(p *pgtoolboxv1alpha1.PgAdmin, in buildInputs) corev1.Co
 			// review), and its default session lasts 168h: without a bound,
 			// a revoked connect (an expired access request, a removed
 			// RoleBinding) would keep pgAdmin open for a week.
-			"--cookie-expire=" + proxySessionMaxAge,
+			"--cookie-expire=" + proxySessionMaxAge(p),
 			"--pass-user-headers=true",
 			"--skip-provider-button=true",
 		},

@@ -176,7 +176,7 @@ omitted); `status.instanceCABundle` lists the Clusters left out.
 | Condition | `True` | `False` |
 |---|---|---|
 | `InstanceCABundleComplete` | the server CA of every selected Cluster is in `<name>-instance-ca` (or no Cluster is selected) | `InstanceCAMissing`, naming each Cluster and why; `ResourceNotOwned` when a ConfigMap that is not this console's already has the bundle's name |
-| `ExposureConfined` | the `<name>-ingress` NetworkPolicy admits only the router, ingress controller or gateway to the console port (present only while a Route, Ingress or HTTPRoute is published) | `ExposureOpen`, naming why no policy is rendered and what the console does with `X-Forwarded-For` |
+| `ExposureConfined` | the `<name>-ingress` NetworkPolicy admits only the router, ingress controller or gateway to the console port (present only while a Route, Ingress or HTTPRoute is published) | `ExposureOpen` (no policy rendered), `ExposurePeersBroad` (a peer of `from` admits everyone), `ExposurePolicyBypassed` (another NetworkPolicy admits more to the console port); the message says what the console does with `X-Forwarded-For` |
 
 ## PgAccessRequest
 
@@ -275,6 +275,8 @@ Reasons are registered once, by owner. `common` reasons are shared by every kind
 | `InstanceCAInvalid` | A Cluster's server CA Secret has a `ca.crt` with no PEM certificate in it. |
 | `InstanceCABundleFull` | The mirrored bundle reached the size a ConfigMap holds (several hundred distinct CAs); the Clusters after it, by name, are left out. |
 | `ExposureOpen` | `ExposureConfined=False`: the console is exposed without its ingress NetworkPolicy (an Ingress or a Gateway without `spec.exposure.networkPolicy.from`, or `networkPolicy.enabled: false`), so any Pod can reach its port; the message says which peers the console believes about `X-Forwarded-For`. |
+| `ExposurePeersBroad` | `ExposureConfined=False`: a peer of `spec.exposure.networkPolicy.from` admits every namespace (an empty `namespaceSelector`), every Pod of the namespace (an empty `podSelector` alone) or every address (an `ipBlock` of `/0`), so the console trusts no peer with `X-Forwarded-For`. |
+| `ExposurePolicyBypassed` | `ExposureConfined=False`: another NetworkPolicy of the namespace admits, to the console port, peers the exposure does not list (NetworkPolicies add up), or there were more than 250 to check; the console trusts no peer with `X-Forwarded-For`. |
 
 ### pgaccessrequest
 

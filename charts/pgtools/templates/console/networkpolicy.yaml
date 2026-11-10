@@ -36,7 +36,14 @@ spec:
     {{- if or (ne .Values.console.exposure.type "none") $np.ingress.extraFrom }}
     # The ingress router (and extra peers), on the console port only.
     - from:
-        {{- if ne .Values.console.exposure.type "none" }}
+        {{- if eq .Values.console.exposure.type "route" }}
+        {{- /* The OpenShift routers, host-network ones included: OVN-Kubernetes
+        matches their traffic to this namespace label, never to a namespace
+        name. */}}
+        - namespaceSelector:
+            matchLabels:
+              policy-group.network.openshift.io/ingress: ""
+        {{- else if ne .Values.console.exposure.type "none" }}
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: {{ .Values.console.exposure.routerNamespace | quote }}

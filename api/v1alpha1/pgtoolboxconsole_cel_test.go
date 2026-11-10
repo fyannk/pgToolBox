@@ -20,7 +20,6 @@ import (
 	"testing"
 	"time"
 
-	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -82,9 +81,41 @@ func TestPgToolBoxConsoleCEL(t *testing.T) {
 		}, wantErr: "networkPolicy.enabled needs networkPolicy.from"},
 		{name: "ingress policy with its controller's namespace", mutate: func(p *pgtoolboxv1alpha1.PgToolBoxConsole) {
 			p.Spec.Exposure.ExposureSpec = pgtoolboxv1alpha1.ExposureSpec{Type: pgtoolboxv1alpha1.ExposureTypeIngress, Hostname: "console.example"}
-			p.Spec.Exposure.NetworkPolicy = &pgtoolboxv1alpha1.PgToolBoxConsoleExposurePolicySpec{Enabled: new(true), From: []networkingv1.NetworkPolicyPeer{{
+			p.Spec.Exposure.NetworkPolicy = &pgtoolboxv1alpha1.PgToolBoxConsoleExposurePolicySpec{Enabled: new(true), From: []pgtoolboxv1alpha1.PgToolBoxConsolePolicyPeer{{
 				NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"kubernetes.io/metadata.name": "ingress-nginx"}},
 			}}}
+		}},
+		{name: "a peer that selects nothing", mutate: func(p *pgtoolboxv1alpha1.PgToolBoxConsole) {
+			p.Spec.Exposure.ExposureSpec = pgtoolboxv1alpha1.ExposureSpec{Type: pgtoolboxv1alpha1.ExposureTypeIngress, Hostname: "console.example"}
+			p.Spec.Exposure.NetworkPolicy = &pgtoolboxv1alpha1.PgToolBoxConsoleExposurePolicySpec{From: []pgtoolboxv1alpha1.PgToolBoxConsolePolicyPeer{{}}}
+		}, wantErr: "each networkPolicy.from peer needs podSelector, namespaceSelector or ipBlock"},
+		{name: "an ipBlock that is not a CIDR", mutate: func(p *pgtoolboxv1alpha1.PgToolBoxConsole) {
+			p.Spec.Exposure.ExposureSpec = pgtoolboxv1alpha1.ExposureSpec{Type: pgtoolboxv1alpha1.ExposureTypeIngress, Hostname: "console.example"}
+			p.Spec.Exposure.NetworkPolicy = &pgtoolboxv1alpha1.PgToolBoxConsoleExposurePolicySpec{From: []pgtoolboxv1alpha1.PgToolBoxConsolePolicyPeer{{IPBlock: &pgtoolboxv1alpha1.PgToolBoxConsoleIPBlock{CIDR: "10.0.0.300/8"}}}}
+		}, wantErr: "networkPolicy.from ipBlock.cidr must be a CIDR"},
+		{name: "an ipBlock with a pod selector", mutate: func(p *pgtoolboxv1alpha1.PgToolBoxConsole) {
+			p.Spec.Exposure.ExposureSpec = pgtoolboxv1alpha1.ExposureSpec{Type: pgtoolboxv1alpha1.ExposureTypeIngress, Hostname: "console.example"}
+			p.Spec.Exposure.NetworkPolicy = &pgtoolboxv1alpha1.PgToolBoxConsoleExposurePolicySpec{From: []pgtoolboxv1alpha1.PgToolBoxConsolePolicyPeer{{IPBlock: &pgtoolboxv1alpha1.PgToolBoxConsoleIPBlock{CIDR: "10.0.0.0/8"}, PodSelector: &metav1.LabelSelector{}}}}
+		}, wantErr: "may not also have podSelector or namespaceSelector"},
+		{name: "an except outside the block", mutate: func(p *pgtoolboxv1alpha1.PgToolBoxConsole) {
+			p.Spec.Exposure.ExposureSpec = pgtoolboxv1alpha1.ExposureSpec{Type: pgtoolboxv1alpha1.ExposureTypeIngress, Hostname: "console.example"}
+			p.Spec.Exposure.NetworkPolicy = &pgtoolboxv1alpha1.PgToolBoxConsoleExposurePolicySpec{From: []pgtoolboxv1alpha1.PgToolBoxConsolePolicyPeer{{IPBlock: &pgtoolboxv1alpha1.PgToolBoxConsoleIPBlock{CIDR: "10.0.0.0/8", Except: []string{"192.168.0.0/16"}}}}}
+		}, wantErr: "ipBlock.except entries must be CIDRs strictly inside ipBlock.cidr"},
+		{name: "an except equal to the block", mutate: func(p *pgtoolboxv1alpha1.PgToolBoxConsole) {
+			p.Spec.Exposure.ExposureSpec = pgtoolboxv1alpha1.ExposureSpec{Type: pgtoolboxv1alpha1.ExposureTypeIngress, Hostname: "console.example"}
+			p.Spec.Exposure.NetworkPolicy = &pgtoolboxv1alpha1.PgToolBoxConsoleExposurePolicySpec{From: []pgtoolboxv1alpha1.PgToolBoxConsolePolicyPeer{{IPBlock: &pgtoolboxv1alpha1.PgToolBoxConsoleIPBlock{CIDR: "10.0.0.0/8", Except: []string{"10.0.0.0/8"}}}}}
+		}, wantErr: "ipBlock.except entries must be CIDRs strictly inside ipBlock.cidr"},
+		{name: "an except that is not a CIDR", mutate: func(p *pgtoolboxv1alpha1.PgToolBoxConsole) {
+			p.Spec.Exposure.ExposureSpec = pgtoolboxv1alpha1.ExposureSpec{Type: pgtoolboxv1alpha1.ExposureTypeIngress, Hostname: "console.example"}
+			p.Spec.Exposure.NetworkPolicy = &pgtoolboxv1alpha1.PgToolBoxConsoleExposurePolicySpec{From: []pgtoolboxv1alpha1.PgToolBoxConsolePolicyPeer{{IPBlock: &pgtoolboxv1alpha1.PgToolBoxConsoleIPBlock{CIDR: "10.0.0.0/8", Except: []string{"10.1.0.0"}}}}}
+		}, wantErr: "ipBlock.except entries must be CIDRs strictly inside ipBlock.cidr"},
+		{name: "an ipBlock with an except inside", mutate: func(p *pgtoolboxv1alpha1.PgToolBoxConsole) {
+			p.Spec.Exposure.ExposureSpec = pgtoolboxv1alpha1.ExposureSpec{Type: pgtoolboxv1alpha1.ExposureTypeIngress, Hostname: "console.example"}
+			p.Spec.Exposure.NetworkPolicy = &pgtoolboxv1alpha1.PgToolBoxConsoleExposurePolicySpec{From: []pgtoolboxv1alpha1.PgToolBoxConsolePolicyPeer{{IPBlock: &pgtoolboxv1alpha1.PgToolBoxConsoleIPBlock{CIDR: "10.0.0.0/8", Except: []string{"10.1.0.0/16"}}}}}
+		}},
+		{name: "an IPv6 ipBlock", mutate: func(p *pgtoolboxv1alpha1.PgToolBoxConsole) {
+			p.Spec.Exposure.ExposureSpec = pgtoolboxv1alpha1.ExposureSpec{Type: pgtoolboxv1alpha1.ExposureTypeIngress, Hostname: "console.example"}
+			p.Spec.Exposure.NetworkPolicy = &pgtoolboxv1alpha1.PgToolBoxConsoleExposurePolicySpec{From: []pgtoolboxv1alpha1.PgToolBoxConsolePolicyPeer{{IPBlock: &pgtoolboxv1alpha1.PgToolBoxConsoleIPBlock{CIDR: "fd00::/64"}}}}
 		}},
 		{name: "trusted proxy that is not a CIDR", mutate: func(p *pgtoolboxv1alpha1.PgToolBoxConsole) {
 			p.Spec.Exposure.TrustedProxy = &pgtoolboxv1alpha1.PgToolBoxConsoleTrustedProxySpec{CIDRs: []string{"the-router"}}

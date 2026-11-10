@@ -453,6 +453,15 @@ type PgAdminOpenShiftOAuthProxySpec struct {
 	// The oauth-proxy image. Omitted, the operator's default.
 	// +optional
 	Image *ImageSpec `json:"image,omitempty"`
+
+	// How long an oauth-proxy session lasts (--cookie-expire). The proxy
+	// reviews connect at sign-in only, so this bounds how long a revoked
+	// person keeps pgAdmin open; when it ends the proxy signs the person in
+	// again, silently while their OpenShift session lasts, but a request
+	// in flight (a form being posted) can be lost. Default 1h.
+	// +kubebuilder:validation:XValidation:rule="duration(self) >= duration('5m') && duration(self) <= duration('12h')",message="sessionMaxAge must be between 5m and 12h",reason=FieldValueInvalid
+	// +optional
+	SessionMaxAge *metav1.Duration `json:"sessionMaxAge,omitempty"`
 }
 
 // PgAdminNetworkPolicySpec configures the optional NetworkPolicy.

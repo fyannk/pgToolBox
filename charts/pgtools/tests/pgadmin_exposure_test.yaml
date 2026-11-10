@@ -53,7 +53,7 @@ tests:
             to: [{ipBlock: {cidr: 10.96.0.1/32}}]
             ports: [{port: 443, protocol: TCP}, {port: 6443, protocol: TCP}]
 
-  - it: admits the router namespace on the proxy port with OpenShift
+  - it: admits the OpenShift routers, host-network ones included, on the proxy port with OpenShift
     set:
       pgadmin.networkPolicy.enabled: true
       pgadmin.networkPolicy.apiServer.mode: any
@@ -64,8 +64,21 @@ tests:
       - equal:
           path: spec.ingress
           value:
-            - from: [{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: openshift-ingress}}}]
+            - from: [{namespaceSelector: {matchLabels: {policy-group.network.openshift.io/ingress: ""}}}]
               ports: [{port: 8443, protocol: TCP}]
+
+  - it: admits the ingress controller's namespace by name for an Ingress
+    set:
+      pgadmin.networkPolicy.enabled: true
+      pgadmin.networkPolicy.apiServer.mode: any
+      pgadmin.exposure.type: ingress
+      pgadmin.exposure.host: pgadmin.example.com
+      pgadmin.exposure.routerNamespace: ingress-nginx
+    template: templates/pgadmin/networkpolicy.yaml
+    asserts:
+      - equal:
+          path: spec.ingress[0].from
+          value: [{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: ingress-nginx}}}]
 
   - it: serves plain HTTP on 80 with OIDC
     template: templates/pgadmin/service.yaml

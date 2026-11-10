@@ -129,13 +129,18 @@ is equivalent to reading those Secrets.
   pgAdmin. A `PgAdmin` created before this change asked for `get`; the operator
   rolls its Deployment to the new check on upgrade. If you bound a custom role
   with `get pgadmins` to let people open pgAdmin, add `connect`.
-  The proxy runs the review **at sign-in only**, so its session is bounded to
-  **one hour** (`--cookie-expire=1h`; the proxy's own default is 168h). After
-  that the proxy signs the person in again, silently while their OpenShift
-  session lasts, and reviews `connect` again: a revoked access (an expired
-  [access request](../console/access-requests.md), a removed RoleBinding) closes
-  pgAdmin within the hour. pgAdmin's own session, and connections it holds open,
-  end with it only once the next request reaches the proxy.
+  The proxy runs the review **at sign-in only**, so its session is bounded:
+  **one hour** by default (`--cookie-expire=1h`; the proxy's own default is
+  168h), `spec.auth.openshiftOAuthProxy.sessionMaxAge` to change it (5m to 12h).
+  When it ends the proxy signs the person in again, silently while their
+  OpenShift session lasts, and reviews `connect` again: a revoked access (an
+  expired [access request](../console/access-requests.md), a removed
+  RoleBinding) closes pgAdmin within that time. The redirect can lose a request
+  in flight (a long query tab, a form being posted), which is the cost of a
+  short bound; a longer one keeps a revoked person in for longer. pgAdmin's own
+  session, and connections it holds open, end with it only once the next
+  request reaches the proxy. The pgtools chart renders pgAdmin's proxy with the
+  one-hour default.
 - On **Kubernetes** pgAdmin's own OAuth2 sign-in is the gate, and the identity
   provider, not RBAC, decides who gets in. `requiredClaims` is therefore
   **required** (1 to 8 claims) and must name the same people as the namespace's
