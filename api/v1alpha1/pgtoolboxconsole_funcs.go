@@ -38,6 +38,7 @@ var pgToolBoxConsoleReasons = []Reason{
 	ReasonExposurePeersBroad,
 	ReasonExposurePolicyBypassed,
 	ReasonExposurePolicyInvalid,
+	ReasonExposurePolicyKept,
 	ReasonExposureTrustUnverified,
 }
 

@@ -273,6 +273,12 @@ spec:
         - apiGroups:
           - ""
           resources:
+          - nodes
+          verbs:
+          - list
+        - apiGroups:
+          - ""
+          resources:
           - persistentvolumeclaims
           - secrets
           - serviceaccounts
