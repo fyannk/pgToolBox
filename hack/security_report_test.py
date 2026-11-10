@@ -79,7 +79,8 @@ class AcceptedFile(unittest.TestCase):
         for ident in ("GO-2026-5064", "GO-2026-5338", "GO-2026-5622", "GO-2026-6791"):
             reason = accepted.get(("grype", ident, "github.com/containerd/containerd"), "")
             self.assertIn("go list -deps", reason, ident)
-        self.assertIn(("grype", "GHSA-685w-q87j-wqw3", "github.com/docker/distribution"), accepted)
+        # Matches no scanner finding: kept as a comment for the Dependabot dismissal.
+        self.assertNotIn(("grype", "GHSA-685w-q87j-wqw3", "github.com/docker/distribution"), accepted)
         for key, reason in accepted.items():
             self.assertGreater(len(reason.split()), 5, "a reason must say how it was shown: %r" % (key,))
 
