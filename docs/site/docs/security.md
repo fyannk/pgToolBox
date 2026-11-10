@@ -94,10 +94,14 @@ what the design guarantees and, as plainly, what it does not.
     the API server refuses, at most 100 a second. Above that, new token
     sign-ins and new raw bearers are refused; an MCP client whose token the
     replica accepted before re-reviews from a bucket of its own;
-  - junk `/mcp/oauth/token` requests: a form parse and a failed decryption
-    each; they never reach the bucket of codes and refresh tokens the console
-    sealed, so connected clients keep refreshing; past 20 a second they get
-    `429` and no audit line;
+  - junk `/mcp/oauth/token` requests, and codes or refresh tokens the console
+    sealed but that no longer buy anything (expired, another client's, a
+    failed PKCE check, a revoked person or grant, a spent code replayed): a
+    form parse and a decryption each; they never reach the bucket connected
+    clients refresh from, so holding a token once is not a way to starve
+    them; past 20 a second they get `429` and no audit line. A live grant
+    spends a bucket of its own (6 at once, 12 a minute) before the shared
+    one, so one grant refreshing in a loop cannot starve the others either;
   - `/mcp/oauth/register`: up to 10 a second sealed and audited; above that,
     new registrations wait. Registered clients are unaffected.
 

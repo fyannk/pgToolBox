@@ -30,8 +30,16 @@ var (
 		Name: "pgtoolbox_console_shared_state_mode",
 		Help: "1 for the state ConfigMap's current mode (pending, live, missing, forbidden, failing); anything but live means each replica keeps its own clocks and sign-outs.",
 	}, []string{"mode"})
+	sharedBytes = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "pgtoolbox_console_shared_state_bytes",
+		Help: "Bytes of each document of the state ConfigMap as this replica would write it (sessions.json, since.json, digests.json, grants.json, drills.json); the API server refuses an object past 1 MiB.",
+	}, []string{"document"})
+	signOutsRefused = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "pgtoolbox_console_shared_state_signouts_refused_total",
+		Help: "Sign-outs the sessions document did not keep: subject (a person past their own bound, their oldest dropped), budget (the document full, the sign-out kept by its replica only).",
+	}, []string{"reason"})
 )
 
 func init() {
-	crmetrics.Registry.MustRegister(sharedWrites, sharedMode)
+	crmetrics.Registry.MustRegister(sharedWrites, sharedMode, sharedBytes, signOutsRefused)
 }

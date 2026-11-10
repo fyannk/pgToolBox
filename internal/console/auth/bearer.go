@@ -132,7 +132,7 @@ func (h *Handler) BearerPrincipal(ctx context.Context, token string) (*Principal
 	if !expiry.IsZero() && expiry.Before(until) {
 		until = expiry
 	}
-	h.knownBearers.remember(tok, until, now)
+	h.knownBearers.remember(tok, u.Name, until, now)
 	return p, nil
 }
 

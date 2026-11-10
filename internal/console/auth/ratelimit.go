@@ -63,6 +63,14 @@ func (l *RateLimiter) Named(bucket string) *RateLimiter {
 	return l
 }
 
+// Clock makes the limiter refill on now instead of the wall clock (an
+// injected clock, so a budget keyed by something time-bound, a grant,
+// ages with the same clock as the thing). It returns l, for chaining.
+func (l *RateLimiter) Clock(now func() time.Time) *RateLimiter {
+	l.now = now
+	return l
+}
+
 // Allow takes one token for key.
 func (l *RateLimiter) Allow(key string) bool {
 	if l == nil {

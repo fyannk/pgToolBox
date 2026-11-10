@@ -221,26 +221,55 @@ func TestARejectedBearerIsForgotten(t *testing.T) {
 }
 
 // TestKnownTokensAreBounded: the set never grows past its bound; expired
-// entries make room, live ones are never evicted for a newcomer.
+// entries make room first, then the least recently used.
 func TestKnownTokensAreBounded(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
-	k := newKnownTokens(3)
+	k := newKnownTokens(3, 3)
 	for i := range 3 {
-		k.remember(fmt.Sprintf("t%d", i), now.Add(time.Duration(i+1)*time.Minute), now)
-	}
-	k.remember("t3", now.Add(time.Hour), now)
-	if k.len() != 3 || k.known("t3", now) || !k.known("t0", now) {
-		t.Fatalf("full set: len %d, t3 known %v, t0 known %v; want 3, false, true", k.len(), k.known("t3", now), k.known("t0", now))
+		k.remember(fmt.Sprintf("t%d", i), fmt.Sprint("user", i), now.Add(time.Duration(i+1)*time.Minute), now)
 	}
 	later := now.Add(90 * time.Second) // t0 expired
-	k.remember("t3", later.Add(time.Hour), later)
-	if k.len() != 3 || !k.known("t3", later) || k.known("t0", later) {
+	k.remember("t3", "user3", later.Add(time.Hour), later)
+	if k.len() != 3 || !k.known("t3", later) || k.known("t0", later) || !k.known("t1", later) {
 		t.Fatalf("after expiry: len %d, t3 known %v, t0 known %v; want 3, true, false", k.len(), k.known("t3", later), k.known("t0", later))
 	}
-	k.remember("expired", now, now)
+	// None expired: the least recently used goes (t2: t1 and t3 were
+	// just looked up).
+	k.remember("t4", "user4", later.Add(time.Hour), later)
+	if k.len() != 3 || !k.known("t4", later) || k.known("t2", later) || !k.known("t1", later) || !k.known("t3", later) {
+		t.Fatalf("full set: len %d; want t1, t3, t4 kept and t2 evicted", k.len())
+	}
+	k.remember("expired", "user5", now, now)
 	if k.known("expired", now) {
 		t.Fatal("a token already expired was remembered")
+	}
+	k.forget("t4")
+	if k.len() != 2 || k.known("t4", later) {
+		t.Fatal("a forgotten token is still remembered")
+	}
+}
+
+// TestOnePersonCannotFillTheKnownBearers is round 6's P2: one person
+// minting thousands of ServiceAccount tokens filled the set of known
+// bearers, so other clients' re-reviews fell back to the shared bucket.
+// A person now keeps their own most recently used tokens only.
+func TestOnePersonCannotFillTheKnownBearers(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	k := newKnownTokens(maxKnownBearers, maxKnownBearersPerSubject)
+	k.remember("alice-token", "alice", now.Add(time.Hour), now)
+	for i := range maxKnownBearers + 10 {
+		k.remember(fmt.Sprint("mallory-", i), "system:serviceaccount:team-a:mallory", now.Add(time.Hour), now)
+	}
+	if k.len() != maxKnownBearersPerSubject+1 {
+		t.Fatalf("known set holds %d tokens, want mallory's %d and alice's", k.len(), maxKnownBearersPerSubject)
+	}
+	if !k.known("alice-token", now) {
+		t.Fatal("another person's token was evicted")
+	}
+	if !k.known(fmt.Sprint("mallory-", maxKnownBearers+9), now) || k.known("mallory-0", now) {
+		t.Fatal("a person must keep their most recently used tokens")
 	}
 }
 

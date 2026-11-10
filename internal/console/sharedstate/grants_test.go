@@ -268,7 +268,7 @@ func TestAnOversizedDocumentIsMergedWhole(t *testing.T) {
 	if err := b.AddGrant(testGrant(n+1, "alice", t0)); !errors.Is(err, ErrTooManyGrants) {
 		t.Fatalf("a grant past the total bound: %v", err)
 	}
-	b.RecordSignOut("sid", t0.Add(time.Hour))
+	b.RecordSignOut("sid", "", t0.Add(time.Hour))
 	eventually(t, "B's write", func() bool { return api.data(KeySessions) != "" })
 	var after grantsDoc
 	if err := json.Unmarshal([]byte(api.data(KeyGrants)), &after); err != nil || len(after.Grants) != n {
@@ -298,7 +298,7 @@ func TestAnUnreadableDocumentIsNeverOverwritten(t *testing.T) {
 		if s.GrantsUsable() {
 			t.Errorf("%s: grants usable over an unreadable document", raw)
 		}
-		s.RecordSignOut("sid", t0.Add(time.Hour))
+		s.RecordSignOut("sid", "", t0.Add(time.Hour))
 		eventually(t, "the write", func() bool { return api.data(KeySessions) != "" })
 		if got := api.data(KeyGrants); got != raw {
 			t.Errorf("an unreadable grants document was rewritten: %s", got)

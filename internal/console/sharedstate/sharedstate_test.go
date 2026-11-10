@@ -53,6 +53,9 @@ type apiServer struct {
 	// compacted refuses a watch from any resourceVersion, as the API
 	// server does once that version is older than the history it keeps.
 	compacted bool
+	// maxBytes, when set, refuses an update whose data is larger, as the
+	// API server refuses an object past 1 MiB.
+	maxBytes int
 }
 
 var configMaps = schema.GroupResource{Resource: "configmaps"}
@@ -101,6 +104,15 @@ func (a *apiServer) Update(_ context.Context, cm *corev1.ConfigMap, _ metav1.Upd
 			a.bumpLocked(a.cm.DeepCopy())
 		}
 		return nil, apierrors.NewConflict(configMaps, cm.Name, errors.New("stale"))
+	}
+	if a.maxBytes > 0 {
+		size := 0
+		for k, v := range cm.Data {
+			size += len(k) + len(v)
+		}
+		if size > a.maxBytes {
+			return nil, apierrors.NewRequestEntityTooLargeError("limit is 1048576")
+		}
 	}
 	a.updates++
 	a.bumpLocked(cm.DeepCopy())
@@ -227,7 +239,7 @@ func TestFindingsSinceClearsWhatARunNoLongerReports(t *testing.T) {
 func TestSignOutsExpire(t *testing.T) {
 	clock := &testClock{now: t0}
 	s := newStore(nil, clock, nil)
-	s.RecordSignOut("0123456789abcdef0123456789abcdef", t0.Add(time.Hour))
+	s.RecordSignOut("0123456789abcdef0123456789abcdef", "", t0.Add(time.Hour))
 	if !s.SignedOut("0123456789abcdef0123456789abcdef") || s.SignedOut("ffffffffffffffffffffffffffffffff") {
 		t.Fatal("signed-out set wrong")
 	}
@@ -236,7 +248,7 @@ func TestSignOutsExpire(t *testing.T) {
 		t.Fatal("a sign-out outlived the session")
 	}
 	var nilStore *Store
-	nilStore.RecordSignOut("x", t0)
+	nilStore.RecordSignOut("x", "", t0)
 	if nilStore.SignedOut("x") || !nilStore.InstanceSince("p", "s", t0).Equal(t0) {
 		t.Fatal("a nil store shares nothing")
 	}
@@ -248,7 +260,7 @@ func TestTheConfigMapNeverHoldsASessionIDOrAReason(t *testing.T) {
 	s := newStore(api, clock, nil)
 	run(t, s)
 	sid := "0123456789abcdef0123456789abcdef"
-	s.RecordSignOut(sid, t0.Add(time.Hour))
+	s.RecordSignOut(sid, "", t0.Add(time.Hour))
 	s.InstanceSince("pod-uid", "unreachable\x00dial tcp 10.0.0.7:8000: i/o timeout", t0)
 	eventually(t, "a write", func() bool { return api.data(KeySince) != "" && api.data(KeySessions) != "" })
 	all := api.data(KeySessions) + api.data(KeySince)
@@ -278,7 +290,7 @@ func TestTwoReplicasConverge(t *testing.T) {
 
 	// A sign-out on A is refused by B.
 	sid := "fedcba9876543210fedcba9876543210"
-	a.RecordSignOut(sid, t0.Add(time.Hour))
+	a.RecordSignOut(sid, "", t0.Add(time.Hour))
 	eventually(t, "B to refuse A's signed-out session", func() bool { return b.SignedOut(sid) })
 
 	// Both now write the same bytes and stop writing.
@@ -313,7 +325,7 @@ func TestAWatchSurvivesACompactedHistory(t *testing.T) {
 	run(t, a)
 	run(t, b)
 	sid := "fedcba9876543210fedcba9876543210"
-	a.RecordSignOut(sid, t0.Add(time.Hour))
+	a.RecordSignOut(sid, "", t0.Add(time.Hour))
 	eventually(t, "B to refuse A's signed-out session", func() bool { return b.SignedOut(sid) })
 	if s := b.State(); s.State != viewmodel.SourceLive {
 		t.Fatalf("B is %s, want live", s.State)
@@ -324,7 +336,7 @@ func TestConflictIsReadMergedAndRetried(t *testing.T) {
 	api := newAPIServer()
 	// Another writer's sign-out lands first, and the next two updates lose
 	// the race as well.
-	other := sessionsDoc{Version: formatVersion, SignedOut: map[string]int64{sessionHash("other-session"): t0.Add(time.Hour).Unix()}}
+	other := sessionsDoc{Version: formatVersion, SignedOut: map[string]signOut{sessionHash("other-session"): {Expiry: t0.Add(time.Hour).Unix()}}}
 	raw, _ := json.Marshal(other)
 	api.cm.Data = map[string]string{KeySessions: string(raw)}
 	clock := &testClock{now: t0}
@@ -334,7 +346,7 @@ func TestConflictIsReadMergedAndRetried(t *testing.T) {
 	s.setModeLocked(modeLive, "")
 	s.mu.Unlock()
 	api.conflicts = 2
-	s.RecordSignOut("mine", t0.Add(time.Hour))
+	s.RecordSignOut("mine", "", t0.Add(time.Hour))
 	if err := s.flush(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -352,7 +364,7 @@ func TestBudgetDropsOldestSinceNeverASignOut(t *testing.T) {
 	clock := &testClock{now: t0}
 	s := New(Options{Name: "console-state", Now: clock.Now, Budget: 4096, Logger: slog.New(slog.NewJSONHandler(&logs, nil))})
 	for i := range 20 {
-		s.RecordSignOut(fmt.Sprintf("session-%02d", i), t0.Add(time.Hour))
+		s.RecordSignOut(fmt.Sprintf("session-%02d", i), "", t0.Add(time.Hour))
 	}
 	for i := range 200 {
 		s.InstanceSince(fmt.Sprintf("pod-%03d", i), "ok", t0.Add(time.Duration(i)*time.Second))
@@ -420,7 +432,7 @@ func TestMissingOrForbiddenDegradesToLocal(t *testing.T) {
 			if got := s.InstanceSince("pod", "ok", t0); !got.Equal(early) {
 				t.Fatalf("local since = %v", got)
 			}
-			s.RecordSignOut("sid", t0.Add(time.Hour))
+			s.RecordSignOut("sid", "", t0.Add(time.Hour))
 			if !s.SignedOut("sid") {
 				t.Fatal("a local sign-out is not honoured")
 			}
@@ -454,7 +466,7 @@ func TestForeignVersionIsLeftAlone(t *testing.T) {
 	s.setModeLocked(modeLive, "")
 	s.mu.Unlock()
 	s.InstanceSince("pod", "ok", t0)
-	s.RecordSignOut("sid", t0.Add(time.Hour))
+	s.RecordSignOut("sid", "", t0.Add(time.Hour))
 	if err := s.flush(t.Context()); err != nil {
 		t.Fatal(err)
 	}

@@ -93,8 +93,11 @@ const (
 	// maxKnownBearers bounds the bearers remembered as accepted (a
 	// digest and an expiry each); knownBearerTTL is how long one is
 	// remembered when its own expiry is unknown (an opaque token).
-	maxKnownBearers = 4096
-	knownBearerTTL  = time.Hour
+	// maxKnownBearersPerSubject bounds one person's share of it, so a
+	// person minting tokens evicts only their own.
+	maxKnownBearers           = 4096
+	maxKnownBearersPerSubject = 16
+	knownBearerTTL            = time.Hour
 	// The token form's per-address budget, charged before the shared
 	// bucket so that one address cannot drain everyone's break-glass
 	// sign-ins: at 20 a minute a single address takes a fraction of the
@@ -233,7 +236,9 @@ type Handler struct {
 // SignOutStore shares signed-out sessions between replicas
 // (internal/console/sharedstate). It keeps a hash of the ID, never the ID.
 type SignOutStore interface {
-	RecordSignOut(sid string, until time.Time)
+	// RecordSignOut shares sid, of subject (empty when unknown), until
+	// it would have ended; false when the store is full and did not.
+	RecordSignOut(sid, subject string, until time.Time) bool
 	SignedOut(sid string) bool
 }
 
@@ -304,7 +309,7 @@ func newHandler(o Options, providers []oauthProvider) *Handler {
 		knownReviews:    NewRateLimiter(knownReviewsPerSecond*60, knownReviewsBurst, 1).Named(BucketKnownReviews),
 		codeExchanges:   NewRateLimiter(codeExchangesPerSecond*60, codeExchangesBurst, 1).Named(BucketCodeExchanges),
 		exchangeReviews: NewRateLimiter(exchangeReviewsPerSecond*60, exchangeReviewsBurst, 1).Named(BucketExchangeReviews),
-		knownBearers:    newKnownTokens(maxKnownBearers),
+		knownBearers:    newKnownTokens(maxKnownBearers, maxKnownBearersPerSubject),
 		flows:           newSpentFlows(maxSpentFlows),
 		loggedOut:       map[string]time.Time{},
 		signOuts:        o.SignOuts,
@@ -623,10 +628,10 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 		if hook := h.signOutHookFn(); hook != nil && user != "" && r.PostFormValue("disconnect") == "assistants" {
 			hook(r.Context(), ClientOf(r, h.cfg.TrustedProxy), user)
 		}
-		h.markLoggedOut(s.ID, s.AbsoluteExpiry(h.codec.Limits()))
+		h.markLoggedOut(s.ID, user, s.AbsoluteExpiry(h.codec.Limits()))
 		// The session's token is refused as a raw bearer too (the MCP
 		// endpoint), until the session would have ended.
-		h.markLoggedOut(BearerReference(s.Token), s.AbsoluteExpiry(h.codec.Limits()))
+		h.markLoggedOut(BearerReference(s.Token), user, s.AbsoluteExpiry(h.codec.Limits()))
 	}
 	h.codec.ClearSession(w)
 	h.codec.clearLogin(w)
@@ -818,7 +823,11 @@ func (p *Principal) String() string {
 	return fmt.Sprintf("%s via %s (session %s)", p.User.Name, p.Provider, p.SessionID)
 }
 
-func (h *Handler) markLoggedOut(sid string, until time.Time) {
+// markLoggedOut refuses sid on this replica until it would have ended,
+// and shares it with the others. The shared document bounds each
+// person's sign-outs and its own size (sharedstate.MaxSignOuts); a
+// sign-out it refuses is still refused here.
+func (h *Handler) markLoggedOut(sid, subject string, until time.Time) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	now := h.now()
@@ -829,7 +838,7 @@ func (h *Handler) markLoggedOut(sid string, until time.Time) {
 	}
 	h.loggedOut[sid] = until
 	if h.signOuts != nil {
-		h.signOuts.RecordSignOut(sid, until)
+		h.signOuts.RecordSignOut(sid, subject, until)
 	}
 }
 

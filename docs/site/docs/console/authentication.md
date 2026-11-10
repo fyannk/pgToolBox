@@ -229,10 +229,16 @@ delete it afterwards.
   clears the cookie, drops the cached identity and refuses that session until its
   absolute expiry: on this replica at once, and on the others within about a
   second through the [state ConfigMap](configuration.md#what-survives-a-restart),
-  which holds the SHA-256 of the session ID, never the session. Without that
+  which holds 128 bits of the SHA-256 of the session ID (and a 64-bit hash of
+  the person's name), never the session. Without that
   ConfigMap (missing or forbidden) the refusal stays on this replica, and a
   copied cookie stays usable on another until it expires or is put on the
-  [revocation list](#revoking-sessions). It does **not** revoke the token at the
+  [revocation list](#revoking-sessions). The ConfigMap keeps at most 16
+  sign-outs a person (past that, their oldest are forgotten by the other
+  replicas: a copy of such a cookie works there again) and 1,536 entries in
+  all (past that, a new sign-out is refused on its own replica only, logged
+  and counted in `pgtoolbox_console_shared_state_signouts_refused_total`), so
+  sign-outs never grow it past what the API server accepts. It does **not** revoke the token at the
   identity provider or at OpenShift's OAuth server.
 
 What the console checks on every request after sign-in:

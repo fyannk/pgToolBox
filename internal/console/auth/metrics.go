@@ -81,6 +81,7 @@ const (
 	BucketOAuthRegistry      = "oauth_registry"
 	BucketOAuthTokens        = "oauth_tokens"         // #nosec G101 -- a metric label, not a credential
 	BucketOAuthUnknownTokens = "oauth_unknown_tokens" // #nosec G101 -- a metric label, not a credential
+	BucketOAuthGrantTokens   = "oauth_grant_tokens"   // #nosec G101 -- a metric label, not a credential
 	BucketOAuthRegistrations = "oauth_registrations"
 	BucketOAuthDecisions     = "oauth_decisions"
 	// BucketMetricsScrapes: /metrics per client address.
