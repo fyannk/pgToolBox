@@ -181,17 +181,27 @@ tests:
         documentIndex: 2
 
   - it: gives pgAdmin to the operator role alone, and writes to neither viewer nor anything else
-    set: {operator.enabled: true}
+    set: {operator.enabled: true, operator.userRoles.aggregateToAdmin: true}
     template: templates/operator/user-clusterroles.yaml
     asserts:
+      # connect, the verb the OpenShift oauth-proxy checks: not get, which OLM
+      # aggregates into view.
       - contains:
           path: rules
-          content: {apiGroups: [pgtoolbox.fyannk.dev], resources: [pgadmins], verbs: [get]}
+          content: {apiGroups: [pgtoolbox.fyannk.dev], resources: [pgadmins], verbs: [connect, get]}
         documentIndex: 1
+      - notContains:
+          path: rules
+          content: {apiGroups: [pgtoolbox.fyannk.dev], resources: [pgadmins], verbs: [connect, get]}
+        documentIndex: 0
       - notContains:
           path: rules
           content: {apiGroups: [pgtoolbox.fyannk.dev], resources: [pgadmins], verbs: [get]}
         documentIndex: 0
+      - contains:
+          path: rules
+          content: {apiGroups: [pgtoolbox.fyannk.dev], resources: [pgadmins], verbs: [connect]}
+        documentIndex: 3
       - contains:
           path: rules
           content: {apiGroups: [postgresql.cnpg.io], resources: [clusters, clusters/status], verbs: [patch]}

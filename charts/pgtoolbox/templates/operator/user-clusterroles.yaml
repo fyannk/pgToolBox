@@ -123,6 +123,7 @@ rules:
   resources:
   - pgadmins
   verbs:
+  - connect
   - get
 - apiGroups:
   - pgtoolbox.fyannk.dev
@@ -231,6 +232,12 @@ rules:
   - get
   - list
   - watch
+- apiGroups:
+  - pgtoolbox.fyannk.dev
+  resources:
+  - pgadmins
+  verbs:
+  - connect
 - apiGroups:
   - pgtoolbox.fyannk.dev
   resources:

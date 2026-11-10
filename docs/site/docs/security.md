@@ -96,8 +96,10 @@ operator therefore:
 - offers the **application user and applied `DatabaseRole`s only**, with privileged
   credentials behind an explicit `credentials.superuser: true`;
 - gates opening it by identity (`requiredClaims` on Kubernetes,
-  `get pgadmins/<name>` on OpenShift), and makes `pgtoolbox-console-operator` the only role
-  that grants that verb;
+  `connect pgadmins/<name>` on OpenShift, a verb that neither `view` nor `edit`
+  carries, even where OLM aggregates `get` on its CRDs into `view`), and makes
+  `pgtoolbox-console-operator` the only user role that grants that verb (besides the
+  namespace `admin`);
 - keeps passwords out of the operator, out of the Pod spec, out of
   pgAdmin's file manager and off disk (a memory-backed volume);
 - reports, but does not enforce, whether the Pod's egress is confined.

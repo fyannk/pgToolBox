@@ -274,7 +274,7 @@ operator:
   # userRoles: the two ClusterRoles people are bound to per namespace with a
   # RoleBinding: pgtoolbox-console-viewer (read the CNPG kinds, pods,
   # events, logs) and pgtoolbox-console-operator (viewer plus create backups, patch
-  # clusters and their status, get pgadmins: whoever may open pgAdmin holds the
+  # clusters and their status, connect pgadmins: whoever may open pgAdmin holds the
   # offered credentials), and pgtoolbox-console-approver (decides
   # PgAccessRequests: create rolebindings, update their status, bind on the two
   # other roles; no request can grant it). The chart renders no binding for them.

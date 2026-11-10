@@ -1,10 +1,12 @@
 # The role of a person who may change things: the viewer's rules plus
 # the three writes the console offers, each made with the person's own token
 # (create backups; patch clusters and clusters/status for promote and fencing) and
-# `get pgadmins`: pgAdmin is dba-only, because whoever may open it holds the
+# `connect pgadmins`: pgAdmin is dba-only, because whoever may open it holds the
 # credentials of every role it offers. On OpenShift the
 # oauth-proxy in front of pgAdmin checks exactly that verb
-# (--openshift-sar get pgadmins/<name>).
+# (--openshift-sar connect pgadmins/<name>), and the console offers the link to
+# whoever holds it. Not `get`: OLM aggregates get/list/watch on its owned CRDs
+# into the built-in `view` role, so every namespace reader holds it there.
 #
 # Access requests: this role does NOT decide them. An approved PgAccessRequest
 # binds this role (time-boxed), so it must hold neither `create rolebindings` nor
@@ -63,6 +65,7 @@ rules:
   resources:
   - pgadmins
   verbs:
+  - connect
   - get
 - apiGroups:
   - pgtoolbox.fyannk.dev

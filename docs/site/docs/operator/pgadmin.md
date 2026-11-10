@@ -113,16 +113,21 @@ a server a person registers can name a managed libpq service. So opening pgAdmin
 is equivalent to reading those Secrets.
 
 - On **OpenShift** the `oauth-proxy` sidecar authorizes with a SubjectAccessReview
-  for `get pgadmins/<name>`, which the
+  for `connect pgadmins/<name>`, which the
   [`pgtoolbox-console-operator`](../console/authorization.md#the-two-clusterroles) role
   grants, and the namespace's `admin` role (through `pgtoolbox-aggregate-to-admin`,
-  `operator.userRoles.aggregateToAdmin`): a namespace admin reads those Secrets
-  anyway. `edit` and `view` do not.
+  `operator.userRoles.aggregateToAdmin`, and OLM's own `*` role for its CRDs): a
+  namespace admin reads those Secrets anyway. `edit` and `view` do not. The verb
+  is `connect`, not `get`, because OLM aggregates `get`, `list` and `watch` on
+  every CRD it owns into `view`: with `get`, every namespace reader could open
+  pgAdmin. A `PgAdmin` created before this change asked for `get`; the operator
+  rolls its Deployment to the new check on upgrade. If you bound a custom role
+  with `get pgadmins` to let people open pgAdmin, add `connect`.
 - On **Kubernetes** pgAdmin's own OAuth2 sign-in is the gate, and the identity
   provider, not RBAC, decides who gets in. `requiredClaims` is therefore
   **required** (1 to 8 claims) and must name the same people as the namespace's
   `pgtoolbox-console-operator` RoleBinding. The console shows the link to pgAdmin only to
-  people who may `get` the `PgAdmin`, but that is a convenience, not the gate.
+  people who may `connect` to the `PgAdmin`, but that is a convenience, not the gate.
 
 Per-person identity inside PostgreSQL is not possible with shared servers:
 connection parameters belong to the server entry, and everybody who connects as a
