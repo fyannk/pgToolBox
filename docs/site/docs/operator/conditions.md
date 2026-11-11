@@ -165,7 +165,8 @@ ConfigMaps are in the operator's label-filtered cache.
 | `ExposureReady` | As for `PgAdmin`: `NotAdmitted`, `NotAccepted`, `RouteAPIUnavailable`, `GatewayAPIUnavailable`; `NotRequested` (True) for `clusterIP`. |
 
 `InstanceCABundleComplete` and `ExposureConfined` are advisory and **never enter
-`Ready`**. `ExposureConfined` is present only while an exposure is published
+`Ready`**. `ExposureConfined` is present only while an exposure is published,
+or while the console's ingress NetworkPolicy is kept without one (`ExposurePolicyKept`)
 ([trusted proxies](console.md#trusted-proxies-and-the-ingress-networkpolicy)).
 For `InstanceCABundleComplete`, a Cluster
 whose CA is missing reads "not verifiable" in the console, the console itself
@@ -176,7 +177,7 @@ omitted); `status.instanceCABundle` lists the Clusters left out.
 | Condition | `True` | `False` |
 |---|---|---|
 | `InstanceCABundleComplete` | the server CA of every selected Cluster is in `<name>-instance-ca` (or no Cluster is selected) | `InstanceCAMissing`, naming each Cluster and why; `ResourceNotOwned` when a ConfigMap that is not this console's already has the bundle's name |
-| `ExposureConfined` | the `<name>-ingress` NetworkPolicy admits only the router, ingress controller or gateway to the console port (present only while a Route, Ingress or HTTPRoute is published) | `ExposureOpen` (no policy rendered), `ExposurePeersBroad` (a peer of `from` admits (nearly) everyone), `ExposurePolicyBypassed` (another NetworkPolicy admits more to the console port), `ExposureTrustUnverified` (the peers could not be checked yet, or a widened `from` waits for the any-peer trust to go), `ExposurePolicyKept` (the policy is no longer rendered and is kept while a console Pod may still trust every peer; present then even with nothing published); the message says what the console does with `X-Forwarded-For`, and when the Nodes' podCIDRs could not be checked |
+| `ExposureConfined` | the `<name>-ingress` NetworkPolicy admits only the router, ingress controller or gateway to the console port (present only while a Route, Ingress or HTTPRoute is published) | `ExposureOpen` (no policy rendered), `ExposurePeersBroad` (a peer of `from` admits (nearly) everyone), `ExposurePolicyBypassed` (another NetworkPolicy admits more to the console port), `ExposureTrustUnverified` (the peers could not be checked yet, or a widened `from` waits for the any-peer trust to go), `ExposurePolicyKept` (the policy is no longer rendered and is kept while a console Pod may still trust every peer, or the console is stalled on `HostnameNotAllowed` with the policy left as it was; present then even with nothing published); the message says what the console does with `X-Forwarded-For`, and when the Nodes' podCIDRs could not be checked (no grant, more than 10,000 Nodes, or Nodes without `spec.podCIDRs`) |
 
 ## PgAccessRequest
 
@@ -279,7 +280,7 @@ Reasons are registered once, by owner. `common` reasons are shared by every kind
 | `ExposurePolicyInvalid` | `ConfigurationValid=False`: the API server refused the ingress NetworkPolicy rendered from `spec.exposure.networkPolicy` (what the CRD could not check, such as a label-key prefix longer than 253 characters), or an admission policy or webhook denied it (Invalid or Forbidden); the message carries its answer. Retried every five minutes and on every change of the spec. |
 | `ExposurePolicyBypassed` | `ExposureConfined=False`: another NetworkPolicy of the namespace admits, to the console port, peers the exposure does not list (NetworkPolicies add up), or there were more than 250 to check; the console trusts no peer with `X-Forwarded-For`. |
 | `ExposureTrustUnverified` | `ExposureConfined=False`: the peers of `networkPolicy.from` could not be checked yet (an `ipBlock` peer while no console Pod has an address and no earlier one verified the same blocks, more than 250 console Pods), or a wider `from` is held back until no console Pod trusts every peer (a Pod stuck terminating that holds it is named); the console trusts no peer with `X-Forwarded-For` meanwhile. |
-| `ExposurePolicyKept` | `ExposureConfined=False`: the ingress NetworkPolicy is no longer rendered (the exposure or the policy was turned off) and is kept while a console Pod may still trust every peer it admits: until the rollout without the grant is through and no Pod carries the grant. A Pod stuck terminating that holds it is named, with when its deletion was asked. |
+| `ExposurePolicyKept` | `ExposureConfined=False`: the ingress NetworkPolicy is no longer rendered (the exposure or the policy was turned off) and is kept while a console Pod may still trust every peer it admits: until the rollout without the grant is through and no Pod carries the grant. A Pod stuck terminating that holds it is named, with when its deletion was asked. Also while the console is stalled on `HostnameNotAllowed`: the exposure is withdrawn, and the workload and the policy stay as they were. |
 
 ### pgaccessrequest
 

@@ -338,12 +338,14 @@ trusted.
   unique-local IPv6 block (inside `fc00::/7`) wider than `/64` (kind's
   `fd00:10:244::/56`, a `/48`), holding a console Pod's own address, or
   overlapping a Node's `spec.podCIDRs` (the Pods of that node: the operator
-  lists the Nodes, uncached, at most 10,000, and keeps what it read for a
-  minute; CNIs that do not allocate from `spec.podCIDRs`, such as Calico or
-  Cilium's cluster pool, leave it empty, and the console Pods' own addresses
-  are then the only check). An installation that does not grant the operator
-  `list` on `nodes` skips that check and says so in the `ExposureConfined`
-  message. The console-Pod check needs a Pod address: at creation, while no
+  lists the Nodes, uncached, 100 a page and at most 10,000, one lookup at a
+  time for every console, and keeps what it read for a minute; CNIs that do
+  not allocate from `spec.podCIDRs`, such as Calico or Cilium's cluster pool,
+  leave it empty, and the console Pods' own addresses are then the only check:
+  the `ExposureConfined` message says that the Node check could not run, or
+  how many Nodes had no range). An installation that does not grant the
+  operator `list` on `nodes` skips that check and says so in the
+  `ExposureConfined` message. The console-Pod check needs a Pod address: at creation, while no
   console Pod has one, an `ipBlock` peer is not trusted
   (`ExposureTrustUnverified`), and the trust comes with the Pod's address
   (one more rollout), never before it. The template then records which
@@ -430,8 +432,9 @@ trusted.
   are watched, so it looks again as the rollout progresses.
 - While the console is stalled on `HostnameNotAllowed` the operator withdraws
   the exposure but leaves the workload and this policy as they were, so a stale
-  `0.0.0.0/0` trust is never left without its policy; `ExposureConfined` is
-  removed, as nothing is published.
+  `0.0.0.0/0` trust is never left without its policy; `ExposureConfined` then
+  says so (`False`, `ExposurePolicyKept`), and is removed only when the console
+  has no ingress policy.
 - The advisory `ExposureConfined` never enters `Ready`; its message says which
   peers the console believes.
 - Sign-in budgets follow the trust. With CIDRs (rows with `0.0.0.0/0,::/0` or
