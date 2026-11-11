@@ -116,7 +116,7 @@ redacted).
 
 | Key | Chart value | Default | |
 |---|---|---|---|
-| `WATCH_NAMESPACES` | `operator.config.watchNamespaces` | empty: every namespace the ClusterRole allows | Comma list; restricts the caches. The Helm chart also binds the namespaced rules (Secrets, workloads, RBAC objects) only in the listed namespaces, by RoleBindings in namespaces that must exist at install time, keeps a small ClusterRole of cluster-scoped rules bound cluster-wide (`<fullname>-manager-cluster`, no `bind`), and grants `get` on the `pgtoolbox-operator-config` ConfigMap and Secret in the release namespace, which need not be listed. See [namespaces dropped from the watch](#namespaces-dropped-from-the-watch) for a listed namespace the operator cannot read at start. Narrowing the list leaves what the operator made in a namespace it no longer watches as it was and unmanaged: its PgAdmins, PgToolBoxConsoles and EvidenceAgents keep their Deployments and Secrets but nobody reconciles them (no status, no certificate renewal for the agents, which stop being served once their certificate expires), an agent's ServiceAccount is dropped from the agents' ClusterRoleBinding at the next agent reconcile (the binding lists the agents the operator sees), so the agent can no longer review the tokens it is called with, and its `PgAdminAccess` grants keep the Roles and RoleBindings they gave. Delete those objects before you narrow the list, or put the namespace back. The operator also runs Pods there as any ServiceAccount: enforce Pod Security `restricted` on every listed namespace ([security](../security.md#known-limitations)). kustomize and OLM always bind the whole ClusterRole cluster-wide. One operator per cluster is the only supported layout. |
+| `WATCH_NAMESPACES` | `operator.config.watchNamespaces` | empty: every namespace the ClusterRole allows | Comma list; restricts the caches. The Helm chart also binds the namespaced rules (Secrets, workloads, RBAC objects) only in the listed namespaces, by RoleBindings in namespaces that must exist at install time, keeps a small ClusterRole of cluster-scoped rules bound cluster-wide (`<fullname>-manager-cluster`, no `bind`), and grants `get` on the `pgtoolbox-operator-config` ConfigMap and Secret in the release namespace, which need not be listed. See [namespaces dropped from the watch](#namespaces-dropped-from-the-watch) for a listed namespace the operator cannot read at start. Narrowing the list leaves what the operator made in a namespace it no longer watches as it was and unmanaged: its PgAdmins, PgToolBoxConsoles and EvidenceAgents keep their Deployments and Secrets but nobody reconciles them (no status, no certificate renewal for the agents, which stop being served once their certificate expires), an agent's ServiceAccount is dropped from the agents' ClusterRoleBinding at the next agent reconcile (the binding lists the agents the operator sees), so the agent can no longer review the tokens it is called with, its `PgAdminAccess` grants keep the Roles and RoleBindings they gave, and the RoleBinding of an approved `PgAccessRequest` there no longer expires: nothing removes it at `spec.expiresAt` or on revocation (the controller that takes grants away does not watch the namespace any more). Delete those objects before you narrow the list, or put the namespace back. The operator also runs Pods there as any ServiceAccount: enforce Pod Security `restricted` on every listed namespace ([security](../security.md#known-limitations)). kustomize and OLM always bind the whole ClusterRole cluster-wide. One operator per cluster is the only supported layout. |
 | `POD_NAMESPACE` | downward API | | Where the operator runs. |
 | `OPERATOR_IMAGE` | `image.*` | baked in at build | Copied into pgAdmin Pods for the credential sidecar. |
 | `PGADMIN_IMAGE` | `operator.pgAdmin.image` | the hardened, digest-pinned image compiled in | |
@@ -148,31 +148,63 @@ overrides `PGADMIN_IMAGE_REPOSITORIES`; see [images](images.md)).
 ### Namespaces dropped from the watch
 
 The operator reads every namespace of `WATCH_NAMESPACES` once at start. It
-leaves out, with an error in its log and in `pgtoolbox_watch_namespaces_dropped`,
-a listed namespace it cannot fully use:
+leaves out, with an error in its log and in
+`pgtoolbox_watch_namespaces_dropped{reason}`, a listed namespace it cannot
+fully use:
 
 - a listed namespace deleted after the install: once it is recreated, run
-  `helm upgrade` (its RoleBinding) and restart the operator;
+  `helm upgrade` (its RoleBinding) and restart the operator (reason
+  `clusters-unlistable`);
 - a namespace where the operator may not list CloudNativePG Clusters: restore
-  the chart's RoleBinding, then restart the operator;
+  the chart's RoleBinding, then restart the operator (`clusters-unlistable`);
 - a namespace where the operator lacks any other namespaced permission of its
   manager role: its administrator replaced the chart's RoleBinding with a
   narrower Role (Clusters readable but not Deployments, Secrets, Pods, Roles
   and so on, or Clusters listed but not watched). The log line names the
   namespace and each missing permission (`list,watch deployments.apps`).
-  Restore the chart's RoleBinding, then restart the operator.
+  Restore the chart's RoleBinding, then restart the operator (`permissions`);
+- a namespace whose permission review fails: an error the API server still
+  returns after one retry (a 5xx, a timeout or throttling is retried once), or
+  no answer within 6 seconds per attempt. The log line names the namespace
+  and the error (`review-failed`). Tens of thousands of RoleBindings in one
+  namespace make its review slow; a
+  `count/rolebindings.rbac.authorization.k8s.io` ResourceQuota keeps it small.
 
-The check is one SelfSubjectRulesReview per namespace, concurrent, under the
-start-up deadline. Where the cluster's authorizer cannot list its rules (a
-webhook authorizer), each permission the review does not show is asked again
-with a SelfSubjectAccessReview. It asks for exactly the namespaced rules of
-the manager role the operator ships with (the generated role, embedded in the
-binary), plus `list` and `watch` on every kind its informers hold. A
-namespace left out is not reconciled, and the others are unaffected. Without
-this check, an informer refused in one namespace would never sync, and the
-operator would stop for every namespace. If the RBAC of a kept namespace
+The check is one SelfSubjectRulesReview per namespace, concurrent, each with
+its own deadline inside the start-up deadline, so one slow namespace is left
+out alone while the others start. Where the cluster's authorizer cannot list
+its rules (a webhook authorizer), each permission the review does not show is
+asked again with a SelfSubjectAccessReview, four at a time per namespace. It
+asks for exactly the namespaced rules of the manager role the operator ships
+with (the generated role, embedded in the binary), plus `list` and `watch` on
+every kind its informers hold, with the RBAC authorizer's matching rules (a
+Role that grants `pgadmins/*` grants no subresource: RBAC reads it literally).
+A namespace left out is not reconciled, and the others are unaffected. If the RBAC of a kept namespace
 changes after the start so that an informer can no longer sync, the
 operator's exit error carries a hint naming the watched namespaces to check.
+
+A namespace left out keeps the status its objects had, which nobody updates
+any more, possibly `Ready=True`. Two signals say so:
+
+- **On the objects**, best effort, once at start: in a namespace left out for
+  its permissions, where the review shows the operator may still list the
+  kind and patch its status, each `PgAdmin`, `PgToolBoxConsole` and
+  `EvidenceAgent` turns `Ready=Unknown`, reason `NamespaceNotWatched`, its
+  message naming that namespace and the permissions missing there; where it
+  may create events, a Warning Event of the same reason goes with it (on the
+  transition, or at every start when the status cannot be written). These
+  writes bypass the cache, each is bounded to 5 seconds, they run beside the
+  start (never in its deadline), and a refused one is logged, not retried. In
+  a namespace whose permissions are unknown (`clusters-unlistable`,
+  `review-failed`) nothing is attempted. Once the namespace is watched again,
+  the next reconciliation computes `Ready` as usual.
+- **On the operator**: `pgtoolbox_watch_namespaces_dropped{reason}` and the
+  chart's alert `PgToolBoxOperatorNamespacesDropped`
+  (`operator.metrics.prometheusRule.enabled`; see
+  [metrics](metrics.md#alerts)), which fires whatever the cause.
+
+In a namespace left out, an approved `PgAccessRequest` no longer expires (see
+`WATCH_NAMESPACES` above).
 
 An optional API (Routes, HTTPRoutes, Poolers, Databases, DatabaseRoles, the
 backup plugins' kinds) never leaves a namespace out: each namespace's Role
@@ -191,7 +223,16 @@ reconciliation and deletes it when it is no longer wanted. When it cannot (the
 Route is the requested exposure, or its read or deletion is refused),
 `ExposureReady` keeps its reason but its message says that a Route or HTTPRoute
 published before may remain and must be deleted by hand. It never says the
-exposure is gone.
+exposure is gone. On a `PgToolBoxConsole` that publishes nothing else,
+`ExposureConfined` is then `False` (`ExposureOpen`) for one found still there,
+and `Unknown` (`ExposureOpen`) for one the operator may not read either: it may
+be gone. A refused read is reported only when the object's history says one
+may have been published (its spec requests that kind, or an earlier status
+observed a Route or HTTPRoute or already reported one); a `PgAdmin` or console
+that was only ever `clusterIP` or Ingress gets no such sentence. If the Route
+or Gateway API itself is removed while the operator runs, nothing of it can
+remain and the reconciliation carries on (restart the operator to read the new
+API set).
 
 If no listed namespace is left, the operator does not start; nor does
 it when the API server refuses its credentials (401) at start, which is retried

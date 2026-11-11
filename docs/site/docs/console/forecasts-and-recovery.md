@@ -251,16 +251,24 @@ without an agent, check `pg_stat_archiver` again). The panel always shows them o
 the reported basis, whose end is never a WAL frontier. The console is read-only,
 so it runs neither query.
 
-The console narrows the suggestion from one list of reasons (the timeline's
-`edgeAdvice`):
+The console narrows the suggestion (the timeline's `edgeAdvice`) from what it
+read of the Cluster first, on the evidence and the reported basis alike, then
+from one list of reasons:
 
+- when no primary runs or none was read (the Cluster is hibernated, the
+  current primary is fenced or unreachable; `archiverHibernated`,
+  `archiverUnread`, `liveTimelineNotArchivedPrimaryUnread`,
+  `archivingFailedPrimaryUnread`), it shows neither query, whatever else the
+  reasons say;
 - when WAL archiving is failing, failed recently or lags behind
   (`archivingFailing`, `failedRecently`, `archiveBacklog`, or archiving read as
   failing under a reported window), it shows `pg_stat_archiver` only: a
   switched segment would wait like every other one;
-- when no primary runs or none was read (`archiverHibernated`,
-  `liveTimelineNotArchivedPrimaryUnread`, `archivingFailedPrimaryUnread`), it
-  shows neither query.
+- when the archiving instance is in recovery (a replica cluster's designated
+  primary, or a primary mid-promotion; `archiverNotReported`), where
+  `pg_switch_wal()` fails with "recovery is in progress", or the repository's
+  newest timeline is another cluster's (`repositoryAheadOfLive`), which a WAL
+  switch here does not move, it shows `pg_stat_archiver` only.
 
 ### Without repository evidence
 
@@ -424,16 +432,19 @@ segments, so the bar and the answer always agree:
   can go: a recovery window's start moves with the clock. pgBackRest expires a
   full backup together with every differential and incremental backup taken
   against it, so there only full backups count as retention anchors, and the
-  oldest full's whole chain goes at once. In a Barman Cloud repository every
+  oldest full's whole chain goes at once; a full marked `backup-error` (page
+  checksum errors) is still one, as `expire` counts it. In a Barman Cloud repository every
   listed backup that did not fail is an anchor, including one with no recovery
   path. Once a scan was missed, the band reaches past the newest anchor before
   the oldest anchor's own span plus the age plus one refresh interval, up to
   the first restore point drawn from it or a newer backup: those backups are
   still in the repository, and every time before is unknown until the
-  repository is read again. A scan is missed when its age passes the longer of
+  repository is read again. When that reach passes the scan's start, the band
+  is the whole window: the base may then be a backup taken since, which the
+  snapshot does not list. A scan is missed when its age passes the longer of
   the refresh interval and the last scan's duration, plus that duration, the
   console's one-minute poll and one minute (two refresh intervals when the
-  snapshot gives no scan start). Within a normal refresh cycle the band does
+  snapshot gives no scan start), whatever the window's length. Within a normal refresh cycle the band does
   not extend, so the oldest backup's span does not flip between covered and
   unknown each time the next scan is a little late. Retention never removes the
   newest backup, so within a normal cycle the band also stops at the newest
@@ -511,8 +522,9 @@ segments, so the bar and the answer always agree:
   Cluster reports failed, with the condition's age (`False since ...`), not that
   archiving is failing now.
 
-  A hibernated Cluster says it is hibernated instead (`unknown`): no instance
-  runs to switch WAL on.
+  A hibernated Cluster says it is hibernated instead (`unknown`), with
+  ContinuousArchiving True or False: no instance runs to switch WAL on, and none
+  will be read again until it wakes up.
 
   When the live timeline is not known, an end that reached the repository
   before the promotion counts the same way. That WAL

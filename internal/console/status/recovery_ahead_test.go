@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -461,10 +462,12 @@ func TestArchiveFailureReadThroughTheGraceSweep(t *testing.T) {
 	}
 }
 
-// TestEdgeAdvice (round 14, DBA P2-1): the SPA's hand checks at an
-// uncertain edge follow one map. Archiving failing, lagging or failed
-// recently: pg_stat_archiver only, a WAL switch would wait like the rest.
-// No primary to run anything on: none. The narrowest reason wins.
+// TestEdgeAdvice (round 14, DBA P2-1; round 15, CNPG P2-1 and DBA P2-1):
+// the SPA's hand checks at an uncertain edge follow the facts first, then
+// one reason map. No primary read, or the Cluster hibernated: none,
+// whatever the reasons. The archiving instance in recovery, where
+// pg_switch_wal() fails, or archiving failing, lagging or failed
+// recently: pg_stat_archiver only. The narrowest wins.
 func TestEdgeAdvice(t *testing.T) {
 	r := func(codes ...string) []viewmodel.Phrase {
 		out := make([]viewmodel.Phrase, 0, len(codes))
@@ -474,30 +477,199 @@ func TestEdgeAdvice(t *testing.T) {
 		return out
 	}
 	for _, c := range []struct {
+		name    string
 		reasons []viewmodel.Phrase
+		facts   recoveryFacts
 		want    string
 	}{
-		{nil, ""},
-		{r("recovery.reason.liveTimelineNotArchived"), ""},
-		{r("recovery.reason.archivingFailing"), viewmodel.EdgeAdviceArchiver},
-		{r("recovery.reason.archiveBacklog"), viewmodel.EdgeAdviceArchiver},
-		{r("recovery.reason.failedRecently"), viewmodel.EdgeAdviceArchiver},
-		{r("recovery.reason.archiverHibernated"), viewmodel.EdgeAdviceNone},
-		{r("recovery.reason.liveTimelineNotArchivedPrimaryUnread"), viewmodel.EdgeAdviceNone},
-		{r("recovery.reason.archivingFailedPrimaryUnread"), viewmodel.EdgeAdviceNone},
-		{r("recovery.reason.failedRecently", "recovery.reason.archiverHibernated"), viewmodel.EdgeAdviceNone},
-		{r("recovery.reason.holes", "recovery.reason.archiveBacklog"), viewmodel.EdgeAdviceArchiver},
+		{"nothing", nil, recoveryFacts{}, ""},
+		{"post-failover lag", r("recovery.reason.liveTimelineNotArchived"), recoveryFacts{}, ""},
+		{"failing", r("recovery.reason.archivingFailing"), recoveryFacts{}, viewmodel.EdgeAdviceArchiver},
+		{"backlog", r("recovery.reason.archiveBacklog"), recoveryFacts{}, viewmodel.EdgeAdviceArchiver},
+		{"failed recently", r("recovery.reason.failedRecently"), recoveryFacts{}, viewmodel.EdgeAdviceArchiver},
+		{"hibernated reason", r("recovery.reason.archiverHibernated"), recoveryFacts{}, viewmodel.EdgeAdviceNone},
+		{"lag, primary unread", r("recovery.reason.liveTimelineNotArchivedPrimaryUnread"), recoveryFacts{}, viewmodel.EdgeAdviceNone},
+		{"failed, primary unread", r("recovery.reason.archivingFailedPrimaryUnread"), recoveryFacts{}, viewmodel.EdgeAdviceNone},
+		{"failed recently and hibernated", r("recovery.reason.failedRecently", "recovery.reason.archiverHibernated"), recoveryFacts{}, viewmodel.EdgeAdviceNone},
+		{"holes and backlog", r("recovery.reason.holes", "recovery.reason.archiveBacklog"), recoveryFacts{}, viewmodel.EdgeAdviceArchiver},
+		// Reported window, archiving failing: no archiving reason, no switch.
+		{"reported, failing", r("recovery.reason.reportedWindow"), recoveryFacts{failing: true}, viewmodel.EdgeAdviceArchiver},
+		{"hibernated, failing", r("recovery.reason.archiverHibernated"), recoveryFacts{failing: true}, viewmodel.EdgeAdviceNone},
+		// (a) Evidence, condition True, primary unread (fenced): the
+		// reason is archiverUnread, PostgreSQL is stopped.
+		{"evidence, archiver unread", r("recovery.reason.archiverUnread"), recoveryFacts{archiverUnread: true, primaryUnread: true}, viewmodel.EdgeAdviceNone},
+		// The reason alone, too: it rests on no reading of the primary.
+		{"archiver unread reason", r("recovery.reason.archiverUnread"), recoveryFacts{}, viewmodel.EdgeAdviceNone},
+		// A graver reason ranks first and hides the archiver's: the fact
+		// still holds.
+		{"holes, primary unread", r("recovery.reason.holes"), recoveryFacts{primaryUnread: true}, viewmodel.EdgeAdviceNone},
+		// (b) Reported basis, no agent, hibernated Cluster.
+		{"reported, hibernated", r("recovery.reason.reportedWindow", "recovery.reason.noEvidence"), recoveryFacts{hibernated: true, archiverUnread: true, primaryUnread: true}, viewmodel.EdgeAdviceNone},
+		{"reported, hibernated, primary read", r("recovery.reason.reportedWindow"), recoveryFacts{hibernated: true}, viewmodel.EdgeAdviceNone},
+		// (c) Reported basis, condition False, primary unread: none, as on
+		// the evidence basis, not archiver.
+		{"reported, failing, primary unread", r("recovery.reason.reportedWindow", "recovery.reason.noEvidence"), recoveryFacts{failing: true, primaryUnread: true}, viewmodel.EdgeAdviceNone},
+		// (d) A designated primary or a primary mid-promotion: in
+		// recovery, pg_switch_wal() fails; its archiver still reads.
+		{"not reported", r("recovery.reason.archiverNotReported"), recoveryFacts{notReported: true, archiverUnread: true}, viewmodel.EdgeAdviceArchiver},
+		{"not reported reason", r("recovery.reason.archiverNotReported"), recoveryFacts{}, viewmodel.EdgeAdviceArchiver},
+		{"reported, not reported", r("recovery.reason.reportedWindow"), recoveryFacts{notReported: true}, viewmodel.EdgeAdviceArchiver},
+		{"holes, not reported", r("recovery.reason.holes"), recoveryFacts{notReported: true}, viewmodel.EdgeAdviceArchiver},
+		// (e) The repository's newest timeline is another cluster's: a
+		// switch here does not move it.
+		{"repository ahead", r("recovery.reason.repositoryAheadOfLive"), recoveryFacts{}, viewmodel.EdgeAdviceArchiver},
+		{"repository ahead, primary unread", r("recovery.reason.repositoryAheadOfLive"), recoveryFacts{primaryUnread: true}, viewmodel.EdgeAdviceNone},
 	} {
-		if got := edgeAdvice(c.reasons, false); got != c.want {
-			t.Errorf("%+v: %q, want %q", c.reasons, got, c.want)
+		if got := edgeAdvice(c.reasons, c.facts); got != c.want {
+			t.Errorf("%s: %q, want %q", c.name, got, c.want)
 		}
 	}
-	// Archiving failing under a reported window, which gives no
-	// archiving reason: no switch.
-	if got := edgeAdvice(r("recovery.reason.reportedWindow"), true); got != viewmodel.EdgeAdviceArchiver {
-		t.Errorf("archiving failing, reported window: %q, want archiver", got)
+}
+
+// edgeAdviceBoth are the reasons that leave both hand checks (the map
+// edgeAdviceOf has no entry for them): each is classified on purpose.
+// None says a primary is unread or the Cluster hibernated, archiving
+// fails or lags, or the archiving instance is in recovery; the facts
+// narrow the advice whenever those hold beside them (edgeAdvice).
+var edgeAdviceBoth = map[string]bool{
+	"recovery.reason.backupsCut":                              true,
+	"recovery.reason.reportedWindow":                          true,
+	"recovery.reason.pathsStale":                              true,
+	"recovery.reason.evidenceStale":                           true,
+	"recovery.reason.timelineWarning":                         true,
+	"recovery.reason.pathsCut":                                true,
+	"recovery.reason.missingAfterLatestFormerPrimaryRejoined": true,
+	"recovery.reason.missingAfterLatestFormerPrimary":         true,
+	"recovery.reason.missingAfterLatest":                      true,
+	"recovery.reason.holes":                                   true,
+	"recovery.reason.candidateGaps":                           true,
+	"recovery.reason.backupGone":                              true,
+	"recovery.reason.backupUnconfirmed":                       true,
+	"recovery.reason.backupNotListed":                         true,
+	"recovery.reason.backupNotUsable":                         true,
+	"recovery.reason.pathNotHealthy":                          true,
+	"recovery.reason.liveTimelineNotArchived":                 true,
+	"recovery.reason.orphanTimeline":                          true,
+	"recovery.reason.undrawn":                                 true,
+	// No paths, or none to draw: the window rests on no evidence edge.
+	"recovery.reason.noEvidence":             true,
+	"recovery.reason.noEvidenceBecause":      true,
+	"recovery.reason.agentCoverage":          true,
+	"recovery.reason.agentPredates":          true,
+	"recovery.reason.noPaths":                true,
+	"recovery.reason.pathsNotCoverage":       true,
+	"recovery.reason.noConsistentPath":       true,
+	"recovery.reason.timelineNotEstablished": true,
+	"recovery.reason.keptTooOld":             true,
+	"recovery.reason.keptRepositoryChanged":  true,
+}
+
+// TestEdgeAdviceClassifiesEveryReason (round 15, DBA P2-1): every
+// recovery.reason code the package's code names is in edgeAdviceOf or in
+// edgeAdviceBoth, never in both: a new reason cannot fall back to both
+// checks unseen.
+func TestEdgeAdviceClassifiesEveryReason(t *testing.T) {
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if got := edgeAdvice(r("recovery.reason.archiverHibernated"), true); got != viewmodel.EdgeAdviceNone {
-		t.Errorf("archiving failing, hibernated: %q, want none", got)
+	code := regexp.MustCompile(`"(recovery\.reason\.[A-Za-z]+)"`)
+	seen := map[string]bool{}
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		src, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, m := range code.FindAllStringSubmatch(string(src), -1) {
+			seen[m[1]] = true
+		}
+	}
+	if len(seen) < len(edgeAdviceOf) {
+		t.Fatalf("found %d reason codes, fewer than the map's %d: the scan is broken", len(seen), len(edgeAdviceOf))
+	}
+	for c := range seen {
+		_, mapped := edgeAdviceOf[c]
+		switch {
+		case mapped && edgeAdviceBoth[c]:
+			t.Errorf("%s is in edgeAdviceOf and edgeAdviceBoth", c)
+		case !mapped && !edgeAdviceBoth[c]:
+			t.Errorf("%s is not classified: add it to edgeAdviceOf (recovery.go) or to edgeAdviceBoth", c)
+		}
+	}
+	for c := range edgeAdviceOf {
+		if !seen[c] {
+			t.Errorf("edgeAdviceOf names %s, which no code says", c)
+		}
+	}
+	for c := range edgeAdviceBoth {
+		if !seen[c] {
+			t.Errorf("edgeAdviceBoth names %s, which no code says", c)
+		}
 	}
 }
+
+// TestEdgeAdviceFromFacts (round 15, CNPG P2-1, DBA P2-1 and CNPG P3-2):
+// from a gathered Cluster, on both bases, the hint offers nothing to run
+// on a primary that was not read or a hibernated Cluster, and no WAL
+// switch on an archiving instance in recovery. A hibernated Cluster with
+// ContinuousArchiving False says it is hibernated, not "until the primary
+// is read again".
+func TestEdgeAdviceFromFacts(t *testing.T) {
+	p := tlPath("b1", 48*time.Hour, 0, evidencev1alpha1.CoverageFrontier)
+	withEvidence := timelineFixture{paths: []evidence.RecoveryPath{p}}.evidence()
+	first, last := now.Add(-48*time.Hour), now.Add(-6*time.Hour)
+	window := &viewmodel.RecoveryWindow{First: &first, Last: &last, Provenance: viewmodel.Provenance{Origin: viewmodel.OriginOperator, Source: "Cluster.status"}}
+	read := func(primary bool) sweep.Instance {
+		return sweep.Instance{State: viewmodel.StatusReadOK, Reading: &instancestatus.Reading{
+			IsPrimary: primary, IsArchivingWAL: true, LastArchivedWALTime: ago(time.Minute), ObservedAt: now.Add(-10 * time.Second),
+		}}
+	}
+	for _, c := range []struct {
+		name       string
+		reported   bool
+		condition  metav1.ConditionStatus
+		hibernated bool
+		primary    *sweep.Instance
+		reason     string
+		want       string
+	}{
+		{name: "evidence, True, primary unread (fenced)", condition: metav1.ConditionTrue, reason: "recovery.reason.archiverUnread", want: viewmodel.EdgeAdviceNone},
+		{name: "evidence, False, hibernated", condition: metav1.ConditionFalse, hibernated: true, reason: "recovery.reason.archiverHibernated", want: viewmodel.EdgeAdviceNone},
+		{name: "evidence, True, hibernated", condition: metav1.ConditionTrue, hibernated: true, reason: "recovery.reason.archiverHibernated", want: viewmodel.EdgeAdviceNone},
+		{name: "evidence, designated primary", condition: metav1.ConditionTrue, primary: ptrTo(read(false)), reason: "recovery.reason.archiverNotReported", want: viewmodel.EdgeAdviceArchiver},
+		{name: "reported, hibernated", reported: true, condition: metav1.ConditionTrue, hibernated: true, reason: "recovery.reason.reportedWindow", want: viewmodel.EdgeAdviceNone},
+		{name: "reported, False, primary unread", reported: true, condition: metav1.ConditionFalse, reason: "recovery.reason.reportedWindow", want: viewmodel.EdgeAdviceNone},
+		{name: "reported, designated primary", reported: true, condition: metav1.ConditionTrue, primary: ptrTo(read(false)), reason: "recovery.reason.reportedWindow", want: viewmodel.EdgeAdviceArchiver},
+		{name: "reported, primary read, healthy", reported: true, condition: metav1.ConditionTrue, primary: ptrTo(read(true)), reason: "recovery.reason.reportedWindow", want: ""},
+	} {
+		g := failoverGathered("db-2", now.Add(-time.Hour), nil)
+		g.cluster.Status.Conditions = []metav1.Condition{{Type: cnpgstatus.ConditionContinuousArchiving, Status: c.condition, Reason: "ContinuousArchivingFailing", LastTransitionTime: metav1.NewTime(now.Add(-2 * time.Hour))}}
+		if c.hibernated {
+			g.cluster.Annotations = map[string]string{cnpgstatus.AnnotationHibernation: "on"}
+			g.cluster.Status.Conditions = append(g.cluster.Status.Conditions, metav1.Condition{Type: cnpgstatus.ConditionHibernation, Status: metav1.ConditionTrue, Reason: "Hibernated"})
+		}
+		g.swept = sweep.Snapshot{SweptAt: now, Interval: 30 * time.Second, Instances: map[string]sweep.Instance{}}
+		if c.primary != nil {
+			g.swept.Instances["db-2"] = *c.primary
+		}
+		reading := cnpgstatus.Archiving(g.cluster, primaryArchiver(g))
+		arch := viewmodel.Archiving{Health: health(reading.Class), Reason: reading.Reason, ConditionStatus: reading.ConditionStatus}
+		facts := recoveryFactsOf(g, arch, now)
+		ev, summary := withEvidence, viewmodel.BackupSummary{Archiving: arch}
+		if c.reported {
+			ev, summary.RecoveryWindow = clusterEvidence{}, window
+		}
+		tl := (&Service{}).recoveryTimeline(ev, summary, nil, facts)
+		if len(tl.Reasons) == 0 || tl.Reasons[0].Code != c.reason {
+			t.Errorf("%s (archiving %s): reasons %+v, want %s first", c.name, reading.Reason, tl.Reasons, c.reason)
+		}
+		if tl.EdgeAdvice != c.want {
+			t.Errorf("%s (archiving %s): edgeAdvice %q, want %q", c.name, reading.Reason, tl.EdgeAdvice, c.want)
+		}
+	}
+}
+
+func ptrTo[T any](v T) *T { return &v }

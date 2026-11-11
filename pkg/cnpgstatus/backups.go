@@ -281,7 +281,7 @@ type ArchivingReading struct {
 
 // Archiving combines the ContinuousArchiving condition (written by the
 // instance on each archive_command, pkg/management/postgres/webserver/local.go
-// v1.30.0:247-263) with the primary's live archiver (nil when the
+// v1.30.0:247-263, v1.30.1 and main:264-280) with the primary's live archiver (nil when the
 // primary's /pg/status was not read).
 //
 //   - No archiver configured and no condition: info.

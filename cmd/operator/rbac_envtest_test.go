@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -29,8 +30,10 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
+	eventsv1 "k8s.io/api/events/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -185,7 +188,7 @@ func TestEnvtestWatchNamespacesRBAC(t *testing.T) {
 		}
 	})
 	t.Run("starts with the deleted namespace left out", func(t *testing.T) {
-		got, err := reachableNamespaces(ctx, operator, []string{"team-a", "team-gone"})
+		got, _, err := reachableNamespaces(ctx, operator, []string{"team-a", "team-gone"})
 		if err != nil || !slices.Equal(got, []string{"team-a"}) {
 			t.Fatalf("watched = %q, %v; want [team-a]", got, err)
 		}
@@ -196,7 +199,7 @@ func TestEnvtestWatchNamespacesRBAC(t *testing.T) {
 	t.Run("the optional-API probe decides a narrowed namespace on its own", func(t *testing.T) {
 		// probeOptionalAPIs alone: team-narrowed also refuses required kinds,
 		// which permittedNamespaces leaves out (the subtest below).
-		got, err := reachableNamespaces(ctx, operator, []string{"team-a", "team-narrowed"})
+		got, _, err := reachableNamespaces(ctx, operator, []string{"team-a", "team-narrowed"})
 		if err != nil || !slices.Equal(got, []string{"team-a", "team-narrowed"}) {
 			t.Fatalf("reachable = %q, %v; want both (Clusters are listable in each)", got, err)
 		}
@@ -267,7 +270,7 @@ func TestEnvtestWatchNamespacesRBAC(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		got, err := reachableNamespaces(ctx, reader, namespaces)
+		got, _, err := reachableNamespaces(ctx, reader, namespaces)
 		if err != nil || !slices.Equal(got, namespaces) {
 			t.Fatalf("reachable = %q, %v; want every namespace", got, err)
 		}
@@ -322,7 +325,7 @@ func TestEnvtestWatchNamespacesRBAC(t *testing.T) {
 			}
 		}
 		configured := []string{"team-a", "team-narrowed", "team-nowatch", "team-nopoolers"}
-		reachable, err := reachableNamespaces(ctx, operator, configured)
+		reachable, _, err := reachableNamespaces(ctx, operator, configured)
 		if err != nil || !slices.Equal(reachable, configured) {
 			t.Fatalf("reachable = %q, %v; want every namespace (each lets Clusters be listed)", reachable, err)
 		}
@@ -335,13 +338,14 @@ func TestEnvtestWatchNamespacesRBAC(t *testing.T) {
 		}
 		assertInformerSyncs(ctx, t, config, unchecked, &appsv1.Deployment{}, false)
 
-		watched, err := permittedNamespaces(ctx, operator, reachable)
+		watched, dropped, err := permittedNamespaces(ctx, operator, reachable)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if want := []string{"team-a", "team-nopoolers"}; !slices.Equal(watched, want) {
 			t.Fatalf("watched = %q, want %q", watched, want)
 		}
+		assertDroppedReported(ctx, t, c, operator, dropped)
 		probed, err := probeOptionalAPIs(ctx, operator, watched)
 		if err != nil {
 			t.Fatal(err)
@@ -484,5 +488,66 @@ func assertInformerSyncs(ctx context.Context, t *testing.T, config *rest.Config,
 	go func() { _ = informers.Start(syncCtx) }()
 	if got := informers.WaitForCacheSync(syncCtx); got != want {
 		t.Fatalf("the %T informer on %d namespaces synced = %t, want %t", object, len(namespaces), got, want)
+	}
+}
+
+// assertDroppedReported: round 15, DBA P2-2, on a real API server as the
+// operator's identity. team-nowatch keeps the manager role but for watch
+// on Clusters: its PgAdmin, Ready=True from before, turns Ready=Unknown
+// (NamespaceNotWatched) and gets one Warning Event the API server accepts.
+// team-narrowed grants Clusters only: nothing is written there (nor
+// attempted: the review said so).
+func assertDroppedReported(ctx context.Context, t *testing.T, admin, operator client.Client, dropped []droppedNamespace) {
+	t.Helper()
+	pgadmins := map[string]*pgtoolboxv1alpha1.PgAdmin{}
+	for _, namespace := range []string{"team-nowatch", "team-narrowed"} {
+		p := &pgtoolboxv1alpha1.PgAdmin{
+			ObjectMeta: metav1.ObjectMeta{Name: "orders", Namespace: namespace},
+			Spec: pgtoolboxv1alpha1.PgAdminSpec{
+				ClusterRefs: []pgtoolboxv1alpha1.LocalObjectReference{{Name: "orders"}},
+				Auth: pgtoolboxv1alpha1.PgAdminAuthSpec{OAuth2: &pgtoolboxv1alpha1.PgAdminOAuth2Spec{
+					IssuerURL: "https://idp.example.com/realms/corp/", ClientID: "pgadmin",
+					ClientSecretRef: pgtoolboxv1alpha1.SecretKeySelector{Name: "pgadmin-oidc"},
+					RequiredClaims:  map[string]pgtoolboxv1alpha1.ClaimValues{"groups": {"dba"}},
+				}},
+				Admins: []string{"alice@example.com"},
+			},
+		}
+		if err := admin.Create(ctx, p); err != nil {
+			t.Fatalf("create the PgAdmin of %s: %v", namespace, err)
+		}
+		p.Status.Conditions = []metav1.Condition{{
+			Type: pgtoolboxv1alpha1.ConditionReady, Status: metav1.ConditionTrue, Reason: pgtoolboxv1alpha1.ReasonAsExpected.String(),
+			Message: "every aspect is as expected", LastTransitionTime: metav1.Now(), ObservedGeneration: p.Generation,
+		}}
+		if err := admin.Status().Update(ctx, p); err != nil {
+			t.Fatalf("set the PgAdmin of %s Ready: %v", namespace, err)
+		}
+		pgadmins[namespace] = p
+	}
+	reportDroppedNamespaces(ctx, operator, dropped, time.Now)
+	for namespace, want := range map[string]metav1.ConditionStatus{"team-nowatch": metav1.ConditionUnknown, "team-narrowed": metav1.ConditionTrue} {
+		p := &pgtoolboxv1alpha1.PgAdmin{}
+		if err := admin.Get(ctx, client.ObjectKeyFromObject(pgadmins[namespace]), p); err != nil {
+			t.Fatal(err)
+		}
+		ready := meta.FindStatusCondition(p.Status.Conditions, pgtoolboxv1alpha1.ConditionReady)
+		if ready == nil || ready.Status != want {
+			t.Errorf("%s: Ready = %+v, want %s", namespace, ready, want)
+		}
+		events := &eventsv1.EventList{}
+		if err := admin.List(ctx, events, client.InNamespace(namespace)); err != nil {
+			t.Fatal(err)
+		}
+		wantEvents := 0
+		if namespace == "team-nowatch" {
+			wantEvents = 1
+			if ready.Reason != pgtoolboxv1alpha1.ReasonNamespaceNotWatched.String() || !strings.Contains(ready.Message, "watch clusters.postgresql.cnpg.io") {
+				t.Errorf("Ready = %+v, want NamespaceNotWatched naming the missing watch on Clusters", ready)
+			}
+		}
+		if len(events.Items) != wantEvents {
+			t.Errorf("%s: %d Events, want %d", namespace, len(events.Items), wantEvents)
+		}
 	}
 }

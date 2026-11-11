@@ -11,6 +11,7 @@ HostnameNotAllowed
 ImageNotAllowed
 ImagePullFailed
 Initializing
+NamespaceNotWatched
 NotAccepted
 NotAdmitted
 NotRequested

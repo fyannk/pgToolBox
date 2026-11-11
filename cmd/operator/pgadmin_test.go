@@ -60,9 +60,12 @@ func refusingReader(refused ...string) client.Client {
 func TestReachableNamespacesAtStart(t *testing.T) {
 	ctx := context.Background()
 
-	got, err := reachableNamespaces(ctx, refusingReader("gone"), []string{"team-a", "gone", "team-b"})
+	got, dropped, err := reachableNamespaces(ctx, refusingReader("gone"), []string{"team-a", "gone", "team-b"})
 	if err != nil {
 		t.Fatalf("one deleted namespace fails the start: %v", err)
+	}
+	if len(dropped) != 1 || dropped[0].Namespace != "gone" || dropped[0].Cause != dropClustersUnlistable {
+		t.Fatalf("dropped = %+v, want gone, clusters-unlistable", dropped)
 	}
 	if !slices.Equal(got, []string{"team-a", "team-b"}) {
 		t.Fatalf("watched = %q, want [team-a team-b]", got)
@@ -81,10 +84,10 @@ func TestReachableNamespacesAtStart(t *testing.T) {
 		}
 	}
 
-	if _, err := reachableNamespaces(ctx, refusingReader("a", "b"), []string{"a", "b"}); err == nil {
+	if _, _, err := reachableNamespaces(ctx, refusingReader("a", "b"), []string{"a", "b"}); err == nil {
 		t.Fatal("no namespace answering must fail the start")
 	}
-	if got, err := reachableNamespaces(ctx, refusingReader(), nil); err != nil || got != nil {
+	if got, _, err := reachableNamespaces(ctx, refusingReader(), nil); err != nil || got != nil {
 		t.Fatalf("every namespace (no list) = %q, %v", got, err)
 	}
 }
@@ -126,8 +129,17 @@ func TestPrepareInfoMetricListsWatchedNamespaces(t *testing.T) {
 	if value != "team-a" {
 		t.Fatalf("pgtoolbox_config_info{name=WATCH_NAMESPACES} value = %q, want team-a", value)
 	}
-	if got := gatherGauges(t, registry)["pgtoolbox_watch_namespaces_dropped"]; got != 1 {
-		t.Fatalf("pgtoolbox_watch_namespaces_dropped = %v, want 1 (gone)", got)
+	gauges := gatherGauges(t, registry)
+	if got := gauges[`pgtoolbox_watch_namespaces_dropped{reason="clusters-unlistable"}`]; got != 1 {
+		t.Fatalf("pgtoolbox_watch_namespaces_dropped{reason=clusters-unlistable} = %v, want 1 (gone): %v", got, gauges)
+	}
+	for _, reason := range []string{"permissions", "review-failed"} {
+		if got, ok := gauges[`pgtoolbox_watch_namespaces_dropped{reason="`+reason+`"}`]; !ok || got != 0 {
+			t.Errorf("pgtoolbox_watch_namespaces_dropped{reason=%s} = %v (exported %t), want 0", reason, got, ok)
+		}
+	}
+	if len(prepared.Dropped) != 1 || prepared.Dropped[0].Cause != dropClustersUnlistable {
+		t.Errorf("dropped = %+v, want the gone namespace, clusters-unlistable", prepared.Dropped)
 	}
 }
 
@@ -351,8 +363,10 @@ func TestNamespaceRBACDecidesThereOnly(t *testing.T) {
 			if got := metrics[`pgtoolbox_optional_api_refused_namespaces{group="postgresql.cnpg.io",kind="Pooler"}`]; got != 0 {
 				t.Errorf("refused Pooler namespaces = %v, want 0", got)
 			}
-			if got, ok := metrics["pgtoolbox_watch_namespaces_dropped"]; !ok || got != 0 {
-				t.Errorf("dropped namespaces = %v (exported %t), want 0", got, ok)
+			for _, reason := range []string{"permissions", "review-failed", "clusters-unlistable"} {
+				if got, ok := metrics[`pgtoolbox_watch_namespaces_dropped{reason="`+reason+`"}`]; !ok || got != 0 {
+					t.Errorf("dropped namespaces (%s) = %v (exported %t), want 0", reason, got, ok)
+				}
 			}
 		})
 	}

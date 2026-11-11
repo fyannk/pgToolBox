@@ -320,10 +320,10 @@ insight-pack: ## Regenerate deploy/insight-pack/insight-pack.yaml from the chart
 	UPDATE_INSIGHT_PACK=1 go test -count=1 -run TestPlainManifestIsCurrent ./pkg/cnpgstatus/insight/
 
 .PHONY: rules-test
-rules-test: ## promtool: check the MCP alert rules and run their unit tests (hack/rules/).
+rules-test: ## promtool: check the MCP and operator alert rules and run their unit tests (hack/rules/).
 	@command -v promtool >/dev/null || { echo "promtool is not on PATH (it ships in the Prometheus release archive)" >&2; exit 2; }
-	promtool check rules charts/pgtools/files/alerts/mcp.rules.yaml
-	promtool test rules hack/rules/mcp.rules.test.yaml
+	promtool check rules charts/pgtools/files/alerts/mcp.rules.yaml charts/pgtoolbox/files/alerts/operator.rules.yaml
+	promtool test rules hack/rules/mcp.rules.test.yaml hack/rules/operator.rules.test.yaml
 
 .PHONY: dashboards-check
 dashboards-check: ## The Grafana dashboard JSON parses and every panel has a title and a query.

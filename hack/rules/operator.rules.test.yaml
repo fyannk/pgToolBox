@@ -1,0 +1,38 @@
+# promtool test rules hack/rules/operator.rules.test.yaml  (make rules-test)
+rule_files:
+  - ../../charts/pgtoolbox/files/alerts/operator.rules.yaml
+evaluation_interval: 1m
+tests:
+  - name: a dropped namespace fires once it lasts, per reason; zero series do not
+    interval: 1m
+    input_series:
+      # Two replicas, each exporting what its start decided.
+      - series: 'pgtoolbox_watch_namespaces_dropped{namespace="pgtoolbox",pod="pgtoolbox-a",reason="permissions"}'
+        values: '1x20'
+      - series: 'pgtoolbox_watch_namespaces_dropped{namespace="pgtoolbox",pod="pgtoolbox-b",reason="permissions"}'
+        values: '1x20'
+      - series: 'pgtoolbox_watch_namespaces_dropped{namespace="pgtoolbox",pod="pgtoolbox-a",reason="review-failed"}'
+        values: '0x20'
+      - series: 'pgtoolbox_watch_namespaces_dropped{namespace="pgtoolbox",pod="pgtoolbox-a",reason="clusters-unlistable"}'
+        values: '0x20'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: PgToolBoxOperatorNamespacesDropped
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: PgToolBoxOperatorNamespacesDropped
+        exp_alerts:
+          - exp_labels: {severity: warning, namespace: pgtoolbox, reason: permissions}
+            exp_annotations:
+              summary: "The pgToolBox operator in pgtoolbox left 1 watched namespace(s) out at start (permissions)"
+              description: "Namespaces of WATCH_NAMESPACES are not reconciled: their PgAdmins, consoles and evidence agents keep a status nobody updates. The operator log names each namespace and what is missing there (reason permissions: a narrower Role; review-failed: the permission review failed; clusters-unlistable: deleted, or not bound). Fix it, then restart the operator."
+              runbook_url: "https://github.com/fyannk/pgToolBox/blob/main/docs/site/docs/operator/index.md#namespaces-dropped-from-the-watch"
+  - name: nothing dropped, nothing fires
+    interval: 1m
+    input_series:
+      - series: 'pgtoolbox_watch_namespaces_dropped{namespace="pgtoolbox",pod="pgtoolbox-a",reason="permissions"}'
+        values: '0x20'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: PgToolBoxOperatorNamespacesDropped
+        exp_alerts: []

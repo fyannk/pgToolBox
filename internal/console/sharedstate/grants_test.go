@@ -286,12 +286,15 @@ func TestAnOversizedDocumentIsMergedWhole(t *testing.T) {
 	}
 }
 
-// A grants document this console cannot read (one that does not parse, of
-// no version it knows, or of a newer version) is never overwritten (it may
+// A grants document this console cannot read (one that does not parse, or
+// of a newer version) is never overwritten (it may
 // hold revocations), and grants are refused meanwhile. An older version is
 // read (TestAnOlderVersionIsReadAndTakenOver).
 func TestAnUnreadableDocumentIsNeverOverwritten(t *testing.T) {
-	for _, raw := range []string{`{"version":2,"grants":`, `{"grants":{}}`, `{"version":3,"grants":{}}`} {
+	// A document of no version (`{"grants":{}}`) is rewritten instead
+	// (TestADocumentOfNoVersionIsRewritten); one of a version of
+	// takeOverBelow or more is never taken over (TestTheFormatContract).
+	for _, raw := range []string{`{"version":2,"grants":`, `{"version":3,"grants":{}}`, `{"version":100,"grants":{}}`} {
 		api := newAPIServer()
 		api.cm.Data = map[string]string{KeyGrants: raw}
 		s := newStore(api, &testClock{now: t0}, nil)

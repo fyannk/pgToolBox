@@ -16,12 +16,15 @@ package managerrole
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"golang.org/x/sync/errgroup"
 	authorizationv1 "k8s.io/api/authorization/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/fyannk/pgToolBox/pkg/discovery"
@@ -73,41 +76,152 @@ func (d Denied) Reason() string {
 	return fmt.Sprintf("not allowed to %s in %s", strings.Join(missing, "; "), d.Namespace)
 }
 
+// Unreviewed is one namespace whose review failed: an error the API server
+// returned after one retry of a transient one, or no answer within the
+// namespace's deadline.
+type Unreviewed struct {
+	Namespace string
+	Err       error
+}
+
+// Reason is the failure in words, naming the namespace.
+func (u Unreviewed) Reason() string {
+	return fmt.Sprintf("could not review the operator's permissions in %s: %v", u.Namespace, u.Err)
+}
+
+// Review is PermittedNamespaces' answer, each list in the order of the
+// namespaces asked.
+type Review struct {
+	// Permitted grant every permission asked for.
+	Permitted []string
+	// Denied lack some.
+	Denied []Denied
+	// Unreviewed could not be reviewed: nothing is known of them.
+	Unreviewed []Unreviewed
+}
+
+const (
+	// NamespaceReviewTimeout bounds one attempt at reviewing one namespace
+	// (its rules review and the access reviews it needs): a namespace
+	// whose review hangs (a response grown to hundreds of megabytes by
+	// tens of thousands of RoleBindings) is left out on its own, within
+	// the start-up step, while the others answer.
+	NamespaceReviewTimeout = 6 * time.Second
+	// accessReviewConcurrency bounds the access reviews in flight per
+	// namespace (an incomplete rules review asks one per missing verb).
+	accessReviewConcurrency = 4
+	// retryPause is the pause before the one retry of a transient error.
+	retryPause = 250 * time.Millisecond
+)
+
 // PermittedNamespaces splits namespaces into those where the caller holds
-// every permission of required and those where it lacks one, with one
-// SelfSubjectRulesReview per namespace (concurrently, discovery.ProbeConcurrency at a
-// time): a namespace whose administrator bound the caller to a narrower Role
-// (Deployments refused, or Clusters listed but not watched) would 403 the
-// caller's informer there forever, and a cache that never syncs stops the
-// process for every namespace. A review the API server reports incomplete
-// (an authorizer that cannot list its rules, such as a webhook) decides
-// nothing alone: each permission it does not show is asked again with one
-// SelfSubjectAccessReview per verb, which every authorizer answers. Each
-// namespace is decided by its own answers only. Any error is returned (the
-// caller fails its start): a review it cannot create is a start that
-// cannot tell. Both lists keep the order of namespaces.
-func PermittedNamespaces(ctx context.Context, c Creator, required []Permission, namespaces []string) (permitted []string, denied []Denied, err error) {
+// every permission of required, those where it lacks one, and those it
+// could not review, with one SelfSubjectRulesReview per namespace
+// (concurrently, discovery.ProbeConcurrency at a time): a namespace whose
+// administrator bound the caller to a narrower Role (Deployments refused,
+// or Clusters listed but not watched) would 403 the caller's informer there
+// forever, and a cache that never syncs stops the process for every
+// namespace. A review the API server reports incomplete (an authorizer
+// that cannot list its rules, such as a webhook) decides nothing alone:
+// each permission it does not show is asked again with one
+// SelfSubjectAccessReview per verb (accessReviewConcurrency at a time),
+// which every authorizer answers. Each namespace is decided by its own
+// answers only, each attempt within timeout (NamespaceReviewTimeout when
+// zero); a transient failure (a 5xx, a server timeout, throttling, or the
+// attempt's deadline) is retried once. A namespace still failing is
+// Unreviewed, never kept by guess, and never fails the others. Only ctx
+// ending is an error.
+func PermittedNamespaces(ctx context.Context, c Creator, required []Permission, namespaces []string, timeout time.Duration) (Review, error) {
+	if timeout <= 0 {
+		timeout = NamespaceReviewTimeout
+	}
 	missing := make([][]Permission, len(namespaces))
-	group, groupCtx := errgroup.WithContext(ctx)
+	failed := make([]error, len(namespaces))
+	group := errgroup.Group{}
 	group.SetLimit(discovery.ProbeConcurrency)
 	for i, namespace := range namespaces {
 		group.Go(func() error {
-			lacking, err := missingIn(groupCtx, c, required, namespace)
-			missing[i] = lacking
-			return err
+			missing[i], failed[i] = reviewNamespace(ctx, c, required, namespace, timeout)
+			return nil
 		})
 	}
-	if err := group.Wait(); err != nil {
-		return nil, nil, err
+	_ = group.Wait()
+	if err := ctx.Err(); err != nil {
+		return Review{}, fmt.Errorf("reviewing the operator's permissions: %w", err)
 	}
+	var review Review
 	for i, namespace := range namespaces {
-		if len(missing[i]) == 0 {
-			permitted = append(permitted, namespace)
-			continue
+		switch {
+		case failed[i] != nil:
+			review.Unreviewed = append(review.Unreviewed, Unreviewed{Namespace: namespace, Err: failed[i]})
+		case len(missing[i]) == 0:
+			review.Permitted = append(review.Permitted, namespace)
+		default:
+			review.Denied = append(review.Denied, Denied{Namespace: namespace, Missing: missing[i]})
 		}
-		denied = append(denied, Denied{Namespace: namespace, Missing: missing[i]})
 	}
-	return permitted, denied, nil
+	return review, nil
+}
+
+// reviewNamespace is missingIn under its own deadline, retried once on a
+// transient failure.
+func reviewNamespace(ctx context.Context, c Creator, required []Permission, namespace string, timeout time.Duration) ([]Permission, error) {
+	var err error
+	for attempt := range 2 {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(retryPause):
+			}
+		}
+		var lacking []Permission
+		lacking, err = attemptReview(ctx, c, required, namespace, timeout)
+		if err == nil {
+			return lacking, nil
+		}
+		if ctx.Err() != nil || !transient(err) {
+			return nil, err
+		}
+	}
+	return nil, err
+}
+
+// attemptReview is one missingIn within timeout. A Creator that ignores its
+// context still cannot hold the namespace past the deadline: the answer is
+// awaited only until then.
+func attemptReview(ctx context.Context, c Creator, required []Permission, namespace string, timeout time.Duration) ([]Permission, error) {
+	attemptCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	type outcome struct {
+		missing []Permission
+		err     error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		lacking, err := missingIn(attemptCtx, c, required, namespace)
+		done <- outcome{lacking, err}
+	}()
+	select {
+	case result := <-done:
+		if result.err != nil && attemptCtx.Err() != nil && ctx.Err() == nil {
+			return nil, fmt.Errorf("reviewing the operator's rules in %s: no answer within %s: %w", namespace, timeout, context.DeadlineExceeded)
+		}
+		return result.missing, result.err
+	case <-attemptCtx.Done():
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, fmt.Errorf("reviewing the operator's rules in %s: no answer within %s: %w", namespace, timeout, context.DeadlineExceeded)
+	}
+}
+
+// transient reports whether a review failure may pass on its own: a server
+// error, a server or gateway timeout, throttling, or no answer in time.
+func transient(err error) bool {
+	return apierrors.IsInternalError(err) || apierrors.IsServerTimeout(err) || apierrors.IsTimeout(err) ||
+		apierrors.IsServiceUnavailable(err) || apierrors.IsTooManyRequests(err) || apierrors.IsUnexpectedServerError(err) ||
+		errors.Is(err, context.DeadlineExceeded)
 }
 
 // missingIn is the permissions of required the caller lacks in namespace,
@@ -117,26 +231,42 @@ func missingIn(ctx context.Context, c Creator, required []Permission, namespace 
 	if err := c.Create(ctx, review); err != nil {
 		return nil, fmt.Errorf("reviewing the operator's rules in %s: %w", namespace, err)
 	}
-	var missing []Permission
-	for _, permission := range required {
-		var lacking []string
-		for _, verb := range permission.Verbs {
+	// lacking[i][j]: required[i].Verbs[j] is not granted. The rules decide
+	// what they show; the access reviews of an incomplete review run
+	// concurrently, bounded.
+	lacking := make([][]bool, len(required))
+	group, groupCtx := errgroup.WithContext(ctx)
+	group.SetLimit(accessReviewConcurrency)
+	for i, permission := range required {
+		lacking[i] = make([]bool, len(permission.Verbs))
+		for j, verb := range permission.Verbs {
 			if Allows(review.Status.ResourceRules, permission.Group, permission.Resource, verb) {
 				continue
 			}
-			if review.Status.Incomplete {
-				allowed, err := accessAllowed(ctx, c, permission.Group, permission.Resource, verb, namespace)
-				if err != nil {
-					return nil, err
-				}
-				if allowed {
-					continue
-				}
+			if !review.Status.Incomplete {
+				lacking[i][j] = true
+				continue
 			}
-			lacking = append(lacking, verb)
+			group.Go(func() error {
+				allowed, err := accessAllowed(groupCtx, c, permission.Group, permission.Resource, verb, namespace)
+				lacking[i][j] = err == nil && !allowed
+				return err
+			})
 		}
-		if len(lacking) > 0 {
-			missing = append(missing, Permission{Group: permission.Group, Resource: permission.Resource, Verbs: lacking})
+	}
+	if err := group.Wait(); err != nil {
+		return nil, err
+	}
+	var missing []Permission
+	for i, permission := range required {
+		var verbs []string
+		for j, verb := range permission.Verbs {
+			if lacking[i][j] {
+				verbs = append(verbs, verb)
+			}
+		}
+		if len(verbs) > 0 {
+			missing = append(missing, Permission{Group: permission.Group, Resource: permission.Resource, Verbs: verbs})
 		}
 	}
 	return missing, nil
@@ -160,10 +290,13 @@ func accessAllowed(ctx context.Context, c Creator, group, resource, verb, namesp
 
 // Allows reports whether rules (a SelfSubjectRulesReview's) grant verb on
 // every object of resource ("resource" or "resource/subresource") in group,
-// with the RBAC matching rules: "*" matches any verb, group or resource;
-// "resource/*" any subresource of resource and "*/sub" that subresource of
-// any resource. A rule restricted to resource names grants no access to
-// every object, so it never counts.
+// with the RBAC matching rules of the API server (rbacv1helpers.VerbMatches,
+// APIGroupMatches, ResourceMatches): "*" matches any verb, group or resource
+// (subresources included), "*/sub" that subresource of any resource, and
+// any other entry only the exact resource or "resource/subresource" it
+// names. "resource/*" is no wildcard: RBAC compares it literally, so it
+// grants no subresource and neither does it here. A rule restricted to
+// resource names grants no access to every object, so it never counts.
 func Allows(rules []authorizationv1.ResourceRule, group, resource, verb string) bool {
 	for _, rule := range rules {
 		if len(rule.ResourceNames) > 0 {
@@ -181,12 +314,12 @@ func matchesAny(values []string, want string) bool {
 }
 
 func resourceMatches(ruleResources []string, resource string) bool {
-	base, sub, hasSub := strings.Cut(resource, "/")
+	_, sub, hasSub := strings.Cut(resource, "/")
 	for _, rule := range ruleResources {
 		switch {
 		case rule == "*", rule == resource:
 			return true
-		case hasSub && rule == base+"/*", hasSub && rule == "*/"+sub:
+		case hasSub && rule == "*/"+sub:
 			return true
 		}
 	}
