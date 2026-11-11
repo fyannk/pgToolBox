@@ -91,6 +91,9 @@ func TestFairShareAdmitsANewcomerToAFullDocument(t *testing.T) {
 	}
 }
 
+// tagOrder breaks fairShares' ties by tag.
+func tagOrder(a, b string, _ int) bool { return a < b }
+
 // fairShares takes from the tags holding the most, never from one
 // holding fewer than another that keeps more than it.
 func TestFairShares(t *testing.T) {
@@ -103,11 +106,11 @@ func TestFairShares(t *testing.T) {
 		{"fits", map[string]int{"a": 3, "b": 2}, 5, map[string]int{"a": 3, "b": 2}},
 		{"the largest loses", map[string]int{"a": 5, "b": 2}, 6, map[string]int{"a": 4, "b": 2}},
 		{"level", map[string]int{"a": 5, "b": 5, "c": 1}, 7, map[string]int{"a": 3, "b": 3, "c": 1}},
-		{"extras in tag order", map[string]int{"b": 5, "a": 5, "c": 1}, 8, map[string]int{"a": 4, "b": 3, "c": 1}},
+		{"extras in the order given", map[string]int{"b": 5, "a": 5, "c": 1}, 8, map[string]int{"a": 4, "b": 3, "c": 1}},
 		{"nobody's last", map[string]int{"": 5, "a": 5}, 9, map[string]int{"": 4, "a": 5}},
 		{"level zero", map[string]int{"a": 1, "b": 1, "c": 1}, 2, map[string]int{"a": 1, "b": 1, "c": 0}},
 	} {
-		got := fairShares(tc.counts, tc.n)
+		got := fairShares(tc.counts, tc.n, tagOrder)
 		if !maps.Equal(got, tc.want) {
 			t.Errorf("%s: %v, want %v", tc.name, got, tc.want)
 		}
@@ -122,7 +125,7 @@ func TestFairShares(t *testing.T) {
 			total += c
 		}
 		n := r.IntN(total + 5)
-		got := fairShares(counts, n)
+		got := fairShares(counts, n, tagOrder)
 		sum := 0
 		for t1, c1 := range counts {
 			sum += got[t1]

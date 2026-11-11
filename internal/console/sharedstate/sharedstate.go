@@ -131,7 +131,8 @@ const (
 	// document, once full, is shared fairly (fairShares): a newcomer's
 	// entry takes the place of the last entry, in signOutBefore (the one
 	// recorded longest ago), of the person holding the most, when that
-	// person holds more than the newcomer: everyone keeps their latest
+	// person holds more than the newcomer (among several holding as many,
+	// the one whose entry was recorded longest ago): everyone keeps their latest
 	// sign-outs, so filling it with many identities cannot lock everyone
 	// else out; a newcomer holding as much as the most refuses or
 	// replaces their own instead. A sign-out the document does not keep
@@ -501,7 +502,7 @@ func (s *Store) RecordSignOut(sid, tag string, until time.Time) bool {
 		replace = tag != ""
 	case len(s.signedOut) >= MaxSignOuts:
 		reason = refusedBudget
-		if v, ok := s.evictionLocked(tag); ok {
+		if v, ok := s.evictionLocked(h, e); ok {
 			victim, reason = v, ""
 		} else {
 			replace = tag != "" && held > 0
@@ -574,48 +575,35 @@ func (s *Store) ownEntriesLocked(tag string) (string, int) {
 	return first, held
 }
 
-// evictionLocked returns, for a new entry of tag in a full document, the
-// entry that leaves for it: what planSignOutCaps would drop from the
-// document with the new entry added. ok is false when that is the new
-// entry itself (its person holds as much as the most). The document is
-// always capped, so exactly one entry leaves.
-func (s *Store) evictionLocked(tag string) (string, bool) {
-	counts := map[string]int{tag: 1}
-	for _, e := range s.signedOut {
-		counts[e.Subject]++
-	}
-	shares := fairShares(counts, MaxSignOuts)
-	loser := ""
-	found := false
-	for t, c := range counts {
-		if shares[t] < c && (!found || t < loser) {
-			loser, found = t, true
+// evictionLocked returns, for a new entry e of session h in a full
+// document, the entry that leaves for it: what planSignOutCaps drops from
+// the document with the new entry added. ok is false when that is the new
+// entry itself, or another entry of its own person (who then replaces
+// their own instead). The document is always capped, so exactly one entry
+// leaves.
+func (s *Store) evictionLocked(h string, e signOut) (string, bool) {
+	all := append(signOutEntries(s.signedOut, 1), signOutEntry{h, e})
+	for victim, reason := range planSignOutEntries(all) {
+		if victim == h || reason != refusedBudget || s.signedOut[victim].Subject == e.Subject {
+			return "", false
 		}
+		return victim, true
 	}
-	if !found || loser == tag {
-		return "", false
-	}
-	last := ""
-	for h, e := range s.signedOut {
-		if e.Subject != loser {
-			continue
-		}
-		if l, ok := s.signedOut[last]; last == "" || !ok || signOutBefore(last, l, h, e) {
-			last = h
-		}
-	}
-	return last, last != ""
+	return "", false
 }
 
 // fairShares divides n places among tags holding counts entries (each
 // already within its own bound): when they do not fit, every tag keeps
 // min(count, L) for the largest level L that fits, and the places left
-// go one each to the tags holding more, in tag order (the sessions
-// naming nobody last). It is a function of the counts alone, so every
-// replica computes the same shares, and it takes from the tags holding
-// the most first: a tag never loses an entry while another holding
-// fewer keeps one more than that tag's share.
-func fairShares(counts map[string]int, n int) map[string]int {
+// go one each to the tags holding more, first in before(a, b, L) (the
+// sessions naming nobody last): planSignOutCaps orders them by the entry
+// each would keep with the extra place, the latest recorded first, so the
+// one left out is the entry recorded longest ago among the tied people,
+// never by who they are. It is a function of the counts and of before
+// alone, so every replica computes the same shares, and it takes from the
+// tags holding the most first: a tag never loses an entry while another
+// holding fewer keeps one more than that tag's share.
+func fairShares(counts map[string]int, n int, before func(a, b string, level int) bool) map[string]int {
 	total, most := 0, 0
 	for _, c := range counts {
 		total += c
@@ -655,7 +643,7 @@ func fairShares(counts map[string]int, n int) map[string]int {
 		if (above[i] == "") != (above[j] == "") {
 			return above[j] == ""
 		}
-		return above[i] < above[j]
+		return before(above[i], above[j], lo)
 	})
 	for _, t := range above[:n-at(lo)] {
 		out[t]++
@@ -701,17 +689,32 @@ func signOutBefore(ah string, a signOut, bh string, b signOut) bool {
 // together, each keeping what comes first in signOutBefore, then the
 // document MaxSignOuts, each person keeping their first fairShares.
 func planSignOutCaps(m map[string]signOut) map[string]string {
-	type entry struct {
-		hash string
-		signOut
-	}
-	all := make([]entry, 0, len(m))
+	return planSignOutEntries(signOutEntries(m, len(m)))
+}
+
+// signOutEntry is one entry of the sessions document with its hash.
+type signOutEntry struct {
+	hash string
+	signOut
+}
+
+// signOutEntries lists m, with room for extra more.
+func signOutEntries(m map[string]signOut, extra int) []signOutEntry {
+	all := make([]signOutEntry, 0, len(m)+extra)
 	for h, e := range m {
-		all = append(all, entry{h, e})
+		all = append(all, signOutEntry{h, e})
 	}
+	return all
+}
+
+// planSignOutEntries is planSignOutCaps of the entries all (distinct
+// hashes), which it sorts.
+func planSignOutEntries(all []signOutEntry) map[string]string {
 	sort.Slice(all, func(i, j int) bool { return signOutBefore(all[i].hash, all[i].signOut, all[j].hash, all[j].signOut) })
 	dropped := map[string]string{}
-	kept := map[string][]string{}
+	// kept holds, per tag, the positions in all of the entries it keeps,
+	// so in signOutBefore.
+	kept := map[string][]int{}
 	head := 0
 	for i, e := range all {
 		if i > 0 && e.Recorded == all[head].Recorded && slotOf(e.hash, e.signOut) == slotOf(all[head].hash, all[head].signOut) {
@@ -731,15 +734,19 @@ func planSignOutCaps(m map[string]signOut) map[string]string {
 			dropped[e.hash] = reason
 			continue
 		}
-		kept[e.Subject] = append(kept[e.Subject], e.hash)
+		kept[e.Subject] = append(kept[e.Subject], i)
 	}
 	counts := make(map[string]int, len(kept))
-	for t, hs := range kept {
-		counts[t] = len(hs)
+	for t, at := range kept {
+		counts[t] = len(at)
 	}
-	for t, share := range fairShares(counts, MaxSignOuts) {
-		for _, h := range kept[t][share:] {
-			dropped[h] = refusedBudget
+	// Ties at the level go to the person whose next entry, the one the
+	// extra place keeps, comes first in signOutBefore (the latest
+	// recorded): every tag in the contest holds more than level entries.
+	newestNext := func(a, b string, level int) bool { return kept[a][level] < kept[b][level] }
+	for t, share := range fairShares(counts, MaxSignOuts, newestNext) {
+		for _, i := range kept[t][share:] {
+			dropped[all[i].hash] = refusedBudget
 		}
 	}
 	return dropped

@@ -246,11 +246,15 @@ delete it afterwards.
   other replicas until it expires). Once the document is full it is shared
   fairly, so that some fifty identities the API server accepts (a
   namespace editor can mint ServiceAccounts) cannot lock everyone else
-  out: a newcomer's sign-out takes the place of the entry recorded longest
-  ago of the person holding the most, provided that person holds more
-  than the newcomer; nobody's entry is ever taken for someone who holds
-  as many or more, and a person holding as much as the most replaces
-  their own instead. Everyone keeps their **latest** sign-outs, so a
+  out: a newcomer's sign-out takes the place of an entry of the people
+  holding the most, provided they hold more than the newcomer; among
+  several holding as many, the entry that goes is the one recorded
+  longest ago (never chosen by who they are), so the result is the same
+  on every replica. Nobody's entry is ever taken for someone who holds as
+  many or more, and a person holding as much as the most replaces their
+  own instead. Everyone keeps their **latest** sign-outs: a person's
+  newest sign-out goes only once the document holds more than 1,536
+  people and at least 1,536 of them signed out more recently, so a
   person who signs out again after a theft, while many identities fill
   the document, keeps that sign-out shared; one exception: the new
   sign-out of a person at their own bound of 16 takes the place, and the

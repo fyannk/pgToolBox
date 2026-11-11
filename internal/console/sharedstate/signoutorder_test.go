@@ -97,9 +97,10 @@ func TestEvictionIsWhatThePlannerDrops(t *testing.T) {
 			limit = MaxUnnamedSignOuts
 		}
 		if len(s.signedOut) >= MaxSignOuts && held < limit {
-			if victim, ok := s.evictionLocked(who); ok {
+			h, e := sessionHash(fmt.Sprint("s-", n)), signOut{Expiry: clock.Now().Add(time.Hour).Unix(), Recorded: clock.Now().Unix(), Subject: who}
+			if victim, ok := s.evictionLocked(h, e); ok {
 				m := maps.Clone(s.signedOut)
-				m[sessionHash(fmt.Sprint("s-", n))] = signOut{Expiry: clock.Now().Add(time.Hour).Unix(), Recorded: clock.Now().Unix(), Subject: who}
+				m[h] = e
 				checked++
 				if d := planSignOutCaps(m); len(d) != 1 || d[victim] == "" {
 					s.mu.Unlock()
@@ -212,5 +213,49 @@ func TestReplicasConvergeAtTheCeiling(t *testing.T) {
 		if !maps.Equal(capSet(st[0].signedOut), st[0].signedOut) {
 			t.Fatalf("seed %d: not capped", seed)
 		}
+	}
+}
+
+// The review's repro (round 11): with everyone at the same number of
+// entries, the leftover places went in tag order, so after some 85 fresh
+// identities a person's newest sign-out was the one evicted. Ties now go
+// to the entries recorded latest: the victim's newest sign-out, and their
+// only one, outlive every older entry.
+func TestEqualHoldersKeepTheirNewestSignOut(t *testing.T) {
+	clock := &testClock{now: t0}
+	s := synced(t, Options{Name: "console-state", Now: clock.Now})
+	for i := range (MaxSignOuts - 3) / 2 {
+		s.RecordSignOut(fmt.Sprintf("a-%d", i), tag(fmt.Sprint("sa-", i)), t0.Add(12*time.Hour))
+		s.RecordSignOut(fmt.Sprintf("a-%d-b", i), tag(fmt.Sprint("sa-", i)), t0.Add(12*time.Hour))
+	}
+	clock.Add(time.Hour)
+	s.RecordSignOut("victim-old", tag("victim"), clock.Now().Add(12*time.Hour))
+	clock.Add(time.Second)
+	s.RecordSignOut("victim-new", tag("victim"), clock.Now().Add(12*time.Hour))
+	s.RecordSignOut("only-new", tag("only"), clock.Now().Add(12*time.Hour))
+	if !s.SignedOut("victim-new") || !s.SignedOut("only-new") {
+		t.Fatal("the victims' sign-outs were not recorded")
+	}
+	for j := range 1000 {
+		clock.Add(time.Second)
+		s.RecordSignOut(fmt.Sprint("att-", j), tag(fmt.Sprint("fresh-", j)), clock.Now().Add(12*time.Hour))
+		s.RecordSignOut(fmt.Sprint("att-", j, "-b"), tag(fmt.Sprint("fresh-", j)), clock.Now().Add(12*time.Hour))
+		if !s.SignedOut("victim-new") || !s.SignedOut("only-new") {
+			t.Fatalf("after %d fresh identities: victim-new %v, only-new %v", j+1, s.SignedOut("victim-new"), s.SignedOut("only-new"))
+		}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// Nobody holds a second entry recorded before the victims'.
+	held := map[string]int{}
+	for _, e := range s.signedOut {
+		if e.Recorded < t0.Add(time.Hour).Unix() {
+			if held[e.Subject]++; held[e.Subject] > 1 {
+				t.Fatalf("%s kept two entries recorded at t0 while newer ones went", e.Subject)
+			}
+		}
+	}
+	if d := planSignOutCaps(s.signedOut); len(d) != 0 {
+		t.Errorf("capping the document again drops %d entries", len(d))
 	}
 }
