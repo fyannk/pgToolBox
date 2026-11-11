@@ -2,7 +2,11 @@
 // Go's English for a code or a value this SPA does not know.
 import { afterEach, expect, test } from "vitest";
 import { backups } from "../../mocks/fixtures";
-import { restoreCheckArchivingFailing } from "../../mocks/fixtures/extra";
+import {
+  recoveryKeptRepositoryChanged,
+  recoveryKeptTooOld,
+  restoreCheckArchivingFailing,
+} from "../../mocks/fixtures/extra";
 import { overwriteGetLocale } from "../paraglide/runtime.js";
 import { renderInFrame } from "../testing/render";
 import { RestoreAnswer } from "./RecoveryWindow";
@@ -196,8 +200,21 @@ test("the reasons, the backlog, the end of WAL and the caps are said in French",
       { timeline: "3", liveTimeline: "2" },
       /^La timeline la plus récente du dépôt, 3, est en avance sur la timeline 2, .*les données de ce cluster\.$/,
     ],
-    ["recovery.reason.keptTooOld", undefined, /^les derniers chemins de restauration valides datent de plus de trois/],
-    ["recovery.reason.keptRepositoryChanged", undefined, /^l’identité du dépôt a changé depuis/],
+    [
+      "recovery.reason.keptTooOld",
+      undefined,
+      /^les derniers chemins de restauration valides datent de plus de trois.*journaux de l’agent de preuves.*stockage objet répond$/,
+    ],
+    [
+      "recovery.reason.keptRepositoryChanged",
+      undefined,
+      /^l’identité du dépôt a changé depuis.*journaux de l’agent de preuves.*désigne toujours le dépôt de ce cluster$/,
+    ],
+    [
+      "recovery.reason.archivingFailing",
+      undefined,
+      /^l’archivage des WAL échoue : .*ContinuousArchiving du Cluster dit pourquoi$/,
+    ],
     [
       "recovery.segment.backupUnconfirmed",
       { backupId: "old", reason: "backup-not-confirmed" },
@@ -342,4 +359,16 @@ test("a covered answer names the timeline a default restore follows; any other a
   );
   const unknown = await renderInFrame(<RestoreAnswer r={tail} />);
   expect(unknown.container.querySelector("[data-target-timeline-latest]")).toBeNull();
+});
+
+// Round 13, DBA: Go's fallback English for the kept reasons (the fixtures
+// copy it from internal/console/status/recovery.go, whose
+// TestRecoveryReasonsMatchTheSPAEnglish checks it against en.json) is the
+// SPA's own English, so a reader sees one sentence whichever side says it.
+test("Go's English for the kept reasons is the SPA's English", () => {
+  for (const t of [recoveryKeptTooOld, recoveryKeptRepositoryChanged]) {
+    const kept = t.reasons.at(-1);
+    expect(kept?.code).toMatch(/^recovery\.reason\.kept/);
+    expect(phraseText(kept?.code, undefined, "")).toBe(kept?.text);
+  }
 });

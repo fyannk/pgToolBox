@@ -38,6 +38,10 @@ want test/e2e/scope/run.sh charts docker go operator
 # check-repo and check-toolchain run in the go family's lint job.
 want Dockerfile docker go
 want deploy/olm/catalog.Dockerfile charts docker go
+# A version or kubeVersion edit alone still reaches lint-files / test-hack (go).
+want charts/pgtoolbox/Chart.yaml charts docker docs go
+want charts/pgtools/Chart.yaml charts docker docs go
+want deploy/olm/bundle/metadata/annotations.yaml charts docker go
 want deploy/olm/bundle/manifests/pgtoolbox.clusterserviceversion.yaml charts docker go
 want ui/package.json console docker go ui
 want ui/e2e.Dockerfile console docker go ui

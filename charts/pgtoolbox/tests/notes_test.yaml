@@ -33,6 +33,8 @@ tests:
     asserts:
       - matchRegexRaw: {pattern: "restore-drill delete guard is NOT rendered"}
       - matchRegexRaw: {pattern: "restoreDrillGuard.enabled=false"}
+      - matchRegexRaw: {pattern: "Kubernetes 1.34\\+, this chart's floor"}
+      - notMatchRegexRaw: {pattern: "1\\.30"}
   - it: warns when the guard is auto and the cluster serves no policy API
     set: {operator.restoreDrillGuard.enabled: auto}
     asserts:

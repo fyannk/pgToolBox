@@ -88,7 +88,11 @@ type EventRecorder = conditions.EventRecorder
 
 // Features are the optional APIs, probed once at start
 // (discovery.ProbeKinds: a scoped List(Limit 1) in every watched
-// namespace). The zero Result is "unavailable".
+// namespace). The zero Result is "unavailable". Usable() on a field means
+// "watched somewhere" (the watches and the cache); a reconcile asks
+// In(namespace), because a kind can be refused in one namespace and
+// allowed in the others, and each namespace's RBAC decides for that
+// namespace alone.
 type Features struct {
 	Routes, Gateways, DatabaseRoles, Poolers discovery.Result
 	// Databases is the CloudNativePG Database API, which configDatabase
@@ -97,6 +101,16 @@ type Features struct {
 	// OpenShift is true when SecurityContextConstraints are listable: the
 	// platform assigns UIDs and fsGroups, so the Pod fixes neither.
 	OpenShift bool
+}
+
+// In is the features in one namespace: each optional API as the probe found
+// it there (discovery.Result.In).
+func (f Features) In(namespace string) Features {
+	return Features{
+		Routes: f.Routes.In(namespace), Gateways: f.Gateways.In(namespace),
+		DatabaseRoles: f.DatabaseRoles.In(namespace), Poolers: f.Poolers.In(namespace),
+		Databases: f.Databases.In(namespace), OpenShift: f.OpenShift,
+	}
 }
 
 // Reconciler reconciles PgAdmin objects.

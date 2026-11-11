@@ -116,7 +116,7 @@ redacted).
 
 | Key | Chart value | Default | |
 |---|---|---|---|
-| `WATCH_NAMESPACES` | `operator.config.watchNamespaces` | empty: every namespace the ClusterRole allows | Comma list; restricts the caches. The Helm chart also binds the namespaced rules (Secrets, workloads, RBAC objects) only in the listed namespaces, by RoleBindings in namespaces that must exist at install time, keeps a small ClusterRole of cluster-scoped rules bound cluster-wide (`<fullname>-manager-cluster`, no `bind`), and grants `get` on the `pgtoolbox-operator-config` ConfigMap and Secret in the release namespace, which need not be listed. A listed namespace deleted later is left out at the next start, with an error in the log; so is one where the operator's Role grants an optional API (Routes, HTTPRoutes, Poolers, Databases, DatabaseRoles, the backup plugins' kinds) that the other namespaces grant, since its administrator can bind the operator to a narrower Role there and must not turn that feature off for every other namespace (restore the chart's RoleBinding, then restart the operator); an API refused in every namespace is off instead; once it is recreated, run `helm upgrade` (its RoleBinding) and restart the operator. If none of them answers, the operator does not start; nor does it when the API server refuses its credentials (401) at start, which is retried by a restart rather than read as a namespace out of reach. Narrowing the list leaves what the operator made in a namespace it no longer watches as it was and unmanaged: its PgAdmins, PgToolBoxConsoles and EvidenceAgents keep their Deployments and Secrets but nobody reconciles them (no status, no certificate renewal for the agents, which stop being served once their certificate expires), an agent's ServiceAccount is dropped from the agents' ClusterRoleBinding at the next agent reconcile (the binding lists the agents the operator sees), so the agent can no longer review the tokens it is called with, and its `PgAdminAccess` grants keep the Roles and RoleBindings they gave. Delete those objects before you narrow the list, or put the namespace back. The operator also runs Pods there as any ServiceAccount: enforce Pod Security `restricted` on every listed namespace ([security](../security.md#known-limitations)). kustomize and OLM always bind the whole ClusterRole cluster-wide. One operator per cluster is the only supported layout. |
+| `WATCH_NAMESPACES` | `operator.config.watchNamespaces` | empty: every namespace the ClusterRole allows | Comma list; restricts the caches. The Helm chart also binds the namespaced rules (Secrets, workloads, RBAC objects) only in the listed namespaces, by RoleBindings in namespaces that must exist at install time, keeps a small ClusterRole of cluster-scoped rules bound cluster-wide (`<fullname>-manager-cluster`, no `bind`), and grants `get` on the `pgtoolbox-operator-config` ConfigMap and Secret in the release namespace, which need not be listed. See [namespaces dropped from the watch](#namespaces-dropped-from-the-watch) for a listed namespace the operator cannot read at start. Narrowing the list leaves what the operator made in a namespace it no longer watches as it was and unmanaged: its PgAdmins, PgToolBoxConsoles and EvidenceAgents keep their Deployments and Secrets but nobody reconciles them (no status, no certificate renewal for the agents, which stop being served once their certificate expires), an agent's ServiceAccount is dropped from the agents' ClusterRoleBinding at the next agent reconcile (the binding lists the agents the operator sees), so the agent can no longer review the tokens it is called with, and its `PgAdminAccess` grants keep the Roles and RoleBindings they gave. Delete those objects before you narrow the list, or put the namespace back. The operator also runs Pods there as any ServiceAccount: enforce Pod Security `restricted` on every listed namespace ([security](../security.md#known-limitations)). kustomize and OLM always bind the whole ClusterRole cluster-wide. One operator per cluster is the only supported layout. |
 | `POD_NAMESPACE` | downward API | | Where the operator runs. |
 | `OPERATOR_IMAGE` | `image.*` | baked in at build | Copied into pgAdmin Pods for the credential sidecar. |
 | `PGADMIN_IMAGE` | `operator.pgAdmin.image` | the hardened, digest-pinned image compiled in | |
@@ -132,17 +132,44 @@ Command-line flags: `--metrics-bind-address` (`:8080`), `--metrics-cert-dir`,
 `--health-probe-bind-address` (`:8081`: `/healthz` is liveness, the process
 answers; `/readyz` is readiness, true only once every informer cache has synced,
 so a replica that cannot list what it watches stays out of rotation; both are
-served only once the start-up's API reads are done, so each of those reads (the
-configuration, the watched namespaces, the optional-API probes of `PgAdmin` and
-`EvidenceAgent`) has a 20-second deadline, all of them together 40 seconds, and
-each discovery request of the controllers' setup 10 seconds; any of them fails
-the start with an error that names it, before the shipped liveness probe kills
-a start that hangs, about 55 seconds in), `--leader-elect` (default true),
+served only once the manager starts, so each start-up step (the configuration,
+the watched namespaces, the optional-API probes of `PgAdmin` and
+`EvidenceAgent`, the manager, and each controller's setup, whose discovery
+requests time out after 10 seconds each) has a 20-second deadline, and all of
+them together 40 seconds; a step that runs out of either fails the start with
+an error that names it, before the shipped liveness probe kills a start that
+hangs or crawls, about 55 seconds in), `--leader-elect` (default true),
 `--default-evidence-agent-image`, `--evidence-agent-image-repositories`,
 `--default-console-image` (`CONSOLE_IMAGE`; the chart passes `console.image`),
 `--console-image-repositories` (`CONSOLE_IMAGE_REPOSITORIES`, chart
 `operator.console.imageRepositories`) and `--pgadmin-image-repositories` (the last
 overrides `PGADMIN_IMAGE_REPOSITORIES`; see [images](images.md)).
+
+### Namespaces dropped from the watch
+
+The operator reads every namespace of `WATCH_NAMESPACES` once at start. It
+leaves out, with an error in its log and in `pgtoolbox_watch_namespaces_dropped`,
+a listed namespace it cannot use for CloudNativePG Clusters:
+
+- a listed namespace deleted after the install: once it is recreated, run
+  `helm upgrade` (its RoleBinding) and restart the operator;
+- a namespace where the operator may not list CloudNativePG Clusters: restore
+  the chart's RoleBinding, then restart the operator.
+
+An optional API (Routes, HTTPRoutes, Poolers, Databases, DatabaseRoles, the
+backup plugins' kinds) never leaves a namespace out: each namespace's Role
+decides for that namespace alone. Refused in some namespaces only (their
+administrator bound the operator to a narrower Role there, or a wider one while
+the install refuses the API elsewhere), the feature is off in those namespaces
+only, with its usual `…APIUnavailable` reason naming the namespace, a log line
+at start and `pgtoolbox_optional_api_refused_namespaces{group,kind}`; the other
+namespaces keep it, and it is watched only where it can be listed. Refused in
+every namespace, it is off everywhere. A change of RBAC is read at the next
+start.
+
+If none of the listed namespaces answers, the operator does not start; nor does
+it when the API server refuses its credentials (401) at start, which is retried
+by a restart rather than read as a namespace out of reach.
 
 ## Availability
 

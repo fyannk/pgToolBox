@@ -61,7 +61,7 @@ func TestAFullDocumentKeepsAPersonsLatestSignOuts(t *testing.T) {
 	}
 	// A merge keeps what the eviction kept.
 	s.mu.Lock()
-	dropped := planSignOutCaps(s.signedOut)
+	dropped := planSignOutCaps(s.signedOut, s.latestRecordedLocked())
 	s.mu.Unlock()
 	if len(dropped) != 0 {
 		t.Errorf("capping the document again drops %d entries", len(dropped))
@@ -102,7 +102,7 @@ func TestEvictionIsWhatThePlannerDrops(t *testing.T) {
 				m := maps.Clone(s.signedOut)
 				m[h] = e
 				checked++
-				if d := planSignOutCaps(m); len(d) != 1 || d[victim] == "" {
+				if d := planSignOutCaps(m, s.latestRecordedLocked()); len(d) != 1 || d[victim] == "" {
 					s.mu.Unlock()
 					t.Fatalf("step %d: eviction of %s, the planner drops %v", n, victim, d)
 				}
@@ -257,7 +257,7 @@ func TestEqualHoldersKeepTheirNewestSignOut(t *testing.T) {
 			}
 		}
 	}
-	if d := planSignOutCaps(s.signedOut); len(d) != 0 {
+	if d := planSignOutCaps(s.signedOut, s.latestRecordedLocked()); len(d) != 0 {
 		t.Errorf("capping the document again drops %d entries", len(d))
 	}
 }

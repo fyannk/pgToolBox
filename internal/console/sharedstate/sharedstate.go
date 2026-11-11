@@ -88,15 +88,26 @@ const (
 	KeySessions = "sessions.json"
 	KeySince    = "since.json"
 	KeyDigests  = "digests.json"
-	// formatVersion gates every document. A replica meets a document of
-	// another version only during a rolling upgrade: it then neither
-	// merges nor rewrites that key, so it never clobbers what a newer
-	// console wrote. It changes whenever a field, a merge rule or the
-	// ordering rule of a bound changes, so that replicas never decide one
-	// document by two rules: 2 since the sign-outs' fair-share tie-break
-	// and the codes' marks (MarkCode), which a replica of version 1 would
-	// drop on its next write.
+	// formatVersion is the version of every document this console
+	// writes. It changes whenever a field, a merge rule or the ordering
+	// rule of a bound changes, so that replicas never decide one document
+	// by two rules: 2 since the sign-outs' fair-share tie-break and the
+	// codes' marks (MarkCode), which a replica of version 1 would drop on
+	// its next write.
+	//
+	// A document of an older version, from minFormatVersion on, is read as
+	// this version (readableVersion says how), and so rewritten at this
+	// version on the next write: the document is taken over, and a
+	// replica still of the older version, during a rolling upgrade, then
+	// finds it newer and leaves it alone. A document of a newer version
+	// (a newer console, during a rolling upgrade or after a rollback), or
+	// of none this console knows, is foreign: neither merged nor
+	// rewritten, so it never clobbers what a newer console wrote; it is
+	// logged once and counted in
+	// pgtoolbox_console_shared_state_foreign_documents.
 	formatVersion = 2
+	// minFormatVersion is the oldest version this console reads.
+	minFormatVersion = 1
 )
 
 // Bounds.
@@ -250,9 +261,10 @@ func slotOf(h string, e signOut) string {
 
 // slotBefore orders two (hash, entry) pairs by slot, the latest recorded
 // first, and within a slot the later generation first, then by hash: a
-// total order. Every bound keeps what comes first in it, so a person's
-// latest sign-outs, the ones a cookie stolen since needs, are the last
-// any bound gives up.
+// total order, of the entries as they were recorded, which the merge
+// keeps by (mergeSignOut) and which no replica's clock changes. The bounds
+// keep by signOutBefore, the same order with the recording times this
+// replica takes for the future read as none.
 func slotBefore(ah string, a signOut, bh string, b signOut) bool {
 	if a.Recorded != b.Recorded {
 		return a.Recorded > b.Recorded
@@ -271,8 +283,30 @@ const maxSignOutGen = 1 << 40
 
 // maxRecordedSkew is how far ahead of this replica's clock a sign-out's
 // recording time read back may be (another replica's clock running
-// ahead); past it, the time is ignored.
+// ahead); past it, the bounds order the entry as unrecorded
+// (signOutBefore). The time itself is kept as it was read: rewriting it
+// would make the replicas whose clocks disagree rewrite each other's
+// copy for as long as they disagree. What each replica's clock still
+// decides alone (an entry's end, and which entries a full document keeps
+// when one's time lies between two replicas' bounds) can make them
+// rewrite each other's copy of that entry for at most the length of their
+// disagreement.
 const maxRecordedSkew = 5 * time.Minute
+
+// latestRecordedLocked is the latest recording time this replica's bounds
+// take as given (signOutBefore).
+func (s *Store) latestRecordedLocked() int64 {
+	return s.opts.Now().Add(maxRecordedSkew).Unix()
+}
+
+// orderedRecorded is the recording time r as the bounds order it: none
+// (0, last) past latest.
+func orderedRecorded(r, latest int64) int64 {
+	if r > latest {
+		return 0
+	}
+	return r
+}
 
 // validSignOut checks the slot of h's entry read from the ConfigMap: its
 // own (generation 0), or another's at a later generation.
@@ -356,8 +390,12 @@ type Store struct {
 	byObject map[string]map[string]struct{}
 	// base is the ConfigMap as last read or written; nil until read.
 	base *corev1.ConfigMap
-	// foreign names the keys of another format version, left untouched.
+	// foreign names the keys left untouched: of a format version this
+	// console does not read, or (grants.json) unreadable.
 	foreign map[string]bool
+	// foreignLogged is the version of each foreign key last logged, so
+	// that each is logged once.
+	foreignLogged map[string]int
 	// gen counts local changes; written is the gen last written.
 	gen, written uint64
 	urgent       bool
@@ -404,7 +442,7 @@ func New(opts Options) *Store {
 	}
 	s := &Store{
 		opts: opts, signedOut: map[string]signOut{}, facts: map[string]fact{}, sent: map[string]int64{}, grants: map[string]grantEntry{}, codes: map[string]codeEntry{}, drills: map[string]DrillResult{}, byObject: map[string]map[string]struct{}{},
-		foreign: map[string]bool{}, mode: modePending, since: opts.Now().UTC(), wake: make(chan struct{}, 1),
+		foreign: map[string]bool{}, foreignLogged: map[string]int{}, mode: modePending, since: opts.Now().UTC(), wake: make(chan struct{}, 1),
 	}
 	if opts.Name == "" {
 		s.mode = modeDisabled
@@ -568,7 +606,7 @@ func (s *Store) fullLocked() {
 // order): the one a new sign-out of theirs replaces. The sessions naming
 // nobody are not one person, and are never replaced.
 func (s *Store) ownEntriesLocked(tag string) (string, int) {
-	held, first := 0, ""
+	held, first, latest := 0, "", s.latestRecordedLocked()
 	for h, e := range s.signedOut {
 		if e.Subject != tag {
 			continue
@@ -577,7 +615,7 @@ func (s *Store) ownEntriesLocked(tag string) (string, int) {
 		if tag == "" {
 			continue
 		}
-		if f, ok := s.signedOut[first]; first == "" || !ok || e.Expiry < f.Expiry || (e.Expiry == f.Expiry && slotBefore(h, e, first, f)) {
+		if f, ok := s.signedOut[first]; first == "" || !ok || e.Expiry < f.Expiry || (e.Expiry == f.Expiry && signOutBefore(h, e, first, f, latest)) {
 			first = h
 		}
 	}
@@ -592,7 +630,7 @@ func (s *Store) ownEntriesLocked(tag string) (string, int) {
 // leaves.
 func (s *Store) evictionLocked(h string, e signOut) (string, bool) {
 	all := append(signOutEntries(s.signedOut, 1), signOutEntry{h, e})
-	for victim, reason := range planSignOutEntries(all) {
+	for victim, reason := range planSignOutEntries(all, s.latestRecordedLocked()) {
 		if victim == h || reason != refusedBudget || s.signedOut[victim].Subject == e.Subject {
 			return "", false
 		}
@@ -676,7 +714,10 @@ func (s *Store) pruneSignOutsLocked() bool {
 
 // signOutBefore is the one order every bound of the sessions document
 // keeps by: by slot, the latest recorded first, then by hash
-// (slotBefore). The
+// (slotBefore), a recording time past latest (a clock far ahead, or an
+// entry written by hand) read as none, so that such an entry comes last
+// in every bound instead of first in all of them for as long as its clock
+// says; it still revokes its session. The
 // per-person bounds keep each person's entries that come first in it,
 // and the document's fair share keeps each person's first shares (a
 // function of how many entries each person holds, nothing else): so,
@@ -687,7 +728,10 @@ func (s *Store) pruneSignOutsLocked() bool {
 // slot in a fixed order is the same kind of rule, and the bounds see
 // slots only, so a person's replacement (a later generation of their own
 // slot) moves nobody.
-func signOutBefore(ah string, a signOut, bh string, b signOut) bool {
+func signOutBefore(ah string, a signOut, bh string, b signOut, latest int64) bool {
+	if ar, br := orderedRecorded(a.Recorded, latest), orderedRecorded(b.Recorded, latest); ar != br {
+		return ar > br
+	}
 	return slotBefore(ah, a, bh, b)
 }
 
@@ -697,8 +741,8 @@ func signOutBefore(ah string, a signOut, bh string, b signOut) bool {
 // MaxSignOutsPerSubject, the entries naming nobody MaxUnnamedSignOuts
 // together, each keeping what comes first in signOutBefore, then the
 // document MaxSignOuts, each person keeping their first fairShares.
-func planSignOutCaps(m map[string]signOut) map[string]string {
-	return planSignOutEntries(signOutEntries(m, len(m)))
+func planSignOutCaps(m map[string]signOut, latest int64) map[string]string {
+	return planSignOutEntries(signOutEntries(m, len(m)), latest)
 }
 
 // signOutEntry is one entry of the sessions document with its hash.
@@ -717,9 +761,13 @@ func signOutEntries(m map[string]signOut, extra int) []signOutEntry {
 }
 
 // planSignOutEntries is planSignOutCaps of the entries all (distinct
-// hashes), which it sorts.
-func planSignOutEntries(all []signOutEntry) map[string]string {
-	sort.Slice(all, func(i, j int) bool { return signOutBefore(all[i].hash, all[i].signOut, all[j].hash, all[j].signOut) })
+// hashes), which it sorts. The entries of one slot (one recording time,
+// one slot hash) stay next to each other in signOutBefore: it orders by
+// the recording time read as given or as none, then as recorded.
+func planSignOutEntries(all []signOutEntry, latest int64) map[string]string {
+	sort.Slice(all, func(i, j int) bool {
+		return signOutBefore(all[i].hash, all[i].signOut, all[j].hash, all[j].signOut, latest)
+	})
 	dropped := map[string]string{}
 	// kept holds, per tag, the positions in all of the entries it keeps,
 	// so in signOutBefore.
@@ -767,7 +815,7 @@ func planSignOutEntries(all []signOutEntry) map[string]string {
 // this replica).
 func (s *Store) capSignOutsLocked() int {
 	n := 0
-	for h, reason := range planSignOutCaps(s.signedOut) {
+	for h, reason := range planSignOutCaps(s.signedOut, s.latestRecordedLocked()) {
 		delete(s.signedOut, h)
 		if reason != superseded {
 			n++
@@ -1042,14 +1090,61 @@ func validSent(key string, at int64) bool {
 	return ok && at > 0 && sentKey(id, channel) == key
 }
 
-// foreignVersion reports a document of another format version, read
-// before the rest so that a newer layout is recognised even when it no
-// longer decodes as this one.
-func foreignVersion(raw string) bool {
+// documentVersion reads a document's format version, before the rest, so
+// that a newer layout is recognised even when it no longer decodes as
+// this one; ok is false when the document does not parse at all.
+func documentVersion(raw string) (version int, ok bool) {
 	var head struct {
 		Version int `json:"version"`
 	}
-	return json.Unmarshal([]byte(raw), &head) == nil && head.Version != formatVersion
+	if json.Unmarshal([]byte(raw), &head) != nil {
+		return 0, false
+	}
+	return head.Version, true
+}
+
+// readableVersion reports whether this console reads a document of
+// version v, as a document of formatVersion: what each older version
+// lacks reads as empty.
+//
+//   - 1: the same layout without the codes' marks (none), whose
+//     sign-outs were ordered by the old fair-share tie-break; read as 2,
+//     they are ordered by this one, as if recorded by a replica of 2.
+func readableVersion(v int) bool {
+	return v >= minFormatVersion && v <= formatVersion
+}
+
+// foreignLocked reports whether the document raw of key is foreign (of a
+// version this console does not read) and, if so, marks it so, to be
+// neither merged nor rewritten, and logs it once.
+func (s *Store) foreignLocked(key, raw string) bool {
+	v, ok := documentVersion(raw)
+	if !ok || readableVersion(v) {
+		return false
+	}
+	s.foreign[key] = true
+	if logged, ok := s.foreignLogged[key]; !ok || logged != v {
+		s.foreignLogged[key] = v
+		s.opts.Logger.Warn("shared state: a document of a format version this console does not read is left as it is "+
+			"(a newer console wrote it, during a rolling upgrade or before a rollback); what it holds is not shared with "+
+			"this replica until every replica runs one version", slog.String("configmap", s.opts.Name),
+			slog.String("document", key), slog.Int("version", v), slog.Int("reads", formatVersion))
+	}
+	return true
+}
+
+// gaugeForeignLocked publishes which documents are left untouched, and
+// forgets the logging of those no longer foreign.
+func (s *Store) gaugeForeignLocked() {
+	for _, key := range documentKeys {
+		v := 0.0
+		if s.foreign[key] {
+			v = 1
+		} else {
+			delete(s.foreignLogged, key)
+		}
+		sharedForeign.WithLabelValues(key).Set(v)
+	}
 }
 
 // mergeLocked folds a ConfigMap read from the API server into the local
@@ -1062,23 +1157,17 @@ func (s *Store) mergeLocked(cm *corev1.ConfigMap) {
 	if raw, ok := data[KeySessions]; ok && raw != "" {
 		var doc sessionsDoc
 		switch {
-		case foreignVersion(raw):
-			s.foreign[KeySessions] = true
+		case s.foreignLocked(KeySessions, raw):
 		case json.Unmarshal([]byte(raw), &doc) != nil:
 			s.opts.Logger.Warn("shared state: the sessions document does not parse; it will be rewritten", slog.String("configmap", s.opts.Name))
 		case len(doc.SignedOut) <= maxEntries:
-			latest := s.opts.Now().Add(maxRecordedSkew).Unix()
 			for h, e := range doc.SignedOut {
 				if !validSessionHash(h) || !validSignOut(h, e) {
 					continue
 				}
-				if e.Recorded > latest {
-					// Recorded in the future (a clock far ahead, or a
-					// hand-written entry): kept, since it revokes a
-					// session, but read as unrecorded, so that it comes
-					// last in every bound instead of first in all of them.
-					e.Recorded = 0
-				}
+				// A recording time in this replica's future is kept as
+				// read: the bounds alone read it as none
+				// (signOutBefore).
 				if prev, ok := s.signedOut[h]; ok {
 					e = mergeSignOut(h, prev, e)
 				}
@@ -1089,8 +1178,7 @@ func (s *Store) mergeLocked(cm *corev1.ConfigMap) {
 	if raw, ok := data[KeySince]; ok && raw != "" {
 		var doc sinceDoc
 		switch {
-		case foreignVersion(raw):
-			s.foreign[KeySince] = true
+		case s.foreignLocked(KeySince, raw):
 		case json.Unmarshal([]byte(raw), &doc) != nil:
 			s.opts.Logger.Warn("shared state: the since document does not parse; it will be rewritten", slog.String("configmap", s.opts.Name))
 		case len(doc.Facts) <= maxEntries:
@@ -1111,8 +1199,7 @@ func (s *Store) mergeLocked(cm *corev1.ConfigMap) {
 	if raw, ok := data[KeyDigests]; ok && raw != "" {
 		var doc digestsDoc
 		switch {
-		case foreignVersion(raw):
-			s.foreign[KeyDigests] = true
+		case s.foreignLocked(KeyDigests, raw):
 		case json.Unmarshal([]byte(raw), &doc) != nil:
 			s.opts.Logger.Warn("shared state: the digests document does not parse; it will be rewritten", slog.String("configmap", s.opts.Name))
 		case len(doc.Sent) <= maxEntries:
@@ -1130,6 +1217,7 @@ func (s *Store) mergeLocked(cm *corev1.ConfigMap) {
 	if raw, ok := data[KeyDrills]; ok && raw != "" {
 		s.mergeDrillsLocked(raw)
 	}
+	s.gaugeForeignLocked()
 	if !s.inSyncWithLocked(s.pruneLocked()) {
 		s.changedLocked(false)
 	}

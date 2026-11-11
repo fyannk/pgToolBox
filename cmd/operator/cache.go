@@ -19,6 +19,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 
 	"github.com/fyannk/pgToolBox/internal/operator/console"
 	"github.com/fyannk/pgToolBox/internal/operator/metadata"
@@ -32,7 +33,45 @@ func managerCacheOptions(options *ctrl.Options, prepared pgAdminPrepared, consol
 	pgAdminManagerOptions(options, prepared)
 	accessRequestCacheOptions(options)
 	pgToolBoxConsoleCacheOptions(options, consoleFeatures)
+	optionalKindCacheOptions(options, prepared.Config.WatchNamespaces, prepared.OptionalKinds)
 	secretCacheOptions(options)
+}
+
+// optionalKindCacheOptions restricts the informer of each optional kind
+// refused in some watched namespaces to the namespaces where it can be
+// listed (ByObject.Namespaces; the kind's label filter and transform are
+// kept): an informer listing in a namespace that refuses it would never
+// sync, and the cache would never be ready. The controllers ask the
+// feature per namespace (Features.In) and read the kind only where it is
+// on, so the cache is never asked for a namespace it does not hold.
+func optionalKindCacheOptions(options *ctrl.Options, watched []string, kinds []optionalKind) {
+	for _, kind := range kinds {
+		listable := kind.Result.ListableIn(watched)
+		if len(listable) == 0 {
+			continue
+		}
+		namespaces := make(map[string]cache.Config, len(listable))
+		for _, namespace := range listable {
+			namespaces[namespace] = cache.Config{}
+		}
+		if options.Cache.ByObject == nil {
+			options.Cache.ByObject = map[client.Object]cache.ByObject{}
+		}
+		objectScheme := options.Scheme
+		if objectScheme == nil {
+			objectScheme = scheme
+		}
+		key := kind.Object
+		for object := range options.Cache.ByObject {
+			if gvk, err := apiutil.GVKForObject(object, objectScheme); err == nil && gvk == kind.Result.GVK {
+				key = object
+				break
+			}
+		}
+		byObject := options.Cache.ByObject[key]
+		byObject.Namespaces = namespaces
+		options.Cache.ByObject[key] = byObject
+	}
 }
 
 // secretCacheOptions gives the Secret informers (metadata-only: Secrets are

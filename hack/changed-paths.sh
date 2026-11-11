@@ -44,7 +44,10 @@ classify() {
     # version; only its loader and the placeholder are in the tree.
     internal/console/docsbundle/*) mark go; mark console; mark docs ;;
     hack/docsbundle/* | hack/mk/docs.mk) mark go; mark docs ;;
-    charts/pgtoolbox/Chart.yaml) mark charts; mark docs ;;
+    # Chart.yaml carries the version and the kubeVersion floor that check-repo,
+    # the packaging gates and the release checks read: lint-files and test-hack
+    # (the go family) run for it as well as the chart jobs.
+    charts/*/Chart.yaml) mark go; mark charts; mark docs ;;
     api/* | config/*) mark go; mark operator; mark charts ;;
     # The operator, the evidence agent (selfresolve) and the chart tests import
     # the backup-repository resolver: everything that exercises them runs.

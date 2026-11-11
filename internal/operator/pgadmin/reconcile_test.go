@@ -32,6 +32,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/events"
@@ -860,6 +861,12 @@ func TestJobReportIgnoresAnImpostorPod(t *testing.T) {
 func TestReconcileUnavailableOptionalAPI(t *testing.T) {
 	forbidden := discovery.Result{State: discovery.Forbidden, Reason: "not allowed to list X in " + testNamespace}
 	notServed := discovery.Result{State: discovery.NotInstalled, Reason: "X is not served by this cluster"}
+	// Each namespace's RBAC decides there alone: refused in this namespace
+	// while others allow it is unavailable here; refused in another
+	// namespace only changes nothing here.
+	refusedIn := func(namespaces ...string) discovery.Result {
+		return discovery.Result{GVK: schema.GroupVersionKind{Version: "v1", Kind: "X"}, State: discovery.Available, RefusedIn: namespaces}
+	}
 	tests := []struct {
 		name     string
 		pgadmin  func() *pgtoolboxv1alpha1.PgAdmin
@@ -880,6 +887,26 @@ func TestReconcileUnavailableOptionalAPI(t *testing.T) {
 			},
 			features: func(f *Features) { f.Poolers = notServed },
 			want:     pgtoolboxv1alpha1.ReasonPoolerAPIUnavailable,
+		},
+		{
+			name: "DatabaseRole API refused in this namespace only", pgadmin: oauth2PgAdmin,
+			features: func(f *Features) { f.DatabaseRoles = refusedIn("team-b", testNamespace) },
+			want:     pgtoolboxv1alpha1.ReasonDatabaseRoleAPIUnavailable,
+		},
+		{
+			name: "pooler endpoint with the Pooler API refused in this namespace only",
+			pgadmin: func() *pgtoolboxv1alpha1.PgAdmin {
+				p := oauth2PgAdmin()
+				p.Spec.Endpoints = []pgtoolboxv1alpha1.Endpoint{"rw", "pooler:orders-pooler"}
+				return p
+			},
+			features: func(f *Features) { f.Poolers = refusedIn(testNamespace) },
+			want:     pgtoolboxv1alpha1.ReasonPoolerAPIUnavailable,
+		},
+		{
+			name: "DatabaseRole API refused in another namespace only", pgadmin: oauth2PgAdmin,
+			features: func(f *Features) { f.DatabaseRoles = refusedIn("team-b") },
+			want:     pgtoolboxv1alpha1.ReasonAsExpected,
 		},
 	}
 	for _, tt := range tests {

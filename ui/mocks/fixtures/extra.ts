@@ -383,6 +383,53 @@ export const recoveryRepositoryAhead = {
   markers: markers.filter((mk) => mk.kind === "completed"),
 } satisfies RecoveryTimeline;
 
+/**
+ * The Cluster is hibernated: no instance runs, so nothing confirms that the
+ * WAL written before it slept reached the repository. The window is unknown,
+ * not amber, and gives no advice to act on a primary (Go's wording,
+ * internal/console/status/recovery.go timelineVerdict).
+ */
+export const recoveryHibernated = {
+  ...recoveryHealthy,
+  state: "unknown",
+  reason:
+    "the Cluster is hibernated: whether the WAL written before it reached the repository is not confirmed, so the newest restore points are uncertain",
+  reasons: [
+    {
+      code: "recovery.reason.archiverHibernated",
+      text: "the Cluster is hibernated: whether the WAL written before it reached the repository is not confirmed, so the newest restore points are uncertain",
+    },
+  ],
+  segments: [
+    { ...(recoveryHealthy.segments[0] as RecoverySegment), to: "2026-10-28T11:59:15Z" },
+    {
+      from: "2026-10-28T11:59:15Z",
+      to: "2026-10-29T11:59:15Z",
+      kind: "unknown",
+      code: "recovery.segment.archiverHibernated",
+      text: "The Cluster is hibernated, and no sweep the console keeps saw its primary with nothing waiting before it slept: WAL that reached the repository may have waited on it first, so its arrival time may overstate how recent a restore can be.",
+    },
+  ],
+} satisfies RecoveryTimeline;
+
+/**
+ * After a failover the repository holds no WAL of timeline 2 yet, and the new
+ * primary was not read (fenced, unreachable): the warning gives no advice to
+ * run pg_switch_wal() on it.
+ */
+export const recoveryPrimaryUnreadAfterFailover = {
+  ...recoveryAfterFailover,
+  reason:
+    "the repository held no WAL of timeline 2, the one the current primary writes, when it was last read, and the primary was not read: the newest restore points are uncertain until the primary is read again and the agent reads WAL of timeline 2",
+  reasons: [
+    {
+      code: "recovery.reason.liveTimelineNotArchivedPrimaryUnread",
+      params: { timeline: "2" },
+      text: "the repository held no WAL of timeline 2, the one the current primary writes, when it was last read, and the primary was not read: the newest restore points are uncertain until the primary is read again and the agent reads WAL of timeline 2",
+    },
+  ],
+} satisfies RecoveryTimeline;
+
 /** No evidence agent: the operator's window, drawn hatched and labelled unverified. */
 export const recoveryReportedOnly = {
   ...timeline,
@@ -480,4 +527,41 @@ export const recoveryNone = {
   segments: [],
   markers: [],
   provenance: { origin: "evidence" },
+} satisfies RecoveryTimeline;
+
+/**
+ * Reading the recovery paths keeps failing, and the last good ones are more
+ * than three refresh intervals older than the latest scan: they are dropped,
+ * and the bar says so and what to check (Go's wording,
+ * internal/console/status/recovery.go keptDroppedReason).
+ */
+export const recoveryKeptTooOld = {
+  ...recoveryNone,
+  reason:
+    "the recovery paths page timed out; the last good recovery paths are more than three refresh intervals (at least an hour) older than the latest scan and are no longer shown; check the evidence agent's logs for why reading its recovery paths fails, and that the object store answers",
+  reasons: [
+    {
+      code: "recovery.reason.pathsNotCoverage",
+      params: { detail: "the recovery paths page timed out" },
+      text: "the recovery paths page timed out",
+    },
+    {
+      code: "recovery.reason.keptTooOld",
+      text: "the last good recovery paths are more than three refresh intervals (at least an hour) older than the latest scan and are no longer shown; check the evidence agent's logs for why reading its recovery paths fails, and that the object store answers",
+    },
+  ],
+} satisfies RecoveryTimeline;
+
+/** The repository's identity changed: the last good paths describe another repository (Go's wording). */
+export const recoveryKeptRepositoryChanged = {
+  ...recoveryKeptTooOld,
+  reason:
+    "the recovery paths page timed out; the repository's identity changed since the last good recovery paths were read: they describe another repository and are no longer shown; check the evidence agent's logs and that its object store configuration still names this cluster's repository",
+  reasons: [
+    ...recoveryKeptTooOld.reasons.slice(0, 1),
+    {
+      code: "recovery.reason.keptRepositoryChanged",
+      text: "the repository's identity changed since the last good recovery paths were read: they describe another repository and are no longer shown; check the evidence agent's logs and that its object store configuration still names this cluster's repository",
+    },
+  ],
 } satisfies RecoveryTimeline;

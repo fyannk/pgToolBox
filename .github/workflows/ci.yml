@@ -350,7 +350,17 @@ jobs:
           set -euo pipefail
           make ui-install
           cd ui
-          pnpm exec playwright install --with-deps chromium
+          # The browser's system packages come from the Ubuntu archives, whose
+          # DNS has failed on hosted runners for over an hour at a time, and
+          # apt then spends ten minutes timing out. When the archive does not
+          # resolve, use the image's own libraries: the gate below still fails
+          # if one is really missing.
+          if getent hosts azure.archive.ubuntu.com >/dev/null; then
+            pnpm exec playwright install --with-deps chromium
+          else
+            echo "::warning::azure.archive.ubuntu.com does not resolve; installing Chromium without its system packages"
+            pnpm exec playwright install chromium
+          fi
       # Generated drift (`pnpm generate:check`), lint, types, unused code,
       # tokens, unit tests, stories with axe, build and size budgets.
       - name: Gate
@@ -509,7 +519,7 @@ jobs:
   # (e2e-kind.yml loads it), so the e2e jobs run the bytes this job checked and
   # none of them builds an image. linux/arm64 is built to prove it builds; the
   # Go stages cross-compile, so there is no emulation. Layers come from the gha
-  # cache, which only the nightly run on main writes (or a dispatch): every
+  # cache, which only the nightly run on main writes (a dispatch reads it only): every
   # export adds the compiled layers of both architectures, several GB, and what
   # a later build reuses is the dependency layers, which change far less often.
   images:
@@ -528,8 +538,8 @@ jobs:
       IMAGE: pgtoolbox-${{ matrix.image }}:prebuilt
       ARCHIVE_NAME: pgtoolbox-${{ matrix.image }}.tar
       # One cache scope per architecture: the two builds export different layers.
-      CACHE_TO_AMD64: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && format('type=gha,mode=max,ignore-error=true,scope=image-{0}-amd64', matrix.image) || '' }}
-      CACHE_TO_ARM64: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && format('type=gha,mode=max,ignore-error=true,scope=image-{0}-arm64', matrix.image) || '' }}
+      CACHE_TO_AMD64: ${{ github.ref == 'refs/heads/main' && github.event_name == 'schedule' && format('type=gha,mode=max,ignore-error=true,scope=image-{0}-amd64', matrix.image) || '' }}
+      CACHE_TO_ARM64: ${{ github.ref == 'refs/heads/main' && github.event_name == 'schedule' && format('type=gha,mode=max,ignore-error=true,scope=image-{0}-arm64', matrix.image) || '' }}
     steps:
       - name: Check out the repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

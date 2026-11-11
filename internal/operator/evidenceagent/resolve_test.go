@@ -88,7 +88,15 @@ func TestResolveRecordsTheObjectStoreAndGatesOnTheProbe(t *testing.T) {
 		t.Fatalf("status.objectStoreName = %q, want it recorded before the read", agent.Status.ObjectStoreName)
 	}
 
-	r.ObjectStoreAPI = discovery.Result{State: discovery.Available}
+	// Listable in other watched namespaces, refused in the agent's: the
+	// agent's namespace decides (its RBAC there alone).
+	r.ObjectStoreAPI = discovery.Result{GVK: discovery.ObjectStoreGVK, State: discovery.Available, RefusedIn: []string{"team-a"}}
+	_, whyNot, err = r.resolve(context.Background(), agent)
+	if err != nil || whyNot == nil || whyNot.reason != pgtoolboxv1alpha1.ReasonObjectStoreAPIUnavailable || !strings.Contains(whyNot.message, "in team-a") {
+		t.Fatalf("API refused in the agent's namespace: problem = %+v, err = %v", whyNot, err)
+	}
+
+	r.ObjectStoreAPI = discovery.Result{GVK: discovery.ObjectStoreGVK, State: discovery.Available, RefusedIn: []string{"team-b"}}
 	resolved, whyNot, err := r.resolve(context.Background(), agent)
 	if err != nil || whyNot != nil {
 		t.Fatalf("resolve = %+v, %v", whyNot, err)

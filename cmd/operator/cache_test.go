@@ -16,21 +16,29 @@ package main
 
 import (
 	"context"
+	"maps"
 	"os"
+	"slices"
 	"testing"
 	"time"
 
+	cnpgv1 "github.com/cloudnative-pg/api/pkg/api/v1"
+	routev1 "github.com/openshift/api/route/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/wait"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 
 	pgtoolboxv1alpha1 "github.com/fyannk/pgToolBox/api/v1alpha1"
 	"github.com/fyannk/pgToolBox/internal/operator/console"
+	"github.com/fyannk/pgToolBox/internal/operator/pgadmin"
+	"github.com/fyannk/pgToolBox/pkg/discovery"
 )
 
 const lastAppliedAnnotation = "kubectl.kubernetes.io/last-applied-configuration"
@@ -179,4 +187,60 @@ func selectorString(selector labels.Selector) string {
 		return "<nil>"
 	}
 	return selector.String()
+}
+
+// TestOptionalKindCacheOptions: an optional kind refused in some watched
+// namespaces is cached only in the others, keeping the label filter a
+// controller set on it; a kind with no refusal, or off everywhere, keeps
+// the cache's default namespaces (no entry is added for it).
+func TestOptionalKindCacheOptions(t *testing.T) {
+	watched := []string{"team-a", "team-b", "team-c"}
+	refusedIn := func(gvk schema.GroupVersionKind, namespaces ...string) discovery.Result {
+		return discovery.Result{GVK: gvk, State: discovery.Available, RefusedIn: namespaces}
+	}
+	routeGVK := routev1.GroupVersion.WithKind("Route")
+	poolerGVK := cnpgv1.SchemeGroupVersion.WithKind("Pooler")
+	databaseGVK := cnpgv1.SchemeGroupVersion.WithKind("Database")
+	prepared := pgAdminPrepared{
+		Features: pgadmin.Features{Routes: refusedIn(routeGVK, "team-b")},
+		OptionalKinds: []optionalKind{
+			{Object: &routev1.Route{}, Result: refusedIn(routeGVK, "team-b")},
+			{Object: &cnpgv1.Pooler{}, Result: refusedIn(poolerGVK, "team-a", "team-c")},
+			{Object: &cnpgv1.Database{}, Result: refusedIn(databaseGVK)},
+			{Object: metadataObject(discovery.StanzaGVK), Result: refusedIn(discovery.StanzaGVK, "team-c")},
+			{Object: metadataObject(discovery.ArchiveGVK), Result: discovery.Result{GVK: discovery.ArchiveGVK, State: discovery.Forbidden}},
+		},
+	}
+	prepared.Config.WatchNamespaces = watched
+	options := &ctrl.Options{Scheme: scheme}
+	managerCacheOptions(options, prepared, pgToolBoxConsoleFeatures(prepared))
+
+	namespacesOf := func(gvk schema.GroupVersionKind) (cache.ByObject, bool) {
+		for object, byObject := range options.Cache.ByObject {
+			if got, err := apiutil.GVKForObject(object, scheme); err == nil && got == gvk {
+				return byObject, true
+			}
+		}
+		return cache.ByObject{}, false
+	}
+	for _, tc := range []struct {
+		gvk       schema.GroupVersionKind
+		want      []string // nil: no namespace restriction
+		wantLabel bool
+	}{
+		{gvk: routeGVK, want: []string{"team-a", "team-c"}, wantLabel: true},
+		{gvk: poolerGVK, want: []string{"team-b"}},
+		{gvk: databaseGVK},
+		{gvk: discovery.StanzaGVK, want: []string{"team-a", "team-b"}},
+		{gvk: discovery.ArchiveGVK},
+	} {
+		byObject, found := namespacesOf(tc.gvk)
+		got := slices.Sorted(maps.Keys(byObject.Namespaces))
+		if !slices.Equal(got, tc.want) {
+			t.Errorf("%s cached in %q (entry %t), want %q", tc.gvk.Kind, got, found, tc.want)
+		}
+		if tc.wantLabel && byObject.Label == nil {
+			t.Errorf("%s lost its label filter", tc.gvk.Kind)
+		}
+	}
 }

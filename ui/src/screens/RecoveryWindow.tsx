@@ -404,6 +404,21 @@ function uncertainEdge(t: RecoveryTimeline): boolean {
   );
 }
 
+/**
+ * The reasons that say no primary runs, or none was read, to act on: a
+ * hibernated Cluster, and the post-failover lag beside an unread primary
+ * (fenced, unreachable). Go gives no advice to act on the primary then, and
+ * neither does the hint below.
+ */
+const NO_PRIMARY_TO_ACT_ON = new Set([
+  "recovery.reason.archiverHibernated",
+  "recovery.reason.liveTimelineNotArchivedPrimaryUnread",
+]);
+
+function primaryToActOn(t: RecoveryTimeline): boolean {
+  return !(t.reasons ?? []).some((r) => NO_PRIMARY_TO_ACT_ON.has(r.code));
+}
+
 /** What a DBA can check by hand at an uncertain edge; the console runs none of it. Without an agent there is no evidence to refresh. */
 function PitrEdgeHint({ basis }: { basis: RecoveryTimeline["basis"] }) {
   return (
@@ -509,7 +524,7 @@ export function RecoveryWindowPanel({
           ))}
         </ul>
       )}
-      {uncertainEdge(t) && <PitrEdgeHint basis={t.basis} />}
+      {uncertainEdge(t) && primaryToActOn(t) && <PitrEdgeHint basis={t.basis} />}
       <p className="m-0 text-caption text-muted">{m.recovery_strongest()}</p>
       {t.basis !== "none" && !t.restoreTested && (
         <p className="m-0 text-label font-semibold" data-restore-tested="false">

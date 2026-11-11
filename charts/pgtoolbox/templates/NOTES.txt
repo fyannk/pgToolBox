@@ -52,7 +52,7 @@ operator.metrics.podMonitor to have Prometheus scrape it.
 The restore-drill delete guard is NOT rendered (operator.restoreDrillGuard.enabled={{ $guard }}{{ if eq $guard "auto" }}, and this cluster serves no ValidatingAdmissionPolicy API{{ end }}),
 but the operator still binds pgtoolbox-console-restore-drills where a PgToolBoxConsole asks for restore
 drills: that role can delete any Cluster of the drill namespace and only the console's own checks keep it
-to its sealed drills. Set operator.restoreDrillGuard.enabled=true (Kubernetes 1.30+), or do not enable restore drills.
+to its sealed drills. Set operator.restoreDrillGuard.enabled=true (the policy API is served by Kubernetes 1.34+, this chart's floor), or do not enable restore drills.
 {{- end }}
 {{- if .Values.operator.networkPolicy.enabled }}
 

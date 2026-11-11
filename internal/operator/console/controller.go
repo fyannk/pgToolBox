@@ -109,11 +109,19 @@ import (
 // +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups=postgresql.cnpg.io,resources=clusters,verbs=get;list;watch
 
-// Features are the optional APIs, probed once at start.
+// Features are the optional APIs, probed once at start. Usable() on a
+// field means "watched somewhere" (the watches and the cache); a reconcile
+// asks In(namespace), because each namespace's RBAC decides for that
+// namespace alone.
 type Features struct {
 	Routes, Gateways discovery.Result
 	// OpenShift is true when the platform assigns UIDs and fsGroups.
 	OpenShift bool
+}
+
+// In is the features in one namespace (discovery.Result.In).
+func (f Features) In(namespace string) Features {
+	return Features{Routes: f.Routes.In(namespace), Gateways: f.Gateways.In(namespace), OpenShift: f.OpenShift}
 }
 
 // Reconciler reconciles PgToolBoxConsoles.
@@ -897,7 +905,7 @@ func (r *Reconciler) applyExposure(ctx context.Context, console *pgtoolboxv1alph
 	} else if err := r.deleteIfOwned(ctx, console, &networkingv1.Ingress{}, console.WorkloadName()); err != nil {
 		return false, err
 	}
-	if r.Features.Routes.Usable() {
+	if r.Features.In(console.Namespace).Routes.Usable() {
 		if kind == pgtoolboxv1alpha1.ExposureTypeRoute {
 			if err := applier.Apply(ctx, exposure.Route(spec, target)); err != nil {
 				return false, r.notOwned(console, err)
@@ -907,7 +915,7 @@ func (r *Reconciler) applyExposure(ctx context.Context, console *pgtoolboxv1alph
 			return false, err
 		}
 	}
-	if r.Features.Gateways.Usable() {
+	if r.Features.In(console.Namespace).Gateways.Usable() {
 		if kind == pgtoolboxv1alpha1.ExposureTypeGateway {
 			if err := applier.Apply(ctx, exposure.HTTPRoute(spec, target)); err != nil {
 				return false, r.notOwned(console, err)
@@ -927,9 +935,9 @@ func (r *Reconciler) exposureUsable(console *pgtoolboxv1alpha1.PgToolBoxConsole)
 	case pgtoolboxv1alpha1.ExposureTypeIngress:
 		return true
 	case pgtoolboxv1alpha1.ExposureTypeRoute:
-		return r.Features.Routes.Usable()
+		return r.Features.In(console.Namespace).Routes.Usable()
 	case pgtoolboxv1alpha1.ExposureTypeGateway:
-		return r.Features.Gateways.Usable()
+		return r.Features.In(console.Namespace).Gateways.Usable()
 	default:
 		return false
 	}
@@ -1038,10 +1046,10 @@ func (r *Reconciler) exposurePolicyRefused(ctx context.Context, console *pgtoolb
 // this console exists.
 func (r *Reconciler) exposurePublished(ctx context.Context, console *pgtoolboxv1alpha1.PgToolBoxConsole) (bool, error) {
 	objects := []client.Object{&networkingv1.Ingress{}}
-	if r.Features.Routes.Usable() {
+	if r.Features.In(console.Namespace).Routes.Usable() {
 		objects = append(objects, &routev1.Route{})
 	}
-	if r.Features.Gateways.Usable() {
+	if r.Features.In(console.Namespace).Gateways.Usable() {
 		objects = append(objects, &gatewayv1.HTTPRoute{})
 	}
 	key := client.ObjectKey{Namespace: console.Namespace, Name: console.WorkloadName()}
@@ -1111,12 +1119,12 @@ func (r *Reconciler) withdrawExposure(ctx context.Context, console *pgtoolboxv1a
 	if err := r.deleteIfOwned(ctx, console, &networkingv1.Ingress{}, name); err != nil {
 		return err
 	}
-	if r.Features.Routes.Usable() {
+	if r.Features.In(console.Namespace).Routes.Usable() {
 		if err := r.deleteIfOwned(ctx, console, &routev1.Route{}, name); err != nil {
 			return err
 		}
 	}
-	if r.Features.Gateways.Usable() {
+	if r.Features.In(console.Namespace).Gateways.Usable() {
 		if err := r.deleteIfOwned(ctx, console, &gatewayv1.HTTPRoute{}, name); err != nil {
 			return err
 		}
@@ -1131,8 +1139,8 @@ func (r *Reconciler) observeExposure(ctx context.Context, console *pgtoolboxv1al
 	switch console.Spec.Exposure.TypeOrDefault() {
 	case pgtoolboxv1alpha1.ExposureTypeClusterIP:
 	case pgtoolboxv1alpha1.ExposureTypeRoute:
-		if !r.Features.Routes.Usable() {
-			fact = exposure.Fact{Status: metav1.ConditionFalse, Reason: pgtoolboxv1alpha1.ReasonRouteAPIUnavailable, Message: "the Route API is unavailable: " + unavailableWhy(r.Features.Routes)}
+		if !r.Features.In(console.Namespace).Routes.Usable() {
+			fact = exposure.Fact{Status: metav1.ConditionFalse, Reason: pgtoolboxv1alpha1.ReasonRouteAPIUnavailable, Message: "the Route API is unavailable: " + unavailableWhy(r.Features.In(console.Namespace).Routes)}
 			break
 		}
 		var route routev1.Route
@@ -1149,8 +1157,8 @@ func (r *Reconciler) observeExposure(ctx context.Context, console *pgtoolboxv1al
 			fact = exposure.IngressFact(&ingress)
 		}
 	case pgtoolboxv1alpha1.ExposureTypeGateway:
-		if !r.Features.Gateways.Usable() {
-			fact = exposure.Fact{Status: metav1.ConditionFalse, Reason: pgtoolboxv1alpha1.ReasonGatewayAPIUnavailable, Message: "the Gateway API is unavailable: " + unavailableWhy(r.Features.Gateways)}
+		if !r.Features.In(console.Namespace).Gateways.Usable() {
+			fact = exposure.Fact{Status: metav1.ConditionFalse, Reason: pgtoolboxv1alpha1.ReasonGatewayAPIUnavailable, Message: "the Gateway API is unavailable: " + unavailableWhy(r.Features.In(console.Namespace).Gateways)}
 			break
 		}
 		var route gatewayv1.HTTPRoute

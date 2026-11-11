@@ -42,6 +42,10 @@ var (
 		Name: "pgtoolbox_console_shared_state_dropped_total",
 		Help: "Entries dropped to keep the state ConfigMap within its size, by document: since.json (the oldest since times, past the budget), drills.json (the oldest restore drill results, past the ConfigMap's ceiling).",
 	}, []string{"document"})
+	sharedForeign = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "pgtoolbox_console_shared_state_foreign_documents",
+		Help: "1 for each document of the state ConfigMap this replica leaves as it is (neither merged nor rewritten): of a format version newer than it reads (a newer console wrote it: a rolling upgrade, or a rollback), or, for grants.json, unreadable (MCP grants are refused until it is fixed). Older versions are read and rewritten at this one.",
+	}, []string{"document"})
 	signOutsHeld = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "pgtoolbox_console_shared_state_signouts",
 		Help: "Entries of the sessions document against each of its bounds: subject (the most one person holds, of 32), unnamed (the sessions that name nobody, of 128), total (of 1536).",
@@ -49,5 +53,5 @@ var (
 )
 
 func init() {
-	crmetrics.Registry.MustRegister(sharedWrites, sharedMode, sharedBytes, signOutsRefused, sharedDropped, signOutsHeld)
+	crmetrics.Registry.MustRegister(sharedWrites, sharedMode, sharedBytes, signOutsRefused, sharedDropped, sharedForeign, signOutsHeld)
 }
