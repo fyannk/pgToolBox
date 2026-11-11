@@ -117,6 +117,32 @@ func ProbeNamespaces(ctx context.Context, c Lister, gvk schema.GroupVersionKind,
 	return result, nil
 }
 
+// ReachableNamespaces splits namespaces into those where the caller may list
+// gvk and those where the List is refused (Forbidden), before any feature is
+// probed: a namespace the caller holds no right in (deleted after the install
+// and with it its RoleBinding, or never bound) is dropped from the watch
+// instead of turning every feature off everywhere or failing the start. A
+// kind that is not served says nothing about the namespaces: every namespace
+// is then returned reachable, for the feature probe to report. Any other error
+// is returned. Empty namespaces (cluster-wide) are returned as they are.
+func ReachableNamespaces(ctx context.Context, c Lister, gvk schema.GroupVersionKind, namespaces []string) (reachable []string, refused []Result, err error) {
+	for _, namespace := range namespaces {
+		probed, err := ProbeListable(ctx, c, gvk, namespace)
+		if err != nil {
+			return nil, nil, err
+		}
+		switch probed.State {
+		case Available:
+			reachable = append(reachable, namespace)
+		case Forbidden:
+			refused = append(refused, probed)
+		case NotInstalled:
+			return append([]string(nil), namespaces...), nil, nil
+		}
+	}
+	return reachable, refused, nil
+}
+
 // ObjectStoreGVK is the barman-cloud plugin's ObjectStore, the optional
 // API an EvidenceAgent resolves its repository from.
 var ObjectStoreGVK = schema.GroupVersionKind{Group: "barmancloud.cnpg.io", Version: "v1", Kind: "ObjectStore"}

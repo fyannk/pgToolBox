@@ -230,6 +230,65 @@ func TestProbeNamespaces(t *testing.T) {
 	}
 }
 
+// TestReachableNamespaces: a watched namespace the caller is refused in (a
+// namespace deleted after the install takes its RoleBinding with it) is
+// dropped from the watch, the others are kept; a kind not served keeps every
+// namespace for the feature probe to report; any other error fails.
+func TestReachableNamespaces(t *testing.T) {
+	gr := schema.GroupResource{Group: "postgresql.cnpg.io", Resource: "clusters"}
+	clusterGVK := schema.GroupVersionKind{Group: "postgresql.cnpg.io", Version: "v1", Kind: "Cluster"}
+	forbidden := apierrors.NewForbidden(gr, "", errors.New("denied"))
+	tests := []struct {
+		name          string
+		namespaces    []string
+		errs          map[string]error
+		wantReachable []string
+		wantRefused   []string
+		wantErr       bool
+	}{
+		{name: "cluster-wide stays cluster-wide"},
+		{name: "every namespace answers", namespaces: []string{"a", "b"}, wantReachable: []string{"a", "b"}},
+		{
+			name: "a refused namespace is dropped, the others kept", namespaces: []string{"a", "gone", "c"},
+			errs: map[string]error{"gone": forbidden}, wantReachable: []string{"a", "c"}, wantRefused: []string{"gone"},
+		},
+		{
+			name: "every namespace refused", namespaces: []string{"a", "b"},
+			errs: map[string]error{"a": forbidden, "b": forbidden}, wantRefused: []string{"a", "b"},
+		},
+		{
+			name: "not served keeps every namespace", namespaces: []string{"a", "b"},
+			errs:          map[string]error{"b": &meta.NoKindMatchError{GroupKind: clusterGVK.GroupKind()}},
+			wantReachable: []string{"a", "b"},
+		},
+		{
+			name: "any other error fails", namespaces: []string{"a", "b"},
+			errs: map[string]error{"a": errors.New("connection refused")}, wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reachable, refused, err := ReachableNamespaces(context.Background(), &namespaceLister{errs: tt.errs}, clusterGVK, tt.namespaces)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("err = %v", err)
+			}
+			if strings.Join(reachable, ",") != strings.Join(tt.wantReachable, ",") {
+				t.Errorf("reachable = %q, want %q", reachable, tt.wantReachable)
+			}
+			var got []string
+			for _, r := range refused {
+				if r.State != Forbidden || !strings.Contains(r.Reason, "in "+r.Namespace) {
+					t.Errorf("refused %+v", r)
+				}
+				got = append(got, r.Namespace)
+			}
+			if strings.Join(got, ",") != strings.Join(tt.wantRefused, ",") {
+				t.Errorf("refused = %q, want %q", got, tt.wantRefused)
+			}
+		})
+	}
+}
+
 // TestProbePgBackRestAPIs: the two pgBackRest plugin kinds are probed like
 // the ObjectStore, each under its own GVK and resource name.
 func TestProbePgBackRestAPIs(t *testing.T) {

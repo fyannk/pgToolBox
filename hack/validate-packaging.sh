@@ -339,6 +339,12 @@ helm_full = render(["helm", "template", "pgtoolbox", "charts/pgtoolbox", "--name
 # from the generated manager role: every rule on a cluster-scoped resource (reduced to
 # those resources) must be in it, and nothing else; otherwise the operator would lose a
 # permission (a RoleBinding cannot grant a cluster-scoped resource) or gain one.
+# Except `bind` (and `escalate`) on clusterroles: their check runs where the binding is
+# made, so the per-namespace RoleBinding of the manager role grants them for the
+# RoleBindings the operator creates; held cluster-wide next to `create
+# clusterrolebindings`, `bind` would let the operator's token ClusterRoleBind
+# pgtoolbox-console-restore-drills to itself. The cluster-wide role holds no
+# bind, escalate, impersonate or wildcard verb and no namespaced resource.
 CLUSTER_SCOPED = {"clusterroles", "clusterrolebindings", "tokenreviews", "subjectaccessreviews",
                   "securitycontextconstraints", "nodes", "namespaces", "persistentvolumes",
                   "customresourcedefinitions", "validatingadmissionpolicies"}
@@ -347,18 +353,48 @@ scoped_cluster = [d for d in helm_full if d["kind"] == "ClusterRole" and d["meta
 if len(scoped_manager) != 1 or len(scoped_cluster) != 1:
     problems.append("Helm with watchNamespaces must render one manager ClusterRole and one manager-cluster-role")
 else:
+    NAMESPACED_GRANT_VERBS = {"bind", "escalate"}
     expected = []
     for r in scoped_manager[0]["rules"]:
         res = [x for x in r.get("resources", []) if x in CLUSTER_SCOPED]
-        if res:
-            expected.append({**r, "resources": res})
+        verbs = [v for v in r.get("verbs", []) if not (v in NAMESPACED_GRANT_VERBS and set(res) <= {"clusterroles", "roles"})]
+        if res and verbs:
+            expected.append({**r, "resources": res, "verbs": verbs})
         elif r.get("apiGroups") == ["discovery.k8s.io"] and r.get("resources") == ["endpointslices"]:
             expected.append(r)  # one named object in the default namespace: needs the cluster-wide grant
     if norm_rules(expected) != norm_rules(scoped_cluster[0]["rules"]):
         problems.append("charts/pgtoolbox clusterrole-cluster-scoped.yaml differs from the cluster-scoped rules of the manager role")
-    cluster_bindings = [d for d in helm_full if d["kind"] == "ClusterRoleBinding" and d["metadata"]["name"].endswith("-manager")]
-    if len(cluster_bindings) != 1 or not cluster_bindings[0]["roleRef"]["name"].endswith("-manager-cluster-role"):
-        problems.append("Helm with watchNamespaces must bind only the cluster-scoped role cluster-wide")
+    for r in scoped_cluster[0]["rules"]:
+        bad_verbs = set(r.get("verbs", [])) & {"bind", "escalate", "impersonate", "*"}
+        bad_res = [x for x in r.get("resources", []) if x not in CLUSTER_SCOPED and x != "endpointslices"]
+        if bad_verbs or bad_res or "*" in r.get("resources", []) or "*" in r.get("apiGroups", []):
+            problems.append(f"charts/pgtoolbox clusterrole-cluster-scoped.yaml grants {sorted(bad_verbs) or ''}{bad_res or ''} cluster-wide: {r}")
+    # One binding name per mode: a roleRef is immutable, so switching the mode with
+    # helm upgrade must replace the binding, not patch its roleRef.
+    cluster_bindings = [d for d in helm_full if d["kind"] == "ClusterRoleBinding" and d["roleRef"]["name"].endswith(("-manager-cluster-role", "-manager-role"))]
+    if len(cluster_bindings) != 1 or not cluster_bindings[0]["roleRef"]["name"].endswith("-manager-cluster-role") \
+            or not cluster_bindings[0]["metadata"]["name"].endswith("-manager-cluster"):
+        problems.append("Helm with watchNamespaces must bind only the cluster-scoped role cluster-wide, as <fullname>-manager-cluster")
+    default_bindings = [d for d in helm_docs if d["kind"] == "ClusterRoleBinding" and d["roleRef"]["name"].endswith(("-manager-cluster-role", "-manager-role"))]
+    if len(default_bindings) != 1 or not default_bindings[0]["roleRef"]["name"].endswith("-manager-role") \
+            or default_bindings[0]["metadata"]["name"] == (cluster_bindings[0]["metadata"]["name"] if cluster_bindings else None):
+        problems.append("Helm by default must bind the manager role cluster-wide under a name of its own (not the watchNamespaces binding's)")
+    # The operator's own namespace: with watchNamespaces it holds nothing there but
+    # leader election and get on its own ConfigMap and Secret, by the names
+    # cmd/operator reads (--config-map, --config-secret defaults: the chart passes neither).
+    main_go = open("cmd/operator/main.go").read()
+    config_names = sorted(set(re.findall(r'flag\.StringVar\(&(?:configMapName|secretName), "config-(?:map|secret)", "([^"]+)"', main_go)))
+    config_roles = [d for d in helm_full if d["kind"] == "Role" and d["metadata"]["name"].endswith("-config")]
+    config_bindings = [d for d in helm_full if d["kind"] == "RoleBinding" and d["metadata"]["name"].endswith("-config")]
+    if not config_names:
+        problems.append("cmd/operator/main.go: --config-map/--config-secret defaults not found")
+    elif len(config_roles) != 1 or config_roles[0]["metadata"].get("namespace") != "pgtoolbox" or norm_rules(config_roles[0]["rules"]) != norm_rules(
+            [{"apiGroups": [""], "resources": ["configmaps", "secrets"], "resourceNames": config_names, "verbs": ["get"]}]):
+        problems.append(f"Helm with watchNamespaces must grant the operator get on its ConfigMap and Secret {config_names} in its namespace, and nothing else")
+    elif len(config_bindings) != 1 or config_bindings[0]["roleRef"] != {"apiGroup": "rbac.authorization.k8s.io", "kind": "Role", "name": config_roles[0]["metadata"]["name"]}:
+        problems.append("Helm with watchNamespaces must bind the operator config Role to the operator")
+    if any(d["kind"] == "Role" and d["metadata"]["name"].endswith("-config") for d in helm_docs):
+        problems.append("Helm by default renders the operator config Role: the manager ClusterRole already grants it")
     bound = sorted(d["metadata"]["namespace"] for d in helm_full if d["kind"] == "RoleBinding" and d["metadata"]["name"].endswith("-manager"))
     if bound != ["team-a", "team-b"]:
         problems.append(f"Helm with watchNamespaces binds the manager role in {bound}, expected [team-a, team-b]")

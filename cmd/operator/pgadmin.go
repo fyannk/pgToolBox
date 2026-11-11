@@ -91,6 +91,14 @@ func preparePgAdmin(ctx context.Context, operatorImage, configMapName, secretNam
 		return pgAdminPrepared{}, err
 	}
 	registerBuildInfo()
+	// A watched namespace the operator holds no right in (deleted after the
+	// install, and its RoleBinding with it) is left out of the watch
+	// rather than failing the start or turning features off elsewhere.
+	watched, err := reachableNamespaces(ctx, direct, loaded.Config.WatchNamespaces)
+	if err != nil {
+		return pgAdminPrepared{}, err
+	}
+	loaded.Config.WatchNamespaces = watched
 	features, err := probeFeatures(ctx, direct, loaded.Config.WatchNamespaces)
 	if err != nil {
 		return pgAdminPrepared{}, err
@@ -205,6 +213,30 @@ func probeFeatures(ctx context.Context, reader client.Reader, namespaces []strin
 		return features, errors.New("the CloudNativePG Cluster API is required: " + clusters.Reason)
 	}
 	return features, nil
+}
+
+// reachableNamespaces keeps the watched namespaces where the operator may
+// list CloudNativePG Clusters (the one kind every controller needs) and logs
+// each one it is refused in: a namespace deleted after the install takes the
+// chart's RoleBinding with it, and a recreated one needs `helm upgrade` (the
+// RoleBinding) and a restart of the operator before it is watched again. At
+// least one namespace must answer; empty (every namespace) stays empty.
+func reachableNamespaces(ctx context.Context, reader client.Reader, namespaces []string) ([]string, error) {
+	if len(namespaces) == 0 {
+		return nil, nil
+	}
+	reachable, refused, err := discovery.ReachableNamespaces(ctx, reader, cnpgv1.SchemeGroupVersion.WithKind("Cluster"), namespaces)
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range refused {
+		setupLog.Error(errors.New(r.Reason), "watched namespace left out: deleted, or the operator is not bound in it (helm upgrade, then restart the operator)",
+			"namespace", r.Namespace)
+	}
+	if len(reachable) == 0 {
+		return nil, fmt.Errorf("none of the watched namespaces %v lets the operator list CloudNativePG Clusters: they do not exist or the operator is not bound in them", namespaces)
+	}
+	return reachable, nil
 }
 
 func registerBuildInfo() {

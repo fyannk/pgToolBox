@@ -1,7 +1,7 @@
 # Default values for pgtoolbox: the operator.
 #
 # One operator per cluster: a single instance. operator.config.watchNamespaces narrows
-# its caches, not its RBAC: the ClusterRole still grants every namespace.
+# its caches and its RBAC to the listed namespaces (see below).
 # It reconciles the v1alpha1 kinds PgToolBoxConsole, PgAdmin and EvidenceAgent, and
 # decides PgAccessRequests. The team tools without the operator (the console,
 # the evidence agent, pgAdmin) are the pgtools chart.
@@ -101,11 +101,18 @@ operator:
     # namespace the ClusterRole allows. Set, it narrows the caches and the RBAC:
     # the manager ClusterRole is bound by a RoleBinding in each listed namespace
     # (they must exist at install time), so the operator holds Secrets, workloads
-    # and RBAC objects only there, and a second ClusterRole with the cluster-scoped
-    # rules alone (TokenReview, SubjectAccessReview, ClusterRoles it binds) is
-    # bound cluster-wide. Empty: the whole role is a ClusterRoleBinding. A second
-    # operator release for other namespaces still collides on the cluster-scoped
-    # names and the CRDs.
+    # and RBAC objects only there (`bind` on the console ClusterRoles included), a
+    # second ClusterRole with the cluster-scoped rules alone (TokenReview,
+    # SubjectAccessReview, Nodes list, the evidence agent's ClusterRole and
+    # binding) is bound cluster-wide as `<fullname>-manager-cluster`, and a Role
+    # in the release namespace grants `get` on the `pgtoolbox-operator-config`
+    # ConfigMap and Secret (the release namespace need not be listed). Empty:
+    # the whole role is the ClusterRoleBinding `<fullname>-manager`; switching
+    # modes with `helm upgrade` replaces one binding by the other. A listed
+    # namespace deleted later is left out at the operator's next start (logged);
+    # once it is recreated, run `helm upgrade` (its RoleBinding) and restart the
+    # operator. A second operator release for other namespaces still collides on
+    # the cluster-scoped names and the CRDs.
     watchNamespaces: []
     # -- Reconciles the operator runs in parallel (`MAX_CONCURRENT_RECONCILES`). 0
     # keeps the operator's default.

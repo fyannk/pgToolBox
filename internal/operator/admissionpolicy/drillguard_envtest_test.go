@@ -161,7 +161,11 @@ func TestEnvtestRestoreDrillGuards(t *testing.T) {
 			Verbs: []string{"get", "list", "watch", "delete"},
 		}},
 	}
-	objects = append(objects, plainDelete)
+	everything := &rbacv1.ClusterRole{
+		ObjectMeta: metav1.ObjectMeta{Name: "everything"},
+		Rules:      []rbacv1.PolicyRule{{APIGroups: []string{"*"}, Resources: []string{"*"}, Verbs: []string{"*"}}},
+	}
+	objects = append(objects, plainDelete, everything)
 	for _, ns := range []string{"team-a", "team-b", "drills"} {
 		objects = append(objects, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}})
 	}
@@ -197,6 +201,29 @@ func TestEnvtestRestoreDrillGuards(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{Name: "pgc-console-restore-drills", Namespace: "drills"},
 			RoleRef:    rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "ClusterRole", Name: "clusters-delete"},
 			Subjects:   saSubject("team-b", "pgc-console"),
+		},
+	)
+	objects = append(objects,
+		// A stolen operator token: the operator holds bind on the drills
+		// role in the namespaces it watches (and, without watchNamespaces,
+		// cluster-wide). Bound to itself by a RoleBinding in team-a, or by
+		// a ClusterRoleBinding, it is still a drill holder, not an
+		// administrator.
+		&rbacv1.RoleBinding{
+			ObjectMeta: metav1.ObjectMeta{Name: "stolen-operator-token", Namespace: "team-a"},
+			RoleRef:    rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "ClusterRole", Name: "pgtoolbox-console-restore-drills"},
+			Subjects:   saSubject("pgtoolbox", "pgtoolbox"),
+		},
+		&rbacv1.ClusterRoleBinding{
+			ObjectMeta: metav1.ObjectMeta{Name: "stolen-operator-token"},
+			RoleRef:    rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "ClusterRole", Name: "pgtoolbox-console-restore-drills"},
+			Subjects:   saSubject("pgtoolbox", "pgtoolbox-crb"),
+		},
+		// A GitOps controller with every verb everywhere: an administrator.
+		&rbacv1.ClusterRoleBinding{
+			ObjectMeta: metav1.ObjectMeta{Name: "gitops"},
+			RoleRef:    rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "ClusterRole", Name: "everything"},
+			Subjects:   saSubject("gitops", "controller"),
 		},
 	)
 	// The prefix policy's parameters: the namespace's PgToolBoxConsoles.
@@ -340,6 +367,17 @@ func TestEnvtestRestoreDrillGuards(t *testing.T) {
 	t.Run("operator: a ServiceAccount without the drills role is not concerned", func(t *testing.T) {
 		u := cluster(t, "team-a", "orders-old", nil, nil)
 		allowed(t, as("team-a", "backup-console").Delete(t.Context(), u))
+	})
+	t.Run("operator: a ServiceAccount of another namespace bound to the drills role is guarded", func(t *testing.T) {
+		u := cluster(t, "team-a", "ledger", nil, nil)
+		denied(t, as("pgtoolbox", "pgtoolbox").Delete(t.Context(), u))
+		denied(t, as("pgtoolbox", "pgtoolbox-crb").Delete(t.Context(), u))
+		drill := cluster(t, "team-a", "drill-ledger-1", map[string]string{drillOwner: "team-a", drillOf: "ledger"}, sealed)
+		allowed(t, as("pgtoolbox", "pgtoolbox").Delete(t.Context(), drill))
+	})
+	t.Run("operator: a ServiceAccount holding every verb cluster-wide is not concerned", func(t *testing.T) {
+		u := cluster(t, "team-a", "ledger-old", nil, nil)
+		allowed(t, as("gitops", "controller").Delete(t.Context(), u))
 	})
 	t.Run("operator: an administrator is not concerned", func(t *testing.T) {
 		u := cluster(t, "team-a", "orders-older", nil, nil)

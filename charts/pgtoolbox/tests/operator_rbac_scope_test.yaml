@@ -6,6 +6,7 @@ templates:
   - templates/operator/clusterrolebinding.yaml
   - templates/operator/clusterrole-cluster-scoped.yaml
   - templates/operator/rolebindings.yaml
+  - templates/operator/config-role.yaml
 release:
   name: pgtoolbox
   namespace: pgtoolbox
@@ -15,18 +16,27 @@ tests:
     asserts:
       - hasDocuments: {count: 1}
         template: templates/operator/clusterrolebinding.yaml
+      - equal: {path: metadata.name, value: pgtoolbox-manager}
+        template: templates/operator/clusterrolebinding.yaml
       - equal: {path: roleRef.name, value: pgtoolbox-manager-role}
         template: templates/operator/clusterrolebinding.yaml
       - hasDocuments: {count: 0}
         template: templates/operator/clusterrole-cluster-scoped.yaml
       - hasDocuments: {count: 0}
         template: templates/operator/rolebindings.yaml
+      # The cluster-wide manager role already grants the config reads.
+      - hasDocuments: {count: 0}
+        template: templates/operator/config-role.yaml
 
   - it: binds the namespaced rules per watched namespace and only cluster-scoped rules cluster-wide
     set:
       operator.enabled: true
       operator.config.watchNamespaces: [team-a, team-b]
     asserts:
+      # Its own name: a roleRef is immutable, so switching the mode with helm
+      # upgrade replaces the default mode's binding instead of patching it.
+      - equal: {path: metadata.name, value: pgtoolbox-manager-cluster}
+        template: templates/operator/clusterrolebinding.yaml
       - equal: {path: roleRef.name, value: pgtoolbox-manager-cluster-role}
         template: templates/operator/clusterrolebinding.yaml
       - hasDocuments: {count: 2}
@@ -58,13 +68,55 @@ tests:
           value: {apiGroups: [""], resources: [nodes], verbs: [list]}
       - notExists: {path: "rules[1:][?(@.apiGroups[0]=='')]"}
       - notExists: {path: "rules[?(@.apiGroups[0]=='apps')]"}
-      - contains:
+      # No bind cluster-wide: with create clusterrolebindings it would let the
+      # operator's token bind pgtoolbox-console-restore-drills to itself in
+      # every namespace. The per-namespace RoleBinding grants bind there.
+      - notContains:
           path: rules
           content:
             apiGroups: [rbac.authorization.k8s.io]
             resourceNames: [pgtoolbox-console, pgtoolbox-console-pod-logs, pgtoolbox-console-restore-drills]
             resources: [clusterroles]
             verbs: [bind]
+      - notExists: {path: "rules[?(@.verbs[0]=='bind')]"}
+      - notExists: {path: "rules[?(@.verbs[0]=='escalate')]"}
+      - notExists: {path: "rules[?(@.verbs[0]=='impersonate')]"}
+
+  - it: lets the operator read its own ConfigMap and Secret, by name, in its namespace only
+    set:
+      operator.enabled: true
+      operator.config.watchNamespaces: [team-a]
+    template: templates/operator/config-role.yaml
+    asserts:
+      - hasDocuments: {count: 2}
+      - documentIndex: 0
+        isKind: {of: Role}
+      - documentIndex: 0
+        equal: {path: metadata.namespace, value: pgtoolbox}
+      - documentIndex: 0
+        equal:
+          path: rules
+          value:
+            - apiGroups: [""]
+              resourceNames: [pgtoolbox-operator-config]
+              resources: [configmaps, secrets]
+              verbs: [get]
+      - documentIndex: 1
+        isKind: {of: RoleBinding}
+      - documentIndex: 1
+        equal: {path: metadata.namespace, value: pgtoolbox}
+      - documentIndex: 1
+        equal: {path: roleRef, value: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: pgtoolbox-config}}
+      - documentIndex: 1
+        equal: {path: subjects, value: [{kind: ServiceAccount, name: pgtoolbox, namespace: pgtoolbox}]}
+
+  - it: still renders the config Role when the release namespace is watched too
+    set:
+      operator.enabled: true
+      operator.config.watchNamespaces: [pgtoolbox, team-a]
+    template: templates/operator/config-role.yaml
+    asserts:
+      - hasDocuments: {count: 2}
 
   - it: renders nothing of it with the operator off
     set:
