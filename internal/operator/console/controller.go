@@ -162,7 +162,12 @@ func (r *Reconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.
 	original := console.DeepCopy()
 	initializeConditions(console)
 	if console.Annotations[pgtoolboxv1alpha1.AnnotationReconcile] == pgtoolboxv1alpha1.ReconcileSkip {
-		return ctrl.Result{}, r.publish(ctx, console, original, conditions.Outcome{Paused: true})
+		// Paused, nothing is applied or observed, with one exception: a
+		// hostname outside the allow-list is withdrawn all the same (a
+		// pause must not keep a refused name published).
+		_, imageProblem := r.imageProblem(console)
+		err := r.checkHostname(ctx, console, imageProblem)
+		return ctrl.Result{}, r.publish(ctx, console, original, conditions.Outcome{Err: err, Paused: true})
 	}
 	loop := &loopState{}
 	err := r.reconcile(ctx, console, loop)
@@ -235,35 +240,9 @@ var stallRetries = map[pgtoolboxv1alpha1.Reason]time.Duration{
 //nolint:gocyclo,cyclop,funlen // the console's children, in dependency order.
 func (r *Reconciler) reconcile(ctx context.Context, console *pgtoolboxv1alpha1.PgToolBoxConsole, loop *loopState) error {
 	image := specs.ResolveImage(console.Spec.Image, r.DefaultImage)
-	var imageReason pgtoolboxv1alpha1.Reason
-	var imageProblem string
-	switch {
-	case image.Reference == "":
-		imageReason, imageProblem = pgtoolboxv1alpha1.ReasonConsoleImageRequired,
-			"spec.image is not set and the operator has no default console image (--default-console-image)"
-	case console.Spec.Image != nil && !specs.ImageAllowed(console.Spec.Image.Repository, r.AllowedImageRepositories, r.DefaultImage):
-		imageReason, imageProblem = pgtoolboxv1alpha1.ReasonImageNotAllowed, fmt.Sprintf(
-			"spec.image repository %s is not in the operator's allow-list (--console-image-repositories)", console.Spec.Image.Repository)
-	}
-	// The hostname allow-list, before anything else may stall (the image
-	// checks included): withdraw what this console published, then stall,
-	// so that nothing stays published under a name the installer did not
-	// allow, whatever else is wrong. The workload and the ingress policy
-	// stay as they were (a template that trusts every peer is never left
-	// without its policy): ExposureConfined says the policy is kept, and
-	// goes only when there is none. ExposureReady and status.url say that
-	// nothing is published any more.
-	if message := exposure.HostnameRefusal(console.Spec.Exposure.ExposureSpec, r.AllowedHostSuffixes, imageProblem); message != "" {
-		if err := r.withdrawExposure(ctx, console); err != nil {
-			return err
-		}
-		if err := r.policyKeptOnStall(ctx, console); err != nil {
-			return err
-		}
-		console.Status.URL = ""
-		setCondition(console, pgtoolboxv1alpha1.ConditionExposureReady, metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonHostnameNotAllowed,
-			exposure.WithdrawnMessage)
-		return r.invalid(console, pgtoolboxv1alpha1.ReasonHostnameNotAllowed, message)
+	imageReason, imageProblem := r.imageProblem(console)
+	if err := r.checkHostname(ctx, console, imageProblem); err != nil {
+		return err
 	}
 	if imageProblem != "" {
 		return r.invalid(console, imageReason, imageProblem)
@@ -768,6 +747,50 @@ func (r *Reconciler) createLease(ctx context.Context, lease client.Object) error
 
 // invalid records ConfigurationValid=False and stalls: nothing is rendered
 // until the PgToolBoxConsole (or the operator's installation) changes.
+// imageProblem is the reason and message of a console image the operator
+// refuses (none to resolve, or outside the allow-list); empty when allowed.
+func (r *Reconciler) imageProblem(console *pgtoolboxv1alpha1.PgToolBoxConsole) (pgtoolboxv1alpha1.Reason, string) {
+	image := specs.ResolveImage(console.Spec.Image, r.DefaultImage)
+	switch {
+	case image.Reference == "":
+		return pgtoolboxv1alpha1.ReasonConsoleImageRequired,
+			"spec.image is not set and the operator has no default console image (--default-console-image)"
+	case console.Spec.Image != nil && !specs.ImageAllowed(console.Spec.Image.Repository, r.AllowedImageRepositories, r.DefaultImage):
+		return pgtoolboxv1alpha1.ReasonImageNotAllowed, fmt.Sprintf(
+			"spec.image repository %s is not in the operator's allow-list (--console-image-repositories)", console.Spec.Image.Repository)
+	}
+	return "", ""
+}
+
+// checkHostname is the hostname allow-list, before anything else may stall
+// (the image checks included), and while the console is paused too:
+// withdraw what this console published, then stall, so that nothing stays
+// published under a name the installer did not allow, whatever else is
+// wrong. The workload and the ingress policy stay as they were (a template
+// that trusts every peer is never left without its policy):
+// ExposureConfined says the policy is kept, and goes only when there is
+// none. ExposureReady and status.url say that nothing is published any
+// more. An allowed hostname clears a HostnameNotAllowed that conditions
+// still say (exposure.ClearHostnameRefusal). imageProblem is named in the
+// same message.
+func (r *Reconciler) checkHostname(ctx context.Context, console *pgtoolboxv1alpha1.PgToolBoxConsole, imageProblem string) error {
+	message := exposure.HostnameRefusal(console.Spec.Exposure.ExposureSpec, r.AllowedHostSuffixes, imageProblem)
+	if message == "" {
+		exposure.ClearHostnameRefusal(&console.Status.Conditions, console.Generation)
+		return nil
+	}
+	if err := r.withdrawExposure(ctx, console); err != nil {
+		return err
+	}
+	if err := r.policyKeptOnStall(ctx, console); err != nil {
+		return err
+	}
+	console.Status.URL = ""
+	setCondition(console, pgtoolboxv1alpha1.ConditionExposureReady, metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonHostnameNotAllowed,
+		exposure.WithdrawnMessage)
+	return r.invalid(console, pgtoolboxv1alpha1.ReasonHostnameNotAllowed, message)
+}
+
 func (r *Reconciler) invalid(console *pgtoolboxv1alpha1.PgToolBoxConsole, reason pgtoolboxv1alpha1.Reason, message string) error {
 	setCondition(console, pgtoolboxv1alpha1.ConditionConfigurationValid, metav1.ConditionFalse, reason, message)
 	return reconcile.Stall(reason, "%s", message)

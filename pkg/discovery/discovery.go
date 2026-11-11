@@ -27,6 +27,7 @@ import (
 	"errors"
 	"fmt"
 
+	"golang.org/x/sync/errgroup"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -112,24 +113,53 @@ func classify(gvk schema.GroupVersionKind, namespace string, err error) (Result,
 	}
 }
 
-// ProbeNamespaces probes gvk in every namespace of namespaces, or once
-// cluster-wide when namespaces is empty, and returns the first outcome that
-// is not Available: a feature a controller enables is watched in every
+// ProbeConcurrency bounds how many probe Lists ProbeNamespaces and
+// ReachableNamespaces run at once: a start-up that watches a hundred
+// namespaces probes them in a few round trips instead of one after the
+// other, without opening a hundred requests at once.
+const ProbeConcurrency = 16
+
+// probeEach probes gvk in every namespace, at most ProbeConcurrency at a
+// time, and returns the outcomes in the order of namespaces. The first
+// error cancels the probes still running and is the one returned.
+func probeEach(ctx context.Context, c Lister, gvk schema.GroupVersionKind, namespaces []string) ([]Result, error) {
+	results := make([]Result, len(namespaces))
+	group, groupCtx := errgroup.WithContext(ctx)
+	group.SetLimit(ProbeConcurrency)
+	for i, namespace := range namespaces {
+		group.Go(func() error {
+			probed, err := classify(gvk, namespace, listOne(groupCtx, c, gvk, namespace))
+			results[i] = probed
+			return err
+		})
+	}
+	if err := group.Wait(); err != nil {
+		return nil, err
+	}
+	return results, nil
+}
+
+// ProbeNamespaces probes gvk in every namespace of namespaces (concurrently,
+// ProbeConcurrency at a time), or once cluster-wide when namespaces is
+// empty, and returns the first outcome, in the order of namespaces, that is
+// not Available: a feature a controller enables is watched in every
 // namespace it watches, so one namespace where the List is refused turns
-// it off everywhere rather than leaving a watch that never syncs.
+// it off everywhere rather than leaving a watch that never syncs. Any error
+// is returned, whatever the other namespaces answered.
 func ProbeNamespaces(ctx context.Context, c Lister, gvk schema.GroupVersionKind, namespaces []string) (Result, error) {
 	if len(namespaces) == 0 {
 		return ProbeListable(ctx, c, gvk, "")
 	}
-	var result Result
-	for _, namespace := range namespaces {
-		probed, err := ProbeListable(ctx, c, gvk, namespace)
-		if err != nil || !probed.Usable() {
-			return probed, err
-		}
-		result = probed
+	results, err := probeEach(ctx, c, gvk, namespaces)
+	if err != nil {
+		return Result{GVK: gvk}, err
 	}
-	return result, nil
+	for _, probed := range results {
+		if !probed.Usable() {
+			return probed, nil
+		}
+	}
+	return results[len(results)-1], nil
 }
 
 // ReachableNamespaces splits namespaces into those where the caller may list
@@ -143,16 +173,17 @@ func ProbeNamespaces(ctx context.Context, c Lister, gvk schema.GroupVersionKind,
 // not accepted (a token being rotated, an authentication webhook down), not
 // that the namespace is out of reach, and dropping the namespace would last
 // for the life of the process. Empty namespaces (cluster-wide) are returned as
-// they are.
+// they are. The namespaces are probed concurrently, ProbeConcurrency at a
+// time; both lists keep the order of namespaces.
 func ReachableNamespaces(ctx context.Context, c Lister, gvk schema.GroupVersionKind, namespaces []string) (reachable []string, refused []Result, err error) {
-	for _, namespace := range namespaces {
-		probed, err := classify(gvk, namespace, listOne(ctx, c, gvk, namespace))
-		if err != nil {
-			return nil, nil, err
-		}
+	results, err := probeEach(ctx, c, gvk, namespaces)
+	if err != nil {
+		return nil, nil, err
+	}
+	for i, probed := range results {
 		switch probed.State {
 		case Available:
-			reachable = append(reachable, namespace)
+			reachable = append(reachable, namespaces[i])
 		case Forbidden:
 			refused = append(refused, probed)
 		case NotInstalled:

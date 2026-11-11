@@ -17,14 +17,19 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
@@ -164,5 +169,106 @@ func TestPrepareStartupDeadline(t *testing.T) {
 				t.Fatalf("took %s", elapsed)
 			}
 		})
+	}
+}
+
+// TestStartupStepHungAPIServer: a real API server that accepts the
+// connection and never answers fails the step at its deadline, naming it,
+// although the client's lazy RESTMapper sends its discovery request without
+// the step's context (it would otherwise wait until the liveness probe
+// kills the container, with no step named).
+func TestStartupStepHungAPIServer(t *testing.T) {
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	t.Cleanup(server.Close)
+	t.Cleanup(func() { close(release) })
+	// No request timeout, as on the manager's config: the deadline alone
+	// must end the step.
+	c, err := client.New(&rest.Config{Host: server.URL, QPS: -1}, client.Options{Scheme: scheme})
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	start := time.Now()
+	go func() {
+		done <- startupStep(t.Context(), 300*time.Millisecond, "probe the optional APIs", func(ctx context.Context) error {
+			return c.Get(ctx, client.ObjectKey{Namespace: "team-a", Name: "x"}, &corev1.ConfigMap{})
+		})
+	}()
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), `"probe the optional APIs" did not finish within 300ms`) {
+			t.Fatalf("error = %v, want the step named with its deadline", err)
+		}
+		if elapsed := time.Since(start); elapsed > 3*time.Second {
+			t.Fatalf("returned after %s, want about the deadline", elapsed)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the step is still running 5 s after its 300 ms deadline")
+	}
+}
+
+// TestStartupClientHasARequestTimeout: the start-up client ends the request
+// a hung step leaves behind, on a copy: the manager's config (whose watches
+// a client timeout would cut) is not changed.
+func TestStartupClientHasARequestTimeout(t *testing.T) {
+	cfg := &rest.Config{Host: "https://127.0.0.1:1"}
+	if _, err := startupClient(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Timeout != 0 {
+		t.Fatalf("startupClient changed the shared config: Timeout = %s", cfg.Timeout)
+	}
+	if got := startupConfig(cfg); got.Timeout != startupStepTimeout || got.Host != cfg.Host {
+		t.Fatalf("start-up config timeout %s host %q, want %s on a copy of %q", got.Timeout, got.Host, startupStepTimeout, cfg.Host)
+	}
+	if cfg.Timeout != 0 {
+		t.Fatalf("startupConfig changed the shared config: Timeout = %s", cfg.Timeout)
+	}
+}
+
+// TestPrepareManyWatchedNamespaces: the start-up probes of an operator that
+// watches many namespaces fit in the step's deadline (the namespaces are
+// probed concurrently): 120 namespaces at 20 ms a List are 2.4 s per kind
+// one after the other, about 17 s for the seven kinds of the optional-API
+// step, against a 3 s deadline here.
+func TestPrepareManyWatchedNamespaces(t *testing.T) {
+	namespaces := make([]string, 120)
+	for i := range namespaces {
+		namespaces[i] = fmt.Sprintf("team-%03d", i)
+	}
+	t.Setenv("WATCH_NAMESPACES", strings.Join(namespaces, ","))
+	t.Setenv("OPERATOR_IMAGE", "registry.example.com/pgtoolbox/operator:test")
+	slow := func(ctx context.Context) error {
+		select {
+		case <-time.After(20 * time.Millisecond):
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	reader := fake.NewClientBuilder().WithScheme(scheme).WithInterceptorFuncs(interceptor.Funcs{
+		List: func(ctx context.Context, _ client.WithWatch, _ client.ObjectList, _ ...client.ListOption) error {
+			return slow(ctx)
+		},
+	}).Build()
+	prepared, err := preparePgAdminWith(t.Context(), reader, prometheus.NewRegistry(), 3*time.Second,
+		configuration.Objects{Namespace: "pgtoolbox", ConfigMap: "pgtoolbox-operator-config", Secret: "pgtoolbox-operator-config"})
+	if err != nil {
+		t.Fatalf("start-up with %d watched namespaces: %v", len(namespaces), err)
+	}
+	if !slices.Equal(prepared.Config.WatchNamespaces, namespaces) {
+		t.Fatalf("watched %d namespaces, want %d in order", len(prepared.Config.WatchNamespaces), len(namespaces))
+	}
+	if !prepared.Features.Poolers.Usable() || !prepared.Features.Routes.Usable() {
+		t.Fatalf("features %+v", prepared.Features)
+	}
+	if _, _, _, err := probeEvidenceAgentAPIs(t.Context(), reader, namespaces, 3*time.Second); err != nil {
+		t.Fatalf("EvidenceAgent probes with %d watched namespaces: %v", len(namespaces), err)
 	}
 }

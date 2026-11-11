@@ -57,7 +57,9 @@ A pass is *converged* only when nothing failed and every aspect is `True`.
   operator cannot make progress without a change of input (and `Progressing` is
   then `False`). A stall is not retried with backoff; a watched change resolves it.
 - **Paused** (`reconcile: skip`): `Progressing=False` and `Ready=Unknown`, both
-  `ReconciliationPaused`.
+  `ReconciliationPaused`; a paused `PgAdmin` or `PgToolBoxConsole` whose hostname
+  is refused also says `Stalled=True` (`HostnameNotAllowed`), with `Progressing`
+  carrying that reason.
 - Every message is bounded.
 - **Events.** One Event per transition worth attention, after the status write
   succeeded: `Ready` turning `True` (Normal, `AsExpected`); `Stalled` turning
@@ -234,7 +236,7 @@ Reasons are registered once, by owner. `common` reasons are shared by every kind
 | `GatewayNotFound`, `HostnameConflict` | The Gateway named by `parentRef` is absent; another route claims the hostname. Registered; the current reconcilers do not set them. |
 | `RouteAPIUnavailable`, `GatewayAPIUnavailable` | The optional API the exposure needs is not served or not readable. The operator probes the optional APIs (Routes, Gateways, DatabaseRoles, Poolers, Databases, the backup plugins' kinds) once at start: not served or refused by RBAC (403) turns the feature off until the next start; any other answer, a refused credential (401) included, fails the start, which the restart retries. |
 | `ImageNotAllowed` | A `spec.image` or oauth-proxy image repository is outside the operator's [allow-list](images.md) (`ConfigurationValid=False`; both kinds). |
-| `HostnameNotAllowed` | `spec.exposure.hostname` is outside the operator's `EXPOSURE_ALLOWED_HOST_SUFFIXES` (`ConfigurationValid=False` and a stall; `PgAdmin` and `PgToolBoxConsole`). What was published under the name is withdrawn, whatever else stalls: the hostname is checked first, `ExposureReady` turns `False` with this reason and `status.url` is cleared (one Warning for both conditions), and when the image is refused too (`ImageNotAllowed`, and `ConsoleImageRequired` for a `PgToolBoxConsole`) the message names both. A `PgAdmin`'s settings database (`spec.configDatabase`) is checked once the hostname is fixed. |
+| `HostnameNotAllowed` | `spec.exposure.hostname` is outside the operator's `EXPOSURE_ALLOWED_HOST_SUFFIXES` (chart value `operator.exposure.allowedHostSuffixes`; the message names both) (`ConfigurationValid=False` and a stall; `PgAdmin` and `PgToolBoxConsole`). What was published under the name is withdrawn, whatever else stalls and while the object is paused (`pgtoolbox.fyannk.dev/reconcile=skip`) too: the hostname is checked first, `ExposureReady` turns `False` with this reason and `status.url` is cleared (one Warning for both conditions), and when the image is refused too (`ImageNotAllowed`, and `ConsoleImageRequired` for a `PgToolBoxConsole`) the message names both. Once the hostname is allowed, a condition that still says `HostnameNotAllowed` turns `Unknown` (`Reconciling`) until the loop says what holds now, so another stall (a refused image, a missing ClusterRole) never leaves the old refusal on show. A `PgAdmin`'s settings database (`spec.configDatabase`) is checked once the hostname is fixed. |
 | `ReconciliationFailed`, `QuotaExceeded`, `AdmissionDenied` | Event reasons: the classified Warning recorded when an error ends a reconciliation. |
 
 ### pgadmin

@@ -21,6 +21,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"os"
 	"strings"
 	"time"
@@ -78,7 +79,13 @@ func evidenceAgentCacheOptions(options *ctrl.Options) {
 // informers hold (pgtoolbox_cached_objects). A probe error other than "not
 // served / not allowed" fails the start.
 func setupEvidenceAgent(ctx context.Context, mgr ctrl.Manager, watchNamespaces []string) ([]client.Object, error) {
-	objectStoreAPI, stanzaAPI, archiveAPI, err := probeEvidenceAgentAPIs(ctx, mgr.GetAPIReader(), watchNamespaces, startupStepTimeout)
+	// The probes read past the cache through a start-up client (a request
+	// timeout on a copy of the manager's config), not mgr.GetAPIReader().
+	direct, err := startupClient(mgr.GetConfig())
+	if err != nil {
+		return nil, fmt.Errorf("build API client: %w", err)
+	}
+	objectStoreAPI, stanzaAPI, archiveAPI, err := probeEvidenceAgentAPIs(ctx, direct, watchNamespaces, startupStepTimeout)
 	if err != nil {
 		return nil, err
 	}
@@ -117,16 +124,18 @@ func splitList(raw string) []string {
 func probeEvidenceAgentAPIs(ctx context.Context, reader client.Reader, watchNamespaces []string, timeout time.Duration) (
 	objectStore, stanza, archive discovery.Result, err error,
 ) {
-	err = startupStep(ctx, timeout, "probe the EvidenceAgent's optional APIs", func(ctx context.Context) error {
+	type results struct{ objectStore, stanza, archive discovery.Result }
+	got, err := startupRead(ctx, timeout, "probe the EvidenceAgent's optional APIs", func(ctx context.Context) (results, error) {
+		var r results
 		var err error
-		if objectStore, err = discovery.ProbeObjectStoreAPI(ctx, reader, watchNamespaces); err != nil {
-			return err
+		if r.objectStore, err = discovery.ProbeObjectStoreAPI(ctx, reader, watchNamespaces); err != nil {
+			return r, err
 		}
-		if stanza, err = discovery.ProbeStanzaAPI(ctx, reader, watchNamespaces); err != nil {
-			return err
+		if r.stanza, err = discovery.ProbeStanzaAPI(ctx, reader, watchNamespaces); err != nil {
+			return r, err
 		}
-		archive, err = discovery.ProbeArchiveAPI(ctx, reader, watchNamespaces)
-		return err
+		r.archive, err = discovery.ProbeArchiveAPI(ctx, reader, watchNamespaces)
+		return r, err
 	})
-	return objectStore, stanza, archive, err
+	return got.objectStore, got.stanza, got.archive, err
 }

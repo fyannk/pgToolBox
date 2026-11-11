@@ -33,6 +33,7 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	pgtoolboxv1alpha1 "github.com/fyannk/pgToolBox/api/v1alpha1"
+	"github.com/fyannk/pgToolBox/internal/operator/conditions"
 	"github.com/fyannk/pgToolBox/internal/operator/specs"
 )
 
@@ -317,7 +318,8 @@ func HostnameRefusal(spec pgtoolboxv1alpha1.ExposureSpec, suffixes []string, als
 		return ""
 	}
 	var message strings.Builder
-	fmt.Fprintf(&message, "spec.exposure.hostname %s is not under the operator's allowed host suffixes (EXPOSURE_ALLOWED_HOST_SUFFIXES: %s)",
+	fmt.Fprintf(&message, "spec.exposure.hostname %s is not under the operator's allowed host suffixes "+
+		"(EXPOSURE_ALLOWED_HOST_SUFFIXES, chart value operator.exposure.allowedHostSuffixes: %s)",
 		spec.Hostname, strings.Join(suffixes, ", "))
 	for _, problem := range also {
 		if problem != "" {
@@ -331,3 +333,23 @@ func HostnameRefusal(spec pgtoolboxv1alpha1.ExposureSpec, suffixes []string, als
 // refused (status False, reason HostnameNotAllowed): the Route, Ingress
 // or HTTPRoute is withdrawn and status.url is cleared.
 const WithdrawnMessage = "nothing is published: spec.exposure.hostname is outside the operator's allowed host suffixes (see ConfigurationValid)"
+
+// HostnameAllowedMessage is the message of a condition that said
+// HostnameNotAllowed once the hostname is allowed again, until the loop
+// gets far enough to say what holds now (ClearHostnameRefusal).
+const HostnameAllowedMessage = "spec.exposure.hostname is allowed: not evaluated again yet"
+
+// ClearHostnameRefusal turns ExposureReady and ConfigurationValid back to
+// Unknown (reason Reconciling) when they still say HostnameNotAllowed and
+// the hostname is now allowed: a loop that then stalls or fails on
+// something else before it reaches the exposure (a refused image, a
+// missing ClusterRole) must not keep reporting a refusal that no longer
+// holds. A condition with any other reason is left as it is, so a no-op
+// loop writes nothing.
+func ClearHostnameRefusal(conds *[]metav1.Condition, generation int64) {
+	for _, conditionType := range []string{pgtoolboxv1alpha1.ConditionExposureReady, pgtoolboxv1alpha1.ConditionConfigurationValid} {
+		if c := meta.FindStatusCondition(*conds, conditionType); c != nil && c.Reason == pgtoolboxv1alpha1.ReasonHostnameNotAllowed.String() {
+			conditions.Set(conds, generation, conditionType, metav1.ConditionUnknown, pgtoolboxv1alpha1.ReasonReconciling, HostnameAllowedMessage)
+		}
+	}
+}
