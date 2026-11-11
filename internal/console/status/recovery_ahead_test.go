@@ -488,8 +488,16 @@ func TestEdgeAdvice(t *testing.T) {
 		{r("recovery.reason.failedRecently", "recovery.reason.archiverHibernated"), viewmodel.EdgeAdviceNone},
 		{r("recovery.reason.holes", "recovery.reason.archiveBacklog"), viewmodel.EdgeAdviceArchiver},
 	} {
-		if got := edgeAdvice(c.reasons); got != c.want {
+		if got := edgeAdvice(c.reasons, false); got != c.want {
 			t.Errorf("%+v: %q, want %q", c.reasons, got, c.want)
 		}
+	}
+	// Archiving failing under a reported window, which gives no
+	// archiving reason: no switch.
+	if got := edgeAdvice(r("recovery.reason.reportedWindow"), true); got != viewmodel.EdgeAdviceArchiver {
+		t.Errorf("archiving failing, reported window: %q, want archiver", got)
+	}
+	if got := edgeAdvice(r("recovery.reason.archiverHibernated"), true); got != viewmodel.EdgeAdviceNone {
+		t.Errorf("archiving failing, hibernated: %q, want none", got)
 	}
 }

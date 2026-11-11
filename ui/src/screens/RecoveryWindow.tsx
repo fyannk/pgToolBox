@@ -405,28 +405,26 @@ function uncertainEdge(t: RecoveryTimeline): boolean {
 }
 
 /**
- * The reasons that say no primary runs, or none was read, to act on: a
- * hibernated Cluster, and the post-failover lag beside an unread primary
- * (fenced, unreachable). Go gives no advice to act on the primary then, and
- * neither does the hint below.
+ * What a DBA can check by hand at an uncertain edge; the console runs none
+ * of it. Go narrows it in edgeAdvice, from one reason map
+ * (internal/console/status/recovery.go edgeAdviceOf): "none" when no
+ * primary runs or none was read to run anything on, "archiver" when
+ * archiving fails or lags and a WAL switch would wait like the rest. This
+ * file keeps no list of its own. Without an agent there is no evidence to
+ * refresh.
  */
-const NO_PRIMARY_TO_ACT_ON = new Set([
-  "recovery.reason.archiverHibernated",
-  "recovery.reason.liveTimelineNotArchivedPrimaryUnread",
-]);
-
-function primaryToActOn(t: RecoveryTimeline): boolean {
-  return !(t.reasons ?? []).some((r) => NO_PRIMARY_TO_ACT_ON.has(r.code));
-}
-
-/** What a DBA can check by hand at an uncertain edge; the console runs none of it. Without an agent there is no evidence to refresh. */
-function PitrEdgeHint({ basis }: { basis: RecoveryTimeline["basis"] }) {
+function PitrEdgeHint({ basis, advice }: { basis: RecoveryTimeline["basis"]; advice: RecoveryTimeline["edgeAdvice"] }) {
+  if (advice === "none") return null;
   return (
     <div className="flex flex-col gap-1 text-label" data-pitr-edge-hint={basis}>
       <p className="m-0">{m.pitr_edge_hint_archiver()}</p>
       <CopyCode code="SELECT * FROM pg_stat_archiver;" label="pg_stat_archiver" />
-      <p className="m-0">{basis === "reported" ? m.pitr_edge_hint_switch_reported() : m.pitr_edge_hint_switch()}</p>
-      <CopyCode code="SELECT pg_switch_wal();" label="pg_switch_wal" />
+      {advice !== "archiver" && (
+        <>
+          <p className="m-0">{basis === "reported" ? m.pitr_edge_hint_switch_reported() : m.pitr_edge_hint_switch()}</p>
+          <CopyCode code="SELECT pg_switch_wal();" label="pg_switch_wal" />
+        </>
+      )}
     </div>
   );
 }
@@ -524,7 +522,7 @@ export function RecoveryWindowPanel({
           ))}
         </ul>
       )}
-      {uncertainEdge(t) && primaryToActOn(t) && <PitrEdgeHint basis={t.basis} />}
+      {uncertainEdge(t) && <PitrEdgeHint basis={t.basis} advice={t.edgeAdvice} />}
       <p className="m-0 text-caption text-muted">{m.recovery_strongest()}</p>
       {t.basis !== "none" && !t.restoreTested && (
         <p className="m-0 text-label font-semibold" data-restore-tested="false">

@@ -1543,6 +1543,8 @@
   "rp_reason_candidate_gaps": "la fenêtre a des trous possibles qu’un second parcours n’a pas encore confirmés",
   "rp_reason_failed_recently": "l’archivage des WAL a échoué récemment : les points de restauration les plus récents sont incertains",
   "rp_reason_archiving_failing": "l’archivage des WAL échoue : les WAL écrits depuis le segment le plus récent que contient le dépôt n’y sont probablement pas, donc les points de restauration les plus récents sont incertains ; la condition ContinuousArchiving du Cluster dit pourquoi",
+  "rp_reason_archiving_failed_primary_unread": "la dernière tentative d’archivage que rapporte le Cluster a échoué (ContinuousArchiving False), et le primaire n’a pas été lu : les WAL écrits depuis le segment le plus récent que contient le dépôt n’y sont peut-être pas, donc les points de restauration les plus récents sont incertains jusqu’à ce que le primaire soit relu",
+  "rp_reason_archiving_failed_primary_unread_since": "la dernière tentative d’archivage que rapporte le Cluster a échoué (ContinuousArchiving False depuis le {since}), et le primaire n’a pas été lu : les WAL écrits depuis le segment le plus récent que contient le dépôt n’y sont peut-être pas, donc les points de restauration les plus récents sont incertains jusqu’à ce que le primaire soit relu",
   "rp_reason_archive_backlog": "{segments} segments WAL attendent d’être archivés sur le primaire : les points de restauration les plus récents sont incertains",
   "rp_reason_orphan_timeline": "la timeline {timeline} est dans l’archive mais n’est reliée par aucun historique valide : une restauration ne peut pas la suivre",
   "rp_reason_undrawn": "certaines sauvegardes n’ont aucun chemin de restauration observé au-delà de leur point de cohérence",

@@ -871,7 +871,7 @@ func (s *Service) recoveryTimeline(ev clusterEvidence, summary viewmodel.BackupS
 		}
 	}
 	out.Markers = recoveryMarkers(ev.result.Backups, rows)
-	out.EdgeAdvice = edgeAdvice(out.Reasons)
+	out.EdgeAdvice = edgeAdvice(out.Reasons, archivingFailing(summary.Archiving))
 	return out
 }
 
@@ -893,9 +893,14 @@ var edgeAdviceOf = map[string]string{
 }
 
 // edgeAdvice is the narrowest advice any reason allows: none before
-// archiver before both checks ("").
-func edgeAdvice(reasons []viewmodel.Phrase) string {
+// archiver before both checks (""). Archiving read as failing allows the
+// archiver check at most, whatever the reasons say (a reported window
+// gives no archiving reason).
+func edgeAdvice(reasons []viewmodel.Phrase, failing bool) string {
 	out := ""
+	if failing {
+		out = viewmodel.EdgeAdviceArchiver
+	}
 	for _, r := range reasons {
 		switch edgeAdviceOf[r.Code] {
 		case viewmodel.EdgeAdviceNone:
@@ -946,10 +951,10 @@ func keptDroppedReason(dropped string) (viewmodel.Phrase, bool) {
 	switch dropped {
 	case evidence.KeptDroppedTooOld:
 		return say("recovery.reason.keptTooOld",
-			"the last good recovery paths are more than three refresh intervals (at least an hour) older than the latest scan and are no longer shown; check the evidence agent's logs for why reading its recovery paths fails, and that the object store answers", nil), true
+			"the last good recovery paths are more than three refresh intervals (at least an hour) older than the latest scan and are no longer shown; check the evidence agent’s logs for why reading its recovery paths fails, and that the object store answers", nil), true
 	case evidence.KeptDroppedRepositoryChanged:
 		return say("recovery.reason.keptRepositoryChanged",
-			"the repository's identity changed since the last good recovery paths were read: they describe another repository and are no longer shown; check the evidence agent's logs and that its object store configuration still names this cluster's repository", nil), true
+			"the repository’s identity changed since the last good recovery paths were read: they describe another repository and are no longer shown; check the evidence agent’s logs and that its object store configuration still names this cluster’s repository", nil), true
 	}
 	return viewmodel.Phrase{}, false
 }
