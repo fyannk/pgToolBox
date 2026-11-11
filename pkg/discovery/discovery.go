@@ -113,7 +113,7 @@ func classify(gvk schema.GroupVersionKind, namespace string, err error) (Result,
 	}
 }
 
-// ProbeConcurrency bounds how many probe Lists ProbeNamespaces and
+// ProbeConcurrency bounds how many probe Lists ProbeKinds and
 // ReachableNamespaces run at once: a start-up that watches a hundred
 // namespaces probes them in a few round trips instead of one after the
 // other, without opening a hundred requests at once.
@@ -121,15 +121,35 @@ const ProbeConcurrency = 16
 
 // probeEach probes gvk in every namespace, at most ProbeConcurrency at a
 // time, and returns the outcomes in the order of namespaces. The first
-// error cancels the probes still running and is the one returned.
+// namespace is probed alone first: a kind the cluster does not serve is not
+// served anywhere, so that one answer decides for every namespace (each one
+// is then returned NotInstalled) instead of one request per namespace, which
+// a real client's lazy RESTMapper sends one after the other under its lock
+// (a discovery GET of the missing group each time). The first error cancels
+// the probes still running and is the one returned.
 func probeEach(ctx context.Context, c Lister, gvk schema.GroupVersionKind, namespaces []string) ([]Result, error) {
 	results := make([]Result, len(namespaces))
+	if len(namespaces) == 0 {
+		return results, nil
+	}
+	first, err := classify(gvk, namespaces[0], listOne(ctx, c, gvk, namespaces[0]))
+	if err != nil {
+		return nil, err
+	}
+	results[0] = first
+	if first.State == NotInstalled {
+		for i, namespace := range namespaces {
+			results[i] = first
+			results[i].Namespace = namespace
+		}
+		return results, nil
+	}
 	group, groupCtx := errgroup.WithContext(ctx)
 	group.SetLimit(ProbeConcurrency)
-	for i, namespace := range namespaces {
+	for i, namespace := range namespaces[1:] {
 		group.Go(func() error {
 			probed, err := classify(gvk, namespace, listOne(groupCtx, c, gvk, namespace))
-			results[i] = probed
+			results[i+1] = probed
 			return err
 		})
 	}
@@ -139,27 +159,100 @@ func probeEach(ctx context.Context, c Lister, gvk schema.GroupVersionKind, names
 	return results, nil
 }
 
-// ProbeNamespaces probes gvk in every namespace of namespaces (concurrently,
-// ProbeConcurrency at a time), or once cluster-wide when namespaces is
-// empty, and returns the first outcome, in the order of namespaces, that is
-// not Available: a feature a controller enables is watched in every
-// namespace it watches, so one namespace where the List is refused turns
-// it off everywhere rather than leaving a watch that never syncs. Any error
-// is returned, whatever the other namespaces answered.
-func ProbeNamespaces(ctx context.Context, c Lister, gvk schema.GroupVersionKind, namespaces []string) (Result, error) {
+// Decision is the outcome of ProbeKinds: one Result per kind, the namespaces
+// kept, and the refusals that left the others out.
+type Decision struct {
+	// Results holds one outcome per kind, in the order the kinds were given.
+	Results []Result
+	// Namespaces is the namespaces kept, in their order; nil when the
+	// probes were cluster-wide.
+	Namespaces []string
+	// Dropped holds, for each namespace left out, the refusal that left it
+	// out, in the order the namespaces were dropped.
+	Dropped []Result
+}
+
+// ProbeKinds probes each optional kind of gvks in every namespace of
+// namespaces (concurrently, ProbeConcurrency at a time), or once
+// cluster-wide when namespaces is empty, and decides per kind:
+//
+//   - not served: the kind is NotInstalled, whatever the namespace (it is a
+//     fact about the cluster, found with one request);
+//   - refused (Forbidden) in every namespace still kept: the kind is
+//     Forbidden, the install's own choice, and the feature is off;
+//   - refused in only some of them: the kind stays Available and those
+//     namespaces are dropped, for every kind, like a namespace the caller
+//     cannot reach at all. A controller watches a kind in every namespace
+//     it watches, so the alternative would be to turn the feature off
+//     everywhere; but a namespace's own administrator can bind the caller
+//     to a narrower Role there, and one namespace must not be able to
+//     switch a feature off for every other tenant.
+//
+// The kinds are decided one after the other on the namespaces still kept,
+// so dropping never changes an earlier decision: available in every kept
+// namespace stays so on fewer, and refused in all of them stays refused.
+// No kind can drop the last namespace (refused in all of them is "off").
+// Any error is returned, whatever the other namespaces answered.
+func ProbeKinds(ctx context.Context, c Lister, gvks []schema.GroupVersionKind, namespaces []string) (Decision, error) {
+	decision := Decision{Results: make([]Result, len(gvks))}
 	if len(namespaces) == 0 {
-		return ProbeListable(ctx, c, gvk, "")
+		for i, gvk := range gvks {
+			result, err := ProbeListable(ctx, c, gvk, "")
+			if err != nil {
+				return Decision{}, err
+			}
+			decision.Results[i] = result
+		}
+		return decision, nil
 	}
-	results, err := probeEach(ctx, c, gvk, namespaces)
-	if err != nil {
-		return Result{GVK: gvk}, err
+	kept := append([]string(nil), namespaces...)
+	for i, gvk := range gvks {
+		results, err := probeEach(ctx, c, gvk, kept)
+		if err != nil {
+			return Decision{}, err
+		}
+		decision.Results[i] = decide(results)
+		if decision.Results[i].State != Available {
+			continue
+		}
+		next := kept[:0:0]
+		for j, probed := range results {
+			if probed.State == Forbidden {
+				decision.Dropped = append(decision.Dropped, probed)
+				continue
+			}
+			next = append(next, kept[j])
+		}
+		kept = next
 	}
-	for _, probed := range results {
-		if !probed.Usable() {
-			return probed, nil
+	decision.Namespaces = kept
+	return decision, nil
+}
+
+// decide is one kind's outcome over the namespaces probed: NotInstalled when
+// any namespace says so, Forbidden (the first refusal in namespace order)
+// when every namespace refuses, Available otherwise (the first available
+// namespace's result).
+func decide(results []Result) Result {
+	var refused, available *Result
+	for i := range results {
+		switch results[i].State {
+		case NotInstalled:
+			return results[i]
+		case Forbidden:
+			if refused == nil {
+				refused = &results[i]
+			}
+		case Available:
+			if available == nil {
+				available = &results[i]
+			}
 		}
 	}
-	return results[len(results)-1], nil
+	if available == nil {
+		return *refused
+	}
+	return *available
 }
 
 // ReachableNamespaces splits namespaces into those where the caller may list
@@ -197,14 +290,6 @@ func ReachableNamespaces(ctx context.Context, c Lister, gvk schema.GroupVersionK
 // API an EvidenceAgent resolves its repository from.
 var ObjectStoreGVK = schema.GroupVersionKind{Group: "barmancloud.cnpg.io", Version: "v1", Kind: "ObjectStore"}
 
-// ProbeObjectStoreAPI is the start-time probe of the barman-cloud
-// ObjectStore API in the watched namespaces (cluster-wide when none):
-// not served or forbidden turns the feature off (EvidenceAgents then
-// report ObjectStoreAPIUnavailable), any other error fails the start.
-func ProbeObjectStoreAPI(ctx context.Context, c Lister, namespaces []string) (Result, error) {
-	return ProbeNamespaces(ctx, c, ObjectStoreGVK, namespaces)
-}
-
 // StanzaGVK is Dalibo's pgBackRest plugin Stanza
 // (pgbackrest.dalibo.com): an optional API an EvidenceAgent
 // resolves a pgBackRest repository from.
@@ -214,20 +299,6 @@ var StanzaGVK = schema.GroupVersionKind{Group: "pgbackrest.dalibo.com", Version:
 // (pgbackrest.cnpg.opera.com): an optional API an EvidenceAgent
 // resolves a pgBackRest repository from.
 var ArchiveGVK = schema.GroupVersionKind{Group: "pgbackrest.cnpg.opera.com", Version: "v1", Kind: "Archive"}
-
-// ProbeStanzaAPI is the start-time probe of the Stanza API, with
-// ProbeObjectStoreAPI's semantics: not served or forbidden turns the
-// feature off (the EvidenceAgents of such Clusters report
-// ObjectStoreAPIUnavailable), any other error fails the start.
-func ProbeStanzaAPI(ctx context.Context, c Lister, namespaces []string) (Result, error) {
-	return ProbeNamespaces(ctx, c, StanzaGVK, namespaces)
-}
-
-// ProbeArchiveAPI is the start-time probe of the Archive API, with
-// ProbeObjectStoreAPI's semantics.
-func ProbeArchiveAPI(ctx context.Context, c Lister, namespaces []string) (Result, error) {
-	return ProbeNamespaces(ctx, c, ArchiveGVK, namespaces)
-}
 
 // isDiscoveryFailure matches the RESTMapper's report that a whole group
 // version is absent, which some client versions return instead of a

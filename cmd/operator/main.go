@@ -103,6 +103,9 @@ func main() {
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
 		LeaderElectionID:       "pgtoolbox.pgtoolbox.fyannk.dev",
+		// The controllers' setups resolve their kinds before the manager
+		// starts: a hung API server fails them, not the liveness probe.
+		MapperProvider: timedMapperProvider(mapperRequestTimeout),
 	}
 	consoleFeatures := pgToolBoxConsoleFeatures(pgAdminPrepared)
 	managerCacheOptions(&managerOptions, pgAdminPrepared, consoleFeatures)
@@ -112,7 +115,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	evidenceAgentKinds, err := setupEvidenceAgent(ctx, mgr, pgAdminPrepared.Config.WatchNamespaces)
+	evidenceAgentKinds, err := setupEvidenceAgent(ctx, mgr, pgAdminPrepared.EvidenceAgentAPIs)
 	if err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "EvidenceAgent")
 		os.Exit(1)

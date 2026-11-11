@@ -85,11 +85,11 @@ type Reconciler struct {
 	// choice is bounded here, by the operator's installer.
 	AllowedImageRepositories []string
 	// ObjectStoreAPI is the start-time probe of barmancloud.cnpg.io
-	// (discovery.ProbeObjectStoreAPI); the zero value is "unavailable".
+	// (discovery.ProbeKinds, with the PgAdmin ones); the zero value is "unavailable".
 	ObjectStoreAPI discovery.Result
 	// StanzaAPI and ArchiveAPI are the start-time probes of the two
-	// pgBackRest plugins' kinds (discovery.ProbeStanzaAPI,
-	// ProbeArchiveAPI), with the same zero value.
+	// pgBackRest plugins' kinds (discovery.StanzaGVK, ArchiveGVK), with
+	// the same zero value.
 	StanzaAPI  discovery.Result
 	ArchiveAPI discovery.Result
 	// Now is injectable for certificate tests.
