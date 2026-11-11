@@ -93,6 +93,8 @@ func TestASignOutNamesThePersonSealedAtSignIn(t *testing.T) {
 		fail func(*testEnv)
 		// shared: the sign-out reaches the state ConfigMap.
 		shared bool
+		// untagged reseals the session without its person's tag.
+		untagged bool
 	}{
 		{
 			name: "API server unreachable", provider: ProviderToken, signIn: signIn,
@@ -111,11 +113,28 @@ func TestASignOutNamesThePersonSealedAtSignIn(t *testing.T) {
 			shared: true,
 		},
 		{
-			// Dead on every replica already: sharing it would only spend
-			// the ConfigMap's bounds.
+			// A 401 at sign-out may be the token webhook being down
+			// (OpenShift's oauth-apiserver, EKS, GKE), not the token being
+			// dead: the sign-out used to stay on this replica, and the
+			// copied cookie worked on the others once the webhook was back
+			// (round 8).
 			name: "token rejected, nothing to renew it", provider: ProviderToken, signIn: signIn,
 			fail:   func(e *testEnv) { e.rev.mu.Lock(); delete(e.rev.users, "sa-token"); e.rev.mu.Unlock() },
+			shared: true,
+		},
+		{
+			// Naming nobody, refused and not renewable: kept on this
+			// replica only, so as not to spend the unnamed sessions' bound.
+			name: "unnamed session, token rejected, nothing to renew it", provider: ProviderToken, untagged: true,
+			signIn: signIn,
+			fail:   func(e *testEnv) { e.rev.mu.Lock(); delete(e.rev.users, "sa-token"); e.rev.mu.Unlock() },
 			shared: false,
+		},
+		{
+			name: "unnamed session, API server unreachable", provider: ProviderToken, untagged: true,
+			signIn: signIn,
+			fail:   func(e *testEnv) { e.rev.mu.Lock(); e.rev.down = true; e.rev.mu.Unlock() },
+			shared: true,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -128,6 +147,9 @@ func TestASignOutNamesThePersonSealedAtSignIn(t *testing.T) {
 			s := sessionOf(t, b)
 			if len(s.SubjectTag) != 32 {
 				t.Fatalf("the session seals no person's tag: %q", s.SubjectTag)
+			}
+			if tc.untagged {
+				s = resealWithoutTag(t, b, s)
 			}
 			tc.fail(env)
 			logout(t, b)
@@ -146,6 +168,26 @@ func TestASignOutNamesThePersonSealedAtSignIn(t *testing.T) {
 			}
 		})
 	}
+}
+
+// resealWithoutTag rewrites the browser's session cookie without the
+// person's tag, as a session sealed before tags existed would be.
+func resealWithoutTag(t *testing.T, b *browser, s Session) Session {
+	t.Helper()
+	s.SubjectTag = ""
+	r := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "https://c.example/", nil)
+	w := httptest.NewRecorder()
+	s, err := b.env.codec.WriteSession(w, r, s)
+	if err != nil {
+		t.Fatalf("reseal: %v", err)
+	}
+	for _, c := range w.Result().Cookies() {
+		b.jar[c.Name] = c
+	}
+	if got := sessionOf(t, b); got.SubjectTag != "" || got.ID != s.ID {
+		t.Fatalf("the resealed session still names %q", got.SubjectTag)
+	}
+	return s
 }
 
 // The tag is keyed by the session secret: the same person gets the same
