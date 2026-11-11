@@ -187,6 +187,18 @@ type Reading struct {
 	VolumeUsages         []VolumeUsage
 }
 
+// Masked reports a report the instance manager answered without reading
+// PostgreSQL: while fencing or a restart sets MightBeUnavailable, GetStatus
+// saves the error it hit as mightBeUnavailableMaskedError, re-reads only
+// isPrimary from the data directory, and /pg/status still answers 200
+// (pkg/management/postgres/probes.go v1.30.1:47-62, webserver/remote.go
+// pgStatus). Every PostgreSQL field of such a report (pg_stat_archiver,
+// readyWalFiles, the WAL positions and file, the timeline) is then
+// unknown, never zero: its zero values are what was not read.
+func (r Reading) Masked() bool {
+	return r.MightBeUnavailableMaskedError != ""
+}
+
 // Snapshot is what the console reads: the last report per instance,
 // and per instance the failure of the last sweep, when it failed.
 type Snapshot struct {

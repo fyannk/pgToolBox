@@ -288,8 +288,14 @@ func TestPurgeBandSpansTheOldestBackup(t *testing.T) {
 		{"past one refresh within a normal cycle: unchanged", two, at(6 * time.Minute), 11 * time.Minute},
 		{"two refreshes old, the next scan not missed yet: unchanged", two, at(10 * time.Minute), 15 * time.Minute},
 		{"a missed scan: the oldest backup's own span", two, at(11 * time.Minute), second.Sub(first)},
-		{"a single backup is not purged by retention", one, at(2 * time.Hour), 2*time.Hour + 5*time.Minute},
-		{"the elapsed band is longer: kept", []interval{{from: first, to: last, backupID: "old"}, {from: first.Add(time.Hour), to: last, backupID: "new"}}, at(3 * time.Hour), 3*time.Hour + 5*time.Minute},
+		// Past a missed scan, a lone backup may have been obsolete at the
+		// read (retention not running) and replaced since: the whole
+		// window (round 16, PG P3-1).
+		{"a single backup past a missed scan: the whole window", one, at(2 * time.Hour), last.Sub(first)},
+		// The newest listed backup (6 d 23 h before the read) is older than
+		// the listed span (1 h) before the read: backups had stopped longer
+		// than the retention the listing reflects (round 16, PG P3-1).
+		{"backups stopped long before the read: the whole window", []interval{{from: first, to: last, backupID: "old"}, {from: first.Add(time.Hour), to: last, backupID: "new"}}, at(3 * time.Hour), last.Sub(first)},
 		{"never past the window", []interval{{from: first, to: last, backupID: "old"}, {from: last.Add(time.Hour), to: last.Add(2 * time.Hour), backupID: "new"}}, at(time.Hour), last.Sub(first)},
 		// Daily backups, scanned 30 h ago: the window's start may have
 		// passed the second and third backups' lower bounds (24 h + 30 h
@@ -302,6 +308,15 @@ func TestPurgeBandSpansTheOldestBackup(t *testing.T) {
 		if got := purgeBand(in, c.spans, first, last); got != c.want {
 			t.Errorf("%s: band %s, want %s", c.name, got, c.want)
 		}
+	}
+	// The elapsed band is longer than the kept backup's lower bound: kept.
+	// Read 4 h 55 min ago, backups 12 h, 11 h and 2 h before the read: the
+	// window's start passed at most the second one (first + 1 h + 5 h).
+	read := now.Add(-4*time.Hour - 55*time.Minute)
+	from := read.Add(-12 * time.Hour)
+	recent := []interval{{from: from, to: last, backupID: "a"}, {from: from.Add(time.Hour), to: last, backupID: "b"}, {from: from.Add(10 * time.Hour), to: last, backupID: "c"}}
+	if got := purgeBand(timelineInput{facts: recoveryFacts{now: now}, scannedAt: &read, refresh: 5 * time.Minute}, recent, from, last); got != 5*time.Hour {
+		t.Errorf("the elapsed band is longer: band %s, want 5h", got)
 	}
 	// A short refresh interval: the console's own poll period bounds a
 	// normal cycle, not two intervals.

@@ -415,6 +415,26 @@ export const recoveryHibernated = {
 } satisfies RecoveryTimeline;
 
 /**
+ * Hibernated while ContinuousArchiving was False (since 10:00): the hibernated
+ * reason stays, and the failed last attempt is said beside it, at warning
+ * (Go's wording, recovery.go hibernatedFailedReason; round 16, PG P3-2).
+ */
+export const recoveryHibernatedFailing = {
+  ...recoveryHibernated,
+  state: "warning",
+  reason:
+    "the Cluster is hibernated: whether the WAL written before it reached the repository is not confirmed, so the newest restore points are uncertain; its last archive attempt failed (ContinuousArchiving False since 2026-10-29T10:00:00Z): WAL written before it was hibernated may not be in the repository, only on its volumes",
+  reasons: [
+    ...recoveryHibernated.reasons,
+    {
+      code: "recovery.reason.archivingFailedHibernated",
+      params: { sinceAt: "2026-10-29T10:00:00Z" },
+      text: "its last archive attempt failed (ContinuousArchiving False since 2026-10-29T10:00:00Z): WAL written before it was hibernated may not be in the repository, only on its volumes",
+    },
+  ],
+} satisfies RecoveryTimeline;
+
+/**
  * After a failover the repository holds no WAL of timeline 2 yet, and the new
  * primary was not read (fenced, unreachable): the warning gives no advice to
  * run pg_switch_wal() on it.
@@ -549,6 +569,10 @@ export const recoveryReportedHibernated = {
   edgeAdvice: "none",
   reasons: [
     { code: "recovery.reason.reportedWindow", text: "the window is the operator's report, not repository evidence" },
+    {
+      code: "recovery.reason.archiverHibernated",
+      text: "the Cluster is hibernated: whether the WAL written before it reached the repository is not confirmed, so the newest restore points are uncertain",
+    },
     { code: "recovery.reason.noEvidence", text: "no repository evidence" },
   ],
 } satisfies RecoveryTimeline;

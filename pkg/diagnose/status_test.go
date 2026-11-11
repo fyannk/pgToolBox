@@ -494,3 +494,33 @@ func TestInstanceStatusConditionsReadTheReport(t *testing.T) {
 		t.Errorf("same version everywhere: %v, want clear", check.Outcome)
 	}
 }
+
+// TestMaskedReportsAreNotJudged (round 16, CNPG P2-1): a fenced or
+// restarting instance answers with the error its manager masked and
+// every PostgreSQL field at zero. Its readyWalFiles 0, its empty slot
+// list and a pg_stat_archiver failure filled before the error are not
+// readings: the rules on them do not clear, and say why.
+func TestMaskedReportsAreNotJudged(t *testing.T) {
+	t.Parallel()
+	failed := now.Add(-time.Hour)
+	masked := instancestatus.Reading{
+		Instance: "orders-1", IsPrimary: true, MightBeUnavailable: true,
+		MightBeUnavailableMaskedError: "FATAL: the database system is shutting down (SQLSTATE 57P03)",
+		LastFailedWAL:                 "0006", LastFailedWALTime: &failed,
+	}
+	for name, rule := range map[string]interface {
+		evaluate(string, Input) ([]conditionMatch, string)
+	}{
+		"archive failing": InstanceArchiveFailing{}, "ready WAL": InstanceReadyWAL{Threshold: 32}, "slots": InstanceSlotInactive{},
+	} {
+		matches, because := rule.evaluate("", statusInput(masked))
+		if len(matches) != 0 || !strings.Contains(because, "without reading PostgreSQL") || !strings.Contains(because, "orders-1") {
+			t.Errorf("%s: %d matches, because %q; want none and the masked instance named", name, len(matches), because)
+		}
+	}
+	read := masked
+	read.MightBeUnavailableMaskedError = ""
+	if matches, _ := (InstanceArchiveFailing{}).evaluate("", statusInput(read)); len(matches) != 1 {
+		t.Errorf("unmasked control: %d archive-failing matches, want 1", len(matches))
+	}
+}

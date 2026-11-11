@@ -43,6 +43,20 @@ type statusReadings struct {
 	fresh   []instancestatus.Reading
 	refused []string
 	failing []string
+	// masked are the instances whose manager answered without reading
+	// PostgreSQL (fenced, restarting: Reading.Masked), which a rule on
+	// PostgreSQL's own statistics skips (skipMasked), never reads as zero.
+	masked []string
+}
+
+// skipMasked records reading as unjudged when its manager answered
+// without reading PostgreSQL, and says so.
+func (r *statusReadings) skipMasked(reading instancestatus.Reading) bool {
+	if !reading.Masked() {
+		return false
+	}
+	r.masked = append(r.masked, reading.Instance)
+	return true
 }
 
 func statusOf(in Input) (statusReadings, string) {
@@ -83,6 +97,9 @@ func (r statusReadings) unjudged() string {
 	}
 	if len(r.failing) > 0 {
 		parts = append(parts, "instances the sweep could not read: "+strings.Join(r.failing, ", "))
+	}
+	if len(r.masked) > 0 {
+		parts = append(parts, "instances whose manager answered without reading PostgreSQL (fenced or restarting): "+strings.Join(r.masked, ", "))
 	}
 	return strings.Join(parts, "; ")
 }
@@ -196,7 +213,7 @@ func (InstanceArchiveFailing) evaluate(_ string, in Input) ([]conditionMatch, st
 	}
 	var matches []conditionMatch
 	for _, reading := range readings.fresh {
-		if reading.LastFailedWALTime == nil {
+		if readings.skipMasked(reading) || reading.LastFailedWALTime == nil {
 			continue
 		}
 		if reading.LastArchivedWALTime != nil && !reading.LastFailedWALTime.After(*reading.LastArchivedWALTime) {
@@ -242,7 +259,7 @@ func (c InstanceReadyWAL) evaluate(_ string, in Input) ([]conditionMatch, string
 	var matches []conditionMatch
 	primaries := 0
 	for _, reading := range readings.fresh {
-		if !reading.IsPrimary {
+		if !reading.IsPrimary || readings.skipMasked(reading) {
 			continue
 		}
 		primaries++
@@ -293,6 +310,9 @@ func (InstanceSlotInactive) evaluate(_ string, in Input) ([]conditionMatch, stri
 	}
 	var matches []conditionMatch
 	for _, reading := range readings.fresh {
+		if readings.skipMasked(reading) {
+			continue
+		}
 		for _, slot := range reading.Slots {
 			if slot.Active || strings.HasPrefix(slot.Name, operatorSlotPrefix) {
 				continue

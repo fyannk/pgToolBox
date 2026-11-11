@@ -15,6 +15,9 @@
 package sweep
 
 import (
+	"bytes"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -81,5 +84,48 @@ func TestPushRingsStampsThePrimaryTimelineAndAFirstArchive(t *testing.T) {
 	}
 	if v := value("db-2", SeriesLastArchivedAt, 0); v != nil {
 		t.Errorf("replica last archived = %v, want none", *v)
+	}
+}
+
+// TestPushRingsGapsAMaskedReport (round 16, CNPG P2-1): a fenced or
+// restarting primary answers /pg/status 200 with the error it masked and
+// every PostgreSQL field at zero (instancestatus testdata, CloudNativePG's
+// wire shape). Its readyWalFiles 0 was not read: every series gets a gap,
+// never a 0, and a standby's lag is not measured against it.
+func TestPushRingsGapsAMaskedReport(t *testing.T) {
+	t.Parallel()
+	at := time.Date(2026, 11, 11, 10, 0, 0, 0, time.UTC)
+	s := &Sweeper{opts: Options{Retention: time.Hour}}
+	cs := &clusterState{rings: map[string]map[string]*ring{}}
+	for _, name := range []string{"fenced-primary.json", "restarting-primary.json"} {
+		body, err := os.ReadFile(filepath.Join("..", "..", "..", "pkg", "cnpgstatus", "instancestatus", "testdata", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		r, err := instancestatus.Parse(bytes.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		s.pushRings(cs, Snapshot{Instances: map[string]Instance{
+			"db-2": {State: viewmodel.StatusReadOK, Reading: &r, readBy: at.Add(time.Second)},
+			"db-1": {State: viewmodel.StatusReadOK, Reading: &instancestatus.Reading{ReplayLSN: "0/3000000"}, readBy: at.Add(time.Second)},
+		}}, at)
+		at = at.Add(30 * time.Second)
+	}
+	for _, key := range []string{SeriesReadyWALFiles, SeriesCurrentLSN, SeriesLastArchivedAt, SeriesTimeline} {
+		points := cs.rings["db-2"][key].points()
+		if len(points) != 2 {
+			t.Fatalf("%s: %d points, want 2", key, len(points))
+		}
+		for i, p := range points {
+			if p.Value != nil {
+				t.Errorf("%s[%d] = %v from a masked report, want a gap", key, i, *p.Value)
+			}
+		}
+	}
+	for _, p := range cs.rings["db-1"][SeriesLagBytes].points() {
+		if p.Value != nil {
+			t.Errorf("standby lag = %v against a masked primary, want a gap", *p.Value)
+		}
 	}
 }
