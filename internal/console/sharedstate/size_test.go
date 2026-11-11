@@ -232,3 +232,18 @@ func TestDrillFieldsAtKubernetesBounds(t *testing.T) {
 		}
 	}
 }
+
+// binaryData counts toward the API server's 1 MiB like data does (round-11
+// review): a key another writer put there is part of what the next write
+// sends.
+func TestBinaryDataCountsTowardTheConfigMapSize(t *testing.T) {
+	s := New(Options{Name: "console-state", Now: (&testClock{now: t0}).Now})
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.mergeLocked(&corev1.ConfigMap{})
+	_, before := s.sizesLocked()
+	s.mergeLocked(&corev1.ConfigMap{BinaryData: map[string][]byte{"blob.bin": make([]byte, 4096)}})
+	if _, after := s.sizesLocked(); after != before+len("blob.bin")+4096 {
+		t.Errorf("data %d bytes with a 4,104-byte binaryData key, %d without", after, before)
+	}
+}

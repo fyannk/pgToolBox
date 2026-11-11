@@ -1316,7 +1316,9 @@ var documentKeys = []string{KeySessions, KeySince, KeyDigests, KeyGrants, KeyDri
 // sizesLocked measures the documents this console writes (ours) and the
 // data the next write sends (data): the keys and values of those
 // documents and of what else the ConfigMap holds (another version's
-// documents, any other key), as the API server counts them.
+// documents, any other key, binaryData included: the API server counts
+// the raw bytes of every binaryData value toward the same 1 MiB), as the
+// API server counts them.
 func (s *Store) sizesLocked() (ours, data int) {
 	return s.measureLocked(s.encodeLocked())
 }
@@ -1336,6 +1338,9 @@ func (s *Store) measureLocked(docs map[string]string) (ours, data int) {
 			if _, mine := docs[key]; !mine || s.foreign[key] {
 				data += len(key) + len(v)
 			}
+		}
+		for key, v := range s.base.BinaryData {
+			data += len(key) + len(v)
 		}
 	}
 	sharedBytes.WithLabelValues("total").Set(float64(data))
