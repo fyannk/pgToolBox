@@ -235,20 +235,23 @@ var stallRetries = map[pgtoolboxv1alpha1.Reason]time.Duration{
 //nolint:gocyclo,cyclop,funlen // the console's children, in dependency order.
 func (r *Reconciler) reconcile(ctx context.Context, console *pgtoolboxv1alpha1.PgToolBoxConsole, loop *loopState) error {
 	image := specs.ResolveImage(console.Spec.Image, r.DefaultImage)
+	var imageReason pgtoolboxv1alpha1.Reason
+	var imageProblem string
 	switch {
 	case image.Reference == "":
-		return r.invalid(console, pgtoolboxv1alpha1.ReasonConsoleImageRequired,
-			"spec.image is not set and the operator has no default console image (--default-console-image)")
+		imageReason, imageProblem = pgtoolboxv1alpha1.ReasonConsoleImageRequired,
+			"spec.image is not set and the operator has no default console image (--default-console-image)"
 	case console.Spec.Image != nil && !specs.ImageAllowed(console.Spec.Image.Repository, r.AllowedImageRepositories, r.DefaultImage):
-		return r.invalid(console, pgtoolboxv1alpha1.ReasonImageNotAllowed, fmt.Sprintf(
-			"spec.image repository %s is not in the operator's allow-list (--console-image-repositories)", console.Spec.Image.Repository))
+		imageReason, imageProblem = pgtoolboxv1alpha1.ReasonImageNotAllowed, fmt.Sprintf(
+			"spec.image repository %s is not in the operator's allow-list (--console-image-repositories)", console.Spec.Image.Repository)
 	}
-	// The hostname allow-list: withdraw what this console published, then
-	// stall, so that nothing is published under a name the installer did
-	// not allow. The workload and the ingress policy stay as they were (a
-	// template that trusts every peer is never left without its policy):
-	// ExposureConfined says the policy is kept, and goes only when there
-	// is none.
+	// The hostname allow-list, before anything else may stall (the image
+	// checks included): withdraw what this console published, then stall,
+	// so that nothing stays published under a name the installer did not
+	// allow, whatever else is wrong. The workload and the ingress policy
+	// stay as they were (a template that trusts every peer is never left
+	// without its policy): ExposureConfined says the policy is kept, and
+	// goes only when there is none.
 	if spec := &console.Spec.Exposure; spec.TypeOrDefault() != pgtoolboxv1alpha1.ExposureTypeClusterIP &&
 		!exposure.HostnameAllowed(spec.Hostname, r.AllowedHostSuffixes) {
 		if err := r.withdrawExposure(ctx, console); err != nil {
@@ -257,9 +260,15 @@ func (r *Reconciler) reconcile(ctx context.Context, console *pgtoolboxv1alpha1.P
 		if err := r.policyKeptOnStall(ctx, console); err != nil {
 			return err
 		}
-		return r.invalid(console, pgtoolboxv1alpha1.ReasonHostnameNotAllowed, fmt.Sprintf(
-			"spec.exposure.hostname %s is not under the operator's allowed host suffixes (EXPOSURE_ALLOWED_HOST_SUFFIXES: %s)",
-			spec.Hostname, strings.Join(r.AllowedHostSuffixes, ", ")))
+		message := fmt.Sprintf("spec.exposure.hostname %s is not under the operator's allowed host suffixes (EXPOSURE_ALLOWED_HOST_SUFFIXES: %s)",
+			spec.Hostname, strings.Join(r.AllowedHostSuffixes, ", "))
+		if imageProblem != "" {
+			message += "; also " + imageProblem
+		}
+		return r.invalid(console, pgtoolboxv1alpha1.ReasonHostnameNotAllowed, message)
+	}
+	if imageProblem != "" {
+		return r.invalid(console, imageReason, imageProblem)
 	}
 	roles := []string{ConsoleClusterRole}
 	if console.PodLogsAllowed() {
