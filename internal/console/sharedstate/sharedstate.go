@@ -122,13 +122,16 @@ const (
 	// maxDigestID and maxChannel bound the two parts of a mark's key.
 	maxDigestID = 64
 	maxChannel  = 16
-	// The sessions document is bounded three ways, and every bound
-	// refuses what arrives once it is reached: a sign-out the document
-	// holds is never dropped for a newer one (signOutOrder). A refused
-	// sign-out is still refused by the replica that recorded it, is
-	// counted in pgtoolbox_console_shared_state_signouts_refused_total
-	// (reason subject, unnamed or budget) and, for the budget, logged once
-	// per episode.
+	// The sessions document is bounded three ways. A person at their own
+	// bound replaces their own entry that ends first with the new one
+	// (the newest sign-out is the one a fresh cookie theft needs); the
+	// other two bounds refuse what arrives once they are reached: nobody
+	// else's sign-out is ever dropped for a newer one (signOutBefore). A
+	// refused sign-out is still refused by the replica that recorded it,
+	// is counted in pgtoolbox_console_shared_state_signouts_refused_total
+	// (reason unnamed or budget; replaced for a person's own entry given
+	// up, merge for one a merge dropped) and, for the budget and a merge,
+	// logged.
 	//
 	// MaxSignOutsPerSubject bounds one person's entries (two a sign-out:
 	// the session and its token as a raw bearer), so one person signing
@@ -195,24 +198,78 @@ type fact struct {
 	Since int64  `json:"t"`
 }
 
-// signOut is one entry of the sessions document: its expiry and when it
-// was first recorded (Unix seconds), and the keyed tag of the person it
-// belongs to (SubjectTag), empty when the session named nobody; the tag
-// only groups a person's entries for MaxSignOutsPerSubject.
+// signOut is one entry of the sessions document: its expiry (Unix
+// seconds), its slot, and the keyed tag of the person it belongs to
+// (SubjectTag), empty when the session named nobody; the tag only groups
+// a person's entries for MaxSignOutsPerSubject.
+//
+// The slot is the entry's place in the one order every bound keeps by
+// (signOutBefore): when it was first recorded (Recorded) and a hash
+// (Slot; empty for the entry's own session hash). A person at their
+// bound gives the new entry the slot of their own entry it replaces,
+// one generation (Gen) later: the slots the document holds, and so where
+// everyone else's entries stand, do not change, and a replica that still
+// holds the replaced entry drops it on merging (the later generation of
+// a slot wins).
 type signOut struct {
 	Expiry   int64  `json:"e"`
 	Recorded int64  `json:"r,omitempty"`
 	Subject  string `json:"u,omitempty"`
+	Slot     string `json:"s,omitempty"`
+	Gen      int64  `json:"g,omitempty"`
 }
 
-// mergeSignOut folds two observations of one session's sign-out: the
-// latest expiry, the earliest recording (an entry without one counts as
-// recorded first, as signOutBefore orders it), and a tag when either has
-// one (the smaller when they differ). It is commutative, associative and
-// idempotent, so replicas folding the same observations in any order
-// hold the same entry.
-func mergeSignOut(a, b signOut) signOut {
-	out := signOut{Expiry: max(a.Expiry, b.Expiry), Recorded: min(a.Recorded, b.Recorded), Subject: a.Subject}
+// slotOf is the hash part of the slot of h's entry e.
+func slotOf(h string, e signOut) string {
+	if e.Slot != "" {
+		return e.Slot
+	}
+	return h
+}
+
+// slotBefore orders two (hash, entry) pairs by slot, and within a slot
+// the later generation first, then by hash: a total order.
+func slotBefore(ah string, a signOut, bh string, b signOut) bool {
+	if a.Recorded != b.Recorded {
+		return a.Recorded < b.Recorded
+	}
+	if as, bs := slotOf(ah, a), slotOf(bh, b); as != bs {
+		return as < bs
+	}
+	if a.Gen != b.Gen {
+		return a.Gen > b.Gen
+	}
+	return ah < bh
+}
+
+// maxSignOutGen bounds a slot's generation read back.
+const maxSignOutGen = 1 << 40
+
+// validSignOut checks the slot of h's entry read from the ConfigMap: its
+// own (generation 0), or another's at a later generation.
+func validSignOut(h string, e signOut) bool {
+	if !validSubjectTag(e.Subject) || e.Gen < 0 || e.Gen > maxSignOutGen {
+		return false
+	}
+	if e.Slot == "" {
+		return e.Gen == 0
+	}
+	return e.Gen > 0 && e.Slot != h && validSessionHash(e.Slot)
+}
+
+// mergeSignOut folds two observations of session h's sign-out: the
+// latest expiry, the slot that comes first in slotBefore (an entry
+// without a recording time counts as recorded first), and a tag when
+// either has one (the smaller when they differ). It is commutative,
+// associative and idempotent, so replicas folding the same observations
+// in any order hold the same entry.
+func mergeSignOut(h string, a, b signOut) signOut {
+	out := a
+	if slotBefore(h, b, h, a) {
+		out.Recorded, out.Slot, out.Gen = b.Recorded, b.Slot, b.Gen
+	}
+	out.Expiry = max(a.Expiry, b.Expiry)
+	out.Subject = a.Subject
 	if out.Subject == "" || (b.Subject != "" && b.Subject < out.Subject) {
 		out.Subject = b.Subject
 	}
@@ -285,7 +342,9 @@ type Store struct {
 	// signOutsFull is set while MaxSignOuts refuses sign-outs (logged
 	// once per episode).
 	signOutsFull bool
-	wake         chan struct{}
+	// mergeDropLogged is set once a merge dropped sign-outs (logged once).
+	mergeDropLogged bool
+	wake            chan struct{}
 }
 
 // New builds a store; nothing is read until Run.
@@ -360,9 +419,15 @@ func validSubjectTag(tag string) bool {
 
 // Reasons a sign-out is not kept (signOutsRefused).
 const (
-	refusedSubject = "subject"
-	refusedUnnamed = "unnamed"
-	refusedBudget  = "budget"
+	refusedSubject  = "subject"
+	refusedUnnamed  = "unnamed"
+	refusedBudget   = "budget"
+	refusedReplaced = "replaced"
+	refusedMerge    = "merge"
+	// superseded is a merge's drop of an entry whose slot a later
+	// generation holds: a replacement reaching this replica, not counted
+	// again.
+	superseded = "superseded"
 )
 
 // RecordSignOut shares a signed-out session until its absolute expiry.
@@ -370,7 +435,8 @@ const (
 // anything else, empty included, files it with the sessions that name
 // nobody). It reports false when a bound of the sessions document
 // refuses it (it is not shared): the caller still refuses the session
-// itself. A sign-out the document holds is never dropped to make room.
+// itself. A person at their own bound gives up their own entry that ends
+// first for it; nobody else's entry is ever dropped to make room.
 func (s *Store) RecordSignOut(sid, tag string, until time.Time) bool {
 	if s == nil || sid == "" {
 		return true
@@ -393,6 +459,18 @@ func (s *Store) RecordSignOut(sid, tag string, until time.Time) bool {
 		return true
 	}
 	e := signOut{Expiry: until.Unix(), Recorded: s.opts.Now().Unix(), Subject: tag}
+	if vh, ok := s.replaceableLocked(tag); ok {
+		// The new entry takes the slot of the person's entry that ends
+		// first, so the document's slots, and everyone else's place in
+		// them, stay as they were.
+		v := s.signedOut[vh]
+		e.Recorded, e.Slot, e.Gen = v.Recorded, slotOf(vh, v), v.Gen+1
+		delete(s.signedOut, vh)
+		s.signedOut[h] = e
+		signOutsRefused.WithLabelValues(refusedReplaced).Inc()
+		s.changedLocked(true)
+		return true
+	}
 	if reason := s.admitSignOutLocked(tag); reason != "" {
 		signOutsRefused.WithLabelValues(reason).Inc()
 		if reason == refusedBudget && !s.signOutsFull {
@@ -411,13 +489,34 @@ func (s *Store) RecordSignOut(sid, tag string, until time.Time) bool {
 	return true
 }
 
+// replaceableLocked returns, for a person (a non-empty tag) at their own
+// bound, their entry that ends first (then the first in slot order): the
+// one a new sign-out of theirs replaces. The sessions naming nobody are
+// not one person, and refuse instead.
+func (s *Store) replaceableLocked(tag string) (string, bool) {
+	if tag == "" {
+		return "", false
+	}
+	held, first := 0, ""
+	for h, e := range s.signedOut {
+		if e.Subject != tag {
+			continue
+		}
+		held++
+		if f, ok := s.signedOut[first]; first == "" || !ok || e.Expiry < f.Expiry || (e.Expiry == f.Expiry && slotBefore(h, e, first, f)) {
+			first = h
+		}
+	}
+	return first, held >= MaxSignOutsPerSubject
+}
+
 // admitSignOutLocked returns why a new entry of tag would not be kept,
 // or "". The document is always capped (planSignOutCaps drops nothing
 // from it), so the new entry is kept without dropping anything exactly
-// when its person's share and the document both have room: otherwise
-// the bounds would drop it, or one already held that sorts after it (the
-// same second, a larger hash), and the new one is refused instead: what
-// the document holds stays.
+// when its share and the document both have room: otherwise the bounds
+// would drop it, or one already held that sorts after it (the same
+// second, a larger hash), and the new one is refused instead: what the
+// document holds stays.
 func (s *Store) admitSignOutLocked(tag string) string {
 	limit, reason := MaxSignOutsPerSubject, refusedSubject
 	if tag == "" {
@@ -453,27 +552,25 @@ func (s *Store) pruneSignOutsLocked() bool {
 }
 
 // signOutBefore is the one order every bound of the sessions document
-// keeps by: recorded first, then by hash. A bound keeps the entries that
-// come first in it, so what was recorded earlier is never dropped for
-// what arrived later, and, the order being total and the same for every
-// bound, replicas that merge the same entries in any order keep the same
-// ones (a union of capped documents caps to what the union of the
-// uncapped ones does).
+// keeps by: by slot, recorded first, then by hash (slotBefore). A bound
+// keeps the slots that come first in it, so what was recorded earlier is
+// never dropped for what arrived later, and, the order being total and
+// the same for every bound, replicas that merge the same entries in any
+// order keep the same ones (a union of capped documents caps to what the
+// union of the uncapped ones does). A slot holds one entry, its latest
+// generation: keeping the first of each slot in a fixed order is the
+// same kind of rule, and the bounds see slots only, so a person's
+// replacement (a later generation of their own slot) moves nobody.
 func signOutBefore(ah string, a signOut, bh string, b signOut) bool {
-	if a.Recorded != b.Recorded {
-		return a.Recorded < b.Recorded
-	}
-	return ah < bh
+	return slotBefore(ah, a, bh, b)
 }
 
 // planSignOutCaps returns the entries of m the bounds drop, by hash, with
-// the bound that drops each: per person MaxSignOutsPerSubject, the
-// entries naming nobody MaxUnnamedSignOuts together, then the document
-// MaxSignOuts; each keeps what comes first in signOutBefore.
+// the bound that drops each: an earlier generation of a slot (superseded),
+// per person MaxSignOutsPerSubject, the entries naming nobody
+// MaxUnnamedSignOuts together, then the document MaxSignOuts; each keeps
+// what comes first in signOutBefore.
 func planSignOutCaps(m map[string]signOut) map[string]string {
-	if len(m) <= MaxSignOutsPerSubject {
-		return nil
-	}
 	type entry struct {
 		hash string
 		signOut
@@ -486,7 +583,11 @@ func planSignOutCaps(m map[string]signOut) map[string]string {
 	dropped := map[string]string{}
 	held := map[string]int{}
 	kept := 0
-	for _, e := range all {
+	for i, e := range all {
+		if i > 0 && e.Recorded == all[i-1].Recorded && slotOf(e.hash, e.signOut) == slotOf(all[i-1].hash, all[i-1].signOut) {
+			dropped[e.hash] = superseded
+			continue
+		}
 		limit, reason := MaxSignOutsPerSubject, refusedSubject
 		if e.Subject == "" {
 			limit, reason = MaxUnnamedSignOuts, refusedUnnamed
@@ -509,13 +610,33 @@ func planSignOutCaps(m map[string]signOut) map[string]string {
 }
 
 // capSignOutsLocked applies the bounds of the sessions document to what
-// a merge brought in, and returns how many entries they dropped.
+// a merge brought in, and returns how many entries they dropped (not
+// counting the earlier generations of a slot: a replacement reaching
+// this replica).
 func (s *Store) capSignOutsLocked() int {
-	dropped := planSignOutCaps(s.signedOut)
-	for h := range dropped {
+	n := 0
+	for h, reason := range planSignOutCaps(s.signedOut) {
 		delete(s.signedOut, h)
+		if reason != superseded {
+			n++
+		}
 	}
-	return len(dropped)
+	return n
+}
+
+// gaugeSignOutsLocked publishes how full each bound of the sessions
+// document is.
+func (s *Store) gaugeSignOutsLocked() {
+	held, most := map[string]int{}, 0
+	for _, e := range s.signedOut {
+		held[e.Subject]++
+		if e.Subject != "" {
+			most = max(most, held[e.Subject])
+		}
+	}
+	signOutsHeld.WithLabelValues(refusedSubject).Set(float64(most))
+	signOutsHeld.WithLabelValues(refusedUnnamed).Set(float64(held[""]))
+	signOutsHeld.WithLabelValues("total").Set(float64(len(s.signedOut)))
 }
 
 // SignedOut reports whether a replica signed the session out.
@@ -795,11 +916,11 @@ func (s *Store) mergeLocked(cm *corev1.ConfigMap) {
 			s.opts.Logger.Warn("shared state: the sessions document does not parse; it will be rewritten", slog.String("configmap", s.opts.Name))
 		case len(doc.SignedOut) <= maxEntries:
 			for h, e := range doc.SignedOut {
-				if !validSessionHash(h) || !validSubjectTag(e.Subject) {
+				if !validSessionHash(h) || !validSignOut(h, e) {
 					continue
 				}
 				if prev, ok := s.signedOut[h]; ok {
-					e = mergeSignOut(prev, e)
+					e = mergeSignOut(h, prev, e)
 				}
 				s.signedOut[h] = e
 			}
@@ -861,7 +982,20 @@ func (s *Store) mergeLocked(cm *corev1.ConfigMap) {
 func (s *Store) pruneLocked() {
 	now := s.opts.Now()
 	s.pruneSignOutsLocked()
-	s.capSignOutsLocked()
+	if n := s.capSignOutsLocked(); n > 0 {
+		// Only a merge brings in more than the bounds hold (two replicas
+		// filling the last places at once): sign-outs each of them had
+		// accepted are dropped from the document, though still refused
+		// by the replica that recorded them.
+		signOutsRefused.WithLabelValues(refusedMerge).Add(float64(n))
+		if !s.mergeDropLogged {
+			s.mergeDropLogged = true
+			s.opts.Logger.Warn("shared state: merging the sessions document dropped sign-outs past its bounds; "+
+				"each is still refused by the replica that recorded it (counted under reason merge, logged once)",
+				slog.String("configmap", s.opts.Name), slog.Int("dropped", n))
+		}
+	}
+	s.gaugeSignOutsLocked()
 	if s.signOutsFull && len(s.signedOut) < MaxSignOuts {
 		s.signOutsFull = false
 		s.opts.Logger.Info("shared state: the sessions document has room for sign-outs again", slog.String("configmap", s.opts.Name))
