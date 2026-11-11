@@ -1442,3 +1442,37 @@ func TestReconcileStaleRouteAfterRefusal(t *testing.T) {
 		}
 	})
 }
+
+// TestReconcileRefusedEverywhereNamesOwnNamespace: round 14, Go P3-2. An
+// optional API refused in every watched namespace carries the first
+// refusing namespace's reason (team-z here); a PgAdmin of another
+// namespace must read its own namespace in its status, never team-z.
+func TestReconcileRefusedEverywhereNamesOwnNamespace(t *testing.T) {
+	p := oauth2PgAdmin()
+	p.Spec.Endpoints = []pgtoolboxv1alpha1.Endpoint{"rw", "pooler:orders-pooler"}
+	h := newHarness(t, nil, baseObjects(p)...)
+	refused := func(kind string) discovery.Result {
+		return discovery.Result{
+			GVK: schema.GroupVersionKind{Group: "postgresql.cnpg.io", Version: "v1", Kind: kind}, Namespace: "team-z",
+			State: discovery.Forbidden, Reason: "not allowed to list " + kind + ".postgresql.cnpg.io in team-z",
+		}
+	}
+	h.r.Features.DatabaseRoles, h.r.Features.Poolers = refused("DatabaseRole"), refused("Pooler")
+	if err := h.reconcile(p.Name); err != nil {
+		t.Fatal(err)
+	}
+	got := h.pgadmin(p.Name)
+	for _, c := range got.Status.Conditions {
+		if strings.Contains(c.Message, "team-z") {
+			t.Errorf("%s names another tenant's namespace: %q", c.Type, c.Message)
+		}
+	}
+	for _, row := range got.Status.Servers {
+		if strings.Contains(row.Message, "team-z") {
+			t.Errorf("server row names another tenant's namespace: %+v", row)
+		}
+	}
+	if msg := condition(got, "ConfigurationValid").Message; !strings.Contains(msg, "in "+testNamespace) {
+		t.Errorf("ConfigurationValid does not name the PgAdmin's own namespace: %q", msg)
+	}
+}
