@@ -151,7 +151,8 @@ admission_component="config/components/admission/admission_policy.yaml"
           -e '/^    app.kubernetes.io\/instance: /d' \
           -e '/^    app.kubernetes.io\/version: /d' \
           -e '/^    app.kubernetes.io\/managed-by: /d' \
-          -e '/^    helm.sh\/chart: /d'
+          -e '/^    helm.sh\/chart: /d' \
+    | sed -e :a -e '/^\n*$/{$d;N;ba' -e '}'
 } > "${admission_component}"
 helm_console_roles="charts/pgtoolbox/templates/operator/console-clusterroles.yaml"
 {

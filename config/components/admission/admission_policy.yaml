@@ -243,4 +243,3 @@ spec:
   policyName: pgtoolbox-image-override
   validationActions:
     - Deny
-

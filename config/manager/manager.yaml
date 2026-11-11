@@ -28,6 +28,13 @@ spec:
         - --leader-elect
         - --metrics-bind-address=:8080
         - --health-probe-bind-address=:8081
+        # The images a PgToolBoxConsole or an EvidenceAgent without spec.image runs
+        # (else ImageRequired), the operator's own for its upgrade Jobs. A tag
+        # here; the release pins all three by digest (hack/release.sh pin-refs).
+        # make validate-packaging compares them with the Helm rendering.
+        - --operator-image=ghcr.io/fyannk/pgtoolbox-operator:0.1.0
+        - --default-evidence-agent-image=ghcr.io/fyannk/pgtoolbox-evidence-agent:0.1.0
+        - --default-console-image=ghcr.io/fyannk/pgtoolbox-console:0.1.0
         env:
         # The operator's own namespace: where it reads its ConfigMap and Secret.
         - name: POD_NAMESPACE
