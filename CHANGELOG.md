@@ -333,5 +333,6 @@ OpenShift.
   Built with Go 1.27.4 (GO-2026-6859, an HTTP/1 server crash in `net/http`).
   `check-toolchain.sh` ties the Dockerfiles' `golang` and `node` images to `mise.toml`, and Dependabot leaves them to the toolchain bump; `release-preflight` checks that the tag points at the SHA. The restore-drill guard is on by default and rendered by plain `helm template`; the kustomize install passes the default images by digest.
   CI path filters run the e2e and gate jobs for `internal/backupresolve`, `hack/lib` and the gate scripts, and turn every job on for a path they do not map. `check-toolchain.sh` requires equal `golang`/`node` digests across Dockerfiles; `release-preflight` accepts any revision; `make doctor` checks promtool and helm-unittest. Chart NOTES warn when the restore-drill guard is not enforced.
+  The allowed-actions list names each action `owner/repo@*`: an exact-SHA list would refuse every Dependabot bump once `allowed_actions` is `selected`, and the SHA pins are enforced by the full-length-SHA setting.
 
 [0.1.0]: https://github.com/fyannk/pgToolBox/releases/tag/v0.1.0
