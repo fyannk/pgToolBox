@@ -188,6 +188,7 @@ OpenShift.
   covered (`backup-not-listed`); the do-not-delete advice names the former primary
   when the console knows it, and a second reason never cuts it.
   Right after a failover, the parent timeline's tail is bounded by the former primary's archiver, and the bar says the repository has no WAL of the live timeline yet. Stale kept paths no longer draw a backup the repository no longer lists as covered, and their purge band is timed from their own scan. The do-not-delete advice no longer names a former primary that has rejoined; `backup-not-listed` says how to act.
+  Recovery paths kept stale are capped against the fresh snapshot's timeline and coverage, dropped on a repository change, and dropped after three refresh intervals (at least an hour). Right after a failover the recovery window is a warning (`liveTimelineNotArchived`) that says what to do, instead of healthy with no reason; once the history file is archived the tail says the repository has no WAL segment of the new timeline yet. Stale paths beside a cut backup list are not counted as covered; the purge band uses the earlier of the agent's and the console's clocks. CloudNativePG's `-infinity` last-archived time reads as "nothing archived".
 - **An archive backlog is not "healthy".** Archiving shows Warning
   `ArchiveBacklog` once segments keep waiting across sweeps (the threshold follows
   CloudNativePG's WAL archiver, `isWALArchiver`, and its ObjectStore's
@@ -248,6 +249,7 @@ OpenShift.
   ConfigMap stays within 1 MiB, dropping the oldest restore drill results first
   (`pgtoolbox_console_shared_state_dropped_total`).
   A full sessions document gives up a person's oldest sign-out, never their newest, so a sign-out after a cookie theft stays shared. Past 80 % of the MCP grant index or codes table, a person holding at least the mean share is refused. "Since" times keep the room the state ConfigMap leaves instead of all being dropped, and prune and merge hold the state lock about half as long.
+  The MCP grant and code fair share no longer depends on arrival order: past 80 %, a person holding four or more is refused, so a hundred identities hold at most 1,360 codes and 1,460 grants (refresh re-records and a first replay placeholder are exempt). Among people holding equal counts, a full sessions document keeps the most recently recorded sign-outs. The size check counts `binaryData`, and a re-probe aborted by an error no longer changes source states.
 - **Exposure trust.** The pgtools chart trusts every peer only when
   `networkPolicy.ingress.extraFrom` is empty. `networkPolicy.from` selectors are
   validated by the CRD, and a policy the API server refuses stalls with
@@ -279,6 +281,7 @@ OpenShift.
   `ExposureConfined` says when the Node podCIDR check is not meaningful (a console
   Pod outside its Node's podCIDRs); the Node lookup runs within 10 s and resumes.
   PgAdmin, like the console, checks its hostname first and withdraws a published Ingress or Route under a disallowed name; both kinds report `ExposureReady=False` (`HostnameNotAllowed`) with an empty `status.url`. Operator start-up steps have a 20 s deadline, below the liveness kill, and a 401 from an optional-API probe fails the start.
+  A paused PgAdmin or PgToolBoxConsole withdraws a refused hostname; `ExposureReady` no longer keeps `HostnameNotAllowed` once the hostname is fixed while another stall holds; the refusal names the chart value `operator.exposure.allowedHostSuffixes`. Start-up steps fail at their deadline, naming the step, against an API server that never answers, and watched namespaces are probed sixteen at a time.
 - **Admission.** A PgAdmin with `configDatabase` needs `get` on the
   namespace's Secrets and its database must start with `pgadmin_` (CloudNativePG
   adopts and resets an existing role); raising `sessionMaxAge` counts as widening
@@ -329,5 +332,6 @@ OpenShift.
   caches of an old `mise.toml`.
   Built with Go 1.27.4 (GO-2026-6859, an HTTP/1 server crash in `net/http`).
   `check-toolchain.sh` ties the Dockerfiles' `golang` and `node` images to `mise.toml`, and Dependabot leaves them to the toolchain bump; `release-preflight` checks that the tag points at the SHA. The restore-drill guard is on by default and rendered by plain `helm template`; the kustomize install passes the default images by digest.
+  CI path filters run the e2e and gate jobs for `internal/backupresolve`, `hack/lib` and the gate scripts, and turn every job on for a path they do not map. `check-toolchain.sh` requires equal `golang`/`node` digests across Dockerfiles; `release-preflight` accepts any revision; `make doctor` checks promtool and helm-unittest. Chart NOTES warn when the restore-drill guard is not enforced.
 
 [0.1.0]: https://github.com/fyannk/pgToolBox/releases/tag/v0.1.0
