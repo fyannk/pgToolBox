@@ -204,6 +204,40 @@ func TestPrepareDropsNamespaceMissingARequiredPermission(t *testing.T) {
 	}
 }
 
+// TestPermittedNamespacesReviewFailedKeepsWhatToAsk: round 16, K8S P2-2. A
+// namespace whose review failed is dropped with the permissions to ask
+// again in the background (reReviewFailed), and its oversized response
+// fails that namespace only.
+func TestPermittedNamespacesReviewFailedKeepsWhatToAsk(t *testing.T) {
+	full := managerRules(t)
+	c := fake.NewClientBuilder().WithScheme(scheme).WithRESTMapper(testMapper()).WithInterceptorFuncs(interceptor.Funcs{
+		Create: func(_ context.Context, _ client.WithWatch, obj client.Object, _ ...client.CreateOption) error {
+			review, ok := obj.(*authorizationv1.SelfSubjectRulesReview)
+			if !ok {
+				return errors.New("only rules reviews are expected")
+			}
+			if review.Spec.Namespace == "team-b" {
+				return managerrole.ErrReviewTooLarge
+			}
+			review.Status.ResourceRules = full
+			return nil
+		},
+	}).Build()
+	kept, dropped, err := permittedNamespaces(t.Context(), c, []string{"team-a", "team-b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(kept, []string{"team-a"}) || len(dropped) != 1 || dropped[0].Namespace != "team-b" || dropped[0].Cause != dropReviewFailed {
+		t.Fatalf("kept %q, dropped %+v; want team-a kept, team-b review-failed", kept, dropped)
+	}
+	if len(dropped[0].required) == 0 {
+		t.Error("team-b dropped without the permissions to review again")
+	}
+	if dropped[0].allows("events.k8s.io", "events", "create") {
+		t.Error("a namespace whose review failed reads as allowing a write")
+	}
+}
+
 // TestPermittedNamespacesClusterWide: with no watched namespaces (every
 // namespace) nothing is reviewed and nothing is dropped.
 func TestPermittedNamespacesClusterWide(t *testing.T) {

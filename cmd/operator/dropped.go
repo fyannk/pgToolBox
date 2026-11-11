@@ -24,6 +24,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	eventsv1 "k8s.io/api/events/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -48,7 +49,8 @@ const (
 	// manager role there (a narrower Role bound in place of the chart's).
 	dropPermissions dropCause = "permissions"
 	// dropReviewFailed: its permissions there could not be reviewed (an
-	// error after one retry, or no answer in time).
+	// error after the retries, a response too large, or no answer in
+	// time).
 	dropReviewFailed dropCause = "review-failed"
 )
 
@@ -57,8 +59,9 @@ var dropCauses = []dropCause{dropPermissions, dropReviewFailed, dropClustersUnli
 
 // droppedNamespace is one watched namespace left out at start. For
 // dropPermissions, required is what the operator asked for there and
-// missing what of it the review refused; both are nil otherwise (nothing
-// is known of what the operator may do there).
+// missing what of it the review refused; for dropReviewFailed, required is
+// what to ask again (reReviewFailed); both are nil otherwise. Only
+// dropPermissions says what the operator may do there.
 type droppedNamespace struct {
 	Namespace string
 	Cause     dropCause
@@ -228,6 +231,18 @@ func reportDroppedKind(ctx context.Context, api droppedAPI, d droppedNamespace, 
 		event := true
 		if canStatus {
 			transition, err := markNotWatched(ctx, api, target, message)
+			if apierrors.IsConflict(err) {
+				// Written meanwhile (another replica's report, before
+				// this one lost the election): read it again and
+				// decide on what it says now, so one transition makes
+				// one Event; where it may not be read, what was written
+				// is taken as said.
+				if d.allows(group, kind.resource, "get") {
+					transition, err = remarkNotWatched(ctx, api, target, message)
+				} else {
+					transition, err = false, nil
+				}
+			}
 			if err != nil {
 				setupLog.Error(err, "could not mark an object of a dropped namespace Ready=Unknown",
 					"namespace", d.Namespace, "kind", target.kind, "name", target.object.GetName())
@@ -270,6 +285,37 @@ func markNotWatched(ctx context.Context, api droppedAPI, target droppedTarget, m
 		return false, fmt.Errorf("patch the status of %s %s/%s: %w", target.kind, target.object.GetNamespace(), target.object.GetName(), err)
 	}
 	return transition, nil
+}
+
+// remarkNotWatched is markNotWatched on target read again.
+func remarkNotWatched(ctx context.Context, api droppedAPI, target droppedTarget, message string) (bool, error) {
+	readCtx, cancel := context.WithTimeout(ctx, droppedWriteTimeout)
+	err := api.Get(readCtx, client.ObjectKeyFromObject(target.object), target.object)
+	cancel()
+	if err != nil {
+		return false, fmt.Errorf("read %s %s/%s again: %w", target.kind, target.object.GetNamespace(), target.object.GetName(), err)
+	}
+	return markNotWatched(ctx, api, target, message)
+}
+
+// droppedReport is reportDroppedNamespaces as a manager Runnable that runs
+// on the elected leader only: two replicas starting together would each
+// report, and the second would emit a second Event for one transition.
+type droppedReport struct {
+	api     droppedAPI
+	dropped []droppedNamespace
+	now     func() time.Time
+}
+
+// NeedLeaderElection makes the manager start the report once this
+// replica leads.
+func (droppedReport) NeedLeaderElection() bool { return true }
+
+// Start runs the report, bounded by droppedReportTimeout, and returns: an
+// error is logged per object, never stops the manager.
+func (r droppedReport) Start(ctx context.Context) error {
+	reportDroppedNamespaces(ctx, r.api, r.dropped, r.now)
+	return nil
 }
 
 // createDroppedEvent creates the Warning Event (events.k8s.io/v1, reason

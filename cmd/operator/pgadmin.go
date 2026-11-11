@@ -44,11 +44,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
+	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/metrics"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	pgtoolboxv1alpha1 "github.com/fyannk/pgToolBox/api/v1alpha1"
 	"github.com/fyannk/pgToolBox/internal/operator/configuration"
+	"github.com/fyannk/pgToolBox/internal/operator/managerrole"
 	"github.com/fyannk/pgToolBox/internal/operator/pgadmin"
 	"github.com/fyannk/pgToolBox/pkg/discovery"
 )
@@ -80,6 +82,9 @@ type pgAdminPrepared struct {
 	OptionalKinds []optionalKind
 	// Dropped is the watched namespaces left out at start, and why.
 	Dropped []droppedNamespace
+	// leaderOnly is what the manager runs once this replica is elected
+	// (the dropped-namespace report).
+	leaderOnly []manager.Runnable
 }
 
 // evidenceAgentAPIs is the outcome of the EvidenceAgent's optional-API
@@ -150,7 +155,10 @@ func budgetedRead[T any](ctx context.Context, budget *startupBudget, name string
 // preparePgAdmin loads the configuration (defaults, env, ConfigMap, Secret;
 // one structured error) and probes the optional APIs with a scoped
 // List(Limit 1), through a client that reads past any cache.
-func preparePgAdmin(ctx context.Context, budget *startupBudget, operatorImage, configMapName, secretName string) (pgAdminPrepared, error) {
+//
+// A namespace left out because its review failed is reviewed again in the
+// background (reReviewFailed), which calls restart once it can be watched.
+func preparePgAdmin(ctx context.Context, budget *startupBudget, operatorImage, configMapName, secretName string, restart context.CancelCauseFunc) (pgAdminPrepared, error) {
 	direct, err := startupClient(ctrl.GetConfigOrDie())
 	if err != nil {
 		return pgAdminPrepared{}, fmt.Errorf("build API client: %w", err)
@@ -166,9 +174,12 @@ func preparePgAdmin(ctx context.Context, budget *startupBudget, operatorImage, c
 	}
 	registerBuildInfo()
 	// Beside the start, never in its budget: the objects of a namespace
-	// left out say so on themselves where the operator may still write.
+	// left out say so on themselves where the operator may still write,
+	// from the elected replica only; a namespace whose review failed is
+	// reviewed again on every replica.
 	if len(prepared.Dropped) > 0 {
-		go reportDroppedNamespaces(ctx, direct, prepared.Dropped, time.Now)
+		prepared.leaderOnly = append(prepared.leaderOnly, droppedReport{api: direct, dropped: prepared.Dropped, now: time.Now})
+		go reReviewFailed(ctx, direct, prepared.Dropped, reReviewInterval, restart)
 	}
 	return prepared, nil
 }
@@ -184,10 +195,15 @@ func startupClient(cfg *rest.Config) (client.Client, error) {
 }
 
 // startupConfig is the start-up client's copy of cfg, with its request
-// timeout.
+// timeout, and the access reviews' responses read through
+// managerrole.ReviewResponseLimit: one namespace's administrator can grow
+// that namespace's rules review without bound (one Role bound many times),
+// and must fail that namespace's review alone, not exhaust the memory of
+// the operator of every namespace.
 func startupConfig(cfg *rest.Config) *rest.Config {
 	cfg = rest.CopyConfig(cfg)
 	cfg.Timeout = startupStepTimeout
+	cfg.Wrap(managerrole.LimitReviewResponses)
 	return cfg
 }
 
