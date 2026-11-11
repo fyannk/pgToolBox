@@ -262,6 +262,40 @@ func TestWeakeningAHistoryNeverStrengthensTheResolution(t *testing.T) {
 	}
 }
 
+// TestJoinKeepsTheActionableTail (round 8, PG P3): a later Join (an
+// off-target note, capUnknown) used to cut the reason from its end, which
+// can drop "do not delete that instance or its volume". The clause stays
+// whole at the 256-byte limit; what comes before it is cut instead.
+func TestJoinKeepsTheActionableTail(t *testing.T) {
+	t.Parallel()
+	gap := "segment 000000010000000A000000FF before the timeline switch is not in the repository; " + FormerPrimaryMayHold
+	for _, extra := range []string{
+		"backup metadata has conflicting PostgreSQL system identifiers",
+		"the backup is on timeline 1, behind the newest; a restore must name timeline 1",
+		"",
+	} {
+		reason := gap
+		if extra == "" {
+			reason = strings.Repeat("x", 120) + "; " + gap
+		}
+		got := Join(reason, extra)
+		if len(got) > MaxReasonBytes || !utf8.ValidString(got) {
+			t.Fatalf("Join = %d bytes", len(got))
+		}
+		if !strings.Contains(got, "do not delete that instance or its volume") {
+			t.Errorf("Join(%q, %q) = %q lost the actionable clause", reason, extra, got)
+		}
+		if extra != "" && !strings.HasSuffix(got, extra) {
+			t.Errorf("Join dropped the extra reason: %q", got)
+		}
+	}
+	// Twice, as a capped path's reason is joined again.
+	twice := Join(Join(gap, "a restore must name timeline 1"), "not coverage: the timeline evidence is unknown")
+	if len(twice) > MaxReasonBytes || !strings.Contains(twice, FormerPrimaryMayHold) {
+		t.Errorf("joined twice: %q (%d bytes)", twice, len(twice))
+	}
+}
+
 func TestJoinKeepsBothReasonsWithinTheWireBound(t *testing.T) {
 	t.Parallel()
 	long := strings.Repeat("é", 200)

@@ -158,6 +158,7 @@ test-fuzz: ## Fuzz the trust-boundary parsers (FUZZ_TIME per target).
 	$(call fuzz,./internal/evidence/formats/pgbackrest,FuzzParseLSN)
 	$(call fuzz,./internal/evidence/formats/pgbackrest,FuzzRecoveryFrontierMonotoneSegment)
 	$(call fuzz,./internal/evidence/formats/pgbackrest,FuzzRecoveryFrontierMonotoneHistory)
+	$(call fuzz,./internal/evidence/formats/pgbackrest,FuzzRecoveryCoveredReach)
 	$(call fuzz,./internal/evidence/formats/pgbackrest,FuzzInferSegmentSize)
 	$(call fuzz,./internal/evidence/formats/timeline,FuzzLatest)
 	$(call fuzz,./internal/evidence/provider/cursor,FuzzCodec)

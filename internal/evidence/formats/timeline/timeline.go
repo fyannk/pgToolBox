@@ -35,6 +35,9 @@ package timeline
 import (
 	"slices"
 	"strconv"
+	"strings"
+
+	evidencev1alpha1 "github.com/fyannk/pgToolBox/pkg/evidence/v1alpha1"
 )
 
 // Status is what the archive shows of one timeline's history file.
@@ -307,27 +310,66 @@ const MaxReasonBytes = 256
 // CloudNativePG archives every .ready segment (ArchiveAllReadyWALs) when
 // that instance restarts, before pg_rewind and before it rejoins. Deleting
 // the instance or its volume is what would make the loss permanent.
-const FormerPrimaryMayHold = "the former primary may still hold it and CloudNativePG archives it before that instance rejoins: do not delete that instance or its volume"
+// It is the contract's clause (evidencev1alpha1.FormerPrimaryMayHold), which
+// the console looks for in a path's reason.
+const FormerPrimaryMayHold = evidencev1alpha1.FormerPrimaryMayHold
+
+// actionable are the clauses a reason must never lose to a cut: what an
+// operator must or must not do. A reason that carries one keeps it whole
+// and is shortened before it instead.
+var actionable = []string{FormerPrimaryMayHold}
 
 // Join appends extra to reason with "; ", keeping the result within
 // MaxReasonBytes: extra is kept whole (it is the actionable part, such as
-// the timeline a restore must name) and reason is shortened at a rune
-// boundary when both do not fit.
+// the timeline a restore must name), and so is an actionable clause of
+// reason (FormerPrimaryMayHold: "do not delete that instance or its
+// volume"); the rest of reason is shortened at a rune boundary, before
+// that clause, when both do not fit (round 8, PG P3).
 func Join(reason, extra string) string {
 	switch {
 	case reason == "":
-		return truncate(extra, MaxReasonBytes)
+		return shorten(extra, MaxReasonBytes)
 	case extra == "":
-		return truncate(reason, MaxReasonBytes)
+		return shorten(reason, MaxReasonBytes)
 	}
 	if len(reason)+2+len(extra) <= MaxReasonBytes {
 		return reason + "; " + extra
 	}
-	room := MaxReasonBytes - 2 - len(extra) - len("…")
+	room := MaxReasonBytes - 2 - len(extra)
 	if room <= 0 {
 		return truncate(extra, MaxReasonBytes)
 	}
-	return truncate(reason, room) + "…; " + extra
+	return shorten(reason, room) + "; " + extra
+}
+
+// shorten cuts value to limit bytes: an actionable clause it carries is
+// kept whole and what comes before it is cut (marked "…"); otherwise the
+// end is cut. When even the clause does not fit, the end is cut.
+func shorten(value string, limit int) string {
+	if len(value) <= limit {
+		return value
+	}
+	for _, clause := range actionable {
+		at := strings.LastIndex(value, clause)
+		if at < 0 {
+			continue
+		}
+		head, tail := strings.TrimSuffix(value[:at], "; "), value[at:]
+		if len(tail)+len("…; ") > limit {
+			// What follows the clause is cut first.
+			tail = clause
+		}
+		room := limit - len(tail) - len("…; ")
+		if room < 0 {
+			break
+		}
+		return truncate(head, room) + "…; " + tail
+	}
+	room := limit - len("…")
+	if room <= 0 {
+		return truncate(value, limit)
+	}
+	return truncate(value, room) + "…"
 }
 
 func truncate(value string, limit int) string {

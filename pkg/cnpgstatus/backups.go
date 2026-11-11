@@ -296,7 +296,7 @@ type ArchivingReading struct {
 //     (isArchivingWAL=false, no backlog) is not made worse than ok by
 //     that alone. With the primary unread: unknown PrimaryUnread, with
 //     the condition's age (the condition alone confirms nothing now),
-//     or unknown Hibernated when the Cluster is hibernated. A count at
+//     or inactive Hibernated when the Cluster is hibernated. A count at
 //     the backlog threshold that too few sweeps saw to judge is unknown
 //     ArchiveBacklogUnconfirmed, never ok. A designated primary (a
 //     replica cluster's archiver) reports no readyWalFiles, so no backlog
@@ -344,6 +344,11 @@ func Archiving(c *cnpgv1.Cluster, primary *ArchiverLive) ArchivingReading {
 		reading.Class = ClassUnknown
 		reading.Reason = ArchivingReasonBacklogNotReported
 		reading.Message = "the archiving instance is a designated primary, which does not report readyWalFiles: whether WAL waits to be archived on it is not known"
+		if !IsReplicaCluster(c) {
+			// Mid-promotion the current primary can briefly report
+			// isPrimary false (CNPG P3-6).
+			reading.Message = "the current primary does not report itself primary yet (a promotion may be in progress), so it does not report readyWalFiles: whether WAL waits to be archived on it is not known"
+		}
 		return reading
 	}
 	hibernatedMessage := "the Cluster is hibernated: no instance runs, so nothing archives WAL, and whether every segment written before it reached the repository is not confirmed"
@@ -371,7 +376,7 @@ func Archiving(c *cnpgv1.Cluster, primary *ArchiverLive) ArchivingReading {
 			return unconfirmed(ArchivingReading{Class: ClassOK, Reason: ArchivingReasonLiveArchiving, Message: "the primary reports WAL archiving; the operator has not written ContinuousArchiving yet"})
 		}
 		if hibernated {
-			return ArchivingReading{Class: ClassUnknown, Reason: ArchivingReasonHibernated, Message: hibernatedMessage}
+			return ArchivingReading{Class: ClassInactive, Reason: ArchivingReasonHibernated, Message: hibernatedMessage}
 		}
 		return ArchivingReading{Class: ClassUnknown, Reason: ArchivingReasonNoCondition, Message: "a WAL archiver is configured but ContinuousArchiving is not reported"}
 	}
@@ -385,7 +390,10 @@ func Archiving(c *cnpgv1.Cluster, primary *ArchiverLive) ArchivingReading {
 		reading.Class = ClassOK
 		switch {
 		case hibernated:
-			reading.Class = ClassUnknown
+			// Deliberately asleep: inactive, as the Cluster is (DBA, round
+			// 8), not unknown, which would outrank it in the headline. The
+			// recovery window's newest edge stays unknown on its own.
+			reading.Class = ClassInactive
 			reading.Reason = ArchivingReasonHibernated
 			reading.Message = "ContinuousArchiving is True" + since(condition.LastTransitionTime.Time) + ", but " + hibernatedMessage
 		case primary == nil:
@@ -426,4 +434,24 @@ func since(t time.Time) string {
 		return ""
 	}
 	return " since " + t.UTC().Format(time.RFC3339)
+}
+
+// IsReplicaCluster is CloudNativePG's Cluster.IsReplica
+// (api/v1/cluster_funcs.go v1.30.1:1087, not in the api module the
+// console builds against): spec.replica.enabled when set, else the
+// distributed topology's self (the Cluster's name by default) differing
+// from replica.primary.
+func IsReplicaCluster(c *cnpgv1.Cluster) bool {
+	if c == nil || c.Spec.ReplicaCluster == nil {
+		return false
+	}
+	r := c.Spec.ReplicaCluster
+	if r.Enabled != nil {
+		return *r.Enabled
+	}
+	self := r.Self
+	if self == "" {
+		self = c.Name
+	}
+	return self != r.Primary
 }

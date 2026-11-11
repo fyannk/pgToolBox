@@ -167,10 +167,11 @@ func TestUnreadArchiverIsNotHealthy(t *testing.T) {
 			wantCode: "recovery.segment.archiverUnread", wantFrom: last.Add(-failureLookback), wantReason: "recovery.reason.archiverUnread",
 		},
 		{
-			name: "hibernated", arch: viewmodel.Archiving{Health: viewmodel.HealthUnknown, Reason: cnpgstatus.ArchivingReasonHibernated},
-			// Round 7, DBA P2-4: a hibernated Cluster is unknown, not a
-			// warning that stays amber for as long as it sleeps.
-			wantCode: "recovery.segment.archiverUnread", wantFrom: last.Add(-failureLookback), wantReason: "recovery.reason.archiverHibernated",
+			name: "hibernated", arch: viewmodel.Archiving{Health: viewmodel.HealthInactive, Reason: cnpgstatus.ArchivingReasonHibernated},
+			// Round 7, DBA P2-4: a hibernated Cluster's newest restore
+			// points are unknown, not a warning that stays amber for as
+			// long as it sleeps; round 8: the band says it is hibernated.
+			wantCode: "recovery.segment.archiverHibernated", wantFrom: last.Add(-failureLookback), wantReason: "recovery.reason.archiverHibernated",
 			wantState: string(evidencev1alpha1.Unknown),
 		},
 	} {
@@ -195,7 +196,7 @@ func TestUnreadArchiverIsNotHealthy(t *testing.T) {
 			if tl.State != wantState || len(tl.Reasons) == 0 || tl.Reasons[0].Code != tc.wantReason {
 				t.Errorf("state %s reasons %+v, want %s %s", tl.State, tl.Reasons, wantState, tc.wantReason)
 			}
-			band := edgeBand(tl, "recovery.segment.archiverUnread", "recovery.segment.archiverUnreadSince")
+			band := edgeBand(tl, "recovery.segment.archiverUnread", "recovery.segment.archiverUnreadSince", "recovery.segment.archiverHibernated")
 			if band == nil || band.Code != tc.wantCode || !band.From.Equal(tc.wantFrom) {
 				t.Fatalf("band %+v, want %s from %s", band, tc.wantCode, tc.wantFrom)
 			}
@@ -207,7 +208,15 @@ func TestUnreadArchiverIsNotHealthy(t *testing.T) {
 			if got.Answer == "covered" {
 				t.Errorf("20 min before the frontier with the archiver unread: %+v", got)
 			}
-			if !slices.ContainsFunc(got.Caveats, func(p viewmodel.Phrase) bool {
+			if tc.arch.Reason == cnpgstatus.ArchivingReasonHibernated {
+				// Round 8, DBA: the caveat says the Cluster is hibernated,
+				// not that its archiver went unread.
+				if !slices.ContainsFunc(got.Caveats, func(p viewmodel.Phrase) bool {
+					return p.Code == "recovery.caveat.archiverHibernated" && strings.HasPrefix(p.Text, "The Cluster is hibernated")
+				}) || slices.ContainsFunc(got.Caveats, func(p viewmodel.Phrase) bool { return p.Code == "recovery.caveat.archiverUnread" }) {
+					t.Errorf("hibernated caveats: %+v", got.Caveats)
+				}
+			} else if !slices.ContainsFunc(got.Caveats, func(p viewmodel.Phrase) bool {
 				// The newest archived WAL may hold older commits than its
 				// arrival says (round 7, DBA P2-3: the copy was inverted).
 				return p.Code == "recovery.caveat.archiverUnread" && strings.Contains(p.Text, "older than its arrival") &&
@@ -395,7 +404,9 @@ func TestDesignatedPrimaryArchiverIsNotOK(t *testing.T) {
 // primary unread now, its ring is still read, so a sweep that read it
 // with nothing waiting bounds the unread band (archiverUnreadEdge's quiet
 // branch); an instance other than the primary is kept only when read now
-// with a failure to report.
+// with a failure to report, or when its ring holds a reading taken while
+// it was primary (a former primary, round 8 P2-2): a standby's ring holds
+// gaps only.
 func TestUnreadPrimaryKeepsItsRing(t *testing.T) {
 	failed := now.Add(-time.Hour)
 	g := &gathered{
@@ -406,17 +417,23 @@ func TestUnreadPrimaryKeepsItsRing(t *testing.T) {
 			"db-3": {State: viewmodel.StatusReadOK, Reading: &instancestatus.Reading{}},
 		}},
 	}
-	rings, _ := readyRings(fakeSweep{}, g)
+	standby := []viewmodel.Point{{At: now.Add(-30 * time.Second)}, {At: now}}
+	sw := ringSweep{rings: map[string][]viewmodel.Point{"db-1": standby, "db-3": standby}}
+	rings, _, _ := readyRings(sw, g)
 	if _, ok := rings["db-2"]; !ok {
 		t.Fatalf("the unread primary's ring is not read: %+v", rings)
 	}
 	if len(rings) != 1 {
 		t.Errorf("rings of instances the facts do not use: %+v", rings)
 	}
+	sw.rings["db-3"] = []viewmodel.Point{{At: now.Add(-30 * time.Second), Value: new(2.0)}, {At: now}}
+	if former, _, _ := readyRings(sw, g); len(former["db-3"]) != 2 {
+		t.Errorf("a former primary's ring is not read: %+v", former)
+	}
 	g.readyRings = rings
 	unread := viewmodel.Archiving{Health: viewmodel.HealthUnknown, Reason: cnpgstatus.ArchivingReasonPrimaryUnread}
 	facts := recoveryFactsOf(g, unread, now)
-	if q := facts.quietBy(nil); q == nil || !q.Equal(now.Add(-30*time.Second)) {
+	if q := facts.quietBy(nil); q == nil || !q.at.Equal(now.Add(-30*time.Second)) {
 		t.Errorf("quiet sweep %v, want the ring's empty reading at %s", q, now.Add(-30*time.Second))
 	}
 }
@@ -534,7 +551,7 @@ func TestBusyPrimaryBacklogBoundByPositions(t *testing.T) {
 				readyRings: map[string][]viewmodel.Point{"db-2": ready},
 			}
 			if tc.positions {
-				g.lsnRing = lsns
+				g.lsnRings = map[string][]viewmodel.Point{g.cluster.Status.CurrentPrimary: lsns}
 			}
 			facts := recoveryFactsOf(g, arch, now)
 			tl := svc.recoveryTimeline(fx.evidence(), viewmodel.BackupSummary{Archiving: arch}, nil, facts)
@@ -575,4 +592,18 @@ func TestWALSegmentSize(t *testing.T) {
 			t.Errorf("walSegmentSize(%s, %s) = %d %t, want %d", tc.lsn, tc.wal, got, ok, tc.want)
 		}
 	}
+}
+
+// ringSweep is fakeSweep with a readyWalFiles ring per instance; an
+// instance it does not name gets fakeSweep's.
+type ringSweep struct {
+	fakeSweep
+	rings map[string][]viewmodel.Point
+}
+
+func (r ringSweep) Series(key sweep.Key, instance string) []viewmodel.Series {
+	if points, ok := r.rings[instance]; ok {
+		return []viewmodel.Series{{Key: sweep.SeriesReadyWALFiles, Unit: "files", Points: points}}
+	}
+	return r.fakeSweep.Series(key, instance)
 }

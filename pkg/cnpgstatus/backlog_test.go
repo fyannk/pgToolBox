@@ -27,6 +27,15 @@ var backlogNow = time.Date(2026, 11, 10, 3, 0, 0, 0, time.UTC)
 
 func ptrInt(v int) *int { return &v }
 
+// withArchived sets every sample's last_archived_time to at (the
+// instance's clock, as the sweep read it).
+func withArchived(run []ReadySample, at *time.Time) []ReadySample {
+	for i := range run {
+		run[i].LastArchivedAt = at
+	}
+	return run
+}
+
 // archivedAgo is a last_archived_time d before backlogNow.
 func archivedAgo(d time.Duration) *time.Time { t := backlogNow.Add(-d); return &t }
 
@@ -89,7 +98,16 @@ func TestArchiveBacklogOf(t *testing.T) {
 		// none reported) is a hung archiver, not a healthy parallel one.
 		{"barman plugin, ObjectStore unread: steady, nothing archived since", barman, &ArchiverLive{ReadyWALFiles: 6, Earlier: readyRun(0, 5, 7, 6), LastArchivedAt: archivedAgo(10 * time.Minute)}, 6, 3, false, 0},
 		{"barman plugin, ObjectStore unread: steady, archived at the oldest sweep", barman, &ArchiverLive{ReadyWALFiles: 6, Earlier: readyRun(0, 5, 7, 6), LastArchivedAt: archivedAgo(60 * time.Second)}, 6, 3, false, 0},
-		{"barman plugin, ObjectStore unread: steady, archived after the oldest sweep", barman, &ArchiverLive{ReadyWALFiles: 6, Earlier: readyRun(0, 5, 7, 6), LastArchivedAt: archivedAgo(59 * time.Second)}, 0, 3, false, 0},
+		// CNPG P3-3: last_archived_time is the instance's clock. Without
+		// the instance's own reading at the oldest sweep, an archive counts
+		// only once it is more than one sweep interval after that sweep,
+		// so a skew within one interval invents no progress.
+		{"barman plugin, ObjectStore unread: steady, archived within one interval after the oldest sweep", barman, &ArchiverLive{ReadyWALFiles: 6, Earlier: readyRun(0, 5, 7, 6), LastArchivedAt: archivedAgo(59 * time.Second)}, 6, 3, false, 0},
+		{"barman plugin, ObjectStore unread: steady, archived over one interval after the oldest sweep", barman, &ArchiverLive{ReadyWALFiles: 6, Earlier: readyRun(0, 5, 7, 6), LastArchivedAt: archivedAgo(29 * time.Second)}, 0, 3, false, 0},
+		// With the instance's last_archived_time at the oldest sweep kept,
+		// both are on its clock: a skew of an hour changes nothing.
+		{"steady, same clock: archived since the oldest sweep", barman, &ArchiverLive{ReadyWALFiles: 6, Earlier: withArchived(readyRun(0, 5, 7, 6), archivedAgo(2*time.Hour)), LastArchivedAt: archivedAgo(119 * time.Minute)}, 0, 3, false, 0},
+		{"steady, same clock: nothing archived since the oldest sweep", barman, &ArchiverLive{ReadyWALFiles: 6, Earlier: withArchived(readyRun(0, 5, 7, 6), archivedAgo(-time.Hour)), LastArchivedAt: archivedAgo(-time.Hour)}, 6, 3, false, 0},
 		{"pgBackRest plugin: steady, never archived", plugin(PgBackRestDaliboPlugin), &ArchiverLive{ReadyWALFiles: 5, Earlier: readyRun(0, 5, 5)}, 5, 3, false, 0},
 		{"barman plugin, ObjectStore unread: two sweeps are not enough", barman, &ArchiverLive{ReadyWALFiles: 8, Earlier: readyRun(0, 6)}, 0, 3, false, 0},
 		{"barman plugin, ObjectStore unread: two sweeps kept, unconfirmed", barman, &ArchiverLive{ReadyWALFiles: 8, Earlier: readyRun(6)}, 0, 3, false, 8},
@@ -193,15 +211,17 @@ func TestArchivingUnreadPrimaryIsNotOK(t *testing.T) {
 	if want := "since 2026-11-01T00:00:00Z"; !strings.Contains(got.Message, want) {
 		t.Errorf("message %q does not name the condition's age (%s)", got.Message, want)
 	}
-	// Hibernated: no primary runs, and the reading says so.
+	// Hibernated: no primary runs, and the reading says so. It is
+	// inactive, as the Cluster is (round 8, DBA): unknown would outrank
+	// the hibernation in the headline.
 	hibernated := clusterWith(map[string]string{AnnotationHibernation: "on"}, ok, cond(ConditionHibernation, "True", "Hibernated"))
 	hibernated.Spec.Plugins = c.Spec.Plugins
-	if got := Archiving(hibernated, nil); got.Class != ClassUnknown || got.Reason != ArchivingReasonHibernated || !strings.Contains(got.Message, "hibernated") {
+	if got := Archiving(hibernated, nil); got.Class != ClassInactive || got.Reason != ArchivingReasonHibernated || !strings.Contains(got.Message, "hibernated") {
 		t.Errorf("Archiving(hibernated) = %+v", got)
 	}
 	noCondition := clusterWith(map[string]string{AnnotationHibernation: "on"}, cond(ConditionHibernation, "True", "Hibernated"))
 	noCondition.Spec.Plugins = c.Spec.Plugins
-	if got := Archiving(noCondition, nil); got.Reason != ArchivingReasonHibernated {
+	if got := Archiving(noCondition, nil); got.Reason != ArchivingReasonHibernated || got.Class != ClassInactive {
 		t.Errorf("Archiving(hibernated, no condition) = %+v", got)
 	}
 }
@@ -239,7 +259,16 @@ func TestArchivingTooFewSweepsIsNotOK(t *testing.T) {
 func TestArchivingDesignatedPrimaryIsNotOK(t *testing.T) {
 	c := clusterWith(nil, cond(ConditionContinuousArchiving, "True", "ContinuousArchivingSuccess"))
 	c.Spec.Backup = &cnpgv1.BackupConfiguration{BarmanObjectStore: &cnpgv1.BarmanObjectStoreConfiguration{}}
+	enabled := true
+	c.Spec.ReplicaCluster = &cnpgv1.ReplicaClusterConfiguration{Enabled: &enabled, Source: "origin"}
 	live := &ArchiverLive{IsArchivingWAL: true, ReadyNotReported: true, ObservedAt: backlogNow, Earlier: readyRun(0, 0, 0)}
+	// CNPG P3-6: outside a replica cluster the same reading is a primary
+	// mid-promotion, not a designated primary.
+	primaryCluster := c.DeepCopy()
+	primaryCluster.Spec.ReplicaCluster = nil
+	if got := Archiving(primaryCluster, live); got.Reason != ArchivingReasonBacklogNotReported || strings.Contains(got.Message, "designated primary") || !strings.Contains(got.Message, "promotion") {
+		t.Errorf("not a replica cluster: %+v", got)
+	}
 	if got := Archiving(c, live); got.Class != ClassUnknown || got.Reason != ArchivingReasonBacklogNotReported || !strings.Contains(got.Message, "designated primary") {
 		t.Errorf("designated primary, condition True: %+v", got)
 	}
@@ -262,6 +291,30 @@ func TestArchivingDesignatedPrimaryIsNotOK(t *testing.T) {
 // P2-5): a count held at the threshold over three sweeps, with no
 // segment archived since the oldest of them, is a stalled archiver:
 // warning ArchiveBacklog, the message naming since when.
+// TestIsReplicaCluster follows CloudNativePG's Cluster.IsReplica: enabled
+// when set, else the distributed topology's self against primary.
+func TestIsReplicaCluster(t *testing.T) {
+	yes, no := true, false
+	for _, tc := range []struct {
+		name string
+		r    *cnpgv1.ReplicaClusterConfiguration
+		want bool
+	}{
+		{"no replica stanza", nil, false},
+		{"enabled", &cnpgv1.ReplicaClusterConfiguration{Enabled: &yes}, true},
+		{"disabled", &cnpgv1.ReplicaClusterConfiguration{Enabled: &no, Primary: "other"}, false},
+		{"distributed, another primary", &cnpgv1.ReplicaClusterConfiguration{Primary: "east"}, true},
+		{"distributed, this one primary", &cnpgv1.ReplicaClusterConfiguration{Primary: "pg"}, false},
+		{"distributed, self named", &cnpgv1.ReplicaClusterConfiguration{Self: "west", Primary: "west"}, false},
+	} {
+		c := &cnpgv1.Cluster{}
+		c.Name, c.Spec.ReplicaCluster = "pg", tc.r
+		if got := IsReplicaCluster(c); got != tc.want {
+			t.Errorf("%s: %t, want %t", tc.name, got, tc.want)
+		}
+	}
+}
+
 func TestArchivingStalledArchiverUnderUnknownParallelism(t *testing.T) {
 	c := clusterWith(nil, cond(ConditionContinuousArchiving, "True", "ContinuousArchivingSuccess"))
 	c.Spec.Plugins = []cnpgv1.PluginConfiguration{{Name: PgBackRestDaliboPlugin}}
