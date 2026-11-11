@@ -1830,6 +1830,7 @@ _Appears in:_
 | `ReconciliationFailed` | Event reasons of the classified Warning recorded when an error ends<br />a reconciliation.<br /> |
 | `QuotaExceeded` |  |
 | `AdmissionDenied` |  |
+| `NamespaceNotWatched` | ReasonNamespaceNotWatched is Ready=Unknown (and the Warning Event of<br />the same reason) on an object of a namespace of WATCH_NAMESPACES the<br />operator left out at start because it lacks some of its permissions<br />there: its status is no longer updated. Written once at start, best<br />effort, only where the operator may still write it; the message<br />names that namespace and the permissions missing there.<br /> |
 | `BarmanPluginNotConfigured` | ReasonBarmanPluginNotConfigured: the Cluster declares neither an<br />enabled barman-cloud plugin with a barmanObjectName nor an in-tree<br />spec.backup.barmanObjectStore, and spec.objectStoreRef is not set.<br /> |
 | `ObjectStoreNotFound` | ReasonObjectStoreNotFound: the resolved ObjectStore, or the pgBackRest<br />plugin's Stanza or Archive, does not exist.<br /> |
 | `ObjectStoreAPIUnavailable` | ReasonObjectStoreAPIUnavailable: barmancloud.cnpg.io ObjectStore (or,<br />for a Cluster backed up with pgBackRest, pgbackrest.dalibo.com Stanza<br />or pgbackrest.cnpg.opera.com Archive) is not served or not readable by<br />the operator.<br /> |
