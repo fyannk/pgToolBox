@@ -604,11 +604,16 @@ func (s *Sweeper) pushRings(cs *clusterState, snap Snapshot, at time.Time) {
 				// cluster's designated primary included, is no reading.
 				files := float64(inst.Reading.ReadyWALFiles)
 				ready = &files
-				ms := float64(ArchivedNone)
-				if t := inst.Reading.LastArchivedWALTime; t != nil {
-					ms = float64(t.UnixMilli())
+				// A time that does not parse is no reading, never "nothing
+				// archived yet" (round 10, CNPG P3).
+				switch t := inst.Reading.LastArchivedWALTime; {
+				case t != nil:
+					ms := float64(t.UnixMilli())
+					archived = &ms
+				case !inst.Reading.LastArchivedWALTimeUnparsed:
+					ms := float64(ArchivedNone)
+					archived = &ms
 				}
-				archived = &ms
 				if tl, ok := walFileTimeline(inst.Reading.CurrentWAL); ok {
 					v := float64(tl)
 					timeline = &v

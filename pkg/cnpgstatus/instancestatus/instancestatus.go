@@ -151,8 +151,13 @@ type Reading struct {
 	// instants they carry.
 	LastArchivedWAL     string
 	LastArchivedWALTime *time.Time
-	LastFailedWAL       string
-	LastFailedWALTime   *time.Time
+	// LastArchivedWALTimeUnparsed reports a lastArchivedWALTime the
+	// instance sent that does not parse as a time: LastArchivedWALTime is
+	// then nil, and the instance did not say it never archived (an absent
+	// or empty value does).
+	LastArchivedWALTimeUnparsed bool
+	LastFailedWAL               string
+	LastFailedWALTime           *time.Time
 	// SystemID and TimelineID identify what the instance is replaying.
 	SystemID   string
 	TimelineID int
@@ -304,6 +309,7 @@ func Parse(body io.Reader) (Reading, error) {
 		ReadyWALFiles:                 r.ReadyWALFiles,
 		LastArchivedWAL:               bound(r.LastArchivedWAL),
 		LastArchivedWALTime:           instant(r.LastArchivedWALTime),
+		LastArchivedWALTimeUnparsed:   r.LastArchivedWALTime != "" && instant(r.LastArchivedWALTime) == nil,
 		LastFailedWAL:                 bound(r.LastFailedWAL),
 		LastFailedWALTime:             instant(r.LastFailedWALTime),
 		SystemID:                      bound(r.SystemID),

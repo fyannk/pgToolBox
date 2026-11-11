@@ -30,6 +30,7 @@ func FuzzDecodeStatus(f *testing.F) {
 	f.Add([]byte(`{"isPrimary":true,"currentLsn":"0/3000060","timeLineID":1,"replicationInfo":[{"applicationName":"orders-2","receivedLsn":"0/3000060"}]}`))
 	f.Add([]byte(`{"replicationSlotsInfo":[{"slotName":"_cnpg_orders_2","active":true}]}`))
 	f.Add([]byte(`{"lastArchivedWALTime":"2026-10-29 12:00:00.123+00","isFenced":true}`))
+	f.Add([]byte(`{"isPrimary":true,"lastArchivedWALTime":"yesterday"}`))
 	f.Add([]byte(`null`))
 	f.Add([]byte(`{"currentLsn":` + `"` + string(make([]byte, 300)) + `"}`))
 	f.Add([]byte(`[`))
@@ -74,6 +75,11 @@ func FuzzDecodeStatus(f *testing.F) {
 				v.InodesFree > v.Inodes || v.HasInodes != (v.Inodes > 0) {
 				t.Fatalf("inconsistent volume usage %+v", v)
 			}
+		}
+		// An archive time is a time or flagged unparsed, never both
+		// (round 10, CNPG P3: an unparsed one is no reading, not "none").
+		if reading.LastArchivedWALTime != nil && reading.LastArchivedWALTimeUnparsed {
+			t.Fatalf("archive time %v flagged unparsed", reading.LastArchivedWALTime)
 		}
 		_, _ = parseLSN(reading.CurrentLSN)
 	})

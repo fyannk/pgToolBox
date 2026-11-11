@@ -17,6 +17,7 @@ package status
 import (
 	"math/rand/v2"
 	"reflect"
+	"sort"
 	"testing"
 	"time"
 
@@ -62,9 +63,20 @@ func failoverGathered(primary string, promoted time.Time, rings map[string][]fai
 	return g
 }
 
+// failoverFacts are the recovery facts of g's failover readings, as
+// recoveryFactsOf derives the former archiver, the promotion, the live
+// timeline and the instances that rejoined.
+func failoverFacts(g *gathered) recoveryFacts {
+	promoted := promotedAt(g)
+	return recoveryFacts{
+		now: now, archiveTimeout: defaultArchiveTimeout, sweepInterval: 30 * time.Second,
+		former:   formerArchiverOf(g, promoted, defaultArchiveTimeout, 30*time.Second),
+		promoted: promoted, liveTimeline: liveTimelineOf(g, promoted), rejoined: rejoinedSince(g, promoted),
+	}
+}
+
 func failoverTimeline(g *gathered, paths ...evidence.RecoveryPath) viewmodel.Backups {
-	f := formerArchiverOf(g, promotedAt(g), defaultArchiveTimeout, 30*time.Second)
-	facts := recoveryFacts{now: now, archiveTimeout: defaultArchiveTimeout, sweepInterval: 30 * time.Second, former: f}
+	facts := failoverFacts(g)
 	ev := timelineFixture{paths: paths}.evidence()
 	tl := (&Service{}).recoveryTimeline(ev, viewmodel.BackupSummary{}, nil, facts)
 	return viewmodel.Backups{RecoveryTimeline: tl, GeneratedAt: now}
@@ -180,51 +192,130 @@ func TestFormerEvidenceOverTwoFailovers(t *testing.T) {
 }
 
 // TestFormerEvidenceOfOtherTimelinesChangesNothing is the property behind
-// round 9's P2: readings of the archivers of other timelines, however many
-// and wherever they fall, leave the bar of a timeline 1 end exactly as
-// that timeline's own readings draw it, and a band they would invert is
-// never coverage.
+// round 9's P2, run on real rings (round 10, PG P3): the former primary's
+// readyWalFiles, position and timeline rings go through formerArchiverOf,
+// timelineAt and archivedBoundsOn as a sweep would keep them. Readings of
+// the archivers of other timelines, however many and wherever they fall
+// (another instance's, or the same instance's on a later term), leave the
+// bar of a timeline 1 end exactly as that timeline's own readings draw
+// it; and the bar matches the rule exactly: covered before the newest
+// band start that timeline's readings give, when that start is before the
+// end, and nowhere in the day before the end otherwise (a band they would
+// invert is never coverage).
 func TestFormerEvidenceOfOtherTimelinesChangesNothing(t *testing.T) {
 	r := rand.New(rand.NewPCG(9, 2))
-	receipt := now.Add(-3 * time.Hour)
+	path := parentTailPath(1)
+	receipt := *path.FrontierReceiptAt
+	promoted := now.Add(-time.Hour)
+	const segment = 16 << 20
 	svc := &Service{}
-	draw := func(f formerArchiver) viewmodel.RecoveryTimeline {
-		facts := recoveryFacts{now: now, archiveTimeout: defaultArchiveTimeout, sweepInterval: 30 * time.Second, former: f}
-		return svc.recoveryTimeline(timelineFixture{paths: []evidence.RecoveryPath{parentTailPath(1)}}.evidence(), viewmodel.BackupSummary{}, nil, facts)
+	type reading struct {
+		at       time.Time
+		files    float64
+		lsn      float64
+		timeline float64
 	}
-	at := func() time.Time { return receipt.Add(time.Duration(r.Int64N(int64(30*time.Hour))) - 26*time.Hour) }
-	for i := range 300 {
-		own := formerArchiver{read: map[uint64]bool{}}
-		if r.IntN(3) > 0 {
-			own.read[1] = true
-			for range r.IntN(3) {
-				q := at()
-				own.quiet = append(own.quiet, quietSweep{at: q, by: q.Add(time.Second), timeline: 1})
+	// series is a random term's readings on one timeline, oldest first:
+	// readyWalFiles 0 a third of the time, the position moving forward by
+	// up to three segments a sweep.
+	series := func(timeline float64, taken map[int64]bool) []reading {
+		var out []reading
+		lsn := float64(uint64(1+r.IntN(4)) * segment)
+		for range r.IntN(7) {
+			at := receipt.Add(-26 * time.Hour).Add(time.Duration(r.Int64N(int64(promoted.Sub(receipt.Add(-26*time.Hour))/time.Second))) * time.Second)
+			if taken[at.UnixNano()] {
+				continue
 			}
-			for range r.IntN(3) {
-				q := at()
-				own.bounds = append(own.bounds, archivedBound{readAt: q, before: q.Add(-time.Duration(r.Int64N(int64(2 * time.Hour)))), timeline: 1})
+			taken[at.UnixNano()] = true
+			out = append(out, reading{at: at, timeline: timeline})
+		}
+		sort.Slice(out, func(i, j int) bool { return out[i].at.Before(out[j].at) })
+		for i := range out {
+			lsn += float64(uint64(r.IntN(4))*segment + uint64(r.IntN(1000)))
+			out[i].lsn = lsn
+			if r.IntN(3) > 0 {
+				out[i].files = float64(1 + r.IntN(6))
 			}
 		}
-		mixed := formerArchiver{read: map[uint64]bool{}, quiet: append([]quietSweep(nil), own.quiet...), bounds: append([]archivedBound(nil), own.bounds...)}
-		for tl := range own.read {
-			mixed.read[tl] = true
+		return out
+	}
+	build := func(instances map[string][]reading) *gathered {
+		c := inTreeCluster()
+		c.Status.CurrentPrimary = "db-2"
+		c.Status.CurrentPrimaryTimestamp = promoted.Format(time.RFC3339Nano)
+		g := &gathered{
+			cluster: c,
+			swept: sweep.Snapshot{SweptAt: now, Interval: 30 * time.Second, Instances: map[string]sweep.Instance{
+				// The current primary, on timeline 5: its reading gives the
+				// segment size (16 MiB) and the live timeline.
+				"db-2": {State: viewmodel.StatusReadOK, Reading: &instancestatus.Reading{IsPrimary: true, CurrentWAL: "000000050000000000000007", CurrentLSN: "0/7000100", ObservedAt: now}},
+			}},
+			readyRings: map[string][]viewmodel.Point{}, lsnRings: map[string][]viewmodel.Point{}, timelineRings: map[string][]viewmodel.Point{},
 		}
-		for range 1 + r.IntN(4) {
-			tl := uint64(2 + r.IntN(3))
-			mixed.read[tl] = true
-			q := at()
-			mixed.quiet = append(mixed.quiet, quietSweep{at: q, by: q.Add(time.Second), timeline: tl})
-			mixed.bounds = append(mixed.bounds, archivedBound{readAt: q, before: q.Add(-time.Minute), timeline: tl})
+		for name, readings := range instances {
+			sorted := append([]reading(nil), readings...)
+			sort.Slice(sorted, func(i, j int) bool { return sorted[i].at.Before(sorted[j].at) })
+			for _, x := range sorted {
+				files, lsn, tl := x.files, x.lsn, x.timeline
+				by := x.at.Add(time.Second)
+				g.readyRings[name] = append(g.readyRings[name], viewmodel.Point{At: x.at, Value: &files, ReadBy: by})
+				g.lsnRings[name] = append(g.lsnRings[name], viewmodel.Point{At: x.at, Value: &lsn, ReadBy: by})
+				g.timelineRings[name] = append(g.timelineRings[name], viewmodel.Point{At: x.at, Value: &tl, ReadBy: by})
+			}
 		}
-		want, got := draw(own), draw(mixed)
+		return g
+	}
+	draw := func(g *gathered) viewmodel.RecoveryTimeline {
+		return svc.recoveryTimeline(timelineFixture{paths: []evidence.RecoveryPath{path}}.evidence(), viewmodel.BackupSummary{}, nil, failoverFacts(g))
+	}
+	margin := recoveryFacts{archiveTimeout: defaultArchiveTimeout}.frontierMargin()
+	evidenced, inverted := 0, 0
+	for i := range 400 {
+		taken := map[int64]bool{}
+		own := series(1, taken)
+		other := map[string][]reading{"db-1": append(append([]reading(nil), own...), series(4, taken)...), "db-3": series(2, taken), "db-4": series(3, taken)}
+		ownG, mixedG := build(map[string][]reading{"db-1": own}), build(other)
+		want, got := draw(ownG), draw(mixedG)
 		if !reflect.DeepEqual(want.Segments, got.Segments) {
 			t.Fatalf("case %d: other timelines' readings changed the bar:\n%+v\nwant\n%+v", i, got.Segments, want.Segments)
 		}
-		b := viewmodel.Backups{RecoveryTimeline: got, GeneratedAt: now}
-		if c := restoreCheck(b, receipt.Add(-time.Minute)); c.Answer == "covered" {
-			t.Fatalf("case %d: a minute before the end of timeline 1 answers covered: %+v", i, own)
+		// The rule, from timeline 1's own readings: the newest band start
+		// a read by the scan gives.
+		read, quiet, bounds := formerArchiverOf(ownG, promoted, defaultArchiveTimeout, 30*time.Second).on(1)
+		var start *time.Time
+		later := func(at time.Time) {
+			if start == nil || at.After(*start) {
+				start = &at
+			}
 		}
+		for _, q := range quiet {
+			if !q.by.After(now) {
+				later(q.at.Add(-defaultArchiveTimeout))
+			}
+		}
+		for _, b := range bounds {
+			if !b.readAt.After(now) {
+				later(b.before)
+			}
+		}
+		if read && start != nil {
+			evidenced++
+			if !start.Before(receipt) {
+				inverted++
+			}
+		}
+		b := viewmodel.Backups{RecoveryTimeline: got, GeneratedAt: now}
+		for range 12 {
+			at := receipt.Add(-time.Duration(1+r.Int64N(int64(failureLookback/time.Second)-1)) * time.Second)
+			covered := restoreCheck(b, at).Answer == "covered"
+			expect := at.Before(receipt.Add(-margin)) && read && start != nil && start.Before(receipt) && at.Before(*start)
+			if covered != expect {
+				t.Fatalf("case %d: %s before the end covered %v, want %v (band start %v, own readings %+v)", i, receipt.Sub(at), covered, expect, start, own)
+			}
+		}
+	}
+	if evidenced < 100 || inverted < 20 {
+		t.Fatalf("the generator exercised %d cases with evidence, %d of them inverted: too few", evidenced, inverted)
 	}
 }
 

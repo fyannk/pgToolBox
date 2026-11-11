@@ -639,6 +639,13 @@ func advance(previous *agentState, agent *pgtoolboxv1alpha1.EvidenceAgent, out o
 		return degrade(failureContract.reason())
 	}
 	observed := now
+	if out.backups.recovery.ScannedAt == nil {
+		scanned := observed
+		if out.snapshot.CompletedAt != nil {
+			scanned = out.snapshot.CompletedAt.UTC()
+		}
+		out.backups.recovery.ScannedAt = &scanned
+	}
 	fresh := Result{
 		Agent: agent.Name, State: viewmodel.EvidenceLive, ObservedAt: &observed, Snapshot: out.snapshot,
 		BackupIDs: out.backups.ids, BackupsComplete: out.backups.complete,
@@ -672,7 +679,9 @@ func advance(previous *agentState, agent *pgtoolboxv1alpha1.EvidenceAgent, out o
 // keepRecovery keeps the last good recovery paths when reading them
 // failed transiently: they turn stale with the failure's reason instead
 // of vanishing, as a failed refresh keeps a retained snapshot. A
-// definitive answer (unsupported, not scanned) replaces them.
+// definitive answer (unsupported, not scanned) replaces them. The kept
+// paths keep their own scan time (ScannedAt), which the timeline's edges
+// are timed from.
 func keepRecovery(previous, current Recovery) Recovery {
 	if current.State != RecoveryUnavailable || previous.State != RecoveryAvailable || len(previous.Paths) == 0 {
 		return current
