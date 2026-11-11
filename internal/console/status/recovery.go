@@ -263,6 +263,11 @@ func recoveryFactsOf(g *gathered, arch viewmodel.Archiving, now time.Time) recov
 	f.notReported = arch.Reason == cnpgstatus.ArchivingReasonBacklogNotReported
 	live := primaryArchiver(g)
 	f.primaryUnread = live == nil
+	// A hibernated Cluster with ContinuousArchiving False keeps CNPG's
+	// own reason in the archiving fact, not Hibernated: the Cluster's
+	// state says it sleeps, as cnpgstatus.Archiving reads it (round 15,
+	// CNPG P3-2).
+	f.hibernated = f.hibernated || (f.primaryUnread && cnpgstatus.Hibernation(g.cluster).State == cnpgstatus.HibernationHibernated)
 	switch b := cnpgstatus.ArchiveBacklogOf(g.cluster, live); {
 	case b.Behind():
 		f.backlog = b.Segments
@@ -871,7 +876,7 @@ func (s *Service) recoveryTimeline(ev clusterEvidence, summary viewmodel.BackupS
 		}
 	}
 	out.Markers = recoveryMarkers(ev.result.Backups, rows)
-	out.EdgeAdvice = edgeAdvice(out.Reasons, archivingFailing(summary.Archiving))
+	out.EdgeAdvice = edgeAdvice(out.Reasons, facts)
 	return out
 }
 
@@ -881,24 +886,40 @@ func (s *Service) recoveryTimeline(ev clusterEvidence, summary viewmodel.BackupS
 // its own (round 14, DBA P2-1). none: no primary runs, or none was read,
 // to run either on (hibernated, fenced, unreachable). archiver: archiving
 // fails or lags, so a switched segment would wait like the others; the
-// archiver's own statistics say why. A reason not here leaves both checks
-// (liveTimelineNotArchived's own text advises the switch).
+// archiver's own statistics say why; or a WAL switch here cannot help
+// (the archiving instance is in recovery, where pg_switch_wal() fails,
+// or the repository's newest timeline is another cluster's). A reason
+// not here leaves both checks (liveTimelineNotArchived's own text
+// advises the switch); TestEdgeAdviceClassifiesEveryReason holds the
+// list of those, so a new reason is classified on purpose.
 var edgeAdviceOf = map[string]string{
 	"recovery.reason.archiverHibernated":                   viewmodel.EdgeAdviceNone,
+	"recovery.reason.archiverUnread":                       viewmodel.EdgeAdviceNone,
 	"recovery.reason.liveTimelineNotArchivedPrimaryUnread": viewmodel.EdgeAdviceNone,
 	"recovery.reason.archivingFailedPrimaryUnread":         viewmodel.EdgeAdviceNone,
 	"recovery.reason.archivingFailing":                     viewmodel.EdgeAdviceArchiver,
 	"recovery.reason.archiveBacklog":                       viewmodel.EdgeAdviceArchiver,
 	"recovery.reason.failedRecently":                       viewmodel.EdgeAdviceArchiver,
+	"recovery.reason.archiverNotReported":                  viewmodel.EdgeAdviceArchiver,
+	"recovery.reason.repositoryAheadOfLive":                viewmodel.EdgeAdviceArchiver,
 }
 
-// edgeAdvice is the narrowest advice any reason allows: none before
-// archiver before both checks (""). Archiving read as failing allows the
-// archiver check at most, whatever the reasons say (a reported window
-// gives no archiving reason).
-func edgeAdvice(reasons []viewmodel.Phrase, failing bool) string {
+// edgeAdvice is the narrowest advice the facts or any reason allow: none
+// before archiver before both checks (""). The facts come first, on the
+// evidence and the reported basis alike (round 15, CNPG P2-1 and DBA
+// P2-1): a reported window gives no archiving reason, and a reason ranked
+// above the archiver's (holes, a stale scan) would hide it. The current
+// primary not read, or the Cluster hibernated: nothing to run either
+// check on. The archiving instance in recovery (notReported: a replica
+// cluster's designated primary, a primary mid-promotion), where
+// pg_switch_wal() fails with "recovery is in progress", or archiving
+// read as failing: the archiver check at most.
+func edgeAdvice(reasons []viewmodel.Phrase, f recoveryFacts) string {
+	if f.primaryUnread || f.hibernated {
+		return viewmodel.EdgeAdviceNone
+	}
 	out := ""
-	if failing {
+	if f.failing || f.notReported {
 		out = viewmodel.EdgeAdviceArchiver
 	}
 	for _, r := range reasons {
@@ -2280,6 +2301,19 @@ func timelineVerdict(out *viewmodel.RecoveryTimeline, in timelineInput, f timeli
 	case f.failedRecently:
 		out.State = warning
 		setReason(out, say("recovery.reason.failedRecently", "WAL archiving failed recently: the newest restore points are uncertain", nil))
+	case f.hibernated:
+		// A hibernated Cluster writes no WAL and runs no archiver: nothing
+		// is going wrong that a warning would ask to act on, and nothing
+		// confirms that the WAL written before it reached the repository.
+		// The newest restore points are unknown until it wakes up. Ranked
+		// before a post-failover lag, whose advice to act on the primary
+		// cannot be followed with no instance running (round 12, CNPG
+		// P3-1), and before a last attempt that failed with the primary
+		// unread, whose "until the primary is read again" waits on no
+		// running instance (round 15, CNPG P3-2): the archiving fact
+		// still says ContinuousArchiving False.
+		out.State = string(evidencev1alpha1.Unknown)
+		setReason(out, say("recovery.reason.archiverHibernated", "the Cluster is hibernated: whether the WAL written before it reached the repository is not confirmed, so the newest restore points are uncertain", nil))
 	case f.failing && f.primaryUnread:
 		// ContinuousArchiving False with the primary unread (fenced after
 		// a failover to investigate, unreachable): nothing archives that
@@ -2309,16 +2343,6 @@ func timelineVerdict(out *viewmodel.RecoveryTimeline, in timelineInput, f timeli
 		n := strconv.Itoa(f.backlog)
 		setReason(out, say("recovery.reason.archiveBacklog", n+" WAL segments are waiting to be archived on the primary: the newest restore points are uncertain",
 			map[string]string{"segments": n}))
-	case f.hibernated:
-		// A hibernated Cluster writes no WAL and runs no archiver: nothing
-		// is going wrong that a warning would ask to act on, and nothing
-		// confirms that the WAL written before it reached the repository.
-		// The newest restore points are unknown until it wakes up. Ranked
-		// before a post-failover lag, whose advice to act on the primary
-		// cannot be followed with no instance running (round 12, CNPG
-		// P3-1).
-		out.State = string(evidencev1alpha1.Unknown)
-		setReason(out, say("recovery.reason.archiverHibernated", "the Cluster is hibernated: whether the WAL written before it reached the repository is not confirmed, so the newest restore points are uncertain", nil))
 	case f.liveAhead != 0 && (f.primaryUnread || f.archiverUnread):
 		// The primary was not read (fenced, unreachable): advice to run
 		// anything on it may not be followable (round 12, CNPG P3-1).
