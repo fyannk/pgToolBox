@@ -1,8 +1,9 @@
 #!/bin/sh
 # The Go toolchain is stated twice by necessity (mise.toml for people and CI,
-# go.mod/go.work for the go command). They must say the same thing, and the
-# language floor must stay above the standard-library advisories recorded in
-# go.mod.
+# go.mod/go.work for the go command). They must say the same thing. The pinned
+# toolchain is what keeps builds clear of standard-library advisories; the
+# language floor only must not fall below 1.26.6, the release that fixed the
+# advisories open when the modules were merged.
 set -eu
 
 want=$(awk -F'"' '$2 == "go" { print $4; exit }' mise.toml)
@@ -19,7 +20,7 @@ for f in go.mod go.work pkg/evidence/go.mod deploy/olm/catalog/opm/go.mod; do
   floor=$(awk '$1 == "go" { print $2; exit }' "$f")
   case "$floor" in
     1.26.[6-9]|1.26.[1-9][0-9]|1.2[7-9]*|1.[3-9][0-9]*) ;;
-    *) echo "$f: go $floor is below the 1.26.6 floor (stdlib advisories, see go.mod)" >&2; status=1 ;;
+    *) echo "$f: go $floor is below the 1.26.6 floor" >&2; status=1 ;;
   esac
 done
 # The release workflow installs cosign through an action that takes a release
