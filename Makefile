@@ -60,7 +60,7 @@ manifests: ## Generate CRDs and the manager ClusterRole, then sync the packaging
 verify-manifests: ## Fail when the checked-in manifests are stale.
 	@./hack/check-helm-major.sh
 	@$(MAKE) --no-print-directory manifests
-	@git diff --exit-code -- config deploy charts || { \
+	@git diff --exit-code -- config deploy charts internal/operator/managerrole || { \
 		echo "generated manifests are stale; run 'make manifests' and commit the result"; exit 1; }
 
 # Every file a generator owns, regenerated, then the tree compared with the

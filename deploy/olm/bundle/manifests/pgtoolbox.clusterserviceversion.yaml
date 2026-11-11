@@ -321,6 +321,8 @@ spec:
         - apiGroups:
           - authorization.k8s.io
           resources:
+          - selfsubjectaccessreviews
+          - selfsubjectrulesreviews
           - subjectaccessreviews
           verbs:
           - create

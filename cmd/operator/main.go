@@ -22,6 +22,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 
 	cnpgv1 "github.com/cloudnative-pg/api/pkg/api/v1"
 	routev1 "github.com/openshift/api/route/v1"
@@ -35,6 +36,7 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"github.com/fyannk/pgToolBox/internal/operator/cachemetrics"
+	"github.com/fyannk/pgToolBox/internal/operator/console"
 	"github.com/fyannk/pgToolBox/internal/operator/pgadmin"
 	"github.com/fyannk/pgToolBox/pkg/memlimit"
 )
@@ -118,18 +120,7 @@ func main() {
 	restConfig := ctrl.GetConfigOrDie()
 	mgr, kinds, err := buildManager(ctx, budget, func() (ctrl.Manager, error) {
 		return ctrl.NewManager(restConfig, managerOptions)
-	}, []managerSetup{
-		{"EvidenceAgent", func(ctx context.Context, mgr ctrl.Manager) ([]client.Object, error) {
-			return setupEvidenceAgent(ctx, mgr, pgAdminPrepared.EvidenceAgentAPIs)
-		}},
-		{"PgAdmin", func(ctx context.Context, mgr ctrl.Manager) ([]client.Object, error) {
-			return pgadmin.CachedKinds(pgAdminPrepared.Features), setupPgAdmin(ctx, mgr, pgAdminPrepared)
-		}},
-		{"PgAccessRequest", setupAccessRequest},
-		{"PgToolBoxConsole", func(ctx context.Context, mgr ctrl.Manager) ([]client.Object, error) {
-			return setupPgToolBoxConsole(ctx, mgr, consoleFeatures, pgAdminPrepared.Config.ExposureAllowedHostSuffixes)
-		}},
-	})
+	}, managerSetups(pgAdminPrepared, consoleFeatures))
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
 		os.Exit(1)
@@ -152,9 +143,41 @@ func main() {
 
 	setupLog.Info("starting manager", "version", operatorVersion)
 	if err := mgr.Start(ctx); err != nil {
-		setupLog.Error(err, "problem running manager")
+		setupLog.Error(err, "problem running manager", "hint", cacheSyncHint(err, pgAdminPrepared.Config.WatchNamespaces))
 		os.Exit(1)
 	}
+}
+
+// managerSetups is every controller's setup, in the order main runs them.
+func managerSetups(prepared pgAdminPrepared, consoleFeatures console.Features) []managerSetup {
+	return []managerSetup{
+		{"EvidenceAgent", func(ctx context.Context, mgr ctrl.Manager) ([]client.Object, error) {
+			return setupEvidenceAgent(ctx, mgr, prepared.EvidenceAgentAPIs)
+		}},
+		{"PgAdmin", func(ctx context.Context, mgr ctrl.Manager) ([]client.Object, error) {
+			return pgadmin.CachedKinds(prepared.Features), setupPgAdmin(ctx, mgr, prepared)
+		}},
+		{"PgAccessRequest", setupAccessRequest},
+		{"PgToolBoxConsole", func(ctx context.Context, mgr ctrl.Manager) ([]client.Object, error) {
+			return setupPgToolBoxConsole(ctx, mgr, consoleFeatures, prepared.Config.ExposureAllowedHostSuffixes)
+		}},
+	}
+}
+
+// cacheSyncHint is what to check when the manager stopped because an
+// informer never synced: controller-runtime's error names the kind (as a
+// Go type) but not the namespace, and the cause is almost always one
+// watched namespace that refuses that kind to the operator (the start-up
+// check left out the namespaces that refused one a moment before, so its
+// RBAC changed since). Empty for any other error.
+func cacheSyncHint(err error, watched []string) string {
+	if !strings.Contains(err.Error(), "timed out waiting for cache to be synced") {
+		return ""
+	}
+	if len(watched) == 0 {
+		return "an informer could not list or watch the kind named in the error cluster-wide: check the operator's manager ClusterRoleBinding"
+	}
+	return fmt.Sprintf("an informer could not list or watch the kind named in the error in one of the watched namespaces %v: check the operator's manager RoleBinding in each (kubectl auth can-i --list --as=system:serviceaccount:<release namespace>:<operator ServiceAccount> -n <namespace>), then restart the operator", watched)
 }
 
 // managerSetup is one controller's setup: it registers the controller on

@@ -40,7 +40,7 @@ import (
 
 // refusingReader answers every List as the API server answers an operator
 // with no RoleBinding in a namespace: Forbidden, whatever the kind.
-func refusingReader(refused ...string) client.Reader {
+func refusingReader(refused ...string) client.Client {
 	return fake.NewClientBuilder().WithScheme(scheme).WithInterceptorFuncs(interceptor.Funcs{
 		List: func(_ context.Context, _ client.WithWatch, _ client.ObjectList, opts ...client.ListOption) error {
 			o := &client.ListOptions{}
@@ -280,7 +280,7 @@ func TestPrepareManyWatchedNamespaces(t *testing.T) {
 // narrowedReader answers Lists as an API server where the operator is bound
 // to the chart's Role in every namespace but those of narrowed, whose
 // administrator bound it to a Role without the kinds of refusedKinds.
-func narrowedReader(narrowed []string, refusedKinds ...string) client.Reader {
+func narrowedReader(narrowed []string, refusedKinds ...string) client.Client {
 	return fake.NewClientBuilder().WithScheme(scheme).WithInterceptorFuncs(interceptor.Funcs{
 		List: func(_ context.Context, _ client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
 			o := &client.ListOptions{}

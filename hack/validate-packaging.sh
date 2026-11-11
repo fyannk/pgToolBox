@@ -352,6 +352,7 @@ helm_full = render(["helm", "template", "pgtoolbox", "charts/pgtoolbox", "--name
 # pgtoolbox-console-restore-drills to itself. The cluster-wide role holds no
 # bind, escalate, impersonate or wildcard verb and no namespaced resource.
 CLUSTER_SCOPED = {"clusterroles", "clusterrolebindings", "tokenreviews", "subjectaccessreviews",
+                  "selfsubjectaccessreviews", "selfsubjectrulesreviews",
                   "securitycontextconstraints", "nodes", "namespaces", "persistentvolumes",
                   "customresourcedefinitions", "validatingadmissionpolicies"}
 scoped_manager = [d for d in helm_full if d["kind"] == "ClusterRole" and d["metadata"]["name"].endswith("-manager-role")]
