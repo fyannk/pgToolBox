@@ -73,6 +73,8 @@ test("the reasons, the backlog, the end of WAL and the caps are said in French",
     ],
     ["recovery.reason.archiverUnread", undefined, /^l’archiveur du primaire n’a pas été lu/],
     ["recovery.reason.archiverHibernated", undefined, /^le cluster est en hibernation/],
+    ["recovery.caveat.archiverHibernated", undefined, /^Le cluster est en hibernation : aucune instance ne tourne/],
+    ["recovery.segment.archiverHibernated", undefined, /^Le cluster est en hibernation, et aucun passage/],
     ["recovery.segment.archiverUnread", undefined, /^L’archiveur du primaire n’est pas lu, et aucun relevé/],
     [
       "recovery.segment.archiverUnreadSince",

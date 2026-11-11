@@ -1249,6 +1249,11 @@ func archiverUnreadEdge(out *viewmodel.RecoveryTimeline, f recoveryFacts, last t
 			map[string]string{"readAt": rfc3339(b.readAt), "boundAt": rfc3339(b.before)}))
 		return
 	}
+	if (quiet == nil || f.archiveTimeout <= 0 || f.sweepInterval <= 0) && f.hibernated {
+		uncertain(out, last.Add(-failureLookback), last, say("recovery.segment.archiverHibernated",
+			"The Cluster is hibernated, and no sweep the console keeps saw its primary with nothing waiting before it slept: WAL that reached the repository may have waited on it first, so its arrival time may overstate how recent a restore can be.", nil))
+		return
+	}
 	if quiet == nil || f.archiveTimeout <= 0 || f.sweepInterval <= 0 {
 		uncertain(out, last.Add(-failureLookback), last, say("recovery.segment.archiverUnread",
 			"The primary's archiver is not read, and no sweep the console keeps saw it with nothing waiting: WAL that reached the repository may have waited on the primary first, so its arrival time may overstate how recent a restore can be.", nil))
@@ -1854,6 +1859,9 @@ func restoreCaveats(b viewmodel.Backups) []viewmodel.Phrase {
 	} else if a.Reason == cnpgstatus.ArchivingReasonBacklogNotReported {
 		out = append(out, say("recovery.caveat.archiverNotReported",
 			"The archiving instance does not report itself primary (a replica cluster's designated primary, or a primary mid-promotion), so it does not report its archive backlog: how long the newest archived WAL waited on it is not known, so restore points near the newest edge may not be in the repository.", nil))
+	} else if a.Reason == cnpgstatus.ArchivingReasonHibernated {
+		out = append(out, say("recovery.caveat.archiverHibernated",
+			"The Cluster is hibernated: no instance runs, so nothing archives WAL, and whether the WAL written before it reached the repository is not confirmed: restore points near the newest edge may not be in the repository until it wakes up.", nil))
 	} else if archiverUnread(a) {
 		out = append(out, say("recovery.caveat.archiverUnread",
 			"The primary's archiver was not read: how long the newest archived WAL waited on the primary is not known, so it may hold commits older than its arrival in the repository suggests, and restore points near the newest edge may not be in the repository.", nil))

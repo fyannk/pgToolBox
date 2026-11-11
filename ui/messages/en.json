@@ -1586,6 +1586,8 @@
   "rp_segment_path_not_healthy_bare": "Base backup {id}’s recovery path reaches here, but the evidence agent rates it {state}: not counted as covered.",
   "rp_reason_archiver_unread": "the primary’s archiver was not read: how late recent WAL reached the repository is not known, so the newest restore points are uncertain",
   "rp_reason_archiver_hibernated": "the Cluster is hibernated: whether the WAL written before it reached the repository is not confirmed, so the newest restore points are uncertain",
+  "rp_segment_archiver_hibernated": "The Cluster is hibernated, and no sweep the console keeps saw its primary with nothing waiting before it slept: WAL that reached the repository may have waited on it first, so its arrival time may overstate how recent a restore can be.",
+  "rp_caveat_archiver_hibernated": "The Cluster is hibernated: no instance runs, so nothing archives WAL, and whether the WAL written before it reached the repository is not confirmed: restore points near the newest edge may not be in the repository until it wakes up.",
   "rp_reason_path_not_healthy": "the recovery path from base backup {id} reaches the archive frontier, but the evidence agent rates it {state} ({detail})",
   "rp_reason_path_not_healthy_bare": "the recovery path from base backup {id} reaches the archive frontier, but the evidence agent rates it {state}",
   "rp_segment_backup_not_usable": "Base backup {id} reaches here, but the evidence agent rates the backup not usable ({detail}): not counted as covered.",

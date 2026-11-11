@@ -296,7 +296,7 @@ type ArchivingReading struct {
 //     (isArchivingWAL=false, no backlog) is not made worse than ok by
 //     that alone. With the primary unread: unknown PrimaryUnread, with
 //     the condition's age (the condition alone confirms nothing now),
-//     or unknown Hibernated when the Cluster is hibernated. A count at
+//     or inactive Hibernated when the Cluster is hibernated. A count at
 //     the backlog threshold that too few sweeps saw to judge is unknown
 //     ArchiveBacklogUnconfirmed, never ok. A designated primary (a
 //     replica cluster's archiver) reports no readyWalFiles, so no backlog
@@ -376,7 +376,7 @@ func Archiving(c *cnpgv1.Cluster, primary *ArchiverLive) ArchivingReading {
 			return unconfirmed(ArchivingReading{Class: ClassOK, Reason: ArchivingReasonLiveArchiving, Message: "the primary reports WAL archiving; the operator has not written ContinuousArchiving yet"})
 		}
 		if hibernated {
-			return ArchivingReading{Class: ClassUnknown, Reason: ArchivingReasonHibernated, Message: hibernatedMessage}
+			return ArchivingReading{Class: ClassInactive, Reason: ArchivingReasonHibernated, Message: hibernatedMessage}
 		}
 		return ArchivingReading{Class: ClassUnknown, Reason: ArchivingReasonNoCondition, Message: "a WAL archiver is configured but ContinuousArchiving is not reported"}
 	}
@@ -390,7 +390,10 @@ func Archiving(c *cnpgv1.Cluster, primary *ArchiverLive) ArchivingReading {
 		reading.Class = ClassOK
 		switch {
 		case hibernated:
-			reading.Class = ClassUnknown
+			// Deliberately asleep: inactive, as the Cluster is (DBA, round
+			// 8), not unknown, which would outrank it in the headline. The
+			// recovery window's newest edge stays unknown on its own.
+			reading.Class = ClassInactive
 			reading.Reason = ArchivingReasonHibernated
 			reading.Message = "ContinuousArchiving is True" + since(condition.LastTransitionTime.Time) + ", but " + hibernatedMessage
 		case primary == nil:

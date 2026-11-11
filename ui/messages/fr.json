@@ -1586,6 +1586,8 @@
   "rp_segment_path_not_healthy_bare": "Le chemin de restauration de la sauvegarde de base {id} atteint ce point, mais l’agent de preuves le juge {state} : non compté comme couvert.",
   "rp_reason_archiver_unread": "l’archiveur du primaire n’a pas été lu : on ne sait pas avec quel retard les WAL récents sont arrivés dans le dépôt, donc les points de restauration les plus récents sont incertains",
   "rp_reason_archiver_hibernated": "le cluster est en hibernation : rien ne confirme que les WAL écrits avant sont arrivés dans le dépôt, donc les points de restauration les plus récents sont incertains",
+  "rp_segment_archiver_hibernated": "Le cluster est en hibernation, et aucun passage gardé par la console n’a vu son primaire sans rien en attente avant sa mise en sommeil : les WAL arrivés dans le dépôt ont pu attendre d’abord sur lui, donc leur heure d’arrivée peut surestimer la fraîcheur possible d’une restauration.",
+  "rp_caveat_archiver_hibernated": "Le cluster est en hibernation : aucune instance ne tourne, donc rien n’archive les WAL, et rien ne confirme que les WAL écrits avant sont arrivés dans le dépôt : les points de restauration proches du bord le plus récent peuvent ne pas être dans le dépôt tant qu’il dort.",
   "rp_reason_path_not_healthy": "le chemin de restauration de la sauvegarde de base {id} atteint la frontière de l’archive, mais l’agent de preuves le juge {state} ({detail})",
   "rp_reason_path_not_healthy_bare": "le chemin de restauration de la sauvegarde de base {id} atteint la frontière de l’archive, mais l’agent de preuves le juge {state}",
   "rp_segment_backup_not_usable": "La sauvegarde de base {id} atteint ce point, mais l’agent de preuves la juge inutilisable ({detail}) : non compté comme couvert.",

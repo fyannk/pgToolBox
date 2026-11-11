@@ -310,6 +310,8 @@ function translate(code: string, p: Params): string | undefined {
       return m.rp_segment_archiver_unread();
     case "recovery.segment.archiverNotReported":
       return m.rp_segment_archiver_not_reported();
+    case "recovery.segment.archiverHibernated":
+      return m.rp_segment_archiver_hibernated();
     case "recovery.segment.archiverUnreadSince": {
       const quiet = instant(p, "quietAt");
       return quiet ? m.rp_segment_archiver_unread_since({ quiet }) : undefined;
@@ -388,6 +390,8 @@ function translate(code: string, p: Params): string | undefined {
       return m.rp_caveat_window_stale();
     case "recovery.caveat.archivingFailing":
       return m.rp_caveat_archiving_failing();
+    case "recovery.caveat.archiverHibernated":
+      return m.rp_caveat_archiver_hibernated();
     case "recovery.caveat.archiverUnread":
       return m.rp_caveat_archiver_unread();
     case "recovery.caveat.archiverNotReported":

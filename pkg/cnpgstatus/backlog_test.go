@@ -211,15 +211,17 @@ func TestArchivingUnreadPrimaryIsNotOK(t *testing.T) {
 	if want := "since 2026-11-01T00:00:00Z"; !strings.Contains(got.Message, want) {
 		t.Errorf("message %q does not name the condition's age (%s)", got.Message, want)
 	}
-	// Hibernated: no primary runs, and the reading says so.
+	// Hibernated: no primary runs, and the reading says so. It is
+	// inactive, as the Cluster is (round 8, DBA): unknown would outrank
+	// the hibernation in the headline.
 	hibernated := clusterWith(map[string]string{AnnotationHibernation: "on"}, ok, cond(ConditionHibernation, "True", "Hibernated"))
 	hibernated.Spec.Plugins = c.Spec.Plugins
-	if got := Archiving(hibernated, nil); got.Class != ClassUnknown || got.Reason != ArchivingReasonHibernated || !strings.Contains(got.Message, "hibernated") {
+	if got := Archiving(hibernated, nil); got.Class != ClassInactive || got.Reason != ArchivingReasonHibernated || !strings.Contains(got.Message, "hibernated") {
 		t.Errorf("Archiving(hibernated) = %+v", got)
 	}
 	noCondition := clusterWith(map[string]string{AnnotationHibernation: "on"}, cond(ConditionHibernation, "True", "Hibernated"))
 	noCondition.Spec.Plugins = c.Spec.Plugins
-	if got := Archiving(noCondition, nil); got.Reason != ArchivingReasonHibernated {
+	if got := Archiving(noCondition, nil); got.Reason != ArchivingReasonHibernated || got.Class != ClassInactive {
 		t.Errorf("Archiving(hibernated, no condition) = %+v", got)
 	}
 }

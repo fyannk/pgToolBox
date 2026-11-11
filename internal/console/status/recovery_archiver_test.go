@@ -167,10 +167,11 @@ func TestUnreadArchiverIsNotHealthy(t *testing.T) {
 			wantCode: "recovery.segment.archiverUnread", wantFrom: last.Add(-failureLookback), wantReason: "recovery.reason.archiverUnread",
 		},
 		{
-			name: "hibernated", arch: viewmodel.Archiving{Health: viewmodel.HealthUnknown, Reason: cnpgstatus.ArchivingReasonHibernated},
-			// Round 7, DBA P2-4: a hibernated Cluster is unknown, not a
-			// warning that stays amber for as long as it sleeps.
-			wantCode: "recovery.segment.archiverUnread", wantFrom: last.Add(-failureLookback), wantReason: "recovery.reason.archiverHibernated",
+			name: "hibernated", arch: viewmodel.Archiving{Health: viewmodel.HealthInactive, Reason: cnpgstatus.ArchivingReasonHibernated},
+			// Round 7, DBA P2-4: a hibernated Cluster's newest restore
+			// points are unknown, not a warning that stays amber for as
+			// long as it sleeps; round 8: the band says it is hibernated.
+			wantCode: "recovery.segment.archiverHibernated", wantFrom: last.Add(-failureLookback), wantReason: "recovery.reason.archiverHibernated",
 			wantState: string(evidencev1alpha1.Unknown),
 		},
 	} {
@@ -195,7 +196,7 @@ func TestUnreadArchiverIsNotHealthy(t *testing.T) {
 			if tl.State != wantState || len(tl.Reasons) == 0 || tl.Reasons[0].Code != tc.wantReason {
 				t.Errorf("state %s reasons %+v, want %s %s", tl.State, tl.Reasons, wantState, tc.wantReason)
 			}
-			band := edgeBand(tl, "recovery.segment.archiverUnread", "recovery.segment.archiverUnreadSince")
+			band := edgeBand(tl, "recovery.segment.archiverUnread", "recovery.segment.archiverUnreadSince", "recovery.segment.archiverHibernated")
 			if band == nil || band.Code != tc.wantCode || !band.From.Equal(tc.wantFrom) {
 				t.Fatalf("band %+v, want %s from %s", band, tc.wantCode, tc.wantFrom)
 			}
@@ -207,7 +208,15 @@ func TestUnreadArchiverIsNotHealthy(t *testing.T) {
 			if got.Answer == "covered" {
 				t.Errorf("20 min before the frontier with the archiver unread: %+v", got)
 			}
-			if !slices.ContainsFunc(got.Caveats, func(p viewmodel.Phrase) bool {
+			if tc.arch.Reason == cnpgstatus.ArchivingReasonHibernated {
+				// Round 8, DBA: the caveat says the Cluster is hibernated,
+				// not that its archiver went unread.
+				if !slices.ContainsFunc(got.Caveats, func(p viewmodel.Phrase) bool {
+					return p.Code == "recovery.caveat.archiverHibernated" && strings.HasPrefix(p.Text, "The Cluster is hibernated")
+				}) || slices.ContainsFunc(got.Caveats, func(p viewmodel.Phrase) bool { return p.Code == "recovery.caveat.archiverUnread" }) {
+					t.Errorf("hibernated caveats: %+v", got.Caveats)
+				}
+			} else if !slices.ContainsFunc(got.Caveats, func(p viewmodel.Phrase) bool {
 				// The newest archived WAL may hold older commits than its
 				// arrival says (round 7, DBA P2-3: the copy was inverted).
 				return p.Code == "recovery.caveat.archiverUnread" && strings.Contains(p.Text, "older than its arrival") &&
