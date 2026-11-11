@@ -536,8 +536,8 @@ func TestSignOutDisconnects(t *testing.T) {
 			t.Errorf("after sign-out: %v", err)
 		}
 	}
-	if n := r.s.DisconnectAll(context.Background(), auth.Client{}, "alice"); n != 0 {
-		t.Errorf("a second disconnect revoked %d", n)
+	if n, err := r.s.DisconnectAll(context.Background(), auth.Client{}, "alice"); n != 0 || err != nil {
+		t.Errorf("a second disconnect revoked %d (%v)", n, err)
 	}
 	if gs := r.s.Grants(context.Background(), "alice"); len(gs) != 0 {
 		t.Errorf("grants after disconnect: %+v", gs)

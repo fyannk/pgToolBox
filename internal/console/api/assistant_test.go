@@ -33,11 +33,17 @@ type fakeGrants struct {
 	revoked      []string
 	client       auth.Client
 	disconnected []string
+	// unrecorded makes every revocation ErrNotRecorded (the shared state
+	// did not take the write).
+	unrecorded bool
 }
 
-func (f *fakeGrants) DisconnectAll(_ context.Context, c auth.Client, user string) int {
+func (f *fakeGrants) DisconnectAll(_ context.Context, c auth.Client, user string) (int, error) {
 	f.disconnected, f.client = append(f.disconnected, user), c
-	return 1
+	if f.unrecorded {
+		return 1, ErrNotRecorded
+	}
+	return 1, nil
 }
 
 func (f *fakeGrants) Grants(_ context.Context, user string) []GrantInfo {
@@ -55,6 +61,9 @@ func (f *fakeGrants) RevokeGrant(_ context.Context, c auth.Client, user, id stri
 		return ErrNoSuchGrant
 	}
 	f.revoked, f.client = append(f.revoked, id), c
+	if f.unrecorded {
+		return ErrNotRecorded
+	}
 	return nil
 }
 
@@ -124,6 +133,24 @@ func TestGrantEndpoints(t *testing.T) {
 	}
 	if len(g.disconnected) != 1 || g.disconnected[0] != "bob" {
 		t.Errorf("disconnected %v", g.disconnected)
+	}
+}
+
+// A disconnection the shared state did not take is no 204: the person is
+// told it was not recorded for every replica, and to retry (round 16,
+// security P3-2).
+func TestADisconnectionNotRecordedIsA503(t *testing.T) {
+	g := &fakeGrants{unrecorded: true}
+	h, _ := New(Deps{Source: FixtureSource{}, Authz: FixtureAuthorizer{}, Grants: g, Assistant: fakeSetup{}})
+	alice := &auth.Principal{User: authz.User{Name: "alice"}}
+	for _, path := range []string{"/api/v1/session/grants/" + testGrant, "/api/v1/session/grants"} {
+		w := callAs(h, alice, http.MethodDelete, path)
+		if w.Code != http.StatusServiceUnavailable {
+			t.Fatalf("%s: %d %s, want 503", path, w.Code, w.Body)
+		}
+		if w.Header().Get("Retry-After") == "" || !strings.Contains(w.Body.String(), "retry") {
+			t.Errorf("%s: Retry-After %q, body %s", path, w.Header().Get("Retry-After"), w.Body)
+		}
 	}
 }
 

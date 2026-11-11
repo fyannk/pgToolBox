@@ -229,6 +229,11 @@ type GrantStore interface {
 	GrantsOf(userHash string) []sharedstate.Grant
 	RevokeGrant(id, userHash string, at, until time.Time) bool
 	RevokeGrantsOf(userHash string, at time.Time) []string
+	// WriteRevocations writes the revocations of ids made on this replica
+	// through to the shared state (sharedstate.ErrNotRecorded when it
+	// cannot); UnwrittenRevocationsOf lists those not written yet.
+	WriteRevocations(ctx context.Context, ids ...string) error
+	UnwrittenRevocationsOf(userHash string) []string
 	GrantRevoked(id string) bool
 	TouchGrant(id string, at time.Time)
 	AdvanceGrant(id string, from int, at time.Time) sharedstate.Advance

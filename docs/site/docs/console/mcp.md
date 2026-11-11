@@ -212,7 +212,14 @@ to within about five minutes, when it ends) and disconnects one, or all:
 `GET /api/v1/session/grants`, `DELETE /api/v1/session/grants/{id}`,
 `DELETE /api/v1/session/grants`. A disconnected grant is refused by every
 replica within about a second (the grant index is in the shared state
-ConfigMap, `STATE_CONFIGMAP`, see [sessions](authentication.md)). Without the
+ConfigMap, `STATE_CONFIGMAP`, see [sessions](authentication.md)): the
+disconnection is written to the ConfigMap before the console answers. When
+that write cannot be made (the API server refuses or does not answer), the
+answer is `503` with `Retry-After` and "retry": the replica that answered
+refuses the grant at once and writes the disconnection with its next write, but
+the others may accept it until then. Retry, or use **Disconnect all**, which
+writes again what an earlier attempt left unwritten. A sign-out with
+**disconnect my assistants** goes on even then (the console log says so). Without the
 shared state the index is in each replica's memory: a restart disconnects every
 assistant, and with more than one replica each refuses the grants of the
 others. Run one replica, or set `STATE_CONFIGMAP`.

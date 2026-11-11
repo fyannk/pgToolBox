@@ -56,12 +56,15 @@ type apiServer struct {
 	// maxBytes, when set, refuses an update whose data is larger, as the
 	// API server refuses an object past 1 MiB.
 	maxBytes int
+	// initialEvent sends a new watch the ConfigMap as it is now (Added),
+	// as the API server does for a watch from no resourceVersion.
+	initialEvent bool
 }
 
 var configMaps = schema.GroupResource{Resource: "configmaps"}
 
 func newAPIServer() *apiServer {
-	return &apiServer{cm: &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "console-state", Namespace: "team-a", ResourceVersion: "1"}}, rv: 1}
+	return &apiServer{cm: &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "console-state", Namespace: "team-a", ResourceVersion: "1", UID: "uid-1"}}, rv: 1}
 }
 
 func (a *apiServer) Get(_ context.Context, name string, _ metav1.GetOptions) (*corev1.ConfigMap, error) {
@@ -86,6 +89,9 @@ func (a *apiServer) Watch(_ context.Context, opts metav1.ListOptions) (watch.Int
 		return nil, apierrors.NewResourceExpired("too old resource version: " + opts.ResourceVersion)
 	}
 	w := watch.NewRaceFreeFake()
+	if a.initialEvent && a.cm != nil {
+		w.Add(a.cm.DeepCopy())
+	}
 	a.watchers = append(a.watchers, w)
 	return w, nil
 }
