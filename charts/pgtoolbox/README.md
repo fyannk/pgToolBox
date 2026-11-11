@@ -160,7 +160,7 @@ authority on what is accepted.
 | operator.networkPolicy.dns.ports | list | `[53]` | Ports of the cluster DNS pods (TCP and UDP). OpenShift DNS pods listen on 5353: use `[5353]` there. |
 | operator.networkPolicy.ingress.metricsFrom | list | `[]` | Peers allowed to scrape the metrics port, as raw NetworkPolicy `from` items. Empty: no ingress on that port. |
 | operator.networkPolicy.extraEgress | list | `[]` | Extra egress rules, as raw NetworkPolicy `egress` items (an egress proxy, a webhook or mail server, a Prometheus outside the watched namespaces). |
-| operator.restoreDrillGuard.enabled | bool | `true` | api-versions`); `false`: never (restore drills then rely on RBAC alone). |
+| operator.restoreDrillGuard.enabled | bool | `true` | Render the restore-drill delete guard. `true` (default): always, which is what a `helm template` or GitOps render needs; `auto`: only when the cluster serves the policy API (`helm install`, or `helm template` with the API passed in `--api-versions`); `false`: never (restore drills then rely on RBAC alone). |
 | operator.admissionPolicy.enabled | bool | `true` | Render the ValidatingAdmissionPolicy for rules that need the request's identity (image override, workload identity, Secret references). On by default; `false` leaves the Secret-reference rule unenforced. |
 | operator.admissionPolicy.validationActions | list | `["Deny"]` | Validation actions of the policy binding: `Deny`, `Warn` and/or `Audit`. Only `Deny` blocks a request. |
 | operator.admissionPolicy.imageOverride.allowedUsers | list | `[]` | Users allowed to set `spec.image` on a PgAdmin or an EvidenceAgent. Everyone else gets the operator's default image. |
