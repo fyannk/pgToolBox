@@ -36,6 +36,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	evidencev1alpha1 "github.com/fyannk/pgToolBox/pkg/evidence/v1alpha1"
 )
 
 // Status is what the archive shows of one timeline's history file.
@@ -308,7 +310,9 @@ const MaxReasonBytes = 256
 // CloudNativePG archives every .ready segment (ArchiveAllReadyWALs) when
 // that instance restarts, before pg_rewind and before it rejoins. Deleting
 // the instance or its volume is what would make the loss permanent.
-const FormerPrimaryMayHold = "the former primary may still hold it and CloudNativePG archives it before that instance rejoins: do not delete that instance or its volume"
+// It is the contract's clause (evidencev1alpha1.FormerPrimaryMayHold), which
+// the console looks for in a path's reason.
+const FormerPrimaryMayHold = evidencev1alpha1.FormerPrimaryMayHold
 
 // actionable are the clauses a reason must never lose to a cut: what an
 // operator must or must not do. A reason that carries one keeps it whole

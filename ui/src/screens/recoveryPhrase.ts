@@ -174,6 +174,8 @@ function recoveryReason(code: string, p: Params): string | undefined {
       return detail ? m.rp_reason_evidence_stale({ detail }) : undefined;
     case "recovery.reason.pathsCut":
       return m.rp_reason_paths_cut();
+    case "recovery.reason.missingAfterLatestFormerPrimary":
+      return m.rp_reason_missing_after_latest_former_primary();
     case "recovery.reason.missingAfterLatest":
       return m.rp_reason_missing_after_latest();
     case "recovery.reason.holes":
@@ -270,6 +272,10 @@ function translate(code: string, p: Params): string | undefined {
     }
     case "recovery.segment.purgeEdge":
       return margin ? m.rp_segment_purge_edge({ margin }) : undefined;
+    case "recovery.segment.missingAfterLatestFormerPrimary":
+      return m.rp_segment_missing_after_latest_former_primary();
+    case "recovery.segment.missingWALFormerPrimary":
+      return m.rp_segment_missing_wal_former_primary();
     case "recovery.segment.missingAfterLatest":
       return m.rp_segment_missing_after_latest();
     case "recovery.segment.collectionCut":

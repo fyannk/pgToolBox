@@ -225,3 +225,43 @@ func TestArchivingWalOnlyOnTheArchiver(t *testing.T) {
 		t.Errorf("a standby of a replica cluster reads as archiving: %+v", live)
 	}
 }
+
+// TestMissingWALSaysTheFormerPrimaryMayHoldIt (round 8, PG plan 5): when
+// the agent's path stops at a segment a former primary may still hold
+// (its reason ends with evidencev1alpha1.FormerPrimaryMayHold), the bar's
+// missing-WAL segment and its reason say not to delete that instance or
+// its volume, for the tail and for a hole; a gap without it says only
+// that WAL is missing.
+func TestMissingWALSaysTheFormerPrimaryMayHoldIt(t *testing.T) {
+	svc := &Service{}
+	facts := recoveryFacts{now: now, archiveTimeout: defaultArchiveTimeout, sweepInterval: 30 * time.Second}
+	held := func(p evidence.RecoveryPath) evidence.RecoveryPath {
+		p.Reason = evidencev1alpha1.Reason{Code: "coverage-path-unhealthy", Message: "segment 000000010000000000000042 before the timeline switch is not in the repository; " + evidencev1alpha1.FormerPrimaryMayHold}
+		return p
+	}
+	codes := func(tl viewmodel.RecoveryTimeline) map[string]bool {
+		out := map[string]bool{}
+		for _, s := range tl.Segments {
+			out[s.Code] = true
+		}
+		for _, r := range tl.Reasons {
+			out[r.Code] = true
+		}
+		return out
+	}
+	tail := svc.recoveryTimeline(timelineFixture{paths: []evidence.RecoveryPath{held(parentTailPath(1))}}.evidence(), viewmodel.BackupSummary{}, nil, facts)
+	if c := codes(tail); !c["recovery.segment.missingAfterLatestFormerPrimary"] || !c["recovery.reason.missingAfterLatestFormerPrimary"] || c["recovery.segment.missingAfterLatest"] {
+		t.Errorf("tail codes %v", c)
+	}
+	consistent := true
+	after := tlPath("b2", 2*time.Hour, time.Minute, evidencev1alpha1.CoverageFrontier)
+	after.Consistent = &consistent
+	hole := svc.recoveryTimeline(timelineFixture{paths: []evidence.RecoveryPath{held(parentTailPath(1)), after}}.evidence(), viewmodel.BackupSummary{}, nil, facts)
+	if c := codes(hole); !c["recovery.segment.missingWALFormerPrimary"] || c["recovery.segment.missingWAL"] {
+		t.Errorf("hole codes %v", c)
+	}
+	plain := svc.recoveryTimeline(timelineFixture{paths: []evidence.RecoveryPath{parentTailPath(1)}}.evidence(), viewmodel.BackupSummary{}, nil, facts)
+	if c := codes(plain); !c["recovery.segment.missingAfterLatest"] || c["recovery.segment.missingAfterLatestFormerPrimary"] {
+		t.Errorf("plain gap codes %v", c)
+	}
+}

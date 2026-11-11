@@ -701,6 +701,10 @@ type interval struct {
 	// timeline is the timeline of the path's frontier (0 when unknown);
 	// for a merged run, that of the path that reaches furthest.
 	timeline uint64
+	// formerMayHold: the path's reason says a former primary may still
+	// hold the missing segment (evidencev1alpha1.FormerPrimaryMayHold);
+	// for a merged run, that of the path that reaches furthest.
+	formerMayHold bool
 }
 
 // degradedPath reports a path that reaches its frontier but that the
@@ -884,7 +888,7 @@ func evidenceTimeline(out *viewmodel.RecoveryTimeline, in timelineInput) {
 			formerArchiverEdge(out, in.facts, r.timeline, r.to, in.scannedAt)
 		}
 	}
-	tailSegment(out, in, last, tail)
+	tailSegment(out, in, last, tail, runs[len(runs)-1].formerMayHold)
 	if !in.rec.Complete {
 		// The paths read may all be toward an older timeline than a cut
 		// one: what they cover is not drawn as current.
@@ -917,7 +921,7 @@ func evidenceTimeline(out *viewmodel.RecoveryTimeline, in timelineInput) {
 		out.NewestCoveredTarget = lastCovered(out.Segments)
 	}
 	timelineVerdict(out, in, timelineFindings{
-		tail: tail, holes: holes, candidates: candidates, failedRecently: failedRecently, backlog: in.facts.backlog,
+		tail: tail, formerMayHold: runs[len(runs)-1].formerMayHold, holes: holes, candidates: candidates, failedRecently: failedRecently, backlog: in.facts.backlog,
 		archiverUnread: in.facts.archiverUnread, hibernated: in.facts.hibernated, notReported: in.facts.notReported, degraded: degraded, degradedUnusable: degradedUnusable,
 		orphan: orphan, undrawn: undrawn,
 	})
@@ -962,6 +966,7 @@ func recoverySpans(out *viewmodel.RecoveryTimeline, in timelineInput, target uin
 		if p.FrontierTimeline != nil {
 			sp.timeline = *p.FrontierTimeline
 		}
+		sp.formerMayHold = p.Stop == evidencev1alpha1.CoverageGapLimited && strings.Contains(p.Reason.Message, evidencev1alpha1.FormerPrimaryMayHold)
 		if code, detail, unusable := unusableBackup(p, ends[p.BackupID]); unusable {
 			path := p
 			path.Reason = evidencev1alpha1.Reason{Code: code, Message: detail}
@@ -1050,7 +1055,7 @@ func mergeSpans(spans []interval) []interval {
 		if n := len(runs); n > 0 && !sp.from.After(runs[n-1].to) {
 			last := &runs[n-1]
 			if sp.to.After(last.to) {
-				last.to, last.stop, last.timeline = sp.to, sp.stop, sp.timeline
+				last.to, last.stop, last.timeline, last.formerMayHold = sp.to, sp.stop, sp.timeline, sp.formerMayHold
 			}
 			continue
 		}
@@ -1087,6 +1092,10 @@ func drawRuns(out *viewmodel.RecoveryTimeline, spans, runs []interval, margin ti
 			"Within "+humanDuration(margin)+" of a hole in the archived WAL: segment names cannot place this target on either side.",
 			map[string]string{"marginSeconds": secondsParam(margin)}))
 		kind, text := holeOf(r.stop)
+		if kind == segmentMissingWAL && r.formerMayHold {
+			text = say("recovery.segment.missingWALFormerPrimary",
+				"WAL is missing from the repository: no restore target in this span. The former primary may still hold it, and CloudNativePG archives it before that instance rejoins: do not delete that instance or its volume.", nil)
+		}
 		switch kind {
 		case segmentMissingWAL:
 			holes++
@@ -1278,13 +1287,19 @@ func walEnd(out *viewmodel.RecoveryTimeline, f recoveryFacts, last time.Time, ma
 // archived yet when the agent read the repository (archive_timeout), and
 // reach it after the scan, so the time after the frontier, before the
 // scan included, is unknown.
-func tailSegment(out *viewmodel.RecoveryTimeline, in timelineInput, last time.Time, tail evidencev1alpha1.CoverageStop) {
+func tailSegment(out *viewmodel.RecoveryTimeline, in timelineInput, last time.Time, tail evidencev1alpha1.CoverageStop, formerMayHold bool) {
 	if !in.facts.now.After(last) {
 		return
 	}
 	var p viewmodel.Phrase
 	kind := segmentUnknown
 	switch {
+	case tail == evidencev1alpha1.CoverageGapLimited && formerMayHold:
+		// The agent says the segment is not proven gone (round 8, PG
+		// plan 5): the hint reaches the bar, not only the path's reason.
+		kind = segmentMissingWAL
+		p = say("recovery.segment.missingAfterLatestFormerPrimary",
+			"WAL is missing from the repository after the latest restore point. The former primary may still hold it, and CloudNativePG archives it before that instance rejoins: do not delete that instance or its volume.", nil)
 	case tail == evidencev1alpha1.CoverageGapLimited:
 		kind = segmentMissingWAL
 		p = say("recovery.segment.missingAfterLatest", "WAL is missing from the repository after the latest restore point.", nil)
@@ -1421,6 +1436,9 @@ func reportedTail(window viewmodel.Provenance, arch viewmodel.Archiving, facts r
 
 // timelineFindings are what the drawing found that decides the verdict.
 type timelineFindings struct {
+	// formerMayHold: the newest run stops at WAL a former primary may
+	// still hold (interval formerMayHold).
+	formerMayHold     bool
 	tail              evidencev1alpha1.CoverageStop
 	holes, candidates int
 	failedRecently    bool
@@ -1449,6 +1467,10 @@ func timelineVerdict(out *viewmodel.RecoveryTimeline, in timelineInput, f timeli
 	case !in.rec.Complete:
 		out.State = string(evidencev1alpha1.Unknown)
 		setReason(out, say("recovery.reason.pathsCut", "the recovery path collection was cut at a bound: the restore target timeline cannot be told", nil))
+	case f.tail == evidencev1alpha1.CoverageGapLimited && f.formerMayHold:
+		out.State = string(evidencev1alpha1.Unhealthy)
+		setReason(out, say("recovery.reason.missingAfterLatestFormerPrimary",
+			"WAL is missing after the latest restore point: recent times are not restorable from the repository now; the former primary may still hold it: do not delete that instance or its volume", nil))
 	case f.tail == evidencev1alpha1.CoverageGapLimited:
 		out.State = string(evidencev1alpha1.Unhealthy)
 		setReason(out, say("recovery.reason.missingAfterLatest", "WAL is missing after the latest restore point: recent times are not restorable from the repository", nil))
