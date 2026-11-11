@@ -72,14 +72,23 @@ type Lister interface {
 // returns Available, Forbidden or NotInstalled; every other error is
 // returned unclassified so the caller fails its start.
 func ProbeListable(ctx context.Context, c Lister, gvk schema.GroupVersionKind, namespace string) (Result, error) {
-	result := Result{GVK: gvk, Namespace: namespace}
+	return classify(gvk, namespace, listOne(ctx, c, gvk, namespace))
+}
+
+// listOne lists at most one object of gvk, as metadata only, in namespace.
+func listOne(ctx context.Context, c Lister, gvk schema.GroupVersionKind, namespace string) error {
 	list := &metav1.PartialObjectMetadataList{}
 	list.SetGroupVersionKind(gvk.GroupVersion().WithKind(gvk.Kind + "List"))
 	opts := []client.ListOption{client.Limit(1)}
 	if namespace != "" {
 		opts = append(opts, client.InNamespace(namespace))
 	}
-	err := c.List(ctx, list, opts...)
+	return c.List(ctx, list, opts...)
+}
+
+// classify maps a probe List's error to its Result.
+func classify(gvk schema.GroupVersionKind, namespace string, err error) (Result, error) {
+	result := Result{GVK: gvk, Namespace: namespace}
 	switch {
 	case err == nil:
 		result.State = Available
@@ -124,10 +133,18 @@ func ProbeNamespaces(ctx context.Context, c Lister, gvk schema.GroupVersionKind,
 // instead of turning every feature off everywhere or failing the start. A
 // kind that is not served says nothing about the namespaces: every namespace
 // is then returned reachable, for the feature probe to report. Any other error
-// is returned. Empty namespaces (cluster-wide) are returned as they are.
+// is returned, Unauthorized included: a 401 says the caller's credentials were
+// not accepted (a token being rotated, an authentication webhook down), not
+// that the namespace is out of reach, and dropping the namespace would last
+// for the life of the process. Empty namespaces (cluster-wide) are returned as
+// they are.
 func ReachableNamespaces(ctx context.Context, c Lister, gvk schema.GroupVersionKind, namespaces []string) (reachable []string, refused []Result, err error) {
 	for _, namespace := range namespaces {
-		probed, err := ProbeListable(ctx, c, gvk, namespace)
+		listed := listOne(ctx, c, gvk, namespace)
+		if apierrors.IsUnauthorized(listed) {
+			return nil, nil, fmt.Errorf("listing %s%s: the API server did not accept the credentials: %w", resourceName(gvk), where(namespace), listed)
+		}
+		probed, err := classify(gvk, namespace, listed)
 		if err != nil {
 			return nil, nil, err
 		}
