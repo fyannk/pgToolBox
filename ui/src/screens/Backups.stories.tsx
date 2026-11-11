@@ -5,11 +5,14 @@ import {
   evidenceAudienceMismatch,
   evidenceStatusNotFromOperator,
   recoveryAfterFailover,
+  recoveryBackupUnconfirmed,
   recoveryHealthy,
+  recoveryLiveTimelineNoSegment,
   recoveryMixedHoles,
   recoveryNone,
   recoveryReportedArchivingFailing,
   recoveryReportedOnly,
+  recoveryRepositoryAhead,
 } from "../../mocks/fixtures/extra";
 import { handlersFor } from "../../mocks/handlers";
 import type { OperationOffer, RestoreDrill } from "../api/generated/model";
@@ -107,6 +110,62 @@ export const RecoveryAfterFailoverFrench: Story = french({
   args: RecoveryAfterFailover.args,
   play: async ({ canvas }) => {
     await expect(canvas.getByText(/lancez pg_switch_wal\(\) sur le nouveau primaire/)).toBeVisible();
+  },
+});
+/** The failover's history file is archived but no WAL segment of the new timeline yet: the tail says so. */
+export const RecoveryLiveTimelineNoSegment: Story = {
+  args: { data: { ...backups, recoveryTimeline: recoveryLiveTimelineNoSegment } },
+  play: async ({ canvas }) => {
+    await expect(canvas.getByRole("list", { name: "Spans of the recovery window" })).toHaveTextContent(
+      /history file of timeline 2.*no WAL segment of it yet/,
+    );
+  },
+};
+/** The same in French. */
+export const RecoveryLiveTimelineNoSegmentFrench: Story = french({
+  args: RecoveryLiveTimelineNoSegment.args,
+  play: async ({ canvas }) => {
+    await expect(canvas.getByRole("list", { name: "Intervalles de la fenêtre de restauration" })).toHaveTextContent(
+      /fichier d’historique de la timeline 2.*encore aucun segment WAL/,
+    );
+  },
+});
+/** Paths kept stale beside a cut backup list that does not list the oldest backup: its span is not covered. */
+export const RecoveryBackupUnconfirmed: Story = {
+  args: { data: { ...backups, recoveryTimeline: recoveryBackupUnconfirmed } },
+  play: async ({ canvas }) => {
+    await expect(canvas.getByText(/base backup 20261022T070800 is not in the repository’s backup list/)).toBeVisible();
+    await expect(canvas.getByRole("list", { name: "Spans of the recovery window" })).toHaveTextContent(
+      /may have been purged since/,
+    );
+  },
+};
+/** The same in French. */
+export const RecoveryBackupUnconfirmedFrench: Story = french({
+  args: RecoveryBackupUnconfirmed.args,
+  play: async ({ canvas }) => {
+    await expect(canvas.getByText(/la sauvegarde de base 20261022T070800 ne figure pas/)).toBeVisible();
+  },
+});
+/** The repository's newest timeline is ahead of the live one: another cluster may archive here. */
+export const RecoveryRepositoryAhead: Story = {
+  args: { data: { ...backups, recoveryTimeline: recoveryRepositoryAhead } },
+  play: async ({ canvas }) => {
+    await expect(
+      canvas.getByText(/ahead of timeline 2.*restore points past the fork are not counted as covered/),
+    ).toBeVisible();
+    await expect(canvas.getByRole("list", { name: "Spans of the recovery window" })).toHaveTextContent(
+      /may restore that cluster’s data/,
+    );
+  },
+};
+/** The same in French. */
+export const RecoveryRepositoryAheadFrench: Story = french({
+  args: RecoveryRepositoryAhead.args,
+  play: async ({ canvas }) => {
+    await expect(
+      canvas.getByText(/en avance sur la timeline 2.*au-delà de la bifurcation ne sont pas comptés/),
+    ).toBeVisible();
   },
 });
 /** Every kind of hole, an incomplete base backup, and a collection cut at a bound: a lower bound. */

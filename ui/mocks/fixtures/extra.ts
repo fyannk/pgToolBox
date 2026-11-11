@@ -288,6 +288,101 @@ export const recoveryAfterFailover = {
   markers: markers.filter((mk) => mk.kind === "completed"),
 } satisfies RecoveryTimeline;
 
+/**
+ * The failover's history file is archived (the paths target timeline 2) but
+ * no WAL segment of timeline 2 yet: the tail says so, the window is a warning.
+ */
+export const recoveryLiveTimelineNoSegment = {
+  ...recoveryAfterFailover,
+  targetTimeline: 2,
+  segments: [
+    ...recoveryAfterFailover.segments.slice(0, 1),
+    {
+      from: "2026-10-29T11:40:00Z",
+      to: "2026-10-29T12:00:00Z",
+      kind: "unknown",
+      code: "recovery.segment.liveTimelineNoSegment",
+      params: { timeline: "2" },
+      text: "The repository held the history file of timeline 2, the one the current primary writes, but no WAL segment of it yet when it was last read: this time's WAL may not be in the repository yet.",
+    },
+  ],
+} satisfies RecoveryTimeline;
+
+/**
+ * Recovery paths kept stale from an earlier scan beside a backup list cut at
+ * a bound that does not list the oldest backup: the span only it reaches is
+ * not counted as covered until the paths are read again.
+ */
+export const recoveryBackupUnconfirmed = {
+  ...timeline,
+  state: "warning",
+  reason:
+    "base backup 20261022T070800 is not in the repository's backup list, which was cut at a bound, beside recovery paths kept from an earlier scan: the span only it reaches is not counted as covered until the paths are read again",
+  reasons: [
+    {
+      code: "recovery.reason.backupUnconfirmed",
+      params: { backupId: "20261022T070800", reason: "backup-not-confirmed" },
+      text: "base backup 20261022T070800 is not in the repository's backup list, which was cut at a bound, beside recovery paths kept from an earlier scan: the span only it reaches is not counted as covered until the paths are read again",
+    },
+  ],
+  segments: [
+    {
+      from: "2026-10-22T07:08:00Z",
+      to: "2026-10-26T07:08:00Z",
+      kind: "unknown",
+      code: "recovery.segment.backupUnconfirmed",
+      params: { backupId: "20261022T070800", reason: "backup-not-confirmed" },
+      text: "Base backup 20261022T070800 reaches here in the recovery paths kept from an earlier scan, but the repository's backup list was cut at a bound and does not list it, so it may have been purged since: not counted as covered.",
+    },
+    {
+      from: "2026-10-26T07:08:00Z",
+      to: "2026-10-29T11:59:15Z",
+      kind: "covered",
+      backupId: segments.at(-1)?.backupId,
+      text: segments.at(-1)?.text,
+    },
+  ],
+  markers: markers.filter((mk) => mk.kind === "completed"),
+} satisfies RecoveryTimeline;
+
+/**
+ * The repository's newest timeline (3) is ahead of the one the current primary
+ * writes (2): another cluster may archive here, so the restore points past the
+ * newest backup of the live line are not counted as covered.
+ */
+export const recoveryRepositoryAhead = {
+  ...timeline,
+  state: "warning",
+  targetTimeline: 3,
+  reason:
+    "the repository's newest timeline, 3, is ahead of timeline 2, the one the current primary writes: another cluster may archive into this repository, and a default restore follows timeline 3, so the restore points past the fork are not counted as covered; check that no other cluster's backup configuration names this repository",
+  reasons: [
+    {
+      code: "recovery.reason.repositoryAheadOfLive",
+      params: { timeline: "3", liveTimeline: "2" },
+      text: "the repository's newest timeline, 3, is ahead of timeline 2, the one the current primary writes: another cluster may archive into this repository, and a default restore follows timeline 3, so the restore points past the fork are not counted as covered; check that no other cluster's backup configuration names this repository",
+    },
+  ],
+  segments: [
+    {
+      from: "2026-10-22T07:08:00Z",
+      to: "2026-10-27T07:08:00Z",
+      kind: "covered",
+      backupId: segments.at(-1)?.backupId,
+      text: segments.at(-1)?.text,
+    },
+    {
+      from: "2026-10-27T07:08:00Z",
+      to: "2026-10-29T11:59:15Z",
+      kind: "unknown",
+      code: "recovery.segment.repositoryAheadOfLive",
+      params: { timeline: "3", liveTimeline: "2" },
+      text: "The repository's newest timeline, 3, is ahead of timeline 2, the one the current primary writes: another cluster may archive into this repository, and a default restore follows timeline 3, so a time past the fork may restore that cluster's data.",
+    },
+  ],
+  markers: markers.filter((mk) => mk.kind === "completed"),
+} satisfies RecoveryTimeline;
+
 /** No evidence agent: the operator's window, drawn hatched and labelled unverified. */
 export const recoveryReportedOnly = {
   ...timeline,
