@@ -391,7 +391,7 @@ func nodeCoherenceNote(pods []corev1.Pod, nodes []nodePodCIDRs) string {
 				return cidr.Contains(addr)
 			})
 			if sameFamily && !inside {
-				return fmt.Sprintf("the Node check is not meaningful: console Pod %s has address %s, outside the podCIDRs of its Node %s (the CNI does not allocate from spec.podCIDRs), so only the console Pods' own addresses were checked against the ipBlock peers", pod.Name, addr, pod.Spec.NodeName)
+				return fmt.Sprintf("the Node check is not meaningful: console Pod %s has address %s, outside the podCIDRs of its Node %s (the CNI does not allocate from spec.podCIDRs), so the Node ranges prove nothing here: an ipBlock peer that covers none of them may still admit the cluster's Pods (a peer that covers one is still reported broad)", pod.Name, addr, pod.Spec.NodeName)
 			}
 		}
 	}

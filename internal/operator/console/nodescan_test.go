@@ -61,6 +61,9 @@ func TestNodeCoherenceNote(t *testing.T) {
 	}{
 		{"inside its node's range", []corev1.Pod{consolePod("console-0", "a", "10.244.0.7")}, ""},
 		{"another IPAM", []corev1.Pod{consolePod("console-0", "a", "192.168.50.5")}, "console Pod console-0 has address 192.168.50.5, outside the podCIDRs of its Node a"},
+		// The Node ranges are still compared (nodeNetworkBlock runs): the
+		// note must not claim that only the Pods' addresses were checked.
+		{"says what the Node ranges prove", []corev1.Pod{consolePod("console-0", "a", "192.168.50.5")}, "the Node ranges prove nothing here"},
 		{"inside another node's range, not its own", []corev1.Pod{consolePod("console-0", "a", "10.244.1.7")}, "Node a"},
 		{"node without podCIDRs", []corev1.Pod{consolePod("console-0", "c", "192.168.50.5")}, ""},
 		{"not scheduled", []corev1.Pod{consolePod("console-0", "", "192.168.50.5")}, ""},
@@ -76,6 +79,9 @@ func TestNodeCoherenceNote(t *testing.T) {
 			got := nodeCoherenceNote(tc.pods, nodes)
 			if (tc.want == "") != (got == "") || !strings.Contains(got, tc.want) {
 				t.Fatalf("nodeCoherenceNote = %q, want %q", got, tc.want)
+			}
+			if strings.Contains(got, "only the console Pods' own addresses") {
+				t.Fatalf("nodeCoherenceNote = %q claims the Node ranges were not checked", got)
 			}
 		})
 	}
@@ -112,6 +118,26 @@ func TestNodeCheckNotMeaningful(t *testing.T) {
 	}
 	if !equality.Semantic.DeepEqual(podTemplate(c, deploymentInputs{Exposed: true, Confinement: found}), podTemplate(c, deploymentInputs{Exposed: true, Confinement: without})) {
 		t.Fatal("the note changed the rendered Pod template")
+	}
+}
+
+// TestNodeCheckNotMeaningfulStillBroad: the Node ranges are compared even
+// when a console Pod's address is outside its Node's podCIDRs, so a peer
+// that covers a Node's range is still reported broad, beside the note.
+func TestNodeCheckNotMeaningfulStillBroad(t *testing.T) {
+	t.Parallel()
+	c := ipBlockConsole("10.244.0.0/16")
+	pod := consolePod("console-0", "a", "172.20.3.9")
+	pod.Namespace, pod.Labels = c.Namespace, selectorLabels(c)
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "a"}, Spec: corev1.NodeSpec{PodCIDRs: []string{"10.244.0.0/24"}}}
+	cl := fake.NewClientBuilder().WithScheme(cnpgScheme(t)).WithObjects(&pod, node).Build()
+	r := &Reconciler{Client: cl, APIReader: cl}
+	found, err := r.exposureConfinement(context.Background(), c, buildExposureNetworkPolicy(c, true).Spec.Ingress[0].From)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if found.Broad == "" || !strings.Contains(found.Note, "the Node ranges prove nothing here") {
+		t.Fatalf("confinement = %+v, want broad with the note", found)
 	}
 }
 
