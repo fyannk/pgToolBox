@@ -17,7 +17,7 @@
 #      mise keys end in the hash of mise.toml; every mise entry of a ref whose
 #      hash differs from the one on the newest mise entry of that ref is dead
 #      (a mise.toml change retires all of them), and a ref keeps at most
-#      MISE_KEEP (16) mise entries, newest first, so a changed job set cannot
+#      MISE_KEEP (32) mise entries, newest first, so a changed job set cannot
 #      pile them up either;
 #        buildkit-blob-1-sha256:...                     -> its own family (a blob is content)
 #      The newest (by creation) member of a family is the one jobs restore, so
@@ -40,7 +40,7 @@ set -euo pipefail
 
 keep="${KEEP:-1}"
 budget_mb="${BUDGET_MB:-8192}"
-mise_keep="${MISE_KEEP:-16}"
+mise_keep="${MISE_KEEP:-32}"
 
 select_ids() {
   local caches="$1" open_prs="$2"

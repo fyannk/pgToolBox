@@ -244,6 +244,11 @@ expect 1 'make release-preflight TAG=<tag>' -- pre "v${version}" "${head}"
 { tab ci-ok completed success 2026-11-10T10:00:00Z 20; tab security-gate completed success 2026-11-10T10:00:00Z 21; } > "${runs}"
 stray="$(git -C "${repo}" commit-tree -p "${head}" -m stray "$(git -C "${repo}" rev-parse "${head}^{tree}")")"
 expect 1 'not an ancestor of origin/main' -- pre "v${version}" "${stray}"
+# An existing tag and an explicit SHA must agree.
+git -C "${repo}" -c user.name=t -c user.email=t@t tag -a -m t "v${version}" "${head}"
+expect 0 'ok: preflight' -- pre "v${version}" "${head}"
+expect 1 'already exists and points at' -- pre "v${version}" "${stray}"
+git -C "${repo}" tag -d "v${version}" >/dev/null
 git -C "${repo}" update-ref -d refs/remotes/origin/main
 expect 1 'origin/main is not fetched' -- pre "v${version}" "${head}"
 git -C "${repo}" update-ref refs/remotes/origin/main "${head}"
@@ -534,4 +539,42 @@ for t in "pgToolBox operator" "pgToolBox console" "pgToolBox evidence agent"; do
   grep -q "title: ${t}$" .github/workflows/release.yml || fail "release.yml: no matrix title '${t}'"
   grep -q "image.title=\"${t}\"" Dockerfile || fail "Dockerfile does not label '${t}'"
 done
+# ---- check-toolchain: a Dockerfile base image that drifts from mise.toml fails.
+mkdir -p "${work}/tc"
+for f in Dockerfile deploy/olm/catalog.Dockerfile; do cp "${f}" "${work}/tc/$(basename "${f}")"; done
+DOCKERFILES="${work}/tc/Dockerfile ${work}/tc/catalog.Dockerfile" ./hack/check-toolchain.sh >/dev/null || fail "check-toolchain fails on the committed Dockerfiles"
+go_pin="$(awk -F'"' '$2 == "go" { print $4; exit }' mise.toml)"
+node_pin="$(awk -F'"' '$2 == "node" { print $4; exit }' mise.toml)"
+sed "s/golang:${go_pin}@/golang:${go_pin%.*}.99@/" deploy/olm/catalog.Dockerfile > "${work}/tc/catalog.Dockerfile"
+DOCKERFILES="${work}/tc/Dockerfile ${work}/tc/catalog.Dockerfile" expect 1 'golang:.*, mise.toml pins go' -- ./hack/check-toolchain.sh
+sed "s/node:${node_pin}-/node:${node_pin%.*}.99-/" Dockerfile > "${work}/tc/Dockerfile"
+cp deploy/olm/catalog.Dockerfile "${work}/tc/catalog.Dockerfile"
+DOCKERFILES="${work}/tc/Dockerfile ${work}/tc/catalog.Dockerfile" expect 1 'node:.*, mise.toml pins node' -- ./hack/check-toolchain.sh
+echo "ok: check-toolchain base images"
+
+# ---- prune-caches: the mise cap covers every distinct tool set the workflows install.
+sets="$(grep -rhE '^ +tools: ' .github/workflows | grep -v 'inputs.tools' | sort -u | wc -l)"
+# shellcheck disable=SC2016
+cap="$(sed -n 's/^mise_keep="${MISE_KEEP:-\([0-9]*\)}"/\1/p' hack/prune-caches.sh)"
+((cap >= sets)) || fail "prune-caches MISE_KEEP default ${cap} is below the ${sets} distinct tool sets in the workflows"
+echo "ok: mise cache cap"
+
+# ---- changed-paths: an e2e script runs the e2e families, not just go.
+cp_repo="${work}/cp"
+mkdir -p "${cp_repo}"
+git -C "${cp_repo}" init -q
+for p in hack/e2e-cnpg-stack.sh hack/kind-create.sh hack/kind/ci.yaml hack/matrix.sh hack/mk/operator.mk; do
+  mkdir -p "${cp_repo}/$(dirname "${p}")"; echo base > "${cp_repo}/${p}"
+done
+git -C "${cp_repo}" add -A
+git -C "${cp_repo}" -c user.name=t -c user.email=t@t commit -q -m base
+for p in hack/e2e-cnpg-stack.sh hack/kind-create.sh hack/kind/ci.yaml hack/matrix.sh hack/mk/operator.mk; do
+  echo changed > "${cp_repo}/${p}"
+  git -C "${cp_repo}" -c user.name=t -c user.email=t@t commit -q -am "touch ${p}"
+  out="$(cd "${cp_repo}" && EVENT=push BASE_SHA="$(git rev-parse HEAD~1)" HEAD_SHA=HEAD "${root}/hack/changed-paths.sh" 2>/dev/null)"
+  for fam in operator console evidence charts; do
+    grep -qx "${fam}=true" <<<"${out}" || fail "changed-paths: ${p} does not turn ${fam} on: ${out}"
+  done
+done
+echo "ok: changed-paths e2e scripts"
 echo "release tests passed"
