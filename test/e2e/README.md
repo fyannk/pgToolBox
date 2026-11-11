@@ -10,7 +10,7 @@ nothing is run against a developer's own cluster.
 | `test/e2e/team/run.sh` | kind, a real CloudNativePG + barman-cloud + MinIO, **no operator**: `charts/pgtools` installed by a user holding only the namespace's `admin` role (impersonated), console + evidence agent + pgAdmin, evidence `live`, `server credential verified`, token sign-in | ci.yml `e2e-team` |
 | `test/e2e/pgbackrest/run.sh` (assertions: `check_test.go`, tag `e2epgbackrest`) | kind, CloudNativePG 1.30, **both pgBackRest CNPG-I plugins** (Dalibo v0.0.3, Opera v0.9.0, images by digest) and MinIO over TLS with a CA created for the test; one cell per plugin: a real full and differential backup, switched WAL, an operator `EvidenceAgent` read by a `PgToolBoxConsole` and a self-resolving `pgtools` agent read by the chart's console; asserts the published `pgbackrest/v1alpha1` evidence, the console's backups API (stanza, window, joined Backups), a restore drill, and that a bad CA and a removed WAL segment are reported; prints wall time by phase and the node's peak memory | ci.yml `e2e-pgbackrest` (heavy tier only) |
 | `test/e2e/console` (`e2econsole` tag) | envtest, `make test-e2e-console-authz` | ci.yml |
-| `test/e2e/pgadmin`, `evidenceagent.sh`, `e2e_test.go` | kind, operator scenarios | ci.yml |
+| `test/e2e/pgadmin`, `test/e2e/scope` (watchNamespaces), `evidenceagent.sh`, `e2e_test.go` | kind, operator scenarios | ci.yml |
 | `hack/console/test-e2e.sh` | kind, the console binary deployed by hand: boot, token sign-in, SAR filter, CSRF header, `/metrics`, sign-out | ci.yml console job |
 
 ## Console coverage

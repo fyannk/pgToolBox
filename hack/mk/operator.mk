@@ -22,3 +22,11 @@ test-fuzz-operator: ## Fuzz the operator's untrusted parsers (registration repor
 test-envtest-manager: ## The operator binary on envtest: /metrics (TLS, TokenReview, SubjectAccessReview) and /readyz following the informer cache.
 	KUBEBUILDER_ASSETS="$$($(SETUP_ENVTEST) use $(ENVTEST_K8S_VERSION_CONSOLE) -p path)" \
 		go test ./cmd/operator/ -run 'Envtest' -count=1 -v
+
+# The operator confined by operator.config.watchNamespaces on kind: Ready with
+# the release namespace not watched, a PgAdmin reconciled only where it
+# watches, a watched namespace deleted under it, and helm upgrade back to the
+# default mode.
+.PHONY: test-e2e-operator-scope
+test-e2e-operator-scope: ## The operator chart with watchNamespaces on kind (own config read, deleted namespace, mode switch). Docker + kind.
+	./test/e2e/scope/run.sh
