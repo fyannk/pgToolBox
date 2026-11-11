@@ -223,6 +223,16 @@ function recoveryReason(code: string, p: Params): string | undefined {
       return p?.backupId ? m.rp_reason_backup_unconfirmed({ id: p.backupId }) : undefined;
     case "recovery.reason.liveTimelineNotArchived":
       return p?.timeline ? m.rp_reason_live_timeline_not_archived({ timeline: p.timeline }) : undefined;
+    case "recovery.reason.liveTimelineNotArchivedPrimaryUnread":
+      return p?.timeline ? m.rp_reason_live_timeline_not_archived_primary_unread({ timeline: p.timeline }) : undefined;
+    case "recovery.reason.repositoryAheadOfLive":
+      return p?.timeline && p?.liveTimeline
+        ? m.rp_reason_repository_ahead_of_live({ timeline: p.timeline, live: p.liveTimeline })
+        : undefined;
+    case "recovery.reason.keptTooOld":
+      return m.rp_reason_kept_too_old();
+    case "recovery.reason.keptRepositoryChanged":
+      return m.rp_reason_kept_repository_changed();
     case "recovery.reason.backupNotUsable": {
       const id = p?.backupId;
       if (!id) return undefined;
@@ -309,6 +319,10 @@ function translate(code: string, p: Params): string | undefined {
       return p?.timeline ? m.rp_segment_live_timeline_not_archived({ timeline: p.timeline }) : undefined;
     case "recovery.segment.liveTimelineNoSegment":
       return p?.timeline ? m.rp_segment_live_timeline_no_segment({ timeline: p.timeline }) : undefined;
+    case "recovery.segment.repositoryAheadOfLive":
+      return p?.timeline && p?.liveTimeline
+        ? m.rp_segment_repository_ahead_of_live({ timeline: p.timeline, live: p.liveTimeline })
+        : undefined;
     case "recovery.segment.missingWALFormerPrimary":
       return p?.instance
         ? m.rp_segment_missing_wal_former_primary_named({ instance: p.instance })

@@ -91,8 +91,12 @@ const (
 	// formatVersion gates every document. A replica meets a document of
 	// another version only during a rolling upgrade: it then neither
 	// merges nor rewrites that key, so it never clobbers what a newer
-	// console wrote.
-	formatVersion = 1
+	// console wrote. It changes whenever a field, a merge rule or the
+	// ordering rule of a bound changes, so that replicas never decide one
+	// document by two rules: 2 since the sign-outs' fair-share tie-break
+	// and the codes' marks (MarkCode), which a replica of version 1 would
+	// drop on its next write.
+	formatVersion = 2
 )
 
 // Bounds.
@@ -264,6 +268,11 @@ func slotBefore(ah string, a signOut, bh string, b signOut) bool {
 
 // maxSignOutGen bounds a slot's generation read back.
 const maxSignOutGen = 1 << 40
+
+// maxRecordedSkew is how far ahead of this replica's clock a sign-out's
+// recording time read back may be (another replica's clock running
+// ahead); past it, the time is ignored.
+const maxRecordedSkew = 5 * time.Minute
 
 // validSignOut checks the slot of h's entry read from the ConfigMap: its
 // own (generation 0), or another's at a later generation.
@@ -1058,9 +1067,17 @@ func (s *Store) mergeLocked(cm *corev1.ConfigMap) {
 		case json.Unmarshal([]byte(raw), &doc) != nil:
 			s.opts.Logger.Warn("shared state: the sessions document does not parse; it will be rewritten", slog.String("configmap", s.opts.Name))
 		case len(doc.SignedOut) <= maxEntries:
+			latest := s.opts.Now().Add(maxRecordedSkew).Unix()
 			for h, e := range doc.SignedOut {
 				if !validSessionHash(h) || !validSignOut(h, e) {
 					continue
+				}
+				if e.Recorded > latest {
+					// Recorded in the future (a clock far ahead, or a
+					// hand-written entry): kept, since it revokes a
+					// session, but read as unrecorded, so that it comes
+					// last in every bound instead of first in all of them.
+					e.Recorded = 0
 				}
 				if prev, ok := s.signedOut[h]; ok {
 					e = mergeSignOut(h, prev, e)

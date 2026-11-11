@@ -1,5 +1,8 @@
 # pgToolBox: the one Makefile. `make check` runs what CI runs without Docker or
-# kind, so a green local run is a green pull request. Shared pieces
+# kind: every prerequisite of it is a step of a job of ci.yml (`vuln` and `audit`
+# are the govulncheck and npm-audit jobs of security.yml). CI splits it into jobs
+# and skips the families a change cannot affect (hack/changed-paths.sh), so a
+# green local run is a green pull request. Shared pieces
 # (help, doctor, tool resolution against mise.toml, the fuzz pattern) live in
 # hack/common.mk.
 
@@ -268,13 +271,19 @@ lint: ## golangci-lint on every module, build-tagged e2e/envtest/integration cod
 	$(MAKE) --no-print-directory fmt-check vet check-repo
 
 .PHONY: check-repo
-check-repo: ## Repository invariants: headers, read-only boundary, dependency closure, layering, toolchain, documented settings.
+check-repo: check-repo-files ## Repository invariants: headers, read-only boundary, dependency closure, layering, toolchain, documented settings, action pins.
 	./hack/check-boilerplate.sh
 	./hack/check-readonly.sh
 	./hack/check-deps.sh
 	./hack/check-layering.sh
-	./hack/check-toolchain.sh
 	./hack/check-docs-env.sh
+
+# The part of check-repo that reads files, not the Go import graph: it needs no
+# Go toolchain, so CI runs it (with test-hack) in lint-files for a change to the
+# workflows, the allowed-actions list, mise.toml or a Dockerfile.
+.PHONY: check-repo-files
+check-repo-files: ## check-repo without Go: toolchain pins against mise.toml, allowed actions against the workflows.
+	./hack/check-toolchain.sh
 	./hack/check-action-pins.sh
 
 .PHONY: vuln

@@ -151,3 +151,88 @@ func TestPausedPgAdminWithdrawsRefusedHostname(t *testing.T) {
 		t.Fatal("a paused, refused PgAdmin's status is rewritten on every loop")
 	}
 }
+
+// TestPgAdminPauseAllowUnpause: a PgAdmin paused while its hostname is
+// refused, whose hostname the installer then allows while it is still
+// paused, stops reporting the refusal and the stall at once, each paused
+// loop after that is a no-op, and unpausing it publishes the Ingress again
+// under the allowed name, with nothing left saying HostnameNotAllowed.
+func TestPgAdminPauseAllowUnpause(t *testing.T) {
+	p := hostnamePgAdmin("login.corp.example.com")
+	p.Annotations = map[string]string{pgtoolboxv1alpha1.AnnotationReconcile: pgtoolboxv1alpha1.ReconcileSkip}
+	h := newHarness(t, nil, baseObjects(p)...)
+	key := client.ObjectKey{Namespace: testNamespace, Name: p.Name + "-pgadmin"}
+	type want struct {
+		conditionType string
+		status        metav1.ConditionStatus
+		reason        pgtoolboxv1alpha1.Reason
+	}
+	steps := []struct {
+		name        string
+		allowed     []string
+		unpause     bool
+		want        []want
+		wantNoop    bool
+		wantIngress bool
+	}{
+		{
+			name: "paused, hostname refused", allowed: []string{"apps.example.com"},
+			want: []want{
+				{"ExposureReady", metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonHostnameNotAllowed},
+				{"Stalled", metav1.ConditionTrue, pgtoolboxv1alpha1.ReasonHostnameNotAllowed},
+				{"Ready", metav1.ConditionUnknown, pgtoolboxv1alpha1.ReasonReconciliationPaused},
+			},
+		},
+		{
+			name: "paused, hostname allowed", allowed: []string{"corp.example.com"}, wantNoop: true,
+			want: []want{
+				{"ExposureReady", metav1.ConditionUnknown, pgtoolboxv1alpha1.ReasonReconciling},
+				{"ConfigurationValid", metav1.ConditionUnknown, pgtoolboxv1alpha1.ReasonReconciling},
+				{"Ready", metav1.ConditionUnknown, pgtoolboxv1alpha1.ReasonReconciliationPaused},
+			},
+		},
+		{name: "unpaused", allowed: []string{"corp.example.com"}, unpause: true, wantIngress: true},
+	}
+	for _, step := range steps {
+		h.r.Config.ExposureAllowedHostSuffixes = step.allowed
+		if step.unpause {
+			current := h.pgadmin(p.Name)
+			current.Annotations = nil
+			if err := h.client.Update(context.Background(), current); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := h.reconcile(p.Name); err != nil {
+			t.Fatalf("%s: %v", step.name, err)
+		}
+		got := h.pgadmin(p.Name)
+		for _, w := range step.want {
+			expectCondition(t, got, w.conditionType, w.status, w.reason)
+		}
+		if step.name != "paused, hostname refused" {
+			for _, c := range got.Status.Conditions {
+				if c.Reason == pgtoolboxv1alpha1.ReasonHostnameNotAllowed.String() {
+					t.Errorf("%s: %s still says HostnameNotAllowed: %q", step.name, c.Type, c.Message)
+				}
+			}
+			if s := condition(got, "Stalled"); s.Status == metav1.ConditionTrue {
+				t.Errorf("%s: Stalled = %+v", step.name, s)
+			}
+		}
+		err := h.client.Get(context.Background(), key, &networkingv1.Ingress{})
+		if step.wantIngress && err != nil {
+			t.Errorf("%s: the Ingress is not published under the allowed hostname: %v", step.name, err)
+		}
+		if !step.wantIngress && !apierrors.IsNotFound(err) {
+			t.Errorf("%s: an Ingress is published while paused: %v", step.name, err)
+		}
+		if step.wantNoop {
+			if err := h.reconcile(p.Name); err != nil {
+				t.Fatal(err)
+			}
+			if again := h.pgadmin(p.Name); again.ResourceVersion != got.ResourceVersion {
+				t.Errorf("%s: the next loop is not a no-op", step.name)
+			}
+		}
+	}
+}

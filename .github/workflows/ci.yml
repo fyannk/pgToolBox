@@ -98,7 +98,7 @@ jobs:
           make lint
 
   lint-files:
-    name: Lint (workflows, Dockerfiles, shell)
+    name: Lint (workflows, Dockerfiles, shell, file checks, hack tests)
     needs: changes
     if: needs.changes.outputs.workflows == 'true' || needs.changes.outputs.docker == 'true' || needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
@@ -113,7 +113,7 @@ jobs:
       - name: Install the pinned tools
         uses: ./.github/actions/toolchain
         with:
-          tools: actionlint zizmor hadolint aqua:koalaman/shellcheck
+          tools: actionlint zizmor hadolint aqua:koalaman/shellcheck helm kubectl
       # actionlint for syntax and embedded shell; zizmor for injection,
       # permissions, unpinned actions and credential persistence. The token is
       # read-only and lets zizmor's online audits (impostor commits, known
@@ -132,6 +132,20 @@ jobs:
         run: |
           set -euo pipefail
           make lint-shell
+      # The file-reading half of `make check-repo` (toolchain pins against
+      # mise.toml, allowed actions against the workflows): a change that only
+      # touches a workflow, the allowed-actions list or a Dockerfile never
+      # reaches the `lint` job, so it is checked here. The Go half runs in `lint`.
+      - name: Repository checks that read files
+        run: |
+          set -euo pipefail
+          make check-repo-files
+      # The tests of hack/: release.sh, changed-paths.sh (which decides what
+      # runs at all), check-toolchain.sh, the security report, the net helpers.
+      - name: Tests of the hack scripts
+        run: |
+          set -euo pipefail
+          make test-hack
 
   generated:
     name: Generated files are current

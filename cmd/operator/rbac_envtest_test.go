@@ -33,6 +33,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/fyannk/pgToolBox/internal/operator/configuration"
+	"github.com/fyannk/pgToolBox/pkg/discovery"
 )
 
 // TestEnvtestWatchNamespacesRBAC applies the RBAC the Helm chart renders
@@ -58,7 +59,7 @@ func TestEnvtestWatchNamespacesRBAC(t *testing.T) {
 	root := filepath.Join("..", "..")
 	out, err := exec.CommandContext(t.Context(), "helm", "template", "pgtoolbox", filepath.Join(root, "charts", "pgtoolbox"), // #nosec G204 -- fixed arguments
 		"--namespace", "pgtoolbox", "--set", "operator.enabled=true",
-		"--set", "operator.config.watchNamespaces={team-a,team-gone}").CombinedOutput()
+		"--set", "operator.config.watchNamespaces={team-a,team-gone,team-narrowed}").CombinedOutput()
 	if err != nil {
 		t.Fatalf("helm template: %v\n%s", err, out)
 	}
@@ -82,6 +83,9 @@ func TestEnvtestWatchNamespacesRBAC(t *testing.T) {
 		case "RoleBinding":
 			if kind.Metadata.Namespace == "team-gone" {
 				continue // deleted with its namespace
+			}
+			if kind.Metadata.Namespace == "team-narrowed" {
+				continue // replaced by its administrator, below
 			}
 			object = &rbacv1.RoleBinding{}
 		default:
@@ -110,6 +114,18 @@ func TestEnvtestWatchNamespacesRBAC(t *testing.T) {
 	objects := []client.Object{
 		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "pgtoolbox"}},
 		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "team-a"}},
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "team-narrowed"}},
+		// team-narrowed's administrator bound the operator to a Role of
+		// their own: Clusters, nothing else.
+		&rbacv1.Role{
+			ObjectMeta: metav1.ObjectMeta{Name: "narrow", Namespace: "team-narrowed"},
+			Rules:      []rbacv1.PolicyRule{{APIGroups: []string{"postgresql.cnpg.io"}, Resources: []string{"clusters"}, Verbs: []string{"get", "list", "watch"}}},
+		},
+		&rbacv1.RoleBinding{
+			ObjectMeta: metav1.ObjectMeta{Name: "narrow", Namespace: "team-narrowed"},
+			RoleRef:    rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "Role", Name: "narrow"},
+			Subjects:   []rbacv1.Subject{{Kind: rbacv1.ServiceAccountKind, Name: "pgtoolbox", Namespace: "pgtoolbox"}},
+		},
 		&corev1.ConfigMap{
 			ObjectMeta: metav1.ObjectMeta{Name: "pgtoolbox-operator-config", Namespace: "pgtoolbox"},
 			Data:       map[string]string{"UPGRADE_BACKUPS_KEPT": "7"},
@@ -163,8 +179,28 @@ func TestEnvtestWatchNamespacesRBAC(t *testing.T) {
 		if err != nil || !slices.Equal(got, []string{"team-a"}) {
 			t.Fatalf("watched = %q, %v; want [team-a]", got, err)
 		}
-		if _, err := probeFeatures(ctx, operator, got); err != nil {
-			t.Fatalf("probeFeatures: %v", err)
+		if _, err := probeOptionalAPIs(ctx, operator, got); err != nil {
+			t.Fatalf("probeOptionalAPIs: %v", err)
+		}
+	})
+	t.Run("a narrowed namespace is left out, the features stay on", func(t *testing.T) {
+		got, err := reachableNamespaces(ctx, operator, []string{"team-a", "team-narrowed"})
+		if err != nil || !slices.Equal(got, []string{"team-a", "team-narrowed"}) {
+			t.Fatalf("reachable = %q, %v; want both (Clusters are listable in each)", got, err)
+		}
+		probed, err := probeOptionalAPIs(ctx, operator, got)
+		if err != nil {
+			t.Fatalf("probeOptionalAPIs: %v", err)
+		}
+		if !slices.Equal(probed.Namespaces, []string{"team-a"}) {
+			t.Fatalf("watched %q, want [team-a]", probed.Namespaces)
+		}
+		for name, r := range map[string]discovery.Result{
+			"databaseRoles": probed.Features.DatabaseRoles, "poolers": probed.Features.Poolers, "databases": probed.Features.Databases,
+		} {
+			if !r.Usable() {
+				t.Errorf("%s turned off by team-narrowed: %+v", name, r)
+			}
 		}
 	})
 	t.Run("reads no other Secret of its namespace", func(t *testing.T) {

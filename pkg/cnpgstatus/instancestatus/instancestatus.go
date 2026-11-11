@@ -418,8 +418,6 @@ var instantLayouts = []string{
 	"2006-01-02T15:04:05.999999999-07",
 }
 
-// instant parses one reported timestamp; nil for an absent or
-// unparseable value, never a wrong instant.
 // neverArchived reports a pg_stat_archiver time that says the instance
 // has archived nothing: absent or empty, or the "-infinity" CloudNativePG
 // coalesces a NULL last_archived_time to (probes.go fillArchiverStatus,
@@ -428,6 +426,8 @@ func neverArchived(raw string) bool {
 	return raw == "" || raw == "-infinity"
 }
 
+// instant parses one reported timestamp; nil for an absent or
+// unparseable value, never a wrong instant.
 func instant(raw string) *time.Time {
 	if raw == "" {
 		return nil

@@ -25,7 +25,7 @@ visible to that pull request alone and would push `main`'s out of the repository
 10 GB budget. The Go module cache is keyed by `go.sum`; each job has its own Go
 build and golangci-lint cache, refreshed daily; the image layers go to the `gha`
 cache from the `images` job of the nightly run on `main` (each export is several GB,
-so once a day, not on every merge). mise itself is pinned in the action, so a
+so once a day, not on every merge). The prune keeps the repository under 6 GiB so that one full run's writes (about 4 GB) still fit in GitHub's 10 GB cap. mise itself is pinned in the action, so a
 new mise release cannot change a job overnight. Each image is built once per run,
 in `images`, and the e2e jobs load that archive instead of building their own.
 
@@ -43,15 +43,15 @@ in `images`, and the e2e jobs load that archive instead of building their own.
 | `verify-release.yml` | called by `release.yml` after the prune; weekly on Monday; by hand | Pulls every image and both charts of a published release by tag **with no registry credentials** and verifies each signature and attestation by digest (`hack/release.sh verify-published`). The weekly run looks at the latest stable release and does nothing until one exists. |
 | `matrix.yml` | nightly at 01:41 UTC, by hand | The end-to-end scenarios on Kubernetes 1.34 and 1.36 × CloudNativePG 1.30.1, plus CloudNativePG `main` (non-blocking): one job per Kubernetes × CloudNativePG × scenario, all at once, on the images built once for the run. |
 | `image-watch.yml` | nightly at 04:23 UTC | Scans the latest published images and keeps one tracking issue for fixable criticals. |
-| `cache-prune.yml` | daily at 03:17 UTC, by hand (`dry_run`) | Deletes the Actions caches of pull requests that are not open, all but the newest of each logical cache (a key without its hash, date and `-pN`), the mise entries of a ref beyond the newest 32 (`MISE_KEEP`) or whose `mise.toml` hash is not the newest one's, and, only if the newest alone exceed 8 GiB, rebuildable build caches first (`hack/prune-caches.sh`); the only job with `actions: write` besides the dispatchers. |
+| `cache-prune.yml` | daily at 03:17 UTC, by hand (`dry_run`) | Deletes the Actions caches of pull requests that are not open, all but the newest of each logical cache (a key without its hash, date and `-pN`), the mise entries of a ref beyond the newest 32 (`MISE_KEEP`) or whose `mise.toml` hash is not the newest one's, every `buildkit-blob-*` cache (each is its own family) not accessed for 3 days (`BLOB_DAYS`) and, only if what is left exceeds 6 GiB (`BUDGET_MB`), the blobs first (least recently used first), then rebuildable build caches (`hack/prune-caches.sh`); the only job with `actions: write` besides the dispatchers. |
 | `automerge.yml` | Dependabot pull requests; every 30 minutes | Arms auto-merge for patch and minor updates. A second job, on the 30-minute schedule (`actions: write`), dispatches each of `ci.yml` and `security.yml` on `main` that has no run for its head commit (a merge made with the Actions token starts none). |
 
 ## What `ci.yml` runs
 
 | Job | Make target | Gate |
 |---|---|---|
-| `lint` | `lint` | golangci-lint on both modules (build-tagged e2e and envtest code included), gofumpt/gci, `go vet`, and the repository checks (`hack/check-*.sh`: headers, read-only boundary, dependency closure, layering, toolchain, documented settings) |
-| `lint-files` | `lint-workflows lint-docker lint-shell` | actionlint, zizmor, hadolint, shellcheck |
+| `lint` | `lint` | golangci-lint on both modules (build-tagged e2e and envtest code included), gofumpt/gci, `go vet`, and the repository checks (`hack/check-*.sh`: headers, read-only boundary, dependency closure, layering, documented settings, and `check-repo-files`, which `lint-files` also runs) |
+| `lint-files` | `lint-workflows lint-docker lint-shell check-repo-files test-hack` | actionlint, zizmor, hadolint, shellcheck; the file-reading half of `check-repo` (toolchain pins against `mise.toml`, the allowed-actions list against the workflows' pins), so a change to a workflow, `repository-settings.md` or a Dockerfile is checked without the Go jobs; and the tests of `hack/` (release logic, `changed-paths.sh`, `check-toolchain.sh`, the security report). A change under `hack/` turns it on, as does any change to the workflows or a Dockerfile |
 | `generated` | `verify-generated` | deepcopy code, CRDs, RBAC and their Helm/OLM copies, OpenAPI and fixtures, the check and API references and the insight pack regenerate to the committed files |
 | `test`, `race-fuzz` | `build test`; `test-race` and `test-fuzz`, one job each | unit tests; the race detector; every fuzz target for a few seconds |
 | `envtest` | `test-envtest` and the operator suites | CRD CEL rules, reconcilers and the operator binary on a real API server |

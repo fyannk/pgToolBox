@@ -182,6 +182,23 @@ test("the reasons, the backlog, the end of WAL and the caps are said in French",
       /^le dépôt ne contenait aucun WAL de la timeline 2, .*lancez pg_switch_wal\(\) sur le nouveau primaire/,
     ],
     [
+      "recovery.reason.liveTimelineNotArchivedPrimaryUnread",
+      { timeline: "2" },
+      /^le dépôt ne contenait aucun WAL de la timeline 2, .*et le primaire n’a pas été lu : .*timeline 2$/,
+    ],
+    [
+      "recovery.reason.repositoryAheadOfLive",
+      { timeline: "3", liveTimeline: "2" },
+      /^la timeline la plus récente du dépôt, 3, est en avance sur la timeline 2, .*suit la timeline 3, /,
+    ],
+    [
+      "recovery.segment.repositoryAheadOfLive",
+      { timeline: "3", liveTimeline: "2" },
+      /^La timeline la plus récente du dépôt, 3, est en avance sur la timeline 2, .*les données de ce cluster\.$/,
+    ],
+    ["recovery.reason.keptTooOld", undefined, /^les derniers chemins de restauration valides datent de plus de trois/],
+    ["recovery.reason.keptRepositoryChanged", undefined, /^l’identité du dépôt a changé depuis/],
+    [
       "recovery.segment.backupUnconfirmed",
       { backupId: "old", reason: "backup-not-confirmed" },
       /^La sauvegarde de base old .*coupée à une borne et ne la contient pas.* non compté comme couvert\.$/,

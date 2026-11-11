@@ -67,15 +67,16 @@ node_want=$(awk -F'"' '$2 == "node" { print $4; exit }' mise.toml)
 dockerfiles=${DOCKERFILES:-$(git ls-files '*Dockerfile' '*.Dockerfile' 2>/dev/null || find . -name '*Dockerfile*' -not -path '*/node_modules/*')}
 froms=$(for f in $dockerfiles; do
   awk -v file="$f" '
-    /^[ \t]*ARG[ \t]/ && !seen_from {
-      line = $0; sub(/^[ \t]*ARG[ \t]+/, "", line)
+    tolower($0) ~ /^[ \t]*arg[ \t]/ && !seen_from {
+      line = $0; sub(/^[ \t]*[Aa][Rr][Gg][ \t]+/, "", line)
       if (index(line, "=") > 0) { name = substr(line, 1, index(line, "=") - 1); val = substr(line, index(line, "=") + 1); gsub(/^"|"$/, "", val); arg[name] = val }
       next
     }
-    /^[ \t]*FROM[ \t]/ {
+    tolower($0) ~ /^[ \t]*from[ \t]/ {
       seen_from = 1
       image = ""
-      for (i = 2; i <= NF; i++) { if ($i ~ /^--/) continue; image = $i; break }
+      # A flag is one word (--platform=X) or two (--platform X).
+      for (i = 2; i <= NF; i++) { if ($i ~ /^--/) { if (index($i, "=") == 0) i++; continue }; image = $i; break }
       for (n in arg) { gsub("\\$\\{" n "\\}", arg[n], image); gsub("\\$" n, arg[n], image) }
       print file "\t" image
     }' "$f"

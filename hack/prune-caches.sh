@@ -23,11 +23,16 @@
 #      The newest (by creation) member of a family is the one jobs restore, so
 #      it is never taken by step 2, a go.sum change or a new day leaves the old
 #      copies behind and those go;
-#   3. only if the newest members alone still exceed BUDGET_MB (8192): the
-#      rebuildable compile caches (date-suffixed gobuild-*) first, largest
-#      first, then the rest least recently used first. Toolchain and module
-#      caches (mise, node, gomod) are the last to go, so a job's start-of-job
-#      restores are not what the budget eats.
+#      Each blob is its own family, so step 2 never ages one out: every
+#      buildkit-blob-* (and any other per-digest cache) not accessed for
+#      BLOB_DAYS (3) days is deleted outright;
+#   3. only if the newest members alone still exceed BUDGET_MB (6144, so that
+#      one full run's ~4 GB of writes stays under GitHub's 10 GB cap): the
+#      buildkit blobs first, least recently used first, then the rebuildable
+#      compile caches (date-suffixed gobuild-*), largest first, then the rest
+#      least recently used first. Toolchain and module caches (mise, node,
+#      gomod) are the last to go, so a job's start-of-job restores are not what
+#      the budget eats.
 #
 #   hack/prune-caches.sh [--dry-run]       list, select, delete through `gh`
 #   hack/prune-caches.sh select CACHES.json OPEN_PRS.txt   print the ids to delete
@@ -35,20 +40,24 @@
 # A failed DELETE (404: GitHub already evicted it) is reported and skipped; any
 # other failure is reported, the loop goes on and the exit status is 1.
 # The cache usage before and after goes to $GITHUB_STEP_SUMMARY when it is set.
-# Environment: GH_TOKEN (actions: write), GITHUB_REPOSITORY, KEEP, MISE_KEEP, BUDGET_MB.
+# Environment: GH_TOKEN (actions: write), GITHUB_REPOSITORY, KEEP, MISE_KEEP, BUDGET_MB,
+# BLOB_DAYS, NOW (epoch seconds; tests only).
 set -euo pipefail
 
 keep="${KEEP:-1}"
-budget_mb="${BUDGET_MB:-8192}"
+budget_mb="${BUDGET_MB:-6144}"
+blob_days="${BLOB_DAYS:-3}"
+now="${NOW:-$(date -u +%s)}"
 mise_keep="${MISE_KEEP:-32}"
 
 select_ids() {
   local caches="$1" open_prs="$2"
   jq -r --argjson keep "${keep}" --argjson misekeep "${mise_keep}" --argjson budget "$((budget_mb * 1048576))" \
+    --argjson blobcut "$(( (now - blob_days * 86400) ))" \
     --rawfile open "${open_prs}" '
     def family: .key | sub("-[0-9]{4}-[0-9]{2}-[0-9]{2}$"; "") | sub("(-p[0-9]+)?-[0-9a-f]{16,}$"; "");
     ($open | split("\n") | map(select(length > 0)) | map("refs/pull/" + . + "/merge")) as $live
-    | map(. + {fam: (.ref + " " + family), dated: (.key | test("-[0-9]{4}-[0-9]{2}-[0-9]{2}$"))}) as $all
+    | map(. + {fam: (.ref + " " + family), dated: (.key | test("-[0-9]{4}-[0-9]{2}-[0-9]{2}$")), blob: (.key | startswith("buildkit-blob-"))}) as $all
     # 1. closed pull requests
     | ($all | map(select(.ref | test("^refs/pull/")) | select(.ref as $r | $live | index($r) | not))) as $closed
     | ($all - $closed) as $rest
@@ -64,10 +73,12 @@ select_ids() {
              | $old + $extra)
        | add // []) as $miseDead
     | ($rest | group_by(.fam) | map(sort_by(.created_at) | reverse | .[$keep:]) | add // []) as $stale0
-    | ($stale0 + $miseDead | unique_by(.id)) as $stale
+    # 2b. per-digest blobs nobody has restored for blob_days
+    | ($rest | map(select(.blob and ((.last_accessed_at | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601) < $blobcut)))) as $oldBlobs
+    | ($stale0 + $miseDead + $oldBlobs | unique_by(.id)) as $stale
     | ($rest - $stale) as $left
-    # 3. over budget: rebuildable build caches (largest first), then LRU
-    | ($left | sort_by([(if .dated then 0 else 1 end), (if .dated then -.size_in_bytes else 0 end), .last_accessed_at]) as $order
+    # 3. over budget: buildkit blobs (LRU), rebuildable build caches (largest first), then LRU
+    | ($left | sort_by([(if .blob then 0 elif .dated then 1 else 2 end), (if .dated and (.blob | not) then -.size_in_bytes else 0 end), .last_accessed_at]) as $order
        | (($left | map(.size_in_bytes) | add // 0) - $budget) as $excess
        | if $excess <= 0 then [] else
            ($order | reduce .[] as $c ({freed: 0, out: []};
