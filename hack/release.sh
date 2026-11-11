@@ -323,6 +323,15 @@ cmd_preflight() {
       sha="$(git rev-parse HEAD)"
     fi
   fi
+  # An existing tag decides what is released: an explicit SHA that is not the
+  # commit the tag points at would be preflighted while another is shipped.
+  if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+    local tagged given
+    tagged="$(git rev-list -n 1 "refs/tags/${tag}")"
+    given="$(git rev-parse -q --verify "${sha}^{commit}")" || die "${sha} is not a commit in this clone"
+    [[ "${given}" == "${tagged}" ]] \
+      || die "${tag} already exists and points at ${tagged}, not at ${sha}; preflight the tagged commit or delete the local tag"
+  fi
   # Fail before any network call: a SHA that is not on main is refused by
   # `prepare` after the approval, so say it now.
   git rev-parse -q --verify refs/remotes/origin/main >/dev/null \

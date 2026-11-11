@@ -132,6 +132,10 @@ updates:
       # Versioned with @playwright/test (the `playwright` npm group); a lone
       # image bump fails hack/check-toolchain.sh and the baselines.
       - dependency-name: "mcr.microsoft.com/playwright"
+      # The Go and Node builders are the mise.toml pins (hack/check-toolchain.sh
+      # fails on any other tag); the quarterly toolchain day bumps both together.
+      - dependency-name: "golang"
+      - dependency-name: "node"
     groups:
       container-routine:
         applies-to: version-updates

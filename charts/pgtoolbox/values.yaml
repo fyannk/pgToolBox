@@ -235,15 +235,17 @@ operator:
   # restoreDrillGuard: the restore-drill delete guard (config/admission), a
   # ValidatingAdmissionPolicy that lets a console's ServiceAccount bound to
   # the drills ClusterRole delete only the drill Clusters it sealed.
-  # admissionregistration.k8s.io/v1 policies, served on every supported
-  # Kubernetes (1.34+). auto: rendered when the cluster serves the API (helm install,
-  # or helm template --api-versions / --kube-version); true: always (a GitOps
-  # render without discovery); false: never.
+  # admissionregistration.k8s.io/v1 policies are served on every supported
+  # Kubernetes (1.34+), so the guard is rendered by default: `helm template`,
+  # `--kube-version` and kustomize helmCharts carry no discovery and would
+  # drop an `auto` guard without a word. `auto` stays for clusters that may
+  # lack the API (rendered only where discovery lists it); false: never.
   restoreDrillGuard:
-    # -- Render the restore-drill delete guard. `auto`: when the cluster serves
-    # the policy API (`helm install`, or `helm template --api-versions`);
-    # `true`: always (a GitOps render without discovery); `false`: never.
-    enabled: auto
+    # -- Render the restore-drill delete guard. `true` (default): always, which
+    # is what a `helm template` or GitOps render needs; `auto`: only when the
+    # cluster serves the policy API (`helm install`, or `helm template
+    # --api-versions`); `false`: never (restore drills then rely on RBAC alone).
+    enabled: true
 
   # admissionPolicy: a ValidatingAdmissionPolicy (CEL, no webhook)
   # for rules that need the request's identity, which the CRD's own

@@ -308,10 +308,12 @@ the console's drill prefix (`spec.restoreDrills.prefix`, default `drill-`).
 Anybody else is not concerned: a ServiceAccount without the drills role, a
 person, and an administrator of the Cluster's namespace.
 
-- **Operator** (`pgtoolbox` chart): rendered with the operator when the cluster
-  serves `admissionregistration.k8s.io/v1` policies
-  (`operator.restoreDrillGuard.enabled: auto`; `true` renders it without
-  discovery, for `helm template` and GitOps). Two policies: the label and seal
+- **Operator** (`pgtoolbox` chart): rendered with the operator by default
+  (`operator.restoreDrillGuard.enabled: true`), also in a plain `helm template`
+  or a kustomize `helmCharts` render, because those carry no API discovery and
+  the policy API is served on every supported Kubernetes (1.34+). `auto`
+  renders it only where discovery lists the API; `false` leaves restore drills
+  to RBAC alone. Two policies: the label and seal
   check applies to any ServiceAccount bound to the shipped
   `pgtoolbox-console-restore-drills` ClusterRole in the Cluster's namespace,
   whatever its name and whichever namespace it belongs to (the role carries a

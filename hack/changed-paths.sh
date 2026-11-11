@@ -81,6 +81,10 @@ while IFS= read -r path; do
     # The console image embeds the SPA built from ui/.
     ui/*) mark ui; mark console; mark docker ;;
     headlamp/* | hack/mk/headlamp.mk) mark headlamp ;;
+    # The kind e2e jobs (operator, console, evidence agent, chart) are driven by
+    # these scripts and the shared Makefile fragments; a change to one must run them.
+    hack/e2e-* | hack/kind* | hack/matrix.sh | hack/mk/*.mk | hack/test-multiarch.sh)
+      mark go; mark operator; mark console; mark evidence; mark charts ;;
     .github/*) mark workflows ;;
     hack/security_report* | hack/lint-workflows.sh) mark workflows ;;
     hack/*) mark go ;;
