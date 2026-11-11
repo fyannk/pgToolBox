@@ -252,9 +252,7 @@ OpenShift.
   of every logical cache (module, toolchain, node, CodeQL, each job's build cache),
   deletes superseded copies and closed pull requests' caches, evicts rebuildable
   build caches first only if the newest members still exceed the budget, and
-  survives a 404 on one delete. The Pages site serves the latest stable release's
-  documentation on its scheduled and post-security rebuilds (main before the first
-  release); a manual `docs_ref` must be a release tag or the default branch.
+  survives a 404 on one delete.
 - **Release gates.** `wait-ci` and `release-preflight` accept only a
   `workflow_dispatch` or `schedule` run of `ci.yml` and `security.yml` on the tagged
   commit, because a docs-only push to main skips the image, e2e and OLM jobs; each
