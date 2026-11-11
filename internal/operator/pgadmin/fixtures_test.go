@@ -23,6 +23,7 @@ import (
 
 	pgtoolboxv1alpha1 "github.com/fyannk/pgToolBox/api/v1alpha1"
 	"github.com/fyannk/pgToolBox/internal/operator/specs"
+	"github.com/fyannk/pgToolBox/pkg/discovery"
 )
 
 const (
@@ -139,8 +140,8 @@ func testPoolers() []cnpgv1.Pooler {
 func testInputs(p *pgtoolboxv1alpha1.PgAdmin, openshift bool) buildInputs {
 	clusters, _, _ := selectClusters(p, testClusters())
 	result := resolveOffer(offerInputs{
-		PgAdmin: p, Clusters: clusters, Roles: testRoles(), RolesAvailable: true,
-		Poolers: testPoolers(), PoolersAvailable: true,
+		PgAdmin: p, Clusters: clusters, Roles: testRoles(), RolesAPI: apiIf(true),
+		Poolers: testPoolers(), PoolersAPI: apiIf(true),
 	})
 	in := buildInputs{
 		Replicas:              1,
@@ -171,3 +172,11 @@ func testInputs(p *pgtoolboxv1alpha1.PgAdmin, openshift bool) buildInputs {
 type pgadminT = pgtoolboxv1alpha1.PgAdmin
 
 func encodeOffer(result offerResult) ([]byte, error) { return offerEncode(result.Document) }
+
+// apiIf is an optional API's probe: available everywhere, or not served.
+func apiIf(available bool) discovery.Result {
+	if available {
+		return discovery.Result{State: discovery.Available}
+	}
+	return discovery.Result{State: discovery.NotInstalled, Reason: "not served by this cluster"}
+}

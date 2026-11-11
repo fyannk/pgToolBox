@@ -243,7 +243,7 @@ func (r *Reconciler) offerFor(ctx context.Context, p *pgtoolboxv1alpha1.PgAdmin,
 	// namespace that refuses one has none of it to offer, and its pooler
 	// endpoints say the API is unavailable there.
 	here := r.Features.In(p.Namespace)
-	offerIn.Roles, offerIn.RolesAvailable = remote.Roles, r.Features.DatabaseRoles.Usable()
+	offerIn.Roles, offerIn.RolesAPI = remote.Roles, r.Features.DatabaseRoles
 	if here.DatabaseRoles.Usable() {
 		var roles cnpgv1.DatabaseRoleList
 		if err := r.Client.List(ctx, &roles, client.InNamespace(p.Namespace)); err != nil {
@@ -251,7 +251,7 @@ func (r *Reconciler) offerFor(ctx context.Context, p *pgtoolboxv1alpha1.PgAdmin,
 		}
 		offerIn.Roles = slices.Concat(roles.Items, remote.Roles)
 	}
-	offerIn.Poolers, offerIn.PoolersAvailable, offerIn.PoolersRefusedIn = remote.Poolers, r.Features.Poolers.Usable(), r.Features.Poolers.RefusedIn
+	offerIn.Poolers, offerIn.PoolersAPI = remote.Poolers, r.Features.Poolers
 	if here.Poolers.Usable() {
 		var poolers cnpgv1.PoolerList
 		if err := r.Client.List(ctx, &poolers, client.InNamespace(p.Namespace)); err != nil {

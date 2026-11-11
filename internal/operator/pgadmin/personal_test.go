@@ -50,7 +50,7 @@ func TestResolveOfferPersonalRoles(t *testing.T) {
 
 	result := resolveOffer(offerInputs{
 		PgAdmin: p, Clusters: []cnpgv1.Cluster{*testCluster()},
-		Roles: []cnpgv1.DatabaseRole{*alice, *invalid, *privileged, *pending, *configRole}, RolesAvailable: true,
+		Roles: []cnpgv1.DatabaseRole{*alice, *invalid, *privileged, *pending, *configRole}, RolesAPI: apiIf(true),
 	})
 	var personal []string
 	for _, s := range result.Document.Servers {

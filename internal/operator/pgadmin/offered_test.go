@@ -24,6 +24,7 @@ import (
 
 	pgtoolboxv1alpha1 "github.com/fyannk/pgToolBox/api/v1alpha1"
 	"github.com/fyannk/pgToolBox/internal/operator/pgadmin/offer"
+	"github.com/fyannk/pgToolBox/pkg/discovery"
 )
 
 func offeredUsers(result offerResult) []string {
@@ -210,8 +211,8 @@ func TestResolveOfferAllowlist(t *testing.T) {
 			}
 			clusters, _, _ := selectClusters(p, all)
 			result := resolveOffer(offerInputs{
-				PgAdmin: p, Clusters: clusters, Roles: tc.roles, RolesAvailable: !tc.rolesOff,
-				Poolers: testPoolers(), PoolersAvailable: true,
+				PgAdmin: p, Clusters: clusters, Roles: tc.roles, RolesAPI: apiIf(!tc.rolesOff),
+				Poolers: testPoolers(), PoolersAPI: apiIf(true),
 			})
 			if tc.want != nil && !slices.Equal(offeredUsers(result), tc.want) {
 				t.Errorf("offered %v, want %v", offeredUsers(result), tc.want)
@@ -244,7 +245,7 @@ func TestResolveOfferSkippedEndpointRows(t *testing.T) {
 	readEndpoints(p)
 	clusters := testClusters()
 	clusters[1].Spec.Instances = 1
-	result := resolveOffer(offerInputs{PgAdmin: p, Clusters: clusters, PoolersAvailable: true})
+	result := resolveOffer(offerInputs{PgAdmin: p, Clusters: clusters, PoolersAPI: apiIf(true)})
 	var got []pgtoolboxv1alpha1.PgAdminServerStatus
 	for _, row := range serverRows(result.Rows, true) {
 		if row.Cluster == "billing" {
@@ -264,7 +265,7 @@ func TestResolveOfferSkippedEndpointRows(t *testing.T) {
 func TestResolveOfferDatabaseRoleSecretVersionPinned(t *testing.T) {
 	p := oauth2PgAdmin()
 	clusters, _, _ := selectClusters(p, testClusters())
-	result := resolveOffer(offerInputs{PgAdmin: p, Clusters: clusters, Roles: testRoles(), RolesAvailable: true})
+	result := resolveOffer(offerInputs{PgAdmin: p, Clusters: clusters, Roles: testRoles(), RolesAPI: apiIf(true)})
 	for _, s := range result.Document.Servers {
 		if s.User == "reporting" && (s.SecretName != "reporting-pw" || s.SecretResourceVersion != "7") {
 			t.Fatalf("role server %+v must pin the Secret version CNPG applied", s)
@@ -279,10 +280,10 @@ func TestResolveOfferIsDeterministic(t *testing.T) {
 	p := openshiftPgAdmin()
 	clusters, _, _ := selectClusters(p, testClusters())
 	roles := testRoles()
-	first, _ := offer.Encode(resolveOffer(offerInputs{PgAdmin: p, Clusters: clusters, Roles: roles, RolesAvailable: true, Poolers: testPoolers(), PoolersAvailable: true}).Document)
+	first, _ := offer.Encode(resolveOffer(offerInputs{PgAdmin: p, Clusters: clusters, Roles: roles, RolesAPI: apiIf(true), Poolers: testPoolers(), PoolersAPI: apiIf(true)}).Document)
 	slices.Reverse(clusters)
 	slices.Reverse(roles)
-	second, _ := offer.Encode(resolveOffer(offerInputs{PgAdmin: p, Clusters: clusters, Roles: roles, RolesAvailable: true, Poolers: testPoolers(), PoolersAvailable: true}).Document)
+	second, _ := offer.Encode(resolveOffer(offerInputs{PgAdmin: p, Clusters: clusters, Roles: roles, RolesAPI: apiIf(true), Poolers: testPoolers(), PoolersAPI: apiIf(true)}).Document)
 	if string(first) != string(second) {
 		t.Fatal("the offer depends on the order of the cache's lists")
 	}
@@ -333,7 +334,7 @@ func TestResolveOfferOwnerByNameIsPrivileged(t *testing.T) {
 	postgres.Namespace = testNamespace
 	postgres.Spec.Name = "postgres"
 	clusters, _, _ := selectClusters(p, testClusters())
-	result := resolveOffer(offerInputs{PgAdmin: p, Clusters: clusters, Roles: []cnpgv1.DatabaseRole{*owner, *postgres}, RolesAvailable: true})
+	result := resolveOffer(offerInputs{PgAdmin: p, Clusters: clusters, Roles: []cnpgv1.DatabaseRole{*owner, *postgres}, RolesAPI: apiIf(true)})
 	for _, s := range result.Document.Servers {
 		if s.User == "orders_owner" || s.User == "postgres" {
 			t.Fatalf("offered %s without credentials.superuser", s.User)
@@ -345,7 +346,7 @@ func TestResolveOfferOwnerByNameIsPrivileged(t *testing.T) {
 		}
 	}
 	p.Spec.Credentials.Superuser = new(true)
-	result = resolveOffer(offerInputs{PgAdmin: p, Clusters: clusters, Roles: []cnpgv1.DatabaseRole{*owner, *postgres}, RolesAvailable: true})
+	result = resolveOffer(offerInputs{PgAdmin: p, Clusters: clusters, Roles: []cnpgv1.DatabaseRole{*owner, *postgres}, RolesAPI: apiIf(true)})
 	users := make([]string, 0, len(result.Document.Servers))
 	for _, s := range result.Document.Servers {
 		users = append(users, s.User)
@@ -363,4 +364,54 @@ func countOf(values []string, want string) int {
 		}
 	}
 	return n
+}
+
+// TestResolveOfferRemoteNamespaceRefusesAPIs: round 14, operator P3-1 and
+// P3-2. A granted Cluster in team-b, whose Role refuses DatabaseRoles and
+// Poolers while the PgAdmin's namespace allows both: its DatabaseRoles are
+// a NotOffered row and its pooler endpoint a problem, each saying the API
+// is refused in team-b, naming no other namespace; the PgAdmin's own
+// Cluster keeps both.
+func TestResolveOfferRemoteNamespaceRefusesAPIs(t *testing.T) {
+	p := oauth2PgAdmin()
+	p.Spec.Endpoints = []pgtoolboxv1alpha1.Endpoint{"rw", "pooler:orders-pooler"}
+	clusters := testClusters()[:1]
+	remote := clusters[0]
+	remote.Namespace = "team-b"
+	clusters = append(clusters, remote)
+	refusedInB := discovery.Result{State: discovery.Available, RefusedIn: []string{"team-b"}}
+	refusedInB.GVK.Group, refusedInB.GVK.Kind = "postgresql.cnpg.io", "DatabaseRole"
+	poolersRefusedInB := refusedInB
+	poolersRefusedInB.GVK.Kind = "Pooler"
+	result := resolveOffer(offerInputs{
+		PgAdmin: p, Clusters: clusters, Roles: testRoles(), RolesAPI: refusedInB,
+		Poolers: testPoolers(), PoolersAPI: poolersRefusedInB,
+	})
+	var remoteRows []string
+	for _, row := range result.Rows {
+		if strings.HasPrefix(row.Cluster, "team-b/") && row.State == pgtoolboxv1alpha1.ServerStateNotOffered {
+			remoteRows = append(remoteRows, row.Message)
+		}
+		if row.Cluster == "orders" && strings.Contains(row.Message, "DatabaseRoles not offered") {
+			t.Errorf("the PgAdmin's own Cluster says its DatabaseRoles are refused: %+v", row)
+		}
+	}
+	wantRow := "DatabaseRoles not offered: not allowed to list DatabaseRole.postgresql.cnpg.io in team-b (other watched namespaces allow it)"
+	if !slices.Contains(remoteRows, wantRow) {
+		t.Errorf("team-b rows %q, want %q", remoteRows, wantRow)
+	}
+	wantProblem := "endpoint pooler:orders-pooler: the Pooler API is not available: not allowed to list Pooler.postgresql.cnpg.io in team-b (other watched namespaces allow it)"
+	if !slices.Contains(result.Problems, wantProblem) {
+		t.Errorf("problems %q, want %q", result.Problems, wantProblem)
+	}
+	for _, server := range result.Document.Servers {
+		if server.Namespace == "team-b" && (server.Endpoint != "rw" || server.SecretName == "reporting-pw") {
+			t.Errorf("team-b offers %s %s (%s), refused there", server.Endpoint, server.User, server.SecretName)
+		}
+	}
+	if !slices.ContainsFunc(result.Document.Servers, func(s offer.Server) bool {
+		return s.Namespace == "" && s.Endpoint == "pooler:orders-pooler"
+	}) {
+		t.Error("the PgAdmin's own Cluster lost its pooler endpoint")
+	}
 }
