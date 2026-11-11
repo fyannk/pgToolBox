@@ -587,26 +587,27 @@ func (r *Reconciler) consolePods(ctx context.Context, console *pgtoolboxv1alpha1
 // watched, so their changes bring the next look). A narrowing change is
 // applied at once.
 //
-// The cache may not hold the policy this operator applied last yet (its
-// informer and the workload's are not ordered), so a widening the cache
-// shows is confirmed past it before anything is held. stuck: a Pod stuck
-// terminating holds it (named in the message).
+// The policy in force is read past the cache, whichever way the cache
+// lags: its informer and the workload's are not ordered, so the cache may
+// show the narrower policy this operator replaced (no widening is left) or
+// an older, wider one that equals policy while the API server already
+// holds the narrower one applied last (a widening the cache cannot show).
+// One uncached GET per pass of a console with an ingress policy. stuck: a
+// Pod stuck terminating holds it (named in the message).
 func (r *Reconciler) heldWidening(ctx context.Context, console *pgtoolboxv1alpha1.PgToolBoxConsole, policy *networkingv1.NetworkPolicy) (held string, stuck bool, err error) {
-	for _, reader := range []client.Reader{r.Client, r.APIReader} {
-		live := &networkingv1.NetworkPolicy{}
-		if err := reader.Get(ctx, client.ObjectKeyFromObject(policy), live); err != nil {
-			return "", false, client.IgnoreNotFound(err)
-		}
-		if !metav1.IsControlledBy(live, console) {
-			return "", false, nil // the apply reports it as not owned
-		}
-		var livePeers []networkingv1.NetworkPolicyPeer
-		if len(live.Spec.Ingress) > 0 {
-			livePeers = live.Spec.Ingress[0].From
-		}
-		if !peersWiden(policy.Spec.Ingress[0].From, livePeers) {
-			return "", false, nil
-		}
+	live := &networkingv1.NetworkPolicy{}
+	if err := r.APIReader.Get(ctx, client.ObjectKeyFromObject(policy), live); err != nil {
+		return "", false, client.IgnoreNotFound(err)
+	}
+	if !metav1.IsControlledBy(live, console) {
+		return "", false, nil // the apply reports it as not owned
+	}
+	var livePeers []networkingv1.NetworkPolicyPeer
+	if len(live.Spec.Ingress) > 0 {
+		livePeers = live.Spec.Ingress[0].From
+	}
+	if !peersWiden(policy.Spec.Ingress[0].From, livePeers) {
+		return "", false, nil
 	}
 	trusted, blockers, err := r.everyPeerTrustInForce(ctx, console)
 	if err != nil || !trusted {
@@ -626,14 +627,18 @@ func (r *Reconciler) heldWidening(ctx context.Context, console *pgtoolboxv1alpha
 // console Pod, terminating ones included, carries it; Pods that could not
 // all be listed count as one that does. blockers names the Pods stuck
 // terminating that carry it (stuckGrantPods).
+//
+// The workloads are read past the cache: the template this operator
+// applied a moment ago may carry the grant before its informer delivers
+// it. It runs only on a confirmed widening, so the two GETs are rare.
 func (r *Reconciler) everyPeerTrustInForce(ctx context.Context, console *pgtoolboxv1alpha1.PgToolBoxConsole) (trusted bool, blockers string, err error) {
 	key := client.ObjectKey{Namespace: console.Namespace, Name: console.WorkloadName()}
 	for _, workload := range []client.Object{&appsv1.Deployment{}, &appsv1.StatefulSet{}} {
-		if err := r.Client.Get(ctx, key, workload); err != nil {
+		if err := r.APIReader.Get(ctx, key, workload); err != nil {
 			if apierrors.IsNotFound(err) {
 				continue
 			}
-			return false, "", err
+			return false, "", fmt.Errorf("read the console workload: %w", err)
 		}
 		if !metav1.IsControlledBy(workload, console) {
 			continue
