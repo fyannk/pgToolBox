@@ -131,6 +131,8 @@ test-race: ## Unit tests with the race detector.
 # emits a category and never a cause; every evidence format parser returns a
 # typed error rather than a panic; and taking a WAL segment or a history file
 # out of an archive never makes either format's recovery path reach further.
+# The MCP guard reads a body as the SDK does: a batch the SDK would read is
+# refused, and the method it counts is the one the SDK runs.
 .PHONY: test-fuzz
 test-fuzz: ## Fuzz the trust-boundary parsers (FUZZ_TIME per target).
 	$(call fuzz,./internal/backupresolve,FuzzParseDestination)
@@ -141,6 +143,7 @@ test-fuzz: ## Fuzz the trust-boundary parsers (FUZZ_TIME per target).
 	$(call fuzz,./internal/operator/pgadmin/declared,FuzzParseDeclared)
 	$(call fuzz,./internal/operator/configuration,FuzzLoadEnvironment)
 	$(call fuzz,./internal/console/mcpoauth,FuzzRegistration)
+	$(call fuzz,./internal/console/mcpauth,FuzzGuardSeesTheMessageTheSDKReads)
 	$(call fuzz,./pkg/redact,FuzzSafe)
 	$(call fuzz,./pkg/redact,FuzzPayload)
 	$(call fuzz,./pkg/cnpgstatus/insight,FuzzParse)
