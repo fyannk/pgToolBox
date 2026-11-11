@@ -17,8 +17,13 @@ package discovery
 import (
 	"context"
 	"errors"
+	"slices"
+	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -169,7 +174,9 @@ func TestReasonsNameNoSecretAndAreBounded(t *testing.T) {
 
 // namespaceLister answers per namespace; a namespace absent from errs
 // lists fine.
+// It is safe for the concurrent probes; seen is in arrival order.
 type namespaceLister struct {
+	mu   sync.Mutex
 	errs map[string]error
 	seen []string
 }
@@ -177,8 +184,17 @@ type namespaceLister struct {
 func (n *namespaceLister) List(_ context.Context, _ client.ObjectList, opts ...client.ListOption) error {
 	o := &client.ListOptions{}
 	o.ApplyOptions(opts)
+	n.mu.Lock()
+	defer n.mu.Unlock()
 	n.seen = append(n.seen, o.Namespace)
 	return n.errs[o.Namespace]
+}
+
+// sortedSeen is the namespaces probed, sorted: the probes run concurrently.
+func (n *namespaceLister) sortedSeen() []string {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return slices.Sorted(slices.Values(n.seen))
 }
 
 func TestProbeNamespaces(t *testing.T) {
@@ -197,12 +213,19 @@ func TestProbeNamespaces(t *testing.T) {
 		{name: "every namespace listable", namespaces: []string{"a", "b"}, want: Available, wantSeen: []string{"a", "b"}},
 		{
 			name: "one forbidden namespace turns the feature off", namespaces: []string{"a", "b", "c"},
-			errs: map[string]error{"b": forbidden}, want: Forbidden, wantSeen: []string{"a", "b"},
+			errs: map[string]error{"b": forbidden}, want: Forbidden, wantSeen: []string{"a", "b", "c"},
 			wantReason: "not allowed to list ObjectStore.barmancloud.cnpg.io in b",
 		},
 		{
-			name: "not served stops at the first namespace", namespaces: []string{"a", "b"},
-			errs: map[string]error{"a": &meta.NoKindMatchError{GroupKind: ObjectStoreGVK.GroupKind()}}, want: NotInstalled, wantSeen: []string{"a"},
+			name: "not served in the first namespace", namespaces: []string{"a", "b"},
+			errs: map[string]error{"a": &meta.NoKindMatchError{GroupKind: ObjectStoreGVK.GroupKind()}}, want: NotInstalled, wantSeen: []string{"a", "b"},
+		},
+		{
+			// The outcome is the first refusal in the order of the
+			// namespaces, not the first to answer.
+			name: "the first refusal in namespace order wins", namespaces: []string{"a", "b", "c"},
+			errs: map[string]error{"b": forbidden, "c": &meta.NoKindMatchError{GroupKind: ObjectStoreGVK.GroupKind()}},
+			want: Forbidden, wantSeen: []string{"a", "b", "c"}, wantReason: "not allowed to list ObjectStore.barmancloud.cnpg.io in b",
 		},
 		{
 			name: "any other error fails", namespaces: []string{"a", "b"},
@@ -232,8 +255,8 @@ func TestProbeNamespaces(t *testing.T) {
 			if tt.wantReason != "" && got.Reason != tt.wantReason {
 				t.Errorf("reason = %q, want %q", got.Reason, tt.wantReason)
 			}
-			if strings.Join(lister.seen, ",") != strings.Join(tt.wantSeen, ",") {
-				t.Errorf("probed %q, want %q", lister.seen, tt.wantSeen)
+			if seen := lister.sortedSeen(); strings.Join(seen, ",") != strings.Join(tt.wantSeen, ",") {
+				t.Errorf("probed %q, want %q", seen, tt.wantSeen)
 			}
 			if !tt.wantErr && got.GVK != ObjectStoreGVK {
 				t.Errorf("GVK = %v", got.GVK)
@@ -337,6 +360,83 @@ func TestProbePgBackRestAPIs(t *testing.T) {
 			}
 			if _, err := p.probe(context.Background(), &namespaceLister{errs: map[string]error{"a": errors.New("connection refused")}}, []string{"a"}); err == nil {
 				t.Fatal("an unclassified error did not fail the probe")
+			}
+		})
+	}
+}
+
+// slowLister answers every List after delay and records the most Lists it
+// saw in flight at once.
+type slowLister struct {
+	delay    time.Duration
+	inFlight atomic.Int32
+	peak     atomic.Int32
+	calls    atomic.Int32
+}
+
+func (s *slowLister) List(ctx context.Context, _ client.ObjectList, _ ...client.ListOption) error {
+	s.calls.Add(1)
+	now := s.inFlight.Add(1)
+	defer s.inFlight.Add(-1)
+	for {
+		peak := s.peak.Load()
+		if now <= peak || s.peak.CompareAndSwap(peak, now) {
+			break
+		}
+	}
+	select {
+	case <-time.After(s.delay):
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// TestProbeManyNamespacesIsBounded: a start-up watching many namespaces
+// probes them concurrently, ProbeConcurrency at a time at most, so 160
+// namespaces at 30 ms each take a few hundred milliseconds rather than the
+// 4.8 s of one List after the other (the operator's start-up step allows
+// 20 s for six kinds).
+func TestProbeManyNamespacesIsBounded(t *testing.T) {
+	namespaces := make([]string, 160)
+	for i := range namespaces {
+		namespaces[i] = "team-" + strconv.Itoa(i)
+	}
+	gvk := schema.GroupVersionKind{Group: "postgresql.cnpg.io", Version: "v1", Kind: "Cluster"}
+	for _, probe := range []struct {
+		name string
+		run  func(Lister) error
+	}{
+		{"ProbeNamespaces", func(l Lister) error {
+			got, err := ProbeNamespaces(context.Background(), l, gvk, namespaces)
+			if err == nil && !got.Usable() {
+				t.Errorf("result %+v, want available", got)
+			}
+			return err
+		}},
+		{"ReachableNamespaces", func(l Lister) error {
+			reachable, refused, err := ReachableNamespaces(context.Background(), l, gvk, namespaces)
+			if err == nil && (!slices.Equal(reachable, namespaces) || len(refused) != 0) {
+				t.Errorf("reachable %d refused %d, want every namespace reachable in order", len(reachable), len(refused))
+			}
+			return err
+		}},
+	} {
+		t.Run(probe.name, func(t *testing.T) {
+			lister := &slowLister{delay: 30 * time.Millisecond}
+			start := time.Now()
+			if err := probe.run(lister); err != nil {
+				t.Fatal(err)
+			}
+			elapsed := time.Since(start)
+			if got := lister.calls.Load(); got != int32(len(namespaces)) {
+				t.Errorf("%d Lists, want one per namespace (%d)", got, len(namespaces))
+			}
+			if peak := lister.peak.Load(); peak > ProbeConcurrency || peak < 2 {
+				t.Errorf("peak in flight %d, want concurrent and at most %d", peak, ProbeConcurrency)
+			}
+			if elapsed > 2*time.Second {
+				t.Errorf("took %s: the namespaces were not probed concurrently", elapsed)
 			}
 		})
 	}
