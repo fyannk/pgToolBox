@@ -220,3 +220,58 @@ func FuzzRecoveryFrontierMonotoneHistory(f *testing.F) {
 func leftAtSwitch(reason string) bool {
 	return strings.Contains(reason, "a default restore leaves timeline ")
 }
+
+// coveredReach is how far a path reaches as the console draws it
+// (internal/console/status recoverySpans, degradedPath): a path that
+// reaches its frontier but is not rated healthy is drawn, but not as
+// covered; an off-target path, or one with no frontier, is not drawn.
+// It is the frontier position plus one, 0 for no covered reach.
+func coveredReach(state evidence.State, stop string, offTarget bool, timeline uint32, position uint64) uint64 {
+	if offTarget || timeline == 0 || stop == "frontier" && state != evidence.Healthy {
+		return 0
+	}
+	return position + 1
+}
+
+// FuzzRecoveryCoveredReach (round 8, PG plan 3; the review's
+// FuzzR8CoveredReach) is the stricter invariant the console relies on,
+// beyond the frontier position assertNotFurther compares: removing any
+// one archived segment never makes either format's path reach further as
+// the console draws it (coveredReach), and never changes the timeline
+// pgBackRest evaluates its path toward.
+func FuzzRecoveryCoveredReach(f *testing.F) {
+	f.Add(uint16(0b110), uint16(0b11100000), uint16(0), uint8(3), uint8(0), uint8(0), uint8(0), uint8(3))
+	f.Add(uint16(0b110), uint16(0b11100000), uint16(0b1100000000), uint8(3), uint8(2), uint8(0b10101), uint8(1), uint8(14))
+	f.Add(uint16(0b111111110), uint16(0b111000), uint16(0b111110000), uint8(1), uint8(1), uint8(0b10011), uint8(2), uint8(27))
+	f.Fuzz(func(t *testing.T, m1, m2, m3 uint16, sw2, sw3, shape, end, drop uint8) {
+		in := newMonotoneInput(m1, m2, m3, sw2, sw3, shape, end)
+		index := int(drop) % (3 * monotoneSegments)
+		timeline, segment := index/monotoneSegments, uint64(1+index%monotoneSegments)
+		if in.masks[timeline]&(1<<segment) == 0 {
+			return
+		}
+		reduced := in
+		reduced.masks[timeline] &^= 1 << segment
+		before, after := analyzeMonotone(t, in.scenario()), analyzeMonotone(t, reduced.scenario())
+		what := fmt.Sprintf("segment %d of timeline %d", segment, timeline+1)
+		for target, a := range after.barman {
+			reach, was := coveredReach(a.State, string(a.Stop), a.OffTarget, a.FrontierTimeline, a.FrontierPosition), uint64(0)
+			b, ok := before.barman[target]
+			if ok {
+				was = coveredReach(b.State, string(b.Stop), b.OffTarget, b.FrontierTimeline, b.FrontierPosition)
+			}
+			if reach > was {
+				t.Errorf("Barman path to %d, removing %s: covered reach %d -> %d (%s/%s %q -> %s/%s %q)", target, what, was, reach, b.State, b.Stop, b.Reason, a.State, a.Stop, a.Reason)
+			}
+		}
+		a, b := after.pgbackrest, before.pgbackrest
+		if a.TargetTimeline != b.TargetTimeline {
+			t.Errorf("pgBackRest target timeline %d -> %d removing %s", b.TargetTimeline, a.TargetTimeline, what)
+		}
+		reach := coveredReach(a.State, string(a.Stop), a.OffTarget, a.FrontierTimeline, a.FrontierPosition)
+		was := coveredReach(b.State, string(b.Stop), b.OffTarget, b.FrontierTimeline, b.FrontierPosition)
+		if reach > was {
+			t.Errorf("pgBackRest, removing %s: covered reach %d -> %d (%s/%s %q -> %s/%s %q)", what, was, reach, b.State, b.Stop, b.Reason, a.State, a.Stop, a.Reason)
+		}
+	})
+}
