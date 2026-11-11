@@ -5,6 +5,7 @@ import {
   evidenceAudienceMismatch,
   evidenceStatusNotFromOperator,
   recoveryAfterFailover,
+  recoveryArchiverNotReported,
   recoveryArchivingFailing,
   recoveryBackupUnconfirmed,
   recoveryHealthy,
@@ -16,6 +17,7 @@ import {
   recoveryPrimaryUnreadAfterFailover,
   recoveryPurgeBandExtended,
   recoveryReportedArchivingFailing,
+  recoveryReportedHibernated,
   recoveryReportedOnly,
   recoveryRepositoryAhead,
 } from "../../mocks/fixtures/extra";
@@ -162,6 +164,9 @@ export const RecoveryRepositoryAhead: Story = {
     await expect(canvas.getByRole("list", { name: "Spans of the recovery window" })).toHaveTextContent(
       /may restore that cluster’s data/,
     );
+    // A WAL switch here does not move another cluster's timeline (round 15, DBA P2-1).
+    await expect(canvas.getByText(/check what PostgreSQL last archived:$/)).toBeVisible();
+    await expect(canvas.queryByText(/pg_switch_wal\(\)/)).toBeNull();
   },
 };
 /** The same in French. */
@@ -242,6 +247,38 @@ export const RecoveryPurgeBandExtended: Story = {
     );
   },
 };
+/** The same in French. */
+export const RecoveryPurgeBandExtendedFrench: Story = french({
+  args: RecoveryPurgeBandExtended.args,
+  play: async ({ canvas }) => {
+    await expect(canvas.getByRole("list", { name: "Intervalles de la fenêtre de restauration" })).toHaveTextContent(
+      /À moins de (1 j|24 h) du plus ancien point de restauration : une purge de rétention/,
+    );
+  },
+});
+/**
+ * The archiving instance is a replica cluster's designated primary (or a
+ * primary mid-promotion): in recovery, pg_switch_wal() fails, so the hint
+ * offers pg_stat_archiver only (round 15, DBA P2-1; Go's edgeAdvice).
+ */
+export const RecoveryArchiverNotReported: Story = {
+  args: { data: { ...backups, recoveryTimeline: recoveryArchiverNotReported } },
+  play: async ({ canvas, canvasElement }) => {
+    await expect(canvas.getByText(/^the archiving instance does not report itself primary/)).toBeVisible();
+    await expect(canvasElement.querySelector('[data-pitr-edge-hint="evidence"]')).not.toBeNull();
+    await expect(canvas.getByText(/check what PostgreSQL last archived:$/)).toBeVisible();
+    await expect(canvas.queryByText(/pg_switch_wal\(\)/)).toBeNull();
+  },
+};
+/** The same in French. */
+export const RecoveryArchiverNotReportedFrench: Story = french({
+  args: RecoveryArchiverNotReported.args,
+  play: async ({ canvas, canvasElement }) => {
+    await expect(canvas.getByText(/^l’instance qui archive ne se déclare pas primaire/)).toBeVisible();
+    await expect(canvasElement.querySelector('[data-pitr-edge-hint="evidence"]')).not.toBeNull();
+    await expect(canvas.queryByText(/pg_switch_wal\(\)/)).toBeNull();
+  },
+});
 /** The last good recovery paths were dropped as too old: the bar says why and what to check. */
 export const RecoveryKeptTooOld: Story = {
   args: { data: { ...backups, recoveryTimeline: recoveryKeptTooOld } },
@@ -310,6 +347,19 @@ export const RecoveryReportedArchivingFailingFrench: Story = french({
     await expect(spans.queryByText(/likely not in the repository/)).toBeNull();
   },
 });
+/**
+ * No evidence agent and a hibernated Cluster: no instance runs, so the edge
+ * hint offers nothing to run (round 15, CNPG P2-1; Go's edgeAdvice).
+ */
+export const RecoveryReportedHibernated: Story = {
+  args: { data: { ...backups, recoveryTimeline: recoveryReportedHibernated } },
+  play: async ({ canvas, canvasElement }) => {
+    await expect(canvas.getByText("Reported by the operator, not verified against the repository")).toBeVisible();
+    await expect(canvasElement.querySelector("[data-pitr-edge-hint]")).toBeNull();
+    await expect(canvas.queryByText(/pg_stat_archiver/)).toBeNull();
+    await expect(canvas.queryByText(/pg_switch_wal\(\)/)).toBeNull();
+  },
+};
 /** Neither evidence nor an operator window: no bar, Go's reason. */
 export const RecoveryNone: Story = {
   args: { data: { ...backups, recoveryTimeline: recoveryNone } },

@@ -353,6 +353,7 @@ export const recoveryBackupUnconfirmed = {
 export const recoveryRepositoryAhead = {
   ...timeline,
   state: "warning",
+  edgeAdvice: "archiver",
   targetTimeline: 3,
   reason:
     "the repository's newest timeline, 3, is ahead of timeline 2, the one the current primary writes: another cluster may archive into this repository, and a default restore follows timeline 3, so the restore points past the fork are not counted as covered; check that no other cluster's backup configuration names this repository",
@@ -486,6 +487,37 @@ export const recoveryPurgeBandExtended = {
   provenance: { ...timeline.provenance, stale: true },
 } satisfies RecoveryTimeline;
 
+/**
+ * The archiving instance does not report itself primary (a replica cluster's
+ * designated primary, or a primary mid-promotion): it is in recovery, where
+ * pg_switch_wal() fails, so the hint offers pg_stat_archiver only (Go's
+ * wording and edgeAdvice, internal/console/status/recovery.go
+ * timelineVerdict, edgeAdvice).
+ */
+export const recoveryArchiverNotReported = {
+  ...recoveryHealthy,
+  state: "warning",
+  edgeAdvice: "archiver",
+  reason:
+    "the archiving instance does not report itself primary (a replica cluster's designated primary, or a primary mid-promotion), so it does not report its archive backlog: how late recent WAL reached the repository is not known, so the newest restore points are uncertain",
+  reasons: [
+    {
+      code: "recovery.reason.archiverNotReported",
+      text: "the archiving instance does not report itself primary (a replica cluster's designated primary, or a primary mid-promotion), so it does not report its archive backlog: how late recent WAL reached the repository is not known, so the newest restore points are uncertain",
+    },
+  ],
+  segments: [
+    { ...(recoveryHealthy.segments[0] as RecoverySegment), to: "2026-10-28T11:59:15Z" },
+    {
+      from: "2026-10-28T11:59:15Z",
+      to: "2026-10-29T11:59:15Z",
+      kind: "unknown",
+      code: "recovery.segment.archiverNotReported",
+      text: "The archiving instance does not report itself primary (a replica cluster's designated primary, or a primary mid-promotion), so it does not report how many WAL segments wait to be archived: WAL that reached the repository may have waited on it first, so its arrival time may overstate how recent a restore can be.",
+    },
+  ],
+} satisfies RecoveryTimeline;
+
 /** No evidence agent: the operator's window, drawn hatched and labelled unverified. */
 export const recoveryReportedOnly = {
   ...timeline,
@@ -505,6 +537,20 @@ export const recoveryReportedOnly = {
   ],
   markers: markers.filter((mk) => mk.source === "backupObject"),
   provenance: { origin: "operator", source: "Cluster.status", observedAt: "2026-10-29T11:59:58Z" },
+} satisfies RecoveryTimeline;
+
+/**
+ * No evidence agent and a hibernated Cluster: no instance runs, so the hint
+ * offers nothing to run on a primary (Go's edgeAdvice, from the facts on the
+ * reported basis too).
+ */
+export const recoveryReportedHibernated = {
+  ...recoveryReportedOnly,
+  edgeAdvice: "none",
+  reasons: [
+    { code: "recovery.reason.reportedWindow", text: "the window is the operator's report, not repository evidence" },
+    { code: "recovery.reason.noEvidence", text: "no repository evidence" },
+  ],
 } satisfies RecoveryTimeline;
 
 /**

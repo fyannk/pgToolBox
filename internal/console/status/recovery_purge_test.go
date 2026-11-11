@@ -174,3 +174,107 @@ func TestMissedScanFollowsTheScan(t *testing.T) {
 		t.Errorf("30 s refresh, 2 min scan: band %s, want the elapsed band from the scan's start", got)
 	}
 }
+
+// TestPurgeBandMissedScanOnAShortWindow (round 15, PG P3-1, the
+// reviewer's probe): a missed scan is told from the scan's real age, not
+// its age capped at the window. Before, a window shorter than missedScan
+// never missed a scan: a lone backup with a 9 min window read 2 h ago at
+// a 5 min refresh was fully covered, and two backups 20 h apart read ten
+// days ago at a 24 h refresh were capped at the newer one.
+func TestPurgeBandMissedScanOnAShortWindow(t *testing.T) {
+	read := now.Add(-2 * time.Hour)
+	for _, c := range []struct {
+		name    string
+		window  time.Duration
+		refresh time.Duration
+		want    time.Duration
+	}{
+		{"3 min window, 5 min refresh", 3 * time.Minute, 5 * time.Minute, 3 * time.Minute},
+		{"9 min window, 5 min refresh", 9 * time.Minute, 5 * time.Minute, 9 * time.Minute},
+		{"11 min window, 5 min refresh", 11 * time.Minute, 5 * time.Minute, 11 * time.Minute},
+		// Read 2 h ago at a 24 h refresh is on time: the newest (lone)
+		// backup is never purged.
+		{"9 min window, 24 h refresh, on time", 9 * time.Minute, 24 * time.Hour, 0},
+	} {
+		last := now.Add(-2 * time.Hour)
+		first := last.Add(-c.window)
+		lone := []interval{{from: first, to: last, backupID: "old"}}
+		in := timelineInput{facts: recoveryFacts{now: now}, scannedAt: &read, refresh: c.refresh}
+		if got := purgeBand(in, lone, first, last); got != c.want {
+			t.Errorf("%s, read 2 h ago: band %s, want %s", c.name, got, c.want)
+		}
+	}
+	last := now.Add(-10 * 24 * time.Hour)
+	first := last.Add(-20 * time.Hour)
+	two := []interval{{from: first, to: last, backupID: "a"}, {from: first.Add(10 * time.Hour), to: last, backupID: "b"}}
+	in := timelineInput{facts: recoveryFacts{now: now}, scannedAt: &last, refresh: 24 * time.Hour}
+	if got := purgeBand(in, two, first, last); got != 20*time.Hour {
+		t.Errorf("two backups read ten days ago at a 24 h refresh: band %s, want the whole window %s", got, 20*time.Hour)
+	}
+}
+
+// TestPurgeBandPastTheScan (round 15, PG P3-2, the reviewer's probe):
+// once the retention window's start passes the scan's start, the base may
+// be a backup taken since, which the snapshot does not list, and the
+// newest listed one goes with its whole chain. Weekly bases 13 and 6 days
+// before the read (daily incrementals under pgBackRest), read 7 to 9 days
+// ago: two days before the read is not covered. Read 5 days ago the
+// window's start has not passed the read, and the next base keeps it.
+func TestPurgeBandPastTheScan(t *testing.T) {
+	day := 24 * time.Hour
+	facts := recoveryFacts{now: now, archiveTimeout: defaultArchiveTimeout, sweepInterval: 30 * time.Second}
+	consistent := true
+	for _, pgBackRest := range []bool{true, false} {
+		for _, c := range []struct {
+			days    int
+			covered bool
+		}{{5, true}, {7, false}, {8, false}, {9, false}} {
+			age := time.Duration(c.days) * day
+			var paths []evidence.RecoveryPath
+			for d := 13; d >= 0; d-- {
+				if !pgBackRest && d != 13 && d != 6 {
+					continue
+				}
+				p := tlPath("b"+strconv.Itoa(d), age+time.Duration(d)*day, age, evidencev1alpha1.CoverageFrontier)
+				p.Consistent = &consistent
+				paths = append(paths, p)
+			}
+			ev := timelineFixture{paths: paths, scannedAt: now.Add(-age), stale: true}.evidence()
+			if pgBackRest {
+				ev.result.Snapshot.Identity.Repository.Format = evidencev1alpha1.FormatPGBackRest
+				for i := range ev.result.Backups {
+					typ := "incr"
+					if id := ev.result.Backups[i].ID; id == "b13" || id == "b6" {
+						typ = "full"
+					}
+					ev.result.Backups[i].PgBackRest = &evidence.PgBackRestItem{Type: typ, Usable: true}
+				}
+			}
+			tl := (&Service{}).recoveryTimeline(ev, viewmodel.BackupSummary{}, nil, facts)
+			got := restoreCheck(viewmodel.Backups{RecoveryTimeline: tl, GeneratedAt: now}, now.Add(-age-2*day))
+			if covered := got.Answer == "covered"; covered != c.covered {
+				t.Errorf("pgBackRest %v, read %d days ago: two days before the read is %s by %s (%s), want covered %v",
+					pgBackRest, c.days, got.Answer, got.BackupID, got.Code, c.covered)
+			}
+		}
+	}
+}
+
+// TestPurgeBandKeepsABackupErrorFull (round 15, CNPG P3-1): a pgBackRest
+// full marked backup-error (page checksum errors) is still a full that
+// expire counts. Read on time, the band stops at the newest full, which is
+// that one, not at the older full before it.
+func TestPurgeBandKeepsABackupErrorFull(t *testing.T) {
+	day := 24 * time.Hour
+	first, last := now.Add(-7*day), now.Add(-time.Minute)
+	spans := []interval{{from: first, to: last, backupID: "f1"}, {from: first.Add(3 * day), to: last, backupID: "f2"}}
+	read := now.Add(-2 * time.Minute)
+	in := timelineInput{facts: recoveryFacts{now: now}, scannedAt: &read, refresh: 5 * time.Minute, pgBackRest: true}
+	in.backups = []evidence.BackupItem{
+		{ID: "f1", PgBackRest: &evidence.PgBackRestItem{Type: "full", Usable: true}},
+		{ID: "f2", Failed: true, PgBackRest: &evidence.PgBackRestItem{Type: "full"}},
+	}
+	if got, want := purgeBand(in, spans, first, last), 7*time.Minute; got != want {
+		t.Errorf("newest full marked backup-error, read on time: band %s, want %s (it anchors retention)", got, want)
+	}
+}

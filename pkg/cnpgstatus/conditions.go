@@ -63,7 +63,7 @@ const (
 	srcReady = "api/v1/cluster_types.go ConditionClusterReady (v1.30.0:1178, main:1189); " +
 		"set True/ClusterIsReady iff phase is healthy, else False/ClusterIsNotReady (pkg/resources/status/transactions.go SetClusterReadyCondition v1.30.0:34-56)"
 	srcArchiving = "api/v1/cluster_types.go ConditionContinuousArchiving (v1.30.0:1174, main:1185); " +
-		"written by the instance on every archive_command (pkg/management/postgres/webserver/local.go v1.30.0:247-263)"
+		"written by the instance on every archive_command (pkg/management/postgres/webserver/local.go v1.30.0:247-263, v1.30.1 and main:264-280; built with no LastTransitionTime, which meta.SetStatusCondition in pkg/resources/status/conditions.go PatchConditionsWithOptimisticLock keeps while the status stays: pins_facts_test.go TestPinContinuousArchivingSince)"
 	srcBackup = "api/v1/cluster_types.go ConditionBackup (v1.30.0:1176, main:1187); " +
 		"api/v1/cluster_conditions.go v1.30.0:28-53 (BackupSucceededCondition, BackupStartingCondition, BuildClusterBackupFailedCondition)"
 	srcSystemID = "api/v1/cluster_types.go ConditionConsistentSystemID (v1.30.0:1181, main:1192); " +

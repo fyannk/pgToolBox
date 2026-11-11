@@ -406,12 +406,13 @@ function uncertainEdge(t: RecoveryTimeline): boolean {
 
 /**
  * What a DBA can check by hand at an uncertain edge; the console runs none
- * of it. Go narrows it in edgeAdvice, from one reason map
- * (internal/console/status/recovery.go edgeAdviceOf): "none" when no
- * primary runs or none was read to run anything on, "archiver" when
- * archiving fails or lags and a WAL switch would wait like the rest. This
- * file keeps no list of its own. Without an agent there is no evidence to
- * refresh.
+ * of it. Go narrows it in edgeAdvice, from the facts and one reason map
+ * (internal/console/status/recovery.go edgeAdviceOf), on both bases: "none"
+ * when no primary runs or none was read to run anything on, "archiver" when
+ * archiving fails or lags and a WAL switch would wait like the rest, or a
+ * switch cannot help (the archiving instance is in recovery, the repository's
+ * newest timeline is another cluster's). This file keeps no list of its own.
+ * Without an agent there is no evidence to refresh.
  */
 function PitrEdgeHint({ basis, advice }: { basis: RecoveryTimeline["basis"]; advice: RecoveryTimeline["edgeAdvice"] }) {
   if (advice === "none") return null;
