@@ -4,8 +4,8 @@ name: Cache prune
 # recently used entry when it is full, at whatever moment a build happens to
 # need it. Caches here are written from main only, but every go.sum or lockfile
 # change leaves the previous hash's entries behind. Once a day this deletes the
-# caches of pull requests that are not open, all but the newest two of each
-# family and, past 8 GiB, the least recently used (hack/prune-caches.sh).
+# caches of pull requests that are not open, all but the newest of each logical
+# cache and, past 8 GiB, rebuildable build caches first (hack/prune-caches.sh).
 # `actions: write` is held by this one job and nothing else.
 on:
   schedule:

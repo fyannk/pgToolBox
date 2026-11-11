@@ -43,7 +43,7 @@ in `images`, and the e2e jobs load that archive instead of building their own.
 | `verify-release.yml` | called by `release.yml` after the prune; weekly on Monday; by hand | Pulls every image and both charts of a published release by tag **with no registry credentials** and verifies each signature and attestation by digest (`hack/release.sh verify-published`). The weekly run looks at the latest stable release and does nothing until one exists. |
 | `matrix.yml` | nightly at 01:41 UTC, by hand | The end-to-end scenarios on Kubernetes 1.34 and 1.36 × CloudNativePG 1.30.1, plus CloudNativePG `main` (non-blocking): one job per Kubernetes × CloudNativePG × scenario, all at once, on the images built once for the run. |
 | `image-watch.yml` | nightly at 04:23 UTC | Scans the latest published images and keeps one tracking issue for fixable criticals. |
-| `cache-prune.yml` | daily at 03:17 UTC, by hand (`dry_run`) | Deletes the Actions caches of pull requests that are not open, all but the newest two of each key family and, past 8 GiB, the least recently used (`hack/prune-caches.sh`); the only job with `actions: write` besides the dispatchers. |
+| `cache-prune.yml` | daily at 03:17 UTC, by hand (`dry_run`) | Deletes the Actions caches of pull requests that are not open, all but the newest of each logical cache (a key without its hash, date and `-pN`) and, only if the newest alone exceed 8 GiB, rebuildable build caches first (`hack/prune-caches.sh`); the only job with `actions: write` besides the dispatchers. |
 | `automerge.yml` | Dependabot pull requests | Arms auto-merge for patch and minor updates. |
 
 ## What `ci.yml` runs
