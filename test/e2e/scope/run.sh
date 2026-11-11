@@ -130,7 +130,11 @@ log "3. a watched namespace deleted after the install"
 kubectl delete namespace scope-b --wait=true --timeout=180s
 kubectl -n pgtoolbox rollout restart deployment/pgtoolbox
 kubectl -n pgtoolbox rollout status deployment/pgtoolbox --timeout=300s || fail "the operator did not restart Ready without scope-b"
-kubectl -n pgtoolbox logs deployment/pgtoolbox | grep -q 'watched namespace left out' ||
+# rollout status returns while the old Pod is still terminating, and
+# `kubectl logs deployment/...` may pick it: read the newest Pod.
+newest="$(kubectl -n pgtoolbox get pods -l app.kubernetes.io/instance=pgtoolbox,app.kubernetes.io/name=pgtoolbox \
+  --sort-by=.metadata.creationTimestamp -o name | tail -n 1)"
+kubectl -n pgtoolbox logs "${newest}" | grep 'watched namespace left out' | grep -q 'scope-b' ||
   fail "the operator did not log scope-b as left out"
 kubectl -n scope-a patch pgadmin/scope --type merge -p '{"spec":{"admins":["alice@example.com","bob@example.com"]}}'
 reconciled scope-a 2 || fail "the PgAdmin in scope-a was not reconciled after the restart"
