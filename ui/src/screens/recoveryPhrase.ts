@@ -197,6 +197,8 @@ function recoveryReason(code: string, p: Params): string | undefined {
       return m.rp_reason_candidate_gaps();
     case "recovery.reason.failedRecently":
       return m.rp_reason_failed_recently();
+    case "recovery.reason.archivingFailing":
+      return m.rp_reason_archiving_failing();
     case "recovery.reason.archiveBacklog":
       return segments ? m.rp_reason_archive_backlog({ segments }) : undefined;
     case "recovery.reason.archiverUnread":
