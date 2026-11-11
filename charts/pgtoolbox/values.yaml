@@ -206,7 +206,9 @@ operator:
       # the `kubernetes` EndpointSlice, looked up at install time or taken from
       # `apiServer.addresses`. `any`: any address on `apiServer.ports`, the
       # fallback for API servers behind a load balancer whose address is not in
-      # the EndpointSlice.
+      # the EndpointSlice. On EKS (and any managed control plane whose endpoint
+      # addresses change on upgrades and scaling) use `any`: the addresses
+      # rendered at install time go stale and the operator loses the API server.
       mode: addresses
       # -- API server IP addresses to allow when `apiServer.mode` is `addresses`
       # and the EndpointSlice lookup is unavailable (`helm template`, GitOps

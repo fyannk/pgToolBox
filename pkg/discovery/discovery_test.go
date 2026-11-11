@@ -265,6 +265,12 @@ func TestReachableNamespaces(t *testing.T) {
 			name: "any other error fails", namespaces: []string{"a", "b"},
 			errs: map[string]error{"a": errors.New("connection refused")}, wantErr: true,
 		},
+		{
+			// A 401 is about the credentials, not the namespace: refusing
+			// the namespace would drop it until the operator restarts.
+			name: "unauthorized fails instead of dropping the namespace", namespaces: []string{"a", "b"},
+			errs: map[string]error{"b": apierrors.NewUnauthorized("token expired")}, wantErr: true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

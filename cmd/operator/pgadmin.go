@@ -67,6 +67,11 @@ type pgAdminPrepared struct {
 	Features pgadmin.Features
 }
 
+// startupStepTimeout bounds each API read of the start-up: an API server
+// that accepts the connection and never answers fails the start, naming the
+// step, instead of hanging the operator before its probes are served.
+const startupStepTimeout = 60 * time.Second
+
 // preparePgAdmin loads the configuration (defaults, env, ConfigMap, Secret;
 // one structured error) and probes the optional APIs with a scoped
 // List(Limit 1), through a client that reads past any cache.
@@ -78,29 +83,68 @@ func preparePgAdmin(ctx context.Context, operatorImage, configMapName, secretNam
 	if operatorImage != "" {
 		configuration.DefaultOperatorImage = operatorImage
 	}
-	loaded, err := configuration.Load(ctx, direct, os.LookupEnv, configuration.Objects{
+	prepared, err := preparePgAdminWith(ctx, direct, metrics.Registry, startupStepTimeout, configuration.Objects{
 		Namespace: os.Getenv("POD_NAMESPACE"), ConfigMap: configMapName, Secret: secretName,
 	})
 	if err != nil {
 		return pgAdminPrepared{}, err
 	}
+	registerBuildInfo()
+	return prepared, nil
+}
+
+// startupStep runs one start-up read under its own deadline and names the
+// step in its error.
+func startupStep(ctx context.Context, timeout time.Duration, name string, run func(context.Context) error) error {
+	stepCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	err := run(stepCtx)
+	switch {
+	case err == nil:
+		return nil
+	case ctx.Err() == nil && errors.Is(stepCtx.Err(), context.DeadlineExceeded):
+		return fmt.Errorf("start-up step %q did not finish within %s: %w", name, timeout, err)
+	default:
+		return fmt.Errorf("start-up step %q: %w", name, err)
+	}
+}
+
+// preparePgAdminWith is preparePgAdmin past the client: each API read under
+// timeout, the configuration info metric registered on registry once the
+// watched namespaces are known (it lists those actually watched).
+func preparePgAdminWith(ctx context.Context, direct client.Reader, registry prometheus.Registerer, timeout time.Duration, objects configuration.Objects) (pgAdminPrepared, error) {
+	var loaded configuration.Loaded
+	if err := startupStep(ctx, timeout, "load the configuration", func(ctx context.Context) error {
+		var err error
+		loaded, err = configuration.Load(ctx, direct, os.LookupEnv, objects)
+		return err
+	}); err != nil {
+		return pgAdminPrepared{}, err
+	}
 	if err := loaded.OverrideFlag("PGADMIN_IMAGE_REPOSITORIES", pgAdminImageRepositories); err != nil {
 		return pgAdminPrepared{}, err
 	}
-	if err := loaded.RegisterInfoMetric(metrics.Registry); err != nil {
-		return pgAdminPrepared{}, err
-	}
-	registerBuildInfo()
 	// A watched namespace the operator holds no right in (deleted after the
 	// install, and its RoleBinding with it) is left out of the watch
 	// rather than failing the start or turning features off elsewhere.
-	watched, err := reachableNamespaces(ctx, direct, loaded.Config.WatchNamespaces)
-	if err != nil {
+	var watched []string
+	if err := startupStep(ctx, timeout, "check the watched namespaces", func(ctx context.Context) error {
+		var err error
+		watched, err = reachableNamespaces(ctx, direct, loaded.Config.WatchNamespaces)
+		return err
+	}); err != nil {
 		return pgAdminPrepared{}, err
 	}
 	loaded.Config.WatchNamespaces = watched
-	features, err := probeFeatures(ctx, direct, loaded.Config.WatchNamespaces)
-	if err != nil {
+	if err := loaded.RegisterInfoMetric(registry); err != nil {
+		return pgAdminPrepared{}, err
+	}
+	var features pgadmin.Features
+	if err := startupStep(ctx, timeout, "probe the optional APIs", func(ctx context.Context) error {
+		var err error
+		features, err = probeFeatures(ctx, direct, loaded.Config.WatchNamespaces)
+		return err
+	}); err != nil {
 		return pgAdminPrepared{}, err
 	}
 	setupLog.Info("PgAdmin optional APIs",

@@ -121,6 +121,22 @@ func TestEnvtestRestoreDrillGuards(t *testing.T) {
 	if len(objects) != 7 {
 		t.Fatalf("%d policy objects and roles, want the operator's two policies, the pgtools one, their bindings and the drills ClusterRole", len(objects))
 	}
+	// The operator's own ClusterRole (controller-gen's output), bound
+	// cluster-wide to pgtoolbox/pgtoolbox as the default install does: the
+	// rights a stolen operator token carries.
+	managerRole, err := os.ReadFile(filepath.Join(root, "config", "rbac", "role.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	operatorRoles := policyDocs(t, managerRole)
+	if len(operatorRoles) != 1 {
+		t.Fatalf("config/rbac/role.yaml holds %d ClusterRoles, want the manager role", len(operatorRoles))
+	}
+	objects = append(objects, operatorRoles[0], &rbacv1.ClusterRoleBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: "pgtoolbox-manager"},
+		RoleRef:    rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "ClusterRole", Name: operatorRoles[0].GetName()},
+		Subjects:   []rbacv1.Subject{{Kind: rbacv1.ServiceAccountKind, Namespace: "pgtoolbox", Name: "pgtoolbox"}},
+	})
 
 	env := &envtest.Environment{
 		CRDDirectoryPaths:     []string{filepath.Join(root, "test", "crds", "cnpg-1.30"), filepath.Join(root, "config", "crd", "bases")},
@@ -166,9 +182,39 @@ func TestEnvtestRestoreDrillGuards(t *testing.T) {
 		Rules:      []rbacv1.PolicyRule{{APIGroups: []string{"*"}, Resources: []string{"*"}, Verbs: []string{"*"}}},
 	}
 	objects = append(objects, plainDelete, everything)
-	for _, ns := range []string{"team-a", "team-b", "drills"} {
-		objects = append(objects, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}})
+	for _, ns := range []string{"team-a", "team-b", "team-c", "drills"} {
+		objects = append(objects, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}},
+			// Every verb on everything, in this namespace only: what a
+			// namespaced Argo CD or OpenShift GitOps instance is given.
+			&rbacv1.Role{
+				ObjectMeta: metav1.ObjectMeta{Name: "everything", Namespace: ns},
+				Rules:      []rbacv1.PolicyRule{{APIGroups: []string{"*"}, Resources: []string{"*"}, Verbs: []string{"*"}}},
+			})
 	}
+	roleSubject := func(namespace, name, role string, subjects []rbacv1.Subject) *rbacv1.RoleBinding {
+		kind := "Role"
+		if role == "cluster-admin" || role == "pgtoolbox-console-restore-drills" {
+			kind = "ClusterRole"
+		}
+		return &rbacv1.RoleBinding{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
+			RoleRef:    rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: kind, Name: role},
+			Subjects:   subjects,
+		}
+	}
+	objects = append(objects,
+		// Namespaced administrators of team-a: a GitOps controller of
+		// another namespace (OpenShift GitOps, a namespaced Argo CD) and
+		// one of team-a itself, each with the */*/* Role there, and a Flux
+		// tenant RoleBound to cluster-admin in its own namespace.
+		roleSubject("team-a", "argocd-everything", "everything", saSubject("argocd", "argocd-application-controller")),
+		roleSubject("team-a", "local-gitops-everything", "everything", saSubject("team-a", "gitops")),
+		roleSubject("team-a", "flux-tenant-admin", "cluster-admin", saSubject("team-a", "flux-tenant")),
+		// An administrator of team-b only, holding the drills role in
+		// team-a: its wildcard elsewhere does not lift the guard here.
+		roleSubject("team-b", "elsewhere-everything", "everything", saSubject("team-b", "elsewhere")),
+		roleSubject("team-a", "elsewhere-restore-drills", "pgtoolbox-console-restore-drills", saSubject("team-b", "elsewhere")),
+	)
 	objects = append(objects,
 		// The operator path: the console team-a/orders-console is bound to
 		// the drills ClusterRole; team-a/backup-console deletes Clusters
@@ -382,6 +428,72 @@ func TestEnvtestRestoreDrillGuards(t *testing.T) {
 	t.Run("operator: an administrator is not concerned", func(t *testing.T) {
 		u := cluster(t, "team-a", "orders-older", nil, nil)
 		allowed(t, c.Delete(t.Context(), u))
+	})
+	t.Run("operator: a namespaced GitOps controller of another namespace is not concerned", func(t *testing.T) {
+		u := cluster(t, "team-a", "pruned-by-argocd", nil, nil)
+		allowed(t, as("argocd", "argocd-application-controller").Delete(t.Context(), u))
+	})
+	t.Run("operator: a ServiceAccount of the namespace with every verb there is not concerned", func(t *testing.T) {
+		u := cluster(t, "team-a", "pruned-locally", nil, nil)
+		allowed(t, as("team-a", "gitops").Delete(t.Context(), u))
+	})
+	t.Run("operator: a tenant RoleBound to cluster-admin in its namespace is not concerned", func(t *testing.T) {
+		u := cluster(t, "team-a", "pruned-by-flux", nil, nil)
+		allowed(t, as("team-a", "flux-tenant").Delete(t.Context(), u))
+	})
+	t.Run("operator: a wildcard in another namespace does not lift the guard", func(t *testing.T) {
+		u := cluster(t, "team-a", "invoices", nil, nil)
+		denied(t, as("team-b", "elsewhere").Delete(t.Context(), u))
+		drill := cluster(t, "team-a", "drill-invoices-1", map[string]string{drillOwner: "team-a", drillOf: "invoices"}, sealed)
+		allowed(t, as("team-b", "elsewhere").Delete(t.Context(), drill))
+	})
+	t.Run("operator: its own token cannot make itself an administrator", func(t *testing.T) {
+		operator := as("pgtoolbox", "pgtoolbox")
+		forbidden := func(t *testing.T, what string, object client.Object) {
+			t.Helper()
+			if err := operator.Create(t.Context(), object); !apierrors.IsForbidden(err) {
+				t.Fatalf("the operator %s: error = %v, want Forbidden (RBAC escalation prevention)", what, err)
+			}
+		}
+		wildcard := []rbacv1.PolicyRule{{APIGroups: []string{"pgtoolbox.fyannk.dev"}, Resources: []string{"restoredrills"}, Verbs: []string{"*"}}}
+		forbidden(t, "creates a Role with every verb on restoredrills", &rbacv1.Role{
+			ObjectMeta: metav1.ObjectMeta{Name: "stolen-wildcard", Namespace: "team-c"}, Rules: wildcard,
+		})
+		forbidden(t, "creates a ClusterRole with every verb on restoredrills", &rbacv1.ClusterRole{
+			ObjectMeta: metav1.ObjectMeta{Name: "stolen-wildcard"}, Rules: wildcard,
+		})
+		forbidden(t, "binds cluster-admin in a namespace", roleSubject("team-c", "stolen-cluster-admin", "cluster-admin", saSubject("pgtoolbox", "pgtoolbox")))
+		forbidden(t, "binds a namespace's */*/* Role", roleSubject("team-c", "stolen-everything", "everything", saSubject("pgtoolbox", "pgtoolbox")))
+		forbidden(t, "binds cluster-admin cluster-wide", &rbacv1.ClusterRoleBinding{
+			ObjectMeta: metav1.ObjectMeta{Name: "stolen-cluster-admin"},
+			RoleRef:    rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "ClusterRole", Name: "cluster-admin"},
+			Subjects:   saSubject("pgtoolbox", "pgtoolbox"),
+		})
+
+		// What it can do: bind the drills role to itself in team-c, which
+		// gives it delete on Clusters there, held to the drill rules.
+		if err := operator.Create(t.Context(), roleSubject("team-c", "stolen-restore-drills", "pgtoolbox-console-restore-drills", saSubject("pgtoolbox", "pgtoolbox"))); err != nil {
+			t.Fatalf("the operator binds the drills role in a namespace it watches: %v", err)
+		}
+		u := cluster(t, "team-c", "payroll", nil, nil)
+		// The RBAC authorizer sees the new binding after its informer does:
+		// until then the delete is refused by RBAC, not by the guard.
+		deadline := time.Now().Add(30 * time.Second)
+		for {
+			err := operator.Delete(t.Context(), u)
+			if apierrors.IsForbidden(err) && strings.Contains(err.Error(), "restore drill Clusters it created") {
+				break
+			}
+			if err == nil {
+				t.Fatal("the operator deleted a production Cluster after binding the drills role to itself")
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("error = %v, want the guard's Forbidden", err)
+			}
+			time.Sleep(200 * time.Millisecond)
+		}
+		drill := cluster(t, "team-c", "drill-payroll-1", map[string]string{drillOwner: "team-c", drillOf: "payroll"}, sealed)
+		allowed(t, operator.Delete(t.Context(), drill))
 	})
 
 	t.Run("pgtools: the console deletes its sealed, prefixed drill", func(t *testing.T) {
