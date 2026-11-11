@@ -251,6 +251,17 @@ without an agent, check `pg_stat_archiver` again). The panel always shows them o
 the reported basis, whose end is never a WAL frontier. The console is read-only,
 so it runs neither query.
 
+The console narrows the suggestion from one list of reasons (the timeline's
+`edgeAdvice`):
+
+- when WAL archiving is failing, failed recently or lags behind
+  (`archivingFailing`, `failedRecently`, `archiveBacklog`, or archiving read as
+  failing under a reported window), it shows `pg_stat_archiver` only: a
+  switched segment would wait like every other one;
+- when no primary runs or none was read (`archiverHibernated`,
+  `liveTimelineNotArchivedPrimaryUnread`, `archivingFailedPrimaryUnread`), it
+  shows neither query.
+
 ### Without repository evidence
 
 The operator's or plugin's own window (`serverRecoveryWindow`, or the in-tree
@@ -407,17 +418,28 @@ segments, so the bar and the answer always agree:
   they come from, not the fresher snapshot's. The age runs from the earlier of
   the agent's scan time and the console's fetch time, so an agent clock ahead of
   the console's does not shorten it, and the band never reaches past the
-  newest restore point. A purge drops a whole backup, with the WAL only it
-  needs, and during a long wait several can go: a recovery window's start moves
-  with the clock. So once a scan was missed (the scan is older than two refresh
-  intervals, and than one interval plus the console's one-minute poll and a
-  minute of scan time), the band reaches the newest backup lower bound before
-  the oldest backup's own span plus the age plus one refresh interval: that
-  backup is still in the repository, and every time before it is unknown until
-  the repository is read again. Within a normal refresh cycle the band does
+  newest restore point. The age runs from the scan's start (`started_at`):
+  the backups were listed during the scan, not when it completed. A purge drops
+  a whole backup, with the WAL only it needs, and during a long wait several
+  can go: a recovery window's start moves with the clock. pgBackRest expires a
+  full backup together with every differential and incremental backup taken
+  against it, so there only full backups count as retention anchors, and the
+  oldest full's whole chain goes at once. In a Barman Cloud repository every
+  listed backup that did not fail is an anchor, including one with no recovery
+  path. Once a scan was missed, the band reaches past the newest anchor before
+  the oldest anchor's own span plus the age plus one refresh interval, up to
+  the first restore point drawn from it or a newer backup: those backups are
+  still in the repository, and every time before is unknown until the
+  repository is read again. A scan is missed when its age passes the longer of
+  the refresh interval and the last scan's duration, plus that duration, the
+  console's one-minute poll and one minute (two refresh intervals when the
+  snapshot gives no scan start). Within a normal refresh cycle the band does
   not extend, so the oldest backup's span does not flip between covered and
-  unknown each time the next scan is a little late (a single backup is never
-  purged by retention, so it keeps the shorter band);
+  unknown each time the next scan is a little late. Retention never removes the
+  newest backup, so within a normal cycle the band also stops at the newest
+  backup's first restore point, and a single backup has none. Past a missed
+  scan it keeps the elapsed band: a backup taken since, which the snapshot
+  cannot list, may have let retention remove the newest one listed;
 - after a WAL archiving failure an instance reported (`lastFailedWALTime`, the
   newest over every instance read, so a former primary's failure survives a
   failover) in the day before the latest point, the day before the failure: WAL
@@ -474,13 +496,26 @@ segments, so the bar and the answer always agree:
   archive its first segment. When the primary was not read (fenced or
   unreachable: the sweep has no reading of it, whatever the archiving
   condition says), the warning (`liveTimelineNotArchivedPrimaryUnread`) gives no
-  such advice. When archiving is failing (`ContinuousArchiving` False, or the
-  primary's last attempt failed with WAL waiting) and no readable instance
-  reports the failure, the window is a warning that says so
-  (`archivingFailing`), ranked before the lag: the repository lacks the new
-  timeline because archiving fails, and switching WAL would not help; and a hibernated Cluster says it is hibernated instead
-  (`unknown`): no instance runs to switch WAL on. When the live timeline is not known, an end that reached the
-  repository before the promotion counts the same way. That WAL
+  such advice.
+
+  When archiving is failing (`ContinuousArchiving` False, or the primary's last
+  attempt failed with WAL waiting) and no readable instance reports the failure,
+  the window is a warning that says so (`archivingFailing`), ranked before the
+  lag: the repository lacks the new timeline because archiving fails, and
+  switching WAL would not help. The primary's last good reading stands through
+  one missed read for this as for the archiving fact, so a single missed read
+  keeps the recent-failure reason.
+
+  With the primary unread, nothing archives that could change the condition: the
+  warning (`archivingFailedPrimaryUnread`) says the last archive attempt the
+  Cluster reports failed, with the condition's age (`False since ...`), not that
+  archiving is failing now.
+
+  A hibernated Cluster says it is hibernated instead (`unknown`): no instance
+  runs to switch WAL on.
+
+  When the live timeline is not known, an end that reached the repository
+  before the promotion counts the same way. That WAL
   was archived by a former primary, whose backlog the current primary's
   readings do not show, and a crash can lose its `.ready` tail. Only the
   readings of that timeline's own primary count: each sweep records the
