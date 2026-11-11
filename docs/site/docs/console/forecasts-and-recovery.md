@@ -534,4 +534,9 @@ reader's language; any other reason of the agent's is shown as written. When the
 evidence names a timeline history file as missing or unreadable (one such file
 can withhold every restore point), the restore check names it, for example
 `00000005.history`. Stale evidence is never shown as healthy. When reading
-the paths fails, the last good ones are kept and marked stale.
+the paths fails, the last good ones are kept and marked stale. They are judged
+against the fresh snapshot beside them: when its timeline evidence is no longer
+established (after a failover, say), no kept path is coverage, and its coverage
+and timeline reasons replace the old ones. Paths of another repository are never
+kept, and kept paths more than three of the agent's refresh intervals (at least
+an hour) older than its latest scan are dropped.

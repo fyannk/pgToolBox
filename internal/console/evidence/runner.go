@@ -649,12 +649,12 @@ func advance(previous *agentState, agent *pgtoolboxv1alpha1.EvidenceAgent, out o
 	fresh := Result{
 		Agent: agent.Name, State: viewmodel.EvidenceLive, ObservedAt: &observed, Snapshot: out.snapshot,
 		BackupIDs: out.backups.ids, BackupsComplete: out.backups.complete,
-		Backups: out.backups.items, Recovery: keepRecovery(next.result.Recovery, out.backups.recovery),
-		RefreshInterval: DefaultAgentRefreshInterval,
+		Backups: out.backups.items, RefreshInterval: DefaultAgentRefreshInterval,
 	}
 	if agent.Spec.RefreshInterval != nil && agent.Spec.RefreshInterval.Duration > 0 {
 		fresh.RefreshInterval = agent.Spec.RefreshInterval.Duration
 	}
+	fresh.Recovery = keepRecovery(next.result, out.backups.recovery, out.snapshot, out.backups.items, fresh.RefreshInterval)
 	if pgbackrest := agent.Status.PgBackRest; pgbackrest != nil && !static {
 		fresh.PgBackRestPlugin, fresh.PgBackRestObject = pgbackrest.Plugin, pgbackrest.ObjectName
 	}
@@ -682,12 +682,56 @@ func advance(previous *agentState, agent *pgtoolboxv1alpha1.EvidenceAgent, out o
 // definitive answer (unsupported, not scanned) replaces them. The kept
 // paths keep their own scan time (ScannedAt), which the timeline's edges
 // are timed from.
-func keepRecovery(previous, current Recovery) Recovery {
-	if current.State != RecoveryUnavailable || previous.State != RecoveryAvailable || len(previous.Paths) == 0 {
+//
+// The kept paths were capped against the snapshot they were read with;
+// the fresh snapshot beside them may say more (round 11, PG P2): its
+// timeline conclusion may no longer be established after a failover, its
+// coverage roll-up may have degraded. So they are capped again against
+// the fresh snapshot and backups (capRecovery), and its TimelineWarning
+// and CoverageReason replace theirs. Paths of another repository (the
+// identity changed) are never kept, and paths more than keptScans refresh
+// intervals (at least keptFloor) older than the fresh scan are dropped: a
+// failure that persists (a page contract error) does not keep year-old
+// paths.
+func keepRecovery(previous Result, current Recovery, snapshot *evidencev1alpha1.RepositoryEvidenceSnapshot, items []BackupItem, refresh time.Duration) Recovery {
+	kept := previous.Recovery
+	if current.State != RecoveryUnavailable || kept.State != RecoveryAvailable || len(kept.Paths) == 0 {
 		return current
 	}
-	previous.Stale, previous.StaleReason = true, current.Reason
-	return previous
+	if previous.Snapshot == nil || snapshot == nil || previous.Snapshot.Identity.Repository != snapshot.Identity.Repository {
+		return current
+	}
+	if refresh <= 0 {
+		refresh = DefaultAgentRefreshInterval
+	}
+	if kept.ScannedAt == nil || current.ScannedAt != nil && current.ScannedAt.Sub(*kept.ScannedAt) > max(keptScans*refresh, keptFloor) {
+		current.Reason = joinReason(current.Reason, reasonKeptTooOld)
+		return current
+	}
+	kept.Stale, kept.StaleReason = true, current.Reason
+	kept.TimelineWarning, kept.CoverageReason = "", ""
+	return capRecovery(snapshot, kept, items)
+}
+
+// keptScans is how many of the agent's refresh intervals the last good
+// recovery paths are kept for, counted from their scan to the fresh one;
+// keptFloor is the least, so a scan that takes longer than the refresh
+// interval does not drop them at the first failure.
+const (
+	keptScans = 3
+	keptFloor = time.Hour
+)
+
+// reasonKeptTooOld is said when the last good recovery paths are older
+// than keptScans refresh intervals and are no longer shown.
+const reasonKeptTooOld = "the last good recovery paths are more than three refresh intervals (at least an hour) older than the latest scan and are no longer shown"
+
+// joinReason joins two display-safe reasons.
+func joinReason(first, second string) string {
+	if first == "" {
+		return second
+	}
+	return first + "; " + second
 }
 
 // logTransition logs a change of state or reason, never a token, a CA
