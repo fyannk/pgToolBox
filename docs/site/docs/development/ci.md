@@ -200,7 +200,7 @@ sequenceDiagram
   participant G as GHCR
   participant H as GitHub release
   M->>R: push annotated tag vX.Y.Z
-  R->>R: release.sh resolve: kind, version (no v), prerelease; the only place a tag is parsed
+  R->>R: release.sh resolve: kind, version (no v), prerelease, the only place a tag is parsed
   R->>R: release.sh check: semver, annotated, on main, both charts' version, CHANGELOG section
   R->>R: release.sh wait-ci: ci-ok and security-gate green on the tagged commit
   R->>G: build and push operator, console, evidence agent (multi-arch, SBOM, provenance)
