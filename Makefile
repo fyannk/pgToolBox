@@ -57,7 +57,9 @@ manifests: ## Generate CRDs and the manager ClusterRole, then sync the packaging
 	./hack/sync-manifests.sh
 
 .PHONY: verify-manifests
-verify-manifests: manifests ## Fail when the checked-in manifests are stale.
+verify-manifests: ## Fail when the checked-in manifests are stale.
+	@./hack/check-helm-major.sh
+	@$(MAKE) --no-print-directory manifests
 	@git diff --exit-code -- config deploy charts || { \
 		echo "generated manifests are stale; run 'make manifests' and commit the result"; exit 1; }
 
