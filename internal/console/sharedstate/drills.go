@@ -198,8 +198,7 @@ func (s *Store) DrillsKeptSince() time.Time {
 func (s *Store) mergeDrillsLocked(raw string) {
 	var doc drillsDoc
 	switch {
-	case foreignVersion(raw):
-		s.foreign[KeyDrills] = true
+	case s.foreignLocked(KeyDrills, raw):
 	case json.Unmarshal([]byte(raw), &doc) != nil:
 		s.opts.Logger.Warn("shared state: the drills document does not parse; it will be rewritten", slog.String("configmap", s.opts.Name))
 	case len(doc.Results) <= maxEntries:

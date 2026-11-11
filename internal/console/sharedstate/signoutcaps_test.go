@@ -17,6 +17,7 @@ package sharedstate
 import (
 	"fmt"
 	"maps"
+	"math"
 	"math/rand/v2"
 	"testing"
 	"time"
@@ -135,7 +136,7 @@ func TestSignOutCapsConvergeInAnyOrder(t *testing.T) {
 	people := []string{"", tag("a"), tag("b"), tag("c"), tag("d")}
 	capped := func(m map[string]signOut) map[string]signOut {
 		out := maps.Clone(m)
-		for h := range planSignOutCaps(out) {
+		for h := range planSignOutCaps(out, math.MaxInt64) {
 			delete(out, h)
 		}
 		return out
@@ -396,7 +397,7 @@ func TestReplicasAgreeWhenASessionHasTwoSlots(t *testing.T) {
 
 func capSet(m map[string]signOut) map[string]signOut {
 	out := maps.Clone(m)
-	for h := range planSignOutCaps(out) {
+	for h := range planSignOutCaps(out, math.MaxInt64) {
 		delete(out, h)
 	}
 	return out
