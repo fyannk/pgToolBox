@@ -1542,6 +1542,7 @@
   "rp_reason_holes": "la fenêtre a des trous où des WAL manquent",
   "rp_reason_candidate_gaps": "la fenêtre a des trous possibles qu’un second parcours n’a pas encore confirmés",
   "rp_reason_failed_recently": "l’archivage des WAL a échoué récemment : les points de restauration les plus récents sont incertains",
+  "rp_reason_archiving_failing": "l’archivage des WAL échoue : les WAL écrits depuis le segment le plus récent que contient le dépôt n’y sont probablement pas, donc les points de restauration les plus récents sont incertains ; la condition ContinuousArchiving du Cluster dit pourquoi",
   "rp_reason_archive_backlog": "{segments} segments WAL attendent d’être archivés sur le primaire : les points de restauration les plus récents sont incertains",
   "rp_reason_orphan_timeline": "la timeline {timeline} est dans l’archive mais n’est reliée par aucun historique valide : une restauration ne peut pas la suivre",
   "rp_reason_undrawn": "certaines sauvegardes n’ont aucun chemin de restauration observé au-delà de leur point de cohérence",
@@ -1625,6 +1626,6 @@
   "rp_reason_live_timeline_not_archived_primary_unread": "le dépôt ne contenait aucun WAL de la timeline {timeline}, celle qu’écrit le primaire actuel, lors de sa dernière lecture, et le primaire n’a pas été lu : les points de restauration les plus récents sont incertains jusqu’à ce que le primaire soit relu et que l’agent lise des WAL de la timeline {timeline}",
   "rp_reason_repository_ahead_of_live": "la timeline la plus récente du dépôt, {timeline}, est en avance sur la timeline {live}, celle qu’écrit le primaire actuel : un autre cluster archive peut-être dans ce dépôt, et une restauration par défaut suit la timeline {timeline}, donc les points de restauration au-delà de la bifurcation ne sont pas comptés comme couverts ; vérifiez qu’aucune configuration de sauvegarde d’un autre cluster ne désigne ce dépôt",
   "rp_segment_repository_ahead_of_live": "La timeline la plus récente du dépôt, {timeline}, est en avance sur la timeline {live}, celle qu’écrit le primaire actuel : un autre cluster archive peut-être dans ce dépôt, et une restauration par défaut suit la timeline {timeline}, donc un moment au-delà de la bifurcation peut restaurer les données de ce cluster.",
-  "rp_reason_kept_too_old": "les derniers chemins de restauration valides datent de plus de trois intervalles de rafraîchissement (au moins une heure) avant le dernier parcours et ne sont plus affichés",
-  "rp_reason_kept_repository_changed": "l’identité du dépôt a changé depuis la lecture des derniers chemins de restauration valides : ils décrivent un autre dépôt et ne sont plus affichés"
+  "rp_reason_kept_too_old": "les derniers chemins de restauration valides datent de plus de trois intervalles de rafraîchissement (au moins une heure) avant le dernier parcours et ne sont plus affichés ; vérifiez dans les journaux de l’agent de preuves pourquoi la lecture de ses chemins de restauration échoue, et que le stockage objet répond",
+  "rp_reason_kept_repository_changed": "l’identité du dépôt a changé depuis la lecture des derniers chemins de restauration valides : ils décrivent un autre dépôt et ne sont plus affichés ; vérifiez les journaux de l’agent de preuves et que sa configuration de stockage objet désigne toujours le dépôt de ce cluster"
 }

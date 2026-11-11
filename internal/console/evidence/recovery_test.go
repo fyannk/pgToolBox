@@ -249,20 +249,62 @@ func TestKeptPathsBesideADegradedFreshRollup(t *testing.T) {
 			}
 		}
 	}
-	// The same roll-up as the paths were read with is theirs: it caps
-	// nothing (an old backup's gap says nothing of the newest one).
-	got := keepRecovery(Result{Snapshot: read, Recovery: kept}, failed, read, nil, 2*time.Hour)
+	// A fresh healthy roll-up caps nothing.
+	healthy := withCoverage(evidencev1alpha1.Healthy, "")
+	got := keepRecovery(Result{Snapshot: read, Recovery: kept}, failed, healthy, nil, 2*time.Hour)
 	if newest := got.Paths[1]; newest.State != evidencev1alpha1.Healthy || newest.FrontierReceiptAt == nil {
-		t.Errorf("the roll-up the paths were read with capped the newest: %+v", newest)
+		t.Errorf("a healthy fresh roll-up capped the newest: %+v", newest)
 	}
 }
 
-// Round 12, PG: keepRecovery never claims more covered time than a fresh
-// read of the same repository could: for any kept paths, any roll-up they
-// were read with and any fresh roll-up, the paths it draws covered are
-// among those capRecovery draws covered on the fresh snapshot for the same
-// paths with the fresh degradation in any one healthy path (the paths the
-// fresh roll-up was computed from are not known, so each is a candidate).
+// Round 13, PG P3-A (the reviewer's probe): the agent's roll-up text is
+// generic (it names no path), so an old backup's confirmed gap and a new
+// gap inside the newest backup's range read the same. A fresh roll-up
+// equal to the one the kept paths were read with does not say the newest
+// kept path is still healthy: it is capped at a warning, keeps its
+// frontier, and the old path keeps its own state.
+func TestKeptPathsBesideAnUnchangedGenericRollup(t *testing.T) {
+	snapshot := fixtureSnapshot(t)
+	scanned := testNow
+	lb, lbNew := testNow.Add(-72*time.Hour), testNow.Add(-24*time.Hour)
+	receipt, oldReceipt := testNow.Add(-time.Minute), testNow.Add(-48*time.Hour)
+	tl := uint64(1)
+	kept := Recovery{State: RecoveryAvailable, Complete: true, ScannedAt: &scanned, Paths: []RecoveryPath{
+		{BackupID: "old", TargetTimeline: 1, State: evidencev1alpha1.Unhealthy, Stop: evidencev1alpha1.CoverageGapLimited, LowerBoundAt: &lb, FrontierReceiptAt: &oldReceipt, StartTimeline: &tl, FrontierTimeline: &tl},
+		{BackupID: "new", TargetTimeline: 1, State: evidencev1alpha1.Healthy, Stop: evidencev1alpha1.CoverageFrontier, LowerBoundAt: &lbNew, FrontierReceiptAt: &receipt, StartTimeline: &tl, FrontierTimeline: &tl},
+	}}
+	for _, state := range []evidencev1alpha1.State{evidencev1alpha1.Unhealthy, evidencev1alpha1.Warning, evidencev1alpha1.Unknown} {
+		cov := evidencev1alpha1.StateReason{State: state, Reason: evidencev1alpha1.Reason{Code: "coverage-" + string(state), Message: "one or more recovery paths cross a confirmed required gap"}}
+		mk := func() *evidencev1alpha1.RepositoryEvidenceSnapshot {
+			s := snapshot
+			bc := *s.Details.BarmanCloud
+			bc.Coverage = cov
+			s.Details.BarmanCloud = &bc
+			return &s
+		}
+		at := scanned.Add(time.Hour)
+		got := keepRecovery(Result{Snapshot: mk(), Recovery: kept}, Recovery{State: RecoveryUnavailable, Reason: "timeout", ScannedAt: &at}, mk(), nil, 2*time.Hour)
+		if !got.Stale || len(got.Paths) != 2 {
+			t.Fatalf("%s: %+v", state, got)
+		}
+		if newest := got.Paths[1]; newest.State != evidencev1alpha1.Warning || newest.Reason.Code != RollupCapCode || newest.FrontierReceiptAt == nil {
+			t.Errorf("%s: the newest kept path beside the same generic roll-up is %s (%s), want a warning capped at the roll-up", state, newest.State, newest.Reason.Code)
+		}
+		if old := got.Paths[0]; old.State != evidencev1alpha1.Unhealthy || old.Reason.Code == RollupCapCode {
+			t.Errorf("%s: the old path changed: %+v", state, old)
+		}
+	}
+}
+
+// Round 12, PG (oracle redrawn in round 13, PG P3-A): keepRecovery never
+// claims more covered time than a fresh read of the same repository
+// could. The fresh scan is drawn as the agent would publish it: which
+// kept path degraded since (or none) is drawn first, independently of
+// whether the roll-up text changed, since the agent's roll-up names no
+// path; then the fresh roll-up, the same text as the paths were read with
+// or another, at least as degraded as the newly degraded path. The paths
+// drawn covered must be among those capRecovery draws covered on that
+// fresh scan, which the console does not see (the recovery pages failed).
 func TestKeepRecoveryClaimsNoMoreThanAFreshCap(t *testing.T) {
 	snapshot := fixtureSnapshot(t)
 	states := []evidencev1alpha1.State{evidencev1alpha1.Healthy, evidencev1alpha1.Warning, evidencev1alpha1.Unhealthy, evidencev1alpha1.Unknown}
@@ -278,11 +320,21 @@ func TestKeepRecoveryClaimsNoMoreThanAFreshCap(t *testing.T) {
 		return p.Reason.Code != capCode && p.FrontierReceiptAt != nil && p.LowerBoundAt != nil &&
 			(p.Stop != evidencev1alpha1.CoverageFrontier || p.State == evidencev1alpha1.Healthy)
 	}
-	random := rand.New(rand.NewPCG(12, 3))
+	worst := func(paths []RecoveryPath) evidencev1alpha1.State {
+		out := evidencev1alpha1.Healthy
+		for _, p := range paths {
+			if severity(p.State) > severity(out) {
+				out = p.State
+			}
+		}
+		return out
+	}
+	random := rand.New(rand.NewPCG(13, 3))
 	scanned := testNow
 	at := scanned.Add(time.Hour)
 	failed := Recovery{State: RecoveryUnavailable, Reason: "timeout", ScannedAt: &at}
 	tl := uint64(1)
+	sameText, degradedHealthy := 0, 0
 	for range 5000 {
 		paths := make([]RecoveryPath, 1+random.IntN(4))
 		for i := range paths {
@@ -300,38 +352,47 @@ func TestKeepRecoveryClaimsNoMoreThanAFreshCap(t *testing.T) {
 				StartTimeline: &tl, FrontierTimeline: &tl,
 			}
 		}
-		readWith := withCoverage(states[random.IntN(len(states))], "read")
-		fresh := readWith
-		if random.IntN(2) == 0 {
-			fresh = withCoverage(states[random.IntN(len(states))], "fresh")
+		// The roll-up the paths were read with is at least their worst.
+		readState := worst(paths)
+		if random.IntN(3) == 0 {
+			readState = states[random.IntN(len(states))]
+			if severity(readState) < severity(worst(paths)) {
+				readState = worst(paths)
+			}
+		}
+		readWith := withCoverage(readState, "read")
+		// The hidden fresh scan: one path (or none) degraded since,
+		// drawn before and independently of the roll-up text.
+		freshPaths := slices.Clone(paths)
+		if j := random.IntN(len(paths)+1) - 1; j >= 0 {
+			freshPaths[j].State = states[1+random.IntN(len(states)-1)]
+			if paths[j].State == evidencev1alpha1.Healthy {
+				degradedHealthy++
+			}
+		}
+		var fresh *evidencev1alpha1.RepositoryEvidenceSnapshot
+		if random.IntN(2) == 0 && severity(readState) >= severity(worst(freshPaths)) {
+			// The same generic text: the agent says nothing new.
+			fresh = readWith
+			sameText++
+		} else {
+			state := states[random.IntN(len(states))]
+			if severity(state) < severity(worst(freshPaths)) {
+				state = worst(freshPaths)
+			}
+			fresh = withCoverage(state, "fresh")
 		}
 		kept := Recovery{State: RecoveryAvailable, Complete: true, ScannedAt: &scanned, Paths: paths}
 		got := keepRecovery(Result{Snapshot: readWith, Recovery: kept}, failed, fresh, nil, 2*time.Hour)
-		rollup := snapshotCoverage(fresh)
-		candidates := 0
-		for j, p := range paths {
-			if p.State != evidencev1alpha1.Healthy || rollup.State == evidencev1alpha1.Healthy || rollup == snapshotCoverage(readWith) {
-				continue
-			}
-			candidates++
-			degraded := slices.Clone(paths)
-			degraded[j].State = rollup.State
-			fc := capRecovery(fresh, Recovery{State: RecoveryAvailable, Complete: true, ScannedAt: &scanned, Paths: degraded}, nil)
-			for i := range got.Paths {
-				if covered(got.Paths[i]) && !covered(fc.Paths[i]) {
-					t.Fatalf("path %d covered beside a fresh %s roll-up that path %d may explain:\nkept %+v\nfresh cap %+v", i, rollup.State, j, got.Paths[i], fc.Paths[i])
-				}
+		fc := capRecovery(fresh, Recovery{State: RecoveryAvailable, Complete: true, ScannedAt: &scanned, Paths: freshPaths}, nil)
+		for i := range got.Paths {
+			if covered(got.Paths[i]) && !covered(fc.Paths[i]) {
+				t.Fatalf("path %d covered where the fresh scan does not cover it (fresh roll-up %s):\nkept %+v\nfresh %+v", i, snapshotCoverage(fresh).State, got.Paths[i], fc.Paths[i])
 			}
 		}
-		if candidates == 0 {
-			// No fresh degradation to place: the fresh cap of the same paths.
-			fc := capRecovery(fresh, kept, nil)
-			for i := range got.Paths {
-				if covered(got.Paths[i]) && !covered(fc.Paths[i]) {
-					t.Fatalf("path %d covered where a fresh cap does not: %+v / %+v", i, got.Paths[i], fc.Paths[i])
-				}
-			}
-		}
+	}
+	if sameText == 0 || degradedHealthy == 0 {
+		t.Fatalf("the generator never drew an unchanged roll-up (%d) or a degraded healthy path (%d)", sameText, degradedHealthy)
 	}
 }
 

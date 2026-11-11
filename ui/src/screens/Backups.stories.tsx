@@ -7,9 +7,12 @@ import {
   recoveryAfterFailover,
   recoveryBackupUnconfirmed,
   recoveryHealthy,
+  recoveryHibernated,
+  recoveryKeptTooOld,
   recoveryLiveTimelineNoSegment,
   recoveryMixedHoles,
   recoveryNone,
+  recoveryPrimaryUnreadAfterFailover,
   recoveryReportedArchivingFailing,
   recoveryReportedOnly,
   recoveryRepositoryAhead,
@@ -165,6 +168,60 @@ export const RecoveryRepositoryAheadFrench: Story = french({
   play: async ({ canvas }) => {
     await expect(
       canvas.getByText(/en avance sur la timeline 2.*au-delà de la bifurcation ne sont pas comptés/),
+    ).toBeVisible();
+  },
+});
+/** After a failover, with the new primary not read (fenced, unreachable): the lag warning gives no pg_switch_wal() advice. */
+export const RecoveryPrimaryUnreadAfterFailover: Story = {
+  args: { data: { ...backups, recoveryTimeline: recoveryPrimaryUnreadAfterFailover } },
+  play: async ({ canvas }) => {
+    await expect(
+      canvas.getByText(/and the primary was not read: the newest restore points are uncertain/),
+    ).toBeVisible();
+    await expect(canvas.queryByText(/pg_switch_wal\(\)/)).toBeNull();
+  },
+};
+/** The same in French. */
+export const RecoveryPrimaryUnreadAfterFailoverFrench: Story = french({
+  args: RecoveryPrimaryUnreadAfterFailover.args,
+  play: async ({ canvas }) => {
+    await expect(canvas.getByText(/et le primaire n’a pas été lu/)).toBeVisible();
+    await expect(canvas.queryByText(/pg_switch_wal\(\)/)).toBeNull();
+  },
+});
+/** A hibernated Cluster: the newest restore points are unknown, not amber, and nothing asks to act on a primary. */
+export const RecoveryHibernated: Story = {
+  args: { data: { ...backups, recoveryTimeline: recoveryHibernated } },
+  play: async ({ canvas }) => {
+    await expect(canvas.getByText(/^the Cluster is hibernated: whether the WAL written before it/)).toBeVisible();
+    await expect(canvas.getByRole("list", { name: "Spans of the recovery window" })).toHaveTextContent(
+      /The Cluster is hibernated, and no sweep/,
+    );
+    await expect(canvas.queryByText(/pg_switch_wal\(\)/)).toBeNull();
+  },
+};
+/** The same in French. */
+export const RecoveryHibernatedFrench: Story = french({
+  args: RecoveryHibernated.args,
+  play: async ({ canvas }) => {
+    await expect(canvas.getByText(/^le cluster est en hibernation/)).toBeVisible();
+  },
+});
+/** The last good recovery paths were dropped as too old: the bar says why and what to check. */
+export const RecoveryKeptTooOld: Story = {
+  args: { data: { ...backups, recoveryTimeline: recoveryKeptTooOld } },
+  play: async ({ canvas }) => {
+    await expect(
+      canvas.getByText(/more than three refresh intervals .*check the evidence agent's logs .*object store answers/),
+    ).toBeVisible();
+  },
+};
+/** The same in French. */
+export const RecoveryKeptTooOldFrench: Story = french({
+  args: RecoveryKeptTooOld.args,
+  play: async ({ canvas }) => {
+    await expect(
+      canvas.getByText(/plus de trois intervalles .*journaux de l’agent de preuves .*stockage objet répond/),
     ).toBeVisible();
   },
 });

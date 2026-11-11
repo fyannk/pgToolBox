@@ -688,12 +688,14 @@ func advance(previous *agentState, agent *pgtoolboxv1alpha1.EvidenceAgent, out o
 // timeline conclusion may no longer be established after a failover, its
 // coverage roll-up may have degraded. So they are capped again against
 // the fresh snapshot and backups (capRecovery), and its TimelineWarning
-// and CoverageReason replace theirs. A fresh roll-up that differs from
-// the one the kept paths were read with is not theirs: the paths it was
-// computed from are not known, so no kept path explains it (a kept path
-// already as degraded is an older backup's, which says nothing of the
-// newest one), and every healthy kept path is at most a warning (round
-// 12, PG P3-1). Paths of another repository (the identity changed) are
+// and CoverageReason replace theirs. A fresh roll-up that is not healthy
+// is not explained by the kept paths: the paths it was computed from are
+// not known (a kept path already as degraded is an older backup's, which
+// says nothing of the newest one), and an unchanged roll-up says nothing
+// either, since the agent's roll-up text names no path (a new gap inside
+// the newest backup's range reads the same as an old backup's). So every
+// healthy kept path is at most a warning beside it (round 12, PG P3-1;
+// round 13, PG P3-A): it is stale anyway. Paths of another repository (the identity changed) are
 // never kept, and paths more than keptScans refresh intervals (at least
 // keptFloor) older than the fresh scan are dropped: a failure that
 // persists (a page contract error) does not keep year-old paths. Either
@@ -720,7 +722,7 @@ func keepRecovery(previous Result, current Recovery, snapshot *evidencev1alpha1.
 	kept.Stale, kept.StaleReason = true, current.Reason
 	kept.TimelineWarning, kept.CoverageReason = "", ""
 	capped := capRecovery(snapshot, kept, items)
-	if fresh := snapshotCoverage(snapshot); capped.State == RecoveryAvailable && fresh.State != evidencev1alpha1.Healthy && fresh != snapshotCoverage(previous.Snapshot) {
+	if fresh := snapshotCoverage(snapshot); capped.State == RecoveryAvailable && fresh.State != evidencev1alpha1.Healthy {
 		capped = rollupCap(capped, fresh)
 	}
 	return capped
