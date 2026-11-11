@@ -417,3 +417,59 @@ func TestARevocationIsAcknowledgedOnlyOnceWritten(t *testing.T) {
 		t.Errorf("without a ConfigMap: %v", err)
 	}
 }
+
+// A batch written while a write-through is in flight (the writer's
+// debounce ends: a change waiting longer than UrgentDebounce is written at
+// once) would carry the write-through's own spend or mark; the
+// write-through, conflicting with it, would find the spend in the
+// ConfigMap and call it another replica's: a confirmation's answer then
+// failed with "could not be recorded" (round 16, the chart e2e). Batches
+// wait for a write-through to end.
+func TestABatchDoesNotRaceItsOwnWriteThrough(t *testing.T) {
+	until := t0.Add(time.Minute)
+	alice := uh("alice")
+	for _, tc := range []struct {
+		name    string
+		prepare func(t *testing.T, s *Store)
+		step    func(ctx context.Context, s *Store) error
+	}{
+		{"SpendCode", func(*testing.T, *Store) {}, func(ctx context.Context, s *Store) error { return s.SpendCode(ctx, "nonce-1", alice, until) }},
+		{"MarkCode", func(t *testing.T, s *Store) {
+			if err := s.SpendCode(t.Context(), "nonce-1", alice, until); err != nil {
+				t.Fatal(err)
+			}
+		}, func(ctx context.Context, s *Store) error { return s.MarkCode(ctx, "nonce-1", "declined", alice) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			clock := &testClock{now: t0}
+			api := newAPIServer()
+			hooked := &getHook{apiServer: api}
+			a := newStore(hooked, clock, nil)
+			watchMerge(t, api, a)
+			a.mu.Lock()
+			a.setModeLocked(modeLive, "")
+			a.mu.Unlock()
+			tc.prepare(t, a)
+			a.InstanceSince("pod-a", "ok", t0) // a batch is waiting
+			// Another replica's write lands first: the write-through
+			// conflicts and re-reads.
+			api.set(func(x *apiServer) { x.conflicts = 1 })
+			batch := make(chan error, 1)
+			hooked.after = func() {
+				// The writer's batch starts while the re-read is on its way.
+				go func() { batch <- a.flush(t.Context()) }()
+				select {
+				case err := <-batch:
+					batch <- err
+				case <-time.After(100 * time.Millisecond):
+				}
+			}
+			if err := tc.step(t.Context(), a); err != nil {
+				t.Errorf("the write-through raced by its own batch: %v", err)
+			}
+			if err := <-batch; err != nil {
+				t.Errorf("the batch: %v", err)
+			}
+		})
+	}
+}

@@ -584,6 +584,8 @@ func (s *Store) WriteRevocations(ctx context.Context, ids ...string) error {
 		}
 		return true
 	}
+	s.writes.Lock()
+	defer s.writes.Unlock()
 	s.mu.Lock()
 	if s.base == nil || s.mode == modeMissing || s.mode == modeForbidden || s.foreign[KeyGrants] {
 		s.mu.Unlock()
@@ -746,6 +748,11 @@ func (s *Store) SpendCode(ctx context.Context, code, userHash string, until time
 		return errors.New("not a user key")
 	}
 	h := codeHash(code)
+	// No batch is written while the spend is (writes): one would carry
+	// the reservation, and the write-through, conflicting with it, would
+	// find the spend in the ConfigMap and call its own spend another's.
+	s.writes.Lock()
+	defer s.writes.Unlock()
 	s.mu.Lock()
 	if s.base == nil || s.mode == modeMissing || s.mode == modeForbidden || s.foreign[KeyGrants] {
 		s.mu.Unlock()
@@ -891,6 +898,11 @@ func (s *Store) MarkCode(ctx context.Context, code, mark, userHash string) error
 		return errors.New("not a mark")
 	}
 	h := codeHash(code)
+	if s.Enabled() {
+		// As SpendCode: no batch carries the mark meanwhile.
+		s.writes.Lock()
+		defer s.writes.Unlock()
+	}
 	s.mu.Lock()
 	if s.Enabled() && (s.base == nil || s.mode == modeMissing || s.mode == modeForbidden || s.foreign[KeyGrants]) {
 		s.mu.Unlock()

@@ -398,6 +398,10 @@ const (
 type Store struct {
 	opts Options
 
+	// writes serializes the writes of the ConfigMap: a batch (flush) and
+	// a write-through (SpendCode, MarkCode, WriteRevocations) never run at
+	// once. Taken before mu, never under it.
+	writes    sync.Mutex
 	mu        sync.Mutex
 	signedOut map[string]signOut
 	facts     map[string]fact
@@ -1715,6 +1719,8 @@ func (s *Store) inSyncWithLocked(docs map[string]string) bool {
 // flush writes the local state when it differs from the ConfigMap,
 // re-reading and merging on a conflict.
 func (s *Store) flush(ctx context.Context) error {
+	s.writes.Lock()
+	defer s.writes.Unlock()
 	ctx, cancel := context.WithTimeout(ctx, writeTimeout)
 	defer cancel()
 	for range maxAttempts {
