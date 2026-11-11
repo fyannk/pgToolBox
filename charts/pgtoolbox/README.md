@@ -144,6 +144,7 @@ authority on what is accepted.
 | operator.metrics.podMonitor.interval | string | `"30s"` | Scrape interval of the PodMonitor. |
 | operator.metrics.podMonitor.labels | object | `{}` | Extra labels on the PodMonitor (for example the Prometheus Operator's release selector). |
 | operator.metrics.podMonitor.bearerTokenSecret | object | `{"key":"token","name":""}` | Secret (name and key) holding the bearer token the PodMonitor sends. The token's identity must be allowed to `get` the URL `/metrics`. |
+| operator.metrics.prometheusRule | object | `{"enabled":false,"labels":{}}` | Create a PrometheusRule with the operator's alerts (`files/alerts/operator.rules.yaml`: a watched namespace left out at start): `enabled` and extra `labels` (for the Prometheus `ruleSelector`). |
 | operator.podDisruptionBudget.enabled | bool | `true` | Render a PodDisruptionBudget. It is rendered only with more than one replica. |
 | operator.podDisruptionBudget.minAvailable | int | `1` | `minAvailable` of the PodDisruptionBudget. |
 | operator.topologySpreadConstraints | list | `[]` | Topology spread constraints of the pods. Empty with more than one replica: a soft spread across nodes. |

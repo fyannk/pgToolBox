@@ -1,0 +1,19 @@
+# Alerts on the operator's start-up decisions (docs/site/docs/operator/metrics.md).
+# Plain Prometheus rule groups: the chart wraps them in a PrometheusRule
+# (operator.metrics.prometheusRule.enabled) and `make rules-test` runs
+# hack/rules/operator.rules.test.yaml against this file with promtool.
+#
+# pgtoolbox_watch_namespaces_dropped{reason} is set once at start and changes
+# only with a restart; every replica exports it, hence max, not sum.
+groups:
+  - name: pgtoolbox-operator
+    rules:
+      - alert: PgToolBoxOperatorNamespacesDropped
+        expr: max by (namespace, reason) (pgtoolbox_watch_namespaces_dropped) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "The pgToolBox operator in {{ $labels.namespace }} left {{ $value }} watched namespace(s) out at start ({{ $labels.reason }})"
+          description: "Namespaces of WATCH_NAMESPACES are not reconciled: their PgAdmins, consoles and evidence agents keep a status nobody updates. The operator log names each namespace and what is missing there (reason permissions: a narrower Role; review-failed: the permission review failed; clusters-unlistable: deleted, or not bound). Fix it, then restart the operator."
+          runbook_url: "https://github.com/fyannk/pgToolBox/blob/main/docs/site/docs/operator/index.md#namespaces-dropped-from-the-watch"

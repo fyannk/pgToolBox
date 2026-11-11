@@ -27,6 +27,7 @@ import (
 	"net/http"
 	"os"
 	"reflect"
+	"slices"
 	"time"
 
 	cnpgv1 "github.com/cloudnative-pg/api/pkg/api/v1"
@@ -77,6 +78,8 @@ type pgAdminPrepared struct {
 	// EvidenceAgent's: the cache watches each one only in the namespaces
 	// where it can be listed (optionalKindCacheOptions).
 	OptionalKinds []optionalKind
+	// Dropped is the watched namespaces left out at start, and why.
+	Dropped []droppedNamespace
 }
 
 // evidenceAgentAPIs is the outcome of the EvidenceAgent's optional-API
@@ -162,6 +165,11 @@ func preparePgAdmin(ctx context.Context, budget *startupBudget, operatorImage, c
 		return pgAdminPrepared{}, err
 	}
 	registerBuildInfo()
+	// Beside the start, never in its budget: the objects of a namespace
+	// left out say so on themselves where the operator may still write.
+	if len(prepared.Dropped) > 0 {
+		go reportDroppedNamespaces(ctx, direct, prepared.Dropped, time.Now)
+	}
 	return prepared, nil
 }
 
@@ -270,19 +278,27 @@ func preparePgAdminWith(ctx context.Context, direct startupAPI, registry prometh
 	// needs (its administrator bound the operator to a narrower Role), is
 	// left out of the watch rather than failing the start for every
 	// namespace: an informer refused in one namespace never syncs.
+	type split struct {
+		kept    []string
+		dropped []droppedNamespace
+	}
 	namespaces := loaded.Config.WatchNamespaces
-	reachable, err := budgetedRead(ctx, budget, "check the watched namespaces", func(ctx context.Context) ([]string, error) {
-		return reachableNamespaces(ctx, direct, namespaces)
+	reachable, err := budgetedRead(ctx, budget, "check the watched namespaces", func(ctx context.Context) (split, error) {
+		kept, dropped, err := reachableNamespaces(ctx, direct, namespaces)
+		return split{kept, dropped}, err
 	})
 	if err != nil {
 		return pgAdminPrepared{}, err
 	}
-	watched, err := budgetedRead(ctx, budget, "check the operator's permissions in the watched namespaces", func(ctx context.Context) ([]string, error) {
-		return permittedNamespaces(ctx, direct, reachable)
+	permitted, err := budgetedRead(ctx, budget, "check the operator's permissions in the watched namespaces", func(ctx context.Context) (split, error) {
+		kept, dropped, err := permittedNamespaces(ctx, direct, reachable.kept)
+		return split{kept, dropped}, err
 	})
 	if err != nil {
 		return pgAdminPrepared{}, err
 	}
+	watched := permitted.kept
+	dropped := append(slices.Clone(reachable.dropped), permitted.dropped...)
 	// An optional API refused in some watched namespaces only is off in
 	// those namespaces alone; no namespace is left out for it.
 	probed, err := budgetedRead(ctx, budget, "probe the optional APIs", func(ctx context.Context) (optionalAPIs, error) {
@@ -295,7 +311,7 @@ func preparePgAdminWith(ctx context.Context, direct startupAPI, registry prometh
 	if err := loaded.RegisterInfoMetric(registry); err != nil {
 		return pgAdminPrepared{}, err
 	}
-	if err := registerWatchMetrics(registry, len(namespaces)-len(watched), probed.Kinds); err != nil {
+	if err := registerWatchMetrics(registry, countDropped(dropped), probed.Kinds); err != nil {
 		return pgAdminPrepared{}, err
 	}
 	features := probed.Features
@@ -303,7 +319,7 @@ func preparePgAdminWith(ctx context.Context, direct startupAPI, registry prometh
 		"routes", features.Routes.State, "gateways", features.Gateways.State,
 		"databaseRoles", features.DatabaseRoles.State, "poolers", features.Poolers.State,
 		"openshift", features.OpenShift)
-	return pgAdminPrepared{Config: loaded.Config, Features: features, EvidenceAgentAPIs: probed.EvidenceAgent, OptionalKinds: probed.Kinds}, nil
+	return pgAdminPrepared{Config: loaded.Config, Features: features, EvidenceAgentAPIs: probed.EvidenceAgent, OptionalKinds: probed.Kinds, Dropped: dropped}, nil
 }
 
 // pgAdminManagerOptions adds the PgAdmin controller's needs to the shared
@@ -494,24 +510,25 @@ func optionalGroupKinds() []schema.GroupKind {
 // list CloudNativePG Clusters (the one kind every controller needs) and logs
 // each one it is refused in: a namespace deleted after the install takes the
 // chart's RoleBinding with it, and a recreated one needs `helm upgrade` (the
-// RoleBinding) and a restart of the operator before it is watched again. At
-// least one namespace must answer; empty (every namespace) stays empty.
-func reachableNamespaces(ctx context.Context, reader client.Reader, namespaces []string) ([]string, error) {
+// RoleBinding) and a restart of the operator before it is watched again. It
+// returns the namespaces kept and those left out. At least one namespace
+// must answer; empty (every namespace) stays empty.
+func reachableNamespaces(ctx context.Context, reader client.Reader, namespaces []string) ([]string, []droppedNamespace, error) {
 	if len(namespaces) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 	reachable, refused, err := discovery.ReachableNamespaces(ctx, reader, cnpgv1.SchemeGroupVersion.WithKind("Cluster"), namespaces)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	for _, r := range refused {
 		setupLog.Error(errors.New(r.Reason), "watched namespace left out: deleted, or the operator is not bound in it (helm upgrade, then restart the operator)",
 			"namespace", r.Namespace)
 	}
 	if len(reachable) == 0 {
-		return nil, fmt.Errorf("none of the watched namespaces %v lets the operator list CloudNativePG Clusters: they do not exist or the operator is not bound in them", namespaces)
+		return nil, nil, fmt.Errorf("none of the watched namespaces %v lets the operator list CloudNativePG Clusters: they do not exist or the operator is not bound in them", namespaces)
 	}
-	return reachable, nil
+	return reachable, droppedFromReachable(refused), nil
 }
 
 func registerBuildInfo() {

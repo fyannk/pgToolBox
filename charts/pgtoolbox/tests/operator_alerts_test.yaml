@@ -1,0 +1,27 @@
+# The operator's alerts (files/alerts/operator.rules.yaml) as a PrometheusRule:
+# off by default, and the dropped-namespace alert keyed on the gauge's reason.
+suite: operator alerts
+templates:
+  - templates/operator/prometheusrule.yaml
+release:
+  name: pgtoolbox
+  namespace: pgtoolbox
+tests:
+  - it: renders no alerts by default
+    asserts:
+      - hasDocuments: {count: 0}
+  - it: renders none with the operator off
+    set: {operator.enabled: false, operator.metrics.prometheusRule.enabled: true}
+    asserts:
+      - hasDocuments: {count: 0}
+  - it: renders the dropped-namespace alert with a severity and a runbook
+    set: {operator.metrics.prometheusRule.enabled: true, operator.metrics.prometheusRule.labels: {release: prom}}
+    asserts:
+      - isKind: {of: PrometheusRule}
+      - equal: {path: metadata.namespace, value: pgtoolbox}
+      - equal: {path: metadata.labels.release, value: prom}
+      - equal: {path: "spec.groups[0].name", value: pgtoolbox-operator}
+      - equal: {path: "spec.groups[0].rules[0].alert", value: PgToolBoxOperatorNamespacesDropped}
+      - equal: {path: "spec.groups[0].rules[0].expr", value: "max by (namespace, reason) (pgtoolbox_watch_namespaces_dropped) > 0"}
+      - matchRegex: {path: "spec.groups[0].rules[0].labels.severity", pattern: "^(info|warning|critical)$"}
+      - matchRegex: {path: "spec.groups[0].rules[0].annotations.runbook_url", pattern: "operator/index.md#namespaces-dropped-from-the-watch$"}

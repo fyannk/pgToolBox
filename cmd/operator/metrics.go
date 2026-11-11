@@ -53,22 +53,27 @@ func metricsOptions(bindAddress, certDir string) metricsserver.Options {
 // registerWatchMetrics registers the start-up's watch decisions on
 // registry, fixed for the life of the process:
 //
-//   - pgtoolbox_watch_namespaces_dropped: watched namespaces left out at
-//     start because the operator cannot list CloudNativePG Clusters there
-//     (deleted since the install, or the operator not bound in them), or
-//     lacks there another namespaced permission of its manager role (a
-//     narrower Role bound in its place: an informer refused there would
-//     never sync). An optional API refused never leaves a namespace out.
+//   - pgtoolbox_watch_namespaces_dropped{reason}: watched namespaces left
+//     out at start, per cause (a fixed set, every series exported, 0 when
+//     none): clusters-unlistable, the operator may not list CloudNativePG
+//     Clusters there (deleted since the install, or the operator not bound
+//     in them); permissions, it lacks there another namespaced permission
+//     of its manager role (a narrower Role bound in its place: an informer
+//     refused there would never sync); review-failed, its permissions
+//     there could not be reviewed (an error after one retry, or no answer
+//     in time). An optional API refused never leaves a namespace out.
 //   - pgtoolbox_optional_api_refused_namespaces{group,kind}: per optional
 //     kind, the watched namespaces where it is refused while others allow
 //     it; the feature is off in those namespaces only. A series is
 //     exported for every optional kind (0 when none refuses it).
-func registerWatchMetrics(registry prometheus.Registerer, dropped int, kinds []optionalKind) error {
-	droppedGauge := prometheus.NewGauge(prometheus.GaugeOpts{
+func registerWatchMetrics(registry prometheus.Registerer, dropped map[dropCause]int, kinds []optionalKind) error {
+	droppedGauge := prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "pgtoolbox_watch_namespaces_dropped",
-		Help: "Watched namespaces left out at start: the operator may not list CloudNativePG Clusters there (deleted, or not bound), or lacks another permission of its manager role there.",
-	})
-	droppedGauge.Set(float64(dropped))
+		Help: "Watched namespaces left out at start, per reason: clusters-unlistable (CloudNativePG Clusters may not be listed there: deleted, or not bound), permissions (another permission of the manager role is missing there), review-failed (the permission review there failed).",
+	}, []string{"reason"})
+	for _, cause := range dropCauses {
+		droppedGauge.WithLabelValues(string(cause)).Set(float64(dropped[cause]))
+	}
 	refused := prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "pgtoolbox_optional_api_refused_namespaces",
 		Help: "Watched namespaces where an optional API is refused to the operator while others allow it: the feature is off there only.",

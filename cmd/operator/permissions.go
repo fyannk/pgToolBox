@@ -145,38 +145,56 @@ func requiredPermissions(mapper meta.RESTMapper, objectScheme *runtime.Scheme, r
 // narrower Role (Clusters readable, Deployments or Secrets not; Clusters
 // listed but not watched) would 403 the operator's informer there forever,
 // the cache would never sync, and the operator would crash-loop for every
-// namespace. Left out, it is not reconciled until its RoleBinding is
-// restored and the operator restarted; the others are unaffected. At least
-// one namespace must be kept; empty (every namespace) stays empty.
-func permittedNamespaces(ctx context.Context, api startupAPI, namespaces []string) ([]string, error) {
+// namespace. A namespace whose review fails (an error after one retry, or
+// no answer within managerrole.NamespaceReviewTimeout) is left out too,
+// with its error logged: nothing is known of it, and the others must not
+// wait on it. Left out, it is not reconciled until it is fixed and the
+// operator restarted; the others are unaffected. It returns the namespaces
+// kept and those left out, why and (for missing permissions) what the
+// review showed. At least one namespace must be kept; empty (every
+// namespace) stays empty.
+func permittedNamespaces(ctx context.Context, api startupAPI, namespaces []string) ([]string, []droppedNamespace, error) {
 	if len(namespaces) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 	rules, err := managerrole.Rules()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	required, err := requiredPermissions(api.RESTMapper(), scheme, rules, requiredKinds(), optionalGroupKinds())
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if len(required) == 0 {
-		return namespaces, nil
+		return namespaces, nil, nil
 	}
-	permitted, denied, err := managerrole.PermittedNamespaces(ctx, api, required, namespaces)
+	review, err := managerrole.PermittedNamespaces(ctx, api, required, namespaces, namespaceReviewTimeout)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	for _, d := range denied {
+	var dropped []droppedNamespace
+	for _, d := range review.Denied {
 		missing := make([]string, len(d.Missing))
 		for i, permission := range d.Missing {
 			missing[i] = permission.String()
 		}
 		setupLog.Error(errors.New(d.Reason()), "watched namespace left out: the operator lacks permissions it needs there (restore the chart's manager RoleBinding, then restart the operator)",
 			"namespace", d.Namespace, "missing", missing)
+		dropped = append(dropped, droppedNamespace{Namespace: d.Namespace, Cause: dropPermissions, Reason: d.Reason(), required: required, missing: d.Missing})
 	}
-	if len(permitted) == 0 {
-		return nil, fmt.Errorf("none of the watched namespaces %v grants the operator every permission of its manager role: restore the chart's manager RoleBindings", namespaces)
+	for _, u := range review.Unreviewed {
+		setupLog.Error(u.Err, "watched namespace left out: the operator's permissions there could not be reviewed (check the API server and the namespace's RoleBindings, a count/rolebindings.rbac.authorization.k8s.io quota keeps the review small, then restart the operator)",
+			"namespace", u.Namespace)
+		dropped = append(dropped, droppedNamespace{Namespace: u.Namespace, Cause: dropReviewFailed, Reason: u.Reason()})
 	}
-	return permitted, nil
+	if len(review.Permitted) == 0 {
+		return nil, dropped, fmt.Errorf("none of the watched namespaces %v grants the operator every permission of its manager role (%d lack one, %d could not be reviewed): restore the chart's manager RoleBindings",
+			namespaces, len(review.Denied), len(review.Unreviewed))
+	}
+	return review.Permitted, dropped, nil
 }
+
+// namespaceReviewTimeout bounds each attempt at reviewing one namespace's
+// permissions at start (managerrole.NamespaceReviewTimeout; a variable for
+// the tests).
+var namespaceReviewTimeout = managerrole.NamespaceReviewTimeout

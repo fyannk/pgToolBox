@@ -186,8 +186,11 @@ func TestPrepareDropsNamespaceMissingARequiredPermission(t *testing.T) {
 	if !slices.Equal(prepared.Config.WatchNamespaces, []string{"team-a", "team-d"}) {
 		t.Fatalf("watched = %q, want [team-a team-d]", prepared.Config.WatchNamespaces)
 	}
-	if got := gatherGauges(t, registry)["pgtoolbox_watch_namespaces_dropped"]; got != 2 {
-		t.Fatalf("pgtoolbox_watch_namespaces_dropped = %v, want 2 (team-b, team-c)", got)
+	if got := gatherGauges(t, registry)[`pgtoolbox_watch_namespaces_dropped{reason="permissions"}`]; got != 2 {
+		t.Fatalf("pgtoolbox_watch_namespaces_dropped{reason=permissions} = %v, want 2 (team-b, team-c)", got)
+	}
+	if len(prepared.Dropped) != 2 || prepared.Dropped[0].Namespace != "team-b" || prepared.Dropped[1].Namespace != "team-c" {
+		t.Fatalf("dropped = %+v, want team-b and team-c", prepared.Dropped)
 	}
 
 	// Every namespace lacking a permission fails the start, naming the
@@ -204,9 +207,9 @@ func TestPrepareDropsNamespaceMissingARequiredPermission(t *testing.T) {
 // TestPermittedNamespacesClusterWide: with no watched namespaces (every
 // namespace) nothing is reviewed and nothing is dropped.
 func TestPermittedNamespacesClusterWide(t *testing.T) {
-	got, err := permittedNamespaces(t.Context(), rulesClient(nil), nil)
-	if err != nil || got != nil {
-		t.Fatalf("permittedNamespaces(every namespace) = %q, %v", got, err)
+	got, dropped, err := permittedNamespaces(t.Context(), rulesClient(nil), nil)
+	if err != nil || got != nil || dropped != nil {
+		t.Fatalf("permittedNamespaces(every namespace) = %q, %+v, %v", got, dropped, err)
 	}
 }
 

@@ -1,0 +1,14 @@
+{{- if and .Values.operator.enabled .Values.operator.metrics.prometheusRule.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "pgtoolbox.fullname" . }}-operator
+  namespace: {{ include "pgtoolbox.namespace" . }}
+  labels:
+    {{- include "pgtoolbox.labels" . | nindent 4 }}
+    {{- with .Values.operator.metrics.prometheusRule.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  {{- (.Files.Get "files/alerts/operator.rules.yaml" | fromYaml) | toYaml | nindent 2 }}
+{{- end }}
