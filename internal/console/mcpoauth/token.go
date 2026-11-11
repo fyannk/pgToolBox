@@ -175,7 +175,8 @@ func (s *Server) redeemCode(r *http.Request) (tokenResponse, grantBase, *tokenFa
 		// A code redeemed twice: whatever it bought is revoked too (RFC
 		// 6749 §4.1.2), on every replica: one that has not recorded the
 		// grant yet (a concurrent first redemption elsewhere) gets a
-		// revoked placeholder its record merges into.
+		// revoked placeholder its record merges into, which the fair
+		// share does not refuse (sharedstate.Store.RevokeGrant).
 		s.o.Store.RevokeGrant(c.ID, key, now, now.Add(sharedstate.RevokedKeep))
 		return tokenResponse{}, c.grantBase, &tokenFailure{http.StatusBadRequest, "invalid_grant", "the code was already used; the grant it bought is revoked", "replayed"}
 	case err != nil:
@@ -312,10 +313,12 @@ func (s *Server) redeemRefresh(r *http.Request) (tokenResponse, grantBase, *toke
 		return tokenResponse{}, rt.grantBase, &tokenFailure{http.StatusBadRequest, "invalid_grant", "the grant is revoked", "revoked"}
 	case sharedstate.Unknown:
 		// Rotated on another replica moments ago: record it here, at the
-		// generation this refresh moves it to.
+		// generation this refresh moves it to. Not new work (the replica
+		// that issued the token admitted it): the fair share does not
+		// apply, so a legitimate holder is not disconnected by it.
 		err := s.o.Store.AddGrant(sharedstate.Grant{
 			ID: rt.ID, UserHash: key, Client: rt.Name, Scope: rt.Scope, Created: time.Unix(rt.IssuedAt, 0),
-			LastUsed: now, Expiry: time.Unix(rt.Expiry, 0), Generation: rt.Generation + 1,
+			LastUsed: now, Expiry: time.Unix(rt.Expiry, 0), Generation: rt.Generation + 1, Rotated: true,
 		})
 		if err != nil {
 			return tokenResponse{}, rt.grantBase, invalidGrant("the grant could not be recorded: " + err.Error())
