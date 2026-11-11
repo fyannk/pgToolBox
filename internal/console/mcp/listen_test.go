@@ -19,7 +19,9 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -64,9 +66,12 @@ func TestListChangedClientsHoldNoCallSlot(t *testing.T) {
 }
 
 // A client may open subscriptions/listen although nothing is advertised:
-// the SDK then agrees to no subscription, and the guard counts the request
-// as an open stream, not as a call, should it park. Four listens of one
-// person leave that person's calls their four slots.
+// the SDK then agrees to no subscription and answers at once, so a listen
+// parks nothing and holds none of the person's call slots once answered.
+// Four listens, each read to its end within a deadline, leave all four
+// call slots to the person's calls, made at once. (That the guard counts a
+// listen that does park as a stream, not a call, is
+// mcpauth.TestGuardOpenStreamsDoNotTakeCallSlots.)
 func TestListenRequestsDoNotTakeCallSlots(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
@@ -74,8 +79,10 @@ func TestListenRequestsDoNotTakeCallSlots(t *testing.T) {
 		`"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientInfo":{"name":"raw","version":"v0"},` +
 		`"io.modelcontextprotocol/clientCapabilities":{}}}}`
 	for i := range 4 {
-		req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, h.url+"/mcp", strings.NewReader(listen))
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, h.url+"/mcp", strings.NewReader(listen))
 		if err != nil {
+			cancel()
 			t.Fatal(err)
 		}
 		req.Header.Set("Authorization", "Bearer tok-dba")
@@ -85,16 +92,27 @@ func TestListenRequestsDoNotTakeCallSlots(t *testing.T) {
 		req.Header.Set("Mcp-Method", "subscriptions/listen")
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
+			cancel()
 			t.Fatal(err)
 		}
-		t.Cleanup(func() { _ = resp.Body.Close() })
-		if resp.StatusCode != http.StatusOK || !strings.HasPrefix(resp.Header.Get("Content-Type"), "text/event-stream") {
-			b, _ := io.ReadAll(resp.Body)
-			t.Fatalf("listen %d = %d %q: the test needs a parked stream %s", i+1, resp.StatusCode, resp.Header.Get("Content-Type"), b)
+		b, err := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		cancel()
+		if err != nil {
+			t.Fatalf("listen %d did not end: %v (a listen parks: the call slots below prove nothing)", i+1, err)
+		}
+		if resp.StatusCode != http.StatusOK || !strings.Contains(string(b), `"result"`) {
+			t.Fatalf("listen %d = %d %s: want an answer agreeing to nothing", i+1, resp.StatusCode, b)
 		}
 	}
 	cs := h.connect(t, "tok-dba")
-	if res, err := cs.CallTool(t.Context(), &mcp.CallToolParams{Name: "list_clusters", Arguments: map[string]any{}}); err != nil || res.IsError {
-		t.Errorf("a call beside four open listens: %v %v", err, res)
+	var wg sync.WaitGroup
+	for i := range 4 {
+		wg.Go(func() {
+			if res, err := cs.CallTool(t.Context(), &mcp.CallToolParams{Name: "list_clusters", Arguments: map[string]any{}}); err != nil || res.IsError {
+				t.Errorf("call %d of four at once, after four listens: %v %v", i+1, err, res)
+			}
+		})
 	}
+	wg.Wait()
 }
