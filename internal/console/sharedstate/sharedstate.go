@@ -129,9 +129,10 @@ const (
 	// (the newest sign-out is the one a fresh cookie theft needs). The
 	// sessions naming nobody refuse what arrives past their bound. The
 	// document, once full, is shared fairly (fairShares): a newcomer's
-	// entry takes the place of the last entry, in signOutBefore, of the
-	// person holding the most, when that person holds more than the
-	// newcomer, so filling it with many identities cannot lock everyone
+	// entry takes the place of the last entry, in signOutBefore (the one
+	// recorded longest ago), of the person holding the most, when that
+	// person holds more than the newcomer: everyone keeps their latest
+	// sign-outs, so filling it with many identities cannot lock everyone
 	// else out; a newcomer holding as much as the most refuses or
 	// replaces their own instead. A sign-out the document does not keep
 	// is still refused by the replica that recorded it, is counted in
@@ -219,8 +220,8 @@ type fact struct {
 // a person's entries for MaxSignOutsPerSubject.
 //
 // The slot is the entry's place in the one order every bound keeps by
-// (signOutBefore): when it was first recorded (Recorded) and a hash
-// (Slot; empty for the entry's own session hash). A person at their
+// (signOutBefore): when it was first recorded (Recorded, the latest
+// first) and a hash (Slot; empty for the entry's own session hash). A person at their
 // bound gives the new entry the slot of their own entry it replaces,
 // one generation (Gen) later: the slots the document holds, and so where
 // everyone else's entries stand, do not change, and a replica that still
@@ -242,11 +243,14 @@ func slotOf(h string, e signOut) string {
 	return h
 }
 
-// slotBefore orders two (hash, entry) pairs by slot, and within a slot
-// the later generation first, then by hash: a total order.
+// slotBefore orders two (hash, entry) pairs by slot, the latest recorded
+// first, and within a slot the later generation first, then by hash: a
+// total order. Every bound keeps what comes first in it, so a person's
+// latest sign-outs, the ones a cookie stolen since needs, are the last
+// any bound gives up.
 func slotBefore(ah string, a signOut, bh string, b signOut) bool {
 	if a.Recorded != b.Recorded {
-		return a.Recorded < b.Recorded
+		return a.Recorded > b.Recorded
 	}
 	if as, bs := slotOf(ah, a), slotOf(bh, b); as != bs {
 		return as < bs
@@ -273,8 +277,8 @@ func validSignOut(h string, e signOut) bool {
 }
 
 // mergeSignOut folds two observations of session h's sign-out: the
-// latest expiry, the slot that comes first in slotBefore (an entry
-// without a recording time counts as recorded first), and a tag when
+// latest expiry, the slot that comes first in slotBefore (the latest
+// recorded; an entry without a recording time comes last), and a tag when
 // either has one (the smaller when they differ). It is commutative,
 // associative and idempotent, so replicas folding the same observations
 // in any order hold the same entry.
@@ -674,7 +678,8 @@ func (s *Store) pruneSignOutsLocked() bool {
 }
 
 // signOutBefore is the one order every bound of the sessions document
-// keeps by: by slot, recorded first, then by hash (slotBefore). The
+// keeps by: by slot, the latest recorded first, then by hash
+// (slotBefore). The
 // per-person bounds keep each person's entries that come first in it,
 // and the document's fair share keeps each person's first shares (a
 // function of how many entries each person holds, nothing else): so,
