@@ -58,5 +58,20 @@ sed -i '0,/^FROM /s|^FROM |ARG GO_IMAGE=golang:9.9.9\nFROM |' "${work}/Dockerfil
 # shellcheck disable=SC2016
 sed -i 's|^FROM --platform=\$BUILDPLATFORM golang:[^ ]* AS builder|FROM --platform=$BUILDPLATFORM ${GO_IMAGE} AS builder|' "${work}/Dockerfile"
 expect_fail 'golang:9.9.9, mise.toml pins'
+cp Dockerfile "${work}/Dockerfile"
+
+# Docker keywords are case-insensitive: a lowercase from is still a base image.
+printf 'from golang:9.9.9 as lower\n' >> "${work}/Dockerfile"
+expect_fail 'golang:9.9.9, mise.toml pins'
+cp Dockerfile "${work}/Dockerfile"
+
+# --platform with a space is a flag, not the image; the real builder line
+# written that way still passes, and a wrong version behind it is found.
+# shellcheck disable=SC2016
+sed -i 's|^FROM --platform=\$BUILDPLATFORM golang:|FROM --platform $BUILDPLATFORM golang:|' "${work}/Dockerfile"
+grep -q '^FROM --platform \$BUILDPLATFORM golang:' "${work}/Dockerfile" || fail "the space-form fixture was not written"
+run >/dev/null || fail "FROM --platform X (space form) is misread: $(run)"
+printf 'FROM --platform $BUILDPLATFORM golang:9.9.9 AS spaced\n' >> "${work}/Dockerfile"
+expect_fail 'golang:9.9.9, mise.toml pins'
 
 echo "check-toolchain: Dockerfile rules ok"

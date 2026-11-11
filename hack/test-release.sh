@@ -229,9 +229,17 @@ expect 1 'gh workflow run security.yml --ref main' -- ./hack/release.sh wait-ci 
 # preflight: one poll, no waiting; a green pair on a dated CHANGELOG passes,
 # a missing check run or an Unreleased heading fails before any tag is pushed.
 pre() { (cd "${repo}" && ./hack/release.sh preflight "$@"); }
-head="$(git -C "${repo}" rev-parse HEAD)"
-git -C "${repo}" update-ref refs/remotes/origin/main "${head}"
-changelog "## [${version}] - 2026-11-09"
+# The preflight judges the tagged commit, not the working tree: commit the
+# CHANGELOG the tests mean, and keep the working tree different where a test
+# says so.
+commit_changelog() {
+  changelog "$1"
+  git -C "${repo}" add CHANGELOG.md
+  git -C "${repo}" -c user.name=t -c user.email=t@t commit -q -m "changelog: $1"
+  head="$(git -C "${repo}" rev-parse HEAD)"
+  git -C "${repo}" update-ref refs/remotes/origin/main "${head}"
+}
+commit_changelog "## [${version}] - 2026-11-09"
 { tab ci-ok completed success 2026-11-10T10:00:00Z 20; tab security-gate completed success 2026-11-10T10:00:00Z 21; } > "${runs}"
 expect 0 'ok: preflight' -- pre "v${version}" "${head}"
 { tab ci-ok completed success 2026-11-10T10:00:00Z 20; } > "${runs}"
@@ -255,14 +263,33 @@ expect 0 "ok: preflight v${version} on ${head}" -- pre "v${version}" HEAD
 expect 0 "ok: preflight v${version} on ${head}" -- pre "v${version}" "$(git -C "${repo}" rev-parse "refs/tags/v${version}")"
 expect 1 'does not name a commit' -- pre "v${version}" "$(git -C "${repo}" rev-parse "${head}^{tree}")"
 expect 1 'does not name a commit' -- pre "v${version}" no-such-revision
+# ... and the message keeps the argument the caller gave.
+expect 1 'release: no-such-revision does not name a commit' -- pre "v${version}" no-such-revision
 git -C "${repo}" tag -d "v${version}" >/dev/null
 git -C "${repo}" update-ref -d refs/remotes/origin/main
 expect 1 'origin/main is not fetched' -- pre "v${version}" "${head}"
 git -C "${repo}" update-ref refs/remotes/origin/main "${head}"
 { tab ci-ok completed success 2026-11-10T10:00:00Z 20; tab security-gate completed success 2026-11-10T10:00:00Z 21; } > "${runs}"
+# The working tree says Unreleased, the commit is dated: the commit decides.
+dated="${head}"
 changelog "## [${version}] - Unreleased"
+expect 0 'ok: preflight' -- pre "v${version}" "${dated}"
+# The working tree is dated, the commit is not: refused.
+commit_changelog "## [${version}] - Unreleased"
+changelog "## [${version}] - 2026-11-09"
 expect 1 'still says Unreleased' -- pre "v${version}" "${head}"
-expect 1 'still says Unreleased' -- pre "v${version}-rc.1" deadbeef
+expect 1 'still says Unreleased' -- pre "v${version}-rc.9" "${head}"
+# Chart versions come from the commit as well: a chart that disagrees with the
+# tag in the commit is refused although the working tree agrees.
+commit_changelog "## [${version}] - 2026-11-09"
+sed -i 's/^version: .*/version: 9.9.9/' "${repo}/charts/pgtoolbox/Chart.yaml"
+git -C "${repo}" add charts/pgtoolbox/Chart.yaml
+git -C "${repo}" -c user.name=t -c user.email=t@t commit -q -m "chart: wrong version"
+bad="$(git -C "${repo}" rev-parse HEAD)"
+git -C "${repo}" update-ref refs/remotes/origin/main "${bad}"
+git -C "${repo}" checkout -q "${dated}" -- charts/pgtoolbox/Chart.yaml
+expect 1 'Chart.yaml says version=9.9.9' -- pre "v${version}" "${bad}"
+git -C "${repo}" update-ref refs/remotes/origin/main "${head}"
 unset GH_STUB_RUNS CI_WAIT_SLEEP CI_WAIT_ATTEMPTS CI_WAIT_EMPTY_ATTEMPTS
 
 # ---- verify-published: anonymous pulls, then signature and attestation of
@@ -355,7 +382,9 @@ cd "${root}"
 # the golden input; the selection must keep the newest member of every family.
 live="${root}/hack/testdata/caches-live.json"
 echo 27 > "${work}/open.txt"
-prune_ids() { ./hack/prune-caches.sh select "$1" "${work}/open.txt" | sort -n | tr '\n' ' '; }
+# NOW is fixed (2026-11-12T12:00:00Z) so the age of a blob is deterministic; the
+# budget is lifted unless a test sets it, to look at the age rules alone.
+prune_ids() { NOW=1794484800 BUDGET_MB="${BUDGET_MB-100000}" ./hack/prune-caches.sh select "$1" "${work}/open.txt" | sort -n | tr '\n' ' '; }
 sel() { # sel CACHES.json ids...: the summary of keys/ids for the assertions
   jq -r --argjson ids "$(printf '%s\n' "${@:2}" | jq -Rn '[inputs | select(length > 0) | tonumber]')" '.[] | select(.id as $i | $ids | index($i)) | .key' "$1"
 }
@@ -400,10 +429,10 @@ STUB
 chmod +x "${work}/prune-stub/gh"
 first="$(prune_ids "${live}" | cut -d' ' -f1)"
 : > "${work}/prune.log"
-expect 0 'already gone \(404\)' -- env PATH="${work}/prune-stub:${PATH}" PRUNE_LIVE="${live}" PRUNE_LOG="${work}/prune.log" PRUNE_404="${first}" PRUNE_500=0 GITHUB_REPOSITORY=o/r ./hack/prune-caches.sh
+expect 0 'already gone \(404\)' -- env BUDGET_MB=100000 NOW=1794484800 PATH="${work}/prune-stub:${PATH}" PRUNE_LIVE="${live}" PRUNE_LOG="${work}/prune.log" PRUNE_404="${first}" PRUNE_500=0 GITHUB_REPOSITORY=o/r ./hack/prune-caches.sh
 [[ "$(wc -l < "${work}/prune.log")" == 10 ]] || fail "prune-caches stopped after a 404: $(wc -l < "${work}/prune.log") of 10 deletions attempted"
 : > "${work}/prune.log"
-expect 1 '1 deletion\(s\) failed' -- env PATH="${work}/prune-stub:${PATH}" PRUNE_LIVE="${live}" PRUNE_LOG="${work}/prune.log" PRUNE_404=0 PRUNE_500="${first}" GITHUB_REPOSITORY=o/r ./hack/prune-caches.sh
+expect 1 '1 deletion\(s\) failed' -- env BUDGET_MB=100000 NOW=1794484800 PATH="${work}/prune-stub:${PATH}" PRUNE_LIVE="${live}" PRUNE_LOG="${work}/prune.log" PRUNE_404=0 PRUNE_500="${first}" GITHUB_REPOSITORY=o/r ./hack/prune-caches.sh
 [[ "$(wc -l < "${work}/prune.log")" == 10 ]] || fail "prune-caches stopped after a 500"
 # mise entries: a mise.toml change retires every entry of the old hash (the
 # newest entry of the ref names the current one); a cap bounds the rest.
@@ -416,9 +445,28 @@ n="$(sel "${work}/live3.json" ${got} | grep -c '^mise-v1.*-p692-0101' || true)"
 got="$(MISE_KEEP=5 prune_ids "${live}")"
 n="$(sel "${live}" ${got} | grep -c '^mise-v1' || true)"
 [[ "${n}" == 7 ]] || fail "prune-caches with MISE_KEEP=5 deleted ${n} mise entries, want 7"
+# buildkit-blob-*: each blob is its own family, so only age and the budget
+# remove it. A live-like listing: 40 blobs of 100 MiB accessed 1..40 hours ago
+# (fresh), 5 of 100 MiB last accessed 4 days ago (dead), on top of the real
+# fixture.
+jq --slurpfile base "${live}" -n '$base[0] + (
+  [range(0;40) | {id: (2000 + .), key: ("buildkit-blob-1-sha256:" + (. | tostring | (("0" * 64) + .)[-64:])), ref: "refs/heads/main", size_in_bytes: 104857600,
+     created_at: "2026-11-12T00:00:00Z", last_accessed_at: ((1794484800 - (. + 1) * 3600) | todate)}]
+  + [range(0;5) | {id: (3000 + .), key: ("buildkit-blob-1-sha256:" + (. | tostring | (("f" * 64) + .)[-64:])), ref: "refs/heads/main", size_in_bytes: 104857600,
+     created_at: "2026-11-01T00:00:00Z", last_accessed_at: "2026-11-08T08:00:00Z"}])' > "${work}/live4.json"
+got="$(prune_ids "${work}/live4.json")"
+for i in 3000 3001 3002 3003 3004; do [[ " ${got}" == *" ${i} "* ]] || fail "prune-caches kept blob ${i} not accessed for 4 days: ${got}"; done
+for i in 2000 2001 2039; do [[ " ${got}" != *" ${i} "* ]] || fail "prune-caches deleted blob ${i} accessed within a day: ${got}"; done
+# the default budget (6 GiB): blobs go first, least recently used first, and before any gobuild or toolchain cache
+got="$(BUDGET_MB='' prune_ids "${work}/live4.json")"
+left="$(jq --argjson ids "$(printf '%s\n' ${got} | jq -Rn '[inputs|tonumber]')" '[.[] | select(.id as $i | $ids | index($i) | not) | .size_in_bytes] | add / 1048576' "${work}/live4.json")"
+(( ${left%.*} <= 6144 )) || fail "prune-caches left ${left} MiB with the default budget"
+[[ " ${got}" == *" 2039 "* ]] || fail "prune-caches over budget kept the least recently used blob: ${got}"
+! sel "${work}/live4.json" ${got} | grep -Eq '^(mise|node|gomod|codeql)' || fail "prune-caches evicted a toolchain cache while blobs were left"
+grep -q 'BUDGET_MB:-6144' hack/prune-caches.sh || fail "prune-caches default budget is not 6144 MiB"
 # the usage before and after reaches the step summary
 : > "${work}/prune.log"
-env PATH="${work}/prune-stub:${PATH}" PRUNE_LIVE="${live}" PRUNE_LOG="${work}/prune.log" PRUNE_404=0 PRUNE_500=0 GITHUB_REPOSITORY=o/r GITHUB_STEP_SUMMARY="${work}/summary.md" ./hack/prune-caches.sh >/dev/null
+env BUDGET_MB=100000 NOW=1794484800 PATH="${work}/prune-stub:${PATH}" PRUNE_LIVE="${live}" PRUNE_LOG="${work}/prune.log" PRUNE_404=0 PRUNE_500=0 GITHUB_REPOSITORY=o/r GITHUB_STEP_SUMMARY="${work}/summary.md" ./hack/prune-caches.sh >/dev/null
 grep -q '^| before |' "${work}/summary.md" && grep -q '^| after |' "${work}/summary.md" || fail "prune-caches wrote no before/after table to GITHUB_STEP_SUMMARY"
 echo "ok: prune-caches"
 
@@ -449,6 +497,10 @@ grep -q -- 'flags+=(--prerelease --latest=false)' "${wf}" || fail "release.yml: 
 # a draft cannot be latest: the create step must not ask for it, the publish step does
 ! grep -q -- 'flags+=(--latest)' <(sed -n '/Create the draft release/,/Check that every digest/p' "${wf}") || fail "release.yml: the draft release is created with --latest (drafts cannot be latest)"
 grep -q -- 'gh release edit "${TAG}" --draft=false --latest$' "${wf}" || fail "release.yml: publishing a stable release does not pass --latest"
+# A dispatch must run from the ref it publishes: the resolve step compares the
+# input with github.ref_name through env, never an expression in run:.
+grep -q 'DISPATCH_TAG}" != "${REF_NAME}"' "${wf}" || fail "release.yml: a dispatch is not checked against the ref it runs from"
+! grep -q 'inputs\.tag' <(awk '/run: \|/ {on=1; next} /^ {6}- name:|^ {4}[a-z]/ {on=0} on' "${wf}") || fail "release.yml: inputs.tag is interpolated into a run: block"
 echo "ok: release.yml latest flags"
 
 # ---- Chart.yaml: helm push stamps org.opencontainers.image.source from the

@@ -111,8 +111,19 @@ images=(
 
 die() { echo "release: $*" >&2; exit 1; }
 
+# file_at PATH: the file as the commit in CHECK_SHA has it (the commit that is
+# being tagged), else as the working tree has it. A preflight run from another
+# checkout, or with uncommitted edits, must judge the tagged tree.
+file_at() {
+  if [[ -n "${CHECK_SHA:-}" ]]; then
+    git show "${CHECK_SHA}:$1"
+  else
+    cat "$1"
+  fi
+}
+
 chart_field() { # version | appVersion
-  sed -n "s/^$1: *\"\{0,1\}\([^\"]*\)\"\{0,1\} *\$/\1/p" "${chart_dir}/Chart.yaml"
+  file_at "${chart_dir}/Chart.yaml" | sed -n "s/^$1: *\"\{0,1\}\([^\"]*\)\"\{0,1\} *\$/\1/p"
 }
 
 # ---------------------------------------------------------------- check ---
@@ -185,7 +196,7 @@ cmd_check() {
 
 # changelog_heading VERSION -> the '## [VERSION]...' line, empty when absent.
 changelog_heading() {
-  awk -v v="$1" 'index($0, "## [" v "]") == 1 { print; exit }' CHANGELOG.md
+  file_at CHANGELOG.md | awk -v v="$1" 'index($0, "## [" v "]") == 1 { print; exit }'
 }
 
 # A release is cut from main: the tagged commit must be reachable from it.
@@ -314,14 +325,14 @@ full_tier_state() {
 # automerge workflow dispatches ci.yml and security.yml for that reason); if
 # there are none, dispatch both on the commit.
 cmd_preflight() {
-  local tag="${1:?usage: release.sh preflight TAG [SHA]}" sha="${2:-}"
-  ALLOW_UNRELEASED=0 REQUIRE_DATED=1 cmd_check "${tag}"
+  local tag="${1:?usage: release.sh preflight TAG [SHA]}" arg="${2:-}" sha=""
   # An argument is any revision (HEAD~1, a branch, the object SHA of an annotated
   # tag): resolve it to the commit it peels to, so that every comparison and the
-  # check-run query below use a commit SHA.
-  if [[ -n "${sha}" ]]; then
-    sha="$(git rev-parse -q --verify "${sha}^{commit}")" \
-      || die "${sha} does not name a commit in this clone (a revision such as HEAD~1 or a tag is accepted; fetch it first if it is remote)"
+  # check-run query below use a commit SHA. It is resolved before the checks so
+  # that they read the tagged commit, not the working tree.
+  if [[ -n "${arg}" ]]; then
+    sha="$(git rev-parse -q --verify "${arg}^{commit}")" \
+      || die "${arg} does not name a commit in this clone (a revision such as HEAD~1 or a tag is accepted; fetch it first if it is remote)"
   fi
   if [[ -z "${sha}" ]]; then
     if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
@@ -333,12 +344,12 @@ cmd_preflight() {
   # An existing tag decides what is released: an explicit SHA that is not the
   # commit the tag points at would be preflighted while another is shipped.
   if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
-    local tagged given
+    local tagged
     tagged="$(git rev-list -n 1 "refs/tags/${tag}")"
-    given="$(git rev-parse -q --verify "${sha}^{commit}")" || die "${sha} is not a commit in this clone"
-    [[ "${given}" == "${tagged}" ]] \
+    [[ "${sha}" == "${tagged}" ]] \
       || die "${tag} already exists and points at ${tagged}, not at ${sha}; preflight the tagged commit or delete the local tag"
   fi
+  CHECK_SHA="${sha}" ALLOW_UNRELEASED=0 REQUIRE_DATED=1 cmd_check "${tag}"
   # Fail before any network call: a SHA that is not on main is refused by
   # `prepare` after the approval, so say it now.
   git rev-parse -q --verify refs/remotes/origin/main >/dev/null \

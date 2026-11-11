@@ -101,7 +101,19 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          if [[ "${EVENT}" == "workflow_dispatch" ]]; then tag="${DISPATCH_TAG}"; else tag="${REF_NAME}"; fi
+          if [[ "${EVENT}" == "workflow_dispatch" ]]; then
+            # The workflow file that runs (and signs: release.yml@refs/tags/...)
+            # is the one of the ref the dispatch was started from; it must be
+            # the tag being published, or a release of one tag would be built
+            # by the workflow of another.
+            if [[ "${DISPATCH_TAG}" != "${REF_NAME}" ]]; then
+              echo "dispatch input tag ${DISPATCH_TAG} is not the ref the workflow runs from (${REF_NAME}); start it with --ref ${DISPATCH_TAG}" >&2
+              exit 1
+            fi
+            tag="${DISPATCH_TAG}"
+          else
+            tag="${REF_NAME}"
+          fi
           kind=product
           [[ "${tag}" != pkg/evidence/v* ]] || kind=module
           if [[ "${kind}" == product ]]; then
