@@ -27,6 +27,29 @@ expect() {
   grep -Eq -- "${pattern}" <<<"${out}" || fail "$*: output lacks /${pattern}/: ${out}"
 }
 
+# ---- resolve: the one place a version is derived from a tag. A product rc keeps
+# its pre-release part and loses only the v (the bug was "v0.1.0-rc.1").
+rs() { ./hack/release.sh resolve "$@"; }
+expect 0 '^kind=product$' -- rs v0.1.0
+expect 0 '^version=0\.1\.0$' -- rs v0.1.0
+expect 0 '^prerelease=false$' -- rs v0.1.0
+expect 0 '^version=0\.1\.0-rc\.1$' -- rs v0.1.0-rc.1
+expect 0 '^prerelease=true$' -- rs v0.1.0-rc.1
+expect 0 '^version=1\.2\.3$' -- rs v1.2.3
+expect 0 '^kind=module$' -- rs pkg/evidence/v0.1.0
+expect 0 '^version=0\.1\.0$' -- rs pkg/evidence/v0.1.0
+expect 0 '^prerelease=true$' -- rs pkg/evidence/v0.2.0-rc.1
+for bad in 0.1.0 v1 v1.2 v1.2.3.4 vx.y.z latest pkg/evidence/0.1.0 pkg/evidence/v1 pkg/other/v1.2.3 foo/v1.2.3 ""; do
+  expect 1 'must be|usage' -- rs "${bad}"
+done
+# A module tag is not a product tag for check, and the workflow derives nothing
+# by itself: no prefix stripping of a tag left in release.yml.
+expect 1 'must be semantic' -- ./hack/release.sh check pkg/evidence/v0.1.0
+if grep -nE '\$\{(tag|TAG)(##|#|%)' .github/workflows/release.yml hack/release.sh | grep -v 'rest="\${tag#'; then
+  fail "a version is derived from a tag outside resolve_tag (see the lines above)"
+fi
+grep -q 'release.sh resolve' .github/workflows/release.yml || fail "release.yml does not call release.sh resolve"
+
 # ---- check: a scratch repository with one commit, the real script and charts.
 repo="${work}/repo"
 mkdir -p "${repo}/hack" "${repo}/charts"
@@ -303,7 +326,7 @@ rm -f "${GH_STUB_COUNT}"
 GH_STUB_FAILS=99 expect 1 'does not verify' -- ./hack/release.sh verify-published v0.1.0
 COSIGN_STUB_FAIL=1 expect 1 'does not verify' -- ./hack/release.sh verify-published v0.1.0
 DOCKER_STUB_FAIL=1 expect 1 'cannot be pulled anonymously' -- ./hack/release.sh verify-published v0.1.0
-expect 1 'not a release tag' -- ./hack/release.sh verify-published 0.1.0
+expect 1 'must be semantic' -- ./hack/release.sh verify-published 0.1.0
 unset GH_STUB_COUNT VERIFY_SLEEP VERIFY_ATTEMPTS
 
 export GITHUB_STEP_SUMMARY="${work}/summary.md"
@@ -606,7 +629,7 @@ for t in "pgToolBox operator" "pgToolBox console" "pgToolBox evidence agent"; do
   grep -q "title: ${t}$" .github/workflows/release.yml || fail "release.yml: no matrix title '${t}'"
   grep -q "image.title=\"${t}\"" Dockerfile || fail "Dockerfile does not label '${t}'"
 done
-# ---- check-helm-major: another helm major than mise.toml's pin stops verify-manifests early.
+# ---- check-helm-major: another helm major than mise.toml's pin stops the helm-rendering targets early.
 mkdir -p "${work}/hm/ok" "${work}/hm/bad"
 helm_pin="$(awk -F'"' '$2 == "helm" { print $4; exit }' mise.toml)"
 printf '#!/bin/sh\necho "v%s"\n' "${helm_pin}" > "${work}/hm/ok/helm"
@@ -614,6 +637,11 @@ printf '#!/bin/sh\necho "v%s.9.9+gabc"\n' "$((${helm_pin%%.*} - 1))" > "${work}/
 chmod +x "${work}/hm/ok/helm" "${work}/hm/bad/helm"
 HELM="${work}/hm/ok/helm" ./hack/check-helm-major.sh || fail "check-helm-major rejects the pinned major"
 HELM="${work}/hm/bad/helm" expect 1 "major differs|mise.toml pins ${helm_pin}" -- ./hack/check-helm-major.sh
+# The guard sits on every target that renders with helm, and on none that does not.
+for t in helm-lint validate-packaging helm-unittest; do
+  make -n "${t}" 2>/dev/null | grep -q 'hack/check-helm-major.sh' || fail "make ${t} does not run check-helm-major"
+done
+! make -n verify-manifests 2>/dev/null | grep -q 'check-helm-major' || fail "verify-manifests runs no helm and must not be guarded by check-helm-major"
 echo "ok: check-helm-major"
 
 # ---- check-toolchain: a Dockerfile base image that drifts from mise.toml fails.

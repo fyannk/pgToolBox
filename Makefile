@@ -57,8 +57,7 @@ manifests: ## Generate CRDs and the manager ClusterRole, then sync the packaging
 	./hack/sync-manifests.sh
 
 .PHONY: verify-manifests
-verify-manifests: ## Fail when the checked-in manifests are stale.
-	@./hack/check-helm-major.sh
+verify-manifests: ## Fail when the checked-in CRD/RBAC copies are stale (no helm: a quick subset of verify-generated, which `make check` and CI run).
 	@$(MAKE) --no-print-directory manifests
 	@git diff --exit-code -- config deploy charts || { \
 		echo "generated manifests are stale; run 'make manifests' and commit the result"; exit 1; }
@@ -332,12 +331,14 @@ dashboards-check: ## The Grafana dashboard JSON parses and every panel has a tit
 
 .PHONY: helm-lint
 helm-lint: ## Lint and template-render the two Helm charts.
+	@./hack/check-helm-major.sh
 	helm lint charts/pgtoolbox charts/pgtools
 	helm template pgtoolbox charts/pgtoolbox --namespace pgtoolbox > /dev/null
 	helm template pgtoolbox-console charts/pgtools --namespace team-a > /dev/null
 
 .PHONY: validate-packaging
 validate-packaging: ## Compare Helm, kustomize and OLM field by field (CRDs, RBAC, versions, images).
+	@./hack/check-helm-major.sh
 	./hack/validate-packaging.sh
 
 .PHONY: test-hack
@@ -511,6 +512,7 @@ test-fuzz: test-fuzz-console-api test-fuzz-evidence-agent test-fuzz-operator
 
 .PHONY: helm-unittest
 helm-unittest: ## helm-unittest: the console's RBAC, availability, NetworkPolicy and exposure rules.
+	@./hack/check-helm-major.sh
 	./hack/chart-gates.sh unittest
 
 .PHONY: chart-lint

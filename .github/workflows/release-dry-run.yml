@@ -12,6 +12,8 @@ on:
       - .github/workflows/release.yml
       - .github/workflows/release-dry-run.yml
       - hack/release.sh
+      - hack/common.mk
+      - charts/**
       - Dockerfile
       - deploy/olm/**
       - mise.toml
@@ -95,5 +97,20 @@ jobs:
           set -euo pipefail
           core="$(sed -n 's/^version: *"\{0,1\}\([^"]*\)"\{0,1\} *$/\1/p' charts/pgtoolbox/Chart.yaml)"
           core="${core%%-*}"
+          # The tag resolver first (the images, charts and notes all take their
+          # version from it): a candidate keeps its pre-release part and loses
+          # only the v. A regression here ("v0.1.0-rc.1" as a version) fails
+          # now, not after the images are pushed.
+          resolved="$(./hack/release.sh resolve "v${core}-rc.1")"
+          [[ "${resolved}" == $'kind=product\nversion='"${core}"$'-rc.1\nprerelease=true' ]] \
+            || { echo "resolve v${core}-rc.1 gave: ${resolved}" >&2; exit 1; }
+          ./hack/release.sh resolve "pkg/evidence/v${core}" | grep -qx "version=${core}"
           ./hack/release.sh check "v${core}-rc.1"
           make release-dry-run TAG="v${core}-rc.1"
+          # The artifacts carry the resolved version, not the tag.
+          for chart in pgtoolbox pgtools; do
+            test -f "dist/release/${chart}-${core}-rc.1.tgz" \
+              || { echo "dist/release/${chart}-${core}-rc.1.tgz was not produced" >&2; ls dist/release >&2; exit 1; }
+          done
+          ./hack/release.sh notes "${core}-rc.1" | head -n 3 | grep -q . \
+            || { echo "release.sh notes finds no section for ${core}-rc.1" >&2; exit 1; }
