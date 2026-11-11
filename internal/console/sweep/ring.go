@@ -21,10 +21,14 @@ import (
 	"github.com/fyannk/pgToolBox/pkg/cnpgstatus"
 )
 
-// sample is one ring entry; a nil value is a gap (the read failed).
+// sample is one ring entry; a nil value is a gap (the read failed). at
+// is the sweep's start, before the request was sent; readBy, when the
+// read returned (zero when unknown: a gap, or a ring restored from a
+// snapshot that predates it).
 type sample struct {
-	at    time.Time
-	value *float64
+	at     time.Time
+	readBy time.Time
+	value  *float64
 }
 
 // ring keeps the samples of one series younger than the retention. It is
@@ -33,8 +37,8 @@ type ring struct {
 	samples []sample
 }
 
-func (r *ring) push(at time.Time, value *float64, retention time.Duration) {
-	r.samples = append(r.samples, sample{at: at, value: value})
+func (r *ring) push(at, readBy time.Time, value *float64, retention time.Duration) {
+	r.samples = append(r.samples, sample{at: at, readBy: readBy, value: value})
 	cut := 0
 	for cut < len(r.samples) && at.Sub(r.samples[cut].at) > retention {
 		cut++
@@ -47,7 +51,7 @@ func (r *ring) push(at time.Time, value *float64, retention time.Duration) {
 func (r *ring) points() []viewmodel.Point {
 	out := make([]viewmodel.Point, 0, len(r.samples))
 	for _, s := range r.samples {
-		p := viewmodel.Point{At: s.at}
+		p := viewmodel.Point{At: s.at, ReadBy: s.readBy}
 		if s.value != nil {
 			v := *s.value
 			p.Value = &v

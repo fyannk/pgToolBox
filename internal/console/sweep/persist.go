@@ -80,6 +80,9 @@ type PersistedRing struct {
 	At               []int64
 	Values           []float64
 	Has              []bool
+	// ReadBy is when each read returned (UnixNano, 0 when unknown); a
+	// snapshot without it restores no read time.
+	ReadBy []int64 `json:",omitempty"`
 }
 
 // clusterCopy is what Export copies under the sweep's lock.
@@ -171,10 +174,15 @@ func (s *Sweeper) copyCluster(key Key) (clusterCopy, bool) {
 			r := cs.rings[name][key]
 			pr := PersistedRing{
 				Instance: name, Series: key, At: make([]int64, 0, len(r.samples)),
-				Values: make([]float64, 0, len(r.samples)), Has: make([]bool, 0, len(r.samples)),
+				Values: make([]float64, 0, len(r.samples)), Has: make([]bool, 0, len(r.samples)), ReadBy: make([]int64, 0, len(r.samples)),
 			}
 			for _, sm := range r.samples {
 				pr.At = append(pr.At, sm.at.UnixNano())
+				if sm.readBy.IsZero() {
+					pr.ReadBy = append(pr.ReadBy, 0)
+				} else {
+					pr.ReadBy = append(pr.ReadBy, sm.readBy.UnixNano())
+				}
 				if sm.value != nil {
 					pr.Values, pr.Has = append(pr.Values, *sm.value), append(pr.Has, true)
 				} else {
@@ -282,6 +290,9 @@ func (s *Sweeper) restoreLocked(cs *clusterState, target Target, at time.Time) {
 			if pr.Has[i] {
 				v := pr.Values[i]
 				sm.value = &v
+				if len(pr.ReadBy) == len(pr.At) && pr.ReadBy[i] >= ns {
+					sm.readBy = time.Unix(0, pr.ReadBy[i]).UTC()
+				}
 			}
 			r.samples = append(r.samples, sm)
 			last = t

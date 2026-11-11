@@ -395,7 +395,9 @@ func TestDesignatedPrimaryArchiverIsNotOK(t *testing.T) {
 // primary unread now, its ring is still read, so a sweep that read it
 // with nothing waiting bounds the unread band (archiverUnreadEdge's quiet
 // branch); an instance other than the primary is kept only when read now
-// with a failure to report.
+// with a failure to report, or when its ring holds a reading taken while
+// it was primary (a former primary, round 8 P2-2): a standby's ring holds
+// gaps only.
 func TestUnreadPrimaryKeepsItsRing(t *testing.T) {
 	failed := now.Add(-time.Hour)
 	g := &gathered{
@@ -406,17 +408,23 @@ func TestUnreadPrimaryKeepsItsRing(t *testing.T) {
 			"db-3": {State: viewmodel.StatusReadOK, Reading: &instancestatus.Reading{}},
 		}},
 	}
-	rings, _ := readyRings(fakeSweep{}, g)
+	standby := []viewmodel.Point{{At: now.Add(-30 * time.Second)}, {At: now}}
+	sw := ringSweep{rings: map[string][]viewmodel.Point{"db-1": standby, "db-3": standby}}
+	rings, _ := readyRings(sw, g)
 	if _, ok := rings["db-2"]; !ok {
 		t.Fatalf("the unread primary's ring is not read: %+v", rings)
 	}
 	if len(rings) != 1 {
 		t.Errorf("rings of instances the facts do not use: %+v", rings)
 	}
+	sw.rings["db-3"] = []viewmodel.Point{{At: now.Add(-30 * time.Second), Value: new(2.0)}, {At: now}}
+	if former, _ := readyRings(sw, g); len(former["db-3"]) != 2 {
+		t.Errorf("a former primary's ring is not read: %+v", former)
+	}
 	g.readyRings = rings
 	unread := viewmodel.Archiving{Health: viewmodel.HealthUnknown, Reason: cnpgstatus.ArchivingReasonPrimaryUnread}
 	facts := recoveryFactsOf(g, unread, now)
-	if q := facts.quietBy(nil); q == nil || !q.Equal(now.Add(-30*time.Second)) {
+	if q := facts.quietBy(nil); q == nil || !q.at.Equal(now.Add(-30*time.Second)) {
 		t.Errorf("quiet sweep %v, want the ring's empty reading at %s", q, now.Add(-30*time.Second))
 	}
 }
@@ -534,7 +542,7 @@ func TestBusyPrimaryBacklogBoundByPositions(t *testing.T) {
 				readyRings: map[string][]viewmodel.Point{"db-2": ready},
 			}
 			if tc.positions {
-				g.lsnRing = lsns
+				g.lsnRings = map[string][]viewmodel.Point{g.cluster.Status.CurrentPrimary: lsns}
 			}
 			facts := recoveryFactsOf(g, arch, now)
 			tl := svc.recoveryTimeline(fx.evidence(), viewmodel.BackupSummary{Archiving: arch}, nil, facts)
@@ -575,4 +583,18 @@ func TestWALSegmentSize(t *testing.T) {
 			t.Errorf("walSegmentSize(%s, %s) = %d %t, want %d", tc.lsn, tc.wal, got, ok, tc.want)
 		}
 	}
+}
+
+// ringSweep is fakeSweep with a readyWalFiles ring per instance; an
+// instance it does not name gets fakeSweep's.
+type ringSweep struct {
+	fakeSweep
+	rings map[string][]viewmodel.Point
+}
+
+func (r ringSweep) Series(key sweep.Key, instance string) []viewmodel.Series {
+	if points, ok := r.rings[instance]; ok {
+		return []viewmodel.Series{{Key: sweep.SeriesReadyWALFiles, Unit: "files", Points: points}}
+	}
+	return r.fakeSweep.Series(key, instance)
 }

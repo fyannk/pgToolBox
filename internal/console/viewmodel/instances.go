@@ -172,4 +172,9 @@ type Series struct {
 type Point struct {
 	At    time.Time `json:"at"`
 	Value *float64  `json:"value"`
+	// ReadBy is when the read behind the point returned (At is the
+	// sweep's start, before it was sent); zero when unknown. Not served:
+	// the recovery facts read it (a "by then" claim takes ReadBy, a
+	// "not yet by then" one At).
+	ReadBy time.Time `json:"-"`
 }

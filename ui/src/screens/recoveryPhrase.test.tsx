@@ -125,6 +125,12 @@ test("the reasons, the backlog, the end of WAL and the caps are said in French",
       { backupId: "b1", reason: "chain-broken", detail: "" },
       /^la sauvegarde de base b1 est inutilisable \(chain-broken\) : l’intervalle qu’elle seule atteint/,
     ],
+    ["recovery.segment.formerArchiverUnknown", { timeline: "1" }, /^Les WAL jusqu’ici sur la timeline 1 ont été archivés par un ancien primaire, et la console/],
+    [
+      "recovery.segment.formerArchiverSince",
+      { timeline: "1", quietAt: "2026-10-29T09:00:00Z" },
+      /^Les WAL jusqu’ici sur la timeline 1 .* n’avait plus rien en attente le .*09:00/,
+    ],
     ["recovery.segment.afterLastReadFailing", { scannedAt: "2026-10-29T11:50:00Z" }, /l’archivage des WAL échoue/],
     [
       "recovery.reportedTail.afterArchivedBacklog",

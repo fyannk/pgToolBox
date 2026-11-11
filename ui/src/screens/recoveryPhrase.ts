@@ -318,6 +318,22 @@ function translate(code: string, p: Params): string | undefined {
       const bound = instant(p, "boundAt");
       return read && bound ? m.rp_segment_archiver_unread_bound({ read, bound }) : undefined;
     }
+    case "recovery.segment.formerArchiverUnknown":
+    case "recovery.segment.formerArchiverBacklog":
+    case "recovery.segment.formerArchiverSince":
+    case "recovery.segment.formerArchiverBound": {
+      const timeline = p?.timeline;
+      if (!timeline) return undefined;
+      if (code === "recovery.segment.formerArchiverUnknown") return m.rp_segment_former_archiver_unknown({ timeline });
+      if (code === "recovery.segment.formerArchiverBacklog") return m.rp_segment_former_archiver_backlog({ timeline });
+      if (code === "recovery.segment.formerArchiverSince") {
+        const quiet = instant(p, "quietAt");
+        return quiet ? m.rp_segment_former_archiver_since({ timeline, quiet }) : undefined;
+      }
+      const read = instant(p, "readAt");
+      const bound = instant(p, "boundAt");
+      return read && bound ? m.rp_segment_former_archiver_bound({ timeline, read, bound }) : undefined;
+    }
     case "recovery.segment.pathNotHealthy": {
       const state = evidenceStateWord(p?.state);
       if (!state || !id) return undefined;
