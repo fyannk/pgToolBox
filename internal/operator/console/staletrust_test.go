@@ -96,6 +96,60 @@ func TestHeldWideningReadsTheWorkloadPastCache(t *testing.T) {
 	}
 }
 
+// TestExposureConfinementGrantCases: the any-peer trust an earlier Pod
+// address verified stands in only for the console's own workload carrying
+// both the grant and the hash of these blocks; a Deployment counts like a
+// StatefulSet.
+func TestExposureConfinementGrantCases(t *testing.T) {
+	t.Parallel()
+	c := ipBlockConsole("192.168.10.0/24")
+	peers := buildExposureNetworkPolicy(c, true).Spec.Ingress[0].From
+	pending := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "console-0", Namespace: c.Namespace, Labels: selectorLabels(c)}}
+	both := map[string]string{annotationTrustsEveryPeer: "true", annotationTrustedBlocks: trustedBlocksHash(peers)}
+	deployment := owned(c, &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: c.WorkloadName(), Namespace: c.Namespace}})
+	deployment.Spec.Template.Annotations = both
+	foreign := &appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{Name: c.WorkloadName(), Namespace: c.Namespace}}
+	foreign.Spec.Template.Annotations = both
+	noHash := owned(c, &appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{Name: c.WorkloadName(), Namespace: c.Namespace}})
+	noHash.Spec.Template.Annotations = map[string]string{annotationTrustsEveryPeer: "true"}
+	cases := []struct {
+		name    string
+		objects []client.Object
+		trusted bool
+	}{
+		{"a Deployment with the grant and the hash", []client.Object{pending, deployment}, true},
+		{"a workload the console does not own", []client.Object{pending, foreign}, false},
+		{"the grant without the hash", []client.Object{pending, noHash}, false},
+		{"scaled to zero, a Deployment with both", []client.Object{deployment}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			objects := make([]client.Object, 0, len(tc.objects))
+			for _, o := range tc.objects {
+				objects = append(objects, o.DeepCopyObject().(client.Object))
+			}
+			cl := fake.NewClientBuilder().WithScheme(cnpgScheme(t)).WithObjects(objects...).Build()
+			r := &Reconciler{Client: cl, APIReader: cl}
+			found, err := r.exposureConfinement(context.Background(), c, peers)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := effectiveProxyTrust(c, true, found).EveryPeer; got != tc.trusted {
+				t.Fatalf("any-peer trust %v, want %v (confinement %+v)", got, tc.trusted, found)
+			}
+			if !tc.trusted {
+				return
+			}
+			// The grant kept renders the same hash, byte-stable.
+			in := deploymentInputs{Exposed: true, Confinement: found}
+			if got := podTemplate(c, in).Annotations[annotationTrustedBlocks]; got != both[annotationTrustedBlocks] {
+				t.Fatalf("rendered blocks %q, want the live %q", got, both[annotationTrustedBlocks])
+			}
+		})
+	}
+}
+
 // blockingNodeList is an APIReader whose Node lists wait for release (or
 // their context) and count.
 func blockingNodeList(t *testing.T, objects ...client.Object) (client.WithWatch, chan struct{}, chan struct{}, *atomic.Int32) {
