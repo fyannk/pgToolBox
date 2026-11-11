@@ -426,6 +426,9 @@ echo "ok: prune-caches"
 ./hack/check-action-pins.sh >/dev/null || fail "check-action-pins fails on the committed doc"
 sed '/jdx\/mise-action@/d' docs/site/docs/development/repository-settings.md > "${work}/settings-missing.md"
 expect 1 'jdx/mise-action' -- ./hack/check-action-pins.sh "${work}/settings-missing.md"
+# An entry naming a SHA would allow only that SHA: the list must say @*.
+sed 's#`jdx/mise-action@\*`#`jdx/mise-action@0123456789abcdef0123456789abcdef01234567`#' docs/site/docs/development/repository-settings.md > "${work}/settings-sha.md"
+expect 1 'jdx/mise-action' -- ./hack/check-action-pins.sh "${work}/settings-sha.md"
 
 # ---- retry: the bounded loop the workflow's verify step shares with
 # verify-published; a command that never succeeds fails after VERIFY_ATTEMPTS.
