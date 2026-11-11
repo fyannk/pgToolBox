@@ -1374,3 +1374,105 @@ func TestReconcileHostnameAllowList(t *testing.T) {
 		})
 	}
 }
+
+// TestReconcileStaleRouteAfterRefusal: round 14, operator item 4. The
+// PgAdmin published a Route; then this namespace's Role started refusing
+// Routes (other namespaces allow them) and the PgAdmin switched to
+// clusterIP. Owned, the Route is read past the cache and deleted; if the
+// read is refused, ExposureReady keeps its reason and says a Route may
+// remain, the same text at every loop (the second loop writes no status).
+func TestReconcileStaleRouteAfterRefusal(t *testing.T) {
+	refusedHere := discovery.Result{GVK: routev1.GroupVersion.WithKind("Route"), State: discovery.Available, RefusedIn: []string{testNamespace}}
+	clusterIP := func() *pgtoolboxv1alpha1.PgAdmin {
+		p := oauth2PgAdmin()
+		p.Spec.Exposure.Type = pgtoolboxv1alpha1.ExposureTypeClusterIP
+		return p
+	}
+	staleRoute := func(p *pgtoolboxv1alpha1.PgAdmin) *routev1.Route {
+		return &routev1.Route{ObjectMeta: metav1.ObjectMeta{
+			Name: namesOf(p).base, Namespace: testNamespace, UID: "route-uid",
+			OwnerReferences: []metav1.OwnerReference{{
+				APIVersion: pgtoolboxv1alpha1.GroupVersion.String(), Kind: "PgAdmin", Name: p.Name, UID: p.UID, Controller: new(true),
+			}},
+		}}
+	}
+
+	t.Run("owned: deleted", func(t *testing.T) {
+		p := clusterIP()
+		h := newHarness(t, nil, append(baseObjects(p), staleRoute(p))...)
+		h.r.Features.Routes = refusedHere
+		if err := h.reconcile(p.Name); err != nil {
+			t.Fatal(err)
+		}
+		err := h.client.Get(context.Background(), client.ObjectKey{Namespace: testNamespace, Name: namesOf(p).base}, &routev1.Route{})
+		if !apierrors.IsNotFound(err) {
+			t.Fatalf("the stale Route is still there: %v", err)
+		}
+		if msg := condition(h.pgadmin(p.Name), "ExposureReady").Message; strings.Contains(msg, "Route") {
+			t.Errorf("ExposureReady still names a Route once it is deleted: %q", msg)
+		}
+	})
+
+	t.Run("unreadable: ExposureReady says it may remain", func(t *testing.T) {
+		p := clusterIP()
+		h := newHarness(t, nil, baseObjects(p)...)
+		h.r.Features.Routes = refusedHere
+		h.r.APIReader = interceptor.NewClient(h.client.(client.WithWatch), interceptor.Funcs{
+			Get: func(ctx context.Context, inner client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+				if _, isRoute := obj.(*routev1.Route); isRoute {
+					return apierrors.NewForbidden(schema.GroupResource{Group: routev1.GroupName, Resource: "routes"}, key.Name, errors.New("narrowed Role"))
+				}
+				return inner.Get(ctx, key, obj, opts...)
+			},
+		})
+		if err := h.reconcile(p.Name); err != nil {
+			t.Fatal(err)
+		}
+		first := h.pgadmin(p.Name)
+		ready := condition(first, "ExposureReady")
+		want := "the operator may not read Routes in " + testNamespace + ": a Route " + namesOf(p).base + " published before may remain; delete it by hand"
+		if ready.Reason != string(pgtoolboxv1alpha1.ReasonNotRequested) || !strings.Contains(ready.Message, want) {
+			t.Fatalf("ExposureReady = %+v, want NotRequested with %q", ready, want)
+		}
+		if err := h.reconcile(p.Name); err != nil {
+			t.Fatal(err)
+		}
+		if again := h.pgadmin(p.Name); again.ResourceVersion != first.ResourceVersion {
+			t.Errorf("a no-op loop wrote the status: %s -> %s", first.ResourceVersion, again.ResourceVersion)
+		}
+	})
+}
+
+// TestReconcileRefusedEverywhereNamesOwnNamespace: round 14, Go P3-2. An
+// optional API refused in every watched namespace carries the first
+// refusing namespace's reason (team-z here); a PgAdmin of another
+// namespace must read its own namespace in its status, never team-z.
+func TestReconcileRefusedEverywhereNamesOwnNamespace(t *testing.T) {
+	p := oauth2PgAdmin()
+	p.Spec.Endpoints = []pgtoolboxv1alpha1.Endpoint{"rw", "pooler:orders-pooler"}
+	h := newHarness(t, nil, baseObjects(p)...)
+	refused := func(kind string) discovery.Result {
+		return discovery.Result{
+			GVK: schema.GroupVersionKind{Group: "postgresql.cnpg.io", Version: "v1", Kind: kind}, Namespace: "team-z",
+			State: discovery.Forbidden, Reason: "not allowed to list " + kind + ".postgresql.cnpg.io in team-z",
+		}
+	}
+	h.r.Features.DatabaseRoles, h.r.Features.Poolers = refused("DatabaseRole"), refused("Pooler")
+	if err := h.reconcile(p.Name); err != nil {
+		t.Fatal(err)
+	}
+	got := h.pgadmin(p.Name)
+	for _, c := range got.Status.Conditions {
+		if strings.Contains(c.Message, "team-z") {
+			t.Errorf("%s names another tenant's namespace: %q", c.Type, c.Message)
+		}
+	}
+	for _, row := range got.Status.Servers {
+		if strings.Contains(row.Message, "team-z") {
+			t.Errorf("server row names another tenant's namespace: %+v", row)
+		}
+	}
+	if msg := condition(got, "ConfigurationValid").Message; !strings.Contains(msg, "in "+testNamespace) {
+		t.Errorf("ConfigurationValid does not name the PgAdmin's own namespace: %q", msg)
+	}
+}

@@ -36,6 +36,7 @@ import (
 	"github.com/fyannk/pgToolBox/internal/operator/pgadmin/offer"
 	"github.com/fyannk/pgToolBox/internal/operator/reconcile"
 	"github.com/fyannk/pgToolBox/internal/operator/specs"
+	"github.com/fyannk/pgToolBox/pkg/discovery"
 )
 
 // configDatabase: pgAdmin's settings database
@@ -256,7 +257,7 @@ func (r *Reconciler) reconcileConfigDatabase(ctx context.Context, p *pgtoolboxv1
 		return state, nil
 	}
 	name := spec.DatabaseOrDefault(p.Name)
-	host, port, _ := endpointHost(&cluster, pgtoolboxv1alpha1.EndpointRW, nil, false)
+	host, port, _ := endpointHost(&cluster, pgtoolboxv1alpha1.EndpointRW, nil, discovery.Result{})
 	state.Server = &offer.Server{
 		Name:                  configDatabaseServerName,
 		Cluster:               cluster.Name,

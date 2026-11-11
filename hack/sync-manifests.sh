@@ -50,6 +50,11 @@ HEADER
   printf '\n{{- end }}\n'
 } > "${helm_clusterrole}"
 
+# 2a. The operator's own copy of the manager role: it embeds it
+#     (internal/operator/managerrole) to check, at start, that each watched
+#     namespace grants it every namespaced rule, rather than a hand-kept list.
+cp "${role_file}" internal/operator/managerrole/role.yaml
+
 # 2b. The two user ClusterRoles and the metrics reader: hand-written once in
 #     config/rbac, copied into the bundle as plain manifests (OLM applies
 #     ClusterRoles shipped beside the CSV) and into the chart as templates. The

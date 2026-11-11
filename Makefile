@@ -59,7 +59,7 @@ manifests: ## Generate CRDs and the manager ClusterRole, then sync the packaging
 .PHONY: verify-manifests
 verify-manifests: ## Fail when the checked-in CRD/RBAC copies are stale (no helm: a quick subset of verify-generated, which `make check` and CI run).
 	@$(MAKE) --no-print-directory manifests
-	@git diff --exit-code -- config deploy charts || { \
+	@git diff --exit-code -- config deploy charts internal/operator/managerrole || { \
 		echo "generated manifests are stale; run 'make manifests' and commit the result"; exit 1; }
 
 # Every file a generator owns, regenerated, then the tree compared with the

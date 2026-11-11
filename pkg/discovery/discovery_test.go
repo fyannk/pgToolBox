@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"math/rand/v2"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -377,6 +378,17 @@ func TestProbeKindsNamespaceIsolation(t *testing.T) {
 					t.Fatalf("iteration %d: %s in %s usable = %v, its own answer %v (matrix %v)",
 						iteration, gvk.Kind, namespace, result.In(namespace).Usable(), answer, errs[gvk.Kind])
 				}
+				// A namespace's outcome names no other namespace: its reason
+				// reaches that namespace's status, read by its tenant.
+				for _, named := range namespaceWord.FindAllString(result.In(namespace).Reason, -1) {
+					if named != namespace {
+						t.Fatalf("iteration %d: %s in %s: reason %q names %s (matrix %v)",
+							iteration, gvk.Kind, namespace, result.In(namespace).Reason, named, errs[gvk.Kind])
+					}
+				}
+				if in := result.In(namespace); in.Namespace != "" && in.Namespace != namespace {
+					t.Fatalf("iteration %d: %s in %s carries namespace %s", iteration, gvk.Kind, namespace, in.Namespace)
+				}
 			}
 			if result.Usable() != (listable > 0) {
 				t.Fatalf("iteration %d: %s usable = %v with %d namespaces listable", iteration, gvk.Kind, result.Usable(), listable)
@@ -394,6 +406,9 @@ func TestProbeKindsNamespaceIsolation(t *testing.T) {
 		}
 	}
 }
+
+// namespaceWord matches a namespace name of TestProbeKindsNamespaceIsolation.
+var namespaceWord = regexp.MustCompile(`\bns[0-9]+\b`)
 
 func btoi(b bool) int {
 	if b {

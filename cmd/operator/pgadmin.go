@@ -255,7 +255,7 @@ func startupRead[T any](ctx context.Context, timeout time.Duration, name string,
 // preparePgAdminWith is preparePgAdmin past the client: each API read under
 // the budget, the configuration info metric registered on registry once the
 // watched namespaces are known (it lists those actually watched).
-func preparePgAdminWith(ctx context.Context, direct client.Reader, registry prometheus.Registerer, budget *startupBudget, objects configuration.Objects) (pgAdminPrepared, error) {
+func preparePgAdminWith(ctx context.Context, direct startupAPI, registry prometheus.Registerer, budget *startupBudget, objects configuration.Objects) (pgAdminPrepared, error) {
 	loaded, err := budgetedRead(ctx, budget, "load the configuration", func(ctx context.Context) (configuration.Loaded, error) {
 		return configuration.Load(ctx, direct, os.LookupEnv, objects)
 	})
@@ -266,18 +266,25 @@ func preparePgAdminWith(ctx context.Context, direct client.Reader, registry prom
 		return pgAdminPrepared{}, err
 	}
 	// A watched namespace the operator holds no right in (deleted after the
-	// install, and its RoleBinding with it) is left out of the watch
-	// rather than failing the start or turning features off elsewhere.
+	// install, and its RoleBinding with it), or only some of the rights it
+	// needs (its administrator bound the operator to a narrower Role), is
+	// left out of the watch rather than failing the start for every
+	// namespace: an informer refused in one namespace never syncs.
 	namespaces := loaded.Config.WatchNamespaces
-	watched, err := budgetedRead(ctx, budget, "check the watched namespaces", func(ctx context.Context) ([]string, error) {
+	reachable, err := budgetedRead(ctx, budget, "check the watched namespaces", func(ctx context.Context) ([]string, error) {
 		return reachableNamespaces(ctx, direct, namespaces)
 	})
 	if err != nil {
 		return pgAdminPrepared{}, err
 	}
-	// A namespace where one optional API is refused while others allow it
-	// (its administrator bound the operator to a narrower Role) is left out
-	// too, rather than the feature turned off for every namespace.
+	watched, err := budgetedRead(ctx, budget, "check the operator's permissions in the watched namespaces", func(ctx context.Context) ([]string, error) {
+		return permittedNamespaces(ctx, direct, reachable)
+	})
+	if err != nil {
+		return pgAdminPrepared{}, err
+	}
+	// An optional API refused in some watched namespaces only is off in
+	// those namespaces alone; no namespace is left out for it.
 	probed, err := budgetedRead(ctx, budget, "probe the optional APIs", func(ctx context.Context) (optionalAPIs, error) {
 		return probeOptionalAPIs(ctx, direct, watched)
 	})
@@ -407,22 +414,7 @@ func probeOptionalAPIs(ctx context.Context, reader client.Reader, namespaces []s
 	probed := optionalAPIs{Namespaces: namespaces}
 	var clusters discovery.Result
 	features := &probed.Features
-	evidence := &probed.EvidenceAgent
-	probes := []struct {
-		target *discovery.Result
-		gvk    schema.GroupVersionKind
-		object client.Object // nil: the required kind, not optional
-	}{
-		{&clusters, cnpgv1.SchemeGroupVersion.WithKind("Cluster"), nil},
-		{&features.Routes, routev1.GroupVersion.WithKind("Route"), &routev1.Route{}},
-		{&features.Gateways, schema.GroupVersionKind{Group: gatewayv1.GroupName, Version: "v1", Kind: "HTTPRoute"}, &gatewayv1.HTTPRoute{}},
-		{&features.DatabaseRoles, cnpgv1.SchemeGroupVersion.WithKind("DatabaseRole"), &cnpgv1.DatabaseRole{}},
-		{&features.Poolers, cnpgv1.SchemeGroupVersion.WithKind("Pooler"), &cnpgv1.Pooler{}},
-		{&features.Databases, cnpgv1.SchemeGroupVersion.WithKind("Database"), &cnpgv1.Database{}},
-		{&evidence.ObjectStore, discovery.ObjectStoreGVK, metadataObject(discovery.ObjectStoreGVK)},
-		{&evidence.Stanza, discovery.StanzaGVK, metadataObject(discovery.StanzaGVK)},
-		{&evidence.Archive, discovery.ArchiveGVK, metadataObject(discovery.ArchiveGVK)},
-	}
+	probes := apiProbes(&probed, &clusters)
 	gvks := make([]schema.GroupVersionKind, len(probes))
 	for i, probe := range probes {
 		gvks[i] = probe.gvk
@@ -457,6 +449,45 @@ func probeOptionalAPIs(ctx context.Context, reader client.Reader, namespaces []s
 	}
 	features.OpenShift = openShift
 	return probed, nil
+}
+
+// apiProbe is one kind probeOptionalAPIs probes: where its result goes, and
+// the object its informer is keyed by (nil for the required Cluster kind).
+type apiProbe struct {
+	target *discovery.Result
+	gvk    schema.GroupVersionKind
+	object client.Object
+}
+
+// apiProbes is the kinds probeOptionalAPIs probes, the Cluster kind first,
+// each writing its result into probed (clusters for the Cluster kind).
+func apiProbes(probed *optionalAPIs, clusters *discovery.Result) []apiProbe {
+	features := &probed.Features
+	evidence := &probed.EvidenceAgent
+	return []apiProbe{
+		{clusters, cnpgv1.SchemeGroupVersion.WithKind("Cluster"), nil},
+		{&features.Routes, routev1.GroupVersion.WithKind("Route"), &routev1.Route{}},
+		{&features.Gateways, schema.GroupVersionKind{Group: gatewayv1.GroupName, Version: "v1", Kind: "HTTPRoute"}, &gatewayv1.HTTPRoute{}},
+		{&features.DatabaseRoles, cnpgv1.SchemeGroupVersion.WithKind("DatabaseRole"), &cnpgv1.DatabaseRole{}},
+		{&features.Poolers, cnpgv1.SchemeGroupVersion.WithKind("Pooler"), &cnpgv1.Pooler{}},
+		{&features.Databases, cnpgv1.SchemeGroupVersion.WithKind("Database"), &cnpgv1.Database{}},
+		{&evidence.ObjectStore, discovery.ObjectStoreGVK, metadataObject(discovery.ObjectStoreGVK)},
+		{&evidence.Stanza, discovery.StanzaGVK, metadataObject(discovery.StanzaGVK)},
+		{&evidence.Archive, discovery.ArchiveGVK, metadataObject(discovery.ArchiveGVK)},
+	}
+}
+
+// optionalGroupKinds is the optional kinds' GroupKinds: a namespace that
+// refuses one turns that feature off there, it is not left out of the
+// watch (permittedNamespaces asks for none of them).
+func optionalGroupKinds() []schema.GroupKind {
+	var kinds []schema.GroupKind
+	for _, probe := range apiProbes(&optionalAPIs{}, &discovery.Result{}) {
+		if probe.object != nil {
+			kinds = append(kinds, probe.gvk.GroupKind())
+		}
+	}
+	return kinds
 }
 
 // reachableNamespaces keeps the watched namespaces where the operator may

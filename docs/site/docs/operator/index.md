@@ -149,12 +149,30 @@ overrides `PGADMIN_IMAGE_REPOSITORIES`; see [images](images.md)).
 
 The operator reads every namespace of `WATCH_NAMESPACES` once at start. It
 leaves out, with an error in its log and in `pgtoolbox_watch_namespaces_dropped`,
-a listed namespace it cannot use for CloudNativePG Clusters:
+a listed namespace it cannot fully use:
 
 - a listed namespace deleted after the install: once it is recreated, run
   `helm upgrade` (its RoleBinding) and restart the operator;
 - a namespace where the operator may not list CloudNativePG Clusters: restore
-  the chart's RoleBinding, then restart the operator.
+  the chart's RoleBinding, then restart the operator;
+- a namespace where the operator lacks any other namespaced permission of its
+  manager role: its administrator replaced the chart's RoleBinding with a
+  narrower Role (Clusters readable but not Deployments, Secrets, Pods, Roles
+  and so on, or Clusters listed but not watched). The log line names the
+  namespace and each missing permission (`list,watch deployments.apps`).
+  Restore the chart's RoleBinding, then restart the operator.
+
+The check is one SelfSubjectRulesReview per namespace, concurrent, under the
+start-up deadline. Where the cluster's authorizer cannot list its rules (a
+webhook authorizer), each permission the review does not show is asked again
+with a SelfSubjectAccessReview. It asks for exactly the namespaced rules of
+the manager role the operator ships with (the generated role, embedded in the
+binary), plus `list` and `watch` on every kind its informers hold. A
+namespace left out is not reconciled, and the others are unaffected. Without
+this check, an informer refused in one namespace would never sync, and the
+operator would stop for every namespace. If the RBAC of a kept namespace
+changes after the start so that an informer can no longer sync, the
+operator's exit error carries a hint naming the watched namespaces to check.
 
 An optional API (Routes, HTTPRoutes, Poolers, Databases, DatabaseRoles, the
 backup plugins' kinds) never leaves a namespace out: each namespace's Role
@@ -167,7 +185,15 @@ namespaces keep it, and it is watched only where it can be listed. Refused in
 every namespace, it is off everywhere. A change of RBAC is read at the next
 start.
 
-If none of the listed namespaces answers, the operator does not start; nor does
+A Route or HTTPRoute published before its API was refused in the namespace
+is not forgotten. The operator looks it up past the cache at every
+reconciliation and deletes it when it is no longer wanted. When it cannot (the
+Route is the requested exposure, or its read or deletion is refused),
+`ExposureReady` keeps its reason but its message says that a Route or HTTPRoute
+published before may remain and must be deleted by hand. It never says the
+exposure is gone.
+
+If no listed namespace is left, the operator does not start; nor does
 it when the API server refuses its credentials (401) at start, which is retried
 by a restart rather than read as a namespace out of reach.
 
@@ -228,7 +254,10 @@ security model:
 
 - It holds `create` on `tokenreviews` and `subjectaccessreviews`, because the
   evidence agents' ClusterRole needs both and Kubernetes' escalation prevention
-  makes a grantor hold what it grants.
+  makes a grantor hold what it grants. It also holds `create` on
+  `selfsubjectrulesreviews` and `selfsubjectaccessreviews`, for its start-up
+  check of each watched namespace (Kubernetes grants both to every
+  authenticated user by default; the role does not rely on that).
 - It does **not** hold the console's read rules. A `PgToolBoxConsole`'s ServiceAccount is
   bound to two ClusterRoles shipped with the operator, `pgtoolbox-console` and
   `pgtoolbox-console-pod-logs`; the operator has only the `bind` verb on those two
