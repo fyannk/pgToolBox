@@ -17,6 +17,15 @@ name: Pages
 # page's age is at most a day even when nothing is pushed), by hand, and by the
 # release workflow after a release (an event raised with the Actions token
 # starts no other workflow, so release.yml dispatches this one on main).
+#
+# What the documentation shows: the docs of the latest stable release (the tag
+# of GitHub's "latest" release, never a pre-release) once one exists, and of
+# the default branch before that. That holds for the scheduled and the
+# workflow_run builds too, so the site does not jump back to unreleased text at
+# the next main deploy. A dispatch with an empty docs_ref builds the default
+# branch (the way to publish main's docs on purpose); with docs_ref it builds
+# that release tag. The Security page is separate: it always shows the newest
+# security run on main.
 on:
   workflow_run: # zizmor: ignore[dangerous-triggers] checks out main only and renders JSON from main's own runs; see the build job
     workflows: [Security]
@@ -27,7 +36,7 @@ on:
   workflow_dispatch:
     inputs:
       docs_ref:
-        description: Ref whose documentation is built (default branch when empty); release.yml passes the release tag
+        description: Documentation to build, refs/tags/vX.Y.Z or the default branch (default branch when empty); release.yml passes the release tag. Scheduled and workflow_run builds use the latest stable release tag
         required: false
         default: ""
         type: string
@@ -52,21 +61,52 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
-      contents: read # check out main
+      contents: read # check out the documentation ref and read the latest release
       actions: read # download the security-results artifact of another run
       security-events: read # read the open CodeQL alerts
     env:
       GH_TOKEN: ${{ github.token }}
       REPO: ${{ github.repository }}
     steps:
-      # The default branch, never the commit a workflow_run event names; after a
-      # release, the release tag (docs_ref), so the site shows the released
-      # documentation even when main has moved on. The ref is only ever a
-      # checkout input, never part of a command.
-      - name: Check out main (or the release tag)
+      # Which documentation: see the header. Only refs/tags/vX.Y.Z[-pre] and the
+      # default branch are accepted (never refs/pull/*, a branch of a fork or a
+      # commit a workflow_run event names). Every input reaches this script
+      # through env, and the result is only ever a checkout input.
+      - name: Choose the documentation to build
+        id: docs
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          DOCS_REF_INPUT: ${{ inputs.docs_ref }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          tag_re='^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'
+          ref="${DEFAULT_BRANCH}"
+          if [[ "${EVENT_NAME}" == "workflow_dispatch" ]]; then
+            if [[ -n "${DOCS_REF_INPUT}" ]]; then
+              if [[ "${DOCS_REF_INPUT}" =~ ${tag_re} ]]; then
+                ref="${DOCS_REF_INPUT}"
+              elif [[ "${DOCS_REF_INPUT}" == "${DEFAULT_BRANCH}" || "${DOCS_REF_INPUT}" == "refs/heads/${DEFAULT_BRANCH}" ]]; then
+                ref="${DEFAULT_BRANCH}"
+              else
+                echo "::error::docs_ref must be refs/tags/vX.Y.Z or ${DEFAULT_BRANCH}; refusing '${DOCS_REF_INPUT}'"
+                exit 1
+              fi
+            fi
+          else
+            # The tag of the latest stable (non-draft, non-pre-release) product
+            # release; the nested module's releases are never "latest".
+            latest="$(gh api "repos/${REPO}/releases/latest" --jq '.tag_name' 2>/dev/null || true)"
+            if [[ -n "${latest}" && "refs/tags/${latest}" =~ ${tag_re} && "${latest}" != *-* ]]; then
+              ref="refs/tags/${latest}"
+            fi
+          fi
+          echo "documentation ref: ${ref}"
+          echo "ref=${ref}" >> "${GITHUB_OUTPUT}"
+      - name: Check out the documentation ref
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.docs_ref || github.event.repository.default_branch }}
+          ref: ${{ steps.docs.outputs.ref }}
           persist-credentials: false
       - name: Install the pinned tools
         uses: ./.github/actions/toolchain

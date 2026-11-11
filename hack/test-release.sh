@@ -405,6 +405,35 @@ grep -q -- 'flags+=(--latest)' "${wf}" || fail "release.yml: stable product rele
 grep -q -- 'gh release edit "${TAG}" --draft=false --latest$' "${wf}" || fail "release.yml: publishing a stable release does not pass --latest"
 echo "ok: release.yml latest flags"
 
+# ---- pages.yml: which documentation the site shows. The step's script is run
+# as written with a gh stub.
+awk '/- name: Choose the documentation to build/ {on=1; next} on && /^        run: \|/ {r=1; next} on && r && /^      - name:/ {exit} on && r {sub(/^          /, ""); print}' "${root}/.github/workflows/pages.yml" > "${work}/pages-choose.sh"
+[[ -s "${work}/pages-choose.sh" ]] || fail "pages.yml: cannot extract the 'Choose the documentation' script"
+mkdir -p "${work}/pgh"
+cat > "${work}/pgh/gh" <<'STUB'
+#!/usr/bin/env bash
+[[ -n "${PAGES_LATEST:-}" ]] || exit 1
+echo "${PAGES_LATEST}"
+STUB
+chmod +x "${work}/pgh/gh"
+pages() { # pages EVENT INPUT LATEST -> "ref=..." or exit 1
+  : > "${work}/pages-out"
+  env PATH="${work}/pgh:${PATH}" REPO=o/r EVENT_NAME="$1" DOCS_REF_INPUT="$2" PAGES_LATEST="$3" DEFAULT_BRANCH=main GITHUB_OUTPUT="${work}/pages-out" bash "${work}/pages-choose.sh" > /dev/null 2>&1 || return 1
+  cat "${work}/pages-out"
+}
+[[ "$(pages schedule "" v0.1.0)" == "ref=refs/tags/v0.1.0" ]] || fail "pages: a scheduled build does not serve the latest stable tag"
+[[ "$(pages workflow_run "" v0.1.0)" == "ref=refs/tags/v0.1.0" ]] || fail "pages: a workflow_run build does not serve the latest stable tag"
+[[ "$(pages schedule "" "")" == "ref=main" ]] || fail "pages: no release must fall back to main"
+[[ "$(pages schedule "" v0.2.0-rc.1)" == "ref=main" ]] || fail "pages: a pre-release counts as the latest stable tag"
+[[ "$(pages workflow_dispatch "" v0.1.0)" == "ref=main" ]] || fail "pages: a dispatch with no docs_ref must build the default branch"
+[[ "$(pages workflow_dispatch refs/tags/v0.1.0-rc.1 v0.1.0)" == "ref=refs/tags/v0.1.0-rc.1" ]] || fail "pages: dispatch with a tag"
+[[ "$(pages workflow_dispatch main v0.1.0)" == "ref=main" ]] || fail "pages: dispatch with the default branch"
+for bad in refs/pull/5/merge refs/heads/evil refs/tags/not-semver 'refs/tags/v1.0.0;rm' deadbeefdeadbeef; do
+  ! pages workflow_dispatch "${bad}" v0.1.0 > /dev/null || fail "pages: docs_ref '${bad}' was accepted"
+done
+! grep -n 'run:.*\${{' "${root}/.github/workflows/pages.yml" || fail "pages.yml: an expression inside run:"
+echo "ok: pages docs ref"
+
 # ---- Chart.yaml: helm push stamps org.opencontainers.image.source from the
 # first entry of `sources`, so it must be this repository.
 for c in pgtoolbox pgtools; do
