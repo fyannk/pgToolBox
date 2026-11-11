@@ -37,13 +37,13 @@ in `images`, and the e2e jobs load that archive instead of building their own.
 | `e2e-kind.yml` | called by `ci.yml` | One kind scenario on a fresh runner, with the images of the run loaded (reusable workflow). |
 | `security.yml` | pull request, push to `main`, daily at 03:37 UTC, by hand | CodeQL, govulncheck, osv-scanner, npm audit, grype on the five images (operator, console, evidence agent, OLM bundle and catalog), gitleaks, gosec, zizmor, kube-linter. Its last job, `security-gate`, is the required check. |
 | `scorecard.yml` | push to `main`, weekly on Tuesday, by hand | OpenSSF Scorecard, published and uploaded to code scanning. |
-| `pages.yml` | when `security.yml` finishes on `main`, nightly at 04:47 UTC, by hand, after a release (building the tag) | Builds the documentation, renders the Security page, deploys both to GitHub Pages. |
+| `pages.yml` | when `security.yml` finishes on `main`, nightly at 04:47 UTC, by hand, after a release (building the tag) | Builds the documentation, renders the Security page, deploys both to GitHub Pages. The release's dispatch builds the documentation of the tag; the scheduled and `security.yml`-triggered builds build `main`, so the site shows the tag's documentation only until the next of those. The Security page always shows the newest security run on `main`. |
 | `release.yml` | tag `v*` or `pkg/evidence/v*`; by hand for an existing tag | The release. It checks out and runs nothing but the tagged commit, and restores no cache. |
 | `release-dry-run.yml` | a pull request touching the release files; weekly on Sunday, or by hand with a tag to rehearse | The release's build as a dry run, plus a release-candidate rehearsal of the pinning (placeholder digests): nothing pushed or signed, no write permission. |
 | `verify-release.yml` | called by `release.yml` after the prune; weekly on Monday; by hand | Pulls every image and both charts of a published release by tag **with no registry credentials** and verifies each signature and attestation by digest (`hack/release.sh verify-published`). The weekly run looks at the latest stable release and does nothing until one exists. |
 | `matrix.yml` | nightly at 01:41 UTC, by hand | The end-to-end scenarios on Kubernetes 1.34 and 1.36 × CloudNativePG 1.30.1, plus CloudNativePG `main` (non-blocking): one job per Kubernetes × CloudNativePG × scenario, all at once, on the images built once for the run. |
 | `image-watch.yml` | nightly at 04:23 UTC | Scans the latest published images and keeps one tracking issue for fixable criticals. |
-| `cache-prune.yml` | daily at 03:17 UTC, by hand (`dry_run`) | Deletes the Actions caches of pull requests that are not open, all but the newest two of each key family and, past 8 GiB, the least recently used (`hack/prune-caches.sh`); the only job with `actions: write` besides the dispatchers. |
+| `cache-prune.yml` | daily at 03:17 UTC, by hand (`dry_run`) | Deletes the Actions caches of pull requests that are not open, all but the newest of each logical cache (a key without its hash, date and `-pN`) and, only if the newest alone exceed 8 GiB, rebuildable build caches first (`hack/prune-caches.sh`); the only job with `actions: write` besides the dispatchers. |
 | `automerge.yml` | Dependabot pull requests | Arms auto-merge for patch and minor updates. |
 
 ## What `ci.yml` runs
@@ -208,9 +208,9 @@ sequenceDiagram
   R->>G: both charts, rewritten to the digests, pushed, signed, attested
   R->>R: SBOMs, installer manifests, SHA256SUMS signed keyless
   R->>G: grype every digest on both platforms: a fixable critical stops here, a registry error is reported as one
-  R->>G: move latest (stable releases only)
   R->>H: draft release with the CHANGELOG notes and a commit-log link, files attached
   R->>G: anonymous HEAD of every pushed digest: any private package leaves the release a draft
+  R->>G: move latest (stable releases only)
   R->>H: publish the release
   R->>R: dispatch pages.yml on main (docs_ref = the tag), prune untagged GHCR versions
   R->>G: verify-release.yml: pull by tag with no credentials, cosign verify, gh attestation verify, helm pull
