@@ -680,9 +680,12 @@ func (s *Store) SpendCode(ctx context.Context, code, userHash string, until time
 		// (another replica's, which this one's watch merged while its
 		// write was in flight, or its own write delivered so) stays: it
 		// is spent, and forgetting it here would erase it from the
-		// ConfigMap with this replica's next write.
+		// ConfigMap with this replica's next write. An expired copy there
+		// (pruned here, the prune not written yet) is no spend: kept, the
+		// reservation would refuse the retry as spent, and the next write
+		// would put the code back.
 		s.mu.Lock()
-		if !codeIn(s.base, h) {
+		if !liveCodeIn(s.base, h, s.opts.Now().Unix()) {
 			delete(s.codes, h)
 		}
 		s.mu.Unlock()
@@ -750,6 +753,19 @@ func markIn(cm *corev1.ConfigMap, h, mark string) bool {
 	return ok && slices.Contains(c.Marks, mark)
 }
 
+// liveCodeIn is codeIn of a code that has not expired at now: what the
+// rollback of a failed write-through keeps.
+func liveCodeIn(cm *corev1.ConfigMap, h string, now int64) bool {
+	c, ok := codeOf(cm, h)
+	return ok && c.Expiry > now
+}
+
+// liveMarkIn is markIn of a code that has not expired at now.
+func liveMarkIn(cm *corev1.ConfigMap, h, mark string, now int64) bool {
+	c, ok := codeOf(cm, h)
+	return ok && c.Expiry > now && slices.Contains(c.Marks, mark)
+}
+
 func codeOf(cm *corev1.ConfigMap, h string) (codeEntry, bool) {
 	var doc grantsDoc
 	if cm == nil || json.Unmarshal([]byte(cm.Data[KeyGrants]), &doc) != nil {
@@ -808,7 +824,7 @@ func (s *Store) MarkCode(ctx context.Context, code, mark, userHash string) error
 		// already (another replica's, merged while this write was in
 		// flight), which this replica's next write would otherwise erase.
 		s.mu.Lock()
-		if c, ok := s.codes[h]; ok && !markIn(s.base, h, mark) {
+		if c, ok := s.codes[h]; ok && !liveMarkIn(s.base, h, mark, s.opts.Now().Unix()) {
 			c.Marks = slices.DeleteFunc(slices.Clone(c.Marks), func(m string) bool { return m == mark })
 			s.codes[h] = c
 		}
