@@ -179,9 +179,7 @@ asks for exactly the namespaced rules of the manager role the operator ships
 with (the generated role, embedded in the binary), plus `list` and `watch` on
 every kind its informers hold, with the RBAC authorizer's matching rules (a
 Role that grants `pgadmins/*` grants no subresource: RBAC reads it literally).
-A namespace left out is not reconciled, and the others are unaffected. Without
-this check, an informer refused in one namespace would never sync, and the
-operator would stop for every namespace. If the RBAC of a kept namespace
+A namespace left out is not reconciled, and the others are unaffected. If the RBAC of a kept namespace
 changes after the start so that an informer can no longer sync, the
 operator's exit error carries a hint naming the watched namespaces to check.
 
@@ -205,11 +203,8 @@ any more, possibly `Ready=True`. Two signals say so:
   (`operator.metrics.prometheusRule.enabled`; see
   [metrics](metrics.md#alerts)), which fires whatever the cause.
 
-In a namespace left out, an approved `PgAccessRequest` no longer expires: its
-RoleBinding stays past `spec.expiresAt` and a revocation removes nothing, with
-no signal to the approver but the operator's log, the gauge and the alert.
-Restore the namespace (or delete the RoleBinding by hand) before relying on an
-expiry there.
+In a namespace left out, an approved `PgAccessRequest` no longer expires (see
+`WATCH_NAMESPACES` above).
 
 An optional API (Routes, HTTPRoutes, Poolers, Databases, DatabaseRoles, the
 backup plugins' kinds) never leaves a namespace out: each namespace's Role
