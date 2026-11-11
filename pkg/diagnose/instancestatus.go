@@ -220,7 +220,12 @@ func (InstanceArchiveFailing) evaluate(_ string, in Input) ([]conditionMatch, st
 }
 
 // InstanceReadyWAL matches an instance reporting at least Threshold WAL
-// segments waiting to be archived.
+// segments waiting to be archived. CloudNativePG counts them only on a
+// primary (pkg/management/postgres/probes.go v1.30.0 and v1.30.1:461-463
+// return before GetWALArchiveCounters): a standby's 0, a replica
+// cluster's designated primary's included, is no reading. Only fresh
+// primary readings are judged; with none, the rule says so instead of
+// clearing (CNPG P3-1).
 type InstanceReadyWAL struct {
 	Threshold int
 }
@@ -235,7 +240,12 @@ func (c InstanceReadyWAL) evaluate(_ string, in Input) ([]conditionMatch, string
 		return nil, reason
 	}
 	var matches []conditionMatch
+	primaries := 0
 	for _, reading := range readings.fresh {
+		if !reading.IsPrimary {
+			continue
+		}
+		primaries++
 		if reading.ReadyWALFiles < c.Threshold {
 			continue
 		}
@@ -250,6 +260,14 @@ func (c InstanceReadyWAL) evaluate(_ string, in Input) ([]conditionMatch, string
 			}},
 			link: "/backups", linkLabel: "Backups",
 		})
+	}
+	if primaries == 0 {
+		reason := "no fresh report of a primary: CloudNativePG counts the WAL segments waiting to be archived only on a primary, " +
+			"so a standby, and a replica cluster's designated primary, report none"
+		if more := readings.unjudged(); more != "" {
+			reason += "; " + more
+		}
+		return nil, reason
 	}
 	return readings.finish(matches)
 }

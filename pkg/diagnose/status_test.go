@@ -468,6 +468,19 @@ func TestInstanceStatusConditionsReadTheReport(t *testing.T) {
 	if len(backlog) != 1 || !strings.Contains(backlog[0].Summary, "40 WAL segments") {
 		t.Errorf("backlog = %+v", backlog)
 	}
+	// CNPG P3-1: a standby's count is no reading, even at the
+	// threshold, and with no fresh primary report the rule does not
+	// clear: a replica cluster's designated primary reports none.
+	designated := primary
+	designated.IsPrimary, designated.ReadyWALFiles = false, 0
+	if check, matches := evaluateOnce(t, InstanceReadyWAL{Threshold: 32}, statusInput(designated, replica)); check.Outcome == CheckClear || len(matches) != 0 || !strings.Contains(check.Because, "only on a primary") {
+		t.Errorf("no primary reading: %+v %+v, want unjudged with a reason", check, matches)
+	}
+	standby := replica
+	standby.ReadyWALFiles = 99
+	if _, matches := evaluateOnce(t, InstanceReadyWAL{Threshold: 32}, statusInput(primary, standby)); len(matches) != 1 || matches[0].Subject.Name != "orders-1" {
+		t.Errorf("a standby's count matched: %+v", matches)
+	}
 	_, slots := evaluateOnce(t, InstanceSlotInactive{}, in)
 	if len(slots) != 1 || !strings.Contains(slots[0].Summary, `"debezium"`) || slots[0].ID != "held/orders-1/debezium" {
 		t.Errorf("slots = %+v (the operator's own slot must be left out)", slots)
