@@ -48,6 +48,12 @@ func TestPushRingsStampsThePrimaryTimelineAndAFirstArchive(t *testing.T) {
 		"db-1": read(&instancestatus.Reading{IsPrimary: true, TimelineID: 3, CurrentWAL: "not a wal file name", CurrentLSN: "0/3000000", LastArchivedWALTime: &archived}),
 		"db-2": read(&instancestatus.Reading{TimelineID: 3, CurrentWAL: "000000030000000000000003", ReplayLSN: "0/3000000"}),
 	}}, at.Add(30*time.Second))
+	// Round 10, CNPG P3: a time the instance sent that does not parse is
+	// no reading, never "nothing archived yet".
+	s.pushRings(cs, Snapshot{Instances: map[string]Instance{
+		"db-1": read(&instancestatus.Reading{IsPrimary: true, CurrentWAL: "000000030000000000000003", CurrentLSN: "0/3000000", LastArchivedWALTimeUnparsed: true}),
+		"db-2": read(&instancestatus.Reading{TimelineID: 3, CurrentWAL: "000000030000000000000003", ReplayLSN: "0/3000000"}),
+	}}, at.Add(time.Minute))
 	value := func(instance, key string, i int) *float64 {
 		points := cs.rings[instance][key].points()
 		if i >= len(points) {
@@ -66,6 +72,9 @@ func TestPushRingsStampsThePrimaryTimelineAndAFirstArchive(t *testing.T) {
 	}
 	if v := value("db-1", SeriesLastArchivedAt, 1); v == nil || *v != float64(archived.UnixMilli()) {
 		t.Errorf("primary's first archive = %v", v)
+	}
+	if v := value("db-1", SeriesLastArchivedAt, 2); v != nil {
+		t.Errorf("primary whose archive time does not parse = %v, want no reading", *v)
 	}
 	if v := value("db-2", SeriesTimeline, 0); v != nil {
 		t.Errorf("replica timeline = %v, want none", *v)
