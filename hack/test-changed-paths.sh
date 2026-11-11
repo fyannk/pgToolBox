@@ -57,6 +57,16 @@ want PROJECT ${all}
 want some/new/file.txt ${all}
 want docs/site/docs/index.md docs
 want .github/workflows/release.yml workflows
+# check-repo-files (action pins, toolchain pins) and test-hack run in lint-files,
+# the `workflows` and `docker` families; every input of those must turn one on.
+want .github/workflows/security.yml workflows
+want .github/dependabot.yml workflows
+want docs/site/docs/development/repository-settings.md docs workflows
+want hack/check-action-pins.sh docker go
+want hack/test-release.sh docker go
+want hack/lib/net.sh charts console docker evidence go operator
+want hack/security_report_test.py workflows
+want hack/release.sh docker
 
 # Every tracked path reaches a named arm, or is listed here on purpose.
 deliberate='^(AUTHORS|LICENSE|NOTICE|PROJECT|\.editorconfig|\.gitignore|\.gitleaks\.toml|deploy/insight-pack/.*|test/crds/.*)$'
