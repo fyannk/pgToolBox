@@ -232,14 +232,29 @@ older ones never take over; and a take-over is written with the
 it conflict, and the re-read leaves the document alone. The trade-off: a newer
 replica unable to reach the API server for 30 minutes has its documents taken
 over, and takes them back (merging) once it writes again. A document taken over
-is read in this version's layout, so the sign-outs it holds stay refused,
-except `grants.json`, which is reset (a revocation recorded in a newer layout
-could otherwise be lost): a replica drops the MCP grants it holds once it finds
-a newer `grants.json`, and every assistant connects again after the take-over.
-To recover at once, delete the document's key from the ConfigMap; what it held
-is lost (for `grants.json`, every assistant connects again). A document of a
-version older than any this console reads (or of none) stays foreign until its
-key is deleted.
+is read in this version's layout, so the sign-outs it holds stay refused: every
+later version keeps the fields an earlier one reads, and a version that cannot
+is numbered 100 or more, which no console of this version ever takes over (it
+stays foreign until its key is deleted). `grants.json` is reset instead (a
+revocation recorded in a newer layout could otherwise be lost): a replica drops
+the MCP grants it holds once it finds a newer `grants.json`, and every assistant
+connects again after the take-over. An annotation of another version that has
+not changed for 30 minutes is removed with a replica's next write, so a replica
+started later sends no heartbeat for a version long gone. To recover at once,
+delete the document's key from the ConfigMap; what it held is lost (for
+`grants.json`, every assistant connects again). A document of no version (`{}`)
+is read as empty and rewritten.
+
+MCP grants are merged against what each replica last read, not added up: a
+grant the ConfigMap no longer holds was pruned, reset or deleted by another
+replica, and is dropped. So a replica cut off from the API server while a grant
+was revoked, and the revocation pruned 10 minutes later, does not bring the
+grant back when it reconnects, nor does one that missed a take-over. A grant a
+replica recorded itself is kept while its own write is on the way, for at most 8
+minutes; a revocation it made is kept until the ConfigMap holds it. A replica cut
+off longer than that loses the grants it recorded meanwhile (their assistants
+connect again), and it refuses every grant from 30 seconds into the outage
+anyway.
 
 Replicas whose clocks disagree still converge: a sign-out's
 recording time is kept as written, and a replica that finds it more than five
