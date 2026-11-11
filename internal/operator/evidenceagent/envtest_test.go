@@ -33,6 +33,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/events"
@@ -117,18 +118,20 @@ func newEnvtestSuite(t *testing.T) *envtestSuite {
 	if err != nil {
 		t.Fatal(err)
 	}
-	objectStoreAPI, err := discovery.ProbeObjectStoreAPI(ctx, operator, nil)
-	if err != nil || !objectStoreAPI.Usable() {
+	probed, err := discovery.ProbeKinds(ctx, operator, []schema.GroupVersionKind{discovery.ObjectStoreGVK, discovery.StanzaGVK, discovery.ArchiveGVK}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	objectStoreAPI, stanzaAPI, archiveAPI := probed.Results[0], probed.Results[1], probed.Results[2]
+	if !objectStoreAPI.Usable() {
 		t.Fatalf("ObjectStore probe = %+v, %v", objectStoreAPI, err)
 	}
 	// The generated ClusterRole must let the operator list both pgBackRest
 	// plugins' objects, or their probes turn the feature off.
-	stanzaAPI, err := discovery.ProbeStanzaAPI(ctx, operator, nil)
-	if err != nil || !stanzaAPI.Usable() {
+	if !stanzaAPI.Usable() {
 		t.Fatalf("Stanza probe = %+v, %v", stanzaAPI, err)
 	}
-	archiveAPI, err := discovery.ProbeArchiveAPI(ctx, operator, nil)
-	if err != nil || !archiveAPI.Usable() {
+	if !archiveAPI.Usable() {
 		t.Fatalf("Archive probe = %+v, %v", archiveAPI, err)
 	}
 	recorder := events.NewFakeRecorder(256)

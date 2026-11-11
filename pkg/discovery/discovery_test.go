@@ -190,79 +190,154 @@ func (n *namespaceLister) List(_ context.Context, _ client.ObjectList, opts ...c
 	return n.errs[o.Namespace]
 }
 
-// sortedSeen is the namespaces probed, sorted: the probes run concurrently.
-func (n *namespaceLister) sortedSeen() []string {
-	n.mu.Lock()
-	defer n.mu.Unlock()
-	return slices.Sorted(slices.Values(n.seen))
-}
-
-func TestProbeNamespaces(t *testing.T) {
+// TestProbeKinds: a kind refused in some of the watched namespaces drops
+// those namespaces (for every kind) instead of turning the feature off for
+// every other namespace; refused in every namespace still kept, the kind is
+// off; not served is decided once, by the first namespace; any other error
+// fails.
+func TestProbeKinds(t *testing.T) {
 	gr := schema.GroupResource{Group: "barmancloud.cnpg.io", Resource: "objectstores"}
 	forbidden := apierrors.NewForbidden(gr, "", errors.New("denied"))
+	notServed := &meta.NoKindMatchError{GroupKind: ObjectStoreGVK.GroupKind()}
 	tests := []struct {
-		name       string
-		namespaces []string
-		errs       map[string]error
-		want       State
-		wantErr    bool
-		wantSeen   []string
-		wantReason string
+		name        string
+		namespaces  []string
+		errs        map[string]map[string]error // kind -> namespace -> error
+		gvks        []schema.GroupVersionKind
+		want        []State
+		wantKept    []string
+		wantDropped []string
+		wantSeen    map[string][]string // kind -> namespaces listed
+		wantErr     bool
+		wantReason  string
 	}{
-		{name: "cluster-wide when no namespace", want: Available, wantSeen: []string{""}},
-		{name: "every namespace listable", namespaces: []string{"a", "b"}, want: Available, wantSeen: []string{"a", "b"}},
 		{
-			name: "one forbidden namespace turns the feature off", namespaces: []string{"a", "b", "c"},
-			errs: map[string]error{"b": forbidden}, want: Forbidden, wantSeen: []string{"a", "b", "c"},
-			wantReason: "not allowed to list ObjectStore.barmancloud.cnpg.io in b",
+			name: "cluster-wide when no namespace", gvks: []schema.GroupVersionKind{ObjectStoreGVK},
+			want: []State{Available}, wantSeen: map[string][]string{"ObjectStore": {""}},
 		},
 		{
-			name: "not served in the first namespace", namespaces: []string{"a", "b"},
-			errs: map[string]error{"a": &meta.NoKindMatchError{GroupKind: ObjectStoreGVK.GroupKind()}}, want: NotInstalled, wantSeen: []string{"a", "b"},
+			name: "every namespace listable", namespaces: []string{"a", "b"}, gvks: []schema.GroupVersionKind{ObjectStoreGVK},
+			want: []State{Available}, wantKept: []string{"a", "b"}, wantSeen: map[string][]string{"ObjectStore": {"a", "b"}},
 		},
 		{
-			// The outcome is the first refusal in the order of the
-			// namespaces, not the first to answer.
-			name: "the first refusal in namespace order wins", namespaces: []string{"a", "b", "c"},
-			errs: map[string]error{"b": forbidden, "c": &meta.NoKindMatchError{GroupKind: ObjectStoreGVK.GroupKind()}},
-			want: Forbidden, wantSeen: []string{"a", "b", "c"}, wantReason: "not allowed to list ObjectStore.barmancloud.cnpg.io in b",
+			// The regression: one namespace's administrator narrowing the
+			// operator's Role there must not turn the feature off for b and c.
+			name: "one forbidden namespace is dropped, the feature stays on", namespaces: []string{"a", "b", "c"},
+			gvks: []schema.GroupVersionKind{ObjectStoreGVK, StanzaGVK},
+			errs: map[string]map[string]error{"ObjectStore": {"b": forbidden}},
+			want: []State{Available, Available}, wantKept: []string{"a", "c"}, wantDropped: []string{"b"},
+			// The kinds after the drop are not probed in b any more.
+			wantSeen: map[string][]string{"ObjectStore": {"a", "b", "c"}, "Stanza": {"a", "c"}},
 		},
 		{
-			name: "any other error fails", namespaces: []string{"a", "b"},
-			errs: map[string]error{"b": errors.New("connection refused")}, wantErr: true, wantSeen: []string{"a", "b"},
+			name: "forbidden everywhere turns the feature off and drops nothing", namespaces: []string{"a", "b"},
+			gvks: []schema.GroupVersionKind{ObjectStoreGVK},
+			errs: map[string]map[string]error{"ObjectStore": {"a": forbidden, "b": forbidden}},
+			want: []State{Forbidden}, wantKept: []string{"a", "b"},
+			wantReason: "not allowed to list ObjectStore.barmancloud.cnpg.io in a",
+			wantSeen:   map[string][]string{"ObjectStore": {"a", "b"}},
 		},
 		{
-			// A transient 401 (a token being rotated) must not turn the
-			// feature off until the next restart: the start fails instead.
-			name: "unauthorized fails instead of turning the feature off", namespaces: []string{"a", "b"},
-			errs: map[string]error{"b": apierrors.NewUnauthorized("token expired")}, wantErr: true, wantSeen: []string{"a", "b"},
+			// b is dropped by the first kind; the second is refused in every
+			// namespace still kept (a): off, and a is not dropped.
+			name: "refused in every namespace still kept is off", namespaces: []string{"a", "b"},
+			gvks: []schema.GroupVersionKind{ObjectStoreGVK, StanzaGVK},
+			errs: map[string]map[string]error{"ObjectStore": {"b": forbidden}, "Stanza": {"a": forbidden}},
+			want: []State{Available, Forbidden}, wantKept: []string{"a"}, wantDropped: []string{"b"},
+			wantSeen: map[string][]string{"ObjectStore": {"a", "b"}, "Stanza": {"a"}},
 		},
 		{
-			name: "unauthorized cluster-wide fails too",
-			errs: map[string]error{"": apierrors.NewUnauthorized("token expired")}, wantErr: true, wantSeen: []string{""},
+			name: "not served is decided by the first namespace alone", namespaces: []string{"a", "b", "c"},
+			gvks: []schema.GroupVersionKind{ObjectStoreGVK},
+			errs: map[string]map[string]error{"ObjectStore": {"a": notServed, "b": notServed, "c": notServed}},
+			want: []State{NotInstalled}, wantKept: []string{"a", "b", "c"},
+			wantReason: "ObjectStore.barmancloud.cnpg.io is not served by this cluster",
+			wantSeen:   map[string][]string{"ObjectStore": {"a"}},
+		},
+		{
+			name: "any other error fails", namespaces: []string{"a", "b"}, gvks: []schema.GroupVersionKind{ObjectStoreGVK},
+			errs:    map[string]map[string]error{"ObjectStore": {"b": errors.New("connection refused")}},
+			wantErr: true, wantSeen: map[string][]string{"ObjectStore": {"a", "b"}},
+		},
+		{
+			// A transient 401 (a token being rotated) must neither turn the
+			// feature off nor drop the namespace until the next restart.
+			name: "unauthorized fails instead of dropping or turning off", namespaces: []string{"a", "b"},
+			gvks:    []schema.GroupVersionKind{ObjectStoreGVK},
+			errs:    map[string]map[string]error{"ObjectStore": {"b": apierrors.NewUnauthorized("token expired")}},
+			wantErr: true, wantSeen: map[string][]string{"ObjectStore": {"a", "b"}},
+		},
+		{
+			name: "unauthorized cluster-wide fails too", gvks: []schema.GroupVersionKind{ObjectStoreGVK},
+			errs:    map[string]map[string]error{"ObjectStore": {"": apierrors.NewUnauthorized("token expired")}},
+			wantErr: true, wantSeen: map[string][]string{"ObjectStore": {""}},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			lister := &namespaceLister{errs: tt.errs}
-			got, err := ProbeObjectStoreAPI(context.Background(), lister, tt.namespaces)
+			lister := &kindLister{errs: tt.errs}
+			got, err := ProbeKinds(context.Background(), lister, tt.gvks, tt.namespaces)
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("err = %v", err)
 			}
-			if !tt.wantErr && got.State != tt.want {
-				t.Errorf("state = %s, want %s", got.State, tt.want)
+			for kind, want := range tt.wantSeen {
+				if seen := lister.sortedSeen(kind); strings.Join(seen, ",") != strings.Join(want, ",") {
+					t.Errorf("%s probed in %q, want %q", kind, seen, want)
+				}
 			}
-			if tt.wantReason != "" && got.Reason != tt.wantReason {
-				t.Errorf("reason = %q, want %q", got.Reason, tt.wantReason)
+			if tt.wantErr {
+				return
 			}
-			if seen := lister.sortedSeen(); strings.Join(seen, ",") != strings.Join(tt.wantSeen, ",") {
-				t.Errorf("probed %q, want %q", seen, tt.wantSeen)
+			for i, want := range tt.want {
+				if got.Results[i].State != want || got.Results[i].GVK != tt.gvks[i] {
+					t.Errorf("result %d = %+v, want %s", i, got.Results[i], want)
+				}
 			}
-			if !tt.wantErr && got.GVK != ObjectStoreGVK {
-				t.Errorf("GVK = %v", got.GVK)
+			if tt.wantReason != "" && got.Results[0].Reason != tt.wantReason {
+				t.Errorf("reason = %q, want %q", got.Results[0].Reason, tt.wantReason)
+			}
+			if strings.Join(got.Namespaces, ",") != strings.Join(tt.wantKept, ",") {
+				t.Errorf("kept %q, want %q", got.Namespaces, tt.wantKept)
+			}
+			var dropped []string
+			for _, r := range got.Dropped {
+				if r.State != Forbidden || !strings.Contains(r.Reason, "in "+r.Namespace) {
+					t.Errorf("dropped %+v", r)
+				}
+				dropped = append(dropped, r.Namespace)
+			}
+			if strings.Join(dropped, ",") != strings.Join(tt.wantDropped, ",") {
+				t.Errorf("dropped %q, want %q", dropped, tt.wantDropped)
 			}
 		})
 	}
+}
+
+// kindLister answers each List with errs[kind][namespace] and records the
+// namespaces each kind was listed in.
+type kindLister struct {
+	mu   sync.Mutex
+	errs map[string]map[string]error
+	seen map[string][]string
+}
+
+func (k *kindLister) List(_ context.Context, list client.ObjectList, opts ...client.ListOption) error {
+	o := &client.ListOptions{}
+	o.ApplyOptions(opts)
+	kind := strings.TrimSuffix(list.GetObjectKind().GroupVersionKind().Kind, "List")
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if k.seen == nil {
+		k.seen = map[string][]string{}
+	}
+	k.seen[kind] = append(k.seen[kind], o.Namespace)
+	return k.errs[kind][o.Namespace]
+}
+
+func (k *kindLister) sortedSeen(kind string) []string {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	return slices.Sorted(slices.Values(k.seen[kind]))
 }
 
 // TestReachableNamespaces: a watched namespace the caller is refused in (a
@@ -334,31 +409,31 @@ func TestReachableNamespaces(t *testing.T) {
 // the ObjectStore, each under its own GVK and resource name.
 func TestProbePgBackRestAPIs(t *testing.T) {
 	probes := []struct {
-		name  string
-		probe func(context.Context, Lister, []string) (Result, error)
-		gvk   schema.GroupVersionKind
-		gr    schema.GroupResource
+		name string
+		gvk  schema.GroupVersionKind
+		gr   schema.GroupResource
 	}{
-		{"Stanza", ProbeStanzaAPI, StanzaGVK, schema.GroupResource{Group: "pgbackrest.dalibo.com", Resource: "stanzas"}},
-		{"Archive", ProbeArchiveAPI, ArchiveGVK, schema.GroupResource{Group: "pgbackrest.cnpg.opera.com", Resource: "archives"}},
+		{"Stanza", StanzaGVK, schema.GroupResource{Group: "pgbackrest.dalibo.com", Resource: "stanzas"}},
+		{"Archive", ArchiveGVK, schema.GroupResource{Group: "pgbackrest.cnpg.opera.com", Resource: "archives"}},
 	}
 	for _, p := range probes {
 		t.Run(p.name, func(t *testing.T) {
+			forbidden := apierrors.NewForbidden(p.gr, "", errors.New("denied"))
 			for _, tt := range []struct {
 				errs   map[string]error
 				want   State
 				reason string
 			}{
 				{want: Available},
-				{errs: map[string]error{"b": apierrors.NewForbidden(p.gr, "", errors.New("denied"))}, want: Forbidden, reason: "not allowed to list " + p.gvk.Kind + "." + p.gvk.Group + " in b"},
+				{errs: map[string]error{"a": forbidden, "b": forbidden}, want: Forbidden, reason: "not allowed to list " + p.gvk.Kind + "." + p.gvk.Group + " in a"},
 				{errs: map[string]error{"a": &meta.NoKindMatchError{GroupKind: p.gvk.GroupKind()}}, want: NotInstalled, reason: p.gvk.Kind + "." + p.gvk.Group + " is not served by this cluster"},
 			} {
-				got, err := p.probe(context.Background(), &namespaceLister{errs: tt.errs}, []string{"a", "b"})
-				if err != nil || got.State != tt.want || got.Reason != tt.reason || got.GVK != p.gvk {
+				got, err := ProbeKinds(context.Background(), &namespaceLister{errs: tt.errs}, []schema.GroupVersionKind{p.gvk}, []string{"a", "b"})
+				if err != nil || got.Results[0].State != tt.want || got.Results[0].Reason != tt.reason || got.Results[0].GVK != p.gvk {
 					t.Fatalf("probe = %+v, %v; want %s %q", got, err, tt.want, tt.reason)
 				}
 			}
-			if _, err := p.probe(context.Background(), &namespaceLister{errs: map[string]error{"a": errors.New("connection refused")}}, []string{"a"}); err == nil {
+			if _, err := ProbeKinds(context.Background(), &namespaceLister{errs: map[string]error{"a": errors.New("connection refused")}}, []schema.GroupVersionKind{p.gvk}, []string{"a"}); err == nil {
 				t.Fatal("an unclassified error did not fail the probe")
 			}
 		})
@@ -407,10 +482,10 @@ func TestProbeManyNamespacesIsBounded(t *testing.T) {
 		name string
 		run  func(Lister) error
 	}{
-		{"ProbeNamespaces", func(l Lister) error {
-			got, err := ProbeNamespaces(context.Background(), l, gvk, namespaces)
-			if err == nil && !got.Usable() {
-				t.Errorf("result %+v, want available", got)
+		{"ProbeKinds", func(l Lister) error {
+			got, err := ProbeKinds(context.Background(), l, []schema.GroupVersionKind{gvk}, namespaces)
+			if err == nil && (!got.Results[0].Usable() || !slices.Equal(got.Namespaces, namespaces)) {
+				t.Errorf("result %+v, want available in every namespace", got)
 			}
 			return err
 		}},

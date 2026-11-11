@@ -29,6 +29,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -233,10 +234,11 @@ func TestEnvtestDatabaseRolesNotServed(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	roles, err := discovery.ProbeNamespaces(ctx, c, cnpgv1.SchemeGroupVersion.WithKind("DatabaseRole"), []string{testNamespace})
+	probed, err := discovery.ProbeKinds(ctx, c, []schema.GroupVersionKind{cnpgv1.SchemeGroupVersion.WithKind("DatabaseRole")}, []string{testNamespace})
 	if err != nil {
 		t.Fatal(err)
 	}
+	roles := probed.Results[0]
 	if roles.State != discovery.NotInstalled {
 		t.Fatalf("DatabaseRole probe without its CRD = %+v, want NotInstalled", roles)
 	}

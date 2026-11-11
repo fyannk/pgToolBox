@@ -67,10 +67,11 @@ func TestReachableNamespacesAtStart(t *testing.T) {
 	if !slices.Equal(got, []string{"team-a", "team-b"}) {
 		t.Fatalf("watched = %q, want [team-a team-b]", got)
 	}
-	features, err := probeFeatures(ctx, refusingReader("gone"), got)
+	probed, err := probeOptionalAPIs(ctx, refusingReader("gone"), got)
 	if err != nil {
-		t.Fatalf("probeFeatures on what is left: %v", err)
+		t.Fatalf("probeOptionalAPIs on what is left: %v", err)
 	}
+	features := probed.Features
 	for name, r := range map[string]discovery.Result{
 		"routes": features.Routes, "gateways": features.Gateways, "databaseRoles": features.DatabaseRoles,
 		"poolers": features.Poolers, "databases": features.Databases,
@@ -95,7 +96,7 @@ func TestPrepareInfoMetricListsWatchedNamespaces(t *testing.T) {
 	t.Setenv("WATCH_NAMESPACES", "team-a,gone")
 	t.Setenv("OPERATOR_IMAGE", "registry.example.com/pgtoolbox/operator:test")
 	registry := prometheus.NewRegistry()
-	prepared, err := preparePgAdminWith(t.Context(), refusingReader("gone"), registry, time.Minute,
+	prepared, err := preparePgAdminWith(t.Context(), refusingReader("gone"), registry, newStartupBudget(time.Minute, time.Minute),
 		configuration.Objects{Namespace: "pgtoolbox", ConfigMap: "pgtoolbox-operator-config", Secret: "pgtoolbox-operator-config"})
 	if err != nil {
 		t.Fatal(err)
@@ -160,7 +161,7 @@ func TestPrepareStartupDeadline(t *testing.T) {
 			t.Setenv("OPERATOR_IMAGE", "registry.example.com/pgtoolbox/operator:test")
 			reader := fake.NewClientBuilder().WithScheme(scheme).WithInterceptorFuncs(tt.funcs).Build()
 			start := time.Now()
-			_, err := preparePgAdminWith(t.Context(), reader, prometheus.NewRegistry(), 50*time.Millisecond,
+			_, err := preparePgAdminWith(t.Context(), reader, prometheus.NewRegistry(), newStartupBudget(50*time.Millisecond, time.Minute),
 				configuration.Objects{Namespace: "pgtoolbox", ConfigMap: "pgtoolbox-operator-config", Secret: "pgtoolbox-operator-config"})
 			if err == nil || !strings.Contains(err.Error(), tt.step) || !strings.Contains(err.Error(), "did not finish within") {
 				t.Fatalf("error = %v, want the step %s named with its deadline", err, tt.step)
@@ -257,7 +258,7 @@ func TestPrepareManyWatchedNamespaces(t *testing.T) {
 			return slow(ctx)
 		},
 	}).Build()
-	prepared, err := preparePgAdminWith(t.Context(), reader, prometheus.NewRegistry(), 3*time.Second,
+	prepared, err := preparePgAdminWith(t.Context(), reader, prometheus.NewRegistry(), newStartupBudget(3*time.Second, 3*time.Second),
 		configuration.Objects{Namespace: "pgtoolbox", ConfigMap: "pgtoolbox-operator-config", Secret: "pgtoolbox-operator-config"})
 	if err != nil {
 		t.Fatalf("start-up with %d watched namespaces: %v", len(namespaces), err)
@@ -268,7 +269,66 @@ func TestPrepareManyWatchedNamespaces(t *testing.T) {
 	if !prepared.Features.Poolers.Usable() || !prepared.Features.Routes.Usable() {
 		t.Fatalf("features %+v", prepared.Features)
 	}
-	if _, _, _, err := probeEvidenceAgentAPIs(t.Context(), reader, namespaces, 3*time.Second); err != nil {
-		t.Fatalf("EvidenceAgent probes with %d watched namespaces: %v", len(namespaces), err)
+	if apis := prepared.EvidenceAgentAPIs; !apis.ObjectStore.Usable() || !apis.Stanza.Usable() || !apis.Archive.Usable() {
+		t.Fatalf("EvidenceAgent APIs %+v", apis)
+	}
+}
+
+// narrowedReader answers Lists as an API server where the operator is bound
+// to the chart's Role in every namespace but those of narrowed, whose
+// administrator bound it to a Role without the kinds of refusedKinds.
+func narrowedReader(narrowed []string, refusedKinds ...string) client.Reader {
+	return fake.NewClientBuilder().WithScheme(scheme).WithInterceptorFuncs(interceptor.Funcs{
+		List: func(_ context.Context, _ client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+			o := &client.ListOptions{}
+			o.ApplyOptions(opts)
+			kind := strings.TrimSuffix(list.GetObjectKind().GroupVersionKind().Kind, "List")
+			if slices.Contains(narrowed, o.Namespace) && slices.Contains(refusedKinds, kind) {
+				return apierrors.NewForbidden(schema.GroupResource{Resource: strings.ToLower(kind) + "s"}, "", errors.New("narrowed Role"))
+			}
+			return nil
+		},
+	}).Build()
+}
+
+// TestOneNamespaceCannotTurnAFeatureOff: the administrator of one watched
+// namespace binds the operator to a narrower Role there (Clusters still
+// listable, no Routes, no Stanzas). That namespace is left out of the
+// watch, like one the operator cannot reach; the features stay on for every
+// other namespace. Refused in every namespace, the install's own choice, a
+// feature is off and no namespace is left out.
+func TestOneNamespaceCannotTurnAFeatureOff(t *testing.T) {
+	t.Setenv("OPERATOR_IMAGE", "registry.example.com/pgtoolbox/operator:test")
+	objects := configuration.Objects{Namespace: "pgtoolbox", ConfigMap: "pgtoolbox-operator-config", Secret: "pgtoolbox-operator-config"}
+	tests := []struct {
+		name        string
+		narrowed    []string
+		wantWatched []string
+		wantOn      bool
+	}{
+		{name: "one namespace narrowed", narrowed: []string{"team-b"}, wantWatched: []string{"team-a", "team-c"}, wantOn: true},
+		{name: "every namespace refuses", narrowed: []string{"team-a", "team-b", "team-c"}, wantWatched: []string{"team-a", "team-b", "team-c"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("WATCH_NAMESPACES", "team-a,team-b,team-c")
+			prepared, err := preparePgAdminWith(t.Context(), narrowedReader(tt.narrowed, "Route", "Stanza"), prometheus.NewRegistry(),
+				newStartupBudget(time.Minute, time.Minute), objects)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(prepared.Config.WatchNamespaces, tt.wantWatched) {
+				t.Fatalf("watched %q, want %q", prepared.Config.WatchNamespaces, tt.wantWatched)
+			}
+			if got := prepared.Features.Routes.Usable(); got != tt.wantOn {
+				t.Errorf("Routes usable = %t, want %t (%+v)", got, tt.wantOn, prepared.Features.Routes)
+			}
+			if got := prepared.EvidenceAgentAPIs.Stanza.Usable(); got != tt.wantOn {
+				t.Errorf("Stanza usable = %t, want %t (%+v)", got, tt.wantOn, prepared.EvidenceAgentAPIs.Stanza)
+			}
+			if !prepared.Features.Poolers.Usable() || !prepared.EvidenceAgentAPIs.ObjectStore.Usable() {
+				t.Errorf("a kind every namespace allows is off: %+v %+v", prepared.Features, prepared.EvidenceAgentAPIs)
+			}
+		})
 	}
 }

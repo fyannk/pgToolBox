@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	networkingv1 "k8s.io/api/networking/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -227,5 +228,100 @@ func TestPausedConsoleWithdrawsRefusedHostname(t *testing.T) {
 	if allowed := reconcileConsole(t, r, cl, c); meta.FindStatusCondition(allowed.Status.Conditions, pgtoolboxv1alpha1.ConditionExposureReady).Reason ==
 		pgtoolboxv1alpha1.ReasonHostnameNotAllowed.String() {
 		t.Error("ExposureReady still says HostnameNotAllowed once the hostname is allowed")
+	}
+}
+
+// TestPauseAllowUnpause: a console paused while its hostname is refused,
+// whose hostname the installer then allows while it is still paused, stops
+// reporting the refusal at once (ExposureConfined included: it no longer
+// says the policy is kept "while stalled"), each paused loop after that is
+// a no-op, and unpausing it reconciles as usual: nothing says
+// HostnameNotAllowed or the stall any more.
+func TestPauseAllowUnpause(t *testing.T) {
+	t.Parallel()
+	pausedAnnotations := map[string]string{pgtoolboxv1alpha1.AnnotationReconcile: pgtoolboxv1alpha1.ReconcileSkip}
+	r, cl, c, _, _ := hostnameHarness(t, pausedAnnotations, nil)
+	r.Scheme = cl.Scheme()
+	policy := owned(c, &networkingv1.NetworkPolicy{ObjectMeta: metav1.ObjectMeta{Name: exposurePolicyName(c), Namespace: c.Namespace}})
+	if err := cl.Create(context.Background(), policy); err != nil {
+		t.Fatal(err)
+	}
+	// The console roles the operator ships, for the unpaused loop to get
+	// past the RBAC to the exposure.
+	for _, name := range []string{"pgtoolbox-console", "pgtoolbox-console-pod-logs", "pgtoolbox-console-restore-drills"} {
+		if err := cl.Create(context.Background(), &rbacv1.ClusterRole{ObjectMeta: metav1.ObjectMeta{Name: name}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	type want struct {
+		conditionType string
+		status        metav1.ConditionStatus
+		reason        pgtoolboxv1alpha1.Reason
+	}
+	steps := []struct {
+		name     string
+		allowed  []string
+		unpause  bool
+		want     []want
+		wantNoop bool
+	}{
+		{
+			name: "paused, hostname refused", allowed: []string{"apps.example.com"},
+			want: []want{
+				{pgtoolboxv1alpha1.ConditionExposureConfined, metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonExposurePolicyKept},
+				{pgtoolboxv1alpha1.ConditionStalled, metav1.ConditionTrue, pgtoolboxv1alpha1.ReasonHostnameNotAllowed},
+				{pgtoolboxv1alpha1.ConditionReady, metav1.ConditionUnknown, pgtoolboxv1alpha1.ReasonReconciliationPaused},
+			},
+		},
+		{
+			name: "paused, hostname allowed", allowed: []string{"corp.example.com"}, wantNoop: true,
+			want: []want{
+				{pgtoolboxv1alpha1.ConditionExposureConfined, metav1.ConditionUnknown, pgtoolboxv1alpha1.ReasonReconciling},
+				{pgtoolboxv1alpha1.ConditionExposureReady, metav1.ConditionUnknown, pgtoolboxv1alpha1.ReasonReconciling},
+				{pgtoolboxv1alpha1.ConditionConfigurationValid, metav1.ConditionUnknown, pgtoolboxv1alpha1.ReasonReconciling},
+				{pgtoolboxv1alpha1.ConditionReady, metav1.ConditionUnknown, pgtoolboxv1alpha1.ReasonReconciliationPaused},
+			},
+		},
+		{name: "unpaused", allowed: []string{"corp.example.com"}, unpause: true},
+	}
+	for _, step := range steps {
+		r.AllowedHostSuffixes = step.allowed
+		if step.unpause {
+			current := &pgtoolboxv1alpha1.PgToolBoxConsole{}
+			if err := cl.Get(context.Background(), client.ObjectKeyFromObject(c), current); err != nil {
+				t.Fatal(err)
+			}
+			current.Annotations = nil
+			if err := cl.Update(context.Background(), current); err != nil {
+				t.Fatal(err)
+			}
+		}
+		got := reconcileConsole(t, r, cl, c)
+		for _, w := range step.want {
+			c := meta.FindStatusCondition(got.Status.Conditions, w.conditionType)
+			if c == nil || c.Status != w.status || c.Reason != w.reason.String() {
+				t.Errorf("%s: %s = %+v, want %s/%s", step.name, w.conditionType, c, w.status, w.reason)
+			}
+		}
+		if step.name != "paused, hostname refused" {
+			for _, cond := range got.Status.Conditions {
+				if cond.Reason == pgtoolboxv1alpha1.ReasonHostnameNotAllowed.String() || strings.Contains(cond.Message, "while the console is stalled") {
+					t.Errorf("%s: %s still says %s: %q", step.name, cond.Type, cond.Reason, cond.Message)
+				}
+			}
+			if s := meta.FindStatusCondition(got.Status.Conditions, pgtoolboxv1alpha1.ConditionStalled); s != nil && s.Status == metav1.ConditionTrue {
+				t.Errorf("%s: Stalled = %+v", step.name, s)
+			}
+		}
+		if step.unpause {
+			if err := cl.Get(context.Background(), client.ObjectKey{Namespace: c.Namespace, Name: c.WorkloadName()}, &networkingv1.Ingress{}); err != nil {
+				t.Errorf("unpaused: the Ingress is not published again under the allowed hostname: %v", err)
+			}
+		}
+		if step.wantNoop {
+			if again := reconcileConsole(t, r, cl, c); again.ResourceVersion != got.ResourceVersion {
+				t.Errorf("%s: the next loop is not a no-op", step.name)
+			}
+		}
 	}
 }

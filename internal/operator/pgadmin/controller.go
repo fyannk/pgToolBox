@@ -87,7 +87,7 @@ import (
 type EventRecorder = conditions.EventRecorder
 
 // Features are the optional APIs, probed once at start
-// (discovery.ProbeNamespaces: a scoped List(Limit 1) in every watched
+// (discovery.ProbeKinds: a scoped List(Limit 1) in every watched
 // namespace). The zero Result is "unavailable".
 type Features struct {
 	Routes, Gateways, DatabaseRoles, Poolers discovery.Result

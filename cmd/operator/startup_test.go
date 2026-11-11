@@ -16,16 +16,24 @@ package main
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/yaml"
+
+	"github.com/fyannk/pgToolBox/internal/operator/configuration"
 )
 
 // livenessProbes returns every livenessProbe (and startupProbe) object in
@@ -95,31 +103,125 @@ func TestStartupStepBeforeLivenessKill(t *testing.T) {
 				t.Fatalf("no livenessProbe in %s", source)
 			}
 			for _, probe := range probes {
-				if kill := killAfter(t, probe); 2*startupStepTimeout >= kill {
-					t.Errorf("the liveness probe kills a hung start after %s, before two start-up steps of %s can fail with their named error",
-						kill, startupStepTimeout)
+				// Every step together, then one hung discovery request of a
+				// controller's setup, fail with a named error before the kill.
+				if kill := killAfter(t, probe); startupBudgetTotal+mapperRequestTimeout >= kill {
+					t.Errorf("the liveness probe kills a hung start after %s, before the start-up budget of %s and a setup's discovery request of %s can fail with their named error",
+						kill, startupBudgetTotal, mapperRequestTimeout)
+				}
+				if startupStepTimeout > startupBudgetTotal {
+					t.Errorf("a step's deadline %s exceeds the whole budget %s", startupStepTimeout, startupBudgetTotal)
 				}
 			}
 		})
 	}
 }
 
-// TestEvidenceAgentProbesStartupDeadline: an API server that never answers
-// the EvidenceAgent's optional-API probes fails the start within the
-// step's deadline, naming the step.
-func TestEvidenceAgentProbesStartupDeadline(t *testing.T) {
-	reader := fake.NewClientBuilder().WithScheme(scheme).WithInterceptorFuncs(interceptor.Funcs{
-		List: func(ctx context.Context, _ client.WithWatch, _ client.ObjectList, _ ...client.ListOption) error {
-			<-ctx.Done()
+// TestStartupBudgetIsShared: an API server slow on every request, but
+// answering, keeps every step under its own deadline; the steps together
+// still fail the start, naming the step the shared budget ran out in,
+// rather than adding up past the liveness kill with no error named.
+func TestStartupBudgetIsShared(t *testing.T) {
+	t.Setenv("WATCH_NAMESPACES", "team-a")
+	t.Setenv("OPERATOR_IMAGE", "registry.example.com/pgtoolbox/operator:test")
+	slow := func(ctx context.Context) error {
+		select {
+		case <-time.After(60 * time.Millisecond):
+			return nil
+		case <-ctx.Done():
 			return ctx.Err()
+		}
+	}
+	reader := fake.NewClientBuilder().WithScheme(scheme).WithInterceptorFuncs(interceptor.Funcs{
+		Get: func(ctx context.Context, _ client.WithWatch, _ client.ObjectKey, _ client.Object, _ ...client.GetOption) error {
+			if err := slow(ctx); err != nil {
+				return err
+			}
+			return apierrors.NewNotFound(schema.GroupResource{Resource: "configmaps"}, "pgtoolbox-operator-config")
+		},
+		List: func(ctx context.Context, _ client.WithWatch, _ client.ObjectList, _ ...client.ListOption) error {
+			return slow(ctx)
 		},
 	}).Build()
-	start := time.Now()
-	_, _, _, err := probeEvidenceAgentAPIs(t.Context(), reader, []string{"team-a"}, 50*time.Millisecond)
-	if err == nil || !strings.Contains(err.Error(), `"probe the EvidenceAgent's optional APIs" did not finish within`) {
-		t.Fatalf("error = %v, want the step named with its deadline", err)
+	objects := configuration.Objects{Namespace: "pgtoolbox", ConfigMap: "pgtoolbox-operator-config", Secret: "pgtoolbox-operator-config"}
+
+	// Each step alone fits in its 2 s; together they take about 0.8 s.
+	if _, err := preparePgAdminWith(t.Context(), reader, prometheus.NewRegistry(), newStartupBudget(2*time.Second, 10*time.Second), objects); err != nil {
+		t.Fatalf("with budget to spare: %v", err)
 	}
-	if elapsed := time.Since(start); elapsed > 10*time.Second {
-		t.Fatalf("took %s", elapsed)
+	start := time.Now()
+	_, err := preparePgAdminWith(t.Context(), reader, prometheus.NewRegistry(), newStartupBudget(2*time.Second, 400*time.Millisecond), objects)
+	if err == nil || !strings.Contains(err.Error(), `"probe the optional APIs"`) || !strings.Contains(err.Error(), "start-up budget of 400ms is spent") {
+		t.Fatalf("error = %v, want the optional-API step named with the spent budget", err)
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("took %s, want about the budget", elapsed)
+	}
+}
+
+// TestStartupBudgetSpentBeforeAStep: a step that starts with the budget
+// spent fails at once, naming itself, without reading.
+func TestStartupBudgetSpentBeforeAStep(t *testing.T) {
+	budget := newStartupBudget(time.Second, time.Second)
+	budget.now = func() time.Time { return budget.deadline.Add(time.Millisecond) }
+	read := false
+	_, err := budgetedRead(t.Context(), budget, "check the watched namespaces", func(context.Context) (struct{}, error) {
+		read = true
+		return struct{}{}, nil
+	})
+	if err == nil || !strings.Contains(err.Error(), `"check the watched namespaces" not started: the start-up budget of 1s is spent`) {
+		t.Fatalf("error = %v", err)
+	}
+	if read {
+		t.Fatal("the step read with the budget spent")
+	}
+}
+
+// TestTimedMapperProviderHungAPIServer: the manager's RESTMapper, which the
+// controllers' setups (IndexField) use before the manager starts and whose
+// discovery requests take no context, fails a lookup against an API server
+// that never answers after its request timeout, instead of hanging the
+// start until the liveness probe kills it.
+func TestTimedMapperProviderHungAPIServer(t *testing.T) {
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	t.Cleanup(server.Close)
+	t.Cleanup(func() { close(release) })
+	cfg := &rest.Config{Host: server.URL, QPS: -1}
+	shared, err := rest.HTTPClientFor(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mapper, err := timedMapperProvider(300*time.Millisecond)(cfg, shared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Timeout != 0 || shared.Timeout != 0 {
+		t.Fatalf("the manager's config or HTTP client got a timeout: %s, %s", cfg.Timeout, shared.Timeout)
+	}
+	done := make(chan error, 1)
+	start := time.Now()
+	go func() {
+		_, err := mapper.RESTMapping(schema.GroupKind{Group: "postgresql.cnpg.io", Kind: "Cluster"}, "v1")
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("a lookup against a hung API server succeeded")
+		}
+		if elapsed := time.Since(start); elapsed > 3*time.Second {
+			t.Fatalf("failed after %s, want about the request timeout", elapsed)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the lookup is still running 5 s after its 300 ms request timeout")
+	}
+	if mapperRequestTimeout <= 0 || mapperRequestTimeout >= startupStepTimeout {
+		t.Fatalf("mapperRequestTimeout %s, want positive and under a start-up step", mapperRequestTimeout)
 	}
 }

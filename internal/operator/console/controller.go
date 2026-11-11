@@ -55,6 +55,7 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -777,6 +778,7 @@ func (r *Reconciler) checkHostname(ctx context.Context, console *pgtoolboxv1alph
 	message := exposure.HostnameRefusal(console.Spec.Exposure.ExposureSpec, r.AllowedHostSuffixes, imageProblem)
 	if message == "" {
 		exposure.ClearHostnameRefusal(&console.Status.Conditions, console.Generation)
+		clearPolicyKeptOnStall(console)
 		return nil
 	}
 	if err := r.withdrawExposure(ctx, console); err != nil {
@@ -1077,8 +1079,30 @@ func (r *Reconciler) policyKeptOnStall(ctx context.Context, console *pgtoolboxv1
 		return nil
 	}
 	setCondition(console, pgtoolboxv1alpha1.ConditionExposureConfined, metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonExposurePolicyKept,
-		"NetworkPolicy "+name+" is kept while the console is stalled with its exposure withdrawn: the workload keeps its last template, which may still trust every peer the policy admits")
+		policyKeptOnStallMessage(name))
 	return nil
+}
+
+// policyKeptOnStallMessage is ExposureConfined's message while the console
+// is stalled with its exposure withdrawn (policyKeptOnStall).
+func policyKeptOnStallMessage(name string) string {
+	return "NetworkPolicy " + name + " is kept while the console is stalled with its exposure withdrawn: the workload keeps its last template, which may still trust every peer the policy admits"
+}
+
+// clearPolicyKeptOnStall turns ExposureConfined back to Unknown (reason
+// Reconciling) when it still says what policyKeptOnStall said and the
+// hostname is now allowed: a paused console, which goes no further than
+// the hostname check, must not keep saying it is stalled with its exposure
+// withdrawn once that no longer holds (exposure.ClearHostnameRefusal does
+// the same for ExposureReady and ConfigurationValid). The next loop that
+// gets to the exposure says what holds; any other ExposureConfined is left
+// as it is, so a no-op loop writes nothing.
+func clearPolicyKeptOnStall(console *pgtoolboxv1alpha1.PgToolBoxConsole) {
+	c := meta.FindStatusCondition(console.Status.Conditions, pgtoolboxv1alpha1.ConditionExposureConfined)
+	if c != nil && c.Reason == pgtoolboxv1alpha1.ReasonExposurePolicyKept.String() && c.Message == policyKeptOnStallMessage(exposurePolicyName(console)) {
+		setCondition(console, pgtoolboxv1alpha1.ConditionExposureConfined, metav1.ConditionUnknown, pgtoolboxv1alpha1.ReasonReconciling,
+			exposure.HostnameAllowedMessage)
+	}
 }
 
 // withdrawExposure deletes every exposure object this console owns.
