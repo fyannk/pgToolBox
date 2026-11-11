@@ -17,6 +17,7 @@ package main
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -30,6 +31,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
+	"sigs.k8s.io/controller-runtime/pkg/manager"
 
 	pgtoolboxv1alpha1 "github.com/fyannk/pgToolBox/api/v1alpha1"
 	"github.com/fyannk/pgToolBox/internal/operator/managerrole"
@@ -299,6 +301,69 @@ func TestReportDroppedNamespaces(t *testing.T) {
 			t.Errorf("%d status patches of the PgAdmin, want 1 (no retry)", patches)
 		}
 	})
+}
+
+// raceList is a droppedAPI whose first List runs another replica's report
+// once it has listed: every object it then patches has changed since.
+type raceList struct {
+	droppedAPI
+	once  sync.Once
+	other func()
+}
+
+func (r *raceList) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+	err := r.droppedAPI.List(ctx, list, opts...)
+	r.once.Do(r.other)
+	return err
+}
+
+// TestReportDroppedNamespacesTwoReplicas: round 16, OPERATOR P3-1. Two
+// replicas reporting at once: the second's patch from its stale List is a
+// Conflict; it reads the object again, finds Ready already says so, and
+// emits no second Event. Where it may not read the object again, the
+// Conflict counts as already said.
+func TestReportDroppedNamespacesTwoReplicas(t *testing.T) {
+	now := func() time.Time { return time.Date(2026, 11, 11, 9, 0, 0, 0, time.UTC) }
+	narrowed := droppedNamespace{
+		Namespace: "team-b", Cause: dropPermissions, Reason: "not allowed to list,watch deployments.apps in team-b",
+		required: droppedRequired(), missing: []managerrole.Permission{{Group: "apps", Resource: "deployments", Verbs: []string{"list", "watch"}}},
+	}
+	noGet := narrowed
+	noGet.missing = append(slices.Clone(narrowed.missing), managerrole.Permission{Group: pgtoolboxv1alpha1.GroupVersion.Group, Resource: "pgadmins", Verbs: []string{"get"}})
+	for name, d := range map[string]droppedNamespace{"read again": narrowed, "no get": noGet} {
+		t.Run(name, func(t *testing.T) {
+			c := newDroppedClient(t)
+			other := &raceList{droppedAPI: c}
+			other.other = func() { reportDroppedNamespaces(t.Context(), c, []droppedNamespace{d}, now) }
+			reportDroppedNamespaces(t.Context(), other, []droppedNamespace{d}, now)
+			if events := listOf(t, c, &eventsv1.EventList{}, "team-b").Items; len(events) != 3 {
+				t.Errorf("%d Events for one transition of 3 objects, want 3", len(events))
+			}
+			for _, ready := range readyOf(t, c) {
+				if ready.Reason != pgtoolboxv1alpha1.ReasonNamespaceNotWatched.String() {
+					t.Errorf("Ready = %+v, want NamespaceNotWatched", ready)
+				}
+			}
+		})
+	}
+}
+
+// TestDroppedReportNeedsLeaderElection: round 16, K8S P3-1. The report is
+// a Runnable the manager starts on the elected leader only.
+func TestDroppedReportNeedsLeaderElection(t *testing.T) {
+	var runnable manager.Runnable = droppedReport{}
+	elected, ok := runnable.(manager.LeaderElectionRunnable)
+	if !ok || !elected.NeedLeaderElection() {
+		t.Fatal("the dropped-namespace report would run on every replica")
+	}
+	c := newDroppedClient(t)
+	narrowed := droppedNamespace{Namespace: "team-b", Cause: dropPermissions, Reason: "r", required: droppedRequired()}
+	if err := (droppedReport{api: c, dropped: []droppedNamespace{narrowed}, now: time.Now}).Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if events := listOf(t, c, &eventsv1.EventList{}, "team-b").Items; len(events) != 3 {
+		t.Errorf("%d Events, want 3", len(events))
+	}
 }
 
 // TestCountDropped: every cause is exported, 0 when none.

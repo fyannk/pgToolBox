@@ -974,6 +974,11 @@ func (in *PgAdminStatus) DeepCopyInto(out *PgAdminStatus) {
 		*out = make([]PgAdminServerStatus, len(*in))
 		copy(*out, *in)
 	}
+	if in.PublishedExposureKinds != nil {
+		in, out := &in.PublishedExposureKinds, &out.PublishedExposureKinds
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
 	if in.Conditions != nil {
 		in, out := &in.Conditions, &out.Conditions
 		*out = make([]metav1.Condition, len(*in))
@@ -1869,6 +1874,11 @@ func (in *PgToolBoxConsoleStatus) DeepCopyInto(out *PgToolBoxConsoleStatus) {
 		in, out := &in.InstanceCABundle, &out.InstanceCABundle
 		*out = new(PgToolBoxConsoleInstanceCABundleStatus)
 		(*in).DeepCopyInto(*out)
+	}
+	if in.PublishedExposureKinds != nil {
+		in, out := &in.PublishedExposureKinds, &out.PublishedExposureKinds
+		*out = make([]string, len(*in))
+		copy(*out, *in)
 	}
 	if in.Conditions != nil {
 		in, out := &in.Conditions, &out.Conditions

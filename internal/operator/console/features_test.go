@@ -93,6 +93,7 @@ func TestStaleRouteAfterRefusal(t *testing.T) {
 
 	t.Run("an owned stale Route is deleted", func(t *testing.T) {
 		c := newConsole()
+		c.Status.PublishedExposureKinds = []string{"Route"}
 		cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(c, staleRoute(c)).Build()
 		r := &Reconciler{Client: cl, APIReader: cl, Features: features}
 		exposed, leftovers, err := r.applyExposure(context.Background(), c)
@@ -101,6 +102,9 @@ func TestStaleRouteAfterRefusal(t *testing.T) {
 		}
 		if err := cl.Get(context.Background(), client.ObjectKey{Namespace: "team-b", Name: c.WorkloadName()}, &routev1.Route{}); !apierrors.IsNotFound(err) {
 			t.Fatalf("the stale Route is still there: %v", err)
+		}
+		if c.Status.PublishedExposureKinds != nil {
+			t.Errorf("publishedExposureKinds = %q once the Route is deleted, want none", c.Status.PublishedExposureKinds)
 		}
 		if published, _, err := r.exposurePublished(context.Background(), c); err != nil || published {
 			t.Fatalf("exposurePublished = %t, %v once the Route is gone", published, err)
@@ -119,6 +123,9 @@ func TestStaleRouteAfterRefusal(t *testing.T) {
 	t.Run("an unreadable Route never published is not reported", func(t *testing.T) {
 		c := newConsole()
 		setCondition(c, pgtoolboxv1alpha1.ConditionExposureReady, metav1.ConditionTrue, pgtoolboxv1alpha1.ReasonNotRequested, "in-cluster Service only (exposure type clusterIP)")
+		// Round 16, OPERATOR P3-2: words about a Gateway or the Route API
+		// are no record of a published Route.
+		setCondition(c, pgtoolboxv1alpha1.ConditionReady, metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonReconciling, "the Route API is unavailable; 504 Gateway Timeout")
 		cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(c).Build()
 		r := &Reconciler{Client: cl, APIReader: refusing, Features: features}
 		exposed, leftovers, err := r.applyExposure(context.Background(), c)
@@ -137,9 +144,9 @@ func TestStaleRouteAfterRefusal(t *testing.T) {
 
 	t.Run("an unreadable Route may remain, and the status says so", func(t *testing.T) {
 		c := newConsole()
-		// The loop before the refusal observed the Route this console
-		// published then.
-		setCondition(c, pgtoolboxv1alpha1.ConditionExposureReady, metav1.ConditionTrue, pgtoolboxv1alpha1.ReasonAsExpected, "admitted by router default")
+		// The operator published a Route for this console before the
+		// refusal.
+		c.Status.PublishedExposureKinds = []string{"Route"}
 		cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(c).Build()
 		r := &Reconciler{Client: cl, APIReader: refusing, Features: features}
 		want := "the operator may not read Routes in team-b: a Route " + c.WorkloadName() + " published before may remain; delete it by hand"

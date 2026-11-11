@@ -1415,6 +1415,32 @@ func TestReconcileStaleRouteAfterRefusal(t *testing.T) {
 		}
 	})
 
+	// Round 16, OPERATOR P3-2: the status records the Route the operator
+	// publishes, and drops the record once it deleted it.
+	t.Run("published, then withdrawn: recorded, then cleared", func(t *testing.T) {
+		p := clusterIP()
+		p.Spec.Exposure.Type = pgtoolboxv1alpha1.ExposureTypeRoute
+		h := newHarness(t, nil, baseObjects(p)...)
+		h.r.Features.Routes = discovery.Result{GVK: routev1.GroupVersion.WithKind("Route"), State: discovery.Available}
+		if err := h.reconcile(p.Name); err != nil {
+			t.Fatal(err)
+		}
+		if got := h.pgadmin(p.Name).Status.PublishedExposureKinds; !slices.Equal(got, []string{"Route"}) {
+			t.Fatalf("publishedExposureKinds = %q after publishing a Route, want [Route]", got)
+		}
+		current := h.pgadmin(p.Name)
+		current.Spec.Exposure.Type = pgtoolboxv1alpha1.ExposureTypeClusterIP
+		if err := h.client.Update(context.Background(), current); err != nil {
+			t.Fatal(err)
+		}
+		if err := h.reconcile(p.Name); err != nil {
+			t.Fatal(err)
+		}
+		if got := h.pgadmin(p.Name).Status.PublishedExposureKinds; got != nil {
+			t.Fatalf("publishedExposureKinds = %q once the Route is deleted, want none", got)
+		}
+	})
+
 	refuseRoutes := func(h *harness) {
 		h.r.APIReader = interceptor.NewClient(h.client.(client.WithWatch), interceptor.Funcs{
 			Get: func(ctx context.Context, inner client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
@@ -1428,6 +1454,12 @@ func TestReconcileStaleRouteAfterRefusal(t *testing.T) {
 
 	t.Run("unreadable, never published: nothing said", func(t *testing.T) {
 		p := clusterIP()
+		// Round 16, OPERATOR P3-2: words about a Gateway or the Route API
+		// in a message are no record of a published Route.
+		p.Status.Conditions = []metav1.Condition{{
+			Type: pgtoolboxv1alpha1.ConditionReady, Status: metav1.ConditionFalse, Reason: pgtoolboxv1alpha1.ReasonReconciling.String(),
+			Message: "the Route API is unavailable; 504 Gateway Timeout", LastTransitionTime: metav1.Now(),
+		}}
 		h := newHarness(t, nil, baseObjects(p)...)
 		h.r.Features.Routes = refusedHere
 		refuseRoutes(h)
@@ -1443,11 +1475,8 @@ func TestReconcileStaleRouteAfterRefusal(t *testing.T) {
 
 	t.Run("unreadable: ExposureReady says it may remain", func(t *testing.T) {
 		p := clusterIP()
-		// The loop before the refusal observed the Route it published.
-		p.Status.Conditions = []metav1.Condition{{
-			Type: pgtoolboxv1alpha1.ConditionExposureReady, Status: metav1.ConditionTrue, Reason: pgtoolboxv1alpha1.ReasonAsExpected.String(),
-			Message: "admitted by router default", LastTransitionTime: metav1.Now(),
-		}}
+		// The operator published a Route before the refusal.
+		p.Status.PublishedExposureKinds = []string{"Route"}
 		h := newHarness(t, nil, baseObjects(p)...)
 		h.r.Features.Routes = refusedHere
 		refuseRoutes(h)
@@ -1465,6 +1494,9 @@ func TestReconcileStaleRouteAfterRefusal(t *testing.T) {
 		}
 		if again := h.pgadmin(p.Name); again.ResourceVersion != first.ResourceVersion {
 			t.Errorf("a no-op loop wrote the status: %s -> %s", first.ResourceVersion, again.ResourceVersion)
+		}
+		if got := h.pgadmin(p.Name).Status.PublishedExposureKinds; !slices.Equal(got, []string{"Route"}) {
+			t.Errorf("publishedExposureKinds = %q, want the Route kept on record while it may remain", got)
 		}
 	})
 }

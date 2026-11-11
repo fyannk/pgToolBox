@@ -588,6 +588,15 @@ type PgAdminStatus struct {
 	// +optional
 	Servers []PgAdminServerStatus `json:"servers,omitempty"`
 
+	// The exposure kinds (Route, HTTPRoute) the operator published for
+	// this PgAdmin and has not seen gone since: where it is later refused
+	// one of them, it reports what may remain of it.
+	// +kubebuilder:validation:MaxItems=2
+	// +kubebuilder:validation:items:Enum=Route;HTTPRoute
+	// +listType=set
+	// +optional
+	PublishedExposureKinds []string `json:"publishedExposureKinds,omitempty"`
+
 	// Conditions: Ready (summary of ConfigurationValid, WorkloadReady,
 	// ExposureReady and ServersSynced), Progressing, Stalled, and the
 	// advisory PgAdminEgressConfined, which never enters Ready.

@@ -149,7 +149,8 @@ func requiredPermissions(mapper meta.RESTMapper, objectScheme *runtime.Scheme, r
 // no answer within managerrole.NamespaceReviewTimeout) is left out too,
 // with its error logged: nothing is known of it, and the others must not
 // wait on it. Left out, it is not reconciled until it is fixed and the
-// operator restarted; the others are unaffected. It returns the namespaces
+// operator restarted (reReviewFailed restarts it for a failed review); the
+// others are unaffected. It returns the namespaces
 // kept and those left out, why and (for missing permissions) what the
 // review showed. At least one namespace must be kept; empty (every
 // namespace) stays empty.
@@ -183,9 +184,9 @@ func permittedNamespaces(ctx context.Context, api startupAPI, namespaces []strin
 		dropped = append(dropped, droppedNamespace{Namespace: d.Namespace, Cause: dropPermissions, Reason: d.Reason(), required: required, missing: d.Missing})
 	}
 	for _, u := range review.Unreviewed {
-		setupLog.Error(u.Err, "watched namespace left out: the operator's permissions there could not be reviewed (check the API server and the namespace's RoleBindings, a count/rolebindings.rbac.authorization.k8s.io quota keeps the review small, then restart the operator)",
+		setupLog.Error(u.Err, "watched namespace left out: the operator's permissions there could not be reviewed (check the API server and the namespace's RoleBindings; it is reviewed again every minute, and the operator restarts to watch it once it grants every permission)",
 			"namespace", u.Namespace)
-		dropped = append(dropped, droppedNamespace{Namespace: u.Namespace, Cause: dropReviewFailed, Reason: u.Reason()})
+		dropped = append(dropped, droppedNamespace{Namespace: u.Namespace, Cause: dropReviewFailed, Reason: u.Reason(), required: required})
 	}
 	if len(review.Permitted) == 0 {
 		return nil, dropped, fmt.Errorf("none of the watched namespaces %v grants the operator every permission of its manager role (%d lack one, %d could not be reviewed): restore the chart's manager RoleBindings",
