@@ -166,6 +166,11 @@ operator:
       # -- Secret (name and key) holding the bearer token the PodMonitor sends.
       # The token's identity must be allowed to `get` the URL `/metrics`.
       bearerTokenSecret: {name: "", key: token}
+    # -- Create a PrometheusRule with the operator's alerts
+    # (`files/alerts/operator.rules.yaml`: a watched namespace left out at
+    # start): `enabled` and extra `labels` (for the Prometheus
+    # `ruleSelector`).
+    prometheusRule: {enabled: false, labels: {}}
 
   # Availability of the operator pods.
   podDisruptionBudget:

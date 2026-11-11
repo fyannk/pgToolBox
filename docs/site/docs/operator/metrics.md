@@ -36,13 +36,23 @@ runtime metrics:
 | `pgtoolbox_evidenceagent_info` | `namespace`, `name`, `cluster`, `issuer`, `image` | One series per `EvidenceAgent`. |
 | `pgtoolbox_evidenceagent_condition` | `namespace`, `name`, `type`, `status` | 1 for the current status of each condition. |
 | `pgtoolbox_evidenceagent_producer_epoch` | `namespace`, `name` | `status.producerEpoch`. |
-| `pgtoolbox_watch_namespaces_dropped` | | Namespaces of `WATCH_NAMESPACES` left out of the watch at start: the operator may not list CloudNativePG Clusters there (deleted since the install, or not bound), or it lacks another namespaced permission of its manager role there (a narrower Role bound in place of the chart's; the log names the permission). An optional API refused never counts here. Their objects are not reconciled until the namespace is back and the operator restarts. |
+| `pgtoolbox_watch_namespaces_dropped` | `reason` | Namespaces of `WATCH_NAMESPACES` left out of the watch at start, per cause (a fixed set, every series exported, 0 when none): `clusters-unlistable`, the operator may not list CloudNativePG Clusters there (deleted since the install, or not bound); `permissions`, it lacks another namespaced permission of its manager role there (a narrower Role bound in place of the chart's; the log names the permission); `review-failed`, its permissions there could not be reviewed (an error after one retry, or no answer in time). An optional API refused never counts here. Their objects are not reconciled until the namespace is back and the operator restarts ([dropped namespaces](index.md#namespaces-dropped-from-the-watch)). |
 | `pgtoolbox_optional_api_refused_namespaces` | `group`, `kind` | Per optional API, the watched namespaces whose Role refuses it while others allow it: the feature is off in those namespaces only (no namespace is left out for it). 0 when none does, or when the API is off everywhere. |
 
 These are computed from the cache at scrape time, kube-state-metrics style. A
 failed list yields no series: *absent*, not zero. The two start-up gauges
 (`pgtoolbox_watch_namespaces_dropped`, `pgtoolbox_optional_api_refused_namespaces`)
-are set once at start and change only with a restart; a value above 0 is
-worth an alert of your own (`pgtoolbox_watch_namespaces_dropped > 0`: some
-tenant's objects are unmanaged).
+are set once at start and change only with a restart; every replica exports
+its own.
+
+## Alerts
+
+`operator.metrics.prometheusRule.enabled` renders `<release>-operator`, a
+PrometheusRule with the operator's alerts (`files/alerts/operator.rules.yaml`
+in the chart, unit-tested with promtool by `make rules-test`); `labels` adds
+the labels your Prometheus `ruleSelector` needs.
+
+| Alert | Fires when | Severity |
+|---|---|---|
+| `PgToolBoxOperatorNamespacesDropped` | `max by (namespace, reason) (pgtoolbox_watch_namespaces_dropped) > 0` for 5 minutes: some tenant's objects are not reconciled. The `reason` label tells the causes apart; the operator log names each namespace. Runbook: [namespaces dropped from the watch](index.md#namespaces-dropped-from-the-watch). | warning |
 

@@ -23,6 +23,7 @@ operator:
     podMonitor:
       enabled: true
       bearerTokenSecret: {name: prometheus-scrape-token, key: token}
+    prometheusRule: {enabled: true, labels: {release: kube-prometheus-stack}}
   priorityClassName: system-cluster-critical
   topologySpreadConstraints:
     - maxSkew: 1

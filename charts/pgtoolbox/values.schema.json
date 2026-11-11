@@ -883,6 +883,21 @@
             },
             "podMonitor": {
               "$ref": "#/definitions/podMonitor"
+            },
+            "prometheusRule": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "labels": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  }
+                }
+              }
             }
           }
         },
