@@ -237,16 +237,27 @@ delete it afterwards.
   ConfigMap (missing or forbidden) the refusal stays on this replica, and a
   copied cookie stays usable on another until it expires or is put on the
   [revocation list](#revoking-sessions). The ConfigMap keeps at most 16
-  sign-outs a person and 1,536 entries in all, and it never drops a
-  sign-out it holds to make room: past a bound a **new** sign-out is
-  refused on its own replica only (a copy of that cookie works on the other
-  replicas until it expires), counted in
-  `pgtoolbox_console_shared_state_signouts_refused_total{reason}` and, for
-  the document's bound, logged. Filling the document therefore takes some
-  fifty identities the API server accepts. A sign-out whose token the API
-  server already refuses, in a session that cannot renew it (a pasted
-  token, an OIDC session without a refresh token), is not shared: every
-  replica refuses that session already. Each replica also bounds its own
+  sign-outs a person and 1,536 entries in all. A person past their 16
+  keeps their **latest** sign-outs: each new one takes the place of their
+  own sign-out that ends first (the newest is the one a freshly copied
+  cookie needs), and nobody else's entry moves. The other bounds (128
+  entries for the sessions sealed without a person's tag, all together,
+  and the document's 1,536) never drop a sign-out they hold: past them a
+  **new** sign-out is refused on its own replica only (a copy of that
+  cookie works on the other replicas until it expires). Both are counted
+  in `pgtoolbox_console_shared_state_signouts_refused_total{reason}`, and
+  the document's bound is logged. Filling the document therefore takes
+  some fifty identities the API server accepts. Two replicas taking the
+  document's last place at the same moment each accept their sign-out, and
+  merging keeps one: the other is counted under `reason="merge"`, logged
+  once, and still refused by the replica that recorded it. Every sign-out of
+  a session sealed with its person's tag is shared, even when the API
+  server refuses the token at sign-out: OpenShift's OAuth API server and
+  the webhook authenticators of EKS and GKE answer 401 while they are
+  down, and the token works again once they are back. Only a session
+  without that tag, whose token is refused and cannot be renewed (a pasted
+  token, an OIDC session without a refresh token), is kept on its own
+  replica. Each replica also bounds its own
   list (64 sign-outs a person, 65,536 in all, the earliest-ending
   forgotten first), so sign-outs never grow memory or the ConfigMap past
   what the API server accepts. It does **not** revoke the token at the
