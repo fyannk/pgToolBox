@@ -57,7 +57,8 @@ docs-env-check: ## Fail when a console environment variable has no line on the s
 
 # The console embeds the documentation of its own version:
 # the Markdown the site's llms plugin writes for `current` and a BM25 index
-# over its sections, in internal/console/docsbundle/data (under 1 MiB). The
+# over its sections, as one gzip archive, internal/console/docsbundle/data/bundle.gz
+# (1 MiB compressed, 4 MiB decompressed at most; see docsbundle/archive.go). The
 # bundle version is the product's: the chart version.
 #
 # The bundle is generated and NOT committed (it used to be, and every pull
@@ -75,7 +76,7 @@ docs-build: ## Build the documentation site (typecheck, the llms plugin and scri
 	cd docs/site && npm ci --ignore-scripts && npm run typecheck && npm test && npm run check:mermaid && npm run build
 
 .PHONY: docs-bundle
-docs-bundle: docs-build ## Write the console's embedded documentation bundle (Markdown pages and BM25 index; git-ignored) from the built site.
+docs-bundle: docs-build ## Write the console's embedded documentation bundle (a gzip archive of the Markdown pages and BM25 index; git-ignored) from the built site.
 	go run ./hack/docsbundle -site docs/site/build -out $(DOCS_BUNDLE_DIR) -version $(DOCS_BUNDLE_VERSION)
 
 .PHONY: test-docs-bundle

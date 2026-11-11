@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"errors"
 	"io/fs"
+	"maps"
 	"os"
 	"reflect"
 	"slices"
@@ -156,9 +157,12 @@ func TestBuildIsDeterministicWhateverTheOrder(t *testing.T) {
 			t.Fatal("the same pages built to different bytes")
 		}
 	}
+	if len(first) != 1 || len(first[archiveName]) == 0 {
+		t.Fatalf("Build must write one file, %s: %v", archiveName, slices.Collect(maps.Keys(first)))
+	}
 	other, _ := Build("1.0.1", src)
-	if bytes.Equal(first["index.bin"], other["index.bin"]) {
-		t.Error("the version must be part of the index")
+	if bytes.Equal(first[archiveName], other[archiveName]) {
+		t.Error("the version must be part of the bundle")
 	}
 }
 
@@ -197,10 +201,14 @@ func TestAbsentBundleIsAStateNotAFailure(t *testing.T) {
 	if _, err := Load(fstest.MapFS{}); !errors.Is(err, ErrNotEmbedded) {
 		t.Errorf("Load of an empty tree = %v, want ErrNotEmbedded", err)
 	}
-	if _, err := Load(fstest.MapFS{"index.bin": &fstest.MapFile{Data: []byte("nope")}}); err == nil || errors.Is(err, ErrNotEmbedded) {
-		t.Errorf("a corrupt index must be an error that is not ErrNotEmbedded: %v", err)
+	if _, err := Load(fstest.MapFS{archiveName: &fstest.MapFile{Data: []byte("nope")}}); err == nil || errors.Is(err, ErrNotEmbedded) {
+		t.Errorf("a corrupt archive must be an error that is not ErrNotEmbedded: %v", err)
 	}
-	if _, err := fs.Stat(embedded, "data/index.bin"); err == nil {
+	// The layout before the archive is no bundle: Load reads bundle.gz only.
+	if _, err := Load(fstest.MapFS{"index.bin": &fstest.MapFile{Data: fixture(t).ix.encode()}}); !errors.Is(err, ErrNotEmbedded) {
+		t.Errorf("Load of a tree without %s = %v, want ErrNotEmbedded", archiveName, err)
+	}
+	if _, err := fs.Stat(embedded, "data/"+archiveName); err == nil {
 		t.Skip("a bundle is embedded (make docs-bundle was run): the absent case cannot be observed")
 	}
 	if _, err := Default(); !errors.Is(err, ErrNotEmbedded) {
@@ -238,6 +246,7 @@ func TestEmbeddedBundleLoadsAndFitsTheBudget(t *testing.T) {
 	if n := len(Pages()); n < 30 {
 		t.Errorf("only %d pages embedded", n)
 	}
+	// Everything go:embed carries is the archive (and the empty .keep).
 	total := 0
 	err := fs.WalkDir(embedded, "data", func(_ string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
@@ -250,8 +259,12 @@ func TestEmbeddedBundleLoadsAndFitsTheBudget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if total >= 1<<20 {
-		t.Errorf("the bundle is %d bytes, the budget is 1 MiB", total)
+	if total > MaxEmbeddedBytes {
+		t.Errorf("the embedded bundle is %d bytes, the budget is %d", total, MaxEmbeddedBytes)
+	}
+	b, _ := Default()
+	if n := b.DecompressedSize(); n <= total || n > MaxBundleBytes {
+		t.Errorf("the bundle decompresses to %d bytes (compressed %d), the budget is %d", n, total, MaxBundleBytes)
 	}
 }
 

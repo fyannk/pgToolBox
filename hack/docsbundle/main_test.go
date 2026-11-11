@@ -92,31 +92,48 @@ func TestWriteThenRewrite(t *testing.T) {
 	if err := run(dir, out, "1.3.0"); err != nil {
 		t.Fatal(err)
 	}
-	// Only current is bundled, addressed under the release's own snapshot.
-	page, err := os.ReadFile(filepath.Join(out, "pages", "docs", "1.3", "a.md"))
+	// One file, the archive, is written.
+	entries, err := os.ReadDir(out)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(page), "path: /docs/1.3/a/") || !strings.Contains(string(page), "](/docs/1.3/b.md)") || strings.Contains(string(page), "https://h") {
-		t.Errorf("page = %q", page)
+	if len(entries) != 1 || entries[0].Name() != "bundle.gz" {
+		t.Fatalf("the bundle directory holds %v, want bundle.gz alone", entries)
 	}
-	// A rerun replaces the generated files and leaves the placeholder.
+	// Only current is bundled, addressed under the release's own snapshot.
+	b, err := docsbundle.Load(os.DirFS(out))
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, ok := b.Page("/docs/1.3/a/")
+	if !ok || page.Path != "/docs/1.3/a/" || !strings.Contains(page.Markdown, "](/docs/1.3/b.md)") || strings.Contains(page.Markdown, "https://h") {
+		t.Errorf("page = %+v, %v", page, ok)
+	}
+	// A rerun replaces the generated files, the layout before the archive
+	// (index.bin and pages/) included, and leaves the placeholder.
 	if err := os.WriteFile(filepath.Join(out, ".keep"), nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(out, "pages", "stale.md"), []byte("x"), 0o644); err != nil {
+	if err := os.MkdirAll(filepath.Join(out, "pages"), 0o755); err != nil {
 		t.Fatal(err)
+	}
+	for _, stale := range []string{"index.bin", filepath.Join("pages", "stale.md")} {
+		if err := os.WriteFile(filepath.Join(out, stale), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := run(dir, out, "1.3.1"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(out, "pages", "stale.md")); err == nil {
-		t.Error("a stale page survived the rerun")
+	for _, stale := range []string{"index.bin", "pages"} {
+		if _, err := os.Stat(filepath.Join(out, stale)); err == nil {
+			t.Errorf("%s survived the rerun", stale)
+		}
 	}
 	if _, err := os.Stat(filepath.Join(out, ".keep")); err != nil {
 		t.Errorf("the placeholder must survive: %v", err)
 	}
-	b, err := docsbundle.Load(os.DirFS(out))
+	b, err = docsbundle.Load(os.DirFS(out))
 	if err != nil || b.Version() != "1.3.1" {
 		t.Errorf("the rerun's bundle = %v, %v", b, err)
 	}
@@ -128,8 +145,12 @@ func TestUnversionedSiteKeepsItsPaths(t *testing.T) {
 	if err := run(dir, out, "1.2.0"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(out, "pages", "docs", "next", "a.md")); err != nil {
-		t.Error(err)
+	b, err := docsbundle.Load(os.DirFS(out))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := b.Page("/docs/a/"); !ok {
+		t.Error("the page must keep its path")
 	}
 }
 
@@ -143,5 +164,22 @@ func TestRunRefusesMissingInput(t *testing.T) {
 	dir := site(t, `{"versions":[{"version":"1.2","path":"/docs/","pages":[]}]}`)
 	if err := run(dir, t.TempDir(), "1.0.0"); err == nil {
 		t.Error("a manifest without a current version must be refused")
+	}
+}
+
+// A site whose pages break a budget fails the generator, the error naming the
+// limit, and nothing is written.
+func TestRunRefusesAnOversizedBundle(t *testing.T) {
+	dir := site(t, `{"versions":[{"version":"current","path":"/docs/","pages":[{"title":"Alpha","path":"/docs/a/","file":"docs/next/a.md"}]}]}`)
+	if err := os.WriteFile(filepath.Join(dir, "docs", "next", "a.md"), []byte(strings.Repeat("word ", docsbundle.MaxBundleBytes/5+1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(t.TempDir(), "data")
+	err := run(dir, out, "1.2.0")
+	if err == nil || !strings.Contains(err.Error(), "MaxBundleBytes") || !strings.Contains(err.Error(), " over the ") {
+		t.Errorf("run = %v, want the MaxBundleBytes error", err)
+	}
+	if _, err := os.Stat(out); err == nil {
+		t.Error("an oversized bundle must not be written")
 	}
 }
