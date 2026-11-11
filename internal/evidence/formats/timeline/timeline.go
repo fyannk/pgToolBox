@@ -324,7 +324,9 @@ var actionable = []string{FormerPrimaryMayHold}
 // the timeline a restore must name), and so is an actionable clause of
 // reason (FormerPrimaryMayHold: "do not delete that instance or its
 // volume"); the rest of reason is shortened at a rune boundary, before
-// that clause, when both do not fit (round 8, PG P3).
+// that clause, when both do not fit (round 8, PG P3). An actionable
+// clause outranks extra: when the clause and extra do not fit together,
+// extra is cut instead, after the clause (round 9, PG P3).
 func Join(reason, extra string) string {
 	switch {
 	case reason == "":
@@ -335,11 +337,33 @@ func Join(reason, extra string) string {
 	if len(reason)+2+len(extra) <= MaxReasonBytes {
 		return reason + "; " + extra
 	}
+	if head, clause, ok := actionableIn(reason); ok && len(clause)+len("…; ")+len("; ")+len(extra) > MaxReasonBytes {
+		lead := ""
+		if head != "" {
+			lead = "…; "
+		}
+		room := MaxReasonBytes - len(lead) - len(clause) - len("; ") - len("…")
+		if room <= 0 {
+			return shorten(reason, MaxReasonBytes)
+		}
+		return lead + clause + "; " + truncate(extra, room) + "…"
+	}
 	room := MaxReasonBytes - 2 - len(extra)
 	if room <= 0 {
 		return truncate(extra, MaxReasonBytes)
 	}
 	return shorten(reason, room) + "; " + extra
+}
+
+// actionableIn finds the last actionable clause in value: what comes
+// before it (without its "; ") and the clause itself.
+func actionableIn(value string) (head, clause string, ok bool) {
+	for _, c := range actionable {
+		if at := strings.LastIndex(value, c); at >= 0 {
+			return strings.TrimSuffix(value[:at], "; "), c, true
+		}
+	}
+	return "", "", false
 }
 
 // shorten cuts value to limit bytes: an actionable clause it carries is
