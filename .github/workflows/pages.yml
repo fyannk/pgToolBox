@@ -61,7 +61,8 @@ jobs:
     steps:
       # The default branch, never the commit a workflow_run event names; after a
       # release, the release tag (docs_ref), so the site shows the released
-      # documentation even when main has moved on. The ref is only ever a
+      # documentation until the next scheduled or security.yml-triggered build,
+      # which builds main again (see development/ci.md). The ref is only ever a
       # checkout input, never part of a command.
       - name: Check out main (or the release tag)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

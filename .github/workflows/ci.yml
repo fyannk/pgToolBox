@@ -689,7 +689,7 @@ jobs:
   e2e-operator-scope:
     name: E2E operator watchNamespaces
     needs: [changes, images]
-    if: needs.changes.outputs.operator == 'true'
+    if: needs.changes.outputs.operator == 'true' || needs.changes.outputs.charts == 'true'
     permissions:
       contents: read # the called workflow checks out the repository
     uses: ./.github/workflows/e2e-kind.yml
