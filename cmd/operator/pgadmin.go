@@ -91,18 +91,29 @@ type evidenceAgentAPIs struct {
 // its probes are served. The health endpoint is served only once the
 // manager starts, so the manager's liveness probe (first at 15 s, every
 // 20 s, three failures: killed about 55 s after the start) counts the
-// whole start-up against it, not one step: the steps also share
-// startupBudgetTotal, and each one's deadline is the smaller of
-// startupStepTimeout and what is left of the budget, so an API server that
-// is slow on every step, but answers, still fails the start with a named
-// error before the kill (TestStartupStepBeforeLivenessKill).
+// whole start-up against it, not one step. Every step of it shares
+// startupBudgetTotal: the reads before the manager (configuration,
+// namespaces, optional APIs), then the manager itself and each
+// controller's setup, whose discovery requests go through the timed
+// RESTMapper (each request under mapperRequestTimeout, but a slow API
+// server can answer many of them in turn). Each step's deadline is the
+// smaller of startupStepTimeout and what is left of the budget, and a
+// step returns at its deadline even when its requests ignore their
+// context, so an API server that is slow on every request, but answers,
+// still fails the start with a named error before the kill
+// (TestStartupStepBeforeLivenessKill, TestStartupBudgetCoversTheSetups).
 const startupStepTimeout = 20 * time.Second
 
-// startupBudgetTotal is the time every start-up step together may take
-// (see startupStepTimeout). With mapperRequestTimeout, the longest a
-// discovery request of a controller's setup can take after the steps, it
-// stays under the liveness kill.
+// startupBudgetTotal is the time the whole start-up may take, from the
+// first read to the manager's start (see startupStepTimeout). It stays
+// under the liveness kill with room for the process start before it and
+// the manager's start after it (startupMargin).
 const startupBudgetTotal = 40 * time.Second
+
+// startupMargin is what the start-up takes outside the budget: the process
+// start and flag parsing before it, and the manager's start after it until
+// the health endpoint answers (it is the manager's first server).
+const startupMargin = 5 * time.Second
 
 // startupBudget is the start-up's deadline shared by its steps.
 type startupBudget struct {
@@ -136,7 +147,7 @@ func budgetedRead[T any](ctx context.Context, budget *startupBudget, name string
 // preparePgAdmin loads the configuration (defaults, env, ConfigMap, Secret;
 // one structured error) and probes the optional APIs with a scoped
 // List(Limit 1), through a client that reads past any cache.
-func preparePgAdmin(ctx context.Context, operatorImage, configMapName, secretName string) (pgAdminPrepared, error) {
+func preparePgAdmin(ctx context.Context, budget *startupBudget, operatorImage, configMapName, secretName string) (pgAdminPrepared, error) {
 	direct, err := startupClient(ctrl.GetConfigOrDie())
 	if err != nil {
 		return pgAdminPrepared{}, fmt.Errorf("build API client: %w", err)
@@ -144,7 +155,7 @@ func preparePgAdmin(ctx context.Context, operatorImage, configMapName, secretNam
 	if operatorImage != "" {
 		configuration.DefaultOperatorImage = operatorImage
 	}
-	prepared, err := preparePgAdminWith(ctx, direct, metrics.Registry, newStartupBudget(startupStepTimeout, startupBudgetTotal), configuration.Objects{
+	prepared, err := preparePgAdminWith(ctx, direct, metrics.Registry, budget, configuration.Objects{
 		Namespace: os.Getenv("POD_NAMESPACE"), ConfigMap: configMapName, Secret: secretName,
 	})
 	if err != nil {

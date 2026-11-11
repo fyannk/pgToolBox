@@ -25,9 +25,11 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/rest"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
@@ -75,10 +77,13 @@ func killAfter(t *testing.T, probe map[string]any) time.Duration {
 	return time.Duration((delay + period*(threshold-1) + timeout) * float64(time.Second))
 }
 
-// TestStartupStepBeforeLivenessKill: a hung start-up step fails the start
-// with its named error before the liveness probe of any shipped install
-// (Helm values, kustomize, OLM) kills the container, with room for the
-// steps before it.
+// TestStartupStepBeforeLivenessKill: the whole start-up, from the first
+// read to the manager's start (the reads, the manager, every controller's
+// setup: one shared budget, buildManager), fails with a named error before
+// the liveness probe of any shipped install (Helm values, kustomize, OLM)
+// kills the container, with room for the process start before the budget
+// and the manager's start after it. A discovery request still running when
+// a step's deadline passes does not count: the step returns at the deadline.
 func TestStartupStepBeforeLivenessKill(t *testing.T) {
 	sources := []string{
 		"../../charts/pgtoolbox/values.yaml",
@@ -103,11 +108,9 @@ func TestStartupStepBeforeLivenessKill(t *testing.T) {
 				t.Fatalf("no livenessProbe in %s", source)
 			}
 			for _, probe := range probes {
-				// Every step together, then one hung discovery request of a
-				// controller's setup, fail with a named error before the kill.
-				if kill := killAfter(t, probe); startupBudgetTotal+mapperRequestTimeout >= kill {
-					t.Errorf("the liveness probe kills a hung start after %s, before the start-up budget of %s and a setup's discovery request of %s can fail with their named error",
-						kill, startupBudgetTotal, mapperRequestTimeout)
+				if kill := killAfter(t, probe); startupBudgetTotal+startupMargin >= kill {
+					t.Errorf("the liveness probe kills a slow start after %s, before the start-up budget of %s (plus %s outside it) can fail with its named error",
+						kill, startupBudgetTotal, startupMargin)
 				}
 				if startupStepTimeout > startupBudgetTotal {
 					t.Errorf("a step's deadline %s exceeds the whole budget %s", startupStepTimeout, startupBudgetTotal)
@@ -223,5 +226,62 @@ func TestTimedMapperProviderHungAPIServer(t *testing.T) {
 	}
 	if mapperRequestTimeout <= 0 || mapperRequestTimeout >= startupStepTimeout {
 		t.Fatalf("mapperRequestTimeout %s, want positive and under a start-up step", mapperRequestTimeout)
+	}
+}
+
+// TestStartupBudgetCoversTheSetups: the manager and the controllers' setups
+// run under what is left of the start-up budget. An API server that answers
+// every discovery request, each well under the mapper's timeout, but slowly
+// enough that the setups add up past the budget, fails the start naming the
+// step the budget ran out in, at about the budget, instead of running into
+// the liveness kill with no error (round 13, operator P3-1). A setup that
+// never returns (its requests ignore their context) is cut at the deadline.
+func TestStartupBudgetCoversTheSetups(t *testing.T) {
+	slow := func(d time.Duration) func(context.Context, ctrl.Manager) ([]client.Object, error) {
+		return func(context.Context, ctrl.Manager) ([]client.Object, error) {
+			time.Sleep(d) // a discovery request answered late, ignoring its context like the RESTMapper's
+			return []client.Object{&corev1.ConfigMap{}}, nil
+		}
+	}
+	newManager := func() (ctrl.Manager, error) { time.Sleep(100 * time.Millisecond); return nil, nil }
+	setups := func(d time.Duration) []managerSetup {
+		return []managerSetup{{"EvidenceAgent", slow(d)}, {"PgAdmin", slow(d)}, {"PgAccessRequest", slow(d)}, {"PgToolBoxConsole", slow(d)}}
+	}
+
+	// With budget to spare: every setup runs, in order.
+	_, kinds, err := buildManager(t.Context(), newStartupBudget(2*time.Second, 5*time.Second), newManager, setups(100*time.Millisecond))
+	if err != nil || len(kinds) != 4 {
+		t.Fatalf("with budget to spare: %d kinds, %v", len(kinds), err)
+	}
+
+	// Each setup fits in its own 2 s step; together they need 1.3 s, over
+	// the 700 ms budget.
+	start := time.Now()
+	_, _, err = buildManager(t.Context(), newStartupBudget(2*time.Second, 700*time.Millisecond), newManager, setups(300*time.Millisecond))
+	if err == nil || !strings.Contains(err.Error(), "start-up budget of 700ms is spent") || !strings.Contains(err.Error(), "controller") {
+		t.Fatalf("error = %v, want a setup step named with the spent budget", err)
+	}
+	if elapsed := time.Since(start); elapsed > 1200*time.Millisecond {
+		t.Fatalf("took %s, want about the 700ms budget", elapsed)
+	}
+
+	// A setup that never returns is cut at its deadline.
+	hung := []managerSetup{{"EvidenceAgent", func(context.Context, ctrl.Manager) ([]client.Object, error) { select {} }}}
+	start = time.Now()
+	_, _, err = buildManager(t.Context(), newStartupBudget(300*time.Millisecond, time.Minute), newManager, hung)
+	if err == nil || !strings.Contains(err.Error(), `"set up the EvidenceAgent controller" did not finish within 300ms`) {
+		t.Fatalf("error = %v, want the hung setup named", err)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("took %s, want about the 300ms step", elapsed)
+	}
+
+	// The budget spent before the manager: nothing is created.
+	spent := newStartupBudget(time.Second, time.Second)
+	spent.now = func() time.Time { return spent.deadline.Add(time.Millisecond) }
+	created := false
+	_, _, err = buildManager(t.Context(), spent, func() (ctrl.Manager, error) { created = true; return nil, nil }, nil)
+	if err == nil || !strings.Contains(err.Error(), `"create the manager" not started`) || created {
+		t.Fatalf("error = %v, created %t; want the manager step refused unrun", err, created)
 	}
 }

@@ -132,12 +132,13 @@ Command-line flags: `--metrics-bind-address` (`:8080`), `--metrics-cert-dir`,
 `--health-probe-bind-address` (`:8081`: `/healthz` is liveness, the process
 answers; `/readyz` is readiness, true only once every informer cache has synced,
 so a replica that cannot list what it watches stays out of rotation; both are
-served only once the start-up's API reads are done, so each of those reads (the
-configuration, the watched namespaces, the optional-API probes of `PgAdmin` and
-`EvidenceAgent`) has a 20-second deadline, all of them together 40 seconds, and
-each discovery request of the controllers' setup 10 seconds; any of them fails
-the start with an error that names it, before the shipped liveness probe kills
-a start that hangs, about 55 seconds in), `--leader-elect` (default true),
+served only once the manager starts, so each start-up step (the configuration,
+the watched namespaces, the optional-API probes of `PgAdmin` and
+`EvidenceAgent`, the manager, and each controller's setup, whose discovery
+requests time out after 10 seconds each) has a 20-second deadline, and all of
+them together 40 seconds; a step that runs out of either fails the start with
+an error that names it, before the shipped liveness probe kills a start that
+hangs or crawls, about 55 seconds in), `--leader-elect` (default true),
 `--default-evidence-agent-image`, `--evidence-agent-image-repositories`,
 `--default-console-image` (`CONSOLE_IMAGE`; the chart passes `console.image`),
 `--console-image-repositories` (`CONSOLE_IMAGE_REPOSITORIES`, chart
