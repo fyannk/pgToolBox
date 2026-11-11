@@ -67,6 +67,10 @@ type offerInputs struct {
 	Poolers []cnpgv1.Pooler
 	// PoolersAvailable reports whether the Pooler API was readable.
 	PoolersAvailable bool
+	// PoolersRefusedIn names the namespaces where the Pooler API is
+	// refused while others allow it: their Clusters' pooler endpoints are
+	// unavailable there.
+	PoolersRefusedIn []string
 	// PrivilegedGranted names the Clusters of other namespaces
 	// ("namespace/name") whose grant allows privileged credentials; a
 	// granted Cluster absent from it offers none, whatever the PgAdmin asks.
@@ -133,7 +137,7 @@ func resolveOffer(in offerInputs) offerResult {
 				}
 				continue
 			}
-			host, port, problem := endpointHost(cluster, endpoint, in.Poolers, in.PoolersAvailable)
+			host, port, problem := endpointHost(cluster, endpoint, in.Poolers, in.PoolersAvailable && !slices.Contains(in.PoolersRefusedIn, cluster.Namespace))
 			if problem == errOtherCluster {
 				// A pooler endpoint serves the one Cluster its Pooler
 				// belongs to; the other Clusters simply have none.

@@ -18,7 +18,9 @@
 package main
 
 import (
+	"context"
 	"flag"
+	"fmt"
 	"os"
 
 	cnpgv1 "github.com/cloudnative-pg/api/pkg/api/v1"
@@ -27,6 +29,7 @@ import (
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/metrics"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
@@ -90,9 +93,12 @@ func main() {
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 
 	ctx := ctrl.SetupSignalHandler()
+	// One budget for the whole start-up, up to the manager's start (the
+	// liveness probe is served from then on): startupBudgetTotal.
+	budget := newStartupBudget(startupStepTimeout, startupBudgetTotal)
 	// The PgAdmin configuration and optional-API probes come first: they
 	// shape the cache and the manager's lease timings.
-	pgAdminPrepared, err := preparePgAdmin(ctx, operatorImage, configMapName, secretName)
+	pgAdminPrepared, err := preparePgAdmin(ctx, budget, operatorImage, configMapName, secretName)
 	if err != nil {
 		setupLog.Error(err, "unable to prepare the PgAdmin controller")
 		os.Exit(1)
@@ -109,32 +115,23 @@ func main() {
 	}
 	consoleFeatures := pgToolBoxConsoleFeatures(pgAdminPrepared)
 	managerCacheOptions(&managerOptions, pgAdminPrepared, consoleFeatures)
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), managerOptions)
+	restConfig := ctrl.GetConfigOrDie()
+	mgr, kinds, err := buildManager(ctx, budget, func() (ctrl.Manager, error) {
+		return ctrl.NewManager(restConfig, managerOptions)
+	}, []managerSetup{
+		{"EvidenceAgent", func(ctx context.Context, mgr ctrl.Manager) ([]client.Object, error) {
+			return setupEvidenceAgent(ctx, mgr, pgAdminPrepared.EvidenceAgentAPIs)
+		}},
+		{"PgAdmin", func(ctx context.Context, mgr ctrl.Manager) ([]client.Object, error) {
+			return pgadmin.CachedKinds(pgAdminPrepared.Features), setupPgAdmin(ctx, mgr, pgAdminPrepared)
+		}},
+		{"PgAccessRequest", setupAccessRequest},
+		{"PgToolBoxConsole", func(ctx context.Context, mgr ctrl.Manager) ([]client.Object, error) {
+			return setupPgToolBoxConsole(ctx, mgr, consoleFeatures, pgAdminPrepared.Config.ExposureAllowedHostSuffixes)
+		}},
+	})
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
-		os.Exit(1)
-	}
-
-	evidenceAgentKinds, err := setupEvidenceAgent(ctx, mgr, pgAdminPrepared.EvidenceAgentAPIs)
-	if err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "EvidenceAgent")
-		os.Exit(1)
-	}
-
-	if err := setupPgAdmin(ctx, mgr, pgAdminPrepared); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "PgAdmin")
-		os.Exit(1)
-	}
-
-	accessRequestKinds, err := setupAccessRequest(ctx, mgr)
-	if err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "PgAccessRequest")
-		os.Exit(1)
-	}
-
-	pgToolBoxConsoleKinds, err := setupPgToolBoxConsole(ctx, mgr, consoleFeatures, pgAdminPrepared.Config.ExposureAllowedHostSuffixes)
-	if err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "PgToolBoxConsole")
 		os.Exit(1)
 	}
 
@@ -142,7 +139,7 @@ func main() {
 	// informers hold, counted on scrape.
 	if err := metrics.Registry.Register(cachemetrics.Collector{
 		Reader: mgr.GetCache(), Scheme: mgr.GetScheme(),
-		Kinds: cachemetrics.Union(mgr.GetScheme(), pgadmin.CachedKinds(pgAdminPrepared.Features), evidenceAgentKinds, accessRequestKinds, pgToolBoxConsoleKinds),
+		Kinds: cachemetrics.Union(mgr.GetScheme(), kinds...),
 	}); err != nil {
 		setupLog.Error(err, "unable to register pgtoolbox_cached_objects")
 		os.Exit(1)
@@ -158,4 +155,40 @@ func main() {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)
 	}
+}
+
+// managerSetup is one controller's setup: it registers the controller on
+// the manager and returns the kinds its informers hold.
+type managerSetup struct {
+	controller string
+	setup      func(context.Context, ctrl.Manager) ([]client.Object, error)
+}
+
+// buildManager creates the manager and runs each controller's setup, each a
+// start-up step under budget, so the whole start-up up to the manager's
+// start stays within it: a slow API server that answers every discovery
+// request of the RESTMapper (each under mapperRequestTimeout) still fails
+// the start with the step named, before the liveness probe kills the
+// container with no error. A setup gets ctx, not the step's context: what
+// it registers outlives the step (the step's deadline is enforced by
+// startupRead, which returns at it even when the setup does not). It returns
+// the kinds of every setup, in order.
+func buildManager(ctx context.Context, budget *startupBudget, newManager func() (ctrl.Manager, error), setups []managerSetup) (ctrl.Manager, [][]client.Object, error) {
+	mgr, err := budgetedRead(ctx, budget, "create the manager", func(context.Context) (ctrl.Manager, error) {
+		return newManager()
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	kinds := make([][]client.Object, 0, len(setups))
+	for _, s := range setups {
+		objects, err := budgetedRead(ctx, budget, "set up the "+s.controller+" controller", func(context.Context) ([]client.Object, error) {
+			return s.setup(ctx, mgr)
+		})
+		if err != nil {
+			return nil, nil, fmt.Errorf("unable to create controller %s: %w", s.controller, err)
+		}
+		kinds = append(kinds, objects)
+	}
+	return mgr, kinds, nil
 }

@@ -191,7 +191,7 @@ func TestPgAdminPauseAllowUnpause(t *testing.T) {
 				{"Ready", metav1.ConditionUnknown, pgtoolboxv1alpha1.ReasonReconciliationPaused},
 			},
 		},
-		{name: "unpaused", allowed: []string{"corp.example.com"}, unpause: true, wantIngress: true},
+		{name: "unpaused", allowed: []string{"corp.example.com"}, unpause: true, wantIngress: true, wantNoop: true},
 	}
 	for _, step := range steps {
 		h.r.Config.ExposureAllowedHostSuffixes = step.allowed

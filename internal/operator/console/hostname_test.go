@@ -282,7 +282,7 @@ func TestPauseAllowUnpause(t *testing.T) {
 				{pgtoolboxv1alpha1.ConditionReady, metav1.ConditionUnknown, pgtoolboxv1alpha1.ReasonReconciliationPaused},
 			},
 		},
-		{name: "unpaused", allowed: []string{"corp.example.com"}, unpause: true},
+		{name: "unpaused", allowed: []string{"corp.example.com"}, unpause: true, wantNoop: true},
 	}
 	for _, step := range steps {
 		r.AllowedHostSuffixes = step.allowed

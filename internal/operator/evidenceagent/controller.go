@@ -86,6 +86,8 @@ type Reconciler struct {
 	AllowedImageRepositories []string
 	// ObjectStoreAPI is the start-time probe of barmancloud.cnpg.io
 	// (discovery.ProbeKinds, with the PgAdmin ones); the zero value is "unavailable".
+	// Usable() means "watched somewhere"; a reconcile asks
+	// In(namespace): each namespace's RBAC decides there alone.
 	ObjectStoreAPI discovery.Result
 	// StanzaAPI and ArchiveAPI are the start-time probes of the two
 	// pgBackRest plugins' kinds (discovery.StanzaGVK, ArchiveGVK), with

@@ -132,12 +132,13 @@ Command-line flags: `--metrics-bind-address` (`:8080`), `--metrics-cert-dir`,
 `--health-probe-bind-address` (`:8081`: `/healthz` is liveness, the process
 answers; `/readyz` is readiness, true only once every informer cache has synced,
 so a replica that cannot list what it watches stays out of rotation; both are
-served only once the start-up's API reads are done, so each of those reads (the
-configuration, the watched namespaces, the optional-API probes of `PgAdmin` and
-`EvidenceAgent`) has a 20-second deadline, all of them together 40 seconds, and
-each discovery request of the controllers' setup 10 seconds; any of them fails
-the start with an error that names it, before the shipped liveness probe kills
-a start that hangs, about 55 seconds in), `--leader-elect` (default true),
+served only once the manager starts, so each start-up step (the configuration,
+the watched namespaces, the optional-API probes of `PgAdmin` and
+`EvidenceAgent`, the manager, and each controller's setup, whose discovery
+requests time out after 10 seconds each) has a 20-second deadline, and all of
+them together 40 seconds; a step that runs out of either fails the start with
+an error that names it, before the shipped liveness probe kills a start that
+hangs or crawls, about 55 seconds in), `--leader-elect` (default true),
 `--default-evidence-agent-image`, `--evidence-agent-image-repositories`,
 `--default-console-image` (`CONSOLE_IMAGE`; the chart passes `console.image`),
 `--console-image-repositories` (`CONSOLE_IMAGE_REPOSITORIES`, chart
@@ -146,17 +147,25 @@ overrides `PGADMIN_IMAGE_REPOSITORIES`; see [images](images.md)).
 
 ### Namespaces dropped from the watch
 
-The operator reads every namespace of `WATCH_NAMESPACES` once at start and
-leaves out, with an error in its log, any it cannot use:
+The operator reads every namespace of `WATCH_NAMESPACES` once at start. It
+leaves out, with an error in its log and in `pgtoolbox_watch_namespaces_dropped`,
+a listed namespace it cannot use for CloudNativePG Clusters:
 
 - a listed namespace deleted after the install: once it is recreated, run
   `helm upgrade` (its RoleBinding) and restart the operator;
-- a namespace where the operator's Role grants an optional API (Routes,
-  HTTPRoutes, Poolers, Databases, DatabaseRoles, the backup plugins' kinds)
-  that the other namespaces grant. Its administrator can bind the operator to a
-  narrower Role there, and must not turn that feature off for every other
-  namespace: restore the chart's RoleBinding, then restart the operator. An API
-  refused in every namespace is turned off instead.
+- a namespace where the operator may not list CloudNativePG Clusters: restore
+  the chart's RoleBinding, then restart the operator.
+
+An optional API (Routes, HTTPRoutes, Poolers, Databases, DatabaseRoles, the
+backup plugins' kinds) never leaves a namespace out: each namespace's Role
+decides for that namespace alone. Refused in some namespaces only (their
+administrator bound the operator to a narrower Role there, or a wider one while
+the install refuses the API elsewhere), the feature is off in those namespaces
+only, with its usual `…APIUnavailable` reason naming the namespace, a log line
+at start and `pgtoolbox_optional_api_refused_namespaces{group,kind}`; the other
+namespaces keep it, and it is watched only where it can be listed. Refused in
+every namespace, it is off everywhere. A change of RBAC is read at the next
+start.
 
 If none of the listed namespaces answers, the operator does not start; nor does
 it when the API server refuses its credentials (401) at start, which is retried

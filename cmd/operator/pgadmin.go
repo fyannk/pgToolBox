@@ -35,6 +35,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/rest"
@@ -70,9 +71,12 @@ type pgAdminPrepared struct {
 	Config   configuration.Config
 	Features pgadmin.Features
 	// EvidenceAgentAPIs is the outcome of the EvidenceAgent's optional-API
-	// probes, made with the PgAdmin ones before the manager exists: a
-	// namespace one of them is refused in is left out of the watch.
+	// probes, made with the PgAdmin ones before the manager exists.
 	EvidenceAgentAPIs evidenceAgentAPIs
+	// OptionalKinds is every optional kind's probe, PgAdmin's and
+	// EvidenceAgent's: the cache watches each one only in the namespaces
+	// where it can be listed (optionalKindCacheOptions).
+	OptionalKinds []optionalKind
 }
 
 // evidenceAgentAPIs is the outcome of the EvidenceAgent's optional-API
@@ -87,18 +91,29 @@ type evidenceAgentAPIs struct {
 // its probes are served. The health endpoint is served only once the
 // manager starts, so the manager's liveness probe (first at 15 s, every
 // 20 s, three failures: killed about 55 s after the start) counts the
-// whole start-up against it, not one step: the steps also share
-// startupBudgetTotal, and each one's deadline is the smaller of
-// startupStepTimeout and what is left of the budget, so an API server that
-// is slow on every step, but answers, still fails the start with a named
-// error before the kill (TestStartupStepBeforeLivenessKill).
+// whole start-up against it, not one step. Every step of it shares
+// startupBudgetTotal: the reads before the manager (configuration,
+// namespaces, optional APIs), then the manager itself and each
+// controller's setup, whose discovery requests go through the timed
+// RESTMapper (each request under mapperRequestTimeout, but a slow API
+// server can answer many of them in turn). Each step's deadline is the
+// smaller of startupStepTimeout and what is left of the budget, and a
+// step returns at its deadline even when its requests ignore their
+// context, so an API server that is slow on every request, but answers,
+// still fails the start with a named error before the kill
+// (TestStartupStepBeforeLivenessKill, TestStartupBudgetCoversTheSetups).
 const startupStepTimeout = 20 * time.Second
 
-// startupBudgetTotal is the time every start-up step together may take
-// (see startupStepTimeout). With mapperRequestTimeout, the longest a
-// discovery request of a controller's setup can take after the steps, it
-// stays under the liveness kill.
+// startupBudgetTotal is the time the whole start-up may take, from the
+// first read to the manager's start (see startupStepTimeout). It stays
+// under the liveness kill with room for the process start before it and
+// the manager's start after it (startupMargin).
 const startupBudgetTotal = 40 * time.Second
+
+// startupMargin is what the start-up takes outside the budget: the process
+// start and flag parsing before it, and the manager's start after it until
+// the health endpoint answers (it is the manager's first server).
+const startupMargin = 5 * time.Second
 
 // startupBudget is the start-up's deadline shared by its steps.
 type startupBudget struct {
@@ -132,7 +147,7 @@ func budgetedRead[T any](ctx context.Context, budget *startupBudget, name string
 // preparePgAdmin loads the configuration (defaults, env, ConfigMap, Secret;
 // one structured error) and probes the optional APIs with a scoped
 // List(Limit 1), through a client that reads past any cache.
-func preparePgAdmin(ctx context.Context, operatorImage, configMapName, secretName string) (pgAdminPrepared, error) {
+func preparePgAdmin(ctx context.Context, budget *startupBudget, operatorImage, configMapName, secretName string) (pgAdminPrepared, error) {
 	direct, err := startupClient(ctrl.GetConfigOrDie())
 	if err != nil {
 		return pgAdminPrepared{}, fmt.Errorf("build API client: %w", err)
@@ -140,7 +155,7 @@ func preparePgAdmin(ctx context.Context, operatorImage, configMapName, secretNam
 	if operatorImage != "" {
 		configuration.DefaultOperatorImage = operatorImage
 	}
-	prepared, err := preparePgAdminWith(ctx, direct, metrics.Registry, newStartupBudget(startupStepTimeout, startupBudgetTotal), configuration.Objects{
+	prepared, err := preparePgAdminWith(ctx, direct, metrics.Registry, budget, configuration.Objects{
 		Namespace: os.Getenv("POD_NAMESPACE"), ConfigMap: configMapName, Secret: secretName,
 	})
 	if err != nil {
@@ -273,12 +288,15 @@ func preparePgAdminWith(ctx context.Context, direct client.Reader, registry prom
 	if err := loaded.RegisterInfoMetric(registry); err != nil {
 		return pgAdminPrepared{}, err
 	}
+	if err := registerWatchMetrics(registry, len(namespaces)-len(watched), probed.Kinds); err != nil {
+		return pgAdminPrepared{}, err
+	}
 	features := probed.Features
 	setupLog.Info("PgAdmin optional APIs",
 		"routes", features.Routes.State, "gateways", features.Gateways.State,
 		"databaseRoles", features.DatabaseRoles.State, "poolers", features.Poolers.State,
 		"openshift", features.OpenShift)
-	return pgAdminPrepared{Config: loaded.Config, Features: features, EvidenceAgentAPIs: probed.EvidenceAgent}, nil
+	return pgAdminPrepared{Config: loaded.Config, Features: features, EvidenceAgentAPIs: probed.EvidenceAgent, OptionalKinds: probed.Kinds}, nil
 }
 
 // pgAdminManagerOptions adds the PgAdmin controller's needs to the shared
@@ -348,41 +366,62 @@ func setupPgAdmin(ctx context.Context, mgr ctrl.Manager, prepared pgAdminPrepare
 }
 
 // optionalAPIs is what probeOptionalAPIs found: the PgAdmin features, the
-// EvidenceAgent's optional APIs, and the namespaces still watched.
+// EvidenceAgent's optional APIs, every optional kind's probe, and the
+// namespaces watched.
 type optionalAPIs struct {
 	Features      pgadmin.Features
 	EvidenceAgent evidenceAgentAPIs
-	// Namespaces is the namespaces kept (nil: every namespace).
+	Kinds         []optionalKind
+	// Namespaces is the namespaces watched (nil: every namespace): those
+	// given, always; an optional kind never leaves one out.
 	Namespaces []string
+}
+
+// optionalKind is one optional kind's probe, with the object its informer
+// is keyed by in the cache options.
+type optionalKind struct {
+	Object client.Object
+	Result discovery.Result
+}
+
+// metadataObject is the cache key of a kind watched metadata-only.
+func metadataObject(gvk schema.GroupVersionKind) client.Object {
+	object := &metav1.PartialObjectMetadata{}
+	object.SetGroupVersionKind(gvk)
+	return object
 }
 
 // probeOptionalAPIs checks every optional API, the PgAdmin's and the
 // EvidenceAgent's, with a scoped List(Limit 1) in every watched namespace
 // (pkg/discovery.ProbeKinds): off when not served or refused in every
-// namespace; a namespace where one is refused while the others allow it is
-// left out of the watch and logged like one the operator cannot reach (its
-// administrator can narrow the operator's Role there, and that must not
-// turn a feature off for every other tenant); the start fails on any other
-// error. The CloudNativePG Cluster API is required; SecurityContextConstraints
-// are probed cluster-wide and a Forbidden answer still means OpenShift.
+// namespace; refused in some namespaces only, off in those namespaces alone
+// (watched and used in the others; logged, and counted in
+// pgtoolbox_optional_api_refused_namespaces). No namespace is left out for
+// an optional kind: a namespace's administrator can narrow or widen the
+// operator's Role there, and that must decide nothing for another
+// namespace. The start fails on any other error. The CloudNativePG Cluster
+// API is required (reachableNamespaces already left out the namespaces that
+// refuse it); SecurityContextConstraints are probed cluster-wide and a
+// Forbidden answer still means OpenShift.
 func probeOptionalAPIs(ctx context.Context, reader client.Reader, namespaces []string) (optionalAPIs, error) {
-	var probed optionalAPIs
+	probed := optionalAPIs{Namespaces: namespaces}
 	var clusters discovery.Result
 	features := &probed.Features
 	evidence := &probed.EvidenceAgent
 	probes := []struct {
 		target *discovery.Result
 		gvk    schema.GroupVersionKind
+		object client.Object // nil: the required kind, not optional
 	}{
-		{&clusters, cnpgv1.SchemeGroupVersion.WithKind("Cluster")},
-		{&features.Routes, routev1.GroupVersion.WithKind("Route")},
-		{&features.Gateways, schema.GroupVersionKind{Group: gatewayv1.GroupName, Version: "v1", Kind: "HTTPRoute"}},
-		{&features.DatabaseRoles, cnpgv1.SchemeGroupVersion.WithKind("DatabaseRole")},
-		{&features.Poolers, cnpgv1.SchemeGroupVersion.WithKind("Pooler")},
-		{&features.Databases, cnpgv1.SchemeGroupVersion.WithKind("Database")},
-		{&evidence.ObjectStore, discovery.ObjectStoreGVK},
-		{&evidence.Stanza, discovery.StanzaGVK},
-		{&evidence.Archive, discovery.ArchiveGVK},
+		{&clusters, cnpgv1.SchemeGroupVersion.WithKind("Cluster"), nil},
+		{&features.Routes, routev1.GroupVersion.WithKind("Route"), &routev1.Route{}},
+		{&features.Gateways, schema.GroupVersionKind{Group: gatewayv1.GroupName, Version: "v1", Kind: "HTTPRoute"}, &gatewayv1.HTTPRoute{}},
+		{&features.DatabaseRoles, cnpgv1.SchemeGroupVersion.WithKind("DatabaseRole"), &cnpgv1.DatabaseRole{}},
+		{&features.Poolers, cnpgv1.SchemeGroupVersion.WithKind("Pooler"), &cnpgv1.Pooler{}},
+		{&features.Databases, cnpgv1.SchemeGroupVersion.WithKind("Database"), &cnpgv1.Database{}},
+		{&evidence.ObjectStore, discovery.ObjectStoreGVK, metadataObject(discovery.ObjectStoreGVK)},
+		{&evidence.Stanza, discovery.StanzaGVK, metadataObject(discovery.StanzaGVK)},
+		{&evidence.Archive, discovery.ArchiveGVK, metadataObject(discovery.ArchiveGVK)},
 	}
 	gvks := make([]schema.GroupVersionKind, len(probes))
 	for i, probe := range probes {
@@ -393,15 +432,24 @@ func probeOptionalAPIs(ctx context.Context, reader client.Reader, namespaces []s
 		return probed, err
 	}
 	for i, probe := range probes {
-		*probe.target = decision.Results[i]
-	}
-	probed.Namespaces = decision.Namespaces
-	for _, r := range decision.Dropped {
-		setupLog.Error(errors.New(r.Reason), "watched namespace left out: the operator's Role there does not grant an optional API it grants elsewhere (restore the chart's RoleBinding, then restart the operator)",
-			"namespace", r.Namespace)
+		result := decision.Results[i]
+		*probe.target = result
+		if probe.object == nil {
+			continue
+		}
+		probed.Kinds = append(probed.Kinds, optionalKind{Object: probe.object, Result: result})
+		if len(result.RefusedIn) > 0 {
+			setupLog.Info("optional API refused in some watched namespaces: off there only (grant it in the operator's Role there, then restart the operator)",
+				"kind", probe.gvk.Kind, "group", probe.gvk.Group, "namespaces", result.RefusedIn)
+		}
 	}
 	if !clusters.Usable() {
 		return probed, errors.New("the CloudNativePG Cluster API is required: " + clusters.Reason)
+	}
+	if len(clusters.RefusedIn) > 0 {
+		// reachableNamespaces kept only namespaces that allowed it a moment
+		// ago: the operator's RBAC changed during the start.
+		return probed, fmt.Errorf("listing CloudNativePG Clusters became refused in %v during the start", clusters.RefusedIn)
 	}
 	openShift, err := discovery.ProbeSCC(ctx, reader)
 	if err != nil {

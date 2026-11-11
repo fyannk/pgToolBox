@@ -117,8 +117,10 @@ func (r *Reconciler) resolve(ctx context.Context, agent *pgtoolboxv1alpha1.Evide
 // composeBarman reads the Barman configuration (in-tree, or the
 // ObjectStore when its API is usable) and composes it.
 func (r *Reconciler) composeBarman(ctx context.Context, located *backupresolve.Located) (*composition, *backupresolve.Problem, error) {
-	if located.InTree == nil && !r.ObjectStoreAPI.Usable() {
-		return nil, unavailable(r.ObjectStoreAPI, "the barmancloud.cnpg.io/v1 ObjectStore API"), nil
+	// Each namespace's RBAC decides there alone: the probe's answer in the
+	// Cluster's namespace, not the answer anywhere.
+	if probe := r.ObjectStoreAPI.In(located.Cluster.Namespace); located.InTree == nil && !probe.Usable() {
+		return nil, unavailable(probe, "the barmancloud.cnpg.io/v1 ObjectStore API"), nil
 	}
 	configuration, whyNot, err := backupresolve.Configuration(ctx, r.APIReader, located)
 	if err != nil || whyNot != nil {
@@ -135,7 +137,7 @@ func (r *Reconciler) composePgBackRest(ctx context.Context, located *backupresol
 	if located.PgBackRest.Kind == backupresolve.PgBackRestKindStanza {
 		probe, api = r.StanzaAPI, "the pgbackrest.dalibo.com/v1 Stanza API"
 	}
-	if !probe.Usable() {
+	if probe = probe.In(located.Cluster.Namespace); !probe.Usable() {
 		return nil, unavailable(probe, api), nil
 	}
 	object, whyNot, err := backupresolve.ReadPgBackRest(ctx, r.APIReader, located.Cluster.Namespace, located.PgBackRest)

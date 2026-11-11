@@ -238,19 +238,26 @@ func (r *Reconciler) offerFor(ctx context.Context, p *pgtoolboxv1alpha1.PgAdmin,
 	problems *configProblems,
 ) (offerResult, configDatabaseState, error) {
 	offerIn := offerInputs{PgAdmin: p, Clusters: append(slices.Clone(selected), remote.Clusters...), PrivilegedGranted: remote.PrivilegedGranted}
-	if r.Features.DatabaseRoles.Usable() {
+	// Each namespace's DatabaseRoles and Poolers are read where the
+	// operator may list them there (remote ones by remoteClusters); a
+	// namespace that refuses one has none of it to offer, and its pooler
+	// endpoints say the API is unavailable there.
+	here := r.Features.In(p.Namespace)
+	offerIn.Roles, offerIn.RolesAvailable = remote.Roles, r.Features.DatabaseRoles.Usable()
+	if here.DatabaseRoles.Usable() {
 		var roles cnpgv1.DatabaseRoleList
 		if err := r.Client.List(ctx, &roles, client.InNamespace(p.Namespace)); err != nil {
 			return offerResult{}, configDatabaseState{}, fmt.Errorf("list DatabaseRoles: %w", err)
 		}
-		offerIn.Roles, offerIn.RolesAvailable = slices.Concat(roles.Items, remote.Roles), true
+		offerIn.Roles = slices.Concat(roles.Items, remote.Roles)
 	}
-	if r.Features.Poolers.Usable() {
+	offerIn.Poolers, offerIn.PoolersAvailable, offerIn.PoolersRefusedIn = remote.Poolers, r.Features.Poolers.Usable(), r.Features.Poolers.RefusedIn
+	if here.Poolers.Usable() {
 		var poolers cnpgv1.PoolerList
 		if err := r.Client.List(ctx, &poolers, client.InNamespace(p.Namespace)); err != nil {
 			return offerResult{}, configDatabaseState{}, fmt.Errorf("list Poolers: %w", err)
 		}
-		offerIn.Poolers, offerIn.PoolersAvailable = slices.Concat(poolers.Items, remote.Poolers), true
+		offerIn.Poolers = slices.Concat(poolers.Items, remote.Poolers)
 	}
 	result := resolveOffer(offerIn)
 	var configDB configDatabaseState
@@ -280,19 +287,19 @@ func (r *Reconciler) offerFor(ctx context.Context, p *pgtoolboxv1alpha1.PgAdmin,
 // cannot tell a request from the default. A refused List is a problem:
 // the kind exists and the operator cannot read it.
 func (r *Reconciler) unservedAPIProblems(p *pgtoolboxv1alpha1.PgAdmin, problems *configProblems) (notes []string) {
-	if p.Spec.Credentials.OffersDatabaseRoles() && !r.Features.DatabaseRoles.Usable() {
-		if r.Features.DatabaseRoles.State == discovery.Forbidden {
+	if p.Spec.Credentials.OffersDatabaseRoles() && !r.Features.In(p.Namespace).DatabaseRoles.Usable() {
+		if r.Features.In(p.Namespace).DatabaseRoles.State == discovery.Forbidden {
 			problems.add(pgtoolboxv1alpha1.ReasonDatabaseRoleAPIUnavailable, "spec.credentials offers DatabaseRoles, but the DatabaseRole API is unavailable: "+
-				unavailableWhy(r.Features.DatabaseRoles))
+				unavailableWhy(r.Features.In(p.Namespace).DatabaseRoles))
 		} else {
-			notes = append(notes, "no DatabaseRole offered: "+unavailableWhy(r.Features.DatabaseRoles))
+			notes = append(notes, "no DatabaseRole offered: "+unavailableWhy(r.Features.In(p.Namespace).DatabaseRoles))
 		}
 	}
-	if !r.Features.Poolers.Usable() && slices.ContainsFunc(p.Spec.EndpointsOrDefault(), func(e pgtoolboxv1alpha1.Endpoint) bool {
+	if !r.Features.In(p.Namespace).Poolers.Usable() && slices.ContainsFunc(p.Spec.EndpointsOrDefault(), func(e pgtoolboxv1alpha1.Endpoint) bool {
 		_, isPooler := e.PoolerName()
 		return isPooler
 	}) {
-		problems.add(pgtoolboxv1alpha1.ReasonPoolerAPIUnavailable, "spec.endpoints names a pooler, but the Pooler API is unavailable: "+unavailableWhy(r.Features.Poolers))
+		problems.add(pgtoolboxv1alpha1.ReasonPoolerAPIUnavailable, "spec.endpoints names a pooler, but the Pooler API is unavailable: "+unavailableWhy(r.Features.In(p.Namespace).Poolers))
 	}
 	return notes
 }
@@ -576,12 +583,12 @@ func (r *Reconciler) withdrawExposure(ctx context.Context, p *pgtoolboxv1alpha1.
 	if err := r.deleteIfOwned(ctx, p, &networkingv1.Ingress{}, name); err != nil {
 		return err
 	}
-	if r.Features.Routes.Usable() {
+	if r.Features.In(p.Namespace).Routes.Usable() {
 		if err := r.deleteIfOwned(ctx, p, &routev1.Route{}, name); err != nil {
 			return err
 		}
 	}
-	if r.Features.Gateways.Usable() {
+	if r.Features.In(p.Namespace).Gateways.Usable() {
 		if err := r.deleteIfOwned(ctx, p, &gatewayv1.HTTPRoute{}, name); err != nil {
 			return err
 		}
@@ -602,7 +609,7 @@ func (r *Reconciler) applyExposure(ctx context.Context, p *pgtoolboxv1alpha1.PgA
 	} else if err := r.deleteIfOwned(ctx, p, &networkingv1.Ingress{}, n.base); err != nil {
 		return err
 	}
-	if r.Features.Routes.Usable() {
+	if r.Features.In(p.Namespace).Routes.Usable() {
 		if kind == pgtoolboxv1alpha1.ExposureTypeRoute {
 			if err := applier.Apply(ctx, buildRoute(p)); err != nil {
 				return r.notOwned(p, err)
@@ -611,7 +618,7 @@ func (r *Reconciler) applyExposure(ctx context.Context, p *pgtoolboxv1alpha1.PgA
 			return err
 		}
 	}
-	if r.Features.Gateways.Usable() {
+	if r.Features.In(p.Namespace).Gateways.Usable() {
 		if kind == pgtoolboxv1alpha1.ExposureTypeGateway {
 			if err := applier.Apply(ctx, buildHTTPRoute(p)); err != nil {
 				return r.notOwned(p, err)
@@ -632,8 +639,8 @@ func (r *Reconciler) reconcileExposure(ctx context.Context, p *pgtoolboxv1alpha1
 	case pgtoolboxv1alpha1.ExposureTypeClusterIP:
 		// The default fact above.
 	case pgtoolboxv1alpha1.ExposureTypeRoute:
-		if !r.Features.Routes.Usable() {
-			fact = exposureFact{Status: metav1.ConditionFalse, Reason: pgtoolboxv1alpha1.ReasonRouteAPIUnavailable, Message: "the Route API is unavailable: " + unavailableWhy(r.Features.Routes)}
+		if !r.Features.In(p.Namespace).Routes.Usable() {
+			fact = exposureFact{Status: metav1.ConditionFalse, Reason: pgtoolboxv1alpha1.ReasonRouteAPIUnavailable, Message: "the Route API is unavailable: " + unavailableWhy(r.Features.In(p.Namespace).Routes)}
 			break
 		}
 		var route routev1.Route
@@ -650,8 +657,8 @@ func (r *Reconciler) reconcileExposure(ctx context.Context, p *pgtoolboxv1alpha1
 			fact = ingressFact(&ingress)
 		}
 	case pgtoolboxv1alpha1.ExposureTypeGateway:
-		if !r.Features.Gateways.Usable() {
-			fact = exposureFact{Status: metav1.ConditionFalse, Reason: pgtoolboxv1alpha1.ReasonGatewayAPIUnavailable, Message: "the Gateway API is unavailable: " + unavailableWhy(r.Features.Gateways)}
+		if !r.Features.In(p.Namespace).Gateways.Usable() {
+			fact = exposureFact{Status: metav1.ConditionFalse, Reason: pgtoolboxv1alpha1.ReasonGatewayAPIUnavailable, Message: "the Gateway API is unavailable: " + unavailableWhy(r.Features.In(p.Namespace).Gateways)}
 			break
 		}
 		var route gatewayv1.HTTPRoute

@@ -16,18 +16,24 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"testing"
+	"time"
 
+	cnpgv1 "github.com/cloudnative-pg/api/pkg/api/v1"
 	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/rest"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 	"sigs.k8s.io/yaml"
@@ -183,7 +189,7 @@ func TestEnvtestWatchNamespacesRBAC(t *testing.T) {
 			t.Fatalf("probeOptionalAPIs: %v", err)
 		}
 	})
-	t.Run("a narrowed namespace is left out, the features stay on", func(t *testing.T) {
+	t.Run("a narrowed namespace stays watched, the features off there only", func(t *testing.T) {
 		got, err := reachableNamespaces(ctx, operator, []string{"team-a", "team-narrowed"})
 		if err != nil || !slices.Equal(got, []string{"team-a", "team-narrowed"}) {
 			t.Fatalf("reachable = %q, %v; want both (Clusters are listable in each)", got, err)
@@ -192,16 +198,89 @@ func TestEnvtestWatchNamespacesRBAC(t *testing.T) {
 		if err != nil {
 			t.Fatalf("probeOptionalAPIs: %v", err)
 		}
-		if !slices.Equal(probed.Namespaces, []string{"team-a"}) {
-			t.Fatalf("watched %q, want [team-a]", probed.Namespaces)
+		if !slices.Equal(probed.Namespaces, []string{"team-a", "team-narrowed"}) {
+			t.Fatalf("watched %q, want both", probed.Namespaces)
 		}
 		for name, r := range map[string]discovery.Result{
 			"databaseRoles": probed.Features.DatabaseRoles, "poolers": probed.Features.Poolers, "databases": probed.Features.Databases,
 		} {
-			if !r.Usable() {
-				t.Errorf("%s turned off by team-narrowed: %+v", name, r)
+			if !r.In("team-a").Usable() {
+				t.Errorf("%s turned off in team-a by team-narrowed: %+v", name, r)
+			}
+			if r.In("team-narrowed").Usable() {
+				t.Errorf("%s on in team-narrowed, whose Role refuses it: %+v", name, r)
 			}
 		}
+		assertCacheSyncs(ctx, t, config, probed, &cnpgv1.Pooler{})
+	})
+	t.Run("a widened namespace leaves every other namespace watched", func(t *testing.T) {
+		// The installer refuses Poolers in every watched namespace (the
+		// documented way to turn a feature off); team-widened's
+		// administrator grants them there. Round 13, P2: this used to
+		// leave every other namespace out of the watch.
+		widened := rest.CopyConfig(admin)
+		widened.Impersonate = rest.ImpersonationConfig{
+			UserName: "system:serviceaccount:pgtoolbox:widened",
+			Groups:   []string{"system:serviceaccounts", "system:serviceaccounts:pgtoolbox", "system:authenticated"},
+		}
+		namespaces := []string{"team-w1", "team-w2", "team-widened", "team-w3"}
+		subject := []rbacv1.Subject{{Kind: rbacv1.ServiceAccountKind, Name: "widened", Namespace: "pgtoolbox"}}
+		objects := make([]client.Object, 0, 3+2*len(namespaces))
+		objects = append(objects, &rbacv1.ClusterRole{
+			ObjectMeta: metav1.ObjectMeta{Name: "widened-base"},
+			Rules: []rbacv1.PolicyRule{{
+				APIGroups: []string{"postgresql.cnpg.io"}, Resources: []string{"clusters", "databaseroles", "databases"},
+				Verbs: []string{"get", "list", "watch"},
+			}},
+		})
+		for _, namespace := range namespaces {
+			objects = append(objects,
+				&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: namespace}},
+				&rbacv1.RoleBinding{
+					ObjectMeta: metav1.ObjectMeta{Name: "widened-base", Namespace: namespace},
+					RoleRef:    rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "ClusterRole", Name: "widened-base"},
+					Subjects:   subject,
+				})
+		}
+		objects = append(objects,
+			&rbacv1.Role{
+				ObjectMeta: metav1.ObjectMeta{Name: "poolers", Namespace: "team-widened"},
+				Rules:      []rbacv1.PolicyRule{{APIGroups: []string{"postgresql.cnpg.io"}, Resources: []string{"poolers"}, Verbs: []string{"get", "list", "watch"}}},
+			},
+			&rbacv1.RoleBinding{
+				ObjectMeta: metav1.ObjectMeta{Name: "poolers", Namespace: "team-widened"},
+				RoleRef:    rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "Role", Name: "poolers"},
+				Subjects:   subject,
+			})
+		for _, object := range objects {
+			if err := c.Create(ctx, object); err != nil {
+				t.Fatalf("create %T %s: %v", object, object.GetName(), err)
+			}
+		}
+		reader, err := client.New(widened, client.Options{Scheme: scheme})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := reachableNamespaces(ctx, reader, namespaces)
+		if err != nil || !slices.Equal(got, namespaces) {
+			t.Fatalf("reachable = %q, %v; want every namespace", got, err)
+		}
+		probed, err := probeOptionalAPIs(ctx, reader, got)
+		if err != nil {
+			t.Fatalf("probeOptionalAPIs: %v", err)
+		}
+		if !slices.Equal(probed.Namespaces, namespaces) {
+			t.Fatalf("watched %q, want every namespace %q", probed.Namespaces, namespaces)
+		}
+		for _, namespace := range namespaces {
+			if on := probed.Features.Poolers.In(namespace).Usable(); on != (namespace == "team-widened") {
+				t.Errorf("Poolers in %s usable = %t, want it on in team-widened only", namespace, on)
+			}
+			if !probed.Features.DatabaseRoles.In(namespace).Usable() {
+				t.Errorf("DatabaseRoles off in %s, which allows them", namespace)
+			}
+		}
+		assertCacheSyncs(ctx, t, widened, probed, &cnpgv1.Pooler{})
 	})
 	t.Run("reads no other Secret of its namespace", func(t *testing.T) {
 		err := operator.Get(ctx, client.ObjectKey{Namespace: "pgtoolbox", Name: "someone-else"}, &corev1.Secret{})
@@ -231,4 +310,41 @@ func TestEnvtestWatchNamespacesRBAC(t *testing.T) {
 			t.Fatalf("RoleBinding in team-a: %v", err)
 		}
 	})
+}
+
+// assertCacheSyncs builds the manager's cache as main does, from the probe,
+// as the operator's identity, and checks that the informer of object (an
+// optional kind refused in some watched namespaces) syncs: watched only
+// where it is listable, it never retries a refused List forever.
+func assertCacheSyncs(ctx context.Context, t *testing.T, config *rest.Config, probed optionalAPIs, object client.Object) {
+	t.Helper()
+	prepared := pgAdminPrepared{Features: probed.Features, EvidenceAgentAPIs: probed.EvidenceAgent, OptionalKinds: probed.Kinds}
+	prepared.Config.WatchNamespaces = probed.Namespaces
+	options := ctrl.Options{Scheme: scheme}
+	managerCacheOptions(&options, prepared, pgToolBoxConsoleFeatures(prepared))
+	byObjects := map[client.Object]cache.ByObject{}
+	for key, byObject := range options.Cache.ByObject {
+		if reflect.TypeOf(key) == reflect.TypeOf(object) {
+			byObjects[key] = byObject
+			if len(byObject.Namespaces) == 0 || len(byObject.Namespaces) == len(probed.Namespaces) {
+				t.Fatalf("the %T informer is not restricted to the namespaces it is listable in: %v", object, byObject.Namespaces)
+			}
+		}
+	}
+	if len(byObjects) != 1 {
+		t.Fatalf("%d cache entries for %T, want 1", len(byObjects), object)
+	}
+	informers, err := cache.New(config, cache.Options{Scheme: scheme, DefaultNamespaces: options.Cache.DefaultNamespaces, ByObject: byObjects})
+	if err != nil {
+		t.Fatal(err)
+	}
+	syncCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	if _, err := informers.GetInformer(syncCtx, object, cache.BlockUntilSynced(false)); err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = informers.Start(syncCtx) }()
+	if !informers.WaitForCacheSync(syncCtx) {
+		t.Fatalf("the %T informer did not sync in the namespaces it is listable in", object)
+	}
 }
