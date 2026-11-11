@@ -9,15 +9,26 @@
 #
 #   1. the operator starts and becomes Ready (it reads its own ConfigMap and
 #      Secret, by name, in a namespace it does not watch);
-#   2. it reconciles a PgAdmin in a watched namespace, and none in another;
+#   2. it reconciles a PgAdmin, a PgToolBoxConsole and an EvidenceAgent in a
+#      watched namespace, and no PgAdmin in another: each one's children
+#      exist (so the console's RoleBindings to the three console roles and the
+#      agents' ClusterRoleBinding pass RBAC escalation prevention in this
+#      mode) and no condition carries an API server Forbidden;
 #   3. a watched namespace deleted after the install does not stop it at its
 #      next start, and it keeps reconciling the namespaces left;
-#   4. switching back to the default mode with helm upgrade succeeds (each
-#      mode has its own ClusterRoleBinding: a roleRef is immutable).
+#   4. switching to the default mode with helm upgrade succeeds (each mode
+#      has its own ClusterRoleBinding: a roleRef is immutable), and
+#   5. so does switching back to watchNamespaces, which confines it again.
 #
-# Only CloudNativePG's CRDs and operator are installed: the PgAdmin names a
-# Cluster that does not exist, so its status (observedGeneration) is the
-# proof of a reconcile, without a database.
+# observedGeneration alone proves nothing: status is published on error
+# paths too. Only CloudNativePG's CRDs and operator are installed, and no
+# database runs: the PgAdmin names a Cluster that does not exist (it still
+# renders), and the EvidenceAgent reads a Cluster whose reconciliation is
+# disabled (cnpg.io/reconciliationLoop: disabled: CloudNativePG creates no
+# Pod) and whose in-tree object store is a fake bucket. The agent's and the
+# console's Pods may never become ready (their images are pulled, the bucket
+# does not answer): the scenario asserts what the operator renders, not what
+# they serve.
 #
 # Host rules (AGENTS.md): KUBECONFIG and CLUSTER_NAME come from the caller;
 # nothing is written outside the work tree and $TMPDIR; the cluster is deleted
@@ -47,7 +58,9 @@ trap teardown EXIT
 
 diagnostics() {
   log "diagnostics"
-  kubectl get pgadmin -A -o yaml || true
+  kubectl get pgadmin,pgtoolboxconsole,evidenceagent -A -o yaml || true
+  kubectl -n scope-a get deployments,services,serviceaccounts,rolebindings || true
+  kubectl get clusterrolebinding pgtoolbox-evidence-agent -o yaml || true
   kubectl -n pgtoolbox get pods,deployments,roles,rolebindings -o wide || true
   kubectl get clusterrolebindings -l app.kubernetes.io/name=pgtoolbox || true
   kubectl -n pgtoolbox logs deployment/pgtoolbox --tail=200 || true
@@ -113,14 +126,129 @@ spec:
 YAML
 }
 
-reconciled() { # reconciled <namespace> <generation>
-  kubectl -n "$1" wait pgadmin/scope --for=jsonpath='{.status.observedGeneration}'="$2" --timeout=180s
+# retry <seconds> <command...>: until the command succeeds, or fail.
+retry() {
+  local deadline=$((SECONDS + $1))
+  shift
+  until "$@" >/dev/null 2>&1; do
+    ((SECONDS < deadline)) || return 1
+    sleep 2
+  done
 }
 
-log "2. a PgAdmin in a watched namespace is reconciled, one elsewhere is not"
+# exist <namespace> <kind/name>...: every object exists.
+exist() {
+  local ns=$1 object
+  shift
+  for object in "$@"; do
+    kubectl -n "${ns}" get "${object}" >/dev/null 2>&1 || return 1
+  done
+}
+
+# no_forbidden <namespace> <kind/name>: the object has conditions and none of
+# them carries the API server's Forbidden ("... is forbidden: User ... cannot
+# ..."); a registry's "403 Forbidden" in an image pull message is not one.
+no_forbidden() {
+  local conditions
+  conditions="$(kubectl -n "$1" get "$2" -o jsonpath='{range .status.conditions[*]}{.type}={.status} {.reason}: {.message}{"\n"}{end}')"
+  if [[ -z "${conditions}" ]]; then
+    echo "$1/$2 has no condition" >&2
+    return 1
+  fi
+  if grep -qi 'is forbidden' <<<"${conditions}"; then
+    echo "$1/$2 carries a Forbidden condition:" >&2
+    echo "${conditions}" >&2
+    return 1
+  fi
+}
+
+# reconciled <namespace> <generation>: the PgAdmin's status names the
+# generation, its children exist and no condition is a Forbidden.
+reconciled() {
+  kubectl -n "$1" wait pgadmin/scope --for=jsonpath='{.status.observedGeneration}'="$2" --timeout=180s || return 1
+  retry 120 exist "$1" deployment/scope-pgadmin service/scope-pgadmin serviceaccount/scope-pgadmin || {
+    echo "the PgAdmin's Deployment, Service or ServiceAccount is missing in $1" >&2
+    return 1
+  }
+  no_forbidden "$1" pgadmin/scope
+}
+
+# console_and_agent <namespace>: a PgToolBoxConsole with the three console
+# roles to bind (restore drills on, pod logs by default) and an EvidenceAgent
+# reading a Cluster that never runs.
+console_and_agent() {
+  local ns=$1
+  kubectl -n "${ns}" create secret generic fake-s3 --from-literal=ACCESS_KEY_ID=e2e --from-literal=ACCESS_SECRET_KEY=e2e
+  kubectl apply -f - <<YAML
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: inert
+  namespace: ${ns}
+  annotations:
+    cnpg.io/reconciliationLoop: disabled
+spec:
+  instances: 1
+  storage: {size: 1Gi}
+  backup:
+    barmanObjectStore:
+      destinationPath: s3://scope-e2e/
+      endpointURL: http://fake-s3.invalid:9000
+      s3Credentials:
+        accessKeyId: {name: fake-s3, key: ACCESS_KEY_ID}
+        secretAccessKey: {name: fake-s3, key: ACCESS_SECRET_KEY}
+---
+apiVersion: pgtoolbox.fyannk.dev/v1alpha1
+kind: EvidenceAgent
+metadata:
+  name: scope
+  namespace: ${ns}
+spec:
+  clusterRef: {name: inert}
+  allowedSecrets: [fake-s3]
+  refreshInterval: 30m
+---
+apiVersion: pgtoolbox.fyannk.dev/v1alpha1
+kind: PgToolBoxConsole
+metadata:
+  name: console
+  namespace: ${ns}
+spec:
+  replicas: 1
+  history: {persistent: false}
+  auth: {tokenLogin: true}
+  restoreDrills: {enabled: true}
+YAML
+}
+
+# console_and_agent_reconciled <namespace>: their children exist, the agent's
+# ServiceAccount is a subject of the agents' ClusterRoleBinding, and neither
+# carries a Forbidden.
+console_and_agent_reconciled() {
+  local ns=$1
+  retry 180 exist "${ns}" serviceaccount/console service/console deployment/console \
+    rolebinding/console rolebinding/console-pod-logs rolebinding/console-restore-drills || {
+    echo "the console's ServiceAccount, Service, Deployment or RoleBindings are missing in ${ns}" >&2
+    return 1
+  }
+  retry 180 exist "${ns}" serviceaccount/scope-evidence-agent service/scope-evidence-agent deployment/scope-evidence-agent || {
+    echo "the EvidenceAgent's ServiceAccount, Service or Deployment is missing in ${ns}" >&2
+    return 1
+  }
+  kubectl get clusterrolebinding pgtoolbox-evidence-agent -o jsonpath='{range .subjects[*]}{.namespace}/{.name}{"\n"}{end}' |
+    grep -qx "${ns}/scope-evidence-agent" || {
+    echo "the agents' ClusterRoleBinding does not bind ${ns}/scope-evidence-agent" >&2
+    return 1
+  }
+  no_forbidden "${ns}" pgtoolboxconsole/console && no_forbidden "${ns}" evidenceagent/scope
+}
+
+log "2. a PgAdmin, a console and an agent in a watched namespace are reconciled, a PgAdmin elsewhere is not"
 pgadmin scope-a
 pgadmin scope-x
+console_and_agent scope-a
 reconciled scope-a 1 || fail "the PgAdmin in scope-a was not reconciled"
+console_and_agent_reconciled scope-a || fail "the console or the agent in scope-a was not reconciled"
 sleep 10
 if [[ -n "$(kubectl -n scope-x get pgadmin/scope -o jsonpath='{.status.observedGeneration}')" ]]; then
   fail "the operator reconciled a PgAdmin in scope-x, which it does not watch"
@@ -147,5 +275,21 @@ if kubectl get clusterrolebinding pgtoolbox-manager-cluster >/dev/null 2>&1; the
 fi
 kubectl -n pgtoolbox rollout status deployment/pgtoolbox --timeout=300s || fail "the operator is not Ready in the default mode"
 reconciled scope-x 1 || fail "in the default mode the PgAdmin in scope-x was not reconciled"
+console_and_agent_reconciled scope-a || fail "in the default mode the console or the agent in scope-a is not reconciled"
+
+log "5. back to watchNamespaces with helm upgrade"
+helm_install --set 'operator.config.watchNamespaces={scope-a}' || fail "helm upgrade to watchNamespaces (immutable roleRef?)"
+kubectl get clusterrolebinding pgtoolbox-manager-cluster >/dev/null || fail "no watchNamespaces ClusterRoleBinding"
+if kubectl get clusterrolebinding pgtoolbox-manager >/dev/null 2>&1; then
+  fail "the default-mode ClusterRoleBinding is still there"
+fi
+kubectl -n pgtoolbox rollout status deployment/pgtoolbox --timeout=300s || fail "the operator is not Ready confined to scope-a"
+kubectl -n scope-a patch pgadmin/scope --type merge -p '{"spec":{"admins":["alice@example.com"]}}'
+reconciled scope-a 3 || fail "confined again, the PgAdmin in scope-a was not reconciled"
+console_and_agent_reconciled scope-a || fail "confined again, the console or the agent in scope-a is not reconciled"
+kubectl -n scope-x patch pgadmin/scope --type merge -p '{"spec":{"admins":["alice@example.com","bob@example.com"]}}'
+sleep 10
+[[ "$(kubectl -n scope-x get pgadmin/scope -o jsonpath='{.status.observedGeneration}')" == "1" ]] ||
+  fail "confined again, the operator still reconciled the PgAdmin in scope-x"
 
 log "the scope scenario passed"
