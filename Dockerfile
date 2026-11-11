@@ -62,7 +62,7 @@ COPY charts/pgtoolbox/Chart.yaml /repo/charts/pgtoolbox/Chart.yaml
 COPY ui/e2e/__screenshots__/screens.spec.ts /repo/ui/e2e/__screenshots__/screens.spec.ts
 RUN npm run build
 
-FROM --platform=$BUILDPLATFORM golang:1.27.3@sha256:2920bb124f1a2e12a1d39f0cab756ae0068441ee1da7655dec7f5e374944095b AS docs-bundle
+FROM --platform=$BUILDPLATFORM golang:1.27.4@sha256:08bcb99a38f85a265f9a93d1d3323e2440eec333380f3ea26ee0dec9264bb41c AS docs-bundle
 WORKDIR /workspace
 ENV GOWORK=off
 COPY go.mod go.sum ./
@@ -77,7 +77,7 @@ COPY --from=docs-site /repo/docs/site/build docs/site/build
 RUN go run ./hack/docsbundle -site docs/site/build -out internal/console/docsbundle/data \
     -version "$(awk '/^version:/ {print $2; exit}' charts/pgtoolbox/Chart.yaml)"
 
-FROM --platform=$BUILDPLATFORM golang:1.27.3@sha256:2920bb124f1a2e12a1d39f0cab756ae0068441ee1da7655dec7f5e374944095b AS builder
+FROM --platform=$BUILDPLATFORM golang:1.27.4@sha256:08bcb99a38f85a265f9a93d1d3323e2440eec333380f3ea26ee0dec9264bb41c AS builder
 ARG TARGETOS
 ARG TARGETARCH
 WORKDIR /workspace

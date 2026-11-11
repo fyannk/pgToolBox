@@ -324,5 +324,6 @@ OpenShift.
   allowed-actions list (now with `jdx/mise-action`) in step with the pins, the
   watchNamespaces e2e also runs on chart changes, and cache pruning retires mise
   caches of an old `mise.toml`.
+  Built with Go 1.27.4 (GO-2026-6859, an HTTP/1 server crash in `net/http`).
 
 [0.1.0]: https://github.com/fyannk/pgToolBox/releases/tag/v0.1.0
