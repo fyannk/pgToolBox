@@ -219,9 +219,19 @@ func (m *Manager) Run(ctx context.Context) error {
 	}
 }
 
-// probe lists one object of every kind in every watched namespace.
+// probe lists one object of every kind in every watched namespace. The
+// round is atomic: the source states are applied only once every List of
+// the round has an outcome, so an error that aborts it (a 401, a timeout)
+// leaves every state as the previous round set it, and the cache that
+// keeps serving is described as it is.
 func (m *Manager) probe(ctx context.Context) (plan, error) {
+	type outcome struct {
+		namespace, source string
+		state             viewmodel.SourceStateKind
+		reason            string
+	}
 	next := plan{}
+	var outcomes []outcome
 	for _, kind := range m.kinds {
 		namespaces := m.cfg.WatchNamespaces
 		if kind.ClusterScoped {
@@ -237,15 +247,23 @@ func (m *Manager) probe(ctx context.Context) (plan, error) {
 			switch result.State {
 			case discovery.Available:
 				next[kind.Source] = append(next[kind.Source], ns)
-				if state, ok := m.tracker.get(ns, kind.Source); !ok || (state.State != viewmodel.SourceLive && state.State != viewmodel.SourceStale) {
-					m.tracker.set(ns, kind.Source, viewmodel.SourcePending, "initial list in progress")
-				}
+				outcomes = append(outcomes, outcome{ns, kind.Source, viewmodel.SourcePending, "initial list in progress"})
 			case discovery.Forbidden:
-				m.tracker.set(ns, kind.Source, viewmodel.SourceForbidden, "the console ServiceAccount is "+result.Reason)
+				outcomes = append(outcomes, outcome{ns, kind.Source, viewmodel.SourceForbidden, "the console ServiceAccount is " + result.Reason})
 			default:
-				m.tracker.set(ns, kind.Source, viewmodel.SourceNotInstalled, result.Reason)
+				outcomes = append(outcomes, outcome{ns, kind.Source, viewmodel.SourceNotInstalled, result.Reason})
 			}
 		}
+	}
+	for _, o := range outcomes {
+		if o.state == viewmodel.SourcePending {
+			// An available source already listed keeps its live or stale
+			// state: the informer, not the probe, knows it.
+			if state, ok := m.tracker.get(o.namespace, o.source); ok && (state.State == viewmodel.SourceLive || state.State == viewmodel.SourceStale) {
+				continue
+			}
+		}
+		m.tracker.set(o.namespace, o.source, o.state, o.reason)
 	}
 	return next, nil
 }

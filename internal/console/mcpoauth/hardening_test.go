@@ -320,10 +320,17 @@ func TestAFullCodeTableIsNotAReplay(t *testing.T) {
 	if spent != sharedstate.MaxCodesPerUser {
 		t.Errorf("mallory spent %d codes, bound %d", spent, sharedstate.MaxCodesPerUser)
 	}
-	// Many people's together fill the table.
+	// Many people's together fill the table: each takes what the fair
+	// share lets them, until a newcomer is refused.
 	full := false
-	for i := 0; i < 10000 && !full; i++ {
-		full = store.UseCode(fmt.Sprintf("flood-%d", i), r.s.userKey(fmt.Sprintf("user-%d", i/sharedstate.MaxCodesPerUser)), t0.Add(30*time.Second)) != nil
+	for u := 0; u < 10000 && !full; u++ {
+		key := r.s.userKey(fmt.Sprintf("user-%d", u))
+		full = store.UseCode(fmt.Sprintf("flood-%d-0", u), key, t0.Add(30*time.Second)) != nil
+		for i := 1; i < sharedstate.MaxCodesPerUser && !full; i++ {
+			if store.UseCode(fmt.Sprintf("flood-%d-%d", u, i), key, t0.Add(30*time.Second)) != nil {
+				break
+			}
+		}
 	}
 	if !full {
 		t.Fatal("the code table has no bound")
