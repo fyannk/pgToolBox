@@ -346,7 +346,10 @@ trusted.
   how many Nodes had no range; Calico IPAM or Cilium's cluster pool with
   kube-controller-manager still filling `spec.podCIDRs` leaves ranges there
   that are not the Pod network, and when a console Pod's address is outside
-  its own Node's range the message says the Node check is not meaningful).
+  its own Node's range the message says the Node check is not meaningful: the
+  Node ranges prove nothing then, as a peer that covers none of them may still
+  admit the cluster's Pods, though a peer that covers one is still reported
+  `ExposurePeersBroad`).
   One lookup runs for at most ten seconds; one that stops keeps the pages it
   read and the next attempt resumes from them. An installation that does not grant the
   operator `list` on `nodes` skips that check and says so in the

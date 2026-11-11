@@ -70,7 +70,11 @@ type Lister interface {
 // ProbeListable lists at most one object of gvk, as metadata only, in
 // namespace ("" for a cluster-scoped kind or a cluster-wide list). It
 // returns Available, Forbidden or NotInstalled; every other error is
-// returned unclassified so the caller fails its start.
+// returned unclassified so the caller fails its start (or, re-probing,
+// keeps what it has), Unauthorized included: a 401 says the caller's
+// credentials were not accepted (a token being rotated, an authentication
+// webhook down), not that RBAC refuses the kind, and turning the feature
+// off would last for the life of the process.
 func ProbeListable(ctx context.Context, c Lister, gvk schema.GroupVersionKind, namespace string) (Result, error) {
 	return classify(gvk, namespace, listOne(ctx, c, gvk, namespace))
 }
@@ -93,7 +97,9 @@ func classify(gvk schema.GroupVersionKind, namespace string, err error) (Result,
 	case err == nil:
 		result.State = Available
 		return result, nil
-	case apierrors.IsForbidden(err) || apierrors.IsUnauthorized(err):
+	case apierrors.IsUnauthorized(err):
+		return result, fmt.Errorf("listing %s%s: the API server did not accept the credentials: %w", resourceName(gvk), where(namespace), err)
+	case apierrors.IsForbidden(err):
 		result.State = Forbidden
 		result.Reason = fmt.Sprintf("not allowed to list %s%s", resourceName(gvk), where(namespace))
 		return result, nil
@@ -140,11 +146,7 @@ func ProbeNamespaces(ctx context.Context, c Lister, gvk schema.GroupVersionKind,
 // they are.
 func ReachableNamespaces(ctx context.Context, c Lister, gvk schema.GroupVersionKind, namespaces []string) (reachable []string, refused []Result, err error) {
 	for _, namespace := range namespaces {
-		listed := listOne(ctx, c, gvk, namespace)
-		if apierrors.IsUnauthorized(listed) {
-			return nil, nil, fmt.Errorf("listing %s%s: the API server did not accept the credentials: %w", resourceName(gvk), where(namespace), listed)
-		}
-		probed, err := classify(gvk, namespace, listed)
+		probed, err := classify(gvk, namespace, listOne(ctx, c, gvk, namespace))
 		if err != nil {
 			return nil, nil, err
 		}
