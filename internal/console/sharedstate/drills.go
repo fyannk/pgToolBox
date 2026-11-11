@@ -31,13 +31,20 @@ import (
 // full record stays in the history journal when there is one.
 const KeyDrills = "drills.json"
 
-// Bounds of the drill results: per source and in total. A person starts
-// each drill, so this is years of drills, and the document stays a small
-// share of the budget (about 300 bytes a result).
+// Bounds of the drill results: per source and in total, and of each
+// field as Kubernetes bounds it (a namespace is a DNS label, a name a DNS
+// subdomain, a UID a UUID, a pgBackRest label 33 characters). A person
+// starts each drill, so this is years of drills (about 450 bytes a
+// result, some 230 KB for 500); a document of results at every field's
+// bound would not fit beside the others, and MaxData then drops the
+// oldest results (budgetLocked).
 const (
 	maxDrillsPerSource = 50
 	maxDrills          = 500
+	maxDrillNamespace  = 63
 	maxDrillName       = 253
+	maxDrillUID        = 36
+	maxDrillLabel      = 64
 	maxDrillReason     = 512
 )
 
@@ -77,10 +84,11 @@ var finishedResults = map[string]bool{
 }
 
 func validDrill(key string, r DrillResult) bool {
-	name := func(s string) bool { return s != "" && len(s) <= maxDrillName }
-	return name(r.Namespace) && name(r.Name) && name(r.SourceNamespace) && name(r.Source) &&
+	name := func(s string, bound int) bool { return s != "" && len(s) <= bound }
+	return name(r.Namespace, maxDrillNamespace) && name(r.Name, maxDrillName) &&
+		name(r.SourceNamespace, maxDrillNamespace) && name(r.Source, maxDrillName) &&
 		key == drillKey(r.Namespace, r.Name) && finishedResults[r.Result] &&
-		len(r.Backup) <= maxDrillName && len(r.SourceUID) <= maxDrillName && len(r.BackupLabel) <= maxDrillName &&
+		len(r.Backup) <= maxDrillName && len(r.SourceUID) <= maxDrillUID && len(r.BackupLabel) <= maxDrillLabel &&
 		len(r.Reason) <= maxDrillReason && utf8.ValidString(r.Reason) &&
 		r.StartedAt > 0 && r.FinishedAt >= r.StartedAt
 }
@@ -224,11 +232,30 @@ func (s *Store) mergeDrillsLocked(raw string) {
 // are protected (the newest), so recreating a Cluster cannot grow the
 // document past its bounds.
 func (s *Store) boundDrillsLocked() {
+	keys := s.newestDrillsFirst()
+	protected := s.protectedDrillsLocked(keys)
+	perSource := map[string]int{}
+	total := 0
+	for _, key := range keys {
+		r := s.drills[key]
+		src := drillKey(r.SourceNamespace, r.Source)
+		perSource[src]++
+		total++
+		if (perSource[src] > maxDrillsPerSource || total > maxDrills) && !protected[key] {
+			delete(s.drills, key)
+			perSource[src]--
+			total--
+		}
+	}
+}
+
+// newestDrillsFirst returns the keys of the results, the latest finish
+// first.
+func (s *Store) newestDrillsFirst() []string {
 	keys := make([]string, 0, len(s.drills))
 	for key := range s.drills {
 		keys = append(keys, key)
 	}
-	// Newest first.
 	sort.Slice(keys, func(i, j int) bool {
 		a, b := s.drills[keys[i]], s.drills[keys[j]]
 		if a.FinishedAt != b.FinishedAt {
@@ -236,6 +263,13 @@ func (s *Store) boundDrillsLocked() {
 		}
 		return keys[i] < keys[j]
 	})
+	return keys
+}
+
+// protectedDrillsLocked returns the results boundDrillsLocked keeps past
+// the count bounds: each source incarnation's newest pass. keys are the
+// results, newest first.
+func (s *Store) protectedDrillsLocked(keys []string) map[string]bool {
 	passOf := map[string]bool{}
 	protected := map[string]bool{}
 	protectedPerSource := map[string]int{}
@@ -253,17 +287,34 @@ func (s *Store) boundDrillsLocked() {
 		protected[key] = true
 		protectedPerSource[src]++
 	}
-	perSource := map[string]int{}
-	total := 0
-	for _, key := range keys {
-		r := s.drills[key]
-		src := drillKey(r.SourceNamespace, r.Source)
-		perSource[src]++
-		total++
-		if (perSource[src] > maxDrillsPerSource || total > maxDrills) && !protected[key] {
-			delete(s.drills, key)
-			perSource[src]--
-			total--
+	return protected
+}
+
+// shedDrillsLocked drops results, the oldest first and each source's
+// newest pass last, until about over bytes are freed, and returns how
+// many it dropped: the last resort that keeps the ConfigMap within
+// MaxData (budgetLocked).
+func (s *Store) shedDrillsLocked(over int) int {
+	keys := s.newestDrillsFirst()
+	protected := s.protectedDrillsLocked(keys)
+	order := make([]string, 0, len(keys))
+	for _, pass := range []bool{false, true} {
+		for i := len(keys) - 1; i >= 0; i-- {
+			if protected[keys[i]] == pass {
+				order = append(order, keys[i])
+			}
 		}
 	}
+	dropped := 0
+	for _, key := range order {
+		if over <= 0 {
+			break
+		}
+		// "key":{...}, and a comma.
+		b, _ := json.Marshal(s.drills[key])
+		over -= len(b) + len(key) + 4
+		delete(s.drills, key)
+		dropped++
+	}
+	return dropped
 }

@@ -65,6 +65,11 @@ OpenShift.
   role holds no `bind`; each mode has its own ClusterRoleBinding name, so `helm
   upgrade` can switch modes; a watched namespace deleted after install is left out
   at start and logged.
+  The restore-drill delete guard exempts holders of `*` on restore drills in
+  the Cluster's namespace (a namespaced Argo CD or OpenShift GitOps controller, a
+  Flux tenant bound to cluster-admin); start-up reads have a 60 s deadline per step,
+  a 401 at start fails it instead of leaving a namespace out, and
+  `pgtoolbox_config_info` lists only the namespaces watched.
 - The custom resources are `pgtoolbox.fyannk.dev/v1alpha1`.
 - **Opening a pgAdmin** behind the OpenShift OAuth proxy takes the `connect`
   verb on `pgadmins/<name>` (granted by `pgtoolbox-console-operator` and by
@@ -177,6 +182,11 @@ OpenShift.
   bounded by the former primary's archive backlog, else by a day; the missing-WAL
   segment says a former primary may still hold the WAL, and shortened reasons keep
   "do not delete that instance or its volume".
+  A former primary's readings bound only the end of the timeline it wrote, so
+  a double failover or A→B→A no longer pools them, and readings after an end are no
+  evidence for it; a pgBackRest backup cut from the 1,000 items read is never drawn
+  covered (`backup-not-listed`); the do-not-delete advice names the former primary
+  when the console knows it, and a second reason never cuts it.
 - **An archive backlog is not "healthy".** Archiving shows Warning
   `ArchiveBacklog` once segments keep waiting across sweeps (the threshold follows
   CloudNativePG's WAL archiver, `isWALArchiver`, and its ObjectStore's
@@ -204,6 +214,8 @@ OpenShift.
   only for the archiving instance; `cnpg-wal-files-waiting` judges only primary
   readings and says why when there is none; the not-reported message is worded by
   cluster kind; a hibernated Cluster's headline reads inactive.
+  The backlog rule reads only the current primary's term, a first archive counts
+  as progress, and `archivingWal` is shown only on `status.currentPrimary`.
 - **Sign-in under a flood.** Behind a shared proxy address, unauthenticated junk
   (bad OAuth codes, unknown tokens, MCP token and registration requests) no
   longer spends the budgets genuine sign-ins, known MCP clients and token
@@ -229,6 +241,11 @@ OpenShift.
   ones (each replaces that person's own earliest-ending one, nobody else's entry
   moves); `signouts_refused_total` reasons are `replaced`, `unnamed`, `budget` and
   `merge`; new gauge `pgtoolbox_console_shared_state_signouts{bound}`.
+  A full sessions document is shared fairly: a newcomer's sign-out takes the
+  place of an entry of the person holding the most (`reason="evicted"`), and
+  concurrent replacements a merge drops are counted under `merge`; the shared-state
+  ConfigMap stays within 1 MiB, dropping the oldest restore drill results first
+  (`pgtoolbox_console_shared_state_dropped_total`).
 - **Exposure trust.** The pgtools chart trusts every peer only when
   `networkPolicy.ingress.extraFrom` is empty. `networkPolicy.from` selectors are
   validated by the CRD, and a policy the API server refuses stalls with
@@ -255,6 +272,10 @@ OpenShift.
   policy or workload; the Node podCIDR check runs one lookup at a time, lists 100
   Nodes a page and says when Nodes have no `spec.podCIDRs`; a `HostnameNotAllowed`
   stall reports `ExposurePolicyKept` while the console's ingress policy remains.
+  A console whose hostname and image are both outside the allow-lists withdraws
+  its Ingress, Route or HTTPRoute (the hostname is checked first) and names both;
+  `ExposureConfined` says when the Node podCIDR check is not meaningful (a console
+  Pod outside its Node's podCIDRs); the Node lookup runs within 10 s and resumes.
 - **Admission.** A PgAdmin with `configDatabase` needs `get` on the
   namespace's Secrets and its database must start with `pgadmin_` (CloudNativePG
   adopts and resets an existing role); raising `sessionMaxAge` counts as widening
@@ -297,5 +318,12 @@ OpenShift.
   limit; `verify-pins-cnpgstatus` runs every pin test; the repository-settings page
   matches the live rulesets; the e2e clients drop idle connections before the
   console closes them.
+  `check` requires a real `YYYY-MM-DD` date, `wait-ci` names a failing API call,
+  the draft release is no longer created with `--latest`, `make doctor` reads
+  govulncheck's own version, `hack/check-action-pins.sh` keeps the documented
+  allowed-actions list (now with `jdx/mise-action`) in step with the pins, the
+  watchNamespaces e2e also runs on chart changes, and cache pruning retires mise
+  caches of an old `mise.toml`.
+  Built with Go 1.27.4 (GO-2026-6859, an HTTP/1 server crash in `net/http`).
 
 [0.1.0]: https://github.com/fyannk/pgToolBox/releases/tag/v0.1.0

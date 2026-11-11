@@ -305,7 +305,8 @@ to what the console itself checks: it may delete a `clusters.postgresql.cnpg.io`
 only when the Cluster carries this console's `drill-owner` label, a
 `restore-drill-of` label and a drill seal annotation, and its name starts with
 the console's drill prefix (`spec.restoreDrills.prefix`, default `drill-`).
-Anybody else, an administrator included, is not concerned.
+Anybody else is not concerned: a ServiceAccount without the drills role, a
+person, and an administrator of the Cluster's namespace.
 
 - **Operator** (`pgtoolbox` chart): rendered with the operator when the cluster
   serves `admissionregistration.k8s.io/v1` policies
@@ -318,10 +319,19 @@ Anybody else, an administrator included, is not concerned.
   `restoredrills.pgtoolbox.fyannk.dev`, which no API serves). That includes
   the operator's own ServiceAccount, which may bind the role: a stolen operator
   token that binds it to itself, by RoleBinding or ClusterRoleBinding, still
-  deletes nothing but sealed drills. A ServiceAccount of another namespace that
-  holds every verb (`*`) on every namespace's resources, such as a GitOps
-  controller bound to `cluster-admin`, is an administrator and is not
-  concerned; the drills role names `teardown`, never `*`. The prefix check
+  deletes nothing but sealed drills. Any wildcard rule grants `teardown` too,
+  so a ServiceAccount whose rights come from a wildcard is concerned as well,
+  unless it is an administrator: one that holds every verb (`*`) on
+  `restoredrills` in the Cluster's namespace, whichever namespace it belongs
+  to. That covers a GitOps controller bound to `cluster-admin`, a namespaced
+  Argo CD or OpenShift GitOps instance with a `*/*/*` Role in the namespace,
+  and a Flux tenant RoleBound to `cluster-admin` there: they prune their
+  Clusters freely. The drills role names `teardown`, never `*`, and RBAC
+  escalation prevention keeps anyone who does not hold `*` from granting it,
+  so neither a console nor the operator becomes an administrator. The guard
+  matches ServiceAccounts only: the drills role bound to a User or a Group is
+  not held to drills (see [the operator's limits](../security.md#known-limitations)).
+  The prefix check
   reads the namespace's PgToolBoxConsoles as parameters and applies to each
   console's exact ServiceAccount. The second fails open (no console, or the CRD
   gone), the first never does.
@@ -505,7 +515,10 @@ results live in this replica's memory only, and the panel says "drill history
 lost at restart". In every case a running drill is still found and torn down
 after a restart: the console verifies the seal, not its memory. The console
 keeps the last 50 drills per Cluster (and 500 in the ConfigMap), and never
-drops a Cluster's newest passed drill to stay within that bound. A Cluster that
+drops a Cluster's newest passed drill to stay within that bound. Should the
+ConfigMap as a whole near the API server's 1 MiB (every other document at
+its bound), the oldest results go first, the newest passes last, counted in
+`pgtoolbox_console_shared_state_dropped_total{document="drills.json"}`. A Cluster that
 was deleted and recreated under its name is a different source: the newest pass
 of each one (told apart by UID) is kept, up to 50 passes per name, so a drill of the
 predecessor's backup never pushes out the recreated Cluster's own pass.

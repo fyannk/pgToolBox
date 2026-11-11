@@ -16,6 +16,7 @@ package status
 
 import (
 	"context"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -141,30 +142,70 @@ type recoveryFacts struct {
 }
 
 // archivedBound says that by the sweep at readAt every commit before
-// before was in WAL the archiver had archived.
+// before was in WAL the archiver had archived. timeline is the timeline
+// the archiver was primary on at that sweep (former primaries only; 0
+// for the current primary's, which need none).
 type archivedBound struct {
 	readAt, before time.Time
+	timeline       uint64
 }
 
 // quietSweep is a sweep that read the archiver with no .ready file: at
 // is the sweep's start (the count was taken at or after it), by is when
 // the read returned (the count was taken at or before it). Every segment
-// completed by at was archived by by.
+// completed by at was archived by by. timeline is as archivedBound's.
 type quietSweep struct {
-	at, by time.Time
+	at, by   time.Time
+	timeline uint64
 }
 
 // formerArchiver are the readings of the former primaries' archivers
-// from before the promotion (status.currentPrimaryTimestamp): the rings
-// keep a readyWalFiles value only while an instance reports itself
-// primary (sweep pushRings). read is false when no ring holds one (the
-// former primary's pod is gone, the ring's retention passed, or the
-// promotion time is not known): its archiver's state at the switch is
-// then not known.
+// from before the promotion (status.currentPrimaryTimestamp), each
+// stamped with the timeline the instance was primary on then (sweep
+// SeriesTimeline): the rings keep a readyWalFiles value only while an
+// instance reports itself primary (sweep pushRings), and only the
+// archiver of a timeline says how late that timeline's WAL reached the
+// repository. read holds the timelines some ring has a reading of; a
+// timeline it lacks (the former primary's pod is gone, the ring's
+// retention passed, the reading carried no timeline, or the promotion
+// time is not known) has no archiver state at the switch.
 type formerArchiver struct {
-	read   bool
+	read   map[uint64]bool
 	quiet  []quietSweep
 	bounds []archivedBound
+	// holders are, per timeline, the instances read as its primary.
+	holders map[uint64]map[string]bool
+}
+
+// holder is the one instance read as primary on timeline: the former
+// primary that may still hold that timeline's unarchived WAL. Empty when
+// none or more than one is (the console then names none).
+func (f formerArchiver) holder(timeline uint64) string {
+	if len(f.holders[timeline]) != 1 {
+		return ""
+	}
+	for name := range f.holders[timeline] {
+		return name
+	}
+	return ""
+}
+
+// on is the former archiver's readings of one timeline.
+func (f formerArchiver) on(timeline uint64) (read bool, quiet []quietSweep, bounds []archivedBound) {
+	if timeline == 0 || !f.read[timeline] {
+		return false, nil, nil
+	}
+	for _, q := range f.quiet {
+		if q.timeline == timeline {
+			quiet = append(quiet, q)
+		}
+	}
+	for _, b := range f.bounds {
+		if b.timeline == timeline {
+			bounds = append(bounds, b)
+		}
+	}
+	return true, quiet, bounds
 }
 
 // recoveryFactsOf reads the facts from a gathered Cluster and its
@@ -280,14 +321,31 @@ func quietSweeps(ring []viewmodel.Point, from, until time.Time, interval time.Du
 // so a segment completed between the two reads only raises k. Empty
 // without the position ring, the segment size, or archive_timeout.
 func archivedBounds(g *gathered, instance string, lsnRing []viewmodel.Point, from, until time.Time, archiveTimeout, interval time.Duration) []archivedBound {
+	return archivedBoundsOn(g, instance, lsnRing, nil, from, until, archiveTimeout, interval)
+}
+
+// archivedBoundsOn is archivedBounds with each sweep's timeline: when
+// timelines is not nil, a sweep without one is no T or T', T' is on T's
+// timeline, and each bound carries it.
+func archivedBoundsOn(g *gathered, instance string, lsnRing []viewmodel.Point, timelines map[int64]uint64, from, until time.Time, archiveTimeout, interval time.Duration) []archivedBound {
 	size, ok := clusterSegmentSize(g, instance)
 	if !ok || archiveTimeout <= 0 || len(lsnRing) == 0 {
 		return nil
 	}
 	inTerm := func(at time.Time) bool { return !at.Before(from) && (until.IsZero() || at.Before(until)) }
 	type sample struct {
-		at  time.Time
-		lsn uint64
+		at       time.Time
+		lsn      uint64
+		timeline uint64
+	}
+	// stamped is the sweep's timeline, and whether it counts: every sweep
+	// does when no timelines are given.
+	stamped := func(at time.Time) (uint64, bool) {
+		if timelines == nil {
+			return 0, true
+		}
+		tl := timelines[at.UnixNano()]
+		return tl, tl != 0
 	}
 	var positions []sample // oldest first
 	// Keyed by the instant, not time.Time (whose == compares the
@@ -297,8 +355,12 @@ func archivedBounds(g *gathered, instance string, lsnRing []viewmodel.Point, fro
 		if p.Value == nil || *p.Value < 0 || !inTerm(p.At) {
 			continue
 		}
+		tl, ok := stamped(p.At)
+		if !ok {
+			continue
+		}
 		v := uint64(*p.Value)
-		positions = append(positions, sample{at: p.At, lsn: v})
+		positions = append(positions, sample{at: p.At, lsn: v, timeline: tl})
 		byAt[p.At.UnixNano()] = v
 	}
 	var out []archivedBound
@@ -310,6 +372,7 @@ func archivedBounds(g *gathered, instance string, lsnRing []viewmodel.Point, fro
 		if !read {
 			continue
 		}
+		tl, _ := stamped(p.At)
 		k := uint64(*p.Value)
 		segment := lsn / size
 		if segment+1 <= k {
@@ -319,11 +382,11 @@ func archivedBounds(g *gathered, instance string, lsnRing []viewmodel.Point, fro
 		// reaches it.
 		start := (segment - k + 1) * size
 		for i := len(positions) - 1; i >= 0; i-- {
-			if positions[i].at.After(p.At) {
+			if positions[i].at.After(p.At) || positions[i].timeline != tl {
 				continue
 			}
 			if positions[i].lsn < start {
-				out = append(out, archivedBound{readAt: readByOf(p, interval), before: positions[i].at.Add(-archiveTimeout).UTC()})
+				out = append(out, archivedBound{readAt: readByOf(p, interval), before: positions[i].at.Add(-archiveTimeout).UTC(), timeline: tl})
 				break
 			}
 		}
@@ -352,39 +415,57 @@ func clusterSegmentSize(g *gathered, instance string) (uint64, bool) {
 }
 
 // formerArchiverOf reads the former primaries' rings up to the
-// promotion. Every instance but the current primary whose ring holds a
-// readyWalFiles value before it was primary then; their quiet sweeps and
-// bounds are pooled (after several failovers the console cannot tell
-// which wrote which older timeline, and the newest bound of any of them
-// is taken only where it is at or before the scan).
+// promotion: every instance's sweeps from before the current primary's
+// term (the current primary's own included, for a term it held earlier:
+// A, then B, then A again), each reading stamped with the timeline the
+// instance was primary on (timelineAt). A reading without a timeline is
+// no evidence: after several failovers only the timeline tells which
+// archiver wrote which older timeline's WAL, so a quiet sweep of the
+// primary of timeline 2 never bounds the end of timeline 1 (round 9, P2).
 func formerArchiverOf(g *gathered, promoted time.Time, archiveTimeout, interval time.Duration) formerArchiver {
-	var out formerArchiver
+	out := formerArchiver{read: map[uint64]bool{}, holders: map[uint64]map[string]bool{}}
 	if promoted.IsZero() {
 		return out
 	}
 	names := make([]string, 0, len(g.readyRings))
 	for name := range g.readyRings {
-		if name != g.cluster.Status.CurrentPrimary {
-			names = append(names, name)
-		}
+		names = append(names, name)
 	}
 	sort.Strings(names)
 	for _, name := range names {
-		read := false
-		for _, p := range g.readyRings[name] {
-			if p.Value != nil && p.At.Before(promoted) {
-				read = true
-				break
-			}
-		}
-		if !read {
+		timelines := timelineAt(g, name)
+		if len(timelines) == 0 {
 			continue
 		}
-		out.read = true
-		out.quiet = append(out.quiet, quietSweeps(g.readyRings[name], time.Time{}, promoted, interval)...)
-		out.bounds = append(out.bounds, archivedBounds(g, name, g.lsnRings[name], time.Time{}, promoted, archiveTimeout, interval)...)
+		for _, p := range g.readyRings[name] {
+			if tl := timelines[p.At.UnixNano()]; p.Value != nil && p.At.Before(promoted) && tl != 0 {
+				out.read[tl] = true
+				if out.holders[tl] == nil {
+					out.holders[tl] = map[string]bool{}
+				}
+				out.holders[tl][name] = true
+			}
+		}
+		for _, q := range quietSweeps(g.readyRings[name], time.Time{}, promoted, interval) {
+			if q.timeline = timelines[q.at.UnixNano()]; q.timeline != 0 {
+				out.quiet = append(out.quiet, q)
+			}
+		}
+		out.bounds = append(out.bounds, archivedBoundsOn(g, name, g.lsnRings[name], timelines, time.Time{}, promoted, archiveTimeout, interval)...)
 	}
 	sort.Slice(out.quiet, func(i, j int) bool { return out.quiet[i].at.Before(out.quiet[j].at) })
+	return out
+}
+
+// timelineAt is the instance's timeline at each sweep that read it as
+// primary with one (sweep SeriesTimeline), keyed by the sweep's instant.
+func timelineAt(g *gathered, instance string) map[int64]uint64 {
+	out := map[int64]uint64{}
+	for _, p := range g.timelineRings[instance] {
+		if p.Value != nil && *p.Value >= 1 && *p.Value <= math.MaxUint32 {
+			out[p.At.UnixNano()] = uint64(*p.Value)
+		}
+	}
 	return out
 }
 
@@ -526,7 +607,11 @@ func caughtUpBy(g *gathered, instance string) *time.Time {
 		return nil
 	}
 	by := r.ObservedAt.UTC()
-	samples := earlierReady(g, instance, r.ObservedAt)
+	var from time.Time
+	if instance == g.cluster.Status.CurrentPrimary {
+		from = promotedAt(g)
+	}
+	samples := earlierReady(g, instance, from, r.ObservedAt)
 	for i := len(samples) - 1; i >= 0; i-- {
 		s := samples[i]
 		if !s.At.After(failed) {
@@ -614,6 +699,7 @@ func (s *Service) recoveryTimeline(ev clusterEvidence, summary viewmodel.BackupS
 		in := timelineInput{
 			rec: rec, backups: ev.result.Backups, facts: facts, stale: stale,
 			scannedAt: scannedAt(ev.result), refresh: ev.result.RefreshInterval,
+			pgBackRest: ev.result.Snapshot.Details.PGBackRest != nil,
 		}
 		evidenceTimeline(&out, in)
 		out.OffTarget = offTargetSpans(rec.Paths, ev.result.Backups)
@@ -750,6 +836,10 @@ type timelineInput struct {
 	stale     *viewmodel.Phrase
 	scannedAt *time.Time
 	refresh   time.Duration
+	// pgBackRest: the repository is pgBackRest's, whose usability the
+	// agent rates per backup item (a path's backup missing from the items
+	// read is not known to be usable).
+	pgBackRest bool
 }
 
 // targetTimeline is the newest timeline a path was evaluated toward: a
@@ -873,7 +963,7 @@ func evidenceTimeline(out *viewmodel.RecoveryTimeline, in timelineInput) {
 	}
 	runs := mergeSpans(spans)
 	margin := in.facts.frontierMargin()
-	holes, candidates := drawRuns(out, spans, runs, margin)
+	holes, candidates := drawRuns(out, spans, runs, margin, in.facts.former.holder)
 	first, last := runs[0].from, runs[len(runs)-1].to
 	out.Earliest, out.Latest = &first, &last
 	tail := runs[len(runs)-1].stop
@@ -888,7 +978,12 @@ func evidenceTimeline(out *viewmodel.RecoveryTimeline, in timelineInput) {
 			formerArchiverEdge(out, in.facts, r.timeline, r.to, in.scannedAt)
 		}
 	}
-	tailSegment(out, in, last, tail, runs[len(runs)-1].formerMayHold)
+	newest := runs[len(runs)-1]
+	holder := ""
+	if newest.formerMayHold {
+		holder = in.facts.former.holder(newest.timeline)
+	}
+	tailSegment(out, in, last, tail, newest.formerMayHold, holder)
 	if !in.rec.Complete {
 		// The paths read may all be toward an older timeline than a cut
 		// one: what they cover is not drawn as current.
@@ -921,7 +1016,7 @@ func evidenceTimeline(out *viewmodel.RecoveryTimeline, in timelineInput) {
 		out.NewestCoveredTarget = lastCovered(out.Segments)
 	}
 	timelineVerdict(out, in, timelineFindings{
-		tail: tail, formerMayHold: runs[len(runs)-1].formerMayHold, holes: holes, candidates: candidates, failedRecently: failedRecently, backlog: in.facts.backlog,
+		tail: tail, formerMayHold: newest.formerMayHold, holder: holder, holes: holes, candidates: candidates, failedRecently: failedRecently, backlog: in.facts.backlog,
 		archiverUnread: in.facts.archiverUnread, hibernated: in.facts.hibernated, notReported: in.facts.notReported, degraded: degraded, degradedUnusable: degradedUnusable,
 		orphan: orphan, undrawn: undrawn,
 	})
@@ -967,7 +1062,17 @@ func recoverySpans(out *viewmodel.RecoveryTimeline, in timelineInput, target uin
 			sp.timeline = *p.FrontierTimeline
 		}
 		sp.formerMayHold = p.Stop == evidencev1alpha1.CoverageGapLimited && strings.Contains(p.Reason.Message, evidencev1alpha1.FormerPrimaryMayHold)
-		if code, detail, unusable := unusableBackup(p, ends[p.BackupID]); unusable {
+		item, listed := ends[p.BackupID]
+		if in.pgBackRest && !listed {
+			// The console keeps the newest maximumBackupItems items but
+			// more paths: a path whose backup was cut from the items read
+			// has no usability rating, so it is drawn, never as covered
+			// (round 9, PG P2; the roll-up already reads it so, cap.go
+			// rollupUnexplained).
+			path := p
+			path.Reason = evidencev1alpha1.Reason{Code: backupNotListedCode}
+			sp.degraded, sp.unusable = &path, true
+		} else if code, detail, unusable := unusableBackup(p, item); unusable {
 			path := p
 			path.Reason = evidencev1alpha1.Reason{Code: code, Message: detail}
 			sp.degraded, sp.unusable = &path, true
@@ -983,6 +1088,11 @@ func recoverySpans(out *viewmodel.RecoveryTimeline, in timelineInput, target uin
 	sort.Strings(out.Assumptions)
 	return spans, undrawn
 }
+
+// backupNotListedCode is the console's reason for a pgBackRest path whose
+// backup is not among the backup items read (cut at the console's bound):
+// its usability is not known.
+const backupNotListedCode = "backup-not-listed"
 
 // pathShownUnusable are the pgBackRest unusable reasons that come from
 // the backup's recovery path itself (pgbackrest assess.go): the path the
@@ -1023,6 +1133,19 @@ func unusableBackup(p evidence.RecoveryPath, b evidence.BackupItem) (code, detai
 		return item.UnusableReasons[0], detail, true
 	}
 	return "", "", false
+}
+
+// formerMayHoldPhrase is a missing-WAL sentence (missing, ending with a
+// space) followed by the advice that the former primary may still hold
+// the WAL: it names that instance when the console knows it (instance,
+// the one read as primary on the timeline the WAL stops on), else says
+// "that instance".
+func formerMayHoldPhrase(code, missing, instance string) viewmodel.Phrase {
+	if instance == "" {
+		return say(code, missing+"The former primary may still hold it, and CloudNativePG archives it before that instance rejoins: do not delete that instance or its volume.", nil)
+	}
+	return say(code, missing+"The former primary, "+instance+", may still hold it, and CloudNativePG archives it before that instance rejoins: do not delete "+instance+" or its volume.",
+		map[string]string{"instance": instance})
 }
 
 // lastCovered is the end of the newest covered segment: the newest
@@ -1067,9 +1190,15 @@ func mergeSpans(spans []interval) []interval {
 // drawRuns draws each run as covered pieces and each gap between two runs
 // as a hole, the margin before it uncertain; it counts the confirmed holes
 // and the candidate gaps.
-func drawRuns(out *viewmodel.RecoveryTimeline, spans, runs []interval, margin time.Duration) (holes, candidates int) {
+func drawRuns(out *viewmodel.RecoveryTimeline, spans, runs []interval, margin time.Duration, holder func(timeline uint64) string) (holes, candidates int) {
 	for i, r := range runs {
 		for _, piece := range coveredPieces(spans, r.from, r.to) {
+			if p := piece.degraded; p != nil && piece.unusable && p.Reason.Code == backupNotListedCode {
+				out.Segments = append(out.Segments, segment(piece.from, piece.to, segmentUnknown, say("recovery.segment.backupNotListed",
+					"Base backup "+p.BackupID+" reaches here, but it is not among the backups the console read from the evidence agent, so its usability is not known: not counted as covered.",
+					map[string]string{"backupId": p.BackupID, "reason": backupNotListedCode})))
+				continue
+			}
 			if p := piece.degraded; p != nil && piece.unusable {
 				out.Segments = append(out.Segments, segment(piece.from, piece.to, segmentUnknown, backupNotUsable("recovery.segment.backupNotUsable", *p,
 					"Base backup "+p.BackupID+" reaches here, but the evidence agent rates the backup not usable", ": not counted as covered.")))
@@ -1093,8 +1222,7 @@ func drawRuns(out *viewmodel.RecoveryTimeline, spans, runs []interval, margin ti
 			map[string]string{"marginSeconds": secondsParam(margin)}))
 		kind, text := holeOf(r.stop)
 		if kind == segmentMissingWAL && r.formerMayHold {
-			text = say("recovery.segment.missingWALFormerPrimary",
-				"WAL is missing from the repository: no restore target in this span. The former primary may still hold it, and CloudNativePG archives it before that instance rejoins: do not delete that instance or its volume.", nil)
+			text = formerMayHoldPhrase("recovery.segment.missingWALFormerPrimary", "WAL is missing from the repository: no restore target in this span. ", holder(r.timeline))
 		}
 		switch kind {
 		case segmentMissingWAL:
@@ -1195,29 +1323,44 @@ func backlogEdge(out *viewmodel.RecoveryTimeline, f recoveryFacts, n int, last t
 // primary, whose backlog at the switch the current primary's readings
 // say nothing of. A segment it never archived (its .ready tail lost in a
 // crash, the standby having marked the streamed segments .done) holds
-// commits older than the end's receipt by however long it waited. From
-// the newest sweep, at or before the scan, that read the former primary
-// with no .ready file (less one archive_timeout), or the newest bound its
-// WAL positions give (archivedBounds), whichever is later; from
+// commits older than the end's receipt by however long it waited. Only
+// the readings of the primary of that same timeline count (formerArchiver
+// on): from the newest sweep, at or before the scan, that read it with no
+// .ready file (less one archive_timeout), or the newest bound its WAL
+// positions give (archivedBounds), whichever is later; from
 // failureLookback before the end when the console kept no reading of
-// that archiver from before the promotion, none bounds it, the sweep
-// period is not known, or archive_timeout is disabled (round 8, P2-2).
+// that timeline's archiver from before the promotion, none bounds it,
+// the band they give does not end before the end (no evidence for it),
+// the sweep period is not known, or archive_timeout is disabled (round 8,
+// P2-2; round 9, P2).
 func formerArchiverEdge(out *viewmodel.RecoveryTimeline, f recoveryFacts, timeline uint64, end time.Time, scanned *time.Time) {
 	tl := strconv.FormatUint(timeline, 10)
-	if !f.former.read || f.archiveTimeout <= 0 || f.sweepInterval <= 0 {
+	unknown := func() {
 		uncertain(out, end.Add(-failureLookback), end, say("recovery.segment.formerArchiverUnknown",
-			"The WAL up to here on timeline "+tl+" was archived by a former primary, and the console kept no reading of its archiver from before the switch: WAL that waited on it, or never left it, may hold commits older than this end's arrival time, so a restore this recent may stop short.",
+			"The WAL up to here on timeline "+tl+" was archived by a former primary, and the console kept no reading of that timeline's archiver that bounds this end: WAL that waited on it, or never left it, may hold commits older than this end's arrival time, so a restore this recent may stop short.",
 			map[string]string{"timeline": tl}))
+	}
+	read, quietOn, boundsOn := f.former.on(timeline)
+	if !read || f.archiveTimeout <= 0 || f.sweepInterval <= 0 {
+		unknown()
 		return
 	}
-	quiet := newestQuiet(f.former.quiet, f.now, scanned)
-	b := newestBound(f.former.bounds, f.now, scanned)
+	quiet := newestQuiet(quietOn, f.now, scanned)
+	b := newestBound(boundsOn, f.now, scanned)
 	switch {
 	case b != nil && (quiet == nil || b.before.After(quiet.at.Add(-f.archiveTimeout))):
+		if !end.After(b.before) {
+			unknown()
+			return
+		}
 		uncertain(out, b.before, end, say("recovery.segment.formerArchiverBound",
 			"The WAL up to here on timeline "+tl+" was archived by a former primary; by its reading at "+rfc3339(b.readAt)+" every commit before "+rfc3339(b.before)+" was archived: WAL archived after that may have waited on it, or never left it, so a restore this recent may stop short.",
 			map[string]string{"timeline": tl, "readAt": rfc3339(b.readAt), "boundAt": rfc3339(b.before)}))
 	case quiet != nil:
+		if !end.After(quiet.at.Add(-f.archiveTimeout)) {
+			unknown()
+			return
+		}
 		uncertain(out, quiet.at.Add(-f.archiveTimeout), end, say("recovery.segment.formerArchiverSince",
 			"The WAL up to here on timeline "+tl+" was archived by a former primary, which last had nothing waiting at "+rfc3339(quiet.at)+": WAL archived after that may have waited on it, or never left it, so a restore this recent may stop short.",
 			map[string]string{"timeline": tl, "quietAt": rfc3339(quiet.at)}))
@@ -1292,7 +1435,7 @@ func walEnd(out *viewmodel.RecoveryTimeline, f recoveryFacts, last time.Time, ma
 // archived yet when the agent read the repository (archive_timeout), and
 // reach it after the scan, so the time after the frontier, before the
 // scan included, is unknown.
-func tailSegment(out *viewmodel.RecoveryTimeline, in timelineInput, last time.Time, tail evidencev1alpha1.CoverageStop, formerMayHold bool) {
+func tailSegment(out *viewmodel.RecoveryTimeline, in timelineInput, last time.Time, tail evidencev1alpha1.CoverageStop, formerMayHold bool, holder string) {
 	if !in.facts.now.After(last) {
 		return
 	}
@@ -1303,8 +1446,7 @@ func tailSegment(out *viewmodel.RecoveryTimeline, in timelineInput, last time.Ti
 		// The agent says the segment is not proven gone (round 8, PG
 		// plan 5): the hint reaches the bar, not only the path's reason.
 		kind = segmentMissingWAL
-		p = say("recovery.segment.missingAfterLatestFormerPrimary",
-			"WAL is missing from the repository after the latest restore point. The former primary may still hold it, and CloudNativePG archives it before that instance rejoins: do not delete that instance or its volume.", nil)
+		p = formerMayHoldPhrase("recovery.segment.missingAfterLatestFormerPrimary", "WAL is missing from the repository after the latest restore point. ", holder)
 	case tail == evidencev1alpha1.CoverageGapLimited:
 		kind = segmentMissingWAL
 		p = say("recovery.segment.missingAfterLatest", "WAL is missing from the repository after the latest restore point.", nil)
@@ -1443,7 +1585,10 @@ func reportedTail(window viewmodel.Provenance, arch viewmodel.Archiving, facts r
 type timelineFindings struct {
 	// formerMayHold: the newest run stops at WAL a former primary may
 	// still hold (interval formerMayHold).
-	formerMayHold     bool
+	formerMayHold bool
+	// holder is the former primary that may hold it, when the console
+	// knows it (formerArchiver holder); empty otherwise.
+	holder            string
 	tail              evidencev1alpha1.CoverageStop
 	holes, candidates int
 	failedRecently    bool
@@ -1474,8 +1619,14 @@ func timelineVerdict(out *viewmodel.RecoveryTimeline, in timelineInput, f timeli
 		setReason(out, say("recovery.reason.pathsCut", "the recovery path collection was cut at a bound: the restore target timeline cannot be told", nil))
 	case f.tail == evidencev1alpha1.CoverageGapLimited && f.formerMayHold:
 		out.State = string(evidencev1alpha1.Unhealthy)
-		setReason(out, say("recovery.reason.missingAfterLatestFormerPrimary",
-			"WAL is missing after the latest restore point: recent times are not restorable from the repository now; the former primary may still hold it: do not delete that instance or its volume", nil))
+		if f.holder != "" {
+			setReason(out, say("recovery.reason.missingAfterLatestFormerPrimary",
+				"WAL is missing after the latest restore point: recent times are not restorable from the repository now; the former primary, "+f.holder+", may still hold it: do not delete "+f.holder+" or its volume",
+				map[string]string{"instance": f.holder}))
+		} else {
+			setReason(out, say("recovery.reason.missingAfterLatestFormerPrimary",
+				"WAL is missing after the latest restore point: recent times are not restorable from the repository now; the former primary may still hold it: do not delete that instance or its volume", nil))
+		}
 	case f.tail == evidencev1alpha1.CoverageGapLimited:
 		out.State = string(evidencev1alpha1.Unhealthy)
 		setReason(out, say("recovery.reason.missingAfterLatest", "WAL is missing after the latest restore point: recent times are not restorable from the repository", nil))
@@ -1489,6 +1640,11 @@ func timelineVerdict(out *viewmodel.RecoveryTimeline, in timelineInput, f timeli
 	case f.candidates > 0:
 		out.State = warning
 		setReason(out, say("recovery.reason.candidateGaps", "the window has candidate gaps a second scan has not confirmed yet", nil))
+	case f.degraded != nil && f.degradedUnusable && f.degraded.Reason.Code == backupNotListedCode:
+		out.State = warning
+		setReason(out, say("recovery.reason.backupNotListed",
+			"base backup "+f.degraded.BackupID+" is not among the backups read, so its usability is not known: the span only it reaches is not counted as covered",
+			map[string]string{"backupId": f.degraded.BackupID, "reason": backupNotListedCode}))
 	case f.degraded != nil && f.degradedUnusable:
 		out.State = warning
 		setReason(out, backupNotUsable("recovery.reason.backupNotUsable", *f.degraded,

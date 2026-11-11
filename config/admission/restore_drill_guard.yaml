@@ -12,9 +12,12 @@
 #   role's marker (teardown on restoredrills.pgtoolbox.fyannk.dev) in the
 #   request's namespace, whatever its name or namespace, may delete a Cluster
 #   only when it carries the drill-owner label of that namespace, the
-#   restore-drill-of label and the drill seal annotation. Not concerned: a
-#   ServiceAccount of another namespace holding every verb (*) on
-#   restoredrills cluster-wide, an administrator.
+#   restore-drill-of label and the drill seal annotation. Not concerned: an
+#   administrator, a ServiceAccount holding every verb (*) on restoredrills in
+#   the request's namespace (a namespaced GitOps controller with a */*/* Role
+#   there, a tenant bound to cluster-admin by a RoleBinding). Any wildcard
+#   rule satisfies teardown too, so without that exception every such
+#   ServiceAccount would be held to the drill rules.
 # - pgtoolbox-console-restore-drill-prefix, one evaluation per PgToolBoxConsole
 #   of the namespace: that console's exact ServiceAccount (its WorkloadName:
 #   the name when it contains "console", otherwise <name>-console) may delete
@@ -57,15 +60,17 @@ spec:
   - name: drillTeardown
     expression: >-
       authorizer.group('pgtoolbox.fyannk.dev').resource('restoredrills').namespace(request.namespace).check('teardown').allowed()
-  # A ServiceAccount of another namespace holding every verb on every
-  # namespace's restoredrills (a wildcard: cluster-admin, a GitOps controller)
-  # is an administrator, not a console: not concerned. The drills role names
-  # the verb teardown, never *, so binding it, even cluster-wide, does not
-  # make an administrator.
+  # A ServiceAccount holding every verb on restoredrills in this namespace
+  # (a wildcard rule: cluster-admin, admin of everything, a namespaced GitOps
+  # controller's */*/* Role) is an administrator, not a console: not
+  # concerned, wherever it lives. The drills role names the verb teardown,
+  # never *, so binding it, even cluster-wide, does not make an
+  # administrator; and nobody can grant * without holding it (RBAC
+  # escalation prevention): the operator, whose bind covers only the three
+  # console roles and which holds no right on restoredrills, cannot.
   - name: administrator
     expression: >-
-      !request.userInfo.username.startsWith('system:serviceaccount:' + request.namespace + ':') &&
-      authorizer.group('pgtoolbox.fyannk.dev').resource('restoredrills').check('*').allowed()
+      authorizer.group('pgtoolbox.fyannk.dev').resource('restoredrills').namespace(request.namespace).check('*').allowed()
   validations:
   - expression: >-
       !variables.drillTeardown || variables.administrator ||

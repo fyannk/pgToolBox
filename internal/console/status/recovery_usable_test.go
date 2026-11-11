@@ -15,6 +15,7 @@
 package status
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -140,5 +141,56 @@ func TestUnusablePgBackRestBackupIsNotCovered(t *testing.T) {
 				t.Fatalf("newest covered target %v with no usable backup", tl.NewestCoveredTarget)
 			}
 		})
+	}
+}
+
+// TestPgBackRestPathWhoseBackupWasCutIsNotCovered (round 9, PG P2): the
+// console keeps the newest 1,000 backup items but up to 2,000 recovery
+// paths, and BackupsComplete stays true. With 1,001 pgBackRest backups,
+// the oldest one's path has no item: its usability is not known, so its
+// span is drawn, never as covered, and the bar says why. A listed usable
+// backup's span stays covered.
+func TestPgBackRestPathWhoseBackupWasCutIsNotCovered(t *testing.T) {
+	svc := &Service{}
+	facts := recoveryFacts{now: now, archiveTimeout: defaultArchiveTimeout}
+	consistent := true
+	oldest := tlPath("full-0000", 48*time.Hour, 2*time.Minute, evidencev1alpha1.CoverageFrontier)
+	oldest.Consistent = &consistent
+	newest := tlPath("full-1000", 6*time.Hour, 2*time.Minute, evidencev1alpha1.CoverageFrontier)
+	newest.Consistent = &consistent
+	ev := timelineFixture{paths: []evidence.RecoveryPath{oldest, newest}}.evidence()
+	ev.result.Snapshot.Details.PGBackRest = &evidencev1alpha1.PGBackRestSummary{}
+	items := make([]evidence.BackupItem, 0, 1001)
+	for i := range 1001 {
+		end := now.Add(-48*time.Hour + time.Duration(i)*2*time.Minute)
+		if i == 1000 {
+			end = now.Add(-6 * time.Hour)
+		}
+		id := fmt.Sprintf("full-%04d", i)
+		items = append(items, evidence.BackupItem{
+			ID: id, EndAt: &end, EndTimeline: pu64(2), EndPosition: pu64(50), State: evidencev1alpha1.Healthy,
+			PgBackRest: &evidence.PgBackRestItem{Type: "full", Usable: true},
+		})
+	}
+	// The console keeps the newest 1,000 (evidence fetch newestItems):
+	// the oldest backup, whose path is still served, is cut.
+	ev.result.Backups = items[1:]
+	tl := svc.recoveryTimeline(ev, viewmodel.BackupSummary{}, nil, facts)
+	b := viewmodel.Backups{RecoveryTimeline: tl, GeneratedAt: now}
+	if got := restoreCheck(b, now.Add(-20*time.Hour)); got.Answer == "covered" || got.Code != "recovery.segment.backupNotListed" {
+		t.Fatalf("restore check on the cut backup's span: %s (%s), want not covered, backupNotListed", got.Answer, got.Code)
+	}
+	if got := restoreCheck(b, now.Add(-3*time.Hour)); got.Answer != "covered" || got.BackupID != "full-1000" {
+		t.Fatalf("restore check on the listed backup's span: %s (%s, %q), want covered by full-1000", got.Answer, got.Code, got.BackupID)
+	}
+	if tl.State != "warning" || len(tl.Reasons) == 0 || tl.Reasons[0].Code != "recovery.reason.backupNotListed" || tl.Reasons[0].Params["backupId"] != "full-0000" {
+		t.Fatalf("bar %s, reasons %+v, want a warning naming the cut backup", tl.State, tl.Reasons)
+	}
+	// A Barman repository has no usability items: a path without one is
+	// judged by its WAL alone, as before.
+	ev.result.Snapshot.Details.PGBackRest = nil
+	tl = svc.recoveryTimeline(ev, viewmodel.BackupSummary{}, nil, facts)
+	if got := restoreCheck(viewmodel.Backups{RecoveryTimeline: tl, GeneratedAt: now}, now.Add(-20*time.Hour)); got.Answer != "covered" {
+		t.Fatalf("a Barman path without an item: %s (%s), want covered", got.Answer, got.Code)
 	}
 }

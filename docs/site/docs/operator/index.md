@@ -112,7 +112,7 @@ redacted).
 
 | Key | Chart value | Default | |
 |---|---|---|---|
-| `WATCH_NAMESPACES` | `operator.config.watchNamespaces` | empty: every namespace the ClusterRole allows | Comma list; restricts the caches. The Helm chart also binds the namespaced rules (Secrets, workloads, RBAC objects) only in the listed namespaces, by RoleBindings in namespaces that must exist at install time, keeps a small ClusterRole of cluster-scoped rules bound cluster-wide (`<fullname>-manager-cluster`, no `bind`), and grants `get` on the `pgtoolbox-operator-config` ConfigMap and Secret in the release namespace, which need not be listed. A listed namespace deleted later is left out at the next start, with an error in the log; once it is recreated, run `helm upgrade` (its RoleBinding) and restart the operator. If none of them answers, the operator does not start. kustomize and OLM always bind the whole ClusterRole cluster-wide. One operator per cluster is the only supported layout. |
+| `WATCH_NAMESPACES` | `operator.config.watchNamespaces` | empty: every namespace the ClusterRole allows | Comma list; restricts the caches. The Helm chart also binds the namespaced rules (Secrets, workloads, RBAC objects) only in the listed namespaces, by RoleBindings in namespaces that must exist at install time, keeps a small ClusterRole of cluster-scoped rules bound cluster-wide (`<fullname>-manager-cluster`, no `bind`), and grants `get` on the `pgtoolbox-operator-config` ConfigMap and Secret in the release namespace, which need not be listed. A listed namespace deleted later is left out at the next start, with an error in the log; once it is recreated, run `helm upgrade` (its RoleBinding) and restart the operator. If none of them answers, the operator does not start; nor does it when the API server refuses its credentials (401) at start, which is retried by a restart rather than read as a namespace out of reach. Narrowing the list leaves what the operator made in a namespace it no longer watches as it was and unmanaged: its PgAdmins, PgToolBoxConsoles and EvidenceAgents keep their Deployments and Secrets but nobody reconciles them (no status, no certificate renewal for the agents, which stop being served once their certificate expires), an agent's ServiceAccount is dropped from the agents' ClusterRoleBinding at the next agent reconcile (the binding lists the agents the operator sees), so the agent can no longer review the tokens it is called with, and its `PgAdminAccess` grants keep the Roles and RoleBindings they gave. Delete those objects before you narrow the list, or put the namespace back. The operator also runs Pods there as any ServiceAccount: enforce Pod Security `restricted` on every listed namespace ([security](../security.md#known-limitations)). kustomize and OLM always bind the whole ClusterRole cluster-wide. One operator per cluster is the only supported layout. |
 | `POD_NAMESPACE` | downward API | | Where the operator runs. |
 | `OPERATOR_IMAGE` | `image.*` | baked in at build | Copied into pgAdmin Pods for the credential sidecar. |
 | `PGADMIN_IMAGE` | `operator.pgAdmin.image` | the hardened, digest-pinned image compiled in | |
@@ -151,7 +151,10 @@ decision, never the product's.
 - `operator.networkPolicy.enabled`: egress to DNS, the API server (looked up from
   the `kubernetes` EndpointSlice at install time, or `apiServer.mode: any` or
   `addresses`) and `extraEgress`; ingress only from `ingress.metricsFrom`, on the
-  metrics port.
+  metrics port. The API server's addresses are rendered when the chart is
+  installed or upgraded: on EKS, and wherever a managed control plane's
+  addresses move (upgrades, scaling), set `apiServer.mode: any`, or the
+  operator loses the API server until the next `helm upgrade`.
 - `operator.admissionPolicy.enabled` (default `true`; kustomize opts in with
   `config/components/admission`, OLM cannot ship it):
   a `ValidatingAdmissionPolicy` (CEL, no webhook). Its rules: only `imageOverride.allowedUsers`

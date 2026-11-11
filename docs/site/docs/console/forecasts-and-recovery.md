@@ -203,13 +203,18 @@ fail.
   pgBackRest's own error flag after a page-checksum failure) is drawn as
   `unknown` with the first reason, never as covered, even when its WAL reaches
   the frontier: the agent judges the path from the WAL alone. The window is then
-  a warning. A usable backup still covers what it reaches.
+  a warning. A usable backup still covers what it reaches. The console keeps the
+  newest 1,000 backup items but more recovery paths: a pgBackRest path whose
+  backup is not among the items read has no usability rating, so it is drawn the
+  same way (`backup-not-listed`), never as covered.
 - **Holes** between spans, each with a kind:
   - **missing WAL**: a confirmed gap. When the agent says a former primary may
     still hold the missing segment (it stopped on a parent timeline before a
     switch whose child already has WAL), the hole, or the time after the latest
     point, says so: CloudNativePG archives that instance's waiting segments
-    before it rejoins, so do not delete that instance or its volume;
+    before it rejoins, so do not delete that instance or its volume. When the
+    sweeps kept readings of exactly one instance as primary on the timeline the
+    WAL stops on, the advice names that instance;
   - **candidate gap**: seen by one scan, not confirmed by a second;
   - **unknown**: the evidence cannot tell.
 - **Markers**: the repository's base backups (completed, failed, incomplete) and
@@ -310,9 +315,10 @@ backlog cannot be seen there; replica clusters' archiving stays `unknown` until 
 lag bound is read from the exporter's metrics (a later feature). Outside a
 replica cluster the same reading is a primary mid-promotion, and the message
 says so. The API serves an instance's `archivingWal` only for the instance that
-archives (the primary, or a replica cluster's current or target primary): a
-replica cluster's other standbys report `isArchivingWAL` true, but their
-archiver does nothing. The `cnpg-wal-files-waiting` check judges fresh primary
+archives, `status.currentPrimary`: the instance manager refuses to archive on
+any other pod (a switchover's target primary, a pod that still reports itself
+primary), and a replica cluster's other standbys report `isArchivingWAL` true,
+but their archiver does nothing. The `cnpg-wal-files-waiting` check judges fresh primary
 readings only, and says so instead of clearing when there is none. A standby's zeros, including those of a pod that
 was a designated primary before a replica-cluster promotion, are never read as a
 quiet sweep or as an archiver that caught up.
@@ -326,7 +332,11 @@ growing one, so under unknown parallelism a count at the threshold over three
 sweeps that did not grow is also a backlog when the archiver archived nothing
 over them: its `last_archived_time` (pg_stat_archiver) is not after the one it
 reported at the oldest of those sweeps (both on the instance's clock, which the
-sweep keeps per reading), or it reports none. When the sweep did not keep that
+sweep keeps per reading), or it reports none. When that oldest sweep read the
+archiver with nothing archived yet, any archive since is progress (its first).
+Only the sweeps of the primary's current term count (from
+`status.currentPrimaryTimestamp`): an instance promoted again never joins the
+readings of its earlier term to this one. When the sweep did not keep that
 earlier time (a console restored from an older snapshot), it is compared with
 the oldest sweep's time plus one sweep interval, so a clock skew within one
 interval neither hides a stall nor invents progress. The message then says the
@@ -425,19 +435,26 @@ segments, so the bar and the answer always agree:
 - at an end of the archived WAL on a timeline older than the newest (after a
   failover: the parent timeline's tail, or a hole before the switch): that WAL
   was archived by a former primary, whose backlog the current primary's
-  readings do not show, and a crash can lose its `.ready` tail. The band starts
-  at the newest sweep that read that former primary with nothing waiting (less
-  one `archive_timeout`) or at its WAL-position bound, both from before the
-  promotion (`status.currentPrimaryTimestamp`); when the sweeps kept no reading
-  of it (its pod is gone, the rings' retention passed) or only readings with WAL
-  waiting, the day before that end;
+  readings do not show, and a crash can lose its `.ready` tail. Only the
+  readings of that timeline's own primary count: each sweep records the
+  timeline a primary writes (the timeline of its current WAL file, which,
+  unlike `timelineId`, does not lag a promotion), so after two failovers the
+  quiet sweeps of the second timeline's primary never bound the end of the
+  first. The band starts at the newest sweep that read that timeline's primary
+  with nothing waiting (less one `archive_timeout`) or at its WAL-position
+  bound, both from before the promotion (`status.currentPrimaryTimestamp`);
+  when the sweeps kept no reading of it (its pod is gone, the rings' retention
+  passed, the reading named no timeline), only readings with WAL waiting, or
+  readings that come after that end and so say nothing of it, the day before
+  that end;
 - every "by then" claim of a sweep (nothing waited, every commit before a time
   was archived) is dated when its read returned, and every "not yet" claim (the
   write position had not reached a segment) when the sweep started, so a read
   that straddles the agent's scan never narrows a band;
-- while the archiver is a designated primary (`ArchiveBacklogNotReported`):
-  the day before the latest point, with its own reason and caveat, since no
-  sweep can show that nothing waited on it;
+- while the archiver reports no `.ready` count (`ArchiveBacklogNotReported`: a
+  replica cluster's designated primary, or a primary mid-promotion that still
+  reads as a standby): the day before the latest point, with its own reason and
+  caveat, since no sweep can show that nothing waited on it;
 - a recovery path that reaches its frontier but that the evidence agent rates
   below healthy (a pgBackRest WAL segment size not proven across a log id or a
   timeline switch, or a path capped because the agent's coverage roll-up says

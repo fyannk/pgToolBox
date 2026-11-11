@@ -72,8 +72,9 @@ func TestOnePersonsSignOutsAreBounded(t *testing.T) {
 	}
 }
 
-// At MaxSignOuts the document refuses the sign-outs that end last
-// (reported to the caller and counted), keeps every one it holds, and,
+// At MaxSignOuts the document is shared fairly: a newcomer takes the
+// place of the last entry of a person holding the most (counted under
+// evicted), a person holding as much as the most replaces their own, and,
 // with a full grants index beside it, the ConfigMap is still one the API
 // server accepts.
 func TestSignOutsAtTheSizeLimit(t *testing.T) {
@@ -96,21 +97,39 @@ func TestSignOutsAtTheSizeLimit(t *testing.T) {
 		s.codes[hex.EncodeToString(sum[:16])] = codeEntry{Expiry: t0.Add(24 * time.Hour).Unix(), User: uh("x")}
 	}
 	s.mu.Unlock()
-	refusedBefore := testutil.ToFloat64(signOutsRefused.WithLabelValues("budget"))
 	for i := range MaxSignOuts {
 		// Many people, a few sign-outs each, all within their bounds.
 		if !s.RecordSignOut(fmt.Sprintf("s-%d", i), tag(fmt.Sprint("person-", i/8)), t0.Add(time.Hour+time.Duration(i)*time.Second)) {
 			t.Fatalf("sign-out %d refused below MaxSignOuts", i)
 		}
 	}
-	if s.RecordSignOut("late", tag("person-late"), t0.Add(2*time.Hour)) {
-		t.Fatal("a sign-out past MaxSignOuts was reported shared")
+	others := othersOf(s, tag("person-late"))
+	evictedBefore := testutil.ToFloat64(signOutsRefused.WithLabelValues(refusedEvicted))
+	replacedBefore := testutil.ToFloat64(signOutsRefused.WithLabelValues(refusedReplaced))
+	if !s.RecordSignOut("late", tag("person-late"), t0.Add(2*time.Hour)) || !s.SignedOut("late") {
+		t.Fatal("a newcomer's sign-out was refused by a full document")
 	}
-	if got := testutil.ToFloat64(signOutsRefused.WithLabelValues("budget")) - refusedBefore; got != 1 {
-		t.Errorf("refusals counted: %v, want 1", got)
+	if got := testutil.ToFloat64(signOutsRefused.WithLabelValues(refusedEvicted)) - evictedBefore; got != 1 {
+		t.Errorf("evictions counted: %v, want 1", got)
 	}
-	if !s.SignedOut("s-0") || !s.SignedOut(fmt.Sprintf("s-%d", MaxSignOuts-1)) || s.SignedOut("late") {
-		t.Error("a full document must keep what it holds and refuse the new sign-out")
+	gone := 0
+	for h, e := range others {
+		if _, ok := s.signedOut[h]; !ok {
+			gone++
+			if held := heldBy(s, e.Subject); held != 7 {
+				t.Errorf("the evicted entry's person holds %d now, want 7 of 8", held)
+			}
+		}
+	}
+	if gone != 1 || len(s.signedOut) != MaxSignOuts {
+		t.Fatalf("%d entries left the document for the newcomer, %d held", gone, len(s.signedOut))
+	}
+	// A person holding as much as the most replaces their own.
+	if !s.RecordSignOut("again", tag("person-0"), t0.Add(2*time.Hour)) || s.SignedOut("s-0") {
+		t.Error("a person holding the most did not replace their own earliest-ending sign-out")
+	}
+	if got := testutil.ToFloat64(signOutsRefused.WithLabelValues(refusedReplaced)) - replacedBefore; got != 1 {
+		t.Errorf("replacements counted: %v, want 1", got)
 	}
 	if err := s.flush(t.Context()); err != nil {
 		t.Fatalf("the full ConfigMap was refused: %v", err)
@@ -123,10 +142,8 @@ func TestSignOutsAtTheSizeLimit(t *testing.T) {
 	if len(api.data(KeySessions)) > 170<<10 {
 		t.Errorf("a full sessions document is %d bytes, more than 170 KiB", len(api.data(KeySessions)))
 	}
-	// Room again once the oldest ends.
-	clock.Add(time.Hour + time.Second)
-	if !s.RecordSignOut("later", tag("person-late"), t0.Add(3*time.Hour)) {
-		t.Error("a sign-out refused after the document made room")
+	if size > MaxData {
+		t.Errorf("the ConfigMap's data is %d bytes, past %d", size, MaxData)
 	}
 }
 

@@ -16,7 +16,7 @@
 # validated, by the build platform's opm; opm re-checks the cache's integrity
 # when it starts, so a cache that does not suit the target platform degrades
 # to a rebuild at startup rather than to wrong answers.
-FROM --platform=$BUILDPLATFORM golang:1.27.3@sha256:2920bb124f1a2e12a1d39f0cab756ae0068441ee1da7655dec7f5e374944095b AS tools
+FROM --platform=$BUILDPLATFORM golang:1.27.4@sha256:08bcb99a38f85a265f9a93d1d3323e2440eec333380f3ea26ee0dec9264bb41c AS tools
 ARG BUILDARCH
 ARG TARGETOS
 ARG TARGETARCH
@@ -28,7 +28,7 @@ RUN GOOS=linux GOARCH=${BUILDARCH} go build -tags=json1,netgo,osusergo,container
  && GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -tags=json1,netgo,osusergo,containers_image_openpgp -ldflags="-s -w" -o /out/target/opm github.com/operator-framework/operator-registry/cmd/opm \
  && GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-s -w" -o /out/target/grpc_health_probe github.com/grpc-ecosystem/grpc-health-probe
 
-FROM --platform=$BUILDPLATFORM golang:1.27.3@sha256:2920bb124f1a2e12a1d39f0cab756ae0068441ee1da7655dec7f5e374944095b AS cache
+FROM --platform=$BUILDPLATFORM golang:1.27.4@sha256:08bcb99a38f85a265f9a93d1d3323e2440eec333380f3ea26ee0dec9264bb41c AS cache
 COPY --from=tools /out/build/opm /bin/opm
 COPY pgtoolbox /configs/pgtoolbox
 RUN ["/bin/opm", "serve", "/configs", "--cache-dir=/tmp/cache", "--cache-only"]

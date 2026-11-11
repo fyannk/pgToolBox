@@ -194,14 +194,16 @@ others wrote:
 
 | Key | What it holds |
 |---|---|
-| `sessions.json` | signed-out sessions, as the SHA-256 of the session ID with its expiry, when it was recorded and an HMAC tag of the person; a sign-out on one replica is refused by every other, and pruned once expired; past its bounds new sign-outs are refused, never stored ones dropped ([sign-out](authentication.md#sessions)) |
+| `sessions.json` | signed-out sessions, as the SHA-256 of the session ID with its expiry, when it was recorded and an HMAC tag of the person; a sign-out on one replica is refused by every other, and pruned once expired; bounded per person and in all, a full document shared fairly among the people holding entries ([sign-out](authentication.md#sessions)) |
 | `since.json` | when each state began: an instance's `/pg/status` result, a Cluster's phase, a diagnostics finding; keyed by object UID, the earliest time wins, a changed state replaces it, and entries go when their object does |
 | `digests.json` | which [digest](timeline-and-digest.md#daily-digest) went to which channel and when (`<digest id>/<channel>`): the earliest time wins, kept for the digest retention plus two days, so a replica taking over the delivery never sends one twice |
 
 Writes are batched (about every 10 seconds, a sign-out or a delivered digest
 within a second), use the ConfigMap's `resourceVersion` and re-read and merge on
 a conflict. The documents stay under 1 MiB: past the budget the oldest "since"
-entries go first, sign-outs and delivery marks never. A missing or forbidden ConfigMap is logged once and
+entries go first, and should the whole ConfigMap (every document counted)
+near 1 MiB, the oldest restore drill results; sign-outs, MCP grants and
+delivery marks never. A missing or forbidden ConfigMap is logged once and
 shown on the admin page (source `sharedState`); each replica then keeps its own
 sign-outs and clocks, as a single replica does. `pgtoolbox_console_shared_state_*` metrics count
 the writes and give the mode.

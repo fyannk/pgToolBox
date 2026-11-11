@@ -8,4 +8,4 @@ module github.com/fyannk/pgToolBox/pkg/evidence
 // CI builds at the pinned toolchain and never at the floor.
 go 1.26.6
 
-toolchain go1.27.3
+toolchain go1.27.4

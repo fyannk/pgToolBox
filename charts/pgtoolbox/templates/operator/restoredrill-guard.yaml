@@ -33,15 +33,17 @@ spec:
   - name: drillTeardown
     expression: >-
       authorizer.group('pgtoolbox.fyannk.dev').resource('restoredrills').namespace(request.namespace).check('teardown').allowed()
-  # A ServiceAccount of another namespace holding every verb on every
-  # namespace's restoredrills (a wildcard: cluster-admin, a GitOps controller)
-  # is an administrator, not a console: not concerned. The drills role names
-  # the verb teardown, never *, so binding it, even cluster-wide, does not
-  # make an administrator.
+  # A ServiceAccount holding every verb on restoredrills in this namespace
+  # (a wildcard rule: cluster-admin, admin of everything, a namespaced GitOps
+  # controller's */*/* Role) is an administrator, not a console: not
+  # concerned, wherever it lives. The drills role names the verb teardown,
+  # never *, so binding it, even cluster-wide, does not make an
+  # administrator; and nobody can grant * without holding it (RBAC
+  # escalation prevention): the operator, whose bind covers only the three
+  # console roles and which holds no right on restoredrills, cannot.
   - name: administrator
     expression: >-
-      !request.userInfo.username.startsWith('system:serviceaccount:' + request.namespace + ':') &&
-      authorizer.group('pgtoolbox.fyannk.dev').resource('restoredrills').check('*').allowed()
+      authorizer.group('pgtoolbox.fyannk.dev').resource('restoredrills').namespace(request.namespace).check('*').allowed()
   validations:
   - expression: >-
       !variables.drillTeardown || variables.administrator ||

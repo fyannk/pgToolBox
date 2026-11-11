@@ -292,7 +292,7 @@ func TestSinceAndLastGoodReading(t *testing.T) {
 	}
 
 	series := s.Series(key, "orders-2")
-	if len(series) != 4 {
+	if len(series) != 5 {
 		t.Fatalf("series = %+v", series)
 	}
 	for _, sr := range series {
@@ -321,6 +321,13 @@ func TestSinceAndLastGoodReading(t *testing.T) {
 			for _, p := range sr.Points {
 				if p.Value != nil {
 					t.Errorf("last archived time of a replica: %+v", sr.Points)
+				}
+			}
+		case SeriesTimeline:
+			// A replica's timeline is not one its archiver writes.
+			for _, p := range sr.Points {
+				if p.Value != nil {
+					t.Errorf("timeline of a replica: %+v", sr.Points)
 				}
 			}
 		case SeriesLagBytes:

@@ -72,7 +72,8 @@ func TestUnnamedSignOutsCannotFillTheDocument(t *testing.T) {
 }
 
 // 48 people, 16 sign-outs each (two entries a sign-out), fill the
-// document: what it held before stays, and the next ones are refused.
+// document: bob's sign-out, held before and by a person holding fewer
+// than any of them, stays.
 func TestManySubjectsDoNotEvictAStoredOne(t *testing.T) {
 	clock := &testClock{now: t0.Add(30 * time.Minute)}
 	s := New(Options{Name: "console-state", Now: clock.Now})
@@ -125,8 +126,8 @@ func TestARefusalThatPrunedMarksTheStateChanged(t *testing.T) {
 // person's replacement is a later generation of one of their own slots
 // (the latest generation of a slot wins, by the same order), so, as long
 // as each session's sign-out has one slot, capping is idempotent and capped documents merged pairwise in any
-// order end in the state capping their union gives, and an entry
-// recorded before the others is never dropped by them.
+// order end in the state capping their union gives (the fair share of a
+// full document is a function of each person's count alone).
 func TestSignOutCapsConvergeInAnyOrder(t *testing.T) {
 	r := rand.New(rand.NewPCG(7, 11))
 	// a and b replace at their bound; c, d and the unnamed sessions do

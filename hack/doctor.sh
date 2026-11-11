@@ -53,7 +53,9 @@ row kubeconform "$(want aqua:yannh/kubeconform)" "$(found kubeconform kubeconfor
 row kube-linter "$(want github:stackrox/kube-linter)" "$(found kube-linter kube-linter version)"
 row helm-docs "$(want go:github.com/norwoodj/helm-docs/cmd/helm-docs)" "$(found helm-docs helm-docs --version)"
 row golangci-lint "$(want go:github.com/golangci/golangci-lint/v2/cmd/golangci-lint)" "$(found golangci-lint golangci-lint --version)"
-row govulncheck "$(want go:golang.org/x/vuln/cmd/govulncheck)" "$(found govulncheck govulncheck -version)"
+# `govulncheck -version` prints Go's version first; the tool's is on the Scanner line.
+found_govulncheck() { command -v govulncheck >/dev/null 2>&1 && govulncheck -version 2>&1 | sed -n 's/^Scanner: govulncheck@v//p' | first_version || true; }
+row govulncheck "$(want go:golang.org/x/vuln/cmd/govulncheck)" "$(found_govulncheck)"
 row gitleaks "$(want aqua:gitleaks/gitleaks)" "$(found gitleaks gitleaks version)"
 row grype "$(want aqua:anchore/grype)" "$(found grype grype version)"
 row osv-scanner "$(want aqua:google/osv-scanner)" "$(found osv-scanner osv-scanner --version)"

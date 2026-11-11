@@ -275,6 +275,7 @@ check-repo: ## Repository invariants: headers, read-only boundary, dependency cl
 	./hack/check-layering.sh
 	./hack/check-toolchain.sh
 	./hack/check-docs-env.sh
+	./hack/check-action-pins.sh
 
 .PHONY: vuln
 vuln: ## Scan the Go dependency graph for known vulnerabilities.

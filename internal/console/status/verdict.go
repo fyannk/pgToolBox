@@ -25,6 +25,7 @@ import (
 
 	"github.com/fyannk/pgToolBox/internal/console/cache"
 	"github.com/fyannk/pgToolBox/internal/console/diag"
+	"github.com/fyannk/pgToolBox/internal/console/sweep"
 	"github.com/fyannk/pgToolBox/internal/console/viewmodel"
 	"github.com/fyannk/pgToolBox/pkg/cnpgstatus"
 	"github.com/fyannk/pgToolBox/pkg/cnpgstatus/instancestatus"
@@ -244,24 +245,34 @@ func primaryArchiver(g *gathered) *cnpgstatus.ArchiverLive {
 	return &cnpgstatus.ArchiverLive{
 		IsArchivingWAL: r.IsArchivingWAL, LastFailedWAL: r.LastFailedWAL, ReadyWALFiles: r.ReadyWALFiles, ReadyNotReported: !r.IsPrimary,
 		LastArchivedAt: r.LastArchivedWALTime,
-		ObservedAt:     r.ObservedAt, Earlier: earlierReady(g, g.cluster.Status.CurrentPrimary, r.ObservedAt),
+		ObservedAt:     r.ObservedAt, Earlier: earlierReady(g, g.cluster.Status.CurrentPrimary, promotedAt(g), r.ObservedAt),
 		PluginMaxParallel: pluginMaxParallel(g),
 	}
 }
 
 // earlierReady are the instance's readyWalFiles samples before the
-// reading taken at observed, oldest first, each with the
-// last_archived_time the same sweep read (instance clock), when kept.
-func earlierReady(g *gathered, instance string, observed time.Time) []cnpgstatus.ReadySample {
+// reading taken at observed and not before from (the current primary's
+// promotion, status.currentPrimaryTimestamp; zero for no limit), oldest
+// first, each with the last_archived_time the same sweep read (instance
+// clock), when kept. The term bound matters because the backlog rule
+// skips gaps: an instance promoted again would otherwise join the
+// readings of its earlier term to this one's across its time as a
+// standby (CNPG P3-c).
+func earlierReady(g *gathered, instance string, from, observed time.Time) []cnpgstatus.ReadySample {
 	archived := map[int64]time.Time{}
+	none := map[int64]bool{}
 	for _, p := range g.archivedRings[instance] {
-		if p.Value != nil {
+		switch {
+		case p.Value == nil:
+		case *p.Value == sweep.ArchivedNone:
+			none[p.At.UnixNano()] = true
+		case *p.Value >= 0:
 			archived[p.At.UnixNano()] = time.UnixMilli(int64(*p.Value)).UTC()
 		}
 	}
 	var out []cnpgstatus.ReadySample
 	for _, p := range g.readyRings[instance] {
-		if !p.At.Before(observed) {
+		if !p.At.Before(observed) || p.At.Before(from) {
 			continue
 		}
 		s := cnpgstatus.ReadySample{At: p.At}
@@ -271,6 +282,7 @@ func earlierReady(g *gathered, instance string, observed time.Time) []cnpgstatus
 			if t, ok := archived[p.At.UnixNano()]; ok {
 				s.LastArchivedAt = &t
 			}
+			s.ArchivedNone = none[p.At.UnixNano()]
 		}
 		out = append(out, s)
 	}
