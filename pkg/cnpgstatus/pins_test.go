@@ -32,14 +32,24 @@ import (
 // read from (the same corpus pkg/diagnose/catalog's pin test uses).
 const operatorModule = "github.com/cloudnative-pg/cloudnative-pg"
 
-// verifiedReleases maps each released minor to the tag its table was
-// read at. 1.31 is planned (upstream main) and has no release to fetch.
-// 1.30 is read at 1.30.1: the failover rehearsal follows its election
-// (fenced instances ranked last, no election when all are fenced, the
-// quorum checked again before promoting), which 1.30.0 does not have
-// (TestElectionRulesAreAbsentAt1300).
-var verifiedReleases = map[Minor]string{
-	Minor130: "1.30.1",
+// verifiedRelease is one released tag a minor's tables are checked at.
+// election: the tag has the 1.30.1 election rules the failover rehearsal
+// follows (fenced instances ranked last, no election when all are
+// fenced, the quorum checked again before promoting), which 1.30.0 does
+// not (TestElectionRulesAreAbsentAt1300).
+type verifiedRelease struct {
+	minor    Minor
+	tag      string
+	election bool
+}
+
+// verifiedReleases are every supported release the tables are checked
+// at (pkg/diagnose/catalog/cnpg VerifiedReleases is the same list): a
+// literal that 1.30.0 lacks fails here as it does at 1.30.1. 1.31 is
+// planned (upstream main) and has no release to fetch.
+var verifiedReleases = []verifiedRelease{
+	{minor: Minor130, tag: "1.30.0"},
+	{minor: Minor130, tag: "1.30.1", election: true},
 }
 
 // electionPins are what failover.go follows from 1.30.1 on.
@@ -65,7 +75,8 @@ const belowFloorRelease = "1.29.2"
 // instead of silently never matching. Run with -tags catalogpins (it
 // needs the module cache or the network).
 func TestTablePinsExistInVerifiedReleases(t *testing.T) {
-	for minor, release := range verifiedReleases {
+	for _, v := range verifiedReleases {
+		minor, release := v.minor, v.tag
 		corpus := operatorSources(t, release)
 		var literals []string
 		for _, row := range PhaseTable(minor) {
@@ -105,8 +116,10 @@ func TestTablePinsExistInVerifiedReleases(t *testing.T) {
 			`json:"isArchivingWAL,omitempty"`, `json:"lastFailedWAL,omitempty"`, `json:"readyWalFiles,omitempty"`,
 			"AS is_archiving", "WHERE application_name ~ $1 AND usename = $2",
 		)
-		if minor.atLeast(Minor130) {
+		if v.election {
 			literals = append(literals, electionPins...)
+		}
+		if minor.atLeast(Minor130) {
 			literals = append(literals, `json:"operatorCertificateFingerprint,omitempty"`, "func (r *ClusterReconciler) reconcilePrimaryLease", "type DatabaseRoleSpec struct")
 		}
 		for _, literal := range literals {
@@ -149,7 +162,8 @@ func TestFeatureFloorsAreAbsentBelowTheFloor(t *testing.T) {
 func TestEveryUpstreamPhaseIsInTheTable(t *testing.T) {
 	constant := regexp.MustCompile(`(?m)^\s*Phase\w+\s*=\s*"([^"]+)"`)
 	conditionType := regexp.MustCompile(`(?m)^\s*Condition\w+\s+ClusterConditionType\s*=\s*"([^"]+)"`)
-	for minor, release := range verifiedReleases {
+	for _, v := range verifiedReleases {
+		minor, release := v.minor, v.tag
 		types, err := os.ReadFile(filepath.Join(moduleDir(t, release), "api", "v1", "cluster_types.go"))
 		if err != nil {
 			t.Fatal(err)
