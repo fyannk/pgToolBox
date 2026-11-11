@@ -73,14 +73,14 @@ jobs:
           tools: go
           go-cache: "true"
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@1fc58d04a4d4374f921bdac573c3811c240f9c26 # v4.39.2
+        uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build-mode }}
           queries: security-extended
           config-file: ./.github/codeql/codeql-config.yml
       - name: Analyze
-        uses: github/codeql-action/analyze@1fc58d04a4d4374f921bdac573c3811c240f9c26 # v4.39.2
+        uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           category: "/language:${{ matrix.language }}"
 
@@ -119,13 +119,13 @@ jobs:
               --output "results/govulncheck-${module}.envelope.json"
           done
       - name: Upload to code scanning (root module)
-        uses: github/codeql-action/upload-sarif@1fc58d04a4d4374f921bdac573c3811c240f9c26 # v4.39.2
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         continue-on-error: ${{ github.event_name == 'pull_request' }} # a fork's token cannot upload
         with:
           sarif_file: results/govulncheck-root.sarif
           category: govulncheck-root
       - name: Upload to code scanning (pkg/evidence)
-        uses: github/codeql-action/upload-sarif@1fc58d04a4d4374f921bdac573c3811c240f9c26 # v4.39.2
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         continue-on-error: ${{ github.event_name == 'pull_request' }} # a fork's token cannot upload
         with:
           sarif_file: results/govulncheck-evidence.sarif
@@ -169,7 +169,7 @@ jobs:
             --input results/osv-scanner.json --tool-mise aqua:google/osv-scanner \
             --output results/osv-scanner.envelope.json
       - name: Upload to code scanning
-        uses: github/codeql-action/upload-sarif@1fc58d04a4d4374f921bdac573c3811c240f9c26 # v4.39.2
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         continue-on-error: ${{ github.event_name == 'pull_request' }} # a fork's token cannot upload
         with:
           sarif_file: results/osv-scanner.sarif
@@ -274,7 +274,7 @@ jobs:
             --input "results/grype-${NAME}.json" --target "${NAME}" --tool-mise aqua:anchore/grype \
             --output "results/grype-${NAME}.envelope.json"
       - name: Upload to code scanning
-        uses: github/codeql-action/upload-sarif@1fc58d04a4d4374f921bdac573c3811c240f9c26 # v4.39.2
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         continue-on-error: ${{ github.event_name == 'pull_request' }} # a fork's token cannot upload
         with:
           sarif_file: results/grype-${{ env.NAME }}.sarif
@@ -372,7 +372,7 @@ jobs:
             --input results/gitleaks.sarif --tool-mise aqua:gitleaks/gitleaks \
             --output results/gitleaks.envelope.json
       - name: Upload to code scanning
-        uses: github/codeql-action/upload-sarif@1fc58d04a4d4374f921bdac573c3811c240f9c26 # v4.39.2
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         continue-on-error: ${{ github.event_name == 'pull_request' }} # a fork's token cannot upload
         with:
           sarif_file: results/gitleaks.sarif
@@ -422,13 +422,13 @@ jobs:
               --output "results/gosec-${module}.envelope.json"
           done
       - name: Upload to code scanning (root module)
-        uses: github/codeql-action/upload-sarif@1fc58d04a4d4374f921bdac573c3811c240f9c26 # v4.39.2
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         continue-on-error: ${{ github.event_name == 'pull_request' }} # a fork's token cannot upload
         with:
           sarif_file: results/gosec-root.sarif
           category: gosec-root
       - name: Upload to code scanning (pkg/evidence)
-        uses: github/codeql-action/upload-sarif@1fc58d04a4d4374f921bdac573c3811c240f9c26 # v4.39.2
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         continue-on-error: ${{ github.event_name == 'pull_request' }} # a fork's token cannot upload
         with:
           sarif_file: results/gosec-evidence.sarif
@@ -470,7 +470,7 @@ jobs:
             --input results/zizmor.sarif --tool-mise zizmor \
             --output results/zizmor.envelope.json
       - name: Upload to code scanning
-        uses: github/codeql-action/upload-sarif@1fc58d04a4d4374f921bdac573c3811c240f9c26 # v4.39.2
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         continue-on-error: ${{ github.event_name == 'pull_request' }} # a fork's token cannot upload
         with:
           sarif_file: results/zizmor.sarif
@@ -513,13 +513,13 @@ jobs:
               --output "results/kube-linter-${chart}.envelope.json"
           done
       - name: Upload to code scanning (pgtoolbox chart)
-        uses: github/codeql-action/upload-sarif@1fc58d04a4d4374f921bdac573c3811c240f9c26 # v4.39.2
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         continue-on-error: ${{ github.event_name == 'pull_request' }} # a fork's token cannot upload
         with:
           sarif_file: results/kube-linter-pgtoolbox.sarif
           category: kube-linter-pgtoolbox
       - name: Upload to code scanning (pgtools chart)
-        uses: github/codeql-action/upload-sarif@1fc58d04a4d4374f921bdac573c3811c240f9c26 # v4.39.2
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         continue-on-error: ${{ github.event_name == 'pull_request' }} # a fork's token cannot upload
         with:
           sarif_file: results/kube-linter-pgtools.sarif
