@@ -51,7 +51,9 @@
 // ten), carry the resourceVersion read (a conflict is read again, merged
 // and retried), and stay under a size budget well below the 1 MiB object
 // limit: over it, the oldest "since" entries are dropped first, never a
-// sign-out, a delivery mark, a grant or a redeemed code.
+// sign-out, a delivery mark, a grant or a redeemed code; and the whole
+// ConfigMap stays within MaxData, past which the oldest restore drill
+// results go.
 //
 // The ConfigMap is optional. Missing or forbidden, the console keeps
 // today's local behaviour (each replica its own clocks and sign-outs),
@@ -124,14 +126,20 @@ const (
 	maxChannel  = 16
 	// The sessions document is bounded three ways. A person at their own
 	// bound replaces their own entry that ends first with the new one
-	// (the newest sign-out is the one a fresh cookie theft needs); the
-	// other two bounds refuse what arrives once they are reached: nobody
-	// else's sign-out is ever dropped for a newer one (signOutBefore). A
-	// refused sign-out is still refused by the replica that recorded it,
-	// is counted in pgtoolbox_console_shared_state_signouts_refused_total
-	// (reason unnamed or budget; replaced for a person's own entry given
-	// up, merge for one a merge dropped) and, for the budget and a merge,
-	// logged.
+	// (the newest sign-out is the one a fresh cookie theft needs). The
+	// sessions naming nobody refuse what arrives past their bound. The
+	// document, once full, is shared fairly (fairShares): a newcomer's
+	// entry takes the place of the last entry, in signOutBefore, of the
+	// person holding the most, when that person holds more than the
+	// newcomer, so filling it with many identities cannot lock everyone
+	// else out; a newcomer holding as much as the most refuses or
+	// replaces their own instead. A sign-out the document does not keep
+	// is still refused by the replica that recorded it, is counted in
+	// pgtoolbox_console_shared_state_signouts_refused_total (reason
+	// replaced for a person's own entry given up, unnamed or budget for a
+	// new one refused, evicted for another person's taken for a newcomer,
+	// merge for one a merge dropped) and, for the budget, an eviction and
+	// a merge, logged.
 	//
 	// MaxSignOutsPerSubject bounds one person's entries (two a sign-out:
 	// the session and its token as a raw bearer), so one person signing
@@ -143,11 +151,18 @@ const (
 	// MaxUnnamedSignOuts bounds the entries of sessions that name nobody
 	// (a session sealed without its person's tag), all together.
 	MaxUnnamedSignOuts = 4 * MaxSignOutsPerSubject
-	// MaxSignOuts bounds the sessions document (some 105 bytes an entry,
-	// so about 160 KiB; with a full grants index the ConfigMap stays under
-	// the API server's 1 MiB), rather than growing the ConfigMap past what
-	// the API server accepts and failing every write.
+	// MaxSignOuts bounds the sessions document (151 to 163 bytes an
+	// entry encoded, so about 232 to 250 KB), rather than growing the
+	// ConfigMap past what the API server accepts and failing every write;
+	// MaxData bounds the ConfigMap as a whole.
 	MaxSignOuts = 1536
+	// MaxData bounds the bytes of the ConfigMap's data, every document
+	// counted (keys and values, another version's included): the API
+	// server refuses a ConfigMap whose values pass 1 MiB, and every write
+	// would then fail. The margin leaves room for the keys and for what
+	// the API server adds. Past it, the oldest drill results are dropped
+	// (budgetLocked).
+	MaxData = 1<<20 - 16<<10
 )
 
 // Fact kinds, the first segment of a key.
@@ -339,9 +354,12 @@ type Store struct {
 	// overBudget is set while the budget forces entries out (logged once
 	// per episode).
 	overBudget bool
-	// signOutsFull is set while MaxSignOuts refuses sign-outs (logged
-	// once per episode).
+	// signOutsFull is set while MaxSignOuts refuses or evicts sign-outs
+	// (logged once per episode).
 	signOutsFull bool
+	// overCeiling is set while MaxData forces drill results out (logged
+	// once per episode).
+	overCeiling bool
 	// mergeDropLogged is set once a merge dropped sign-outs (logged once).
 	mergeDropLogged bool
 	wake            chan struct{}
@@ -423,11 +441,18 @@ const (
 	refusedUnnamed  = "unnamed"
 	refusedBudget   = "budget"
 	refusedReplaced = "replaced"
+	refusedEvicted  = "evicted"
 	refusedMerge    = "merge"
 	// superseded is a merge's drop of an entry whose slot a later
 	// generation holds: a replacement reaching this replica, not counted
 	// again.
 	superseded = "superseded"
+	// collided is a merge's drop of one of two entries holding the same
+	// generation of one slot: two replicas each replaced the same entry
+	// of a person at their bound before syncing, so one sign-out more
+	// than the person's share reached the document. Each replica had
+	// accepted its own, so the drop is counted (under merge).
+	collided = "collided"
 )
 
 // RecordSignOut shares a signed-out session until its absolute expiry.
@@ -435,8 +460,10 @@ const (
 // anything else, empty included, files it with the sessions that name
 // nobody). It reports false when a bound of the sessions document
 // refuses it (it is not shared): the caller still refuses the session
-// itself. A person at their own bound gives up their own entry that ends
-// first for it; nobody else's entry is ever dropped to make room.
+// itself. A person at their own bound, or holding as much as the most
+// once the document is full, gives up their own entry that ends first
+// for it; with the document full, a person holding less takes the place
+// of an entry of the person holding the most (fairShares).
 func (s *Store) RecordSignOut(sid, tag string, until time.Time) bool {
 	if s == nil || sid == "" {
 		return true
@@ -459,82 +486,177 @@ func (s *Store) RecordSignOut(sid, tag string, until time.Time) bool {
 		return true
 	}
 	e := signOut{Expiry: until.Unix(), Recorded: s.opts.Now().Unix(), Subject: tag}
-	if vh, ok := s.replaceableLocked(tag); ok {
+	first, held := s.ownEntriesLocked(tag)
+	limit, reason := MaxSignOutsPerSubject, refusedSubject
+	if tag == "" {
+		limit, reason = MaxUnnamedSignOuts, refusedUnnamed
+	}
+	victim, replace := "", false
+	switch {
+	case held >= limit:
+		replace = tag != ""
+	case len(s.signedOut) >= MaxSignOuts:
+		reason = refusedBudget
+		if v, ok := s.evictionLocked(tag); ok {
+			victim, reason = v, ""
+		} else {
+			replace = tag != "" && held > 0
+		}
+	default:
+		reason = ""
+	}
+	switch {
+	case replace:
 		// The new entry takes the slot of the person's entry that ends
 		// first, so the document's slots, and everyone else's place in
 		// them, stay as they were.
-		v := s.signedOut[vh]
-		e.Recorded, e.Slot, e.Gen = v.Recorded, slotOf(vh, v), v.Gen+1
-		delete(s.signedOut, vh)
+		v := s.signedOut[first]
+		e.Recorded, e.Slot, e.Gen = v.Recorded, slotOf(first, v), v.Gen+1
+		delete(s.signedOut, first)
 		s.signedOut[h] = e
 		signOutsRefused.WithLabelValues(refusedReplaced).Inc()
 		s.changedLocked(true)
 		return true
-	}
-	if reason := s.admitSignOutLocked(tag); reason != "" {
+	case reason != "":
 		signOutsRefused.WithLabelValues(reason).Inc()
-		if reason == refusedBudget && !s.signOutsFull {
-			s.signOutsFull = true
-			s.opts.Logger.Warn("shared state: the sessions document is full; new sign-outs are refused by this replica only, "+
-				"and a copy of a signed-out cookie is accepted by the other replicas until it expires",
-				slog.String("configmap", s.opts.Name), slog.Int("max", MaxSignOuts))
+		if reason == refusedBudget {
+			s.fullLocked()
 		}
 		if pruned {
 			s.changedLocked(false)
 		}
 		return false
 	}
+	if victim != "" {
+		delete(s.signedOut, victim)
+		signOutsRefused.WithLabelValues(refusedEvicted).Inc()
+		s.fullLocked()
+	}
 	s.signedOut[h] = e
 	s.changedLocked(true)
 	return true
 }
 
-// replaceableLocked returns, for a person (a non-empty tag) at their own
-// bound, their entry that ends first (then the first in slot order): the
-// one a new sign-out of theirs replaces. The sessions naming nobody are
-// not one person, and refuse instead.
-func (s *Store) replaceableLocked(tag string) (string, bool) {
-	if tag == "" {
-		return "", false
+// fullLocked logs, once per episode, that the sessions document is full.
+func (s *Store) fullLocked() {
+	if s.signOutsFull {
+		return
 	}
+	s.signOutsFull = true
+	s.opts.Logger.Warn("shared state: the sessions document is full; a new sign-out takes the place of an entry of the person "+
+		"holding the most, or, from a person holding as much, is refused (or replaces their own) on this replica only: "+
+		"a copy of a cookie whose sign-out is not shared is accepted by the other replicas until it expires",
+		slog.String("configmap", s.opts.Name), slog.Int("max", MaxSignOuts))
+}
+
+// ownEntriesLocked returns how many entries tag holds and, for a person
+// (a non-empty tag), their entry that ends first (then the first in slot
+// order): the one a new sign-out of theirs replaces. The sessions naming
+// nobody are not one person, and are never replaced.
+func (s *Store) ownEntriesLocked(tag string) (string, int) {
 	held, first := 0, ""
 	for h, e := range s.signedOut {
 		if e.Subject != tag {
 			continue
 		}
 		held++
+		if tag == "" {
+			continue
+		}
 		if f, ok := s.signedOut[first]; first == "" || !ok || e.Expiry < f.Expiry || (e.Expiry == f.Expiry && slotBefore(h, e, first, f)) {
 			first = h
 		}
 	}
-	return first, held >= MaxSignOutsPerSubject
+	return first, held
 }
 
-// admitSignOutLocked returns why a new entry of tag would not be kept,
-// or "". The document is always capped (planSignOutCaps drops nothing
-// from it), so the new entry is kept without dropping anything exactly
-// when its share and the document both have room: otherwise the bounds
-// would drop it, or one already held that sorts after it (the same
-// second, a larger hash), and the new one is refused instead: what the
-// document holds stays.
-func (s *Store) admitSignOutLocked(tag string) string {
-	limit, reason := MaxSignOutsPerSubject, refusedSubject
-	if tag == "" {
-		limit, reason = MaxUnnamedSignOuts, refusedUnnamed
-	}
-	held := 0
+// evictionLocked returns, for a new entry of tag in a full document, the
+// entry that leaves for it: what planSignOutCaps would drop from the
+// document with the new entry added. ok is false when that is the new
+// entry itself (its person holds as much as the most). The document is
+// always capped, so exactly one entry leaves.
+func (s *Store) evictionLocked(tag string) (string, bool) {
+	counts := map[string]int{tag: 1}
 	for _, e := range s.signedOut {
-		if e.Subject == tag {
-			held++
+		counts[e.Subject]++
+	}
+	shares := fairShares(counts, MaxSignOuts)
+	loser := ""
+	found := false
+	for t, c := range counts {
+		if shares[t] < c && (!found || t < loser) {
+			loser, found = t, true
 		}
 	}
-	switch {
-	case held >= limit:
-		return reason
-	case len(s.signedOut) >= MaxSignOuts:
-		return refusedBudget
+	if !found || loser == tag {
+		return "", false
 	}
-	return ""
+	last := ""
+	for h, e := range s.signedOut {
+		if e.Subject != loser {
+			continue
+		}
+		if l, ok := s.signedOut[last]; last == "" || !ok || signOutBefore(last, l, h, e) {
+			last = h
+		}
+	}
+	return last, last != ""
+}
+
+// fairShares divides n places among tags holding counts entries (each
+// already within its own bound): when they do not fit, every tag keeps
+// min(count, L) for the largest level L that fits, and the places left
+// go one each to the tags holding more, in tag order (the sessions
+// naming nobody last). It is a function of the counts alone, so every
+// replica computes the same shares, and it takes from the tags holding
+// the most first: a tag never loses an entry while another holding
+// fewer keeps one more than that tag's share.
+func fairShares(counts map[string]int, n int) map[string]int {
+	total, most := 0, 0
+	for _, c := range counts {
+		total += c
+		most = max(most, c)
+	}
+	out := make(map[string]int, len(counts))
+	if total <= n {
+		for t, c := range counts {
+			out[t] = c
+		}
+		return out
+	}
+	at := func(level int) int {
+		sum := 0
+		for _, c := range counts {
+			sum += min(c, level)
+		}
+		return sum
+	}
+	// The largest level that fits: at(0) = 0 <= n < at(most).
+	lo, hi := 0, most
+	for hi-lo > 1 {
+		if mid := (lo + hi) / 2; at(mid) <= n {
+			lo = mid
+		} else {
+			hi = mid
+		}
+	}
+	above := make([]string, 0, len(counts))
+	for t, c := range counts {
+		out[t] = min(c, lo)
+		if c > lo {
+			above = append(above, t)
+		}
+	}
+	sort.Slice(above, func(i, j int) bool {
+		if (above[i] == "") != (above[j] == "") {
+			return above[j] == ""
+		}
+		return above[i] < above[j]
+	})
+	for _, t := range above[:n-at(lo)] {
+		out[t]++
+	}
+	return out
 }
 
 // pruneSignOutsLocked drops the sign-outs that ended, reporting whether
@@ -552,24 +674,27 @@ func (s *Store) pruneSignOutsLocked() bool {
 }
 
 // signOutBefore is the one order every bound of the sessions document
-// keeps by: by slot, recorded first, then by hash (slotBefore). A bound
-// keeps the slots that come first in it, so what was recorded earlier is
-// never dropped for what arrived later, and, the order being total and
-// the same for every bound, replicas that merge the same entries in any
-// order keep the same ones (a union of capped documents caps to what the
-// union of the uncapped ones does). A slot holds one entry, its latest
-// generation: keeping the first of each slot in a fixed order is the
-// same kind of rule, and the bounds see slots only, so a person's
-// replacement (a later generation of their own slot) moves nobody.
+// keeps by: by slot, recorded first, then by hash (slotBefore). The
+// per-person bounds keep each person's entries that come first in it,
+// and the document's fair share keeps each person's first shares (a
+// function of how many entries each person holds, nothing else): so,
+// the order being total and the same for every bound, replicas that
+// merge the same entries in any order keep the same ones (a union of
+// capped documents caps to what the union of the uncapped ones does). A
+// slot holds one entry, its latest generation: keeping the first of each
+// slot in a fixed order is the same kind of rule, and the bounds see
+// slots only, so a person's replacement (a later generation of their own
+// slot) moves nobody.
 func signOutBefore(ah string, a signOut, bh string, b signOut) bool {
 	return slotBefore(ah, a, bh, b)
 }
 
 // planSignOutCaps returns the entries of m the bounds drop, by hash, with
-// the bound that drops each: an earlier generation of a slot (superseded),
-// per person MaxSignOutsPerSubject, the entries naming nobody
-// MaxUnnamedSignOuts together, then the document MaxSignOuts; each keeps
-// what comes first in signOutBefore.
+// the bound that drops each: an earlier generation of a slot (superseded)
+// or a second entry of its generation (collided), per person
+// MaxSignOutsPerSubject, the entries naming nobody MaxUnnamedSignOuts
+// together, each keeping what comes first in signOutBefore, then the
+// document MaxSignOuts, each person keeping their first fairShares.
 func planSignOutCaps(m map[string]signOut) map[string]string {
 	type entry struct {
 		hash string
@@ -581,29 +706,35 @@ func planSignOutCaps(m map[string]signOut) map[string]string {
 	}
 	sort.Slice(all, func(i, j int) bool { return signOutBefore(all[i].hash, all[i].signOut, all[j].hash, all[j].signOut) })
 	dropped := map[string]string{}
-	held := map[string]int{}
-	kept := 0
+	kept := map[string][]string{}
+	head := 0
 	for i, e := range all {
-		if i > 0 && e.Recorded == all[i-1].Recorded && slotOf(e.hash, e.signOut) == slotOf(all[i-1].hash, all[i-1].signOut) {
-			dropped[e.hash] = superseded
+		if i > 0 && e.Recorded == all[head].Recorded && slotOf(e.hash, e.signOut) == slotOf(all[head].hash, all[head].signOut) {
+			if e.Gen < all[head].Gen {
+				dropped[e.hash] = superseded
+			} else {
+				dropped[e.hash] = collided
+			}
 			continue
 		}
+		head = i
 		limit, reason := MaxSignOutsPerSubject, refusedSubject
 		if e.Subject == "" {
 			limit, reason = MaxUnnamedSignOuts, refusedUnnamed
 		}
-		switch {
-		case held[e.Subject] >= limit:
+		if len(kept[e.Subject]) >= limit {
 			dropped[e.hash] = reason
-		case kept >= MaxSignOuts:
-			// Counted against its person all the same: the order is the
-			// same for every bound, so an entry the budget drops would be
-			// dropped after its person's earlier ones in any case.
-			held[e.Subject]++
-			dropped[e.hash] = refusedBudget
-		default:
-			held[e.Subject]++
-			kept++
+			continue
+		}
+		kept[e.Subject] = append(kept[e.Subject], e.hash)
+	}
+	counts := make(map[string]int, len(kept))
+	for t, hs := range kept {
+		counts[t] = len(hs)
+	}
+	for t, share := range fairShares(counts, MaxSignOuts) {
+		for _, h := range kept[t][share:] {
+			dropped[h] = refusedBudget
 		}
 	}
 	return dropped
@@ -984,9 +1115,10 @@ func (s *Store) pruneLocked() {
 	s.pruneSignOutsLocked()
 	if n := s.capSignOutsLocked(); n > 0 {
 		// Only a merge brings in more than the bounds hold (two replicas
-		// filling the last places at once): sign-outs each of them had
-		// accepted are dropped from the document, though still refused
-		// by the replica that recorded them.
+		// filling the last places at once, or replacing the same entry
+		// of one person at once): sign-outs each of them had accepted
+		// are dropped from the document, though still refused by the
+		// replica that recorded them. Every replica merging counts them.
 		signOutsRefused.WithLabelValues(refusedMerge).Add(float64(n))
 		if !s.mergeDropLogged {
 			s.mergeDropLogged = true
@@ -1027,19 +1159,23 @@ func (s *Store) pruneLocked() {
 }
 
 // budgetLocked drops the facts with the oldest "since" until the
-// documents fit the budget. Sign-outs are not dropped here (forgetting
-// one would let a copied cookie back in): their own bounds
-// (capSignOutsLocked) keep the sessions document within MaxSignOuts; nor
-// are delivery marks, which the
-// retention bounds (a few a day) and whose loss would send a digest
-// twice; nor are drill results, bounded by count (drills.go).
+// documents fit the budget, then, should the ConfigMap's data still pass
+// MaxData, the oldest drill results (ceilingLocked). Sign-outs are not
+// dropped here (forgetting one would let a copied cookie back in): their
+// own bounds (capSignOutsLocked) keep the sessions document within
+// MaxSignOuts; nor are delivery marks, which the retention bounds (a few
+// a day) and whose loss would send a digest twice; nor grants and
+// redeemed codes, bounded by count (grants.go). At every bound those
+// take some 800 KB, under MaxData.
 func (s *Store) budgetLocked() {
-	over := s.encodedSizeLocked() - s.opts.Budget
+	ours, data := s.sizesLocked()
+	over := ours - s.opts.Budget
 	if over <= 0 {
 		if s.overBudget {
 			s.overBudget = false
 			s.opts.Logger.Info("shared state fits its budget again", slog.String("configmap", s.opts.Name))
 		}
+		s.ceilingLocked(data)
 		return
 	}
 	keys := make([]string, 0, len(s.facts))
@@ -1062,14 +1198,54 @@ func (s *Store) budgetLocked() {
 			over -= len(key) + len(s.facts[key].State) + len(strconv.FormatInt(s.facts[key].Since, 10)) + 18
 			s.deleteFactLocked(key)
 		}
-		over = s.encodedSizeLocked() - s.opts.Budget
+		ours, data = s.sizesLocked()
+		over = ours - s.opts.Budget
 	}
+	sharedDropped.WithLabelValues(KeySince).Add(float64(dropped))
 	if !s.overBudget {
 		s.overBudget = true
 		s.opts.Logger.Warn("shared state over its size budget: the oldest since times were dropped",
 			slog.String("configmap", s.opts.Name), slog.Int("dropped", dropped), slog.Int("budget", s.opts.Budget),
 			slog.Int("signedOut", len(s.signedOut)))
 	}
+	s.ceilingLocked(data)
+}
+
+// ceilingLocked keeps the ConfigMap's data within MaxData, every
+// document counted, another version's included: past it the API server
+// refuses every write. What the budget leaves past it are drill results
+// (a document at every field's bound) or another version's documents
+// during a rolling upgrade; the oldest drill results go, each source's
+// newest pass last (counted in pgtoolbox_console_shared_state_dropped_total
+// and logged once an episode). With none left to drop, it logs that the
+// write will be refused.
+func (s *Store) ceilingLocked(data int) {
+	over := data - MaxData
+	if over <= 0 {
+		if s.overCeiling {
+			s.overCeiling = false
+			s.opts.Logger.Info("shared state ConfigMap fits within its size again", slog.String("configmap", s.opts.Name))
+		}
+		return
+	}
+	dropped := 0
+	for over > 0 && len(s.drills) > 0 {
+		dropped += s.shedDrillsLocked(over)
+		_, data = s.sizesLocked()
+		over = data - MaxData
+	}
+	sharedDropped.WithLabelValues(KeyDrills).Add(float64(dropped))
+	if s.overCeiling {
+		return
+	}
+	s.overCeiling = true
+	if over > 0 {
+		s.opts.Logger.Error("shared state ConfigMap past what the API server accepts, with nothing left to drop: its writes will be refused",
+			slog.String("configmap", s.opts.Name), slog.Int("bytes", over+MaxData), slog.Int("max", MaxData))
+		return
+	}
+	s.opts.Logger.Warn("shared state ConfigMap at its size ceiling: the oldest restore drill results were dropped",
+		slog.String("configmap", s.opts.Name), slog.Int("dropped", dropped), slog.Int("max", MaxData))
 }
 
 // encodeLocked renders the documents, by data key; encoding/json sorts
@@ -1092,13 +1268,28 @@ func (s *Store) encodeLocked() map[string]string {
 // documentKeys are the ConfigMap keys this console writes.
 var documentKeys = []string{KeySessions, KeySince, KeyDigests, KeyGrants, KeyDrills}
 
-func (s *Store) encodedSizeLocked() int {
-	n := 0
-	for key, doc := range s.encodeLocked() {
-		n += len(doc)
+// sizesLocked measures the documents this console writes (ours) and the
+// data the next write sends (data): the keys and values of those
+// documents and of what else the ConfigMap holds (another version's
+// documents, any other key), as the API server counts them.
+func (s *Store) sizesLocked() (ours, data int) {
+	docs := s.encodeLocked()
+	for key, doc := range docs {
+		ours += len(doc)
 		sharedBytes.WithLabelValues(key).Set(float64(len(doc)))
+		if !s.foreign[key] {
+			data += len(key) + len(doc)
+		}
 	}
-	return n
+	if s.base != nil {
+		for key, v := range s.base.Data {
+			if _, mine := docs[key]; !mine || s.foreign[key] {
+				data += len(key) + len(v)
+			}
+		}
+	}
+	sharedBytes.WithLabelValues("total").Set(float64(data))
+	return ours, data
 }
 
 // desiredLocked is the ConfigMap to write: the base with the documents

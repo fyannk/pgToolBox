@@ -145,7 +145,8 @@ func TestAReplacementReachesEveryReplica(t *testing.T) {
 }
 
 // Two replicas filling the last place of the document at once each
-// accept their sign-out; merging keeps one. That drop used to be
+// accept their sign-out; merging keeps one entry fewer (the fair share
+// takes it from a person holding the most). That drop used to be
 // neither counted nor logged (round 8): it is counted under merge and
 // logged once.
 func TestAMergeDropIsCountedAndLogged(t *testing.T) {
@@ -158,6 +159,7 @@ func TestAMergeDropIsCountedAndLogged(t *testing.T) {
 		a.RecordSignOut(fmt.Sprint("s-", i), tag(fmt.Sprint("person-", i/8)), t0.Add(time.Hour))
 	}
 	exchange(b, a)
+	base := maps.Clone(a.signedOut)
 	clock.Add(time.Second)
 	before := testutil.ToFloat64(signOutsRefused.WithLabelValues(refusedMerge))
 	for round := range 2 {
@@ -169,16 +171,12 @@ func TestAMergeDropIsCountedAndLogged(t *testing.T) {
 		if len(a.signedOut) != MaxSignOuts {
 			t.Fatalf("round %d: %d sign-outs held after the merge", round, len(a.signedOut))
 		}
-		// Make room for the next round.
+		// Back to one place left for the next round.
 		a.mu.Lock()
-		for h, e := range a.signedOut {
-			if e.Subject == tag("alice") || e.Subject == tag("bob") {
-				delete(a.signedOut, h)
-			}
-		}
+		a.signedOut = maps.Clone(base)
 		a.mu.Unlock()
 		b.mu.Lock()
-		b.signedOut = maps.Clone(a.signedOut)
+		b.signedOut = maps.Clone(base)
 		b.mu.Unlock()
 	}
 	if got := testutil.ToFloat64(signOutsRefused.WithLabelValues(refusedMerge)) - before; got != 2 {
