@@ -18,9 +18,12 @@ import (
 	"testing"
 	"time"
 
+	cnpgv1 "github.com/cloudnative-pg/api/pkg/api/v1"
+
 	"github.com/fyannk/pgToolBox/internal/console/evidence"
 	"github.com/fyannk/pgToolBox/internal/console/sweep"
 	"github.com/fyannk/pgToolBox/internal/console/viewmodel"
+	"github.com/fyannk/pgToolBox/pkg/cnpgstatus/instancestatus"
 	evidencev1alpha1 "github.com/fyannk/pgToolBox/pkg/evidence/v1alpha1"
 )
 
@@ -197,5 +200,28 @@ func TestEarlierReadyCarriesTheInstanceClock(t *testing.T) {
 	got := earlierReady(g, "db-2", now)
 	if len(got) != 3 || got[0].LastArchivedAt == nil || !got[0].LastArchivedAt.Equal(now.Add(time.Hour).Truncate(time.Millisecond)) || got[1].LastArchivedAt != nil {
 		t.Fatalf("earlier samples %+v", got)
+	}
+}
+
+// TestArchivingWalOnlyOnTheArchiver (CNPG P3-2): a replica cluster's
+// standbys run with archive_mode always, so their isArchivingWAL reads
+// true, but only the designated primary (current or target primary)
+// archives: the others' archivingWal is not served.
+func TestArchivingWalOnlyOnTheArchiver(t *testing.T) {
+	c := inTreeCluster()
+	enabled := true
+	c.Spec.ReplicaCluster = &cnpgv1.ReplicaClusterConfiguration{Enabled: &enabled, Source: "origin"}
+	c.Status.CurrentPrimary, c.Status.TargetPrimary = "dr-1", "dr-1"
+	standby := instancestatus.Reading{IsArchivingWAL: true}
+	g := &gathered{cluster: c, swept: sweep.Snapshot{Instances: map[string]sweep.Instance{
+		"dr-1": {State: viewmodel.StatusReadOK, Reading: &standby},
+		"dr-2": {State: viewmodel.StatusReadOK, Reading: &standby},
+	}}}
+	svc := &Service{sweep: fakeSweep{}}
+	if _, live := svc.statusRead(g, "dr-1", ""); live == nil || !live.ArchivingWAL {
+		t.Errorf("the designated primary's archiving: %+v", live)
+	}
+	if _, live := svc.statusRead(g, "dr-2", ""); live == nil || live.ArchivingWAL {
+		t.Errorf("a standby of a replica cluster reads as archiving: %+v", live)
 	}
 }

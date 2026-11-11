@@ -257,7 +257,16 @@ func TestArchivingTooFewSweepsIsNotOK(t *testing.T) {
 func TestArchivingDesignatedPrimaryIsNotOK(t *testing.T) {
 	c := clusterWith(nil, cond(ConditionContinuousArchiving, "True", "ContinuousArchivingSuccess"))
 	c.Spec.Backup = &cnpgv1.BackupConfiguration{BarmanObjectStore: &cnpgv1.BarmanObjectStoreConfiguration{}}
+	enabled := true
+	c.Spec.ReplicaCluster = &cnpgv1.ReplicaClusterConfiguration{Enabled: &enabled, Source: "origin"}
 	live := &ArchiverLive{IsArchivingWAL: true, ReadyNotReported: true, ObservedAt: backlogNow, Earlier: readyRun(0, 0, 0)}
+	// CNPG P3-6: outside a replica cluster the same reading is a primary
+	// mid-promotion, not a designated primary.
+	primaryCluster := c.DeepCopy()
+	primaryCluster.Spec.ReplicaCluster = nil
+	if got := Archiving(primaryCluster, live); got.Reason != ArchivingReasonBacklogNotReported || strings.Contains(got.Message, "designated primary") || !strings.Contains(got.Message, "promotion") {
+		t.Errorf("not a replica cluster: %+v", got)
+	}
 	if got := Archiving(c, live); got.Class != ClassUnknown || got.Reason != ArchivingReasonBacklogNotReported || !strings.Contains(got.Message, "designated primary") {
 		t.Errorf("designated primary, condition True: %+v", got)
 	}
@@ -280,6 +289,30 @@ func TestArchivingDesignatedPrimaryIsNotOK(t *testing.T) {
 // P2-5): a count held at the threshold over three sweeps, with no
 // segment archived since the oldest of them, is a stalled archiver:
 // warning ArchiveBacklog, the message naming since when.
+// TestIsReplicaCluster follows CloudNativePG's Cluster.IsReplica: enabled
+// when set, else the distributed topology's self against primary.
+func TestIsReplicaCluster(t *testing.T) {
+	yes, no := true, false
+	for _, tc := range []struct {
+		name string
+		r    *cnpgv1.ReplicaClusterConfiguration
+		want bool
+	}{
+		{"no replica stanza", nil, false},
+		{"enabled", &cnpgv1.ReplicaClusterConfiguration{Enabled: &yes}, true},
+		{"disabled", &cnpgv1.ReplicaClusterConfiguration{Enabled: &no, Primary: "other"}, false},
+		{"distributed, another primary", &cnpgv1.ReplicaClusterConfiguration{Primary: "east"}, true},
+		{"distributed, this one primary", &cnpgv1.ReplicaClusterConfiguration{Primary: "pg"}, false},
+		{"distributed, self named", &cnpgv1.ReplicaClusterConfiguration{Self: "west", Primary: "west"}, false},
+	} {
+		c := &cnpgv1.Cluster{}
+		c.Name, c.Spec.ReplicaCluster = "pg", tc.r
+		if got := IsReplicaCluster(c); got != tc.want {
+			t.Errorf("%s: %t, want %t", tc.name, got, tc.want)
+		}
+	}
+}
+
 func TestArchivingStalledArchiverUnderUnknownParallelism(t *testing.T) {
 	c := clusterWith(nil, cond(ConditionContinuousArchiving, "True", "ContinuousArchivingSuccess"))
 	c.Spec.Plugins = []cnpgv1.PluginConfiguration{{Name: PgBackRestDaliboPlugin}}

@@ -344,6 +344,11 @@ func Archiving(c *cnpgv1.Cluster, primary *ArchiverLive) ArchivingReading {
 		reading.Class = ClassUnknown
 		reading.Reason = ArchivingReasonBacklogNotReported
 		reading.Message = "the archiving instance is a designated primary, which does not report readyWalFiles: whether WAL waits to be archived on it is not known"
+		if !IsReplicaCluster(c) {
+			// Mid-promotion the current primary can briefly report
+			// isPrimary false (CNPG P3-6).
+			reading.Message = "the current primary does not report itself primary yet (a promotion may be in progress), so it does not report readyWalFiles: whether WAL waits to be archived on it is not known"
+		}
 		return reading
 	}
 	hibernatedMessage := "the Cluster is hibernated: no instance runs, so nothing archives WAL, and whether every segment written before it reached the repository is not confirmed"
@@ -426,4 +431,24 @@ func since(t time.Time) string {
 		return ""
 	}
 	return " since " + t.UTC().Format(time.RFC3339)
+}
+
+// IsReplicaCluster is CloudNativePG's Cluster.IsReplica
+// (api/v1/cluster_funcs.go v1.30.1:1087, not in the api module the
+// console builds against): spec.replica.enabled when set, else the
+// distributed topology's self (the Cluster's name by default) differing
+// from replica.primary.
+func IsReplicaCluster(c *cnpgv1.Cluster) bool {
+	if c == nil || c.Spec.ReplicaCluster == nil {
+		return false
+	}
+	r := c.Spec.ReplicaCluster
+	if r.Enabled != nil {
+		return *r.Enabled
+	}
+	self := r.Self
+	if self == "" {
+		self = c.Name
+	}
+	return self != r.Primary
 }

@@ -1230,7 +1230,7 @@ func archiverUnreadEdge(out *viewmodel.RecoveryTimeline, f recoveryFacts, last t
 		// A designated primary never reports readyWalFiles: no sweep can
 		// say nothing waited on it.
 		uncertain(out, last.Add(-failureLookback), last, say("recovery.segment.archiverNotReported",
-			"The archiving instance is a designated primary, which does not report how many WAL segments wait to be archived: WAL that reached the repository may have waited on it first, so its arrival time may overstate how recent a restore can be.", nil))
+			"The archiving instance does not report itself primary (a replica cluster's designated primary, or a primary mid-promotion), so it does not report how many WAL segments wait to be archived: WAL that reached the repository may have waited on it first, so its arrival time may overstate how recent a restore can be.", nil))
 		return
 	}
 	quiet := f.quietBy(scanned)
@@ -1480,7 +1480,7 @@ func timelineVerdict(out *viewmodel.RecoveryTimeline, in timelineInput, f timeli
 			map[string]string{"segments": n}))
 	case f.notReported:
 		out.State = warning
-		setReason(out, say("recovery.reason.archiverNotReported", "the archiving instance is a designated primary, which does not report its archive backlog: how late recent WAL reached the repository is not known, so the newest restore points are uncertain", nil))
+		setReason(out, say("recovery.reason.archiverNotReported", "the archiving instance does not report itself primary (a replica cluster's designated primary, or a primary mid-promotion), so it does not report its archive backlog: how late recent WAL reached the repository is not known, so the newest restore points are uncertain", nil))
 	case f.hibernated:
 		// A hibernated Cluster writes no WAL and runs no archiver: nothing
 		// is going wrong that a warning would ask to act on, and nothing
@@ -1831,7 +1831,7 @@ func restoreCaveats(b viewmodel.Backups) []viewmodel.Phrase {
 		}
 	} else if a.Reason == cnpgstatus.ArchivingReasonBacklogNotReported {
 		out = append(out, say("recovery.caveat.archiverNotReported",
-			"The archiving instance is a designated primary, which does not report its archive backlog: how long the newest archived WAL waited on it is not known, so restore points near the newest edge may not be in the repository.", nil))
+			"The archiving instance does not report itself primary (a replica cluster's designated primary, or a primary mid-promotion), so it does not report its archive backlog: how long the newest archived WAL waited on it is not known, so restore points near the newest edge may not be in the repository.", nil))
 	} else if archiverUnread(a) {
 		out = append(out, say("recovery.caveat.archiverUnread",
 			"The primary's archiver was not read: how long the newest archived WAL waited on the primary is not known, so it may hold commits older than its arrival in the repository suggests, and restore points near the newest edge may not be in the repository.", nil))
