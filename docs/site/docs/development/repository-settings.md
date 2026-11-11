@@ -121,10 +121,10 @@ Settings, Actions, General:
   GitHub" (covers `actions/*` and `github/codeql-action/*`) and paste the list
   below into "Allow specified actions and reusable workflows". With "Require actions
   to be pinned to a full-length commit SHA" on, every `uses:` is already compliant.
-  The list is generated from the workflows; regenerate it after a Dependabot bump:
+  The list is generated from the workflows and the local actions under `.github/actions`, and `make check-repo` fails when it differs; regenerate it after a Dependabot bump:
 
   ```bash
-  grep -rhoE 'uses: [^./][^ ]+@[0-9a-f]{40}' .github/workflows | sed 's/uses: //' | sort -u | grep -vE '^(actions|github)/'
+  grep -rhoE 'uses: [^./][^ ]+@[0-9a-f]{40}' .github/workflows .github/actions | sed 's/uses: //' | sort -u | grep -vE '^(actions|github)/'
   ```
 
   Allow-list at this commit (`owner/repo@sha`, the SHA is what makes it exact):
@@ -136,6 +136,7 @@ Settings, Actions, General:
   - `docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6`
   - `docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302`
   - `docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069`
+  - `jdx/mise-action@f5be966e4a917d54244728e6a5fdcd1d93a35e6c`
   - `ossf/scorecard-action@fa7117db83c52d787ae5a89f350999701505d78e`
   - `sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6`
 
