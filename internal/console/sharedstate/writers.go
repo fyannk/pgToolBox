@@ -57,11 +57,19 @@ import (
 //
 // What a document taken over holds is read as this version's layout and
 // merged through the usual validation (a sign-out in it stays refused),
-// except grants.json, which is reset: a revocation recorded in a newer
-// layout could otherwise be lost and its grant come back. A replica drops
-// its own grants and codes as soon as it finds a newer grants document
-// (they are refused meanwhile anyway), so that no replica brings one
-// back on merging the reset document. MCP assistants then connect again.
+// as the compatibility contract of formatVersion allows; a document of
+// takeOverBelow or more is never taken over. grants.json is reset instead:
+// a revocation recorded in a newer layout could otherwise be lost and its
+// grant come back. The reset is made once a document (grantsReset), so
+// that a merge of the same document again cannot erase what was recorded
+// since. A replica drops its own grants (not its spent codes) as soon as
+// it finds a newer grants document, and the three-way merge of grants
+// (mergeGrantsLocked) drops them on every replica that finds the reset
+// document, including one that never saw the newer one: no replica
+// brings a revoked grant back. MCP assistants then connect again.
+//
+// An annotation of another version that has not changed for
+// takeOverAfter is dropped on this replica's next write (stampLocked).
 const (
 	// writerAnnotationPrefix, followed by a format version, names the
 	// annotation of the ConfigMap that replicas of that version change
@@ -92,6 +100,20 @@ func newerDocument(raw string) bool {
 	return ok && v > formatVersion
 }
 
+// takeable reports whether raw, a newer document, keeps the compatibility
+// contract (formatVersion) and so may be taken over.
+func takeable(raw string) bool {
+	v, ok := documentVersion(raw)
+	return ok && v > formatVersion && v < takeOverBelow
+}
+
+// beat is an annotation of another version as last seen: its value, and
+// when (this replica's clock) it last changed.
+type beat struct {
+	value string
+	since time.Time
+}
+
 // observeWritersLocked records, before cm's documents are merged, what
 // cm shows of the replicas of other versions and of this one, and
 // decides whether its newer documents are taken over (s.takeOver).
@@ -109,9 +131,17 @@ func (s *Store) observeWritersLocked(cm *corev1.ConfigMap) {
 		}
 	}
 	sort.Strings(keys)
+	beats := make(map[string]beat, len(keys))
 	for _, key := range keys {
-		sum.Write([]byte(key + "=" + cm.Annotations[key] + "\n"))
+		v := cm.Annotations[key]
+		sum.Write([]byte(key + "=" + v + "\n"))
+		if b, ok := s.othersBeats[key]; ok && b.value == v {
+			beats[key] = b
+		} else {
+			beats[key] = beat{value: v, since: now}
+		}
 	}
+	s.othersBeats = beats
 	s.newer = false
 	for _, key := range documentKeys {
 		if raw := cm.Data[key]; newerDocument(raw) {
@@ -119,6 +149,9 @@ func (s *Store) observeWritersLocked(cm *corev1.ConfigMap) {
 			sum.Write([]byte(key + "=" + raw + "\n"))
 		} else {
 			delete(s.takeOverLogged, key)
+			if key == KeyGrants {
+				s.grantsReset = ""
+			}
 		}
 	}
 	fp := ""
@@ -148,6 +181,19 @@ func (s *Store) stampLocked(cm *corev1.ConfigMap) {
 	if cm.Annotations == nil {
 		cm.Annotations = map[string]string{}
 	}
+	// An annotation of another version unchanged for takeOverAfter is
+	// dropped: that version is gone (the take-over waits as long), and a
+	// replica started later would otherwise count it as a live writer and
+	// send heartbeats for takeOverAfter after each start. Not while a newer
+	// document is left alone or taken over: the change of what this
+	// replica sees of the others would restart the take-over's wait.
+	if !s.newer {
+		for key, b := range s.othersBeats {
+			if s.opts.Now().Sub(b.since) >= takeOverAfter && cm.Annotations[key] == b.value {
+				delete(cm.Annotations, key)
+			}
+		}
+	}
 	key := writerAnnotation(formatVersion)
 	next := s.opts.Now().Unix()
 	if prev, err := strconv.ParseInt(cm.Annotations[key], 10, 64); err == nil && prev >= next {
@@ -160,12 +206,13 @@ func (s *Store) stampLocked(cm *corev1.ConfigMap) {
 // returned it): this replica's own heartbeat.
 func (s *Store) wroteLocked(updated *corev1.ConfigMap) {
 	s.ownBeat, s.ownSince = updated.Annotations[writerAnnotation(formatVersion)], s.opts.Now()
+	s.landedLocked(updated.Data[KeyGrants])
 }
 
 // takingOverLocked reports whether the document raw of key is a newer
 // one taken over in this merge, and logs the take-over once.
 func (s *Store) takingOverLocked(key, raw string) bool {
-	if !s.takeOver || !newerDocument(raw) {
+	if !s.takeOver || !takeable(raw) {
 		return false
 	}
 	if !s.takeOverLogged[key] {

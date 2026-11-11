@@ -54,10 +54,12 @@ import (
 // entry may be dropped once nothing could be refused by it any more: at
 // its expiry, or RevokedKeep after its revocation.
 //
-// Merge rule, the same on every replica: grants are a union; for one ID
-// the earliest creation, the latest use, the highest generation and the
-// earliest revocation win (a revocation is never undone). Codes are a
-// union, latest expiry, and the union of their marks. Every valid entry another replica wrote is merged,
+// Merge rule, the same on every replica: for one ID the earliest
+// creation, the latest use, the highest generation and the earliest
+// revocation win (a revocation is never undone); a grant the document no
+// longer holds is dropped, unless this replica recorded it moments ago or
+// holds a revocation of it not written yet (mergeGrantsLocked says why).
+// Codes are a union, latest expiry, and the union of their marks. Every valid entry another replica wrote is merged,
 // however many there are: none is dropped for being one too many. A
 // document this replica cannot read (another format version, or not
 // JSON) is never overwritten, and grants are refused while it is so.
@@ -109,6 +111,11 @@ const (
 	// grant it does not know yet (mcpoauth), so that no replica can accept
 	// a revoked grant's token for want of the entry.
 	RevokedKeep = 10 * time.Minute
+	// localKeep is how long a grant this replica recorded is kept while
+	// no document read from the ConfigMap holds it (mergeGrantsLocked):
+	// RevokedKeep less a margin for clock skew between replicas (the
+	// console assumes at most 30 s) and the write and watch delays.
+	localKeep = RevokedKeep - 2*time.Minute
 	// staleGrace is how long grants stay usable while the ConfigMap cannot
 	// be written or read: a moment's API server trouble does not
 	// disconnect every assistant, a lasting one refuses grants (a
@@ -443,6 +450,7 @@ func (s *Store) AddGrant(g Grant) error {
 		return ErrTooManyGrants
 	}
 	s.grants[g.ID] = e
+	s.recordedLocked(g.ID)
 	s.changedLocked(true)
 	return nil
 }
@@ -516,6 +524,10 @@ func (s *Store) RevokeGrant(id, userHash string, at, until time.Time) bool {
 	}
 	e.Revoked = at.Unix()
 	s.grants[id] = e
+	if !ok {
+		s.recordedLocked(id)
+	}
+	s.revokedLocked(id)
 	s.changedLocked(true)
 	return ok
 }
@@ -534,6 +546,7 @@ func (s *Store) RevokeGrantsOf(userHash string, at time.Time) []string {
 		if e.User == userHash && e.Revoked == 0 && e.Expiry > now {
 			e.Revoked = at.Unix()
 			s.grants[id] = e
+			s.revokedLocked(id)
 			ids = append(ids, id)
 		}
 	}
@@ -670,7 +683,8 @@ func (s *Store) SpendCode(ctx context.Context, code, userHash string, until time
 	}
 	desired, gen := s.desiredLocked(), s.gen
 	s.mu.Unlock()
-	err := s.writeThrough(ctx, func(cm *corev1.ConfigMap) bool { return codeIn(cm, h) }, desired, gen)
+	held := func() bool { _, ok := s.codes[h]; return ok }
+	err := s.writeThrough(ctx, func(cm *corev1.ConfigMap) bool { return codeIn(cm, h) }, held, desired, gen)
 	if err != nil && !errors.Is(err, ErrSpent) {
 		// Nothing was recorded that this replica knows of: forget the
 		// reservation, so that the value is not refused here as spent. A
@@ -694,8 +708,12 @@ func (s *Store) SpendCode(ctx context.Context, code, userHash string, until time
 
 // writeThrough writes desired (the local state with a spend reserved),
 // re-reading and merging on a conflict, until it lands or the ConfigMap
-// shows the spend made already (spentIn: ErrSpent).
-func (s *Store) writeThrough(ctx context.Context, spentIn func(*corev1.ConfigMap) bool, desired *corev1.ConfigMap, gen uint64) error {
+// shows the spend made already (spentIn: ErrSpent). held reports, under
+// s.mu, whether the local state still holds the reservation once a
+// conflict's re-read is merged: one the merge removed (the value expired,
+// or anything else that empties the local state) would not be in the
+// next write, which would then land without it, so it is ErrNotRecorded.
+func (s *Store) writeThrough(ctx context.Context, spentIn func(*corev1.ConfigMap) bool, held func() bool, desired *corev1.ConfigMap, gen uint64) error {
 	ctx, cancel := context.WithTimeout(ctx, writeTimeout)
 	defer cancel()
 	for range maxAttempts {
@@ -722,13 +740,13 @@ func (s *Store) writeThrough(ctx context.Context, spentIn func(*corev1.ConfigMap
 			spent := spentIn(fresh)
 			s.mu.Lock()
 			s.mergeLocked(fresh)
-			unreadable := s.foreign[KeyGrants]
+			unreadable, kept := s.foreign[KeyGrants], held()
 			desired, gen = s.desiredLocked(), s.gen
 			s.mu.Unlock()
 			switch {
 			case spent:
 				return ErrSpent
-			case unreadable:
+			case unreadable, !kept:
 				return ErrNotRecorded
 			}
 		default:
@@ -818,7 +836,8 @@ func (s *Store) MarkCode(ctx context.Context, code, mark, userHash string) error
 	}
 	desired, gen := s.desiredLocked(), s.gen
 	s.mu.Unlock()
-	err := s.writeThrough(ctx, func(cm *corev1.ConfigMap) bool { return markIn(cm, h, mark) }, desired, gen)
+	held := func() bool { c, ok := s.codes[h]; return ok && slices.Contains(c.Marks, mark) }
+	err := s.writeThrough(ctx, func(cm *corev1.ConfigMap) bool { return markIn(cm, h, mark) }, held, desired, gen)
 	if err != nil && !errors.Is(err, ErrSpent) {
 		// As SpendCode: forget the mark unless the ConfigMap holds it
 		// already (another replica's, merged while this write was in
@@ -889,17 +908,71 @@ func (s *Store) CodeUsed(code string) bool {
 	return used && c.Expiry > s.opts.Now().Unix()
 }
 
+// mergeGrantsLocked folds the grants document raw (empty when the key is
+// missing) into the local index.
+//
+// Grants are merged three ways, not as a union: a grant the document does
+// not hold is dropped here, unless this replica recorded it itself less
+// than localKeep ago and has read no document holding it since (it is
+// waiting for its own write). Codes stay a union.
+//
+// Why. Every write is an update at the resourceVersion of the document it
+// merged, so an entry leaves the document only when a replica drops it on
+// purpose: pruned (expired, or RevokedKeep after its revocation), reset by
+// a take-over, or the key deleted. A union lets a replica that missed the
+// drop write the entry back, and a revoked grant pruned while a replica
+// was cut off from the API server came back unrevoked from it. Under
+// this rule:
+//   - a grant this replica read in a document and that the document no
+//     longer holds was dropped elsewhere: dropped here too;
+//   - a grant recorded here that no document has held yet is known
+//     elsewhere only through a write of this replica that landed after it
+//     was recorded, or (a revocation placeholder of a replayed code)
+//     through the code's spend, written through within the same request:
+//     a revocation of it elsewhere is no older than its recording here,
+//     and its prune comes RevokedKeep later on the pruning replica's
+//     clock. localKeep is RevokedKeep less a margin for the replicas'
+//     clocks and the write delays, so a grant kept by this exception
+//     never outlives a pruned revocation of it; past localKeep it is
+//     dropped, and its assistant connects again (only a replica cut off
+//     from the ConfigMap that long gets there, and it refuses grants
+//     after staleGrace anyway);
+//   - a replica that never read the document (its first read, the
+//     ConfigMap recreated, a take-over it missed) holds only grants it
+//     read in an older document (dropped) or recorded (the exception);
+//   - a revocation made here is neither dropped by this rule nor pruned
+//     before a document read or written holds it (unwritten), so a
+//     revocation made while cut off is not lost when its RevokedKeep ends
+//     before it reached the ConfigMap. Keeping a revoked entry longer only
+//     refuses more.
+//
+// The replication grace of mcpoauth (a grant not known yet is accepted
+// within 30 s of its newest token) is unchanged: a grant dropped here was
+// revoked, expired or reset long before, or recorded localKeep ago by a
+// replica that has refused grants since.
 func (s *Store) mergeGrantsLocked(raw string) {
 	var doc grantsDoc
 	switch {
-	case s.foreignLocked(KeyGrants, raw), s.takingOverLocked(KeyGrants, raw):
+	case raw != "" && s.foreignLocked(KeyGrants, raw):
 		// A newer grants document may record revocations of grants this
 		// replica holds, in a layout it does not read: they are dropped
-		// here (refused meanwhile anyway), and the document taken over is
-		// reset rather than read (writers.go), so that no replica brings
-		// a revoked grant back.
-		s.grants, s.codes = map[string]grantEntry{}, map[string]codeEntry{}
-	case json.Unmarshal([]byte(raw), &doc) != nil:
+		// (refused meanwhile anyway). Spent codes are kept: a spend is
+		// never undone, and keeping it only refuses more.
+		s.dropGrantsLocked()
+	case raw != "" && s.takingOverLocked(KeyGrants, raw):
+		// Taken over (writers.go): reset rather than read, so that a
+		// revocation recorded in the newer layout cannot be lost. Once a
+		// document: a merge of the same document again (a conflict of the
+		// take-over's own write with a replica of this version that left
+		// it alone) must not erase what was recorded since, a spend being
+		// written through among it. Every replica of this version drops
+		// the grants it holds on finding the reset document (the rule
+		// below), including one that never saw the newer one.
+		if sum := sha256.Sum256([]byte(raw)); hex.EncodeToString(sum[:]) != s.grantsReset {
+			s.grantsReset = hex.EncodeToString(sum[:])
+			s.dropGrantsLocked()
+		}
+	case raw != "" && json.Unmarshal([]byte(raw), &doc) != nil:
 		// Never overwritten: what it holds (revocations among it) is not
 		// known, and replacing it would forget them. Grants are refused
 		// until it is readable again.
@@ -907,14 +980,24 @@ func (s *Store) mergeGrantsLocked(raw string) {
 		s.foreign[KeyGrants] = true
 		s.grantsUnreadable = true
 	default:
+		now := s.opts.Now()
+		held := make(map[string]bool, len(doc.Grants))
 		for id, e := range doc.Grants {
 			if !validGrantEntry(id, e) {
 				continue
 			}
+			held[id] = true
+			s.heldLocked(id, e)
 			if prev, ok := s.grants[id]; ok {
 				e = mergeGrant(prev, e)
 			}
 			s.grants[id] = e
+		}
+		for id := range s.grants {
+			if at, mine := s.recorded[id]; held[id] || s.unwritten[id] || (mine && now.Sub(at) < localKeep) {
+				continue
+			}
+			s.dropGrantLocked(id)
 		}
 		for h, c := range doc.Codes {
 			if !isHex32(h) || !isHex32(c.User) {
@@ -931,10 +1014,67 @@ func (s *Store) mergeGrantsLocked(raw string) {
 	}
 }
 
+// landedLocked records that the grants document raw, this replica's own
+// write, landed: what it holds of the grants and revocations recorded
+// here is now in the ConfigMap, under the merge rule's first case
+// (mergeGrantsLocked). Parsed only while something recorded here waits.
+func (s *Store) landedLocked(raw string) {
+	if len(s.recorded) == 0 && len(s.unwritten) == 0 {
+		return
+	}
+	var doc grantsDoc
+	if json.Unmarshal([]byte(raw), &doc) != nil {
+		return
+	}
+	for id, e := range doc.Grants {
+		s.heldLocked(id, e)
+	}
+}
+
+// heldLocked records that a document read or written holds entry e of
+// grant id.
+func (s *Store) heldLocked(id string, e grantEntry) {
+	delete(s.recorded, id)
+	if e.Revoked > 0 {
+		delete(s.unwritten, id)
+	}
+}
+
+// dropGrantsLocked forgets every grant of the index.
+func (s *Store) dropGrantsLocked() {
+	s.grants, s.recorded, s.unwritten = map[string]grantEntry{}, map[string]time.Time{}, map[string]bool{}
+}
+
+// dropGrantLocked forgets one grant.
+func (s *Store) dropGrantLocked(id string) {
+	delete(s.grants, id)
+	delete(s.recorded, id)
+	delete(s.unwritten, id)
+}
+
+// recordedLocked notes a grant recorded on this replica, for the merge
+// rule (mergeGrantsLocked).
+func (s *Store) recordedLocked(id string) {
+	if s.Enabled() {
+		s.recorded[id] = s.opts.Now()
+	}
+}
+
+// revokedLocked notes a revocation made on this replica: not pruned
+// before a document read holds it.
+func (s *Store) revokedLocked(id string) {
+	if s.Enabled() {
+		s.unwritten[id] = true
+	}
+}
+
 func (s *Store) pruneGrantsLocked(now int64) {
 	for id, e := range s.grants {
-		if e.gone(now) {
-			delete(s.grants, id)
+		// A revocation no document read holds yet is kept to its expiry:
+		// pruned, it would be lost, and its grant written back by a
+		// replica that never saw it.
+		if e.gone(now) && (e.Expiry <= now || !s.unwritten[id]) {
+			s.dropGrantLocked(id)
 		}
 	}
 	for h, c := range s.codes {
