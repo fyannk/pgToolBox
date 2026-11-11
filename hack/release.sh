@@ -316,6 +316,13 @@ full_tier_state() {
 cmd_preflight() {
   local tag="${1:?usage: release.sh preflight TAG [SHA]}" sha="${2:-}"
   ALLOW_UNRELEASED=0 REQUIRE_DATED=1 cmd_check "${tag}"
+  # An argument is any revision (HEAD~1, a branch, the object SHA of an annotated
+  # tag): resolve it to the commit it peels to, so that every comparison and the
+  # check-run query below use a commit SHA.
+  if [[ -n "${sha}" ]]; then
+    sha="$(git rev-parse -q --verify "${sha}^{commit}")" \
+      || die "${sha} does not name a commit in this clone (a revision such as HEAD~1 or a tag is accepted; fetch it first if it is remote)"
+  fi
   if [[ -z "${sha}" ]]; then
     if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
       sha="$(git rev-list -n 1 "refs/tags/${tag}")"

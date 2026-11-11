@@ -16,6 +16,7 @@ package evidence
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -129,24 +130,110 @@ func TestRunnerReadsRecoveryCoverage(t *testing.T) {
 }
 
 func TestKeepRecovery(t *testing.T) {
-	good := Recovery{State: RecoveryAvailable, Complete: true, Paths: []RecoveryPath{{BackupID: "b1"}}}
+	snapshot := fixtureSnapshot(t)
+	scanned := testNow
+	good := Recovery{State: RecoveryAvailable, Complete: true, Paths: []RecoveryPath{{BackupID: "b1", State: evidencev1alpha1.Healthy}}, ScannedAt: &scanned}
+	previous := Result{Snapshot: &snapshot, Recovery: good}
+	failed := func(after time.Duration) Recovery {
+		at := scanned.Add(after)
+		return Recovery{State: RecoveryUnavailable, Reason: "timeout", ScannedAt: &at}
+	}
+	moved := snapshot
+	moved.Identity.Repository.DestinationFingerprint = "sha256:another"
 	cases := []struct {
 		name     string
-		previous Recovery
+		previous Result
 		current  Recovery
+		snapshot *evidencev1alpha1.RepositoryEvidenceSnapshot
 		stale    bool
 		state    string
 	}{
-		{"a failure keeps the last good paths", good, Recovery{State: RecoveryUnavailable, Reason: "timeout"}, true, RecoveryAvailable},
-		{"a fresh read replaces them", good, Recovery{State: RecoveryAvailable, Complete: true}, false, RecoveryAvailable},
-		{"unsupported is definitive", good, Recovery{State: RecoveryUnsupported}, false, RecoveryUnsupported},
-		{"nothing to keep", Recovery{}, Recovery{State: RecoveryUnavailable}, false, RecoveryUnavailable},
+		{"a failure keeps the last good paths", previous, failed(time.Hour), &snapshot, true, RecoveryAvailable},
+		{"a fresh read replaces them", previous, Recovery{State: RecoveryAvailable, Complete: true}, &snapshot, false, RecoveryAvailable},
+		{"unsupported is definitive", previous, Recovery{State: RecoveryUnsupported}, &snapshot, false, RecoveryUnsupported},
+		{"nothing to keep", Result{Snapshot: &snapshot}, failed(0), &snapshot, false, RecoveryUnavailable},
+		// Round 11, PG: paths of another repository are not this one's.
+		{"another repository's paths are not kept", previous, failed(time.Hour), &moved, false, RecoveryUnavailable},
+		// Round 11, PG: a failure that persists does not keep old paths.
+		{"paths older than three refresh intervals are dropped", previous, failed(6*time.Hour + time.Second), &snapshot, false, RecoveryUnavailable},
+		{"paths three refresh intervals old are kept", previous, failed(6 * time.Hour), &snapshot, true, RecoveryAvailable},
 	}
 	for _, c := range cases {
-		got := keepRecovery(c.previous, c.current)
+		got := keepRecovery(c.previous, c.current, c.snapshot, nil, 2*time.Hour)
 		if got.Stale != c.stale || got.State != c.state {
 			t.Errorf("%s: %+v", c.name, got)
 		}
+		if c.state == RecoveryUnavailable && len(got.Paths) != 0 {
+			t.Errorf("%s: paths kept: %+v", c.name, got.Paths)
+		}
+	}
+	// The fresh snapshot's timeline warning and coverage reason replace
+	// the kept ones.
+	warned := previous
+	warned.Recovery.TimelineWarning, warned.Recovery.CoverageReason = "00000003.history is invalid", "an old roll-up"
+	if got := keepRecovery(warned, failed(time.Hour), &snapshot, nil, 2*time.Hour); got.TimelineWarning != "" || got.CoverageReason != "" {
+		t.Errorf("the kept reasons survive the fresh snapshot: %+v", got)
+	}
+	// A short refresh interval keeps them an hour (keptFloor), no longer.
+	if got := keepRecovery(previous, failed(time.Hour), &snapshot, nil, time.Minute); !got.Stale {
+		t.Errorf("an hour with a one-minute interval: %+v", got)
+	}
+	if got := keepRecovery(previous, failed(time.Hour+time.Second), &snapshot, nil, time.Minute); got.Stale || len(got.Paths) != 0 {
+		t.Errorf("past an hour with a one-minute interval: %+v", got)
+	}
+	if got := keepRecovery(previous, failed(7*time.Hour), &snapshot, nil, 2*time.Hour); !strings.Contains(got.Reason, reasonKeptTooOld) || !strings.HasPrefix(got.Reason, "timeout") {
+		t.Errorf("dropped paths say %q", got.Reason)
+	}
+}
+
+// Round 11, PG P2: the paths kept when reading them failed are capped
+// against the fresh snapshot beside them, not only the one they were
+// read with. After a failover whose timeline conclusion is not
+// established, a kept path is no coverage: unknown, no frontier receipt,
+// still stale, its scan time kept; the fresh snapshot's coverage reason
+// and timeline warning replace the old ones.
+func TestKeptRecoveryIsCappedByTheFreshSnapshot(t *testing.T) {
+	ca := newTestCA(t, evidencev1alpha1.ServerName(testService, testNamespace))
+	for _, state := range []evidencev1alpha1.State{evidencev1alpha1.Unknown, evidencev1alpha1.Unhealthy} {
+		t.Run("a fresh timeline "+string(state), func(t *testing.T) {
+			fake := newFakeAgent(t, ca)
+			snapshot := fixtureSnapshot(t)
+			fake.pages = backupPages(snapshot, []evidencev1alpha1.BarmanBackup{fixtureBackup(t, "b1")}, 5)
+			fake.recovery = fixtureRecovery(t, snapshot)
+			fake.snapshot = snapshot
+			object := testEvidenceAgent(testAgent, ca, snapshot, testNow)
+			runner := newTestRunner(t, newFakeLister(t, object), fake, writeToken(t, testToken))
+			runner.refresh(context.Background())
+			first := runner.ForCluster(testNamespace, testCluster).Recovery
+			if first.State != RecoveryAvailable || first.Paths[0].FrontierReceiptAt == nil || first.ScannedAt == nil {
+				t.Fatalf("first read: %+v", first)
+			}
+			keptScan := *first.ScannedAt
+
+			// The next refresh: a failover left the timeline not
+			// established, and the recovery pages fail.
+			fake.mu.Lock()
+			fake.recovery = nil
+			later := snapshot.CompletedAt.Add(time.Hour)
+			fake.snapshot.CompletedAt = &later
+			bc := *fake.snapshot.Details.BarmanCloud
+			bc.Timeline = evidencev1alpha1.StateReason{State: state, Reason: evidencev1alpha1.Reason{Code: "x", Message: "history 2 is unreadable"}}
+			fake.snapshot.Details.BarmanCloud = &bc
+			fake.mu.Unlock()
+			runner.refresh(context.Background())
+			got := runner.ForCluster(testNamespace, testCluster).Recovery
+			if got.State != RecoveryUncertain || !got.Stale || got.StaleReason == "" || got.ScannedAt == nil || !got.ScannedAt.Equal(keptScan) {
+				t.Fatalf("kept: %+v", got)
+			}
+			if !strings.Contains(got.Reason, "history 2 is unreadable") {
+				t.Errorf("reason %q does not follow the fresh snapshot", got.Reason)
+			}
+			for _, p := range got.Paths {
+				if p.State == evidencev1alpha1.Healthy || p.State == evidencev1alpha1.Warning || p.FrontierReceiptAt != nil {
+					t.Errorf("kept path still coverage: %+v", p)
+				}
+			}
+		})
 	}
 }
 

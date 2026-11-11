@@ -35,6 +35,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -67,21 +68,21 @@ type pgAdminPrepared struct {
 	Features pgadmin.Features
 }
 
-// startupStepTimeout bounds each API read of the start-up: an API server
-// that accepts the connection and never answers fails the start, naming the
-// step, instead of hanging the operator before its probes are served. The
-// health endpoint is served only once the manager starts, so the
-// manager's liveness probe (first at 15 s, every 20 s, three failures:
-// killed about 55 s after the start) counts the start-up against it; the
-// deadline stays well under that, so the named error is what the log
-// shows (TestStartupStepBeforeLivenessKill).
+// startupStepTimeout bounds each start-up step (one or many API reads, see
+// startupStep): an API server that accepts the connection and never answers
+// fails the start, naming the step, instead of hanging the operator before
+// its probes are served. The health endpoint is served only once the
+// manager starts, so the manager's liveness probe (first at 15 s, every
+// 20 s, three failures: killed about 55 s after the start) counts the
+// start-up against it; the deadline stays well under that, so the named
+// error is what the log shows (TestStartupStepBeforeLivenessKill).
 const startupStepTimeout = 20 * time.Second
 
 // preparePgAdmin loads the configuration (defaults, env, ConfigMap, Secret;
 // one structured error) and probes the optional APIs with a scoped
 // List(Limit 1), through a client that reads past any cache.
 func preparePgAdmin(ctx context.Context, operatorImage, configMapName, secretName string) (pgAdminPrepared, error) {
-	direct, err := client.New(ctrl.GetConfigOrDie(), client.Options{Scheme: scheme})
+	direct, err := startupClient(ctrl.GetConfigOrDie())
 	if err != nil {
 		return pgAdminPrepared{}, fmt.Errorf("build API client: %w", err)
 	}
@@ -98,19 +99,65 @@ func preparePgAdmin(ctx context.Context, operatorImage, configMapName, secretNam
 	return prepared, nil
 }
 
-// startupStep runs one start-up read under its own deadline and names the
+// startupClient is a client for the start-up reads only, on a copy of cfg
+// with a request timeout: the lazy RESTMapper's discovery requests take no
+// context, so without it a hung API server would hold a step past its
+// deadline (startupStep returns at the deadline anyway; the timeout ends
+// the request it leaves behind). The manager keeps cfg as it is: a client
+// timeout would also cut its watches.
+func startupClient(cfg *rest.Config) (client.Client, error) {
+	return client.New(startupConfig(cfg), client.Options{Scheme: scheme})
+}
+
+// startupConfig is the start-up client's copy of cfg, with its request
+// timeout.
+func startupConfig(cfg *rest.Config) *rest.Config {
+	cfg = rest.CopyConfig(cfg)
+	cfg.Timeout = startupStepTimeout
+	return cfg
+}
+
+// startupStep runs one start-up step under its own deadline and names the
 // step in its error.
 func startupStep(ctx context.Context, timeout time.Duration, name string, run func(context.Context) error) error {
+	_, err := startupRead(ctx, timeout, name, func(ctx context.Context) (struct{}, error) {
+		return struct{}{}, run(ctx)
+	})
+	return err
+}
+
+// startupRead is startupStep for a step that returns a value. It returns at
+// the deadline even when read does not: a request that ignores its context
+// (the RESTMapper's discovery) cannot hold the start past it. read is then
+// left to finish on its own; its result goes only to a buffered channel
+// nobody reads, never to a variable of the caller.
+func startupRead[T any](ctx context.Context, timeout time.Duration, name string, read func(context.Context) (T, error)) (T, error) {
 	stepCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	err := run(stepCtx)
+	type outcome struct {
+		value T
+		err   error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		value, err := read(stepCtx)
+		done <- outcome{value, err}
+	}()
+	var result outcome
+	select {
+	case result = <-done:
+	case <-stepCtx.Done():
+		result.err = stepCtx.Err()
+	}
 	switch {
-	case err == nil:
-		return nil
+	case result.err == nil:
+		return result.value, nil
 	case ctx.Err() == nil && errors.Is(stepCtx.Err(), context.DeadlineExceeded):
-		return fmt.Errorf("start-up step %q did not finish within %s: %w", name, timeout, err)
+		var zero T
+		return zero, fmt.Errorf("start-up step %q did not finish within %s: %w", name, timeout, result.err)
 	default:
-		return fmt.Errorf("start-up step %q: %w", name, err)
+		var zero T
+		return zero, fmt.Errorf("start-up step %q: %w", name, result.err)
 	}
 }
 
@@ -118,12 +165,10 @@ func startupStep(ctx context.Context, timeout time.Duration, name string, run fu
 // timeout, the configuration info metric registered on registry once the
 // watched namespaces are known (it lists those actually watched).
 func preparePgAdminWith(ctx context.Context, direct client.Reader, registry prometheus.Registerer, timeout time.Duration, objects configuration.Objects) (pgAdminPrepared, error) {
-	var loaded configuration.Loaded
-	if err := startupStep(ctx, timeout, "load the configuration", func(ctx context.Context) error {
-		var err error
-		loaded, err = configuration.Load(ctx, direct, os.LookupEnv, objects)
-		return err
-	}); err != nil {
+	loaded, err := startupRead(ctx, timeout, "load the configuration", func(ctx context.Context) (configuration.Loaded, error) {
+		return configuration.Load(ctx, direct, os.LookupEnv, objects)
+	})
+	if err != nil {
 		return pgAdminPrepared{}, err
 	}
 	if err := loaded.OverrideFlag("PGADMIN_IMAGE_REPOSITORIES", pgAdminImageRepositories); err != nil {
@@ -132,24 +177,21 @@ func preparePgAdminWith(ctx context.Context, direct client.Reader, registry prom
 	// A watched namespace the operator holds no right in (deleted after the
 	// install, and its RoleBinding with it) is left out of the watch
 	// rather than failing the start or turning features off elsewhere.
-	var watched []string
-	if err := startupStep(ctx, timeout, "check the watched namespaces", func(ctx context.Context) error {
-		var err error
-		watched, err = reachableNamespaces(ctx, direct, loaded.Config.WatchNamespaces)
-		return err
-	}); err != nil {
+	namespaces := loaded.Config.WatchNamespaces
+	watched, err := startupRead(ctx, timeout, "check the watched namespaces", func(ctx context.Context) ([]string, error) {
+		return reachableNamespaces(ctx, direct, namespaces)
+	})
+	if err != nil {
 		return pgAdminPrepared{}, err
 	}
 	loaded.Config.WatchNamespaces = watched
 	if err := loaded.RegisterInfoMetric(registry); err != nil {
 		return pgAdminPrepared{}, err
 	}
-	var features pgadmin.Features
-	if err := startupStep(ctx, timeout, "probe the optional APIs", func(ctx context.Context) error {
-		var err error
-		features, err = probeFeatures(ctx, direct, loaded.Config.WatchNamespaces)
-		return err
-	}); err != nil {
+	features, err := startupRead(ctx, timeout, "probe the optional APIs", func(ctx context.Context) (pgadmin.Features, error) {
+		return probeFeatures(ctx, direct, watched)
+	})
+	if err != nil {
 		return pgAdminPrepared{}, err
 	}
 	setupLog.Info("PgAdmin optional APIs",

@@ -243,8 +243,8 @@ operator:
   restoreDrillGuard:
     # -- Render the restore-drill delete guard. `true` (default): always, which
     # is what a `helm template` or GitOps render needs; `auto`: only when the
-    # cluster serves the policy API (`helm install`, or `helm template
-    # --api-versions`); `false`: never (restore drills then rely on RBAC alone).
+    # cluster serves the policy API (`helm install`, or `helm template` with
+    # the API passed in `--api-versions`); `false`: never (restore drills then rely on RBAC alone).
     enabled: true
 
   # admissionPolicy: a ValidatingAdmissionPolicy (CEL, no webhook)

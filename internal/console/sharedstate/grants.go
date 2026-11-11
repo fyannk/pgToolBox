@@ -66,18 +66,30 @@ const KeyGrants = "grants.json"
 // few machines; the console refuses new work (a grant, a consent answer,
 // a code) beyond them rather than growing the ConfigMap. Every entry
 // counts, revoked ones and revocation placeholders included. The totals
-// hold a hundred people each at their own bound; past fairFrom of a total,
-// new work is refused to a person holding at least the mean share of the
-// people the table holds (overFairShare), so that a hundred identities
-// each at their own bound cannot fill it for everyone else: the last
-// places go to the people holding less. Each replica decides from what
-// it holds, and the merge stays a union, so replicas converge as before.
-// Identities minted without bound can still fill a table one entry each:
-// that is what the per-person bounds cannot tell apart. Encoded, a grant entry is at most
-// about 300 bytes (a client name costs at most 128 bytes once
-// JSON-escaped, the scope 32) and a code about 90, so a full index takes
-// about 605 KiB of the 768 KiB budget, which the other documents give way
-// to (TestAFullIndexFitsTheBudget measures it).
+// are sized for a hundred people each at their own bound, but no table
+// fills that way: once a table holds fairFromPercent of its total, new
+// work is refused to a person holding lateBound entries or more, or at
+// least the mean share of the people the table holds (overFairShare); a
+// newcomer is admitted while the table has room. Whatever the order of
+// arrival, N identities hold at most 80 % of the total plus lateBound for
+// each identity past the 80 % that took their own bound to get there:
+// 1,280 + 4 x (N - 80) of 1,600, plus in the grants table one revocation
+// placeholder each (below): a hundred identities hold at most 1,360 codes
+// and 1,460 grants, filling the codes table takes 160 identities and the
+// grants table 128, so the last places go to newcomers.
+// Each replica decides from what it holds and the merge stays a union, so
+// replicas converge as before (concurrent admissions on several replicas,
+// within the second a write takes to arrive, can each take a place).
+// Identities minted without bound can still fill a table four entries
+// each: that is what the per-person bounds cannot tell apart. Two writes
+// that are not new work are exempt from the fair share (only the hard
+// bounds apply): re-recording a grant another replica admitted (a refresh
+// of a grant this replica has not seen rotate), and a person's first
+// standing revocation placeholder (a replayed code's). Encoded, a grant
+// entry is at most about 300 bytes (a client name costs at most 128 bytes
+// once JSON-escaped, the scope 32) and a code about 90, so a full index
+// takes about 605 KiB of the 768 KiB budget, which the other documents
+// give way to (TestAFullIndexFitsTheBudget measures it).
 const (
 	MaxGrantsPerUser = 16
 	MaxGrants        = 100 * MaxGrantsPerUser
@@ -86,8 +98,11 @@ const (
 	// fairFromPercent is how full a table is, in percent of its total,
 	// when the fair share starts to refuse the people holding the most.
 	fairFromPercent = 80
-	maxClientName   = 128
-	maxScope        = 32
+	// lateDivisor sets lateBound, the per-person bound past
+	// fairFromPercent: a quarter of the per-person bound.
+	lateDivisor   = 4
+	maxClientName = 128
+	maxScope      = 32
 	// RevokedKeep is how long a revoked entry outlives its revocation: far
 	// longer than the replication grace during which a replica accepts a
 	// grant it does not know yet (mcpoauth), so that no replica can accept
@@ -127,6 +142,11 @@ type Grant struct {
 	Generation int
 	// Revoked is zero while the grant stands.
 	Revoked time.Time
+	// Rotated (AddGrant only, never stored) marks a grant another replica
+	// admitted and rotated, which this one has not seen yet: the refresh
+	// token is the proof it was admitted, the union already holds it, so
+	// recording it here is not new work and only the hard bounds apply.
+	Rotated bool
 }
 
 // grantEntry is a Grant on the wire.
@@ -298,6 +318,19 @@ func (s *Store) countLocked(user string) (mine, total, people int) {
 	return mine, len(s.grants), len(seen)
 }
 
+// placeholdersLocked counts the revocation placeholders user holds: the
+// entries revoked and never used (a recorded grant is used at its
+// creation, and the merge keeps the latest use).
+func (s *Store) placeholdersLocked(user string) int {
+	n := 0
+	for _, x := range s.grants {
+		if x.User == user && x.Revoked > 0 && x.Used == 0 {
+			n++
+		}
+	}
+	return n
+}
+
 // tableBound is the bounds of a table of the index: per person and in
 // all.
 type tableBound struct{ perUser, total int }
@@ -307,26 +340,40 @@ var (
 	codesBound  = tableBound{perUser: MaxCodesPerUser, total: maxCodes}
 )
 
+// full reports whether a person holding mine of a table's total entries
+// may add none whatever the fair share: at the per-person bound or at the
+// table's bound.
+func (b tableBound) full(mine, total int) bool {
+	return mine >= b.perUser || total >= b.total
+}
+
+// lateBound is the per-person bound once the table holds fairFromPercent
+// of its total.
+func (b tableBound) lateBound() int { return max(1, b.perUser/lateDivisor) }
+
 // overFairShare reports whether a person holding mine of a table's total
-// entries, held by people people, may add none: at the per-person bound,
-// at the table's bound, or, once the table holds fairFromPercent of its
-// bound, holding at least the mean share (total/people). A person holding
-// less than the mean, a newcomer always, may still add while the table
-// has room.
+// entries, held by people people, may add none: when full, or, once the
+// table holds fairFromPercent of its bound, holding lateBound or more, or
+// at least the mean share (total/people). A newcomer may always add while
+// the table has room. The lateBound refusal is what makes the bound
+// independent of the order of arrival: the mean alone stops people
+// arriving together, not people arriving one after another (each of the
+// last ones holds less than the mean until their own bound).
 func (b tableBound) overFairShare(mine, total, people int) bool {
 	switch {
-	case mine >= b.perUser, total >= b.total:
+	case b.full(mine, total):
 		return true
 	case total*100 < b.total*fairFromPercent:
 		return false
 	}
-	return mine > 0 && mine*people >= total
+	return mine >= b.lateBound() || (mine > 0 && mine*people >= total)
 }
 
 // AddGrant records a new grant, or merges one the index has. A new one is
 // refused over the per-user or the total bound, or past the fair share of
 // a nearly full index (overFairShare) (ErrTooManyGrants), counting every
-// entry.
+// entry. A Rotated one (another replica admitted it) is refused only over
+// the hard bounds.
 func (s *Store) AddGrant(g Grant) error {
 	if s == nil || !validGrantID(g.ID) {
 		return errors.New("not a grant")
@@ -349,7 +396,8 @@ func (s *Store) AddGrant(g Grant) error {
 		return nil
 	}
 	s.pruneGrantsLocked(s.opts.Now().Unix())
-	if mine, total, people := s.countLocked(e.User); grantsBound.overFairShare(mine, total, people) {
+	mine, total, people := s.countLocked(e.User)
+	if grantsBound.full(mine, total) || (!g.Rotated && grantsBound.overFairShare(mine, total, people)) {
 		return ErrTooManyGrants
 	}
 	s.grants[g.ID] = e
@@ -398,8 +446,11 @@ func (s *Store) GrantsOf(userHash string) []Grant {
 // next write (about a second). It reports whether the grant was standing.
 // A grant the index does not know (a code replayed before the grant it
 // bought reached this replica) is recorded revoked under userHash until
-// until, within the bounds: a placeholder is new work, refused at the
-// bounds like a grant.
+// until. A placeholder is refused at the hard bounds; past the fair share
+// it is admitted while the person holds no other standing placeholder (a
+// revocation must be recorded, and a person cannot climb past the fair
+// share by replaying their own codes: one placeholder each, at most, past
+// it).
 func (s *Store) RevokeGrant(id, userHash string, at, until time.Time) bool {
 	if s == nil || !validGrantID(id) {
 		return false
@@ -413,7 +464,8 @@ func (s *Store) RevokeGrant(id, userHash string, at, until time.Time) bool {
 			return false
 		}
 		s.pruneGrantsLocked(s.opts.Now().Unix())
-		if mine, total, people := s.countLocked(userHash); grantsBound.overFairShare(mine, total, people) {
+		mine, total, people := s.countLocked(userHash)
+		if grantsBound.full(mine, total) || (grantsBound.overFairShare(mine, total, people) && s.placeholdersLocked(userHash) > 0) {
 			return false
 		}
 	}

@@ -309,8 +309,12 @@ func dumpOnFailure(t *testing.T, namespaces ...string) {
 		if !t.Failed() {
 			return
 		}
-		var all strings.Builder
+		var all, denied strings.Builder
 		for _, ns := range namespaces {
+			// Every console of every namespace (both releases): the audit
+			// lines that name a refusal, kept out of the tail cut below.
+			logs, _ := exec.CommandContext(context.Background(), "kubectl", "-n", ns, "logs", "-l", "app.kubernetes.io/name=pgtoolbox-console", "--all-containers", "--tail=2000", "--prefix").CombinedOutput()
+			fmt.Fprintf(&denied, "\n[%s] refusals in the console logs:\n%s", ns, tail(grep(string(logs), "denied"), 2500))
 			for _, args := range [][]string{
 				{"-n", ns, "get", "deploy,rs,pods,svc,pdb,networkpolicy,pvc,cm,role,rolebinding,sa", "-o", "wide"},
 				{"-n", ns, "get", "events", "--sort-by=.lastTimestamp"},
@@ -324,7 +328,7 @@ func dumpOnFailure(t *testing.T, namespaces ...string) {
 		out, _ := exec.CommandContext(context.Background(), "kubectl", "get", "clusterrole,clusterrolebinding", "-o", "name").CombinedOutput()
 		fmt.Fprintf(&all, "\n$ kubectl get clusterrole,clusterrolebinding -o name (pgtoolbox-console only)\n%s", grep(string(out), "console"))
 		report := all.String()
-		t.Logf("state at failure:%s", tail(report, 12000))
+		t.Logf("state at failure:%s\n%s", denied.String(), tail(report, 9000))
 		if artifactDir != "" {
 			if err := os.MkdirAll(artifactDir, 0o755); err == nil {
 				_ = os.WriteFile(filepath.Join(artifactDir, t.Name()+".txt"), []byte(report), 0o644)

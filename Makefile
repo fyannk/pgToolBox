@@ -332,6 +332,8 @@ test-hack: ## Tests of the hack/ scripts (the security report generator; throwaw
 	./hack/evidence/test-verify-signing-key.sh
 	./hack/lib/test-net.sh
 	./hack/test-release.sh
+	./hack/test-changed-paths.sh
+	./hack/test-check-toolchain.sh
 
 .PHONY: lint-workflows
 lint-workflows: ## actionlint and zizmor on .github (workflows and the local action).

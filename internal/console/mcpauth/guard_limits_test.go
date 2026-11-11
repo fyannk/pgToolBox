@@ -143,3 +143,56 @@ func TestGuardExpiredTokenIsInvalid(t *testing.T) {
 		t.Errorf("expired = %d %q", w.Code, w.Header().Get("WWW-Authenticate"))
 	}
 }
+
+// An assistant holds a GET stream open for its whole session. Four of them
+// (one person, four windows) must not refuse that person's calls, and a
+// runaway number of them is still bounded, per person.
+func TestGuardOpenStreamsDoNotTakeCallSlots(t *testing.T) {
+	t.Parallel()
+	release := make(chan struct{})
+	entered := make(chan struct{}, 32)
+	auth1 := AuthenticatorFunc(func(_ context.Context, tok string) (*auth.Principal, error) {
+		return &auth.Principal{User: authz.User{Name: strings.TrimPrefix(tok, "good-")}}, nil
+	})
+	h := NewGuard(Options{Authenticator: auth1, PublicURL: publicURL, MaxConcurrent: 2, MaxStreams: 3}).Wrap(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodGet {
+				entered <- struct{}{}
+				<-release
+			}
+		}))
+	get := func(token string) int {
+		r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, publicURL+PathMCP, nil)
+		r.RemoteAddr = "10.0.0.7:5555"
+		r.Header.Set("Authorization", token)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w.Code
+	}
+	var wg sync.WaitGroup
+	for range 3 {
+		wg.Go(func() { get("Bearer good-dba") })
+	}
+	for range 3 {
+		<-entered
+	}
+	for range 4 {
+		if w := post(t, h, "Bearer good-dba", `{}`); w.Code != http.StatusOK {
+			t.Errorf("a call beside three open streams = %d", w.Code)
+		}
+	}
+	if code := get("Bearer good-dba"); code != http.StatusTooManyRequests {
+		t.Errorf("a fourth stream = %d", code)
+	}
+	done := make(chan int, 1)
+	go func() { done <- get("Bearer good-ops") }()
+	<-entered
+	close(release)
+	if code := <-done; code != http.StatusOK {
+		t.Errorf("another person's stream = %d", code)
+	}
+	wg.Wait()
+	if code := get("Bearer good-dba"); code != http.StatusOK {
+		t.Errorf("after the streams ended = %d", code)
+	}
+}

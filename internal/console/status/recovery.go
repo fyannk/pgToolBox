@@ -801,13 +801,13 @@ func (s *Service) recoveryTimeline(ev clusterEvidence, summary viewmodel.BackupS
 		}
 		in := timelineInput{
 			rec: rec, backups: ev.result.Backups, facts: facts, stale: stale,
-			scannedAt: scanned, refresh: ev.result.RefreshInterval,
+			scannedAt: scanned, observedAt: ev.result.ObservedAt, refresh: ev.result.RefreshInterval,
 			pgBackRest:  ev.result.Snapshot.Identity.Repository.Format == evidencev1alpha1.FormatPGBackRest,
 			backupIDs:   ev.result.BackupIDs,
 			backupsDone: ev.result.BackupsComplete,
 		}
 		evidenceTimeline(&out, in)
-		out.OffTarget = offTargetSpans(rec.Paths, ev.result.Backups, in.gone)
+		out.OffTarget = offTargetSpans(rec.Paths, ev.result.Backups, in.notRestorable)
 		if w := rec.TimelineWarning; w != "" {
 			p := evidenceReason("recovery.reason.timelineWarning", w)
 			if f := historyFileIn(w); f != "" && p.Params["historyFile"] == "" {
@@ -940,7 +940,10 @@ type timelineInput struct {
 	// stale says why the evidence is stale; nil when fresh.
 	stale     *viewmodel.Phrase
 	scannedAt *time.Time
-	refresh   time.Duration
+	// observedAt is when the console fetched the snapshot (its own clock):
+	// the purge band is timed from the earlier of it and scannedAt.
+	observedAt *time.Time
+	refresh    time.Duration
 	// pgBackRest: the repository is pgBackRest's (its identity's format),
 	// whose usability the agent rates per backup item (a path's backup
 	// missing from the items read is not known to be usable).
@@ -959,6 +962,21 @@ type timelineInput struct {
 // not possible, whichever the format (round 10, PG P2).
 func (in timelineInput) gone(id string) bool {
 	return in.backupsDone && !in.backupIDs[id]
+}
+
+// unconfirmed reports a path's backup that a cut backup collection does
+// not list beside recovery paths kept stale from an earlier scan: the
+// collection cannot say it is gone, nor that it is still there, and the
+// paths were read before a retention purge may have removed it, so a
+// restore from it is not confirmed (round 11, PG P3). Fresh paths come
+// from the same scan as the backups, which held them then.
+func (in timelineInput) unconfirmed(id string) bool {
+	return in.rec.Stale && !in.backupsDone && !in.backupIDs[id]
+}
+
+// notRestorable reports a path's backup that is gone or unconfirmed.
+func (in timelineInput) notRestorable(id string) bool {
+	return in.gone(id) || in.unconfirmed(id)
 }
 
 // targetTimeline is the newest timeline a path was evaluated toward: a
@@ -1118,7 +1136,7 @@ func evidenceTimeline(out *viewmodel.RecoveryTimeline, in timelineInput) {
 	if newest.timeline != 0 && newest.timeline < live {
 		behind = live
 	}
-	tailSegment(out, in, last, tailFacts{stop: tail, formerMayHold: newest.formerMayHold, holder: holder, rejoined: rejoined, liveAhead: behind})
+	tailSegment(out, in, last, tailFacts{stop: tail, formerMayHold: newest.formerMayHold, holder: holder, rejoined: rejoined, liveAhead: behind, targetLive: target >= live})
 	if !in.rec.Complete {
 		// The paths read may all be toward an older timeline than a cut
 		// one: what they cover is not drawn as current.
@@ -1151,7 +1169,7 @@ func evidenceTimeline(out *viewmodel.RecoveryTimeline, in timelineInput) {
 		out.NewestCoveredTarget = lastCovered(out.Segments)
 	}
 	timelineVerdict(out, in, timelineFindings{
-		tail: tail, formerMayHold: newest.formerMayHold, holder: holder, holderRejoined: rejoined, holes: holes, candidates: candidates, failedRecently: failedRecently, backlog: in.facts.backlog,
+		tail: tail, formerMayHold: newest.formerMayHold, holder: holder, holderRejoined: rejoined, holes: holes, candidates: candidates, failedRecently: failedRecently, backlog: in.facts.backlog, liveAhead: behind,
 		archiverUnread: in.facts.archiverUnread, hibernated: in.facts.hibernated, notReported: in.facts.notReported, degraded: degraded, degradedUnusable: degradedUnusable,
 		orphan: orphan, undrawn: undrawn,
 	})
@@ -1204,6 +1222,12 @@ func recoverySpans(out *viewmodel.RecoveryTimeline, in timelineInput, target uin
 			path := p
 			path.Reason = evidencev1alpha1.Reason{Code: backupGoneCode}
 			sp.degraded, sp.unusable = &path, true
+		} else if in.unconfirmed(p.BackupID) {
+			// Kept stale beside a cut collection that does not list it: a
+			// purge since the paths were read may have removed it.
+			path := p
+			path.Reason = evidencev1alpha1.Reason{Code: backupUnconfirmedCode}
+			sp.degraded, sp.unusable = &path, true
 		} else if in.pgBackRest && !listed {
 			// The console keeps the newest MaximumBackupItems items but
 			// more paths: a path whose backup was cut from the items read
@@ -1243,6 +1267,11 @@ var backupItemsLimit = strconv.Itoa(evidence.MaximumBackupItems)
 // repository's complete backup collection does not list (timelineInput
 // gone).
 const backupGoneCode = "backup-not-in-repository"
+
+// backupUnconfirmedCode is the console's reason for a path kept stale
+// whose backup a cut backup collection does not list (timelineInput
+// unconfirmed).
+const backupUnconfirmedCode = "backup-not-confirmed"
 
 // pathShownUnusable are the pgBackRest unusable reasons that come from
 // the backup's recovery path itself (pgbackrest assess.go): the path the
@@ -1357,6 +1386,12 @@ func drawRuns(out *viewmodel.RecoveryTimeline, spans, runs []interval, margin ti
 					map[string]string{"backupId": p.BackupID, "reason": backupGoneCode})))
 				continue
 			}
+			if p := piece.degraded; p != nil && piece.unusable && p.Reason.Code == backupUnconfirmedCode {
+				out.Segments = append(out.Segments, segment(piece.from, piece.to, segmentUnknown, say("recovery.segment.backupUnconfirmed",
+					"Base backup "+p.BackupID+" reaches here in the recovery paths kept from an earlier scan, but the repository's backup list was cut at a bound and does not list it, so it may have been purged since: not counted as covered.",
+					map[string]string{"backupId": p.BackupID, "reason": backupUnconfirmedCode})))
+				continue
+			}
 			if p := piece.degraded; p != nil && piece.unusable && p.Reason.Code == backupNotListedCode {
 				out.Segments = append(out.Segments, segment(piece.from, piece.to, segmentUnknown, say("recovery.segment.backupNotListed",
 					"Base backup "+p.BackupID+" reaches here, but it is not among the newest "+backupItemsLimit+" backups the console reads from the evidence agent, so its usability is not known: not counted as covered. Expire old backups or lower the retention so the repository holds fewer than "+backupItemsLimit+" backups, or restore from a newer backup.",
@@ -1429,17 +1464,40 @@ func markEdges(out *viewmodel.RecoveryTimeline, in timelineInput, first, last ti
 	if in.facts.archiverUnread {
 		archiverUnreadEdge(out, in.facts, last, in.scannedAt)
 	}
-	purge := in.refresh
-	if purge <= 0 {
-		purge = evidence.DefaultAgentRefreshInterval
-	}
-	if in.scannedAt != nil && in.facts.now.After(*in.scannedAt) {
-		purge += in.facts.now.Sub(*in.scannedAt)
-	}
+	purge := purgeBand(in, first, last)
 	uncertain(out, first, first.Add(purge), say("recovery.segment.purgeEdge",
 		"Within "+humanDuration(purge)+" of the oldest restore point: a retention purge since the repository was last read may have removed this base backup.",
 		map[string]string{"marginSeconds": secondsParam(purge)}))
 	return failedRecently
+}
+
+// purgeBand is how long after the oldest restore point a retention purge
+// may have removed its base backup unseen: the agent's refresh interval
+// plus the age of the scan the paths come from, timed from the earlier of
+// the agent's scan time and the console's fetch time (an agent clock
+// ahead of the console's does not shrink it), and never past the window
+// [first, last] (an absurd scan time, which saturates time.Sub, does not
+// overflow it to nothing; round 11, PG P3).
+func purgeBand(in timelineInput, first, last time.Time) time.Duration {
+	purge := in.refresh
+	if purge <= 0 {
+		purge = evidence.DefaultAgentRefreshInterval
+	}
+	var read *time.Time
+	for _, at := range []*time.Time{in.scannedAt, in.observedAt} {
+		if at != nil && (read == nil || at.Before(*read)) {
+			read = at
+		}
+	}
+	window := max(last.Sub(first), 0)
+	var age time.Duration
+	if read != nil && in.facts.now.After(*read) {
+		age = min(in.facts.now.Sub(*read), window)
+	}
+	if purge > window-age {
+		return window
+	}
+	return purge + age
 }
 
 // caughtUpBefore reports an archiver that had caught up from its failure
@@ -1604,6 +1662,10 @@ type tailFacts struct {
 	// liveAhead is the live timeline when the newest run ends on an older
 	// one (the repository lags the failover); 0 otherwise.
 	liveAhead uint64
+	// targetLive: the paths already target the live timeline (its history
+	// file is in the repository) though their frontier is still on the
+	// parent: no segment of the live timeline was archived yet.
+	targetLive bool
 }
 
 // tailSegment draws the time after the newest restore point: only a
@@ -1632,6 +1694,13 @@ func tailSegment(out *viewmodel.RecoveryTimeline, in timelineInput, last time.Ti
 		_, p = holeOf(tail)
 	case !in.rec.Complete:
 		p = say("recovery.segment.collectionCut", "The recovery path collection was cut at a bound: newer coverage may exist.", nil)
+	case t.liveAhead != 0 && t.targetLive:
+		// The history file of the live timeline is archived (the paths
+		// target it), but no segment of it yet (round 11, CNPG P3).
+		tl := strconv.FormatUint(t.liveAhead, 10)
+		p = say("recovery.segment.liveTimelineNoSegment",
+			"The repository held the history file of timeline "+tl+", the one the current primary writes, but no WAL segment of it yet when it was last read: this time's WAL may not be in the repository yet.",
+			map[string]string{"timeline": tl})
 	case t.liveAhead != 0:
 		// The newest run ends on an older timeline than the one the
 		// current primary writes (round 10, P2).
@@ -1782,6 +1851,9 @@ type timelineFindings struct {
 	failedRecently    bool
 	// backlog is the archiver's waiting segments, 0 when keeping up.
 	backlog int
+	// liveAhead is the live timeline when the newest run ends on an older
+	// one (tailFacts liveAhead); 0 otherwise.
+	liveAhead uint64
 	// archiverUnread, hibernated, notReported: the primary's archiver is
 	// not read, or reports no readyWalFiles.
 	archiverUnread, hibernated, notReported bool
@@ -1798,7 +1870,8 @@ type timelineFindings struct {
 // timelineVerdict states the bar's state and reason, the gravest finding
 // first: a cut collection, missing WAL at the end, an unconfirmed end,
 // holes, candidate gaps, a recent archiving failure, an archive backlog,
-// an orphan timeline, stale evidence.
+// a live timeline the repository holds no WAL of, an orphan timeline,
+// stale evidence.
 func timelineVerdict(out *viewmodel.RecoveryTimeline, in timelineInput, f timelineFindings) {
 	warning := string(evidencev1alpha1.Warning)
 	switch {
@@ -1838,6 +1911,11 @@ func timelineVerdict(out *viewmodel.RecoveryTimeline, in timelineInput, f timeli
 		setReason(out, say("recovery.reason.backupGone",
 			"base backup "+f.degraded.BackupID+" is no longer in the repository's backup list: the span only it reaches is not counted as covered",
 			map[string]string{"backupId": f.degraded.BackupID, "reason": backupGoneCode}))
+	case f.degraded != nil && f.degradedUnusable && f.degraded.Reason.Code == backupUnconfirmedCode:
+		out.State = warning
+		setReason(out, say("recovery.reason.backupUnconfirmed",
+			"base backup "+f.degraded.BackupID+" is not in the repository's backup list, which was cut at a bound, beside recovery paths kept from an earlier scan: the span only it reaches is not counted as covered until the paths are read again",
+			map[string]string{"backupId": f.degraded.BackupID, "reason": backupUnconfirmedCode}))
 	case f.degraded != nil && f.degradedUnusable && f.degraded.Reason.Code == backupNotListedCode:
 		out.State = warning
 		setReason(out, say("recovery.reason.backupNotListed",
@@ -1859,6 +1937,16 @@ func timelineVerdict(out *viewmodel.RecoveryTimeline, in timelineInput, f timeli
 		n := strconv.Itoa(f.backlog)
 		setReason(out, say("recovery.reason.archiveBacklog", n+" WAL segments are waiting to be archived on the primary: the newest restore points are uncertain",
 			map[string]string{"segments": n}))
+	case f.liveAhead != 0:
+		// Right after a failover the repository holds no WAL of the
+		// timeline the new primary writes: the newest restore points are
+		// not established, which a healthy chip would hide (round 11, DBA
+		// P2). It clears once the agent reads the new timeline's WAL.
+		out.State = warning
+		tl := strconv.FormatUint(f.liveAhead, 10)
+		setReason(out, say("recovery.reason.liveTimelineNotArchived",
+			"the repository held no WAL of timeline "+tl+", the one the current primary writes, when it was last read: the newest restore points are uncertain; wait for the next evidence refresh, or run pg_switch_wal() on the new primary to archive its first segment",
+			map[string]string{"timeline": tl}))
 	case f.notReported:
 		out.State = warning
 		setReason(out, say("recovery.reason.archiverNotReported", "the archiving instance does not report itself primary (a replica cluster's designated primary, or a primary mid-promotion), so it does not report its archive backlog: how late recent WAL reached the repository is not known, so the newest restore points are uncertain", nil))

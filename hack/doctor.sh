@@ -76,13 +76,15 @@ row crd-ref-docs "$(want go:github.com/elastic/crd-ref-docs)" "$(found crd-ref-d
 row lychee "$(want aqua:lycheeverse/lychee)" "$(found lychee lychee --version)"
 row codespell "$(want pipx:codespell)" "$(found codespell codespell --version)"
 
-# untt (helm-unittest) prints no version either; presence is what matters.
-if command -v untt >/dev/null 2>&1; then
-  printf '  %-14s %-34s ok (version not reported)\n' untt "wants $(want github:helm-unittest/helm-unittest)"
-else
-  printf '  %-14s %-34s MISSING\n' untt "wants $(want github:helm-unittest/helm-unittest)"
-  status=1
-fi
+# untt (helm-unittest) has no version flag, but it is a Go binary and carries
+# its module version in the build info.
+found_untt() {
+  command -v untt >/dev/null 2>&1 && command -v go >/dev/null 2>&1 \
+    && go version -m "$(command -v untt)" 2>/dev/null | awk '$1 == "mod" && $2 ~ /helm-unittest$/ { print $3 }' | first_version || true
+}
+row untt "$(want github:helm-unittest/helm-unittest)" "$(found_untt)"
+# promtool runs the alert rules' unit tests (make rules-test).
+row promtool "$(want aqua:prometheus/prometheus)" "$(found promtool promtool --version)"
 
 echo "other tools (not pinned here; the e2e, image and release targets need them):"
 for t in docker git make jq curl python3 gh; do

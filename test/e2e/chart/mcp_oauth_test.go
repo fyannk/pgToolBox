@@ -176,7 +176,9 @@ func (f *dexFixture) oauthConnect(t *testing.T, hosts map[string]string, base, w
 		t.Fatal(err)
 	}
 	c := mcp.NewClient(&mcp.Implementation{Name: "pgtoolbox-e2e-oauth", Version: "v0"}, nil)
-	cs, err := c.Connect(ctx(), &mcp.StreamableClientTransport{Endpoint: base + "/mcp", HTTPClient: hc, MaxRetries: -1, OAuthHandler: h}, nil)
+	cs, err := connectWaitingOut429(func() (*mcp.ClientSession, error) {
+		return c.Connect(ctx(), &mcp.StreamableClientTransport{Endpoint: base + "/mcp", HTTPClient: hc, MaxRetries: -1, OAuthHandler: h}, nil)
+	})
 	if err != nil {
 		t.Fatalf("MCP connect to %s as %s through the console's OAuth: %v", base, who, err)
 	}

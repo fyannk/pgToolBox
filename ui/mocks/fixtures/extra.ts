@@ -250,6 +250,44 @@ export const recoveryMixedHoles = {
   ],
 } satisfies RecoveryTimeline;
 
+/**
+ * Right after a failover: the repository holds no WAL of the timeline the new
+ * primary writes yet, so the window is a warning that says to wait for the
+ * next evidence refresh or switch WAL, never a green chip with no reason.
+ */
+export const recoveryAfterFailover = {
+  ...timeline,
+  state: "warning",
+  targetTimeline: 1,
+  reason:
+    "the repository held no WAL of timeline 2, the one the current primary writes, when it was last read: the newest restore points are uncertain; wait for the next evidence refresh, or run pg_switch_wal() on the new primary to archive its first segment",
+  reasons: [
+    {
+      code: "recovery.reason.liveTimelineNotArchived",
+      params: { timeline: "2" },
+      text: "the repository held no WAL of timeline 2, the one the current primary writes, when it was last read: the newest restore points are uncertain; wait for the next evidence refresh, or run pg_switch_wal() on the new primary to archive its first segment",
+    },
+  ],
+  segments: [
+    {
+      from: segments[0]?.from ?? "2026-10-22T07:08:00Z",
+      to: "2026-10-29T11:40:00Z",
+      kind: "covered",
+      backupId: segments.at(-1)?.backupId,
+      text: segments.at(-1)?.text,
+    },
+    {
+      from: "2026-10-29T11:40:00Z",
+      to: "2026-10-29T12:00:00Z",
+      kind: "unknown",
+      code: "recovery.segment.liveTimelineNotArchived",
+      params: { timeline: "2" },
+      text: "The repository held no WAL of timeline 2, the one the current primary writes, when it was last read (the failover's history file may not be archived yet, or the evidence agent has not read the repository since): this time's WAL may not be in the repository yet.",
+    },
+  ],
+  markers: markers.filter((mk) => mk.kind === "completed"),
+} satisfies RecoveryTimeline;
+
 /** No evidence agent: the operator's window, drawn hatched and labelled unverified. */
 export const recoveryReportedOnly = {
   ...timeline,

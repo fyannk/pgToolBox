@@ -243,6 +243,13 @@ console_and_agent_reconciled() {
   no_forbidden "${ns}" pgtoolboxconsole/console && no_forbidden "${ns}" evidenceagent/scope
 }
 
+# bound_agent_subject <namespace>: the agents' ClusterRoleBinding names the
+# namespace's agent ServiceAccount.
+bound_agent_subject() {
+  kubectl get clusterrolebinding pgtoolbox-evidence-agent -o jsonpath='{range .subjects[*]}{.namespace}/{.name}{"\n"}{end}' |
+    grep -qx "$1/scope-evidence-agent"
+}
+
 # refresh_console_and_agent <namespace> <n>: force a reconcile under the
 # operator's CURRENT mode and wait for its status. The first reconcile of a
 # mode switch can predate it; its conditions are the old mode's. The agent's
@@ -252,7 +259,16 @@ console_and_agent_reconciled() {
 # only do with the new mode's permissions.
 refresh_console_and_agent() {
   local ns=$1 n=$2 agent_gen console_gen
+  # The agents' ClusterRoleBinding loses every subject first, so the operator's
+  # update of it (not the object left over from the install) is what the wait
+  # below proves; the spec changes that follow trigger the reconcile.
+  kubectl patch clusterrolebinding pgtoolbox-evidence-agent --type json -p '[{"op":"replace","path":"/subjects","value":[]}]' || return 1
   kubectl -n "${ns}" patch evidenceagent/scope --type merge -p "{\"spec\":{\"refreshInterval\":\"$((30 + n))m\"}}" || return 1
+  # A harmless console field (an annotation on its Service only) so that the
+  # console's generation really moves and the observedGeneration wait below
+  # cannot pass on the generation it already had.
+  kubectl -n "${ns}" patch pgtoolboxconsole/console --type merge \
+    -p "{\"spec\":{\"metadataPropagation\":[{\"target\":\"Service\",\"annotations\":{\"e2e.pgtoolbox.fyannk.dev/refresh\":\"${n}\"}}]}}" || return 1
   kubectl -n "${ns}" delete rolebinding/console-restore-drills --wait=true || return 1
   retry 180 exist "${ns}" rolebinding/console-restore-drills || {
     echo "the operator did not recreate rolebinding/console-restore-drills in ${ns}" >&2
@@ -260,6 +276,10 @@ refresh_console_and_agent() {
   }
   agent_gen="$(kubectl -n "${ns}" get evidenceagent/scope -o jsonpath='{.metadata.generation}')"
   kubectl -n "${ns}" wait evidenceagent/scope --for=jsonpath='{.status.observedGeneration}'="${agent_gen}" --timeout=180s || return 1
+  retry 180 bound_agent_subject "${ns}" || {
+    echo "the operator did not restore ${ns}/scope-evidence-agent in the agents' ClusterRoleBinding" >&2
+    return 1
+  }
   console_gen="$(kubectl -n "${ns}" get pgtoolboxconsole/console -o jsonpath='{.metadata.generation}')"
   kubectl -n "${ns}" wait pgtoolboxconsole/console --for=jsonpath='{.status.observedGeneration}'="${console_gen}" --timeout=180s || return 1
 }

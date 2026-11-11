@@ -82,7 +82,9 @@ func mcpSession(t *testing.T, hosts map[string]string, base, token string) *mcp.
 	hc.Jar = nil
 	hc.Transport = bearerRoundTripper{token: token, next: hc.Transport}
 	c := mcp.NewClient(&mcp.Implementation{Name: "pgtoolbox-e2e", Version: "v0"}, nil)
-	cs, err := c.Connect(ctx(), &mcp.StreamableClientTransport{Endpoint: base + "/mcp", HTTPClient: hc, MaxRetries: -1}, nil)
+	cs, err := connectWaitingOut429(func() (*mcp.ClientSession, error) {
+		return c.Connect(ctx(), &mcp.StreamableClientTransport{Endpoint: base + "/mcp", HTTPClient: hc, MaxRetries: -1}, nil)
+	})
 	if err != nil {
 		t.Fatalf("MCP connect to %s: %v", base, err)
 	}
@@ -221,7 +223,9 @@ func mcpWriteSession(t *testing.T, hosts map[string]string, base, token, typed s
 			return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"confirmation": typed}}, nil
 		},
 	})
-	cs, err := c.Connect(ctx(), &mcp.StreamableClientTransport{Endpoint: base + "/mcp", HTTPClient: hc, MaxRetries: -1}, nil)
+	cs, err := connectWaitingOut429(func() (*mcp.ClientSession, error) {
+		return c.Connect(ctx(), &mcp.StreamableClientTransport{Endpoint: base + "/mcp", HTTPClient: hc, MaxRetries: -1}, nil)
+	})
 	if err != nil {
 		t.Fatalf("MCP connect to %s: %v", base, err)
 	}
@@ -278,7 +282,9 @@ func mcpURLSession(t *testing.T, hosts map[string]string, base, token string, fo
 			return &mcp.ElicitResult{Action: "accept"}, nil
 		},
 	})
-	cs, err := c.Connect(ctx(), &mcp.StreamableClientTransport{Endpoint: base + "/mcp", HTTPClient: hc, MaxRetries: -1}, nil)
+	cs, err := connectWaitingOut429(func() (*mcp.ClientSession, error) {
+		return c.Connect(ctx(), &mcp.StreamableClientTransport{Endpoint: base + "/mcp", HTTPClient: hc, MaxRetries: -1}, nil)
+	})
 	if err != nil {
 		t.Fatalf("MCP connect to %s: %v", base, err)
 	}
@@ -413,5 +419,23 @@ func mcpWriteScenario(t *testing.T, dex *dexFixture, hosts map[string]string, ba
 		if tl.Name == "reload" || tl.Name == "backup" || tl.Name == "restart" || tl.Name == "promote" {
 			t.Errorf("console B (writeTools off) lists %s", tl.Name)
 		}
+	}
+}
+
+// connectWaitingOut429 retries an MCP connect the console answered 429 for
+// up to two minutes. Every client of this test reaches the consoles from
+// one address (kind's port forward), so the per-address budget for
+// unrecognised tokens, which a new access token spends once on each
+// replica and which the sign-in form shares, is spent by the scenarios
+// together where real people would each have their own; any other error
+// is returned at once.
+func connectWaitingOut429(connect func() (*mcp.ClientSession, error)) (*mcp.ClientSession, error) {
+	deadline := time.Now().Add(2 * time.Minute)
+	for {
+		cs, err := connect()
+		if err == nil || !strings.Contains(err.Error(), http.StatusText(http.StatusTooManyRequests)) || time.Now().After(deadline) {
+			return cs, err
+		}
+		time.Sleep(10 * time.Second)
 	}
 }

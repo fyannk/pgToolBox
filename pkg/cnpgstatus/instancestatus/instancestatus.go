@@ -154,7 +154,9 @@ type Reading struct {
 	// LastArchivedWALTimeUnparsed reports a lastArchivedWALTime the
 	// instance sent that does not parse as a time: LastArchivedWALTime is
 	// then nil, and the instance did not say it never archived (an absent
-	// or empty value does).
+	// or empty value does, and so does "-infinity", the value CloudNativePG
+	// sends: COALESCE(last_archived_time,'-infinity') in fillArchiverStatus,
+	// through pgx's text form; neverArchived).
 	LastArchivedWALTimeUnparsed bool
 	LastFailedWAL               string
 	LastFailedWALTime           *time.Time
@@ -309,7 +311,7 @@ func Parse(body io.Reader) (Reading, error) {
 		ReadyWALFiles:                 r.ReadyWALFiles,
 		LastArchivedWAL:               bound(r.LastArchivedWAL),
 		LastArchivedWALTime:           instant(r.LastArchivedWALTime),
-		LastArchivedWALTimeUnparsed:   r.LastArchivedWALTime != "" && instant(r.LastArchivedWALTime) == nil,
+		LastArchivedWALTimeUnparsed:   !neverArchived(r.LastArchivedWALTime) && instant(r.LastArchivedWALTime) == nil,
 		LastFailedWAL:                 bound(r.LastFailedWAL),
 		LastFailedWALTime:             instant(r.LastFailedWALTime),
 		SystemID:                      bound(r.SystemID),
@@ -418,6 +420,14 @@ var instantLayouts = []string{
 
 // instant parses one reported timestamp; nil for an absent or
 // unparseable value, never a wrong instant.
+// neverArchived reports a pg_stat_archiver time that says the instance
+// has archived nothing: absent or empty, or the "-infinity" CloudNativePG
+// coalesces a NULL last_archived_time to (probes.go fillArchiverStatus,
+// v1.30.0 and v1.30.1; round 11, CNPG P3).
+func neverArchived(raw string) bool {
+	return raw == "" || raw == "-infinity"
+}
+
 func instant(raw string) *time.Time {
 	if raw == "" {
 		return nil

@@ -248,6 +248,13 @@ expect 1 'not an ancestor of origin/main' -- pre "v${version}" "${stray}"
 git -C "${repo}" -c user.name=t -c user.email=t@t tag -a -m t "v${version}" "${head}"
 expect 0 'ok: preflight' -- pre "v${version}" "${head}"
 expect 1 'already exists and points at' -- pre "v${version}" "${stray}"
+# The argument may be any revision, resolved to its commit: a branch-less
+# symbolic name, the object SHA of the annotated tag itself, and a refusal that
+# names a bad argument instead of failing later.
+expect 0 "ok: preflight v${version} on ${head}" -- pre "v${version}" HEAD
+expect 0 "ok: preflight v${version} on ${head}" -- pre "v${version}" "$(git -C "${repo}" rev-parse "refs/tags/v${version}")"
+expect 1 'does not name a commit' -- pre "v${version}" "$(git -C "${repo}" rev-parse "${head}^{tree}")"
+expect 1 'does not name a commit' -- pre "v${version}" no-such-revision
 git -C "${repo}" tag -d "v${version}" >/dev/null
 git -C "${repo}" update-ref -d refs/remotes/origin/main
 expect 1 'origin/main is not fetched' -- pre "v${version}" "${head}"
@@ -419,6 +426,9 @@ echo "ok: prune-caches"
 ./hack/check-action-pins.sh >/dev/null || fail "check-action-pins fails on the committed doc"
 sed '/jdx\/mise-action@/d' docs/site/docs/development/repository-settings.md > "${work}/settings-missing.md"
 expect 1 'jdx/mise-action' -- ./hack/check-action-pins.sh "${work}/settings-missing.md"
+# An entry naming a SHA would allow only that SHA: the list must say @*.
+sed 's#`jdx/mise-action@\*`#`jdx/mise-action@0123456789abcdef0123456789abcdef01234567`#' docs/site/docs/development/repository-settings.md > "${work}/settings-sha.md"
+expect 1 'jdx/mise-action' -- ./hack/check-action-pins.sh "${work}/settings-sha.md"
 
 # ---- retry: the bounded loop the workflow's verify step shares with
 # verify-published; a command that never succeeds fails after VERIFY_ATTEMPTS.

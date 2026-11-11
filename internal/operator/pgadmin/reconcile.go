@@ -93,7 +93,10 @@ func (r *Reconciler) reconcile(ctx context.Context, p *pgtoolboxv1alpha1.PgAdmin
 		pgtoolboxv1alpha1.ConditionProgressing, pgtoolboxv1alpha1.ConditionStalled,
 		pgtoolboxv1alpha1.ConditionPgAdminEgressConfined)...)
 	if p.IsPaused() {
-		return false, nil
+		// Paused, nothing is applied or observed, with one exception: a
+		// hostname outside the allow-list is withdrawn all the same (a
+		// pause must not keep a refused name published).
+		return false, r.checkHostname(ctx, p)
 	}
 	in, result, remote, err := r.resolve(ctx, p)
 	if err != nil {
@@ -1007,11 +1010,14 @@ func unavailableWhy(result discovery.Result) string {
 // ConfigurationValid=False (HostnameNotAllowed) and a stall until the spec
 // or the operator's configuration changes. The message names a refused
 // image too; what needs the API (the settings database) is checked once
-// the hostname is fixed.
+// the hostname is fixed. It runs while the PgAdmin is paused too. An
+// allowed hostname clears a HostnameNotAllowed that conditions still say
+// (exposure.ClearHostnameRefusal).
 func (r *Reconciler) checkHostname(ctx context.Context, p *pgtoolboxv1alpha1.PgAdmin) error {
 	_, imageProblem := r.imageProblem(p)
 	message := exposure.HostnameRefusal(p.Spec.Exposure, r.Config.ExposureAllowedHostSuffixes, imageProblem)
 	if message == "" {
+		exposure.ClearHostnameRefusal(&p.Status.Conditions, p.Generation)
 		return nil
 	}
 	if err := r.withdrawExposure(ctx, p); err != nil {
