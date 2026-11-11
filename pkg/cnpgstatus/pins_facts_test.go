@@ -197,6 +197,39 @@ func TestPinArchiverIdentityAndTimeline(t *testing.T) {
 				t.Errorf("v%s: fillStatusFromPrimary no longer reads %q", release, literal)
 			}
 		}
+		// instancestatus neverArchived (round 11, CNPG P3): a NULL
+		// last_archived_time reaches /pg/status as "-infinity".
+		archiverStatus := functionBody(t, probes, "func fillArchiverStatus(superUserDB *sql.DB, result *postgres.PostgresqlStatus) error {")
+		if !bytes.Contains(archiverStatus, []byte("COALESCE(last_archived_time,'-infinity'),")) {
+			t.Errorf("v%s: fillArchiverStatus no longer coalesces last_archived_time to '-infinity'", release)
+		}
+	}
+}
+
+// TestPinFormerPrimaryArchivesBeforeRejoining pins the fact the console's
+// FormerPrimaryRejoined advice rests on (internal/console/status
+// rejoinedSince, round 11, CNPG P3): a former primary that starts again
+// archives every .ready WAL file before pg_rewind and its demotion, and a
+// failure stops the start, so a Ready standby read after the promotion
+// no longer holds WAL waiting to be archived.
+func TestPinFormerPrimaryArchivesBeforeRejoining(t *testing.T) {
+	for _, v := range verifiedReleases {
+		release := v.tag
+		startup, err := os.ReadFile(filepath.Join(moduleDir(t, release), "internal", "management", "controller", "instance_startup.go"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		archive := bytes.Index(startup, []byte("archiver.ArchiveAllReadyWALs(ctx, cluster, r.instance.PgData)"))
+		failure := bytes.Index(startup, []byte("while ensuring all WAL files are archived"))
+		rewind := bytes.Index(startup, []byte("r.instance.Rewind(ctx)"))
+		switch {
+		case archive < 0:
+			t.Errorf("v%s: instance_startup.go no longer archives the ready WAL files on start", release)
+		case failure < archive:
+			t.Errorf("v%s: instance_startup.go no longer fails the start when archiving the ready WAL files fails", release)
+		case rewind < failure:
+			t.Errorf("v%s: instance_startup.go no longer archives the ready WAL files before pg_rewind", release)
+		}
 	}
 }
 
