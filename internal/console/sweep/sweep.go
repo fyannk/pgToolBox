@@ -585,13 +585,13 @@ func (s *Sweeper) pushRings(cs *clusterState, snap Snapshot, at time.Time) {
 			rings = map[string]*ring{}
 			cs.rings[name] = rings
 		}
-		for _, key := range []string{SeriesLagBytes, SeriesReadyWALFiles, SeriesCurrentLSN, SeriesLastArchivedAt} {
+		for _, key := range []string{SeriesLagBytes, SeriesReadyWALFiles, SeriesCurrentLSN, SeriesLastArchivedAt, SeriesTimeline} {
 			if rings[key] == nil {
 				// A ring restored from a snapshot may lack a series.
 				rings[key] = &ring{}
 			}
 		}
-		var lag, ready, position, archived *float64
+		var lag, ready, position, archived, timeline *float64
 		if inst.State == viewmodel.StatusReadOK && inst.Reading != nil {
 			if inst.Reading.IsPrimary {
 				if lsn, ok := parseLSN(inst.Reading.CurrentLSN); ok && lsn <= maxExactLSN {
@@ -604,9 +604,14 @@ func (s *Sweeper) pushRings(cs *clusterState, snap Snapshot, at time.Time) {
 				// cluster's designated primary included, is no reading.
 				files := float64(inst.Reading.ReadyWALFiles)
 				ready = &files
+				ms := float64(ArchivedNone)
 				if t := inst.Reading.LastArchivedWALTime; t != nil {
-					ms := float64(t.UnixMilli())
-					archived = &ms
+					ms = float64(t.UnixMilli())
+				}
+				archived = &ms
+				if tl, ok := walFileTimeline(inst.Reading.CurrentWAL); ok {
+					v := float64(tl)
+					timeline = &v
 				}
 			}
 			if !inst.Reading.IsPrimary {
@@ -628,6 +633,7 @@ func (s *Sweeper) pushRings(cs *clusterState, snap Snapshot, at time.Time) {
 		rings[SeriesReadyWALFiles].push(at, readBy, ready, s.opts.Retention)
 		rings[SeriesCurrentLSN].push(at, readBy, position, s.opts.Retention)
 		rings[SeriesLastArchivedAt].push(at, readBy, archived, s.opts.Retention)
+		rings[SeriesTimeline].push(at, readBy, timeline, s.opts.Retention)
 	}
 	for name := range cs.rings {
 		if _, ok := snap.Instances[name]; !ok {

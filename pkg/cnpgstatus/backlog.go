@@ -30,6 +30,10 @@ type ReadySample struct {
 	// clock; nil when that sweep did not read one (none reported, or a
 	// ring that does not keep it).
 	LastArchivedAt *time.Time `json:"lastArchivedAt,omitempty"`
+	// ArchivedNone: that sweep read the archiver and it had archived
+	// nothing yet (last_archived_time null), so a first archive since is
+	// progress; false when the sweep did not read it (CNPG P3-b).
+	ArchivedNone bool `json:"archivedNone,omitempty"`
 }
 
 const (
@@ -226,13 +230,18 @@ func ArchiveBacklogOf(c *cnpgv1.Cluster, live *ArchiverLive) ArchiveBacklog {
 // When that sweep's is not kept, it is compared with the sweep's time
 // plus one sweep interval, so a skew within one interval neither hides a
 // stall nor invents progress; only an archive that clearly postdates the
-// sweep counts.
+// sweep counts. When that sweep read the archiver with nothing archived
+// yet (ArchivedNone), any archive now is progress.
 func archivedSince(live *ArchiverLive, oldest ReadySample, interval time.Duration) bool {
 	if live.LastArchivedAt == nil {
 		return false
 	}
 	if oldest.LastArchivedAt != nil {
 		return live.LastArchivedAt.After(*oldest.LastArchivedAt)
+	}
+	if oldest.ArchivedNone {
+		// It had archived nothing then, and has now: its first archive.
+		return true
 	}
 	return live.LastArchivedAt.After(oldest.At.Add(max(interval, 0)))
 }

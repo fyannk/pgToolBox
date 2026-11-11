@@ -175,7 +175,9 @@ function recoveryReason(code: string, p: Params): string | undefined {
     case "recovery.reason.pathsCut":
       return m.rp_reason_paths_cut();
     case "recovery.reason.missingAfterLatestFormerPrimary":
-      return m.rp_reason_missing_after_latest_former_primary();
+      return p?.instance
+        ? m.rp_reason_missing_after_latest_former_primary_named({ instance: p.instance })
+        : m.rp_reason_missing_after_latest_former_primary();
     case "recovery.reason.missingAfterLatest":
       return m.rp_reason_missing_after_latest();
     case "recovery.reason.holes":
@@ -200,6 +202,8 @@ function recoveryReason(code: string, p: Params): string | undefined {
         ? m.rp_reason_path_not_healthy({ id, state, detail })
         : m.rp_reason_path_not_healthy_bare({ id, state });
     }
+    case "recovery.reason.backupNotListed":
+      return p?.backupId ? m.rp_reason_backup_not_listed({ id: p.backupId }) : undefined;
     case "recovery.reason.backupNotUsable": {
       const id = p?.backupId;
       if (!id) return undefined;
@@ -273,9 +277,13 @@ function translate(code: string, p: Params): string | undefined {
     case "recovery.segment.purgeEdge":
       return margin ? m.rp_segment_purge_edge({ margin }) : undefined;
     case "recovery.segment.missingAfterLatestFormerPrimary":
-      return m.rp_segment_missing_after_latest_former_primary();
+      return p?.instance
+        ? m.rp_segment_missing_after_latest_former_primary_named({ instance: p.instance })
+        : m.rp_segment_missing_after_latest_former_primary();
     case "recovery.segment.missingWALFormerPrimary":
-      return m.rp_segment_missing_wal_former_primary();
+      return p?.instance
+        ? m.rp_segment_missing_wal_former_primary_named({ instance: p.instance })
+        : m.rp_segment_missing_wal_former_primary();
     case "recovery.segment.missingAfterLatest":
       return m.rp_segment_missing_after_latest();
     case "recovery.segment.collectionCut":
@@ -349,6 +357,8 @@ function translate(code: string, p: Params): string | undefined {
         ? m.rp_segment_path_not_healthy({ id, state, detail: p.detail })
         : m.rp_segment_path_not_healthy_bare({ id, state });
     }
+    case "recovery.segment.backupNotListed":
+      return id ? m.rp_segment_backup_not_listed({ id }) : undefined;
     case "recovery.segment.backupNotUsable": {
       if (!id) return undefined;
       if (p?.detail) return m.rp_segment_backup_not_usable({ id, detail: p.detail });

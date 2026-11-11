@@ -419,7 +419,7 @@ func TestUnreadPrimaryKeepsItsRing(t *testing.T) {
 	}
 	standby := []viewmodel.Point{{At: now.Add(-30 * time.Second)}, {At: now}}
 	sw := ringSweep{rings: map[string][]viewmodel.Point{"db-1": standby, "db-3": standby}}
-	rings, _, _ := readyRings(sw, g)
+	rings, _, _, _ := readyRings(sw, g)
 	if _, ok := rings["db-2"]; !ok {
 		t.Fatalf("the unread primary's ring is not read: %+v", rings)
 	}
@@ -427,7 +427,7 @@ func TestUnreadPrimaryKeepsItsRing(t *testing.T) {
 		t.Errorf("rings of instances the facts do not use: %+v", rings)
 	}
 	sw.rings["db-3"] = []viewmodel.Point{{At: now.Add(-30 * time.Second), Value: new(2.0)}, {At: now}}
-	if former, _, _ := readyRings(sw, g); len(former["db-3"]) != 2 {
+	if former, _, _, _ := readyRings(sw, g); len(former["db-3"]) != 2 {
 		t.Errorf("a former primary's ring is not read: %+v", former)
 	}
 	g.readyRings = rings

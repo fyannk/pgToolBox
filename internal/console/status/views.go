@@ -734,22 +734,27 @@ func (s *Service) statusRead(g *gathered, name, primaryLSN string) (viewmodel.St
 	if inst.Reading == nil {
 		return read, nil
 	}
+	// Only status.currentPrimary archives: the instance manager refuses
+	// on any other pod, the target primary of a switchover and a pod that
+	// still reports itself primary included (archiver.go v1.30.1:145-150,
+	// errSwitchoverInProgress). Without the Cluster, the self-report is
+	// all there is.
 	archiver := inst.Reading.IsPrimary
 	if g.cluster != nil {
-		archiver = archiver || name == g.cluster.Status.CurrentPrimary || name == g.cluster.Status.TargetPrimary
+		archiver = name == g.cluster.Status.CurrentPrimary
 	}
 	return read, liveStatus(inst, primaryLSN, archiver)
 }
 
 // liveStatus is an instance's own report. archiver says whether the
-// instance is the one that archives: the primary, or a replica cluster's
-// designated primary (status.currentPrimary / targetPrimary). A replica
-// cluster's other standbys run with archive_mode always too
-// (pkg/postgres/configuration.go v1.30.1:741-742), so CloudNativePG's
-// isArchivingWAL reads true on them, but the instance manager's archiver
-// returns without archiving there (pkg/management/postgres/archiver/
-// archiver.go v1.30.1:132-142): it is
-// not served for them (CNPG P3-2).
+// instance is the one that archives: status.currentPrimary, the primary
+// or a replica cluster's designated primary. A replica cluster's other
+// standbys run with archive_mode always too (pkg/postgres/
+// configuration.go v1.30.1:741-742), so CloudNativePG's isArchivingWAL
+// reads true on them, but the instance manager's archiver returns
+// without archiving there (pkg/management/postgres/archiver/archiver.go
+// v1.30.1:132-142), and refuses on every pod but currentPrimary
+// (:145-150): it is not served for them (CNPG P3-2, round 9 P3-a).
 func liveStatus(inst sweep.Instance, primaryLSN string, archiver bool) *viewmodel.LiveStatus {
 	r := inst.Reading
 	observed := r.ObservedAt
@@ -975,10 +980,10 @@ func eventRow(e *corev1.Event) viewmodel.EventRow {
 }
 
 // sparklines are the series an instance row draws: the primary's WAL
-// position and last-archived rings are read by the recovery and backlog
-// facts only.
+// position, last-archived and timeline rings are read by the recovery and
+// backlog facts only.
 func sparklines(series []viewmodel.Series) []viewmodel.Series {
 	return slices.DeleteFunc(series, func(s viewmodel.Series) bool {
-		return s.Key == sweep.SeriesCurrentLSN || s.Key == sweep.SeriesLastArchivedAt
+		return s.Key == sweep.SeriesCurrentLSN || s.Key == sweep.SeriesLastArchivedAt || s.Key == sweep.SeriesTimeline
 	})
 }
