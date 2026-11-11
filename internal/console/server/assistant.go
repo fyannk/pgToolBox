@@ -34,7 +34,9 @@ import (
 type GrantIndex interface {
 	mcpoauth.GrantStore
 	CodeUsed(code string) bool
+	CodeMarked(code, mark string) bool
 	SpendCode(ctx context.Context, code, userHash string, until time.Time) error
+	MarkCode(ctx context.Context, code, mark, userHash string) error
 }
 
 // grantIndex is the shared index when STATE_CONFIGMAP is set, else this

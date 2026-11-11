@@ -177,11 +177,14 @@ func (e *Endpoint) handleConfirmAnswer(w http.ResponseWriter, r *http.Request) {
 		auth.ErrorPage(w, http.StatusServiceUnavailable, "The console cannot record confirmations right now; nothing was done. Retry in a minute.")
 		return
 	}
-	marker, outcome := codeDeclined, "declined"
+	mark, outcome := markDeclined, "declined"
 	if approve {
-		marker, outcome = codeApproved, "approved"
+		mark, outcome = markApproved, "approved"
 	}
-	if err := store.SpendCode(r.Context(), marker+pg.Nonce, key, until); err != nil {
+	// A mark on the answer's entry: no room of its own to be refused, so
+	// only a write the API server refuses leaves the answer spent but
+	// unrecorded.
+	if err := store.MarkCode(r.Context(), codeAnswered+pg.Nonce, mark, key); err != nil {
 		// The answer is spent but not recorded: the tool finds no
 		// approval and does nothing.
 		auth.ErrorPage(w, http.StatusServiceUnavailable, "Your answer could not be recorded; nothing was done. Ask the assistant again.")

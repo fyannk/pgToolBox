@@ -112,14 +112,22 @@ const (
 	modeURL  = "url"
 )
 
-// Prefixes of the single-use values a confirmation spends in the index.
+// Prefixes of the single-use values a confirmation spends in the index,
+// and the marks its later steps put on them (MarkCode): a confirmation is
+// one entry of the index, so one unit of a person's fair share of it,
+// whatever steps it records, and a step after one the index admitted is
+// never refused for want of room.
 const (
-	// codeSpent: the operation ran (or was refused) on this confirmation.
+	// codeSpent: the operation ran (or was refused) on this confirmation
+	// asked in the client (form mode).
 	codeSpent = "mcp-confirm/"
-	// codeAnswered: the confirmation page took its one answer.
+	// codeAnswered: the confirmation page took its one answer (URL mode);
+	// marked markApproved or markDeclined with it, then markRun when the
+	// operation ran (or was refused) on it.
 	codeAnswered = "mcp-confirm-answer/"
-	codeApproved = "mcp-confirm-approve/"
-	codeDeclined = "mcp-confirm-decline/"
+	markApproved = "approve"
+	markDeclined = "decline"
+	markRun      = "run"
 )
 
 // Outcomes of a write call in the mcp.call line, beside "ok" and the
@@ -141,11 +149,14 @@ type Sealer interface {
 
 // ConfirmStore keeps the single-use values of confirmations: the shared
 // index of MCP grants (sharedstate.Store), or this replica's memory.
-// SpendCode is written through to the shared ConfigMap before it returns
-// nil; CodeUsed reads this replica's copy (a replica behind re-asks).
+// SpendCode and MarkCode are written through to the shared ConfigMap
+// before they return nil; CodeUsed and CodeMarked read this replica's
+// copy (a replica behind re-asks).
 type ConfirmStore interface {
 	SpendCode(ctx context.Context, code, userHash string, until time.Time) error
+	MarkCode(ctx context.Context, code, mark, userHash string) error
 	CodeUsed(code string) bool
+	CodeMarked(code, mark string) bool
 	GrantsUsable() bool
 }
 
@@ -412,10 +423,10 @@ func (e *Endpoint) operate(ctx context.Context, req *mcp.CallToolRequest, p *aut
 	if st.Mode == modeURL {
 		store := e.o.Confirmations
 		switch {
-		case store.CodeUsed(codeDeclined + st.Nonce):
+		case store.CodeMarked(codeAnswered+st.Nonce, markDeclined):
 			return writeResult{outcome: outcomeDeclined, confirmation: id},
 				&callError{kind: outcomeDeclined, text: "nothing was done: the person declined the " + string(kind) + " on the console's confirmation page"}
-		case store.CodeUsed(codeApproved + st.Nonce):
+		case store.CodeMarked(codeAnswered+st.Nonce, markApproved):
 			typed = typedFor(kind, t)
 		case st.Round+1 < maxURLRounds && e.o.Now().Unix() < st.Expiry:
 			st.Round++
@@ -431,7 +442,17 @@ func (e *Endpoint) operate(ctx context.Context, req *mcp.CallToolRequest, p *aut
 	if !e.o.Confirmations.GrantsUsable() {
 		return writeResult{confirmation: id}, errUnavailable()
 	}
-	switch err := e.o.Confirmations.SpendCode(ctx, codeSpent+st.Nonce, e.userKey(p.User.Name), time.Unix(st.Expiry, 0).Add(time.Minute)); {
+	spend := func() error {
+		return e.o.Confirmations.SpendCode(ctx, codeSpent+st.Nonce, e.userKey(p.User.Name), time.Unix(st.Expiry, 0).Add(time.Minute))
+	}
+	if st.Mode == modeURL {
+		// The page's answer is the confirmation's entry: the run is a
+		// mark on it, which needs no room of its own.
+		spend = func() error {
+			return e.o.Confirmations.MarkCode(ctx, codeAnswered+st.Nonce, markRun, e.userKey(p.User.Name))
+		}
+	}
+	switch err := spend(); {
 	case errors.Is(err, sharedstate.ErrSpent):
 		return writeResult{confirmation: id}, &callError{status: http.StatusConflict, text: "nothing was done: this confirmation was " +
 			"already used; one confirmation runs one operation. Call the tool again to ask the person anew"}

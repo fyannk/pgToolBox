@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -36,11 +37,12 @@ import (
 // single-use values already spent (authorization codes, consent answers),
 // in grants.json:
 //
-//	{"version":1,
+//	{"version":2,
 //	 "grants":{"grant-<32 hex>":{"u":<user key>,"c":<client name, as the
 //	   client declared it>,"s":<scope>,"t":<created>,"l":<last used>,
 //	   "e":<expiry>,"g":<refresh generation>,"r":<revoked at, 0 when not>}},
-//	 "codes":{<32-hex SHA-256 prefix of the value>:{"e":<expiry>,"u":<user key>}}}
+//	 "codes":{<32-hex SHA-256 prefix of the value>:{"e":<expiry>,"u":<user key>,
+//	   "m":[<marks: the later steps of the same work, MarkCode>]}}}
 //
 // Times are Unix seconds. The user key is a 32-hex keyed hash of the
 // username (the console's secret is needed to tell whose it is). No token,
@@ -56,7 +58,7 @@ import (
 // Merge rule, the same on every replica: grants are a union; for one ID
 // the earliest creation, the latest use, the highest generation and the
 // earliest revocation win (a revocation is never undone). Codes are a
-// union, latest expiry. Every valid entry another replica wrote is merged,
+// union, latest expiry, and the union of their marks. Every valid entry another replica wrote is merged,
 // however many there are: none is dropped for being one too many. A
 // document this replica cannot read (another format version, or not
 // JSON) is never overwritten, and grants are refused while it is so.
@@ -125,6 +127,9 @@ var (
 	// ErrBusy: the table of spent values is full (for this person or for
 	// the console); nothing was recorded, retry later.
 	ErrBusy = errors.New("too many sign-ins in progress; retry in a minute")
+	// ErrNotSpent: MarkCode was asked to mark a value the person has not
+	// spent (or that expired); nothing was recorded.
+	ErrNotSpent = errors.New("not a spent value of this person")
 )
 
 // Grant is one grant as the index keeps it.
@@ -161,10 +166,48 @@ type grantEntry struct {
 	Revoked int64  `json:"r,omitempty"`
 }
 
-// codeEntry is a spent single-use value on the wire.
+// codeEntry is a spent single-use value on the wire. Marks are the later
+// steps of the same piece of work, recorded on the value rather than as
+// entries of their own (MarkCode): a confirmation is one entry, however
+// many steps it records, and so one unit of the fair share.
 type codeEntry struct {
-	Expiry int64  `json:"e"`
-	User   string `json:"u"`
+	Expiry int64    `json:"e"`
+	User   string   `json:"u"`
+	Marks  []string `json:"m,omitempty"`
+}
+
+// maxMarks bounds the marks of one value, maxMark the length of a mark.
+const (
+	maxMarks = 4
+	maxMark  = 16
+)
+
+func validMark(m string) bool {
+	if m == "" || len(m) > maxMark {
+		return false
+	}
+	for _, r := range m {
+		if r < 'a' || r > 'z' {
+			return false
+		}
+	}
+	return true
+}
+
+// unionMarks is the sorted union of two entries' valid marks, at most
+// maxMarks of them.
+func unionMarks(a, b []string) []string {
+	var out []string
+	for _, m := range append(slices.Clone(a), b...) {
+		if validMark(m) && !slices.Contains(out, m) {
+			out = append(out, m)
+		}
+	}
+	slices.Sort(out)
+	if len(out) > maxMarks {
+		out = out[:maxMarks]
+	}
+	return out
 }
 
 type grantsDoc struct {
@@ -628,7 +671,7 @@ func (s *Store) SpendCode(ctx context.Context, code, userHash string, until time
 	}
 	desired, gen := s.desiredLocked(), s.gen
 	s.mu.Unlock()
-	err := s.writeThrough(ctx, h, desired, gen)
+	err := s.writeThrough(ctx, func(cm *corev1.ConfigMap) bool { return codeIn(cm, h) }, desired, gen)
 	if err != nil && !errors.Is(err, ErrSpent) {
 		// Nothing was recorded that this replica knows of: forget the
 		// reservation, so that the value is not refused here as spent. A
@@ -641,10 +684,10 @@ func (s *Store) SpendCode(ctx context.Context, code, userHash string, until time
 	return err
 }
 
-// writeThrough writes desired (the local state with code hash h
-// reserved), re-reading and merging on a conflict, until it lands or the
-// ConfigMap shows h spent already (ErrSpent).
-func (s *Store) writeThrough(ctx context.Context, h string, desired *corev1.ConfigMap, gen uint64) error {
+// writeThrough writes desired (the local state with a spend reserved),
+// re-reading and merging on a conflict, until it lands or the ConfigMap
+// shows the spend made already (spentIn: ErrSpent).
+func (s *Store) writeThrough(ctx context.Context, spentIn func(*corev1.ConfigMap) bool, desired *corev1.ConfigMap, gen uint64) error {
 	ctx, cancel := context.WithTimeout(ctx, writeTimeout)
 	defer cancel()
 	for range maxAttempts {
@@ -667,7 +710,7 @@ func (s *Store) writeThrough(ctx context.Context, h string, desired *corev1.Conf
 				_ = s.failed(getErr)
 				return ErrNotRecorded
 			}
-			spent := codeIn(fresh, h)
+			spent := spentIn(fresh)
 			s.mu.Lock()
 			s.mergeLocked(fresh)
 			unreadable := s.foreign[KeyGrants]
@@ -690,12 +733,92 @@ func (s *Store) writeThrough(ctx context.Context, h string, desired *corev1.Conf
 
 // codeIn reports whether the grants document of cm holds code hash h.
 func codeIn(cm *corev1.ConfigMap, h string) bool {
+	_, ok := codeOf(cm, h)
+	return ok
+}
+
+// markIn reports whether the grants document of cm holds code hash h
+// marked mark.
+func markIn(cm *corev1.ConfigMap, h, mark string) bool {
+	c, ok := codeOf(cm, h)
+	return ok && slices.Contains(c.Marks, mark)
+}
+
+func codeOf(cm *corev1.ConfigMap, h string) (codeEntry, bool) {
 	var doc grantsDoc
 	if cm == nil || json.Unmarshal([]byte(cm.Data[KeyGrants]), &doc) != nil {
+		return codeEntry{}, false
+	}
+	c, ok := doc.Codes[h]
+	return c, ok
+}
+
+// MarkCode records mark (a later step of the same piece of work: a
+// confirmation answered, then approved, then run) on code, a value
+// userHash spent (UseCode, SpendCode) that has not expired. A mark is no
+// new entry: it is refused at no bound, so the step after one the fair
+// share admitted cannot be refused for want of room. ErrSpent when the
+// value carries the mark already, here or in the ConfigMap; ErrNotSpent
+// when it is not userHash's spent value (nothing recorded); and, as
+// SpendCode, written through to the ConfigMap before it returns nil
+// (ErrNotRecorded when it cannot be, leaving nothing behind).
+func (s *Store) MarkCode(ctx context.Context, code, mark, userHash string) error {
+	if s == nil {
+		return ErrNotRecorded
+	}
+	if !validMark(mark) {
+		return errors.New("not a mark")
+	}
+	h := codeHash(code)
+	s.mu.Lock()
+	if s.Enabled() && (s.base == nil || s.mode == modeMissing || s.mode == modeForbidden || s.foreign[KeyGrants]) {
+		s.mu.Unlock()
+		return ErrNotRecorded
+	}
+	c, ok := s.codes[h]
+	switch {
+	case !ok || c.User != userHash || c.Expiry <= s.opts.Now().Unix():
+		s.mu.Unlock()
+		return ErrNotSpent
+	case slices.Contains(c.Marks, mark):
+		s.mu.Unlock()
+		return ErrSpent
+	case len(c.Marks) >= maxMarks:
+		s.mu.Unlock()
+		return ErrBusy
+	}
+	c.Marks = unionMarks(c.Marks, []string{mark})
+	s.codes[h] = c
+	s.changedLocked(true)
+	if !s.Enabled() {
+		s.mu.Unlock()
+		return nil
+	}
+	desired, gen := s.desiredLocked(), s.gen
+	s.mu.Unlock()
+	err := s.writeThrough(ctx, func(cm *corev1.ConfigMap) bool { return markIn(cm, h, mark) }, desired, gen)
+	if err != nil && !errors.Is(err, ErrSpent) {
+		s.mu.Lock()
+		if c, ok := s.codes[h]; ok {
+			c.Marks = slices.DeleteFunc(slices.Clone(c.Marks), func(m string) bool { return m == mark })
+			s.codes[h] = c
+		}
+		s.mu.Unlock()
+	}
+	return err
+}
+
+// CodeMarked reports whether code was spent, has not expired and carries
+// mark (MarkCode), on this replica or on one whose write it has read.
+func (s *Store) CodeMarked(code, mark string) bool {
+	if s == nil {
 		return false
 	}
-	_, ok := doc.Codes[h]
-	return ok
+	h := codeHash(code)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c, used := s.codes[h]
+	return used && c.Expiry > s.opts.Now().Unix() && slices.Contains(c.Marks, mark)
 }
 
 // codeHash is how a single-use value is kept: a hash, never the value.
@@ -765,9 +888,16 @@ func (s *Store) mergeGrantsLocked(raw string) {
 			s.grants[id] = e
 		}
 		for h, c := range doc.Codes {
-			if isHex32(h) && isHex32(c.User) && c.Expiry > s.codes[h].Expiry {
-				s.codes[h] = c
+			if !isHex32(h) || !isHex32(c.User) {
+				continue
 			}
+			prev, ok := s.codes[h]
+			marks := unionMarks(prev.Marks, c.Marks)
+			if ok && prev.Expiry >= c.Expiry {
+				c = prev
+			}
+			c.Marks = marks
+			s.codes[h] = c
 		}
 	}
 }
