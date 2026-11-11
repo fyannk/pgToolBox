@@ -126,6 +126,9 @@ func TestPrepareInfoMetricListsWatchedNamespaces(t *testing.T) {
 	if value != "team-a" {
 		t.Fatalf("pgtoolbox_config_info{name=WATCH_NAMESPACES} value = %q, want team-a", value)
 	}
+	if got := gatherGauges(t, registry)["pgtoolbox_watch_namespaces_dropped"]; got != 1 {
+		t.Fatalf("pgtoolbox_watch_namespaces_dropped = %v, want 1 (gone)", got)
+	}
 }
 
 // TestPrepareStartupDeadline: an API server that never answers fails the
@@ -291,44 +294,94 @@ func narrowedReader(narrowed []string, refusedKinds ...string) client.Reader {
 	}).Build()
 }
 
-// TestOneNamespaceCannotTurnAFeatureOff: the administrator of one watched
-// namespace binds the operator to a narrower Role there (Clusters still
-// listable, no Routes, no Stanzas). That namespace is left out of the
-// watch, like one the operator cannot reach; the features stay on for every
-// other namespace. Refused in every namespace, the install's own choice, a
-// feature is off and no namespace is left out.
-func TestOneNamespaceCannotTurnAFeatureOff(t *testing.T) {
+// TestNamespaceRBACDecidesThereOnly: the administrator of one watched
+// namespace binds the operator to a different Role there. Narrowed (no
+// Routes, no Stanzas there), the features are off in that namespace only;
+// widened (the install refuses Routes and Stanzas everywhere, one namespace
+// grants them), they are on in that namespace only. Either way every
+// namespace stays watched: no namespace's RBAC changes what the operator
+// does in another (round 13, P2: a widened namespace used to leave every
+// other namespace out of the watch). Refused everywhere, the install's own
+// choice, a feature is off.
+func TestNamespaceRBACDecidesThereOnly(t *testing.T) {
 	t.Setenv("OPERATOR_IMAGE", "registry.example.com/pgtoolbox/operator:test")
 	objects := configuration.Objects{Namespace: "pgtoolbox", ConfigMap: "pgtoolbox-operator-config", Secret: "pgtoolbox-operator-config"}
+	watched := []string{"team-a", "team-b", "team-c"}
 	tests := []struct {
-		name        string
-		narrowed    []string
-		wantWatched []string
-		wantOn      bool
+		name     string
+		refused  []string // the namespaces refusing Routes and Stanzas
+		wantOnIn []string
 	}{
-		{name: "one namespace narrowed", narrowed: []string{"team-b"}, wantWatched: []string{"team-a", "team-c"}, wantOn: true},
-		{name: "every namespace refuses", narrowed: []string{"team-a", "team-b", "team-c"}, wantWatched: []string{"team-a", "team-b", "team-c"}},
+		{name: "one namespace narrowed", refused: []string{"team-b"}, wantOnIn: []string{"team-a", "team-c"}},
+		{name: "one namespace widened", refused: []string{"team-a", "team-c"}, wantOnIn: []string{"team-b"}},
+		{name: "every namespace refuses", refused: watched},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Setenv("WATCH_NAMESPACES", "team-a,team-b,team-c")
-			prepared, err := preparePgAdminWith(t.Context(), narrowedReader(tt.narrowed, "Route", "Stanza"), prometheus.NewRegistry(),
+			t.Setenv("WATCH_NAMESPACES", strings.Join(watched, ","))
+			registry := prometheus.NewRegistry()
+			prepared, err := preparePgAdminWith(t.Context(), narrowedReader(tt.refused, "Route", "Stanza"), registry,
 				newStartupBudget(time.Minute, time.Minute), objects)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !slices.Equal(prepared.Config.WatchNamespaces, tt.wantWatched) {
-				t.Fatalf("watched %q, want %q", prepared.Config.WatchNamespaces, tt.wantWatched)
+			if !slices.Equal(prepared.Config.WatchNamespaces, watched) {
+				t.Fatalf("watched %q, want every namespace %q", prepared.Config.WatchNamespaces, watched)
 			}
-			if got := prepared.Features.Routes.Usable(); got != tt.wantOn {
-				t.Errorf("Routes usable = %t, want %t (%+v)", got, tt.wantOn, prepared.Features.Routes)
+			for _, namespace := range watched {
+				wantOn := slices.Contains(tt.wantOnIn, namespace)
+				if got := prepared.Features.In(namespace).Routes; got.Usable() != wantOn {
+					t.Errorf("Routes in %s = %+v, want usable %t", namespace, got, wantOn)
+				}
+				if got := prepared.EvidenceAgentAPIs.Stanza.In(namespace); got.Usable() != wantOn {
+					t.Errorf("Stanza in %s = %+v, want usable %t", namespace, got, wantOn)
+				}
+				if !prepared.Features.In(namespace).Poolers.Usable() || !prepared.EvidenceAgentAPIs.ObjectStore.In(namespace).Usable() {
+					t.Errorf("a kind every namespace allows is off in %s: %+v %+v", namespace, prepared.Features, prepared.EvidenceAgentAPIs)
+				}
 			}
-			if got := prepared.EvidenceAgentAPIs.Stanza.Usable(); got != tt.wantOn {
-				t.Errorf("Stanza usable = %t, want %t (%+v)", got, tt.wantOn, prepared.EvidenceAgentAPIs.Stanza)
+			wantRefused := float64(len(tt.refused))
+			if len(tt.wantOnIn) == 0 {
+				wantRefused = 0 // off everywhere: the install's choice, not a refusal of some namespaces
 			}
-			if !prepared.Features.Poolers.Usable() || !prepared.EvidenceAgentAPIs.ObjectStore.Usable() {
-				t.Errorf("a kind every namespace allows is off: %+v %+v", prepared.Features, prepared.EvidenceAgentAPIs)
+			metrics := gatherGauges(t, registry)
+			if got := metrics[`pgtoolbox_optional_api_refused_namespaces{group="route.openshift.io",kind="Route"}`]; got != wantRefused {
+				t.Errorf("refused Route namespaces = %v, want %v (%v)", got, wantRefused, metrics)
+			}
+			if got := metrics[`pgtoolbox_optional_api_refused_namespaces{group="postgresql.cnpg.io",kind="Pooler"}`]; got != 0 {
+				t.Errorf("refused Pooler namespaces = %v, want 0", got)
+			}
+			if got, ok := metrics["pgtoolbox_watch_namespaces_dropped"]; !ok || got != 0 {
+				t.Errorf("dropped namespaces = %v (exported %t), want 0", got, ok)
 			}
 		})
 	}
+}
+
+// gatherGauges is every gauge of registry by name{labels} (labels sorted
+// by name, as the registry returns them).
+func gatherGauges(t *testing.T, registry *prometheus.Registry) map[string]float64 {
+	t.Helper()
+	families, err := registry.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	gauges := map[string]float64{}
+	for _, family := range families {
+		for _, m := range family.GetMetric() {
+			if m.GetGauge() == nil {
+				continue
+			}
+			labels := make([]string, 0, len(m.GetLabel()))
+			for _, l := range m.GetLabel() {
+				labels = append(labels, fmt.Sprintf("%s=%q", l.GetName(), l.GetValue()))
+			}
+			name := family.GetName()
+			if len(labels) > 0 {
+				name += "{" + strings.Join(labels, ",") + "}"
+			}
+			gauges[name] = m.GetGauge().GetValue()
+		}
+	}
+	return gauges
 }

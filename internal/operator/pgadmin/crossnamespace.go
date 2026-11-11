@@ -130,14 +130,14 @@ func (r *Reconciler) resolveRemote(ctx context.Context, p *pgtoolboxv1alpha1.PgA
 		if granted == 0 {
 			continue
 		}
-		if r.Features.DatabaseRoles.Usable() {
+		if r.Features.In(namespace).DatabaseRoles.Usable() {
 			var roles cnpgv1.DatabaseRoleList
 			if err := r.Client.List(ctx, &roles, client.InNamespace(namespace)); err != nil {
 				return out, fmt.Errorf("list DatabaseRoles in %s: %w", namespace, err)
 			}
 			out.Roles = append(out.Roles, roles.Items...)
 		}
-		if r.Features.Poolers.Usable() {
+		if r.Features.In(namespace).Poolers.Usable() {
 			var poolers cnpgv1.PoolerList
 			if err := r.Client.List(ctx, &poolers, client.InNamespace(namespace)); err != nil {
 				return out, fmt.Errorf("list Poolers in %s: %w", namespace, err)

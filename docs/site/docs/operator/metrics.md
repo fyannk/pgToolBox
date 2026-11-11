@@ -36,7 +36,13 @@ runtime metrics:
 | `pgtoolbox_evidenceagent_info` | `namespace`, `name`, `cluster`, `issuer`, `image` | One series per `EvidenceAgent`. |
 | `pgtoolbox_evidenceagent_condition` | `namespace`, `name`, `type`, `status` | 1 for the current status of each condition. |
 | `pgtoolbox_evidenceagent_producer_epoch` | `namespace`, `name` | `status.producerEpoch`. |
+| `pgtoolbox_watch_namespaces_dropped` | | Namespaces of `WATCH_NAMESPACES` left out of the watch at start: the operator may not list CloudNativePG Clusters there (deleted since the install, or not bound). Their objects are not reconciled until the namespace is back and the operator restarts. |
+| `pgtoolbox_optional_api_refused_namespaces` | `group`, `kind` | Per optional API, the watched namespaces whose Role refuses it while others allow it: the feature is off in those namespaces only (no namespace is left out for it). 0 when none does, or when the API is off everywhere. |
 
 These are computed from the cache at scrape time, kube-state-metrics style. A
-failed list yields no series: *absent*, not zero.
+failed list yields no series: *absent*, not zero. The two start-up gauges
+(`pgtoolbox_watch_namespaces_dropped`, `pgtoolbox_optional_api_refused_namespaces`)
+are set once at start and change only with a restart; a value above 0 is
+worth an alert of your own (`pgtoolbox_watch_namespaces_dropped > 0`: some
+tenant's objects are unmanaged).
 

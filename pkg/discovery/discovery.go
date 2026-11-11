@@ -26,6 +26,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"golang.org/x/sync/errgroup"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -57,10 +58,46 @@ type Result struct {
 	// Reason explains Forbidden and NotInstalled in words, naming the
 	// resource and namespace; empty when Available.
 	Reason string
+	// RefusedIn names, for a kind Available in some of the namespaces
+	// probed only, the namespaces where it is refused (ProbeKinds), in the
+	// order they were probed; empty otherwise. The feature is off in those
+	// namespaces alone (In).
+	RefusedIn []string
 }
 
-// Usable reports whether the feature can be watched.
+// Usable reports whether the feature can be watched somewhere: in every
+// namespace probed, except those of RefusedIn. A reconciler of an object
+// asks In(its namespace).Usable() instead.
 func (r Result) Usable() bool { return r.State == Available }
+
+// In is the outcome in one namespace: Forbidden, with a reason naming the
+// namespace, where the kind is refused there while other namespaces allow
+// it; the outcome everywhere otherwise.
+func (r Result) In(namespace string) Result {
+	if r.State != Available || !slices.Contains(r.RefusedIn, namespace) {
+		return r
+	}
+	return Result{
+		GVK: r.GVK, Namespace: namespace, State: Forbidden,
+		Reason: fmt.Sprintf("not allowed to list %s%s (other watched namespaces allow it)", resourceName(r.GVK), where(namespace)),
+	}
+}
+
+// ListableIn is the namespaces of watched where the kind can be watched,
+// for a cache restricted to them; nil when it can be watched in all of them
+// (or the kind is not usable at all).
+func (r Result) ListableIn(watched []string) []string {
+	if !r.Usable() || len(r.RefusedIn) == 0 {
+		return nil
+	}
+	var listable []string
+	for _, namespace := range watched {
+		if !slices.Contains(r.RefusedIn, namespace) {
+			listable = append(listable, namespace)
+		}
+	}
+	return listable
+}
 
 // Lister is the one method a probe needs; a controller-runtime client,
 // an APIReader or a fake satisfy it.
@@ -159,17 +196,12 @@ func probeEach(ctx context.Context, c Lister, gvk schema.GroupVersionKind, names
 	return results, nil
 }
 
-// Decision is the outcome of ProbeKinds: one Result per kind, the namespaces
-// kept, and the refusals that left the others out.
+// Decision is the outcome of ProbeKinds: one Result per kind, in the order
+// the kinds were given. No namespace is ever left out for an optional kind:
+// a kind refused in some namespaces only is Available with those namespaces
+// in its RefusedIn, and the feature is off there alone.
 type Decision struct {
-	// Results holds one outcome per kind, in the order the kinds were given.
 	Results []Result
-	// Namespaces is the namespaces kept, in their order; nil when the
-	// probes were cluster-wide.
-	Namespaces []string
-	// Dropped holds, for each namespace left out, the refusal that left it
-	// out, in the order the namespaces were dropped.
-	Dropped []Result
 }
 
 // ProbeKinds probes each optional kind of gvks in every namespace of
@@ -178,63 +210,48 @@ type Decision struct {
 //
 //   - not served: the kind is NotInstalled, whatever the namespace (it is a
 //     fact about the cluster, found with one request);
-//   - refused (Forbidden) in every namespace still kept: the kind is
-//     Forbidden, the install's own choice, and the feature is off;
-//   - refused in only some of them: the kind stays Available and those
-//     namespaces are dropped, for every kind, like a namespace the caller
-//     cannot reach at all. A controller watches a kind in every namespace
-//     it watches, so the alternative would be to turn the feature off
-//     everywhere; but a namespace's own administrator can bind the caller
-//     to a narrower Role there, and one namespace must not be able to
-//     switch a feature off for every other tenant.
+//   - refused (Forbidden) in every namespace: the kind is Forbidden, the
+//     install's own choice, and the feature is off;
+//   - refused in only some of them: the kind is Available, its RefusedIn
+//     names those namespaces, and the feature is off there only (Result.In,
+//     Result.ListableIn): it is watched and used where it can be listed.
 //
-// The kinds are decided one after the other on the namespaces still kept,
-// so dropping never changes an earlier decision: available in every kept
-// namespace stays so on fewer, and refused in all of them stays refused.
-// No kind can drop the last namespace (refused in all of them is "off").
-// Any error is returned, whatever the other namespaces answered.
+// Each kind is decided on its own and each namespace's answer decides for
+// that namespace alone: one namespace's RBAC, narrowed or widened by its
+// administrator, never changes what the operator does in another namespace
+// (a namespace that grants a kind the install refuses everywhere else turns
+// it on in that namespace only, and leaves the others watched). Only the
+// required kind may leave a namespace out of the watch, and that is
+// ReachableNamespaces' decision, not this one's. Any error is returned,
+// whatever the other namespaces answered.
 func ProbeKinds(ctx context.Context, c Lister, gvks []schema.GroupVersionKind, namespaces []string) (Decision, error) {
 	decision := Decision{Results: make([]Result, len(gvks))}
-	if len(namespaces) == 0 {
-		for i, gvk := range gvks {
+	for i, gvk := range gvks {
+		if len(namespaces) == 0 {
 			result, err := ProbeListable(ctx, c, gvk, "")
 			if err != nil {
 				return Decision{}, err
 			}
 			decision.Results[i] = result
+			continue
 		}
-		return decision, nil
-	}
-	kept := append([]string(nil), namespaces...)
-	for i, gvk := range gvks {
-		results, err := probeEach(ctx, c, gvk, kept)
+		results, err := probeEach(ctx, c, gvk, namespaces)
 		if err != nil {
 			return Decision{}, err
 		}
 		decision.Results[i] = decide(results)
-		if decision.Results[i].State != Available {
-			continue
-		}
-		next := kept[:0:0]
-		for j, probed := range results {
-			if probed.State == Forbidden {
-				decision.Dropped = append(decision.Dropped, probed)
-				continue
-			}
-			next = append(next, kept[j])
-		}
-		kept = next
 	}
-	decision.Namespaces = kept
 	return decision, nil
 }
 
 // decide is one kind's outcome over the namespaces probed: NotInstalled when
 // any namespace says so, Forbidden (the first refusal in namespace order)
 // when every namespace refuses, Available otherwise (the first available
-// namespace's result).
+// namespace's result, with every refusing namespace in RefusedIn, in
+// namespace order).
 func decide(results []Result) Result {
 	var refused, available *Result
+	var refusedIn []string
 	for i := range results {
 		switch results[i].State {
 		case NotInstalled:
@@ -243,6 +260,7 @@ func decide(results []Result) Result {
 			if refused == nil {
 				refused = &results[i]
 			}
+			refusedIn = append(refusedIn, results[i].Namespace)
 		case Available:
 			if available == nil {
 				available = &results[i]
@@ -252,7 +270,9 @@ func decide(results []Result) Result {
 	if available == nil {
 		return *refused
 	}
-	return *available
+	result := *available
+	result.RefusedIn = refusedIn
+	return result
 }
 
 // ReachableNamespaces splits namespaces into those where the caller may list
