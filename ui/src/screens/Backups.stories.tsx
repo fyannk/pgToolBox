@@ -10,6 +10,7 @@ import {
   recoveryBackupUnconfirmed,
   recoveryHealthy,
   recoveryHibernated,
+  recoveryHibernatedFailing,
   recoveryKeptTooOld,
   recoveryLiveTimelineNoSegment,
   recoveryMixedHoles,
@@ -215,6 +216,32 @@ export const RecoveryHibernatedFrench: Story = french({
   },
 });
 /**
+ * Hibernated after archiving failed: the hibernated reason, then the failed
+ * last attempt with its time, at warning; nothing to run (round 16, PG P3-2).
+ */
+export const RecoveryHibernatedFailing: Story = {
+  args: { data: { ...backups, recoveryTimeline: recoveryHibernatedFailing } },
+  play: async ({ canvas, canvasElement }) => {
+    await expect(
+      canvas.getByText(
+        /^the Cluster is hibernated: .*; its last archive attempt failed \(ContinuousArchiving False since Oct 29, 2026, 10:00 UTC\): WAL written before it was hibernated may not be in the repository, only on its volumes$/,
+      ),
+    ).toBeVisible();
+    await expect(canvasElement.querySelector("[data-pitr-edge-hint]")).toBeNull();
+  },
+};
+/** The same in French. */
+export const RecoveryHibernatedFailingFrench: Story = french({
+  args: RecoveryHibernatedFailing.args,
+  play: async ({ canvas }) => {
+    await expect(
+      canvas.getByText(
+        /^le cluster est en hibernation.*sa dernière tentative d’archivage a échoué \(ContinuousArchiving False depuis le 29 oct\. 2026, 10:00 UTC\)/,
+      ),
+    ).toBeVisible();
+  },
+});
+/**
  * WAL archiving is failing: the edge hint offers pg_stat_archiver, never a
  * WAL switch, which would wait like every other segment (round 14, DBA
  * P2-1; Go's edgeAdvice).
@@ -355,6 +382,8 @@ export const RecoveryReportedHibernated: Story = {
   args: { data: { ...backups, recoveryTimeline: recoveryReportedHibernated } },
   play: async ({ canvas, canvasElement }) => {
     await expect(canvas.getByText("Reported by the operator, not verified against the repository")).toBeVisible();
+    // Why no check is offered (round 16, DBA).
+    await expect(canvas.getByText(/the Cluster is hibernated: whether the WAL written before it/)).toBeVisible();
     await expect(canvasElement.querySelector("[data-pitr-edge-hint]")).toBeNull();
     await expect(canvas.queryByText(/pg_stat_archiver/)).toBeNull();
     await expect(canvas.queryByText(/pg_switch_wal\(\)/)).toBeNull();
