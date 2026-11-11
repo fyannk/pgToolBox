@@ -123,8 +123,9 @@ const (
 	// (seen by this scan only; it may still fill).
 	CoverageCandidateLimited CoverageStop = "candidate-limited"
 	// CoverageGapLimited means the walk stopped at a confirmed gap, or at WAL
-	// that is proven lost (a backup's own WAL, or WAL before a timeline
-	// switch whose child has WAL).
+	// that is missing and not on its way (a backup's own WAL, or WAL before a
+	// timeline switch whose child has WAL, which the former primary may still
+	// hold).
 	CoverageGapLimited CoverageStop = "gap-limited"
 	// CoverageUnknownLimited means the walk could not be evaluated.
 	CoverageUnknownLimited CoverageStop = "unknown-limited"
@@ -151,7 +152,7 @@ type RecoveryPath struct {
 	// consistent); the path then follows the backup's own timeline.
 	OffTarget bool
 	// SwitchInFlight is true when the target timeline's history is archived
-	// but none of its WAL is yet, and nothing in the archive proves WAL lost:
+	// but none of its WAL is yet, and nothing in the archive proves WAL missing:
 	// a promotion archives NNNNNNNN.history at once and its first segment
 	// only once it fills or archive_timeout passes. The path then stops on
 	// the parent (State warning, Stop unknown-limited) and the backup is
@@ -852,6 +853,11 @@ func evaluatePath(backup Backup, wal ArchiveWAL, histories []TimelineHistory, hi
 			path.State = missingState(wal.Gaps, current.timeline, position)
 			path.Stop = gapStop(path.State)
 			path.Reason = fmt.Sprintf("segment %s is not archived", mustWALName(current.timeline, position, wal.SegmentSize))
+			if index > 0 && current.last != math.MaxUint64 && !rangeAfter(wal.Ranges, current.timeline, position) {
+				// An intermediate timeline holds none of its WAL up to the
+				// next switch: its primary may still hold it.
+				path.Reason = fmt.Sprintf("segment %s is not in the repository; %s", mustWALName(current.timeline, position, wal.SegmentSize), pgtimeline.FormerPrimaryMayHold)
+			}
 			path.Consistent = position > stopPosition
 			return markOffTarget(inconsistentPath(path), offTarget, startTimeline)
 		}
@@ -869,6 +875,13 @@ func evaluatePath(backup Backup, wal ArchiveWAL, histories []TimelineHistory, hi
 			path.State = missingState(wal.Gaps, current.timeline, run.End+1)
 			path.Stop = gapStop(path.State)
 			path.Reason = fmt.Sprintf("segment %s is not archived; the backup recovers only to %s on timeline %d", mustWALName(current.timeline, run.End+1, wal.SegmentSize), run.Last, current.timeline)
+			if !rangeAfter(wal.Ranges, current.timeline, run.End) {
+				// The parent's tail before the switch is not in the
+				// repository and the parent has no later WAL: the primary
+				// that wrote it may still hold it (it crashed with the
+				// segments .ready). The reason keeps within the wire bound.
+				path.Reason = fmt.Sprintf("segment %s is not in the repository; the backup recovers only to %s; %s", mustWALName(current.timeline, run.End+1, wal.SegmentSize), run.Last, pgtimeline.FormerPrimaryMayHold)
+			}
 			path.Consistent = run.End >= stopPosition
 			return markOffTarget(inconsistentPath(path), offTarget, startTimeline)
 		}
@@ -965,13 +978,19 @@ func rangeAfter(ranges []WALRange, timeline uint32, position uint64) bool {
 
 // inconsistentPath makes a walk that stopped before the backup's
 // archive-stop unhealthy whatever the gap: pgBackRest finishes a backup only
-// once that WAL is archived, so it is lost, not in flight.
+// once that WAL is archived, so it is missing, not in flight.
 func inconsistentPath(path RecoveryPath) RecoveryPath {
 	if !path.Consistent {
 		path.State, path.Stop = evidence.Unhealthy, CoverageGapLimited
 		path.Reason = "WAL the backup needs to reach consistency is missing: " + path.Reason
 		if index := strings.Index(path.Reason, "; the backup recovers only"); index >= 0 {
-			path.Reason = path.Reason[:index]
+			// Drop that clause only: what follows it (the former primary
+			// hint) stays.
+			rest := ""
+			if next := strings.Index(path.Reason[index+2:], "; "); next >= 0 {
+				rest = path.Reason[index+2+next:]
+			}
+			path.Reason = path.Reason[:index] + rest
 		}
 	}
 	return path

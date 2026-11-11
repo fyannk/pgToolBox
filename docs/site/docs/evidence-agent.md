@@ -75,8 +75,18 @@ reaches at most segment 4 of timeline 2, even when timeline 2 holds WAL up to
 segment 9, and its reason says that the later WAL on timeline 2 needs
 `targetTLI: 2`. When the ancestor's WAL stops before that switch while the
 child already holds WAL from its switch segment on, the missing segments were
-written and are lost: the ancestor path is unhealthy and names the first
-missing segment, as pgBackRest does, rather than reaching the archive frontier.
+written and are not in the repository: the ancestor path is unhealthy and names
+the first missing segment, as pgBackRest does, rather than reaching the archive
+frontier.
+
+Such segments are not proven gone. A primary that crashed with segments still
+waiting to be archived (`.ready`) keeps them on its volume, and CloudNativePG
+archives every waiting segment when that instance restarts, before `pg_rewind`
+and before it rejoins as a replica. The reason says so: until the next scan sees
+the segments, a restore past them fails, but **do not delete the former primary
+or its PersistentVolumeClaim** (for example with `kubectl cnpg destroy`): that
+is what would make the loss permanent. Once the instance has rejoined and the
+segments are archived, the next scan reads the path as healthy.
 
 Because the probe only tests that a history file exists, a listed history whose
 content is malformed, duplicated or contradictory still counts as present. Only
@@ -124,10 +134,16 @@ the reason in its place:
   is an older build that may call a path healthy when a default restore does
   not follow it.
 
-A third limit keeps the spans: no path claims more than the agent's own
-coverage conclusion, so when that conclusion is not healthy (for example "a
-default restore succeeds from none" of the backups), a path that reads healthy
-is shown as a warning.
+A third limit keeps the spans, and applies only when the agent's coverage
+conclusion is not healthy for a reason no path carries: every backup is left
+behind by the newest timeline ("a default restore succeeds from none"), the
+pgBackRest WAL is under another stanza (`StanzaSplit`), or the conclusion is
+worse than every path. A path that reads healthy is then shown as a warning.
+The conclusion is the worst over every backup's own path, so an old backup that
+stops at a confirmed gap, or one backup's unknown path, caps nothing: each path
+is drawn by its own state, the old backup's gap as a hole, and the newer
+backups' spans stay covered. The conclusion's reason is said beside the
+recovery window instead.
 
 A Cluster backed up through a pgBackRest plugin is read the same way, as one
 stanza of one repository; see

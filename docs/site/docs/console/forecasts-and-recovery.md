@@ -280,16 +280,35 @@ screens read it as a backlog until enough sweeps can tell.
 With `ContinuousArchiving` `True` but the archiving instance not read, archiving
 is `unknown` (`PrimaryUnread`), with the time the condition last changed: the
 condition is written only when an `archive_command`'s outcome changes, so on its
-own it does not say that WAL reaches the repository now. A hibernated Cluster
+own it does not say that WAL reaches the repository now. One missed read (a
+timeout, a slow answer) does not flip it: the same pod's reading from the sweep
+before stands, with its own time as provenance, so the bar does not flicker. A
+second miss in a row, or a restarted pod (a new UID has no last reading), is
+unread. A hibernated Cluster
 reads `unknown` (`Hibernated`): no instance runs, and nothing confirms that every
-segment written before hibernation reached the repository.
+segment written before hibernation reached the repository. A replica cluster's
+archiver is its designated primary, a standby (`isPrimary` false) that archives
+with `archive_mode=always`; CloudNativePG counts `.ready` files only on a primary
+(`pkg/management/postgres/probes.go` v1.30.1), so its `/pg/status` carries no
+`readyWalFiles`. The console records no sample for it (nor for any standby) and
+reads archiving as `unknown` (`ArchiveBacklogNotReported`), never `ok`: a
+backlog cannot be seen there. A standby's zeros, including those of a pod that
+was a designated primary before a replica-cluster promotion, are never read as a
+quiet sweep or as an archiver that caught up.
 The diagnostics findings on the same count (`cnpg-wal-archive-backlog`,
 `cnpg-instance-archive-backlog`) fire much later, at 32 segments, so a screen
 with the finding never shows archiving as healthy. A stalled archiver shows up in
 the count: with `archive_timeout` set, written WAL completes a segment within
 it, and a segment the archiver does not take is a `.ready` file. On an idle
-primary that writes nothing, a hung archiver can hold a steady count that the
-growth rule (unknown parallelism) does not flag.
+primary that writes little, a hung archiver holds a steady count rather than a
+growing one, so under unknown parallelism a count at the threshold over three
+sweeps that did not grow is also a backlog when the archiver archived nothing
+over them: its `last_archived_time` (pg_stat_archiver, the instance's clock) is
+not after the oldest of those sweeps, or it reports none. The message then says
+the archiver is stalled and since when. A healthy parallel archiver archives a
+segment each time PostgreSQL asks for one, so its time moves; an instance clock
+running more than a sweep behind the console's could still make a healthy one
+read as stalled.
 
 The last archived time is when PostgreSQL archived a segment, not the newest
 commit in it, so even "may well be possible" is an `unknown` answer: an evidence
@@ -356,31 +375,55 @@ segments, so the bar and the answer always agree:
   when the agent read it, while segments archived since may have reached it
   late. A reading of one or two files proves nothing (a slow archiver can hold
   them for long), and a failed read is no reading, so a run of failed reads
-  widens the band, never narrows it. When no sweep the console keeps
-  (`RING_RETENTION`, one hour by default; a console that just started keeps
-  none) read zero, the sweep period is not known, or `archive_timeout` is 0,
-  the band is the day before the latest point. The window is then a warning,
-  never healthy;
+  widens the band, never narrows it. A busy primary may never read zero, so a
+  sweep with files waiting bounds the start too, from the primary's WAL
+  positions the sweep keeps: at a sweep with *k* `.ready` files and the write
+  position in segment *S*, every segment before *S−k* was archived; segment
+  *S−k* switched after the newest earlier sweep whose position had not reached
+  the start of *S−k+1*, and a commit in it is at most one `archive_timeout`
+  older than its switch. The band then starts one `archive_timeout` before
+  that earlier sweep, when that is later than the quiet-sweep bound. The WAL
+  segment size comes from the primary's own report (its current WAL file name
+  against its position); when that does not settle a single size, this bound is
+  not used. When no sweep the console keeps (`RING_RETENTION`, one hour by
+  default; a console that just started keeps none) gives either bound, the
+  sweep period is not known, or `archive_timeout` is 0, the band is the day
+  before the latest point. The window is then a warning, never healthy;
 - while the primary's archiver is not read (archiving `PrimaryUnread`, or the
   Cluster hibernated): the same band, from the newest sweep that read it with
-  nothing waiting, else the day before the latest point. Nothing says how long
+  nothing waiting or the WAL-position bound above, else the day before the
+  latest point. Nothing says how long
   the newest archived WAL waited on the primary, so the window is a warning and
-  every answer carries the caveat "the primary's archiver was not read";
+  every answer carries the caveat "the primary's archiver was not read". A
+  hibernated Cluster's window is `unknown` instead: it writes no WAL and runs no
+  archiver, so there is nothing to act on, but nothing confirms that the WAL
+  written before it reached the repository; it stays `unknown`, not amber, for
+  as long as it sleeps;
+- while the archiver is a designated primary (`ArchiveBacklogNotReported`):
+  the day before the latest point, with its own reason and caveat, since no
+  sweep can show that nothing waited on it;
 - a recovery path that reaches its frontier but that the evidence agent rates
   below healthy (a pgBackRest WAL segment size not proven across a log id or a
-  timeline switch, or a path capped because the agent's coverage roll-up is not
-  healthy) is drawn as `unknown` with the agent's reason, never as covered; a
-  healthy path still covers what it reaches. The window is then a warning.
+  timeline switch, or a path capped because the agent's coverage roll-up says
+  something no path carries, such as a stanza split) is drawn as `unknown` with
+  the agent's reason, never as covered; a healthy path still covers what it
+  reaches. The window is then a warning. A roll-up that is not healthy because
+  of another backup (an old backup stopped at a gap, one unknown path) is
+  listed as a reason of the window and greys out nothing.
 
-Inside the end-of-archived-WAL edge, the last `archive_timeout` before the
-latest point (at least one minute; the whole edge when `archive_timeout` is 0)
-is drawn as **end of the archived WAL** (`walEnd`, a warning band). The latest
+Inside the end-of-archived-WAL edge, the last `archive_timeout` plus an
+allowance for the archiver's latency (one sweep interval, at least one minute)
+before the latest point (the whole edge when `archive_timeout` is 0) is drawn
+as **end of the archived WAL** (`walEnd`, a warning band): the last commit can
+be one `archive_timeout` before its segment switched, and the segment reached
+the repository some time after the switch. The latest
 point is when the last segment *reached* the repository, not its last commit, so
 the bar labels it **WAL received until**, and names apart the **newest covered
 target** (`newestCoveredTarget`): the end of the newest covered span once every
 edge above is drawn, the newest instant the check answers `covered`. It is
 structurally covered, not restore-tested (only a passed restore drill tests a
-restore), and it is left out when the newest span's path is not rated healthy. A `covered`
+restore), and it is left out when only a path not rated healthy reaches the
+newest end (a healthy path that ends there too names it). A `covered`
 answer adds that a restore that names no timeline follows the default
 `recovery_target_timeline 'latest'`. A
 `recovery_target_time` after that commit makes PostgreSQL stop with "recovery

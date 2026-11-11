@@ -26,6 +26,8 @@
 #                               already green on SHA (default: the tag's commit,
 #                               else HEAD); one poll, no waiting
 #   release.sh retry CMD...     run CMD, bounded by VERIFY_ATTEMPTS and VERIFY_SLEEP
+#   release.sh commits-link TAG a link to the compare view (or the history) in place
+#                               of the commit list, for the release notes
 #   release.sh notes VERSION    the CHANGELOG section of a version, as notes
 #   release.sh commits TAG     the conventional commits since the previous tag of the
 #                               same line, grouped by type, as Markdown
@@ -122,6 +124,8 @@ cmd_check() {
   # A release candidate (v0.1.0-rc.1) is cut from the tree of its final
   # version: the charts and the CHANGELOG may carry either the rc version or the
   # core version (0.1.0); helm package stamps the rc version on the archives.
+  # A pushed candidate and its final tag name the same commit, so both need the
+  # dated heading (see the Unreleased rule below).
   local core="${version%%-*}" chart_version app_version dir
   for dir in "${chart_dirs[@]}"; do
     chart_version="$(chart_dir="${dir}" chart_field version)"
@@ -138,12 +142,19 @@ cmd_check() {
     heading="$(changelog_heading "${core}")"
   fi
   [[ -n "${heading}" ]] || die "CHANGELOG.md has no '## [${version}]' section"
-  # The heading of the release being cut carries its date. A release candidate
-  # may use the still-open section of its final version.
+  # The heading of the release being cut carries its date. Rehearsals (a dry
+  # run, a plain check) let a candidate use the open section of its final
+  # version; a candidate that is really cut or preflighted does not.
   # ALLOW_UNRELEASED=1 is the dry run on a pull request, where the open
   # section is the normal state: it is reported, not refused. A real release
   # (REQUIRE_TAG=1) never takes it.
-  if [[ "${heading}" == *[Uu]nreleased* ]] && { [[ "${version}" == "${core}" ]] || [[ "${heading}" == "## [${version}]"* ]]; }; then
+  # A real release (REQUIRE_TAG=1) and the preflight (REQUIRE_DATED=1) refuse an
+  # open section for a candidate too: the candidate and the final tag are cut on
+  # the SAME commit (a dating commit between them would change the SHA and need
+  # a full-tier run of its own), so the section is dated before rc.1.
+  local strict=0
+  [[ "${REQUIRE_TAG:-0}" == "1" || "${REQUIRE_DATED:-0}" == "1" ]] && strict=1
+  if [[ "${heading}" == *[Uu]nreleased* ]] && { [[ "${strict}" == 1 ]] || [[ "${version}" == "${core}" ]] || [[ "${heading}" == "## [${version}]"* ]]; }; then
     if [[ "${ALLOW_UNRELEASED:-0}" == "1" && "${REQUIRE_TAG:-0}" != "1" ]]; then
       echo "note: CHANGELOG.md heading '${heading}' still says Unreleased; it must be dated before tagging ${tag}"
     else
@@ -294,7 +305,7 @@ full_tier_state() {
 # there are none, dispatch both on the commit.
 cmd_preflight() {
   local tag="${1:?usage: release.sh preflight TAG [SHA]}" sha="${2:-}"
-  ALLOW_UNRELEASED=0 cmd_check "${tag}"
+  ALLOW_UNRELEASED=0 REQUIRE_DATED=1 cmd_check "${tag}"
   if [[ -z "${sha}" ]]; then
     if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
       sha="$(git rev-list -n 1 "refs/tags/${tag}")"
@@ -475,6 +486,22 @@ cmd_commits() {
   fi
 }
 
+# commits-link TAG: a link to the commit log, not the log itself. The CHANGELOG
+# section is the release's story; a first release would otherwise list the whole
+# history. With a previous final tag (a candidate: any previous tag of the line)
+# the link is the compare view, else the history up to the tag.
+cmd_commits_link() {
+  local tag="${1:?usage: release.sh commits-link TAG}" previous
+  local -a exclude=()
+  [[ "${tag}" == *-* ]] || exclude=(--exclude '*-*')
+  previous="$(git describe --tags --abbrev=0 --match "v*" ${exclude[@]+"${exclude[@]}"} "${tag}^" 2>/dev/null || true)"
+  if [[ -n "${previous}" && "${previous}" != */* ]]; then
+    echo "Full commit log: [${previous}...${tag}](https://github.com/${repo}/compare/${previous}...${tag})"
+  else
+    echo "Full commit log: [history up to ${tag}](https://github.com/${repo}/commits/${tag})"
+  fi
+}
+
 # --------------------------------------------------------- manifests ---
 # package-charts: pin a copy of each chart to the digests just pushed, check
 # the rendering, package it. The tarballs land in OUT_DIR for `helm push`.
@@ -538,6 +565,15 @@ cmd_check_public() {
   local -a private=()
   for attempt in $(seq 1 "${attempts}"); do
     check_public_once "$@" && { echo "ok: every digest is publicly pullable"; return 0; }
+    # One annotation per wait, naming the settings page of every private package:
+    # a maintainer who only sees the run page needs no log reading to act.
+    {
+      printf '::notice title=Make these GHCR packages public::'
+      for pkg in "${private[@]}"; do
+        printf 'https://github.com/users/%s/packages/container/%s/settings%%0A' "${repo%%/*}" "${pkg//\//%2F}"
+      done
+      echo
+    }
     if ((attempt < attempts)); then
       echo "waiting for visibility changes (${attempt}/${attempts}); set each package to public here:"
       for pkg in "${private[@]}"; do
@@ -785,6 +821,7 @@ case "${1:-}" in
   retry) shift; retry "$@" ;;
   preflight) shift; cmd_preflight "$@" ;;
   notes) shift; cmd_notes "$@" ;;
+  commits-link) shift; cmd_commits_link "$@" ;;
   commits) shift; cmd_commits "$@" ;;
   sums) shift; cmd_sums "$@" ;;
   check-public) shift; cmd_check_public "$@" ;;

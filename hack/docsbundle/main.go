@@ -86,6 +86,9 @@ func run(site, out, version string) error {
 		found = true
 		currentPath = v.Path
 		for _, p := range v.Pages {
+			if maintainerPage(p.Path, v.Path) {
+				continue
+			}
 			md, err := os.ReadFile(filepath.Join(site, filepath.FromSlash(p.File))) //nolint:gosec // a build tool: paths come from the site build
 			if err != nil {
 				return err
@@ -160,6 +163,14 @@ func verify(dir, version string, sources []docsbundle.Source) error {
 		return fmt.Errorf("the bundle written to %s finds nothing for any page title", dir)
 	}
 	return nil
+}
+
+// maintainerPage says whether a page is in the development section, which
+// documents building pgToolBox itself: the site serves it, but the console's
+// bundle answers people who run a console and leaves it out. The release page
+// stays: it is where an installer verifies images and charts.
+func maintainerPage(path, versionPath string) bool {
+	return strings.HasPrefix(strings.TrimPrefix(path, versionPath), "development/")
 }
 
 // minor is "1.3" for "1.3.0" and "1.3.0-rc.1".

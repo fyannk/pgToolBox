@@ -62,6 +62,10 @@ type fakeIdP struct {
 	refreshes     int
 	refreshFails  bool
 	tokens        int
+	// subject is the sub claim of every ID token; empty: a new one per
+	// code exchange (each sign-in a different person, as a team's are),
+	// so the per-person budgets stay out of tests about other bounds.
+	subject string
 	// authorizedAs and clients record the client of each authorization
 	// request and each token request (code or refresh), in order.
 	authorizedAs []string
@@ -179,7 +183,7 @@ func (f *fakeIdP) token(w http.ResponseWriter, r *http.Request) {
 		if f.badNonce {
 			nonce = "wrong"
 		}
-		f.write(w, id, nonce, "refresh-1")
+		f.write(w, id, nonce, "refresh-1", "")
 	case "refresh_token":
 		if f.refreshFails || !strings.HasPrefix(r.PostFormValue("refresh_token"), "refresh-") {
 			w.Header().Set("Content-Type", "application/json")
@@ -188,16 +192,22 @@ func (f *fakeIdP) token(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		f.refreshes++
-		f.write(w, id, "", fmt.Sprintf("refresh-%d", f.refreshes+1))
+		f.write(w, id, "", fmt.Sprintf("refresh-%d", f.refreshes+1), "person-refreshed")
 	default:
 		http.Error(w, "grant", http.StatusBadRequest)
 	}
 }
 
-func (f *fakeIdP) write(w http.ResponseWriter, aud, nonce, refresh string) {
+func (f *fakeIdP) write(w http.ResponseWriter, aud, nonce, refresh, sub string) {
 	now := time.Now()
+	switch {
+	case f.subject != "":
+		sub = f.subject
+	case sub == "":
+		sub = "person-" + strconv.Itoa(f.tokens)
+	}
 	claims := map[string]any{
-		"iss": f.srv.URL, "sub": "12345", "aud": aud,
+		"iss": f.srv.URL, "sub": sub, "aud": aud,
 		"exp": now.Add(f.idTokenTTL).Unix(), "iat": now.Unix(), "email": f.email,
 	}
 	if nonce != "" {

@@ -48,8 +48,8 @@ const (
 	// peer admits (nearly) every namespace (a namespaceSelector that pins
 	// no label value), every Pod of the console's namespace (such a
 	// podSelector alone), or the Pod network or every address (an ipBlock
-	// wider than /8 or /32, holding a whole private range, or a console
-	// Pod's address): its peers are not the proxies, so the console trusts
+	// wider than /8 or /32, holding a whole private range, a console
+	// Pod's address, or overlapping a Node's podCIDRs): its peers are not the proxies, so the console trusts
 	// none of them with X-Forwarded-For.
 	ReasonExposurePeersBroad Reason = "ExposurePeersBroad"
 	// ReasonExposurePolicyBypassed: ExposureConfined=False, another
@@ -61,15 +61,22 @@ const (
 	// ReasonExposureTrustUnverified: ExposureConfined=False, the
 	// networkPolicy.from peers could not be checked yet, or are held back:
 	// an ipBlock peer while no console Pod has an address to check it
-	// against, more console Pods than one bounded list returns, or a
+	// against and no earlier one verified the same blocks, more console Pods than one bounded list returns, or a
 	// widened from that waits until no console Pod trusts every peer any
 	// more. The console trusts none of the peers with X-Forwarded-For
 	// meanwhile.
 	ReasonExposureTrustUnverified Reason = "ExposureTrustUnverified"
+	// ReasonExposurePolicyKept: ExposureConfined=False, the ingress
+	// NetworkPolicy is no longer rendered (the exposure or the policy was
+	// turned off) and is kept while a console Pod may still trust every
+	// peer it admits on the operator's grant: until the rollout without
+	// the grant is through. The message names a Pod stuck terminating
+	// that holds it.
+	ReasonExposurePolicyKept Reason = "ExposurePolicyKept"
 	// ReasonExposurePolicyInvalid: ConfigurationValid=False, the API
 	// server refused the ingress NetworkPolicy rendered from
 	// spec.exposure.networkPolicy (a selector or block the CRD could not
-	// check). Looked at again every five minutes and on every spec change.
+	// check), or an admission policy or webhook denied it. Looked at again every five minutes and on every spec change.
 	ReasonExposurePolicyInvalid Reason = "ExposurePolicyInvalid"
 )
 
@@ -82,8 +89,10 @@ const (
 // networkPolicy.enabled=false), ExposurePeersBroad when a peer of from
 // admits (nearly) everyone, ExposurePolicyBypassed when another
 // NetworkPolicy does, ExposureTrustUnverified while the peers could not be
-// checked yet or a widened from is held back.
-// Removed when nothing is published, the hostname stall included. The
+// checked yet or a widened from is held back, ExposurePolicyKept while a
+// policy no longer rendered is kept for a Pod that may trust every peer.
+// Removed when nothing is published and no policy is kept, the hostname
+// stall included. The
 // message says which peers the console believes about X-Forwarded-For.
 // Whether the CNI enforces NetworkPolicies cannot be observed: True says
 // what is declared, not what the network does.

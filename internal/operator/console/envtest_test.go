@@ -20,8 +20,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	cnpgv1 "github.com/cloudnative-pg/api/pkg/api/v1"
+	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -785,9 +787,9 @@ func TestPgToolBoxConsoleReconcilerOnEnvtest(t *testing.T) {
 		s.reconcile(ctx, t, "console")
 		unpublished := s.console(ctx, t, "console")
 		assertCondition(t, unpublished, pgtoolboxv1alpha1.ConditionExposureReady, metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonRouteAPIUnavailable)
-		if meta.FindStatusCondition(unpublished.Status.Conditions, pgtoolboxv1alpha1.ConditionExposureConfined) != nil {
-			t.Fatal("ExposureConfined on a Route that is not published")
-		}
+		// Nothing is published, but the policy is kept until the Pods no
+		// longer trust every peer, and ExposureConfined says so.
+		assertCondition(t, unpublished, pgtoolboxv1alpha1.ConditionExposureConfined, metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonExposurePolicyKept)
 		if got := proxyEnv(); len(got) != 0 {
 			t.Fatalf("a Route that is not published: %v, want no trusted proxy", got)
 		}
@@ -814,7 +816,26 @@ func TestPgToolBoxConsoleReconcilerOnEnvtest(t *testing.T) {
 		must(t, s.admin.Create(ctx, oldPod))
 		s.reconcile(ctx, t, "console")
 		s.get(ctx, t, console.WorkloadName()+"-ingress", &networkingv1.NetworkPolicy{})
+		// Stuck terminating (a lost node, a finalizer): the policy stays,
+		// the condition names the Pod, and it is looked for again.
+		stuckPod := oldPod.DeepCopy()
+		stuckPod.Name, stuckPod.ResourceVersion, stuckPod.UID = "console-stuck", "", ""
+		stuckPod.Finalizers = []string{"example.com/stuck"}
+		must(t, s.admin.Create(ctx, stuckPod))
 		must(t, s.admin.Delete(ctx, oldPod, client.GracePeriodSeconds(0)))
+		must(t, s.admin.Delete(ctx, stuckPod))
+		if result := s.reconcile(ctx, t, "console"); result.RequeueAfter != policyRecheck {
+			t.Fatalf("RequeueAfter = %s with a Pod stuck terminating, want %s", result.RequeueAfter, policyRecheck)
+		}
+		s.get(ctx, t, console.WorkloadName()+"-ingress", &networkingv1.NetworkPolicy{})
+		kept := s.console(ctx, t, "console")
+		assertCondition(t, kept, pgtoolboxv1alpha1.ConditionExposureConfined, metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonExposurePolicyKept)
+		if message := meta.FindStatusCondition(kept.Status.Conditions, pgtoolboxv1alpha1.ConditionExposureConfined).Message; !strings.Contains(message, "Pod console-stuck, terminating since") {
+			t.Fatalf("ExposureConfined message %q does not name the stuck Pod", message)
+		}
+		s.get(ctx, t, stuckPod.Name, stuckPod)
+		stuckPod.Finalizers = nil
+		must(t, s.admin.Update(ctx, stuckPod))
 		// A Pod whose any-peer trust is the user's own trustedProxy.cidrs
 		// (the same TRUSTED_PROXY_CIDRS, no grant) does not hold it back.
 		userPod := oldPod.DeepCopy()
@@ -924,8 +945,155 @@ func TestPgToolBoxConsoleReconcilerOnEnvtest(t *testing.T) {
 		if !grant() {
 			t.Fatal("no any-peer trust behind a node-network block once a Pod address is known")
 		}
+		// The template with the grant replaces the only Pod (a Parallel
+		// StatefulSet does not wait for it to be ready): the new one is
+		// Pending, with no address. The blocks were verified for this
+		// template, so the grant stays and the template does not change
+		// (it used to lose the grant, roll the Pending Pod, get it back
+		// once the next Pod had an address, and so on forever).
+		completeRollout(ctx, t, s, console.WorkloadName())
+		set := &appsv1.StatefulSet{}
+		s.get(ctx, t, console.WorkloadName(), set)
+		before := set.ResourceVersion
 		must(t, s.admin.Delete(ctx, pod, client.GracePeriodSeconds(0)))
+		pending := &corev1.Pod{ObjectMeta: pod.ObjectMeta, Spec: pod.Spec}
+		pending.ResourceVersion, pending.UID, pending.CreationTimestamp, pending.ManagedFields = "", "", metav1.Time{}, nil
+		must(t, s.admin.Create(ctx, pending))
+		for range 2 {
+			s.reconcile(ctx, t, "blocked")
+		}
+		s.get(ctx, t, console.WorkloadName(), set)
+		if set.ResourceVersion != before || !grant() {
+			t.Fatalf("the StatefulSet changed (resourceVersion %s -> %s, grant %v) when its only Pod came back Pending", before, set.ResourceVersion, grant())
+		}
+		assertCondition(t, s.console(ctx, t, "blocked"), pgtoolboxv1alpha1.ConditionExposureConfined, metav1.ConditionTrue, pgtoolboxv1alpha1.ReasonAsExpected)
+		// Other blocks are not covered by that check: with no address,
+		// they are not trusted.
+		other := s.console(ctx, t, "blocked")
+		other.Spec.Exposure.NetworkPolicy.From[0].IPBlock.CIDR = "192.168.11.0/24"
+		must(t, s.admin.Update(ctx, other))
+		completeRollout(ctx, t, s, console.WorkloadName())
+		for range 3 {
+			s.reconcile(ctx, t, "blocked")
+			completeRollout(ctx, t, s, console.WorkloadName())
+		}
+		assertCondition(t, s.console(ctx, t, "blocked"), pgtoolboxv1alpha1.ConditionExposureConfined, metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonExposureTrustUnverified)
+		if grant() {
+			t.Fatal("any-peer trust kept for blocks no Pod address verified")
+		}
+		must(t, s.admin.Delete(ctx, pending, client.GracePeriodSeconds(0)))
 		must(t, s.admin.Delete(ctx, s.console(ctx, t, "blocked")))
+	})
+
+	t.Run("an ipBlock that holds another Node's Pod range is not trusted", func(t *testing.T) {
+		nodes := []*corev1.Node{
+			{ObjectMeta: metav1.ObjectMeta{Name: "node-a"}, Spec: corev1.NodeSpec{PodCIDR: "10.128.0.0/24", PodCIDRs: []string{"10.128.0.0/24"}}},
+			{ObjectMeta: metav1.ObjectMeta{Name: "node-b"}, Spec: corev1.NodeSpec{PodCIDR: "10.128.4.0/24", PodCIDRs: []string{"10.128.4.0/24"}}},
+		}
+		for _, node := range nodes {
+			must(t, s.admin.Create(ctx, node))
+		}
+		t.Cleanup(func() {
+			for _, node := range nodes {
+				_ = s.admin.Delete(ctx, node)
+			}
+		})
+		s.reconciler.forgetNodes()
+		console := &pgtoolboxv1alpha1.PgToolBoxConsole{ObjectMeta: metav1.ObjectMeta{Name: "noderange", Namespace: suiteNamespace}}
+		console.Spec.Exposure.ExposureSpec = pgtoolboxv1alpha1.ExposureSpec{Type: pgtoolboxv1alpha1.ExposureTypeIngress, Hostname: "noderange.example"}
+		console.Spec.Exposure.NetworkPolicy = &pgtoolboxv1alpha1.PgToolBoxConsoleExposurePolicySpec{From: []pgtoolboxv1alpha1.PgToolBoxConsolePolicyPeer{{
+			IPBlock: &pgtoolboxv1alpha1.PgToolBoxConsoleIPBlock{CIDR: "10.128.4.0/23"},
+		}}}
+		must(t, s.admin.Create(ctx, console))
+		// The console Pod runs on node A, outside the block; the block
+		// holds node B's Pod range, so every Pod of node B could forge
+		// X-Forwarded-For if it were trusted.
+		pod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: "noderange-0", Namespace: suiteNamespace, Labels: selectorLabels(console)},
+			Spec:       corev1.PodSpec{NodeName: "node-a", Containers: []corev1.Container{{Name: "console", Image: "registry.example/pgtoolbox-console:1.2.0"}}},
+		}
+		must(t, s.admin.Create(ctx, pod))
+		pod.Status = corev1.PodStatus{Phase: corev1.PodRunning, PodIP: "10.128.0.5", PodIPs: []corev1.PodIP{{IP: "10.128.0.5"}}}
+		must(t, s.admin.Status().Update(ctx, pod))
+		s.reconcile(ctx, t, "noderange")
+		got := s.console(ctx, t, "noderange")
+		assertCondition(t, got, pgtoolboxv1alpha1.ConditionExposureConfined, metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonExposurePeersBroad)
+		if message := meta.FindStatusCondition(got.Status.Conditions, pgtoolboxv1alpha1.ConditionExposureConfined).Message; !strings.Contains(message, "node-b") {
+			t.Fatalf("ExposureConfined message %q does not name node-b", message)
+		}
+		set := &appsv1.StatefulSet{}
+		s.get(ctx, t, console.WorkloadName(), set)
+		if set.Spec.Template.Annotations[annotationTrustsEveryPeer] == "true" {
+			t.Fatal("any-peer trust granted to an ipBlock that holds another node's Pod range")
+		}
+		must(t, s.admin.Delete(ctx, pod, client.GracePeriodSeconds(0)))
+		must(t, s.admin.Delete(ctx, got))
+	})
+
+	t.Run("an admission policy that denies the NetworkPolicy stalls like a schema refusal", func(t *testing.T) {
+		const denied = "vapdenied-console-ingress"
+		vap := &admissionregistrationv1.ValidatingAdmissionPolicy{
+			ObjectMeta: metav1.ObjectMeta{Name: "deny-console-policy"},
+			Spec: admissionregistrationv1.ValidatingAdmissionPolicySpec{
+				FailurePolicy: new(admissionregistrationv1.Fail),
+				MatchConstraints: &admissionregistrationv1.MatchResources{ResourceRules: []admissionregistrationv1.NamedRuleWithOperations{{
+					RuleWithOperations: admissionregistrationv1.RuleWithOperations{
+						Operations: []admissionregistrationv1.OperationType{admissionregistrationv1.Create, admissionregistrationv1.Update},
+						Rule:       admissionregistrationv1.Rule{APIGroups: []string{"networking.k8s.io"}, APIVersions: []string{"v1"}, Resources: []string{"networkpolicies"}},
+					},
+				}}},
+				Validations: []admissionregistrationv1.Validation{{
+					Expression: "object.metadata.name != '" + denied + "'",
+					Message:    "this platform refuses that NetworkPolicy",
+					Reason:     new(metav1.StatusReasonForbidden),
+				}},
+			},
+		}
+		binding := &admissionregistrationv1.ValidatingAdmissionPolicyBinding{
+			ObjectMeta: metav1.ObjectMeta{Name: "deny-console-policy"},
+			Spec: admissionregistrationv1.ValidatingAdmissionPolicyBindingSpec{
+				PolicyName:        vap.Name,
+				ValidationActions: []admissionregistrationv1.ValidationAction{admissionregistrationv1.Deny},
+			},
+		}
+		must(t, s.admin.Create(ctx, vap))
+		must(t, s.admin.Create(ctx, binding))
+		t.Cleanup(func() {
+			_ = s.admin.Delete(ctx, binding)
+			_ = s.admin.Delete(ctx, vap)
+		})
+		// The policy takes effect once the API server has compiled it.
+		probe := &networkingv1.NetworkPolicy{ObjectMeta: metav1.ObjectMeta{Name: denied, Namespace: suiteNamespace}}
+		deadline := time.Now().Add(30 * time.Second)
+		for {
+			err := s.admin.Create(ctx, probe.DeepCopy(), client.DryRunAll)
+			if apierrors.IsForbidden(err) {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("the admission policy did not take effect: %v", err)
+			}
+			time.Sleep(200 * time.Millisecond)
+		}
+
+		console := &pgtoolboxv1alpha1.PgToolBoxConsole{ObjectMeta: metav1.ObjectMeta{Name: "vapdenied", Namespace: suiteNamespace}}
+		console.Spec.Exposure.ExposureSpec = pgtoolboxv1alpha1.ExposureSpec{Type: pgtoolboxv1alpha1.ExposureTypeIngress, Hostname: "vapdenied.example"}
+		console.Spec.Exposure.NetworkPolicy = &pgtoolboxv1alpha1.PgToolBoxConsoleExposurePolicySpec{From: []pgtoolboxv1alpha1.PgToolBoxConsolePolicyPeer{{
+			NamespaceSelector: &pgtoolboxv1alpha1.PgToolBoxConsoleLabelSelector{MatchLabels: map[string]pgtoolboxv1alpha1.PgToolBoxConsoleLabelValue{"kubernetes.io/metadata.name": "ingress-nginx"}},
+		}}}
+		must(t, s.admin.Create(ctx, console))
+		if result := s.reconcile(ctx, t, "vapdenied"); result.RequeueAfter != policyRecheck {
+			t.Fatalf("RequeueAfter = %s on a denied NetworkPolicy, want %s", result.RequeueAfter, policyRecheck)
+		}
+		stalled := s.console(ctx, t, "vapdenied")
+		assertCondition(t, stalled, pgtoolboxv1alpha1.ConditionConfigurationValid, metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonExposurePolicyInvalid)
+		if message := meta.FindStatusCondition(stalled.Status.Conditions, pgtoolboxv1alpha1.ConditionConfigurationValid).Message; !strings.Contains(message, "this platform refuses") {
+			t.Fatalf("ConfigurationValid message %q does not carry the denial", message)
+		}
+		// The dry run refused it: nothing was published.
+		s.absent(ctx, t, console.WorkloadName(), &networkingv1.Ingress{})
+		s.absent(ctx, t, denied, &networkingv1.NetworkPolicy{})
+		must(t, s.admin.Delete(ctx, stalled))
 	})
 
 	t.Run("a referenced ConfigMap that does not exist stalls and is looked for again", func(t *testing.T) {

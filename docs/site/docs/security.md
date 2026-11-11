@@ -43,7 +43,7 @@ what the design guarantees and, as plainly, what it does not.
 |---|---|---|---|
 | **Console ServiceAccount** | The CloudNativePG kinds, pods, services, PVCs, events, PDBs, leases, jobs, `pgadmins`, `evidenceagents`, `objectstores` in the watched namespaces; `pods/log` unless withheld; one ConfigMap by name | Nothing. It asks the API server with SelfSubjectAccessReviews sent with the reader's own token, which need no grant | Read a Secret; use `impersonate`; read outside its namespaces; write |
 | **A person through the console** | What their own RBAC lets them `get` | Back up, reload, restart, promote, **with their token** | Anything the API server denies them |
-| **Operator** | Its watched namespaces' CRs and what they reference (Secret *metadata* only for user Secrets) | The children of `PgAdmin` and `EvidenceAgent`; their status | Hold a database password |
+| **Operator** | Its watched namespaces' CRs and what they reference. Its cache holds Secret *metadata* only for user Secrets, but its RBAC grants Secret `get`, `list`, `watch`, `create`, `update`, `patch` and `delete`: in every namespace with kustomize, OLM and the Helm chart left at its default, and only in the namespaces of `operator.config.watchNamespaces` when the Helm chart sets it (RoleBindings; cluster-wide it keeps TokenReview, SubjectAccessReview, `list` on Nodes (to compare an exposure's ipBlocks with their podCIDRs) and the ClusterRoles it binds) | The children of `PgAdmin` and `EvidenceAgent`; their status | Hold a database password |
 | **Evidence agent ServiceAccount** | The object store: with the operator, through credential files mounted in its own Pod; in team mode, through the Secrets its values list, read with a name-scoped Role | Nothing in the store | With the operator, anything on the API server except creating TokenReviews and SubjectAccessReviews; in team mode, anything but its Cluster, ObjectStore and listed Secrets |
 | **pgAdmin Pod** | Offered Secrets and `<cluster>-ca`, through a name-scoped Role | Its own volumes | Read any other Secret |
 
@@ -100,8 +100,11 @@ what the design guarantees and, as plainly, what it does not.
     form parse and a decryption each; they never reach the bucket connected
     clients refresh from, so holding a token once is not a way to starve
     them; past 20 a second they get `429` and no audit line. A live grant
-    spends a bucket of its own (6 at once, 12 a minute) before the shared
-    one, so one grant refreshing in a loop cannot starve the others either;
+    spends a bucket of its own (6 at once, 12 a minute), then its person's
+    (12 at once, 24 a minute), before the shared one, so neither one grant
+    refreshing in a loop nor one person's grants nor a handful of identities
+    can starve the others; a replayed refresh token is refused before any of
+    them;
   - `/mcp/oauth/register`: up to 10 a second sealed and audited; above that,
     new registrations wait. Registered clients are unaffected.
 
@@ -184,7 +187,12 @@ In the table, `name*` is every key that starts with `name`:
 | `konghq.com/` | `plugins`, `host-aliases` | Kong | plugins, extra hosts |
 
 A kept annotation with the same value, on a rule reaching the same objects and
-an object exposed the same way, is not checked again. Keys that tune how a
+an object exposed the same way, is not checked again. The policy therefore gates
+only keys that are added or changed: it does not remove or lower a restriction
+that is already there, and it does not make one up. A restriction an administrator
+relies on (`inbound-cidrs`, a source range, `scheme`) belongs in the ingress
+controller or platform configuration (a default or a locked annotation set), not in
+an annotation an editor with write access to the CR may later drop. Keys that tune how a
 request reaches the workload's own Service are not checked: timeouts, body size,
 affinity, `rewrite-target`, `use-regex`, `upstream-vhost`, `backend-protocol`
 (they can break the route, not move it). The Service the operator renders is
@@ -345,7 +353,7 @@ in view.
 | **The OpenShift sign-in using the ServiceAccount's projected token as client secret is not yet verified on a live cluster.** | If OpenShift rejects it, sign-in fails with `invalid_client`. | Use a long-lived token Secret ([checklist](console/openshift.md#manual-checklist), step 5). |
 | **The pgAdmin container's root filesystem is writable.** | An attacker with code execution in the container can write to its filesystem. | Restricted Pod Security, no capabilities, optional NetworkPolicy; read-only is an image change on the roadmap. |
 | **Shared pgAdmin servers carry one identity per role.** | PostgreSQL's logs cannot name the person behind a shared server. | The Kubernetes API audit log names who opened pgAdmin on OpenShift; per-person roles are a roadmap item. |
-| **The operator's ServiceAccount is effectively cluster-admin.** Its ClusterRole holds Secret, ServiceAccount, Deployment, Role and RoleBinding verbs and `bind` on named ClusterRoles in every namespace, because it creates the Secrets, accounts and Roles of the workloads it runs. | Whoever obtains its token (a compromised operator, or anyone who can exec into its Pod, edit its Deployment or read a token of its ServiceAccount) can read every Secret, and run a Deployment as any ServiceAccount, in every namespace: treat it as cluster-admin. | Run the operator in a namespace of its own where only cluster administrators hold any right; restrict `pods/exec`, Deployment edits and `serviceaccounts/token` there. `operator.config.watchNamespaces` narrows what it reconciles, not what its ClusterRole allows; one operator per cluster is the supported layout. |
+| **The operator's ServiceAccount is effectively cluster-admin** (with `watchNamespaces` set in the Helm chart: admin of those namespaces, plus `bind` on three named ClusterRoles). Its ClusterRole holds Secret, ServiceAccount, Deployment, Role and RoleBinding verbs and `bind` on named ClusterRoles in every namespace, because it creates the Secrets, accounts and Roles of the workloads it runs. | Whoever obtains its token (a compromised operator, or anyone who can exec into its Pod, edit its Deployment or read a token of its ServiceAccount) can read every Secret, and run a Deployment as any ServiceAccount, in every namespace: treat it as cluster-admin. | Run the operator in a namespace of its own where only cluster administrators hold any right; restrict `pods/exec`, Deployment edits and `serviceaccounts/token` there. With the Helm chart, `operator.config.watchNamespaces` also confines the Secret, ServiceAccount, workload and RBAC rules to the listed namespaces (a RoleBinding each); kustomize and OLM always bind them cluster-wide. One operator per cluster is the supported layout. |
 | **`pgtoolbox-console-operator` is effectively database-superuser.** `patch clusters` covers the whole `Cluster` spec (`enableSuperuserAccess`, `managed.roles`, `postgresql.parameters`). | Its holder, and the grantee of an `operator` access request, can become the superuser of the namespace's Clusters. | Grant and approve it as you would the `postgres` password ([authorization](console/authorization.md#the-two-clusterroles)). |
 
 ## Network

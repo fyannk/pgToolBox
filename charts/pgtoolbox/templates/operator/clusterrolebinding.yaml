@@ -1,4 +1,9 @@
 {{- if .Values.operator.enabled }}
+{{- /* Default: the whole manager ClusterRole bound cluster-wide. With
+operator.config.watchNamespaces the namespaced rules (Secrets, workloads,
+RBAC objects) are bound only in those namespaces by RoleBindings
+(rolebindings.yaml), and the cluster-wide binding carries the cluster-scoped
+rules alone (clusterrole-cluster-scoped.yaml). */}}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
@@ -8,7 +13,11 @@ metadata:
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
+  {{- if .Values.operator.config.watchNamespaces }}
+  name: {{ include "pgtoolbox.fullname" . }}-manager-cluster-role
+  {{- else }}
   name: {{ include "pgtoolbox.fullname" . }}-manager-role
+  {{- end }}
 subjects:
 - kind: ServiceAccount
   name: {{ include "pgtoolbox.fullname" . }}

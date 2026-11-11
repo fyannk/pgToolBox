@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"testing"
 	"time"
 )
 
@@ -87,3 +88,19 @@ func (r retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 // "context deadline exceeded" is not one here: helm prints it when --wait itself
 // times out, which is a real failure.
 func helmTransient(out string) bool { return transientText(out) }
+
+// TestBrowserClientsDropIdleConnectionsBeforeTheConsoleDoes: the console closes
+// idle connections after 120 s; a client that keeps one longer reuses a dead
+// connection after the tests' long sleeps and fails a POST that Go will not retry.
+func TestBrowserClientsDropIdleConnectionsBeforeTheConsoleDoes(t *testing.T) {
+	for _, noKeepAlive := range []bool{false, true} {
+		b := &browser{t: t}
+		tr, ok := b.build(noKeepAlive).Transport.(*http.Transport)
+		if !ok {
+			t.Fatal("the e2e client's transport is not an *http.Transport")
+		}
+		if tr.IdleConnTimeout <= 0 || tr.IdleConnTimeout >= 120*time.Second {
+			t.Fatalf("IdleConnTimeout = %v, want 0 < d < the console's 120 s idle timeout", tr.IdleConnTimeout)
+		}
+	}
+}

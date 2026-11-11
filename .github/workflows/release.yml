@@ -70,6 +70,7 @@ jobs:
     permissions:
       contents: read # check out the repository and read the release list
       checks: read # read the check runs of the tagged commit
+      actions: read # hack/release.sh wait-ci lists the workflow runs of the tagged commit (full-tier check)
     outputs:
       mode: ${{ steps.resolve.outputs.mode }}
       kind: ${{ steps.resolve.outputs.kind }}
@@ -581,7 +582,10 @@ jobs:
             echo
             echo "## Commits"
             echo
-            ./hack/release.sh commits "${TAG}"
+            # The CHANGELOG section above is the story; the commit log is a link,
+            # not a paste (the first release would list the whole history).
+            ./hack/release.sh commits-link "${TAG}"
+            echo
             echo "## Artifacts"
             echo
             echo "Signed by digest with cosign (keyless) and attested; see the [release page](https://fyannk.github.io/pgToolBox/docs/release/) for the verification commands. Pin by digest."
@@ -689,14 +693,18 @@ jobs:
     steps:
       # The Pages environment only deploys from the default branch, and an event
       # raised with the Actions token starts no other workflow: dispatching it
-      # on main is the supported way to publish the site for this release.
-      - name: Dispatch the Pages workflow on main
+      # on main is the supported way to publish the site for this release. The
+      # tag is passed as `docs_ref`, so the site is built from the tagged
+      # commit (main may have moved since), and deployed through main's
+      # workflow definition.
+      - name: Dispatch the Pages workflow on main, building the tag
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
+          TAG: ${{ needs.prepare.outputs.tag }}
         run: |
           set -euo pipefail
-          gh workflow run pages.yml --repo "${REPO}" --ref main
+          gh workflow run pages.yml --repo "${REPO}" --ref main -f "docs_ref=refs/tags/${TAG}"
 
   # Each push orphans the untagged manifests a retag replaced. Prune only what no
   # tagged index, signature or attestation references.

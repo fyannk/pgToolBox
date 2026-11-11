@@ -69,7 +69,7 @@ func TestTruncatedPodListFailsClosed(t *testing.T) {
 	}
 
 	facts := &workloadFacts{Kind: "StatefulSet", Generation: 1, ObservedGeneration: 1, Desired: 1, Replicas: 1, Updated: 1, Available: 1}
-	if err := r.withdrawExposurePolicy(ctx, c, facts); err != nil {
+	if _, _, err := r.withdrawExposurePolicy(ctx, c, facts); err != nil {
 		t.Fatal(err)
 	}
 	if err := reader.Get(ctx, client.ObjectKeyFromObject(policy), &networkingv1.NetworkPolicy{}); err != nil {

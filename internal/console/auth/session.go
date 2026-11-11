@@ -29,7 +29,8 @@ import (
 // AES-GCM(provider, token, refresh?, exp). It carries the user's
 // apiserver token and the bookkeeping needed to expire it; it never
 // carries a username, a group or a permission, which are re-read from the
-// API server.
+// API server (SubjectTag is a keyed hash of the name, for bookkeeping
+// only, never for a decision).
 type Session struct {
 	// ID is a random reference to this session, printed in audit lines so
 	// an admin can revoke exactly this session. It is not a credential.
@@ -47,7 +48,16 @@ type Session struct {
 	// refreshed the idle timer (Unix seconds).
 	IssuedAt int64 `json:"iat"`
 	LastSeen int64 `json:"lst"`
+	// SubjectTag is the keyed hash (Codec.KeyedHashes, SignOutSubjectPurpose)
+	// of the name the API server reported at sign-in: the person a
+	// sign-out is counted against in the state ConfigMap's bounds, sealed
+	// so that a token revoked before signing out still names its owner.
+	// It authorizes nothing.
+	SubjectTag string `json:"sbt,omitempty"`
 }
+
+// SignOutSubjectPurpose keys Session.SubjectTag.
+const SignOutSubjectPurpose = "signout-subject"
 
 // newSessionID returns 128 random bits, hex encoded.
 func newSessionID() string {

@@ -39,6 +39,11 @@ type tokenSet struct {
 	token   string
 	refresh string
 	expiry  time.Time
+	// identity names the person as the IdP vouched for them (the verified
+	// ID token's issuer and subject); empty when the provider names
+	// nobody before the API server does (OpenShift's opaque tokens). It
+	// keys a per-person budget, never a decision.
+	identity string
 }
 
 // loginError is a failed sign-in: a status and a message for the person,
@@ -247,7 +252,7 @@ func (p *oidcProvider) verify(ctx context.Context, tok *oauth2.Token, nonce stri
 	if !emailVouched(claims, p.cfg.RequireEmailVerified) {
 		return tokenSet{}, &loginError{http.StatusForbidden, "The identity provider has not verified this e-mail address.", nil}
 	}
-	return tokenSet{token: raw, refresh: tok.RefreshToken, expiry: idt.Expiry}, nil
+	return tokenSet{token: raw, refresh: tok.RefreshToken, expiry: idt.Expiry, identity: idt.Issuer + "\x00" + idt.Subject}, nil
 }
 
 // emailVouched enforces email_verified: a token that carries

@@ -760,10 +760,10 @@ func evaluatePath(backup Backup, wal ServerWAL, timeline uint32, start, required
 		if !rangeContains(wal.Ranges, edge.Child, edge.SwitchPosition) {
 			// Later child segments prove the switch segment was written and
 			// is not on its way any more (archiving is in segment order), so
-			// it is lost; with no later child WAL the promotion may be minutes
-			// old and the segment still filling.
+			// the path is unhealthy; with no later child WAL the promotion
+			// may be minutes old and the segment still filling.
 			if childHasWAL(wal, edge) {
-				path.State, path.Stop, path.Reason = evidence.Unhealthy, CoverageGapLimited, "timeline switch segment is missing on the child timeline while later child segments are archived: it is lost"
+				path.State, path.Stop, path.Reason = evidence.Unhealthy, CoverageGapLimited, "timeline switch segment is not in the repository on the child timeline while later child segments are"
 				return path
 			}
 			path.State, path.Stop, path.Reason = evidence.Unknown, CoverageUnknownLimited, "timeline switch segment is not observed on the child timeline"
@@ -773,9 +773,12 @@ func evaluatePath(backup Backup, wal ServerWAL, timeline uint32, start, required
 	}
 	// The backup's end segment is read from the timeline current at that
 	// segment: the backup's own timeline, or the child when the backup
-	// ended inside the switch segment.
+	// ended inside the switch segment. When the default restore leaves this
+	// timeline after that segment for a child that has WAL, the timeline is
+	// closed there, as on the path toward the child.
 	if position <= requiredEnd {
-		frontier, receipt, state, stop, reason = reachPosition(wal, current, position, requiredEnd, false)
+		closed := leave != nil && requiredEnd < leave.SwitchPosition && childHasWAL(wal, *leave)
+		frontier, receipt, state, stop, reason = reachPosition(wal, current, position, requiredEnd, closed)
 		path.FrontierTimeline, path.FrontierPosition, path.FrontierReceipt = current, frontier, receipt
 		path.FrontierWAL, _ = WALName(current, frontier, wal.SegmentSize)
 		if state != evidence.Healthy {
@@ -804,13 +807,15 @@ func evaluatePath(backup Backup, wal ServerWAL, timeline uint32, start, required
 		case childHasWAL(wal, *leave):
 			// The child has WAL from its switch segment on, so this
 			// timeline is closed before the switch: its segments after
-			// the frontier were written and are lost, not in flight
-			// (reachPosition with closed). pgBackRest's parent leg says
-			// the same.
+			// the frontier were written and are not in flight any more
+			// (reachPosition with closed). They are not in the repository,
+			// but the former primary may still hold them (see
+			// pgtimeline.FormerPrimaryMayHold). pgBackRest's parent leg
+			// says the same.
 			missing, _ := WALName(current, frontier+1, wal.SegmentSize)
 			state, stop = evidence.Unhealthy, CoverageGapLimited
-			reason = "segment " + missing + " is not archived while timeline " + strconv.FormatUint(uint64(leave.Child), 10) +
-				" already has WAL after the switch: it is lost"
+			reason = "segment " + missing + " is not in the repository and timeline " + strconv.FormatUint(uint64(leave.Child), 10) +
+				" has WAL after the switch; " + pgtimeline.FormerPrimaryMayHold
 		}
 	}
 	path.FrontierTimeline, path.FrontierPosition, path.FrontierReceipt = current, frontier, receipt
@@ -834,7 +839,8 @@ func leaveReason(wal ServerWAL, timeline uint32, leave HistoryEdge) string {
 // childHasWAL reports whether the child of a timeline switch has archived WAL
 // from its switch segment on. Its history and that WAL prove the parent
 // closed: no server writes the parent's segments before the switch any more,
-// so one that is missing is lost, not in flight. Without child WAL the
+// so one that is missing is not in flight (the former primary may still
+// hold it, pgtimeline.FormerPrimaryMayHold). Without child WAL the
 // promotion may be minutes old and the parent's last segments still on
 // their way, which stays unknown.
 func childHasWAL(wal ServerWAL, edge HistoryEdge) bool {
@@ -845,7 +851,8 @@ func childHasWAL(wal ServerWAL, edge HistoryEdge) bool {
 
 // reachPosition walks timeline from start to required. closed says the
 // timeline can receive no more WAL up to required (childHasWAL), so WAL
-// missing at its end is lost.
+// missing at its end is not on its way: unhealthy, though the former
+// primary may still hold it (pgtimeline.FormerPrimaryMayHold).
 func reachPosition(wal ServerWAL, timeline uint32, start, required uint64, closed bool) (uint64, time.Time, evidence.State, CoverageStop, string) {
 	ranges := rangesForTimeline(wal.Ranges, timeline)
 	for index, value := range ranges {
@@ -874,7 +881,7 @@ func reachPosition(wal ServerWAL, timeline uint32, start, required uint64, close
 		}
 		if closed {
 			missing, _ := WALName(timeline, value.End+1, wal.SegmentSize)
-			return value.End, value.EndReceipt, evidence.Unhealthy, CoverageGapLimited, "segment " + missing + " before the timeline switch is not archived and the child timeline has WAL: it is lost"
+			return value.End, value.EndReceipt, evidence.Unhealthy, CoverageGapLimited, "segment " + missing + " before the timeline switch is not in the repository; " + pgtimeline.FormerPrimaryMayHold
 		}
 		return value.End, value.EndReceipt, evidence.Unknown, CoverageUnknownLimited, "required backup consistency WAL was not observed"
 	}

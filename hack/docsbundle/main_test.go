@@ -23,6 +23,26 @@ import (
 	"github.com/fyannk/pgToolBox/internal/console/docsbundle"
 )
 
+func TestMaintainerPagesAreLeftOut(t *testing.T) {
+	for path, want := range map[string]bool{
+		"/docs/release/":                         false,
+		"/docs/development/":                     true,
+		"/docs/development/ci/":                  true,
+		"/docs/development/repository-settings/": true,
+		"/docs/security/":                        false,
+		"/docs/console/mcp/":                     false,
+		"/docs/reference/api/":                   false,
+		"/docs/guides/release-notes/":            false,
+	} {
+		if got := maintainerPage(path, "/docs/"); got != want {
+			t.Errorf("maintainerPage(%q) = %v, want %v", path, got, want)
+		}
+	}
+	if !maintainerPage("/docs/next/development/ci/", "/docs/next/") {
+		t.Error("a versioned development page is a maintainer page")
+	}
+}
+
 func TestMinor(t *testing.T) {
 	for in, want := range map[string]string{"1.3.0": "1.3", "1.3.0-rc.1": "1.3", "2.10.4": "2.10", "weird": "weird"} {
 		if got := minor(in); got != want {

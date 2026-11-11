@@ -90,6 +90,13 @@ const (
 	knownReviewsPerSecond = 20
 	knownReviewsBurst     = 40
 	knownReviewsKey       = "known-bearer"
+	// knownSubjectReviews: one person's share of knownReviews, charged
+	// before it: maxKnownBearersPerSubject tokens each re-reviewed once an
+	// identity-cache lifetime (30 s) is 32 a minute; past that a person
+	// waits, and emptying knownReviews takes some forty identities the
+	// API server accepts.
+	knownSubjectReviewsPerMinute = 2 * maxKnownBearersPerSubject
+	knownSubjectReviewsBurst     = maxKnownBearersPerSubject
 	// maxKnownBearers bounds the bearers remembered as accepted (a
 	// digest and an expiry each); knownBearerTTL is how long one is
 	// remembered when its own expiry is unknown (an opaque token).
@@ -122,6 +129,19 @@ const (
 	exchangeReviewsPerSecond = 20
 	exchangeReviewsBurst     = 40
 	exchangeReviewsKey       = "exchange-review"
+	// exchangeSubjectReviews: one person's share of exchangeReviews, keyed
+	// by the IdP-verified issuer and subject of the ID token (OIDC only:
+	// an OpenShift token names nobody before the review), so one account
+	// signing in silently in a loop cannot keep a team from signing in.
+	exchangeSubjectReviewsPerMinute = 12
+	exchangeSubjectReviewsBurst     = 6
+	// maxLoggedOut bounds the sessions this replica refuses as signed
+	// out (loggedOut), maxLoggedOutPerSubject one person's share of it
+	// (their own earliest-ending go first), maxLoggedOutUnnamed that of
+	// the sessions that name nobody together. Some 100 bytes an entry.
+	maxLoggedOut           = 1 << 16
+	maxLoggedOutPerSubject = 64
+	maxLoggedOutUnnamed    = 1024
 )
 
 // Principal is the signed-in user of one request.
@@ -213,6 +233,10 @@ type Handler struct {
 	knownReviews    *RateLimiter
 	codeExchanges   *RateLimiter
 	exchangeReviews *RateLimiter
+	// knownSubjectReviews and exchangeSubjectReviews are the per-person
+	// shares of knownReviews and exchangeReviews, charged before them.
+	knownSubjectReviews    *RateLimiter
+	exchangeSubjectReviews *RateLimiter
 	// knownBearers are the raw bearers this replica accepted, by digest,
 	// until their expiry: their re-reviews spend knownReviews.
 	knownBearers *knownTokens
@@ -221,12 +245,15 @@ type Handler struct {
 
 	// loggedOut holds sessions signed out on this replica until their
 	// absolute expiry: a copy of the cookie stops working here at once.
+	// It is bounded (maxLoggedOut, per person maxLoggedOutPerSubject).
 	// signOuts shares them with the other replicas and across restarts
 	// (the console's state ConfigMap); without it they learn of a
 	// sign-out only through the revocation list.
 	mu        sync.Mutex
-	loggedOut map[string]time.Time
-	signOuts  SignOutStore
+	loggedOut map[string]loggedOutEntry
+	// loggedOutMax is maxLoggedOut (a field so a test can lower it).
+	loggedOutMax int
+	signOuts     SignOutStore
 	// grantDone receives grant sign-ins (grantsignin.go); signOutHook
 	// disconnects a person's assistants on request at sign-out.
 	grantDone   GrantCompletion
@@ -236,9 +263,10 @@ type Handler struct {
 // SignOutStore shares signed-out sessions between replicas
 // (internal/console/sharedstate). It keeps a hash of the ID, never the ID.
 type SignOutStore interface {
-	// RecordSignOut shares sid, of subject (empty when unknown), until
-	// it would have ended; false when the store is full and did not.
-	RecordSignOut(sid, subject string, until time.Time) bool
+	// RecordSignOut shares sid, of the person tagged tag
+	// (Session.SubjectTag; empty when the session names nobody), until it
+	// would have ended; false when a bound of the store refused it.
+	RecordSignOut(sid, tag string, until time.Time) bool
 	SignedOut(sid string) bool
 }
 
@@ -309,10 +337,15 @@ func newHandler(o Options, providers []oauthProvider) *Handler {
 		knownReviews:    NewRateLimiter(knownReviewsPerSecond*60, knownReviewsBurst, 1).Named(BucketKnownReviews),
 		codeExchanges:   NewRateLimiter(codeExchangesPerSecond*60, codeExchangesBurst, 1).Named(BucketCodeExchanges),
 		exchangeReviews: NewRateLimiter(exchangeReviewsPerSecond*60, exchangeReviewsBurst, 1).Named(BucketExchangeReviews),
-		knownBearers:    newKnownTokens(maxKnownBearers, maxKnownBearersPerSubject),
-		flows:           newSpentFlows(maxSpentFlows),
-		loggedOut:       map[string]time.Time{},
-		signOuts:        o.SignOuts,
+		knownSubjectReviews: NewRateLimiter(knownSubjectReviewsPerMinute, knownSubjectReviewsBurst, maxLimiterKeys).
+			Named(BucketKnownReviewsSubject),
+		exchangeSubjectReviews: NewRateLimiter(exchangeSubjectReviewsPerMinute, exchangeSubjectReviewsBurst, maxLimiterKeys).
+			Named(BucketExchangeReviewsSubject),
+		knownBearers: newKnownTokens(maxKnownBearers, maxKnownBearersPerSubject),
+		flows:        newSpentFlows(maxSpentFlows),
+		loggedOut:    map[string]loggedOutEntry{},
+		loggedOutMax: maxLoggedOut,
+		signOuts:     o.SignOuts,
 	}
 }
 
@@ -463,7 +496,12 @@ func (h *Handler) handleCallback(w http.ResponseWriter, r *http.Request, p oauth
 		return
 	}
 	// The IdP issued a token: only now is a SelfSubjectReview spent, from
-	// a bucket that no junk code reaches.
+	// a bucket that no junk code reaches, after the person's own share of
+	// it when the IdP named them.
+	if ts.identity != "" && !h.exchangeSubjectReviews.Allow(ts.identity) {
+		h.fail(w, r, p.name(), &loginError{http.StatusTooManyRequests, "You are signing in too often; wait a minute and try again.", nil})
+		return
+	}
 	if !h.exchangeReviews.Allow(exchangeReviewsKey) {
 		h.fail(w, r, p.name(), &loginError{http.StatusTooManyRequests, "The console is receiving too many sign-ins; wait a few seconds and try again.", nil})
 		return
@@ -579,6 +617,9 @@ func (h *Handler) complete(w http.ResponseWriter, r *http.Request, provider stri
 		IssuedAt:     now.Unix(),
 		LastSeen:     now.Unix(),
 	}
+	if tags := h.codec.KeyedHashes(SignOutSubjectPurpose, u.Name); len(tags) > 0 {
+		s.SubjectTag = tags[0]
+	}
 	if !ts.expiry.IsZero() {
 		s.TokenExpiry = ts.expiry.Unix()
 	}
@@ -614,9 +655,15 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 	}
 	if s, err := h.codec.ReadSession(r); err == nil {
 		user := ""
-		if u, err := h.identity.Review(r.Context(), s.Token); err == nil {
+		u, err := h.identity.Review(r.Context(), s.Token)
+		if err == nil {
 			user = u.Name
 		}
+		// A token the API server refuses, in a session that cannot renew
+		// it, is refused by every replica already (their identity caches
+		// last DefaultIdentityTTL): sharing its sign-out would only spend
+		// the state ConfigMap's bounds.
+		share := !errors.Is(err, ErrTokenRejected) || s.RefreshToken != ""
 		if c, ok := h.identity.(*CachedReviewer); ok {
 			c.Forget(s.Token)
 		}
@@ -628,10 +675,13 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 		if hook := h.signOutHookFn(); hook != nil && user != "" && r.PostFormValue("disconnect") == "assistants" {
 			hook(r.Context(), ClientOf(r, h.cfg.TrustedProxy), user)
 		}
-		h.markLoggedOut(s.ID, user, s.AbsoluteExpiry(h.codec.Limits()))
+		// The sign-out counts against the person sealed at sign-in, not
+		// against what the API server says now (nobody, once the token is
+		// revoked).
+		h.markLoggedOut(s.ID, s.SubjectTag, s.AbsoluteExpiry(h.codec.Limits()), share)
 		// The session's token is refused as a raw bearer too (the MCP
 		// endpoint), until the session would have ended.
-		h.markLoggedOut(BearerReference(s.Token), user, s.AbsoluteExpiry(h.codec.Limits()))
+		h.markLoggedOut(BearerReference(s.Token), s.SubjectTag, s.AbsoluteExpiry(h.codec.Limits()), share)
 	}
 	h.codec.ClearSession(w)
 	h.codec.clearLogin(w)
@@ -823,23 +873,69 @@ func (p *Principal) String() string {
 	return fmt.Sprintf("%s via %s (session %s)", p.User.Name, p.Provider, p.SessionID)
 }
 
+// loggedOutEntry is one session signed out on this replica: until when
+// it is refused, and its person's tag (Session.SubjectTag).
+type loggedOutEntry struct {
+	until time.Time
+	tag   string
+}
+
 // markLoggedOut refuses sid on this replica until it would have ended,
-// and shares it with the others. The shared document bounds each
-// person's sign-outs and its own size (sharedstate.MaxSignOuts); a
-// sign-out it refuses is still refused here.
-func (h *Handler) markLoggedOut(sid, subject string, until time.Time) {
+// and, when share is set, shares it with the others under the person's
+// tag. The shared document bounds each person's sign-outs and its own
+// size (sharedstate.MaxSignOuts); a sign-out it refuses is still refused
+// here. This replica's own table is bounded too: a person past their
+// share forgets their own earliest-ending sign-out, and a full table
+// those that end first.
+func (h *Handler) markLoggedOut(sid, tag string, until time.Time, share bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	now := h.now()
-	for k, exp := range h.loggedOut {
-		if now.After(exp) {
+	held := 0
+	limit := maxLoggedOutPerSubject
+	if tag == "" {
+		limit = maxLoggedOutUnnamed
+	}
+	var mineFirst string
+	for k, e := range h.loggedOut {
+		switch {
+		case now.After(e.until):
 			delete(h.loggedOut, k)
+		case e.tag == tag && k != sid:
+			held++
+			if mineFirst == "" || endsBefore(k, e, mineFirst, h.loggedOut[mineFirst]) {
+				mineFirst = k
+			}
 		}
 	}
-	h.loggedOut[sid] = until
-	if h.signOuts != nil {
-		h.signOuts.RecordSignOut(sid, subject, until)
+	if _, again := h.loggedOut[sid]; !again {
+		if held >= limit {
+			delete(h.loggedOut, mineFirst)
+		}
+		for len(h.loggedOut) >= h.loggedOutMax {
+			first := ""
+			for k, e := range h.loggedOut {
+				if first == "" || endsBefore(k, e, first, h.loggedOut[first]) {
+					first = k
+				}
+			}
+			delete(h.loggedOut, first)
+		}
 	}
+	if prev, ok := h.loggedOut[sid]; !ok || until.After(prev.until) {
+		h.loggedOut[sid] = loggedOutEntry{until: until, tag: tag}
+	}
+	if share && h.signOuts != nil {
+		h.signOuts.RecordSignOut(sid, tag, until)
+	}
+}
+
+// endsBefore orders loggedOut entries by when they end, then by key.
+func endsBefore(ak string, a loggedOutEntry, bk string, b loggedOutEntry) bool {
+	if !a.until.Equal(b.until) {
+		return a.until.Before(b.until)
+	}
+	return ak < bk
 }
 
 // SignedOut reports whether the session sid was signed out, on this

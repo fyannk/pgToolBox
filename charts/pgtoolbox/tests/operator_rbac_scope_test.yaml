@@ -1,0 +1,74 @@
+# watchNamespaces narrows the operator's RBAC, not only its caches: the namespaced
+# rules (Secrets above all) are bound per namespace, the cluster-wide binding carries
+# cluster-scoped rules alone.
+suite: the operator RBAC scope
+templates:
+  - templates/operator/clusterrolebinding.yaml
+  - templates/operator/clusterrole-cluster-scoped.yaml
+  - templates/operator/rolebindings.yaml
+release:
+  name: pgtoolbox
+  namespace: pgtoolbox
+tests:
+  - it: binds the whole manager role cluster-wide by default
+    set: {operator.enabled: true}
+    asserts:
+      - hasDocuments: {count: 1}
+        template: templates/operator/clusterrolebinding.yaml
+      - equal: {path: roleRef.name, value: pgtoolbox-manager-role}
+        template: templates/operator/clusterrolebinding.yaml
+      - hasDocuments: {count: 0}
+        template: templates/operator/clusterrole-cluster-scoped.yaml
+      - hasDocuments: {count: 0}
+        template: templates/operator/rolebindings.yaml
+
+  - it: binds the namespaced rules per watched namespace and only cluster-scoped rules cluster-wide
+    set:
+      operator.enabled: true
+      operator.config.watchNamespaces: [team-a, team-b]
+    asserts:
+      - equal: {path: roleRef.name, value: pgtoolbox-manager-cluster-role}
+        template: templates/operator/clusterrolebinding.yaml
+      - hasDocuments: {count: 2}
+        template: templates/operator/rolebindings.yaml
+      - equal: {path: metadata.namespace, value: team-a}
+        template: templates/operator/rolebindings.yaml
+        documentIndex: 0
+      - equal: {path: metadata.namespace, value: team-b}
+        template: templates/operator/rolebindings.yaml
+        documentIndex: 1
+      - equal: {path: roleRef.name, value: pgtoolbox-manager-role}
+        template: templates/operator/rolebindings.yaml
+        documentIndex: 0
+      - equal: {path: roleRef.kind, value: ClusterRole}
+        template: templates/operator/rolebindings.yaml
+        documentIndex: 1
+
+  - it: gives the cluster-wide role no Secret, workload or namespaced rule
+    set:
+      operator.enabled: true
+      operator.config.watchNamespaces: [team-a]
+    template: templates/operator/clusterrole-cluster-scoped.yaml
+    asserts:
+      # The one core-group rule is the cluster-scoped Nodes list; Secrets,
+      # PVCs and ServiceAccounts stay in the per-namespace RoleBindings
+      # (hack/validate-packaging.sh checks the full rule set).
+      - equal:
+          path: rules[0]
+          value: {apiGroups: [""], resources: [nodes], verbs: [list]}
+      - notExists: {path: "rules[1:][?(@.apiGroups[0]=='')]"}
+      - notExists: {path: "rules[?(@.apiGroups[0]=='apps')]"}
+      - contains:
+          path: rules
+          content:
+            apiGroups: [rbac.authorization.k8s.io]
+            resourceNames: [pgtoolbox-console, pgtoolbox-console-pod-logs, pgtoolbox-console-restore-drills]
+            resources: [clusterroles]
+            verbs: [bind]
+
+  - it: renders nothing of it with the operator off
+    set:
+      operator.enabled: false
+      operator.config.watchNamespaces: [team-a]
+    asserts:
+      - hasDocuments: {count: 0}

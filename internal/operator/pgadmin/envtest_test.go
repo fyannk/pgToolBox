@@ -99,9 +99,11 @@ func TestEnvtestReconcile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var nodes corev1.NodeList
-	if err := operator.List(ctx, &nodes); err == nil {
-		t.Fatal("the operator identity can list nodes: the API server is not enforcing RBAC, the test would prove nothing")
+	// PersistentVolumes: cluster-scoped and in no rule of the manager role
+	// (it lists Nodes, for the console's exposure check).
+	var volumes corev1.PersistentVolumeList
+	if err := operator.List(ctx, &volumes); err == nil {
+		t.Fatal("the operator identity can list persistentvolumes: the API server is not enforcing RBAC, the test would prove nothing")
 	}
 
 	must(t, admin.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testNamespace}}))

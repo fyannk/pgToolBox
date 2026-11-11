@@ -42,7 +42,7 @@ func roundTrip(t *testing.T, in PersistedState) PersistedState {
 	return out
 }
 
-// restartFixture sweeps one replica pod twice (read, then failing) and
+// restartFixture sweeps one primary pod twice (read, then failing) and
 // returns its snapshot, the failure's "since" and a way to build a
 // second sweeper on the same server, as the console after a restart.
 type restartFixture struct {
@@ -61,7 +61,8 @@ func newRestartFixture(t *testing.T) restartFixture {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			return
 		}
-		_, _ = fmt.Fprintf(w, report, false, "0/2000000", 3)
+		// A primary: only a primary reports readyWalFiles.
+		_, _ = fmt.Fprintf(w, report, true, "0/2000000", 3)
 	})
 	bundle := bundleFile(t, good.caPEM)
 	mk := func(roster Roster, now *time.Time) *Sweeper {
@@ -103,6 +104,13 @@ func TestSnapshotRestoresSinceReadingAndRings(t *testing.T) {
 		t.Fatalf("reading = %+v, want the last good report restored", inst.Reading)
 	}
 	for _, sr := range s.Series(key, "orders-2") {
+		if sr.Key == SeriesCurrentLSN {
+			// The primary's position (0/3000000) is kept and restored.
+			if len(sr.Points) != 4 || sr.Points[0].Value == nil || *sr.Points[0].Value != 0x3000000 || sr.Points[2].Value != nil {
+				t.Fatalf("position points = %+v", sr.Points)
+			}
+			continue
+		}
 		if sr.Key != SeriesReadyWALFiles {
 			continue
 		}

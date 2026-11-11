@@ -80,6 +80,13 @@ func TestFactPinsExistInVerifiedReleases(t *testing.T) {
 			"if err := archiveWALViaPlugins(ctx, cluster, pgData, walName); err != nil {",
 			`if cluster.GetEnabledWALArchivePluginName() != "" {`,
 			"if cluster.Spec.Backup == nil || cluster.Spec.Backup.BarmanObjectStore == nil {",
+			// backups.go ArchiverLive.ReadyNotReported: readyWalFiles is
+			// filled only on a primary (a designated primary is not one),
+			// and the recovery facts' WAL positions and segment size come
+			// from pg_current_wal_lsn() and its file name.
+			"func (instance *Instance) fillWalStatusFromConnection(result *postgres.PostgresqlStatus, superUserDB *sql.DB) error {\n\tif !result.IsPrimary {\n\t\treturn nil\n\t}",
+			"result.ReadyWALFiles, _, err = GetWALArchiveCounters()",
+			"pg_catalog.pg_walfile_name(pg_catalog.pg_current_wal_lsn()) as current_wal,",
 			// The pooler phases, the backup definition phase and
 			// DatabaseRole arrived in 1.30, the support floor.
 			`BackupPhaseDefinitionInvalid = "invalid backup definition"`,

@@ -903,7 +903,7 @@ func TestLeaveEdgeStopsAncestorPathsAtTheSwitch(t *testing.T) {
 			name: "parent tail lost before the switch", h2: "1\t0/5000000\tx\n",
 			ranges: []WALRange{walRange(1, 1, 2), walRange(2, 5, 7)}, end: 1,
 			paths: map[uint32]want{
-				1: {state: evidence.Unhealthy, frontier: 2, reason: "segment 000000010000000000000003 is not archived", absent: "archive frontier"},
+				1: {state: evidence.Unhealthy, frontier: 2, reason: "segment 000000010000000000000003 is not in the repository", absent: "archive frontier"},
 				2: {state: evidence.Unhealthy, frontier: 2},
 			},
 		},

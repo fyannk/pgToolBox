@@ -229,16 +229,27 @@ delete it afterwards.
   clears the cookie, drops the cached identity and refuses that session until its
   absolute expiry: on this replica at once, and on the others within about a
   second through the [state ConfigMap](configuration.md#what-survives-a-restart),
-  which holds 128 bits of the SHA-256 of the session ID (and a 64-bit hash of
-  the person's name), never the session. Without that
+  which holds 128 bits of the SHA-256 of the session ID, when it was
+  recorded, and a tag of the person: an HMAC of their name under the
+  session secret, sealed in the cookie at sign-in, so reading the ConfigMap
+  cannot test a guessed name and a token revoked before signing out still
+  counts against its owner. It never holds the session. Without that
   ConfigMap (missing or forbidden) the refusal stays on this replica, and a
   copied cookie stays usable on another until it expires or is put on the
   [revocation list](#revoking-sessions). The ConfigMap keeps at most 16
-  sign-outs a person (past that, their oldest are forgotten by the other
-  replicas: a copy of such a cookie works there again) and 1,536 entries in
-  all (past that, a new sign-out is refused on its own replica only, logged
-  and counted in `pgtoolbox_console_shared_state_signouts_refused_total`), so
-  sign-outs never grow it past what the API server accepts. It does **not** revoke the token at the
+  sign-outs a person and 1,536 entries in all, and it never drops a
+  sign-out it holds to make room: past a bound a **new** sign-out is
+  refused on its own replica only (a copy of that cookie works on the other
+  replicas until it expires), counted in
+  `pgtoolbox_console_shared_state_signouts_refused_total{reason}` and, for
+  the document's bound, logged. Filling the document therefore takes some
+  fifty identities the API server accepts. A sign-out whose token the API
+  server already refuses, in a session that cannot renew it (a pasted
+  token, an OIDC session without a refresh token), is not shared: every
+  replica refuses that session already. Each replica also bounds its own
+  list (64 sign-outs a person, 65,536 in all, the earliest-ending
+  forgotten first), so sign-outs never grow memory or the ConfigMap past
+  what the API server accepts. It does **not** revoke the token at the
   identity provider or at OpenShift's OAuth server.
 
 What the console checks on every request after sign-in:

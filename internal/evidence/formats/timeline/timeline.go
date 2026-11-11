@@ -299,6 +299,16 @@ func format(value uint32) string { return strconv.FormatUint(uint64(value), 10) 
 // MaxReasonBytes is the longest reason the wire contract carries.
 const MaxReasonBytes = 256
 
+// FormerPrimaryMayHold ends the reason of a path that stops at a parent
+// timeline's segment missing before a switch whose child already has WAL.
+// The repository does not hold that segment and a restore past it fails
+// now (the path stays unhealthy), but the segment is not proven gone: a
+// primary that crashed with it still .ready keeps it on its volume, and
+// CloudNativePG archives every .ready segment (ArchiveAllReadyWALs) when
+// that instance restarts, before pg_rewind and before it rejoins. Deleting
+// the instance or its volume is what would make the loss permanent.
+const FormerPrimaryMayHold = "the former primary may still hold it and CloudNativePG archives it before that instance rejoins: do not delete that instance or its volume"
+
 // Join appends extra to reason with "; ", keeping the result within
 // MaxReasonBytes: extra is kept whole (it is the actionable part, such as
 // the timeline a restore must name) and reason is shortened at a rune
