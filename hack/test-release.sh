@@ -317,21 +317,60 @@ grep -q ' chart-digests.txt$' "${work}/sums/SHA256SUMS" || fail "SHA256SUMS lack
 echo "ok: hack/release.sh"
 cd "${root}"
 
-# ---- prune-caches: closed-PR refs, stale members of a family and the budget.
-cat > "${work}/caches.json" <<'JSON'
-[{"id":1,"key":"gobuild-Linux-e2e-aaaaaaaaaaaaaaaaaaaa","ref":"refs/heads/main","size_in_bytes":100,"last_accessed_at":"2026-11-01T00:00:00Z"},
- {"id":2,"key":"gobuild-Linux-e2e-bbbbbbbbbbbbbbbbbbbb","ref":"refs/heads/main","size_in_bytes":100,"last_accessed_at":"2026-11-02T00:00:00Z"},
- {"id":3,"key":"gobuild-Linux-e2e-cccccccccccccccccccc","ref":"refs/heads/main","size_in_bytes":100,"last_accessed_at":"2026-11-03T00:00:00Z"},
- {"id":4,"key":"gobuild-Linux-docs-aaaaaaaaaaaaaaaaaaaa","ref":"refs/pull/7/merge","size_in_bytes":100,"last_accessed_at":"2026-11-03T00:00:00Z"},
- {"id":5,"key":"gobuild-Linux-docs-bbbbbbbbbbbbbbbbbbbb","ref":"refs/pull/8/merge","size_in_bytes":100,"last_accessed_at":"2026-11-03T00:00:00Z"},
- {"id":6,"key":"buildkit-blob-1-sha256:0123","ref":"refs/heads/main","size_in_bytes":3000000,"last_accessed_at":"2026-11-04T00:00:00Z"},
- {"id":7,"key":"buildkit-blob-1-sha256:0124","ref":"refs/heads/main","size_in_bytes":3000000,"last_accessed_at":"2026-11-05T00:00:00Z"}]
-JSON
-echo 8 > "${work}/open.txt"
-got="$(BUDGET_MB=5 ./hack/prune-caches.sh select "${work}/caches.json" "${work}/open.txt" | tr '\n' ' ')"
-[[ "${got}" == "1 4 6 " ]] || fail "prune-caches selected '${got}', want '1 4 6 ' (oldest of a family of 3, closed PR 7, LRU over the budget)"
-got="$(./hack/prune-caches.sh select "${work}/caches.json" "${work}/open.txt" | tr '\n' ' ')"
-[[ "${got}" == "1 4 " ]] || fail "prune-caches without budget pressure selected '${got}', want '1 4 '"
+# ---- prune-caches: a recorded (anonymised) listing of the live repository is
+# the golden input; the selection must keep the newest member of every family.
+live="${root}/hack/testdata/caches-live.json"
+echo 27 > "${work}/open.txt"
+prune_ids() { ./hack/prune-caches.sh select "$1" "${work}/open.txt" | sort -n | tr '\n' ' '; }
+sel() { # sel CACHES.json ids...: the summary of keys/ids for the assertions
+  jq -r --argjson ids "$(printf '%s\n' "${@:2}" | jq -Rn '[inputs | select(length > 0) | tonumber]')" '.[] | select(.id as $i | $ids | index($i)) | .key' "$1"
+}
+got="$(prune_ids "${live}")"
+# yesterday's gobuild copies (10 of them) go, nothing else does
+[[ "$(wc -w <<<"${got}")" == 10 ]] || fail "prune-caches (live listing) selected '${got}', want exactly the 10 gobuild copies of the previous day"
+while read -r key; do
+  [[ "${key}" == gobuild-*-2026-11-10 ]] || fail "prune-caches selected '${key}' from the live listing; only previous-day gobuild copies may go"
+done < <(sel "${live}" ${got})
+# every family keeps its newest member: all 12 mise entries (one family per job hash), node, gomod, codeql, today's gobuild
+for k in mise-v1 node-Linux gomod-Linux codeql-trap gobuild-Linux-test-race gobuild-Linux-e2e; do
+  jq -e --arg k "${k}" --argjson ids "$(printf '%s\n' ${got} | jq -Rn '[inputs|tonumber]')" \
+    '[.[] | select(.key | startswith($k)) | select(.id as $i | $ids | index($i) | not)] | length > 0' "${live}" > /dev/null || fail "prune-caches deleted every ${k}* cache"
+done
+# closed-PR caches, a replaced hash, a 404-prone id list and the budget
+jq '. + [
+  {"id":901,"key":"gobuild-Linux-test-0909090909090909090909090909090909090909090909090909090909090909-2026-11-11","ref":"refs/pull/9/merge","size_in_bytes":10,"created_at":"2026-11-11T00:00:00Z","last_accessed_at":"2026-11-11T00:00:00Z"},
+  {"id":902,"key":"gobuild-Linux-test-0909090909090909090909090909090909090909090909090909090909090909-2026-11-11","ref":"refs/pull/27/merge","size_in_bytes":10,"created_at":"2026-11-11T00:00:00Z","last_accessed_at":"2026-11-11T00:00:00Z"},
+  {"id":903,"key":"gomod-Linux-0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a","ref":"refs/heads/main","size_in_bytes":10,"created_at":"2026-10-01T00:00:00Z","last_accessed_at":"2026-11-11T01:00:00Z"}]' "${live}" > "${work}/live2.json"
+got="$(prune_ids "${work}/live2.json")"
+[[ " ${got}" == *" 901 "* ]] || fail "prune-caches kept the cache of closed PR 9: ${got}"
+[[ " ${got}" != *" 902 "* ]] || fail "prune-caches deleted the cache of open PR 27: ${got}"
+[[ " ${got}" == *" 903 "* ]] || fail "prune-caches kept a superseded gomod cache: ${got}"
+# budget: only newest members remain (6.8 GB); a 5 GB budget evicts rebuildable gobuild caches, largest first, before any toolchain cache
+got="$(BUDGET_MB=5000 prune_ids "${live}")"
+left="$(jq --argjson ids "$(printf '%s\n' ${got} | jq -Rn '[inputs|tonumber]')" '[.[] | select(.id as $i | $ids | index($i) | not) | .size_in_bytes] | add / 1048576' "${live}")"
+(( ${left%.*} <= 5000 )) || fail "prune-caches left ${left} MiB with a 5000 MiB budget"
+! sel "${live}" ${got} | grep -Eq '^(mise|node|gomod|codeql)' || fail "prune-caches evicted a toolchain cache before the rebuildable ones: $(sel "${live}" ${got} | grep -E '^(mise|node|gomod)')"
+# a 404 on one DELETE (already evicted) does not stop the loop; another error does not either, but fails the run
+mkdir -p "${work}/prune-stub"
+cat > "${work}/prune-stub/gh" <<'STUB'
+#!/usr/bin/env bash
+case "$*" in
+  "api --paginate"*) jq -c '.[]' "${PRUNE_LIVE}" | jq -c '{actions_caches: [.]}' | jq -c --slurp '.[]' | jq '.actions_caches[]' ;;
+  "pr list"*) echo 27 ;;
+  "api -X DELETE"*) id="${4##*/}"; echo "${id}" >> "${PRUNE_LOG}"
+    [[ "${id}" == "${PRUNE_404}" ]] && { echo "gh: Not Found (HTTP 404)" >&2; exit 1; }
+    [[ "${id}" == "${PRUNE_500}" ]] && { echo "gh: boom (HTTP 500)" >&2; exit 1; }
+    exit 0 ;;
+esac
+STUB
+chmod +x "${work}/prune-stub/gh"
+first="$(prune_ids "${live}" | cut -d' ' -f1)"
+: > "${work}/prune.log"
+expect 0 'already gone \(404\)' -- env PATH="${work}/prune-stub:${PATH}" PRUNE_LIVE="${live}" PRUNE_LOG="${work}/prune.log" PRUNE_404="${first}" PRUNE_500=0 GITHUB_REPOSITORY=o/r ./hack/prune-caches.sh
+[[ "$(wc -l < "${work}/prune.log")" == 10 ]] || fail "prune-caches stopped after a 404: $(wc -l < "${work}/prune.log") of 10 deletions attempted"
+: > "${work}/prune.log"
+expect 1 '1 deletion\(s\) failed' -- env PATH="${work}/prune-stub:${PATH}" PRUNE_LIVE="${live}" PRUNE_LOG="${work}/prune.log" PRUNE_404=0 PRUNE_500="${first}" GITHUB_REPOSITORY=o/r ./hack/prune-caches.sh
+[[ "$(wc -l < "${work}/prune.log")" == 10 ]] || fail "prune-caches stopped after a 500"
 echo "ok: prune-caches"
 
 # ---- retry: the bounded loop the workflow's verify step shares with
