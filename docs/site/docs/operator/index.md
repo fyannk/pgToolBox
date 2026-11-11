@@ -191,7 +191,16 @@ reconciliation and deletes it when it is no longer wanted. When it cannot (the
 Route is the requested exposure, or its read or deletion is refused),
 `ExposureReady` keeps its reason but its message says that a Route or HTTPRoute
 published before may remain and must be deleted by hand. It never says the
-exposure is gone.
+exposure is gone. On a `PgToolBoxConsole` that publishes nothing else,
+`ExposureConfined` is then `False` (`ExposureOpen`) for one found still there,
+and `Unknown` (`ExposureOpen`) for one the operator may not read either: it may
+be gone. A refused read is reported only when the object's history says one
+may have been published (its spec requests that kind, or an earlier status
+observed a Route or HTTPRoute or already reported one); a `PgAdmin` or console
+that was only ever `clusterIP` or Ingress gets no such sentence. If the Route
+or Gateway API itself is removed while the operator runs, nothing of it can
+remain and the reconciliation carries on (restart the operator to read the new
+API set).
 
 If no listed namespace is left, the operator does not start; nor does
 it when the API server refuses its credentials (401) at start, which is retried

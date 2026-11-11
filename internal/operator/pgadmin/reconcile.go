@@ -435,7 +435,7 @@ func (r *Reconciler) apiServerEndpoints(ctx context.Context) apiServerEndpoints 
 
 // applyChildren writes every child except the Deployment and the Jobs. It
 // returns the exposure leftovers applyExposure found.
-func (r *Reconciler) applyChildren(ctx context.Context, p *pgtoolboxv1alpha1.PgAdmin, in *buildInputs) ([]string, error) {
+func (r *Reconciler) applyChildren(ctx context.Context, p *pgtoolboxv1alpha1.PgAdmin, in *buildInputs) ([]exposure.Remnant, error) {
 	applier := r.applier()
 	n := namesOf(p)
 	if p.Spec.ConfigDatabase == nil {
@@ -581,7 +581,7 @@ func (r *Reconciler) notOwned(p *pgtoolboxv1alpha1.PgAdmin, err error) error {
 
 // withdrawExposure deletes every exposure object this PgAdmin owns. It
 // returns the status sentences of those it could not (leftoverExposure).
-func (r *Reconciler) withdrawExposure(ctx context.Context, p *pgtoolboxv1alpha1.PgAdmin) ([]string, error) {
+func (r *Reconciler) withdrawExposure(ctx context.Context, p *pgtoolboxv1alpha1.PgAdmin) ([]exposure.Remnant, error) {
 	name := namesOf(p).base
 	if err := r.deleteIfOwned(ctx, p, &networkingv1.Ingress{}, name); err != nil {
 		return nil, err
@@ -603,7 +603,7 @@ func (r *Reconciler) withdrawExposure(ctx context.Context, p *pgtoolboxv1alpha1.
 // deletes the others this PgAdmin owns. It returns, for a kind refused in
 // the PgAdmin's namespace, what it published before and may still be
 // serving (leftoverExposure).
-func (r *Reconciler) applyExposure(ctx context.Context, p *pgtoolboxv1alpha1.PgAdmin) ([]string, error) {
+func (r *Reconciler) applyExposure(ctx context.Context, p *pgtoolboxv1alpha1.PgAdmin) ([]exposure.Remnant, error) {
 	n := namesOf(p)
 	kind := p.Spec.Exposure.TypeOrDefault()
 	applier := r.applier()
@@ -641,9 +641,9 @@ func (r *Reconciler) applyExposure(ctx context.Context, p *pgtoolboxv1alpha1.PgA
 // holds none of that kind there, so one uncached Get each
 // (exposure.Leftover), deleting it when remove says so for its type. It
 // returns the status sentences of those that remain or may remain.
-func (r *Reconciler) leftoverExposure(ctx context.Context, p *pgtoolboxv1alpha1.PgAdmin, remove func(pgtoolboxv1alpha1.ExposureType) bool) ([]string, error) {
+func (r *Reconciler) leftoverExposure(ctx context.Context, p *pgtoolboxv1alpha1.PgAdmin, remove func(pgtoolboxv1alpha1.ExposureType) bool) ([]exposure.Remnant, error) {
 	here := r.Features.In(p.Namespace)
-	var leftovers []string
+	var leftovers []exposure.Remnant
 	for _, k := range []struct {
 		api    discovery.Result
 		typ    pgtoolboxv1alpha1.ExposureType
@@ -656,11 +656,12 @@ func (r *Reconciler) leftoverExposure(ctx context.Context, p *pgtoolboxv1alpha1.
 		if k.api.State != discovery.Forbidden {
 			continue
 		}
-		leftover, err := exposure.Leftover(ctx, r.APIReader, r.Client, p, k.object, k.kind, namesOf(p).base, remove(k.typ))
+		publishedBefore := exposure.MayHavePublished(p.Spec.Exposure.TypeOrDefault() == k.typ, p.Status.Conditions, k.kind)
+		leftover, err := exposure.Leftover(ctx, r.APIReader, r.Client, p, k.object, k.kind, namesOf(p).base, remove(k.typ), publishedBefore)
 		if err != nil {
 			return nil, err
 		}
-		if leftover != "" {
+		if leftover.Sentence != "" {
 			leftovers = append(leftovers, leftover)
 		}
 	}
@@ -671,7 +672,7 @@ func (r *Reconciler) leftoverExposure(ctx context.Context, p *pgtoolboxv1alpha1.
 // followed by what the PgAdmin published before a refusal and may still be
 // serving (leftovers, from applyExposure): the message never says an
 // exposure is gone while one may remain.
-func (r *Reconciler) reconcileExposure(ctx context.Context, p *pgtoolboxv1alpha1.PgAdmin, leftovers []string) {
+func (r *Reconciler) reconcileExposure(ctx context.Context, p *pgtoolboxv1alpha1.PgAdmin, leftovers []exposure.Remnant) {
 	p.Status.URL = exposureURL(p)
 	key := client.ObjectKey{Namespace: p.Namespace, Name: namesOf(p).base}
 	fact := exposureFact{Status: metav1.ConditionTrue, Reason: pgtoolboxv1alpha1.ReasonNotRequested, Message: "in-cluster Service only (exposure type clusterIP)"}

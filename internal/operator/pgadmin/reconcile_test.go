@@ -1381,6 +1381,8 @@ func TestReconcileHostnameAllowList(t *testing.T) {
 // clusterIP. Owned, the Route is read past the cache and deleted; if the
 // read is refused, ExposureReady keeps its reason and says a Route may
 // remain, the same text at every loop (the second loop writes no status).
+// Round 15, k8s P3-2: a refused read says nothing for a PgAdmin whose
+// history shows no Route (only ever clusterIP).
 func TestReconcileStaleRouteAfterRefusal(t *testing.T) {
 	refusedHere := discovery.Result{GVK: routev1.GroupVersion.WithKind("Route"), State: discovery.Available, RefusedIn: []string{testNamespace}}
 	clusterIP := func() *pgtoolboxv1alpha1.PgAdmin {
@@ -1413,10 +1415,7 @@ func TestReconcileStaleRouteAfterRefusal(t *testing.T) {
 		}
 	})
 
-	t.Run("unreadable: ExposureReady says it may remain", func(t *testing.T) {
-		p := clusterIP()
-		h := newHarness(t, nil, baseObjects(p)...)
-		h.r.Features.Routes = refusedHere
+	refuseRoutes := func(h *harness) {
 		h.r.APIReader = interceptor.NewClient(h.client.(client.WithWatch), interceptor.Funcs{
 			Get: func(ctx context.Context, inner client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
 				if _, isRoute := obj.(*routev1.Route); isRoute {
@@ -1425,6 +1424,33 @@ func TestReconcileStaleRouteAfterRefusal(t *testing.T) {
 				return inner.Get(ctx, key, obj, opts...)
 			},
 		})
+	}
+
+	t.Run("unreadable, never published: nothing said", func(t *testing.T) {
+		p := clusterIP()
+		h := newHarness(t, nil, baseObjects(p)...)
+		h.r.Features.Routes = refusedHere
+		refuseRoutes(h)
+		for range 2 {
+			if err := h.reconcile(p.Name); err != nil {
+				t.Fatal(err)
+			}
+			if msg := condition(h.pgadmin(p.Name), "ExposureReady").Message; strings.Contains(msg, "Route") {
+				t.Fatalf("ExposureReady names a Route this PgAdmin never published: %q", msg)
+			}
+		}
+	})
+
+	t.Run("unreadable: ExposureReady says it may remain", func(t *testing.T) {
+		p := clusterIP()
+		// The loop before the refusal observed the Route it published.
+		p.Status.Conditions = []metav1.Condition{{
+			Type: pgtoolboxv1alpha1.ConditionExposureReady, Status: metav1.ConditionTrue, Reason: pgtoolboxv1alpha1.ReasonAsExpected.String(),
+			Message: "admitted by router default", LastTransitionTime: metav1.Now(),
+		}}
+		h := newHarness(t, nil, baseObjects(p)...)
+		h.r.Features.Routes = refusedHere
+		refuseRoutes(h)
 		if err := h.reconcile(p.Name); err != nil {
 			t.Fatal(err)
 		}

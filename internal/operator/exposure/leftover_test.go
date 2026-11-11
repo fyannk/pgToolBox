@@ -22,6 +22,7 @@ import (
 
 	routev1 "github.com/openshift/api/route/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -51,15 +52,18 @@ func TestLeftover(t *testing.T) {
 		return r
 	}
 	forbidden := apierrors.NewForbidden(schema.GroupResource{Group: routev1.GroupName, Resource: "routes"}, "team-pgadmin", errors.New("narrowed Role"))
+	noKind := &meta.NoKindMatchError{GroupKind: schema.GroupKind{Group: routev1.GroupName, Kind: "Route"}, SearchedVersions: []string{"v1"}}
 	tests := []struct {
-		name        string
-		objects     []client.Object
-		getErr      error
-		deleteErr   error
-		remove      bool
-		want        string
-		wantErr     bool
-		wantDeleted bool
+		name           string
+		objects        []client.Object
+		getErr         error
+		deleteErr      error
+		remove         bool
+		notPublished   bool
+		want           string
+		wantUnverified bool
+		wantErr        bool
+		wantDeleted    bool
 	}{
 		{name: "nothing there", want: ""},
 		{name: "owned, removed", objects: []client.Object{route("owner-uid")}, remove: true, want: "", wantDeleted: true},
@@ -71,8 +75,16 @@ func TestLeftover(t *testing.T) {
 		{name: "unowned, never touched", objects: []client.Object{route("")}, remove: true, want: ""},
 		{
 			name: "unreadable", getErr: forbidden, remove: true,
-			want: "the operator may not read Routes in team-b: a Route team-pgadmin published before may remain; delete it by hand",
+			want:           "the operator may not read Routes in team-b: a Route team-pgadmin published before may remain; delete it by hand",
+			wantUnverified: true,
 		},
+		// Round 15, k8s P3-2: nothing in the owner's history says it ever
+		// published a Route; an unreadable one is not reported.
+		{name: "unreadable, never published", getErr: forbidden, remove: true, notPublished: true, want: ""},
+		// Round 15, operator note: the Route CRD removed while the operator
+		// runs. Nothing of it can remain; the loop does not fail.
+		{name: "kind no longer served", getErr: noKind, remove: true, want: ""},
+		{name: "kind no longer served at delete", objects: []client.Object{route("owner-uid")}, deleteErr: noKind, remove: true, want: ""},
 		{
 			name: "deletion refused", objects: []client.Object{route("owner-uid")}, deleteErr: forbidden, remove: true,
 			want: "the operator may not delete Routes in team-b: Route team-pgadmin published before remains; delete it by hand",
@@ -102,12 +114,13 @@ func TestLeftover(t *testing.T) {
 					return c.Delete(ctx, obj, opts...)
 				},
 			}).Build()
-			got, err := Leftover(context.Background(), c, c, owner, &routev1.Route{}, "Route", "team-pgadmin", tt.remove)
+			remnant, err := Leftover(context.Background(), c, c, owner, &routev1.Route{}, "Route", "team-pgadmin", tt.remove, !tt.notPublished)
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("err = %v, want error %t", err, tt.wantErr)
 			}
-			if got != tt.want {
-				t.Errorf("leftover = %q, want %q", got, tt.want)
+			got := remnant.Sentence
+			if got != tt.want || remnant.Unverified != tt.wantUnverified {
+				t.Errorf("leftover = %q (unverified %t), want %q (unverified %t)", got, remnant.Unverified, tt.want, tt.wantUnverified)
 			}
 			if deleted != tt.wantDeleted {
 				t.Errorf("deleted = %t, want %t", deleted, tt.wantDeleted)
@@ -120,7 +133,47 @@ func TestLeftover(t *testing.T) {
 	if got := WithLeftovers("in-cluster Service only", nil); got != "in-cluster Service only" {
 		t.Errorf("WithLeftovers without leftovers = %q", got)
 	}
-	if got := WithLeftovers("a", []string{"b", "c"}); got != "a; b; c" {
+	if got := WithLeftovers("a", []Remnant{{Sentence: "b"}, {}, {Sentence: "c", Unverified: true}}); got != "a; b; c" {
 		t.Errorf("WithLeftovers = %q", got)
+	}
+}
+
+// TestMayHavePublished: what in an owner's history says it may have
+// published a Route or an HTTPRoute, so that a Leftover it may not read is
+// reported only then.
+func TestMayHavePublished(t *testing.T) {
+	ready := func(message string) []metav1.Condition {
+		return []metav1.Condition{{Type: pgtoolboxv1alpha1.ConditionExposureReady, Message: message}}
+	}
+	leftover := "in-cluster Service only (exposure type clusterIP); the operator may not read Routes in team-b: a Route orders published before may remain; delete it by hand"
+	for _, tt := range []struct {
+		name       string
+		requested  bool
+		conditions []metav1.Condition
+		kind       string
+		want       bool
+	}{
+		{"requested now", true, nil, "Route", true},
+		{"no history", false, nil, "Route", false},
+		{"only ever clusterIP", false, ready("in-cluster Service only (exposure type clusterIP)"), "Route", false},
+		{"an Ingress", false, ready("served at orders.example.com"), "Route", false},
+		{"admitted by a router", false, ready("admitted by router default"), "Route", true},
+		{"router refused it", false, ready("router default: HostAlreadyClaimed: taken"), "Route", true},
+		{"Route not observed yet", false, ready("the Route is not observed yet"), "Route", true},
+		{"its own leftover sentence (sticky)", false, ready(leftover), "Route", true},
+		{"an HTTPRoute is no Route", false, ready("accepted by Gateway public; no Gateway has reported on the HTTPRoute yet"), "Route", false},
+		{"a Route is no HTTPRoute", false, ready("admitted by router default"), "HTTPRoute", false},
+		{"accepted by a Gateway", false, ready("accepted by Gateway public"), "HTTPRoute", true},
+		{"HTTPRoute not observed yet", false, ready("the HTTPRoute is not observed yet"), "HTTPRoute", true},
+		{"in another condition", false, []metav1.Condition{{Type: "ExposureConfined", Message: leftover}}, "Route", true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := MayHavePublished(tt.requested, tt.conditions, tt.kind); got != tt.want {
+				t.Fatalf("MayHavePublished = %t, want %t", got, tt.want)
+			}
+		})
+	}
+	if !AllUnverified([]Remnant{{Unverified: true}, {Unverified: true}}) || AllUnverified([]Remnant{{Unverified: true}, {}}) || AllUnverified(nil) {
+		t.Error("AllUnverified: true only for a non-empty list of unverified remnants")
 	}
 }

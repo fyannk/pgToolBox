@@ -43,6 +43,10 @@ const (
 	ReasonInstanceCABundleFull Reason = "InstanceCABundleFull"
 	// ReasonExposureOpen: ExposureConfined=False, the console is exposed
 	// without its ingress NetworkPolicy, so any Pod can reach its port.
+	// ExposureConfined=Unknown with this reason: the only exposure object
+	// is a Route or HTTPRoute the console published before the operator
+	// was refused its kind, which the operator may not read either, so it
+	// may be gone or still serve unconfined.
 	ReasonExposureOpen Reason = "ExposureOpen"
 	// ReasonExposurePeersBroad: ExposureConfined=False, a networkPolicy.from
 	// peer admits (nearly) every namespace (a namespaceSelector that pins
