@@ -350,7 +350,18 @@ jobs:
           set -euo pipefail
           make ui-install
           cd ui
-          pnpm exec playwright install --with-deps chromium
+          # The browser's system packages come from the Ubuntu archives, whose
+          # DNS has failed on hosted runners for an hour at a time. Retry, then
+          # fall back to the image's own libraries: the gate below still fails
+          # if one is really missing.
+          for wait in 30 60 0; do
+            if pnpm exec playwright install --with-deps chromium; then exit 0; fi
+            if [[ "${wait}" == 0 ]]; then break; fi
+            echo "playwright install --with-deps failed; retrying in ${wait}s"
+            sleep "${wait}"
+          done
+          echo "::warning::the Ubuntu archives could not be reached; installing Chromium without its system packages"
+          pnpm exec playwright install chromium
       # Generated drift (`pnpm generate:check`), lint, types, unused code,
       # tokens, unit tests, stories with axe, build and size budgets.
       - name: Gate
