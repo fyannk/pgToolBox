@@ -1213,44 +1213,92 @@ func unavailableWhy(result discovery.Result) string {
 // not to be checked), kept for nodeCIDRTTL and shared by every console:
 // a Node's podCIDRs never change once set, and a new Node is seen within
 // that time.
+//
+// The pages are full Nodes: a metadata-only list has no spec, and the
+// controller-runtime reader decodes a typed list whole. Pages of 100 keep
+// what one page holds in memory to about a hundred Node objects (their
+// status lists images and can run to tens of kilobytes each), and only
+// the names and podCIDRs outlive the page.
 const (
-	nodeListPage  = 500
-	nodeListPages = 20
+	nodeListPage  = 100
+	nodeListPages = 100
 	nodeCIDRTTL   = time.Minute
 )
 
-// nodeCIDRMemo is the last Node podCIDR lookup.
+// nodeCIDRMemo is the last successful Node podCIDR lookup, and the one
+// under way. The mutex guards the fields only: it is never held across a
+// List.
 type nodeCIDRMemo struct {
 	mu    sync.Mutex
 	at    time.Time
 	nodes []nodePodCIDRs
 	note  string
+	// inflight is closed when the lookup under way ends, nil when none is.
+	inflight chan struct{}
 }
 
 // nodePodCIDRs returns the Nodes' spec.podCIDRs. When the operator may not
 // list Nodes (an installation without the grant), or there are more than
-// it lists, note says that they were not checked and the console Pods'
-// own addresses stay the only check; any other error is returned.
+// it lists, or no Node has spec.podCIDRs (a CNI that allocates Pod
+// addresses itself), note says that they were not checked and the console
+// Pods' own addresses stay the only check; any other error is returned.
+//
+// One lookup runs at a time; the other callers wait for it, each on its
+// own context, and take its result. When it fails (its caller's context
+// ended, or the API server erred) nothing is kept, and a waiter whose
+// context is still live runs the next one itself.
 func (r *Reconciler) nodePodCIDRs(ctx context.Context) (nodes []nodePodCIDRs, note string, err error) {
 	now := time.Now
 	if r.Now != nil {
 		now = r.Now
 	}
-	r.nodes.mu.Lock()
-	defer r.nodes.mu.Unlock()
-	if !r.nodes.at.IsZero() && now().Sub(r.nodes.at) < nodeCIDRTTL {
-		return r.nodes.nodes, r.nodes.note, nil
+	for {
+		r.nodes.mu.Lock()
+		if !r.nodes.at.IsZero() && now().Sub(r.nodes.at) < nodeCIDRTTL {
+			nodes, note = r.nodes.nodes, r.nodes.note
+			r.nodes.mu.Unlock()
+			return nodes, note, nil
+		}
+		if wait := r.nodes.inflight; wait != nil {
+			r.nodes.mu.Unlock()
+			select {
+			case <-wait:
+				continue
+			case <-ctx.Done():
+				return nil, "", fmt.Errorf("wait for the Node podCIDR lookup: %w", ctx.Err())
+			}
+		}
+		r.nodes.inflight = make(chan struct{})
+		r.nodes.mu.Unlock()
+		return r.leadNodeLookup(ctx, now)
 	}
+}
+
+// leadNodeLookup runs the lookup nodePodCIDRs made inflight, keeps a
+// successful result and releases the waiters on every path (a panic
+// included, which keeps nothing).
+func (r *Reconciler) leadNodeLookup(ctx context.Context, now func() time.Time) (nodes []nodePodCIDRs, note string, err error) {
+	returned := false
+	defer func() {
+		r.nodes.mu.Lock()
+		defer r.nodes.mu.Unlock()
+		if returned && err == nil {
+			r.nodes.at, r.nodes.nodes, r.nodes.note = now(), nodes, note
+		}
+		close(r.nodes.inflight)
+		r.nodes.inflight = nil
+	}()
 	nodes, note, err = r.listNodePodCIDRs(ctx)
+	returned = true
 	if err != nil {
 		return nil, "", err
 	}
-	r.nodes.at, r.nodes.nodes, r.nodes.note = now(), nodes, note
 	return nodes, note, nil
 }
 
 func (r *Reconciler) listNodePodCIDRs(ctx context.Context) ([]nodePodCIDRs, string, error) {
 	var nodes []nodePodCIDRs
+	listed := 0
 	continueToken := ""
 	for range nodeListPages {
 		var list corev1.NodeList
@@ -1264,6 +1312,7 @@ func (r *Reconciler) listNodePodCIDRs(ctx context.Context) ([]nodePodCIDRs, stri
 			}
 			return nil, "", fmt.Errorf("list the Nodes for their podCIDRs: %w", err)
 		}
+		listed += len(list.Items)
 		for i := range list.Items {
 			node := nodePodCIDRs{Name: list.Items[i].Name}
 			for _, cidr := range list.Items[i].Spec.PodCIDRs {
@@ -1276,8 +1325,24 @@ func (r *Reconciler) listNodePodCIDRs(ctx context.Context) ([]nodePodCIDRs, stri
 			}
 		}
 		if continueToken = list.Continue; continueToken == "" {
-			return nodes, "", nil
+			return nodes, nodeCoverageNote(listed, len(nodes)), nil
 		}
 	}
 	return nil, fmt.Sprintf("the Nodes' podCIDRs were not checked against the ipBlock peers (more than %d Nodes): only the console Pods' own addresses were", nodeListPage*nodeListPages), nil
+}
+
+// nodeCoverageNote says which of the listed Nodes could not be checked
+// for want of spec.podCIDRs, "" when every one could (or none is listed):
+// a CNI that allocates Pod addresses itself (Calico, Cilium's cluster
+// pool) leaves it empty on every Node, so an empty list of ranges is a
+// check that could not run, not one that passed.
+func nodeCoverageNote(listed, withCIDRs int) string {
+	switch {
+	case listed == 0 || withCIDRs == listed:
+		return ""
+	case withCIDRs == 0:
+		return fmt.Sprintf("the Node check could not run: none of the %d Nodes has spec.podCIDRs (the CNI allocates Pod addresses itself), so only the console Pods' own addresses were checked against the ipBlock peers", listed)
+	default:
+		return fmt.Sprintf("%d of the %d Nodes have no spec.podCIDRs: their Pod ranges were not checked against the ipBlock peers", listed-withCIDRs, listed)
+	}
 }
