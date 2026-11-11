@@ -158,7 +158,7 @@ cmd_check() {
     if [[ "${ALLOW_UNRELEASED:-0}" == "1" && "${REQUIRE_TAG:-0}" != "1" ]]; then
       echo "note: CHANGELOG.md heading '${heading}' still says Unreleased; it must be dated before tagging ${tag}"
     else
-      die "CHANGELOG.md heading '${heading}' still says Unreleased; date it ('## [${version}] - $(date -u +%F)') before tagging ${tag}"
+      die "CHANGELOG.md heading '${heading}' still says Unreleased; date it ('## [${core}] - $(date -u +%F)', the core version: a candidate and the final tag share that one section) before tagging ${tag}"
     fi
   fi
 
@@ -313,6 +313,12 @@ cmd_preflight() {
       sha="$(git rev-parse HEAD)"
     fi
   fi
+  # Fail before any network call: a SHA that is not on main is refused by
+  # `prepare` after the approval, so say it now.
+  git rev-parse -q --verify refs/remotes/origin/main >/dev/null \
+    || die "origin/main is not fetched; run \`git fetch origin main\` to check that ${sha} is on main"
+  git merge-base --is-ancestor "${sha}" refs/remotes/origin/main \
+    || die "${tag} would point at ${sha}, which is not an ancestor of origin/main; merge it to main (and fetch) first"
   CI_WAIT_ATTEMPTS=1 CI_WAIT_EMPTY_ATTEMPTS=1 CI_WAIT_SLEEP=0 cmd_wait_ci "${sha}"
   echo "ok: preflight ${tag} on ${sha}"
 }
@@ -562,9 +568,15 @@ cmd_check_public() {
   # A package flipped to public while the run waits turns it green: poll every
   # CHECK_PUBLIC_SLEEP seconds (60) up to CHECK_PUBLIC_ATTEMPTS times (20).
   local attempts="${CHECK_PUBLIC_ATTEMPTS:-20}" attempt pkg
-  local -a private=()
+  local -a private=() unavailable=()
   for attempt in $(seq 1 "${attempts}"); do
     check_public_once "$@" && { echo "ok: every digest is publicly pullable"; return 0; }
+    if ((${#private[@]} == 0)); then
+      # Only registry errors: nothing says a package is private. Wait and retry.
+      echo "registry unavailable (HTTP 5xx or timeout) for: ${unavailable[*]}; this says nothing about visibility"
+      ((attempt < attempts)) && sleep "${CHECK_PUBLIC_SLEEP:-60}"
+      continue
+    fi
     # One annotation per wait, naming the settings page of every private package:
     # a maintainer who only sees the run page needs no log reading to act.
     {
@@ -583,18 +595,27 @@ cmd_check_public() {
     fi
   done
   {
-    echo "::error::these packages cannot be pulled anonymously; the release stays a draft:"
-    printf '%s\n' "${private[@]}" | LC_ALL=C sort -u | sed 's/^/  - /'
-    echo "Make each package public (github.com/${repo%%/*}?tab=packages, Package settings, Change visibility), then use 'Re-run failed jobs' on this workflow run."
+    if ((${#private[@]} > 0)); then
+      echo "::error::these packages are private (or missing) for an anonymous pull; the release stays a draft:"
+      printf '%s\n' "${private[@]}" | LC_ALL=C sort -u | sed 's/^/  - /'
+      echo "Make each package public (github.com/${repo%%/*}?tab=packages, Package settings, Change visibility), then use 'Re-run failed jobs' on this workflow run."
+    fi
+    if ((${#unavailable[@]} > 0)); then
+      echo "::error::the registry did not answer (HTTP 5xx or timeout) for these packages; this is an outage, not a visibility problem:"
+      printf '%s\n' "${unavailable[@]}" | LC_ALL=C sort -u | sed 's/^/  - /'
+      echo "Use 'Re-run failed jobs' on this workflow run once ${registry} is back."
+    fi
   } >&2
   return 1
 }
 
 # check_public_once FILE...: one anonymous pull of every digest; fills the
-# caller's `private` array with the package names that failed, returns 1 then.
+# caller's `private` array with the packages that answered 401/403/404 and its
+# `unavailable` array with those the registry failed to answer (5xx, timeout),
+# returns 1 when either is not empty.
 check_public_once() {
   local ref name digest path token status accept
-  private=()
+  private=() unavailable=()
   accept="application/vnd.oci.image.index.v1+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.docker.distribution.manifest.v2+json"
   while read -r ref; do
     [[ -n "${ref}" ]] || continue
@@ -608,14 +629,20 @@ check_public_once() {
       status="$(curl -sS -o /dev/null -w '%{http_code}' -I -H "Authorization: Bearer ${token}" -H "Accept: ${accept}" \
         "https://${registry}/v2/${path}/manifests/${digest}" || true)"
     fi
-    if [[ "${status}" == 200 ]]; then
-      echo "public: ${ref}"
-    else
-      echo "NOT PUBLIC (HTTP ${status}): ${ref}" >&2
-      private+=("${path#*/}") # the package name: the path below the owner
-    fi
+    case "${status}" in
+      200) echo "public: ${ref}" ;;
+      401 | 403 | 404)
+        echo "NOT PUBLIC (HTTP ${status}): ${ref}" >&2
+        private+=("${path#*/}") # the package name: the path below the owner
+        ;;
+      *)
+        # 5xx, a timeout (000) or anything unexpected: the registry, not the package.
+        echo "REGISTRY ERROR (HTTP ${status}): ${ref}" >&2
+        unavailable+=("${path#*/}")
+        ;;
+    esac
   done < <(cat "$@")
-  ((${#private[@]} == 0))
+  ((${#private[@]} == 0 && ${#unavailable[@]} == 0))
 }
 
 # -------------------------------------------------------- scan-digests ---

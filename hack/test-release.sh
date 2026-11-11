@@ -60,7 +60,10 @@ expect 0 'ok: semver' -- check "v${version}-rc.1"
 # needs the dated section too: rc and final share one commit, so the date is
 # in the tree before rc.1, never in a commit between them.
 changelog "## [${version}] - Unreleased"
-expect 1 'still says Unreleased' -- env REQUIRE_DATED=1 bash -c 'cd "$1" && ./hack/release.sh check "$2"' _ "${repo}" "v${version}-rc.1"
+expect 1 "date it \\('## \\[${version//./\\.}\\] - " -- env REQUIRE_DATED=1 bash -c 'cd "$1" && ./hack/release.sh check "$2"' _ "${repo}" "v${version}-rc.1"
+# ... and the message names the core heading, never the candidate's own.
+out="$(cd "${repo}" && REQUIRE_DATED=1 ./hack/release.sh check "v${version}-rc.1" 2>&1 || true)"
+! grep -q "date it ('## \[${version}-rc" <<<"${out}" || fail "the Unreleased message tells the owner to date the rc heading: ${out}"
 changelog "## [${version}] - 2026-11-09"
 expect 0 'ok: semver' -- env REQUIRE_DATED=1 bash -c 'cd "$1" && ./hack/release.sh check "$2"' _ "${repo}" "v${version}-rc.1"
 # Charts that match neither the rc nor its core version are refused.
@@ -216,18 +219,27 @@ expect 1 'gh workflow run security.yml --ref main' -- ./hack/release.sh wait-ci 
 # preflight: one poll, no waiting; a green pair on a dated CHANGELOG passes,
 # a missing check run or an Unreleased heading fails before any tag is pushed.
 pre() { (cd "${repo}" && ./hack/release.sh preflight "$@"); }
+head="$(git -C "${repo}" rev-parse HEAD)"
+git -C "${repo}" update-ref refs/remotes/origin/main "${head}"
 changelog "## [${version}] - 2026-11-09"
 { tab ci-ok completed success 2026-11-10T10:00:00Z 20; tab security-gate completed success 2026-11-10T10:00:00Z 21; } > "${runs}"
-expect 0 'ok: preflight' -- pre "v${version}" deadbeef
+expect 0 'ok: preflight' -- pre "v${version}" "${head}"
 { tab ci-ok completed success 2026-11-10T10:00:00Z 20; } > "${runs}"
-expect 1 'did not finish' -- pre "v${version}" deadbeef
+expect 1 'did not finish' -- pre "v${version}" "${head}"
 : > "${runs}"
-expect 1 'no check run exists for deadbeef' -- pre "v${version}" deadbeef
-expect 1 'gh workflow run security.yml --ref main' -- pre "v${version}" deadbeef
-expect 1 'make release-preflight TAG=<tag>' -- pre "v${version}" deadbeef
+expect 1 'no check run exists for' -- pre "v${version}" "${head}"
+expect 1 'gh workflow run security.yml --ref main' -- pre "v${version}" "${head}"
+expect 1 'make release-preflight TAG=<tag>' -- pre "v${version}" "${head}"
+# The tagged SHA must be an ancestor of origin/main: refused before any check-run call.
+{ tab ci-ok completed success 2026-11-10T10:00:00Z 20; tab security-gate completed success 2026-11-10T10:00:00Z 21; } > "${runs}"
+stray="$(git -C "${repo}" commit-tree -p "${head}" -m stray "$(git -C "${repo}" rev-parse "${head}^{tree}")")"
+expect 1 'not an ancestor of origin/main' -- pre "v${version}" "${stray}"
+git -C "${repo}" update-ref -d refs/remotes/origin/main
+expect 1 'origin/main is not fetched' -- pre "v${version}" "${head}"
+git -C "${repo}" update-ref refs/remotes/origin/main "${head}"
 { tab ci-ok completed success 2026-11-10T10:00:00Z 20; tab security-gate completed success 2026-11-10T10:00:00Z 21; } > "${runs}"
 changelog "## [${version}] - Unreleased"
-expect 1 'still says Unreleased' -- pre "v${version}" deadbeef
+expect 1 'still says Unreleased' -- pre "v${version}" "${head}"
 expect 1 'still says Unreleased' -- pre "v${version}-rc.1" deadbeef
 unset GH_STUB_RUNS CI_WAIT_SLEEP CI_WAIT_ATTEMPTS CI_WAIT_EMPTY_ATTEMPTS
 
@@ -419,7 +431,7 @@ changelog "## [${version}] - 2026-11-09"
 { tab ci.yml push completed success 5; tab security.yml push completed success 6; } > "${wfruns}"
 expect 1 'no full-tier run of ci.yml' -- ./hack/release.sh wait-ci deadbeef
 expect 1 'gh workflow run ci.yml --ref main' -- ./hack/release.sh wait-ci deadbeef
-expect 1 'no full-tier run of ci.yml' -- pre "v${version}" deadbeef
+expect 1 'no full-tier run of ci.yml' -- pre "v${version}" "${head}"
 { tab ci.yml workflow_dispatch completed success 5; tab security.yml push completed success 6; } > "${wfruns}"
 expect 1 'no full-tier run of security.yml' -- ./hack/release.sh wait-ci deadbeef
 # A dispatch that failed after an earlier green one: the newest full-tier run counts.
@@ -430,7 +442,7 @@ expect 1 'full-tier run of ci.yml on deadbeef ended failure' -- ./hack/release.s
 expect 1 'did not finish' -- ./hack/release.sh wait-ci deadbeef
 { tab ci.yml workflow_dispatch completed success 5; tab security.yml schedule completed success 6; } > "${wfruns}"
 expect 0 'full-tier .* green on deadbeef' -- ./hack/release.sh wait-ci deadbeef
-expect 0 'ok: preflight' -- pre "v${version}" deadbeef
+expect 0 'ok: preflight' -- pre "v${version}" "${head}"
 
 # ---- check-public polls: a package made public while the run waits goes green.
 cat > "${stubs}/curl" <<'STUB'
@@ -455,6 +467,26 @@ echo 0 > "${CURL_STUB_COUNT}"
 CURL_STUB_FLIP=99 expect 1 'Re-run failed jobs' -- ./hack/release.sh check-public "${work}/one.txt"
 echo 0 > "${CURL_STUB_COUNT}"
 CURL_STUB_FLIP=99 expect 1 'packages/container/pgtoolbox-operator/settings' -- ./hack/release.sh check-public "${work}/one.txt"
+# A registry outage (5xx, timeout) is not "private": different text, no settings link.
+cat > "${stubs}/curl" <<'STUB'
+#!/usr/bin/env bash
+for a in "$@"; do
+  case "${a}" in
+    *"/token?"*) echo '{"token":"t"}'; exit 0 ;;
+    *"/manifests/"*) echo "${CURL_STUB_STATUS}"; exit 0 ;;
+  esac
+done
+exit 22
+STUB
+out="$(CURL_STUB_STATUS=503 ./hack/release.sh check-public "${work}/one.txt" 2>&1)" && fail "check-public passed on a 503"
+grep -q 'registry did not answer' <<<"${out}" && grep -q 'REGISTRY ERROR (HTTP 503)' <<<"${out}" || fail "check-public 503 text: ${out}"
+! grep -Eq 'NOT PUBLIC|Make each package public|Make these GHCR' <<<"${out}" || fail "check-public calls a 503 private: ${out}"
+out="$(CURL_STUB_STATUS=000 ./hack/release.sh check-public "${work}/one.txt" 2>&1)" && fail "check-public passed on a timeout"
+grep -q 'registry did not answer' <<<"${out}" || fail "check-public timeout text: ${out}"
+for st in 401 403; do
+  out="$(CURL_STUB_STATUS=${st} ./hack/release.sh check-public "${work}/one.txt" 2>&1)" && fail "check-public passed on ${st}"
+  grep -q "NOT PUBLIC (HTTP ${st})" <<<"${out}" && grep -q 'Make each package public' <<<"${out}" && ! grep -q 'registry did not answer' <<<"${out}" || fail "check-public ${st} text: ${out}"
+done
 
 # ---- image labels: metadata-action's defaults (the repository's name and
 # description) replace the Dockerfile labels, so every metadata step of the
