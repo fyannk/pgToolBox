@@ -471,6 +471,7 @@ grep -q '^| before |' "${work}/summary.md" && grep -q '^| after |' "${work}/summ
 # The prune runs after every CI/Security run on main, and only the nightly run writes buildkit blobs.
 grep -q 'workflow_run:' .github/workflows/cache-prune.yml || fail "cache-prune.yml does not run after a CI/Security run"
 grep -q "head_branch == 'main'" .github/workflows/cache-prune.yml || fail "cache-prune.yml workflow_run is not limited to main"
+grep -q 'head_repository.full_name == github.repository' .github/workflows/cache-prune.yml || fail "cache-prune.yml workflow_run accepts a fork's main"
 ! grep -E '^ +CACHE_TO_' .github/workflows/ci.yml | grep -q workflow_dispatch || fail "ci.yml writes buildkit blobs on a dispatch; only the nightly run may"
 echo "ok: prune-caches"
 
