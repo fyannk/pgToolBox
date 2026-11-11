@@ -70,6 +70,13 @@ func TestParseReadsTheReportVerbatim(t *testing.T) {
 	if none, err := Parse(strings.NewReader(`{"lastArchivedWALTime": ""}`)); err != nil || none.LastArchivedWALTime != nil || none.LastArchivedWALTimeUnparsed {
 		t.Errorf("an empty archive time (nothing archived yet): %v unparsed %v, err %v", none.LastArchivedWALTime, none.LastArchivedWALTimeUnparsed, err)
 	}
+	// The value CloudNativePG really sends for a NULL last_archived_time
+	// (COALESCE(last_archived_time,'-infinity'), round 11, CNPG P3): nothing
+	// archived yet, not an unparsed time.
+	none, err := Parse(strings.NewReader(`{"isPrimary":true,"lastArchivedWALTime":"-infinity","lastFailedWALTime":"-infinity"}`))
+	if err != nil || none.LastArchivedWALTime != nil || none.LastArchivedWALTimeUnparsed || none.LastFailedWALTime != nil {
+		t.Errorf("CloudNativePG's -infinity: %v unparsed %v, failed %v, err %v", none.LastArchivedWALTime, none.LastArchivedWALTimeUnparsed, none.LastFailedWALTime, err)
+	}
 	if _, err := Parse(strings.NewReader("not json")); err == nil {
 		t.Error("a malformed report parsed")
 	}

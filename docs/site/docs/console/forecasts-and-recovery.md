@@ -211,6 +211,9 @@ fail.
   1,000. A path whose backup the repository's backup list, read complete, no
   longer has (a retention purge since the paths were read, while the paths kept
   are stale) is drawn the same way in either format (`backup-not-in-repository`).
+  When the backup list was cut at a bound, it cannot say that a backup is gone:
+  a stale path whose backup it does not list is drawn the same way too
+  (`backup-not-confirmed`) until the paths are read again.
   The repository's format is the one its snapshot identity names.
 - **Holes** between spans, each with a kind:
   - **missing WAL**: a confirmed gap. When the agent says a former primary may
@@ -401,7 +404,10 @@ segments, so the bar and the answer always agree:
 - the oldest restore point, within the agent's refresh interval plus the age of
   its last scan: a retention purge may have removed that backup since. When the
   recovery paths are the last good ones kept stale, the age is that of the scan
-  they come from, not the fresher snapshot's;
+  they come from, not the fresher snapshot's. The age runs from the earlier of
+  the agent's scan time and the console's fetch time, so an agent clock ahead of
+  the console's does not shorten it, and the band never reaches past the
+  newest restore point;
 - after a WAL archiving failure an instance reported (`lastFailedWALTime`, the
   newest over every instance read, so a former primary's failure survives a
   failover) in the day before the latest point, the day before the failure: WAL
@@ -452,7 +458,10 @@ segments, so the bar and the answer always agree:
   timeline, so the live timeline (the current primary's current WAL file, else
   its sweeps since the promotion) counts too, and the time after the newest
   point says that the repository held no WAL of that timeline when it was last
-  read. When the live timeline is not known, an end that reached the
+  read (or, once its history file is archived, no WAL segment of it yet). The
+  window is then a warning (`liveTimelineNotArchived`), not healthy: wait for
+  the next evidence refresh, or run `pg_switch_wal()` on the new primary to
+  archive its first segment. When the live timeline is not known, an end that reached the
   repository before the promotion counts the same way. That WAL
   was archived by a former primary, whose backlog the current primary's
   readings do not show, and a crash can lose its `.ready` tail. Only the
@@ -534,4 +543,9 @@ reader's language; any other reason of the agent's is shown as written. When the
 evidence names a timeline history file as missing or unreadable (one such file
 can withhold every restore point), the restore check names it, for example
 `00000005.history`. Stale evidence is never shown as healthy. When reading
-the paths fails, the last good ones are kept and marked stale.
+the paths fails, the last good ones are kept and marked stale. They are judged
+against the fresh snapshot beside them: when its timeline evidence is no longer
+established (after a failover, say), no kept path is coverage, and its coverage
+and timeline reasons replace the old ones. Paths of another repository are never
+kept, and kept paths more than three of the agent's refresh intervals (at least
+an hour) older than its latest scan are dropped.

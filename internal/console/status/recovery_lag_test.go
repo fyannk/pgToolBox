@@ -73,6 +73,26 @@ func TestRepositoryTimelineLagsTheLiveOne(t *testing.T) {
 		if tail == nil || tail.Params["timeline"] != "2" || !tail.From.Equal(receipt) || !strings.Contains(tail.Text, "no WAL of timeline 2") {
 			t.Errorf("tail %+v, want it to say the repository has no WAL of timeline 2 yet", tail)
 		}
+		// Round 11, DBA P2: the chip is not healthy with no reason.
+		if tl.State != string(evidencev1alpha1.Warning) || len(tl.Reasons) == 0 || tl.Reasons[0].Code != "recovery.reason.liveTimelineNotArchived" ||
+			tl.Reasons[0].Params["timeline"] != "2" || !strings.Contains(tl.Reason, "pg_switch_wal()") {
+			t.Errorf("state %s, reasons %+v, want a warning that the repository has no WAL of timeline 2", tl.State, tl.Reasons)
+		}
+
+		// Round 11, CNPG P3: the history file is archived (the path
+		// targets timeline 2) but no segment of timeline 2 yet.
+		p.TargetTimeline = 2
+		tl = (&Service{}).recoveryTimeline(timelineFixture{paths: []evidence.RecoveryPath{p}}.evidence(), viewmodel.BackupSummary{}, nil, facts)
+		if segmentCoded(tl, "recovery.segment.liveTimelineNotArchived") != nil {
+			t.Errorf("the tail still says the history file may not be archived")
+		}
+		tail = segmentCoded(tl, "recovery.segment.liveTimelineNoSegment")
+		if tail == nil || tail.Params["timeline"] != "2" || !strings.Contains(tail.Text, "no WAL segment of it yet") {
+			t.Errorf("tail %+v, want it to say no segment of timeline 2 yet", tail)
+		}
+		if tl.State != string(evidencev1alpha1.Warning) || len(tl.Reasons) == 0 || tl.Reasons[0].Code != "recovery.reason.liveTimelineNotArchived" {
+			t.Errorf("target 2: state %s, reasons %+v", tl.State, tl.Reasons)
+		}
 	})
 
 	t.Run("PG probe: the target lags, or the target moved on and the parent is gap-limited", func(t *testing.T) {
@@ -285,5 +305,100 @@ func TestStaleBarmanPathsOfAnExpiredBackup(t *testing.T) {
 	}
 	if c := restoreCheck(b, first.Add(3*time.Hour)); c.Answer != "covered" || c.BackupID != "old" {
 		t.Errorf("three hours after the oldest point: %s (%s), want covered by old", c.Answer, c.Code)
+	}
+}
+
+// TestStalePathsBesideACutCollection (round 11, PG P3, the reviewer's
+// probe): the recovery paths are kept stale from a scan two hours ago and
+// the backup collection beside them was cut at a bound, so it cannot say
+// whether backup old is still in the repository. Its span is not
+// covered; a backup the cut collection lists still covers; fresh paths
+// beside a cut collection are not doubted.
+func TestStalePathsBesideACutCollection(t *testing.T) {
+	old := tlPath("old", 72*time.Hour, 10*time.Minute, evidencev1alpha1.CoverageFrontier)
+	newer := tlPath("new", 24*time.Hour, 10*time.Minute, evidencev1alpha1.CoverageFrontier)
+	scanned := now.Add(-time.Minute)
+	evidenceOf := func(stale bool) clusterEvidence {
+		snap := evidencev1alpha1.RepositoryEvidenceSnapshot{CompletedAt: &scanned}
+		snap.Identity.Repository.Format = evidencev1alpha1.FormatBarmanCloud
+		rec := evidence.Recovery{State: evidence.RecoveryAvailable, Complete: true, Paths: []evidence.RecoveryPath{old, newer}, ScannedAt: ago(2 * time.Hour)}
+		if stale {
+			rec.Stale, rec.StaleReason = true, "recovery pages failed"
+		}
+		return clusterEvidence{result: evidence.Result{
+			Agent: "a", Snapshot: &snap, BackupsComplete: false, BackupIDs: map[string]bool{"new": true},
+			Backups:         []evidence.BackupItem{{ID: "new", EndAt: newer.LowerBoundAt, EndTimeline: pu64(2), EndPosition: pu64(50)}},
+			RefreshInterval: 5 * time.Minute, Recovery: rec,
+		}}
+	}
+	facts := recoveryFacts{now: now, archiveTimeout: defaultArchiveTimeout, sweepInterval: 30 * time.Second}
+	svc := &Service{}
+
+	tl := svc.recoveryTimeline(evidenceOf(true), viewmodel.BackupSummary{}, nil, facts)
+	b := viewmodel.Backups{RecoveryTimeline: tl, GeneratedAt: now}
+	for _, d := range []time.Duration{70 * time.Hour, 48 * time.Hour, 30 * time.Hour} {
+		if c := restoreCheck(b, now.Add(-d)); c.Answer == "covered" || c.Code != "recovery.segment.backupUnconfirmed" {
+			t.Errorf("now-%s: %s backup=%s (%s), want not covered, backupUnconfirmed", d, c.Answer, c.BackupID, c.Code)
+		}
+	}
+	if c := restoreCheck(b, now.Add(-3*time.Hour)); c.Answer != "covered" || c.BackupID != "new" {
+		t.Errorf("now-3h: %s (%s), want covered by new", c.Answer, c.Code)
+	}
+	if tl.State != string(evidencev1alpha1.Warning) || len(tl.Reasons) == 0 || tl.Reasons[0].Code != "recovery.reason.backupUnconfirmed" || tl.Reasons[0].Params["backupId"] != "old" {
+		t.Errorf("bar %s, reasons %+v, want a warning naming old", tl.State, tl.Reasons)
+	}
+
+	tl = svc.recoveryTimeline(evidenceOf(false), viewmodel.BackupSummary{}, nil, facts)
+	b = viewmodel.Backups{RecoveryTimeline: tl, GeneratedAt: now}
+	if c := restoreCheck(b, now.Add(-48*time.Hour)); c.Answer != "covered" || c.BackupID != "old" {
+		t.Errorf("fresh paths beside a cut collection: now-48h %s (%s), want covered by old", c.Answer, c.Code)
+	}
+}
+
+// TestPurgeBandArithmetic (round 11, PG P3, the reviewer's probe): the
+// band at the oldest restore point is the refresh interval plus the age
+// of the scan, from the earlier of the agent's scan time and the
+// console's fetch time (an agent clock ahead does not shrink it), and
+// never past the window (an absurd scan time does not overflow it away).
+func TestPurgeBandArithmetic(t *testing.T) {
+	facts := recoveryFacts{now: now, archiveTimeout: defaultArchiveTimeout, sweepInterval: 30 * time.Second}
+	first := now.Add(-72 * time.Hour)
+	band := func(scanned, observed time.Time) *viewmodel.RecoverySegment {
+		t.Helper()
+		p := tlPath("old", 72*time.Hour, 10*time.Minute, evidencev1alpha1.CoverageFrontier)
+		ev := timelineFixture{paths: []evidence.RecoveryPath{p}, scannedAt: scanned}.evidence()
+		ev.result.Snapshot.CompletedAt = &scanned
+		ev.result.ObservedAt = &observed
+		ev.result.RefreshInterval = 5 * time.Minute
+		tl := (&Service{}).recoveryTimeline(ev, viewmodel.BackupSummary{}, nil, facts)
+		return segmentCoded(tl, "recovery.segment.purgeEdge")
+	}
+	cases := []struct {
+		name               string
+		scanned, observed  time.Time
+		want               time.Duration
+		wholeWindowAtLeast bool
+	}{
+		{"a scan two hours ago", now.Add(-2 * time.Hour), now.Add(-time.Minute), 2*time.Hour + 5*time.Minute, false},
+		{"an agent clock 30 minutes ahead", now.Add(30 * time.Minute), now.Add(-10 * time.Minute), 15 * time.Minute, false},
+		{"a scan in year 1", time.Date(1, 1, 1, 0, 0, 1, 0, time.UTC), now.Add(-time.Minute), 0, true},
+		{"a scan in 1700", time.Date(1700, 1, 1, 0, 0, 0, 0, time.UTC), now.Add(-time.Minute), 0, true},
+	}
+	for _, c := range cases {
+		seg := band(c.scanned, c.observed)
+		if seg == nil {
+			t.Errorf("%s: no purge band", c.name)
+			continue
+		}
+		if !seg.From.Equal(first) {
+			t.Errorf("%s: band from %s, want the oldest point %s", c.name, seg.From, first)
+		}
+		got := seg.To.Sub(seg.From)
+		switch {
+		case c.wholeWindowAtLeast && got < 70*time.Hour:
+			t.Errorf("%s: band %s, want it to reach (nearly) the whole window", c.name, got)
+		case !c.wholeWindowAtLeast && got != c.want:
+			t.Errorf("%s: band %s, want %s", c.name, got, c.want)
+		}
 	}
 }

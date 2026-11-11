@@ -4,6 +4,7 @@ import { backups, operationsOperator } from "../../mocks/fixtures";
 import {
   evidenceAudienceMismatch,
   evidenceStatusNotFromOperator,
+  recoveryAfterFailover,
   recoveryHealthy,
   recoveryMixedHoles,
   recoveryNone,
@@ -91,6 +92,23 @@ export const RecoveryHealthy: Story = {
 };
 export const RecoveryHealthyDark = dark(RecoveryHealthy);
 export const RecoveryHealthyCompact = compact(RecoveryHealthy);
+/** Right after a failover: a warning that the repository holds no WAL of the new timeline yet, saying what to do. */
+export const RecoveryAfterFailover: Story = {
+  args: { data: { ...backups, recoveryTimeline: recoveryAfterFailover } },
+  play: async ({ canvas }) => {
+    await expect(canvas.getByText(/run pg_switch_wal\(\) on the new primary/)).toBeVisible();
+    await expect(canvas.getByRole("list", { name: "Spans of the recovery window" })).toHaveTextContent(
+      /no WAL of timeline 2/,
+    );
+  },
+};
+/** The same in French. */
+export const RecoveryAfterFailoverFrench: Story = french({
+  args: RecoveryAfterFailover.args,
+  play: async ({ canvas }) => {
+    await expect(canvas.getByText(/lancez pg_switch_wal\(\) sur le nouveau primaire/)).toBeVisible();
+  },
+});
 /** Every kind of hole, an incomplete base backup, and a collection cut at a bound: a lower bound. */
 export const RecoveryMixedHoles: Story = {
   args: { data: { ...backups, recoveryTimeline: recoveryMixedHoles } },

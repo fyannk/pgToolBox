@@ -171,6 +171,26 @@ test("the reasons, the backlog, the end of WAL and the caps are said in French",
       { timeline: "2" },
       /^Le dépôt ne contenait aucun WAL de la timeline 2, celle qu’écrit le primaire actuel/,
     ],
+    [
+      "recovery.segment.liveTimelineNoSegment",
+      { timeline: "2" },
+      /^Le dépôt contenait le fichier d’historique de la timeline 2, .*encore aucun segment WAL/,
+    ],
+    [
+      "recovery.reason.liveTimelineNotArchived",
+      { timeline: "2" },
+      /^le dépôt ne contenait aucun WAL de la timeline 2, .*lancez pg_switch_wal\(\) sur le nouveau primaire/,
+    ],
+    [
+      "recovery.segment.backupUnconfirmed",
+      { backupId: "old", reason: "backup-not-confirmed" },
+      /^La sauvegarde de base old .*coupée à une borne et ne la contient pas.* non compté comme couvert\.$/,
+    ],
+    [
+      "recovery.reason.backupUnconfirmed",
+      { backupId: "old", reason: "backup-not-confirmed" },
+      /^la sauvegarde de base old ne figure pas dans la liste des sauvegardes du dépôt, coupée à une borne/,
+    ],
     ["recovery.segment.missingAfterLatestFormerPrimary", undefined, /ne supprimez ni cette instance ni son volume\.$/],
     [
       "recovery.segment.missingWALFormerPrimary",
