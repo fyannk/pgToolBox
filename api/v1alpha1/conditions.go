@@ -118,6 +118,13 @@ const (
 	ReasonReconciliationFailed Reason = "ReconciliationFailed"
 	ReasonQuotaExceeded        Reason = "QuotaExceeded"
 	ReasonAdmissionDenied      Reason = "AdmissionDenied"
+	// ReasonNamespaceNotWatched is Ready=Unknown (and the Warning Event of
+	// the same reason) on an object of a namespace of WATCH_NAMESPACES the
+	// operator left out at start because it lacks some of its permissions
+	// there: its status is no longer updated. Written once at start, best
+	// effort, only where the operator may still write it; the message
+	// names that namespace and the permissions missing there.
+	ReasonNamespaceNotWatched Reason = "NamespaceNotWatched"
 )
 
 // commonReasons is the shared part of the catalogue.
@@ -153,6 +160,7 @@ var commonReasons = []Reason{
 	ReasonReconciliationFailed,
 	ReasonQuotaExceeded,
 	ReasonAdmissionDenied,
+	ReasonNamespaceNotWatched,
 }
 
 // CatalogueCommon is the owner name of the shared reasons in Catalogue.
