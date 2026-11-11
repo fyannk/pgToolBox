@@ -312,6 +312,12 @@ if all(pods.values()):
             problems.append(f"manager pod securityContext: {label} differs from Helm")
         if [a for a in c.get("args", []) if not image_flag(a)] != [a for a in refc.get("args", []) if not image_flag(a)]:
             problems.append(f"manager non-image args: {label} {c.get('args')} != Helm {refc.get('args')}")
+    # The image flags: kustomize carries the same three as Helm (tags in the tree,
+    # digests after pin-refs), so a CR without spec.image does not get ImageRequired.
+    helm_img = sorted(a for a in refc.get("args", []) if image_flag(a))
+    kust_img = sorted(a for a in pods["kustomize"]["containers"][0].get("args", []) if image_flag(a))
+    if kust_img != helm_img:
+        problems.append(f"manager image flags: kustomize {kust_img} != Helm {helm_img} (config/manager/manager.yaml)")
     if pods["OLM"]["containers"][0].get("args") != refc.get("args"):
         problems.append("manager args: OLM CSV and Helm differ (image flags included)")
 

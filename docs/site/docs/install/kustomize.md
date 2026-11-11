@@ -54,6 +54,14 @@ ClusterRoles), the manager Deployment and the
 (`config/admission`). Generated files (`config/crd/bases`,
 `config/rbac/role.yaml`) come from `make manifests`; do not edit them.
 
+The manager's args carry `--operator-image`, `--default-console-image` and
+`--default-evidence-agent-image`, as the chart and the OLM bundle do, so a
+`PgToolBoxConsole` or `EvidenceAgent` without `spec.image` runs the images of
+this release instead of failing with `ImageRequired`. In the tree they are tags;
+`install-operator.yaml` on the release page has them by digest. If you apply the
+base after changing the operator image, change the three flags with it
+(`make validate-packaging` checks them against the chart).
+
 :::danger `kubectl delete -k config/default` deletes every pgToolBox object
 Unlike the chart, `config/default` does not keep the CRDs: deleting the kustomization
 deletes the CRDs, hence every `PgToolBoxConsole`, `PgAdmin`, `PgAdminAccess`,
