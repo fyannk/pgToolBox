@@ -3,13 +3,22 @@ name: Cache prune
 # GitHub keeps 10 GB of Actions cache per repository and evicts the least
 # recently used entry when it is full, at whatever moment a build happens to
 # need it. Caches here are written from main only, but every go.sum or lockfile
-# change leaves the previous hash's entries behind. Once a day this deletes the
+# change leaves the previous hash's entries behind. After every CI and Security
+# run on main (a run is what writes ~4 GB) and once a day, this deletes the
 # caches of pull requests that are not open, all but the newest of each logical
-# cache and, past 6 GiB, buildkit blobs and rebuildable build caches first (hack/prune-caches.sh).
+# cache and, past 4 GiB, buildkit blobs and rebuildable build caches first
+# (hack/prune-caches.sh): the budget plus one full run's writes stays under the
+# 10 GB cap.
 # `actions: write` is held by this one job and nothing else.
 on:
   schedule:
     - cron: "17 3 * * *"
+  # The run that wrote the caches is the moment to prune them: a daily job alone
+  # lets a busy day on main pass the cap. Only runs on main write caches.
+  workflow_run: # zizmor: ignore[dangerous-triggers] checks out the default branch only, runs one script, reads nothing from the triggering run
+    workflows: [CI, Security]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
     inputs:
       dry_run:
@@ -27,6 +36,8 @@ concurrency:
 jobs:
   prune:
     name: Prune the Actions cache
+    # A run of a pull request or of a fork never writes a cache; skip it.
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.head_branch == 'main'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

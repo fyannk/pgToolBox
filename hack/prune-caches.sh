@@ -26,8 +26,8 @@
 #      Each blob is its own family, so step 2 never ages one out: every
 #      buildkit-blob-* (and any other per-digest cache) not accessed for
 #      BLOB_DAYS (3) days is deleted outright;
-#   3. only if the newest members alone still exceed BUDGET_MB (6144, so that
-#      one full run's ~4 GB of writes stays under GitHub's 10 GB cap): the
+#   3. only if the newest members alone still exceed BUDGET_MB (4096, so that
+#      the budget plus one full run's ~4-4.5 GB of writes stays under GitHub's 10 GB cap): the
 #      buildkit blobs first, least recently used first, then the rebuildable
 #      compile caches (date-suffixed gobuild-*), largest first, then the rest
 #      least recently used first. Toolchain and module caches (mise, node,
@@ -39,13 +39,14 @@
 #
 # A failed DELETE (404: GitHub already evicted it) is reported and skipped; any
 # other failure is reported, the loop goes on and the exit status is 1.
+# It runs after every CI and Security run on main and daily (cache-prune.yml).
 # The cache usage before and after goes to $GITHUB_STEP_SUMMARY when it is set.
 # Environment: GH_TOKEN (actions: write), GITHUB_REPOSITORY, KEEP, MISE_KEEP, BUDGET_MB,
 # BLOB_DAYS, NOW (epoch seconds; tests only).
 set -euo pipefail
 
 keep="${KEEP:-1}"
-budget_mb="${BUDGET_MB:-6144}"
+budget_mb="${BUDGET_MB:-4096}"
 blob_days="${BLOB_DAYS:-3}"
 now="${NOW:-$(date -u +%s)}"
 mise_keep="${MISE_KEEP:-32}"

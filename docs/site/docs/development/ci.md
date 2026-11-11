@@ -24,8 +24,8 @@ nightly, dispatch) and restored everywhere: a cache a pull request writes would 
 visible to that pull request alone and would push `main`'s out of the repository's
 10 GB budget. The Go module cache is keyed by `go.sum`; each job has its own Go
 build and golangci-lint cache, refreshed daily; the image layers go to the `gha`
-cache from the `images` job of the nightly run on `main` (each export is several GB,
-so once a day, not on every merge). The prune keeps the repository under 6 GiB so that one full run's writes (about 4 GB) still fit in GitHub's 10 GB cap. mise itself is pinned in the action, so a
+cache from the `images` job of the nightly run on `main`, never a dispatch (each export is several GB,
+so once a day, not on every merge). The prune keeps the repository under 4 GiB so that the budget plus one full run's writes (about 4-4.5 GB) still fit in GitHub's 10 GB cap; it runs after every CI and Security run on `main`, not only daily. Each distinct tool set has its own mise entry (about 20, 2.7 GiB together): they are bounded by the tool sets, `mise.toml` hash and `MISE_KEEP`, and the budget step evicts rebuildable caches before them. mise itself is pinned in the action, so a
 new mise release cannot change a job overnight. Each image is built once per run,
 in `images`, and the e2e jobs load that archive instead of building their own.
 
@@ -43,7 +43,7 @@ in `images`, and the e2e jobs load that archive instead of building their own.
 | `verify-release.yml` | called by `release.yml` after the prune; weekly on Monday; by hand | Pulls every image and both charts of a published release by tag **with no registry credentials** and verifies each signature and attestation by digest (`hack/release.sh verify-published`). The weekly run looks at the latest stable release and does nothing until one exists. |
 | `matrix.yml` | nightly at 01:41 UTC, by hand | The end-to-end scenarios on Kubernetes 1.34 and 1.36 × CloudNativePG 1.30.1, plus CloudNativePG `main` (non-blocking): one job per Kubernetes × CloudNativePG × scenario, all at once, on the images built once for the run. |
 | `image-watch.yml` | nightly at 04:23 UTC | Scans the latest published images and keeps one tracking issue for fixable criticals. |
-| `cache-prune.yml` | daily at 03:17 UTC, by hand (`dry_run`) | Deletes the Actions caches of pull requests that are not open, all but the newest of each logical cache (a key without its hash, date and `-pN`), the mise entries of a ref beyond the newest 32 (`MISE_KEEP`) or whose `mise.toml` hash is not the newest one's, every `buildkit-blob-*` cache (each is its own family) not accessed for 3 days (`BLOB_DAYS`) and, only if what is left exceeds 6 GiB (`BUDGET_MB`), the blobs first (least recently used first), then rebuildable build caches (`hack/prune-caches.sh`); the only job with `actions: write` besides the dispatchers. |
+| `cache-prune.yml` | after every CI and Security run on `main`, daily at 03:17 UTC, by hand (`dry_run`) | Deletes the Actions caches of pull requests that are not open, all but the newest of each logical cache (a key without its hash, date and `-pN`), the mise entries of a ref beyond the newest 32 (`MISE_KEEP`) or whose `mise.toml` hash is not the newest one's, every `buildkit-blob-*` cache (each is its own family) not accessed for 3 days (`BLOB_DAYS`) and, only if what is left exceeds 4 GiB (`BUDGET_MB`), the blobs first (least recently used first), then rebuildable build caches (`hack/prune-caches.sh`); the only job with `actions: write` besides the dispatchers. |
 | `automerge.yml` | Dependabot pull requests; every 30 minutes | Arms auto-merge for patch and minor updates. A second job, on the 30-minute schedule (`actions: write`), dispatches each of `ci.yml` and `security.yml` on `main` that has no run for its head commit (a merge made with the Actions token starts none). |
 
 ## What `ci.yml` runs
@@ -231,7 +231,7 @@ git push origin v0.1.0
 A release candidate (`v0.1.0-rc.1`) is the rehearsal: the same workflow, a GitHub
 pre-release, and `latest` does not move. It is cut from the tree of the final
 version (charts and CHANGELOG say `0.1.0`; `release-check` accepts the open
-`## [0.1.0]` section for an `-rc.N` tag, and the archives are stamped
+`## [0.1.0]` section for an `-rc.N` tag only as a rehearsal (the real cut and `preflight` refuse an open section), and the archives are stamped
 `0.1.0-rc.1`). It creates the GHCR packages, which start **private**: make each one
 public (see [repository settings](repository-settings.md#packages)), check an
 anonymous pull, and only then tag the final version. The tag patterns `v*` and

@@ -457,17 +457,21 @@ jq --slurpfile base "${live}" -n '$base[0] + (
 got="$(prune_ids "${work}/live4.json")"
 for i in 3000 3001 3002 3003 3004; do [[ " ${got}" == *" ${i} "* ]] || fail "prune-caches kept blob ${i} not accessed for 4 days: ${got}"; done
 for i in 2000 2001 2039; do [[ " ${got}" != *" ${i} "* ]] || fail "prune-caches deleted blob ${i} accessed within a day: ${got}"; done
-# the default budget (6 GiB): blobs go first, least recently used first, and before any gobuild or toolchain cache
+# the default budget (4 GiB): blobs go first, least recently used first, and before any gobuild or toolchain cache
 got="$(BUDGET_MB='' prune_ids "${work}/live4.json")"
 left="$(jq --argjson ids "$(printf '%s\n' ${got} | jq -Rn '[inputs|tonumber]')" '[.[] | select(.id as $i | $ids | index($i) | not) | .size_in_bytes] | add / 1048576' "${work}/live4.json")"
-(( ${left%.*} <= 6144 )) || fail "prune-caches left ${left} MiB with the default budget"
+(( ${left%.*} <= 4096 )) || fail "prune-caches left ${left} MiB with the default budget"
 [[ " ${got}" == *" 2039 "* ]] || fail "prune-caches over budget kept the least recently used blob: ${got}"
 ! sel "${work}/live4.json" ${got} | grep -Eq '^(mise|node|gomod|codeql)' || fail "prune-caches evicted a toolchain cache while blobs were left"
-grep -q 'BUDGET_MB:-6144' hack/prune-caches.sh || fail "prune-caches default budget is not 6144 MiB"
+grep -q 'BUDGET_MB:-4096' hack/prune-caches.sh || fail "prune-caches default budget is not 4096 MiB"
 # the usage before and after reaches the step summary
 : > "${work}/prune.log"
 env BUDGET_MB=100000 NOW=1794484800 PATH="${work}/prune-stub:${PATH}" PRUNE_LIVE="${live}" PRUNE_LOG="${work}/prune.log" PRUNE_404=0 PRUNE_500=0 GITHUB_REPOSITORY=o/r GITHUB_STEP_SUMMARY="${work}/summary.md" ./hack/prune-caches.sh >/dev/null
 grep -q '^| before |' "${work}/summary.md" && grep -q '^| after |' "${work}/summary.md" || fail "prune-caches wrote no before/after table to GITHUB_STEP_SUMMARY"
+# The prune runs after every CI/Security run on main, and only the nightly run writes buildkit blobs.
+grep -q 'workflow_run:' .github/workflows/cache-prune.yml || fail "cache-prune.yml does not run after a CI/Security run"
+grep -q "head_branch == 'main'" .github/workflows/cache-prune.yml || fail "cache-prune.yml workflow_run is not limited to main"
+! grep -E '^ +CACHE_TO_' .github/workflows/ci.yml | grep -q workflow_dispatch || fail "ci.yml writes buildkit blobs on a dispatch; only the nightly run may"
 echo "ok: prune-caches"
 
 # ---- check-action-pins: the doc's allow-list must equal the pins in use.
@@ -601,6 +605,16 @@ for t in "pgToolBox operator" "pgToolBox console" "pgToolBox evidence agent"; do
   grep -q "title: ${t}$" .github/workflows/release.yml || fail "release.yml: no matrix title '${t}'"
   grep -q "image.title=\"${t}\"" Dockerfile || fail "Dockerfile does not label '${t}'"
 done
+# ---- check-helm-major: another helm major than mise.toml's pin stops verify-manifests early.
+mkdir -p "${work}/hm/ok" "${work}/hm/bad"
+helm_pin="$(awk -F'"' '$2 == "helm" { print $4; exit }' mise.toml)"
+printf '#!/bin/sh\necho "v%s"\n' "${helm_pin}" > "${work}/hm/ok/helm"
+printf '#!/bin/sh\necho "v%s.9.9+gabc"\n' "$((${helm_pin%%.*} - 1))" > "${work}/hm/bad/helm"
+chmod +x "${work}/hm/ok/helm" "${work}/hm/bad/helm"
+HELM="${work}/hm/ok/helm" ./hack/check-helm-major.sh || fail "check-helm-major rejects the pinned major"
+HELM="${work}/hm/bad/helm" expect 1 "major differs|mise.toml pins ${helm_pin}" -- ./hack/check-helm-major.sh
+echo "ok: check-helm-major"
+
 # ---- check-toolchain: a Dockerfile base image that drifts from mise.toml fails.
 mkdir -p "${work}/tc"
 for f in Dockerfile deploy/olm/catalog.Dockerfile; do cp "${f}" "${work}/tc/$(basename "${f}")"; done
