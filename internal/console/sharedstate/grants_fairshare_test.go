@@ -344,8 +344,10 @@ func TestTheFairShareRefusesOnlyNewWork(t *testing.T) {
 	}
 	// The hard bounds hold for both.
 	for i := range 16 {
-		_ = s.AddGrant(Grant{ID: grantID(98_000 + i), UserHash: uh("user1"), Client: "c", Scope: "mcp:read",
-			Created: clock.Now(), LastUsed: clock.Now(), Expiry: clock.Now().Add(time.Hour), Rotated: true})
+		_ = s.AddGrant(Grant{
+			ID: grantID(98_000 + i), UserHash: uh("user1"), Client: "c", Scope: "mcp:read",
+			Created: clock.Now(), LastUsed: clock.Now(), Expiry: clock.Now().Add(time.Hour), Rotated: true,
+		})
 	}
 	s.mu.Lock()
 	mine, _, _ := s.countLocked(uh("user1"))
@@ -354,8 +356,10 @@ func TestTheFairShareRefusesOnlyNewWork(t *testing.T) {
 		t.Errorf("rotated grants took user1 to %d, past the per-person bound %d", mine, MaxGrantsPerUser)
 	}
 	full := fill(MaxGrantsPerUser)
-	if err := full.AddGrant(Grant{ID: grantID(97_000), UserHash: uh("newcomer"), Client: "c", Created: clock.Now(),
-		LastUsed: clock.Now(), Expiry: clock.Now().Add(time.Hour), Rotated: true}); !errors.Is(err, ErrTooManyGrants) {
+	if err := full.AddGrant(Grant{
+		ID: grantID(97_000), UserHash: uh("newcomer"), Client: "c", Created: clock.Now(),
+		LastUsed: clock.Now(), Expiry: clock.Now().Add(time.Hour), Rotated: true,
+	}); !errors.Is(err, ErrTooManyGrants) {
 		t.Errorf("a rotated grant added to a full index: %v", err)
 	}
 	if full.RevokeGrant(grantID(97_001), uh("newcomer"), clock.Now(), clock.Now().Add(RevokedKeep)); full.GrantRevoked(grantID(97_001)) {

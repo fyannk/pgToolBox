@@ -100,9 +100,9 @@ const (
 	fairFromPercent = 80
 	// lateDivisor sets lateBound, the per-person bound past
 	// fairFromPercent: a quarter of the per-person bound.
-	lateDivisor = 4
-	maxClientName   = 128
-	maxScope        = 32
+	lateDivisor   = 4
+	maxClientName = 128
+	maxScope      = 32
 	// RevokedKeep is how long a revoked entry outlives its revocation: far
 	// longer than the replication grace during which a replica accepts a
 	// grant it does not know yet (mcpoauth), so that no replica can accept
