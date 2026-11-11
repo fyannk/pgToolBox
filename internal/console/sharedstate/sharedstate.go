@@ -68,6 +68,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"maps"
 	"sort"
 	"strconv"
 	"strings"
@@ -99,13 +100,31 @@ const (
 	// this version (readableVersion says how), and so rewritten at this
 	// version on the next write: the document is taken over, and a
 	// replica still of the older version, during a rolling upgrade, then
-	// finds it newer and leaves it alone. A document of a newer version
-	// (a newer console, during a rolling upgrade or after a rollback), or
-	// of none this console knows, is foreign: neither merged nor
-	// rewritten, so it never clobbers what a newer console wrote; it is
-	// logged once and counted in
-	// pgtoolbox_console_shared_state_foreign_documents.
+	// finds it newer and leaves it alone. A document of a newer version (a
+	// newer console, during a rolling upgrade or after a rollback) is
+	// foreign while a console of another version may still be running:
+	// neither merged nor rewritten, logged once and counted in
+	// pgtoolbox_console_shared_state_foreign_documents. Once none has
+	// written for takeOverAfter (a rollback, writers.go), a newer document
+	// below takeOverBelow is taken over: read in this version's layout,
+	// and rewritten at this version. grants.json is reset instead of read.
+	//
+	// The compatibility contract every later version keeps, since this
+	// version reads its documents so: a document of a version from 3 to
+	// takeOverBelow-1 holds what this version reads in this version's
+	// fields, with their meaning (sessions.json: "signedOut", keyed by the
+	// session hash, each entry's "e", "r" and "s"; since.json: "facts";
+	// digests.json: "sent"; drills.json: "since" and "results"), adds
+	// fields rather than renaming or re-keying them, and holds at most
+	// maxEntries entries in each. A version that cannot keep it is
+	// numbered takeOverBelow or more: this version then never takes that
+	// document over (it stays foreign until its key is deleted), rather
+	// than read it wrong and overwrite it with less
+	// (TestTheFormatContract).
 	formatVersion = 2
+	// takeOverBelow bounds the newer versions a take-over reads as this
+	// one (the contract above).
+	takeOverBelow = 100
 	// minFormatVersion is the oldest version this console reads.
 	minFormatVersion = 1
 )
@@ -407,6 +426,23 @@ type Store struct {
 	othersFP, ownBeat     string
 	othersSince, ownSince time.Time
 	takeOverLogged        map[string]bool
+	// othersBeats is, per annotation of another version, its value and
+	// when (this replica's clock) it last changed: one unchanged for
+	// takeOverAfter is dropped on this replica's next write.
+	othersBeats map[string]beat
+	// grantsReset is the SHA-256 of the newer grants document whose
+	// take-over reset the grants: the reset is made once a document, not
+	// again on each merge of it until the take-over is written.
+	grantsReset string
+	// recorded holds the grants this replica recorded (AddGrant, a
+	// revocation placeholder) that no document read has held yet, and when
+	// (this replica's clock); unwritten the revocations made here that no
+	// document read has held yet (mergeGrantsLocked).
+	recorded  map[string]time.Time
+	unwritten map[string]bool
+	// unversionedLogged names the documents logged as carrying no format
+	// version (versionedLocked).
+	unversionedLogged map[string]bool
 	// gen counts local changes; written is the gen last written.
 	gen, written uint64
 	urgent       bool
@@ -456,7 +492,8 @@ func New(opts Options) *Store {
 	}
 	s := &Store{
 		opts: opts, signedOut: map[string]signOut{}, facts: map[string]fact{}, sent: map[string]int64{}, grants: map[string]grantEntry{}, codes: map[string]codeEntry{}, drills: map[string]DrillResult{}, byObject: map[string]map[string]struct{}{},
-		foreign: map[string]bool{}, foreignLogged: map[string]int{}, takeOverLogged: map[string]bool{}, mode: modePending, since: opts.Now().UTC(), wake: make(chan struct{}, 1),
+		foreign: map[string]bool{}, foreignLogged: map[string]int{}, takeOverLogged: map[string]bool{}, othersBeats: map[string]beat{},
+		recorded: map[string]time.Time{}, unwritten: map[string]bool{}, unversionedLogged: map[string]bool{}, mode: modePending, since: opts.Now().UTC(), wake: make(chan struct{}, 1),
 	}
 	if opts.Name == "" {
 		s.mode = modeDisabled
@@ -1139,13 +1176,46 @@ func (s *Store) foreignLocked(key, raw string) bool {
 	s.foreign[key] = true
 	if logged, ok := s.foreignLogged[key]; !ok || logged != v {
 		s.foreignLogged[key] = v
+		until := "until it is taken over, once no console of another version has written the ConfigMap for " +
+			takeOverAfter.String() + " (or at once by deleting the key: what it holds is then lost)"
+		if !takeable(raw) {
+			until = "until its key is deleted (what it holds is then lost): this version never takes over a document of " +
+				"version " + strconv.Itoa(takeOverBelow) + " or more"
+		}
 		s.opts.Logger.Warn("shared state: a document of a format version this console does not read is left as it is "+
-			"(a newer console wrote it, during a rolling upgrade or before a rollback); what it holds is not shared with "+
-			"this replica until it is taken over, once no console of another version has written the ConfigMap for "+
-			takeOverAfter.String()+" (or at once by deleting the key: what it holds is then lost)", slog.String("configmap", s.opts.Name),
+			"(another console wrote it, during a rolling upgrade or before a rollback); what it holds is not shared with "+
+			"this replica "+until, slog.String("configmap", s.opts.Name),
 			slog.String("document", key), slog.Int("version", v), slog.Int("reads", formatVersion))
 	}
 	return true
+}
+
+// versionedLocked is data without the documents that carry no format
+// version (`{}`, or a version of 0 or less, which no console writes): such a
+// document is not foreign (it would be left alone for good, as no version
+// ever takes it over) but unreadable, so it is merged as missing and
+// rewritten at this version on the next write; for grants.json a missing
+// document resets the index (mergeGrantsLocked), as deleting the key
+// does. Each is logged once.
+func (s *Store) versionedLocked(data map[string]string) map[string]string {
+	out, cloned := data, false
+	for _, key := range documentKeys {
+		raw := data[key]
+		if v, parsed := documentVersion(raw); raw == "" || !parsed || v > 0 {
+			delete(s.unversionedLogged, key)
+			continue
+		}
+		if !cloned {
+			out, cloned = maps.Clone(data), true
+		}
+		delete(out, key)
+		if !s.unversionedLogged[key] {
+			s.unversionedLogged[key] = true
+			s.opts.Logger.Warn("shared state: a document carries no format version (no console writes one so); it is read as empty "+
+				"and rewritten on the next write", slog.String("configmap", s.opts.Name), slog.String("document", key))
+		}
+	}
+	return out
 }
 
 // gaugeForeignLocked publishes which documents are left untouched, and
@@ -1168,7 +1238,7 @@ func (s *Store) gaugeForeignLocked() {
 func (s *Store) mergeLocked(cm *corev1.ConfigMap) {
 	s.base = cm.DeepCopy()
 	s.observeWritersLocked(cm)
-	data := cm.Data
+	data := s.versionedLocked(cm.Data)
 	s.foreign = map[string]bool{}
 	if raw, ok := data[KeySessions]; ok && raw != "" {
 		var doc sessionsDoc
@@ -1229,9 +1299,9 @@ func (s *Store) mergeLocked(cm *corev1.ConfigMap) {
 	}
 	wasUnreadable := s.grantsUnreadable
 	s.grantsUnreadable = false
-	if raw, ok := data[KeyGrants]; ok && raw != "" {
-		s.mergeGrantsLocked(raw)
-	}
+	// A missing or empty grants document is merged as an empty one: the
+	// key deleted resets the index (mergeGrantsLocked).
+	s.mergeGrantsLocked(data[KeyGrants])
 	switch {
 	case s.grantsUnreadable && !wasUnreadable:
 		s.opts.Logger.Error("shared state: the grants document does not parse; MCP grants are refused until it is fixed "+
