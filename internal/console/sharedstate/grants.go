@@ -676,9 +676,15 @@ func (s *Store) SpendCode(ctx context.Context, code, userHash string, until time
 		// Nothing was recorded that this replica knows of: forget the
 		// reservation, so that the value is not refused here as spent. A
 		// write that landed although its answer was lost is found by the
-		// next attempt's conflict.
+		// next attempt's conflict. A spend the ConfigMap holds already
+		// (another replica's, which this one's watch merged while its
+		// write was in flight, or its own write delivered so) stays: it
+		// is spent, and forgetting it here would erase it from the
+		// ConfigMap with this replica's next write.
 		s.mu.Lock()
-		delete(s.codes, h)
+		if !codeIn(s.base, h) {
+			delete(s.codes, h)
+		}
 		s.mu.Unlock()
 	}
 	return err
@@ -798,8 +804,11 @@ func (s *Store) MarkCode(ctx context.Context, code, mark, userHash string) error
 	s.mu.Unlock()
 	err := s.writeThrough(ctx, func(cm *corev1.ConfigMap) bool { return markIn(cm, h, mark) }, desired, gen)
 	if err != nil && !errors.Is(err, ErrSpent) {
+		// As SpendCode: forget the mark unless the ConfigMap holds it
+		// already (another replica's, merged while this write was in
+		// flight), which this replica's next write would otherwise erase.
 		s.mu.Lock()
-		if c, ok := s.codes[h]; ok {
+		if c, ok := s.codes[h]; ok && !markIn(s.base, h, mark) {
 			c.Marks = slices.DeleteFunc(slices.Clone(c.Marks), func(m string) bool { return m == mark })
 			s.codes[h] = c
 		}
