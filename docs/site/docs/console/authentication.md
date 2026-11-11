@@ -237,20 +237,28 @@ delete it afterwards.
   ConfigMap (missing or forbidden) the refusal stays on this replica, and a
   copied cookie stays usable on another until it expires or is put on the
   [revocation list](#revoking-sessions). The ConfigMap keeps at most 16
-  sign-outs a person and 1,536 entries in all. A person past their 16
-  keeps their **latest** sign-outs: each new one takes the place of their
-  own sign-out that ends first (the newest is the one a freshly copied
-  cookie needs), and nobody else's entry moves. The other bounds (128
-  entries for the sessions sealed without a person's tag, all together,
-  and the document's 1,536) never drop a sign-out they hold: past them a
-  **new** sign-out is refused on its own replica only (a copy of that
-  cookie works on the other replicas until it expires). Both are counted
-  in `pgtoolbox_console_shared_state_signouts_refused_total{reason}`, and
-  the document's bound is logged. Filling the document therefore takes
-  some fifty identities the API server accepts. Two replicas taking the
-  document's last place at the same moment each accept their sign-out, and
-  merging keeps one: the other is counted under `reason="merge"`, logged
-  once, and still refused by the replica that recorded it. Every sign-out of
+  sign-outs a person (32 entries) and 1,536 entries in all. A person past
+  their 16 keeps their **latest** sign-outs: each new one takes the place
+  of their own sign-out that ends first (the newest is the one a freshly
+  copied cookie needs), and nobody else's entry moves. The sessions sealed
+  without a person's tag share 128 entries; past them a **new** one is
+  refused on its own replica only (a copy of that cookie works on the
+  other replicas until it expires). Once the document is full it is shared
+  fairly, so that some fifty identities the API server accepts (a
+  namespace editor can mint ServiceAccounts) cannot lock everyone else
+  out: a newcomer's sign-out takes the place of the last-placed entry of
+  the person holding the most, provided that person holds more
+  than the newcomer; nobody's entry is ever taken for someone who holds
+  as many or more, and a person holding as much as the most replaces
+  their own instead. Each is counted in
+  `pgtoolbox_console_shared_state_signouts_refused_total{reason}`
+  (`replaced`, `unnamed`, `evicted` for an entry taken for a newcomer,
+  `budget` for a new one refused) and the full document is logged once.
+  Two replicas taking the document's last place at the same moment, or
+  both replacing the same entry of a person at their bound, each accept
+  their sign-out, and merging keeps one entry fewer: it is counted under
+  `reason="merge"` (by every replica that merges it), logged once, and
+  still refused by the replica that recorded it. Every sign-out of
   a session sealed with its person's tag is shared, even when the API
   server refuses the token at sign-out: OpenShift's OAuth API server and
   the webhook authenticators of EKS and GKE answer 401 while they are

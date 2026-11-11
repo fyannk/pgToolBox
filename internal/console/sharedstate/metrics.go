@@ -32,12 +32,16 @@ var (
 	}, []string{"mode"})
 	sharedBytes = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "pgtoolbox_console_shared_state_bytes",
-		Help: "Bytes of each document of the state ConfigMap as this replica would write it (sessions.json, since.json, digests.json, grants.json, drills.json); the API server refuses an object past 1 MiB.",
+		Help: "Bytes of each document of the state ConfigMap as this replica would write it (sessions.json, since.json, digests.json, grants.json, drills.json), and total: the ConfigMap's data, keys and values, every document counted (held within 1,032,192 bytes; the API server refuses an object past 1 MiB).",
 	}, []string{"document"})
 	signOutsRefused = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "pgtoolbox_console_shared_state_signouts_refused_total",
-		Help: "Sign-outs the sessions document did not keep (each still refused by the replica that recorded it): replaced (a person at their own bound gave up their own earliest-ending one for the new one), unnamed (the sessions that name nobody at their bound), budget (the document full), merge (a merge of two replicas' documents past a bound dropped one each had accepted).",
+		Help: "Sign-outs the sessions document did not keep (each still refused by the replica that recorded it): replaced (a person at their own bound gave up their own earliest-ending one for the new one), unnamed (the sessions that name nobody at their bound), budget (the document full and the person holding as much as the most), evicted (another person's entry, of the person holding the most, taken for a newcomer holding less), merge (a merge of two replicas' documents past a bound dropped one each had accepted; every replica merging counts it).",
 	}, []string{"reason"})
+	sharedDropped = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "pgtoolbox_console_shared_state_dropped_total",
+		Help: "Entries dropped to keep the state ConfigMap within its size, by document: since.json (the oldest since times, past the budget), drills.json (the oldest restore drill results, past the ConfigMap's ceiling).",
+	}, []string{"document"})
 	signOutsHeld = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "pgtoolbox_console_shared_state_signouts",
 		Help: "Entries of the sessions document against each of its bounds: subject (the most one person holds, of 32), unnamed (the sessions that name nobody, of 128), total (of 1536).",
@@ -45,5 +49,5 @@ var (
 )
 
 func init() {
-	crmetrics.Registry.MustRegister(sharedWrites, sharedMode, sharedBytes, signOutsRefused, signOutsHeld)
+	crmetrics.Registry.MustRegister(sharedWrites, sharedMode, sharedBytes, signOutsRefused, sharedDropped, signOutsHeld)
 }

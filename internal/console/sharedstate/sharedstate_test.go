@@ -372,7 +372,7 @@ func TestBudgetDropsOldestSinceNeverASignOut(t *testing.T) {
 	s.MarkDigestSent("20261105T0700Z", "chat", t0)
 	s.mu.Lock()
 	s.pruneLocked()
-	size := s.encodedSizeLocked()
+	size, _ := s.sizesLocked()
 	s.mu.Unlock()
 	if size > 4096 {
 		t.Fatalf("documents take %d bytes, budget 4096", size)
