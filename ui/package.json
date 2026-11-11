@@ -49,7 +49,7 @@
     "@axe-core/playwright": "4.14.0",
     "@biomejs/biome": "2.6.4",
     "@faker-js/faker": "10.6.0",
-    "@inlang/paraglide-js": "2.29.3",
+    "@inlang/paraglide-js": "3.1.0",
     "@inlang/plugin-message-format": "4.6.0",
     "@playwright/test": "1.64.1",
     "@size-limit/file": "14.3.0",
