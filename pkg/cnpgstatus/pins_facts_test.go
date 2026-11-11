@@ -167,6 +167,42 @@ func TestPinLSNBeforeReadyCount(t *testing.T) {
 	}
 }
 
+// TestPinContinuousArchivingSince pins what the recovery facts read
+// from ContinuousArchiving's lastTransitionTime (internal/console/status
+// recoveryFacts failingSince, round 14, CNPG P3-b; pinned round 15, CNPG
+// P3-3): the instance builds the condition with no LastTransitionTime
+// (pkg/management/postgres/webserver/local.go
+// getContinuousArchivingCondition, v1.30.0:247-263, v1.30.1:264-280),
+// and the operator merges it with meta.SetStatusCondition
+// (pkg/resources/status/conditions.go PatchConditionsWithOptimisticLock),
+// which sets the time only when the status changes: "False since T" is
+// the start of the current failing streak.
+func TestPinContinuousArchivingSince(t *testing.T) {
+	for _, v := range verifiedReleases {
+		release := v.tag
+		dir := moduleDir(t, release)
+		local, err := os.ReadFile(filepath.Join(dir, "pkg", "management", "postgres", "webserver", "local.go"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		build := functionBody(t, local, "func (asr *ArchiveStatusRequest) getContinuousArchivingCondition() metav1.Condition {")
+		if !bytes.Contains(build, []byte("Type:    string(apiv1.ConditionContinuousArchiving),")) || !bytes.Contains(build, []byte("Status:  metav1.ConditionFalse,")) {
+			t.Errorf("v%s: getContinuousArchivingCondition no longer builds ContinuousArchiving False", release)
+		}
+		if bytes.Contains(build, []byte("LastTransitionTime")) {
+			t.Errorf("v%s: getContinuousArchivingCondition now sets LastTransitionTime: failingSince may no longer be the streak's start", release)
+		}
+		conditions, err := os.ReadFile(filepath.Join(dir, "pkg", "resources", "status", "conditions.go"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		patch := functionBody(t, conditions, "func PatchConditionsWithOptimisticLock(")
+		if !bytes.Contains(patch, []byte("meta.SetStatusCondition(&cluster.Status.Conditions, c)")) {
+			t.Errorf("v%s: PatchConditionsWithOptimisticLock no longer merges with meta.SetStatusCondition", release)
+		}
+	}
+}
+
 // TestPinArchiverIdentityAndTimeline pins two facts the recovery facts
 // read (round 9): the instance manager archives only on
 // status.currentPrimary (a switchover's target primary or a pod that
