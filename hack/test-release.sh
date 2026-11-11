@@ -248,6 +248,13 @@ expect 1 'not an ancestor of origin/main' -- pre "v${version}" "${stray}"
 git -C "${repo}" -c user.name=t -c user.email=t@t tag -a -m t "v${version}" "${head}"
 expect 0 'ok: preflight' -- pre "v${version}" "${head}"
 expect 1 'already exists and points at' -- pre "v${version}" "${stray}"
+# The argument may be any revision, resolved to its commit: a branch-less
+# symbolic name, the object SHA of the annotated tag itself, and a refusal that
+# names a bad argument instead of failing later.
+expect 0 "ok: preflight v${version} on ${head}" -- pre "v${version}" HEAD
+expect 0 "ok: preflight v${version} on ${head}" -- pre "v${version}" "$(git -C "${repo}" rev-parse "refs/tags/v${version}")"
+expect 1 'does not name a commit' -- pre "v${version}" "$(git -C "${repo}" rev-parse "${head}^{tree}")"
+expect 1 'does not name a commit' -- pre "v${version}" no-such-revision
 git -C "${repo}" tag -d "v${version}" >/dev/null
 git -C "${repo}" update-ref -d refs/remotes/origin/main
 expect 1 'origin/main is not fetched' -- pre "v${version}" "${head}"
