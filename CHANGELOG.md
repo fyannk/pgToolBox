@@ -250,6 +250,7 @@ OpenShift.
   (`pgtoolbox_console_shared_state_dropped_total`).
   A full sessions document gives up a person's oldest sign-out, never their newest, so a sign-out after a cookie theft stays shared. Past 80 % of the MCP grant index or codes table, a person holding at least the mean share is refused. "Since" times keep the room the state ConfigMap leaves instead of all being dropped, and prune and merge hold the state lock about half as long.
   The MCP grant and code fair share no longer depends on arrival order: past 80 %, a person holding four or more is refused, so a hundred identities hold at most 1,360 codes and 1,460 grants (refresh re-records and a first replay placeholder are exempt). Among people holding equal counts, a full sessions document keeps the most recently recorded sign-outs. The size check counts `binaryData`, and a re-probe aborted by an error no longer changes source states.
+  The MCP endpoint no longer counts a session's open SSE stream among a person's four requests in flight; open streams have their own cap of sixteen per person and replica, so a few open assistants no longer refuse each other's calls.
 - **Exposure trust.** The pgtools chart trusts every peer only when
   `networkPolicy.ingress.extraFrom` is empty. `networkPolicy.from` selectors are
   validated by the CRD, and a policy the API server refuses stalls with
