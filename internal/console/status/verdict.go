@@ -312,14 +312,17 @@ func pluginMaxParallel(g *gathered) *int {
 // (a timeout, a slow answer) does not flip the archiving facts: the last
 // good reading of the same pod (the sweep keeps it only for the same pod
 // UID, so a restarted pod has none) stands while it is from the sweep
-// before (primaryReadGrace); a second miss in a row is unread.
+// before (primaryReadGrace); a second miss in a row is unread. A report
+// the instance manager answered without reading PostgreSQL (fenced,
+// restarting: instancestatus Reading.Masked) is no reading of the
+// archiver: its zero archiver fields were not read (round 16, CNPG P2-1).
 func primaryArchiverReading(g *gathered) *instancestatus.Reading {
 	name := g.cluster.Status.CurrentPrimary
 	if name == "" {
 		return nil
 	}
 	inst, ok := g.swept.Instances[name]
-	if !ok || inst.Reading == nil {
+	if !ok || inst.Reading == nil || inst.Reading.Masked() {
 		return nil
 	}
 	if inst.State == viewmodel.StatusReadOK {
