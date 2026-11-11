@@ -193,7 +193,7 @@ spec:
   backup:
     barmanObjectStore:
       destinationPath: s3://scope-e2e/
-      endpointURL: http://fake-s3.invalid:9000
+      endpointURL: https://fake-s3.invalid
       s3Credentials:
         accessKeyId: {name: fake-s3, key: ACCESS_KEY_ID}
         secretAccessKey: {name: fake-s3, key: ACCESS_SECRET_KEY}
