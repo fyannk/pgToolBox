@@ -246,11 +246,16 @@ delete it afterwards.
   other replicas until it expires). Once the document is full it is shared
   fairly, so that some fifty identities the API server accepts (a
   namespace editor can mint ServiceAccounts) cannot lock everyone else
-  out: a newcomer's sign-out takes the place of the last-placed entry of
-  the person holding the most, provided that person holds more
+  out: a newcomer's sign-out takes the place of the entry recorded longest
+  ago of the person holding the most, provided that person holds more
   than the newcomer; nobody's entry is ever taken for someone who holds
   as many or more, and a person holding as much as the most replaces
-  their own instead. Each is counted in
+  their own instead. Everyone keeps their **latest** sign-outs, so a
+  person who signs out again after a theft, while many identities fill
+  the document, keeps that sign-out shared; one exception: the new
+  sign-out of a person at their own bound of 16 takes the place, and the
+  rank, of the sign-out it replaces, and may then be the first to go.
+  Each is counted in
   `pgtoolbox_console_shared_state_signouts_refused_total{reason}`
   (`replaced`, `unnamed`, `evicted` for an entry taken for a newcomer,
   `budget` for a new one refused) and the full document is logged once.
@@ -270,6 +275,14 @@ delete it afterwards.
   forgotten first), so sign-outs never grow memory or the ConfigMap past
   what the API server accepts. It does **not** revoke the token at the
   identity provider or at OpenShift's OAuth server.
+
+  When the sessions document is contended (a steady
+  `signouts_refused_total{reason="evicted"}` or any `budget`), a sign-out
+  may be kept only on the replica that recorded it. The durable answer to
+  a stolen cookie is then the [revocation list](#revoking-sessions): a
+  `users` line (`<username> <now>`) refuses every session that person
+  signed in before it, on every replica and after every restart, and it
+  is bounded by nothing an identity can fill.
 
 What the console checks on every request after sign-in:
 

@@ -1,0 +1,22 @@
+# NOTES.txt warns when restore drills run without the cluster-scoped delete
+# guard, which a namespace admin cannot install.
+suite: restore drills guard notes
+templates:
+  - templates/NOTES.txt
+release:
+  name: pgc
+  namespace: team-a
+tests:
+  - it: warns when drills are on and the guard is off
+    set: {console.restoreDrills.enabled: true}
+    asserts:
+      - matchRegexRaw: {pattern: "Restore drills are ENABLED without the delete guard"}
+
+  - it: is quiet when the guard is rendered
+    set: {console.restoreDrills.enabled: true, console.restoreDrills.admissionPolicy.create: true}
+    asserts:
+      - notMatchRegexRaw: {pattern: "Restore drills are ENABLED"}
+
+  - it: is quiet when drills are off
+    asserts:
+      - notMatchRegexRaw: {pattern: "Restore drills are ENABLED"}

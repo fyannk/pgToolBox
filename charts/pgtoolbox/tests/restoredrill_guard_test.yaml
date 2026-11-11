@@ -1,7 +1,8 @@
 # The restore-drill delete guard (config/admission): a
 # ValidatingAdmissionPolicy that holds a console's ServiceAccount bound to the
 # drills ClusterRole to deleting its own sealed drills, under its own prefix:
-# rendered when the API is served (auto), always (true), or never (false).
+# rendered by default (true, also in a plain `helm template`), when the API is
+# served (auto), or never (false).
 suite: the restore-drill delete guard
 templates:
   - templates/operator/restoredrill-guard.yaml
@@ -9,13 +10,18 @@ release:
   name: pgtoolbox
   namespace: pgtoolbox
 tests:
-  - it: renders nothing where the API server serves no v1 policies
+  - it: renders by default, without discovery (plain helm template)
     set: {operator.enabled: true}
+    asserts:
+      - hasDocuments: {count: 4}
+
+  - it: auto renders nothing where the API server serves no v1 policies
+    set: {operator.enabled: true, operator.restoreDrillGuard.enabled: auto}
     asserts:
       - hasDocuments: {count: 0}
 
   - it: renders both policies and their bindings where the API is served
-    set: {operator.enabled: true}
+    set: {operator.enabled: true, operator.restoreDrillGuard.enabled: auto}
     capabilities:
       apiVersions: [admissionregistration.k8s.io/v1/ValidatingAdmissionPolicy]
     asserts:

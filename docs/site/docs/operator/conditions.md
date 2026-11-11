@@ -101,7 +101,7 @@ too.
 |---|---|---|---|
 | `ConfigurationValid` | the references resolve and the offered set is within bounds | `ClusterNotFound`, `NoClusterSelected`, `PoolerNotFound`, `TooManyServers`, `SecretNotFound`, `ConfigurationInvalid` (a cross-object check the CRD cannot express), `ImageNotAllowed`, `HostnameNotAllowed`, `ResourceNotOwned`, `DatabaseRoleAPIUnavailable`, `PoolerAPIUnavailable`, `GrantMissing`, `DatabaseAPIUnavailable`, `PasswordGenerationUnavailable` | `Initializing` |
 | `WorkloadReady` | every desired replica runs the current template and is Ready | `RolloutInProgress`, `ReplicaFailure` (the Deployment cannot create a Pod, e.g. a quota), `PodUnschedulable`, `ImagePullFailed`, `CrashLoopBackOff`, `PodNotReady`, `UpgradeBackupRunning`, `UpgradeBackupFailed`, `ConfigDatabaseNotReady` | |
-| `ExposureReady` | the Route, Ingress or HTTPRoute is admitted; `NotRequested` for `clusterIP` | `NotAdmitted`, `NotAccepted`, `RouteAPIUnavailable`, `GatewayAPIUnavailable` | `Reconciling` (not observed yet) |
+| `ExposureReady` | the Route, Ingress or HTTPRoute is admitted; `NotRequested` for `clusterIP` | `NotAdmitted`, `NotAccepted`, `RouteAPIUnavailable`, `GatewayAPIUnavailable`, `HostnameNotAllowed` (the exposure is withdrawn and `status.url` cleared) | `Reconciling` (not observed yet) |
 | `ServersSynced` | the registered servers match the offered set | `RegistrationFailed` (the Job's fact in the message) | `PgAdminNotRunning`, `RegistrationRunning` |
 | `PgAdminEgressConfined` | the NetworkPolicy confines egress to named destinations | `PgAdminEgressOpen`, naming every rule that does not | `PgAdminNotRunning` |
 
@@ -162,7 +162,7 @@ ConfigMaps are in the operator's label-filtered cache.
 |---|---|
 | `ConfigurationValid` | `ConsoleImageRequired`, `ImageNotAllowed`, `HostnameNotAllowed`, `ConsoleRoleMissing` (retried every two minutes), `SecretNotFound` (a Secret the console Pod mounts does not exist; the message names it and its field), `ConfigMapNotFound` (the same for a ConfigMap you name; retried every two minutes), `ExposurePolicyInvalid` (the API server refused the ingress NetworkPolicy rendered from `spec.exposure.networkPolicy`; retried every five minutes), `ResourceNotOwned`. Each is a stall; see [PgToolBoxConsole](console.md#reconcile-loop). |
 | `WorkloadReady` | `RolloutInProgress`, `RolloutStuck`, `ReplicaFailure`, `SecretKeyMissing`, `PodUnschedulable`, `ImagePullFailed`, `CrashLoopBackOff`, `PodNotReady`. |
-| `ExposureReady` | As for `PgAdmin`: `NotAdmitted`, `NotAccepted`, `RouteAPIUnavailable`, `GatewayAPIUnavailable`; `NotRequested` (True) for `clusterIP`. |
+| `ExposureReady` | As for `PgAdmin`: `NotAdmitted`, `NotAccepted`, `RouteAPIUnavailable`, `GatewayAPIUnavailable`, `HostnameNotAllowed` (withdrawn, `status.url` cleared); `NotRequested` (True) for `clusterIP`. |
 
 `InstanceCABundleComplete` and `ExposureConfined` are advisory and **never enter
 `Ready`**. `ExposureConfined` is present only while an exposure is published,
@@ -232,9 +232,9 @@ Reasons are registered once, by owner. `common` reasons are shared by every kind
 | `NotRequested` | The exposure is `clusterIP`: nothing to publish. |
 | `NotAdmitted`, `NotAccepted` | The Route or Ingress / the HTTPRoute was not accepted by its controller. |
 | `GatewayNotFound`, `HostnameConflict` | The Gateway named by `parentRef` is absent; another route claims the hostname. Registered; the current reconcilers do not set them. |
-| `RouteAPIUnavailable`, `GatewayAPIUnavailable` | The optional API the exposure needs is not served or not readable. |
+| `RouteAPIUnavailable`, `GatewayAPIUnavailable` | The optional API the exposure needs is not served or not readable. The operator probes the optional APIs (Routes, Gateways, DatabaseRoles, Poolers, Databases, the backup plugins' kinds) once at start: not served or refused by RBAC (403) turns the feature off until the next start; any other answer, a refused credential (401) included, fails the start, which the restart retries. |
 | `ImageNotAllowed` | A `spec.image` or oauth-proxy image repository is outside the operator's [allow-list](images.md) (`ConfigurationValid=False`; both kinds). |
-| `HostnameNotAllowed` | `spec.exposure.hostname` is outside the operator's `EXPOSURE_ALLOWED_HOST_SUFFIXES` (`ConfigurationValid=False` and a stall; `PgAdmin` and `PgToolBoxConsole`). What was published under the name is withdrawn, whatever else stalls: the hostname is checked first, and for a `PgToolBoxConsole` whose image is refused too (`ImageNotAllowed`, `ConsoleImageRequired`) the message names both. |
+| `HostnameNotAllowed` | `spec.exposure.hostname` is outside the operator's `EXPOSURE_ALLOWED_HOST_SUFFIXES` (`ConfigurationValid=False` and a stall; `PgAdmin` and `PgToolBoxConsole`). What was published under the name is withdrawn, whatever else stalls: the hostname is checked first, `ExposureReady` turns `False` with this reason and `status.url` is cleared (one Warning for both conditions), and when the image is refused too (`ImageNotAllowed`, and `ConsoleImageRequired` for a `PgToolBoxConsole`) the message names both. A `PgAdmin`'s settings database (`spec.configDatabase`) is checked once the hostname is fixed. |
 | `ReconciliationFailed`, `QuotaExceeded`, `AdmissionDenied` | Event reasons: the classified Warning recorded when an error ends a reconciliation. |
 
 ### pgadmin

@@ -149,19 +149,63 @@ func TestRealisticDrillsAtTheirBoundAreKept(t *testing.T) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.mergeLocked(&corev1.ConfigMap{})
-	fillToTheBounds(s, false, func(i int) DrillResult {
-		return DrillResult{
-			Namespace: "team-payments-prod", Name: fmt.Sprintf("drill-pg-main-%d", i), SourceNamespace: "team-payments-prod",
-			Source: fmt.Sprint("pg-main-", i%10), SourceUID: "0f0e0d0c-0b0a-0908-0706-050403020100", Backup: "pg-main-20261111010203",
-			BackupLabel: "20261111-010203F_20261111-020304I", Result: "failed", Reason: strings.Repeat("r", 120),
-			StartedAt: t0.Unix(), Deadline: t0.Unix(), HealthyAt: t0.Unix(), FinishedAt: t0.Unix() + int64(i),
-		}
-	})
+	fillToTheBounds(s, false, realisticDrill)
 	s.pruneLocked()
 	_, data := s.sizesLocked()
 	t.Logf("ConfigMap data %d bytes", data)
 	if len(s.drills) != maxDrills || data > MaxData {
 		t.Errorf("%d drill results kept, data %d bytes", len(s.drills), data)
+	}
+}
+
+// realisticDrill is a drill result as a real console writes it.
+func realisticDrill(i int) DrillResult {
+	return DrillResult{
+		Namespace: "team-payments-prod", Name: fmt.Sprintf("drill-pg-main-%d", i), SourceNamespace: "team-payments-prod",
+		Source: fmt.Sprint("pg-main-", i%10), SourceUID: "0f0e0d0c-0b0a-0908-0706-050403020100", Backup: "pg-main-20261111010203",
+		BackupLabel: "20261111-010203F_20261111-020304I", Result: "failed", Reason: strings.Repeat("r", 120),
+		StartedAt: t0.Unix(), Deadline: t0.Unix(), HealthyAt: t0.Unix(), FinishedAt: t0.Unix() + int64(i),
+	}
+}
+
+// The review's measure (round 10): with every other document at its
+// bound and realistic grants and drills, the documents took 965,088
+// bytes against the 786,432 of the budget, and every "since" time was
+// dropped while some 67 KB were left under MaxData. The since times now
+// take the room the ConfigMap leaves, the newest kept, and give way to
+// nothing else.
+func TestSinceTimesKeepTheRoomLeftWhenEverythingElseIsFull(t *testing.T) {
+	s := New(Options{Name: "console-state", Now: (&testClock{now: t0}).Now})
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.mergeLocked(&corev1.ConfigMap{})
+	fillToTheBounds(s, false, realisticDrill)
+	sessions, grants, codes, sent := len(s.signedOut), len(s.grants), len(s.codes), len(s.sent)
+	docs := s.pruneLocked()
+	_, data := s.measureLocked(docs)
+	t.Logf("ConfigMap data %d bytes, %d since times kept of 20000, since document %d bytes", data, len(s.facts), len(docs[KeySince]))
+	if data > MaxData {
+		t.Fatalf("data %d bytes, past %d", data, MaxData)
+	}
+	if len(s.drills) != maxDrills || len(s.signedOut) != sessions || len(s.grants) != grants || len(s.codes) != codes || len(s.sent) != sent {
+		t.Fatal("a drill result, a sign-out, a grant, a code or a delivery mark gave way to since times")
+	}
+	if len(s.facts) == 0 {
+		t.Fatalf("every since time was dropped with %d bytes left under MaxData", MaxData-data)
+	}
+	if room := MaxData - data; room > 256 {
+		t.Errorf("%d bytes left under MaxData while since times were dropped", room)
+	}
+	// The newest are kept.
+	if _, newest := s.facts[factKey(kindFinding, fmt.Sprintf("%036d", 19999), "finding")]; !newest {
+		t.Error("the newest since time was dropped")
+	}
+	if _, oldest := s.facts[factKey(kindFinding, fmt.Sprintf("%036d", 0), "finding")]; oldest {
+		t.Error("the oldest since time was kept")
+	}
+	// What is kept is what is written.
+	if got := docs[KeySince]; got != s.encodeSinceLocked() {
+		t.Error("the since document returned is not the state's")
 	}
 }
 

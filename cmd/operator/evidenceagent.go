@@ -23,6 +23,7 @@ import (
 	"flag"
 	"os"
 	"strings"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -77,15 +78,7 @@ func evidenceAgentCacheOptions(options *ctrl.Options) {
 // informers hold (pgtoolbox_cached_objects). A probe error other than "not
 // served / not allowed" fails the start.
 func setupEvidenceAgent(ctx context.Context, mgr ctrl.Manager, watchNamespaces []string) ([]client.Object, error) {
-	objectStoreAPI, err := discovery.ProbeObjectStoreAPI(ctx, mgr.GetAPIReader(), watchNamespaces)
-	if err != nil {
-		return nil, err
-	}
-	stanzaAPI, err := discovery.ProbeStanzaAPI(ctx, mgr.GetAPIReader(), watchNamespaces)
-	if err != nil {
-		return nil, err
-	}
-	archiveAPI, err := discovery.ProbeArchiveAPI(ctx, mgr.GetAPIReader(), watchNamespaces)
+	objectStoreAPI, stanzaAPI, archiveAPI, err := probeEvidenceAgentAPIs(ctx, mgr.GetAPIReader(), watchNamespaces, startupStepTimeout)
 	if err != nil {
 		return nil, err
 	}
@@ -116,4 +109,24 @@ func splitList(raw string) []string {
 		}
 	}
 	return values
+}
+
+// probeEvidenceAgentAPIs probes the ObjectStore, Stanza and Archive APIs
+// as one start-up step (startupStep): an API server that never answers
+// fails the start naming the step, before the liveness probe kills it.
+func probeEvidenceAgentAPIs(ctx context.Context, reader client.Reader, watchNamespaces []string, timeout time.Duration) (
+	objectStore, stanza, archive discovery.Result, err error,
+) {
+	err = startupStep(ctx, timeout, "probe the EvidenceAgent's optional APIs", func(ctx context.Context) error {
+		var err error
+		if objectStore, err = discovery.ProbeObjectStoreAPI(ctx, reader, watchNamespaces); err != nil {
+			return err
+		}
+		if stanza, err = discovery.ProbeStanzaAPI(ctx, reader, watchNamespaces); err != nil {
+			return err
+		}
+		archive, err = discovery.ProbeArchiveAPI(ctx, reader, watchNamespaces)
+		return err
+	})
+	return objectStore, stanza, archive, err
 }

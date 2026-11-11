@@ -14,7 +14,7 @@ tests:
       - matchRegexRaw: {pattern: "kubectl get crd \\| grep pgtoolbox.fyannk.dev"}
       - matchRegexRaw: {pattern: "Next steps"}
       - matchRegexRaw: {pattern: "pgtoolbox-console-viewer"}
-      - matchRegexRaw: {pattern: "github.com/fyannk/pgToolBox/src/branch/main/docs/site/docs/operator/"}
+      - matchRegexRaw: {pattern: "github.com/fyannk/pgToolBox/tree/main/docs/site/docs/operator/"}
   - it: says which namespaces it watches
     set: {operator.config.watchNamespaces: [team-a, team-b]}
     asserts:

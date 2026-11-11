@@ -304,3 +304,30 @@ func HostnameAllowed(hostname string, suffixes []string) bool {
 }
 
 func normalizeHost(name string) string { return strings.ToLower(strings.TrimSuffix(name, ".")) }
+
+// HostnameRefusal is the ConfigurationValid message of a spec whose
+// published hostname is outside the allow-list of host suffixes, or ""
+// when nothing is refused (type clusterIP publishes no name). PgAdmin and
+// PgToolBoxConsole check it before anything else may stall, withdraw what
+// they published under the name, and stall with reason
+// HostnameNotAllowed; also names the other problems the controller found
+// without side effects (a refused image), so that one status says both.
+func HostnameRefusal(spec pgtoolboxv1alpha1.ExposureSpec, suffixes []string, also ...string) string {
+	if spec.TypeOrDefault() == pgtoolboxv1alpha1.ExposureTypeClusterIP || HostnameAllowed(spec.Hostname, suffixes) {
+		return ""
+	}
+	var message strings.Builder
+	fmt.Fprintf(&message, "spec.exposure.hostname %s is not under the operator's allowed host suffixes (EXPOSURE_ALLOWED_HOST_SUFFIXES: %s)",
+		spec.Hostname, strings.Join(suffixes, ", "))
+	for _, problem := range also {
+		if problem != "" {
+			message.WriteString("; also " + problem)
+		}
+	}
+	return message.String()
+}
+
+// WithdrawnMessage is ExposureReady's message while the hostname is
+// refused (status False, reason HostnameNotAllowed): the Route, Ingress
+// or HTTPRoute is withdrawn and status.url is cleared.
+const WithdrawnMessage = "nothing is published: spec.exposure.hostname is outside the operator's allowed host suffixes (see ConfigurationValid)"

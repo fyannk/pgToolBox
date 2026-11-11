@@ -61,8 +61,14 @@ func TestParseReadsTheReportVerbatim(t *testing.T) {
 	}
 	long := strings.Repeat("x", 1000)
 	bounded, err := Parse(strings.NewReader(`{"node": "` + long + `", "lastArchivedWALTime": "yesterday"}`))
-	if err != nil || len(bounded.Node) != maxText || bounded.LastArchivedWALTime != nil {
-		t.Errorf("bounds: node %d, time %v, err %v", len(bounded.Node), bounded.LastArchivedWALTime, err)
+	if err != nil || len(bounded.Node) != maxText || bounded.LastArchivedWALTime != nil || !bounded.LastArchivedWALTimeUnparsed {
+		t.Errorf("bounds: node %d, time %v (unparsed %v), err %v", len(bounded.Node), bounded.LastArchivedWALTime, bounded.LastArchivedWALTimeUnparsed, err)
+	}
+	if reading.LastArchivedWALTimeUnparsed {
+		t.Error("a time that parsed is flagged unparsed")
+	}
+	if none, err := Parse(strings.NewReader(`{"lastArchivedWALTime": ""}`)); err != nil || none.LastArchivedWALTime != nil || none.LastArchivedWALTimeUnparsed {
+		t.Errorf("an empty archive time (nothing archived yet): %v unparsed %v, err %v", none.LastArchivedWALTime, none.LastArchivedWALTimeUnparsed, err)
 	}
 	if _, err := Parse(strings.NewReader("not json")); err == nil {
 		t.Error("a malformed report parsed")

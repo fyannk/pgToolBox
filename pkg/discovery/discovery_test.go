@@ -52,7 +52,9 @@ func TestProbeListable(t *testing.T) {
 	}{
 		{name: "available", want: Available, namespace: "team-a"},
 		{name: "forbidden", err: apierrors.NewForbidden(gr, "", errors.New("denied")), namespace: "team-a", want: Forbidden, reason: "not allowed to list Pooler.postgresql.cnpg.io in team-a"},
-		{name: "unauthorized counts as forbidden", err: apierrors.NewUnauthorized("no"), namespace: "team-a", want: Forbidden},
+		// A 401 is about the credentials, not RBAC: Forbidden would turn
+		// the feature off until the next restart.
+		{name: "unauthorized fails instead of turning the feature off", err: apierrors.NewUnauthorized("no"), namespace: "team-a", wantErr: true},
 		{name: "no kind match", err: &meta.NoKindMatchError{GroupKind: poolerGVK.GroupKind(), SearchedVersions: []string{"v1"}}, want: NotInstalled, reason: "Pooler.postgresql.cnpg.io is not served by this cluster"},
 		{name: "no resource match", err: &meta.NoResourceMatchError{PartialResource: schema.GroupVersionResource{Group: "postgresql.cnpg.io", Resource: "poolers"}}, want: NotInstalled},
 		{name: "not found", err: apierrors.NewNotFound(gr, ""), want: NotInstalled},
@@ -205,6 +207,16 @@ func TestProbeNamespaces(t *testing.T) {
 		{
 			name: "any other error fails", namespaces: []string{"a", "b"},
 			errs: map[string]error{"b": errors.New("connection refused")}, wantErr: true, wantSeen: []string{"a", "b"},
+		},
+		{
+			// A transient 401 (a token being rotated) must not turn the
+			// feature off until the next restart: the start fails instead.
+			name: "unauthorized fails instead of turning the feature off", namespaces: []string{"a", "b"},
+			errs: map[string]error{"b": apierrors.NewUnauthorized("token expired")}, wantErr: true, wantSeen: []string{"a", "b"},
+		},
+		{
+			name: "unauthorized cluster-wide fails too",
+			errs: map[string]error{"": apierrors.NewUnauthorized("token expired")}, wantErr: true, wantSeen: []string{""},
 		},
 	}
 	for _, tt := range tests {

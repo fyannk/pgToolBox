@@ -200,10 +200,11 @@ others wrote:
 
 Writes are batched (about every 10 seconds, a sign-out or a delivered digest
 within a second), use the ConfigMap's `resourceVersion` and re-read and merge on
-a conflict. The documents stay under 1 MiB: past the budget the oldest "since"
-entries go first, and should the whole ConfigMap (every document counted)
-near 1 MiB, the oldest restore drill results; sign-outs, MCP grants and
-delivery marks never. A missing or forbidden ConfigMap is logged once and
+a conflict. The documents stay under 1 MiB. The sessions, digests and "since"
+documents share one budget, and past it the oldest "since" entries go first;
+"since" also keeps only the room every other document leaves. Should the
+whole ConfigMap (every document counted) near 1 MiB, the oldest restore drill
+results go; sign-outs, MCP grants and delivery marks never. A missing or forbidden ConfigMap is logged once and
 shown on the admin page (source `sharedState`); each replica then keeps its own
 sign-outs and clocks, as a single replica does. `pgtoolbox_console_shared_state_*` metrics count
 the writes and give the mode.

@@ -129,9 +129,10 @@ const (
 	// (the newest sign-out is the one a fresh cookie theft needs). The
 	// sessions naming nobody refuse what arrives past their bound. The
 	// document, once full, is shared fairly (fairShares): a newcomer's
-	// entry takes the place of the last entry, in signOutBefore, of the
-	// person holding the most, when that person holds more than the
-	// newcomer, so filling it with many identities cannot lock everyone
+	// entry takes the place of the last entry, in signOutBefore (the one
+	// recorded longest ago), of the person holding the most, when that
+	// person holds more than the newcomer: everyone keeps their latest
+	// sign-outs, so filling it with many identities cannot lock everyone
 	// else out; a newcomer holding as much as the most refuses or
 	// replaces their own instead. A sign-out the document does not keep
 	// is still refused by the replica that recorded it, is counted in
@@ -219,8 +220,8 @@ type fact struct {
 // a person's entries for MaxSignOutsPerSubject.
 //
 // The slot is the entry's place in the one order every bound keeps by
-// (signOutBefore): when it was first recorded (Recorded) and a hash
-// (Slot; empty for the entry's own session hash). A person at their
+// (signOutBefore): when it was first recorded (Recorded, the latest
+// first) and a hash (Slot; empty for the entry's own session hash). A person at their
 // bound gives the new entry the slot of their own entry it replaces,
 // one generation (Gen) later: the slots the document holds, and so where
 // everyone else's entries stand, do not change, and a replica that still
@@ -242,11 +243,14 @@ func slotOf(h string, e signOut) string {
 	return h
 }
 
-// slotBefore orders two (hash, entry) pairs by slot, and within a slot
-// the later generation first, then by hash: a total order.
+// slotBefore orders two (hash, entry) pairs by slot, the latest recorded
+// first, and within a slot the later generation first, then by hash: a
+// total order. Every bound keeps what comes first in it, so a person's
+// latest sign-outs, the ones a cookie stolen since needs, are the last
+// any bound gives up.
 func slotBefore(ah string, a signOut, bh string, b signOut) bool {
 	if a.Recorded != b.Recorded {
-		return a.Recorded < b.Recorded
+		return a.Recorded > b.Recorded
 	}
 	if as, bs := slotOf(ah, a), slotOf(bh, b); as != bs {
 		return as < bs
@@ -273,8 +277,8 @@ func validSignOut(h string, e signOut) bool {
 }
 
 // mergeSignOut folds two observations of session h's sign-out: the
-// latest expiry, the slot that comes first in slotBefore (an entry
-// without a recording time counts as recorded first), and a tag when
+// latest expiry, the slot that comes first in slotBefore (the latest
+// recorded; an entry without a recording time comes last), and a tag when
 // either has one (the smaller when they differ). It is commutative,
 // associative and idempotent, so replicas folding the same observations
 // in any order hold the same entry.
@@ -674,7 +678,8 @@ func (s *Store) pruneSignOutsLocked() bool {
 }
 
 // signOutBefore is the one order every bound of the sessions document
-// keeps by: by slot, recorded first, then by hash (slotBefore). The
+// keeps by: by slot, the latest recorded first, then by hash
+// (slotBefore). The
 // per-person bounds keep each person's entries that come first in it,
 // and the document's fair share keeps each person's first shares (a
 // function of how many entries each person holds, nothing else): so,
@@ -1101,16 +1106,18 @@ func (s *Store) mergeLocked(cm *corev1.ConfigMap) {
 	if raw, ok := data[KeyDrills]; ok && raw != "" {
 		s.mergeDrillsLocked(raw)
 	}
-	s.pruneLocked()
-	if !s.inSyncLocked() {
+	if !s.inSyncWithLocked(s.pruneLocked()) {
 		s.changedLocked(false)
 	}
 }
 
 // pruneLocked drops expired sign-outs, cleared findings past offKeep,
 // the facts of objects gone from the cache (when the cache's list is
-// complete), and, over the budget, the oldest facts.
-func (s *Store) pruneLocked() {
+// complete), and, over the budget, the oldest facts. It returns the
+// documents as encoded once pruned (encodeLocked), for the caller to
+// compare and write while it holds the lock: the documents are encoded
+// once a prune, the largest part of the time the lock is held.
+func (s *Store) pruneLocked() map[string]string {
 	now := s.opts.Now()
 	s.pruneSignOutsLocked()
 	if n := s.capSignOutsLocked(); n > 0 {
@@ -1155,28 +1162,33 @@ func (s *Store) pruneLocked() {
 			}
 		}
 	}
-	s.budgetLocked()
+	return s.budgetLocked(s.encodeLocked())
 }
 
-// budgetLocked drops the facts with the oldest "since" until the
-// documents fit the budget, then, should the ConfigMap's data still pass
-// MaxData, the oldest drill results (ceilingLocked). Sign-outs are not
-// dropped here (forgetting one would let a copied cookie back in): their
-// own bounds (capSignOutsLocked) keep the sessions document within
-// MaxSignOuts; nor are delivery marks, which the retention bounds (a few
-// a day) and whose loss would send a digest twice; nor grants and
-// redeemed codes, bounded by count (grants.go). At every bound those
-// take some 800 KB, under MaxData.
-func (s *Store) budgetLocked() {
-	ours, data := s.sizesLocked()
-	over := ours - s.opts.Budget
+// budgetLocked drops the facts with the oldest "since" until they fit,
+// then, should the ConfigMap's data still pass MaxData, the oldest drill
+// results (ceilingLocked); docs are the documents as encoded, and it
+// returns them as they are once fitted. The "since" times give way to
+// every other document: the since document may take what the budget
+// leaves the sessions and digests documents (Options.Budget bounds the
+// three together), and no more than what MaxData leaves once every other
+// document is counted, so that they are dropped only when the ConfigMap
+// has no room left for them. Sign-outs are not dropped here (forgetting
+// one would let a copied cookie back in): their own bounds
+// (capSignOutsLocked) keep the sessions document within MaxSignOuts; nor
+// are delivery marks, which the retention bounds (a few a day) and whose
+// loss would send a digest twice; nor grants and redeemed codes, bounded
+// by count (grants.go). At every bound those take some 800 KB, under
+// MaxData.
+func (s *Store) budgetLocked(docs map[string]string) map[string]string {
+	_, data := s.measureLocked(docs)
+	over := s.sinceOverLocked(docs, data)
 	if over <= 0 {
 		if s.overBudget {
 			s.overBudget = false
 			s.opts.Logger.Info("shared state fits its budget again", slog.String("configmap", s.opts.Name))
 		}
-		s.ceilingLocked(data)
-		return
+		return s.ceilingLocked(docs, data)
 	}
 	keys := make([]string, 0, len(s.facts))
 	for key := range s.facts {
@@ -1198,8 +1210,9 @@ func (s *Store) budgetLocked() {
 			over -= len(key) + len(s.facts[key].State) + len(strconv.FormatInt(s.facts[key].Since, 10)) + 18
 			s.deleteFactLocked(key)
 		}
-		ours, data = s.sizesLocked()
-		over = ours - s.opts.Budget
+		docs[KeySince] = s.encodeSinceLocked()
+		_, data = s.measureLocked(docs)
+		over = s.sinceOverLocked(docs, data)
 	}
 	sharedDropped.WithLabelValues(KeySince).Add(float64(dropped))
 	if !s.overBudget {
@@ -1208,7 +1221,20 @@ func (s *Store) budgetLocked() {
 			slog.String("configmap", s.opts.Name), slog.Int("dropped", dropped), slog.Int("budget", s.opts.Budget),
 			slog.Int("signedOut", len(s.signedOut)))
 	}
-	s.ceilingLocked(data)
+	return s.ceilingLocked(docs, data)
+}
+
+// sinceOverLocked is by how many bytes the since document passes what it
+// may take (budgetLocked), data being the ConfigMap's data with docs.
+func (s *Store) sinceOverLocked(docs map[string]string, data int) int {
+	since := len(docs[KeySince])
+	overBudget := len(docs[KeySessions]) + len(docs[KeyDigests]) + since - s.opts.Budget
+	overData := data - MaxData
+	if s.foreign[KeySince] {
+		// Not written: dropping facts frees nothing of the ConfigMap.
+		overData = 0
+	}
+	return max(overBudget, overData)
 }
 
 // ceilingLocked keeps the ConfigMap's data within MaxData, every
@@ -1218,51 +1244,70 @@ func (s *Store) budgetLocked() {
 // during a rolling upgrade; the oldest drill results go, each source's
 // newest pass last (counted in pgtoolbox_console_shared_state_dropped_total
 // and logged once an episode). With none left to drop, it logs that the
-// write will be refused.
-func (s *Store) ceilingLocked(data int) {
+// write will be refused. docs are the documents as encoded, data the
+// ConfigMap's data with them; it returns the documents once fitted.
+func (s *Store) ceilingLocked(docs map[string]string, data int) map[string]string {
 	over := data - MaxData
 	if over <= 0 {
 		if s.overCeiling {
 			s.overCeiling = false
 			s.opts.Logger.Info("shared state ConfigMap fits within its size again", slog.String("configmap", s.opts.Name))
 		}
-		return
+		return docs
 	}
 	dropped := 0
 	for over > 0 && len(s.drills) > 0 {
 		dropped += s.shedDrillsLocked(over)
-		_, data = s.sizesLocked()
+		if drills, ok := s.encodeDrillsLocked(); ok {
+			docs[KeyDrills] = drills
+		} else {
+			delete(docs, KeyDrills)
+		}
+		_, data = s.measureLocked(docs)
 		over = data - MaxData
 	}
 	sharedDropped.WithLabelValues(KeyDrills).Add(float64(dropped))
 	if s.overCeiling {
-		return
+		return docs
 	}
 	s.overCeiling = true
 	if over > 0 {
 		s.opts.Logger.Error("shared state ConfigMap past what the API server accepts, with nothing left to drop: its writes will be refused",
 			slog.String("configmap", s.opts.Name), slog.Int("bytes", over+MaxData), slog.Int("max", MaxData))
-		return
+		return docs
 	}
 	s.opts.Logger.Warn("shared state ConfigMap at its size ceiling: the oldest restore drill results were dropped",
 		slog.String("configmap", s.opts.Name), slog.Int("dropped", dropped), slog.Int("max", MaxData))
+	return docs
 }
 
 // encodeLocked renders the documents, by data key; encoding/json sorts
 // map keys, so two replicas holding the same state write the same bytes.
 func (s *Store) encodeLocked() map[string]string {
 	sessions, _ := json.Marshal(sessionsDoc{Version: formatVersion, SignedOut: s.signedOut})
-	since, _ := json.Marshal(sinceDoc{Version: formatVersion, Facts: s.facts})
 	digests, _ := json.Marshal(digestsDoc{Version: formatVersion, Sent: s.sent})
 	grants, _ := json.Marshal(grantsDoc{Version: formatVersion, Grants: s.grants, Codes: s.codes})
-	out := map[string]string{KeySessions: string(sessions), KeySince: string(since), KeyDigests: string(digests), KeyGrants: string(grants)}
-	// The drills document is written only once there is something to
-	// keep, so a console without restore drills writes what it did.
-	if len(s.drills) > 0 || s.drillsSince != 0 {
-		drills, _ := json.Marshal(drillsDoc{Version: formatVersion, Since: s.drillsSince, Results: s.drills})
-		out[KeyDrills] = string(drills)
+	out := map[string]string{KeySessions: string(sessions), KeySince: s.encodeSinceLocked(), KeyDigests: string(digests), KeyGrants: string(grants)}
+	if drills, ok := s.encodeDrillsLocked(); ok {
+		out[KeyDrills] = drills
 	}
 	return out
+}
+
+func (s *Store) encodeSinceLocked() string {
+	since, _ := json.Marshal(sinceDoc{Version: formatVersion, Facts: s.facts})
+	return string(since)
+}
+
+// encodeDrillsLocked renders the drills document. It is written only once
+// there is something to keep (ok), so a console without restore drills
+// writes what it did.
+func (s *Store) encodeDrillsLocked() (string, bool) {
+	if len(s.drills) == 0 && s.drillsSince == 0 {
+		return "", false
+	}
+	drills, _ := json.Marshal(drillsDoc{Version: formatVersion, Since: s.drillsSince, Results: s.drills})
+	return string(drills), true
 }
 
 // documentKeys are the ConfigMap keys this console writes.
@@ -1273,7 +1318,12 @@ var documentKeys = []string{KeySessions, KeySince, KeyDigests, KeyGrants, KeyDri
 // documents and of what else the ConfigMap holds (another version's
 // documents, any other key), as the API server counts them.
 func (s *Store) sizesLocked() (ours, data int) {
-	docs := s.encodeLocked()
+	return s.measureLocked(s.encodeLocked())
+}
+
+// measureLocked is sizesLocked of the documents docs, as encodeLocked
+// renders them.
+func (s *Store) measureLocked(docs map[string]string) (ours, data int) {
 	for key, doc := range docs {
 		ours += len(doc)
 		sharedBytes.WithLabelValues(key).Set(float64(len(doc)))
@@ -1295,11 +1345,17 @@ func (s *Store) sizesLocked() (ours, data int) {
 // desiredLocked is the ConfigMap to write: the base with the documents
 // this console understands replaced.
 func (s *Store) desiredLocked() *corev1.ConfigMap {
+	return s.desiredWithLocked(s.encodeLocked())
+}
+
+// desiredWithLocked is desiredLocked of the documents docs, as
+// encodeLocked renders them.
+func (s *Store) desiredWithLocked(docs map[string]string) *corev1.ConfigMap {
 	cm := s.base.DeepCopy()
 	if cm.Data == nil {
 		cm.Data = map[string]string{}
 	}
-	for key, doc := range s.encodeLocked() {
+	for key, doc := range docs {
 		if !s.foreign[key] {
 			cm.Data[key] = doc
 		}
@@ -1307,13 +1363,25 @@ func (s *Store) desiredLocked() *corev1.ConfigMap {
 	return cm
 }
 
+// inSyncLocked reports whether the ConfigMap holds the local state.
 func (s *Store) inSyncLocked() bool {
+	return s.inSyncWithLocked(s.encodeLocked())
+}
+
+// inSyncWithLocked is inSyncLocked of the documents docs, as encodeLocked
+// renders them: what desiredWithLocked would write of each document this
+// console writes is what the ConfigMap holds (a document of another
+// version, or one this console does not write now, is left as it is).
+func (s *Store) inSyncWithLocked(docs map[string]string) bool {
 	if s.base == nil {
 		return true
 	}
-	want := s.desiredLocked()
 	for _, key := range documentKeys {
-		if want.Data[key] != s.base.Data[key] {
+		doc, ok := docs[key]
+		if !ok || s.foreign[key] {
+			continue
+		}
+		if have, held := s.base.Data[key]; !held || doc != have {
 			return false
 		}
 	}
@@ -1331,13 +1399,13 @@ func (s *Store) flush(ctx context.Context) error {
 			s.mu.Unlock()
 			return nil
 		}
-		s.pruneLocked()
-		if s.inSyncLocked() {
+		docs := s.pruneLocked()
+		if s.inSyncWithLocked(docs) {
 			s.written, s.urgent = s.gen, false
 			s.mu.Unlock()
 			return nil
 		}
-		cm, gen := s.desiredLocked(), s.gen
+		cm, gen := s.desiredWithLocked(docs), s.gen
 		s.mu.Unlock()
 		updated, err := s.opts.Client.Update(ctx, cm, metav1.UpdateOptions{FieldManager: "pgtoolbox-console"})
 		switch {
@@ -1423,8 +1491,8 @@ func (s *Store) setLive(live map[string]bool) {
 	defer s.mu.Unlock()
 	s.live = live
 	before := s.gen
-	s.pruneLocked()
-	if s.gen == before && !s.inSyncLocked() {
+	docs := s.pruneLocked()
+	if s.gen == before && !s.inSyncWithLocked(docs) {
 		s.changedLocked(false)
 	}
 }

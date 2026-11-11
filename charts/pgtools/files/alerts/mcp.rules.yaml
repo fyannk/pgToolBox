@@ -26,7 +26,7 @@ groups:
         annotations:
           summary: "More than 10% of the MCP tool calls of the console in {{ $labels.namespace }} fail"
           description: "Tool calls ended in error, timeout or a 5xx status over the last 10 minutes. Assistants get an error text instead of an answer."
-          runbook_url: "https://github.com/fyannk/pgToolBox/src/branch/main/docs/site/docs/console/alerts.md#pgtoolboxconsolemcphigherrorratio"
+          runbook_url: "https://github.com/fyannk/pgToolBox/blob/main/docs/site/docs/console/alerts.md#pgtoolboxconsolemcphigherrorratio"
       - alert: PgToolBoxConsoleMCPCallTimeouts
         expr: sum by (namespace, tool) (increase(pgtoolbox_console_mcp_calls_total{outcome="timeout"}[15m])) >= 3
         for: 5m
@@ -35,7 +35,7 @@ groups:
         annotations:
           summary: "MCP calls to {{ $labels.tool }} keep hitting the call timeout in {{ $labels.namespace }}"
           description: "Calls to the tool {{ $labels.tool }} ran past the MCP call timeout at least three times in the last 15 minutes."
-          runbook_url: "https://github.com/fyannk/pgToolBox/src/branch/main/docs/site/docs/console/alerts.md#pgtoolboxconsolemcpcalltimeouts"
+          runbook_url: "https://github.com/fyannk/pgToolBox/blob/main/docs/site/docs/console/alerts.md#pgtoolboxconsolemcpcalltimeouts"
       - alert: PgToolBoxConsoleMCPUnauthenticatedCalls
         expr: sum by (namespace) (increase(pgtoolbox_console_mcp_calls_total{outcome="unauthenticated"}[15m])) > 0
         for: 5m
@@ -44,7 +44,7 @@ groups:
         annotations:
           summary: "MCP tool calls reached the handler without a signed-in person in {{ $labels.namespace }}"
           description: "Tool calls carried no principal. The bearer check in front of the endpoint should refuse them first, so this is a defect or a bypass, not an expired token."
-          runbook_url: "https://github.com/fyannk/pgToolBox/src/branch/main/docs/site/docs/console/alerts.md#pgtoolboxconsolemcpunauthenticatedcalls"
+          runbook_url: "https://github.com/fyannk/pgToolBox/blob/main/docs/site/docs/console/alerts.md#pgtoolboxconsolemcpunauthenticatedcalls"
       - alert: PgToolBoxConsoleMCPResultsTruncated
         expr: |
           (
@@ -60,7 +60,7 @@ groups:
         annotations:
           summary: "A quarter of the results of {{ $labels.tool }} are cut to fit the response cap in {{ $labels.namespace }}"
           description: "Over a quarter of the successful {{ $labels.tool }} results were truncated over the last 30 minutes. The assistant reads a partial answer."
-          runbook_url: "https://github.com/fyannk/pgToolBox/src/branch/main/docs/site/docs/console/alerts.md#pgtoolboxconsolemcpresultstruncated"
+          runbook_url: "https://github.com/fyannk/pgToolBox/blob/main/docs/site/docs/console/alerts.md#pgtoolboxconsolemcpresultstruncated"
   - name: pgtoolbox-console-mcp-oauth
     rules:
       - alert: PgToolBoxConsoleMCPOAuthTokenFailures
@@ -78,7 +78,7 @@ groups:
         annotations:
           summary: "Over a quarter of the MCP token requests of the console in {{ $labels.namespace }} fail"
           description: "Requests to the token endpoint failed (refused, revoked, replayed, throttled, busy or error) over the last 10 minutes. Assistants cannot connect or refresh."
-          runbook_url: "https://github.com/fyannk/pgToolBox/src/branch/main/docs/site/docs/console/alerts.md#pgtoolboxconsolemcpoauthtokenfailures"
+          runbook_url: "https://github.com/fyannk/pgToolBox/blob/main/docs/site/docs/console/alerts.md#pgtoolboxconsolemcpoauthtokenfailures"
       - alert: PgToolBoxConsoleMCPOAuthCodeReplayed
         expr: sum by (namespace) (increase(pgtoolbox_console_mcp_oauth_requests_total{endpoint="token",outcome="replayed"}[15m])) > 0
         labels:
@@ -86,4 +86,4 @@ groups:
         annotations:
           summary: "An MCP authorization code was presented twice in {{ $labels.namespace }}"
           description: "An authorization code was redeemed a second time in the last 15 minutes. The console revoked the grant the first redemption bought: a stolen code, or a client that retried badly."
-          runbook_url: "https://github.com/fyannk/pgToolBox/src/branch/main/docs/site/docs/console/alerts.md#pgtoolboxconsolemcpoauthcodereplayed"
+          runbook_url: "https://github.com/fyannk/pgToolBox/blob/main/docs/site/docs/console/alerts.md#pgtoolboxconsolemcpoauthcodereplayed"

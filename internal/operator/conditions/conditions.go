@@ -236,7 +236,9 @@ var progressReasons = map[pgtoolboxv1alpha1.Reason]bool{
 //     aspect turning False in the same write already said it;
 //   - an aspect turning False (any type but Ready, Progressing and
 //     Stalled), unless its reason is a progress reason (RolloutInProgress,
-//     PodNotReady, or one of quiet): Warning with that reason;
+//     PodNotReady, or one of quiet): Warning with that reason, once per
+//     reason (two aspects turning False for one cause, ConfigurationValid
+//     and ExposureReady on HostnameNotAllowed, are one Warning);
 //   - a reconciliation error (reported) of a class Ready did not carry
 //     before: Warning with the classified reason (ReconciliationFailed,
 //     QuotaExceeded, AdmissionDenied) — once per class, not per retry.
@@ -274,7 +276,7 @@ func RecordTransitions(recorder EventRecorder, object runtime.Object, before, af
 				stalled = &c
 			}
 		case t.Type == pgtoolboxv1alpha1.ConditionProgressing:
-		case c.Status == metav1.ConditionFalse && !isQuiet(c.Reason):
+		case c.Status == metav1.ConditionFalse && !isQuiet(c.Reason) && !warned[c.Reason]:
 			warned[c.Reason] = true
 			event(corev1.EventTypeWarning, c.Reason, t.Type+": "+c.Message)
 		}

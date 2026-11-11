@@ -55,6 +55,12 @@ func TestDisallowedHostnameWithdrawnWhateverTheImage(t *testing.T) {
 			c := &pgtoolboxv1alpha1.PgToolBoxConsole{ObjectMeta: metav1.ObjectMeta{Name: "console", Namespace: "team-a", UID: "u", Generation: 1}}
 			c.Spec.Image = tc.image
 			c.Spec.Exposure.Type, c.Spec.Exposure.Hostname = pgtoolboxv1alpha1.ExposureTypeIngress, "login.corp.example.com"
+			// Published before the allow-list existed.
+			c.Status.URL = "https://login.corp.example.com"
+			c.Status.Conditions = []metav1.Condition{{
+				Type: pgtoolboxv1alpha1.ConditionExposureReady, Status: metav1.ConditionTrue, Reason: pgtoolboxv1alpha1.ReasonAsExpected.String(),
+				ObservedGeneration: 1, LastTransitionTime: metav1.Now(),
+			}}
 			published := owned(c, &networkingv1.Ingress{ObjectMeta: metav1.ObjectMeta{Name: c.WorkloadName(), Namespace: c.Namespace}})
 			cl := fake.NewClientBuilder().WithScheme(cnpgScheme(t)).WithObjects(c, published).
 				WithStatusSubresource(&pgtoolboxv1alpha1.PgToolBoxConsole{}).Build()
@@ -83,6 +89,14 @@ func TestDisallowedHostnameWithdrawnWhateverTheImage(t *testing.T) {
 			}
 			if tc.imageText == "" && strings.Contains(valid.Message, "also") {
 				t.Fatalf("ConfigurationValid message %q names an image problem there is none of", valid.Message)
+			}
+			// Nothing stale says the console is still reachable.
+			if ready := meta.FindStatusCondition(got.Status.Conditions, pgtoolboxv1alpha1.ConditionExposureReady); ready == nil ||
+				ready.Status != metav1.ConditionFalse || ready.Reason != pgtoolboxv1alpha1.ReasonHostnameNotAllowed.String() {
+				t.Fatalf("ExposureReady = %+v, want False/HostnameNotAllowed", ready)
+			}
+			if got.Status.URL != "" {
+				t.Fatalf("status.url = %q while nothing is published", got.Status.URL)
 			}
 		})
 	}

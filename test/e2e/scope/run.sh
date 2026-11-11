@@ -243,12 +243,47 @@ console_and_agent_reconciled() {
   no_forbidden "${ns}" pgtoolboxconsole/console && no_forbidden "${ns}" evidenceagent/scope
 }
 
+# refresh_console_and_agent <namespace> <n>: force a reconcile under the
+# operator's CURRENT mode and wait for its status. The first reconcile of a
+# mode switch can predate it; its conditions are the old mode's. The agent's
+# refreshInterval is a harmless spec field: changing it bumps the generation,
+# and observedGeneration must catch up. The console's drills RoleBinding is
+# owned, so deleting it is a watch event the operator must repair, which it can
+# only do with the new mode's permissions.
+refresh_console_and_agent() {
+  local ns=$1 n=$2 agent_gen console_gen
+  kubectl -n "${ns}" patch evidenceagent/scope --type merge -p "{\"spec\":{\"refreshInterval\":\"$((30 + n))m\"}}" || return 1
+  kubectl -n "${ns}" delete rolebinding/console-restore-drills --wait=true || return 1
+  retry 180 exist "${ns}" rolebinding/console-restore-drills || {
+    echo "the operator did not recreate rolebinding/console-restore-drills in ${ns}" >&2
+    return 1
+  }
+  agent_gen="$(kubectl -n "${ns}" get evidenceagent/scope -o jsonpath='{.metadata.generation}')"
+  kubectl -n "${ns}" wait evidenceagent/scope --for=jsonpath='{.status.observedGeneration}'="${agent_gen}" --timeout=180s || return 1
+  console_gen="$(kubectl -n "${ns}" get pgtoolboxconsole/console -o jsonpath='{.metadata.generation}')"
+  kubectl -n "${ns}" wait pgtoolboxconsole/console --for=jsonpath='{.status.observedGeneration}'="${console_gen}" --timeout=180s || return 1
+}
+
+# operator_log_clean: the newest operator Pod's log carries no API server
+# Forbidden (RBAC escalation prevention or a missing verb in this mode).
+operator_log_clean() {
+  local newest
+  newest="$(kubectl -n pgtoolbox get pods -l app.kubernetes.io/instance=pgtoolbox,app.kubernetes.io/name=pgtoolbox \
+    --sort-by=.metadata.creationTimestamp -o name | tail -n 1)"
+  [[ -n "${newest}" ]] || { echo "no operator Pod" >&2; return 1; }
+  if kubectl -n pgtoolbox logs "${newest}" | grep -i 'is forbidden'; then
+    echo "${newest} logged a Forbidden" >&2
+    return 1
+  fi
+}
+
 log "2. a PgAdmin, a console and an agent in a watched namespace are reconciled, a PgAdmin elsewhere is not"
 pgadmin scope-a
 pgadmin scope-x
 console_and_agent scope-a
 reconciled scope-a 1 || fail "the PgAdmin in scope-a was not reconciled"
 console_and_agent_reconciled scope-a || fail "the console or the agent in scope-a was not reconciled"
+operator_log_clean || fail "the operator logged a Forbidden confined to scope-a and scope-b"
 sleep 10
 if [[ -n "$(kubectl -n scope-x get pgadmin/scope -o jsonpath='{.status.observedGeneration}')" ]]; then
   fail "the operator reconciled a PgAdmin in scope-x, which it does not watch"
@@ -275,7 +310,9 @@ if kubectl get clusterrolebinding pgtoolbox-manager-cluster >/dev/null 2>&1; the
 fi
 kubectl -n pgtoolbox rollout status deployment/pgtoolbox --timeout=300s || fail "the operator is not Ready in the default mode"
 reconciled scope-x 1 || fail "in the default mode the PgAdmin in scope-x was not reconciled"
+refresh_console_and_agent scope-a 1 || fail "in the default mode the console or the agent in scope-a did not reconcile again"
 console_and_agent_reconciled scope-a || fail "in the default mode the console or the agent in scope-a is not reconciled"
+operator_log_clean || fail "in the default mode the operator logged a Forbidden"
 
 log "5. back to watchNamespaces with helm upgrade"
 helm_install --set 'operator.config.watchNamespaces={scope-a}' || fail "helm upgrade to watchNamespaces (immutable roleRef?)"
@@ -286,7 +323,9 @@ fi
 kubectl -n pgtoolbox rollout status deployment/pgtoolbox --timeout=300s || fail "the operator is not Ready confined to scope-a"
 kubectl -n scope-a patch pgadmin/scope --type merge -p '{"spec":{"admins":["alice@example.com"]}}'
 reconciled scope-a 3 || fail "confined again, the PgAdmin in scope-a was not reconciled"
+refresh_console_and_agent scope-a 2 || fail "confined again, the console or the agent in scope-a did not reconcile again"
 console_and_agent_reconciled scope-a || fail "confined again, the console or the agent in scope-a is not reconciled"
+operator_log_clean || fail "confined again, the operator logged a Forbidden"
 kubectl -n scope-x patch pgadmin/scope --type merge -p '{"spec":{"admins":["alice@example.com","bob@example.com"]}}'
 sleep 10
 [[ "$(kubectl -n scope-x get pgadmin/scope -o jsonpath='{.status.observedGeneration}')" == "1" ]] ||

@@ -52,6 +52,27 @@ for f in Dockerfile ui/e2e.Dockerfile; do
     status=1
   }
 done
+# Every Go and Node base image in a Dockerfile must be the mise.toml pin: the
+# shipped binaries are built by the Go CI, govulncheck and the linters use. The
+# docker ecosystem of Dependabot ignores golang and node for that reason; the
+# toolchain day bumps mise.toml and the Dockerfiles together (digests included).
+node_want=$(awk -F'"' '$2 == "node" { print $4; exit }' mise.toml)
+# DOCKERFILES lets the test suite point the check at scratch copies.
+dockerfiles=${DOCKERFILES:-$(git ls-files '*Dockerfile' '*.Dockerfile' 2>/dev/null || find . -name '*Dockerfile*' -not -path '*/node_modules/*')}
+for f in $dockerfiles; do
+  for v in $(sed -n 's/^FROM .*[ /]golang:\([0-9][0-9.]*\)[@ -].*/\1/p; s/^FROM .*[ /]golang:\([0-9][0-9.]*\)$/\1/p' "$f" | sort -u); do
+    if [ "$v" != "$want" ]; then
+      echo "$f: golang:$v, mise.toml pins go $want" >&2
+      status=1
+    fi
+  done
+  for v in $(sed -n 's/^FROM .*[ /]node:\([0-9][0-9.]*\)[@ -].*/\1/p; s/^FROM .*[ /]node:\([0-9][0-9.]*\)$/\1/p' "$f" | sort -u); do
+    if [ "$v" != "$node_want" ]; then
+      echo "$f: node:$v, mise.toml pins node $node_want" >&2
+      status=1
+    fi
+  done
+done
 # The Playwright image the UI suite runs in carries the version of
 # @playwright/test: a mismatch fails at run time with missing browsers.
 pw_want=$(sed -n 's/.*"@playwright\/test": *"[~^]\{0,1\}\([0-9.]*\)".*/\1/p' ui/package.json)
@@ -74,5 +95,5 @@ for minor in 1.34 1.35 1.36; do
     status=1
   }
 done
-[ "$status" = 0 ] && echo "toolchain consistent (go $want, cosign $cosign_want, pnpm $pnpm_want, playwright $pw_want)"
+[ "$status" = 0 ] && echo "toolchain consistent (go $want, node $node_want, cosign $cosign_want, pnpm $pnpm_want, playwright $pw_want)"
 exit "$status"

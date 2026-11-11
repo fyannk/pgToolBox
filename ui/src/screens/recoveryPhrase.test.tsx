@@ -133,13 +133,43 @@ test("the reasons, the backlog, the end of WAL and the caps are said in French",
     ],
     [
       "recovery.segment.backupNotListed",
-      { backupId: "b1", reason: "backup-not-listed" },
-      /^La sauvegarde de base b1 atteint ce point, mais elle ne figure pas parmi les sauvegardes .* non compté comme couvert\.$/,
+      { backupId: "b1", reason: "backup-not-listed", limit: "1000" },
+      /^La sauvegarde de base b1 atteint ce point, mais elle ne figure pas parmi les 1\s000 sauvegardes .* non compté comme couvert\. Expirez les anciennes sauvegardes .*moins de 1\s000, ou restaurez depuis une sauvegarde plus récente\.$/,
     ],
     [
       "recovery.reason.backupNotListed",
-      { backupId: "b1", reason: "backup-not-listed" },
-      /^la sauvegarde de base b1 ne figure pas parmi les sauvegardes lues/,
+      { backupId: "b1", reason: "backup-not-listed", limit: "1000" },
+      /^la sauvegarde de base b1 ne figure pas parmi les 1\s000 sauvegardes les plus récentes lues.*réduisez la rétention/,
+    ],
+    [
+      "recovery.segment.backupGone",
+      { backupId: "old", reason: "backup-not-in-repository" },
+      /^La sauvegarde de base old .* ne la contient plus .* non compté comme couvert\.$/,
+    ],
+    [
+      "recovery.reason.backupGone",
+      { backupId: "old", reason: "backup-not-in-repository" },
+      /^la sauvegarde de base old ne figure plus dans la liste des sauvegardes du dépôt/,
+    ],
+    [
+      "recovery.segment.missingAfterLatestFormerPrimaryRejoined",
+      { instance: "db-1" },
+      /L’ancien primaire, db-1, a rejoint le cluster depuis.*jamais été sur db-1\.$/,
+    ],
+    [
+      "recovery.segment.missingWALFormerPrimaryRejoined",
+      { instance: "db-1" },
+      /^Des WAL manquent dans le dépôt : .*a rejoint le cluster depuis/,
+    ],
+    [
+      "recovery.reason.missingAfterLatestFormerPrimaryRejoined",
+      { instance: "db-1" },
+      /l’ancien primaire, db-1, a rejoint le cluster depuis/,
+    ],
+    [
+      "recovery.segment.liveTimelineNotArchived",
+      { timeline: "2" },
+      /^Le dépôt ne contenait aucun WAL de la timeline 2, celle qu’écrit le primaire actuel/,
     ],
     ["recovery.segment.missingAfterLatestFormerPrimary", undefined, /ne supprimez ni cette instance ni son volume\.$/],
     [

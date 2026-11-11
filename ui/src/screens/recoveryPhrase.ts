@@ -4,7 +4,7 @@
 // under one ending in "Seconds". A code this file does not know, or a
 // value it needs that is missing, shows Go's English text: never a blank
 // and never a guess.
-import { formatDuration } from "../ds/format";
+import { formatDuration, formatNumber } from "../ds/format";
 import { healthWord } from "../ds/health";
 import { formatUtcMinute } from "../ds/time";
 import { m } from "../paraglide/messages.js";
@@ -15,6 +15,13 @@ type Params = Record<string, string> | undefined;
 function instant(p: Params, key: string): string | undefined {
   const v = p?.[key];
   return v === undefined || Number.isNaN(Date.parse(v)) ? undefined : formatUtcMinute(v);
+}
+
+/** A count parameter in the reader's digits ("1,000", "1 000"); undefined when absent or not a number. */
+function count(p: Params, key: string): string | undefined {
+  const v = p?.[key];
+  const n = v === undefined || v === "" ? Number.NaN : Number(v);
+  return Number.isFinite(n) ? formatNumber(n) : undefined;
 }
 
 /** A whole-seconds parameter as words; undefined when absent or not a number. */
@@ -174,6 +181,10 @@ function recoveryReason(code: string, p: Params): string | undefined {
       return detail ? m.rp_reason_evidence_stale({ detail }) : undefined;
     case "recovery.reason.pathsCut":
       return m.rp_reason_paths_cut();
+    case "recovery.reason.missingAfterLatestFormerPrimaryRejoined":
+      return p?.instance
+        ? m.rp_reason_missing_after_latest_former_primary_rejoined({ instance: p.instance })
+        : undefined;
     case "recovery.reason.missingAfterLatestFormerPrimary":
       return p?.instance
         ? m.rp_reason_missing_after_latest_former_primary_named({ instance: p.instance })
@@ -202,8 +213,12 @@ function recoveryReason(code: string, p: Params): string | undefined {
         ? m.rp_reason_path_not_healthy({ id, state, detail })
         : m.rp_reason_path_not_healthy_bare({ id, state });
     }
-    case "recovery.reason.backupNotListed":
-      return p?.backupId ? m.rp_reason_backup_not_listed({ id: p.backupId }) : undefined;
+    case "recovery.reason.backupNotListed": {
+      const limit = count(p, "limit");
+      return p?.backupId && limit ? m.rp_reason_backup_not_listed({ id: p.backupId, limit }) : undefined;
+    }
+    case "recovery.reason.backupGone":
+      return p?.backupId ? m.rp_reason_backup_gone({ id: p.backupId }) : undefined;
     case "recovery.reason.backupNotUsable": {
       const id = p?.backupId;
       if (!id) return undefined;
@@ -280,6 +295,14 @@ function translate(code: string, p: Params): string | undefined {
       return p?.instance
         ? m.rp_segment_missing_after_latest_former_primary_named({ instance: p.instance })
         : m.rp_segment_missing_after_latest_former_primary();
+    case "recovery.segment.missingAfterLatestFormerPrimaryRejoined":
+      return p?.instance
+        ? m.rp_segment_missing_after_latest_former_primary_rejoined({ instance: p.instance })
+        : undefined;
+    case "recovery.segment.missingWALFormerPrimaryRejoined":
+      return p?.instance ? m.rp_segment_missing_wal_former_primary_rejoined({ instance: p.instance }) : undefined;
+    case "recovery.segment.liveTimelineNotArchived":
+      return p?.timeline ? m.rp_segment_live_timeline_not_archived({ timeline: p.timeline }) : undefined;
     case "recovery.segment.missingWALFormerPrimary":
       return p?.instance
         ? m.rp_segment_missing_wal_former_primary_named({ instance: p.instance })
@@ -357,8 +380,12 @@ function translate(code: string, p: Params): string | undefined {
         ? m.rp_segment_path_not_healthy({ id, state, detail: p.detail })
         : m.rp_segment_path_not_healthy_bare({ id, state });
     }
-    case "recovery.segment.backupNotListed":
-      return id ? m.rp_segment_backup_not_listed({ id }) : undefined;
+    case "recovery.segment.backupNotListed": {
+      const limit = count(p, "limit");
+      return id && limit ? m.rp_segment_backup_not_listed({ id, limit }) : undefined;
+    }
+    case "recovery.segment.backupGone":
+      return id ? m.rp_segment_backup_gone({ id }) : undefined;
     case "recovery.segment.backupNotUsable": {
       if (!id) return undefined;
       if (p?.detail) return m.rp_segment_backup_not_usable({ id, detail: p.detail });

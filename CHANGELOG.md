@@ -187,6 +187,7 @@ OpenShift.
   evidence for it; a pgBackRest backup cut from the 1,000 items read is never drawn
   covered (`backup-not-listed`); the do-not-delete advice names the former primary
   when the console knows it, and a second reason never cuts it.
+  Right after a failover, the parent timeline's tail is bounded by the former primary's archiver, and the bar says the repository has no WAL of the live timeline yet. Stale kept paths no longer draw a backup the repository no longer lists as covered, and their purge band is timed from their own scan. The do-not-delete advice no longer names a former primary that has rejoined; `backup-not-listed` says how to act.
 - **An archive backlog is not "healthy".** Archiving shows Warning
   `ArchiveBacklog` once segments keep waiting across sweeps (the threshold follows
   CloudNativePG's WAL archiver, `isWALArchiver`, and its ObjectStore's
@@ -246,6 +247,7 @@ OpenShift.
   concurrent replacements a merge drops are counted under `merge`; the shared-state
   ConfigMap stays within 1 MiB, dropping the oldest restore drill results first
   (`pgtoolbox_console_shared_state_dropped_total`).
+  A full sessions document gives up a person's oldest sign-out, never their newest, so a sign-out after a cookie theft stays shared. Past 80 % of the MCP grant index or codes table, a person holding at least the mean share is refused. "Since" times keep the room the state ConfigMap leaves instead of all being dropped, and prune and merge hold the state lock about half as long.
 - **Exposure trust.** The pgtools chart trusts every peer only when
   `networkPolicy.ingress.extraFrom` is empty. `networkPolicy.from` selectors are
   validated by the CRD, and a policy the API server refuses stalls with
@@ -276,6 +278,7 @@ OpenShift.
   its Ingress, Route or HTTPRoute (the hostname is checked first) and names both;
   `ExposureConfined` says when the Node podCIDR check is not meaningful (a console
   Pod outside its Node's podCIDRs); the Node lookup runs within 10 s and resumes.
+  PgAdmin, like the console, checks its hostname first and withdraws a published Ingress or Route under a disallowed name; both kinds report `ExposureReady=False` (`HostnameNotAllowed`) with an empty `status.url`. Operator start-up steps have a 20 s deadline, below the liveness kill, and a 401 from an optional-API probe fails the start.
 - **Admission.** A PgAdmin with `configDatabase` needs `get` on the
   namespace's Secrets and its database must start with `pgadmin_` (CloudNativePG
   adopts and resets an existing role); raising `sessionMaxAge` counts as widening
@@ -325,5 +328,6 @@ OpenShift.
   watchNamespaces e2e also runs on chart changes, and cache pruning retires mise
   caches of an old `mise.toml`.
   Built with Go 1.27.4 (GO-2026-6859, an HTTP/1 server crash in `net/http`).
+  `check-toolchain.sh` ties the Dockerfiles' `golang` and `node` images to `mise.toml`, and Dependabot leaves them to the toolchain bump; `release-preflight` checks that the tag points at the SHA. The restore-drill guard is on by default and rendered by plain `helm template`; the kustomize install passes the default images by digest.
 
 [0.1.0]: https://github.com/fyannk/pgToolBox/releases/tag/v0.1.0

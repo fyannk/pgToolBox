@@ -49,9 +49,9 @@ const (
 	maximumBackupBytes = 16 * 1024 * 1024
 	// maximumBackupIDs bounds the assembled backup_id set.
 	maximumBackupIDs = 10000
-	// maximumBackupItems bounds the compact backup items kept for the
+	// MaximumBackupItems bounds the compact backup items kept for the
 	// recovery window; the newest by end time win.
-	maximumBackupItems = 1000
+	MaximumBackupItems = 1000
 	// maximumRecoveryPages, maximumRecoveryBytes and maximumRecoveryPaths
 	// bound the recovery-path chain like the backup one.
 	maximumRecoveryPages = 20
@@ -617,7 +617,7 @@ func collectBackups[T any](
 }
 
 // newestItems orders the items by end time (unknown first) and keeps
-// the newest maximumBackupItems.
+// the newest MaximumBackupItems.
 func newestItems(items []BackupItem) []BackupItem {
 	sort.SliceStable(items, func(i, j int) bool {
 		a, b := items[i].EndAt, items[j].EndAt
@@ -628,8 +628,8 @@ func newestItems(items []BackupItem) []BackupItem {
 			return a.Before(*b)
 		}
 	})
-	if len(items) > maximumBackupItems {
-		items = append([]BackupItem(nil), items[len(items)-maximumBackupItems:]...)
+	if len(items) > MaximumBackupItems {
+		items = append([]BackupItem(nil), items[len(items)-MaximumBackupItems:]...)
 	}
 	return items
 }

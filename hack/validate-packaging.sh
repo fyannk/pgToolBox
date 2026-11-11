@@ -312,6 +312,12 @@ if all(pods.values()):
             problems.append(f"manager pod securityContext: {label} differs from Helm")
         if [a for a in c.get("args", []) if not image_flag(a)] != [a for a in refc.get("args", []) if not image_flag(a)]:
             problems.append(f"manager non-image args: {label} {c.get('args')} != Helm {refc.get('args')}")
+    # The image flags: kustomize carries the same three as Helm (tags in the tree,
+    # digests after pin-refs), so a CR without spec.image does not get ImageRequired.
+    helm_img = sorted(a for a in refc.get("args", []) if image_flag(a))
+    kust_img = sorted(a for a in pods["kustomize"]["containers"][0].get("args", []) if image_flag(a))
+    if kust_img != helm_img:
+        problems.append(f"manager image flags: kustomize {kust_img} != Helm {helm_img} (config/manager/manager.yaml)")
     if pods["OLM"]["containers"][0].get("args") != refc.get("args"):
         problems.append("manager args: OLM CSV and Helm differ (image flags included)")
 
@@ -459,7 +465,7 @@ comp_kust = load(comp_dir / "kustomization.yaml") if (comp_dir / "kustomization.
 if comp_kust.get("kind") != "Component" or comp_kust.get("resources") != ["admission_policy.yaml"]:
     problems.append("config/components/admission/kustomization.yaml must be a kustomize Component listing admission_policy.yaml")
 comp_docs = [d for d in yaml.safe_load_all(open(comp_dir / "admission_policy.yaml")) if d] if (comp_dir / "admission_policy.yaml").exists() else []
-helm_vap = [d for d in helm_docs if d["kind"] in ("ValidatingAdmissionPolicy", "ValidatingAdmissionPolicyBinding")]
+helm_vap = [d for d in helm_docs if d["kind"] in ("ValidatingAdmissionPolicy", "ValidatingAdmissionPolicyBinding") and d["metadata"]["name"].endswith("image-override")]
 if sorted((d["kind"], d["metadata"]["name"]) for d in comp_docs) != sorted((d["kind"], d["metadata"]["name"]) for d in helm_vap):
     problems.append(f"config/components/admission renders {[(d['kind'], d['metadata']['name']) for d in comp_docs]}, Helm {[(d['kind'], d['metadata']['name']) for d in helm_vap]} — run make manifests")
 for doc in helm_vap:
@@ -616,7 +622,7 @@ for label, labels in (("Helm", helm_ns_labels), ("kustomize", kust_ns_labels), (
 for doc in helm_docs:
     if doc["kind"] == "NetworkPolicy":
         problems.append(f"operator.enabled renders a {doc['kind']} by default: it is the installing admin's choice, never on by default")
-default_vap = [d["metadata"]["name"] for d in helm_docs if d["kind"] in ("ValidatingAdmissionPolicy", "ValidatingAdmissionPolicyBinding")]
+default_vap = [d["metadata"]["name"] for d in helm_docs if d["kind"] in ("ValidatingAdmissionPolicy", "ValidatingAdmissionPolicyBinding") and d["metadata"]["name"].endswith("image-override")]
 if sorted(default_vap) != ["pgtoolbox-image-override", "pgtoolbox-image-override"]:
     problems.append(f"operator.enabled must render the admission policy and its binding by default (the Secret-reference rule has no other check); renders {default_vap}")
 for doc in helm_full:
@@ -640,7 +646,10 @@ if helm_full_pod:
         problems.append("operator.metrics.tls.certSecret is not mounted where --metrics-cert-dir points")
     if not helm_full_pod.get("priorityClassName") or not helm_full_pod.get("topologySpreadConstraints"):
         problems.append("operator priorityClassName/topologySpreadConstraints values are not rendered")
-vap = [d for d in helm_full if d["kind"] == "ValidatingAdmissionPolicy"]
+# The restore-drill guard is rendered by default, without API discovery (a plain helm template).
+if not [d for d in helm_docs if d["kind"] == "ValidatingAdmissionPolicy" and d["metadata"]["name"] == "pgtoolbox-console-restore-drills"]:
+    problems.append("operator.enabled must render the restore-drill delete guard by default, also without API discovery (operator.restoreDrillGuard.enabled)")
+vap = [d for d in helm_full if d["kind"] == "ValidatingAdmissionPolicy" and d["metadata"]["name"].endswith("image-override")]
 if len(vap) != 1 or not [d for d in helm_full if d["kind"] == "ValidatingAdmissionPolicyBinding"]:
     problems.append("operator.admissionPolicy.enabled must render one ValidatingAdmissionPolicy and its binding")
 elif not any(r["resources"] == ["pgadmins", "evidenceagents", "pgtoolboxconsoles"] for r in vap[0]["spec"]["matchConstraints"]["resourceRules"]):

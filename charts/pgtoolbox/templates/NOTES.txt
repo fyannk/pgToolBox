@@ -51,7 +51,7 @@ operator.metrics.podMonitor to have Prometheus scrape it.
 NetworkPolicy is ENABLED (your choice). The chart cannot prove your CNI enforces it.
 {{- end }}
 
-Documentation: https://github.com/fyannk/pgToolBox/src/branch/main/docs/site/docs/operator/
+Documentation: https://github.com/fyannk/pgToolBox/tree/main/docs/site/docs/operator/
 {{- else }}
 operator.enabled is false: this release renders nothing. The team tools (console,
 evidence agents, pgAdmin) are the pgtools chart.

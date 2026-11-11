@@ -10,6 +10,13 @@ RoleBinding, for example read access to the Clusters of a watched namespace:
     --verb=get,list,watch --resource=clusters.postgresql.cnpg.io
   kubectl -n {{ index (include "pgtools.console.watchNamespaces" . | fromJsonArray) 0 }} create rolebinding cluster-viewer --role=cluster-viewer --group=<group>
 
+{{- if and .Values.console.restoreDrills.enabled (not .Values.console.restoreDrills.admissionPolicy.create) }}
+
+Restore drills are ENABLED without the delete guard (console.restoreDrills.admissionPolicy.create is
+false): the teardown Role can delete any Cluster of the drill namespace, and only the console's own
+checks keep it to its sealed drills. The guard is cluster-scoped, so a cluster admin must install it:
+set console.restoreDrills.admissionPolicy.create=true, or apply the policy this chart renders with it.
+{{- end }}
 {{- if .Values.console.instanceStatus.caBundleConfigMap }}
 
 The console verifies each instance's /pg/status against a CA bundle YOU supply.

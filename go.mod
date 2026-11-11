@@ -1,12 +1,11 @@
 module github.com/fyannk/pgToolBox
 
 // The module graph derives 1.27.0 (sigs.k8s.io/gateway-api v1.7.0 requires
-// it). The floor was held above the 1.26.4 and 1.26.5 standard-library
-// vulnerabilities (net/url, html/template, crypto/tls, net/http,
-// encoding/asn1; fixed in 1.26.6) so that a GOTOOLCHAIN=local build against
-// the floor does not produce a binary govulncheck rejects; every 1.27 floor
-// is above that. CI never sees the floor, because CI builds at the pinned
-// toolchain.
+// it). The floor only bounds the language; it does not keep builds clear of
+// standard-library advisories (1.27.0 itself carries ones fixed since). The
+// pinned toolchain below does that: CI, the Dockerfile and releases all build
+// at it, and govulncheck runs against it. A GOTOOLCHAIN=local build at an
+// older Go is unsupported.
 go 1.27.0
 
 toolchain go1.27.4
