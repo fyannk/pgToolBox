@@ -70,16 +70,32 @@ type Result struct {
 // asks In(its namespace).Usable() instead.
 func (r Result) Usable() bool { return r.State == Available }
 
-// In is the outcome in one namespace: Forbidden, with a reason naming the
-// namespace, where the kind is refused there while other namespaces allow
-// it; the outcome everywhere otherwise.
+// In is the outcome in one namespace, whose reason names that namespace
+// alone: Forbidden where the kind is refused there while other namespaces
+// allow it; Forbidden, reworded for that namespace, where every namespace
+// probed refused it (the overall result names the first namespace that
+// refused, another tenant's, which must never reach this namespace's
+// status); the outcome everywhere otherwise, carrying that namespace
+// (Available, NotInstalled and a cluster-wide probe name none in their
+// reason).
 func (r Result) In(namespace string) Result {
-	if r.State != Available || !slices.Contains(r.RefusedIn, namespace) {
+	switch {
+	case r.State == Available && slices.Contains(r.RefusedIn, namespace):
+		return Result{
+			GVK: r.GVK, Namespace: namespace, State: Forbidden,
+			Reason: fmt.Sprintf("not allowed to list %s%s (other watched namespaces allow it)", resourceName(r.GVK), where(namespace)),
+		}
+	case r.State == Forbidden && r.Namespace != "" && r.Namespace != namespace:
+		return Result{
+			GVK: r.GVK, Namespace: namespace, State: Forbidden,
+			Reason: fmt.Sprintf("not allowed to list %s%s", resourceName(r.GVK), where(namespace)),
+		}
+	case r.Namespace != "":
+		r.Namespace = namespace
+		r.RefusedIn = nil
 		return r
-	}
-	return Result{
-		GVK: r.GVK, Namespace: namespace, State: Forbidden,
-		Reason: fmt.Sprintf("not allowed to list %s%s (other watched namespaces allow it)", resourceName(r.GVK), where(namespace)),
+	default:
+		return r
 	}
 }
 
@@ -319,6 +335,13 @@ var StanzaGVK = schema.GroupVersionKind{Group: "pgbackrest.dalibo.com", Version:
 // (pgbackrest.cnpg.opera.com): an optional API an EvidenceAgent
 // resolves a pgBackRest repository from.
 var ArchiveGVK = schema.GroupVersionKind{Group: "pgbackrest.cnpg.opera.com", Version: "v1", Kind: "Archive"}
+
+// IsNotServed reports whether err (a List's or a RESTMapper's) says the API
+// server does not serve the kind or its group version, as a probe
+// classifies NotInstalled.
+func IsNotServed(err error) bool {
+	return meta.IsNoMatchError(err) || isDiscoveryFailure(err)
+}
 
 // isDiscoveryFailure matches the RESTMapper's report that a whole group
 // version is absent, which some client versions return instead of a
