@@ -60,9 +60,22 @@ type RecoveryTimeline struct {
 	TimelineWarning *Phrase `json:"timelineWarning,omitempty" doc:"The evidence's timeline warning (a history file no default restore reads is invalid, named in params.historyFile when known); it caps no coverage."`
 	// RestoreTested: a restore drill of this Cluster passed within the
 	// drill window. False, every covered span is "not restore-tested".
-	RestoreTested bool       `json:"restoreTested,omitempty"`
-	Provenance    Provenance `json:"provenance"`
+	RestoreTested bool `json:"restoreTested,omitempty"`
+	// EdgeAdvice narrows what a client offers to check by hand at an
+	// uncertain edge (EdgeAdvice*); empty: pg_stat_archiver and
+	// pg_switch_wal() on the primary.
+	EdgeAdvice string     `json:"edgeAdvice,omitempty" enum:"archiver,none" doc:"Narrows the checks a client offers at an uncertain edge. Absent: pg_stat_archiver and pg_switch_wal() on the primary. archiver: pg_stat_archiver only, a WAL switch would not help (archiving fails or lags). none: neither, no primary runs or none was read to run them on."`
+	Provenance Provenance `json:"provenance"`
 }
+
+// EdgeAdvice values (RecoveryTimeline.EdgeAdvice).
+const (
+	// EdgeAdviceArchiver: check pg_stat_archiver only; a WAL switch would
+	// not help.
+	EdgeAdviceArchiver = "archiver"
+	// EdgeAdviceNone: no primary runs, or none was read, to check on.
+	EdgeAdviceNone = "none"
+)
 
 // RecoverySegment is one span of the bar.
 type RecoverySegment struct {

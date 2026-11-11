@@ -23,6 +23,9 @@ import (
 	"strings"
 	"time"
 
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
 	"github.com/fyannk/pgToolBox/internal/console/evidence"
 	"github.com/fyannk/pgToolBox/internal/console/viewmodel"
 	"github.com/fyannk/pgToolBox/pkg/cnpgstatus"
@@ -114,6 +117,11 @@ type recoveryFacts struct {
 	caughtUpBy *time.Time
 	// failing is the archiving fact read as failing (archivingFailing).
 	failing bool
+	// failingSince is ContinuousArchiving's lastTransitionTime when the
+	// condition is False; nil otherwise or when not set. With the primary
+	// unread the condition cannot change: the reason gives its age (round
+	// 14, CNPG P3-b).
+	failingSince *time.Time
 	// backlog is the archiver's readyWalFiles when the backlog persists
 	// across sweeps, or is at the threshold with too few sweeps kept to
 	// judge it (cnpgstatus.ArchiveBacklogOf, Segments or Unconfirmed); 0
@@ -248,6 +256,10 @@ func recoveryFactsOf(g *gathered, arch viewmodel.Archiving, now time.Time) recov
 		}
 	}
 	f.archiverUnread, f.hibernated = archiverUnread(arch), arch.Reason == cnpgstatus.ArchivingReasonHibernated
+	if c := meta.FindStatusCondition(g.cluster.Status.Conditions, cnpgstatus.ConditionContinuousArchiving); c != nil && c.Status == metav1.ConditionFalse && !c.LastTransitionTime.IsZero() {
+		at := c.LastTransitionTime.UTC()
+		f.failingSince = &at
+	}
 	f.notReported = arch.Reason == cnpgstatus.ArchivingReasonBacklogNotReported
 	live := primaryArchiver(g)
 	f.primaryUnread = live == nil
@@ -661,7 +673,12 @@ func newestQuiet(quiet []quietSweep, now time.Time, by *time.Time) *quietSweep {
 // primary's: after a failover the failure is on the former primary,
 // whose statistics survive a clean demotion, and the WAL it failed to
 // archive is still what reached the repository late. A replica that
-// never archived reports none.
+// never archived reports none. The current primary's reading is the one
+// the archiving fact rests on (primaryArchiverReading, the last good
+// reading through one missed read): both facts read the same failure, so
+// a grace sweep does not turn a recent failure into "archiving is
+// failing" against a ContinuousArchiving condition that is True (round
+// 14, CNPG P3-a).
 func newestArchiveFailure(g *gathered) (*time.Time, string) {
 	var newest *time.Time
 	var instance string
@@ -672,11 +689,18 @@ func newestArchiveFailure(g *gathered) (*time.Time, string) {
 	sort.Strings(names)
 	for _, name := range names {
 		inst := g.swept.Instances[name]
-		if inst.State != viewmodel.StatusReadOK || inst.Reading == nil || inst.Reading.LastFailedWALTime == nil {
+		r := inst.Reading
+		switch {
+		case g.cluster != nil && name == g.cluster.Status.CurrentPrimary:
+			r = primaryArchiverReading(g)
+		case inst.State != viewmodel.StatusReadOK:
+			r = nil
+		}
+		if r == nil || r.LastFailedWALTime == nil {
 			continue
 		}
-		at := inst.Reading.LastFailedWALTime.UTC()
-		if observed := inst.Reading.ObservedAt; !observed.IsZero() && at.After(observed) {
+		at := r.LastFailedWALTime.UTC()
+		if observed := r.ObservedAt; !observed.IsZero() && at.After(observed) {
 			at = observed.UTC()
 		}
 		if newest == nil || at.After(*newest) {
@@ -847,6 +871,39 @@ func (s *Service) recoveryTimeline(ev clusterEvidence, summary viewmodel.BackupS
 		}
 	}
 	out.Markers = recoveryMarkers(ev.result.Backups, rows)
+	out.EdgeAdvice = edgeAdvice(out.Reasons)
+	return out
+}
+
+// edgeAdviceOf is the one reason-to-advice map behind the SPA's hint at
+// an uncertain edge (pg_stat_archiver, then pg_switch_wal(), on the
+// primary), which follows the timeline's edgeAdvice and keeps no list of
+// its own (round 14, DBA P2-1). none: no primary runs, or none was read,
+// to run either on (hibernated, fenced, unreachable). archiver: archiving
+// fails or lags, so a switched segment would wait like the others; the
+// archiver's own statistics say why. A reason not here leaves both checks
+// (liveTimelineNotArchived's own text advises the switch).
+var edgeAdviceOf = map[string]string{
+	"recovery.reason.archiverHibernated":                   viewmodel.EdgeAdviceNone,
+	"recovery.reason.liveTimelineNotArchivedPrimaryUnread": viewmodel.EdgeAdviceNone,
+	"recovery.reason.archivingFailedPrimaryUnread":         viewmodel.EdgeAdviceNone,
+	"recovery.reason.archivingFailing":                     viewmodel.EdgeAdviceArchiver,
+	"recovery.reason.archiveBacklog":                       viewmodel.EdgeAdviceArchiver,
+	"recovery.reason.failedRecently":                       viewmodel.EdgeAdviceArchiver,
+}
+
+// edgeAdvice is the narrowest advice any reason allows: none before
+// archiver before both checks ("").
+func edgeAdvice(reasons []viewmodel.Phrase) string {
+	out := ""
+	for _, r := range reasons {
+		switch edgeAdviceOf[r.Code] {
+		case viewmodel.EdgeAdviceNone:
+			return viewmodel.EdgeAdviceNone
+		case viewmodel.EdgeAdviceArchiver:
+			out = viewmodel.EdgeAdviceArchiver
+		}
+	}
 	return out
 }
 
@@ -2218,11 +2275,25 @@ func timelineVerdict(out *viewmodel.RecoveryTimeline, in timelineInput, f timeli
 	case f.failedRecently:
 		out.State = warning
 		setReason(out, say("recovery.reason.failedRecently", "WAL archiving failed recently: the newest restore points are uncertain", nil))
+	case f.failing && f.primaryUnread:
+		// ContinuousArchiving False with the primary unread (fenced after
+		// a failover to investigate, unreachable): nothing archives that
+		// could change the condition, so it reports the last attempt, not
+		// that archiving is failing now (a transient error, a refusal
+		// during a switchover, stays False until the next attempt; round
+		// 14, CNPG P3-b). Its age is said as for a True condition.
+		out.State = warning
+		failed := "the last archive attempt the Cluster reports failed (ContinuousArchiving False"
+		var params map[string]string
+		if since := in.facts.failingSince; since != nil {
+			failed += " since " + since.Format(time.RFC3339)
+			params = map[string]string{"sinceAt": rfc3339(*since)}
+		}
+		setReason(out, say("recovery.reason.archivingFailedPrimaryUnread", failed+"), and the primary was not read: WAL written since the newest segment the repository holds may not be in it, so the newest restore points are uncertain until the primary is read again", params))
 	case f.failing:
 		// Archiving is failing (ContinuousArchiving False, or the
 		// primary's last attempt failed with WAL waiting) though no
-		// readable instance reports a recent failure: the primary may not
-		// be read (fenced after a failover to investigate). Ranked before
+		// readable instance reports a recent failure. Ranked before
 		// the post-failover lag, whose advice to run pg_switch_wal()
 		// would not help: the repository lacks the live timeline because
 		// archiving fails (round 13, CNPG P3-1).
