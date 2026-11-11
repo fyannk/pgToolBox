@@ -56,7 +56,8 @@ func TestAFewPeopleCannotFillTheIndex(t *testing.T) {
 }
 
 // The worst full index (every grant with the costliest client name a
-// client can declare, every code) fits the budget with room for the other
+// client can declare, every code a confirmation approved and run: the
+// marks MCP writes put on it) fits the budget with room for the other
 // documents.
 func TestAFullIndexFitsTheBudget(t *testing.T) {
 	name := TruncateClientName(strings.Repeat("<& \"\\\x01é", 100))
@@ -75,7 +76,7 @@ func TestAFullIndexFitsTheBudget(t *testing.T) {
 	}
 	for i := range maxCodes {
 		sum := sha256.Sum256([]byte(strconv.Itoa(i)))
-		s.codes[hex.EncodeToString(sum[:16])] = codeEntry{Expiry: t0.Unix(), User: uh("x")}
+		s.codes[hex.EncodeToString(sum[:16])] = codeEntry{Expiry: t0.Unix(), User: uh("x"), Marks: []string{"approve", "run"}}
 	}
 	size := len(s.encodeLocked()[KeyGrants])
 	t.Logf("a full grants document: %d bytes (%d grants, %d codes)", size, MaxGrants, maxCodes)
