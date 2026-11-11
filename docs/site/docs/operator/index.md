@@ -78,7 +78,11 @@ say is on [Conditions](conditions.md).
 - **Pause.** The annotation `pgtoolbox.fyannk.dev/reconcile: skip` pauses
   reconciliation. Status is still published: `Progressing=False` and `Ready=Unknown`
   with reason `ReconciliationPaused`, meaning the operator is not looking and does
-  not vouch for the children.
+  not vouch for the children. One check runs all the same on a `PgAdmin` or a
+  `PgToolBoxConsole`: a `spec.exposure.hostname` outside
+  `EXPOSURE_ALLOWED_HOST_SUFFIXES` withdraws the Route, Ingress or HTTPRoute
+  (`Stalled=True`, `HostnameNotAllowed`), so a pause never keeps a refused name
+  published.
 - **Ownership.** If an object the operator must create already exists under the
   generated name and is controlled by someone else, it stops with
   `ConfigurationValid=False` (`ResourceNotOwned`) instead of taking it over.
