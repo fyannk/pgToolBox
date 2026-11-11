@@ -44,8 +44,11 @@ expect 0 'note: .*still says Unreleased' -- env ALLOW_UNRELEASED=1 bash -c 'cd "
 expect 1 'still says Unreleased' -- env ALLOW_UNRELEASED=1 REQUIRE_TAG=1 bash -c 'cd "$1" && ./hack/release.sh check "$2"' _ "${repo}" "v${version}"
 changelog "## [${version}] - 2026-11-09"
 expect 0 'ok: semver' -- check "v${version}"
-changelog "## [${version}]"
-expect 0 'ok: semver' -- check "v${version}"
+# A heading needs a real date: no bare heading, no TBD, no impossible day.
+for bad in "## [${version}]" "## [${version}] - TBD" "## [${version}] - 2026-13-45" "## [${version}] - 2026-1-9"; do
+  changelog "${bad}"
+  expect 1 'no valid YYYY-MM-DD date' -- check "v${version}"
+done
 changelog "## [9.9.9] - 2026-11-09"
 expect 1 'no .## \[' -- check "v${version}"
 # A release candidate may use the open section of its final version ...
@@ -156,6 +159,7 @@ case "$1" in
   api)
     # actions/runs: path, event, status, conclusion, id (GH_STUB_WF); the
     # check-runs listing otherwise (GH_STUB_RUNS).
+    [[ -z "${GH_STUB_API_FAIL:-}" || "$*" != *"${GH_STUB_API_FAIL}"* ]] || { echo "gh: HTTP 403 stub" >&2; exit 1; }
     case "$*" in
       *actions/runs*) [[ -z "${GH_STUB_WF:-}" ]] || cat "${GH_STUB_WF}" ;;
       *) [[ -z "${GH_STUB_RUNS:-}" ]] || cat "${GH_STUB_RUNS}" ;;
@@ -213,6 +217,12 @@ expect 1 'CI failed on deadbeef: ci-ok=failure' -- ./hack/release.sh wait-ci dea
 # A newer run still in progress hides the older green one.
 { tab ci-ok in_progress "" 2026-11-10T10:00:00Z 20; tab ci-ok completed success 2026-11-10T09:00:00Z 10; tab security-gate completed success 2026-11-10T09:00:00Z 11; } > "${runs}"
 expect 1 'did not finish' -- ./hack/release.sh wait-ci deadbeef
+# A failing gh api call is named, not silent.
+GH_STUB_API_FAIL=check-runs expect 1 'wait-ci: .gh api repos/.*/check-runs. failed' -- ./hack/release.sh wait-ci deadbeef
+{ tab ci-ok completed success 2026-11-10T10:00:00Z 20; tab security-gate completed success 2026-11-10T10:00:00Z 21; } > "${runs}"
+# ... and the second call (the full-tier runs) alike.
+GH_STUB_API_FAIL=actions/runs expect 1 'wait-ci: .gh api repos/.*/actions/runs' -- ./hack/release.sh wait-ci deadbeef
+: > "${runs}"
 # No check run at all: fail fast, with the command that fixes it.
 : > "${runs}"
 expect 1 'gh workflow run security.yml --ref main' -- ./hack/release.sh wait-ci deadbeef
@@ -383,7 +393,27 @@ expect 0 'already gone \(404\)' -- env PATH="${work}/prune-stub:${PATH}" PRUNE_L
 : > "${work}/prune.log"
 expect 1 '1 deletion\(s\) failed' -- env PATH="${work}/prune-stub:${PATH}" PRUNE_LIVE="${live}" PRUNE_LOG="${work}/prune.log" PRUNE_404=0 PRUNE_500="${first}" GITHUB_REPOSITORY=o/r ./hack/prune-caches.sh
 [[ "$(wc -l < "${work}/prune.log")" == 10 ]] || fail "prune-caches stopped after a 500"
+# mise entries: a mise.toml change retires every entry of the old hash (the
+# newest entry of the ref names the current one); a cap bounds the rest.
+jq '. + [
+  {"id":911,"key":"mise-v1-linux-x64-ubuntu26-2026.11.4-0303030303030303030303030303030303030303030303030303030303030303-p692-0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f","ref":"refs/heads/main","size_in_bytes":10,"created_at":"2026-11-12T00:00:00Z","last_accessed_at":"2026-11-12T00:00:00Z"}]' "${live}" > "${work}/live3.json"
+got="$(prune_ids "${work}/live3.json")"
+[[ " ${got}" != *" 911 "* ]] || fail "prune-caches deleted the newest mise entry: ${got}"
+n="$(sel "${work}/live3.json" ${got} | grep -c '^mise-v1.*-p692-0101' || true)"
+[[ "${n}" == 12 ]] || fail "prune-caches kept ${n} of 12 mise entries of the replaced mise.toml hash (want all 12 deleted)"
+got="$(MISE_KEEP=5 prune_ids "${live}")"
+n="$(sel "${live}" ${got} | grep -c '^mise-v1' || true)"
+[[ "${n}" == 7 ]] || fail "prune-caches with MISE_KEEP=5 deleted ${n} mise entries, want 7"
+# the usage before and after reaches the step summary
+: > "${work}/prune.log"
+env PATH="${work}/prune-stub:${PATH}" PRUNE_LIVE="${live}" PRUNE_LOG="${work}/prune.log" PRUNE_404=0 PRUNE_500=0 GITHUB_REPOSITORY=o/r GITHUB_STEP_SUMMARY="${work}/summary.md" ./hack/prune-caches.sh >/dev/null
+grep -q '^| before |' "${work}/summary.md" && grep -q '^| after |' "${work}/summary.md" || fail "prune-caches wrote no before/after table to GITHUB_STEP_SUMMARY"
 echo "ok: prune-caches"
+
+# ---- check-action-pins: the doc's allow-list must equal the pins in use.
+./hack/check-action-pins.sh >/dev/null || fail "check-action-pins fails on the committed doc"
+sed '/jdx\/mise-action@/d' docs/site/docs/development/repository-settings.md > "${work}/settings-missing.md"
+expect 1 'jdx/mise-action' -- ./hack/check-action-pins.sh "${work}/settings-missing.md"
 
 # ---- retry: the bounded loop the workflow's verify step shares with
 # verify-published; a command that never succeeds fails after VERIFY_ATTEMPTS.
@@ -401,7 +431,8 @@ grep -q 'docs_ref=refs/tags/' "${wf}" || fail "release.yml: the Pages dispatch d
 ! grep -q 'release.sh commits "${TAG}"' <(sed -n '/Write the release notes/,/Create the draft/p' "${wf}") || fail "release.yml: product notes paste the whole commit log"
 grep -q -- 'flags+=(--latest=false)' "${wf}" || fail "release.yml: module release does not pass --latest=false"
 grep -q -- 'flags+=(--prerelease --latest=false)' "${wf}" || fail "release.yml: product rc does not pass --latest=false"
-grep -q -- 'flags+=(--latest)' "${wf}" || fail "release.yml: stable product release does not pass --latest"
+# a draft cannot be latest: the create step must not ask for it, the publish step does
+! grep -q -- 'flags+=(--latest)' <(sed -n '/Create the draft release/,/Check that every digest/p' "${wf}") || fail "release.yml: the draft release is created with --latest (drafts cannot be latest)"
 grep -q -- 'gh release edit "${TAG}" --draft=false --latest$' "${wf}" || fail "release.yml: publishing a stable release does not pass --latest"
 echo "ok: release.yml latest flags"
 

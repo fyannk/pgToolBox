@@ -162,6 +162,14 @@ cmd_check() {
     fi
   fi
 
+  # A dated heading carries a real YYYY-MM-DD ('## [0.1.0] - TBD' is not a date).
+  if [[ "${heading}" != *[Uu]nreleased* ]]; then
+    local hdate
+    hdate="$(sed -nE 's/^## \[[^]]+\] - ([0-9]{4}-[0-9]{2}-[0-9]{2})([[:space:]].*)?$/\1/p' <<<"${heading}")"
+    [[ -n "${hdate}" ]] && [[ "$(date -u -d "${hdate}" +%F 2>/dev/null)" == "${hdate}" ]] \
+      || die "CHANGELOG.md heading '${heading}' has no valid YYYY-MM-DD date ('## [${core}] - $(date -u +%F)')"
+  fi
+
   if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
     [[ "$(git cat-file -t "refs/tags/${tag}")" == "tag" ]] \
       || die "release tag must be annotated: ${tag} (git tag -a)"
@@ -239,7 +247,8 @@ cmd_wait_ci() {
   local attempts="${CI_WAIT_ATTEMPTS:-120}" empty_limit="${CI_WAIT_EMPTY_ATTEMPTS:-4}" empty=0
   local attempt runs name conclusion missing failed
   for attempt in $(seq 1 "${attempts}"); do
-    runs="$(gh api --paginate "repos/${repo}/commits/${sha}/check-runs?per_page=100" --jq '.check_runs[] | [.name, .status, (.conclusion // ""), (.started_at // ""), .id] | @tsv')"
+    runs="$(gh api --paginate "repos/${repo}/commits/${sha}/check-runs?per_page=100" --jq '.check_runs[] | [.name, .status, (.conclusion // ""), (.started_at // ""), .id] | @tsv')" \
+      || die "wait-ci: \`gh api repos/${repo}/commits/${sha}/check-runs\` failed (see its message above; is GH_TOKEN set and does it read checks?)"
     if [[ -z "${runs}" ]]; then
       empty=$((empty + 1))
       if ((empty >= empty_limit)); then
@@ -279,7 +288,8 @@ cmd_wait_ci() {
 # failed or none exists (waiting would not change that).
 full_tier_state() {
   local sha="$1" wf runs state pending=""
-  runs="$(gh api --paginate "repos/${repo}/actions/runs?head_sha=${sha}&per_page=100" --jq '.workflow_runs[] | [(.path | split("@")[0] | split("/") | last), .event, .status, (.conclusion // ""), .id] | @tsv')"
+  runs="$(gh api --paginate "repos/${repo}/actions/runs?head_sha=${sha}&per_page=100" --jq '.workflow_runs[] | [(.path | split("@")[0] | split("/") | last), .event, .status, (.conclusion // ""), .id] | @tsv')" \
+    || die "wait-ci: \`gh api repos/${repo}/actions/runs?head_sha=${sha}\` failed (see its message above; the token needs actions: read)"
   for wf in ci.yml security.yml; do
     state="$(LC_ALL=C sort -t$'\t' -k5,5n <<<"${runs}" | awk -F'\t' -v w="${wf}" '$1 == w && ($2 == "workflow_dispatch" || $2 == "schedule") { c = ($3 == "completed" ? $4 : "pending") } END { print c }')"
     case "${state}" in
