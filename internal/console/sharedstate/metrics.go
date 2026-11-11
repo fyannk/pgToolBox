@@ -36,10 +36,14 @@ var (
 	}, []string{"document"})
 	signOutsRefused = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "pgtoolbox_console_shared_state_signouts_refused_total",
-		Help: "Sign-outs the sessions document refused (each still refused by the replica that recorded it; a sign-out the document holds is never dropped): subject (a person at their own bound), unnamed (the sessions that name nobody at theirs), budget (the document full).",
+		Help: "Sign-outs the sessions document did not keep (each still refused by the replica that recorded it): replaced (a person at their own bound gave up their own earliest-ending one for the new one), unnamed (the sessions that name nobody at their bound), budget (the document full), merge (a merge of two replicas' documents past a bound dropped one each had accepted).",
 	}, []string{"reason"})
+	signOutsHeld = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "pgtoolbox_console_shared_state_signouts",
+		Help: "Entries of the sessions document against each of its bounds: subject (the most one person holds, of 32), unnamed (the sessions that name nobody, of 128), total (of 1536).",
+	}, []string{"bound"})
 )
 
 func init() {
-	crmetrics.Registry.MustRegister(sharedWrites, sharedMode, sharedBytes, signOutsRefused)
+	crmetrics.Registry.MustRegister(sharedWrites, sharedMode, sharedBytes, signOutsRefused, signOutsHeld)
 }

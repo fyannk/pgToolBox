@@ -37,21 +37,21 @@ func tag(person string) string {
 // One person signing in and out in a loop within their sessions'
 // lifetime (two entries a sign-out) used to grow the sessions document
 // past the API server's 1 MiB, after which every write of the ConfigMap
-// failed. They now fill only their own share, and what it holds stays:
-// their later sign-outs are refused (and counted), never another
-// person's dropped.
+// failed. They now fill only their own share: past it each new sign-out
+// replaces their own that ends first (counted), so their latest ones are
+// shared, and never another person's is dropped.
 func TestOnePersonsSignOutsAreBounded(t *testing.T) {
 	clock := &testClock{now: t0}
 	s := New(Options{Name: "console-state", Now: clock.Now})
 	s.RecordSignOut("victim-session", tag("bob"), t0.Add(12*time.Hour))
-	refusedBefore := testutil.ToFloat64(signOutsRefused.WithLabelValues(refusedSubject))
+	refusedBefore := testutil.ToFloat64(signOutsRefused.WithLabelValues(refusedReplaced))
 	for i := range 6700 {
 		clock.Add(time.Second)
 		s.RecordSignOut(fmt.Sprintf("session-%d", i), tag("mallory"), t0.Add(12*time.Hour+time.Duration(i)*time.Second))
 		s.RecordSignOut(fmt.Sprintf("bearer-%d", i), tag("mallory"), t0.Add(12*time.Hour+time.Duration(i)*time.Second))
 	}
-	if got := testutil.ToFloat64(signOutsRefused.WithLabelValues(refusedSubject)) - refusedBefore; got != 2*6700-MaxSignOutsPerSubject {
-		t.Errorf("refusals counted: %v, want %d", got, 2*6700-MaxSignOutsPerSubject)
+	if got := testutil.ToFloat64(signOutsRefused.WithLabelValues(refusedReplaced)) - refusedBefore; got != 2*6700-MaxSignOutsPerSubject {
+		t.Errorf("replacements counted: %v, want %d", got, 2*6700-MaxSignOutsPerSubject)
 	}
 	s.mu.Lock()
 	s.pruneLocked()
@@ -60,14 +60,15 @@ func TestOnePersonsSignOutsAreBounded(t *testing.T) {
 	if n != MaxSignOutsPerSubject+1 {
 		t.Errorf("%d sign-outs kept, want mallory's %d and bob's", n, MaxSignOutsPerSubject)
 	}
-	if size > 4<<10 {
+	if size > 6<<10 {
 		t.Errorf("the sessions document is %d bytes", size)
 	}
 	if !s.SignedOut("victim-session") {
 		t.Error("another person's sign-out was dropped")
 	}
-	if !s.SignedOut("session-0") || !s.SignedOut("bearer-0") || s.SignedOut("session-6699") {
-		t.Error("a person's first sign-outs must be the ones kept: the document never drops what it holds")
+	if s.SignedOut("session-0") || s.SignedOut("bearer-0") || !s.SignedOut("session-6699") || !s.SignedOut("bearer-6699") ||
+		!s.SignedOut(fmt.Sprint("session-", 6700-MaxSignOutsPerSubject/2)) {
+		t.Error("a person past their share must keep their latest sign-outs, giving up their earliest-ending ones")
 	}
 }
 
