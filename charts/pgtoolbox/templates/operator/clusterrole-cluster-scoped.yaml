@@ -3,7 +3,14 @@
 (or the one namespaced object the API server serves in `default`), bound
 cluster-wide when watchNamespaces is set. Every rule here is a copy of one in
 clusterrole.yaml (the generated one); hack/validate-packaging.sh checks it is a
-subset and that nothing else in the manager role is cluster-scoped. */}}
+subset and that nothing else in the manager role is cluster-scoped.
+Not here: `bind` on the console ClusterRoles. The operator binds them only by
+RoleBindings in a watched namespace, where the per-namespace RoleBinding of the
+manager role grants `bind`; held cluster-wide next to `create
+clusterrolebindings`, it would let the operator's token bind
+pgtoolbox-console-restore-drills (delete Clusters) or -pod-logs to itself in
+every namespace. hack/validate-packaging.sh refuses bind, escalate,
+impersonate and every namespaced resource in this role. */}}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -57,16 +64,6 @@ rules:
   verbs:
   - patch
   - update
-- apiGroups:
-  - rbac.authorization.k8s.io
-  resourceNames:
-  - pgtoolbox-console
-  - pgtoolbox-console-pod-logs
-  - pgtoolbox-console-restore-drills
-  resources:
-  - clusterroles
-  verbs:
-  - bind
 - apiGroups:
   - security.openshift.io
   resources:

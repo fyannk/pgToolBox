@@ -16,6 +16,7 @@ package evidence
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -98,7 +99,7 @@ func TestCapRecovery(t *testing.T) {
 				test.mutate(snapshot)
 			}
 			in := Recovery{State: RecoveryAvailable, Complete: true, Paths: capFixturePaths()}
-			got := capRecovery(snapshot, in)
+			got := capRecovery(snapshot, in, nil)
 			if in.Paths[0].State != evidencev1alpha1.Healthy || in.Paths[0].FrontierReceiptAt == nil {
 				t.Fatal("capRecovery changed its input")
 			}
@@ -130,7 +131,7 @@ func TestCapRecovery(t *testing.T) {
 	for _, state := range []string{RecoveryUnavailable, RecoveryUnsupported, RecoveryNotScanned} {
 		snapshot := fixtureSnapshot(t)
 		snapshot.Producer.Features = nil
-		if got := capRecovery(&snapshot, Recovery{State: state, Reason: "kept"}); got.State != state || got.Reason != "kept" {
+		if got := capRecovery(&snapshot, Recovery{State: state, Reason: "kept"}, nil); got.State != state || got.Reason != "kept" {
 			t.Errorf("a %s recovery was capped: %+v", state, got)
 		}
 	}
@@ -159,7 +160,7 @@ func TestCapRecoveryAtTheCoverageRollup(t *testing.T) {
 			snapshot := fixtureSnapshot(t)
 			snapshot.Details.BarmanCloud.Coverage = evidencev1alpha1.StateReason{State: test.state, Reason: evidencev1alpha1.Reason{Code: "coverage-" + string(test.state), Message: "no backup on or before the newest timeline's branch point: a default restore succeeds from none"}}
 			in := Recovery{State: RecoveryAvailable, Complete: true, Paths: capFixturePaths()}
-			got := capRecovery(&snapshot, in)
+			got := capRecovery(&snapshot, in, nil)
 			if in.Paths[0].State != evidencev1alpha1.Healthy {
 				t.Fatal("capRecovery changed its input")
 			}
@@ -216,6 +217,9 @@ func TestCapAtRollupOnlyForReasonsNoPathExplains(t *testing.T) {
 		mutate   func(*evidencev1alpha1.RepositoryEvidenceSnapshot)
 		rollup   evidencev1alpha1.State
 		paths    []RecoveryPath
+		// unusable are the pgBackRest backups the agent rates not usable;
+		// every other backup of the paths is usable.
+		unusable []string
 		capped   bool
 	}{
 		{name: "Barman, an old gap-limited backup beside a healthy one", snapshot: barman, rollup: evidencev1alpha1.Unhealthy, paths: []RecoveryPath{oldGap, healthy}},
@@ -227,6 +231,13 @@ func TestCapAtRollupOnlyForReasonsNoPathExplains(t *testing.T) {
 		{name: "pgBackRest stanza split", snapshot: pgbackrest, mutate: func(s *evidencev1alpha1.RepositoryEvidenceSnapshot) {
 			s.Details.PGBackRest.ArchiveStanza = s.Details.PGBackRest.Stanza + "-archive"
 		}, rollup: evidencev1alpha1.Unhealthy, paths: []RecoveryPath{oldGap, healthy}, capped: true},
+		// Round 8, P2-1: pgBackRest rolls coverage up over the usable
+		// backups only, so an unknown path of an unusable backup explains
+		// nothing, and "no usable backup" (a data-checksum error making
+		// every backup error:true) is explained by no path.
+		{name: "pgBackRest, no usable backup beside an unusable unknown path", snapshot: pgbackrest, rollup: evidencev1alpha1.Unknown, paths: []RecoveryPath{oldUnknown, healthy}, unusable: []string{"old", "new"}, capped: true},
+		{name: "pgBackRest, an unknown roll-up only an unusable backup's path matches", snapshot: pgbackrest, rollup: evidencev1alpha1.Unknown, paths: []RecoveryPath{oldUnknown, healthy}, unusable: []string{"old"}, capped: true},
+		{name: "pgBackRest, an old unknown own path of a usable backup", snapshot: pgbackrest, rollup: evidencev1alpha1.Unknown, paths: []RecoveryPath{oldUnknown, healthy}},
 		{name: "pgBackRest StanzaSplit finding", snapshot: pgbackrest, mutate: func(s *evidencev1alpha1.RepositoryEvidenceSnapshot) {
 			s.Details.PGBackRest.Findings = []evidencev1alpha1.PGBackRestFinding{{Code: evidencev1alpha1.FindingStanzaSplit, Severity: evidencev1alpha1.FindingWarning}}
 		}, rollup: evidencev1alpha1.Warning, paths: []RecoveryPath{healthy}, capped: true},
@@ -243,7 +254,17 @@ func TestCapAtRollupOnlyForReasonsNoPathExplains(t *testing.T) {
 			} else {
 				snapshot.Details.BarmanCloud.Coverage = coverage
 			}
-			got := capRecovery(snapshot, Recovery{State: RecoveryAvailable, Complete: true, Paths: test.paths})
+			var items []BackupItem
+			if snapshot.Details.PGBackRest != nil {
+				seen := map[string]bool{}
+				for _, p := range test.paths {
+					if !seen[p.BackupID] {
+						seen[p.BackupID] = true
+						items = append(items, BackupItem{ID: p.BackupID, PgBackRest: &PgBackRestItem{Usable: !slices.Contains(test.unusable, p.BackupID)}})
+					}
+				}
+			}
+			got := capRecovery(snapshot, Recovery{State: RecoveryAvailable, Complete: true, Paths: test.paths}, items)
 			if got.State != RecoveryAvailable || got.CoverageReason != coverage.Reason.Message {
 				t.Fatalf("recovery %s, coverage reason %q", got.State, got.CoverageReason)
 			}
@@ -272,12 +293,12 @@ func TestCapAtRollupOnlyForReasonsNoPathExplains(t *testing.T) {
 func TestCapRecoveryCarriesTheCoverageReason(t *testing.T) {
 	t.Parallel()
 	snapshot := fixtureSnapshot(t)
-	if got := capRecovery(&snapshot, Recovery{State: RecoveryAvailable, Paths: capFixturePaths()}); snapshot.Details.BarmanCloud.Coverage.State == evidencev1alpha1.Healthy && got.CoverageReason != "" {
+	if got := capRecovery(&snapshot, Recovery{State: RecoveryAvailable, Paths: capFixturePaths()}, nil); snapshot.Details.BarmanCloud.Coverage.State == evidencev1alpha1.Healthy && got.CoverageReason != "" {
 		t.Fatalf("a healthy coverage carried a reason: %q", got.CoverageReason)
 	}
 	want := "no backup on or before the newest timeline's branch point"
 	snapshot.Details.BarmanCloud.Coverage = evidencev1alpha1.StateReason{State: evidencev1alpha1.Unknown, Reason: evidencev1alpha1.Reason{Code: "coverage-unknown", Message: want}}
-	if got := capRecovery(&snapshot, Recovery{State: RecoveryAvailable, Paths: capFixturePaths()}); got.CoverageReason != want {
+	if got := capRecovery(&snapshot, Recovery{State: RecoveryAvailable, Paths: capFixturePaths()}, nil); got.CoverageReason != want {
 		t.Fatalf("coverage reason %q, want %q", got.CoverageReason, want)
 	}
 }

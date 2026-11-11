@@ -17,6 +17,7 @@ package timeline
 import (
 	"math"
 	"slices"
+	"strings"
 	"testing"
 	"unicode/utf8"
 )
@@ -37,6 +38,7 @@ func FuzzLatest(f *testing.F) {
 	f.Add(uint32(1), []byte{2, 2}, true, uint8(1), uint8(2), "", "")
 	f.Add(uint32(1), []byte{1, 1, 3}, false, uint8(1), uint8(0), "", "")
 	f.Add(uint32(1), []byte{1, 1 + 4}, false, uint8(1), uint8(1), "", "")
+	f.Add(uint32(1), []byte{1}, false, uint8(0), uint8(0), "segment 000000010000000A000000FF is not in the repository; the backup recovers only to 000000010000000A000000FE; "+FormerPrimaryMayHold+"; after", "a restore must name timeline 1")
 	f.Fuzz(func(t *testing.T, start uint32, layout []byte, truncated bool, weaken, weaker uint8, reason, extra string) {
 		if start == 0 || len(layout) > 64 || start > math.MaxUint32-uint32(len(layout))-1 {
 			return
@@ -105,8 +107,14 @@ func FuzzLatest(f *testing.F) {
 		if !utf8.ValidString(reason) || !utf8.ValidString(extra) {
 			return
 		}
-		if joined := Join(reason, extra); len(joined) > MaxReasonBytes || !utf8.ValidString(joined) {
+		joined := Join(reason, extra)
+		if len(joined) > MaxReasonBytes || !utf8.ValidString(joined) {
 			t.Fatalf("Join = %d bytes, valid UTF-8 %v", len(joined), utf8.ValidString(joined))
+		}
+		// An actionable clause survives whenever it fits beside extra.
+		if strings.Contains(reason, FormerPrimaryMayHold) && len(FormerPrimaryMayHold)+len("…; ; ")+len(extra) <= MaxReasonBytes &&
+			!strings.Contains(joined, FormerPrimaryMayHold) {
+			t.Fatalf("Join(%q, %q) = %q lost the actionable clause", reason, extra, joined)
 		}
 	})
 }

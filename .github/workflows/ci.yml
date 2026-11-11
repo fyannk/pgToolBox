@@ -686,6 +686,18 @@ jobs:
       tools: go kind kubectl
       timeout: 25
 
+  e2e-operator-scope:
+    name: E2E operator watchNamespaces
+    needs: [changes, images]
+    if: needs.changes.outputs.operator == 'true'
+    permissions:
+      contents: read # the called workflow checks out the repository
+    uses: ./.github/workflows/e2e-kind.yml
+    with:
+      target: test-e2e-operator-scope
+      tools: go kind kubectl helm
+      timeout: 25
+
   e2e-access:
     name: E2E access requests
     needs: [changes, images]
@@ -770,6 +782,7 @@ jobs:
       - e2e-chart-netpol
       - e2e-evidenceagent
       - e2e-pgadmin
+      - e2e-operator-scope
       - e2e-access
       - e2e-team
       - e2e-pgbackrest

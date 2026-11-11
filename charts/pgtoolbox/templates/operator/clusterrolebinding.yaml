@@ -3,11 +3,17 @@
 operator.config.watchNamespaces the namespaced rules (Secrets, workloads,
 RBAC objects) are bound only in those namespaces by RoleBindings
 (rolebindings.yaml), and the cluster-wide binding carries the cluster-scoped
-rules alone (clusterrole-cluster-scoped.yaml). */}}
+rules alone (clusterrole-cluster-scoped.yaml). Each mode has its own binding name: a
+roleRef is immutable, so switching the mode with `helm upgrade` replaces one
+binding by the other instead of patching the roleRef (refused). */}}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
+  {{- if .Values.operator.config.watchNamespaces }}
+  name: {{ include "pgtoolbox.fullname" . }}-manager-cluster
+  {{- else }}
   name: {{ include "pgtoolbox.fullname" . }}-manager
+  {{- end }}
   labels:
     {{- include "pgtoolbox.labels" . | nindent 4 }}
 roleRef:

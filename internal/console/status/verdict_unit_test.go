@@ -20,6 +20,8 @@ import (
 	"time"
 
 	cnpgv1 "github.com/cloudnative-pg/api/pkg/api/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"github.com/fyannk/pgToolBox/internal/console/cache"
 	"github.com/fyannk/pgToolBox/internal/console/diag"
@@ -149,5 +151,57 @@ func TestCappedPhaseIsNotWaiting(t *testing.T) {
 	g := &gathered{cluster: &cnpgv1.Cluster{Status: cnpgv1.ClusterStatus{Phase: cnpgv1.PhaseHealthy}}, phaseMinor: "1.31"}
 	if w := waitingFor(g, nil); w != nil {
 		t.Errorf("waiting %+v on a capped healthy phase", w)
+	}
+}
+
+// TestHibernatedClusterHeadlineIsInactive (round 8, DBA): a deliberately
+// hibernated Cluster runs no instance, so its archiver cannot be read and
+// no pod answers the sweep. Both contributors are inactive, as the
+// hibernation is, and the headline reads inactive, not unknown; its
+// recovery window's newest edge may stay unknown.
+func TestHibernatedClusterHeadlineIsInactive(t *testing.T) {
+	scheme, err := cache.NewScheme()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sleepy := &cnpgv1.Cluster{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "team-a", Name: "sleepy", UID: "5e1e9c1a-0000-4000-8000-000000000001", Annotations: map[string]string{cnpgstatus.AnnotationHibernation: "on"}},
+		Spec:       cnpgv1.ClusterSpec{Instances: 2, Backup: &cnpgv1.BackupConfiguration{BarmanObjectStore: &cnpgv1.BarmanObjectStoreConfiguration{}}},
+		Status: cnpgv1.ClusterStatus{
+			Phase: "Cluster in healthy state", Instances: 2, CurrentPrimary: "sleepy-1", TargetPrimary: "sleepy-1",
+			Conditions: []metav1.Condition{
+				{Type: "Ready", Status: metav1.ConditionTrue, Reason: "ClusterIsReady", LastTransitionTime: metav1.NewTime(now.Add(-48 * time.Hour))},
+				{Type: cnpgstatus.ConditionContinuousArchiving, Status: metav1.ConditionTrue, Reason: "ContinuousArchivingSuccess", LastTransitionTime: metav1.NewTime(now.Add(-48 * time.Hour))},
+				{Type: cnpgstatus.ConditionHibernation, Status: metav1.ConditionTrue, Reason: "Hibernated", LastTransitionTime: metav1.NewTime(now.Add(-24 * time.Hour))},
+			},
+		},
+	}
+	stopped := metav1.NewTime(now.Add(-26 * time.Hour))
+	backup := &cnpgv1.Backup{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "team-a", Name: "sleepy-last", CreationTimestamp: metav1.NewTime(now.Add(-27 * time.Hour))},
+		Spec:       cnpgv1.BackupSpec{Cluster: cnpgv1.LocalObjectReference{Name: "sleepy"}},
+		Status:     cnpgv1.BackupStatus{Phase: cnpgv1.BackupPhaseCompleted, StartedAt: &stopped, StoppedAt: &stopped},
+	}
+	builder := fake.NewClientBuilder().WithScheme(scheme).WithObjects(sleepy, backup)
+	for _, index := range cache.Indexes() {
+		builder = builder.WithIndex(index.Object, index.Field, index.Func)
+	}
+	snaps := map[sweep.Key]sweep.Snapshot{{Namespace: "team-a", Name: "sleepy"}: {SweptAt: now, Interval: 30 * time.Second, Instances: map[string]sweep.Instance{}}}
+	svc := New(Options{Cache: &fakeCache{reader: builder.Build(), namespaces: []string{"team-a"}}, Sweep: fakeSweep{snaps: snaps}, Now: func() time.Time { return now }})
+	ov, err := svc.Overview(t.Context(), "team-a", "sleepy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	byID := map[string]viewmodel.Contributor{}
+	for _, c := range ov.Verdict.Contributors {
+		byID[c.ID] = c
+	}
+	for _, id := range []string{"hibernation", "archiving", "instanceStatus"} {
+		if byID[id].Health != viewmodel.HealthInactive {
+			t.Errorf("%s contributor %s (%s), want inactive", id, byID[id].Health, byID[id].Detail)
+		}
+	}
+	if ov.Verdict.Health != viewmodel.HealthInactive {
+		t.Errorf("headline %s, want inactive; contributors %+v", ov.Verdict.Health, ov.Verdict.Contributors)
 	}
 }

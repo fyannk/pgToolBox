@@ -112,7 +112,7 @@ redacted).
 
 | Key | Chart value | Default | |
 |---|---|---|---|
-| `WATCH_NAMESPACES` | `operator.config.watchNamespaces` | empty: every namespace the ClusterRole allows | Comma list; restricts the caches. The Helm chart also binds the namespaced rules (Secrets, workloads, RBAC objects) only in the listed namespaces, by RoleBindings that must exist at install time, and keeps a small ClusterRole of cluster-scoped rules bound cluster-wide; kustomize and OLM always bind the whole ClusterRole cluster-wide. One operator per cluster is the only supported layout. |
+| `WATCH_NAMESPACES` | `operator.config.watchNamespaces` | empty: every namespace the ClusterRole allows | Comma list; restricts the caches. The Helm chart also binds the namespaced rules (Secrets, workloads, RBAC objects) only in the listed namespaces, by RoleBindings in namespaces that must exist at install time, keeps a small ClusterRole of cluster-scoped rules bound cluster-wide (`<fullname>-manager-cluster`, no `bind`), and grants `get` on the `pgtoolbox-operator-config` ConfigMap and Secret in the release namespace, which need not be listed. A listed namespace deleted later is left out at the next start, with an error in the log; once it is recreated, run `helm upgrade` (its RoleBinding) and restart the operator. If none of them answers, the operator does not start. kustomize and OLM always bind the whole ClusterRole cluster-wide. One operator per cluster is the only supported layout. |
 | `POD_NAMESPACE` | downward API | | Where the operator runs. |
 | `OPERATOR_IMAGE` | `image.*` | baked in at build | Copied into pgAdmin Pods for the credential sidecar. |
 | `PGADMIN_IMAGE` | `operator.pgAdmin.image` | the hardened, digest-pinned image compiled in | |

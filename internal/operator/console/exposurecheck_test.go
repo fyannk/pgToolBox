@@ -278,7 +278,7 @@ func TestNodePodCIDRs(t *testing.T) {
 	t.Run("another node's range", func(t *testing.T) {
 		t.Parallel()
 		var limits []int64
-		cl := fake.NewClientBuilder().WithScheme(cnpgScheme(t)).WithObjects(running, node("a", "10.128.0.0/24"), node("b", "10.128.4.0/24")).
+		cl := fake.NewClientBuilder().WithScheme(cnpgScheme(t)).WithObjects(running.DeepCopy(), node("a", "10.128.0.0/24"), node("b", "10.128.4.0/24")).
 			WithInterceptorFuncs(interceptor.Funcs{List: func(ctx context.Context, cl client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
 				if _, ok := list.(*corev1.NodeList); ok {
 					var o client.ListOptions
@@ -324,7 +324,7 @@ func TestNodePodCIDRs(t *testing.T) {
 	t.Run("may not list Nodes", func(t *testing.T) {
 		t.Parallel()
 		narrow := ipBlockConsole("192.168.10.0/24")
-		cl := fake.NewClientBuilder().WithScheme(cnpgScheme(t)).WithObjects(running).
+		cl := fake.NewClientBuilder().WithScheme(cnpgScheme(t)).WithObjects(running.DeepCopy()).
 			WithInterceptorFuncs(listError(apierrors.NewForbidden(schema.GroupResource{Resource: "nodes"}, "", errors.New("no")))).Build()
 		r := &Reconciler{Client: cl, APIReader: cl}
 		found, err := r.exposureConfinement(context.Background(), narrow, buildExposureNetworkPolicy(narrow, true).Spec.Ingress[0].From)
@@ -340,7 +340,7 @@ func TestNodePodCIDRs(t *testing.T) {
 	})
 	t.Run("the Node list fails", func(t *testing.T) {
 		t.Parallel()
-		cl := fake.NewClientBuilder().WithScheme(cnpgScheme(t)).WithObjects(running).
+		cl := fake.NewClientBuilder().WithScheme(cnpgScheme(t)).WithObjects(running.DeepCopy()).
 			WithInterceptorFuncs(listError(apierrors.NewServiceUnavailable("etcd"))).Build()
 		r := &Reconciler{Client: cl, APIReader: cl}
 		if _, err := r.exposureConfinement(context.Background(), c, peers); err == nil {
@@ -349,7 +349,7 @@ func TestNodePodCIDRs(t *testing.T) {
 	})
 	t.Run("more Nodes than it lists", func(t *testing.T) {
 		t.Parallel()
-		cl := fake.NewClientBuilder().WithScheme(cnpgScheme(t)).WithObjects(running, node("a", "10.128.0.0/24")).
+		cl := fake.NewClientBuilder().WithScheme(cnpgScheme(t)).WithObjects(running.DeepCopy(), node("a", "10.128.0.0/24")).
 			WithInterceptorFuncs(interceptor.Funcs{List: func(ctx context.Context, cl client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
 				if err := cl.List(ctx, list, opts...); err != nil {
 					return err

@@ -103,13 +103,13 @@ func TestARefusalThatPrunedMarksTheStateChanged(t *testing.T) {
 	s := New(Options{Name: "console-state", Now: clock.Now})
 	s.mu.Lock()
 	s.signedOut[sessionHash("ended")] = signOut{Expiry: t0.Unix() - 1, Recorded: 1, Subject: tag("bob")}
-	for i := range MaxSignOutsPerSubject {
-		s.signedOut[sessionHash(fmt.Sprint("s-", i))] = signOut{Expiry: t0.Add(time.Hour).Unix(), Recorded: 2, Subject: tag("mallory")}
+	for i := range MaxUnnamedSignOuts {
+		s.signedOut[sessionHash(fmt.Sprint("s-", i))] = signOut{Expiry: t0.Add(time.Hour).Unix(), Recorded: 2}
 	}
 	before := s.gen
 	s.mu.Unlock()
-	if s.RecordSignOut("refused", tag("mallory"), t0.Add(time.Hour)) {
-		t.Fatal("a sign-out past the person's share was kept")
+	if s.RecordSignOut("refused", "", t0.Add(time.Hour)) {
+		t.Fatal("an unnamed sign-out past the unnamed sessions' share was kept")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -121,12 +121,16 @@ func TestARefusalThatPrunedMarksTheStateChanged(t *testing.T) {
 	}
 }
 
-// Property: the bounds are a total order applied the same way, so
-// capping is idempotent and capped documents merged pairwise in any
+// Property: the bounds are a total order applied the same way, and a
+// person's replacement is a later generation of one of their own slots
+// (the latest generation of a slot wins, by the same order), so, as long
+// as each session's sign-out has one slot, capping is idempotent and capped documents merged pairwise in any
 // order end in the state capping their union gives, and an entry
 // recorded before the others is never dropped by them.
 func TestSignOutCapsConvergeInAnyOrder(t *testing.T) {
 	r := rand.New(rand.NewPCG(7, 11))
+	// a and b replace at their bound; c, d and the unnamed sessions do
+	// not, and their sessions may be recorded twice at different times.
 	people := []string{"", tag("a"), tag("b"), tag("c"), tag("d")}
 	capped := func(m map[string]signOut) map[string]signOut {
 		out := maps.Clone(m)
@@ -139,15 +143,22 @@ func TestSignOutCapsConvergeInAnyOrder(t *testing.T) {
 		out := maps.Clone(a)
 		for h, e := range b {
 			if prev, ok := out[h]; ok {
-				e = mergeSignOut(prev, e)
+				e = mergeSignOut(h, prev, e)
 			}
 			out[h] = e
 		}
 		return out
 	}
+	replacements := 0
+	defer func() {
+		if replacements == 0 {
+			t.Error("no replacement was generated")
+		}
+	}()
 	for trial := range 40 {
 		replicas := make([]map[string]signOut, 2+r.IntN(4))
 		all := map[string]signOut{}
+		victims := map[string][]string{}
 		for i := range replicas {
 			replicas[i] = map[string]signOut{}
 			for range r.IntN(3 * MaxSignOuts / len(replicas)) {
@@ -155,12 +166,37 @@ func TestSignOutCapsConvergeInAnyOrder(t *testing.T) {
 				// session's sign-out.
 				h := fmt.Sprintf("%032x", r.IntN(4*MaxSignOuts))
 				e := signOut{Expiry: 1 << 40, Recorded: int64(r.IntN(500)), Subject: people[r.IntN(len(people))]}
-				if prev, ok := all[h]; ok {
+				prev, seen := all[h]
+				replacing := e.Subject == tag("a") || e.Subject == tag("b")
+				if seen {
 					e.Subject = prev.Subject // one session, one person
+					replacing = e.Subject == tag("a") || e.Subject == tag("b")
+					if replacing {
+						// One slot a session for the people who replace
+						// (see TestReplicasAgreeWhenASessionHasTwoSlots);
+						// the others' sessions may be recorded at two
+						// different times.
+						e.Recorded, e.Slot, e.Gen = prev.Recorded, prev.Slot, prev.Gen
+					}
 				}
+				// A person's replacement: the slot of one of their own
+				// entries (perhaps one another replica holds, perhaps one
+				// already replaced, perhaps by two replicas at once), a
+				// later generation.
+				if v, ok := victims[e.Subject]; ok && !seen && replacing && r.IntN(3) == 0 {
+					if vh := v[r.IntN(len(v))]; vh != h {
+						ve := all[vh]
+						e.Recorded, e.Slot, e.Gen = ve.Recorded, slotOf(vh, ve), ve.Gen+1+int64(r.IntN(2))
+						replacements++
+					}
+				}
+				if !validSignOut(h, e) {
+					continue
+				}
+				victims[e.Subject] = append(victims[e.Subject], h)
 				replicas[i][h] = e
 				if prev, ok := all[h]; ok {
-					e = mergeSignOut(prev, e)
+					e = mergeSignOut(h, prev, e)
 				}
 				all[h] = e
 			}
@@ -262,4 +298,116 @@ func TestStoresConvergeAndKeepWhatTheyHeld(t *testing.T) {
 			}
 		}
 	}
+}
+
+// One session signed out on two replicas before they sync, one of them
+// replacing at its person's bound, has two slots; the merge keeps the
+// first. A replica that dropped one of them may then end differently
+// from capping the union of everything, so the exact property above does
+// not hold for it. What does: after exchanging, replicas agree, and,
+// with room in the document, only that person's own entries differ.
+func TestReplicasAgreeWhenASessionHasTwoSlots(t *testing.T) {
+	r := rand.New(rand.NewPCG(13, 17))
+	people := []string{"", tag("a"), tag("b"), tag("c")}
+	covered := 0
+	defer func() {
+		if covered == 0 {
+			t.Error("no session with two slots and a replacement was generated")
+		}
+	}()
+	for trial := range 30 {
+		replicas := make([]map[string]signOut, 2+r.IntN(3))
+		all := map[string]signOut{}
+		victims := map[string][]string{}
+		twoSlots, replaced := map[string]bool{}, map[string]bool{}
+		for i := range replicas {
+			replicas[i] = map[string]signOut{}
+			for range 2*MaxSignOutsPerSubject + r.IntN(2*MaxSignOutsPerSubject) {
+				h := fmt.Sprintf("%032x", r.IntN(6*MaxSignOutsPerSubject))
+				e := signOut{Expiry: 1 << 40, Recorded: int64(r.IntN(200)), Subject: people[r.IntN(len(people))]}
+				prev, seen := all[h]
+				if seen {
+					e.Subject = prev.Subject
+				}
+				if v, ok := victims[e.Subject]; ok && e.Subject != "" && r.IntN(3) == 0 {
+					if vh := v[r.IntN(len(v))]; vh != h {
+						ve := all[vh]
+						e.Recorded, e.Slot, e.Gen = ve.Recorded, slotOf(vh, ve), ve.Gen+1
+					}
+				}
+				if !validSignOut(h, e) {
+					continue
+				}
+				if seen && (prev.Recorded != e.Recorded || slotOf(h, prev) != slotOf(h, e)) {
+					twoSlots[e.Subject] = true
+				}
+				if e.Gen > 0 {
+					replaced[e.Subject] = true
+				}
+				victims[e.Subject] = append(victims[e.Subject], h)
+				replicas[i][h] = e
+				if seen {
+					e = mergeSignOut(h, prev, e)
+				}
+				all[h] = e
+			}
+		}
+		state := make([]map[string]signOut, len(replicas))
+		for i, m := range replicas {
+			state[i] = capSet(m)
+		}
+		for range 4 * len(state) * len(state) {
+			i, j := r.IntN(len(state)), r.IntN(len(state))
+			state[i] = capSet(unionOf(state[i], state[j]))
+		}
+		for range 3 {
+			for i := range state {
+				for j := range state {
+					state[i] = capSet(unionOf(state[i], state[j]))
+				}
+			}
+		}
+		for i := range state {
+			if !maps.Equal(state[i], state[0]) {
+				t.Fatalf("trial %d: replica %d holds %d sign-outs, replica 0 %d", trial, i, len(state[i]), len(state[0]))
+			}
+		}
+		full := map[string]signOut{}
+		for _, m := range replicas {
+			full = unionOf(full, m)
+		}
+		want := capSet(full)
+		for p := range twoSlots {
+			if !replaced[p] {
+				delete(twoSlots, p) // two slots and no replacement: the exact property holds
+			}
+		}
+		covered += len(twoSlots)
+		for _, pair := range [][2]map[string]signOut{{want, state[0]}, {state[0], want}} {
+			for h, e := range pair[0] {
+				if g, ok := pair[1][h]; (!ok || g != e) && !twoSlots[e.Subject] {
+					t.Fatalf("trial %d: an entry of a person whose sessions have one slot each differs (%s)", trial, h)
+				}
+			}
+		}
+	}
+}
+
+func capSet(m map[string]signOut) map[string]signOut {
+	out := maps.Clone(m)
+	for h := range planSignOutCaps(out) {
+		delete(out, h)
+	}
+	return out
+}
+
+func unionOf(a, b map[string]signOut) map[string]signOut {
+	out := maps.Clone(a)
+	for h, e := range b {
+		if prev, ok := out[h]; ok {
+			e = mergeSignOut(h, prev, e)
+		}
+		out[h] = e
+	}
+	return out
 }

@@ -533,6 +533,16 @@ type BarmanWALGap struct {
 // says which, in words).
 const ReasonPathNeedsTargetTimeline = "coverage-path-needs-target-timeline"
 
+// FormerPrimaryMayHold is the clause that ends the reason of a recovery
+// path stopped at a parent timeline's segment missing before a switch
+// whose child already has WAL, Barman Cloud and pgBackRest alike: the
+// segment is not in the repository, but a former primary that crashed
+// with it still .ready keeps it on its volume, and CloudNativePG
+// archives it before that instance rejoins. A reader may show it beside
+// the missing WAL; it is the actionable part, and producers keep it whole
+// when they shorten a reason.
+const FormerPrimaryMayHold = "the former primary may still hold it and CloudNativePG archives it before that instance rejoins: do not delete that instance or its volume"
+
 // CoverageStop identifies why an observed recovery path ends.
 type CoverageStop string
 

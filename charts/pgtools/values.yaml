@@ -1535,9 +1535,10 @@ pgadmin:
   # `auth.provider` is `openshift`), whose restricted-v2 SCC assigns its own
   # range and refuses a fixed one. `0`: none. An explicit value always wins. A
   # client-side `helm template` for OpenShift with another provider needs
-  # `--api-versions security.openshift.io/v1` or `fsGroup: 0`; the console's
-  # NetworkPolicy and proxy trust need `--api-versions route.openshift.io/v1`
-  # or `console.platform: openshift`.
+  # `--api-versions security.openshift.io/v1` or `fsGroup: 0`.
+  # `console.platform: openshift` does not set this: it drives one thing only,
+  # the console's trust of `X-Forwarded-For` (see `console.platform`), and
+  # changes no NetworkPolicy and no pgAdmin security context.
   fsGroup: null
   # -- Resource requests and limits of the pgadmin container (the operator's
   # defaults); the small sidecars have their own fixed ones.

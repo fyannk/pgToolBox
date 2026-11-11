@@ -60,6 +60,11 @@ OpenShift.
   rules cluster-wide. Images for `linux/amd64`
   and `linux/arm64`: `ghcr.io/fyannk/pgtoolbox-operator`,
   `ghcr.io/fyannk/pgtoolbox-console` and `ghcr.io/fyannk/pgtoolbox-evidence-agent`.
+  With `watchNamespaces` the operator also gets a name-scoped Role for its own
+  ConfigMap and Secret, so it starts without its namespace listed; the cluster-wide
+  role holds no `bind`; each mode has its own ClusterRoleBinding name, so `helm
+  upgrade` can switch modes; a watched namespace deleted after install is left out
+  at start and logged.
 - The custom resources are `pgtoolbox.fyannk.dev/v1alpha1`.
 - **Opening a pgAdmin** behind the OpenShift OAuth proxy takes the `connect`
   verb on `pgadmins/<name>` (granted by `pgtoolbox-console-operator` and by
@@ -167,6 +172,11 @@ OpenShift.
   reasons no path explains, and lists the agent's coverage reason on the recovery
   bar. The pgBackRest window `end_lsn` is shown as an exclusive upper bound, not a
   restore target.
+  A pgBackRest backup the agent rates not usable is drawn unknown, and "no usable
+  backup" caps the window again; after a failover, an end on the parent timeline is
+  bounded by the former primary's archive backlog, else by a day; the missing-WAL
+  segment says a former primary may still hold the WAL, and shortened reasons keep
+  "do not delete that instance or its volume".
 - **An archive backlog is not "healthy".** Archiving shows Warning
   `ArchiveBacklog` once segments keep waiting across sweeps (the threshold follows
   CloudNativePG's WAL archiver, `isWALArchiver`, and its ObjectStore's
@@ -190,6 +200,10 @@ OpenShift.
   or unverified CloudNativePG minors and say why; recovery and timeline reasons
   are translated. The failover rehearsal applies the election rules of the
   operator's own version (1.30.1's, and says when 1.30.0 differs).
+  The stall rule compares the instance's clock with itself; `archivingWal` is served
+  only for the archiving instance; `cnpg-wal-files-waiting` judges only primary
+  readings and says why when there is none; the not-reported message is worded by
+  cluster kind; a hibernated Cluster's headline reads inactive.
 - **Sign-in under a flood.** Behind a shared proxy address, unauthenticated junk
   (bad OAuth codes, unknown tokens, MCP token and registration requests) no
   longer spends the budgets genuine sign-ins, known MCP clients and token
@@ -210,6 +224,11 @@ OpenShift.
   `exchange_reviews_subject`); a replayed refresh token is refused before the
   review; store-outage refusals are bounded; each replica's signed-out table is
   bounded.
+  A sign-out of a session sealed with its person's tag is shared even when the API
+  server refuses the token at sign-out; a person past 16 sign-outs keeps their latest
+  ones (each replaces that person's own earliest-ending one, nobody else's entry
+  moves); `signouts_refused_total` reasons are `replaced`, `unnamed`, `budget` and
+  `merge`; new gauge `pgtoolbox_console_shared_state_signouts{bound}`.
 - **Exposure trust.** The pgtools chart trusts every peer only when
   `networkPolicy.ingress.extraFrom` is empty. `networkPolicy.from` selectors are
   validated by the CRD, and a policy the API server refuses stalls with
@@ -232,6 +251,10 @@ OpenShift.
   `ExposurePolicyInvalid`; the dry run is skipped when nothing changed; a Pod
   stuck terminating that holds an exposure change is named
   (`ExposurePolicyKept`).
+  A widened `networkPolicy.from` is held even when the cache still shows an older
+  policy or workload; the Node podCIDR check runs one lookup at a time, lists 100
+  Nodes a page and says when Nodes have no `spec.podCIDRs`; a `HostnameNotAllowed`
+  stall reports `ExposurePolicyKept` while the console's ingress policy remains.
 - **Admission.** A PgAdmin with `configDatabase` needs `get` on the
   namespace's Secrets and its database must start with `pgadmin_` (CloudNativePG
   adopts and resets an existing role); raising `sessionMaxAge` counts as widening
@@ -241,6 +264,8 @@ OpenShift.
   for ingress-nginx, AWS Load Balancer Controller, HAProxy, the OpenShift router,
   Traefik and Kong) need `create` on the exposure kind, on the Service as well as
   the exposure; the list is documented in security.md and kept equal by a test.
+  The restore-drill delete guard also holds ServiceAccounts of other namespaces,
+  the operator's included, unless they hold `*` on restore drills cluster-wide.
 - **Release pipeline hardening.** GHCR pruning is opt-in (repository variable
   `PRUNE_GHCR`) so a release cannot turn red after it is public; the 30-minute net
   now dispatches `ci.yml` and `security.yml` independently (the dead

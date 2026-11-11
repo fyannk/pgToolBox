@@ -659,11 +659,20 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			user = u.Name
 		}
-		// A token the API server refuses, in a session that cannot renew
-		// it, is refused by every replica already (their identity caches
-		// last DefaultIdentityTTL): sharing its sign-out would only spend
-		// the state ConfigMap's bounds.
-		share := !errors.Is(err, ErrTokenRejected) || s.RefreshToken != ""
+		// A refusal now does not mean the token is dead: OpenShift's
+		// oauth-apiserver and the webhook authenticators of EKS and GKE
+		// answer 401 while they are down, and once they are back a copied
+		// cookie would work on every other replica. So every sign-out of a
+		// session that names its person is shared: that person's own
+		// share of the state ConfigMap bounds what it costs, and nobody
+		// else's entries. Only a session that names nobody, whose token is
+		// refused and cannot be renewed, stays on this replica: the
+		// unnamed sessions share one small bound, and spending it on
+		// tokens the API server refuses would crowd out the others. The
+		// token's own expiry is not the rule: a session without a refresh
+		// token is not ended locally at TokenExpiry (the API server alone
+		// enforces it), and an opaque pasted token has none.
+		share := s.SubjectTag != "" || !errors.Is(err, ErrTokenRejected) || s.RefreshToken != ""
 		if c, ok := h.identity.(*CachedReviewer); ok {
 			c.Forget(s.Token)
 		}

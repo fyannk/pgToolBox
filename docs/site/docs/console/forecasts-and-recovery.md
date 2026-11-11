@@ -197,8 +197,19 @@ fail.
   reaches its backup's end segment (the consistency point) is drawn. Where paths
   overlap, each piece names the newest backup whose own path covers it: the backup
   CloudNativePG restores from when no `backupID` is given.
+- **Not usable** spans: a pgBackRest backup the agent rates not usable for a
+  reason its recovery path does not show (a broken chain, a manifest of its own
+  or of a backup it depends on that does not verify or was not inspected,
+  pgBackRest's own error flag after a page-checksum failure) is drawn as
+  `unknown` with the first reason, never as covered, even when its WAL reaches
+  the frontier: the agent judges the path from the WAL alone. The window is then
+  a warning. A usable backup still covers what it reaches.
 - **Holes** between spans, each with a kind:
-  - **missing WAL**: a confirmed gap;
+  - **missing WAL**: a confirmed gap. When the agent says a former primary may
+    still hold the missing segment (it stopped on a parent timeline before a
+    switch whose child already has WAL), the hole, or the time after the latest
+    point, says so: CloudNativePG archives that instance's waiting segments
+    before it rejoins, so do not delete that instance or its volume;
   - **candidate gap**: seen by one scan, not confirmed by a second;
   - **unknown**: the evidence cannot tell.
 - **Markers**: the repository's base backups (completed, failed, incomplete) and
@@ -285,14 +296,24 @@ timeout, a slow answer) does not flip it: the same pod's reading from the sweep
 before stands, with its own time as provenance, so the bar does not flicker. A
 second miss in a row, or a restarted pod (a new UID has no last reading), is
 unread. A hibernated Cluster
-reads `unknown` (`Hibernated`): no instance runs, and nothing confirms that every
-segment written before hibernation reached the repository. A replica cluster's
+reads `inactive` (`Hibernated`), as the Cluster does: no instance runs, and
+nothing confirms that every segment written before hibernation reached the
+repository, but nothing is going wrong either. The instance self-reports
+contributor is `inactive` too (no pod to read), so the overview and fleet
+headline of a hibernated Cluster reads `inactive`, not `unknown`. A replica cluster's
 archiver is its designated primary, a standby (`isPrimary` false) that archives
 with `archive_mode=always`; CloudNativePG counts `.ready` files only on a primary
 (`pkg/management/postgres/probes.go` v1.30.1), so its `/pg/status` carries no
 `readyWalFiles`. The console records no sample for it (nor for any standby) and
 reads archiving as `unknown` (`ArchiveBacklogNotReported`), never `ok`: a
-backlog cannot be seen there. A standby's zeros, including those of a pod that
+backlog cannot be seen there; replica clusters' archiving stays `unknown` until a
+lag bound is read from the exporter's metrics (a later feature). Outside a
+replica cluster the same reading is a primary mid-promotion, and the message
+says so. The API serves an instance's `archivingWal` only for the instance that
+archives (the primary, or a replica cluster's current or target primary): a
+replica cluster's other standbys report `isArchivingWAL` true, but their
+archiver does nothing. The `cnpg-wal-files-waiting` check judges fresh primary
+readings only, and says so instead of clearing when there is none. A standby's zeros, including those of a pod that
 was a designated primary before a replica-cluster promotion, are never read as a
 quiet sweep or as an archiver that caught up.
 The diagnostics findings on the same count (`cnpg-wal-archive-backlog`,
@@ -303,12 +324,14 @@ it, and a segment the archiver does not take is a `.ready` file. On an idle
 primary that writes little, a hung archiver holds a steady count rather than a
 growing one, so under unknown parallelism a count at the threshold over three
 sweeps that did not grow is also a backlog when the archiver archived nothing
-over them: its `last_archived_time` (pg_stat_archiver, the instance's clock) is
-not after the oldest of those sweeps, or it reports none. The message then says
-the archiver is stalled and since when. A healthy parallel archiver archives a
-segment each time PostgreSQL asks for one, so its time moves; an instance clock
-running more than a sweep behind the console's could still make a healthy one
-read as stalled.
+over them: its `last_archived_time` (pg_stat_archiver) is not after the one it
+reported at the oldest of those sweeps (both on the instance's clock, which the
+sweep keeps per reading), or it reports none. When the sweep did not keep that
+earlier time (a console restored from an older snapshot), it is compared with
+the oldest sweep's time plus one sweep interval, so a clock skew within one
+interval neither hides a stall nor invents progress. The message then says the
+archiver is stalled and since when. A healthy parallel archiver archives a
+segment each time PostgreSQL asks for one, so its time moves.
 
 The last archived time is when PostgreSQL archived a segment, not the newest
 commit in it, so even "may well be possible" is an `unknown` answer: an evidence
@@ -395,10 +418,23 @@ segments, so the bar and the answer always agree:
   latest point. Nothing says how long
   the newest archived WAL waited on the primary, so the window is a warning and
   every answer carries the caveat "the primary's archiver was not read". A
-  hibernated Cluster's window is `unknown` instead: it writes no WAL and runs no
-  archiver, so there is nothing to act on, but nothing confirms that the WAL
-  written before it reached the repository; it stays `unknown`, not amber, for
-  as long as it sleeps;
+  hibernated Cluster's window is `unknown` instead, and its band and caveat say
+  the Cluster is hibernated: it writes no WAL and runs no archiver, so there is
+  nothing to act on, but nothing confirms that the WAL written before it reached
+  the repository; it stays `unknown`, not amber, for as long as it sleeps;
+- at an end of the archived WAL on a timeline older than the newest (after a
+  failover: the parent timeline's tail, or a hole before the switch): that WAL
+  was archived by a former primary, whose backlog the current primary's
+  readings do not show, and a crash can lose its `.ready` tail. The band starts
+  at the newest sweep that read that former primary with nothing waiting (less
+  one `archive_timeout`) or at its WAL-position bound, both from before the
+  promotion (`status.currentPrimaryTimestamp`); when the sweeps kept no reading
+  of it (its pod is gone, the rings' retention passed) or only readings with WAL
+  waiting, the day before that end;
+- every "by then" claim of a sweep (nothing waited, every commit before a time
+  was archived) is dated when its read returned, and every "not yet" claim (the
+  write position had not reached a segment) when the sweep started, so a read
+  that straddles the agent's scan never narrows a band;
 - while the archiver is a designated primary (`ArchiveBacklogNotReported`):
   the day before the latest point, with its own reason and caveat, since no
   sweep can show that nothing waited on it;
@@ -428,7 +464,12 @@ answer adds that a restore that names no timeline follows the default
 `recovery_target_timeline 'latest'`. A
 `recovery_target_time` after that commit makes PostgreSQL stop with "recovery
 ended before configured recovery target was reached". To restore everything the
-repository holds, restore to the end of WAL (no recovery target) instead.
+repository holds, restore to the end of WAL (no recovery target) instead. The
+band assumes a commit near the end of the WAL: a stretch of WAL with no commit
+record (an anti-wraparound `VACUUM` on a quiet database) can push the last
+commit further back than the band, and a `recovery_target_time` inside it then
+fails the same way. This is a known limit; restoring to the end of WAL is not
+affected.
 
 After the latest point the answer is never `notCovered`. Missing WAL confirmed
 after the newest path is a `gap`. Otherwise the answer is `unknown`: a fresh and

@@ -141,6 +141,10 @@ type Instance struct {
 	// older than At when the latest read failed.
 	Reading *instancestatus.Reading
 	uid     string
+	// readBy is when this sweep's read of the pod returned (zero when it
+	// failed): the instance answered at or before it, and at or after the
+	// sweep's start (At). The rings keep both (ring sample readBy).
+	readBy time.Time
 }
 
 // Snapshot is the published state of one Cluster.
@@ -258,6 +262,8 @@ func (s *Sweeper) SweepOnce(ctx context.Context) {
 		series   map[string]float64
 		instants map[string]float64
 		insight  *insight.Reading
+		// readBy is when the status read returned.
+		readBy time.Time
 	}
 	results := make(chan result)
 	var wg sync.WaitGroup
@@ -290,7 +296,7 @@ func (s *Sweeper) SweepOnce(ctx context.Context) {
 				reading, err := s.readStatus(ctx, tlsConfig, pod.IP)
 				r.state, r.reason = classify(err)
 				if err == nil {
-					r.reading = &reading
+					r.reading, r.readBy = &reading, s.now().UTC()
 				}
 				if s.opts.Metrics {
 					r.series, r.instants, r.insight = s.readMetrics(ctx, target, tlsConfig, pod.IP, s.bodyLimit(target.Key, pod.Name))
@@ -323,7 +329,7 @@ func (s *Sweeper) SweepOnce(ctx context.Context) {
 		previous := cs.snap.Instances
 		next := Snapshot{SweptAt: at, Interval: s.opts.Interval, Instances: map[string]Instance{}, Incomplete: incomplete[target.Key]}
 		for _, r := range fresh[target.Key] {
-			inst := Instance{State: r.state, Reason: r.reason, At: at, Since: at, uid: r.pod.UID}
+			inst := Instance{State: r.state, Reason: r.reason, At: at, Since: at, uid: r.pod.UID, readBy: r.readBy}
 			if prev, ok := previous[r.pod.Name]; ok && prev.uid == r.pod.UID {
 				if prev.State == r.state && prev.Reason == r.reason {
 					inst.Since = prev.Since
@@ -579,13 +585,13 @@ func (s *Sweeper) pushRings(cs *clusterState, snap Snapshot, at time.Time) {
 			rings = map[string]*ring{}
 			cs.rings[name] = rings
 		}
-		for _, key := range []string{SeriesLagBytes, SeriesReadyWALFiles, SeriesCurrentLSN} {
+		for _, key := range []string{SeriesLagBytes, SeriesReadyWALFiles, SeriesCurrentLSN, SeriesLastArchivedAt} {
 			if rings[key] == nil {
 				// A ring restored from a snapshot may lack a series.
 				rings[key] = &ring{}
 			}
 		}
-		var lag, ready, position *float64
+		var lag, ready, position, archived *float64
 		if inst.State == viewmodel.StatusReadOK && inst.Reading != nil {
 			if inst.Reading.IsPrimary {
 				if lsn, ok := parseLSN(inst.Reading.CurrentLSN); ok && lsn <= maxExactLSN {
@@ -598,6 +604,10 @@ func (s *Sweeper) pushRings(cs *clusterState, snap Snapshot, at time.Time) {
 				// cluster's designated primary included, is no reading.
 				files := float64(inst.Reading.ReadyWALFiles)
 				ready = &files
+				if t := inst.Reading.LastArchivedWALTime; t != nil {
+					ms := float64(t.UnixMilli())
+					archived = &ms
+				}
 			}
 			if !inst.Reading.IsPrimary {
 				if bytes, ok := LagBytes(primaryLSN, inst.Reading.ReplayLSN); ok {
@@ -606,9 +616,18 @@ func (s *Sweeper) pushRings(cs *clusterState, snap Snapshot, at time.Time) {
 				}
 			}
 		}
-		rings[SeriesLagBytes].push(at, lag, s.opts.Retention)
-		rings[SeriesReadyWALFiles].push(at, ready, s.opts.Retention)
-		rings[SeriesCurrentLSN].push(at, position, s.opts.Retention)
+		// Each sample keeps the sweep's start (at, before the request was
+		// sent) and when this read returned (readBy): a rule that needs
+		// "by then" reads the second, one that needs "not yet by then" the
+		// first (CNPG P3-4).
+		var readBy time.Time
+		if inst.State == viewmodel.StatusReadOK && inst.Reading != nil && !inst.readBy.IsZero() && !inst.readBy.Before(at) {
+			readBy = inst.readBy
+		}
+		rings[SeriesLagBytes].push(at, readBy, lag, s.opts.Retention)
+		rings[SeriesReadyWALFiles].push(at, readBy, ready, s.opts.Retention)
+		rings[SeriesCurrentLSN].push(at, readBy, position, s.opts.Retention)
+		rings[SeriesLastArchivedAt].push(at, readBy, archived, s.opts.Retention)
 	}
 	for name := range cs.rings {
 		if _, ok := snap.Instances[name]; !ok {

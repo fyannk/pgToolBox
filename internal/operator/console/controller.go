@@ -245,13 +245,18 @@ func (r *Reconciler) reconcile(ctx context.Context, console *pgtoolboxv1alpha1.P
 	}
 	// The hostname allow-list: withdraw what this console published, then
 	// stall, so that nothing is published under a name the installer did
-	// not allow. ExposureConfined goes with it (nothing is published).
+	// not allow. The workload and the ingress policy stay as they were (a
+	// template that trusts every peer is never left without its policy):
+	// ExposureConfined says the policy is kept, and goes only when there
+	// is none.
 	if spec := &console.Spec.Exposure; spec.TypeOrDefault() != pgtoolboxv1alpha1.ExposureTypeClusterIP &&
 		!exposure.HostnameAllowed(spec.Hostname, r.AllowedHostSuffixes) {
 		if err := r.withdrawExposure(ctx, console); err != nil {
 			return err
 		}
-		setExposureConfined(console, false, confinement{})
+		if err := r.policyKeptOnStall(ctx, console); err != nil {
+			return err
+		}
 		return r.invalid(console, pgtoolboxv1alpha1.ReasonHostnameNotAllowed, fmt.Sprintf(
 			"spec.exposure.hostname %s is not under the operator's allowed host suffixes (EXPOSURE_ALLOWED_HOST_SUFFIXES: %s)",
 			spec.Hostname, strings.Join(r.AllowedHostSuffixes, ", ")))
@@ -587,26 +592,27 @@ func (r *Reconciler) consolePods(ctx context.Context, console *pgtoolboxv1alpha1
 // watched, so their changes bring the next look). A narrowing change is
 // applied at once.
 //
-// The cache may not hold the policy this operator applied last yet (its
-// informer and the workload's are not ordered), so a widening the cache
-// shows is confirmed past it before anything is held. stuck: a Pod stuck
-// terminating holds it (named in the message).
+// The policy in force is read past the cache, whichever way the cache
+// lags: its informer and the workload's are not ordered, so the cache may
+// show the narrower policy this operator replaced (no widening is left) or
+// an older, wider one that equals policy while the API server already
+// holds the narrower one applied last (a widening the cache cannot show).
+// One uncached GET per pass of a console with an ingress policy. stuck: a
+// Pod stuck terminating holds it (named in the message).
 func (r *Reconciler) heldWidening(ctx context.Context, console *pgtoolboxv1alpha1.PgToolBoxConsole, policy *networkingv1.NetworkPolicy) (held string, stuck bool, err error) {
-	for _, reader := range []client.Reader{r.Client, r.APIReader} {
-		live := &networkingv1.NetworkPolicy{}
-		if err := reader.Get(ctx, client.ObjectKeyFromObject(policy), live); err != nil {
-			return "", false, client.IgnoreNotFound(err)
-		}
-		if !metav1.IsControlledBy(live, console) {
-			return "", false, nil // the apply reports it as not owned
-		}
-		var livePeers []networkingv1.NetworkPolicyPeer
-		if len(live.Spec.Ingress) > 0 {
-			livePeers = live.Spec.Ingress[0].From
-		}
-		if !peersWiden(policy.Spec.Ingress[0].From, livePeers) {
-			return "", false, nil
-		}
+	live := &networkingv1.NetworkPolicy{}
+	if err := r.APIReader.Get(ctx, client.ObjectKeyFromObject(policy), live); err != nil {
+		return "", false, client.IgnoreNotFound(err)
+	}
+	if !metav1.IsControlledBy(live, console) {
+		return "", false, nil // the apply reports it as not owned
+	}
+	var livePeers []networkingv1.NetworkPolicyPeer
+	if len(live.Spec.Ingress) > 0 {
+		livePeers = live.Spec.Ingress[0].From
+	}
+	if !peersWiden(policy.Spec.Ingress[0].From, livePeers) {
+		return "", false, nil
 	}
 	trusted, blockers, err := r.everyPeerTrustInForce(ctx, console)
 	if err != nil || !trusted {
@@ -626,14 +632,18 @@ func (r *Reconciler) heldWidening(ctx context.Context, console *pgtoolboxv1alpha
 // console Pod, terminating ones included, carries it; Pods that could not
 // all be listed count as one that does. blockers names the Pods stuck
 // terminating that carry it (stuckGrantPods).
+//
+// The workloads are read past the cache: the template this operator
+// applied a moment ago may carry the grant before its informer delivers
+// it. It runs only on a confirmed widening, so the two GETs are rare.
 func (r *Reconciler) everyPeerTrustInForce(ctx context.Context, console *pgtoolboxv1alpha1.PgToolBoxConsole) (trusted bool, blockers string, err error) {
 	key := client.ObjectKey{Namespace: console.Namespace, Name: console.WorkloadName()}
 	for _, workload := range []client.Object{&appsv1.Deployment{}, &appsv1.StatefulSet{}} {
-		if err := r.Client.Get(ctx, key, workload); err != nil {
+		if err := r.APIReader.Get(ctx, key, workload); err != nil {
 			if apierrors.IsNotFound(err) {
 				continue
 			}
-			return false, "", err
+			return false, "", fmt.Errorf("read the console workload: %w", err)
 		}
 		if !metav1.IsControlledBy(workload, console) {
 			continue
@@ -1014,6 +1024,30 @@ func (r *Reconciler) exposurePublished(ctx context.Context, console *pgtoolboxv1
 	return false, nil
 }
 
+// policyKeptOnStall records ExposureConfined while the console is
+// stalled with its exposure withdrawn: ExposurePolicyKept when the
+// console's own ingress NetworkPolicy remains (read past the cache: one
+// applied a moment ago counts), else no condition (nothing is published,
+// nothing confines).
+func (r *Reconciler) policyKeptOnStall(ctx context.Context, console *pgtoolboxv1alpha1.PgToolBoxConsole) error {
+	name := exposurePolicyName(console)
+	policy := &networkingv1.NetworkPolicy{}
+	if err := r.APIReader.Get(ctx, client.ObjectKey{Namespace: console.Namespace, Name: name}, policy); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return fmt.Errorf("read the console's ingress NetworkPolicy: %w", err)
+		}
+		setExposureConfined(console, false, confinement{})
+		return nil
+	}
+	if !metav1.IsControlledBy(policy, console) {
+		setExposureConfined(console, false, confinement{})
+		return nil
+	}
+	setCondition(console, pgtoolboxv1alpha1.ConditionExposureConfined, metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonExposurePolicyKept,
+		"NetworkPolicy "+name+" is kept while the console is stalled with its exposure withdrawn: the workload keeps its last template, which may still trust every peer the policy admits")
+	return nil
+}
+
 // withdrawExposure deletes every exposure object this console owns.
 func (r *Reconciler) withdrawExposure(ctx context.Context, console *pgtoolboxv1alpha1.PgToolBoxConsole) error {
 	name := console.WorkloadName()
@@ -1208,44 +1242,92 @@ func unavailableWhy(result discovery.Result) string {
 // not to be checked), kept for nodeCIDRTTL and shared by every console:
 // a Node's podCIDRs never change once set, and a new Node is seen within
 // that time.
+//
+// The pages are full Nodes: a metadata-only list has no spec, and the
+// controller-runtime reader decodes a typed list whole. Pages of 100 keep
+// what one page holds in memory to about a hundred Node objects (their
+// status lists images and can run to tens of kilobytes each), and only
+// the names and podCIDRs outlive the page.
 const (
-	nodeListPage  = 500
-	nodeListPages = 20
+	nodeListPage  = 100
+	nodeListPages = 100
 	nodeCIDRTTL   = time.Minute
 )
 
-// nodeCIDRMemo is the last Node podCIDR lookup.
+// nodeCIDRMemo is the last successful Node podCIDR lookup, and the one
+// under way. The mutex guards the fields only: it is never held across a
+// List.
 type nodeCIDRMemo struct {
 	mu    sync.Mutex
 	at    time.Time
 	nodes []nodePodCIDRs
 	note  string
+	// inflight is closed when the lookup under way ends, nil when none is.
+	inflight chan struct{}
 }
 
 // nodePodCIDRs returns the Nodes' spec.podCIDRs. When the operator may not
 // list Nodes (an installation without the grant), or there are more than
-// it lists, note says that they were not checked and the console Pods'
-// own addresses stay the only check; any other error is returned.
+// it lists, or no Node has spec.podCIDRs (a CNI that allocates Pod
+// addresses itself), note says that they were not checked and the console
+// Pods' own addresses stay the only check; any other error is returned.
+//
+// One lookup runs at a time; the other callers wait for it, each on its
+// own context, and take its result. When it fails (its caller's context
+// ended, or the API server erred) nothing is kept, and a waiter whose
+// context is still live runs the next one itself.
 func (r *Reconciler) nodePodCIDRs(ctx context.Context) (nodes []nodePodCIDRs, note string, err error) {
 	now := time.Now
 	if r.Now != nil {
 		now = r.Now
 	}
-	r.nodes.mu.Lock()
-	defer r.nodes.mu.Unlock()
-	if !r.nodes.at.IsZero() && now().Sub(r.nodes.at) < nodeCIDRTTL {
-		return r.nodes.nodes, r.nodes.note, nil
+	for {
+		r.nodes.mu.Lock()
+		if !r.nodes.at.IsZero() && now().Sub(r.nodes.at) < nodeCIDRTTL {
+			nodes, note = r.nodes.nodes, r.nodes.note
+			r.nodes.mu.Unlock()
+			return nodes, note, nil
+		}
+		if wait := r.nodes.inflight; wait != nil {
+			r.nodes.mu.Unlock()
+			select {
+			case <-wait:
+				continue
+			case <-ctx.Done():
+				return nil, "", fmt.Errorf("wait for the Node podCIDR lookup: %w", ctx.Err())
+			}
+		}
+		r.nodes.inflight = make(chan struct{})
+		r.nodes.mu.Unlock()
+		return r.leadNodeLookup(ctx, now)
 	}
+}
+
+// leadNodeLookup runs the lookup nodePodCIDRs made inflight, keeps a
+// successful result and releases the waiters on every path (a panic
+// included, which keeps nothing).
+func (r *Reconciler) leadNodeLookup(ctx context.Context, now func() time.Time) (nodes []nodePodCIDRs, note string, err error) {
+	returned := false
+	defer func() {
+		r.nodes.mu.Lock()
+		defer r.nodes.mu.Unlock()
+		if returned && err == nil {
+			r.nodes.at, r.nodes.nodes, r.nodes.note = now(), nodes, note
+		}
+		close(r.nodes.inflight)
+		r.nodes.inflight = nil
+	}()
 	nodes, note, err = r.listNodePodCIDRs(ctx)
+	returned = true
 	if err != nil {
 		return nil, "", err
 	}
-	r.nodes.at, r.nodes.nodes, r.nodes.note = now(), nodes, note
 	return nodes, note, nil
 }
 
 func (r *Reconciler) listNodePodCIDRs(ctx context.Context) ([]nodePodCIDRs, string, error) {
 	var nodes []nodePodCIDRs
+	listed := 0
 	continueToken := ""
 	for range nodeListPages {
 		var list corev1.NodeList
@@ -1259,6 +1341,7 @@ func (r *Reconciler) listNodePodCIDRs(ctx context.Context) ([]nodePodCIDRs, stri
 			}
 			return nil, "", fmt.Errorf("list the Nodes for their podCIDRs: %w", err)
 		}
+		listed += len(list.Items)
 		for i := range list.Items {
 			node := nodePodCIDRs{Name: list.Items[i].Name}
 			for _, cidr := range list.Items[i].Spec.PodCIDRs {
@@ -1271,8 +1354,24 @@ func (r *Reconciler) listNodePodCIDRs(ctx context.Context) ([]nodePodCIDRs, stri
 			}
 		}
 		if continueToken = list.Continue; continueToken == "" {
-			return nodes, "", nil
+			return nodes, nodeCoverageNote(listed, len(nodes)), nil
 		}
 	}
 	return nil, fmt.Sprintf("the Nodes' podCIDRs were not checked against the ipBlock peers (more than %d Nodes): only the console Pods' own addresses were", nodeListPage*nodeListPages), nil
+}
+
+// nodeCoverageNote says which of the listed Nodes could not be checked
+// for want of spec.podCIDRs, "" when every one could (or none is listed):
+// a CNI that allocates Pod addresses itself (Calico, Cilium's cluster
+// pool) leaves it empty on every Node, so an empty list of ranges is a
+// check that could not run, not one that passed.
+func nodeCoverageNote(listed, withCIDRs int) string {
+	switch {
+	case listed == 0 || withCIDRs == listed:
+		return ""
+	case withCIDRs == 0:
+		return fmt.Sprintf("the Node check could not run: none of the %d Nodes has spec.podCIDRs (the CNI allocates Pod addresses itself), so only the console Pods' own addresses were checked against the ipBlock peers", listed)
+	default:
+		return fmt.Sprintf("%d of the %d Nodes have no spec.podCIDRs: their Pod ranges were not checked against the ipBlock peers", listed-withCIDRs, listed)
+	}
 }

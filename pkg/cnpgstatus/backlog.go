@@ -25,6 +25,11 @@ import (
 type ReadySample struct {
 	At    time.Time `json:"at"`
 	Files *int      `json:"files,omitempty"`
+	// LastArchivedAt is the instance's pg_stat_archiver
+	// last_archived_time as that sweep read it, on the instance's own
+	// clock; nil when that sweep did not read one (none reported, or a
+	// ring that does not keep it).
+	LastArchivedAt *time.Time `json:"lastArchivedAt,omitempty"`
 }
 
 const (
@@ -204,15 +209,32 @@ func ArchiveBacklogOf(c *cnpgv1.Cluster, live *ArchiverLive) ArchiveBacklog {
 	if !known && !growing(run[:need]) {
 		// A steady count is what a healthy parallel archiver holds, unless
 		// nothing was archived over those sweeps.
-		oldest := run[need-1].At
-		if live.LastArchivedAt != nil && live.LastArchivedAt.After(oldest) {
+		if archivedSince(live, run[need-1], run[0].At.Sub(run[1].At)) {
 			return out
 		}
-		at := oldest.UTC()
+		at := run[need-1].At.UTC()
 		out.StalledSince = &at
 	}
 	out.Segments = live.ReadyWALFiles
 	return out
+}
+
+// archivedSince reports an archiver that archived a segment after the
+// sweep oldest. last_archived_time is the instance's clock, the sweep
+// times the console's (CNPG P3-3): the current reading's is compared with
+// the one the same instance reported at that sweep, both on its clock.
+// When that sweep's is not kept, it is compared with the sweep's time
+// plus one sweep interval, so a skew within one interval neither hides a
+// stall nor invents progress; only an archive that clearly postdates the
+// sweep counts.
+func archivedSince(live *ArchiverLive, oldest ReadySample, interval time.Duration) bool {
+	if live.LastArchivedAt == nil {
+		return false
+	}
+	if oldest.LastArchivedAt != nil {
+		return live.LastArchivedAt.After(*oldest.LastArchivedAt)
+	}
+	return live.LastArchivedAt.After(oldest.At.Add(max(interval, 0)))
 }
 
 // growing reports readings (newest first) that never shrink toward the

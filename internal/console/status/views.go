@@ -734,16 +734,29 @@ func (s *Service) statusRead(g *gathered, name, primaryLSN string) (viewmodel.St
 	if inst.Reading == nil {
 		return read, nil
 	}
-	return read, liveStatus(inst, primaryLSN)
+	archiver := inst.Reading.IsPrimary
+	if g.cluster != nil {
+		archiver = archiver || name == g.cluster.Status.CurrentPrimary || name == g.cluster.Status.TargetPrimary
+	}
+	return read, liveStatus(inst, primaryLSN, archiver)
 }
 
-func liveStatus(inst sweep.Instance, primaryLSN string) *viewmodel.LiveStatus {
+// liveStatus is an instance's own report. archiver says whether the
+// instance is the one that archives: the primary, or a replica cluster's
+// designated primary (status.currentPrimary / targetPrimary). A replica
+// cluster's other standbys run with archive_mode always too
+// (pkg/postgres/configuration.go v1.30.1:741-742), so CloudNativePG's
+// isArchivingWAL reads true on them, but the instance manager's archiver
+// returns without archiving there (pkg/management/postgres/archiver/
+// archiver.go v1.30.1:132-142): it is
+// not served for them (CNPG P3-2).
+func liveStatus(inst sweep.Instance, primaryLSN string, archiver bool) *viewmodel.LiveStatus {
 	r := inst.Reading
 	observed := r.ObservedAt
 	live := &viewmodel.LiveStatus{
 		IsPrimary: r.IsPrimary, SystemID: r.SystemID, CurrentLSN: r.CurrentLSN, ReceivedLSN: r.ReceivedLSN, ReplayLSN: r.ReplayLSN,
 		ReplayPaused: r.ReplayPaused, WALReceiverActive: r.IsWalReceiverActive, PendingRestart: r.PendingRestart,
-		PendingRestartDecr: r.PendingRestartForDecrease, ArchivingWAL: r.IsArchivingWAL, LastFailedWAL: r.LastFailedWAL,
+		PendingRestartDecr: r.PendingRestartForDecrease, ArchivingWAL: r.IsArchivingWAL && archiver, LastFailedWAL: r.LastFailedWAL,
 		ReadyWALFiles: r.ReadyWALFiles, MightBeUnavailable: r.MightBeUnavailable, PgRewindRunning: r.IsPgRewindRunning,
 		ManagerVersion: r.InstanceManagerVersion, ManagerUpgrading: r.IsInstanceManagerUpgrading,
 		Provenance: viewmodel.Provenance{Origin: viewmodel.OriginInstance, Source: "/pg/status", ObservedAt: &observed},
@@ -962,7 +975,10 @@ func eventRow(e *corev1.Event) viewmodel.EventRow {
 }
 
 // sparklines are the series an instance row draws: the primary's WAL
-// position ring is read by the recovery facts only.
+// position and last-archived rings are read by the recovery and backlog
+// facts only.
 func sparklines(series []viewmodel.Series) []viewmodel.Series {
-	return slices.DeleteFunc(series, func(s viewmodel.Series) bool { return s.Key == sweep.SeriesCurrentLSN })
+	return slices.DeleteFunc(series, func(s viewmodel.Series) bool {
+		return s.Key == sweep.SeriesCurrentLSN || s.Key == sweep.SeriesLastArchivedAt
+	})
 }

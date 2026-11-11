@@ -118,6 +118,11 @@ func TestSnapshotRestoresSinceReadingAndRings(t *testing.T) {
 		if len(sr.Points) != 4 || sr.Points[0].Value == nil || *sr.Points[0].Value != 3 || sr.Points[2].Value != nil {
 			t.Fatalf("points = %+v, want the old samples, a gap, the new one", sr.Points)
 		}
+		// When the read returned is kept across the restart (CNPG P3-4);
+		// a failed read has none.
+		if sr.Points[0].ReadBy.IsZero() || sr.Points[0].ReadBy.Before(sr.Points[0].At) || !sr.Points[1].ReadBy.IsZero() {
+			t.Fatalf("read times = %v, %v, want the first read's restored and none for the failure", sr.Points[0].ReadBy, sr.Points[1].ReadBy)
+		}
 	}
 }
 

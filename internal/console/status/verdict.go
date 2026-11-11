@@ -250,8 +250,15 @@ func primaryArchiver(g *gathered) *cnpgstatus.ArchiverLive {
 }
 
 // earlierReady are the instance's readyWalFiles samples before the
-// reading taken at observed, oldest first.
+// reading taken at observed, oldest first, each with the
+// last_archived_time the same sweep read (instance clock), when kept.
 func earlierReady(g *gathered, instance string, observed time.Time) []cnpgstatus.ReadySample {
+	archived := map[int64]time.Time{}
+	for _, p := range g.archivedRings[instance] {
+		if p.Value != nil {
+			archived[p.At.UnixNano()] = time.UnixMilli(int64(*p.Value)).UTC()
+		}
+	}
 	var out []cnpgstatus.ReadySample
 	for _, p := range g.readyRings[instance] {
 		if !p.At.Before(observed) {
@@ -261,6 +268,9 @@ func earlierReady(g *gathered, instance string, observed time.Time) []cnpgstatus
 		if p.Value != nil {
 			n := int(*p.Value)
 			s.Files = &n
+			if t, ok := archived[p.At.UnixNano()]; ok {
+				s.LastArchivedAt = &t
+			}
 		}
 		out = append(out, s)
 	}
@@ -374,8 +384,15 @@ func (s *Service) statusReadContributor(g *gathered, now time.Time) viewmodel.Co
 		c.Provenance = viewmodel.Provenance{Origin: viewmodel.OriginInstance, Source: "/pg/status"}
 		return c
 	}
+	// A hibernated Cluster runs no instance: nothing to read is what it
+	// is, inactive, not unknown (which would outrank the hibernation in
+	// the headline; round 8, DBA).
+	hibernated := g.cluster != nil && cnpgstatus.Hibernation(g.cluster).State == cnpgstatus.HibernationHibernated
 	if !g.hasSweep {
 		c.Health, c.Detail = viewmodel.HealthUnknown, "not swept yet"
+		if hibernated && len(g.pods) == 0 {
+			c.Health, c.Detail = viewmodel.HealthInactive, "the Cluster is hibernated: no instance runs to read"
+		}
 		c.Provenance = viewmodel.Provenance{Origin: viewmodel.OriginInstance, Source: "/pg/status"}
 		return c
 	}
@@ -389,6 +406,8 @@ func (s *Service) statusReadContributor(g *gathered, now time.Time) viewmodel.Co
 	}
 	c.Detail = fmt.Sprintf("%d of %d instances read", read, total)
 	switch {
+	case total == 0 && hibernated:
+		c.Health, c.Detail = viewmodel.HealthInactive, "the Cluster is hibernated: no instance runs to read"
 	case total == 0:
 		c.Health, c.Detail = viewmodel.HealthUnknown, "no instance pod to read"
 	case read == total:
@@ -398,7 +417,10 @@ func (s *Service) statusReadContributor(g *gathered, now time.Time) viewmodel.Co
 	}
 	if sweepStale(g, now) {
 		c.Provenance.Stale, c.Provenance.StaleReason = true, sweepStaleReason
-		c.Health = viewmodel.HealthUnknown
+		if total > 0 || !hibernated {
+			// With no instance to read, a stale sweep hides nothing.
+			c.Health = viewmodel.HealthUnknown
+		}
 	}
 	return c
 }
