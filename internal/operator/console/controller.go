@@ -251,20 +251,18 @@ func (r *Reconciler) reconcile(ctx context.Context, console *pgtoolboxv1alpha1.P
 	// allow, whatever else is wrong. The workload and the ingress policy
 	// stay as they were (a template that trusts every peer is never left
 	// without its policy): ExposureConfined says the policy is kept, and
-	// goes only when there is none.
-	if spec := &console.Spec.Exposure; spec.TypeOrDefault() != pgtoolboxv1alpha1.ExposureTypeClusterIP &&
-		!exposure.HostnameAllowed(spec.Hostname, r.AllowedHostSuffixes) {
+	// goes only when there is none. ExposureReady and status.url say that
+	// nothing is published any more.
+	if message := exposure.HostnameRefusal(console.Spec.Exposure.ExposureSpec, r.AllowedHostSuffixes, imageProblem); message != "" {
 		if err := r.withdrawExposure(ctx, console); err != nil {
 			return err
 		}
 		if err := r.policyKeptOnStall(ctx, console); err != nil {
 			return err
 		}
-		message := fmt.Sprintf("spec.exposure.hostname %s is not under the operator's allowed host suffixes (EXPOSURE_ALLOWED_HOST_SUFFIXES: %s)",
-			spec.Hostname, strings.Join(r.AllowedHostSuffixes, ", "))
-		if imageProblem != "" {
-			message += "; also " + imageProblem
-		}
+		console.Status.URL = ""
+		setCondition(console, pgtoolboxv1alpha1.ConditionExposureReady, metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonHostnameNotAllowed,
+			exposure.WithdrawnMessage)
 		return r.invalid(console, pgtoolboxv1alpha1.ReasonHostnameNotAllowed, message)
 	}
 	if imageProblem != "" {

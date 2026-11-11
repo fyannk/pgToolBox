@@ -256,6 +256,17 @@ func TestRecordTransitions(t *testing.T) {
 			want: []string{"Warning ClusterNotFound"},
 		},
 		{
+			name:   "two aspects turning False for one reason are one Warning",
+			before: nil,
+			after: []metav1.Condition{
+				at("ConfigurationValid", metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonHostnameNotAllowed),
+				at("ExposureReady", metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonHostnameNotAllowed),
+				at("WorkloadReady", metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonImagePullFailed),
+				at("Stalled", metav1.ConditionTrue, pgtoolboxv1alpha1.ReasonHostnameNotAllowed),
+			},
+			want: []string{"Warning HostnameNotAllowed", "Warning ImagePullFailed"},
+		},
+		{
 			name:   "a stall of its own is a Warning",
 			before: nil,
 			after:  []metav1.Condition{at("Stalled", metav1.ConditionTrue, pgtoolboxv1alpha1.ReasonUpgradeBackupFailed)},

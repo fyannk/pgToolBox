@@ -14,7 +14,13 @@
 
 package exposure
 
-import "testing"
+import (
+	"slices"
+	"strings"
+	"testing"
+
+	pgtoolboxv1alpha1 "github.com/fyannk/pgToolBox/api/v1alpha1"
+)
 
 func TestHostnameAllowed(t *testing.T) {
 	for _, tc := range []struct {
@@ -41,6 +47,46 @@ func TestHostnameAllowed(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := HostnameAllowed(tc.hostname, tc.suffixes); got != tc.want {
 				t.Fatalf("HostnameAllowed(%q, %q) = %v, want %v", tc.hostname, tc.suffixes, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestHostnameRefusal(t *testing.T) {
+	suffixes := []string{"apps.example.com"}
+	for _, tc := range []struct {
+		name string
+		spec pgtoolboxv1alpha1.ExposureSpec
+		also []string
+		want []string // substrings; nil: no refusal
+	}{
+		{name: "clusterIP publishes no name", spec: pgtoolboxv1alpha1.ExposureSpec{Hostname: "login.corp.example.com"}},
+		{name: "allowed", spec: pgtoolboxv1alpha1.ExposureSpec{Type: pgtoolboxv1alpha1.ExposureTypeIngress, Hostname: "a.apps.example.com"}},
+		{
+			name: "refused", spec: pgtoolboxv1alpha1.ExposureSpec{Type: pgtoolboxv1alpha1.ExposureTypeRoute, Hostname: "login.corp.example.com"},
+			want: []string{"login.corp.example.com", "EXPOSURE_ALLOWED_HOST_SUFFIXES: apps.example.com"},
+		},
+		{
+			name: "refused with another problem", spec: pgtoolboxv1alpha1.ExposureSpec{Type: pgtoolboxv1alpha1.ExposureTypeIngress, Hostname: "login.corp.example.com"},
+			also: []string{"", "spec.image repository evil is not in the operator's allow-list"},
+			want: []string{"login.corp.example.com", "; also spec.image repository evil"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := HostnameRefusal(tc.spec, suffixes, tc.also...)
+			if tc.want == nil {
+				if got != "" {
+					t.Fatalf("HostnameRefusal = %q, want none", got)
+				}
+				return
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(got, want) {
+					t.Fatalf("HostnameRefusal = %q, want it to contain %q", got, want)
+				}
+			}
+			if strings.Count(got, "; also") != len(slices.DeleteFunc(slices.Clone(tc.also), func(s string) bool { return s == "" })) {
+				t.Fatalf("HostnameRefusal = %q names an empty problem", got)
 			}
 		})
 	}

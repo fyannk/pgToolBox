@@ -131,6 +131,13 @@ func (r *Reconciler) reconcile(ctx context.Context, p *pgtoolboxv1alpha1.PgAdmin
 // Clusters, Poolers and client Secret exist, and every Cluster of another
 // namespace is granted (ConfigurationValid).
 func (r *Reconciler) resolve(ctx context.Context, p *pgtoolboxv1alpha1.PgAdmin) (buildInputs, offerResult, remoteResolution, error) {
+	// The hostname allow-list (EXPOSURE_ALLOWED_HOST_SUFFIXES) before
+	// anything else may stall (the image allow-list, the settings
+	// database): nothing stays published under a name the installer did
+	// not allow, whatever else is wrong.
+	if err := r.checkHostname(ctx, p); err != nil {
+		return buildInputs{}, offerResult{}, remoteResolution{}, err
+	}
 	problems := configProblems{reason: pgtoolboxv1alpha1.ReasonConfigurationInvalid}
 	selected, remote, err := r.resolveClusters(ctx, p, &problems)
 	if err != nil {
@@ -148,11 +155,6 @@ func (r *Reconciler) resolve(ctx context.Context, p *pgtoolboxv1alpha1.PgAdmin) 
 	}
 	in, err := r.assembleInputs(p, selected, remote, result, configDB)
 	if err != nil {
-		return buildInputs{}, offerResult{}, remoteResolution{}, err
-	}
-	// The hostname allow-list (EXPOSURE_ALLOWED_HOST_SUFFIXES): nothing is
-	// published under a name the installer did not allow.
-	if err := r.checkHostname(ctx, p); err != nil {
 		return buildInputs{}, offerResult{}, remoteResolution{}, err
 	}
 	if err := r.checkOAuth2Secret(ctx, p, &in); err != nil {
@@ -1000,20 +1002,23 @@ func unavailableWhy(result discovery.Result) string {
 
 // checkHostname refuses a spec.exposure.hostname outside the operator's
 // host suffixes: the exposure objects this PgAdmin owns are withdrawn (one
-// published before the allow-list existed must not keep the name), then
+// published before the allow-list existed must not keep the name),
+// ExposureReady=False and status.url cleared, then
 // ConfigurationValid=False (HostnameNotAllowed) and a stall until the spec
-// or the operator's configuration changes.
+// or the operator's configuration changes. The message names a refused
+// image too; what needs the API (the settings database) is checked once
+// the hostname is fixed.
 func (r *Reconciler) checkHostname(ctx context.Context, p *pgtoolboxv1alpha1.PgAdmin) error {
-	hostname := p.Spec.Exposure.Hostname
-	if p.Spec.Exposure.TypeOrDefault() == pgtoolboxv1alpha1.ExposureTypeClusterIP ||
-		exposure.HostnameAllowed(hostname, r.Config.ExposureAllowedHostSuffixes) {
+	_, imageProblem := r.imageProblem(p)
+	message := exposure.HostnameRefusal(p.Spec.Exposure, r.Config.ExposureAllowedHostSuffixes, imageProblem)
+	if message == "" {
 		return nil
 	}
 	if err := r.withdrawExposure(ctx, p); err != nil {
 		return err
 	}
-	message := fmt.Sprintf("spec.exposure.hostname %s is not under the operator's allowed host suffixes (EXPOSURE_ALLOWED_HOST_SUFFIXES: %s)",
-		hostname, strings.Join(r.Config.ExposureAllowedHostSuffixes, ", "))
+	p.Status.URL = ""
+	set(p, pgtoolboxv1alpha1.ConditionExposureReady, metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonHostnameNotAllowed, "%s", exposure.WithdrawnMessage)
 	set(p, pgtoolboxv1alpha1.ConditionConfigurationValid, metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonHostnameNotAllowed, "%s", message)
 	return reconcile.Stall(pgtoolboxv1alpha1.ReasonHostnameNotAllowed, "%s", message)
 }
@@ -1022,6 +1027,18 @@ func (r *Reconciler) checkHostname(ctx context.Context, p *pgtoolboxv1alpha1.PgA
 // operator's allow-list: ConfigurationValid=False (ImageNotAllowed) and a
 // stall until the spec or the operator's configuration changes.
 func (r *Reconciler) checkImages(p *pgtoolboxv1alpha1.PgAdmin) error {
+	reason, message := r.imageProblem(p)
+	if message == "" {
+		return nil
+	}
+	set(p, pgtoolboxv1alpha1.ConditionConfigurationValid, metav1.ConditionFalse, reason, "%s", message)
+	return reconcile.Stall(reason, "%s", message)
+}
+
+// imageProblem names the first spec.image or oauth-proxy image outside the
+// operator's allow-list, or "" when every image is allowed. It reads
+// nothing and writes nothing.
+func (r *Reconciler) imageProblem(p *pgtoolboxv1alpha1.PgAdmin) (pgtoolboxv1alpha1.Reason, string) {
 	type named struct {
 		field        string
 		image        *pgtoolboxv1alpha1.ImageSpec
@@ -1035,10 +1052,8 @@ func (r *Reconciler) checkImages(p *pgtoolboxv1alpha1.PgAdmin) error {
 		if candidate.image == nil || specs.ImageAllowed(candidate.image.Repository, r.Config.PgAdminImageRepositories, candidate.defaultImage) {
 			continue
 		}
-		message := fmt.Sprintf("%s repository %s is not in the operator's allow-list (--pgadmin-image-repositories)",
+		return pgtoolboxv1alpha1.ReasonImageNotAllowed, fmt.Sprintf("%s repository %s is not in the operator's allow-list (--pgadmin-image-repositories)",
 			candidate.field, candidate.image.Repository)
-		set(p, pgtoolboxv1alpha1.ConditionConfigurationValid, metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonImageNotAllowed, "%s", message)
-		return reconcile.Stall(pgtoolboxv1alpha1.ReasonImageNotAllowed, "%s", message)
 	}
-	return nil
+	return "", ""
 }

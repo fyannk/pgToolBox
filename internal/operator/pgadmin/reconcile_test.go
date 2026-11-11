@@ -1240,21 +1240,56 @@ func TestReconcileHostnameAllowList(t *testing.T) {
 			return p
 		}
 	}
+	// The round-10 probe: a check that stalls before the hostname's (the
+	// image allow-list, the settings database) must not keep the Ingress
+	// published under a refused name.
+	refusedImage := func() *pgtoolboxv1alpha1.PgAdmin {
+		p := ingress("login.corp.example.com")()
+		p.Spec.Image = &pgtoolboxv1alpha1.ImageSpec{Repository: "evil.example/pgadmin", Tag: "1"}
+		return p
+	}
+	withConfigDatabase := func() *pgtoolboxv1alpha1.PgAdmin {
+		p := ingress("login.corp.example.com")()
+		p.Spec.ConfigDatabase = &pgtoolboxv1alpha1.PgAdminConfigDatabaseSpec{ClusterRef: pgtoolboxv1alpha1.LocalObjectReference{Name: "billing"}}
+		return p
+	}
 	for _, tt := range []struct {
 		name     string
 		pgadmin  func() *pgtoolboxv1alpha1.PgAdmin
 		suffixes []string
-		want     pgtoolboxv1alpha1.Reason
+		// before runs ahead of the first loop, after ahead of the second,
+		// with the suffixes.
+		before, after func(h *harness)
+		message       string
+		want          pgtoolboxv1alpha1.Reason
 	}{
 		{name: "no list keeps any hostname", pgadmin: ingress("login.corp.example.com"), want: pgtoolboxv1alpha1.ReasonAsExpected},
 		{name: "under a suffix", pgadmin: ingress("pgadmin.team-a.apps.example.com"), suffixes: []string{"apps.example.com"}, want: pgtoolboxv1alpha1.ReasonAsExpected},
 		{name: "clusterIP publishes no name", pgadmin: oauth2PgAdmin, suffixes: []string{"apps.example.com"}, want: pgtoolboxv1alpha1.ReasonAsExpected},
 		{name: "another team's name", pgadmin: ingress("login.corp.example.com"), suffixes: []string{"apps.example.com"}, want: pgtoolboxv1alpha1.ReasonHostnameNotAllowed},
 		{name: "a look-alike of a suffix", pgadmin: ingress("evilapps.example.com"), suffixes: []string{"apps.example.com"}, want: pgtoolboxv1alpha1.ReasonHostnameNotAllowed},
+		{
+			name: "the image refused too", pgadmin: refusedImage, suffixes: []string{"apps.example.com"},
+			before: func(h *harness) { h.r.Config.PgAdminImageRepositories = []string{"evil.example/pgadmin"} },
+			after:  func(h *harness) { h.r.Config.PgAdminImageRepositories = []string{"registry.example/pgadmin"} },
+			message: "; also spec.image repository evil.example/pgadmin is not in the operator's allow-list",
+			want:    pgtoolboxv1alpha1.ReasonHostnameNotAllowed,
+		},
+		{
+			name: "the settings database stalls too", pgadmin: withConfigDatabase, suffixes: []string{"apps.example.com"},
+			before: func(h *harness) { h.r.Features.Databases = discovery.Result{State: discovery.Available} },
+			after: func(h *harness) {
+				h.r.Features.Databases = discovery.Result{State: discovery.NotInstalled, Reason: "Database.postgresql.cnpg.io is not served"}
+			},
+			want: pgtoolboxv1alpha1.ReasonHostnameNotAllowed,
+		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			p := tt.pgadmin()
 			h := newHarness(t, nil, baseObjects(p)...)
+			if tt.before != nil {
+				tt.before(h)
+			}
 			// Published before the list existed.
 			if err := h.reconcile(p.Name); err != nil {
 				t.Fatal(err)
@@ -1265,6 +1300,9 @@ func TestReconcileHostnameAllowList(t *testing.T) {
 				}
 			}
 			h.r.Config.ExposureAllowedHostSuffixes = tt.suffixes
+			if tt.after != nil {
+				tt.after(h)
+			}
 			if err := h.reconcile(p.Name); err != nil {
 				t.Fatal(err)
 			}
@@ -1281,6 +1319,21 @@ func TestReconcileHostnameAllowList(t *testing.T) {
 			expectCondition(t, got, "Stalled", metav1.ConditionTrue, tt.want)
 			if !apierrors.IsNotFound(ingressErr) {
 				t.Fatalf("the Ingress under a refused hostname was not withdrawn: %v", ingressErr)
+			}
+			// Nothing stale says pgAdmin is still reachable under the name.
+			expectCondition(t, got, "ExposureReady", metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonHostnameNotAllowed)
+			if got.Status.URL != "" {
+				t.Errorf("status.url = %q while nothing is published", got.Status.URL)
+			}
+			if c := condition(got, "ConfigurationValid"); !strings.Contains(c.Message, tt.message) {
+				t.Errorf("ConfigurationValid message %q does not contain %q", c.Message, tt.message)
+			}
+			// The stalled loop is a no-op the next time: no status write.
+			if err := h.reconcile(p.Name); err != nil {
+				t.Fatal(err)
+			}
+			if again := h.pgadmin(p.Name); again.ResourceVersion != got.ResourceVersion {
+				t.Errorf("a repeated stalled loop wrote status (resourceVersion %s -> %s)", got.ResourceVersion, again.ResourceVersion)
 			}
 			warnings := 0
 			for _, e := range h.events() {
