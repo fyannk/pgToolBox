@@ -43,7 +43,10 @@ const (
 // Budgets. Every request to /mcp spends one call of its user's budget
 // (tools/list as much as tools/call), and carries one JSON-RPC message:
 // batches are refused, so a request is one call. A user has at most
-// DefaultMaxConcurrent requests in flight. A bearer the console has not
+// DefaultMaxConcurrent requests in flight (a GET, the idle SSE stream an
+// assistant holds open for the length of its session, counts against
+// DefaultMaxStreams instead, so four open assistants do not refuse the
+// fifth one's calls). A bearer the console has not
 // accepted recently spends one attempt of its client address's budget
 // before the API server is asked about it; the console shares that
 // budget with its sign-in form.
@@ -51,6 +54,7 @@ const (
 	DefaultCallsPerMinute    = 120
 	DefaultCallsBurst        = 60
 	DefaultMaxConcurrent     = 4
+	DefaultMaxStreams        = 16
 	DefaultMaxBodyBytes      = 64 << 10
 	DefaultAttemptsPerMinute = 30
 	DefaultAttemptsBurst     = 30
@@ -81,6 +85,9 @@ type Options struct {
 	// MaxConcurrent bounds one user's requests in flight; 0 is
 	// DefaultMaxConcurrent.
 	MaxConcurrent int
+	// MaxStreams bounds one user's open GET streams (a session's idle
+	// server-to-client channel); 0 is DefaultMaxStreams.
+	MaxStreams int
 	// MaxBodyBytes bounds a request body; 0 is DefaultMaxBodyBytes.
 	MaxBodyBytes int
 	Log          *slog.Logger
@@ -93,6 +100,7 @@ type Guard struct {
 	mu       sync.Mutex
 	known    map[[32]byte]time.Time
 	inflight map[string]int
+	streams  map[string]int
 }
 
 // NewGuard fills the defaults.
@@ -112,10 +120,13 @@ func NewGuard(o Options) *Guard {
 	if o.MaxConcurrent <= 0 {
 		o.MaxConcurrent = DefaultMaxConcurrent
 	}
+	if o.MaxStreams <= 0 {
+		o.MaxStreams = DefaultMaxStreams
+	}
 	if o.MaxBodyBytes <= 0 {
 		o.MaxBodyBytes = DefaultMaxBodyBytes
 	}
-	return &Guard{o: o, known: map[[32]byte]time.Time{}, inflight: map[string]int{}}
+	return &Guard{o: o, known: map[[32]byte]time.Time{}, inflight: map[string]int{}, streams: map[string]int{}}
 }
 
 type clientKey struct{}
@@ -218,12 +229,18 @@ func (g *Guard) Wrap(next http.Handler) http.Handler {
 			tooMany(w, "too many MCP requests for this user; wait a few seconds")
 			return
 		}
-		if !g.acquire(p.User.Name) {
-			g.deny(r, client, p.User.Name, "concurrent calls")
-			tooMany(w, "too many MCP requests in flight for this user; wait for one to finish")
+		// A GET is the session's SSE stream: idle for most of its life, it
+		// has a cap of its own and does not take a call's slot.
+		held, limit, why, msg := g.inflight, g.o.MaxConcurrent, "concurrent calls", "too many MCP requests in flight for this user; wait for one to finish"
+		if r.Method == http.MethodGet {
+			held, limit, why, msg = g.streams, g.o.MaxStreams, "open streams", "too many MCP streams open for this user; close an assistant session"
+		}
+		if !g.acquire(held, p.User.Name, limit) {
+			g.deny(r, client, p.User.Name, why)
+			tooMany(w, msg)
 			return
 		}
-		defer g.release(p.User.Name)
+		defer g.release(held, p.User.Name)
 		ctx := WithClient(auth.WithPrincipal(r.Context(), p), client)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
@@ -270,24 +287,24 @@ func (g *Guard) oneMessage(w http.ResponseWriter, r *http.Request, c auth.Client
 	return true
 }
 
-func (g *Guard) acquire(user string) bool {
+func (g *Guard) acquire(held map[string]int, user string, limit int) bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if g.inflight[user] >= g.o.MaxConcurrent {
+	if held[user] >= limit {
 		return false
 	}
-	g.inflight[user]++
+	held[user]++
 	return true
 }
 
-func (g *Guard) release(user string) {
+func (g *Guard) release(held map[string]int, user string) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if g.inflight[user] <= 1 {
-		delete(g.inflight, user)
+	if held[user] <= 1 {
+		delete(held, user)
 		return
 	}
-	g.inflight[user]--
+	held[user]--
 }
 
 // ResourceURL is the endpoint's resource identifier for r.
