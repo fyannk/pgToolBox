@@ -124,6 +124,12 @@ func capAtRollup(snapshot *evidencev1alpha1.RepositoryEvidenceSnapshot, rec Reco
 	if !rollupUnexplained(snapshot, rec.Paths, coverage.State, items) {
 		return rec
 	}
+	return rollupCap(rec, coverage)
+}
+
+// rollupCap makes every healthy path of rec at most a warning, with the
+// roll-up's reason after its own (RollupCapCode).
+func rollupCap(rec Recovery, coverage evidencev1alpha1.StateReason) Recovery {
 	rec.Paths = slices.Clone(rec.Paths)
 	for index := range rec.Paths {
 		path := &rec.Paths[index]

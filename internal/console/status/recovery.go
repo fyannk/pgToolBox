@@ -834,6 +834,9 @@ func (s *Service) recoveryTimeline(ev clusterEvidence, summary viewmodel.BackupS
 			addReason(&out, say("recovery.reason.reportedWindow", "the window is the operator's report, not repository evidence", nil))
 		}
 		addReason(&out, reason)
+		if p, ok := keptDroppedReason(ev.result.Recovery.Dropped); ok {
+			addReason(&out, p)
+		}
 	}
 	out.Markers = recoveryMarkers(ev.result.Backups, rows)
 	return out
@@ -860,6 +863,21 @@ func recoveryUnavailableReason(ev clusterEvidence) viewmodel.Phrase {
 		return evidenceReason("recovery.reason.pathsNotCoverage", ev.result.Recovery.Reason)
 	}
 	return say("recovery.reason.noPaths", "the evidence agent published no recovery paths", nil)
+}
+
+// keptDroppedReason says why the last good recovery paths were not kept
+// beside a failed read (evidence.Recovery Dropped); false when none were
+// dropped.
+func keptDroppedReason(dropped string) (viewmodel.Phrase, bool) {
+	switch dropped {
+	case evidence.KeptDroppedTooOld:
+		return say("recovery.reason.keptTooOld",
+			"the last good recovery paths are more than three refresh intervals (at least an hour) older than the latest scan and are no longer shown", nil), true
+	case evidence.KeptDroppedRepositoryChanged:
+		return say("recovery.reason.keptRepositoryChanged",
+			"the repository's identity changed since the last good recovery paths were read: they describe another repository and are no longer shown", nil), true
+	}
+	return viewmodel.Phrase{}, false
 }
 
 // addReason appends p to the timeline's reasons; Reason is their English
@@ -1107,7 +1125,7 @@ func evidenceTimeline(out *viewmodel.RecoveryTimeline, in timelineInput) {
 	if tail == evidencev1alpha1.CoverageFrontier {
 		walEnd(out, in.facts, last, margin)
 	}
-	failedRecently := markEdges(out, in, first, last, margin)
+	failedRecently := markEdges(out, in, spans, first, last, margin)
 	// The repository's newest timeline can lag the live one: right after a
 	// failover, until the new timeline's history file is archived and the
 	// agent reads the repository again, every path targets the parent
@@ -1126,6 +1144,14 @@ func evidenceTimeline(out *viewmodel.RecoveryTimeline, in timelineInput) {
 			// primary archived it.
 			formerArchiverEdge(out, in.facts, r.timeline, r.to, in.scannedAt)
 		}
+	}
+	var ahead uint64
+	if live != 0 && target > live {
+		// The repository's newest timeline is ahead of the live one: a
+		// default restore follows a timeline the current primary never
+		// wrote (round 12, PG P3-2).
+		ahead = target
+		repositoryAheadEdge(out, in, target, live, first, last)
 	}
 	newest := runs[len(runs)-1]
 	holder, rejoined := "", false
@@ -1169,7 +1195,7 @@ func evidenceTimeline(out *viewmodel.RecoveryTimeline, in timelineInput) {
 		out.NewestCoveredTarget = lastCovered(out.Segments)
 	}
 	timelineVerdict(out, in, timelineFindings{
-		tail: tail, formerMayHold: newest.formerMayHold, holder: holder, holderRejoined: rejoined, holes: holes, candidates: candidates, failedRecently: failedRecently, backlog: in.facts.backlog, liveAhead: behind,
+		tail: tail, formerMayHold: newest.formerMayHold, holder: holder, holderRejoined: rejoined, holes: holes, candidates: candidates, failedRecently: failedRecently, backlog: in.facts.backlog, liveAhead: behind, repositoryAhead: ahead, live: live,
 		archiverUnread: in.facts.archiverUnread, hibernated: in.facts.hibernated, notReported: in.facts.notReported, degraded: degraded, degradedUnusable: degradedUnusable,
 		orphan: orphan, undrawn: undrawn,
 	})
@@ -1442,7 +1468,7 @@ func drawRuns(out *viewmodel.RecoveryTimeline, spans, runs []interval, margin ti
 // reached the repository (failedRecently), or while a backlog persists.
 // The oldest edge: a retention purge can remove the oldest backup at any
 // moment; the evidence shows it at most one scan later.
-func markEdges(out *viewmodel.RecoveryTimeline, in timelineInput, first, last time.Time, margin time.Duration) (failedRecently bool) {
+func markEdges(out *viewmodel.RecoveryTimeline, in timelineInput, spans []interval, first, last time.Time, margin time.Duration) (failedRecently bool) {
 	marginText := say("recovery.segment.nearEnd",
 		"Within "+humanDuration(margin)+" of the end of the archived WAL: segment names cannot tell whether this target's WAL is archived yet.",
 		map[string]string{"marginSeconds": secondsParam(margin)})
@@ -1464,7 +1490,7 @@ func markEdges(out *viewmodel.RecoveryTimeline, in timelineInput, first, last ti
 	if in.facts.archiverUnread {
 		archiverUnreadEdge(out, in.facts, last, in.scannedAt)
 	}
-	purge := purgeBand(in, first, last)
+	purge := purgeBand(in, spans, first, last)
 	uncertain(out, first, first.Add(purge), say("recovery.segment.purgeEdge",
 		"Within "+humanDuration(purge)+" of the oldest restore point: a retention purge since the repository was last read may have removed this base backup.",
 		map[string]string{"marginSeconds": secondsParam(purge)}))
@@ -1478,7 +1504,14 @@ func markEdges(out *viewmodel.RecoveryTimeline, in timelineInput, first, last ti
 // ahead of the console's does not shrink it), and never past the window
 // [first, last] (an absurd scan time, which saturates time.Sub, does not
 // overflow it to nothing; round 11, PG P3).
-func purgeBand(in timelineInput, first, last time.Time) time.Duration {
+//
+// A purge drops a whole backup, with the WAL only it needs, not a span as
+// long as the time elapsed: once the scan is older than one refresh
+// interval (a purge may have run since it, unseen), the band reaches at
+// least the end of the span only the oldest backup reaches, the next
+// backup's lower bound (round 12, PG P3-3). A single backup is never
+// purged by retention, so its span is not extended.
+func purgeBand(in timelineInput, spans []interval, first, last time.Time) time.Duration {
 	purge := in.refresh
 	if purge <= 0 {
 		purge = evidence.DefaultAgentRefreshInterval
@@ -1494,10 +1527,64 @@ func purgeBand(in timelineInput, first, last time.Time) time.Duration {
 	if read != nil && in.facts.now.After(*read) {
 		age = min(in.facts.now.Sub(*read), window)
 	}
-	if purge > window-age {
-		return window
+	band := window
+	if purge <= window-age {
+		band = purge + age
 	}
-	return purge + age
+	if age > purge {
+		if only := oldestOnly(spans, first); only > band {
+			band = min(only, window)
+		}
+	}
+	return band
+}
+
+// oldestOnly is how long after first only the oldest backup's spans
+// reach: until the earliest lower bound of another backup's span; 0 when
+// no other backup has a span.
+func oldestOnly(spans []interval, first time.Time) time.Duration {
+	oldest := ""
+	for _, sp := range spans {
+		if sp.from.Equal(first) {
+			oldest = sp.backupID
+			break
+		}
+	}
+	var next *time.Time
+	for _, sp := range spans {
+		if sp.backupID != oldest && (next == nil || sp.from.Before(*next)) {
+			from := sp.from
+			next = &from
+		}
+	}
+	if next == nil {
+		return 0
+	}
+	return max(next.Sub(first), 0)
+}
+
+// repositoryAheadEdge marks the restore points a default restore may
+// reach on another cluster's line when the repository's newest timeline,
+// target, is ahead of live, the one the current primary writes: from the
+// newest lower bound of an on-target backup on a timeline the current
+// primary wrote or descends from (live or older: an on-target path from it
+// ends its backup before the fork), else from the first restore point, to
+// the newest. The fork itself is not placed: what lies between is unknown,
+// never covered.
+func repositoryAheadEdge(out *viewmodel.RecoveryTimeline, in timelineInput, target, live uint64, first, last time.Time) {
+	from := first
+	for _, p := range in.rec.Paths {
+		if p.TargetTimeline != target || offTarget(p) || p.LowerBoundAt == nil || p.StartTimeline == nil || *p.StartTimeline > live {
+			continue
+		}
+		if b := p.LowerBoundAt.UTC(); b.After(from) {
+			from = b
+		}
+	}
+	tl, lv := strconv.FormatUint(target, 10), strconv.FormatUint(live, 10)
+	uncertain(out, from, last, say("recovery.segment.repositoryAheadOfLive",
+		"The repository's newest timeline, "+tl+", is ahead of timeline "+lv+", the one the current primary writes: another cluster may archive into this repository, and a default restore follows timeline "+tl+", so a time past the fork may restore that cluster's data.",
+		map[string]string{"timeline": tl, "liveTimeline": lv}))
 }
 
 // caughtUpBefore reports an archiver that had caught up from its failure
@@ -1854,6 +1941,9 @@ type timelineFindings struct {
 	// liveAhead is the live timeline when the newest run ends on an older
 	// one (tailFacts liveAhead); 0 otherwise.
 	liveAhead uint64
+	// repositoryAhead is the target timeline when it is newer than live,
+	// the timeline the current primary writes (known); 0 otherwise.
+	repositoryAhead, live uint64
 	// archiverUnread, hibernated, notReported: the primary's archiver is
 	// not read, or reports no readyWalFiles.
 	archiverUnread, hibernated, notReported bool
@@ -1900,6 +1990,12 @@ func timelineVerdict(out *viewmodel.RecoveryTimeline, in timelineInput, f timeli
 		out.State = warning
 		_, p := holeOf(f.tail)
 		setReason(out, p)
+	case f.repositoryAhead != 0:
+		out.State = warning
+		tl, lv := strconv.FormatUint(f.repositoryAhead, 10), strconv.FormatUint(f.live, 10)
+		setReason(out, say("recovery.reason.repositoryAheadOfLive",
+			"the repository's newest timeline, "+tl+", is ahead of timeline "+lv+", the one the current primary writes: another cluster may archive into this repository, and a default restore follows timeline "+tl+", so the restore points past the fork are not counted as covered; check that no other cluster's backup configuration names this repository",
+			map[string]string{"timeline": tl, "liveTimeline": lv}))
 	case f.holes > 0:
 		out.State = warning
 		setReason(out, say("recovery.reason.holes", "the window has holes where WAL is missing", nil))
@@ -1937,6 +2033,24 @@ func timelineVerdict(out *viewmodel.RecoveryTimeline, in timelineInput, f timeli
 		n := strconv.Itoa(f.backlog)
 		setReason(out, say("recovery.reason.archiveBacklog", n+" WAL segments are waiting to be archived on the primary: the newest restore points are uncertain",
 			map[string]string{"segments": n}))
+	case f.hibernated:
+		// A hibernated Cluster writes no WAL and runs no archiver: nothing
+		// is going wrong that a warning would ask to act on, and nothing
+		// confirms that the WAL written before it reached the repository.
+		// The newest restore points are unknown until it wakes up. Ranked
+		// before a post-failover lag, whose advice to act on the primary
+		// cannot be followed with no instance running (round 12, CNPG
+		// P3-1).
+		out.State = string(evidencev1alpha1.Unknown)
+		setReason(out, say("recovery.reason.archiverHibernated", "the Cluster is hibernated: whether the WAL written before it reached the repository is not confirmed, so the newest restore points are uncertain", nil))
+	case f.liveAhead != 0 && f.archiverUnread:
+		// The primary was not read (fenced, unreachable): advice to run
+		// anything on it may not be followable (round 12, CNPG P3-1).
+		out.State = warning
+		tl := strconv.FormatUint(f.liveAhead, 10)
+		setReason(out, say("recovery.reason.liveTimelineNotArchivedPrimaryUnread",
+			"the repository held no WAL of timeline "+tl+", the one the current primary writes, when it was last read, and the primary was not read: the newest restore points are uncertain until the primary is read again and the agent reads WAL of timeline "+tl,
+			map[string]string{"timeline": tl}))
 	case f.liveAhead != 0:
 		// Right after a failover the repository holds no WAL of the
 		// timeline the new primary writes: the newest restore points are
@@ -1950,13 +2064,6 @@ func timelineVerdict(out *viewmodel.RecoveryTimeline, in timelineInput, f timeli
 	case f.notReported:
 		out.State = warning
 		setReason(out, say("recovery.reason.archiverNotReported", "the archiving instance does not report itself primary (a replica cluster's designated primary, or a primary mid-promotion), so it does not report its archive backlog: how late recent WAL reached the repository is not known, so the newest restore points are uncertain", nil))
-	case f.hibernated:
-		// A hibernated Cluster writes no WAL and runs no archiver: nothing
-		// is going wrong that a warning would ask to act on, and nothing
-		// confirms that the WAL written before it reached the repository.
-		// The newest restore points are unknown until it wakes up.
-		out.State = string(evidencev1alpha1.Unknown)
-		setReason(out, say("recovery.reason.archiverHibernated", "the Cluster is hibernated: whether the WAL written before it reached the repository is not confirmed, so the newest restore points are uncertain", nil))
 	case f.archiverUnread:
 		out.State = warning
 		setReason(out, say("recovery.reason.archiverUnread", "the primary's archiver was not read: how late recent WAL reached the repository is not known, so the newest restore points are uncertain", nil))

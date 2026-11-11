@@ -688,29 +688,42 @@ func advance(previous *agentState, agent *pgtoolboxv1alpha1.EvidenceAgent, out o
 // timeline conclusion may no longer be established after a failover, its
 // coverage roll-up may have degraded. So they are capped again against
 // the fresh snapshot and backups (capRecovery), and its TimelineWarning
-// and CoverageReason replace theirs. Paths of another repository (the
-// identity changed) are never kept, and paths more than keptScans refresh
-// intervals (at least keptFloor) older than the fresh scan are dropped: a
-// failure that persists (a page contract error) does not keep year-old
-// paths.
+// and CoverageReason replace theirs. A fresh roll-up that differs from
+// the one the kept paths were read with is not theirs: the paths it was
+// computed from are not known, so no kept path explains it (a kept path
+// already as degraded is an older backup's, which says nothing of the
+// newest one), and every healthy kept path is at most a warning (round
+// 12, PG P3-1). Paths of another repository (the identity changed) are
+// never kept, and paths more than keptScans refresh intervals (at least
+// keptFloor) older than the fresh scan are dropped: a failure that
+// persists (a page contract error) does not keep year-old paths. Either
+// drop is said (Dropped).
 func keepRecovery(previous Result, current Recovery, snapshot *evidencev1alpha1.RepositoryEvidenceSnapshot, items []BackupItem, refresh time.Duration) Recovery {
 	kept := previous.Recovery
 	if current.State != RecoveryUnavailable || kept.State != RecoveryAvailable || len(kept.Paths) == 0 {
 		return current
 	}
-	if previous.Snapshot == nil || snapshot == nil || previous.Snapshot.Identity.Repository != snapshot.Identity.Repository {
+	if previous.Snapshot == nil || snapshot == nil {
+		return current
+	}
+	if previous.Snapshot.Identity.Repository != snapshot.Identity.Repository {
+		current.Dropped = KeptDroppedRepositoryChanged
 		return current
 	}
 	if refresh <= 0 {
 		refresh = DefaultAgentRefreshInterval
 	}
 	if kept.ScannedAt == nil || current.ScannedAt != nil && current.ScannedAt.Sub(*kept.ScannedAt) > max(keptScans*refresh, keptFloor) {
-		current.Reason = joinReason(current.Reason, reasonKeptTooOld)
+		current.Dropped = KeptDroppedTooOld
 		return current
 	}
 	kept.Stale, kept.StaleReason = true, current.Reason
 	kept.TimelineWarning, kept.CoverageReason = "", ""
-	return capRecovery(snapshot, kept, items)
+	capped := capRecovery(snapshot, kept, items)
+	if fresh := snapshotCoverage(snapshot); capped.State == RecoveryAvailable && fresh.State != evidencev1alpha1.Healthy && fresh != snapshotCoverage(previous.Snapshot) {
+		capped = rollupCap(capped, fresh)
+	}
+	return capped
 }
 
 // keptScans is how many of the agent's refresh intervals the last good
@@ -721,18 +734,6 @@ const (
 	keptScans = 3
 	keptFloor = time.Hour
 )
-
-// reasonKeptTooOld is said when the last good recovery paths are older
-// than keptScans refresh intervals and are no longer shown.
-const reasonKeptTooOld = "the last good recovery paths are more than three refresh intervals (at least an hour) older than the latest scan and are no longer shown"
-
-// joinReason joins two display-safe reasons.
-func joinReason(first, second string) string {
-	if first == "" {
-		return second
-	}
-	return first + "; " + second
-}
 
 // logTransition logs a change of state or reason, never a token, a CA
 // or a body; the transport cause is debug-only.

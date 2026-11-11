@@ -166,7 +166,22 @@ type Recovery struct {
 	// a history file that no default restore reads is invalid (the reason
 	// names the file).
 	TimelineWarning string
+	// Dropped says why the last good paths were not kept beside a failed
+	// read (KeptDroppedTooOld, KeptDroppedRepositoryChanged); empty when
+	// none were dropped.
+	Dropped string
 }
+
+// Why the last good recovery paths were dropped instead of kept stale
+// (keepRecovery).
+const (
+	// KeptDroppedTooOld: they are more than three refresh intervals (at
+	// least an hour) older than the latest scan.
+	KeptDroppedTooOld = "too-old"
+	// KeptDroppedRepositoryChanged: the repository's identity changed
+	// since they were read; they are another repository's.
+	KeptDroppedRepositoryChanged = "repository-changed"
+)
 
 // RecoveryPath is one backup's observed coverage toward a timeline.
 type RecoveryPath struct {

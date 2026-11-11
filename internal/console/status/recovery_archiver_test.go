@@ -499,7 +499,7 @@ func busyPrimary(read time.Time, ready int) (instancestatus.Reading, []viewmodel
 	segno := current / size
 	r := instancestatus.Reading{
 		IsPrimary: true, IsArchivingWAL: true, ReadyWALFiles: ready, ObservedAt: read,
-		CurrentLSN: fmt.Sprintf("%X/%X", current>>32, current&0xFFFFFFFF), CurrentWAL: fmt.Sprintf("%08X%08X%08X", 1, segno/256, segno%256),
+		CurrentLSN: fmt.Sprintf("%X/%X", current>>32, current&0xFFFFFFFF), CurrentWAL: fmt.Sprintf("%08X%08X%08X", 2, segno/256, segno%256),
 	}
 	return r, ring(read, counts...), ring(read, lsns...)
 }
@@ -537,7 +537,7 @@ func TestBusyPrimaryBacklogBoundByPositions(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			r, ready, lsns := busyPrimary(read, 3)
 			if tc.badWAL {
-				r.CurrentWAL = "000000010000000000000000"
+				r.CurrentWAL = "000000020000000000000000"
 			}
 			inst := sweep.Instance{State: viewmodel.StatusReadOK, Reading: &r}
 			arch := viewmodel.Archiving{Health: viewmodel.HealthWarning, Reason: cnpgstatus.ArchivingReasonBacklog}
