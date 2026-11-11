@@ -24,6 +24,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // docGrants is the grants document the API server holds.
@@ -379,5 +380,52 @@ func TestForgedAnnotationsCostABoundedNumberOfWrites(t *testing.T) {
 	}
 	if n := api.updates - before; n > int(takeOverAfter/heartbeatEvery)+1 {
 		t.Errorf("%d writes in two hours over a foreign annotation that never changes", n)
+	}
+}
+
+// A ConfigMap older than the one a replica last merged (a watch event
+// still queued when a conflict's re-read, or the replica's own write,
+// showed a newer one) is not merged: under the three-way rule its lack of
+// a grant the newer document holds would drop the grant, and a revocation
+// of it would then find no such grant.
+func TestAnOlderConfigMapIsNotMerged(t *testing.T) {
+	clock := &testClock{now: t0}
+	api := newAPIServer()
+	a, b := loaded(t, api, clock), loaded(t, api, clock)
+	stale, err := api.Get(t.Context(), "console-state", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.AddGrant(testGrant(1, "alice", t0)); err != nil {
+		t.Fatal(err)
+	}
+	flushed(t, a)
+	watchMerge(t, api, b) // the newer document first (a re-read)
+	if _, ok := b.Grant(grantID(1)); !ok {
+		t.Fatal("the test needs b to learn the grant")
+	}
+	b.mu.Lock()
+	b.mergeLocked(stale) // then the older one (the queued watch event)
+	b.mu.Unlock()
+	if !b.RevokeGrant(grantID(1), uh("alice"), clock.Now(), clock.Now().Add(12*time.Hour)) {
+		t.Fatal("an older ConfigMap merged late dropped a grant b had learned")
+	}
+	// b's own write, then a late event of the document before it: same.
+	b.InstanceSince("pod-b", "ok", t0)
+	before, err := api.Get(t.Context(), "console-state", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.AddGrant(testGrant(2, "alice", t0)); err != nil {
+		t.Fatal(err)
+	}
+	flushed(t, a)
+	watchMerge(t, api, b)
+	flushed(t, b)
+	b.mu.Lock()
+	b.mergeLocked(before)
+	b.mu.Unlock()
+	if !standing(b, grantID(2)) {
+		t.Fatal("an event older than b's own write dropped a grant")
 	}
 }

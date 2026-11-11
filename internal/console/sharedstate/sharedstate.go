@@ -1190,6 +1190,17 @@ func (s *Store) foreignLocked(key, raw string) bool {
 	return true
 }
 
+// olderVersion reports whether resourceVersion rv is older than than,
+// two versions of one object. Kubernetes asks clients to treat them as
+// opaque; every API server stores them as the integer revision of its
+// store, and the two are compared only when both parse so: otherwise
+// neither is called older and the ConfigMap is merged.
+func olderVersion(rv, than string) bool {
+	a, errA := strconv.ParseUint(rv, 10, 64)
+	b, errB := strconv.ParseUint(than, 10, 64)
+	return errA == nil && errB == nil && a < b
+}
+
 // versionedLocked is data without the documents that carry no format
 // version (`{}`, or a version of 0 or less, which no console writes): such a
 // document is not foreign (it would be left alone for good, as no version
@@ -1236,6 +1247,15 @@ func (s *Store) gaugeForeignLocked() {
 // state, then prunes, and reports whether the merged state differs from
 // what the ConfigMap holds (a write is then due).
 func (s *Store) mergeLocked(cm *corev1.ConfigMap) {
+	if s.base != nil && olderVersion(cm.ResourceVersion, s.base.ResourceVersion) {
+		// Older than the ConfigMap last merged or written (a watch event
+		// still queued while a conflict's re-read or this replica's own
+		// write showed a newer one): everything it holds is in that newer
+		// one, which is a merge of it, and what it lacks was added since.
+		// Merged, it would set an older base and, under the three-way merge
+		// of grants, drop a grant added since (mergeGrantsLocked).
+		return
+	}
 	s.base = cm.DeepCopy()
 	s.observeWritersLocked(cm)
 	data := s.versionedLocked(cm.Data)
