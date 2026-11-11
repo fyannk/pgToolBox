@@ -17,6 +17,7 @@ package evidence
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/fyannk/pgToolBox/internal/console/viewmodel"
 	evidencev1alpha1 "github.com/fyannk/pgToolBox/pkg/evidence/v1alpha1"
@@ -71,11 +72,24 @@ func TestRunnerReadsRecoveryCoverage(t *testing.T) {
 		object := testEvidenceAgent(testAgent, ca, snapshot, testNow)
 		runner := newTestRunner(t, newFakeLister(t, object), fake, writeToken(t, testToken))
 		runner.refresh(context.Background())
+		first := runner.ForCluster(testNamespace, testCluster).Recovery.ScannedAt
+		if first == nil || snapshot.CompletedAt == nil || !first.Equal(*snapshot.CompletedAt) {
+			t.Fatalf("fresh paths scanned at %v, want the snapshot's completedAt %v", first, snapshot.CompletedAt)
+		}
 		fake.recovery = nil
+		later := snapshot.CompletedAt.Add(time.Hour)
+		fake.snapshot.CompletedAt = &later
 		runner.refresh(context.Background())
-		got := runner.ForCluster(testNamespace, testCluster).Recovery
+		result := runner.ForCluster(testNamespace, testCluster)
+		got := result.Recovery
 		if got.State != RecoveryAvailable || !got.Stale || got.StaleReason == "" || len(got.Paths) != 1 {
 			t.Errorf("%+v", got)
+		}
+		// Round 10, PG P2: the kept paths keep their own scan time beside
+		// the fresher snapshot, so the timeline's purge band is timed from
+		// it.
+		if got.ScannedAt == nil || !got.ScannedAt.Equal(*first) || result.Snapshot == nil || result.Snapshot.CompletedAt == nil || !result.Snapshot.CompletedAt.Equal(later) {
+			t.Errorf("kept paths scanned at %v beside snapshot %v, want %v beside %v", got.ScannedAt, result.Snapshot.CompletedAt, first, later)
 		}
 	})
 

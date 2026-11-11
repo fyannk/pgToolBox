@@ -159,7 +159,10 @@ func TestPgBackRestPathWhoseBackupWasCutIsNotCovered(t *testing.T) {
 	newest := tlPath("full-1000", 6*time.Hour, 2*time.Minute, evidencev1alpha1.CoverageFrontier)
 	newest.Consistent = &consistent
 	ev := timelineFixture{paths: []evidence.RecoveryPath{oldest, newest}}.evidence()
-	ev.result.Snapshot.Details.PGBackRest = &evidencev1alpha1.PGBackRestSummary{}
+	// The format is the snapshot identity's (the console's routing in
+	// evidence fetch), not whether the details carry a pgBackRest summary (round
+	// 10, PG P3): none here.
+	ev.result.Snapshot.Identity.Repository.Format = evidencev1alpha1.FormatPGBackRest
 	items := make([]evidence.BackupItem, 0, 1001)
 	for i := range 1001 {
 		end := now.Add(-48*time.Hour + time.Duration(i)*2*time.Minute)
@@ -175,6 +178,9 @@ func TestPgBackRestPathWhoseBackupWasCutIsNotCovered(t *testing.T) {
 	// The console keeps the newest 1,000 (evidence fetch newestItems):
 	// the oldest backup, whose path is still served, is cut.
 	ev.result.Backups = items[1:]
+	for _, item := range items {
+		ev.result.BackupIDs[item.ID] = true
+	}
 	tl := svc.recoveryTimeline(ev, viewmodel.BackupSummary{}, nil, facts)
 	b := viewmodel.Backups{RecoveryTimeline: tl, GeneratedAt: now}
 	if got := restoreCheck(b, now.Add(-20*time.Hour)); got.Answer == "covered" || got.Code != "recovery.segment.backupNotListed" {
@@ -187,8 +193,9 @@ func TestPgBackRestPathWhoseBackupWasCutIsNotCovered(t *testing.T) {
 		t.Fatalf("bar %s, reasons %+v, want a warning naming the cut backup", tl.State, tl.Reasons)
 	}
 	// A Barman repository has no usability items: a path without one is
-	// judged by its WAL alone, as before.
-	ev.result.Snapshot.Details.PGBackRest = nil
+	// judged by its WAL alone, as before, whatever its details carry.
+	ev.result.Snapshot.Identity.Repository.Format = evidencev1alpha1.FormatBarmanCloud
+	ev.result.Snapshot.Details.PGBackRest = &evidencev1alpha1.PGBackRestSummary{}
 	tl = svc.recoveryTimeline(ev, viewmodel.BackupSummary{}, nil, facts)
 	if got := restoreCheck(viewmodel.Backups{RecoveryTimeline: tl, GeneratedAt: now}, now.Add(-20*time.Hour)); got.Answer != "covered" {
 		t.Fatalf("a Barman path without an item: %s (%s), want covered", got.Answer, got.Code)

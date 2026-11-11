@@ -56,7 +56,7 @@ type Result struct {
 	BackupIDs       map[string]bool
 	BackupsComplete bool
 	// Backups are the same collection's items, compact, newest last;
-	// bounded to maximumBackupItems (the newest are kept).
+	// bounded to MaximumBackupItems (the newest are kept).
 	Backups []BackupItem
 	// Recovery is the agent's observed recovery coverage of the same
 	// publication.
@@ -153,6 +153,11 @@ type Recovery struct {
 	// good ones, of an earlier publication; StaleReason says why.
 	Stale       bool
 	StaleReason string
+	// ScannedAt is when the agent completed the scan these paths come
+	// from (the snapshot's completedAt, else when the console fetched
+	// it): kept with stale paths, it stays that earlier scan's while the
+	// snapshot beside them is fresher. Nil when not known.
+	ScannedAt *time.Time
 	// CoverageReason is the agent's own coverage roll-up reason, set when
 	// that roll-up is not healthy: it says why no path places a restore
 	// point better than the console can from the paths alone.

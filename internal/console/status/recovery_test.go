@@ -111,11 +111,13 @@ func (f timelineFixture) evidence() clusterEvidence {
 	}
 	snap := evidencev1alpha1.RepositoryEvidenceSnapshot{CompletedAt: &scanned}
 	backups := make([]evidence.BackupItem, 0, len(f.paths))
+	ids := make(map[string]bool, len(f.paths))
 	for _, p := range f.paths {
 		backups = append(backups, evidence.BackupItem{ID: p.BackupID, EndAt: p.LowerBoundAt, EndTimeline: pu64(2), EndPosition: pu64(50)})
+		ids[p.BackupID] = true
 	}
 	ev := clusterEvidence{result: evidence.Result{
-		Agent: "a", Snapshot: &snap, BackupsComplete: true, Backups: backups, RefreshInterval: 5 * time.Minute,
+		Agent: "a", Snapshot: &snap, BackupsComplete: true, BackupIDs: ids, Backups: backups, RefreshInterval: 5 * time.Minute,
 		Recovery: evidence.Recovery{State: evidence.RecoveryAvailable, Complete: !f.cut, Paths: f.paths},
 	}}
 	if f.stale {

@@ -206,7 +206,12 @@ fail.
   a warning. A usable backup still covers what it reaches. The console keeps the
   newest 1,000 backup items but more recovery paths: a pgBackRest path whose
   backup is not among the items read has no usability rating, so it is drawn the
-  same way (`backup-not-listed`), never as covered.
+  same way (`backup-not-listed`), never as covered; to have every backup rated,
+  expire old backups or lower the retention so the repository holds fewer than
+  1,000. A path whose backup the repository's backup list, read complete, no
+  longer has (a retention purge since the paths were read, while the paths kept
+  are stale) is drawn the same way in either format (`backup-not-in-repository`).
+  The repository's format is the one its snapshot identity names.
 - **Holes** between spans, each with a kind:
   - **missing WAL**: a confirmed gap. When the agent says a former primary may
     still hold the missing segment (it stopped on a parent timeline before a
@@ -214,7 +219,12 @@ fail.
     point, says so: CloudNativePG archives that instance's waiting segments
     before it rejoins, so do not delete that instance or its volume. When the
     sweeps kept readings of exactly one instance as primary on the timeline the
-    WAL stops on, the advice names that instance;
+    WAL stops on, the advice names that instance. When that instance has
+    rejoined the Cluster since the switch (it is the current primary again, or
+    a Ready standby read since then), it no longer holds unarchived WAL:
+    CloudNativePG archives the WAL waiting on it before it starts again, so the
+    bar says the WAL was archived since the repository was read, or was never on
+    it, instead of advising to keep it;
   - **candidate gap**: seen by one scan, not confirmed by a second;
   - **unknown**: the evidence cannot tell.
 - **Markers**: the repository's base backups (completed, failed, incomplete) and
@@ -389,7 +399,9 @@ segments, so the bar and the answer always agree:
   `archive_timeout` periods (at least 15 minutes; one hour when `archive_timeout`
   is 0): segment names cannot place the target;
 - the oldest restore point, within the agent's refresh interval plus the age of
-  its last scan: a retention purge may have removed that backup since;
+  its last scan: a retention purge may have removed that backup since. When the
+  recovery paths are the last good ones kept stale, the age is that of the scan
+  they come from, not the fresher snapshot's;
 - after a WAL archiving failure an instance reported (`lastFailedWALTime`, the
   newest over every instance read, so a former primary's failure survives a
   failover) in the day before the latest point, the day before the failure: WAL
@@ -432,8 +444,16 @@ segments, so the bar and the answer always agree:
   the Cluster is hibernated: it writes no WAL and runs no archiver, so there is
   nothing to act on, but nothing confirms that the WAL written before it reached
   the repository; it stays `unknown`, not amber, for as long as it sleeps;
-- at an end of the archived WAL on a timeline older than the newest (after a
-  failover: the parent timeline's tail, or a hole before the switch): that WAL
+- at an end of the archived WAL on a timeline older than the newest one, the
+  repository's or the one the current primary writes (after a failover: the
+  parent timeline's tail, or a hole before the switch). Right after a failover
+  the repository lags: until the new timeline's history file is archived and
+  the agent reads the repository again, every path targets the parent
+  timeline, so the live timeline (the current primary's current WAL file, else
+  its sweeps since the promotion) counts too, and the time after the newest
+  point says that the repository held no WAL of that timeline when it was last
+  read. When the live timeline is not known, an end that reached the
+  repository before the promotion counts the same way. That WAL
   was archived by a former primary, whose backlog the current primary's
   readings do not show, and a crash can lose its `.ready` tail. Only the
   readings of that timeline's own primary count: each sweep records the
