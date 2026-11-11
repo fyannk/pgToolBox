@@ -1270,8 +1270,8 @@ func TestReconcileHostnameAllowList(t *testing.T) {
 		{name: "a look-alike of a suffix", pgadmin: ingress("evilapps.example.com"), suffixes: []string{"apps.example.com"}, want: pgtoolboxv1alpha1.ReasonHostnameNotAllowed},
 		{
 			name: "the image refused too", pgadmin: refusedImage, suffixes: []string{"apps.example.com"},
-			before: func(h *harness) { h.r.Config.PgAdminImageRepositories = []string{"evil.example/pgadmin"} },
-			after:  func(h *harness) { h.r.Config.PgAdminImageRepositories = []string{"registry.example/pgadmin"} },
+			before:  func(h *harness) { h.r.Config.PgAdminImageRepositories = []string{"evil.example/pgadmin"} },
+			after:   func(h *harness) { h.r.Config.PgAdminImageRepositories = []string{"registry.example/pgadmin"} },
 			message: "; also spec.image repository evil.example/pgadmin is not in the operator's allow-list",
 			want:    pgtoolboxv1alpha1.ReasonHostnameNotAllowed,
 		},

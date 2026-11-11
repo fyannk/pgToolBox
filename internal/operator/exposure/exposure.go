@@ -316,14 +316,15 @@ func HostnameRefusal(spec pgtoolboxv1alpha1.ExposureSpec, suffixes []string, als
 	if spec.TypeOrDefault() == pgtoolboxv1alpha1.ExposureTypeClusterIP || HostnameAllowed(spec.Hostname, suffixes) {
 		return ""
 	}
-	message := fmt.Sprintf("spec.exposure.hostname %s is not under the operator's allowed host suffixes (EXPOSURE_ALLOWED_HOST_SUFFIXES: %s)",
+	var message strings.Builder
+	fmt.Fprintf(&message, "spec.exposure.hostname %s is not under the operator's allowed host suffixes (EXPOSURE_ALLOWED_HOST_SUFFIXES: %s)",
 		spec.Hostname, strings.Join(suffixes, ", "))
 	for _, problem := range also {
 		if problem != "" {
-			message += "; also " + problem
+			message.WriteString("; also " + problem)
 		}
 	}
-	return message
+	return message.String()
 }
 
 // WithdrawnMessage is ExposureReady's message while the hostname is
