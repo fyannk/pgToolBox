@@ -20,3 +20,20 @@ tests:
   - it: is quiet when drills are off
     asserts:
       - notMatchRegexRaw: {pattern: "Restore drills are ENABLED"}
+
+  - it: warns when the guard is rendered but Deny is not a validation action
+    set:
+      console.restoreDrills.enabled: true
+      console.restoreDrills.admissionPolicy.create: true
+      console.restoreDrills.admissionPolicy.validationActions: [Warn, Audit]
+    asserts:
+      - matchRegexRaw: {pattern: "rendered but NOT ENFORCED"}
+      - matchRegexRaw: {pattern: "Warn, Audit"}
+
+  - it: is quiet about enforcement when Deny is among the actions
+    set:
+      console.restoreDrills.enabled: true
+      console.restoreDrills.admissionPolicy.create: true
+      console.restoreDrills.admissionPolicy.validationActions: [Warn, Deny]
+    asserts:
+      - notMatchRegexRaw: {pattern: "NOT ENFORCED"}

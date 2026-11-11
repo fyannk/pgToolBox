@@ -16,6 +16,11 @@ Restore drills are ENABLED without the delete guard (console.restoreDrills.admis
 false): the teardown Role can delete any Cluster of the drill namespace, and only the console's own
 checks keep it to its sealed drills. The guard is cluster-scoped, so a cluster admin must install it:
 set console.restoreDrills.admissionPolicy.create=true, or apply the policy this chart renders with it.
+{{- else if and .Values.console.restoreDrills.enabled .Values.console.restoreDrills.admissionPolicy.create (not (has "Deny" .Values.console.restoreDrills.admissionPolicy.validationActions)) }}
+
+The restore-drill delete guard is rendered but NOT ENFORCED: console.restoreDrills.admissionPolicy.validationActions
+({{ join ", " .Values.console.restoreDrills.admissionPolicy.validationActions }}) lacks Deny, so the API server only warns or audits and the teardown Role can
+still delete any Cluster of the drill namespace. Add Deny to validationActions.
 {{- end }}
 {{- if .Values.console.instanceStatus.caBundleConfigMap }}
 
