@@ -20,7 +20,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"log/slog"
 	"slices"
 	"sort"
 	"strings"
@@ -680,9 +679,12 @@ func (s *Store) SpendCode(ctx context.Context, code, userHash string, until time
 		// (another replica's, which this one's watch merged while its
 		// write was in flight, or its own write delivered so) stays: it
 		// is spent, and forgetting it here would erase it from the
-		// ConfigMap with this replica's next write.
+		// ConfigMap with this replica's next write. An expired copy there
+		// (pruned here, the prune not written yet) is no spend: kept, the
+		// reservation would refuse the retry as spent, and the next write
+		// would put the code back.
 		s.mu.Lock()
-		if !codeIn(s.base, h) {
+		if !liveCodeIn(s.base, h, s.opts.Now().Unix()) {
 			delete(s.codes, h)
 		}
 		s.mu.Unlock()
@@ -702,6 +704,7 @@ func (s *Store) writeThrough(ctx context.Context, spentIn func(*corev1.ConfigMap
 		case err == nil:
 			s.mu.Lock()
 			s.base = updated.DeepCopy()
+			s.wroteLocked(updated)
 			if s.gen == gen {
 				s.written, s.urgent = gen, false
 			}
@@ -748,6 +751,19 @@ func codeIn(cm *corev1.ConfigMap, h string) bool {
 func markIn(cm *corev1.ConfigMap, h, mark string) bool {
 	c, ok := codeOf(cm, h)
 	return ok && slices.Contains(c.Marks, mark)
+}
+
+// liveCodeIn is codeIn of a code that has not expired at now: what the
+// rollback of a failed write-through keeps.
+func liveCodeIn(cm *corev1.ConfigMap, h string, now int64) bool {
+	c, ok := codeOf(cm, h)
+	return ok && c.Expiry > now
+}
+
+// liveMarkIn is markIn of a code that has not expired at now.
+func liveMarkIn(cm *corev1.ConfigMap, h, mark string, now int64) bool {
+	c, ok := codeOf(cm, h)
+	return ok && c.Expiry > now && slices.Contains(c.Marks, mark)
 }
 
 func codeOf(cm *corev1.ConfigMap, h string) (codeEntry, bool) {
@@ -808,7 +824,7 @@ func (s *Store) MarkCode(ctx context.Context, code, mark, userHash string) error
 		// already (another replica's, merged while this write was in
 		// flight), which this replica's next write would otherwise erase.
 		s.mu.Lock()
-		if c, ok := s.codes[h]; ok && !markIn(s.base, h, mark) {
+		if c, ok := s.codes[h]; ok && !liveMarkIn(s.base, h, mark, s.opts.Now().Unix()) {
 			c.Marks = slices.DeleteFunc(slices.Clone(c.Marks), func(m string) bool { return m == mark })
 			s.codes[h] = c
 		}
@@ -876,15 +892,20 @@ func (s *Store) CodeUsed(code string) bool {
 func (s *Store) mergeGrantsLocked(raw string) {
 	var doc grantsDoc
 	switch {
-	case s.foreignLocked(KeyGrants, raw):
+	case s.foreignLocked(KeyGrants, raw), s.takingOverLocked(KeyGrants, raw):
+		// A newer grants document may record revocations of grants this
+		// replica holds, in a layout it does not read: they are dropped
+		// here (refused meanwhile anyway), and the document taken over is
+		// reset rather than read (writers.go), so that no replica brings
+		// a revoked grant back.
+		s.grants, s.codes = map[string]grantEntry{}, map[string]codeEntry{}
 	case json.Unmarshal([]byte(raw), &doc) != nil:
 		// Never overwritten: what it holds (revocations among it) is not
 		// known, and replacing it would forget them. Grants are refused
 		// until it is readable again.
+		// Logged by mergeLocked once an episode.
 		s.foreign[KeyGrants] = true
-		s.opts.Logger.Error("shared state: the grants document does not parse; MCP grants are refused until it is fixed "+
-			"(delete the key "+KeyGrants+" to reset it: every assistant then connects again)",
-			slog.String("configmap", s.opts.Name))
+		s.grantsUnreadable = true
 	default:
 		for id, e := range doc.Grants {
 			if !validGrantEntry(id, e) {

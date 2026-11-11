@@ -213,9 +213,35 @@ Each document carries a format version. A console reads the documents of
 older versions, and rewrites them at its own on its next write; it leaves a
 document of a newer version (written by a newer console during a rolling
 upgrade, or before a rollback) exactly as it is, logs it once and counts it in
-`pgtoolbox_console_shared_state_foreign_documents{document}`: until every
-replica runs one version, what that document holds is not shared with the
-older replicas. Replicas whose clocks disagree still converge: a sign-out's
+`pgtoolbox_console_shared_state_foreign_documents{document}`: what that
+document holds is not shared with the older replica (a sign-out in it is not
+refused there, and MCP is refused over a newer `grants.json`).
+
+Every write a console makes also changes the ConfigMap annotation
+`pgtoolbox.fyannk.dev/shared-state-format-<version>` of its own version. A
+replica that leaves a newer document alone, or that has seen another version's
+annotation change in the last 30 minutes, rewrites its own every 10 minutes
+even with nothing else to write; replicas of one version alone write no such
+heartbeat. A replica takes a newer document over once it has seen no write by a
+console of another version for 30 minutes, counted on its own clock from when
+it last saw one (or from its own start): after a rollback, about half an hour
+after the rolled-back replicas start, sharing resumes on its own. During a
+rolling upgrade the newer replicas write at least every 10 minutes, so the
+older ones never take over; and a take-over is written with the
+`resourceVersion` it was decided on, so a newer replica's write in between makes
+it conflict, and the re-read leaves the document alone. The trade-off: a newer
+replica unable to reach the API server for 30 minutes has its documents taken
+over, and takes them back (merging) once it writes again. A document taken over
+is read in this version's layout, so the sign-outs it holds stay refused,
+except `grants.json`, which is reset (a revocation recorded in a newer layout
+could otherwise be lost): a replica drops the MCP grants it holds once it finds
+a newer `grants.json`, and every assistant connects again after the take-over.
+To recover at once, delete the document's key from the ConfigMap; what it held
+is lost (for `grants.json`, every assistant connects again). A document of a
+version older than any this console reads (or of none) stays foreign until its
+key is deleted.
+
+Replicas whose clocks disagree still converge: a sign-out's
 recording time is kept as written, and a replica that finds it more than five
 minutes in its own future only ranks it last when a bound of the sessions
 document must choose. What each replica's clock decides on its own (when an
