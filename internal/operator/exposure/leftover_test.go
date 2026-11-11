@@ -17,6 +17,7 @@ package exposure
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -64,15 +65,16 @@ func TestLeftover(t *testing.T) {
 		wantUnverified bool
 		wantErr        bool
 		wantDeleted    bool
+		wantGone       bool
 	}{
-		{name: "nothing there", want: ""},
-		{name: "owned, removed", objects: []client.Object{route("owner-uid")}, remove: true, want: "", wantDeleted: true},
+		{name: "nothing there", want: "", wantGone: true},
+		{name: "owned, removed", objects: []client.Object{route("owner-uid")}, remove: true, want: "", wantDeleted: true, wantGone: true},
 		{
 			name: "owned, kept (the requested kind)", objects: []client.Object{route("owner-uid")},
 			want: "Route team-pgadmin published before remains, no longer managed: the operator may not list Routes in team-b; delete it by hand",
 		},
-		{name: "someone else's, never touched", objects: []client.Object{route("other-uid")}, remove: true, want: ""},
-		{name: "unowned, never touched", objects: []client.Object{route("")}, remove: true, want: ""},
+		{name: "someone else's, never touched", objects: []client.Object{route("other-uid")}, remove: true, want: "", wantGone: true},
+		{name: "unowned, never touched", objects: []client.Object{route("")}, remove: true, want: "", wantGone: true},
 		{
 			name: "unreadable", getErr: forbidden, remove: true,
 			want:           "the operator may not read Routes in team-b: a Route team-pgadmin published before may remain; delete it by hand",
@@ -81,10 +83,11 @@ func TestLeftover(t *testing.T) {
 		// Round 15, k8s P3-2: nothing in the owner's history says it ever
 		// published a Route; an unreadable one is not reported.
 		{name: "unreadable, never published", getErr: forbidden, remove: true, notPublished: true, want: ""},
-		// Round 15, operator note: the Route CRD removed while the operator
-		// runs. Nothing of it can remain; the loop does not fail.
-		{name: "kind no longer served", getErr: noKind, remove: true, want: ""},
-		{name: "kind no longer served at delete", objects: []client.Object{route("owner-uid")}, deleteErr: noKind, remove: true, want: ""},
+		// Round 16, OPERATOR P3-3: the kind served at start answers
+		// NoKindMatch (an aggregated API unavailable for a moment while
+		// the Route remains): an error, retried, never "nothing left".
+		{name: "kind not served now", getErr: noKind, remove: true, wantErr: true},
+		{name: "kind not served now, at delete", objects: []client.Object{route("owner-uid")}, deleteErr: noKind, remove: true, wantErr: true, wantDeleted: false},
 		{
 			name: "deletion refused", objects: []client.Object{route("owner-uid")}, deleteErr: forbidden, remove: true,
 			want: "the operator may not delete Routes in team-b: Route team-pgadmin published before remains; delete it by hand",
@@ -119,8 +122,8 @@ func TestLeftover(t *testing.T) {
 				t.Fatalf("err = %v, want error %t", err, tt.wantErr)
 			}
 			got := remnant.Sentence
-			if got != tt.want || remnant.Unverified != tt.wantUnverified {
-				t.Errorf("leftover = %q (unverified %t), want %q (unverified %t)", got, remnant.Unverified, tt.want, tt.wantUnverified)
+			if got != tt.want || remnant.Unverified != tt.wantUnverified || remnant.Gone != tt.wantGone {
+				t.Errorf("leftover = %q (unverified %t, gone %t), want %q (unverified %t, gone %t)", got, remnant.Unverified, remnant.Gone, tt.want, tt.wantUnverified, tt.wantGone)
 			}
 			if deleted != tt.wantDeleted {
 				t.Errorf("deleted = %t, want %t", deleted, tt.wantDeleted)
@@ -138,41 +141,59 @@ func TestLeftover(t *testing.T) {
 	}
 }
 
-// TestMayHavePublished: what in an owner's history says it may have
-// published a Route or an HTTPRoute, so that a Leftover it may not read is
-// reported only then.
+// TestMayHavePublished: round 16, OPERATOR P3-2. Only the spec's request
+// or the status record of a published kind says an owner may have
+// published a Route or an HTTPRoute; no word in a condition message does
+// ("504 Gateway Timeout", "the Route API is unavailable", nor the leftover
+// sentence itself, which made an Unknown stick).
 func TestMayHavePublished(t *testing.T) {
-	ready := func(message string) []metav1.Condition {
-		return []metav1.Condition{{Type: pgtoolboxv1alpha1.ConditionExposureReady, Message: message}}
-	}
-	leftover := "in-cluster Service only (exposure type clusterIP); the operator may not read Routes in team-b: a Route orders published before may remain; delete it by hand"
 	for _, tt := range []struct {
-		name       string
-		requested  bool
-		conditions []metav1.Condition
-		kind       string
-		want       bool
+		name      string
+		requested bool
+		published []string
+		kind      string
+		want      bool
 	}{
 		{"requested now", true, nil, "Route", true},
-		{"no history", false, nil, "Route", false},
-		{"only ever clusterIP", false, ready("in-cluster Service only (exposure type clusterIP)"), "Route", false},
-		{"an Ingress", false, ready("served at orders.example.com"), "Route", false},
-		{"admitted by a router", false, ready("admitted by router default"), "Route", true},
-		{"router refused it", false, ready("router default: HostAlreadyClaimed: taken"), "Route", true},
-		{"Route not observed yet", false, ready("the Route is not observed yet"), "Route", true},
-		{"its own leftover sentence (sticky)", false, ready(leftover), "Route", true},
-		{"an HTTPRoute is no Route", false, ready("accepted by Gateway public; no Gateway has reported on the HTTPRoute yet"), "Route", false},
-		{"a Route is no HTTPRoute", false, ready("admitted by router default"), "HTTPRoute", false},
-		{"accepted by a Gateway", false, ready("accepted by Gateway public"), "HTTPRoute", true},
-		{"HTTPRoute not observed yet", false, ready("the HTTPRoute is not observed yet"), "HTTPRoute", true},
-		{"in another condition", false, []metav1.Condition{{Type: "ExposureConfined", Message: leftover}}, "Route", true},
+		{"no record", false, nil, "Route", false},
+		{"a Route recorded", false, []string{"Route"}, "Route", true},
+		{"an HTTPRoute is no Route", false, []string{"HTTPRoute"}, "Route", false},
+		{"a Route is no HTTPRoute", false, []string{"Route"}, "HTTPRoute", false},
+		{"both recorded", false, []string{"HTTPRoute", "Route"}, "HTTPRoute", true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := MayHavePublished(tt.requested, tt.conditions, tt.kind); got != tt.want {
+			if got := MayHavePublished(tt.requested, tt.published, tt.kind); got != tt.want {
 				t.Fatalf("MayHavePublished = %t, want %t", got, tt.want)
 			}
 		})
 	}
+}
+
+// TestPublishedRecord: MarkPublished and MarkGone keep a sorted set,
+// nil when empty (so a no-op loop writes nothing).
+func TestPublishedRecord(t *testing.T) {
+	var published []string
+	MarkGone(&published, "Route")
+	if published != nil {
+		t.Fatalf("MarkGone on nothing = %q", published)
+	}
+	MarkPublished(&published, "Route")
+	MarkPublished(&published, "HTTPRoute")
+	MarkPublished(&published, "Route")
+	if !slices.Equal(published, []string{"HTTPRoute", "Route"}) {
+		t.Fatalf("published = %q, want [HTTPRoute Route]", published)
+	}
+	MarkGone(&published, "Route")
+	if !slices.Equal(published, []string{"HTTPRoute"}) {
+		t.Fatalf("published = %q, want [HTTPRoute]", published)
+	}
+	MarkGone(&published, "HTTPRoute")
+	if published != nil {
+		t.Fatalf("published = %q, want nil", published)
+	}
+}
+
+func TestAllUnverified(t *testing.T) {
 	if !AllUnverified([]Remnant{{Unverified: true}, {Unverified: true}}) || AllUnverified([]Remnant{{Unverified: true}, {}}) || AllUnverified(nil) {
 		t.Error("AllUnverified: true only for a non-empty list of unverified remnants")
 	}

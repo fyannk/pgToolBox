@@ -1012,6 +1012,15 @@ type PgToolBoxConsoleStatus struct {
 	// +optional
 	InstanceCABundle *PgToolBoxConsoleInstanceCABundleStatus `json:"instanceCABundle,omitempty"`
 
+	// The exposure kinds (Route, HTTPRoute) the operator published for
+	// this console and has not seen gone since: where it is later refused
+	// one of them, it reports what may remain of it.
+	// +kubebuilder:validation:MaxItems=2
+	// +kubebuilder:validation:items:Enum=Route;HTTPRoute
+	// +listType=set
+	// +optional
+	PublishedExposureKinds []string `json:"publishedExposureKinds,omitempty"`
+
 	// Conditions: Ready (summary), ConfigurationValid, WorkloadReady,
 	// ExposureReady, Progressing, Stalled and the advisory
 	// InstanceCABundleComplete and ExposureConfined.

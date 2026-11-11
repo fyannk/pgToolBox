@@ -17,7 +17,7 @@ package exposure
 import (
 	"context"
 	"fmt"
-	"regexp"
+	"slices"
 	"strings"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -29,11 +29,14 @@ import (
 
 // Remnant is what Leftover found of an exposure object an owner may have
 // published before its kind was refused: the status sentence ("" when
-// nothing of the owner's remains), and whether it is only possible (the
-// operator could not read the object) rather than found.
+// nothing of the owner's remains or none is known to), whether it is only
+// possible (the operator could not read the object) rather than found, and
+// whether nothing of the owner's is verified to remain (Gone: the record of
+// the published kind can be cleared, MarkGone).
 type Remnant struct {
 	Sentence   string
 	Unverified bool
+	Gone       bool
 }
 
 // Leftover looks, past the cache, for the exposure object name (a Route or
@@ -46,19 +49,23 @@ type Remnant struct {
 // status when such an object remains or may remain: found and kept
 // (remove unset), found and its deletion refused, or unreadable (the Get
 // refused) while publishedBefore says owner may have published one
-// (MayHavePublished); unreadable with nothing in owner's history, it says
+// (MayHavePublished); unreadable with nothing in owner's record, it says
 // nothing: a Route that was never published is not reported as one that
-// may remain. Nothing either when the kind is no longer served (its CRD
-// removed while the operator runs: nothing of it can remain). Any other
-// error is returned. The sentence names only owner's own namespace and the
-// object's name, and is the same at every loop, so a no-op loop writes
-// nothing.
+// may remain. The kind not served (NoKindMatch) is an error, retried: it
+// was served at start (Leftover runs only for a kind the start-up probe
+// found installed and refused), and an aggregated API briefly unavailable
+// (openshift-apiserver restarting) answers so while the Route remains. Any
+// other error is returned too. The sentence names only owner's own
+// namespace and the object's name, and is the same at every loop, so a
+// no-op loop writes nothing.
 func Leftover(ctx context.Context, reader client.Reader, writer client.Writer, owner metav1.Object, object client.Object, kind, name string, remove, publishedBefore bool) (Remnant, error) {
 	namespace := owner.GetNamespace()
 	err := reader.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, object)
 	switch {
-	case apierrors.IsNotFound(err), discovery.IsNotServed(err):
-		return Remnant{}, nil
+	case apierrors.IsNotFound(err):
+		return Remnant{Gone: true}, nil
+	case discovery.IsNotServed(err):
+		return Remnant{}, fmt.Errorf("read %s %s: the API served at start is not served now (unavailable for a moment?): %w", kind, name, err)
 	case apierrors.IsForbidden(err):
 		if !publishedBefore {
 			return Remnant{}, nil
@@ -71,17 +78,17 @@ func Leftover(ctx context.Context, reader client.Reader, writer client.Writer, o
 		return Remnant{}, fmt.Errorf("read %s %s: %w", kind, name, err)
 	}
 	if !metav1.IsControlledBy(object, owner) {
-		return Remnant{}, nil
+		return Remnant{Gone: true}, nil
 	}
 	if !remove {
 		return Remnant{Sentence: fmt.Sprintf("%s %s published before remains, no longer managed: the operator may not list %ss in %s; delete it by hand", kind, name, kind, namespace)}, nil
 	}
 	err = writer.Delete(ctx, object, client.Preconditions{UID: new(object.GetUID())})
 	switch {
-	case err == nil, apierrors.IsNotFound(err), apierrors.IsConflict(err), discovery.IsNotServed(err):
+	case err == nil, apierrors.IsNotFound(err), apierrors.IsConflict(err):
 		// Conflict: the UID precondition failed, the object under the
 		// name is no longer owner's.
-		return Remnant{}, nil
+		return Remnant{Gone: true}, nil
 	case apierrors.IsForbidden(err):
 		return Remnant{Sentence: fmt.Sprintf("the operator may not delete %ss in %s: %s %s published before remains; delete it by hand", kind, namespace, kind, name)}, nil
 	default:
@@ -89,39 +96,35 @@ func Leftover(ctx context.Context, reader client.Reader, writer client.Writer, o
 	}
 }
 
-// kindMentions is, per exposure kind Leftover looks for, the words a
-// status message of the operator uses only about an object of that kind:
-// its observed fact (admitted by a router, accepted by a Gateway), "not
-// observed yet", "API unavailable", and Leftover's own sentences. Whole
-// words: "Route" never matches "HTTPRoute" or "Routes".
-var kindMentions = map[string]*regexp.Regexp{
-	"Route":     regexp.MustCompile(`\b(Route|router)\b`),
-	"HTTPRoute": regexp.MustCompile(`\b(HTTPRoute|Gateway)\b`),
+// MayHavePublished reports whether an owner may have published an exposure
+// object of kind ("Route" or "HTTPRoute"): its spec requests that kind now
+// (requested; it may have been published before the refusal), or its
+// status records that the operator published one and has not seen it gone
+// since (published, MarkPublished and MarkGone). A console or PgAdmin that
+// was only ever clusterIP or Ingress has neither, and Leftover then
+// reports nothing for a kind it may not read; one whose leftover was
+// reported keeps it reported until it is gone or readable.
+func MayHavePublished(requested bool, published []string, kind string) bool {
+	return requested || slices.Contains(published, kind)
 }
 
-// MayHavePublished reports whether an owner's history says it may have
-// published an exposure object of kind ("Route" or "HTTPRoute"): its spec
-// requests that kind now (requested; an earlier operator may have
-// published it before the refusal), or a condition it carries from an
-// earlier loop speaks of one (the observed Route or HTTPRoute, or a
-// Leftover sentence about it, so a reported leftover stays reported until
-// it is gone or readable). A console or PgAdmin that was only ever
-// clusterIP or Ingress has none, and Leftover then reports nothing for a
-// kind it may not read.
-func MayHavePublished(requested bool, conditions []metav1.Condition, kind string) bool {
-	if requested {
-		return true
+// MarkPublished records in published (a status list, kept sorted) that the
+// operator published an object of kind.
+func MarkPublished(published *[]string, kind string) {
+	if slices.Contains(*published, kind) {
+		return
 	}
-	mentions, ok := kindMentions[kind]
-	if !ok {
-		return true
+	*published = append(*published, kind)
+	slices.Sort(*published)
+}
+
+// MarkGone records in published that nothing of kind the operator
+// published remains: deleted, not found, or no longer the owner's.
+func MarkGone(published *[]string, kind string) {
+	*published = slices.DeleteFunc(*published, func(k string) bool { return k == kind })
+	if len(*published) == 0 {
+		*published = nil
 	}
-	for _, condition := range conditions {
-		if mentions.MatchString(condition.Message) {
-			return true
-		}
-	}
-	return false
 }
 
 // AllUnverified reports whether every remnant is only possible (none was
