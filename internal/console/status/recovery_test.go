@@ -228,7 +228,10 @@ func TestRecoveryTimelineStates(t *testing.T) {
 			"stale paths are not healthy and widen the oldest edge",
 			timelineFixture{paths: overlapping, stale: true, scannedAt: now.Add(-6 * time.Hour)},
 			facts, "warning",
-			[]answer{{45 * time.Hour, "unknown", ""}, {30 * time.Hour, "covered", "b1"}, {0, "unknown", ""}},
+			// Scanned more than one refresh ago: a purge since may have
+			// dropped b1 whole, so the span only it reaches (up to b2's
+			// lower bound) is unknown (round 12, PG P3-3).
+			[]answer{{45 * time.Hour, "unknown", ""}, {30 * time.Hour, "unknown", ""}, {20 * time.Hour, "covered", "b2"}, {0, "unknown", ""}},
 		},
 		{
 			// The frontier is a fact about the scan: WAL archived since

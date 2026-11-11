@@ -16,6 +16,9 @@ package evidence
 
 import (
 	"context"
+	"fmt"
+	"math/rand/v2"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -181,8 +184,154 @@ func TestKeepRecovery(t *testing.T) {
 	if got := keepRecovery(previous, failed(time.Hour+time.Second), &snapshot, nil, time.Minute); got.Stale || len(got.Paths) != 0 {
 		t.Errorf("past an hour with a one-minute interval: %+v", got)
 	}
-	if got := keepRecovery(previous, failed(7*time.Hour), &snapshot, nil, 2*time.Hour); !strings.Contains(got.Reason, reasonKeptTooOld) || !strings.HasPrefix(got.Reason, "timeout") {
-		t.Errorf("dropped paths say %q", got.Reason)
+	// A drop is said by its code, and the failure's own reason is kept
+	// (round 12, DBA).
+	if got := keepRecovery(previous, failed(7*time.Hour), &snapshot, nil, 2*time.Hour); got.Dropped != KeptDroppedTooOld || got.Reason != "timeout" {
+		t.Errorf("paths dropped as too old say %q (%q)", got.Dropped, got.Reason)
+	}
+	if got := keepRecovery(previous, failed(time.Hour), &moved, nil, 2*time.Hour); got.Dropped != KeptDroppedRepositoryChanged || got.Reason != "timeout" {
+		t.Errorf("paths dropped on a repository change say %q (%q)", got.Dropped, got.Reason)
+	}
+	for _, c := range []struct {
+		name     string
+		previous Result
+		current  Recovery
+	}{
+		{"kept", previous, failed(time.Hour)},
+		{"a fresh read", previous, Recovery{State: RecoveryAvailable, Complete: true}},
+		{"nothing to keep", Result{Snapshot: &snapshot}, failed(0)},
+	} {
+		if got := keepRecovery(c.previous, c.current, &snapshot, nil, 2*time.Hour); got.Dropped != "" {
+			t.Errorf("%s: says dropped %q", c.name, got.Dropped)
+		}
+	}
+}
+
+// Round 12, PG P3-1: a fresh roll-up that degraded since the kept paths
+// were read is not explained by an old kept path already as degraded:
+// the newest kept path, healthy at the frontier, is capped at a warning
+// as it is without the old one.
+func TestKeptPathsBesideADegradedFreshRollup(t *testing.T) {
+	snapshot := fixtureSnapshot(t)
+	scanned := testNow
+	lbOld, lbNew := testNow.Add(-72*time.Hour), testNow.Add(-24*time.Hour)
+	receipt, oldReceipt := testNow.Add(-time.Minute), testNow.Add(-48*time.Hour)
+	tl := uint64(1)
+	kept := Recovery{State: RecoveryAvailable, Complete: true, ScannedAt: &scanned, Paths: []RecoveryPath{
+		{BackupID: "old", TargetTimeline: 1, State: evidencev1alpha1.Unhealthy, Stop: evidencev1alpha1.CoverageGapLimited, LowerBoundAt: &lbOld, FrontierReceiptAt: &oldReceipt, StartTimeline: &tl, FrontierTimeline: &tl},
+		{BackupID: "new", TargetTimeline: 1, State: evidencev1alpha1.Healthy, Stop: evidencev1alpha1.CoverageFrontier, LowerBoundAt: &lbNew, FrontierReceiptAt: &receipt, StartTimeline: &tl, FrontierTimeline: &tl},
+	}}
+	withCoverage := func(state evidencev1alpha1.State, message string) *evidencev1alpha1.RepositoryEvidenceSnapshot {
+		s := snapshot
+		bc := *s.Details.BarmanCloud
+		bc.Coverage = evidencev1alpha1.StateReason{State: state, Reason: evidencev1alpha1.Reason{Code: "gap", Message: message}}
+		s.Details.BarmanCloud = &bc
+		return &s
+	}
+	read := withCoverage(evidencev1alpha1.Unhealthy, "old backup stops at a gap")
+	at := scanned.Add(time.Hour)
+	failed := Recovery{State: RecoveryUnavailable, Reason: "timeout", ScannedAt: &at}
+	for _, state := range []evidencev1alpha1.State{evidencev1alpha1.Unhealthy, evidencev1alpha1.Unknown} {
+		fresh := withCoverage(state, "WAL 000000010000000000000042 missing")
+		for _, paths := range [][]RecoveryPath{kept.Paths, kept.Paths[1:]} {
+			previous := Result{Snapshot: read, Recovery: kept}
+			previous.Recovery.Paths = paths
+			got := keepRecovery(previous, failed, fresh, nil, 2*time.Hour)
+			newest := got.Paths[len(got.Paths)-1]
+			if !got.Stale || newest.BackupID != "new" || newest.State != evidencev1alpha1.Warning || newest.Reason.Code != RollupCapCode {
+				t.Errorf("fresh roll-up %s, %d kept paths: the newest is %s (%s), want a warning capped at the roll-up", state, len(paths), newest.State, newest.Reason.Code)
+			}
+			if !strings.Contains(newest.Reason.Message, "000000010000000000000042") {
+				t.Errorf("the cap does not say the fresh roll-up: %q", newest.Reason.Message)
+			}
+			if old := got.Paths[0]; len(paths) == 2 && (old.State != evidencev1alpha1.Unhealthy || old.Reason.Code == RollupCapCode) {
+				t.Errorf("the old path changed: %+v", old)
+			}
+		}
+	}
+	// The same roll-up as the paths were read with is theirs: it caps
+	// nothing (an old backup's gap says nothing of the newest one).
+	got := keepRecovery(Result{Snapshot: read, Recovery: kept}, failed, read, nil, 2*time.Hour)
+	if newest := got.Paths[1]; newest.State != evidencev1alpha1.Healthy || newest.FrontierReceiptAt == nil {
+		t.Errorf("the roll-up the paths were read with capped the newest: %+v", newest)
+	}
+}
+
+// Round 12, PG: keepRecovery never claims more covered time than a fresh
+// read of the same repository could: for any kept paths, any roll-up they
+// were read with and any fresh roll-up, the paths it draws covered are
+// among those capRecovery draws covered on the fresh snapshot for the same
+// paths with the fresh degradation in any one healthy path (the paths the
+// fresh roll-up was computed from are not known, so each is a candidate).
+func TestKeepRecoveryClaimsNoMoreThanAFreshCap(t *testing.T) {
+	snapshot := fixtureSnapshot(t)
+	states := []evidencev1alpha1.State{evidencev1alpha1.Healthy, evidencev1alpha1.Warning, evidencev1alpha1.Unhealthy, evidencev1alpha1.Unknown}
+	stops := []evidencev1alpha1.CoverageStop{evidencev1alpha1.CoverageFrontier, evidencev1alpha1.CoverageGapLimited, evidencev1alpha1.CoverageUnknownLimited, evidencev1alpha1.CoverageCandidateLimited}
+	withCoverage := func(state evidencev1alpha1.State, code string) *evidencev1alpha1.RepositoryEvidenceSnapshot {
+		s := snapshot
+		bc := *s.Details.BarmanCloud
+		bc.Coverage = evidencev1alpha1.StateReason{State: state, Reason: evidencev1alpha1.Reason{Code: code, Message: code}}
+		s.Details.BarmanCloud = &bc
+		return &s
+	}
+	covered := func(p RecoveryPath) bool {
+		return p.Reason.Code != capCode && p.FrontierReceiptAt != nil && p.LowerBoundAt != nil &&
+			(p.Stop != evidencev1alpha1.CoverageFrontier || p.State == evidencev1alpha1.Healthy)
+	}
+	random := rand.New(rand.NewPCG(12, 3))
+	scanned := testNow
+	at := scanned.Add(time.Hour)
+	failed := Recovery{State: RecoveryUnavailable, Reason: "timeout", ScannedAt: &at}
+	tl := uint64(1)
+	for range 5000 {
+		paths := make([]RecoveryPath, 1+random.IntN(4))
+		for i := range paths {
+			lb := testNow.Add(-time.Duration(48-i) * time.Hour)
+			receipt := testNow.Add(-time.Duration(i) * time.Minute)
+			stop := stops[random.IntN(len(stops))]
+			state := evidencev1alpha1.Healthy
+			if stop != evidencev1alpha1.CoverageFrontier {
+				state = states[1+random.IntN(len(states)-1)]
+			} else if random.IntN(3) == 0 {
+				state = states[random.IntN(len(states))]
+			}
+			paths[i] = RecoveryPath{
+				BackupID: fmt.Sprintf("b%d", i), TargetTimeline: 1, State: state, Stop: stop, LowerBoundAt: &lb, FrontierReceiptAt: &receipt,
+				StartTimeline: &tl, FrontierTimeline: &tl,
+			}
+		}
+		readWith := withCoverage(states[random.IntN(len(states))], "read")
+		fresh := readWith
+		if random.IntN(2) == 0 {
+			fresh = withCoverage(states[random.IntN(len(states))], "fresh")
+		}
+		kept := Recovery{State: RecoveryAvailable, Complete: true, ScannedAt: &scanned, Paths: paths}
+		got := keepRecovery(Result{Snapshot: readWith, Recovery: kept}, failed, fresh, nil, 2*time.Hour)
+		rollup := snapshotCoverage(fresh)
+		candidates := 0
+		for j, p := range paths {
+			if p.State != evidencev1alpha1.Healthy || rollup.State == evidencev1alpha1.Healthy || rollup == snapshotCoverage(readWith) {
+				continue
+			}
+			candidates++
+			degraded := slices.Clone(paths)
+			degraded[j].State = rollup.State
+			fc := capRecovery(fresh, Recovery{State: RecoveryAvailable, Complete: true, ScannedAt: &scanned, Paths: degraded}, nil)
+			for i := range got.Paths {
+				if covered(got.Paths[i]) && !covered(fc.Paths[i]) {
+					t.Fatalf("path %d covered beside a fresh %s roll-up that path %d may explain:\nkept %+v\nfresh cap %+v", i, rollup.State, j, got.Paths[i], fc.Paths[i])
+				}
+			}
+		}
+		if candidates == 0 {
+			// No fresh degradation to place: the fresh cap of the same paths.
+			fc := capRecovery(fresh, kept, nil)
+			for i := range got.Paths {
+				if covered(got.Paths[i]) && !covered(fc.Paths[i]) {
+					t.Fatalf("path %d covered where a fresh cap does not: %+v / %+v", i, got.Paths[i], fc.Paths[i])
+				}
+			}
+		}
 	}
 }
 

@@ -407,7 +407,11 @@ segments, so the bar and the answer always agree:
   they come from, not the fresher snapshot's. The age runs from the earlier of
   the agent's scan time and the console's fetch time, so an agent clock ahead of
   the console's does not shorten it, and the band never reaches past the
-  newest restore point;
+  newest restore point. A purge drops a whole backup, with the WAL only it
+  needs, so once that scan is older than one refresh interval the band reaches
+  at least the next backup's lower bound: the span only the oldest backup
+  reaches is unknown until the repository is read again (a single backup is
+  never purged by retention, so it keeps the shorter band);
 - after a WAL archiving failure an instance reported (`lastFailedWALTime`, the
   newest over every instance read, so a former primary's failure survives a
   failover) in the day before the latest point, the day before the failure: WAL
@@ -461,7 +465,10 @@ segments, so the bar and the answer always agree:
   read (or, once its history file is archived, no WAL segment of it yet). The
   window is then a warning (`liveTimelineNotArchived`), not healthy: wait for
   the next evidence refresh, or run `pg_switch_wal()` on the new primary to
-  archive its first segment. When the live timeline is not known, an end that reached the
+  archive its first segment. When the primary was not read (fenced or
+  unreachable), the warning (`liveTimelineNotArchivedPrimaryUnread`) gives no
+  such advice, and a hibernated Cluster says it is hibernated instead
+  (`unknown`): no instance runs to switch WAL on. When the live timeline is not known, an end that reached the
   repository before the promotion counts the same way. That WAL
   was archived by a former primary, whose backlog the current primary's
   readings do not show, and a crash can lose its `.ready` tail. Only the
@@ -476,6 +483,16 @@ segments, so the bar and the answer always agree:
   passed, the reading named no timeline), only readings with WAL waiting, or
   readings that come after that end and so say nothing of it, the day before
   that end;
+- when the repository's newest timeline is ahead of the one the current primary
+  writes (`repositoryAheadOfLive`): another cluster may archive into this
+  repository (a cluster restored by point-in-time recovery, or a promoted
+  replica cluster, with CloudNativePG's empty-archive check skipped), and a
+  default restore follows the newer timeline, so a time past the fork may
+  restore that cluster's data. The fork is not placed: from the newest end of a
+  base backup on the live timeline (or an older one), else from the oldest
+  restore point, to the newest, the bar is `unknown`, and the window is a
+  warning that asks to check that no other cluster's backup configuration
+  names this repository;
 - every "by then" claim of a sweep (nothing waited, every commit before a time
   was archived) is dated when its read returned, and every "not yet" claim (the
   write position had not reached a segment) when the sweep started, so a read
@@ -548,4 +565,8 @@ against the fresh snapshot beside them: when its timeline evidence is no longer
 established (after a failover, say), no kept path is coverage, and its coverage
 and timeline reasons replace the old ones. Paths of another repository are never
 kept, and kept paths more than three of the agent's refresh intervals (at least
-an hour) older than its latest scan are dropped.
+an hour) older than its latest scan are dropped; either drop is said
+(`keptRepositoryChanged`, `keptTooOld`). A fresh coverage roll-up that differs
+from the one the kept paths were read with is not theirs: the paths it was
+computed from are unknown, so a kept path rated healthy is at most a warning,
+never drawn covered, even when an older kept path is as degraded as the roll-up.

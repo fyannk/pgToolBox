@@ -303,8 +303,16 @@ func TestStaleBarmanPathsOfAnExpiredBackup(t *testing.T) {
 	if c := restoreCheck(b, first.Add(time.Hour)); c.Answer == "covered" || c.Code != "recovery.segment.purgeEdge" {
 		t.Errorf("an hour after the oldest point: %s (%s), want the purge band timed from the kept paths' scan", c.Answer, c.Code)
 	}
-	if c := restoreCheck(b, first.Add(3*time.Hour)); c.Answer != "covered" || c.BackupID != "old" {
-		t.Errorf("three hours after the oldest point: %s (%s), want covered by old", c.Answer, c.Code)
+	// Round 12, PG P3-3: the kept scan is older than one refresh, so a
+	// purge since may have dropped old whole: the span only it reaches,
+	// up to new's lower bound, is in the band; new still covers.
+	for _, at := range []time.Time{first.Add(3 * time.Hour), now.Add(-24*time.Hour - time.Minute)} {
+		if c := restoreCheck(b, at); c.Answer == "covered" || c.Code != "recovery.segment.purgeEdge" {
+			t.Errorf("%s, only old reaches it: %s (%s), want the purge band", at, c.Answer, c.Code)
+		}
+	}
+	if c := restoreCheck(b, now.Add(-23*time.Hour)); c.Answer != "covered" || c.BackupID != "new" {
+		t.Errorf("now-23h: %s (%s), want covered by new", c.Answer, c.Code)
 	}
 }
 
