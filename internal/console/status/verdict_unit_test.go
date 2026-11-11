@@ -166,7 +166,7 @@ func TestHibernatedClusterHeadlineIsInactive(t *testing.T) {
 	}
 	sleepy := &cnpgv1.Cluster{
 		ObjectMeta: metav1.ObjectMeta{Namespace: "team-a", Name: "sleepy", UID: "5e1e9c1a-0000-4000-8000-000000000001", Annotations: map[string]string{cnpgstatus.AnnotationHibernation: "on"}},
-		Spec: cnpgv1.ClusterSpec{Instances: 2, Backup: &cnpgv1.BackupConfiguration{BarmanObjectStore: &cnpgv1.BarmanObjectStoreConfiguration{}}},
+		Spec:       cnpgv1.ClusterSpec{Instances: 2, Backup: &cnpgv1.BackupConfiguration{BarmanObjectStore: &cnpgv1.BarmanObjectStoreConfiguration{}}},
 		Status: cnpgv1.ClusterStatus{
 			Phase: "Cluster in healthy state", Instances: 2, CurrentPrimary: "sleepy-1", TargetPrimary: "sleepy-1",
 			Conditions: []metav1.Condition{

@@ -1848,7 +1848,8 @@ func restoreCaveats(b viewmodel.Backups) []viewmodel.Phrase {
 	default:
 		return out
 	}
-	if a := b.Summary.Archiving; archivingFailing(a) {
+	switch a := b.Summary.Archiving; {
+	case archivingFailing(a):
 		if a.LastArchivedAt != nil {
 			out = append(out, say("recovery.caveat.archivingFailingSince",
 				"WAL archiving is failing: the primary last archived a segment at "+a.LastArchivedAt.UTC().Format(time.RFC3339)+"; newer WAL is on the instance, not in the repository.",
@@ -1856,13 +1857,13 @@ func restoreCaveats(b viewmodel.Backups) []viewmodel.Phrase {
 		} else {
 			out = append(out, say("recovery.caveat.archivingFailing", "WAL archiving is failing: the newest WAL is on the instance, not in the repository.", nil))
 		}
-	} else if a.Reason == cnpgstatus.ArchivingReasonBacklogNotReported {
+	case a.Reason == cnpgstatus.ArchivingReasonBacklogNotReported:
 		out = append(out, say("recovery.caveat.archiverNotReported",
 			"The archiving instance does not report itself primary (a replica cluster's designated primary, or a primary mid-promotion), so it does not report its archive backlog: how long the newest archived WAL waited on it is not known, so restore points near the newest edge may not be in the repository.", nil))
-	} else if a.Reason == cnpgstatus.ArchivingReasonHibernated {
+	case a.Reason == cnpgstatus.ArchivingReasonHibernated:
 		out = append(out, say("recovery.caveat.archiverHibernated",
 			"The Cluster is hibernated: no instance runs, so nothing archives WAL, and whether the WAL written before it reached the repository is not confirmed: restore points near the newest edge may not be in the repository until it wakes up.", nil))
-	} else if archiverUnread(a) {
+	case archiverUnread(a):
 		out = append(out, say("recovery.caveat.archiverUnread",
 			"The primary's archiver was not read: how long the newest archived WAL waited on the primary is not known, so it may hold commits older than its arrival in the repository suggests, and restore points near the newest edge may not be in the repository.", nil))
 	}
