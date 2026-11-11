@@ -557,6 +557,80 @@ func (s *Store) RevokeGrantsOf(userHash string, at time.Time) []string {
 	return ids
 }
 
+// WriteRevocations writes the revocations of ids, made on this replica
+// (RevokeGrant, RevokeGrantsOf), through to the ConfigMap, as SpendCode
+// writes a spend: nil once a document the API server holds records each
+// of them revoked (this write, or another replica's that holds them
+// already), ErrNotRecorded when that cannot be done within writeTimeout.
+// The local revocations stay either way: they only refuse more, and the
+// next batch writes them. Without a ConfigMap (one replica) there is
+// nothing to write.
+func (s *Store) WriteRevocations(ctx context.Context, ids ...string) error {
+	if s == nil {
+		return ErrNotRecorded
+	}
+	if !s.Enabled() || len(ids) == 0 {
+		return nil
+	}
+	revokedIn := func(cm *corev1.ConfigMap) bool {
+		var doc grantsDoc
+		if cm == nil || json.Unmarshal([]byte(cm.Data[KeyGrants]), &doc) != nil {
+			return false
+		}
+		for _, id := range ids {
+			if doc.Grants[id].Revoked == 0 {
+				return false
+			}
+		}
+		return true
+	}
+	s.mu.Lock()
+	if s.base == nil || s.mode == modeMissing || s.mode == modeForbidden || s.foreign[KeyGrants] {
+		s.mu.Unlock()
+		return ErrNotRecorded
+	}
+	if revokedIn(s.base) {
+		s.mu.Unlock()
+		return nil
+	}
+	desired, gen := s.desiredLocked(), s.gen
+	s.mu.Unlock()
+	held := func() bool {
+		for _, id := range ids {
+			if s.grants[id].Revoked == 0 {
+				return false
+			}
+		}
+		return true
+	}
+	switch err := s.writeThrough(ctx, revokedIn, held, desired, gen); {
+	case errors.Is(err, ErrSpent):
+		return nil // the ConfigMap holds them revoked already
+	case err != nil:
+		return err
+	}
+	return nil
+}
+
+// UnwrittenRevocationsOf returns the IDs of userHash's grants revoked on
+// this replica that no document read or written holds revoked yet: what a
+// retried disconnection writes again.
+func (s *Store) UnwrittenRevocationsOf(userHash string) []string {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var ids []string
+	for id := range s.unwritten {
+		if e, ok := s.grants[id]; ok && e.User == userHash && e.Revoked > 0 {
+			ids = append(ids, id)
+		}
+	}
+	sort.Strings(ids)
+	return ids
+}
+
 // GrantRevoked reports whether the grant is revoked on any replica.
 func (s *Store) GrantRevoked(id string) bool {
 	if s == nil {
@@ -721,8 +795,7 @@ func (s *Store) writeThrough(ctx context.Context, spentIn func(*corev1.ConfigMap
 		switch {
 		case err == nil:
 			s.mu.Lock()
-			s.base = updated.DeepCopy()
-			s.wroteLocked(updated)
+			s.wroteBaseLocked(updated)
 			if s.gen == gen {
 				s.written, s.urgent = gen, false
 			}
@@ -737,9 +810,14 @@ func (s *Store) writeThrough(ctx context.Context, spentIn func(*corev1.ConfigMap
 				_ = s.failed(getErr)
 				return ErrNotRecorded
 			}
-			spent := spentIn(fresh)
 			s.mu.Lock()
-			s.mergeLocked(fresh)
+			s.mergeReadLocked(fresh)
+			// The spend is looked for in what was merged, not only in
+			// the re-read: a re-read older than the base (the watch
+			// delivered a newer write while its answer was on its way)
+			// is not merged, and the next write is built on that newer
+			// base, which may hold another replica's spend already.
+			spent := spentIn(fresh) || spentIn(s.base)
 			unreadable, kept := s.foreign[KeyGrants], held()
 			desired, gen = s.desiredLocked(), s.gen
 			s.mu.Unlock()
@@ -755,6 +833,9 @@ func (s *Store) writeThrough(ctx context.Context, spentIn func(*corev1.ConfigMap
 			return ErrNotRecorded
 		}
 	}
+	s.mu.Lock()
+	s.exhaustedLocked()
+	s.mu.Unlock()
 	return ErrNotRecorded
 }
 
@@ -1040,6 +1121,21 @@ func (s *Store) heldLocked(id string, e grantEntry) {
 	}
 }
 
+// recreatedLocked handles a ConfigMap deleted and recreated: the empty
+// document resets the index (mergeGrantsLocked), but a grant recorded
+// here within localKeep, or on another replica, survives the reset, and a
+// revocation of it that an older document held would not. Every
+// revocation this replica knows is made unwritten again, so it is kept
+// and written to the new ConfigMap: a reset of the index never undoes a
+// revocation (keeping one longer only refuses more).
+func (s *Store) recreatedLocked() {
+	for id, e := range s.grants {
+		if e.Revoked > 0 {
+			s.revokedLocked(id)
+		}
+	}
+}
+
 // dropGrantsLocked forgets every grant of the index.
 func (s *Store) dropGrantsLocked() {
 	s.grants, s.recorded, s.unwritten = map[string]grantEntry{}, map[string]time.Time{}, map[string]bool{}
@@ -1070,10 +1166,15 @@ func (s *Store) revokedLocked(id string) {
 
 func (s *Store) pruneGrantsLocked(now int64) {
 	for id, e := range s.grants {
-		// A revocation no document read holds yet is kept to its expiry:
-		// pruned, it would be lost, and its grant written back by a
-		// replica that never saw it.
-		if e.gone(now) && (e.Expiry <= now || !s.unwritten[id]) {
+		// A revocation no document read or written holds yet is kept,
+		// past its expiry and its RevokedKeep too, until one does:
+		// pruned, it would be lost, and its grant written back, or left
+		// standing, by a replica that never saw it (a code-replay
+		// placeholder recorded on a replica cut off from the ConfigMap
+		// expires RevokedKeep after the replay). It is an entry of the
+		// table, under its bounds, and the first write that lands
+		// releases it (landedLocked).
+		if e.gone(now) && !s.unwritten[id] {
 			s.dropGrantLocked(id)
 		}
 	}

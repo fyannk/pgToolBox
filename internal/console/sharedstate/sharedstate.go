@@ -79,6 +79,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/watch"
 
 	"github.com/fyannk/pgToolBox/internal/console/viewmodel"
@@ -149,6 +150,10 @@ const (
 	writeTimeout = 10 * time.Second
 	// maxAttempts bounds the conflict retries of one write.
 	maxAttempts = 5
+	// rewoundAfter is how many Gets in a row older than what a Get or
+	// this replica's own write showed before make the older one
+	// authoritative (mergeReadLocked).
+	rewoundAfter = 2
 	// DefaultDigestRetention is how long a delivery mark is kept when
 	// Options.DigestRetention is not set: the longest DIGEST_RETENTION.
 	DefaultDigestRetention = 366 * 24 * time.Hour
@@ -409,6 +414,17 @@ type Store struct {
 	byObject map[string]map[string]struct{}
 	// base is the ConfigMap as last read or written; nil until read.
 	base *corev1.ConfigMap
+	// rewound counts the Gets in a row older than the base, and
+	// rewoundLogged is set once such an episode is logged
+	// (mergeReadLocked).
+	rewound       int
+	rewoundLogged bool
+	// uid is the UID of the ConfigMap last merged: another one is the
+	// ConfigMap deleted and recreated (recreatedLocked); seenRV the
+	// resourceVersion of the last base, kept when the ConfigMap is
+	// deleted (olderLocked).
+	uid    types.UID
+	seenRV string
 	// foreign names the keys left untouched: of a format version this
 	// console does not read, or (grants.json) unreadable.
 	foreign map[string]bool
@@ -1247,7 +1263,7 @@ func (s *Store) gaugeForeignLocked() {
 // state, then prunes, and reports whether the merged state differs from
 // what the ConfigMap holds (a write is then due).
 func (s *Store) mergeLocked(cm *corev1.ConfigMap) {
-	if s.base != nil && olderVersion(cm.ResourceVersion, s.base.ResourceVersion) {
+	if s.olderLocked(cm) {
 		// Older than the ConfigMap last merged or written (a watch event
 		// still queued while a conflict's re-read or this replica's own
 		// write showed a newer one): everything it holds is in that newer
@@ -1256,7 +1272,13 @@ func (s *Store) mergeLocked(cm *corev1.ConfigMap) {
 		// of grants, drop a grant added since (mergeGrantsLocked).
 		return
 	}
-	s.base = cm.DeepCopy()
+	s.base, s.seenRV = cm.DeepCopy(), cm.ResourceVersion
+	if s.uid != "" && cm.UID != "" && cm.UID != s.uid {
+		s.recreatedLocked()
+	}
+	if cm.UID != "" {
+		s.uid = cm.UID
+	}
 	s.observeWritersLocked(cm)
 	data := s.versionedLocked(cm.Data)
 	s.foreign = map[string]bool{}
@@ -1337,6 +1359,74 @@ func (s *Store) mergeLocked(cm *corev1.ConfigMap) {
 	if !s.inSyncWithLocked(s.pruneLocked()) || s.beatDueLocked() {
 		s.changedLocked(false)
 	}
+}
+
+// olderLocked reports whether cm is older than the base, or, the
+// ConfigMap deleted since (no base), older than the last base of the same
+// object (a read answered before the delete, arriving after it): such a
+// ConfigMap is not merged (mergeLocked).
+func (s *Store) olderLocked(cm *corev1.ConfigMap) bool {
+	if s.base != nil {
+		return olderVersion(cm.ResourceVersion, s.base.ResourceVersion)
+	}
+	return cm.UID != "" && cm.UID == s.uid && olderVersion(cm.ResourceVersion, s.seenRV)
+}
+
+// mergeReadLocked is mergeLocked of cm as a Get answered it (a quorum
+// read), not as a watch delivered it.
+//
+// mergeLocked skips a ConfigMap older than the base: a watch event still
+// queued, or a Get whose answer was overtaken by the watch delivering a
+// newer write. But when the API server's revision went back (an etcd
+// restore without --bump-revision), every read is older than the base:
+// each would be skipped, each write would conflict until maxAttempts, and
+// the grants would stay usable without the other replicas' revocations.
+// So rewoundAfter Gets in a row older than the base make the older one
+// authoritative: the base is replaced by it (logged once an episode). A
+// Get overtaken by the watch twice in a row is merged so too, which costs
+// one more conflict: the next write, built on it, conflicts, and the
+// re-read after it shows the newer ConfigMap again.
+func (s *Store) mergeReadLocked(cm *corev1.ConfigMap) {
+	if s.olderLocked(cm) {
+		s.rewound++
+		if s.rewound < rewoundAfter {
+			return
+		}
+		if !s.rewoundLogged {
+			s.rewoundLogged = true
+			s.opts.Logger.Warn("shared state: the API server shows the ConfigMap at a resourceVersion older than the one this "+
+				"replica merged (an etcd restore that did not bump the revision?); that version is taken as the ConfigMap",
+				slog.String("configmap", s.opts.Name), slog.String("resourceVersion", cm.ResourceVersion),
+				slog.String("merged", s.seenRV))
+		}
+		s.base, s.seenRV = nil, ""
+	} else {
+		s.rewoundLogged = false
+	}
+	s.rewound = 0
+	s.mergeLocked(cm)
+}
+
+// wroteBaseLocked records updated, this replica's write as the API server
+// answered it, as the base, unless the base is newer already (the watch
+// delivered another replica's later write before this answer was read):
+// set back, the base would drop under the three-way merge the grants that
+// later write added (mergeGrantsLocked).
+func (s *Store) wroteBaseLocked(updated *corev1.ConfigMap) {
+	if s.base == nil || !olderVersion(updated.ResourceVersion, s.base.ResourceVersion) {
+		s.base, s.seenRV = updated.DeepCopy(), updated.ResourceVersion
+	}
+	s.rewound = 0
+	s.wroteLocked(updated)
+}
+
+// exhaustedLocked records a write that still conflicted after maxAttempts
+// as a failure: the replica cannot write its state (a ConfigMap rewritten
+// faster than it can merge, or one whose revision went back), so the
+// failing mode's rules apply (grants usable for staleGrace only).
+func (s *Store) exhaustedLocked() {
+	sharedExhausted.Inc()
+	s.setModeLocked(modeFailing, "every write conflicted")
 }
 
 // pruneLocked drops expired sign-outs, cleared findings past offKeep,
@@ -1645,8 +1735,7 @@ func (s *Store) flush(ctx context.Context) error {
 		switch {
 		case err == nil:
 			s.mu.Lock()
-			s.base = updated.DeepCopy()
-			s.wroteLocked(updated)
+			s.wroteBaseLocked(updated)
 			if s.gen == gen {
 				s.written, s.urgent = gen, false
 			}
@@ -1662,13 +1751,16 @@ func (s *Store) flush(ctx context.Context) error {
 				return s.failed(getErr)
 			}
 			s.mu.Lock()
-			s.mergeLocked(fresh)
+			s.mergeReadLocked(fresh)
 			s.mu.Unlock()
 		default:
 			sharedWrites.WithLabelValues("failed").Inc()
 			return s.failed(err)
 		}
 	}
+	s.mu.Lock()
+	s.exhaustedLocked()
+	s.mu.Unlock()
 	return fmt.Errorf("write of ConfigMap %s: still conflicting after %d attempts", s.opts.Name, maxAttempts)
 }
 
@@ -1776,7 +1868,7 @@ func (s *Store) watchOnce(ctx context.Context) error {
 		return s.failed(err)
 	}
 	s.mu.Lock()
-	s.mergeLocked(cm)
+	s.mergeReadLocked(cm)
 	s.setModeLocked(modeLive, "")
 	s.mu.Unlock()
 	// No resourceVersion: the watch starts at the current state and first
@@ -1791,6 +1883,7 @@ func (s *Store) watchOnce(ctx context.Context) error {
 		return s.failed(err)
 	}
 	defer w.Stop()
+	first := true
 	for {
 		select {
 		case <-ctx.Done():
@@ -1803,12 +1896,22 @@ func (s *Store) watchOnce(ctx context.Context) error {
 			case watch.Added, watch.Modified:
 				if cm, ok := ev.Object.(*corev1.ConfigMap); ok && cm.Name == s.opts.Name {
 					s.mu.Lock()
-					s.mergeLocked(cm)
+					if first && ev.Type == watch.Added {
+						// The watch's first event is the ConfigMap as it is
+						// now, a read as the Get above: two such reads older
+						// than the base mean the revision went back
+						// (mergeReadLocked), which an idle replica would
+						// otherwise never take in.
+						s.mergeReadLocked(cm)
+					} else {
+						s.mergeLocked(cm)
+					}
 					s.mu.Unlock()
 				}
+				first = false
 			case watch.Deleted:
 				s.mu.Lock()
-				s.base = nil
+				s.base, s.rewound = nil, 0
 				s.setModeLocked(modeMissing, "")
 				s.mu.Unlock()
 				return nil
