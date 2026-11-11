@@ -111,10 +111,15 @@ func FuzzLatest(f *testing.F) {
 		if len(joined) > MaxReasonBytes || !utf8.ValidString(joined) {
 			t.Fatalf("Join = %d bytes, valid UTF-8 %v", len(joined), utf8.ValidString(joined))
 		}
-		// An actionable clause survives whenever it fits beside extra.
-		if strings.Contains(reason, FormerPrimaryMayHold) && len(FormerPrimaryMayHold)+len("…; ; ")+len(extra) <= MaxReasonBytes &&
-			!strings.Contains(joined, FormerPrimaryMayHold) {
+		// An actionable clause of reason always survives, whatever extra
+		// is (round 9, PG P3): extra is cut before it is.
+		if strings.Contains(reason, FormerPrimaryMayHold) && !strings.Contains(joined, FormerPrimaryMayHold) {
 			t.Fatalf("Join(%q, %q) = %q lost the actionable clause", reason, extra, joined)
+		}
+		// And extra survives whole whenever it fits beside the clause.
+		if strings.Contains(reason, FormerPrimaryMayHold) && len(FormerPrimaryMayHold)+len("…; ; ")+len(extra) <= MaxReasonBytes &&
+			!strings.HasSuffix(joined, extra) {
+			t.Fatalf("Join(%q, %q) = %q lost the extra reason", reason, extra, joined)
 		}
 	})
 }

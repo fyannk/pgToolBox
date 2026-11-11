@@ -296,6 +296,28 @@ func TestJoinKeepsTheActionableTail(t *testing.T) {
 	}
 }
 
+// TestJoinCutsExtraBeforeTheClause (round 9, PG P3): Barman's capUnknown
+// joins the own-timeline reason (about 125 bytes) to a path's reason that
+// ends with FormerPrimaryMayHold; together they exceed the wire bound.
+// The clause stays whole and extra is cut after it.
+func TestJoinCutsExtraBeforeTheClause(t *testing.T) {
+	t.Parallel()
+	reason := "segment 000000010000000A000000FF before the timeline switch is not in the repository; " + FormerPrimaryMayHold
+	extra := "a default restore (recovery_target_timeline 'latest') stops on timeline 3: timeline 4 history is missing; timeline 5 needs an explicit targetTLI"
+	for _, r := range []string{reason, FormerPrimaryMayHold, strings.Repeat("é", 100) + "; " + FormerPrimaryMayHold + "; trailing words"} {
+		got := Join(r, extra)
+		if len(got) > MaxReasonBytes || !utf8.ValidString(got) {
+			t.Fatalf("Join = %d bytes, valid UTF-8 %v", len(got), utf8.ValidString(got))
+		}
+		if !strings.Contains(got, FormerPrimaryMayHold) {
+			t.Errorf("Join(%q, %q) = %q lost the actionable clause", r, extra, got)
+		}
+		if !strings.Contains(got, extra[:40]) {
+			t.Errorf("Join dropped extra entirely: %q", got)
+		}
+	}
+}
+
 func TestJoinKeepsBothReasonsWithinTheWireBound(t *testing.T) {
 	t.Parallel()
 	long := strings.Repeat("é", 200)

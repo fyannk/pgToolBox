@@ -15,6 +15,7 @@
 package sweep
 
 import (
+	"strconv"
 	"time"
 
 	"github.com/fyannk/pgToolBox/internal/console/viewmodel"
@@ -76,9 +77,39 @@ const (
 	// reported). The backlog rule compares it across sweeps of the same
 	// instance (cnpgstatus ArchiveBacklogOf); it is not a sparkline.
 	SeriesLastArchivedAt = "lastArchivedAt"
+	// SeriesTimeline is the timeline a primary writes at each sweep: the
+	// one its current WAL file is named on (/pg/status currentWal,
+	// pg_walfile_name(pg_current_wal_lsn())), not timelineId, which
+	// CloudNativePG reads from pg_control_checkpoint() and which stays on
+	// the old timeline after a promotion until the first checkpoint
+	// completes. Nil for a standby, a failed read, or a name that does
+	// not parse. The recovery facts match a former primary's readings to
+	// the timeline whose WAL its archiver wrote; it is not a sparkline.
+	SeriesTimeline = "timeline"
 )
 
-var seriesUnits = map[string]string{SeriesLagBytes: "bytes", SeriesReadyWALFiles: "files", SeriesCurrentLSN: "bytes", SeriesLastArchivedAt: "ms"}
+// ArchivedNone is the SeriesLastArchivedAt value of a sweep that read the
+// primary's archiver and found it had archived nothing yet
+// (last_archived_time null): a first archive after it is progress, which
+// a gap (nil, no reading) could not show (CNPG P3-b).
+const ArchivedNone = -1
+
+var seriesUnits = map[string]string{
+	SeriesLagBytes: "bytes", SeriesReadyWALFiles: "files", SeriesCurrentLSN: "bytes", SeriesLastArchivedAt: "ms", SeriesTimeline: "",
+}
+
+// walFileTimeline is the timeline a WAL file name (24 hex digits) is on;
+// false when it does not parse or names timeline 0.
+func walFileTimeline(name string) (uint32, bool) {
+	if len(name) != 24 {
+		return 0, false
+	}
+	tl, err := strconv.ParseUint(name[:8], 16, 32)
+	if err != nil || tl == 0 {
+		return 0, false
+	}
+	return uint32(tl), true
+}
 
 // maxExactLSN is the largest position a float64 holds exactly.
 const maxExactLSN = 1 << 53

@@ -1,0 +1,85 @@
+{
+  "basis": "evidence",
+  "state": "unhealthy",
+  "reason": "WAL is missing after the latest restore point: recent times are not restorable from the repository now; the former primary, db-1, may still hold it: do not delete db-1 or its volume",
+  "reasons": [
+    {
+      "code": "recovery.reason.missingAfterLatestFormerPrimary",
+      "params": {
+        "instance": "db-1"
+      },
+      "text": "WAL is missing after the latest restore point: recent times are not restorable from the repository now; the former primary, db-1, may still hold it: do not delete db-1 or its volume"
+    }
+  ],
+  "earliest": "2026-10-27T12:00:00Z",
+  "latest": "2026-10-29T07:55:00Z",
+  "newestCoveredTarget": "2026-10-28T07:55:00Z",
+  "targetTimeline": 2,
+  "segments": [
+    {
+      "from": "2026-10-27T12:00:00Z",
+      "to": "2026-10-27T12:05:00Z",
+      "kind": "unknown",
+      "text": "Within 5 min of the oldest restore point: a retention purge since the repository was last read may have removed this base backup.",
+      "code": "recovery.segment.purgeEdge",
+      "params": {
+        "marginSeconds": "300"
+      }
+    },
+    {
+      "from": "2026-10-27T12:05:00Z",
+      "to": "2026-10-28T07:55:00Z",
+      "kind": "covered",
+      "backupId": "b1",
+      "text": "Structurally covered: base backup b1 and contiguous archived WAL.",
+      "code": "recovery.segment.covered",
+      "params": {
+        "backupId": "b1"
+      }
+    },
+    {
+      "from": "2026-10-28T07:55:00Z",
+      "to": "2026-10-29T07:40:00Z",
+      "kind": "unknown",
+      "text": "The WAL up to here on timeline 1 was archived by a former primary, which had WAL waiting in every reading the console kept before the switch: WAL that waited on it, or never left it, may hold commits older than this end's arrival time, so a restore this recent may stop short.",
+      "code": "recovery.segment.formerArchiverBacklog",
+      "params": {
+        "timeline": "1"
+      }
+    },
+    {
+      "from": "2026-10-29T07:40:00Z",
+      "to": "2026-10-29T07:55:00Z",
+      "kind": "unknown",
+      "text": "Within 15 min of the end of the archived WAL: segment names cannot tell whether this target's WAL is archived yet.",
+      "code": "recovery.segment.nearEnd",
+      "params": {
+        "marginSeconds": "900"
+      }
+    },
+    {
+      "from": "2026-10-29T07:55:00Z",
+      "to": "2026-10-29T12:00:00Z",
+      "kind": "missingWAL",
+      "text": "WAL is missing from the repository after the latest restore point. The former primary, db-1, may still hold it, and CloudNativePG archives it before that instance rejoins: do not delete db-1 or its volume.",
+      "code": "recovery.segment.missingAfterLatestFormerPrimary",
+      "params": {
+        "instance": "db-1"
+      }
+    }
+  ],
+  "markers": [
+    {
+      "at": "2026-10-27T12:00:00Z",
+      "backupId": "b1",
+      "kind": "incomplete",
+      "source": "repository"
+    }
+  ],
+  "assumptions": [],
+  "complete": true,
+  "provenance": {
+    "origin": "",
+    "source": "EvidenceAgent a /api/v1alpha1/recovery-paths"
+  }
+}

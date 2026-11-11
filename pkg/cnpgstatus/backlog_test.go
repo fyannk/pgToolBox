@@ -36,6 +36,14 @@ func withArchived(run []ReadySample, at *time.Time) []ReadySample {
 	return run
 }
 
+// archivedNone marks every sample as read with nothing archived yet.
+func archivedNone(run []ReadySample) []ReadySample {
+	for i := range run {
+		run[i].ArchivedNone = true
+	}
+	return run
+}
+
 // archivedAgo is a last_archived_time d before backlogNow.
 func archivedAgo(d time.Duration) *time.Time { t := backlogNow.Add(-d); return &t }
 
@@ -108,6 +116,11 @@ func TestArchiveBacklogOf(t *testing.T) {
 		// both are on its clock: a skew of an hour changes nothing.
 		{"steady, same clock: archived since the oldest sweep", barman, &ArchiverLive{ReadyWALFiles: 6, Earlier: withArchived(readyRun(0, 5, 7, 6), archivedAgo(2*time.Hour)), LastArchivedAt: archivedAgo(119 * time.Minute)}, 0, 3, false, 0},
 		{"steady, same clock: nothing archived since the oldest sweep", barman, &ArchiverLive{ReadyWALFiles: 6, Earlier: withArchived(readyRun(0, 5, 7, 6), archivedAgo(-time.Hour)), LastArchivedAt: archivedAgo(-time.Hour)}, 6, 3, false, 0},
+		// CNPG P3-b: the oldest sweep read the archiver with nothing
+		// archived yet; its first archive since is progress, even within
+		// one interval of that sweep.
+		{"steady, first archive since a sweep that read none", barman, &ArchiverLive{ReadyWALFiles: 6, Earlier: archivedNone(readyRun(0, 5, 7, 6)), LastArchivedAt: archivedAgo(59 * time.Second)}, 0, 3, false, 0},
+		{"steady, still nothing archived since a sweep that read none", barman, &ArchiverLive{ReadyWALFiles: 6, Earlier: archivedNone(readyRun(0, 5, 7, 6))}, 6, 3, false, 0},
 		{"pgBackRest plugin: steady, never archived", plugin(PgBackRestDaliboPlugin), &ArchiverLive{ReadyWALFiles: 5, Earlier: readyRun(0, 5, 5)}, 5, 3, false, 0},
 		{"barman plugin, ObjectStore unread: two sweeps are not enough", barman, &ArchiverLive{ReadyWALFiles: 8, Earlier: readyRun(0, 6)}, 0, 3, false, 0},
 		{"barman plugin, ObjectStore unread: two sweeps kept, unconfirmed", barman, &ArchiverLive{ReadyWALFiles: 8, Earlier: readyRun(6)}, 0, 3, false, 8},

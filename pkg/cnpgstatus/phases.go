@@ -199,7 +199,7 @@ type PhaseReading struct {
 // verifiedMinors are the minors whose phase and condition tables were
 // read at a released tag and are checked there by make
 // verify-pins-cnpgstatus (pins_test.go verifiedReleases: 1.30 at
-// v1.30.0). 1.31 is planned: its rows were read at upstream main
+// v1.30.0 and v1.30.1). 1.31 is planned: its rows were read at upstream main
 // (21e24f6), not at a 1.31 tag.
 var verifiedMinors = []Minor{Minor130}
 

@@ -30,7 +30,8 @@ import (
 // operations.go): every literal they rely on must be in the operator
 // source of each verified release. Run with -tags catalogpins.
 func TestFactPinsExistInVerifiedReleases(t *testing.T) {
-	for _, release := range verifiedReleases {
+	for _, v := range verifiedReleases {
+		release := v.tag
 		corpus := operatorSources(t, release)
 		literals := []string{
 			// backupobjects.go
@@ -117,7 +118,8 @@ func TestFactPinsExistInVerifiedReleases(t *testing.T) {
 // phases.
 func TestEveryUpstreamBackupPhaseIsInTheTable(t *testing.T) {
 	constant := regexp.MustCompile(`(?m)^\s*BackupPhase\w+\s*=\s*"([^"]+)"`)
-	for minor, release := range verifiedReleases {
+	for _, v := range verifiedReleases {
+		minor, release := v.minor, v.tag
 		types, err := os.ReadFile(filepath.Join(moduleDir(t, release), "api", "v1", "backup_types.go"))
 		if err != nil {
 			t.Fatal(err)
@@ -144,7 +146,8 @@ func TestEveryUpstreamBackupPhaseIsInTheTable(t *testing.T) {
 // upstream reorders them, the bound becomes slightly too optimistic and
 // this test fails.
 func TestPinLSNBeforeReadyCount(t *testing.T) {
-	for _, release := range verifiedReleases {
+	for _, v := range verifiedReleases {
+		release := v.tag
 		probes, err := os.ReadFile(filepath.Join(moduleDir(t, release), "pkg", "management", "postgres", "probes.go"))
 		if err != nil {
 			t.Fatal(err)
@@ -160,6 +163,39 @@ func TestPinLSNBeforeReadyCount(t *testing.T) {
 		}
 		if ready := functionBody(t, probes, "func (instance *Instance) fillWalStatusFromConnection(result *postgres.PostgresqlStatus, superUserDB *sql.DB) error {"); !bytes.Contains(ready, []byte("GetWALArchiveCounters()")) {
 			t.Errorf("v%s: fillWalStatusFromConnection no longer counts the .ready files", release)
+		}
+	}
+}
+
+// TestPinArchiverIdentityAndTimeline pins two facts the recovery facts
+// read (round 9): the instance manager archives only on
+// status.currentPrimary (a switchover's target primary or a pod that
+// still reports itself primary is refused: internal/console/status
+// statusRead), and /pg/status names the primary's current WAL file with
+// pg_walfile_name(pg_current_wal_lsn()), the timeline the sweep stamps
+// (sweep SeriesTimeline), while its timelineId comes from
+// pg_control_checkpoint(), which lags a promotion.
+func TestPinArchiverIdentityAndTimeline(t *testing.T) {
+	for _, v := range verifiedReleases {
+		release := v.tag
+		archiver, err := os.ReadFile(filepath.Join(moduleDir(t, release), "pkg", "management", "postgres", "archiver", "archiver.go"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, literal := range []string{"if cluster.Status.CurrentPrimary != podName {", "return errSwitchoverInProgress"} {
+			if !bytes.Contains(archiver, []byte(literal)) {
+				t.Errorf("v%s: archiver.go no longer has %q", release, literal)
+			}
+		}
+		probes, err := os.ReadFile(filepath.Join(moduleDir(t, release), "pkg", "management", "postgres", "probes.go"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		body := functionBody(t, probes, "func (instance *Instance) fillStatusFromPrimary(result *postgres.PostgresqlStatus) error {")
+		for _, literal := range []string{"pg_catalog.pg_walfile_name(pg_catalog.pg_current_wal_lsn()) as current_wal", "FROM pg_catalog.pg_control_checkpoint()) as timeline_id"} {
+			if !bytes.Contains(body, []byte(literal)) {
+				t.Errorf("v%s: fillStatusFromPrimary no longer reads %q", release, literal)
+			}
 		}
 	}
 }
