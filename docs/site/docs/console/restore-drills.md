@@ -311,10 +311,17 @@ Anybody else, an administrator included, is not concerned.
   serves `admissionregistration.k8s.io/v1` policies
   (`operator.restoreDrillGuard.enabled: auto`; `true` renders it without
   discovery, for `helm template` and GitOps). Two policies: the label and seal
-  check applies to any ServiceAccount of the namespace bound to the shipped
-  `pgtoolbox-console-restore-drills` ClusterRole, whatever its name (the role
-  carries a marker rule for that purpose: `teardown` on
-  `restoredrills.pgtoolbox.fyannk.dev`, which no API serves); the prefix check
+  check applies to any ServiceAccount bound to the shipped
+  `pgtoolbox-console-restore-drills` ClusterRole in the Cluster's namespace,
+  whatever its name and whichever namespace it belongs to (the role carries a
+  marker rule for that purpose: `teardown` on
+  `restoredrills.pgtoolbox.fyannk.dev`, which no API serves). That includes
+  the operator's own ServiceAccount, which may bind the role: a stolen operator
+  token that binds it to itself, by RoleBinding or ClusterRoleBinding, still
+  deletes nothing but sealed drills. A ServiceAccount of another namespace that
+  holds every verb (`*`) on every namespace's resources, such as a GitOps
+  controller bound to `cluster-admin`, is an administrator and is not
+  concerned; the drills role names `teardown`, never `*`. The prefix check
   reads the namespace's PgToolBoxConsoles as parameters and applies to each
   console's exact ServiceAccount. The second fails open (no console, or the CRD
   gone), the first never does.

@@ -20,26 +20,38 @@ spec:
       resources:
       - clusters
   matchConditions:
-  # A ServiceAccount of the Cluster's own namespace, whatever its name: the
-  # drills role's marker, not a naming convention, says it is a console.
-  - name: namespace-service-account
+  # Any ServiceAccount, whatever its name or namespace: the drills role's
+  # marker, not a naming convention, says it is a console. A ServiceAccount of
+  # another namespace is concerned too: the operator, which may bind the drills
+  # role in the namespaces it watches, must not be able to delete their
+  # Clusters by binding it to itself (or to anyone outside the namespace).
+  - name: service-account
     expression: >-
-      request.userInfo.username.startsWith('system:serviceaccount:' + request.namespace + ':')
+      request.userInfo.username.startsWith('system:serviceaccount:')
   variables:
   # Bound to the drills ClusterRole in this namespace.
   - name: drillTeardown
     expression: >-
       authorizer.group('pgtoolbox.fyannk.dev').resource('restoredrills').namespace(request.namespace).check('teardown').allowed()
+  # A ServiceAccount of another namespace holding every verb on every
+  # namespace's restoredrills (a wildcard: cluster-admin, a GitOps controller)
+  # is an administrator, not a console: not concerned. The drills role names
+  # the verb teardown, never *, so binding it, even cluster-wide, does not
+  # make an administrator.
+  - name: administrator
+    expression: >-
+      !request.userInfo.username.startsWith('system:serviceaccount:' + request.namespace + ':') &&
+      authorizer.group('pgtoolbox.fyannk.dev').resource('restoredrills').check('*').allowed()
   validations:
   - expression: >-
-      !variables.drillTeardown ||
+      !variables.drillTeardown || variables.administrator ||
       (has(oldObject.metadata.labels) &&
       'pgtoolbox.fyannk.dev/drill-owner' in oldObject.metadata.labels &&
       oldObject.metadata.labels['pgtoolbox.fyannk.dev/drill-owner'] == request.namespace &&
       'pgtoolbox.fyannk.dev/restore-drill-of' in oldObject.metadata.labels &&
       has(oldObject.metadata.annotations) &&
       'pgtoolbox.fyannk.dev/restore-drill-seal' in oldObject.metadata.annotations)
-    message: a console's ServiceAccount may delete only the restore drill Clusters it created (drill-owner label, drill label, drill seal)
+    message: a ServiceAccount holding the restore-drill teardown right may delete only the restore drill Clusters it created (drill-owner label, drill label, drill seal)
     reason: Forbidden
 ---
 apiVersion: admissionregistration.k8s.io/v1
