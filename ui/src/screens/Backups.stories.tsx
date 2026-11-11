@@ -5,6 +5,7 @@ import {
   evidenceAudienceMismatch,
   evidenceStatusNotFromOperator,
   recoveryAfterFailover,
+  recoveryArchivingFailing,
   recoveryBackupUnconfirmed,
   recoveryHealthy,
   recoveryHibernated,
@@ -13,6 +14,7 @@ import {
   recoveryMixedHoles,
   recoveryNone,
   recoveryPrimaryUnreadAfterFailover,
+  recoveryPurgeBandExtended,
   recoveryReportedArchivingFailing,
   recoveryReportedOnly,
   recoveryRepositoryAhead,
@@ -207,12 +209,45 @@ export const RecoveryHibernatedFrench: Story = french({
     await expect(canvas.getByText(/^le cluster est en hibernation/)).toBeVisible();
   },
 });
+/**
+ * WAL archiving is failing: the edge hint offers pg_stat_archiver, never a
+ * WAL switch, which would wait like every other segment (round 14, DBA
+ * P2-1; Go's edgeAdvice).
+ */
+export const RecoveryArchivingFailing: Story = {
+  args: { data: { ...backups, recoveryTimeline: recoveryArchivingFailing } },
+  play: async ({ canvas, canvasElement }) => {
+    await expect(canvas.getByText(/^WAL archiving is failing: WAL written since the newest segment/)).toBeVisible();
+    await expect(canvasElement.querySelector('[data-pitr-edge-hint="evidence"]')).not.toBeNull();
+    await expect(canvas.getByText(/check what PostgreSQL last archived:$/)).toBeVisible();
+    await expect(canvas.queryByText(/pg_switch_wal\(\)/)).toBeNull();
+    await expect(canvas.queryByText(/force a WAL switch/)).toBeNull();
+  },
+};
+/** The same in French. */
+export const RecoveryArchivingFailingFrench: Story = french({
+  args: RecoveryArchivingFailing.args,
+  play: async ({ canvas, canvasElement }) => {
+    await expect(canvas.getByText(/^l’archivage des WAL échoue :/)).toBeVisible();
+    await expect(canvasElement.querySelector('[data-pitr-edge-hint="evidence"]')).not.toBeNull();
+    await expect(canvas.queryByText(/pg_switch_wal\(\)/)).toBeNull();
+  },
+});
+/** Scans were missed: the purge band at the oldest edge runs to the next base backup's lower bound. */
+export const RecoveryPurgeBandExtended: Story = {
+  args: { data: { ...backups, recoveryTimeline: recoveryPurgeBandExtended } },
+  play: async ({ canvas }) => {
+    await expect(canvas.getByRole("list", { name: "Spans of the recovery window" })).toHaveTextContent(
+      /Within (1 d|24 h) of the oldest restore point: a retention purge since the repository was last read/,
+    );
+  },
+};
 /** The last good recovery paths were dropped as too old: the bar says why and what to check. */
 export const RecoveryKeptTooOld: Story = {
   args: { data: { ...backups, recoveryTimeline: recoveryKeptTooOld } },
   play: async ({ canvas }) => {
     await expect(
-      canvas.getByText(/more than three refresh intervals .*check the evidence agent's logs .*object store answers/),
+      canvas.getByText(/more than three refresh intervals .*check the evidence agent’s logs .*object store answers/),
     ).toBeVisible();
   },
 };
@@ -261,7 +296,9 @@ export const RecoveryReportedArchivingFailing: Story = {
     await expect(spans.getByText(/is likely not in the repository\.$/)).toBeVisible();
     await expect(spans.queryByText(/may well be possible/)).toBeNull();
     await expect(canvasElement.querySelector('[data-pitr-edge-hint="reported"]')).not.toBeNull();
-    await expect(canvas.getByText(/check pg_stat_archiver again:$/)).toBeVisible();
+    // Archiving fails: pg_stat_archiver, no WAL switch (round 14, DBA P2-1).
+    await expect(canvas.getByText(/check what PostgreSQL last archived:$/)).toBeVisible();
+    await expect(canvas.queryByText(/pg_switch_wal\(\)/)).toBeNull();
   },
 };
 /** The same in French: Go's sentences are said from their codes, not shown in English. */

@@ -5776,6 +5776,12 @@ components:
         earliest:
           format: date-time
           type: string
+        edgeAdvice:
+          description: "Narrows the checks a client offers at an uncertain edge. Absent: pg_stat_archiver and pg_switch_wal() on the primary. archiver: pg_stat_archiver only, a WAL switch would not help (archiving fails or lags). none: neither, no primary runs or none was read to run them on."
+          enum:
+            - archiver
+            - none
+          type: string
         latest:
           description: "When the newest contiguous WAL segment reached the repository (evidence basis), or the reported window's end: a receipt time, not a restore target (see newestCoveredTarget)."
           format: date-time

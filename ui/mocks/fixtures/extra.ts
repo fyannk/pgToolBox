@@ -392,6 +392,7 @@ export const recoveryRepositoryAhead = {
 export const recoveryHibernated = {
   ...recoveryHealthy,
   state: "unknown",
+  edgeAdvice: "none",
   reason:
     "the Cluster is hibernated: whether the WAL written before it reached the repository is not confirmed, so the newest restore points are uncertain",
   reasons: [
@@ -419,6 +420,7 @@ export const recoveryHibernated = {
  */
 export const recoveryPrimaryUnreadAfterFailover = {
   ...recoveryAfterFailover,
+  edgeAdvice: "none",
   reason:
     "the repository held no WAL of timeline 2, the one the current primary writes, when it was last read, and the primary was not read: the newest restore points are uncertain until the primary is read again and the agent reads WAL of timeline 2",
   reasons: [
@@ -428,6 +430,60 @@ export const recoveryPrimaryUnreadAfterFailover = {
       text: "the repository held no WAL of timeline 2, the one the current primary writes, when it was last read, and the primary was not read: the newest restore points are uncertain until the primary is read again and the agent reads WAL of timeline 2",
     },
   ],
+} satisfies RecoveryTimeline;
+
+/**
+ * WAL archiving is failing with the primary read and no recent failure on
+ * record (ContinuousArchiving False): the newest restore points are
+ * uncertain, the hint offers pg_stat_archiver only; a WAL switch would
+ * wait like every other segment (Go's wording and edgeAdvice,
+ * internal/console/status/recovery.go timelineVerdict, edgeAdviceOf).
+ */
+export const recoveryArchivingFailing = {
+  ...recoveryHealthy,
+  state: "warning",
+  edgeAdvice: "archiver",
+  reason:
+    "WAL archiving is failing: WAL written since the newest segment the repository holds is likely not in it, so the newest restore points are uncertain; the Cluster's ContinuousArchiving condition says why",
+  reasons: [
+    {
+      code: "recovery.reason.archivingFailing",
+      text: "WAL archiving is failing: WAL written since the newest segment the repository holds is likely not in it, so the newest restore points are uncertain; the Cluster's ContinuousArchiving condition says why",
+    },
+  ],
+  segments: [
+    { ...(recoveryHealthy.segments[0] as RecoverySegment), to: "2026-10-29T11:40:00Z" },
+    {
+      from: "2026-10-29T11:40:00Z",
+      to: "2026-10-29T12:00:00Z",
+      kind: "unknown",
+      code: "recovery.segment.afterFrontierFailing",
+      text: "After the newest archived WAL the evidence shows, and WAL archiving is failing: this time's WAL is likely not in the repository.",
+    },
+  ],
+} satisfies RecoveryTimeline;
+
+/**
+ * The evidence agent missed its scans: the paths come from a scan more than
+ * a day old, so retention may have purged the oldest base backup and the
+ * WAL only it needs. The purge band at the oldest edge runs to the next
+ * backup's lower bound, not just the age of the scan (Go's wording,
+ * internal/console/status/recovery.go purgeBand).
+ */
+export const recoveryPurgeBandExtended = {
+  ...recoveryHealthy,
+  segments: [
+    {
+      from: "2026-10-22T07:08:00Z",
+      to: "2026-10-23T07:08:00Z",
+      kind: "unknown",
+      code: "recovery.segment.purgeEdge",
+      params: { marginSeconds: "86400" },
+      text: "Within 24 h of the oldest restore point: a retention purge since the repository was last read may have removed this base backup.",
+    },
+    { ...(recoveryHealthy.segments[0] as RecoverySegment), from: "2026-10-23T07:08:00Z" },
+  ],
+  provenance: { ...timeline.provenance, stale: true },
 } satisfies RecoveryTimeline;
 
 /** No evidence agent: the operator's window, drawn hatched and labelled unverified. */
@@ -459,6 +515,7 @@ export const recoveryReportedOnly = {
  */
 export const recoveryReportedArchivingFailing = {
   ...recoveryReportedOnly,
+  edgeAdvice: "archiver",
   latest: "2026-10-29T07:08:00Z",
   segments: [
     { ...(recoveryReportedOnly.segments[0] as RecoverySegment), to: "2026-10-29T07:08:00Z" },
@@ -538,7 +595,7 @@ export const recoveryNone = {
 export const recoveryKeptTooOld = {
   ...recoveryNone,
   reason:
-    "the recovery paths page timed out; the last good recovery paths are more than three refresh intervals (at least an hour) older than the latest scan and are no longer shown; check the evidence agent's logs for why reading its recovery paths fails, and that the object store answers",
+    "the recovery paths page timed out; the last good recovery paths are more than three refresh intervals (at least an hour) older than the latest scan and are no longer shown; check the evidence agent’s logs for why reading its recovery paths fails, and that the object store answers",
   reasons: [
     {
       code: "recovery.reason.pathsNotCoverage",
@@ -547,7 +604,7 @@ export const recoveryKeptTooOld = {
     },
     {
       code: "recovery.reason.keptTooOld",
-      text: "the last good recovery paths are more than three refresh intervals (at least an hour) older than the latest scan and are no longer shown; check the evidence agent's logs for why reading its recovery paths fails, and that the object store answers",
+      text: "the last good recovery paths are more than three refresh intervals (at least an hour) older than the latest scan and are no longer shown; check the evidence agent’s logs for why reading its recovery paths fails, and that the object store answers",
     },
   ],
 } satisfies RecoveryTimeline;
@@ -556,12 +613,12 @@ export const recoveryKeptTooOld = {
 export const recoveryKeptRepositoryChanged = {
   ...recoveryKeptTooOld,
   reason:
-    "the recovery paths page timed out; the repository's identity changed since the last good recovery paths were read: they describe another repository and are no longer shown; check the evidence agent's logs and that its object store configuration still names this cluster's repository",
+    "the recovery paths page timed out; the repository’s identity changed since the last good recovery paths were read: they describe another repository and are no longer shown; check the evidence agent’s logs and that its object store configuration still names this cluster’s repository",
   reasons: [
     ...recoveryKeptTooOld.reasons.slice(0, 1),
     {
       code: "recovery.reason.keptRepositoryChanged",
-      text: "the repository's identity changed since the last good recovery paths were read: they describe another repository and are no longer shown; check the evidence agent's logs and that its object store configuration still names this cluster's repository",
+      text: "the repository’s identity changed since the last good recovery paths were read: they describe another repository and are no longer shown; check the evidence agent’s logs and that its object store configuration still names this cluster’s repository",
     },
   ],
 } satisfies RecoveryTimeline;
