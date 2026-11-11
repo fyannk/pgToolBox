@@ -56,10 +56,27 @@ weighs it double.
 The console's [MCP endpoint](../console/mcp.md) serves it through its
 documentation tools and `docs://` resources.
 
-`make docs-bundle` builds the site and writes `internal/console/docsbundle/data`:
-the pages of `docs/` under `pages/` (except this development section, which documents building pgToolBox rather
-than running it) and the index as `index.bin`, under 1 MiB in
-all, byte-for-byte reproducible from the same pages.
+`make docs-bundle` builds the site and writes one file,
+`internal/console/docsbundle/data/bundle.gz`: a gzip archive (standard library
+`compress/gzip` at its best compression, no file name or time in the header, the
+files in name order) of the pages of `docs/` under `pages/` (except this
+development section, which documents building pgToolBox rather than running it)
+and of the index, `index.bin`. It is byte-for-byte reproducible from the same
+pages with the same Go toolchain (`mise.toml` pins it). The console decompresses
+it once, on first use (at start when the MCP endpoint is enabled), and keeps it
+in memory.
+
+Two budgets bound it, both in `internal/console/docsbundle/archive.go`, and the
+generator fails naming the one a site build breaks and by how much:
+
+| Budget | Bounds | Limit |
+|---|---|---|
+| `MaxEmbeddedBytes` | the compressed archive: what the docs add to the console binary and image | 1 MiB |
+| `MaxBundleBytes` | the archive decompressed: what the console holds in memory once loaded, so the docs cannot grow unchecked behind a good compression ratio | 4 MiB |
+
+The console itself refuses an archive that does not decompress cleanly or
+inflates past twice `MaxBundleBytes`: its docs tools are then absent, and it
+says why at start.
 
 The files are generated and not committed (only `data/.keep` is, so that
 `go:embed` matches on a fresh clone): a committed binary index would make any two
