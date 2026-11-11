@@ -246,7 +246,7 @@ func TestReplayedCodesCannotGrowTheIndex(t *testing.T) {
 func TestAnOversizedDocumentIsMergedWhole(t *testing.T) {
 	api := newAPIServer()
 	clock := &testClock{now: t0}
-	doc := grantsDoc{Version: 1, Grants: map[string]grantEntry{}, Codes: map[string]codeEntry{}}
+	doc := grantsDoc{Version: formatVersion, Grants: map[string]grantEntry{}, Codes: map[string]codeEntry{}}
 	n := 4*MaxGrants + 10
 	for i := range n {
 		doc.Grants[grantID(i)] = grantEntry{User: uh(fmt.Sprint("u", i%400)), Client: "c", Created: t0.Unix(), Expiry: t0.Add(time.Hour).Unix(), Revoked: t0.Unix()}
@@ -289,7 +289,7 @@ func TestAnOversizedDocumentIsMergedWhole(t *testing.T) {
 // A grants document this console cannot read is never overwritten (it may
 // hold revocations), and grants are refused meanwhile.
 func TestAnUnreadableDocumentIsNeverOverwritten(t *testing.T) {
-	for _, raw := range []string{`{"version":1,"grants":`, `{"version":2,"grants":{}}`} {
+	for _, raw := range []string{`{"version":2,"grants":`, `{"version":1,"grants":{}}`, `{"version":3,"grants":{}}`} {
 		api := newAPIServer()
 		api.cm.Data = map[string]string{KeyGrants: raw}
 		s := newStore(api, &testClock{now: t0}, nil)
