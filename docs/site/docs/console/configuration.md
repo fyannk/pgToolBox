@@ -209,6 +209,19 @@ shown on the admin page (source `sharedState`); each replica then keeps its own
 sign-outs and clocks, as a single replica does. `pgtoolbox_console_shared_state_*` metrics count
 the writes and give the mode.
 
+Each document carries a format version. A console reads the documents of
+older versions, and rewrites them at its own on its next write; it leaves a
+document of a newer version (written by a newer console during a rolling
+upgrade, or before a rollback) exactly as it is, logs it once and counts it in
+`pgtoolbox_console_shared_state_foreign_documents{document}`: until every
+replica runs one version, what that document holds is not shared with the
+older replicas. Replicas whose clocks disagree still converge: a sign-out's
+recording time is kept as written, and a replica that finds it more than five
+minutes in its own future only ranks it last when a bound of the sessions
+document must choose. What each replica's clock decides on its own (when an
+entry ends, and which entries a full document keeps) can make two replicas
+rewrite each other's copy for at most as long as their clocks disagree.
+
 The chart's ConfigMap and Role need only what a namespace admin holds
 (`configmaps` in the release namespace), so the team install keeps working
 without a cluster administrator.
