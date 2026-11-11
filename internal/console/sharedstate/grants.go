@@ -705,6 +705,7 @@ func (s *Store) writeThrough(ctx context.Context, spentIn func(*corev1.ConfigMap
 		case err == nil:
 			s.mu.Lock()
 			s.base = updated.DeepCopy()
+			s.wroteLocked(updated)
 			if s.gen == gen {
 				s.written, s.urgent = gen, false
 			}
@@ -892,7 +893,13 @@ func (s *Store) CodeUsed(code string) bool {
 func (s *Store) mergeGrantsLocked(raw string) {
 	var doc grantsDoc
 	switch {
-	case s.foreignLocked(KeyGrants, raw):
+	case s.foreignLocked(KeyGrants, raw), s.takingOverLocked(KeyGrants, raw):
+		// A newer grants document may record revocations of grants this
+		// replica holds, in a layout it does not read: they are dropped
+		// here (refused meanwhile anyway), and the document taken over is
+		// reset rather than read (writers.go), so that no replica brings
+		// a revoked grant back.
+		s.grants, s.codes = map[string]grantEntry{}, map[string]codeEntry{}
 	case json.Unmarshal([]byte(raw), &doc) != nil:
 		// Never overwritten: what it holds (revocations among it) is not
 		// known, and replacing it would forget them. Grants are refused

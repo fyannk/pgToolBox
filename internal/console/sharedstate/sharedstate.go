@@ -396,6 +396,17 @@ type Store struct {
 	// foreignLogged is the version of each foreign key last logged, so
 	// that each is logged once.
 	foreignLogged map[string]int
+	// The replicas of other versions (writers.go): newer is set while
+	// the ConfigMap holds a document of a newer version, takeOver once
+	// those are taken over; othersFP is what the ConfigMap shows of the
+	// other versions' writes and othersSince when (this replica's clock)
+	// that last changed; ownBeat is this version's annotation and
+	// ownSince when it last changed; takeOverLogged names the documents
+	// whose take-over was logged.
+	newer, takeOver       bool
+	othersFP, ownBeat     string
+	othersSince, ownSince time.Time
+	takeOverLogged        map[string]bool
 	// gen counts local changes; written is the gen last written.
 	gen, written uint64
 	urgent       bool
@@ -442,7 +453,7 @@ func New(opts Options) *Store {
 	}
 	s := &Store{
 		opts: opts, signedOut: map[string]signOut{}, facts: map[string]fact{}, sent: map[string]int64{}, grants: map[string]grantEntry{}, codes: map[string]codeEntry{}, drills: map[string]DrillResult{}, byObject: map[string]map[string]struct{}{},
-		foreign: map[string]bool{}, foreignLogged: map[string]int{}, mode: modePending, since: opts.Now().UTC(), wake: make(chan struct{}, 1),
+		foreign: map[string]bool{}, foreignLogged: map[string]int{}, takeOverLogged: map[string]bool{}, mode: modePending, since: opts.Now().UTC(), wake: make(chan struct{}, 1),
 	}
 	if opts.Name == "" {
 		s.mode = modeDisabled
@@ -1119,7 +1130,7 @@ func readableVersion(v int) bool {
 // neither merged nor rewritten, and logs it once.
 func (s *Store) foreignLocked(key, raw string) bool {
 	v, ok := documentVersion(raw)
-	if !ok || readableVersion(v) {
+	if !ok || readableVersion(v) || s.takingOverLocked(key, raw) {
 		return false
 	}
 	s.foreign[key] = true
@@ -1127,7 +1138,8 @@ func (s *Store) foreignLocked(key, raw string) bool {
 		s.foreignLogged[key] = v
 		s.opts.Logger.Warn("shared state: a document of a format version this console does not read is left as it is "+
 			"(a newer console wrote it, during a rolling upgrade or before a rollback); what it holds is not shared with "+
-			"this replica until every replica runs one version", slog.String("configmap", s.opts.Name),
+			"this replica until it is taken over, once no console of another version has written the ConfigMap for "+
+			takeOverAfter.String()+" (or at once by deleting the key: what it holds is then lost)", slog.String("configmap", s.opts.Name),
 			slog.String("document", key), slog.Int("version", v), slog.Int("reads", formatVersion))
 	}
 	return true
@@ -1152,6 +1164,7 @@ func (s *Store) gaugeForeignLocked() {
 // what the ConfigMap holds (a write is then due).
 func (s *Store) mergeLocked(cm *corev1.ConfigMap) {
 	s.base = cm.DeepCopy()
+	s.observeWritersLocked(cm)
 	data := cm.Data
 	s.foreign = map[string]bool{}
 	if raw, ok := data[KeySessions]; ok && raw != "" {
@@ -1218,7 +1231,7 @@ func (s *Store) mergeLocked(cm *corev1.ConfigMap) {
 		s.mergeDrillsLocked(raw)
 	}
 	s.gaugeForeignLocked()
-	if !s.inSyncWithLocked(s.pruneLocked()) {
+	if !s.inSyncWithLocked(s.pruneLocked()) || s.beatDueLocked() {
 		s.changedLocked(false)
 	}
 }
@@ -1472,6 +1485,7 @@ func (s *Store) desiredWithLocked(docs map[string]string) *corev1.ConfigMap {
 	if cm.Data == nil {
 		cm.Data = map[string]string{}
 	}
+	s.stampLocked(cm)
 	for key, doc := range docs {
 		if !s.foreign[key] {
 			cm.Data[key] = doc
@@ -1517,7 +1531,7 @@ func (s *Store) flush(ctx context.Context) error {
 			return nil
 		}
 		docs := s.pruneLocked()
-		if s.inSyncWithLocked(docs) {
+		if s.inSyncWithLocked(docs) && !s.beatDueLocked() {
 			s.written, s.urgent = s.gen, false
 			s.mu.Unlock()
 			return nil
@@ -1529,6 +1543,7 @@ func (s *Store) flush(ctx context.Context) error {
 		case err == nil:
 			s.mu.Lock()
 			s.base = updated.DeepCopy()
+			s.wroteLocked(updated)
 			if s.gen == gen {
 				s.written, s.urgent = gen, false
 			}
@@ -1625,6 +1640,7 @@ func (s *Store) Run(ctx context.Context) error {
 	var wg sync.WaitGroup
 	wg.Go(func() { s.writer(ctx) })
 	wg.Go(func() { s.pruner(ctx) })
+	wg.Go(func() { s.ticker(ctx) })
 	attempt := 0
 	for ctx.Err() == nil {
 		err := s.watchOnce(ctx)
