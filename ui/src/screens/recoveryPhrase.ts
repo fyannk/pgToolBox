@@ -198,6 +198,12 @@ function recoveryReason(code: string, p: Params): string | undefined {
         ? m.rp_reason_path_not_healthy({ id, state, detail })
         : m.rp_reason_path_not_healthy_bare({ id, state });
     }
+    case "recovery.reason.backupNotUsable": {
+      const id = p?.backupId;
+      if (!id) return undefined;
+      if (detail) return m.rp_reason_backup_not_usable({ id, detail });
+      return p?.reason ? m.rp_reason_backup_not_usable_bare({ id, reason: p.reason }) : undefined;
+    }
     case "recovery.reason.orphanTimeline":
       return p?.timeline ? m.rp_reason_orphan_timeline({ timeline: p.timeline }) : undefined;
     case "recovery.reason.undrawn":
@@ -318,6 +324,11 @@ function translate(code: string, p: Params): string | undefined {
       return p?.detail
         ? m.rp_segment_path_not_healthy({ id, state, detail: p.detail })
         : m.rp_segment_path_not_healthy_bare({ id, state });
+    }
+    case "recovery.segment.backupNotUsable": {
+      if (!id) return undefined;
+      if (p?.detail) return m.rp_segment_backup_not_usable({ id, detail: p.detail });
+      return p?.reason ? m.rp_segment_backup_not_usable_bare({ id, reason: p.reason }) : undefined;
     }
     case "recovery.segment.walEnd": {
       const end = instant(p, "endAt");

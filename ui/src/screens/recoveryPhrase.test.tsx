@@ -115,6 +115,16 @@ test("the reasons, the backlog, the end of WAL and the caps are said in French",
       { backupId: "b1", state: "warning", detail: "" },
       /^le chemin de restauration de la sauvegarde de base b1 atteint la frontière de l’archive, mais l’agent de preuves le juge [^(]+$/,
     ],
+    [
+      "recovery.segment.backupNotUsable",
+      { backupId: "b1", reason: "backup-error", detail: "pgBackRest recorded errors (page checksums) in this backup" },
+      /^La sauvegarde de base b1 atteint ce point, mais l’agent de preuves la juge inutilisable \(pgBackRest recorded errors \(page checksums\) in this backup\) : non compté comme couvert\.$/,
+    ],
+    [
+      "recovery.reason.backupNotUsable",
+      { backupId: "b1", reason: "chain-broken", detail: "" },
+      /^la sauvegarde de base b1 est inutilisable \(chain-broken\) : l’intervalle qu’elle seule atteint/,
+    ],
     ["recovery.segment.afterLastReadFailing", { scannedAt: "2026-10-29T11:50:00Z" }, /l’archivage des WAL échoue/],
     [
       "recovery.reportedTail.afterArchivedBacklog",

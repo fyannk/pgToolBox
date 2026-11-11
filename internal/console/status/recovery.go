@@ -573,8 +573,14 @@ type interval struct {
 	backupID string
 	stop     evidencev1alpha1.CoverageStop
 	// degraded is the path when the agent does not rate it healthy
-	// though it reaches its frontier (degradedPath); nil otherwise.
+	// though it reaches its frontier (degradedPath), or when its backup
+	// is not usable (unusable, unusableBackup: the path then carries the
+	// backup's reason); nil otherwise.
 	degraded *evidence.RecoveryPath
+	unusable bool
+	// timeline is the timeline of the path's frontier (0 when unknown);
+	// for a merged run, that of the path that reaches furthest.
+	timeline uint64
 }
 
 // degradedPath reports a path that reaches its frontier but that the
@@ -598,6 +604,17 @@ func pathNotHealthy(code string, p evidence.RecoveryPath, lead, tail string) vie
 		text += " (" + p.Reason.Message + ")"
 	}
 	return say(code, text+tail, map[string]string{"backupId": p.BackupID, "state": string(p.State), "detail": p.Reason.Message})
+}
+
+// backupNotUsable says why an unusable backup's span is not covered:
+// lead, the agent's reason in parentheses when it gave one, then tail.
+// reason is the first unusable code (chain-broken, backup-error, ...).
+func backupNotUsable(code string, p evidence.RecoveryPath, lead, tail string) viewmodel.Phrase {
+	text := lead
+	if p.Reason.Message != "" {
+		text += " (" + p.Reason.Message + ")"
+	}
+	return say(code, text+tail, map[string]string{"backupId": p.BackupID, "reason": p.Reason.Code, "detail": p.Reason.Message})
 }
 
 // timelineInput is the evidence a timeline is drawn from.
@@ -754,6 +771,7 @@ func evidenceTimeline(out *viewmodel.RecoveryTimeline, in timelineInput) {
 	}
 	sort.SliceStable(out.Segments, func(i, j int) bool { return out.Segments[i].From.Before(out.Segments[j].From) })
 	var degraded *evidence.RecoveryPath
+	degradedUnusable := false
 	newestDegraded, newestHealthy := false, false
 	for _, sp := range spans {
 		if sp.degraded == nil {
@@ -761,7 +779,7 @@ func evidenceTimeline(out *viewmodel.RecoveryTimeline, in timelineInput) {
 			continue
 		}
 		if degraded == nil || sp.to.After(*degraded.FrontierReceiptAt) {
-			degraded = sp.degraded
+			degraded, degradedUnusable = sp.degraded, sp.unusable
 		}
 		newestDegraded = newestDegraded || sp.to.Equal(last)
 	}
@@ -773,7 +791,8 @@ func evidenceTimeline(out *viewmodel.RecoveryTimeline, in timelineInput) {
 	}
 	timelineVerdict(out, in, timelineFindings{
 		tail: tail, holes: holes, candidates: candidates, failedRecently: failedRecently, backlog: in.facts.backlog,
-		archiverUnread: in.facts.archiverUnread, hibernated: in.facts.hibernated, notReported: in.facts.notReported, degraded: degraded, orphan: orphan, undrawn: undrawn,
+		archiverUnread: in.facts.archiverUnread, hibernated: in.facts.hibernated, notReported: in.facts.notReported, degraded: degraded, degradedUnusable: degradedUnusable,
+		orphan: orphan, undrawn: undrawn,
 	})
 	if in.rec.CoverageReason != "" {
 		// The agent's roll-up (the worst over every backup) is said beside
@@ -813,7 +832,14 @@ func recoverySpans(out *viewmodel.RecoveryTimeline, in timelineInput, target uin
 			continue
 		}
 		sp := interval{from: p.LowerBoundAt.UTC(), to: p.FrontierReceiptAt.UTC(), backupID: p.BackupID, stop: p.Stop}
-		if degradedPath(p) {
+		if p.FrontierTimeline != nil {
+			sp.timeline = *p.FrontierTimeline
+		}
+		if code, detail, unusable := unusableBackup(p, ends[p.BackupID]); unusable {
+			path := p
+			path.Reason = evidencev1alpha1.Reason{Code: code, Message: detail}
+			sp.degraded, sp.unusable = &path, true
+		} else if degradedPath(p) {
 			path := p
 			sp.degraded = &path
 		}
@@ -824,6 +850,47 @@ func recoverySpans(out *viewmodel.RecoveryTimeline, in timelineInput, target uin
 	}
 	sort.Strings(out.Assumptions)
 	return spans, undrawn
+}
+
+// pathShownUnusable are the pgBackRest unusable reasons that come from
+// the backup's recovery path itself (pgbackrest assess.go): the path the
+// console draws carries them already (its stop, its state, off target
+// or not consistent), so they do not make a drawn span degraded again.
+var pathShownUnusable = map[string]bool{
+	evidencev1alpha1.UnusableWALToConsistency:    true,
+	evidencev1alpha1.UnusableWALUnknown:          true,
+	evidencev1alpha1.UnusableWALToTargetTimeline: true,
+	evidencev1alpha1.UnusableOffTargetTimeline:   true,
+}
+
+// unusableBackup reports a pgBackRest backup the agent rates not usable
+// for a reason its recovery path does not show: a broken chain, a
+// manifest (its own or a dependency's) not verified, pgBackRest's own
+// error flag (page checksums), a manifest not inspected. Its path is
+// judged from the WAL alone, so its span is drawn, but never as covered
+// (round 8, P2-1). code is that first reason, detail the agent's
+// message. A backup with no reason given is unusable too; one whose only
+// reasons come from the path is unusable only when the path itself reads
+// healthy at its frontier, which then does not show them. Barman Cloud
+// backups (no PgBackRest item) are never judged here.
+func unusableBackup(p evidence.RecoveryPath, b evidence.BackupItem) (code, detail string, unusable bool) {
+	item := b.PgBackRest
+	if item == nil || item.Usable {
+		return "", "", false
+	}
+	detail = b.Reason.Message
+	for _, r := range item.UnusableReasons {
+		if !pathShownUnusable[r] {
+			return r, detail, true
+		}
+	}
+	if len(item.UnusableReasons) == 0 {
+		return "backup-not-usable", detail, true
+	}
+	if p.Stop == evidencev1alpha1.CoverageFrontier && p.State == evidencev1alpha1.Healthy {
+		return item.UnusableReasons[0], detail, true
+	}
+	return "", "", false
 }
 
 // lastCovered is the end of the newest covered segment: the newest
@@ -856,7 +923,7 @@ func mergeSpans(spans []interval) []interval {
 		if n := len(runs); n > 0 && !sp.from.After(runs[n-1].to) {
 			last := &runs[n-1]
 			if sp.to.After(last.to) {
-				last.to, last.stop = sp.to, sp.stop
+				last.to, last.stop, last.timeline = sp.to, sp.stop, sp.timeline
 			}
 			continue
 		}
@@ -871,6 +938,11 @@ func mergeSpans(spans []interval) []interval {
 func drawRuns(out *viewmodel.RecoveryTimeline, spans, runs []interval, margin time.Duration) (holes, candidates int) {
 	for i, r := range runs {
 		for _, piece := range coveredPieces(spans, r.from, r.to) {
+			if p := piece.degraded; p != nil && piece.unusable {
+				out.Segments = append(out.Segments, segment(piece.from, piece.to, segmentUnknown, backupNotUsable("recovery.segment.backupNotUsable", *p,
+					"Base backup "+p.BackupID+" reaches here, but the evidence agent rates the backup not usable", ": not counted as covered.")))
+				continue
+			}
 			if p := piece.degraded; p != nil {
 				out.Segments = append(out.Segments, segment(piece.from, piece.to, segmentUnknown, pathNotHealthy("recovery.segment.pathNotHealthy", *p,
 					"Base backup "+p.BackupID+"'s recovery path reaches here, but the evidence agent rates it "+string(p.State), ": not counted as covered.")))
@@ -1194,8 +1266,11 @@ type timelineFindings struct {
 	// degraded is the newest drawn path the agent does not rate healthy
 	// though it reaches its frontier; nil when none is.
 	degraded *evidence.RecoveryPath
-	orphan   uint64
-	undrawn  int
+	// degradedUnusable: degraded is there because its backup is not
+	// usable (unusableBackup), not because of the path's own state.
+	degradedUnusable bool
+	orphan           uint64
+	undrawn          int
 }
 
 // timelineVerdict states the bar's state and reason, the gravest finding
@@ -1221,6 +1296,10 @@ func timelineVerdict(out *viewmodel.RecoveryTimeline, in timelineInput, f timeli
 	case f.candidates > 0:
 		out.State = warning
 		setReason(out, say("recovery.reason.candidateGaps", "the window has candidate gaps a second scan has not confirmed yet", nil))
+	case f.degraded != nil && f.degradedUnusable:
+		out.State = warning
+		setReason(out, backupNotUsable("recovery.reason.backupNotUsable", *f.degraded,
+			"base backup "+f.degraded.BackupID+" is not usable", ": the span only it reaches is not counted as covered"))
 	case f.degraded != nil:
 		out.State = warning
 		setReason(out, pathNotHealthy("recovery.reason.pathNotHealthy", *f.degraded,
@@ -1375,7 +1454,7 @@ func coveredPieces(spans []interval, from, to time.Time) []interval {
 			out[n-1].to = b
 			continue
 		}
-		out = append(out, interval{from: a, to: b, backupID: spans[best].backupID, degraded: spans[best].degraded})
+		out = append(out, interval{from: a, to: b, backupID: spans[best].backupID, degraded: spans[best].degraded, unusable: spans[best].unusable})
 	}
 	return out
 }

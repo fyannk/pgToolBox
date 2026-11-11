@@ -66,7 +66,7 @@ var requiredFeatures = []evidencev1alpha1.Feature{evidencev1alpha1.FeatureRecove
 // most unknown (a proven loss stays unhealthy), keeps its own reason after
 // the cap's, and loses its frontier receipt, which is what a recovery bar
 // draws a covered span to.
-func capRecovery(snapshot *evidencev1alpha1.RepositoryEvidenceSnapshot, rec Recovery) Recovery {
+func capRecovery(snapshot *evidencev1alpha1.RepositoryEvidenceSnapshot, rec Recovery, items []BackupItem) Recovery {
 	if rec.State != RecoveryAvailable {
 		return rec
 	}
@@ -90,7 +90,7 @@ func capRecovery(snapshot *evidencev1alpha1.RepositoryEvidenceSnapshot, rec Reco
 		short = "the timeline evidence is " + string(timeline.State)
 	}
 	if reason == "" {
-		return capAtRollup(snapshot, rec, coverage)
+		return capAtRollup(snapshot, rec, coverage, items)
 	}
 	reason = boundedReason(reason, "")
 	rec.State, rec.Reason = RecoveryUncertain, reason
@@ -117,11 +117,11 @@ func capRecovery(snapshot *evidencev1alpha1.RepositoryEvidenceSnapshot, rec Reco
 // nothing: an old backup that stops at a confirmed gap, an orphan
 // timeline or one unknown own path says nothing of a newer backup whose
 // own path reaches the frontier (round 7, P1).
-func capAtRollup(snapshot *evidencev1alpha1.RepositoryEvidenceSnapshot, rec Recovery, coverage evidencev1alpha1.StateReason) Recovery {
+func capAtRollup(snapshot *evidencev1alpha1.RepositoryEvidenceSnapshot, rec Recovery, coverage evidencev1alpha1.StateReason, items []BackupItem) Recovery {
 	if coverage.State == evidencev1alpha1.Healthy || !slices.ContainsFunc(rec.Paths, func(path RecoveryPath) bool { return path.State == evidencev1alpha1.Healthy }) {
 		return rec
 	}
-	if !rollupUnexplained(snapshot, rec.Paths, coverage.State) {
+	if !rollupUnexplained(snapshot, rec.Paths, coverage.State, items) {
 		return rec
 	}
 	rec.Paths = slices.Clone(rec.Paths)
@@ -148,11 +148,18 @@ func capAtRollup(snapshot *evidencev1alpha1.RepositoryEvidenceSnapshot, rec Reco
 //     backups, finding StanzaSplit): a restore must name that stanza;
 //   - no path is as degraded as the roll-up (an unknown roll-up over
 //     healthy and warning paths): the agent knows something the paths do
-//     not carry, so the console does not read past it.
+//     not carry, so the console does not read past it. For pgBackRest the
+//     roll-up is the worst over the usable backups' paths only
+//     (pgbackrest assess.go coverageAspect), so only a path whose backup
+//     the agent rates usable explains it: "no usable backup to recover
+//     from" (every backup error:true after a data-checksum failure, say)
+//     is explained by none, whatever the unusable backups' paths say
+//     (round 8, P2-1). A backup not in the collection read (cut) is not
+//     known to be usable.
 //
 // Otherwise the roll-up is the worst of the paths' own states, and each
 // path already says its own.
-func rollupUnexplained(snapshot *evidencev1alpha1.RepositoryEvidenceSnapshot, paths []RecoveryPath, rollup evidencev1alpha1.State) bool {
+func rollupUnexplained(snapshot *evidencev1alpha1.RepositoryEvidenceSnapshot, paths []RecoveryPath, rollup evidencev1alpha1.State, items []BackupItem) bool {
 	if noBackupOnNewestTimeline(paths) {
 		return true
 	}
@@ -164,7 +171,17 @@ func rollupUnexplained(snapshot *evidencev1alpha1.RepositoryEvidenceSnapshot, pa
 			return true
 		}
 	}
-	return !slices.ContainsFunc(paths, func(path RecoveryPath) bool { return severity(path.State) >= severity(rollup) })
+	explains := func(path RecoveryPath) bool { return severity(path.State) >= severity(rollup) }
+	if snapshot.Details.PGBackRest != nil {
+		usable := map[string]bool{}
+		for _, item := range items {
+			if item.PgBackRest != nil && item.PgBackRest.Usable {
+				usable[item.ID] = true
+			}
+		}
+		explains = func(path RecoveryPath) bool { return usable[path.BackupID] && severity(path.State) >= severity(rollup) }
+	}
+	return !slices.ContainsFunc(paths, explains)
 }
 
 // noBackupOnNewestTimeline reports paths of which every backup's
