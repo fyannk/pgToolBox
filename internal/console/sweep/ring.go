@@ -70,9 +70,15 @@ const (
 	// 2^53, which a float64 does not hold exactly). The recovery facts
 	// read it beside readyWalFiles; it is not a sparkline.
 	SeriesCurrentLSN = "currentLsn"
+	// SeriesLastArchivedAt is a primary's pg_stat_archiver
+	// last_archived_time at each sweep, in Unix milliseconds on the
+	// instance's own clock (nil for a standby, a failed read, or none
+	// reported). The backlog rule compares it across sweeps of the same
+	// instance (cnpgstatus ArchiveBacklogOf); it is not a sparkline.
+	SeriesLastArchivedAt = "lastArchivedAt"
 )
 
-var seriesUnits = map[string]string{SeriesLagBytes: "bytes", SeriesReadyWALFiles: "files", SeriesCurrentLSN: "bytes"}
+var seriesUnits = map[string]string{SeriesLagBytes: "bytes", SeriesReadyWALFiles: "files", SeriesCurrentLSN: "bytes", SeriesLastArchivedAt: "ms"}
 
 // maxExactLSN is the largest position a float64 holds exactly.
 const maxExactLSN = 1 << 53

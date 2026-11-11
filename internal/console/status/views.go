@@ -962,7 +962,10 @@ func eventRow(e *corev1.Event) viewmodel.EventRow {
 }
 
 // sparklines are the series an instance row draws: the primary's WAL
-// position ring is read by the recovery facts only.
+// position and last-archived rings are read by the recovery and backlog
+// facts only.
 func sparklines(series []viewmodel.Series) []viewmodel.Series {
-	return slices.DeleteFunc(series, func(s viewmodel.Series) bool { return s.Key == sweep.SeriesCurrentLSN })
+	return slices.DeleteFunc(series, func(s viewmodel.Series) bool {
+		return s.Key == sweep.SeriesCurrentLSN || s.Key == sweep.SeriesLastArchivedAt
+	})
 }

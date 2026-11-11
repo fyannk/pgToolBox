@@ -250,8 +250,15 @@ func primaryArchiver(g *gathered) *cnpgstatus.ArchiverLive {
 }
 
 // earlierReady are the instance's readyWalFiles samples before the
-// reading taken at observed, oldest first.
+// reading taken at observed, oldest first, each with the
+// last_archived_time the same sweep read (instance clock), when kept.
 func earlierReady(g *gathered, instance string, observed time.Time) []cnpgstatus.ReadySample {
+	archived := map[int64]time.Time{}
+	for _, p := range g.archivedRings[instance] {
+		if p.Value != nil {
+			archived[p.At.UnixNano()] = time.UnixMilli(int64(*p.Value)).UTC()
+		}
+	}
 	var out []cnpgstatus.ReadySample
 	for _, p := range g.readyRings[instance] {
 		if !p.At.Before(observed) {
@@ -261,6 +268,9 @@ func earlierReady(g *gathered, instance string, observed time.Time) []cnpgstatus
 		if p.Value != nil {
 			n := int(*p.Value)
 			s.Files = &n
+			if t, ok := archived[p.At.UnixNano()]; ok {
+				s.LastArchivedAt = &t
+			}
 		}
 		out = append(out, s)
 	}

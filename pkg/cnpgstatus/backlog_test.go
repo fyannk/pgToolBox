@@ -27,6 +27,15 @@ var backlogNow = time.Date(2026, 11, 10, 3, 0, 0, 0, time.UTC)
 
 func ptrInt(v int) *int { return &v }
 
+// withArchived sets every sample's last_archived_time to at (the
+// instance's clock, as the sweep read it).
+func withArchived(run []ReadySample, at *time.Time) []ReadySample {
+	for i := range run {
+		run[i].LastArchivedAt = at
+	}
+	return run
+}
+
 // archivedAgo is a last_archived_time d before backlogNow.
 func archivedAgo(d time.Duration) *time.Time { t := backlogNow.Add(-d); return &t }
 
@@ -89,7 +98,16 @@ func TestArchiveBacklogOf(t *testing.T) {
 		// none reported) is a hung archiver, not a healthy parallel one.
 		{"barman plugin, ObjectStore unread: steady, nothing archived since", barman, &ArchiverLive{ReadyWALFiles: 6, Earlier: readyRun(0, 5, 7, 6), LastArchivedAt: archivedAgo(10 * time.Minute)}, 6, 3, false, 0},
 		{"barman plugin, ObjectStore unread: steady, archived at the oldest sweep", barman, &ArchiverLive{ReadyWALFiles: 6, Earlier: readyRun(0, 5, 7, 6), LastArchivedAt: archivedAgo(60 * time.Second)}, 6, 3, false, 0},
-		{"barman plugin, ObjectStore unread: steady, archived after the oldest sweep", barman, &ArchiverLive{ReadyWALFiles: 6, Earlier: readyRun(0, 5, 7, 6), LastArchivedAt: archivedAgo(59 * time.Second)}, 0, 3, false, 0},
+		// CNPG P3-3: last_archived_time is the instance's clock. Without
+		// the instance's own reading at the oldest sweep, an archive counts
+		// only once it is more than one sweep interval after that sweep,
+		// so a skew within one interval invents no progress.
+		{"barman plugin, ObjectStore unread: steady, archived within one interval after the oldest sweep", barman, &ArchiverLive{ReadyWALFiles: 6, Earlier: readyRun(0, 5, 7, 6), LastArchivedAt: archivedAgo(59 * time.Second)}, 6, 3, false, 0},
+		{"barman plugin, ObjectStore unread: steady, archived over one interval after the oldest sweep", barman, &ArchiverLive{ReadyWALFiles: 6, Earlier: readyRun(0, 5, 7, 6), LastArchivedAt: archivedAgo(29 * time.Second)}, 0, 3, false, 0},
+		// With the instance's last_archived_time at the oldest sweep kept,
+		// both are on its clock: a skew of an hour changes nothing.
+		{"steady, same clock: archived since the oldest sweep", barman, &ArchiverLive{ReadyWALFiles: 6, Earlier: withArchived(readyRun(0, 5, 7, 6), archivedAgo(2*time.Hour)), LastArchivedAt: archivedAgo(119 * time.Minute)}, 0, 3, false, 0},
+		{"steady, same clock: nothing archived since the oldest sweep", barman, &ArchiverLive{ReadyWALFiles: 6, Earlier: withArchived(readyRun(0, 5, 7, 6), archivedAgo(-time.Hour)), LastArchivedAt: archivedAgo(-time.Hour)}, 6, 3, false, 0},
 		{"pgBackRest plugin: steady, never archived", plugin(PgBackRestDaliboPlugin), &ArchiverLive{ReadyWALFiles: 5, Earlier: readyRun(0, 5, 5)}, 5, 3, false, 0},
 		{"barman plugin, ObjectStore unread: two sweeps are not enough", barman, &ArchiverLive{ReadyWALFiles: 8, Earlier: readyRun(0, 6)}, 0, 3, false, 0},
 		{"barman plugin, ObjectStore unread: two sweeps kept, unconfirmed", barman, &ArchiverLive{ReadyWALFiles: 8, Earlier: readyRun(6)}, 0, 3, false, 8},

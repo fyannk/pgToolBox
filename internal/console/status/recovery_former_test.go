@@ -182,3 +182,20 @@ func TestRingReadTimes(t *testing.T) {
 		t.Fatal("rings at the same instants in another location are not matched")
 	}
 }
+
+// TestEarlierReadyCarriesTheInstanceClock (CNPG P3-3): each earlier
+// readyWalFiles sample carries the last_archived_time the same sweep read
+// (the instance's clock), matched by instant, so the steady-stall rule
+// compares the instance's clock with itself.
+func TestEarlierReadyCarriesTheInstanceClock(t *testing.T) {
+	ready := ring(now, 6, 6, 6)
+	archived := ring(now, float64(now.Add(time.Hour).UnixMilli()), -1, float64(now.Add(time.Hour).UnixMilli()))
+	for i := range archived {
+		archived[i].At = archived[i].At.In(time.FixedZone("elsewhere", -7200))
+	}
+	g := &gathered{cluster: inTreeCluster(), readyRings: map[string][]viewmodel.Point{"db-2": ready}, archivedRings: map[string][]viewmodel.Point{"db-2": archived}}
+	got := earlierReady(g, "db-2", now)
+	if len(got) != 3 || got[0].LastArchivedAt == nil || !got[0].LastArchivedAt.Equal(now.Add(time.Hour).Truncate(time.Millisecond)) || got[1].LastArchivedAt != nil {
+		t.Fatalf("earlier samples %+v", got)
+	}
+}

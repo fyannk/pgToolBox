@@ -448,6 +448,9 @@ type gathered struct {
 	// same instances, read with their readyRings entries: the recovery
 	// facts bound a backlog's onset with both.
 	lsnRings map[string][]viewmodel.Point
+	// archivedRings are their last_archived_time rings (sweep
+	// SeriesLastArchivedAt, Unix ms on the instance's clock).
+	archivedRings map[string][]viewmodel.Point
 	// volumesReported: an instance reported its volumes recently (the
 	// fork's volumeUsages or cnpg_disk_* metrics).
 	volumesReported bool
@@ -608,7 +611,7 @@ func (s *Service) gather(ctx context.Context, key cache.ClusterKey, withEvents b
 	}
 	if sw := s.sweeper(); sw != nil {
 		g.swept, g.hasSweep = sw.Snapshot(g.sweepKey())
-		g.readyRings, g.lsnRings = readyRings(sw, g)
+		g.readyRings, g.lsnRings, g.archivedRings = readyRings(sw, g)
 		if s.opts.Trends != nil {
 			since := s.now().Add(-max(3*g.swept.Interval, 5*time.Minute))
 			g.volumesReported = s.opts.Trends.Reported(key.Namespace, key.Name, since)
@@ -640,20 +643,22 @@ func (s *Service) gather(ctx context.Context, key cache.ClusterKey, withEvents b
 // for a sweep that read the instance as primary, and after a failover
 // the former primary's backlog before the switch bounds how recent a
 // restore on the older timeline can be (recovery formerArchiverOf). A
-// failed read is a gap in the ring, never a reading. lsn are the same
-// instances' WAL position rings.
-func readyRings(sw Sweep, g *gathered) (out, lsn map[string][]viewmodel.Point) {
-	out, lsn = map[string][]viewmodel.Point{}, map[string][]viewmodel.Point{}
+// failed read is a gap in the ring, never a reading. lsn and archived are
+// the same instances' WAL position and last_archived_time rings.
+func readyRings(sw Sweep, g *gathered) (out, lsn, archived map[string][]viewmodel.Point) {
+	out, lsn, archived = map[string][]viewmodel.Point{}, map[string][]viewmodel.Point{}, map[string][]viewmodel.Point{}
 	for name, inst := range g.swept.Instances {
 		read := inst.State == viewmodel.StatusReadOK && inst.Reading != nil
 		failing := read && inst.Reading.LastFailedWALTime != nil
-		var ready, position []viewmodel.Point
+		var ready, position, last []viewmodel.Point
 		for _, series := range sw.Series(g.sweepKey(), name) {
 			switch series.Key {
 			case sweep.SeriesReadyWALFiles:
 				ready = series.Points
 			case sweep.SeriesCurrentLSN:
 				position = series.Points
+			case sweep.SeriesLastArchivedAt:
+				last = series.Points
 			}
 		}
 		if name != g.cluster.Status.CurrentPrimary && !failing && !slices.ContainsFunc(ready, func(p viewmodel.Point) bool { return p.Value != nil }) {
@@ -665,8 +670,11 @@ func readyRings(sw Sweep, g *gathered) (out, lsn map[string][]viewmodel.Point) {
 		if position != nil {
 			lsn[name] = position
 		}
+		if last != nil {
+			archived[name] = last
+		}
 	}
-	return out, lsn
+	return out, lsn, archived
 }
 
 // isMember is the membership rule: the label selected the pod, but
