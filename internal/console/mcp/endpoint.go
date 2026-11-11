@@ -223,9 +223,16 @@ func New(o Options) (*Endpoint, error) {
 		Name: "pgtoolbox", Title: "pgToolBox console", Version: o.Version, Description: description,
 	}, &mcp.ServerOptions{
 		Instructions: instructions,
-		// No logging capability: the console sends no log messages.
-		Capabilities: &mcp.ServerCapabilities{},
-		SchemaCache:  mcp.NewSchemaCache(),
+		// No logging capability: the console sends no log messages. The
+		// lists never change during a session (the tools a person sees are
+		// decided per request), so no list-changed notification is
+		// advertised: left nil, the SDK would advertise them, and a client
+		// of protocol 2026-07-28 would hold a subscriptions/listen request
+		// open for its whole session.
+		Capabilities: &mcp.ServerCapabilities{
+			Tools: &mcp.ToolCapabilities{}, Prompts: &mcp.PromptCapabilities{}, Resources: &mcp.ResourceCapabilities{},
+		},
+		SchemaCache: mcp.NewSchemaCache(),
 		// tools/list depends on who asks once the write tools are on
 		// (filterTools): no shared cache may serve one person's list to
 		// another.

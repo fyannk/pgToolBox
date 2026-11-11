@@ -29,6 +29,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
+
 	"github.com/fyannk/pgToolBox/internal/console/auth"
 )
 
@@ -43,10 +45,14 @@ const (
 // Budgets. Every request to /mcp spends one call of its user's budget
 // (tools/list as much as tools/call), and carries one JSON-RPC message:
 // batches are refused, so a request is one call. A user has at most
-// DefaultMaxConcurrent requests in flight (a GET, the idle SSE stream an
-// assistant holds open for the length of its session, counts against
-// DefaultMaxStreams instead, so four open assistants do not refuse the
-// fifth one's calls). A bearer the console has not
+// DefaultMaxConcurrent requests in flight. The endpoint is stateless: the
+// SDK answers every GET 405 at once, so no GET stays open. The one
+// request that does is a POST `subscriptions/listen` (protocol
+// 2026-07-28), which a client opens for its whole session when the server
+// advertises list changes; the console advertises none (its lists never
+// change during a session), but a client may open one anyway, so such a
+// POST counts against DefaultMaxStreams instead of a call's slot: four
+// open assistants do not refuse a fifth one's calls. A bearer the console has not
 // accepted recently spends one attempt of its client address's budget
 // before the API server is asked about it; the console shares that
 // budget with its sign-in form.
@@ -85,8 +91,9 @@ type Options struct {
 	// MaxConcurrent bounds one user's requests in flight; 0 is
 	// DefaultMaxConcurrent.
 	MaxConcurrent int
-	// MaxStreams bounds one user's open GET streams (a session's idle
-	// server-to-client channel); 0 is DefaultMaxStreams.
+	// MaxStreams bounds one user's open subscriptions/listen requests
+	// (a session's idle server-to-client channel, parked until the client
+	// closes it); 0 is DefaultMaxStreams.
 	MaxStreams int
 	// MaxBodyBytes bounds a request body; 0 is DefaultMaxBodyBytes.
 	MaxBodyBytes int
@@ -179,7 +186,8 @@ func (g *Guard) Wrap(next http.Handler) http.Handler {
 			g.challenge(w, r, "", "")
 			return
 		}
-		if !g.oneMessage(w, r, client) {
+		method, ok := g.oneMessage(w, r, client)
+		if !ok {
 			return
 		}
 		digest := sha256.Sum256([]byte(token))
@@ -229,10 +237,12 @@ func (g *Guard) Wrap(next http.Handler) http.Handler {
 			tooMany(w, "too many MCP requests for this user; wait a few seconds")
 			return
 		}
-		// A GET is the session's SSE stream: idle for most of its life, it
-		// has a cap of its own and does not take a call's slot.
+		// A subscriptions/listen POST is the session's open stream: parked
+		// for its whole life, it has a cap of its own and does not take a
+		// call's slot. Anything else (a GET included, answered 405 at
+		// once) is a call.
 		held, limit, why, msg := g.inflight, g.o.MaxConcurrent, "concurrent calls", "too many MCP requests in flight for this user; wait for one to finish"
-		if r.Method == http.MethodGet {
+		if method == methodListen {
 			held, limit, why, msg = g.streams, g.o.MaxStreams, "open streams", "too many MCP streams open for this user; close an assistant session"
 		}
 		if !g.acquire(held, p.User.Name, limit) {
@@ -257,34 +267,55 @@ func bearer(r *http.Request) (string, bool) {
 	return fields[1], true
 }
 
+// methodListen is the JSON-RPC method of a session's open stream
+// (SEP-2575).
+const methodListen = "subscriptions/listen"
+
 // oneMessage refuses a body over the limit (413) and a JSON-RPC batch
 // (400), and hands the body on unread. The SDK still accepts batches from
 // clients of protocol 2025-03-26; one request would then carry hundreds
-// of calls for one unit of the budget.
-func (g *Guard) oneMessage(w http.ResponseWriter, r *http.Request, c auth.Client) bool {
+// of calls for one unit of the budget. It returns the message's method
+// (empty when it has none or the body does not parse: the SDK refuses it,
+// and it is counted as a call).
+func (g *Guard) oneMessage(w http.ResponseWriter, r *http.Request, c auth.Client) (string, bool) {
 	if r.Method != http.MethodPost || r.Body == nil {
-		return true
+		return "", true
 	}
 	body, err := io.ReadAll(io.LimitReader(r.Body, int64(g.o.MaxBodyBytes)+1))
 	_ = r.Body.Close()
 	switch {
 	case err != nil:
 		http.Error(w, "the request body could not be read", http.StatusBadRequest)
-		return false
+		return "", false
 	case len(body) > g.o.MaxBodyBytes:
 		g.deny(r, c, "", "body too large")
 		http.Error(w, "the request body is too large", http.StatusRequestEntityTooLarge)
-		return false
+		return "", false
 	}
 	if trimmed := bytes.TrimLeft(body, " \t\r\n"); len(trimmed) > 0 && trimmed[0] == '[' {
 		g.deny(r, c, "", "batch")
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
 		_, _ = io.WriteString(w, `{"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"JSON-RPC batches are not accepted: send one message per request"}}`)
-		return false
+		return "", false
 	}
 	r.Body = io.NopCloser(bytes.NewReader(body))
-	return true
+	// The SDK's own decoder, so that the method the guard counts is the
+	// one the SDK runs (its JSON keys are case-sensitive; encoding/json's
+	// are not).
+	if req, ok := decodeRequest(body); ok {
+		return req.Method, true
+	}
+	return "", true
+}
+
+func decodeRequest(body []byte) (*jsonrpc.Request, bool) {
+	msg, err := jsonrpc.DecodeMessage(body)
+	if err != nil {
+		return nil, false
+	}
+	req, ok := msg.(*jsonrpc.Request)
+	return req, ok
 }
 
 func (g *Guard) acquire(held map[string]int, user string, limit int) bool {

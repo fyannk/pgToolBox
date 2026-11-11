@@ -22,6 +22,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/fyannk/pgToolBox/internal/console/auth"
 	"github.com/fyannk/pgToolBox/internal/console/authz"
@@ -144,9 +145,13 @@ func TestGuardExpiredTokenIsInvalid(t *testing.T) {
 	}
 }
 
-// An assistant holds a GET stream open for its whole session. Four of them
-// (one person, four windows) must not refuse that person's calls, and a
-// runaway number of them is still bounded, per person.
+const listenBody = `{"jsonrpc":"2.0","id":1,"method":"subscriptions/listen","params":{"notifications":{}}}`
+
+// An assistant may hold a subscriptions/listen POST open for its whole
+// session (protocol 2026-07-28). Four of them (one person, four windows)
+// must not refuse that person's calls, and a runaway number of them is
+// still bounded, per person. A GET (answered 405 by the stateless SDK)
+// and a call disguised by a key the SDK does not read count as calls.
 func TestGuardOpenStreamsDoNotTakeCallSlots(t *testing.T) {
 	t.Parallel()
 	release := make(chan struct{})
@@ -154,45 +159,96 @@ func TestGuardOpenStreamsDoNotTakeCallSlots(t *testing.T) {
 	auth1 := AuthenticatorFunc(func(_ context.Context, tok string) (*auth.Principal, error) {
 		return &auth.Principal{User: authz.User{Name: strings.TrimPrefix(tok, "good-")}}, nil
 	})
+	parkCalls := false
+	var mu sync.Mutex
 	h := NewGuard(Options{Authenticator: auth1, PublicURL: publicURL, MaxConcurrent: 2, MaxStreams: 3}).Wrap(
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.Method == http.MethodGet {
+			b, _ := io.ReadAll(r.Body)
+			mu.Lock()
+			park, gate := parkCalls || strings.Contains(string(b), `"subscriptions/listen"`), release
+			mu.Unlock()
+			if park {
 				entered <- struct{}{}
-				<-release
+				<-gate
+			}
+			if r.Method == http.MethodGet {
+				w.WriteHeader(http.StatusMethodNotAllowed)
 			}
 		}))
-	get := func(token string) int {
-		r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, publicURL+PathMCP, nil)
-		r.RemoteAddr = "10.0.0.7:5555"
-		r.Header.Set("Authorization", token)
-		w := httptest.NewRecorder()
-		h.ServeHTTP(w, r)
-		return w.Code
+	wait := func(n int) {
+		t.Helper()
+		for range n {
+			select {
+			case <-entered:
+			case <-time.After(5 * time.Second):
+				t.Fatal("a request held open was refused")
+			}
+		}
 	}
 	var wg sync.WaitGroup
 	for range 3 {
-		wg.Go(func() { get("Bearer good-dba") })
+		wg.Go(func() { post(t, h, "Bearer good-dba", listenBody) })
 	}
-	for range 3 {
-		<-entered
-	}
+	wait(3)
 	for range 4 {
 		if w := post(t, h, "Bearer good-dba", `{}`); w.Code != http.StatusOK {
 			t.Errorf("a call beside three open streams = %d", w.Code)
 		}
 	}
-	if code := get("Bearer good-dba"); code != http.StatusTooManyRequests {
-		t.Errorf("a fourth stream = %d", code)
+	if w := post(t, h, "Bearer good-dba", listenBody); w.Code != http.StatusTooManyRequests {
+		t.Errorf("a fourth stream = %d", w.Code)
+	}
+	get := func() int {
+		r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, publicURL+PathMCP, nil)
+		r.RemoteAddr = "10.0.0.7:5555"
+		r.Header.Set("Authorization", "Bearer good-dba")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w.Code
+	}
+	if code := get(); code != http.StatusMethodNotAllowed {
+		t.Errorf("a GET beside three open streams = %d", code)
 	}
 	done := make(chan int, 1)
-	go func() { done <- get("Bearer good-ops") }()
-	<-entered
+	go func() { done <- post(t, h, "Bearer good-ops", listenBody).Code }()
+	wait(1)
+	mu.Lock()
 	close(release)
+	mu.Unlock()
 	if code := <-done; code != http.StatusOK {
 		t.Errorf("another person's stream = %d", code)
 	}
 	wg.Wait()
-	if code := get("Bearer good-dba"); code != http.StatusOK {
-		t.Errorf("after the streams ended = %d", code)
+	if w := post(t, h, "Bearer good-dba", listenBody); w.Code != http.StatusOK {
+		t.Errorf("after the streams ended = %d", w.Code)
 	}
+	wait(1)
+
+	// Calls held open take the call slots, whatever key a body adds that
+	// the SDK does not read (its keys are case-sensitive).
+	mu.Lock()
+	release, parkCalls = make(chan struct{}), true
+	mu.Unlock()
+	disguised := `{"jsonrpc":"2.0","id":1,"method":"tools/call","Method":"subscriptions/listen"}`
+	for range 2 {
+		wg.Go(func() { post(t, h, "Bearer good-cto", disguised) })
+	}
+	wait(2)
+	if w := post(t, h, "Bearer good-cto", disguised); w.Code != http.StatusTooManyRequests {
+		t.Errorf("a disguised third call = %d", w.Code)
+	}
+	if code := func() int {
+		r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, publicURL+PathMCP, nil)
+		r.RemoteAddr = "10.0.0.7:5555"
+		r.Header.Set("Authorization", "Bearer good-cto")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w.Code
+	}(); code != http.StatusTooManyRequests {
+		t.Errorf("a GET past the call slots = %d", code)
+	}
+	mu.Lock()
+	close(release)
+	mu.Unlock()
+	wg.Wait()
 }
