@@ -87,6 +87,12 @@ func TestFactPinsExistInVerifiedReleases(t *testing.T) {
 			"func (instance *Instance) fillWalStatusFromConnection(result *postgres.PostgresqlStatus, superUserDB *sql.DB) error {\n\tif !result.IsPrimary {\n\t\treturn nil\n\t}",
 			"result.ReadyWALFiles, _, err = GetWALArchiveCounters()",
 			"pg_catalog.pg_walfile_name(pg_catalog.pg_current_wal_lsn()) as current_wal,",
+			// backups.go IsReplicaCluster follows Cluster.IsReplica, and
+			// the archiver archives on a replica cluster only from the
+			// designated primary (views.go liveStatus).
+			"func (cluster Cluster) IsReplica() bool {", "return clusterName != r.Primary",
+			"if podName != cluster.Status.CurrentPrimary && podName != cluster.Status.TargetPrimary {",
+			`configuration.OverwriteConfig("archive_mode", "always")`,
 			// The pooler phases, the backup definition phase and
 			// DatabaseRole arrived in 1.30, the support floor.
 			`BackupPhaseDefinitionInvalid = "invalid backup definition"`,
@@ -126,4 +132,50 @@ func TestEveryUpstreamBackupPhaseIsInTheTable(t *testing.T) {
 			}
 		}
 	}
+}
+
+// TestPinLSNBeforeReadyCount pins the read order the recovery facts'
+// busy-primary bound relies on (internal/console/status archivedBounds,
+// CNPG P3-5): in one /pg/status answer the instance manager reads
+// pg_current_wal_lsn() (fillStatusFromPrimary, probes.go v1.30.1:349-350)
+// before it counts the .ready files (fillWalStatus →
+// fillWalStatusFromConnection → GetWALArchiveCounters, :275, :520), so a
+// segment completed between the two reads only raises the count. If
+// upstream reorders them, the bound becomes slightly too optimistic and
+// this test fails.
+func TestPinLSNBeforeReadyCount(t *testing.T) {
+	for _, release := range verifiedReleases {
+		probes, err := os.ReadFile(filepath.Join(moduleDir(t, release), "pkg", "management", "postgres", "probes.go"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		body := functionBody(t, probes, "func (instance *Instance) fillStatus(result *postgres.PostgresqlStatus) error {")
+		position := bytes.Index(body, []byte("err = instance.fillStatusFromPrimary(result)"))
+		count := bytes.Index(body, []byte("return instance.fillWalStatus(result)"))
+		if position < 0 || count < 0 || position > count {
+			t.Errorf("v%s: fillStatus no longer reads the primary's position (at %d) before the .ready count (at %d)", release, position, count)
+		}
+		if lsn := functionBody(t, probes, "func (instance *Instance) fillStatusFromPrimary(result *postgres.PostgresqlStatus) error {"); !bytes.Contains(lsn, []byte("pg_catalog.pg_current_wal_lsn(),")) {
+			t.Errorf("v%s: fillStatusFromPrimary no longer reads pg_current_wal_lsn()", release)
+		}
+		if ready := functionBody(t, probes, "func (instance *Instance) fillWalStatusFromConnection(result *postgres.PostgresqlStatus, superUserDB *sql.DB) error {"); !bytes.Contains(ready, []byte("GetWALArchiveCounters()")) {
+			t.Errorf("v%s: fillWalStatusFromConnection no longer counts the .ready files", release)
+		}
+	}
+}
+
+// functionBody is the text from a function's signature line to the next
+// top-level closing brace.
+func functionBody(t *testing.T, source []byte, signature string) []byte {
+	t.Helper()
+	start := bytes.Index(source, []byte(signature))
+	if start < 0 {
+		t.Fatalf("%q is not in the source", signature)
+	}
+	rest := source[start:]
+	end := bytes.Index(rest, []byte("\n}\n"))
+	if end < 0 {
+		t.Fatalf("%q has no end", signature)
+	}
+	return rest[:end]
 }
