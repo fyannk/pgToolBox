@@ -248,7 +248,13 @@ OpenShift.
   commands and the checklist says to run `make release-preflight` before pushing a
   tag; npm installs of the docs site and the Headlamp plugin run with
   `ignore-scripts` and a minimum release age; the actions allow-list for the
-  repository is documented.
+  repository is documented. The daily Actions cache prune keeps the newest member
+  of every logical cache (module, toolchain, node, CodeQL, each job's build cache),
+  deletes superseded copies and closed pull requests' caches, evicts rebuildable
+  build caches first only if the newest members still exceed the budget, and
+  survives a 404 on one delete. The Pages site serves the latest stable release's
+  documentation on its scheduled and post-security rebuilds (main before the first
+  release); a manual `docs_ref` must be a release tag or the default branch.
 - **Release gates.** `wait-ci` and `release-preflight` accept only a
   `workflow_dispatch` or `schedule` run of `ci.yml` and `security.yml` on the tagged
   commit, because a docs-only push to main skips the image, e2e and OLM jobs; each
@@ -257,7 +263,10 @@ OpenShift.
   cannot be deleted; the CI image cache has one scope per architecture; the
   anonymous-pull check polls for 20 minutes so package visibility can be flipped
   during the run and, while it waits, names the settings page of every private
-  package in a `::notice`. A release candidate and its final tag are cut on the
+  package in a `::notice`, and a registry outage (5xx, timeout) is reported as
+  such rather than as a private package. `release-preflight` refuses a commit
+  that is not an ancestor of `origin/main` before any check-run call, and its
+  Unreleased message names the core `## [X.Y.Z]` heading for a candidate. A release candidate and its final tag are cut on the
   same commit with the CHANGELOG already dated (`release-preflight` and the
   workflow refuse `Unreleased` for a candidate too); the release's `prepare` job
   holds `actions: read`, which the full-tier check needs; Pages after a release
