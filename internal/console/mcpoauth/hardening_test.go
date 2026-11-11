@@ -24,13 +24,18 @@ import (
 	"net/http/httptest"
 	"net/netip"
 	"net/url"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 
 	"github.com/fyannk/pgToolBox/internal/console/auth"
 	"github.com/fyannk/pgToolBox/internal/console/mcpauth"
@@ -66,7 +71,8 @@ func eventually(t *testing.T, what string, cond func() bool) {
 // server, each running its watch.
 func sharedStores(t *testing.T, c *clock) (*sharedstate.Store, *sharedstate.Store) {
 	t.Helper()
-	cs := fake.NewClientset(&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "console-state", Namespace: "team-a"}})
+	cs := fake.NewClientset(&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "console-state", Namespace: "team-a", ResourceVersion: "1"}})
+	optimisticConcurrency(cs)
 	start := func() *sharedstate.Store {
 		s := sharedstate.New(sharedstate.Options{
 			Client: cs.CoreV1().ConfigMaps("team-a"), Name: "console-state", Now: c.Now,
@@ -82,6 +88,45 @@ func sharedStores(t *testing.T, c *clock) (*sharedstate.Store, *sharedstate.Stor
 	a, b := start(), start()
 	eventually(t, "both indexes reading", func() bool { return a.GrantsUsable() && b.GrantsUsable() })
 	return a, b
+}
+
+// optimisticConcurrency gives cs's ConfigMaps the API server's optimistic
+// concurrency: the fake stores no resourceVersion and applies updates as
+// they come, so two replicas' writes would replace each other, a lost
+// update no API server allows (each write is a merge of the one it
+// replaces), and the replicas' indexes, merged three ways, would lose the
+// overwritten grant. Each stored version gets the next integer, and an
+// update carrying another one conflicts.
+func optimisticConcurrency(cs *fake.Clientset) {
+	var mu sync.Mutex
+	next := 1
+	gvr := corev1.SchemeGroupVersion.WithResource("configmaps")
+	cs.PrependReactor("update", "configmaps", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		update, ok := action.(k8stesting.UpdateAction)
+		if !ok || update.GetSubresource() != "" {
+			return false, nil, nil
+		}
+		cm, ok := update.GetObject().(*corev1.ConfigMap)
+		if !ok {
+			return false, nil, nil
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		stored, err := cs.Tracker().Get(gvr, update.GetNamespace(), cm.Name)
+		if err != nil {
+			return true, nil, err
+		}
+		if rv := stored.(*corev1.ConfigMap).ResourceVersion; cm.ResourceVersion != rv {
+			return true, nil, apierrors.NewConflict(gvr.GroupResource(), cm.Name, fmt.Errorf("resourceVersion %q, stored %q", cm.ResourceVersion, rv))
+		}
+		next++
+		cm = cm.DeepCopy()
+		cm.ResourceVersion = strconv.Itoa(next)
+		if err := cs.Tracker().Update(gvr, cm, update.GetNamespace()); err != nil {
+			return true, nil, err
+		}
+		return true, cm.DeepCopy(), nil
+	})
 }
 
 func grantOfCode(t *testing.T, r *replica, code string) string {
