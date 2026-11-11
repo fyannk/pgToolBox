@@ -11,6 +11,7 @@ import type { Provenance } from './provenance.ts';
 import type { RecoveryMarker } from './recoveryMarker.ts';
 import type { RecoverySegment } from './recoverySegment.ts';
 import type { RecoveryTimelineBasis } from './recoveryTimelineBasis.ts';
+import type { RecoveryTimelineEdgeAdvice } from './recoveryTimelineEdgeAdvice.ts';
 import type { RecoveryTimelineState } from './recoveryTimelineState.ts';
 
 export interface RecoveryTimeline {
@@ -19,6 +20,8 @@ export interface RecoveryTimeline {
   basis: RecoveryTimelineBasis;
   complete: boolean;
   earliest?: string;
+  /** Narrows the checks a client offers at an uncertain edge. Absent: pg_stat_archiver and pg_switch_wal() on the primary. archiver: pg_stat_archiver only, a WAL switch would not help (archiving fails or lags). none: neither, no primary runs or none was read to run them on. */
+  edgeAdvice?: RecoveryTimelineEdgeAdvice;
   /** When the newest contiguous WAL segment reached the repository (evidence basis), or the reported window's end: a receipt time, not a restore target (see newestCoveredTarget). */
   latest?: string;
   /**

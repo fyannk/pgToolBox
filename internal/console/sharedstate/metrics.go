@@ -44,7 +44,7 @@ var (
 	}, []string{"document"})
 	sharedForeign = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "pgtoolbox_console_shared_state_foreign_documents",
-		Help: "1 for each document of the state ConfigMap this replica leaves as it is (neither merged nor rewritten): of a format version newer than it reads (a newer console wrote it: a rolling upgrade, or a rollback), or, for grants.json, unreadable (MCP grants are refused until it is fixed). Older versions are read and rewritten at this one.",
+		Help: "1 for each document of the state ConfigMap this replica leaves as it is (neither merged nor rewritten): of a format version newer than it reads (a newer console wrote it: a rolling upgrade, or a rollback), or, for grants.json, unreadable (MCP grants are refused until it is fixed). A newer document is taken over once no console of another version has written the ConfigMap for 30 minutes (after a rollback); deleting the key recovers at once, losing what it holds. Older versions are read and rewritten at this one.",
 	}, []string{"document"})
 	signOutsHeld = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "pgtoolbox_console_shared_state_signouts",

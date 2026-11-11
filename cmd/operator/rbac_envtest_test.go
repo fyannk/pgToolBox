@@ -26,6 +26,7 @@ import (
 	"time"
 
 	cnpgv1 "github.com/cloudnative-pg/api/pkg/api/v1"
+	appsv1 "k8s.io/api/apps/v1"
 	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -36,9 +37,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
+	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/yaml"
 
+	pgtoolboxv1alpha1 "github.com/fyannk/pgToolBox/api/v1alpha1"
 	"github.com/fyannk/pgToolBox/internal/operator/configuration"
+	"github.com/fyannk/pgToolBox/internal/operator/managerrole"
 	"github.com/fyannk/pgToolBox/pkg/discovery"
 )
 
@@ -104,7 +108,7 @@ func TestEnvtestWatchNamespacesRBAC(t *testing.T) {
 	}
 
 	env := &envtest.Environment{
-		CRDDirectoryPaths:     []string{filepath.Join(root, "test", "crds", "cnpg-1.30")},
+		CRDDirectoryPaths:     []string{filepath.Join(root, "test", "crds", "cnpg-1.30"), filepath.Join(root, "config", "crd", "bases")},
 		ErrorIfCRDPathMissing: true,
 	}
 	admin, err := env.Start()
@@ -189,7 +193,9 @@ func TestEnvtestWatchNamespacesRBAC(t *testing.T) {
 			t.Fatalf("probeOptionalAPIs: %v", err)
 		}
 	})
-	t.Run("a narrowed namespace stays watched, the features off there only", func(t *testing.T) {
+	t.Run("the optional-API probe decides a narrowed namespace on its own", func(t *testing.T) {
+		// probeOptionalAPIs alone: team-narrowed also refuses required kinds,
+		// which permittedNamespaces leaves out (the subtest below).
 		got, err := reachableNamespaces(ctx, operator, []string{"team-a", "team-narrowed"})
 		if err != nil || !slices.Equal(got, []string{"team-a", "team-narrowed"}) {
 			t.Fatalf("reachable = %q, %v; want both (Clusters are listable in each)", got, err)
@@ -282,6 +288,119 @@ func TestEnvtestWatchNamespacesRBAC(t *testing.T) {
 		}
 		assertCacheSyncs(ctx, t, widened, probed, &cnpgv1.Pooler{})
 	})
+	t.Run("a namespace refusing a required kind is left out, the others start and reconcile", func(t *testing.T) {
+		// Round 14, K8s P2-1. team-narrowed's Role keeps Clusters and drops
+		// everything else (Deployments, Secrets, ...); team-nowatch's
+		// administrator copied the manager role but lets Clusters be listed,
+		// not watched; team-nopoolers's refuses only an optional kind.
+		rules, err := managerrole.Rules()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var noWatch, noPoolers []rbacv1.PolicyRule
+		for _, r := range rules {
+			if slices.Contains(r.Resources, "clusters") && r.APIGroups[0] == "postgresql.cnpg.io" {
+				noWatch = append(noWatch, rbacv1.PolicyRule{APIGroups: r.APIGroups, Resources: []string{"clusters"}, Verbs: []string{"get", "list"}})
+				noPoolers = append(noPoolers, rbacv1.PolicyRule{APIGroups: r.APIGroups, Resources: []string{"clusters"}, Verbs: r.Verbs})
+				continue
+			}
+			noWatch, noPoolers = append(noWatch, r), append(noPoolers, r)
+		}
+		for namespace, rules := range map[string][]rbacv1.PolicyRule{"team-nowatch": noWatch, "team-nopoolers": noPoolers} {
+			for _, object := range []client.Object{
+				&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: namespace}},
+				&rbacv1.Role{ObjectMeta: metav1.ObjectMeta{Name: "own", Namespace: namespace}, Rules: rules},
+				&rbacv1.RoleBinding{
+					ObjectMeta: metav1.ObjectMeta{Name: "own", Namespace: namespace},
+					RoleRef:    rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "Role", Name: "own"},
+					Subjects:   []rbacv1.Subject{{Kind: rbacv1.ServiceAccountKind, Name: "pgtoolbox", Namespace: "pgtoolbox"}},
+				},
+			} {
+				if err := c.Create(ctx, object); err != nil {
+					t.Fatalf("create %T %s: %v", object, object.GetName(), err)
+				}
+			}
+		}
+		configured := []string{"team-a", "team-narrowed", "team-nowatch", "team-nopoolers"}
+		reachable, err := reachableNamespaces(ctx, operator, configured)
+		if err != nil || !slices.Equal(reachable, configured) {
+			t.Fatalf("reachable = %q, %v; want every namespace (each lets Clusters be listed)", reachable, err)
+		}
+
+		// Without the check, the start fails for every namespace: the
+		// Deployment informer never syncs in team-narrowed.
+		unchecked := map[string]cache.Config{}
+		for _, namespace := range reachable {
+			unchecked[namespace] = cache.Config{}
+		}
+		assertInformerSyncs(ctx, t, config, unchecked, &appsv1.Deployment{}, false)
+
+		watched, err := permittedNamespaces(ctx, operator, reachable)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := []string{"team-a", "team-nopoolers"}; !slices.Equal(watched, want) {
+			t.Fatalf("watched = %q, want %q", watched, want)
+		}
+		probed, err := probeOptionalAPIs(ctx, operator, watched)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if probed.Features.Poolers.In("team-nopoolers").Usable() || !probed.Features.Poolers.In("team-a").Usable() {
+			t.Fatalf("Poolers: %+v, want off in team-nopoolers only", probed.Features.Poolers)
+		}
+
+		// The manager as main builds it, as the operator's identity, on the
+		// namespaces kept: every informer syncs and a controller reconciles.
+		prepared := pgAdminPrepared{Config: configuration.Defaults(), Features: probed.Features, EvidenceAgentAPIs: probed.EvidenceAgent, OptionalKinds: probed.Kinds}
+		prepared.Config.WatchNamespaces = probed.Namespaces
+		consoleFeatures := pgToolBoxConsoleFeatures(prepared)
+		options := ctrl.Options{Scheme: scheme, Metrics: metricsserver.Options{BindAddress: "0"}, HealthProbeBindAddress: "0"}
+		managerCacheOptions(&options, prepared, consoleFeatures)
+		mgr, _, err := buildManager(ctx, newStartupBudget(20*time.Second, time.Minute), func() (ctrl.Manager, error) {
+			return ctrl.NewManager(config, options)
+		}, managerSetups(prepared, consoleFeatures))
+		if err != nil {
+			t.Fatal(err)
+		}
+		mgrCtx, stop := context.WithCancel(ctx)
+		stopped := make(chan error, 1)
+		go func() { stopped <- mgr.Start(mgrCtx) }()
+		t.Cleanup(func() {
+			stop()
+			if err := <-stopped; err != nil {
+				t.Errorf("the manager stopped with %v", err)
+			}
+		})
+		syncCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		if !mgr.GetCache().WaitForCacheSync(syncCtx) {
+			t.Fatal("the manager's cache did not sync on the namespaces kept")
+		}
+		request := &pgtoolboxv1alpha1.PgAccessRequest{
+			ObjectMeta: metav1.ObjectMeta{Name: "victor", Namespace: "team-a"},
+			Spec: pgtoolboxv1alpha1.PgAccessRequestSpec{
+				Subject:    pgtoolboxv1alpha1.AccessSubject{Kind: pgtoolboxv1alpha1.AccessSubjectUser, Name: "victor"},
+				Capability: pgtoolboxv1alpha1.AccessCapabilityOperator, Justification: "INC-1",
+				ExpiresAt: &metav1.Time{Time: time.Now().Add(time.Hour)},
+			},
+		}
+		if err := c.Create(ctx, request); err != nil {
+			t.Fatal(err)
+		}
+		for request.Status.Phase == "" {
+			select {
+			case err := <-stopped:
+				t.Fatalf("the manager stopped: %v", err)
+			case <-syncCtx.Done():
+				t.Fatal("the PgAccessRequest in team-a was not reconciled")
+			case <-time.After(200 * time.Millisecond):
+			}
+			if err := c.Get(ctx, client.ObjectKeyFromObject(request), request); err != nil {
+				t.Fatal(err)
+			}
+		}
+	})
 	t.Run("reads no other Secret of its namespace", func(t *testing.T) {
 		err := operator.Get(ctx, client.ObjectKey{Namespace: "pgtoolbox", Name: "someone-else"}, &corev1.Secret{})
 		if !apierrors.IsForbidden(err) {
@@ -346,5 +465,24 @@ func assertCacheSyncs(ctx context.Context, t *testing.T, config *rest.Config, pr
 	go func() { _ = informers.Start(syncCtx) }()
 	if !informers.WaitForCacheSync(syncCtx) {
 		t.Fatalf("the %T informer did not sync in the namespaces it is listable in", object)
+	}
+}
+
+// assertInformerSyncs starts one informer of object on namespaces as the
+// identity of config and checks whether it syncs within a few seconds.
+func assertInformerSyncs(ctx context.Context, t *testing.T, config *rest.Config, namespaces map[string]cache.Config, object client.Object, want bool) {
+	t.Helper()
+	informers, err := cache.New(config, cache.Options{Scheme: scheme, DefaultNamespaces: namespaces})
+	if err != nil {
+		t.Fatal(err)
+	}
+	syncCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if _, err := informers.GetInformer(syncCtx, object, cache.BlockUntilSynced(false)); err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = informers.Start(syncCtx) }()
+	if got := informers.WaitForCacheSync(syncCtx); got != want {
+		t.Fatalf("the %T informer on %d namespaces synced = %t, want %t", object, len(namespaces), got, want)
 	}
 }

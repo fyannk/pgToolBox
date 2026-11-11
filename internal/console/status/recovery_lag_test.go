@@ -388,7 +388,9 @@ func TestPurgeBandArithmetic(t *testing.T) {
 		wholeWindowAtLeast bool
 	}{
 		{"a scan two hours ago", now.Add(-2 * time.Hour), now.Add(-time.Minute), 2*time.Hour + 5*time.Minute, false},
-		{"an agent clock 30 minutes ahead", now.Add(30 * time.Minute), now.Add(-10 * time.Minute), 15 * time.Minute, false},
+		// Fetched 15 min ago, past a missed scan: a lone backup scanned
+		// on time has no band (round 14, PG P3-A).
+		{"an agent clock 30 minutes ahead", now.Add(30 * time.Minute), now.Add(-15 * time.Minute), 20 * time.Minute, false},
 		{"a scan in year 1", time.Date(1, 1, 1, 0, 0, 1, 0, time.UTC), now.Add(-time.Minute), 0, true},
 		{"a scan in 1700", time.Date(1700, 1, 1, 0, 0, 0, 0, time.UTC), now.Add(-time.Minute), 0, true},
 	}

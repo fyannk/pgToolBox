@@ -39,7 +39,7 @@ in `images`, and the e2e jobs load that archive instead of building their own.
 | `scorecard.yml` | push to `main`, weekly on Tuesday, by hand | OpenSSF Scorecard, published and uploaded to code scanning. |
 | `pages.yml` | when `security.yml` finishes on `main`, nightly at 04:47 UTC, by hand, after a release (building the tag) | Builds the documentation, renders the Security page, deploys both to GitHub Pages. The release's dispatch builds the documentation of the tag; the scheduled and `security.yml`-triggered builds build `main`, so the site shows the tag's documentation only until the next of those. The Security page always shows the newest security run on `main`. |
 | `release.yml` | tag `v*` or `pkg/evidence/v*`; by hand for an existing tag | The release. It checks out and runs nothing but the tagged commit, and restores no cache. |
-| `release-dry-run.yml` | a pull request touching the release files; weekly on Sunday, or by hand with a tag to rehearse | The release's build as a dry run, plus a release-candidate rehearsal of the pinning (placeholder digests): nothing pushed or signed, no write permission. |
+| `release-dry-run.yml` | a pull request touching the release files; weekly on Sunday, or by hand with a tag to rehearse | The release's build as a dry run (also on a change under `charts/` or `hack/common.mk`), plus a release-candidate rehearsal of the tag resolver, pinning and packaging (placeholder digests; it fails if `release.sh resolve v0.1.0-rc.1` does not give version `0.1.0-rc.1`, if the charts are not named `...-0.1.0-rc.1.tgz` or the notes find no section): nothing pushed or signed, no write permission. |
 | `verify-release.yml` | called by `release.yml` after the prune; weekly on Monday; by hand | Pulls every image and both charts of a published release by tag **with no registry credentials** and verifies each signature and attestation by digest (`hack/release.sh verify-published`). The weekly run looks at the latest stable release and does nothing until one exists. |
 | `matrix.yml` | nightly at 01:41 UTC, by hand | The end-to-end scenarios on Kubernetes 1.34 and 1.36 × CloudNativePG 1.30.1, plus CloudNativePG `main` (non-blocking): one job per Kubernetes × CloudNativePG × scenario, all at once, on the images built once for the run. |
 | `image-watch.yml` | nightly at 04:23 UTC | Scans the latest published images and keeps one tracking issue for fixable criticals. |
@@ -52,11 +52,11 @@ in `images`, and the e2e jobs load that archive instead of building their own.
 |---|---|---|
 | `lint` | `lint` | golangci-lint on both modules (build-tagged e2e and envtest code included), gofumpt/gci, `go vet`, and the repository checks (`hack/check-*.sh`: headers, read-only boundary, dependency closure, layering, documented settings, and `check-repo-files`, which `lint-files` also runs) |
 | `lint-files` | `lint-workflows lint-docker lint-shell check-repo-files test-hack` | actionlint, zizmor, hadolint, shellcheck; the file-reading half of `check-repo` (toolchain pins against `mise.toml`, the allowed-actions list against the workflows' pins), so a change to a workflow, `repository-settings.md` or a Dockerfile is checked without the Go jobs; and the tests of `hack/` (release logic, `changed-paths.sh`, `check-toolchain.sh`, the security report). A change under `hack/` turns it on, as does any change to the workflows or a Dockerfile |
-| `generated` | `verify-generated` | deepcopy code, CRDs, RBAC and their Helm/OLM copies, OpenAPI and fixtures, the check and API references and the insight pack regenerate to the committed files |
+| `generated` | `verify-generated` | deepcopy code, CRDs, RBAC and their Helm/OLM copies, OpenAPI and fixtures, the check and API references and the insight pack regenerate to the committed files. `make verify-manifests` (CRD and RBAC copies only, no helm) is a quick local subset of it, so it is in neither `make check` nor a CI job of its own |
 | `test`, `race-fuzz` | `build test`; `test-race` and `test-fuzz`, one job each | unit tests; the race detector; every fuzz target for a few seconds |
 | `envtest` | `test-envtest` and the operator suites | CRD CEL rules, reconcilers and the operator binary on a real API server |
 | `console-core` | `verify-pins test-console-core test-e2e-console-authz test-bounds` | the informer cache per CloudNativePG minor, the write path, SubjectAccessReview semantics, read-model pins, bounded resources |
-| `ui`, `ui-e2e` | `ui-check ui-audit`, `ui-e2e` | Biome, knip, tsc, tokens, Vitest, stories with axe, build, size budgets, `pnpm generate:check`; Playwright with axe and screenshots in the baseline image |
+| `ui`, `ui-e2e` | `ui-check ui-audit`, `ui-e2e` | Biome, knip, tsc, tokens, Vitest, stories with axe, build, size budgets, `pnpm generate:check`; Playwright with axe and screenshots in the baseline image. The browser installs with its system packages under a 180 s bound; on any failure or timeout (a degraded Ubuntu mirror, not only DNS) it falls back to Chromium alone with a warning, and the gate still runs real Chromium |
 | `headlamp` | `headlamp-check` | the Headlamp plugin builds and tests |
 | `docs` | `docs`, `docs-spell`, `docs-links` | the site builds with broken links failing it, generated references are current, spelling; external links are reported, not enforced |
 | `packaging` | `chart-gates bundle-validate kustomize-validate` | helm lint and template, helm-unittest, ct lint, kubeconform, kube-linter, alert rules, README values, Helm vs kustomize vs OLM field by field, `operator-sdk bundle validate` |
@@ -200,6 +200,7 @@ sequenceDiagram
   participant G as GHCR
   participant H as GitHub release
   M->>R: push annotated tag vX.Y.Z
+  R->>R: release.sh resolve: kind, version (no v), prerelease, the only place a tag is parsed
   R->>R: release.sh check: semver, annotated, on main, both charts' version, CHANGELOG section
   R->>R: release.sh wait-ci: ci-ok and security-gate green on the tagged commit
   R->>G: build and push operator, console, evidence agent (multi-arch, SBOM, provenance)
@@ -251,7 +252,7 @@ packages to open. Make them public, then **Re-run failed jobs**.
 
 A pull request that touches the release files, and the weekly schedule, run the same
 build as a dry run: nothing is pushed or signed. A tag
-`pkg/evidence/vX.Y.Z` releases the nested evidence module instead: the module
+`pkg/evidence/vX.Y.Z` (the `pkg/evidence/v*` trigger of `release.yml`; `release.sh resolve` tells it from a product tag) releases the nested evidence module instead: the module
 checks, green CI, and a release with no images (`make release-check-module
 TAG=pkg/evidence/vX.Y.Z` first). A failed run is finished with
 **Re-run failed jobs** on that run, not with a new dispatch: a new run rebuilds the

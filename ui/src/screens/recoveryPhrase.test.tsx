@@ -35,6 +35,8 @@ test("an unknown code, or a missing value, shows Go's English rather than a blan
   );
   expect(phraseText("recovery.reportedTail.afterArchived", { endAt: "2026-10-29T07:08:00Z" }, "Go.")).toBe("Go.");
   expect(phraseText(undefined, undefined, "plain")).toBe("plain");
+  // A since that is not an instant keeps Go's English, never "since undefined".
+  expect(phraseText("recovery.reason.archivingFailedPrimaryUnread", { sinceAt: "soon" }, "Go.")).toBe("Go.");
 });
 
 test("every segment of the golden timeline has a code this SPA says", () => {
@@ -214,6 +216,16 @@ test("the reasons, the backlog, the end of WAL and the caps are said in French",
       "recovery.reason.archivingFailing",
       undefined,
       /^l’archivage des WAL échoue : .*ContinuousArchiving du Cluster dit pourquoi$/,
+    ],
+    [
+      "recovery.reason.archivingFailedPrimaryUnread",
+      { sinceAt: "2026-10-29T11:50:00Z" },
+      /^la dernière tentative d’archivage .*\(ContinuousArchiving False depuis le 29 oct\. 2026, 11:50 UTC\), et le primaire n’a pas été lu/,
+    ],
+    [
+      "recovery.reason.archivingFailedPrimaryUnread",
+      undefined,
+      /^la dernière tentative d’archivage que rapporte le Cluster a échoué \(ContinuousArchiving False\), et le primaire/,
     ],
     [
       "recovery.segment.backupUnconfirmed",

@@ -303,6 +303,7 @@ export * from './recoverySegmentKind.ts';
 export * from './recoverySegmentParams.ts';
 export * from './recoveryTimeline.ts';
 export * from './recoveryTimelineBasis.ts';
+export * from './recoveryTimelineEdgeAdvice.ts';
 export * from './recoveryTimelineState.ts';
 export * from './recoveryWindow.ts';
 export * from './rehearsalQuorum.ts';

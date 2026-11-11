@@ -199,6 +199,11 @@ function recoveryReason(code: string, p: Params): string | undefined {
       return m.rp_reason_failed_recently();
     case "recovery.reason.archivingFailing":
       return m.rp_reason_archiving_failing();
+    case "recovery.reason.archivingFailedPrimaryUnread": {
+      if (p?.sinceAt === undefined) return m.rp_reason_archiving_failed_primary_unread();
+      const since = instant(p, "sinceAt");
+      return since ? m.rp_reason_archiving_failed_primary_unread_since({ since }) : undefined;
+    }
     case "recovery.reason.archiveBacklog":
       return segments ? m.rp_reason_archive_backlog({ segments }) : undefined;
     case "recovery.reason.archiverUnread":

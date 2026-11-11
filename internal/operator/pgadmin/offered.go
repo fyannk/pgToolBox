@@ -26,6 +26,7 @@ import (
 	"github.com/fyannk/pgToolBox/internal/operator/adminsync"
 	"github.com/fyannk/pgToolBox/internal/operator/cnpgcred"
 	"github.com/fyannk/pgToolBox/internal/operator/pgadmin/offer"
+	"github.com/fyannk/pgToolBox/pkg/discovery"
 )
 
 // The connections pgAdmin offers come from the CloudNativePG Clusters, not
@@ -58,19 +59,20 @@ type offerInputs struct {
 	// Clusters are the registered Clusters: the PgAdmin's namespace's, and
 	// those of other namespaces a PgAdminAccess grants.
 	Clusters []cnpgv1.Cluster
-	// Roles are the DatabaseRoles of the Clusters' namespaces (nil when the
-	// API is unavailable).
+	// Roles are the DatabaseRoles of the Clusters' namespaces where the API
+	// is usable.
 	Roles []cnpgv1.DatabaseRole
-	// RolesAvailable reports whether the DatabaseRole API was readable.
-	RolesAvailable bool
-	// Poolers are the namespace's Poolers.
+	// RolesAPI is the DatabaseRole API's probe: In(a Cluster's namespace)
+	// says whether that namespace's DatabaseRoles were readable, and why
+	// not.
+	RolesAPI discovery.Result
+	// Poolers are the Poolers of the Clusters' namespaces where the API is
+	// usable.
 	Poolers []cnpgv1.Pooler
-	// PoolersAvailable reports whether the Pooler API was readable.
-	PoolersAvailable bool
-	// PoolersRefusedIn names the namespaces where the Pooler API is
-	// refused while others allow it: their Clusters' pooler endpoints are
-	// unavailable there.
-	PoolersRefusedIn []string
+	// PoolersAPI is the Pooler API's probe, read per namespace like
+	// RolesAPI: a namespace that refuses it has its Clusters' pooler
+	// endpoints unavailable, with the reason naming that namespace.
+	PoolersAPI discovery.Result
 	// PrivilegedGranted names the Clusters of other namespaces
 	// ("namespace/name") whose grant allows privileged credentials; a
 	// granted Cluster absent from it offers none, whatever the PgAdmin asks.
@@ -123,7 +125,7 @@ func resolveOffer(in offerInputs) offerResult {
 			clusterSpec = spec.DeepCopy()
 			clusterSpec.Credentials.Superuser = new(false)
 		}
-		credentials, notOffered := clusterCredentials(clusterSpec, cluster, label, in.Roles, in.RolesAvailable)
+		credentials, notOffered := clusterCredentials(clusterSpec, cluster, label, in.Roles, in.RolesAPI)
 		result.Rows = append(result.Rows, notOffered...)
 		for _, endpoint := range spec.EndpointsOrDefault() {
 			if why := cnpgcred.EndpointNotServed(cluster, string(endpoint)); why != "" {
@@ -137,7 +139,7 @@ func resolveOffer(in offerInputs) offerResult {
 				}
 				continue
 			}
-			host, port, problem := endpointHost(cluster, endpoint, in.Poolers, in.PoolersAvailable && !slices.Contains(in.PoolersRefusedIn, cluster.Namespace))
+			host, port, problem := endpointHost(cluster, endpoint, in.Poolers, in.PoolersAPI.In(cluster.Namespace))
 			if problem == errOtherCluster {
 				// A pooler endpoint serves the one Cluster its Pooler
 				// belongs to; the other Clusters simply have none.
@@ -175,7 +177,7 @@ func resolveOffer(in offerInputs) offerResult {
 	}
 	for _, endpoint := range spec.EndpointsOrDefault() {
 		name, ok := endpoint.PoolerName()
-		if !ok || !in.PoolersAvailable {
+		if !ok || !in.PoolersAPI.Usable() {
 			continue
 		}
 		for i := range in.Poolers {
@@ -208,7 +210,7 @@ func clusterCredentials(
 	cluster *cnpgv1.Cluster,
 	label string,
 	roles []cnpgv1.DatabaseRole,
-	rolesAvailable bool,
+	rolesAPI discovery.Result,
 ) ([]credential, []pgtoolboxv1alpha1.PgAdminServerStatus) {
 	var offered []credential
 	var notOffered []pgtoolboxv1alpha1.PgAdminServerStatus
@@ -240,7 +242,15 @@ func clusterCredentials(
 		refuse(superuserRoleName, "privileged; offered only with spec.credentials.superuser")
 	}
 
-	if spec.Credentials.OffersDatabaseRoles() && rolesAvailable {
+	rolesHere := rolesAPI.In(cluster.Namespace)
+	if spec.Credentials.OffersDatabaseRoles() && rolesAPI.Usable() && !rolesHere.Usable() {
+		// Readable elsewhere, refused in this Cluster's namespace (a
+		// granted namespace whose Role refuses them): say so rather than
+		// offer silently fewer servers. The reason names that namespace
+		// alone.
+		refuse("", "DatabaseRoles not offered: "+unavailableWhy(rolesHere))
+	}
+	if spec.Credentials.OffersDatabaseRoles() && rolesHere.Usable() {
 		privileges := newRolePrivileges(cluster, roles)
 		ordered := slices.Clone(roles)
 		slices.SortFunc(ordered, func(a, b cnpgv1.DatabaseRole) int { return strings.Compare(a.Name, b.Name) })
@@ -293,7 +303,7 @@ const errOtherCluster = "\x00other-cluster"
 
 // endpointHost returns the Service host and port of one endpoint, or a
 // configuration problem.
-func endpointHost(cluster *cnpgv1.Cluster, endpoint pgtoolboxv1alpha1.Endpoint, poolers []cnpgv1.Pooler, poolersAvailable bool) (string, int32, string) {
+func endpointHost(cluster *cnpgv1.Cluster, endpoint pgtoolboxv1alpha1.Endpoint, poolers []cnpgv1.Pooler, poolersAPI discovery.Result) (string, int32, string) {
 	namespace := cluster.Namespace
 	switch endpoint {
 	case pgtoolboxv1alpha1.EndpointRW:
@@ -315,8 +325,8 @@ func endpointHost(cluster *cnpgv1.Cluster, endpoint pgtoolboxv1alpha1.Endpoint, 
 	if !ok {
 		return "", 0, fmt.Sprintf("endpoint %q is not rw, ro, r or pooler:<name>", endpoint)
 	}
-	if !poolersAvailable {
-		return "", 0, fmt.Sprintf("endpoint %s: the Pooler API is not available", endpoint)
+	if !poolersAPI.Usable() {
+		return "", 0, fmt.Sprintf("endpoint %s: the Pooler API is not available: %s", endpoint, unavailableWhy(poolersAPI))
 	}
 	for i := range poolers {
 		if poolers[i].Name == name && poolers[i].Namespace == namespace {

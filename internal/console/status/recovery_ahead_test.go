@@ -169,7 +169,9 @@ func TestPostFailoverLagWhileArchivingFails(t *testing.T) {
 	}{
 		{"read, archiving succeeds", true, metav1.ConditionTrue, "ContinuousArchivingSuccess", "recovery.reason.liveTimelineNotArchived", true},
 		{"not read, archiving succeeded", false, metav1.ConditionTrue, "ContinuousArchivingSuccess", "recovery.reason.liveTimelineNotArchivedPrimaryUnread", false},
-		{"not read, archiving fails", false, metav1.ConditionFalse, "ContinuousArchivingFailing", "recovery.reason.archivingFailing", false},
+		// The condition cannot change while nothing archives: the last
+		// attempt failed, with the condition's age (round 14, CNPG P3-b).
+		{"not read, archiving fails", false, metav1.ConditionFalse, "ContinuousArchivingFailing", "recovery.reason.archivingFailedPrimaryUnread", false},
 	} {
 		g := failoverGathered("db-2", p1, map[string][]failoverReading{
 			"db-1": {{at: p1.Add(-20 * time.Minute), files: 0, timeline: 1}},
@@ -195,6 +197,16 @@ func TestPostFailoverLagWhileArchivingFails(t *testing.T) {
 		}
 		if advises := strings.Contains(tl.Reason, "pg_switch_wal()"); advises != c.advises {
 			t.Errorf("%s: advises pg_switch_wal() %v: %q", c.name, advises, tl.Reason)
+		}
+		// The SPA's hint follows the same reasons (round 14, DBA P2-1):
+		// no primary read, nothing to run on it.
+		if want := map[bool]string{true: "", false: viewmodel.EdgeAdviceNone}[c.advises]; tl.EdgeAdvice != want {
+			t.Errorf("%s: edgeAdvice %q, want %q", c.name, tl.EdgeAdvice, want)
+		}
+		if c.condition == metav1.ConditionFalse {
+			if since := tl.Reasons[0].Params["sinceAt"]; since != p1.Format(time.RFC3339) || !strings.Contains(tl.Reason, "last archive attempt") || strings.Contains(tl.Reason, "is failing") {
+				t.Errorf("%s: %q (since %q), want the last attempt with the condition's age, not the present tense", c.name, tl.Reason, since)
+			}
 		}
 	}
 }
@@ -409,5 +421,83 @@ func TestRecoveryReasonsMatchTheSPAEnglish(t *testing.T) {
 		if en[key] != phrase.Text {
 			t.Errorf("%s (%s): the SPA says %q, Go %q", key, phrase.Code, en[key], phrase.Text)
 		}
+	}
+}
+
+// TestArchiveFailureReadThroughTheGraceSweep (round 14, CNPG P3-a, the
+// reviewer's probe): ContinuousArchiving True, the primary's last attempt
+// failed with 5 .ready files. Read, then missed once (the grace sweep:
+// the last good reading stands), the bar gives the same reason, the
+// recent failure: the archiving fact and the failure come from the same
+// reading. It must not say "archiving is failing" while the condition
+// it points at says archiving works.
+func TestArchiveFailureReadThroughTheGraceSweep(t *testing.T) {
+	ev := timelineFixture{paths: []evidence.RecoveryPath{tlPath("b1", 48*time.Hour, 3*time.Minute, evidencev1alpha1.CoverageFrontier)}}.evidence()
+	failed, archived := now.Add(-2*time.Minute), now.Add(-5*time.Minute)
+	reading := &instancestatus.Reading{
+		IsPrimary: true, CurrentWAL: "000000020000000000000007", ReadyWALFiles: 5,
+		LastFailedWAL: "000000020000000000000005", LastFailedWALTime: &failed, LastArchivedWALTime: &archived, ObservedAt: now.Add(-30 * time.Second),
+	}
+	for _, c := range []struct {
+		name string
+		inst sweep.Instance
+	}{
+		{"read", sweep.Instance{State: viewmodel.StatusReadOK, Since: now.Add(-time.Hour), Reading: reading}},
+		{"missed once", sweep.Instance{State: viewmodel.StatusReadUnreachable, Since: now, Reading: reading}},
+	} {
+		g := failoverGathered("db-1", time.Time{}, map[string][]failoverReading{})
+		g.cluster.Status.Conditions = []metav1.Condition{{Type: cnpgstatus.ConditionContinuousArchiving, Status: metav1.ConditionTrue, Reason: "ContinuousArchivingSuccess", LastTransitionTime: metav1.NewTime(now.Add(-time.Hour))}}
+		g.swept = sweep.Snapshot{SweptAt: now, Interval: 30 * time.Second, Instances: map[string]sweep.Instance{"db-1": c.inst}}
+		live := cnpgstatus.Archiving(g.cluster, primaryArchiver(g))
+		if live.Reason != cnpgstatus.ArchivingReasonFailureWithBacklog {
+			t.Fatalf("%s: archiving reason %s, want FailureWithBacklog", c.name, live.Reason)
+		}
+		arch := viewmodel.Archiving{Health: health(live.Class), Reason: live.Reason, ConditionStatus: live.ConditionStatus}
+		facts := recoveryFactsOf(g, arch, now)
+		tl := (&Service{}).recoveryTimeline(ev, viewmodel.BackupSummary{Archiving: arch}, nil, facts)
+		if len(tl.Reasons) == 0 || tl.Reasons[0].Code != "recovery.reason.failedRecently" {
+			t.Errorf("%s: reasons %+v, want recovery.reason.failedRecently", c.name, tl.Reasons)
+		}
+	}
+}
+
+// TestEdgeAdvice (round 14, DBA P2-1): the SPA's hand checks at an
+// uncertain edge follow one map. Archiving failing, lagging or failed
+// recently: pg_stat_archiver only, a WAL switch would wait like the rest.
+// No primary to run anything on: none. The narrowest reason wins.
+func TestEdgeAdvice(t *testing.T) {
+	r := func(codes ...string) []viewmodel.Phrase {
+		out := make([]viewmodel.Phrase, 0, len(codes))
+		for _, c := range codes {
+			out = append(out, viewmodel.Phrase{Code: c})
+		}
+		return out
+	}
+	for _, c := range []struct {
+		reasons []viewmodel.Phrase
+		want    string
+	}{
+		{nil, ""},
+		{r("recovery.reason.liveTimelineNotArchived"), ""},
+		{r("recovery.reason.archivingFailing"), viewmodel.EdgeAdviceArchiver},
+		{r("recovery.reason.archiveBacklog"), viewmodel.EdgeAdviceArchiver},
+		{r("recovery.reason.failedRecently"), viewmodel.EdgeAdviceArchiver},
+		{r("recovery.reason.archiverHibernated"), viewmodel.EdgeAdviceNone},
+		{r("recovery.reason.liveTimelineNotArchivedPrimaryUnread"), viewmodel.EdgeAdviceNone},
+		{r("recovery.reason.archivingFailedPrimaryUnread"), viewmodel.EdgeAdviceNone},
+		{r("recovery.reason.failedRecently", "recovery.reason.archiverHibernated"), viewmodel.EdgeAdviceNone},
+		{r("recovery.reason.holes", "recovery.reason.archiveBacklog"), viewmodel.EdgeAdviceArchiver},
+	} {
+		if got := edgeAdvice(c.reasons, false); got != c.want {
+			t.Errorf("%+v: %q, want %q", c.reasons, got, c.want)
+		}
+	}
+	// Archiving failing under a reported window, which gives no
+	// archiving reason: no switch.
+	if got := edgeAdvice(r("recovery.reason.reportedWindow"), true); got != viewmodel.EdgeAdviceArchiver {
+		t.Errorf("archiving failing, reported window: %q, want archiver", got)
+	}
+	if got := edgeAdvice(r("recovery.reason.archiverHibernated"), true); got != viewmodel.EdgeAdviceNone {
+		t.Errorf("archiving failing, hibernated: %q, want none", got)
 	}
 }
