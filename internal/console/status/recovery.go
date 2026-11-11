@@ -1659,16 +1659,21 @@ func purgeBand(in timelineInput, spans []interval, first, last time.Time) time.D
 		read = &start
 	}
 	window := max(last.Sub(first), 0)
-	var age time.Duration
+	// elapsed is the scan's real age, which says whether a scan was
+	// missed; age is it capped at the window, for the band. Testing the
+	// capped age made a window shorter than missedScan never miss a scan
+	// (round 15, PG P3-1).
+	var age, elapsed time.Duration
 	if read != nil && in.facts.now.After(*read) {
-		age = min(in.facts.now.Sub(*read), window)
+		elapsed = in.facts.now.Sub(*read)
+		age = min(elapsed, window)
 	}
 	band := window
 	if purge <= window-age {
 		band = purge + age
 	}
 	anchors := purgeAnchors(in, spans)
-	if age <= missedScan(purge, in.scanDuration) {
+	if elapsed <= missedScan(purge, in.scanDuration) {
 		if newest, ok := newestAnchor(anchors, nil); ok {
 			if kept, ok := drawnFrom(spans, newest); ok {
 				band = min(band, max(kept.Sub(first), 0))
@@ -1683,6 +1688,12 @@ func purgeBand(in timelineInput, spans []interval, first, last time.Time) time.D
 	// Two Adds: each duration is at most the window or a saturated Sub,
 	// which a time adds without overflow.
 	reach := first.Add(only).Add(band)
+	if read != nil && reach.After(*read) {
+		// The policy's window has passed the scan's start: the base may be
+		// a backup taken since, which the snapshot does not list, and the
+		// newest listed one goes with its whole chain (round 15, PG P3-2).
+		return window
+	}
 	base, ok := newestAnchor(anchors, &reach)
 	if !ok || base.Before(first) {
 		return band
@@ -1713,7 +1724,8 @@ func drawnFrom(spans []interval, at time.Time) (time.Time, bool) {
 // purgeable once the policy's window passes it. pgBackRest expires a full
 // backup together with every differential and incremental backup taken
 // against it, so only full backups are anchors: the oldest full's whole
-// chain goes at once, up to the next full (round 14, PG P3-A). A Barman
+// chain goes at once, up to the next full (round 14, PG P3-A), whether
+// or not it is marked backup-error (round 15, CNPG P3-1). A Barman
 // backup is removed on its own: every backup the repository lists that
 // did not fail is an anchor, drawn or not (a backup with no recovery path
 // is still a retention anchor), with the drawn spans' lower bounds. A
@@ -1741,7 +1753,10 @@ func purgeAnchors(in timelineInput, spans []interval) []time.Time {
 	full := map[string]bool{}
 	var out []time.Time
 	for _, b := range in.backups {
-		if b.Failed || b.PgBackRest == nil || b.PgBackRest.Type != "full" {
+		// A full marked backup-error (page checksum errors) is still a
+		// full to expire, which counts it as one (round 15, CNPG P3-1):
+		// only Barman's FAILED backups are not retention anchors.
+		if b.PgBackRest == nil || b.PgBackRest.Type != "full" {
 			continue
 		}
 		full[b.ID] = true
