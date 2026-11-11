@@ -4,8 +4,9 @@
 #
 # Fail early, with a plain message, when the helm on PATH has another major
 # version than mise.toml pins. helm 3 and helm 4 render and serialise
-# differently, so `make verify-manifests` against the wrong major reports a
-# diff that is the tool's, not the tree's.
+# differently, so `make helm-lint`, `validate-packaging` and `helm-unittest` (the
+# targets that render with helm) against the wrong major report a diff that is
+# the tool's, not the tree's. verify-manifests runs no helm and is not guarded.
 #
 #   hack/check-helm-major.sh           (ROOT and HELM override the defaults; tests)
 set -euo pipefail

@@ -15,6 +15,11 @@
 #                               the tag exists, that it is annotated (REQUIRE_TAG=1
 #                               insists it exists; REQUIRE_MAIN=1 insists its commit
 #                               is on origin/main)
+#   release.sh resolve TAG      the one place a version is derived from a tag:
+#                               prints kind=product|module, version=0.1.0-rc.1
+#                               (no v) and prerelease=true|false; refuses any
+#                               other tag. The workflow and every other command
+#                               use it; nothing strips a tag prefix by itself
 #   release.sh check-module TAG nested module tag (pkg/evidence/vX.Y.Z): module
 #                               path, semver, annotated, zero requirements
 #   release.sh wait-ci SHA      wait for the ci-ok and security-gate checks of a
@@ -111,6 +116,33 @@ images=(
 
 die() { echo "release: $*" >&2; exit 1; }
 
+# resolve_tag TAG: the one place a version is derived from a tag. Sets
+# tag_kind (product | module), tag_version (no leading v: 0.1.0-rc.1, the
+# image tag, the chart version and the CHANGELOG key) and tag_prerelease.
+# vX.Y.Z[-pre] is the product; pkg/evidence/vX.Y.Z[-pre] the nested module.
+# Anything else is refused, so no caller strips a prefix by itself.
+resolve_tag() {
+  local tag="$1" rest
+  case "${tag}" in
+    "${evidence_module_dir}"/*) tag_kind=module; rest="${tag#"${evidence_module_dir}"/}" ;;
+    *) tag_kind=product; rest="${tag}" ;;
+  esac
+  if [[ ! "${rest}" =~ ${semver_re} ]]; then
+    if [[ "${tag_kind}" == module ]]; then
+      die "module tag must be ${evidence_module_dir}/vX.Y.Z with a semantic version: ${tag}"
+    fi
+    die "release tag must be semantic and start with v: ${tag}"
+  fi
+  tag_version="${rest#v}"
+  tag_prerelease=false
+  [[ "${tag_version}" != *-* ]] || tag_prerelease=true
+}
+
+cmd_resolve() {
+  resolve_tag "${1:?usage: release.sh resolve TAG}"
+  printf 'kind=%s\nversion=%s\nprerelease=%s\n' "${tag_kind}" "${tag_version}" "${tag_prerelease}"
+}
+
 # file_at PATH: the file as the commit in CHECK_SHA has it (the commit that is
 # being tagged), else as the working tree has it. A preflight run from another
 # checkout, or with uncommitted edits, must judge the tagged tree.
@@ -129,8 +161,9 @@ chart_field() { # version | appVersion
 # ---------------------------------------------------------------- check ---
 cmd_check() {
   local tag="${1:-v$(chart_field version)}"
-  [[ "${tag}" =~ ${semver_re} ]] || die "release tag must be semantic and start with v: ${tag}"
-  local version="${tag#v}"
+  resolve_tag "${tag}"
+  [[ "${tag_kind}" == product ]] || die "release tag must be semantic and start with v: ${tag} (a module tag goes to check-module)"
+  local version="${tag_version}"
 
   # A release candidate (v0.1.0-rc.1) is cut from the tree of its final
   # version: the charts and the CHANGELOG may carry either the rc version or the
@@ -216,8 +249,8 @@ cmd_check_module() {
   local tag="${1:?usage: release.sh check-module pkg/evidence/vX.Y.Z}"
   local prefix_dir="${evidence_module_dir}/"
   [[ "${tag}" == "${prefix_dir}"* ]] || die "module tag must start with ${prefix_dir}: ${tag}"
-  local version="${tag#"${prefix_dir}"}"
-  [[ "${version}" =~ ${semver_re} ]] || die "module tag must end in a semantic version starting with v: ${tag}"
+  resolve_tag "${tag}"
+  local version="v${tag_version}"
 
   local expected actual
   expected="$(awk '$1 == "module" { print $2; exit }' go.mod)/${evidence_module_dir}"
@@ -745,8 +778,9 @@ retry() {
 
 cmd_verify_published() {
   local tag="${1:?usage: release.sh verify-published vX.Y.Z}" version ref digest entry name out chart status=0
-  [[ "${tag}" =~ ${semver_re} ]] || die "verify-published: not a release tag: ${tag}"
-  version="${tag#v}"
+  resolve_tag "${tag}"
+  [[ "${tag_kind}" == product ]] || die "verify-published: not a product release tag: ${tag}"
+  version="${tag_version}"
   for tool in docker cosign gh helm; do command -v "${tool}" >/dev/null || die "verify-published: ${tool} is not on PATH"; done
   local identity="^https://github.com/${repo}/\\.github/workflows/release\\.yml@refs/tags/"
   local issuer="https://token.actions.githubusercontent.com" work
@@ -808,8 +842,9 @@ cmd_dry_run() {
   version="$(chart_field version)"
   # DRY_RUN_TAG=v0.1.0-rc.1 rehearses a release candidate against this tree.
   if [[ -n "${DRY_RUN_TAG:-}" ]]; then
-    [[ "${DRY_RUN_TAG}" =~ ${semver_re} ]] || die "DRY_RUN_TAG must be semantic and start with v: ${DRY_RUN_TAG}"
-    version="${DRY_RUN_TAG#v}"
+    resolve_tag "${DRY_RUN_TAG}"
+    [[ "${tag_kind}" == product ]] || die "DRY_RUN_TAG must be a product tag (vX.Y.Z): ${DRY_RUN_TAG}"
+    version="${tag_version}"
   fi
   mkdir -p "${out_dir}"
   : > "${out_dir}/digests.txt"
@@ -881,6 +916,7 @@ case "${1:-}" in
   install-manifests) shift; cmd_install_manifests "$@" ;;
   check) shift; cmd_check "$@" ;;
   check-module) shift; cmd_check_module "$@" ;;
+  resolve) shift; cmd_resolve "$@" ;;
   wait-ci) shift; cmd_wait_ci "$@" ;;
   retry) shift; retry "$@" ;;
   preflight) shift; cmd_preflight "$@" ;;

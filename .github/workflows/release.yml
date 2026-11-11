@@ -114,12 +114,13 @@ jobs:
           else
             tag="${REF_NAME}"
           fi
-          kind=product
-          [[ "${tag}" != pkg/evidence/v* ]] || kind=module
-          if [[ "${kind}" == product ]]; then
-            [[ "${tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] \
-              || { echo "release tag must be semantic and start with v: ${tag}" >&2; exit 1; }
-          fi
+          # The one resolver (hack/release.sh resolve): kind, version without
+          # the v, prerelease. It refuses a tag that is neither a product nor a
+          # module semver tag.
+          resolved="$(./hack/release.sh resolve "${tag}")"
+          kind="$(sed -n 's/^kind=//p' <<<"${resolved}")"
+          version="$(sed -n 's/^version=//p' <<<"${resolved}")"
+          prerelease="$(sed -n 's/^prerelease=//p' <<<"${resolved}")"
           sha="$(git rev-list -n 1 "refs/tags/${tag}")"
           # GITHUB_SHA is the tagged commit on a push of an annotated tag (the
           # event's `after` is the tag object); peel it anyway so that a tag
@@ -128,9 +129,6 @@ jobs:
             echo "tag moved after the release workflow started" >&2
             exit 1
           fi
-          version="${tag##*/v}"
-          prerelease=false
-          [[ "${version}" != *-* ]] || prerelease=true
           # The tagged commit's time: the `created` label, so two builds of a
           # tag carry the same one. Images are NOT bit-for-bit reproducible
           # (BuildKit provenance mode=max records the build itself).

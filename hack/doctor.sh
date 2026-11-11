@@ -43,7 +43,7 @@ row node "$(want node)" "$(found node node --version)"
 row pnpm "$(want pnpm)" "$(found pnpm pnpm --version)"
 row helm "$(want helm)" "$(found helm helm version --short)"
 if ! ./hack/check-helm-major.sh 2>/dev/null; then
-  command -v helm >/dev/null 2>&1 && echo "  helm: the major version differs from mise.toml's pin; make verify-manifests refuses to run until it matches"
+  command -v helm >/dev/null 2>&1 && echo "  helm: the major version differs from mise.toml's pin; make helm-lint, validate-packaging and helm-unittest refuse to run until it matches"
 fi
 row kind "$(want kind)" "$(found kind kind version)"
 row kubectl "$(want kubectl)" "$(found kubectl kubectl version --client)"
