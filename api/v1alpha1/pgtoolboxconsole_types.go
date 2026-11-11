@@ -71,7 +71,9 @@ const (
 	// turned off) and is kept while a console Pod may still trust every
 	// peer it admits on the operator's grant: until the rollout without
 	// the grant is through. The message names a Pod stuck terminating
-	// that holds it.
+	// that holds it. Also while the console is stalled on
+	// HostnameNotAllowed: its Ingress, Route or HTTPRoute is withdrawn,
+	// and the workload and the policy stay as they were.
 	ReasonExposurePolicyKept Reason = "ExposurePolicyKept"
 	// ReasonExposurePolicyInvalid: ConfigurationValid=False, the API
 	// server refused the ingress NetworkPolicy rendered from

@@ -343,7 +343,12 @@ trusted.
   not allocate from `spec.podCIDRs`, such as Calico or Cilium's cluster pool,
   leave it empty, and the console Pods' own addresses are then the only check:
   the `ExposureConfined` message says that the Node check could not run, or
-  how many Nodes had no range). An installation that does not grant the
+  how many Nodes had no range; Calico IPAM or Cilium's cluster pool with
+  kube-controller-manager still filling `spec.podCIDRs` leaves ranges there
+  that are not the Pod network, and when a console Pod's address is outside
+  its own Node's range the message says the Node check is not meaningful).
+  One lookup runs for at most ten seconds; one that stops keeps the pages it
+  read and the next attempt resumes from them. An installation that does not grant the
   operator `list` on `nodes` skips that check and says so in the
   `ExposureConfined` message. The console-Pod check needs a Pod address: at creation, while no
   console Pod has one, an `ipBlock` peer is not trusted
@@ -430,7 +435,8 @@ trusted.
   `ExposurePolicyKept`, present while the policy is kept even with nothing
   published; a Pod stuck terminating is named), and the workload and its Pods
   are watched, so it looks again as the rollout progresses.
-- While the console is stalled on `HostnameNotAllowed` the operator withdraws
+- While the console is stalled on `HostnameNotAllowed` (checked before
+  anything else that stalls, the image included) the operator withdraws
   the exposure but leaves the workload and this policy as they were, so a stale
   `0.0.0.0/0` trust is never left without its policy; `ExposureConfined` then
   says so (`False`, `ExposurePolicyKept`), and is removed only when the console
