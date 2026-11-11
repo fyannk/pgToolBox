@@ -69,8 +69,13 @@ type pgAdminPrepared struct {
 
 // startupStepTimeout bounds each API read of the start-up: an API server
 // that accepts the connection and never answers fails the start, naming the
-// step, instead of hanging the operator before its probes are served.
-const startupStepTimeout = 60 * time.Second
+// step, instead of hanging the operator before its probes are served. The
+// health endpoint is served only once the manager starts, so the
+// manager's liveness probe (first at 15 s, every 20 s, three failures:
+// killed about 55 s after the start) counts the start-up against it; the
+// deadline stays well under that, so the named error is what the log
+// shows (TestStartupStepBeforeLivenessKill).
+const startupStepTimeout = 20 * time.Second
 
 // preparePgAdmin loads the configuration (defaults, env, ConfigMap, Secret;
 // one structured error) and probes the optional APIs with a scoped
