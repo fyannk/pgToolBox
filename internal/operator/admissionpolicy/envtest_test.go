@@ -52,6 +52,8 @@ const (
 // policy on and returns its ValidatingAdmissionPolicy and binding. The
 // allow-lists are overridden so that the test's users, not system:masters,
 // are the ones listed.
+const imageOverridePolicy = "pgtoolbox-image-override"
+
 func renderPolicy(t *testing.T) (*admissionregistrationv1.ValidatingAdmissionPolicy, *admissionregistrationv1.ValidatingAdmissionPolicyBinding) {
 	t.Helper()
 	if _, err := exec.LookPath("helm"); err != nil {
@@ -77,15 +79,23 @@ func renderPolicy(t *testing.T) (*admissionregistrationv1.ValidatingAdmissionPol
 			continue
 		}
 		switch kind.Kind {
+		// The chart also renders the restore-drill guard's policies; this
+		// suite tests the image-override one.
 		case "ValidatingAdmissionPolicy":
-			policy = &admissionregistrationv1.ValidatingAdmissionPolicy{}
-			if err := yaml.UnmarshalStrict(doc, policy); err != nil {
+			p := &admissionregistrationv1.ValidatingAdmissionPolicy{}
+			if err := yaml.UnmarshalStrict(doc, p); err != nil {
 				t.Fatalf("policy: %v", err)
 			}
+			if p.Name == imageOverridePolicy {
+				policy = p
+			}
 		case "ValidatingAdmissionPolicyBinding":
-			binding = &admissionregistrationv1.ValidatingAdmissionPolicyBinding{}
-			if err := yaml.UnmarshalStrict(doc, binding); err != nil {
+			b := &admissionregistrationv1.ValidatingAdmissionPolicyBinding{}
+			if err := yaml.UnmarshalStrict(doc, b); err != nil {
 				t.Fatalf("binding: %v", err)
+			}
+			if b.Name == imageOverridePolicy {
+				binding = b
 			}
 		}
 	}
