@@ -66,8 +66,14 @@ const KeyGrants = "grants.json"
 // few machines; the console refuses new work (a grant, a consent answer,
 // a code) beyond them rather than growing the ConfigMap. Every entry
 // counts, revoked ones and revocation placeholders included. The totals
-// hold a hundred people each at their own bound, so that a few identities
-// cannot fill them for everyone else. Encoded, a grant entry is at most
+// hold a hundred people each at their own bound; past fairFrom of a total,
+// new work is refused to a person holding at least the mean share of the
+// people the table holds (overFairShare), so that a hundred identities
+// each at their own bound cannot fill it for everyone else: the last
+// places go to the people holding less. Each replica decides from what
+// it holds, and the merge stays a union, so replicas converge as before.
+// Identities minted without bound can still fill a table one entry each:
+// that is what the per-person bounds cannot tell apart. Encoded, a grant entry is at most
 // about 300 bytes (a client name costs at most 128 bytes once
 // JSON-escaped, the scope 32) and a code about 90, so a full index takes
 // about 605 KiB of the 768 KiB budget, which the other documents give way
@@ -77,8 +83,11 @@ const (
 	MaxGrants        = 100 * MaxGrantsPerUser
 	MaxCodesPerUser  = 16
 	maxCodes         = 100 * MaxCodesPerUser
-	maxClientName    = 128
-	maxScope         = 32
+	// fairFromPercent is how full a table is, in percent of its total,
+	// when the fair share starts to refuse the people holding the most.
+	fairFromPercent = 80
+	maxClientName   = 128
+	maxScope        = 32
 	// RevokedKeep is how long a revoked entry outlives its revocation: far
 	// longer than the replication grace during which a replica accepts a
 	// grant it does not know yet (mcpoauth), so that no replica can accept
@@ -276,19 +285,48 @@ func (s *Store) GrantsUsable() bool {
 // (a grant created elsewhere reaches this one about a second later).
 func (s *Store) GrantsShared() bool { return s.Enabled() }
 
-// countLocked counts the entries of user and in all, whatever their state.
-func (s *Store) countLocked(user string) (mine, total int) {
+// countLocked counts the entries of user, in all, and the people holding
+// any, whatever their state.
+func (s *Store) countLocked(user string) (mine, total, people int) {
+	seen := make(map[string]struct{}, len(s.grants))
 	for _, x := range s.grants {
 		if x.User == user {
 			mine++
 		}
+		seen[x.User] = struct{}{}
 	}
-	return mine, len(s.grants)
+	return mine, len(s.grants), len(seen)
+}
+
+// tableBound is the bounds of a table of the index: per person and in
+// all.
+type tableBound struct{ perUser, total int }
+
+var (
+	grantsBound = tableBound{perUser: MaxGrantsPerUser, total: MaxGrants}
+	codesBound  = tableBound{perUser: MaxCodesPerUser, total: maxCodes}
+)
+
+// overFairShare reports whether a person holding mine of a table's total
+// entries, held by people people, may add none: at the per-person bound,
+// at the table's bound, or, once the table holds fairFromPercent of its
+// bound, holding at least the mean share (total/people). A person holding
+// less than the mean, a newcomer always, may still add while the table
+// has room.
+func (b tableBound) overFairShare(mine, total, people int) bool {
+	switch {
+	case mine >= b.perUser, total >= b.total:
+		return true
+	case total*100 < b.total*fairFromPercent:
+		return false
+	}
+	return mine > 0 && mine*people >= total
 }
 
 // AddGrant records a new grant, or merges one the index has. A new one is
-// refused over the per-user or the total bound (ErrTooManyGrants),
-// counting every entry.
+// refused over the per-user or the total bound, or past the fair share of
+// a nearly full index (overFairShare) (ErrTooManyGrants), counting every
+// entry.
 func (s *Store) AddGrant(g Grant) error {
 	if s == nil || !validGrantID(g.ID) {
 		return errors.New("not a grant")
@@ -311,7 +349,7 @@ func (s *Store) AddGrant(g Grant) error {
 		return nil
 	}
 	s.pruneGrantsLocked(s.opts.Now().Unix())
-	if mine, total := s.countLocked(e.User); mine >= MaxGrantsPerUser || total >= MaxGrants {
+	if mine, total, people := s.countLocked(e.User); grantsBound.overFairShare(mine, total, people) {
 		return ErrTooManyGrants
 	}
 	s.grants[g.ID] = e
@@ -375,7 +413,7 @@ func (s *Store) RevokeGrant(id, userHash string, at, until time.Time) bool {
 			return false
 		}
 		s.pruneGrantsLocked(s.opts.Now().Unix())
-		if mine, total := s.countLocked(userHash); mine >= MaxGrantsPerUser || total >= MaxGrants {
+		if mine, total, people := s.countLocked(userHash); grantsBound.overFairShare(mine, total, people) {
 			return false
 		}
 	}
@@ -484,7 +522,8 @@ func (s *Store) AdvanceGrant(id string, from int, at time.Time) Advance {
 // answer's nonce, by a hash of it) of user until it expires: ErrSpent
 // when it was spent before, on this replica or on one whose write this
 // replica has read; ErrBusy, recording nothing, when user or the console
-// holds too many. The spend reaches the other replicas with the next
+// holds too many, or user holds the mean share of a nearly full table
+// (overFairShare). The spend reaches the other replicas with the next
 // batch (about a second): SpendCode is for the values that window matters
 // for.
 func (s *Store) UseCode(code, userHash string, until time.Time) error {
@@ -614,19 +653,22 @@ func codeHash(code string) string {
 }
 
 // reserveLocked records code hash h as spent by userHash until until:
-// ErrSpent when it is recorded already, ErrBusy when the table is full.
+// ErrSpent when it is recorded already, ErrBusy when the table is full
+// for userHash (overFairShare).
 func (s *Store) reserveLocked(h, userHash string, until time.Time) error {
 	if _, used := s.codes[h]; used {
 		return ErrSpent
 	}
 	s.pruneGrantsLocked(s.opts.Now().Unix())
 	mine := 0
+	people := make(map[string]struct{}, len(s.codes))
 	for _, c := range s.codes {
 		if c.User == userHash {
 			mine++
 		}
+		people[c.User] = struct{}{}
 	}
-	if mine >= MaxCodesPerUser || len(s.codes) >= maxCodes {
+	if codesBound.overFairShare(mine, len(s.codes), len(people)) {
 		return ErrBusy
 	}
 	s.codes[h] = codeEntry{Expiry: until.Unix(), User: userHash}

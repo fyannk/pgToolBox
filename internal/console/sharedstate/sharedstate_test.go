@@ -371,8 +371,10 @@ func TestBudgetDropsOldestSinceNeverASignOut(t *testing.T) {
 	}
 	s.MarkDigestSent("20261105T0700Z", "chat", t0)
 	s.mu.Lock()
-	s.pruneLocked()
-	size, _ := s.sizesLocked()
+	docs := s.pruneLocked()
+	// The budget bounds the sessions, digests and since documents
+	// together; grants and drills have their own bounds.
+	size := len(docs[KeySessions]) + len(docs[KeyDigests]) + len(docs[KeySince])
 	s.mu.Unlock()
 	if size > 4096 {
 		t.Fatalf("documents take %d bytes, budget 4096", size)
