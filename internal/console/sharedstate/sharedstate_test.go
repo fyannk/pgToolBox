@@ -461,7 +461,7 @@ func (w syncWriter) Write(p []byte) (int, error) {
 
 func TestForeignVersionIsLeftAlone(t *testing.T) {
 	api := newAPIServer()
-	api.cm.Data = map[string]string{KeySince: `{"version":2,"facts":{"x":1}}`}
+	api.cm.Data = map[string]string{KeySince: `{"version":3,"facts":{"x":1}}`}
 	s := newStore(api, &testClock{now: t0}, nil)
 	s.mu.Lock()
 	s.mergeLocked(api.cm.DeepCopy())
@@ -472,7 +472,7 @@ func TestForeignVersionIsLeftAlone(t *testing.T) {
 	if err := s.flush(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if got := api.data(KeySince); got != `{"version":2,"facts":{"x":1}}` {
+	if got := api.data(KeySince); got != `{"version":3,"facts":{"x":1}}` {
 		t.Fatalf("a newer console's document was rewritten: %s", got)
 	}
 	if api.data(KeySessions) == "" {
@@ -527,7 +527,7 @@ func TestDigestMarksMergeRules(t *testing.T) {
 	// A document without the marks (an older console's write) unsets
 	// nothing.
 	s.mu.Lock()
-	s.mergeLocked(&corev1.ConfigMap{Data: map[string]string{KeyDigests: `{"version":1,"sent":{}}`}})
+	s.mergeLocked(&corev1.ConfigMap{Data: map[string]string{KeyDigests: `{"version":2,"sent":{}}`}})
 	n := len(s.sent)
 	s.mu.Unlock()
 	if n != 3 {

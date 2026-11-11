@@ -124,7 +124,9 @@ func TestEvictionIsWhatThePlannerDrops(t *testing.T) {
 func TestReplicasConvergeAtTheCeiling(t *testing.T) {
 	seeds, steps := []uint64{0, 1}, 4000
 	if testing.Short() || raceEnabled {
-		seeds, steps = []uint64{0}, 1200
+		// The ceiling seed only: what the race detector looks at is the
+		// merge under bursts, which a few hundred steps already reach.
+		seeds, steps = []uint64{0}, 400
 	}
 	for _, seed := range seeds {
 		r := rand.New(rand.NewPCG(seed, 1234))

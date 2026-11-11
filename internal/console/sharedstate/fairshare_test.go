@@ -157,8 +157,12 @@ func TestFairShareNeverTakesFromSomeoneHoldingLess(t *testing.T) {
 	for i := range 70 {
 		people = append(people, tag(fmt.Sprint("p", i)))
 	}
-	evictions := 0
-	for n := range 6000 {
+	evictions, ops := 0, 6000
+	if testing.Short() || raceEnabled {
+		// Enough to fill the document (MaxSignOuts) and run past it.
+		ops = MaxSignOuts + 800
+	}
+	for n := range ops {
 		if n%20 == 0 {
 			clock.Add(time.Second)
 		}

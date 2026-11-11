@@ -16,7 +16,10 @@ package mcp
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -953,7 +956,9 @@ type failingStore struct {
 }
 
 func (f failingStore) SpendCode(context.Context, string, string, time.Time) error { return f.err }
+func (f failingStore) MarkCode(context.Context, string, string, string) error     { return f.err }
 func (failingStore) CodeUsed(string) bool                                         { return false }
+func (failingStore) CodeMarked(string, string) bool                               { return false }
 func (f failingStore) GrantsUsable() bool                                         { return f.usable }
 
 // When the console cannot record a confirmation, nothing runs, and the
@@ -1229,5 +1234,37 @@ func TestWriteToolCallMetrics(t *testing.T) {
 	}
 	if got := testutil.ToFloat64(calls.WithLabelValues("reload", "ok")) - ok; got != 1 {
 		t.Errorf("pgtoolbox_console_mcp_calls_total{tool=reload,outcome=ok} grew by %v, want 1", got)
+	}
+}
+
+// Past 80 % of the codes table (80 identities each at their late bound),
+// a person's confirmations on the page still go through, one after the
+// other: a confirmation is one entry of the table, so its approval and
+// its run are never refused for want of room, and the person may have
+// the late bound of them in flight (round-12 security P3-1: each step was
+// an entry, and the second confirmation's approval was refused, leaving
+// its answer spent).
+func TestPageConfirmationsPastTheLateBound(t *testing.T) {
+	t.Parallel()
+	store := sharedstate.New(sharedstate.Options{Logger: slog.New(slog.DiscardHandler), Now: func() time.Time { return fixtures.Now }})
+	codes := 0
+	for p := range 80 {
+		sum := sha256.Sum256(fmt.Append(nil, "hoarder", p))
+		user := hex.EncodeToString(sum[:16])
+		for store.UseCode(fmt.Sprint(user, "/", codes), user, fixtures.Now.Add(time.Hour)) == nil {
+			codes++
+		}
+	}
+	h, op := writeHarness(t, func(o *Options, _ *api.Deps) { o.Confirmations = store })
+	const confirmations = sharedstate.MaxCodesPerUser / 4
+	for i := range confirmations {
+		cs, rec := h.elicitClient(t, "tok-dba", answer{action: "accept", page: &page{as: "dba", decision: "approve", typed: "orders"}})
+		res, _ := callTool(t, cs, "restart", map[string]any{"namespace": "team-a", "name": "orders"})
+		if res.IsError {
+			t.Fatalf("confirmation %d (page %v): %s", i+1, rec.statuses(), text(res))
+		}
+	}
+	if n := len(op.requests()); n != confirmations {
+		t.Errorf("%d operations ran, want %d", n, confirmations)
 	}
 }
