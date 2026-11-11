@@ -99,7 +99,7 @@ var allowed = map[Site]int{
 	// get, watch and update on that one name.
 	{"internal/console/sharedstate.(*Store).flush", "Update"}: 1,
 	// The same ConfigMap, written through for a spent MCP confirmation
-	// (SpendCode), resourceVersion-preconditioned.
+	// (SpendCode, MarkCode), resourceVersion-preconditioned.
 	{"internal/console/sharedstate.(*Store).writeThrough", "Update"}: 1,
 	// The digest Lease (DIGEST_LEASE): created by the first replica that
 	// stands (create cannot be scoped by name), then renewed and handed
