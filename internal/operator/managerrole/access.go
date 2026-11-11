@@ -160,10 +160,13 @@ func accessAllowed(ctx context.Context, c Creator, group, resource, verb, namesp
 
 // Allows reports whether rules (a SelfSubjectRulesReview's) grant verb on
 // every object of resource ("resource" or "resource/subresource") in group,
-// with the RBAC matching rules: "*" matches any verb, group or resource;
-// "resource/*" any subresource of resource and "*/sub" that subresource of
-// any resource. A rule restricted to resource names grants no access to
-// every object, so it never counts.
+// with the RBAC matching rules of the API server (rbacv1helpers.VerbMatches,
+// APIGroupMatches, ResourceMatches): "*" matches any verb, group or resource
+// (subresources included), "*/sub" that subresource of any resource, and
+// any other entry only the exact resource or "resource/subresource" it
+// names. "resource/*" is no wildcard: RBAC compares it literally, so it
+// grants no subresource and neither does it here. A rule restricted to
+// resource names grants no access to every object, so it never counts.
 func Allows(rules []authorizationv1.ResourceRule, group, resource, verb string) bool {
 	for _, rule := range rules {
 		if len(rule.ResourceNames) > 0 {
@@ -181,12 +184,12 @@ func matchesAny(values []string, want string) bool {
 }
 
 func resourceMatches(ruleResources []string, resource string) bool {
-	base, sub, hasSub := strings.Cut(resource, "/")
+	_, sub, hasSub := strings.Cut(resource, "/")
 	for _, rule := range ruleResources {
 		switch {
 		case rule == "*", rule == resource:
 			return true
-		case hasSub && rule == base+"/*", hasSub && rule == "*/"+sub:
+		case hasSub && rule == "*/"+sub:
 			return true
 		}
 	}

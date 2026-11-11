@@ -48,7 +48,10 @@ func TestAllows(t *testing.T) {
 		{"wildcard resource", []authorizationv1.ResourceRule{rule(apps, []string{"*"}, []string{"get"})}, "apps", "deployments", "get", true},
 		{"wildcard resource covers a subresource", []authorizationv1.ResourceRule{rule(apps, []string{"*"}, []string{"update"})}, "apps", "deployments/status", "update", true},
 		{"resource does not cover its subresource", []authorizationv1.ResourceRule{rule(apps, []string{"deployments"}, []string{"update"})}, "apps", "deployments/status", "update", false},
-		{"resource/*", []authorizationv1.ResourceRule{rule(apps, []string{"deployments/*"}, []string{"update"})}, "apps", "deployments/status", "update", true},
+		// RBAC compares "deployments/*" literally (ResourceMatches honours
+		// only "*", an exact match and "*/sub"): it grants no subresource.
+		{"resource/* is no wildcard", []authorizationv1.ResourceRule{rule(apps, []string{"deployments/*"}, []string{"update"})}, "apps", "deployments/status", "update", false},
+		{"resource/* does not cover the resource", []authorizationv1.ResourceRule{rule(apps, []string{"deployments/*"}, []string{"get"})}, "apps", "deployments", "get", false},
 		{"*/subresource", []authorizationv1.ResourceRule{rule(apps, []string{"*/status"}, []string{"update"})}, "apps", "deployments/status", "update", true},
 		{"*/other subresource", []authorizationv1.ResourceRule{rule(apps, []string{"*/scale"}, []string{"update"})}, "apps", "deployments/status", "update", false},
 		{"subresource does not cover the resource", []authorizationv1.ResourceRule{rule(apps, []string{"deployments/status"}, []string{"get"})}, "apps", "deployments", "get", false},
@@ -63,6 +66,64 @@ func TestAllows(t *testing.T) {
 				t.Fatalf("Allows(%s %s.%s) = %t, want %t", tt.verb, tt.resource, tt.group, got, tt.want)
 			}
 		})
+	}
+}
+
+// upstreamResourceMatches is Kubernetes' rbacv1helpers.ResourceMatches
+// (pkg/apis/rbac/v1/evaluation_helpers.go, Apache-2.0, The Kubernetes
+// Authors), transcribed for one rule's resources: what the RBAC authorizer
+// matches a request's "resource" or "resource/subresource" with.
+func upstreamResourceMatches(ruleResources []string, combinedRequestedResource, requestedSubresource string) bool {
+	for _, ruleResource := range ruleResources {
+		if ruleResource == "*" {
+			return true
+		}
+		if ruleResource == combinedRequestedResource {
+			return true
+		}
+		if len(requestedSubresource) == 0 {
+			continue
+		}
+		if len(ruleResource) == len(requestedSubresource)+2 &&
+			strings.HasPrefix(ruleResource, "*/") &&
+			strings.HasSuffix(ruleResource, requestedSubresource) {
+			return true
+		}
+	}
+	return false
+}
+
+// TestResourceMatchesUpstream pins resourceMatches to the RBAC authorizer's
+// matching over every pair of rule entry and requested resource of a set
+// that holds each shape (exact, "*", "*/sub", "resource/*", other
+// resources and subresources): a namespace kept by the start-up check is
+// one whose writes RBAC allows, never one that would 403 them.
+func TestResourceMatchesUpstream(t *testing.T) {
+	entries := []string{
+		"*", "*/status", "*/scale", "*/*", "pgadmins", "pgadmins/*", "pgadmins/status",
+		"pgadmins/finalizers", "pgtoolboxconsoles", "pgtoolboxconsoles/*", "status", "", "pgadmins/status/x",
+	}
+	requested := []string{"pgadmins", "pgadmins/status", "pgadmins/finalizers", "pgadmins/scale", "pgtoolboxconsoles/status", "deployments"}
+	for _, entry := range entries {
+		for _, resource := range requested {
+			_, sub, _ := strings.Cut(resource, "/")
+			want := upstreamResourceMatches([]string{entry}, resource, sub)
+			if got := resourceMatches([]string{entry}, resource); got != want {
+				t.Errorf("rule resource %q, requested %q: matches = %t, RBAC says %t", entry, resource, got, want)
+			}
+		}
+	}
+	// The same over multi-entry rules: any entry matching is a match.
+	for i := range entries {
+		for j := range entries {
+			rule := []string{entries[i], entries[j]}
+			for _, resource := range requested {
+				_, sub, _ := strings.Cut(resource, "/")
+				if got, want := resourceMatches(rule, resource), upstreamResourceMatches(rule, resource, sub); got != want {
+					t.Errorf("rule resources %q, requested %q: matches = %t, RBAC says %t", rule, resource, got, want)
+				}
+			}
+		}
 	}
 }
 
