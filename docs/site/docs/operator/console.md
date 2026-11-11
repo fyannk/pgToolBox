@@ -432,8 +432,9 @@ trusted.
   are watched, so it looks again as the rollout progresses.
 - While the console is stalled on `HostnameNotAllowed` the operator withdraws
   the exposure but leaves the workload and this policy as they were, so a stale
-  `0.0.0.0/0` trust is never left without its policy; `ExposureConfined` is
-  removed, as nothing is published.
+  `0.0.0.0/0` trust is never left without its policy; `ExposureConfined` then
+  says so (`False`, `ExposurePolicyKept`), and is removed only when the console
+  has no ingress policy.
 - The advisory `ExposureConfined` never enters `Ready`; its message says which
   peers the console believes.
 - Sign-in budgets follow the trust. With CIDRs (rows with `0.0.0.0/0,::/0` or

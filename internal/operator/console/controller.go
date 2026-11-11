@@ -245,13 +245,18 @@ func (r *Reconciler) reconcile(ctx context.Context, console *pgtoolboxv1alpha1.P
 	}
 	// The hostname allow-list: withdraw what this console published, then
 	// stall, so that nothing is published under a name the installer did
-	// not allow. ExposureConfined goes with it (nothing is published).
+	// not allow. The workload and the ingress policy stay as they were (a
+	// template that trusts every peer is never left without its policy):
+	// ExposureConfined says the policy is kept, and goes only when there
+	// is none.
 	if spec := &console.Spec.Exposure; spec.TypeOrDefault() != pgtoolboxv1alpha1.ExposureTypeClusterIP &&
 		!exposure.HostnameAllowed(spec.Hostname, r.AllowedHostSuffixes) {
 		if err := r.withdrawExposure(ctx, console); err != nil {
 			return err
 		}
-		setExposureConfined(console, false, confinement{})
+		if err := r.policyKeptOnStall(ctx, console); err != nil {
+			return err
+		}
 		return r.invalid(console, pgtoolboxv1alpha1.ReasonHostnameNotAllowed, fmt.Sprintf(
 			"spec.exposure.hostname %s is not under the operator's allowed host suffixes (EXPOSURE_ALLOWED_HOST_SUFFIXES: %s)",
 			spec.Hostname, strings.Join(r.AllowedHostSuffixes, ", ")))
@@ -1017,6 +1022,30 @@ func (r *Reconciler) exposurePublished(ctx context.Context, console *pgtoolboxv1
 		}
 	}
 	return false, nil
+}
+
+// policyKeptOnStall records ExposureConfined while the console is
+// stalled with its exposure withdrawn: ExposurePolicyKept when the
+// console's own ingress NetworkPolicy remains (read past the cache: one
+// applied a moment ago counts), else no condition (nothing is published,
+// nothing confines).
+func (r *Reconciler) policyKeptOnStall(ctx context.Context, console *pgtoolboxv1alpha1.PgToolBoxConsole) error {
+	name := exposurePolicyName(console)
+	policy := &networkingv1.NetworkPolicy{}
+	if err := r.APIReader.Get(ctx, client.ObjectKey{Namespace: console.Namespace, Name: name}, policy); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return fmt.Errorf("read the console's ingress NetworkPolicy: %w", err)
+		}
+		setExposureConfined(console, false, confinement{})
+		return nil
+	}
+	if !metav1.IsControlledBy(policy, console) {
+		setExposureConfined(console, false, confinement{})
+		return nil
+	}
+	setCondition(console, pgtoolboxv1alpha1.ConditionExposureConfined, metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonExposurePolicyKept,
+		"NetworkPolicy "+name+" is kept while the console is stalled with its exposure withdrawn: the workload keeps its last template, which may still trust every peer the policy admits")
+	return nil
 }
 
 // withdrawExposure deletes every exposure object this console owns.

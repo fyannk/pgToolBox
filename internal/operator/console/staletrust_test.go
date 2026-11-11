@@ -26,6 +26,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -252,5 +253,47 @@ func TestNodeCoverageNote(t *testing.T) {
 	fact := exposureConfinedFact(c, true, found)
 	if !strings.Contains(fact.Message, "the Node check could not run: none of the 2 Nodes has spec.podCIDRs") {
 		t.Fatalf("ExposureConfined = %+v, want the message to say the Node check could not run", fact)
+	}
+}
+
+// TestPolicyKeptOnStall: stalled with the exposure withdrawn, the console
+// says its ingress policy is kept while it is (read past the cache), and
+// has no ExposureConfined without one, or with a policy it does not own.
+func TestPolicyKeptOnStall(t *testing.T) {
+	t.Parallel()
+	c := ipBlockConsole("192.168.10.0/24")
+	policy := buildExposureNetworkPolicy(c, true)
+	foreign := policy.DeepCopy()
+	foreign.OwnerReferences = nil
+	cases := []struct {
+		name string
+		live []client.Object
+		kept bool
+	}{
+		{"the console's policy", []client.Object{owned(c, policy.DeepCopy())}, true},
+		{"none", nil, false},
+		{"someone else's", []client.Object{foreign}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			console := c.DeepCopy()
+			// Published before: the condition is there to be replaced or removed.
+			setExposureConfined(console, true, confinement{})
+			r := &Reconciler{
+				Client:    fake.NewClientBuilder().WithScheme(cnpgScheme(t)).Build(), // a cache that has not seen it
+				APIReader: fake.NewClientBuilder().WithScheme(cnpgScheme(t)).WithObjects(tc.live...).Build(),
+			}
+			if err := r.policyKeptOnStall(context.Background(), console); err != nil {
+				t.Fatal(err)
+			}
+			got := meta.FindStatusCondition(console.Status.Conditions, pgtoolboxv1alpha1.ConditionExposureConfined)
+			switch {
+			case tc.kept && (got == nil || got.Status != metav1.ConditionFalse || got.Reason != string(pgtoolboxv1alpha1.ReasonExposurePolicyKept)):
+				t.Fatalf("ExposureConfined = %+v, want False ExposurePolicyKept", got)
+			case !tc.kept && got != nil:
+				t.Fatalf("ExposureConfined = %+v, want none", got)
+			}
+		})
 	}
 }

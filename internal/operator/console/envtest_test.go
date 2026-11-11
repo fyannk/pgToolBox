@@ -895,6 +895,30 @@ func TestPgToolBoxConsoleReconcilerOnEnvtest(t *testing.T) {
 		must(t, s.admin.Delete(ctx, stalled))
 	})
 
+	t.Run("a hostname stall keeps the ingress policy and says so", func(t *testing.T) {
+		console := &pgtoolboxv1alpha1.PgToolBoxConsole{ObjectMeta: metav1.ObjectMeta{Name: "hoststall", Namespace: suiteNamespace}}
+		console.Spec.Exposure.ExposureSpec = pgtoolboxv1alpha1.ExposureSpec{Type: pgtoolboxv1alpha1.ExposureTypeIngress, Hostname: "login.corp.example.com"}
+		console.Spec.Exposure.NetworkPolicy = &pgtoolboxv1alpha1.PgToolBoxConsoleExposurePolicySpec{From: []pgtoolboxv1alpha1.PgToolBoxConsolePolicyPeer{{
+			NamespaceSelector: &pgtoolboxv1alpha1.PgToolBoxConsoleLabelSelector{MatchLabels: map[string]pgtoolboxv1alpha1.PgToolBoxConsoleLabelValue{"kubernetes.io/metadata.name": "ingress-nginx"}},
+		}}}
+		must(t, s.admin.Create(ctx, console))
+		s.reconcile(ctx, t, "hoststall")
+		s.get(ctx, t, console.WorkloadName(), &networkingv1.Ingress{})
+		s.get(ctx, t, console.WorkloadName()+"-ingress", &networkingv1.NetworkPolicy{})
+
+		s.reconciler.AllowedHostSuffixes = []string{"apps.example.com"}
+		defer func() { s.reconciler.AllowedHostSuffixes = nil }()
+		s.reconcile(ctx, t, "hoststall")
+		stalled := s.console(ctx, t, "hoststall")
+		assertCondition(t, stalled, pgtoolboxv1alpha1.ConditionStalled, metav1.ConditionTrue, pgtoolboxv1alpha1.ReasonHostnameNotAllowed)
+		s.absent(ctx, t, console.WorkloadName(), &networkingv1.Ingress{})
+		// The policy stays with the workload's last template, and the
+		// status says so rather than dropping the condition.
+		s.get(ctx, t, console.WorkloadName()+"-ingress", &networkingv1.NetworkPolicy{})
+		assertCondition(t, stalled, pgtoolboxv1alpha1.ConditionExposureConfined, metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonExposurePolicyKept)
+		must(t, s.admin.Delete(ctx, stalled))
+	})
+
 	t.Run("an ipBlock peer is trusted only once a console Pod has an address", func(t *testing.T) {
 		console := &pgtoolboxv1alpha1.PgToolBoxConsole{ObjectMeta: metav1.ObjectMeta{Name: "blocked", Namespace: suiteNamespace}}
 		console.Spec.Exposure.ExposureSpec = pgtoolboxv1alpha1.ExposureSpec{Type: pgtoolboxv1alpha1.ExposureTypeIngress, Hostname: "blocked.example"}
