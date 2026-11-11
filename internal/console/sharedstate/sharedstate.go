@@ -425,7 +425,10 @@ type Store struct {
 	overCeiling bool
 	// mergeDropLogged is set once a merge dropped sign-outs (logged once).
 	mergeDropLogged bool
-	wake            chan struct{}
+	// grantsUnreadable is set while the grants document does not parse
+	// (logged once per episode).
+	grantsUnreadable bool
+	wake             chan struct{}
 }
 
 // New builds a store; nothing is read until Run.
@@ -1224,8 +1227,18 @@ func (s *Store) mergeLocked(cm *corev1.ConfigMap) {
 			}
 		}
 	}
+	wasUnreadable := s.grantsUnreadable
+	s.grantsUnreadable = false
 	if raw, ok := data[KeyGrants]; ok && raw != "" {
 		s.mergeGrantsLocked(raw)
+	}
+	switch {
+	case s.grantsUnreadable && !wasUnreadable:
+		s.opts.Logger.Error("shared state: the grants document does not parse; MCP grants are refused until it is fixed "+
+			"(delete the key "+KeyGrants+" to reset it: every assistant then connects again)",
+			slog.String("configmap", s.opts.Name))
+	case wasUnreadable && !s.grantsUnreadable:
+		s.opts.Logger.Info("shared state: the grants document is readable again", slog.String("configmap", s.opts.Name))
 	}
 	if raw, ok := data[KeyDrills]; ok && raw != "" {
 		s.mergeDrillsLocked(raw)

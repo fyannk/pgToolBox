@@ -20,7 +20,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"log/slog"
 	"slices"
 	"sort"
 	"strings"
@@ -904,10 +903,9 @@ func (s *Store) mergeGrantsLocked(raw string) {
 		// Never overwritten: what it holds (revocations among it) is not
 		// known, and replacing it would forget them. Grants are refused
 		// until it is readable again.
+		// Logged by mergeLocked once an episode.
 		s.foreign[KeyGrants] = true
-		s.opts.Logger.Error("shared state: the grants document does not parse; MCP grants are refused until it is fixed "+
-			"(delete the key "+KeyGrants+" to reset it: every assistant then connects again)",
-			slog.String("configmap", s.opts.Name))
+		s.grantsUnreadable = true
 	default:
 		for id, e := range doc.Grants {
 			if !validGrantEntry(id, e) {

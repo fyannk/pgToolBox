@@ -15,7 +15,9 @@
 package sharedstate
 
 import (
+	"bytes"
 	"encoding/json"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -301,5 +303,36 @@ func TestOneVersionWritesNoHeartbeat(t *testing.T) {
 				t.Errorf("%d writes with nothing changing", n)
 			}
 		})
+	}
+}
+
+// An unreadable grants document is logged once an episode, not on every
+// merge, and its recovery once.
+func TestAnUnreadableGrantsDocumentIsLoggedOnceAnEpisode(t *testing.T) {
+	api := newAPIServer()
+	var logs bytes.Buffer
+	s := newStore(api, &testClock{now: t0}, slog.New(slog.NewTextHandler(&logs, nil)))
+	setGrants := func(raw string) {
+		api.set(func(a *apiServer) {
+			cm := a.cm.DeepCopy()
+			cm.Data = map[string]string{KeyGrants: raw}
+			a.bumpLocked(cm)
+		})
+		for range 3 {
+			watchMerge(t, api, s)
+		}
+	}
+	setGrants(`{"version":2,"grants":[]}`)
+	setGrants(`{"version":2,"grants":"x"}`)
+	if n := strings.Count(logs.String(), "does not parse"); n != 1 {
+		t.Fatalf("logged %d times in one episode, want once:\n%s", n, logs.String())
+	}
+	setGrants(`{"version":2,"grants":{},"codes":{}}`)
+	if n := strings.Count(logs.String(), "readable again"); n != 1 {
+		t.Fatalf("the recovery logged %d times, want once:\n%s", n, logs.String())
+	}
+	setGrants(`{"version":2,"grants":[]}`)
+	if n := strings.Count(logs.String(), "does not parse"); n != 2 {
+		t.Fatalf("a second episode logged %d times in all, want 2", n)
 	}
 }
