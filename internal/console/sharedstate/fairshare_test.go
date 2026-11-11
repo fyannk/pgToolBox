@@ -86,7 +86,7 @@ func TestFairShareAdmitsANewcomerToAFullDocument(t *testing.T) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if d := planSignOutCaps(s.signedOut); len(d) != 0 {
+	if d := planSignOutCaps(s.signedOut, s.latestRecordedLocked()); len(d) != 0 {
 		t.Errorf("the bounds drop %d entries from a document RecordSignOut made", len(d))
 	}
 }
@@ -185,7 +185,7 @@ func TestFairShareNeverTakesFromSomeoneHoldingLess(t *testing.T) {
 			}
 		}
 		if n%50 == 0 {
-			if d := planSignOutCaps(s.signedOut); len(d) != 0 {
+			if d := planSignOutCaps(s.signedOut, s.latestRecordedLocked()); len(d) != 0 {
 				t.Fatalf("op %d: the bounds drop %v from a document RecordSignOut made", n, d)
 			}
 		}

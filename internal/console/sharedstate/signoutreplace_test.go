@@ -104,7 +104,7 @@ func TestAPersonsLatestSignOutReplacesTheirOwnOldest(t *testing.T) {
 	}
 	// Capping the document (what every merge does) keeps it as it is.
 	s.mu.Lock()
-	dropped := planSignOutCaps(s.signedOut)
+	dropped := planSignOutCaps(s.signedOut, s.latestRecordedLocked())
 	s.pruneLocked()
 	s.mu.Unlock()
 	for bound, want := range map[string]float64{"subject": MaxSignOutsPerSubject, "unnamed": 0, "total": MaxSignOuts} {
