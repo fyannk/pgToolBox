@@ -185,6 +185,14 @@ namespaces keep it, and it is watched only where it can be listed. Refused in
 every namespace, it is off everywhere. A change of RBAC is read at the next
 start.
 
+A Route or HTTPRoute published before its API was refused in the namespace
+is not forgotten. The operator looks it up past the cache at every
+reconciliation and deletes it when it is no longer wanted. When it cannot (the
+Route is the requested exposure, or its read or deletion is refused),
+`ExposureReady` keeps its reason but its message says that a Route or HTTPRoute
+published before may remain and must be deleted by hand. It never says the
+exposure is gone.
+
 If no listed namespace is left, the operator does not start; nor does
 it when the API server refuses its credentials (401) at start, which is retried
 by a restart rather than read as a namespace out of reach.
