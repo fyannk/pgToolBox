@@ -88,15 +88,26 @@ const (
 	KeySessions = "sessions.json"
 	KeySince    = "since.json"
 	KeyDigests  = "digests.json"
-	// formatVersion gates every document. A replica meets a document of
-	// another version only during a rolling upgrade: it then neither
-	// merges nor rewrites that key, so it never clobbers what a newer
-	// console wrote. It changes whenever a field, a merge rule or the
-	// ordering rule of a bound changes, so that replicas never decide one
-	// document by two rules: 2 since the sign-outs' fair-share tie-break
-	// and the codes' marks (MarkCode), which a replica of version 1 would
-	// drop on its next write.
+	// formatVersion is the version of every document this console
+	// writes. It changes whenever a field, a merge rule or the ordering
+	// rule of a bound changes, so that replicas never decide one document
+	// by two rules: 2 since the sign-outs' fair-share tie-break and the
+	// codes' marks (MarkCode), which a replica of version 1 would drop on
+	// its next write.
+	//
+	// A document of an older version, from minFormatVersion on, is read as
+	// this version (readableVersion says how), and so rewritten at this
+	// version on the next write: the document is taken over, and a
+	// replica still of the older version, during a rolling upgrade, then
+	// finds it newer and leaves it alone. A document of a newer version
+	// (a newer console, during a rolling upgrade or after a rollback), or
+	// of none this console knows, is foreign: neither merged nor
+	// rewritten, so it never clobbers what a newer console wrote; it is
+	// logged once and counted in
+	// pgtoolbox_console_shared_state_foreign_documents.
 	formatVersion = 2
+	// minFormatVersion is the oldest version this console reads.
+	minFormatVersion = 1
 )
 
 // Bounds.
@@ -379,8 +390,12 @@ type Store struct {
 	byObject map[string]map[string]struct{}
 	// base is the ConfigMap as last read or written; nil until read.
 	base *corev1.ConfigMap
-	// foreign names the keys of another format version, left untouched.
+	// foreign names the keys left untouched: of a format version this
+	// console does not read, or (grants.json) unreadable.
 	foreign map[string]bool
+	// foreignLogged is the version of each foreign key last logged, so
+	// that each is logged once.
+	foreignLogged map[string]int
 	// gen counts local changes; written is the gen last written.
 	gen, written uint64
 	urgent       bool
@@ -427,7 +442,7 @@ func New(opts Options) *Store {
 	}
 	s := &Store{
 		opts: opts, signedOut: map[string]signOut{}, facts: map[string]fact{}, sent: map[string]int64{}, grants: map[string]grantEntry{}, codes: map[string]codeEntry{}, drills: map[string]DrillResult{}, byObject: map[string]map[string]struct{}{},
-		foreign: map[string]bool{}, mode: modePending, since: opts.Now().UTC(), wake: make(chan struct{}, 1),
+		foreign: map[string]bool{}, foreignLogged: map[string]int{}, mode: modePending, since: opts.Now().UTC(), wake: make(chan struct{}, 1),
 	}
 	if opts.Name == "" {
 		s.mode = modeDisabled
@@ -1075,14 +1090,61 @@ func validSent(key string, at int64) bool {
 	return ok && at > 0 && sentKey(id, channel) == key
 }
 
-// foreignVersion reports a document of another format version, read
-// before the rest so that a newer layout is recognised even when it no
-// longer decodes as this one.
-func foreignVersion(raw string) bool {
+// documentVersion reads a document's format version, before the rest, so
+// that a newer layout is recognised even when it no longer decodes as
+// this one; ok is false when the document does not parse at all.
+func documentVersion(raw string) (version int, ok bool) {
 	var head struct {
 		Version int `json:"version"`
 	}
-	return json.Unmarshal([]byte(raw), &head) == nil && head.Version != formatVersion
+	if json.Unmarshal([]byte(raw), &head) != nil {
+		return 0, false
+	}
+	return head.Version, true
+}
+
+// readableVersion reports whether this console reads a document of
+// version v, as a document of formatVersion: what each older version
+// lacks reads as empty.
+//
+//   - 1: the same layout without the codes' marks (none), whose
+//     sign-outs were ordered by the old fair-share tie-break; read as 2,
+//     they are ordered by this one, as if recorded by a replica of 2.
+func readableVersion(v int) bool {
+	return v >= minFormatVersion && v <= formatVersion
+}
+
+// foreignLocked reports whether the document raw of key is foreign (of a
+// version this console does not read) and, if so, marks it so, to be
+// neither merged nor rewritten, and logs it once.
+func (s *Store) foreignLocked(key, raw string) bool {
+	v, ok := documentVersion(raw)
+	if !ok || readableVersion(v) {
+		return false
+	}
+	s.foreign[key] = true
+	if logged, ok := s.foreignLogged[key]; !ok || logged != v {
+		s.foreignLogged[key] = v
+		s.opts.Logger.Warn("shared state: a document of a format version this console does not read is left as it is "+
+			"(a newer console wrote it, during a rolling upgrade or before a rollback); what it holds is not shared with "+
+			"this replica until every replica runs one version", slog.String("configmap", s.opts.Name),
+			slog.String("document", key), slog.Int("version", v), slog.Int("reads", formatVersion))
+	}
+	return true
+}
+
+// gaugeForeignLocked publishes which documents are left untouched, and
+// forgets the logging of those no longer foreign.
+func (s *Store) gaugeForeignLocked() {
+	for _, key := range documentKeys {
+		v := 0.0
+		if s.foreign[key] {
+			v = 1
+		} else {
+			delete(s.foreignLogged, key)
+		}
+		sharedForeign.WithLabelValues(key).Set(v)
+	}
 }
 
 // mergeLocked folds a ConfigMap read from the API server into the local
@@ -1095,8 +1157,7 @@ func (s *Store) mergeLocked(cm *corev1.ConfigMap) {
 	if raw, ok := data[KeySessions]; ok && raw != "" {
 		var doc sessionsDoc
 		switch {
-		case foreignVersion(raw):
-			s.foreign[KeySessions] = true
+		case s.foreignLocked(KeySessions, raw):
 		case json.Unmarshal([]byte(raw), &doc) != nil:
 			s.opts.Logger.Warn("shared state: the sessions document does not parse; it will be rewritten", slog.String("configmap", s.opts.Name))
 		case len(doc.SignedOut) <= maxEntries:
@@ -1117,8 +1178,7 @@ func (s *Store) mergeLocked(cm *corev1.ConfigMap) {
 	if raw, ok := data[KeySince]; ok && raw != "" {
 		var doc sinceDoc
 		switch {
-		case foreignVersion(raw):
-			s.foreign[KeySince] = true
+		case s.foreignLocked(KeySince, raw):
 		case json.Unmarshal([]byte(raw), &doc) != nil:
 			s.opts.Logger.Warn("shared state: the since document does not parse; it will be rewritten", slog.String("configmap", s.opts.Name))
 		case len(doc.Facts) <= maxEntries:
@@ -1139,8 +1199,7 @@ func (s *Store) mergeLocked(cm *corev1.ConfigMap) {
 	if raw, ok := data[KeyDigests]; ok && raw != "" {
 		var doc digestsDoc
 		switch {
-		case foreignVersion(raw):
-			s.foreign[KeyDigests] = true
+		case s.foreignLocked(KeyDigests, raw):
 		case json.Unmarshal([]byte(raw), &doc) != nil:
 			s.opts.Logger.Warn("shared state: the digests document does not parse; it will be rewritten", slog.String("configmap", s.opts.Name))
 		case len(doc.Sent) <= maxEntries:
@@ -1158,6 +1217,7 @@ func (s *Store) mergeLocked(cm *corev1.ConfigMap) {
 	if raw, ok := data[KeyDrills]; ok && raw != "" {
 		s.mergeDrillsLocked(raw)
 	}
+	s.gaugeForeignLocked()
 	if !s.inSyncWithLocked(s.pruneLocked()) {
 		s.changedLocked(false)
 	}

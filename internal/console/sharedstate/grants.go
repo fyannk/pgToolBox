@@ -876,8 +876,7 @@ func (s *Store) CodeUsed(code string) bool {
 func (s *Store) mergeGrantsLocked(raw string) {
 	var doc grantsDoc
 	switch {
-	case foreignVersion(raw):
-		s.foreign[KeyGrants] = true
+	case s.foreignLocked(KeyGrants, raw):
 	case json.Unmarshal([]byte(raw), &doc) != nil:
 		// Never overwritten: what it holds (revocations among it) is not
 		// known, and replacing it would forget them. Grants are refused
