@@ -809,9 +809,10 @@ func (s *Service) recoveryTimeline(ev clusterEvidence, summary viewmodel.BackupS
 		in := timelineInput{
 			rec: rec, backups: ev.result.Backups, facts: facts, stale: stale,
 			scannedAt: scanned, observedAt: ev.result.ObservedAt, refresh: ev.result.RefreshInterval,
-			pgBackRest:  ev.result.Snapshot.Identity.Repository.Format == evidencev1alpha1.FormatPGBackRest,
-			backupIDs:   ev.result.BackupIDs,
-			backupsDone: ev.result.BackupsComplete,
+			scanDuration: scanDuration(ev.result.Snapshot),
+			pgBackRest:   ev.result.Snapshot.Identity.Repository.Format == evidencev1alpha1.FormatPGBackRest,
+			backupIDs:    ev.result.BackupIDs,
+			backupsDone:  ev.result.BackupsComplete,
 		}
 		evidenceTimeline(&out, in)
 		out.OffTarget = offTargetSpans(rec.Paths, ev.result.Backups, in.notRestorable)
@@ -856,6 +857,15 @@ func scannedAt(r evidence.Result) *time.Time {
 		return r.Snapshot.CompletedAt
 	}
 	return r.ObservedAt
+}
+
+// scanDuration is how long the snapshot's scan took; 0 when either time
+// is missing or they are out of order.
+func scanDuration(s *evidencev1alpha1.RepositoryEvidenceSnapshot) time.Duration {
+	if s == nil || s.StartedAt == nil || s.CompletedAt == nil || !s.CompletedAt.After(*s.StartedAt) {
+		return 0
+	}
+	return s.CompletedAt.Sub(*s.StartedAt)
 }
 
 // recoveryUnavailableReason says why there is no evidence timeline.
@@ -969,6 +979,12 @@ type timelineInput struct {
 	// the purge band is timed from the earlier of it and scannedAt.
 	observedAt *time.Time
 	refresh    time.Duration
+	// scanDuration is how long the snapshot's scan took (started_at to
+	// completed_at); 0 when the snapshot does not say. The purge band times
+	// the read from the scan's start, and missedScan allows a slow scan
+	// its own duration (round 14, PG P3-B). For paths kept from an earlier
+	// scan it is the latest scan's: an estimate of that scan's.
+	scanDuration time.Duration
 	// pgBackRest: the repository is pgBackRest's (its identity's format),
 	// whose usability the agent rates per backup item (a path's backup
 	// missing from the items read is not known to be usable).
@@ -1507,28 +1523,36 @@ func markEdges(out *viewmodel.RecoveryTimeline, in timelineInput, spans []interv
 
 // purgeBand is how long after the oldest restore point a retention purge
 // may have removed its base backup unseen: the agent's refresh interval
-// plus the age of the scan the paths come from, timed from the earlier of
-// the agent's scan time and the console's fetch time (an agent clock
-// ahead of the console's does not shrink it), and never past the window
-// [first, last] (an absurd scan time, which saturates time.Sub, does not
-// overflow it to nothing; round 11, PG P3).
+// plus the age of the scan the paths come from, timed from the earliest
+// of the scan's start (the listing is read during the scan, not when it
+// completes; round 14, PG P3-B), the agent's completion time and the
+// console's fetch time (an agent clock ahead of the console's does not
+// shrink it), and never past the window [first, last] (an absurd scan
+// time, which saturates time.Sub, does not overflow it to nothing; round
+// 11, PG P3).
 //
 // A purge drops a whole backup, with the WAL only it needs, not a span as
 // long as the time elapsed. Under a recovery window the first restore
-// point the repository keeps is the newest lower bound at or before the
-// window's start, which moves with the clock: when the paths were read the
-// oldest backup was still needed, so the window started before the next
-// backup's lower bound (first plus oldestOnly); since then it has moved by
-// at most the age of the read plus one refresh interval. Every backup
-// whose successor's lower bound it passed may be gone, several during a
-// long age (round 13, PG P3-B: the band used to stop at the next backup's
-// lower bound). The window's start is now before reach = first +
-// oldestOnly + age + refresh, so the backup with the newest lower bound
-// before reach is still there: the band runs to that lower bound, and
-// every point after it is restorable from that backup or a newer one. A
-// single backup is never purged by retention, so its span is not
-// extended (oldestOnly is 0 and the newest lower bound before reach is
-// first).
+// point the repository keeps is the newest retention anchor (purgeAnchors)
+// at or before the window's start, which moves with the clock: when the
+// paths were read the oldest anchor was still needed, so the window
+// started before the next anchor (first plus oldestOnly); since then it
+// has moved by at most the age of the read plus one refresh interval.
+// Every anchor whose successor it passed may be gone, several during a
+// long age (round 13, PG P3-B). The window's start is now before reach =
+// first + oldestOnly + age + refresh, so the newest anchor before reach,
+// base, is still there with every newer backup. The band runs to the
+// first drawn restore point at or after base: before it, the drawn spans
+// come from backups that may be gone (an anchor with no recovery path,
+// or a pgBackRest incremental of an expired full, keeps no span covered).
+//
+// Retention never removes the newest backup, so within a normal cycle
+// the band never passes the first drawn restore point at or after the
+// newest anchor the snapshot lists: a lone backup scanned on time has no
+// band (round 14, PG P3-A). Once a scan was missed it may: a backup
+// taken since, which the snapshot cannot list, lets retention remove the
+// newest one listed, so the elapsed band is not capped there and reaches
+// the whole window as the age grows.
 //
 // The band extends only once a scan was missed (missedScan). Within a
 // normal cycle the scan's age passes one refresh interval for up to a
@@ -1547,6 +1571,10 @@ func purgeBand(in timelineInput, spans []interval, first, last time.Time) time.D
 			read = at
 		}
 	}
+	if read != nil && in.scanDuration > 0 {
+		start := read.Add(-in.scanDuration)
+		read = &start
+	}
 	window := max(last.Sub(first), 0)
 	var age time.Duration
 	if read != nil && in.facts.now.After(*read) {
@@ -1556,57 +1584,144 @@ func purgeBand(in timelineInput, spans []interval, first, last time.Time) time.D
 	if purge <= window-age {
 		band = purge + age
 	}
-	if age <= missedScan(purge) {
+	anchors := purgeAnchors(in, spans)
+	if age <= missedScan(purge, in.scanDuration) {
+		if newest, ok := newestAnchor(anchors, nil); ok {
+			if kept, ok := drawnFrom(spans, newest); ok {
+				band = min(band, max(kept.Sub(first), 0))
+			}
+		}
 		return band
 	}
-	only := oldestOnly(spans, first)
+	only := oldestOnly(anchors, first)
 	if only <= 0 || band >= window {
 		return band
 	}
 	// Two Adds: each duration is at most the window or a saturated Sub,
 	// which a time adds without overflow.
 	reach := first.Add(only).Add(band)
-	for _, sp := range spans {
-		if sp.from.Before(reach) && !sp.from.Before(first) {
-			band = max(band, sp.from.Sub(first))
-		}
+	base, ok := newestAnchor(anchors, &reach)
+	if !ok || base.Before(first) {
+		return band
 	}
-	return min(band, window)
+	kept, ok := drawnFrom(spans, base)
+	if !ok {
+		return window
+	}
+	return min(max(band, kept.Sub(first)), window)
 }
 
-// missedScan is the age past which a scan of an agent refreshing every
-// refresh is overdue: two intervals, and at least one interval plus the
-// console's poll period and scanSlack.
-func missedScan(refresh time.Duration) time.Duration {
-	return max(2*refresh, refresh+evidence.DefaultInterval+scanSlack)
+// drawnFrom is the earliest drawn span's lower bound at or after at: the
+// first restore point a backup that is kept with the anchor at at (or a
+// newer one) draws. False when no span starts there.
+func drawnFrom(spans []interval, at time.Time) (time.Time, bool) {
+	var out time.Time
+	found := false
+	for _, sp := range spans {
+		if !sp.from.Before(at) && (!found || sp.from.Before(out)) {
+			out, found = sp.from, true
+		}
+	}
+	return out, found
+}
+
+// purgeAnchors are the lower bounds of the backups a retention policy
+// keeps as a recovery base, each one making every older restore point
+// purgeable once the policy's window passes it. pgBackRest expires a full
+// backup together with every differential and incremental backup taken
+// against it, so only full backups are anchors: the oldest full's whole
+// chain goes at once, up to the next full (round 14, PG P3-A). A Barman
+// backup is removed on its own: every backup the repository lists that
+// did not fail is an anchor, drawn or not (a backup with no recovery path
+// is still a retention anchor), with the drawn spans' lower bounds. A
+// pgBackRest repository whose items are not read falls back to the drawn
+// spans, as if each backup were a full: the chains are not known.
+func purgeAnchors(in timelineInput, spans []interval) []time.Time {
+	// A drawn backup's anchor is its span's lower bound, the time the
+	// window is drawn from, not its item's end time, which may differ.
+	drawn := make(map[string]bool, len(spans))
+	for _, sp := range spans {
+		drawn[sp.backupID] = true
+	}
+	if !in.pgBackRest || len(in.backups) == 0 {
+		var out []time.Time
+		for _, b := range in.backups {
+			if !in.pgBackRest && !b.Failed && b.EndAt != nil && !drawn[b.ID] {
+				out = append(out, b.EndAt.UTC())
+			}
+		}
+		for _, sp := range spans {
+			out = append(out, sp.from)
+		}
+		return out
+	}
+	full := map[string]bool{}
+	var out []time.Time
+	for _, b := range in.backups {
+		if b.Failed || b.PgBackRest == nil || b.PgBackRest.Type != "full" {
+			continue
+		}
+		full[b.ID] = true
+		if b.EndAt != nil && !drawn[b.ID] {
+			out = append(out, b.EndAt.UTC())
+		}
+	}
+	for _, sp := range spans {
+		if full[sp.backupID] {
+			out = append(out, sp.from)
+		}
+	}
+	return out
+}
+
+// newestAnchor is the newest of the anchors, before before when it is
+// set; false when there is none.
+func newestAnchor(anchors []time.Time, before *time.Time) (time.Time, bool) {
+	var newest time.Time
+	found := false
+	for _, a := range anchors {
+		if (before == nil || a.Before(*before)) && (!found || a.After(newest)) {
+			newest, found = a, true
+		}
+	}
+	return newest, found
+}
+
+// missedScan is the age, from the scan's start, past which the next scan
+// of an agent refreshing every refresh is overdue. A scan that takes
+// longer than the interval delays the next one (the agent's ticker drops
+// the ticks it missed), so a normal cycle lasts the longer of the
+// interval and the scan, then the next scan's own duration, then up to
+// the console's poll period before the console reads it, plus scanSlack
+// (round 14, PG P3-B: two intervals held the short band for a whole day
+// at a 24 h refresh and flapped with a scan slower than a 30 s refresh).
+// Without a scan duration (no start time in the snapshot) it is two
+// intervals, and at least one interval plus the poll period and
+// scanSlack.
+func missedScan(refresh, scan time.Duration) time.Duration {
+	if scan <= 0 {
+		return max(2*refresh, refresh+evidence.DefaultInterval+scanSlack)
+	}
+	return max(refresh, scan) + scan + evidence.DefaultInterval + scanSlack
 }
 
 // scanSlack is the time a scan is allowed to take on top of its interval
 // before missedScan counts it as missed.
 const scanSlack = time.Minute
 
-// oldestOnly is how long after first only the oldest backup's spans
-// reach: until the earliest lower bound of another backup's span; 0 when
-// no other backup has a span.
-func oldestOnly(spans []interval, first time.Time) time.Duration {
-	oldest := ""
-	for _, sp := range spans {
-		if sp.from.Equal(first) {
-			oldest = sp.backupID
-			break
-		}
-	}
+// oldestOnly is how long after first only the oldest anchor's backups
+// reach: until the earliest anchor after first; 0 when there is none.
+func oldestOnly(anchors []time.Time, first time.Time) time.Duration {
 	var next *time.Time
-	for _, sp := range spans {
-		if sp.backupID != oldest && (next == nil || sp.from.Before(*next)) {
-			from := sp.from
-			next = &from
+	for i := range anchors {
+		if anchors[i].After(first) && (next == nil || anchors[i].Before(*next)) {
+			next = &anchors[i]
 		}
 	}
 	if next == nil {
 		return 0
 	}
-	return max(next.Sub(first), 0)
+	return next.Sub(first)
 }
 
 // repositoryAheadEdge marks the restore points a default restore may
