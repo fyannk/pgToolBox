@@ -502,6 +502,9 @@ func (r *Reconciler) exposureConfinement(ctx context.Context, console *pgtoolbox
 			return confinement{}, err
 		}
 		found.Broad, found.Note = nodeNetworkBlock(ours, nodes), note
+		if incoherent := nodeCoherenceNote(pods, nodes); incoherent != "" {
+			found.Note = joinNotes(found.Note, incoherent)
+		}
 	}
 	var policies networkingv1.NetworkPolicyList
 	if err := r.APIReader.List(ctx, &policies, client.InNamespace(console.Namespace), client.Limit(networkPolicyListLimit)); err != nil {
@@ -1257,15 +1260,26 @@ func unavailableWhy(result discovery.Result) string {
 // what one page holds in memory to about a hundred Node objects (their
 // status lists images and can run to tens of kilobytes each), and only
 // the names and podCIDRs outlive the page.
+//
+// One lookup runs for at most nodeLookupBudget, a third of the reconcile
+// timeout, so that the reads after it still have time; a lookup that
+// stops keeps the pages it read (nodeScan) and the next resumes from
+// them, so a cluster too large for one pass is still read whole over a
+// few (each retry comes with the reconcile error's backoff).
 const (
-	nodeListPage  = 100
-	nodeListPages = 100
-	nodeCIDRTTL   = time.Minute
+	nodeListPage     = 100
+	nodeListPages    = 100
+	nodeCIDRTTL      = time.Minute
+	nodeLookupBudget = reconciliationTimeout / 3
+	// nodeScanMaxAge drops a stopped scan nobody resumed: its continue
+	// token would have expired by then (the API server compacts every
+	// five minutes by default), and a fresh one is cheaper than a 410.
+	nodeScanMaxAge = 5 * time.Minute
 )
 
-// nodeCIDRMemo is the last successful Node podCIDR lookup, and the one
-// under way. The mutex guards the fields only: it is never held across a
-// List.
+// nodeCIDRMemo is the last successful Node podCIDR lookup, the one under
+// way, and what a stopped one had read. The mutex guards the fields only:
+// it is never held across a List.
 type nodeCIDRMemo struct {
 	mu    sync.Mutex
 	at    time.Time
@@ -1273,6 +1287,22 @@ type nodeCIDRMemo struct {
 	note  string
 	// inflight is closed when the lookup under way ends, nil when none is.
 	inflight chan struct{}
+	// scan is what the last lookup that stopped had read, the zero value
+	// when none did.
+	scan nodeScan
+}
+
+// nodeScan is a Node podCIDR list part read: the Nodes with podCIDRs of
+// the pages read so far, how many Nodes and pages those were, and the
+// continue token of the next page. A continue token reads the snapshot
+// the first page was read at, so pages read by successive lookups add up
+// to one list; a token the API server no longer serves (410 Expired)
+// starts the list over.
+type nodeScan struct {
+	started       time.Time
+	token         string
+	nodes         []nodePodCIDRs
+	listed, pages int
 }
 
 // nodePodCIDRs returns the Nodes' spec.podCIDRs. When the operator may not
@@ -1283,8 +1313,9 @@ type nodeCIDRMemo struct {
 //
 // One lookup runs at a time; the other callers wait for it, each on its
 // own context, and take its result. When it fails (its caller's context
-// ended, or the API server erred) nothing is kept, and a waiter whose
-// context is still live runs the next one itself.
+// ended, its budget ran out, or the API server erred) no result is kept,
+// only the pages it read, and a waiter whose context is still live runs
+// the next lookup itself, from where this one stopped.
 func (r *Reconciler) nodePodCIDRs(ctx context.Context) (nodes []nodePodCIDRs, note string, err error) {
 	now := time.Now
 	if r.Now != nil {
@@ -1307,50 +1338,73 @@ func (r *Reconciler) nodePodCIDRs(ctx context.Context) (nodes []nodePodCIDRs, no
 			}
 		}
 		r.nodes.inflight = make(chan struct{})
+		scan := r.nodes.scan
+		r.nodes.scan = nodeScan{}
 		r.nodes.mu.Unlock()
-		return r.leadNodeLookup(ctx, now)
+		if scan.started.IsZero() || now().Sub(scan.started) > nodeScanMaxAge {
+			scan = nodeScan{started: now()}
+		}
+		scan.nodes = slices.Clone(scan.nodes)
+		return r.leadNodeLookup(ctx, now, scan)
 	}
 }
 
-// leadNodeLookup runs the lookup nodePodCIDRs made inflight, keeps a
-// successful result and releases the waiters on every path (a panic
+// leadNodeLookup runs the lookup nodePodCIDRs made inflight, from scan,
+// within nodeLookupBudget; it keeps a successful result, or the pages a
+// failed one read, and releases the waiters on every path (a panic
 // included, which keeps nothing).
-func (r *Reconciler) leadNodeLookup(ctx context.Context, now func() time.Time) (nodes []nodePodCIDRs, note string, err error) {
+func (r *Reconciler) leadNodeLookup(ctx context.Context, now func() time.Time, scan nodeScan) (nodes []nodePodCIDRs, note string, err error) {
 	returned := false
 	defer func() {
 		r.nodes.mu.Lock()
 		defer r.nodes.mu.Unlock()
-		if returned && err == nil {
+		switch {
+		case returned && err == nil:
 			r.nodes.at, r.nodes.nodes, r.nodes.note = now(), nodes, note
+		case returned:
+			r.nodes.scan = scan
 		}
 		close(r.nodes.inflight)
 		r.nodes.inflight = nil
 	}()
-	nodes, note, err = r.listNodePodCIDRs(ctx)
+	lookup, cancel := context.WithTimeout(ctx, nodeLookupBudget)
+	defer cancel()
+	nodes, note, err = r.listNodePodCIDRs(lookup, &scan)
 	returned = true
 	if err != nil {
+		if lookup.Err() != nil && ctx.Err() == nil {
+			err = fmt.Errorf("the Node podCIDR lookup did not finish within %s (%d Nodes listed so far; the next attempt resumes where it stopped): %w",
+				nodeLookupBudget, scan.listed, err)
+		}
 		return nil, "", err
 	}
 	return nodes, note, nil
 }
 
-func (r *Reconciler) listNodePodCIDRs(ctx context.Context) ([]nodePodCIDRs, string, error) {
-	var nodes []nodePodCIDRs
-	listed := 0
-	continueToken := ""
-	for range nodeListPages {
+// listNodePodCIDRs reads the Nodes' podCIDRs from where scan stopped,
+// recording each page in it as it is read.
+func (r *Reconciler) listNodePodCIDRs(ctx context.Context, scan *nodeScan) ([]nodePodCIDRs, string, error) {
+	restarted := false
+	for scan.pages < nodeListPages {
 		var list corev1.NodeList
 		options := []client.ListOption{client.Limit(nodeListPage)}
-		if continueToken != "" {
-			options = append(options, client.Continue(continueToken))
+		if scan.token != "" {
+			options = append(options, client.Continue(scan.token))
 		}
 		if err := r.APIReader.List(ctx, &list, options...); err != nil {
-			if apierrors.IsForbidden(err) {
+			switch {
+			case apierrors.IsForbidden(err):
 				return nil, "the Nodes' podCIDRs were not checked against the ipBlock peers (the operator may not list Nodes): only the console Pods' own addresses were", nil
+			case scan.token != "" && !restarted && (apierrors.IsResourceExpired(err) || apierrors.IsGone(err)):
+				// The snapshot is gone: the list starts over, once.
+				*scan = nodeScan{started: scan.started}
+				restarted = true
+				continue
 			}
 			return nil, "", fmt.Errorf("list the Nodes for their podCIDRs: %w", err)
 		}
-		listed += len(list.Items)
+		scan.pages++
+		scan.listed += len(list.Items)
 		for i := range list.Items {
 			node := nodePodCIDRs{Name: list.Items[i].Name}
 			for _, cidr := range list.Items[i].Spec.PodCIDRs {
@@ -1359,11 +1413,11 @@ func (r *Reconciler) listNodePodCIDRs(ctx context.Context) ([]nodePodCIDRs, stri
 				}
 			}
 			if len(node.CIDRs) > 0 {
-				nodes = append(nodes, node)
+				scan.nodes = append(scan.nodes, node)
 			}
 		}
-		if continueToken = list.Continue; continueToken == "" {
-			return nodes, nodeCoverageNote(listed, len(nodes)), nil
+		if scan.token = list.Continue; scan.token == "" {
+			return scan.nodes, nodeCoverageNote(scan.listed, len(scan.nodes)), nil
 		}
 	}
 	return nil, fmt.Sprintf("the Nodes' podCIDRs were not checked against the ipBlock peers (more than %d Nodes): only the console Pods' own addresses were", nodeListPage*nodeListPages), nil

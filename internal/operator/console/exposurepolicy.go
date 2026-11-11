@@ -352,6 +352,57 @@ func nodeNetworkBlock(peers []networkingv1.NetworkPolicyPeer, nodes []nodePodCID
 	return ""
 }
 
+// nodeCoherenceNote says that the Node check is not meaningful, "" when
+// nothing shows that: a console Pod's address lies outside every podCIDR
+// of its own Node of that address family. A CNI that allocates Pod
+// addresses itself (Calico IPAM, Cilium's cluster pool) while
+// kube-controller-manager still fills spec.podCIDRs leaves ranges there
+// that are not the Pod network, so a block that misses them proves
+// nothing; the console Pods' own addresses are then the only check. A Pod
+// whose Node has no podCIDRs, or none of that family, shows nothing (the
+// coverage note counts those Nodes). The Pods are taken by name, so the
+// note names the same Pod from one pass to the next. It is a note, not a
+// finding: the trust is not withheld for it (a Node range that overlaps a
+// block still makes it broad: false alarms are the safe side).
+func nodeCoherenceNote(pods []corev1.Pod, nodes []nodePodCIDRs) string {
+	ranges := make(map[string][]netip.Prefix, len(nodes))
+	for _, node := range nodes {
+		ranges[node.Name] = node.CIDRs
+	}
+	sorted := slices.Clone(pods)
+	slices.SortFunc(sorted, func(a, b corev1.Pod) int { return strings.Compare(a.Name, b.Name) })
+	for p := range sorted {
+		pod := &sorted[p]
+		cidrs, ok := ranges[pod.Spec.NodeName]
+		if !ok || pod.Spec.HostNetwork {
+			continue
+		}
+		for _, ip := range pod.Status.PodIPs {
+			addr, err := netip.ParseAddr(ip.IP)
+			if err != nil {
+				continue
+			}
+			sameFamily := false
+			inside := slices.ContainsFunc(cidrs, func(cidr netip.Prefix) bool {
+				if cidr.Addr().Is4() != addr.Is4() {
+					return false
+				}
+				sameFamily = true
+				return cidr.Contains(addr)
+			})
+			if sameFamily && !inside {
+				return fmt.Sprintf("the Node check is not meaningful: console Pod %s has address %s, outside the podCIDRs of its Node %s (the CNI does not allocate from spec.podCIDRs), so only the console Pods' own addresses were checked against the ipBlock peers", pod.Name, addr, pod.Spec.NodeName)
+			}
+		}
+	}
+	return ""
+}
+
+// joinNotes joins the notes that are set.
+func joinNotes(notes ...string) string {
+	return strings.Join(slices.DeleteFunc(notes, func(n string) bool { return n == "" }), "; ")
+}
+
 // exceptedPrefix: one of except holds the whole of cidr.
 func exceptedPrefix(except []string, cidr netip.Prefix) bool {
 	return slices.ContainsFunc(except, func(entry string) bool {
