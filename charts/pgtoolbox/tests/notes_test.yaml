@@ -28,3 +28,21 @@ tests:
     set: {operator.enabled: false}
     asserts:
       - matchRegexRaw: {pattern: "operator.enabled is false: this release renders nothing"}
+  - it: warns when the restore-drill guard is disabled
+    set: {operator.restoreDrillGuard.enabled: false}
+    asserts:
+      - matchRegexRaw: {pattern: "restore-drill delete guard is NOT rendered"}
+      - matchRegexRaw: {pattern: "restoreDrillGuard.enabled=false"}
+  - it: warns when the guard is auto and the cluster serves no policy API
+    set: {operator.restoreDrillGuard.enabled: auto}
+    asserts:
+      - matchRegexRaw: {pattern: "serves no ValidatingAdmissionPolicy API"}
+  - it: is quiet about the guard when it is rendered
+    asserts:
+      - notMatchRegexRaw: {pattern: "restore-drill delete guard is NOT rendered"}
+  - it: is quiet about the guard when auto finds the API
+    set: {operator.restoreDrillGuard.enabled: auto}
+    capabilities:
+      apiVersions: [admissionregistration.k8s.io/v1/ValidatingAdmissionPolicy]
+    asserts:
+      - notMatchRegexRaw: {pattern: "restore-drill delete guard is NOT rendered"}

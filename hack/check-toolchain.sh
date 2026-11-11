@@ -56,22 +56,71 @@ done
 # shipped binaries are built by the Go CI, govulncheck and the linters use. The
 # docker ecosystem of Dependabot ignores golang and node for that reason; the
 # toolchain day bumps mise.toml and the Dockerfiles together (digests included).
+# Each tool must appear in at least one FROM, the digests of one tool must be
+# the same in every Dockerfile (a bump that updates one file and not the other
+# leaves two toolchains in the images), and a FROM that names an ARG must
+# resolve through the global ARG defaults, so that no pin hides behind a build
+# argument this check cannot see.
 node_want=$(awk -F'"' '$2 == "node" { print $4; exit }' mise.toml)
 # DOCKERFILES lets the test suite point the check at scratch copies.
 dockerfiles=${DOCKERFILES:-$(git ls-files '*Dockerfile' '*.Dockerfile' 2>/dev/null || find . -name '*Dockerfile*' -not -path '*/node_modules/*')}
-for f in $dockerfiles; do
-  for v in $(sed -n 's/^FROM .*[ /]golang:\([0-9][0-9.]*\)[@ -].*/\1/p; s/^FROM .*[ /]golang:\([0-9][0-9.]*\)$/\1/p' "$f" | sort -u); do
-    if [ "$v" != "$want" ]; then
-      echo "$f: golang:$v, mise.toml pins go $want" >&2
+froms=$(for f in $dockerfiles; do
+  awk -v file="$f" '
+    /^[ \t]*ARG[ \t]/ && !seen_from {
+      line = $0; sub(/^[ \t]*ARG[ \t]+/, "", line)
+      if (index(line, "=") > 0) { name = substr(line, 1, index(line, "=") - 1); val = substr(line, index(line, "=") + 1); gsub(/^"|"$/, "", val); arg[name] = val }
+      next
+    }
+    /^[ \t]*FROM[ \t]/ {
+      seen_from = 1
+      image = ""
+      for (i = 2; i <= NF; i++) { if ($i ~ /^--/) continue; image = $i; break }
+      for (n in arg) { gsub("\\$\\{" n "\\}", arg[n], image); gsub("\\$" n, arg[n], image) }
+      print file "\t" image
+    }' "$f"
+done)
+tab=$(printf '\t')
+for tool in golang node; do
+  if [ "$tool" = golang ]; then tool_want=$want; pin=go; else tool_want=$node_want; pin=node; fi
+  n=0
+  digests=
+  for line in $(printf '%s\n' "$froms" | tr "$tab" '|'); do
+    f=${line%%|*}
+    image=${line#*|}
+    case "$image" in
+      *'$'*)
+        # Reported once, by the golang pass.
+        if [ "$tool" = golang ]; then
+          echo "$f: FROM $image does not resolve through the global ARG defaults; pin the image in the FROM line" >&2
+          status=1
+        fi
+        continue ;;
+    esac
+    case "$image" in
+      "$tool":* | */"$tool":*) ;;
+      *) continue ;;
+    esac
+    n=$((n + 1))
+    ver=${image#*"$tool":}
+    ver=${ver%%[@-]*}
+    if [ "$ver" != "$tool_want" ]; then
+      echo "$f: $tool:$ver, mise.toml pins $pin $tool_want" >&2
       status=1
     fi
+    case "$image" in
+      *@sha256:*) digests="$digests ${image##*@}" ;;
+      *) echo "$f: $image is not pinned by digest" >&2; status=1 ;;
+    esac
   done
-  for v in $(sed -n 's/^FROM .*[ /]node:\([0-9][0-9.]*\)[@ -].*/\1/p; s/^FROM .*[ /]node:\([0-9][0-9.]*\)$/\1/p' "$f" | sort -u); do
-    if [ "$v" != "$node_want" ]; then
-      echo "$f: node:$v, mise.toml pins node $node_want" >&2
-      status=1
-    fi
-  done
+  if [ "$n" = 0 ]; then
+    echo "no $tool base image in any Dockerfile: the $tool pin of mise.toml binds nothing" >&2
+    status=1
+  fi
+  uniq_digests=$(printf '%s' "$digests" | tr ' ' '\n' | sed '/^$/d' | sort -u)
+  if [ "$(printf '%s\n' "$uniq_digests" | wc -l)" -gt 1 ]; then
+    echo "the $tool base images carry different digests across the Dockerfiles: $(printf '%s' "$uniq_digests" | tr '\n' ' ')" >&2
+    status=1
+  fi
 done
 # The Playwright image the UI suite runs in carries the version of
 # @playwright/test: a mismatch fails at run time with missing browsers.

@@ -46,6 +46,14 @@ Metrics are served over HTTPS on {{ .Values.metricsBindAddress }} and every scra
 to `get` the URL `/metrics`. Enable operator.metrics.serviceMonitor or
 operator.metrics.podMonitor to have Prometheus scrape it.
 {{- end }}
+{{- $guard := toString .Values.operator.restoreDrillGuard.enabled }}
+{{- if or (eq $guard "false") (and (eq $guard "auto") (not (.Capabilities.APIVersions.Has "admissionregistration.k8s.io/v1/ValidatingAdmissionPolicy"))) }}
+
+The restore-drill delete guard is NOT rendered (operator.restoreDrillGuard.enabled={{ $guard }}{{ if eq $guard "auto" }}, and this cluster serves no ValidatingAdmissionPolicy API{{ end }}),
+but the operator still binds pgtoolbox-console-restore-drills where a PgToolBoxConsole asks for restore
+drills: that role can delete any Cluster of the drill namespace and only the console's own checks keep it
+to its sealed drills. Set operator.restoreDrillGuard.enabled=true (Kubernetes 1.30+), or do not enable restore drills.
+{{- end }}
 {{- if .Values.operator.networkPolicy.enabled }}
 
 NetworkPolicy is ENABLED (your choice). The chart cannot prove your CNI enforces it.

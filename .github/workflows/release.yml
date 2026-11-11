@@ -109,7 +109,10 @@ jobs:
               || { echo "release tag must be semantic and start with v: ${tag}" >&2; exit 1; }
           fi
           sha="$(git rev-list -n 1 "refs/tags/${tag}")"
-          if [[ "${EVENT}" == "push" && "${sha}" != "${GITHUB_SHA}" ]]; then
+          # GITHUB_SHA is the tagged commit on a push of an annotated tag (the
+          # event's `after` is the tag object); peel it anyway so that a tag
+          # object SHA would still compare as the commit it points at.
+          if [[ "${EVENT}" == "push" && "${sha}" != "$(git rev-parse --verify "${GITHUB_SHA}^{commit}")" ]]; then
             echo "tag moved after the release workflow started" >&2
             exit 1
           fi
