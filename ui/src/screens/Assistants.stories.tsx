@@ -221,8 +221,9 @@ const notRecorded = () =>
     {
       title: "Service Unavailable",
       status: 503,
+      type: "urn:pgtoolbox:disconnection-unrecorded",
       detail:
-        "the disconnection was not recorded for every console replica yet (the Kubernetes API server did not take the write); retry",
+        "the disconnection was made on the console replica that answered, but the Kubernetes API server did not take its write for the other replicas yet; the replica keeps retrying; retry to be sure",
     },
     "req-503",
   );
@@ -259,7 +260,7 @@ export const DisconnectNotRecorded: StoryObj<typeof ConnectedAssistantsView> = {
     await waitFor(() => expect(note).toHaveFocus());
     await expect(note.querySelector('[data-health="warning"]')).not.toBeNull();
     await expect(note).not.toHaveTextContent(/Not started/);
-    await expect(canvas.getByText("being written to the other replicas")).toBeVisible();
+    await expect(canvas.getByText("not confirmed for every replica yet")).toBeVisible();
     await expect(canvas.getByRole("button", { name: "Retry disconnecting Claude Code" })).toBeVisible();
     await expect(canvas.getByRole("button", { name: "Disconnect all" })).toBeVisible();
   },
@@ -301,7 +302,7 @@ export const DisconnectRetriedDone: StoryObj<typeof ConnectedAssistantsView> = {
     await waitFor(() => expect(canvas.getByRole("status")).toHaveTextContent(/nothing left of it to write/));
     await expect(body.queryByRole("alertdialog")).toBeNull();
     await expect(canvas.getByRole("status").querySelector('[data-health="ok"]')).not.toBeNull();
-    await expect(canvas.queryByText("being written to the other replicas")).toBeNull();
+    await expect(canvas.queryByText("not confirmed for every replica yet")).toBeNull();
     await waitFor(() => expect(canvas.getByRole("status")).toHaveFocus());
   },
 };
@@ -336,7 +337,7 @@ export const DisconnectRetryRefused: StoryObj<typeof ConnectedAssistantsView> = 
     await waitFor(() => expect(canvas.getByRole("status")).toHaveTextContent("Request id req-403"));
     await expect(canvas.getByRole("status")).toHaveTextContent("not allowed to disconnect");
     await expect(canvas.getByRole("status").querySelector('[data-health="critical"]')).not.toBeNull();
-    await expect(canvas.getByText("being written to the other replicas")).toBeVisible();
+    await expect(canvas.getByText("not confirmed for every replica yet")).toBeVisible();
   },
 };
 export const DisconnectRetryRefusedDark = dark(DisconnectRetryRefused);
@@ -361,7 +362,7 @@ export const DisconnectAllNotRecorded: StoryObj<typeof ConnectedAssistantsView> 
     await userEvent.click(within(dialog).getByRole("button", { name: "Disconnect all" }));
     await waitFor(() => expect(body.queryByRole("alertdialog")).toBeNull());
     await expect(canvas.getByRole("status")).toHaveTextContent(/Retry Disconnect all to be sure/);
-    await expect(canvas.getAllByText("being written to the other replicas")).toHaveLength(3);
+    await expect(canvas.getAllByText("not confirmed for every replica yet")).toHaveLength(3);
     await expect(canvas.getByRole("button", { name: "Disconnect all" })).toBeVisible();
     await waitFor(() => expect(canvas.getByRole("status")).toHaveFocus());
   },

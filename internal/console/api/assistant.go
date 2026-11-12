@@ -67,14 +67,38 @@ var ErrNoSuchGrant = errors.New("no such grant")
 // written for the others": answered 503, retry.
 var ErrNotRecorded = errors.New("the disconnection could not be recorded for every replica")
 
-// notRecorded is the answer to ErrNotRecorded: 503 with a Retry-After. The
-// revocation stays on the replica that answered (it refuses the grant, and
-// writes it with its next batch); a retry writes it again.
-func notRecorded() error {
-	return huma.ErrorWithHeaders(
-		huma.Error503ServiceUnavailable("the disconnection was not recorded for every console replica yet (the Kubernetes API server "+
-			"did not take the write); retry"),
-		http.Header{"Retry-After": {"2"}})
+// ErrNotConfirmed is the grant manager's "the shared state could not be
+// read": nothing may have been disconnected (a grant recorded on another
+// replica is not known here); answered 503, retry.
+var ErrNotConfirmed = errors.New("the disconnection could not be confirmed")
+
+// The problem types of the two 503 answers of a disconnection, so that
+// the page tells them apart (round 22, DBA): a stable URN each, not a
+// page to fetch.
+const (
+	ProblemDisconnectionUnrecorded  = "urn:pgtoolbox:disconnection-unrecorded"
+	ProblemDisconnectionUnconfirmed = "urn:pgtoolbox:disconnection-unconfirmed"
+)
+
+// disconnectionUnavailable is the answer to ErrNotRecorded (the
+// revocation was made on the replica that answered, which refuses the
+// grant and writes it with its next batch; a retry writes it again) and
+// to ErrNotConfirmed (the replica could not read the shared state, or
+// would not now: nothing may be disconnected; a retry reads it again):
+// 503 with a Retry-After, each its own problem type.
+func disconnectionUnavailable(err error) error {
+	model := &huma.ErrorModel{
+		Status: http.StatusServiceUnavailable, Title: http.StatusText(http.StatusServiceUnavailable),
+		Type: ProblemDisconnectionUnrecorded,
+		Detail: "the disconnection was made on the console replica that answered, but the Kubernetes API server did not " +
+			"take its write for the other replicas yet; the replica keeps retrying; retry to be sure",
+	}
+	if errors.Is(err, ErrNotConfirmed) {
+		model.Type = ProblemDisconnectionUnconfirmed
+		model.Detail = "the console replica that answered could not read the shared state from the Kubernetes API server, " +
+			"so it cannot confirm the disconnection: assistants recorded on another replica may still be connected; retry"
+	}
+	return huma.ErrorWithHeaders(model, http.Header{"Retry-After": {"2"}})
 }
 
 // GrantManager lists and revokes a person's grants (mcpoauth.Server,
@@ -83,11 +107,14 @@ type GrantManager interface {
 	Grants(ctx context.Context, user string) []GrantInfo
 	// RevokeGrant returns ErrNoSuchGrant for a grant that is not the
 	// user's, or no longer stands; ErrNotRecorded when the revocation was
-	// made on this replica but could not be written for the others.
+	// made on this replica but could not be written for the others;
+	// ErrNotConfirmed when the grant is not known here and the shared
+	// state could not be read.
 	RevokeGrant(ctx context.Context, c auth.Client, user, id string) error
 	// DisconnectAll revokes every standing grant of the user and returns
 	// how many it revoked; ErrNotRecorded, as RevokeGrant, when the
-	// revocations could not be written for every replica.
+	// revocations could not be written for every replica; ErrNotConfirmed
+	// when the shared state could not be read first.
 	DisconnectAll(ctx context.Context, c auth.Client, user string) (int, error)
 }
 
@@ -239,7 +266,9 @@ func registerAssistant(a huma.API, d Deps) {
 		OperationID: OpRevokeGrant, Method: http.MethodDelete, Path: "/api/" + Version + "/session/grants/{id}",
 		Summary: "Disconnect an assistant", Tags: []string{"session"},
 		Description: "Revokes one of your grants: every replica refuses its tokens within about a second. Recorded as mcp.revoke. " +
-			"503 (with Retry-After) when the revocation could not be written for the other replicas: this one refuses the grant, retry.",
+			"503 (with Retry-After), retry: of type " + ProblemDisconnectionUnrecorded + " when the revocation could not be written for the other replicas " +
+			"(this one refuses the grant); of type " + ProblemDisconnectionUnconfirmed + " when this replica does not know the grant and could not read the shared state " +
+			"(nothing was disconnected).",
 		DefaultStatus: http.StatusNoContent,
 		Errors:        []int{http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound, http.StatusServiceUnavailable},
 	}, func(ctx context.Context, in *grantPath) (*struct{}, error) {
@@ -254,8 +283,8 @@ func registerAssistant(a huma.API, d Deps) {
 			switch {
 			case errors.Is(err, ErrNoSuchGrant):
 				return nil, huma.Error404NotFound("no such grant of yours")
-			case errors.Is(err, ErrNotRecorded):
-				return nil, notRecorded()
+			case errors.Is(err, ErrNotRecorded), errors.Is(err, ErrNotConfirmed):
+				return nil, disconnectionUnavailable(err)
 			}
 			return nil, err
 		}
@@ -266,7 +295,9 @@ func registerAssistant(a huma.API, d Deps) {
 		OperationID: OpRevokeAllGrants, Method: http.MethodDelete, Path: "/api/" + Version + "/session/grants",
 		Summary: "Disconnect every assistant", Tags: []string{"session"},
 		Description: "Revokes all your grants on this console: every replica refuses their tokens within about a second. Each is recorded as mcp.revoke. Your browser session is untouched (sign out with the disconnect option to end both). " +
-			"503 (with Retry-After) when the revocations could not be written for the other replicas: this one refuses the grants, retry.",
+			"503 (with Retry-After), retry: of type " + ProblemDisconnectionUnrecorded + " when the revocations could not be written for the other replicas " +
+			"(this one refuses the grants); of type " + ProblemDisconnectionUnconfirmed + " when the shared state could not be read first " +
+			"(grants recorded on another replica may still be connected, none may be disconnected).",
 		DefaultStatus: http.StatusNoContent,
 		Errors:        []int{http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound, http.StatusServiceUnavailable},
 	}, func(ctx context.Context, _ *struct{}) (*struct{}, error) {
@@ -278,8 +309,8 @@ func registerAssistant(a huma.API, d Deps) {
 			return nil, notServed()
 		}
 		if _, err := d.Grants.DisconnectAll(ctx, clientOf(ctx, d), p.User.Name); err != nil {
-			if errors.Is(err, ErrNotRecorded) {
-				return nil, notRecorded()
+			if errors.Is(err, ErrNotRecorded) || errors.Is(err, ErrNotConfirmed) {
+				return nil, disconnectionUnavailable(err)
 			}
 			return nil, err
 		}

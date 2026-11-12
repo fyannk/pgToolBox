@@ -142,9 +142,10 @@ func TestSignOutDisconnectsAssistants(t *testing.T) {
 	if strings.Contains(b.get("/logout").Body.String(), `value="assistants"`) {
 		t.Error("the sign-out page offers to disconnect assistants without a hook")
 	}
-	env.h.SetSignOutHook(func(_ context.Context, c Client, user string) int {
+	var outcome error
+	env.h.SetSignOutHook(func(_ context.Context, c Client, user string) error {
 		calls = append(calls, user)
-		return 1
+		return outcome
 	})
 	if !strings.Contains(b.get("/logout").Body.String(), `value="assistants"`) {
 		t.Error("the sign-out page does not offer to disconnect assistants")
@@ -162,5 +163,32 @@ func TestSignOutDisconnectsAssistants(t *testing.T) {
 	// Without a session, nothing is disconnected.
 	if w := b.do(http.MethodPost, "/logout", url.Values{"disconnect": {"assistants"}}, sameOriginForm); w.Code != http.StatusOK || len(calls) != 1 {
 		t.Errorf("sign-out without a session: %d, hook calls %v", w.Code, calls)
+	}
+}
+
+// A sign-out whose disconnection of the assistants is not confirmed says
+// so (round 22, security): "Signed out" alone would read as done.
+func TestSignOutSaysWhenTheAssistantsMayStillBeConnected(t *testing.T) {
+	t.Parallel()
+	env := newTestEnv(t, ProviderToken)
+	b := env.browser(t)
+	var outcome error
+	env.h.SetSignOutHook(func(context.Context, Client, string) error { return outcome })
+	const warning = "Your assistants may still be connected"
+	for _, tc := range []struct {
+		outcome error
+		warn    bool
+	}{{nil, false}, {errors.New("the shared state could not be read"), true}} {
+		outcome = tc.outcome
+		signIn(t, b)
+		w := b.do(http.MethodPost, "/logout", url.Values{"disconnect": {"assistants"}}, sameOriginForm)
+		if got := strings.Contains(w.Body.String(), warning); w.Code != http.StatusOK || got != tc.warn {
+			t.Errorf("outcome %v: status %d, warning shown %v, want %v", tc.outcome, w.Code, got, tc.warn)
+		}
+	}
+	outcome = errors.New("not confirmed")
+	signIn(t, b)
+	if w := b.do(http.MethodPost, "/logout", url.Values{}, sameOriginForm); strings.Contains(w.Body.String(), warning) {
+		t.Error("a plain sign-out warns about assistants it was not asked to disconnect")
 	}
 }

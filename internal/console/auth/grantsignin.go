@@ -126,8 +126,10 @@ func (h *Handler) completeGrant(w http.ResponseWriter, r *http.Request, provider
 }
 
 // SignOutHook runs on a sign-out that asked to disconnect the person's
-// assistants too; it reports how many grants it ended.
-type SignOutHook func(ctx context.Context, c Client, user string) int
+// assistants too: nil once they are disconnected on every replica, an
+// error when that is not confirmed (the signed-out page then says they
+// may still be connected).
+type SignOutHook func(ctx context.Context, c Client, user string) error
 
 // SetSignOutHook installs the "and disconnect my assistants" part of
 // sign-out; without one the sign-out page does not offer it.

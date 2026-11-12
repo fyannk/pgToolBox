@@ -22,7 +22,7 @@ import (
 // requests counts the authorization server's requests by endpoint
 // (register, authorize, token, revoke, client_metadata) and outcome (a
 // fixed set per endpoint: ok, refused, throttled, consent, approved,
-// denied, replayed, revoked, unrecorded, error). Never a client or a user.
+// denied, replayed, revoked, unrecorded, unconfirmed, held, error). Never a client or a user.
 var requests = prometheus.NewCounterVec(prometheus.CounterOpts{
 	Name: "pgtoolbox_console_mcp_oauth_requests_total",
 	Help: "Requests to the MCP authorization server by endpoint and outcome.",

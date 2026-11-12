@@ -15,7 +15,12 @@ import { ConnectedAssistantsView } from "./Assistants";
 const notRecorded = () =>
   new ApiError(
     503,
-    { title: "Service Unavailable", status: 503, detail: "not recorded for every replica; retry" },
+    {
+      title: "Service Unavailable",
+      status: 503,
+      type: "urn:pgtoolbox:disconnection-unrecorded",
+      detail: "not recorded for every replica; retry",
+    },
     "r",
   );
 

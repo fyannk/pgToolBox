@@ -81,6 +81,9 @@ type signedOutPage struct {
 	Subject string
 	// Disconnect offers "sign out and disconnect my assistants".
 	Disconnect bool
+	// AssistantsUncertain: a sign-out that asked to disconnect the
+	// assistants could not confirm it for every replica.
+	AssistantsUncertain bool
 }
 
 const pageFallback = `<!doctype html><meta charset="utf-8"><title>Error</title><p>This page could not be rendered.</p>`
