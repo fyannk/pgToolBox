@@ -101,6 +101,9 @@ Each instance as the operator, the Pod and the instance's own `/pg/status`
 see it, side by side, so a disagreement between them is visible. When the
 console cannot read an instance's status, the row says why and what fixes it
 (for example [the instance CA bundle](configuration.md#the-instance-ca-bundle)).
+A fenced or restarting instance whose manager answered without reaching
+PostgreSQL reads "PostgreSQL not read", with the error it hit: its PostgreSQL
+fields are unread, never zero.
 
 ## Replication
 

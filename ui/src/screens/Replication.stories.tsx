@@ -2,7 +2,7 @@ import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect } from "storybook/test";
 import { replication } from "../../mocks/fixtures";
 import { handlersFor } from "../../mocks/handlers";
-import { compact, dark, darkCompact } from "../testing/variants";
+import { compact, dark, darkCompact, french } from "../testing/variants";
 import { ReplicationScreen, ReplicationView } from "./Replication";
 
 /** Who is primary, the synchronous configuration declared and the set PostgreSQL applied, every WAL sender, receiver and slot. Lag is shown, not judged. */
@@ -101,6 +101,57 @@ export const FailoverBlocked: Story = {
     },
   },
 };
+const maskedError = "FATAL: the database system is shutting down (SQLSTATE 57P03)";
+/**
+ * A fenced or restarting primary: its instance manager answered without
+ * reaching PostgreSQL. Its WAL senders and slots are not read, never "none".
+ */
+export const MaskedPrimary: Story = {
+  args: {
+    data: { ...replication, standbys: [], slots: [], primaryUnread: { instance: "orders-1", error: maskedError } },
+  },
+  play: async ({ canvas }) => {
+    await expect(canvas.getByText(/The primary orders-1 was not read: .*FATAL/)).toBeVisible();
+    await expect(
+      canvas.getAllByText(/^Not read: the primary's instance manager answered without reaching PostgreSQL/),
+    ).toHaveLength(2);
+    await expect(canvas.queryByText(/reports no WAL sender/)).toBeNull();
+    await expect(canvas.queryByText(/reports no replication slot/)).toBeNull();
+  },
+};
+export const MaskedPrimaryFrench: Story = french({
+  args: MaskedPrimary.args,
+  play: async ({ canvas }) => {
+    await expect(canvas.getByText(/Le primaire orders-1 n’a pas été lu/)).toBeVisible();
+  },
+});
+/** A masked replica: its WAL receiver is not read, never "not active". */
+export const MaskedReplica: Story = {
+  args: {
+    data: {
+      ...replication,
+      receivers: (replication.receivers ?? []).map((r) =>
+        r.name === "orders-2"
+          ? {
+              ...r,
+              health: "unknown",
+              walReceiverActive: undefined,
+              receivedLsn: undefined,
+              replayLsn: undefined,
+              lagBytes: undefined,
+              timelineId: undefined,
+              postgresUnread: { instance: "orders-2", error: maskedError },
+            }
+          : r,
+      ),
+    },
+  },
+  play: async ({ canvasElement }) => {
+    const cell = canvasElement.querySelector("[data-postgres-unread]") as HTMLElement;
+    await expect(cell).toHaveTextContent("PostgreSQL not read (fenced or restarting)");
+  },
+};
+export const MaskedReplicaDark = dark(MaskedReplica);
 const screen = { render: () => <ReplicationScreen namespace="team-a" cluster="orders" /> };
 export const Live: Story = { ...screen, parameters: { msw: handlersFor("default") } };
 export const Loading: Story = { ...screen, parameters: { msw: handlersFor("loading") } };

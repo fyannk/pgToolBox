@@ -1631,5 +1631,16 @@
   "rp_reason_repository_ahead_of_live": "la timeline la plus récente du dépôt, {timeline}, est en avance sur la timeline {live}, celle qu’écrit le primaire actuel : un autre cluster archive peut-être dans ce dépôt, et une restauration par défaut suit la timeline {timeline}, donc les points de restauration au-delà de la bifurcation ne sont pas comptés comme couverts ; vérifiez qu’aucune configuration de sauvegarde d’un autre cluster ne désigne ce dépôt",
   "rp_segment_repository_ahead_of_live": "La timeline la plus récente du dépôt, {timeline}, est en avance sur la timeline {live}, celle qu’écrit le primaire actuel : un autre cluster archive peut-être dans ce dépôt, et une restauration par défaut suit la timeline {timeline}, donc un moment au-delà de la bifurcation peut restaurer les données de ce cluster.",
   "rp_reason_kept_too_old": "les derniers chemins de restauration valides datent de plus de trois intervalles de rafraîchissement (au moins une heure) avant le dernier parcours et ne sont plus affichés ; vérifiez dans les journaux de l’agent de preuves pourquoi la lecture de ses chemins de restauration échoue, et que le stockage objet répond",
-  "rp_reason_kept_repository_changed": "l’identité du dépôt a changé depuis la lecture des derniers chemins de restauration valides : ils décrivent un autre dépôt et ne sont plus affichés ; vérifiez les journaux de l’agent de preuves et que sa configuration de stockage objet désigne toujours le dépôt de ce cluster"
+  "rp_reason_kept_repository_changed": "l’identité du dépôt a changé depuis la lecture des derniers chemins de restauration valides : ils décrivent un autre dépôt et ne sont plus affichés ; vérifiez les journaux de l’agent de preuves et que sa configuration de stockage objet désigne toujours le dépôt de ce cluster",
+  "postgres_unread": "PostgreSQL non lu : le gestionnaire d’instance a répondu sans l’atteindre (isolée ou en redémarrage) : {error}",
+  "postgres_unread_short": "PostgreSQL non lu (isolée ou en redémarrage)",
+  "pg_not_read": "non lu",
+  "replay_paused_label": "Rejeu en pause",
+  "wal_receiver_label": "Récepteur WAL",
+  "archiving_wal_label": "Archive les WAL",
+  "ready_wal_files_label": "Fichiers WAL en attente d’archivage",
+  "might_be_unavailable_label": "Selon le gestionnaire, PostgreSQL est peut-être arrêté",
+  "replication_primary_unread": "Le primaire {instance} n’a pas été lu : son gestionnaire d’instance a répondu sans atteindre PostgreSQL (isolé ou en redémarrage) : {error}. Ses émetteurs WAL et ses slots ne sont pas connus.",
+  "standbys_unread": "Non lus : le gestionnaire d’instance du primaire a répondu sans atteindre PostgreSQL.",
+  "slots_unread": "Non lus : le gestionnaire d’instance du primaire a répondu sans atteindre PostgreSQL."
 }

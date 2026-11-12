@@ -91,6 +91,13 @@ const receiverColumns: Columns<ReceiverRow> = rc.columns([
     header: () => m.col_receiver(),
     cell: (c) => {
       const r = c.row.original;
+      if (r.postgresUnread) {
+        return (
+          <span className="text-muted italic" title={r.postgresUnread.error} data-postgres-unread>
+            {m.postgres_unread_short()}
+          </span>
+        );
+      }
       return (
         <span>
           {r.walReceiverActive === undefined ? (
@@ -227,13 +234,18 @@ export function ReplicationView({ data }: { data: Replication }) {
       </Panel>
       <FailoverPanel f={data.failover} />
       <p className="text-caption text-muted">{m.lag_not_judged()}</p>
+      {data.primaryUnread && (
+        <p className="health rounded-control px-3 py-1.5 text-label" data-health="unknown" data-primary-unread>
+          {m.replication_primary_unread({ instance: data.primaryUnread.instance, error: data.primaryUnread.error })}
+        </p>
+      )}
       <Titled title={m.caption_standbys()}>
         <DataTable
           caption={m.caption_standbys()}
           data={data.standbys ?? []}
           columns={standbyColumns}
           getRowId={(r) => r.name}
-          empty={m.standbys_none()}
+          empty={data.primaryUnread ? m.standbys_unread() : m.standbys_none()}
         />
       </Titled>
       <Titled title={m.caption_receivers()}>
@@ -252,7 +264,7 @@ export function ReplicationView({ data }: { data: Replication }) {
           data={data.slots ?? []}
           columns={slotColumns}
           getRowId={(r) => `${r.instance}/${r.name}`}
-          empty={m.slots_none()}
+          empty={data.primaryUnread ? m.slots_unread() : m.slots_none()}
         />
       </Titled>
       <SourcesPanel sources={data.sources} />

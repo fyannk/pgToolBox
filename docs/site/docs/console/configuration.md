@@ -112,6 +112,20 @@ The other states of an instance's status read, each with its reason:
 | `notRunning` | The Pod has no IP yet or is being deleted. |
 | `disabled` | `INSTANCE_STATUS_ENABLED=false`. |
 
+A read can be `ok` and still not read PostgreSQL. While an instance is fenced or
+restarting, CloudNativePG's instance manager answers `/pg/status` without
+reaching PostgreSQL and says so (`mightBeUnavailable`, with the error it hit).
+Such a report is shown as "PostgreSQL not read", with that error: its positions,
+timeline, pending restart, replay pause, WAL receiver, archiver, walsenders and
+slots are not read, never false, zero or empty. The Instances row and detail mark
+them unread; the Replication screen says the primary's walsenders and slots, or a
+replica's receiver, were not read; the topology places no replica against the
+primary's walsenders; the diagnostics on those fields, the failover rehearsal and
+the archiving fact (`PrimaryUnread`, "answered without reading PostgreSQL") do not
+judge it. Only the manager's own flags (`mightBeUnavailable`, a rewind in
+progress, its version) and the primary role it reads from the data directory
+stand.
+
 The sweep runs every `INSTANCE_STATUS_INTERVAL` (30 s), each read bounded by
 `INSTANCE_STATUS_TIMEOUT` (5 s, shorter than the interval), at most
 `INSTANCE_STATUS_CONCURRENCY` (8) at a time. It also scrapes the instances'

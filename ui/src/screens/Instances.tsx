@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { useMemo, useRef, useState } from "react";
+import { type ReactNode, useMemo, useRef, useState } from "react";
 import { useGetCluster, useListInstances } from "../api/generated/endpoints/clusters/clusters";
 import type { InstanceList, InstanceRow } from "../api/generated/model";
 import { useFeatures } from "../app/sections";
@@ -18,6 +18,21 @@ import { sourceStateWord } from "./sources";
 import { StatusReadHint, statusReadWord } from "./statusRead";
 
 const col = columnHelper<InstanceRow>();
+
+/** A field PostgreSQL fills, on a report whose manager did not reach PostgreSQL: unread, never false or zero. */
+function NotRead() {
+  return <span className="text-muted italic">{m.pg_not_read()}</span>;
+}
+
+/** The masked state of a report: the manager answered without reaching PostgreSQL (fenced or restarting). */
+function PostgresUnreadNote({ live }: { live: InstanceRow["live"] }) {
+  if (!live?.postgresUnread) return null;
+  return (
+    <p className="health rounded-control px-3 py-1.5 text-label" data-health="warning" data-postgres-unread>
+      {m.postgres_unread({ error: live.postgresUnread.error })}
+    </p>
+  );
+}
 
 function roleWord(r: string) {
   return r === "primary" ? m.role_primary() : r === "replica" ? m.role_replica() : m.role_unknown();
@@ -87,6 +102,11 @@ function columns(open: (name: string, opener: HTMLElement) => void): Columns<Ins
           <span className="flex flex-col text-label">
             <span className={s.state === "ok" ? "" : "font-semibold"}>{statusReadWord(s.state)}</span>
             {s.reason && <span className="text-muted">{s.reason}</span>}
+            {c.row.original.live?.postgresUnread && (
+              <span className="font-semibold" title={c.row.original.live.postgresUnread.error}>
+                {m.postgres_unread_short()}
+              </span>
+            )}
             <StatusReadHint state={s.state} />
           </span>
         );
@@ -99,6 +119,7 @@ function columns(open: (name: string, opener: HTMLElement) => void): Columns<Ins
         const l = c.row.original.live;
         if (!l) return <Reported value={undefined} />;
         if (l.isPrimary) return <span className="text-muted">{m.lag_primary()}</span>;
+        if (l.postgresUnread) return <NotRead />;
         return l.lagBytes === undefined ? (
           <Reported value={undefined} />
         ) : (
@@ -153,37 +174,50 @@ function InstanceDetail({ row }: { row: InstanceRow }) {
         )}
       </Panel>
       <Panel title={m.detail_live()}>
-        {l ? (
-          <>
-            <Facts>
-              <Fact label={m.live_is_primary()}>{l.isPrimary ? m.yes() : m.no()}</Fact>
-              <Fact label={m.timeline()}>
-                <Reported value={l.timelineId} />
-              </Fact>
-              <Fact label={m.current_lsn()}>
-                <Reported value={l.currentLsn} />
-              </Fact>
-              <Fact label={m.received_lsn()}>
-                <Reported value={l.receivedLsn} />
-              </Fact>
-              <Fact label={m.replay_lsn()}>
-                <Reported value={l.replayLsn} />
-              </Fact>
-              <Fact label={m.col_lag()}>
-                {l.lagBytes === undefined ? <Reported value={undefined} /> : formatBytes(l.lagBytes)}
-              </Fact>
-              <Fact label={m.pending_restart()}>{l.pendingRestart ? m.yes() : m.no_or_not_reported()}</Fact>
-              <Fact label={m.manager_version()}>
-                <Reported value={l.instanceManagerVersion} />
-              </Fact>
-            </Facts>
-            <Provenance provenance={l.provenance} />
-          </>
-        ) : (
-          <p className="text-label text-muted">{m.live_never_read()}</p>
-        )}
+        {l ? <LiveFacts l={l} /> : <p className="text-label text-muted">{m.live_never_read()}</p>}
       </Panel>
     </div>
+  );
+}
+
+/** The instance's own report; on a masked one, PostgreSQL's fields are not read and say so. */
+function LiveFacts({ l }: { l: NonNullable<InstanceRow["live"]> }) {
+  const unread = l.postgresUnread !== undefined;
+  const pg = (node: ReactNode) => (unread ? <NotRead /> : node);
+  const flag = (v: boolean | undefined) => pg(v ? m.yes() : m.no_or_not_reported());
+  return (
+    <>
+      <PostgresUnreadNote live={l} />
+      <Facts>
+        <Fact label={m.live_is_primary()}>{l.isPrimary ? m.yes() : m.no()}</Fact>
+        <Fact label={m.might_be_unavailable_label()}>{l.mightBeUnavailable ? m.yes() : m.no()}</Fact>
+        <Fact label={m.timeline()}>{pg(<Reported value={l.timelineId} />)}</Fact>
+        <Fact label={m.current_lsn()}>{pg(<Reported value={l.currentLsn} />)}</Fact>
+        <Fact label={m.received_lsn()}>{pg(<Reported value={l.receivedLsn} />)}</Fact>
+        <Fact label={m.replay_lsn()}>{pg(<Reported value={l.replayLsn} />)}</Fact>
+        <Fact label={m.col_lag()}>
+          {pg(l.lagBytes === undefined ? <Reported value={undefined} /> : formatBytes(l.lagBytes))}
+        </Fact>
+        <Fact label={m.pending_restart()}>{flag(l.pendingRestart)}</Fact>
+        {l.isPrimary ? (
+          <>
+            <Fact label={m.archiving_wal_label()}>{flag(l.archivingWal)}</Fact>
+            <Fact label={m.ready_wal_files_label()}>{pg(String(l.readyWalFiles ?? 0))}</Fact>
+          </>
+        ) : (
+          <>
+            <Fact label={m.wal_receiver_label()}>
+              {pg(l.walReceiverActive ? m.receiver_active() : m.no_or_not_reported())}
+            </Fact>
+            <Fact label={m.replay_paused_label()}>{flag(l.replayPaused)}</Fact>
+          </>
+        )}
+        <Fact label={m.manager_version()}>
+          <Reported value={l.instanceManagerVersion} />
+        </Fact>
+      </Facts>
+      <Provenance provenance={l.provenance} />
+    </>
   );
 }
 
