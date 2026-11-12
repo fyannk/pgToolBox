@@ -168,10 +168,12 @@ var backupTimeFloor = time.Date(2000, time.January, 1, 0, 0, 0, 0, time.UTC)
 // barman's begin and end), and CloudNativePG's own stamps:
 // status.reconciliationStartedAt (SetAsStarted, called by the operator)
 // and status.reconciliationTerminatedAt (SetAsCompleted and SetAsFailed,
-// pkg/api/v1/backup_funcs.go v1.30.1:46-71 and 83), which the instance
-// manager writes for in-tree barman and plugin Backups once the tool
-// returned (pkg/management/postgres/backup.go:202,
-// webserver/plugin_backup.go:129) and the operator for volume snapshots.
+// pkg/api/v1/backup_funcs.go v1.30.1:46-71 and 83): the instance
+// manager's for an in-tree barman or plugin Backup it completed or failed
+// once the tool returned (pkg/management/postgres/backup.go:202,
+// webserver/plugin_backup.go:129), else the operator's (a volume
+// snapshot, or a Backup the operator failed: internal/controller/
+// backup_controller.go, for example a pod gone or a session changed).
 type BackupStamps struct {
 	Created                                         time.Time
 	Started, Stopped                                *time.Time
@@ -194,12 +196,21 @@ type BackupTimes struct {
 	// object's creation while the Backup waited in the queue.
 	OperatorStarted *time.Time
 	// OperatorTerminated is CloudNativePG's completion stamp
-	// (status.reconciliationTerminatedAt: the instance manager's, the
-	// operator's for a volume snapshot), written when the Backup was
+	// (status.reconciliationTerminatedAt: the instance manager's for a
+	// barman or plugin Backup it completed or failed, else the
+	// operator's), written when the Backup was
 	// marked completed or failed: an upper bound on its end, seconds after
 	// it, and after pgBackRest's expire at that end (round 19, CNPG P3-1;
 	// round 20, PG P3-A).
 	OperatorTerminated *time.Time
+	// ClockBehind: outside Imported, on a Backup the operator started
+	// after its creation, a tool time or the completion stamp is more
+	// than backupClockSkew before the object's creation or the
+	// operator's start stamp. The instance that wrote them runs behind
+	// the API server and the operator, so every time it wrote (Start,
+	// Stop, OperatorTerminated) is skewed and dropped: such a Backup has
+	// no plausible end, never an early one (round 21, PG P3-B, CNPG P3-1).
+	ClockBehind bool
 }
 
 // SaneBackupTimes reads a Backup's times with every impossible value as
@@ -218,14 +229,25 @@ type BackupTimes struct {
 //     also that early (Imported). A Backup restored with its status
 //     (Velero) carries its old stamps; a live one's are at or after its
 //     creation, so tool times that early are an instance clock running
-//     behind, and are dropped (round 20, PG P3-B, CNPG P3-2);
+//     behind (round 20, PG P3-B, CNPG P3-2);
+//   - outside Imported, on a Backup whose operator start stamp
+//     (SetAsStarted, written by the operator before the instance runs
+//     the tool) is not older than the object, a tool time or the
+//     completion stamp more than backupClockSkew before that stamp or
+//     the object's creation: the instance's clock runs behind. The
+//     completion stamp of a barman or plugin Backup is the instance
+//     manager's, on the same clock as the tool times, so every time the
+//     instance wrote is dropped (ClockBehind; round 21, PG P3-B, CNPG
+//     P3-1). Without such a start stamp the status was restored or
+//     migrated: only the early tool times are dropped;
 //   - a stop before the start.
 //
 // CloudNativePG's stamps are written on the instance's or the operator's
-// clock as the Backup's status is patched: only the floor and the upper
-// bound apply. A Completed Backup whose stop time is unknown is then
-// bounded by OperatorTerminated, else counted as one that could have
-// ended at any time, never as one that ended in 1970.
+// clock as the Backup's status is patched: past the floor and the upper
+// bound, only the clock check above applies. A Completed Backup whose
+// stop time is unknown is then bounded by OperatorTerminated, else
+// counted as one that could have ended at any time, never as one that
+// ended in 1970 or before it ran.
 func SaneBackupTimes(now time.Time, s BackupStamps) BackupTimes {
 	ceiling := now.Add(backupClockSkew)
 	plausible := func(at *time.Time) *time.Time {
@@ -245,15 +267,31 @@ func SaneBackupTimes(now time.Time, s BackupStamps) BackupTimes {
 	}
 	opStarted, opTerminated := plausible(s.ReconciliationStarted), plausible(s.ReconciliationTerminated)
 	stampsEarly := (opStarted == nil || early(opStarted)) && (opTerminated == nil || early(opTerminated))
-	switch {
-	case start != nil && stop != nil && early(stop) && stampsEarly:
+	if start != nil && stop != nil && early(stop) && stampsEarly {
 		out.Imported = true
-	default:
-		if early(start) {
-			start = nil
+	} else {
+		// beforeStart: at is earlier than the operator's start stamp, which
+		// the operator writes before the instance runs the tool.
+		beforeStart := func(at *time.Time) bool {
+			return at != nil && at.Before(opStarted.Add(-backupClockSkew))
 		}
-		if early(stop) {
-			stop = nil
+		switch {
+		case opStarted != nil && !early(opStarted) &&
+			(early(start) || early(stop) || early(opTerminated) ||
+				beforeStart(start) || beforeStart(stop) || beforeStart(opTerminated)):
+			// The operator started this Backup here, and the instance
+			// wrote times before that.
+			start, stop, opTerminated = nil, nil, nil
+			out.ClockBehind = true
+		default:
+			// No live start stamp: a restored or migrated status, whose
+			// stamps are kept; an early tool time alone is dropped.
+			if early(start) {
+				start = nil
+			}
+			if early(stop) {
+				stop = nil
+			}
 		}
 	}
 	out.Start, out.Stop = start, stop

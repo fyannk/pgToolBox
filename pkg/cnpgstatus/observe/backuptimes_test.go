@@ -100,25 +100,86 @@ func TestSaneBackupTimesImportedNeedsEarlyStamps(t *testing.T) {
 	now := created.Add(10 * time.Minute)
 	at := func(d time.Duration) *time.Time { v := created.Add(d); return &v }
 	skewedStart, skewedStop := at(5*time.Second-15*time.Minute), at(8*time.Minute-15*time.Minute)
+	// The instance manager stamps the completion on the instance's clock
+	// too (round 21, CNPG P3-1): 3 s after the skewed stop.
+	skewedEnd := at(8*time.Minute + 3*time.Second - 15*time.Minute)
 	for _, c := range []struct {
 		name                   string
 		opStarted, opEnded     *time.Time
 		wantImported           bool
 		wantStart, wantStopped *time.Time
+		wantEnded              *time.Time
+		wantBehind             bool
 	}{
-		{"no stamps (a restored status without them)", nil, nil, true, skewedStart, skewedStop},
-		{"stamps as old as the tool times (Velero)", at(-16 * time.Minute), at(8*time.Minute + 3*time.Second - 15*time.Minute), true, skewedStart, skewedStop},
-		{"live: started at creation, completed after", at(2 * time.Second), at(8*time.Minute + 3*time.Second), false, nil, nil},
-		{"live: only the start stamp", at(2 * time.Second), nil, false, nil, nil},
-		{"live: only the completion stamp", nil, at(8*time.Minute + 3*time.Second), false, nil, nil},
-		{"old start stamp, completion after creation", at(-16 * time.Minute), at(8*time.Minute + 3*time.Second), false, nil, nil},
+		{"no stamps (a restored status without them)", nil, nil, true, skewedStart, skewedStop, nil, false},
+		{"stamps as old as the tool times (Velero)", at(-16 * time.Minute), skewedEnd, true, skewedStart, skewedStop, skewedEnd, false},
+		{"live: started at creation, completed on the skewed clock", at(2 * time.Second), skewedEnd, false, nil, nil, nil, true},
+		{"live: started at creation, a completion stamp on the operator's clock", at(2 * time.Second), at(8*time.Minute + 3*time.Second), false, nil, nil, nil, true},
+		{"live: only the start stamp", at(2 * time.Second), nil, false, nil, nil, nil, true},
+		{"only the completion stamp (no live start: a restored status)", nil, at(8*time.Minute + 3*time.Second), false, nil, nil, at(8*time.Minute + 3*time.Second), false},
+		{"old start stamp, completion after creation", at(-16 * time.Minute), at(8*time.Minute + 3*time.Second), false, nil, nil, at(8*time.Minute + 3*time.Second), false},
 	} {
 		got := SaneBackupTimes(now, BackupStamps{Created: created, Started: skewedStart, Stopped: skewedStop, ReconciliationStarted: c.opStarted, ReconciliationTerminated: c.opEnded})
 		if got.Imported != c.wantImported || !sameInstant(got.Start, c.wantStart) || !sameInstant(got.Stop, c.wantStopped) {
 			t.Errorf("%s: got imported=%v %v %v, want imported=%v %v %v", c.name, got.Imported, got.Start, got.Stop, c.wantImported, c.wantStart, c.wantStopped)
 		}
-		if !sameInstant(got.OperatorTerminated, c.opEnded) {
-			t.Errorf("%s: completion stamp %v, want %v", c.name, got.OperatorTerminated, c.opEnded)
+		if !sameInstant(got.OperatorTerminated, c.wantEnded) || got.ClockBehind != c.wantBehind {
+			t.Errorf("%s: completion stamp %v clock behind %v, want %v %v", c.name, got.OperatorTerminated, got.ClockBehind, c.wantEnded, c.wantBehind)
+		}
+		if !sameInstant(got.OperatorStarted, c.opStarted) {
+			t.Errorf("%s: the operator's start stamp %v, want it kept (%v)", c.name, got.OperatorStarted, c.opStarted)
+		}
+	}
+}
+
+// TestSaneBackupTimesInstanceClockBehind (round 21, PG P3-B, CNPG P3-1):
+// on an instance whose clock runs behind, the tool times and the
+// instance manager's completion stamp are skewed alike; outside Imported
+// they are all dropped once one of them is more than backupClockSkew
+// before the object's creation or the operator's start stamp, so the
+// Backup has no end rather than an early one. An honest instance keeps
+// them; a Velero copy keeps its old coherent times.
+func TestSaneBackupTimesInstanceClockBehind(t *testing.T) {
+	created := time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC)
+	now := created.Add(time.Hour)
+	at := func(d time.Duration) *time.Time { v := created.Add(d); return &v }
+	for _, c := range []struct {
+		name       string
+		queue      time.Duration // operator's start stamp after creation
+		skew       time.Duration // instance clock behind
+		imported   bool          // the whole status is older than the object
+		wantBehind bool
+	}{
+		{"honest clock", 2 * time.Second, 0, false, false},
+		{"2 min behind: within the allowance", 2 * time.Second, 2 * time.Minute, false, false},
+		{"6 min behind", 2 * time.Second, 6 * time.Minute, false, true},
+		{"30 min behind", 2 * time.Second, 30 * time.Minute, false, true},
+		{"queued 20 min, 6 min behind: earlier than the operator's start, not the creation", 20 * time.Minute, 6 * time.Minute, false, true},
+		{"queued 20 min, honest clock", 20 * time.Minute, 0, false, false},
+		{"Velero copy of a Backup two days old", 2 * time.Second, 0, true, false},
+	} {
+		shift := -c.skew
+		if c.imported {
+			shift = -48 * time.Hour
+		}
+		opStarted := at(c.queue)
+		if c.imported {
+			opStarted = at(c.queue - 48*time.Hour)
+		}
+		start, stop, ended := at(c.queue+5*time.Second+shift), at(c.queue+10*time.Minute+shift), at(c.queue+10*time.Minute+3*time.Second+shift)
+		got := SaneBackupTimes(now, BackupStamps{Created: created, Started: start, Stopped: stop, ReconciliationStarted: opStarted, ReconciliationTerminated: ended})
+		if got.ClockBehind != c.wantBehind || got.Imported != c.imported {
+			t.Errorf("%s: clock behind %v imported %v, want %v %v", c.name, got.ClockBehind, got.Imported, c.wantBehind, c.imported)
+		}
+		if c.wantBehind {
+			if got.Start != nil || got.Stop != nil || got.OperatorTerminated != nil {
+				t.Errorf("%s: kept a skewed time: %v %v %v", c.name, got.Start, got.Stop, got.OperatorTerminated)
+			}
+		} else if !sameInstant(got.Start, start) || !sameInstant(got.Stop, stop) || !sameInstant(got.OperatorTerminated, ended) {
+			t.Errorf("%s: dropped a plausible time: %+v", c.name, got)
+		}
+		if !sameInstant(got.OperatorStarted, opStarted) {
+			t.Errorf("%s: the operator's start stamp %v, want %v", c.name, got.OperatorStarted, opStarted)
 		}
 	}
 }

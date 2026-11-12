@@ -82,6 +82,8 @@ func (c *Client) convertBackup(content map[string]any) (observe.BackupFacts, boo
 	times := observe.SaneBackupTimes(c.now, observe.BackupStamps{
 		Created: backup.CreationTimestamp.Time,
 		Started: metaTime(backup.Status.StartedAt), Stopped: metaTime(backup.Status.StoppedAt),
+		ReconciliationStarted:    metaTime(backup.Status.ReconciliationStartedAt),
+		ReconciliationTerminated: metaTime(backup.Status.ReconciliationTerminatedAt),
 	})
 	facts.StartedAt, facts.StoppedAt = times.Start, times.Stop
 	if backup.Spec.PluginConfiguration != nil {

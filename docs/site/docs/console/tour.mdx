@@ -63,9 +63,12 @@ and the count of diagnostics findings by severity. The last backup is the
 newest completed `Backup`'s stop time; a stop time a plugin left unset (1970)
 or set in the future is not one, and such a backup is then timed by
 CloudNativePG's completion stamp (`status.reconciliationTerminatedAt`, seconds
-after the backup ended). The list and the Overview's backups panel show that
-time unmarked; only the backup line of the cluster Overview's health roll-up
-says it is the completion stamp. A failed `Backup` is timed by when
+after the backup ended). A backup whose instance clock runs behind (its times
+more than five minutes before the operator started it) has neither, and is
+timed by when the operator started it, an instant before it ended. The list
+and the Overview's backups panel show that time unmarked; only the backup line
+of the cluster Overview's health roll-up says it is the completion stamp, or
+that the stop time and completion stamp are not plausible. A failed `Backup` is timed by when
 CloudNativePG marked it failed (its creation when that is not stamped), so a
 backup that waited behind a successful one and failed after it still shows as a
 failure after the last completed backup. A namespace the console
