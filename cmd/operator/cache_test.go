@@ -244,3 +244,18 @@ func TestOptionalKindCacheOptions(t *testing.T) {
 		}
 	}
 }
+
+// TestManagerReleasesTheLeaseOnCancel: round 18, OPERATOR (optional). The
+// exit to watch a namespace (errRestartToWatch) cancels the manager's
+// context: the lease is released then, so the other replica takes over at
+// once instead of after a lease period, within a bounded shutdown.
+func TestManagerReleasesTheLeaseOnCancel(t *testing.T) {
+	options := &ctrl.Options{Scheme: scheme}
+	managerCacheOptions(options, pgAdminPrepared{}, console.Features{})
+	if !options.LeaderElectionReleaseOnCancel {
+		t.Error("LeaderElectionReleaseOnCancel is off: a restart to watch would hold the lease for a lease period")
+	}
+	if options.GracefulShutdownTimeout == nil || *options.GracefulShutdownTimeout <= 0 {
+		t.Errorf("GracefulShutdownTimeout = %v, want a bounded shutdown", options.GracefulShutdownTimeout)
+	}
+}
