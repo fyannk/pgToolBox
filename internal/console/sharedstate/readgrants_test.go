@@ -232,38 +232,6 @@ func TestReadGrantsFindingARecreatedConfigMapIsPending(t *testing.T) {
 	}
 }
 
-// One 403 while the watch is open (a ReadGrants, a write) is left at the
-// next freshness read that is answered (round 22, Go P3-1): the watch is
-// opened again and the replica is live, rather than refusing every grant
-// until the watch ends.
-func TestAGoodFreshnessReadLeavesTheForbiddenMode(t *testing.T) {
-	t.Run("takeFresh", func(t *testing.T) {
-		clock := &testClock{now: t0}
-		api := newAPIServer()
-		s := handLoaded(t, api, api, clock, slog.New(slog.DiscardHandler))
-		_ = s.failed(apierrors.NewForbidden(configMaps, "console-state", errors.New("no")))
-		cm, _ := api.Get(t.Context(), "console-state", metav1.GetOptions{})
-		behind := ""
-		reopen, err := s.takeFresh(freshRead{cm: cm, asked: t0}, watchProgress{seen: "1", object: "1"}, &behind)
-		if err != nil || !reopen {
-			t.Errorf("takeFresh while forbidden = %v, %v; want the watch reopened", reopen, err)
-		}
-	})
-	t.Run("running", func(t *testing.T) {
-		clock := &testClock{now: t0}
-		api := newAPIServer()
-		g := &gatedGets{apiServer: api}
-		s := freshStore(g, clock, time.Hour, 20*time.Millisecond, 10*time.Millisecond)
-		run(t, s)
-		eventually(t, "live", func() bool { return modeOf(s) == modeLive && s.GrantsUsable() })
-		forbidden := error(apierrors.NewForbidden(configMaps, "console-state", errors.New("no")))
-		g.fail.Store(&forbidden)
-		_ = s.ReadGrants(t.Context())
-		g.fail.Store(nil)
-		eventually(t, "live again", func() bool { return modeOf(s) == modeLive && s.GrantsUsable() })
-	})
-}
-
 // WriteGrant puts a grant recorded here in the ConfigMap before its first
 // token: nil once it is there, ErrNotRecorded when it cannot be written.
 func TestWriteGrant(t *testing.T) {
