@@ -128,6 +128,18 @@ export type ConnectedAssistantsViewProps = {
 /** Go's 503 on a disconnection: this replica refuses the grant, the others may not yet. */
 const notRecorded = (error: unknown): boolean => error instanceof ApiError && error.unavailable;
 
+/**
+ * Go's two 503s of a disconnection (internal/console/api/assistant.go): "unrecorded" is
+ * revoked on the replica that answered, its write for the others retrying; anything else
+ * (the shared state could not be read, or another layer's 503) confirms nothing.
+ */
+const UNRECORDED = "urn:pgtoolbox:disconnection-unrecorded";
+const revokedHere = (error: unknown): boolean => error instanceof ApiError && error.problem?.type === UNRECORDED;
+const unavailableNote = (error: unknown, client: string): string =>
+  revokedHere(error) ? m.assistant_unrecorded({ client }) : m.assistant_unconfirmed({ client });
+const unavailableAllNote = (error: unknown): string =>
+  revokedHere(error) ? m.assistant_unrecorded_all() : m.assistant_unconfirmed_all();
+
 /** What the page says after a disconnection; a refused retry also carries Go's detail and request id. */
 type Notice = {
   health: "ok" | "warning" | "critical";
@@ -226,7 +238,7 @@ export function ConnectedAssistantsView({ grants, actor, onRevoke, onRevokeAll }
     } catch (err) {
       if (notRecorded(err)) {
         done = false;
-        setNotice({ health: "warning", text: m.assistant_unrecorded({ client: g.client }) });
+        setNotice({ health: "warning", text: unavailableNote(err, g.client) });
       } else if (err instanceof ApiError && err.status === 404) {
         // After a 503, a 404 says there is nothing left of the grant to write: done.
         setNotice({ health: "ok", text: m.assistant_already_revoked({ client: g.client }) });
@@ -318,7 +330,7 @@ export function ConnectedAssistantsView({ grants, actor, onRevoke, onRevokeAll }
             if (notRecorded(err)) {
               markPending([target]);
               focusNote.current = true;
-              setNotice({ health: "warning", text: m.assistant_unrecorded({ client: target.client }) });
+              setNotice({ health: "warning", text: unavailableNote(err, target.client) });
               return;
             }
             throw err;
@@ -346,7 +358,7 @@ export function ConnectedAssistantsView({ grants, actor, onRevoke, onRevokeAll }
             if (notRecorded(err)) {
               markPending(standing);
               focusNote.current = true;
-              setNotice({ health: "warning", text: m.assistant_unrecorded_all() });
+              setNotice({ health: "warning", text: unavailableAllNote(err) });
               return;
             }
             throw err;
