@@ -218,7 +218,15 @@ that write cannot be made (the API server refuses or does not answer), the
 answer is `503` with `Retry-After` and "retry": the replica that answered
 refuses the grant at once and writes the disconnection with its next write, but
 the others may accept it until then. Retry, or use **Disconnect all**, which
-writes again what an earlier attempt left unwritten. A sign-out with
+writes again what an earlier attempt left unwritten. While the ConfigMap does
+not exist (deleted, or not created yet), a disconnection is answered done, and
+logged: every replica refuses every grant until the ConfigMap exists, and the
+replica that answered writes the disconnection into it within about a second of
+its return. A restart of that replica before then loses the disconnection
+(another replica that recorded the grant less than eight minutes earlier then
+keeps it). A ConfigMap the console may not write is not so: a replica whose
+watch opened before the permission was withdrawn still serves grants until its
+next write, so that answer stays `503`. A sign-out with
 **disconnect my assistants** goes on even then (the console log says so). Without the
 shared state the index is in each replica's memory: a restart disconnects every
 assistant, and with more than one replica each refuses the grants of the

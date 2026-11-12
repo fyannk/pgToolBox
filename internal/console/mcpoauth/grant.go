@@ -292,11 +292,30 @@ func (s *Server) RevokeGrant(ctx context.Context, c auth.Client, user, id string
 	}
 	// A retry after ErrNotRecorded finds the grant revoked here, not
 	// written yet: it writes again.
-	if err := s.o.Store.WriteRevocations(ctx, id); err != nil {
-		requests.WithLabelValues("revoke", "unrecorded").Inc()
-		return fmt.Errorf("%w: %w", ErrNotRecorded, err)
+	return s.written(ctx, s.o.Store.WriteRevocations(ctx, id), 1)
+}
+
+// written is the outcome of a revocation's write-through. While the
+// shared state ConfigMap does not exist, every replica refuses every
+// grant (each one's watch delivers the deletion), so the disconnection is
+// in effect everywhere: it is answered done, logged, and written once the
+// ConfigMap is back (sharedstate.ErrNoConfigMap). A ConfigMap the console
+// may not write is not so: a replica whose watch was opened before the
+// permission was withdrawn still serves grants until its next write, so
+// that stays ErrNotRecorded.
+func (s *Server) written(ctx context.Context, err error, grants int) error {
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, sharedstate.ErrNoConfigMap):
+		requests.WithLabelValues("revoke", "held").Inc()
+		s.o.Log.WarnContext(ctx, "MCP: a disconnection was made while the shared state ConfigMap does not exist; every replica "+
+			"refuses every grant until it does, and this replica writes the revocation to it then (lost if it restarts first)",
+			slog.Int("grants", grants))
+		return nil
 	}
-	return nil
+	requests.WithLabelValues("revoke", "unrecorded").Inc()
+	return fmt.Errorf("%w: %w", ErrNotRecorded, err)
 }
 
 // DisconnectAll revokes every standing grant of the person, written
@@ -312,11 +331,7 @@ func (s *Server) DisconnectAll(ctx context.Context, c auth.Client, user string) 
 	}
 	slices.Sort(ids)
 	ids = slices.Compact(ids)
-	if err := s.o.Store.WriteRevocations(ctx, ids...); err != nil {
-		requests.WithLabelValues("revoke", "unrecorded").Inc()
-		return n, fmt.Errorf("%w: %w", ErrNotRecorded, err)
-	}
-	return n, nil
+	return n, s.written(ctx, s.o.Store.WriteRevocations(ctx, ids...), len(ids))
 }
 
 // disconnectAll is DisconnectAll at a sign-out that asked to disconnect
