@@ -125,8 +125,12 @@ const (
 	// RoleBinding of the caller in the namespace, duplicates included, so
 	// a namespace administrator who binds one Role of 25,000 rules forty
 	// times makes it 53 MiB of JSON and over 500 MiB to decode; the
-	// operator's own namespaced rules fit in a few KiB.
-	ReviewResponseLimit = 4 << 20
+	// operator's own namespaced rules fit in a few KiB. The limit is per
+	// response and discovery.ProbeConcurrency reviews run at once, each
+	// decoded at about four times its size: 1 MiB keeps them all under
+	// 64 MiB of heap, a quarter of the chart's 256Mi limit (at 4 MiB,
+	// sixteen near-cap reviews peaked at about 260 MiB).
+	ReviewResponseLimit = 1 << 20
 )
 
 // namespaceBudget is the time one namespace's review may take, every
@@ -144,8 +148,10 @@ var ErrReviewTooLarge = fmt.Errorf("the access review's response is larger than 
 // LimitReviewResponses wraps rt so that the body of every response to an
 // authorization.k8s.io POST (the access reviews) is read through
 // ReviewResponseLimit: past it, the read fails with ErrReviewTooLarge,
-// before the client decodes anything. Other requests pass unchanged. For
-// rest.Config.Wrap.
+// before the client decodes anything. The API path is matched anywhere in
+// the URL path: a kubeconfig whose server carries a path prefix (a proxy
+// such as Rancher's /k8s/clusters/<id>) is bounded too. Other requests
+// pass unchanged. For rest.Config.Wrap.
 func LimitReviewResponses(rt http.RoundTripper) http.RoundTripper {
 	return limitedReviews{next: rt, limit: ReviewResponseLimit}
 }
@@ -157,7 +163,7 @@ type limitedReviews struct {
 
 func (l limitedReviews) RoundTrip(req *http.Request) (*http.Response, error) {
 	resp, err := l.next.RoundTrip(req)
-	if err != nil || resp.Body == nil || req.Method != http.MethodPost || !strings.HasPrefix(req.URL.Path, "/apis/authorization.k8s.io/") {
+	if err != nil || resp.Body == nil || req.Method != http.MethodPost || !strings.Contains(req.URL.Path, "/apis/authorization.k8s.io/") {
 		return resp, err
 	}
 	if resp.ContentLength > l.limit {

@@ -56,7 +56,7 @@ func TestStartupClientBoundsTheRulesReview(t *testing.T) {
 		review.APIVersion, review.Kind = "authorization.k8s.io/v1", "SelfSubjectRulesReview"
 		review.Status.ResourceRules = []authorizationv1.ResourceRule{rule}
 		if review.Spec.Namespace == "team-hostile" {
-			// Over 4 MiB of duplicated rules (JSON or protobuf), streamed
+			// Over ReviewResponseLimit of duplicated rules (JSON or protobuf), streamed
 			// without a length.
 			review.Status.ResourceRules = slices.Repeat(review.Status.ResourceRules, 250_000)
 		}
