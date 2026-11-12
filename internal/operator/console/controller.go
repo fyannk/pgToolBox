@@ -910,22 +910,34 @@ func (r *Reconciler) applyExposure(ctx context.Context, console *pgtoolboxv1alph
 	}
 	if r.Features.In(console.Namespace).Routes.Usable() {
 		if kind == pgtoolboxv1alpha1.ExposureTypeRoute {
+			// Recorded before the write: one that fails may still have
+			// published it.
+			exposure.MarkPublished(&console.Status.PublishedExposureKinds, "Route")
 			if err := applier.Apply(ctx, exposure.Route(spec, target)); err != nil {
 				return false, nil, r.notOwned(console, err)
 			}
 			exposed = true
-		} else if err := r.deleteIfOwned(ctx, console, &routev1.Route{}, console.WorkloadName()); err != nil {
-			return false, nil, err
+		} else {
+			if err := r.deleteIfOwned(ctx, console, &routev1.Route{}, console.WorkloadName()); err != nil {
+				return false, nil, err
+			}
+			exposure.MarkGone(&console.Status.PublishedExposureKinds, "Route")
 		}
 	}
 	if r.Features.In(console.Namespace).Gateways.Usable() {
 		if kind == pgtoolboxv1alpha1.ExposureTypeGateway {
+			// Recorded before the write: one that fails may still have
+			// published it.
+			exposure.MarkPublished(&console.Status.PublishedExposureKinds, "HTTPRoute")
 			if err := applier.Apply(ctx, exposure.HTTPRoute(spec, target)); err != nil {
 				return false, nil, r.notOwned(console, err)
 			}
 			exposed = true
-		} else if err := r.deleteIfOwned(ctx, console, &gatewayv1.HTTPRoute{}, console.WorkloadName()); err != nil {
-			return false, nil, err
+		} else {
+			if err := r.deleteIfOwned(ctx, console, &gatewayv1.HTTPRoute{}, console.WorkloadName()); err != nil {
+				return false, nil, err
+			}
+			exposure.MarkGone(&console.Status.PublishedExposureKinds, "HTTPRoute")
 		}
 	}
 	leftovers, err := r.leftoverExposure(ctx, console, func(t pgtoolboxv1alpha1.ExposureType) bool { return t != kind })
@@ -950,13 +962,20 @@ func (r *Reconciler) leftoverExposure(ctx context.Context, console *pgtoolboxv1a
 		{here.Routes, pgtoolboxv1alpha1.ExposureTypeRoute, &routev1.Route{}, "Route"},
 		{here.Gateways, pgtoolboxv1alpha1.ExposureTypeGateway, &gatewayv1.HTTPRoute{}, "HTTPRoute"},
 	} {
+		if k.api.State == discovery.NotInstalled {
+			// Not served: nothing of the kind can remain.
+			exposure.MarkGone(&console.Status.PublishedExposureKinds, k.kind)
+		}
 		if k.api.State != discovery.Forbidden {
 			continue
 		}
-		publishedBefore := exposure.MayHavePublished(console.Spec.Exposure.TypeOrDefault() == k.typ, console.Status.Conditions, k.kind)
+		publishedBefore := exposure.MayHavePublished(console.Spec.Exposure.TypeOrDefault() == k.typ, console.Status.PublishedExposureKinds, k.kind)
 		leftover, err := exposure.Leftover(ctx, r.APIReader, r.Client, console, k.object, k.kind, console.WorkloadName(), remove(k.typ), publishedBefore)
 		if err != nil {
 			return nil, err
+		}
+		if leftover.Gone {
+			exposure.MarkGone(&console.Status.PublishedExposureKinds, k.kind)
 		}
 		if leftover.Sentence != "" {
 			leftovers = append(leftovers, leftover)

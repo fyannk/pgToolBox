@@ -107,7 +107,11 @@ func TestBacklogOnsetFromTheQuietSweep(t *testing.T) {
 				tc.wantFrom = last.Add(-failureLookback)
 			}
 			f := timelineFixture{paths: []evidence.RecoveryPath{tlPath("b1", 48*time.Hour, frontier, evidencev1alpha1.CoverageFrontier)}, scannedAt: tc.scanned}
-			tl := svc.recoveryTimeline(f.evidence(), viewmodel.BackupSummary{}, nil, facts)
+			ev := f.evidence()
+			// A scan on time: past a missed one a lone backup's purge band
+			// covers the whole window (round 16, PG P3-1).
+			ev.result.RefreshInterval = 30 * time.Minute
+			tl := svc.recoveryTimeline(ev, viewmodel.BackupSummary{}, nil, facts)
 			band := edgeBand(tl, "recovery.segment.archiveBacklog", "recovery.segment.archiveBacklogSince")
 			if band == nil || band.Code != tc.wantCode || !band.From.Equal(tc.wantFrom) {
 				t.Fatalf("band %+v, want %s from %s (facts %+v)", band, tc.wantCode, tc.wantFrom, facts)

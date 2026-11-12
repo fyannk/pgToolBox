@@ -19,6 +19,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -94,13 +95,16 @@ func main() {
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 
-	ctx := ctrl.SetupSignalHandler()
+	// restart stops the manager like a signal, with errRestartToWatch as
+	// the cause: the operator then exits 1 and is restarted (a namespace
+	// left out at start can now be watched, reReviewFailed).
+	ctx, restart := context.WithCancelCause(ctrl.SetupSignalHandler())
 	// One budget for the whole start-up, up to the manager's start (the
 	// liveness probe is served from then on): startupBudgetTotal.
 	budget := newStartupBudget(startupStepTimeout, startupBudgetTotal)
 	// The PgAdmin configuration and optional-API probes come first: they
 	// shape the cache and the manager's lease timings.
-	pgAdminPrepared, err := preparePgAdmin(ctx, budget, operatorImage, configMapName, secretName)
+	pgAdminPrepared, err := preparePgAdmin(ctx, budget, operatorImage, configMapName, secretName, restart)
 	if err != nil {
 		setupLog.Error(err, "unable to prepare the PgAdmin controller")
 		os.Exit(1)
@@ -136,6 +140,13 @@ func main() {
 		os.Exit(1)
 	}
 
+	for _, runnable := range pgAdminPrepared.leaderOnly {
+		if err := mgr.Add(runnable); err != nil {
+			setupLog.Error(err, "unable to add a leader-only task")
+			os.Exit(1)
+		}
+	}
+
 	if err := addProbes(mgr); err != nil {
 		setupLog.Error(err, "unable to set up the health and ready checks")
 		os.Exit(1)
@@ -144,6 +155,10 @@ func main() {
 	setupLog.Info("starting manager", "version", operatorVersion)
 	if err := mgr.Start(ctx); err != nil {
 		setupLog.Error(err, "problem running manager", "hint", cacheSyncHint(err, pgAdminPrepared.Config.WatchNamespaces))
+		os.Exit(1)
+	}
+	if cause := context.Cause(ctx); errors.Is(cause, errRestartToWatch) {
+		setupLog.Info("manager stopped to restart", "reason", cause.Error())
 		os.Exit(1)
 	}
 }

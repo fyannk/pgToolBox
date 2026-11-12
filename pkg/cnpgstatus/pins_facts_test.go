@@ -269,6 +269,52 @@ func TestPinFormerPrimaryArchivesBeforeRejoining(t *testing.T) {
 	}
 }
 
+// TestPinMaskedStatusIsA200 pins the fact instancestatus Reading.Masked
+// rests on (round 16, CNPG P2-1): while fencing or a restart sets
+// MightBeUnavailable (SetFencing, RequestAndWaitRestartSmartFast), GetStatus
+// defers a mask that saves the error as MightBeUnavailableMaskedError and
+// re-reads only isPrimary (pkg/management/postgres/probes.go
+// v1.30.1:47-62), so pgStatus (webserver/remote.go) answers 200 with every
+// other PostgreSQL field at zero.
+func TestPinMaskedStatusIsA200(t *testing.T) {
+	for _, v := range verifiedReleases {
+		release := v.tag
+		dir := moduleDir(t, release)
+		probes, err := os.ReadFile(filepath.Join(dir, "pkg", "management", "postgres", "probes.go"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		get := functionBody(t, probes, "func (instance *Instance) GetStatus() (result *postgres.PostgresqlStatus, err error) {")
+		mask := bytes.Index(get, []byte("result.MightBeUnavailableMaskedError = err.Error()"))
+		primary := bytes.Index(get, []byte("result.IsPrimary, err = instance.IsPrimary()"))
+		if !bytes.Contains(get, []byte("defer func() {")) || mask < 0 || primary < mask {
+			t.Errorf("v%s: GetStatus no longer masks the error and re-reads only isPrimary", release)
+		}
+		remote, err := os.ReadFile(filepath.Join(dir, "pkg", "management", "postgres", "webserver", "remote.go"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		status := functionBody(t, remote, "func (ws *remoteWebserverEndpoints) pgStatus(w http.ResponseWriter, _ *http.Request) {")
+		for _, literal := range []string{"status, err := ws.instance.GetStatus()", "js, err := json.Marshal(status)", "_, _ = w.Write(js)"} {
+			if !bytes.Contains(status, []byte(literal)) {
+				t.Errorf("v%s: pgStatus no longer has %q", release, literal)
+			}
+		}
+		instance, err := os.ReadFile(filepath.Join(dir, "pkg", "management", "postgres", "instance.go"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for signature, literal := range map[string]string{
+			"func (instance *Instance) SetFencing(enabled bool) {":                                                         "instance.SetMightBeUnavailable(true)",
+			"func (instance *Instance) RequestAndWaitRestartSmartFast(ctx context.Context, timeout time.Duration) error {": "instance.SetMightBeUnavailable(true)",
+		} {
+			if !bytes.Contains(functionBody(t, instance, signature), []byte(literal)) {
+				t.Errorf("v%s: %s no longer sets MightBeUnavailable", release, signature)
+			}
+		}
+	}
+}
+
 // functionBody is the text from a function's signature line to the next
 // top-level closing brace.
 func functionBody(t *testing.T, source []byte, signature string) []byte {

@@ -210,6 +210,11 @@ function recoveryReason(code: string, p: Params): string | undefined {
       return m.rp_reason_archiver_unread();
     case "recovery.reason.archiverHibernated":
       return m.rp_reason_archiver_hibernated();
+    case "recovery.reason.archivingFailedHibernated": {
+      if (p?.sinceAt === undefined) return m.rp_reason_archiving_failed_hibernated();
+      const since = instant(p, "sinceAt");
+      return since ? m.rp_reason_archiving_failed_hibernated_since({ since }) : undefined;
+    }
     case "recovery.reason.archiverNotReported":
       return m.rp_reason_archiver_not_reported();
     case "recovery.reason.pathNotHealthy": {

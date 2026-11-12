@@ -10558,7 +10558,7 @@ paths:
         - session
   /api/v1/session/grants:
     delete:
-      description: "Revokes all your grants on this console: every replica refuses their tokens within about a second. Each is recorded as mcp.revoke. Your browser session is untouched (sign out with the disconnect option to end both)."
+      description: "Revokes all your grants on this console: every replica refuses their tokens within about a second. Each is recorded as mcp.revoke. Your browser session is untouched (sign out with the disconnect option to end both). 503 (with Retry-After) when the revocations could not be written for the other replicas: this one refuses the grants, retry."
       operationId: revokeAllGrants
       responses:
         "204":
@@ -10587,6 +10587,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorModel"
           description: Internal Server Error
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Service Unavailable
       summary: Disconnect every assistant
       tags:
         - session
@@ -10623,7 +10629,7 @@ paths:
         - session
   /api/v1/session/grants/{id}:
     delete:
-      description: "Revokes one of your grants: every replica refuses its tokens within about a second. Recorded as mcp.revoke."
+      description: "Revokes one of your grants: every replica refuses its tokens within about a second. Recorded as mcp.revoke. 503 (with Retry-After) when the revocation could not be written for the other replicas: this one refuses the grant, retry."
       operationId: revokeGrant
       parameters:
         - description: The grant's reference.
@@ -10667,6 +10673,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorModel"
           description: Internal Server Error
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Service Unavailable
       summary: Disconnect an assistant
       tags:
         - session

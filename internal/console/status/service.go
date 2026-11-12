@@ -652,7 +652,7 @@ func (s *Service) gather(ctx context.Context, key cache.ClusterKey, withEvents b
 func readyRings(sw Sweep, g *gathered) (out, lsn, archived, timeline map[string][]viewmodel.Point) {
 	out, lsn, archived, timeline = map[string][]viewmodel.Point{}, map[string][]viewmodel.Point{}, map[string][]viewmodel.Point{}, map[string][]viewmodel.Point{}
 	for name, inst := range g.swept.Instances {
-		read := inst.State == viewmodel.StatusReadOK && inst.Reading != nil
+		read := inst.State == viewmodel.StatusReadOK && inst.Reading != nil && !inst.Reading.Masked()
 		failing := read && inst.Reading.LastFailedWALTime != nil
 		var ready, position, last, tl []viewmodel.Point
 		for _, series := range sw.Series(g.sweepKey(), name) {

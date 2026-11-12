@@ -988,6 +988,7 @@ _Appears in:_
 | `registeredHash` _string_ | The hash of the offered set the last successful registration<br />applied. |  | MaxLength: 64 <br />Optional: \{\} <br /> |
 | `personalServerOwners` _string array_ | The pgAdmin users the last successful registration gave personal<br />servers (per-person DatabaseRoles); the next registration removes<br />the managed personal servers of those no longer among them. |  | MaxItems: 64 <br />items:MaxLength: 254 <br />Optional: \{\} <br /> |
 | `servers` _[PgAdminServerStatus](#pgadminserverstatus) array_ | The servers pgAdmin offers and the credentials it does not. |  | MaxItems: 256 <br />Optional: \{\} <br /> |
+| `publishedExposureKinds` _string array_ | The exposure kinds (Route, HTTPRoute) the operator published for<br />this PgAdmin and has not seen gone since: where it is later refused<br />one of them, it reports what may remain of it. |  | MaxItems: 2 <br />items:Enum: [Route HTTPRoute] <br />Optional: \{\} <br /> |
 | `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.34/#condition-v1-meta) array_ | Conditions: Ready (summary of ConfigurationValid, WorkloadReady,<br />ExposureReady and ServersSynced), Progressing, Stalled, and the<br />advisory PgAdminEgressConfined, which never enters Ready. |  | MaxItems: 16 <br />Optional: \{\} <br /> |
 
 
@@ -1715,6 +1716,7 @@ _Appears in:_
 | `image` _string_ | The image reference the console runs. |  | MaxLength: 512 <br />Optional: \{\} <br /> |
 | `lifecycle` _[PgToolBoxConsoleLifecycleStatus](#pgtoolboxconsolelifecyclestatus)_ | The ConfigMap the console reads its end-of-life table from, and who<br />keeps it: Operator (the operator's table, updated with the operator),<br />User (edited or annotated user-managed, left alone) or Referenced<br />(spec.lifecycleConfigMapRef). |  | Optional: \{\} <br /> |
 | `instanceCABundle` _[PgToolBoxConsoleInstanceCABundleStatus](#pgtoolboxconsoleinstancecabundlestatus)_ | The instance CA bundle the console mounts, who keeps it and, when the<br />operator does, how many Clusters it covers and which are missing. |  | Optional: \{\} <br /> |
+| `publishedExposureKinds` _string array_ | The exposure kinds (Route, HTTPRoute) the operator published for<br />this console and has not seen gone since: where it is later refused<br />one of them, it reports what may remain of it. |  | MaxItems: 2 <br />items:Enum: [Route HTTPRoute] <br />Optional: \{\} <br /> |
 | `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.34/#condition-v1-meta) array_ | Conditions: Ready (summary), ConfigurationValid, WorkloadReady,<br />ExposureReady, Progressing, Stalled and the advisory<br />InstanceCABundleComplete and ExposureConfined. |  | MaxItems: 16 <br />Optional: \{\} <br /> |
 
 

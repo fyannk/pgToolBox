@@ -18,6 +18,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"slices"
 	"strings"
 	"time"
@@ -25,6 +27,7 @@ import (
 	"golang.org/x/sync/errgroup"
 	authorizationv1 "k8s.io/api/authorization/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	utilnet "k8s.io/apimachinery/pkg/util/net"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/fyannk/pgToolBox/pkg/discovery"
@@ -77,8 +80,8 @@ func (d Denied) Reason() string {
 }
 
 // Unreviewed is one namespace whose review failed: an error the API server
-// returned after one retry of a transient one, or no answer within the
-// namespace's deadline.
+// returned after the retries of a transient one, a response too large, or
+// no answer within the namespace's deadline.
 type Unreviewed struct {
 	Namespace string
 	Err       error
@@ -110,9 +113,84 @@ const (
 	// accessReviewConcurrency bounds the access reviews in flight per
 	// namespace (an incomplete rules review asks one per missing verb).
 	accessReviewConcurrency = 4
-	// retryPause is the pause before the one retry of a transient error.
+	// retryPause is the pause before the first retry of a transient
+	// error; the second waits twice as long.
 	retryPause = 250 * time.Millisecond
+	// maxAttempts bounds the attempts at one namespace: a connection reset
+	// by an API server restarting (client-go never retries a POST) passes
+	// in a second or two.
+	maxAttempts = 3
+	// ReviewResponseLimit bounds the body of one access review's response
+	// (LimitReviewResponses). A rules review lists every rule of every
+	// RoleBinding of the caller in the namespace, duplicates included, so
+	// a namespace administrator who binds one Role of 25,000 rules forty
+	// times makes it 53 MiB of JSON and over 500 MiB to decode; the
+	// operator's own namespaced rules fit in a few KiB.
+	ReviewResponseLimit = 4 << 20
 )
+
+// namespaceBudget is the time one namespace's review may take, every
+// attempt and pause included: two full attempts and the first pause, so
+// one namespace that never answers holds one slot no longer than that.
+func namespaceBudget(timeout time.Duration) time.Duration {
+	return 2*timeout + retryPause
+}
+
+// ErrReviewTooLarge is the error of an access review whose response passed
+// ReviewResponseLimit: that namespace is unreviewed (never retried, the
+// same rules give the same answer), and no other is affected.
+var ErrReviewTooLarge = fmt.Errorf("the access review's response is larger than %d bytes: the RoleBindings of the namespace grant the operator far more rules than its manager role (one Role bound many times?)", ReviewResponseLimit)
+
+// LimitReviewResponses wraps rt so that the body of every response to an
+// authorization.k8s.io POST (the access reviews) is read through
+// ReviewResponseLimit: past it, the read fails with ErrReviewTooLarge,
+// before the client decodes anything. Other requests pass unchanged. For
+// rest.Config.Wrap.
+func LimitReviewResponses(rt http.RoundTripper) http.RoundTripper {
+	return limitedReviews{next: rt, limit: ReviewResponseLimit}
+}
+
+type limitedReviews struct {
+	next  http.RoundTripper
+	limit int64
+}
+
+func (l limitedReviews) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := l.next.RoundTrip(req)
+	if err != nil || resp.Body == nil || req.Method != http.MethodPost || !strings.HasPrefix(req.URL.Path, "/apis/authorization.k8s.io/") {
+		return resp, err
+	}
+	if resp.ContentLength > l.limit {
+		_ = resp.Body.Close()
+		return nil, ErrReviewTooLarge
+	}
+	resp.Body = &cappedBody{ReadCloser: resp.Body, left: l.limit}
+	return resp, nil
+}
+
+// cappedBody reads at most left bytes of its body, then fails with
+// ErrReviewTooLarge if the body has more.
+type cappedBody struct {
+	io.ReadCloser
+	left int64
+}
+
+func (b *cappedBody) Read(p []byte) (int, error) {
+	if b.left <= 0 {
+		var one [1]byte
+		n, err := b.ReadCloser.Read(one[:])
+		if n > 0 {
+			return 0, ErrReviewTooLarge
+		}
+		return 0, err
+	}
+	if int64(len(p)) > b.left {
+		p = p[:b.left]
+	}
+	n, err := b.ReadCloser.Read(p)
+	b.left -= int64(n)
+	return n, err
+}
 
 // PermittedNamespaces splits namespaces into those where the caller holds
 // every permission of required, those where it lacks one, and those it
@@ -127,8 +205,11 @@ const (
 // SelfSubjectAccessReview per verb (accessReviewConcurrency at a time),
 // which every authorizer answers. Each namespace is decided by its own
 // answers only, each attempt within timeout (NamespaceReviewTimeout when
-// zero); a transient failure (a 5xx, a server timeout, throttling, or the
-// attempt's deadline) is retried once. A namespace still failing is
+// zero) and all within namespaceBudget; a transient failure (a 5xx, a
+// server timeout, throttling, the attempt's deadline, a connection reset or
+// refused) is retried, twice at most. A response larger than
+// ReviewResponseLimit (through a client wrapped by LimitReviewResponses)
+// fails that namespace alone. A namespace still failing is
 // Unreviewed, never kept by guess, and never fails the others. Only ctx
 // ending is an error.
 func PermittedNamespaces(ctx context.Context, c Creator, required []Permission, namespaces []string, timeout time.Duration) (Review, error) {
@@ -163,20 +244,29 @@ func PermittedNamespaces(ctx context.Context, c Creator, required []Permission, 
 	return review, nil
 }
 
-// reviewNamespace is missingIn under its own deadline, retried once on a
-// transient failure.
+// reviewNamespace is missingIn under the namespace's deadline (namespaceBudget
+// of timeout), up to maxAttempts attempts, each within timeout and what is
+// left of that deadline, a transient failure retried after a pause that
+// doubles (retryPause, then twice that) while the deadline leaves room for
+// it.
 func reviewNamespace(ctx context.Context, c Creator, required []Permission, namespace string, timeout time.Duration) ([]Permission, error) {
+	deadline := time.Now().Add(namespaceBudget(timeout))
 	var err error
-	for attempt := range 2 {
+	pause := retryPause
+	for attempt := range maxAttempts {
 		if attempt > 0 {
+			if time.Until(deadline) <= pause {
+				return nil, err
+			}
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
-			case <-time.After(retryPause):
+			case <-time.After(pause):
 			}
+			pause *= 2
 		}
 		var lacking []Permission
-		lacking, err = attemptReview(ctx, c, required, namespace, timeout)
+		lacking, err = attemptReview(ctx, c, required, namespace, min(timeout, time.Until(deadline)))
 		if err == nil {
 			return lacking, nil
 		}
@@ -217,11 +307,21 @@ func attemptReview(ctx context.Context, c Creator, required []Permission, namesp
 }
 
 // transient reports whether a review failure may pass on its own: a server
-// error, a server or gateway timeout, throttling, or no answer in time.
+// error, a server or gateway timeout, throttling, no answer in time, or the
+// connection lost on the way (reset, refused, cut short, an HTTP/2 GOAWAY
+// or a network timeout: an API server restarting; client-go retries none
+// of them on a POST). A response too large is not: the same rules give the
+// same answer.
 func transient(err error) bool {
+	if errors.Is(err, ErrReviewTooLarge) {
+		return false
+	}
 	return apierrors.IsInternalError(err) || apierrors.IsServerTimeout(err) || apierrors.IsTimeout(err) ||
 		apierrors.IsServiceUnavailable(err) || apierrors.IsTooManyRequests(err) || apierrors.IsUnexpectedServerError(err) ||
-		errors.Is(err, context.DeadlineExceeded)
+		errors.Is(err, context.DeadlineExceeded) ||
+		utilnet.IsConnectionReset(err) || utilnet.IsConnectionRefused(err) || utilnet.IsProbableEOF(err) ||
+		errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) ||
+		utilnet.IsHTTP2ConnectionLost(err) || strings.Contains(err.Error(), "GOAWAY") || utilnet.IsTimeout(err)
 }
 
 // missingIn is the permissions of required the caller lacks in namespace,

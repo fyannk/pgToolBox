@@ -114,7 +114,7 @@ func TestPurgeBandNeverPassesTheNewestBackup(t *testing.T) {
 		want    time.Duration
 	}{
 		{"a lone backup read on time", lone, at(2 * time.Minute), 0},
-		{"a lone backup past a missed scan", lone, at(2 * time.Hour), 2*time.Hour + 5*time.Minute},
+		{"a lone backup past a missed scan: the whole window", lone, at(2 * time.Hour), last.Sub(first)},
 		{"the newest backup 3 min after the oldest, read on time", near, at(2 * time.Minute), 3 * time.Minute},
 	} {
 		in := timelineInput{facts: recoveryFacts{now: now}, scannedAt: c.scanned, refresh: 5 * time.Minute}
@@ -276,5 +276,86 @@ func TestPurgeBandKeepsABackupErrorFull(t *testing.T) {
 	}
 	if got, want := purgeBand(in, spans, first, last), 7*time.Minute; got != want {
 		t.Errorf("newest full marked backup-error, read on time: band %s, want %s (it anchors retention)", got, want)
+	}
+}
+
+// TestPurgeBandPastAStoppedRetention (round 16, PG P3-1, the reviewer's
+// probe TestR16LoneStaleBackup): backups stopped for longer than the
+// retention, so expire (pgBackRest runs it only at a backup's end) left
+// obsolete backups listed, and the agent missed scans for days. A backup
+// taken since the read becomes the base and every listed one goes: the
+// listed ones bound nothing, and the whole window is in the band, never
+// "covered" for the read's last 19 days.
+func TestPurgeBandPastAStoppedRetention(t *testing.T) {
+	day := 24 * time.Hour
+	read := now.Add(-10 * day)
+	first, last := read.Add(-30*day), read
+	in := timelineInput{facts: recoveryFacts{now: now}, scannedAt: &read, refresh: day}
+	for _, c := range []struct {
+		name  string
+		spans []interval
+	}{
+		{"a lone backup 30 d old", []interval{{from: first, to: last, backupID: "old"}}},
+		{"two backups 30 d and 28 d old", []interval{{from: first, to: last, backupID: "a"}, {from: first.Add(2 * day), to: last, backupID: "b"}}},
+	} {
+		if got := purgeBand(in, c.spans, first, last); got != last.Sub(first) {
+			t.Errorf("%s, read 10 d ago: band %s, want the whole window %s", c.name, got, last.Sub(first))
+		}
+	}
+}
+
+// TestPurgeBandFromATimeRetention (round 16, PG P3-1): a pgBackRest
+// time-based full retention places the window's start from the clock:
+// expire keeps the newest full at or before now minus the retention, so
+// the band runs to it whatever the listing still holds, and past the read
+// to the whole window (the base may be an unlisted full).
+func TestPurgeBandFromATimeRetention(t *testing.T) {
+	day := 24 * time.Hour
+	first, last := now.Add(-40*day), now.Add(-time.Minute)
+	spans := []interval{{from: first, to: last, backupID: "a"}, {from: now.Add(-35 * day), to: last, backupID: "b"}, {from: now.Add(-3 * day), to: last, backupID: "c"}}
+	read := now.Add(-2 * time.Hour)
+	base := timelineInput{facts: recoveryFacts{now: now}, scannedAt: &read, refresh: 5 * time.Minute}
+	for _, c := range []struct {
+		name     string
+		retained time.Duration
+		read     time.Time
+		want     time.Duration
+	}{
+		{"30 d, read 2 h ago: to the newest full before now-30d", 30 * day, read, 5 * day},
+		{"30 d past a long gap: still to that full", 30 * day, now.Add(-4 * day), 5 * day},
+		{"7 d, read 10 d ago: the base may be unlisted", 7 * day, now.Add(-10 * day), last.Sub(first)},
+		{"50 d: nothing expired yet, the elapsed band", 50 * day, read, 2*time.Hour + 5*time.Minute},
+	} {
+		in := base
+		in.retainedFor, in.scannedAt = c.retained, &c.read
+		if got := purgeBand(in, spans, first, last); got != c.want {
+			t.Errorf("%s: band %s, want %s", c.name, got, c.want)
+		}
+	}
+}
+
+// TestRetainedForReadsOnlyATimeRetention: only a configured time-based
+// pgBackRest full retention is a clock bound; a count, an unset one or a
+// Barman summary is none, and an absurd number of days stays a duration.
+func TestRetainedForReadsOnlyATimeRetention(t *testing.T) {
+	snap := func(r *evidencev1alpha1.PGBackRestRetention) *evidencev1alpha1.RepositoryEvidenceSnapshot {
+		return &evidencev1alpha1.RepositoryEvidenceSnapshot{Details: evidencev1alpha1.Details{Type: "pgbackrest", PGBackRest: &evidencev1alpha1.PGBackRestSummary{Retention: r}}}
+	}
+	seven, huge := uint64(7), uint64(evidencev1alpha1.MaxPGBackRestRetention)
+	for _, c := range []struct {
+		name string
+		snap *evidencev1alpha1.RepositoryEvidenceSnapshot
+		want time.Duration
+	}{
+		{"time, 7 days", snap(&evidencev1alpha1.PGBackRestRetention{Configured: true, Full: &seven, FullType: evidencev1alpha1.RetentionFullTime}), 7 * 24 * time.Hour},
+		{"count", snap(&evidencev1alpha1.PGBackRestRetention{Configured: true, Full: &seven, FullType: evidencev1alpha1.RetentionFullCount}), 0},
+		{"not configured", snap(&evidencev1alpha1.PGBackRestRetention{Full: &seven, FullType: evidencev1alpha1.RetentionFullTime}), 0},
+		{"no retention", snap(nil), 0},
+		{"Barman", &evidencev1alpha1.RepositoryEvidenceSnapshot{}, 0},
+		{"absurd days", snap(&evidencev1alpha1.PGBackRestRetention{Configured: true, Full: &huge, FullType: evidencev1alpha1.RetentionFullTime}), maxRetainedDays * 24 * time.Hour},
+	} {
+		if got := retainedFor(c.snap); got != c.want {
+			t.Errorf("%s: %s, want %s", c.name, got, c.want)
+		}
 	}
 }

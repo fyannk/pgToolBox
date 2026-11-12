@@ -616,20 +616,32 @@ func (r *Reconciler) applyExposure(ctx context.Context, p *pgtoolboxv1alpha1.PgA
 	}
 	if r.Features.In(p.Namespace).Routes.Usable() {
 		if kind == pgtoolboxv1alpha1.ExposureTypeRoute {
+			// Recorded before the write: one that fails may still have
+			// published it.
+			exposure.MarkPublished(&p.Status.PublishedExposureKinds, "Route")
 			if err := applier.Apply(ctx, buildRoute(p)); err != nil {
 				return nil, r.notOwned(p, err)
 			}
-		} else if err := r.deleteIfOwned(ctx, p, &routev1.Route{}, n.base); err != nil {
-			return nil, err
+		} else {
+			if err := r.deleteIfOwned(ctx, p, &routev1.Route{}, n.base); err != nil {
+				return nil, err
+			}
+			exposure.MarkGone(&p.Status.PublishedExposureKinds, "Route")
 		}
 	}
 	if r.Features.In(p.Namespace).Gateways.Usable() {
 		if kind == pgtoolboxv1alpha1.ExposureTypeGateway {
+			// Recorded before the write: one that fails may still have
+			// published it.
+			exposure.MarkPublished(&p.Status.PublishedExposureKinds, "HTTPRoute")
 			if err := applier.Apply(ctx, buildHTTPRoute(p)); err != nil {
 				return nil, r.notOwned(p, err)
 			}
-		} else if err := r.deleteIfOwned(ctx, p, &gatewayv1.HTTPRoute{}, n.base); err != nil {
-			return nil, err
+		} else {
+			if err := r.deleteIfOwned(ctx, p, &gatewayv1.HTTPRoute{}, n.base); err != nil {
+				return nil, err
+			}
+			exposure.MarkGone(&p.Status.PublishedExposureKinds, "HTTPRoute")
 		}
 	}
 	return r.leftoverExposure(ctx, p, func(t pgtoolboxv1alpha1.ExposureType) bool { return t != kind })
@@ -653,13 +665,20 @@ func (r *Reconciler) leftoverExposure(ctx context.Context, p *pgtoolboxv1alpha1.
 		{here.Routes, pgtoolboxv1alpha1.ExposureTypeRoute, &routev1.Route{}, "Route"},
 		{here.Gateways, pgtoolboxv1alpha1.ExposureTypeGateway, &gatewayv1.HTTPRoute{}, "HTTPRoute"},
 	} {
+		if k.api.State == discovery.NotInstalled {
+			// Not served: nothing of the kind can remain.
+			exposure.MarkGone(&p.Status.PublishedExposureKinds, k.kind)
+		}
 		if k.api.State != discovery.Forbidden {
 			continue
 		}
-		publishedBefore := exposure.MayHavePublished(p.Spec.Exposure.TypeOrDefault() == k.typ, p.Status.Conditions, k.kind)
+		publishedBefore := exposure.MayHavePublished(p.Spec.Exposure.TypeOrDefault() == k.typ, p.Status.PublishedExposureKinds, k.kind)
 		leftover, err := exposure.Leftover(ctx, r.APIReader, r.Client, p, k.object, k.kind, namesOf(p).base, remove(k.typ), publishedBefore)
 		if err != nil {
 			return nil, err
+		}
+		if leftover.Gone {
+			exposure.MarkGone(&p.Status.PublishedExposureKinds, k.kind)
 		}
 		if leftover.Sentence != "" {
 			leftovers = append(leftovers, leftover)

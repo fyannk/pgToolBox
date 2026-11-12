@@ -248,6 +248,9 @@ func (f formerArchiver) on(timeline uint64) (read bool, quiet []quietSweep, boun
 func recoveryFactsOf(g *gathered, arch viewmodel.Archiving, now time.Time) recoveryFacts {
 	f := recoveryFacts{now: now, archiveTimeout: defaultArchiveTimeout, failing: archivingFailing(arch), sweepInterval: g.swept.Interval}
 	if g.cluster == nil {
+		// No Cluster, no status.currentPrimary: no primary was read to
+		// run a check on (round 16, CNPG P3-c).
+		f.primaryUnread = true
 		return f
 	}
 	if v, ok := g.cluster.Spec.PostgresConfiguration.Parameters["archive_timeout"]; ok {
@@ -260,9 +263,18 @@ func recoveryFactsOf(g *gathered, arch viewmodel.Archiving, now time.Time) recov
 		at := c.LastTransitionTime.UTC()
 		f.failingSince = &at
 	}
-	f.notReported = arch.Reason == cnpgstatus.ArchivingReasonBacklogNotReported
 	live := primaryArchiver(g)
 	f.primaryUnread = live == nil
+	// Whatever the condition says (Unknown above all, which keeps CNPG's
+	// reason), a primary not read is an archiver not read: the newest edge
+	// is never healthy on it (round 16, CNPG P2-1: a fenced or restarting
+	// primary is now unread).
+	f.archiverUnread = f.archiverUnread || f.primaryUnread
+	// The archiving instance in recovery is the live fact, whatever the
+	// condition's reason: with ContinuousArchiving False or Unknown the
+	// archiving reading keeps CNPG's reason, and pg_switch_wal() would
+	// still fail there (round 16, CNPG P3-b).
+	f.notReported = arch.Reason == cnpgstatus.ArchivingReasonBacklogNotReported || (live != nil && live.ReadyNotReported)
 	// A hibernated Cluster with ContinuousArchiving False keeps CNPG's
 	// own reason in the archiving fact, not Hibernated: the Cluster's
 	// state says it sleeps, as cnpgstatus.Archiving reads it (round 15,
@@ -701,7 +713,7 @@ func newestArchiveFailure(g *gathered) (*time.Time, string) {
 		case inst.State != viewmodel.StatusReadOK:
 			r = nil
 		}
-		if r == nil || r.LastFailedWALTime == nil {
+		if r == nil || r.Masked() || r.LastFailedWALTime == nil {
 			continue
 		}
 		at := r.LastFailedWALTime.UTC()
@@ -726,7 +738,7 @@ func newestArchiveFailure(g *gathered) (*time.Time, string) {
 // primary) reports no readyWalFiles, so its 0 says nothing.
 func caughtUpBy(g *gathered, instance string) *time.Time {
 	inst, ok := g.swept.Instances[instance]
-	if !ok || inst.Reading == nil || !inst.Reading.IsPrimary {
+	if !ok || inst.Reading == nil || !inst.Reading.IsPrimary || inst.Reading.Masked() {
 		return nil
 	}
 	r := inst.Reading
@@ -842,6 +854,7 @@ func (s *Service) recoveryTimeline(ev clusterEvidence, summary viewmodel.BackupS
 			pgBackRest:   ev.result.Snapshot.Identity.Repository.Format == evidencev1alpha1.FormatPGBackRest,
 			backupIDs:    ev.result.BackupIDs,
 			backupsDone:  ev.result.BackupsComplete,
+			retainedFor:  retainedFor(ev.result.Snapshot),
 		}
 		evidenceTimeline(&out, in)
 		out.OffTarget = offTargetSpans(rec.Paths, ev.result.Backups, in.notRestorable)
@@ -869,6 +882,13 @@ func (s *Service) recoveryTimeline(ev clusterEvidence, summary viewmodel.BackupS
 				out.Segments = append(out.Segments, reportedTail(w.Provenance, summary.Archiving, facts, last)...)
 			}
 			addReason(&out, say("recovery.reason.reportedWindow", "the window is the operator's report, not repository evidence", nil))
+			if facts.hibernated {
+				// Why no check is offered at the edge (round 16, DBA).
+				addReason(&out, hibernatedReason())
+				if facts.failing {
+					addReason(&out, hibernatedFailedReason(facts.failingSince))
+				}
+			}
 		}
 		addReason(&out, reason)
 		if p, ok := keptDroppedReason(ev.result.Recovery.Dropped); ok {
@@ -878,6 +898,26 @@ func (s *Service) recoveryTimeline(ev clusterEvidence, summary viewmodel.BackupS
 	out.Markers = recoveryMarkers(ev.result.Backups, rows)
 	out.EdgeAdvice = edgeAdvice(out.Reasons, facts)
 	return out
+}
+
+// hibernatedReason is why the newest restore points of a hibernated
+// Cluster are uncertain, and why no check is offered.
+func hibernatedReason() viewmodel.Phrase {
+	return say("recovery.reason.archiverHibernated", "the Cluster is hibernated: whether the WAL written before it reached the repository is not confirmed, so the newest restore points are uncertain", nil)
+}
+
+// hibernatedFailedReason is the second reason of a Cluster hibernated
+// while ContinuousArchiving was False: its last archive attempt failed,
+// so the WAL after the newest segment the repository holds may be only on
+// its volumes.
+func hibernatedFailedReason(since *time.Time) viewmodel.Phrase {
+	text := "its last archive attempt failed (ContinuousArchiving False"
+	var params map[string]string
+	if since != nil {
+		text += " since " + since.UTC().Format(time.RFC3339)
+		params = map[string]string{"sinceAt": rfc3339(*since)}
+	}
+	return say("recovery.reason.archivingFailedHibernated", text+"): WAL written before it was hibernated may not be in the repository, only on its volumes", params)
 }
 
 // edgeAdviceOf is the one reason-to-advice map behind the SPA's hint at
@@ -897,6 +937,7 @@ var edgeAdviceOf = map[string]string{
 	"recovery.reason.archiverUnread":                       viewmodel.EdgeAdviceNone,
 	"recovery.reason.liveTimelineNotArchivedPrimaryUnread": viewmodel.EdgeAdviceNone,
 	"recovery.reason.archivingFailedPrimaryUnread":         viewmodel.EdgeAdviceNone,
+	"recovery.reason.archivingFailedHibernated":            viewmodel.EdgeAdviceNone,
 	"recovery.reason.archivingFailing":                     viewmodel.EdgeAdviceArchiver,
 	"recovery.reason.archiveBacklog":                       viewmodel.EdgeAdviceArchiver,
 	"recovery.reason.failedRecently":                       viewmodel.EdgeAdviceArchiver,
@@ -1077,6 +1118,30 @@ type timelineInput struct {
 	// it is not in the repository (gone).
 	backupIDs   map[string]bool
 	backupsDone bool
+	// retainedFor is a pgBackRest time-based full retention
+	// (repo-retention-full-type=time, in days) as the snapshot reports it;
+	// 0 when the policy is not time-based or not reported. expire keeps
+	// the newest full at or before its run minus it, so the first restore
+	// point kept is bounded by the clock, not by the listing (retainedFor).
+	retainedFor time.Duration
+}
+
+// maxRetainedDays bounds a reported retention in days so that it stays a
+// time.Duration (about 292 years): a longer one expires nothing either.
+const maxRetainedDays = 100_000
+
+// retainedFor is the snapshot's pgBackRest time-based full retention; 0
+// when it is not one (count-based, unset, or Barman, whose summary carries
+// no policy window).
+func retainedFor(snapshot *evidencev1alpha1.RepositoryEvidenceSnapshot) time.Duration {
+	if snapshot == nil || snapshot.Details.Unknown() || snapshot.Details.PGBackRest == nil {
+		return 0
+	}
+	r := snapshot.Details.PGBackRest.Retention
+	if r == nil || !r.Configured || r.FullType != evidencev1alpha1.RetentionFullTime || r.Full == nil || *r.Full < 1 {
+		return 0
+	}
+	return time.Duration(min(*r.Full, maxRetainedDays)) * 24 * time.Hour
 }
 
 // gone reports a path's backup that the repository's backup collection,
@@ -1681,9 +1746,44 @@ func purgeBand(in timelineInput, spans []interval, first, last time.Time) time.D
 		}
 		return band
 	}
-	only := oldestOnly(anchors, first)
-	if only <= 0 || band >= window {
+	if band >= window {
 		return band
+	}
+	if in.retainedFor > 0 {
+		// The policy says where the window's start is now, whatever the
+		// listing still holds (round 16, PG P3-1): expire, run at a
+		// backup's end, keeps the newest full at or before that end minus
+		// the retention, so at or before now minus it. Past the read, that
+		// full may be one the snapshot does not list.
+		reach := in.facts.now.Add(-in.retainedFor)
+		if read != nil && reach.After(*read) {
+			return window
+		}
+		base, ok := newestAnchor(anchors, &reach)
+		if !ok || !base.After(first) {
+			return band
+		}
+		kept, ok := drawnFrom(spans, base)
+		if !ok {
+			return window
+		}
+		return min(max(band, kept.Sub(first)), window)
+	}
+	// The reach bound below assumes the oldest listed anchor was still
+	// needed when the paths were read. Retention may have stopped (pgBackRest
+	// expires only at the end of a backup, Barman's enforcement may fail),
+	// leaving obsolete backups listed; then the policy's window may have
+	// passed every listed backup at the read, and one backup taken since
+	// replaces them all (round 16, PG P3-1). Nothing bounds that with a
+	// lone listed anchor, or when the newest one had aged past the span
+	// the listed ones cover (newest - first) by the read: backups had
+	// stopped for longer than the retention the listing reflects.
+	only := oldestOnly(anchors, first)
+	if only <= 0 {
+		return window
+	}
+	if newest, ok := newestAnchor(anchors, nil); ok && read != nil && newest.Before(read.Add(-newest.Sub(first))) {
+		return window
 	}
 	// Two Adds: each duration is at most the window or a saturated Sub,
 	// which a time adds without overflow.
@@ -2327,8 +2427,14 @@ func timelineVerdict(out *viewmodel.RecoveryTimeline, in timelineInput, f timeli
 		// unread, whose "until the primary is read again" waits on no
 		// running instance (round 15, CNPG P3-2): the archiving fact
 		// still says ContinuousArchiving False.
+		// Hibernated after archiving failed, the last attempt is known to
+		// have failed: said beside it, at warning (round 16, PG P3-2).
 		out.State = string(evidencev1alpha1.Unknown)
-		setReason(out, say("recovery.reason.archiverHibernated", "the Cluster is hibernated: whether the WAL written before it reached the repository is not confirmed, so the newest restore points are uncertain", nil))
+		setReason(out, hibernatedReason())
+		if f.failing {
+			out.State = warning
+			addReason(out, hibernatedFailedReason(in.facts.failingSince))
+		}
 	case f.failing && f.primaryUnread:
 		// ContinuousArchiving False with the primary unread (fenced after
 		// a failover to investigate, unreachable): nothing archives that

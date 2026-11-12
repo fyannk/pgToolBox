@@ -1921,6 +1921,19 @@ spec:
                 description: The generation the status was computed from.
                 format: int64
                 type: integer
+              publishedExposureKinds:
+                description: |-
+                  The exposure kinds (Route, HTTPRoute) the operator published for
+                  this console and has not seen gone since: where it is later refused
+                  one of them, it reports what may remain of it.
+                items:
+                  enum:
+                  - Route
+                  - HTTPRoute
+                  type: string
+                maxItems: 2
+                type: array
+                x-kubernetes-list-type: set
               url:
                 description: Where the console is reached.
                 maxLength: 512

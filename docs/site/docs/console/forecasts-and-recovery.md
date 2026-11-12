@@ -256,7 +256,7 @@ read of the Cluster first, on the evidence and the reported basis alike, then
 from one list of reasons:
 
 - when no primary runs or none was read (the Cluster is hibernated, the
-  current primary is fenced or unreachable; `archiverHibernated`,
+  current primary is fenced, restarting or unreachable; `archiverHibernated`,
   `archiverUnread`, `liveTimelineNotArchivedPrimaryUnread`,
   `archivingFailedPrimaryUnread`), it shows neither query, whatever else the
   reasons say;
@@ -296,7 +296,10 @@ window is split at that instant, and each span says what the archiver supports:
 
 The archiver is `status.currentPrimary` (the designated primary in a replica
 cluster). When that instance was not read, archiving is unknown: no other
-instance that reports itself primary stands in for it. A `last_archived_time`
+instance that reports itself primary stands in for it. A fenced or restarting
+instance answers `/pg/status` without reading PostgreSQL
+(`mightBeUnavailableMaskedError`): that answer counts as not read, and the
+sparklines show a gap. A `last_archived_time`
 later than the sweep that read it (an instance clock running ahead) is read as
 the sweep's time.
 
@@ -449,8 +452,13 @@ segments, so the bar and the answer always agree:
   unknown each time the next scan is a little late. Retention never removes the
   newest backup, so within a normal cycle the band also stops at the newest
   backup's first restore point, and a single backup has none. Past a missed
-  scan it keeps the elapsed band: a backup taken since, which the snapshot
-  cannot list, may have let retention remove the newest one listed;
+  scan a single backup's band is the whole window, and so is it when the newest
+  listed backup was older at the read than the listed span: retention may have
+  stopped (pgBackRest expires only at a backup's end), so the listed backups
+  may all be obsolete and a backup taken since the base. A pgBackRest time-based
+  full retention (`repo-retention-full-type=time`) bounds the band from the
+  clock instead: to the newest full at or before now minus the retention, or
+  the whole window once that passes the scan;
 - after a WAL archiving failure an instance reported (`lastFailedWALTime`, the
   newest over every instance read, so a former primary's failure survives a
   failover) in the day before the latest point, the day before the failure: WAL
@@ -522,9 +530,10 @@ segments, so the bar and the answer always agree:
   Cluster reports failed, with the condition's age (`False since ...`), not that
   archiving is failing now.
 
-  A hibernated Cluster says it is hibernated instead (`unknown`), with
-  ContinuousArchiving True or False: no instance runs to switch WAL on, and none
-  will be read again until it wakes up.
+  A hibernated Cluster says it is hibernated instead (`unknown`): no instance
+  runs to switch WAL on. With ContinuousArchiving False it adds that the last
+  attempt failed, with its time, at warning (`archivingFailedHibernated`): that
+  WAL may be only on the Cluster's volumes. A reported window says the same.
 
   When the live timeline is not known, an end that reached the repository
   before the promotion counts the same way. That WAL

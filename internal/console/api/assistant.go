@@ -63,16 +63,32 @@ type GrantInfo struct {
 // ErrNoSuchGrant is the grant manager's "not one of yours".
 var ErrNoSuchGrant = errors.New("no such grant")
 
+// ErrNotRecorded is the grant manager's "revoked on this replica, not yet
+// written for the others": answered 503, retry.
+var ErrNotRecorded = errors.New("the disconnection could not be recorded for every replica")
+
+// notRecorded is the answer to ErrNotRecorded: 503 with a Retry-After. The
+// revocation stays on the replica that answered (it refuses the grant, and
+// writes it with its next batch); a retry writes it again.
+func notRecorded() error {
+	return huma.ErrorWithHeaders(
+		huma.Error503ServiceUnavailable("the disconnection was not recorded for every console replica yet (the Kubernetes API server "+
+			"did not take the write); retry"),
+		http.Header{"Retry-After": {"2"}})
+}
+
 // GrantManager lists and revokes a person's grants (mcpoauth.Server,
 // adapted in internal/console/server).
 type GrantManager interface {
 	Grants(ctx context.Context, user string) []GrantInfo
 	// RevokeGrant returns ErrNoSuchGrant for a grant that is not the
-	// user's, or no longer stands.
+	// user's, or no longer stands; ErrNotRecorded when the revocation was
+	// made on this replica but could not be written for the others.
 	RevokeGrant(ctx context.Context, c auth.Client, user, id string) error
 	// DisconnectAll revokes every standing grant of the user and returns
-	// how many it revoked.
-	DisconnectAll(ctx context.Context, c auth.Client, user string) int
+	// how many it revoked; ErrNotRecorded, as RevokeGrant, when the
+	// revocations could not be written for every replica.
+	DisconnectAll(ctx context.Context, c auth.Client, user string) (int, error)
 }
 
 // AssistantSetup renders the setup snippets and the prompt pack for a
@@ -222,9 +238,10 @@ func registerAssistant(a huma.API, d Deps) {
 	huma.Register(a, huma.Operation{
 		OperationID: OpRevokeGrant, Method: http.MethodDelete, Path: "/api/" + Version + "/session/grants/{id}",
 		Summary: "Disconnect an assistant", Tags: []string{"session"},
-		Description:   "Revokes one of your grants: every replica refuses its tokens within about a second. Recorded as mcp.revoke.",
+		Description: "Revokes one of your grants: every replica refuses its tokens within about a second. Recorded as mcp.revoke. " +
+			"503 (with Retry-After) when the revocation could not be written for the other replicas: this one refuses the grant, retry.",
 		DefaultStatus: http.StatusNoContent,
-		Errors:        []int{http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+		Errors:        []int{http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound, http.StatusServiceUnavailable},
 	}, func(ctx context.Context, in *grantPath) (*struct{}, error) {
 		p, err := principal(ctx)
 		if err != nil {
@@ -234,8 +251,11 @@ func registerAssistant(a huma.API, d Deps) {
 			return nil, notServed()
 		}
 		if err := d.Grants.RevokeGrant(ctx, clientOf(ctx, d), p.User.Name, in.ID); err != nil {
-			if errors.Is(err, ErrNoSuchGrant) {
+			switch {
+			case errors.Is(err, ErrNoSuchGrant):
 				return nil, huma.Error404NotFound("no such grant of yours")
+			case errors.Is(err, ErrNotRecorded):
+				return nil, notRecorded()
 			}
 			return nil, err
 		}
@@ -245,9 +265,10 @@ func registerAssistant(a huma.API, d Deps) {
 	huma.Register(a, huma.Operation{
 		OperationID: OpRevokeAllGrants, Method: http.MethodDelete, Path: "/api/" + Version + "/session/grants",
 		Summary: "Disconnect every assistant", Tags: []string{"session"},
-		Description:   "Revokes all your grants on this console: every replica refuses their tokens within about a second. Each is recorded as mcp.revoke. Your browser session is untouched (sign out with the disconnect option to end both).",
+		Description: "Revokes all your grants on this console: every replica refuses their tokens within about a second. Each is recorded as mcp.revoke. Your browser session is untouched (sign out with the disconnect option to end both). " +
+			"503 (with Retry-After) when the revocations could not be written for the other replicas: this one refuses the grants, retry.",
 		DefaultStatus: http.StatusNoContent,
-		Errors:        []int{http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+		Errors:        []int{http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound, http.StatusServiceUnavailable},
 	}, func(ctx context.Context, _ *struct{}) (*struct{}, error) {
 		p, err := principal(ctx)
 		if err != nil {
@@ -256,7 +277,12 @@ func registerAssistant(a huma.API, d Deps) {
 		if d.Grants == nil {
 			return nil, notServed()
 		}
-		d.Grants.DisconnectAll(ctx, clientOf(ctx, d), p.User.Name)
+		if _, err := d.Grants.DisconnectAll(ctx, clientOf(ctx, d), p.User.Name); err != nil {
+			if errors.Is(err, ErrNotRecorded) {
+				return nil, notRecorded()
+			}
+			return nil, err
+		}
 		return nil, nil
 	})
 

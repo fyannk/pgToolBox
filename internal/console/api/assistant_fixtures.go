@@ -75,8 +75,8 @@ func (f FixtureGrants) RevokeGrant(ctx context.Context, _ auth.Client, _, id str
 }
 
 // DisconnectAll implements GrantManager.
-func (f FixtureGrants) DisconnectAll(ctx context.Context, _ auth.Client, user string) int {
-	return len(f.Grants(ctx, user))
+func (f FixtureGrants) DisconnectAll(ctx context.Context, _ auth.Client, user string) (int, error) {
+	return len(f.Grants(ctx, user)), nil
 }
 
 type assistantFixtureCase struct {

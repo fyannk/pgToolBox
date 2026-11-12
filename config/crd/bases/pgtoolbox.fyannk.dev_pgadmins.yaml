@@ -1251,6 +1251,19 @@ spec:
                 description: The pgAdmin version the last registration Job reported.
                 maxLength: 32
                 type: string
+              publishedExposureKinds:
+                description: |-
+                  The exposure kinds (Route, HTTPRoute) the operator published for
+                  this PgAdmin and has not seen gone since: where it is later refused
+                  one of them, it reports what may remain of it.
+                items:
+                  enum:
+                  - Route
+                  - HTTPRoute
+                  type: string
+                maxItems: 2
+                type: array
+                x-kubernetes-list-type: set
               registeredHash:
                 description: |-
                   The hash of the offered set the last successful registration

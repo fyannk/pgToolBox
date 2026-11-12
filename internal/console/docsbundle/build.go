@@ -36,10 +36,28 @@ type Source struct {
 }
 
 // Build turns the pages of one documentation version into the files of a
-// bundle, keyed by their path under the bundle directory: pages/<File> for
-// each page and index.bin. The output is a pure function of its input: the
-// same pages and version are always the same bytes.
+// bundle, keyed by their path under the bundle directory. There is one,
+// bundle.gz: a gzip archive of pages/<File> for each page and index.bin. The
+// output is a pure function of its input: the same pages and version are
+// always the same bytes. A bundle over MaxEmbeddedBytes compressed or
+// MaxBundleBytes decompressed is refused, the error naming the limit.
 func Build(version string, sources []Source) (map[string][]byte, error) {
+	files, err := buildFiles(version, sources)
+	if err != nil {
+		return nil, err
+	}
+	archive, decompressed, err := pack(files)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkBudget(len(archive), decompressed); err != nil {
+		return nil, err
+	}
+	return map[string][]byte{archiveName: archive}, nil
+}
+
+// buildFiles is Build before the archive: the files the archive holds.
+func buildFiles(version string, sources []Source) (map[string][]byte, error) {
 	if version == "" {
 		return nil, errors.New("docsbundle: version is empty")
 	}

@@ -164,37 +164,43 @@ fully use:
   namespace and each missing permission (`list,watch deployments.apps`).
   Restore the chart's RoleBinding, then restart the operator (`permissions`);
 - a namespace whose permission review fails: an error the API server still
-  returns after one retry (a 5xx, a timeout or throttling is retried once), or
-  no answer within 6 seconds per attempt. The log line names the namespace
-  and the error (`review-failed`). Tens of thousands of RoleBindings in one
-  namespace make its review slow; a
-  `count/rolebindings.rbac.authorization.k8s.io` ResourceQuota keeps it small.
+  returns after two retries (a 5xx, a timeout, throttling or a lost
+  connection: reset, refused, EOF, HTTP/2 GOAWAY), no answer within 6 seconds
+  per attempt and about 12 for the namespace, or a response over 4 MiB (one
+  Role bound many times to the operator). The log line names the namespace
+  and the error (`review-failed`). Such a namespace is reviewed again every
+  minute; once it grants every permission, the operator logs why and exits 1,
+  and the restart watches it. The alert below is the signal meanwhile.
 
 The check is one SelfSubjectRulesReview per namespace, concurrent, each with
-its own deadline inside the start-up deadline, so one slow namespace is left
-out alone while the others start. Where the cluster's authorizer cannot list
-its rules (a webhook authorizer), each permission the review does not show is
-asked again with a SelfSubjectAccessReview, four at a time per namespace. It
-asks for exactly the namespaced rules of the manager role the operator ships
-with (the generated role, embedded in the binary), plus `list` and `watch` on
-every kind its informers hold, with the RBAC authorizer's matching rules (a
-Role that grants `pgadmins/*` grants no subresource: RBAC reads it literally).
-A namespace left out is not reconciled, and the others are unaffected. If the RBAC of a kept namespace
-changes after the start so that an informer can no longer sync, the
-operator's exit error carries a hint naming the watched namespaces to check.
+its own deadline and response limit inside the start-up deadline, so one slow
+or oversized namespace is left out alone. Where the authorizer cannot list
+its rules (a webhook), each permission the review does not show is asked
+with a SelfSubjectAccessReview, four at a time per namespace. It asks for the
+namespaced rules of the manager role embedded in the binary, plus `list` and
+`watch` on every kind its informers hold, with RBAC's matching rules
+(`pgadmins/*` grants no subresource). If the RBAC of a kept namespace changes
+after the start so that an informer can no longer sync, the exit error names
+the watched namespaces to check.
+
+The informers keep each object's annotations and labels in memory. In each
+watched namespace, `count/` ResourceQuotas on the kinds the operator caches
+(`count/pgadmins.pgtoolbox.fyannk.dev`, `count/deployments.apps`,
+`count/secrets` and so on) bound what one tenant can make it hold. The
+operator sets its Go memory limit to 90% of its container's limit.
 
 A namespace left out keeps the status its objects had, which nobody updates
 any more, possibly `Ready=True`. Two signals say so:
 
-- **On the objects**, best effort, once at start: in a namespace left out for
+- **On the objects**, best effort, once the replica is elected leader: in a namespace left out for
   its permissions, where the review shows the operator may still list the
   kind and patch its status, each `PgAdmin`, `PgToolBoxConsole` and
   `EvidenceAgent` turns `Ready=Unknown`, reason `NamespaceNotWatched`, its
   message naming that namespace and the permissions missing there; where it
   may create events, a Warning Event of the same reason goes with it (on the
   transition, or at every start when the status cannot be written). These
-  writes bypass the cache, each is bounded to 5 seconds, they run beside the
-  start (never in its deadline), and a refused one is logged, not retried. In
+  writes bypass the cache, are bounded to 5 seconds each, and a refused one is
+  logged, not retried. In
   a namespace whose permissions are unknown (`clusters-unlistable`,
   `review-failed`) nothing is attempted. Once the namespace is watched again,
   the next reconciliation computes `Ready` as usual.
@@ -226,13 +232,13 @@ published before may remain and must be deleted by hand. It never says the
 exposure is gone. On a `PgToolBoxConsole` that publishes nothing else,
 `ExposureConfined` is then `False` (`ExposureOpen`) for one found still there,
 and `Unknown` (`ExposureOpen`) for one the operator may not read either: it may
-be gone. A refused read is reported only when the object's history says one
-may have been published (its spec requests that kind, or an earlier status
-observed a Route or HTTPRoute or already reported one); a `PgAdmin` or console
-that was only ever `clusterIP` or Ingress gets no such sentence. If the Route
-or Gateway API itself is removed while the operator runs, nothing of it can
-remain and the reconciliation carries on (restart the operator to read the new
-API set).
+be gone. A refused read is reported only when one may have been published:
+the spec requests that kind, or `status.publishedExposureKinds` records that
+the operator published one and has not seen it gone since. A `PgAdmin` or
+console that was only ever `clusterIP` or Ingress gets no such sentence. An
+API served at start that answers "no such kind" later (an aggregated API
+restarting) fails the reconciliation, which is retried; restart the operator
+after removing the Route or Gateway API.
 
 If no listed namespace is left, the operator does not start; nor does
 it when the API server refuses its credentials (401) at start, which is retried

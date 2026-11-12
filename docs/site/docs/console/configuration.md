@@ -251,10 +251,21 @@ replica, and is dropped. So a replica cut off from the API server while a grant
 was revoked, and the revocation pruned 10 minutes later, does not bring the
 grant back when it reconnects, nor does one that missed a take-over. A grant a
 replica recorded itself is kept while its own write is on the way, for at most 8
-minutes; a revocation it made is kept until the ConfigMap holds it. A replica cut
+minutes; a revocation it made is kept until the ConfigMap holds it, however
+long that takes, past its own expiry too. A replica cut
 off longer than that loses the grants it recorded meanwhile (their assistants
 connect again), and it refuses every grant from 30 seconds into the outage
-anyway.
+anyway. A ConfigMap deleted and recreated (a new UID) resets the grants, but
+every replica writes the revocations it knows into the new one, so a grant
+still recorded on another replica does not come back unrevoked.
+
+A ConfigMap older than the one a replica last merged (a watch event still
+queued) is not merged. Should the API server's revision go back (an etcd
+restore that did not bump it), two reads in a row older than what a replica
+merged are taken as the ConfigMap, logged once: the replicas then read and write
+again. A write still conflicting after five re-reads counts as a failure
+(`pgtoolbox_console_shared_state_write_exhausted_total`): the replica is in the
+failing mode, and refuses MCP grants 30 seconds later, until a write lands.
 
 Replicas whose clocks disagree still converge: a sign-out's
 recording time is kept as written, and a replica that finds it more than five

@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 	"time"
@@ -265,36 +266,83 @@ func (s *Server) Grants(_ context.Context, user string) []GrantInfo {
 // ErrNoSuchGrant means no standing grant of this person has that ID.
 var ErrNoSuchGrant = errors.New("no such grant")
 
-// RevokeGrant revokes one of the person's grants: every replica refuses
-// its tokens within about a second.
+// ErrNotRecorded means a revocation was made on this replica but could not
+// be written to the shared state: this replica refuses the grant, the
+// others may not until it is written (the next batch tries again). The
+// person is told to retry.
+var ErrNotRecorded = errors.New("the disconnection could not be recorded for every replica; retry")
+
+// RevokeGrant revokes one of the person's grants, written through to the
+// shared state before it returns nil: every replica refuses its tokens
+// within about a second. ErrNotRecorded when the write cannot be made (the
+// revocation stays on this replica, and is written with its next batch).
 func (s *Server) RevokeGrant(ctx context.Context, c auth.Client, user, id string) error {
 	g, ok := s.o.Store.Grant(id)
-	if !ok || !slices.Contains(s.userKeys(user), g.UserHash) || !g.Revoked.IsZero() {
+	if !ok || !slices.Contains(s.userKeys(user), g.UserHash) {
 		return ErrNoSuchGrant
 	}
-	now := s.o.Now().UTC()
-	s.o.Store.RevokeGrant(id, g.UserHash, now, g.Expiry)
-	requests.WithLabelValues("revoke", "ok").Inc()
-	s.audit.Record(ctx, c, auth.AuditMCPRevoke, "user", user, "grant", id, "client", g.Client)
+	if g.Revoked.IsZero() {
+		now := s.o.Now().UTC()
+		s.o.Store.RevokeGrant(id, g.UserHash, now, g.Expiry)
+		requests.WithLabelValues("revoke", "ok").Inc()
+		s.audit.Record(ctx, c, auth.AuditMCPRevoke, "user", user, "grant", id, "client", g.Client)
+	} else if !slices.Contains(s.o.Store.UnwrittenRevocationsOf(g.UserHash), id) {
+		// Revoked, and written: nothing left of it to disconnect.
+		return ErrNoSuchGrant
+	}
+	// A retry after ErrNotRecorded finds the grant revoked here, not
+	// written yet: it writes again.
+	if err := s.o.Store.WriteRevocations(ctx, id); err != nil {
+		requests.WithLabelValues("revoke", "unrecorded").Inc()
+		return fmt.Errorf("%w: %w", ErrNotRecorded, err)
+	}
 	return nil
 }
 
-// DisconnectAll revokes every standing grant of the person and returns
-// how many ("sign out and disconnect my assistants", or the session
-// page's "disconnect all").
-func (s *Server) DisconnectAll(ctx context.Context, c auth.Client, user string) int {
-	return s.disconnectAll(ctx, c, user)
+// DisconnectAll revokes every standing grant of the person, written
+// through to the shared state, and returns how many ("disconnect all" on
+// the session page). ErrNotRecorded as RevokeGrant.
+func (s *Server) DisconnectAll(ctx context.Context, c auth.Client, user string) (int, error) {
+	ids := s.revokeAll(ctx, c, user)
+	n := len(ids)
+	// A retry after ErrNotRecorded writes again what the first attempt
+	// revoked here.
+	for _, key := range s.userKeys(user) {
+		ids = append(ids, s.o.Store.UnwrittenRevocationsOf(key)...)
+	}
+	slices.Sort(ids)
+	ids = slices.Compact(ids)
+	if err := s.o.Store.WriteRevocations(ctx, ids...); err != nil {
+		requests.WithLabelValues("revoke", "unrecorded").Inc()
+		return n, fmt.Errorf("%w: %w", ErrNotRecorded, err)
+	}
+	return n, nil
 }
 
+// disconnectAll is DisconnectAll at a sign-out that asked to disconnect
+// the person's assistants: the sign-out goes on whatever the write's
+// outcome; one not made is logged, and written with the next batch.
 func (s *Server) disconnectAll(ctx context.Context, c auth.Client, user string) int {
+	n, err := s.DisconnectAll(ctx, c, user)
+	if err != nil {
+		s.o.Log.WarnContext(ctx, "MCP: the disconnection at a sign-out could not be written to the shared state yet; "+
+			"this replica refuses the grants, the others once its next write lands", slog.Int("grants", n))
+	}
+	return n
+}
+
+// revokeAll revokes the person's standing grants on this replica and
+// returns their IDs.
+func (s *Server) revokeAll(ctx context.Context, c auth.Client, user string) []string {
 	now := s.o.Now().UTC()
-	n := 0
+	var all []string
 	for _, key := range s.userKeys(user) {
-		for _, id := range s.o.Store.RevokeGrantsOf(key, now) {
-			n++
+		ids := s.o.Store.RevokeGrantsOf(key, now)
+		for _, id := range ids {
 			requests.WithLabelValues("revoke", "ok").Inc()
 			s.audit.Record(ctx, c, auth.AuditMCPRevoke, "user", user, "grant", id, "reason", "disconnect all")
 		}
+		all = append(all, ids...)
 	}
-	return n
+	return all
 }

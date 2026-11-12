@@ -46,6 +46,10 @@ var (
 		Name: "pgtoolbox_console_shared_state_foreign_documents",
 		Help: "1 for each document of the state ConfigMap this replica leaves as it is (neither merged nor rewritten): of a format version newer than it reads (a newer console wrote it: a rolling upgrade, or a rollback), or, for grants.json, unreadable (MCP grants are refused until it is fixed). A newer document is taken over once no console of another version has written the ConfigMap for 30 minutes (after a rollback); deleting the key recovers at once, losing what it holds. Older versions are read and rewritten at this one.",
 	}, []string{"document"})
+	sharedExhausted = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "pgtoolbox_console_shared_state_write_exhausted_total",
+		Help: "Writes of the state ConfigMap that still conflicted after 5 re-reads: the replica then counts as failing (MCP grants usable for 30 s more). Rising steadily: the ConfigMap is rewritten faster than this replica can merge, or its resourceVersion went back (an etcd restore).",
+	})
 	signOutsHeld = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "pgtoolbox_console_shared_state_signouts",
 		Help: "Entries of the sessions document against each of its bounds: subject (the most one person holds, of 32), unnamed (the sessions that name nobody, of 128), total (of 1536).",
@@ -53,5 +57,5 @@ var (
 )
 
 func init() {
-	crmetrics.Registry.MustRegister(sharedWrites, sharedMode, sharedBytes, signOutsRefused, sharedDropped, sharedForeign, signOutsHeld)
+	crmetrics.Registry.MustRegister(sharedWrites, sharedMode, sharedBytes, signOutsRefused, sharedDropped, sharedForeign, signOutsHeld, sharedExhausted)
 }

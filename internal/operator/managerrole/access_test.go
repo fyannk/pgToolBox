@@ -17,9 +17,17 @@ package managerrole
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"os"
 	"slices"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -324,7 +332,7 @@ func TestPermittedNamespacesOneHangs(t *testing.T) {
 			t.Errorf("team-stuck's error = %v, want its deadline", review.Unreviewed[0].Err)
 		}
 		if calls := c.callsIn("team-stuck"); calls != 2 {
-			t.Errorf("team-stuck reviewed %d times, want 2 (no answer in time is retried once)", calls)
+			t.Errorf("team-stuck reviewed %d times, want 2 (no answer in time is retried within the namespace's budget)", calls)
 		}
 		if elapsed := time.Since(start); elapsed > 2*time.Second {
 			t.Errorf("the check took %s; each attempt is bounded by its deadline", elapsed)
@@ -332,9 +340,10 @@ func TestPermittedNamespacesOneHangs(t *testing.T) {
 	}
 }
 
-// TestPermittedNamespacesTransientRetried: round 15, GO plan. A 5xx (or a
-// throttled request) is retried once: one failure then an answer keeps the
-// namespace; two failures leave it out, alone. A permanent error is not
+// TestPermittedNamespacesTransientRetried: round 15, GO plan, and round 16,
+// K8S P2-2. A 5xx, a throttled request or a lost connection is retried
+// twice: up to two failures then an answer keep the namespace; three leave
+// it out, alone. A permanent error, or a response too large, is not
 // retried.
 func TestPermittedNamespacesTransientRetried(t *testing.T) {
 	required := []Permission{{Group: "apps", Resource: "deployments", Verbs: []string{"list"}}}
@@ -349,7 +358,17 @@ func TestPermittedNamespacesTransientRetried(t *testing.T) {
 		{"one 5xx then an answer", apierrors.NewInternalError(errors.New("etcd leader changed")), 1, []string{"team-a", "team-flaky"}, 2},
 		{"one 503 then an answer", apierrors.NewServiceUnavailable("apiserver shutting down"), 1, []string{"team-a", "team-flaky"}, 2},
 		{"one 429 then an answer", apierrors.NewTooManyRequests("slow down", 1), 1, []string{"team-a", "team-flaky"}, 2},
-		{"two 5xx", apierrors.NewInternalError(errors.New("etcd down")), 2, []string{"team-a"}, 2},
+		{"two 5xx then an answer", apierrors.NewInternalError(errors.New("etcd down")), 2, []string{"team-a", "team-flaky"}, 3},
+		{"three 5xx", apierrors.NewInternalError(errors.New("etcd down")), 3, []string{"team-a"}, 3},
+		// Round 16, K8S P2-2: the connection lost by an API server
+		// restarting; client-go retries no POST.
+		{"one connection reset then an answer", &url.Error{Op: "Post", URL: "https://api/x", Err: &net.OpError{Op: "read", Net: "tcp", Err: os.NewSyscallError("read", syscall.ECONNRESET)}}, 1, []string{"team-a", "team-flaky"}, 2},
+		{"one connection refused then an answer", &url.Error{Op: "Post", URL: "https://api/x", Err: &net.OpError{Op: "dial", Net: "tcp", Err: os.NewSyscallError("connect", syscall.ECONNREFUSED)}}, 1, []string{"team-a", "team-flaky"}, 2},
+		{"one EOF then an answer", &url.Error{Op: "Post", URL: "https://api/x", Err: io.EOF}, 1, []string{"team-a", "team-flaky"}, 2},
+		{"one body cut short then an answer", fmt.Errorf("unexpected error when reading response body. Please retry. Original error: %w", io.ErrUnexpectedEOF), 1, []string{"team-a", "team-flaky"}, 2},
+		{"one GOAWAY then an answer", &url.Error{Op: "Post", URL: "https://api/x", Err: errors.New("http2: server sent GOAWAY and closed the connection; LastStreamID=1, ErrCode=NO_ERROR")}, 1, []string{"team-a", "team-flaky"}, 2},
+		{"one network timeout then an answer", &url.Error{Op: "Post", URL: "https://api/x", Err: timeoutError{}}, 1, []string{"team-a", "team-flaky"}, 2},
+		{"a response too large", fmt.Errorf("unexpected error when reading response body: %w", ErrReviewTooLarge), 1, []string{"team-a"}, 1},
 		{"a permanent error", apierrors.NewForbidden(authorizationv1.Resource("selfsubjectrulesreviews"), "", errors.New("no")), 1, []string{"team-a"}, 1},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -367,6 +386,65 @@ func TestPermittedNamespacesTransientRetried(t *testing.T) {
 		})
 	}
 }
+
+type timeoutError struct{}
+
+func (timeoutError) Error() string   { return "i/o timeout" }
+func (timeoutError) Timeout() bool   { return true }
+func (timeoutError) Temporary() bool { return true }
+
+// TestLimitReviewResponses: round 16, K8S P2-1. An access review's
+// response is read up to ReviewResponseLimit, never past it, whatever
+// Content-Length says; other requests pass unchanged.
+func TestLimitReviewResponses(t *testing.T) {
+	const reviews = "/apis/authorization.k8s.io/v1/selfsubjectrulesreviews"
+	for _, tt := range []struct {
+		name          string
+		method, path  string
+		size          int
+		contentLength bool
+		wantErr       bool
+	}{
+		{"a small review", http.MethodPost, reviews, 1024, false, false},
+		{"a review at the limit", http.MethodPost, reviews, ReviewResponseLimit, false, false},
+		{"a review one byte past the limit", http.MethodPost, reviews, ReviewResponseLimit + 1, false, true},
+		{"a review declared too large", http.MethodPost, reviews, ReviewResponseLimit + 1, true, true},
+		{"a large list is not a review", http.MethodGet, "/apis/apps/v1/deployments", ReviewResponseLimit + 1, true, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			next := roundTripFunc(func(*http.Request) (*http.Response, error) {
+				resp := &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(strings.Repeat("x", tt.size))), ContentLength: -1}
+				if tt.contentLength {
+					resp.ContentLength = int64(tt.size)
+				}
+				return resp, nil
+			})
+			req := httptest.NewRequestWithContext(t.Context(), tt.method, "https://api"+tt.path, nil)
+			resp, err := LimitReviewResponses(next).RoundTrip(req)
+			var body []byte
+			if err == nil {
+				body, err = io.ReadAll(resp.Body)
+				_ = resp.Body.Close()
+			}
+			if tt.wantErr {
+				if !errors.Is(err, ErrReviewTooLarge) {
+					t.Fatalf("err = %v, want ErrReviewTooLarge", err)
+				}
+				if len(body) > ReviewResponseLimit {
+					t.Fatalf("read %d bytes, past the limit", len(body))
+				}
+				return
+			}
+			if err != nil || len(body) != tt.size {
+				t.Fatalf("read %d bytes, err %v; want %d", len(body), err, tt.size)
+			}
+		})
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
 
 // TestPermittedNamespacesCancelled: the caller's own context ending is an
 // error (the start-up step ran out), never a namespace left out.

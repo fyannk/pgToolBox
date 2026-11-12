@@ -574,8 +574,14 @@ func (s *Sweeper) getLimited(ctx context.Context, c *http.Client, url string, li
 // a gap, so the sparkline shows the hole instead of interpolating.
 func (s *Sweeper) pushRings(cs *clusterState, snap Snapshot, at time.Time) {
 	var primaryLSN string
+	// A report the instance manager answered without reading PostgreSQL
+	// (fenced, restarting: Reading.Masked) carries zeros it did not read:
+	// a gap in every series, never a 0 (round 16, CNPG P2-1).
+	read := func(inst Instance) bool {
+		return inst.State == viewmodel.StatusReadOK && inst.Reading != nil && !inst.Reading.Masked()
+	}
 	for _, inst := range snap.Instances {
-		if inst.State == viewmodel.StatusReadOK && inst.Reading != nil && inst.Reading.IsPrimary {
+		if read(inst) && inst.Reading.IsPrimary {
 			primaryLSN = inst.Reading.CurrentLSN
 		}
 	}
@@ -592,7 +598,7 @@ func (s *Sweeper) pushRings(cs *clusterState, snap Snapshot, at time.Time) {
 			}
 		}
 		var lag, ready, position, archived, timeline *float64
-		if inst.State == viewmodel.StatusReadOK && inst.Reading != nil {
+		if read(inst) {
 			if inst.Reading.IsPrimary {
 				if lsn, ok := parseLSN(inst.Reading.CurrentLSN); ok && lsn <= maxExactLSN {
 					v := float64(lsn)
@@ -631,7 +637,7 @@ func (s *Sweeper) pushRings(cs *clusterState, snap Snapshot, at time.Time) {
 		// "by then" reads the second, one that needs "not yet by then" the
 		// first (CNPG P3-4).
 		var readBy time.Time
-		if inst.State == viewmodel.StatusReadOK && inst.Reading != nil && !inst.readBy.IsZero() && !inst.readBy.Before(at) {
+		if read(inst) && !inst.readBy.IsZero() && !inst.readBy.Before(at) {
 			readBy = inst.readBy
 		}
 		rings[SeriesLagBytes].push(at, readBy, lag, s.opts.Retention)
