@@ -2067,6 +2067,12 @@ func (s *Store) watchOnce(ctx context.Context) (bool, error) {
 	defer w.Stop()
 	s.locked(func() {
 		s.watching = true
+		// A request to reopen the watch made before it opened (a write
+		// that landed between the read and the watch) is answered.
+		select {
+		case <-s.rewatch:
+		default:
+		}
 		s.setModeLocked(modeLive, "")
 		if s.gen != s.written {
 			// Written while not live (held revocations): write them now.
