@@ -165,12 +165,73 @@ func TestBackupCadence(t *testing.T) {
 	}
 }
 
+// TestBackupRecencyFailureAfterAQueuedSuccess (round 20, CNPG P3-3): B2
+// is created at 02:00 and waits behind B1, which completes at 02:10; B2
+// then fails at 02:30. CloudNativePG never sets stoppedAt on a failure,
+// so timing B2 at its creation hid it behind B1's success; its
+// completion stamp (SetAsFailed) shows the failure after it.
+func TestBackupRecencyFailureAfterAQueuedSuccess(t *testing.T) {
+	const uid = types.UID("5e1f0c2a-0000-4000-8000-000000000003")
+	t0 := now.Add(-3 * time.Hour)
+	cluster := &cnpgv1.Cluster{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "team-a", Name: "reborn", UID: uid, CreationTimestamp: metav1.NewTime(t0.Add(-24 * time.Hour))},
+		Spec: cnpgv1.ClusterSpec{Instances: 1, Plugins: []cnpgv1.PluginConfiguration{{
+			Name: "barman-cloud.cloudnative-pg.io", IsWALArchiver: new(true), Parameters: map[string]string{"barmanObjectName": "store"},
+		}}},
+		Status: cnpgv1.ClusterStatus{Phase: "Cluster in healthy state", Instances: 1, ReadyInstances: 1, CurrentPrimary: "reborn-1"},
+	}
+	owner := &metav1.OwnerReference{APIVersion: "postgresql.cnpg.io/v1", Kind: "Cluster", Name: "reborn", UID: uid}
+	for _, tt := range []struct {
+		name       string
+		failedAt   *time.Time
+		wantFailed bool
+	}{
+		{"failed after the success", new(t0.Add(30 * time.Minute)), true},
+		{"failed before the success", new(t0.Add(5 * time.Minute)), false},
+		{"no stamp: its creation, before the success", nil, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			b1 := completedBackup("b1", t0.Add(-time.Minute), t0.Add(10*time.Minute), owner)
+			b1.UID = "b1-uid"
+			b2 := &cnpgv1.Backup{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "team-a", Name: "b2", UID: "b2-uid", CreationTimestamp: metav1.NewTime(t0), OwnerReferences: []metav1.OwnerReference{*owner}},
+				Spec:       cnpgv1.BackupSpec{Cluster: cnpgv1.LocalObjectReference{Name: "reborn"}, Method: "plugin"},
+				Status:     cnpgv1.BackupStatus{Phase: cnpgv1.BackupPhaseFailed, Error: "boom"},
+			}
+			if tt.failedAt != nil {
+				b2.Status.ReconciliationTerminatedAt = new(metav1.NewTime(*tt.failedAt))
+			}
+			scheme, err := cache.NewScheme()
+			if err != nil {
+				t.Fatal(err)
+			}
+			builder := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cluster.DeepCopy(), b1, b2)
+			for _, index := range cache.Indexes() {
+				builder = builder.WithIndex(index.Object, index.Field, index.Func)
+			}
+			fc := &fakeCache{reader: builder.Build(), namespaces: []string{"team-a"}}
+			svc := New(Options{Cache: fc, Sweep: fakeSweep{snaps: sweepSnaps()}, Now: func() time.Time { return now }})
+			got, err := svc.Backups(context.Background(), "team-a", "reborn")
+			if err != nil {
+				t.Fatal(err)
+			}
+			r := got.Summary.BackupRecency
+			if failed := r.LastFailedAt != nil; failed != tt.wantFailed {
+				t.Fatalf("last failed %v, want a failure shown: %v", r.LastFailedAt, tt.wantFailed)
+			}
+			if tt.wantFailed && (!r.LastFailedAt.Equal(*tt.failedAt) || r.Health != viewmodel.HealthWarning) {
+				t.Errorf("failure at %v health %s, want %v warning", r.LastFailedAt, r.Health, *tt.failedAt)
+			}
+		})
+	}
+}
+
 // TestBackupRecencyReadsPlausibleTimes (round 19, CNPG P3-1): the
 // Overview's last backup and the timeline read a Backup's stop through
 // cnpgstatus.BackupTimesOf. A plugin's unset stop (1970) is not "last
 // completed 1970, overdue", a stop in the future is not a backup that
 // never ages (a false ok), and a Completed Backup with no plausible stop
-// is timed by the operator's completion stamp, attributed to that field.
+// is timed by CloudNativePG's completion stamp, attributed to that field.
 func TestBackupRecencyReadsPlausibleTimes(t *testing.T) {
 	const uid = types.UID("5e1f0c2a-0000-4000-8000-000000000002")
 	created := now.Add(-time.Hour)
@@ -192,7 +253,7 @@ func TestBackupRecencyReadsPlausibleTimes(t *testing.T) {
 	}{
 		{"a plugin's unset stop is not 1970", time.Unix(0, 0), nil, nil, "Backup.status"},
 		{"a stop in the future is not a fresh backup", now.Add(1000 * 24 * time.Hour), nil, nil, "Backup.status"},
-		{"no plausible stop: the operator's completion stamp", time.Unix(0, 0), &stamp, &stamp, backupStampSource},
+		{"no plausible stop: CloudNativePG's completion stamp", time.Unix(0, 0), &stamp, &stamp, backupStampSource},
 		{"a plausible stop", now.Add(-20 * time.Minute), &stamp, new(now.Add(-20 * time.Minute)), "Backup.status"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -228,7 +289,7 @@ func TestBackupRecencyReadsPlausibleTimes(t *testing.T) {
 			if src := got.Summary.BackupRecency.Provenance.Source; src != tt.wantSource {
 				t.Errorf("provenance %q, want %q", src, tt.wantSource)
 			}
-			if detail := backupDetail(got.Summary.BackupRecency, now); (tt.wantSource == backupStampSource) != strings.Contains(detail, "operator's completion time") {
+			if detail := backupDetail(got.Summary.BackupRecency, now); (tt.wantSource == backupStampSource) != strings.Contains(detail, "CloudNativePG's completion stamp") {
 				t.Errorf("detail %q does not attribute the time to its source", detail)
 			}
 			facts, ok := svc.ClusterFacts(context.Background(), cache.ClusterKey{Namespace: "team-a", Name: "reborn"})
