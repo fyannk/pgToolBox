@@ -460,11 +460,16 @@ segments, so the bar and the answer always agree:
   stopped (pgBackRest expires only at a backup's end), so the listed backups
   may all be obsolete and a backup taken since the base. A pgBackRest time-based
   full retention (`repo-retention-full-type=time`) bounds the band from the
-  clock instead: to the newest full at or before now minus the retention, or
-  the whole window once that passes the scan. Under pgBackRest a count bounds
+  clock instead: to the newest full at or before the retention before the
+  latest `expire` of a backup since the scan (the latest completion stamp of
+  those backups, or now while one is still running or has no stamp), or the
+  whole window once that passes the scan. Under pgBackRest a count bounds
   it too, in or out of a refresh cycle: `expire` runs at the end of every
   backup, so the console counts the Cluster's `Backup` objects that ended since
-  the scan's start (each counted as a full, the worst case), and those still in
+  the scan's start (each counted as a full, the worst case; a completed one at
+  the later of its stop time and CloudNativePG's completion stamp, since the
+  pgBackRest plugin marks it completed only once `pgbackrest backup` and its
+  `expire` returned), and those still in
   progress that began after it (by their start, else when the operator started
   them, `status.reconciliationStartedAt`, since a queued backup waits after its
   creation, else their creation: a plugin backup reports no start until it
@@ -473,13 +478,17 @@ segments, so the bar and the answer always agree:
   (1970-01-01, which a plugin that leaves it unset gets, a time more than five
   minutes in the future, which a plugin sending milliseconds gets, or one
   before the backup's start or, alone, its creation) is read as no stop time.
-  Such a completed backup is then timed by the operator's completion stamp
-  (`status.reconciliationTerminatedAt`, written seconds after the backup
-  ended): one stamped before the scan ended before it. With no stamp either,
-  it is counted as one that could have ended at any time. A `Backup` restored
-  with its status (Velero) or migrated from another cluster carries start and
-  stop times older than the object itself; when they are coherent they are
-  kept, and the backup counts when it ended, not as one ended since. With
+  Such a completed backup is then timed by CloudNativePG's completion stamp
+  (`status.reconciliationTerminatedAt`, written by the instance manager, or
+  the operator for a volume snapshot, seconds after the backup ended): one
+  stamped before the scan ended before it. With no stamp either, it is
+  counted as one that could have ended at any time. A `Backup` restored with
+  its status (Velero) or migrated from another cluster carries start and stop
+  times older than the object itself; when they are coherent, and its
+  CloudNativePG stamps are as old (or absent), they are kept, and the backup
+  counts when it ended, not as one ended since. Tool times that old on a
+  `Backup` stamped at or after its creation are an instance clock running
+  behind, and are read as no times. With
   `repo-retention-full=K` (type `count`), L fulls listed and n backups since,
   the oldest L + n − K listed fulls may be gone with their chains, and the band
   runs to the first restore point of the next one; the whole window when that is
@@ -494,11 +503,14 @@ segments, so the bar and the answer always agree:
   `Backup` stopped earlier than the scan's start) lists more than K fulls, WAL
   drawn continuously from before the A-th newest backup of its type, or, under a
   time-based retention, fulls older than the newest one stopped before that
-  `expire`'s run minus the retention. The run is after the scan read the
-  listing, so when the newest listed backup ended within one refresh interval
-  before the scan, the run is taken as the latest of the scan's completion, the
-  console's fetch and that end; an older backup's `expire` ran at its end,
-  before the scan. The band then runs past what that
+  `expire`'s run minus the retention. That run is timed at the completion
+  stamp of the completed `Backup` whose run holds the newest listed end, by
+  which its `expire` had returned, so a healthy daily schedule keeps no band.
+  With no such stamp (a backup run outside CloudNativePG) the run may be after
+  the scan read the listing, so when the newest listed backup ended within one
+  refresh interval before the scan, the run is taken as the latest of the
+  scan's completion, the console's fetch and that end; an older backup's
+  `expire` ran at its end, before the scan. The band then runs past what that
   `expire` removes; a lowered retention looks the same until the next backup. A
   listing `expire` already made has none. When the `Backup` objects were not read, or the snapshot does not report
   the retention, any backup since the scan may have expired anything: the whole
