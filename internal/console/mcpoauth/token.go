@@ -157,6 +157,11 @@ func (s *Server) redeemCode(r *http.Request) (tokenResponse, grantBase, *tokenFa
 		refusal = invalidGrant("the PKCE code_verifier does not match the challenge")
 	case s.o.Sessions.Revoked(c.Subject, time.Unix(c.IssuedAt, 0), c.ID, c.Session):
 		refusal = &tokenFailure{http.StatusBadRequest, "invalid_grant", "the sign-in this code came from is revoked", "revoked"}
+	case s.o.Sessions.SignedOut(c.Session):
+		// The approval went with the session, as at consent (completeGrant):
+		// a code issued just before its session signed out buys no grant
+		// (round 22, security).
+		refusal = &tokenFailure{http.StatusBadRequest, "invalid_grant", "the console session this code was approved in signed out", "revoked"}
 	case s.o.Store.GrantRevoked(c.ID):
 		refusal = &tokenFailure{http.StatusBadRequest, "invalid_grant", "the code was already used; the grant it bought is revoked", "replayed"}
 	}
@@ -198,6 +203,19 @@ func (s *Server) redeemCode(r *http.Request) (tokenResponse, grantBase, *tokenFa
 	}
 	if err != nil {
 		return tokenResponse{}, c.grantBase, &tokenFailure{http.StatusInternalServerError, "server_error", "the grant could not be recorded", "error"}
+	}
+	// Written through before the first token (round 22, Go P2-1,
+	// security): every grant an assistant holds is then in the shared
+	// state, so a disconnection on any replica, which reads it, revokes
+	// it, even when this replica is cut off from the API server since.
+	// One that cannot be written is revoked here and buys no token; the
+	// client signs in again.
+	if err := s.o.Store.WriteGrant(r.Context(), c.ID); err != nil {
+		s.o.Store.RevokeGrant(c.ID, key, now, expiry)
+		return tokenResponse{}, c.grantBase, &tokenFailure{
+			http.StatusServiceUnavailable, "temporarily_unavailable",
+			"the grant could not be recorded for every console replica; start the connection again", "unrecorded",
+		}
 	}
 	if s.o.Store.GrantRevoked(c.ID) {
 		// A replay elsewhere revoked it while this redemption ran.

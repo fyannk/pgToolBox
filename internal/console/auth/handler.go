@@ -653,6 +653,7 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 		ErrorPage(w, http.StatusForbidden, "Sign-out can only be requested from this console's own pages.")
 		return
 	}
+	var page signedOutPage
 	if s, err := h.codec.ReadSession(r); err == nil {
 		user := ""
 		u, err := h.identity.Review(r.Context(), s.Token)
@@ -682,7 +683,9 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 		// no longer accepts disconnects nothing (the grants then fail on
 		// their own, carrying the same identity).
 		if hook := h.signOutHookFn(); hook != nil && user != "" && r.PostFormValue("disconnect") == "assistants" {
-			hook(r.Context(), ClientOf(r, h.cfg.TrustedProxy), user)
+			// The sign-out goes on; the page says when the disconnection
+			// is not confirmed (round 22, security).
+			page.AssistantsUncertain = hook(r.Context(), ClientOf(r, h.cfg.TrustedProxy), user) != nil
 		}
 		// The sign-out counts against the person sealed at sign-in, not
 		// against what the API server says now (nobody, once the token is
@@ -694,7 +697,7 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 	}
 	h.codec.ClearSession(w)
 	h.codec.clearLogin(w)
-	renderPage(w, http.StatusOK, "signed-out", "Signed out", signedOutPage{})
+	renderPage(w, http.StatusOK, "signed-out", "Signed out", page)
 }
 
 // Require authenticates every request it wraps: a sealed, unexpired,

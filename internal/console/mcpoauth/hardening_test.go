@@ -525,11 +525,11 @@ func TestSignOutDisconnects(t *testing.T) {
 	_, f, r := setup(t)
 	_, a := r.connect(t)
 	_, b := r.connect(t)
-	if n := f.signOut(context.Background(), auth.Client{}, "bob"); n != 0 {
-		t.Errorf("bob disconnected %d grants", n)
+	if err := f.signOut(context.Background(), auth.Client{}, "bob"); err != nil {
+		t.Errorf("bob's sign-out: %v", err)
 	}
-	if n := f.signOut(context.Background(), auth.Client{}, "alice"); n != 2 {
-		t.Errorf("alice disconnected %d grants, want 2", n)
+	if err := f.signOut(context.Background(), auth.Client{}, "alice"); err != nil {
+		t.Errorf("alice's sign-out: %v", err)
 	}
 	for _, tok := range []tokens{a, b} {
 		if _, err := r.authenticate(tok.Access); !errors.Is(err, auth.ErrBearerRevoked) {

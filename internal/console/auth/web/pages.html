@@ -84,6 +84,9 @@ working until you disconnect them, here or on the <a href="/assistants">Assistan
 {{else}}
 <h1>Signed out</h1>
 <p>You have been signed out of this console. Signing out of your identity provider, if you want to, is done there.</p>
+{{if .AssistantsUncertain}}<p role="alert"><strong>Your assistants may still be connected.</strong> The console could not confirm that
+their disconnection reached every replica. Sign in again and use Disconnect all on the <a href="/assistants">Assistants</a> page
+until it reports them disconnected.</p>{{end}}
 <p><a class="button-link" href="/auth/login">Sign in again</a></p>
 {{end}}
 {{end}}

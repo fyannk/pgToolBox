@@ -163,7 +163,7 @@ export const getRevokeAllGrantsUrl = () => {
 }
 
 /**
- * Revokes all your grants on this console: every replica refuses their tokens within about a second. Each is recorded as mcp.revoke. Your browser session is untouched (sign out with the disconnect option to end both). 503 (with Retry-After) when the revocations could not be written for the other replicas: this one refuses the grants, retry.
+ * Revokes all your grants on this console: every replica refuses their tokens within about a second. Each is recorded as mcp.revoke. Your browser session is untouched (sign out with the disconnect option to end both). 503 (with Retry-After), retry: of type urn:pgtoolbox:disconnection-unrecorded when the revocations could not be written for the other replicas (this one refuses the grants); of type urn:pgtoolbox:disconnection-unconfirmed when the shared state could not be read first (grants recorded on another replica may still be connected, none may be disconnected).
  * @summary Disconnect every assistant
  */
 export const revokeAllGrants = async ( options?: Parameters<typeof apiFetch>[1]): Promise<void> => {
@@ -338,7 +338,7 @@ export const getRevokeGrantUrl = (id: string,) => {
 }
 
 /**
- * Revokes one of your grants: every replica refuses its tokens within about a second. Recorded as mcp.revoke. 503 (with Retry-After) when the revocation could not be written for the other replicas: this one refuses the grant, retry.
+ * Revokes one of your grants: every replica refuses its tokens within about a second. Recorded as mcp.revoke. 503 (with Retry-After), retry: of type urn:pgtoolbox:disconnection-unrecorded when the revocation could not be written for the other replicas (this one refuses the grant); of type urn:pgtoolbox:disconnection-unconfirmed when this replica does not know the grant and could not read the shared state (nothing was disconnected).
  * @summary Disconnect an assistant
  */
 export const revokeGrant = async (id: string, options?: Parameters<typeof apiFetch>[1]): Promise<void> => {

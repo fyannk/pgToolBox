@@ -272,6 +272,34 @@ var ErrNoSuchGrant = errors.New("no such grant")
 // person is told to retry.
 var ErrNotRecorded = errors.New("the disconnection could not be recorded for every replica; retry")
 
+// ErrNotConfirmed means the shared state could not be read (or this
+// replica would not read it now: too many disconnections asked at once),
+// so the disconnection is not confirmed: grants recorded on another
+// replica may still be served, none may have been revoked. The person is
+// told so, and to retry. Some grants this replica knew may have been
+// revoked (and written) meanwhile.
+var ErrNotConfirmed = errors.New("the disconnection could not be confirmed: the shared state could not be read; retry")
+
+// errReadThrottled is a read of the shared state this replica refused to
+// make (readGrants).
+var errReadThrottled = errors.New("too many disconnections asked at once")
+
+// readGrants is the read of the shared index a disconnection makes,
+// charged to the person's bucket, then the replica's: nil once the index
+// holds the shared state as the API server answered it, ErrNotConfirmed
+// otherwise.
+func (s *Server) readGrants(ctx context.Context, user string) error {
+	if !s.subjectGrantReads.Allow(user) || !s.grantReads.Allow(processKey) {
+		requests.WithLabelValues("revoke", "throttled").Inc()
+		return fmt.Errorf("%w: %w", ErrNotConfirmed, errReadThrottled)
+	}
+	if err := s.o.Store.ReadGrants(ctx); err != nil {
+		requests.WithLabelValues("revoke", "unconfirmed").Inc()
+		return fmt.Errorf("%w: %w", ErrNotConfirmed, err)
+	}
+	return nil
+}
+
 // RevokeGrant revokes one of the person's grants, written through to the
 // shared state before it returns nil: every replica refuses its tokens
 // within about a second. ErrNotRecorded when the write cannot be made (the
@@ -283,13 +311,19 @@ var ErrNotRecorded = errors.New("the disconnection could not be recorded for eve
 // server still takes requests), and the page shows ErrNoSuchGrant as the
 // assistant disconnected. ErrNoSuchGrant is so an answer only once that
 // read shows no such grant of the person (or the ConfigMap is missing,
-// and every replica refuses every grant); a read that fails is
-// ErrNotRecorded (round 21, security P2-1).
+// and every replica refuses every grant); a read that fails, or is
+// refused (readGrants), is ErrNotConfirmed (round 21, security P2-1). An
+// ID that is no grant reference is ErrNoSuchGrant at once, with no read.
+// Every grant an assistant holds was written to the ConfigMap before its
+// first token (redeemCode), so the read shows every one there is.
 func (s *Server) RevokeGrant(ctx context.Context, c auth.Client, user, id string) error {
+	if !sharedstate.ValidGrantID(id) {
+		return ErrNoSuchGrant
+	}
 	g, ok := s.o.Store.Grant(id)
 	if !ok || !slices.Contains(s.userKeys(user), g.UserHash) {
-		if err := s.o.Store.ReadGrants(ctx); err != nil {
-			return s.written(ctx, err, 0)
+		if err := s.readGrants(ctx, user); err != nil {
+			return err
 		}
 		g, ok = s.o.Store.Grant(id)
 		if !ok || !slices.Contains(s.userKeys(user), g.UserHash) {
@@ -337,15 +371,19 @@ func (s *Server) written(ctx context.Context, err error, grants int) error {
 
 // DisconnectAll revokes every standing grant of the person, written
 // through to the shared state, and returns how many ("disconnect all" on
-// the session page). The ConfigMap is read first (ReadGrants), so that
+// the session page). The ConfigMap is read first (readGrants), so that
 // the grants recorded on another replica that this one's watch has not
 // delivered, or never will (a replica cut off from the API server still
-// takes requests), are revoked too. ErrNotRecorded as RevokeGrant, and
-// whenever that read fails: the grants it would have shown are not
-// revoked, whatever the write of the others does (round 21, security
-// P2-1). The ones this replica knows are revoked here either way.
+// takes requests), are revoked too: every grant an assistant holds was
+// written there before its first token (redeemCode), so nil means none
+// of the person's grants is served by any replica once each has merged
+// the revocations (about a second). ErrNotConfirmed whenever that read
+// fails or is refused: the grants it would have shown are not revoked,
+// whatever the write of the others does (round 21, security P2-1); the
+// ones this replica knows are revoked here either way. ErrNotRecorded,
+// as RevokeGrant, when the read worked and the write did not.
 func (s *Server) DisconnectAll(ctx context.Context, c auth.Client, user string) (int, error) {
-	read := s.o.Store.ReadGrants(ctx)
+	read := s.readGrants(ctx, user)
 	ids := s.revokeAll(ctx, c, user)
 	n := len(ids)
 	// A retry after ErrNotRecorded writes again what the first attempt
@@ -355,27 +393,36 @@ func (s *Server) DisconnectAll(ctx context.Context, c auth.Client, user string) 
 	}
 	slices.Sort(ids)
 	ids = slices.Compact(ids)
-	if len(ids) == 0 && read == nil {
-		// Nothing to revoke in the ConfigMap as the API server holds it.
-		return 0, nil
+	if len(ids) == 0 {
+		// Nothing to revoke in the ConfigMap as the API server holds it,
+		// or no answer.
+		return 0, read
 	}
-	err := s.o.Store.WriteRevocations(ctx, ids...)
-	if err == nil && read != nil {
-		err = read
+	err := s.written(ctx, s.o.Store.WriteRevocations(ctx, ids...), len(ids))
+	if read != nil {
+		return n, read
 	}
-	return n, s.written(ctx, err, len(ids))
+	return n, err
 }
 
 // disconnectAll is DisconnectAll at a sign-out that asked to disconnect
-// the person's assistants: the sign-out goes on whatever the write's
-// outcome; one not made is logged, and written with the next batch.
-func (s *Server) disconnectAll(ctx context.Context, c auth.Client, user string) int {
+// the person's assistants: the sign-out goes on whatever the outcome,
+// which the signed-out page shows (nil: disconnected everywhere). One not
+// confirmed or not written is logged; a revocation made here is written
+// with the next batch, but a grant recorded on another replica that this
+// one could not read is not revoked at all: the person is told to use
+// Disconnect all.
+func (s *Server) disconnectAll(ctx context.Context, c auth.Client, user string) error {
 	n, err := s.DisconnectAll(ctx, c, user)
-	if err != nil {
+	switch {
+	case errors.Is(err, ErrNotConfirmed):
+		s.o.Log.WarnContext(ctx, "MCP: the disconnection at a sign-out could not read the shared state; grants recorded on "+
+			"another replica may still be served, until the person disconnects them again", slog.Int("grants", n))
+	case err != nil:
 		s.o.Log.WarnContext(ctx, "MCP: the disconnection at a sign-out could not be written to the shared state yet; "+
-			"this replica refuses the grants, the others once its next write lands", slog.Int("grants", n))
+			"this replica refuses the grants it revoked, the others once its next write lands", slog.Int("grants", n))
 	}
-	return n
+	return err
 }
 
 // revokeAll revokes the person's standing grants on this replica and

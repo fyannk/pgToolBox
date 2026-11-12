@@ -139,8 +139,8 @@ func TestADisconnectionIsAcknowledgedOnlyOnceRecorded(t *testing.T) {
 	// A sign-out that disconnects goes on whatever the write's outcome.
 	_, d := r.connect(t)
 	store.setFail(true)
-	if n := f.signOut(ctx, auth.Client{}, "alice"); n != 1 {
-		t.Errorf("sign-out disconnected %d", n)
+	if err := f.signOut(ctx, auth.Client{}, "alice"); !errors.Is(err, ErrNotRecorded) {
+		t.Errorf("sign-out with the write failing: %v, want ErrNotRecorded (the page says so)", err)
 	}
 	if _, err := r.authenticate(d.Access); !errors.Is(err, auth.ErrBearerRevoked) {
 		t.Errorf("after the sign-out: %v", err)
@@ -191,14 +191,17 @@ func TestADisconnectionWhileTheConfigMapIsMissingIsDone(t *testing.T) {
 	}
 }
 
-// A replica that cannot read the shared state (a pod just started, or one
-// cut off from the API server while it still takes requests: /readyz does
-// not wait for it unless MCP OAuth is on) acknowledges no disconnection:
+// unknownGrant is a well-formed grant reference no replica recorded.
+const unknownGrant = "grant-0123456789abcdef0123456789abcdef"
+
+// A replica that cannot read the shared state (one cut off from the API
+// server while it still takes requests) acknowledges no disconnection:
 // "disconnect all" finds nothing to revoke there and a retried
 // disconnection finds no such grant, and both would read as done on the
 // session page (204, 404) while another replica serves the grants. Both
-// are ErrNotRecorded (503, retry) until a read of the ConfigMap answers
-// (round 18, security P3; round 21, security P2-1).
+// are ErrNotConfirmed (503, retry) until a read of the ConfigMap answers
+// (round 18, security P3; round 21, security P2-1; round 22, DBA: not
+// ErrNotRecorded, which says the replica revoked something).
 func TestAPendingReplicaAcknowledgesNoDisconnection(t *testing.T) {
 	c := &clock{now: t0}
 	f := newSessions(t, c, secretA)
@@ -209,11 +212,14 @@ func TestAPendingReplicaAcknowledgesNoDisconnection(t *testing.T) {
 	pending := sharedstate.New(sharedstate.Options{Client: cs.CoreV1().ConfigMaps("team-a"), Name: "console-state", Now: c.Now})
 	r := newReplica(t, f, pending, c, nil)
 	ctx := context.Background()
-	if n, err := r.s.DisconnectAll(ctx, auth.Client{}, "alice"); n != 0 || !errors.Is(err, ErrNotRecorded) {
-		t.Errorf("disconnect all on a replica that read nothing: %d, %v, want ErrNotRecorded", n, err)
+	if n, err := r.s.DisconnectAll(ctx, auth.Client{}, "alice"); n != 0 || !errors.Is(err, ErrNotConfirmed) {
+		t.Errorf("disconnect all on a replica that read nothing: %d, %v, want ErrNotConfirmed", n, err)
 	}
-	if err := r.s.RevokeGrant(ctx, auth.Client{}, "alice", "grant-0123"); !errors.Is(err, ErrNotRecorded) {
-		t.Errorf("a disconnection on a replica that read nothing: %v, want ErrNotRecorded", err)
+	if err := r.s.RevokeGrant(ctx, auth.Client{}, "alice", unknownGrant); !errors.Is(err, ErrNotConfirmed) {
+		t.Errorf("a disconnection on a replica that read nothing: %v, want ErrNotConfirmed", err)
+	}
+	if err := r.s.RevokeGrant(ctx, auth.Client{}, "alice", "grant-0123"); !errors.Is(err, ErrNoSuchGrant) {
+		t.Errorf("an ID that is no grant reference: %v, want ErrNoSuchGrant without a read", err)
 	}
 
 	// Once read, the same answers are answers.
@@ -222,12 +228,12 @@ func TestAPendingReplicaAcknowledgesNoDisconnection(t *testing.T) {
 	if n, err := r.s.DisconnectAll(ctx, auth.Client{}, "alice"); n != 0 || err != nil {
 		t.Errorf("disconnect all with nothing to revoke: %d, %v", n, err)
 	}
-	if err := r.s.RevokeGrant(ctx, auth.Client{}, "alice", "grant-0123"); !errors.Is(err, ErrNoSuchGrant) {
+	if err := r.s.RevokeGrant(ctx, auth.Client{}, "alice", unknownGrant); !errors.Is(err, ErrNoSuchGrant) {
 		t.Errorf("an unknown grant on a replica that read the index: %v, want ErrNoSuchGrant", err)
 	}
 	// One replica, no ConfigMap: the index is its memory, always read.
 	r = newReplica(t, f, memoryStore(c), c, nil)
-	if err := r.s.RevokeGrant(ctx, auth.Client{}, "alice", "grant-0123"); !errors.Is(err, ErrNoSuchGrant) {
+	if err := r.s.RevokeGrant(ctx, auth.Client{}, "alice", unknownGrant); !errors.Is(err, ErrNoSuchGrant) {
 		t.Errorf("an unknown grant on a single replica: %v, want ErrNoSuchGrant", err)
 	}
 }

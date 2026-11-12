@@ -34,14 +34,22 @@ type fakeGrants struct {
 	client       auth.Client
 	disconnected []string
 	// unrecorded makes every revocation ErrNotRecorded (the shared state
-	// did not take the write).
+	// did not take the write); failWith, when set, is the error instead.
 	unrecorded bool
+	failWith   error
+}
+
+func (f *fakeGrants) failure() error {
+	if f.failWith != nil {
+		return f.failWith
+	}
+	return ErrNotRecorded
 }
 
 func (f *fakeGrants) DisconnectAll(_ context.Context, c auth.Client, user string) (int, error) {
 	f.disconnected, f.client = append(f.disconnected, user), c
 	if f.unrecorded {
-		return 1, ErrNotRecorded
+		return 1, f.failure()
 	}
 	return 1, nil
 }
@@ -62,7 +70,7 @@ func (f *fakeGrants) RevokeGrant(_ context.Context, c auth.Client, user, id stri
 	}
 	f.revoked, f.client = append(f.revoked, id), c
 	if f.unrecorded {
-		return ErrNotRecorded
+		return f.failure()
 	}
 	return nil
 }
@@ -150,6 +158,35 @@ func TestADisconnectionNotRecordedIsA503(t *testing.T) {
 		}
 		if w.Header().Get("Retry-After") == "" || !strings.Contains(w.Body.String(), "retry") {
 			t.Errorf("%s: Retry-After %q, body %s", path, w.Header().Get("Retry-After"), w.Body)
+		}
+	}
+}
+
+// The two 503s of a disconnection carry their own problem type and
+// detail (round 22, DBA): a read that failed never says the replica
+// revoked anything, nor that the API server refused a write.
+func TestTheTwo503sOfADisconnectionDiffer(t *testing.T) {
+	alice := &auth.Principal{User: authz.User{Name: "alice"}}
+	for _, tc := range []struct {
+		err          error
+		typ, says    string
+		mustNotSayIt string
+	}{
+		{ErrNotRecorded, ProblemDisconnectionUnrecorded, "did not take its write", "could not read"},
+		{ErrNotConfirmed, ProblemDisconnectionUnconfirmed, "could not read the shared state", "did not take"},
+	} {
+		g := &fakeGrants{unrecorded: true, failWith: tc.err}
+		h, _ := New(Deps{Source: FixtureSource{}, Authz: FixtureAuthorizer{}, Grants: g, Assistant: fakeSetup{}})
+		for _, path := range []string{"/api/v1/session/grants/" + testGrant, "/api/v1/session/grants"} {
+			w := callAs(h, alice, http.MethodDelete, path)
+			var problem struct{ Type, Detail string }
+			_ = json.Unmarshal(w.Body.Bytes(), &problem)
+			if w.Code != http.StatusServiceUnavailable || w.Header().Get("Retry-After") == "" || problem.Type != tc.typ {
+				t.Errorf("%v %s: %d, Retry-After %q, type %q; want 503, Retry-After, %s", tc.err, path, w.Code, w.Header().Get("Retry-After"), problem.Type, tc.typ)
+			}
+			if !strings.Contains(problem.Detail, tc.says) || strings.Contains(problem.Detail, tc.mustNotSayIt) {
+				t.Errorf("%v %s: detail %q", tc.err, path, problem.Detail)
+			}
 		}
 	}
 }
