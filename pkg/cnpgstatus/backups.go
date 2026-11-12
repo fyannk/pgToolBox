@@ -315,6 +315,15 @@ type ArchivingReading struct {
 // WAL completes a segment within it, and a segment the archiver does
 // not take is a .ready file, so the stall shows as the backlog.
 func Archiving(c *cnpgv1.Cluster, primary *ArchiverLive) ArchivingReading {
+	return ArchivingOf(c, primary, false)
+}
+
+// ArchivingOf is Archiving, told whether a primary given as nil was
+// masked: its instance manager answered /pg/status without reaching
+// PostgreSQL (fenced or restarting, instancestatus.Reading.Masked). The
+// reading is the same, PrimaryUnread with condition True; only the words
+// differ, so that a DBA does not look for a sweep that failed.
+func ArchivingOf(c *cnpgv1.Cluster, primary *ArchiverLive, primaryMasked bool) ArchivingReading {
 	if c == nil {
 		return ArchivingReading{Class: ClassUnknown, Reason: ArchivingReasonNoCluster}
 	}
@@ -402,8 +411,12 @@ func Archiving(c *cnpgv1.Cluster, primary *ArchiverLive) ArchivingReading {
 			// True says nothing about WAL reaching the repository now.
 			reading.Class = ClassUnknown
 			reading.Reason = ArchivingReasonPrimaryUnread
+			unread := "the primary's archiver was not read"
+			if primaryMasked {
+				unread = "the primary's instance manager answered without reading PostgreSQL (fenced or restarting)"
+			}
 			reading.Message = "ContinuousArchiving is True" + since(condition.LastTransitionTime.Time) +
-				", but the primary's archiver was not read: whether WAL reaches the repository now is not confirmed"
+				", but " + unread + ": whether WAL reaches the repository now is not confirmed"
 		case primary != nil && !primary.IsArchivingWAL && primary.LastFailedWAL != "" && primary.ReadyWALFiles > 0:
 			reading.Class = ClassWarning
 			reading.Reason = ArchivingReasonFailureWithBacklog

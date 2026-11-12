@@ -4003,6 +4003,9 @@ components:
           type: boolean
         pgRewindRunning:
           type: boolean
+        postgresUnread:
+          $ref: "#/components/schemas/PostgresUnread"
+          description: "Set when the instance manager answered without reaching PostgreSQL (fenced or restarting): PostgreSQL's fields are then not read, never false or zero."
         provenance:
           $ref: "#/components/schemas/Provenance"
         readyWalFiles:
@@ -5349,6 +5352,18 @@ components:
         - health
         - provenance
       type: object
+    PostgresUnread:
+      additionalProperties: false
+      properties:
+        error:
+          description: The error the instance manager hit and masked (mightBeUnavailableMaskedError), bounded.
+          type: string
+        instance:
+          type: string
+      required:
+        - instance
+        - error
+      type: object
     PreviewField:
       additionalProperties: false
       properties:
@@ -5671,6 +5686,9 @@ components:
           type: integer
         name:
           type: string
+        postgresUnread:
+          $ref: "#/components/schemas/PostgresUnread"
+          description: "Set when the replica's instance manager answered without reaching PostgreSQL: its receiver, positions and timeline are not read."
         provenance:
           $ref: "#/components/schemas/Provenance"
         receivedLsn:
@@ -5943,6 +5961,9 @@ components:
           type: string
         primary:
           $ref: "#/components/schemas/PrimaryElection"
+        primaryUnread:
+          $ref: "#/components/schemas/PostgresUnread"
+          description: "Set when the primary's instance manager answered without reaching PostgreSQL: standbys and slots are then not read, never empty."
         quorum:
           $ref: "#/components/schemas/QuorumView"
           description: "FailoverQuorum.status: the synchronous set PostgreSQL really applied; absent when not reported."

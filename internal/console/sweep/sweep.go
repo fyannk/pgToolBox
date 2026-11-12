@@ -147,6 +147,15 @@ type Instance struct {
 	readBy time.Time
 }
 
+// ReadingOK reports a current reading of PostgreSQL itself: the last
+// read succeeded, a report is kept, and its instance manager reached
+// PostgreSQL (instancestatus.Reading.Masked is false). Every field
+// PostgreSQL fills is a fact only then: on a masked report (fenced or
+// restarting) it is unread, never false, zero or empty.
+func (i Instance) ReadingOK() bool {
+	return i.State == viewmodel.StatusReadOK && i.Reading != nil && !i.Reading.Masked()
+}
+
 // Snapshot is the published state of one Cluster.
 type Snapshot struct {
 	SweptAt   time.Time
@@ -577,9 +586,7 @@ func (s *Sweeper) pushRings(cs *clusterState, snap Snapshot, at time.Time) {
 	// A report the instance manager answered without reading PostgreSQL
 	// (fenced, restarting: Reading.Masked) carries zeros it did not read:
 	// a gap in every series, never a 0 (round 16, CNPG P2-1).
-	read := func(inst Instance) bool {
-		return inst.State == viewmodel.StatusReadOK && inst.Reading != nil && !inst.Reading.Masked()
-	}
+	read := Instance.ReadingOK
 	for _, inst := range snap.Instances {
 		if read(inst) && inst.Reading.IsPrimary {
 			primaryLSN = inst.Reading.CurrentLSN

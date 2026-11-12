@@ -39,7 +39,12 @@ type Replication struct {
 	// Failover is the failover rehearsal: "if the primary died now".
 	Failover FailoverRehearsal `json:"failover"`
 	// Slots are the primary's replication slots, unfiltered.
-	Slots      []SlotRow     `json:"slots"`
+	Slots []SlotRow `json:"slots"`
+	// PrimaryUnread: the primary's manager answered without reaching
+	// PostgreSQL, so Standbys and Slots are empty because they were not
+	// read, never because there are none.
+	PrimaryUnread *PostgresUnread `json:"primaryUnread,omitempty" doc:"Set when the primary's instance manager answered without reaching PostgreSQL: standbys and slots are then not read, never empty."`
+
 	Sources    []SourceState `json:"sources"`
 	BlindSpots []BlindSpot   `json:"blindSpots"`
 }
@@ -107,11 +112,14 @@ type ReceiverRow struct {
 	ReplayLSN   string     `json:"replayLsn,omitempty"`
 	// LagBytes is the primary's current LSN minus this replica's replay
 	// LSN, when both were read in the same sweep.
-	LagBytes          *int64     `json:"lagBytes,omitempty"`
-	ReplayPaused      bool       `json:"replayPaused,omitempty"`
-	WALReceiverActive *bool      `json:"walReceiverActive,omitempty"`
-	TimelineID        *int       `json:"timelineId,omitempty"`
-	Provenance        Provenance `json:"provenance"`
+	LagBytes          *int64 `json:"lagBytes,omitempty"`
+	ReplayPaused      bool   `json:"replayPaused,omitempty"`
+	WALReceiverActive *bool  `json:"walReceiverActive,omitempty"`
+	TimelineID        *int   `json:"timelineId,omitempty"`
+	// PostgresUnread: the replica's manager answered without reaching
+	// PostgreSQL; its receiver, positions and timeline are not read.
+	PostgresUnread *PostgresUnread `json:"postgresUnread,omitempty" doc:"Set when the replica's instance manager answered without reaching PostgreSQL: its receiver, positions and timeline are not read."`
+	Provenance     Provenance      `json:"provenance"`
 }
 
 // SlotRow is one replication slot of the primary.

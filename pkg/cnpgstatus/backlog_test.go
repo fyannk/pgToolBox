@@ -224,6 +224,17 @@ func TestArchivingUnreadPrimaryIsNotOK(t *testing.T) {
 	if want := "since 2026-11-01T00:00:00Z"; !strings.Contains(got.Message, want) {
 		t.Errorf("message %q does not name the condition's age (%s)", got.Message, want)
 	}
+	if strings.Contains(got.Message, "without reading PostgreSQL") {
+		t.Errorf("unread primary worded as masked: %q", got.Message)
+	}
+	// A masked primary (fenced or restarting: its manager answered without
+	// reaching PostgreSQL) is the same reading, worded as such, never as a
+	// read that did not happen (round 17, DBA).
+	masked := ArchivingOf(c, nil, true)
+	if masked.Class != got.Class || masked.Reason != got.Reason || !strings.Contains(masked.Message, "answered without reading PostgreSQL") ||
+		strings.Contains(masked.Message, "was not read") {
+		t.Errorf("ArchivingOf(masked) = %+v", masked)
+	}
 	// Hibernated: no primary runs, and the reading says so. It is
 	// inactive, as the Cluster is (round 8, DBA): unknown would outrank
 	// the hibernation in the headline.

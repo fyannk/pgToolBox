@@ -23,9 +23,11 @@ import (
 	"strings"
 	"time"
 
+	cnpgv1 "github.com/cloudnative-pg/api/pkg/api/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"github.com/fyannk/pgToolBox/internal/console/cache"
 	"github.com/fyannk/pgToolBox/internal/console/evidence"
 	"github.com/fyannk/pgToolBox/internal/console/viewmodel"
 	"github.com/fyannk/pgToolBox/pkg/cnpgstatus"
@@ -165,6 +167,50 @@ type recoveryFacts struct {
 	// waiting on a former primary before it rejoins (and does not start it
 	// otherwise), so such an instance no longer holds unarchived WAL.
 	rejoined map[string]bool
+	// backupEnds are when this Cluster's CNPG Backups ended
+	// (status.stoppedAt), whatever their method or phase; nil for a
+	// Backup completed with no stop time, which could have ended at any
+	// time. pgBackRest expires only at the end of a backup, so those that
+	// ended since the evidence was read bound what expire may have
+	// removed since (backupsSince). backupsUnread: the Backups were not
+	// listed, so that count is not known.
+	backupEnds    []*time.Time
+	backupsUnread bool
+}
+
+// backupsSince is how many of the Cluster's Backups ended after read
+// (less scanSlack, for the clocks of the instance and the agent); false
+// when the Backups were not listed. A backup taken outside CloudNativePG
+// (a pgbackrest command run by hand) has no Backup object and is not
+// counted.
+func (f recoveryFacts) backupsSince(read time.Time) (int, bool) {
+	if f.backupsUnread {
+		return 0, false
+	}
+	n := 0
+	for _, end := range f.backupEnds {
+		if end == nil || end.After(read.Add(-scanSlack)) {
+			n++
+		}
+	}
+	return n, true
+}
+
+// backupEndsOf are g's Backups' ends (recoveryFacts backupEnds).
+func backupEndsOf(g *gathered) (ends []*time.Time, unread bool) {
+	if !g.listed(cache.SourceBackups) {
+		return nil, true
+	}
+	for _, b := range g.backups {
+		switch {
+		case b.Status.StoppedAt != nil:
+			at := b.Status.StoppedAt.UTC()
+			ends = append(ends, &at)
+		case b.Status.Phase == cnpgv1.BackupPhaseCompleted:
+			ends = append(ends, nil)
+		}
+	}
+	return ends, false
 }
 
 // formerHolder is the former primary that may still hold the unarchived
@@ -247,6 +293,7 @@ func (f formerArchiver) on(timeline uint64) (read bool, quiet []quietSweep, boun
 // archiving fact (the backups summary's, so both agree).
 func recoveryFactsOf(g *gathered, arch viewmodel.Archiving, now time.Time) recoveryFacts {
 	f := recoveryFacts{now: now, archiveTimeout: defaultArchiveTimeout, failing: archivingFailing(arch), sweepInterval: g.swept.Interval}
+	f.backupEnds, f.backupsUnread = backupEndsOf(g)
 	if g.cluster == nil {
 		// No Cluster, no status.currentPrimary: no primary was read to
 		// run a check on (round 16, CNPG P3-c).
@@ -855,6 +902,7 @@ func (s *Service) recoveryTimeline(ev clusterEvidence, summary viewmodel.BackupS
 			backupIDs:    ev.result.BackupIDs,
 			backupsDone:  ev.result.BackupsComplete,
 			retainedFor:  retainedFor(ev.result.Snapshot),
+			policy:       pgbackrestPolicyOf(ev.result.Snapshot),
 		}
 		evidenceTimeline(&out, in)
 		out.OffTarget = offTargetSpans(rec.Paths, ev.result.Backups, in.notRestorable)
@@ -1124,6 +1172,57 @@ type timelineInput struct {
 	// the newest full at or before its run minus it, so the first restore
 	// point kept is bounded by the clock, not by the listing (retainedFor).
 	retainedFor time.Duration
+	// policy is the pgBackRest repository's count-based retention as the
+	// snapshot reports it (pgbackrestPolicyOf), read by sinceReadBand.
+	policy pgbackrestPolicy
+}
+
+// pgbackrestPolicy is what bounds, by count of backups, the restore
+// points pgBackRest's expire keeps: each backup's end runs expire, so a
+// backup taken since the evidence was read may have removed listed ones.
+type pgbackrestPolicy struct {
+	// unknown: the snapshot carries no retention block (the options were
+	// not read), so any backup since the read may have expired anything.
+	unknown bool
+	// fulls is a count-based repo-retention-full (type count); 0 when the
+	// full retention is time-based (retainedFor) or unset (never expires).
+	fulls int
+	// archive is the archive retention expire applies (EffectiveArchive),
+	// in backups of archiveTypes, when it is a count that may keep less
+	// WAL than the fulls: explicit, or defaulted from repo-retention-diff;
+	// 0 otherwise. A time-based full retention's default (the fulls kept)
+	// is left out: it moves with the fulls expire keeps.
+	archive      int
+	archiveTypes map[string]bool
+}
+
+// maxRetainedCount bounds a reported retention count so that it stays an
+// int on every platform: a larger one expires nothing either.
+const maxRetainedCount = 1 << 20
+
+// pgbackrestPolicyOf reads the snapshot's pgBackRest retention.
+func pgbackrestPolicyOf(snapshot *evidencev1alpha1.RepositoryEvidenceSnapshot) pgbackrestPolicy {
+	if snapshot == nil || snapshot.Details.Unknown() || snapshot.Details.PGBackRest == nil || snapshot.Details.PGBackRest.Retention == nil {
+		return pgbackrestPolicy{unknown: true}
+	}
+	r := snapshot.Details.PGBackRest.Retention
+	var out pgbackrestPolicy
+	if r.Configured && r.FullType != evidencev1alpha1.RetentionFullTime && r.Full != nil && *r.Full > 0 {
+		out.fulls = int(min(*r.Full, maxRetainedCount))
+	}
+	defaulted := r.Archive == nil && (r.ArchiveType == "" || r.ArchiveType == evidencev1alpha1.PGBackRestFull) && r.FullType == evidencev1alpha1.RetentionFullTime
+	if r.EffectiveArchive != nil && *r.EffectiveArchive > 0 && !defaulted {
+		out.archive = int(min(*r.EffectiveArchive, maxRetainedCount))
+		out.archiveTypes = map[string]bool{evidencev1alpha1.PGBackRestFull: true}
+		switch r.ArchiveType {
+		case evidencev1alpha1.PGBackRestIncremental:
+			out.archiveTypes[evidencev1alpha1.PGBackRestIncremental] = true
+			out.archiveTypes[evidencev1alpha1.PGBackRestDifferential] = true
+		case evidencev1alpha1.PGBackRestDifferential:
+			out.archiveTypes[evidencev1alpha1.PGBackRestDifferential] = true
+		}
+	}
+	return out
 }
 
 // maxRetainedDays bounds a reported retention in days so that it stays a
@@ -1708,11 +1807,20 @@ func markEdges(out *viewmodel.RecoveryTimeline, in timelineInput, spans []interv
 // the oldest backup's span between covered and unknown every cycle (round
 // 13, PG P3-C). A purge within that cycle is the evidence's ordinary lag,
 // which the elapsed band (one refresh plus the age) covers in time.
+//
+// Under pgBackRest a count bounds it too, whatever the clock: each backup
+// ended since the read ran expire (sinceReadBand).
 func purgeBand(in timelineInput, spans []interval, first, last time.Time) time.Duration {
-	purge := in.refresh
-	if purge <= 0 {
-		purge = evidence.DefaultAgentRefreshInterval
+	band := listedPurgeBand(in, spans, first, last)
+	if since, ok := sinceReadBand(in, spans, first, last); ok {
+		band = max(band, since)
 	}
+	return band
+}
+
+// purgeRead is when the paths were read, the earliest of the scan's
+// start, its completion and the console's fetch; nil when not known.
+func purgeRead(in timelineInput) *time.Time {
 	var read *time.Time
 	for _, at := range []*time.Time{in.scannedAt, in.observedAt} {
 		if at != nil && (read == nil || at.Before(*read)) {
@@ -1723,6 +1831,134 @@ func purgeBand(in timelineInput, spans []interval, first, last time.Time) time.D
 		start := read.Add(-in.scanDuration)
 		read = &start
 	}
+	return read
+}
+
+// sinceReadBand is the band pgBackRest's expire may already have cut by
+// the backups that ended since the read (recoveryFacts backupsSince), each
+// of which ran expire at its end: false when none did, or the repository
+// is not pgBackRest's (Barman's retention is a recovery window, which the
+// clock bounds in listedPurgeBand). Every such backup is counted as a
+// full of every archive type, the worst case.
+//
+//   - repo-retention-full=K (count): with L fulls listed and n backups
+//     since, expire kept the newest K of the L+n, so the max(0, L+n-K)
+//     oldest listed are gone with their chains; all L, the whole window,
+//     when that reaches L (round 17, PG P3-1).
+//   - time-based: expire keeps the newest full stopped before its run
+//     minus the retention, so at or before now minus it (retainedFor); a
+//     backup since the read that stopped before that may be the base,
+//     unlisted.
+//   - an archive retention below the fulls (A backups of its types):
+//     WAL is kept continuously only from the A-th newest of them, the
+//     older ones keeping only their own consistency range, so the band
+//     reaches the A-th newest of the listed and the n new ones; the whole
+//     window when n reaches A (round 17, PG P3-2).
+//
+// The count not known (the Backups not listed) or the policy not
+// reported, any backup may have expired anything: the whole window. A
+// pgbackrest backup run outside CloudNativePG, which has no Backup
+// object, is not counted.
+func sinceReadBand(in timelineInput, spans []interval, first, last time.Time) (time.Duration, bool) {
+	if !in.pgBackRest {
+		return 0, false
+	}
+	read := purgeRead(in)
+	if read == nil {
+		return 0, false
+	}
+	window := max(last.Sub(first), 0)
+	n, known := in.facts.backupsSince(*read)
+	switch {
+	case known && n == 0:
+		return 0, false
+	case !known || in.policy.unknown:
+		return window, true
+	}
+	base := first
+	later := func(t time.Time) {
+		if t.After(base) {
+			base = t
+		}
+	}
+	if in.retainedFor > 0 {
+		reach := in.facts.now.Add(-in.retainedFor)
+		if reach.After(*read) {
+			return window, true
+		}
+		if b, ok := newestAnchor(purgeAnchors(in, spans), &reach); ok {
+			later(b)
+		}
+	}
+	if k := in.policy.fulls; k > 0 {
+		fulls, ok := backupAnchors(in, spans, map[string]bool{evidencev1alpha1.PGBackRestFull: true})
+		gone := max(0, len(fulls)+n-k)
+		if !ok || gone >= len(fulls) {
+			return window, true
+		}
+		later(fulls[gone])
+	}
+	if a := in.policy.archive; a > 0 {
+		kept, ok := backupAnchors(in, spans, in.policy.archiveTypes)
+		from := max(0, len(kept)+n-a)
+		if !ok || from >= len(kept) {
+			return window, true
+		}
+		later(kept[from])
+	}
+	if !base.After(first) {
+		return 0, false
+	}
+	kept, ok := drawnFrom(spans, base)
+	if !ok {
+		return window, true
+	}
+	return min(max(kept.Sub(first), 0), window), true
+}
+
+// backupAnchors are the listed pgBackRest backups of types, one anchor
+// each, oldest first: the earliest drawn span's lower bound when the
+// backup is drawn, its end time otherwise. A repository whose items are
+// not read counts each drawn backup as a full, as purgeAnchors does.
+// False when one of them has neither: its place in the order, which
+// decides what expire removed, is not known.
+func backupAnchors(in timelineInput, spans []interval, types map[string]bool) ([]time.Time, bool) {
+	from := map[string]time.Time{}
+	for _, sp := range spans {
+		if at, ok := from[sp.backupID]; !ok || sp.from.Before(at) {
+			from[sp.backupID] = sp.from
+		}
+	}
+	var out []time.Time
+	if len(in.backups) == 0 {
+		for _, at := range from {
+			out = append(out, at)
+		}
+	}
+	for _, b := range in.backups {
+		if b.PgBackRest == nil || !types[b.PgBackRest.Type] {
+			continue
+		}
+		switch at, ok := from[b.ID]; {
+		case ok:
+			out = append(out, at)
+		case b.EndAt != nil:
+			out = append(out, b.EndAt.UTC())
+		default:
+			return nil, false
+		}
+	}
+	slices.SortFunc(out, func(a, b time.Time) int { return a.Compare(b) })
+	return out, true
+}
+
+// listedPurgeBand is the purge band from the listing and the clock.
+func listedPurgeBand(in timelineInput, spans []interval, first, last time.Time) time.Duration {
+	purge := in.refresh
+	if purge <= 0 {
+		purge = evidence.DefaultAgentRefreshInterval
+	}
+	read := purgeRead(in)
 	window := max(last.Sub(first), 0)
 	// elapsed is the scan's real age, which says whether a scan was
 	// missed; age is it capped at the window, for the band. Testing the

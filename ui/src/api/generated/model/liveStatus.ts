@@ -5,6 +5,7 @@
  * The JSON API of the pgToolBox console, the CloudNativePG observation console. Every operation acts as the signed-in user: the console asks the Kubernetes API server (SelfSubjectAccessReview, with your own token) before it reads anything on your behalf. Unsafe methods require the header X-PgToolBox-Request: 1 and a same-origin request.
  * OpenAPI spec version: v1
  */
+import type { PostgresUnread } from './postgresUnread.ts';
 import type { Provenance } from './provenance.ts';
 import type { Standby } from './standby.ts';
 
@@ -20,6 +21,8 @@ export interface LiveStatus {
   pendingRestart?: boolean;
   pendingRestartForDecrease?: boolean;
   pgRewindRunning?: boolean;
+  /** Set when the instance manager answered without reaching PostgreSQL (fenced or restarting): PostgreSQL's fields are then not read, never false or zero. */
+  postgresUnread?: PostgresUnread;
   provenance: Provenance;
   readyWalFiles?: number;
   receivedLsn?: string;

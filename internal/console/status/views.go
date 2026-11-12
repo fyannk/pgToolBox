@@ -630,7 +630,7 @@ func (s *Service) instanceRows(g *gathered, withSeries bool) []viewmodel.Instanc
 	}
 	var primaryLSN string
 	for _, inst := range g.swept.Instances {
-		if inst.State == viewmodel.StatusReadOK && inst.Reading != nil && inst.Reading.IsPrimary {
+		if inst.ReadingOK() && inst.Reading.IsPrimary {
 			primaryLSN = inst.Reading.CurrentLSN
 		}
 	}
@@ -743,7 +743,7 @@ func (s *Service) statusRead(g *gathered, name, primaryLSN string) (viewmodel.St
 	if g.cluster != nil {
 		archiver = name == g.cluster.Status.CurrentPrimary
 	}
-	return read, liveStatus(inst, primaryLSN, archiver)
+	return read, liveStatus(name, inst, primaryLSN, archiver)
 }
 
 // liveStatus is an instance's own report. archiver says whether the
@@ -755,9 +755,25 @@ func (s *Service) statusRead(g *gathered, name, primaryLSN string) (viewmodel.St
 // without archiving there (pkg/management/postgres/archiver/archiver.go
 // v1.30.1:132-142), and refuses on every pod but currentPrimary
 // (:145-150): it is not served for them (CNPG P3-2, round 9 P3-a).
-func liveStatus(inst sweep.Instance, primaryLSN string, archiver bool) *viewmodel.LiveStatus {
+func liveStatus(name string, inst sweep.Instance, primaryLSN string, archiver bool) *viewmodel.LiveStatus {
 	r := inst.Reading
 	observed := r.ObservedAt
+	if r.Masked() {
+		// The manager answered without reaching PostgreSQL (fenced or
+		// restarting): only its own flags and isPrimary, re-read from the
+		// data directory, are facts. PostgreSQL's fields are not served,
+		// so none reads as false or zero (round 17, PG/CNPG P3).
+		live := &viewmodel.LiveStatus{
+			IsPrimary: r.IsPrimary, MightBeUnavailable: r.MightBeUnavailable, PgRewindRunning: r.IsPgRewindRunning,
+			ManagerVersion: r.InstanceManagerVersion, ManagerUpgrading: r.IsInstanceManagerUpgrading,
+			PostgresUnread: postgresUnread(name, inst),
+			Provenance:     viewmodel.Provenance{Origin: viewmodel.OriginInstance, Source: "/pg/status", ObservedAt: &observed},
+		}
+		if inst.State != viewmodel.StatusReadOK {
+			live.Provenance.Stale, live.Provenance.StaleReason = true, "the last read failed: "+inst.Reason
+		}
+		return live
+	}
 	live := &viewmodel.LiveStatus{
 		IsPrimary: r.IsPrimary, SystemID: r.SystemID, CurrentLSN: r.CurrentLSN, ReceivedLSN: r.ReceivedLSN, ReplayLSN: r.ReplayLSN,
 		ReplayPaused: r.ReplayPaused, WALReceiverActive: r.IsWalReceiverActive, PendingRestart: r.PendingRestart,
@@ -782,6 +798,16 @@ func liveStatus(inst sweep.Instance, primaryLSN string, archiver bool) *viewmode
 		live.Standbys = append(live.Standbys, viewmodel.Standby{Name: sb.ApplicationName, State: sb.State, SyncState: sb.SyncState, SentLSN: sb.SentLSN, ReplayLSN: sb.ReplayLSN, ReplayLag: sb.ReplayLag})
 	}
 	return live
+}
+
+// postgresUnread is the masked state of an instance's report (its
+// manager answered without reaching PostgreSQL), with the error it
+// masked, bounded; nil when PostgreSQL was read or no report is kept.
+func postgresUnread(name string, inst sweep.Instance) *viewmodel.PostgresUnread {
+	if inst.Reading == nil || !inst.Reading.Masked() {
+		return nil
+	}
+	return &viewmodel.PostgresUnread{Instance: name, Error: bound(inst.Reading.MightBeUnavailableMaskedError)}
 }
 
 // instanceHealth reads one row: a waiting container or an unready pod is
@@ -819,7 +845,7 @@ func instanceHealth(r viewmodel.InstanceRow) viewmodel.Health {
 
 func (s *Service) backupSummary(g *gathered, now time.Time) viewmodel.BackupSummary {
 	cfg := cnpgstatus.Backups(g.cluster)
-	archiving := cnpgstatus.Archiving(g.cluster, primaryArchiver(g))
+	archiving := archivingOf(g)
 	summary := viewmodel.BackupSummary{
 		BackupRecency: s.backupRecency(g),
 		Archiving: viewmodel.Archiving{
