@@ -277,18 +277,24 @@ var ErrNotRecorded = errors.New("the disconnection could not be recorded for eve
 // within about a second. ErrNotRecorded when the write cannot be made (the
 // revocation stays on this replica, and is written with its next batch).
 //
-// ErrNoSuchGrant is an answer only from a replica that has read the
-// shared grant index: one that has not yet (a pod just started) knows
-// none of the grants recorded elsewhere, and a disconnection retried
-// there must not read as done. It answers ErrNotRecorded instead, as
-// WriteRevocations of nothing does on such a replica.
+// A grant the index does not know is looked for again in the ConfigMap as
+// the API server holds it now (ReadGrants): this replica's watch may not
+// have delivered it yet, or may have ended (a replica cut off from the API
+// server still takes requests), and the page shows ErrNoSuchGrant as the
+// assistant disconnected. ErrNoSuchGrant is so an answer only once that
+// read shows no such grant of the person (or the ConfigMap is missing,
+// and every replica refuses every grant); a read that fails is
+// ErrNotRecorded (round 21, security P2-1).
 func (s *Server) RevokeGrant(ctx context.Context, c auth.Client, user, id string) error {
 	g, ok := s.o.Store.Grant(id)
 	if !ok || !slices.Contains(s.userKeys(user), g.UserHash) {
-		if err := s.o.Store.WriteRevocations(ctx); err != nil {
+		if err := s.o.Store.ReadGrants(ctx); err != nil {
 			return s.written(ctx, err, 0)
 		}
-		return ErrNoSuchGrant
+		g, ok = s.o.Store.Grant(id)
+		if !ok || !slices.Contains(s.userKeys(user), g.UserHash) {
+			return ErrNoSuchGrant
+		}
 	}
 	if g.Revoked.IsZero() {
 		now := s.o.Now().UTC()
@@ -309,10 +315,11 @@ func (s *Server) RevokeGrant(ctx context.Context, c auth.Client, user, id string
 // grant (each one's watch delivers the deletion), so the disconnection is
 // in effect everywhere: it is answered done, logged, and written once the
 // ConfigMap is back (sharedstate.ErrNoConfigMap). A ConfigMap the console
-// may not read or write is not so: the API server authorizes a watch only
-// when it opens, so a replica whose watch was opened before the permission
-// was withdrawn still serves grants until its next freshness read is
-// refused (sharedstate.DefaultFreshness), so that stays ErrNotRecorded.
+// may not read or write is not answered done: the API server authorizes a
+// watch only when it opens, so a replica whose watch was opened before the
+// permission was withdrawn still serves grants until its next freshness
+// read is refused (sharedstate.DefaultFreshness), so that stays
+// ErrNotRecorded, whatever this replica read before.
 func (s *Server) written(ctx context.Context, err error, grants int) error {
 	switch {
 	case err == nil:
@@ -330,10 +337,15 @@ func (s *Server) written(ctx context.Context, err error, grants int) error {
 
 // DisconnectAll revokes every standing grant of the person, written
 // through to the shared state, and returns how many ("disconnect all" on
-// the session page). ErrNotRecorded as RevokeGrant, including when there
-// is nothing to revoke on a replica that has not read the shared grant
-// index yet (WriteRevocations of no IDs).
+// the session page). The ConfigMap is read first (ReadGrants), so that
+// the grants recorded on another replica that this one's watch has not
+// delivered, or never will (a replica cut off from the API server still
+// takes requests), are revoked too. ErrNotRecorded as RevokeGrant, and
+// whenever that read fails: the grants it would have shown are not
+// revoked, whatever the write of the others does (round 21, security
+// P2-1). The ones this replica knows are revoked here either way.
 func (s *Server) DisconnectAll(ctx context.Context, c auth.Client, user string) (int, error) {
+	read := s.o.Store.ReadGrants(ctx)
 	ids := s.revokeAll(ctx, c, user)
 	n := len(ids)
 	// A retry after ErrNotRecorded writes again what the first attempt
@@ -343,7 +355,15 @@ func (s *Server) DisconnectAll(ctx context.Context, c auth.Client, user string) 
 	}
 	slices.Sort(ids)
 	ids = slices.Compact(ids)
-	return n, s.written(ctx, s.o.Store.WriteRevocations(ctx, ids...), len(ids))
+	if len(ids) == 0 && read == nil {
+		// Nothing to revoke in the ConfigMap as the API server holds it.
+		return 0, nil
+	}
+	err := s.o.Store.WriteRevocations(ctx, ids...)
+	if err == nil && read != nil {
+		err = read
+	}
+	return n, s.written(ctx, err, len(ids))
 }
 
 // disconnectAll is DisconnectAll at a sign-out that asked to disconnect

@@ -176,12 +176,22 @@ type Revocations struct {
 	ready   chan struct{}
 	// backoff between failed watch attempts; tests shorten it.
 	backoff func(attempt int) time.Duration
+	// readTimeout bounds the read of the list and the opening of its
+	// watch (revocationReadTimeout; tests shorten it).
+	readTimeout time.Duration
 }
+
+// revocationReadTimeout is how long the API server has to answer the read
+// of the revocation list, and the opening of its watch: one that does not
+// (a request queued by its flow control, a dead pooled connection) is a
+// failure retried with backoff and logged, not a wait without end with
+// the list unread (round 21, k8s P3-3).
+const revocationReadTimeout = 10 * time.Second
 
 // NewRevocations watches ConfigMap name through client. With an empty
 // name the list is disabled: always synced, never revoking.
 func NewRevocations(client ConfigMapWatcher, name string, log *slog.Logger) *Revocations {
-	r := &Revocations{client: client, name: name, log: log, ready: make(chan struct{})}
+	r := &Revocations{client: client, name: name, log: log, ready: make(chan struct{}), readTimeout: revocationReadTimeout}
 	r.backoff = func(attempt int) time.Duration {
 		d := time.Second << min(attempt, 6)
 		return min(d, time.Minute)
@@ -263,7 +273,9 @@ func (r *Revocations) Run(ctx context.Context) error {
 }
 
 func (r *Revocations) watchOnce(ctx context.Context) error {
-	cm, err := r.client.Get(ctx, r.name, metav1.GetOptions{})
+	getCtx, cancelGet := context.WithTimeout(ctx, r.readTimeout)
+	cm, err := r.client.Get(getCtx, r.name, metav1.GetOptions{})
+	cancelGet()
 	switch {
 	case apierrors.IsNotFound(err):
 		r.apply(nil)
@@ -276,9 +288,19 @@ func (r *Revocations) watchOnce(ctx context.Context) error {
 	// sends the ConfigMap as Added. Starting from cm.ResourceVersion fails
 	// with "too old resource version" forever once the list has been left
 	// unchanged longer than the API server keeps history.
-	w, err := r.client.Watch(ctx, metav1.ListOptions{
+	// The watch lives on wctx; the deadline applies to its opening only.
+	wctx, cancelWatch := context.WithCancel(ctx)
+	defer cancelWatch()
+	timer := time.AfterFunc(r.readTimeout, cancelWatch)
+	w, err := r.client.Watch(wctx, metav1.ListOptions{
 		FieldSelector: fields.OneTermEqualSelector("metadata.name", r.name).String(),
 	})
+	if !timer.Stop() {
+		if err == nil {
+			w.Stop()
+		}
+		return fmt.Errorf("watch: %w", context.DeadlineExceeded)
+	}
 	if err != nil {
 		return fmt.Errorf("watch: %w", err)
 	}

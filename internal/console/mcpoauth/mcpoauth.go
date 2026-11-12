@@ -234,6 +234,10 @@ type GrantStore interface {
 	// cannot, and for no ids on a replica that has not read the shared
 	// index yet); UnwrittenRevocationsOf lists those not written yet.
 	WriteRevocations(ctx context.Context, ids ...string) error
+	// ReadGrants reads the shared index afresh (sharedstate.ErrNotRecorded
+	// when it cannot), so that a revocation made next covers the grants
+	// recorded elsewhere that this replica has not seen yet.
+	ReadGrants(ctx context.Context) error
 	UnwrittenRevocationsOf(userHash string) []string
 	GrantRevoked(id string) bool
 	TouchGrant(id string, at time.Time)

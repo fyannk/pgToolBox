@@ -332,7 +332,50 @@ func TestNothingToRevokeIsAnAnswerOnlyOnceRead(t *testing.T) {
 		want    error
 	}{
 		"pending": {want: ErrNotRecorded},
-		"read":    {prepare: func(t *testing.T, s *Store, api *apiServer) { watchMerge(t, api, s) }},
+		"read, watching": {prepare: func(t *testing.T, s *Store, api *apiServer) {
+			watchMerge(t, api, s)
+			s.mu.Lock()
+			s.watchOpenedLocked()
+			s.mu.Unlock()
+		}},
+		// Read, then the watch ended or the API server stopped answering:
+		// what was read is what the ConfigMap held, not what it holds; a
+		// grant recorded since elsewhere is served there (round 21,
+		// security P2-1).
+		"read, not watching": {
+			prepare: func(t *testing.T, s *Store, api *apiServer) { watchMerge(t, api, s) },
+			want:    ErrNotRecorded,
+		},
+		"read, watch ended": {
+			prepare: func(t *testing.T, s *Store, api *apiServer) {
+				watchMerge(t, api, s)
+				s.mu.Lock()
+				s.watchOpenedLocked()
+				s.watching, s.unwatchedAt = false, s.opts.Now()
+				s.mu.Unlock()
+			},
+			want: ErrNotRecorded,
+		},
+		"read, then failing": {
+			prepare: func(t *testing.T, s *Store, api *apiServer) {
+				watchMerge(t, api, s)
+				s.mu.Lock()
+				s.watchOpenedLocked()
+				s.mu.Unlock()
+				_ = s.failed(apierrors.NewInternalError(errors.New("dial tcp: i/o timeout")))
+			},
+			want: ErrNotRecorded,
+		},
+		"read, then forbidden": {
+			prepare: func(t *testing.T, s *Store, api *apiServer) {
+				watchMerge(t, api, s)
+				s.mu.Lock()
+				s.watchOpenedLocked()
+				s.mu.Unlock()
+				_ = s.failed(apierrors.NewForbidden(configMaps, "console-state", errors.New("no")))
+			},
+			want: ErrNotRecorded,
+		},
 		"missing": {prepare: func(_ *testing.T, s *Store, _ *apiServer) {
 			_ = s.failed(apierrors.NewNotFound(configMaps, "console-state"))
 		}},
