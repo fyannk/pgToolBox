@@ -266,7 +266,8 @@ func TestPermittedNamespacesError(t *testing.T) {
 
 // flakyReviewer answers rules reviews with full rules, except: in hang it
 // never answers (until its context ends, or ever when ignoreContext), and
-// in flaky it fails its first fails reviews with err.
+// in flaky it fails its first fails reviews with err. It answers the
+// check of the API server (apiAnswers) with check (see answerCheck).
 type flakyReviewer struct {
 	rules         []authorizationv1.ResourceRule
 	hang          string
@@ -274,6 +275,7 @@ type flakyReviewer struct {
 	flaky         string
 	fails         int
 	err           error
+	check         error
 
 	mu    sync.Mutex
 	calls map[string]int
@@ -285,7 +287,26 @@ func (r *flakyReviewer) callsIn(namespace string) int {
 	return r.calls[namespace]
 }
 
+// answerCheck answers the check of the API server apiAnswers sends (a
+// cluster-scoped SelfSubjectAccessReview) with check: nil an answer,
+// errHang none until ctx ends, any other error that error. ok is false
+// for any other object.
+func answerCheck(ctx context.Context, obj client.Object, check error) (ok bool, err error) {
+	review, isAccess := obj.(*authorizationv1.SelfSubjectAccessReview)
+	if !isAccess || review.Spec.ResourceAttributes == nil || review.Spec.ResourceAttributes.Namespace != "" {
+		return false, nil
+	}
+	if errors.Is(check, errHang) {
+		<-ctx.Done()
+		return true, ctx.Err()
+	}
+	return true, check
+}
+
 func (r *flakyReviewer) Create(ctx context.Context, obj client.Object, _ ...client.CreateOption) error {
+	if ok, err := answerCheck(ctx, obj, r.check); ok {
+		return err
+	}
 	review, ok := obj.(*authorizationv1.SelfSubjectRulesReview)
 	if !ok {
 		return errors.New("unexpected object")
@@ -314,12 +335,28 @@ func (r *flakyReviewer) Create(ctx context.Context, obj client.Object, _ ...clie
 // TestPermittedNamespacesOneHangs: round 15, K8S P3-4. One namespace's
 // review never answers (a response grown huge, a stuck request); it is
 // left out on its own, past its deadline, while the others are kept, and
-// the start is not failed.
+// the start is not failed. Round 19, OPERATOR P3-1: it is too slow only
+// while the API server answers a check sent meanwhile; when the check
+// hangs too (a connection dead without a reset), the cause is not the
+// namespace, and its failure stays transient.
 func TestPermittedNamespacesOneHangs(t *testing.T) {
 	required := []Permission{{Group: "apps", Resource: "deployments", Verbs: []string{"list"}}}
 	rules := []authorizationv1.ResourceRule{{APIGroups: []string{"apps"}, Resources: []string{"deployments"}, Verbs: []string{"list"}}}
-	for _, ignoreContext := range []bool{false, true} {
-		c := &flakyReviewer{rules: rules, hang: "team-stuck", ignoreContext: ignoreContext}
+	for _, tc := range []struct {
+		ignoreContext bool
+		check         error
+		wantTooSlow   bool
+	}{
+		{false, nil, true},
+		{true, nil, true},
+		{false, errHang, false},
+		{true, errHang, false},
+		// A gateway's 504 is no answer of the API server's.
+		{false, apierrors.NewTimeoutError("gateway timeout", 0), false},
+		// A refusal is an answer: the server is up.
+		{false, apierrors.NewForbidden(authorizationv1.Resource("selfsubjectaccessreviews"), "", errors.New("no")), true},
+	} {
+		c := &flakyReviewer{rules: rules, hang: "team-stuck", ignoreContext: tc.ignoreContext, check: tc.check}
 		start := time.Now()
 		review, err := PermittedNamespaces(t.Context(), c, required, []string{"team-a", "team-stuck", "team-b"}, 50*time.Millisecond)
 		if err != nil {
@@ -333,8 +370,11 @@ func TestPermittedNamespacesOneHangs(t *testing.T) {
 		}
 		// Round 18, OPERATOR and SECURITY P3: no answer in time at every
 		// attempt is a cause of its own, never retried in the background.
-		if !review.Unreviewed[0].TooSlow() || review.Unreviewed[0].TooLarge() {
-			t.Errorf("team-stuck's error = %v, want ErrReviewTooSlow only", review.Unreviewed[0].Err)
+		if review.Unreviewed[0].TooSlow() != tc.wantTooSlow || review.Unreviewed[0].TooLarge() {
+			t.Errorf("check %v: team-stuck's error = %v, want too slow %t, never too large", tc.check, review.Unreviewed[0].Err, tc.wantTooSlow)
+		}
+		if !tc.wantTooSlow && !transient(review.Unreviewed[0].Err) {
+			t.Errorf("check %v: team-stuck's error = %v, want it transient (reviewed again in the background)", tc.check, review.Unreviewed[0].Err)
 		}
 		if calls := c.callsIn("team-stuck"); calls != 2 {
 			t.Errorf("team-stuck reviewed %d times, want 2 (no answer in time is retried within the namespace's budget)", calls)
@@ -393,11 +433,13 @@ func TestPermittedNamespacesTransientRetried(t *testing.T) {
 }
 
 // sequenceReviewer answers the n-th rules review (from 1) of every
-// namespace with steps[n-1]: hang (until the context ends), or err (nil:
-// the rules).
+// namespace with steps[n-1]: hang (until the context ends), a lateError
+// (its error, after its delay), or err (nil: the rules). It answers the
+// check of the API server with check (answerCheck).
 type sequenceReviewer struct {
 	rules []authorizationv1.ResourceRule
 	steps []error
+	check error
 
 	mu    sync.Mutex
 	calls int
@@ -406,7 +448,21 @@ type sequenceReviewer struct {
 // errHang is a step that never answers before its context ends.
 var errHang = errors.New("hang")
 
+// lateError is a step that answers err after a delay of fraction of the
+// attempt's timeout.
+type lateError struct {
+	fraction float64
+	err      error
+}
+
+func (e lateError) Error() string {
+	return fmt.Sprintf("%v after %.0f%% of the timeout", e.err, 100*e.fraction)
+}
+
 func (r *sequenceReviewer) Create(ctx context.Context, obj client.Object, _ ...client.CreateOption) error {
+	if ok, err := answerCheck(ctx, obj, r.check); ok {
+		return err
+	}
 	review, ok := obj.(*authorizationv1.SelfSubjectRulesReview)
 	if !ok {
 		return errors.New("unexpected object")
@@ -415,10 +471,19 @@ func (r *sequenceReviewer) Create(ctx context.Context, obj client.Object, _ ...c
 	r.calls++
 	step := r.steps[min(r.calls, len(r.steps))-1]
 	r.mu.Unlock()
+	var late lateError
 	switch {
 	case errors.Is(step, errHang):
 		<-ctx.Done()
 		return ctx.Err()
+	case errors.As(step, &late):
+		deadline, _ := ctx.Deadline()
+		select {
+		case <-time.After(time.Duration(late.fraction * float64(time.Until(deadline)))):
+			return late.err
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	case step != nil:
 		return step
 	}
@@ -430,24 +495,43 @@ func (r *sequenceReviewer) Create(ctx context.Context, obj client.Object, _ ...c
 // namespace is too slow (ErrReviewTooSlow, never re-reviewed in the
 // background) only when every attempt got no answer in time: one attempt
 // that the API server answered with an error leaves it review-failed, and
-// one that answered keeps it.
+// one that answered keeps it. Round 19: and only when the API server
+// answered a check sent meanwhile; a server or gateway timeout late in an
+// attempt counts as its deadline, an early one does not.
 func TestPermittedNamespacesTooSlow(t *testing.T) {
 	required := []Permission{{Group: "apps", Resource: "deployments", Verbs: []string{"list"}}}
 	rules := []authorizationv1.ResourceRule{{APIGroups: []string{"apps"}, Resources: []string{"deployments"}, Verbs: []string{"list"}}}
 	unavailable := apierrors.NewServiceUnavailable("apiserver shutting down")
+	gateway := apierrors.NewTimeoutError("the gateway gave up", 0)
+	serverTimeout := apierrors.NewServerTimeout(authorizationv1.Resource("selfsubjectrulesreviews"), "create", 0)
+	generic504 := apierrors.NewGenericServerResponse(http.StatusGatewayTimeout, "POST", authorizationv1.Resource("selfsubjectrulesreviews"), "", "", 0, true)
 	for _, tt := range []struct {
 		name          string
 		steps         []error
+		check         error
 		wantPermitted bool
 		wantTooSlow   bool
 	}{
-		{"every attempt hangs", []error{errHang}, false, true},
-		{"a 503, then a hang", []error{unavailable, errHang}, false, false},
-		{"a hang, then a 503", []error{errHang, unavailable}, false, false},
-		{"a hang, then an answer", []error{errHang, nil}, true, false},
+		{"every attempt hangs", []error{errHang}, nil, false, true},
+		{"a 503, then a hang", []error{unavailable, errHang}, nil, false, false},
+		{"a hang, then a 503", []error{errHang, unavailable}, nil, false, false},
+		{"a hang, then an answer", []error{errHang, nil}, nil, true, false},
+		// Round 19, OPERATOR P3-1: one connection serves every review; a
+		// check sent with the last attempt that gets no answer either is
+		// the connection, not the namespace.
+		{"every attempt hangs, and the check too", []error{errHang}, errHang, false, false},
+		// Round 19, SECURITY P3-2: a gateway or an API server with a
+		// shorter request timeout ends the attempt with a timeout status
+		// where it would have hit its deadline: late, it is the deadline.
+		{"a late 504 at every attempt", []error{lateError{0.8, gateway}}, nil, false, true},
+		{"a late server timeout at every attempt", []error{lateError{0.8, serverTimeout}}, nil, false, true},
+		{"a late generic 504 at every attempt", []error{lateError{0.8, generic504}}, nil, false, true},
+		{"a hang, then a late 504", []error{errHang, lateError{0.8, gateway}}, nil, false, true},
+		{"an early 504 at every attempt", []error{lateError{0.1, gateway}}, nil, false, false},
+		{"a late 503 at every attempt", []error{lateError{0.8, unavailable}}, nil, false, false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			c := &sequenceReviewer{rules: rules, steps: tt.steps}
+			c := &sequenceReviewer{rules: rules, steps: tt.steps, check: tt.check}
 			review, err := PermittedNamespaces(t.Context(), c, required, []string{"team-a"}, 100*time.Millisecond)
 			if err != nil {
 				t.Fatal(err)
@@ -476,25 +560,34 @@ func (timeoutError) Temporary() bool { return true }
 
 // TestLimitReviewResponses: round 16, K8S P2-1. An access review's
 // response is read up to ReviewResponseLimit, never past it, whatever
-// Content-Length says; other requests pass unchanged.
+// Content-Length says; other requests pass unchanged. Round 19, OPERATOR
+// P3-2: the error says the size seen (Content-Length, or the bytes
+// counted past the limit into nothing, up to tooLargeCountLimit).
 func TestLimitReviewResponses(t *testing.T) {
 	const reviews = "/apis/authorization.k8s.io/v1/selfsubjectrulesreviews"
 	for _, tt := range []struct {
 		name          string
 		method, path  string
-		size          int
+		size          int // -1: endless
 		contentLength bool
 		wantErr       bool
+		wantSize      string
 	}{
-		{"a small review", http.MethodPost, reviews, 1024, false, false},
-		{"a review at the limit", http.MethodPost, reviews, ReviewResponseLimit, false, false},
-		{"a review one byte past the limit", http.MethodPost, reviews, ReviewResponseLimit + 1, false, true},
-		{"a review declared too large", http.MethodPost, reviews, ReviewResponseLimit + 1, true, true},
-		{"a large list is not a review", http.MethodGet, "/apis/apps/v1/deployments", ReviewResponseLimit + 1, true, false},
+		{"a small review", http.MethodPost, reviews, 1024, false, false, ""},
+		{"a review at the limit", http.MethodPost, reviews, ReviewResponseLimit, false, false, ""},
+		{"a review one byte past the limit", http.MethodPost, reviews, ReviewResponseLimit + 1, false, true, fmt.Sprintf("%d bytes read", ReviewResponseLimit+1)},
+		{"a review of 3 MiB", http.MethodPost, reviews, 3 << 20, false, true, fmt.Sprintf("%d bytes read", 3<<20)},
+		{"a review past the count", http.MethodPost, reviews, -1, false, true, fmt.Sprintf("at least %d bytes read", ReviewResponseLimit+1+tooLargeCountLimit)},
+		{"a review declared too large", http.MethodPost, reviews, ReviewResponseLimit + 1, true, true, fmt.Sprintf("Content-Length %d", ReviewResponseLimit+1)},
+		{"a large list is not a review", http.MethodGet, "/apis/apps/v1/deployments", ReviewResponseLimit + 1, true, false, ""},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			next := roundTripFunc(func(*http.Request) (*http.Response, error) {
-				resp := &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(strings.Repeat("x", tt.size))), ContentLength: -1}
+				var body io.Reader = strings.NewReader(strings.Repeat("x", max(tt.size, 0)))
+				if tt.size < 0 {
+					body = endless{}
+				}
+				resp := &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(body), ContentLength: -1}
 				if tt.contentLength {
 					resp.ContentLength = int64(tt.size)
 				}
@@ -514,6 +607,10 @@ func TestLimitReviewResponses(t *testing.T) {
 				if len(body) > ReviewResponseLimit {
 					t.Fatalf("read %d bytes, past the limit", len(body))
 				}
+				var tooLarge *ReviewTooLargeError
+				if !errors.As(err, &tooLarge) || tooLarge.Size() != tt.wantSize || !strings.Contains(err.Error(), tt.wantSize) {
+					t.Fatalf("err = %v, want the size %q in it", err, tt.wantSize)
+				}
 				return
 			}
 			if err != nil || len(body) != tt.size {
@@ -521,6 +618,16 @@ func TestLimitReviewResponses(t *testing.T) {
 			}
 		})
 	}
+}
+
+// endless is a body that never ends.
+type endless struct{}
+
+func (endless) Read(p []byte) (int, error) {
+	for i := range p {
+		p[i] = 'x'
+	}
+	return len(p), nil
 }
 
 type roundTripFunc func(*http.Request) (*http.Response, error)

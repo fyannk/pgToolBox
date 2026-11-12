@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"testing"
 
 	authorizationv1 "k8s.io/api/authorization/v1"
@@ -81,5 +82,10 @@ func TestStartupClientBoundsTheRulesReview(t *testing.T) {
 	}
 	if !errors.Is(review.Unreviewed[0].Err, managerrole.ErrReviewTooLarge) {
 		t.Errorf("team-hostile's error = %v, want ErrReviewTooLarge", review.Unreviewed[0].Err)
+	}
+	// Round 19, OPERATOR P3-2: the size seen reaches the error (and so the
+	// log) through the client.
+	if size := responseSize(review.Unreviewed[0].Err); !strings.HasSuffix(size, " bytes read") || !strings.Contains(review.Unreviewed[0].Err.Error(), size) {
+		t.Errorf("team-hostile's error = %v, size %q: want the bytes read named", review.Unreviewed[0].Err, size)
 	}
 }

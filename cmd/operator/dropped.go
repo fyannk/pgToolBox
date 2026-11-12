@@ -49,8 +49,10 @@ const (
 	// manager role there (a narrower Role bound in place of the chart's).
 	dropPermissions dropCause = "permissions"
 	// dropReviewFailed: its permissions there could not be reviewed (an
-	// API server error or a lost connection, after the retries); reviewed
-	// again in the background (reReviewFailed).
+	// API server error or a reset or refused connection after the
+	// retries, or no answer in time while the API server answered nothing
+	// else either: a connection dead without a reset); reviewed again in
+	// the background (reReviewFailed).
 	dropReviewFailed dropCause = "review-failed"
 	// dropReviewTooLarge: its permission review answered more than
 	// managerrole.ReviewResponseLimit (the namespace's RoleBindings grant
@@ -58,7 +60,8 @@ const (
 	// again in the background: only the next start reviews it.
 	dropReviewTooLarge dropCause = "review-too-large"
 	// dropReviewTooSlow: its permission review got no answer in time at
-	// every attempt (managerrole.ErrReviewTooSlow), most likely its
+	// every attempt while the API server answered a check sent meanwhile
+	// (managerrole.ErrReviewTooSlow), most likely its
 	// RoleBindings again: an API server builds the whole response before
 	// the first byte. Never reviewed again in the background, like
 	// dropReviewTooLarge: only the next start reviews it.

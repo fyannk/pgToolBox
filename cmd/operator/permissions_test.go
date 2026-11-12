@@ -17,6 +17,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -216,6 +217,12 @@ func TestPermittedNamespacesReviewFailedKeepsWhatToAsk(t *testing.T) {
 	full := managerRules(t)
 	c := fake.NewClientBuilder().WithScheme(scheme).WithRESTMapper(testMapper()).WithInterceptorFuncs(interceptor.Funcs{
 		Create: func(ctx context.Context, _ client.WithWatch, obj client.Object, _ ...client.CreateOption) error {
+			// The check of the API server sent with a namespace's last
+			// attempt (round 19): answered, the server is up.
+			if access, ok := obj.(*authorizationv1.SelfSubjectAccessReview); ok && access.Spec.ResourceAttributes != nil && access.Spec.ResourceAttributes.Namespace == "" {
+				access.Status.Allowed = true
+				return nil
+			}
 			review, ok := obj.(*authorizationv1.SelfSubjectRulesReview)
 			if !ok {
 				return errors.New("only rules reviews are expected")
@@ -258,6 +265,25 @@ func TestPermittedNamespacesReviewFailedKeepsWhatToAsk(t *testing.T) {
 	for _, d := range dropped {
 		if d.allows("events.k8s.io", "events", "create") {
 			t.Errorf("%s, whose review failed, reads as allowing a write", d.Namespace)
+		}
+	}
+}
+
+// TestResponseSize: round 19, OPERATOR P3-2. The log of a namespace whose
+// review was too large says the size seen.
+func TestResponseSize(t *testing.T) {
+	for _, tt := range []struct {
+		err  error
+		want string
+	}{
+		{fmt.Errorf("reading the body: %w", &managerrole.ReviewTooLargeError{Read: 3 << 20}), "3145728 bytes read"},
+		{&managerrole.ReviewTooLargeError{ContentLength: 300_000}, "Content-Length 300000"},
+		{&managerrole.ReviewTooLargeError{Read: 1 << 26, AtLeast: true}, "at least 67108864 bytes read"},
+		{managerrole.ErrReviewTooLarge, "unknown"},
+		{errors.New("other"), "unknown"},
+	} {
+		if got := responseSize(tt.err); got != tt.want {
+			t.Errorf("responseSize(%v) = %q, want %q", tt.err, got, tt.want)
 		}
 	}
 }
