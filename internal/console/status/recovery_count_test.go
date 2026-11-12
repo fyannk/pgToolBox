@@ -605,7 +605,7 @@ func TestPurgeBandHoldsOverChains(t *testing.T) {
 // TestBackupEndsOfRestoredStampedAndQueued (round 19, PG P3-B, CNPG P3-1
 // and P3-2): a Backup restored with its status keeps its old times and
 // is not counted as ended since the read; a Completed one with no
-// plausible stop is bounded by the operator's completion stamp; a queued
+// plausible stop is bounded by CloudNativePG's completion stamp; a queued
 // one in progress counts from when the operator started it, not from its
 // creation. Never fewer than could have ended since: no stop and no
 // stamp still counts.
