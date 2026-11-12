@@ -31,6 +31,7 @@ import (
 	"github.com/fyannk/pgToolBox/internal/console/opstate"
 	"github.com/fyannk/pgToolBox/internal/console/viewmodel"
 	"github.com/fyannk/pgToolBox/pkg/cnpgstatus"
+	"github.com/fyannk/pgToolBox/pkg/cnpgstatus/observe"
 )
 
 // DrillOptions enable the restore-drill operation. The
@@ -99,8 +100,8 @@ func (d *DrillOptions) namespaceFor(source string) string {
 func latestCompleted(backups []*cnpgv1.Backup) *cnpgv1.Backup {
 	var best *cnpgv1.Backup
 	at := func(b *cnpgv1.Backup) time.Time {
-		if b.Status.StoppedAt != nil {
-			return b.Status.StoppedAt.Time
+		if stop := backupStop(b); stop != nil {
+			return *stop
 		}
 		return b.CreationTimestamp.Time
 	}
@@ -215,11 +216,24 @@ type drillBackup struct {
 
 func barmanDrillBackup(b *cnpgv1.Backup) drillBackup {
 	out := drillBackup{object: b}
-	if b != nil && b.Status.StoppedAt != nil {
-		t := b.Status.StoppedAt.UTC()
-		out.stoppedAt = &t
+	if b != nil {
+		out.stoppedAt = backupStop(b)
 	}
 	return out
+}
+
+// backupStop is the Backup's stop time, nil when unset or not sane (a
+// plugin that leaves stopped_at unset is stamped 1970 by CNPG).
+func backupStop(b *cnpgv1.Backup) *time.Time {
+	var started, stopped *time.Time
+	if b.Status.StartedAt != nil {
+		started = &b.Status.StartedAt.Time
+	}
+	if b.Status.StoppedAt != nil {
+		stopped = &b.Status.StoppedAt.Time
+	}
+	_, stop := observe.SaneBackupTimes(b.CreationTimestamp.Time, started, stopped)
+	return stop
 }
 
 // name is the Backup object's name, else the label.
