@@ -238,7 +238,7 @@ from any replica, is the safe check. When the card, the pending row or
 **Disconnect all** that you used is gone after the answer, focus moves to the
 note that says what happened.
 A replica that has not read the shared state yet (a pod just started) answers
-`503` instead, to a disconnection of a grant it does not know and to
+`503`, not `404` or `204`, to a disconnection of a grant it does not know and to
 **Disconnect all** with nothing to revoke there: it knows none of the grants the
 others recorded. With MCP OAuth on, `/readyz` waits for that first read, so such
 a pod takes no traffic first.
