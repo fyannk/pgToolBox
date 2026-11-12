@@ -97,7 +97,7 @@ func (s *Service) volumeFactsOf(ctx context.Context, g *gathered) volumeFacts {
 			hasWAL = true
 		}
 	}
-	f.archiving = cnpgstatus.Archiving(g.cluster, primaryArchiver(g))
+	f.archiving = archivingOf(g)
 	if f.archiving.Class == cnpgstatus.ClassCritical || f.archiving.Reason == cnpgstatus.ArchivingReasonFailureWithBacklog {
 		f.archivingFailing = "pgdata"
 		if hasWAL {

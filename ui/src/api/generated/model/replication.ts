@@ -8,6 +8,7 @@
 import type { BlindSpot } from './blindSpot.ts';
 import type { ClusterRef } from './clusterRef.ts';
 import type { FailoverRehearsal } from './failoverRehearsal.ts';
+import type { PostgresUnread } from './postgresUnread.ts';
 import type { PrimaryElection } from './primaryElection.ts';
 import type { QuorumView } from './quorumView.ts';
 import type { ReceiverRow } from './receiverRow.ts';
@@ -22,6 +23,8 @@ export interface Replication {
   failover: FailoverRehearsal;
   generatedAt: string;
   primary: PrimaryElection;
+  /** Set when the primary's instance manager answered without reaching PostgreSQL: standbys and slots are then not read, never empty. */
+  primaryUnread?: PostgresUnread;
   /** FailoverQuorum.status: the synchronous set PostgreSQL really applied; absent when not reported. */
   quorum?: QuorumView;
   /**

@@ -5,6 +5,7 @@
  * The JSON API of the pgToolBox console, the CloudNativePG observation console. Every operation acts as the signed-in user: the console asks the Kubernetes API server (SelfSubjectAccessReview, with your own token) before it reads anything on your behalf. Unsafe methods require the header X-PgToolBox-Request: 1 and a same-origin request.
  * OpenAPI spec version: v1
  */
+import type { PostgresUnread } from './postgresUnread.ts';
 import type { Provenance } from './provenance.ts';
 import type { ReceiverRowHealth } from './receiverRowHealth.ts';
 import type { StatusRead } from './statusRead.ts';
@@ -13,6 +14,8 @@ export interface ReceiverRow {
   health: ReceiverRowHealth;
   lagBytes?: number;
   name: string;
+  /** Set when the replica's instance manager answered without reaching PostgreSQL: its receiver, positions and timeline are not read. */
+  postgresUnread?: PostgresUnread;
   provenance: Provenance;
   receivedLsn?: string;
   replayLsn?: string;

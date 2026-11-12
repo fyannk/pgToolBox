@@ -181,11 +181,14 @@ func (s *Service) topoInstances(g *gathered, facts *topoFacts) (boxes []topology
 
 // attachedStandbys is the primary's walsender report by standby name, or
 // nil. Only a current read of the primary says who is attached: a stale
-// reading would place a replica out of the set on old news.
+// reading would place a replica out of the set on old news, and a masked
+// one (its manager answered without reaching PostgreSQL) read no
+// walsender at all.
 func attachedStandbys(rows []viewmodel.InstanceRow) map[string]viewmodel.Standby {
 	var standbys map[string]viewmodel.Standby
 	for _, r := range rows {
-		if r.Role.Operator == viewmodel.RolePrimary && r.Live != nil && r.Live.IsPrimary && r.StatusRead.State == viewmodel.StatusReadOK && !r.Live.Provenance.Stale {
+		if r.Role.Operator == viewmodel.RolePrimary && r.Live != nil && r.Live.IsPrimary && r.StatusRead.State == viewmodel.StatusReadOK && !r.Live.Provenance.Stale &&
+			r.Live.PostgresUnread == nil {
 			standbys = map[string]viewmodel.Standby{}
 			for _, sb := range r.Live.Standbys {
 				standbys[sb.Name] = sb
@@ -445,7 +448,7 @@ func poolerBox(g *gathered, p *cnpgv1.Pooler) topology.Pooler {
 // endpoint goes to the frame note. URLs lose any user information, query
 // and fragment before they are shown.
 func (s *Service) storeBox(g *gathered, cfg cnpgstatus.BackupConfig, inTree bool, facts *topoFacts) (topology.Box, string) {
-	box := topology.Box{ID: "store", Kind: topology.KindStore, State: health(cnpgstatus.Archiving(g.cluster, primaryArchiver(g)).Class), Link: "backups"}
+	box := topology.Box{ID: "store", Kind: topology.KindStore, State: health(archivingOf(g).Class), Link: "backups"}
 	var destination, endpoint, retention string
 	switch {
 	case inTree:
