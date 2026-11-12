@@ -81,7 +81,8 @@ func (d Denied) Reason() string {
 
 // Unreviewed is one namespace whose review failed: an error the API server
 // returned after the retries of a transient one, a response too large, or
-// no answer in time at every attempt.
+// no answer in time at every attempt (too slow when the API server answered
+// a check sent meanwhile, transient when it did not).
 type Unreviewed struct {
 	Namespace string
 	Err       error
@@ -100,7 +101,8 @@ func (u Unreviewed) TooLarge() bool {
 }
 
 // TooSlow reports whether the review failed because every attempt got no
-// answer within its deadline (ErrReviewTooSlow): most likely the
+// answer within its deadline while the API server answered a check sent
+// meanwhile (ErrReviewTooSlow): most likely the
 // namespace's RoleBindings again (an API server builds the whole response
 // before its first byte, so a huge one passes the deadline before the
 // response limit sees anything), and whoever administers them can make it
@@ -142,15 +144,17 @@ const (
 	// RoleBinding of the caller in the namespace, duplicates included, so
 	// a namespace administrator who binds one Role of 25,000 rules forty
 	// times makes it 53 MiB of JSON and over 500 MiB to decode. The
-	// operator's own namespaced rules are 32 rules, about 4 KB of JSON,
-	// and the largest honest case seen (OpenShift's default bindings)
-	// about 120 KB. The limit is per response, discovery.ProbeConcurrency
-	// reviews run at once, and the worst shapes (thousands of one-letter
-	// verbs, or of minimal rules) decode to several times their size: in
-	// JSON, 256 KiB keeps the sixteen of them under 40 MiB of heap
-	// (measured, cmd/operator TestStartupReviewsHeapIsBounded), against
-	// 240-340 MiB at 1 MiB and 90-140 MiB at 256 KiB of protobuf, which
-	// decodes to more per byte: the start-up client asks for JSON.
+	// operator's own namespaced rules are 32 rules, about 4 KB of JSON; an
+	// aggregated admin rule for one API group is about 200 B, so 256 KiB
+	// still holds over a thousand aggregated groups bound once. The limit
+	// is per response, discovery.ProbeConcurrency reviews run at once, and
+	// the worst shapes (thousands of one-letter verbs, or of minimal rules)
+	// decode to several times their size: cmd/operator
+	// TestStartupReviewsHeapIsBounded answers all sixteen just under this
+	// limit, in JSON, at once, and fails past a 64 MiB heap budget (it has
+	// measured 18 to 45 MiB); 1 MiB grew it by 240-340 MiB, and 256 KiB of
+	// protobuf, which decodes to more per byte, by 90-140 MiB: the start-up
+	// client asks for JSON.
 	ReviewResponseLimit = 1 << 18
 )
 
@@ -163,14 +167,56 @@ func namespaceBudget(timeout time.Duration) time.Duration {
 
 // ErrReviewTooLarge is the error of an access review whose response passed
 // ReviewResponseLimit: that namespace is unreviewed (never retried, the
-// same rules give the same answer), and no other is affected.
-var ErrReviewTooLarge = fmt.Errorf("the access review's response is larger than %d bytes: the RoleBindings of the namespace grant the operator far more rules than its manager role (one Role bound many times?)", ReviewResponseLimit)
+// same rules give the same answer), and no other is affected. The error
+// returned is a *ReviewTooLargeError, which errors.Is matches to it.
+var ErrReviewTooLarge = fmt.Errorf("the access review's response is larger than %d bytes", ReviewResponseLimit)
+
+// tooLargeCountLimit bounds what is read past ReviewResponseLimit, into
+// nothing, to tell how large a response too large was: the bytes are
+// counted, never kept, and the read is bounded by the attempt's deadline.
+const tooLargeCountLimit = 64 << 20
+
+// ReviewTooLargeError is ErrReviewTooLarge with the size seen: the
+// response's Content-Length when the server declared one, or the bytes of
+// the body read (after any gzip decoding), at least that many when
+// tooLargeCountLimit stopped the count. It lets whoever reads the log tell
+// a response just over the limit from one of tens of megabytes.
+type ReviewTooLargeError struct {
+	// ContentLength is the length the server declared, or 0.
+	ContentLength int64
+	// Read is the bytes of the body read, when ContentLength is 0.
+	Read int64
+	// AtLeast: the body has more than Read bytes; the count stopped there.
+	AtLeast bool
+}
+
+// Size is the size seen, in words: "Content-Length 3145728", "3145728
+// bytes read" or "at least 67371009 bytes read".
+func (e *ReviewTooLargeError) Size() string {
+	switch {
+	case e.ContentLength > 0:
+		return fmt.Sprintf("Content-Length %d", e.ContentLength)
+	case e.AtLeast:
+		return fmt.Sprintf("at least %d bytes read", e.Read)
+	}
+	return fmt.Sprintf("%d bytes read", e.Read)
+}
+
+func (e *ReviewTooLargeError) Error() string {
+	return fmt.Sprintf("%v (%s): the RoleBindings of the namespace grant the operator far more rules than its manager role (one Role bound many times?)", ErrReviewTooLarge, e.Size())
+}
+
+// Unwrap is ErrReviewTooLarge.
+func (e *ReviewTooLargeError) Unwrap() error { return ErrReviewTooLarge }
 
 // ErrReviewTooSlow is the error of a namespace whose every review attempt
-// got no answer within its deadline while ctx was still live: the API
-// server answered nothing for that namespace for two full attempts. It
-// wraps the last attempt's error (context.DeadlineExceeded).
-var ErrReviewTooSlow = errors.New("the access review got no answer in time at every attempt: the RoleBindings of the namespace may make its review too large to build in time")
+// got no answer within its deadline while ctx was still live, and while
+// the API server answered a check sent during the last attempt (so the
+// connection and the server were up): the API server answered nothing for
+// that namespace for two full attempts. It wraps the last attempt's error
+// (context.DeadlineExceeded, or a server or gateway timeout that came late
+// in the attempt).
+var ErrReviewTooSlow = errors.New("the access review got no answer in time at every attempt, while the API server answered meanwhile: the RoleBindings of the namespace may make its review too large to build in time")
 
 // LimitReviewResponses wraps rt so that the body of every response to an
 // authorization.k8s.io POST (the access reviews) is read through
@@ -195,17 +241,19 @@ func (l limitedReviews) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 	if resp.ContentLength > l.limit {
 		_ = resp.Body.Close()
-		return nil, ErrReviewTooLarge
+		return nil, &ReviewTooLargeError{ContentLength: resp.ContentLength}
 	}
 	resp.Body = &cappedBody{ReadCloser: resp.Body, left: l.limit}
 	return resp, nil
 }
 
-// cappedBody reads at most left bytes of its body, then fails with
-// ErrReviewTooLarge if the body has more.
+// cappedBody reads at most left bytes of its body, then fails with a
+// *ReviewTooLargeError if the body has more, after counting (into nothing,
+// up to tooLargeCountLimit) how much more.
 type cappedBody struct {
 	io.ReadCloser
 	left int64
+	read int64
 }
 
 func (b *cappedBody) Read(p []byte) (int, error) {
@@ -213,7 +261,8 @@ func (b *cappedBody) Read(p []byte) (int, error) {
 		var one [1]byte
 		n, err := b.ReadCloser.Read(one[:])
 		if n > 0 {
-			return 0, ErrReviewTooLarge
+			more, err := io.CopyN(io.Discard, b.ReadCloser, tooLargeCountLimit)
+			return 0, &ReviewTooLargeError{Read: b.read + 1 + more, AtLeast: more == tooLargeCountLimit || (err != nil && !errors.Is(err, io.EOF))}
 		}
 		return 0, err
 	}
@@ -222,6 +271,7 @@ func (b *cappedBody) Read(p []byte) (int, error) {
 	}
 	n, err := b.ReadCloser.Read(p)
 	b.left -= int64(n)
+	b.read += int64(n)
 	return n, err
 }
 
@@ -243,7 +293,9 @@ func (b *cappedBody) Read(p []byte) (int, error) {
 // refused) is retried, twice at most. A response larger than
 // ReviewResponseLimit (through a client wrapped by LimitReviewResponses)
 // fails that namespace alone, and so does one whose every attempt got no
-// answer in time (ErrReviewTooSlow). A namespace still failing is
+// answer in time while the API server answered a check sent meanwhile
+// (ErrReviewTooSlow; without that answer, the failure is the transient
+// one, see reviewNamespace). A namespace still failing is
 // Unreviewed, never kept by guess, and never fails the others. Only ctx
 // ending is an error.
 func PermittedNamespaces(ctx context.Context, c Creator, required []Permission, namespaces []string, timeout time.Duration) (Review, error) {
@@ -283,16 +335,31 @@ func PermittedNamespaces(ctx context.Context, c Creator, required []Permission, 
 // left of that deadline, a transient failure retried after a pause that
 // doubles (retryPause, then twice that) while the deadline leaves room for
 // it.
+//
+// A namespace is too slow (ErrReviewTooSlow) only when every attempt ended
+// at its deadline (or with a server or gateway timeout late in it, see
+// lateTimeout) and the API server answered a check sent with the last
+// attempt (apiAnswers): every review shares one connection, and one that
+// died silently (a control-plane node lost, a load balancer failing over,
+// no reset sent) makes every attempt hang until client-go notices, 45 s
+// later. Without that answer the cause is the connection or the server,
+// not the namespace: the error stays the transient one, and the namespace
+// is reviewed again in the background.
 func reviewNamespace(ctx context.Context, c Creator, required []Permission, namespace string, timeout time.Duration) ([]Permission, error) {
 	deadline := time.Now().Add(namespaceBudget(timeout))
 	var err error
 	// timedOut: every attempt so far ended at its own deadline.
 	timedOut := true
+	// alive: the answer of the check sent with the latest attempt, nil
+	// before any.
+	var alive <-chan bool
+	cancelCheck := context.CancelFunc(func() {})
+	defer func() { cancelCheck() }()
 	pause := retryPause
 	for attempt := range maxAttempts {
 		if attempt > 0 {
 			if time.Until(deadline) <= pause {
-				return nil, tooSlow(err, timedOut)
+				return nil, tooSlow(err, timedOut, alive)
 			}
 			select {
 			case <-ctx.Done():
@@ -301,26 +368,92 @@ func reviewNamespace(ctx context.Context, c Creator, required []Permission, name
 			}
 			pause *= 2
 		}
+		attemptTimeout := min(timeout, time.Until(deadline))
+		if attempt > 0 && timedOut {
+			cancelCheck()
+			alive, cancelCheck = apiAnswers(ctx, c, attemptTimeout)
+		}
+		began := time.Now()
 		var lacking []Permission
-		lacking, err = attemptReview(ctx, c, required, namespace, min(timeout, time.Until(deadline)))
+		lacking, err = attemptReview(ctx, c, required, namespace, attemptTimeout)
 		if err == nil {
 			return lacking, nil
 		}
 		if ctx.Err() != nil || !transient(err) {
 			return nil, err
 		}
-		timedOut = timedOut && errors.Is(err, context.DeadlineExceeded)
+		timedOut = timedOut && (errors.Is(err, context.DeadlineExceeded) || lateTimeout(err, time.Since(began), attemptTimeout))
 	}
-	return nil, tooSlow(err, timedOut)
+	return nil, tooSlow(err, timedOut, alive)
+}
+
+// lateTimeout reports whether err is a server or gateway timeout (a 504,
+// StatusReasonTimeout or StatusReasonServerTimeout) that came after half of
+// the attempt's timeout: an API server whose request timeout is shorter
+// than the attempt's, or a gateway in front of it that gives up first, ends
+// the attempt with that status where it would otherwise have ended at its
+// deadline. One that comes early is a server refusing quickly, transient.
+func lateTimeout(err error, elapsed, timeout time.Duration) bool {
+	if elapsed <= timeout/2 {
+		return false
+	}
+	var status apierrors.APIStatus
+	return apierrors.IsTimeout(err) || apierrors.IsServerTimeout(err) ||
+		(errors.As(err, &status) && status.Status().Code == http.StatusGatewayTimeout)
 }
 
 // tooSlow is the last attempt's error err, wrapped in ErrReviewTooSlow when
-// every attempt ended at its deadline.
-func tooSlow(err error, timedOut bool) error {
+// every attempt ended at its deadline and the API server answered the check
+// sent with the last attempt (alive, awaited until its own deadline). When
+// it did not, err is returned with that said, still transient.
+func tooSlow(err error, timedOut bool, alive <-chan bool) error {
 	if err == nil || !timedOut {
 		return err
 	}
-	return fmt.Errorf("%w: %w", ErrReviewTooSlow, err)
+	if alive != nil && <-alive {
+		return fmt.Errorf("%w: %w", ErrReviewTooSlow, err)
+	}
+	return fmt.Errorf("%w (a check of the API server sent meanwhile got no answer either: the connection to it or the server, not this namespace, is the likely cause)", err)
+}
+
+// apiAnswers sends one check that no namespace's RoleBindings can slow or
+// grow (a SelfSubjectAccessReview of a cluster-scoped resource, which only
+// ClusterRoleBindings decide) and reports on the channel whether the API
+// server answered it within timeout: an answer, allowed or not, or any
+// status other than a timeout, is the connection and the server up. The
+// channel always receives one value, within timeout at the latest, even
+// from a Creator that ignores its context. Cancel abandons the check.
+func apiAnswers(parent context.Context, c Creator, timeout time.Duration) (<-chan bool, context.CancelFunc) {
+	ctx, cancel := context.WithTimeout(parent, timeout)
+	answered := make(chan bool, 1)
+	go func() {
+		done := make(chan error, 1)
+		go func() {
+			done <- c.Create(ctx, &authorizationv1.SelfSubjectAccessReview{Spec: authorizationv1.SelfSubjectAccessReviewSpec{
+				ResourceAttributes: &authorizationv1.ResourceAttributes{Verb: "get", Resource: "namespaces"},
+			}})
+		}()
+		select {
+		case err := <-done:
+			answered <- ctx.Err() == nil && isAnswer(err)
+		case <-ctx.Done():
+			answered <- false
+		}
+	}()
+	return answered, cancel
+}
+
+// isAnswer reports whether err (of a Create) is the API server's answer:
+// none, or a status other than a server or gateway timeout.
+func isAnswer(err error) bool {
+	if err == nil {
+		return true
+	}
+	var status apierrors.APIStatus
+	if !errors.As(err, &status) {
+		return false
+	}
+	return !apierrors.IsTimeout(err) && !apierrors.IsServerTimeout(err) && status.Status().Code != http.StatusGatewayTimeout
 }
 
 // attemptReview is one missingIn within timeout. A Creator that ignores its
