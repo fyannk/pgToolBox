@@ -154,6 +154,13 @@ const (
 	// DefaultWatchIdle is Options.WatchIdle's default: three of the API
 	// server's bookmark periods.
 	DefaultWatchIdle = 3 * time.Minute
+	// DefaultFreshness is Options.Freshness's default (round 20): with
+	// up to a quarter of jitter and the read's writeTimeout, a replica
+	// whose permission on the ConfigMap was withdrawn, or whose open watch
+	// stopped delivering (a watch cache that no longer progresses), refuses
+	// or catches up within staleGrace. It costs one Get of the ConfigMap
+	// per replica every 15 to 19 seconds.
+	DefaultFreshness = 15 * time.Second
 	// maxAttempts bounds the conflict retries of one write.
 	maxAttempts = 5
 	// rewoundAfter is how many Gets in a row older than what a Get or
@@ -252,6 +259,12 @@ type Options struct {
 	// a bookmark (the API server sends one about every minute), before
 	// it is taken for deaf and opened again; DefaultWatchIdle when 0.
 	WatchIdle time.Duration
+	// Freshness is how often, while the watch is open, the ConfigMap is
+	// read again (a quorum Get) to check that the watch is current and
+	// still allowed: the API server authorizes a watch only when it
+	// opens, and a watch cache that stopped progressing keeps sending
+	// bookmarks at its old resourceVersion; DefaultFreshness when 0.
+	Freshness time.Duration
 	// DigestRetention is how long digests are kept (DIGEST_RETENTION);
 	// a delivery mark goes some time after its digest.
 	// DefaultDigestRetention when 0.
@@ -507,7 +520,8 @@ type Store struct {
 	// for staleGrace from that instant only (GrantsUsable), and a
 	// failing mode entered from it runs its staleGrace from there too
 	// (setModeLocked), so neither a read that hangs nor a failure after
-	// it extends the time this replica serves grants unwatched.
+	// it extends the time this replica serves grants unwatched. It and
+	// since keep the clock's monotonic reading (never UTC()).
 	unwatchedAt time.Time
 	// known is set on the first answer of the API server about the
 	// ConfigMap (a read or write of it, or its being missing or
@@ -546,13 +560,16 @@ func New(opts Options) *Store {
 	if opts.WatchIdle <= 0 {
 		opts.WatchIdle = DefaultWatchIdle
 	}
+	if opts.Freshness <= 0 {
+		opts.Freshness = DefaultFreshness
+	}
 	if opts.DigestRetention <= 0 {
 		opts.DigestRetention = DefaultDigestRetention
 	}
 	s := &Store{
 		opts: opts, signedOut: map[string]signOut{}, facts: map[string]fact{}, sent: map[string]int64{}, grants: map[string]grantEntry{}, codes: map[string]codeEntry{}, drills: map[string]DrillResult{}, byObject: map[string]map[string]struct{}{},
 		foreign: map[string]bool{}, foreignLogged: map[string]int{}, takeOverLogged: map[string]bool{}, othersBeats: map[string]beat{},
-		recorded: map[string]time.Time{}, unwritten: map[string]bool{}, unversionedLogged: map[string]bool{}, mode: modePending, since: opts.Now().UTC(), wake: make(chan struct{}, 1),
+		recorded: map[string]time.Time{}, unwritten: map[string]bool{}, unversionedLogged: map[string]bool{}, mode: modePending, since: opts.Now(), wake: make(chan struct{}, 1),
 		writes: make(chan struct{}, 1), rewatch: make(chan struct{}, 1),
 	}
 	if opts.Name == "" {
@@ -1284,6 +1301,21 @@ func (s *Store) foreignLocked(key, raw string) bool {
 // opaque; every API server stores them as the integer revision of its
 // store, and the two are compared only when both parse so: otherwise
 // neither is called older and the ConfigMap is merged.
+// newerVersion reports whether rv is a later version than seen: as
+// numbers when both are (etcd's revisions, which the API server's
+// resourceVersions are), otherwise when it differs from it.
+func newerVersion(rv, seen string) bool {
+	if rv == "" {
+		return false
+	}
+	a, errA := strconv.ParseUint(rv, 10, 64)
+	b, errB := strconv.ParseUint(seen, 10, 64)
+	if errA == nil && errB == nil {
+		return a > b
+	}
+	return rv != seen
+}
+
 func olderVersion(rv, than string) bool {
 	a, errA := strconv.ParseUint(rv, 10, 64)
 	b, errB := strconv.ParseUint(than, 10, 64)
@@ -1929,7 +1961,10 @@ func (s *Store) setModeLocked(m mode, reason string) {
 		s.reason = reason
 		return
 	}
-	since := s.opts.Now().UTC()
+	// Not UTC: the grace windows are measured on the clock's monotonic
+	// reading, which UTC() would strip (a backward step of the wall clock
+	// would extend them); State converts for display.
+	since := s.opts.Now()
 	if s.mode == modeLive && !s.watching && !s.unwatchedAt.IsZero() && s.unwatchedAt.Before(since) {
 		since = s.unwatchedAt
 	}
@@ -2097,9 +2132,17 @@ func (s *Store) pause(ctx context.Context, d time.Duration, kicked bool) bool {
 // answer: an API server that does not (a request queued by its flow
 // control, a dial into a partition, a dead pooled connection) is a
 // failure of it, not a wait without end in a live mode with no watch
-// (round 19). An open watch that delivers nothing for watchIdle, not
-// even a bookmark, is ended and opened again, quietly, as a watch the
-// API server closes.
+// (round 19). An open watch that delivers nothing new for watchIdle (no
+// event, no bookmark at a newer resourceVersion: a watch cache that
+// stopped progressing keeps sending bookmarks at its old one) is ended
+// and opened again, quietly, as a watch the API server closes.
+//
+// While the watch is open the ConfigMap is read again every Freshness
+// (freshness): the API server authorizes a watch only when it opens, so a
+// permission withdrawn since (a Role narrowed or removed) is seen only by
+// such a read (round 20, security P2-1), and a watch that fell behind
+// (the read shows a resourceVersion the watch has not delivered) is
+// caught up by the read at once and reopened at the next one.
 func (s *Store) watchOnce(ctx context.Context) (bool, error) {
 	getCtx, cancelGet := context.WithTimeout(ctx, writeTimeout)
 	cm, err := s.opts.Client.Get(getCtx, s.opts.Name, metav1.GetOptions{})
@@ -2107,6 +2150,7 @@ func (s *Store) watchOnce(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, s.failed(err)
 	}
+	seen := cm.ResourceVersion
 	s.locked(func() {
 		s.mergeReadLocked(cm)
 		if s.mode == modeMissing || s.mode == modeForbidden {
@@ -2140,10 +2184,16 @@ func (s *Store) watchOnce(ctx context.Context) (bool, error) {
 			s.wakeLocked(true)
 		}
 	})
-	defer s.locked(func() { s.watching, s.unwatchedAt = false, s.opts.Now().UTC() })
+	defer s.locked(func() { s.watching, s.unwatchedAt = false, s.opts.Now() })
 	first := true
 	idle := time.NewTimer(s.opts.WatchIdle)
 	defer idle.Stop()
+	freshCtx, cancelFresh := context.WithCancel(ctx)
+	defer cancelFresh()
+	fresh := time.NewTimer(jitter(s.opts.Freshness))
+	defer fresh.Stop()
+	reads := make(chan freshRead, 1)
+	behind := ""
 	for {
 		select {
 		case <-ctx.Done():
@@ -2151,16 +2201,36 @@ func (s *Store) watchOnce(ctx context.Context) (bool, error) {
 		case <-idle.C:
 			// Deaf (round 19, security P3): a revocation another replica
 			// wrote would not be seen. The next read and watch see it.
-			s.opts.Logger.Debug("shared state watch idle; reopening", slog.String("configmap", s.opts.Name))
+			s.opts.Logger.Debug("shared state watch idle; reopening", slog.String("configmap", s.opts.Name),
+				slog.String("resourceVersion", seen))
 			return true, nil
+		case <-fresh.C:
+			// Read in its own goroutine, so that the watch's events are
+			// still taken while the API server takes its time; one read at
+			// a time (the timer is set again once it is answered).
+			go func() { reads <- s.readFresh(freshCtx) }()
+		case r := <-reads:
+			if ctx.Err() != nil {
+				return true, nil
+			}
+			reopen, err := s.takeFresh(r, seen, &behind)
+			if err != nil || reopen {
+				return true, err
+			}
+			fresh.Reset(jitter(s.opts.Freshness))
 		case ev, ok := <-w.ResultChan():
 			if !ok {
 				return true, nil
 			}
-			idle.Reset(s.opts.WatchIdle)
+			if ev.Type != watch.Bookmark {
+				idle.Reset(s.opts.WatchIdle)
+			}
 			switch ev.Type {
 			case watch.Added, watch.Modified:
 				if cm, ok := ev.Object.(*corev1.ConfigMap); ok && cm.Name == s.opts.Name {
+					if newerVersion(cm.ResourceVersion, seen) {
+						seen = cm.ResourceVersion
+					}
 					s.locked(func() {
 						if first && ev.Type == watch.Added {
 							// The watch's first event is the ConfigMap as it
@@ -2188,9 +2258,74 @@ func (s *Store) watchOnce(ctx context.Context) (bool, error) {
 				s.locked(func() { s.setModeLocked(modeFailing, "the watch of the ConfigMap failed") })
 				return true, fmt.Errorf("watch error: %w", apierrors.FromObject(ev.Object))
 			case watch.Bookmark:
+				// A sign of life only if it moved on (round 20, security
+				// P3-1): a bookmark repeating an old resourceVersion is
+				// what a watch cache that stopped progressing sends.
+				if m, ok := ev.Object.(metav1.Object); ok && newerVersion(m.GetResourceVersion(), seen) {
+					seen = m.GetResourceVersion()
+					idle.Reset(s.opts.WatchIdle)
+				}
 			}
 		}
 	}
+}
+
+// freshRead is the answer to a freshness read (readFresh): the ConfigMap
+// or the error, and when the read was sent.
+type freshRead struct {
+	cm    *corev1.ConfigMap
+	err   error
+	asked time.Time
+}
+
+// readFresh reads the ConfigMap with writeTimeout to answer.
+func (s *Store) readFresh(ctx context.Context) freshRead {
+	asked := s.opts.Now()
+	getCtx, cancel := context.WithTimeout(ctx, writeTimeout)
+	defer cancel()
+	cm, err := s.opts.Client.Get(getCtx, s.opts.Name, metav1.GetOptions{})
+	return freshRead{cm: cm, err: err, asked: asked}
+}
+
+// takeFresh takes in a freshness read made while the watch is open
+// (watchOnce): whether to end the watch, with the error that ends it.
+//
+//   - Missing or forbidden: the mode says so at once, and every grant is
+//     refused (a watch opened before the permission was withdrawn would
+//     otherwise go on serving them until the API server closes it, up to
+//     an hour later).
+//   - Any other failure: the failing mode, its staleGrace running from
+//     when the read was sent (the API server has not answered since), and
+//     the watch is opened again: a watch that is not checked is not one to
+//     serve grants on for longer.
+//   - Answered: a ConfigMap newer than what the watch delivered is merged
+//     now (what it holds, a revocation written elsewhere, counts at once);
+//     a watch that has still not delivered the version the previous read
+//     showed has fallen behind and is opened again.
+func (s *Store) takeFresh(r freshRead, seen string, behind *string) (bool, error) {
+	if r.err != nil {
+		if apierrors.IsNotFound(r.err) || apierrors.IsForbidden(r.err) {
+			return true, s.failed(r.err)
+		}
+		s.locked(func() {
+			s.watching, s.unwatchedAt = false, r.asked
+			s.setModeLocked(modeFailing, "the API server did not answer a read of the ConfigMap")
+		})
+		return true, fmt.Errorf("freshness read of ConfigMap %s: %w", s.opts.Name, r.err)
+	}
+	if newerVersion(r.cm.ResourceVersion, seen) {
+		s.locked(func() { s.mergeLocked(r.cm) })
+	}
+	stale := *behind != "" && newerVersion(*behind, seen)
+	*behind = ""
+	if newerVersion(r.cm.ResourceVersion, seen) {
+		*behind = r.cm.ResourceVersion
+	}
+	if stale {
+		s.opts.Logger.Debug("shared state watch behind the ConfigMap; reopening", slog.String("configmap", s.opts.Name),
+			slog.String("resourceVersion", seen))
+	}
+	return stale, nil
 }
 
 // openWatch opens the watch of the ConfigMap, with bookmarks (the API
@@ -2327,7 +2462,7 @@ func (s *Store) State() viewmodel.SourceState {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	since := s.since
+	since := s.since.UTC()
 	st := viewmodel.SourceState{Source: SourceName, Since: &since}
 	switch s.mode {
 	case modeLive:

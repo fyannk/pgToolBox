@@ -322,9 +322,10 @@ func TestAMissingConfigMapIsPolled(t *testing.T) {
 
 // WriteRevocations of no IDs ("disconnect all" with nothing to revoke
 // here) is nil only on a replica that has read the grants document or
-// knows the ConfigMap missing or forbidden: one that read nothing yet, or cannot read
-// the document, acknowledges no disconnection (round 18, security P3; the
-// reviewer's probe TestR18PendingReplicaAcknowledgesDisconnectAll).
+// knows the ConfigMap missing: one that read nothing yet, may not read it,
+// or cannot read the document, acknowledges no disconnection (round 18,
+// security P3; the reviewer's probe
+// TestR18PendingReplicaAcknowledgesDisconnectAll).
 func TestNothingToRevokeIsAnAnswerOnlyOnceRead(t *testing.T) {
 	for name, tc := range map[string]struct {
 		prepare func(t *testing.T, s *Store, api *apiServer)
@@ -335,13 +336,15 @@ func TestNothingToRevokeIsAnAnswerOnlyOnceRead(t *testing.T) {
 		"missing": {prepare: func(_ *testing.T, s *Store, _ *apiServer) {
 			_ = s.failed(apierrors.NewNotFound(configMaps, "console-state"))
 		}},
-		// Every grant is refused on every replica (they share the
-		// ServiceAccount): nothing to disconnect is an answer, not a 503
-		// forever on an install without the RBAC (round 19, Go P3-1).
+		// Not an answer (round 20, security P2-1, which reverts round 19's
+		// Go P3-1): another replica whose watch opened before the
+		// permission was withdrawn still serves grants until its next
+		// freshness read.
 		"forbidden from the start": {
 			prepare: func(_ *testing.T, s *Store, _ *apiServer) {
 				_ = s.failed(apierrors.NewForbidden(configMaps, "console-state", errors.New("no")))
 			},
+			want: ErrNotRecorded,
 		},
 		"grants unreadable": {
 			prepare: func(t *testing.T, s *Store, api *apiServer) {
