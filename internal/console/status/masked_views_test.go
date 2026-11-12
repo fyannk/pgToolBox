@@ -126,11 +126,11 @@ func TestMaskedReplicationIsUnread(t *testing.T) {
 			}
 		}
 	}
-	rows := []viewmodel.InstanceRow{}
 	list, err := svc.Instances(context.Background(), "team-a", "orders")
 	if err != nil {
 		t.Fatal(err)
 	}
+	rows := make([]viewmodel.InstanceRow, 0, len(list.Items))
 	for _, r := range list.Items {
 		if r.Name == "orders-1" {
 			r.Role.Operator = viewmodel.RolePrimary

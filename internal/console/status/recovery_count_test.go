@@ -34,7 +34,7 @@ import (
 // that ended since.
 func fullsInput(read time.Time, stops []time.Time, last time.Time, ends ...time.Time) (timelineInput, []interval) {
 	in := timelineInput{facts: recoveryFacts{now: now}, scannedAt: &read, refresh: time.Hour, pgBackRest: true}
-	var spans []interval
+	spans := make([]interval, 0, len(stops))
 	for i, stop := range stops {
 		id := fmt.Sprintf("f%d", i+1)
 		end := stop
@@ -59,7 +59,7 @@ func TestR17CountBurstPastAMissedScan(t *testing.T) {
 	stops := []time.Time{first, first.Add(7 * day), first.Add(14 * day), first.Add(21*day - time.Hour)}
 	window := last.Sub(first)
 	since := func(n int) []time.Time {
-		var out []time.Time
+		out := make([]time.Time, 0, n)
 		for i := range n {
 			out = append(out, read.Add(time.Duration(i+1)*time.Hour))
 		}
@@ -199,7 +199,7 @@ func TestPurgeBandNeverEndsBeforeTheFirstRestorePoint(t *testing.T) {
 		at := read.Add(-time.Duration(rng.Int64N(int64(day))))
 		for i := listed - 1; i >= 0; i-- {
 			stops[i] = at
-			at = at.Add(-time.Duration(1+rng.Int64N(int64(8*day))))
+			at = at.Add(-time.Duration(1 + rng.Int64N(int64(8*day))))
 		}
 		first, last := stops[0], read
 		var news []time.Time
@@ -263,10 +263,10 @@ func TestPurgeBandNeverEndsBeforeTheFirstRestorePoint(t *testing.T) {
 		if archive > 0 && len(stops) >= archive {
 			atRead = stops[len(stops)-archive]
 		}
-		in := timelineInput{facts: recoveryFacts{now: now}, scannedAt: &read, refresh: time.Duration(1+rng.Int64N(int64(day))), pgBackRest: true}
+		in := timelineInput{facts: recoveryFacts{now: now}, scannedAt: &read, refresh: time.Duration(1 + rng.Int64N(int64(day))), pgBackRest: true}
 		in.retainedFor = retainedFor(&evidencev1alpha1.RepositoryEvidenceSnapshot{Details: evidencev1alpha1.Details{Type: "pgbackrest", PGBackRest: &evidencev1alpha1.PGBackRestSummary{Retention: r}}})
 		in.policy = pgbackrestPolicyOf(&evidencev1alpha1.RepositoryEvidenceSnapshot{Details: evidencev1alpha1.Details{Type: "pgbackrest", PGBackRest: &evidencev1alpha1.PGBackRestSummary{Retention: r}}})
-		var spans []interval
+		spans := make([]interval, 0, len(stops))
 		for i, stop := range stops {
 			id := fmt.Sprintf("f%d", i+1)
 			end := stop
