@@ -610,8 +610,5 @@ func TestDisabled(t *testing.T) {
 // write, and a write that lands leaves the failing mode.
 func (s *Store) watchOpenedLocked() {
 	s.watching = true
-	if s.base != nil {
-		s.delivered = watchProgress{seen: s.base.ResourceVersion, object: s.base.ResourceVersion}
-	}
 	s.setModeLocked(modeLive, "")
 }

@@ -15,7 +15,6 @@
 package sharedstate
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"log/slog"
@@ -126,47 +125,6 @@ func TestReadGrantsIsAnsweredByAReadSentAfterIt(t *testing.T) {
 	}
 }
 
-// On a replica whose watch is current, ReadGrants reads the metadata only
-// while it shows nothing the watch has not delivered; the whole ConfigMap
-// once it does, or once it is another ConfigMap (round 22, k8s P2-1).
-func TestReadGrantsOnACurrentReplicaReadsTheMetadataFirst(t *testing.T) {
-	clock := &testClock{now: t0}
-	api := newAPIServer()
-	m := &metaAPI{ConfigMapClient: api, api: api}
-	s := handLoaded(t, api, m, clock, slog.New(slog.DiscardHandler))
-	s.opts.Meta = metaGets{m}
-	for range 20 {
-		if err := s.ReadGrants(t.Context()); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if f, n := m.full.Load(), m.metas.Load(); f != 0 || n != 20 {
-		t.Fatalf("current replica: %d full reads, %d metadata reads; want 0 and 20", f, n)
-	}
-	// Another replica records a grant this one's watch has not delivered.
-	_, id := grantOnTwoReplicas(t, api, clock)
-	if err := s.ReadGrants(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := s.Grant(id); !ok || m.full.Load() != 1 {
-		t.Fatalf("watch behind: grant found %v after %d full reads, want found after 1", ok, m.full.Load())
-	}
-	// The watch delivers it: metadata only again.
-	cm, _ := api.Get(t.Context(), "console-state", metav1.GetOptions{})
-	s.locked(func() {
-		s.mergeLocked(cm)
-		s.delivered = watchProgress{seen: cm.ResourceVersion, object: cm.ResourceVersion}
-	})
-	if err := s.ReadGrants(t.Context()); err != nil || m.full.Load() != 1 {
-		t.Fatalf("watch caught up: err %v, %d full reads, want nil and still 1", err, m.full.Load())
-	}
-	// Recreated at the same version: another UID is a full read.
-	api.set(func(x *apiServer) { x.cm.UID = "uid-2" })
-	if err := s.ReadGrants(t.Context()); err != nil || m.full.Load() != 2 {
-		t.Fatalf("recreated: err %v, %d full reads, want nil and 2", err, m.full.Load())
-	}
-}
-
 // Only a 403 or a 404 of ReadGrants changes the mode (round 22, k8s
 // P2-1): a person repeating Disconnect all against a throttled or slow
 // API server cannot put the replica in the failing mode.
@@ -272,76 +230,6 @@ func TestReadGrantsFindingARecreatedConfigMapIsPending(t *testing.T) {
 	if !strings.Contains(api.data(KeyGrants), id) {
 		t.Error("the recreated ConfigMap does not hold the revocation")
 	}
-}
-
-// undecodable is a metadata client behind a proxy that ignores
-// as=PartialObjectMetadata: every answer fails to decode (no API status).
-type undecodable struct{ calls atomic.Int32 }
-
-func (u *undecodable) Get(context.Context, string, metav1.GetOptions, ...string) (*metav1.PartialObjectMetadata, error) {
-	u.calls.Add(1)
-	return nil, errors.New("unable to decode returned object as PartialObjectMetadata")
-}
-
-// A metadata answer that does not decode falls back to the full read in
-// the same read; once that full read answers, the metadata is given up
-// for the process, logged once (round 22, k8s P3-1). Without an answer
-// to the full read either (the connection, not the decoding), it is kept.
-func TestUndecodableMetadataFallsBackToFullReads(t *testing.T) {
-	t.Run("freshness and ReadGrants", func(t *testing.T) {
-		clock := &testClock{now: t0}
-		api := newAPIServer()
-		var buf bytes.Buffer
-		log := slog.New(slog.NewTextHandler(syncWriter{&sync.Mutex{}, &buf}, nil))
-		s := handLoaded(t, api, api, clock, log)
-		u := &undecodable{}
-		s.opts.Meta = u
-		p := watchProgress{seen: "1", object: "1"}
-		r := s.readFresh(t.Context(), t0, p)
-		if r.err != nil || r.meta || r.cm == nil {
-			t.Fatalf("freshness read = %+v, want the full ConfigMap", r)
-		}
-		if !s.metaOff.Load() {
-			t.Fatal("metadata kept after an undecodable answer")
-		}
-		_ = s.readFresh(t.Context(), t0, p)
-		if err := s.ReadGrants(t.Context()); err != nil {
-			t.Fatal(err)
-		}
-		if n := u.calls.Load(); n != 1 {
-			t.Errorf("%d metadata reads, want 1 (given up after it)", n)
-		}
-		if n := strings.Count(buf.String(), "could not be decoded"); n != 1 {
-			t.Errorf("logged %d times, want once:\n%s", n, buf.String())
-		}
-	})
-	t.Run("ReadGrants first", func(t *testing.T) {
-		clock := &testClock{now: t0}
-		api := newAPIServer()
-		s := handLoaded(t, api, api, clock, slog.New(slog.DiscardHandler))
-		s.opts.Meta = &undecodable{}
-		if err := s.ReadGrants(t.Context()); err != nil {
-			t.Fatalf("ReadGrants = %v, want the full read's answer", err)
-		}
-		if !s.metaOff.Load() || modeOf(s) != modeLive {
-			t.Errorf("metaOff %v, mode %s; want given up, live", s.metaOff.Load(), modeOf(s))
-		}
-	})
-	t.Run("no answer at all", func(t *testing.T) {
-		clock := &testClock{now: t0}
-		api := newAPIServer()
-		g := &gatedGets{apiServer: api}
-		dial := error(errors.New("dial tcp 10.0.0.1:443: connect: connection refused"))
-		g.fail.Store(&dial)
-		s := handLoaded(t, api, g, clock, slog.New(slog.DiscardHandler))
-		s.opts.Meta = &undecodable{}
-		if r := s.readFresh(t.Context(), t0, watchProgress{seen: "1", object: "1"}); r.err == nil {
-			t.Fatal("freshness read answered without an API server")
-		}
-		if s.metaOff.Load() {
-			t.Error("metadata given up for a connection failure")
-		}
-	})
 }
 
 // One 403 while the watch is open (a ReadGrants, a write) is left at the

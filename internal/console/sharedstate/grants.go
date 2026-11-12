@@ -670,30 +670,20 @@ func (s *Store) currentLocked() bool {
 // the index is the only one, and nil.
 //
 // Any signed-in person reaches it (Disconnect all, the disconnection of a
-// grant this replica does not know), so it costs the API server little
-// (round 22, k8s P2-1, Go P2-2):
+// grant this replica does not know), so (round 22, k8s P2-1, Go P2-2):
 //
 //   - Reads are coalesced (readGroup): a caller is answered by the read
 //     in flight only when that one was sent after it arrived, else by the
 //     next one, which every caller arriving meanwhile shares; never more
 //     than two at once, one sent.
-//   - On a replica whose watch is current, the ConfigMap's metadata is
-//     read first (Options.Meta): a version the watch has delivered, of
-//     the same ConfigMap, shows nothing the index lacks, and the whole
-//     ConfigMap (up to MaxData) is read only otherwise.
 //   - Only an answer that says so changes the mode: missing (404) or
 //     forbidden (403). A throttled (429), failed or timed out read is
-//     ErrNotRecorded and leaves the mode as it is: a person repeating
-//     the request cannot put the replica in the failing mode, and its
-//     grants out of use past staleGrace.
+//     ErrNotRecorded and leaves the mode as it is.
 //   - The read is merged as a watch event is (mergeLocked): an answer
-//     the watch overtook is not merged, and two of them never make an
-//     older ConfigMap the base (round 22, Go P3-2: the rewound revision
-//     is the Run loop's and the writes' reads' to detect).
+//     the watch overtook is not merged.
 //   - A read that finds the ConfigMap while it was known missing (it was
-//     recreated, and this replica's poll has not seen it yet) leaves the
-//     missing mode for pending (round 22, Go P3-3): a revocation is then
-//     written to it, not answered done as held.
+//     recreated) leaves the missing mode for pending: a revocation is
+//     then written to it, not answered done as held.
 func (s *Store) ReadGrants(ctx context.Context) error {
 	if s == nil {
 		return ErrNotRecorded
@@ -708,34 +698,10 @@ func (s *Store) ReadGrants(ctx context.Context) error {
 func (s *Store) readGrants(ctx context.Context) error {
 	getCtx, cancel := context.WithTimeout(ctx, writeTimeout)
 	defer cancel()
-	var current bool
-	s.locked(func() { current = s.mode == modeLive && s.currentLocked() })
-	var undecoded error
-	if current {
-		m, und, err := s.readMeta(getCtx)
-		undecoded = und
-		switch {
-		case undecoded != nil:
-		case err != nil:
-			return s.grantsReadFailed(err)
-		case m != nil:
-			var shown bool
-			s.locked(func() {
-				// The watch's progress as of the answer: what it has
-				// delivered since the read was sent is in the index too.
-				shown = s.mode == modeLive && s.currentLocked() && !s.delivered.ahead(m.ResourceVersion) &&
-					s.uid != "" && m.UID == s.uid
-			})
-			if shown {
-				return nil
-			}
-		}
-	}
 	cm, err := s.opts.Client.Get(getCtx, s.opts.Name, metav1.GetOptions{})
 	if err != nil {
 		return s.grantsReadFailed(err)
 	}
-	s.metaUndecodable(undecoded)
 	var unreadable bool
 	s.locked(func() {
 		s.mergeLocked(cm)
