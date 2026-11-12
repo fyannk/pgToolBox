@@ -163,23 +163,37 @@ fully use:
   and so on, or Clusters listed but not watched). The log line names the
   namespace and each missing permission (`list,watch deployments.apps`).
   Restore the chart's RoleBinding, then restart the operator (`permissions`);
-- a namespace whose permission review fails: an error the API server still
-  returns after two retries (a 5xx, a timeout, throttling or a lost
-  connection: reset, refused, EOF, HTTP/2 GOAWAY), or no answer within 6
-  seconds per attempt and about 12 for the namespace. The log line names the
-  namespace and the error (`review-failed`). Such a namespace is reviewed
-  again every minute. Once it has granted every permission twice in a row,
-  and the process has run at least ten minutes, the operator logs why, waits
-  up to a minute more (so the two replicas do not stop together) and exits
-  to be restarted, and the restart watches it. The alert below is the signal
-  meanwhile;
-- a namespace whose permission review answers more than 1 MiB: its
+- a namespace whose permission review fails with an error the API server
+  still returns after two retries (a 5xx, a server timeout, throttling or a
+  lost connection: reset, refused, EOF, HTTP/2 GOAWAY). The log line names
+  the namespace and the error (`review-failed`). Such a namespace is
+  reviewed again every minute. Once it has granted every permission twice
+  in a row, and the process has run at least ten minutes, the operator logs
+  why, waits up to a minute more (so the two replicas do not stop together)
+  and exits to be restarted, and the restart watches it. The alert below is
+  the signal meanwhile;
+- a namespace whose permission review answers more than 256 KiB: its
   RoleBindings grant the operator far more rules than its manager role (one
   Role bound many times). The log line names the namespace
-  (`review-too-large`). It is never reviewed again in the background, so
-  that whoever administers the namespace cannot make the operator restart
-  by adding and removing bindings: remove the extra bindings, then restart
-  the operator (any later start reviews it again).
+  (`review-too-large`);
+- a namespace whose permission review gets no answer within 6 seconds, at
+  both attempts (about 12 seconds for the namespace): most likely the same
+  cause, tens of thousands of bindings that the API server takes longer
+  than that to answer for (it builds the whole response before its first
+  byte, so the size limit never sees it), or else an API server overloaded
+  at that moment. The log line names the namespace (`review-too-slow`).
+
+A namespace too large or too slow is never reviewed again in the
+background, and one of `review-failed` whose background review turns too
+large or too slow leaves the background review and moves to that reason in
+the gauge and the alert. Remove the extra bindings (or wait for the API
+server), then restart the operator: any later start reviews it again. This
+is so that whoever administers a namespace cannot make the operator restart
+through its RoleBindings: they decide whether its review is too large or too
+slow, and could make it fail at start and pass later at will. A restart to
+watch a namespace follows only a review that failed with an API server
+error or a lost connection, which RoleBindings do not cause; it happens at
+most once per process, and never before the process has run ten minutes.
 
 The restart to watch a namespace is intentional, not a crash: the operator
 logs `restarting to watch` with the namespaces, then exits with code 0 and
