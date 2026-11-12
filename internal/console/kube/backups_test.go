@@ -225,3 +225,29 @@ func TestConvertBackupReadsAnEpochStopAsUnknown(t *testing.T) {
 
 // testNow is the test converters' clock: after every fixture's times.
 var testNow = time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+
+// TestConvertBackupDropsTimesOfAnInstanceClockBehind (round 21, PG P3-B,
+// CNPG P3-1): the converter reads CloudNativePG's stamps too, so tool
+// times 10 min before the operator's start stamp are an instance clock
+// running behind and are dropped, never read as an Imported old backup;
+// an honest instance's times are kept.
+func TestConvertBackupDropsTimesOfAnInstanceClockBehind(t *testing.T) {
+	t.Parallel()
+	c := newTestClient(t)
+	raw := rawBackup("b-skew", "orders", "plugin")
+	status := raw.Object["status"].(map[string]any)
+	status["reconciliationStartedAt"] = "2026-07-28T10:00:01Z"
+	status["reconciliationTerminatedAt"] = "2026-07-28T10:02:03Z"
+	facts, _, err := c.convertBackup(raw.Object)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if facts.StartedAt == nil || facts.StoppedAt == nil {
+		t.Fatalf("an honest instance's times dropped: %v %v", facts.StartedAt, facts.StoppedAt)
+	}
+	status["startedAt"], status["stoppedAt"] = "2026-07-28T09:51:00Z", "2026-07-28T09:52:00Z"
+	status["reconciliationTerminatedAt"] = "2026-07-28T09:52:03Z"
+	if facts, _, _ := c.convertBackup(raw.Object); facts.StartedAt != nil || facts.StoppedAt != nil {
+		t.Errorf("skewed instance times kept: %v %v", facts.StartedAt, facts.StoppedAt)
+	}
+}

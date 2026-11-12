@@ -244,23 +244,33 @@ func TestBackupRecencyReadsPlausibleTimes(t *testing.T) {
 	}
 	owner := &metav1.OwnerReference{APIVersion: "postgresql.cnpg.io/v1", Kind: "Cluster", Name: "reborn", UID: uid}
 	stamp := now.Add(-10 * time.Minute)
+	// An instance clock 15 min behind (round 21, PG P3-B, CNPG P3-1): the
+	// operator started the Backup a second after its creation, the
+	// instance stopped it and stamped it Completed on its own clock.
+	opStarted := now.Add(-30*time.Minute + time.Second)
+	skewedStop, skewedStamp := now.Add(-20*time.Minute-15*time.Minute), now.Add(-20*time.Minute-15*time.Minute+3*time.Second)
 	for _, tt := range []struct {
 		name          string
 		stopped       time.Time
 		stamp         *time.Time
+		opStarted     *time.Time
 		wantCompleted *time.Time
 		wantSource    string
 	}{
-		{"a plugin's unset stop is not 1970", time.Unix(0, 0), nil, nil, "Backup.status"},
-		{"a stop in the future is not a fresh backup", now.Add(1000 * 24 * time.Hour), nil, nil, "Backup.status"},
-		{"no plausible stop: CloudNativePG's completion stamp", time.Unix(0, 0), &stamp, &stamp, backupStampSource},
-		{"a plausible stop", now.Add(-20 * time.Minute), &stamp, new(now.Add(-20 * time.Minute)), "Backup.status"},
+		{"a plugin's unset stop is not 1970", time.Unix(0, 0), nil, nil, nil, "Backup.status"},
+		{"a stop in the future is not a fresh backup", now.Add(1000 * 24 * time.Hour), nil, nil, nil, "Backup.status"},
+		{"no plausible stop: CloudNativePG's completion stamp", time.Unix(0, 0), &stamp, nil, &stamp, backupStampSource},
+		{"a plausible stop", now.Add(-20 * time.Minute), &stamp, &opStarted, new(now.Add(-20 * time.Minute)), "Backup.status"},
+		{"an instance clock behind: neither its stop nor its stamp, the operator's start", skewedStop, &skewedStamp, &opStarted, &opStarted, backupSkewSource},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			b := completedBackup("b", now.Add(-30*time.Minute), tt.stopped, owner)
 			b.UID = "b-uid"
 			if tt.stamp != nil {
 				b.Status.ReconciliationTerminatedAt = new(metav1.NewTime(*tt.stamp))
+			}
+			if tt.opStarted != nil {
+				b.Status.ReconciliationStartedAt = new(metav1.NewTime(*tt.opStarted))
 			}
 			scheme, err := cache.NewScheme()
 			if err != nil {
@@ -291,17 +301,25 @@ func TestBackupRecencyReadsPlausibleTimes(t *testing.T) {
 			}
 			if detail := backupDetail(got.Summary.BackupRecency, now); (tt.wantSource == backupStampSource) != strings.Contains(detail, "CloudNativePG's completion stamp") {
 				t.Errorf("detail %q does not attribute the time to its source", detail)
+			} else if (tt.wantSource == backupSkewSource) != strings.Contains(detail, "not plausible") {
+				t.Errorf("detail %q does not say the skewed times are not plausible", detail)
 			}
 			facts, ok := svc.ClusterFacts(context.Background(), cache.ClusterKey{Namespace: "team-a", Name: "reborn"})
 			if !ok || len(facts.Backups) != 1 {
 				t.Fatalf("timeline facts: %v %+v", ok, facts.Backups)
 			}
 			at := facts.Backups[0].StoppedAt
+			// The timeline places a Backup at its end: one whose times are
+			// skewed has none and is observed by the console.
+			wantStop := tt.wantCompleted
+			if tt.wantSource == backupSkewSource {
+				wantStop = nil
+			}
 			switch {
-			case tt.wantCompleted == nil && !at.IsZero():
+			case wantStop == nil && !at.IsZero():
 				t.Errorf("timeline stop %s, want none (observed by the console)", at)
-			case tt.wantCompleted != nil && !at.Equal(*tt.wantCompleted):
-				t.Errorf("timeline stop %s, want %s", at, *tt.wantCompleted)
+			case wantStop != nil && !at.Equal(*wantStop):
+				t.Errorf("timeline stop %s, want %s", at, *wantStop)
 			}
 		})
 	}

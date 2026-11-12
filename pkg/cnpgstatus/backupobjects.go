@@ -188,8 +188,9 @@ type BackupObjectReading struct {
 	// StartedAt/StoppedAt are the tool's own times;
 	// ReconciliationTerminatedAt is CloudNativePG's completion stamp, set
 	// by SetAsCompleted/SetAsFailed (backup_funcs.go v1.30.0:46-71): the
-	// instance manager's for in-tree barman and plugin Backups, the
-	// operator's for volume snapshots. Queue time is
+	// instance manager's for an in-tree barman or plugin Backup it
+	// completed or failed, else the operator's (a volume snapshot, or a
+	// Backup the operator failed). Queue time is
 	// ReconciliationStartedAt - CreatedAt.
 	CreatedAt                  *time.Time `json:"createdAt,omitempty"`
 	ReconciliationStartedAt    *time.Time `json:"reconciliationStartedAt,omitempty"`

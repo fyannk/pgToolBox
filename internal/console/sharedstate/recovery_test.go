@@ -281,6 +281,10 @@ func TestAnExhaustedWriteStrandsNoIdleReplica(t *testing.T) {
 	run(t, b)
 	eventually(t, "a live", func() bool { return modeOf(a) == modeLive })
 	eventually(t, "b live", func() bool { return modeOf(b) == modeLive })
+	// Each replica's start-up write (its heartbeat) lands first: one still
+	// in flight would take an injected conflict meant for a's spend, which
+	// would then land (round 21, k8s P3-1: 26 runs in 200 under -race).
+	eventually(t, "the start-up writes landed", func() bool { return startedUp(a) && startedUp(b) })
 	api.set(func(x *apiServer) { x.conflicts = maxAttempts })
 	if err := a.SpendCode(t.Context(), "code-x", uh("mallory"), t0.Add(time.Minute)); err == nil {
 		t.Fatal("landed")
@@ -297,6 +301,14 @@ func TestAnExhaustedWriteStrandsNoIdleReplica(t *testing.T) {
 	if !a.GrantsUsable() {
 		t.Errorf("a healthy replica refuses every MCP grant after one exhausted write (mode %s)", modeOf(a))
 	}
+}
+
+// startedUp reports whether a running replica has nothing left to write:
+// its heartbeat is in the ConfigMap and every local change written.
+func startedUp(s *Store) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.ownBeat != "" && s.gen == s.written && s.base != nil && s.inSyncLocked()
 }
 
 // Two Gets older than the base are a rewound revision only in a row: a

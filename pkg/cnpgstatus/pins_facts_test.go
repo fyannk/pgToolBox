@@ -18,9 +18,11 @@ package cnpgstatus
 
 import (
 	"bytes"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 )
 
@@ -409,7 +411,64 @@ func TestPinBackupStampsAfterTheTool(t *testing.T) {
 		ordered(t, release, "invokeStart", plugin, "response, err := cli.Backup(", "if err != nil {", "b.markBackupAsFailed(ctx, err)", "return", "b.Backup.Status.SetAsCompleted()")
 		snapshot := read(t, dir, "pkg", "reconciler", "backup", "volumesnapshot", "reconciler.go")
 		ordered(t, release, "volumesnapshot reconciler.go", snapshot, "backup.Status.SetAsCompleted()\n\tbackup.Status.StoppedAt = backup.Status.ReconciliationTerminatedAt.DeepCopy()")
+		// reconciliationStartedAt is on the operator's clock: SetAsStarted
+		// is called only by the Backup controller (backup_controller.go
+		// v1.30.1:702 and 985; round 21, CNPG P3-3), so the Imported gate
+		// and the instance clock check (observe.SaneBackupTimes) compare the
+		// instance's times with the operator's.
+		controller := filepath.Join("internal", "controller", "backup_controller.go")
+		callers := setAsStartedCallers(t, dir)
+		if len(callers) == 0 {
+			t.Errorf("v%s: nothing calls SetAsStarted any more", release)
+		}
+		for _, file := range callers {
+			if file != controller {
+				t.Errorf("v%s: SetAsStarted is now called from %s, not only by the operator's %s", release, file, controller)
+			}
+		}
+		// A Completed or Failed Backup is not reconciled again, so the
+		// operator never re-stamps one (backup_controller.go v1.30.1:155).
+		reconcile := functionBody(t, read(t, dir, controller), "func (r *BackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {")
+		ordered(t, release, "BackupReconciler.Reconcile", reconcile, "switch backup.Status.Phase {", "case apiv1.BackupPhaseFailed, apiv1.BackupPhaseCompleted:", "return ctrl.Result{}, nil", "EnsureResourceIsAdmitted(")
+		if skip := bytes.Index(reconcile, []byte("case apiv1.BackupPhaseFailed, apiv1.BackupPhaseCompleted:")); skip >= 0 {
+			for _, write := range []string{"SetAs", "Status()", "Patch(", "Update("} {
+				if bytes.Contains(reconcile[:skip], []byte(write)) {
+					t.Errorf("v%s: BackupReconciler.Reconcile has %q before its terminal-phase skip", release, write)
+				}
+			}
+		}
 	}
+}
+
+// setAsStartedCallers are the non-test Go files of the module at dir,
+// relative to it, that call SetAsStarted (its definition excluded).
+func setAsStartedCallers(t *testing.T, dir string) []string {
+	t.Helper()
+	var files []string
+	err := filepath.WalkDir(dir, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if bytes.Contains(content, []byte(".SetAsStarted(")) {
+			rel, err := filepath.Rel(dir, path)
+			if err != nil {
+				return err
+			}
+			files = append(files, rel)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return files
 }
 
 // TestPinReadyWALFilesCountedOnEveryPrimary pins the fact the console's

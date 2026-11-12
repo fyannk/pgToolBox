@@ -608,7 +608,8 @@ func TestPurgeBandHoldsOverChains(t *testing.T) {
 // plausible stop is bounded by CloudNativePG's completion stamp; a queued
 // one in progress counts from when the operator started it, not from its
 // creation. Never fewer than could have ended since: no stop and no
-// stamp still counts.
+// stamp still counts, nor does one whose instance clock runs behind
+// (round 21, PG P3-B, CNPG P3-1).
 func TestBackupEndsOfRestoredStampedAndQueued(t *testing.T) {
 	read := now.Add(-time.Hour)
 	at := func(d time.Duration) *metav1.Time { return &metav1.Time{Time: read.Add(d)} }
@@ -654,6 +655,35 @@ func TestBackupEndsOfRestoredStampedAndQueued(t *testing.T) {
 		{
 			"an instance clock 15 min behind: skewed times before the object, stamped after the read (round 20, PG P3-B)", cnpgv1.BackupPhaseCompleted, -4 * time.Minute,
 			stamps{at(-19 * time.Minute), at(-16 * time.Minute), at(-4 * time.Minute), at(time.Minute)},
+			true,
+		},
+		{
+			// Round 21, PG P3-B and CNPG P3-1: the instance manager writes
+			// the tool times and the completion stamp on the same clock. A
+			// clock 6, 10 or 30 min behind puts a Backup created 4 min
+			// before the read and ended after it before the read.
+			"an instance clock 6 min behind, its completion stamp skewed too", cnpgv1.BackupPhaseCompleted, -4 * time.Minute,
+			stamps{at(-4*time.Minute + 5*time.Second - 6*time.Minute), at(2*time.Minute - 6*time.Minute), at(-4*time.Minute + time.Second), at(2*time.Minute + 3*time.Second - 6*time.Minute)},
+			true,
+		},
+		{
+			"an instance clock 30 min behind, its completion stamp skewed too", cnpgv1.BackupPhaseCompleted, -4 * time.Minute,
+			stamps{at(-4*time.Minute + 5*time.Second - 30*time.Minute), at(2*time.Minute - 30*time.Minute), at(-4*time.Minute + time.Second), at(2*time.Minute + 3*time.Second - 30*time.Minute)},
+			true,
+		},
+		{
+			"a queued Backup on an instance clock 6 min behind: earlier than the operator's start, not its creation", cnpgv1.BackupPhaseCompleted, -2 * time.Hour,
+			stamps{at(-10*time.Minute + 5*time.Second - 6*time.Minute), at(2*time.Minute - 6*time.Minute), at(-10 * time.Minute), at(2*time.Minute + 3*time.Second - 6*time.Minute)},
+			true,
+		},
+		{
+			"an honest clock, ended and stamped before the read", cnpgv1.BackupPhaseCompleted, -4 * time.Minute,
+			stamps{at(-4*time.Minute + 5*time.Second), at(-2 * time.Minute), at(-4*time.Minute + time.Second), at(-2*time.Minute + 3*time.Second)},
+			false,
+		},
+		{
+			"an honest clock, ended and stamped after the read", cnpgv1.BackupPhaseCompleted, -4 * time.Minute,
+			stamps{at(-4*time.Minute + 5*time.Second), at(2 * time.Minute), at(-4*time.Minute + time.Second), at(2*time.Minute + 3*time.Second)},
 			true,
 		},
 		{
