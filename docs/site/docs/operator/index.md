@@ -167,9 +167,10 @@ fully use:
   still returns after two retries (a 5xx, an early server timeout,
   throttling, or a reset or refused connection: reset, refused, EOF, HTTP/2
   GOAWAY), or that gets no answer in time at both attempts while a check of
-  the API server sent with the second gets no answer either (a connection
-  dead without a reset: a control-plane node lost, a load balancer failing
-  over; the cause is the connection, not the namespace). The log line names
+  the API server sent in the last third of the second gets no answer
+  either (a connection dead without a reset: a control-plane node lost, a
+  load balancer failing over; the cause is the connection, not the
+  namespace). The log line names
   the namespace and the error (`review-failed`). Such a namespace is
   reviewed again every minute. Once it has granted every permission twice
   in a row, and the process has run at least ten minutes, the operator logs
@@ -180,11 +181,12 @@ fully use:
   RoleBindings grant the operator far more rules than its manager role (one
   Role bound many times). The log line names the namespace and the size
   seen (`responseSize`: the declared Content-Length, or the bytes read,
-  counted up to 64 MiB past the limit and never kept)
+  counted up to 8 MiB past the limit, for at most a second and never past
+  the attempt's 6 seconds, and never kept: "at least" when the count stopped)
   (`review-too-large`);
 - a namespace whose permission review gets no answer within 6 seconds, at
   both attempts (about 12 seconds for the namespace), while the API server
-  answers a check sent with the second attempt (a review of a cluster-wide
+  answers a check sent in the last third of the second attempt (a review of a cluster-wide
   permission, which no namespace's bindings can slow down). A server or
   gateway timeout (a 504) that arrives after more than half of an attempt
   counts as no answer in time. Most likely the same cause, tens of

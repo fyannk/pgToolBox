@@ -20,10 +20,12 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	cnpgv1 "github.com/cloudnative-pg/api/pkg/api/v1"
+	"github.com/go-logr/logr/funcr"
 	routev1 "github.com/openshift/api/route/v1"
 	"github.com/prometheus/client_golang/prometheus"
 	appsv1 "k8s.io/api/apps/v1"
@@ -231,7 +233,7 @@ func TestPermittedNamespacesReviewFailedKeepsWhatToAsk(t *testing.T) {
 			case "team-b":
 				return apierrors.NewForbidden(schema.GroupResource{Group: "authorization.k8s.io", Resource: "selfsubjectrulesreviews"}, "", errors.New("an admission webhook refused it"))
 			case "team-c":
-				return managerrole.ErrReviewTooLarge
+				return fmt.Errorf("reading the body: %w", &managerrole.ReviewTooLargeError{Read: 3 << 20, AtLeast: true})
 			case "team-d":
 				// No answer before the attempt's deadline, every time.
 				<-ctx.Done()
@@ -244,9 +246,34 @@ func TestPermittedNamespacesReviewFailedKeepsWhatToAsk(t *testing.T) {
 	timeout := namespaceReviewTimeout
 	namespaceReviewTimeout = 50 * time.Millisecond
 	t.Cleanup(func() { namespaceReviewTimeout = timeout })
+	logs := captureSetupLog(t)
 	kept, dropped, err := permittedNamespaces(t.Context(), c, []string{"team-a", "team-b", "team-c", "team-d"})
 	if err != nil {
 		t.Fatal(err)
+	}
+	// Round 20, K8S P3-2: each cause is logged with its own message and
+	// keys; the size seen of a review too large, never of another.
+	for _, want := range []struct {
+		namespace, message string
+		keys               []string
+		without            string
+	}{
+		{"team-b", "permissions there could not be reviewed", nil, `"responseSize"`},
+		{"team-c", "permission review there is too large", []string{`"responseSize"="at least 3145728 bytes read"`}, ""},
+		{"team-d", "got no answer in time at every attempt while the API server answered other requests", []string{`"error"=`}, `"responseSize"`},
+	} {
+		line := logs.line(`"namespace"="` + want.namespace + `"`)
+		if !strings.Contains(line, want.message) {
+			t.Errorf("%s's log line = %q, want %q in it", want.namespace, line, want.message)
+		}
+		for _, key := range want.keys {
+			if !strings.Contains(line, key) {
+				t.Errorf("%s's log line = %q, want %s in it", want.namespace, line, key)
+			}
+		}
+		if want.without != "" && strings.Contains(line, want.without) {
+			t.Errorf("%s's log line = %q, want no %s", want.namespace, line, want.without)
+		}
 	}
 	if !slices.Equal(kept, []string{"team-a"}) || len(dropped) != 3 ||
 		dropped[0].Namespace != "team-b" || dropped[0].Cause != dropReviewFailed ||
@@ -267,6 +294,38 @@ func TestPermittedNamespacesReviewFailedKeepsWhatToAsk(t *testing.T) {
 			t.Errorf("%s, whose review failed, reads as allowing a write", d.Namespace)
 		}
 	}
+}
+
+// capturedLog is the lines setupLog wrote while captured.
+type capturedLog struct {
+	mu    sync.Mutex
+	lines []string
+}
+
+// line is the one line with key in it, or "".
+func (l *capturedLog) line(key string) string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, line := range l.lines {
+		if strings.Contains(line, key) {
+			return line
+		}
+	}
+	return ""
+}
+
+// captureSetupLog sends setupLog's lines to the result until the test ends.
+func captureSetupLog(t *testing.T) *capturedLog {
+	t.Helper()
+	logs := &capturedLog{}
+	previous := setupLog
+	setupLog = funcr.New(func(prefix, args string) {
+		logs.mu.Lock()
+		defer logs.mu.Unlock()
+		logs.lines = append(logs.lines, prefix+" "+args)
+	}, funcr.Options{})
+	t.Cleanup(func() { setupLog = previous })
+	return logs
 }
 
 // TestResponseSize: round 19, OPERATOR P3-2. The log of a namespace whose
