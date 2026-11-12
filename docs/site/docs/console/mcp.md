@@ -168,19 +168,22 @@ The 30 seconds run from the moment the watch ended, whatever happens next: the
 read that reopens it has 10 seconds to answer, and one that does not is a
 failure, not a wait. A watch the API server closes and that opens again at once
 is routine and logs nothing. While its watch is open, each replica also reads
-the ConfigMap every 15 to 19 seconds (one `GET` of the ConfigMap per replica,
-whose size is what the shared state holds, a few KiB on a small install and
-under 1 MiB at most): the API server checks a watch's permission only when it
-opens, and a watch can fall behind while staying open. A read refused (`403`,
-`404`) refuses grants at once; a read that fails otherwise or takes more than
-10 seconds is the failing mode above, its 30 seconds counted from when the read
-was sent; a read showing a ConfigMap newer than the watch delivered applies it
-at once, and the watch is opened again if it is still behind at the next read.
-So a revocation, or a permission withdrawn, reaches every replica serving
-grants within about 20 seconds, 50 if the API server stops answering. A watch
-that stays open but delivers nothing new, no event and no bookmark at a newer
-version (the API server sends one about once a minute), is also reopened after
-3 minutes.
+the ConfigMap's metadata every 15 to 19 seconds, counted from when the previous
+read was sent (one `GET` per replica, a few hundred bytes; the ConfigMap
+itself, a few KiB on a small install and under 1 MiB at most, is read only when
+the metadata shows a version the watch has not delivered): the API server
+checks a watch's permission only when it opens, and a watch can fall behind
+while staying open. A read refused (`403`, `404`) refuses grants at once; a
+read that fails otherwise or takes more than 10 seconds is the failing mode
+above, its 30 seconds counted from when the read was sent, the watch ending
+while it is unanswered included; a read showing a ConfigMap newer than the
+watch delivered applies it at once, and the watch is opened again if it is
+still behind at the next read. So a revocation, or a permission withdrawn,
+reaches every replica serving grants within about 20 seconds, 50 if the API
+server stops answering. A watch that stays open but delivers nothing new, no
+event and no bookmark at a newer version (the API server sends one about once
+a minute, at the same version while nothing changes), is also reopened after
+10 minutes.
 A write that lands does not end that state on its own: only an open watch does. A `STATE_CONFIGMAP` that is
 missing, or that the console's ServiceAccount may not use, refuses grants the
 same way, and the console says so at start with what it needs: the ConfigMap
@@ -251,13 +254,21 @@ write: the page reports the assistant disconnected. The pending rows exist only
 in the open page: after a reload, the replica that answered no longer lists the
 grant, so it disappears from the list although the other replicas may still
 accept it. The console keeps writing the disconnection; **Disconnect all**,
-from any replica, is the safe check. When the card, the pending row or
+from any replica, is the safe check: it is answered done only once written, or
+once a read of the ConfigMap made for it shows nothing of yours left to revoke.
+When the card, the pending row or
 **Disconnect all** that you used is gone after the answer, focus moves to the
 note that says what happened.
-A replica that has not read the shared state yet (a pod just started) answers
-`503`, not `404` or `204`, to a disconnection of a grant it does not know and to
-**Disconnect all** with nothing to revoke there: it knows none of the grants the
-others recorded. With MCP OAuth on, `/readyz` waits for that first read (or
+**Disconnect all**, and a disconnection of a grant the replica does not know,
+first read the ConfigMap as the API server holds it now (one `GET`, 10 seconds
+to answer): a grant another replica recorded that this one's watch has not
+delivered yet, or will not (a replica cut off from the API server stays Ready
+and takes requests), is found and disconnected too. When that read fails or is
+refused (a pod just started, a replica cut off from the API server, a
+permission withdrawn), the answer is `503`, not `404` or `204`, **Disconnect
+all** with nothing to revoke on that replica included: what it read before is
+not what the others serve now. The grants it does know are disconnected on it
+either way. With MCP OAuth on, `/readyz` waits for that first read (or
 for the API server to answer that the ConfigMap is missing or may not be read),
 so such a pod takes no traffic first. Once answered, `/readyz` does not go back
 to failing for the shared state: a later API server failure refuses grants
@@ -273,11 +284,12 @@ ten seconds). Meanwhile another replica that reads the new ConfigMap
 first and recorded the grant less than eight minutes earlier may serve it for
 those seconds. A restart of the replica that answered before then loses the
 disconnection (that other replica then keeps the grant). A ConfigMap the
-console may not read or write is not so: the API server checks a watch's
-permission only when it opens, so a replica whose watch opened before the
-permission was withdrawn still serves grants until its next freshness read
-(below) is refused, and the answer stays `503`, **Disconnect all** with
-nothing to revoke included. A sign-out with **disconnect my assistants** goes
+console may not read or write is not answered done: the API server checks a
+watch's permission only when it opens, so a replica whose watch opened before
+the permission was withdrawn still serves grants until its next freshness read
+([above](#what-a-console-grant-is)) is refused, and the answer stays `503`,
+**Disconnect all** with nothing to revoke included, whatever the replica read
+before. A sign-out with **disconnect my assistants** goes
 on even then (the console log says so). Without the
 shared state the index is in each replica's memory: a restart disconnects every
 assistant, and with more than one replica each refuses the grants of the
