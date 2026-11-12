@@ -404,3 +404,38 @@ func TestEventAttributionStartsNoUnplannedInformer(t *testing.T) {
 		t.Fatal("the cache did not create a Pooler informer on GetInformer: the test proves nothing")
 	}
 }
+
+// TestBackupTransformKeepsOnlyStatusWriteTimes (round 22, PG P3-B): a
+// Backup keeps the API server's time of each status-subresource write,
+// never a field set or a main-resource entry, so the purge band can bound
+// the end of one whose instance's and operator's clocks disagree.
+func TestBackupTransformKeepsOnlyStatusWriteTimes(t *testing.T) {
+	at := metav1.NewTime(time.Date(2026, 11, 1, 10, 3, 4, 0, time.UTC))
+	b := &cnpgv1.Backup{ObjectMeta: metav1.ObjectMeta{Name: "b", ManagedFields: []metav1.ManagedFieldsEntry{
+		{Manager: "kubectl", Operation: metav1.ManagedFieldsOperationApply, Time: &at, FieldsType: "FieldsV1", FieldsV1: metav1.NewFieldsV1(`{"f:spec":{}}`)},
+		{Manager: "manager", Operation: metav1.ManagedFieldsOperationUpdate, Time: &at, Subresource: "status", FieldsType: "FieldsV1", FieldsV1: metav1.NewFieldsV1(`{"f:status":{}}`)},
+		{Manager: "untimed", Operation: metav1.ManagedFieldsOperationUpdate, Subresource: "status"},
+	}}}
+	out, err := BackupTransform(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := out.(*cnpgv1.Backup).ManagedFields
+	want := []metav1.ManagedFieldsEntry{{Manager: "manager", Operation: metav1.ManagedFieldsOperationUpdate, Time: &at, Subresource: "status"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("kept %+v, want %+v", got, want)
+	}
+	tomb := toolscache.DeletedFinalStateUnknown{Key: "team-a/b", Obj: b}
+	if other, _ := BackupTransform(tomb); other != any(tomb) {
+		t.Error("a tombstone was changed")
+	}
+	var backups *Kind
+	for _, k := range Kinds(nil, false) {
+		if k.Source == SourceBackups {
+			backups = &k
+		}
+	}
+	if backups == nil || backups.Transform == nil {
+		t.Fatal("the Backup informer keeps the default transform")
+	}
+}

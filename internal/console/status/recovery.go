@@ -32,6 +32,7 @@ import (
 	"github.com/fyannk/pgToolBox/internal/console/viewmodel"
 	"github.com/fyannk/pgToolBox/pkg/cnpgstatus"
 	"github.com/fyannk/pgToolBox/pkg/cnpgstatus/instancestatus"
+	"github.com/fyannk/pgToolBox/pkg/cnpgstatus/observe"
 	evidencev1alpha1 "github.com/fyannk/pgToolBox/pkg/evidence/v1alpha1"
 )
 
@@ -181,8 +182,9 @@ type recoveryFacts struct {
 type backupEnd struct {
 	// at is when it ended: for a Completed Backup the later of its stop
 	// time and CloudNativePG's completion stamp; for one in progress
-	// when it began. nil for a Backup completed with neither, which
-	// could have ended at any time.
+	// when it began. A Completed Backup with neither is bounded by the
+	// API server's time of its last status write (statusWrittenAt); nil
+	// when none is recorded either: it could have ended at any time.
 	at *time.Time
 	// from is the earliest known instant of a Completed Backup's tool run
 	// (its start, else its stop) and done its completion stamp
@@ -273,7 +275,10 @@ func (f recoveryFacts) expireStampAt(end time.Time) (time.Time, bool) {
 // with its status (Velero) or migrated keeps its coherent old times
 // (observe.BackupTimes Imported) and counts then, not since the object
 // appeared, which held a whole-window band on a healthy cluster (round
-// 19, PG P3-B).
+// 19, PG P3-B). One with neither time plausible (its instance's and the
+// operator's clocks disagree: ClockBehind) counts until the API server's
+// time of its last status write (statusWrittenAt), plus backupClockSkew
+// for the agent's clock, is before the read.
 //
 // A Backup still in progress (started, running, finalizing) counts at
 // the latest known instant before its tool began: its start, else the
@@ -309,11 +314,22 @@ func backupEndsOf(g *gathered, now time.Time) (ends []backupEnd, unread bool) {
 			if end == nil || times.OperatorTerminated != nil && times.OperatorTerminated.After(*end) {
 				end = times.OperatorTerminated
 			}
+			done := times.OperatorTerminated
+			if end == nil {
+				// Neither time is plausible (ClockBehind, or a plugin that
+				// reported no stop and no stamp): the API server's time of
+				// the last status write, at or after the Completed patch,
+				// bounds the end, allowing for the agent's clock.
+				if written := statusWrittenAt(b); written != nil {
+					bound := written.Add(time.Second + backupClockSkew)
+					end, done = &bound, &bound
+				}
+			}
 			from := times.Start
 			if from == nil {
 				from = times.Stop
 			}
-			ends = append(ends, backupEnd{at: end, from: from, done: times.OperatorTerminated})
+			ends = append(ends, backupEnd{at: end, from: from, done: done})
 		default:
 			if times.Stop != nil {
 				ends = append(ends, backupEnd{at: times.Stop})
@@ -321,6 +337,30 @@ func backupEndsOf(g *gathered, now time.Time) (ends []backupEnd, unread bool) {
 		}
 	}
 	return ends, false
+}
+
+// statusWrittenAt is the latest time the API server recorded a write to
+// b's status subresource (metadata.managedFields, which the console's
+// cache keeps for Backups without their field sets: cache.BackupTransform),
+// on the API server's clock; nil when none is recorded. Each entry's time
+// moves when its manager changes a field it owns, so on a Completed
+// Backup the latest is at or after the patch that marked it Completed,
+// after the backup's end; it is truncated to the second. A Completed
+// Backup whose instance's and operator's clocks disagree has no other
+// upper bound on its end: without this it counted as one ended after
+// every read for as long as its object existed, a permanent purge band
+// (round 22, PG P3-B).
+func statusWrittenAt(b *cnpgv1.Backup) *time.Time {
+	var at *time.Time
+	for _, entry := range b.ManagedFields {
+		if entry.Subresource != "status" || entry.Time == nil || entry.Time.IsZero() {
+			continue
+		}
+		if t := entry.Time.UTC(); at == nil || t.After(*at) {
+			at = &t
+		}
+	}
+	return at
 }
 
 // formerHolder is the former primary that may still hold the unarchived
@@ -2049,15 +2089,19 @@ func sinceReadBand(in timelineInput, spans []interval, first, last time.Time) (t
 //     have run before the scan. The expire at the newest listed end had
 //     returned by the completion stamp of the Completed Backup whose run
 //     holds that end (expireStampAt: the plugin marks it Completed only
-//     after pgbackrest backup, auto-expire included, returned). That
-//     Backup is counted at its stamp at the latest, and none counted
-//     since the read puts the stamp more than scanSlack before it: the
-//     listing already reflects that expire and keeps no band (round 21,
-//     PG P3-A: timing the run at the stamp still cut, for the day until
-//     the next backup, a full the expire keeps when a full stopped in the
-//     seconds between the expire's clock read and the stamp, on about one
-//     day in five of a daily schedule; round 20 had timed it at the
-//     console's fetch, which cut it on about half the days). With no
+//     after pgbackrest backup, auto-expire included, returned). A stamp
+//     more than scanSlack and backupClockSkew before the read says the
+//     listing already reflects that expire, which keeps no band (round
+//     21, PG P3-A: timing the run at the stamp still cut, for the day
+//     until the next backup, a full the expire keeps when a full stopped
+//     in the seconds between the expire's clock read and the stamp, on
+//     about one day in five of a daily schedule; round 20 had timed it
+//     at the console's fetch, which cut it on about half the days). The
+//     stamp is on the instance's clock and the read on the agent's: an
+//     instance up to backupClockSkew behind is not ClockBehind, and
+//     skipping on scanSlack alone kept, for one scan, a full the expire
+//     removed (round 22, PG P3-A). A later stamp times the run at the
+//     stamp, the round-20 rule: the expire ran at or before it. With no
 //     such stamp (a backup run outside CloudNativePG, or none reported),
 //     that run may be after the read, so when the newest end is within
 //     one refresh interval before the read its instant is the latest of
@@ -2088,12 +2132,17 @@ func pendingExpireBand(in timelineInput, spans []interval, first time.Time, wind
 	}
 	if in.retainedFor > 0 {
 		if end, ok := newestListedEnd(in, spans); ok {
-			// A stamp holding end means that expire had returned before the
-			// scan: the Backup is counted at the stamp at the latest, and n
-			// == 0 puts that more than scanSlack before the read.
-			if _, stamped := in.facts.expireStampAt(end); !stamped {
+			// A stamp holding end more than scanSlack and backupClockSkew
+			// before the read means that expire had returned before the
+			// scan, across the instance's clock and the agent's; a later
+			// one times the run at the stamp.
+			stamp, stamped := in.facts.expireStampAt(end)
+			if !stamped || stamp.After(read.Add(-scanSlack-backupClockSkew)) {
 				run := end
-				if in.refresh > 0 && !end.Before(read.Add(-in.refresh)) {
+				if stamped {
+					run = stamp
+				}
+				if !stamped && in.refresh > 0 && !end.Before(read.Add(-in.refresh)) {
 					for _, at := range []*time.Time{in.scannedAt, in.observedAt} {
 						if at != nil && at.After(run) {
 							run = *at
@@ -2376,6 +2425,11 @@ func missedScan(refresh, scan time.Duration) time.Duration {
 // scanSlack is the time a scan is allowed to take on top of its interval
 // before missedScan counts it as missed.
 const scanSlack = time.Minute
+
+// backupClockSkew is how far the clock of the instance that writes a
+// Backup's stamps may run behind (observe.BackupClockSkew) and still
+// have them read as true, so behind the agent's too.
+const backupClockSkew = observe.BackupClockSkew
 
 // oldestOnly is how long after first only the oldest anchor's backups
 // reach: until the earliest anchor after first; 0 when there is none.

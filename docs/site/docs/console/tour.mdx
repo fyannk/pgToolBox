@@ -63,15 +63,24 @@ and the count of diagnostics findings by severity. The last backup is the
 newest completed `Backup`'s stop time; a stop time a plugin left unset (1970)
 or set in the future is not one, and such a backup is then timed by
 CloudNativePG's completion stamp (`status.reconciliationTerminatedAt`, seconds
-after the backup ended). A backup whose instance clock runs behind (its times
-more than five minutes before the operator started it) has neither, and is
-timed by when the operator started it, an instant before it ended. The list
-and the Overview's backups panel show that time unmarked; only the backup line
-of the cluster Overview's health roll-up says it is the completion stamp, or
-that the stop time and completion stamp are not plausible. A failed `Backup` is timed by when
-CloudNativePG marked it failed (its creation when that is not stamped), so a
-backup that waited behind a successful one and failed after it still shows as a
-failure after the last completed backup. A namespace the console
+after the backup ended).
+
+A backup whose times are more than five minutes before the operator started it
+has neither: the instance's clock and the operator's disagree (the instance
+runs behind or the operator ahead, and the console cannot tell which). It is
+timed by the earlier of its creation and the operator's start stamp. Both come
+before the backup started running, so a long backup shows older than it is,
+never fresher. The list and the Overview's backups panel show that time
+unmarked. Only the backup line of the cluster Overview's health roll-up says it
+is the completion stamp, or that the stop time and completion stamp are not
+plausible because the clocks disagree; the Backups screen shows no times for
+such a backup and does not mark it.
+
+A failed `Backup` is timed by the latest of when CloudNativePG marked it
+failed, when the operator started it and its creation. A backup that waited
+behind a successful one and failed after it still shows as a failure after the
+last completed backup, also when its instance's failure stamp is dropped
+because the clocks disagree. A namespace the console
 cannot read is named in a banner rather than shown as empty. Tick two rows to
 [compare them](../guides/compare.md). What you may see is decided by the API
 server for your own identity ([authorization](authorization.md)).

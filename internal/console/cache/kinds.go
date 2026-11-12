@@ -21,6 +21,7 @@ import (
 	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -165,7 +166,9 @@ func Kinds(clusterSelector labels.Selector, clusterCatalogs bool) []Kind {
 		// carries no cnpg.io/cluster label, so Leases are watched
 		// unfiltered in the watched namespaces, managedFields stripped.
 		typed(SourceLeases, coordinationv1.SchemeGroupVersion.WithKind("Lease"), false, nil, func() *coordinationv1.Lease { return &coordinationv1.Lease{} }),
-		typed(SourceBackups, cnpgGVK("Backup"), false, nil, func() *cnpgv1.Backup { return &cnpgv1.Backup{} }),
+		// Backups keep the time of each status-subresource managedFields
+		// entry, on the API server's clock (BackupTransform).
+		withTransform(typed(SourceBackups, cnpgGVK("Backup"), false, nil, func() *cnpgv1.Backup { return &cnpgv1.Backup{} }), BackupTransform),
 		typed(SourceScheduledBackups, cnpgGVK("ScheduledBackup"), false, nil, func() *cnpgv1.ScheduledBackup { return &cnpgv1.ScheduledBackup{} }),
 		typed(SourcePoolers, cnpgGVK("Pooler"), false, nil, func() *cnpgv1.Pooler { return &cnpgv1.Pooler{} }),
 		typed(SourceDatabases, cnpgGVK("Database"), false, nil, func() *cnpgv1.Database { return &cnpgv1.Database{} }),
@@ -213,6 +216,35 @@ func NewClusterStorage() *unstructured.Unstructured {
 
 // stripManagedFields is the cache's default transform.
 var stripManagedFields = crcache.TransformStripManagedFields()
+
+// BackupTransform is the transform of Backups: of the managedFields it
+// keeps only the status-subresource entries' manager, operation, API
+// version, subresource and time, never the field set. The time is the
+// API server's, so a Completed Backup whose instance's and operator's
+// clocks disagree still has an upper bound on its end (the console's
+// purge band, status.statusWrittenAt; round 22, PG P3-B). A few dozen
+// bytes per Backup.
+func BackupTransform(obj any) (any, error) {
+	if tombstone, ok := obj.(toolscache.DeletedFinalStateUnknown); ok {
+		return tombstone, nil
+	}
+	accessor, ok := obj.(metav1.Object)
+	if !ok {
+		return obj, nil
+	}
+	var kept []metav1.ManagedFieldsEntry
+	for _, entry := range accessor.GetManagedFields() {
+		if entry.Subresource != "status" || entry.Time == nil {
+			continue
+		}
+		kept = append(kept, metav1.ManagedFieldsEntry{
+			Manager: entry.Manager, Operation: entry.Operation, APIVersion: entry.APIVersion,
+			Time: entry.Time, Subresource: entry.Subresource,
+		})
+	}
+	accessor.SetManagedFields(kept)
+	return obj, nil
+}
 
 // ClusterTransform is the transform of both views of Clusters: a typed
 // Cluster loses its managedFields like every other kind, a raw one is

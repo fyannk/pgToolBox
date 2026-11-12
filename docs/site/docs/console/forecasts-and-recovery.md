@@ -491,12 +491,21 @@ segments, so the bar and the answer always agree:
   `Backup` stamped at or after its creation are an instance clock running
   behind, and are read as no times. So is a start, stop or completion stamp
   more than five minutes before `status.reconciliationStartedAt`, which the
-  operator writes before the instance runs the backup: the instance manager
-  writes the tool times and the completion stamp on the same clock, so once
-  one of them is that early all three are dropped and the backup counts as one
-  that could have ended at any time, never as one that ended before the scan.
-  The Overview then times it by the operator's start stamp and says its stop
-  time and completion stamp are not plausible. With
+  operator writes before the instance runs the backup: the instance's clock
+  and the operator's disagree (the instance behind or the operator ahead; the
+  console cannot tell which). The instance manager writes the tool times and
+  the completion stamp on the same clock, so once one of them is that early
+  all three are dropped, never read as a backup that ended before the scan.
+  Such a backup is then bounded by the API server's time of its last status
+  write (the `metadata.managedFields` entry of the status subresource, which
+  the console's cache keeps without its field set), plus five minutes for the
+  agent's clock: it counts as one since the scan until that time is more than
+  a minute before the scan's start, and no longer. With no such entry it
+  counts as one that could have ended at any time, after every scan, until the
+  clocks are fixed or the `Backup` is deleted. The Overview then times it by
+  the earlier of its creation and the operator's start stamp, and says its
+  stop time and completion stamp are not plausible because the clocks
+  disagree. With
   `repo-retention-full=K` (type `count`), L fulls listed and n backups since,
   the oldest L + n − K listed fulls may be gone with their chains, and the band
   runs to the first restore point of the next one; the whole window when that is
@@ -513,14 +522,17 @@ segments, so the bar and the answer always agree:
   time-based retention, fulls older than the newest one stopped before that
   `expire`'s run minus the retention. When a completed `Backup` whose run holds
   the newest listed end carries a completion stamp, its `expire` had returned
-  by that stamp, which, with no backup counted since the scan, is before the
-  scan's start: the listing already shows what that `expire` left and keeps no
-  band. A healthy daily schedule therefore keeps none, except during the one
-  scan that starts within a minute of a completion stamp (the clock allowance
-  between the instance and the agent): that backup counts as one since the
-  scan, and when a full from the retention's edge stopped in the seconds
-  between its `expire`'s clock read and the stamp, the band may hold the
-  oldest full until the next scan.
+  by that stamp. The stamp is on the instance's clock and the scan's start on
+  the agent's, and an instance up to five minutes behind is not flagged, so
+  only a stamp more than six minutes before the scan's start (a minute for
+  the scan, five for the clocks) says the listing already shows what that
+  `expire` left: it keeps no band. A later stamp times that `expire` at the
+  stamp, and fulls older than the stamp minus the retention may be gone. A
+  healthy daily schedule therefore keeps a band only in the scans that start
+  within about six minutes of a completion stamp: the band may then hold the
+  oldest full until the next scan, never all day. A full that `expire`
+  removed is never shown, also when the instance runs 1 to 5 minutes behind
+  the agent, below the five-minute flag.
   With no such stamp (a backup run outside CloudNativePG) the run may be after
   the scan read the listing, so when the newest listed backup ended within one
   refresh interval before the scan, the run is taken as the latest of the
