@@ -22,6 +22,7 @@ import (
 	"net/http/httptest"
 	"runtime"
 	"runtime/debug"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -125,8 +126,14 @@ func TestStartupReviewsHeapIsBounded(t *testing.T) {
 			all := make(chan struct{})
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				_, _ = io.Copy(io.Discard, r.Body)
-				contentType := r.Header.Get("Content-Type")
-				if contentType != "application/json" {
+				// Round 19, OPERATOR P3-3: the response's media type is
+				// the one Accept asks for first, as an API server picks
+				// it, whatever the request's own Content-Type: a client
+				// that sends JSON but accepts protobuf gets protobuf.
+				accept := r.Header.Get("Accept")
+				contentType, _, _ := strings.Cut(accept, ",")
+				contentType = strings.TrimSpace(contentType)
+				if accept != "application/json" || r.Header.Get("Content-Type") != "application/json" {
 					notJSON.Store(true)
 				}
 				b, ok := body(contentType)
@@ -195,7 +202,7 @@ func TestStartupReviewsHeapIsBounded(t *testing.T) {
 				t.Fatal(err)
 			}
 			if notJSON.Load() {
-				t.Error("the start-up client sent a review in another media type than JSON: protobuf decodes to several times more heap per byte")
+				t.Error("the start-up client sent a review in, or accepted its answer in, another media type than JSON alone: protobuf decodes to several times more heap per byte")
 			}
 			if len(review.Unreviewed) != 0 {
 				t.Fatalf("a near-cap review was refused: %+v", review.Unreviewed[0])
