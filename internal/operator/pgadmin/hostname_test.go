@@ -16,15 +16,18 @@ package pgadmin
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 
+	routev1 "github.com/openshift/api/route/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	pgtoolboxv1alpha1 "github.com/fyannk/pgToolBox/api/v1alpha1"
+	"github.com/fyannk/pgToolBox/pkg/discovery"
 )
 
 func hostnamePgAdmin(hostname string) *pgtoolboxv1alpha1.PgAdmin {
@@ -234,5 +237,39 @@ func TestPgAdminPauseAllowUnpause(t *testing.T) {
 				t.Errorf("%s: the next loop is not a no-op", step.name)
 			}
 		}
+	}
+}
+
+// TestPausedPgAdminWithdrawnRouteMarkedGone: round 17, OPERATOR P3. A
+// Route published, then withdrawn for a refused hostname while the
+// PgAdmin is paused, is no longer recorded in publishedExposureKinds: the
+// status never keeps saying a Route may remain once the operator deleted
+// it.
+func TestPausedPgAdminWithdrawnRouteMarkedGone(t *testing.T) {
+	p := hostnamePgAdmin("login.corp.example.com")
+	p.Spec.Exposure.Type = pgtoolboxv1alpha1.ExposureTypeRoute
+	h := newHarness(t, nil, baseObjects(p)...)
+	h.r.Features.Routes = discovery.Result{GVK: routev1.GroupVersion.WithKind("Route"), State: discovery.Available}
+	if err := h.reconcile(p.Name); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.pgadmin(p.Name).Status.PublishedExposureKinds; !slices.Equal(got, []string{"Route"}) {
+		t.Fatalf("publishedExposureKinds = %q after publishing a Route, want [Route]", got)
+	}
+	paused := h.pgadmin(p.Name)
+	paused.Annotations = map[string]string{pgtoolboxv1alpha1.AnnotationReconcile: pgtoolboxv1alpha1.ReconcileSkip}
+	if err := h.client.Update(context.Background(), paused); err != nil {
+		t.Fatal(err)
+	}
+	h.r.Config.ExposureAllowedHostSuffixes = []string{"apps.example.com"}
+	if err := h.reconcile(p.Name); err != nil {
+		t.Fatal(err)
+	}
+	key := client.ObjectKey{Namespace: testNamespace, Name: namesOf(p).base}
+	if err := h.client.Get(context.Background(), key, &routev1.Route{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("the Route under a refused hostname is still there: %v", err)
+	}
+	if got := h.pgadmin(p.Name).Status.PublishedExposureKinds; got != nil {
+		t.Errorf("publishedExposureKinds = %q once the Route is withdrawn, want none", got)
 	}
 }
