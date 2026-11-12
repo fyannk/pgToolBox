@@ -132,14 +132,19 @@ type LiveStatus struct {
 	// LagBytes is this replica's replay distance behind the primary's
 	// current LSN as both were last read; absent on the primary or when
 	// either side was not read.
-	LagBytes           *int64    `json:"lagBytes,omitempty"`
-	ReplayPaused       bool      `json:"replayPaused,omitempty"`
-	WALReceiverActive  bool      `json:"walReceiverActive,omitempty"`
-	PendingRestart     bool      `json:"pendingRestart,omitempty"`
-	PendingRestartDecr bool      `json:"pendingRestartForDecrease,omitempty"`
-	ArchivingWAL       bool      `json:"archivingWal,omitempty"`
-	LastFailedWAL      string    `json:"lastFailedWal,omitempty"`
-	ReadyWALFiles      int       `json:"readyWalFiles,omitempty"`
+	LagBytes           *int64 `json:"lagBytes,omitempty"`
+	ReplayPaused       bool   `json:"replayPaused,omitempty"`
+	WALReceiverActive  bool   `json:"walReceiverActive,omitempty"`
+	PendingRestart     bool   `json:"pendingRestart,omitempty"`
+	PendingRestartDecr bool   `json:"pendingRestartForDecrease,omitempty"`
+	ArchivingWAL       bool   `json:"archivingWal,omitempty"`
+	LastFailedWAL      string `json:"lastFailedWal,omitempty"`
+	// ReadyWALFiles is the primary's count of WAL files waiting to be
+	// archived, 0 included; absent when not reported (a standby, or a
+	// report that did not reach PostgreSQL). CloudNativePG counts them on
+	// every primary it reads and omits a zero (probes.go
+	// fillWalStatusFromConnection), so a primary read without it has none.
+	ReadyWALFiles      *int      `json:"readyWalFiles,omitempty"`
 	MightBeUnavailable bool      `json:"mightBeUnavailable,omitempty"`
 	PgRewindRunning    bool      `json:"pgRewindRunning,omitempty"`
 	ManagerVersion     string    `json:"instanceManagerVersion,omitempty"`
