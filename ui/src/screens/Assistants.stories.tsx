@@ -256,7 +256,7 @@ export const DisconnectNotRecorded: StoryObj<typeof ConnectedAssistantsView> = {
     await waitFor(() => expect(body.queryByRole("alertdialog")).toBeNull());
     const note = canvas.getByRole("status");
     await expect(note).toHaveTextContent(/Claude Code is disconnected on the replica that answered/);
-    await expect(note).toHaveTextContent(/until the console has written the disconnection; it keeps retrying/);
+    await expect(note).toHaveTextContent(/until the console has written the disconnection\. Retry/);
     await waitFor(() => expect(note).toHaveFocus());
     await expect(note.querySelector('[data-health="warning"]')).not.toBeNull();
     await expect(note).not.toHaveTextContent(/Not started/);

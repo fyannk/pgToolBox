@@ -259,7 +259,7 @@ problem `type`:
   the grants it knows, but the API server did not take the write. That replica
   refuses them at once and keeps writing them with its next writes; the others
   may accept them until one lands. The page says the assistants are
-  disconnected on the replica that answered and that it keeps retrying.
+  disconnected on the replica that answered, and to retry.
 - `urn:pgtoolbox:disconnection-unconfirmed`: the replica could not read the
   ConfigMap (the API server refused, throttled or did not answer the read).
   Nothing may be disconnected: a grant recorded on another replica is not known here. The
