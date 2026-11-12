@@ -35,8 +35,36 @@ export const Detail: Story = {
     await userEvent.click(canvas.getByRole("button", { name: "billing-1" }));
     const dialog = await within(canvasElement.ownerDocument.body).findByRole("dialog", { name: "billing-1" });
     await expect(within(dialog).getByText("CrashLoopBackOff")).toBeVisible();
+    const ready = within(dialog).getByText("WAL files waiting to be archived").parentElement as HTMLElement;
+    await expect(ready).toHaveTextContent("2");
   },
 };
+
+/** A primary read with no readyWalFiles in its report: "not reported", never an invented 0. */
+function withoutReadyWal(): InstanceRow[] {
+  return (instances.items ?? []).map((r) =>
+    r.name === "billing-1" && r.live ? { ...r, live: { ...r.live, readyWalFiles: undefined } } : r,
+  );
+}
+export const ReadyWalFilesNotReported: Story = {
+  args: { data: { ...instances, items: withoutReadyWal() } },
+  play: async ({ canvas, canvasElement }) => {
+    await userEvent.click(canvas.getByRole("button", { name: "billing-1" }));
+    const dialog = await within(canvasElement.ownerDocument.body).findByRole("dialog", { name: "billing-1" });
+    const ready = within(dialog).getByText("WAL files waiting to be archived").parentElement as HTMLElement;
+    await expect(ready).toHaveTextContent("not reported");
+    await expect(ready).not.toHaveTextContent("0");
+  },
+};
+export const ReadyWalFilesNotReportedFrench: Story = french({
+  args: { data: { ...instances, items: withoutReadyWal() } },
+  play: async ({ canvas, canvasElement }) => {
+    await userEvent.click(canvas.getByRole("button", { name: "billing-1" }));
+    const dialog = await within(canvasElement.ownerDocument.body).findByRole("dialog", { name: "billing-1" });
+    const ready = within(dialog).getByText("Fichiers WAL en attente d’archivage").parentElement as HTMLElement;
+    await expect(ready).toHaveTextContent("non communiqué");
+  },
+});
 /**
  * No CA bundle configured: every instance is "not verifiable", an honest
  * configuration state with the administrator's fix, not an error.

@@ -192,3 +192,27 @@ func TestConvertBackupNamesItsSchedule(t *testing.T) {
 		})
 	}
 }
+
+// TestConvertBackupReadsAnEpochStopAsUnknown (round 18, CNPG P3): a
+// plugin that leaves stopped_at unset gives a Completed Backup stopped
+// 1970-01-01 (time.Unix(0, 0)); the console reads it as no stop time.
+func TestConvertBackupReadsAnEpochStopAsUnknown(t *testing.T) {
+	t.Parallel()
+	c := newTestClient(t)
+	raw := rawBackup("b-epoch", "orders", "plugin")
+	raw.Object["status"].(map[string]any)["stoppedAt"] = "1970-01-01T00:00:00Z"
+	facts, _, err := c.convertBackup(raw.Object)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if facts.StoppedAt != nil {
+		t.Errorf("epoch stoppedAt read as %s", facts.StoppedAt)
+	}
+	if facts.StartedAt == nil || !facts.StartedAt.Equal(time.Date(2026, 7, 28, 10, 1, 0, 0, time.UTC)) {
+		t.Errorf("plausible startedAt lost: %v", facts.StartedAt)
+	}
+	raw.Object["status"].(map[string]any)["stoppedAt"] = "2026-07-28T10:00:30Z"
+	if facts, _, _ := c.convertBackup(raw.Object); facts.StoppedAt != nil {
+		t.Errorf("a stop before the start read as %s", facts.StoppedAt)
+	}
+}

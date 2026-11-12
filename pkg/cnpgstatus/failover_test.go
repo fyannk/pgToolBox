@@ -492,6 +492,19 @@ func TestRehearsalMaskedIsUnread(t *testing.T) {
 	if out.Certain {
 		t.Error("a rehearsal with a masked replica claims certainty")
 	}
+	// Round 18, CNPG P3-3: a masked replica that reports itself primary
+	// (isPrimary is re-read from its data directory after the mask)
+	// keeps that outcome; the rehearsal names it, never only "unread".
+	masked.Reading.IsPrimary = true
+	out = Rehearse(RehearsalInput{Primary: "db-1", Sync: SyncReading{Mode: SyncModeNone}, Instances: []RehearsalInstance{primaryInst(), masked}})
+	if out.Outcome != RehearsalUnknown || !strings.Contains(out.Text, "db-3 reports itself primary") || out.Certain {
+		t.Errorf("masked self-primary: %q (certain %v), want it named as reporting itself primary", out.Text, out.Certain)
+	}
+	for _, c := range out.Ranking {
+		if c.Name == "db-3" && (c.Eligible || c.Reason != "it reports itself primary") {
+			t.Errorf("masked self-primary ranked %+v", c)
+		}
+	}
 	primary := primaryInst(instancestatus.Standby{ApplicationName: "db-2", SyncState: "sync"})
 	primary.Reading.MightBeUnavailableMaskedError = "FATAL: the database system is shutting down"
 	if _, lsn, standbys := rehearsalPrimary(RehearsalInput{Primary: "db-1", Instances: []RehearsalInstance{primary}}); lsn != "" || len(standbys) != 0 {

@@ -243,7 +243,7 @@ func Instances() viewmodel.InstanceList {
 				Pod:        &viewmodel.PodView{Phase: "Running", Ready: false, Node: "node-a", Restarts: 4, Waiting: "CrashLoopBackOff", Image: "ghcr.io/cloudnative-pg/postgresql:18.1-system-trixie", CreatedAt: ago(30 * 24 * time.Hour), Provenance: viewmodel.Provenance{Origin: viewmodel.OriginKubernetes, Source: "Pod", ObservedAt: ago(4 * time.Minute), Stale: true, StaleReason: "pod watch lost: connection refused"}},
 				StatusRead: viewmodel.StatusRead{State: viewmodel.StatusReadUnreachable, Reason: "not reachable from this console: dial tcp 10.0.0.11:8000: i/o timeout", At: ago(8 * time.Second), Since: ago(100 * time.Second)},
 				Live: &viewmodel.LiveStatus{
-					IsPrimary: true, TimelineID: new(3), CurrentLSN: "0/9000060", ArchivingWAL: true, ManagerVersion: "1.30.1",
+					IsPrimary: true, TimelineID: new(3), CurrentLSN: "0/9000060", ArchivingWAL: true, ReadyWALFiles: new(2), ManagerVersion: "1.30.1",
 					Provenance: viewmodel.Provenance{Origin: viewmodel.OriginInstance, Source: "/pg/status", ObservedAt: ago(100 * time.Second), Stale: true, StaleReason: "last read failed"},
 				},
 				Series: []viewmodel.Series{{Key: "readyWalFiles", Unit: "files", Points: []viewmodel.Point{

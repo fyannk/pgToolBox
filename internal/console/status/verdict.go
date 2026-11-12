@@ -401,7 +401,8 @@ func (s *Service) archivingProvenance(g *gathered, now time.Time) viewmodel.Prov
 }
 
 // statusReadContributor turns the sweep into one roll-up item: every
-// instance read is ok; any not read makes it unknown (an observer's
+// instance read is ok; one answering without PostgreSQL (masked) makes it
+// a warning; any not read makes it unknown (an observer's
 // limit, not a fault of the Cluster); a switched-off sweep is info.
 func (s *Service) statusReadContributor(g *gathered, now time.Time) viewmodel.Contributor {
 	c := viewmodel.Contributor{ID: "instanceStatus", Label: "Instance self-reports", Link: "instances"}
@@ -430,13 +431,24 @@ func (s *Service) statusReadContributor(g *gathered, now time.Time) viewmodel.Co
 	}
 	at := g.swept.SweptAt
 	c.Provenance = viewmodel.Provenance{Origin: viewmodel.OriginInstance, Source: "/pg/status", ObservedAt: &at}
-	read, total := 0, len(g.swept.Instances)
+	// A masked report (fenced or restarting: the instance manager
+	// answered without reaching PostgreSQL) is no reading of PostgreSQL
+	// (sweep.Instance.ReadingOK), so it is not counted as read (round 18,
+	// CNPG P3-2): it is a known state of the instance, a warning, and
+	// said apart from those that did not answer.
+	read, masked, total := 0, 0, len(g.swept.Instances)
 	for _, inst := range g.swept.Instances {
-		if inst.State == viewmodel.StatusReadOK {
+		switch {
+		case inst.ReadingOK():
 			read++
+		case inst.State == viewmodel.StatusReadOK:
+			masked++
 		}
 	}
 	c.Detail = fmt.Sprintf("%d of %d instances read", read, total)
+	if masked > 0 {
+		c.Detail += fmt.Sprintf(", %d answered without PostgreSQL (fenced or restarting)", masked)
+	}
 	switch {
 	case total == 0 && hibernated:
 		c.Health, c.Detail = viewmodel.HealthInactive, "the Cluster is hibernated: no instance runs to read"
@@ -444,6 +456,8 @@ func (s *Service) statusReadContributor(g *gathered, now time.Time) viewmodel.Co
 		c.Health, c.Detail = viewmodel.HealthUnknown, "no instance pod to read"
 	case read == total:
 		c.Health = viewmodel.HealthOK
+	case read+masked == total:
+		c.Health = viewmodel.HealthWarning
 	default:
 		c.Health = viewmodel.HealthUnknown
 	}

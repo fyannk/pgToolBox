@@ -94,6 +94,18 @@ func TestBackupObject(t *testing.T) {
 	if got := BackupObject(Minor130, plugin); got.NotReportedWhileRunning != nil {
 		t.Errorf("completed plugin backup still lists missing fields: %v", got.NotReportedWhileRunning)
 	}
+	// A plugin that leaves stopped_at unset: CloudNativePG stamps
+	// 1970-01-01 (round 18, CNPG P3); the reading has no stop time.
+	epoch, stopped := metav1.NewTime(time.Unix(0, 0)), metav1.NewTime(created.Add(time.Hour))
+	plugin.Status.StartedAt, plugin.Status.StoppedAt = &started, &epoch
+	if got := BackupObject(Minor130, plugin); got.StoppedAt != nil || got.StartedAt == nil {
+		t.Errorf("epoch stoppedAt: started %v stopped %v, want a start and no stop", got.StartedAt, got.StoppedAt)
+	}
+	plugin.Status.StoppedAt = &stopped
+	if got := BackupObject(Minor130, plugin); got.StoppedAt == nil || !got.StoppedAt.Equal(stopped.Time) {
+		t.Errorf("plausible stoppedAt lost: %v", got.StoppedAt)
+	}
+	plugin.Status.StartedAt, plugin.Status.StoppedAt = nil, nil
 
 	inTree := &cnpgv1.Backup{
 		Spec:   cnpgv1.BackupSpec{Method: cnpgv1.BackupMethodBarmanObjectStore},

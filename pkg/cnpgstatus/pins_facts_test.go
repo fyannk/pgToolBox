@@ -330,3 +330,62 @@ func functionBody(t *testing.T, source []byte, signature string) []byte {
 	}
 	return rest[:end]
 }
+
+// TestPinPluginBackupTimesFromUnix pins the fact observe.SaneBackupTimes
+// rests on (round 18, CNPG P3): CloudNativePG converts a plugin's start
+// and stop seconds with time.Unix (internal/cnpi/plugin/client/backup.go)
+// and keeps the result unless IsZero (webserver/plugin_backup.go), which
+// a time.Unix(0, 0) never is: a plugin that leaves one unset stamps the
+// Backup 1970-01-01.
+func TestPinPluginBackupTimesFromUnix(t *testing.T) {
+	for _, v := range verifiedReleases {
+		release := v.tag
+		dir := moduleDir(t, release)
+		client, err := os.ReadFile(filepath.Join(dir, "internal", "cnpi", "plugin", "client", "backup.go"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, literal := range []string{"time.Unix(result.StartedAt, 0)", "time.Unix(result.StoppedAt, 0)"} {
+			if !bytes.Contains(client, []byte(literal)) {
+				t.Errorf("v%s: backup.go no longer has %q", release, literal)
+			}
+		}
+		webserver, err := os.ReadFile(filepath.Join(dir, "pkg", "management", "postgres", "webserver", "plugin_backup.go"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, literal := range []string{"if !response.StartedAt.IsZero() {", "if !response.StoppedAt.IsZero() {"} {
+			if !bytes.Contains(webserver, []byte(literal)) {
+				t.Errorf("v%s: plugin_backup.go no longer guards with %q", release, literal)
+			}
+		}
+	}
+}
+
+// TestPinReadyWALFilesCountedOnEveryPrimary pins the fact the console's
+// LiveStatus.readyWalFiles rests on (round 18, DBA): CloudNativePG counts
+// the .ready files on every primary it reads, failing the status
+// otherwise, and omits a zero from the JSON, so a primary read through
+// PostgreSQL without the field has none waiting.
+func TestPinReadyWALFilesCountedOnEveryPrimary(t *testing.T) {
+	for _, v := range verifiedReleases {
+		release := v.tag
+		dir := moduleDir(t, release)
+		probes, err := os.ReadFile(filepath.Join(dir, "pkg", "management", "postgres", "probes.go"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		fill := functionBody(t, probes, "func (instance *Instance) fillWalStatusFromConnection(result *postgres.PostgresqlStatus, superUserDB *sql.DB) error {")
+		count := bytes.Index(fill, []byte("result.ReadyWALFiles, _, err = GetWALArchiveCounters()"))
+		if count < 0 || !bytes.Contains(fill[count:], []byte("return err")) {
+			t.Errorf("v%s: fillWalStatusFromConnection no longer counts the ready WAL files on the primary, failing on error", release)
+		}
+		status, err := os.ReadFile(filepath.Join(dir, "pkg", "postgres", "status.go"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Contains(status, []byte("`json:\"readyWalFiles,omitempty\"`")) {
+			t.Errorf("v%s: PostgresqlStatus.ReadyWALFiles is no longer omitempty", release)
+		}
+	}
+}

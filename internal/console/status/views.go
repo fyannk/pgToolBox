@@ -778,9 +778,13 @@ func liveStatus(name string, inst sweep.Instance, primaryLSN string, archiver bo
 		IsPrimary: r.IsPrimary, SystemID: r.SystemID, CurrentLSN: r.CurrentLSN, ReceivedLSN: r.ReceivedLSN, ReplayLSN: r.ReplayLSN,
 		ReplayPaused: r.ReplayPaused, WALReceiverActive: r.IsWalReceiverActive, PendingRestart: r.PendingRestart,
 		PendingRestartDecr: r.PendingRestartForDecrease, ArchivingWAL: r.IsArchivingWAL && archiver, LastFailedWAL: r.LastFailedWAL,
-		ReadyWALFiles: r.ReadyWALFiles, MightBeUnavailable: r.MightBeUnavailable, PgRewindRunning: r.IsPgRewindRunning,
+		MightBeUnavailable: r.MightBeUnavailable, PgRewindRunning: r.IsPgRewindRunning,
 		ManagerVersion: r.InstanceManagerVersion, ManagerUpgrading: r.IsInstanceManagerUpgrading,
 		Provenance: viewmodel.Provenance{Origin: viewmodel.OriginInstance, Source: "/pg/status", ObservedAt: &observed},
+	}
+	if r.IsPrimary {
+		ready := r.ReadyWALFiles
+		live.ReadyWALFiles = &ready
 	}
 	if r.TimelineID > 0 {
 		tl := r.TimelineID

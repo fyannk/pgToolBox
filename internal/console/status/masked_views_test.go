@@ -82,7 +82,7 @@ func TestMaskedInstanceIsUnread(t *testing.T) {
 		if l == nil || l.PostgresUnread == nil || l.PostgresUnread.Error != maskedError || l.PostgresUnread.Instance != row.Name {
 			t.Fatalf("%s: live %+v, want postgresUnread with the masked error", row.Name, l)
 		}
-		if l.PendingRestart || l.ReplayPaused || l.WALReceiverActive || l.ArchivingWAL || l.ReadyWALFiles != 0 || l.LastFailedWAL != "" ||
+		if l.PendingRestart || l.ReplayPaused || l.WALReceiverActive || l.ArchivingWAL || l.ReadyWALFiles != nil || l.LastFailedWAL != "" ||
 			l.CurrentLSN != "" || l.ReplayLSN != "" || l.TimelineID != nil || l.LagBytes != nil || len(l.Standbys) != 0 {
 			t.Errorf("%s: a masked report serves PostgreSQL's fields: %+v", row.Name, l)
 		}

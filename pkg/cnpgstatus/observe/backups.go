@@ -149,3 +149,38 @@ type BackupsSnapshot struct {
 	// ObjectStore is the optional metadata-only reference result.
 	ObjectStore ObjectStoreReference
 }
+
+// backupClockSkew is how far before its Backup's creation a backup
+// tool's time may fall and still be read as true: the instance's clock
+// against the API server's.
+const backupClockSkew = 5 * time.Minute
+
+// backupTimeFloor is the earliest backup tool time read as true.
+// CloudNativePG converts a plugin's start and stop times with
+// time.Unix(seconds, 0) and keeps them unless IsZero
+// (internal/cnpi/plugin/client/backup.go v1.30.1:156-157,
+// webserver/plugin_backup.go:144-148), so a plugin that leaves one
+// unset stamps the Backup 1970-01-01 (round 18, CNPG P3).
+var backupTimeFloor = time.Date(2000, time.January, 1, 0, 0, 0, 0, time.UTC)
+
+// SaneBackupTimes are a Backup's status.startedAt and status.stoppedAt
+// with every impossible value read as unknown (nil): a time before
+// backupTimeFloor (the plugin epoch above), one more than backupClockSkew
+// before the object's creation (created zero: not checked), and a stop
+// before the start. A Completed Backup whose stop time is unknown is then
+// counted as one that could have ended at any time, never as one that
+// ended in 1970. Times are returned in UTC.
+func SaneBackupTimes(created time.Time, started, stopped *time.Time) (start, stop *time.Time) {
+	sane := func(at *time.Time) *time.Time {
+		if at == nil || at.Before(backupTimeFloor) || !created.IsZero() && at.Before(created.Add(-backupClockSkew)) {
+			return nil
+		}
+		t := at.UTC()
+		return &t
+	}
+	start, stop = sane(started), sane(stopped)
+	if start != nil && stop != nil && stop.Before(*start) {
+		stop = nil
+	}
+	return start, stop
+}

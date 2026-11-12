@@ -45,6 +45,7 @@
         "timelineId": 1,
         "currentLsn": "0/3000000",
         "archivingWal": true,
+        "readyWalFiles": 0,
         "instanceManagerVersion": "1.30.0",
         "provenance": {
           "origin": "instance",
