@@ -179,7 +179,7 @@ func preparePgAdmin(ctx context.Context, budget *startupBudget, operatorImage, c
 	// reviewed again on every replica.
 	if len(prepared.Dropped) > 0 {
 		prepared.leaderOnly = append(prepared.leaderOnly, droppedReport{api: direct, dropped: prepared.Dropped, now: time.Now})
-		go reReviewFailed(ctx, direct, prepared.Dropped, reReviewInterval, restart)
+		go reReviewFailed(ctx, direct, prepared.Dropped, defaultReReviewPolicy(processStarted), restart)
 	}
 	return prepared, nil
 }

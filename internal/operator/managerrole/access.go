@@ -92,6 +92,13 @@ func (u Unreviewed) Reason() string {
 	return fmt.Sprintf("could not review the operator's permissions in %s: %v", u.Namespace, u.Err)
 }
 
+// TooLarge reports whether the review failed because its response passed
+// ReviewResponseLimit: the namespace's RoleBindings, not a transient fault,
+// so the same rules give the same answer.
+func (u Unreviewed) TooLarge() bool {
+	return errors.Is(u.Err, ErrReviewTooLarge)
+}
+
 // Review is PermittedNamespaces' answer, each list in the order of the
 // namespaces asked.
 type Review struct {

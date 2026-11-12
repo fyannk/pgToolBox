@@ -49,13 +49,18 @@ const (
 	// manager role there (a narrower Role bound in place of the chart's).
 	dropPermissions dropCause = "permissions"
 	// dropReviewFailed: its permissions there could not be reviewed (an
-	// error after the retries, a response too large, or no answer in
-	// time).
+	// error after the retries, or no answer in time); reviewed again in
+	// the background (reReviewFailed).
 	dropReviewFailed dropCause = "review-failed"
+	// dropReviewTooLarge: its permission review answered more than
+	// managerrole.ReviewResponseLimit (the namespace's RoleBindings grant
+	// the operator far more rules than its manager role). Never reviewed
+	// again in the background: only the next start reviews it.
+	dropReviewTooLarge dropCause = "review-too-large"
 )
 
 // dropCauses is every dropCause, in the order the gauge exports them.
-var dropCauses = []dropCause{dropPermissions, dropReviewFailed, dropClustersUnlistable}
+var dropCauses = []dropCause{dropPermissions, dropReviewFailed, dropReviewTooLarge, dropClustersUnlistable}
 
 // droppedNamespace is one watched namespace left out at start. For
 // dropPermissions, required is what the operator asked for there and
@@ -186,7 +191,8 @@ func droppedMessage(d droppedNamespace) string {
 // page per kind, the whole droppedReportTimeout): a namespace is often
 // dropped because writes are refused there, so a failure is logged and
 // never retried. Nothing is written in a namespace whose permissions are
-// unknown (Clusters unlistable, review failed), nor in any watched one.
+// unknown (Clusters unlistable, review failed or too large), nor in any
+// watched one.
 func reportDroppedNamespaces(ctx context.Context, api droppedAPI, dropped []droppedNamespace, now func() time.Time) {
 	ctx, cancel := context.WithTimeout(ctx, droppedReportTimeout)
 	defer cancel()
