@@ -13,6 +13,12 @@ The first public release: a console, an optional operator and an evidence agent
 for [CloudNativePG](https://cloudnative-pg.io) 1.30 and later, on Kubernetes and
 OpenShift.
 
+**Known limitation:** with NetworkPolicy enabled and no trusted proxy addresses set, the
+console trusts `X-Forwarded-For` from the peers its policy admits. On a network plugin that
+does not enforce NetworkPolicy, set `console.trustedProxyCIDRs` (or
+`spec.exposure.trustedProxy.cidrs`): otherwise any pod can fake the client address seen by
+the per-address sign-in limits and the audit log (identity is not affected).
+
 ### Added
 
 - **The console**, installed once per team namespace by the `pgtools` chart or
