@@ -565,11 +565,24 @@ func (s *Store) RevokeGrantsOf(userHash string, at time.Time) []string {
 // The local revocations stay either way: they only refuse more, and the
 // next batch writes them. Without a ConfigMap (one replica) there is
 // nothing to write.
+//
+// No ids is nil only on a replica that has read the grants document (or
+// knows the ConfigMap missing): one that has not read it yet knows none of
+// the grants recorded elsewhere, and its "nothing to revoke" is no answer
+// (ErrNotRecorded), not a disconnection done.
 func (s *Store) WriteRevocations(ctx context.Context, ids ...string) error {
 	if s == nil {
 		return ErrNotRecorded
 	}
-	if !s.Enabled() || len(ids) == 0 {
+	if !s.Enabled() {
+		return nil
+	}
+	if len(ids) == 0 {
+		var read bool
+		s.locked(func() { read = s.mode == modeMissing || s.base != nil && !s.foreign[KeyGrants] })
+		if !read {
+			return ErrNotRecorded
+		}
 		return nil
 	}
 	revokedIn := func(cm *corev1.ConfigMap) bool {
@@ -588,21 +601,25 @@ func (s *Store) WriteRevocations(ctx context.Context, ids ...string) error {
 		return ErrNotRecorded
 	}
 	defer s.unlockWrites()
-	s.mu.Lock()
-	if s.mode == modeMissing {
-		s.mu.Unlock()
-		return ErrNoConfigMap
+	var desired *corev1.ConfigMap
+	var gen uint64
+	var early error
+	done := false
+	s.locked(func() {
+		switch {
+		case s.mode == modeMissing:
+			done, early = true, ErrNoConfigMap
+		case s.base == nil || s.mode == modeForbidden || s.foreign[KeyGrants]:
+			done, early = true, ErrNotRecorded
+		case revokedIn(s.base):
+			done = true
+		default:
+			desired, gen = s.desiredLocked(), s.gen
+		}
+	})
+	if done {
+		return early
 	}
-	if s.base == nil || s.mode == modeForbidden || s.foreign[KeyGrants] {
-		s.mu.Unlock()
-		return ErrNotRecorded
-	}
-	if revokedIn(s.base) {
-		s.mu.Unlock()
-		return nil
-	}
-	desired, gen := s.desiredLocked(), s.gen
-	s.mu.Unlock()
 	held := func() bool {
 		for _, id := range ids {
 			if s.grants[id].Revoked == 0 {
@@ -740,9 +757,11 @@ var ErrNotRecorded = errors.New("the spend could not be recorded in the shared s
 // (it was deleted, or never created): there is nothing to write to, and
 // every replica refuses every grant meanwhile (GrantsUsable, each
 // replica's watch delivering the deletion). The revocations stay on this
-// replica and are written within about a second of the ConfigMap's
-// return (recreatedLocked); a restart of this replica before then loses
-// them.
+// replica and are written at its next read of the ConfigMap, which a
+// missing one gets every one to two seconds (Run, missingPoll), so within
+// about two seconds of its return (recreatedLocked); meanwhile another
+// replica that read it first may serve a grant it recorded itself. A
+// restart of this replica before then loses them.
 var ErrNoConfigMap = errors.New("the shared state ConfigMap does not exist: every replica refuses every grant until it does")
 
 // SpendCode is UseCode written through: the spend is in the ConfigMap,
@@ -770,17 +789,22 @@ func (s *Store) SpendCode(ctx context.Context, code, userHash string, until time
 		return ErrNotRecorded
 	}
 	defer s.unlockWrites()
-	s.mu.Lock()
-	if s.base == nil || s.mode == modeMissing || s.mode == modeForbidden || s.foreign[KeyGrants] {
-		s.mu.Unlock()
-		return ErrNotRecorded
+	var desired *corev1.ConfigMap
+	var gen uint64
+	var refused error
+	s.locked(func() {
+		if s.base == nil || s.mode == modeMissing || s.mode == modeForbidden || s.foreign[KeyGrants] {
+			refused = ErrNotRecorded
+			return
+		}
+		if refused = s.reserveLocked(h, userHash, until); refused != nil {
+			return
+		}
+		desired, gen = s.desiredLocked(), s.gen
+	})
+	if refused != nil {
+		return refused
 	}
-	if err := s.reserveLocked(h, userHash, until); err != nil {
-		s.mu.Unlock()
-		return err
-	}
-	desired, gen := s.desiredLocked(), s.gen
-	s.mu.Unlock()
 	held := func() bool { _, ok := s.codes[h]; return ok }
 	err := s.writeThrough(ctx, func(cm *corev1.ConfigMap) bool { return codeIn(cm, h) }, held, desired, gen)
 	if err != nil && !errors.Is(err, ErrSpent) {
@@ -795,11 +819,11 @@ func (s *Store) SpendCode(ctx context.Context, code, userHash string, until time
 		// (pruned here, the prune not written yet) is no spend: kept, the
 		// reservation would refuse the retry as spent, and the next write
 		// would put the code back.
-		s.mu.Lock()
-		if !liveCodeIn(s.base, h, s.opts.Now().Unix()) {
-			delete(s.codes, h)
-		}
-		s.mu.Unlock()
+		s.locked(func() {
+			if !liveCodeIn(s.base, h, s.opts.Now().Unix()) {
+				delete(s.codes, h)
+			}
+		})
 	}
 	return err
 }
@@ -823,13 +847,8 @@ func (s *Store) writeThrough(ctx context.Context, spentIn func(*corev1.ConfigMap
 		updated, err := s.opts.Client.Update(ctx, desired, metav1.UpdateOptions{FieldManager: "pgtoolbox-console"})
 		switch {
 		case err == nil:
-			s.mu.Lock()
-			s.wroteBaseLocked(updated)
-			if s.gen == gen {
-				s.written, s.urgent = gen, false
-			}
-			s.setModeLocked(modeLive, "")
-			s.mu.Unlock()
+			// Recorded; live again only while the watch is open.
+			s.locked(func() { s.wroteLandedLocked(updated, gen) })
 			sharedWrites.WithLabelValues("written").Inc()
 			return nil
 		case apierrors.IsConflict(err):
@@ -839,17 +858,19 @@ func (s *Store) writeThrough(ctx context.Context, spentIn func(*corev1.ConfigMap
 				_ = s.failed(getErr)
 				return ErrNotRecorded
 			}
-			s.mu.Lock()
-			s.mergeReadLocked(fresh)
-			// The spend is looked for in what was merged, not only in
-			// the re-read: a re-read older than the base (the watch
-			// delivered a newer write while its answer was on its way)
-			// is not merged, and the next write is built on that newer
-			// base, which may hold another replica's spend already.
-			spent := spentIn(fresh) || spentIn(s.base)
-			unreadable, kept := s.foreign[KeyGrants], held()
-			desired, gen = s.desiredLocked(), s.gen
-			s.mu.Unlock()
+			var spent, unreadable, kept bool
+			s.locked(func() {
+				s.mergeReadLocked(fresh)
+				// The spend is looked for in what was merged, not only
+				// in the re-read: a re-read older than the base (the
+				// watch delivered a newer write while its answer was on
+				// its way) is not merged, and the next write is built on
+				// that newer base, which may hold another replica's
+				// spend already.
+				spent = spentIn(fresh) || spentIn(s.base)
+				unreadable, kept = s.foreign[KeyGrants], held()
+				desired, gen = s.desiredLocked(), s.gen
+			})
 			switch {
 			case spent:
 				return ErrSpent
@@ -862,9 +883,7 @@ func (s *Store) writeThrough(ctx context.Context, spentIn func(*corev1.ConfigMap
 			return ErrNotRecorded
 		}
 	}
-	s.mu.Lock()
-	s.exhaustedLocked()
-	s.mu.Unlock()
+	s.locked(s.exhaustedLocked)
 	return ErrNotRecorded
 }
 
@@ -927,46 +946,51 @@ func (s *Store) MarkCode(ctx context.Context, code, mark, userHash string) error
 		}
 		defer s.unlockWrites()
 	}
+	desired, gen, err := s.recordMark(h, mark, userHash)
+	if err != nil || desired == nil {
+		return err
+	}
+	held := func() bool { c, ok := s.codes[h]; return ok && slices.Contains(c.Marks, mark) }
+	err = s.writeThrough(ctx, func(cm *corev1.ConfigMap) bool { return markIn(cm, h, mark) }, held, desired, gen)
+	if err != nil && !errors.Is(err, ErrSpent) {
+		// As SpendCode: forget the mark unless the ConfigMap holds it
+		// already (another replica's, merged while this write was in
+		// flight), which this replica's next write would otherwise erase.
+		s.locked(func() {
+			if c, ok := s.codes[h]; ok && !liveMarkIn(s.base, h, mark, s.opts.Now().Unix()) {
+				c.Marks = slices.DeleteFunc(slices.Clone(c.Marks), func(m string) bool { return m == mark })
+				s.codes[h] = c
+			}
+		})
+	}
+	return err
+}
+
+// recordMark takes mu and records mark on code hash h (MarkCode): the
+// ConfigMap to write it through to and its gen, or nil when there is
+// nothing to write (no ConfigMap configured) or err refuses it.
+func (s *Store) recordMark(h, mark, userHash string) (*corev1.ConfigMap, uint64, error) {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.Enabled() && (s.base == nil || s.mode == modeMissing || s.mode == modeForbidden || s.foreign[KeyGrants]) {
-		s.mu.Unlock()
-		return ErrNotRecorded
+		return nil, 0, ErrNotRecorded
 	}
 	c, ok := s.codes[h]
 	switch {
 	case !ok || c.User != userHash || c.Expiry <= s.opts.Now().Unix():
-		s.mu.Unlock()
-		return ErrNotSpent
+		return nil, 0, ErrNotSpent
 	case slices.Contains(c.Marks, mark):
-		s.mu.Unlock()
-		return ErrSpent
+		return nil, 0, ErrSpent
 	case len(c.Marks) >= maxMarks:
-		s.mu.Unlock()
-		return ErrBusy
+		return nil, 0, ErrBusy
 	}
 	c.Marks = unionMarks(c.Marks, []string{mark})
 	s.codes[h] = c
 	s.changedLocked(true)
 	if !s.Enabled() {
-		s.mu.Unlock()
-		return nil
+		return nil, 0, nil
 	}
-	desired, gen := s.desiredLocked(), s.gen
-	s.mu.Unlock()
-	held := func() bool { c, ok := s.codes[h]; return ok && slices.Contains(c.Marks, mark) }
-	err := s.writeThrough(ctx, func(cm *corev1.ConfigMap) bool { return markIn(cm, h, mark) }, held, desired, gen)
-	if err != nil && !errors.Is(err, ErrSpent) {
-		// As SpendCode: forget the mark unless the ConfigMap holds it
-		// already (another replica's, merged while this write was in
-		// flight), which this replica's next write would otherwise erase.
-		s.mu.Lock()
-		if c, ok := s.codes[h]; ok && !liveMarkIn(s.base, h, mark, s.opts.Now().Unix()) {
-			c.Marks = slices.DeleteFunc(slices.Clone(c.Marks), func(m string) bool { return m == mark })
-			s.codes[h] = c
-		}
-		s.mu.Unlock()
-	}
-	return err
+	return s.desiredLocked(), s.gen, nil
 }
 
 // CodeMarked reports whether code was spent, has not expired and carries

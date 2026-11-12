@@ -349,7 +349,7 @@ func TestConflictIsReadMergedAndRetried(t *testing.T) {
 	s := newStore(api, clock, nil)
 	s.mu.Lock()
 	s.mergeLocked(api.cm.DeepCopy())
-	s.setModeLocked(modeLive, "")
+	s.watchOpenedLocked()
 	s.mu.Unlock()
 	api.conflicts = 2
 	s.RecordSignOut("mine", "", t0.Add(time.Hour))
@@ -471,7 +471,7 @@ func TestForeignVersionIsLeftAlone(t *testing.T) {
 	s := newStore(api, &testClock{now: t0}, nil)
 	s.mu.Lock()
 	s.mergeLocked(api.cm.DeepCopy())
-	s.setModeLocked(modeLive, "")
+	s.watchOpenedLocked()
 	s.mu.Unlock()
 	s.InstanceSince("pod", "ok", t0)
 	s.RecordSignOut("sid", "", t0.Add(time.Hour))
@@ -603,4 +603,12 @@ func TestDisabled(t *testing.T) {
 	if err := s.Run(ctx); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// watchOpenedLocked is the Run loop's watch opening (watchOnce), for a
+// test that drives the store by hand: the replica reads what the others
+// write, and a write that lands leaves the failing mode.
+func (s *Store) watchOpenedLocked() {
+	s.watching = true
+	s.setModeLocked(modeLive, "")
 }

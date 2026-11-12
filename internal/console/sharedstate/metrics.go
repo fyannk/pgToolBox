@@ -32,7 +32,7 @@ var (
 	}, []string{"mode"})
 	sharedModeSince = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "pgtoolbox_console_shared_state_mode_since_timestamp_seconds",
-		Help: "When (Unix seconds) the state ConfigMap's mode last changed (pgtoolbox_console_shared_state_mode). A replica failing leaves the mode with its next write that lands, retried with backoff; alert on time() minus this while the mode is not live: past 30 s of failing the replica refuses every MCP grant.",
+		Help: "When (Unix seconds) the state ConfigMap's mode last changed (pgtoolbox_console_shared_state_mode). A replica failing is live again once its watch of the ConfigMap is open and a read or write lands (a write alone does not end it); alert on time() minus this while the mode is not live (and ignoring(mode) the mode series): past 30 s of failing the replica refuses every MCP grant.",
 	})
 	sharedBytes = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "pgtoolbox_console_shared_state_bytes",

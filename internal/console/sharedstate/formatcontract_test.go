@@ -103,7 +103,7 @@ func TestADocumentOfNoVersionIsRewritten(t *testing.T) {
 			watchMerge(t, api, a)
 		}
 		a.mu.Lock()
-		a.setModeLocked(modeLive, "")
+		a.watchOpenedLocked()
 		a.mu.Unlock()
 		if !a.GrantsUsable() {
 			t.Errorf("%s: grants refused over a document of no version", raw)

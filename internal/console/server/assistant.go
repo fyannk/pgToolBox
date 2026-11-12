@@ -39,6 +39,35 @@ type GrantIndex interface {
 	MarkCode(ctx context.Context, code, mark, userHash string) error
 }
 
+// stateReader is the shared state's readiness (sharedstate.Store):
+// MarksKnown is false until the ConfigMap was read once or is known
+// missing or forbidden.
+type stateReader interface {
+	Enabled() bool
+	MarksKnown() bool
+}
+
+// sharedStateReady is the readiness check of the shared grant index while
+// the console's OAuth server serves it, nil otherwise (no OAuth server, or
+// an index of this replica's memory). A replica that has not read the
+// shared state knows none of the grants and revocations the others
+// recorded: it refuses every token and acknowledges no disconnection
+// until it has, so it takes no traffic first. A ConfigMap known missing
+// or forbidden is an answer (the console then refuses MCP grants and says
+// why), not a reason to stay unready.
+func sharedStateReady(index GrantIndex, oauth bool) func() error {
+	c, ok := index.(stateReader)
+	if !ok || !oauth || !c.Enabled() {
+		return nil
+	}
+	return func() error {
+		if !c.MarksKnown() {
+			return errors.New("the shared state ConfigMap not read yet")
+		}
+		return nil
+	}
+}
+
 // grantIndex is the shared index when STATE_CONFIGMAP is set, else this
 // replica's memory.
 func grantIndex(o AppOptions) GrantIndex {

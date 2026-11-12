@@ -261,6 +261,9 @@ func RunApp(ctx context.Context, o AppOptions) error {
 		return nil
 	})
 	ready.Add("runners", sup.Check)
+	if check := sharedStateReady(index, oauthServer != nil); check != nil {
+		ready.Add("shared-state", check)
+	}
 	for name, fn := range o.Ready {
 		ready.Add(name, fn)
 	}

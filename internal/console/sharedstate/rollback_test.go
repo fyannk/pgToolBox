@@ -96,7 +96,7 @@ func TestAFailedWriteThroughKeepsWhatAnotherReplicaWrote(t *testing.T) {
 			b := newStore(hc, clock, nil)
 			watchMerge(t, api, b)
 			b.mu.Lock()
-			b.setModeLocked(modeLive, "")
+			b.watchOpenedLocked()
 			b.mu.Unlock()
 			hc.beforeUpdate = func() error {
 				// a's same step lands; b's watch delivers it; b's own
@@ -114,7 +114,7 @@ func TestAFailedWriteThroughKeepsWhatAnotherReplicaWrote(t *testing.T) {
 				t.Fatal("the test needs a's write in the ConfigMap")
 			}
 			b.mu.Lock()
-			b.setModeLocked(modeLive, "")
+			b.watchOpenedLocked()
 			b.mu.Unlock()
 			// b's next write (anything else changing) must keep a's.
 			b.InstanceSince("pod", "ok", t0)
