@@ -114,33 +114,92 @@ export type ConnectedAssistantsViewProps = {
   grants: GrantView[];
   /** The signed-in user: whose grants these are. */
   actor: string;
-  /** DELETEs the grant; resolves on 204, throws ApiError otherwise (404: not yours, or already gone). */
+  /**
+   * DELETEs the grant; resolves on 204, throws ApiError otherwise (404: not
+   * yours, or nothing left of it to disconnect; 503: refused on the replica
+   * that answered, not yet written for the others).
+   */
   onRevoke: (grant: GrantView) => Promise<void>;
-  /** DELETEs every grant of the user (revokeAllGrants); resolves on 204. */
+  /** DELETEs every grant of the user (revokeAllGrants); resolves on 204, 503 as onRevoke. */
   onRevokeAll: () => Promise<void>;
 };
+
+/** Go's 503 on a disconnection: this replica refuses the grant, the others may not yet. */
+const notRecorded = (error: unknown): boolean => error instanceof ApiError && error.unavailable;
+
+type Notice = { health: "ok" | "warning"; text: string };
+
+/** A disconnection the replica that answered made but could not write for the others yet. */
+function PendingCard({ grant, onRetry }: { grant: GrantView; onRetry: () => void }) {
+  return (
+    <li
+      className="flex flex-col gap-2 rounded-control border border-line border-dashed p-3"
+      data-grant-pending={grant.id}
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 className="flex flex-wrap items-baseline gap-2 font-semibold">
+          <span className="break-all">{grant.client}</span>
+          <span className="health rounded-control px-1.5 text-caption font-normal" data-health="warning">
+            <span aria-hidden="true" className="health-glyph mr-1">
+              ▲
+            </span>
+            {m.assistant_pending_write()}
+          </span>
+        </h3>
+        <button
+          type="button"
+          onClick={onRetry}
+          aria-label={m.assistant_pending_retry_named({ client: grant.client })}
+          className="h-8 rounded-control border border-line-strong px-3 font-semibold hover:bg-surface-2"
+        >
+          {m.assistant_pending_retry()}
+        </button>
+      </div>
+      <Facts>
+        <Fact label={m.assistant_reference()}>
+          <code className="break-all font-code">{grant.id}</code>
+        </Fact>
+      </Facts>
+    </li>
+  );
+}
 
 /**
  * Connected assistants: the MCP clients the reader approved (console
  * grants), each acting as them. Disconnecting is confirmed by typing the
  * client's name; the 204 is the revocation itself (every replica refuses the
- * grant within about a second), which the page then says. With more than
- * one, "Disconnect all" revokes them together, confirmed by typing a fixed
- * phrase; the browser session stays.
+ * grant within about a second), which the page then says. A 503 is not a
+ * refusal: the replica that answered already refuses the grant but could
+ * not write it for the others, so the dialog closes, the page says so, and
+ * the grant stays as a pending row to retry (a 404 on that retry: nothing
+ * was left to write, it is done). "Disconnect all", confirmed by typing a
+ * fixed phrase, is offered with more than one grant or any pending one; the
+ * browser session stays.
  */
 export function ConnectedAssistantsView({ grants, actor, onRevoke, onRevokeAll }: ConnectedAssistantsViewProps) {
   const [target, setTarget] = useState<GrantView | null>(null);
   const [all, setAll] = useState(false);
-  const [revoked, setRevoked] = useState<string | null>(null);
+  const [notice, setNotice] = useState<Notice | null>(null);
+  const [pending, setPending] = useState<GrantView[]>([]);
+  const pendingIds = new Set(pending.map((g) => g.id));
+  const standing = grants.filter((g) => !pendingIds.has(g.id));
+  const allCount = standing.length + pending.length;
+  const markPending = (more: GrantView[]) =>
+    setPending((cur) => [...cur, ...more.filter((g) => !cur.some((c) => c.id === g.id))]);
+  const clearPending = (id: string) => setPending((cur) => cur.filter((g) => g.id !== id));
+  const open = (g: GrantView) => {
+    setNotice(null);
+    setTarget(g);
+  };
   return (
     <div className="flex flex-col gap-2">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <p className="min-w-0 flex-1 text-label text-muted">{m.assistant_connected_intro()}</p>
-        {grants.length > 1 && (
+        {(standing.length > 1 || pending.length > 0) && (
           <button
             type="button"
             onClick={() => {
-              setRevoked(null);
+              setNotice(null);
               setAll(true);
             }}
             className="h-8 rounded-control border border-line-strong px-3 font-semibold hover:bg-surface-2"
@@ -150,32 +209,39 @@ export function ConnectedAssistantsView({ grants, actor, onRevoke, onRevokeAll }
         )}
       </div>
       <div role="status" aria-live="polite">
-        {revoked && (
-          <p className="health rounded-control p-2 text-label" data-health="ok">
-            {revoked}
+        {notice && (
+          <p className="health rounded-control p-2 text-label" data-health={notice.health}>
+            {notice.health === "warning" && (
+              <span aria-hidden="true" className="health-glyph mr-1">
+                ▲
+              </span>
+            )}
+            {notice.text}
           </p>
         )}
       </div>
-      {grants.length === 0 ? (
-        <EmptyState title={m.assistant_connected_empty()}>{m.assistant_connected_empty_hint()}</EmptyState>
+      {pending.length > 0 && (
+        <ul className="flex flex-col gap-2">
+          {pending.map((g) => (
+            <PendingCard key={g.id} grant={g} onRetry={() => open(g)} />
+          ))}
+        </ul>
+      )}
+      {standing.length === 0 ? (
+        pending.length === 0 && (
+          <EmptyState title={m.assistant_connected_empty()}>{m.assistant_connected_empty_hint()}</EmptyState>
+        )
       ) : (
         <ul className="flex flex-col gap-2">
-          {grants.map((g) => (
-            <GrantCard
-              key={g.id}
-              grant={g}
-              onDisconnect={() => {
-                setRevoked(null);
-                setTarget(g);
-              }}
-            />
+          {standing.map((g) => (
+            <GrantCard key={g.id} grant={g} onDisconnect={() => open(g)} />
           ))}
         </ul>
       )}
       <ConfirmDialog
         open={target !== null}
-        onOpenChange={(open) => {
-          if (!open) setTarget(null);
+        onOpenChange={(next) => {
+          if (!next) setTarget(null);
         }}
         title={m.assistant_disconnect_title({ client: target?.client ?? "" })}
         consequence={m.assistant_disconnect_consequence()}
@@ -185,22 +251,51 @@ export function ConnectedAssistantsView({ grants, actor, onRevoke, onRevokeAll }
         submitLabel={m.assistant_disconnect()}
         onConfirm={async () => {
           if (!target) return;
-          await onRevoke(target);
-          setRevoked(m.assistant_revoked({ client: target.client }));
+          const retry = pendingIds.has(target.id);
+          try {
+            await onRevoke(target);
+          } catch (err) {
+            if (notRecorded(err)) {
+              markPending([target]);
+              setNotice({ health: "warning", text: m.assistant_unrecorded({ client: target.client }) });
+              return;
+            }
+            // After a 503, a 404 says there is nothing left of the grant to write: done.
+            if (retry && err instanceof ApiError && err.status === 404) {
+              clearPending(target.id);
+              setNotice({ health: "ok", text: m.assistant_already_revoked({ client: target.client }) });
+              return;
+            }
+            throw err;
+          }
+          clearPending(target.id);
+          setNotice({ health: "ok", text: m.assistant_revoked({ client: target.client }) });
         }}
       />
       <ConfirmDialog
         open={all}
         onOpenChange={setAll}
-        title={m.assistant_disconnect_all_title({ count: grants.length })}
+        title={
+          allCount > 1 ? m.assistant_disconnect_all_title({ count: allCount }) : m.assistant_disconnect_all_title_any()
+        }
         consequence={m.assistant_disconnect_all_consequence()}
         confirmWord={m.assistant_disconnect_all_word()}
         actor={actor}
         recordedAs={m.assistant_disconnect_all_recorded({ actor })}
         submitLabel={m.assistant_disconnect_all()}
         onConfirm={async () => {
-          await onRevokeAll();
-          setRevoked(m.assistant_revoked_all());
+          try {
+            await onRevokeAll();
+          } catch (err) {
+            if (notRecorded(err)) {
+              markPending(standing);
+              setNotice({ health: "warning", text: m.assistant_unrecorded_all() });
+              return;
+            }
+            throw err;
+          }
+          setPending([]);
+          setNotice({ health: "ok", text: m.assistant_revoked_all() });
         }}
       />
     </div>
