@@ -83,21 +83,22 @@ func restartJitter() time.Duration {
 
 // reReviewFailed reviews again, every policy.interval until ctx ends, the
 // namespaces dropped because their review failed for a reason that may pass
-// (a connection lost past the retries, no answer in time): the informers'
-// namespaces are fixed when the manager starts, so one that becomes
-// reviewable and grants every permission is only watched after a restart.
-// A namespace whose review was too large (dropReviewTooLarge) is never
-// reviewed here: its RoleBindings decide that, and a tenant who toggles
-// them must not be able to restart the operator; it is reviewed at the
-// next start, whatever causes it. restart is called once (with
-// errRestartToWatch, naming the namespaces) when a namespace passed
-// policy.passes reviews in a row, the process has run policy.minUptime,
-// and a pause of policy.jitter has passed; a namespace that fails a review
-// again starts its count over, and one whose review becomes too large
-// leaves the loop. Nothing is written anywhere. Each round is one
-// managerrole.PermittedNamespaces of those namespaces only, bounded like
-// the start's.
-func reReviewFailed(ctx context.Context, api managerrole.Creator, dropped []droppedNamespace, policy reReviewPolicy, restart context.CancelCauseFunc) {
+// (an API server error or a connection lost, past the retries): the
+// informers' namespaces are fixed when the manager starts, so one that
+// becomes reviewable and grants every permission is only watched after a
+// restart. A namespace whose review was too large or too slow
+// (contentCause) is never reviewed here: its RoleBindings decide that, and
+// whoever administers them could make it fail at start and pass later at
+// will; it is reviewed at the next start, whatever causes it. For the same
+// reason a namespace whose review here turns too large or too slow leaves
+// the loop, and gauge moves it to that cause. restart is called once per
+// process (with errRestartToWatch, naming the namespaces) when a namespace
+// passed policy.passes reviews in a row, the process has run
+// policy.minUptime, and a pause of policy.jitter has passed; a namespace
+// that fails a review again starts its count over. Nothing is written
+// anywhere. Each round is one managerrole.PermittedNamespaces of those
+// namespaces only, bounded like the start's.
+func reReviewFailed(ctx context.Context, api managerrole.Creator, dropped []droppedNamespace, gauge droppedGauge, policy reReviewPolicy, restart context.CancelCauseFunc) {
 	var namespaces []string
 	var required []managerrole.Permission
 	for _, d := range dropped {
@@ -124,11 +125,14 @@ func reReviewFailed(ctx context.Context, api managerrole.Creator, dropped []drop
 			return
 		}
 		for _, u := range review.Unreviewed {
-			if u.TooLarge() {
-				setupLog.Error(u.Err, "watched namespace no longer reviewed in the background: its permission review is too large; it is reviewed again at the next start",
-					"namespace", u.Namespace)
-				namespaces = slices.DeleteFunc(namespaces, func(n string) bool { return n == u.Namespace })
+			cause := contentCause(u)
+			if cause == "" {
+				continue
 			}
+			setupLog.Error(u.Err, "watched namespace no longer reviewed in the background: its permission review is too large or too slow (its RoleBindings decide that); it is reviewed again at the next start",
+				"namespace", u.Namespace, "reason", string(cause))
+			namespaces = slices.DeleteFunc(namespaces, func(n string) bool { return n == u.Namespace })
+			gauge.move(dropReviewFailed, cause)
 		}
 		var ready []string
 		for _, namespace := range namespaces {

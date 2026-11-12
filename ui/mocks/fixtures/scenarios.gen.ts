@@ -10212,6 +10212,7 @@ export const listInstancesBilling = {
         "timelineId": 3,
         "currentLsn": "0/9000060",
         "archivingWal": true,
+        "readyWalFiles": 2,
         "instanceManagerVersion": "1.30.1",
         "provenance": {
           "origin": "instance",

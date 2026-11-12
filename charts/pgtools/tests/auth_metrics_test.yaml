@@ -387,6 +387,7 @@ tests:
       - equal: {path: "spec.groups[0].name", value: pgtoolbox-console-mcp}
       - equal: {path: "spec.groups[0].rules[0].alert", value: PgToolBoxConsoleMCPHighErrorRatio}
       - equal: {path: "spec.groups[1].rules[0].alert", value: PgToolBoxConsoleMCPOAuthTokenFailures}
+      - equal: {path: "spec.groups[1].rules[2].alert", value: PgToolBoxConsoleMCPGrantsRefused}
       - matchRegex: {path: "spec.groups[0].rules[0].annotations.runbook_url", pattern: "console/alerts.md#pgtoolboxconsolemcphigherrorratio$"}
       - matchRegex: {path: "spec.groups[0].rules[0].labels.severity", pattern: "^(info|warning|critical)$"}
 

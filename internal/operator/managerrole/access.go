@@ -81,7 +81,7 @@ func (d Denied) Reason() string {
 
 // Unreviewed is one namespace whose review failed: an error the API server
 // returned after the retries of a transient one, a response too large, or
-// no answer within the namespace's deadline.
+// no answer in time at every attempt.
 type Unreviewed struct {
 	Namespace string
 	Err       error
@@ -97,6 +97,16 @@ func (u Unreviewed) Reason() string {
 // so the same rules give the same answer.
 func (u Unreviewed) TooLarge() bool {
 	return errors.Is(u.Err, ErrReviewTooLarge)
+}
+
+// TooSlow reports whether the review failed because every attempt got no
+// answer within its deadline (ErrReviewTooSlow): most likely the
+// namespace's RoleBindings again (an API server builds the whole response
+// before its first byte, so a huge one passes the deadline before the
+// response limit sees anything), and whoever administers them can make it
+// pass or fail at will.
+func (u Unreviewed) TooSlow() bool {
+	return errors.Is(u.Err, ErrReviewTooSlow)
 }
 
 // Review is PermittedNamespaces' answer, each list in the order of the
@@ -131,13 +141,17 @@ const (
 	// (LimitReviewResponses). A rules review lists every rule of every
 	// RoleBinding of the caller in the namespace, duplicates included, so
 	// a namespace administrator who binds one Role of 25,000 rules forty
-	// times makes it 53 MiB of JSON and over 500 MiB to decode; the
-	// operator's own namespaced rules fit in a few KiB. The limit is per
-	// response and discovery.ProbeConcurrency reviews run at once, each
-	// decoded at about four times its size: 1 MiB keeps them all under
-	// 64 MiB of heap, a quarter of the chart's 256Mi limit (at 4 MiB,
-	// sixteen near-cap reviews peaked at about 260 MiB).
-	ReviewResponseLimit = 1 << 20
+	// times makes it 53 MiB of JSON and over 500 MiB to decode. The
+	// operator's own namespaced rules are 32 rules, about 4 KB of JSON,
+	// and the largest honest case seen (OpenShift's default bindings)
+	// about 120 KB. The limit is per response, discovery.ProbeConcurrency
+	// reviews run at once, and the worst shapes (thousands of one-letter
+	// verbs, or of minimal rules) decode to several times their size: in
+	// JSON, 256 KiB keeps the sixteen of them under 40 MiB of heap
+	// (measured, cmd/operator TestStartupReviewsHeapIsBounded), against
+	// 240-340 MiB at 1 MiB and 90-140 MiB at 256 KiB of protobuf, which
+	// decodes to more per byte: the start-up client asks for JSON.
+	ReviewResponseLimit = 1 << 18
 )
 
 // namespaceBudget is the time one namespace's review may take, every
@@ -151,6 +165,12 @@ func namespaceBudget(timeout time.Duration) time.Duration {
 // ReviewResponseLimit: that namespace is unreviewed (never retried, the
 // same rules give the same answer), and no other is affected.
 var ErrReviewTooLarge = fmt.Errorf("the access review's response is larger than %d bytes: the RoleBindings of the namespace grant the operator far more rules than its manager role (one Role bound many times?)", ReviewResponseLimit)
+
+// ErrReviewTooSlow is the error of a namespace whose every review attempt
+// got no answer within its deadline while ctx was still live: the API
+// server answered nothing for that namespace for two full attempts. It
+// wraps the last attempt's error (context.DeadlineExceeded).
+var ErrReviewTooSlow = errors.New("the access review got no answer in time at every attempt: the RoleBindings of the namespace may make its review too large to build in time")
 
 // LimitReviewResponses wraps rt so that the body of every response to an
 // authorization.k8s.io POST (the access reviews) is read through
@@ -222,7 +242,8 @@ func (b *cappedBody) Read(p []byte) (int, error) {
 // server timeout, throttling, the attempt's deadline, a connection reset or
 // refused) is retried, twice at most. A response larger than
 // ReviewResponseLimit (through a client wrapped by LimitReviewResponses)
-// fails that namespace alone. A namespace still failing is
+// fails that namespace alone, and so does one whose every attempt got no
+// answer in time (ErrReviewTooSlow). A namespace still failing is
 // Unreviewed, never kept by guess, and never fails the others. Only ctx
 // ending is an error.
 func PermittedNamespaces(ctx context.Context, c Creator, required []Permission, namespaces []string, timeout time.Duration) (Review, error) {
@@ -265,11 +286,13 @@ func PermittedNamespaces(ctx context.Context, c Creator, required []Permission, 
 func reviewNamespace(ctx context.Context, c Creator, required []Permission, namespace string, timeout time.Duration) ([]Permission, error) {
 	deadline := time.Now().Add(namespaceBudget(timeout))
 	var err error
+	// timedOut: every attempt so far ended at its own deadline.
+	timedOut := true
 	pause := retryPause
 	for attempt := range maxAttempts {
 		if attempt > 0 {
 			if time.Until(deadline) <= pause {
-				return nil, err
+				return nil, tooSlow(err, timedOut)
 			}
 			select {
 			case <-ctx.Done():
@@ -286,8 +309,18 @@ func reviewNamespace(ctx context.Context, c Creator, required []Permission, name
 		if ctx.Err() != nil || !transient(err) {
 			return nil, err
 		}
+		timedOut = timedOut && errors.Is(err, context.DeadlineExceeded)
 	}
-	return nil, err
+	return nil, tooSlow(err, timedOut)
+}
+
+// tooSlow is the last attempt's error err, wrapped in ErrReviewTooSlow when
+// every attempt ended at its deadline.
+func tooSlow(err error, timedOut bool) error {
+	if err == nil || !timedOut {
+		return err
+	}
+	return fmt.Errorf("%w: %w", ErrReviewTooSlow, err)
 }
 
 // attemptReview is one missingIn within timeout. A Creator that ignores its
@@ -326,7 +359,7 @@ func attemptReview(ctx context.Context, c Creator, required []Permission, namesp
 // of them on a POST). A response too large is not: the same rules give the
 // same answer.
 func transient(err error) bool {
-	if errors.Is(err, ErrReviewTooLarge) {
+	if errors.Is(err, ErrReviewTooLarge) || errors.Is(err, ErrReviewTooSlow) {
 		return false
 	}
 	return apierrors.IsInternalError(err) || apierrors.IsServerTimeout(err) || apierrors.IsTimeout(err) ||

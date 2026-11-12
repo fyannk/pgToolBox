@@ -20,6 +20,8 @@ import (
 
 	cnpgv1 "github.com/cloudnative-pg/api/pkg/api/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/fyannk/pgToolBox/pkg/cnpgstatus/observe"
 )
 
 // Backup.status.phase values. They are untyped constants in
@@ -223,10 +225,10 @@ func BackupObject(minor Minor, b *cnpgv1.Backup) BackupObjectReading {
 		Error:                      bound(status.Error, maxMessage),
 		CreatedAt:                  metaTime(&b.CreationTimestamp),
 		ReconciliationStartedAt:    metaTime(status.ReconciliationStartedAt),
-		StartedAt:                  metaTime(status.StartedAt),
-		StoppedAt:                  metaTime(status.StoppedAt),
 		ReconciliationTerminatedAt: metaTime(status.ReconciliationTerminatedAt),
 	}
+	reading.StartedAt, reading.StoppedAt = observe.SaneBackupTimes(b.CreationTimestamp.Time,
+		metaTime(status.StartedAt), metaTime(status.StoppedAt))
 	if reading.Method == "" {
 		reading.Method = bound(string(b.Spec.Method), maxAnnotationValue)
 	}

@@ -84,7 +84,7 @@ func TestSignOutsAtTheSizeLimit(t *testing.T) {
 	s := newStore(api, clock, nil)
 	s.mu.Lock()
 	s.mergeLocked(api.cm.DeepCopy())
-	s.setModeLocked(modeLive, "")
+	s.watchOpenedLocked()
 	name := TruncateClientName(strings.Repeat("<& é\\", 100))
 	for i := range MaxGrants {
 		s.grants[grantID(i)] = grantEntry{

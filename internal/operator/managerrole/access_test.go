@@ -331,6 +331,11 @@ func TestPermittedNamespacesOneHangs(t *testing.T) {
 		if !errors.Is(review.Unreviewed[0].Err, context.DeadlineExceeded) {
 			t.Errorf("team-stuck's error = %v, want its deadline", review.Unreviewed[0].Err)
 		}
+		// Round 18, OPERATOR and SECURITY P3: no answer in time at every
+		// attempt is a cause of its own, never retried in the background.
+		if !review.Unreviewed[0].TooSlow() || review.Unreviewed[0].TooLarge() {
+			t.Errorf("team-stuck's error = %v, want ErrReviewTooSlow only", review.Unreviewed[0].Err)
+		}
 		if calls := c.callsIn("team-stuck"); calls != 2 {
 			t.Errorf("team-stuck reviewed %d times, want 2 (no answer in time is retried within the namespace's budget)", calls)
 		}
@@ -382,6 +387,82 @@ func TestPermittedNamespacesTransientRetried(t *testing.T) {
 			}
 			if calls := c.callsIn("team-flaky"); calls != tt.wantCalls {
 				t.Errorf("team-flaky reviewed %d times, want %d", calls, tt.wantCalls)
+			}
+		})
+	}
+}
+
+// sequenceReviewer answers the n-th rules review (from 1) of every
+// namespace with steps[n-1]: hang (until the context ends), or err (nil:
+// the rules).
+type sequenceReviewer struct {
+	rules []authorizationv1.ResourceRule
+	steps []error
+
+	mu    sync.Mutex
+	calls int
+}
+
+// errHang is a step that never answers before its context ends.
+var errHang = errors.New("hang")
+
+func (r *sequenceReviewer) Create(ctx context.Context, obj client.Object, _ ...client.CreateOption) error {
+	review, ok := obj.(*authorizationv1.SelfSubjectRulesReview)
+	if !ok {
+		return errors.New("unexpected object")
+	}
+	r.mu.Lock()
+	r.calls++
+	step := r.steps[min(r.calls, len(r.steps))-1]
+	r.mu.Unlock()
+	switch {
+	case errors.Is(step, errHang):
+		<-ctx.Done()
+		return ctx.Err()
+	case step != nil:
+		return step
+	}
+	review.Status.ResourceRules = r.rules
+	return nil
+}
+
+// TestPermittedNamespacesTooSlow: round 18, OPERATOR and SECURITY P3. A
+// namespace is too slow (ErrReviewTooSlow, never re-reviewed in the
+// background) only when every attempt got no answer in time: one attempt
+// that the API server answered with an error leaves it review-failed, and
+// one that answered keeps it.
+func TestPermittedNamespacesTooSlow(t *testing.T) {
+	required := []Permission{{Group: "apps", Resource: "deployments", Verbs: []string{"list"}}}
+	rules := []authorizationv1.ResourceRule{{APIGroups: []string{"apps"}, Resources: []string{"deployments"}, Verbs: []string{"list"}}}
+	unavailable := apierrors.NewServiceUnavailable("apiserver shutting down")
+	for _, tt := range []struct {
+		name          string
+		steps         []error
+		wantPermitted bool
+		wantTooSlow   bool
+	}{
+		{"every attempt hangs", []error{errHang}, false, true},
+		{"a 503, then a hang", []error{unavailable, errHang}, false, false},
+		{"a hang, then a 503", []error{errHang, unavailable}, false, false},
+		{"a hang, then an answer", []error{errHang, nil}, true, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			c := &sequenceReviewer{rules: rules, steps: tt.steps}
+			review, err := PermittedNamespaces(t.Context(), c, required, []string{"team-a"}, 100*time.Millisecond)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := len(review.Permitted) == 1; got != tt.wantPermitted {
+				t.Fatalf("permitted %t, want %t (%+v)", got, tt.wantPermitted, review)
+			}
+			if tt.wantPermitted {
+				return
+			}
+			if len(review.Unreviewed) != 1 {
+				t.Fatalf("review = %+v, want team-a unreviewed", review)
+			}
+			if got := review.Unreviewed[0].TooSlow(); got != tt.wantTooSlow {
+				t.Errorf("TooSlow() = %t, want %t (%v)", got, tt.wantTooSlow, review.Unreviewed[0].Err)
 			}
 		})
 	}

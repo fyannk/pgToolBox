@@ -171,6 +171,8 @@ export const Disconnect: Story = {
     await userEvent.click(submit);
     await waitFor(() => expect(canvas.getByText(/Claude Code is disconnected/)).toBeVisible());
     await waitFor(() => expect(canvas.queryByRole("button", { name: "Disconnect Claude Code" })).toBeNull());
+    // The card that opened the dialog is gone: focus is on the note that says so.
+    await waitFor(() => expect(canvasElement.querySelector("[data-assistants-note]")).toHaveFocus());
   },
 };
 
@@ -253,6 +255,8 @@ export const DisconnectNotRecorded: StoryObj<typeof ConnectedAssistantsView> = {
     await waitFor(() => expect(body.queryByRole("alertdialog")).toBeNull());
     const note = canvas.getByRole("status");
     await expect(note).toHaveTextContent(/Claude Code is disconnected on the replica that answered/);
+    await expect(note).toHaveTextContent(/until the console has written the disconnection; it keeps retrying/);
+    await waitFor(() => expect(note).toHaveFocus());
     await expect(note.querySelector('[data-health="warning"]')).not.toBeNull();
     await expect(note).not.toHaveTextContent(/Not started/);
     await expect(canvas.getByText("being written to the other replicas")).toBeVisible();
@@ -264,7 +268,11 @@ export const DisconnectNotRecordedDark = dark(DisconnectNotRecorded);
 export const DisconnectNotRecordedCompact = compact(DisconnectNotRecorded);
 export const DisconnectNotRecordedFrench = french({ ...DisconnectNotRecorded, play: undefined });
 
-/** The follow-up: a retry after the 503 answers 404, nothing was left to write, so it is done. */
+/**
+ * The follow-up: Retry sends the DELETE again without a second typed
+ * confirmation (the name was typed for this grant); it answers 404, nothing
+ * was left to write, so it is done, and focus moves to the note.
+ */
 export const DisconnectRetriedDone: StoryObj<typeof ConnectedAssistantsView> = {
   render: (args) => <ConnectedAssistantsView {...args} />,
   args: {
@@ -290,13 +298,49 @@ export const DisconnectRetriedDone: StoryObj<typeof ConnectedAssistantsView> = {
     await userEvent.click(canvas.getByRole("button", { name: "Disconnect Claude Code" }));
     await confirm();
     await userEvent.click(await canvas.findByRole("button", { name: "Retry disconnecting Claude Code" }));
-    await confirm();
     await waitFor(() => expect(canvas.getByRole("status")).toHaveTextContent(/nothing left of it to write/));
+    await expect(body.queryByRole("alertdialog")).toBeNull();
     await expect(canvas.getByRole("status").querySelector('[data-health="ok"]')).not.toBeNull();
     await expect(canvas.queryByText("being written to the other replicas")).toBeNull();
+    await waitFor(() => expect(canvas.getByRole("status")).toHaveFocus());
   },
 };
 export const DisconnectRetriedDoneDark = dark(DisconnectRetriedDone);
+export const DisconnectRetriedDoneCompact = compact(DisconnectRetriedDone);
+
+/** A retry refused for another reason (here a 403): the row stays, the note is critical, Go's words and request id. */
+export const DisconnectRetryRefused: StoryObj<typeof ConnectedAssistantsView> = {
+  render: (args) => <ConnectedAssistantsView {...args} />,
+  args: {
+    grants: oneGrant,
+    actor: "oidc:jane@corp.example",
+    onRevoke: (() => {
+      let calls = 0;
+      return fn(async () => {
+        calls += 1;
+        throw calls % 2 === 1
+          ? notRecorded()
+          : new ApiError(403, { title: "Forbidden", status: 403, detail: "not allowed to disconnect" }, "req-403");
+      });
+    })(),
+    onRevokeAll: fn(async () => {}),
+  },
+  play: async ({ canvas, canvasElement }) => {
+    const body = within(canvasElement.ownerDocument.body);
+    await userEvent.click(canvas.getByRole("button", { name: "Disconnect Claude Code" }));
+    const dialog = await body.findByRole("alertdialog");
+    await userEvent.type(within(dialog).getByLabelText(/To confirm, type/), "Claude Code");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Disconnect" }));
+    await waitFor(() => expect(body.queryByRole("alertdialog")).toBeNull());
+    await userEvent.click(await canvas.findByRole("button", { name: "Retry disconnecting Claude Code" }));
+    await waitFor(() => expect(canvas.getByRole("status")).toHaveTextContent("Request id req-403"));
+    await expect(canvas.getByRole("status")).toHaveTextContent("not allowed to disconnect");
+    await expect(canvas.getByRole("status").querySelector('[data-health="critical"]')).not.toBeNull();
+    await expect(canvas.getByText("being written to the other replicas")).toBeVisible();
+  },
+};
+export const DisconnectRetryRefusedDark = dark(DisconnectRetryRefused);
+export const DisconnectRetryRefusedFrench = french({ ...DisconnectRetryRefused, play: undefined });
 
 /** Disconnect all answered 503: the same honest note, every grant pending, Disconnect all to retry. */
 export const DisconnectAllNotRecorded: StoryObj<typeof ConnectedAssistantsView> = {
@@ -316,12 +360,14 @@ export const DisconnectAllNotRecorded: StoryObj<typeof ConnectedAssistantsView> 
     await userEvent.type(within(dialog).getByLabelText(/To confirm, type/), "disconnect all");
     await userEvent.click(within(dialog).getByRole("button", { name: "Disconnect all" }));
     await waitFor(() => expect(body.queryByRole("alertdialog")).toBeNull());
-    await expect(canvas.getByRole("status")).toHaveTextContent(/retry Disconnect all to be sure/);
+    await expect(canvas.getByRole("status")).toHaveTextContent(/Retry Disconnect all to be sure/);
     await expect(canvas.getAllByText("being written to the other replicas")).toHaveLength(3);
     await expect(canvas.getByRole("button", { name: "Disconnect all" })).toBeVisible();
+    await waitFor(() => expect(canvas.getByRole("status")).toHaveFocus());
   },
 };
 export const DisconnectAllNotRecordedDark = dark(DisconnectAllNotRecorded);
+export const DisconnectAllNotRecordedCompact = compact(DisconnectAllNotRecorded);
 
 /** Any other refusal of the setup (a 503): the usual error with its request id, never "MCP off". */
 export const SetupUnavailable: Story = {

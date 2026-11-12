@@ -396,7 +396,7 @@ func TestDroppedReportNeedsLeaderElection(t *testing.T) {
 // TestCountDropped: every cause is exported, 0 when none.
 func TestCountDropped(t *testing.T) {
 	got := countDropped([]droppedNamespace{{Cause: dropPermissions}, {Cause: dropPermissions}, {Cause: dropReviewFailed}})
-	want := map[dropCause]int{dropPermissions: 2, dropReviewFailed: 1, dropReviewTooLarge: 0, dropClustersUnlistable: 0}
+	want := map[dropCause]int{dropPermissions: 2, dropReviewFailed: 1, dropReviewTooLarge: 0, dropReviewTooSlow: 0, dropClustersUnlistable: 0}
 	if len(got) != len(want) {
 		t.Fatalf("counts = %v, want %v", got, want)
 	}

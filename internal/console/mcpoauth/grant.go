@@ -276,9 +276,18 @@ var ErrNotRecorded = errors.New("the disconnection could not be recorded for eve
 // shared state before it returns nil: every replica refuses its tokens
 // within about a second. ErrNotRecorded when the write cannot be made (the
 // revocation stays on this replica, and is written with its next batch).
+//
+// ErrNoSuchGrant is an answer only from a replica that has read the
+// shared grant index: one that has not yet (a pod just started) knows
+// none of the grants recorded elsewhere, and a disconnection retried
+// there must not read as done. It answers ErrNotRecorded instead, as
+// WriteRevocations of nothing does on such a replica.
 func (s *Server) RevokeGrant(ctx context.Context, c auth.Client, user, id string) error {
 	g, ok := s.o.Store.Grant(id)
 	if !ok || !slices.Contains(s.userKeys(user), g.UserHash) {
+		if err := s.o.Store.WriteRevocations(ctx); err != nil {
+			return s.written(ctx, err, 0)
+		}
 		return ErrNoSuchGrant
 	}
 	if g.Revoked.IsZero() {
@@ -320,7 +329,9 @@ func (s *Server) written(ctx context.Context, err error, grants int) error {
 
 // DisconnectAll revokes every standing grant of the person, written
 // through to the shared state, and returns how many ("disconnect all" on
-// the session page). ErrNotRecorded as RevokeGrant.
+// the session page). ErrNotRecorded as RevokeGrant, including when there
+// is nothing to revoke on a replica that has not read the shared grant
+// index yet (WriteRevocations of no IDs).
 func (s *Server) DisconnectAll(ctx context.Context, c auth.Client, user string) (int, error) {
 	ids := s.revokeAll(ctx, c, user)
 	n := len(ids)

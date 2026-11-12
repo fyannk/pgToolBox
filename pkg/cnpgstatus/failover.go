@@ -408,16 +408,19 @@ func qualifyReplica(inst RehearsalInstance, fenced bool, primaryNode, primaryLSN
 	r.fenced = fenced
 	r.read = inst.read()
 	switch {
+	case inst.Fresh && inst.Reading != nil && inst.Reading.IsPrimary:
+		// A second instance claiming the primary role: the old primary
+		// not yet demoted, or a split brain. The operator would sort it
+		// first as a primary; the rehearsal does not promote it. A
+		// masked answer still carries it: GetStatus re-reads isPrimary
+		// from the data directory after the mask (TestPinMaskedStatusIsA200;
+		// round 18, CNPG P3-3), so it is checked before the mask.
+		r.read, r.selfPrimary = false, true
+		r.c.Reason = "it reports itself primary"
 	case !r.read && inst.Fresh && inst.Reading != nil:
 		r.c.Reason = "its instance manager answered without reading PostgreSQL (fenced or restarting)"
 	case !r.read:
 		r.c.Reason = "its status could not be read by the console"
-	case inst.Reading.IsPrimary:
-		// A second instance claiming the primary role: the old primary
-		// not yet demoted, or a split brain. The operator would sort it
-		// first as a primary; the rehearsal does not promote it.
-		r.read, r.selfPrimary = false, true
-		r.c.Reason = "it reports itself primary"
 	case r.fenced:
 		r.c.Reason = "it is fenced"
 	default:

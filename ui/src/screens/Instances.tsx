@@ -202,7 +202,7 @@ function LiveFacts({ l }: { l: NonNullable<InstanceRow["live"]> }) {
         {l.isPrimary ? (
           <>
             <Fact label={m.archiving_wal_label()}>{flag(l.archivingWal)}</Fact>
-            <Fact label={m.ready_wal_files_label()}>{pg(String(l.readyWalFiles ?? 0))}</Fact>
+            <Fact label={m.ready_wal_files_label()}>{pg(<Reported value={l.readyWalFiles} />)}</Fact>
           </>
         ) : (
           <>

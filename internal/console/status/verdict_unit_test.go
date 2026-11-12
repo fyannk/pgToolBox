@@ -205,3 +205,30 @@ func TestHibernatedClusterHeadlineIsInactive(t *testing.T) {
 		t.Errorf("headline %s, want inactive; contributors %+v", ov.Verdict.Health, ov.Verdict.Contributors)
 	}
 }
+
+// TestStatusReadCountsAMaskedReportApart (round 18, CNPG P3-2): an
+// instance whose manager answered without reaching PostgreSQL (fenced or
+// restarting) is not read: the roll-up says so and warns, never "3 of 3
+// instances read" at ok; one that did not answer keeps it unknown.
+func TestStatusReadCountsAMaskedReportApart(t *testing.T) {
+	ok := sweep.Instance{State: viewmodel.StatusReadOK, Reading: &instancestatus.Reading{IsPrimary: false}}
+	masked := sweep.Instance{State: viewmodel.StatusReadOK, Reading: &instancestatus.Reading{IsPrimary: true, MightBeUnavailable: true, MightBeUnavailableMaskedError: "FATAL: the database system is shutting down"}}
+	failed := sweep.Instance{State: viewmodel.StatusReadUnreachable}
+	svc := New(Options{Sweep: fakeSweep{}, Now: func() time.Time { return now }})
+	for _, c := range []struct {
+		name      string
+		instances map[string]sweep.Instance
+		health    viewmodel.Health
+		detail    string
+	}{
+		{"all read", map[string]sweep.Instance{"db-1": ok, "db-2": ok, "db-3": ok}, viewmodel.HealthOK, "3 of 3 instances read"},
+		{"masked primary", map[string]sweep.Instance{"db-1": masked, "db-2": ok, "db-3": ok}, viewmodel.HealthWarning, "2 of 3 instances read, 1 answered without PostgreSQL (fenced or restarting)"},
+		{"masked and unanswered", map[string]sweep.Instance{"db-1": masked, "db-2": failed, "db-3": ok}, viewmodel.HealthUnknown, "1 of 3 instances read, 1 answered without PostgreSQL (fenced or restarting)"},
+	} {
+		g := &gathered{hasSweep: true, swept: sweep.Snapshot{SweptAt: now, Interval: 30 * time.Second, Instances: c.instances}}
+		got := svc.statusReadContributor(g, now)
+		if got.Health != c.health || got.Detail != c.detail {
+			t.Errorf("%s: %s %q, want %s %q", c.name, got.Health, got.Detail, c.health, c.detail)
+		}
+	}
+}

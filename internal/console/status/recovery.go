@@ -32,6 +32,7 @@ import (
 	"github.com/fyannk/pgToolBox/internal/console/viewmodel"
 	"github.com/fyannk/pgToolBox/pkg/cnpgstatus"
 	"github.com/fyannk/pgToolBox/pkg/cnpgstatus/instancestatus"
+	"github.com/fyannk/pgToolBox/pkg/cnpgstatus/observe"
 	evidencev1alpha1 "github.com/fyannk/pgToolBox/pkg/evidence/v1alpha1"
 )
 
@@ -168,9 +169,9 @@ type recoveryFacts struct {
 	// otherwise), so such an instance no longer holds unarchived WAL.
 	rejoined map[string]bool
 	// backupEnds are when this Cluster's CNPG Backups ended
-	// (status.stoppedAt), whatever their method or phase; nil for a
-	// Backup completed with no stop time, which could have ended at any
-	// time. pgBackRest expires only at the end of a backup, so those that
+	// (status.stoppedAt), whatever their method or phase, or for one in
+	// progress when it began (backupEndsOf); nil for a Backup completed
+	// with no plausible stop time, which could have ended at any time. pgBackRest expires only at the end of a backup, so those that
 	// ended since the evidence was read bound what expire may have
 	// removed since (backupsSince). backupsUnread: the Backups were not
 	// listed, so that count is not known.
@@ -196,21 +197,52 @@ func (f recoveryFacts) backupsSince(read time.Time) (int, bool) {
 	return n, true
 }
 
-// backupEndsOf are g's Backups' ends (recoveryFacts backupEnds).
+// backupEndsOf are g's Backups' ends (recoveryFacts backupEnds), read
+// through observe.SaneBackupTimes: a plugin's unset stop time, which
+// CloudNativePG stamps 1970-01-01, or a stop before the start or the
+// object's creation, is no stop time (round 18, CNPG P3), so such a
+// Completed Backup counts as one that could have ended at any time.
+//
+// A Backup still in progress (started, running, finalizing) whose start,
+// else its creation, is known counts at that time: it ends later, and
+// pgBackRest expires at its end, seconds before CloudNativePG patches
+// the Backup Completed, so one begun after the read may already have
+// expired what the snapshot lists (round 18, Go and CNPG P3). One begun
+// before the read is not counted until its stop time is reported: it
+// only widens the band once it ends. A plugin backup reports no start
+// while running (pluginFieldsAtCompletion), hence the creation.
 func backupEndsOf(g *gathered) (ends []*time.Time, unread bool) {
 	if !g.listed(cache.SourceBackups) {
 		return nil, true
 	}
 	for _, b := range g.backups {
-		switch {
-		case b.Status.StoppedAt != nil:
-			at := b.Status.StoppedAt.UTC()
-			ends = append(ends, &at)
-		case b.Status.Phase == cnpgv1.BackupPhaseCompleted:
-			ends = append(ends, nil)
+		start, stop := observe.SaneBackupTimes(b.CreationTimestamp.Time, metaTimePtr(b.Status.StartedAt), metaTimePtr(b.Status.StoppedAt))
+		switch b.Status.Phase {
+		case cnpgv1.BackupPhaseStarted, cnpgv1.BackupPhaseRunning, cnpgv1.BackupPhaseFinalizing:
+			if start == nil && !b.CreationTimestamp.IsZero() {
+				created := b.CreationTimestamp.UTC()
+				start = &created
+			}
+			if start != nil {
+				ends = append(ends, start)
+			}
+		case cnpgv1.BackupPhaseCompleted:
+			ends = append(ends, stop)
+		default:
+			if stop != nil {
+				ends = append(ends, stop)
+			}
 		}
 	}
 	return ends, false
+}
+
+// metaTimePtr is an API time as a time; nil for nil or zero.
+func metaTimePtr(at *metav1.Time) *time.Time {
+	if at == nil || at.IsZero() {
+		return nil
+	}
+	return &at.Time
 }
 
 // formerHolder is the former primary that may still hold the unarchived
@@ -1836,8 +1868,9 @@ func purgeRead(in timelineInput) *time.Time {
 
 // sinceReadBand is the band pgBackRest's expire may already have cut by
 // the backups that ended since the read (recoveryFacts backupsSince), each
-// of which ran expire at its end: false when none did, or the repository
-// is not pgBackRest's (Barman's retention is a recovery window, which the
+// of which ran expire at its end; when none did, the expire the listing
+// shows pending (pendingExpireBand). False when there is none, or the
+// repository is not pgBackRest's (Barman's retention is a recovery window, which the
 // clock bounds in listedPurgeBand). Every such backup is counted as a
 // full of every archive type, the worst case.
 //
@@ -1870,9 +1903,11 @@ func sinceReadBand(in timelineInput, spans []interval, first, last time.Time) (t
 	window := max(last.Sub(first), 0)
 	n, known := in.facts.backupsSince(*read)
 	switch {
-	case known && n == 0:
-		return 0, false
-	case !known || in.policy.unknown:
+	case !known:
+		return window, true
+	case n == 0:
+		return pendingExpireBand(in, spans, first, window)
+	case in.policy.unknown:
 		return window, true
 	}
 	base := first
@@ -1914,6 +1949,94 @@ func sinceReadBand(in timelineInput, spans []interval, first, last time.Time) (t
 		return window, true
 	}
 	return min(max(kept.Sub(first), 0), window), true
+}
+
+// pendingExpireBand is sinceReadBand when no Backup ended since the
+// read (round 18, PG P3). pgBackRest saves a backup to backup.info and
+// then expires, both before CloudNativePG reads the stop time; a scan
+// that starts in between lists the new backup with what its expire is
+// about to remove, while that Backup stopped more than scanSlack before
+// the scan's start and is not counted. Each rule below is what an expire
+// run at the newest listed backup's end removes; on a listing that
+// expire already made it removes nothing, so a snapshot read after it
+// keeps no band:
+//
+//   - repo-retention-full=K (count): more than K fulls listed (also a
+//     retention lowered since the last backup) leaves the L-K oldest
+//     with their chains;
+//   - time-based: the fulls older than the newest one stopped before
+//     that end minus the retention;
+//   - an archive retention below the fulls: continuous WAL drawn from a
+//     backup older than the A-th newest of its types is cut there; the
+//     older backups' own consistency points, drawn alone, are what
+//     expire left and do not move the band.
+//
+// An unreported policy, or backups whose order is not known, is read as
+// is: no backup counted since the read says nothing ran expire.
+func pendingExpireBand(in timelineInput, spans []interval, first time.Time, window time.Duration) (time.Duration, bool) {
+	if in.policy.unknown {
+		return 0, false
+	}
+	base := first
+	later := func(t time.Time) {
+		if t.After(base) {
+			base = t
+		}
+	}
+	if k := in.policy.fulls; k > 0 {
+		if fulls, ok := backupAnchors(in, spans, map[string]bool{evidencev1alpha1.PGBackRestFull: true}); ok && len(fulls) > k {
+			later(fulls[len(fulls)-k])
+		}
+	}
+	if in.retainedFor > 0 {
+		if end, ok := newestListedEnd(in, spans); ok {
+			reach := end.Add(-in.retainedFor)
+			if b, ok := newestAnchor(purgeAnchors(in, spans), &reach); ok {
+				later(b)
+			}
+		}
+	}
+	if a := in.policy.archive; a > 0 {
+		if kept, ok := backupAnchors(in, spans, in.policy.archiveTypes); ok && len(kept) > a {
+			cut := kept[len(kept)-a]
+			for _, sp := range spans {
+				if sp.from.Before(cut) && sp.to.After(cut) {
+					later(cut)
+					break
+				}
+			}
+		}
+	}
+	if !base.After(first) {
+		return 0, false
+	}
+	kept, ok := drawnFrom(spans, base)
+	if !ok {
+		return window, true
+	}
+	return min(max(kept.Sub(first), 0), window), true
+}
+
+// newestListedEnd is the newest end among the listed pgBackRest backups
+// (their item end times, else their drawn spans' lower bounds); false
+// when none is known.
+func newestListedEnd(in timelineInput, spans []interval) (time.Time, bool) {
+	var newest time.Time
+	found := false
+	seen := func(at time.Time) {
+		if !found || at.After(newest) {
+			newest, found = at, true
+		}
+	}
+	for _, b := range in.backups {
+		if b.EndAt != nil {
+			seen(b.EndAt.UTC())
+		}
+	}
+	for _, sp := range spans {
+		seen(sp.from)
+	}
+	return newest, found
 }
 
 // backupAnchors are the listed pgBackRest backups of types, one anchor

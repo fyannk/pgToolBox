@@ -91,7 +91,7 @@ func TestASpendIsNotMadeTwiceWhenTheWatchOvertakesTheConflictRead(t *testing.T) 
 			a := newStore(hooked, clock, nil)
 			watchMerge(t, api, a)
 			a.mu.Lock()
-			a.setModeLocked(modeLive, "")
+			a.watchOpenedLocked()
 			a.mu.Unlock()
 			watchMerge(t, api, b)
 			// Another write lands first, so a's write-through conflicts.
@@ -264,7 +264,7 @@ func TestAWriteAnswerDoesNotSetTheBaseBack(t *testing.T) {
 			a := newStore(hooked, clock, nil)
 			watchMerge(t, api, a)
 			a.mu.Lock()
-			a.setModeLocked(modeLive, "")
+			a.watchOpenedLocked()
 			a.mu.Unlock()
 			b := loaded(t, api, clock)
 			hooked.after = func() {
@@ -371,7 +371,7 @@ func TestARevocationIsAcknowledgedOnlyOnceWritten(t *testing.T) {
 	failing := newStore(failingWrites{api}, clock, slog.New(slog.DiscardHandler))
 	watchMerge(t, api, failing)
 	failing.mu.Lock()
-	failing.setModeLocked(modeLive, "")
+	failing.watchOpenedLocked()
 	failing.mu.Unlock()
 	if !failing.RevokeGrant(grantID(1), uh("alice"), clock.Now(), clock.Now().Add(12*time.Hour)) {
 		t.Fatal("revoke")
@@ -447,7 +447,7 @@ func TestABatchDoesNotRaceItsOwnWriteThrough(t *testing.T) {
 			a := newStore(hooked, clock, nil)
 			watchMerge(t, api, a)
 			a.mu.Lock()
-			a.setModeLocked(modeLive, "")
+			a.watchOpenedLocked()
 			a.mu.Unlock()
 			tc.prepare(t, a)
 			a.InstanceSince("pod-a", "ok", t0) // a batch is waiting

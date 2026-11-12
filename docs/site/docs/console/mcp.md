@@ -161,8 +161,10 @@ person. A grant the index does not hold is refused, never trusted on the token
 alone: only for 30 seconds after a token was issued, while the index of
 another replica catches up, is a shared index's silence accepted. While the
 index cannot be trusted (the shared state ConfigMap unreachable for more than
-30 seconds, or a grants document the console cannot read) every grant is
-refused with `503` and no new one is issued. A `STATE_CONFIGMAP` that is
+30 seconds, its watch refused or broken for more than 30 seconds, so that the
+replica would not see a revocation written by another, or a grants document the
+console cannot read) every grant is refused with `503` and no new one is issued.
+A write that lands does not end that state on its own: only an open watch does. A `STATE_CONFIGMAP` that is
 missing, or that the console's ServiceAccount may not use, refuses grants the
 same way, and the console says so at start with what it needs: the ConfigMap
 in its namespace and a Role with `get`, `watch` and `update` on it by name (the
@@ -220,17 +222,35 @@ refuses the grant at once and writes the disconnection with its next write, but
 the others may accept it until then. Retry, or use **Disconnect all**, which
 writes again what an earlier attempt left unwritten. The Assistants page closes
 the dialog on that `503` and says the assistant is disconnected on the replica
-that answered while the others may accept it for a few more seconds; the
-assistant stays listed as "being written to the other replicas" with a
-**Retry** button, and **Disconnect all** is offered as long as one is pending,
-even with a single assistant. A retry that answers `404` means nothing was left
-to write: the page reports the assistant disconnected. While the ConfigMap does
+that answered while the others may still accept it until the console has
+written the disconnection (it keeps retrying; the answer does not say how long
+that takes, which is as long as the write keeps failing, for instance while the
+console may not write the ConfigMap); the assistant stays listed as "being written to the
+other replicas" with a **Retry** button, and **Disconnect all** is offered as
+long as one is pending, even with a single assistant. **Retry** sends the
+disconnection again without asking you to type the name a second time: you
+already confirmed it. A retry that answers `404` means nothing was left to
+write: the page reports the assistant disconnected. The pending rows exist only
+in the open page: after a reload, the replica that answered no longer lists the
+grant, so it disappears from the list although the other replicas may still
+accept it. The console keeps writing the disconnection; **Disconnect all**,
+from any replica, is the safe check. When the card, the pending row or
+**Disconnect all** that you used is gone after the answer, focus moves to the
+note that says what happened.
+A replica that has not read the shared state yet (a pod just started) answers
+`503`, not `404` or `204`, to a disconnection of a grant it does not know and to
+**Disconnect all** with nothing to revoke there: it knows none of the grants the
+others recorded. With MCP OAuth on, `/readyz` waits for that first read, so such
+a pod takes no traffic first.
+While the ConfigMap does
 not exist (deleted, or not created yet), a disconnection is answered done, and
 logged: every replica refuses every grant until the ConfigMap exists, and the
-replica that answered writes the disconnection into it within about a second of
-its return. A restart of that replica before then loses the disconnection
-(another replica that recorded the grant less than eight minutes earlier then
-keeps it). A ConfigMap the console may not write is not so: a replica whose
+replica that answered writes the disconnection into it at its next read of the
+ConfigMap, within two seconds of its return (a missing ConfigMap is read every
+one to two seconds). Meanwhile another replica that reads the new ConfigMap
+first and recorded the grant less than eight minutes earlier may serve it for
+those seconds. A restart of the replica that answered before then loses the
+disconnection (that other replica then keeps the grant). A ConfigMap the console may not write is not so: a replica whose
 watch opened before the permission was withdrawn still serves grants until its
 next write, so that answer stays `503`. A sign-out with
 **disconnect my assistants** goes on even then (the console log says so). Without the

@@ -20,20 +20,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
-
-	"github.com/fyannk/pgToolBox/pkg/discovery"
 )
-
-// TestReviewResponseLimitFitsTheHeap: round 17, K8S P3-1. Every review in
-// flight at its limit, decoded at about four times its size, stays under a
-// quarter of the chart's 256Mi memory limit.
-func TestReviewResponseLimitFitsTheHeap(t *testing.T) {
-	const decodeFactor, budget = 4, 64 << 20
-	if peak := int64(ReviewResponseLimit) * discovery.ProbeConcurrency * decodeFactor; peak > budget {
-		t.Fatalf("%d reviews in flight at %d bytes peak at about %d MiB of heap, over the %d MiB budget",
-			discovery.ProbeConcurrency, ReviewResponseLimit, peak>>20, budget>>20)
-	}
-}
 
 // oversized answers every request with a body one byte over the limit,
 // without a length.

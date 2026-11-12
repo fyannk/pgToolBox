@@ -70,6 +70,7 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"math/rand/v2"
 	"sort"
 	"strconv"
 	"strings"
@@ -486,7 +487,20 @@ type Store struct {
 	// grantsUnreadable is set while the grants document does not parse
 	// (logged once per episode).
 	grantsUnreadable bool
-	wake             chan struct{}
+	// watching is set while the watch of the ConfigMap is open
+	// (watchOnce): only then does a write that lands leave the failing
+	// mode (wroteLandedLocked). A write proves the ConfigMap writable, not that
+	// this replica sees what the others write: with no watch, a revocation
+	// written elsewhere is not seen, and the failing mode's staleGrace
+	// must run out rather than be reset by every write.
+	watching bool
+	// recovering is set while the mode is degraded (failing, missing or
+	// forbidden): the return to live is logged once.
+	recovering bool
+	wake       chan struct{}
+	// rewatch asks the Run loop to open the watch again now, cutting its
+	// backoff short (pause): a write landed with no watch open.
+	rewatch chan struct{}
 }
 
 // New builds a store; nothing is read until Run.
@@ -516,7 +530,7 @@ func New(opts Options) *Store {
 		opts: opts, signedOut: map[string]signOut{}, facts: map[string]fact{}, sent: map[string]int64{}, grants: map[string]grantEntry{}, codes: map[string]codeEntry{}, drills: map[string]DrillResult{}, byObject: map[string]map[string]struct{}{},
 		foreign: map[string]bool{}, foreignLogged: map[string]int{}, takeOverLogged: map[string]bool{}, othersBeats: map[string]beat{},
 		recorded: map[string]time.Time{}, unwritten: map[string]bool{}, unversionedLogged: map[string]bool{}, mode: modePending, since: opts.Now().UTC(), wake: make(chan struct{}, 1),
-		writes: make(chan struct{}, 1),
+		writes: make(chan struct{}, 1), rewatch: make(chan struct{}, 1),
 	}
 	if opts.Name == "" {
 		s.mode = modeDisabled
@@ -1756,11 +1770,13 @@ func (s *Store) inSyncWithLocked(docs map[string]string) bool {
 // flush writes the local state when it differs from the ConfigMap,
 // re-reading and merging on a conflict.
 //
-// In the failing mode it writes even when nothing is pending: a write-
-// through that failed rolled its change back, and the replica would
-// otherwise stay failing (refusing every grant past staleGrace) until an
-// unrelated change. The write, unchanged, is a no-op for the API server
-// and proves the ConfigMap writable again (modeLive).
+// In the failing mode it writes even when nothing is pending, while the
+// watch is open: a write-through that failed rolled its change back, and
+// the replica would otherwise stay failing (refusing every grant past
+// staleGrace) until an unrelated change. The write, unchanged, is a no-op
+// for the API server and proves the ConfigMap writable again (modeLive).
+// With no watch open, no write can end the failing mode (wroteLandedLocked):
+// flush then asks the Run loop to open the watch again instead.
 func (s *Store) flush(ctx context.Context) error {
 	if err := s.lockWrites(ctx); err != nil {
 		return err
@@ -1769,29 +1785,14 @@ func (s *Store) flush(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, writeTimeout)
 	defer cancel()
 	for range maxAttempts {
-		s.mu.Lock()
-		if s.base == nil || s.mode == modeMissing || s.mode == modeForbidden {
-			s.mu.Unlock()
+		cm, gen, write := s.nextBatch()
+		if !write {
 			return nil
 		}
-		docs := s.pruneLocked()
-		if s.inSyncWithLocked(docs) && !s.beatDueLocked() && s.mode != modeFailing {
-			s.written, s.urgent = s.gen, false
-			s.mu.Unlock()
-			return nil
-		}
-		cm, gen := s.desiredWithLocked(docs), s.gen
-		s.mu.Unlock()
 		updated, err := s.opts.Client.Update(ctx, cm, metav1.UpdateOptions{FieldManager: "pgtoolbox-console"})
 		switch {
 		case err == nil:
-			s.mu.Lock()
-			s.wroteBaseLocked(updated)
-			if s.gen == gen {
-				s.written, s.urgent = gen, false
-			}
-			s.setModeLocked(modeLive, "")
-			s.mu.Unlock()
+			s.locked(func() { s.wroteLandedLocked(updated, gen) })
 			sharedWrites.WithLabelValues("written").Inc()
 			return nil
 		case apierrors.IsConflict(err):
@@ -1801,18 +1802,69 @@ func (s *Store) flush(ctx context.Context) error {
 			if getErr != nil {
 				return s.failed(getErr)
 			}
-			s.mu.Lock()
-			s.mergeReadLocked(fresh)
-			s.mu.Unlock()
+			s.locked(func() { s.mergeReadLocked(fresh) })
 		default:
 			sharedWrites.WithLabelValues("failed").Inc()
 			return s.failed(err)
 		}
 	}
-	s.mu.Lock()
-	s.exhaustedLocked()
-	s.mu.Unlock()
+	s.locked(s.exhaustedLocked)
 	return fmt.Errorf("write of ConfigMap %s: still conflicting after %d attempts", s.opts.Name, maxAttempts)
+}
+
+// nextBatch takes mu and returns the ConfigMap flush writes next and
+// the gen it holds, or write false when there is nothing to write.
+func (s *Store) nextBatch() (cm *corev1.ConfigMap, gen uint64, write bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.base == nil || s.mode == modeMissing || s.mode == modeForbidden {
+		return nil, 0, false
+	}
+	docs := s.pruneLocked()
+	if s.inSyncWithLocked(docs) && !s.beatDueLocked() && (s.mode != modeFailing || !s.watching) {
+		s.written, s.urgent = s.gen, false
+		if s.mode == modeFailing {
+			// No write ends the failing mode without a watch: open one.
+			s.rewatchLocked()
+		}
+		return nil, 0, false
+	}
+	return s.desiredWithLocked(docs), s.gen, true
+}
+
+// locked runs f under mu, released on every path, a panic included: a
+// panic recovered by net/http in a handler must not leave the store
+// locked for every later request. The lock order is unchanged (writes,
+// then mu).
+func (s *Store) locked(f func()) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	f()
+}
+
+// wroteLandedLocked records a write that landed (updated, built at gen). It
+// proves the ConfigMap writable, which leaves a degraded mode only while
+// the watch is open: without one, the revocations other replicas write
+// are not seen, and the failing mode's staleGrace runs on. The Run loop is
+// asked to open the watch again instead (rewatch).
+func (s *Store) wroteLandedLocked(updated *corev1.ConfigMap, gen uint64) {
+	s.wroteBaseLocked(updated)
+	if s.gen == gen {
+		s.written, s.urgent = gen, false
+	}
+	if s.watching {
+		s.setModeLocked(modeLive, "")
+		return
+	}
+	s.rewatchLocked()
+}
+
+// rewatchLocked asks the Run loop to open the watch now (pause).
+func (s *Store) rewatchLocked() {
+	select {
+	case s.rewatch <- struct{}{}:
+	default:
+	}
 }
 
 // failed records a read or write failure as the store's mode. A
@@ -1838,33 +1890,41 @@ func (s *Store) failed(err error) error {
 
 // setModeLocked changes the mode, logging the transitions an operator
 // must see once: the degradations and the recovery.
+//
+// A change of reason alone (a failing replica failing another way) keeps
+// since: the failing mode's staleGrace runs from when the replica left
+// the live mode, and no new failure may extend it.
 func (s *Store) setModeLocked(m mode, reason string) {
-	if s.mode == m && s.reason == reason {
+	if s.mode == m {
+		s.reason = reason
 		return
 	}
-	previous := s.mode
 	s.mode, s.reason, s.since = m, reason, s.opts.Now().UTC()
 	log := s.opts.Logger.With(slog.String("configmap", s.opts.Name))
 	switch m {
 	// P4-F: the two an install without the chart's RBAC meets at start;
 	// each says what to create, and that MCP grants wait for it.
 	case modeMissing:
+		s.recovering = true
 		log.Warn("shared state ConfigMap not found: each replica keeps its own clocks and sign-outs, and MCP OAuth grants "+
 			"are refused, until it exists; create it empty in the console's namespace (the chart does when console.rbac.create is true)",
 			slog.String("rbac", "verbs get, watch, update on configmaps, resourceNames ["+s.opts.Name+"], for the console's ServiceAccount"))
 	case modeForbidden:
+		s.recovering = true
 		log.Warn("shared state ConfigMap not readable or writable by the console's ServiceAccount: each replica keeps its own "+
 			"clocks and sign-outs, and MCP OAuth grants are refused; bind a Role to the ServiceAccount in the console's namespace "+
 			"(the chart does when console.rbac.create is true)",
 			slog.String("rbac", "verbs get, watch, update on configmaps, resourceNames ["+s.opts.Name+"]"))
 	case modeFailing:
+		s.recovering = true
 		log.Warn("shared state ConfigMap unreachable; retrying", slog.String("reason", reason))
 		// The writer retries, with nothing pending too (flush), until a
 		// write lands: the failing mode is left by a write, never only
 		// waited out.
 		s.wakeLocked(true)
 	case modeLive:
-		if previous != modePending {
+		if s.recovering {
+			s.recovering = false
 			log.Info("shared state ConfigMap in use again")
 		}
 	case modeDisabled, modePending:
@@ -1898,11 +1958,14 @@ func (s *Store) Run(ctx context.Context) error {
 	wg.Go(func() { s.writer(ctx) })
 	wg.Go(func() { s.pruner(ctx) })
 	wg.Go(func() { s.ticker(ctx) })
-	attempt := 0
+	attempt, kicked := 0, false
 	for ctx.Err() == nil {
-		err := s.watchOnce(ctx)
+		opened, err := s.watchOnce(ctx)
 		if ctx.Err() != nil {
 			break
+		}
+		if opened {
+			kicked = false
 		}
 		if err != nil {
 			attempt++
@@ -1910,10 +1973,13 @@ func (s *Store) Run(ctx context.Context) error {
 		} else {
 			attempt = 0
 		}
-		select {
-		case <-ctx.Done():
-		case <-time.After(s.opts.Backoff(attempt)):
+		wait := jitter(s.opts.Backoff(attempt))
+		if s.isMode(modeMissing) {
+			// Polled, not backed off: a revocation held while the
+			// ConfigMap is missing is written at its next read (P3).
+			wait = missingPoll + rand.N(missingPoll) //nolint:gosec // retry spread, not a secret
 		}
+		kicked = s.pause(ctx, wait, kicked)
 	}
 	wg.Wait()
 	// A sign-out made just before the shutdown must still reach the
@@ -1924,15 +1990,69 @@ func (s *Store) Run(ctx context.Context) error {
 	return nil
 }
 
-func (s *Store) watchOnce(ctx context.Context) error {
+// missingPoll is how often a missing ConfigMap is read again, plus up to
+// as much again of jitter: its return is seen within two seconds, and the
+// revocations this replica held meanwhile are written then, rather than
+// after the read backoff's minute (one Get a replica every second or two,
+// only while the ConfigMap is missing).
+const missingPoll = time.Second
+
+// jitter spreads d over [d, 1.25 d): the replicas of a console that lost
+// the API server at once do not all retry at once.
+func jitter(d time.Duration) time.Duration {
+	if d <= 0 {
+		return d
+	}
+	return d + rand.N(d/4+1) //nolint:gosec // retry spread, not a secret
+}
+
+func (s *Store) isMode(m mode) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mode == m
+}
+
+// pause waits d before the Run loop's next read, or less: a write that
+// landed with no watch open (rewatch) cuts it short, once until a watch
+// opens again (kicked), so that a watch the API server keeps refusing is
+// retried with backoff, never in a loop. It returns kicked.
+func (s *Store) pause(ctx context.Context, d time.Duration, kicked bool) bool {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return kicked
+		case <-t.C:
+			return kicked
+		case <-s.rewatch:
+			if !kicked {
+				return true
+			}
+		}
+	}
+}
+
+// watchOnce reads the ConfigMap and watches it until the watch ends. It
+// reports whether the watch opened. The mode becomes live only once the
+// watch is open, never on the read alone: a replica whose watch the API
+// server refuses (429 or 503, shedding long-running requests) would
+// otherwise reset the failing mode's staleGrace at every retry while
+// seeing nothing the other replicas write.
+func (s *Store) watchOnce(ctx context.Context) (bool, error) {
 	cm, err := s.opts.Client.Get(ctx, s.opts.Name, metav1.GetOptions{})
 	if err != nil {
-		return s.failed(err)
+		return false, s.failed(err)
 	}
-	s.mu.Lock()
-	s.mergeReadLocked(cm)
-	s.setModeLocked(modeLive, "")
-	s.mu.Unlock()
+	s.locked(func() {
+		s.mergeReadLocked(cm)
+		if s.mode == modeMissing || s.mode == modeForbidden {
+			// The ConfigMap is back, or readable again: no longer known
+			// missing (a revocation is then written, not held), not live
+			// until the watch is open.
+			s.setModeLocked(modePending, "")
+		}
+	})
 	// No resourceVersion: the watch starts at the current state and first
 	// sends the ConfigMap as Added (merged again, harmlessly). Starting from
 	// cm.ResourceVersion fails with "too old resource version" forever once
@@ -1942,43 +2062,62 @@ func (s *Store) watchOnce(ctx context.Context) error {
 		FieldSelector: fields.OneTermEqualSelector("metadata.name", s.opts.Name).String(),
 	})
 	if err != nil {
-		return s.failed(err)
+		return false, s.failed(err)
 	}
 	defer w.Stop()
+	s.locked(func() {
+		s.watching = true
+		// A request to reopen the watch made before it opened (a write
+		// that landed between the read and the watch) is answered.
+		select {
+		case <-s.rewatch:
+		default:
+		}
+		s.setModeLocked(modeLive, "")
+		if s.gen != s.written {
+			// Written while not live (held revocations): write them now.
+			s.wakeLocked(true)
+		}
+	})
+	defer s.locked(func() { s.watching = false })
 	first := true
 	for {
 		select {
 		case <-ctx.Done():
-			return nil
+			return true, nil
 		case ev, ok := <-w.ResultChan():
 			if !ok {
-				return nil
+				return true, nil
 			}
 			switch ev.Type {
 			case watch.Added, watch.Modified:
 				if cm, ok := ev.Object.(*corev1.ConfigMap); ok && cm.Name == s.opts.Name {
-					s.mu.Lock()
-					if first && ev.Type == watch.Added {
-						// The watch's first event is the ConfigMap as it is
-						// now, a read as the Get above: two such reads older
-						// than the base mean the revision went back
-						// (mergeReadLocked), which an idle replica would
-						// otherwise never take in.
-						s.mergeReadLocked(cm)
-					} else {
-						s.mergeLocked(cm)
-					}
-					s.mu.Unlock()
+					s.locked(func() {
+						if first && ev.Type == watch.Added {
+							// The watch's first event is the ConfigMap as it
+							// is now, a read as the Get above: two such reads
+							// older than the base mean the revision went back
+							// (mergeReadLocked), which an idle replica would
+							// otherwise never take in.
+							s.mergeReadLocked(cm)
+						} else {
+							s.mergeLocked(cm)
+						}
+					})
 				}
 				first = false
 			case watch.Deleted:
-				s.mu.Lock()
-				s.base, s.rewound = nil, 0
-				s.setModeLocked(modeMissing, "")
-				s.mu.Unlock()
-				return nil
+				s.locked(func() {
+					s.base, s.rewound = nil, 0
+					s.setModeLocked(modeMissing, "")
+				})
+				return true, nil
 			case watch.Error:
-				return fmt.Errorf("watch error: %w", apierrors.FromObject(ev.Object))
+				// No watch until the Run loop's next one: the failing
+				// mode, whose staleGrace bounds how long grants are served
+				// unwatched.
+				s.locked(func() { s.setModeLocked(modeFailing, "the watch of the ConfigMap failed") })
+				return true, fmt.Errorf("watch error: %w", apierrors.FromObject(ev.Object))
 			case watch.Bookmark:
 			}
 		}
@@ -2002,16 +2141,16 @@ func (s *Store) writer(ctx context.Context) {
 			select {
 			case <-ctx.Done():
 				return
-			case <-time.After(s.opts.Backoff(attempt)):
+			case <-time.After(jitter(s.opts.Backoff(attempt))):
 			}
-			s.mu.Lock()
-			switch {
-			case s.gen != s.written:
-				s.changedLocked(false)
-			case s.mode == modeFailing:
-				s.wakeLocked(false)
-			}
-			s.mu.Unlock()
+			s.locked(func() {
+				switch {
+				case s.gen != s.written:
+					s.changedLocked(false)
+				case s.mode == modeFailing:
+					s.wakeLocked(false)
+				}
+			})
 			continue
 		}
 		attempt = 0
@@ -2030,9 +2169,8 @@ func (s *Store) debounce(ctx context.Context) bool {
 	timer := time.NewTimer(s.opts.Debounce)
 	defer timer.Stop()
 	for {
-		s.mu.Lock()
-		nowUrgent := s.urgent
-		s.mu.Unlock()
+		var nowUrgent bool
+		s.locked(func() { nowUrgent = s.urgent })
 		if nowUrgent && !urgent {
 			urgent = true
 			// The urgent deadline runs from the start of the batch: a

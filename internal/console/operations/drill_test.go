@@ -425,3 +425,30 @@ func TestTrackDrillAnswersOnlyForTheHandlesCluster(t *testing.T) {
 		t.Errorf("the real handle = %s", real.Phase)
 	}
 }
+
+// TestDrillBackupStopIsSane: a plugin Backup whose stopped_at was left
+// unset is stamped 1970-01-01 by CNPG; the drill neither labels it with
+// that date nor ranks it by it.
+func TestDrillBackupStopIsSane(t *testing.T) {
+	created := time.Date(2026, 11, 10, 2, 0, 0, 0, time.UTC)
+	backup := func(name string, stopped time.Time) *cnpgv1.Backup {
+		b := &cnpgv1.Backup{ObjectMeta: metav1.ObjectMeta{Name: name, CreationTimestamp: metav1.NewTime(created)}}
+		b.Status.Phase = cnpgv1.BackupPhaseCompleted
+		b.Status.StoppedAt = &metav1.Time{Time: stopped}
+		return b
+	}
+	epoch := backup("epoch", time.Unix(0, 0))
+	if got := barmanDrillBackup(epoch).stoppedAt; got != nil {
+		t.Errorf("a 1970 stop is labelled %s, want unknown", got)
+	}
+	good := backup("good", created.Add(10*time.Minute))
+	if got := barmanDrillBackup(good).stoppedAt; got == nil || !got.Equal(created.Add(10*time.Minute)) {
+		t.Errorf("a sane stop reads %v", got)
+	}
+	// Ranked by its creation time, the epoch Backup created later wins.
+	later := backup("later-epoch", time.Unix(0, 0))
+	later.CreationTimestamp = metav1.NewTime(created.Add(time.Hour))
+	if got := latestCompleted([]*cnpgv1.Backup{good, later}); got == nil || got.Name != "later-epoch" {
+		t.Errorf("latest %v, want later-epoch ranked by its creation", got)
+	}
+}

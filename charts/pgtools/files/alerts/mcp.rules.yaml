@@ -87,3 +87,17 @@ groups:
           summary: "An MCP authorization code was presented twice in {{ $labels.namespace }}"
           description: "An authorization code was redeemed a second time in the last 15 minutes. The console revoked the grant the first redemption bought: a stolen code, or a client that retried badly."
           runbook_url: "https://github.com/fyannk/pgToolBox/blob/main/docs/site/docs/console/alerts.md#pgtoolboxconsolemcpoauthcodereplayed"
+      - alert: PgToolBoxConsoleMCPGrantsRefused
+        # The shared state's mode (one series, mode label set) joined with
+        # when it last changed (no mode label): ignoring(mode).
+        expr: |
+          pgtoolbox_console_shared_state_mode{mode=~"failing|missing|forbidden"} == 1
+          and ignoring(mode)
+          (time() - pgtoolbox_console_shared_state_mode_since_timestamp_seconds) > 30
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "A console replica in {{ $labels.namespace }} refuses every MCP grant: its shared state is {{ $labels.mode }}"
+          description: "The replica {{ $labels.pod }} has not read and watched its shared state ConfigMap (mode {{ $labels.mode }}) for more than 30 seconds, so it refuses every MCP token and sign-in rather than miss a revocation made on another replica."
+          runbook_url: "https://github.com/fyannk/pgToolBox/blob/main/docs/site/docs/console/alerts.md#pgtoolboxconsolemcpgrantsrefused"

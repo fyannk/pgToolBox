@@ -269,7 +269,10 @@ func TestAnOversizedDocumentIsMergedWhole(t *testing.T) {
 		t.Fatalf("a grant past the total bound: %v", err)
 	}
 	b.RecordSignOut("sid", "", t0.Add(time.Hour))
-	eventually(t, "B's write", func() bool { return api.data(KeySessions) != "" })
+	// B's write of the sign-out, not any write: the first one (its
+	// format and heartbeat, made once it has read the ConfigMap) may land
+	// before the sign-out is made, and holds an empty sessions document.
+	eventually(t, "B's write", func() bool { return strings.Contains(api.data(KeySessions), sessionHash("sid")) })
 	var after grantsDoc
 	if err := json.Unmarshal([]byte(api.data(KeyGrants)), &after); err != nil || len(after.Grants) != n {
 		t.Fatalf("grants.json after B's write holds %d entries, want %d (%v)", len(after.Grants), n, err)
@@ -325,7 +328,7 @@ func TestGrantsUsable(t *testing.T) {
 		t.Error("a shared store not read yet is usable")
 	}
 	s.mu.Lock()
-	s.setModeLocked(modeLive, "")
+	s.watchOpenedLocked()
 	s.mu.Unlock()
 	if !s.GrantsUsable() {
 		t.Error("a live store is unusable")

@@ -31,10 +31,12 @@ test("connected: Disconnect all answered 503 leaves every grant pending, then a 
     await expect.poll(() => s.container.ownerDocument.querySelector('[role="alertdialog"]')).toBeNull();
   };
   await run();
-  expect(s.container.querySelector('[role="status"]')?.textContent).toContain("retry Disconnect all to be sure");
+  expect(s.container.querySelector('[role="status"]')?.textContent).toContain("Retry Disconnect all to be sure");
   expect(s.container.querySelectorAll("[data-grant-pending]")).toHaveLength(3);
   await run();
   await expect.element(s.getByText(/Every assistant is disconnected/)).toBeVisible();
   expect(s.container.querySelectorAll("[data-grant-pending]")).toHaveLength(0);
+  // Disconnect all itself is gone with the last grant: focus is on the note.
+  await expect.poll(() => s.container.ownerDocument.activeElement).toBe(s.container.querySelector('[role="status"]'));
   s.unmount();
 });

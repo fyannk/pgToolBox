@@ -30,4 +30,5 @@ tests:
     asserts:
       - matchRegex: {path: "spec.groups[0].rules[0].annotations.description", pattern: 'eq \$labels.reason "review-failed" \}\}[^{]*restarts on its own'}
       - matchRegex: {path: "spec.groups[0].rules[0].annotations.description", pattern: 'eq \$labels.reason "review-too-large" \}\}[^{]*then restart the operator; only a start reviews it again'}
+      - matchRegex: {path: "spec.groups[0].rules[0].annotations.description", pattern: 'eq \$labels.reason "review-too-slow" \}\}[^{]*then restart the operator; only a start reviews it again'}
       - notMatchRegex: {path: "spec.groups[0].rules[0].annotations.description", pattern: '\{\{ end \}\}.+'}
