@@ -21,6 +21,10 @@ import (
 	"sync"
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes/fake"
+
 	"github.com/fyannk/pgToolBox/internal/console/auth"
 	"github.com/fyannk/pgToolBox/internal/console/sharedstate"
 )
@@ -178,5 +182,42 @@ func TestADisconnectionWhileTheConfigMapIsMissingIsDone(t *testing.T) {
 	}
 	if err := r.s.RevokeGrant(ctx, auth.Client{}, "alice", q.SessionID); !errors.Is(err, ErrNotRecorded) {
 		t.Errorf("a disconnection the ConfigMap refuses: %v, want ErrNotRecorded", err)
+	}
+}
+
+// A replica that has not read the shared state yet (a pod just started:
+// /readyz does not wait for it unless MCP OAuth is on) acknowledges no
+// disconnection: "disconnect all" finds nothing to revoke there and a
+// retried disconnection finds no such grant, and both would read as done
+// on the session page (204, 404) while another replica serves the grants.
+// Both are ErrNotRecorded (503, retry) until it has read it (round 18,
+// security P3).
+func TestAPendingReplicaAcknowledgesNoDisconnection(t *testing.T) {
+	c := &clock{now: t0}
+	f := newSessions(t, c, secretA)
+	cs := fake.NewClientset(&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "console-state", Namespace: "team-a", ResourceVersion: "1"}})
+	pending := sharedstate.New(sharedstate.Options{Client: cs.CoreV1().ConfigMaps("team-a"), Name: "console-state", Now: c.Now})
+	r := newReplica(t, f, pending, c, nil)
+	ctx := context.Background()
+	if n, err := r.s.DisconnectAll(ctx, auth.Client{}, "alice"); n != 0 || !errors.Is(err, ErrNotRecorded) {
+		t.Errorf("disconnect all on a replica that read nothing: %d, %v, want ErrNotRecorded", n, err)
+	}
+	if err := r.s.RevokeGrant(ctx, auth.Client{}, "alice", "grant-0123"); !errors.Is(err, ErrNotRecorded) {
+		t.Errorf("a disconnection on a replica that read nothing: %v, want ErrNotRecorded", err)
+	}
+
+	// Once read, the same answers are answers.
+	a, _ := sharedStores(t, c)
+	r = newReplica(t, f, a, c, nil)
+	if n, err := r.s.DisconnectAll(ctx, auth.Client{}, "alice"); n != 0 || err != nil {
+		t.Errorf("disconnect all with nothing to revoke: %d, %v", n, err)
+	}
+	if err := r.s.RevokeGrant(ctx, auth.Client{}, "alice", "grant-0123"); !errors.Is(err, ErrNoSuchGrant) {
+		t.Errorf("an unknown grant on a replica that read the index: %v, want ErrNoSuchGrant", err)
+	}
+	// One replica, no ConfigMap: the index is its memory, always read.
+	r = newReplica(t, f, memoryStore(c), c, nil)
+	if err := r.s.RevokeGrant(ctx, auth.Client{}, "alice", "grant-0123"); !errors.Is(err, ErrNoSuchGrant) {
+		t.Errorf("an unknown grant on a single replica: %v, want ErrNoSuchGrant", err)
 	}
 }
