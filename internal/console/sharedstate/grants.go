@@ -20,6 +20,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"slices"
 	"sort"
 	"strings"
@@ -570,15 +571,17 @@ func (s *Store) RevokeGrantsOf(userHash string, at time.Time) []string {
 // next batch writes them. Without a ConfigMap (one replica) there is
 // nothing to write.
 //
-// No ids is nil only on a replica that has read the grants document, or
-// knows the ConfigMap missing (every replica's watch delivers the
-// deletion, and every grant is refused): one that has not read it yet
-// knows none of the grants recorded elsewhere, and its "nothing to
-// revoke" is no answer (ErrNotRecorded), not a disconnection done. A
-// ConfigMap this replica may not read is no such answer either (round 20,
-// security P2-1): the API server authorizes a watch only when it opens,
-// so another replica whose watch opened before the permission was
-// withdrawn serves grants until its next freshness read sees the 403.
+// No ids is nil only while this replica's view of the grants document is
+// current (currentLocked): live with its watch open, the document read and
+// readable; or the ConfigMap known missing (every replica's watch delivers
+// the deletion, and every grant is refused). Anywhere else its "nothing to
+// revoke" is no answer (ErrNotRecorded), not a disconnection done: a
+// replica that has not read the document knows none of the grants recorded
+// elsewhere; one whose watch ended (failing, or live while it reopens it)
+// or that may no longer read the ConfigMap (forbidden: round 20, security
+// P2-1) knows only what it read before, and a grant recorded since on
+// another replica is served there until it expires (round 21, security
+// P2-1). ReadGrants is the fresh read that makes such an answer.
 func (s *Store) WriteRevocations(ctx context.Context, ids ...string) error {
 	if s == nil {
 		return ErrNotRecorded
@@ -587,11 +590,9 @@ func (s *Store) WriteRevocations(ctx context.Context, ids ...string) error {
 		return nil
 	}
 	if len(ids) == 0 {
-		var read bool
-		s.locked(func() {
-			read = s.mode == modeMissing || s.base != nil && !s.foreign[KeyGrants]
-		})
-		if !read {
+		var current bool
+		s.locked(func() { current = s.currentLocked() })
+		if !current {
 			return ErrNotRecorded
 		}
 		return nil
@@ -644,6 +645,52 @@ func (s *Store) WriteRevocations(ctx context.Context, ids ...string) error {
 		return nil // the ConfigMap holds them revoked already
 	case err != nil:
 		return err
+	}
+	return nil
+}
+
+// currentLocked reports whether the grant index is what the other replicas
+// see now, give or take the watch's delivery: the ConfigMap known missing,
+// or the mode live with the watch open and the grants document read and
+// readable. A base kept through a failing or forbidden mode, or while the
+// watch is reopened, is what the ConfigMap held, not what it holds.
+func (s *Store) currentLocked() bool {
+	return s.mode == modeMissing || s.mode == modeLive && s.watching && s.base != nil && !s.foreign[KeyGrants]
+}
+
+// ReadGrants reads the ConfigMap now (a quorum Get, writeTimeout to
+// answer) and merges it, so that a revocation made next covers every grant
+// recorded so far on any replica, the ones this replica's watch has not
+// delivered yet included (it lags by up to a second, more on a loaded API
+// server). nil once the index holds the document as the API server
+// answered it (or the ConfigMap is known missing: every grant is refused),
+// ErrNotRecorded when the read fails, is refused, or shows a grants
+// document this console does not read. A failure counts as one of the API
+// server (failed), as a write's does. Without a ConfigMap (one replica)
+// the index is the only one, and nil.
+func (s *Store) ReadGrants(ctx context.Context) error {
+	if s == nil {
+		return ErrNotRecorded
+	}
+	if !s.Enabled() {
+		return nil
+	}
+	getCtx, cancel := context.WithTimeout(ctx, writeTimeout)
+	defer cancel()
+	cm, err := s.opts.Client.Get(getCtx, s.opts.Name, metav1.GetOptions{})
+	if err != nil {
+		if apierrors.IsNotFound(s.failed(err)) {
+			return nil
+		}
+		return fmt.Errorf("%w: reading ConfigMap %s: %w", ErrNotRecorded, s.opts.Name, err)
+	}
+	var unreadable bool
+	s.locked(func() {
+		s.mergeReadLocked(cm)
+		unreadable = s.foreign[KeyGrants] || s.base == nil
+	})
+	if unreadable {
+		return ErrNotRecorded
 	}
 	return nil
 }
