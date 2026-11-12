@@ -453,7 +453,7 @@ func TestPurgeBandHoldsOverChains(t *testing.T) {
 			seq = append(seq, chainBackup{id: fmt.Sprintf("b%d", i), typ: typ, stop: stops[i], full: lastFull})
 		}
 		listedN := len(seq)
-		var newsEnds []time.Time
+		newsEnds := make([]time.Time, 0, 4)
 		for range rng.IntN(5) {
 			end := read.Add(time.Duration(1 + rng.Int64N(int64(age))))
 			if rng.IntN(4) == 0 {
@@ -542,7 +542,7 @@ func TestPurgeBandHoldsOverChains(t *testing.T) {
 		snap := &evidencev1alpha1.RepositoryEvidenceSnapshot{Details: evidencev1alpha1.Details{Type: "pgbackrest", PGBackRest: &evidencev1alpha1.PGBackRestSummary{Retention: r}}}
 		in := timelineInput{facts: recoveryFacts{now: now}, scannedAt: &read, refresh: time.Duration(1 + rng.Int64N(int64(day))), pgBackRest: true}
 		in.policy = pgbackrestPolicyOf(snap)
-		var spans []interval
+		spans := make([]interval, 0, len(listed))
 		for _, b := range listed {
 			end := b.stop
 			in.backups = append(in.backups, evidence.BackupItem{ID: b.id, EndAt: &end, PgBackRest: &evidence.PgBackRestItem{Type: b.typ, Usable: true}})
