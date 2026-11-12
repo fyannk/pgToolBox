@@ -66,6 +66,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
@@ -400,8 +401,9 @@ type Store struct {
 
 	// writes serializes the writes of the ConfigMap: a batch (flush) and
 	// a write-through (SpendCode, MarkCode, WriteRevocations) never run at
-	// once. Taken before mu, never under it.
-	writes    sync.Mutex
+	// once. A semaphore (lockWrites), so that a caller that gave up while
+	// waiting for it never starts a write. Taken before mu, never under it.
+	writes    chan struct{}
 	mu        sync.Mutex
 	signedOut map[string]signOut
 	facts     map[string]fact
@@ -514,6 +516,7 @@ func New(opts Options) *Store {
 		opts: opts, signedOut: map[string]signOut{}, facts: map[string]fact{}, sent: map[string]int64{}, grants: map[string]grantEntry{}, codes: map[string]codeEntry{}, drills: map[string]DrillResult{}, byObject: map[string]map[string]struct{}{},
 		foreign: map[string]bool{}, foreignLogged: map[string]int{}, takeOverLogged: map[string]bool{}, othersBeats: map[string]beat{},
 		recorded: map[string]time.Time{}, unwritten: map[string]bool{}, unversionedLogged: map[string]bool{}, mode: modePending, since: opts.Now().UTC(), wake: make(chan struct{}, 1),
+		writes: make(chan struct{}, 1),
 	}
 	if opts.Name == "" {
 		s.mode = modeDisabled
@@ -1123,12 +1126,39 @@ func (s *Store) MarksKnown() bool {
 // changedLocked records a local change and wakes the writer.
 func (s *Store) changedLocked(urgent bool) {
 	s.gen++
+	s.wakeLocked(urgent)
+}
+
+// wakeLocked wakes the writer, with no local change: a write is due all
+// the same (flush, in the failing mode).
+func (s *Store) wakeLocked(urgent bool) {
 	s.urgent = s.urgent || urgent
 	select {
 	case s.wake <- struct{}{}:
 	default:
 	}
 }
+
+// lockWrites takes writes, unless ctx ends first: a caller that gave up
+// (the client closed the connection) never starts a write. It returns
+// ctx.Err() then; unlockWrites releases what it took.
+func (s *Store) lockWrites(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	select {
+	case s.writes <- struct{}{}:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	if err := ctx.Err(); err != nil {
+		s.unlockWrites()
+		return err
+	}
+	return nil
+}
+
+func (s *Store) unlockWrites() { <-s.writes }
 
 // validFact reports whether a remote entry is one this console could
 // have written.
@@ -1276,6 +1306,10 @@ func (s *Store) mergeLocked(cm *corev1.ConfigMap) {
 		// of grants, drop a grant added since (mergeGrantsLocked).
 		return
 	}
+	// A ConfigMap no older than the base ends a run of older Gets
+	// (mergeReadLocked): two such Gets hours apart, each overtaken by the
+	// watch, are no rewound revision.
+	s.rewound = 0
 	s.base, s.seenRV = cm.DeepCopy(), cm.ResourceVersion
 	if s.uid != "" && cm.UID != "" && cm.UID != s.uid {
 		s.recreatedLocked()
@@ -1361,7 +1395,10 @@ func (s *Store) mergeLocked(cm *corev1.ConfigMap) {
 	}
 	s.gaugeForeignLocked()
 	if !s.inSyncWithLocked(s.pruneLocked()) || s.beatDueLocked() {
-		s.changedLocked(false)
+		// A revocation made here that no document holds yet (one made
+		// while the ConfigMap was missing, kept by recreatedLocked) is
+		// written within about a second, as when it was made.
+		s.changedLocked(len(s.unwritten) > 0)
 	}
 }
 
@@ -1718,9 +1755,17 @@ func (s *Store) inSyncWithLocked(docs map[string]string) bool {
 
 // flush writes the local state when it differs from the ConfigMap,
 // re-reading and merging on a conflict.
+//
+// In the failing mode it writes even when nothing is pending: a write-
+// through that failed rolled its change back, and the replica would
+// otherwise stay failing (refusing every grant past staleGrace) until an
+// unrelated change. The write, unchanged, is a no-op for the API server
+// and proves the ConfigMap writable again (modeLive).
 func (s *Store) flush(ctx context.Context) error {
-	s.writes.Lock()
-	defer s.writes.Unlock()
+	if err := s.lockWrites(ctx); err != nil {
+		return err
+	}
+	defer s.unlockWrites()
 	ctx, cancel := context.WithTimeout(ctx, writeTimeout)
 	defer cancel()
 	for range maxAttempts {
@@ -1730,7 +1775,7 @@ func (s *Store) flush(ctx context.Context) error {
 			return nil
 		}
 		docs := s.pruneLocked()
-		if s.inSyncWithLocked(docs) && !s.beatDueLocked() {
+		if s.inSyncWithLocked(docs) && !s.beatDueLocked() && s.mode != modeFailing {
 			s.written, s.urgent = s.gen, false
 			s.mu.Unlock()
 			return nil
@@ -1770,8 +1815,14 @@ func (s *Store) flush(ctx context.Context) error {
 	return fmt.Errorf("write of ConfigMap %s: still conflicting after %d attempts", s.opts.Name, maxAttempts)
 }
 
-// failed records a read or write failure as the store's mode.
+// failed records a read or write failure as the store's mode. A
+// cancellation is no answer of the API server (a caller or the process
+// that gave up; a write's own deadline is context.DeadlineExceeded):
+// the mode is left as it is.
 func (s *Store) failed(err error) error {
+	if errors.Is(err, context.Canceled) {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	switch {
@@ -1808,6 +1859,10 @@ func (s *Store) setModeLocked(m mode, reason string) {
 			slog.String("rbac", "verbs get, watch, update on configmaps, resourceNames ["+s.opts.Name+"]"))
 	case modeFailing:
 		log.Warn("shared state ConfigMap unreachable; retrying", slog.String("reason", reason))
+		// The writer retries, with nothing pending too (flush), until a
+		// write lands: the failing mode is left by a write, never only
+		// waited out.
+		s.wakeLocked(true)
 	case modeLive:
 		if previous != modePending {
 			log.Info("shared state ConfigMap in use again")
@@ -1816,6 +1871,7 @@ func (s *Store) setModeLocked(m mode, reason string) {
 	}
 	sharedMode.Reset()
 	sharedMode.WithLabelValues(string(m)).Set(1)
+	sharedModeSince.Set(float64(s.since.Unix()))
 }
 
 // SetLive records the objects the cache holds, for pruning.
@@ -1949,8 +2005,11 @@ func (s *Store) writer(ctx context.Context) {
 			case <-time.After(s.opts.Backoff(attempt)):
 			}
 			s.mu.Lock()
-			if s.gen != s.written {
+			switch {
+			case s.gen != s.written:
 				s.changedLocked(false)
+			case s.mode == modeFailing:
+				s.wakeLocked(false)
 			}
 			s.mu.Unlock()
 			continue

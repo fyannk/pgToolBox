@@ -25,6 +25,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 )
@@ -34,9 +35,17 @@ import (
 type lossy struct {
 	*apiServer
 	lose bool
+	// transient refuses updates as an API server under load (503).
+	transient bool
 }
 
 func (l *lossy) Update(ctx context.Context, cm *corev1.ConfigMap, o metav1.UpdateOptions) (*corev1.ConfigMap, error) {
+	if l.transient {
+		return nil, apierrors.NewServiceUnavailable("throttled")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err // as client-go once the request's context is done
+	}
 	out, err := l.apiServer.Update(ctx, cm, o)
 	if err == nil && l.lose {
 		return nil, errors.New("context deadline exceeded")
@@ -136,7 +145,7 @@ func pathModel(t *testing.T, seed uint64, skew time.Duration) (lost, acknowledge
 		i := rng.IntN(replicas)
 		s := stores[i]
 		now := clock.Now()
-		switch rng.IntN(13) {
+		switch rng.IntN(15) {
 		case 0:
 			cut[i] = !cut[i]
 			trace = append(trace, fmt.Sprintf("%d cut=%v", i, cut[i]))
@@ -269,6 +278,43 @@ func pathModel(t *testing.T, seed uint64, skew time.Duration) (lost, acknowledge
 					trace = append(trace, fmt.Sprintf("%d rotated %d", i, n))
 				}
 			}
+		case 13:
+			// A caller that gave up (the client closed the connection)
+			// before its disconnection or its spend was written: never
+			// acknowledged, and no reason to leave the live mode.
+			if next == 0 {
+				continue
+			}
+			id := grantID(1 + rng.IntN(next))
+			before := modeOf(s)
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			if s.GrantRevoked(id) && s.WriteRevocations(ctx, id) == nil {
+				t.Fatalf("seed %d: a cancelled disconnection acknowledged", seed)
+			}
+			if err := s.SpendCode(ctx, fmt.Sprintf("cancelled-%d", len(trace)), uh("alice"), now.Add(time.Minute)); err == nil {
+				t.Fatalf("seed %d: a cancelled spend recorded", seed)
+			}
+			if before == modeLive && modeOf(s) != modeLive {
+				t.Fatalf("seed %d: a cancelled caller left replica %d %s", seed, i, modeOf(s))
+			}
+			trace = append(trace, fmt.Sprintf("%d cancelled caller", i))
+		case 14:
+			// An API server under load refuses one write-through; the
+			// next batch, with nothing of the replica's own pending,
+			// brings it back.
+			if cut[i] {
+				continue
+			}
+			clients[i].transient = true
+			_ = s.SpendCode(context.Background(), fmt.Sprintf("throttled-%d", len(trace)), uh("alice"), now.Add(time.Minute))
+			clients[i].transient = false
+			failing := modeOf(s) == modeFailing
+			_ = s.flush(context.Background())
+			if failing && modeOf(s) != modeLive {
+				t.Fatalf("seed %d: replica %d still %s after a batch that the API server took\n%s", seed, i, modeOf(s), strings.Join(trace, "\n"))
+			}
+			trace = append(trace, fmt.Sprintf("%d throttled write (failing %v)", i, failing))
 		default:
 			if !cut[i] {
 				syncOnce(s, api)

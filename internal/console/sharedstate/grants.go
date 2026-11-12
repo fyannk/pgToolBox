@@ -584,10 +584,16 @@ func (s *Store) WriteRevocations(ctx context.Context, ids ...string) error {
 		}
 		return true
 	}
-	s.writes.Lock()
-	defer s.writes.Unlock()
+	if s.lockWrites(ctx) != nil {
+		return ErrNotRecorded
+	}
+	defer s.unlockWrites()
 	s.mu.Lock()
-	if s.base == nil || s.mode == modeMissing || s.mode == modeForbidden || s.foreign[KeyGrants] {
+	if s.mode == modeMissing {
+		s.mu.Unlock()
+		return ErrNoConfigMap
+	}
+	if s.base == nil || s.mode == modeForbidden || s.foreign[KeyGrants] {
 		s.mu.Unlock()
 		return ErrNotRecorded
 	}
@@ -730,6 +736,15 @@ func (s *Store) UseCode(code, userHash string, until time.Time) error {
 // nothing was recorded, and the caller must not act on the value.
 var ErrNotRecorded = errors.New("the spend could not be recorded in the shared state")
 
+// ErrNoConfigMap is WriteRevocations while the ConfigMap does not exist
+// (it was deleted, or never created): there is nothing to write to, and
+// every replica refuses every grant meanwhile (GrantsUsable, each
+// replica's watch delivering the deletion). The revocations stay on this
+// replica and are written within about a second of the ConfigMap's
+// return (recreatedLocked); a restart of this replica before then loses
+// them.
+var ErrNoConfigMap = errors.New("the shared state ConfigMap does not exist: every replica refuses every grant until it does")
+
 // SpendCode is UseCode written through: the spend is in the ConfigMap,
 // under the API server's optimistic concurrency, before it returns nil.
 // A conflict re-reads the ConfigMap; a spend found there (another
@@ -751,8 +766,10 @@ func (s *Store) SpendCode(ctx context.Context, code, userHash string, until time
 	// No batch is written while the spend is (writes): one would carry
 	// the reservation, and the write-through, conflicting with it, would
 	// find the spend in the ConfigMap and call its own spend another's.
-	s.writes.Lock()
-	defer s.writes.Unlock()
+	if s.lockWrites(ctx) != nil {
+		return ErrNotRecorded
+	}
+	defer s.unlockWrites()
 	s.mu.Lock()
 	if s.base == nil || s.mode == modeMissing || s.mode == modeForbidden || s.foreign[KeyGrants] {
 		s.mu.Unlock()
@@ -794,8 +811,13 @@ func (s *Store) SpendCode(ctx context.Context, code, userHash string, until time
 // conflict's re-read is merged: one the merge removed (the value expired,
 // or anything else that empties the local state) would not be in the
 // next write, which would then land without it, so it is ErrNotRecorded.
+//
+// Once started, the write is not cancelled with the caller's request
+// (it is bounded by writeTimeout): a caller that gives up midway is no
+// failure of the API server, and must not put the replica in the
+// failing mode, nor leave a write whose outcome nobody reads.
 func (s *Store) writeThrough(ctx context.Context, spentIn func(*corev1.ConfigMap) bool, held func() bool, desired *corev1.ConfigMap, gen uint64) error {
-	ctx, cancel := context.WithTimeout(ctx, writeTimeout)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), writeTimeout)
 	defer cancel()
 	for range maxAttempts {
 		updated, err := s.opts.Client.Update(ctx, desired, metav1.UpdateOptions{FieldManager: "pgtoolbox-console"})
@@ -900,8 +922,10 @@ func (s *Store) MarkCode(ctx context.Context, code, mark, userHash string) error
 	h := codeHash(code)
 	if s.Enabled() {
 		// As SpendCode: no batch carries the mark meanwhile.
-		s.writes.Lock()
-		defer s.writes.Unlock()
+		if s.lockWrites(ctx) != nil {
+			return ErrNotRecorded
+		}
+		defer s.unlockWrites()
 	}
 	s.mu.Lock()
 	if s.Enabled() && (s.base == nil || s.mode == modeMissing || s.mode == modeForbidden || s.foreign[KeyGrants]) {
