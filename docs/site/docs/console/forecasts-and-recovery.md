@@ -479,16 +479,24 @@ segments, so the bar and the answer always agree:
   minutes in the future, which a plugin sending milliseconds gets, or one
   before the backup's start or, alone, its creation) is read as no stop time.
   Such a completed backup is then timed by CloudNativePG's completion stamp
-  (`status.reconciliationTerminatedAt`, written by the instance manager, or
-  the operator for a volume snapshot, seconds after the backup ended): one
-  stamped before the scan ended before it. With no stamp either, it is
-  counted as one that could have ended at any time. A `Backup` restored with
+  (`status.reconciliationTerminatedAt`, seconds after the backup ended,
+  written by the instance manager for a barman or plugin backup it completed
+  or failed, else by the operator): one stamped before the scan ended before
+  it. With no stamp either, it is counted as one that could have ended at any
+  time. A `Backup` restored with
   its status (Velero) or migrated from another cluster carries start and stop
   times older than the object itself; when they are coherent, and its
   CloudNativePG stamps are as old (or absent), they are kept, and the backup
   counts when it ended, not as one ended since. Tool times that old on a
   `Backup` stamped at or after its creation are an instance clock running
-  behind, and are read as no times. With
+  behind, and are read as no times. So is a start, stop or completion stamp
+  more than five minutes before `status.reconciliationStartedAt`, which the
+  operator writes before the instance runs the backup: the instance manager
+  writes the tool times and the completion stamp on the same clock, so once
+  one of them is that early all three are dropped and the backup counts as one
+  that could have ended at any time, never as one that ended before the scan.
+  The Overview then times it by the operator's start stamp and says its stop
+  time and completion stamp are not plausible. With
   `repo-retention-full=K` (type `count`), L fulls listed and n backups since,
   the oldest L + n − K listed fulls may be gone with their chains, and the band
   runs to the first restore point of the next one; the whole window when that is
