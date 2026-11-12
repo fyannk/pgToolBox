@@ -311,8 +311,8 @@ watch's permission only when it opens, so a replica whose watch opened before
 the permission was withdrawn still serves grants until its next freshness read
 ([above](#what-a-console-grant-is)) is refused, and the answer stays `503`,
 **Disconnect all** with nothing to revoke included, whatever the replica read
-before; once a freshness read is answered again, the replica reopens its watch
-and serves grants again. A sign-out with **disconnect my assistants** goes
+before; once the console may read and write it again, the replica serves
+grants again. A sign-out with **disconnect my assistants** goes
 on whatever the outcome; when the disconnection is not confirmed, the
 signed-out page says your assistants may still be connected and to use
 **Disconnect all** (and the console log says so). Without the

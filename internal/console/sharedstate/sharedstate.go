@@ -1957,6 +1957,11 @@ func (s *Store) failed(err error) error {
 	switch {
 	case apierrors.IsNotFound(err):
 		s.setModeLocked(modeMissing, "")
+	case apierrors.IsForbidden(err) && s.watching:
+		// A request refused while the watch still delivers: failing,
+		// which retries its writes and keeps since, rather than a
+		// forbidden mode nothing on this watch would leave.
+		s.setModeLocked(modeFailing, "the API server refused a request")
 	case apierrors.IsForbidden(err):
 		s.setModeLocked(modeForbidden, "")
 	default:
