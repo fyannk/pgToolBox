@@ -16,6 +16,7 @@ package status
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -159,6 +160,87 @@ func TestBackupCadence(t *testing.T) {
 			got := backupCadence(&gathered{cluster: tt.cluster, scheduled: tt.scheduled}, now, tt.last)
 			if got.Basis != tt.wantBasis || got.Overdue != tt.wantOverdue {
 				t.Errorf("cadence = %+v, want basis %s overdue %v", *got, tt.wantBasis, tt.wantOverdue)
+			}
+		})
+	}
+}
+
+// TestBackupRecencyReadsPlausibleTimes (round 19, CNPG P3-1): the
+// Overview's last backup and the timeline read a Backup's stop through
+// cnpgstatus.BackupTimesOf. A plugin's unset stop (1970) is not "last
+// completed 1970, overdue", a stop in the future is not a backup that
+// never ages (a false ok), and a Completed Backup with no plausible stop
+// is timed by the operator's completion stamp, attributed to that field.
+func TestBackupRecencyReadsPlausibleTimes(t *testing.T) {
+	const uid = types.UID("5e1f0c2a-0000-4000-8000-000000000002")
+	created := now.Add(-time.Hour)
+	cluster := &cnpgv1.Cluster{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "team-a", Name: "reborn", UID: uid, CreationTimestamp: metav1.NewTime(created)},
+		Spec: cnpgv1.ClusterSpec{Instances: 1, Plugins: []cnpgv1.PluginConfiguration{{
+			Name: "barman-cloud.cloudnative-pg.io", IsWALArchiver: new(true), Parameters: map[string]string{"barmanObjectName": "store"},
+		}}},
+		Status: cnpgv1.ClusterStatus{Phase: "Cluster in healthy state", Instances: 1, ReadyInstances: 1, CurrentPrimary: "reborn-1"},
+	}
+	owner := &metav1.OwnerReference{APIVersion: "postgresql.cnpg.io/v1", Kind: "Cluster", Name: "reborn", UID: uid}
+	stamp := now.Add(-10 * time.Minute)
+	for _, tt := range []struct {
+		name          string
+		stopped       time.Time
+		stamp         *time.Time
+		wantCompleted *time.Time
+		wantSource    string
+	}{
+		{"a plugin's unset stop is not 1970", time.Unix(0, 0), nil, nil, "Backup.status"},
+		{"a stop in the future is not a fresh backup", now.Add(1000 * 24 * time.Hour), nil, nil, "Backup.status"},
+		{"no plausible stop: the operator's completion stamp", time.Unix(0, 0), &stamp, &stamp, backupStampSource},
+		{"a plausible stop", now.Add(-20 * time.Minute), &stamp, new(now.Add(-20 * time.Minute)), "Backup.status"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			b := completedBackup("b", now.Add(-30*time.Minute), tt.stopped, owner)
+			b.UID = "b-uid"
+			if tt.stamp != nil {
+				b.Status.ReconciliationTerminatedAt = new(metav1.NewTime(*tt.stamp))
+			}
+			scheme, err := cache.NewScheme()
+			if err != nil {
+				t.Fatal(err)
+			}
+			builder := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cluster.DeepCopy(), b)
+			for _, index := range cache.Indexes() {
+				builder = builder.WithIndex(index.Object, index.Field, index.Func)
+			}
+			fc := &fakeCache{reader: builder.Build(), namespaces: []string{"team-a"}}
+			svc := New(Options{Cache: fc, Sweep: fakeSweep{snaps: sweepSnaps()}, Now: func() time.Time { return now }})
+			got, err := svc.Backups(context.Background(), "team-a", "reborn")
+			if err != nil {
+				t.Fatal(err)
+			}
+			last := got.Summary.LastCompletedAt
+			switch {
+			case tt.wantCompleted == nil && last != nil:
+				t.Errorf("last completed = %v, want none", *last)
+			case tt.wantCompleted != nil && (last == nil || !last.Equal(*tt.wantCompleted)):
+				t.Errorf("last completed = %v, want %v", last, *tt.wantCompleted)
+			}
+			if tt.wantCompleted == nil && got.Summary.Health == viewmodel.HealthOK {
+				t.Errorf("health ok with no plausible completed backup")
+			}
+			if src := got.Summary.BackupRecency.Provenance.Source; src != tt.wantSource {
+				t.Errorf("provenance %q, want %q", src, tt.wantSource)
+			}
+			if detail := backupDetail(got.Summary.BackupRecency, now); (tt.wantSource == backupStampSource) != strings.Contains(detail, "operator's completion time") {
+				t.Errorf("detail %q does not attribute the time to its source", detail)
+			}
+			facts, ok := svc.ClusterFacts(context.Background(), cache.ClusterKey{Namespace: "team-a", Name: "reborn"})
+			if !ok || len(facts.Backups) != 1 {
+				t.Fatalf("timeline facts: %v %+v", ok, facts.Backups)
+			}
+			at := facts.Backups[0].StoppedAt
+			switch {
+			case tt.wantCompleted == nil && !at.IsZero():
+				t.Errorf("timeline stop %s, want none (observed by the console)", at)
+			case tt.wantCompleted != nil && !at.Equal(*tt.wantCompleted):
+				t.Errorf("timeline stop %s, want %s", at, *tt.wantCompleted)
 			}
 		})
 	}

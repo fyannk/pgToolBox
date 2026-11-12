@@ -272,35 +272,54 @@ func componentVersions(run *diag.Run, image string) []viewmodel.ComponentVersion
 	return out
 }
 
-// backupRecency is the newest completed and failed Backup of the Cluster.
+// backupStampSource is the provenance of a last completed backup timed
+// by the operator's completion stamp (backupRecency).
+const backupStampSource = "Backup.status.reconciliationTerminatedAt"
+
+// backupRecency is the newest completed and failed Backup of the Cluster,
+// timed through cnpgstatus.BackupTimesOf (round 19, CNPG P3-1): a stop
+// time a plugin left unset (CloudNativePG stamps 1970-01-01) or set in
+// the future (never overdue) is not one. A Completed Backup with no
+// plausible stop is timed by the operator's completion stamp
+// (status.reconciliationTerminatedAt, set by SetAsCompleted seconds after
+// the end: an upper bound on it), and the claim then names that field.
 func (s *Service) backupRecency(g *gathered) viewmodel.BackupRecency {
+	now := s.now().UTC()
 	cfg := cnpgstatus.Backups(g.cluster)
 	r := viewmodel.BackupRecency{
 		Configured:  cfg.Configured || len(g.scheduled) > 0,
 		PluginBased: cfg.PluginBased,
-		Provenance:  s.provenance(g.key.Namespace, cache.SourceBackups, viewmodel.OriginOperator, "Backup.status", s.now().UTC()),
+		Provenance:  s.provenance(g.key.Namespace, cache.SourceBackups, viewmodel.OriginOperator, "Backup.status", now),
 	}
 	if !g.listed(cache.SourceBackups) {
 		r.Health = viewmodel.HealthUnknown
 		return r
 	}
+	stamped := false
 	for _, b := range g.backups {
-		stopped := b.Status.StoppedAt
+		times := cnpgstatus.BackupTimesOf(b, now)
 		switch b.Status.Phase {
 		case cnpgv1.BackupPhaseCompleted:
-			if stopped != nil && (r.LastCompletedAt == nil || stopped.After(*r.LastCompletedAt)) {
-				t := stopped.UTC()
-				r.LastCompletedAt = &t
+			at, bound := times.Stop, false
+			if at == nil {
+				at, bound = times.OperatorTerminated, true
+			}
+			if at != nil && (r.LastCompletedAt == nil || at.After(*r.LastCompletedAt)) {
+				t := *at
+				r.LastCompletedAt, stamped = &t, bound
 			}
 		case cnpgv1.BackupPhaseFailed:
 			at := b.CreationTimestamp.UTC()
-			if stopped != nil {
-				at = stopped.UTC()
+			if times.Stop != nil {
+				at = *times.Stop
 			}
 			if r.LastFailedAt == nil || at.After(*r.LastFailedAt) {
 				r.LastFailedAt = &at
 			}
 		}
+	}
+	if stamped {
+		r.Provenance.Source = backupStampSource
 	}
 	if r.LastFailedAt != nil && r.LastCompletedAt != nil && !r.LastFailedAt.After(*r.LastCompletedAt) {
 		r.LastFailedAt = nil
@@ -377,6 +396,8 @@ func backupDetail(r viewmodel.BackupRecency, now time.Time) string {
 	case r.Cadence != nil && r.Cadence.Overdue:
 		return "completed " + age(now, *r.LastCompletedAt) + " ago, older than " +
 			age(now, now.Add(-time.Duration(r.Cadence.ThresholdSeconds)*time.Second)) + " (no backup cadence known)"
+	case r.Provenance.Source == backupStampSource:
+		return "completed " + age(now, *r.LastCompletedAt) + " ago, by the operator's completion time (the backup tool reported no plausible stop time)"
 	default:
 		return "completed " + age(now, *r.LastCompletedAt) + " ago"
 	}

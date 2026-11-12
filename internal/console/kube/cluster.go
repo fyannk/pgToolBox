@@ -21,6 +21,7 @@ package kube
 
 import (
 	"log/slog"
+	"time"
 
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
@@ -38,6 +39,9 @@ type target struct {
 type Client struct {
 	opts   target
 	logger *slog.Logger
+	// now is the instant the converters judge times against (a Backup
+	// time in the future is not plausible: observe.SaneBackupTimes).
+	now time.Time
 }
 
 // clusterGVR is the CloudNativePG Cluster resource.
