@@ -194,9 +194,10 @@ type Reading struct {
 // (pkg/management/postgres/probes.go v1.30.1:47-62, webserver/remote.go
 // pgStatus). Every PostgreSQL field of such a report (pg_stat_archiver,
 // readyWalFiles, the WAL positions and file, the timeline) is then
-// unknown, never zero: its zero values are what was not read.
+// unknown, never zero: its zero values are what was not read. A rewind in
+// progress returns before PostgreSQL is read too (probes.go v1.30.1:64-69).
 func (r Reading) Masked() bool {
-	return r.MightBeUnavailableMaskedError != ""
+	return r.MightBeUnavailableMaskedError != "" || r.IsPgRewindRunning
 }
 
 // Snapshot is what the console reads: the last report per instance,
