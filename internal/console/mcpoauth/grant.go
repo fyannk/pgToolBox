@@ -272,27 +272,17 @@ var ErrNoSuchGrant = errors.New("no such grant")
 // person is told to retry.
 var ErrNotRecorded = errors.New("the disconnection could not be recorded for every replica; retry")
 
-// ErrNotConfirmed means the shared state could not be read (or this
-// replica would not read it now: too many disconnections asked at once),
-// so the disconnection is not confirmed: grants recorded on another
+// ErrNotConfirmed means the shared state could not be read, so the
+// disconnection is not confirmed: grants recorded on another
 // replica may still be served, none may have been revoked. The person is
 // told so, and to retry. Some grants this replica knew may have been
 // revoked (and written) meanwhile.
 var ErrNotConfirmed = errors.New("the disconnection could not be confirmed: the shared state could not be read; retry")
 
-// errReadThrottled is a read of the shared state this replica refused to
-// make (readGrants).
-var errReadThrottled = errors.New("too many disconnections asked at once")
-
-// readGrants is the read of the shared index a disconnection makes,
-// charged to the person's bucket, then the replica's: nil once the index
-// holds the shared state as the API server answered it, ErrNotConfirmed
-// otherwise.
-func (s *Server) readGrants(ctx context.Context, user string) error {
-	if !s.subjectGrantReads.Allow(user) || !s.grantReads.Allow(processKey) {
-		requests.WithLabelValues("revoke", "throttled").Inc()
-		return fmt.Errorf("%w: %w", ErrNotConfirmed, errReadThrottled)
-	}
+// readGrants is the read of the shared index a disconnection makes: nil
+// once the index holds the shared state as the API server answered it,
+// ErrNotConfirmed otherwise.
+func (s *Server) readGrants(ctx context.Context) error {
 	if err := s.o.Store.ReadGrants(ctx); err != nil {
 		requests.WithLabelValues("revoke", "unconfirmed").Inc()
 		return fmt.Errorf("%w: %w", ErrNotConfirmed, err)
@@ -311,8 +301,8 @@ func (s *Server) readGrants(ctx context.Context, user string) error {
 // server still takes requests), and the page shows ErrNoSuchGrant as the
 // assistant disconnected. ErrNoSuchGrant is so an answer only once that
 // read shows no such grant of the person (or the ConfigMap is missing,
-// and every replica refuses every grant); a read that fails, or is
-// refused (readGrants), is ErrNotConfirmed (round 21, security P2-1). An
+// and every replica refuses every grant); a read that fails
+// (readGrants) is ErrNotConfirmed (round 21, security P2-1). An
 // ID that is no grant reference is ErrNoSuchGrant at once, with no read.
 // Every grant an assistant holds was written to the ConfigMap before its
 // first token (redeemCode), so the read shows every one there is.
@@ -322,7 +312,7 @@ func (s *Server) RevokeGrant(ctx context.Context, c auth.Client, user, id string
 	}
 	g, ok := s.o.Store.Grant(id)
 	if !ok || !slices.Contains(s.userKeys(user), g.UserHash) {
-		if err := s.readGrants(ctx, user); err != nil {
+		if err := s.readGrants(ctx); err != nil {
 			return err
 		}
 		g, ok = s.o.Store.Grant(id)
@@ -378,12 +368,12 @@ func (s *Server) written(ctx context.Context, err error, grants int) error {
 // written there before its first token (redeemCode), so nil means none
 // of the person's grants is served by any replica once each has merged
 // the revocations (about a second). ErrNotConfirmed whenever that read
-// fails or is refused: the grants it would have shown are not revoked,
+// fails: the grants it would have shown are not revoked,
 // whatever the write of the others does (round 21, security P2-1); the
 // ones this replica knows are revoked here either way. ErrNotRecorded,
 // as RevokeGrant, when the read worked and the write did not.
 func (s *Server) DisconnectAll(ctx context.Context, c auth.Client, user string) (int, error) {
-	read := s.readGrants(ctx, user)
+	read := s.readGrants(ctx)
 	ids := s.revokeAll(ctx, c, user)
 	n := len(ids)
 	// A retry after ErrNotRecorded writes again what the first attempt

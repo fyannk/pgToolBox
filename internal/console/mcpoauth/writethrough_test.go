@@ -21,7 +21,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/fyannk/pgToolBox/internal/console/auth"
 	"github.com/fyannk/pgToolBox/internal/console/sharedstate"
@@ -140,12 +139,9 @@ func TestADisconnectionTellsAReadFromAWriteFailure(t *testing.T) {
 	}
 }
 
-// A disconnection that reads the shared state is bounded per person and
-// per replica (round 22, k8s P2-1, Go P2-2), and an ID that is no grant
-// reference reads nothing: a signed-in person looping DELETE cannot make
-// the replica read the ConfigMap at will. A refused read is
-// ErrNotConfirmed, never done.
-func TestDisconnectionReadsAreBounded(t *testing.T) {
+// An ID that is no grant reference reads nothing (round 22, k8s P2-1):
+// it is ErrNoSuchGrant before any read of the shared state.
+func TestAMalformedGrantIDReadsNothing(t *testing.T) {
 	ctx := context.Background()
 	c := &clock{now: t0}
 	f := newSessions(t, c, secretA)
@@ -159,37 +155,5 @@ func TestDisconnectionReadsAreBounded(t *testing.T) {
 	}
 	if n := store.reads.Load(); n != 0 {
 		t.Fatalf("malformed IDs made %d reads", n)
-	}
-	var refused int
-	for range 3 * subjectGrantReadsBurst {
-		if err := r.s.RevokeGrant(ctx, auth.Client{}, "alice", unknownGrant); errors.Is(err, ErrNotConfirmed) {
-			refused++
-		} else if !errors.Is(err, ErrNoSuchGrant) {
-			t.Fatalf("RevokeGrant: %v", err)
-		}
-	}
-	if n := store.reads.Load(); n != subjectGrantReadsBurst || refused != 2*subjectGrantReadsBurst {
-		t.Errorf("one person's loop: %d reads, %d refused; want %d and %d", n, refused, subjectGrantReadsBurst, 2*subjectGrantReadsBurst)
-	}
-	if _, err := r.s.DisconnectAll(ctx, auth.Client{}, "alice"); !errors.Is(err, ErrNotConfirmed) {
-		t.Errorf("Disconnect all past the person's bucket: %v, want ErrNotConfirmed", err)
-	}
-	// Another person is not refused for alice's loop.
-	if _, err := r.s.DisconnectAll(ctx, auth.Client{}, "bob"); err != nil {
-		t.Errorf("bob's Disconnect all: %v", err)
-	}
-	// The replica's bucket bounds many people at once.
-	r.s.subjectGrantReads = auth.NewRateLimiter(1<<20, 1<<20, maxLimiterKeys)
-	before := store.reads.Load()
-	for range 2 * grantReadsBurst {
-		_, _ = r.s.DisconnectAll(ctx, auth.Client{}, "carol")
-	}
-	if n := store.reads.Load() - before; n > grantReadsBurst {
-		t.Errorf("%d reads past the replica's bucket of %d", n, grantReadsBurst)
-	}
-	// Time refills them.
-	c.Add(time.Minute)
-	if _, err := r.s.DisconnectAll(ctx, auth.Client{}, "alice"); err != nil {
-		t.Errorf("after a minute: %v", err)
 	}
 }

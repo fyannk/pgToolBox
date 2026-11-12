@@ -83,8 +83,8 @@ const (
 // disconnectionUnavailable is the answer to ErrNotRecorded (the
 // revocation was made on the replica that answered, which refuses the
 // grant and writes it with its next batch; a retry writes it again) and
-// to ErrNotConfirmed (the replica could not read the shared state, or
-// would not now: nothing may be disconnected; a retry reads it again):
+// to ErrNotConfirmed (the replica could not read the shared state:
+// nothing may be disconnected; a retry reads it again):
 // 503 with a Retry-After, each its own problem type.
 func disconnectionUnavailable(err error) error {
 	model := &huma.ErrorModel{

@@ -91,11 +91,6 @@ const (
 	BucketOAuthSubjectTokens = "oauth_subject_tokens" // #nosec G101 -- a metric label, not a credential
 	BucketOAuthRegistrations = "oauth_registrations"
 	BucketOAuthDecisions     = "oauth_decisions"
-	// BucketGrantReads and BucketGrantReadsSubject: the reads of the
-	// shared grant index a disconnection makes (Disconnect all, an
-	// assistant this replica does not know), per replica and per person.
-	BucketGrantReads        = "grant_reads"
-	BucketGrantReadsSubject = "grant_reads_subject"
 	// BucketMetricsScrapes: /metrics per client address.
 	BucketMetricsScrapes = "metrics_scrapes"
 )

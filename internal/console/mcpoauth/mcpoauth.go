@@ -195,19 +195,7 @@ const (
 	// this replica, never a registered client's sign-in or refresh.
 	registrationsPerMinute = 600
 	registrationsBurst     = 120
-	// A disconnection that reads the shared grant index (Disconnect all,
-	// a grant this replica does not know) spends the person's bucket,
-	// then the replica's (round 22, k8s P2-1, Go P2-2): reads are
-	// coalesced and mostly of the metadata already
-	// (sharedstate.Store.ReadGrants), the buckets bound what one person
-	// repeating the request, or many at once, make this replica ask of the
-	// API server. A person clicks Disconnect all a few times; a refused
-	// one is 503 with Retry-After, like a read that failed.
-	grantReadsPerMinute        = 600
-	grantReadsBurst            = 60
-	subjectGrantReadsPerMinute = 20
-	subjectGrantReadsBurst     = 10
-	processKey                 = "process"
+	processKey             = "process"
 	// userKeyPurpose keys the grant index's user hashes.
 	userKeyPurpose = "mcp-grant-user"
 )
@@ -310,10 +298,6 @@ type Server struct {
 	subjectTokenRequests *auth.RateLimiter
 	registrations        *auth.RateLimiter
 	decisions            *auth.RateLimiter
-	// grantReads and subjectGrantReads bound the reads of the shared
-	// index a disconnection makes (readGrants).
-	grantReads        *auth.RateLimiter
-	subjectGrantReads *auth.RateLimiter
 
 	mu      sync.Mutex
 	touched map[string]time.Time
@@ -379,8 +363,6 @@ func New(o Options) (*Server, error) {
 		subjectTokenRequests: auth.NewRateLimiter(subjectTokenRequestsPerMinute, subjectTokenRequestsBurst, maxLimiterKeys).Named(auth.BucketOAuthSubjectTokens).Clock(o.Now),
 		registrations:        auth.NewRateLimiter(registrationsPerMinute, registrationsBurst, 1).Named(auth.BucketOAuthRegistrations).Clock(o.Now),
 		decisions:            auth.NewRateLimiter(decisionsPerMinute, decisionsBurst, maxLimiterKeys).Named(auth.BucketOAuthDecisions).Clock(o.Now),
-		grantReads:           auth.NewRateLimiter(grantReadsPerMinute, grantReadsBurst, 1).Named(auth.BucketGrantReads).Clock(o.Now),
-		subjectGrantReads:    auth.NewRateLimiter(subjectGrantReadsPerMinute, subjectGrantReadsBurst, maxLimiterKeys).Named(auth.BucketGrantReadsSubject).Clock(o.Now),
 		touched:              map[string]time.Time{},
 	}
 	if len(s.userKeys("probe")) == 0 {
