@@ -24,6 +24,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -665,9 +666,34 @@ func (s *Store) currentLocked() bool {
 // server). nil once the index holds the document as the API server
 // answered it (or the ConfigMap is known missing: every grant is refused),
 // ErrNotRecorded when the read fails, is refused, or shows a grants
-// document this console does not read. A failure counts as one of the API
-// server (failed), as a write's does. Without a ConfigMap (one replica)
+// document this console does not read. Without a ConfigMap (one replica)
 // the index is the only one, and nil.
+//
+// Any signed-in person reaches it (Disconnect all, the disconnection of a
+// grant this replica does not know), so it costs the API server little
+// (round 22, k8s P2-1, Go P2-2):
+//
+//   - Reads are coalesced (readGroup): a caller is answered by the read
+//     in flight only when that one was sent after it arrived, else by the
+//     next one, which every caller arriving meanwhile shares; never more
+//     than two at once, one sent.
+//   - On a replica whose watch is current, the ConfigMap's metadata is
+//     read first (Options.Meta): a version the watch has delivered, of
+//     the same ConfigMap, shows nothing the index lacks, and the whole
+//     ConfigMap (up to MaxData) is read only otherwise.
+//   - Only an answer that says so changes the mode: missing (404) or
+//     forbidden (403). A throttled (429), failed or timed out read is
+//     ErrNotRecorded and leaves the mode as it is: a person repeating
+//     the request cannot put the replica in the failing mode, and its
+//     grants out of use past staleGrace.
+//   - The read is merged as a watch event is (mergeLocked): an answer
+//     the watch overtook is not merged, and two of them never make an
+//     older ConfigMap the base (round 22, Go P3-2: the rewound revision
+//     is the Run loop's and the writes' reads' to detect).
+//   - A read that finds the ConfigMap while it was known missing (it was
+//     recreated, and this replica's poll has not seen it yet) leaves the
+//     missing mode for pending (round 22, Go P3-3): a revocation is then
+//     written to it, not answered done as held.
 func (s *Store) ReadGrants(ctx context.Context) error {
 	if s == nil {
 		return ErrNotRecorded
@@ -675,18 +701,49 @@ func (s *Store) ReadGrants(ctx context.Context) error {
 	if !s.Enabled() {
 		return nil
 	}
+	return s.grantReads.do(ctx, s.readGrants)
+}
+
+// readGrants is one read of ReadGrants.
+func (s *Store) readGrants(ctx context.Context) error {
 	getCtx, cancel := context.WithTimeout(ctx, writeTimeout)
 	defer cancel()
+	var current bool
+	s.locked(func() { current = s.mode == modeLive && s.currentLocked() })
+	var undecoded error
+	if current {
+		m, und, err := s.readMeta(getCtx)
+		undecoded = und
+		switch {
+		case undecoded != nil:
+		case err != nil:
+			return s.grantsReadFailed(err)
+		case m != nil:
+			var shown bool
+			s.locked(func() {
+				// The watch's progress as of the answer: what it has
+				// delivered since the read was sent is in the index too.
+				shown = s.mode == modeLive && s.currentLocked() && !s.delivered.ahead(m.ResourceVersion) &&
+					s.uid != "" && m.UID == s.uid
+			})
+			if shown {
+				return nil
+			}
+		}
+	}
 	cm, err := s.opts.Client.Get(getCtx, s.opts.Name, metav1.GetOptions{})
 	if err != nil {
-		if apierrors.IsNotFound(s.failed(err)) {
-			return nil
-		}
-		return fmt.Errorf("%w: reading ConfigMap %s: %w", ErrNotRecorded, s.opts.Name, err)
+		return s.grantsReadFailed(err)
 	}
+	s.metaUndecodable(undecoded)
 	var unreadable bool
 	s.locked(func() {
-		s.mergeReadLocked(cm)
+		s.mergeLocked(cm)
+		s.known = true
+		if s.mode == modeMissing {
+			s.setModeLocked(modePending, "")
+			s.rewatchLocked()
+		}
 		unreadable = s.foreign[KeyGrants] || s.base == nil
 	})
 	if unreadable {
@@ -694,6 +751,136 @@ func (s *Store) ReadGrants(ctx context.Context) error {
 	}
 	return nil
 }
+
+// grantsReadFailed is a failed read of ReadGrants: a 404 is the missing
+// mode and nil (every replica refuses every grant), a 403 the forbidden
+// mode; anything else (a 429, a 5xx, a timeout, a client-side limiter
+// that gave up, a cancellation) is ErrNotRecorded and no mode.
+func (s *Store) grantsReadFailed(err error) error {
+	if apierrors.IsNotFound(err) || apierrors.IsForbidden(err) {
+		if apierrors.IsNotFound(s.failed(err)) {
+			return nil
+		}
+	}
+	return fmt.Errorf("%w: reading ConfigMap %s: %w", ErrNotRecorded, s.opts.Name, err)
+}
+
+// readGroup coalesces reads of the ConfigMap that answer a question asked
+// at an instant (ReadGrants: what does the ConfigMap hold now?). A read
+// answers the callers that arrived before it was sent: the first caller
+// sends one; a caller arriving while it is in flight waits for the next,
+// which every caller arriving meanwhile shares and which is sent once the
+// first is answered. A read runs on the context of the caller that
+// started its chain without its cancellation (each read is bounded by
+// writeTimeout): a caller that gives up does not fail the others.
+type readGroup struct {
+	mu             sync.Mutex
+	inflight, next *readCall
+}
+
+type readCall struct {
+	done chan struct{}
+	err  error
+}
+
+func (g *readGroup) do(ctx context.Context, read func(context.Context) error) error {
+	g.mu.Lock()
+	var c *readCall
+	switch {
+	case g.inflight == nil:
+		c = &readCall{done: make(chan struct{})}
+		g.inflight = c
+		go g.run(context.WithoutCancel(ctx), c, read)
+	case g.next == nil:
+		c = &readCall{done: make(chan struct{})}
+		g.next = c
+	default:
+		c = g.next
+	}
+	g.mu.Unlock()
+	select {
+	case <-c.done:
+		return c.err
+	case <-ctx.Done():
+		return fmt.Errorf("%w: %w", ErrNotRecorded, ctx.Err())
+	}
+}
+
+func (g *readGroup) run(ctx context.Context, c *readCall, read func(context.Context) error) {
+	for c != nil {
+		c.err = read(ctx)
+		close(c.done)
+		g.mu.Lock()
+		c, g.next = g.next, nil
+		g.inflight = c
+		g.mu.Unlock()
+	}
+}
+
+// WriteGrant writes the grant id, recorded on this replica (AddGrant),
+// through to the ConfigMap, as SpendCode writes a spend: nil once a
+// document the API server holds records it (this write, or another
+// replica's that holds it already), ErrNotRecorded when that cannot be
+// done within writeTimeout (the grant stays in this replica's index; the
+// caller revokes it). Without a ConfigMap (one replica) there is nothing
+// to write.
+//
+// A grant's first token is issued only once it is written (round 22, Go
+// P2-1, security): every grant an assistant holds is then in the
+// ConfigMap, and a read of it (ReadGrants) shows every grant a
+// disconnection must revoke, whatever replica recorded it, even one cut
+// off from the API server since.
+func (s *Store) WriteGrant(ctx context.Context, id string) error {
+	if s == nil {
+		return ErrNotRecorded
+	}
+	if !s.Enabled() {
+		return nil
+	}
+	in := func(cm *corev1.ConfigMap) bool {
+		var doc grantsDoc
+		if cm == nil || json.Unmarshal([]byte(cm.Data[KeyGrants]), &doc) != nil {
+			return false
+		}
+		_, ok := doc.Grants[id]
+		return ok
+	}
+	if s.lockWrites(ctx) != nil {
+		return ErrNotRecorded
+	}
+	defer s.unlockWrites()
+	var desired *corev1.ConfigMap
+	var gen uint64
+	var early error
+	done := false
+	s.locked(func() {
+		_, held := s.grants[id]
+		switch {
+		case !held || s.base == nil || s.mode == modeMissing || s.mode == modeForbidden || s.foreign[KeyGrants]:
+			done, early = true, ErrNotRecorded
+		case in(s.base):
+			done = true
+		default:
+			desired, gen = s.desiredLocked(), s.gen
+		}
+	})
+	if done {
+		return early
+	}
+	held := func() bool { _, ok := s.grants[id]; return ok }
+	switch err := s.writeThrough(ctx, in, held, desired, gen); {
+	case errors.Is(err, ErrSpent):
+		return nil // the ConfigMap holds it already
+	case err != nil:
+		return err
+	}
+	return nil
+}
+
+// ValidGrantID reports whether id has the form of a grant reference
+// (grant-<32 hex>): anything else names no grant, and is answered without
+// reading the ConfigMap.
+func ValidGrantID(id string) bool { return validGrantID(id) }
 
 // UnwrittenRevocationsOf returns the IDs of userHash's grants revoked on
 // this replica that no document read or written holds revoked yet: what a
@@ -807,9 +994,11 @@ func (s *Store) UseCode(code, userHash string, until time.Time) error {
 	return nil
 }
 
-// ErrNotRecorded is SpendCode unable to write the spend to the ConfigMap:
-// nothing was recorded, and the caller must not act on the value.
-var ErrNotRecorded = errors.New("the spend could not be recorded in the shared state")
+// ErrNotRecorded is a read or write of the ConfigMap that could not be
+// made: SpendCode, MarkCode, WriteGrant and WriteRevocations unable to
+// write, ReadGrants unable to read. For a spend, nothing was recorded,
+// and the caller must not act on the value.
+var ErrNotRecorded = errors.New("the shared state could not be read or written")
 
 // ErrNoConfigMap is WriteRevocations while the ConfigMap does not exist
 // (it was deleted, or never created): there is nothing to write to, and

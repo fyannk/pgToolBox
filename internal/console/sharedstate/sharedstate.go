@@ -75,6 +75,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -553,6 +554,17 @@ type Store struct {
 	// rewatch asks the Run loop to open the watch again now, cutting its
 	// backoff short (pause): a write landed with no watch open.
 	rewatch chan struct{}
+	// delivered is what the open watch has delivered (watchOnce), set
+	// with what it merged: a read whose version it is not ahead of shows
+	// nothing the index lacks (ReadGrants).
+	delivered watchProgress
+	// metaOff is set once a metadata read got an answer the metadata
+	// client could not decode while the full read of the same instant
+	// worked (a proxy that does not honour as=PartialObjectMetadata):
+	// every read is then of the whole ConfigMap (logged once).
+	metaOff atomic.Bool
+	// grantReads coalesces ReadGrants (readGroup).
+	grantReads readGroup
 }
 
 // New builds a store; nothing is read until Run.
@@ -2195,7 +2207,7 @@ func (s *Store) watchOnce(ctx context.Context) (bool, error) {
 	}
 	defer w.Stop()
 	s.locked(func() {
-		s.watching = true
+		s.watching, s.delivered = true, p
 		// A request to reopen the watch made before it opened (a write
 		// that landed between the read and the watch) is answered.
 		select {
@@ -2288,6 +2300,7 @@ func (s *Store) watchOnce(ctx context.Context) (bool, error) {
 						} else {
 							s.mergeLocked(cm)
 						}
+						s.delivered = p
 					})
 				}
 				first = false
@@ -2309,6 +2322,7 @@ func (s *Store) watchOnce(ctx context.Context) (bool, error) {
 				// what a watch cache that stopped progressing sends.
 				if m, ok := ev.Object.(metav1.Object); ok && newerVersion(m.GetResourceVersion(), p.seen) {
 					p.seen = m.GetResourceVersion()
+					s.locked(func() { s.delivered = p })
 					idle.Reset(s.opts.WatchIdle)
 				}
 			}
@@ -2350,11 +2364,13 @@ type freshRead struct {
 func (s *Store) readFresh(ctx context.Context, asked time.Time, p watchProgress) freshRead {
 	getCtx, cancel := context.WithTimeout(ctx, writeTimeout)
 	defer cancel()
-	if s.opts.Meta != nil {
-		m, err := s.opts.Meta.Get(getCtx, s.opts.Name, metav1.GetOptions{})
-		if err != nil {
-			return freshRead{err: err, asked: asked}
-		}
+	m, undecoded, err := s.readMeta(getCtx)
+	switch {
+	case undecoded != nil:
+		// Not an answer of the API server's: the whole ConfigMap below.
+	case err != nil:
+		return freshRead{err: err, asked: asked}
+	case m != nil:
 		var uid types.UID
 		s.locked(func() { uid = s.uid })
 		if !p.ahead(m.ResourceVersion) && (uid == "" || m.UID == uid) {
@@ -2364,7 +2380,45 @@ func (s *Store) readFresh(ctx context.Context, asked time.Time, p watchProgress)
 		}
 	}
 	cm, err := s.opts.Client.Get(getCtx, s.opts.Name, metav1.GetOptions{})
+	if err == nil {
+		s.metaUndecodable(undecoded)
+	}
 	return freshRead{cm: cm, err: err, asked: asked}
+}
+
+// readMeta reads the ConfigMap's metadata (Options.Meta): nil, nil, nil
+// without a metadata client, or once it is given up (metaOff). An error
+// that is no status of the API server's, while ctx still runs, is
+// returned as undecoded: an answer the metadata client could not decode
+// (a proxy in front of the API server that answers the whole ConfigMap
+// as protobuf, ignoring as=PartialObjectMetadata), or no answer at all
+// (a connection refused); the caller reads the whole ConfigMap instead,
+// and gives the metadata up when that read is answered
+// (metaUndecodable). A status (403, 404, 429, 5xx) or a deadline is an
+// answer, or the API server's silence: err.
+func (s *Store) readMeta(ctx context.Context) (m *metav1.PartialObjectMetadata, undecoded, err error) {
+	if s.opts.Meta == nil || s.metaOff.Load() {
+		return nil, nil, nil
+	}
+	m, err = s.opts.Meta.Get(ctx, s.opts.Name, metav1.GetOptions{})
+	var status apierrors.APIStatus
+	if err != nil && !errors.As(err, &status) && ctx.Err() == nil {
+		return nil, err, nil
+	}
+	return m, nil, err
+}
+
+// metaUndecodable gives the metadata reads up for the life of the
+// process once a full read answered where the metadata read of the same
+// instant could not be decoded (readMeta), logged once: the metadata
+// client is what fails, not the API server.
+func (s *Store) metaUndecodable(err error) {
+	if err == nil || !s.metaOff.CompareAndSwap(false, true) {
+		return
+	}
+	s.opts.Logger.Warn("shared state: the metadata of the ConfigMap could not be decoded while the ConfigMap itself could "+
+		"(a proxy in front of the API server that ignores as=PartialObjectMetadata?); reading the whole ConfigMap from now on",
+		slog.String("configmap", s.opts.Name), slog.String("error", err.Error()))
 }
 
 // takeFresh takes in a freshness read made while the watch is open
@@ -2396,8 +2450,21 @@ func (s *Store) takeFresh(r freshRead, p watchProgress, behind *string) (bool, e
 		return true, fmt.Errorf("freshness read of ConfigMap %s: %w", s.opts.Name, r.err)
 	}
 	ahead := p.ahead(r.cm.ResourceVersion)
-	if ahead && !r.meta {
-		s.locked(func() { s.mergeLocked(r.cm) })
+	var forbidden bool
+	s.locked(func() {
+		if ahead && !r.meta {
+			s.mergeLocked(r.cm)
+		}
+		forbidden = s.mode == modeForbidden
+	})
+	if forbidden {
+		// A read or write refused while the watch is open (ReadGrants, a
+		// write-through) left the forbidden mode, which nothing on this
+		// watch leaves (round 22, Go P3-1): the read answered, so the
+		// permission is back, and the watch is opened again (watchOnce
+		// reads, then goes live).
+		s.opts.Logger.Debug("shared state readable again while forbidden; reopening the watch", slog.String("configmap", s.opts.Name))
+		return true, nil
 	}
 	stale := *behind != "" && p.ahead(*behind)
 	*behind = ""
