@@ -39,7 +39,7 @@ func TestAFailedSpendOverAnExpiredBaseCopyLeavesNothing(t *testing.T) {
 	b := newStore(hc, clock, nil)
 	watchMerge(t, api, b)
 	b.mu.Lock()
-	b.setModeLocked(modeLive, "")
+	b.watchOpenedLocked()
 	b.mu.Unlock()
 	clock.Add(2 * time.Minute)
 	b.mu.Lock()
@@ -52,7 +52,7 @@ func TestAFailedSpendOverAnExpiredBaseCopyLeavesNothing(t *testing.T) {
 	}
 	b.mu.Lock()
 	_, kept := b.codes[codeHash("confirm-1")]
-	b.setModeLocked(modeLive, "")
+	b.watchOpenedLocked()
 	b.mu.Unlock()
 	if kept {
 		t.Fatal("ErrNotRecorded left the reservation behind")
@@ -86,7 +86,7 @@ func TestAFailedMarkOverAnExpiredBaseCopyLeavesNothing(t *testing.T) {
 	// This replica holds the value spent again, unmarked, not yet
 	// written (the prune of the expired copy and the new spend).
 	b.mu.Lock()
-	b.setModeLocked(modeLive, "")
+	b.watchOpenedLocked()
 	b.codes[h] = codeEntry{Expiry: t0.Add(time.Minute).Unix(), User: alice}
 	b.mu.Unlock()
 	hc.beforeUpdate = func() error { return context.Canceled }
@@ -97,7 +97,7 @@ func TestAFailedMarkOverAnExpiredBaseCopyLeavesNothing(t *testing.T) {
 		t.Fatal("ErrNotRecorded left the mark behind")
 	}
 	b.mu.Lock()
-	b.setModeLocked(modeLive, "")
+	b.watchOpenedLocked()
 	b.mu.Unlock()
 	if err := b.MarkCode(t.Context(), "confirm-1", "run", alice); err != nil {
 		t.Fatalf("the retry: %v, want nil", err)

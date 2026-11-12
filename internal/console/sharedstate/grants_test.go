@@ -325,7 +325,7 @@ func TestGrantsUsable(t *testing.T) {
 		t.Error("a shared store not read yet is usable")
 	}
 	s.mu.Lock()
-	s.setModeLocked(modeLive, "")
+	s.watchOpenedLocked()
 	s.mu.Unlock()
 	if !s.GrantsUsable() {
 		t.Error("a live store is unusable")

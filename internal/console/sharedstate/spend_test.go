@@ -36,7 +36,7 @@ func loaded(t *testing.T, api *apiServer, clock *testClock) *Store {
 	}
 	s.mu.Lock()
 	s.mergeLocked(cm)
-	s.setModeLocked(modeLive, "")
+	s.watchOpenedLocked()
 	s.mu.Unlock()
 	return s
 }

@@ -75,7 +75,7 @@ func flushed(t *testing.T, s *Store) {
 
 func usable(s *Store) bool {
 	s.mu.Lock()
-	s.setModeLocked(modeLive, "")
+	s.watchOpenedLocked()
 	s.mu.Unlock()
 	return s.GrantsUsable()
 }

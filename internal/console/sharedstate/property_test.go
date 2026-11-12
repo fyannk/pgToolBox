@@ -62,19 +62,20 @@ func skewedStore(c ConfigMapClient, clock *testClock, off time.Duration) *Store 
 	})
 }
 
-// syncOnce is a replica re-reading the ConfigMap (a Get) and writing.
+// syncOnce is a replica re-reading the ConfigMap (a Get), its watch open
+// again, and writing.
 func syncOnce(s *Store, api *apiServer) {
 	cm, err := api.Get(context.Background(), "console-state", metav1.GetOptions{})
 	if err != nil {
 		s.mu.Lock()
-		s.base = nil
+		s.base, s.watching = nil, false
 		s.setModeLocked(modeMissing, "")
 		s.mu.Unlock()
 		return
 	}
 	s.mu.Lock()
 	s.mergeReadLocked(cm)
-	s.setModeLocked(modeLive, "")
+	s.watchOpenedLocked()
 	s.mu.Unlock()
 	_ = s.flush(context.Background())
 }
@@ -83,7 +84,9 @@ func syncOnce(s *Store, api *apiServer) {
 // 16, security): lost write answers, late (older) watch events, the
 // ConfigMap deleted and recreated, crash restarts while cut off, code
 // replay placeholders, rotated re-adds within the 30 s grace, and replica
-// clocks skewed within the assumed bound. Once every replica is
+// clocks skewed within the assumed bound, watches refused or ended with an
+// error (round 18: a replica with no watch refuses grants once staleGrace
+// has run since it last read the ConfigMap). Once every replica is
 // reconnected, no revocation is undone, except one a crash took before
 // any document held it: such a revocation was never acknowledged (the
 // session page answered 503, WriteRevocations), or the ConfigMap was
@@ -121,6 +124,10 @@ func pathModel(t *testing.T, seed uint64, skew time.Duration) (lost, acknowledge
 		syncOnce(stores[i], api)
 	}
 	cut := make([]bool, replicas)
+	// lostAt is when a replica last read the ConfigMap before losing its
+	// watch (cases 10 and 11): with no watch since, it must refuse grants
+	// staleGrace later.
+	lostAt := make([]time.Time, replicas)
 	revokedBy := map[string]int{} // grant -> the replica that revoked it first
 	pending := map[string][]int{} // revocations no document holds yet, by replica
 	crashed := map[string]bool{}  // revocations a crash took before a document held them
@@ -145,7 +152,7 @@ func pathModel(t *testing.T, seed uint64, skew time.Duration) (lost, acknowledge
 		i := rng.IntN(replicas)
 		s := stores[i]
 		now := clock.Now()
-		switch rng.IntN(15) {
+		switch rng.IntN(17) {
 		case 0:
 			cut[i] = !cut[i]
 			trace = append(trace, fmt.Sprintf("%d cut=%v", i, cut[i]))
@@ -278,6 +285,39 @@ func pathModel(t *testing.T, seed uint64, skew time.Duration) (lost, acknowledge
 					trace = append(trace, fmt.Sprintf("%d rotated %d", i, n))
 				}
 			}
+		case 10:
+			// The watch ended; the next Get is answered, the watch is
+			// refused (429: an API server shedding long-running requests).
+			if cut[i] {
+				continue
+			}
+			cm, err := api.Get(context.Background(), "console-state", metav1.GetOptions{})
+			s.mu.Lock()
+			s.watching = false
+			if err == nil {
+				s.mergeReadLocked(cm)
+				if s.mode == modeMissing || s.mode == modeForbidden {
+					s.setModeLocked(modePending, "")
+				}
+			}
+			s.mu.Unlock()
+			if err == nil {
+				_ = s.failed(apierrors.NewTooManyRequests("watch shed", 1))
+			} else {
+				_ = s.failed(err)
+			}
+			lostAt[i] = now
+			trace = append(trace, fmt.Sprintf("%d watch refused", i))
+		case 11:
+			// The watch ends with an error event.
+			s.mu.Lock()
+			if s.watching {
+				s.watching = false
+				s.setModeLocked(modeFailing, "the watch of the ConfigMap failed")
+				lostAt[i] = now
+			}
+			s.mu.Unlock()
+			trace = append(trace, fmt.Sprintf("%d watch error", i))
 		case 13:
 			// A caller that gave up (the client closed the connection)
 			// before its disconnection or its spend was written: never
@@ -310,9 +350,15 @@ func pathModel(t *testing.T, seed uint64, skew time.Duration) (lost, acknowledge
 			_ = s.SpendCode(context.Background(), fmt.Sprintf("throttled-%d", len(trace)), uh("alice"), now.Add(time.Minute))
 			clients[i].transient = false
 			failing := modeOf(s) == modeFailing
+			s.mu.Lock()
+			watching := s.watching
+			s.mu.Unlock()
 			_ = s.flush(context.Background())
-			if failing && modeOf(s) != modeLive {
+			if failing && watching && modeOf(s) != modeLive {
 				t.Fatalf("seed %d: replica %d still %s after a batch that the API server took\n%s", seed, i, modeOf(s), strings.Join(trace, "\n"))
+			}
+			if failing && !watching && modeOf(s) == modeLive {
+				t.Fatalf("seed %d: replica %d live with no watch after a batch\n%s", seed, i, strings.Join(trace, "\n"))
 			}
 			trace = append(trace, fmt.Sprintf("%d throttled write (failing %v)", i, failing))
 		default:
@@ -322,6 +368,15 @@ func pathModel(t *testing.T, seed uint64, skew time.Duration) (lost, acknowledge
 			}
 		}
 		durable()
+		for j, r := range stores {
+			r.mu.Lock()
+			unwatched := !r.watching
+			r.mu.Unlock()
+			if unwatched && !lostAt[j].IsZero() && clock.Now().Sub(lostAt[j]) >= staleGrace && r.GrantsUsable() {
+				t.Fatalf("skew %v seed %d: replica %d serves grants %s after it lost its watch (mode %s)\n%s",
+					skew, seed, j, clock.Now().Sub(lostAt[j]), modeOf(r), strings.Join(trace, "\n"))
+			}
+		}
 	}
 	for range 3 {
 		for i := range stores {

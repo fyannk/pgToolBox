@@ -97,7 +97,7 @@ func TestEveryDocumentAtItsBoundFitsTheConfigMap(t *testing.T) {
 	s := newStore(api, clock, slog.New(slog.NewJSONHandler(&logs, nil)))
 	s.mu.Lock()
 	s.mergeLocked(api.cm.DeepCopy())
-	s.setModeLocked(modeLive, "")
+	s.watchOpenedLocked()
 	fillToTheBounds(s, true, drillAtTheBounds)
 	sessions, grants, codes, sent := len(s.signedOut), len(s.grants), len(s.codes), len(s.sent)
 	before := testutil.ToFloat64(sharedDropped.WithLabelValues(KeyDrills))
