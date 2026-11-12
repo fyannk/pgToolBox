@@ -218,7 +218,13 @@ that write cannot be made (the API server refuses or does not answer), the
 answer is `503` with `Retry-After` and "retry": the replica that answered
 refuses the grant at once and writes the disconnection with its next write, but
 the others may accept it until then. Retry, or use **Disconnect all**, which
-writes again what an earlier attempt left unwritten. A sign-out with
+writes again what an earlier attempt left unwritten. The Assistants page closes
+the dialog on that `503` and says the assistant is disconnected on the replica
+that answered while the others may accept it for a few more seconds; the
+assistant stays listed as "being written to the other replicas" with a
+**Retry** button, and **Disconnect all** is offered as long as one is pending,
+even with a single assistant. A retry that answers `404` means nothing was left
+to write: the page reports the assistant disconnected. A sign-out with
 **disconnect my assistants** goes on even then (the console log says so). Without the
 shared state the index is in each replica's memory: a restart disconnects every
 assistant, and with more than one replica each refuses the grants of the

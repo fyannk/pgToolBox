@@ -212,6 +212,117 @@ export const DisconnectRefused: StoryObj<typeof ConnectedAssistantsView> = {
   },
 };
 
+/** Go's 503 on a disconnection: refused on the replica that answered, not yet written for the others. */
+const notRecorded = () =>
+  new ApiError(
+    503,
+    {
+      title: "Service Unavailable",
+      status: 503,
+      detail:
+        "the disconnection was not recorded for every console replica yet (the Kubernetes API server did not take the write); retry",
+    },
+    "req-503",
+  );
+
+const oneGrant = (grants.items ?? []).slice(0, 1);
+
+/**
+ * A 503 on Disconnect is not a refusal: the dialog closes, the page says the
+ * replica that answered refuses the grant and the others may not yet, and the
+ * grant stays as a pending row with Retry; Disconnect all is offered even
+ * with one assistant.
+ */
+export const DisconnectNotRecorded: StoryObj<typeof ConnectedAssistantsView> = {
+  render: (args) => <ConnectedAssistantsView {...args} />,
+  args: {
+    grants: oneGrant,
+    actor: "oidc:jane@corp.example",
+    onRevoke: fn(async () => {
+      throw notRecorded();
+    }),
+    onRevokeAll: fn(async () => {}),
+  },
+  play: async ({ canvas, canvasElement }) => {
+    const body = within(canvasElement.ownerDocument.body);
+    await expect(canvas.queryByRole("button", { name: "Disconnect all" })).toBeNull();
+    await userEvent.click(canvas.getByRole("button", { name: "Disconnect Claude Code" }));
+    const dialog = await body.findByRole("alertdialog");
+    await userEvent.type(within(dialog).getByLabelText(/To confirm, type/), "Claude Code");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Disconnect" }));
+    await waitFor(() => expect(body.queryByRole("alertdialog")).toBeNull());
+    const note = canvas.getByRole("status");
+    await expect(note).toHaveTextContent(/Claude Code is disconnected on the replica that answered/);
+    await expect(note.querySelector('[data-health="warning"]')).not.toBeNull();
+    await expect(note).not.toHaveTextContent(/Not started/);
+    await expect(canvas.getByText("being written to the other replicas")).toBeVisible();
+    await expect(canvas.getByRole("button", { name: "Retry disconnecting Claude Code" })).toBeVisible();
+    await expect(canvas.getByRole("button", { name: "Disconnect all" })).toBeVisible();
+  },
+};
+export const DisconnectNotRecordedDark = dark(DisconnectNotRecorded);
+export const DisconnectNotRecordedCompact = compact(DisconnectNotRecorded);
+export const DisconnectNotRecordedFrench = french({ ...DisconnectNotRecorded, play: undefined });
+
+/** The follow-up: a retry after the 503 answers 404, nothing was left to write, so it is done. */
+export const DisconnectRetriedDone: StoryObj<typeof ConnectedAssistantsView> = {
+  render: (args) => <ConnectedAssistantsView {...args} />,
+  args: {
+    grants: oneGrant,
+    actor: "oidc:jane@corp.example",
+    onRevoke: (() => {
+      let calls = 0;
+      return fn(async () => {
+        calls += 1;
+        throw calls % 2 === 1 ? notRecorded() : new ApiError(404, grantNotFound, "req-404");
+      });
+    })(),
+    onRevokeAll: fn(async () => {}),
+  },
+  play: async ({ canvas, canvasElement }) => {
+    const body = within(canvasElement.ownerDocument.body);
+    const confirm = async () => {
+      const dialog = await body.findByRole("alertdialog");
+      await userEvent.type(within(dialog).getByLabelText(/To confirm, type/), "Claude Code");
+      await userEvent.click(within(dialog).getByRole("button", { name: "Disconnect" }));
+      await waitFor(() => expect(body.queryByRole("alertdialog")).toBeNull());
+    };
+    await userEvent.click(canvas.getByRole("button", { name: "Disconnect Claude Code" }));
+    await confirm();
+    await userEvent.click(await canvas.findByRole("button", { name: "Retry disconnecting Claude Code" }));
+    await confirm();
+    await waitFor(() => expect(canvas.getByRole("status")).toHaveTextContent(/nothing left of it to write/));
+    await expect(canvas.getByRole("status").querySelector('[data-health="ok"]')).not.toBeNull();
+    await expect(canvas.queryByText("being written to the other replicas")).toBeNull();
+  },
+};
+export const DisconnectRetriedDoneDark = dark(DisconnectRetriedDone);
+
+/** Disconnect all answered 503: the same honest note, every grant pending, Disconnect all to retry. */
+export const DisconnectAllNotRecorded: StoryObj<typeof ConnectedAssistantsView> = {
+  render: (args) => <ConnectedAssistantsView {...args} />,
+  args: {
+    grants: grants.items ?? [],
+    actor: "oidc:jane@corp.example",
+    onRevoke: fn(async () => {}),
+    onRevokeAll: fn(async () => {
+      throw notRecorded();
+    }),
+  },
+  play: async ({ canvas, canvasElement }) => {
+    const body = within(canvasElement.ownerDocument.body);
+    await userEvent.click(canvas.getByRole("button", { name: "Disconnect all" }));
+    const dialog = await body.findByRole("alertdialog");
+    await userEvent.type(within(dialog).getByLabelText(/To confirm, type/), "disconnect all");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Disconnect all" }));
+    await waitFor(() => expect(body.queryByRole("alertdialog")).toBeNull());
+    await expect(canvas.getByRole("status")).toHaveTextContent(/retry Disconnect all to be sure/);
+    await expect(canvas.getAllByText("being written to the other replicas")).toHaveLength(3);
+    await expect(canvas.getByRole("button", { name: "Disconnect all" })).toBeVisible();
+  },
+};
+export const DisconnectAllNotRecordedDark = dark(DisconnectAllNotRecorded);
+
 /** Any other refusal of the setup (a 503): the usual error with its request id, never "MCP off". */
 export const SetupUnavailable: Story = {
   parameters: {
