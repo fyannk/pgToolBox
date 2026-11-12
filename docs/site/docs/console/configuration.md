@@ -204,7 +204,9 @@ Without `HISTORY_PATH` nothing is written and a restart starts empty.
 written by the console itself (with the digest Lease, the only writes it makes
 with its own identity besides the opt-in drill teardown: `get`, `watch` and
 `update` on that name only). Every replica watches it and merges what the
-others wrote:
+others wrote, and reads it again every 15 to 19 seconds while watching (one
+`GET` per replica, the size of the ConfigMap), to see a permission withdrawn
+or a watch that fell behind ([MCP grants](mcp.md)):
 
 | Key | What it holds |
 |---|---|
