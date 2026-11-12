@@ -83,6 +83,9 @@ type pgAdminPrepared struct {
 	OptionalKinds []optionalKind
 	// Dropped is the watched namespaces left out at start, and why.
 	Dropped []droppedNamespace
+	// droppedGauge is pgtoolbox_watch_namespaces_dropped, which the
+	// background review moves a namespace in (reReviewFailed).
+	droppedGauge droppedGauge
 	// leaderOnly is what the manager runs once this replica is elected
 	// (the dropped-namespace report).
 	leaderOnly []manager.Runnable
@@ -180,7 +183,7 @@ func preparePgAdmin(ctx context.Context, budget *startupBudget, operatorImage, c
 	// reviewed again on every replica.
 	if len(prepared.Dropped) > 0 {
 		prepared.leaderOnly = append(prepared.leaderOnly, droppedReport{api: direct, dropped: prepared.Dropped, now: time.Now})
-		go reReviewFailed(ctx, direct, prepared.Dropped, defaultReReviewPolicy(processStarted), restart)
+		go reReviewFailed(ctx, direct, prepared.Dropped, prepared.droppedGauge, defaultReReviewPolicy(processStarted), restart)
 	}
 	return prepared, nil
 }
@@ -333,7 +336,8 @@ func preparePgAdminWith(ctx context.Context, direct startupAPI, registry prometh
 	if err := loaded.RegisterInfoMetric(registry); err != nil {
 		return pgAdminPrepared{}, err
 	}
-	if err := registerWatchMetrics(registry, countDropped(dropped), probed.Kinds); err != nil {
+	gauge, err := registerWatchMetrics(registry, countDropped(dropped), probed.Kinds)
+	if err != nil {
 		return pgAdminPrepared{}, err
 	}
 	features := probed.Features
@@ -341,7 +345,7 @@ func preparePgAdminWith(ctx context.Context, direct startupAPI, registry prometh
 		"routes", features.Routes.State, "gateways", features.Gateways.State,
 		"databaseRoles", features.DatabaseRoles.State, "poolers", features.Poolers.State,
 		"openshift", features.OpenShift)
-	return pgAdminPrepared{Config: loaded.Config, Features: features, EvidenceAgentAPIs: probed.EvidenceAgent, OptionalKinds: probed.Kinds, Dropped: dropped}, nil
+	return pgAdminPrepared{Config: loaded.Config, Features: features, EvidenceAgentAPIs: probed.EvidenceAgent, OptionalKinds: probed.Kinds, Dropped: dropped, droppedGauge: gauge}, nil
 }
 
 // pgAdminManagerOptions adds the PgAdmin controller's needs to the shared

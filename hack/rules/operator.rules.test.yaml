@@ -15,6 +15,8 @@ tests:
         values: '0x20'
       - series: 'pgtoolbox_watch_namespaces_dropped{namespace="pgtoolbox",pod="pgtoolbox-a",reason="review-too-large"}'
         values: '0x20'
+      - series: 'pgtoolbox_watch_namespaces_dropped{namespace="pgtoolbox",pod="pgtoolbox-a",reason="review-too-slow"}'
+        values: '0x20'
       - series: 'pgtoolbox_watch_namespaces_dropped{namespace="pgtoolbox",pod="pgtoolbox-a",reason="clusters-unlistable"}'
         values: '0x20'
     alert_rule_test:
@@ -29,13 +31,15 @@ tests:
               summary: "The pgToolBox operator in pgtoolbox left 1 watched namespace(s) out at start (permissions)"
               description: "Namespaces of WATCH_NAMESPACES are not reconciled: their PgAdmins, consoles and evidence agents keep a status nobody updates. The operator log names each namespace. The operator lacks a permission of its manager role there (a narrower Role): restore the chart's manager RoleBinding, then restart the operator."
               runbook_url: "https://github.com/fyannk/pgToolBox/blob/main/docs/site/docs/operator/index.md#namespaces-dropped-from-the-watch"
-  - name: the description says what to do per reason; only a restart helps a review too large
+  - name: the description says what to do per reason; only a restart helps a review too large or too slow
     interval: 1m
     input_series:
       - series: 'pgtoolbox_watch_namespaces_dropped{namespace="pgtoolbox",pod="pgtoolbox-a",reason="review-failed"}'
         values: '1x20'
       - series: 'pgtoolbox_watch_namespaces_dropped{namespace="pgtoolbox",pod="pgtoolbox-a",reason="review-too-large"}'
         values: '2x20'
+      - series: 'pgtoolbox_watch_namespaces_dropped{namespace="pgtoolbox",pod="pgtoolbox-a",reason="review-too-slow"}'
+        values: '1x20'
       - series: 'pgtoolbox_watch_namespaces_dropped{namespace="pgtoolbox",pod="pgtoolbox-a",reason="clusters-unlistable"}'
         values: '1x20'
     alert_rule_test:
@@ -45,17 +49,38 @@ tests:
           - exp_labels: {severity: warning, namespace: pgtoolbox, reason: review-failed}
             exp_annotations:
               summary: "The pgToolBox operator in pgtoolbox left 1 watched namespace(s) out at start (review-failed)"
-              description: "Namespaces of WATCH_NAMESPACES are not reconciled: their PgAdmins, consoles and evidence agents keep a status nobody updates. The operator log names each namespace. The permission review there failed (the API server, or no answer in time): the operator reviews it again every minute and restarts on its own to watch it once it passes twice in a row and the process has run ten minutes; check the API server if this lasts."
+              description: "Namespaces of WATCH_NAMESPACES are not reconciled: their PgAdmins, consoles and evidence agents keep a status nobody updates. The operator log names each namespace. The permission review there failed (an API server error or a lost connection): the operator reviews it again every minute and restarts on its own to watch it once it passes twice in a row and the process has run ten minutes; check the API server if this lasts."
               runbook_url: "https://github.com/fyannk/pgToolBox/blob/main/docs/site/docs/operator/index.md#namespaces-dropped-from-the-watch"
           - exp_labels: {severity: warning, namespace: pgtoolbox, reason: review-too-large}
             exp_annotations:
               summary: "The pgToolBox operator in pgtoolbox left 2 watched namespace(s) out at start (review-too-large)"
               description: "Namespaces of WATCH_NAMESPACES are not reconciled: their PgAdmins, consoles and evidence agents keep a status nobody updates. The operator log names each namespace. The permission review there answered too much (its RoleBindings grant the operator far more rules than its manager role): remove the extra bindings, then restart the operator; only a start reviews it again."
               runbook_url: "https://github.com/fyannk/pgToolBox/blob/main/docs/site/docs/operator/index.md#namespaces-dropped-from-the-watch"
+          - exp_labels: {severity: warning, namespace: pgtoolbox, reason: review-too-slow}
+            exp_annotations:
+              summary: "The pgToolBox operator in pgtoolbox left 1 watched namespace(s) out at start (review-too-slow)"
+              description: "Namespaces of WATCH_NAMESPACES are not reconciled: their PgAdmins, consoles and evidence agents keep a status nobody updates. The operator log names each namespace. The permission review there got no answer in time at every attempt (most likely its RoleBindings grant the operator far more rules than its manager role; or the API server is overloaded): remove the extra bindings or check the API server, then restart the operator; only a start reviews it again."
+              runbook_url: "https://github.com/fyannk/pgToolBox/blob/main/docs/site/docs/operator/index.md#namespaces-dropped-from-the-watch"
           - exp_labels: {severity: warning, namespace: pgtoolbox, reason: clusters-unlistable}
             exp_annotations:
               summary: "The pgToolBox operator in pgtoolbox left 1 watched namespace(s) out at start (clusters-unlistable)"
               description: "Namespaces of WATCH_NAMESPACES are not reconciled: their PgAdmins, consoles and evidence agents keep a status nobody updates. The operator log names each namespace. CloudNativePG Clusters may not be listed there (the namespace deleted, or the operator not bound): recreate or bind it, then restart the operator."
+              runbook_url: "https://github.com/fyannk/pgToolBox/blob/main/docs/site/docs/operator/index.md#namespaces-dropped-from-the-watch"
+  - name: a namespace the background review moves to review-too-slow stops being review-failed
+    interval: 1m
+    input_series:
+      - series: 'pgtoolbox_watch_namespaces_dropped{namespace="pgtoolbox",pod="pgtoolbox-a",reason="review-failed"}'
+        values: '1x9 0x10'
+      - series: 'pgtoolbox_watch_namespaces_dropped{namespace="pgtoolbox",pod="pgtoolbox-a",reason="review-too-slow"}'
+        values: '0x9 1x10'
+    alert_rule_test:
+      - eval_time: 18m
+        alertname: PgToolBoxOperatorNamespacesDropped
+        exp_alerts:
+          - exp_labels: {severity: warning, namespace: pgtoolbox, reason: review-too-slow}
+            exp_annotations:
+              summary: "The pgToolBox operator in pgtoolbox left 1 watched namespace(s) out at start (review-too-slow)"
+              description: "Namespaces of WATCH_NAMESPACES are not reconciled: their PgAdmins, consoles and evidence agents keep a status nobody updates. The operator log names each namespace. The permission review there got no answer in time at every attempt (most likely its RoleBindings grant the operator far more rules than its manager role; or the API server is overloaded): remove the extra bindings or check the API server, then restart the operator; only a start reviews it again."
               runbook_url: "https://github.com/fyannk/pgToolBox/blob/main/docs/site/docs/operator/index.md#namespaces-dropped-from-the-watch"
   - name: nothing dropped, nothing fires
     interval: 1m

@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	authorizationv1 "k8s.io/api/authorization/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -100,6 +101,12 @@ func testPolicy(clock *fakeUptime, jitters *atomic.Int32) reReviewPolicy {
 // the channel returned, and done closes when it returns.
 func runReReview(t *testing.T, api managerrole.Creator, dropped []droppedNamespace, policy reReviewPolicy) (restarts chan error, done chan struct{}) {
 	t.Helper()
+	return runReReviewGauged(t, api, dropped, droppedGauge{}, policy)
+}
+
+// runReReviewGauged is runReReview moving gauge.
+func runReReviewGauged(t *testing.T, api managerrole.Creator, dropped []droppedNamespace, gauge droppedGauge, policy reReviewPolicy) (restarts chan error, done chan struct{}) {
+	t.Helper()
 	restarts, done = make(chan error, 4), make(chan struct{})
 	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(func() {
@@ -107,7 +114,7 @@ func runReReview(t *testing.T, api managerrole.Creator, dropped []droppedNamespa
 		<-done
 	})
 	go func() {
-		reReviewFailed(ctx, api, dropped, policy, func(cause error) { restarts <- cause })
+		reReviewFailed(ctx, api, dropped, gauge, policy, func(cause error) { restarts <- cause })
 		close(done)
 	}()
 	return restarts, done
@@ -240,45 +247,83 @@ func TestReReviewWaitsForUptime(t *testing.T) {
 	oneRestart(t, restarts, done, "team-b")
 }
 
-// TestReReviewTooLargeNeverRestarts: round 17, OPERATOR and SECURITY P2. A
-// namespace whose review becomes too large leaves the background review,
-// and passing afterwards restarts nothing; one dropped as too large at
+// TestReReviewTooLargeNeverRestarts: round 17, OPERATOR and SECURITY P2,
+// and round 18. A namespace whose review becomes too large or too slow
+// leaves the background review (and moves in the gauge), and passing
+// afterwards restarts nothing; one dropped as too large or too slow at
 // start is never reviewed, so the re-review returns at once.
 func TestReReviewTooLargeNeverRestarts(t *testing.T) {
 	clock := &fakeUptime{started: time.Date(2026, 11, 12, 9, 0, 0, 0, time.UTC)}
 	clock.uptime.Store(int64(time.Hour))
 	var jitters atomic.Int32
-	t.Run("too large at start: never reviewed", func(t *testing.T) {
+	t.Run("too large or too slow at start: never reviewed", func(t *testing.T) {
 		r := &scriptedReviewer{answer: func(string, int) ([]authorizationv1.ResourceRule, error) { return granting, nil }}
-		restarts, done := runReReview(t, r, []droppedNamespace{{Namespace: "team-e", Cause: dropReviewTooLarge, Reason: "too large"}}, testPolicy(clock, &jitters))
+		restarts, done := runReReview(t, r, []droppedNamespace{
+			{Namespace: "team-e", Cause: dropReviewTooLarge, Reason: "too large"},
+			{Namespace: "team-f", Cause: dropReviewTooSlow, Reason: "too slow"},
+		}, testPolicy(clock, &jitters))
 		select {
 		case <-done:
 		case <-time.After(10 * time.Second):
 			t.Fatal("the re-review of a too-large namespace did not return")
 		}
-		noRestart(t, restarts, "for a namespace too large at start")
-		if n := r.callsOf("team-e"); n != 0 {
-			t.Errorf("team-e reviewed %d times, want 0", n)
-		}
-	})
-	t.Run("too large later: leaves the loop", func(t *testing.T) {
-		r := &scriptedReviewer{answer: func(_ string, n int) ([]authorizationv1.ResourceRule, error) {
-			if n == 1 {
-				return nil, managerrole.ErrReviewTooLarge
+		noRestart(t, restarts, "for a namespace too large or too slow at start")
+		for _, namespace := range []string{"team-e", "team-f"} {
+			if n := r.callsOf(namespace); n != 0 {
+				t.Errorf("%s reviewed %d times, want 0", namespace, n)
 			}
-			return granting, nil
-		}}
-		restarts, done := runReReview(t, r, []droppedNamespace{{Namespace: "team-b", Cause: dropReviewFailed, Reason: "no answer", required: reReviewRequired}}, testPolicy(clock, &jitters))
-		select {
-		case <-done:
-		case <-time.After(10 * time.Second):
-			t.Fatal("the re-review went on with no namespace left")
-		}
-		noRestart(t, restarts, "for a namespace whose review became too large")
-		if n := r.callsOf("team-b"); n != 1 {
-			t.Errorf("team-b reviewed %d times, want 1", n)
 		}
 	})
+	for _, tc := range []struct {
+		name  string
+		err   error
+		cause dropCause
+	}{
+		{"too large later: leaves the loop", managerrole.ErrReviewTooLarge, dropReviewTooLarge},
+		// Round 18, OPERATOR and SECURITY P3: a tenant who makes the API
+		// server build the response slowly, then removes the bindings.
+		{"too slow later: leaves the loop", managerrole.ErrReviewTooSlow, dropReviewTooSlow},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := &scriptedReviewer{answer: func(_ string, n int) ([]authorizationv1.ResourceRule, error) {
+				if n == 1 {
+					return nil, tc.err
+				}
+				return granting, nil
+			}}
+			// Round 18, K8S P3: the gauge follows the namespace to its new
+			// cause, so the alert no longer promises a restart for it.
+			dropped := []droppedNamespace{
+				{Namespace: "team-b", Cause: dropReviewFailed, Reason: "no answer", required: reReviewRequired},
+				{Namespace: "team-c", Cause: dropPermissions, Reason: "narrowed", required: reReviewRequired},
+			}
+			registry := prometheus.NewRegistry()
+			gauge, err := registerWatchMetrics(registry, countDropped(dropped), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			restarts, done := runReReviewGauged(t, r, dropped, gauge, testPolicy(clock, &jitters))
+			select {
+			case <-done:
+			case <-time.After(10 * time.Second):
+				t.Fatal("the re-review went on with no namespace left")
+			}
+			noRestart(t, restarts, "for a namespace whose review became "+string(tc.cause))
+			if n := r.callsOf("team-b"); n != 1 {
+				t.Errorf("team-b reviewed %d times, want 1", n)
+			}
+			gauges := gatherGauges(t, registry)
+			for _, cause := range dropCauses {
+				want := 0.0
+				if cause == tc.cause || cause == dropPermissions {
+					want = 1
+				}
+				if got := gauges[`pgtoolbox_watch_namespaces_dropped{reason="`+string(cause)+`"}`]; got != want {
+					t.Errorf("pgtoolbox_watch_namespaces_dropped{reason=%s} = %v, want %v", cause, got, want)
+				}
+			}
+		})
+	}
 }
 
 // TestReReviewFailedNothingToDo: no namespace failed its review: the
@@ -286,7 +331,7 @@ func TestReReviewTooLargeNeverRestarts(t *testing.T) {
 func TestReReviewFailedNothingToDo(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
-		reReviewFailed(t.Context(), &scriptedReviewer{}, []droppedNamespace{{Namespace: "team-c", Cause: dropPermissions}}, defaultReReviewPolicy(time.Now()),
+		reReviewFailed(t.Context(), &scriptedReviewer{}, []droppedNamespace{{Namespace: "team-c", Cause: dropPermissions}}, droppedGauge{}, defaultReReviewPolicy(time.Now()),
 			func(error) { t.Error("restarted with nothing to review") })
 		close(done)
 	}()

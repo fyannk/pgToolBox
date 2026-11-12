@@ -206,15 +206,16 @@ func TestPrepareDropsNamespaceMissingARequiredPermission(t *testing.T) {
 }
 
 // TestPermittedNamespacesReviewFailedKeepsWhatToAsk: round 16, K8S P2-2,
-// and round 17. A namespace whose review failed is dropped with the
-// permissions to ask again in the background (reReviewFailed); one whose
-// response was too large is dropped under a cause of its own
-// (review-too-large), with nothing to ask again: only the next start
-// reviews it. Each fails that namespace only.
+// and rounds 17 and 18. A namespace whose review failed is dropped with
+// the permissions to ask again in the background (reReviewFailed); one
+// whose response was too large, or that got no answer in time at every
+// attempt, is dropped under a cause of its own (review-too-large,
+// review-too-slow), with nothing to ask again: only the next start reviews
+// it. Each fails that namespace only.
 func TestPermittedNamespacesReviewFailedKeepsWhatToAsk(t *testing.T) {
 	full := managerRules(t)
 	c := fake.NewClientBuilder().WithScheme(scheme).WithRESTMapper(testMapper()).WithInterceptorFuncs(interceptor.Funcs{
-		Create: func(_ context.Context, _ client.WithWatch, obj client.Object, _ ...client.CreateOption) error {
+		Create: func(ctx context.Context, _ client.WithWatch, obj client.Object, _ ...client.CreateOption) error {
 			review, ok := obj.(*authorizationv1.SelfSubjectRulesReview)
 			if !ok {
 				return errors.New("only rules reviews are expected")
@@ -224,25 +225,35 @@ func TestPermittedNamespacesReviewFailedKeepsWhatToAsk(t *testing.T) {
 				return apierrors.NewForbidden(schema.GroupResource{Group: "authorization.k8s.io", Resource: "selfsubjectrulesreviews"}, "", errors.New("an admission webhook refused it"))
 			case "team-c":
 				return managerrole.ErrReviewTooLarge
+			case "team-d":
+				// No answer before the attempt's deadline, every time.
+				<-ctx.Done()
+				return ctx.Err()
 			}
 			review.Status.ResourceRules = full
 			return nil
 		},
 	}).Build()
-	kept, dropped, err := permittedNamespaces(t.Context(), c, []string{"team-a", "team-b", "team-c"})
+	timeout := namespaceReviewTimeout
+	namespaceReviewTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { namespaceReviewTimeout = timeout })
+	kept, dropped, err := permittedNamespaces(t.Context(), c, []string{"team-a", "team-b", "team-c", "team-d"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(kept, []string{"team-a"}) || len(dropped) != 2 ||
+	if !slices.Equal(kept, []string{"team-a"}) || len(dropped) != 3 ||
 		dropped[0].Namespace != "team-b" || dropped[0].Cause != dropReviewFailed ||
-		dropped[1].Namespace != "team-c" || dropped[1].Cause != dropReviewTooLarge {
-		t.Fatalf("kept %q, dropped %+v; want team-a kept, team-b review-failed, team-c review-too-large", kept, dropped)
+		dropped[1].Namespace != "team-c" || dropped[1].Cause != dropReviewTooLarge ||
+		dropped[2].Namespace != "team-d" || dropped[2].Cause != dropReviewTooSlow {
+		t.Fatalf("kept %q, dropped %+v; want team-a kept, team-b review-failed, team-c review-too-large, team-d review-too-slow", kept, dropped)
 	}
 	if len(dropped[0].required) == 0 {
 		t.Error("team-b dropped without the permissions to review again")
 	}
-	if len(dropped[1].required) != 0 {
-		t.Error("team-c, too large, dropped with permissions to review again in the background")
+	for _, d := range dropped[1:] {
+		if len(d.required) != 0 {
+			t.Errorf("%s, %s, dropped with permissions to review again in the background", d.Namespace, d.Cause)
+		}
 	}
 	for _, d := range dropped {
 		if d.allows("events.k8s.io", "events", "create") {
