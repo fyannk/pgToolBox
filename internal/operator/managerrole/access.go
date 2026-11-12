@@ -131,13 +131,17 @@ const (
 	// (LimitReviewResponses). A rules review lists every rule of every
 	// RoleBinding of the caller in the namespace, duplicates included, so
 	// a namespace administrator who binds one Role of 25,000 rules forty
-	// times makes it 53 MiB of JSON and over 500 MiB to decode; the
-	// operator's own namespaced rules fit in a few KiB. The limit is per
-	// response and discovery.ProbeConcurrency reviews run at once, each
-	// decoded at about four times its size: 1 MiB keeps them all under
-	// 64 MiB of heap, a quarter of the chart's 256Mi limit (at 4 MiB,
-	// sixteen near-cap reviews peaked at about 260 MiB).
-	ReviewResponseLimit = 1 << 20
+	// times makes it 53 MiB of JSON and over 500 MiB to decode. The
+	// operator's own namespaced rules are 32 rules, about 4 KB of JSON,
+	// and the largest honest case seen (OpenShift's default bindings)
+	// about 120 KB. The limit is per response, discovery.ProbeConcurrency
+	// reviews run at once, and the worst shapes (thousands of one-letter
+	// verbs, or of minimal rules) decode to several times their size: in
+	// JSON, 256 KiB keeps the sixteen of them under 40 MiB of heap
+	// (measured, cmd/operator TestStartupReviewsHeapIsBounded), against
+	// 240-340 MiB at 1 MiB and 90-140 MiB at 256 KiB of protobuf, which
+	// decodes to more per byte: the start-up client asks for JSON.
+	ReviewResponseLimit = 1 << 18
 )
 
 // namespaceBudget is the time one namespace's review may take, every

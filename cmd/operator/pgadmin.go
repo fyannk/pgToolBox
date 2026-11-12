@@ -37,6 +37,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/rest"
@@ -199,10 +200,15 @@ func startupClient(cfg *rest.Config) (client.Client, error) {
 // managerrole.ReviewResponseLimit: one namespace's administrator can grow
 // that namespace's rules review without bound (one Role bound many times),
 // and must fail that namespace's review alone, not exhaust the memory of
-// the operator of every namespace.
+// the operator of every namespace. It speaks JSON: protobuf packs the
+// worst shapes of a review (thousands of one-letter verbs or minimal
+// rules) several times tighter than JSON for the same decoded heap, so
+// the same limit would let several times more heap in.
 func startupConfig(cfg *rest.Config) *rest.Config {
 	cfg = rest.CopyConfig(cfg)
 	cfg.Timeout = startupStepTimeout
+	cfg.ContentType = runtime.ContentTypeJSON
+	cfg.AcceptContentTypes = runtime.ContentTypeJSON
 	cfg.Wrap(managerrole.LimitReviewResponses)
 	return cfg
 }

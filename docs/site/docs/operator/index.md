@@ -173,7 +173,7 @@ fully use:
   up to a minute more (so the two replicas do not stop together) and exits
   to be restarted, and the restart watches it. The alert below is the signal
   meanwhile;
-- a namespace whose permission review answers more than 1 MiB: its
+- a namespace whose permission review answers more than 256 KiB: its
   RoleBindings grant the operator far more rules than its manager role (one
   Role bound many times). The log line names the namespace
   (`review-too-large`). It is never reviewed again in the background, so
