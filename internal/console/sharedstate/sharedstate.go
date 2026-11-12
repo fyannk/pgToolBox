@@ -148,8 +148,12 @@ const (
 	// pruneEvery is how often the facts of objects gone from the cache
 	// are pruned.
 	pruneEvery = time.Minute
-	// writeTimeout bounds one read-merge-write.
+	// writeTimeout bounds one read-merge-write, and the read and the
+	// opening of the watch of the Run loop.
 	writeTimeout = 10 * time.Second
+	// DefaultWatchIdle is Options.WatchIdle's default: three of the API
+	// server's bookmark periods.
+	DefaultWatchIdle = 3 * time.Minute
 	// maxAttempts bounds the conflict retries of one write.
 	maxAttempts = 5
 	// rewoundAfter is how many Gets in a row older than what a Get or
@@ -244,6 +248,10 @@ type Options struct {
 	// Backoff is the wait before the n-th retry of a failed watch or
 	// write.
 	Backoff func(attempt int) time.Duration
+	// WatchIdle is how long an open watch may deliver nothing, not even
+	// a bookmark (the API server sends one about every minute), before
+	// it is taken for deaf and opened again; DefaultWatchIdle when 0.
+	WatchIdle time.Duration
 	// DigestRetention is how long digests are kept (DIGEST_RETENTION);
 	// a delivery mark goes some time after its digest.
 	// DefaultDigestRetention when 0.
@@ -494,6 +502,18 @@ type Store struct {
 	// written elsewhere is not seen, and the failing mode's staleGrace
 	// must run out rather than be reset by every write.
 	watching bool
+	// unwatchedAt is when the last watch ended (watchOnce). A live mode
+	// with no watch open is a watch being reopened: grants stay usable
+	// for staleGrace from that instant only (GrantsUsable), and a
+	// failing mode entered from it runs its staleGrace from there too
+	// (setModeLocked), so neither a read that hangs nor a failure after
+	// it extends the time this replica serves grants unwatched.
+	unwatchedAt time.Time
+	// known is set on the first answer of the API server about the
+	// ConfigMap (a read or write of it, or its being missing or
+	// forbidden) and never cleared: MarksKnown, and so the readiness
+	// check, do not go back to false on a later transient failure.
+	known bool
 	// recovering is set while the mode is degraded (failing, missing or
 	// forbidden): the return to live is logged once.
 	recovering bool
@@ -522,6 +542,9 @@ func New(opts Options) *Store {
 	}
 	if opts.Backoff == nil {
 		opts.Backoff = func(attempt int) time.Duration { return min(time.Second<<min(attempt, 6), time.Minute) }
+	}
+	if opts.WatchIdle <= 0 {
+		opts.WatchIdle = DefaultWatchIdle
 	}
 	if opts.DigestRetention <= 0 {
 		opts.DigestRetention = DefaultDigestRetention
@@ -1123,16 +1146,18 @@ func (s *Store) DigestSent(id, channel string) (time.Time, bool) {
 
 // MarksKnown reports whether the delivery marks reflect the ConfigMap:
 // it was read once, or it cannot be (none configured, missing,
-// forbidden) and the local marks are all there is. While the first read
-// is pending or failing it is false, so that a new leader does not take
-// "no mark yet" for "not sent".
+// forbidden) and the local marks are all there is. Until the API server
+// first answers it is false, so that a new leader does not take "no mark
+// yet" for "not sent"; from then on it stays true (known), whatever
+// fails later: it is the console's readiness check too, and one
+// transient failure must not take every replica out of the Service.
 func (s *Store) MarksKnown() bool {
 	if !s.Enabled() {
 		return true
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.base != nil || s.mode == modeMissing || s.mode == modeForbidden
+	return s.known
 }
 
 // ------------------------------------------------------------ merge/write
@@ -1324,7 +1349,7 @@ func (s *Store) mergeLocked(cm *corev1.ConfigMap) {
 	// (mergeReadLocked): two such Gets hours apart, each overtaken by the
 	// watch, are no rewound revision.
 	s.rewound = 0
-	s.base, s.seenRV = cm.DeepCopy(), cm.ResourceVersion
+	s.base, s.seenRV, s.known = cm.DeepCopy(), cm.ResourceVersion, true
 	if s.uid != "" && cm.UID != "" && cm.UID != s.uid {
 		s.recreatedLocked()
 	}
@@ -1471,7 +1496,7 @@ func (s *Store) wroteBaseLocked(updated *corev1.ConfigMap) {
 	if s.base == nil || !olderVersion(updated.ResourceVersion, s.base.ResourceVersion) {
 		s.base, s.seenRV = updated.DeepCopy(), updated.ResourceVersion
 	}
-	s.rewound = 0
+	s.rewound, s.known = 0, true
 	s.wroteLocked(updated)
 }
 
@@ -1893,13 +1918,22 @@ func (s *Store) failed(err error) error {
 //
 // A change of reason alone (a failing replica failing another way) keeps
 // since: the failing mode's staleGrace runs from when the replica left
-// the live mode, and no new failure may extend it.
+// the live mode, and no new failure may extend it. A live mode left with
+// no watch open was left when that watch ended (unwatchedAt): the time
+// spent reopening it counts.
 func (s *Store) setModeLocked(m mode, reason string) {
+	if m == modeMissing || m == modeForbidden {
+		s.known = true
+	}
 	if s.mode == m {
 		s.reason = reason
 		return
 	}
-	s.mode, s.reason, s.since = m, reason, s.opts.Now().UTC()
+	since := s.opts.Now().UTC()
+	if s.mode == modeLive && !s.watching && !s.unwatchedAt.IsZero() && s.unwatchedAt.Before(since) {
+		since = s.unwatchedAt
+	}
+	s.mode, s.reason, s.since = m, reason, since
 	log := s.opts.Logger.With(slog.String("configmap", s.opts.Name))
 	switch m {
 	// P4-F: the two an install without the chart's RBAC meets at start;
@@ -1919,8 +1953,9 @@ func (s *Store) setModeLocked(m mode, reason string) {
 		s.recovering = true
 		log.Warn("shared state ConfigMap unreachable; retrying", slog.String("reason", reason))
 		// The writer retries, with nothing pending too (flush), until a
-		// write lands: the failing mode is left by a write, never only
-		// waited out.
+		// write lands. The failing mode is left by a write that lands
+		// while the watch is open (wroteLandedLocked), or by the Run
+		// loop's next watch opening (watchOnce), never only waited out.
 		s.wakeLocked(true)
 	case modeLive:
 		if s.recovering {
@@ -1967,17 +2002,19 @@ func (s *Store) Run(ctx context.Context) error {
 		if opened {
 			kicked = false
 		}
-		if err != nil {
+		switch {
+		case err == nil, apierrors.IsNotFound(err):
+			// A missing ConfigMap is an answer, polled on its own terms
+			// (missingWait): the backoff of the failures that may follow
+			// its return starts again from the first.
+			attempt = 0
+		default:
 			attempt++
 			s.opts.Logger.Debug("shared state watch ended", slog.String("configmap", s.opts.Name), slog.Int("attempt", attempt))
-		} else {
-			attempt = 0
 		}
 		wait := jitter(s.opts.Backoff(attempt))
-		if s.isMode(modeMissing) {
-			// Polled, not backed off: a revocation held while the
-			// ConfigMap is missing is written at its next read (P3).
-			wait = missingPoll + rand.N(missingPoll) //nolint:gosec // retry spread, not a secret
+		if d, ok := s.missingWait(); ok {
+			wait = d
 		}
 		kicked = s.pause(ctx, wait, kicked)
 	}
@@ -1991,11 +2028,33 @@ func (s *Store) Run(ctx context.Context) error {
 }
 
 // missingPoll is how often a missing ConfigMap is read again, plus up to
-// as much again of jitter: its return is seen within two seconds, and the
-// revocations this replica held meanwhile are written then, rather than
-// after the read backoff's minute (one Get a replica every second or two,
-// only while the ConfigMap is missing).
-const missingPoll = time.Second
+// as much again of jitter, while that matters: while this replica holds
+// an urgent change not written (a revocation, a sign-out, written at the ConfigMap's return
+// rather than after the read backoff's minute) and for missingFastFor
+// after the ConfigMap went missing (a restore or a re-creation, whose
+// return is then seen within two seconds). Past that, with nothing
+// held, it is read every missingSlowPoll (plus a quarter of jitter): an
+// install that never creates it costs one Get a replica every ten
+// seconds or so, not every second.
+const (
+	missingPoll     = time.Second
+	missingFastFor  = 2 * time.Minute
+	missingSlowPoll = 10 * time.Second
+)
+
+// missingWait is the Run loop's wait before the next read while the
+// ConfigMap is missing (missingPoll), false in any other mode.
+func (s *Store) missingWait() (time.Duration, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.mode != modeMissing {
+		return 0, false
+	}
+	if s.urgent && s.gen != s.written || s.opts.Now().Sub(s.since) < missingFastFor {
+		return missingPoll + rand.N(missingPoll), true //nolint:gosec // retry spread, not a secret
+	}
+	return jitter(missingSlowPoll), true
+}
 
 // jitter spreads d over [d, 1.25 d): the replicas of a console that lost
 // the API server at once do not all retry at once.
@@ -2004,12 +2063,6 @@ func jitter(d time.Duration) time.Duration {
 		return d
 	}
 	return d + rand.N(d/4+1) //nolint:gosec // retry spread, not a secret
-}
-
-func (s *Store) isMode(m mode) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.mode == m
 }
 
 // pause waits d before the Run loop's next read, or less: a write that
@@ -2039,8 +2092,18 @@ func (s *Store) pause(ctx context.Context, d time.Duration, kicked bool) bool {
 // server refuses (429 or 503, shedding long-running requests) would
 // otherwise reset the failing mode's staleGrace at every retry while
 // seeing nothing the other replicas write.
+//
+// The read and the opening of the watch each have writeTimeout to
+// answer: an API server that does not (a request queued by its flow
+// control, a dial into a partition, a dead pooled connection) is a
+// failure of it, not a wait without end in a live mode with no watch
+// (round 19). An open watch that delivers nothing for watchIdle, not
+// even a bookmark, is ended and opened again, quietly, as a watch the
+// API server closes.
 func (s *Store) watchOnce(ctx context.Context) (bool, error) {
-	cm, err := s.opts.Client.Get(ctx, s.opts.Name, metav1.GetOptions{})
+	getCtx, cancelGet := context.WithTimeout(ctx, writeTimeout)
+	cm, err := s.opts.Client.Get(getCtx, s.opts.Name, metav1.GetOptions{})
+	cancelGet()
 	if err != nil {
 		return false, s.failed(err)
 	}
@@ -2058,9 +2121,7 @@ func (s *Store) watchOnce(ctx context.Context) (bool, error) {
 	// cm.ResourceVersion fails with "too old resource version" forever once
 	// the ConfigMap has been left unchanged longer than the API server keeps
 	// history.
-	w, err := s.opts.Client.Watch(ctx, metav1.ListOptions{
-		FieldSelector: fields.OneTermEqualSelector("metadata.name", s.opts.Name).String(),
-	})
+	w, err := s.openWatch(ctx)
 	if err != nil {
 		return false, s.failed(err)
 	}
@@ -2079,16 +2140,24 @@ func (s *Store) watchOnce(ctx context.Context) (bool, error) {
 			s.wakeLocked(true)
 		}
 	})
-	defer s.locked(func() { s.watching = false })
+	defer s.locked(func() { s.watching, s.unwatchedAt = false, s.opts.Now().UTC() })
 	first := true
+	idle := time.NewTimer(s.opts.WatchIdle)
+	defer idle.Stop()
 	for {
 		select {
 		case <-ctx.Done():
+			return true, nil
+		case <-idle.C:
+			// Deaf (round 19, security P3): a revocation another replica
+			// wrote would not be seen. The next read and watch see it.
+			s.opts.Logger.Debug("shared state watch idle; reopening", slog.String("configmap", s.opts.Name))
 			return true, nil
 		case ev, ok := <-w.ResultChan():
 			if !ok {
 				return true, nil
 			}
+			idle.Reset(s.opts.WatchIdle)
 			switch ev.Type {
 			case watch.Added, watch.Modified:
 				if cm, ok := ev.Object.(*corev1.ConfigMap); ok && cm.Name == s.opts.Name {
@@ -2122,6 +2191,43 @@ func (s *Store) watchOnce(ctx context.Context) (bool, error) {
 			}
 		}
 	}
+}
+
+// openWatch opens the watch of the ConfigMap, with bookmarks (the API
+// server's sign of life on a watch with nothing to deliver), giving the
+// API server writeTimeout to answer. The watch itself lives on ctx.
+func (s *Store) openWatch(ctx context.Context) (watch.Interface, error) {
+	wctx, cancel := context.WithCancel(ctx)
+	timer := time.AfterFunc(writeTimeout, cancel)
+	w, err := s.opts.Client.Watch(wctx, metav1.ListOptions{
+		FieldSelector:       fields.OneTermEqualSelector("metadata.name", s.opts.Name).String(),
+		AllowWatchBookmarks: true,
+	})
+	if !timer.Stop() {
+		// The deadline ran first: a watch it ended, or that opened just
+		// then, is not one to rely on; the failure is the API server's
+		// silence (context.DeadlineExceeded), not a cancellation.
+		if err == nil {
+			w.Stop()
+		}
+		return nil, fmt.Errorf("opening the watch of ConfigMap %s: %w", s.opts.Name, context.DeadlineExceeded)
+	}
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	return stopping{Interface: w, cancel: cancel}, nil
+}
+
+// stopping is a watch that also releases its context when stopped.
+type stopping struct {
+	watch.Interface
+	cancel context.CancelFunc
+}
+
+func (w stopping) Stop() {
+	w.Interface.Stop()
+	w.cancel()
 }
 
 // writer batches local changes into writes.

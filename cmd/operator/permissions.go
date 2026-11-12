@@ -147,12 +147,12 @@ func requiredPermissions(mapper meta.RESTMapper, objectScheme *runtime.Scheme, r
 // the cache would never sync, and the operator would crash-loop for every
 // namespace. A namespace whose review fails (an error after the retries, a
 // response too large, or no answer within managerrole.NamespaceReviewTimeout
-// at every attempt) is left out too, with its error logged: nothing is
+// at every attempt while the API server answered meanwhile) is left out too, with its error logged: nothing is
 // known of it, and the others must not wait on it. Left out, it is not
 // reconciled until it is fixed and the operator restarted (reReviewFailed
-// restarts it for an API server error or a lost connection, never for a
-// review too large or too slow, which the namespace's RoleBindings
-// decide); the others are unaffected. It returns the namespaces
+// restarts it for an API server error, a reset or refused connection, or
+// a connection that answered nothing at all, never for a review too large
+// or too slow, which the namespace's RoleBindings decide); the others are unaffected. It returns the namespaces
 // kept and those left out, why and (for missing permissions) what the
 // review showed. At least one namespace must be kept; empty (every
 // namespace) stays empty.
@@ -189,10 +189,10 @@ func permittedNamespaces(ctx context.Context, api startupAPI, namespaces []strin
 		switch contentCause(u) {
 		case dropReviewTooLarge:
 			setupLog.Error(u.Err, "watched namespace left out: the operator's permission review there is too large (its RoleBindings grant the operator far more rules than its manager role; remove the extra bindings: it is reviewed again at the next start, never in the background)",
-				"namespace", u.Namespace)
+				"namespace", u.Namespace, "responseSize", responseSize(u.Err))
 			dropped = append(dropped, droppedNamespace{Namespace: u.Namespace, Cause: dropReviewTooLarge, Reason: u.Reason()})
 		case dropReviewTooSlow:
-			setupLog.Error(u.Err, "watched namespace left out: the operator's permission review there got no answer in time at every attempt (most likely its RoleBindings grant the operator far more rules than its manager role; check them and the API server: it is reviewed again at the next start, never in the background)",
+			setupLog.Error(u.Err, "watched namespace left out: the operator's permission review there got no answer in time at every attempt while the API server answered other requests (most likely its RoleBindings grant the operator far more rules than its manager role; check them and the API server: it is reviewed again at the next start, never in the background)",
 				"namespace", u.Namespace)
 			dropped = append(dropped, droppedNamespace{Namespace: u.Namespace, Cause: dropReviewTooSlow, Reason: u.Reason()})
 		default:
@@ -206,6 +206,16 @@ func permittedNamespaces(ctx context.Context, api startupAPI, namespaces []strin
 			namespaces, len(review.Denied), len(review.Unreviewed))
 	}
 	return review.Permitted, dropped, nil
+}
+
+// responseSize is the size a review too large was seen at (the
+// managerrole.ReviewTooLargeError in err), or "unknown".
+func responseSize(err error) string {
+	var tooLarge *managerrole.ReviewTooLargeError
+	if errors.As(err, &tooLarge) {
+		return tooLarge.Size()
+	}
+	return "unknown"
 }
 
 // namespaceReviewTimeout bounds each attempt at reviewing one namespace's

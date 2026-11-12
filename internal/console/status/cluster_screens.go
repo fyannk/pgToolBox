@@ -270,7 +270,7 @@ func (s *Service) Backups(ctx context.Context, namespace, name string) (viewmode
 		return backups[i].CreationTimestamp.After(backups[j].CreationTimestamp.Time)
 	})
 	for _, b := range backups {
-		r := cnpgstatus.BackupObject(g.minor, b)
+		r := cnpgstatus.BackupObject(g.minor, b, now)
 		row := viewmodel.BackupRow{
 			Name: b.Name, Phase: r.Phase, Health: health(r.Reading.Class), Known: r.Reading.Known, Terminal: r.Reading.Terminal,
 			Method: r.Method, PluginName: r.PluginName, Instance: r.PodName, Online: r.Online, BackupID: r.BackupID, Error: r.Error,

@@ -42,7 +42,7 @@ func rawDeclared(kind, name, cluster string, spec, status map[string]any) *unstr
 // cluster's declarations are expected traffic that must not be adopted.
 func TestDeclaredObjectsRequireTheExactClusterReference(t *testing.T) {
 	t.Parallel()
-	f := NewFacts("payments", "orders")
+	f := NewFacts("payments", "orders", testNow)
 	objs := []*unstructured.Unstructured{
 		rawDeclared("Database", "app-db", "orders", map[string]any{"name": "app", "owner": "app"}, map[string]any{"applied": true}),
 		rawDeclared("Database", "other-db", "other", map[string]any{"name": "other"}, nil),

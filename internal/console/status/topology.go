@@ -308,7 +308,8 @@ func topoSchedules(g *gathered, now time.Time, facts *topoFacts) []topology.Box 
 func topoSnapshot(g *gathered) *topology.Box {
 	var snapshotBackups int
 	for _, b := range g.backups {
-		if cnpgstatus.BackupObject(g.minor, b).Method == cnpgstatus.BackupMethodVolumeSnapshot {
+		// Only the method is read: no time, so no clock.
+		if cnpgstatus.BackupObject(g.minor, b, time.Time{}).Method == cnpgstatus.BackupMethodVolumeSnapshot {
 			snapshotBackups++
 		}
 	}
@@ -515,7 +516,8 @@ func baseFlow(g *gathered, store, snapshot bool) *topology.Base {
 		return backups[i].Name < backups[j].Name
 	})
 	for _, b := range backups {
-		r := cnpgstatus.BackupObject(g.minor, b)
+		// Only the instance and the method are read: no clock.
+		r := cnpgstatus.BackupObject(g.minor, b, time.Time{})
 		if r.PodName == "" {
 			continue
 		}

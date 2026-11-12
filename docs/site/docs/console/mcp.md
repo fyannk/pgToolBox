@@ -164,6 +164,13 @@ index cannot be trusted (the shared state ConfigMap unreachable for more than
 30 seconds, its watch refused or broken for more than 30 seconds, so that the
 replica would not see a revocation written by another, or a grants document the
 console cannot read) every grant is refused with `503` and no new one is issued.
+The 30 seconds run from the moment the watch ended, whatever happens next: the
+read that reopens it has 10 seconds to answer, and one that does not is a
+failure, not a wait. A watch the API server closes and that opens again at once
+is routine and logs nothing. A watch that stays open but delivers nothing, not
+even the bookmark the API server sends about once a minute, is reopened after
+3 minutes: in that API server fault, a revocation made on another replica can
+take up to that long to reach this one.
 A write that lands does not end that state on its own: only an open watch does. A `STATE_CONFIGMAP` that is
 missing, or that the console's ServiceAccount may not use, refuses grants the
 same way, and the console says so at start with what it needs: the ConfigMap
@@ -240,19 +247,27 @@ note that says what happened.
 A replica that has not read the shared state yet (a pod just started) answers
 `503`, not `404` or `204`, to a disconnection of a grant it does not know and to
 **Disconnect all** with nothing to revoke there: it knows none of the grants the
-others recorded. With MCP OAuth on, `/readyz` waits for that first read, so such
-a pod takes no traffic first.
+others recorded. With MCP OAuth on, `/readyz` waits for that first read (or
+for the API server to answer that the ConfigMap is missing or may not be read),
+so such a pod takes no traffic first. Once answered, `/readyz` does not go back
+to failing for the shared state: a later API server failure refuses grants
+(`503`) as above, rather than taking every replica out of the Service at once.
 While the ConfigMap does
 not exist (deleted, or not created yet), a disconnection is answered done, and
 logged: every replica refuses every grant until the ConfigMap exists, and the
 replica that answered writes the disconnection into it at its next read of the
 ConfigMap, within two seconds of its return (a missing ConfigMap is read every
-one to two seconds). Meanwhile another replica that reads the new ConfigMap
+one to two seconds while a replica holds a disconnection or a sign-out not
+written yet, and for two minutes after it went missing; otherwise about every
+ten seconds). Meanwhile another replica that reads the new ConfigMap
 first and recorded the grant less than eight minutes earlier may serve it for
 those seconds. A restart of the replica that answered before then loses the
 disconnection (that other replica then keeps the grant). A ConfigMap the console may not write is not so: a replica whose
 watch opened before the permission was withdrawn still serves grants until its
-next write, so that answer stays `503`. A sign-out with
+next write, so that answer stays `503`. Where the console's ServiceAccount
+may not read the ConfigMap at all, **Disconnect all** with nothing to revoke is
+answered done, as when the ConfigMap is missing: every replica uses the same
+ServiceAccount, so every grant is refused. A sign-out with
 **disconnect my assistants** goes on even then (the console log says so). Without the
 shared state the index is in each replica's memory: a restart disconnects every
 assistant, and with more than one replica each refuses the grants of the

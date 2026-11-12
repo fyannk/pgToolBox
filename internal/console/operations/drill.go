@@ -31,7 +31,6 @@ import (
 	"github.com/fyannk/pgToolBox/internal/console/opstate"
 	"github.com/fyannk/pgToolBox/internal/console/viewmodel"
 	"github.com/fyannk/pgToolBox/pkg/cnpgstatus"
-	"github.com/fyannk/pgToolBox/pkg/cnpgstatus/observe"
 )
 
 // DrillOptions enable the restore-drill operation. The
@@ -96,12 +95,18 @@ func (d *DrillOptions) namespaceFor(source string) string {
 	return source
 }
 
-// latestCompleted is the newest completed Backup of the Cluster.
-func latestCompleted(backups []*cnpgv1.Backup) *cnpgv1.Backup {
+// latestCompleted is the newest completed Backup of the Cluster at now,
+// ranked by its plausible stop time, else the operator's completion
+// stamp (an upper bound on its end, seconds after it), else its creation.
+func latestCompleted(backups []*cnpgv1.Backup, now time.Time) *cnpgv1.Backup {
 	var best *cnpgv1.Backup
 	at := func(b *cnpgv1.Backup) time.Time {
-		if stop := backupStop(b); stop != nil {
-			return *stop
+		times := cnpgstatus.BackupTimesOf(b, now)
+		switch {
+		case times.Stop != nil:
+			return *times.Stop
+		case times.OperatorTerminated != nil:
+			return *times.OperatorTerminated
 		}
 		return b.CreationTimestamp.Time
 	}
@@ -145,7 +150,8 @@ func (s *Service) drillBlockers(ctx context.Context, c *cnpgv1.Cluster, backups 
 	rs, err := ops.DrillRecoverySource(c)
 	var backup drillBackup
 	if rs.PgBackRest == nil {
-		backup = barmanDrillBackup(latestCompleted(backups))
+		now := s.opts.Now().UTC()
+		backup = barmanDrillBackup(latestCompleted(backups, now), now)
 		if backup.object == nil {
 			out = append(out, viewmodel.OperationBlocker{Reason: "NoCompletedBackup", Text: "the Cluster has no completed Backup to restore", Source: "Backup.status.phase"})
 		}
@@ -214,26 +220,15 @@ type drillBackup struct {
 	stoppedAt *time.Time
 }
 
-func barmanDrillBackup(b *cnpgv1.Backup) drillBackup {
+func barmanDrillBackup(b *cnpgv1.Backup, now time.Time) drillBackup {
 	out := drillBackup{object: b}
 	if b != nil {
-		out.stoppedAt = backupStop(b)
+		// Its plausible stop time at now, nil when unset or not sane: a
+		// plugin that leaves stopped_at unset is stamped 1970 by CNPG, one
+		// that sends milliseconds the far future.
+		out.stoppedAt = cnpgstatus.BackupTimesOf(b, now).Stop
 	}
 	return out
-}
-
-// backupStop is the Backup's stop time, nil when unset or not sane (a
-// plugin that leaves stopped_at unset is stamped 1970 by CNPG).
-func backupStop(b *cnpgv1.Backup) *time.Time {
-	var started, stopped *time.Time
-	if b.Status.StartedAt != nil {
-		started = &b.Status.StartedAt.Time
-	}
-	if b.Status.StoppedAt != nil {
-		stopped = &b.Status.StoppedAt.Time
-	}
-	_, stop := observe.SaneBackupTimes(b.CreationTimestamp.Time, started, stopped)
-	return stop
 }
 
 // name is the Backup object's name, else the label.

@@ -431,6 +431,7 @@ func TestTrackDrillAnswersOnlyForTheHandlesCluster(t *testing.T) {
 // that date nor ranks it by it.
 func TestDrillBackupStopIsSane(t *testing.T) {
 	created := time.Date(2026, 11, 10, 2, 0, 0, 0, time.UTC)
+	now := created.Add(24 * time.Hour)
 	backup := func(name string, stopped time.Time) *cnpgv1.Backup {
 		b := &cnpgv1.Backup{ObjectMeta: metav1.ObjectMeta{Name: name, CreationTimestamp: metav1.NewTime(created)}}
 		b.Status.Phase = cnpgv1.BackupPhaseCompleted
@@ -438,17 +439,32 @@ func TestDrillBackupStopIsSane(t *testing.T) {
 		return b
 	}
 	epoch := backup("epoch", time.Unix(0, 0))
-	if got := barmanDrillBackup(epoch).stoppedAt; got != nil {
+	if got := barmanDrillBackup(epoch, now).stoppedAt; got != nil {
 		t.Errorf("a 1970 stop is labelled %s, want unknown", got)
 	}
 	good := backup("good", created.Add(10*time.Minute))
-	if got := barmanDrillBackup(good).stoppedAt; got == nil || !got.Equal(created.Add(10*time.Minute)) {
+	if got := barmanDrillBackup(good, now).stoppedAt; got == nil || !got.Equal(created.Add(10*time.Minute)) {
 		t.Errorf("a sane stop reads %v", got)
 	}
 	// Ranked by its creation time, the epoch Backup created later wins.
 	later := backup("later-epoch", time.Unix(0, 0))
 	later.CreationTimestamp = metav1.NewTime(created.Add(time.Hour))
-	if got := latestCompleted([]*cnpgv1.Backup{good, later}); got == nil || got.Name != "later-epoch" {
+	if got := latestCompleted([]*cnpgv1.Backup{good, later}, now); got == nil || got.Name != "later-epoch" {
 		t.Errorf("latest %v, want later-epoch ranked by its creation", got)
+	}
+	// Round 19, CNPG P3-1: a stop in the future (milliseconds sent as
+	// seconds) is neither the label nor the rank; the operator's
+	// completion stamp ranks a Backup with no plausible stop.
+	future := backup("future", created.Add(1000*24*time.Hour))
+	if got := barmanDrillBackup(future, now).stoppedAt; got != nil {
+		t.Errorf("a future stop is labelled %s, want unknown", got)
+	}
+	if got := latestCompleted([]*cnpgv1.Backup{good, future}, now); got == nil || got.Name != "good" {
+		t.Errorf("latest %v, want good: a future stop does not rank first", got)
+	}
+	stamped := backup("stamped", time.Unix(0, 0))
+	stamped.Status.ReconciliationTerminatedAt = &metav1.Time{Time: created.Add(20 * time.Minute)}
+	if got := latestCompleted([]*cnpgv1.Backup{good, stamped}, now); got == nil || got.Name != "stamped" {
+		t.Errorf("latest %v, want stamped: ranked by the operator's completion stamp", got)
 	}
 }

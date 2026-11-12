@@ -209,26 +209,41 @@ var pluginFieldsAtCompletion = []string{
 	"status.beginWal", "status.endWal", "status.beginLSN", "status.endLSN", "status.online",
 }
 
-// BackupObject reads one Backup. A nil Backup is unknown.
-func BackupObject(minor Minor, b *cnpgv1.Backup) BackupObjectReading {
+// BackupTimesOf are b's plausible times at now (observe.SaneBackupTimes):
+// the one reading every console consumer of a Backup's times shares.
+func BackupTimesOf(b *cnpgv1.Backup, now time.Time) observe.BackupTimes {
+	if b == nil {
+		return observe.BackupTimes{}
+	}
+	return observe.SaneBackupTimes(now, observe.BackupStamps{
+		Created: b.CreationTimestamp.Time,
+		Started: metaTime(b.Status.StartedAt), Stopped: metaTime(b.Status.StoppedAt),
+		ReconciliationStarted:    metaTime(b.Status.ReconciliationStartedAt),
+		ReconciliationTerminated: metaTime(b.Status.ReconciliationTerminatedAt),
+	})
+}
+
+// BackupObject reads one Backup at now (its times through BackupTimesOf:
+// an impossible one, 1970 or in the future, is not reported). A nil
+// Backup is unknown.
+func BackupObject(minor Minor, b *cnpgv1.Backup, now time.Time) BackupObjectReading {
 	if b == nil {
 		return BackupObjectReading{Reading: BackupPhaseReading{Class: ClassUnknown}}
 	}
 	status := b.Status
 	reading := BackupObjectReading{
-		Phase:                      bound(string(status.Phase), maxAnnotationValue),
-		Reading:                    ClassifyBackupPhase(minor, string(status.Phase)),
-		Method:                     bound(string(status.Method), maxAnnotationValue),
-		Online:                     status.Online,
-		BackupID:                   bound(status.BackupID, maxAnnotationValue),
-		BackupName:                 bound(status.BackupName, maxAnnotationValue),
-		Error:                      bound(status.Error, maxMessage),
-		CreatedAt:                  metaTime(&b.CreationTimestamp),
-		ReconciliationStartedAt:    metaTime(status.ReconciliationStartedAt),
-		ReconciliationTerminatedAt: metaTime(status.ReconciliationTerminatedAt),
+		Phase:      bound(string(status.Phase), maxAnnotationValue),
+		Reading:    ClassifyBackupPhase(minor, string(status.Phase)),
+		Method:     bound(string(status.Method), maxAnnotationValue),
+		Online:     status.Online,
+		BackupID:   bound(status.BackupID, maxAnnotationValue),
+		BackupName: bound(status.BackupName, maxAnnotationValue),
+		Error:      bound(status.Error, maxMessage),
+		CreatedAt:  metaTime(&b.CreationTimestamp),
 	}
-	reading.StartedAt, reading.StoppedAt = observe.SaneBackupTimes(b.CreationTimestamp.Time,
-		metaTime(status.StartedAt), metaTime(status.StoppedAt))
+	times := BackupTimesOf(b, now)
+	reading.StartedAt, reading.StoppedAt = times.Start, times.Stop
+	reading.ReconciliationStartedAt, reading.ReconciliationTerminatedAt = times.OperatorStarted, times.OperatorTerminated
 	if reading.Method == "" {
 		reading.Method = bound(string(b.Spec.Method), maxAnnotationValue)
 	}

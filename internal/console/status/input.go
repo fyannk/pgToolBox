@@ -59,7 +59,7 @@ func (s *Service) Input(ctx context.Context, key cache.ClusterKey) (diagnose.Inp
 		return diagnose.Input{}, false
 	}
 	now := s.now().UTC()
-	facts := kube.NewFacts(key.Namespace, key.Name)
+	facts := kube.NewFacts(key.Namespace, key.Name, now)
 	// The one CNPG version detector gates every version-pinned rule.
 	in := diagnose.Input{Now: now, CNPGVersion: g.version, HasCNPGVersion: true}
 
