@@ -21,7 +21,9 @@ import (
 	"net/http/httptest"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	authorizationv1 "k8s.io/api/authorization/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -87,5 +89,72 @@ func TestStartupClientBoundsTheRulesReview(t *testing.T) {
 	// log) through the client.
 	if size := responseSize(review.Unreviewed[0].Err); !strings.HasSuffix(size, " bytes read") || !strings.Contains(review.Unreviewed[0].Err.Error(), size) {
 		t.Errorf("team-hostile's error = %v, size %q: want the bytes read named", review.Unreviewed[0].Err, size)
+	}
+}
+
+// TestStartupClientSlowReviewTooLarge: round 20, OPERATOR P3-1 and GO
+// P3-1. A review too large that arrives slowly (a slow link, an API server
+// CPU-bound on gzip), whether it trickles or stalls past the limit, is too
+// large through the start-up client, with the size seen, at its first
+// attempt and before its deadline: never a timeout, never retried.
+func TestStartupClientSlowReviewTooLarge(t *testing.T) {
+	const timeout = 1500 * time.Millisecond
+	for _, tc := range []struct {
+		name  string
+		trick bool
+	}{{"trickles", true}, {"stalls", false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, _ = io.Copy(io.Discard, r.Body)
+				if !strings.HasSuffix(r.URL.Path, "/selfsubjectrulesreviews") {
+					http.Error(w, "unexpected request", http.StatusBadRequest)
+					return
+				}
+				calls.Add(1)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusCreated)
+				_, _ = w.Write([]byte(`{"kind":"SelfSubjectRulesReview","status":{"resourceRules":[` + strings.Repeat(`{"verbs":["list"]},`, managerrole.ReviewResponseLimit/18)))
+				w.(http.Flusher).Flush()
+				for {
+					select {
+					case <-r.Context().Done():
+						return
+					case <-time.After(10 * time.Millisecond):
+					}
+					if tc.trick {
+						_, _ = w.Write([]byte(strings.Repeat(`{"verbs":["list"]},`, 50)))
+						w.(http.Flusher).Flush()
+					}
+				}
+			}))
+			defer server.Close()
+			mapper := meta.NewDefaultRESTMapper(nil)
+			mapper.Add(authorizationv1.SchemeGroupVersion.WithKind("SelfSubjectRulesReview"), meta.RESTScopeRoot)
+			mapper.Add(authorizationv1.SchemeGroupVersion.WithKind("SelfSubjectAccessReview"), meta.RESTScopeRoot)
+			c, err := client.New(startupConfig(&rest.Config{Host: server.URL}), client.Options{Scheme: scheme, Mapper: mapper})
+			if err != nil {
+				t.Fatal(err)
+			}
+			required := []managerrole.Permission{{Group: "apps", Resource: "deployments", Verbs: []string{"list"}}}
+			start := time.Now()
+			review, err := managerrole.PermittedNamespaces(t.Context(), c, required, []string{"team-slow"}, timeout)
+			elapsed := time.Since(start)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(review.Unreviewed) != 1 || !review.Unreviewed[0].TooLarge() || review.Unreviewed[0].TooSlow() {
+				t.Fatalf("review = %+v, want team-slow too large, not too slow", review)
+			}
+			if size := responseSize(review.Unreviewed[0].Err); !strings.HasPrefix(size, "at least ") || !strings.Contains(review.Unreviewed[0].Err.Error(), size) {
+				t.Errorf("team-slow's error = %v, size %q: want at least the bytes counted named", review.Unreviewed[0].Err, size)
+			}
+			if n := calls.Load(); n != 1 {
+				t.Errorf("team-slow reviewed %d times, want once (too large is never retried)", n)
+			}
+			if elapsed >= timeout {
+				t.Errorf("the review took %s, to the attempt's deadline %s", elapsed, timeout)
+			}
+		})
 	}
 }

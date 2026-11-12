@@ -739,3 +739,159 @@ func TestPermissionString(t *testing.T) {
 		}
 	}
 }
+
+// slowBody is a body of first bytes, then of every bytes each tick (none
+// when tick is 0), until its request's context ends: a review too large
+// that a slow link or a CPU-bound API server sends slowly.
+type slowBody struct {
+	ctx         context.Context //nolint:containedctx // the request's, as a transport's body
+	first, each int
+	tick        time.Duration
+}
+
+func (b *slowBody) Read(p []byte) (int, error) {
+	if b.first > 0 {
+		n := min(len(p), b.first)
+		b.first -= n
+		return n, nil
+	}
+	if b.tick == 0 {
+		<-b.ctx.Done()
+		return 0, b.ctx.Err()
+	}
+	select {
+	case <-b.ctx.Done():
+		return 0, b.ctx.Err()
+	case <-time.After(b.tick):
+	}
+	return min(len(p), b.each), nil
+}
+
+// TestLimitReviewResponsesCountIsBounded: round 20, OPERATOR P3-1 and GO
+// P3-1. The count of a review too large stops tooLargeCountMargin before
+// its request's deadline, or after tooLargeCountTime, whichever comes
+// first, even while a read blocks: the error says "at least" the bytes
+// counted. It is sticky: client-go drains a body before closing it, and
+// a read after the error counts nothing more.
+func TestLimitReviewResponsesCountIsBounded(t *testing.T) {
+	const reviews = "/apis/authorization.k8s.io/v1/selfsubjectrulesreviews"
+	for _, tt := range []struct {
+		name     string
+		deadline time.Duration // 0: none
+		each     int
+		tick     time.Duration
+		within   time.Duration
+	}{
+		{"a body that stalls, before the deadline", 400 * time.Millisecond, 0, 0, 400*time.Millisecond - tooLargeCountMargin/2},
+		{"a body that trickles, before the deadline", 400 * time.Millisecond, 1024, 5 * time.Millisecond, 400*time.Millisecond - tooLargeCountMargin/2},
+		{"a body that trickles, within the count's time", 0, 1024, 5 * time.Millisecond, tooLargeCountTime + 300*time.Millisecond},
+		{"a body that stalls, within the count's time", 0, 0, 0, tooLargeCountTime + 300*time.Millisecond},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := t.Context()
+			if tt.deadline > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, tt.deadline)
+				defer cancel()
+			}
+			next := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				body := &slowBody{ctx: req.Context(), first: ReviewResponseLimit + 1, each: tt.each, tick: tt.tick}
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(body), ContentLength: -1}, nil
+			})
+			req := httptest.NewRequestWithContext(ctx, http.MethodPost, "https://api"+reviews, nil)
+			start := time.Now()
+			resp, err := LimitReviewResponses(next).RoundTrip(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = resp.Body.Close() }()
+			_, err = io.ReadAll(resp.Body)
+			elapsed := time.Since(start)
+			var tooLarge *ReviewTooLargeError
+			if !errors.As(err, &tooLarge) || !tooLarge.AtLeast || tooLarge.Read <= ReviewResponseLimit {
+				t.Fatalf("err = %v, want at least the limit read", err)
+			}
+			if elapsed > tt.within {
+				t.Errorf("the count took %s, want within %s", elapsed, tt.within)
+			}
+			if tt.deadline > 0 && ctx.Err() != nil {
+				t.Errorf("the count ran to the request's deadline (%s)", elapsed)
+			}
+			again := time.Now()
+			if _, err := resp.Body.Read(make([]byte, 1024)); !errors.Is(err, ErrReviewTooLarge) || time.Since(again) > 50*time.Millisecond {
+				t.Errorf("a read after the error = %v in %s, want the same error at once", err, time.Since(again))
+			}
+		})
+	}
+}
+
+// dyingReviewer is a namespace whose every review hangs, behind one
+// connection that dies at diesAt, a share of the second attempt: the check
+// of the API server answers before it, and never after.
+type dyingReviewer struct {
+	rules   []authorizationv1.ResourceRule
+	timeout time.Duration
+	diesAt  float64
+
+	mu    sync.Mutex
+	first time.Time
+}
+
+func (r *dyingReviewer) Create(ctx context.Context, obj client.Object, _ ...client.CreateOption) error {
+	r.mu.Lock()
+	first := r.first
+	r.mu.Unlock()
+	dies := first.Add(r.timeout + retryPause + time.Duration(r.diesAt*float64(r.timeout)))
+	if ok, _ := answerCheck(ctx, obj, nil); ok {
+		if time.Now().Before(dies) {
+			return nil
+		}
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	r.mu.Lock()
+	if r.first.IsZero() {
+		r.first = time.Now()
+	}
+	r.mu.Unlock()
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+// TestPermittedNamespacesConnectionDiesLate: round 20, OPERATOR P3-2. The
+// check of the API server is sent in the last third of the last attempt:
+// a connection that dies a third into the second attempt (after a check
+// sent at its start would have answered) is the connection, not the
+// namespace, and the failure stays transient (reviewed again); one that
+// lives to the end of the attempt makes the namespace too slow.
+func TestPermittedNamespacesConnectionDiesLate(t *testing.T) {
+	required := []Permission{{Group: "apps", Resource: "deployments", Verbs: []string{"list"}}}
+	rules := []authorizationv1.ResourceRule{{APIGroups: []string{"apps"}, Resources: []string{"deployments"}, Verbs: []string{"list"}}}
+	const timeout = 300 * time.Millisecond
+	for _, tt := range []struct {
+		diesAt      float64
+		wantTooSlow bool
+	}{
+		{0.33, false},
+		{2, true},
+	} {
+		t.Run(fmt.Sprintf("dies at %.0f%%", 100*tt.diesAt), func(t *testing.T) {
+			c := &dyingReviewer{rules: rules, timeout: timeout, diesAt: tt.diesAt}
+			start := time.Now()
+			review, err := PermittedNamespaces(t.Context(), c, required, []string{"team-a"}, timeout)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(review.Unreviewed) != 1 {
+				t.Fatalf("review = %+v, want team-a unreviewed", review)
+			}
+			got := review.Unreviewed[0].Err
+			if review.Unreviewed[0].TooSlow() != tt.wantTooSlow || transient(got) == tt.wantTooSlow {
+				t.Errorf("err = %v, want too slow %t (transient otherwise)", got, tt.wantTooSlow)
+			}
+			if elapsed := time.Since(start); elapsed > namespaceBudget(timeout)+200*time.Millisecond {
+				t.Errorf("the review took %s, past the namespace's budget %s", elapsed, namespaceBudget(timeout))
+			}
+		})
+	}
+}
