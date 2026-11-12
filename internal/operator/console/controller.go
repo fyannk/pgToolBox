@@ -1216,11 +1216,13 @@ func (r *Reconciler) withdrawExposure(ctx context.Context, console *pgtoolboxv1a
 		if err := r.deleteIfOwned(ctx, console, &routev1.Route{}, name); err != nil {
 			return nil, err
 		}
+		exposure.MarkGone(&console.Status.PublishedExposureKinds, "Route")
 	}
 	if r.Features.In(console.Namespace).Gateways.Usable() {
 		if err := r.deleteIfOwned(ctx, console, &gatewayv1.HTTPRoute{}, name); err != nil {
 			return nil, err
 		}
+		exposure.MarkGone(&console.Status.PublishedExposureKinds, "HTTPRoute")
 	}
 	return r.leftoverExposure(ctx, console, func(pgtoolboxv1alpha1.ExposureType) bool { return true })
 }

@@ -34,6 +34,9 @@ type unrecorded struct {
 	mu      sync.Mutex
 	fail    bool
 	pending map[string]bool
+	// failWith is the error of a write that fails (ErrNotRecorded when
+	// nil).
+	failWith error
 }
 
 func (u *unrecorded) WriteRevocations(_ context.Context, ids ...string) error {
@@ -47,6 +50,9 @@ func (u *unrecorded) WriteRevocations(_ context.Context, ids ...string) error {
 		}
 	}
 	if u.fail {
+		if u.failWith != nil {
+			return u.failWith
+		}
 		return sharedstate.ErrNotRecorded
 	}
 	return nil
@@ -128,5 +134,49 @@ func TestADisconnectionIsAcknowledgedOnlyOnceRecorded(t *testing.T) {
 	}
 	if _, err := r.authenticate(d.Access); !errors.Is(err, auth.ErrBearerRevoked) {
 		t.Errorf("after the sign-out: %v", err)
+	}
+}
+
+// While the shared state ConfigMap does not exist every replica refuses
+// every grant, so a disconnection then is answered done (and logged), not
+// 503 forever; one the ConfigMap's permissions refuse stays ErrNotRecorded
+// (round 17, P3).
+func TestADisconnectionWhileTheConfigMapIsMissingIsDone(t *testing.T) {
+	c := &clock{now: t0}
+	f := newSessions(t, c, secretA)
+	store := &unrecorded{Store: memoryStore(c), pending: map[string]bool{}, failWith: sharedstate.ErrNoConfigMap}
+	r := newReplica(t, f, store, c, nil)
+	ctx := context.Background()
+
+	_, tok := r.connect(t)
+	p, err := r.authenticate(tok.Access)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, other := r.connect(t)
+	store.setFail(true)
+	if err := r.s.RevokeGrant(ctx, auth.Client{}, "alice", p.SessionID); err != nil {
+		t.Errorf("a disconnection while the ConfigMap is missing: %v, want done", err)
+	}
+	if _, err := r.authenticate(tok.Access); !errors.Is(err, auth.ErrBearerRevoked) {
+		t.Errorf("this replica accepts the grant it revoked: %v", err)
+	}
+	if n, err := r.s.DisconnectAll(ctx, auth.Client{}, "alice"); n != 1 || err != nil {
+		t.Errorf("disconnect all while the ConfigMap is missing: %d, %v", n, err)
+	}
+	if _, err := r.authenticate(other.Access); !errors.Is(err, auth.ErrBearerRevoked) {
+		t.Errorf("after disconnect all: %v", err)
+	}
+
+	store.mu.Lock()
+	store.failWith = sharedstate.ErrNotRecorded // forbidden, failing
+	store.mu.Unlock()
+	_, third := r.connect(t)
+	q, err := r.authenticate(third.Access)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.s.RevokeGrant(ctx, auth.Client{}, "alice", q.SessionID); !errors.Is(err, ErrNotRecorded) {
+		t.Errorf("a disconnection the ConfigMap refuses: %v, want ErrNotRecorded", err)
 	}
 }

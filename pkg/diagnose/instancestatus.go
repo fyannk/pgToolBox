@@ -132,6 +132,14 @@ const (
 	FlagRewindRunning InstanceFlag = "isPgRewindRunning"
 )
 
+// fromPostgres reports a flag the instance manager reads from
+// PostgreSQL itself, unread on a masked report (Reading.Masked); the
+// manager's own flags (mightBeUnavailable, isPgRewindRunning) are read
+// whatever PostgreSQL's state.
+func (f InstanceFlag) fromPostgres() bool {
+	return f == FlagPendingRestart || f == FlagReplayPaused
+}
+
 func (f InstanceFlag) read(reading instancestatus.Reading) (bool, string) {
 	switch f {
 	case FlagPendingRestart:
@@ -180,6 +188,11 @@ func (c InstanceFlagSet) evaluate(_ string, in Input) ([]conditionMatch, string)
 	var matches []conditionMatch
 	for _, reading := range readings.fresh {
 		if c.PrimaryOnly && !reading.IsPrimary || c.ReplicaOnly && reading.IsPrimary {
+			continue
+		}
+		if c.Flag.fromPostgres() && readings.skipMasked(reading) {
+			// pending_restart and pg_is_wal_replay_paused() are
+			// PostgreSQL's: a masked report's false is not a read.
 			continue
 		}
 		set, detail := c.Flag.read(reading)

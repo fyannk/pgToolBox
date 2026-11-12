@@ -518,6 +518,20 @@ func TestMaskedReportsAreNotJudged(t *testing.T) {
 			t.Errorf("%s: %d matches, because %q; want none and the masked instance named", name, len(matches), because)
 		}
 	}
+	// pendingRestart and replayPaused are PostgreSQL's: unjudged on a
+	// masked report, even when it carries them set (round 17, PG P3-3).
+	// The manager's own flags are still read.
+	flagged := masked
+	flagged.PendingRestart, flagged.ReplayPaused, flagged.IsPrimary = true, true, false
+	for _, flag := range []InstanceFlag{FlagPendingRestart, FlagReplayPaused} {
+		matches, because := InstanceFlagSet{Flag: flag}.evaluate("", statusInput(flagged))
+		if len(matches) != 0 || !strings.Contains(because, "without reading PostgreSQL") || !strings.Contains(because, "orders-1") {
+			t.Errorf("flag %s: %d matches, because %q; want none and the masked instance named", flag, len(matches), because)
+		}
+	}
+	if matches, _ := (InstanceFlagSet{Flag: FlagMightBeUnavailable}).evaluate("", statusInput(masked)); len(matches) != 1 {
+		t.Errorf("mightBeUnavailable on a masked report: %d matches, want 1", len(matches))
+	}
 	read := masked
 	read.MightBeUnavailableMaskedError = ""
 	if matches, _ := (InstanceArchiveFailing{}).evaluate("", statusInput(read)); len(matches) != 1 {

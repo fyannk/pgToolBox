@@ -30,6 +30,10 @@ var (
 		Name: "pgtoolbox_console_shared_state_mode",
 		Help: "1 for the state ConfigMap's current mode (pending, live, missing, forbidden, failing); anything but live means each replica keeps its own clocks and sign-outs.",
 	}, []string{"mode"})
+	sharedModeSince = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "pgtoolbox_console_shared_state_mode_since_timestamp_seconds",
+		Help: "When (Unix seconds) the state ConfigMap's mode last changed (pgtoolbox_console_shared_state_mode). A replica failing leaves the mode with its next write that lands, retried with backoff; alert on time() minus this while the mode is not live: past 30 s of failing the replica refuses every MCP grant.",
+	})
 	sharedBytes = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "pgtoolbox_console_shared_state_bytes",
 		Help: "Bytes of each document of the state ConfigMap as this replica would write it (sessions.json, since.json, digests.json, grants.json, drills.json), and total: the ConfigMap's data, keys and values, every document counted (held within 1,032,192 bytes; the API server refuses an object past 1 MiB).",
@@ -57,5 +61,5 @@ var (
 )
 
 func init() {
-	crmetrics.Registry.MustRegister(sharedWrites, sharedMode, sharedBytes, signOutsRefused, sharedDropped, sharedForeign, signOutsHeld, sharedExhausted)
+	crmetrics.Registry.MustRegister(sharedWrites, sharedMode, sharedModeSince, sharedBytes, signOutsRefused, sharedDropped, sharedForeign, signOutsHeld, sharedExhausted)
 }

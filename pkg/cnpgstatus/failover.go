@@ -97,6 +97,14 @@ type RehearsalInstance struct {
 	Node string
 }
 
+// read reports a current reading of PostgreSQL itself: fresh, and not
+// masked (instancestatus.Reading.Masked: the instance manager answered
+// without reaching PostgreSQL, so its positions and walsenders are not
+// read, never empty).
+func (i RehearsalInstance) read() bool {
+	return i.Fresh && i.Reading != nil && !i.Reading.Masked()
+}
+
 // RehearsalInput is everything the rehearsal reads.
 type RehearsalInput struct {
 	// Primary is Cluster.status.currentPrimary.
@@ -329,7 +337,7 @@ func rehearsalPrimary(in RehearsalInput) (primary *RehearsalInstance, primaryLSN
 		}
 	}
 	standbys = map[string]instancestatus.Standby{}
-	if primary != nil && primary.Fresh && primary.Reading != nil {
+	if primary != nil && primary.read() {
 		primaryLSN = primary.Reading.CurrentLSN
 		for _, sb := range primary.Reading.Standbys {
 			standbys[sb.ApplicationName] = sb
@@ -398,8 +406,10 @@ func qualifyReplica(inst RehearsalInstance, fenced bool, primaryNode, primaryLSN
 		r.c.SyncState = sb.SyncState
 	}
 	r.fenced = fenced
-	r.read = inst.Fresh && inst.Reading != nil
+	r.read = inst.read()
 	switch {
+	case !r.read && inst.Fresh && inst.Reading != nil:
+		r.c.Reason = "its instance manager answered without reading PostgreSQL (fenced or restarting)"
 	case !r.read:
 		r.c.Reason = "its status could not be read by the console"
 	case inst.Reading.IsPrimary:
@@ -670,7 +680,7 @@ func liveQuorum(in RehearsalInput, primary *RehearsalInstance) (*bool, string) {
 	}
 	fresh := map[string]bool{}
 	for _, inst := range in.Instances {
-		fresh[inst.Name] = inst.Fresh && inst.Reading != nil && !inst.Reading.IsPrimary
+		fresh[inst.Name] = inst.read() && !inst.Reading.IsPrimary
 	}
 	set := map[string]bool{}
 	if in.Quorum != nil && len(in.Quorum.Status.StandbyNames) > 0 {

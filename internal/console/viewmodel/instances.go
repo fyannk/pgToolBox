@@ -132,20 +132,37 @@ type LiveStatus struct {
 	// LagBytes is this replica's replay distance behind the primary's
 	// current LSN as both were last read; absent on the primary or when
 	// either side was not read.
-	LagBytes           *int64     `json:"lagBytes,omitempty"`
-	ReplayPaused       bool       `json:"replayPaused,omitempty"`
-	WALReceiverActive  bool       `json:"walReceiverActive,omitempty"`
-	PendingRestart     bool       `json:"pendingRestart,omitempty"`
-	PendingRestartDecr bool       `json:"pendingRestartForDecrease,omitempty"`
-	ArchivingWAL       bool       `json:"archivingWal,omitempty"`
-	LastFailedWAL      string     `json:"lastFailedWal,omitempty"`
-	ReadyWALFiles      int        `json:"readyWalFiles,omitempty"`
-	MightBeUnavailable bool       `json:"mightBeUnavailable,omitempty"`
-	PgRewindRunning    bool       `json:"pgRewindRunning,omitempty"`
-	ManagerVersion     string     `json:"instanceManagerVersion,omitempty"`
-	ManagerUpgrading   bool       `json:"instanceManagerUpgrading,omitempty"`
-	Standbys           []Standby  `json:"standbys,omitempty" doc:"The primary's streaming_replica walsenders only."`
-	Provenance         Provenance `json:"provenance"`
+	LagBytes           *int64    `json:"lagBytes,omitempty"`
+	ReplayPaused       bool      `json:"replayPaused,omitempty"`
+	WALReceiverActive  bool      `json:"walReceiverActive,omitempty"`
+	PendingRestart     bool      `json:"pendingRestart,omitempty"`
+	PendingRestartDecr bool      `json:"pendingRestartForDecrease,omitempty"`
+	ArchivingWAL       bool      `json:"archivingWal,omitempty"`
+	LastFailedWAL      string    `json:"lastFailedWal,omitempty"`
+	ReadyWALFiles      int       `json:"readyWalFiles,omitempty"`
+	MightBeUnavailable bool      `json:"mightBeUnavailable,omitempty"`
+	PgRewindRunning    bool      `json:"pgRewindRunning,omitempty"`
+	ManagerVersion     string    `json:"instanceManagerVersion,omitempty"`
+	ManagerUpgrading   bool      `json:"instanceManagerUpgrading,omitempty"`
+	Standbys           []Standby `json:"standbys,omitempty" doc:"The primary's streaming_replica walsenders only."`
+	// PostgresUnread is set when the instance manager answered without
+	// reaching PostgreSQL (fenced or restarting): every field PostgreSQL
+	// fills (positions, timeline, system id, the flags but
+	// mightBeUnavailable, pgRewindRunning and the manager's own, the
+	// archiver's, the walsenders) is then absent because it was not
+	// read, never because it is false or zero.
+	PostgresUnread *PostgresUnread `json:"postgresUnread,omitempty" doc:"Set when the instance manager answered without reaching PostgreSQL (fenced or restarting): PostgreSQL's fields are then not read, never false or zero."`
+	Provenance     Provenance      `json:"provenance"`
+}
+
+// PostgresUnread is an instance report the instance manager answered
+// without reaching PostgreSQL: CloudNativePG's
+// mightBeUnavailableMaskedError, while fencing or a restart sets
+// mightBeUnavailable.
+type PostgresUnread struct {
+	Instance string `json:"instance"`
+	// Error is the error the manager hit and masked, bounded.
+	Error string `json:"error" untrusted:"true" doc:"The error the instance manager hit and masked (mightBeUnavailableMaskedError), bounded."`
 }
 
 // Standby is one walsender row the primary reports. SentLSN is

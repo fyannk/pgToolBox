@@ -112,6 +112,20 @@ The other states of an instance's status read, each with its reason:
 | `notRunning` | The Pod has no IP yet or is being deleted. |
 | `disabled` | `INSTANCE_STATUS_ENABLED=false`. |
 
+A read can be `ok` and still not read PostgreSQL. While an instance is fenced or
+restarting, CloudNativePG's instance manager answers `/pg/status` without
+reaching PostgreSQL and says so (`mightBeUnavailable`, with the error it hit).
+Such a report is shown as "PostgreSQL not read", with that error: its positions,
+timeline, pending restart, replay pause, WAL receiver, archiver, walsenders and
+slots are not read, never false, zero or empty. The Instances row and detail mark
+them unread; the Replication screen says the primary's walsenders and slots, or a
+replica's receiver, were not read; the topology places no replica against the
+primary's walsenders; the diagnostics on those fields, the failover rehearsal and
+the archiving fact (`PrimaryUnread`, "answered without reading PostgreSQL") do not
+judge it. Only the manager's own flags (`mightBeUnavailable`, a rewind in
+progress, its version) and the primary role it reads from the data directory
+stand.
+
 The sweep runs every `INSTANCE_STATUS_INTERVAL` (30 s), each read bounded by
 `INSTANCE_STATUS_TIMEOUT` (5 s, shorter than the interval), at most
 `INSTANCE_STATUS_CONCURRENCY` (8) at a time. It also scrapes the instances'
@@ -266,6 +280,11 @@ merged are taken as the ConfigMap, logged once: the replicas then read and write
 again. A write still conflicting after five re-reads counts as a failure
 (`pgtoolbox_console_shared_state_write_exhausted_total`): the replica is in the
 failing mode, and refuses MCP grants 30 seconds later, until a write lands.
+A replica in the failing mode retries a write about a second later and then
+with backoff (up to a minute apart), with nothing of its own pending too, so a
+failed write leaves it failing only while the API server keeps refusing. A
+request whose client gives up is no failure: one still waiting for another
+write starts none, and one already sent is completed (within 10 seconds).
 
 Replicas whose clocks disagree still converge: a sign-out's
 recording time is kept as written, and a replica that finds it more than five

@@ -18,31 +18,86 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand/v2"
+	"slices"
 	"time"
 
 	"github.com/fyannk/pgToolBox/internal/operator/managerrole"
 )
 
-// reReviewInterval is the pause between two background reviews of the
-// namespaces whose review failed at start.
-const reReviewInterval = time.Minute
-
 // errRestartToWatch is the cause the operator's context is cancelled with
 // when a namespace left out for a failed review can now be watched: main
-// exits 1 once the manager has stopped, and the restart watches it.
+// exits once the manager has stopped, and the restart watches it.
 var errRestartToWatch = errors.New("a watched namespace left out at start can now be watched: restarting to watch it")
 
-// reReviewFailed reviews again, every interval until ctx ends, the
-// namespaces dropped because their review failed (a connection lost past
-// the retries, no answer in time, a response too large): the informers'
+// reReviewPolicy is when reReviewFailed reviews again and when it may
+// restart the operator.
+type reReviewPolicy struct {
+	// interval is the pause between two background reviews.
+	interval time.Duration
+	// passes is how many reviews in a row a namespace must pass before
+	// the operator restarts for it: one passing review between two
+	// failing ones restarts nothing.
+	passes int
+	// minUptime is how long the process must have run before it restarts
+	// to watch: past ten minutes kubelet resets the container's restart
+	// back-off, so a tenant who makes a namespace pass and fail in turn
+	// cannot hold the operator in CrashLoopBackOff.
+	minUptime time.Duration
+	// started is when the process started.
+	started time.Time
+	// now is the clock.
+	now func() time.Time
+	// jitter is the pause before the restart, so that the replicas, which
+	// review on the same schedule, do not stop together.
+	jitter func() time.Duration
+}
+
+const (
+	// reReviewInterval is the pause between two background reviews of the
+	// namespaces whose review failed at start.
+	reReviewInterval = time.Minute
+	// reReviewPasses is reReviewPolicy.passes.
+	reReviewPasses = 2
+	// restartMinUptime is reReviewPolicy.minUptime: kubelet resets a
+	// container's restart back-off once it ran ten minutes.
+	restartMinUptime = 10 * time.Minute
+	// restartMaxJitter bounds reReviewPolicy.jitter.
+	restartMaxJitter = time.Minute
+)
+
+// defaultReReviewPolicy is the operator's reReviewPolicy for a process
+// started at started.
+func defaultReReviewPolicy(started time.Time) reReviewPolicy {
+	return reReviewPolicy{
+		interval: reReviewInterval, passes: reReviewPasses, minUptime: restartMinUptime,
+		started: started, now: time.Now, jitter: restartJitter,
+	}
+}
+
+// restartJitter is a pause in [0, restartMaxJitter): not a secret, only
+// spread between the replicas.
+func restartJitter() time.Duration {
+	return rand.N(restartMaxJitter) //nolint:gosec // G404: spreads restarts, nothing to guess.
+}
+
+// reReviewFailed reviews again, every policy.interval until ctx ends, the
+// namespaces dropped because their review failed for a reason that may pass
+// (a connection lost past the retries, no answer in time): the informers'
 // namespaces are fixed when the manager starts, so one that becomes
-// reviewable and grants every permission is only watched after a restart,
-// and restart is called once (with errRestartToWatch, naming the
-// namespaces) as soon as one does. A namespace still failing, or now
-// lacking a permission, is reviewed again at the next interval; nothing is
-// written anywhere. Each round is one managerrole.PermittedNamespaces of
-// those namespaces only, bounded like the start's.
-func reReviewFailed(ctx context.Context, api managerrole.Creator, dropped []droppedNamespace, interval time.Duration, restart context.CancelCauseFunc) {
+// reviewable and grants every permission is only watched after a restart.
+// A namespace whose review was too large (dropReviewTooLarge) is never
+// reviewed here: its RoleBindings decide that, and a tenant who toggles
+// them must not be able to restart the operator; it is reviewed at the
+// next start, whatever causes it. restart is called once (with
+// errRestartToWatch, naming the namespaces) when a namespace passed
+// policy.passes reviews in a row, the process has run policy.minUptime,
+// and a pause of policy.jitter has passed; a namespace that fails a review
+// again starts its count over, and one whose review becomes too large
+// leaves the loop. Nothing is written anywhere. Each round is one
+// managerrole.PermittedNamespaces of those namespaces only, bounded like
+// the start's.
+func reReviewFailed(ctx context.Context, api managerrole.Creator, dropped []droppedNamespace, policy reReviewPolicy, restart context.CancelCauseFunc) {
 	var namespaces []string
 	var required []managerrole.Permission
 	for _, d := range dropped {
@@ -54,9 +109,11 @@ func reReviewFailed(ctx context.Context, api managerrole.Creator, dropped []drop
 	if len(namespaces) == 0 {
 		return
 	}
-	ticker := time.NewTicker(interval)
+	passed := make(map[string]int, len(namespaces))
+	waitLogged := false
+	ticker := time.NewTicker(policy.interval)
 	defer ticker.Stop()
-	for {
+	for len(namespaces) > 0 {
 		select {
 		case <-ctx.Done():
 			return
@@ -66,11 +123,44 @@ func reReviewFailed(ctx context.Context, api managerrole.Creator, dropped []drop
 		if err != nil {
 			return
 		}
-		if len(review.Permitted) > 0 {
-			setupLog.Info("restarting: a watched namespace whose permission review failed at start now grants every permission the operator needs",
-				"namespaces", review.Permitted)
-			restart(fmt.Errorf("%w: %v", errRestartToWatch, review.Permitted))
-			return
+		for _, u := range review.Unreviewed {
+			if u.TooLarge() {
+				setupLog.Error(u.Err, "watched namespace no longer reviewed in the background: its permission review is too large; it is reviewed again at the next start",
+					"namespace", u.Namespace)
+				namespaces = slices.DeleteFunc(namespaces, func(n string) bool { return n == u.Namespace })
+			}
 		}
+		var ready []string
+		for _, namespace := range namespaces {
+			if !slices.Contains(review.Permitted, namespace) {
+				passed[namespace] = 0
+				continue
+			}
+			passed[namespace]++
+			if passed[namespace] >= policy.passes {
+				ready = append(ready, namespace)
+			}
+		}
+		if len(ready) == 0 {
+			continue
+		}
+		if uptime := policy.now().Sub(policy.started); uptime < policy.minUptime {
+			if !waitLogged {
+				setupLog.Info("a watched namespace whose permission review failed at start now grants every permission: the operator restarts to watch it once it has run long enough",
+					"namespaces", ready, "minUptime", policy.minUptime.String(), "uptime", uptime.Round(time.Second).String())
+				waitLogged = true
+			}
+			continue
+		}
+		pause := policy.jitter()
+		setupLog.Info("restarting to watch: a watched namespace whose permission review failed at start now grants every permission the operator needs (an intentional exit, not a crash)",
+			"namespaces", ready, "in", pause.Round(time.Second).String())
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(pause):
+		}
+		restart(fmt.Errorf("%w: %v", errRestartToWatch, ready))
+		return
 	}
 }

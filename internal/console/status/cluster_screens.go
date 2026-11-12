@@ -164,10 +164,17 @@ func (s *Service) Replication(ctx context.Context, namespace, name string) (view
 	if hasPrimary {
 		// A lag is computed only against a primary LSN read in good
 		// standing: a stale one would make every replica look caught up.
-		if primary.State == viewmodel.StatusReadOK {
+		if primary.ReadingOK() {
 			primaryLSN = primary.Reading.CurrentLSN
 		}
-		for _, sb := range primary.Reading.Standbys {
+		senders, slots := primary.Reading.Standbys, primary.Reading.Slots
+		if unread := postgresUnread(primaryName, primary); unread != nil {
+			// Its walsenders and slots were not read: the lists are
+			// empty because of that, never because there are none, and
+			// whatever the report carries is no reading.
+			out.PrimaryUnread, senders, slots = unread, nil, nil
+		}
+		for _, sb := range senders {
 			state := cnpgstatus.ClassifyWalSenderState(sb.State)
 			syncState := cnpgstatus.ClassifySyncState(sb.SyncState)
 			row := viewmodel.StandbyRow{
@@ -185,7 +192,7 @@ func (s *Service) Replication(ctx context.Context, namespace, name string) (view
 			}
 			out.Standbys = append(out.Standbys, row)
 		}
-		for _, slot := range primary.Reading.Slots {
+		for _, slot := range slots {
 			wal := cnpgstatus.ClassifySlotWALStatus(slot.WALStatus)
 			h := health(wal.Class)
 			if primary.State != viewmodel.StatusReadOK {
@@ -211,7 +218,8 @@ func (s *Service) Replication(ctx context.Context, namespace, name string) (view
 		}
 		if live != nil {
 			row.ReceivedLSN, row.ReplayLSN, row.LagBytes, row.ReplayPaused, row.TimelineID = live.ReceivedLSN, live.ReplayLSN, live.LagBytes, live.ReplayPaused, live.TimelineID
-			if read.State == viewmodel.StatusReadOK {
+			row.PostgresUnread = live.PostgresUnread
+			if read.State == viewmodel.StatusReadOK && live.PostgresUnread == nil {
 				active := live.WALReceiverActive
 				row.WALReceiverActive = &active
 				switch {

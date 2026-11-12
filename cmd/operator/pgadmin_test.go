@@ -133,7 +133,7 @@ func TestPrepareInfoMetricListsWatchedNamespaces(t *testing.T) {
 	if got := gauges[`pgtoolbox_watch_namespaces_dropped{reason="clusters-unlistable"}`]; got != 1 {
 		t.Fatalf("pgtoolbox_watch_namespaces_dropped{reason=clusters-unlistable} = %v, want 1 (gone): %v", got, gauges)
 	}
-	for _, reason := range []string{"permissions", "review-failed"} {
+	for _, reason := range []string{"permissions", "review-failed", "review-too-large"} {
 		if got, ok := gauges[`pgtoolbox_watch_namespaces_dropped{reason="`+reason+`"}`]; !ok || got != 0 {
 			t.Errorf("pgtoolbox_watch_namespaces_dropped{reason=%s} = %v (exported %t), want 0", reason, got, ok)
 		}
@@ -363,7 +363,7 @@ func TestNamespaceRBACDecidesThereOnly(t *testing.T) {
 			if got := metrics[`pgtoolbox_optional_api_refused_namespaces{group="postgresql.cnpg.io",kind="Pooler"}`]; got != 0 {
 				t.Errorf("refused Pooler namespaces = %v, want 0", got)
 			}
-			for _, reason := range []string{"permissions", "review-failed", "clusters-unlistable"} {
+			for _, reason := range []string{"permissions", "review-failed", "review-too-large", "clusters-unlistable"} {
 				if got, ok := metrics[`pgtoolbox_watch_namespaces_dropped{reason="`+reason+`"}`]; !ok || got != 0 {
 					t.Errorf("dropped namespaces (%s) = %v (exported %t), want 0", reason, got, ok)
 				}

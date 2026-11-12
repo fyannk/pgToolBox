@@ -29,6 +29,7 @@ import (
 	authorizationv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -204,10 +205,12 @@ func TestPrepareDropsNamespaceMissingARequiredPermission(t *testing.T) {
 	}
 }
 
-// TestPermittedNamespacesReviewFailedKeepsWhatToAsk: round 16, K8S P2-2. A
-// namespace whose review failed is dropped with the permissions to ask
-// again in the background (reReviewFailed), and its oversized response
-// fails that namespace only.
+// TestPermittedNamespacesReviewFailedKeepsWhatToAsk: round 16, K8S P2-2,
+// and round 17. A namespace whose review failed is dropped with the
+// permissions to ask again in the background (reReviewFailed); one whose
+// response was too large is dropped under a cause of its own
+// (review-too-large), with nothing to ask again: only the next start
+// reviews it. Each fails that namespace only.
 func TestPermittedNamespacesReviewFailedKeepsWhatToAsk(t *testing.T) {
 	full := managerRules(t)
 	c := fake.NewClientBuilder().WithScheme(scheme).WithRESTMapper(testMapper()).WithInterceptorFuncs(interceptor.Funcs{
@@ -216,25 +219,35 @@ func TestPermittedNamespacesReviewFailedKeepsWhatToAsk(t *testing.T) {
 			if !ok {
 				return errors.New("only rules reviews are expected")
 			}
-			if review.Spec.Namespace == "team-b" {
+			switch review.Spec.Namespace {
+			case "team-b":
+				return apierrors.NewForbidden(schema.GroupResource{Group: "authorization.k8s.io", Resource: "selfsubjectrulesreviews"}, "", errors.New("an admission webhook refused it"))
+			case "team-c":
 				return managerrole.ErrReviewTooLarge
 			}
 			review.Status.ResourceRules = full
 			return nil
 		},
 	}).Build()
-	kept, dropped, err := permittedNamespaces(t.Context(), c, []string{"team-a", "team-b"})
+	kept, dropped, err := permittedNamespaces(t.Context(), c, []string{"team-a", "team-b", "team-c"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(kept, []string{"team-a"}) || len(dropped) != 1 || dropped[0].Namespace != "team-b" || dropped[0].Cause != dropReviewFailed {
-		t.Fatalf("kept %q, dropped %+v; want team-a kept, team-b review-failed", kept, dropped)
+	if !slices.Equal(kept, []string{"team-a"}) || len(dropped) != 2 ||
+		dropped[0].Namespace != "team-b" || dropped[0].Cause != dropReviewFailed ||
+		dropped[1].Namespace != "team-c" || dropped[1].Cause != dropReviewTooLarge {
+		t.Fatalf("kept %q, dropped %+v; want team-a kept, team-b review-failed, team-c review-too-large", kept, dropped)
 	}
 	if len(dropped[0].required) == 0 {
 		t.Error("team-b dropped without the permissions to review again")
 	}
-	if dropped[0].allows("events.k8s.io", "events", "create") {
-		t.Error("a namespace whose review failed reads as allowing a write")
+	if len(dropped[1].required) != 0 {
+		t.Error("team-c, too large, dropped with permissions to review again in the background")
+	}
+	for _, d := range dropped {
+		if d.allows("events.k8s.io", "events", "create") {
+			t.Errorf("%s, whose review failed, reads as allowing a write", d.Namespace)
+		}
 	}
 }
 

@@ -88,7 +88,7 @@ func (s *Service) verdict(g *gathered, run *diag.Run) viewmodel.Verdict {
 		add(viewmodel.Contributor{ID: "escapeHatch:" + hatch.Annotation, Health: health(hatch.Class), Label: hatch.Annotation, Detail: hatch.Effect, Provenance: operator("Cluster.metadata.annotations")})
 	}
 
-	archiving := cnpgstatus.Archiving(g.cluster, primaryArchiver(g))
+	archiving := archivingOf(g)
 	add(viewmodel.Contributor{ID: "archiving", Health: health(archiving.Class), Label: "WAL archiving", Detail: archivingDetail(archiving), Provenance: s.archivingProvenance(g, now), Link: "backups"})
 
 	backup := s.backupRecency(g)
@@ -316,6 +316,23 @@ func pluginMaxParallel(g *gathered) *int {
 // the instance manager answered without reading PostgreSQL (fenced,
 // restarting: instancestatus Reading.Masked) is no reading of the
 // archiver: its zero archiver fields were not read (round 16, CNPG P2-1).
+// archivingOf is the Cluster's archiving fact from its current
+// primary's archiver, worded for a primary whose manager answered
+// without reaching PostgreSQL (masked) when it is one.
+func archivingOf(g *gathered) cnpgstatus.ArchivingReading {
+	return cnpgstatus.ArchivingOf(g.cluster, primaryArchiver(g), primaryMasked(g))
+}
+
+// primaryMasked reports a current primary whose last report is masked
+// (instancestatus.Reading.Masked: fenced or restarting).
+func primaryMasked(g *gathered) bool {
+	if g.cluster == nil || g.cluster.Status.CurrentPrimary == "" {
+		return false
+	}
+	inst, ok := g.swept.Instances[g.cluster.Status.CurrentPrimary]
+	return ok && inst.Reading != nil && inst.Reading.Masked()
+}
+
 func primaryArchiverReading(g *gathered) *instancestatus.Reading {
 	name := g.cluster.Status.CurrentPrimary
 	if name == "" {

@@ -165,12 +165,35 @@ fully use:
   Restore the chart's RoleBinding, then restart the operator (`permissions`);
 - a namespace whose permission review fails: an error the API server still
   returns after two retries (a 5xx, a timeout, throttling or a lost
-  connection: reset, refused, EOF, HTTP/2 GOAWAY), no answer within 6 seconds
-  per attempt and about 12 for the namespace, or a response over 4 MiB (one
-  Role bound many times to the operator). The log line names the namespace
-  and the error (`review-failed`). Such a namespace is reviewed again every
-  minute; once it grants every permission, the operator logs why and exits 1,
-  and the restart watches it. The alert below is the signal meanwhile.
+  connection: reset, refused, EOF, HTTP/2 GOAWAY), or no answer within 6
+  seconds per attempt and about 12 for the namespace. The log line names the
+  namespace and the error (`review-failed`). Such a namespace is reviewed
+  again every minute. Once it has granted every permission twice in a row,
+  and the process has run at least ten minutes, the operator logs why, waits
+  up to a minute more (so the two replicas do not stop together) and exits
+  to be restarted, and the restart watches it. The alert below is the signal
+  meanwhile;
+- a namespace whose permission review answers more than 1 MiB: its
+  RoleBindings grant the operator far more rules than its manager role (one
+  Role bound many times). The log line names the namespace
+  (`review-too-large`). It is never reviewed again in the background, so
+  that whoever administers the namespace cannot make the operator restart
+  by adding and removing bindings: remove the extra bindings, then restart
+  the operator (any later start reviews it again).
+
+The restart to watch a namespace is intentional, not a crash: the operator
+logs `restarting to watch` with the namespaces, then exits with code 0 and
+the reason as its termination message, so `kubectl describe pod` shows the
+last state `Completed` (exit code 0) where a crash shows `Error`. kubelet
+restarts it as usual. Because it runs at least ten minutes first, kubelet's
+restart back-off is reset each time, and a namespace that passes and fails
+its review in turn restarts nothing.
+
+Two changes made while the operator runs are read only at its next start,
+like a namespace deleted and recreated: the RBAC of a watched namespace, and
+a Gateway API (HTTPRoute) or OpenShift Route CRD installed or removed. After
+removing one of these CRDs, restart the operator: until then the
+reconciliations that touch the kind fail and are retried.
 
 The check is one SelfSubjectRulesReview per namespace, concurrent, each with
 its own deadline and response limit inside the start-up deadline, so one slow
@@ -197,12 +220,12 @@ any more, possibly `Ready=True`. Two signals say so:
   kind and patch its status, each `PgAdmin`, `PgToolBoxConsole` and
   `EvidenceAgent` turns `Ready=Unknown`, reason `NamespaceNotWatched`, its
   message naming that namespace and the permissions missing there; where it
-  may create events, a Warning Event of the same reason goes with it (on the
-  transition, or at every start when the status cannot be written). These
+  may create events, a Warning Event of the same reason goes with it (on a
+  transition it wrote, or at every start when the status cannot be written). These
   writes bypass the cache, are bounded to 5 seconds each, and a refused one is
   logged, not retried. In
   a namespace whose permissions are unknown (`clusters-unlistable`,
-  `review-failed`) nothing is attempted. Once the namespace is watched again,
+  `review-failed`, `review-too-large`) nothing is attempted. Once the namespace is watched again,
   the next reconciliation computes `Ready` as usual.
 - **On the operator**: `pgtoolbox_watch_namespaces_dropped{reason}` and the
   chart's alert `PgToolBoxOperatorNamespacesDropped`

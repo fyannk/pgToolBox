@@ -468,3 +468,33 @@ func TestElectionVersionIsTheOperators(t *testing.T) {
 		}
 	}
 }
+
+// TestRehearsalMaskedIsUnread (round 17, CNPG P3): a replica whose
+// instance manager answered without reaching PostgreSQL (fenced or
+// restarting) has no position to rank: it is unread, said so, never
+// eligible at a zero LSN; a masked primary's walsender list is not read
+// as "no synchronous standby".
+func TestRehearsalMaskedIsUnread(t *testing.T) {
+	t.Parallel()
+	masked := replica("db-3", "", "", "n3")
+	masked.Reading.MightBeUnavailable, masked.Reading.MightBeUnavailableMaskedError = true, "FATAL: the database system is starting up"
+	out := Rehearse(RehearsalInput{Primary: "db-1", Sync: SyncReading{Mode: SyncModeNone}, Instances: []RehearsalInstance{
+		primaryInst(), replica("db-2", "0/4000000", "0/4000000", "n2"), masked,
+	}})
+	if out.Candidate != "db-2" {
+		t.Fatalf("candidate %q, want db-2", out.Candidate)
+	}
+	for _, c := range out.Ranking {
+		if c.Name == "db-3" && (c.Eligible || !strings.Contains(c.Reason, "without reading PostgreSQL")) {
+			t.Errorf("masked replica ranked %+v, want unread with its reason", c)
+		}
+	}
+	if out.Certain {
+		t.Error("a rehearsal with a masked replica claims certainty")
+	}
+	primary := primaryInst(instancestatus.Standby{ApplicationName: "db-2", SyncState: "sync"})
+	primary.Reading.MightBeUnavailableMaskedError = "FATAL: the database system is shutting down"
+	if _, lsn, standbys := rehearsalPrimary(RehearsalInput{Primary: "db-1", Instances: []RehearsalInstance{primary}}); lsn != "" || len(standbys) != 0 {
+		t.Errorf("masked primary read: lsn %q, standbys %v", lsn, standbys)
+	}
+}
