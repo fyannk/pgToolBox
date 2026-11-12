@@ -54,8 +54,8 @@ type PodFacts struct {
 // BackupFacts is one Backup object.
 type BackupFacts struct {
 	Name, UID, Phase string
-	// StoppedAt is the Backup's plausible status.stoppedAt, else the
-	// operator's completion stamp (status.reconciliationTerminatedAt);
+	// StoppedAt is the Backup's plausible status.stoppedAt, else
+	// CloudNativePG's completion stamp (status.reconciliationTerminatedAt);
 	// zero when neither (a 1970 or future stop is not plausible).
 	StoppedAt time.Time
 	// Error is status.error, bounded by the caller.

@@ -88,8 +88,9 @@ func (s *Service) ClusterFacts(ctx context.Context, key cache.ClusterKey) (timel
 	}
 	// A Backup's end through cnpgstatus.BackupTimesOf (round 19, CNPG
 	// P3-1): a stop a plugin left unset (1970) or set in the future is not
-	// reported; a finished Backup with none is timed by the operator's
-	// completion stamp, else when the console saw it.
+	// reported; a finished Backup with none is timed by CloudNativePG's
+	// completion stamp (the instance manager's, the operator's for a
+	// volume snapshot; round 20, CNPG P3-1), else when the console saw it.
 	now := s.now().UTC()
 	for _, b := range g.backups {
 		bf := timeline.BackupFacts{Name: b.Name, UID: string(b.UID), Phase: string(b.Status.Phase), Error: bound(b.Status.Error)}

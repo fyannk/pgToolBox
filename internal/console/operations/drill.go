@@ -96,7 +96,7 @@ func (d *DrillOptions) namespaceFor(source string) string {
 }
 
 // latestCompleted is the newest completed Backup of the Cluster at now,
-// ranked by its plausible stop time, else the operator's completion
+// ranked by its plausible stop time, else CloudNativePG's completion
 // stamp (an upper bound on its end, seconds after it), else its creation.
 func latestCompleted(backups []*cnpgv1.Backup, now time.Time) *cnpgv1.Backup {
 	var best *cnpgv1.Backup

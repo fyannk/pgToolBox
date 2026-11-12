@@ -273,16 +273,22 @@ func componentVersions(run *diag.Run, image string) []viewmodel.ComponentVersion
 }
 
 // backupStampSource is the provenance of a last completed backup timed
-// by the operator's completion stamp (backupRecency).
+// by CloudNativePG's completion stamp (backupRecency).
 const backupStampSource = "Backup.status.reconciliationTerminatedAt"
 
 // backupRecency is the newest completed and failed Backup of the Cluster,
 // timed through cnpgstatus.BackupTimesOf (round 19, CNPG P3-1): a stop
 // time a plugin left unset (CloudNativePG stamps 1970-01-01) or set in
 // the future (never overdue) is not one. A Completed Backup with no
-// plausible stop is timed by the operator's completion stamp
+// plausible stop is timed by CloudNativePG's completion stamp
 // (status.reconciliationTerminatedAt, set by SetAsCompleted seconds after
-// the end: an upper bound on it), and the claim then names that field.
+// the end, by the instance manager, or the operator for a volume
+// snapshot: an upper bound on it), and the claim then names that field
+// (round 20, CNPG P3-1). A Failed Backup is timed by the latest of its
+// stop, which CloudNativePG never sets on a failure, and its completion
+// stamp (SetAsFailed), else its creation: a Backup queued behind
+// another that then fails is a failure after that other's success, not
+// one hidden by it (round 20, CNPG P3-3).
 func (s *Service) backupRecency(g *gathered) viewmodel.BackupRecency {
 	now := s.now().UTC()
 	cfg := cnpgstatus.Backups(g.cluster)
@@ -310,8 +316,10 @@ func (s *Service) backupRecency(g *gathered) viewmodel.BackupRecency {
 			}
 		case cnpgv1.BackupPhaseFailed:
 			at := b.CreationTimestamp.UTC()
-			if times.Stop != nil {
-				at = *times.Stop
+			for _, end := range []*time.Time{times.OperatorTerminated, times.Stop} {
+				if end != nil && end.After(at) {
+					at = *end
+				}
 			}
 			if r.LastFailedAt == nil || at.After(*r.LastFailedAt) {
 				r.LastFailedAt = &at
@@ -397,7 +405,7 @@ func backupDetail(r viewmodel.BackupRecency, now time.Time) string {
 		return "completed " + age(now, *r.LastCompletedAt) + " ago, older than " +
 			age(now, now.Add(-time.Duration(r.Cadence.ThresholdSeconds)*time.Second)) + " (no backup cadence known)"
 	case r.Provenance.Source == backupStampSource:
-		return "completed " + age(now, *r.LastCompletedAt) + " ago, by the operator's completion time (the backup tool reported no plausible stop time)"
+		return "completed " + age(now, *r.LastCompletedAt) + " ago, by CloudNativePG's completion stamp (the backup tool reported no plausible stop time)"
 	default:
 		return "completed " + age(now, *r.LastCompletedAt) + " ago"
 	}
