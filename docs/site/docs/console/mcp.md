@@ -250,9 +250,7 @@ replica refuses it once its watch delivers the write (about a second); a
 replica whose watch stopped delivering catches up, or refuses every grant,
 within the bounds [above](#what-a-console-grant-is). A connection
 completed after your request was answered is not covered: disconnect it again.
-The read is coalesced across requests and, on a replica whose watch is
-current, is a read of the ConfigMap's metadata only (a few hundred bytes), the
-whole ConfigMap only when the watch has not delivered the version it shows.
+Concurrent reads are coalesced: one in flight per replica, one waiting.
 
 There are two `503` answers, both with `Retry-After`, each with its own
 problem `type`:
@@ -263,10 +261,8 @@ problem `type`:
   may accept them until one lands. The page says the assistants are
   disconnected on the replica that answered and that it keeps retrying.
 - `urn:pgtoolbox:disconnection-unconfirmed`: the replica could not read the
-  ConfigMap (the API server refused, throttled or did not answer the read,
-  or the console's own bound on these reads refused it: 20 a minute per
-  person, bursts of 10, and 600 a minute per replica, bursts of 60). Nothing may be
-  disconnected: a grant recorded on another replica is not known here. The
+  ConfigMap (the API server refused, throttled or did not answer the read).
+  Nothing may be disconnected: a grant recorded on another replica is not known here. The
   page says your assistants may still be connected and to retry; it never says
   they are disconnected. A `503` of any other layer is shown the same way. A
   failed or throttled read does not put the replica in the failing mode; only
@@ -290,9 +286,7 @@ When the `503` persists, check that the console's ServiceAccount may `get`,
 `watch` and `update` the shared state ConfigMap (`kubectl auth can-i get
 configmap/<console>-state --as system:serviceaccount:<namespace>:<service account>`)
 and that the API server is reachable from the console pods; the console logs
-the shared state's mode changes (`shared state`), and
-`pgtoolbox_console_throttled_requests_total{bucket=~"grant_reads.*"}` counts
-the reads it refused itself.
+the shared state's mode changes (`shared state`).
 
 With MCP OAuth on, `/readyz` waits for the first read of the ConfigMap (or for
 the API server to answer that it is missing or may not be read), so a pod that

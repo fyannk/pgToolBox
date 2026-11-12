@@ -495,14 +495,8 @@ segments, so the bar and the answer always agree:
   and the operator's disagree (the instance behind or the operator ahead; the
   console cannot tell which). The instance manager writes the tool times and
   the completion stamp on the same clock, so once one of them is that early
-  all three are dropped, never read as a backup that ended before the scan.
-  Such a backup is then bounded by the API server's time of its last status
-  write (the `metadata.managedFields` entry of the status subresource, which
-  the console's cache keeps without its field set), plus five minutes for the
-  agent's clock: it counts as one since the scan until that time is more than
-  a minute before the scan's start, and no longer. With no such entry it
-  counts as one that could have ended at any time, after every scan, until the
-  clocks are fixed or the `Backup` is deleted. The Overview then times it by
+  all three are dropped and the backup counts as one that could have ended
+  at any time, never as one that ended before the scan. The Overview times it by
   the earlier of its creation and the operator's start stamp, and says its
   stop time and completion stamp are not plausible because the clocks
   disagree. With

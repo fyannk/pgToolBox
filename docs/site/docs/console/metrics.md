@@ -41,7 +41,7 @@ Operator in the test clusters).
 | `pgtoolbox_console_api_request_duration_seconds` | API latency by operation and status class. |
 | `pgtoolbox_console_mcp_calls_total{tool,outcome}`, `pgtoolbox_console_mcp_call_duration_seconds{tool}` | [MCP](mcp.md) tool calls by outcome (`ok`, a status such as `403`, `timeout`, `error`, `unauthenticated`) and their duration; `pgtoolbox_console_mcp_requests_total{method,outcome}` counts the other MCP requests (resource reads, prompts, lists). |
 | `pgtoolbox_console_mcp_result_bytes{tool}`, `pgtoolbox_console_mcp_result_truncated_total{tool}` | Size of the successful MCP results, and how many were cut to the response cap (`MCP_MAX_RESULT_BYTES`). |
-| `pgtoolbox_console_mcp_oauth_requests_total{endpoint,outcome}` | Requests to the MCP authorization server by endpoint (`register`, `authorize`, `token`, `revoke`, `client_metadata`) and outcome; `revoke` `unrecorded` is a disconnection answered `503` (not written to the shared state yet), `unconfirmed` one whose read of the shared state failed and `throttled` one whose read the replica's own bound refused (both `503`, nothing confirmed), `held` one answered done while the shared state ConfigMap does not exist (written when it is back); `token` `unrecorded` is a code exchange whose grant could not be written to the shared state (`503`, no token). |
+| `pgtoolbox_console_mcp_oauth_requests_total{endpoint,outcome}` | Requests to the MCP authorization server by endpoint (`register`, `authorize`, `token`, `revoke`, `client_metadata`) and outcome; `revoke` `unrecorded` is a disconnection answered `503` (not written to the shared state yet), `unconfirmed` one whose read of the shared state failed (`503`, nothing confirmed), `held` one answered done while the shared state ConfigMap does not exist (written when it is back); `token` `unrecorded` is a code exchange whose grant could not be written to the shared state (`503`, no token). |
 | `pgtoolbox_console_logins_total{provider,outcome}` | Sign-in attempts. |
 | `pgtoolbox_console_throttled_requests_total{bucket}` | Requests refused by a budget ([throttled requests](#throttled-requests)). |
 | `pgtoolbox_console_session_rejections_total{reason}` | Refused sessions: `expired`, `revoked`, `token_rejected`, `malformed`. |
@@ -82,7 +82,6 @@ carries):
 | `known_reviews_subject` | The same, per person the API server named (32 a minute, bursts of 16), charged first |
 | `mcp_calls`, `mcp_attempts`, `mcp_writes`, `mcp_page_views`, `mcp_page_answers` | The [MCP endpoint's budgets](mcp.md#budgets) |
 | `oauth_requests`, `oauth_registry`, `oauth_tokens`, `oauth_unknown_tokens`, `oauth_grant_tokens`, `oauth_subject_tokens`, `oauth_registrations`, `oauth_decisions` | The MCP authorization server's budgets (`oauth_grant_tokens`: per grant; `oauth_subject_tokens`: per person) |
-| `grant_reads`, `grant_reads_subject` | The reads of the shared grant index a disconnection makes (Disconnect all, an assistant the replica does not know), per replica and per person; a refused one answers `503` |
 | `metrics_scrapes` | `/metrics` per client address |
 
 A per-address bucket rising is one client retrying. A per-replica bucket
