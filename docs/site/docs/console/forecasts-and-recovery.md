@@ -461,7 +461,13 @@ segments, so the bar and the answer always agree:
   the whole window once that passes the scan. Under pgBackRest a count bounds
   it too, in or out of a refresh cycle: `expire` runs at the end of every
   backup, so the console counts the Cluster's `Backup` objects that ended since
-  the scan's start (each counted as a full, the worst case). With
+  the scan's start (each counted as a full, the worst case), and those still in
+  progress that began after it (by their start, else their creation: a plugin
+  backup reports no start until it completes), since `expire` runs seconds
+  before CloudNativePG marks the `Backup` completed. A stop time CloudNativePG
+  could not have meant (1970-01-01, which a plugin that leaves it unset gets, or
+  one before the backup's start or creation) is read as no stop time, so that
+  completed backup is counted as one that could have ended at any time. With
   `repo-retention-full=K` (type `count`), L fulls listed and n backups since,
   the oldest L + n − K listed fulls may be gone with their chains, and the band
   runs to the first restore point of the next one; the whole window when that is
@@ -470,7 +476,15 @@ segments, so the bar and the answer always agree:
   with `repo-retention-archive-type=diff`) keeps WAL continuously only from the
   A-th newest backup of its type (older ones keep only their own consistency
   range): the band runs to the first restore point of the A-th newest of the
-  listed and the n new ones, and is the whole window once n reaches A. When the `Backup` objects were not read, or the snapshot does not report
+  listed and the n new ones, and is the whole window once n reaches A. With no
+  backup since the scan, the listing can still show an `expire` about to run: a
+  scan that starts between a backup's save and its `expire` (that backup's
+  `Backup` stopped earlier than the scan's start) lists more than K fulls, WAL
+  drawn continuously from before the A-th newest backup of its type, or, under a
+  time-based retention, fulls older than the newest one stopped before the newest
+  listed backup's end minus the retention. The band then runs past what that
+  `expire` removes; a lowered retention looks the same until the next backup. A
+  listing `expire` already made has none. When the `Backup` objects were not read, or the snapshot does not report
   the retention, any backup since the scan may have expired anything: the whole
   window once one may have ended. A `pgbackrest backup` run by hand, which
   creates no `Backup` object, is not counted;

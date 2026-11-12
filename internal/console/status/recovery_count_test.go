@@ -175,6 +175,26 @@ func TestBackupsSince(t *testing.T) {
 	if n, ok := f.backupsSince(read); !ok || n != 3 {
 		t.Errorf("backupsSince = %d, %v; want 3 (two ended after the read, one completed with no stop time)", n, ok)
 	}
+	// Round 18: a plugin's unset stop time (1970-01-01) is no stop time,
+	// so that Completed Backup counts; a stop before the start too. A
+	// Backup in progress counts when it began after the read, by its
+	// start, else (a plugin backup reports none while running) its
+	// creation; one begun before the read does not.
+	epoch := time.Unix(0, 0)
+	epochStop := backup("completed", &epoch)
+	backwards := backup("completed", &before)
+	backwards.Status.StartedAt = &metav1.Time{Time: read.Add(-5 * time.Minute)}
+	runningBefore, runningAfter, startedAfter := backup("running", nil), backup("running", nil), backup("finalizing", nil)
+	runningBefore.CreationTimestamp = metav1.Time{Time: read.Add(-time.Hour)}
+	runningAfter.CreationTimestamp = metav1.Time{Time: read.Add(time.Minute)}
+	startedAfter.CreationTimestamp = metav1.Time{Time: read.Add(-time.Hour)}
+	startedAfter.Status.StartedAt = &metav1.Time{Time: read.Add(2 * time.Minute)}
+	g.backups = append(g.backups, epochStop, backwards, runningBefore, runningAfter, startedAfter)
+	ends, unread = backupEndsOf(g)
+	f = recoveryFacts{backupEnds: ends, backupsUnread: unread}
+	if n, ok := f.backupsSince(read); !ok || n != 7 {
+		t.Errorf("backupsSince = %d, %v; want 7 (plus an epoch stop, a stop before its start, two in progress begun after the read)", n, ok)
+	}
 	g.failed = map[string]bool{cache.SourceBackups: true}
 	ends, unread = backupEndsOf(g)
 	if _, ok := (recoveryFacts{backupEnds: ends, backupsUnread: unread}).backupsSince(read); ok {
@@ -306,5 +326,268 @@ func TestPurgeBandNeverEndsBeforeTheFirstRestorePoint(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// TestR18ExpireAfterScanStart (round 18, PG P3, the reviewer's probe):
+// the newest full's Backup stopped two minutes before the scan's start,
+// beyond scanSlack, so it is not counted, and the listing shows K+1
+// fulls: the backup was saved to backup.info and its expire ran after
+// the scan started. The oldest full is gone; the band reaches the second.
+func TestR18ExpireAfterScanStart(t *testing.T) {
+	day := 24 * time.Hour
+	read := now.Add(-10 * time.Minute)
+	first := read.Add(-28 * day)
+	stops := []time.Time{first, first.Add(7 * day), first.Add(14 * day), first.Add(21 * day), read.Add(-2 * time.Minute)}
+	in, spans := fullsInput(read, stops, read, read.Add(-2*time.Minute-scanSlack))
+	in.policy = pgbackrestPolicy{fulls: 4}
+	if band := purgeBand(in, spans, first, read); band < 7*day {
+		t.Errorf("band %s of %s: the oldest full is expired right after the scan's start, want at least 7d", band, read.Sub(first))
+	}
+	// The same listing after that expire, K fulls: no band beyond the
+	// listed one (the snapshot is what expire left).
+	in, spans = fullsInput(read, stops[1:], read, read.Add(-2*time.Minute-scanSlack))
+	in.policy = pgbackrestPolicy{fulls: 4}
+	if band, ok := sinceReadBand(in, spans, stops[1], read); ok {
+		t.Errorf("a listing within the count keeps a band %s", band)
+	}
+	// A count lowered to 2 before the next backup: two of the four go.
+	in.policy = pgbackrestPolicy{fulls: 2}
+	if band, ok := sinceReadBand(in, spans, stops[1], read); !ok || band != 14*day {
+		t.Errorf("retention lowered to 2: band %s, %v; want 14d", band, ok)
+	}
+}
+
+// TestR18PendingExpireTimeAndArchive: the same pending expire under a
+// time-based retention (the fulls older than the newest one stopped
+// before the newest listed end minus the retention go) and under an
+// archive retention below the fulls (continuous WAL drawn from a backup
+// older than the A-th newest is cut there; points drawn alone are not).
+func TestR18PendingExpireTimeAndArchive(t *testing.T) {
+	day := 24 * time.Hour
+	read := now.Add(-10 * time.Minute)
+	first := read.Add(-28 * day)
+	stops := []time.Time{first, first.Add(7 * day), first.Add(14 * day), first.Add(21 * day), read.Add(-2 * time.Minute)}
+
+	in, spans := fullsInput(read, stops, read)
+	in.policy, in.retainedFor = pgbackrestPolicy{}, 10*day
+	// newest end read-2m, reach read-10d-2m: the newest full before it
+	// is the third (first+14d); the two older go.
+	if band, ok := sinceReadBand(in, spans, first, read); !ok || band != 14*day {
+		t.Errorf("time-based pending expire: band %s, %v; want 14d", band, ok)
+	}
+	// After that expire: no band.
+	in, spans = fullsInput(read, stops[2:], read)
+	in.policy, in.retainedFor = pgbackrestPolicy{}, 10*day
+	if band, ok := sinceReadBand(in, spans, stops[2], read); ok {
+		t.Errorf("time-based listing expire already made keeps a band %s", band)
+	}
+
+	full := map[string]bool{evidencev1alpha1.PGBackRestFull: true}
+	in, spans = fullsInput(read, stops, read)
+	in.policy = pgbackrestPolicy{fulls: 9, archive: 2, archiveTypes: full}
+	// WAL still continuous from the third full: the archive expire of
+	// the newest backup cuts it at the fourth.
+	for i := range spans[:2] {
+		spans[i].to = spans[i].from
+	}
+	if band, ok := sinceReadBand(in, spans, first, read); !ok || band != 21*day {
+		t.Errorf("archive pending expire: band %s, %v; want 21d", band, ok)
+	}
+	// Steady state: only the two newest draw continuous WAL, the older
+	// ones their own points; no band.
+	spans[2].to = spans[2].from
+	if band, ok := sinceReadBand(in, spans, first, read); ok {
+		t.Errorf("archive steady state keeps a band %s", band)
+	}
+}
+
+// chainBackup is one backup of TestPurgeBandHoldsOverChains: its type,
+// stop time and the index of the full it depends on.
+type chainBackup struct {
+	id   string
+	typ  string
+	stop time.Time
+	full int
+}
+
+// TestPurgeBandHoldsOverChains (round 18, PG, the reviewer's property,
+// alongside TestPurgeBandNeverEndsBeforeTheFirstRestorePoint): count
+// retention over random full/diff/incr chains, every archive type, an
+// archive retention of 1 to 5, backups of random types since the read,
+// expire removing a full with its dependents and the WAL before the A-th
+// newest of the archive types. Some listings were read between a
+// backup's save to backup.info and its expire (the backup's CNPG stop
+// time within a few scanSlack of the read, counted or not), and some
+// backups since the read end within scanSlack of it. Every point the
+// drawn spans claim past the band must still be restorable.
+func TestPurgeBandHoldsOverChains(t *testing.T) {
+	rng := rand.New(rand.NewPCG(18, 7))
+	day := 24 * time.Hour
+	types := []string{"full", "diff", "incr"}
+	partial, pending := 0, 0
+	for iter := range 20000 {
+		age := time.Duration(1 + rng.Int64N(int64(5*day)))
+		read := now.Add(-age)
+		n := 1 + rng.IntN(10)
+		stops := make([]time.Time, n)
+		at := read.Add(-time.Duration(1 + rng.Int64N(int64(day))))
+		isPending := rng.IntN(3) == 0
+		if isPending || rng.IntN(4) == 0 {
+			at = read.Add(-time.Duration(rng.Int64N(int64(3 * scanSlack))))
+		}
+		for i := n - 1; i >= 0; i-- {
+			stops[i] = at
+			at = at.Add(-time.Duration(1 + rng.Int64N(int64(2*day))))
+		}
+		var seq []chainBackup
+		lastFull := -1
+		for i := range n {
+			typ := "full"
+			if i > 0 {
+				typ = types[rng.IntN(3)]
+			}
+			if typ == "full" {
+				lastFull = i
+			}
+			seq = append(seq, chainBackup{id: fmt.Sprintf("b%d", i), typ: typ, stop: stops[i], full: lastFull})
+		}
+		listedN := len(seq)
+		var newsEnds []time.Time
+		for range rng.IntN(5) {
+			end := read.Add(time.Duration(1 + rng.Int64N(int64(age))))
+			if rng.IntN(4) == 0 {
+				end = read.Add(-time.Duration(rng.Int64N(int64(scanSlack))))
+			}
+			newsEnds = append(newsEnds, end)
+		}
+		slices.SortFunc(newsEnds, func(a, b time.Time) int { return a.Compare(b) })
+		for _, e := range newsEnds {
+			typ := types[rng.IntN(3)]
+			if typ == "full" {
+				lastFull = len(seq)
+			}
+			seq = append(seq, chainBackup{id: fmt.Sprintf("b%d", len(seq)), typ: typ, stop: e, full: lastFull})
+		}
+		k := 1 + rng.IntN(4)
+		atype := types[rng.IntN(3)]
+		inT := func(typ string) bool {
+			switch atype {
+			case "full":
+				return typ == "full"
+			case "diff":
+				return typ != "incr"
+			}
+			return true
+		}
+		a := 1 + rng.IntN(5)
+		expireFulls := func(list []chainBackup) []chainBackup {
+			var fulls []int
+			for _, b := range list {
+				if b.typ == "full" {
+					fulls = append(fulls, b.full)
+				}
+			}
+			if len(fulls) <= k {
+				return list
+			}
+			keepFrom := fulls[len(fulls)-k]
+			var out []chainBackup
+			for _, b := range list {
+				if b.full >= keepFrom {
+					out = append(out, b)
+				}
+			}
+			return out
+		}
+		walFromOf := func(list []chainBackup, first time.Time) time.Time {
+			cnt := 0
+			for i := len(list) - 1; i >= 0; i-- {
+				if inT(list[i].typ) {
+					cnt++
+					if cnt == a {
+						return list[i].stop
+					}
+				}
+			}
+			return first
+		}
+		// The listing: what expire left after each listed backup, the
+		// newest one's expire still to run when pending.
+		var listed []chainBackup
+		var prior []chainBackup
+		if isPending && listedN > 1 {
+			prior = expireFulls(seq[:listedN-1])
+			listed = append(slices.Clone(prior), seq[listedN-1])
+		} else {
+			listed = expireFulls(seq[:listedN])
+			prior = listed
+		}
+		first, last := listed[0].stop, read
+		atRead := walFromOf(prior, prior[0].stop)
+		alive := slices.Clone(listed)
+		walFrom := atRead
+		apply := func() {
+			alive = expireFulls(alive)
+			if w := walFromOf(alive, first); w.After(walFrom) {
+				walFrom = w
+			}
+		}
+		apply()
+		for j := listedN; j < len(seq); j++ {
+			alive = append(alive, seq[j])
+			apply()
+		}
+		r := &evidencev1alpha1.PGBackRestRetention{Configured: true, FullType: "count", Full: new(uint64(k)), Archive: new(uint64(a)), ArchiveType: atype, EffectiveArchive: new(uint64(a))}
+		snap := &evidencev1alpha1.RepositoryEvidenceSnapshot{Details: evidencev1alpha1.Details{Type: "pgbackrest", PGBackRest: &evidencev1alpha1.PGBackRestSummary{Retention: r}}}
+		in := timelineInput{facts: recoveryFacts{now: now}, scannedAt: &read, refresh: time.Duration(1 + rng.Int64N(int64(day))), pgBackRest: true}
+		in.policy = pgbackrestPolicyOf(snap)
+		var spans []interval
+		for _, b := range listed {
+			end := b.stop
+			in.backups = append(in.backups, evidence.BackupItem{ID: b.id, EndAt: &end, PgBackRest: &evidence.PgBackRestItem{Type: b.typ, Usable: true}})
+			to := last
+			if b.stop.Before(atRead) {
+				to = b.stop
+			}
+			spans = append(spans, interval{from: b.stop, to: to, backupID: b.id})
+		}
+		// Every CNPG Backup is listed: the old ones end long before the
+		// read, the newest listed one maybe within scanSlack of it.
+		for i := range seq {
+			end := seq[i].stop
+			in.facts.backupEnds = append(in.facts.backupEnds, &end)
+		}
+		band := purgeBand(in, spans, first, last)
+		if band >= last.Sub(first) {
+			continue
+		}
+		partial++
+		if isPending {
+			pending++
+		}
+		restorable := func(p time.Time) bool {
+			for _, b := range alive {
+				if b.stop.Equal(p) || !b.stop.After(p) && !b.stop.Before(walFrom) {
+					return true
+				}
+			}
+			return false
+		}
+		from := first.Add(band)
+		for _, sp := range spans {
+			for _, p := range []time.Time{sp.from, sp.from.Add(time.Minute), sp.to} {
+				if p.Before(from) || p.After(sp.to) || p.After(last) {
+					continue
+				}
+				if !restorable(p) {
+					t.Fatalf("iteration %d: %s after the band (%s of %s) is claimed but gone: k=%d a=%d type=%s pending=%v listed=%v since=%v alive=%v wal from %s",
+						iter, p, band, last.Sub(first), k, a, atype, isPending, listed, newsEnds, alive, walFrom)
+				}
+			}
+		}
+	}
+	if partial == 0 || pending == 0 {
+		t.Errorf("the property never drew a partial band (%d) or one on a pending listing (%d)", partial, pending)
 	}
 }
