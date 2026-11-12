@@ -247,7 +247,10 @@ func reportDroppedKind(ctx context.Context, api droppedAPI, d droppedNamespace, 
 				setupLog.Error(err, "could not mark an object of a dropped namespace Ready=Unknown",
 					"namespace", d.Namespace, "kind", target.kind, "name", target.object.GetName())
 			}
-			event = transition || err != nil
+			// A second Conflict: another writer changed it again, and no
+			// transition was written here; any other error leaves Ready
+			// unwritten, and the Event is then all that says it.
+			event = transition || (err != nil && !apierrors.IsConflict(err))
 		}
 		if !canEvent || !event {
 			continue
