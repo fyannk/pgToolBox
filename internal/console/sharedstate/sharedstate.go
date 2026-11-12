@@ -1957,6 +1957,11 @@ func (s *Store) failed(err error) error {
 	switch {
 	case apierrors.IsNotFound(err):
 		s.setModeLocked(modeMissing, "")
+	case apierrors.IsForbidden(err) && s.watching:
+		// A request refused while the watch still delivers: failing,
+		// which retries its writes and keeps since, rather than a
+		// forbidden mode nothing on this watch would leave.
+		s.setModeLocked(modeFailing, "the API server refused a request")
 	case apierrors.IsForbidden(err):
 		s.setModeLocked(modeForbidden, "")
 	default:
@@ -2398,21 +2403,8 @@ func (s *Store) takeFresh(r freshRead, p watchProgress, behind *string) (bool, e
 		return true, fmt.Errorf("freshness read of ConfigMap %s: %w", s.opts.Name, r.err)
 	}
 	ahead := p.ahead(r.cm.ResourceVersion)
-	var forbidden bool
-	s.locked(func() {
-		if ahead && !r.meta {
-			s.mergeLocked(r.cm)
-		}
-		forbidden = s.mode == modeForbidden
-	})
-	if forbidden {
-		// A read or write refused while the watch is open (ReadGrants, a
-		// write-through) left the forbidden mode, which nothing on this
-		// watch leaves (round 22, Go P3-1): the read answered, so the
-		// permission is back, and the watch is opened again (watchOnce
-		// reads, then goes live).
-		s.opts.Logger.Debug("shared state readable again while forbidden; reopening the watch", slog.String("configmap", s.opts.Name))
-		return true, nil
+	if ahead && !r.meta {
+		s.locked(func() { s.mergeLocked(r.cm) })
 	}
 	stale := *behind != "" && p.ahead(*behind)
 	*behind = ""

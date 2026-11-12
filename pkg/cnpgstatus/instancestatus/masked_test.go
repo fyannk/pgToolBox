@@ -50,4 +50,11 @@ func TestMaskedReports(t *testing.T) {
 	if r.Masked() {
 		t.Error("a report read with MightBeUnavailable set and no masked error is masked")
 	}
+	r, err = Parse(strings.NewReader(`{"isPgRewindRunning":true}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !r.Masked() {
+		t.Error("a report sent while pg_rewind runs (PostgreSQL not read) is not masked")
+	}
 }

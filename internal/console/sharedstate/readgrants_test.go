@@ -127,7 +127,8 @@ func TestReadGrantsIsAnsweredByAReadSentAfterIt(t *testing.T) {
 
 // Only a 403 or a 404 of ReadGrants changes the mode (round 22, k8s
 // P2-1): a person repeating Disconnect all against a throttled or slow
-// API server cannot put the replica in the failing mode.
+// API server cannot put the replica in the failing mode. A 403 while the
+// watch is open leaves it failing (retrying its writes), not forbidden.
 func TestReadGrantsFailuresChangeTheModeOnlyWhenAnswered(t *testing.T) {
 	for name, tc := range map[string]struct {
 		err      error
@@ -140,7 +141,7 @@ func TestReadGrantsFailuresChangeTheModeOnlyWhenAnswered(t *testing.T) {
 		"deadline":  {err: context.DeadlineExceeded, mode: modeLive, want: ErrNotRecorded},
 		"limiter":   {err: errors.New("client rate limiter Wait returned an error: rate: Wait(n=1) would exceed context deadline"), mode: modeLive, want: ErrNotRecorded},
 		"internal":  {err: apierrors.NewInternalError(errors.New("etcdserver: leader changed")), mode: modeLive, want: ErrNotRecorded},
-		"forbidden": {err: apierrors.NewForbidden(configMaps, "console-state", errors.New("no")), mode: modeForbidden, want: ErrNotRecorded},
+		"forbidden": {err: apierrors.NewForbidden(configMaps, "console-state", errors.New("no")), mode: modeFailing, want: ErrNotRecorded},
 		"missing":   {err: apierrors.NewNotFound(configMaps, "console-state"), mode: modeMissing},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -232,38 +233,6 @@ func TestReadGrantsFindingARecreatedConfigMapIsPending(t *testing.T) {
 	}
 }
 
-// One 403 while the watch is open (a ReadGrants, a write) is left at the
-// next freshness read that is answered (round 22, Go P3-1): the watch is
-// opened again and the replica is live, rather than refusing every grant
-// until the watch ends.
-func TestAGoodFreshnessReadLeavesTheForbiddenMode(t *testing.T) {
-	t.Run("takeFresh", func(t *testing.T) {
-		clock := &testClock{now: t0}
-		api := newAPIServer()
-		s := handLoaded(t, api, api, clock, slog.New(slog.DiscardHandler))
-		_ = s.failed(apierrors.NewForbidden(configMaps, "console-state", errors.New("no")))
-		cm, _ := api.Get(t.Context(), "console-state", metav1.GetOptions{})
-		behind := ""
-		reopen, err := s.takeFresh(freshRead{cm: cm, asked: t0}, watchProgress{seen: "1", object: "1"}, &behind)
-		if err != nil || !reopen {
-			t.Errorf("takeFresh while forbidden = %v, %v; want the watch reopened", reopen, err)
-		}
-	})
-	t.Run("running", func(t *testing.T) {
-		clock := &testClock{now: t0}
-		api := newAPIServer()
-		g := &gatedGets{apiServer: api}
-		s := freshStore(g, clock, time.Hour, 20*time.Millisecond, 10*time.Millisecond)
-		run(t, s)
-		eventually(t, "live", func() bool { return modeOf(s) == modeLive && s.GrantsUsable() })
-		forbidden := error(apierrors.NewForbidden(configMaps, "console-state", errors.New("no")))
-		g.fail.Store(&forbidden)
-		_ = s.ReadGrants(t.Context())
-		g.fail.Store(nil)
-		eventually(t, "live again", func() bool { return modeOf(s) == modeLive && s.GrantsUsable() })
-	})
-}
-
 // WriteGrant puts a grant recorded here in the ConfigMap before its first
 // token: nil once it is there, ErrNotRecorded when it cannot be written.
 func TestWriteGrant(t *testing.T) {
@@ -352,4 +321,27 @@ func TestAGrantNotWrittenIsNeverServedAfterADoneDisconnectAll(t *testing.T) {
 	if !c.GrantRevoked(id) {
 		t.Error("Disconnect all answered done on c; c serves the grant 2 h later")
 	}
+}
+
+// One 403 while the watch is open (a ReadGrants, a write) leaves the
+// replica failing, not forbidden: it refuses grants after staleGrace like
+// any failing replica and is live again once a write lands, rather than
+// refusing until the watch ends (round 21) or flapping every freshness
+// read (round 22).
+func TestAForbiddenRequestWhileWatchingIsFailing(t *testing.T) {
+	clock := &testClock{now: t0}
+	api := newAPIServer()
+	g := &gatedGets{apiServer: api}
+	s := freshStore(g, clock, time.Hour, 20*time.Millisecond, 10*time.Millisecond)
+	run(t, s)
+	eventually(t, "live", func() bool { return modeOf(s) == modeLive && s.GrantsUsable() })
+	forbidden := error(apierrors.NewForbidden(configMaps, "console-state", errors.New("no")))
+	g.fail.Store(&forbidden)
+	_ = s.ReadGrants(t.Context())
+	if m := modeOf(s); m != modeFailing {
+		t.Fatalf("mode after a 403 while watching = %s, want failing", m)
+	}
+	g.fail.Store(nil)
+	s.RevokeGrant(grantID(4), uh("alice"), t0, t0.Add(time.Hour))
+	eventually(t, "live again once a write lands", func() bool { return modeOf(s) == modeLive && s.GrantsUsable() })
 }
