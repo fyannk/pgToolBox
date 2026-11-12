@@ -165,10 +165,13 @@ var backupTimeFloor = time.Date(2000, time.January, 1, 0, 0, 0, 0, time.UTC)
 
 // BackupStamps are the times a Backup object carries: its creation, the
 // backup tool's status.startedAt and status.stoppedAt (a plugin's, or
-// barman's begin and end), and the operator's own
-// status.reconciliationStartedAt (SetAsStarted) and
-// status.reconciliationTerminatedAt (SetAsCompleted and SetAsFailed,
-// pkg/api/v1/backup_funcs.go v1.30.1:67-71 and 83).
+// barman's begin and end), and CloudNativePG's own stamps:
+// status.reconciliationStartedAt (SetAsStarted, called by the operator)
+// and status.reconciliationTerminatedAt (SetAsCompleted and SetAsFailed,
+// pkg/api/v1/backup_funcs.go v1.30.1:46-71 and 83), which the instance
+// manager writes for in-tree barman and plugin Backups once the tool
+// returned (pkg/management/postgres/backup.go:202,
+// webserver/plugin_backup.go:129) and the operator for volume snapshots.
 type BackupStamps struct {
 	Created                                         time.Time
 	Started, Stopped                                *time.Time
@@ -190,9 +193,12 @@ type BackupTimes struct {
 	// (SetAsStarted): at or before the tool's start, and after the
 	// object's creation while the Backup waited in the queue.
 	OperatorStarted *time.Time
-	// OperatorTerminated is when the operator marked the Backup completed
-	// or failed: an upper bound on its end, seconds after it, read when
-	// Stop is not known (round 19, CNPG P3-1).
+	// OperatorTerminated is CloudNativePG's completion stamp
+	// (status.reconciliationTerminatedAt: the instance manager's, the
+	// operator's for a volume snapshot), written when the Backup was
+	// marked completed or failed: an upper bound on its end, seconds after
+	// it, and after pgBackRest's expire at that end (round 19, CNPG P3-1;
+	// round 20, PG P3-A).
 	OperatorTerminated *time.Time
 }
 
@@ -203,20 +209,27 @@ type BackupTimes struct {
 //   - a time more than backupClockSkew after now: a plugin that sends
 //     milliseconds for seconds stamps the far future, which would read as
 //     a backup that never ages (round 19, CNPG P3-1); a future time is
-//     dropped, never taken as fresh;
+//     dropped, never taken as fresh. A zero now sets no ceiling: a
+//     caller that reads only the method or the pod gets the times
+//     unchecked against a clock rather than none (round 20, Go P3-2);
 //   - a tool time more than backupClockSkew before the object's creation
 //     (created zero: not checked), unless start and stop are both
-//     reported and coherent (Imported);
+//     reported and coherent and CloudNativePG's stamps, when present, are
+//     also that early (Imported). A Backup restored with its status
+//     (Velero) carries its old stamps; a live one's are at or after its
+//     creation, so tool times that early are an instance clock running
+//     behind, and are dropped (round 20, PG P3-B, CNPG P3-2);
 //   - a stop before the start.
 //
-// The operator's times are its own clock's: only the floor and the
-// upper bound apply. A Completed Backup whose stop time is unknown is
-// then bounded by OperatorTerminated, else counted as one that could
-// have ended at any time, never as one that ended in 1970.
+// CloudNativePG's stamps are written on the instance's or the operator's
+// clock as the Backup's status is patched: only the floor and the upper
+// bound apply. A Completed Backup whose stop time is unknown is then
+// bounded by OperatorTerminated, else counted as one that could have
+// ended at any time, never as one that ended in 1970.
 func SaneBackupTimes(now time.Time, s BackupStamps) BackupTimes {
 	ceiling := now.Add(backupClockSkew)
 	plausible := func(at *time.Time) *time.Time {
-		if at == nil || at.Before(backupTimeFloor) || at.After(ceiling) {
+		if at == nil || at.Before(backupTimeFloor) || (!now.IsZero() && at.After(ceiling)) {
 			return nil
 		}
 		t := at.UTC()
@@ -230,8 +243,10 @@ func SaneBackupTimes(now time.Time, s BackupStamps) BackupTimes {
 	early := func(at *time.Time) bool {
 		return at != nil && !s.Created.IsZero() && at.Before(s.Created.Add(-backupClockSkew))
 	}
+	opStarted, opTerminated := plausible(s.ReconciliationStarted), plausible(s.ReconciliationTerminated)
+	stampsEarly := (opStarted == nil || early(opStarted)) && (opTerminated == nil || early(opTerminated))
 	switch {
-	case start != nil && stop != nil && early(stop):
+	case start != nil && stop != nil && early(stop) && stampsEarly:
 		out.Imported = true
 	default:
 		if early(start) {
@@ -242,6 +257,6 @@ func SaneBackupTimes(now time.Time, s BackupStamps) BackupTimes {
 		}
 	}
 	out.Start, out.Stop = start, stop
-	out.OperatorStarted, out.OperatorTerminated = plausible(s.ReconciliationStarted), plausible(s.ReconciliationTerminated)
+	out.OperatorStarted, out.OperatorTerminated = opStarted, opTerminated
 	return out
 }

@@ -186,8 +186,10 @@ type BackupObjectReading struct {
 	// CreatedAt is the object's creation; ReconciliationStartedAt is
 	// when the operator handed it to an instance (SetAsStarted);
 	// StartedAt/StoppedAt are the tool's own times;
-	// ReconciliationTerminatedAt is set by SetAsCompleted/SetAsFailed
-	// (backup_funcs.go v1.30.0:46-71). Queue time is
+	// ReconciliationTerminatedAt is CloudNativePG's completion stamp, set
+	// by SetAsCompleted/SetAsFailed (backup_funcs.go v1.30.0:46-71): the
+	// instance manager's for in-tree barman and plugin Backups, the
+	// operator's for volume snapshots. Queue time is
 	// ReconciliationStartedAt - CreatedAt.
 	CreatedAt                  *time.Time `json:"createdAt,omitempty"`
 	ReconciliationStartedAt    *time.Time `json:"reconciliationStartedAt,omitempty"`
@@ -224,8 +226,8 @@ func BackupTimesOf(b *cnpgv1.Backup, now time.Time) observe.BackupTimes {
 }
 
 // BackupObject reads one Backup at now (its times through BackupTimesOf:
-// an impossible one, 1970 or in the future, is not reported). A nil
-// Backup is unknown.
+// an impossible one, 1970 or in the future, is not reported; a zero now
+// checks no future). A nil Backup is unknown.
 func BackupObject(minor Minor, b *cnpgv1.Backup, now time.Time) BackupObjectReading {
 	if b == nil {
 		return BackupObjectReading{Reading: BackupPhaseReading{Class: ClassUnknown}}
