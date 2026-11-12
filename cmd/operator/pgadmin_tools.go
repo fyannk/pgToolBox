@@ -163,7 +163,9 @@ type stringList []string
 func (s *stringList) String() string     { return strings.Join(*s, ",") }
 func (s *stringList) Set(v string) error { *s = append(*s, v); return nil }
 
-// terminationLog is where a Job reports to the reconciler.
+// terminationLog is the container's termination message file (the
+// Kubernetes default terminationMessagePath): where a Job reports to the
+// reconciler, and why the operator exited to restart (exitToWatch).
 const terminationLog = "/dev/termination-log"
 
 func runPgAdminRegister(ctx context.Context, args []string) error {

@@ -19,6 +19,7 @@ import (
 	"strings"
 	"testing"
 
+	routev1 "github.com/openshift/api/route/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -30,6 +31,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	pgtoolboxv1alpha1 "github.com/fyannk/pgToolBox/api/v1alpha1"
+	"github.com/fyannk/pgToolBox/pkg/discovery"
 )
 
 // TestDisallowedHostnameWithdrawnWhateverTheImage: a hostname outside
@@ -323,5 +325,40 @@ func TestPauseAllowUnpause(t *testing.T) {
 				t.Errorf("%s: the next loop is not a no-op", step.name)
 			}
 		}
+	}
+}
+
+// TestPausedConsoleWithdrawnRouteMarkedGone: round 17, OPERATOR P3. A
+// Route the console published, withdrawn for a refused hostname while the
+// console is paused, is no longer recorded in publishedExposureKinds once
+// the operator deleted it.
+func TestPausedConsoleWithdrawnRouteMarkedGone(t *testing.T) {
+	t.Parallel()
+	c := &pgtoolboxv1alpha1.PgToolBoxConsole{ObjectMeta: metav1.ObjectMeta{
+		Name: "console", Namespace: "team-a", UID: "u", Generation: 1,
+		Annotations: map[string]string{pgtoolboxv1alpha1.AnnotationReconcile: pgtoolboxv1alpha1.ReconcileSkip},
+	}}
+	c.Spec.Exposure.Type, c.Spec.Exposure.Hostname = pgtoolboxv1alpha1.ExposureTypeRoute, "login.corp.example.com"
+	c.Status.URL = "https://login.corp.example.com"
+	c.Status.PublishedExposureKinds = []string{"Route"}
+	published := owned(c, &routev1.Route{ObjectMeta: metav1.ObjectMeta{Name: c.WorkloadName(), Namespace: c.Namespace}})
+	scheme := cnpgScheme(t)
+	if err := routev1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(c, published).
+		WithStatusSubresource(&pgtoolboxv1alpha1.PgToolBoxConsole{}).Build()
+	r := &Reconciler{
+		Client: cl, APIReader: cl, Recorder: events.NewFakeRecorder(100), DefaultImage: "registry.example/pgtoolbox-console:1",
+		AllowedImageRepositories: []string{"registry.example/pgtoolbox-console"},
+		AllowedHostSuffixes:      []string{"apps.example.com"},
+		Features:                 Features{Routes: discovery.Result{GVK: routev1.GroupVersion.WithKind("Route"), State: discovery.Available}},
+	}
+	got := reconcileConsole(t, r, cl, c)
+	if err := cl.Get(context.Background(), client.ObjectKeyFromObject(published), &routev1.Route{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("the Route under a refused hostname is still there (get: %v)", err)
+	}
+	if got.Status.PublishedExposureKinds != nil {
+		t.Errorf("publishedExposureKinds = %q once the Route is withdrawn, want none", got.Status.PublishedExposureKinds)
 	}
 }

@@ -149,7 +149,8 @@ func requiredPermissions(mapper meta.RESTMapper, objectScheme *runtime.Scheme, r
 // no answer within managerrole.NamespaceReviewTimeout) is left out too,
 // with its error logged: nothing is known of it, and the others must not
 // wait on it. Left out, it is not reconciled until it is fixed and the
-// operator restarted (reReviewFailed restarts it for a failed review); the
+// operator restarted (reReviewFailed restarts it for a review that failed
+// for a reason that may pass, never for one too large); the
 // others are unaffected. It returns the namespaces
 // kept and those left out, why and (for missing permissions) what the
 // review showed. At least one namespace must be kept; empty (every
@@ -184,6 +185,12 @@ func permittedNamespaces(ctx context.Context, api startupAPI, namespaces []strin
 		dropped = append(dropped, droppedNamespace{Namespace: d.Namespace, Cause: dropPermissions, Reason: d.Reason(), required: required, missing: d.Missing})
 	}
 	for _, u := range review.Unreviewed {
+		if u.TooLarge() {
+			setupLog.Error(u.Err, "watched namespace left out: the operator's permission review there is too large (its RoleBindings grant the operator far more rules than its manager role; remove the extra bindings: it is reviewed again at the next start, never in the background)",
+				"namespace", u.Namespace)
+			dropped = append(dropped, droppedNamespace{Namespace: u.Namespace, Cause: dropReviewTooLarge, Reason: u.Reason()})
+			continue
+		}
 		setupLog.Error(u.Err, "watched namespace left out: the operator's permissions there could not be reviewed (check the API server and the namespace's RoleBindings; it is reviewed again every minute, and the operator restarts to watch it once it grants every permission)",
 			"namespace", u.Namespace)
 		dropped = append(dropped, droppedNamespace{Namespace: u.Namespace, Cause: dropReviewFailed, Reason: u.Reason(), required: required})

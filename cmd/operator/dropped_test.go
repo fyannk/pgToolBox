@@ -348,6 +348,33 @@ func TestReportDroppedNamespacesTwoReplicas(t *testing.T) {
 	}
 }
 
+// TestReportDroppedNamespacesConflictTwice: round 17, OPERATOR P3. A
+// status patch that conflicts again once the object is read again (another
+// writer each time) wrote no transition: no Event is emitted for it.
+func TestReportDroppedNamespacesConflictTwice(t *testing.T) {
+	now := func() time.Time { return time.Date(2026, 11, 12, 9, 0, 0, 0, time.UTC) }
+	narrowed := droppedNamespace{
+		Namespace: "team-b", Cause: dropPermissions, Reason: "not allowed to list,watch deployments.apps in team-b",
+		required: droppedRequired(), missing: []managerrole.Permission{{Group: "apps", Resource: "deployments", Verbs: []string{"list", "watch"}}},
+	}
+	patches := 0
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(droppedObjects()...).
+		WithStatusSubresource(&pgtoolboxv1alpha1.PgAdmin{}, &pgtoolboxv1alpha1.PgToolBoxConsole{}, &pgtoolboxv1alpha1.EvidenceAgent{}).
+		WithInterceptorFuncs(interceptor.Funcs{
+			SubResourcePatch: func(context.Context, client.Client, string, client.Object, client.Patch, ...client.SubResourcePatchOption) error {
+				patches++
+				return apierrors.NewConflict(schema.GroupResource{Resource: "pgadmins"}, "x", errors.New("changed meanwhile"))
+			},
+		}).Build()
+	reportDroppedNamespaces(t.Context(), c, []droppedNamespace{narrowed}, now)
+	if patches != 6 {
+		t.Errorf("%d status patches, want 6 (each of 3 objects, read again once)", patches)
+	}
+	if events := listOf(t, c, &eventsv1.EventList{}, "team-b").Items; len(events) != 0 {
+		t.Errorf("%d Events while no transition was written, want 0", len(events))
+	}
+}
+
 // TestDroppedReportNeedsLeaderElection: round 16, K8S P3-1. The report is
 // a Runnable the manager starts on the elected leader only.
 func TestDroppedReportNeedsLeaderElection(t *testing.T) {
@@ -369,7 +396,7 @@ func TestDroppedReportNeedsLeaderElection(t *testing.T) {
 // TestCountDropped: every cause is exported, 0 when none.
 func TestCountDropped(t *testing.T) {
 	got := countDropped([]droppedNamespace{{Cause: dropPermissions}, {Cause: dropPermissions}, {Cause: dropReviewFailed}})
-	want := map[dropCause]int{dropPermissions: 2, dropReviewFailed: 1, dropClustersUnlistable: 0}
+	want := map[dropCause]int{dropPermissions: 2, dropReviewFailed: 1, dropReviewTooLarge: 0, dropClustersUnlistable: 0}
 	if len(got) != len(want) {
 		t.Fatalf("counts = %v, want %v", got, want)
 	}
