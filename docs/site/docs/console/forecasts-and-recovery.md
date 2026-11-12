@@ -458,7 +458,22 @@ segments, so the bar and the answer always agree:
   may all be obsolete and a backup taken since the base. A pgBackRest time-based
   full retention (`repo-retention-full-type=time`) bounds the band from the
   clock instead: to the newest full at or before now minus the retention, or
-  the whole window once that passes the scan;
+  the whole window once that passes the scan. Under pgBackRest a count bounds
+  it too, in or out of a refresh cycle: `expire` runs at the end of every
+  backup, so the console counts the Cluster's `Backup` objects that ended since
+  the scan's start (each counted as a full, the worst case). With
+  `repo-retention-full=K` (type `count`), L fulls listed and n backups since,
+  the oldest L + n − K listed fulls may be gone with their chains, and the band
+  runs to the first restore point of the next one; the whole window when that is
+  every listed full. An archive retention that keeps fewer backups than the
+  fulls (`repo-retention-archive`, or the default from `repo-retention-diff`
+  with `repo-retention-archive-type=diff`) keeps WAL continuously only from the
+  A-th newest backup of its type (older ones keep only their own consistency
+  range): the band runs to the first restore point of the A-th newest of the
+  listed and the n new ones, and is the whole window once n reaches A. When the `Backup` objects were not read, or the snapshot does not report
+  the retention, any backup since the scan may have expired anything: the whole
+  window once one may have ended. A `pgbackrest backup` run by hand, which
+  creates no `Backup` object, is not counted;
 - after a WAL archiving failure an instance reported (`lastFailedWALTime`, the
   newest over every instance read, so a former primary's failure survives a
   failover) in the day before the latest point, the day before the failure: WAL
