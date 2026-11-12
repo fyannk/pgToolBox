@@ -309,9 +309,10 @@ func (s *Server) RevokeGrant(ctx context.Context, c auth.Client, user, id string
 // grant (each one's watch delivers the deletion), so the disconnection is
 // in effect everywhere: it is answered done, logged, and written once the
 // ConfigMap is back (sharedstate.ErrNoConfigMap). A ConfigMap the console
-// may not write is not so: a replica whose watch was opened before the
-// permission was withdrawn still serves grants until its next write, so
-// that stays ErrNotRecorded.
+// may not read or write is not so: the API server authorizes a watch only
+// when it opens, so a replica whose watch was opened before the permission
+// was withdrawn still serves grants until its next freshness read is
+// refused (sharedstate.DefaultFreshness), so that stays ErrNotRecorded.
 func (s *Server) written(ctx context.Context, err error, grants int) error {
 	switch {
 	case err == nil:

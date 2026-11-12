@@ -61,8 +61,14 @@ The first screen lists the Clusters you may see in the namespaces the console
 watches, one row each: verdict, phase, primary, ready instances, last backup
 and the count of diagnostics findings by severity. The last backup is the
 newest completed `Backup`'s stop time; a stop time a plugin left unset (1970)
-or set in the future is not one, and such a backup is then timed by the
-operator's completion stamp, which the overview names as its source. A namespace the console
+or set in the future is not one, and such a backup is then timed by
+CloudNativePG's completion stamp (`status.reconciliationTerminatedAt`, seconds
+after the backup ended). The list and the Overview's backups panel show that
+time unmarked; only the backup line of the cluster Overview's health roll-up
+says it is the completion stamp. A failed `Backup` is timed by when
+CloudNativePG marked it failed (its creation when that is not stamped), so a
+backup that waited behind a successful one and failed after it still shows as a
+failure after the last completed backup. A namespace the console
 cannot read is named in a banner rather than shown as empty. Tick two rows to
 [compare them](../guides/compare.md). What you may see is decided by the API
 server for your own identity ([authorization](authorization.md)).

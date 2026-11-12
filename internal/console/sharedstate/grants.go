@@ -571,10 +571,14 @@ func (s *Store) RevokeGrantsOf(userHash string, at time.Time) []string {
 // nothing to write.
 //
 // No ids is nil only on a replica that has read the grants document, or
-// knows the ConfigMap missing or forbidden (every grant is then refused,
-// on every replica: they share the ServiceAccount): one that has not read
-// it yet knows none of the grants recorded elsewhere, and its "nothing to
-// revoke" is no answer (ErrNotRecorded), not a disconnection done.
+// knows the ConfigMap missing (every replica's watch delivers the
+// deletion, and every grant is refused): one that has not read it yet
+// knows none of the grants recorded elsewhere, and its "nothing to
+// revoke" is no answer (ErrNotRecorded), not a disconnection done. A
+// ConfigMap this replica may not read is no such answer either (round 20,
+// security P2-1): the API server authorizes a watch only when it opens,
+// so another replica whose watch opened before the permission was
+// withdrawn serves grants until its next freshness read sees the 403.
 func (s *Store) WriteRevocations(ctx context.Context, ids ...string) error {
 	if s == nil {
 		return ErrNotRecorded
@@ -585,7 +589,7 @@ func (s *Store) WriteRevocations(ctx context.Context, ids ...string) error {
 	if len(ids) == 0 {
 		var read bool
 		s.locked(func() {
-			read = s.mode == modeMissing || s.mode == modeForbidden || s.base != nil && !s.foreign[KeyGrants]
+			read = s.mode == modeMissing || s.base != nil && !s.foreign[KeyGrants]
 		})
 		if !read {
 			return ErrNotRecorded

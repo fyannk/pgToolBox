@@ -173,8 +173,17 @@ var ErrReviewTooLarge = fmt.Errorf("the access review's response is larger than 
 
 // tooLargeCountLimit bounds what is read past ReviewResponseLimit, into
 // nothing, to tell how large a response too large was: the bytes are
-// counted, never kept, and the read is bounded by the attempt's deadline.
-const tooLargeCountLimit = 64 << 20
+// counted, never kept. The count also stops after tooLargeCountTime, and
+// tooLargeCountMargin before the request's deadline, whichever comes first
+// (the request is then cancelled, so a read that blocks returns): the
+// error then says "at least" the bytes counted, and it reaches the
+// attempt before its deadline, so a slow body too large is too large,
+// never a timeout.
+const (
+	tooLargeCountLimit  = 8 << 20
+	tooLargeCountTime   = time.Second
+	tooLargeCountMargin = 100 * time.Millisecond
+)
 
 // ReviewTooLargeError is ErrReviewTooLarge with the size seen: the
 // response's Content-Length when the server declared one, or the bytes of
@@ -211,7 +220,7 @@ func (e *ReviewTooLargeError) Unwrap() error { return ErrReviewTooLarge }
 
 // ErrReviewTooSlow is the error of a namespace whose every review attempt
 // got no answer within its deadline while ctx was still live, and while
-// the API server answered a check sent during the last attempt (so the
+// the API server answered a check sent late in the last attempt (so the
 // connection and the server were up): the API server answered nothing for
 // that namespace for two full attempts. It wraps the last attempt's error
 // (context.DeadlineExceeded, or a server or gateway timeout that came late
@@ -235,34 +244,50 @@ type limitedReviews struct {
 }
 
 func (l limitedReviews) RoundTrip(req *http.Request) (*http.Response, error) {
-	resp, err := l.next.RoundTrip(req)
-	if err != nil || resp.Body == nil || req.Method != http.MethodPost || !strings.Contains(req.URL.Path, "/apis/authorization.k8s.io/") {
+	if req.Method != http.MethodPost || !strings.Contains(req.URL.Path, "/apis/authorization.k8s.io/") {
+		return l.next.RoundTrip(req)
+	}
+	// cancel ends the request, so that the count past the limit can stop a
+	// read that blocks; it is called when the body is closed at the latest.
+	ctx, cancel := context.WithCancel(req.Context())
+	resp, err := l.next.RoundTrip(req.WithContext(ctx))
+	if err != nil || resp.Body == nil {
+		cancel()
 		return resp, err
 	}
 	if resp.ContentLength > l.limit {
 		_ = resp.Body.Close()
+		cancel()
 		return nil, &ReviewTooLargeError{ContentLength: resp.ContentLength}
 	}
-	resp.Body = &cappedBody{ReadCloser: resp.Body, left: l.limit}
+	resp.Body = &cappedBody{ReadCloser: resp.Body, left: l.limit, ctx: req.Context(), cancel: cancel}
 	return resp, nil
 }
 
 // cappedBody reads at most left bytes of its body, then fails with a
 // *ReviewTooLargeError if the body has more, after counting (into nothing,
-// up to tooLargeCountLimit) how much more.
+// within tooLargeCountLimit and tooLargeCountTime, and before ctx's
+// deadline) how much more. The error is sticky: a read after it (client-go
+// drains a body before closing it) returns it again, counting nothing.
 type cappedBody struct {
 	io.ReadCloser
-	left int64
-	read int64
+	left   int64
+	read   int64
+	ctx    context.Context //nolint:containedctx // the request's, for its deadline
+	cancel context.CancelFunc
+	err    error
 }
 
 func (b *cappedBody) Read(p []byte) (int, error) {
+	if b.err != nil {
+		return 0, b.err
+	}
 	if b.left <= 0 {
 		var one [1]byte
 		n, err := b.ReadCloser.Read(one[:])
 		if n > 0 {
-			more, err := io.CopyN(io.Discard, b.ReadCloser, tooLargeCountLimit)
-			return 0, &ReviewTooLargeError{Read: b.read + 1 + more, AtLeast: more == tooLargeCountLimit || (err != nil && !errors.Is(err, io.EOF))}
+			b.err = b.tooLarge()
+			return 0, b.err
 		}
 		return 0, err
 	}
@@ -273,6 +298,26 @@ func (b *cappedBody) Read(p []byte) (int, error) {
 	b.left -= int64(n)
 	b.read += int64(n)
 	return n, err
+}
+
+// tooLarge counts the rest of the body, one byte past the limit read
+// already, and is the error that says the size seen.
+func (b *cappedBody) tooLarge() error {
+	until := time.Now().Add(tooLargeCountTime)
+	if deadline, ok := b.ctx.Deadline(); ok && deadline.Add(-tooLargeCountMargin).Before(until) {
+		until = deadline.Add(-tooLargeCountMargin)
+	}
+	stop := time.AfterFunc(time.Until(until), b.cancel)
+	more, err := io.CopyN(io.Discard, b.ReadCloser, tooLargeCountLimit)
+	cut := !stop.Stop()
+	return &ReviewTooLargeError{Read: b.read + 1 + more, AtLeast: cut || more == tooLargeCountLimit || (err != nil && !errors.Is(err, io.EOF))}
+}
+
+// Close closes the body and ends its request.
+func (b *cappedBody) Close() error {
+	err := b.ReadCloser.Close()
+	b.cancel()
+	return err
 }
 
 // PermittedNamespaces splits namespaces into those where the caller holds
@@ -338,8 +383,9 @@ func PermittedNamespaces(ctx context.Context, c Creator, required []Permission, 
 //
 // A namespace is too slow (ErrReviewTooSlow) only when every attempt ended
 // at its deadline (or with a server or gateway timeout late in it, see
-// lateTimeout) and the API server answered a check sent with the last
-// attempt (apiAnswers): every review shares one connection, and one that
+// lateTimeout) and the API server answered a check sent in the last third
+// of the last attempt (apiAnswers), when the namespace's review should
+// have answered: every review shares one connection, and one that
 // died silently (a control-plane node lost, a load balancer failing over,
 // no reset sent) makes every attempt hang until client-go notices, 45 s
 // later. Without that answer the cause is the connection or the server,
@@ -350,7 +396,7 @@ func reviewNamespace(ctx context.Context, c Creator, required []Permission, name
 	var err error
 	// timedOut: every attempt so far ended at its own deadline.
 	timedOut := true
-	// alive: the answer of the check sent with the latest attempt, nil
+	// alive: the answer of the check sent late in the latest attempt, nil
 	// before any.
 	var alive <-chan bool
 	cancelCheck := context.CancelFunc(func() {})
@@ -370,8 +416,12 @@ func reviewNamespace(ctx context.Context, c Creator, required []Permission, name
 		}
 		attemptTimeout := min(timeout, time.Until(deadline))
 		if attempt > 0 && timedOut {
+			// The check is sent late in the last attempt and awaited until
+			// its deadline: its answer is the connection up at the time the
+			// namespace's review should have answered, not at its start.
 			cancelCheck()
-			alive, cancelCheck = apiAnswers(ctx, c, attemptTimeout)
+			wait := attemptTimeout * checkAfter / checkWindow
+			alive, cancelCheck = apiAnswers(ctx, c, wait, attemptTimeout-wait)
 		}
 		began := time.Now()
 		var lacking []Permission
@@ -404,7 +454,7 @@ func lateTimeout(err error, elapsed, timeout time.Duration) bool {
 
 // tooSlow is the last attempt's error err, wrapped in ErrReviewTooSlow when
 // every attempt ended at its deadline and the API server answered the check
-// sent with the last attempt (alive, awaited until its own deadline). When
+// sent late in the last attempt (alive, awaited until its own deadline). When
 // it did not, err is returned with that said, still transient.
 func tooSlow(err error, timedOut bool, alive <-chan bool) error {
 	if err == nil || !timedOut {
@@ -416,17 +466,35 @@ func tooSlow(err error, timedOut bool, alive <-chan bool) error {
 	return fmt.Errorf("%w (a check of the API server sent meanwhile got no answer either: the connection to it or the server, not this namespace, is the likely cause)", err)
 }
 
-// apiAnswers sends one check that no namespace's RoleBindings can slow or
-// grow (a SelfSubjectAccessReview of a cluster-scoped resource, which only
-// ClusterRoleBindings decide) and reports on the channel whether the API
-// server answered it within timeout: an answer, allowed or not, or any
-// status other than a timeout, is the connection and the server up. The
-// channel always receives one value, within timeout at the latest, even
-// from a Creator that ignores its context. Cancel abandons the check.
-func apiAnswers(parent context.Context, c Creator, timeout time.Duration) (<-chan bool, context.CancelFunc) {
-	ctx, cancel := context.WithTimeout(parent, timeout)
+// checkAfter / checkWindow is the share of the last attempt's time after
+// which the check of the API server is sent: in its last third.
+const (
+	checkAfter  = 2
+	checkWindow = 3
+)
+
+// apiAnswers sends, after wait, one check that no namespace's RoleBindings
+// can slow or grow (a SelfSubjectAccessReview of a cluster-scoped resource,
+// which only ClusterRoleBindings decide) and reports on the channel whether
+// the API server answered it within timeout: an answer, allowed or not, or
+// any status other than a timeout, is the connection and the server up.
+// The channel always receives one value, within wait and timeout at the
+// latest, even from a Creator that ignores its context. Cancel abandons
+// the check, sent or not.
+func apiAnswers(parent context.Context, c Creator, wait, timeout time.Duration) (<-chan bool, context.CancelFunc) {
+	waitCtx, cancel := context.WithCancel(parent)
 	answered := make(chan bool, 1)
 	go func() {
+		timer := time.NewTimer(wait)
+		defer timer.Stop()
+		select {
+		case <-waitCtx.Done():
+			answered <- false
+			return
+		case <-timer.C:
+		}
+		ctx, cancelTimeout := context.WithTimeout(waitCtx, timeout)
+		defer cancelTimeout()
 		done := make(chan error, 1)
 		go func() {
 			done <- c.Create(ctx, &authorizationv1.SelfSubjectAccessReview{Spec: authorizationv1.SelfSubjectAccessReviewSpec{
@@ -473,6 +541,11 @@ func attemptReview(ctx context.Context, c Creator, required []Permission, namesp
 	}()
 	select {
 	case result := <-done:
+		// A response too large is too large, even when the count of its
+		// size ran up to the deadline.
+		if errors.Is(result.err, ErrReviewTooLarge) {
+			return nil, result.err
+		}
 		if result.err != nil && attemptCtx.Err() != nil && ctx.Err() == nil {
 			return nil, fmt.Errorf("reviewing the operator's rules in %s: no answer within %s: %w", namespace, timeout, context.DeadlineExceeded)
 		}
@@ -480,6 +553,15 @@ func attemptReview(ctx context.Context, c Creator, required []Permission, namesp
 	case <-attemptCtx.Done():
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
+		}
+		// The count of a response too large stops before the deadline:
+		// its error may be waiting already.
+		select {
+		case result := <-done:
+			if errors.Is(result.err, ErrReviewTooLarge) {
+				return nil, result.err
+			}
+		default:
 		}
 		return nil, fmt.Errorf("reviewing the operator's rules in %s: no answer within %s: %w", namespace, timeout, context.DeadlineExceeded)
 	}

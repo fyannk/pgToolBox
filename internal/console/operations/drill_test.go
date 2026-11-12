@@ -465,6 +465,6 @@ func TestDrillBackupStopIsSane(t *testing.T) {
 	stamped := backup("stamped", time.Unix(0, 0))
 	stamped.Status.ReconciliationTerminatedAt = &metav1.Time{Time: created.Add(20 * time.Minute)}
 	if got := latestCompleted([]*cnpgv1.Backup{good, stamped}, now); got == nil || got.Name != "stamped" {
-		t.Errorf("latest %v, want stamped: ranked by the operator's completion stamp", got)
+		t.Errorf("latest %v, want stamped: ranked by CloudNativePG's completion stamp", got)
 	}
 }

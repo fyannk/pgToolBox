@@ -89,6 +89,56 @@ func TestSaneBackupOperatorTimes(t *testing.T) {
 	}
 }
 
+// TestSaneBackupTimesImportedNeedsEarlyStamps (round 20, PG P3-B, CNPG
+// P3-2): tool times older than the object read as Imported only when
+// CloudNativePG's stamps, if any, are as old. A Velero copy carries its
+// old stamps and is imported; a live Backup on an instance whose clock
+// runs 15 min behind has stamps at or after its creation, and its skewed
+// tool times are dropped, never kept as a false old stop.
+func TestSaneBackupTimesImportedNeedsEarlyStamps(t *testing.T) {
+	created := time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC)
+	now := created.Add(10 * time.Minute)
+	at := func(d time.Duration) *time.Time { v := created.Add(d); return &v }
+	skewedStart, skewedStop := at(5*time.Second-15*time.Minute), at(8*time.Minute-15*time.Minute)
+	for _, c := range []struct {
+		name                   string
+		opStarted, opEnded     *time.Time
+		wantImported           bool
+		wantStart, wantStopped *time.Time
+	}{
+		{"no stamps (a restored status without them)", nil, nil, true, skewedStart, skewedStop},
+		{"stamps as old as the tool times (Velero)", at(-16 * time.Minute), at(8*time.Minute + 3*time.Second - 15*time.Minute), true, skewedStart, skewedStop},
+		{"live: started at creation, completed after", at(2 * time.Second), at(8*time.Minute + 3*time.Second), false, nil, nil},
+		{"live: only the start stamp", at(2 * time.Second), nil, false, nil, nil},
+		{"live: only the completion stamp", nil, at(8*time.Minute + 3*time.Second), false, nil, nil},
+		{"old start stamp, completion after creation", at(-16 * time.Minute), at(8*time.Minute + 3*time.Second), false, nil, nil},
+	} {
+		got := SaneBackupTimes(now, BackupStamps{Created: created, Started: skewedStart, Stopped: skewedStop, ReconciliationStarted: c.opStarted, ReconciliationTerminated: c.opEnded})
+		if got.Imported != c.wantImported || !sameInstant(got.Start, c.wantStart) || !sameInstant(got.Stop, c.wantStopped) {
+			t.Errorf("%s: got imported=%v %v %v, want imported=%v %v %v", c.name, got.Imported, got.Start, got.Stop, c.wantImported, c.wantStart, c.wantStopped)
+		}
+		if !sameInstant(got.OperatorTerminated, c.opEnded) {
+			t.Errorf("%s: completion stamp %v, want %v", c.name, got.OperatorTerminated, c.opEnded)
+		}
+	}
+}
+
+// TestSaneBackupTimesZeroNow (round 20, Go P3-2): a zero now sets no
+// ceiling; the floor and the creation checks still apply.
+func TestSaneBackupTimesZeroNow(t *testing.T) {
+	created := time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC)
+	at := func(d time.Duration) *time.Time { v := created.Add(d); return &v }
+	epoch := time.Unix(0, 0)
+	got := SaneBackupTimes(time.Time{}, BackupStamps{Created: created, Started: at(time.Minute), Stopped: at(time.Hour), ReconciliationStarted: at(0), ReconciliationTerminated: at(time.Hour + time.Second)})
+	if !sameInstant(got.Start, at(time.Minute)) || !sameInstant(got.Stop, at(time.Hour)) || !sameInstant(got.OperatorStarted, at(0)) || !sameInstant(got.OperatorTerminated, at(time.Hour+time.Second)) {
+		t.Errorf("zero now dropped plausible times: %+v", got)
+	}
+	got = SaneBackupTimes(time.Time{}, BackupStamps{Created: created, Started: &epoch, Stopped: at(-time.Hour)})
+	if got.Start != nil || got.Stop != nil {
+		t.Errorf("zero now kept an epoch or a lone pre-creation time: %+v", got)
+	}
+}
+
 func sameInstant(a, b *time.Time) bool {
 	if a == nil || b == nil {
 		return a == nil && b == nil

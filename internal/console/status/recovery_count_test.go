@@ -42,7 +42,7 @@ func fullsInput(read time.Time, stops []time.Time, last time.Time, ends ...time.
 		spans = append(spans, interval{from: stop, to: last, backupID: id})
 	}
 	for i := range ends {
-		in.facts.backupEnds = append(in.facts.backupEnds, &ends[i])
+		in.facts.backupEnds = append(in.facts.backupEnds, backupEnd{at: &ends[i]})
 	}
 	return in, spans
 }
@@ -300,7 +300,7 @@ func TestPurgeBandNeverEndsBeforeTheFirstRestorePoint(t *testing.T) {
 			spans = append(spans, interval{from: stop, to: to, backupID: id})
 		}
 		for i := range news {
-			in.facts.backupEnds = append(in.facts.backupEnds, &news[i])
+			in.facts.backupEnds = append(in.facts.backupEnds, backupEnd{at: &news[i]})
 		}
 		band := purgeBand(in, spans, first, last)
 		restorable := func(p time.Time) bool {
@@ -556,7 +556,7 @@ func TestPurgeBandHoldsOverChains(t *testing.T) {
 		// read, the newest listed one maybe within scanSlack of it.
 		for i := range seq {
 			end := seq[i].stop
-			in.facts.backupEnds = append(in.facts.backupEnds, &end)
+			in.facts.backupEnds = append(in.facts.backupEnds, backupEnd{at: &end})
 		}
 		// The steady state (round 19, PG plan 3): nothing pending, no
 		// Backup since the read, the newest listed one ended before it:
@@ -605,7 +605,7 @@ func TestPurgeBandHoldsOverChains(t *testing.T) {
 // TestBackupEndsOfRestoredStampedAndQueued (round 19, PG P3-B, CNPG P3-1
 // and P3-2): a Backup restored with its status keeps its old times and
 // is not counted as ended since the read; a Completed one with no
-// plausible stop is bounded by the operator's completion stamp; a queued
+// plausible stop is bounded by CloudNativePG's completion stamp; a queued
 // one in progress counts from when the operator started it, not from its
 // creation. Never fewer than could have ended since: no stop and no
 // stamp still counts.
@@ -645,6 +645,16 @@ func TestBackupEndsOfRestoredStampedAndQueued(t *testing.T) {
 			"a stop in the future, stamped before the read", cnpgv1.BackupPhaseCompleted, -2 * time.Hour,
 			stamps{at(-110 * time.Minute), at(1000 * 24 * time.Hour), nil, at(-90 * time.Minute)},
 			false,
+		},
+		{
+			"stopped before the read, stamped after it: its expire may have run after the read (round 20, PG P3-A)", cnpgv1.BackupPhaseCompleted, -2 * time.Hour,
+			stamps{at(-110 * time.Minute), at(-2 * time.Minute), at(-115 * time.Minute), at(30 * time.Second)},
+			true,
+		},
+		{
+			"an instance clock 15 min behind: skewed times before the object, stamped after the read (round 20, PG P3-B)", cnpgv1.BackupPhaseCompleted, -4 * time.Minute,
+			stamps{at(-19 * time.Minute), at(-16 * time.Minute), at(-4 * time.Minute), at(time.Minute)},
+			true,
 		},
 		{
 			"no stop and no stamp: could have ended any time", cnpgv1.BackupPhaseCompleted, -2 * time.Hour,

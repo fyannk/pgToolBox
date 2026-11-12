@@ -362,6 +362,56 @@ func TestPinPluginBackupTimesFromUnix(t *testing.T) {
 	}
 }
 
+// TestPinBackupStampsAfterTheTool pins the facts observe.SaneBackupTimes
+// and the purge band's expire timing rest on (round 20, CNPG P3-4):
+// SetAsCompleted and SetAsFailed stamp status.reconciliationTerminatedAt
+// and SetAsStarted status.reconciliationStartedAt with the writer's
+// clock; both instance sites (in-tree barman and plugin) call
+// SetAsCompleted only after the tool returned, a failure returning
+// first, so the stamp is an upper bound on the end and comes after
+// pgBackRest's expire; a volume snapshot's stoppedAt is that stamp.
+func TestPinBackupStampsAfterTheTool(t *testing.T) {
+	read := func(t *testing.T, dir string, path ...string) []byte {
+		t.Helper()
+		content, err := os.ReadFile(filepath.Join(append([]string{dir}, path...)...))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return content
+	}
+	// ordered says that in body each literal comes after the one before.
+	ordered := func(t *testing.T, release, what string, body []byte, literals ...string) {
+		t.Helper()
+		at := 0
+		for _, literal := range literals {
+			i := bytes.Index(body[at:], []byte(literal))
+			if i < 0 {
+				t.Errorf("v%s: %s no longer has %q after %q", release, what, literal, body[max(0, at-40):at])
+				return
+			}
+			at += i + len(literal)
+		}
+	}
+	for _, v := range verifiedReleases {
+		release := v.tag
+		dir := moduleDir(t, release)
+		funcs := read(t, dir, "api", "v1", "backup_funcs.go")
+		for _, c := range []struct{ signature, stamp string }{
+			{"func (backupStatus *BackupStatus) SetAsCompleted() {", "backupStatus.ReconciliationTerminatedAt = ptr.To(metav1.Now())"},
+			{"func (backupStatus *BackupStatus) SetAsFailed(", "backupStatus.ReconciliationTerminatedAt = ptr.To(metav1.Now())"},
+			{"func (backupStatus *BackupStatus) SetAsStarted(podName, containerID, sessionID string, method BackupMethod) {", "backupStatus.ReconciliationStartedAt = ptr.To(metav1.Now())"},
+		} {
+			ordered(t, release, c.signature, functionBody(t, funcs, c.signature), c.stamp)
+		}
+		barman := functionBody(t, read(t, dir, "pkg", "management", "postgres", "backup.go"), "func (b *BackupCommand) takeBackup(ctx context.Context) error {")
+		ordered(t, release, "takeBackup", barman, "err := b.barmanBackup.Take(", "if err != nil {", "return err", "b.Backup.Status.SetAsCompleted()")
+		plugin := functionBody(t, read(t, dir, "pkg", "management", "postgres", "webserver", "plugin_backup.go"), "func (b *PluginBackupCommand) invokeStart(ctx context.Context) {")
+		ordered(t, release, "invokeStart", plugin, "response, err := cli.Backup(", "if err != nil {", "b.markBackupAsFailed(ctx, err)", "return", "b.Backup.Status.SetAsCompleted()")
+		snapshot := read(t, dir, "pkg", "reconciler", "backup", "volumesnapshot", "reconciler.go")
+		ordered(t, release, "volumesnapshot reconciler.go", snapshot, "backup.Status.SetAsCompleted()\n\tbackup.Status.StoppedAt = backup.Status.ReconciliationTerminatedAt.DeepCopy()")
+	}
+}
+
 // TestPinReadyWALFilesCountedOnEveryPrimary pins the fact the console's
 // LiveStatus.readyWalFiles rests on (round 18, DBA): CloudNativePG counts
 // the .ready files on every primary it reads, failing the status

@@ -113,6 +113,13 @@ func TestBackupObject(t *testing.T) {
 	if got := BackupObject(Minor130, plugin, now); got.StoppedAt != nil {
 		t.Errorf("future stoppedAt read as true: %v", got.StoppedAt)
 	}
+	// A zero now (topology.go's callers read only the method and the
+	// pod) sets no ceiling: the times are kept, not all dropped (round
+	// 20, Go P3-2).
+	plugin.Status.StoppedAt = &stopped
+	if got := BackupObject(Minor130, plugin, time.Time{}); got.StoppedAt == nil || got.StartedAt == nil || got.ReconciliationStartedAt == nil {
+		t.Errorf("zero now dropped the times: started %v stopped %v reconciliation %v", got.StartedAt, got.StoppedAt, got.ReconciliationStartedAt)
+	}
 	plugin.Status.StartedAt, plugin.Status.StoppedAt = nil, nil
 
 	inTree := &cnpgv1.Backup{
