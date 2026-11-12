@@ -32,7 +32,6 @@ import (
 	"github.com/fyannk/pgToolBox/internal/console/viewmodel"
 	"github.com/fyannk/pgToolBox/pkg/cnpgstatus"
 	"github.com/fyannk/pgToolBox/pkg/cnpgstatus/instancestatus"
-	"github.com/fyannk/pgToolBox/pkg/cnpgstatus/observe"
 	evidencev1alpha1 "github.com/fyannk/pgToolBox/pkg/evidence/v1alpha1"
 )
 
@@ -169,9 +168,11 @@ type recoveryFacts struct {
 	// otherwise), so such an instance no longer holds unarchived WAL.
 	rejoined map[string]bool
 	// backupEnds are when this Cluster's CNPG Backups ended
-	// (status.stoppedAt), whatever their method or phase, or for one in
+	// (status.stoppedAt, else for a Completed one the operator's
+	// completion stamp), whatever their method or phase, or for one in
 	// progress when it began (backupEndsOf); nil for a Backup completed
-	// with no plausible stop time, which could have ended at any time. pgBackRest expires only at the end of a backup, so those that
+	// with neither, which could have ended at any time. pgBackRest
+	// expires only at the end of a backup, so those that
 	// ended since the evidence was read bound what expire may have
 	// removed since (backupsSince). backupsUnread: the Backups were not
 	// listed, so that count is not known.
@@ -197,52 +198,64 @@ func (f recoveryFacts) backupsSince(read time.Time) (int, bool) {
 	return n, true
 }
 
-// backupEndsOf are g's Backups' ends (recoveryFacts backupEnds), read
-// through observe.SaneBackupTimes: a plugin's unset stop time, which
-// CloudNativePG stamps 1970-01-01, or a stop before the start or the
-// object's creation, is no stop time (round 18, CNPG P3), so such a
-// Completed Backup counts as one that could have ended at any time.
+// backupEndsOf are g's Backups' ends (recoveryFacts backupEnds) at now,
+// read through cnpgstatus.BackupTimesOf: a plugin's unset stop time,
+// which CloudNativePG stamps 1970-01-01, a stop in the future, or one
+// before the start or, alone, the object's creation, is no stop time
+// (rounds 18 and 19, CNPG P3).
 //
-// A Backup still in progress (started, running, finalizing) whose start,
-// else its creation, is known counts at that time: it ends later, and
-// pgBackRest expires at its end, seconds before CloudNativePG patches
-// the Backup Completed, so one begun after the read may already have
-// expired what the snapshot lists (round 18, Go and CNPG P3). One begun
-// before the read is not counted until its stop time is reported: it
-// only widens the band once it ends. A plugin backup reports no start
-// while running (pluginFieldsAtCompletion), hence the creation.
-func backupEndsOf(g *gathered) (ends []*time.Time, unread bool) {
+// A Completed Backup counts at its stop time; with none plausible, at the
+// operator's completion stamp (status.reconciliationTerminatedAt, written
+// by SetAsCompleted seconds after the tool returned): an upper bound on
+// its end, so one stamped before the read ended before it too; with
+// neither, as one that could have ended at any time. A Backup restored
+// with its status (Velero) or migrated keeps its coherent old times
+// (observe.BackupTimes Imported) and counts then, not since the object
+// appeared, which held a whole-window band on a healthy cluster (round
+// 19, PG P3-B).
+//
+// A Backup still in progress (started, running, finalizing) counts at
+// the latest known instant before its tool began: its start, else the
+// operator's (status.reconciliationStartedAt, SetAsStarted: a queued
+// Backup waits after its creation; round 19, CNPG P3-2), else its
+// creation. It ends later, and pgBackRest expires at its end, seconds
+// before CloudNativePG patches the Backup Completed, so one begun after
+// the read may already have expired what the snapshot lists (round 18,
+// Go and CNPG P3). One begun before the read is not counted until its
+// stop time is reported: it only widens the band once it ends. A plugin
+// backup reports no start while running (pluginFieldsAtCompletion).
+func backupEndsOf(g *gathered, now time.Time) (ends []*time.Time, unread bool) {
 	if !g.listed(cache.SourceBackups) {
 		return nil, true
 	}
 	for _, b := range g.backups {
-		start, stop := observe.SaneBackupTimes(b.CreationTimestamp.Time, metaTimePtr(b.Status.StartedAt), metaTimePtr(b.Status.StoppedAt))
+		times := cnpgstatus.BackupTimesOf(b, now)
 		switch b.Status.Phase {
 		case cnpgv1.BackupPhaseStarted, cnpgv1.BackupPhaseRunning, cnpgv1.BackupPhaseFinalizing:
-			if start == nil && !b.CreationTimestamp.IsZero() {
-				created := b.CreationTimestamp.UTC()
-				start = &created
+			began := times.Start
+			if began == nil {
+				began = times.OperatorStarted
 			}
-			if start != nil {
-				ends = append(ends, start)
+			if began == nil && !b.CreationTimestamp.IsZero() {
+				created := b.CreationTimestamp.UTC()
+				began = &created
+			}
+			if began != nil {
+				ends = append(ends, began)
 			}
 		case cnpgv1.BackupPhaseCompleted:
-			ends = append(ends, stop)
+			end := times.Stop
+			if end == nil {
+				end = times.OperatorTerminated
+			}
+			ends = append(ends, end)
 		default:
-			if stop != nil {
-				ends = append(ends, stop)
+			if times.Stop != nil {
+				ends = append(ends, times.Stop)
 			}
 		}
 	}
 	return ends, false
-}
-
-// metaTimePtr is an API time as a time; nil for nil or zero.
-func metaTimePtr(at *metav1.Time) *time.Time {
-	if at == nil || at.IsZero() {
-		return nil
-	}
-	return &at.Time
 }
 
 // formerHolder is the former primary that may still hold the unarchived
@@ -325,7 +338,7 @@ func (f formerArchiver) on(timeline uint64) (read bool, quiet []quietSweep, boun
 // archiving fact (the backups summary's, so both agree).
 func recoveryFactsOf(g *gathered, arch viewmodel.Archiving, now time.Time) recoveryFacts {
 	f := recoveryFacts{now: now, archiveTimeout: defaultArchiveTimeout, failing: archivingFailing(arch), sweepInterval: g.swept.Interval}
-	f.backupEnds, f.backupsUnread = backupEndsOf(g)
+	f.backupEnds, f.backupsUnread = backupEndsOf(g, now)
 	if g.cluster == nil {
 		// No Cluster, no status.currentPrimary: no primary was read to
 		// run a check on (round 16, CNPG P3-c).
@@ -1906,7 +1919,7 @@ func sinceReadBand(in timelineInput, spans []interval, first, last time.Time) (t
 	case !known:
 		return window, true
 	case n == 0:
-		return pendingExpireBand(in, spans, first, window)
+		return pendingExpireBand(in, spans, first, window, *read)
 	case in.policy.unknown:
 		return window, true
 	}
@@ -1965,7 +1978,12 @@ func sinceReadBand(in timelineInput, spans []interval, first, last time.Time) (t
 //     retention lowered since the last backup) leaves the L-K oldest
 //     with their chains;
 //   - time-based: the fulls older than the newest one stopped before
-//     that end minus the retention;
+//     the expire's run minus the retention. That run is after the read
+//     (it had not run when the listing was read), so when the newest end
+//     is within one refresh interval before the read its instant is the
+//     latest of the scan's completion, the console's fetch and that end
+//     (round 19, PG P3-A: timing it at the end kept a full the expire
+//     removes); an older end's expire ran before the read, at that end;
 //   - an archive retention below the fulls: continuous WAL drawn from a
 //     backup older than the A-th newest of its types is cut there; the
 //     older backups' own consistency points, drawn alone, are what
@@ -1973,7 +1991,7 @@ func sinceReadBand(in timelineInput, spans []interval, first, last time.Time) (t
 //
 // An unreported policy, or backups whose order is not known, is read as
 // is: no backup counted since the read says nothing ran expire.
-func pendingExpireBand(in timelineInput, spans []interval, first time.Time, window time.Duration) (time.Duration, bool) {
+func pendingExpireBand(in timelineInput, spans []interval, first time.Time, window time.Duration, read time.Time) (time.Duration, bool) {
 	if in.policy.unknown {
 		return 0, false
 	}
@@ -1990,7 +2008,15 @@ func pendingExpireBand(in timelineInput, spans []interval, first time.Time, wind
 	}
 	if in.retainedFor > 0 {
 		if end, ok := newestListedEnd(in, spans); ok {
-			reach := end.Add(-in.retainedFor)
+			run := end
+			if in.refresh > 0 && !end.Before(read.Add(-in.refresh)) {
+				for _, at := range []*time.Time{in.scannedAt, in.observedAt} {
+					if at != nil && at.After(run) {
+						run = *at
+					}
+				}
+			}
+			reach := run.Add(-in.retainedFor)
 			if b, ok := newestAnchor(purgeAnchors(in, spans), &reach); ok {
 				later(b)
 			}

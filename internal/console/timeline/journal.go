@@ -87,8 +87,9 @@ const (
 	// the change happened at or shortly before At.
 	TimingObserved Timing = "observed"
 	// TimingReported is a timestamp the operator or the kubelet wrote
-	// (status.currentPrimaryTimestamp, Backup.status.stoppedAt, a
-	// container's finishedAt).
+	// (status.currentPrimaryTimestamp, Backup.status.stoppedAt or, with
+	// none plausible, reconciliationTerminatedAt, a container's
+	// finishedAt).
 	TimingReported Timing = "reported"
 )
 

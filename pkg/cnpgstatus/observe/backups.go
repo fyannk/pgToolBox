@@ -150,9 +150,9 @@ type BackupsSnapshot struct {
 	ObjectStore ObjectStoreReference
 }
 
-// backupClockSkew is how far before its Backup's creation a backup
-// tool's time may fall and still be read as true: the instance's clock
-// against the API server's.
+// backupClockSkew is how far before its Backup's creation, or after the
+// reader's now, a backup time may fall and still be read as true: the
+// instance's clock against the API server's and the console's.
 const backupClockSkew = 5 * time.Minute
 
 // backupTimeFloor is the earliest backup tool time read as true.
@@ -163,24 +163,85 @@ const backupClockSkew = 5 * time.Minute
 // unset stamps the Backup 1970-01-01 (round 18, CNPG P3).
 var backupTimeFloor = time.Date(2000, time.January, 1, 0, 0, 0, 0, time.UTC)
 
-// SaneBackupTimes are a Backup's status.startedAt and status.stoppedAt
-// with every impossible value read as unknown (nil): a time before
-// backupTimeFloor (the plugin epoch above), one more than backupClockSkew
-// before the object's creation (created zero: not checked), and a stop
-// before the start. A Completed Backup whose stop time is unknown is then
-// counted as one that could have ended at any time, never as one that
-// ended in 1970. Times are returned in UTC.
-func SaneBackupTimes(created time.Time, started, stopped *time.Time) (start, stop *time.Time) {
-	sane := func(at *time.Time) *time.Time {
-		if at == nil || at.Before(backupTimeFloor) || !created.IsZero() && at.Before(created.Add(-backupClockSkew)) {
+// BackupStamps are the times a Backup object carries: its creation, the
+// backup tool's status.startedAt and status.stoppedAt (a plugin's, or
+// barman's begin and end), and the operator's own
+// status.reconciliationStartedAt (SetAsStarted) and
+// status.reconciliationTerminatedAt (SetAsCompleted and SetAsFailed,
+// pkg/api/v1/backup_funcs.go v1.30.1:67-71 and 83).
+type BackupStamps struct {
+	Created                                         time.Time
+	Started, Stopped                                *time.Time
+	ReconciliationStarted, ReconciliationTerminated *time.Time
+}
+
+// BackupTimes are a Backup's plausible times (SaneBackupTimes), in UTC;
+// nil where not known.
+type BackupTimes struct {
+	// Start and Stop are the backup tool's times.
+	Start, Stop *time.Time
+	// Imported: the tool's start and stop are coherent (start at or before
+	// stop, both after the floor) but older than the object itself, as on
+	// a Backup restored with its status (Velero) or migrated from another
+	// cluster. They are kept: the backup ended then, not since the object
+	// appeared (round 19, PG P3-B).
+	Imported bool
+	// OperatorStarted is when the operator began reconciling the Backup
+	// (SetAsStarted): at or before the tool's start, and after the
+	// object's creation while the Backup waited in the queue.
+	OperatorStarted *time.Time
+	// OperatorTerminated is when the operator marked the Backup completed
+	// or failed: an upper bound on its end, seconds after it, read when
+	// Stop is not known (round 19, CNPG P3-1).
+	OperatorTerminated *time.Time
+}
+
+// SaneBackupTimes reads a Backup's times with every impossible value as
+// unknown (nil), at now:
+//
+//   - a time before backupTimeFloor (the plugin epoch above);
+//   - a time more than backupClockSkew after now: a plugin that sends
+//     milliseconds for seconds stamps the far future, which would read as
+//     a backup that never ages (round 19, CNPG P3-1); a future time is
+//     dropped, never taken as fresh;
+//   - a tool time more than backupClockSkew before the object's creation
+//     (created zero: not checked), unless start and stop are both
+//     reported and coherent (Imported);
+//   - a stop before the start.
+//
+// The operator's times are its own clock's: only the floor and the
+// upper bound apply. A Completed Backup whose stop time is unknown is
+// then bounded by OperatorTerminated, else counted as one that could
+// have ended at any time, never as one that ended in 1970.
+func SaneBackupTimes(now time.Time, s BackupStamps) BackupTimes {
+	ceiling := now.Add(backupClockSkew)
+	plausible := func(at *time.Time) *time.Time {
+		if at == nil || at.Before(backupTimeFloor) || at.After(ceiling) {
 			return nil
 		}
 		t := at.UTC()
 		return &t
 	}
-	start, stop = sane(started), sane(stopped)
+	var out BackupTimes
+	start, stop := plausible(s.Started), plausible(s.Stopped)
 	if start != nil && stop != nil && stop.Before(*start) {
 		stop = nil
 	}
-	return start, stop
+	early := func(at *time.Time) bool {
+		return at != nil && !s.Created.IsZero() && at.Before(s.Created.Add(-backupClockSkew))
+	}
+	switch {
+	case start != nil && stop != nil && early(stop):
+		out.Imported = true
+	default:
+		if early(start) {
+			start = nil
+		}
+		if early(stop) {
+			stop = nil
+		}
+	}
+	out.Start, out.Stop = start, stop
+	out.OperatorStarted, out.OperatorTerminated = plausible(s.ReconciliationStarted), plausible(s.ReconciliationTerminated)
+	return out
 }

@@ -16,6 +16,7 @@ package kube
 
 import (
 	"log/slog"
+	"time"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -36,11 +37,12 @@ type Facts struct {
 	c *Client
 }
 
-// NewFacts returns the converters for one Cluster.
-func NewFacts(namespace, cluster string) Facts {
+// NewFacts returns the converters for one Cluster, judging times at now.
+func NewFacts(namespace, cluster string, now time.Time) Facts {
 	return Facts{c: &Client{
 		opts:   target{Namespace: namespace, ClusterName: cluster},
 		logger: slog.New(slog.DiscardHandler),
+		now:    now,
 	}}
 }
 

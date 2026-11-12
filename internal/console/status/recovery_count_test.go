@@ -170,7 +170,7 @@ func TestBackupsSince(t *testing.T) {
 	g := &gathered{readable: map[string]bool{cache.SourceBackups: true}, backups: []*cnpgv1.Backup{
 		backup("completed", &before), backup("completed", &after), backup("failed", &after), backup("completed", nil), backup("running", nil),
 	}}
-	ends, unread := backupEndsOf(g)
+	ends, unread := backupEndsOf(g, now)
 	f := recoveryFacts{backupEnds: ends, backupsUnread: unread}
 	if n, ok := f.backupsSince(read); !ok || n != 3 {
 		t.Errorf("backupsSince = %d, %v; want 3 (two ended after the read, one completed with no stop time)", n, ok)
@@ -190,13 +190,13 @@ func TestBackupsSince(t *testing.T) {
 	startedAfter.CreationTimestamp = metav1.Time{Time: read.Add(-time.Hour)}
 	startedAfter.Status.StartedAt = &metav1.Time{Time: read.Add(2 * time.Minute)}
 	g.backups = append(g.backups, epochStop, backwards, runningBefore, runningAfter, startedAfter)
-	ends, unread = backupEndsOf(g)
+	ends, unread = backupEndsOf(g, now)
 	f = recoveryFacts{backupEnds: ends, backupsUnread: unread}
 	if n, ok := f.backupsSince(read); !ok || n != 7 {
 		t.Errorf("backupsSince = %d, %v; want 7 (plus an epoch stop, a stop before its start, two in progress begun after the read)", n, ok)
 	}
 	g.failed = map[string]bool{cache.SourceBackups: true}
-	ends, unread = backupEndsOf(g)
+	ends, unread = backupEndsOf(g, now)
 	if _, ok := (recoveryFacts{backupEnds: ends, backupsUnread: unread}).backupsSince(read); ok {
 		t.Error("a failed Backups read counted")
 	}
@@ -425,7 +425,7 @@ func TestPurgeBandHoldsOverChains(t *testing.T) {
 	rng := rand.New(rand.NewPCG(18, 7))
 	day := 24 * time.Hour
 	types := []string{"full", "diff", "incr"}
-	partial, pending := 0, 0
+	partial, pending, steady := 0, 0, 0
 	for iter := range 20000 {
 		age := time.Duration(1 + rng.Int64N(int64(5*day)))
 		read := now.Add(-age)
@@ -558,6 +558,16 @@ func TestPurgeBandHoldsOverChains(t *testing.T) {
 			end := seq[i].stop
 			in.facts.backupEnds = append(in.facts.backupEnds, &end)
 		}
+		// The steady state (round 19, PG plan 3): nothing pending, no
+		// Backup since the read, the newest listed one ended before it:
+		// the listing is what expire left, and no since-read band is kept.
+		if !isPending && len(newsEnds) == 0 && seq[listedN-1].stop.Before(read.Add(-scanSlack)) {
+			if since, ok := sinceReadBand(in, spans, first, last); ok {
+				t.Fatalf("iteration %d: steady state keeps a band of %s over %s: k=%d a=%d type=%s listed=%v wal from %s",
+					iter, since, last.Sub(first), k, a, atype, listed, atRead)
+			}
+			steady++
+		}
 		band := purgeBand(in, spans, first, last)
 		if band >= last.Sub(first) {
 			continue
@@ -587,7 +597,86 @@ func TestPurgeBandHoldsOverChains(t *testing.T) {
 			}
 		}
 	}
-	if partial == 0 || pending == 0 {
-		t.Errorf("the property never drew a partial band (%d) or one on a pending listing (%d)", partial, pending)
+	if partial == 0 || pending == 0 || steady == 0 {
+		t.Errorf("the property never drew a partial band (%d), one on a pending listing (%d) or a steady state (%d)", partial, pending, steady)
+	}
+}
+
+// TestBackupEndsOfRestoredStampedAndQueued (round 19, PG P3-B, CNPG P3-1
+// and P3-2): a Backup restored with its status keeps its old times and
+// is not counted as ended since the read; a Completed one with no
+// plausible stop is bounded by the operator's completion stamp; a queued
+// one in progress counts from when the operator started it, not from its
+// creation. Never fewer than could have ended since: no stop and no
+// stamp still counts.
+func TestBackupEndsOfRestoredStampedAndQueued(t *testing.T) {
+	read := now.Add(-time.Hour)
+	at := func(d time.Duration) *metav1.Time { return &metav1.Time{Time: read.Add(d)} }
+	epoch := &metav1.Time{Time: time.Unix(0, 0)}
+	type stamps struct{ started, stopped, reconStarted, reconEnded *metav1.Time }
+	for _, c := range []struct {
+		name    string
+		phase   cnpgv1.BackupPhase
+		created time.Duration
+		s       stamps
+		counted bool
+	}{
+		{
+			"restored with its status after the read: coherent old times", cnpgv1.BackupPhaseCompleted, 10 * time.Minute,
+			stamps{at(-50 * time.Hour), at(-49 * time.Hour), at(-50 * time.Hour), at(-49 * time.Hour)},
+			false,
+		},
+		{
+			"restored, a lone old stop: bounded by its old stamp", cnpgv1.BackupPhaseCompleted, 10 * time.Minute,
+			stamps{nil, at(-49 * time.Hour), nil, at(-49 * time.Hour)},
+			false,
+		},
+		{
+			"plugin left stoppedAt unset, stamped before the read", cnpgv1.BackupPhaseCompleted, -2 * time.Hour,
+			stamps{at(-110 * time.Minute), epoch, at(-115 * time.Minute), at(-90 * time.Minute)},
+			false,
+		},
+		{
+			"plugin left stoppedAt unset, stamped after the read", cnpgv1.BackupPhaseCompleted, -2 * time.Hour,
+			stamps{at(-110 * time.Minute), epoch, at(-115 * time.Minute), at(5 * time.Minute)},
+			true,
+		},
+		{
+			"a stop in the future, stamped before the read", cnpgv1.BackupPhaseCompleted, -2 * time.Hour,
+			stamps{at(-110 * time.Minute), at(1000 * 24 * time.Hour), nil, at(-90 * time.Minute)},
+			false,
+		},
+		{
+			"no stop and no stamp: could have ended any time", cnpgv1.BackupPhaseCompleted, -2 * time.Hour,
+			stamps{nil, epoch, nil, nil},
+			true,
+		},
+		{
+			"queued before the read, started after it", cnpgv1.BackupPhaseRunning, -30 * time.Minute,
+			stamps{nil, nil, at(2 * time.Minute), nil},
+			true,
+		},
+		{
+			"queued and started before the read", cnpgv1.BackupPhaseStarted, -30 * time.Minute,
+			stamps{nil, nil, at(-20 * time.Minute), nil},
+			false,
+		},
+		{
+			"queued before the read, no operator start: its creation", cnpgv1.BackupPhaseRunning, -30 * time.Minute,
+			stamps{},
+			false,
+		},
+	} {
+		b := &cnpgv1.Backup{ObjectMeta: metav1.ObjectMeta{CreationTimestamp: metav1.Time{Time: read.Add(c.created)}}}
+		b.Status = cnpgv1.BackupStatus{
+			Phase: c.phase, StartedAt: c.s.started, StoppedAt: c.s.stopped,
+			ReconciliationStartedAt: c.s.reconStarted, ReconciliationTerminatedAt: c.s.reconEnded,
+		}
+		g := &gathered{readable: map[string]bool{cache.SourceBackups: true}, backups: []*cnpgv1.Backup{b}}
+		ends, unread := backupEndsOf(g, now)
+		n, ok := recoveryFacts{backupEnds: ends, backupsUnread: unread}.backupsSince(read)
+		if !ok || (n == 1) != c.counted {
+			t.Errorf("%s: counted %d (%v), want counted %v", c.name, n, ok, c.counted)
+		}
 	}
 }

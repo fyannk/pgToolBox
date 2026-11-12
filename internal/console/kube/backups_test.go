@@ -140,7 +140,7 @@ func TestObjectStoreRecoveryWindowIsReadForThisServerOnly(t *testing.T) {
 			"billing": map[string]any{"lastSuccessfulBackupTime": "2026-09-17T02:00:00Z"},
 		}},
 	}}
-	ref := NewFacts("payments", "orders").ObjectStoreReference(rawClusterWithObjectStore("orders-store"), store, true)
+	ref := NewFacts("payments", "orders", testNow).ObjectStoreReference(rawClusterWithObjectStore("orders-store"), store, true)
 	if ref.State != observe.ObjectStorePresent || ref.ServerName != "orders" || ref.RecoveryWindow == nil {
 		t.Fatalf("reference = %+v", ref)
 	}
@@ -215,4 +215,13 @@ func TestConvertBackupReadsAnEpochStopAsUnknown(t *testing.T) {
 	if facts, _, _ := c.convertBackup(raw.Object); facts.StoppedAt != nil {
 		t.Errorf("a stop before the start read as %s", facts.StoppedAt)
 	}
+	// Round 19, CNPG P3-1: a stop after the converter's now (a plugin
+	// that sends milliseconds) is not a stop time, never a fresh one.
+	raw.Object["status"].(map[string]any)["stoppedAt"] = testNow.Add(time.Hour).Format(time.RFC3339)
+	if facts, _, _ := c.convertBackup(raw.Object); facts.StoppedAt != nil {
+		t.Errorf("a future stop read as %s", facts.StoppedAt)
+	}
 }
+
+// testNow is the test converters' clock: after every fixture's times.
+var testNow = time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)

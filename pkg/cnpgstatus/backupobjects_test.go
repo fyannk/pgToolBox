@@ -68,6 +68,7 @@ func TestClassifyBackupPhase(t *testing.T) {
 func TestBackupObject(t *testing.T) {
 	created := metav1.NewTime(time.Date(2026, 10, 30, 10, 0, 0, 0, time.UTC))
 	started := metav1.NewTime(created.Add(time.Minute))
+	now := created.Add(2 * time.Hour)
 	plugin := &cnpgv1.Backup{
 		ObjectMeta: metav1.ObjectMeta{Name: "b1", CreationTimestamp: created},
 		Spec: cnpgv1.BackupSpec{
@@ -80,7 +81,7 @@ func TestBackupObject(t *testing.T) {
 			ReconciliationStartedAt: &started,
 		},
 	}
-	got := BackupObject(Minor130, plugin)
+	got := BackupObject(Minor130, plugin, now)
 	if got.Method != BackupMethodPlugin || got.PluginName != BarmanCloudPlugin || got.PodName != "pg-2" {
 		t.Errorf("plugin backup fields: %+v", got)
 	}
@@ -91,19 +92,26 @@ func TestBackupObject(t *testing.T) {
 		t.Errorf("queue time: %v -> %v", got.CreatedAt, got.ReconciliationStartedAt)
 	}
 	plugin.Status.Phase = BackupPhaseCompleted
-	if got := BackupObject(Minor130, plugin); got.NotReportedWhileRunning != nil {
+	if got := BackupObject(Minor130, plugin, now); got.NotReportedWhileRunning != nil {
 		t.Errorf("completed plugin backup still lists missing fields: %v", got.NotReportedWhileRunning)
 	}
 	// A plugin that leaves stopped_at unset: CloudNativePG stamps
 	// 1970-01-01 (round 18, CNPG P3); the reading has no stop time.
 	epoch, stopped := metav1.NewTime(time.Unix(0, 0)), metav1.NewTime(created.Add(time.Hour))
 	plugin.Status.StartedAt, plugin.Status.StoppedAt = &started, &epoch
-	if got := BackupObject(Minor130, plugin); got.StoppedAt != nil || got.StartedAt == nil {
+	if got := BackupObject(Minor130, plugin, now); got.StoppedAt != nil || got.StartedAt == nil {
 		t.Errorf("epoch stoppedAt: started %v stopped %v, want a start and no stop", got.StartedAt, got.StoppedAt)
 	}
 	plugin.Status.StoppedAt = &stopped
-	if got := BackupObject(Minor130, plugin); got.StoppedAt == nil || !got.StoppedAt.Equal(stopped.Time) {
+	if got := BackupObject(Minor130, plugin, now); got.StoppedAt == nil || !got.StoppedAt.Equal(stopped.Time) {
 		t.Errorf("plausible stoppedAt lost: %v", got.StoppedAt)
+	}
+	// A plugin that sends milliseconds for seconds stamps the far
+	// future (round 19, CNPG P3-1): no stop time, never a fresh one.
+	future := metav1.NewTime(created.Add(1000 * 24 * time.Hour))
+	plugin.Status.StoppedAt = &future
+	if got := BackupObject(Minor130, plugin, now); got.StoppedAt != nil {
+		t.Errorf("future stoppedAt read as true: %v", got.StoppedAt)
 	}
 	plugin.Status.StartedAt, plugin.Status.StoppedAt = nil, nil
 
@@ -111,14 +119,14 @@ func TestBackupObject(t *testing.T) {
 		Spec:   cnpgv1.BackupSpec{Method: cnpgv1.BackupMethodBarmanObjectStore},
 		Status: cnpgv1.BackupStatus{Phase: BackupPhaseFailed, Error: strings.Repeat("x", 5000), Online: new(true)},
 	}
-	got = BackupObject(Minor130, inTree)
+	got = BackupObject(Minor130, inTree, now)
 	if got.Method != BackupMethodBarmanObjectStore || len(got.Error) != maxMessage || got.Online == nil || !*got.Online {
 		t.Errorf("in-tree failed backup: method %q error %d online %v", got.Method, len(got.Error), got.Online)
 	}
 	if got.NotReportedWhileRunning != nil || got.Reading.Class != ClassCritical {
 		t.Errorf("in-tree failed backup reading: %+v", got)
 	}
-	if got := BackupObject(Minor130, nil); got.Reading.Class != ClassUnknown {
+	if got := BackupObject(Minor130, nil, now); got.Reading.Class != ClassUnknown {
 		t.Errorf("nil backup: %+v", got)
 	}
 }

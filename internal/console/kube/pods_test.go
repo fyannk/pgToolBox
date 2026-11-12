@@ -29,6 +29,7 @@ func newTestClient(t *testing.T) *Client {
 	return &Client{
 		opts:   target{Namespace: "payments", ClusterName: "orders"},
 		logger: slog.New(slog.DiscardHandler),
+		now:    testNow,
 	}
 }
 
