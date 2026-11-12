@@ -340,7 +340,10 @@ reads `inactive` (`Hibernated`), as the Cluster does: no instance runs, and
 nothing confirms that every segment written before hibernation reached the
 repository, but nothing is going wrong either. The instance self-reports
 contributor is `inactive` too (no pod to read), so the overview and fleet
-headline of a hibernated Cluster reads `inactive`, not `unknown`. A replica cluster's
+headline of a hibernated Cluster reads `inactive`, not `unknown`. An instance
+whose manager answered without reaching PostgreSQL (fenced or restarting) is not
+counted as read there: the contributor says "n of m instances read, k answered
+without PostgreSQL" and warns. A replica cluster's
 archiver is its designated primary, a standby (`isPrimary` false) that archives
 with `archive_mode=always`; CloudNativePG counts `.ready` files only on a primary
 (`pkg/management/postgres/probes.go` v1.30.1), so its `/pg/status` carries no
