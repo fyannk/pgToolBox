@@ -69,7 +69,7 @@ func TestLimitReviewResponsesPaths(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 			_, err = io.ReadAll(resp.Body)
 			if got := errors.Is(err, ErrReviewTooLarge); got != tc.bounded {
 				t.Errorf("read error = %v; bounded %t, want %t", err, got, tc.bounded)

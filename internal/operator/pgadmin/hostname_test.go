@@ -246,7 +246,7 @@ func TestPgAdminPauseAllowUnpause(t *testing.T) {
 // status never keeps saying a Route may remain once the operator deleted
 // it.
 func TestPausedPgAdminWithdrawnRouteMarkedGone(t *testing.T) {
-	p := hostnamePgAdmin("login.corp.example.com")
+	p := hostnamePgAdmin("pgadmin.corp.example.com")
 	p.Spec.Exposure.Type = pgtoolboxv1alpha1.ExposureTypeRoute
 	h := newHarness(t, nil, baseObjects(p)...)
 	h.r.Features.Routes = discovery.Result{GVK: routev1.GroupVersion.WithKind("Route"), State: discovery.Available}
