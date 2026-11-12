@@ -264,7 +264,7 @@ func TestGraceTimesKeepTheMonotonicReading(t *testing.T) {
 	s.watchOpenedLocked()
 	s.mu.Unlock()
 	behind := ""
-	_, _ = s.takeFresh(freshRead{err: apierrors.NewInternalError(errors.New("no")), asked: time.Now()}, "1", &behind)
+	_, _ = s.takeFresh(freshRead{err: apierrors.NewInternalError(errors.New("no")), asked: time.Now()}, watchProgress{seen: "1", object: "1"}, &behind)
 	s.mu.Lock()
 	since, unwatched, m := s.since, s.unwatchedAt, s.mode
 	s.mu.Unlock()
