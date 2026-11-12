@@ -41,7 +41,9 @@ type GrantIndex interface {
 
 // stateReader is the shared state's readiness (sharedstate.Store):
 // MarksKnown is false until the ConfigMap was read once or is known
-// missing or forbidden.
+// missing or forbidden, and true from then on (a later failure of the API
+// server refuses grants, GrantsUsable, rather than failing every
+// replica's readiness at once).
 type stateReader interface {
 	Enabled() bool
 	MarksKnown() bool

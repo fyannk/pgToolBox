@@ -328,6 +328,10 @@ func TruncateClientName(name string) string {
 // revoked: a store of this replica's memory always (it is the only
 // authority), a shared one while it reads and writes the ConfigMap (or
 // failed to for less than staleGrace) and can read its grants document.
+// Live with no watch open (one being reopened) counts as failing from the
+// instant the last watch ended (unwatchedAt): a read that hangs while it
+// is reopened does not keep revocations made elsewhere unseen past
+// staleGrace.
 func (s *Store) GrantsUsable() bool {
 	if s == nil {
 		return false
@@ -342,7 +346,7 @@ func (s *Store) GrantsUsable() bool {
 	}
 	switch s.mode {
 	case modeLive:
-		return true
+		return s.watching || !s.unwatchedAt.IsZero() && s.opts.Now().Sub(s.unwatchedAt) < staleGrace
 	case modeFailing:
 		return s.opts.Now().Sub(s.since) < staleGrace
 	case modeDisabled, modePending, modeMissing, modeForbidden:
@@ -566,10 +570,11 @@ func (s *Store) RevokeGrantsOf(userHash string, at time.Time) []string {
 // next batch writes them. Without a ConfigMap (one replica) there is
 // nothing to write.
 //
-// No ids is nil only on a replica that has read the grants document (or
-// knows the ConfigMap missing): one that has not read it yet knows none of
-// the grants recorded elsewhere, and its "nothing to revoke" is no answer
-// (ErrNotRecorded), not a disconnection done.
+// No ids is nil only on a replica that has read the grants document, or
+// knows the ConfigMap missing or forbidden (every grant is then refused,
+// on every replica: they share the ServiceAccount): one that has not read
+// it yet knows none of the grants recorded elsewhere, and its "nothing to
+// revoke" is no answer (ErrNotRecorded), not a disconnection done.
 func (s *Store) WriteRevocations(ctx context.Context, ids ...string) error {
 	if s == nil {
 		return ErrNotRecorded
@@ -579,7 +584,9 @@ func (s *Store) WriteRevocations(ctx context.Context, ids ...string) error {
 	}
 	if len(ids) == 0 {
 		var read bool
-		s.locked(func() { read = s.mode == modeMissing || s.base != nil && !s.foreign[KeyGrants] })
+		s.locked(func() {
+			read = s.mode == modeMissing || s.mode == modeForbidden || s.base != nil && !s.foreign[KeyGrants]
+		})
 		if !read {
 			return ErrNotRecorded
 		}
