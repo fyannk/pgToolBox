@@ -344,8 +344,8 @@ func TestAGrantNotWrittenIsNeverServedAfterADoneDisconnectAll(t *testing.T) {
 	bc.down.Store(false)
 	eventually(t, "b live again", func() bool { return modeOf(b) == modeLive && b.GrantsUsable() })
 	eventually(t, "the revocation written", func() bool { return strings.Contains(api.data(KeyGrants), id) })
-	clock.Add(2 * time.Hour)
 	eventually(t, "c sees it", func() bool { _, ok := c.Grant(id); return ok })
+	clock.Add(2 * time.Hour)
 	if !b.GrantRevoked(id) {
 		t.Errorf("Disconnect all answered done on c; b (mode %s) serves the grant 2 h later", modeOf(b))
 	}
