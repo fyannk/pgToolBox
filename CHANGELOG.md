@@ -281,7 +281,7 @@ OpenShift.
   **Disconnect all**, and disconnecting an assistant the replica does not know, read the shared state ConfigMap first and answer 503 instead of "done" on a replica that cannot read it right now (cut off from the API server or forbidden). The freshness read fetches only the ConfigMap's metadata and is counted from when the previous one was sent; the 30 s grace runs from that read's sending even if the watch ends while it is unanswered; a quiet watch is reopened after 10 minutes. The revocation list read and its watch opening time out after 10 seconds and are retried.
   A grant is written to the shared state before its first token is issued (503 `temporarily_unavailable` if that write fails), and a code from a signed-out session buys nothing, so a done **Disconnect all** also covers grants issued on a replica cut off from the API server.
   Disconnection reads are coalesced; only a 403 or 404 changes what a replica serves, so a throttled or timed-out read answers 503 without making the replica fail. A malformed grant id is refused without a read.
-  The two 503s of a disconnection (not confirmed for every replica, or not recorded) have their own problem types and texts, and the signed-out page says when assistants may still be connected. A replica marked forbidden recovers at its next good freshness read.
+  The two 503s of a disconnection (not confirmed for every replica, or not recorded) have their own problem types and texts, and the signed-out page says when assistants may still be connected.
 - **Exposure trust.** The pgtools chart trusts every peer only when
   `networkPolicy.ingress.extraFrom` is empty. `networkPolicy.from` selectors are
   validated by the CRD, and a policy the API server refuses stalls with
