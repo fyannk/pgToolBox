@@ -1,3 +1,4 @@
+import { useRef, useState } from "react";
 import { expect, test, vi } from "vitest";
 import { page } from "vitest/browser";
 import { ApiError } from "../../../api/fetcher";
@@ -44,4 +45,52 @@ test("the dialog promises the audit log, never a Kubernetes Event", async () => 
   const text = page.getByRole("alertdialog").element().textContent ?? "";
   expect(text).toContain("the API server audit log records it");
   expect(text.toLowerCase()).not.toContain("event");
+});
+
+/** Opens the dialog from a trigger the outcome removes, as a disconnected card is. */
+function Harness({ finalFocus }: { finalFocus?: () => HTMLElement | null | undefined }) {
+  const [open, setOpen] = useState(false);
+  const [gone, setGone] = useState(false);
+  const note = useRef<HTMLParagraphElement>(null);
+  return (
+    <div>
+      {!gone && (
+        <button type="button" onClick={() => setOpen(true)}>
+          Open
+        </button>
+      )}
+      <p tabIndex={-1} ref={note} data-testid="note">
+        note
+      </p>
+      <ConfirmDialog
+        {...base}
+        open={open}
+        onOpenChange={setOpen}
+        finalFocus={finalFocus ?? (() => (gone ? note.current : undefined))}
+        onConfirm={async () => {
+          setGone(true);
+        }}
+      />
+    </div>
+  );
+}
+
+test("finalFocus: when the outcome removed the opener, focus goes to the element the caller names", async () => {
+  const s = await renderInFrame(<Harness />);
+  await s.getByRole("button", { name: "Open" }).click();
+  await page.getByLabelText(/To confirm, type/).fill("billing");
+  await page.getByRole("button", { name: "Request" }).click();
+  await expect.poll(() => document.querySelector('[role="alertdialog"]')).toBeNull();
+  await expect.poll(() => document.activeElement).toBe(s.getByTestId("note").element());
+  s.unmount();
+});
+
+test("finalFocus: a cancel keeps the default, back to the control that opened the dialog", async () => {
+  const s = await renderInFrame(<Harness />);
+  const opener = s.getByRole("button", { name: "Open" });
+  await opener.click();
+  await page.getByRole("button", { name: "Cancel" }).click();
+  await expect.poll(() => document.querySelector('[role="alertdialog"]')).toBeNull();
+  await expect.poll(() => document.activeElement).toBe(opener.element());
+  s.unmount();
 });
