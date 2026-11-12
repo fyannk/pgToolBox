@@ -503,9 +503,16 @@ segments, so the bar and the answer always agree:
   `Backup` stopped earlier than the scan's start) lists more than K fulls, WAL
   drawn continuously from before the A-th newest backup of its type, or, under a
   time-based retention, fulls older than the newest one stopped before that
-  `expire`'s run minus the retention. That run is timed at the completion
-  stamp of the completed `Backup` whose run holds the newest listed end, by
-  which its `expire` had returned, so a healthy daily schedule keeps no band.
+  `expire`'s run minus the retention. When a completed `Backup` whose run holds
+  the newest listed end carries a completion stamp, its `expire` had returned
+  by that stamp, which, with no backup counted since the scan, is before the
+  scan's start: the listing already shows what that `expire` left and keeps no
+  band. A healthy daily schedule therefore keeps none, except during the one
+  scan that starts within a minute of a completion stamp (the clock allowance
+  between the instance and the agent): that backup counts as one since the
+  scan, and when a full from the retention's edge stopped in the seconds
+  between its `expire`'s clock read and the stamp, the band may hold the
+  oldest full until the next scan.
   With no such stamp (a backup run outside CloudNativePG) the run may be after
   the scan read the listing, so when the newest listed backup ended within one
   refresh interval before the scan, the run is taken as the latest of the

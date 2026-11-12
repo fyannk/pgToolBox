@@ -2045,19 +2045,25 @@ func sinceReadBand(in timelineInput, spans []interval, first, last time.Time) (t
 //     retention lowered since the last backup) leaves the L-K oldest
 //     with their chains;
 //   - time-based: the fulls older than the newest one stopped before
-//     the expire's run minus the retention. The expire at the newest
-//     listed end had returned by the completion stamp of the Completed
-//     Backup whose run holds that end (expireStampAt: the plugin marks
-//     it Completed only after pgbackrest backup, auto-expire included,
-//     returned), so the run is timed there (round 20, PG P3-A: timing it
-//     at the console's fetch cut a full the expire keeps on about half
-//     the days of a daily schedule). With no such stamp (a backup run
-//     outside CloudNativePG, or none reported), that run may be after
-//     the read, so when the newest end is within one refresh interval
-//     before the read its instant is the latest of the scan's
-//     completion, the console's fetch and that end (round 19, PG P3-A:
-//     timing it at the end kept a full the expire removes); an older
-//     end's expire ran before the read, at that end;
+//     the expire's run minus the retention, when that expire may not
+//     have run before the scan. The expire at the newest listed end had
+//     returned by the completion stamp of the Completed Backup whose run
+//     holds that end (expireStampAt: the plugin marks it Completed only
+//     after pgbackrest backup, auto-expire included, returned). That
+//     Backup is counted at its stamp at the latest, and none counted
+//     since the read puts the stamp more than scanSlack before it: the
+//     listing already reflects that expire and keeps no band (round 21,
+//     PG P3-A: timing the run at the stamp still cut, for the day until
+//     the next backup, a full the expire keeps when a full stopped in the
+//     seconds between the expire's clock read and the stamp, on about one
+//     day in five of a daily schedule; round 20 had timed it at the
+//     console's fetch, which cut it on about half the days). With no
+//     such stamp (a backup run outside CloudNativePG, or none reported),
+//     that run may be after the read, so when the newest end is within
+//     one refresh interval before the read its instant is the latest of
+//     the scan's completion, the console's fetch and that end (round 19,
+//     PG P3-A: timing it at the end kept a full the expire removes); an
+//     older end's expire ran before the read, at that end;
 //   - an archive retention below the fulls: continuous WAL drawn from a
 //     backup older than the A-th newest of its types is cut there; the
 //     older backups' own consistency points, drawn alone, are what
@@ -2082,19 +2088,22 @@ func pendingExpireBand(in timelineInput, spans []interval, first time.Time, wind
 	}
 	if in.retainedFor > 0 {
 		if end, ok := newestListedEnd(in, spans); ok {
-			run := end
-			if stamp, ok := in.facts.expireStampAt(end); ok {
-				run = stamp
-			} else if in.refresh > 0 && !end.Before(read.Add(-in.refresh)) {
-				for _, at := range []*time.Time{in.scannedAt, in.observedAt} {
-					if at != nil && at.After(run) {
-						run = *at
+			// A stamp holding end means that expire had returned before the
+			// scan: the Backup is counted at the stamp at the latest, and n
+			// == 0 puts that more than scanSlack before the read.
+			if _, stamped := in.facts.expireStampAt(end); !stamped {
+				run := end
+				if in.refresh > 0 && !end.Before(read.Add(-in.refresh)) {
+					for _, at := range []*time.Time{in.scannedAt, in.observedAt} {
+						if at != nil && at.After(run) {
+							run = *at
+						}
 					}
 				}
-			}
-			reach := run.Add(-in.retainedFor)
-			if b, ok := newestAnchor(purgeAnchors(in, spans), &reach); ok {
-				later(b)
+				reach := run.Add(-in.retainedFor)
+				if b, ok := newestAnchor(purgeAnchors(in, spans), &reach); ok {
+					later(b)
+				}
 			}
 		}
 	}
