@@ -182,9 +182,8 @@ type recoveryFacts struct {
 type backupEnd struct {
 	// at is when it ended: for a Completed Backup the later of its stop
 	// time and CloudNativePG's completion stamp; for one in progress
-	// when it began. A Completed Backup with neither is bounded by the
-	// API server's time of its last status write (statusWrittenAt); nil
-	// when none is recorded either: it could have ended at any time.
+	// when it began. nil for a Backup completed with neither, which
+	// could have ended at any time.
 	at *time.Time
 	// from is the earliest known instant of a Completed Backup's tool run
 	// (its start, else its stop) and done its completion stamp
@@ -275,10 +274,7 @@ func (f recoveryFacts) expireStampAt(end time.Time) (time.Time, bool) {
 // with its status (Velero) or migrated keeps its coherent old times
 // (observe.BackupTimes Imported) and counts then, not since the object
 // appeared, which held a whole-window band on a healthy cluster (round
-// 19, PG P3-B). One with neither time plausible (its instance's and the
-// operator's clocks disagree: ClockBehind) counts until the API server's
-// time of its last status write (statusWrittenAt), plus backupClockSkew
-// for the agent's clock, is before the read.
+// 19, PG P3-B).
 //
 // A Backup still in progress (started, running, finalizing) counts at
 // the latest known instant before its tool began: its start, else the
@@ -314,22 +310,11 @@ func backupEndsOf(g *gathered, now time.Time) (ends []backupEnd, unread bool) {
 			if end == nil || times.OperatorTerminated != nil && times.OperatorTerminated.After(*end) {
 				end = times.OperatorTerminated
 			}
-			done := times.OperatorTerminated
-			if end == nil {
-				// Neither time is plausible (ClockBehind, or a plugin that
-				// reported no stop and no stamp): the API server's time of
-				// the last status write, at or after the Completed patch,
-				// bounds the end, allowing for the agent's clock.
-				if written := statusWrittenAt(b); written != nil {
-					bound := written.Add(time.Second + backupClockSkew)
-					end, done = &bound, &bound
-				}
-			}
 			from := times.Start
 			if from == nil {
 				from = times.Stop
 			}
-			ends = append(ends, backupEnd{at: end, from: from, done: done})
+			ends = append(ends, backupEnd{at: end, from: from, done: times.OperatorTerminated})
 		default:
 			if times.Stop != nil {
 				ends = append(ends, backupEnd{at: times.Stop})
@@ -337,30 +322,6 @@ func backupEndsOf(g *gathered, now time.Time) (ends []backupEnd, unread bool) {
 		}
 	}
 	return ends, false
-}
-
-// statusWrittenAt is the latest time the API server recorded a write to
-// b's status subresource (metadata.managedFields, which the console's
-// cache keeps for Backups without their field sets: cache.BackupTransform),
-// on the API server's clock; nil when none is recorded. Each entry's time
-// moves when its manager changes a field it owns, so on a Completed
-// Backup the latest is at or after the patch that marked it Completed,
-// after the backup's end; it is truncated to the second. A Completed
-// Backup whose instance's and operator's clocks disagree has no other
-// upper bound on its end: without this it counted as one ended after
-// every read for as long as its object existed, a permanent purge band
-// (round 22, PG P3-B).
-func statusWrittenAt(b *cnpgv1.Backup) *time.Time {
-	var at *time.Time
-	for _, entry := range b.ManagedFields {
-		if entry.Subresource != "status" || entry.Time == nil || entry.Time.IsZero() {
-			continue
-		}
-		if t := entry.Time.UTC(); at == nil || t.After(*at) {
-			at = &t
-		}
-	}
-	return at
 }
 
 // formerHolder is the former primary that may still hold the unarchived

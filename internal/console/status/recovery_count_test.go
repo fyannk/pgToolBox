@@ -26,7 +26,6 @@ import (
 
 	"github.com/fyannk/pgToolBox/internal/console/cache"
 	"github.com/fyannk/pgToolBox/internal/console/evidence"
-	"github.com/fyannk/pgToolBox/pkg/cnpgstatus"
 	evidencev1alpha1 "github.com/fyannk/pgToolBox/pkg/evidence/v1alpha1"
 )
 
@@ -718,68 +717,6 @@ func TestBackupEndsOfRestoredStampedAndQueued(t *testing.T) {
 		n, ok := recoveryFacts{backupEnds: ends, backupsUnread: unread}.backupsSince(read)
 		if !ok || (n == 1) != c.counted {
 			t.Errorf("%s: counted %d (%v), want counted %v", c.name, n, ok, c.counted)
-		}
-	}
-}
-
-// TestBackupEndsOfBoundedByStatusWrite (round 22, PG P3-B): a Completed
-// Backup with no plausible stop and no plausible stamp (its instance's
-// and the operator's clocks disagree, or a plugin reported neither) was
-// counted as ended after every read for as long as its object existed,
-// a permanent purge band. The API server's time of its last status
-// write bounds its end: it counts while that time, plus backupClockSkew
-// for the agent's clock, is within scanSlack of the read, and no longer.
-// With no status write recorded it still counts.
-func TestBackupEndsOfBoundedByStatusWrite(t *testing.T) {
-	read := now.Add(-time.Hour)
-	at := func(d time.Duration) *metav1.Time { return &metav1.Time{Time: read.Add(d)} }
-	status := func(d time.Duration) []metav1.ManagedFieldsEntry {
-		return []metav1.ManagedFieldsEntry{
-			{Manager: "manager", Operation: metav1.ManagedFieldsOperationUpdate, Subresource: "status", Time: at(d - 2*time.Hour)},
-			{Manager: "instance-manager", Operation: metav1.ManagedFieldsOperationUpdate, Subresource: "status", Time: at(d)},
-		}
-	}
-	// Created 30 days before the read, started a second later by the
-	// operator; the instance, 30 min behind, stopped and stamped it on its
-	// own clock 10 min later.
-	created := -30 * 24 * time.Hour
-	skewed := cnpgv1.BackupStatus{
-		Phase: cnpgv1.BackupPhaseCompleted, StartedAt: at(created + 5*time.Second - 30*time.Minute),
-		StoppedAt: at(created + 10*time.Minute - 30*time.Minute), ReconciliationStartedAt: at(created + time.Second),
-		ReconciliationTerminatedAt: at(created + 10*time.Minute + 3*time.Second - 30*time.Minute),
-	}
-	plugin := cnpgv1.BackupStatus{Phase: cnpgv1.BackupPhaseCompleted, StoppedAt: &metav1.Time{Time: time.Unix(0, 0)}}
-	for _, c := range []struct {
-		name    string
-		status  cnpgv1.BackupStatus
-		fields  []metav1.ManagedFieldsEntry
-		counted bool
-	}{
-		{"clocks disagree, Completed a month before the read", skewed, status(created + 10*time.Minute + 4*time.Second), false},
-		{"clocks disagree, last status write 7 min before the read", skewed, status(-7 * time.Minute), false},
-		{"clocks disagree, last status write 3 min before the read: within the clock allowance", skewed, status(-3 * time.Minute), true},
-		{"clocks disagree, last status write after the read", skewed, status(2 * time.Minute), true},
-		{"clocks disagree, no managedFields recorded", skewed, nil, true},
-		{"clocks disagree, only a main-resource entry", skewed, []metav1.ManagedFieldsEntry{{Manager: "kubectl", Operation: metav1.ManagedFieldsOperationApply, Time: at(created)}}, true},
-		{"a plugin's unset stop and no stamp, written a day before the read", plugin, status(-24 * time.Hour), false},
-		{"a plugin's unset stop and no stamp, nothing recorded", plugin, nil, true},
-	} {
-		b := &cnpgv1.Backup{ObjectMeta: metav1.ObjectMeta{CreationTimestamp: *at(created), ManagedFields: c.fields}, Status: c.status}
-		if times := cnpgstatus.BackupTimesOf(b, now); c.status.ReconciliationStartedAt != nil && !times.ClockBehind {
-			t.Fatalf("%s: the fixture is not ClockBehind: %+v", c.name, times)
-		}
-		g := &gathered{readable: map[string]bool{cache.SourceBackups: true}, backups: []*cnpgv1.Backup{b}}
-		ends, unread := backupEndsOf(g, now)
-		f := recoveryFacts{now: now, backupEnds: ends, backupsUnread: unread}
-		n, ok := f.backupsSince(read)
-		if !ok || (n == 1) != c.counted {
-			t.Errorf("%s: counted %d (%v), want counted %v", c.name, n, ok, c.counted)
-		}
-		// Counted with a bound: its expire had run by then, not "now".
-		if c.counted && c.fields != nil && len(ends) == 1 && ends[0].done != nil {
-			if by := f.expiredBy(read); !by.Equal(*ends[0].done) || by.After(now) {
-				t.Errorf("%s: expired by %s, want the bound %s", c.name, by, *ends[0].done)
-			}
 		}
 	}
 }
