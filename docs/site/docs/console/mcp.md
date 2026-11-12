@@ -224,7 +224,15 @@ that answered while the others may accept it for a few more seconds; the
 assistant stays listed as "being written to the other replicas" with a
 **Retry** button, and **Disconnect all** is offered as long as one is pending,
 even with a single assistant. A retry that answers `404` means nothing was left
-to write: the page reports the assistant disconnected. A sign-out with
+to write: the page reports the assistant disconnected. While the ConfigMap does
+not exist (deleted, or not created yet), a disconnection is answered done, and
+logged: every replica refuses every grant until the ConfigMap exists, and the
+replica that answered writes the disconnection into it within about a second of
+its return. A restart of that replica before then loses the disconnection
+(another replica that recorded the grant less than eight minutes earlier then
+keeps it). A ConfigMap the console may not write is not so: a replica whose
+watch opened before the permission was withdrawn still serves grants until its
+next write, so that answer stays `503`. A sign-out with
 **disconnect my assistants** goes on even then (the console log says so). Without the
 shared state the index is in each replica's memory: a restart disconnects every
 assistant, and with more than one replica each refuses the grants of the

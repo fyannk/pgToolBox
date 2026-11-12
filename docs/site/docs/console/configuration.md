@@ -266,6 +266,11 @@ merged are taken as the ConfigMap, logged once: the replicas then read and write
 again. A write still conflicting after five re-reads counts as a failure
 (`pgtoolbox_console_shared_state_write_exhausted_total`): the replica is in the
 failing mode, and refuses MCP grants 30 seconds later, until a write lands.
+A replica in the failing mode retries a write about a second later and then
+with backoff (up to a minute apart), with nothing of its own pending too, so a
+failed write leaves it failing only while the API server keeps refusing. A
+request whose client gives up is no failure: one still waiting for another
+write starts none, and one already sent is completed (within 10 seconds).
 
 Replicas whose clocks disagree still converge: a sign-out's
 recording time is kept as written, and a replica that finds it more than five
