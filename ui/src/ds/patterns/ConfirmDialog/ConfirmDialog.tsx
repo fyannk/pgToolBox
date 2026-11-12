@@ -26,6 +26,13 @@ export type ConfirmDialogProps = {
   submitLabel?: string;
   /** Where the action is recorded, when not the API server's audit log (a console action: the console's audit log). */
   recordedAs?: string;
+  /**
+   * Where focus goes when the dialog closes, asked at that moment. By default
+   * it returns to the control that opened the dialog; when the outcome removes
+   * that control (a disconnected card), return the element that now says what
+   * happened. Undefined or null keeps the default.
+   */
+  finalFocus?: () => HTMLElement | null | undefined;
 };
 
 /**
@@ -47,6 +54,7 @@ export function ConfirmDialog({
   canSubmit = true,
   submitLabel,
   recordedAs,
+  finalFocus,
 }: ConfirmDialogProps) {
   const [typed, setTyped] = useState("");
   const [pending, setPending] = useState(false);
@@ -82,7 +90,10 @@ export function ConfirmDialog({
       <AlertDialog.Portal>
         <AlertDialog.Backdrop className="fixed inset-0 bg-overlay" />
         <AlertDialog.Viewport className="fixed inset-0 grid place-items-center p-4">
-          <AlertDialog.Popup className="w-full max-w-lg rounded-dialog border border-line bg-surface p-5 text-fg shadow-overlay">
+          <AlertDialog.Popup
+            finalFocus={finalFocus ? () => finalFocus() ?? true : undefined}
+            className="w-full max-w-lg rounded-dialog border border-line bg-surface p-5 text-fg shadow-overlay"
+          >
             <form onSubmit={submit} className="flex flex-col gap-4">
               <AlertDialog.Title className="font-semibold text-heading">{title}</AlertDialog.Title>
               <AlertDialog.Description render={<div />} className="flex flex-col gap-2 text-body">

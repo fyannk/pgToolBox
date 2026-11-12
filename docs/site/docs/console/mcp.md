@@ -220,11 +220,21 @@ refuses the grant at once and writes the disconnection with its next write, but
 the others may accept it until then. Retry, or use **Disconnect all**, which
 writes again what an earlier attempt left unwritten. The Assistants page closes
 the dialog on that `503` and says the assistant is disconnected on the replica
-that answered while the others may accept it for a few more seconds; the
-assistant stays listed as "being written to the other replicas" with a
-**Retry** button, and **Disconnect all** is offered as long as one is pending,
-even with a single assistant. A retry that answers `404` means nothing was left
-to write: the page reports the assistant disconnected. While the ConfigMap does
+that answered while the others may still accept it until the console has
+written the disconnection (it keeps retrying; the answer does not say how long
+that takes, which is as long as the write keeps failing, for instance while the
+console may not write the ConfigMap); the assistant stays listed as "being written to the
+other replicas" with a **Retry** button, and **Disconnect all** is offered as
+long as one is pending, even with a single assistant. **Retry** sends the
+disconnection again without asking you to type the name a second time: you
+already confirmed it. A retry that answers `404` means nothing was left to
+write: the page reports the assistant disconnected. The pending rows exist only
+in the open page: after a reload, the replica that answered no longer lists the
+grant, so it disappears from the list although the other replicas may still
+accept it. The console keeps writing the disconnection; **Disconnect all**,
+from any replica, is the safe check. When the card, the pending row or
+**Disconnect all** that you used is gone after the answer, focus moves to the
+note that says what happened. While the ConfigMap does
 not exist (deleted, or not created yet), a disconnection is answered done, and
 logged: every replica refuses every grant until the ConfigMap exists, and the
 replica that answered writes the disconnection into it within about a second of
