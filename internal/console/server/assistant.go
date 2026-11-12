@@ -130,7 +130,10 @@ func (g grantManager) Grants(ctx context.Context, user string) []api.GrantInfo {
 
 func (g grantManager) DisconnectAll(ctx context.Context, c auth.Client, user string) (int, error) {
 	n, err := g.s.DisconnectAll(ctx, c, user)
-	if errors.Is(err, mcpoauth.ErrNotRecorded) {
+	switch {
+	case errors.Is(err, mcpoauth.ErrNotConfirmed):
+		return n, api.ErrNotConfirmed
+	case errors.Is(err, mcpoauth.ErrNotRecorded):
 		return n, api.ErrNotRecorded
 	}
 	return n, err
@@ -141,6 +144,8 @@ func (g grantManager) RevokeGrant(ctx context.Context, c auth.Client, user, id s
 	switch {
 	case errors.Is(err, mcpoauth.ErrNoSuchGrant):
 		return api.ErrNoSuchGrant
+	case errors.Is(err, mcpoauth.ErrNotConfirmed):
+		return api.ErrNotConfirmed
 	case errors.Is(err, mcpoauth.ErrNotRecorded):
 		return api.ErrNotRecorded
 	}

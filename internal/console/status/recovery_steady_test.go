@@ -337,15 +337,28 @@ func stampAfter(rng *rand.Rand, run time.Time) time.Time {
 // pgBackRest's expire seconds after each backup and CloudNativePG's
 // completion stamp 0.5 to 5 s after it returned (stampAfter). The agent
 // scans every 5 min (20 s scans), the console fetches every 60 s,
-// evaluated at every fetch in the hour after the newest backup. A
-// listing read more than scanSlack after every completion stamp, which
-// is what every expire left, keeps no pending band; one read before the
-// newest expire ran never claims a restore point that expire removed.
+// evaluated at every fetch in the hour after the newest backup. The
+// instance's clock, which every pgBackRest and instance-manager time is
+// on, runs 0 to 4 min behind the agent's and the console's, under
+// backupClockSkew (round 22, PG P3-A). A listing read more than scanSlack
+// and backupClockSkew after every completion stamp, which is what every
+// expire left, keeps no pending band; one read before the newest expire
+// ran never claims a restore point that expire removed.
 func TestDailyScheduleTimeRetentionKeepsNoBand(t *testing.T) {
 	rng := rand.New(rand.NewPCG(20, 7))
 	day := 24 * time.Hour
 	scan, fetch, refresh := 20*time.Second, time.Minute, 5*time.Minute
-	for _, jitter := range []time.Duration{time.Minute, 3 * time.Minute, 10 * time.Minute} {
+	for _, c := range []struct{ jitter, skew time.Duration }{
+		{time.Minute, 0},
+		{3 * time.Minute, 0},
+		{10 * time.Minute, 0},
+		{time.Minute, 70 * time.Second},
+		{3 * time.Minute, 2 * time.Minute},
+		{10 * time.Minute, 4 * time.Minute},
+	} {
+		jitter, skew := c.jitter, c.skew
+		// sk is a true instant as the instance's clock reads it.
+		sk := func(at time.Time) time.Time { return at.Add(-skew) }
 		steady, pending, ambiguous := 0, 0, 0
 		for trial := range 400 {
 			nDays := 1 + rng.IntN(10)
@@ -390,40 +403,41 @@ func TestDailyScheduleTimeRetentionKeepsNoBand(t *testing.T) {
 				in.retainedFor = retainedFor(snap)
 				spans := make([]interval, 0, len(listed))
 				for _, b := range listed {
-					end := b.stop
+					end := sk(b.stop)
 					in.backups = append(in.backups, evidence.BackupItem{ID: b.id, EndAt: &end, PgBackRest: &evidence.PgBackRestItem{Type: "full", Usable: true}})
-					spans = append(spans, interval{from: b.stop, to: completed, backupID: b.id})
+					spans = append(spans, interval{from: end, to: completed, backupID: b.id})
 				}
 				for i, b := range history {
-					in.facts.backupEnds = append(in.facts.backupEnds, completedEnd(b.stop.Add(-10*time.Minute), b.stop, dones[i]))
+					in.facts.backupEnds = append(in.facts.backupEnds, completedEnd(sk(b.stop.Add(-10*time.Minute)), sk(b.stop), sk(dones[i])))
 				}
-				first, last := listed[0].stop, completed
+				newestDone := dones[len(dones)-1]
+				first, last := sk(listed[0].stop), completed
 				band := purgeBand(in, spans, first, last)
-				if first.Add(band).Before(alive[0].stop) {
-					t.Fatalf("jitter %s, trial %d, fetch +%s: band %s ends before %s, which expire removed: listed=%v alive=%v", jitter, trial, f, band, alive[0].stop, listed, alive)
+				if first.Add(band).Before(sk(alive[0].stop)) {
+					t.Fatalf("jitter %s, skew %s, trial %d, fetch +%s: band %s ends before %s, which expire removed: listed=%v alive=%v", jitter, skew, trial, f, band, alive[0].stop, listed, alive)
 				}
 				if len(listed) != len(alive) {
 					pending++
 					continue
 				}
 				steady++
-				// A scan that began within scanSlack of the newest
-				// completion stamp may, for all the console knows across
-				// the clocks, have read before that Backup's expire: it is
-				// counted since the read and may band the oldest full until
-				// the next scan (round 21, PG P3-A: conservative, one scan
-				// long). Every other steady listing keeps no band.
-				if n, _ := in.facts.backupsSince(*purgeRead(in)); n > 0 {
+				// A scan that began within scanSlack and backupClockSkew
+				// of the newest completion stamp may, for all the console
+				// knows across the clocks, have read before that Backup's
+				// expire: it may band the oldest full until the next scan
+				// (rounds 21 and 22, PG P3-A: conservative, one scan long).
+				// Every other steady listing keeps no band.
+				if newestDone.After(purgeRead(in).Add(-scanSlack - backupClockSkew)) {
 					ambiguous++
 					continue
 				}
 				if since, ok := sinceReadBand(in, spans, first, last); ok && since > listedPurgeBand(in, spans, first, last) {
-					t.Fatalf("jitter %s, trial %d, fetch +%s: a healthy cluster shows a pending band of %s over %s: listed=%v N=%d", jitter, trial, f, since, last.Sub(first), listed, nDays)
+					t.Fatalf("jitter %s, skew %s, trial %d, fetch +%s: a healthy cluster shows a pending band of %s over %s: listed=%v N=%d", jitter, skew, trial, f, since, last.Sub(first), listed, nDays)
 				}
 			}
 		}
 		if steady == 0 || pending == 0 || ambiguous >= steady {
-			t.Errorf("jitter %s: the property never drew a steady listing read after every expire (%d steady, %d within scanSlack of a stamp) or a pending one (%d)", jitter, steady, ambiguous, pending)
+			t.Errorf("jitter %s, skew %s: the property never drew a steady listing read after every expire (%d steady, %d within scanSlack and backupClockSkew of a stamp) or a pending one (%d)", jitter, skew, steady, ambiguous, pending)
 		}
 	}
 }
@@ -435,15 +449,29 @@ func TestDailyScheduleTimeRetentionKeepsNoBand(t *testing.T) {
 // instance manager stamps the Backup Completed 0.5 to 5.5 s after that,
 // truncated to the second; stop times jitter by 2 s to 10 min from day
 // to day. A full from N days ago may then stop in the seconds between
-// the expire's clock read and the stamp. Never overstated; and a listing
-// read after every counted Backup's expire (none counted since the
-// read) keeps no pending band: timing that expire at the stamp held one
-// for the whole day until the next backup, on about one day in five.
+// the expire's clock read and the stamp. The instance's clock runs 0 to
+// 4 min behind the agent's and the console's (round 22, PG P3-A). Never
+// overstated; and a listing read more than scanSlack and
+// backupClockSkew after every Completed Backup's stamp keeps no pending
+// band: timing that expire at the stamp held one for the whole day until
+// the next backup, on about one day in five.
 func TestDailyRealisticStampsKeepNoDayLongBand(t *testing.T) {
 	rng := rand.New(rand.NewPCG(21, 1))
 	day := 24 * time.Hour
 	scan, refresh := 20*time.Second, 5*time.Minute
-	for _, jitter := range []time.Duration{2 * time.Second, 10 * time.Second, time.Minute, 10 * time.Minute} {
+	for _, c := range []struct{ jitter, skew time.Duration }{
+		{2 * time.Second, 0},
+		{10 * time.Second, 0},
+		{time.Minute, 0},
+		{10 * time.Minute, 0},
+		{2 * time.Second, 70 * time.Second},
+		{10 * time.Second, 2 * time.Minute},
+		{time.Minute, 4 * time.Minute},
+		{10 * time.Minute, 4 * time.Minute},
+	} {
+		jitter, skew := c.jitter, c.skew
+		// sk is a true instant as the instance's clock reads it.
+		sk := func(at time.Time) time.Time { return at.Add(-skew) }
 		steady, quiet := 0, 0
 		for trial := range 100 {
 			nDays := 1 + rng.IntN(10)
@@ -488,23 +516,25 @@ func TestDailyRealisticStampsKeepNoDayLongBand(t *testing.T) {
 				in.retainedFor = retainedFor(snap)
 				spans := make([]interval, 0, len(listed))
 				for _, b := range listed {
-					end := b.stop
+					end := sk(b.stop)
 					in.backups = append(in.backups, evidence.BackupItem{ID: b.id, EndAt: &end, PgBackRest: &evidence.PgBackRestItem{Type: b.typ, Usable: true}})
-					spans = append(spans, interval{from: b.stop, to: completed, backupID: b.id})
+					spans = append(spans, interval{from: end, to: completed, backupID: b.id})
 				}
+				var newestDone time.Time
 				for i, b := range history {
 					if dones[i].After(obs) {
 						// Still Running at obs: counted from its start.
-						began := b.stop.Add(-5 * time.Minute)
+						began := sk(b.stop.Add(-5 * time.Minute))
 						in.facts.backupEnds = append(in.facts.backupEnds, backupEnd{at: &began})
 						continue
 					}
-					in.facts.backupEnds = append(in.facts.backupEnds, completedEnd(b.stop.Add(-5*time.Minute), b.stop, dones[i]))
+					newestDone = dones[i]
+					in.facts.backupEnds = append(in.facts.backupEnds, completedEnd(sk(b.stop.Add(-5*time.Minute)), sk(b.stop), sk(dones[i])))
 				}
-				first, last := listed[0].stop, completed
+				first, last := sk(listed[0].stop), completed
 				band := purgeBand(in, spans, first, last)
-				if first.Add(band).Before(alive[0].stop) {
-					t.Fatalf("jitter %s, trial %d, fetch +%s: band %s ends before %s, which expire removed: listed=%v alive=%v", jitter, trial, f, band, alive[0].stop, listed, alive)
+				if first.Add(band).Before(sk(alive[0].stop)) {
+					t.Fatalf("jitter %s, skew %s, trial %d, fetch +%s: band %s ends before %s, which expire removed: listed=%v alive=%v", jitter, skew, trial, f, band, alive[0].stop, listed, alive)
 				}
 				if len(listed) != len(alive) {
 					continue
@@ -514,17 +544,17 @@ func TestDailyRealisticStampsKeepNoDayLongBand(t *testing.T) {
 				if read == nil {
 					t.Fatalf("jitter %s, trial %d: no read instant", jitter, trial)
 				}
-				if n, _ := in.facts.backupsSince(*read); n > 0 {
+				if newestDone.After(read.Add(-scanSlack - backupClockSkew)) {
 					continue
 				}
 				quiet++
 				if since, ok := sinceReadBand(in, spans, first, last); ok && since > listedPurgeBand(in, spans, first, last) {
-					t.Fatalf("jitter %s, trial %d, fetch +%s: a listing read after every expire keeps a pending band of %s over %s: listed=%v N=%d", jitter, trial, f, since, last.Sub(first), listed, nDays)
+					t.Fatalf("jitter %s, skew %s, trial %d, fetch +%s: a listing read after every expire keeps a pending band of %s over %s: listed=%v N=%d", jitter, skew, trial, f, since, last.Sub(first), listed, nDays)
 				}
 			}
 		}
-		if steady == 0 || quiet == 0 {
-			t.Errorf("jitter %s: the probe never drew a steady listing (%d) or one with no Backup since the read (%d)", jitter, steady, quiet)
+		if steady == 0 || quiet == 0 || quiet*2 < steady {
+			t.Errorf("jitter %s, skew %s: the probe never drew a steady listing (%d) or one read after every stamp (%d)", jitter, skew, steady, quiet)
 		}
 	}
 }
@@ -576,6 +606,102 @@ func TestExpiredBy(t *testing.T) {
 	} {
 		if got := (recoveryFacts{now: now, backupEnds: c.ends}).expiredBy(read); !got.Equal(c.want) {
 			t.Errorf("%s: %s, want %s", c.name, got, c.want)
+		}
+	}
+}
+
+// TestPendingTimeRuleInstanceClockBehind (round 22, PG P3-A, the
+// reviewer's probe made a regression test): the instance's clock runs 0
+// to 4 min behind the agent's and the console's, under backupClockSkew,
+// so its stamps are read as true. Every pgBackRest and instance-manager
+// time is on the instance's clock. A scan starts between the newest
+// full's save to backup.info and its expire's run, and lists the full
+// that expire is about to remove; the console reads it after the Backup
+// is Completed. With the stamp skip on scanSlack alone, an instance 70 s
+// or more behind put the stamp more than scanSlack before the read, no
+// Backup was counted since and the removed full was claimed for one
+// scan. Never overstated.
+func TestPendingTimeRuleInstanceClockBehind(t *testing.T) {
+	rng := rand.New(rand.NewPCG(22, 3))
+	day := 24 * time.Hour
+	scan, refresh := 20*time.Second, 5*time.Minute
+	for _, skew := range []time.Duration{0, 30 * time.Second, 70 * time.Second, 2 * time.Minute, 4 * time.Minute} {
+		pendingN0, total := 0, 0
+		for trial := range 300 {
+			nDays := 1 + rng.IntN(5)
+			retained := time.Duration(nDays) * day
+			base := now.Add(-15 * day).Truncate(day).Add(2 * time.Hour)
+			hist := make([]chainBackup, 0, 15)
+			runs, dones := make([]time.Time, 0, 15), make([]time.Time, 0, 15)
+			for d := range 15 {
+				// The same stop time each day to the second, so the
+				// N-days-old full is right at the cut.
+				stop := base.Add(time.Duration(d)*day + 20*time.Minute + time.Duration(rng.Int64N(int64(4*time.Second)))).Truncate(time.Second)
+				hist = append(hist, chainBackup{id: fmt.Sprintf("f%d", d), typ: "full", stop: stop, full: len(hist)})
+				r := stop.Add(2*time.Second + time.Duration(rng.Int64N(int64(8*time.Second))))
+				runs = append(runs, r)
+				dones = append(dones, r.Add(time.Second+time.Duration(rng.Int64N(int64(4*time.Second)))))
+			}
+			aliveAt := func(t time.Time) []chainBackup {
+				var out []chainBackup
+				for i, b := range hist {
+					if b.stop.After(t) {
+						break
+					}
+					out = append(out, b)
+					if !runs[i].After(t) {
+						out = expireAt(out, runs[i], 0, retained)
+					}
+				}
+				return out
+			}
+			last := len(hist) - 1
+			e, run := hist[last].stop, runs[last]
+			// The scan starts, on the instance's clock, between the save
+			// and the expire's run.
+			startedI := e.Add(time.Duration(1 + rng.Int64N(int64(run.Sub(e))-1)))
+			listed := aliveAt(startedI)
+			started := startedI.Add(skew) // the agent's clock
+			completed := started.Add(scan)
+			for _, f := range []time.Duration{30 * time.Second, 2 * time.Minute, 4 * time.Minute} {
+				obs := completed.Add(f)
+				alive := aliveAt(obs.Add(-skew))
+				if len(alive) == len(listed) {
+					continue
+				}
+				total++
+				in := timelineInput{facts: recoveryFacts{now: obs}, scannedAt: &completed, observedAt: &obs, scanDuration: scan, refresh: refresh, pgBackRest: true}
+				snap := &evidencev1alpha1.RepositoryEvidenceSnapshot{Details: evidencev1alpha1.Details{Type: "pgbackrest", PGBackRest: &evidencev1alpha1.PGBackRestSummary{Retention: &evidencev1alpha1.PGBackRestRetention{Configured: true, FullType: "time", Full: new(uint64(nDays))}}}}
+				in.policy = pgbackrestPolicyOf(snap)
+				in.retainedFor = retainedFor(snap)
+				spans := make([]interval, 0, len(listed))
+				for _, b := range listed {
+					end := b.stop
+					in.backups = append(in.backups, evidence.BackupItem{ID: b.id, EndAt: &end, PgBackRest: &evidence.PgBackRestItem{Type: b.typ, Usable: true}})
+					spans = append(spans, interval{from: b.stop, to: completed, backupID: b.id})
+				}
+				for i, b := range hist {
+					if dones[i].Add(skew).After(obs) {
+						began := b.stop.Add(-5 * time.Minute)
+						in.facts.backupEnds = append(in.facts.backupEnds, backupEnd{at: &began})
+						continue
+					}
+					in.facts.backupEnds = append(in.facts.backupEnds, completedEnd(b.stop.Add(-5*time.Minute), b.stop, dones[i]))
+				}
+				if n, _ := in.facts.backupsSince(*purgeRead(in)); n == 0 {
+					pendingN0++
+				}
+				first := listed[0].stop
+				band := purgeBand(in, spans, first, completed)
+				if first.Add(band).Before(alive[0].stop) {
+					t.Fatalf("instance clock %s behind, trial %d, fetch +%s: band %s ends before %s, which expire removed: listed=%v alive=%v", skew, trial, f, band, alive[0].stop, listed, alive)
+				}
+			}
+		}
+		// The scenario is the one the skip missed: at 70 s and more, no
+		// Backup is counted since the read on most evaluations.
+		if total == 0 || skew >= 70*time.Second && pendingN0*2 < total {
+			t.Errorf("instance clock %s behind: %d pending evaluations, %d with no Backup since the read", skew, total, pendingN0)
 		}
 	}
 }

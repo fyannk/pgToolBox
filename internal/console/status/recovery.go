@@ -32,6 +32,7 @@ import (
 	"github.com/fyannk/pgToolBox/internal/console/viewmodel"
 	"github.com/fyannk/pgToolBox/pkg/cnpgstatus"
 	"github.com/fyannk/pgToolBox/pkg/cnpgstatus/instancestatus"
+	"github.com/fyannk/pgToolBox/pkg/cnpgstatus/observe"
 	evidencev1alpha1 "github.com/fyannk/pgToolBox/pkg/evidence/v1alpha1"
 )
 
@@ -2049,15 +2050,19 @@ func sinceReadBand(in timelineInput, spans []interval, first, last time.Time) (t
 //     have run before the scan. The expire at the newest listed end had
 //     returned by the completion stamp of the Completed Backup whose run
 //     holds that end (expireStampAt: the plugin marks it Completed only
-//     after pgbackrest backup, auto-expire included, returned). That
-//     Backup is counted at its stamp at the latest, and none counted
-//     since the read puts the stamp more than scanSlack before it: the
-//     listing already reflects that expire and keeps no band (round 21,
-//     PG P3-A: timing the run at the stamp still cut, for the day until
-//     the next backup, a full the expire keeps when a full stopped in the
-//     seconds between the expire's clock read and the stamp, on about one
-//     day in five of a daily schedule; round 20 had timed it at the
-//     console's fetch, which cut it on about half the days). With no
+//     after pgbackrest backup, auto-expire included, returned). A stamp
+//     more than scanSlack and backupClockSkew before the read says the
+//     listing already reflects that expire, which keeps no band (round
+//     21, PG P3-A: timing the run at the stamp still cut, for the day
+//     until the next backup, a full the expire keeps when a full stopped
+//     in the seconds between the expire's clock read and the stamp, on
+//     about one day in five of a daily schedule; round 20 had timed it
+//     at the console's fetch, which cut it on about half the days). The
+//     stamp is on the instance's clock and the read on the agent's: an
+//     instance up to backupClockSkew behind is not ClockBehind, and
+//     skipping on scanSlack alone kept, for one scan, a full the expire
+//     removed (round 22, PG P3-A). A later stamp times the run at the
+//     stamp, the round-20 rule: the expire ran at or before it. With no
 //     such stamp (a backup run outside CloudNativePG, or none reported),
 //     that run may be after the read, so when the newest end is within
 //     one refresh interval before the read its instant is the latest of
@@ -2088,12 +2093,17 @@ func pendingExpireBand(in timelineInput, spans []interval, first time.Time, wind
 	}
 	if in.retainedFor > 0 {
 		if end, ok := newestListedEnd(in, spans); ok {
-			// A stamp holding end means that expire had returned before the
-			// scan: the Backup is counted at the stamp at the latest, and n
-			// == 0 puts that more than scanSlack before the read.
-			if _, stamped := in.facts.expireStampAt(end); !stamped {
+			// A stamp holding end more than scanSlack and backupClockSkew
+			// before the read means that expire had returned before the
+			// scan, across the instance's clock and the agent's; a later
+			// one times the run at the stamp.
+			stamp, stamped := in.facts.expireStampAt(end)
+			if !stamped || stamp.After(read.Add(-scanSlack-backupClockSkew)) {
 				run := end
-				if in.refresh > 0 && !end.Before(read.Add(-in.refresh)) {
+				if stamped {
+					run = stamp
+				}
+				if !stamped && in.refresh > 0 && !end.Before(read.Add(-in.refresh)) {
 					for _, at := range []*time.Time{in.scannedAt, in.observedAt} {
 						if at != nil && at.After(run) {
 							run = *at
@@ -2376,6 +2386,11 @@ func missedScan(refresh, scan time.Duration) time.Duration {
 // scanSlack is the time a scan is allowed to take on top of its interval
 // before missedScan counts it as missed.
 const scanSlack = time.Minute
+
+// backupClockSkew is how far the clock of the instance that writes a
+// Backup's stamps may run behind (observe.BackupClockSkew) and still
+// have them read as true, so behind the agent's too.
+const backupClockSkew = observe.BackupClockSkew
 
 // oldestOnly is how long after first only the oldest anchor's backups
 // reach: until the earliest anchor after first; 0 when there is none.

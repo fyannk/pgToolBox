@@ -238,6 +238,10 @@ type GrantStore interface {
 	// when it cannot), so that a revocation made next covers the grants
 	// recorded elsewhere that this replica has not seen yet.
 	ReadGrants(ctx context.Context) error
+	// WriteGrant writes a grant recorded here (AddGrant) through to the
+	// shared state (sharedstate.ErrNotRecorded when it cannot): its
+	// first token is issued only then.
+	WriteGrant(ctx context.Context, id string) error
 	UnwrittenRevocationsOf(userHash string) []string
 	GrantRevoked(id string) bool
 	TouchGrant(id string, at time.Time)

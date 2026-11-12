@@ -276,12 +276,16 @@ func componentVersions(run *diag.Run, image string) []viewmodel.ComponentVersion
 // by CloudNativePG's completion stamp (backupRecency).
 const backupStampSource = "Backup.status.reconciliationTerminatedAt"
 
-// backupSkewSource is the provenance of a last completed backup that
-// ran on an instance whose clock runs behind (observe.BackupTimes
-// ClockBehind): its stop time and completion stamp are not plausible, so
-// it is timed by the operator's start stamp, or its creation, an
-// instant before it ended (backupRecency).
-const backupSkewSource = "Backup.status.reconciliationStartedAt"
+// backupSkewSource and backupCreatedSource are the provenance of a last
+// completed backup whose instance's and operator's clocks disagree
+// (observe.BackupTimes ClockBehind): its stop time and completion stamp
+// are not plausible, so it is timed by the earlier of the operator's
+// start stamp and its creation, both before it started running
+// (backupRecency).
+const (
+	backupSkewSource    = "Backup.status.reconciliationStartedAt"
+	backupCreatedSource = "Backup.metadata.creationTimestamp"
+)
 
 // backupRecency is the newest completed and failed Backup of the Cluster,
 // timed through cnpgstatus.BackupTimesOf (round 19, CNPG P3-1): a stop
@@ -291,16 +295,20 @@ const backupSkewSource = "Backup.status.reconciliationStartedAt"
 // (status.reconciliationTerminatedAt, set by SetAsCompleted seconds after
 // the end, by the instance manager, or the operator for a volume
 // snapshot: an upper bound on it), and the claim then names that field
-// (round 20, CNPG P3-1). One whose instance clock runs behind
-// (ClockBehind: its times are earlier than the operator's start stamp or
-// its creation) has neither: it is timed by that start stamp, else its
-// creation, an instant before it ended, so it reads older than it is,
-// never as a skewed completion (round 21, PG P3-B, CNPG P3-1). A Failed
-// Backup is timed by the latest of its
-// stop, which CloudNativePG never sets on a failure, and its completion
-// stamp (SetAsFailed), else its creation: a Backup queued behind
-// another that then fails is a failure after that other's success, not
-// one hidden by it (round 20, CNPG P3-3).
+// (round 20, CNPG P3-1). One whose instance's and operator's clocks
+// disagree (ClockBehind: its times are earlier than the operator's start
+// stamp or its creation) has neither: it is timed by the earlier of that
+// start stamp and its creation, so it reads older than it is, never as a
+// skewed completion (round 21, PG P3-B, CNPG P3-1). The creation is on
+// the API server's clock and always before the end; the start stamp
+// alone, from an operator running ahead, put a backup that ended minutes
+// ago in the console's future, "<1m ago" (round 22, CNPG P3-1). A Failed
+// Backup is timed by the latest of its creation, the operator's start
+// stamp, its stop, which CloudNativePG never sets on a failure, and its
+// completion stamp (SetAsFailed): a Backup queued behind another that
+// then fails is a failure after that other's success, not one hidden by
+// it (round 20, CNPG P3-3), also when its instance's failure stamp is
+// dropped as skewed (round 22, CNPG P3-2).
 func (s *Service) backupRecency(g *gathered) viewmodel.BackupRecency {
 	now := s.now().UTC()
 	cfg := cnpgstatus.Backups(g.cluster)
@@ -322,9 +330,9 @@ func (s *Service) backupRecency(g *gathered) viewmodel.BackupRecency {
 			switch {
 			case at == nil && times.ClockBehind:
 				at, from = times.OperatorStarted, backupSkewSource
-				if at == nil && !b.CreationTimestamp.IsZero() {
+				if !b.CreationTimestamp.IsZero() && (at == nil || b.CreationTimestamp.Time.Before(*at)) {
 					created := b.CreationTimestamp.UTC()
-					at = &created
+					at, from = &created, backupCreatedSource
 				}
 			case at == nil:
 				at, from = times.OperatorTerminated, backupStampSource
@@ -335,7 +343,7 @@ func (s *Service) backupRecency(g *gathered) viewmodel.BackupRecency {
 			}
 		case cnpgv1.BackupPhaseFailed:
 			at := b.CreationTimestamp.UTC()
-			for _, end := range []*time.Time{times.OperatorTerminated, times.Stop} {
+			for _, end := range []*time.Time{times.OperatorStarted, times.OperatorTerminated, times.Stop} {
 				if end != nil && end.After(at) {
 					at = *end
 				}
@@ -426,7 +434,9 @@ func backupDetail(r viewmodel.BackupRecency, now time.Time) string {
 	case r.Provenance.Source == backupStampSource:
 		return "completed " + age(now, *r.LastCompletedAt) + " ago, by CloudNativePG's completion stamp (the backup tool reported no plausible stop time)"
 	case r.Provenance.Source == backupSkewSource:
-		return "completed after it started " + age(now, *r.LastCompletedAt) + " ago (its stop time and completion stamp are not plausible: the instance's clock runs behind the operator's)"
+		return "completed after the operator started it " + age(now, *r.LastCompletedAt) + " ago (its stop time and completion stamp are not plausible: the instance's and the operator's clocks disagree)"
+	case r.Provenance.Source == backupCreatedSource:
+		return "completed after it was created " + age(now, *r.LastCompletedAt) + " ago (its stop time and completion stamp are not plausible: the instance's and the operator's clocks disagree)"
 	default:
 		return "completed " + age(now, *r.LastCompletedAt) + " ago"
 	}

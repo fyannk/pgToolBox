@@ -15,7 +15,7 @@ what happened to the Cluster, newest first. The revision list is the second tab.
 | `phase` | The Cluster phase changed | the console's (observed) |
 | `primary` | The primary changed: a **failover** when the phases seen just before say so, a **switchover** otherwise | the operator's timestamp (reported) |
 | `restart` | An instance's `postgres` container restarted, with the exit reason | the kubelet's (reported) |
-| `backup` | A Backup completed or failed | the backup's stop time (reported); with none plausible (1970, in the future, or written by an instance whose clock runs behind), CloudNativePG's completion stamp `reconciliationTerminatedAt` (reported; the instance manager's for a barman or plugin backup it completed or failed, else the operator's), else the console's (observed) |
+| `backup` | A Backup completed or failed | the backup's stop time (reported); with none plausible (1970, in the future, or written while the instance's clock and the operator's disagree by more than five minutes), CloudNativePG's completion stamp `reconciliationTerminatedAt` (reported; the instance manager's for a barman or plugin backup it completed or failed, else the operator's), else the console's (observed) |
 | `finding` | A diagnostics finding appeared, worsened, improved or cleared | the console's (observed) |
 | `revision` | A spec change, creation or deletion from the history | the console's (observed) |
 | `event` | A Kubernetes Event of the Cluster's objects, within `EVENTS_MAX_AGE` | the API server's (reported) |
