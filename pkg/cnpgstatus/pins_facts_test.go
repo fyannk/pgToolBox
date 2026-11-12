@@ -361,3 +361,31 @@ func TestPinPluginBackupTimesFromUnix(t *testing.T) {
 		}
 	}
 }
+
+// TestPinReadyWALFilesCountedOnEveryPrimary pins the fact the console's
+// LiveStatus.readyWalFiles rests on (round 18, DBA): CloudNativePG counts
+// the .ready files on every primary it reads, failing the status
+// otherwise, and omits a zero from the JSON, so a primary read through
+// PostgreSQL without the field has none waiting.
+func TestPinReadyWALFilesCountedOnEveryPrimary(t *testing.T) {
+	for _, v := range verifiedReleases {
+		release := v.tag
+		dir := moduleDir(t, release)
+		probes, err := os.ReadFile(filepath.Join(dir, "pkg", "management", "postgres", "probes.go"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		fill := functionBody(t, probes, "func (instance *Instance) fillWalStatusFromConnection(result *postgres.PostgresqlStatus, superUserDB *sql.DB) error {")
+		count := bytes.Index(fill, []byte("result.ReadyWALFiles, _, err = GetWALArchiveCounters()"))
+		if count < 0 || !bytes.Contains(fill[count:], []byte("return err")) {
+			t.Errorf("v%s: fillWalStatusFromConnection no longer counts the ready WAL files on the primary, failing on error", release)
+		}
+		status, err := os.ReadFile(filepath.Join(dir, "pkg", "postgres", "status.go"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Contains(status, []byte("`json:\"readyWalFiles,omitempty\"`")) {
+			t.Errorf("v%s: PostgresqlStatus.ReadyWALFiles is no longer omitempty", release)
+		}
+	}
+}
