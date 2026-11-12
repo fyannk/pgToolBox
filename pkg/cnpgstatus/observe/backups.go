@@ -155,6 +155,12 @@ type BackupsSnapshot struct {
 // instance's clock against the API server's and the console's.
 const backupClockSkew = 5 * time.Minute
 
+// BackupClockSkew is backupClockSkew for the readers that compare an
+// instance-written time with another clock (the console's purge band:
+// an instance up to this far behind the agent is not ClockBehind, and
+// its stamps are read as true; round 22, PG P3-A).
+const BackupClockSkew = backupClockSkew
+
 // backupTimeFloor is the earliest backup tool time read as true.
 // CloudNativePG converts a plugin's start and stop times with
 // time.Unix(seconds, 0) and keeps them unless IsZero
@@ -206,10 +212,14 @@ type BackupTimes struct {
 	// ClockBehind: outside Imported, on a Backup the operator started
 	// after its creation, a tool time or the completion stamp is more
 	// than backupClockSkew before the object's creation or the
-	// operator's start stamp. The instance that wrote them runs behind
-	// the API server and the operator, so every time it wrote (Start,
-	// Stop, OperatorTerminated) is skewed and dropped: such a Backup has
-	// no plausible end, never an early one (round 21, PG P3-B, CNPG P3-1).
+	// operator's start stamp. The instance's clock and the operator's
+	// (or the API server's) disagree: either the instance runs behind or
+	// the operator runs ahead, and the console cannot tell which. Every
+	// time the instance wrote (Start, Stop, OperatorTerminated) is
+	// dropped, and OperatorStarted may itself be late: such a Backup has
+	// no plausible end, never an early one, and a reader that needs one
+	// takes a time on the API server's clock (its creation, before the
+	// end; round 21, PG P3-B, CNPG P3-1; round 22, CNPG P3-1).
 	ClockBehind bool
 }
 
@@ -234,7 +244,8 @@ type BackupTimes struct {
 //     (SetAsStarted, written by the operator before the instance runs
 //     the tool) is not older than the object, a tool time or the
 //     completion stamp more than backupClockSkew before that stamp or
-//     the object's creation: the instance's clock runs behind. The
+//     the object's creation: the instance's clock and the operator's
+//     disagree (the instance behind or the operator ahead). The
 //     completion stamp of a barman or plugin Backup is the instance
 //     manager's, on the same clock as the tool times, so every time the
 //     instance wrote is dropped (ClockBehind; round 21, PG P3-B, CNPG
@@ -280,7 +291,8 @@ func SaneBackupTimes(now time.Time, s BackupStamps) BackupTimes {
 			(early(start) || early(stop) || early(opTerminated) ||
 				beforeStart(start) || beforeStart(stop) || beforeStart(opTerminated)):
 			// The operator started this Backup here, and the instance
-			// wrote times before that.
+			// wrote times before that: the instance runs behind, or the
+			// operator ahead.
 			start, stop, opTerminated = nil, nil, nil
 			out.ClockBehind = true
 		default:

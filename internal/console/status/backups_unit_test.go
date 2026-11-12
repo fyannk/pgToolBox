@@ -184,11 +184,20 @@ func TestBackupRecencyFailureAfterAQueuedSuccess(t *testing.T) {
 	for _, tt := range []struct {
 		name       string
 		failedAt   *time.Time
+		opStarted  *time.Time
 		wantFailed bool
+		wantAt     *time.Time // nil: failedAt
 	}{
-		{"failed after the success", new(t0.Add(30 * time.Minute)), true},
-		{"failed before the success", new(t0.Add(5 * time.Minute)), false},
-		{"no stamp: its creation, before the success", nil, false},
+		{"failed after the success", new(t0.Add(30 * time.Minute)), nil, true, nil},
+		{"failed before the success", new(t0.Add(5 * time.Minute)), nil, false, nil},
+		{"no stamp: its creation, before the success", nil, nil, false, nil},
+		// Round 22, CNPG P3-2: B2 waits behind B1, the operator starts it
+		// at 02:15 and its instance, 20 min behind, stamps the failure at
+		// 01:56 on its own clock. The skewed stamp is dropped
+		// (ClockBehind); timed at its creation (02:00) the failure hid
+		// behind B1's 02:10 success, timed at the operator's start it
+		// is after it.
+		{"a skewed failure stamp: the operator's start, after the success", new(t0.Add(-4 * time.Minute)), new(t0.Add(15 * time.Minute)), true, new(t0.Add(15 * time.Minute))},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			b1 := completedBackup("b1", t0.Add(-time.Minute), t0.Add(10*time.Minute), owner)
@@ -200,6 +209,9 @@ func TestBackupRecencyFailureAfterAQueuedSuccess(t *testing.T) {
 			}
 			if tt.failedAt != nil {
 				b2.Status.ReconciliationTerminatedAt = new(metav1.NewTime(*tt.failedAt))
+			}
+			if tt.opStarted != nil {
+				b2.Status.ReconciliationStartedAt = new(metav1.NewTime(*tt.opStarted))
 			}
 			scheme, err := cache.NewScheme()
 			if err != nil {
@@ -219,8 +231,12 @@ func TestBackupRecencyFailureAfterAQueuedSuccess(t *testing.T) {
 			if failed := r.LastFailedAt != nil; failed != tt.wantFailed {
 				t.Fatalf("last failed %v, want a failure shown: %v", r.LastFailedAt, tt.wantFailed)
 			}
-			if tt.wantFailed && (!r.LastFailedAt.Equal(*tt.failedAt) || r.Health != viewmodel.HealthWarning) {
-				t.Errorf("failure at %v health %s, want %v warning", r.LastFailedAt, r.Health, *tt.failedAt)
+			want := tt.wantAt
+			if want == nil {
+				want = tt.failedAt
+			}
+			if tt.wantFailed && (!r.LastFailedAt.Equal(*want) || r.Health != viewmodel.HealthWarning) {
+				t.Errorf("failure at %v health %s, want %v warning", r.LastFailedAt, r.Health, *want)
 			}
 		})
 	}
@@ -249,22 +265,39 @@ func TestBackupRecencyReadsPlausibleTimes(t *testing.T) {
 	// instance stopped it and stamped it Completed on its own clock.
 	opStarted := now.Add(-30*time.Minute + time.Second)
 	skewedStop, skewedStamp := now.Add(-20*time.Minute-15*time.Minute), now.Add(-20*time.Minute-15*time.Minute+3*time.Second)
+	created30 := now.Add(-30 * time.Minute)
 	for _, tt := range []struct {
 		name          string
+		created       time.Time // zero: 30 min ago
 		stopped       time.Time
 		stamp         *time.Time
 		opStarted     *time.Time
 		wantCompleted *time.Time
 		wantSource    string
 	}{
-		{"a plugin's unset stop is not 1970", time.Unix(0, 0), nil, nil, nil, "Backup.status"},
-		{"a stop in the future is not a fresh backup", now.Add(1000 * 24 * time.Hour), nil, nil, nil, "Backup.status"},
-		{"no plausible stop: CloudNativePG's completion stamp", time.Unix(0, 0), &stamp, nil, &stamp, backupStampSource},
-		{"a plausible stop", now.Add(-20 * time.Minute), &stamp, &opStarted, new(now.Add(-20 * time.Minute)), "Backup.status"},
-		{"an instance clock behind: neither its stop nor its stamp, the operator's start", skewedStop, &skewedStamp, &opStarted, &opStarted, backupSkewSource},
+		{"a plugin's unset stop is not 1970", time.Time{}, time.Unix(0, 0), nil, nil, nil, "Backup.status"},
+		{"a stop in the future is not a fresh backup", time.Time{}, now.Add(1000 * 24 * time.Hour), nil, nil, nil, "Backup.status"},
+		{"no plausible stop: CloudNativePG's completion stamp", time.Time{}, time.Unix(0, 0), &stamp, nil, &stamp, backupStampSource},
+		{"a plausible stop", time.Time{}, now.Add(-20 * time.Minute), &stamp, &opStarted, new(now.Add(-20 * time.Minute)), "Backup.status"},
+		{"an instance clock behind: neither its stop nor its stamp, its creation", time.Time{}, skewedStop, &skewedStamp, &opStarted, &created30, backupCreatedSource},
+		// Round 22, CNPG P3-1: an honest instance stops at -1m, the
+		// operator, 4.5 min ahead of the console and more than
+		// backupClockSkew ahead of the instance, stamped its start in the
+		// console's future. ClockBehind cannot tell which clock is off:
+		// timed by the operator's stamp the backup "completed <1m ago"
+		// after it really did; its creation is before the end.
+		{"an operator clock ahead: its creation, not the operator's future start", now.Add(-4 * time.Minute), now.Add(-time.Minute), new(now.Add(-time.Minute + 3*time.Second)), new(now.Add(4*time.Minute + 30*time.Second)), new(now.Add(-4 * time.Minute)), backupCreatedSource},
+		// An operator 2 min behind the API server started it before its
+		// creation, and the instance runs 20 min behind: the earlier, the
+		// operator's start stamp.
+		{"an operator start before the creation: the operator's start", time.Time{}, now.Add(-50 * time.Minute), new(now.Add(-50*time.Minute + 3*time.Second)), new(now.Add(-32 * time.Minute)), new(now.Add(-32 * time.Minute)), backupSkewSource},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			b := completedBackup("b", now.Add(-30*time.Minute), tt.stopped, owner)
+			created := tt.created
+			if created.IsZero() {
+				created = created30
+			}
+			b := completedBackup("b", created, tt.stopped, owner)
 			b.UID = "b-uid"
 			if tt.stamp != nil {
 				b.Status.ReconciliationTerminatedAt = new(metav1.NewTime(*tt.stamp))
@@ -301,8 +334,9 @@ func TestBackupRecencyReadsPlausibleTimes(t *testing.T) {
 			}
 			if detail := backupDetail(got.Summary.BackupRecency, now); (tt.wantSource == backupStampSource) != strings.Contains(detail, "CloudNativePG's completion stamp") {
 				t.Errorf("detail %q does not attribute the time to its source", detail)
-			} else if (tt.wantSource == backupSkewSource) != strings.Contains(detail, "not plausible") {
-				t.Errorf("detail %q does not say the skewed times are not plausible", detail)
+			} else if skewed := tt.wantSource == backupSkewSource || tt.wantSource == backupCreatedSource; skewed != strings.Contains(detail, "not plausible") ||
+				skewed != strings.Contains(detail, "the instance's and the operator's clocks disagree") {
+				t.Errorf("detail %q does not say the skewed times are not plausible, without blaming one clock", detail)
 			}
 			facts, ok := svc.ClusterFacts(context.Background(), cache.ClusterKey{Namespace: "team-a", Name: "reborn"})
 			if !ok || len(facts.Backups) != 1 {
@@ -312,7 +346,7 @@ func TestBackupRecencyReadsPlausibleTimes(t *testing.T) {
 			// The timeline places a Backup at its end: one whose times are
 			// skewed has none and is observed by the console.
 			wantStop := tt.wantCompleted
-			if tt.wantSource == backupSkewSource {
+			if tt.wantSource == backupSkewSource || tt.wantSource == backupCreatedSource {
 				wantStop = nil
 			}
 			switch {
