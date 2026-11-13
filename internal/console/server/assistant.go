@@ -17,13 +17,21 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
+	"log/slog"
+	"net"
+	"strconv"
 	"time"
+
+	"k8s.io/client-go/kubernetes"
 
 	"github.com/fyannk/pgToolBox/internal/console/api"
 	"github.com/fyannk/pgToolBox/internal/console/assistant"
 	"github.com/fyannk/pgToolBox/internal/console/auth"
+	"github.com/fyannk/pgToolBox/internal/console/leader"
 	"github.com/fyannk/pgToolBox/internal/console/mcp"
 	"github.com/fyannk/pgToolBox/internal/console/mcpauth"
+	"github.com/fyannk/pgToolBox/internal/console/mcpleader"
 	"github.com/fyannk/pgToolBox/internal/console/mcpoauth"
 	"github.com/fyannk/pgToolBox/internal/console/sharedstate"
 )
@@ -85,9 +93,13 @@ func grantIndex(o AppOptions) GrantIndex {
 // clients over the sign-in layer and the grant index.
 // A public URL that cannot be an issuer turns it off (nil, no error): the
 // MCP endpoint then accepts raw API-server tokens only.
-func newOAuthServer(o AppOptions, h *auth.Handler, store mcpoauth.GrantStore) (*mcpoauth.Server, error) {
+func newOAuthServer(o AppOptions, h *auth.Handler, l *mcpleader.Leader, store mcpoauth.GrantStore) (*mcpoauth.Server, error) {
+	var sessions mcpoauth.SessionSource = h
+	if l != nil {
+		sessions = leaderSessions{Handler: h, l: l}
+	}
 	s, err := mcpoauth.New(mcpoauth.Options{
-		Sessions: h, Store: store, PublicURL: o.Auth.PublicURL, TrustedProxy: o.Auth.TrustedProxy,
+		Sessions: sessions, Store: store, PublicURL: o.Auth.PublicURL, TrustedProxy: o.Auth.TrustedProxy,
 		WriteTools: o.MCP.WriteTools, AccessTTL: o.MCP.AccessTTL, ClientMetadataDocuments: o.MCP.ClientMetadataDocuments,
 		ClientMetadataHosts: o.MCP.ClientMetadataHosts, Log: o.Log,
 	})
@@ -96,6 +108,50 @@ func newOAuthServer(o AppOptions, h *auth.Handler, store mcpoauth.GrantStore) (*
 		return nil, nil
 	}
 	return s, err
+}
+
+// leaderSessions is the sign-in layer with the MCP leader's guard on
+// "disconnect my assistants": refused (mcpleader.ErrNotLeader) on a
+// replica that does not lead.
+type leaderSessions struct {
+	*auth.Handler
+	l *mcpleader.Leader
+}
+
+func (s leaderSessions) SetSignOutHook(f auth.SignOutHook) { s.Handler.SetSignOutHook(s.l.Hook(f)) }
+
+// leaderIndex is the grant index under the MCP leader (sharedstate.Store).
+type leaderIndex interface {
+	mcpleader.Grants
+	SetLeader(leading func() bool)
+}
+
+// newMCPLeader builds the MCP election (MCP_LEASE) over the console's own
+// client and hands the grant index to it.
+func newMCPLeader(o AppOptions, c kubernetes.Interface, index GrantIndex) (*mcpleader.Leader, error) {
+	g, ok := index.(leaderIndex)
+	if !ok {
+		return nil, errors.New("server: the MCP leader needs the console's grant index")
+	}
+	if o.Auth.Namespace == "" {
+		return nil, errors.New("MCP_LEASE needs the console's namespace (POD_NAMESPACE)")
+	}
+	_, raw, err := net.SplitHostPort(o.ListenAddr)
+	if err != nil {
+		return nil, fmt.Errorf("MCP_LEASE: the listen address %q: %w", o.ListenAddr, err)
+	}
+	port, err := strconv.ParseUint(raw, 10, 16)
+	if err != nil || port == 0 {
+		return nil, fmt.Errorf("MCP_LEASE: the listen address %q has no port", o.ListenAddr)
+	}
+	l := mcpleader.New(mcpleader.Options{
+		Leases: c.CoordinationV1().Leases(o.Auth.Namespace), Slices: c.DiscoveryV1().EndpointSlices(o.Auth.Namespace),
+		Grants: g, Namespace: o.Auth.Namespace, Lease: o.MCP.Lease, SliceNames: o.MCP.EndpointSlices,
+		PodIP: o.MCP.PodIP, Port: int32(port), Identity: leader.CandidateIdentity(),
+		Logger: o.Log.With(slog.String("component", "mcp-leader")),
+	})
+	g.SetLeader(l.Leading)
+	return l, nil
 }
 
 // mcpAuthenticator is the MCP guard's chain: console grants first (when

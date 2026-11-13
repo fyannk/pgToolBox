@@ -108,7 +108,8 @@ In short:
 - **Console**: read-only unless explicitly enabled, with an enumerated mutation
   surface (`internal/console/ops` originates writes; `hack/check-readonly.sh`);
   its own identity writes only its state ConfigMap, its digest Lease when digests
-  are delivered and, opt-in, the restore-drill cleanup; no SQL, no object
+  are delivered, its MCP Lease and EndpointSlices when `MCP_LEASE` is set and,
+  opt-in, the restore-drill cleanup; no SQL, no object
   storage, no Secrets; the console decides no authorization of its own; preserve
   uncertainty (a broken watch is stale/unknown, never healthy); render from
   snapshots; redact at the boundary; `html/template` only; attribute every claim

@@ -62,6 +62,29 @@ func TestMCP(t *testing.T) {
 			"",
 		},
 		{"bad metadata host", map[string]string{EnvMCPOAuthClientMetadataHosts: "https://claude.ai"}, MCP{}, EnvMCPOAuthClientMetadataHosts},
+		{
+			"leader",
+			map[string]string{EnvMCPEnabled: "true", EnvMCPLease: "console-mcp", EnvMCPEndpointSlices: "console-mcp-ipv4, console-mcp-ipv6", EnvPodIP: "fd00::1"},
+			MCP{
+				Enabled: true, MaxResultBytes: 256 << 10, CallTimeout: 20 * time.Second, AccessTTL: time.Hour,
+				Lease: "console-mcp", EndpointSlices: []string{"console-mcp-ipv4", "console-mcp-ipv6"}, PodIP: "fd00::1",
+			},
+			"",
+		},
+		{
+			"no leader: the Pod IP is ignored",
+			map[string]string{EnvMCPEnabled: "true", EnvPodIP: "10.0.0.1"},
+			MCP{Enabled: true, MaxResultBytes: 256 << 10, CallTimeout: 20 * time.Second, AccessTTL: time.Hour},
+			"",
+		},
+		{"leader without the endpoint", map[string]string{EnvMCPLease: "console-mcp", EnvMCPEndpointSlices: "s", EnvPodIP: "10.0.0.1"}, MCP{}, EnvMCPLease},
+		{"bad lease", map[string]string{EnvMCPEnabled: "true", EnvMCPLease: "Console_MCP"}, MCP{}, EnvMCPLease},
+		{"slices without a lease", map[string]string{EnvMCPEnabled: "true", EnvMCPEndpointSlices: "s"}, MCP{}, EnvMCPEndpointSlices},
+		{"leader without slices", map[string]string{EnvMCPEnabled: "true", EnvMCPLease: "console-mcp", EnvPodIP: "10.0.0.1"}, MCP{}, EnvMCPEndpointSlices},
+		{"three slices", map[string]string{EnvMCPEnabled: "true", EnvMCPLease: "console-mcp", EnvMCPEndpointSlices: "a,b,c", EnvPodIP: "10.0.0.1"}, MCP{}, EnvMCPEndpointSlices},
+		{"bad slice", map[string]string{EnvMCPEnabled: "true", EnvMCPLease: "console-mcp", EnvMCPEndpointSlices: "a/b", EnvPodIP: "10.0.0.1"}, MCP{}, EnvMCPEndpointSlices},
+		{"leader without the Pod IP", map[string]string{EnvMCPEnabled: "true", EnvMCPLease: "console-mcp", EnvMCPEndpointSlices: "s"}, MCP{}, EnvPodIP},
+		{"bad Pod IP", map[string]string{EnvMCPEnabled: "true", EnvMCPLease: "console-mcp", EnvMCPEndpointSlices: "s", EnvPodIP: "pod"}, MCP{}, EnvPodIP},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

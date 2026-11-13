@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/fyannk/pgToolBox/internal/console/mcpleader"
 	"github.com/fyannk/pgToolBox/internal/console/sse"
 )
 
@@ -51,5 +52,25 @@ func TestMCPRoutesBypassCSRFOnly(t *testing.T) {
 	// Without an endpoint, /mcp is an ordinary path behind the CSRF check.
 	if w := get(testServer(t, &Readiness{}).Handler(), http.MethodPost, "/mcp", nil); w.Code != http.StatusForbidden {
 		t.Errorf("POST /mcp with MCP off = %d", w.Code)
+	}
+}
+
+// With MCP_LEASE, a replica that does not lead refuses the MCP paths
+// before anything else answers them, with the security headers, and
+// serves the rest.
+func TestTheMCPGateWrapsTheMCPRoutes(t *testing.T) {
+	t.Parallel()
+	api := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, `{}`) })
+	follower := mcpleader.New(mcpleader.Options{}) // never runs: never leads
+	h := New(Options{Auth: testAuth(t), API: api, UI: api, Ready: &Readiness{}, Broker: sse.NewBroker(), MCP: mounter{}, MCPGate: follower.Gate}).Handler()
+	w := get(h, http.MethodPost, "/mcp", nil)
+	if w.Code != http.StatusServiceUnavailable || w.Header().Get("Retry-After") != mcpleader.RetryAfter {
+		t.Fatalf("POST /mcp on a follower = %d %v", w.Code, w.Header())
+	}
+	if w.Header().Get("X-Content-Type-Options") != "nosniff" {
+		t.Errorf("the refusal lost the security headers: %v", w.Header())
+	}
+	if w := get(h, http.MethodGet, "/healthz-not-mcp", nil); w.Code == http.StatusServiceUnavailable {
+		t.Errorf("a path outside MCP was refused: %d", w.Code)
 	}
 }

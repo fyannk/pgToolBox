@@ -31,6 +31,7 @@ import (
 	"github.com/fyannk/pgToolBox/internal/console/auth"
 	"github.com/fyannk/pgToolBox/internal/console/authz"
 	"github.com/fyannk/pgToolBox/internal/console/mcp"
+	"github.com/fyannk/pgToolBox/internal/console/mcpleader"
 	"github.com/fyannk/pgToolBox/internal/console/mcpoauth"
 	"github.com/fyannk/pgToolBox/internal/console/ops"
 	"github.com/fyannk/pgToolBox/internal/console/sse"
@@ -108,6 +109,12 @@ type MCPOptions struct {
 	// only when set (MCP_OAUTH_CLIENT_METADATA_HOSTS).
 	ClientMetadataDocuments bool
 	ClientMetadataHosts     []string
+	// Lease, EndpointSlices and PodIP elect the one replica that serves
+	// MCP (MCP_LEASE, MCP_ENDPOINT_SLICES, POD_IP); an empty Lease lets
+	// every replica serve it.
+	Lease          string
+	EndpointSlices []string
+	PodIP          string
 	// Docs is the embedded documentation; nil serves no docs tools.
 	Docs mcp.Docs
 }
@@ -202,12 +209,18 @@ func RunApp(ctx context.Context, o AppOptions) error {
 		oauthServer *mcpoauth.Server
 		setup       *assistantSetup
 		index       GrantIndex
+		mcpLeader   *mcpleader.Leader
 	)
 	if o.MCP.Enabled {
 		// One index for the grants and the write tools' confirmations:
 		// both spend single-use values every replica must see.
 		index = grantIndex(o)
-		if oauthServer, err = newOAuthServer(o, authHandler, index); err != nil {
+		if o.MCP.Lease != "" {
+			if mcpLeader, err = newMCPLeader(o, console, index); err != nil {
+				return err
+			}
+		}
+		if oauthServer, err = newOAuthServer(o, authHandler, mcpLeader, index); err != nil {
 			return err
 		}
 		setup = &assistantSetup{}
@@ -253,6 +266,11 @@ func RunApp(ctx context.Context, o AppOptions) error {
 	for _, r := range o.Runners {
 		sup.Add(r)
 	}
+	var gate func(http.Handler) http.Handler
+	if mcpLeader != nil {
+		sup.Add(Runner{Name: "mcp-leader", Run: mcpLeader.Run})
+		gate = mcpLeader.Gate
+	}
 	ready := &Readiness{}
 	ready.Add("revocation-list", func() error {
 		if !revocations.Synced() {
@@ -272,7 +290,7 @@ func RunApp(ctx context.Context, o AppOptions) error {
 		Addr: o.ListenAddr, ProbeAddr: o.ProbeAddr, TLSCertFile: o.TLSCertFile, TLSKeyFile: o.TLSKeyFile,
 		Auth: authHandler, PublicURL: o.Auth.PublicURL, API: apiHandler, UI: o.UI,
 		Ready: ready, Broker: o.Broker, Metrics: metrics, Log: o.Log, MCP: mcpEndpoint, Tracing: o.Tracing,
-		ShutdownDelay: o.ShutdownDelay,
+		ShutdownDelay: o.ShutdownDelay, MCPGate: gate,
 	})
 	return serveThenStop(ctx, sup.Run, srv.Run)
 }
