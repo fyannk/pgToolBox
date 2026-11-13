@@ -82,6 +82,10 @@ func TestBacklogOnsetFromTheQuietSweep(t *testing.T) {
 			wantCode: "recovery.segment.archiveBacklog",
 		},
 		{
+			name: "a console that just started: the count is not judged, a day's band", ready: 40, interval: 30 * time.Second,
+			wantCode: "recovery.segment.archiveBacklog",
+		},
+		{
 			// An empty sweep after the scan says nothing of what the scan saw.
 			name: "the empty sweep after the scan is not used", ready: 6, interval: 30 * time.Second, frontier: 25 * time.Minute, scanned: now.Add(-20 * time.Minute),
 			earlier:  append(append([]float64{0}, slices.Repeat([]float64{1}, 100)...), 0, 5),

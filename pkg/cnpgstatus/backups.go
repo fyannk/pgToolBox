@@ -241,6 +241,10 @@ const (
 	// ArchivingReasonHibernated: the Cluster is hibernated, so no
 	// primary runs to read or to archive.
 	ArchivingReasonHibernated = "Hibernated"
+	// ArchivingReasonBacklogUnconfirmed: readyWalFiles is at the backlog
+	// threshold, but the console has too few sweeps to tell a backlog
+	// that persists from a burst (ArchiveBacklog.Unconfirmed).
+	ArchivingReasonBacklogUnconfirmed = "ArchiveBacklogUnconfirmed"
 	// ArchivingReasonBacklogNotReported: the archiving instance is a
 	// designated primary (ArchiverLive.ReadyNotReported), which does not
 	// report readyWalFiles, so a backlog cannot be seen.
@@ -292,10 +296,11 @@ type ArchivingReading struct {
 //     (isArchivingWAL=false, no backlog) is not made worse than ok by
 //     that alone. With the primary unread: unknown PrimaryUnread, with
 //     the condition's age (the condition alone confirms nothing now),
-//     or inactive Hibernated when the Cluster is hibernated. A
-//     designated primary (a replica cluster's archiver) reports no
-//     readyWalFiles, so no backlog can be seen on it: unknown
-//     ArchiveBacklogNotReported, never ok.
+//     or inactive Hibernated when the Cluster is hibernated. A count at
+//     the backlog threshold that too few sweeps saw to judge is unknown
+//     ArchiveBacklogUnconfirmed, never ok. A designated primary (a
+//     replica cluster's archiver) reports no readyWalFiles, so no backlog
+//     can be seen on it: unknown ArchiveBacklogNotReported, never ok.
 //   - Condition False: critical, unless the live archiver shows a
 //     success after the failure: warning (the condition catches up on
 //     the next archive).
@@ -338,6 +343,15 @@ func ArchivingOf(c *cnpgv1.Cluster, primary *ArchiverLive, primaryMasked, notChe
 	b := ArchiveBacklogOf(c, primary)
 	backlog := b.Behind()
 	hibernated := primary == nil && Hibernation(c).State == HibernationHibernated
+	unconfirmed := func(reading ArchivingReading) ArchivingReading {
+		if b.Unconfirmed == 0 {
+			return reading
+		}
+		reading.Class = ClassUnknown
+		reading.Reason = ArchivingReasonBacklogUnconfirmed
+		reading.Message = strconv.Itoa(b.Unconfirmed) + " WAL segments are waiting to be archived on the primary, and the console has not swept it long enough to tell a backlog that persists from a burst"
+		return reading
+	}
 	notReported := primary != nil && primary.ReadyNotReported
 	notReportedReading := func(reading ArchivingReading) ArchivingReading {
 		reading.Class = ClassUnknown
@@ -372,7 +386,7 @@ func ArchivingOf(c *cnpgv1.Cluster, primary *ArchiverLive, primaryMasked, notChe
 			if backlog {
 				return backlogReading(ArchivingReading{})
 			}
-			return ArchivingReading{Class: ClassOK, Reason: ArchivingReasonLiveArchiving, Message: "the primary reports WAL archiving; the operator has not written ContinuousArchiving yet"}
+			return unconfirmed(ArchivingReading{Class: ClassOK, Reason: ArchivingReasonLiveArchiving, Message: "the primary reports WAL archiving; the operator has not written ContinuousArchiving yet"})
 		}
 		if hibernated {
 			return ArchivingReading{Class: ClassInactive, Reason: ArchivingReasonHibernated, Message: hibernatedMessage}
@@ -422,6 +436,8 @@ func ArchivingOf(c *cnpgv1.Cluster, primary *ArchiverLive, primaryMasked, notChe
 			reading = notReportedReading(reading)
 		case backlog:
 			reading = backlogReading(reading)
+		default:
+			reading = unconfirmed(reading)
 		}
 	case statusFalse:
 		reading.Class = ClassCritical

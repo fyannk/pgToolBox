@@ -142,6 +142,10 @@ type ArchiveBacklog struct {
 	// ParallelismKnown says whether Threshold follows the archiver's
 	// declared parallelism; when not, the backlog must also grow.
 	ParallelismKnown bool `json:"parallelismKnown"`
+	// Unconfirmed is the current readyWalFiles when it is at the
+	// threshold but the sweeps kept are too few to tell a persistent
+	// backlog from a burst (a console that just started); 0 otherwise.
+	Unconfirmed int `json:"unconfirmed,omitempty"`
 	// StalledSince is set when the parallelism is not known and the count
 	// held at the threshold without growing, but the archiver archived
 	// nothing over those sweeps (Behind): the oldest of them, which its
@@ -164,9 +168,8 @@ func (b ArchiveBacklog) Behind() bool { return b.Segments > 0 }
 // began, or that held at the threshold while the archiver archived
 // nothing (its last_archived_time is not after the oldest of them, or it
 // reports none: StalledSince), since a hung archiver on a primary that
-// writes little holds a steady count. A run too short is no backlog yet,
-// whatever the sweeps before it (a console that just started, a new
-// primary): it is judged once the sweeps are kept. A nil reading is no
+// writes little holds a steady count. A run too short that reaches back to the oldest sweep kept is
+// Unconfirmed: nothing kept says it is a burst. A nil reading is no
 // backlog; a reading that does not report readyWalFiles (a designated
 // primary) is NotReported, never a count.
 func ArchiveBacklogOf(c *cnpgv1.Cluster, live *ArchiverLive) ArchiveBacklog {
@@ -185,12 +188,14 @@ func ArchiveBacklogOf(c *cnpgv1.Cluster, live *ArchiverLive) ArchiveBacklog {
 	}
 	// run holds the readings newest first, starting with the current one.
 	run := []ReadySample{{At: live.ObservedAt, Files: &live.ReadyWALFiles}}
+	reachedOldest := true
 	for i := len(live.Earlier) - 1; i >= 0; i-- {
 		s := live.Earlier[i]
 		if s.Files == nil {
 			continue
 		}
 		if *s.Files < threshold {
+			reachedOldest = false
 			break
 		}
 		run = append(run, s)
@@ -200,6 +205,9 @@ func ArchiveBacklogOf(c *cnpgv1.Cluster, live *ArchiverLive) ArchiveBacklog {
 		need = BacklogSweepsUnknownParallelism
 	}
 	if len(run) < need {
+		if reachedOldest {
+			out.Unconfirmed = live.ReadyWALFiles
+		}
 		return out
 	}
 	if !known && !growing(run[:need]) {

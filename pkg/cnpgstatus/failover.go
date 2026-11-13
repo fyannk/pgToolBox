@@ -51,7 +51,7 @@ import (
 //     (ErrQuorumCheckFailed).
 //
 // v1.30.0 has neither fenced rule nor the second quorum check; the
-// console requires 1.30.1 or later and follows its election.
+// rehearsal needs 1.30.1 or later and follows its election.
 //
 // The console's view of an instance is its own sweep, not the
 // operator's: an instance the console could not read is "not known",

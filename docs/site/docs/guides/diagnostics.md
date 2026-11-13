@@ -199,7 +199,7 @@ flowchart TB
 
 A claim mined from an operator's source is a claim about specific releases, so
 catalog rules carry version pins that state what was actually verified: CloudNativePG
-**1.30.0 and 1.30.1**, the supported minor (pgToolBox supports CloudNativePG 1.30.1 and
+**1.30.0 and 1.30.1**, the supported minor (pgToolBox supports CloudNativePG 1.30 and
 later). On any other release, 1.29 included, the pinned rules answer "does not
 apply". Versions are **observed, never configured**: CloudNativePG's
 from the operator image the instance pods run, PostgreSQL's from the Cluster status,

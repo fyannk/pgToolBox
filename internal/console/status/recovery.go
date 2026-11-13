@@ -124,8 +124,9 @@ type recoveryFacts struct {
 	// unread the condition cannot change: the reason gives its age.
 	failingSince *time.Time
 	// backlog is the archiver's readyWalFiles when the backlog persists
-	// across sweeps (cnpgstatus.ArchiveBacklogOf Segments); 0 otherwise or
-	// when unread.
+	// across sweeps, or is at the threshold with too few sweeps kept to
+	// judge it (cnpgstatus.ArchiveBacklogOf, Segments or Unconfirmed); 0
+	// otherwise or when unread.
 	backlog int
 	// archiverUnread: the archiving fact rests on no reading of the
 	// primary's archiver (archiverUnread); hibernated or notReported (a
@@ -332,7 +333,12 @@ func recoveryFactsOf(g *gathered, arch viewmodel.Archiving, now time.Time) recov
 	// own reason in the archiving fact, not Hibernated: the Cluster's
 	// state says it sleeps, as cnpgstatus.Archiving reads it.
 	f.hibernated = f.hibernated || (f.primaryUnread && cnpgstatus.Hibernation(g.cluster).State == cnpgstatus.HibernationHibernated)
-	f.backlog = cnpgstatus.ArchiveBacklogOf(g.cluster, live).Segments
+	switch b := cnpgstatus.ArchiveBacklogOf(g.cluster, live); {
+	case b.Behind():
+		f.backlog = b.Segments
+	case b.Unconfirmed > 0:
+		f.backlog = b.Unconfirmed
+	}
 	primary := g.cluster.Status.CurrentPrimary
 	promoted := promotedAt(g)
 	if f.backlog > 0 || f.archiverUnread {
@@ -1666,7 +1672,9 @@ func purgeRead(in timelineInput) *time.Time {
 // the read. False when no Backup ended or began since, or the repository
 // is not pgBackRest's (Barman's retention is a recovery window, which
 // the clock bounds in listedPurgeBand). A pgbackrest backup run outside
-// CloudNativePG, which has no Backup object, is not counted.
+// CloudNativePG has no Backup object: the listing shows its expire may
+// still have been pending at the read (expirePending), which bands the
+// same way.
 func sinceReadBand(in timelineInput, spans []interval, first, last time.Time) (time.Duration, bool) {
 	if !in.pgBackRest {
 		return 0, false
@@ -1677,13 +1685,13 @@ func sinceReadBand(in timelineInput, spans []interval, first, last time.Time) (t
 	}
 	window := max(last.Sub(first), 0)
 	n, known := in.facts.backupsSince(*read)
-	if known && (n == 0 || !in.policy.unknown && in.policy.fulls == 0 && in.policy.archive == 0 && in.retainedFor <= 0) {
-		// Nothing ran expire since, or the policy expires nothing.
-		return 0, false
-	}
 	types := map[string]bool{evidencev1alpha1.PGBackRestFull: true}
 	if in.policy.archive > 0 {
 		types = in.policy.archiveTypes
+	}
+	if known && (n == 0 && !expirePending(in, spans, *read) || !in.policy.unknown && in.policy.fulls == 0 && in.policy.archive == 0 && in.retainedFor <= 0) {
+		// Nothing ran expire since, or the policy expires nothing.
+		return 0, false
 	}
 	switch {
 	case !known, in.policy.unknown,
@@ -1701,6 +1709,49 @@ func sinceReadBand(in timelineInput, spans []interval, first, last time.Time) (t
 		return window, true
 	}
 	return min(max(kept.Sub(first), 0), window), true
+}
+
+// expirePending says the listing holds more than its retention keeps (an
+// expire after the listing removes the excess: more fulls than the full
+// retention, WAL drawn across the archive retention's cut), or a backup that ended
+// within one refresh interval before the read, whose expire may have run
+// after the listing under a time-based retention. Either is a backup
+// that may run expire after the read, CloudNativePG's or not.
+func expirePending(in timelineInput, spans []interval, read time.Time) bool {
+	if k := in.policy.fulls; k > 0 {
+		if fulls, ok := backupAnchors(in, spans, map[string]bool{evidencev1alpha1.PGBackRestFull: true}); !ok || len(fulls) > k {
+			return true
+		}
+	}
+	if a := in.policy.archive; a > 0 {
+		// Archive retention removes the WAL before the A-th newest backup
+		// of its type: WAL still drawn across that cut is pending.
+		kept, ok := backupAnchors(in, spans, in.policy.archiveTypes)
+		if !ok {
+			return true
+		}
+		if len(kept) > a {
+			cut := kept[len(kept)-a]
+			for _, sp := range spans {
+				if sp.from.Before(cut) && sp.to.After(cut) {
+					return true
+				}
+			}
+		}
+	}
+	if in.retainedFor > 0 && in.refresh > 0 {
+		for _, b := range in.backups {
+			if b.EndAt != nil && !b.EndAt.UTC().Before(read.Add(-in.refresh)) {
+				return true
+			}
+		}
+		for _, sp := range spans {
+			if !sp.from.Before(read.Add(-in.refresh)) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // backupAnchors are the listed pgBackRest backups of types, one anchor

@@ -359,6 +359,45 @@ func TestR18ExpireAfterScanStart(t *testing.T) {
 	}
 }
 
+// TestExpirePendingWithoutBackupObject (arbiter, WP4): a pgbackrest
+// backup run outside CloudNativePG has no Backup object, so nothing is
+// counted since the read; a listing read between its save and its
+// expire still bands to the newest full.
+func TestExpirePendingWithoutBackupObject(t *testing.T) {
+	day := 24 * time.Hour
+	read := now.Add(-10 * time.Minute)
+	first := read.Add(-28 * day)
+	weekly := []time.Time{first, first.Add(7 * day), first.Add(14 * day), first.Add(21 * day)}
+	fresh := append(append([]time.Time{}, weekly...), read.Add(-2*time.Minute))
+	for _, c := range []struct {
+		name        string
+		stops       []time.Time
+		policy      pgbackrestPolicy
+		retainedFor time.Duration
+		want        time.Duration // 0: no band
+	}{
+		{"count: one full more than retention is pending", fresh, pgbackrestPolicy{fulls: 4}, 0, fresh[4].Sub(first)},
+		{"count: the listing at retention is steady", weekly, pgbackrestPolicy{fulls: 4}, 0, 0},
+		{"time: a backup within one refresh of the read", fresh, pgbackrestPolicy{}, 21 * day, fresh[4].Sub(first)},
+		{"time: no backup within one refresh of the read", weekly, pgbackrestPolicy{}, 21 * day, 0},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			in, spans := fullsInput(read, c.stops, read)
+			in.policy, in.retainedFor = c.policy, c.retainedFor
+			band, ok := sinceReadBand(in, spans, first, read)
+			if c.want == 0 {
+				if ok {
+					t.Fatalf("band %s, want none", band)
+				}
+				return
+			}
+			if !ok || band != c.want {
+				t.Fatalf("band %s (%v), want %s", band, ok, c.want)
+			}
+		})
+	}
+}
+
 // chainBackup is one backup of TestPurgeBandHoldsOverChains: its type,
 // stop time and the index of the full it depends on.
 type chainBackup struct {

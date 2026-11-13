@@ -311,7 +311,7 @@ func TestFormerEvidenceOfOtherTimelinesChangesNothing(t *testing.T) {
 // gaps, so an instance promoted again would join its earlier term's
 // readings (WAL waiting before it was demoted) to the current one across
 // its time as a standby. Only the sweeps since the promotion count: one
-// reading at the threshold since then is not a backlog.
+// reading at the threshold since then is unconfirmed, not a backlog.
 func TestBacklogReadsOnlyTheCurrentTerm(t *testing.T) {
 	promoted := now.Add(-time.Hour)
 	read := now.Add(-10 * time.Second)
@@ -332,8 +332,8 @@ func TestBacklogReadsOnlyTheCurrentTerm(t *testing.T) {
 		}},
 	}
 	b := cnpgstatus.ArchiveBacklogOf(g.cluster, primaryArchiver(g))
-	if b.Behind() {
-		t.Fatalf("backlog %+v, want the current term's single reading not judged a backlog", b)
+	if b.Behind() || b.Unconfirmed != 9 {
+		t.Fatalf("backlog %+v, want the current term's single reading unconfirmed", b)
 	}
 	c.Status.CurrentPrimaryTimestamp = promoted.Add(-4 * time.Hour).Format(time.RFC3339Nano)
 	if b := cnpgstatus.ArchiveBacklogOf(g.cluster, primaryArchiver(g)); !b.Behind() {

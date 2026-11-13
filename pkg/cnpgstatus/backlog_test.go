@@ -77,58 +77,59 @@ func TestArchiveBacklogOf(t *testing.T) {
 	}
 	barman := plugin(BarmanCloudPlugin)
 	tests := []struct {
-		name      string
-		cluster   *cnpgv1.Cluster
-		live      *ArchiverLive
-		segments  int
-		threshold int
-		known     bool
+		name        string
+		cluster     *cnpgv1.Cluster
+		live        *ArchiverLive
+		segments    int
+		threshold   int
+		known       bool
+		unconfirmed int
 	}{
-		{"no reading", inTree(0), nil, 0, 3, true},
-		{"below the threshold", inTree(0), &ArchiverLive{ReadyWALFiles: 2, Earlier: readyRun(9, 9)}, 0, 3, true},
-		{"one sweep at the threshold (a burst)", inTree(0), &ArchiverLive{ReadyWALFiles: 7, Earlier: readyRun(0, 1)}, 0, 3, true},
-		{"two sweeps at the threshold: a backlog", inTree(0), &ArchiverLive{ReadyWALFiles: 7, Earlier: readyRun(0, 5)}, 7, 3, true},
-		{"two sweeps after one file", inTree(0), &ArchiverLive{ReadyWALFiles: 7, Earlier: readyRun(1, 5)}, 7, 3, true},
-		{"[0,1,2,3] then 3: a backlog", inTree(0), &ArchiverLive{ReadyWALFiles: 3, Earlier: readyRun(0, 1, 2, 3)}, 3, 3, true},
-		{"a failed read neither extends nor breaks the run", inTree(0), &ArchiverLive{ReadyWALFiles: 7, Earlier: readyRun(0, -1, 4, -1)}, 7, 3, true},
-		{"[low, failed, high] then high", inTree(0), &ArchiverLive{ReadyWALFiles: 6, Earlier: readyRun(1, -1, 5)}, 6, 3, true},
-		{"the run reaches the oldest sweep kept", inTree(0), &ArchiverLive{ReadyWALFiles: 7, Earlier: readyRun(4, 5)}, 7, 3, true},
-		{"a console that just started: not judged yet", inTree(0), &ArchiverLive{ReadyWALFiles: 40}, 0, 3, true},
-		{"only failed reads kept: not judged yet", inTree(0), &ArchiverLive{ReadyWALFiles: 40, Earlier: readyRun(-1, -1)}, 0, 3, true},
-		{"in-tree maxParallel 8: eight in flight twice is not a backlog", inTree(8), &ArchiverLive{ReadyWALFiles: 8, Earlier: readyRun(0, 8)}, 0, 9, true},
-		{"barman plugin maxParallel 8: six ready on one sweep", barman, &ArchiverLive{ReadyWALFiles: 6, Earlier: readyRun(2, 1), PluginMaxParallel: ptrInt(8)}, 0, 9, true},
-		{"barman plugin maxParallel 8: six ready on every sweep", barman, &ArchiverLive{ReadyWALFiles: 6, Earlier: readyRun(2, 6, 8, 5), PluginMaxParallel: ptrInt(8)}, 0, 9, true},
-		{"barman plugin maxParallel 8: a persistent backlog above it", barman, &ArchiverLive{ReadyWALFiles: 14, Earlier: readyRun(0, 3, 10, 12), PluginMaxParallel: ptrInt(8)}, 14, 9, true},
-		{"barman plugin, ObjectStore unread: steady handful", barman, &ArchiverLive{ReadyWALFiles: 6, Earlier: readyRun(0, 5, 7, 6), LastArchivedAt: archivedAgo(10 * time.Second)}, 0, 3, false},
+		{"no reading", inTree(0), nil, 0, 3, true, 0},
+		{"below the threshold", inTree(0), &ArchiverLive{ReadyWALFiles: 2, Earlier: readyRun(9, 9)}, 0, 3, true, 0},
+		{"one sweep at the threshold (a burst)", inTree(0), &ArchiverLive{ReadyWALFiles: 7, Earlier: readyRun(0, 1)}, 0, 3, true, 0},
+		{"two sweeps at the threshold: a backlog", inTree(0), &ArchiverLive{ReadyWALFiles: 7, Earlier: readyRun(0, 5)}, 7, 3, true, 0},
+		{"two sweeps after one file", inTree(0), &ArchiverLive{ReadyWALFiles: 7, Earlier: readyRun(1, 5)}, 7, 3, true, 0},
+		{"[0,1,2,3] then 3: a backlog", inTree(0), &ArchiverLive{ReadyWALFiles: 3, Earlier: readyRun(0, 1, 2, 3)}, 3, 3, true, 0},
+		{"a failed read neither extends nor breaks the run", inTree(0), &ArchiverLive{ReadyWALFiles: 7, Earlier: readyRun(0, -1, 4, -1)}, 7, 3, true, 0},
+		{"[low, failed, high] then high", inTree(0), &ArchiverLive{ReadyWALFiles: 6, Earlier: readyRun(1, -1, 5)}, 6, 3, true, 0},
+		{"the run reaches the oldest sweep kept", inTree(0), &ArchiverLive{ReadyWALFiles: 7, Earlier: readyRun(4, 5)}, 7, 3, true, 0},
+		{"a console that just started: unconfirmed, not ok", inTree(0), &ArchiverLive{ReadyWALFiles: 40}, 0, 3, true, 40},
+		{"only failed reads kept: unconfirmed", inTree(0), &ArchiverLive{ReadyWALFiles: 40, Earlier: readyRun(-1, -1)}, 0, 3, true, 40},
+		{"in-tree maxParallel 8: eight in flight twice is not a backlog", inTree(8), &ArchiverLive{ReadyWALFiles: 8, Earlier: readyRun(0, 8)}, 0, 9, true, 0},
+		{"barman plugin maxParallel 8: six ready on one sweep", barman, &ArchiverLive{ReadyWALFiles: 6, Earlier: readyRun(2, 1), PluginMaxParallel: ptrInt(8)}, 0, 9, true, 0},
+		{"barman plugin maxParallel 8: six ready on every sweep", barman, &ArchiverLive{ReadyWALFiles: 6, Earlier: readyRun(2, 6, 8, 5), PluginMaxParallel: ptrInt(8)}, 0, 9, true, 0},
+		{"barman plugin maxParallel 8: a persistent backlog above it", barman, &ArchiverLive{ReadyWALFiles: 14, Earlier: readyRun(0, 3, 10, 12), PluginMaxParallel: ptrInt(8)}, 14, 9, true, 0},
+		{"barman plugin, ObjectStore unread: steady handful", barman, &ArchiverLive{ReadyWALFiles: 6, Earlier: readyRun(0, 5, 7, 6), LastArchivedAt: archivedAgo(10 * time.Second)}, 0, 3, false, 0},
 		// Round 7, DBA P2-5: a steady count over the sweeps while nothing
 		// is archived (last_archived_time not after the oldest of them, or
 		// none reported) is a hung archiver, not a healthy parallel one.
-		{"barman plugin, ObjectStore unread: steady, nothing archived since", barman, &ArchiverLive{ReadyWALFiles: 6, Earlier: readyRun(0, 5, 7, 6), LastArchivedAt: archivedAgo(10 * time.Minute)}, 6, 3, false},
-		{"barman plugin, ObjectStore unread: steady, archived at the oldest sweep", barman, &ArchiverLive{ReadyWALFiles: 6, Earlier: readyRun(0, 5, 7, 6), LastArchivedAt: archivedAgo(60 * time.Second)}, 6, 3, false},
+		{"barman plugin, ObjectStore unread: steady, nothing archived since", barman, &ArchiverLive{ReadyWALFiles: 6, Earlier: readyRun(0, 5, 7, 6), LastArchivedAt: archivedAgo(10 * time.Minute)}, 6, 3, false, 0},
+		{"barman plugin, ObjectStore unread: steady, archived at the oldest sweep", barman, &ArchiverLive{ReadyWALFiles: 6, Earlier: readyRun(0, 5, 7, 6), LastArchivedAt: archivedAgo(60 * time.Second)}, 6, 3, false, 0},
 		// CNPG P3-3: last_archived_time is the instance's clock. Without
 		// the instance's own reading at the oldest sweep, an archive counts
 		// only once it is more than one sweep interval after that sweep,
 		// so a skew within one interval invents no progress.
-		{"barman plugin, ObjectStore unread: steady, archived within one interval after the oldest sweep", barman, &ArchiverLive{ReadyWALFiles: 6, Earlier: readyRun(0, 5, 7, 6), LastArchivedAt: archivedAgo(59 * time.Second)}, 6, 3, false},
-		{"barman plugin, ObjectStore unread: steady, archived over one interval after the oldest sweep", barman, &ArchiverLive{ReadyWALFiles: 6, Earlier: readyRun(0, 5, 7, 6), LastArchivedAt: archivedAgo(29 * time.Second)}, 0, 3, false},
+		{"barman plugin, ObjectStore unread: steady, archived within one interval after the oldest sweep", barman, &ArchiverLive{ReadyWALFiles: 6, Earlier: readyRun(0, 5, 7, 6), LastArchivedAt: archivedAgo(59 * time.Second)}, 6, 3, false, 0},
+		{"barman plugin, ObjectStore unread: steady, archived over one interval after the oldest sweep", barman, &ArchiverLive{ReadyWALFiles: 6, Earlier: readyRun(0, 5, 7, 6), LastArchivedAt: archivedAgo(29 * time.Second)}, 0, 3, false, 0},
 		// With the instance's last_archived_time at the oldest sweep kept,
 		// both are on its clock: a skew of an hour changes nothing.
-		{"steady, same clock: archived since the oldest sweep", barman, &ArchiverLive{ReadyWALFiles: 6, Earlier: withArchived(readyRun(0, 5, 7, 6), archivedAgo(2*time.Hour)), LastArchivedAt: archivedAgo(119 * time.Minute)}, 0, 3, false},
-		{"steady, same clock: nothing archived since the oldest sweep", barman, &ArchiverLive{ReadyWALFiles: 6, Earlier: withArchived(readyRun(0, 5, 7, 6), archivedAgo(-time.Hour)), LastArchivedAt: archivedAgo(-time.Hour)}, 6, 3, false},
+		{"steady, same clock: archived since the oldest sweep", barman, &ArchiverLive{ReadyWALFiles: 6, Earlier: withArchived(readyRun(0, 5, 7, 6), archivedAgo(2*time.Hour)), LastArchivedAt: archivedAgo(119 * time.Minute)}, 0, 3, false, 0},
+		{"steady, same clock: nothing archived since the oldest sweep", barman, &ArchiverLive{ReadyWALFiles: 6, Earlier: withArchived(readyRun(0, 5, 7, 6), archivedAgo(-time.Hour)), LastArchivedAt: archivedAgo(-time.Hour)}, 6, 3, false, 0},
 		// CNPG P3-b: the oldest sweep read the archiver with nothing
 		// archived yet; its first archive since is progress, even within
 		// one interval of that sweep.
-		{"steady, first archive since a sweep that read none", barman, &ArchiverLive{ReadyWALFiles: 6, Earlier: archivedNone(readyRun(0, 5, 7, 6)), LastArchivedAt: archivedAgo(59 * time.Second)}, 0, 3, false},
-		{"steady, still nothing archived since a sweep that read none", barman, &ArchiverLive{ReadyWALFiles: 6, Earlier: archivedNone(readyRun(0, 5, 7, 6))}, 6, 3, false},
-		{"pgBackRest plugin: steady, never archived", plugin(PgBackRestDaliboPlugin), &ArchiverLive{ReadyWALFiles: 5, Earlier: readyRun(0, 5, 5)}, 5, 3, false},
-		{"barman plugin, ObjectStore unread: two sweeps are not enough", barman, &ArchiverLive{ReadyWALFiles: 8, Earlier: readyRun(0, 6)}, 0, 3, false},
-		{"barman plugin, ObjectStore unread: two sweeps kept, not yet judged", barman, &ArchiverLive{ReadyWALFiles: 8, Earlier: readyRun(6)}, 0, 3, false},
-		{"barman plugin, ObjectStore unread: growing over three sweeps", barman, &ArchiverLive{ReadyWALFiles: 9, Earlier: readyRun(0, 6, 6)}, 9, 3, false},
-		{"pgBackRest plugin: parallelism never known", plugin(PgBackRestDaliboPlugin), &ArchiverLive{ReadyWALFiles: 5, Earlier: readyRun(0, 5, 5), LastArchivedAt: archivedAgo(5 * time.Second)}, 0, 3, false},
+		{"steady, first archive since a sweep that read none", barman, &ArchiverLive{ReadyWALFiles: 6, Earlier: archivedNone(readyRun(0, 5, 7, 6)), LastArchivedAt: archivedAgo(59 * time.Second)}, 0, 3, false, 0},
+		{"steady, still nothing archived since a sweep that read none", barman, &ArchiverLive{ReadyWALFiles: 6, Earlier: archivedNone(readyRun(0, 5, 7, 6))}, 6, 3, false, 0},
+		{"pgBackRest plugin: steady, never archived", plugin(PgBackRestDaliboPlugin), &ArchiverLive{ReadyWALFiles: 5, Earlier: readyRun(0, 5, 5)}, 5, 3, false, 0},
+		{"barman plugin, ObjectStore unread: two sweeps are not enough", barman, &ArchiverLive{ReadyWALFiles: 8, Earlier: readyRun(0, 6)}, 0, 3, false, 0},
+		{"barman plugin, ObjectStore unread: two sweeps kept, unconfirmed", barman, &ArchiverLive{ReadyWALFiles: 8, Earlier: readyRun(6)}, 0, 3, false, 8},
+		{"barman plugin, ObjectStore unread: growing over three sweeps", barman, &ArchiverLive{ReadyWALFiles: 9, Earlier: readyRun(0, 6, 6)}, 9, 3, false, 0},
+		{"pgBackRest plugin: parallelism never known", plugin(PgBackRestDaliboPlugin), &ArchiverLive{ReadyWALFiles: 5, Earlier: readyRun(0, 5, 5), LastArchivedAt: archivedAgo(5 * time.Second)}, 0, 3, false, 0},
 		// CloudNativePG's archiver is the isWALArchiver plugin, not the
 		// first backup plugin: a backups-only barman-cloud entry with its
 		// ObjectStore at maxParallel 16 does not raise pgBackRest's threshold.
-		{"barman backups only, pgBackRest archives: the growth rule at 3", mixed(), &ArchiverLive{ReadyWALFiles: 10, Earlier: readyRun(0, 6, 8), PluginMaxParallel: ptrInt(16)}, 10, 3, false},
+		{"barman backups only, pgBackRest archives: the growth rule at 3", mixed(), &ArchiverLive{ReadyWALFiles: 10, Earlier: readyRun(0, 6, 8), PluginMaxParallel: ptrInt(16)}, 10, 3, false, 0},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -136,8 +137,8 @@ func TestArchiveBacklogOf(t *testing.T) {
 				tt.live.ObservedAt = backlogNow
 			}
 			got := ArchiveBacklogOf(tt.cluster, tt.live)
-			if got.Segments != tt.segments || got.Threshold != tt.threshold || got.ParallelismKnown != tt.known {
-				t.Errorf("ArchiveBacklogOf = %+v, want segments %d threshold %d known %v", got, tt.segments, tt.threshold, tt.known)
+			if got.Segments != tt.segments || got.Threshold != tt.threshold || got.ParallelismKnown != tt.known || got.Unconfirmed != tt.unconfirmed {
+				t.Errorf("ArchiveBacklogOf = %+v, want segments %d threshold %d known %v unconfirmed %d", got, tt.segments, tt.threshold, tt.known, tt.unconfirmed)
 			}
 			if got.Behind() != (tt.segments > 0) {
 				t.Errorf("Behind() = %v", got.Behind())
@@ -261,19 +262,28 @@ func TestArchivingUnreadPrimaryIsNotOK(t *testing.T) {
 	}
 }
 
-// TestArchivingTooFewSweeps: after a console restart or a failover a
-// count at the threshold is judged like any first reading at it, not as
-// a backlog until enough sweeps saw it.
-func TestArchivingTooFewSweeps(t *testing.T) {
+// TestArchivingTooFewSweepsIsNotOK: after a console restart a count at
+// the threshold is unknown until enough sweeps can judge it.
+func TestArchivingTooFewSweepsIsNotOK(t *testing.T) {
 	c := clusterWith(nil, cond(ConditionContinuousArchiving, "True", "ContinuousArchivingSuccess"))
 	c.Spec.Backup = &cnpgv1.BackupConfiguration{BarmanObjectStore: &cnpgv1.BarmanObjectStoreConfiguration{}}
 	live := &ArchiverLive{IsArchivingWAL: true, ReadyWALFiles: 500, ObservedAt: backlogNow}
-	if got := Archiving(c, live); got.Class != ClassOK {
+	if got := Archiving(c, live); got.Class != ClassUnknown || got.Reason != ArchivingReasonBacklogUnconfirmed || !strings.HasPrefix(got.Message, "500 ") {
 		t.Errorf("first sweep, 500 ready: %+v", got)
 	}
 	live.Earlier = readyRun(400)
 	if got := Archiving(c, live); got.Reason != ArchivingReasonBacklog {
 		t.Errorf("second sweep, still high: %+v", got)
+	}
+	live.Earlier, live.ReadyWALFiles = nil, 1
+	if got := Archiving(c, live); got.Class != ClassOK {
+		t.Errorf("first sweep, one ready: %+v", got)
+	}
+	noCondition := clusterWith(nil)
+	noCondition.Spec.Backup = c.Spec.Backup
+	live.ReadyWALFiles = 500
+	if got := Archiving(noCondition, live); got.Reason != ArchivingReasonBacklogUnconfirmed {
+		t.Errorf("no condition, first sweep, 500 ready: %+v", got)
 	}
 }
 
@@ -298,7 +308,7 @@ func TestArchivingDesignatedPrimaryIsNotOK(t *testing.T) {
 	if got := Archiving(c, live); got.Class != ClassUnknown || got.Reason != ArchivingReasonBacklogNotReported || !strings.Contains(got.Message, "designated primary") {
 		t.Errorf("designated primary, condition True: %+v", got)
 	}
-	if b := ArchiveBacklogOf(c, live); !b.NotReported || b.Behind() {
+	if b := ArchiveBacklogOf(c, live); !b.NotReported || b.Behind() || b.Unconfirmed != 0 {
 		t.Errorf("backlog of a designated primary: %+v", b)
 	}
 	noCondition := clusterWith(nil)
