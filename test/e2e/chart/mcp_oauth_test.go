@@ -33,6 +33,8 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/auth"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/modelcontextprotocol/go-sdk/oauthex"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // oauthAccessTTL is the console's MCP_OAUTH_ACCESS_TTL in this scenario:
@@ -308,6 +310,46 @@ func refusedEverywhere(t *testing.T, hosts map[string]string, base, token string
 	}
 }
 
+// failOverMCPLeader deletes the MCP Pod, the Lease holder, and waits
+// until its replacement holds the Lease and is Ready.
+func failOverMCPLeader(t *testing.T, c console) {
+	t.Helper()
+	lease := c.fullname() + "-mcp"
+	holder := func() string {
+		l, err := clientset.CoordinationV1().Leases(c.Namespace).Get(ctx(), lease, metav1.GetOptions{})
+		if err != nil || l.Spec.HolderIdentity == nil {
+			return ""
+		}
+		pod, _, _ := strings.Cut(*l.Spec.HolderIdentity, "_")
+		return pod
+	}
+	old := holder()
+	if old == "" {
+		t.Fatalf("nobody holds Lease %s", lease)
+	}
+	if err := clientset.CoreV1().Pods(c.Namespace).Delete(ctx(), old, metav1.DeleteOptions{}); err != nil {
+		t.Fatalf("delete the MCP Pod %s: %v", old, err)
+	}
+	eventually(t, 120*time.Second, "the MCP Pod's replacement holds the Lease and is Ready", func() error {
+		now := holder()
+		if now == "" || now == old {
+			return fmt.Errorf("Lease %s held by %q", lease, now)
+		}
+		pod, err := clientset.CoreV1().Pods(c.Namespace).Get(ctx(), now, metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		for _, cond := range pod.Status.Conditions {
+			if cond.Type == corev1.PodReady && cond.Status == corev1.ConditionTrue {
+				return nil
+			}
+		}
+		return fmt.Errorf("%s is not Ready", now)
+	})
+	// kube-proxy follows the Service's endpoints within a moment.
+	time.Sleep(3 * time.Second)
+}
+
 // consoleWarnings is what the console's pods logged at WARN or ERROR
 // level, for a failure's message (no token reaches these lines).
 func consoleWarnings(c console) string {
@@ -338,8 +380,8 @@ func (o *oauthConnection) liveToken(t *testing.T) (string, time.Time) {
 
 // mcpOAuthScenario: each person connects an MCP client through the
 // console's OAuth flow; it sees exactly the REST table; its access token
-// is refreshed after expiry; a disconnected grant is refused by every
-// replica.
+// is refreshed after expiry; when the MCP Pod goes, its replacement
+// serves the grants and refreshes; a disconnected grant is refused.
 func mcpOAuthScenario(t *testing.T, c console, dex *dexFixture, hosts map[string]string, base string, want map[string][]string) {
 	t.Helper()
 	for _, p := range consolePods(t, c) {
@@ -360,7 +402,6 @@ func mcpOAuthScenario(t *testing.T, c console, dex *dexFixture, hosts map[string
 		if st != http.StatusOK || strings.Join(got, ",") != strings.Join(rest, ",") || strings.Join(got, ",") != strings.Join(want[who], ",") {
 			t.Errorf("OAuth MCP: %s sees %v; the REST table %v (HTTP %d); want %v", who, got, rest, st, want[who])
 		}
-		// The grant index reaches the other replica within about a second.
 		eventually(t, 10*time.Second, who+"'s grant is listed", func() error {
 			if gs := o.grants(t, base); len(gs) != 1 || !strings.HasPrefix(gs[0].Client, "pgtoolbox e2e") ||
 				strings.Join(gs[0].Scopes, " ") != "mcp:read" {
@@ -420,7 +461,23 @@ func mcpOAuthScenario(t *testing.T, c console, dex *dexFixture, hosts map[string
 		t.Errorf("dba's browser past the first ID token's end, after a grant's sign-in: %v (HTTP %d); console warnings:\n%s", got, st, consoleWarnings(c))
 	}
 
-	// Disconnect the grant from the session page: every replica refuses it.
+	// The MCP Pod goes: its replacement takes the Lease and serves the
+	// grants it loads.
+	failOverMCPLeader(t, c)
+	if _, err := dba.session.ListTools(ctx(), nil); err != nil {
+		t.Errorf("tools/list on the new MCP Pod: %v", err)
+	}
+	stale, _ := dba.accessToken(t)
+	time.Sleep(oauthAccessTTL + 5*time.Second)
+	if got := dba.clusters(t); strings.Join(got, ",") != strings.Join(want["dba"], ",") {
+		t.Errorf("after the hand-over dba sees %v; console warnings:\n%s", got, consoleWarnings(c))
+	}
+	if renewed, _ := dba.accessToken(t); renewed == stale {
+		t.Fatal("the new MCP Pod did not refresh the access token")
+	}
+
+	// Disconnect the grant from the session page, on the new MCP Pod: the
+	// grant is refused.
 	gs := dba.grants(t, base)
 	if len(gs) != 1 {
 		t.Fatalf("dba's grants = %+v", gs)
