@@ -109,12 +109,11 @@ type MCPOptions struct {
 	// only when set (MCP_OAUTH_CLIENT_METADATA_HOSTS).
 	ClientMetadataDocuments bool
 	ClientMetadataHosts     []string
-	// Lease, EndpointSlices and PodIP elect the one replica that serves
-	// MCP (MCP_LEASE, MCP_ENDPOINT_SLICES, POD_IP); an empty Lease lets
-	// every replica serve it.
-	Lease          string
-	EndpointSlices []string
-	PodIP          string
+	// Lease elects the one replica that serves MCP (MCP_LEASE); an empty
+	// Lease lets every replica serve it. NotCandidate keeps this replica
+	// out of the election (MCP_CANDIDATE=false).
+	Lease        string
+	NotCandidate bool
 	// Docs is the embedded documentation; nil serves no docs tools.
 	Docs mcp.Docs
 }

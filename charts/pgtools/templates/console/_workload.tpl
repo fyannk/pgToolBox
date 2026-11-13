@@ -1,0 +1,960 @@
+{{/*
+The console's workload: its Deployment (a StatefulSet with persistent
+history), rendered by deployment.yaml, and with console.mcp.enabled the MCP
+Deployment, rendered by mcp.yaml from the same template with mcpPod set: one
+replica named <fullname>-mcp, the one candidate for the MCP Lease, with
+in-memory history and no digest delivery (both need the persistent history
+of the console's own replicas).
+*/}}
+{{- define "pgtools.console.workload" -}}
+{{- if .Values.console.enabled }}
+{{- $c := .Values.console }}
+{{- if and $c.mcp.writeTools (not $c.mcp.enabled) }}
+{{- fail "console.mcp.writeTools requires console.mcp.enabled" }}
+{{- end }}
+{{- $persistent := $c.history.persistent }}
+{{- $digest := $c.digest }}
+{{- $dl := $digest.delivery }}
+{{- $smtpPassword := and $dl.smtp.address $dl.smtp.username $dl.smtp.password.existingSecret }}
+{{- $delivers := or $dl.chat.existingSecret $dl.webhook.existingSecret $dl.smtp.address }}
+{{- if $delivers }}
+{{- if not $persistent }}
+{{- fail "console.digest.delivery needs console.history.persistent=true: a delivered digest links to its page, which in-memory history loses at the next restart" }}
+{{- end }}
+{{- if eq (toString $digest.enabled) "false" }}
+{{- fail "console.digest.delivery needs console.digest.enabled" }}
+{{- end }}
+{{- end }}
+{{- if $dl.smtp.address }}
+{{- $_ := required "console.digest.delivery.smtp.from is required with smtp.address" $dl.smtp.from }}
+{{- if not $dl.smtp.to }}
+{{- fail "console.digest.delivery.smtp.to needs at least one recipient" }}
+{{- end }}
+{{- if and $dl.smtp.username (not $dl.smtp.password.existingSecret) }}
+{{- fail "console.digest.delivery.smtp.username needs smtp.password.existingSecret" }}
+{{- end }}
+{{- end }}
+{{- if and $persistent (gt (len (include "pgtools.console.fullname" .)) 52) }}
+{{- /* A StatefulSet's pods carry a controller-revision-hash label of
+<name>-<10 characters>, and a label value has at most 63. */}}
+{{- fail "console.history.persistent: the console's name (console.fullnameOverride or the release name) must be at most 52 characters for its StatefulSet" }}
+{{- end }}
+{{- $oidc := eq $c.auth.provider "oidc" }}
+{{- $openshift := eq $c.auth.provider "openshift" }}
+{{- $osSecret := $c.auth.openshift.clientSecret.existingSecret }}
+{{- $prom := $c.prometheus }}
+{{- $promSecret := $prom.token.secret.name }}
+{{- $promProjected := $prom.token.projected.enabled }}
+{{- /* The drill seal's own keys, mounted only when drills are on. */}}
+{{- $drillSeal := and $c.restoreDrills.enabled ($c.restoreDrills.sealKey).existingSecret }}
+{{- if or $promSecret $promProjected $prom.caConfigMap $prom.namespaced $prom.range }}
+{{- $_ := required "console.prometheus.url is required by the other console.prometheus values" $prom.url }}
+{{- end }}
+{{- if and $promSecret $promProjected }}
+{{- fail "console.prometheus.token: set either secret.name or projected.enabled, not both" }}
+{{- end }}
+{{- if and (or $promSecret $promProjected) (not (hasPrefix "https://" $prom.url)) }}
+{{- fail "console.prometheus.url must be https when a token is configured: the token is never sent in clear" }}
+{{- end }}
+{{- /* Evidence agents of this chart (evidence.agents): the console reads their
+fixed list instead of EvidenceAgent objects. */}}
+{{- $agents := and .Values.evidence.agents $c.evidence.enabled }}
+{{- $agentsMode := .Values.evidence.tls.mode }}
+{{- if $agents }}{{ include "pgtools.evidence.validate" . }}{{ end }}
+{{- $publicURL := $c.publicURL | default (ternary (printf "https://%s" $c.exposure.host) "" (ne $c.exposure.host "")) }}
+{{- if and $c.mcp.enabled (not $publicURL) }}
+{{- fail "console.mcp.enabled needs console.publicURL or console.exposure.host: the MCP endpoint advertises only its configured origin, never one taken from a request" }}
+{{- end }}
+{{- if $oidc }}
+{{- $_ := required "console.auth.oidc.issuerURL is required with auth.provider=oidc" $c.auth.oidc.issuerURL }}
+{{- $_ := required "console.auth.oidc.clientID is required with auth.provider=oidc" $c.auth.oidc.clientID }}
+{{- $_ := required "console.auth.oidc.clientSecret.existingSecret is required with auth.provider=oidc" $c.auth.oidc.clientSecret.existingSecret }}
+{{- end }}
+{{- /* The optional OIDC grant client (dig: a release upgraded with
+       --reuse-values has no grantClient key). */}}
+{{- $grantClient := "" }}
+{{- $grantSecret := "" }}
+{{- $grantKey := dig "grantClient" "clientSecret" "key" "client-secret" $c.auth.oidc }}
+{{- if $oidc }}
+{{- $grantClient = dig "grantClient" "clientID" "" $c.auth.oidc }}
+{{- $grantSecret = dig "grantClient" "clientSecret" "existingSecret" "" $c.auth.oidc }}
+{{- end }}
+{{- if and $grantClient (not $grantSecret) }}
+{{- fail "console.auth.oidc.grantClient.clientSecret.existingSecret is required with console.auth.oidc.grantClient.clientID" }}
+{{- end }}
+{{- if and $grantClient (eq $grantClient $c.auth.oidc.clientID) }}
+{{- fail "console.auth.oidc.grantClient.clientID must differ from console.auth.oidc.clientID (or be left empty)" }}
+{{- end }}
+{{- $mcpPod := hasKey . "mcpPod" }}
+{{- $name := include "pgtools.console.fullname" . }}
+{{- $replicas := include "pgtools.console.replicas" . }}
+{{- if $mcpPod }}
+{{- $name = include "pgtools.console.mcpLeader" . }}
+{{- $replicas = "1" }}
+{{- $persistent = false }}
+{{- $delivers = false }}
+{{- $smtpPassword = false }}
+{{- $dl = dict "chat" (dict "existingSecret" "") "webhook" (dict "existingSecret" "") "smtp" (dict "address" "") "timeout" "" }}
+{{- end }}
+apiVersion: apps/v1
+{{- if $persistent }}
+# Persistent history: a StatefulSet with one history volume per replica (the
+# journal takes an exclusive lock on its file, so replicas cannot share one).
+kind: StatefulSet
+{{- else }}
+kind: Deployment
+{{- end }}
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "pgtools.console.labels" . | nindent 4 }}
+  {{- if or $oidc $osSecret $smtpPassword }}
+  annotations:
+    # OIDC_CLIENT_SECRET_FILE, OPENSHIFT_CLIENT_SECRET_FILE and DIGEST_SMTP_PASSWORD_FILE are paths to mounted files, not secret values.
+    ignore-check.kube-linter.io/env-var-secret: "the variable holds a file path; the secret is a mounted file"
+  {{- end }}
+spec:
+  # The one availability rule: two replicas rolling by default, with or
+  # without persistent history.
+  replicas: {{ $replicas }}
+  {{- if $persistent }}
+  serviceName: {{ include "pgtools.console.fullname" . }}
+  # The replicas share nothing on disk: no reason for the ordered start and
+  # stop of a StatefulSet. A roll still replaces one pod at a time.
+  podManagementPolicy: Parallel
+  updateStrategy:
+    type: RollingUpdate
+  # The volumes go with the release, as the single history claim did, and
+  # stay when scaling down (scaling up again finds them).
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Delete
+    whenScaled: Retain
+  {{- else }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "pgtools.console.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "pgtools.console.labels" . | nindent 8 }}
+        {{- with $c.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- if or $c.podAnnotations $agents }}
+      annotations:
+        {{- with $c.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- if $agents }}
+        # The agents file is read at start: a changed list rolls the pods.
+        checksum/evidence-agents: {{ include "pgtools.evidence.agentsFile" . | sha256sum | quote }}
+        {{- end }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "pgtools.console.fullname" . }}
+      # Only the console container gets an API token, as a projected volume.
+      automountServiceAccountToken: false
+      {{- with $c.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      securityContext:
+        {{- toYaml $c.podSecurityContext | nindent 8 }}
+      {{- with $c.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: console
+          image: {{ include "pgtools.console.image" . | quote }}
+          imagePullPolicy: {{ $c.image.pullPolicy }}
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            # Never empty and never "all namespaces": the Roles above exist in
+            # exactly these.
+            - name: WATCH_NAMESPACES
+              value: {{ include "pgtools.console.watchNamespaces" . | fromJsonArray | join "," | quote }}
+            {{- if $c.clusterSelector }}
+            - name: CLUSTER_SELECTOR
+              value: {{ include "pgtools.console.selectorString" $c.clusterSelector | quote }}
+            {{- end }}
+            - name: LISTEN_ADDR
+              value: {{ printf ":%v" $c.port | quote }}
+            - name: PROBE_LISTEN_ADDR
+              value: {{ printf ":%v" $c.probePort | quote }}
+            - name: AUTH_PROVIDER
+              value: {{ $c.auth.provider | quote }}
+            - name: SESSION_KEY_FILE
+              value: /var/run/console/session/{{ $c.auth.sessionKey.key }}
+            - name: SESSION_IDLE_TIMEOUT
+              value: {{ $c.auth.sessionIdleTimeout | quote }}
+            {{- if $oidc }}
+            - name: OIDC_ISSUER_URL
+              value: {{ $c.auth.oidc.issuerURL | quote }}
+            - name: OIDC_CLIENT_ID
+              value: {{ $c.auth.oidc.clientID | quote }}
+            - name: OIDC_CLIENT_SECRET_FILE
+              value: /var/run/console/oidc/{{ $c.auth.oidc.clientSecret.key }}
+            {{- with $c.auth.oidc.redirectURL }}
+            - name: OIDC_REDIRECT_URL
+              value: {{ . | quote }}
+            {{- end }}
+            - name: OIDC_SCOPES
+              value: {{ join "," $c.auth.oidc.scopes | quote }}
+            {{- if not $c.auth.oidc.requireEmailVerified }}
+            - name: OIDC_REQUIRE_EMAIL_VERIFIED
+              value: "false"
+            {{- end }}
+            {{- if $c.auth.oidc.caConfigMap }}
+            - name: OIDC_CA_FILE
+              value: /var/run/console/oidc-ca/ca.crt
+            {{- end }}
+            {{- if $grantClient }}
+            # The IdP sign-ins of console grants (MCP clients) use this
+            # client; the API server must accept its audience too.
+            - name: OIDC_GRANT_CLIENT_ID
+              value: {{ $grantClient | quote }}
+            - name: OIDC_GRANT_CLIENT_SECRET_FILE
+              value: /var/run/console/oidc-grant/{{ $grantKey }}
+            {{- end }}
+            {{- end }}
+            {{- if $openshift }}
+            {{- with $c.auth.openshift.clientID }}
+            - name: OPENSHIFT_CLIENT_ID
+              value: {{ . | quote }}
+            {{- end }}
+            {{- if $osSecret }}
+            - name: OPENSHIFT_CLIENT_SECRET_FILE
+              value: /var/run/console/openshift/{{ $c.auth.openshift.clientSecret.key }}
+            {{- end }}
+            {{- with $c.auth.openshift.discoveryURL }}
+            - name: OPENSHIFT_DISCOVERY_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with $c.auth.openshift.scopes }}
+            - name: OPENSHIFT_SCOPES
+              value: {{ join "," . | quote }}
+            {{- end }}
+            {{- if $c.auth.openshift.caConfigMap }}
+            - name: OPENSHIFT_CA_FILE
+              value: /var/run/console/openshift-ca/ca.crt
+            {{- end }}
+            {{- end }}
+            {{- with $c.auth.sessionMaxAge }}
+            - name: SESSION_MAX_AGE
+              value: {{ . | quote }}
+            {{- end }}
+            {{- if not $c.auth.tokenLogin }}
+            - name: AUTH_TOKEN_LOGIN
+              value: "false"
+            {{- end }}
+            {{- with $c.auth.idpTimeout }}
+            - name: IDP_TIMEOUT
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with $publicURL }}
+            - name: PUBLIC_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with $c.cookieSecure }}
+            - name: COOKIE_SECURE
+              value: {{ . | quote }}
+            {{- end }}
+            {{- $hops := $c.trustedProxyHops }}
+            {{- if kindIs "invalid" $hops }}
+            {{- $hops = ternary 0 1 (eq $c.exposure.type "none") }}
+            {{- end }}
+            {{- if $hops }}
+            - name: TRUSTED_PROXY_HOPS
+              value: {{ $hops | quote }}
+            {{- /* Without the proxies' addresses the console ignores the
+            header: every client shares the proxy's address. */}}
+            {{- with $c.trustedProxyCIDRs }}
+            - name: TRUSTED_PROXY_CIDRS
+              value: {{ join "," . | quote }}
+            {{- end }}
+            {{- end }}
+            {{- if $c.tls.secretName }}
+            - name: TLS_CERT_FILE
+              value: /var/run/console/tls/tls.crt
+            - name: TLS_KEY_FILE
+              value: /var/run/console/tls/tls.key
+            {{- end }}
+            # The end-of-life table, mounted from the lifecycle ConfigMap and
+            # reloaded on change; absent, the built-in table applies.
+            - name: LIFECYCLE_FILE
+              value: /var/run/console/lifecycle/lifecycle.json
+            - name: REVOCATION_CONFIGMAP
+              value: {{ include "pgtools.console.revocations" . | quote }}
+            # Sign-outs and "since" times shared by the replicas; missing or
+            # forbidden, each replica keeps its own.
+            - name: STATE_CONFIGMAP
+              value: {{ include "pgtools.console.state" . | quote }}
+            # The insight pack's ConfigMap the Clusters opt in with; the
+            # console reads no ConfigMap for it.
+            - name: INSIGHT_PACK_CONFIGMAP
+              value: {{ include "pgtools.insightPack.configMapName" . | quote }}
+            {{- if $c.instanceStatus.caBundleConfigMap }}
+            # Read from the filesystem and reloaded on change; the console
+            # reads no Secret and no ConfigMap through the API for this.
+            - name: INSTANCE_STATUS_CA_FILE
+              value: /var/run/console/instance-ca/ca.crt
+            {{- end }}
+            {{- if not $c.evidence.enabled }}
+            - name: EVIDENCE_ENABLED
+              value: "false"
+            {{- else if $c.evidenceToken.enabled }}
+            # One token per watched namespace under this directory
+            # (<namespace>/token), each for the audience
+            # pgtoolbox-evidence-agent/<namespace>.
+            - name: EVIDENCE_TOKEN_DIR
+              value: /var/run/secrets/pgtoolbox.fyannk.dev/evidence-agent
+            {{- end }}
+            {{- if $agents }}
+            # The chart's own agents (evidence.agents): a fixed list, read
+            # with the shared token of evidence.token.
+            - name: EVIDENCE_AGENTS_FILE
+              value: /var/run/console/evidence-agents/agents.json
+            {{- end }}
+            {{- with $c.evidence.interval }}
+            - name: EVIDENCE_INTERVAL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- if not $c.operations.enabled }}
+            - name: OPERATIONS_ENABLED
+              value: "false"
+            {{- end }}
+            {{- if $c.mcp.enabled }}
+            - name: MCP_ENABLED
+              value: "true"
+            {{- if $c.mcp.writeTools }}
+            - name: MCP_WRITE_TOOLS
+              value: "true"
+            {{- end }}
+            {{- if not (kindIs "invalid" $c.mcp.maxResultBytes) }}
+            - name: MCP_MAX_RESULT_BYTES
+              value: {{ $c.mcp.maxResultBytes | int | toString | quote }}
+            {{- end }}
+            {{- with $c.mcp.callTimeout }}
+            - name: MCP_CALL_TIMEOUT
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with $c.mcp.oauthAccessTTL }}
+            - name: MCP_OAUTH_ACCESS_TTL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- if $c.mcp.oauthClientMetadataDocuments }}
+            - name: MCP_OAUTH_CLIENT_METADATA_DOCUMENTS
+              value: "true"
+            {{- end }}
+            {{- with $c.mcp.oauthClientMetadataHosts }}
+            - name: MCP_OAUTH_CLIENT_METADATA_HOSTS
+              value: {{ join "," . | quote }}
+            {{- end }}
+            # One Pod serves MCP, the holder of this Lease: the MCP Deployment's
+            # (mcp.yaml); the console's own replicas never campaign.
+            - name: MCP_LEASE
+              value: {{ include "pgtools.console.mcpLeader" . | quote }}
+            {{- if not $mcpPod }}
+            - name: MCP_CANDIDATE
+              value: "false"
+            {{- end }}
+            {{- end }}
+            {{- with $c.tracing }}
+            {{- if .endpoint }}
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ .endpoint | quote }}
+            {{- if .serviceName }}
+            - name: OTEL_SERVICE_NAME
+              value: {{ .serviceName | quote }}
+            {{- end }}
+            {{- if .sampler }}
+            - name: OTEL_TRACES_SAMPLER
+              value: {{ .sampler | quote }}
+            {{- end }}
+            {{- if .samplerArg }}
+            - name: OTEL_TRACES_SAMPLER_ARG
+              value: {{ .samplerArg | quote }}
+            {{- end }}
+            {{- if .headersSecret.existingSecret }}
+            - name: TRACING_HEADERS_FILE
+              value: /var/run/console/tracing/{{ .headersSecret.key }}
+            {{- end }}
+            {{- if .includePayloads }}
+            - name: TRACING_INCLUDE_PAYLOADS
+              value: "true"
+            {{- end }}
+            {{- end }}
+            {{- end }}
+            {{- with $c.restoreDrills }}
+            {{- if .enabled }}
+            - name: RESTORE_DRILL_ENABLED
+              value: "true"
+            {{- with .namespace }}
+            - name: RESTORE_DRILL_NAMESPACE
+              value: {{ . | quote }}
+            {{- end }}
+            - name: RESTORE_DRILL_PREFIX
+              value: {{ .prefix | quote }}
+            - name: RESTORE_DRILL_TIME_LIMIT
+              value: {{ .timeLimit | quote }}
+            - name: RESTORE_DRILL_MAX_CONCURRENT
+              value: {{ .maxConcurrent | quote }}
+            {{- with .resources.requests.cpu }}
+            - name: RESTORE_DRILL_CPU_REQUEST
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .resources.requests.memory }}
+            - name: RESTORE_DRILL_MEMORY_REQUEST
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .resources.limits.cpu }}
+            - name: RESTORE_DRILL_CPU_LIMIT
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .resources.limits.memory }}
+            - name: RESTORE_DRILL_MEMORY_LIMIT
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .storage.size }}
+            - name: RESTORE_DRILL_STORAGE_SIZE
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .storage.storageClass }}
+            - name: RESTORE_DRILL_STORAGE_CLASS
+              value: {{ . | quote }}
+            {{- end }}
+            {{- $ca := include "pgtools.console.drillServerCA" $ }}
+            - name: RESTORE_DRILL_SERVER_CA
+              value: {{ $ca | quote }}
+            {{- if eq $ca "secret" }}
+            - name: RESTORE_DRILL_SERVER_CA_SECRET
+              value: {{ required "console.restoreDrills.serverCA.secret is required with serverCA.mode=secret" .serverCA.secret | quote }}
+            {{- end }}
+            {{- with (.sealKey).existingSecret }}
+            - name: RESTORE_DRILL_SEAL_KEY_FILE
+              value: /var/run/console/restore-drill-seal/{{ $c.restoreDrills.sealKey.key }}
+            {{- end }}
+            {{- end }}
+            {{- end }}
+            {{- with $c.monitoringURL }}
+            - name: MONITORING_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with ($c.pgadmin).url }}
+            - name: PGADMIN_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- if $prom.url }}
+            - name: PROMETHEUS_URL
+              value: {{ $prom.url | quote }}
+            {{- if $promSecret }}
+            - name: PROMETHEUS_TOKEN_FILE
+              value: /var/run/console/prometheus/{{ $prom.token.secret.key }}
+            {{- else if $promProjected }}
+            - name: PROMETHEUS_TOKEN_FILE
+              value: /var/run/console/prometheus/token
+            {{- end }}
+            {{- if $prom.caConfigMap }}
+            - name: PROMETHEUS_CA_FILE
+              value: /var/run/console/prometheus-ca/ca.crt
+            {{- end }}
+            {{- if $prom.namespaced }}
+            - name: PROMETHEUS_NAMESPACED
+              value: "true"
+            {{- end }}
+            {{- with $prom.range }}
+            - name: PROMETHEUS_RANGE
+              value: {{ . | quote }}
+            {{- end }}
+            {{- end }}
+            {{- if $c.clusterImageCatalogs.enabled }}
+            - name: ALLOW_CLUSTER_CATALOGS
+              value: "true"
+            {{- end }}
+            {{- if not $c.rbac.podLogs }}
+            - name: ALLOW_LOGS
+              value: "false"
+            {{- end }}
+            # The continuous log matcher needs `get pods/log`: without it the
+            # console would refuse LOG_STREAM_ENABLED=true at start-up.
+            - name: LOG_STREAM_ENABLED
+              value: {{ and $c.rbac.podLogs $c.logs.streamEnabled | ternary "true" "false" | quote }}
+            - name: LOG_MATCH_MAX_AGE
+              value: {{ $c.logs.matchMaxAge | quote }}
+            {{- if $persistent }}
+            - name: HISTORY_ENABLED
+              value: "true"
+            - name: HISTORY_PATH
+              value: /var/lib/console/history.db
+            {{- end }}
+            # The daily digest (DIGEST_*): switches and file paths only.
+            {{- if not (kindIs "invalid" $digest.enabled) }}
+            - name: DIGEST_ENABLED
+              value: {{ $digest.enabled | ternary "true" "false" | quote }}
+            {{- end }}
+            {{- if not (kindIs "invalid" $digest.hour) }}
+            - name: DIGEST_HOUR
+              value: {{ $digest.hour | int | toString | quote }}
+            {{- end }}
+            {{- with $digest.retention }}
+            - name: DIGEST_RETENTION
+              value: {{ . | quote }}
+            {{- end }}
+            {{- if $dl.chat.existingSecret }}
+            - name: DIGEST_CHAT_WEBHOOK_URL_FILE
+              value: /var/run/console/digest/chat/{{ $dl.chat.key }}
+            {{- end }}
+            {{- if $dl.webhook.existingSecret }}
+            - name: DIGEST_WEBHOOK_URL_FILE
+              value: /var/run/console/digest/webhook/{{ $dl.webhook.key }}
+            {{- end }}
+            {{- with $dl.timeout }}
+            - name: DIGEST_DELIVERY_TIMEOUT
+              value: {{ . | quote }}
+            {{- end }}
+            {{- if $delivers }}
+            # Every replica makes the digest; only the one holding this Lease
+            # delivers it (the delivery marks are shared in STATE_CONFIGMAP).
+            - name: DIGEST_LEASE
+              value: {{ include "pgtools.console.digestLease" . | quote }}
+            {{- end }}
+            {{- if $dl.smtp.address }}
+            - name: DIGEST_SMTP_ADDRESS
+              value: {{ $dl.smtp.address | quote }}
+            - name: DIGEST_SMTP_TLS
+              value: {{ $dl.smtp.tls | default "starttls" | quote }}
+            - name: DIGEST_SMTP_FROM
+              value: {{ $dl.smtp.from | quote }}
+            - name: DIGEST_SMTP_TO
+              value: {{ join "," $dl.smtp.to | quote }}
+            {{- if $smtpPassword }}
+            - name: DIGEST_SMTP_USERNAME
+              value: {{ $dl.smtp.username | quote }}
+            - name: DIGEST_SMTP_PASSWORD_FILE
+              value: /var/run/console/digest/smtp/{{ $dl.smtp.password.key }}
+            {{- end }}
+            {{- end }}
+            {{- with $c.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ $c.port }}
+              protocol: TCP
+            - name: probes
+              containerPort: {{ $c.probePort }}
+              protocol: TCP
+          securityContext:
+            {{- toYaml $c.securityContext | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: probes
+              {{- if $c.tls.secretName }}
+              scheme: HTTPS
+              {{- end }}
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: probes
+              {{- if $c.tls.secretName }}
+              scheme: HTTPS
+              {{- end }}
+            periodSeconds: 10
+          resources:
+            {{- toYaml $c.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: kube-api-access
+              mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+              readOnly: true
+            - name: session
+              mountPath: /var/run/console/session
+              readOnly: true
+            {{- if $drillSeal }}
+            - name: restore-drill-seal
+              mountPath: /var/run/console/restore-drill-seal
+              readOnly: true
+            {{- end }}
+            {{- if $oidc }}
+            - name: oidc
+              mountPath: /var/run/console/oidc
+              readOnly: true
+            {{- end }}
+            {{- if and $oidc $c.auth.oidc.caConfigMap }}
+            - name: oidc-ca
+              mountPath: /var/run/console/oidc-ca
+              readOnly: true
+            {{- end }}
+            {{- if $grantClient }}
+            - name: oidc-grant
+              mountPath: /var/run/console/oidc-grant
+              readOnly: true
+            {{- end }}
+            {{- if or $promSecret $promProjected }}
+            - name: prometheus-token
+              mountPath: /var/run/console/prometheus
+              readOnly: true
+            {{- end }}
+            {{- if $prom.caConfigMap }}
+            - name: prometheus-ca
+              mountPath: /var/run/console/prometheus-ca
+              readOnly: true
+            {{- end }}
+            {{- if and $openshift $osSecret }}
+            - name: openshift
+              mountPath: /var/run/console/openshift
+              readOnly: true
+            {{- end }}
+            {{- if and $openshift $c.auth.openshift.caConfigMap }}
+            - name: openshift-ca
+              mountPath: /var/run/console/openshift-ca
+              readOnly: true
+            {{- end }}
+            {{- if $c.evidenceToken.enabled }}
+            # The bound token for the EvidenceAgent channel; the console re-reads
+            # it when the kubelet rotates it.
+            - name: evidence-agent-token
+              mountPath: /var/run/secrets/pgtoolbox.fyannk.dev/evidence-agent
+              readOnly: true
+            {{- end }}
+            {{- if $c.tls.secretName }}
+            - name: tls
+              mountPath: /var/run/console/tls
+              readOnly: true
+            {{- end }}
+            {{- if $agents }}
+            - name: evidence-agents
+              mountPath: /var/run/console/evidence-agents
+              readOnly: true
+            # The shared token and the agents' CA are re-read on every pass.
+            - name: evidence-token
+              mountPath: /var/run/console/evidence-token
+              readOnly: true
+            {{- if ne $agentsMode "none" }}
+            - name: evidence-ca
+              mountPath: /var/run/console/evidence-ca
+              readOnly: true
+            {{- end }}
+            {{- end }}
+            {{- if $c.instanceStatus.caBundleConfigMap }}
+            # A directory mount, not a subPath: only a directory mount is
+            # refreshed by the kubelet when the ConfigMap changes.
+            - name: instance-ca
+              mountPath: /var/run/console/instance-ca
+              readOnly: true
+            {{- end }}
+            - name: lifecycle
+              mountPath: /var/run/console/lifecycle
+              readOnly: true
+            {{- if $dl.chat.existingSecret }}
+            - name: digest-chat
+              mountPath: /var/run/console/digest/chat
+              readOnly: true
+            {{- end }}
+            {{- if $dl.webhook.existingSecret }}
+            - name: digest-webhook
+              mountPath: /var/run/console/digest/webhook
+              readOnly: true
+            {{- end }}
+            {{- if $smtpPassword }}
+            - name: digest-smtp
+              mountPath: /var/run/console/digest/smtp
+              readOnly: true
+            {{- end }}
+            {{- if and $c.tracing.endpoint $c.tracing.headersSecret.existingSecret }}
+            # The exporter headers (an API key): a directory mount, read at start.
+            - name: tracing-headers
+              mountPath: /var/run/console/tracing
+              readOnly: true
+            {{- end }}
+            {{- if $persistent }}
+            - name: history
+              mountPath: /var/lib/console
+            {{- end }}
+            {{- with $c.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: kube-api-access
+          projected:
+            sources:
+              - serviceAccountToken:
+                  path: token
+                  expirationSeconds: 3600
+              - configMap:
+                  name: kube-root-ca.crt
+                  items:
+                    - key: ca.crt
+                      path: ca.crt
+              {{- if and $openshift (not $c.auth.openshift.caConfigMap) }}
+              # The OpenShift service CA that signs the OAuth server's certificate
+              # (OPENSHIFT_CA_FILE defaults to service-ca.crt in this directory).
+              # The ConfigMap exists in every OpenShift namespace.
+              - configMap:
+                  name: openshift-service-ca.crt
+                  optional: true
+                  items:
+                    - key: service-ca.crt
+                      path: service-ca.crt
+              {{- end }}
+              - downwardAPI:
+                  items:
+                    - path: namespace
+                      fieldRef:
+                        fieldPath: metadata.namespace
+        - name: session
+          secret:
+            secretName: {{ include "pgtools.console.sessionSecret" . }}
+            items:
+              - key: {{ $c.auth.sessionKey.key }}
+                path: {{ $c.auth.sessionKey.key }}
+        {{- if $drillSeal }}
+        # The drill seal's own keys, read once at start.
+        - name: restore-drill-seal
+          secret:
+            secretName: {{ $c.restoreDrills.sealKey.existingSecret }}
+            items:
+              - key: {{ $c.restoreDrills.sealKey.key }}
+                path: {{ $c.restoreDrills.sealKey.key }}
+        {{- end }}
+        {{- if $dl.chat.existingSecret }}
+        - name: digest-chat
+          secret:
+            secretName: {{ $dl.chat.existingSecret }}
+            items:
+              - key: {{ $dl.chat.key }}
+                path: {{ $dl.chat.key }}
+        {{- end }}
+        {{- if $dl.webhook.existingSecret }}
+        - name: digest-webhook
+          secret:
+            secretName: {{ $dl.webhook.existingSecret }}
+            items:
+              - key: {{ $dl.webhook.key }}
+                path: {{ $dl.webhook.key }}
+        {{- end }}
+        {{- if and $c.tracing.endpoint $c.tracing.headersSecret.existingSecret }}
+        - name: tracing-headers
+          secret:
+            secretName: {{ $c.tracing.headersSecret.existingSecret }}
+            items:
+              - key: {{ $c.tracing.headersSecret.key }}
+                path: {{ $c.tracing.headersSecret.key }}
+        {{- end }}
+        {{- if $smtpPassword }}
+        - name: digest-smtp
+          secret:
+            secretName: {{ $dl.smtp.password.existingSecret }}
+            items:
+              - key: {{ $dl.smtp.password.key }}
+                path: {{ $dl.smtp.password.key }}
+        {{- end }}
+        {{- if and $openshift $osSecret }}
+        - name: openshift
+          secret:
+            secretName: {{ $osSecret }}
+            items:
+              - key: {{ $c.auth.openshift.clientSecret.key }}
+                path: {{ $c.auth.openshift.clientSecret.key }}
+        {{- end }}
+        {{- if and $openshift $c.auth.openshift.caConfigMap }}
+        - name: openshift-ca
+          configMap:
+            name: {{ $c.auth.openshift.caConfigMap }}
+            items:
+              - key: ca.crt
+                path: ca.crt
+        {{- end }}
+        {{- if $c.evidenceToken.enabled }}
+        - name: evidence-agent-token
+          projected:
+            sources:
+              {{- range (include "pgtools.console.watchNamespaces" . | fromJsonArray) }}
+              - serviceAccountToken:
+                  audience: {{ printf "pgtoolbox-evidence-agent/%s" . }}
+                  expirationSeconds: {{ $c.evidenceToken.expirationSeconds }}
+                  path: {{ printf "%s/token" . }}
+              {{- end }}
+        {{- end }}
+        {{- if $oidc }}
+        - name: oidc
+          secret:
+            secretName: {{ $c.auth.oidc.clientSecret.existingSecret }}
+            items:
+              - key: {{ $c.auth.oidc.clientSecret.key }}
+                path: {{ $c.auth.oidc.clientSecret.key }}
+        {{- end }}
+        {{- if and $oidc $c.auth.oidc.caConfigMap }}
+        - name: oidc-ca
+          configMap:
+            name: {{ $c.auth.oidc.caConfigMap }}
+            items:
+              - key: ca.crt
+                path: ca.crt
+        {{- end }}
+        {{- if $grantClient }}
+        - name: oidc-grant
+          secret:
+            secretName: {{ $grantSecret }}
+            items:
+              - key: {{ $grantKey }}
+                path: {{ $grantKey }}
+        {{- end }}
+        {{- if $promSecret }}
+        - name: prometheus-token
+          secret:
+            secretName: {{ $promSecret }}
+            items:
+              - key: {{ $prom.token.secret.key }}
+                path: {{ $prom.token.secret.key }}
+        {{- else if $promProjected }}
+        - name: prometheus-token
+          projected:
+            sources:
+              - serviceAccountToken:
+                  expirationSeconds: {{ $prom.token.projected.expirationSeconds }}
+                  path: token
+        {{- end }}
+        {{- if $prom.caConfigMap }}
+        - name: prometheus-ca
+          configMap:
+            name: {{ $prom.caConfigMap }}
+            items:
+              - key: ca.crt
+                path: ca.crt
+        {{- end }}
+        {{- if $c.tls.secretName }}
+        - name: tls
+          secret:
+            secretName: {{ $c.tls.secretName }}
+            items:
+              - key: tls.crt
+                path: tls.crt
+              - key: tls.key
+                path: tls.key
+        {{- end }}
+        {{- if $agents }}
+        - name: evidence-agents
+          configMap:
+            name: {{ include "pgtools.evidence.agentsConfigMap" . }}
+            items:
+              - key: agents.json
+                path: agents.json
+        - name: evidence-token
+          secret:
+            secretName: {{ include "pgtools.evidence.tokenSecret" . }}
+            items:
+              - key: {{ .Values.evidence.token.key }}
+                path: token
+        {{- if eq $agentsMode "openshiftServiceCA" }}
+        # The OpenShift service CA that signs every agent's Service
+        # certificate; the ConfigMap exists in every OpenShift namespace.
+        - name: evidence-ca
+          configMap:
+            name: openshift-service-ca.crt
+            items:
+              - key: service-ca.crt
+                path: service-ca.crt
+        {{- else if eq $agentsMode "certManager" }}
+        # Each agent's ca.crt from its cert-manager Secret (no key is
+        # mounted), at <cluster>/ca.crt. optional: the console says "CA file
+        # missing" for an agent until cert-manager has issued.
+        - name: evidence-ca
+          projected:
+            sources:
+              {{- range $agent := .Values.evidence.agents }}
+              - secret:
+                  name: {{ printf "%s-tls" (include "pgtools.evidence.name" (dict "root" $ "agent" $agent)) }}
+                  optional: true
+                  items:
+                    - key: ca.crt
+                      path: {{ printf "%s/ca.crt" $agent.cluster }}
+              {{- end }}
+        {{- end }}
+        {{- end }}
+        - name: lifecycle
+          configMap:
+            name: {{ include "pgtools.console.lifecycle" . }}
+            # A ConfigMap of your own may not exist yet: the built-in table
+            # applies until it does.
+            optional: true
+            items:
+              - key: lifecycle.json
+                path: lifecycle.json
+        {{- if $c.instanceStatus.caBundleConfigMap }}
+        - name: instance-ca
+          configMap:
+            name: {{ $c.instanceStatus.caBundleConfigMap }}
+            # Absent at start is not fatal: every Cluster then reads "not
+            # verifiable" until the admin creates the bundle, and the kubelet
+            # fills the mount in when it appears.
+            optional: true
+            items:
+              - key: ca.crt
+                path: ca.crt
+        {{- end }}
+        {{- with $c.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with $c.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $c.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if $c.affinity }}
+      affinity:
+        {{- toYaml $c.affinity | nindent 8 }}
+      {{- else if gt (int $replicas) 1 }}
+      # Replicas prefer different nodes; a single-node cluster still schedules.
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    {{- include "pgtools.console.selectorLabels" . | nindent 20 }}
+      {{- end }}
+      {{- with $c.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+  {{- if $persistent }}
+  # One claim per replica, history-<console>-<ordinal>. A claim template
+  # cannot change after the StatefulSet exists: a new size or class applies
+  # to claims made later (see the chart README, "Persistent history").
+  volumeClaimTemplates:
+    - metadata:
+        name: history
+        labels:
+          {{- include "pgtools.console.selectorLabels" . | nindent 10 }}
+      spec:
+        accessModes: [ReadWriteOnce]
+        {{- with $c.history.storageClassName }}
+        storageClassName: {{ . | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ $c.history.size }}
+  {{- end }}
+{{- end }}
+{{- end -}}

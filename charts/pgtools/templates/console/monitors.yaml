@@ -54,7 +54,8 @@ metadata:
 spec:
   selector:
     matchLabels:
-      {{- include "pgtools.console.selectorLabels" . | nindent 6 }}
+      {{- /* The console's Pods and, with MCP on, the MCP Pod. */}}
+      {{- include "pgtools.console.instanceLabels" . | nindent 6 }}
   podMetricsEndpoints:
     # PodMonitor cannot send a token file: prefer the ServiceMonitor, or put the
     # scraper's authorization in an additionalScrapeConfig.

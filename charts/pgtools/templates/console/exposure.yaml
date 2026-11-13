@@ -2,6 +2,12 @@
 {{- $e := .Values.console.exposure }}
 {{- $name := include "pgtools.console.fullname" . }}
 {{- $sticky := $e.sticky | default dict }}
+{{- /* With MCP on, the MCP paths go to the leader's Service (mcp-leader.yaml). */}}
+{{- $mcp := include "pgtools.console.mcpLeader" . }}
+{{- $mcpPaths := list }}
+{{- if .Values.console.mcp.enabled }}
+{{- $mcpPaths = include "pgtools.console.mcpPaths" . | fromYamlArray }}
+{{- end }}
 {{- if eq $e.type "ingress" }}
 {{- /* Cookie affinity: a person stays on one replica, whose
 history and charts they keep seeing. ingress-nginx reads these; Traefik reads
@@ -60,6 +66,15 @@ spec:
   rules:
     - http:
         paths:
+          {{- range $mcpPaths }}
+          - path: {{ .path }}
+            pathType: {{ ternary "Prefix" "Exact" .prefix }}
+            backend:
+              service:
+                name: {{ $mcp }}
+                port:
+                  name: http
+          {{- end }}
           - path: /
             pathType: Prefix
             backend:
@@ -71,13 +86,22 @@ spec:
       host: {{ . | quote }}
       {{- end }}
 {{- else if eq $e.type "route" }}
+{{- /* One Route per path: a Route has one path and one Service. */}}
+{{- $routes := list (dict "name" $name "path" "" "service" $name) }}
+{{- range $mcpPaths }}
+{{- $routes = append $routes (dict "name" (printf "%s-%s" $mcp .name) "path" .path "service" $mcp) }}
+{{- end }}
+{{- range $i, $r := $routes }}
+{{- if $i }}
+---
+{{- end }}
 apiVersion: route.openshift.io/v1
 kind: Route
 metadata:
-  name: {{ $name }}
-  namespace: {{ .Release.Namespace }}
+  name: {{ $r.name }}
+  namespace: {{ $.Release.Namespace }}
   labels:
-    {{- include "pgtools.console.labels" . | nindent 4 }}
+    {{- include "pgtools.console.labels" $ | nindent 4 }}
   annotations:
     # SSE: the router's default 30 s timeout would cut the event stream.
     {{- if not (hasKey $e.route.annotations "haproxy.router.openshift.io/timeout") }}
@@ -98,14 +122,18 @@ spec:
   {{- with $e.host }}
   host: {{ . | quote }}
   {{- end }}
+  {{- with $r.path }}
+  path: {{ . }}
+  {{- end }}
   to:
     kind: Service
-    name: {{ $name }}
+    name: {{ $r.service }}
   port:
     targetPort: http
   tls:
     termination: {{ $e.route.termination }}
     insecureEdgeTerminationPolicy: Redirect
+{{- end }}
 {{- else if eq $e.type "httpRoute" }}
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
@@ -123,6 +151,18 @@ spec:
   hostnames: [{{ . | quote }}]
   {{- end }}
   rules:
+    {{- if $mcpPaths }}
+    - matches:
+        {{- range $mcpPaths }}
+        - path: {type: {{ ternary "PathPrefix" "Exact" .prefix }}, value: {{ .path }}}
+        {{- end }}
+      # SSE: no request timeout shorter than the stream.
+      timeouts:
+        request: {{ $e.sse.timeout | quote }}
+      backendRefs:
+        - name: {{ $mcp }}
+          port: {{ .Values.console.service.port }}
+    {{- end }}
     - matches:
         - path: {type: PathPrefix, value: /}
       # SSE: no request timeout shorter than the stream.

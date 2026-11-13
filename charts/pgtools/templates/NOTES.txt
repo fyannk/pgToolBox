@@ -63,6 +63,10 @@ in the audit log. Set console.trustedProxyCIDRs to your ingress controller's add
 {{- if eq .Values.console.exposure.type "none" }}
 
 Not exposed. Reach it with:  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "pgtools.console.fullname" . }} 8080:{{ .Values.console.service.port }}
+{{- if .Values.console.mcp.enabled }}
+MCP (/mcp, /oauth, /api/v1/session/grants, /logout) is served by the MCP Pod alone; the console's
+replicas answer it 503. For MCP:  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "pgtools.console.mcpLeader" . }} 8080:{{ .Values.console.service.port }}
+{{- end }}
 {{- end }}
 {{- if .Values.console.networkPolicy.enabled }}
 

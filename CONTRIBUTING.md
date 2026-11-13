@@ -113,7 +113,7 @@ These are hard rules; a change that violates one is a bug.
     `hack/check-readonly.sh` and `hack/readonlycheck` list every call that could
     change something, with its exact count. The console's own identity writes
     only its state ConfigMap, its digest Lease when digests are delivered, its
-    MCP Lease and EndpointSlices when `MCP_LEASE` is set and, opt-in, the
+    MCP Lease when `MCP_LEASE` is set and, opt-in, the
     restore-drill cleanup.
 14. **No SQL, no object storage, no Secrets** in the console
     (`hack/check-deps.sh`).

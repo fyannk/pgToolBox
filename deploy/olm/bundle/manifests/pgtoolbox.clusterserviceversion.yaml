@@ -292,6 +292,7 @@ spec:
           verbs:
           - get
           - list
+          - patch
           - watch
         - apiGroups:
           - apps
@@ -347,7 +348,9 @@ spec:
           verbs:
           - create
           - get
+          - list
           - update
+          - watch
         - apiGroups:
           - discovery.k8s.io
           resourceNames:

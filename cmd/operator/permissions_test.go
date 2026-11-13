@@ -81,7 +81,7 @@ func TestRequiredPermissions(t *testing.T) {
 	want := map[string]string{
 		"apps/deployments":                         all,
 		"/secrets":                                 all,
-		"/pods":                                    "get,list,watch",
+		"/pods":                                    "get,list,patch,watch",
 		"postgresql.cnpg.io/clusters":              "get,list,watch",
 		"pgtoolbox.fyannk.dev/pgadmins":            "get,list,patch,update,watch",
 		"pgtoolbox.fyannk.dev/pgadmins/status":     "get,patch,update",

@@ -201,6 +201,9 @@ func TestTeamConsoles(t *testing.T) {
 		hostPort(a.SSO):                   fmt.Sprintf("%s:%d", node, httpA),
 		hostPort(b.SSO):                   fmt.Sprintf("%s:%d", node, httpB),
 		os.Getenv("E2E_DEX_IP") + ":5556": fmt.Sprintf("%s:%d", node, dex.NodePort),
+		// One Pod serves MCP: its paths go to it.
+		leaderRoute(hostPort(a.SSO)): fmt.Sprintf("%s:%d", node, exposeMCPLeader(t, a)),
+		leaderRoute(hostPort(b.SSO)): fmt.Sprintf("%s:%d", node, exposeMCPLeader(t, b)),
 	}
 	baseA, baseB := "http://"+a.SSO, "http://"+b.SSO
 	sso := func(base string, who string) *browser {
@@ -580,8 +583,9 @@ func sortedStrings(in []string) []string {
 }
 
 func consolePodsNoFail(c console) []corev1.Pod {
+	// The console's replicas; its MCP Pod is component console-mcp.
 	list, err := clientset.CoreV1().Pods(c.Namespace).List(ctx(), metav1.ListOptions{
-		LabelSelector: "app.kubernetes.io/name=pgtoolbox-console,app.kubernetes.io/instance=" + c.Release,
+		LabelSelector: "app.kubernetes.io/name=pgtoolbox-console,app.kubernetes.io/component=console,app.kubernetes.io/instance=" + c.Release,
 	})
 	if err != nil {
 		return nil

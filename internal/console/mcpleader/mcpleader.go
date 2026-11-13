@@ -14,16 +14,16 @@
 
 // Package mcpleader makes one replica of a console the only one that
 // serves MCP and writes the grant index (MCP_LEASE), as CloudNativePG's
-// -rw Service points at the primary: the replicas elect a leader on a
-// Lease (internal/console/leader), and the leader writes its Pod IP into
-// the EndpointSlices of a selector-less Service the exposure sends the
-// MCP paths (Paths) to. Any other replica answers those paths 503 with
-// Retry-After (Gate): no proxying.
+// -rw Service points at the primary: the candidates elect a leader on a
+// Lease (internal/console/leader), and the install routes the MCP paths
+// (Paths) to it: the operator labels the holder's Pod, which its -mcp
+// Service selects; the team chart runs the one candidate as its own
+// Deployment. Any other replica answers those paths 503 with Retry-After
+// (Gate): no proxying. A replica that is no candidate (MCP_CANDIDATE=false)
+// never leads.
 //
-// Leading: load the grant index from the API server (LoadGrants), publish
-// the slice, serve; the slice is checked again every Recheck. Losing:
-// stop serving first, forget the index (DropGrants), then clear the slice
-// if it still names this Pod.
+// Leading: load the grant index from the API server (LoadGrants), then
+// serve. Losing: stop serving first, then forget the index (DropGrants).
 package mcpleader
 
 import (
@@ -80,9 +80,6 @@ var ErrNotLeader = errors.New("this replica does not serve MCP: the disconnectio
 // one election retry period, the time a graceful hand-over takes.
 const RetryAfter = "2"
 
-// DefaultRecheck is how often the leader checks its slices.
-const DefaultRecheck = 30 * time.Second
-
 // Grants is the grant index the leader loads and forgets
 // (sharedstate.Store).
 type Grants interface {
@@ -93,22 +90,15 @@ type Grants interface {
 // Options configure a Leader.
 type Options struct {
 	Leases    leader.LeaseClient
-	Slices    SliceClient
 	Grants    Grants
 	Namespace string
-	// Lease is the Lease's name, and the name of the Service the slices
-	// belong to (MCP_LEASE).
-	Lease string
-	// SliceNames are the EndpointSlices of that Service
-	// (MCP_ENDPOINT_SLICES); the one of PodIP's family is written.
-	SliceNames []string
-	PodIP      string
-	// Port is the console's listen port, named http in the slice.
-	Port     int32
+	// Lease is the Lease's name (MCP_LEASE).
+	Lease    string
 	Identity string
-	// Recheck is DefaultRecheck when zero; the election timings are the
-	// leader package's defaults when zero.
-	Recheck                                   time.Duration
+	// NotCandidate never campaigns (MCP_CANDIDATE=false): this replica
+	// never leads.
+	NotCandidate bool
+	// The election timings are the leader package's defaults when zero.
 	LeaseDuration, RenewDeadline, RetryPeriod time.Duration
 	Logger                                    *slog.Logger
 }
@@ -117,19 +107,15 @@ type Options struct {
 type Leader struct {
 	o       Options
 	elector *leader.Elector
-	slices  *publisher
 	serving atomic.Bool
 	// lead serializes the leaderships: a new one starts only once the
-	// previous one has dropped the index and cleared the slice.
+	// previous one has dropped the index.
 	lead sync.Mutex
 }
 
 func (o Options) withDefaults() Options {
 	if o.Logger == nil {
 		o.Logger = slog.New(slog.DiscardHandler)
-	}
-	if o.Recheck <= 0 {
-		o.Recheck = DefaultRecheck
 	}
 	if o.RetryPeriod <= 0 {
 		o.RetryPeriod = leader.DefaultRetryPeriod
@@ -140,7 +126,7 @@ func (o Options) withDefaults() Options {
 // New builds a leader; nothing is contacted until Run.
 func New(o Options) *Leader {
 	o = o.withDefaults()
-	l := &Leader{o: o, slices: newPublisher(o)}
+	l := &Leader{o: o}
 	l.elector = leader.New(leader.Options{
 		Client: o.Leases, Purpose: leader.MCP, Namespace: o.Namespace, Name: o.Lease, Identity: o.Identity,
 		Lead: l.leadFor, LeaseDuration: o.LeaseDuration, RenewDeadline: o.RenewDeadline, RetryPeriod: o.RetryPeriod,
@@ -150,8 +136,13 @@ func New(o Options) *Leader {
 }
 
 // Run takes part in the election until ctx ends, and returns once the
-// last leadership has cleared its slice.
+// last leadership has dropped the index. A replica that is no candidate
+// waits for ctx.
 func (l *Leader) Run(ctx context.Context) error {
+	if l.o.NotCandidate {
+		<-ctx.Done()
+		return nil
+	}
 	err := l.elector.Run(ctx)
 	l.lead.Lock()
 	defer l.lead.Unlock()
@@ -166,7 +157,7 @@ func (l *Leader) Leading() bool { return l != nil && l.serving.Load() }
 func (l *Leader) leadFor(ctx context.Context) {
 	l.lead.Lock()
 	defer l.lead.Unlock()
-	defer l.lose(ctx)
+	defer l.lose()
 	for {
 		err := l.o.Grants.LoadGrants(ctx)
 		if err == nil {
@@ -178,30 +169,16 @@ func (l *Leader) leadFor(ctx context.Context) {
 			return
 		}
 	}
-	l.slices.publish(ctx)
 	l.serving.Store(true)
 	l.o.Logger.Info("MCP leader: this replica serves MCP", slog.String("lease", l.o.Lease))
-	t := time.NewTicker(l.o.Recheck)
-	defer t.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-			l.slices.publish(ctx)
-		}
-	}
+	<-ctx.Done()
 }
 
-// lose ends a leadership: no request is served from here on, the index
-// is forgotten, then the slice cleared (without ctx's cancellation: the
-// leadership's context has ended).
-func (l *Leader) lose(ctx context.Context) {
+// lose ends a leadership: no request is served from here on, then the
+// index is forgotten.
+func (l *Leader) lose() {
 	was := l.serving.Swap(false)
 	l.o.Grants.DropGrants()
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), clearTimeout)
-	defer cancel()
-	l.slices.clear(ctx)
 	if was {
 		l.o.Logger.Info("MCP leader: this replica no longer serves MCP", slog.String("lease", l.o.Lease))
 	}

@@ -48,6 +48,14 @@ func init() {
 // operator generates for it.
 const LabelPgToolBoxConsole = "pgtoolbox.fyannk.dev/console"
 
+// LabelMCPLeader=MCPLeaderLabelValue marks the console Pod that holds the
+// MCP Lease, the one the -mcp Service selects. The operator sets it on
+// that Pod and removes it from the others.
+const (
+	LabelMCPLeader      = "pgtoolbox.fyannk.dev/mcp-leader"
+	MCPLeaderLabelValue = "true"
+)
+
 // AnnotationUserManaged=UserManagedValue on a ConfigMap the operator (or the
 // chart) seeded hands it over to people: neither writes it again.
 const (
@@ -99,6 +107,11 @@ const HistoryClaimTemplateName = "history"
 
 // DigestLeaseName is the Lease whose holder delivers the daily digests.
 func (c *PgToolBoxConsole) DigestLeaseName() string { return c.WorkloadName() + "-digest" }
+
+// MCPLeaseName is the Lease whose holder alone serves MCP, and the name of
+// the Service, selecting that holder's Pod, the exposure sends the MCP
+// paths to.
+func (c *PgToolBoxConsole) MCPLeaseName() string { return c.WorkloadName() + "-mcp" }
 
 // DigestDelivered reports whether a digest delivery channel is configured.
 func (c *PgToolBoxConsole) DigestDelivered() bool { return c.Spec.Digest.Delivery != nil }

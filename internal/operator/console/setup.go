@@ -23,6 +23,7 @@ import (
 	cnpgv1 "github.com/cloudnative-pg/api/pkg/api/v1"
 	routev1 "github.com/openshift/api/route/v1"
 	appsv1 "k8s.io/api/apps/v1"
+	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	policyv1 "k8s.io/api/policy/v1"
@@ -61,6 +62,7 @@ func CacheByObject(features Features) map[client.Object]cache.ByObject {
 		&corev1.Pod{}:                   managed,
 		&corev1.PersistentVolumeClaim{}: managed,
 		&corev1.ConfigMap{}:             managed,
+		&coordinationv1.Lease{}:         managed,
 		&rbacv1.Role{}:                  managed,
 		&rbacv1.RoleBinding{}:           managed,
 		&rbacv1.ClusterRole{}:           managed,
@@ -99,7 +101,8 @@ func CachedKinds(features Features) []client.Object {
 }
 
 // SetupWithManager registers the controller. Watches: the PgToolBoxConsole itself,
-// every kind it owns and its Pods (their facts are WorkloadReady's
+// every kind it owns (of its Leases, a new holder only: the MCP leader's
+// label follows it) and its Pods (their facts are WorkloadReady's
 // reasons), and, for the instance CA mirror, the namespace's Clusters and
 // the metadata of their server CA Secrets and of the user Secrets each
 // console mounts (indexReferencedSecret). No polling, except for a console
@@ -137,6 +140,7 @@ func (r *Reconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager) err
 		Owns(&policyv1.PodDisruptionBudget{}).
 		Owns(&networkingv1.Ingress{}).
 		Owns(&networkingv1.NetworkPolicy{}).
+		Owns(&coordinationv1.Lease{}, builder.WithPredicates(leaseHolderChanged())).
 		Owns(&corev1.Secret{}, builder.OnlyMetadata).
 		Owns(&corev1.ConfigMap{}, builder.OnlyMetadata, builder.WithPredicates(stateWritesIgnored())).
 		Watches(&corev1.Pod{}, handler.EnqueueRequestsFromMapFunc(byConsoleLabel)).

@@ -39,6 +39,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"slices"
 	"time"
 
 	routev1 "github.com/openshift/api/route/v1"
@@ -81,11 +82,11 @@ import (
 // +kubebuilder:rbac:groups=pgtoolbox.fyannk.dev,resources=pgtoolboxconsoles/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=pgtoolbox.fyannk.dev,resources=pgtoolboxconsoles/finalizers,verbs=update
 // +kubebuilder:rbac:groups=apps,resources=deployments;statefulsets,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=coordination.k8s.io,resources=leases,verbs=get;create;update
+// +kubebuilder:rbac:groups=coordination.k8s.io,resources=leases,verbs=get;list;watch;create;update
 // +kubebuilder:rbac:groups="",resources=services;serviceaccounts;persistentvolumeclaims,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch
-// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;patch
 // +kubebuilder:rbac:groups=policy,resources=poddisruptionbudgets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=roles;rolebindings,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles,verbs=get;list;watch;create
@@ -254,6 +255,11 @@ func (r *Reconciler) reconcile(ctx context.Context, console *pgtoolboxv1alpha1.P
 		role, binding = buildDigestLeaseRBAC(console)
 		objects = append(objects, role, binding)
 	}
+	mcpService, mcpLease := buildMCPLeader(console)
+	if console.MCPEnabled() {
+		role, binding = buildMCPLeaderRBAC(console)
+		objects = append(objects, mcpService, role, binding)
+	}
 	for _, object := range objects {
 		if err := applier.Apply(ctx, object); err != nil {
 			return r.notOwned(console, err)
@@ -281,6 +287,20 @@ func (r *Reconciler) reconcile(ctx context.Context, console *pgtoolboxv1alpha1.P
 		}
 		if err := r.deleteIfOwned(ctx, console, &rbacv1.Role{}, console.DigestLeaseName()); err != nil {
 			return err
+		}
+	}
+	if console.MCPEnabled() {
+		if err := r.createLease(ctx, mcpLease); err != nil {
+			return err
+		}
+	} else {
+		// The Lease stays, as the digest's does (it goes with the
+		// PgToolBoxConsole); without the Service and the grant nothing
+		// reaches or takes it.
+		for _, object := range []client.Object{&corev1.Service{}, &rbacv1.RoleBinding{}, &rbacv1.Role{}} {
+			if err := r.deleteIfOwned(ctx, console, object, console.MCPLeaseName()); err != nil {
+				return err
+			}
 		}
 	}
 	if policy := buildDrillNetworkPolicy(console); policy != nil {
@@ -329,6 +349,9 @@ func (r *Reconciler) reconcile(ctx context.Context, console *pgtoolboxv1alpha1.P
 	setExposureConfined(console, exposed)
 	in := deploymentInputs{Image: image, OpenShift: r.Features.OpenShift, Exposed: exposed}
 	if err := r.reconcileWorkload(ctx, console, in); err != nil {
+		return err
+	}
+	if err := r.labelMCPLeader(ctx, console); err != nil {
 		return err
 	}
 	r.observeExposure(ctx, console)
@@ -568,13 +591,20 @@ func (r *Reconciler) applyExposure(ctx context.Context, console *pgtoolboxv1alph
 		return false, err
 	}
 	if r.Features.In(console.Namespace).Routes.Usable() {
+		// The console's Route, then one per MCP path (none with MCP off).
+		routes := []*routev1.Route{}
 		if kind == pgtoolboxv1alpha1.ExposureTypeRoute {
-			if err := applier.Apply(ctx, exposure.Route(spec, target)); err != nil {
-				return false, r.notOwned(console, err)
+			routes = append([]*routev1.Route{exposure.Route(spec, target)}, exposure.ExtraRoutes(spec, target)...)
+		}
+		for _, name := range routeNames(console) {
+			if i := slices.IndexFunc(routes, func(route *routev1.Route) bool { return route.Name == name }); i >= 0 {
+				if err := applier.Apply(ctx, routes[i]); err != nil {
+					return false, r.notOwned(console, err)
+				}
+				exposed = true
+			} else if err := r.deleteIfOwned(ctx, console, &routev1.Route{}, name); err != nil {
+				return false, err
 			}
-			exposed = true
-		} else if err := r.deleteIfOwned(ctx, console, &routev1.Route{}, console.WorkloadName()); err != nil {
-			return false, err
 		}
 	}
 	if r.Features.In(console.Namespace).Gateways.Usable() {
@@ -626,6 +656,17 @@ func (r *Reconciler) exposurePolicyRefused(console *pgtoolboxv1alpha1.PgToolBoxC
 	return r.invalid(console, pgtoolboxv1alpha1.ReasonExposurePolicyInvalid, message)
 }
 
+// routeNames are the console's Route and one per MCP path.
+func routeNames(console *pgtoolboxv1alpha1.PgToolBoxConsole) []string {
+	paths := mcpPaths(console)
+	names := make([]string, 0, len(paths)+1)
+	names = append(names, console.WorkloadName())
+	for _, p := range paths {
+		names = append(names, p.Service+"-"+p.Name)
+	}
+	return names
+}
+
 // withdrawExposure deletes every exposure object this console owns.
 func (r *Reconciler) withdrawExposure(ctx context.Context, console *pgtoolboxv1alpha1.PgToolBoxConsole) error {
 	name := console.WorkloadName()
@@ -633,8 +674,10 @@ func (r *Reconciler) withdrawExposure(ctx context.Context, console *pgtoolboxv1a
 		return err
 	}
 	if r.Features.In(console.Namespace).Routes.Usable() {
-		if err := r.deleteIfOwned(ctx, console, &routev1.Route{}, name); err != nil {
-			return err
+		for _, route := range routeNames(console) {
+			if err := r.deleteIfOwned(ctx, console, &routev1.Route{}, route); err != nil {
+				return err
+			}
 		}
 	}
 	if r.Features.In(console.Namespace).Gateways.Usable() {

@@ -365,6 +365,14 @@ node_port="$(kubectl -n "${NS}" get svc -l "app.kubernetes.io/instance=${RELEASE
 [[ -n "${node_ip}" && -n "${node_port}" ]] || fail "no console address (node '${node_ip}', port '${node_port}')"
 base="http://${node_ip}:${node_port}"
 echo "[team] console at ${base}"
+# MCP is served by the chart's one MCP Pod behind the ClusterIP Service
+# ${RELEASE}-console-mcp; the test reaches it through a NodePort of its own
+# (the chart's Service is never changed: helm owns it).
+as_admin expose deployment "${RELEASE}-console-mcp" --name team-e2e-mcp --type NodePort --port 80 --target-port http >/dev/null
+mcp_port="$(kubectl -n "${NS}" get svc team-e2e-mcp -o jsonpath='{.spec.ports[0].nodePort}')"
+[[ -n "${mcp_port}" ]] || fail "no NodePort for the MCP Pod"
+mcp_base="http://${node_ip}:${mcp_port}"
+echo "[team] MCP at ${mcp_base}"
 
 # status <jar> <path>: the HTTP status of one API call, the body in ${work}/body.
 status() { curl -s -o "${work}/body" -w '%{http_code}' --max-time 20 -b "${work}/$1.jar" "${base}$2" || echo curl-error; }
@@ -413,7 +421,7 @@ mcp_call() {
   code="$(curl -s -o "${work}/mcp.raw" -w '%{http_code}' --max-time 30 -X POST \
     -H "Authorization: Bearer ${token}" -H 'content-type: application/json' \
     -H 'accept: application/json, text/event-stream' -H 'MCP-Protocol-Version: 2025-06-18' \
-    --data "{\"jsonrpc\":\"2.0\",\"id\":${mcp_id},\"method\":\"$2\",\"params\":$3}" "${base}/mcp" || echo curl-error)"
+    --data "{\"jsonrpc\":\"2.0\",\"id\":${mcp_id},\"method\":\"$2\",\"params\":$3}" "${mcp_base}/mcp" || echo curl-error)"
   [[ "${code}" == 200 ]] || fail "MCP $2 as $1: HTTP ${code}, want 200: $(head -c 300 "${work}/mcp.raw")"
   # Strip the SSE framing when there is one; plain JSON passes through.
   sed -n 's/^data: *//p' "${work}/mcp.raw" >"${work}/mcp.json"
@@ -425,9 +433,15 @@ mcp_call() {
 }
 for sa in viewer stranger; do as_admin create token "${sa}" --duration=1h >"${work}/${sa}.token"; done
 
+# The MCP Pod answers 503 until it holds the Lease and has loaded the grants.
+mcp_unauthorized() {
+  [[ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 -X POST -H 'content-type: application/json' \
+    -H 'accept: application/json, text/event-stream' --data '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' "${mcp_base}/mcp")" == 401 ]]
+}
+wait_for "the MCP Pod leads" 180 mcp_unauthorized
 # Without a bearer the endpoint challenges, it does not serve.
 code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 -X POST -H 'content-type: application/json' \
-  -H 'accept: application/json, text/event-stream' --data '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' "${base}/mcp" || echo curl-error)"
+  -H 'accept: application/json, text/event-stream' --data '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' "${mcp_base}/mcp" || echo curl-error)"
 [[ "${code}" == 401 ]] || fail "POST /mcp with no bearer: HTTP ${code}, want 401"
 echo "[team] ok: /mcp without a bearer is refused (401)"
 

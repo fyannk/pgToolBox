@@ -17,6 +17,7 @@ package console
 import (
 	"bytes"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -24,14 +25,20 @@ import (
 	"testing"
 	"time"
 
+	routev1 "github.com/openshift/api/route/v1"
 	appsv1 "k8s.io/api/apps/v1"
+	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 	"sigs.k8s.io/yaml"
 
 	pgtoolboxv1alpha1 "github.com/fyannk/pgToolBox/api/v1alpha1"
+	"github.com/fyannk/pgToolBox/internal/console/mcpleader"
+	"github.com/fyannk/pgToolBox/internal/operator/exposure"
 	"github.com/fyannk/pgToolBox/internal/operator/specs"
 )
 
@@ -431,6 +438,9 @@ func TestDeploymentMatchesTheChart(t *testing.T) {
 			}
 
 			chartEnv, chartMounts, chartVolumes := containerFacts(&chartPod.Spec)
+			// The chart's replicas leave MCP to its MCP Deployment; the
+			// operator's campaign, and it labels the holder.
+			chartEnv = slices.DeleteFunc(chartEnv, func(e string) bool { return e == "MCP_CANDIDATE=false" })
 			ourEnv, ourMounts, ourVolumes := containerFacts(&ourPod.Spec)
 			if !slices.Equal(ourEnv, chartEnv) {
 				t.Errorf("env\n got %v\nwant %v (the chart's)", ourEnv, chartEnv)
@@ -490,6 +500,89 @@ func TestDigestLeaseRoleMatchesTheChart(t *testing.T) {
 	}
 	if got, want := ruleSet(ours.Rules), ruleSet(chart.Rules); !slices.Equal(got, want) {
 		t.Errorf("digest Lease rules\n got %v\nwant %v (the chart's)", got, want)
+	}
+}
+
+// TestMCPLeaderMatchesTheChart: with MCP on, the operator and the chart
+// render the same Lease, Role and Service port for the MCP leader and send
+// the same paths to that Service, those of mcpleader.Paths, through each
+// kind of exposure. The Services differ in what they select: the
+// operator's the console Pod it labels as the holder, the chart's its MCP
+// Deployment's Pod.
+func TestMCPLeaderMatchesTheChart(t *testing.T) {
+	console := &pgtoolboxv1alpha1.PgToolBoxConsole{ObjectMeta: metav1.ObjectMeta{Name: "console", Namespace: "team-a", UID: "u"}}
+	console.Spec.MCP = &pgtoolboxv1alpha1.PgToolBoxConsoleMCPSpec{Enabled: true}
+	var want []string
+	for _, p := range mcpleader.Paths {
+		want = append(want, fmt.Sprintf("%v %s", p.Prefix, p.Path))
+	}
+	ours := make([]string, 0, len(mcpleader.Paths))
+	for _, p := range mcpPaths(console) {
+		ours = append(ours, fmt.Sprintf("%v %s", !p.Exact, p.Path))
+	}
+	if !slices.Equal(ours, want) {
+		t.Errorf("the operator's MCP paths %v, want mcpleader.Paths %v", ours, want)
+	}
+
+	mcp := []string{"console.mcp.enabled=true", "console.exposure.host=console.example"}
+	docs := renderChart(t, append(mcp, "console.exposure.type=ingress")...)
+	role, binding := buildMCPLeaderRBAC(console)
+	chartRole := chartObject[rbacv1.Role](t, docs, "Role/console-mcp")
+	if got, want := ruleSet(role.Rules), ruleSet(chartRole.Rules); !slices.Equal(got, want) {
+		t.Errorf("MCP leader rules\n got %v\nwant %v (the chart's)", got, want)
+	}
+	if chartBinding := chartObject[rbacv1.RoleBinding](t, docs, "RoleBinding/console-mcp"); chartBinding.RoleRef != binding.RoleRef ||
+		!slices.Equal(chartBinding.Subjects, binding.Subjects) {
+		t.Errorf("MCP leader binding %+v %+v, chart %+v %+v", binding.RoleRef, binding.Subjects, chartBinding.RoleRef, chartBinding.Subjects)
+	}
+	service, lease := buildMCPLeader(console)
+	chartService := chartObject[corev1.Service](t, docs, "Service/console-mcp")
+	if !slices.Equal(chartService.Spec.Ports, service.Spec.Ports) {
+		t.Errorf("MCP Service ports %+v, chart %+v", service.Spec.Ports, chartService.Spec.Ports)
+	}
+	if service.Spec.Selector[pgtoolboxv1alpha1.LabelMCPLeader] != pgtoolboxv1alpha1.MCPLeaderLabelValue {
+		t.Errorf("the operator's MCP Service selects %v: want the holder's label", service.Spec.Selector)
+	}
+	chartObject[coordinationv1.Lease](t, docs, "Lease/"+lease.Name)
+	if mcpDeployment := chartObject[appsv1.Deployment](t, docs, "Deployment/console-mcp"); !maps.Equal(mcpDeployment.Spec.Selector.MatchLabels, chartService.Spec.Selector) {
+		t.Errorf("the chart's MCP Service selects %v, its MCP Deployment's Pods are %v", chartService.Spec.Selector, mcpDeployment.Spec.Selector.MatchLabels)
+	}
+
+	// The paths each exposure sends to the MCP Service.
+	ingress := chartObject[networkingv1.Ingress](t, docs, "Ingress/console")
+	var got []string
+	for _, p := range ingress.Spec.Rules[0].HTTP.Paths {
+		if p.Backend.Service.Name == console.MCPLeaseName() {
+			got = append(got, fmt.Sprintf("%v %s", *p.PathType == networkingv1.PathTypePrefix, p.Path))
+		}
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("the chart's Ingress sends %v to the leader, want %v", got, want)
+	}
+	docs = renderChart(t, append(mcp, "console.exposure.type=route")...)
+	got = make([]string, 0, len(mcpleader.Paths))
+	for _, route := range exposure.ExtraRoutes(&console.Spec.Exposure.ExposureSpec, exposureTarget(console)) {
+		chart := chartObject[routev1.Route](t, docs, "Route/"+route.Name)
+		if chart.Spec.Path != route.Spec.Path || chart.Spec.To.Name != console.MCPLeaseName() {
+			t.Errorf("Route %s: chart path %s to %s, ours %s", route.Name, chart.Spec.Path, chart.Spec.To.Name, route.Spec.Path)
+		}
+		got = append(got, route.Spec.Path)
+	}
+	if len(got) != len(mcpleader.Paths) {
+		t.Errorf("Routes for %v, want one per path of %v", got, mcpleader.Paths)
+	}
+	docs = renderChart(t, append(mcp, "console.exposure.type=httpRoute", "console.exposure.httpRoute.parentRefs[0].name=gw")...)
+	got = nil
+	for _, rule := range chartObject[gatewayv1.HTTPRoute](t, docs, "HTTPRoute/console").Spec.Rules {
+		if string(rule.BackendRefs[0].Name) != console.MCPLeaseName() {
+			continue
+		}
+		for _, m := range rule.Matches {
+			got = append(got, fmt.Sprintf("%v %s", *m.Path.Type == gatewayv1.PathMatchPathPrefix, *m.Path.Value))
+		}
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("the chart's HTTPRoute sends %v to the leader, want %v", got, want)
 	}
 }
 

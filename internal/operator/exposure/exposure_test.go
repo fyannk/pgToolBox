@@ -15,13 +15,16 @@
 package exposure
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	pgtoolboxv1alpha1 "github.com/fyannk/pgToolBox/api/v1alpha1"
+	"github.com/fyannk/pgToolBox/internal/operator/specs"
 )
 
 func TestHostnameAllowed(t *testing.T) {
@@ -131,6 +134,69 @@ func TestClearHostnameRefusal(t *testing.T) {
 				case !changed && c != before[i]:
 					t.Errorf("%s changed: %+v, was %+v", c.Type, c, before[i])
 				}
+			}
+		})
+	}
+}
+
+// TestExtraPaths: the extra paths of a Target go to their Service ahead of
+// the catch-all, with the same stream timeout; none leaves each object as
+// it was (one path, one rule without matches, no extra Route).
+func TestExtraPaths(t *testing.T) {
+	spec := &pgtoolboxv1alpha1.ExposureSpec{
+		Hostname: "console.example",
+		Gateway:  &pgtoolboxv1alpha1.GatewayExposureSpec{ParentRef: pgtoolboxv1alpha1.GatewayParentRef{Name: "gw"}},
+	}
+	extra := []PathBackend{
+		{Name: "mcp", Path: "/mcp", Service: "console-mcp"},
+		{Name: "logout", Path: "/logout", Exact: true, Service: "console-mcp"},
+	}
+	for _, tc := range []struct {
+		name       string
+		extra      []PathBackend
+		wantPaths  []string // path type path -> Service
+		wantRules  []string // match types and values -> Service
+		wantRoutes []string // name path -> Service
+	}{
+		{
+			name:      "none",
+			wantPaths: []string{"Prefix / -> console"},
+			wantRules: []string{"[] -> console"},
+		},
+		{
+			name: "two", extra: extra,
+			wantPaths:  []string{"Prefix /mcp -> console-mcp", "Exact /logout -> console-mcp", "Prefix / -> console"},
+			wantRules:  []string{"[PathPrefix /mcp Exact /logout] -> console-mcp", "[] -> console"},
+			wantRoutes: []string{"console-mcp-mcp /mcp -> console-mcp", "console-mcp-logout /logout -> console-mcp"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			target := Target{
+				Meta: metav1.ObjectMeta{Name: "console", Namespace: "team-a"}, Service: "console", PortName: "http", Port: 80,
+				StreamTimeout: time.Hour, Extra: tc.extra,
+			}
+			var paths, rules, routes []string
+			for _, p := range Ingress(spec, target).Spec.Rules[0].HTTP.Paths {
+				paths = append(paths, fmt.Sprintf("%s %s -> %s", *p.PathType, p.Path, p.Backend.Service.Name))
+			}
+			for _, r := range HTTPRoute(spec, target).Spec.Rules {
+				var matches []string
+				for _, m := range r.Matches {
+					matches = append(matches, string(*m.Path.Type)+" "+*m.Path.Value)
+				}
+				if r.Timeouts == nil || *r.Timeouts.Request != "3600s" {
+					t.Errorf("rule %v: timeouts %+v, want the stream's", matches, r.Timeouts)
+				}
+				rules = append(rules, fmt.Sprintf("[%s] -> %s", strings.Join(matches, " "), r.BackendRefs[0].Name))
+			}
+			for _, r := range ExtraRoutes(spec, target) {
+				if r.Annotations["haproxy.router.openshift.io/timeout"] != "3600s" || specs.HashOf(r) != specs.Hash(r.Spec) {
+					t.Errorf("Route %s: annotations %v, want the stream timeout and its own hash", r.Name, r.Annotations)
+				}
+				routes = append(routes, fmt.Sprintf("%s %s -> %s", r.Name, r.Spec.Path, r.Spec.To.Name))
+			}
+			if !slices.Equal(paths, tc.wantPaths) || !slices.Equal(rules, tc.wantRules) || !slices.Equal(routes, tc.wantRoutes) {
+				t.Errorf("Ingress %v\nHTTPRoute %v\nRoutes %v\nwant %v\n%v\n%v", paths, rules, routes, tc.wantPaths, tc.wantRules, tc.wantRoutes)
 			}
 		})
 	}

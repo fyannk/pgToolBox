@@ -35,6 +35,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -44,6 +45,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
+
+	"github.com/fyannk/pgToolBox/internal/console/mcpleader"
 )
 
 // The identity provider of the SSO scenarios: dex, pinned by digest in
@@ -299,7 +302,7 @@ func exposeConsole(t *testing.T, c console) (httpPort, probePort int) {
 		ObjectMeta: metav1.ObjectMeta{Name: c.fullname() + "-e2e-access", Namespace: c.Namespace},
 		Spec: corev1.ServiceSpec{
 			Type:     corev1.ServiceTypeNodePort,
-			Selector: map[string]string{"app.kubernetes.io/name": "pgtoolbox-console", "app.kubernetes.io/instance": c.Release},
+			Selector: map[string]string{"app.kubernetes.io/name": "pgtoolbox-console", "app.kubernetes.io/instance": c.Release, "app.kubernetes.io/component": "console"},
 			Ports: []corev1.ServicePort{
 				{Name: "http", Port: 3000, TargetPort: intstr.FromString("http")},
 				{Name: "probes", Port: 3001, TargetPort: intstr.FromString("probes")},
@@ -318,6 +321,31 @@ func exposeConsole(t *testing.T, c console) (httpPort, probePort int) {
 		}
 	}
 	return httpPort, probePort
+}
+
+// leaderRoute is the hosts key of a console's MCP Pod: requests to host
+// on mcpleader.Paths are sent to that address.
+func leaderRoute(host string) string { return "mcp " + host }
+
+// exposeMCPLeader adds a NodePort Service in front of a console's MCP Pod,
+// as exposeConsole does for the console's (the chart's <fullname>-mcp
+// Service is ClusterIP, and chart-owned: a test never changes it).
+func exposeMCPLeader(t *testing.T, c console) int {
+	t.Helper()
+	svc, err := clientset.CoreV1().Services(c.Namespace).Create(ctx(), &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: c.fullname() + "-mcp-e2e-access", Namespace: c.Namespace},
+		Spec: corev1.ServiceSpec{
+			Type: corev1.ServiceTypeNodePort,
+			Selector: map[string]string{
+				"app.kubernetes.io/name": "pgtoolbox-console", "app.kubernetes.io/instance": c.Release, "app.kubernetes.io/component": "console-mcp",
+			},
+			Ports: []corev1.ServicePort{{Name: "http", Port: 3000, TargetPort: intstr.FromString("http")}},
+		},
+	}, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("expose the MCP Pod of %s: %v", c.Release, err)
+	}
+	return int(svc.Spec.Ports[0].NodePort)
 }
 
 // browser is a browser-less HTTP client: it follows redirects, keeps cookies, and
@@ -359,6 +387,16 @@ func (b *browser) build(noKeepAlive bool) *http.Client {
 			// connections well before the server does.
 			IdleConnTimeout: 30 * time.Second,
 			TLSClientConfig: &tls.Config{RootCAs: b.roots, MinVersion: tls.VersionTLS12},
+			// The MCP paths go to the MCP Pod, as the chart's exposure
+			// sends them: plain HTTP, so a proxy hop keeps the request as
+			// it is.
+			Proxy: func(r *http.Request) (*url.URL, error) {
+				to, ok := b.hosts[leaderRoute(hostPort(r.URL.Host))]
+				if ok && r.URL.Scheme == "http" && slices.ContainsFunc(mcpleader.Paths, func(p mcpleader.Path) bool { return p.Match(r.URL.Path) }) {
+					return &url.URL{Scheme: "http", Host: to}, nil
+				}
+				return nil, nil
+			},
 			DialContext: func(c context.Context, network, addr string) (net.Conn, error) {
 				if to, ok := b.hosts[addr]; ok {
 					addr = to

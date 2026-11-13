@@ -3,7 +3,7 @@ kind: StatefulSet
 metadata:
   annotations:
     pgtoolbox.fyannk.dev/claim-template-hash: 4229bd76cf97f0be
-    pgtoolbox.fyannk.dev/spec-hash: 984753a9246985d9
+    pgtoolbox.fyannk.dev/spec-hash: 6669f4a05fa99317
   labels:
     app.kubernetes.io/component: console
     app.kubernetes.io/instance: console
@@ -100,6 +100,8 @@ spec:
           value: "true"
         - name: MCP_OAUTH_CLIENT_METADATA_HOSTS
           value: claude.ai,chatgpt.com
+        - name: MCP_LEASE
+          value: console-mcp
         - name: OTEL_EXPORTER_OTLP_ENDPOINT
           value: https://api.smith.langchain.com/otel
         - name: OTEL_SERVICE_NAME

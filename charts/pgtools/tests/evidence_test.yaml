@@ -441,7 +441,7 @@ tests:
           value:
             - from:
                 - podSelector:
-                    matchLabels: {app.kubernetes.io/name: pgtoolbox-console, app.kubernetes.io/instance: pgc, app.kubernetes.io/component: console}
+                    matchLabels: {app.kubernetes.io/name: pgtoolbox-console, app.kubernetes.io/instance: pgc}
               ports: [{port: 8443, protocol: TCP}]
       - contains:
           path: spec.egress

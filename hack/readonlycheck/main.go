@@ -75,8 +75,8 @@ type Site struct {
 // writers built the same way); the review Create asks the API server a
 // question and changes nothing; the own-identity writes are the drill
 // teardown, the console's own state ConfigMap, which its
-// Role names by resourceNames and nothing else, the digest and MCP
-// Leases, and the MCP leader's EndpointSlices.
+// Role names by resourceNames and nothing else, and the digest and MCP
+// Leases.
 var allowed = map[Site]int{
 	// Reviews (SelfSubjectReview, SelfSubjectAccessReview): questions put
 	// to the API server, with the person's token or the console's; they
@@ -108,11 +108,6 @@ var allowed = map[Site]int{
 	// on that one name, and create on leases.
 	{"internal/console/leader.(*leaseLock).Create", "Create"}: 1,
 	{"internal/console/leader.(*leaseLock).Update", "Update"}: 1,
-	// The MCP leader's EndpointSlices (MCP_ENDPOINT_SLICES): its Pod IP
-	// written in and taken out, resourceVersion-preconditioned, labels
-	// and port pinned; the Role grants get and update on those names, no
-	// create.
-	{"internal/console/mcpleader.(*publisher).write", "Update"}: 1,
 }
 
 // resourcelockPackage holds client-go's own election locks. They write

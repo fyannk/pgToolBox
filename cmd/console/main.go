@@ -243,7 +243,7 @@ func run(ctx context.Context, lookup func(string) (string, bool), logOut io.Writ
 		MaxResultBytes: s.Console.MCP.MaxResultBytes, CallTimeout: s.Console.MCP.CallTimeout,
 		AccessTTL: s.Console.MCP.AccessTTL, ClientMetadataDocuments: s.Console.MCP.ClientMetadataDocuments,
 		ClientMetadataHosts: s.Console.MCP.ClientMetadataHosts,
-		Lease:               s.Console.MCP.Lease, EndpointSlices: s.Console.MCP.EndpointSlices, PodIP: s.Console.MCP.PodIP,
+		Lease:               s.Console.MCP.Lease, NotCandidate: !s.Console.MCP.Candidate,
 	}
 	if mcpOptions.Enabled {
 		// The documentation of this release, embedded in the image: the
