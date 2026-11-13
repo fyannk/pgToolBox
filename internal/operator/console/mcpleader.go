@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -37,21 +36,16 @@ import (
 // the holder's Pod LabelMCPLeader, which the -mcp Service selects. The
 // console holds nothing on Pods.
 
-// mcpHolderPod is the Pod named by a Lease that is held and not expired at
-// now: its holderIdentity is "<pod name>_<suffix>" (the console's
-// leader.CandidateIdentity). Empty for none.
-func mcpHolderPod(lease *coordinationv1.Lease, now time.Time) string {
-	if lease == nil {
+// mcpHolderPod is the Pod a Lease names: its holderIdentity is
+// "<pod name>_<suffix>" (the console's leader.CandidateIdentity). Empty for
+// none. No expiry is judged here (the operator's clock is not the
+// holder's): a dead holder's Pod is not Ready, so the Service skips it, and
+// the next acquisition is a new holder.
+func mcpHolderPod(lease *coordinationv1.Lease) string {
+	if lease == nil || lease.Spec.HolderIdentity == nil {
 		return ""
 	}
-	spec := lease.Spec
-	if spec.HolderIdentity == nil || spec.RenewTime == nil || spec.LeaseDurationSeconds == nil {
-		return ""
-	}
-	if now.After(spec.RenewTime.Add(time.Duration(*spec.LeaseDurationSeconds) * time.Second)) {
-		return ""
-	}
-	pod, _, found := strings.Cut(*spec.HolderIdentity, "_")
+	pod, _, found := strings.Cut(*lease.Spec.HolderIdentity, "_")
 	if !found {
 		return ""
 	}
@@ -77,14 +71,14 @@ func mcpLabelChanges(pods []corev1.Pod, holder string) map[string]bool {
 
 // labelMCPLeader puts LabelMCPLeader on the MCP Lease holder's Pod and
 // takes it off every other Pod of this console (all of them with MCP off,
-// with no holder or an expired Lease). Pods already right are not written.
+// with no holder). Pods already right are not written.
 func (r *Reconciler) labelMCPLeader(ctx context.Context, console *pgtoolboxv1alpha1.PgToolBoxConsole) error {
 	holder := ""
 	if console.MCPEnabled() {
 		lease := &coordinationv1.Lease{}
 		switch err := r.Client.Get(ctx, client.ObjectKey{Namespace: console.Namespace, Name: console.MCPLeaseName()}, lease); {
 		case err == nil:
-			holder = mcpHolderPod(lease, time.Now())
+			holder = mcpHolderPod(lease)
 		case !apierrors.IsNotFound(err):
 			return fmt.Errorf("read Lease %s: %w", console.MCPLeaseName(), err)
 		}

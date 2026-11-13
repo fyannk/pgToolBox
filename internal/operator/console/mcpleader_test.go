@@ -43,26 +43,26 @@ func mcpLease(holder string, renewed time.Time) *coordinationv1.Lease {
 }
 
 func TestMCPHolderPod(t *testing.T) {
-	now := time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC)
+	now := time.Now()
 	for _, tc := range []struct {
 		name  string
 		lease *coordinationv1.Lease
 		want  string
 	}{
-		{"held", mcpLease("console-7d9f-abcde_0a1b2c3d4e5f", now.Add(-5*time.Second)), "console-7d9f-abcde"},
+		{"held", mcpLease("console-7d9f-abcde_0a1b2c3d4e5f", now), "console-7d9f-abcde"},
+		{"held, renewed long ago by the operator's clock", mcpLease("console-0_0a1b2c3d4e5f", now.Add(-time.Hour)), "console-0"},
 		{"no Lease", nil, ""},
 		{"released", mcpLease("", time.Time{}), ""},
-		{"expired", mcpLease("console-0_0a1b2c3d4e5f", now.Add(-16*time.Second)), ""},
 		{"not a candidate identity", mcpLease("console-0", now), ""},
 	} {
-		if got := mcpHolderPod(tc.lease, now); got != tc.want {
+		if got := mcpHolderPod(tc.lease); got != tc.want {
 			t.Errorf("%s: holder %q, want %q", tc.name, got, tc.want)
 		}
 	}
 }
 
 // TestLabelMCPLeader: the holder's Pod alone carries the label; with no
-// holder, an expired Lease, no Lease or MCP off, none does; a Pod that is
+// holder, no Lease or MCP off, none does (a stale renewal changes nothing); a Pod that is
 // not this console's is never written; a Pod already right is not either.
 func TestLabelMCPLeader(t *testing.T) {
 	now := time.Now()
@@ -79,7 +79,7 @@ func TestLabelMCPLeader(t *testing.T) {
 		{"holder moved", false, mcpLease("console-b_00ff", now), []string{"console-a"}, []string{"console-b"}, 2},
 		{"already right", false, mcpLease("console-b_00ff", now), []string{"console-b"}, []string{"console-b"}, 0},
 		{"holder gone", false, mcpLease("console-z_00ff", now), []string{"console-a"}, nil, 1},
-		{"expired", false, mcpLease("console-b_00ff", now.Add(-time.Minute)), []string{"console-b"}, nil, 1},
+		{"stale renewal", false, mcpLease("console-b_00ff", now.Add(-time.Hour)), []string{"console-b"}, []string{"console-b"}, 0},
 		{"released", false, mcpLease("", now), []string{"console-b"}, nil, 1},
 		{"no Lease", false, nil, []string{"console-a", "console-b"}, nil, 2},
 		{"MCP off", true, mcpLease("console-b_00ff", now), []string{"console-b"}, nil, 1},
