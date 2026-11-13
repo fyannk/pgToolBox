@@ -3,7 +3,8 @@
 // (viewmodel.Phrase): an instant under a key ending in "At", a duration
 // under one ending in "Seconds". A code this file does not know, or a
 // value it needs that is missing, shows Go's English text: never a blank
-// and never a guess.
+// and never a guess. Rare sentences (the evidence without a scan time)
+// are left in English on purpose.
 import { formatDuration, formatNumber } from "../ds/format";
 import { healthWord } from "../ds/health";
 import { formatUtcMinute } from "../ds/time";
@@ -349,20 +350,14 @@ function translate(code: string, p: Params): string | undefined {
       const scanned = instant(p, "scannedAt");
       return scanned ? m.rp_segment_after_last_read({ scanned }) : undefined;
     }
-    case "recovery.segment.afterFrontier":
-      return m.rp_segment_after_frontier();
     case "recovery.segment.afterLastReadFailing": {
       const scanned = instant(p, "scannedAt");
       return scanned ? m.rp_segment_after_last_read_failing({ scanned }) : undefined;
     }
-    case "recovery.segment.afterFrontierFailing":
-      return m.rp_segment_after_frontier_failing();
     case "recovery.segment.afterLastReadBacklog": {
       const scanned = instant(p, "scannedAt");
       return scanned && segments ? m.rp_segment_after_last_read_backlog({ scanned, segments }) : undefined;
     }
-    case "recovery.segment.afterFrontierBacklog":
-      return segments ? m.rp_segment_after_frontier_backlog({ segments }) : undefined;
     case "recovery.segment.archiveBacklog":
       return segments ? m.rp_segment_archive_backlog({ segments }) : undefined;
     case "recovery.segment.archiveBacklogSince": {
@@ -373,37 +368,17 @@ function translate(code: string, p: Params): string | undefined {
       return m.rp_segment_archiver_unread();
     case "recovery.segment.archiverNotReported":
       return m.rp_segment_archiver_not_reported();
-    case "recovery.segment.archiverHibernated":
-      return m.rp_segment_archiver_hibernated();
     case "recovery.segment.archiverUnreadSince": {
       const quiet = instant(p, "quietAt");
       return quiet ? m.rp_segment_archiver_unread_since({ quiet }) : undefined;
     }
-    case "recovery.segment.archiveBacklogBound": {
-      const read = instant(p, "readAt");
-      const bound = instant(p, "boundAt");
-      return segments && read && bound ? m.rp_segment_archive_backlog_bound({ segments, read, bound }) : undefined;
-    }
-    case "recovery.segment.archiverUnreadBound": {
-      const read = instant(p, "readAt");
-      const bound = instant(p, "boundAt");
-      return read && bound ? m.rp_segment_archiver_unread_bound({ read, bound }) : undefined;
-    }
     case "recovery.segment.formerArchiverUnknown":
-    case "recovery.segment.formerArchiverBacklog":
-    case "recovery.segment.formerArchiverSince":
-    case "recovery.segment.formerArchiverBound": {
+    case "recovery.segment.formerArchiverSince": {
       const timeline = p?.timeline;
       if (!timeline) return undefined;
       if (code === "recovery.segment.formerArchiverUnknown") return m.rp_segment_former_archiver_unknown({ timeline });
-      if (code === "recovery.segment.formerArchiverBacklog") return m.rp_segment_former_archiver_backlog({ timeline });
-      if (code === "recovery.segment.formerArchiverSince") {
-        const quiet = instant(p, "quietAt");
-        return quiet ? m.rp_segment_former_archiver_since({ timeline, quiet }) : undefined;
-      }
-      const read = instant(p, "readAt");
-      const bound = instant(p, "boundAt");
-      return read && bound ? m.rp_segment_former_archiver_bound({ timeline, read, bound }) : undefined;
+      const quiet = instant(p, "quietAt");
+      return quiet ? m.rp_segment_former_archiver_since({ timeline, quiet }) : undefined;
     }
     case "recovery.segment.pathNotHealthy": {
       const state = evidenceStateWord(p?.state);

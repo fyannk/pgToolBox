@@ -70,7 +70,7 @@ func failoverFacts(g *gathered) recoveryFacts {
 	promoted := promotedAt(g)
 	return recoveryFacts{
 		now: now, archiveTimeout: defaultArchiveTimeout, sweepInterval: 30 * time.Second,
-		former:   formerArchiverOf(g, promoted, defaultArchiveTimeout, 30*time.Second),
+		former:   formerArchiverOf(g, promoted, 30*time.Second),
 		promoted: promoted, liveTimeline: liveTimelineOf(g, promoted), rejoined: rejoinedSince(g, promoted),
 	}
 }
@@ -118,7 +118,7 @@ func TestFormerEvidenceIsNotPooledAcrossFailovers(t *testing.T) {
 	path.FrontierReceiptAt = &receipt
 	b := failoverTimeline(g, path)
 	assertNotCovered(t, b, receipt, 2*time.Minute, 10*time.Minute, 20*time.Minute, 2*time.Hour)
-	if band := bandOn(b, "1"); band == nil || band.Code != "recovery.segment.formerArchiverBacklog" || !band.From.Equal(receipt.Add(-failureLookback)) {
+	if band := bandOn(b, "1"); band == nil || band.Code != "recovery.segment.formerArchiverUnknown" || !band.From.Equal(receipt.Add(-failureLookback)) {
 		t.Errorf("timeline 1's band %+v, want A's backlog from a day before the end", band)
 	}
 }
@@ -141,7 +141,7 @@ func TestFormerEvidenceAfterAToBToA(t *testing.T) {
 		})
 		b := failoverTimeline(g, path)
 		assertNotCovered(t, b, receipt, 2*time.Minute, 10*time.Minute, 20*time.Minute)
-		if band := bandOn(b, "1"); band == nil || band.Code != "recovery.segment.formerArchiverBacklog" {
+		if band := bandOn(b, "1"); band == nil || band.Code != "recovery.segment.formerArchiverUnknown" {
 			t.Errorf("timeline 1's band %+v, want A's backlog", band)
 		}
 	})
@@ -180,7 +180,7 @@ func TestFormerEvidenceOverTwoFailovers(t *testing.T) {
 	end1, end2 := now.Add(-6*time.Hour), now.Add(-2*time.Hour)
 	assertNotCovered(t, b, end1, 2*time.Minute, 20*time.Minute, 2*time.Hour)
 	assertNotCovered(t, b, end2, 2*time.Minute, 30*time.Minute)
-	if band := bandOn(b, "1"); band == nil || band.Code != "recovery.segment.formerArchiverBacklog" {
+	if band := bandOn(b, "1"); band == nil || band.Code != "recovery.segment.formerArchiverUnknown" {
 		t.Errorf("timeline 1's band %+v, want A's backlog (B's quiet sweep is timeline 2's)", band)
 	}
 	if band := bandOn(b, "2"); band == nil || band.Code != "recovery.segment.formerArchiverSince" || !band.From.Equal(bQuiet.Add(-defaultArchiveTimeout)) {
@@ -193,8 +193,8 @@ func TestFormerEvidenceOverTwoFailovers(t *testing.T) {
 
 // TestFormerEvidenceOfOtherTimelinesChangesNothing is the property behind
 // round 9's P2, run on real rings (round 10, PG P3): the former primary's
-// readyWalFiles, position and timeline rings go through formerArchiverOf,
-// timelineAt and archivedBoundsOn as a sweep would keep them. Readings of
+// readyWalFiles and timeline rings go through formerArchiverOf and
+// timelineAt as a sweep would keep them. Readings of
 // the archivers of other timelines, however many and wherever they fall
 // (another instance's, or the same instance's on a later term), leave the
 // bar of a timeline 1 end exactly as that timeline's own readings draw
@@ -207,20 +207,16 @@ func TestFormerEvidenceOfOtherTimelinesChangesNothing(t *testing.T) {
 	path := parentTailPath(1)
 	receipt := *path.FrontierReceiptAt
 	promoted := now.Add(-time.Hour)
-	const segment = 16 << 20
 	svc := &Service{}
 	type reading struct {
 		at       time.Time
 		files    float64
-		lsn      float64
 		timeline float64
 	}
 	// series is a random term's readings on one timeline, oldest first:
-	// readyWalFiles 0 a third of the time, the position moving forward by
-	// up to three segments a sweep.
+	// readyWalFiles 0 a third of the time.
 	series := func(timeline float64, taken map[int64]bool) []reading {
 		var out []reading
-		lsn := float64(uint64(1+r.IntN(4)) * segment)
 		for range r.IntN(7) {
 			at := receipt.Add(-26 * time.Hour).Add(time.Duration(r.Int64N(int64(promoted.Sub(receipt.Add(-26*time.Hour))/time.Second))) * time.Second)
 			if taken[at.UnixNano()] {
@@ -231,8 +227,6 @@ func TestFormerEvidenceOfOtherTimelinesChangesNothing(t *testing.T) {
 		}
 		sort.Slice(out, func(i, j int) bool { return out[i].at.Before(out[j].at) })
 		for i := range out {
-			lsn += float64(uint64(r.IntN(4))*segment + uint64(r.IntN(1000)))
-			out[i].lsn = lsn
 			if r.IntN(3) > 0 {
 				out[i].files = float64(1 + r.IntN(6))
 			}
@@ -247,19 +241,18 @@ func TestFormerEvidenceOfOtherTimelinesChangesNothing(t *testing.T) {
 			cluster: c,
 			swept: sweep.Snapshot{SweptAt: now, Interval: 30 * time.Second, Instances: map[string]sweep.Instance{
 				// The current primary, on timeline 5: its reading gives the
-				// segment size (16 MiB) and the live timeline.
+				// live timeline.
 				"db-2": {State: viewmodel.StatusReadOK, Reading: &instancestatus.Reading{IsPrimary: true, CurrentWAL: "000000050000000000000007", CurrentLSN: "0/7000100", ObservedAt: now}},
 			}},
-			readyRings: map[string][]viewmodel.Point{}, lsnRings: map[string][]viewmodel.Point{}, timelineRings: map[string][]viewmodel.Point{},
+			readyRings: map[string][]viewmodel.Point{}, timelineRings: map[string][]viewmodel.Point{},
 		}
 		for name, readings := range instances {
 			sorted := append([]reading(nil), readings...)
 			sort.Slice(sorted, func(i, j int) bool { return sorted[i].at.Before(sorted[j].at) })
 			for _, x := range sorted {
-				files, lsn, tl := x.files, x.lsn, x.timeline
+				files, tl := x.files, x.timeline
 				by := x.at.Add(time.Second)
 				g.readyRings[name] = append(g.readyRings[name], viewmodel.Point{At: x.at, Value: &files, ReadBy: by})
-				g.lsnRings[name] = append(g.lsnRings[name], viewmodel.Point{At: x.at, Value: &lsn, ReadBy: by})
 				g.timelineRings[name] = append(g.timelineRings[name], viewmodel.Point{At: x.at, Value: &tl, ReadBy: by})
 			}
 		}
@@ -281,7 +274,7 @@ func TestFormerEvidenceOfOtherTimelinesChangesNothing(t *testing.T) {
 		}
 		// The rule, from timeline 1's own readings: the newest band start
 		// a read by the scan gives.
-		read, quiet, bounds := formerArchiverOf(ownG, promoted, defaultArchiveTimeout, 30*time.Second).on(1)
+		read, quiet := formerArchiverOf(ownG, promoted, 30*time.Second).on(1)
 		var start *time.Time
 		later := func(at time.Time) {
 			if start == nil || at.After(*start) {
@@ -291,11 +284,6 @@ func TestFormerEvidenceOfOtherTimelinesChangesNothing(t *testing.T) {
 		for _, q := range quiet {
 			if !q.by.After(now) {
 				later(q.at.Add(-defaultArchiveTimeout))
-			}
-		}
-		for _, b := range bounds {
-			if !b.readAt.After(now) {
-				later(b.before)
 			}
 		}
 		if read && start != nil {
@@ -323,7 +311,7 @@ func TestFormerEvidenceOfOtherTimelinesChangesNothing(t *testing.T) {
 // gaps, so an instance promoted again would join its earlier term's
 // readings (WAL waiting before it was demoted) to the current one across
 // its time as a standby. Only the sweeps since the promotion count: one
-// reading at the threshold since then is unconfirmed, not a backlog.
+// reading at the threshold since then is not a backlog.
 func TestBacklogReadsOnlyTheCurrentTerm(t *testing.T) {
 	promoted := now.Add(-time.Hour)
 	read := now.Add(-10 * time.Second)
@@ -344,8 +332,8 @@ func TestBacklogReadsOnlyTheCurrentTerm(t *testing.T) {
 		}},
 	}
 	b := cnpgstatus.ArchiveBacklogOf(g.cluster, primaryArchiver(g))
-	if b.Behind() || b.Unconfirmed != 9 {
-		t.Fatalf("backlog %+v, want the current term's single reading unconfirmed", b)
+	if b.Behind() {
+		t.Fatalf("backlog %+v, want the current term's single reading not judged a backlog", b)
 	}
 	c.Status.CurrentPrimaryTimestamp = promoted.Add(-4 * time.Hour).Format(time.RFC3339Nano)
 	if b := cnpgstatus.ArchiveBacklogOf(g.cluster, primaryArchiver(g)); !b.Behind() {

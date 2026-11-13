@@ -138,37 +138,6 @@ func TestEveryUpstreamBackupPhaseIsInTheTable(t *testing.T) {
 	}
 }
 
-// TestPinLSNBeforeReadyCount pins the read order the recovery facts'
-// busy-primary bound relies on (internal/console/status archivedBounds,
-// CNPG P3-5): in one /pg/status answer the instance manager reads
-// pg_current_wal_lsn() (fillStatusFromPrimary, probes.go v1.30.1:349-350)
-// before it counts the .ready files (fillWalStatus →
-// fillWalStatusFromConnection → GetWALArchiveCounters, :275, :520), so a
-// segment completed between the two reads only raises the count. If
-// upstream reorders them, the bound becomes slightly too optimistic and
-// this test fails.
-func TestPinLSNBeforeReadyCount(t *testing.T) {
-	for _, v := range verifiedReleases {
-		release := v.tag
-		probes, err := os.ReadFile(filepath.Join(moduleDir(t, release), "pkg", "management", "postgres", "probes.go"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		body := functionBody(t, probes, "func (instance *Instance) fillStatus(result *postgres.PostgresqlStatus) error {")
-		position := bytes.Index(body, []byte("err = instance.fillStatusFromPrimary(result)"))
-		count := bytes.Index(body, []byte("return instance.fillWalStatus(result)"))
-		if position < 0 || count < 0 || position > count {
-			t.Errorf("v%s: fillStatus no longer reads the primary's position (at %d) before the .ready count (at %d)", release, position, count)
-		}
-		if lsn := functionBody(t, probes, "func (instance *Instance) fillStatusFromPrimary(result *postgres.PostgresqlStatus) error {"); !bytes.Contains(lsn, []byte("pg_catalog.pg_current_wal_lsn(),")) {
-			t.Errorf("v%s: fillStatusFromPrimary no longer reads pg_current_wal_lsn()", release)
-		}
-		if ready := functionBody(t, probes, "func (instance *Instance) fillWalStatusFromConnection(result *postgres.PostgresqlStatus, superUserDB *sql.DB) error {"); !bytes.Contains(ready, []byte("GetWALArchiveCounters()")) {
-			t.Errorf("v%s: fillWalStatusFromConnection no longer counts the .ready files", release)
-		}
-	}
-}
-
 // TestPinContinuousArchivingSince pins what the recovery facts read
 // from ContinuousArchiving's lastTransitionTime (internal/console/status
 // recoveryFacts failingSince, round 14, CNPG P3-b; pinned round 15, CNPG
@@ -413,9 +382,9 @@ func TestPinBackupStampsAfterTheTool(t *testing.T) {
 		ordered(t, release, "volumesnapshot reconciler.go", snapshot, "backup.Status.SetAsCompleted()\n\tbackup.Status.StoppedAt = backup.Status.ReconciliationTerminatedAt.DeepCopy()")
 		// reconciliationStartedAt is on the operator's clock: SetAsStarted
 		// is called only by the Backup controller (backup_controller.go
-		// v1.30.1:702 and 985; round 21, CNPG P3-3), so the Imported gate
-		// and the instance clock check (observe.SaneBackupTimes) compare the
-		// instance's times with the operator's.
+		// v1.30.1:702 and 985; round 21, CNPG P3-3), so a start stamp kept
+		// beside dropped instance times says the operator started that
+		// Backup live (observe.SaneBackupTimes ClockBehind).
 		controller := filepath.Join("internal", "controller", "backup_controller.go")
 		callers := setAsStartedCallers(t, dir)
 		if len(callers) == 0 {

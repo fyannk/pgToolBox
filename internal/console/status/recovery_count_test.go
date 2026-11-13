@@ -42,7 +42,7 @@ func fullsInput(read time.Time, stops []time.Time, last time.Time, ends ...time.
 		spans = append(spans, interval{from: stop, to: last, backupID: id})
 	}
 	for i := range ends {
-		in.facts.backupEnds = append(in.facts.backupEnds, backupEnd{at: &ends[i]})
+		in.facts.backupEnds = append(in.facts.backupEnds, &ends[i])
 	}
 	return in, spans
 }
@@ -50,8 +50,8 @@ func fullsInput(read time.Time, stops []time.Time, last time.Time, ends ...time.
 // TestR17CountBurstPastAMissedScan (round 17, PG P3-1, the reviewer's
 // probe made a pgBackRest repository): repo-retention-full=4 with four
 // weekly fulls, the agent missed scans for 6 h, and on-demand fulls were
-// taken since the read. Each expired the oldest listed full: four expire
-// them all, and one only the oldest.
+// taken since the read. Four may expire them all; fewer than the count
+// keep the newest listed full, where the band ends.
 func TestR17CountBurstPastAMissedScan(t *testing.T) {
 	day := 24 * time.Hour
 	read := now.Add(-6 * time.Hour)
@@ -72,9 +72,9 @@ func TestR17CountBurstPastAMissedScan(t *testing.T) {
 		want   time.Duration
 	}{
 		{"four fulls since: every listed one may be gone", 4, pgbackrestPolicy{fulls: 4}, window},
-		{"one full since: the oldest goes", 1, pgbackrestPolicy{fulls: 4}, 7 * day},
+		{"one full since: to the newest listed full", 1, pgbackrestPolicy{fulls: 4}, 21*day - time.Hour},
 		{"three since: the newest listed is left", 3, pgbackrestPolicy{fulls: 4}, 21*day - time.Hour},
-		{"one since, six kept: nothing listed goes", 1, pgbackrestPolicy{fulls: 6}, 0},
+		{"one since, six kept: still to the newest listed full", 1, pgbackrestPolicy{fulls: 6}, 21*day - time.Hour},
 		{"one since, the policy not reported", 1, pgbackrestPolicy{unknown: true}, window},
 		// P3-2: archive=1 keeps WAL only from the newest full: one taken
 		// since leaves every listed one its consistency range alone.
@@ -300,7 +300,7 @@ func TestPurgeBandNeverEndsBeforeTheFirstRestorePoint(t *testing.T) {
 			spans = append(spans, interval{from: stop, to: to, backupID: id})
 		}
 		for i := range news {
-			in.facts.backupEnds = append(in.facts.backupEnds, backupEnd{at: &news[i]})
+			in.facts.backupEnds = append(in.facts.backupEnds, &news[i])
 		}
 		band := purgeBand(in, spans, first, last)
 		restorable := func(p time.Time) bool {
@@ -330,75 +330,32 @@ func TestPurgeBandNeverEndsBeforeTheFirstRestorePoint(t *testing.T) {
 }
 
 // TestR18ExpireAfterScanStart (round 18, PG P3, the reviewer's probe):
-// the newest full's Backup stopped two minutes before the scan's start,
-// beyond scanSlack, so it is not counted, and the listing shows K+1
-// fulls: the backup was saved to backup.info and its expire ran after
-// the scan started. The oldest full is gone; the band reaches the second.
+// the newest full was saved to backup.info before the scan's start and
+// its expire ran after it, so the listing shows K+1 fulls. CloudNativePG
+// stamps the Backup Completed once that expire returned, after the read:
+// it is counted since, and the band reaches the newest full. A Backup
+// stamped more than scanSlack and BackupClockSkew before the read ran
+// its expire before it: no band past the listed one.
 func TestR18ExpireAfterScanStart(t *testing.T) {
 	day := 24 * time.Hour
 	read := now.Add(-10 * time.Minute)
 	first := read.Add(-28 * day)
 	stops := []time.Time{first, first.Add(7 * day), first.Add(14 * day), first.Add(21 * day), read.Add(-2 * time.Minute)}
-	in, spans := fullsInput(read, stops, read, read.Add(-2*time.Minute-scanSlack))
+	in, spans := fullsInput(read, stops, read, read.Add(30*time.Second))
 	in.policy = pgbackrestPolicy{fulls: 4}
-	if band := purgeBand(in, spans, first, read); band < 7*day {
-		t.Errorf("band %s of %s: the oldest full is expired right after the scan's start, want at least 7d", band, read.Sub(first))
+	if band := purgeBand(in, spans, first, read); band != stops[4].Sub(first) {
+		t.Errorf("band %s of %s: the expire ran after the scan's start, want it to the newest full", band, read.Sub(first))
 	}
-	// The same listing after that expire, K fulls: no band beyond the
-	// listed one (the snapshot is what expire left).
-	in, spans = fullsInput(read, stops[1:], read, read.Add(-2*time.Minute-scanSlack))
+	// Stamped within the clock allowance before the read: still counted.
+	in, spans = fullsInput(read, stops[1:], read, read.Add(-4*time.Minute))
+	in.policy = pgbackrestPolicy{fulls: 4}
+	if _, ok := sinceReadBand(in, spans, stops[1], read); !ok {
+		t.Error("a Backup stamped 4 min before the read is not counted")
+	}
+	in, spans = fullsInput(read, stops[1:], read, read.Add(-scanSlack-backupClockSkew-time.Second))
 	in.policy = pgbackrestPolicy{fulls: 4}
 	if band, ok := sinceReadBand(in, spans, stops[1], read); ok {
-		t.Errorf("a listing within the count keeps a band %s", band)
-	}
-	// A count lowered to 2 before the next backup: two of the four go.
-	in.policy = pgbackrestPolicy{fulls: 2}
-	if band, ok := sinceReadBand(in, spans, stops[1], read); !ok || band != 14*day {
-		t.Errorf("retention lowered to 2: band %s, %v; want 14d", band, ok)
-	}
-}
-
-// TestR18PendingExpireTimeAndArchive: the same pending expire under a
-// time-based retention (the fulls older than the newest one stopped
-// before the newest listed end minus the retention go) and under an
-// archive retention below the fulls (continuous WAL drawn from a backup
-// older than the A-th newest is cut there; points drawn alone are not).
-func TestR18PendingExpireTimeAndArchive(t *testing.T) {
-	day := 24 * time.Hour
-	read := now.Add(-10 * time.Minute)
-	first := read.Add(-28 * day)
-	stops := []time.Time{first, first.Add(7 * day), first.Add(14 * day), first.Add(21 * day), read.Add(-2 * time.Minute)}
-
-	in, spans := fullsInput(read, stops, read)
-	in.policy, in.retainedFor = pgbackrestPolicy{}, 10*day
-	// newest end read-2m, reach read-10d-2m: the newest full before it
-	// is the third (first+14d); the two older go.
-	if band, ok := sinceReadBand(in, spans, first, read); !ok || band != 14*day {
-		t.Errorf("time-based pending expire: band %s, %v; want 14d", band, ok)
-	}
-	// After that expire: no band.
-	in, spans = fullsInput(read, stops[2:], read)
-	in.policy, in.retainedFor = pgbackrestPolicy{}, 10*day
-	if band, ok := sinceReadBand(in, spans, stops[2], read); ok {
-		t.Errorf("time-based listing expire already made keeps a band %s", band)
-	}
-
-	full := map[string]bool{evidencev1alpha1.PGBackRestFull: true}
-	in, spans = fullsInput(read, stops, read)
-	in.policy = pgbackrestPolicy{fulls: 9, archive: 2, archiveTypes: full}
-	// WAL still continuous from the third full: the archive expire of
-	// the newest backup cuts it at the fourth.
-	for i := range spans[:2] {
-		spans[i].to = spans[i].from
-	}
-	if band, ok := sinceReadBand(in, spans, first, read); !ok || band != 21*day {
-		t.Errorf("archive pending expire: band %s, %v; want 21d", band, ok)
-	}
-	// Steady state: only the two newest draw continuous WAL, the older
-	// ones their own points; no band.
-	spans[2].to = spans[2].from
-	if band, ok := sinceReadBand(in, spans, first, read); ok {
-		t.Errorf("archive steady state keeps a band %s", band)
+		t.Errorf("a Backup stamped before the allowance keeps a band %s", band)
 	}
 }
 
@@ -556,12 +513,13 @@ func TestPurgeBandHoldsOverChains(t *testing.T) {
 		// read, the newest listed one maybe within scanSlack of it.
 		for i := range seq {
 			end := seq[i].stop
-			in.facts.backupEnds = append(in.facts.backupEnds, backupEnd{at: &end})
+			in.facts.backupEnds = append(in.facts.backupEnds, &end)
 		}
 		// The steady state (round 19, PG plan 3): nothing pending, no
-		// Backup since the read, the newest listed one ended before it:
-		// the listing is what expire left, and no since-read band is kept.
-		if !isPending && len(newsEnds) == 0 && seq[listedN-1].stop.Before(read.Add(-scanSlack)) {
+		// Backup since the read, the newest listed one ended before it,
+		// beyond the clocks' allowance: the listing is what expire left,
+		// and no since-read band is kept.
+		if !isPending && len(newsEnds) == 0 && seq[listedN-1].stop.Before(read.Add(-scanSlack-backupClockSkew)) {
 			if since, ok := sinceReadBand(in, spans, first, last); ok {
 				t.Fatalf("iteration %d: steady state keeps a band of %s over %s: k=%d a=%d type=%s listed=%v wal from %s",
 					iter, since, last.Sub(first), k, a, atype, listed, atRead)
@@ -602,9 +560,9 @@ func TestPurgeBandHoldsOverChains(t *testing.T) {
 	}
 }
 
-// TestBackupEndsOfRestoredStampedAndQueued (round 19, PG P3-B, CNPG P3-1
-// and P3-2): a Backup restored with its status keeps its old times and
-// is not counted as ended since the read; a Completed one with no
+// TestBackupEndsOfRestoredStampedAndQueued: a Backup restored with its
+// status has no plausible time (all older than its creation) and counts
+// as one that could have ended since the read; a Completed one with no
 // plausible stop is bounded by CloudNativePG's completion stamp; a queued
 // one in progress counts from when the operator started it, not from its
 // creation. Never fewer than could have ended since: no stop and no
@@ -625,12 +583,12 @@ func TestBackupEndsOfRestoredStampedAndQueued(t *testing.T) {
 		{
 			"restored with its status after the read: coherent old times", cnpgv1.BackupPhaseCompleted, 10 * time.Minute,
 			stamps{at(-50 * time.Hour), at(-49 * time.Hour), at(-50 * time.Hour), at(-49 * time.Hour)},
-			false,
+			true,
 		},
 		{
-			"restored, a lone old stop: bounded by its old stamp", cnpgv1.BackupPhaseCompleted, 10 * time.Minute,
+			"restored, a lone old stop and stamp", cnpgv1.BackupPhaseCompleted, 10 * time.Minute,
 			stamps{nil, at(-49 * time.Hour), nil, at(-49 * time.Hour)},
-			false,
+			true,
 		},
 		{
 			"plugin left stoppedAt unset, stamped before the read", cnpgv1.BackupPhaseCompleted, -2 * time.Hour,
@@ -672,13 +630,18 @@ func TestBackupEndsOfRestoredStampedAndQueued(t *testing.T) {
 			true,
 		},
 		{
-			"a queued Backup on an instance clock 6 min behind: earlier than the operator's start, not its creation", cnpgv1.BackupPhaseCompleted, -2 * time.Hour,
+			"a queued Backup on an instance clock 6 min behind: stamped within the allowance of the read", cnpgv1.BackupPhaseCompleted, -2 * time.Hour,
 			stamps{at(-10*time.Minute + 5*time.Second - 6*time.Minute), at(2*time.Minute - 6*time.Minute), at(-10 * time.Minute), at(2*time.Minute + 3*time.Second - 6*time.Minute)},
 			true,
 		},
 		{
-			"an honest clock, ended and stamped before the read", cnpgv1.BackupPhaseCompleted, -4 * time.Minute,
+			"an honest clock, stamped within the clocks' allowance before the read", cnpgv1.BackupPhaseCompleted, -4 * time.Minute,
 			stamps{at(-4*time.Minute + 5*time.Second), at(-2 * time.Minute), at(-4*time.Minute + time.Second), at(-2*time.Minute + 3*time.Second)},
+			true,
+		},
+		{
+			"an honest clock, ended and stamped before the read", cnpgv1.BackupPhaseCompleted, -10 * time.Minute,
+			stamps{at(-10*time.Minute + 5*time.Second), at(-8 * time.Minute), at(-10*time.Minute + time.Second), at(-8*time.Minute + 3*time.Second)},
 			false,
 		},
 		{

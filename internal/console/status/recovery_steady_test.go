@@ -86,8 +86,9 @@ func randomChain(rng *rand.Rand, n int, newest time.Time) []chainBackup {
 }
 
 // TestR19SteadyStateNoPendingBand (round 19, PG probe): the listing is what
-// expire left after every backup, and no Backup ended since the read. The
-// pending rule keeps no band: a healthy cluster is not shown uncertain.
+// expire left after every backup, and no Backup ended since the read (nor
+// within the clocks' allowance before it): no since-read band, a healthy
+// cluster is not shown uncertain.
 // Count-based (with an archive retention) and time-based policies.
 func TestR19SteadyStateNoPendingBand(t *testing.T) {
 	rng := rand.New(rand.NewPCG(19, 1))
@@ -96,7 +97,7 @@ func TestR19SteadyStateNoPendingBand(t *testing.T) {
 	fired := 0
 	for iter := range 50000 {
 		read := now.Add(-time.Duration(rng.Int64N(int64(4 * time.Minute))))
-		seq := randomChain(rng, 1+rng.IntN(14), read.Add(-2*scanSlack-time.Duration(rng.Int64N(int64(day)))))
+		seq := randomChain(rng, 1+rng.IntN(14), read.Add(-scanSlack-backupClockSkew-time.Second-time.Duration(rng.Int64N(int64(day)))))
 		k := 1 + rng.IntN(4)
 		atype := types[rng.IntN(3)]
 		inT := func(typ string) bool {
@@ -154,7 +155,7 @@ func TestR19SteadyStateNoPendingBand(t *testing.T) {
 		}
 		for i := range seq {
 			e := seq[i].stop
-			in.facts.backupEnds = append(in.facts.backupEnds, backupEnd{at: &e})
+			in.facts.backupEnds = append(in.facts.backupEnds, &e)
 		}
 		if band, ok := sinceReadBand(in, spans, first, last); ok {
 			if fired++; fired < 5 {
@@ -170,12 +171,13 @@ func TestR19SteadyStateNoPendingBand(t *testing.T) {
 
 // TestR19TimePendingAfterRead (round 19, PG P3-A): a time-based expire the
 // listing shows pending runs after the read, not at the newest listed end
-// E: a full stopped between E minus the retention and the run minus it
-// is the base it keeps, and the older one it removes is not covered.
+// E: its Backup ended within the clocks' allowance before the read, so it
+// is counted since, and the older full that expire removes is not
+// covered.
 func TestR19TimePendingAfterRead(t *testing.T) {
 	day := 24 * time.Hour
 	read := now.Add(-time.Minute)
-	newest := read.Add(-3 * time.Minute) // the newest full; its CNPG Backup is not counted
+	newest := read.Add(-3 * time.Minute) // the newest full
 	retained := 7 * day
 	f0 := newest.Add(-retained - 2*day)
 	f1 := newest.Add(-retained + 90*time.Second) // after E-N, before run-N (run >= read)
@@ -185,12 +187,6 @@ func TestR19TimePendingAfterRead(t *testing.T) {
 	in.refresh = 5 * time.Minute
 	if band := purgeBand(in, spans, f0, read); band < f1.Sub(f0) {
 		t.Errorf("band %s: f0, which the pending expire removes, is claimed covered (want at least %s)", band, f1.Sub(f0))
-	}
-	// The newest end older than one refresh interval: its expire ran
-	// before the read, at that end, and the listing is what it left.
-	in.refresh = time.Minute
-	if band := purgeBand(in, spans, f0, read); band >= f1.Sub(f0) {
-		t.Errorf("band %s: an expire that ran before the read is timed at the read", band)
 	}
 }
 
@@ -276,9 +272,9 @@ func TestPurgeBandHoldsOverTimeChains(t *testing.T) {
 			spans = append(spans, interval{from: b.stop, to: last, backupID: b.id})
 		}
 		for i := range seq {
-			in.facts.backupEnds = append(in.facts.backupEnds, completedEnd(seq[i].stop.Add(-time.Minute), seq[i].stop, stampAfter(rng, run[i])))
+			in.facts.backupEnds = append(in.facts.backupEnds, completedEnd(seq[i].stop, stampAfter(rng, run[i])))
 		}
-		if !isPending && len(news) == 0 {
+		if !isPending && len(news) == 0 && seq[listedN-1].stop.Before(read.Add(-scanSlack-backupClockSkew-time.Minute)) {
 			if band, ok := sinceReadBand(in, spans, first, last); ok {
 				t.Fatalf("iteration %d: steady state keeps a band of %s over %s: listed=%v retained=%s", iter, band, last.Sub(first), listed, retained)
 			}
@@ -312,14 +308,14 @@ func TestPurgeBandHoldsOverTimeChains(t *testing.T) {
 }
 
 // completedEnd is a Completed Backup as backupEndsOf reads it: its tool
-// ran from start to stop and CloudNativePG stamped it Completed at done,
-// once pgBackRest's expire at that end had returned.
-func completedEnd(start, stop, done time.Time) backupEnd {
+// stopped at stop and CloudNativePG stamped it Completed at done, once
+// pgBackRest's expire at that end had returned; it counts at the later.
+func completedEnd(stop, done time.Time) *time.Time {
 	at := stop
 	if done.After(at) {
 		at = done
 	}
-	return backupEnd{at: &at, from: &start, done: &done}
+	return &at
 }
 
 // stampAfter is CloudNativePG's completion stamp of a backup whose
@@ -408,7 +404,7 @@ func TestDailyScheduleTimeRetentionKeepsNoBand(t *testing.T) {
 					spans = append(spans, interval{from: end, to: completed, backupID: b.id})
 				}
 				for i, b := range history {
-					in.facts.backupEnds = append(in.facts.backupEnds, completedEnd(sk(b.stop.Add(-10*time.Minute)), sk(b.stop), sk(dones[i])))
+					in.facts.backupEnds = append(in.facts.backupEnds, completedEnd(sk(b.stop), sk(dones[i])))
 				}
 				newestDone := dones[len(dones)-1]
 				first, last := sk(listed[0].stop), completed
@@ -525,11 +521,11 @@ func TestDailyRealisticStampsKeepNoDayLongBand(t *testing.T) {
 					if dones[i].After(obs) {
 						// Still Running at obs: counted from its start.
 						began := sk(b.stop.Add(-5 * time.Minute))
-						in.facts.backupEnds = append(in.facts.backupEnds, backupEnd{at: &began})
+						in.facts.backupEnds = append(in.facts.backupEnds, &began)
 						continue
 					}
 					newestDone = dones[i]
-					in.facts.backupEnds = append(in.facts.backupEnds, completedEnd(sk(b.stop.Add(-5*time.Minute)), sk(b.stop), sk(dones[i])))
+					in.facts.backupEnds = append(in.facts.backupEnds, completedEnd(sk(b.stop), sk(dones[i])))
 				}
 				first, last := sk(listed[0].stop), completed
 				band := purgeBand(in, spans, first, last)
@@ -555,57 +551,6 @@ func TestDailyRealisticStampsKeepNoDayLongBand(t *testing.T) {
 		}
 		if steady == 0 || quiet == 0 || quiet*2 < steady {
 			t.Errorf("jitter %s, skew %s: the probe never drew a steady listing (%d) or one read after every stamp (%d)", jitter, skew, steady, quiet)
-		}
-	}
-}
-
-// TestExpireStampAt (round 20, PG P3-A): the pending expire at the newest
-// listed end is timed at the completion stamp of the Completed Backup
-// whose run holds that end, the latest when several do; a backup with no
-// such Backup (run outside CloudNativePG) or no stamp has none, and the
-// round-19 rule applies.
-func TestExpireStampAt(t *testing.T) {
-	end := now.Add(-time.Hour)
-	at := end.Add
-	for _, c := range []struct {
-		name string
-		ends []backupEnd
-		want time.Duration
-		ok   bool
-	}{
-		{"the Backup that ran it", []backupEnd{completedEnd(at(-time.Hour), at(0), at(8*time.Second))}, 8 * time.Second, true},
-		{"an older Backup only", []backupEnd{completedEnd(at(-25*time.Hour), at(-24*time.Hour), at(-24*time.Hour+5*time.Second))}, 0, false},
-		{"stopped at the end, no stamp", []backupEnd{{at: ptrTo(at(0)), from: ptrTo(at(-time.Hour))}}, 0, false},
-		{"in progress", []backupEnd{{at: ptrTo(at(-time.Hour))}}, 0, false},
-		{"two hold it: the later stamp", []backupEnd{completedEnd(at(-time.Hour), at(0), at(5*time.Second)), completedEnd(at(-time.Minute), at(time.Minute), at(70*time.Second))}, 70 * time.Second, true},
-	} {
-		got, ok := recoveryFacts{backupEnds: c.ends}.expireStampAt(end)
-		if ok != c.ok || ok && !got.Equal(end.Add(c.want)) {
-			t.Errorf("%s: %s %v, want %s %v", c.name, got, ok, end.Add(c.want), c.ok)
-		}
-	}
-}
-
-// TestExpiredBy (round 20, PG P3-A): the expires of the Backups counted
-// since the read had all run by the latest of their completion stamps;
-// one in progress or unstamped has not told, so now.
-func TestExpiredBy(t *testing.T) {
-	read := now.Add(-time.Hour)
-	at := read.Add
-	before := completedEnd(at(-3*time.Hour), at(-2*time.Hour), at(-2*time.Hour+time.Second))
-	stamped := completedEnd(at(time.Minute), at(10*time.Minute), at(10*time.Minute+4*time.Second))
-	for _, c := range []struct {
-		name string
-		ends []backupEnd
-		want time.Time
-	}{
-		{"one since, stamped", []backupEnd{before, stamped}, at(10*time.Minute + 4*time.Second)},
-		{"one in progress since", []backupEnd{stamped, {at: ptrTo(at(20 * time.Minute))}}, now},
-		{"completed with no stop and no stamp", []backupEnd{stamped, {}}, now},
-		{"none since", []backupEnd{before}, now},
-	} {
-		if got := (recoveryFacts{now: now, backupEnds: c.ends}).expiredBy(read); !got.Equal(c.want) {
-			t.Errorf("%s: %s, want %s", c.name, got, c.want)
 		}
 	}
 }
@@ -683,10 +628,10 @@ func TestPendingTimeRuleInstanceClockBehind(t *testing.T) {
 				for i, b := range hist {
 					if dones[i].Add(skew).After(obs) {
 						began := b.stop.Add(-5 * time.Minute)
-						in.facts.backupEnds = append(in.facts.backupEnds, backupEnd{at: &began})
+						in.facts.backupEnds = append(in.facts.backupEnds, &began)
 						continue
 					}
-					in.facts.backupEnds = append(in.facts.backupEnds, completedEnd(b.stop.Add(-5*time.Minute), b.stop, dones[i]))
+					in.facts.backupEnds = append(in.facts.backupEnds, completedEnd(b.stop, dones[i]))
 				}
 				if n, _ := in.facts.backupsSince(*purgeRead(in)); n == 0 {
 					pendingN0++
@@ -698,9 +643,10 @@ func TestPendingTimeRuleInstanceClockBehind(t *testing.T) {
 				}
 			}
 		}
-		// The scenario is the one the skip missed: at 70 s and more, no
-		// Backup is counted since the read on most evaluations.
-		if total == 0 || skew >= 70*time.Second && pendingN0*2 < total {
+		// The Backup whose expire was pending at the scan is counted
+		// since the read on every evaluation, its stamp within the clocks'
+		// allowance.
+		if total == 0 || pendingN0 != 0 {
 			t.Errorf("instance clock %s behind: %d pending evaluations, %d with no Backup since the read", skew, total, pendingN0)
 		}
 	}

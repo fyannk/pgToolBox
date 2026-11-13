@@ -293,7 +293,7 @@ func TestArchiving(t *testing.T) {
 		{"failing", plugin(nil, failing), nil, ClassCritical, "ContinuousArchivingFailing"},
 		{"two segments waiting stays ok", plugin(nil, ok), &ArchiverLive{IsArchivingWAL: true, ReadyWALFiles: 2}, ClassOK, "ContinuousArchivingSuccess"},
 		{"one sweep at the threshold after one below is not a backlog", plugin(nil, ok), &ArchiverLive{IsArchivingWAL: true, ReadyWALFiles: 3, Earlier: readyRun(1)}, ClassOK, "ContinuousArchivingSuccess"},
-		{"one sweep at the threshold with none before is not judged", plugin(nil, ok), &ArchiverLive{IsArchivingWAL: true, ReadyWALFiles: 3}, ClassUnknown, ArchivingReasonBacklogUnconfirmed},
+		{"one sweep at the threshold with none before is not a backlog yet", plugin(nil, ok), &ArchiverLive{IsArchivingWAL: true, ReadyWALFiles: 3}, ClassOK, "ContinuousArchivingSuccess"},
 		{"backlog without a failure", plugin(nil, ok), &ArchiverLive{IsArchivingWAL: true, ReadyWALFiles: 3, Earlier: readyRun(3), PluginMaxParallel: ptrInt(0)}, ClassWarning, ArchivingReasonBacklog},
 		{"hung archiver: backlog, no attempt finished", plugin(nil, ok), &ArchiverLive{ReadyWALFiles: 40, Earlier: readyRun(35), PluginMaxParallel: ptrInt(0)}, ClassWarning, ArchivingReasonBacklog},
 		{"no condition, live archiving with a backlog", plugin(nil), &ArchiverLive{IsArchivingWAL: true, ReadyWALFiles: 5, Earlier: readyRun(5), PluginMaxParallel: ptrInt(0)}, ClassWarning, ArchivingReasonBacklog},
@@ -437,42 +437,6 @@ func podWithInit(name, image string) *corev1.Pod {
 func annotated(pod *corev1.Pod, version string) *corev1.Pod {
 	pod.Annotations = map[string]string{"cnpg.io/operatorVersion": version}
 	return pod
-}
-
-func TestUpgradeInFlight(t *testing.T) {
-	pods := func(versions ...string) []*corev1.Pod {
-		out := make([]*corev1.Pod, 0, len(versions))
-		for _, v := range versions {
-			out = append(out, annotated(podWithInit("other", ""), v))
-		}
-		return out
-	}
-	tests := []struct {
-		name string
-		e    VersionEvidence
-		want string
-	}{
-		{"agree", VersionEvidence{InstanceManagerVersions: []string{"1.30.1", "1.30.1"}, InstancePods: pods("1.30.1", "1.30.1")}, ""},
-		{"no annotation is no evidence", VersionEvidence{InstanceManagerVersions: []string{"1.30.0"}}, ""},
-		{"no instance manager reading is no evidence", VersionEvidence{InstancePods: pods("1.30.1")}, ""},
-		{
-			"operator ahead of every instance",
-			VersionEvidence{InstanceManagerVersions: []string{"1.30.0"}, InstancePods: pods("1.30.1")},
-			"instanceManagerVersion 1.30.0; cnpg.io/operatorVersion 1.30.1",
-		},
-		{
-			"half rolled",
-			VersionEvidence{InstanceManagerVersions: []string{"1.30.1", "1.30.0", "garbage"}, InstancePods: pods("1.30.1", "1.30.1")},
-			"instanceManagerVersion 1.30.0, 1.30.1; cnpg.io/operatorVersion 1.30.1",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := UpgradeInFlight(tt.e); got != tt.want {
-				t.Errorf("UpgradeInFlight() = %q, want %q", got, tt.want)
-			}
-		})
-	}
 }
 
 func TestDetectVersion(t *testing.T) {

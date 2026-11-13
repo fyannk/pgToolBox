@@ -598,19 +598,15 @@ func (s *Sweeper) pushRings(cs *clusterState, snap Snapshot, at time.Time) {
 			rings = map[string]*ring{}
 			cs.rings[name] = rings
 		}
-		for _, key := range []string{SeriesLagBytes, SeriesReadyWALFiles, SeriesCurrentLSN, SeriesLastArchivedAt, SeriesTimeline} {
+		for _, key := range []string{SeriesLagBytes, SeriesReadyWALFiles, SeriesLastArchivedAt, SeriesTimeline} {
 			if rings[key] == nil {
 				// A ring restored from a snapshot may lack a series.
 				rings[key] = &ring{}
 			}
 		}
-		var lag, ready, position, archived, timeline *float64
+		var lag, ready, archived, timeline *float64
 		if read(inst) {
 			if inst.Reading.IsPrimary {
-				if lsn, ok := parseLSN(inst.Reading.CurrentLSN); ok && lsn <= maxExactLSN {
-					v := float64(lsn)
-					position = &v
-				}
 				// CloudNativePG counts .ready files only on a primary
 				// (probes.go v1.30.1:461-463 returns before
 				// GetWALArchiveCounters, :520): a standby's 0, a replica
@@ -649,7 +645,6 @@ func (s *Sweeper) pushRings(cs *clusterState, snap Snapshot, at time.Time) {
 		}
 		rings[SeriesLagBytes].push(at, readBy, lag, s.opts.Retention)
 		rings[SeriesReadyWALFiles].push(at, readBy, ready, s.opts.Retention)
-		rings[SeriesCurrentLSN].push(at, readBy, position, s.opts.Retention)
 		rings[SeriesLastArchivedAt].push(at, readBy, archived, s.opts.Retention)
 		rings[SeriesTimeline].push(at, readBy, timeline, s.opts.Retention)
 	}

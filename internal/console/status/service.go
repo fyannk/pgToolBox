@@ -447,10 +447,6 @@ type gathered struct {
 	// every instance that reported itself primary in a sweep kept (a
 	// former primary).
 	readyRings map[string][]viewmodel.Point
-	// lsnRings are the WAL position rings (sweep SeriesCurrentLSN) of the
-	// same instances, read with their readyRings entries: the recovery
-	// facts bound a backlog's onset with both.
-	lsnRings map[string][]viewmodel.Point
 	// archivedRings are their last_archived_time rings (sweep
 	// SeriesLastArchivedAt, Unix ms on the instance's clock).
 	archivedRings map[string][]viewmodel.Point
@@ -464,13 +460,7 @@ type gathered struct {
 	// of this Cluster recently: its forecasts are missing, not flat.
 	volumesRefused bool
 	version        cnpgstatus.Version
-	// upgradeInFlight names an instance manager / operator annotation
-	// version mismatch (cnpgstatus.UpgradeInFlight), or is empty.
-	upgradeInFlight string
-	// electionVersion is the version whose failover election applies
-	// (cnpgstatus.ElectionVersion): the operator's, never above it.
-	electionVersion string
-	minor           cnpgstatus.Minor
+	minor          cnpgstatus.Minor
 	// phaseMinor is the minor the detected version names, supported or
 	// not, so ClassifyPhase caps a healthy phase on an unverified minor.
 	phaseMinor cnpgstatus.Minor
@@ -619,7 +609,7 @@ func (s *Service) gather(ctx context.Context, key cache.ClusterKey, withEvents b
 	g.sweepOff = sw == nil || sw.State().State == viewmodel.SourceDisabled
 	if sw != nil {
 		g.swept, g.hasSweep = sw.Snapshot(g.sweepKey())
-		g.readyRings, g.lsnRings, g.archivedRings, g.timelineRings = readyRings(sw, g)
+		g.readyRings, g.archivedRings, g.timelineRings = readyRings(sw, g)
 		if s.opts.Trends != nil {
 			since := s.now().Add(-max(3*g.swept.Interval, 5*time.Minute))
 			g.volumesReported = s.opts.Trends.Reported(key.Namespace, key.Name, since)
@@ -635,8 +625,6 @@ func (s *Service) gather(ctx context.Context, key cache.ClusterKey, withEvents b
 		FailoverQuorumsServed:   s.cache.Served(cache.SourceFailoverQuorums),
 	}
 	g.version = cnpgstatus.DetectVersion(versionEvidence)
-	g.upgradeInFlight = cnpgstatus.UpgradeInFlight(versionEvidence)
-	g.electionVersion = cnpgstatus.ElectionVersion(versionEvidence)
 	g.minor = g.version.Minor
 	g.phaseMinor = cnpgstatus.NamedMinor(g.version.Version)
 	return g, nil
@@ -651,21 +639,19 @@ func (s *Service) gather(ctx context.Context, key cache.ClusterKey, withEvents b
 // for a sweep that read the instance as primary, and after a failover
 // the former primary's backlog before the switch bounds how recent a
 // restore on the older timeline can be (recovery formerArchiverOf). A
-// failed read is a gap in the ring, never a reading. lsn and archived are
-// the same instances' WAL position and last_archived_time rings, timeline
-// their timeline rings.
-func readyRings(sw Sweep, g *gathered) (out, lsn, archived, timeline map[string][]viewmodel.Point) {
-	out, lsn, archived, timeline = map[string][]viewmodel.Point{}, map[string][]viewmodel.Point{}, map[string][]viewmodel.Point{}, map[string][]viewmodel.Point{}
+// failed read is a gap in the ring, never a reading. archived are the
+// same instances' last_archived_time rings, timeline their timeline
+// rings.
+func readyRings(sw Sweep, g *gathered) (out, archived, timeline map[string][]viewmodel.Point) {
+	out, archived, timeline = map[string][]viewmodel.Point{}, map[string][]viewmodel.Point{}, map[string][]viewmodel.Point{}
 	for name, inst := range g.swept.Instances {
 		read := inst.ReadingOK()
 		failing := read && inst.Reading.LastFailedWALTime != nil
-		var ready, position, last, tl []viewmodel.Point
+		var ready, last, tl []viewmodel.Point
 		for _, series := range sw.Series(g.sweepKey(), name) {
 			switch series.Key {
 			case sweep.SeriesReadyWALFiles:
 				ready = series.Points
-			case sweep.SeriesCurrentLSN:
-				position = series.Points
 			case sweep.SeriesLastArchivedAt:
 				last = series.Points
 			case sweep.SeriesTimeline:
@@ -678,9 +664,6 @@ func readyRings(sw Sweep, g *gathered) (out, lsn, archived, timeline map[string]
 		if ready != nil {
 			out[name] = ready
 		}
-		if position != nil {
-			lsn[name] = position
-		}
 		if last != nil {
 			archived[name] = last
 		}
@@ -688,7 +671,7 @@ func readyRings(sw Sweep, g *gathered) (out, lsn, archived, timeline map[string]
 			timeline[name] = tl
 		}
 	}
-	return out, lsn, archived, timeline
+	return out, archived, timeline
 }
 
 // isMember is the membership rule: the label selected the pod, but

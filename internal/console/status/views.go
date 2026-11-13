@@ -216,9 +216,6 @@ func versionInfo(g *gathered, run *diag.Run) viewmodel.VersionInfo {
 		Confidence: viewmodel.VersionConfidence(g.version.Confidence),
 		DetectedBy: g.version.DetectedBy,
 		Image:      g.cluster.Status.Image,
-		// UpgradeInFlight: the instance managers and the operator's
-		// cnpg.io/operatorVersion annotation disagree.
-		UpgradeInFlight: g.upgradeInFlight,
 	}
 	if v.Confidence == "" {
 		v.Confidence = viewmodel.VersionUnknown
@@ -276,39 +273,26 @@ func componentVersions(run *diag.Run, image string) []viewmodel.ComponentVersion
 // by CloudNativePG's completion stamp (backupRecency).
 const backupStampSource = "Backup.status.reconciliationTerminatedAt"
 
-// backupSkewSource and backupCreatedSource are the provenance of a last
-// completed backup whose instance's and operator's clocks disagree
-// (observe.BackupTimes ClockBehind): its stop time and completion stamp
-// are not plausible, so it is timed by the earlier of the operator's
-// start stamp and its creation, both before it started running
-// (backupRecency).
-const (
-	backupSkewSource    = "Backup.status.reconciliationStartedAt"
-	backupCreatedSource = "Backup.metadata.creationTimestamp"
-)
+// backupCreatedSource is the provenance of a last completed backup
+// whose instance clock runs behind (observe.BackupTimes ClockBehind):
+// it is timed by its creation, before it ran (backupRecency).
+const backupCreatedSource = "Backup.metadata.creationTimestamp"
 
 // backupRecency is the newest completed and failed Backup of the Cluster,
-// timed through cnpgstatus.BackupTimesOf (round 19, CNPG P3-1): a stop
-// time a plugin left unset (CloudNativePG stamps 1970-01-01) or set in
-// the future (never overdue) is not one. A Completed Backup with no
-// plausible stop is timed by CloudNativePG's completion stamp
-// (status.reconciliationTerminatedAt, set by SetAsCompleted seconds after
-// the end, by the instance manager, or the operator for a volume
-// snapshot: an upper bound on it), and the claim then names that field
-// (round 20, CNPG P3-1). One whose instance's and operator's clocks
-// disagree (ClockBehind: its times are earlier than the operator's start
-// stamp or its creation) has neither: it is timed by the earlier of that
-// start stamp and its creation, so it reads older than it is, never as a
-// skewed completion (round 21, PG P3-B, CNPG P3-1). The creation is on
-// the API server's clock and always before the end; the start stamp
-// alone, from an operator running ahead, put a backup that ended minutes
-// ago in the console's future, "<1m ago" (round 22, CNPG P3-1). A Failed
-// Backup is timed by the latest of its creation, the operator's start
-// stamp, its stop, which CloudNativePG never sets on a failure, and its
-// completion stamp (SetAsFailed): a Backup queued behind another that
-// then fails is a failure after that other's success, not one hidden by
-// it (round 20, CNPG P3-3), also when its instance's failure stamp is
-// dropped as skewed (round 22, CNPG P3-2).
+// timed through cnpgstatus.BackupTimesOf: a stop time a plugin left unset
+// (CloudNativePG stamps 1970-01-01) or set in the future (never overdue)
+// is not one. A Completed Backup with no plausible stop is timed by
+// CloudNativePG's completion stamp (status.reconciliationTerminatedAt,
+// set by SetAsCompleted seconds after the end: an upper bound on it), and
+// the claim then names that field. One whose instance clock runs behind
+// (ClockBehind) has neither: it is timed by its creation, on the API
+// server's clock and before the end, so it reads older than it is. One
+// whose times were all dropped otherwise (a restored status) is not
+// counted. A Failed Backup is timed by the latest of its creation, the
+// operator's start stamp, its stop, which CloudNativePG never sets on a
+// failure, and its completion stamp (SetAsFailed): a Backup queued behind
+// another that then fails is a failure after that other's success, not
+// one hidden by it.
 func (s *Service) backupRecency(g *gathered) viewmodel.BackupRecency {
 	now := s.now().UTC()
 	cfg := cnpgstatus.Backups(g.cluster)
@@ -328,12 +312,9 @@ func (s *Service) backupRecency(g *gathered) viewmodel.BackupRecency {
 		case cnpgv1.BackupPhaseCompleted:
 			at, from := times.Stop, ""
 			switch {
-			case at == nil && times.ClockBehind:
-				at, from = times.OperatorStarted, backupSkewSource
-				if !b.CreationTimestamp.IsZero() && (at == nil || b.CreationTimestamp.Time.Before(*at)) {
-					created := b.CreationTimestamp.UTC()
-					at, from = &created, backupCreatedSource
-				}
+			case at == nil && times.ClockBehind && !b.CreationTimestamp.IsZero():
+				created := b.CreationTimestamp.UTC()
+				at, from = &created, backupCreatedSource
 			case at == nil:
 				at, from = times.OperatorTerminated, backupStampSource
 			}
@@ -433,10 +414,8 @@ func backupDetail(r viewmodel.BackupRecency, now time.Time) string {
 			age(now, now.Add(-time.Duration(r.Cadence.ThresholdSeconds)*time.Second)) + " (no backup cadence known)"
 	case r.Provenance.Source == backupStampSource:
 		return "completed " + age(now, *r.LastCompletedAt) + " ago, by CloudNativePG's completion stamp (the backup tool reported no plausible stop time)"
-	case r.Provenance.Source == backupSkewSource:
-		return "completed after the operator started it " + age(now, *r.LastCompletedAt) + " ago (its stop time and completion stamp are not plausible: the instance's and the operator's clocks disagree)"
 	case r.Provenance.Source == backupCreatedSource:
-		return "completed after it was created " + age(now, *r.LastCompletedAt) + " ago (its stop time and completion stamp are not plausible: the instance's and the operator's clocks disagree)"
+		return "completed after it was created " + age(now, *r.LastCompletedAt) + " ago (its stop time and completion stamp are not plausible: earlier than its creation, the instance's clock and the API server's disagree)"
 	default:
 		return "completed " + age(now, *r.LastCompletedAt) + " ago"
 	}
@@ -1076,11 +1055,11 @@ func eventRow(e *corev1.Event) viewmodel.EventRow {
 	return row
 }
 
-// sparklines are the series an instance row draws: the primary's WAL
-// position, last-archived and timeline rings are read by the recovery and
-// backlog facts only.
+// sparklines are the series an instance row draws: the primary's
+// last-archived and timeline rings are read by the recovery and backlog
+// facts only.
 func sparklines(series []viewmodel.Series) []viewmodel.Series {
 	return slices.DeleteFunc(series, func(s viewmodel.Series) bool {
-		return s.Key == sweep.SeriesCurrentLSN || s.Key == sweep.SeriesLastArchivedAt || s.Key == sweep.SeriesTimeline
+		return s.Key == sweep.SeriesLastArchivedAt || s.Key == sweep.SeriesTimeline
 	})
 }

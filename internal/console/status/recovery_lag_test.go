@@ -66,7 +66,7 @@ func TestRepositoryTimelineLagsTheLiveOne(t *testing.T) {
 		tl := (&Service{}).recoveryTimeline(timelineFixture{paths: []evidence.RecoveryPath{p}}.evidence(), viewmodel.BackupSummary{}, nil, facts)
 		b := viewmodel.Backups{RecoveryTimeline: tl, GeneratedAt: now}
 		assertNotCovered(t, b, receipt, 10*time.Minute, 20*time.Minute, 30*time.Minute, 3*time.Hour)
-		if band := bandOn(b, "1"); band == nil || band.Code != "recovery.segment.formerArchiverBacklog" || !band.From.Equal(receipt.Add(-failureLookback)) {
+		if band := bandOn(b, "1"); band == nil || band.Code != "recovery.segment.formerArchiverUnknown" || !band.From.Equal(receipt.Add(-failureLookback)) {
 			t.Errorf("timeline 1's band %+v, want A's backlog from a day before the end", band)
 		}
 		tail := segmentCoded(tl, "recovery.segment.liveTimelineNotArchived")
@@ -112,7 +112,7 @@ func TestRepositoryTimelineLagsTheLiveOne(t *testing.T) {
 			}
 			b := failoverTimeline(g, p)
 			assertNotCovered(t, b, receipt, 10*time.Minute, 20*time.Minute, 30*time.Minute, time.Hour, 3*time.Hour)
-			if band := bandOn(b, "1"); band == nil || band.Code != "recovery.segment.formerArchiverBacklog" {
+			if band := bandOn(b, "1"); band == nil || band.Code != "recovery.segment.formerArchiverUnknown" {
 				t.Errorf("target %d: timeline 1's band %+v, want A's backlog", target, band)
 			}
 			lag := segmentCoded(b.RecoveryTimeline, "recovery.segment.liveTimelineNotArchived")

@@ -90,22 +90,11 @@ test("the reasons, the backlog, the end of WAL and the caps are said in French",
       /^sa dernière tentative d’archivage a échoué \(ContinuousArchiving False\) :/,
     ],
     ["recovery.caveat.archiverHibernated", undefined, /^Le cluster est en hibernation : aucune instance ne tourne/],
-    ["recovery.segment.archiverHibernated", undefined, /^Le cluster est en hibernation, et aucun passage/],
     ["recovery.segment.archiverUnread", undefined, /^L’archiveur du primaire n’est pas lu, et aucun relevé/],
     [
       "recovery.segment.archiverUnreadSince",
       { quietAt: "2026-10-29T11:40:00Z" },
       /il n’avait rien en attente le 29 oct\. 2026, 11:40 UTC/,
-    ],
-    [
-      "recovery.segment.archiveBacklogBound",
-      { segments: "3", readAt: "2026-10-29T11:59:00Z", boundAt: "2026-10-29T11:39:00Z" },
-      /^3 segments WAL attendent .*relevé du 29 oct\. 2026, 11:59 UTC, toute validation antérieure au 29 oct\. 2026, 11:39 UTC était archivée/,
-    ],
-    [
-      "recovery.segment.archiverUnreadBound",
-      { readAt: "2026-10-29T11:59:00Z", boundAt: "2026-10-29T11:39:00Z" },
-      /^L’archiveur du primaire n’est pas lu en ce moment ; d’après son relevé du 29 oct\. 2026, 11:59 UTC/,
     ],
     [
       "recovery.caveat.archiverUnread",

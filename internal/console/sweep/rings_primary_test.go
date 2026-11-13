@@ -112,7 +112,7 @@ func TestPushRingsGapsAMaskedReport(t *testing.T) {
 		}}, at)
 		at = at.Add(30 * time.Second)
 	}
-	for _, key := range []string{SeriesReadyWALFiles, SeriesCurrentLSN, SeriesLastArchivedAt, SeriesTimeline} {
+	for _, key := range []string{SeriesReadyWALFiles, SeriesLastArchivedAt, SeriesTimeline} {
 		points := cs.rings["db-2"][key].points()
 		if len(points) != 2 {
 			t.Fatalf("%s: %d points, want 2", key, len(points))
