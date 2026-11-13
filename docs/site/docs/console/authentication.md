@@ -167,36 +167,29 @@ also need the `X-PgToolBox-Request: 1` header.
   before the request reaches the session check.
   `SameSite` alone does not protect on OpenShift, where every Route under
   `*.apps.<domain>` is the same site.
-- **Single-use flows.** A sign-in flow is used once on the server, not only
-  because the browser drops its cookie: the replica that accepts a callback
-  remembers a SHA-256 of the flow's state until the flow expires (ten minutes),
-  and a replayed cookie and state are refused before any budget is charged and
-  before any code exchange. The memory is per replica (at most what the
-  code-exchange bound admits in ten minutes, about 60,000 digests):
-  behind several replicas a flow can be replayed once on each other replica,
-  each time charged to that replica's budgets. Starting a flow stores nothing on
-  the server (the flow lives in its sealed cookie), so starting many costs only
-  the sealing.
+- **Replayed flows.** The callback clears the flow cookie; a client that
+  replays it gains nothing a new flow does not: the IdP redeems a code once,
+  bound to the flow's PKCE verifier, and every callback is charged the budgets
+  below. Starting a flow stores nothing on the server (the flow lives in its
+  sealed cookie), so starting many costs only the sealing.
 - **Rate limit.** Sign-in attempts are limited per client address and per
   replica. The per-replica bounds protect the API server and the identity
   provider; they are not meant to ration people, so the ones an
-  unauthenticated sender can reach are large, and the ones a genuine sign-in
-  needs once it has proved something are separate, so junk never reaches them.
+  unauthenticated sender can reach are large, and the one a known MCP bearer
+  needs is separate, so junk never reaches it.
   - An **OAuth callback** is charged only once its flow cookie and state match
     (a callback without them costs the console nothing). It then spends its
     client address's budget (ten a minute, a burst of ten) and the replica's
     code-exchange bound (100 a second, a burst of 200), which caps the requests
     junk codes make the console send to the IdP; the IdP's own rate limit is the
-    real bound on what it accepts. Only a **successful** exchange spends a
-    SelfSubjectReview, from a bound of its own (20 a second, a burst of 40, so a
-    whole team can sign in at once): a junk code costs one refused exchange and
-    nothing else.
-  - A **pasted token** is charged three budgets in turn, and a refusal by one
-    spends none of the next: the token's own (ten a minute, keyed on a digest of
-    it), so retrying one token does not spend its address; the sender's address
-    (twenty a minute, a budget of the token form only, so junk tokens never lock
-    the OAuth sign-in), so distinct junk tokens from one address stop there; and
-    the replica's bound on reviews of tokens it has never accepted (100 a
+    real bound on what it accepts. Only a **successful** exchange leads to a
+    SelfSubjectReview, so the code-exchange bound caps those too: a junk code
+    costs one refused exchange and nothing else.
+  - A **pasted token** is charged two budgets in turn, and a refusal by the
+    first spends none of the second: the sender's address (twenty a minute, a
+    budget of the token form only, so junk tokens never lock the OAuth
+    sign-in), so junk tokens from one address stop there; and the replica's
+    bound on reviews of tokens it has never accepted (100 a
     second, a burst of 200), which caps what a flood from many addresses makes
     the API server authenticate.
   - Over any budget the console answers 429 without asking anyone, and counts it
@@ -206,10 +199,9 @@ also need the `X-PgToolBox-Request: 1` header.
   **When the client address is shared** (hops without CIDRs, or hops 0 behind
   a public URL, below), no per-address budget is charged, on either path: every
   client behind the proxy has its address, and anyone could spend that budget
-  for everyone. Callbacks are then bounded by their single use and the
-  per-replica bounds, pasted tokens by their own budget and the per-replica
-  bound. **What a flood can still do**: one sender making more than 100 junk
-  callbacks a second refuses new OAuth sign-ins on that replica while it lasts,
+  for everyone. Callbacks and pasted tokens are then bounded by the
+  per-replica bounds alone. **What a flood can still do**: one sender making
+  more than 100 junk callbacks a second refuses new OAuth sign-ins on that replica while it lasts,
   and makes the console send up to 100 refused token requests a second to the
   IdP; more than 100 junk tokens a second refuses new token sign-ins. Sessions
   already open, MCP clients already connected and grants already issued keep
@@ -219,7 +211,9 @@ also need the `X-PgToolBox-Request: 1` header.
   Raw API-server tokens presented as MCP bearers spend the token form's bound
   the first time, after their address's (or, behind a shared address, their
   own) budget. A bearer this replica accepted before is remembered by a digest
-  (at most 4,096, until it expires, an hour at most) and its re-review, once
+  (at most 4,096, until it expires, an hour at most; when the set is full the
+  expired go, and the whole set when none has, so a forgotten bearer spends the
+  token form's bound once more) and its re-review, once
   its 30-second cached answer ends, spends a bound of its own (20 a second, a
   burst of 40): a flood of junk bearers cannot fail a connected client.
 - **Client address.** Every per-address budget and the audit trail's
