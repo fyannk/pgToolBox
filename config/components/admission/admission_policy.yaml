@@ -105,6 +105,8 @@ spec:
         authorizer.group(variables.exposureType == 'route' ? 'route.openshift.io' : variables.exposureType == 'gateway' ? 'gateway.networking.k8s.io' : 'networking.k8s.io').resource(variables.exposureType == 'route' ? 'routes' : variables.exposureType == 'gateway' ? 'httproutes' : 'ingresses').namespace(object.metadata.namespace).check('create').allowed()
       message: annotations on the exposure object or the Service (spec.exposure.annotations, metadataPropagation for All, Exposure or Service) require create on the exposure kind (ingresses, routes or httproutes) in the namespace, on create and on any change of its spec
       reason: Forbidden
+
+
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicyBinding
