@@ -142,9 +142,8 @@ the per-address sign-in limits and the audit log (identity is not affected).
 - **Sign-in budgets behind a shared proxy address.** Behind a proxy declared
   without `TRUSTED_PROXY_CIDRS`, junk callbacks on self-started OIDC flows, junk
   pasted tokens, or floods of the MCP and OAuth endpoints no longer lock everyone
-  out: sign-ins are bounded per flow, per token, per person and per replica (20/s,
-  burst 40) instead of per shared address. The docs say what stays open after an
-  access request expires (the console's caches, the pgAdmin session, open
+  out: sign-ins are bounded per replica instead of per shared address. The docs
+  say what stays open after an access request expires (the console's caches, the pgAdmin session, open
   connections) and that the four-eyes check covers only the console's path.
 - **Exposure trust is confined, or withdrawn.** A PgToolBoxConsole trusts every
   peer's `X-Forwarded-For` only while no other NetworkPolicy or broad `from` peer
@@ -240,23 +239,22 @@ the per-address sign-in limits and the audit log (identity is not affected).
   The backlog rule reads only the current primary's term, a first archive counts
   as progress, and `archivingWal` is shown only on `status.currentPrimary`.
 - **Sign-in under a flood.** Behind a shared proxy address, unauthenticated junk
-  (bad OAuth codes, unknown tokens, MCP token and registration requests) no
-  longer spends the budgets genuine sign-ins, known MCP clients and token
-  refreshes use; the per-replica caps protect the IdP and the API server. With
+  (bad OAuth codes, unknown tokens, MCP token and registration requests) is
+  bounded per replica, not per shared address, and never spends the budgets
+  known MCP clients and token refreshes use; the per-replica caps protect the
+  IdP and the API server. With
   `TRUSTED_PROXY_HOPS=0` and a public URL the peer address counts as shared.
   `pgtoolbox_console_throttled_requests_total{bucket}` counts refusals. A replayed,
   spent or expired MCP code or refresh token is checked before it spends any
   shared budget, and each live grant has its own; sign-outs are bounded per person
   so the state ConfigMap stays under 1 MiB
   (`pgtoolbox_console_shared_state_bytes`,
-  `pgtoolbox_console_shared_state_signouts_refused_total`); one person cannot fill
-  the set of known MCP bearers. A sign-out counts against the person sealed in
-  the session at sign-in (an HMAC tag); the state ConfigMap never drops a
+  `pgtoolbox_console_shared_state_signouts_refused_total`). A sign-out counts
+  against the person sealed in the session at sign-in (an HMAC tag); the state ConfigMap never drops a
   sign-out it holds and refuses new ones past its bounds (`reason` `subject`,
   `unnamed` or `budget`), and a dead token-only session is not shared. The MCP
-  token endpoint, known-bearer reviews and OIDC exchange reviews each have a
-  per-person share (`oauth_subject_tokens`, `known_reviews_subject`,
-  `exchange_reviews_subject`); a replayed refresh token is refused before the
+  token endpoint and known-bearer reviews each have a per-person share
+  (`oauth_subject_tokens`, `known_reviews_subject`); a replayed refresh token is refused before the
   review; store-outage refusals are bounded; each replica's signed-out table is
   bounded.
   A sign-out of a session sealed with its person's tag is shared even when the API

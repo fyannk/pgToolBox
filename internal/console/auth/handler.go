@@ -16,9 +16,7 @@ package auth
 
 import (
 	"context"
-	"crypto/sha256"
 	"crypto/subtle"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -68,9 +66,8 @@ const (
 	// sender can spend any bucket it reaches (behind a shared proxy
 	// address no per-address budget tells it apart), so a bucket that
 	// genuine sign-ins share with junk must be far larger than any flood
-	// the console is meant to ride out, and the buckets that genuine
-	// sign-ins need once they have proved something (an IdP-issued token,
-	// a bearer accepted before) are separate, so junk never reaches them.
+	// the console is meant to ride out, and the bucket of bearers this
+	// replica accepted before is separate, so junk never reaches it.
 	//
 	// tokenReviews: SelfSubjectReviews of tokens the console has never
 	// accepted (pasted tokens, raw MCP bearers it does not know). Each is
@@ -91,26 +88,21 @@ const (
 	knownReviewsBurst     = 40
 	knownReviewsKey       = "known-bearer"
 	// knownSubjectReviews: one person's share of knownReviews, charged
-	// before it: maxKnownBearersPerSubject tokens each re-reviewed once an
-	// identity-cache lifetime (30 s) is 32 a minute; past that a person
-	// waits, and emptying knownReviews takes some forty identities the
-	// API server accepts.
-	knownSubjectReviewsPerMinute = 2 * maxKnownBearersPerSubject
-	knownSubjectReviewsBurst     = maxKnownBearersPerSubject
+	// before it: 16 tokens each re-reviewed once an identity-cache
+	// lifetime (30 s) is 32 a minute; past that a person waits, and
+	// emptying knownReviews takes some forty identities the API server
+	// accepts.
+	knownSubjectReviewsPerMinute = 32
+	knownSubjectReviewsBurst     = 16
 	// maxKnownBearers bounds the bearers remembered as accepted (a
-	// digest and an expiry each); knownBearerTTL is how long one is
-	// remembered when its own expiry is unknown (an opaque token).
-	// maxKnownBearersPerSubject bounds one person's share of it, so a
-	// person minting tokens evicts only their own.
-	maxKnownBearers           = 4096
-	maxKnownBearersPerSubject = 16
-	knownBearerTTL            = time.Hour
+	// digest, a name and an expiry each); knownBearerTTL is how long one
+	// is remembered when its own expiry is unknown (an opaque token).
+	maxKnownBearers = 4096
+	knownBearerTTL  = time.Hour
 	// The token form's per-address budget, charged before the shared
 	// bucket so that one address cannot drain everyone's break-glass
 	// sign-ins: at 20 a minute a single address takes a fraction of the
-	// bucket. It is twice the per-token budget, so that
-	// retrying one token until its own budget runs out still leaves the
-	// address room for another.
+	// bucket.
 	tokenAddressPerMinute = 20
 	tokenAddressBurst     = 20
 	// codeExchanges: the OAuth callbacks' code exchanges with the IdP.
@@ -119,22 +111,12 @@ const (
 	// and this replica, not to ration sign-ins: 100 token requests a
 	// second (burst 200), each bounded by IDP_TIMEOUT. The IdP's own rate
 	// limit is the real bound on what it accepts; a junk code costs one
-	// refused exchange and nothing else (no SelfSubjectReview).
+	// refused exchange and nothing else (no SelfSubjectReview). It also
+	// bounds the SelfSubjectReviews of the tokens the IdP issues, one per
+	// successful exchange.
 	codeExchangesPerSecond = 100
 	codeExchangesBurst     = 200
 	codeExchangesKey       = "code-exchange"
-	// exchangeReviews: the SelfSubjectReview of a token the IdP has just
-	// issued, charged only after a successful exchange: junk codes never
-	// reach it. 20 a second (burst 40) lets a team sign in at once.
-	exchangeReviewsPerSecond = 20
-	exchangeReviewsBurst     = 40
-	exchangeReviewsKey       = "exchange-review"
-	// exchangeSubjectReviews: one person's share of exchangeReviews, keyed
-	// by the IdP-verified issuer and subject of the ID token (OIDC only:
-	// an OpenShift token names nobody before the review), so one account
-	// signing in silently in a loop cannot keep a team from signing in.
-	exchangeSubjectReviewsPerMinute = 12
-	exchangeSubjectReviewsBurst     = 6
 	// maxLoggedOut bounds the sessions this replica refuses as signed
 	// out (loggedOut), maxLoggedOutPerSubject one person's share of it
 	// (their own earliest-ending go first), maxLoggedOutUnnamed that of
@@ -220,28 +202,23 @@ type Handler struct {
 	// Each key space has a table of its own, so that a spray of one kind
 	// of key, which resets its table once full, never resets another's.
 	// attempts is the per-address budget of the OAuth callbacks (and of
-	// the MCP endpoint's unrecognised bearers); tokenAttempts is per
-	// pasted-token digest and tokenAddresses per address of the token form.
+	// the MCP endpoint's unrecognised bearers); tokenAddresses is per
+	// address of the token form.
 	attempts       *RateLimiter
-	tokenAttempts  *RateLimiter
 	tokenAddresses *RateLimiter
 	// The per-replica bounds (one key each): tokenReviews of tokens never
 	// accepted (the token form, unknown raw bearers), knownReviews of raw
 	// bearers accepted before, codeExchanges of the callbacks' exchanges
-	// with the IdP, exchangeReviews of the tokens those exchanges return.
-	tokenReviews    *RateLimiter
-	knownReviews    *RateLimiter
-	codeExchanges   *RateLimiter
-	exchangeReviews *RateLimiter
-	// knownSubjectReviews and exchangeSubjectReviews are the per-person
-	// shares of knownReviews and exchangeReviews, charged before them.
-	knownSubjectReviews    *RateLimiter
-	exchangeSubjectReviews *RateLimiter
+	// with the IdP (and so of the reviews of the tokens they return).
+	tokenReviews  *RateLimiter
+	knownReviews  *RateLimiter
+	codeExchanges *RateLimiter
+	// knownSubjectReviews is the per-person share of knownReviews,
+	// charged before it.
+	knownSubjectReviews *RateLimiter
 	// knownBearers are the raw bearers this replica accepted, by digest,
 	// until their expiry: their re-reviews spend knownReviews.
 	knownBearers *knownTokens
-	// flows are the sign-in flows already used on this replica.
-	flows *spentFlows
 
 	// loggedOut holds sessions signed out on this replica until their
 	// absolute expiry: a copy of the cookie stops working here at once.
@@ -320,29 +297,24 @@ func newHandler(o Options, providers []oauthProvider) *Handler {
 		}
 	}
 	return &Handler{
-		grantOIDC:       grantOIDC,
-		cfg:             o.Config,
-		codec:           o.Codec,
-		identity:        o.Identity,
-		revocations:     o.Revocations,
-		audit:           &Auditor{Logger: log, TrustedProxy: o.Config.TrustedProxy},
-		log:             log,
-		oauth:           providers,
-		token:           slices.Contains(o.Config.Providers, ProviderToken),
-		now:             time.Now,
-		attempts:        NewRateLimiter(signInPerMinute, signInBurst, maxLimiterKeys).Named(BucketSignInAddress),
-		tokenAttempts:   NewRateLimiter(signInPerMinute, signInBurst, maxLimiterKeys).Named(BucketTokenFormToken),
-		tokenAddresses:  NewRateLimiter(tokenAddressPerMinute, tokenAddressBurst, maxLimiterKeys).Named(BucketTokenFormAddress),
-		tokenReviews:    NewRateLimiter(tokenReviewsPerSecond*60, tokenReviewsBurst, 1).Named(BucketTokenReviews),
-		knownReviews:    NewRateLimiter(knownReviewsPerSecond*60, knownReviewsBurst, 1).Named(BucketKnownReviews),
-		codeExchanges:   NewRateLimiter(codeExchangesPerSecond*60, codeExchangesBurst, 1).Named(BucketCodeExchanges),
-		exchangeReviews: NewRateLimiter(exchangeReviewsPerSecond*60, exchangeReviewsBurst, 1).Named(BucketExchangeReviews),
+		grantOIDC:      grantOIDC,
+		cfg:            o.Config,
+		codec:          o.Codec,
+		identity:       o.Identity,
+		revocations:    o.Revocations,
+		audit:          &Auditor{Logger: log, TrustedProxy: o.Config.TrustedProxy},
+		log:            log,
+		oauth:          providers,
+		token:          slices.Contains(o.Config.Providers, ProviderToken),
+		now:            time.Now,
+		attempts:       NewRateLimiter(signInPerMinute, signInBurst, maxLimiterKeys).Named(BucketSignInAddress),
+		tokenAddresses: NewRateLimiter(tokenAddressPerMinute, tokenAddressBurst, maxLimiterKeys).Named(BucketTokenFormAddress),
+		tokenReviews:   NewRateLimiter(tokenReviewsPerSecond*60, tokenReviewsBurst, 1).Named(BucketTokenReviews),
+		knownReviews:   NewRateLimiter(knownReviewsPerSecond*60, knownReviewsBurst, 1).Named(BucketKnownReviews),
+		codeExchanges:  NewRateLimiter(codeExchangesPerSecond*60, codeExchangesBurst, 1).Named(BucketCodeExchanges),
 		knownSubjectReviews: NewRateLimiter(knownSubjectReviewsPerMinute, knownSubjectReviewsBurst, maxLimiterKeys).
 			Named(BucketKnownReviewsSubject),
-		exchangeSubjectReviews: NewRateLimiter(exchangeSubjectReviewsPerMinute, exchangeSubjectReviewsBurst, maxLimiterKeys).
-			Named(BucketExchangeReviewsSubject),
-		knownBearers: newKnownTokens(maxKnownBearers, maxKnownBearersPerSubject),
-		flows:        newSpentFlows(maxSpentFlows),
+		knownBearers: newKnownTokens(maxKnownBearers),
 		loggedOut:    map[string]loggedOutEntry{},
 		loggedOutMax: maxLoggedOut,
 		signOuts:     o.SignOuts,
@@ -447,12 +419,6 @@ func (h *Handler) handleCallback(w http.ResponseWriter, r *http.Request, p oauth
 		h.fail(w, r, p.name(), &loginError{http.StatusBadRequest, "Sign-in state mismatch; please try again.", nil})
 		return
 	}
-	// A flow is used once, whatever the browser does with the cookie: a
-	// replayed cookie and state are refused here, before the budget.
-	if h.flows.spent(p.name(), f.State, h.now()) {
-		h.fail(w, r, p.name(), &loginError{http.StatusBadRequest, "This sign-in was already used; please start again.", nil})
-		return
-	}
 	// The budgets are charged only once the flow cookie and its state
 	// match: a callback without them costs nothing (no code exchange, no
 	// SelfSubjectReview). That alone does not protect a shared address:
@@ -461,18 +427,16 @@ func (h *Handler) handleCallback(w http.ResponseWriter, r *http.Request, p oauth
 	// above once. So the per-address budget is charged only when the
 	// address is a client's; behind proxies the console does not trust
 	// (SharedClientKey) every user has the proxy's address, and the
-	// callbacks are bounded instead by their single use (spend below) and
-	// the per-replica exchange bucket, which is sized for the IdP, not for
-	// people: a junk code costs one refused exchange and no review.
+	// callbacks are bounded instead by the per-replica exchange bucket,
+	// which is sized for the IdP, not for people: a junk code costs one
+	// refused exchange and no review. Replaying a flow's cookie buys
+	// nothing a new flow does not: the IdP redeems a code once, bound to
+	// the flow's PKCE verifier.
 	if key, ok := h.addressBudget(r); ok && !h.allowSignIn(w, r, p.name(), h.attempts, key) {
 		return
 	}
 	if !h.codeExchanges.Allow(codeExchangesKey) {
 		h.fail(w, r, p.name(), &loginError{http.StatusTooManyRequests, "The console is receiving too many sign-ins; wait a few seconds and try again.", nil})
-		return
-	}
-	if !h.flows.spend(p.name(), f.State, time.Unix(f.Expiry, 0), h.now()) {
-		h.fail(w, r, p.name(), &loginError{http.StatusBadRequest, "This sign-in was already used; please start again.", nil})
 		return
 	}
 	code := q.Get("code")
@@ -493,17 +457,6 @@ func (h *Handler) handleCallback(w http.ResponseWriter, r *http.Request, p oauth
 	ts, lerr := exchanger.exchange(r.Context(), h.redirectURI(r, p), code, f)
 	if lerr != nil {
 		h.fail(w, r, p.name(), lerr)
-		return
-	}
-	// The IdP issued a token: only now is a SelfSubjectReview spent, from
-	// a bucket that no junk code reaches, after the person's own share of
-	// it when the IdP named them.
-	if ts.identity != "" && !h.exchangeSubjectReviews.Allow(ts.identity) {
-		h.fail(w, r, p.name(), &loginError{http.StatusTooManyRequests, "You are signing in too often; wait a minute and try again.", nil})
-		return
-	}
-	if !h.exchangeReviews.Allow(exchangeReviewsKey) {
-		h.fail(w, r, p.name(), &loginError{http.StatusTooManyRequests, "The console is receiving too many sign-ins; wait a few seconds and try again.", nil})
 		return
 	}
 	if f.Grant != "" {
@@ -528,12 +481,7 @@ func (h *Handler) handleToken(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, ProviderToken, &loginError{http.StatusBadRequest, "That is not a token: paste the output of kubectl create token.", nil})
 		return
 	}
-	// The token's own budget first, keyed on its digest: retrying one
-	// token is bounded without spending its sender's address budget.
-	if !h.allowSignIn(w, r, ProviderToken, h.tokenAttempts, tokenAttemptKey(tok)) {
-		return
-	}
-	// Then the sender's address, when it is a client's: distinct junk
+	// The sender's address first, when it is a client's: distinct junk
 	// tokens from one address stop there, and cannot drain the shared
 	// bucket below. A shared address (SharedClientKey) is not charged:
 	// one sender would spend it for everyone behind the proxy.
@@ -541,7 +489,7 @@ func (h *Handler) handleToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Then the process-wide bound, before anything reaches the API
-	// server: a token refused by either budget spends none of it.
+	// server: a token refused by the address budget spends none of it.
 	if !h.tokenReviews.Allow(tokenReviewsKey) {
 		h.fail(w, r, ProviderToken, &loginError{http.StatusTooManyRequests, "The console is receiving too many token sign-ins; wait a few seconds and try again.", nil})
 		return
@@ -563,14 +511,6 @@ func (h *Handler) allowSignIn(w http.ResponseWriter, r *http.Request, provider s
 	}
 	h.fail(w, r, provider, &loginError{http.StatusTooManyRequests, "Too many sign-in attempts; wait a minute and try again.", nil})
 	return false
-}
-
-// tokenAttemptKey is the sign-in budget key of a pasted token: a
-// digest, so the limiter never holds the token itself, in a key space
-// ("token:") that no address key can collide with.
-func tokenAttemptKey(tok string) string {
-	sum := sha256.Sum256([]byte(tok))
-	return "token:" + hex.EncodeToString(sum[:16])
 }
 
 // normalizePastedToken trims a pasted token and an optional "Bearer "

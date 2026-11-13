@@ -51,8 +51,8 @@ var floods = []struct{ perSecond, seconds int }{{25, 30}, {80, 10}}
 // codes, many a second. Before the fix the junk spent the per-replica
 // bucket that genuine sign-ins needed (20 a second) and 24 of 30 genuine
 // sign-ins were refused. Every genuine sign-in now succeeds, and the
-// junk codes cost no SelfSubjectReview: the review is charged only
-// after a successful exchange, from a bucket junk never reaches.
+// junk codes cost no SelfSubjectReview: the review is made only after
+// a successful exchange.
 func TestJunkCallbackFloodDoesNotStarveSignIns(t *testing.T) {
 	t.Parallel()
 	for _, i := range sharedModes() {
@@ -62,7 +62,7 @@ func TestJunkCallbackFloodDoesNotStarveSignIns(t *testing.T) {
 				t.Parallel()
 				env := newTestEnvWith(t, mode.tweak, ProviderOIDC)
 				clock := &stepClock{now: time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)}
-				useClock(clock, env.h.attempts, env.h.codeExchanges, env.h.exchangeReviews)
+				useClock(clock, env.h.attempts, env.h.codeExchanges)
 				attacker := env.browser(t)
 				reviews := env.rev.calls
 				refused, legit, n := 0, 0, 0
@@ -99,7 +99,7 @@ func TestCodeExchangesStayBounded(t *testing.T) {
 	t.Parallel()
 	env := newTestEnvWith(t, proxyModes[2].tweak, ProviderOIDC)
 	clock := &stepClock{now: time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)}
-	useClock(clock, env.h.attempts, env.h.codeExchanges, env.h.exchangeReviews)
+	useClock(clock, env.h.attempts, env.h.codeExchanges)
 	throttled := testutil.ToFloat64(throttledRequests.WithLabelValues(BucketCodeExchanges))
 	attacker := env.browser(t)
 	exchanges := env.idp.tokens
@@ -115,8 +115,7 @@ func TestCodeExchangesStayBounded(t *testing.T) {
 }
 
 // TestJunkTokenFloodDoesNotStarveTheTokenForm: the same flood on the
-// token form, with distinct junk tokens (each has a budget of its own)
-// from the shared address: every genuine pasted token still signs in.
+// token form, with distinct junk tokens from the shared address: every genuine pasted token still signs in.
 func TestJunkTokenFloodDoesNotStarveTheTokenForm(t *testing.T) {
 	t.Parallel()
 	for _, i := range sharedModes() {
@@ -126,7 +125,7 @@ func TestJunkTokenFloodDoesNotStarveTheTokenForm(t *testing.T) {
 				t.Parallel()
 				env := newTestEnvWith(t, mode.tweak, ProviderToken)
 				clock := &stepClock{now: time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)}
-				useClock(clock, env.h.tokenAttempts, env.h.tokenAddresses, env.h.tokenReviews)
+				useClock(clock, env.h.tokenAddresses, env.h.tokenReviews)
 				attacker := env.browser(t)
 				hdr := withHeaders(sameOriginForm, mode.hdr)
 				refused, n := 0, 0
@@ -220,12 +219,13 @@ func TestARejectedBearerIsForgotten(t *testing.T) {
 	}
 }
 
-// TestKnownTokensAreBounded: the set never grows past its bound; expired
-// entries make room first, then the least recently used.
+// TestKnownTokensAreBounded: the set never grows past its bound;
+// expired entries make room first, and a set full of live ones starts
+// over (its tokens then re-review from the shared bucket once).
 func TestKnownTokensAreBounded(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
-	k := newKnownTokens(3, 3)
+	k := newKnownTokens(3)
 	for i := range 3 {
 		k.remember(fmt.Sprintf("t%d", i), fmt.Sprint("user", i), now.Add(time.Duration(i+1)*time.Minute), now)
 	}
@@ -234,42 +234,26 @@ func TestKnownTokensAreBounded(t *testing.T) {
 	if k.len() != 3 || !k.known("t3", later) || k.known("t0", later) || !k.known("t1", later) {
 		t.Fatalf("after expiry: len %d, t3 known %v, t0 known %v; want 3, true, false", k.len(), k.known("t3", later), k.known("t0", later))
 	}
-	// None expired: the least recently used goes (t2: t1 and t3 were
-	// just looked up).
+	if sub, ok := k.subjectOf("t3", later); !ok || sub != "user3" {
+		t.Fatalf("t3 known as %q, %v; want user3", sub, ok)
+	}
+	// Refreshing a known token takes no room.
+	k.remember("t1", "user1", later.Add(time.Hour), later)
+	if k.len() != 3 {
+		t.Fatalf("refreshing a known token: len %d, want 3", k.len())
+	}
+	// None expired: the set starts over with the newcomer.
 	k.remember("t4", "user4", later.Add(time.Hour), later)
-	if k.len() != 3 || !k.known("t4", later) || k.known("t2", later) || !k.known("t1", later) || !k.known("t3", later) {
-		t.Fatalf("full set: len %d; want t1, t3, t4 kept and t2 evicted", k.len())
+	if k.len() != 1 || !k.known("t4", later) || k.known("t1", later) {
+		t.Fatalf("full set: len %d; want only t4", k.len())
 	}
 	k.remember("expired", "user5", now, now)
 	if k.known("expired", now) {
 		t.Fatal("a token already expired was remembered")
 	}
 	k.forget("t4")
-	if k.len() != 2 || k.known("t4", later) {
+	if k.len() != 0 || k.known("t4", later) {
 		t.Fatal("a forgotten token is still remembered")
-	}
-}
-
-// TestOnePersonCannotFillTheKnownBearers is round 6's P2: one person
-// minting thousands of ServiceAccount tokens filled the set of known
-// bearers, so other clients' re-reviews fell back to the shared bucket.
-// A person now keeps their own most recently used tokens only.
-func TestOnePersonCannotFillTheKnownBearers(t *testing.T) {
-	t.Parallel()
-	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
-	k := newKnownTokens(maxKnownBearers, maxKnownBearersPerSubject)
-	k.remember("alice-token", "alice", now.Add(time.Hour), now)
-	for i := range maxKnownBearers + 10 {
-		k.remember(fmt.Sprint("mallory-", i), "system:serviceaccount:team-a:mallory", now.Add(time.Hour), now)
-	}
-	if k.len() != maxKnownBearersPerSubject+1 {
-		t.Fatalf("known set holds %d tokens, want mallory's %d and alice's", k.len(), maxKnownBearersPerSubject)
-	}
-	if !k.known("alice-token", now) {
-		t.Fatal("another person's token was evicted")
-	}
-	if !k.known(fmt.Sprint("mallory-", maxKnownBearers+9), now) || k.known("mallory-0", now) {
-		t.Fatal("a person must keep their most recently used tokens")
 	}
 }
 

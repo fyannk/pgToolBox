@@ -266,7 +266,7 @@ func TestLoggedOutIsBounded(t *testing.T) {
 	}
 }
 
-// Several people, each with maxKnownBearersPerSubject known tokens
+// Several people, each with knownSubjectReviewsBurst known tokens
 // re-reviewed as fast as they can, used to keep knownReviews empty: a
 // known client's re-review was refused. Each person now spends their own
 // share first.
@@ -276,10 +276,10 @@ func TestKnownBearersOfManyPeopleDoNotStarveAnother(t *testing.T) {
 	clock := &stepClock{now: time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)}
 	useClock(clock, env.h.tokenReviews, env.h.knownReviews, env.h.knownSubjectReviews)
 	const people = 8
-	tokens := make([]string, 0, people*maxKnownBearersPerSubject)
+	tokens := make([]string, 0, people*knownSubjectReviewsBurst)
 	env.rev.mu.Lock()
 	for p := range people {
-		for k := range maxKnownBearersPerSubject {
+		for k := range knownSubjectReviewsBurst {
 			tok := fmt.Sprintf("p%d-t%d", p, k)
 			env.rev.users[tok] = authz.User{Name: fmt.Sprintf("system:serviceaccount:team:sa%d", p)}
 			tokens = append(tokens, tok)
@@ -312,44 +312,5 @@ func TestKnownBearersOfManyPeopleDoNotStarveAnother(t *testing.T) {
 	}
 	if refused > 0 {
 		t.Errorf("a known client's re-review was refused %d of 25 times under %d people's known tokens", refused, people)
-	}
-}
-
-// One IdP account signing in again and again (silent re-authorisation)
-// spends its own share of the exchange reviews, not the team's.
-func TestOneIdPAccountCannotDrainExchangeReviews(t *testing.T) {
-	t.Parallel()
-	env := newTestEnv(t, ProviderOIDC)
-	clock := &stepClock{now: time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)}
-	useClock(clock, env.h.exchangeSubjectReviews, env.h.exchangeReviews)
-	env.idp.mu.Lock()
-	env.idp.subject = "mallory"
-	env.idp.mu.Unlock()
-	// Each sign-in from an address of its own, so the per-address budget
-	// stays out of it.
-	from := func(i int) *browser {
-		b := env.browser(t)
-		b.addr = fmt.Sprintf("198.51.100.%d:1234", i+1)
-		return b
-	}
-	ok, throttled := 0, 0
-	for i := range 3 * exchangeSubjectReviewsBurst {
-		switch w := from(i).oidcLogin("/clusters"); w.Code {
-		case http.StatusFound:
-			ok++
-		case http.StatusTooManyRequests:
-			throttled++
-		default:
-			t.Fatalf("sign-in = %d", w.Code)
-		}
-	}
-	if ok != exchangeSubjectReviewsBurst || throttled == 0 {
-		t.Errorf("one account signed in %d times (%d throttled), want its burst of %d", ok, throttled, exchangeSubjectReviewsBurst)
-	}
-	env.idp.mu.Lock()
-	env.idp.subject = "bob"
-	env.idp.mu.Unlock()
-	if w := from(200).oidcLogin("/clusters"); w.Code != http.StatusFound {
-		t.Errorf("another person's sign-in = %d", w.Code)
 	}
 }

@@ -55,9 +55,7 @@ const (
 	// BucketSignInAddress: OAuth callbacks (and unrecognised MCP bearers)
 	// per client address.
 	BucketSignInAddress = "sign_in_address"
-	// BucketTokenFormToken and BucketTokenFormAddress: the token form per
-	// pasted token and per client address.
-	BucketTokenFormToken   = "token_form_token"
+	// BucketTokenFormAddress: the token form per client address.
 	BucketTokenFormAddress = "token_form_address" // #nosec G101 -- a metric label, not a credential
 	// BucketTokenReviews: SelfSubjectReviews of tokens the console has not
 	// accepted before (pasted tokens, unknown raw bearers), per replica.
@@ -70,12 +68,6 @@ const (
 	BucketKnownReviewsSubject = "known_reviews_subject"
 	// BucketCodeExchanges: OAuth code exchanges with the IdP, per replica.
 	BucketCodeExchanges = "code_exchanges"
-	// BucketExchangeReviews: SelfSubjectReviews of tokens the IdP has just
-	// issued, per replica.
-	BucketExchangeReviews = "exchange_reviews"
-	// BucketExchangeReviewsSubject: the same reviews, per person the IdP
-	// vouched for (OIDC; charged before exchange_reviews).
-	BucketExchangeReviewsSubject = "exchange_reviews_subject"
 	// MCP endpoint: calls per user, writes per user, confirmation pages.
 	BucketMCPCalls       = "mcp_calls"
 	BucketMCPAttempts    = "mcp_attempts"

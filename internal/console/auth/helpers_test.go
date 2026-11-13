@@ -179,6 +179,8 @@ func (f *fakeIdP) token(w http.ResponseWriter, r *http.Request) {
 			_, _ = w.Write([]byte(`{"error":"invalid_grant"}`))
 			return
 		}
+		// An authorization is redeemed once, as a real IdP's code is.
+		f.challenge = ""
 		nonce := f.nonce
 		if f.badNonce {
 			nonce = "wrong"
