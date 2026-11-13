@@ -83,9 +83,6 @@ type pgAdminPrepared struct {
 	OptionalKinds []optionalKind
 	// Dropped is the watched namespaces left out at start, and why.
 	Dropped []droppedNamespace
-	// droppedGauge is pgtoolbox_watch_namespaces_dropped, which the
-	// background review moves a namespace in (reReviewFailed).
-	droppedGauge droppedGauge
 	// leaderOnly is what the manager runs once this replica is elected
 	// (the dropped-namespace report).
 	leaderOnly []manager.Runnable
@@ -159,10 +156,7 @@ func budgetedRead[T any](ctx context.Context, budget *startupBudget, name string
 // preparePgAdmin loads the configuration (defaults, env, ConfigMap, Secret;
 // one structured error) and probes the optional APIs with a scoped
 // List(Limit 1), through a client that reads past any cache.
-//
-// A namespace left out because its review failed is reviewed again in the
-// background (reReviewFailed), which calls restart once it can be watched.
-func preparePgAdmin(ctx context.Context, budget *startupBudget, operatorImage, configMapName, secretName string, restart context.CancelCauseFunc) (pgAdminPrepared, error) {
+func preparePgAdmin(ctx context.Context, budget *startupBudget, operatorImage, configMapName, secretName string) (pgAdminPrepared, error) {
 	direct, err := startupClient(ctrl.GetConfigOrDie())
 	if err != nil {
 		return pgAdminPrepared{}, fmt.Errorf("build API client: %w", err)
@@ -179,11 +173,9 @@ func preparePgAdmin(ctx context.Context, budget *startupBudget, operatorImage, c
 	registerBuildInfo()
 	// Beside the start, never in its budget: the objects of a namespace
 	// left out say so on themselves where the operator may still write,
-	// from the elected replica only; a namespace whose review failed is
-	// reviewed again on every replica.
+	// from the elected replica only.
 	if len(prepared.Dropped) > 0 {
 		prepared.leaderOnly = append(prepared.leaderOnly, droppedReport{api: direct, dropped: prepared.Dropped, now: time.Now})
-		go reReviewFailed(ctx, direct, prepared.Dropped, prepared.droppedGauge, defaultReReviewPolicy(processStarted), restart)
 	}
 	return prepared, nil
 }
@@ -336,8 +328,7 @@ func preparePgAdminWith(ctx context.Context, direct startupAPI, registry prometh
 	if err := loaded.RegisterInfoMetric(registry); err != nil {
 		return pgAdminPrepared{}, err
 	}
-	gauge, err := registerWatchMetrics(registry, countDropped(dropped), probed.Kinds)
-	if err != nil {
+	if err := registerWatchMetrics(registry, countDropped(dropped), probed.Kinds); err != nil {
 		return pgAdminPrepared{}, err
 	}
 	features := probed.Features
@@ -345,7 +336,7 @@ func preparePgAdminWith(ctx context.Context, direct startupAPI, registry prometh
 		"routes", features.Routes.State, "gateways", features.Gateways.State,
 		"databaseRoles", features.DatabaseRoles.State, "poolers", features.Poolers.State,
 		"openshift", features.OpenShift)
-	return pgAdminPrepared{Config: loaded.Config, Features: features, EvidenceAgentAPIs: probed.EvidenceAgent, OptionalKinds: probed.Kinds, Dropped: dropped, droppedGauge: gauge}, nil
+	return pgAdminPrepared{Config: loaded.Config, Features: features, EvidenceAgentAPIs: probed.EvidenceAgent, OptionalKinds: probed.Kinds, Dropped: dropped}, nil
 }
 
 // pgAdminManagerOptions adds the PgAdmin controller's needs to the shared

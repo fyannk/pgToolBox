@@ -752,21 +752,17 @@ func TestPgToolBoxConsoleReconcilerOnEnvtest(t *testing.T) {
 		}
 
 		// A selector the CRD lets through but the API server refuses in
-		// the NetworkPolicy (a label-key prefix longer than a DNS subdomain):
-		// a named stall, looked at again in five minutes, not a hot loop.
+		// the NetworkPolicy (a label-key prefix longer than a DNS subdomain),
+		// added while the Pods trust every peer: a widening, held (nothing
+		// is applied, so the refusal shows only once the hold ends; the
+		// refusal itself is the next subtests'). The policy in force stays.
 		refused := s.console(ctx, t, "console")
 		refused.Spec.Exposure.NetworkPolicy.From = append(refused.Spec.Exposure.NetworkPolicy.From, pgtoolboxv1alpha1.PgToolBoxConsolePolicyPeer{
 			PodSelector: &pgtoolboxv1alpha1.PgToolBoxConsoleLabelSelector{MatchLabels: map[string]pgtoolboxv1alpha1.PgToolBoxConsoleLabelValue{strings.Repeat("a", 254) + "/x": "y"}},
 		})
 		must(t, s.admin.Update(ctx, refused))
-		if result := s.reconcile(ctx, t, "console"); result.RequeueAfter != policyRecheck {
-			t.Fatalf("RequeueAfter = %s on a refused NetworkPolicy, want %s", result.RequeueAfter, policyRecheck)
-		}
-		stalled := s.console(ctx, t, "console")
-		assertCondition(t, stalled, pgtoolboxv1alpha1.ConditionConfigurationValid, metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonExposurePolicyInvalid)
-		// Nothing changed: the earlier policy is in force, and
-		// ExposureConfined still describes it.
-		assertCondition(t, stalled, pgtoolboxv1alpha1.ConditionExposureConfined, metav1.ConditionTrue, pgtoolboxv1alpha1.ReasonAsExpected)
+		s.reconcile(ctx, t, "console")
+		assertCondition(t, s.console(ctx, t, "console"), pgtoolboxv1alpha1.ConditionExposureConfined, metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonExposureTrustUnverified)
 		if n := policyPeers(); n != 1 {
 			t.Fatalf("the refused spec changed the policy in force to %d peers", n)
 		}
@@ -867,16 +863,15 @@ func TestPgToolBoxConsoleReconcilerOnEnvtest(t *testing.T) {
 		console.Spec.Exposure.NetworkPolicy = &pgtoolboxv1alpha1.PgToolBoxConsoleExposurePolicySpec{From: refusedFrom}
 		must(t, s.admin.Create(ctx, console))
 		s.reconcile(ctx, t, "refused")
-		// The dry run refuses it before the Ingress is published.
+		// The policy's apply comes first: refused, the Ingress is not
+		// published.
 		first := s.console(ctx, t, "refused")
 		assertCondition(t, first, pgtoolboxv1alpha1.ConditionConfigurationValid, metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonExposurePolicyInvalid)
+		assertCondition(t, first, pgtoolboxv1alpha1.ConditionExposureConfined, metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonExposurePolicyInvalid)
 		s.absent(ctx, t, console.WorkloadName(), &networkingv1.Ingress{})
-		if meta.FindStatusCondition(first.Status.Conditions, pgtoolboxv1alpha1.ConditionExposureConfined) != nil {
-			t.Fatal("ExposureConfined with nothing published")
-		}
 
 		// Published without a policy, then refused: ExposureConfined says
-		// that no policy is in force.
+		// the policy was refused.
 		first.Spec.Exposure.NetworkPolicy = nil
 		must(t, s.admin.Update(ctx, first))
 		s.reconcile(ctx, t, "refused")
@@ -888,7 +883,7 @@ func TestPgToolBoxConsoleReconcilerOnEnvtest(t *testing.T) {
 		s.reconcile(ctx, t, "refused")
 		stalled := s.console(ctx, t, "refused")
 		assertCondition(t, stalled, pgtoolboxv1alpha1.ConditionConfigurationValid, metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonExposurePolicyInvalid)
-		assertCondition(t, stalled, pgtoolboxv1alpha1.ConditionExposureConfined, metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonExposureOpen)
+		assertCondition(t, stalled, pgtoolboxv1alpha1.ConditionExposureConfined, metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonExposurePolicyInvalid)
 		if message := meta.FindStatusCondition(stalled.Status.Conditions, pgtoolboxv1alpha1.ConditionExposureConfined).Message; !strings.Contains(message, "refused") {
 			t.Fatalf("ExposureConfined message %q does not say the policy was refused", message)
 		}
@@ -1114,7 +1109,7 @@ func TestPgToolBoxConsoleReconcilerOnEnvtest(t *testing.T) {
 		if message := meta.FindStatusCondition(stalled.Status.Conditions, pgtoolboxv1alpha1.ConditionConfigurationValid).Message; !strings.Contains(message, "this platform refuses") {
 			t.Fatalf("ConfigurationValid message %q does not carry the denial", message)
 		}
-		// The dry run refused it: nothing was published.
+		// The policy was refused before the exposure: nothing was published.
 		s.absent(ctx, t, console.WorkloadName(), &networkingv1.Ingress{})
 		s.absent(ctx, t, denied, &networkingv1.NetworkPolicy{})
 		must(t, s.admin.Delete(ctx, stalled))

@@ -145,14 +145,12 @@ func requiredPermissions(mapper meta.RESTMapper, objectScheme *runtime.Scheme, r
 // narrower Role (Clusters readable, Deployments or Secrets not; Clusters
 // listed but not watched) would 403 the operator's informer there forever,
 // the cache would never sync, and the operator would crash-loop for every
-// namespace. A namespace whose review fails (an error after the retries, a
-// response too large, or no answer within managerrole.NamespaceReviewTimeout
-// at every attempt while the API server answered meanwhile) is left out too, with its error logged: nothing is
-// known of it, and the others must not wait on it. Left out, it is not
-// reconciled until it is fixed and the operator restarted (reReviewFailed
-// restarts it for an API server error, a reset or refused connection, or
-// a connection that answered nothing at all, never for a review too large
-// or too slow, which the namespace's RoleBindings decide); the others are unaffected. It returns the namespaces
+// namespace. A namespace whose review fails (an error or no answer within
+// managerrole.NamespaceReviewTimeout after the retries, or a response too
+// large) is left out too, with its error logged: nothing is known of it,
+// and the others must not wait on it. Left out, it is not reconciled until
+// it is fixed and the operator restarted; the others are unaffected. It
+// returns the namespaces
 // kept and those left out, why and (for missing permissions) what the
 // review showed. At least one namespace must be kept; empty (every
 // namespace) stays empty.
@@ -186,36 +184,21 @@ func permittedNamespaces(ctx context.Context, api startupAPI, namespaces []strin
 		dropped = append(dropped, droppedNamespace{Namespace: d.Namespace, Cause: dropPermissions, Reason: d.Reason(), required: required, missing: d.Missing})
 	}
 	for _, u := range review.Unreviewed {
-		switch contentCause(u) {
-		case dropReviewTooLarge:
-			setupLog.Error(u.Err, "watched namespace left out: the operator's permission review there is too large (its RoleBindings grant the operator far more rules than its manager role; remove the extra bindings: it is reviewed again at the next start, never in the background)",
-				"namespace", u.Namespace, "responseSize", responseSize(u.Err))
+		if u.TooLarge() {
+			setupLog.Error(u.Err, "watched namespace left out: the operator's permission review there is too large (its RoleBindings grant the operator far more rules than its manager role; remove the extra bindings, then restart the operator)",
+				"namespace", u.Namespace)
 			dropped = append(dropped, droppedNamespace{Namespace: u.Namespace, Cause: dropReviewTooLarge, Reason: u.Reason()})
-		case dropReviewTooSlow:
-			setupLog.Error(u.Err, "watched namespace left out: the operator's permission review there got no answer in time at every attempt while the API server answered other requests (most likely its RoleBindings grant the operator far more rules than its manager role; check them and the API server: it is reviewed again at the next start, never in the background)",
-				"namespace", u.Namespace)
-			dropped = append(dropped, droppedNamespace{Namespace: u.Namespace, Cause: dropReviewTooSlow, Reason: u.Reason()})
-		default:
-			setupLog.Error(u.Err, "watched namespace left out: the operator's permissions there could not be reviewed (check the API server; it is reviewed again every minute, and the operator restarts to watch it once it grants every permission)",
-				"namespace", u.Namespace)
-			dropped = append(dropped, droppedNamespace{Namespace: u.Namespace, Cause: dropReviewFailed, Reason: u.Reason(), required: required})
+			continue
 		}
+		setupLog.Error(u.Err, "watched namespace left out: the operator's permissions there could not be reviewed (check the API server and the namespace's RoleBindings, then restart the operator)",
+			"namespace", u.Namespace)
+		dropped = append(dropped, droppedNamespace{Namespace: u.Namespace, Cause: dropReviewFailed, Reason: u.Reason()})
 	}
 	if len(review.Permitted) == 0 {
 		return nil, dropped, fmt.Errorf("none of the watched namespaces %v grants the operator every permission of its manager role (%d lack one, %d could not be reviewed): restore the chart's manager RoleBindings",
 			namespaces, len(review.Denied), len(review.Unreviewed))
 	}
 	return review.Permitted, dropped, nil
-}
-
-// responseSize is the size a review too large was seen at (the
-// managerrole.ReviewTooLargeError in err), or "unknown".
-func responseSize(err error) string {
-	var tooLarge *managerrole.ReviewTooLargeError
-	if errors.As(err, &tooLarge) {
-		return tooLarge.Size()
-	}
-	return "unknown"
 }
 
 // namespaceReviewTimeout bounds each attempt at reviewing one namespace's

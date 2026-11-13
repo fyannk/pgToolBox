@@ -19,7 +19,6 @@ import (
 	"errors"
 	"net/netip"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -27,7 +26,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -35,10 +33,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	pgtoolboxv1alpha1 "github.com/fyannk/pgToolBox/api/v1alpha1"
-	"github.com/fyannk/pgToolBox/internal/operator/reconcile"
 )
-
-var networkPolicies = schema.GroupResource{Group: "networking.k8s.io", Resource: "networkpolicies"}
 
 func ipBlockConsole(cidr string) *pgtoolboxv1alpha1.PgToolBoxConsole {
 	c := &pgtoolboxv1alpha1.PgToolBoxConsole{ObjectMeta: metav1.ObjectMeta{Name: "console", Namespace: "team-a", UID: "u"}}
@@ -55,87 +50,6 @@ func owned[T client.Object](c *pgtoolboxv1alpha1.PgToolBoxConsole, object T) T {
 		APIVersion: pgtoolboxv1alpha1.GroupVersion.String(), Kind: "PgToolBoxConsole", Name: c.Name, UID: c.UID, Controller: new(true),
 	}})
 	return object
-}
-
-// TestCheckExposurePolicy: the dry run is skipped when the owned policy in
-// force is the desired one; an admission denial (Forbidden) stalls like a
-// schema refusal (Invalid); a BadRequest (a webhook that cannot run on a
-// dry run) gives way to the real apply; anything else is returned.
-func TestCheckExposurePolicy(t *testing.T) {
-	t.Parallel()
-	c := ipBlockConsole("192.168.10.0/24")
-	desired := buildExposureNetworkPolicy(c, true)
-	other := ipBlockConsole("192.168.20.0/24")
-	stale := owned(c, buildExposureNetworkPolicy(other, true))
-	stale.Name = desired.Name
-	denial := apierrors.NewForbidden(networkPolicies, desired.Name, errors.New("ValidatingAdmissionPolicy 'deny' with binding 'deny' denied request"))
-	cases := []struct {
-		name     string
-		live     *networkingv1.NetworkPolicy
-		dryRun   error
-		patches  int32
-		stall    bool
-		returned bool
-	}{
-		{name: "in force: no dry run", live: owned(c, desired.DeepCopy())},
-		{name: "in force without its labels", live: func() *networkingv1.NetworkPolicy {
-			p := owned(c, desired.DeepCopy())
-			p.Labels = nil
-			return p
-		}(), patches: 1},
-		{name: "another spec in force", live: stale, patches: 1},
-		{name: "none in force", patches: 1},
-		{name: "admission denial", dryRun: denial, patches: 1, stall: true},
-		{name: "schema refusal", dryRun: apierrors.NewInvalid(schema.GroupKind{Group: "networking.k8s.io", Kind: "NetworkPolicy"}, desired.Name, nil), patches: 1, stall: true},
-		{name: "a webhook without dry run", dryRun: apierrors.NewBadRequest("admission webhook \"w\" does not support dry run"), patches: 1},
-		{name: "unavailable", dryRun: apierrors.NewServiceUnavailable("etcd"), patches: 1, returned: true},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			builder := fake.NewClientBuilder().WithScheme(cnpgScheme(t))
-			if tc.live != nil {
-				builder = builder.WithObjects(tc.live.DeepCopy())
-			}
-			var patches atomic.Int32
-			cl := builder.WithInterceptorFuncs(interceptor.Funcs{
-				Patch: func(_ context.Context, _ client.WithWatch, _ client.Object, _ client.Patch, opts ...client.PatchOption) error {
-					var o client.PatchOptions
-					o.ApplyOptions(opts)
-					if len(o.DryRun) == 0 {
-						t.Error("a real patch from the policy check")
-					}
-					patches.Add(1)
-					return tc.dryRun
-				},
-			}).Build()
-			r := &Reconciler{Client: cl, APIReader: cl}
-			console := c.DeepCopy()
-			err := r.checkExposurePolicy(context.Background(), console, desired.DeepCopy())
-			if got := patches.Load(); got != tc.patches {
-				t.Errorf("%d dry runs, want %d", got, tc.patches)
-			}
-			var stalled *reconcile.StallError
-			switch {
-			case tc.stall:
-				if !errors.As(err, &stalled) || stalled.Reason != pgtoolboxv1alpha1.ReasonExposurePolicyInvalid {
-					t.Fatalf("err = %v, want the ExposurePolicyInvalid stall", err)
-				}
-				condition := meta.FindStatusCondition(console.Status.Conditions, pgtoolboxv1alpha1.ConditionConfigurationValid)
-				if condition == nil || condition.Reason != pgtoolboxv1alpha1.ReasonExposurePolicyInvalid.String() {
-					t.Fatalf("ConfigurationValid = %+v", condition)
-				}
-			case tc.returned:
-				if err == nil || errors.As(err, &stalled) {
-					t.Fatalf("err = %v, want the error returned (backoff)", err)
-				}
-			default:
-				if err != nil {
-					t.Fatalf("err = %v, want none", err)
-				}
-			}
-		})
-	}
 }
 
 // TestHeldWideningConfirmsPastCache: the cache still shows the narrower

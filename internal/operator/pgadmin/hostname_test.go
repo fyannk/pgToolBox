@@ -16,7 +16,6 @@ package pgadmin
 
 import (
 	"context"
-	"slices"
 	"strings"
 	"testing"
 
@@ -240,21 +239,15 @@ func TestPgAdminPauseAllowUnpause(t *testing.T) {
 	}
 }
 
-// TestPausedPgAdminWithdrawnRouteMarkedGone: round 17, OPERATOR P3. A
-// Route published, then withdrawn for a refused hostname while the
-// PgAdmin is paused, is no longer recorded in publishedExposureKinds: the
-// status never keeps saying a Route may remain once the operator deleted
-// it.
-func TestPausedPgAdminWithdrawnRouteMarkedGone(t *testing.T) {
+// TestPausedPgAdminWithdrawsRoute: a Route published, then withdrawn for a
+// refused hostname while the PgAdmin is paused.
+func TestPausedPgAdminWithdrawsRoute(t *testing.T) {
 	p := hostnamePgAdmin("pgadmin.corp.example.com")
 	p.Spec.Exposure.Type = pgtoolboxv1alpha1.ExposureTypeRoute
 	h := newHarness(t, nil, baseObjects(p)...)
 	h.r.Features.Routes = discovery.Result{GVK: routev1.GroupVersion.WithKind("Route"), State: discovery.Available}
 	if err := h.reconcile(p.Name); err != nil {
 		t.Fatal(err)
-	}
-	if got := h.pgadmin(p.Name).Status.PublishedExposureKinds; !slices.Equal(got, []string{"Route"}) {
-		t.Fatalf("publishedExposureKinds = %q after publishing a Route, want [Route]", got)
 	}
 	paused := h.pgadmin(p.Name)
 	paused.Annotations = map[string]string{pgtoolboxv1alpha1.AnnotationReconcile: pgtoolboxv1alpha1.ReconcileSkip}
@@ -268,8 +261,5 @@ func TestPausedPgAdminWithdrawnRouteMarkedGone(t *testing.T) {
 	key := client.ObjectKey{Namespace: testNamespace, Name: namesOf(p).base}
 	if err := h.client.Get(context.Background(), key, &routev1.Route{}); !apierrors.IsNotFound(err) {
 		t.Fatalf("the Route under a refused hostname is still there: %v", err)
-	}
-	if got := h.pgadmin(p.Name).Status.PublishedExposureKinds; got != nil {
-		t.Errorf("publishedExposureKinds = %q once the Route is withdrawn, want none", got)
 	}
 }

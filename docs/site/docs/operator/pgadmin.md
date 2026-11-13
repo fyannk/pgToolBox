@@ -464,6 +464,8 @@ repository allow-list is `ImageNotAllowed`; see [images](images.md).
 `ingressClassName` and `tls.certificateSecretRef` apply to `ingress` only; `gateway`
 needs `gateway.parentRef`. `status.url` is the exposure URL, or the in-cluster
 Service URL for `clusterIP`.
+If an admin narrows the operator's Role after an exposure was published, delete
+the leftover Route, HTTPRoute or Ingress by hand: the operator no longer sees it.
 
 ## NetworkPolicy
 

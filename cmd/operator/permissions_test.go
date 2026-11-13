@@ -208,23 +208,15 @@ func TestPrepareDropsNamespaceMissingARequiredPermission(t *testing.T) {
 	}
 }
 
-// TestPermittedNamespacesReviewFailedKeepsWhatToAsk: round 16, K8S P2-2,
-// and rounds 17 and 18. A namespace whose review failed is dropped with
-// the permissions to ask again in the background (reReviewFailed); one
-// whose response was too large, or that got no answer in time at every
-// attempt, is dropped under a cause of its own (review-too-large,
-// review-too-slow), with nothing to ask again: only the next start reviews
-// it. Each fails that namespace only.
-func TestPermittedNamespacesReviewFailedKeepsWhatToAsk(t *testing.T) {
+// TestPermittedNamespacesReviewFailed: round 16, K8S P2-2, and rounds 17
+// and 18. A namespace whose review failed (an error, or no answer in time
+// at every attempt) is dropped as review-failed; one whose response was
+// too large under a cause of its own (review-too-large). Each fails that
+// namespace only, and none reads as allowing a write.
+func TestPermittedNamespacesReviewFailed(t *testing.T) {
 	full := managerRules(t)
 	c := fake.NewClientBuilder().WithScheme(scheme).WithRESTMapper(testMapper()).WithInterceptorFuncs(interceptor.Funcs{
 		Create: func(ctx context.Context, _ client.WithWatch, obj client.Object, _ ...client.CreateOption) error {
-			// The check of the API server sent with a namespace's last
-			// attempt (round 19): answered, the server is up.
-			if access, ok := obj.(*authorizationv1.SelfSubjectAccessReview); ok && access.Spec.ResourceAttributes != nil && access.Spec.ResourceAttributes.Namespace == "" {
-				access.Status.Allowed = true
-				return nil
-			}
 			review, ok := obj.(*authorizationv1.SelfSubjectRulesReview)
 			if !ok {
 				return errors.New("only rules reviews are expected")
@@ -233,7 +225,7 @@ func TestPermittedNamespacesReviewFailedKeepsWhatToAsk(t *testing.T) {
 			case "team-b":
 				return apierrors.NewForbidden(schema.GroupResource{Group: "authorization.k8s.io", Resource: "selfsubjectrulesreviews"}, "", errors.New("an admission webhook refused it"))
 			case "team-c":
-				return fmt.Errorf("reading the body: %w", &managerrole.ReviewTooLargeError{Read: 3 << 20, AtLeast: true})
+				return fmt.Errorf("reading the body: %w", managerrole.ErrReviewTooLarge)
 			case "team-d":
 				// No answer before the attempt's deadline, every time.
 				<-ctx.Done()
@@ -251,43 +243,20 @@ func TestPermittedNamespacesReviewFailedKeepsWhatToAsk(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Round 20, K8S P3-2: each cause is logged with its own message and
-	// keys; the size seen of a review too large, never of another.
-	for _, want := range []struct {
-		namespace, message string
-		keys               []string
-		without            string
-	}{
-		{"team-b", "permissions there could not be reviewed", nil, `"responseSize"`},
-		{"team-c", "permission review there is too large", []string{`"responseSize"="at least 3145728 bytes read"`}, ""},
-		{"team-d", "got no answer in time at every attempt while the API server answered other requests", []string{`"error"=`}, `"responseSize"`},
+	for _, want := range []struct{ namespace, message string }{
+		{"team-b", "permissions there could not be reviewed"},
+		{"team-c", "permission review there is too large"},
+		{"team-d", "permissions there could not be reviewed"},
 	} {
-		line := logs.line(`"namespace"="` + want.namespace + `"`)
-		if !strings.Contains(line, want.message) {
+		if line := logs.line(`"namespace"="` + want.namespace + `"`); !strings.Contains(line, want.message) {
 			t.Errorf("%s's log line = %q, want %q in it", want.namespace, line, want.message)
-		}
-		for _, key := range want.keys {
-			if !strings.Contains(line, key) {
-				t.Errorf("%s's log line = %q, want %s in it", want.namespace, line, key)
-			}
-		}
-		if want.without != "" && strings.Contains(line, want.without) {
-			t.Errorf("%s's log line = %q, want no %s", want.namespace, line, want.without)
 		}
 	}
 	if !slices.Equal(kept, []string{"team-a"}) || len(dropped) != 3 ||
 		dropped[0].Namespace != "team-b" || dropped[0].Cause != dropReviewFailed ||
 		dropped[1].Namespace != "team-c" || dropped[1].Cause != dropReviewTooLarge ||
-		dropped[2].Namespace != "team-d" || dropped[2].Cause != dropReviewTooSlow {
-		t.Fatalf("kept %q, dropped %+v; want team-a kept, team-b review-failed, team-c review-too-large, team-d review-too-slow", kept, dropped)
-	}
-	if len(dropped[0].required) == 0 {
-		t.Error("team-b dropped without the permissions to review again")
-	}
-	for _, d := range dropped[1:] {
-		if len(d.required) != 0 {
-			t.Errorf("%s, %s, dropped with permissions to review again in the background", d.Namespace, d.Cause)
-		}
+		dropped[2].Namespace != "team-d" || dropped[2].Cause != dropReviewFailed {
+		t.Fatalf("kept %q, dropped %+v; want team-a kept, team-b review-failed, team-c review-too-large, team-d review-failed", kept, dropped)
 	}
 	for _, d := range dropped {
 		if d.allows("events.k8s.io", "events", "create") {
@@ -326,25 +295,6 @@ func captureSetupLog(t *testing.T) *capturedLog {
 	}, funcr.Options{})
 	t.Cleanup(func() { setupLog = previous })
 	return logs
-}
-
-// TestResponseSize: round 19, OPERATOR P3-2. The log of a namespace whose
-// review was too large says the size seen.
-func TestResponseSize(t *testing.T) {
-	for _, tt := range []struct {
-		err  error
-		want string
-	}{
-		{fmt.Errorf("reading the body: %w", &managerrole.ReviewTooLargeError{Read: 3 << 20}), "3145728 bytes read"},
-		{&managerrole.ReviewTooLargeError{ContentLength: 300_000}, "Content-Length 300000"},
-		{&managerrole.ReviewTooLargeError{Read: 1 << 26, AtLeast: true}, "at least 67108864 bytes read"},
-		{managerrole.ErrReviewTooLarge, "unknown"},
-		{errors.New("other"), "unknown"},
-	} {
-		if got := responseSize(tt.err); got != tt.want {
-			t.Errorf("responseSize(%v) = %q, want %q", tt.err, got, tt.want)
-		}
-	}
 }
 
 // TestPermittedNamespacesClusterWide: with no watched namespaces (every

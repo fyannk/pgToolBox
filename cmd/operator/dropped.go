@@ -49,47 +49,21 @@ const (
 	// manager role there (a narrower Role bound in place of the chart's).
 	dropPermissions dropCause = "permissions"
 	// dropReviewFailed: its permissions there could not be reviewed (an
-	// API server error or a reset or refused connection after the
-	// retries, or no answer in time while the API server answered nothing
-	// else either: a connection dead without a reset); reviewed again in
-	// the background (reReviewFailed).
+	// API server error, no answer in time, or a reset or refused
+	// connection, after the retries).
 	dropReviewFailed dropCause = "review-failed"
 	// dropReviewTooLarge: its permission review answered more than
 	// managerrole.ReviewResponseLimit (the namespace's RoleBindings grant
-	// the operator far more rules than its manager role). Never reviewed
-	// again in the background: only the next start reviews it.
+	// the operator far more rules than its manager role).
 	dropReviewTooLarge dropCause = "review-too-large"
-	// dropReviewTooSlow: its permission review got no answer in time at
-	// every attempt while the API server answered a check sent meanwhile
-	// (managerrole.ErrReviewTooSlow), most likely its
-	// RoleBindings again: an API server builds the whole response before
-	// the first byte. Never reviewed again in the background, like
-	// dropReviewTooLarge: only the next start reviews it.
-	dropReviewTooSlow dropCause = "review-too-slow"
 )
 
 // dropCauses is every dropCause, in the order the gauge exports them.
-var dropCauses = []dropCause{dropPermissions, dropReviewFailed, dropReviewTooLarge, dropReviewTooSlow, dropClustersUnlistable}
-
-// contentCause is the cause of a review that failed because of the
-// namespace's own RoleBindings (too large, or too slow to build), which
-// whoever administers them can make pass or fail at will: such a namespace
-// is never reviewed in the background, so that they cannot make the
-// operator restart. Empty for any other failure.
-func contentCause(u managerrole.Unreviewed) dropCause {
-	switch {
-	case u.TooLarge():
-		return dropReviewTooLarge
-	case u.TooSlow():
-		return dropReviewTooSlow
-	}
-	return ""
-}
+var dropCauses = []dropCause{dropPermissions, dropReviewFailed, dropReviewTooLarge, dropClustersUnlistable}
 
 // droppedNamespace is one watched namespace left out at start. For
 // dropPermissions, required is what the operator asked for there and
-// missing what of it the review refused; for dropReviewFailed, required is
-// what to ask again (reReviewFailed); both are nil otherwise. Only
+// missing what of it the review refused; both are nil otherwise. Only
 // dropPermissions says what the operator may do there.
 type droppedNamespace struct {
 	Namespace string
@@ -215,7 +189,7 @@ func droppedMessage(d droppedNamespace) string {
 // page per kind, the whole droppedReportTimeout): a namespace is often
 // dropped because writes are refused there, so a failure is logged and
 // never retried. Nothing is written in a namespace whose permissions are
-// unknown (Clusters unlistable, review failed, too large or too slow), nor in any
+// unknown (Clusters unlistable, review failed or too large), nor in any
 // watched one.
 func reportDroppedNamespaces(ctx context.Context, api droppedAPI, dropped []droppedNamespace, now func() time.Time) {
 	ctx, cancel := context.WithTimeout(ctx, droppedReportTimeout)
