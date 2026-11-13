@@ -4,11 +4,9 @@
   "private": true,
   "scripts": {
     "docusaurus": "docusaurus",
-    "prestart": "npm run screens",
-    "start": "docusaurus start",
+    "start": "node scripts/copy-screens.mjs && docusaurus start",
     "screens": "node scripts/copy-screens.mjs",
-    "prebuild": "npm run screens",
-    "build": "docusaurus build",
+    "build": "node scripts/copy-screens.mjs && docusaurus build",
     "swizzle": "docusaurus swizzle",
     "deploy": "docusaurus deploy",
     "clear": "docusaurus clear",

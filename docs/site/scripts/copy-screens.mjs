@@ -2,9 +2,10 @@
 // (ui/e2e/__screenshots__/screens.spec.ts, rendered from the MSW mocks of the
 // API fixtures) into static/img/screens, where the docs reference them.
 //
-// Run by npm before `build` and `start` (the `prebuild` and `prestart`
-// scripts), so the site always shows the baselines of the checkout it is built
-// from, and nothing is committed twice. static/img/screens is git-ignored.
+// Run first by the `build` and `start` scripts, not as pre-scripts: .npmrc
+// sets ignore-scripts, which also skips npm's pre/post hooks. So the site
+// always shows the baselines of the checkout it is built from, and nothing is
+// committed twice. static/img/screens is git-ignored.
 // Copies are not re-encoded (pngquant, the only optimiser on hand, is lossy).
 //
 // The curated subset is the list below: 1440 px, light and dark. A missing
