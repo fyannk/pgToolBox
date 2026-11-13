@@ -338,11 +338,20 @@ for root, _, files in os.walk("/var/lib/pgadmin"):
 
 	t.Run("LibpqConnects", func(t *testing.T) {
 		pod := pgAdminPod(t)
-		out, err := execIn(pod, "sh", "-c",
-			psqlScript("pgtoolbox-orders-rw-app", "select ssl, current_user from pg_stat_ssl join pg_stat_activity using (pid) where pid = pg_backend_pid()"))
-		if err != nil || !strings.HasPrefix(strings.TrimSpace(out), "t|app") {
-			t.Fatalf("psql through the service file (verify-full, SCRAM, channel binding): %v: %s", err, out)
-		}
+		// CloudNativePG may still recreate the instance Pod just after the
+		// Cluster first reads healthy: a refused connection is retried,
+		// any other failure (TLS, SCRAM, the service file) is not.
+		eventually(t, "psql through the service file", func() error {
+			out, err := execIn(pod, "sh", "-c",
+				psqlScript("pgtoolbox-orders-rw-app", "select ssl, current_user from pg_stat_ssl join pg_stat_activity using (pid) where pid = pg_backend_pid()"))
+			if err != nil && strings.Contains(out, "Connection refused") {
+				return fmt.Errorf("%w: %s", err, out)
+			}
+			if err != nil || !strings.HasPrefix(strings.TrimSpace(out), "t|app") {
+				t.Fatalf("psql through the service file (verify-full, SCRAM, channel binding): %v: %s", err, out)
+			}
+			return nil
+		})
 	})
 
 	t.Run("Rotation", func(t *testing.T) {
