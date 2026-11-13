@@ -142,8 +142,7 @@ the per-address sign-in limits and the audit log (identity is not affected).
 - **Sign-in budgets behind a shared proxy address.** Behind a proxy declared
   without `TRUSTED_PROXY_CIDRS`, junk callbacks on self-started OIDC flows, junk
   pasted tokens, or floods of the MCP and OAuth endpoints no longer lock everyone
-  out: sign-ins are bounded per flow, per token, per person and per replica (20/s,
-  burst 40) instead of per shared address. The docs say what stays open after an
+  out: sign-ins are bounded per replica instead of per shared address. The docs say what stays open after an
   access request expires (the console's caches, the pgAdmin session, open
   connections) and that the four-eyes check covers only the console's path.
 - **Exposure trust is confined, or withdrawn.** A PgToolBoxConsole trusts every
@@ -249,14 +248,12 @@ the per-address sign-in limits and the audit log (identity is not affected).
   shared budget, and each live grant has its own; sign-outs are bounded per person
   so the state ConfigMap stays under 1 MiB
   (`pgtoolbox_console_shared_state_bytes`,
-  `pgtoolbox_console_shared_state_signouts_refused_total`); one person cannot fill
-  the set of known MCP bearers. A sign-out counts against the person sealed in
+  `pgtoolbox_console_shared_state_signouts_refused_total`). A sign-out counts against the person sealed in
   the session at sign-in (an HMAC tag); the state ConfigMap never drops a
   sign-out it holds and refuses new ones past its bounds (`reason` `subject`,
   `unnamed` or `budget`), and a dead token-only session is not shared. The MCP
-  token endpoint, known-bearer reviews and OIDC exchange reviews each have a
-  per-person share (`oauth_subject_tokens`, `known_reviews_subject`,
-  `exchange_reviews_subject`); a replayed refresh token is refused before the
+  token endpoint and known-bearer reviews each have a per-person share
+  (`oauth_subject_tokens`, `known_reviews_subject`); a replayed refresh token is refused before the
   review; store-outage refusals are bounded; each replica's signed-out table is
   bounded.
   A sign-out of a session sealed with its person's tag is shared even when the API

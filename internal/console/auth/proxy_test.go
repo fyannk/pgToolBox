@@ -181,7 +181,7 @@ func TestSpoofedForwardedForFromAnUntrustedPeer(t *testing.T) {
 	}, ProviderToken)
 	// A frozen clock: at 20 a minute the address budget refills a token
 	// every 3 s, which a slow -race run would otherwise spend.
-	useClock(&stepClock{now: time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)}, env.h.tokenAttempts, env.h.tokenAddresses, env.h.tokenReviews)
+	useClock(&stepClock{now: time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)}, env.h.tokenAddresses, env.h.tokenReviews)
 	attacker := env.browser(t)
 	attacker.addr = "10.244.3.17:40000"
 	reviews := env.rev.calls

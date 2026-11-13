@@ -73,10 +73,8 @@ carries):
 | `bucket` | Budget |
 |---|---|
 | `sign_in_address` | OAuth callbacks and unrecognised MCP bearers, per client address |
-| `token_form_token`, `token_form_address` | The token form, per pasted token and per client address |
-| `code_exchanges` | OAuth code exchanges with the IdP, per replica |
-| `exchange_reviews` | Reviews of tokens the IdP has just issued, per replica |
-| `exchange_reviews_subject` | The same, per person the IdP vouched for (OIDC: 12 a minute, bursts of 6), charged first |
+| `token_form_address` | The token form, per client address |
+| `code_exchanges` | OAuth code exchanges with the IdP (and so the reviews of the tokens they return), per replica |
 | `token_reviews` | Reviews of tokens the replica never accepted (token form, raw MCP bearers), per replica |
 | `known_reviews` | Re-reviews of raw MCP bearers the replica accepted before, per replica |
 | `known_reviews_subject` | The same, per person the API server named (32 a minute, bursts of 16), charged first |
@@ -87,13 +85,13 @@ carries):
 A per-address bucket rising is one client retrying. A per-replica bucket
 rising (`code_exchanges`, `token_reviews`, `oauth_unknown_tokens`,
 `oauth_registrations`) is a flood that new sign-ins on that replica are now
-waiting behind; `exchange_reviews`, `known_reviews` or `oauth_tokens` rising
+waiting behind; `known_reviews` or `oauth_tokens` rising
 means genuine sign-ins or clients themselves are being refused. A starting
 point for an alert:
 
 ```promql
 sum by (namespace, bucket) (
-  rate(pgtoolbox_console_throttled_requests_total{bucket=~"code_exchanges|exchange_reviews|token_reviews|known_reviews|oauth_tokens"}[5m])
+  rate(pgtoolbox_console_throttled_requests_total{bucket=~"code_exchanges|token_reviews|known_reviews|oauth_tokens"}[5m])
 ) > 1
 ```
 

@@ -186,7 +186,7 @@ func TestJunkTokensBehindASharedAddress(t *testing.T) {
 			t.Parallel()
 			env := newTestEnvWith(t, mode.tweak, ProviderToken)
 			clock := &stepClock{now: time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)}
-			useClock(clock, env.h.tokenAttempts, env.h.tokenAddresses, env.h.tokenReviews)
+			useClock(clock, env.h.tokenAddresses, env.h.tokenReviews)
 			hdr := withHeaders(sameOriginForm, mode.hdr)
 			attacker := env.browser(t)
 			// 60 distinct junk tokens at one a second: three times the
