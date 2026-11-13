@@ -1,8 +1,8 @@
 # The allowed and refused requests of the operator chart's admission policy
 # (charts/pgtoolbox/templates/operator/admissionpolicy.yaml), as data: the
 # envtest (TestEnvtestAdmissionPolicy) runs every case against the rendered
-# policy on an API server, and any other implementation of the same rules runs
-# the same table (loadCases).
+# policy on an API server; the operator's webhook for OLM runs the same table,
+# in Go (TestWebhookCases) and on an API server (TestEnvtestAdmissionWebhook).
 #
 # values: the chart values the policy is rendered with (operator.admissionPolicy;
 #   system:masters, which creates every oldObject, stays listed).

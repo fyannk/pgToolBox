@@ -19,6 +19,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"flag"
 	"fmt"
 	"os"
@@ -33,9 +34,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/metrics"
+	"sigs.k8s.io/controller-runtime/pkg/webhook"
+	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
+	"github.com/fyannk/pgToolBox/internal/operator/admissionpolicy"
 	"github.com/fyannk/pgToolBox/internal/operator/cachemetrics"
+	"github.com/fyannk/pgToolBox/internal/operator/configuration"
 	"github.com/fyannk/pgToolBox/internal/operator/console"
 	"github.com/fyannk/pgToolBox/internal/operator/pgadmin"
 	"github.com/fyannk/pgToolBox/pkg/memlimit"
@@ -88,6 +93,10 @@ func main() {
 		"The operator ConfigMap in the operator's namespace (optional; PgAdmin configuration).")
 	flag.StringVar(&secretName, "config-secret", "pgtoolbox-operator-config",
 		"The operator Secret in the operator's namespace (optional; overrides the ConfigMap).")
+	var admissionWebhook bool
+	flag.BoolVar(&admissionWebhook, "admission-webhook", false,
+		"Serve the admission rules the charts ship as ValidatingAdmissionPolicies as a validating webhook on :9443 "+
+			"(the OLM bundle sets it; never with the policies on the same cluster).")
 	opts := zap.Options{Development: false}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
@@ -114,6 +123,9 @@ func main() {
 		// The controllers' setups resolve their kinds before the manager
 		// starts: a hung API server fails them, not the liveness probe.
 		MapperProvider: timedMapperProvider(mapperRequestTimeout),
+	}
+	if admissionWebhook {
+		managerOptions.WebhookServer = webhook.NewServer(webhook.Options{TLSOpts: []func(*tls.Config){hardenTLS}})
 	}
 	consoleFeatures := pgToolBoxConsoleFeatures(pgAdminPrepared)
 	managerCacheOptions(&managerOptions, pgAdminPrepared, consoleFeatures)
@@ -148,11 +160,34 @@ func main() {
 		os.Exit(1)
 	}
 
+	if admissionWebhook {
+		if err := serveAdmissionWebhook(mgr, pgAdminPrepared.Config); err != nil {
+			setupLog.Error(err, "unable to set up the admission webhook")
+			os.Exit(1)
+		}
+	}
+
 	setupLog.Info("starting manager", "version", operatorVersion)
 	if err := mgr.Start(ctx); err != nil {
 		setupLog.Error(err, "problem running manager", "hint", cacheSyncHint(err, pgAdminPrepared.Config.WatchNamespaces))
 		os.Exit(1)
 	}
+}
+
+// serveAdmissionWebhook serves the rules of the operator chart's
+// ValidatingAdmissionPolicies on the manager's webhook server (port 9443,
+// certificate from the default directory, where OLM mounts it), for the
+// installs that cannot ship the policies; ready once it serves.
+func serveAdmissionWebhook(mgr ctrl.Manager, config configuration.Config) error {
+	v := &admissionpolicy.Validator{
+		ImageUsers: config.AdmissionImageUsers, ImageGroups: config.AdmissionImageGroups,
+		IdentityUsers: config.AdmissionIdentityUsers, IdentityGroups: config.AdmissionIdentityGroups,
+		Authorize: admissionpolicy.SubjectAccessReviews(mgr.GetClient()),
+	}
+	server := mgr.GetWebhookServer()
+	server.Register(admissionpolicy.ResourcesPath, &admission.Webhook{Handler: admissionpolicy.Handler(v.CustomResource)})
+	server.Register(admissionpolicy.ClusterDeletePath, &admission.Webhook{Handler: admissionpolicy.Handler(v.ClusterDelete)})
+	return mgr.AddReadyzCheck("admission-webhook", server.StartedChecker())
 }
 
 // managerSetups is every controller's setup, in the order main runs them.

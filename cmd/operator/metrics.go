@@ -43,11 +43,14 @@ func metricsOptions(bindAddress, certDir string) metricsserver.Options {
 		SecureServing:  true,
 		FilterProvider: filters.WithAuthenticationAndAuthorization,
 		CertDir:        certDir,
-		TLSOpts: []func(*tls.Config){func(c *tls.Config) {
-			c.MinVersion = tls.VersionTLS12
-			c.NextProtos = []string{"http/1.1"}
-		}},
+		TLSOpts:        []func(*tls.Config){hardenTLS},
 	}
+}
+
+// hardenTLS is the metrics and webhook servers' TLS: 1.2 at least, no HTTP/2.
+func hardenTLS(c *tls.Config) {
+	c.MinVersion = tls.VersionTLS12
+	c.NextProtos = []string{"http/1.1"}
 }
 
 // registerWatchMetrics registers the start-up's watch decisions on

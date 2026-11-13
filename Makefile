@@ -188,7 +188,7 @@ test-envtest-evidenceagent: manifests ## The EvidenceAgent reconciler on envtest
 		go test ./internal/operator/evidenceagent/ -run Envtest -count=1 -v
 
 .PHONY: test-envtest-admissionpolicy
-test-envtest-admissionpolicy: ## The operator chart's ValidatingAdmissionPolicy (helm template) evaluated on envtest as different users (needs helm; Kubernetes 1.30+ policies).
+test-envtest-admissionpolicy: ## The operator chart's ValidatingAdmissionPolicy (helm template) and the OLM admission webhook evaluated on envtest as different users (needs helm; Kubernetes 1.30+ policies).
 	KUBEBUILDER_ASSETS="$$($(SETUP_ENVTEST) use $(ENVTEST_K8S_VERSION_CONSOLE) -p path)" \
 		go test ./internal/operator/admissionpolicy/ -run Envtest -count=1 -v
 
