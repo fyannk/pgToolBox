@@ -122,8 +122,7 @@ type recoveryFacts struct {
 	failing bool
 	// failingSince is ContinuousArchiving's lastTransitionTime when the
 	// condition is False; nil otherwise or when not set. With the primary
-	// unread the condition cannot change: the reason gives its age (round
-	// 14, CNPG P3-b).
+	// unread the condition cannot change: the reason gives its age.
 	failingSince *time.Time
 	// backlog is the archiver's readyWalFiles when the backlog persists
 	// across sweeps, or is at the threshold with too few sweeps kept to
@@ -137,7 +136,7 @@ type recoveryFacts struct {
 	// primaryUnread: the sweep did not read status.currentPrimary
 	// (primaryArchiver is nil), whatever the archiving fact's reason: with
 	// ContinuousArchiving False the reason is CNPG's own, not
-	// PrimaryUnread (round 13, CNPG P3-1).
+	// PrimaryUnread.
 	primaryUnread bool
 	// quiet are the sweeps, oldest first, that read the current primary's
 	// archiver with no .ready file at all, since it became primary: at
@@ -220,7 +219,7 @@ func (b backupEnd) since(read time.Time) bool {
 // counted since read (backupsSince) has run: the latest completion stamp
 // among them, or now when one of them has none (in progress, or no
 // stamp). pgBackRest expires at the end of a backup, before the Backup
-// is marked Completed (round 20, PG P3-A).
+// is marked Completed.
 func (f recoveryFacts) expiredBy(read time.Time) time.Time {
 	var by time.Time
 	for _, b := range f.backupEnds {
@@ -262,28 +261,24 @@ func (f recoveryFacts) expireStampAt(end time.Time) (time.Time, bool) {
 // backupEndsOf are g's Backups' ends (recoveryFacts backupEnds) at now,
 // read through cnpgstatus.BackupTimesOf: a plugin's unset stop time,
 // which CloudNativePG stamps 1970-01-01, a stop in the future, or one
-// before the start or, alone, the object's creation, is no stop time
-// (rounds 18 and 19, CNPG P3).
+// before the start or, alone, the object's creation, is no stop time.
 //
 // A Completed Backup counts at the later of its stop time and
 // CloudNativePG's completion stamp (status.reconciliationTerminatedAt,
 // written by SetAsCompleted once the tool returned, pgBackRest's expire
-// included): one stamped before the read ran its expire before it too
-// (round 20, PG P3-A); with neither, as one that could have ended at any
+// included): one stamped before the read ran its expire before it too; with neither, as one that could have ended at any
 // time. A Backup restored
 // with its status (Velero) or migrated keeps its coherent old times
 // (observe.BackupTimes Imported) and counts then, not since the object
-// appeared, which held a whole-window band on a healthy cluster (round
-// 19, PG P3-B).
+// appeared, which held a whole-window band on a healthy cluster.
 //
 // A Backup still in progress (started, running, finalizing) counts at
 // the latest known instant before its tool began: its start, else the
 // operator's (status.reconciliationStartedAt, SetAsStarted: a queued
-// Backup waits after its creation; round 19, CNPG P3-2), else its
+// Backup waits after its creation), else its
 // creation. It ends later, and pgBackRest expires at its end, seconds
 // before CloudNativePG patches the Backup Completed, so one begun after
-// the read may already have expired what the snapshot lists (round 18,
-// Go and CNPG P3). One begun before the read is not counted until its
+// the read may already have expired what the snapshot lists. One begun before the read is not counted until its
 // stop time is reported: it only widens the band once it ends. A plugin
 // backup reports no start while running (pluginFieldsAtCompletion).
 func backupEndsOf(g *gathered, now time.Time) (ends []backupEnd, unread bool) {
@@ -407,7 +402,7 @@ func recoveryFactsOf(g *gathered, arch viewmodel.Archiving, now time.Time) recov
 	f.backupEnds, f.backupsUnread = backupEndsOf(g, now)
 	if g.cluster == nil {
 		// No Cluster, no status.currentPrimary: no primary was read to
-		// run a check on (round 16, CNPG P3-c).
+		// run a check on.
 		f.primaryUnread = true
 		return f
 	}
@@ -425,18 +420,16 @@ func recoveryFactsOf(g *gathered, arch viewmodel.Archiving, now time.Time) recov
 	f.primaryUnread = live == nil
 	// Whatever the condition says (Unknown above all, which keeps CNPG's
 	// reason), a primary not read is an archiver not read: the newest edge
-	// is never healthy on it (round 16, CNPG P2-1: a fenced or restarting
-	// primary is now unread).
+	// is never healthy on it.
 	f.archiverUnread = f.archiverUnread || f.primaryUnread
 	// The archiving instance in recovery is the live fact, whatever the
 	// condition's reason: with ContinuousArchiving False or Unknown the
 	// archiving reading keeps CNPG's reason, and pg_switch_wal() would
-	// still fail there (round 16, CNPG P3-b).
+	// still fail there.
 	f.notReported = arch.Reason == cnpgstatus.ArchivingReasonBacklogNotReported || (live != nil && live.ReadyNotReported)
 	// A hibernated Cluster with ContinuousArchiving False keeps CNPG's
 	// own reason in the archiving fact, not Hibernated: the Cluster's
-	// state says it sleeps, as cnpgstatus.Archiving reads it (round 15,
-	// CNPG P3-2).
+	// state says it sleeps, as cnpgstatus.Archiving reads it.
 	f.hibernated = f.hibernated || (f.primaryUnread && cnpgstatus.Hibernation(g.cluster).State == cnpgstatus.HibernationHibernated)
 	switch b := cnpgstatus.ArchiveBacklogOf(g.cluster, live); {
 	case b.Behind():
@@ -637,7 +630,7 @@ func clusterSegmentSize(g *gathered, instance string) (uint64, bool) {
 // instance was primary on (timelineAt). A reading without a timeline is
 // no evidence: after several failovers only the timeline tells which
 // archiver wrote which older timeline's WAL, so a quiet sweep of the
-// primary of timeline 2 never bounds the end of timeline 1 (round 9, P2).
+// primary of timeline 2 never bounds the end of timeline 1.
 func formerArchiverOf(g *gathered, promoted time.Time, archiveTimeout, interval time.Duration) formerArchiver {
 	out := formerArchiver{read: map[uint64]bool{}, holders: map[uint64]map[string]bool{}}
 	if promoted.IsZero() {
@@ -852,8 +845,7 @@ func newestQuiet(quiet []quietSweep, now time.Time, by *time.Time) *quietSweep {
 // the archiving fact rests on (primaryArchiverReading, the last good
 // reading through one missed read): both facts read the same failure, so
 // a grace sweep does not turn a recent failure into "archiving is
-// failing" against a ContinuousArchiving condition that is True (round
-// 14, CNPG P3-a).
+// failing" against a ContinuousArchiving condition that is True.
 func newestArchiveFailure(g *gathered) (*time.Time, string) {
 	var newest *time.Time
 	var instance string
@@ -1042,7 +1034,7 @@ func (s *Service) recoveryTimeline(ev clusterEvidence, summary viewmodel.BackupS
 			}
 			addReason(&out, say("recovery.reason.reportedWindow", "the window is the operator's report, not repository evidence", nil))
 			if facts.hibernated {
-				// Why no check is offered at the edge (round 16, DBA).
+				// Why no check is offered at the edge.
 				addReason(&out, hibernatedReason())
 				if facts.failing {
 					addReason(&out, hibernatedFailedReason(facts.failingSince))
@@ -1082,7 +1074,7 @@ func hibernatedFailedReason(since *time.Time) viewmodel.Phrase {
 // edgeAdviceOf is the one reason-to-advice map behind the SPA's hint at
 // an uncertain edge (pg_stat_archiver, then pg_switch_wal(), on the
 // primary), which follows the timeline's edgeAdvice and keeps no list of
-// its own (round 14, DBA P2-1). none: no primary runs, or none was read,
+// its own. none: no primary runs, or none was read,
 // to run either on (hibernated, fenced, unreachable). archiver: archiving
 // fails or lags, so a switched segment would wait like the others; the
 // archiver's own statistics say why; or a WAL switch here cannot help
@@ -1106,8 +1098,7 @@ var edgeAdviceOf = map[string]string{
 
 // edgeAdvice is the narrowest advice the facts or any reason allow: none
 // before archiver before both checks (""). The facts come first, on the
-// evidence and the reported basis alike (round 15, CNPG P2-1 and DBA
-// P2-1): a reported window gives no archiving reason, and a reason ranked
+// evidence and the reported basis alike: a reported window gives no archiving reason, and a reason ranked
 // above the archiver's (holes, a stale scan) would hide it. The current
 // primary not read, or the Cluster hibernated: nothing to run either
 // check on. The archiving instance in recovery (notReported: a replica
@@ -1265,7 +1256,7 @@ type timelineInput struct {
 	// scanDuration is how long the snapshot's scan took (started_at to
 	// completed_at); 0 when the snapshot does not say. The purge band times
 	// the read from the scan's start, and missedScan allows a slow scan
-	// its own duration (round 14, PG P3-B). For paths kept from an earlier
+	// its own duration. For paths kept from an earlier
 	// scan it is the latest scan's: an estimate of that scan's.
 	scanDuration time.Duration
 	// pgBackRest: the repository is pgBackRest's (its identity's format),
@@ -1358,7 +1349,7 @@ func retainedFor(snapshot *evidencev1alpha1.RepositoryEvidenceSnapshot) time.Dur
 // read complete, does not list: retention expired it since the paths were
 // read (paths kept stale beside a fresh collection), or the agent
 // published paths of a backup it no longer lists. A restore from it is
-// not possible, whichever the format (round 10, PG P2).
+// not possible, whichever the format.
 func (in timelineInput) gone(id string) bool {
 	return in.backupsDone && !in.backupIDs[id]
 }
@@ -1367,7 +1358,7 @@ func (in timelineInput) gone(id string) bool {
 // not list beside recovery paths kept stale from an earlier scan: the
 // collection cannot say it is gone, nor that it is still there, and the
 // paths were read before a retention purge may have removed it, so a
-// restore from it is not confirmed (round 11, PG P3). Fresh paths come
+// restore from it is not confirmed. Fresh paths come
 // from the same scan as the backups, which held them then.
 func (in timelineInput) unconfirmed(id string) bool {
 	return in.rec.Stale && !in.backupsDone && !in.backupIDs[id]
@@ -1510,7 +1501,7 @@ func evidenceTimeline(out *viewmodel.RecoveryTimeline, in timelineInput) {
 	// The repository's newest timeline can lag the live one: right after a
 	// failover, until the new timeline's history file is archived and the
 	// agent reads the repository again, every path targets the parent
-	// timeline, whose WAL the former primary wrote (round 10, P2).
+	// timeline, whose WAL the former primary wrote.
 	live := in.facts.liveTimeline
 	top := max(target, live)
 	for _, r := range runs {
@@ -1530,7 +1521,7 @@ func evidenceTimeline(out *viewmodel.RecoveryTimeline, in timelineInput) {
 	if live != 0 && target > live {
 		// The repository's newest timeline is ahead of the live one: a
 		// default restore follows a timeline the current primary never
-		// wrote (round 12, PG P3-2).
+		// wrote.
 		ahead = target
 		repositoryAheadEdge(out, in, target, live, first, last)
 	}
@@ -1639,9 +1630,7 @@ func recoverySpans(out *viewmodel.RecoveryTimeline, in timelineInput, target uin
 		} else if in.pgBackRest && !listed {
 			// The console keeps the newest MaximumBackupItems items but
 			// more paths: a path whose backup was cut from the items read
-			// has no usability rating, so it is drawn, never as covered
-			// (round 9, PG P2; the roll-up already reads it so, cap.go
-			// rollupUnexplained).
+			// has no usability rating, so it is drawn, never as covered.
 			path := p
 			path.Reason = evidencev1alpha1.Reason{Code: backupNotListedCode}
 			sp.degraded, sp.unusable = &path, true
@@ -1696,8 +1685,8 @@ var pathShownUnusable = map[string]bool{
 // for a reason its recovery path does not show: a broken chain, a
 // manifest (its own or a dependency's) not verified, pgBackRest's own
 // error flag (page checksums), a manifest not inspected. Its path is
-// judged from the WAL alone, so its span is drawn, but never as covered
-// (round 8, P2-1). code is that first reason, detail the agent's
+// judged from the WAL alone, so its span is drawn, but never as covered;
+// code is that first reason, detail the agent's
 // message. A backup with no reason given is unusable too; one whose only
 // reasons come from the path is unusable only when the path itself reads
 // healthy at its frontier, which then does not show them. Barman Cloud
@@ -1730,7 +1719,7 @@ func unusableBackup(p evidence.RecoveryPath, b evidence.BackupItem) (code, detai
 // (rejoined: it is the current primary, or a Ready standby), it holds no
 // unarchived WAL any more: CloudNativePG archives the WAL waiting on it
 // before it starts again, so the sentence says so instead of advising to
-// keep it (round 10, P3); the code then ends in "Rejoined".
+// keep it; the code then ends in "Rejoined".
 func formerMayHoldPhrase(code, missing, instance string, rejoined bool) viewmodel.Phrase {
 	switch {
 	case instance == "":
@@ -1883,11 +1872,10 @@ func markEdges(out *viewmodel.RecoveryTimeline, in timelineInput, spans []interv
 // may have removed its base backup unseen: the agent's refresh interval
 // plus the age of the scan the paths come from, timed from the earliest
 // of the scan's start (the listing is read during the scan, not when it
-// completes; round 14, PG P3-B), the agent's completion time and the
+// completes), the agent's completion time and the
 // console's fetch time (an agent clock ahead of the console's does not
 // shrink it), and never past the window [first, last] (an absurd scan
-// time, which saturates time.Sub, does not overflow it to nothing; round
-// 11, PG P3).
+// time, which saturates time.Sub, does not overflow it to nothing).
 //
 // A purge drops a whole backup, with the WAL only it needs, not a span as
 // long as the time elapsed. Under a recovery window the first restore
@@ -1897,7 +1885,7 @@ func markEdges(out *viewmodel.RecoveryTimeline, in timelineInput, spans []interv
 // started before the next anchor (first plus oldestOnly); since then it
 // has moved by at most the age of the read plus one refresh interval.
 // Every anchor whose successor it passed may be gone, several during a
-// long age (round 13, PG P3-B). The window's start is now before reach =
+// long age. The window's start is now before reach =
 // first + oldestOnly + age + refresh, so the newest anchor before reach,
 // base, is still there with every newer backup. The band runs to the
 // first drawn restore point at or after base: before it, the drawn spans
@@ -1907,7 +1895,7 @@ func markEdges(out *viewmodel.RecoveryTimeline, in timelineInput, spans []interv
 // Retention never removes the newest backup, so within a normal cycle
 // the band never passes the first drawn restore point at or after the
 // newest anchor the snapshot lists: a lone backup scanned on time has no
-// band (round 14, PG P3-A). Once a scan was missed it may: a backup
+// band. Once a scan was missed it may: a backup
 // taken since, which the snapshot cannot list, lets retention remove the
 // newest one listed, so the elapsed band is not capped there and reaches
 // the whole window as the age grows.
@@ -1915,8 +1903,7 @@ func markEdges(out *viewmodel.RecoveryTimeline, in timelineInput, spans []interv
 // The band extends only once a scan was missed (missedScan). Within a
 // normal cycle the scan's age passes one refresh interval for up to a
 // console poll period before the next scan lands; extending there flipped
-// the oldest backup's span between covered and unknown every cycle (round
-// 13, PG P3-C). A purge within that cycle is the evidence's ordinary lag,
+// the oldest backup's span between covered and unknown every cycle. A purge within that cycle is the evidence's ordinary lag,
 // which the elapsed band (one refresh plus the age) covers in time.
 //
 // Under pgBackRest a count bounds it too, whatever the clock: each backup
@@ -1956,18 +1943,18 @@ func purgeRead(in timelineInput) *time.Time {
 //   - repo-retention-full=K (count): with L fulls listed and n backups
 //     since, expire kept the newest K of the L+n, so the max(0, L+n-K)
 //     oldest listed are gone with their chains; all L, the whole window,
-//     when that reaches L (round 17, PG P3-1).
+//     when that reaches L.
 //   - time-based: expire keeps the newest full stopped before its run
 //     minus the retention, so at or before the latest instant those
 //     backups' expires had returned by (expiredBy: their completion
-//     stamps, else now) minus it (retainedFor; round 20, PG P3-A); a
+//     stamps, else now) minus it (retainedFor); a
 //     backup since the read that stopped before that may be the base,
 //     unlisted.
 //   - an archive retention below the fulls (A backups of its types):
 //     WAL is kept continuously only from the A-th newest of them, the
 //     older ones keeping only their own consistency range, so the band
 //     reaches the A-th newest of the listed and the n new ones; the whole
-//     window when n reaches A (round 17, PG P3-2).
+//     window when n reaches A.
 //
 // The count not known (the Backups not listed) or the policy not
 // reported, any backup may have expired anything: the whole window. A
@@ -2033,7 +2020,7 @@ func sinceReadBand(in timelineInput, spans []interval, first, last time.Time) (t
 }
 
 // pendingExpireBand is sinceReadBand when no Backup ended since the
-// read (round 18, PG P3). pgBackRest saves a backup to backup.info and
+// read. pgBackRest saves a backup to backup.info and
 // then expires, both before CloudNativePG reads the stop time; a scan
 // that starts in between lists the new backup with what its expire is
 // about to remove, while that Backup stopped more than scanSlack before
@@ -2052,22 +2039,16 @@ func sinceReadBand(in timelineInput, spans []interval, first, last time.Time) (t
 //     holds that end (expireStampAt: the plugin marks it Completed only
 //     after pgbackrest backup, auto-expire included, returned). A stamp
 //     more than scanSlack and backupClockSkew before the read says the
-//     listing already reflects that expire, which keeps no band (round
-//     21, PG P3-A: timing the run at the stamp still cut, for the day
-//     until the next backup, a full the expire keeps when a full stopped
-//     in the seconds between the expire's clock read and the stamp, on
-//     about one day in five of a daily schedule; round 20 had timed it
-//     at the console's fetch, which cut it on about half the days). The
+//     listing already reflects that expire, which keeps no band. The
 //     stamp is on the instance's clock and the read on the agent's: an
 //     instance up to backupClockSkew behind is not ClockBehind, and
 //     skipping on scanSlack alone kept, for one scan, a full the expire
-//     removed (round 22, PG P3-A). A later stamp times the run at the
+//     removed. A later stamp times the run at the
 //     stamp, the round-20 rule: the expire ran at or before it. With no
 //     such stamp (a backup run outside CloudNativePG, or none reported),
 //     that run may be after the read, so when the newest end is within
 //     one refresh interval before the read its instant is the latest of
-//     the scan's completion, the console's fetch and that end (round 19,
-//     PG P3-A: timing it at the end kept a full the expire removes); an
+//     the scan's completion, the console's fetch and that end; an
 //     older end's expire ran before the read, at that end;
 //   - an archive retention below the fulls: continuous WAL drawn from a
 //     backup older than the A-th newest of its types is cut there; the
@@ -2206,8 +2187,7 @@ func listedPurgeBand(in timelineInput, spans []interval, first, last time.Time) 
 	window := max(last.Sub(first), 0)
 	// elapsed is the scan's real age, which says whether a scan was
 	// missed; age is it capped at the window, for the band. Testing the
-	// capped age made a window shorter than missedScan never miss a scan
-	// (round 15, PG P3-1).
+	// capped age made a window shorter than missedScan never miss a scan.
 	var age, elapsed time.Duration
 	if read != nil && in.facts.now.After(*read) {
 		elapsed = in.facts.now.Sub(*read)
@@ -2231,7 +2211,7 @@ func listedPurgeBand(in timelineInput, spans []interval, first, last time.Time) 
 	}
 	if in.retainedFor > 0 {
 		// The policy says where the window's start is now, whatever the
-		// listing still holds (round 16, PG P3-1): expire, run at a
+		// listing still holds: expire, run at a
 		// backup's end, keeps the newest full at or before that end minus
 		// the retention, so at or before now minus it. Past the read, that
 		// full may be one the snapshot does not list.
@@ -2254,7 +2234,7 @@ func listedPurgeBand(in timelineInput, spans []interval, first, last time.Time) 
 	// expires only at the end of a backup, Barman's enforcement may fail),
 	// leaving obsolete backups listed; then the policy's window may have
 	// passed every listed backup at the read, and one backup taken since
-	// replaces them all (round 16, PG P3-1). Nothing bounds that with a
+	// replaces them all. Nothing bounds that with a
 	// lone listed anchor, or when the newest one had aged past the span
 	// the listed ones cover (newest - first) by the read: backups had
 	// stopped for longer than the retention the listing reflects.
@@ -2271,7 +2251,7 @@ func listedPurgeBand(in timelineInput, spans []interval, first, last time.Time) 
 	if read != nil && reach.After(*read) {
 		// The policy's window has passed the scan's start: the base may be
 		// a backup taken since, which the snapshot does not list, and the
-		// newest listed one goes with its whole chain (round 15, PG P3-2).
+		// newest listed one goes with its whole chain.
 		return window
 	}
 	base, ok := newestAnchor(anchors, &reach)
@@ -2304,8 +2284,8 @@ func drawnFrom(spans []interval, at time.Time) (time.Time, bool) {
 // purgeable once the policy's window passes it. pgBackRest expires a full
 // backup together with every differential and incremental backup taken
 // against it, so only full backups are anchors: the oldest full's whole
-// chain goes at once, up to the next full (round 14, PG P3-A), whether
-// or not it is marked backup-error (round 15, CNPG P3-1). A Barman
+// chain goes at once, up to the next full, whether
+// or not it is marked backup-error. A Barman
 // backup is removed on its own: every backup the repository lists that
 // did not fail is an anchor, drawn or not (a backup with no recovery path
 // is still a retention anchor), with the drawn spans' lower bounds. A
@@ -2334,7 +2314,7 @@ func purgeAnchors(in timelineInput, spans []interval) []time.Time {
 	var out []time.Time
 	for _, b := range in.backups {
 		// A full marked backup-error (page checksum errors) is still a
-		// full to expire, which counts it as one (round 15, CNPG P3-1):
+		// full to expire, which counts it as one:
 		// only Barman's FAILED backups are not retention anchors.
 		if b.PgBackRest == nil || b.PgBackRest.Type != "full" {
 			continue
@@ -2370,9 +2350,7 @@ func newestAnchor(anchors []time.Time, before *time.Time) (time.Time, bool) {
 // longer than the interval delays the next one (the agent's ticker drops
 // the ticks it missed), so a normal cycle lasts the longer of the
 // interval and the scan, then the next scan's own duration, then up to
-// the console's poll period before the console reads it, plus scanSlack
-// (round 14, PG P3-B: two intervals held the short band for a whole day
-// at a 24 h refresh and flapped with a scan slower than a 30 s refresh).
+// the console's poll period before the console reads it, plus scanSlack.
 // Without a scan duration (no start time in the snapshot) it is two
 // intervals, and at least one interval plus the poll period and
 // scanSlack.
@@ -2437,7 +2415,7 @@ func repositoryAheadEdge(out *viewmodel.RecoveryTimeline, in timelineInput, targ
 // before the backup's consistency point (Barman Cloud's descendant
 // edges). A start timeline at or below live is not enough: a sibling
 // timeline (another cluster's line, numbered below live) would move the
-// start of the unknown span past the fork (round 13, CNPG P3-2). When no
+// start of the unknown span past the fork. When no
 // such path proves it (a pgBackRest repository publishes one path per
 // backup, toward the newest timeline), the backup is not counted, and the
 // span starts earlier: conservative.
@@ -2510,8 +2488,7 @@ func backlogEdge(out *viewmodel.RecoveryTimeline, f recoveryFacts, n int, last t
 // failureLookback before the end when the console kept no reading of
 // that timeline's archiver from before the promotion, none bounds it,
 // the band they give does not end before the end (no evidence for it),
-// the sweep period is not known, or archive_timeout is disabled (round 8,
-// P2-2; round 9, P2).
+// the sweep period is not known, or archive_timeout is disabled.
 func formerArchiverEdge(out *viewmodel.RecoveryTimeline, f recoveryFacts, timeline uint64, end time.Time, scanned *time.Time) {
 	tl := strconv.FormatUint(timeline, 10)
 	unknown := func() {
@@ -2639,8 +2616,7 @@ func tailSegment(out *viewmodel.RecoveryTimeline, in timelineInput, last time.Ti
 	kind := segmentUnknown
 	switch tail := t.stop; {
 	case tail == evidencev1alpha1.CoverageGapLimited && t.formerMayHold:
-		// The agent says the segment is not proven gone (round 8, PG
-		// plan 5): the hint reaches the bar, not only the path's reason.
+		// The agent says the segment is not proven gone: the hint reaches the bar, not only the path's reason.
 		kind = segmentMissingWAL
 		p = formerMayHoldPhrase("recovery.segment.missingAfterLatestFormerPrimary", "WAL is missing from the repository after the latest restore point. ", t.holder, t.rejoined)
 	case tail == evidencev1alpha1.CoverageGapLimited:
@@ -2652,14 +2628,14 @@ func tailSegment(out *viewmodel.RecoveryTimeline, in timelineInput, last time.Ti
 		p = say("recovery.segment.collectionCut", "The recovery path collection was cut at a bound: newer coverage may exist.", nil)
 	case t.liveAhead != 0 && t.targetLive:
 		// The history file of the live timeline is archived (the paths
-		// target it), but no segment of it yet (round 11, CNPG P3).
+		// target it), but no segment of it yet.
 		tl := strconv.FormatUint(t.liveAhead, 10)
 		p = say("recovery.segment.liveTimelineNoSegment",
 			"The repository held the history file of timeline "+tl+", the one the current primary writes, but no WAL segment of it yet when it was last read: this time's WAL may not be in the repository yet.",
 			map[string]string{"timeline": tl})
 	case t.liveAhead != 0:
 		// The newest run ends on an older timeline than the one the
-		// current primary writes (round 10, P2).
+		// current primary writes.
 		tl := strconv.FormatUint(t.liveAhead, 10)
 		p = say("recovery.segment.liveTimelineNotArchived",
 			"The repository held no WAL of timeline "+tl+", the one the current primary writes, when it was last read (the failover's history file may not be archived yet, or the evidence agent has not read the repository since): this time's WAL may not be in the repository yet.",
@@ -2907,13 +2883,12 @@ func timelineVerdict(out *viewmodel.RecoveryTimeline, in timelineInput, f timeli
 		// confirms that the WAL written before it reached the repository.
 		// The newest restore points are unknown until it wakes up. Ranked
 		// before a post-failover lag, whose advice to act on the primary
-		// cannot be followed with no instance running (round 12, CNPG
-		// P3-1), and before a last attempt that failed with the primary
+		// cannot be followed with no instance running, and before a last attempt that failed with the primary
 		// unread, whose "until the primary is read again" waits on no
-		// running instance (round 15, CNPG P3-2): the archiving fact
+		// running instance: the archiving fact
 		// still says ContinuousArchiving False.
 		// Hibernated after archiving failed, the last attempt is known to
-		// have failed: said beside it, at warning (round 16, PG P3-2).
+		// have failed: said beside it, at warning.
 		out.State = string(evidencev1alpha1.Unknown)
 		setReason(out, hibernatedReason())
 		if f.failing {
@@ -2925,8 +2900,7 @@ func timelineVerdict(out *viewmodel.RecoveryTimeline, in timelineInput, f timeli
 		// a failover to investigate, unreachable): nothing archives that
 		// could change the condition, so it reports the last attempt, not
 		// that archiving is failing now (a transient error, a refusal
-		// during a switchover, stays False until the next attempt; round
-		// 14, CNPG P3-b). Its age is said as for a True condition.
+		// during a switchover, stays False until the next attempt). Its age is said as for a True condition.
 		out.State = warning
 		failed := "the last archive attempt the Cluster reports failed (ContinuousArchiving False"
 		var params map[string]string
@@ -2941,7 +2915,7 @@ func timelineVerdict(out *viewmodel.RecoveryTimeline, in timelineInput, f timeli
 		// readable instance reports a recent failure. Ranked before
 		// the post-failover lag, whose advice to run pg_switch_wal()
 		// would not help: the repository lacks the live timeline because
-		// archiving fails (round 13, CNPG P3-1).
+		// archiving fails.
 		out.State = warning
 		setReason(out, say("recovery.reason.archivingFailing", "WAL archiving is failing: WAL written since the newest segment the repository holds is likely not in it, so the newest restore points are uncertain; the Cluster's ContinuousArchiving condition says why", nil))
 	case f.backlog > 0:
@@ -2951,9 +2925,9 @@ func timelineVerdict(out *viewmodel.RecoveryTimeline, in timelineInput, f timeli
 			map[string]string{"segments": n}))
 	case f.liveAhead != 0 && (f.primaryUnread || f.archiverUnread):
 		// The primary was not read (fenced, unreachable): advice to run
-		// anything on it may not be followable (round 12, CNPG P3-1).
+		// anything on it may not be followable.
 		// Not read is the sweep's own fact (primaryUnread), not only the
-		// archiving reason's (round 13, CNPG P3-1).
+		// archiving reason's.
 		out.State = warning
 		tl := strconv.FormatUint(f.liveAhead, 10)
 		setReason(out, say("recovery.reason.liveTimelineNotArchivedPrimaryUnread",
@@ -2962,8 +2936,7 @@ func timelineVerdict(out *viewmodel.RecoveryTimeline, in timelineInput, f timeli
 	case f.liveAhead != 0:
 		// Right after a failover the repository holds no WAL of the
 		// timeline the new primary writes: the newest restore points are
-		// not established, which a healthy chip would hide (round 11, DBA
-		// P2). It clears once the agent reads the new timeline's WAL.
+		// not established, which a healthy chip would hide. It clears once the agent reads the new timeline's WAL.
 		out.State = warning
 		tl := strconv.FormatUint(f.liveAhead, 10)
 		setReason(out, say("recovery.reason.liveTimelineNotArchived",
