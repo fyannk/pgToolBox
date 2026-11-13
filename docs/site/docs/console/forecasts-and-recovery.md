@@ -315,9 +315,8 @@ failed read is skipped). When the parallelism is unknown (a pgBackRest plugin,
 or an unreadable `ObjectStore`) it needs three sweeps over which the count
 never shrinks and ends larger than it began. A backlog turns the WAL archiving
 contributor to a warning (`ArchiveBacklog`) even while `ContinuousArchiving` is
-`True`. Too few sweeps to judge (a console that just started) is `unknown`
-(`ArchiveBacklogUnconfirmed`), never `ok`, and the recovery screens read it as a
-backlog. On an idle primary a hung archiver holds a steady count: under unknown
+`True`. Fewer sweeps than the rule needs (a console that just started) show no
+backlog yet; the WAL-end band still covers the newest edge. On an idle primary a hung archiver holds a steady count: under unknown
 parallelism a count at the threshold over three sweeps that did not grow is also
 a backlog when the archiver archived nothing over them (`last_archived_time` not
 after the oldest sweep's, or none). Only the sweeps of the primary's current
@@ -397,22 +396,18 @@ segments, so the bar and the answer always agree:
   may have gone depends on the format:
   - Barman Cloud: every listed backup that did not fail is an anchor;
   - pgBackRest: only fulls are anchors (`expire` drops a full with its chain; a
-    full marked `backup-error` still counts). Under `repo-retention-full=K`
-    (type `count`) with L fulls listed and n backups since, the oldest
-    L + n − K may be gone; under `repo-retention-full-type=time` the band is
-    bounded by the clock from the latest `expire`; an archive retention below
-    the fulls (`repo-retention-archive`) bounds it by the A-th newest backup of
-    its type. The backups since the scan are counted from the Cluster's
-    `Backup` objects, each as a full (the worst case), timed by their stop time
-    or CloudNativePG's completion stamp (`status.reconciliationTerminatedAt`);
-    times a clock skew makes implausible are read as absent, and the backup
-    then counts as one that could have ended at any time. A `pgbackrest backup`
+    full marked `backup-error` still counts), or the backups of the archive
+    retention's type when `repo-retention-archive` is set. A `Backup` object of
+    the Cluster that began, or ended, since the scan (less one refresh slack and
+    five minutes of clock skew) may have run an `expire`: the band reaches the
+    newest anchor, and the whole window when the retention would drop every
+    listed one, is time-based and due, or is not reported. A `Backup` is timed
+    by its stop time or CloudNativePG's completion stamp
+    (`status.reconciliationTerminatedAt`); times that are implausible (before
+    2000, in the future, or earlier than the object's creation) or absent (a
+    restored status) count as a backup that could have ended at any time. When
+    the `Backup` objects were not read, the whole window. A `pgbackrest backup`
     run by hand creates no `Backup` object and is not counted.
-  - With no stamp (a backup run outside CloudNativePG) a backup that ended
-    within one refresh interval before the scan may have its `expire` after the
-    listing. When the `Backup` objects were not read, or the snapshot reports no
-    retention, any backup since the scan may have expired anything: the whole
-    window once one may have ended.
   Within a normal refresh cycle the band does not extend, and retention never
   removes the newest backup, so the band stops at its first restore point;
 - after a WAL archiving failure an instance reported (`lastFailedWALTime`, the
@@ -426,13 +421,9 @@ segments, so the bar and the answer always agree:
   the agent's scan that read no `.ready` file since it became primary, less one
   `archive_timeout`: nothing waited then, so every segment completed by then was
   in the repository when the agent read it. A reading of one or two files proves
-  nothing, and a failed read is no reading. A busy primary may never read zero,
-  so a sweep with *k* files waiting bounds the start too, from the primary's WAL
-  positions the sweep keeps (segment *S−k* switched after the newest earlier
-  sweep whose position had not reached *S−k+1*; the WAL segment size comes from
-  the primary's own report, and this bound is not used when it settles no single
-  size). When no kept sweep (`RING_RETENTION`, one hour by default) gives either
-  bound, the sweep period is unknown, or `archive_timeout` is 0, the band is the
+  nothing, and a failed read is no reading. When no kept sweep
+  (`RING_RETENTION`, one hour by default) gives that bound (a busy primary may
+  never read zero), the sweep period is unknown, or `archive_timeout` is 0, the band is the
   day before the latest point. The window is then a warning, never healthy;
 - while the primary's archiver is not read (`PrimaryUnread`, or hibernated): the
   same band, from the newest sweep that read it with nothing waiting, else the
@@ -458,7 +449,7 @@ segments, so the bar and the answer always agree:
   last attempt failed, at warning (`archivingFailedHibernated`). When the live
   timeline is not known, an end that reached the repository before the promotion
   counts the same way: the band starts at the newest sweep that read that
-  timeline's own primary with nothing waiting (or its WAL-position bound), from
+  timeline's own primary with nothing waiting, from
   before the promotion, else the day before that end;
 - when the repository's newest timeline is ahead of the one the current primary
   writes (`repositoryAheadOfLive`): another cluster may archive into this

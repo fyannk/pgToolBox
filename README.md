@@ -17,7 +17,7 @@
   <a href="https://scorecard.dev/viewer/?uri=github.com/fyannk/pgToolBox"><img src="https://img.shields.io/ossf-scorecard/github.com/fyannk/pgToolBox?style=flat-square&label=openssf%20scorecard&labelColor=1b231d&color=090c0a" alt="OpenSSF Scorecard"></a>
   <a href="https://fyannk.github.io/pgToolBox/docs/release/"><img src="https://img.shields.io/badge/signed-cosign-090c0a?style=flat-square&labelColor=1b231d" alt="Signed with cosign"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-090c0a?style=flat-square&labelColor=1b231d" alt="Apache-2.0 license"></a>
-  <img src="https://img.shields.io/badge/CloudNativePG-1.30%2B-090c0a?style=flat-square&logo=postgresql&logoColor=b3bf3a&labelColor=1b231d" alt="CloudNativePG 1.30 or later">
+  <img src="https://img.shields.io/badge/CloudNativePG-1.30.1%2B-090c0a?style=flat-square&logo=postgresql&logoColor=b3bf3a&labelColor=1b231d" alt="CloudNativePG 1.30.1 or later">
   <img src="https://img.shields.io/badge/Go-1.27-090c0a?style=flat-square&logo=go&logoColor=b3bf3a&labelColor=1b231d" alt="Go 1.27">
   <img src="https://img.shields.io/badge/status-0.x_pre--1.0-090c0a?style=flat-square&labelColor=1b231d" alt="Pre-1.0">
 </p>
@@ -27,7 +27,7 @@ clusters to the people who run them, one team console per namespace, and lets
 those who hold the right RBAC act on them. A small, optional operator adds a
 managed pgAdmin per team, and a read-only evidence agent checks what the backup
 repository actually holds. It runs on Kubernetes 1.34 or later and on
-OpenShift, for CloudNativePG 1.30 or later.
+OpenShift, for CloudNativePG 1.30.1 or later.
 
 > [!IMPORTANT]
 > pgToolBox reports what it can read and says where each fact comes from; it

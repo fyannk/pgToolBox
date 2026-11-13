@@ -47,9 +47,8 @@ The notes under the sentence, in reading order: the failover quorum does not
 apply to a replica cluster; `spec.failoverDelay` when it is set; a replica
 cluster promotes a new designated primary; an unreadable
 `cnpg.io/fencedInstances` annotation (CloudNativePG reads it as no fencing, so
-every instance runs and may be promoted); the fencing and quorum rules that are
-new in CloudNativePG 1.30.1, when the operator is 1.30.0 or its patch version is
-not known (below); and the instances the console could not read.
+every instance runs and may be promoted); and the instances the console could
+not read.
 
 ## The candidate: CloudNativePG's own order
 
@@ -69,18 +68,8 @@ named: the operator would sort it first, and what it does then is not guessed.
 
 Ranking fenced instances last, skipping the election when every instance is
 fenced, and checking the failover quorum a second time just before the
-promotion are CloudNativePG **1.30.1** behaviour; 1.30.0 checks the quorum only
-when the failover starts and may rank a fenced instance first, which cannot be
-promoted while fenced. The rehearsal follows 1.30.1. The election runs in the
-operator, so the version that decides is the operator's own: the
-`cnpg.io/operatorVersion` annotation on the instance Pods (or
-`status.cloudNativePGCommitHash`), and never more than the lowest
-`instanceManagerVersion` the instances report. An operator rolled back to 1.30.0
-beside a primary that kept the 1.30.1 instance manager rehearses 1.30.0's rules.
-When that version is 1.30.0, or the console does not know the operator's patch
-version (no annotation or commit hash, or only a minor such as `1.30`), an answer
-on a Cluster with fenced instances is not certain, and the notes say which rule
-is 1.30.1's.
+promotion are CloudNativePG **1.30.1** behaviour, the release the console
+requires; the rehearsal follows it.
 
 ## Distance behind
 

@@ -30,7 +30,7 @@ compares the chart, the kustomize bases and the OLM bundle field by field):
 
 ## Before you install
 
-- **CloudNativePG** 1.30 or later on the cluster the console will watch. Without
+- **CloudNativePG** 1.30.1 or later on the cluster the console will watch. Without
   CloudNativePG CRDs the console has nothing to show.
 - **The console needs a CA bundle** of the Clusters' server CAs, or every
   Cluster reads "not verifiable". The operator keeps it for a `PgToolBoxConsole`; with

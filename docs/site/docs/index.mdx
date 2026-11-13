@@ -84,7 +84,7 @@ cluster" is not a supported shape; the answer is one console per team.
 
 | | |
 |---|---|
-| CloudNativePG | 1.30 and later (1.29 is not supported). The diagnostics catalog is pinned to the releases whose source it was verified against (1.30.0 and 1.30.1); on another release its pinned checks answer "does not apply". The end-to-end matrix runs 1.30.1. |
+| CloudNativePG | 1.30.1 and later (1.29 and 1.30.0 are not supported). The diagnostics catalog is pinned to the releases whose source it was verified against (1.30.0 and 1.30.1); on another release its pinned checks answer "does not apply". The end-to-end matrix runs 1.30.1. |
 | Kubernetes | 1.34 or newer, as CloudNativePG 1.30 supports 1.34 to 1.36 (the charts' `kubeVersion` and the OLM bundle's `minKubeVersion`; the CRDs' CEL rules are tested on 1.34). The end-to-end matrix runs 1.34 and 1.36. |
 | Platforms | Vanilla Kubernetes and OpenShift. OpenShift has no CI target: its sign-in is covered by a [manual checklist](console/openshift.md) run before a release. |
 | Backups | Barman Cloud repositories (the barman-cloud plugin's `ObjectStore` or the in-tree `spec.backup.barmanObjectStore`) on S3, Azure Blob or Google Cloud Storage; pgBackRest repositories (format 5) written through Dalibo's or Opera's CNPG-I plugin, on S3 or Azure Blob. See [the supported profile](operator/evidenceagent.md#the-supported-profile) and [Clusters backed up with pgBackRest](guides/pgbackrest.md). |
