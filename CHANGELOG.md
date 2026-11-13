@@ -43,7 +43,12 @@ addresses.
   operator removes when the request expires or is revoked.
 - **An MCP endpoint** (`/mcp`, off by default, read-only unless its write tools
   are enabled) that serves the same facts as the screens to AI agents, as the
-  token's owner.
+  token's owner. One replica serves it, the holder of the Lease `<console>-mcp`,
+  behind the selector-less Service `<console>-mcp` whose EndpointSlice it writes;
+  the exposure sends `/mcp`, `/oauth`, `/api/v1/session/grants` and `/logout`
+  there (four more Routes on OpenShift), and the operator holds `get`, `create`
+  and `update` on EndpointSlices to create them. Without an exposure, port-forward
+  to the leader's Pod.
 - **A daily digest**, alerting rules and Grafana dashboards, the insight pack
   (PostgreSQL metrics from the instances' exporter), and OpenTelemetry tracing.
 - **The operator** (optional), reconciling `PgAdmin` (one pgAdmin per team,

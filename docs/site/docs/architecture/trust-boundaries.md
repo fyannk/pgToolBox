@@ -73,7 +73,7 @@ Two identities cross this boundary, never mixed:
 
 | Identity | Used for | Bounded by |
 |---|---|---|
-| the console's ServiceAccount | informers (list, watch) over the watched namespaces; `get`/`watch` of the revocation ConfigMap; `get`/`watch`/`update` of its own state ConfigMap; with digest delivery, `get`/`update` of its digest Lease and `create` of leases | Roles in the watched namespaces, two Roles naming one ConfigMap each and, with delivery, one naming the Lease (`create` cannot be scoped by name; the console creates only that Lease); no Secret verb, no `impersonate`, no other write |
+| the console's ServiceAccount | informers (list, watch) over the watched namespaces; `get`/`watch` of the revocation ConfigMap; `get`/`watch`/`update` of its own state ConfigMap; with digest delivery, `get`/`update` of its digest Lease and `create` of leases; with MCP, `get`/`update` of its MCP Lease and its two MCP EndpointSlices | Roles in the watched namespaces, two Roles naming one ConfigMap each and, with delivery, one naming the Lease (`create` cannot be scoped by name; the console creates only that Lease) and, with MCP, one naming its MCP Lease and slices (no `create`); no Secret verb, no `impersonate`, no other write |
 | the signed-in person's token | SelfSubjectReview, SelfSubjectAccessReviews, and every write | that person's RBAC, enforced and audited by the API server |
 
 A positive access review is cached 10 s and a positive identity 30 s; denials are

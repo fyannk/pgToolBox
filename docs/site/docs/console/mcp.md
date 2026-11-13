@@ -70,6 +70,52 @@ fragment (plain `http` only on `localhost`, `127.0.0.1` or `[::1]`, a console on
 your own computer). Otherwise it logs a warning at start and the endpoint
 accepts [raw API-server tokens](#raw-api-server-tokens-break-glass) only.
 
+### One replica serves MCP
+
+With the endpoint on, the replicas elect one of them on the Lease
+`<console>-mcp`, as CloudNativePG's `-rw` Service points at the primary.
+The install creates, next to the console's own Service:
+
+- the Lease `<console>-mcp`;
+- the Service `<console>-mcp`, with no selector, port `http`;
+- the EndpointSlices `<console>-mcp-ipv4` and `<console>-mcp-ipv6`, created
+  empty: the leader writes its Pod's address (`POD_IP`) into the one of its
+  family and takes it out when it steps down;
+- a Role and RoleBinding letting the console `get` and `update` those three
+  objects by name: no `create`, nothing on Pods.
+
+The exposure sends these paths to `<console>-mcp` and everything else to the
+console's Service:
+
+| Path | Match |
+|---|---|
+| `/mcp` | prefix (with `/mcp/confirm`) |
+| `/oauth` | prefix (`/oauth/authorize`, `/oauth/token`, `/oauth/register`) |
+| `/api/v1/session/grants` | prefix (the Assistants page) |
+| `/logout` | exact |
+
+An Ingress gets four more paths, an HTTPRoute one more rule (with the same
+stream timeout), and an OpenShift Route, which has one path, four more
+Routes: `<console>-mcp-mcp`, `-oauth`, `-grants` and `-logout`. The
+NetworkPolicy does not change (the same Pods and port). A replica that does
+not lead answers those paths `503` with `Retry-After: 2`; a sign-out there
+works but does not disconnect assistants. A hand-over takes about 2 seconds
+when the leader stops, about 17 when it crashes.
+
+Without an exposure (the chart's `console.exposure.type: none`, a
+`PgToolBoxConsole` of type `clusterIP`), a port-forward to the Service picks
+any replica: forward to the leader's Pod, named by the Lease, and again after
+a hand-over:
+
+```sh
+leader=$(kubectl -n team-a get lease <console>-mcp -o jsonpath='{.spec.holderIdentity}' | cut -d_ -f1)
+kubectl -n team-a port-forward "pod/$leader" 8080:3000
+```
+
+With `console.rbac.create: false` the chart renders the Lease, Service and
+slices but not the Role: grant `get` and `update` on those three names to the
+console's ServiceAccount, or no replica ever leads and MCP answers `503`.
+
 The transport is MCP Streamable HTTP in its stateless form: every request is
 authenticated on its own, any replica answers, and no session is kept. A
 request carries one JSON-RPC message: batches are refused with `400`.
