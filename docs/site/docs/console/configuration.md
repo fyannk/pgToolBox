@@ -267,7 +267,7 @@ delete the document's key from the ConfigMap; what it held is lost (for
 `grants.json`, every assistant connects again). A document of no version (`{}`)
 is read as empty and rewritten.
 
-MCP grants (`grants.json`) are held by the [MCP leader](mcp.md#one-replica-serves-mcp)
+MCP grants (`grants.json`) are held by the [MCP leader](mcp.md#one-pod-serves-mcp)
 alone. It reads the document when it takes the Lease, replacing whatever it
 held, so a grant revoked and pruned meanwhile does not come back; it then
 merges only a late write of the replica it took over from, and drops its grants
