@@ -1,0 +1,83 @@
+{{- $c := .Values.console }}
+{{- if and $c.enabled $c.mcp.enabled }}
+{{- $fullname := include "pgtools.console.fullname" . }}
+{{- $mcp := include "pgtools.console.mcpLeader" . }}
+# With MCP on, one replica serves the MCP paths and writes the grants: the
+# holder of this Lease. It points the selector-less Service below at its own
+# Pod by writing its address into the EndpointSlice of its family; the
+# exposure sends the MCP paths to that Service, everything else to the
+# console's own.
+apiVersion: coordination.k8s.io/v1
+kind: Lease
+metadata:
+  name: {{ $mcp }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "pgtools.console.labels" . | nindent 4 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $mcp }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "pgtools.console.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: {{ $c.service.port }}
+      targetPort: {{ $c.port }}
+      protocol: TCP
+{{- range list "ipv4" "ipv6" }}
+---
+# Endpoints omitted: the leader writes its own, and takes them out on leaving.
+apiVersion: discovery.k8s.io/v1
+kind: EndpointSlice
+metadata:
+  name: {{ $mcp }}-{{ . }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "pgtools.console.labels" $ | nindent 4 }}
+    kubernetes.io/service-name: {{ $mcp }}
+    endpointslice.kubernetes.io/managed-by: pgtoolbox-console
+addressType: {{ ternary "IPv4" "IPv6" (eq . "ipv4") }}
+{{- end }}
+{{- if $c.rbac.create }}
+---
+# get and update, by name, on the Lease and the two slices, and nothing
+# else: no create (they exist above), nothing on Pods.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $mcp }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "pgtools.console.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    resourceNames: [{{ $mcp | quote }}]
+    verbs: [get, update]
+  - apiGroups: [discovery.k8s.io]
+    resources: [endpointslices]
+    resourceNames: [{{ printf "%s-ipv4" $mcp | quote }}, {{ printf "%s-ipv6" $mcp | quote }}]
+    verbs: [get, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $mcp }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "pgtools.console.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $mcp }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $fullname }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}
+{{- end }}

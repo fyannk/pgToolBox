@@ -63,6 +63,16 @@ in the audit log. Set console.trustedProxyCIDRs to your ingress controller's add
 {{- if eq .Values.console.exposure.type "none" }}
 
 Not exposed. Reach it with:  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "pgtools.console.fullname" . }} 8080:{{ .Values.console.service.port }}
+{{- if .Values.console.mcp.enabled }}
+
+MCP is served by one replica only, the holder of Lease {{ include "pgtools.console.mcpLeader" . }}; the
+others answer /mcp, /oauth and /api/v1/session/grants with 503, and a sign-out there
+does not disconnect assistants. A port-forward to the Service picks any replica: forward to the leader's Pod instead
+(again after a hand-over):
+
+  kubectl -n {{ .Release.Namespace }} port-forward pod/$(kubectl -n {{ .Release.Namespace }} get lease {{ include "pgtools.console.mcpLeader" . }} \
+    -o jsonpath='{.spec.holderIdentity}' | cut -d_ -f1) 8080:{{ .Values.console.port }}
+{{- end }}
 {{- end }}
 {{- if .Values.console.networkPolicy.enabled }}
 

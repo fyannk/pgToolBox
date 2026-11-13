@@ -1,0 +1,135 @@
+# With MCP on, one replica serves it: the Lease holder, which points the
+# selector-less <fullname>-mcp Service at its Pod through an EndpointSlice;
+# the exposure sends the MCP paths there. MCP off renders none of it.
+# Render order of mcp-leader.yaml: Lease, Service, slice ipv4, slice ipv6,
+# Role, RoleBinding.
+suite: console MCP leader
+templates:
+  - templates/console/mcp-leader.yaml
+  - templates/console/exposure.yaml
+  - templates/console/deployment.yaml
+release:
+  name: pgc
+  namespace: team-a
+tests:
+  - it: renders nothing with MCP off
+    template: templates/console/mcp-leader.yaml
+    asserts:
+      - hasDocuments: {count: 0}
+
+  - it: renders no leader variable with MCP off
+    template: templates/console/deployment.yaml
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content: {name: MCP_LEASE, value: pgc-console-mcp}
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content: {name: POD_IP, valueFrom: {fieldRef: {fieldPath: status.podIP}}}
+
+  - it: renders the Lease, the selector-less Service and two empty slices
+    template: templates/console/mcp-leader.yaml
+    set: {console.mcp.enabled: true, console.publicURL: "https://pgc.example.org"}
+    asserts:
+      - hasDocuments: {count: 6}
+      - documentIndex: 0
+        isKind: {of: Lease}
+      - documentIndex: 0
+        equal: {path: metadata.name, value: pgc-console-mcp}
+      - documentIndex: 1
+        isKind: {of: Service}
+      - documentIndex: 1
+        notExists: {path: spec.selector}
+      - documentIndex: 1
+        equal: {path: "spec.ports[0].name", value: http}
+      - documentIndex: 2
+        equal: {path: metadata.name, value: pgc-console-mcp-ipv4}
+      - documentIndex: 2
+        equal: {path: addressType, value: IPv4}
+      - documentIndex: 2
+        equal: {path: 'metadata.labels["kubernetes.io/service-name"]', value: pgc-console-mcp}
+      - documentIndex: 2
+        equal: {path: 'metadata.labels["endpointslice.kubernetes.io/managed-by"]', value: pgtoolbox-console}
+      - documentIndex: 2
+        notExists: {path: endpoints}
+      - documentIndex: 3
+        equal: {path: metadata.name, value: pgc-console-mcp-ipv6}
+      - documentIndex: 3
+        equal: {path: addressType, value: IPv6}
+
+  - it: grants get and update by name on the Lease and the slices, no create, nothing on Pods
+    template: templates/console/mcp-leader.yaml
+    set: {console.mcp.enabled: true, console.publicURL: "https://pgc.example.org"}
+    documentIndex: 4
+    asserts:
+      - isKind: {of: Role}
+      - equal:
+          path: rules
+          value:
+            - apiGroups: [coordination.k8s.io]
+              resources: [leases]
+              resourceNames: [pgc-console-mcp]
+              verbs: [get, update]
+            - apiGroups: [discovery.k8s.io]
+              resources: [endpointslices]
+              resourceNames: [pgc-console-mcp-ipv4, pgc-console-mcp-ipv6]
+              verbs: [get, update]
+
+  - it: renders no Role with console.rbac.create false
+    template: templates/console/mcp-leader.yaml
+    set: {console.mcp.enabled: true, console.publicURL: "https://pgc.example.org", console.rbac.create: false}
+    asserts:
+      - hasDocuments: {count: 4}
+
+  - it: sets the leader's variables, the Pod IP from the downward API
+    template: templates/console/deployment.yaml
+    set: {console.mcp.enabled: true, console.publicURL: "https://pgc.example.org"}
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: MCP_LEASE, value: pgc-console-mcp}
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: MCP_ENDPOINT_SLICES, value: "pgc-console-mcp-ipv4,pgc-console-mcp-ipv6"}
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: POD_IP, valueFrom: {fieldRef: {fieldPath: status.podIP}}}
+
+  - it: sends the MCP paths to the leader through an Ingress, the rest to the console
+    template: templates/console/exposure.yaml
+    set: {console.mcp.enabled: true, console.exposure.type: ingress, console.exposure.host: pgc.example.org}
+    asserts:
+      - lengthEqual: {path: "spec.rules[0].http.paths", count: 5}
+      - equal: {path: "spec.rules[0].http.paths[0].path", value: /mcp}
+      - equal: {path: "spec.rules[0].http.paths[0].backend.service.name", value: pgc-console-mcp}
+      - equal: {path: "spec.rules[0].http.paths[3].path", value: /logout}
+      - equal: {path: "spec.rules[0].http.paths[3].pathType", value: Exact}
+      - equal: {path: "spec.rules[0].http.paths[4].path", value: /}
+      - equal: {path: "spec.rules[0].http.paths[4].backend.service.name", value: pgc-console}
+
+  - it: renders one Route per MCP path on OpenShift
+    template: templates/console/exposure.yaml
+    set: {console.mcp.enabled: true, console.exposure.type: route, console.exposure.host: pgc.apps.example.org}
+    asserts:
+      - hasDocuments: {count: 5}
+      - documentIndex: 4
+        equal: {path: metadata.name, value: pgc-console-mcp-logout}
+      - documentIndex: 4
+        equal: {path: spec.path, value: /logout}
+      - documentIndex: 4
+        equal: {path: spec.to.name, value: pgc-console-mcp}
+      - documentIndex: 4
+        equal: {path: 'metadata.annotations["haproxy.router.openshift.io/timeout"]', value: 1h}
+
+  - it: adds one HTTPRoute rule for the MCP paths, with the stream's timeout
+    template: templates/console/exposure.yaml
+    set:
+      console.mcp.enabled: true
+      console.exposure.type: httpRoute
+      console.exposure.host: pgc.example.org
+      console.exposure.httpRoute.parentRefs: [{name: gw}]
+    asserts:
+      - lengthEqual: {path: spec.rules, count: 2}
+      - equal: {path: "spec.rules[0].backendRefs[0].name", value: pgc-console-mcp}
+      - equal: {path: "spec.rules[0].timeouts.request", value: 1h}
+      - equal: {path: "spec.rules[0].matches[3]", value: {path: {type: Exact, value: /logout}}}

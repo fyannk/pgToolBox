@@ -134,6 +134,21 @@ StatefulSet whose replicas each have their own history volume.
 {{- include "pgtools.console.fullname" . }}-digest
 {{- end -}}
 
+{{/* With MCP on: the Lease whose holder alone serves MCP, and the name of the
+     selector-less Service and EndpointSlices that send the MCP paths to it. */}}
+{{- define "pgtools.console.mcpLeader" -}}
+{{- include "pgtools.console.fullname" . }}-mcp
+{{- end -}}
+
+{{/* The paths the exposure sends to the MCP leader: mcpleader.Paths
+     (internal/console/mcpleader), held equal by chart_parity_test.go. */}}
+{{- define "pgtools.console.mcpPaths" -}}
+- {name: mcp, path: /mcp, prefix: true}
+- {name: oauth, path: /oauth, prefix: true}
+- {name: grants, path: /api/v1/session/grants, prefix: true}
+- {name: logout, path: /logout, prefix: false}
+{{- end -}}
+
 {{/* Names of the revocation ConfigMap and the generated session-key Secret. */}}
 {{- define "pgtools.console.revocations" -}}
 {{- .Values.console.revocations.configMapName | default (printf "%s-revocations" (include "pgtools.console.fullname" .)) -}}

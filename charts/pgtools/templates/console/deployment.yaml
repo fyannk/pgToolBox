@@ -340,6 +340,15 @@ spec:
             - name: MCP_OAUTH_CLIENT_METADATA_HOSTS
               value: {{ join "," . | quote }}
             {{- end }}
+            # One replica serves MCP: the holder of this Lease (mcp-leader.yaml).
+            - name: MCP_LEASE
+              value: {{ include "pgtools.console.mcpLeader" . | quote }}
+            - name: MCP_ENDPOINT_SLICES
+              value: {{ printf "%[1]s-ipv4,%[1]s-ipv6" (include "pgtools.console.mcpLeader" .) | quote }}
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
             {{- end }}
             {{- with $c.tracing }}
             {{- if .endpoint }}
