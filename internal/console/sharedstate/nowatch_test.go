@@ -74,54 +74,10 @@ func controlled(api ConfigMapClient, clock *testClock, backoff time.Duration) *S
 	})
 }
 
-// With every watch refused, the failing mode is not left by the writer's
-// write that lands: a revocation written by another replica is not seen,
-// so grants are refused once staleGrace has run (round 18, Go P2; the
-// reviewer's probe TestR18GoLiveWithoutAWatch, which saw the replica live
-// again with no watch and the revoked grant usable).
-func TestALiveModeNeedsAWatch(t *testing.T) {
-	clock := &testClock{now: t0}
-	api := newAPIServer()
-	// b: another replica, which records a grant and later revokes it.
-	b := loaded(t, api, clock)
-	id := grantID(7)
-	if err := b.AddGrant(Grant{ID: id, UserHash: uh("alice"), Client: "c", Created: t0, Expiry: t0.Add(time.Hour)}); err != nil {
-		t.Fatal(err)
-	}
-	flushed(t, b)
-
-	wr := &watchControl{apiServer: api, refuse: true}
-	// The Run loop's pause before the next read (Backoff caps at a minute
-	// in production).
-	a := controlled(wr, clock, 3*time.Second)
-	run(t, a)
-	eventually(t, "a knows the grant", func() bool { _, ok := a.Grant(id); return ok })
-	eventually(t, "a failing", func() bool { return wr.count() >= 1 && modeOf(a) == modeFailing })
-	a.InstanceSince("pod", "ok", t0) // a batch to write, which lands
-	eventually(t, "a's batch written", func() bool {
-		a.mu.Lock()
-		defer a.mu.Unlock()
-		return a.gen == a.written
-	})
-	if m := modeOf(a); m != modeFailing {
-		t.Fatalf("a: mode %s with no watch open, want failing", m)
-	}
-	b.RevokeGrant(id, uh("alice"), clock.Now(), t0.Add(time.Hour))
-	watchMerge(t, api, b)
-	if err := b.WriteRevocations(t.Context(), id); err != nil {
-		t.Fatal(err)
-	}
-	clock.Add(staleGrace + 5*time.Second)
-	time.Sleep(100 * time.Millisecond)
-	if a.GrantsUsable() && !a.GrantRevoked(id) {
-		t.Errorf("a revoked grant stays usable on a replica with no watch, %s after it lost it", staleGrace+5*time.Second)
-	}
-}
-
 // No write path leaves the failing mode while no watch is open: a batch
 // (with something to write or nothing), a spend, a mark and a
 // revocation, each landing. Each asks the Run loop to open the watch
-// again, and the replica refuses grants once staleGrace has run.
+// again: with no watch, what the other replicas write is not seen.
 func TestNoWatchMeansNoLive(t *testing.T) {
 	paths := map[string]struct {
 		setup func(t *testing.T, s *Store)
@@ -186,19 +142,14 @@ func TestNoWatchMeansNoLive(t *testing.T) {
 			default:
 				t.Error("no new watch asked for")
 			}
-			clock.Add(staleGrace)
-			if s.GrantsUsable() {
-				t.Error("grants usable a staleGrace after the watch was lost")
-			}
 		})
 	}
 }
 
 // A watch that ends with an error event (watch.Error) leaves no replica
-// live during the Run loop's backoff: the failing mode starts, grants are
-// refused past staleGrace while the next watch is refused, and the
-// replica is live again once one opens.
-func TestAWatchErrorStartsTheGrace(t *testing.T) {
+// live during the Run loop's backoff: the failing mode starts, stays
+// while the next watch is refused, and ends once one opens.
+func TestAWatchErrorIsFailingUntilANewWatch(t *testing.T) {
 	clock := &testClock{now: t0}
 	api := newAPIServer()
 	wc := &watchControl{apiServer: api}
@@ -210,15 +161,8 @@ func TestAWatchErrorStartsTheGrace(t *testing.T) {
 		w.last.Error(&metav1.Status{Status: metav1.StatusFailure, Code: 500, Reason: metav1.StatusReasonInternalError, Message: "etcd"})
 	})
 	eventually(t, "a failing", func() bool { return modeOf(a) == modeFailing })
-	clock.Add(staleGrace)
-	if a.GrantsUsable() {
-		t.Error("grants usable a staleGrace after the watch failed, with no watch since")
-	}
 	wc.set(func(w *watchControl) { w.refuse = false })
 	eventually(t, "a live again with a new watch", func() bool { return modeOf(a) == modeLive })
-	if !a.GrantsUsable() {
-		t.Error("grants refused once a watch is open again")
-	}
 }
 
 // A watch the API server keeps refusing is retried at once after the
@@ -245,44 +189,22 @@ func TestARefusedWatchIsNotRetriedInALoop(t *testing.T) {
 	}
 }
 
-// hiding is the API server with a replica's reads answering NotFound
-// while hidden: that replica has not polled the recreated ConfigMap yet.
-type hiding struct {
-	*apiServer
-	mu     sync.Mutex
-	hidden bool
-}
-
-func (h *hiding) Get(ctx context.Context, name string, o metav1.GetOptions) (*corev1.ConfigMap, error) {
-	h.mu.Lock()
-	hidden := h.hidden
-	h.mu.Unlock()
-	if hidden {
-		return nil, apierrors.NewNotFound(configMaps, name)
-	}
-	return h.apiServer.Get(ctx, name, o)
-}
-
 // While the ConfigMap is missing it is polled every second or two, not
-// backed off to a minute: once it is recreated, a revocation a held (made
-// while it was missing) is written within seconds, even when b, which
-// knows the grant, read the new ConfigMap first and serves it meanwhile
+// backed off to a minute: once it is recreated, a revocation the MCP
+// leader held (made while it was missing) is written within seconds
 // (round 18, P3).
 func TestAMissingConfigMapIsPolled(t *testing.T) {
 	clock := &testClock{now: t0}
 	api := newAPIServer()
-	ha := &hiding{apiServer: api}
 	// A backoff of an hour: only the poll of the missing ConfigMap reads
 	// it again within the test.
-	a := controlled(ha, clock, time.Hour)
-	b := controlled(api, clock, time.Hour)
+	a := controlled(api, clock, time.Hour)
 	run(t, a)
-	run(t, b)
-	eventually(t, "both live", func() bool { return modeOf(a) == modeLive && modeOf(b) == modeLive })
-	if err := b.AddGrant(testGrant(1, "alice", t0)); err != nil {
+	eventually(t, "live", func() bool { return modeOf(a) == modeLive })
+	if err := a.AddGrant(testGrant(1, "alice", t0)); err != nil {
 		t.Fatal(err)
 	}
-	eventually(t, "a knows the grant", func() bool { return standing(a, grantID(1)) })
+	eventually(t, "the grant written", func() bool { _, ok := docGrants(t, api)[grantID(1)]; return ok })
 
 	api.mu.Lock()
 	for _, w := range api.watchers {
@@ -292,127 +214,24 @@ func TestAMissingConfigMapIsPolled(t *testing.T) {
 	}
 	api.cm = nil
 	api.mu.Unlock()
-	eventually(t, "both missing", func() bool { return modeOf(a) == modeMissing && modeOf(b) == modeMissing })
+	eventually(t, "missing", func() bool { return modeOf(a) == modeMissing })
 	a.RevokeGrant(grantID(1), uh("alice"), t0, t0.Add(time.Hour))
 	if err := a.WriteRevocations(t.Context(), grantID(1)); !errors.Is(err, ErrNoConfigMap) {
 		t.Fatalf("missing: %v, want ErrNoConfigMap", err)
 	}
+	if standing(a, grantID(1)) {
+		t.Fatal("the revocation does not hold while the ConfigMap is missing")
+	}
 
-	ha.mu.Lock()
-	ha.hidden = true
-	ha.mu.Unlock()
 	api.mu.Lock()
 	api.bumpLocked(&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "console-state", Namespace: "team-a", UID: "uid-2"}})
 	api.mu.Unlock()
-	// b first: it reads the new ConfigMap and writes the grant it
-	// recorded, unrevoked.
-	eventually(t, "b live on the new ConfigMap", func() bool { return modeOf(b) == modeLive })
-	ha.mu.Lock()
-	ha.hidden = false
-	ha.mu.Unlock()
 	start := time.Now()
-	eventually(t, "a's revocation written to the new ConfigMap", func() bool {
+	eventually(t, "the revocation written to the new ConfigMap", func() bool {
 		return docGrants(t, api)[grantID(1)].Revoked > 0
 	})
-	eventually(t, "b refuses the grant", func() bool { return !standing(b, grantID(1)) })
 	if d := time.Since(start); d > 3*time.Second {
-		t.Errorf("the held revocation took %s to reach the other replica, want at most about 2 s", d)
-	}
-}
-
-// WriteRevocations of no IDs ("disconnect all" with nothing to revoke
-// here) is nil only on a replica that has read the grants document or
-// knows the ConfigMap missing: one that read nothing yet, may not read it,
-// or cannot read the document, acknowledges no disconnection (round 18,
-// security P3; the reviewer's probe
-// TestR18PendingReplicaAcknowledgesDisconnectAll).
-func TestNothingToRevokeIsAnAnswerOnlyOnceRead(t *testing.T) {
-	for name, tc := range map[string]struct {
-		prepare func(t *testing.T, s *Store, api *apiServer)
-		want    error
-	}{
-		"pending": {want: ErrNotRecorded},
-		"read, watching": {prepare: func(t *testing.T, s *Store, api *apiServer) {
-			watchMerge(t, api, s)
-			s.mu.Lock()
-			s.watchOpenedLocked()
-			s.mu.Unlock()
-		}},
-		// Read, then the watch ended or the API server stopped answering:
-		// what was read is what the ConfigMap held, not what it holds; a
-		// grant recorded since elsewhere is served there (round 21,
-		// security P2-1).
-		"read, not watching": {
-			prepare: func(t *testing.T, s *Store, api *apiServer) { watchMerge(t, api, s) },
-			want:    ErrNotRecorded,
-		},
-		"read, watch ended": {
-			prepare: func(t *testing.T, s *Store, api *apiServer) {
-				watchMerge(t, api, s)
-				s.mu.Lock()
-				s.watchOpenedLocked()
-				s.watching, s.unwatchedAt = false, s.opts.Now()
-				s.mu.Unlock()
-			},
-			want: ErrNotRecorded,
-		},
-		"read, then failing": {
-			prepare: func(t *testing.T, s *Store, api *apiServer) {
-				watchMerge(t, api, s)
-				s.mu.Lock()
-				s.watchOpenedLocked()
-				s.mu.Unlock()
-				_ = s.failed(apierrors.NewInternalError(errors.New("dial tcp: i/o timeout")))
-			},
-			want: ErrNotRecorded,
-		},
-		"read, then forbidden": {
-			prepare: func(t *testing.T, s *Store, api *apiServer) {
-				watchMerge(t, api, s)
-				s.mu.Lock()
-				s.watchOpenedLocked()
-				s.mu.Unlock()
-				_ = s.failed(apierrors.NewForbidden(configMaps, "console-state", errors.New("no")))
-			},
-			want: ErrNotRecorded,
-		},
-		"missing": {prepare: func(_ *testing.T, s *Store, _ *apiServer) {
-			_ = s.failed(apierrors.NewNotFound(configMaps, "console-state"))
-		}},
-		// Not an answer (round 20, security P2-1, which reverts round 19's
-		// Go P3-1): another replica whose watch opened before the
-		// permission was withdrawn still serves grants until its next
-		// freshness read.
-		"forbidden from the start": {
-			prepare: func(_ *testing.T, s *Store, _ *apiServer) {
-				_ = s.failed(apierrors.NewForbidden(configMaps, "console-state", errors.New("no")))
-			},
-			want: ErrNotRecorded,
-		},
-		"grants unreadable": {
-			prepare: func(t *testing.T, s *Store, api *apiServer) {
-				api.set(func(x *apiServer) {
-					cm := x.cm.DeepCopy()
-					cm.Data = map[string]string{KeyGrants: "{not json"}
-					x.bumpLocked(cm)
-				})
-				watchMerge(t, api, s)
-			},
-			want: ErrNotRecorded,
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			clock := &testClock{now: t0}
-			api := newAPIServer()
-			s := newStore(api, clock, nil)
-			if tc.prepare != nil {
-				tc.prepare(t, s, api)
-			}
-			ids := s.RevokeGrantsOf(uh("alice"), t0)
-			if err := s.WriteRevocations(t.Context(), ids...); !errors.Is(err, tc.want) || (tc.want == nil && err != nil) {
-				t.Errorf("WriteRevocations of %d IDs: %v, want %v", len(ids), err, tc.want)
-			}
-		})
+		t.Errorf("the held revocation took %s to be written, want at most about 2 s", d)
 	}
 }
 
@@ -475,5 +294,26 @@ func TestAPanicOnAWritePathLeavesTheStoreUnlocked(t *testing.T) {
 			}
 			s.unlockWrites()
 		})
+	}
+}
+
+// One 403 while the watch is open (a write refused) leaves the replica
+// failing, not forbidden: it retries its writes and is live again once
+// one lands, rather than forbidden until the watch ends. With no watch
+// open, a 403 is the forbidden mode.
+func TestAForbiddenRequestWhileWatchingIsFailing(t *testing.T) {
+	for _, watching := range []bool{true, false} {
+		s := newStore(newAPIServer(), &testClock{now: t0}, nil)
+		s.mu.Lock()
+		s.watching = watching
+		s.mu.Unlock()
+		_ = s.failed(apierrors.NewForbidden(configMaps, "console-state", errors.New("no")))
+		want := modeForbidden
+		if watching {
+			want = modeFailing
+		}
+		if m := modeOf(s); m != want {
+			t.Errorf("a 403, watching %v: mode %s, want %s", watching, m, want)
+		}
 	}
 }

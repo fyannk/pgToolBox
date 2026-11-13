@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -38,8 +39,8 @@ import (
 )
 
 // silentAPI is one ConfigMap under the API server's optimistic
-// concurrency whose watches never deliver anything: every replica stays
-// in the window before it reads the others' writes.
+// concurrency whose watches never deliver anything: a replica sees what
+// another wrote only by reading it (LoadGrants).
 type silentAPI struct {
 	mu sync.Mutex
 	cm *corev1.ConfigMap
@@ -73,34 +74,43 @@ func (a *silentAPI) Update(_ context.Context, cm *corev1.ConfigMap, _ metav1.Upd
 }
 
 // sharedReplica is a harness whose confirmations are kept in the
-// ConfigMap of a, as one replica of several.
-func sharedReplica(t *testing.T, a *silentAPI) (harness, *recordingOperator) {
+// ConfigMap of a, as one replica of several, the MCP leader while lead
+// says so.
+func sharedReplica(t *testing.T, a *silentAPI, lead func() bool) (harness, *recordingOperator, *sharedstate.Store) {
 	t.Helper()
 	store := sharedstate.New(sharedstate.Options{
 		Client: a, Name: "console-state", Now: func() time.Time { return fixtures.Now }, Logger: slog.New(slog.DiscardHandler),
 	})
+	store.SetLeader(lead)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { _ = store.Run(ctx); close(done) }()
 	t.Cleanup(func() { cancel(); <-done })
 	deadline := time.Now().Add(5 * time.Second)
-	for !store.GrantsUsable() {
+	for !store.MarksKnown() {
 		if time.Now().After(deadline) {
 			t.Fatal("the store never read its ConfigMap")
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	return writeHarness(t, func(o *Options, _ *api.Deps) { o.Confirmations = store })
+	h, op := writeHarness(t, func(o *Options, _ *api.Deps) { o.Confirmations = store })
+	return h, op, store
 }
 
-// A confirmation spent on one replica is refused on another before that
-// one has read the first's write: the spend is written through (the
-// re-review's TestRev2ReplayOtherReplicaBeforeSync).
-func TestConfirmationReplayOnAnotherReplica(t *testing.T) {
+// A confirmation spent on the MCP leader is refused by the next one: the
+// spend is written through before the tool runs, and the next leader
+// loads it (the re-review's TestRev2ReplayOtherReplicaBeforeSync, after a
+// failover).
+func TestConfirmationReplayAfterAFailover(t *testing.T) {
 	t.Parallel()
 	shared := newSilentAPI()
-	a, opA := sharedReplica(t, shared)
-	b, opB := sharedReplica(t, shared)
+	var leader atomic.Value
+	leader.Store("a")
+	a, opA, sa := sharedReplica(t, shared, func() bool { return leader.Load() == "a" })
+	b, opB, sb := sharedReplica(t, shared, func() bool { return leader.Load() == "b" })
+	if err := sa.LoadGrants(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	orders := map[string]any{"namespace": "team-a", "name": "orders"}
 
 	cs, sniffed := formSniffedClient(t, a.url, "tok-dba")
@@ -116,6 +126,11 @@ func TestConfirmationReplayOnAnotherReplica(t *testing.T) {
 	if state == "" {
 		t.Fatal("no request state was sniffed")
 	}
+	leader.Store("b")
+	sa.DropGrants()
+	if err := sb.LoadGrants(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	csB, _ := formSniffedClient(t, b.url, "tok-dba")
 	res, err := csB.CallTool(context.Background(), &mcp.CallToolParams{
 		Name: "backup", Arguments: orders, RequestState: state,
@@ -125,7 +140,7 @@ func TestConfirmationReplayOnAnotherReplica(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !res.IsError || !strings.Contains(text(res), "already used") || len(opB.requests()) != 0 {
-		t.Errorf("replica B on A's spent confirmation: error %v %q, ran %d", res.IsError, text(res), len(opB.requests()))
+		t.Errorf("the next leader on A's spent confirmation: error %v %q, ran %d", res.IsError, text(res), len(opB.requests()))
 	}
 }
 

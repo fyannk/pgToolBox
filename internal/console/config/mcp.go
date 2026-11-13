@@ -53,8 +53,8 @@ const (
 	EnvMCPOAuthClientMetadataHosts = "MCP_OAUTH_CLIENT_METADATA_HOSTS"
 	// EnvMCPLease names the coordination.k8s.io Lease, in the console's
 	// namespace, whose holder alone serves MCP and writes the grant index;
-	// the install sends the MCP paths to it. Set by the install; empty:
-	// every replica serves.
+	// the install sends the MCP paths to it. Required with MCP_ENABLED
+	// (the chart and the operator set it).
 	EnvMCPLease = "MCP_LEASE"
 	// EnvMCPCandidate=false keeps this replica out of that election (the
 	// team chart's main replicas, beside its one MCP Pod): it never serves
@@ -75,8 +75,8 @@ type MCP struct {
 	// ClientMetadataHosts are the only hosts CIMD documents are fetched
 	// from; empty: any public address.
 	ClientMetadataHosts []string
-	// Lease elects the replica that serves MCP (MCP_LEASE); empty when
-	// every replica serves. Candidate is MCP_CANDIDATE.
+	// Lease elects the replica that serves MCP (MCP_LEASE); set whenever
+	// Enabled is. Candidate is MCP_CANDIDATE.
 	Lease     string
 	Candidate bool
 }
@@ -99,15 +99,16 @@ func mcpConfig(lookup Lookup, fail func(name, constraint string)) MCP {
 	return m
 }
 
-// leader reads MCP_LEASE and MCP_CANDIDATE.
+// leader reads MCP_LEASE and MCP_CANDIDATE: the lease is required with
+// MCP on, refused with it off.
 func (m *MCP) leader(lookup Lookup, fail func(name, constraint string)) {
 	lease, _ := lookup(EnvMCPLease)
 	m.Candidate = boolVar(lookup, EnvMCPCandidate, true, fail)
 	switch {
+	case lease == "" && m.Enabled:
+		fail(EnvMCPLease, "is required with "+EnvMCPEnabled+"=true (one replica serves MCP)")
+		m.Candidate = false
 	case lease == "":
-		if !m.Candidate {
-			fail(EnvMCPCandidate, "requires "+EnvMCPLease)
-		}
 		m.Candidate = false
 	case !m.Enabled:
 		fail(EnvMCPLease, "requires "+EnvMCPEnabled+"=true")

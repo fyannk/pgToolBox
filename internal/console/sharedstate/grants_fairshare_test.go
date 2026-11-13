@@ -309,8 +309,8 @@ func TestChurnDoesNotLetHoardersFillTheIndex(t *testing.T) {
 }
 
 // Work that is not new is not refused by the fair share (round-11
-// review): re-recording a grant another replica admitted and rotated, and
-// a person's first revocation placeholder. The hard bounds still apply.
+// review): a person's first revocation placeholder. The hard bounds still
+// apply.
 func TestTheFairShareRefusesOnlyNewWork(t *testing.T) {
 	clock := &testClock{now: t0}
 	fill := func(each int) *Store {
@@ -329,11 +329,6 @@ func TestTheFairShareRefusesOnlyNewWork(t *testing.T) {
 	if err := s.AddGrant(testGrant(99_000, "user0", clock.Now())); !errors.Is(err, ErrTooManyGrants) {
 		t.Fatalf("a new grant past the fair share: %v", err)
 	}
-	rotated := testGrant(99_001, "user0", clock.Now())
-	rotated.LastUsed, rotated.Generation, rotated.Rotated = clock.Now(), 3, true
-	if err := s.AddGrant(rotated); err != nil {
-		t.Errorf("a rotated grant another replica admitted was refused: %v", err)
-	}
 	// A replayed code's placeholder is recorded once past the fair share.
 	if s.RevokeGrant(grantID(99_002), uh("user0"), clock.Now(), clock.Now().Add(RevokedKeep)); !s.GrantRevoked(grantID(99_002)) {
 		t.Error("a replayed code's revocation placeholder was refused by the fair share")
@@ -342,26 +337,8 @@ func TestTheFairShareRefusesOnlyNewWork(t *testing.T) {
 	if s.RevokeGrant(grantID(99_003), uh("user0"), clock.Now(), clock.Now().Add(RevokedKeep)); s.GrantRevoked(grantID(99_003)) {
 		t.Error("a second placeholder past the fair share was recorded")
 	}
-	// The hard bounds hold for both.
-	for i := range 16 {
-		_ = s.AddGrant(Grant{
-			ID: grantID(98_000 + i), UserHash: uh("user1"), Client: "c", Scope: "mcp:read",
-			Created: clock.Now(), LastUsed: clock.Now(), Expiry: clock.Now().Add(time.Hour), Rotated: true,
-		})
-	}
-	s.mu.Lock()
-	mine, _, _ := s.countLocked(uh("user1"))
-	s.mu.Unlock()
-	if mine != MaxGrantsPerUser {
-		t.Errorf("rotated grants took user1 to %d, past the per-person bound %d", mine, MaxGrantsPerUser)
-	}
+	// The hard bound holds for it.
 	full := fill(MaxGrantsPerUser)
-	if err := full.AddGrant(Grant{
-		ID: grantID(97_000), UserHash: uh("newcomer"), Client: "c", Created: clock.Now(),
-		LastUsed: clock.Now(), Expiry: clock.Now().Add(time.Hour), Rotated: true,
-	}); !errors.Is(err, ErrTooManyGrants) {
-		t.Errorf("a rotated grant added to a full index: %v", err)
-	}
 	if full.RevokeGrant(grantID(97_001), uh("newcomer"), clock.Now(), clock.Now().Add(RevokedKeep)); full.GrantRevoked(grantID(97_001)) {
 		t.Error("a placeholder added to a full index")
 	}

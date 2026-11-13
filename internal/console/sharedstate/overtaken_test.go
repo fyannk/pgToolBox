@@ -212,9 +212,8 @@ func TestARestartedWatchTakesInARevisionThatWentBack(t *testing.T) {
 	eventually(t, "a takes in the revocation", func() bool { return a.GrantRevoked(grantID(1)) })
 }
 
-// A write still conflicting after maxAttempts counts as a failure: the
-// failing mode's rules apply (grants usable for staleGrace only), and the
-// exhaustion is counted.
+// A write still conflicting after maxAttempts counts as a failure (the
+// failing mode), and the exhaustion is counted.
 func TestAnExhaustedWriteCountsAsFailing(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -243,18 +242,14 @@ func TestAnExhaustedWriteCountsAsFailing(t *testing.T) {
 			if a.mode != modeFailing {
 				t.Errorf("mode %s after an exhausted write, want failing", a.mode)
 			}
-			clock.Add(staleGrace)
-			if a.GrantsUsable() {
-				t.Error("grants usable past staleGrace after exhausted writes")
-			}
 		})
 	}
 }
 
 // A write's answer older than the base (the watch delivered another
 // replica's later write before the answer was read) does not set the base
-// back: under the three-way merge it would drop the grant that later write
-// added (round 16, go P3-2).
+// back: the next write would conflict, and what that later write added
+// must stay (round 16, go P3-2).
 func TestAWriteAnswerDoesNotSetTheBaseBack(t *testing.T) {
 	for _, through := range []bool{false, true} {
 		t.Run(strconv.FormatBool(through), func(t *testing.T) {
@@ -291,58 +286,6 @@ func TestAWriteAnswerDoesNotSetTheBaseBack(t *testing.T) {
 			}
 			if !standing(a, grantID(2)) {
 				t.Error("the grant the later write added is not standing")
-			}
-		})
-	}
-}
-
-// A code-replay revocation recorded on a replica cut off from the
-// ConfigMap is kept, past its expiry, until a document holds it: pruned
-// unwritten, the grant the replayed code bought would stand everywhere
-// (round 16, security P3-1).
-func TestACutReplayPlaceholderIsKeptUntilWritten(t *testing.T) {
-	for _, cut := range []bool{false, true} {
-		t.Run(strconv.FormatBool(cut), func(t *testing.T) {
-			clock := &testClock{now: t0}
-			api := newAPIServer()
-			a := loaded(t, api, clock)
-			const code = "code-nonce-1"
-			until := t0.Add(time.Minute)
-			if err := a.UseCode(code, uh("alice"), until); err != nil {
-				t.Fatal(err)
-			}
-			flushed(t, a) // the spend lands while a's request is at the IdP
-			b := loaded(t, api, clock)
-			if err := a.AddGrant(testGrant(1, "alice", t0)); err != nil {
-				t.Fatal(err)
-			}
-			flushed(t, a)
-			// b (cut off from here if cut) gets the replay.
-			if err := b.UseCode(code, uh("alice"), until); !errors.Is(err, ErrSpent) {
-				t.Fatalf("replay not detected: %v", err)
-			}
-			b.RevokeGrant(grantID(1), uh("alice"), clock.Now(), clock.Now().Add(RevokedKeep))
-			if !cut {
-				flushed(t, b)
-			}
-			clock.Add(RevokedKeep + time.Minute)
-			b.mu.Lock()
-			b.pruneLocked()
-			b.mu.Unlock()
-			watchMerge(t, api, b)
-			flushed(t, b)
-			watchMerge(t, api, a)
-			if standing(a, grantID(1)) {
-				t.Error("the grant bought by a replayed code stands on a after b's replay revocation")
-			}
-			// Once written, the entry is released: the table does not keep it.
-			flushed(t, b)
-			b.mu.Lock()
-			b.pruneLocked()
-			_, kept := b.grants[grantID(1)]
-			b.mu.Unlock()
-			if kept {
-				t.Error("a written, expired revocation is still kept")
 			}
 		})
 	}
