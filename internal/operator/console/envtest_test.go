@@ -752,21 +752,17 @@ func TestPgToolBoxConsoleReconcilerOnEnvtest(t *testing.T) {
 		}
 
 		// A selector the CRD lets through but the API server refuses in
-		// the NetworkPolicy (a label-key prefix longer than a DNS subdomain):
-		// a named stall, looked at again in five minutes, not a hot loop.
+		// the NetworkPolicy (a label-key prefix longer than a DNS subdomain),
+		// added while the Pods trust every peer: a widening, held (nothing
+		// is applied, so the refusal shows only once the hold ends; the
+		// refusal itself is the next subtests'). The policy in force stays.
 		refused := s.console(ctx, t, "console")
 		refused.Spec.Exposure.NetworkPolicy.From = append(refused.Spec.Exposure.NetworkPolicy.From, pgtoolboxv1alpha1.PgToolBoxConsolePolicyPeer{
 			PodSelector: &pgtoolboxv1alpha1.PgToolBoxConsoleLabelSelector{MatchLabels: map[string]pgtoolboxv1alpha1.PgToolBoxConsoleLabelValue{strings.Repeat("a", 254) + "/x": "y"}},
 		})
 		must(t, s.admin.Update(ctx, refused))
-		if result := s.reconcile(ctx, t, "console"); result.RequeueAfter != policyRecheck {
-			t.Fatalf("RequeueAfter = %s on a refused NetworkPolicy, want %s", result.RequeueAfter, policyRecheck)
-		}
-		stalled := s.console(ctx, t, "console")
-		assertCondition(t, stalled, pgtoolboxv1alpha1.ConditionConfigurationValid, metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonExposurePolicyInvalid)
-		// The earlier policy stays in force; ExposureConfined names the
-		// refusal.
-		assertCondition(t, stalled, pgtoolboxv1alpha1.ConditionExposureConfined, metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonExposurePolicyInvalid)
+		s.reconcile(ctx, t, "console")
+		assertCondition(t, s.console(ctx, t, "console"), pgtoolboxv1alpha1.ConditionExposureConfined, metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonExposureTrustUnverified)
 		if n := policyPeers(); n != 1 {
 			t.Fatalf("the refused spec changed the policy in force to %d peers", n)
 		}
