@@ -338,11 +338,14 @@ func (s *Store) GrantsUsable() bool {
 	if s == nil {
 		return false
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.ownsGrantsLocked() {
+		return false
+	}
 	if !s.Enabled() {
 		return true
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.foreign[KeyGrants] {
 		return false
 	}
@@ -1057,6 +1060,12 @@ func (s *Store) writeThrough(ctx context.Context, spentIn func(*corev1.ConfigMap
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), writeTimeout)
 	defer cancel()
 	for range maxAttempts {
+		var owns bool
+		s.locked(func() { owns = s.ownsGrantsLocked() })
+		if !owns {
+			// No longer the MCP leader: desired carries grants.json as read.
+			return ErrNotRecorded
+		}
 		updated, err := s.opts.Client.Update(ctx, desired, metav1.UpdateOptions{FieldManager: "pgtoolbox-console"})
 		switch {
 		case err == nil:
@@ -1407,6 +1416,89 @@ func (s *Store) recreatedLocked() {
 			s.revokedLocked(id)
 		}
 	}
+}
+
+// SetLeader makes grants.json the MCP leader's (MCP_LEASE): leading
+// reports whether this replica leads. Until it has loaded the grants
+// (LoadGrants), and once it no longer leads, the replica refuses grants
+// (GrantsUsable), refuses to write them through, and writes grants.json
+// back exactly as it read it. Called before Run; without it every replica
+// writes its own index (the merge rules below).
+func (s *Store) SetLeader(leading func() bool) {
+	if s != nil {
+		s.leading = leading
+	}
+}
+
+// ownsGrantsLocked reports whether this replica writes its grant index:
+// always without an MCP leader, else once loaded and while it leads.
+func (s *Store) ownsGrantsLocked() bool {
+	return s.leading == nil || s.grantsLoaded && s.leading()
+}
+
+// loadTimeout bounds LoadGrants, its retries included.
+const loadTimeout = 10 * time.Second
+
+// LoadGrants reads the ConfigMap (a quorum Get, retried for up to
+// loadTimeout) and replaces the grant and code tables with its grants
+// document: a new MCP leader starts from what the API server holds, not
+// from a union with what it held before (which could bring back a grant
+// revoked and pruned since). From then on the replica merges the
+// document as the watch delivers it (a late write of the previous
+// leader). ErrNotRecorded when the ConfigMap cannot be read or its grants
+// document is not readable. Without a ConfigMap the tables are this
+// replica's memory, and nothing is read.
+func (s *Store) LoadGrants(ctx context.Context) error {
+	if s == nil {
+		return ErrNotRecorded
+	}
+	if !s.Enabled() {
+		s.locked(func() { s.grantsLoaded = true })
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, loadTimeout)
+	defer cancel()
+	for attempt := 0; ; attempt++ {
+		cm, err := s.opts.Client.Get(ctx, s.opts.Name, metav1.GetOptions{})
+		if err == nil {
+			var unreadable bool
+			s.locked(func() {
+				s.mergeReadLocked(cm)
+				// The base is the newer of cm and what the watch merged.
+				s.dropGrantsLocked()
+				s.codes = map[string]codeEntry{}
+				s.mergeGrantsLoggedLocked(s.base.Data[KeyGrants])
+				unreadable = s.foreign[KeyGrants]
+				s.grantsLoaded = !unreadable
+			})
+			if unreadable {
+				return fmt.Errorf("%w: the grants document of ConfigMap %s is not readable", ErrNotRecorded, s.opts.Name)
+			}
+			return nil
+		}
+		t := time.NewTimer(s.opts.Backoff(attempt))
+		select {
+		case <-ctx.Done():
+			t.Stop()
+			return fmt.Errorf("%w: reading ConfigMap %s: %w", ErrNotRecorded, s.opts.Name, err)
+		case <-t.C:
+		}
+	}
+}
+
+// DropGrants forgets the grant and code tables when this replica stops
+// leading MCP: a batch not written yet is discarded (a revocation answered
+// done was written through), and grants.json is written as read until
+// the next LoadGrants.
+func (s *Store) DropGrants() {
+	if s == nil {
+		return
+	}
+	s.locked(func() {
+		s.dropGrantsLocked()
+		s.codes = map[string]codeEntry{}
+		s.grantsLoaded = false
+	})
 }
 
 // dropGrantsLocked forgets every grant of the index.

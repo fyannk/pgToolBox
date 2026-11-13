@@ -555,6 +555,11 @@ type Store struct {
 	rewatch chan struct{}
 	// grantReads coalesces ReadGrants (readGroup).
 	grantReads readGroup
+	// leading, when set (SetLeader), is the MCP election: grants.json is
+	// then this replica's to write only once loaded (grantsLoaded, by
+	// LoadGrants) and while it leads; otherwise it is written as read.
+	leading      func() bool
+	grantsLoaded bool
 }
 
 // New builds a store; nothing is read until Run.
@@ -1468,18 +1473,10 @@ func (s *Store) mergeLocked(cm *corev1.ConfigMap) {
 			}
 		}
 	}
-	wasUnreadable := s.grantsUnreadable
-	s.grantsUnreadable = false
-	// A missing or empty grants document is merged as an empty one: the
-	// key deleted resets the index (mergeGrantsLocked).
-	s.mergeGrantsLocked(data[KeyGrants])
-	switch {
-	case s.grantsUnreadable && !wasUnreadable:
-		s.opts.Logger.Error("shared state: the grants document does not parse; MCP grants are refused until it is fixed "+
-			"(delete the key "+KeyGrants+" to reset it: every assistant then connects again)",
-			slog.String("configmap", s.opts.Name))
-	case wasUnreadable && !s.grantsUnreadable:
-		s.opts.Logger.Info("shared state: the grants document is readable again", slog.String("configmap", s.opts.Name))
+	if s.leading == nil || s.grantsLoaded {
+		// With the MCP leader on, only the replica that loaded the grants
+		// merges them; another one writes them back as read.
+		s.mergeGrantsLoggedLocked(data[KeyGrants])
 	}
 	if raw, ok := data[KeyDrills]; ok && raw != "" {
 		s.mergeDrillsLocked(raw)
@@ -1490,6 +1487,24 @@ func (s *Store) mergeLocked(cm *corev1.ConfigMap) {
 		// while the ConfigMap was missing, kept by recreatedLocked) is
 		// written within about a second, as when it was made.
 		s.changedLocked(len(s.unwritten) > 0)
+	}
+}
+
+// mergeGrantsLoggedLocked is mergeGrantsLocked, logging once an episode
+// a grants document that does not parse.
+func (s *Store) mergeGrantsLoggedLocked(raw string) {
+	wasUnreadable := s.grantsUnreadable
+	s.grantsUnreadable = false
+	// A missing or empty grants document is merged as an empty one: the
+	// key deleted resets the index (mergeGrantsLocked).
+	s.mergeGrantsLocked(raw)
+	switch {
+	case s.grantsUnreadable && !wasUnreadable:
+		s.opts.Logger.Error("shared state: the grants document does not parse; MCP grants are refused until it is fixed "+
+			"(delete the key "+KeyGrants+" to reset it: every assistant then connects again)",
+			slog.String("configmap", s.opts.Name))
+	case wasUnreadable && !s.grantsUnreadable:
+		s.opts.Logger.Info("shared state: the grants document is readable again", slog.String("configmap", s.opts.Name))
 	}
 }
 
@@ -1736,8 +1751,16 @@ func (s *Store) ceilingLocked(docs map[string]string, data int) map[string]strin
 func (s *Store) encodeLocked() map[string]string {
 	sessions, _ := json.Marshal(sessionsDoc{Version: formatVersion, SignedOut: s.signedOut})
 	digests, _ := json.Marshal(digestsDoc{Version: formatVersion, Sent: s.sent})
-	grants, _ := json.Marshal(grantsDoc{Version: formatVersion, Grants: s.grants, Codes: s.codes})
-	out := map[string]string{KeySessions: string(sessions), KeySince: s.encodeSinceLocked(), KeyDigests: string(digests), KeyGrants: string(grants)}
+	out := map[string]string{KeySessions: string(sessions), KeySince: s.encodeSinceLocked(), KeyDigests: string(digests)}
+	if s.ownsGrantsLocked() {
+		grants, _ := json.Marshal(grantsDoc{Version: formatVersion, Grants: s.grants, Codes: s.codes})
+		out[KeyGrants] = string(grants)
+	} else if s.base != nil {
+		if raw, ok := s.base.Data[KeyGrants]; ok {
+			// Not the MCP leader: the leader's document, exactly as read.
+			out[KeyGrants] = raw
+		}
+	}
 	if drills, ok := s.encodeDrillsLocked(); ok {
 		out[KeyDrills] = drills
 	}
