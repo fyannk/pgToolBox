@@ -36,7 +36,6 @@ package console
 import (
 	"context"
 	"crypto/rand"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"math/big"
@@ -53,12 +52,10 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
-	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
@@ -351,23 +348,12 @@ func (r *Reconciler) reconcile(ctx context.Context, console *pgtoolboxv1alpha1.P
 	} else if err := r.deleteIfOwned(ctx, console, &policyv1.PodDisruptionBudget{}, console.WorkloadName()); err != nil {
 		return err
 	}
-	// The ingress policy the exposure will need, checked by the API server
-	// (a dry run, admission included) before anything is published: a
-	// refused one stalls with nothing new exposed.
-	if policy := buildExposureNetworkPolicy(console, r.exposureUsable(console)); policy != nil {
-		if err := r.checkExposurePolicy(ctx, console, policy); err != nil {
-			return err
-		}
-	}
-	exposed, leftovers, err := r.applyExposure(ctx, console)
-	if err != nil {
-		return err
-	}
-	// The ingress policy before the workload that trusts every peer it
-	// admits; its removal only once no Pod of the workload trusts them any
-	// more (withdrawExposurePolicy), and its widening likewise
-	// (heldWidening).
-	policy := buildExposureNetworkPolicy(console, exposed)
+	// The ingress policy before the exposure it confines and the workload
+	// that trusts every peer it admits: a policy the API server refuses
+	// stalls with nothing new published. Its removal only once no Pod of
+	// the workload trusts them any more (withdrawExposurePolicy), and its
+	// widening likewise (heldWidening).
+	policy := buildExposureNetworkPolicy(console, r.exposureUsable(console))
 	var found confinement
 	if policy != nil {
 		held, stuck, err := r.heldWidening(ctx, console, policy)
@@ -384,7 +370,7 @@ func (r *Reconciler) reconcile(ctx context.Context, console *pgtoolboxv1alpha1.P
 		} else {
 			if err := applier.Apply(ctx, policy); err != nil {
 				if policyRefused(err) {
-					return r.exposurePolicyRefused(ctx, console, policy.Name, err)
+					return r.exposurePolicyRefused(console, policy.Name, err)
 				}
 				return r.notOwned(console, err)
 			}
@@ -393,8 +379,11 @@ func (r *Reconciler) reconcile(ctx context.Context, console *pgtoolboxv1alpha1.P
 			}
 		}
 	}
+	exposed, err := r.applyExposure(ctx, console)
+	if err != nil {
+		return err
+	}
 	setExposureConfined(console, exposed, found)
-	setLeftoverConfinement(console, exposed, leftovers)
 	in := deploymentInputs{Image: image, OpenShift: r.Features.OpenShift, Exposed: exposed, Confinement: found}
 	if trust := effectiveProxyTrust(console, exposed, found); trust.EveryPeer || found.Bypass != "" {
 		loop.after(policyRecheck)
@@ -416,7 +405,7 @@ func (r *Reconciler) reconcile(ctx context.Context, console *pgtoolboxv1alpha1.P
 			loop.after(policyRecheck)
 		}
 	}
-	r.observeExposure(ctx, console, leftovers)
+	r.observeExposure(ctx, console)
 	console.Status.URL = consoleURL(console)
 	// After the workload: the bundle volume is optional, so the console
 	// runs (every Cluster "not verifiable") whatever happens here.
@@ -790,8 +779,7 @@ func (r *Reconciler) checkHostname(ctx context.Context, console *pgtoolboxv1alph
 		clearPolicyKeptOnStall(console)
 		return nil
 	}
-	leftovers, err := r.withdrawExposure(ctx, console)
-	if err != nil {
+	if err := r.withdrawExposure(ctx, console); err != nil {
 		return err
 	}
 	if err := r.policyKeptOnStall(ctx, console); err != nil {
@@ -799,7 +787,7 @@ func (r *Reconciler) checkHostname(ctx context.Context, console *pgtoolboxv1alph
 	}
 	console.Status.URL = ""
 	setCondition(console, pgtoolboxv1alpha1.ConditionExposureReady, metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonHostnameNotAllowed,
-		exposure.WithLeftovers(exposure.WithdrawnMessage, leftovers))
+		exposure.WithdrawnMessage)
 	return r.invalid(console, pgtoolboxv1alpha1.ReasonHostnameNotAllowed, message)
 }
 
@@ -892,9 +880,9 @@ func (r *Reconciler) deleteIfOwned(ctx context.Context, console *pgtoolboxv1alph
 // applyExposure writes the exposure object of the requested type and deletes
 // the others this console owns. It reports whether an exposure object is
 // published: not for clusterIP, nor for a Route or an HTTPRoute whose API
-// is unavailable; and, for a kind refused in the console's namespace, what
-// it published before and may still be serving (leftoverExposure).
-func (r *Reconciler) applyExposure(ctx context.Context, console *pgtoolboxv1alpha1.PgToolBoxConsole) (bool, []exposure.Remnant, error) {
+// is unavailable. One published before the operator was refused its kind
+// in the namespace is no longer seen: it is deleted by hand.
+func (r *Reconciler) applyExposure(ctx context.Context, console *pgtoolboxv1alpha1.PgToolBoxConsole) (bool, error) {
 	spec := &console.Spec.Exposure.ExposureSpec
 	kind := spec.TypeOrDefault()
 	target := exposureTarget(console)
@@ -902,105 +890,33 @@ func (r *Reconciler) applyExposure(ctx context.Context, console *pgtoolboxv1alph
 	exposed := false
 	if kind == pgtoolboxv1alpha1.ExposureTypeIngress {
 		if err := applier.Apply(ctx, exposure.Ingress(spec, target)); err != nil {
-			return false, nil, r.notOwned(console, err)
+			return false, r.notOwned(console, err)
 		}
 		exposed = true
 	} else if err := r.deleteIfOwned(ctx, console, &networkingv1.Ingress{}, console.WorkloadName()); err != nil {
-		return false, nil, err
+		return false, err
 	}
 	if r.Features.In(console.Namespace).Routes.Usable() {
 		if kind == pgtoolboxv1alpha1.ExposureTypeRoute {
-			// Recorded before the write: one that fails may still have
-			// published it.
-			exposure.MarkPublished(&console.Status.PublishedExposureKinds, "Route")
 			if err := applier.Apply(ctx, exposure.Route(spec, target)); err != nil {
-				return false, nil, r.notOwned(console, err)
+				return false, r.notOwned(console, err)
 			}
 			exposed = true
-		} else {
-			if err := r.deleteIfOwned(ctx, console, &routev1.Route{}, console.WorkloadName()); err != nil {
-				return false, nil, err
-			}
-			exposure.MarkGone(&console.Status.PublishedExposureKinds, "Route")
+		} else if err := r.deleteIfOwned(ctx, console, &routev1.Route{}, console.WorkloadName()); err != nil {
+			return false, err
 		}
 	}
 	if r.Features.In(console.Namespace).Gateways.Usable() {
 		if kind == pgtoolboxv1alpha1.ExposureTypeGateway {
-			// Recorded before the write: one that fails may still have
-			// published it.
-			exposure.MarkPublished(&console.Status.PublishedExposureKinds, "HTTPRoute")
 			if err := applier.Apply(ctx, exposure.HTTPRoute(spec, target)); err != nil {
-				return false, nil, r.notOwned(console, err)
+				return false, r.notOwned(console, err)
 			}
 			exposed = true
-		} else {
-			if err := r.deleteIfOwned(ctx, console, &gatewayv1.HTTPRoute{}, console.WorkloadName()); err != nil {
-				return false, nil, err
-			}
-			exposure.MarkGone(&console.Status.PublishedExposureKinds, "HTTPRoute")
+		} else if err := r.deleteIfOwned(ctx, console, &gatewayv1.HTTPRoute{}, console.WorkloadName()); err != nil {
+			return false, err
 		}
 	}
-	leftovers, err := r.leftoverExposure(ctx, console, func(t pgtoolboxv1alpha1.ExposureType) bool { return t != kind })
-	return exposed, leftovers, err
-}
-
-// leftoverExposure looks, for each of Route and HTTPRoute refused to the
-// operator in the console's namespace (while the cluster serves it), for
-// the one the console may have published before the refusal: the cache
-// holds none of that kind there, so one uncached Get each (exposure.Leftover),
-// deleting it when remove says so for its type. It returns the status
-// sentences of those that remain or may remain.
-func (r *Reconciler) leftoverExposure(ctx context.Context, console *pgtoolboxv1alpha1.PgToolBoxConsole, remove func(pgtoolboxv1alpha1.ExposureType) bool) ([]exposure.Remnant, error) {
-	here := r.Features.In(console.Namespace)
-	var leftovers []exposure.Remnant
-	for _, k := range []struct {
-		api    discovery.Result
-		typ    pgtoolboxv1alpha1.ExposureType
-		object client.Object
-		kind   string
-	}{
-		{here.Routes, pgtoolboxv1alpha1.ExposureTypeRoute, &routev1.Route{}, "Route"},
-		{here.Gateways, pgtoolboxv1alpha1.ExposureTypeGateway, &gatewayv1.HTTPRoute{}, "HTTPRoute"},
-	} {
-		if k.api.State == discovery.NotInstalled {
-			// Not served: nothing of the kind can remain.
-			exposure.MarkGone(&console.Status.PublishedExposureKinds, k.kind)
-		}
-		if k.api.State != discovery.Forbidden {
-			continue
-		}
-		publishedBefore := exposure.MayHavePublished(console.Spec.Exposure.TypeOrDefault() == k.typ, console.Status.PublishedExposureKinds, k.kind)
-		leftover, err := exposure.Leftover(ctx, r.APIReader, r.Client, console, k.object, k.kind, console.WorkloadName(), remove(k.typ), publishedBefore)
-		if err != nil {
-			return nil, err
-		}
-		if leftover.Gone {
-			exposure.MarkGone(&console.Status.PublishedExposureKinds, k.kind)
-		}
-		if leftover.Sentence != "" {
-			leftovers = append(leftovers, leftover)
-		}
-	}
-	return leftovers, nil
-}
-
-// setLeftoverConfinement records, for a console that publishes nothing
-// itself (exposed unset), a Route or HTTPRoute it published before the
-// operator was refused its kind here (leftovers): one found still serves,
-// confined by no policy of the operator (ExposureConfined False); one the
-// operator may not read while the console's history says it was published
-// may (Unknown). Nothing left, ExposureConfined stays as
-// setExposureConfined put it.
-func setLeftoverConfinement(console *pgtoolboxv1alpha1.PgToolBoxConsole, exposed bool, leftovers []exposure.Remnant) {
-	if exposed || len(leftovers) == 0 {
-		return
-	}
-	status := metav1.ConditionFalse
-	if exposure.AllUnverified(leftovers) {
-		status = metav1.ConditionUnknown
-	}
-	setCondition(console, pgtoolboxv1alpha1.ConditionExposureConfined, status, pgtoolboxv1alpha1.ReasonExposureOpen,
-		exposure.WithLeftovers("an exposure object the operator no longer manages may still publish the console, confined by no policy of the operator", leftovers))
+	return exposed, nil
 }
 
 // exposureUsable: applyExposure would publish an exposure object (its
@@ -1018,28 +934,6 @@ func (r *Reconciler) exposureUsable(console *pgtoolboxv1alpha1.PgToolBoxConsole)
 	}
 }
 
-// checkExposurePolicy has the API server check policy (a server-side
-// dry run, admission included) before anything is published: a refusal
-// stalls (exposurePolicyRefused). The dry run is skipped when the owned
-// policy in force is already policy (policyInForce: the API server took
-// it, and nothing would change), and a BadRequest (a webhook that cannot
-// run on a dry run) gives way to the real apply, which handles a refusal
-// the same way.
-func (r *Reconciler) checkExposurePolicy(ctx context.Context, console *pgtoolboxv1alpha1.PgToolBoxConsole, policy *networkingv1.NetworkPolicy) error {
-	inForce, err := r.policyInForce(ctx, console, policy)
-	if err != nil || inForce {
-		return err
-	}
-	err = r.dryRunApply(ctx, policy)
-	switch {
-	case err == nil, apierrors.IsBadRequest(err):
-		return nil
-	case policyRefused(err):
-		return r.exposurePolicyRefused(ctx, console, policy.Name, err)
-	}
-	return fmt.Errorf("dry-run NetworkPolicy %s: %w", policy.Name, err)
-}
-
 // policyRefused: the API server refused the policy itself, by its schema
 // (Invalid) or by an admission policy or webhook (Forbidden, a denial's
 // default; the operator holds every verb it uses on NetworkPolicies, so a
@@ -1048,115 +942,17 @@ func policyRefused(err error) bool {
 	return apierrors.IsInvalid(err) || apierrors.IsForbidden(err)
 }
 
-// policyInForce: the cached NetworkPolicy of policy's name is this
-// console's, with policy's spec, labels and annotations (others may add
-// more of their own).
-func (r *Reconciler) policyInForce(ctx context.Context, console *pgtoolboxv1alpha1.PgToolBoxConsole, policy *networkingv1.NetworkPolicy) (bool, error) {
-	live := &networkingv1.NetworkPolicy{}
-	if err := r.Client.Get(ctx, client.ObjectKeyFromObject(policy), live); err != nil {
-		return false, client.IgnoreNotFound(err)
-	}
-	return metav1.IsControlledBy(live, console) && equality.Semantic.DeepEqual(live.Spec, policy.Spec) &&
-		holds(live.Labels, policy.Labels) && holds(live.Annotations, policy.Annotations), nil
-}
-
-// holds: every entry of want is in got.
-func holds(got, want map[string]string) bool {
-	for k, v := range want {
-		if value, ok := got[k]; !ok || value != v {
-			return false
-		}
-	}
-	return true
-}
-
-// dryRunApply sends desired as Apply would, server-side and dry-run: the
-// API server validates it, admission included, and stores nothing.
-func (r *Reconciler) dryRunApply(ctx context.Context, desired client.Object) error {
-	raw, err := json.Marshal(desired)
-	if err != nil {
-		return fmt.Errorf("marshal %T apply patch: %w", desired, err)
-	}
-	probe, ok := desired.DeepCopyObject().(client.Object)
-	if !ok {
-		return fmt.Errorf("%T is not a client.Object", desired)
-	}
-	return r.Client.Patch(ctx, probe, client.RawPatch(types.ApplyPatchType, raw),
-		client.FieldOwner(reconcile.FieldOwner), client.ForceOwnership, client.DryRunAll)
-}
-
 // exposurePolicyRefused stalls on an ingress NetworkPolicy the API server
-// refused. The CRD checks what it can; what the API server still refuses
+// refused (its apply comes before the exposure's, so nothing new is
+// published). The CRD checks what it can; what the API server still refuses
 // (or an admission policy) is looked at again on every spec change and
-// every policyRecheck (stallRetries). Nothing new is published (the dry
-// run comes first), so what is in force is the earlier spec's: with this
-// console's own policy in force, ExposureConfined still describes it;
-// without one, and an exposure object of this console published,
-// ExposureConfined says it is open; with nothing published it goes.
-func (r *Reconciler) exposurePolicyRefused(ctx context.Context, console *pgtoolboxv1alpha1.PgToolBoxConsole, name string, refusal error) error {
-	stall := r.invalid(console, pgtoolboxv1alpha1.ReasonExposurePolicyInvalid, fmt.Sprintf(
-		"the API server refused NetworkPolicy %s rendered from spec.exposure.networkPolicy: %s", name, refusal))
-	live := &networkingv1.NetworkPolicy{}
-	err := r.Client.Get(ctx, client.ObjectKey{Namespace: console.Namespace, Name: name}, live)
-	switch {
-	case err == nil && metav1.IsControlledBy(live, console):
-		return stall
-	case err != nil && !apierrors.IsNotFound(err):
-		return err
-	}
-	published, unverified, err := r.exposurePublished(ctx, console)
-	if err != nil {
-		return err
-	}
-	if !published {
-		setExposureConfined(console, false, confinement{})
-		return stall
-	}
-	// Unknown when the only exposure object is one the operator may not
-	// read: it may be gone.
-	status := metav1.ConditionFalse
-	if unverified {
-		status = metav1.ConditionUnknown
-	}
-	setCondition(console, pgtoolboxv1alpha1.ConditionExposureConfined, status, pgtoolboxv1alpha1.ReasonExposureOpen,
-		"no ingress NetworkPolicy is in force (the API server refused NetworkPolicy "+name+"): any Pod can reach the console port; the console Pods keep the X-Forwarded-For trust they were rendered with, never every peer (that needs the policy)")
-	return stall
-}
-
-// exposurePublished: an exposure object (Ingress, Route, HTTPRoute) of
-// this console exists, or may exist: one of a kind the operator is refused
-// in the namespace, published before the refusal, counts while it remains
-// or cannot be read (leftoverExposure). unverified: none is known to exist,
-// only one the operator may not read and the console's history says it
-// published.
-func (r *Reconciler) exposurePublished(ctx context.Context, console *pgtoolboxv1alpha1.PgToolBoxConsole) (published, unverified bool, err error) {
-	leftovers, err := r.leftoverExposure(ctx, console, func(pgtoolboxv1alpha1.ExposureType) bool { return false })
-	if err != nil {
-		return false, false, err
-	}
-	if len(leftovers) > 0 && !exposure.AllUnverified(leftovers) {
-		return true, false, nil
-	}
-	objects := []client.Object{&networkingv1.Ingress{}}
-	if r.Features.In(console.Namespace).Routes.Usable() {
-		objects = append(objects, &routev1.Route{})
-	}
-	if r.Features.In(console.Namespace).Gateways.Usable() {
-		objects = append(objects, &gatewayv1.HTTPRoute{})
-	}
-	key := client.ObjectKey{Namespace: console.Namespace, Name: console.WorkloadName()}
-	for _, object := range objects {
-		if err := r.Client.Get(ctx, key, object); err != nil {
-			if apierrors.IsNotFound(err) {
-				continue
-			}
-			return false, false, err
-		}
-		if metav1.IsControlledBy(object, console) {
-			return true, false, nil
-		}
-	}
-	return len(leftovers) > 0, len(leftovers) > 0, nil
+// every policyRecheck (stallRetries). ExposureConfined goes False with the
+// stall's reason: whatever the earlier spec published is not known to be
+// confined.
+func (r *Reconciler) exposurePolicyRefused(console *pgtoolboxv1alpha1.PgToolBoxConsole, name string, refusal error) error {
+	message := fmt.Sprintf("the API server refused NetworkPolicy %s rendered from spec.exposure.networkPolicy: %s", name, refusal)
+	setCondition(console, pgtoolboxv1alpha1.ConditionExposureConfined, metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonExposurePolicyInvalid, message)
+	return r.invalid(console, pgtoolboxv1alpha1.ReasonExposurePolicyInvalid, message)
 }
 
 // policyKeptOnStall records ExposureConfined while the console is
@@ -1205,33 +1001,25 @@ func clearPolicyKeptOnStall(console *pgtoolboxv1alpha1.PgToolBoxConsole) {
 	}
 }
 
-// withdrawExposure deletes every exposure object this console owns. It
-// returns the status sentences of those it could not (leftoverExposure).
-func (r *Reconciler) withdrawExposure(ctx context.Context, console *pgtoolboxv1alpha1.PgToolBoxConsole) ([]exposure.Remnant, error) {
+// withdrawExposure deletes every exposure object this console owns.
+func (r *Reconciler) withdrawExposure(ctx context.Context, console *pgtoolboxv1alpha1.PgToolBoxConsole) error {
 	name := console.WorkloadName()
 	if err := r.deleteIfOwned(ctx, console, &networkingv1.Ingress{}, name); err != nil {
-		return nil, err
+		return err
 	}
 	if r.Features.In(console.Namespace).Routes.Usable() {
 		if err := r.deleteIfOwned(ctx, console, &routev1.Route{}, name); err != nil {
-			return nil, err
+			return err
 		}
-		exposure.MarkGone(&console.Status.PublishedExposureKinds, "Route")
 	}
 	if r.Features.In(console.Namespace).Gateways.Usable() {
-		if err := r.deleteIfOwned(ctx, console, &gatewayv1.HTTPRoute{}, name); err != nil {
-			return nil, err
-		}
-		exposure.MarkGone(&console.Status.PublishedExposureKinds, "HTTPRoute")
+		return r.deleteIfOwned(ctx, console, &gatewayv1.HTTPRoute{}, name)
 	}
-	return r.leftoverExposure(ctx, console, func(pgtoolboxv1alpha1.ExposureType) bool { return true })
+	return nil
 }
 
-// observeExposure reads the exposure object's status into ExposureReady,
-// followed by what the console published before a refusal and may still
-// be serving (leftovers, from applyExposure): the message never says an
-// exposure is gone while one may remain.
-func (r *Reconciler) observeExposure(ctx context.Context, console *pgtoolboxv1alpha1.PgToolBoxConsole, leftovers []exposure.Remnant) {
+// observeExposure reads the exposure object's status into ExposureReady.
+func (r *Reconciler) observeExposure(ctx context.Context, console *pgtoolboxv1alpha1.PgToolBoxConsole) {
 	key := client.ObjectKey{Namespace: console.Namespace, Name: console.WorkloadName()}
 	fact := exposure.Fact{Status: metav1.ConditionTrue, Reason: pgtoolboxv1alpha1.ReasonNotRequested, Message: "in-cluster Service only (exposure type clusterIP)"}
 	switch console.Spec.Exposure.TypeOrDefault() {
@@ -1266,7 +1054,7 @@ func (r *Reconciler) observeExposure(ctx context.Context, console *pgtoolboxv1al
 			fact = exposure.HTTPRouteFact(&route)
 		}
 	}
-	setCondition(console, pgtoolboxv1alpha1.ConditionExposureReady, fact.Status, fact.Reason, exposure.WithLeftovers(fact.Message, leftovers))
+	setCondition(console, pgtoolboxv1alpha1.ConditionExposureReady, fact.Status, fact.Reason, fact.Message)
 }
 
 // workloadFacts is what WorkloadReady reads of a Deployment or a

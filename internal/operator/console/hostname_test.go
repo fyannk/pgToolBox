@@ -328,11 +328,9 @@ func TestPauseAllowUnpause(t *testing.T) {
 	}
 }
 
-// TestPausedConsoleWithdrawnRouteMarkedGone: round 17, OPERATOR P3. A
-// Route the console published, withdrawn for a refused hostname while the
-// console is paused, is no longer recorded in publishedExposureKinds once
-// the operator deleted it.
-func TestPausedConsoleWithdrawnRouteMarkedGone(t *testing.T) {
+// TestPausedConsoleWithdrawsRoute: a Route the console published is
+// withdrawn for a refused hostname while the console is paused.
+func TestPausedConsoleWithdrawsRoute(t *testing.T) {
 	t.Parallel()
 	c := &pgtoolboxv1alpha1.PgToolBoxConsole{ObjectMeta: metav1.ObjectMeta{
 		Name: "console", Namespace: "team-a", UID: "u", Generation: 1,
@@ -340,7 +338,6 @@ func TestPausedConsoleWithdrawnRouteMarkedGone(t *testing.T) {
 	}}
 	c.Spec.Exposure.Type, c.Spec.Exposure.Hostname = pgtoolboxv1alpha1.ExposureTypeRoute, "login.corp.example.com"
 	c.Status.URL = "https://login.corp.example.com"
-	c.Status.PublishedExposureKinds = []string{"Route"}
 	published := owned(c, &routev1.Route{ObjectMeta: metav1.ObjectMeta{Name: c.WorkloadName(), Namespace: c.Namespace}})
 	scheme := cnpgScheme(t)
 	if err := routev1.AddToScheme(scheme); err != nil {
@@ -354,11 +351,8 @@ func TestPausedConsoleWithdrawnRouteMarkedGone(t *testing.T) {
 		AllowedHostSuffixes:      []string{"apps.example.com"},
 		Features:                 Features{Routes: discovery.Result{GVK: routev1.GroupVersion.WithKind("Route"), State: discovery.Available}},
 	}
-	got := reconcileConsole(t, r, cl, c)
+	reconcileConsole(t, r, cl, c)
 	if err := cl.Get(context.Background(), client.ObjectKeyFromObject(published), &routev1.Route{}); !apierrors.IsNotFound(err) {
 		t.Fatalf("the Route under a refused hostname is still there (get: %v)", err)
-	}
-	if got.Status.PublishedExposureKinds != nil {
-		t.Errorf("publishedExposureKinds = %q once the Route is withdrawn, want none", got.Status.PublishedExposureKinds)
 	}
 }

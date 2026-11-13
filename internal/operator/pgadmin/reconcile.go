@@ -102,8 +102,7 @@ func (r *Reconciler) reconcile(ctx context.Context, p *pgtoolboxv1alpha1.PgAdmin
 	if err != nil {
 		return false, err
 	}
-	leftovers, err := r.applyChildren(ctx, p, &in)
-	if err != nil {
+	if err := r.applyChildren(ctx, p, &in); err != nil {
 		return false, err
 	}
 	if err := r.applyAccess(ctx, p, remote, result.Document); err != nil {
@@ -113,7 +112,7 @@ func (r *Reconciler) reconcile(ctx context.Context, p *pgtoolboxv1alpha1.PgAdmin
 	if err != nil {
 		return false, err
 	}
-	r.reconcileExposure(ctx, p, leftovers)
+	r.reconcileExposure(ctx, p)
 	r.reconcileEgress(p, &in, ready)
 	if err := r.reconcileRegistration(ctx, p, &in, result, ready); err != nil {
 		return false, err
@@ -433,20 +432,19 @@ func (r *Reconciler) apiServerEndpoints(ctx context.Context) apiServerEndpoints 
 	return out
 }
 
-// applyChildren writes every child except the Deployment and the Jobs. It
-// returns the exposure leftovers applyExposure found.
-func (r *Reconciler) applyChildren(ctx context.Context, p *pgtoolboxv1alpha1.PgAdmin, in *buildInputs) ([]exposure.Remnant, error) {
+// applyChildren writes every child except the Deployment and the Jobs.
+func (r *Reconciler) applyChildren(ctx context.Context, p *pgtoolboxv1alpha1.PgAdmin, in *buildInputs) error {
 	applier := r.applier()
 	n := namesOf(p)
 	if p.Spec.ConfigDatabase == nil {
 		pvc, err := r.settingsVolume(ctx, p)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		// The settings volume may be adopted by its labels (retainPolicy
 		// Retain leaves it without an owner); nothing else ever is.
 		if err := applier.ApplyAdopting(ctx, pvc); err != nil {
-			return nil, r.notOwned(p, err)
+			return r.notOwned(p, err)
 		}
 	}
 	desired := []client.Object{
@@ -458,27 +456,27 @@ func (r *Reconciler) applyChildren(ctx context.Context, p *pgtoolboxv1alpha1.PgA
 	}
 	for _, obj := range desired {
 		if err := applier.Apply(ctx, obj); err != nil {
-			return nil, r.notOwned(p, err)
+			return r.notOwned(p, err)
 		}
 	}
 	if err := r.ensureGeneratedSecret(ctx, p, n.bootstrap, bootstrapKey, 32); err != nil {
-		return nil, r.notOwned(p, err)
+		return r.notOwned(p, err)
 	}
 	if p.Spec.Auth.OpenShiftOAuthProxy != nil {
 		// oauth-proxy wants a 16, 24 or 32-byte cookie secret.
 		if err := r.ensureGeneratedSecret(ctx, p, n.proxyCookie, "cookie-secret", 24); err != nil {
-			return nil, r.notOwned(p, err)
+			return r.notOwned(p, err)
 		}
 	} else if err := r.deleteIfOwned(ctx, p, &corev1.Secret{}, n.proxyCookie); err != nil {
-		return nil, err
+		return err
 	}
 
 	if policy := buildNetworkPolicy(p, *in); policy != nil {
 		if err := applier.Apply(ctx, policy); err != nil {
-			return nil, r.notOwned(p, err)
+			return r.notOwned(p, err)
 		}
 	} else if err := r.deleteIfOwned(ctx, p, &networkingv1.NetworkPolicy{}, n.base); err != nil {
-		return nil, err
+		return err
 	}
 	return r.applyExposure(ctx, p)
 }
@@ -579,121 +577,61 @@ func (r *Reconciler) notOwned(p *pgtoolboxv1alpha1.PgAdmin, err error) error {
 	return reconcile.Stall(pgtoolboxv1alpha1.ReasonResourceNotOwned, "%s", notOwned.Error())
 }
 
-// withdrawExposure deletes every exposure object this PgAdmin owns. It
-// returns the status sentences of those it could not (leftoverExposure).
-func (r *Reconciler) withdrawExposure(ctx context.Context, p *pgtoolboxv1alpha1.PgAdmin) ([]exposure.Remnant, error) {
+// withdrawExposure deletes every exposure object this PgAdmin owns.
+func (r *Reconciler) withdrawExposure(ctx context.Context, p *pgtoolboxv1alpha1.PgAdmin) error {
 	name := namesOf(p).base
 	if err := r.deleteIfOwned(ctx, p, &networkingv1.Ingress{}, name); err != nil {
-		return nil, err
+		return err
 	}
 	if r.Features.In(p.Namespace).Routes.Usable() {
 		if err := r.deleteIfOwned(ctx, p, &routev1.Route{}, name); err != nil {
-			return nil, err
+			return err
 		}
-		exposure.MarkGone(&p.Status.PublishedExposureKinds, "Route")
 	}
 	if r.Features.In(p.Namespace).Gateways.Usable() {
-		if err := r.deleteIfOwned(ctx, p, &gatewayv1.HTTPRoute{}, name); err != nil {
-			return nil, err
-		}
-		exposure.MarkGone(&p.Status.PublishedExposureKinds, "HTTPRoute")
+		return r.deleteIfOwned(ctx, p, &gatewayv1.HTTPRoute{}, name)
 	}
-	return r.leftoverExposure(ctx, p, func(pgtoolboxv1alpha1.ExposureType) bool { return true })
+	return nil
 }
 
 // applyExposure writes the exposure object of the requested type and
-// deletes the others this PgAdmin owns. It returns, for a kind refused in
-// the PgAdmin's namespace, what it published before and may still be
-// serving (leftoverExposure).
-func (r *Reconciler) applyExposure(ctx context.Context, p *pgtoolboxv1alpha1.PgAdmin) ([]exposure.Remnant, error) {
+// deletes the others this PgAdmin owns. One published before the operator
+// was refused its kind in the namespace is no longer seen: it is deleted
+// by hand.
+func (r *Reconciler) applyExposure(ctx context.Context, p *pgtoolboxv1alpha1.PgAdmin) error {
 	n := namesOf(p)
 	kind := p.Spec.Exposure.TypeOrDefault()
 	applier := r.applier()
 	if kind == pgtoolboxv1alpha1.ExposureTypeIngress {
 		if err := applier.Apply(ctx, buildIngress(p)); err != nil {
-			return nil, r.notOwned(p, err)
+			return r.notOwned(p, err)
 		}
 	} else if err := r.deleteIfOwned(ctx, p, &networkingv1.Ingress{}, n.base); err != nil {
-		return nil, err
+		return err
 	}
 	if r.Features.In(p.Namespace).Routes.Usable() {
 		if kind == pgtoolboxv1alpha1.ExposureTypeRoute {
-			// Recorded before the write: one that fails may still have
-			// published it.
-			exposure.MarkPublished(&p.Status.PublishedExposureKinds, "Route")
 			if err := applier.Apply(ctx, buildRoute(p)); err != nil {
-				return nil, r.notOwned(p, err)
+				return r.notOwned(p, err)
 			}
-		} else {
-			if err := r.deleteIfOwned(ctx, p, &routev1.Route{}, n.base); err != nil {
-				return nil, err
-			}
-			exposure.MarkGone(&p.Status.PublishedExposureKinds, "Route")
+		} else if err := r.deleteIfOwned(ctx, p, &routev1.Route{}, n.base); err != nil {
+			return err
 		}
 	}
 	if r.Features.In(p.Namespace).Gateways.Usable() {
 		if kind == pgtoolboxv1alpha1.ExposureTypeGateway {
-			// Recorded before the write: one that fails may still have
-			// published it.
-			exposure.MarkPublished(&p.Status.PublishedExposureKinds, "HTTPRoute")
 			if err := applier.Apply(ctx, buildHTTPRoute(p)); err != nil {
-				return nil, r.notOwned(p, err)
+				return r.notOwned(p, err)
 			}
-		} else {
-			if err := r.deleteIfOwned(ctx, p, &gatewayv1.HTTPRoute{}, n.base); err != nil {
-				return nil, err
-			}
-			exposure.MarkGone(&p.Status.PublishedExposureKinds, "HTTPRoute")
+		} else if err := r.deleteIfOwned(ctx, p, &gatewayv1.HTTPRoute{}, n.base); err != nil {
+			return err
 		}
 	}
-	return r.leftoverExposure(ctx, p, func(t pgtoolboxv1alpha1.ExposureType) bool { return t != kind })
+	return nil
 }
 
-// leftoverExposure looks, for each of Route and HTTPRoute refused to the
-// operator in the PgAdmin's namespace (while the cluster serves it), for
-// the one the PgAdmin may have published before the refusal: the cache
-// holds none of that kind there, so one uncached Get each
-// (exposure.Leftover), deleting it when remove says so for its type. It
-// returns the status sentences of those that remain or may remain.
-func (r *Reconciler) leftoverExposure(ctx context.Context, p *pgtoolboxv1alpha1.PgAdmin, remove func(pgtoolboxv1alpha1.ExposureType) bool) ([]exposure.Remnant, error) {
-	here := r.Features.In(p.Namespace)
-	var leftovers []exposure.Remnant
-	for _, k := range []struct {
-		api    discovery.Result
-		typ    pgtoolboxv1alpha1.ExposureType
-		object client.Object
-		kind   string
-	}{
-		{here.Routes, pgtoolboxv1alpha1.ExposureTypeRoute, &routev1.Route{}, "Route"},
-		{here.Gateways, pgtoolboxv1alpha1.ExposureTypeGateway, &gatewayv1.HTTPRoute{}, "HTTPRoute"},
-	} {
-		if k.api.State == discovery.NotInstalled {
-			// Not served: nothing of the kind can remain.
-			exposure.MarkGone(&p.Status.PublishedExposureKinds, k.kind)
-		}
-		if k.api.State != discovery.Forbidden {
-			continue
-		}
-		publishedBefore := exposure.MayHavePublished(p.Spec.Exposure.TypeOrDefault() == k.typ, p.Status.PublishedExposureKinds, k.kind)
-		leftover, err := exposure.Leftover(ctx, r.APIReader, r.Client, p, k.object, k.kind, namesOf(p).base, remove(k.typ), publishedBefore)
-		if err != nil {
-			return nil, err
-		}
-		if leftover.Gone {
-			exposure.MarkGone(&p.Status.PublishedExposureKinds, k.kind)
-		}
-		if leftover.Sentence != "" {
-			leftovers = append(leftovers, leftover)
-		}
-	}
-	return leftovers, nil
-}
-
-// reconcileExposure reads the exposure object's status into ExposureReady,
-// followed by what the PgAdmin published before a refusal and may still be
-// serving (leftovers, from applyExposure): the message never says an
-// exposure is gone while one may remain.
-func (r *Reconciler) reconcileExposure(ctx context.Context, p *pgtoolboxv1alpha1.PgAdmin, leftovers []exposure.Remnant) {
+// reconcileExposure reads the exposure object's status into ExposureReady.
+func (r *Reconciler) reconcileExposure(ctx context.Context, p *pgtoolboxv1alpha1.PgAdmin) {
 	p.Status.URL = exposureURL(p)
 	key := client.ObjectKey{Namespace: p.Namespace, Name: namesOf(p).base}
 	fact := exposureFact{Status: metav1.ConditionTrue, Reason: pgtoolboxv1alpha1.ReasonNotRequested, Message: "in-cluster Service only (exposure type clusterIP)"}
@@ -730,7 +668,7 @@ func (r *Reconciler) reconcileExposure(ctx context.Context, p *pgtoolboxv1alpha1
 			fact = httpRouteFact(&route)
 		}
 	}
-	set(p, pgtoolboxv1alpha1.ConditionExposureReady, fact.Status, fact.Reason, "%s", exposure.WithLeftovers(fact.Message, leftovers))
+	set(p, pgtoolboxv1alpha1.ConditionExposureReady, fact.Status, fact.Reason, "%s", fact.Message)
 }
 
 // reconcileEgress states, without gating anything, whether the rendered
@@ -1089,12 +1027,11 @@ func (r *Reconciler) checkHostname(ctx context.Context, p *pgtoolboxv1alpha1.PgA
 		exposure.ClearHostnameRefusal(&p.Status.Conditions, p.Generation)
 		return nil
 	}
-	leftovers, err := r.withdrawExposure(ctx, p)
-	if err != nil {
+	if err := r.withdrawExposure(ctx, p); err != nil {
 		return err
 	}
 	p.Status.URL = ""
-	set(p, pgtoolboxv1alpha1.ConditionExposureReady, metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonHostnameNotAllowed, "%s", exposure.WithLeftovers(exposure.WithdrawnMessage, leftovers))
+	set(p, pgtoolboxv1alpha1.ConditionExposureReady, metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonHostnameNotAllowed, "%s", exposure.WithdrawnMessage)
 	set(p, pgtoolboxv1alpha1.ConditionConfigurationValid, metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonHostnameNotAllowed, "%s", message)
 	return reconcile.Stall(pgtoolboxv1alpha1.ReasonHostnameNotAllowed, "%s", message)
 }

@@ -43,10 +43,6 @@ const (
 	ReasonInstanceCABundleFull Reason = "InstanceCABundleFull"
 	// ReasonExposureOpen: ExposureConfined=False, the console is exposed
 	// without its ingress NetworkPolicy, so any Pod can reach its port.
-	// ExposureConfined=Unknown with this reason: the only exposure object
-	// is a Route or HTTPRoute the console published before the operator
-	// was refused its kind, which the operator may not read either, so it
-	// may be gone or still serve unconfined.
 	ReasonExposureOpen Reason = "ExposureOpen"
 	// ReasonExposurePeersBroad: ExposureConfined=False, a networkPolicy.from
 	// peer admits (nearly) every namespace (a namespaceSelector that pins
@@ -79,10 +75,12 @@ const (
 	// HostnameNotAllowed: its Ingress, Route or HTTPRoute is withdrawn,
 	// and the workload and the policy stay as they were.
 	ReasonExposurePolicyKept Reason = "ExposurePolicyKept"
-	// ReasonExposurePolicyInvalid: ConfigurationValid=False, the API
-	// server refused the ingress NetworkPolicy rendered from
-	// spec.exposure.networkPolicy (a selector or block the CRD could not
-	// check), or an admission policy or webhook denied it. Looked at again every five minutes and on every spec change.
+	// ReasonExposurePolicyInvalid: ConfigurationValid=False and
+	// ExposureConfined=False, the API server refused the ingress
+	// NetworkPolicy rendered from spec.exposure.networkPolicy (a selector
+	// or block the CRD could not check), or an admission policy or webhook
+	// denied it. The reconcile stalls before anything new is published.
+	// Looked at again every five minutes and on every spec change.
 	ReasonExposurePolicyInvalid Reason = "ExposurePolicyInvalid"
 )
 
@@ -96,8 +94,8 @@ const (
 // admits (nearly) everyone, ExposurePolicyBypassed when another
 // NetworkPolicy does, ExposureTrustUnverified while the peers could not be
 // checked yet or a widened from is held back, ExposurePolicyKept while a
-// policy no longer rendered is kept for a Pod that may trust every peer.
-// Removed when nothing is published and no policy is kept, the hostname
+// policy no longer rendered is kept for a Pod that may trust every peer,
+// ExposurePolicyInvalid while the API server refuses the policy. Removed when nothing is published and no policy is kept, the hostname
 // stall included. The
 // message says which peers the console believes about X-Forwarded-For.
 // Whether the CNI enforces NetworkPolicies cannot be observed: True says
@@ -1011,15 +1009,6 @@ type PgToolBoxConsoleStatus struct {
 	// operator does, how many Clusters it covers and which are missing.
 	// +optional
 	InstanceCABundle *PgToolBoxConsoleInstanceCABundleStatus `json:"instanceCABundle,omitempty"`
-
-	// The exposure kinds (Route, HTTPRoute) the operator published for
-	// this console and has not seen gone since: where it is later refused
-	// one of them, it reports what may remain of it.
-	// +kubebuilder:validation:MaxItems=2
-	// +kubebuilder:validation:items:Enum=Route;HTTPRoute
-	// +listType=set
-	// +optional
-	PublishedExposureKinds []string `json:"publishedExposureKinds,omitempty"`
 
 	// Conditions: Ready (summary), ConfigurationValid, WorkloadReady,
 	// ExposureReady, Progressing, Stalled and the advisory

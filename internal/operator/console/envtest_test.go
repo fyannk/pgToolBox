@@ -764,9 +764,9 @@ func TestPgToolBoxConsoleReconcilerOnEnvtest(t *testing.T) {
 		}
 		stalled := s.console(ctx, t, "console")
 		assertCondition(t, stalled, pgtoolboxv1alpha1.ConditionConfigurationValid, metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonExposurePolicyInvalid)
-		// Nothing changed: the earlier policy is in force, and
-		// ExposureConfined still describes it.
-		assertCondition(t, stalled, pgtoolboxv1alpha1.ConditionExposureConfined, metav1.ConditionTrue, pgtoolboxv1alpha1.ReasonAsExpected)
+		// The earlier policy stays in force; ExposureConfined names the
+		// refusal.
+		assertCondition(t, stalled, pgtoolboxv1alpha1.ConditionExposureConfined, metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonExposurePolicyInvalid)
 		if n := policyPeers(); n != 1 {
 			t.Fatalf("the refused spec changed the policy in force to %d peers", n)
 		}
@@ -867,16 +867,15 @@ func TestPgToolBoxConsoleReconcilerOnEnvtest(t *testing.T) {
 		console.Spec.Exposure.NetworkPolicy = &pgtoolboxv1alpha1.PgToolBoxConsoleExposurePolicySpec{From: refusedFrom}
 		must(t, s.admin.Create(ctx, console))
 		s.reconcile(ctx, t, "refused")
-		// The dry run refuses it before the Ingress is published.
+		// The policy's apply comes first: refused, the Ingress is not
+		// published.
 		first := s.console(ctx, t, "refused")
 		assertCondition(t, first, pgtoolboxv1alpha1.ConditionConfigurationValid, metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonExposurePolicyInvalid)
+		assertCondition(t, first, pgtoolboxv1alpha1.ConditionExposureConfined, metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonExposurePolicyInvalid)
 		s.absent(ctx, t, console.WorkloadName(), &networkingv1.Ingress{})
-		if meta.FindStatusCondition(first.Status.Conditions, pgtoolboxv1alpha1.ConditionExposureConfined) != nil {
-			t.Fatal("ExposureConfined with nothing published")
-		}
 
 		// Published without a policy, then refused: ExposureConfined says
-		// that no policy is in force.
+		// the policy was refused.
 		first.Spec.Exposure.NetworkPolicy = nil
 		must(t, s.admin.Update(ctx, first))
 		s.reconcile(ctx, t, "refused")
@@ -888,7 +887,7 @@ func TestPgToolBoxConsoleReconcilerOnEnvtest(t *testing.T) {
 		s.reconcile(ctx, t, "refused")
 		stalled := s.console(ctx, t, "refused")
 		assertCondition(t, stalled, pgtoolboxv1alpha1.ConditionConfigurationValid, metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonExposurePolicyInvalid)
-		assertCondition(t, stalled, pgtoolboxv1alpha1.ConditionExposureConfined, metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonExposureOpen)
+		assertCondition(t, stalled, pgtoolboxv1alpha1.ConditionExposureConfined, metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonExposurePolicyInvalid)
 		if message := meta.FindStatusCondition(stalled.Status.Conditions, pgtoolboxv1alpha1.ConditionExposureConfined).Message; !strings.Contains(message, "refused") {
 			t.Fatalf("ExposureConfined message %q does not say the policy was refused", message)
 		}
@@ -1114,7 +1113,7 @@ func TestPgToolBoxConsoleReconcilerOnEnvtest(t *testing.T) {
 		if message := meta.FindStatusCondition(stalled.Status.Conditions, pgtoolboxv1alpha1.ConditionConfigurationValid).Message; !strings.Contains(message, "this platform refuses") {
 			t.Fatalf("ConfigurationValid message %q does not carry the denial", message)
 		}
-		// The dry run refused it: nothing was published.
+		// The policy was refused before the exposure: nothing was published.
 		s.absent(ctx, t, console.WorkloadName(), &networkingv1.Ingress{})
 		s.absent(ctx, t, denied, &networkingv1.NetworkPolicy{})
 		must(t, s.admin.Delete(ctx, stalled))
