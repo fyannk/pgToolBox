@@ -651,7 +651,9 @@ spec:
     webhookPath: /validate-cnpg-cluster-delete
     admissionReviewVersions: [v1]
     sideEffects: None
-    failurePolicy: Fail
+    # Ignore, not the policy's Fail: unscoped, a closed guard would refuse
+    # every Cluster delete in the install's namespaces while the operator is down.
+    failurePolicy: Ignore
     timeoutSeconds: 5
     rules:
     - apiGroups: [postgresql.cnpg.io]

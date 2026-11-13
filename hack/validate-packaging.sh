@@ -339,8 +339,9 @@ for path, path_name in (("config/components/admission/admission_policy.yaml", "/
     hooks = [w for w in csv["spec"].get("webhookdefinitions", []) if w.get("webhookPath") == path_name]
     if len(hooks) != 1 or hooks[0]["rules"] != policy["spec"]["matchConstraints"]["resourceRules"]:
         problems.append(f"OLM webhook {path_name}: rules differ from {path}'s matchConstraints")
-    elif hooks[0].get("failurePolicy") != policy["spec"]["failurePolicy"]:
-        problems.append(f"OLM webhook {path_name}: failurePolicy differs from {path}")
+    # The delete guard fails open on OLM: it cannot be scoped to the drills role.
+    elif hooks[0].get("failurePolicy") != ("Ignore" if path_name == "/validate-cnpg-cluster-delete" else policy["spec"]["failurePolicy"]):
+        problems.append(f"OLM webhook {path_name}: unexpected failurePolicy (resources: the policy's; delete guard: Ignore)")
 
 rules = {
     "kustomize (config/rbac/role.yaml)": load("config/rbac/role.yaml")["rules"],

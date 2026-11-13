@@ -339,6 +339,7 @@ person, and an administrator of the Cluster's namespace.
 - **OLM**: a bundle cannot carry an admission policy, so the operator enforces
   the same guard as a validating webhook (see [OLM](../install/olm.md#admission-rules)),
   called for every `Cluster` delete: OLM's webhooks take no `matchConditions`.
+  It fails open: while no operator replica answers, the guard is not applied.
 - **pgtools chart**: it is cluster-scoped, which a namespace admin cannot
   install, so it is **opt-in**: a cluster admin sets
   `console.restoreDrills.admissionPolicy.create: true` (or applies the rendered

@@ -49,20 +49,22 @@ issues, mounts and rotates their serving certificate:
   [restore-drill delete guard](../console/restore-drills.md#the-delete-guard).
 
 Both ask the API server, with a `SubjectAccessReview`, what the requesting user
-may do, as the policies' authorizer checks do, and both fail closed
-(`failurePolicy: Fail`, 5-second timeout). The allow-lists come from the
+may do, as the policies' authorizer checks do, with a 5-second timeout. The
+resources webhook fails closed (`failurePolicy: Fail`); the delete guard fails
+open (`failurePolicy: Ignore`, see below). The allow-lists come from the
 operator's configuration (`ADMISSION_IMAGE_OVERRIDE_USERS`, `_GROUPS`,
 `ADMISSION_WORKLOAD_IDENTITY_USERS`, `_GROUPS`; default: the group
 `system:masters`), set through the `Subscription`'s `spec.config.env` or the
 [operator ConfigMap](../operator/index.md#configuration).
 
-:::warning While the operator is down, the guarded writes fail
-OLM's webhook definitions take no `matchConditions`, so the delete guard is called
-for **every** `Cluster` delete in the namespaces of the install, not only for
-ServiceAccounts holding the drills role (it admits the others without a review,
-but it must answer). With no operator replica ready, deleting a CNPG `Cluster`
-and creating or updating the three pgToolBox kinds is refused until it is back.
-The bundle runs two replicas and a PodDisruptionBudget, and every replica serves the webhook.
+:::warning While the operator is down
+With no operator replica ready, creating or updating the three pgToolBox kinds is
+refused until it is back. The delete guard fails open instead: OLM's webhook
+definitions take no `matchConditions`, so it is called for **every** `Cluster`
+delete in the namespaces of the install, and failing closed would block those of
+people too. While no replica answers, a ServiceAccount holding the drills role can
+delete a `Cluster` that is not a drill's target. The bundle runs two replicas and a
+PodDisruptionBudget, and every replica serves the webhook.
 :::
 
 Do not also apply the chart's policies (`config/components/admission`,
