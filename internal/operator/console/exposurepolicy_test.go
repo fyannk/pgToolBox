@@ -18,14 +18,11 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 
-	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/yaml"
 
 	pgtoolboxv1alpha1 "github.com/fyannk/pgToolBox/api/v1alpha1"
@@ -113,7 +110,7 @@ func TestExposurePolicyNotRendered(t *testing.T) {
 		{name: "route turned off", typ: pgtoolboxv1alpha1.ExposureTypeRoute, exposed: true, policy: &pgtoolboxv1alpha1.PgToolBoxConsoleExposurePolicySpec{Enabled: new(false)}, fact: "ExposureOpen", message: "networkPolicy.enabled is false"},
 		{name: "ingress without from", typ: pgtoolboxv1alpha1.ExposureTypeIngress, exposed: true, fact: "ExposureOpen", message: "networkPolicy.from is not set"},
 		{name: "gateway without from", typ: pgtoolboxv1alpha1.ExposureTypeGateway, exposed: true, policy: &pgtoolboxv1alpha1.PgToolBoxConsoleExposurePolicySpec{}, fact: "ExposureOpen", message: "X-Forwarded-For is ignored"},
-		{name: "route confined", typ: pgtoolboxv1alpha1.ExposureTypeRoute, exposed: true, fact: "AsExpected", message: "from peers in 0.0.0.0/0,::/0"},
+		{name: "route confined", typ: pgtoolboxv1alpha1.ExposureTypeRoute, exposed: true, fact: "AsExpected", message: "X-Forwarded-For is ignored: trustedProxy.cidrs is not set"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -124,7 +121,7 @@ func TestExposurePolicyNotRendered(t *testing.T) {
 			if p := buildExposureNetworkPolicy(c, tc.exposed); (p != nil) != (tc.fact == "AsExpected") {
 				t.Errorf("NetworkPolicy rendered = %v", p != nil)
 			}
-			fact := exposureConfinedFact(c, tc.exposed, confinement{})
+			fact := exposureConfinedFact(c, tc.exposed)
 			switch {
 			case tc.fact == "" && fact != nil:
 				t.Errorf("ExposureConfined = %+v, want none", fact)
@@ -217,292 +214,47 @@ func TestBroadPeer(t *testing.T) {
 	}
 }
 
-// TestPolicyBypass: another NetworkPolicy that selects the console Pods
-// and admits, to the console port, a peer the exposure does not list,
-// defeats the confinement (NetworkPolicies add up); one that selects other
-// Pods, other ports or only egress, or lists the exposure's own peers,
-// does not.
-func TestPolicyBypass(t *testing.T) {
-	t.Parallel()
-	podLabels := map[string]string{"app.kubernetes.io/name": "pgtoolbox-console", "app.kubernetes.io/instance": "console", "team": "a"}
-	tcp, udp := corev1.ProtocolTCP, corev1.ProtocolUDP
-	port := func(p intstr.IntOrString, end *int32, proto *corev1.Protocol) networkingv1.NetworkPolicyPort {
-		return networkingv1.NetworkPolicyPort{Port: &p, EndPort: end, Protocol: proto}
-	}
-	other := networkingv1.NetworkPolicyPeer{PodSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"role": "debug"}}}
-	policy := func(name string, selector metav1.LabelSelector, types []networkingv1.PolicyType, rules ...networkingv1.NetworkPolicyIngressRule) networkingv1.NetworkPolicy {
-		return networkingv1.NetworkPolicy{
-			ObjectMeta: metav1.ObjectMeta{Name: name},
-			Spec:       networkingv1.NetworkPolicySpec{PodSelector: selector, PolicyTypes: types, Ingress: rules},
-		}
-	}
-	every := metav1.LabelSelector{}
-	ingress := []networkingv1.PolicyType{networkingv1.PolicyTypeIngress}
-	cases := []struct {
-		name     string
-		policies []networkingv1.NetworkPolicy
-		bypass   bool
-	}{
-		{name: "none"},
-		{name: "our own policy is skipped", policies: []networkingv1.NetworkPolicy{policy("console-ingress", every, ingress, networkingv1.NetworkPolicyIngressRule{})}},
-		{name: "allow from the same namespace", policies: []networkingv1.NetworkPolicy{policy("allow-same-ns", every, ingress, networkingv1.NetworkPolicyIngressRule{From: []networkingv1.NetworkPolicyPeer{{PodSelector: &every}}})}, bypass: true},
-		{name: "allow everything (no from), no policyTypes", policies: []networkingv1.NetworkPolicy{policy("allow-all", every, nil, networkingv1.NetworkPolicyIngressRule{})}, bypass: true},
-		{name: "selects the console by a propagated label", policies: []networkingv1.NetworkPolicy{policy("team", metav1.LabelSelector{MatchLabels: map[string]string{"team": "a"}}, ingress, networkingv1.NetworkPolicyIngressRule{From: []networkingv1.NetworkPolicyPeer{other}})}, bypass: true},
-		{name: "selects other pods", policies: []networkingv1.NetworkPolicy{policy("db", metav1.LabelSelector{MatchLabels: map[string]string{"cnpg.io/cluster": "pg"}}, ingress, networkingv1.NetworkPolicyIngressRule{})}},
-		{name: "egress only", policies: []networkingv1.NetworkPolicy{policy("egress", every, []networkingv1.PolicyType{networkingv1.PolicyTypeEgress})}},
-		{name: "deny all ingress (no rule)", policies: []networkingv1.NetworkPolicy{policy("deny", every, ingress)}},
-		{name: "the exposure's own peer, elsewhere", policies: []networkingv1.NetworkPolicy{policy("nginx", every, ingress, networkingv1.NetworkPolicyIngressRule{From: []networkingv1.NetworkPolicyPeer{nginxPeer}})}},
-		{name: "the probe port only", policies: []networkingv1.NetworkPolicy{policy("probes", every, ingress, networkingv1.NetworkPolicyIngressRule{Ports: []networkingv1.NetworkPolicyPort{port(intstr.FromString("probes"), nil, nil)}})}},
-		{name: "another number", policies: []networkingv1.NetworkPolicy{policy("n", every, ingress, networkingv1.NetworkPolicyIngressRule{Ports: []networkingv1.NetworkPolicyPort{port(intstr.FromInt32(9090), nil, &tcp)}})}},
-		{name: "the http port over UDP", policies: []networkingv1.NetworkPolicy{policy("udp", every, ingress, networkingv1.NetworkPolicyIngressRule{Ports: []networkingv1.NetworkPolicyPort{port(intstr.FromString("http"), nil, &udp)}})}},
-		{name: "the http port by name", policies: []networkingv1.NetworkPolicy{policy("name", every, ingress, networkingv1.NetworkPolicyIngressRule{From: []networkingv1.NetworkPolicyPeer{other}, Ports: []networkingv1.NetworkPolicyPort{port(intstr.FromString("http"), nil, nil)}})}, bypass: true},
-		{name: "the http port by number", policies: []networkingv1.NetworkPolicy{policy("num", every, ingress, networkingv1.NetworkPolicyIngressRule{From: []networkingv1.NetworkPolicyPeer{other}, Ports: []networkingv1.NetworkPolicyPort{port(intstr.FromInt32(httpPort), nil, &tcp)}})}, bypass: true},
-		{name: "the http port in a range", policies: []networkingv1.NetworkPolicy{policy("range", every, ingress, networkingv1.NetworkPolicyIngressRule{From: []networkingv1.NetworkPolicyPeer{other}, Ports: []networkingv1.NetworkPolicyPort{port(intstr.FromInt32(1024), new(int32(65535)), nil)}})}, bypass: true},
-		{name: "a protocol-only port", policies: []networkingv1.NetworkPolicy{policy("tcp", every, ingress, networkingv1.NetworkPolicyIngressRule{From: []networkingv1.NetworkPolicyPeer{other}, Ports: []networkingv1.NetworkPolicyPort{{Protocol: &tcp}}})}, bypass: true},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			got := policyBypass(tc.policies, "console-ingress", []map[string]string{podLabels}, []networkingv1.NetworkPolicyPeer{nginxPeer})
-			if (got != "") != tc.bypass {
-				t.Errorf("policyBypass = %q, want bypass %v", got, tc.bypass)
-			}
-		})
-	}
-}
-
-// TestExposureConfinedReasons: a broad peer and another NetworkPolicy each
-// turn ExposureConfined False with their own reason, and the any-peer
-// trust off.
+// TestExposureConfinedReasons: a broad peer turns ExposureConfined False,
+// and the message never claims a trusted peer without trustedProxy.cidrs.
 func TestExposureConfinedReasons(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		name   string
-		from   []pgtoolboxv1alpha1.PgToolBoxConsolePolicyPeer
-		bypass string
-		broad  string
-		status metav1.ConditionStatus
-		reason pgtoolboxv1alpha1.Reason
+		name    string
+		from    []pgtoolboxv1alpha1.PgToolBoxConsolePolicyPeer
+		cidrs   []string
+		status  metav1.ConditionStatus
+		reason  pgtoolboxv1alpha1.Reason
+		message string
 	}{
-		{"confined", []pgtoolboxv1alpha1.PgToolBoxConsolePolicyPeer{nginxSpecPeer}, "", "", metav1.ConditionTrue, pgtoolboxv1alpha1.ReasonAsExpected},
-		{"broad", []pgtoolboxv1alpha1.PgToolBoxConsolePolicyPeer{{NamespaceSelector: &pgtoolboxv1alpha1.PgToolBoxConsoleLabelSelector{}}}, "", "", metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonExposurePeersBroad},
-		{"broad by a Pod's address", []pgtoolboxv1alpha1.PgToolBoxConsolePolicyPeer{nginxSpecPeer}, "", "peer 0 has ipBlock 10.244.0.0/16, which holds the address of console Pod p", metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonExposurePeersBroad},
-		{"bypassed", []pgtoolboxv1alpha1.PgToolBoxConsolePolicyPeer{nginxSpecPeer}, "NetworkPolicy allow-all admits every source to the console port", "", metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonExposurePolicyBypassed},
+		{"confined, header ignored", []pgtoolboxv1alpha1.PgToolBoxConsolePolicyPeer{nginxSpecPeer}, nil, metav1.ConditionTrue, pgtoolboxv1alpha1.ReasonAsExpected, "X-Forwarded-For is ignored: trustedProxy.cidrs is not set"},
+		{"confined, cidrs set", []pgtoolboxv1alpha1.PgToolBoxConsolePolicyPeer{nginxSpecPeer}, []string{"10.1.0.0/16"}, metav1.ConditionTrue, pgtoolboxv1alpha1.ReasonAsExpected, "from peers in 10.1.0.0/16"},
+		{"broad", []pgtoolboxv1alpha1.PgToolBoxConsolePolicyPeer{{NamespaceSelector: &pgtoolboxv1alpha1.PgToolBoxConsoleLabelSelector{}}}, nil, metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonExposurePeersBroad, "X-Forwarded-For is ignored"},
+		{"open", nil, nil, metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonExposureOpen, "X-Forwarded-For is ignored"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			c := &pgtoolboxv1alpha1.PgToolBoxConsole{ObjectMeta: metav1.ObjectMeta{Name: "console", Namespace: "team-a"}}
 			c.Spec.Exposure.Type, c.Spec.Exposure.Hostname = pgtoolboxv1alpha1.ExposureTypeIngress, "console.example"
-			c.Spec.Exposure.NetworkPolicy = &pgtoolboxv1alpha1.PgToolBoxConsoleExposurePolicySpec{From: tc.from}
-			fact := exposureConfinedFact(c, true, confinement{Bypass: tc.bypass, Broad: tc.broad})
+			if tc.from != nil {
+				c.Spec.Exposure.NetworkPolicy = &pgtoolboxv1alpha1.PgToolBoxConsoleExposurePolicySpec{From: tc.from}
+			}
+			if tc.cidrs != nil {
+				c.Spec.Exposure.TrustedProxy = &pgtoolboxv1alpha1.PgToolBoxConsoleTrustedProxySpec{CIDRs: tc.cidrs}
+			}
+			fact := exposureConfinedFact(c, true)
 			if fact == nil || fact.Status != tc.status || fact.Reason != tc.reason {
 				t.Fatalf("ExposureConfined = %+v, want %s/%s", fact, tc.status, tc.reason)
 			}
-			trusted := strings.Contains(fact.Message, "from peers in 0.0.0.0/0,::/0")
-			if trusted != (tc.status == metav1.ConditionTrue) {
-				t.Errorf("message %q: every peer trusted = %v", fact.Message, trusted)
+			if !strings.Contains(fact.Message, tc.message) {
+				t.Errorf("message %q does not say %q", fact.Message, tc.message)
 			}
-			if tc.bypass != "" && !strings.Contains(fact.Message, tc.bypass) {
-				t.Errorf("message %q does not name the other policy", fact.Message)
-			}
-		})
-	}
-}
-
-// TestRolloutComplete: the policy is withdrawn only after the rollout.
-func TestRolloutComplete(t *testing.T) {
-	t.Parallel()
-	done := workloadFacts{Kind: "StatefulSet", Generation: 3, ObservedGeneration: 3, Desired: 2, Replicas: 2, Updated: 2, Available: 2}
-	cases := []struct {
-		name   string
-		mutate func(*workloadFacts)
-		want   bool
-	}{
-		{"complete", func(*workloadFacts) {}, true},
-		{"generation not seen", func(w *workloadFacts) { w.ObservedGeneration = 2 }, false},
-		{"an old pod left", func(w *workloadFacts) { w.Replicas = 3 }, false},
-		{"one not updated", func(w *workloadFacts) { w.Updated = 1 }, false},
-		{"one not available", func(w *workloadFacts) { w.Available = 1 }, false},
-		{"revisions differ", func(w *workloadFacts) { w.RevisionsDiffer = true }, false},
-		{"nothing observed", func(w *workloadFacts) { *w = workloadFacts{} }, false},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			w := done
-			tc.mutate(&w)
-			if got := w.rolloutComplete(); got != tc.want {
-				t.Errorf("rolloutComplete = %v, want %v", got, tc.want)
+			if strings.Contains(fact.Message, "0.0.0.0/0") {
+				t.Errorf("message %q trusts every peer", fact.Message)
 			}
 		})
 	}
-}
-
-// TestPodNetworkBlock: an ipBlock that holds a console Pod's address
-// admits the Pod network; its except entries and other addresses do not.
-func TestPodNetworkBlock(t *testing.T) {
-	t.Parallel()
-	pods := []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Name: "console-0"}, Status: corev1.PodStatus{PodIPs: []corev1.PodIP{{IP: "10.244.1.7"}, {IP: "fd00:10:244::7"}}}}}
-	block := func(cidr string, except ...string) []networkingv1.NetworkPolicyPeer {
-		return []networkingv1.NetworkPolicyPeer{nginxPeer, {IPBlock: &networkingv1.IPBlock{CIDR: cidr, Except: except}}}
-	}
-	pending := []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Name: "console-0"}, Status: corev1.PodStatus{Phase: corev1.PodPending}}}
-	cases := []struct {
-		name       string
-		peers      []networkingv1.NetworkPolicyPeer
-		pods       []corev1.Pod
-		broad      bool
-		unverified bool
-	}{
-		{"no block", []networkingv1.NetworkPolicyPeer{nginxPeer}, pods, false, false},
-		{"the node network", block("192.168.10.0/24"), pods, false, false},
-		{"the Pod network", block("10.244.0.0/16"), pods, true, false},
-		{"the Pod network, IPv6", block("fd00:10:244::/64"), pods, true, false},
-		{"the Pod network, the Pod's range excepted", block("10.244.0.0/16", "10.244.1.0/24"), []corev1.Pod{{Status: corev1.PodStatus{PodIPs: []corev1.PodIP{{IP: "10.244.1.7"}}}}}, false, false},
-		// Fail closed: without an address the block may be the Pod
-		// network, so it is not trusted (it used to be, until the Pod
-		// had its address: a grant, a rollout, a withdrawal).
-		{"the first Pod is Pending", block("10.244.0.0/16"), pending, false, true},
-		{"scaled from zero", block("192.168.10.0/24"), nil, false, true},
-		{"no block, no Pod", []networkingv1.NetworkPolicyPeer{nginxPeer}, nil, false, false},
-		{"one Pod has an address, a new one is Pending", block("192.168.10.0/24"), append(slices.Clone(pending), pods...), false, false},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			broad, unverified := podNetworkBlock(tc.peers, tc.pods)
-			if (broad != "") != tc.broad || (unverified != "") != tc.unverified {
-				t.Errorf("podNetworkBlock = %q, %q, want broad %v, unverified %v", broad, unverified, tc.broad, tc.unverified)
-			}
-		})
-	}
-}
-
-// TestUnverifiedTrustsNoPeer: peers that could not be checked yet turn
-// ExposureConfined False (ExposureTrustUnverified) and grant no any-peer
-// trust, so the template carries no grant.
-func TestUnverifiedTrustsNoPeer(t *testing.T) {
-	t.Parallel()
-	c := &pgtoolboxv1alpha1.PgToolBoxConsole{ObjectMeta: metav1.ObjectMeta{Name: "console", Namespace: "team-a"}}
-	c.Spec.Exposure.Type, c.Spec.Exposure.Hostname = pgtoolboxv1alpha1.ExposureTypeIngress, "console.example"
-	c.Spec.Exposure.NetworkPolicy = &pgtoolboxv1alpha1.PgToolBoxConsoleExposurePolicySpec{From: []pgtoolboxv1alpha1.PgToolBoxConsolePolicyPeer{nginxSpecPeer}}
-	found := confinement{Unverified: "no console Pod has an address yet"}
-	if trust := effectiveProxyTrust(c, true, found); trust.EveryPeer || len(trust.CIDRs) != 0 {
-		t.Fatalf("trust = %+v while unverified, want no trusted peer", trust)
-	}
-	fact := exposureConfinedFact(c, true, found)
-	if fact.Status != metav1.ConditionFalse || fact.Reason != pgtoolboxv1alpha1.ReasonExposureTrustUnverified || !strings.Contains(fact.Message, found.Unverified) {
-		t.Fatalf("ExposureConfined = %+v", fact)
-	}
-	template := podTemplate(c, deploymentInputs{Exposed: true, Confinement: found})
-	if _, ok := template.Annotations[annotationTrustsEveryPeer]; ok {
-		t.Fatal("the template carries the any-peer grant while the peers are unverified")
-	}
-}
-
-// TestPeersWiden: a peer the live policy does not cover widens it; the
-// same peers, fewer, or a narrower namespace do not.
-func TestPeersWiden(t *testing.T) {
-	t.Parallel()
-	ns := func(labels map[string]string) networkingv1.NetworkPolicyPeer {
-		return networkingv1.NetworkPolicyPeer{NamespaceSelector: &metav1.LabelSelector{MatchLabels: labels}}
-	}
-	a := ns(map[string]string{"kubernetes.io/metadata.name": "a"})
-	b := ns(map[string]string{"kubernetes.io/metadata.name": "b"})
-	aNarrow := networkingv1.NetworkPolicyPeer{NamespaceSelector: a.NamespaceSelector, PodSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "proxy"}}}
-	block := networkingv1.NetworkPolicyPeer{IPBlock: &networkingv1.IPBlock{CIDR: "192.168.10.0/24"}}
-	cases := []struct {
-		name        string
-		peers, live []networkingv1.NetworkPolicyPeer
-		widen       bool
-	}{
-		{"unchanged", []networkingv1.NetworkPolicyPeer{a}, []networkingv1.NetworkPolicyPeer{a}, false},
-		{"a peer removed", []networkingv1.NetworkPolicyPeer{a}, []networkingv1.NetworkPolicyPeer{a, b}, false},
-		{"narrowed to some Pods", []networkingv1.NetworkPolicyPeer{aNarrow}, []networkingv1.NetworkPolicyPeer{a}, false},
-		{"a namespace added", []networkingv1.NetworkPolicyPeer{a, b}, []networkingv1.NetworkPolicyPeer{a}, true},
-		{"a namespace swapped", []networkingv1.NetworkPolicyPeer{b}, []networkingv1.NetworkPolicyPeer{a}, true},
-		{"a block added", []networkingv1.NetworkPolicyPeer{a, block}, []networkingv1.NetworkPolicyPeer{a}, true},
-		{"from some Pods to the namespace", []networkingv1.NetworkPolicyPeer{a}, []networkingv1.NetworkPolicyPeer{aNarrow}, true},
-		{"no live peers", []networkingv1.NetworkPolicyPeer{a}, nil, true},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			if got := peersWiden(tc.peers, tc.live); got != tc.widen {
-				t.Errorf("peersWiden = %v, want %v", got, tc.widen)
-			}
-		})
-	}
-}
-
-// TestPolicyBypassLivePods: a policy that selects the console Pods by a
-// label only the live Pods carry (pod-template-hash, the StatefulSet's
-// pod name) is seen.
-func TestPolicyBypassLivePods(t *testing.T) {
-	t.Parallel()
-	template := map[string]string{"app.kubernetes.io/name": "pgtoolbox-console"}
-	live := map[string]string{"app.kubernetes.io/name": "pgtoolbox-console", "statefulset.kubernetes.io/pod-name": "console-0"}
-	policies := []networkingv1.NetworkPolicy{{
-		ObjectMeta: metav1.ObjectMeta{Name: "pod-0"},
-		Spec: networkingv1.NetworkPolicySpec{
-			PodSelector: metav1.LabelSelector{MatchLabels: map[string]string{"statefulset.kubernetes.io/pod-name": "console-0"}},
-			Ingress:     []networkingv1.NetworkPolicyIngressRule{{}},
-		},
-	}}
-	ours := []networkingv1.NetworkPolicyPeer{nginxPeer}
-	if got := policyBypass(policies, "console-ingress", []map[string]string{template}, ours); got != "" {
-		t.Fatalf("template labels alone: %q", got)
-	}
-	if got := policyBypass(policies, "console-ingress", []map[string]string{template, live}, ours); got == "" {
-		t.Error("a policy selecting a live Pod by its own label is not seen")
-	}
-}
-
-// TestPolicyBypassOpenShiftTemplate: on a Route, the project template's
-// allow-from-openshift-ingress (the routers by their older label) admits
-// nothing the routers' peer does not, and a narrower peer inside one of
-// ours is covered; allow-same-namespace still admits every Pod.
-func TestPolicyBypassOpenShiftTemplate(t *testing.T) {
-	t.Parallel()
-	every := metav1.LabelSelector{}
-	allow := func(name string, peer networkingv1.NetworkPolicyPeer) networkingv1.NetworkPolicy {
-		return networkingv1.NetworkPolicy{
-			ObjectMeta: metav1.ObjectMeta{Name: name},
-			Spec: networkingv1.NetworkPolicySpec{
-				PodSelector: every, PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress},
-				Ingress: []networkingv1.NetworkPolicyIngressRule{{From: []networkingv1.NetworkPolicyPeer{peer}}},
-			},
-		}
-	}
-	route := []networkingv1.NetworkPolicyPeer{routerPeer(), legacyRouterPeer()}
-	labels := []map[string]string{{"app": "console"}}
-	cases := []struct {
-		name   string
-		policy networkingv1.NetworkPolicy
-		ours   []networkingv1.NetworkPolicyPeer
-		bypass bool
-	}{
-		{"allow-from-openshift-ingress", allow("allow-from-openshift-ingress", legacyRouterPeer()), route, false},
-		{"the routers' pods only", allow("routers", networkingv1.NetworkPolicyPeer{
-			NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{openShiftIngressPolicyGroup: "", "extra": "x"}},
-			PodSelector:       &metav1.LabelSelector{MatchLabels: map[string]string{"router": "default"}},
-		}), route, false},
-		{"allow-same-namespace", allow("allow-same-namespace", networkingv1.NetworkPolicyPeer{PodSelector: &every}), route, true},
-		{"the routers' label with another value", allow("other", networkingv1.NetworkPolicyPeer{
-			NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{openShiftLegacyIngressLabel: "monitoring"}},
-		}), route, true},
-		{"the older label off a Route", allow("allow-from-openshift-ingress", legacyRouterPeer()), []networkingv1.NetworkPolicyPeer{nginxPeer}, true},
-		{"inside a peer with a podSelector is not covered", allow("narrower", nginxPeer), []networkingv1.NetworkPolicyPeer{{
-			NamespaceSelector: nginxPeer.NamespaceSelector, PodSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"x": "y"}},
-		}}, true},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			if got := policyBypass([]networkingv1.NetworkPolicy{tc.policy}, "console-ingress", labels, tc.ours); (got != "") != tc.bypass {
-				t.Errorf("policyBypass = %q, want bypass %v", got, tc.bypass)
-			}
-		})
+	if exposureConfinedFact(&pgtoolboxv1alpha1.PgToolBoxConsole{}, false) != nil {
+		t.Error("ExposureConfined is set with nothing published")
 	}
 }

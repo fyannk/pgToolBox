@@ -121,20 +121,6 @@ func newEnvtestSuite(t *testing.T) *envtestSuite {
 	}
 }
 
-// completeRollout writes the status a StatefulSet controller would once
-// every replica runs the current template (envtest runs no controller).
-func completeRollout(ctx context.Context, t *testing.T, s *envtestSuite, name string) {
-	t.Helper()
-	set := &appsv1.StatefulSet{}
-	s.get(ctx, t, name, set)
-	replicas := ptrValue(set.Spec.Replicas, 1)
-	set.Status = appsv1.StatefulSetStatus{
-		ObservedGeneration: set.Generation, Replicas: replicas, ReadyReplicas: replicas, CurrentReplicas: replicas,
-		UpdatedReplicas: replicas, AvailableReplicas: replicas, CurrentRevision: "r", UpdateRevision: "r",
-	}
-	must(t, s.admin.Status().Update(ctx, set))
-}
-
 // installShippedRoles creates the console ClusterRoles the way an
 // operator installation does, from config/rbac.
 func (s *envtestSuite) installShippedRoles(ctx context.Context, t *testing.T) {
@@ -621,7 +607,7 @@ func TestPgToolBoxConsoleReconcilerOnEnvtest(t *testing.T) {
 		s.reconcile(ctx, t, "console")
 	})
 
-	t.Run("an Ingress behind its NetworkPolicy trusts only the peers the policy admits", func(t *testing.T) {
+	t.Run("an Ingress behind its NetworkPolicy trusts only trustedProxy.cidrs", func(t *testing.T) {
 		proxyEnv := func() map[string]string {
 			set := &appsv1.StatefulSet{}
 			s.get(ctx, t, "console", set)
@@ -645,6 +631,8 @@ func TestPgToolBoxConsoleReconcilerOnEnvtest(t *testing.T) {
 			t.Fatalf("without a policy: %v, want one hop and no trusted peer", got)
 		}
 
+		// Behind its policy, still no trusted peer: the policy confines
+		// who reaches the port, not whose header is believed.
 		open.Spec.Exposure.NetworkPolicy = &pgtoolboxv1alpha1.PgToolBoxConsoleExposurePolicySpec{From: []pgtoolboxv1alpha1.PgToolBoxConsolePolicyPeer{{
 			NamespaceSelector: &pgtoolboxv1alpha1.PgToolBoxConsoleLabelSelector{MatchLabels: map[string]pgtoolboxv1alpha1.PgToolBoxConsoleLabelValue{"kubernetes.io/metadata.name": "ingress-nginx"}},
 		}}}
@@ -657,124 +645,31 @@ func TestPgToolBoxConsoleReconcilerOnEnvtest(t *testing.T) {
 		if !metav1.IsControlledBy(policy, confined) || len(policy.Spec.Ingress) != 2 || len(policy.Spec.Ingress[0].From) != 1 {
 			t.Fatalf("NetworkPolicy owners %v, ingress %v", policy.OwnerReferences, policy.Spec.Ingress)
 		}
-		if got := proxyEnv(); got["TRUSTED_PROXY_CIDRS"] != "0.0.0.0/0,::/0" {
-			t.Fatalf("behind the policy: %v, want every admitted peer trusted", got)
+		if got := proxyEnv(); got["TRUSTED_PROXY_HOPS"] != "1" || got["TRUSTED_PROXY_CIDRS"] != "" {
+			t.Fatalf("behind the policy: %v, want one hop and no trusted peer", got)
 		}
-		// Byte-stable: a second reconcile rewrites neither. Another
-		// NetworkPolicy may appear unseen (only the operator's own are
-		// cached): the console looks again.
+		// Byte-stable, and nothing is polled.
 		before := policy.ResourceVersion
-		if result := s.reconcile(ctx, t, "console"); result.RequeueAfter != policyRecheck {
-			t.Fatalf("RequeueAfter = %s while every peer is trusted, want %s", result.RequeueAfter, policyRecheck)
+		if result := s.reconcile(ctx, t, "console"); result.RequeueAfter != 0 {
+			t.Fatalf("RequeueAfter = %s behind a confining policy, want none", result.RequeueAfter)
 		}
 		s.get(ctx, t, console.WorkloadName()+"-ingress", policy)
 		if policy.ResourceVersion != before {
 			t.Fatal("an unchanged PgToolBoxConsole rewrote its NetworkPolicy")
 		}
-		templateGrant := func() bool {
-			set := &appsv1.StatefulSet{}
-			s.get(ctx, t, "console", set)
-			return set.Spec.Template.Annotations[annotationTrustsEveryPeer] == "true"
-		}
-		policyPeers := func() int {
-			live := &networkingv1.NetworkPolicy{}
-			s.get(ctx, t, console.WorkloadName()+"-ingress", live)
-			return len(live.Spec.Ingress[0].From)
-		}
 
-		// Widening from while the Pods trust every peer: the policy in
-		// force stays and the template loses the grant; only once the
-		// rollout is through (no Pod trusts every peer) does it widen.
-		widened := s.console(ctx, t, "console")
-		widened.Spec.Exposure.NetworkPolicy.From = append(widened.Spec.Exposure.NetworkPolicy.From, pgtoolboxv1alpha1.PgToolBoxConsolePolicyPeer{
-			NamespaceSelector: &pgtoolboxv1alpha1.PgToolBoxConsoleLabelSelector{MatchLabels: map[string]pgtoolboxv1alpha1.PgToolBoxConsoleLabelValue{"kubernetes.io/metadata.name": "other-proxies"}},
-		})
-		must(t, s.admin.Update(ctx, widened))
+		// The proxies named: their header is believed.
+		named := s.console(ctx, t, "console")
+		named.Spec.Exposure.TrustedProxy = &pgtoolboxv1alpha1.PgToolBoxConsoleTrustedProxySpec{CIDRs: []string{"10.1.0.0/16"}}
+		must(t, s.admin.Update(ctx, named))
 		s.reconcile(ctx, t, "console")
-		if n := policyPeers(); n != 1 {
-			t.Fatalf("the policy widened to %d peers while the Pods trust every peer", n)
+		if got := proxyEnv(); got["TRUSTED_PROXY_HOPS"] != "1" || got["TRUSTED_PROXY_CIDRS"] != "10.1.0.0/16" {
+			t.Fatalf("with trustedProxy.cidrs: %v, want one hop from 10.1.0.0/16", got)
 		}
-		assertCondition(t, s.console(ctx, t, "console"), pgtoolboxv1alpha1.ConditionExposureConfined, metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonExposureTrustUnverified)
-		if got := proxyEnv(); got["TRUSTED_PROXY_CIDRS"] != "" || templateGrant() {
-			t.Fatalf("held widening: %v (grant %v), want the any-peer trust withdrawn", got, templateGrant())
-		}
-		// The controller has not seen the new template yet: still held.
-		s.reconcile(ctx, t, "console")
-		if n := policyPeers(); n != 1 {
-			t.Fatalf("the policy widened to %d peers before the rollout", n)
-		}
-		completeRollout(ctx, t, s, "console")
-		s.reconcile(ctx, t, "console")
-		if n := policyPeers(); n != 2 {
-			t.Fatalf("the policy has %d peers once no Pod trusts every peer, want 2", n)
-		}
-		// Its peers are narrow: the trust comes back with the wider policy.
-		s.reconcile(ctx, t, "console")
-		assertCondition(t, s.console(ctx, t, "console"), pgtoolboxv1alpha1.ConditionExposureConfined, metav1.ConditionTrue, pgtoolboxv1alpha1.ReasonAsExpected)
-		if !templateGrant() {
-			t.Fatal("the any-peer grant did not come back behind the widened policy")
-		}
-		// Narrowing applies at once, the grant kept.
-		narrowed := s.console(ctx, t, "console")
-		narrowed.Spec.Exposure.NetworkPolicy.From = narrowed.Spec.Exposure.NetworkPolicy.From[:1]
-		must(t, s.admin.Update(ctx, narrowed))
-		s.reconcile(ctx, t, "console")
-		if n := policyPeers(); n != 1 || !templateGrant() {
-			t.Fatalf("narrowed: %d peers, grant %v; want 1 peer at once, the grant kept", n, templateGrant())
-		}
-
-		// Another NetworkPolicy that admits the namespace to every port
-		// reopens the console port (NetworkPolicies add up): no peer is
-		// trusted any more.
-		sameNamespace := &networkingv1.NetworkPolicy{
-			ObjectMeta: metav1.ObjectMeta{Name: "allow-same-namespace", Namespace: suiteNamespace},
-			Spec: networkingv1.NetworkPolicySpec{
-				PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress},
-				Ingress:     []networkingv1.NetworkPolicyIngressRule{{From: []networkingv1.NetworkPolicyPeer{{PodSelector: &metav1.LabelSelector{}}}}},
-			},
-		}
-		must(t, s.admin.Create(ctx, sameNamespace))
-		s.reconcile(ctx, t, "console")
-		// Its removal is seen by the same look again (no watch reports it).
-		if result := s.reconcile(ctx, t, "console"); result.RequeueAfter != policyRecheck {
-			t.Fatalf("RequeueAfter = %s while another policy bypasses the exposure's, want %s", result.RequeueAfter, policyRecheck)
-		}
-		bypassed := s.console(ctx, t, "console")
-		assertCondition(t, bypassed, pgtoolboxv1alpha1.ConditionExposureConfined, metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonExposurePolicyBypassed)
-		if got := proxyEnv(); got["TRUSTED_PROXY_CIDRS"] != "" {
-			t.Fatalf("with allow-same-namespace: %v, want no trusted peer", got)
-		}
-		must(t, s.admin.Delete(ctx, sameNamespace))
-		s.reconcile(ctx, t, "console")
-		assertCondition(t, s.console(ctx, t, "console"), pgtoolboxv1alpha1.ConditionExposureConfined, metav1.ConditionTrue, pgtoolboxv1alpha1.ReasonAsExpected)
-		if got := proxyEnv(); got["TRUSTED_PROXY_CIDRS"] != "0.0.0.0/0,::/0" {
-			t.Fatalf("allow-same-namespace removed: %v, want every admitted peer trusted again", got)
-		}
-
-		// A selector the CRD lets through but the API server refuses in
-		// the NetworkPolicy (a label-key prefix longer than a DNS subdomain),
-		// added while the Pods trust every peer: a widening, held (nothing
-		// is applied, so the refusal shows only once the hold ends; the
-		// refusal itself is the next subtests'). The policy in force stays.
-		refused := s.console(ctx, t, "console")
-		refused.Spec.Exposure.NetworkPolicy.From = append(refused.Spec.Exposure.NetworkPolicy.From, pgtoolboxv1alpha1.PgToolBoxConsolePolicyPeer{
-			PodSelector: &pgtoolboxv1alpha1.PgToolBoxConsoleLabelSelector{MatchLabels: map[string]pgtoolboxv1alpha1.PgToolBoxConsoleLabelValue{strings.Repeat("a", 254) + "/x": "y"}},
-		})
-		must(t, s.admin.Update(ctx, refused))
-		s.reconcile(ctx, t, "console")
-		assertCondition(t, s.console(ctx, t, "console"), pgtoolboxv1alpha1.ConditionExposureConfined, metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonExposureTrustUnverified)
-		if n := policyPeers(); n != 1 {
-			t.Fatalf("the refused spec changed the policy in force to %d peers", n)
-		}
-		fixed := s.console(ctx, t, "console")
-		fixed.Spec.Exposure.NetworkPolicy.From = fixed.Spec.Exposure.NetworkPolicy.From[:1]
-		must(t, s.admin.Update(ctx, fixed))
-		s.reconcile(ctx, t, "console")
-		assertCondition(t, s.console(ctx, t, "console"), pgtoolboxv1alpha1.ConditionConfigurationValid, metav1.ConditionTrue, pgtoolboxv1alpha1.ReasonAsExpected)
 
 		// A Route without the Route API (this API server serves none) is
-		// not published: nothing is in front, so nothing is trusted and no
-		// policy is rendered, whatever the spec asks for.
+		// not published: nothing is in front, so nothing is trusted, and
+		// the policy goes at once.
 		route := s.console(ctx, t, "console")
 		route.Spec.Exposure = pgtoolboxv1alpha1.PgToolBoxConsoleExposureSpec{
 			ExposureSpec: pgtoolboxv1alpha1.ExposureSpec{Type: pgtoolboxv1alpha1.ExposureTypeRoute, Hostname: "console.apps.example"},
@@ -783,72 +678,18 @@ func TestPgToolBoxConsoleReconcilerOnEnvtest(t *testing.T) {
 		s.reconcile(ctx, t, "console")
 		unpublished := s.console(ctx, t, "console")
 		assertCondition(t, unpublished, pgtoolboxv1alpha1.ConditionExposureReady, metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonRouteAPIUnavailable)
-		// Nothing is published, but the policy is kept until the Pods no
-		// longer trust every peer, and ExposureConfined says so.
-		assertCondition(t, unpublished, pgtoolboxv1alpha1.ConditionExposureConfined, metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonExposurePolicyKept)
+		s.absent(ctx, t, console.WorkloadName()+"-ingress", &networkingv1.NetworkPolicy{})
+		if meta.FindStatusCondition(unpublished.Status.Conditions, pgtoolboxv1alpha1.ConditionExposureConfined) != nil {
+			t.Fatal("ExposureConfined stays with nothing published")
+		}
 		if got := proxyEnv(); len(got) != 0 {
 			t.Fatalf("a Route that is not published: %v, want no trusted proxy", got)
 		}
-		// The rollout has not happened (envtest runs no controller): the
-		// old Pods still trust every peer, so the policy stays. The
-		// workload's status and its Pods are watched: no polling.
-		if result := s.reconcile(ctx, t, "console"); result.RequeueAfter != 0 {
-			t.Fatalf("RequeueAfter = %s during the rollout, want none (watched)", result.RequeueAfter)
-		}
-		s.get(ctx, t, console.WorkloadName()+"-ingress", &networkingv1.NetworkPolicy{})
-		// Rolled out, but a Pod that still trusts every peer (terminating,
-		// say) keeps the policy.
-		completeRollout(ctx, t, s, "console")
-		oldPod := &corev1.Pod{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: "console-old", Namespace: suiteNamespace, Labels: selectorLabels(console),
-				Annotations: map[string]string{annotationTrustsEveryPeer: "true"},
-			},
-			Spec: corev1.PodSpec{Containers: []corev1.Container{{
-				Name: "console", Image: "registry.example/pgtoolbox-console:1.2.0",
-				Env: []corev1.EnvVar{{Name: "TRUSTED_PROXY_CIDRS", Value: "0.0.0.0/0,::/0"}},
-			}}},
-		}
-		must(t, s.admin.Create(ctx, oldPod))
-		s.reconcile(ctx, t, "console")
-		s.get(ctx, t, console.WorkloadName()+"-ingress", &networkingv1.NetworkPolicy{})
-		// Stuck terminating (a lost node, a finalizer): the policy stays,
-		// the condition names the Pod, and it is looked for again.
-		stuckPod := oldPod.DeepCopy()
-		stuckPod.Name, stuckPod.ResourceVersion, stuckPod.UID = "console-stuck", "", ""
-		stuckPod.Finalizers = []string{"example.com/stuck"}
-		must(t, s.admin.Create(ctx, stuckPod))
-		must(t, s.admin.Delete(ctx, oldPod, client.GracePeriodSeconds(0)))
-		must(t, s.admin.Delete(ctx, stuckPod))
-		if result := s.reconcile(ctx, t, "console"); result.RequeueAfter != policyRecheck {
-			t.Fatalf("RequeueAfter = %s with a Pod stuck terminating, want %s", result.RequeueAfter, policyRecheck)
-		}
-		s.get(ctx, t, console.WorkloadName()+"-ingress", &networkingv1.NetworkPolicy{})
-		kept := s.console(ctx, t, "console")
-		assertCondition(t, kept, pgtoolboxv1alpha1.ConditionExposureConfined, metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonExposurePolicyKept)
-		if message := meta.FindStatusCondition(kept.Status.Conditions, pgtoolboxv1alpha1.ConditionExposureConfined).Message; !strings.Contains(message, "Pod console-stuck, terminating since") {
-			t.Fatalf("ExposureConfined message %q does not name the stuck Pod", message)
-		}
-		s.get(ctx, t, stuckPod.Name, stuckPod)
-		stuckPod.Finalizers = nil
-		must(t, s.admin.Update(ctx, stuckPod))
-		// A Pod whose any-peer trust is the user's own trustedProxy.cidrs
-		// (the same TRUSTED_PROXY_CIDRS, no grant) does not hold it back.
-		userPod := oldPod.DeepCopy()
-		userPod.Name, userPod.Annotations, userPod.ResourceVersion, userPod.UID = "console-user", nil, "", ""
-		must(t, s.admin.Create(ctx, userPod))
-		s.reconcile(ctx, t, "console")
-		s.absent(ctx, t, console.WorkloadName()+"-ingress", &networkingv1.NetworkPolicy{})
-		must(t, s.admin.Delete(ctx, userPod, client.GracePeriodSeconds(0)))
 
 		back := s.console(ctx, t, "console")
 		back.Spec.Exposure = pgtoolboxv1alpha1.PgToolBoxConsoleExposureSpec{}
 		must(t, s.admin.Update(ctx, back))
 		s.reconcile(ctx, t, "console")
-		s.absent(ctx, t, console.WorkloadName()+"-ingress", &networkingv1.NetworkPolicy{})
-		if meta.FindStatusCondition(s.console(ctx, t, "console").Status.Conditions, pgtoolboxv1alpha1.ConditionExposureConfined) != nil {
-			t.Fatal("ExposureConfined stays on an unexposed console")
-		}
 		if got := proxyEnv(); len(got) != 0 {
 			t.Fatalf("unexposed: %v, want no trusted proxy", got)
 		}
@@ -890,7 +731,7 @@ func TestPgToolBoxConsoleReconcilerOnEnvtest(t *testing.T) {
 		must(t, s.admin.Delete(ctx, stalled))
 	})
 
-	t.Run("a hostname stall keeps the ingress policy and says so", func(t *testing.T) {
+	t.Run("a hostname stall keeps the ingress policy and drops ExposureConfined", func(t *testing.T) {
 		console := &pgtoolboxv1alpha1.PgToolBoxConsole{ObjectMeta: metav1.ObjectMeta{Name: "hoststall", Namespace: suiteNamespace}}
 		console.Spec.Exposure.ExposureSpec = pgtoolboxv1alpha1.ExposureSpec{Type: pgtoolboxv1alpha1.ExposureTypeIngress, Hostname: "login.corp.example.com"}
 		console.Spec.Exposure.NetworkPolicy = &pgtoolboxv1alpha1.PgToolBoxConsoleExposurePolicySpec{From: []pgtoolboxv1alpha1.PgToolBoxConsolePolicyPeer{{
@@ -907,146 +748,13 @@ func TestPgToolBoxConsoleReconcilerOnEnvtest(t *testing.T) {
 		stalled := s.console(ctx, t, "hoststall")
 		assertCondition(t, stalled, pgtoolboxv1alpha1.ConditionStalled, metav1.ConditionTrue, pgtoolboxv1alpha1.ReasonHostnameNotAllowed)
 		s.absent(ctx, t, console.WorkloadName(), &networkingv1.Ingress{})
-		// The policy stays with the workload's last template, and the
-		// status says so rather than dropping the condition.
+		// The policy stays with the workload as it was; nothing is
+		// published, so nothing is said to be confined.
 		s.get(ctx, t, console.WorkloadName()+"-ingress", &networkingv1.NetworkPolicy{})
-		assertCondition(t, stalled, pgtoolboxv1alpha1.ConditionExposureConfined, metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonExposurePolicyKept)
+		if meta.FindStatusCondition(stalled.Status.Conditions, pgtoolboxv1alpha1.ConditionExposureConfined) != nil {
+			t.Fatal("ExposureConfined stays on a console whose exposure is withdrawn")
+		}
 		must(t, s.admin.Delete(ctx, stalled))
-	})
-
-	t.Run("an ipBlock peer is trusted only once a console Pod has an address", func(t *testing.T) {
-		console := &pgtoolboxv1alpha1.PgToolBoxConsole{ObjectMeta: metav1.ObjectMeta{Name: "blocked", Namespace: suiteNamespace}}
-		console.Spec.Exposure.ExposureSpec = pgtoolboxv1alpha1.ExposureSpec{Type: pgtoolboxv1alpha1.ExposureTypeIngress, Hostname: "blocked.example"}
-		console.Spec.Exposure.NetworkPolicy = &pgtoolboxv1alpha1.PgToolBoxConsoleExposurePolicySpec{From: []pgtoolboxv1alpha1.PgToolBoxConsolePolicyPeer{{
-			IPBlock: &pgtoolboxv1alpha1.PgToolBoxConsoleIPBlock{CIDR: "10.244.0.0/16"},
-		}}}
-		must(t, s.admin.Create(ctx, console))
-		grant := func() bool {
-			set := &appsv1.StatefulSet{}
-			s.get(ctx, t, console.WorkloadName(), set)
-			return set.Spec.Template.Annotations[annotationTrustsEveryPeer] == "true"
-		}
-		// No Pod yet (first reconcile, or scaled from zero): the block may
-		// be the Pod network, so nothing is granted.
-		s.reconcile(ctx, t, "blocked")
-		assertCondition(t, s.console(ctx, t, "blocked"), pgtoolboxv1alpha1.ConditionExposureConfined, metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonExposureTrustUnverified)
-		if grant() {
-			t.Fatal("any-peer trust granted before a console Pod has an address")
-		}
-		pod := &corev1.Pod{
-			ObjectMeta: metav1.ObjectMeta{Name: "blocked-0", Namespace: suiteNamespace, Labels: selectorLabels(console)},
-			Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "console", Image: "registry.example/pgtoolbox-console:1.2.0"}}},
-		}
-		must(t, s.admin.Create(ctx, pod))
-		// Pending, no address: still nothing.
-		s.reconcile(ctx, t, "blocked")
-		if grant() {
-			t.Fatal("any-peer trust granted while the console Pod is Pending")
-		}
-		// The Pod is in the block: the block is the Pod network, never
-		// trusted, and no grant ever reached the template.
-		pod.Status = corev1.PodStatus{Phase: corev1.PodRunning, PodIP: "10.244.1.7", PodIPs: []corev1.PodIP{{IP: "10.244.1.7"}}}
-		must(t, s.admin.Status().Update(ctx, pod))
-		s.reconcile(ctx, t, "blocked")
-		assertCondition(t, s.console(ctx, t, "blocked"), pgtoolboxv1alpha1.ConditionExposureConfined, metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonExposurePeersBroad)
-		if grant() {
-			t.Fatal("any-peer trust granted to an ipBlock that holds the Pod network")
-		}
-		// A node-network block, with the Pod's address known: granted (a
-		// new block widens the policy: applied at once, since no Pod
-		// trusts every peer and the controller saw the template).
-		completeRollout(ctx, t, s, console.WorkloadName())
-		blocked := s.console(ctx, t, "blocked")
-		blocked.Spec.Exposure.NetworkPolicy.From[0].IPBlock.CIDR = "192.168.10.0/24"
-		must(t, s.admin.Update(ctx, blocked))
-		s.reconcile(ctx, t, "blocked")
-		assertCondition(t, s.console(ctx, t, "blocked"), pgtoolboxv1alpha1.ConditionExposureConfined, metav1.ConditionTrue, pgtoolboxv1alpha1.ReasonAsExpected)
-		if !grant() {
-			t.Fatal("no any-peer trust behind a node-network block once a Pod address is known")
-		}
-		// The template with the grant replaces the only Pod (a Parallel
-		// StatefulSet does not wait for it to be ready): the new one is
-		// Pending, with no address. The blocks were verified for this
-		// template, so the grant stays and the template does not change
-		// (it used to lose the grant, roll the Pending Pod, get it back
-		// once the next Pod had an address, and so on forever).
-		completeRollout(ctx, t, s, console.WorkloadName())
-		set := &appsv1.StatefulSet{}
-		s.get(ctx, t, console.WorkloadName(), set)
-		before := set.ResourceVersion
-		must(t, s.admin.Delete(ctx, pod, client.GracePeriodSeconds(0)))
-		pending := &corev1.Pod{ObjectMeta: pod.ObjectMeta, Spec: pod.Spec}
-		pending.ResourceVersion, pending.UID, pending.CreationTimestamp, pending.ManagedFields = "", "", metav1.Time{}, nil
-		must(t, s.admin.Create(ctx, pending))
-		for range 2 {
-			s.reconcile(ctx, t, "blocked")
-		}
-		s.get(ctx, t, console.WorkloadName(), set)
-		if set.ResourceVersion != before || !grant() {
-			t.Fatalf("the StatefulSet changed (resourceVersion %s -> %s, grant %v) when its only Pod came back Pending", before, set.ResourceVersion, grant())
-		}
-		assertCondition(t, s.console(ctx, t, "blocked"), pgtoolboxv1alpha1.ConditionExposureConfined, metav1.ConditionTrue, pgtoolboxv1alpha1.ReasonAsExpected)
-		// Other blocks are not covered by that check: with no address,
-		// they are not trusted.
-		other := s.console(ctx, t, "blocked")
-		other.Spec.Exposure.NetworkPolicy.From[0].IPBlock.CIDR = "192.168.11.0/24"
-		must(t, s.admin.Update(ctx, other))
-		completeRollout(ctx, t, s, console.WorkloadName())
-		for range 3 {
-			s.reconcile(ctx, t, "blocked")
-			completeRollout(ctx, t, s, console.WorkloadName())
-		}
-		assertCondition(t, s.console(ctx, t, "blocked"), pgtoolboxv1alpha1.ConditionExposureConfined, metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonExposureTrustUnverified)
-		if grant() {
-			t.Fatal("any-peer trust kept for blocks no Pod address verified")
-		}
-		must(t, s.admin.Delete(ctx, pending, client.GracePeriodSeconds(0)))
-		must(t, s.admin.Delete(ctx, s.console(ctx, t, "blocked")))
-	})
-
-	t.Run("an ipBlock that holds another Node's Pod range is not trusted", func(t *testing.T) {
-		nodes := []*corev1.Node{
-			{ObjectMeta: metav1.ObjectMeta{Name: "node-a"}, Spec: corev1.NodeSpec{PodCIDR: "10.128.0.0/24", PodCIDRs: []string{"10.128.0.0/24"}}},
-			{ObjectMeta: metav1.ObjectMeta{Name: "node-b"}, Spec: corev1.NodeSpec{PodCIDR: "10.128.4.0/24", PodCIDRs: []string{"10.128.4.0/24"}}},
-		}
-		for _, node := range nodes {
-			must(t, s.admin.Create(ctx, node))
-		}
-		t.Cleanup(func() {
-			for _, node := range nodes {
-				_ = s.admin.Delete(ctx, node)
-			}
-		})
-		s.reconciler.forgetNodes()
-		console := &pgtoolboxv1alpha1.PgToolBoxConsole{ObjectMeta: metav1.ObjectMeta{Name: "noderange", Namespace: suiteNamespace}}
-		console.Spec.Exposure.ExposureSpec = pgtoolboxv1alpha1.ExposureSpec{Type: pgtoolboxv1alpha1.ExposureTypeIngress, Hostname: "noderange.example"}
-		console.Spec.Exposure.NetworkPolicy = &pgtoolboxv1alpha1.PgToolBoxConsoleExposurePolicySpec{From: []pgtoolboxv1alpha1.PgToolBoxConsolePolicyPeer{{
-			IPBlock: &pgtoolboxv1alpha1.PgToolBoxConsoleIPBlock{CIDR: "10.128.4.0/23"},
-		}}}
-		must(t, s.admin.Create(ctx, console))
-		// The console Pod runs on node A, outside the block; the block
-		// holds node B's Pod range, so every Pod of node B could forge
-		// X-Forwarded-For if it were trusted.
-		pod := &corev1.Pod{
-			ObjectMeta: metav1.ObjectMeta{Name: "noderange-0", Namespace: suiteNamespace, Labels: selectorLabels(console)},
-			Spec:       corev1.PodSpec{NodeName: "node-a", Containers: []corev1.Container{{Name: "console", Image: "registry.example/pgtoolbox-console:1.2.0"}}},
-		}
-		must(t, s.admin.Create(ctx, pod))
-		pod.Status = corev1.PodStatus{Phase: corev1.PodRunning, PodIP: "10.128.0.5", PodIPs: []corev1.PodIP{{IP: "10.128.0.5"}}}
-		must(t, s.admin.Status().Update(ctx, pod))
-		s.reconcile(ctx, t, "noderange")
-		got := s.console(ctx, t, "noderange")
-		assertCondition(t, got, pgtoolboxv1alpha1.ConditionExposureConfined, metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonExposurePeersBroad)
-		if message := meta.FindStatusCondition(got.Status.Conditions, pgtoolboxv1alpha1.ConditionExposureConfined).Message; !strings.Contains(message, "node-b") {
-			t.Fatalf("ExposureConfined message %q does not name node-b", message)
-		}
-		set := &appsv1.StatefulSet{}
-		s.get(ctx, t, console.WorkloadName(), set)
-		if set.Spec.Template.Annotations[annotationTrustsEveryPeer] == "true" {
-			t.Fatal("any-peer trust granted to an ipBlock that holds another node's Pod range")
-		}
-		must(t, s.admin.Delete(ctx, pod, client.GracePeriodSeconds(0)))
-		must(t, s.admin.Delete(ctx, got))
 	})
 
 	t.Run("an admission policy that denies the NetworkPolicy stalls like a schema refusal", func(t *testing.T) {

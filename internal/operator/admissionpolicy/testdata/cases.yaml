@@ -1,0 +1,513 @@
+# The allowed and refused requests of the operator chart's admission policy
+# (charts/pgtoolbox/templates/operator/admissionpolicy.yaml), as data: the
+# envtest (TestEnvtestAdmissionPolicy) runs every case against the rendered
+# policy on an API server, and any other implementation of the same rules runs
+# the same table (loadCases).
+#
+# values: the chart values the policy is rendered with (operator.admissionPolicy;
+#   system:masters, which creates every oldObject, stays listed).
+# requesters: who asks. Each is a user in the group team-members, which RBAC
+#   lets create and update the three kinds in the namespace default; groups are
+#   extra groups, rules the RBAC rules it holds in that namespace (a Role).
+# cases: name; requester; object, the request's object (apiVersion defaults to
+#   pgtoolbox.fyannk.dev/v1alpha1, metadata.namespace to default); oldObject,
+#   for an UPDATE, the object as stored before (created by a cluster
+#   administrator; kind and name default to the object's); allowed; refusedBy,
+#   for a refusal, the rule that refuses: image, workloadIdentity, secretRefs,
+#   credentials, projectedToken or exposure.
+values:
+  workloadIdentity:
+    allowedUsers: [alice]
+    allowedGroups: [platform-team, "system:masters"]
+
+requesters:
+  mallory: {}
+  # get on three named Secrets, not on the namespace's.
+  reader:
+    rules:
+      - {apiGroups: [""], resources: [secrets], resourceNames: [readable, readable-b, readable-c], verbs: [get]}
+  # get on every Secret of the namespace (what admin and edit grant).
+  nsreader:
+    rules:
+      - {apiGroups: [""], resources: [secrets], verbs: [get]}
+  # may mint the tokens of a few consoles' ServiceAccounts, reads no Secret.
+  minter:
+    rules:
+      - {apiGroups: [""], resources: [serviceaccounts/token], resourceNames: [pt-ok-console, pt-console-x, pt-move-console], verbs: [create]}
+  # may create Ingresses (not Routes), reads no Secret.
+  exposer:
+    rules:
+      - {apiGroups: [networking.k8s.io], resources: [ingresses], verbs: [create]}
+  alice: {}
+  carol: {groups: [platform-team]}
+  dave: {groups: [another-team]}
+  admin: {groups: ["system:masters"]}
+
+cases:
+  # spec.image (imageOverride: system:masters by default).
+  - name: image override by a user outside the lists
+    requester: mallory
+    object: {kind: EvidenceAgent, metadata: {name: im-mallory}, spec: {clusterRef: {name: orders}, image: {repository: registry.attacker.example/agent, tag: v1}}}
+    allowed: false
+    refusedBy: image
+
+  # spec.workloadIdentity (alice, platform-team).
+  - name: workload identity by a user outside the lists
+    requester: mallory
+    object: {kind: EvidenceAgent, metadata: {name: wi-mallory}, spec: {clusterRef: {name: orders}, workloadIdentity: {serviceAccountAnnotations: {eks.amazonaws.com/role-arn: "arn:aws:iam::123456789012:role/r"}}}}
+    allowed: false
+    refusedBy: workloadIdentity
+  - name: an empty workload identity is the opt-in and is refused too
+    requester: mallory
+    object: {kind: EvidenceAgent, metadata: {name: wi-empty}, spec: {clusterRef: {name: orders}, workloadIdentity: {}}}
+    allowed: false
+    refusedBy: workloadIdentity
+  - name: an agent without workload identity by anybody
+    requester: mallory
+    object: {kind: EvidenceAgent, metadata: {name: wi-plain}, spec: {clusterRef: {name: orders}}}
+    allowed: true
+  - name: adding a workload identity by a user outside the lists
+    requester: mallory
+    oldObject: {spec: {clusterRef: {name: orders}}}
+    object: {kind: EvidenceAgent, metadata: {name: wi-add}, spec: {clusterRef: {name: orders}, workloadIdentity: {serviceAccountAnnotations: {eks.amazonaws.com/role-arn: "arn:aws:iam::123456789012:role/r"}}}}
+    allowed: false
+    refusedBy: workloadIdentity
+  - name: changing a workload identity by a user outside the lists
+    requester: mallory
+    oldObject: {spec: {clusterRef: {name: orders}, workloadIdentity: {serviceAccountAnnotations: {eks.amazonaws.com/role-arn: "arn:aws:iam::123456789012:role/seed"}}}}
+    object: {kind: EvidenceAgent, metadata: {name: wi-change}, spec: {clusterRef: {name: orders}, workloadIdentity: {serviceAccountAnnotations: {eks.amazonaws.com/role-arn: "arn:aws:iam::123456789012:role/other"}}}}
+    allowed: false
+    refusedBy: workloadIdentity
+  - name: another field changed and the workload identity kept
+    requester: mallory
+    oldObject: {spec: {clusterRef: {name: orders}, workloadIdentity: {serviceAccountAnnotations: {eks.amazonaws.com/role-arn: "arn:aws:iam::123456789012:role/seed"}}}}
+    object: {kind: EvidenceAgent, metadata: {name: wi-other}, spec: {clusterRef: {name: orders}, refreshInterval: 1m, workloadIdentity: {serviceAccountAnnotations: {eks.amazonaws.com/role-arn: "arn:aws:iam::123456789012:role/seed"}}}}
+    allowed: true
+  - name: a listed user sets a workload identity
+    requester: alice
+    object: {kind: EvidenceAgent, metadata: {name: wi-alice}, spec: {clusterRef: {name: orders}, workloadIdentity: {serviceAccountAnnotations: {eks.amazonaws.com/role-arn: "arn:aws:iam::123456789012:role/one"}}}}
+    allowed: true
+  - name: a listed user changes a workload identity
+    requester: alice
+    oldObject: {spec: {clusterRef: {name: orders}, workloadIdentity: {serviceAccountAnnotations: {eks.amazonaws.com/role-arn: "arn:aws:iam::123456789012:role/one"}}}}
+    object: {kind: EvidenceAgent, metadata: {name: wi-alice-change}, spec: {clusterRef: {name: orders}, workloadIdentity: {serviceAccountAnnotations: {eks.amazonaws.com/role-arn: "arn:aws:iam::123456789012:role/two"}}}}
+    allowed: true
+  - name: a member of a listed group sets a workload identity
+    requester: carol
+    object: {kind: EvidenceAgent, metadata: {name: wi-carol}, spec: {clusterRef: {name: orders}, workloadIdentity: {serviceAccountAnnotations: {eks.amazonaws.com/role-arn: "arn:aws:iam::123456789012:role/one"}}}}
+    allowed: true
+  - name: a group that is not listed does not help
+    requester: dave
+    object: {kind: EvidenceAgent, metadata: {name: wi-dave}, spec: {clusterRef: {name: orders}, workloadIdentity: {serviceAccountAnnotations: {eks.amazonaws.com/role-arn: "arn:aws:iam::123456789012:role/r"}}}}
+    allowed: false
+    refusedBy: workloadIdentity
+
+  # Secret references: get on each, on create and on any change of spec.
+  - name: console Prometheus token Secret without get
+    requester: mallory
+    object: {kind: PgToolBoxConsole, metadata: {name: sr-prom}, spec: {prometheus: {url: "https://prometheus.example.com", tokenSecretRef: {name: readable, key: token}}}}
+    allowed: false
+    refusedBy: secretRefs
+  - name: console Prometheus token Secret with get on it
+    requester: reader
+    object: {kind: PgToolBoxConsole, metadata: {name: sr-prom-ok}, spec: {prometheus: {url: "https://prometheus.example.com", tokenSecretRef: {name: readable, key: token}}}}
+    allowed: true
+  - name: get on another Secret does not help
+    requester: reader
+    object: {kind: PgToolBoxConsole, metadata: {name: sr-prom-other}, spec: {prometheus: {url: "https://prometheus.example.com", tokenSecretRef: {name: unreadable, key: token}}}}
+    allowed: false
+    refusedBy: secretRefs
+  - name: console referencing no Secret
+    requester: mallory
+    object: {kind: PgToolBoxConsole, metadata: {name: sr-plain}, spec: {replicas: 2}}
+    allowed: true
+  # Every Secret-bearing field of a PgToolBoxConsole: refused with a Secret
+  # the requester may not read, admitted with one it may.
+  - name: console smtp.passwordSecretRef unreadable
+    requester: reader
+    object: {kind: PgToolBoxConsole, metadata: {name: sr-smtp}, spec: {history: {persistent: true}, digest: {enabled: true, delivery: {smtp: {address: "smtp.attacker.example:587", from: a@example.com, to: [a@example.com], username: u, passwordSecretRef: {name: unreadable, key: password}}}}}}
+    allowed: false
+    refusedBy: secretRefs
+  - name: console smtp.passwordSecretRef readable
+    requester: reader
+    object: {kind: PgToolBoxConsole, metadata: {name: sr-smtp-ok}, spec: {history: {persistent: true}, digest: {enabled: true, delivery: {smtp: {address: "smtp.example.com:587", from: a@example.com, to: [a@example.com], username: u, passwordSecretRef: {name: readable, key: password}}}}}}
+    allowed: true
+  - name: console chatWebhookSecretRef unreadable
+    requester: reader
+    object: {kind: PgToolBoxConsole, metadata: {name: sr-chat}, spec: {history: {persistent: true}, digest: {enabled: true, delivery: {chatWebhookSecretRef: {name: unreadable, key: url}}}}}
+    allowed: false
+    refusedBy: secretRefs
+  - name: console chatWebhookSecretRef readable
+    requester: reader
+    object: {kind: PgToolBoxConsole, metadata: {name: sr-chat-ok}, spec: {history: {persistent: true}, digest: {enabled: true, delivery: {chatWebhookSecretRef: {name: readable, key: url}}}}}
+    allowed: true
+  - name: console webhookSecretRef unreadable
+    requester: reader
+    object: {kind: PgToolBoxConsole, metadata: {name: sr-webhook}, spec: {history: {persistent: true}, digest: {enabled: true, delivery: {webhookSecretRef: {name: unreadable, key: url}}}}}
+    allowed: false
+    refusedBy: secretRefs
+  - name: console webhookSecretRef readable
+    requester: reader
+    object: {kind: PgToolBoxConsole, metadata: {name: sr-webhook-ok}, spec: {history: {persistent: true}, digest: {enabled: true, delivery: {webhookSecretRef: {name: readable, key: url}}}}}
+    allowed: true
+  - name: console oidc.clientSecretRef unreadable
+    requester: reader
+    object: {kind: PgToolBoxConsole, metadata: {name: sr-oidc}, spec: {auth: {provider: oidc, oidc: {issuerURL: "https://idp.example.com", clientID: c, clientSecretRef: {name: unreadable}}}}}
+    allowed: false
+    refusedBy: secretRefs
+  - name: console oidc.clientSecretRef readable
+    requester: reader
+    object: {kind: PgToolBoxConsole, metadata: {name: sr-oidc-ok}, spec: {auth: {provider: oidc, oidc: {issuerURL: "https://idp.example.com", clientID: c, clientSecretRef: {name: readable}}}}}
+    allowed: true
+  - name: console oidc.grantClient.clientSecretRef unreadable
+    requester: reader
+    object: {kind: PgToolBoxConsole, metadata: {name: sr-grant}, spec: {auth: {provider: oidc, oidc: {issuerURL: "https://idp.example.com", clientID: c, clientSecretRef: {name: readable}, grantClient: {clientID: g, clientSecretRef: {name: unreadable}}}}}}
+    allowed: false
+    refusedBy: secretRefs
+  - name: console oidc.grantClient.clientSecretRef readable
+    requester: reader
+    object: {kind: PgToolBoxConsole, metadata: {name: sr-grant-ok}, spec: {auth: {provider: oidc, oidc: {issuerURL: "https://idp.example.com", clientID: c, clientSecretRef: {name: readable}, grantClient: {clientID: g, clientSecretRef: {name: readable-b}}}}}}
+    allowed: true
+  - name: console openshift.clientSecretRef unreadable
+    requester: reader
+    object: {kind: PgToolBoxConsole, metadata: {name: sr-openshift}, spec: {publicURL: "https://c.example.com", auth: {provider: openshift, openshift: {clientSecretRef: {name: unreadable, key: token}}}}}
+    allowed: false
+    refusedBy: secretRefs
+  - name: console openshift.clientSecretRef readable
+    requester: reader
+    object: {kind: PgToolBoxConsole, metadata: {name: sr-openshift-ok}, spec: {publicURL: "https://c.example.com", auth: {provider: openshift, openshift: {clientSecretRef: {name: readable, key: token}}}}}
+    allowed: true
+  - name: console exposure.tls.certificateSecretRef unreadable
+    requester: reader
+    object: {kind: PgToolBoxConsole, metadata: {name: sr-tls}, spec: {exposure: {type: ingress, hostname: c.example.com, tls: {certificateSecretRef: {name: unreadable}}}}}
+    allowed: false
+    refusedBy: secretRefs
+  - name: console exposure.tls.certificateSecretRef readable
+    requester: reader
+    object: {kind: PgToolBoxConsole, metadata: {name: sr-tls-ok}, spec: {exposure: {type: ingress, hostname: c.example.com, tls: {certificateSecretRef: {name: readable}}}}}
+    allowed: true
+  - name: console image.pullSecrets unreadable
+    requester: reader
+    object: {kind: PgToolBoxConsole, metadata: {name: sr-pull}, spec: {image: {repository: registry.attacker.example/console, tag: v1, pullSecrets: [{name: unreadable}]}}}
+    allowed: false
+    refusedBy: secretRefs
+  - name: console image.pullSecrets readable
+    requester: reader
+    object: {kind: PgToolBoxConsole, metadata: {name: sr-pull-ok}, spec: {image: {repository: registry.example.com/console, tag: v1, pullSecrets: [{name: readable}]}}}
+    allowed: true
+  - name: console tracing.headersSecretRef unreadable
+    requester: reader
+    object: {kind: PgToolBoxConsole, metadata: {name: sr-tracing}, spec: {tracing: {endpoint: "https://collector.attacker.example", headersSecretRef: {name: unreadable, key: headers}}}}
+    allowed: false
+    refusedBy: secretRefs
+  - name: console tracing.headersSecretRef readable
+    requester: reader
+    object: {kind: PgToolBoxConsole, metadata: {name: sr-tracing-ok}, spec: {tracing: {endpoint: "https://collector.example.com", headersSecretRef: {name: readable, key: headers}}}}
+    allowed: true
+  - name: console restoreDrills.sealKeySecretRef unreadable
+    requester: reader
+    object: {kind: PgToolBoxConsole, metadata: {name: sr-seal}, spec: {operations: true, restoreDrills: {enabled: true, sealKeySecretRef: {name: unreadable, key: keys}}}}
+    allowed: false
+    refusedBy: secretRefs
+  - name: console restoreDrills.sealKeySecretRef readable
+    requester: reader
+    object: {kind: PgToolBoxConsole, metadata: {name: sr-seal-ok}, spec: {operations: true, restoreDrills: {enabled: true, sealKeySecretRef: {name: readable, key: keys}}}}
+    allowed: true
+  - name: PgAdmin oauth2 client Secret without get
+    requester: mallory
+    object: {kind: PgAdmin, metadata: {name: sr-pga-oauth}, spec: {clusterRefs: [{name: orders}], credentials: {application: false, databaseRoles: false}, auth: {oauth2: {issuerURL: "https://idp.example.com/realms/corp", clientID: pgadmin, clientSecretRef: {name: unreadable}, requiredClaims: {groups: [dba]}}}}}
+    allowed: false
+    refusedBy: secretRefs
+  - name: PgAdmin oauth2 client Secret with get on it
+    requester: reader
+    object: {kind: PgAdmin, metadata: {name: sr-pga-oauth-ok}, spec: {clusterRefs: [{name: orders}], credentials: {application: false, databaseRoles: false}, auth: {oauth2: {issuerURL: "https://idp.example.com/realms/corp", clientID: pgadmin, clientSecretRef: {name: readable}, requiredClaims: {groups: [dba]}}}}}
+    allowed: true
+  - name: PgAdmin proxy pull Secret without get
+    requester: mallory
+    object: {kind: PgAdmin, metadata: {name: sr-pga-pull}, spec: {clusterRefs: [{name: orders}], credentials: {application: false, databaseRoles: false}, auth: {openshiftOAuthProxy: {image: {repository: x.example/proxy, tag: v1, pullSecrets: [{name: unreadable}]}}}}}
+    allowed: false
+    refusedBy: secretRefs
+  - name: PgAdmin TLS Secret without get
+    requester: reader
+    object: {kind: PgAdmin, metadata: {name: sr-pga-tls}, spec: {clusterRefs: [{name: orders}], credentials: {application: false, databaseRoles: false}, auth: {oauth2: {issuerURL: "https://idp.example.com/realms/corp", clientID: pgadmin, clientSecretRef: {name: readable}, requiredClaims: {groups: [dba]}}}, exposure: {type: ingress, hostname: a.example.com, tls: {certificateSecretRef: {name: unreadable}}}}}
+    allowed: false
+    refusedBy: secretRefs
+  # On UPDATE: a metadata-only write passes, any change of spec checks every
+  # reference again.
+  - name: update leaving spec unchanged passes without get
+    requester: mallory
+    oldObject: {spec: &sr-update {prometheus: {url: "https://prometheus.example.com", tokenSecretRef: {name: unreadable, key: token}}}}
+    object: {kind: PgToolBoxConsole, metadata: {name: sr-update-meta, labels: {edited: "true"}}, spec: *sr-update}
+    allowed: true
+  - name: update changing an unrelated spec field needs get on every reference
+    requester: mallory
+    oldObject: {spec: {prometheus: {url: "https://prometheus.example.com", tokenSecretRef: {name: unreadable, key: token}}}}
+    object: {kind: PgToolBoxConsole, metadata: {name: sr-update-spec}, spec: {replicas: 3, prometheus: {url: "https://prometheus.example.com", tokenSecretRef: {name: unreadable, key: token}}}}
+    allowed: false
+    refusedBy: secretRefs
+  - name: update pointing a reference at another unreadable Secret
+    requester: mallory
+    oldObject: {spec: {prometheus: {url: "https://prometheus.example.com", tokenSecretRef: {name: unreadable, key: token}}}}
+    object: {kind: PgToolBoxConsole, metadata: {name: sr-update-repoint}, spec: {prometheus: {url: "https://prometheus.example.com", tokenSecretRef: {name: other-unreadable, key: token}}}}
+    allowed: false
+    refusedBy: secretRefs
+  - name: update pointing a reference at a readable Secret
+    requester: reader
+    oldObject: {spec: {prometheus: {url: "https://prometheus.example.com", tokenSecretRef: {name: unreadable, key: token}}}}
+    object: {kind: PgToolBoxConsole, metadata: {name: sr-update-ok}, spec: {prometheus: {url: "https://prometheus.example.com", tokenSecretRef: {name: readable, key: token}}}}
+    allowed: true
+  - name: update sending a kept Secret elsewhere without get
+    requester: reader
+    oldObject: {spec: {tracing: {endpoint: "https://collector.example.com", headersSecretRef: {name: unreadable, key: headers}}}}
+    object: {kind: PgToolBoxConsole, metadata: {name: sr-update-dest}, spec: {tracing: {endpoint: "https://collector.attacker.example", headersSecretRef: {name: unreadable, key: headers}}}}
+    allowed: false
+    refusedBy: secretRefs
+  - name: update sending a readable kept Secret elsewhere
+    requester: reader
+    oldObject: {spec: {tracing: {endpoint: "https://collector.example.com", headersSecretRef: {name: readable, key: headers}}}}
+    object: {kind: PgToolBoxConsole, metadata: {name: sr-update-dest-ok}, spec: {tracing: {endpoint: "https://collector.attacker.example", headersSecretRef: {name: readable, key: headers}}}}
+    allowed: true
+  # EvidenceAgent allowedSecrets.
+  - name: agent allowedSecrets without get
+    requester: mallory
+    object: {kind: EvidenceAgent, metadata: {name: as-mallory}, spec: {clusterRef: {name: orders}, allowedSecrets: [unreadable]}}
+    allowed: false
+    refusedBy: secretRefs
+  - name: agent allowedSecrets with one unreadable
+    requester: reader
+    object: {kind: EvidenceAgent, metadata: {name: as-mixed}, spec: {clusterRef: {name: orders}, allowedSecrets: [readable, unreadable]}}
+    allowed: false
+    refusedBy: secretRefs
+  - name: agent allowedSecrets two readable names
+    requester: reader
+    object: {kind: EvidenceAgent, metadata: {name: as-two}, spec: {clusterRef: {name: orders}, allowedSecrets: [readable, readable-b]}}
+    allowed: true
+  # Two authorizer checks fit an expression: more than two references take
+  # get on every Secret of the namespace, even when each name is readable.
+  - name: agent allowedSecrets three readable names need get on the namespace
+    requester: reader
+    object: {kind: EvidenceAgent, metadata: {name: as-three}, spec: {clusterRef: {name: orders}, allowedSecrets: [readable, readable-b, readable-c]}}
+    allowed: false
+    refusedBy: secretRefs
+  - name: agent many allowedSecrets from a reader of the namespace stay within the CEL cost budget
+    requester: nsreader
+    object: {kind: EvidenceAgent, metadata: {name: as-many}, spec: {clusterRef: {name: orders}, allowInsecureEndpoint: true, pgbackrest: {repository: 7, endpoint: "ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss.example.com:9000"}, allowedSecrets: [s-00, s-01, s-02, s-03, s-04, s-05, s-06, s-07, s-08, s-09, s-10, s-11, s-12, s-13, s-14, s-15]}}
+    allowed: true
+  - name: agent many allowedSecrets updated by a reader of the namespace
+    requester: nsreader
+    oldObject: {spec: {clusterRef: {name: orders}, allowInsecureEndpoint: true, pgbackrest: {repository: 7, endpoint: "ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss.example.com:9000"}, allowedSecrets: [s-00, s-01, s-02, s-03, s-04, s-05, s-06, s-07, s-08, s-09, s-10, s-11, s-12, s-13, s-14, s-15]}}
+    object: {kind: EvidenceAgent, metadata: {name: as-many-update}, spec: {clusterRef: {name: orders}, allowInsecureEndpoint: true, pgbackrest: {repository: 7, endpoint: "tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt.example.com:9000"}, allowedSecrets: [s-00, s-01, s-02, s-03, s-04, s-05, s-06, s-07, s-08, s-09, s-10, s-11, s-12, s-13, s-14, s-15]}}
+    allowed: true
+  - name: agent many allowedSecrets from a cluster administrator
+    requester: admin
+    object: {kind: EvidenceAgent, metadata: {name: as-admin}, spec: {clusterRef: {name: orders}, allowedSecrets: [s-00, s-01, s-02, s-03, s-04, s-05, s-06, s-07, s-08, s-09, s-10, s-11, s-12, s-13, s-14, s-15]}}
+    allowed: true
+  - name: agent update changing spec checks allowedSecrets again
+    requester: mallory
+    oldObject: {spec: {clusterRef: {name: orders}, allowedSecrets: [unreadable]}}
+    object: {kind: EvidenceAgent, metadata: {name: as-update}, spec: {clusterRef: {name: orders}, refreshInterval: 2m, allowedSecrets: [unreadable]}}
+    allowed: false
+    refusedBy: secretRefs
+  - name: agent update leaving spec unchanged
+    requester: mallory
+    oldObject: {spec: &as-meta {clusterRef: {name: orders}, allowedSecrets: [unreadable]}}
+    object: {kind: EvidenceAgent, metadata: {name: as-update-meta, labels: {edited: "true"}}, spec: *as-meta}
+    allowed: true
+
+  # A PgAdmin offering credentials of Clusters of its namespace, or with a
+  # settings database: get on the namespace's Secrets.
+  - name: PgAdmin offering the superuser without get on the namespace's Secrets
+    requester: mallory
+    object: {kind: PgAdmin, metadata: {name: cr-super}, spec: {clusterRefs: [{name: orders}], credentials: {application: false, databaseRoles: false, superuser: true}, auth: {openshiftOAuthProxy: {}}}}
+    allowed: false
+    refusedBy: credentials
+  - name: get on named Secrets is not get on the Cluster's
+    requester: reader
+    object: {kind: PgAdmin, metadata: {name: cr-super-r}, spec: {clusterRefs: [{name: orders}], credentials: {application: false, databaseRoles: false, superuser: true}, auth: {openshiftOAuthProxy: {}}}}
+    allowed: false
+    refusedBy: credentials
+  - name: PgAdmin offering the default credentials
+    requester: mallory
+    object: {kind: PgAdmin, metadata: {name: cr-default}, spec: {clusterRefs: [{name: orders}], auth: {openshiftOAuthProxy: {}}}}
+    allowed: false
+    refusedBy: credentials
+  - name: PgAdmin offering the credentials of selected Clusters
+    requester: mallory
+    object: {kind: PgAdmin, metadata: {name: cr-selector}, spec: {clusterSelector: {matchLabels: {team: a}}, auth: {openshiftOAuthProxy: {}}}}
+    allowed: false
+    refusedBy: credentials
+  - name: PgAdmin offering nothing
+    requester: mallory
+    object: {kind: PgAdmin, metadata: {name: cr-none}, spec: {clusterRefs: [{name: orders}], credentials: {application: false, databaseRoles: false}, auth: {openshiftOAuthProxy: {}}}}
+    allowed: true
+  - name: PgAdmin of Clusters of other namespaces only
+    requester: mallory
+    object: {kind: PgAdmin, metadata: {name: cr-cross}, spec: {crossNamespaceClusterRefs: [{namespace: team-b, name: orders}], credentials: {superuser: true}, auth: {openshiftOAuthProxy: {}}}}
+    allowed: true
+  - name: PgAdmin offering the superuser from a reader of the namespace's Secrets
+    requester: nsreader
+    object: {kind: PgAdmin, metadata: {name: cr-ns}, spec: {clusterRefs: [{name: orders}], credentials: {superuser: true}, auth: {openshiftOAuthProxy: {}}}}
+    allowed: true
+  - name: PgAdmin settings database without get
+    requester: mallory
+    object: {kind: PgAdmin, metadata: {name: cd-refs}, spec: {clusterRefs: [{name: orders}], credentials: {application: false, databaseRoles: false}, configDatabase: {clusterRef: {name: orders}, database: pgadmin_reporting}, auth: {openshiftOAuthProxy: {}}}}
+    allowed: false
+    refusedBy: credentials
+  - name: PgAdmin settings database beside cross-namespace Clusters only
+    requester: mallory
+    object: {kind: PgAdmin, metadata: {name: cd-cross}, spec: {crossNamespaceClusterRefs: [{namespace: team-b, name: orders}], configDatabase: {clusterRef: {name: orders}, database: pgadmin_reporting}, auth: {openshiftOAuthProxy: {}}}}
+    allowed: false
+    refusedBy: credentials
+  - name: PgAdmin settings database from a reader of the namespace's Secrets
+    requester: nsreader
+    object: {kind: PgAdmin, metadata: {name: cd-ns}, spec: {clusterRefs: [{name: orders}], credentials: {application: false, databaseRoles: false}, configDatabase: {clusterRef: {name: orders}, database: pgadmin_reporting}, auth: {openshiftOAuthProxy: {}}}}
+    allowed: true
+  - name: update of an offering PgAdmin changing spec
+    requester: mallory
+    oldObject: {spec: {clusterRefs: [{name: orders}], auth: {openshiftOAuthProxy: {}}}}
+    object: {kind: PgAdmin, metadata: {name: cr-update}, spec: {clusterRefs: [{name: orders}], endpoints: [rw, ro], auth: {openshiftOAuthProxy: {}}}}
+    allowed: false
+    refusedBy: credentials
+  - name: update widening who signs in to an offering PgAdmin
+    requester: reader
+    oldObject: {spec: {clusterRefs: [{name: orders}], credentials: {superuser: true}, auth: {oauth2: {issuerURL: "https://idp.example.com/realms/corp", clientID: pgadmin, clientSecretRef: {name: readable}, requiredClaims: {groups: [dba]}}}}}
+    object: {kind: PgAdmin, metadata: {name: cr-update-audience}, spec: {clusterRefs: [{name: orders}], credentials: {superuser: true}, auth: {oauth2: {issuerURL: "https://idp.example.com/realms/corp", clientID: pgadmin, clientSecretRef: {name: readable}, requiredClaims: {groups: [everyone]}}}}}
+    allowed: false
+    refusedBy: credentials
+  - name: update of an offering PgAdmin from a reader of the namespace's Secrets
+    requester: nsreader
+    oldObject: {spec: {clusterRefs: [{name: orders}], credentials: {superuser: true}, auth: {openshiftOAuthProxy: {}}}}
+    object: {kind: PgAdmin, metadata: {name: cr-update-ns}, spec: {clusterRefs: [{name: orders}], credentials: {superuser: true}, auth: {openshiftOAuthProxy: {sessionMaxAge: 12h}}}}
+    allowed: true
+  - name: update of an offering PgAdmin leaving spec unchanged
+    requester: mallory
+    oldObject: {spec: &cr-meta {clusterRefs: [{name: orders}], credentials: {superuser: true}, auth: {openshiftOAuthProxy: {}}}}
+    object: {kind: PgAdmin, metadata: {name: cr-update-meta, labels: {edited: "true"}}, spec: *cr-meta}
+    allowed: true
+  - name: update of a PgAdmin offering nothing
+    requester: mallory
+    oldObject: {spec: {clusterRefs: [{name: orders}], credentials: {application: false, databaseRoles: false}, auth: {openshiftOAuthProxy: {}}}}
+    object: {kind: PgAdmin, metadata: {name: cr-update-none}, spec: {clusterRefs: [{name: orders}], credentials: {application: false, databaseRoles: false}, admins: [mallory@evil.example], auth: {openshiftOAuthProxy: {sessionMaxAge: 12h}}}}
+    allowed: true
+
+  # spec.prometheus.projectedToken: create on the console ServiceAccount's token.
+  - name: projected token without create on serviceaccounts/token
+    requester: mallory
+    object: {kind: PgToolBoxConsole, metadata: {name: pt-mallory}, spec: {prometheus: {url: "https://attacker.example/", projectedToken: true}}}
+    allowed: false
+    refusedBy: projectedToken
+  - name: reading every Secret is not minting a token
+    requester: nsreader
+    object: {kind: PgToolBoxConsole, metadata: {name: pt-nsreader}, spec: {prometheus: {url: "https://prometheus.example.com", projectedToken: true}}}
+    allowed: false
+    refusedBy: projectedToken
+  - name: minting another console's token does not help
+    requester: minter
+    object: {kind: PgToolBoxConsole, metadata: {name: pt-other}, spec: {prometheus: {url: "https://prometheus.example.com", projectedToken: true}}}
+    allowed: false
+    refusedBy: projectedToken
+  - name: projected token by a minter of the console's token
+    requester: minter
+    object: {kind: PgToolBoxConsole, metadata: {name: pt-ok}, spec: {prometheus: {url: "https://prometheus.example.com", projectedToken: true}}}
+    allowed: true
+  - name: projected token of a console whose name contains console
+    requester: minter
+    object: {kind: PgToolBoxConsole, metadata: {name: pt-console-x}, spec: {prometheus: {url: "https://prometheus.example.com", projectedToken: true}}}
+    allowed: true
+  - name: a console without a projected token
+    requester: mallory
+    object: {kind: PgToolBoxConsole, metadata: {name: pt-none}, spec: {prometheus: {url: "https://prometheus.example.com"}}}
+    allowed: true
+  - name: update sending the projected token elsewhere
+    requester: mallory
+    oldObject: {spec: {prometheus: {url: "https://prometheus.example.com", projectedToken: true}}}
+    object: {kind: PgToolBoxConsole, metadata: {name: pt-away}, spec: {prometheus: {url: "https://prometheus.attacker.example", projectedToken: true}}}
+    allowed: false
+    refusedBy: projectedToken
+  - name: update sending the projected token elsewhere by a minter
+    requester: minter
+    oldObject: {spec: {prometheus: {url: "https://prometheus.example.com", projectedToken: true}}}
+    object: {kind: PgToolBoxConsole, metadata: {name: pt-move}, spec: {prometheus: {url: "https://prometheus.attacker.example", projectedToken: true}}}
+    allowed: true
+  - name: update of a projecting console changing spec
+    requester: mallory
+    oldObject: {spec: {prometheus: {url: "https://prometheus.example.com", projectedToken: true}}}
+    object: {kind: PgToolBoxConsole, metadata: {name: pt-unrelated}, spec: {prometheus: {url: "https://prometheus.example.com", projectedToken: true, namespaced: true}}}
+    allowed: false
+    refusedBy: projectedToken
+  - name: update of a projecting console leaving spec unchanged
+    requester: mallory
+    oldObject: {spec: &pt-meta {prometheus: {url: "https://prometheus.example.com", projectedToken: true}}}
+    object: {kind: PgToolBoxConsole, metadata: {name: pt-meta, labels: {edited: "true"}}, spec: *pt-meta}
+    allowed: true
+
+  # Exposure annotations: any annotation on the exposure object or the
+  # Service of an exposed object takes create on the exposure kind.
+  - name: an ingress-controller snippet without create on ingresses
+    requester: mallory
+    object: {kind: PgAdmin, metadata: {name: ea-snippet}, spec: {clusterRefs: [{name: orders}], credentials: {application: false, databaseRoles: false}, auth: {openshiftOAuthProxy: {}}, exposure: {type: ingress, hostname: pgadmin.example.com, annotations: {nginx.ingress.kubernetes.io/configuration-snippet: x}}}}
+    allowed: false
+    refusedBy: exposure
+  - name: any exposure annotation without create on ingresses
+    requester: mallory
+    object: {kind: PgAdmin, metadata: {name: ea-benign}, spec: {clusterRefs: [{name: orders}], credentials: {application: false, databaseRoles: false}, auth: {openshiftOAuthProxy: {}}, exposure: {type: ingress, hostname: pgadmin.example.com, annotations: {nginx.ingress.kubernetes.io/proxy-body-size: 8m}}}}
+    allowed: false
+    refusedBy: exposure
+  - name: an exposure without annotations
+    requester: mallory
+    object: {kind: PgAdmin, metadata: {name: ea-none}, spec: {clusterRefs: [{name: orders}], credentials: {application: false, databaseRoles: false}, auth: {openshiftOAuthProxy: {}}, exposure: {type: ingress, hostname: pgadmin.example.com, annotations: {}}}}
+    allowed: true
+  - name: exposure annotations by a user who may create Ingresses
+    requester: exposer
+    object: {kind: PgAdmin, metadata: {name: ea-exposer}, spec: {clusterRefs: [{name: orders}], credentials: {application: false, databaseRoles: false}, auth: {openshiftOAuthProxy: {}}, exposure: {type: ingress, hostname: pgadmin.example.com, annotations: {nginx.ingress.kubernetes.io/auth-url: "https://auth.example.com"}}}}
+    allowed: true
+  - name: Ingresses are not Routes
+    requester: exposer
+    object: {kind: PgAdmin, metadata: {name: ea-route}, spec: {clusterRefs: [{name: orders}], credentials: {application: false, databaseRoles: false}, auth: {openshiftOAuthProxy: {}}, exposure: {type: route, hostname: pgadmin.example.com, annotations: {haproxy.router.openshift.io/ip_allowlist: 0.0.0.0/0}}}}
+    allowed: false
+    refusedBy: exposure
+  - name: metadataPropagation for the Service of an exposed object
+    requester: mallory
+    object: {kind: PgAdmin, metadata: {name: ea-mp-service}, spec: {clusterRefs: [{name: orders}], credentials: {application: false, databaseRoles: false}, auth: {openshiftOAuthProxy: {}}, exposure: {type: ingress, hostname: pgadmin.example.com}, metadataPropagation: [{target: Service, annotations: {konghq.com/plugins: steal}}]}}
+    allowed: false
+    refusedBy: exposure
+  - name: metadataPropagation for All
+    requester: mallory
+    object: {kind: PgAdmin, metadata: {name: ea-mp-all}, spec: {clusterRefs: [{name: orders}], credentials: {application: false, databaseRoles: false}, auth: {openshiftOAuthProxy: {}}, exposure: {type: ingress, hostname: pgadmin.example.com}, metadataPropagation: [{target: All, annotations: {team: a}}]}}
+    allowed: false
+    refusedBy: exposure
+  - name: metadataPropagation for the exposure object
+    requester: mallory
+    object: {kind: PgAdmin, metadata: {name: ea-mp-exposure}, spec: {clusterRefs: [{name: orders}], credentials: {application: false, databaseRoles: false}, auth: {openshiftOAuthProxy: {}}, exposure: {type: ingress, hostname: pgadmin.example.com}, metadataPropagation: [{target: Exposure, annotations: {nginx.ingress.kubernetes.io/configuration-snippet: x}}]}}
+    allowed: false
+    refusedBy: exposure
+  - name: metadataPropagation for the Pod is not checked
+    requester: mallory
+    object: {kind: PgAdmin, metadata: {name: ea-mp-pod}, spec: {clusterRefs: [{name: orders}], credentials: {application: false, databaseRoles: false}, auth: {openshiftOAuthProxy: {}}, exposure: {type: ingress, hostname: pgadmin.example.com}, metadataPropagation: [{target: Pod, annotations: {nginx.ingress.kubernetes.io/configuration-snippet: x}}]}}
+    allowed: true
+  - name: a console's exposure annotations are checked too
+    requester: mallory
+    object: {kind: PgToolBoxConsole, metadata: {name: ea-console}, spec: {exposure: {type: ingress, hostname: c.example.com, annotations: {nginx.ingress.kubernetes.io/server-snippet: x}}}}
+    allowed: false
+    refusedBy: exposure
+  - name: a clusterIP object renders no exposure object
+    requester: mallory
+    object: {kind: PgAdmin, metadata: {name: ea-clusterip}, spec: {clusterRefs: [{name: orders}], credentials: {application: false, databaseRoles: false}, auth: {openshiftOAuthProxy: {}}, exposure: {annotations: {nginx.ingress.kubernetes.io/configuration-snippet: x}}, metadataPropagation: [{target: Service, annotations: {konghq.com/plugins: x}}]}}
+    allowed: true
+  - name: exposing a clusterIP object that carries annotations
+    requester: mallory
+    oldObject: {spec: {clusterRefs: [{name: orders}], credentials: {application: false, databaseRoles: false}, auth: {openshiftOAuthProxy: {}}, exposure: {annotations: {nginx.ingress.kubernetes.io/configuration-snippet: x}}}}
+    object: {kind: PgAdmin, metadata: {name: ea-later}, spec: {clusterRefs: [{name: orders}], credentials: {application: false, databaseRoles: false}, auth: {openshiftOAuthProxy: {}}, exposure: {type: ingress, hostname: pgadmin.example.com, annotations: {nginx.ingress.kubernetes.io/configuration-snippet: x}}}}
+    allowed: false
+    refusedBy: exposure
+  - name: update of an annotated exposure changing spec
+    requester: mallory
+    oldObject: {spec: {clusterRefs: [{name: orders}], credentials: {application: false, databaseRoles: false}, auth: {openshiftOAuthProxy: {}}, exposure: {type: ingress, hostname: pgadmin.example.com, annotations: {nginx.ingress.kubernetes.io/proxy-body-size: 8m}}}}
+    object: {kind: PgAdmin, metadata: {name: ea-update}, spec: {clusterRefs: [{name: orders}], endpoints: [rw, ro], credentials: {application: false, databaseRoles: false}, auth: {openshiftOAuthProxy: {}}, exposure: {type: ingress, hostname: pgadmin.example.com, annotations: {nginx.ingress.kubernetes.io/proxy-body-size: 8m}}}}
+    allowed: false
+    refusedBy: exposure
+  - name: update of an annotated exposure leaving spec unchanged
+    requester: mallory
+    oldObject: {spec: &ea-meta {clusterRefs: [{name: orders}], credentials: {application: false, databaseRoles: false}, auth: {openshiftOAuthProxy: {}}, exposure: {type: ingress, hostname: pgadmin.example.com, annotations: {nginx.ingress.kubernetes.io/auth-url: "https://auth.example.com"}}}}
+    object: {kind: PgAdmin, metadata: {name: ea-update-meta, labels: {edited: "true"}}, spec: *ea-meta}
+    allowed: true

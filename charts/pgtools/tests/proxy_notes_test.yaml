@@ -1,5 +1,5 @@
 # NOTES.txt says when X-Forwarded-For is ignored: hops are trusted, but no
-# proxy is named and no NetworkPolicy keeps other Pods off the port.
+# proxy is named (a NetworkPolicy changes nothing).
 suite: trusted proxy notes
 templates:
   - templates/NOTES.txt
@@ -11,8 +11,18 @@ tests:
     asserts:
       - notMatchRegexRaw: {pattern: "X-Forwarded-For is IGNORED"}
 
-  - it: warns behind an exposure with no named proxy and no policy
+  - it: warns behind an exposure with no named proxy
     set: {console.exposure.type: ingress, console.exposure.host: pgc.example.org}
+    asserts:
+      - matchRegexRaw: {pattern: "X-Forwarded-For is IGNORED"}
+      - matchRegexRaw: {pattern: "console.trustedProxyCIDRs"}
+
+  - it: warns behind the NetworkPolicy with no named proxy
+    set:
+      console.exposure.type: ingress
+      console.exposure.host: pgc.example.org
+      console.networkPolicy.enabled: true
+      console.networkPolicy.apiServer.mode: any
     asserts:
       - matchRegexRaw: {pattern: "X-Forwarded-For is IGNORED"}
 
@@ -21,49 +31,7 @@ tests:
     asserts:
       - notMatchRegexRaw: {pattern: "X-Forwarded-For is IGNORED"}
 
-  - it: says nothing behind the NetworkPolicy
-    set:
-      console.exposure.type: ingress
-      console.exposure.host: pgc.example.org
-      console.networkPolicy.enabled: true
-      console.networkPolicy.apiServer.mode: any
-    asserts:
-      - notMatchRegexRaw: {pattern: "X-Forwarded-For is IGNORED"}
-
-  - it: warns when extraFrom admits more than the router
-    set:
-      console.exposure.type: ingress
-      console.exposure.host: pgc.example.org
-      console.networkPolicy.enabled: true
-      console.networkPolicy.apiServer.mode: any
-      console.networkPolicy.ingress.extraFrom: [{podSelector: {}}]
-    asserts:
-      - matchRegexRaw: {pattern: "X-Forwarded-For is IGNORED"}
-      - matchRegexRaw: {pattern: "extraFrom admits peers that are not the router"}
-      - notMatchRegexRaw: {pattern: "one sign-in budget"}
-
-  - it: warns on OpenShift behind the NetworkPolicy, and names trustedProxyCIDRs
-    capabilities:
-      apiVersions: [route.openshift.io/v1]
-    set:
-      console.exposure.type: route
-      console.exposure.host: pgc.apps.example.org
-      console.networkPolicy.enabled: true
-      console.networkPolicy.apiServer.mode: any
-    asserts:
-      - matchRegexRaw: {pattern: "X-Forwarded-For is IGNORED"}
-      - matchRegexRaw: {pattern: "this is OpenShift"}
-      - matchRegexRaw: {pattern: "console.trustedProxyCIDRs"}
-      - notMatchRegexRaw: {pattern: "or enable console.networkPolicy"}
-
-  - it: says nothing on OpenShift once the proxies are named
-    capabilities:
-      apiVersions: [route.openshift.io/v1]
-    set:
-      console.exposure.type: route
-      console.exposure.host: pgc.apps.example.org
-      console.networkPolicy.enabled: true
-      console.networkPolicy.apiServer.mode: any
-      console.trustedProxyCIDRs: [10.128.0.0/14]
+  - it: says nothing when no hop is trusted
+    set: {console.exposure.type: route, console.exposure.host: pgc.apps.example.org, console.trustedProxyHops: 0}
     asserts:
       - notMatchRegexRaw: {pattern: "X-Forwarded-For is IGNORED"}

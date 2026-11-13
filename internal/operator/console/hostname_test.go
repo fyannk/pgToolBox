@@ -233,10 +233,17 @@ func TestPausedConsoleWithdrawsRefusedHostname(t *testing.T) {
 	}
 }
 
+// owned makes object controlled by c, as the applier writes it.
+func owned[T client.Object](c *pgtoolboxv1alpha1.PgToolBoxConsole, object T) T {
+	object.SetOwnerReferences([]metav1.OwnerReference{{
+		APIVersion: pgtoolboxv1alpha1.GroupVersion.String(), Kind: "PgToolBoxConsole", Name: c.Name, UID: c.UID, Controller: new(true),
+	}})
+	return object
+}
+
 // TestPauseAllowUnpause: a console paused while its hostname is refused,
 // whose hostname the installer then allows while it is still paused, stops
-// reporting the refusal at once (ExposureConfined included: it no longer
-// says the policy is kept "while stalled"), each paused loop after that is
+// reporting the refusal at once, each paused loop after that is
 // a no-op, and unpausing it reconciles as usual: nothing says
 // HostnameNotAllowed or the stall any more.
 func TestPauseAllowUnpause(t *testing.T) {
@@ -270,7 +277,6 @@ func TestPauseAllowUnpause(t *testing.T) {
 		{
 			name: "paused, hostname refused", allowed: []string{"apps.example.com"},
 			want: []want{
-				{pgtoolboxv1alpha1.ConditionExposureConfined, metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonExposurePolicyKept},
 				{pgtoolboxv1alpha1.ConditionStalled, metav1.ConditionTrue, pgtoolboxv1alpha1.ReasonHostnameNotAllowed},
 				{pgtoolboxv1alpha1.ConditionReady, metav1.ConditionUnknown, pgtoolboxv1alpha1.ReasonReconciliationPaused},
 			},
@@ -278,7 +284,6 @@ func TestPauseAllowUnpause(t *testing.T) {
 		{
 			name: "paused, hostname allowed", allowed: []string{"corp.example.com"}, wantNoop: true,
 			want: []want{
-				{pgtoolboxv1alpha1.ConditionExposureConfined, metav1.ConditionUnknown, pgtoolboxv1alpha1.ReasonReconciling},
 				{pgtoolboxv1alpha1.ConditionExposureReady, metav1.ConditionUnknown, pgtoolboxv1alpha1.ReasonReconciling},
 				{pgtoolboxv1alpha1.ConditionConfigurationValid, metav1.ConditionUnknown, pgtoolboxv1alpha1.ReasonReconciling},
 				{pgtoolboxv1alpha1.ConditionReady, metav1.ConditionUnknown, pgtoolboxv1alpha1.ReasonReconciliationPaused},
@@ -304,6 +309,9 @@ func TestPauseAllowUnpause(t *testing.T) {
 			if c == nil || c.Status != w.status || c.Reason != w.reason.String() {
 				t.Errorf("%s: %s = %+v, want %s/%s", step.name, w.conditionType, c, w.status, w.reason)
 			}
+		}
+		if !step.unpause && meta.FindStatusCondition(got.Status.Conditions, pgtoolboxv1alpha1.ConditionExposureConfined) != nil {
+			t.Errorf("%s: ExposureConfined is set with nothing published", step.name)
 		}
 		if step.name != "paused, hostname refused" {
 			for _, cond := range got.Status.Conditions {

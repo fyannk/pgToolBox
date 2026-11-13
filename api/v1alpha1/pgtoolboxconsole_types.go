@@ -48,33 +48,9 @@ const (
 	// peer admits (nearly) every namespace (a namespaceSelector that pins
 	// no label value), every Pod of the console's namespace (such a
 	// podSelector alone), or the Pod network or every address (an ipBlock
-	// wider than /8 or /32, holding a whole private range, a console
-	// Pod's address, or overlapping a Node's podCIDRs): its peers are not the proxies, so the console trusts
-	// none of them with X-Forwarded-For.
+	// wider than /8 or /32, or holding a whole private range): its peers
+	// are not only the proxies.
 	ReasonExposurePeersBroad Reason = "ExposurePeersBroad"
-	// ReasonExposurePolicyBypassed: ExposureConfined=False, another
-	// NetworkPolicy of the namespace admits peers the exposure does not
-	// list to the console port (NetworkPolicies add up), or there were too
-	// many to check: the console trusts none of the peers with
-	// X-Forwarded-For.
-	ReasonExposurePolicyBypassed Reason = "ExposurePolicyBypassed"
-	// ReasonExposureTrustUnverified: ExposureConfined=False, the
-	// networkPolicy.from peers could not be checked yet, or are held back:
-	// an ipBlock peer while no console Pod has an address to check it
-	// against and no earlier one verified the same blocks, more console Pods than one bounded list returns, or a
-	// widened from that waits until no console Pod trusts every peer any
-	// more. The console trusts none of the peers with X-Forwarded-For
-	// meanwhile.
-	ReasonExposureTrustUnverified Reason = "ExposureTrustUnverified"
-	// ReasonExposurePolicyKept: ExposureConfined=False, the ingress
-	// NetworkPolicy is no longer rendered (the exposure or the policy was
-	// turned off) and is kept while a console Pod may still trust every
-	// peer it admits on the operator's grant: until the rollout without
-	// the grant is through. The message names a Pod stuck terminating
-	// that holds it. Also while the console is stalled on
-	// HostnameNotAllowed: its Ingress, Route or HTTPRoute is withdrawn,
-	// and the workload and the policy stay as they were.
-	ReasonExposurePolicyKept Reason = "ExposurePolicyKept"
 	// ReasonExposurePolicyInvalid: ConfigurationValid=False and
 	// ExposureConfined=False, the API server refused the ingress
 	// NetworkPolicy rendered from spec.exposure.networkPolicy (a selector
@@ -87,19 +63,16 @@ const (
 // ConditionExposureConfined is advisory and gates nothing (it never enters
 // Ready): present only while an exposure object is published. True when
 // the operator renders the ingress NetworkPolicy that admits only the
-// router, ingress controller or gateway to the console port and nothing
-// else in the namespace admits more; False with ExposureOpen when it is
-// not rendered (ingress or gateway exposure without networkPolicy.from, or
-// networkPolicy.enabled=false), ExposurePeersBroad when a peer of from
-// admits (nearly) everyone, ExposurePolicyBypassed when another
-// NetworkPolicy does, ExposureTrustUnverified while the peers could not be
-// checked yet or a widened from is held back, ExposurePolicyKept while a
-// policy no longer rendered is kept for a Pod that may trust every peer,
-// ExposurePolicyInvalid while the API server refuses the policy. Removed when nothing is published and no policy is kept, the hostname
-// stall included. The
+// router, ingress controller or gateway to the console port; False with
+// ExposureOpen when it is not rendered (ingress or gateway exposure
+// without networkPolicy.from, or networkPolicy.enabled=false),
+// ExposurePeersBroad when a peer of from admits (nearly) everyone,
+// ExposurePolicyInvalid while the API server refuses the policy. Removed
+// when nothing is published, the hostname stall included. It reads the
+// spec: other NetworkPolicies of the namespace add up and are not
+// checked, and whether the CNI enforces NetworkPolicies cannot be
+// observed: True says what is declared, not what the network does. The
 // message says which peers the console believes about X-Forwarded-For.
-// Whether the CNI enforces NetworkPolicies cannot be observed: True says
-// what is declared, not what the network does.
 const ConditionExposureConfined = "ExposureConfined"
 
 // ConditionInstanceCABundleComplete is advisory and gates nothing (it never
@@ -124,7 +97,7 @@ type PgToolBoxConsoleExposureSpec struct {
 	// TRUSTED_PROXY_CIDRS). The console reads the header only from a peer
 	// it trusts, so the per-address sign-in budgets and the audit trail's
 	// client_ip follow each client. Omitted: one hop when an exposure
-	// object is published; trusted peers per networkPolicy.
+	// object is published, and no trusted peer: the header is ignored.
 	// +optional
 	TrustedProxy *PgToolBoxConsoleTrustedProxySpec `json:"trustedProxy,omitempty"`
 
@@ -135,8 +108,7 @@ type PgToolBoxConsoleExposureSpec struct {
 	// gateway exposure only once from names the controller's namespace;
 	// ExposureConfined says which. Never rendered for clusterIP. Every
 	// in-cluster client of the Service's http port (a debug Pod, an
-	// in-cluster MCP client) is then refused unless from lists it, and is
-	// trusted with X-Forwarded-For once listed.
+	// in-cluster MCP client) is then refused unless from lists it.
 	// +optional
 	NetworkPolicy *PgToolBoxConsoleExposurePolicySpec `json:"networkPolicy,omitempty"`
 }
@@ -154,12 +126,10 @@ type PgToolBoxConsoleTrustedProxySpec struct {
 
 	// The proxies' own addresses, as the console sees them (the router or
 	// ingress controller Pods; the nodes for a host-network router). The
-	// header is read only from a peer inside one. Omitted: with the
-	// NetworkPolicy rendered, any peer it admits (every other Pod is
-	// refused by the network); without it, none, and the header is
-	// ignored: every client behind the proxy then shares its address, and
-	// no per-address sign-in budget applies (only the per-flow, per-token
-	// and per-replica bounds).
+	// header is read only from a peer inside one. Omitted: none, and the
+	// header is ignored: every client behind the proxy then shares the
+	// proxy's address, in the per-address sign-in budget and in the audit
+	// trail's client_ip. Set it to the ingress controller's addresses.
 	// +kubebuilder:validation:MaxItems=32
 	// +kubebuilder:validation:items:MaxLength=49
 	// +kubebuilder:validation:items:XValidation:rule="isCIDR(self)",message="trustedProxy.cidrs entries must be CIDRs",reason=FieldValueInvalid

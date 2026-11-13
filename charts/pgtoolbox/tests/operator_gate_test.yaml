@@ -413,7 +413,7 @@ tests:
         documentIndex: 0
       - equal: {path: "spec.variables[3].expression", value: '["system:masters"]'}
         documentIndex: 0
-      - lengthEqual: {path: spec.validations, count: 7}
+      - lengthEqual: {path: spec.validations, count: 6}
         documentIndex: 0
       - matchRegex: {path: "spec.validations[1].expression", pattern: "evidenceagents.*spec.workloadIdentity"}
         documentIndex: 0
@@ -432,44 +432,37 @@ tests:
     template: templates/operator/admissionpolicy.yaml
     documentIndex: 0
     asserts:
-      - equal: {path: "spec.variables[4].name", value: secretRefs}
-      - equal: {path: "spec.variables[5].name", value: oldSecretRefs}
+      - equal: {path: "spec.matchConstraints.resourceRules[0].operations", value: [CREATE, UPDATE]}
+      # Checked on create and on any change of spec, not on a metadata write.
+      - equal: {path: "spec.variables[4].name", value: specChanged}
+      - equal:
+          path: "spec.variables[4].expression"
+          value: "oldObject == null || has(object.spec) != has(oldObject.spec) || (has(object.spec) && object.spec != oldObject.spec)"
       # Every Secret-bearing field of api/v1alpha1, optional ones behind has().
-      - matchRegex: {path: "spec.variables[4].expression", pattern: "has\\(object.spec.auth.oidc\\)"}
-      - matchRegex: {path: "spec.variables[4].expression", pattern: "auth.openshift.clientSecretRef"}
-      - matchRegex: {path: "spec.variables[4].expression", pattern: "prometheus.tokenSecretRef"}
-      - matchRegex: {path: "spec.variables[4].expression", pattern: "digest.delivery.chatWebhookSecretRef"}
-      - matchRegex: {path: "spec.variables[4].expression", pattern: "digest.delivery.webhookSecretRef"}
-      - matchRegex: {path: "spec.variables[4].expression", pattern: "digest.delivery.smtp.passwordSecretRef"}
-      - matchRegex: {path: "spec.variables[4].expression", pattern: "auth.oauth2.clientSecretRef"}
-      - matchRegex: {path: "spec.variables[4].expression", pattern: "auth.openshiftOAuthProxy.image.pullSecrets"}
-      - matchRegex: {path: "spec.variables[4].expression", pattern: "exposure.tls.certificateSecretRef"}
-      - matchRegex: {path: "spec.variables[4].expression", pattern: "'image.pullSecrets'"}
-      - matchRegex: {path: "spec.variables[5].expression", pattern: "^oldObject == null \\? \\[\\] : \\("}
-      - matchRegex: {path: "spec.variables[5].expression", pattern: "oldObject.spec.prometheus.tokenSecretRef"}
-      # Added references only; one or two name by name, more with one
-      # namespace-wide check (an authorizer check costs most of the CEL budget).
-      - equal: {path: "spec.variables[6].name", value: newSecretRefs}
-      - matchRegex: {path: "spec.variables[6].expression", pattern: "oldObject != null && r in variables.oldSecretRefs"}
+      - equal: {path: "spec.variables[5].name", value: secretRefs}
+      - matchRegex: {path: "spec.variables[5].expression", pattern: "has\\(object.spec.auth.oidc\\)"}
+      - matchRegex: {path: "spec.variables[5].expression", pattern: "auth.openshift.clientSecretRef"}
+      - matchRegex: {path: "spec.variables[5].expression", pattern: "prometheus.tokenSecretRef"}
+      - matchRegex: {path: "spec.variables[5].expression", pattern: "digest.delivery.chatWebhookSecretRef"}
+      - matchRegex: {path: "spec.variables[5].expression", pattern: "digest.delivery.webhookSecretRef"}
+      - matchRegex: {path: "spec.variables[5].expression", pattern: "digest.delivery.smtp.passwordSecretRef"}
+      - matchRegex: {path: "spec.variables[5].expression", pattern: "auth.oauth2.clientSecretRef"}
+      - matchRegex: {path: "spec.variables[5].expression", pattern: "auth.openshiftOAuthProxy.image.pullSecrets"}
+      - matchRegex: {path: "spec.variables[5].expression", pattern: "exposure.tls.certificateSecretRef"}
+      - matchRegex: {path: "spec.variables[5].expression", pattern: "object.spec.image.pullSecrets.map\\(s, string\\(s.name\\)\\)"}
+      - matchRegex: {path: "spec.variables[5].expression", pattern: "object.spec.allowedSecrets.map\\(s, string\\(s\\)\\)"}
+      # Two names by name (an authorizer check costs most of the CEL budget),
+      # more with one namespace-wide check.
       - matchRegex:
           path: "spec.validations[2].expression"
-          pattern: "^variables.newSecretRefs.size\\(\\) <= 2 \\|\\| authorizer.group\\(''\\).resource\\('secrets'\\).namespace\\(object.metadata.namespace\\).check\\('get'\\).allowed\\(\\)"
+          pattern: "^!variables.specChanged \\|\\| \\(variables.secretRefs.size\\(\\) <= 2 \\?"
+      - matchRegex:
+          path: "spec.validations[2].expression"
+          pattern: "authorizer.group\\(''\\).resource\\('secrets'\\).namespace\\(object.metadata.namespace\\).name\\(n\\).check\\('get'\\).allowed\\(\\)\\) :"
+      - matchRegex:
+          path: "spec.validations[2].expression"
+          pattern: "authorizer.group\\(''\\).resource\\('secrets'\\).namespace\\(object.metadata.namespace\\).check\\('get'\\).allowed\\(\\)\\)$"
       - equal: {path: "spec.validations[2].reason", value: Forbidden}
-      - matchRegex:
-          path: "spec.validations[3].expression"
-          pattern: "variables.newSecretRefs.size\\(\\) > 2 \\|\\|"
-      - matchRegex:
-          path: "spec.validations[3].expression"
-          pattern: "authorizer.group\\(''\\).resource\\('secrets'\\).namespace\\(object.metadata.namespace\\).name\\(r.n\\).check\\('get'\\).allowed\\(\\)"
-      - equal: {path: "spec.validations[3].reason", value: Forbidden}
-      - equal: {path: "spec.matchConstraints.resourceRules[0].operations", value: [CREATE, UPDATE]}
-      # A kept reference whose destination changed is a new reference.
-      - matchRegex: {path: "spec.variables[4].expression", pattern: "'d': string\\(object.spec.tracing.endpoint\\)"}
-      - matchRegex: {path: "spec.variables[4].expression", pattern: "'d': string\\(object.spec.auth.oauth2.issuerURL\\)"}
-      - matchRegex: {path: "spec.variables[4].expression", pattern: "'d': string\\(object.spec.prometheus.url\\) \\+ ' ' \\+ \\(has\\(object.spec.prometheus.caConfigMapRef\\)"}
-      - matchRegex: {path: "spec.variables[4].expression", pattern: "'d': string\\(object.spec.clusterRef.name\\) \\+ ' ' \\+ \\(has\\(object.spec.objectStoreRef\\)"}
-      # The EvidenceAgent's allowedSecrets.
-      - matchRegex: {path: "spec.variables[4].expression", pattern: "object.spec.allowedSecrets.map\\(s, \\{'p': 'allowedSecrets', 'n': string\\(s\\)"}
 
   - it: requires get on the namespace's Secrets for a PgAdmin offering Cluster credentials
     set:
@@ -478,44 +471,29 @@ tests:
     template: templates/operator/admissionpolicy.yaml
     documentIndex: 0
     asserts:
-      - equal: {path: "spec.variables[11].name", value: credentialKinds}
-      - equal: {path: "spec.variables[12].name", value: credentialSources}
-      - matchRegex: {path: "spec.variables[11].expression", pattern: "'superuser'"}
+      - matchRegex: {path: "spec.validations[3].expression", pattern: "^request.resource.resource != 'pgadmins' \\|\\| !variables.specChanged \\|\\|"}
+      - matchRegex: {path: "spec.validations[3].expression", pattern: "has\\(object.spec.configDatabase\\)"}
+      - matchRegex: {path: "spec.validations[3].expression", pattern: "has\\(object.spec.clusterSelector\\)"}
+      - matchRegex: {path: "spec.validations[3].expression", pattern: "object.spec.credentials.superuser"}
       - matchRegex:
-          path: "spec.validations[5].expression"
-          pattern: "authorizer.group\\(''\\).resource\\('secrets'\\).namespace\\(object.metadata.namespace\\).check\\('get'\\).allowed\\(\\)"
-      - equal: {path: "spec.validations[5].reason", value: Forbidden}
-      # Widening who may sign in is widening the offer.
-      - equal: {path: "spec.variables[10].name", value: pgadminAudienceKept}
-      - matchRegex: {path: "spec.variables[10].expression", pattern: "object.spec.auth.oauth2.requiredClaims == oldObject.spec.auth.oauth2.requiredClaims"}
-      - matchRegex: {path: "spec.variables[10].expression", pattern: "oldObject.spec.admins"}
-      - notMatchRegex: {path: "spec.variables[10].expression", pattern: "displayName"}
-      - matchRegex: {path: "spec.validations[5].expression", pattern: "variables.pgadminAudienceKept\\) \\|\\|"}
-      # The settings database is a credential source; a longer proxy session is a wider audience.
-      - matchRegex: {path: "spec.validations[5].expression", pattern: "&& !has\\(object.spec.configDatabase\\)\\) \\|\\|"}
-      - matchRegex: {path: "spec.validations[5].expression", pattern: "object.spec.configDatabase == oldObject.spec.configDatabase"}
-      - matchRegex: {path: "spec.variables[10].expression", pattern: "duration\\(has\\(object.spec.auth.openshiftOAuthProxy.sessionMaxAge\\)"}
+          path: "spec.validations[3].expression"
+          pattern: "authorizer.group\\(''\\).resource\\('secrets'\\).namespace\\(object.metadata.namespace\\).check\\('get'\\).allowed\\(\\)$"
+      - equal: {path: "spec.validations[3].reason", value: Forbidden}
 
-  - it: requires create on the exposure kind for annotations an ingress controller runs
+  - it: requires create on the exposure kind for exposure and Service annotations
     set:
       operator.enabled: true
       operator.admissionPolicy.enabled: true
     template: templates/operator/admissionpolicy.yaml
     documentIndex: 0
     asserts:
-      - equal: {path: "spec.variables[15].name", value: exposureType}
-      - equal: {path: "spec.variables[17].name", value: exposureAnnotationsKept}
-      - matchRegex: {path: "spec.variables[17].expression", pattern: "contains\\('snippet'\\)"}
-      - matchRegex: {path: "spec.variables[17].expression", pattern: "startsWith\\('nginx.ingress.kubernetes.io/auth-'\\)"}
-      - matchRegex: {path: "spec.variables[17].expression", pattern: "r.target in \\['All', 'Exposure', 'Service'\\]"}
-      - matchRegex: {path: "spec.variables[17].expression", pattern: "'nginx.ingress.kubernetes.io/server-alias'"}
-      - matchRegex: {path: "spec.variables[17].expression", pattern: "'alb.ingress.kubernetes.io/scheme'"}
-      - matchRegex: {path: "spec.variables[17].expression", pattern: "'haproxy.router.openshift.io/ip_allowlist'"}
-      - matchRegex: {path: "spec.variables[17].expression", pattern: "o.target == 'All' \\|\\| o.target == r.target"}
+      - equal: {path: "spec.variables[7].name", value: exposureType}
+      - matchRegex: {path: "spec.validations[5].expression", pattern: "^!variables.specChanged \\|\\| variables.exposureType == 'clusterIP' \\|\\|"}
+      - matchRegex: {path: "spec.validations[5].expression", pattern: "r.target in \\['All', 'Exposure', 'Service'\\]"}
       - matchRegex:
-          path: "spec.validations[6].expression"
-          pattern: "^variables.exposureAnnotationsKept \\|\\| authorizer.group\\(.*'networking.k8s.io'\\).resource\\(.*'ingresses'\\).*check\\('create'\\).allowed\\(\\)$"
-      - equal: {path: "spec.validations[6].reason", value: Forbidden}
+          path: "spec.validations[5].expression"
+          pattern: "authorizer.group\\(.*'networking.k8s.io'\\).resource\\(.*'ingresses'\\).*check\\('create'\\).allowed\\(\\)$"
+      - equal: {path: "spec.validations[5].reason", value: Forbidden}
 
   - it: requires create on the console ServiceAccount's token to project it to Prometheus
     set:
@@ -524,14 +502,11 @@ tests:
     template: templates/operator/admissionpolicy.yaml
     documentIndex: 0
     asserts:
-      - equal: {path: "spec.variables[7].name", value: prometheusTokenTo}
-      - equal: {path: "spec.variables[8].name", value: oldPrometheusTokenTo}
-      - matchRegex: {path: "spec.variables[7].expression", pattern: "object.spec.prometheus.tokenAudience"}
-      - matchRegex: {path: "spec.variables[7].expression", pattern: "object.spec.prometheus.caConfigMapRef.name"}
-      - equal: {path: "spec.variables[9].name", value: consoleServiceAccount}
+      - equal: {path: "spec.variables[6].name", value: consoleServiceAccount}
       - equal:
-          path: "spec.variables[9].expression"
+          path: "spec.variables[6].expression"
           value: "object.metadata.name.contains('console') ? object.metadata.name : object.metadata.name + '-console'"
+      - matchRegex: {path: "spec.validations[4].expression", pattern: "object.spec.prometheus.projectedToken"}
       - matchRegex:
           path: "spec.validations[4].expression"
           pattern: "authorizer.group\\(''\\).resource\\('serviceaccounts'\\).subresource\\('token'\\).namespace\\(object.metadata.namespace\\).name\\(variables.consoleServiceAccount\\).check\\('create'\\).allowed\\(\\)"

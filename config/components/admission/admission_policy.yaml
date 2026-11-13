@@ -25,147 +25,38 @@ spec:
       expression: "[]"
     - name: identityGroups
       expression: "[\"system:masters\"]"
+    - name: specChanged
+      expression: >-
+        oldObject == null || has(object.spec) != has(oldObject.spec) || (has(object.spec) && object.spec != oldObject.spec)
+    # The name of every Secret the spec references, one reference per line.
     - name: secretRefs
       expression: >-
         request.resource.resource == 'pgtoolboxconsoles' ? (
-          (has(object.spec.auth) && has(object.spec.auth.oidc) ? [{'p': 'auth.oidc.clientSecretRef', 'n': string(object.spec.auth.oidc.clientSecretRef.name), 'd': string(object.spec.auth.oidc.issuerURL) + ' ' + (has(object.spec.auth.oidc.caConfigMapRef) ? string(object.spec.auth.oidc.caConfigMapRef.name) : '')}] : []) +
-          (has(object.spec.auth) && has(object.spec.auth.oidc) && has(object.spec.auth.oidc.grantClient) ? [{'p': 'auth.oidc.grantClient.clientSecretRef', 'n': string(object.spec.auth.oidc.grantClient.clientSecretRef.name), 'd': string(object.spec.auth.oidc.issuerURL) + ' ' + (has(object.spec.auth.oidc.caConfigMapRef) ? string(object.spec.auth.oidc.caConfigMapRef.name) : '')}] : []) +
-          (has(object.spec.auth) && has(object.spec.auth.openshift) && has(object.spec.auth.openshift.clientSecretRef) ? [{'p': 'auth.openshift.clientSecretRef', 'n': string(object.spec.auth.openshift.clientSecretRef.name), 'd': (has(object.spec.auth.openshift.caConfigMapRef) ? string(object.spec.auth.openshift.caConfigMapRef.name) : '')}] : []) +
-          (has(object.spec.prometheus) && has(object.spec.prometheus.tokenSecretRef) ? [{'p': 'prometheus.tokenSecretRef', 'n': string(object.spec.prometheus.tokenSecretRef.name), 'd': string(object.spec.prometheus.url) + ' ' + (has(object.spec.prometheus.caConfigMapRef) ? string(object.spec.prometheus.caConfigMapRef.name) : '')}] : []) +
-          (has(object.spec.digest) && has(object.spec.digest.delivery) && has(object.spec.digest.delivery.chatWebhookSecretRef) ? [{'p': 'digest.delivery.chatWebhookSecretRef', 'n': string(object.spec.digest.delivery.chatWebhookSecretRef.name), 'd': ''}] : []) +
-          (has(object.spec.digest) && has(object.spec.digest.delivery) && has(object.spec.digest.delivery.webhookSecretRef) ? [{'p': 'digest.delivery.webhookSecretRef', 'n': string(object.spec.digest.delivery.webhookSecretRef.name), 'd': ''}] : []) +
-          (has(object.spec.digest) && has(object.spec.digest.delivery) && has(object.spec.digest.delivery.smtp) && has(object.spec.digest.delivery.smtp.passwordSecretRef) ? [{'p': 'digest.delivery.smtp.passwordSecretRef', 'n': string(object.spec.digest.delivery.smtp.passwordSecretRef.name), 'd': string(object.spec.digest.delivery.smtp.address) + ' ' + (has(object.spec.digest.delivery.smtp.tls) ? string(object.spec.digest.delivery.smtp.tls) : '')}] : []) +
-          (has(object.spec.tracing) && has(object.spec.tracing.headersSecretRef) ? [{'p': 'tracing.headersSecretRef', 'n': string(object.spec.tracing.headersSecretRef.name), 'd': string(object.spec.tracing.endpoint)}] : []) +
-          (has(object.spec.restoreDrills) && has(object.spec.restoreDrills.sealKeySecretRef) ? [{'p': 'restoreDrills.sealKeySecretRef', 'n': string(object.spec.restoreDrills.sealKeySecretRef.name), 'd': ''}] : []) +
-          (has(object.spec.exposure) && has(object.spec.exposure.tls) && has(object.spec.exposure.tls.certificateSecretRef) ? [{'p': 'exposure.tls.certificateSecretRef', 'n': string(object.spec.exposure.tls.certificateSecretRef.name), 'd': ''}] : []) +
-          (has(object.spec.image) && has(object.spec.image.pullSecrets) ? object.spec.image.pullSecrets.map(s, {'p': 'image.pullSecrets', 'n': string(s.name), 'd': string(object.spec.image.repository)}) : [])
+        (has(object.spec.auth) && has(object.spec.auth.oidc) ? [string(object.spec.auth.oidc.clientSecretRef.name)] : []) +
+        (has(object.spec.auth) && has(object.spec.auth.oidc) && has(object.spec.auth.oidc.grantClient) ? [string(object.spec.auth.oidc.grantClient.clientSecretRef.name)] : []) +
+        (has(object.spec.auth) && has(object.spec.auth.openshift) && has(object.spec.auth.openshift.clientSecretRef) ? [string(object.spec.auth.openshift.clientSecretRef.name)] : []) +
+        (has(object.spec.prometheus) && has(object.spec.prometheus.tokenSecretRef) ? [string(object.spec.prometheus.tokenSecretRef.name)] : []) +
+        (has(object.spec.digest) && has(object.spec.digest.delivery) && has(object.spec.digest.delivery.chatWebhookSecretRef) ? [string(object.spec.digest.delivery.chatWebhookSecretRef.name)] : []) +
+        (has(object.spec.digest) && has(object.spec.digest.delivery) && has(object.spec.digest.delivery.webhookSecretRef) ? [string(object.spec.digest.delivery.webhookSecretRef.name)] : []) +
+        (has(object.spec.digest) && has(object.spec.digest.delivery) && has(object.spec.digest.delivery.smtp) && has(object.spec.digest.delivery.smtp.passwordSecretRef) ? [string(object.spec.digest.delivery.smtp.passwordSecretRef.name)] : []) +
+        (has(object.spec.tracing) && has(object.spec.tracing.headersSecretRef) ? [string(object.spec.tracing.headersSecretRef.name)] : []) +
+        (has(object.spec.restoreDrills) && has(object.spec.restoreDrills.sealKeySecretRef) ? [string(object.spec.restoreDrills.sealKeySecretRef.name)] : []) +
+        (has(object.spec.exposure) && has(object.spec.exposure.tls) && has(object.spec.exposure.tls.certificateSecretRef) ? [string(object.spec.exposure.tls.certificateSecretRef.name)] : []) +
+        (has(object.spec.image) && has(object.spec.image.pullSecrets) ? object.spec.image.pullSecrets.map(s, string(s.name)) : [])
         ) : request.resource.resource == 'pgadmins' ? (
-          (has(object.spec.auth) && has(object.spec.auth.oauth2) ? [{'p': 'auth.oauth2.clientSecretRef', 'n': string(object.spec.auth.oauth2.clientSecretRef.name), 'd': string(object.spec.auth.oauth2.issuerURL)}] : []) +
-          (has(object.spec.auth) && has(object.spec.auth.openshiftOAuthProxy) && has(object.spec.auth.openshiftOAuthProxy.image) && has(object.spec.auth.openshiftOAuthProxy.image.pullSecrets) ? object.spec.auth.openshiftOAuthProxy.image.pullSecrets.map(s, {'p': 'auth.openshiftOAuthProxy.image.pullSecrets', 'n': string(s.name), 'd': string(object.spec.auth.openshiftOAuthProxy.image.repository)}) : []) +
-          (has(object.spec.exposure) && has(object.spec.exposure.tls) && has(object.spec.exposure.tls.certificateSecretRef) ? [{'p': 'exposure.tls.certificateSecretRef', 'n': string(object.spec.exposure.tls.certificateSecretRef.name), 'd': ''}] : []) +
-          (has(object.spec.image) && has(object.spec.image.pullSecrets) ? object.spec.image.pullSecrets.map(s, {'p': 'image.pullSecrets', 'n': string(s.name), 'd': string(object.spec.image.repository)}) : [])
+        (has(object.spec.auth) && has(object.spec.auth.oauth2) ? [string(object.spec.auth.oauth2.clientSecretRef.name)] : []) +
+        (has(object.spec.auth) && has(object.spec.auth.openshiftOAuthProxy) && has(object.spec.auth.openshiftOAuthProxy.image) && has(object.spec.auth.openshiftOAuthProxy.image.pullSecrets) ? object.spec.auth.openshiftOAuthProxy.image.pullSecrets.map(s, string(s.name)) : []) +
+        (has(object.spec.exposure) && has(object.spec.exposure.tls) && has(object.spec.exposure.tls.certificateSecretRef) ? [string(object.spec.exposure.tls.certificateSecretRef.name)] : []) +
+        (has(object.spec.image) && has(object.spec.image.pullSecrets) ? object.spec.image.pullSecrets.map(s, string(s.name)) : [])
         ) : request.resource.resource == 'evidenceagents' ? (
-          (has(object.spec.allowedSecrets) ? object.spec.allowedSecrets.map(s, {'p': 'allowedSecrets', 'n': string(s), 'd': string(object.spec.clusterRef.name) + ' ' + (has(object.spec.objectStoreRef) ? string(object.spec.objectStoreRef.name) : '') + ' ' + (has(object.spec.allowInsecureEndpoint) && object.spec.allowInsecureEndpoint ? 'insecure' : '') + ' ' + (has(object.spec.pgbackrest) ? 'pgbackrest ' + (has(object.spec.pgbackrest.repository) ? string(object.spec.pgbackrest.repository) : '1') + ' ' + (has(object.spec.pgbackrest.endpoint) ? string(object.spec.pgbackrest.endpoint) : '') + ' ' + (has(object.spec.pgbackrest.endpointCA) ? string(object.spec.pgbackrest.endpointCA.name) + ' ' + string(object.spec.pgbackrest.endpointCA.key) : '') : '')}) : [])
+        (has(object.spec.allowedSecrets) ? object.spec.allowedSecrets.map(s, string(s)) : [])
         ) : []
-    - name: oldSecretRefs
-      expression: >-
-        oldObject == null ? [] : (
-        request.resource.resource == 'pgtoolboxconsoles' ? (
-          (has(oldObject.spec.auth) && has(oldObject.spec.auth.oidc) ? [{'p': 'auth.oidc.clientSecretRef', 'n': string(oldObject.spec.auth.oidc.clientSecretRef.name), 'd': string(oldObject.spec.auth.oidc.issuerURL) + ' ' + (has(oldObject.spec.auth.oidc.caConfigMapRef) ? string(oldObject.spec.auth.oidc.caConfigMapRef.name) : '')}] : []) +
-          (has(oldObject.spec.auth) && has(oldObject.spec.auth.oidc) && has(oldObject.spec.auth.oidc.grantClient) ? [{'p': 'auth.oidc.grantClient.clientSecretRef', 'n': string(oldObject.spec.auth.oidc.grantClient.clientSecretRef.name), 'd': string(oldObject.spec.auth.oidc.issuerURL) + ' ' + (has(oldObject.spec.auth.oidc.caConfigMapRef) ? string(oldObject.spec.auth.oidc.caConfigMapRef.name) : '')}] : []) +
-          (has(oldObject.spec.auth) && has(oldObject.spec.auth.openshift) && has(oldObject.spec.auth.openshift.clientSecretRef) ? [{'p': 'auth.openshift.clientSecretRef', 'n': string(oldObject.spec.auth.openshift.clientSecretRef.name), 'd': (has(oldObject.spec.auth.openshift.caConfigMapRef) ? string(oldObject.spec.auth.openshift.caConfigMapRef.name) : '')}] : []) +
-          (has(oldObject.spec.prometheus) && has(oldObject.spec.prometheus.tokenSecretRef) ? [{'p': 'prometheus.tokenSecretRef', 'n': string(oldObject.spec.prometheus.tokenSecretRef.name), 'd': string(oldObject.spec.prometheus.url) + ' ' + (has(oldObject.spec.prometheus.caConfigMapRef) ? string(oldObject.spec.prometheus.caConfigMapRef.name) : '')}] : []) +
-          (has(oldObject.spec.digest) && has(oldObject.spec.digest.delivery) && has(oldObject.spec.digest.delivery.chatWebhookSecretRef) ? [{'p': 'digest.delivery.chatWebhookSecretRef', 'n': string(oldObject.spec.digest.delivery.chatWebhookSecretRef.name), 'd': ''}] : []) +
-          (has(oldObject.spec.digest) && has(oldObject.spec.digest.delivery) && has(oldObject.spec.digest.delivery.webhookSecretRef) ? [{'p': 'digest.delivery.webhookSecretRef', 'n': string(oldObject.spec.digest.delivery.webhookSecretRef.name), 'd': ''}] : []) +
-          (has(oldObject.spec.digest) && has(oldObject.spec.digest.delivery) && has(oldObject.spec.digest.delivery.smtp) && has(oldObject.spec.digest.delivery.smtp.passwordSecretRef) ? [{'p': 'digest.delivery.smtp.passwordSecretRef', 'n': string(oldObject.spec.digest.delivery.smtp.passwordSecretRef.name), 'd': string(oldObject.spec.digest.delivery.smtp.address) + ' ' + (has(oldObject.spec.digest.delivery.smtp.tls) ? string(oldObject.spec.digest.delivery.smtp.tls) : '')}] : []) +
-          (has(oldObject.spec.tracing) && has(oldObject.spec.tracing.headersSecretRef) ? [{'p': 'tracing.headersSecretRef', 'n': string(oldObject.spec.tracing.headersSecretRef.name), 'd': string(oldObject.spec.tracing.endpoint)}] : []) +
-          (has(oldObject.spec.restoreDrills) && has(oldObject.spec.restoreDrills.sealKeySecretRef) ? [{'p': 'restoreDrills.sealKeySecretRef', 'n': string(oldObject.spec.restoreDrills.sealKeySecretRef.name), 'd': ''}] : []) +
-          (has(oldObject.spec.exposure) && has(oldObject.spec.exposure.tls) && has(oldObject.spec.exposure.tls.certificateSecretRef) ? [{'p': 'exposure.tls.certificateSecretRef', 'n': string(oldObject.spec.exposure.tls.certificateSecretRef.name), 'd': ''}] : []) +
-          (has(oldObject.spec.image) && has(oldObject.spec.image.pullSecrets) ? oldObject.spec.image.pullSecrets.map(s, {'p': 'image.pullSecrets', 'n': string(s.name), 'd': string(oldObject.spec.image.repository)}) : [])
-        ) : request.resource.resource == 'pgadmins' ? (
-          (has(oldObject.spec.auth) && has(oldObject.spec.auth.oauth2) ? [{'p': 'auth.oauth2.clientSecretRef', 'n': string(oldObject.spec.auth.oauth2.clientSecretRef.name), 'd': string(oldObject.spec.auth.oauth2.issuerURL)}] : []) +
-          (has(oldObject.spec.auth) && has(oldObject.spec.auth.openshiftOAuthProxy) && has(oldObject.spec.auth.openshiftOAuthProxy.image) && has(oldObject.spec.auth.openshiftOAuthProxy.image.pullSecrets) ? oldObject.spec.auth.openshiftOAuthProxy.image.pullSecrets.map(s, {'p': 'auth.openshiftOAuthProxy.image.pullSecrets', 'n': string(s.name), 'd': string(oldObject.spec.auth.openshiftOAuthProxy.image.repository)}) : []) +
-          (has(oldObject.spec.exposure) && has(oldObject.spec.exposure.tls) && has(oldObject.spec.exposure.tls.certificateSecretRef) ? [{'p': 'exposure.tls.certificateSecretRef', 'n': string(oldObject.spec.exposure.tls.certificateSecretRef.name), 'd': ''}] : []) +
-          (has(oldObject.spec.image) && has(oldObject.spec.image.pullSecrets) ? oldObject.spec.image.pullSecrets.map(s, {'p': 'image.pullSecrets', 'n': string(s.name), 'd': string(oldObject.spec.image.repository)}) : [])
-        ) : request.resource.resource == 'evidenceagents' ? (
-          (has(oldObject.spec.allowedSecrets) ? oldObject.spec.allowedSecrets.map(s, {'p': 'allowedSecrets', 'n': string(s), 'd': string(oldObject.spec.clusterRef.name) + ' ' + (has(oldObject.spec.objectStoreRef) ? string(oldObject.spec.objectStoreRef.name) : '') + ' ' + (has(oldObject.spec.allowInsecureEndpoint) && oldObject.spec.allowInsecureEndpoint ? 'insecure' : '') + ' ' + (has(oldObject.spec.pgbackrest) ? 'pgbackrest ' + (has(oldObject.spec.pgbackrest.repository) ? string(oldObject.spec.pgbackrest.repository) : '1') + ' ' + (has(oldObject.spec.pgbackrest.endpoint) ? string(oldObject.spec.pgbackrest.endpoint) : '') + ' ' + (has(oldObject.spec.pgbackrest.endpointCA) ? string(oldObject.spec.pgbackrest.endpointCA.name) + ' ' + string(oldObject.spec.pgbackrest.endpointCA.key) : '') : '')}) : [])
-        ) : []
-        )
-    - name: newSecretRefs
-      expression: >-
-        variables.secretRefs.filter(r, !(oldObject != null && r in variables.oldSecretRefs))
-    - name: prometheusTokenTo
-      expression: >-
-        request.resource.resource == 'pgtoolboxconsoles' && has(object.spec.prometheus) && has(object.spec.prometheus.projectedToken) && object.spec.prometheus.projectedToken ?
-          string(object.spec.prometheus.url) + ' ' + (has(object.spec.prometheus.caConfigMapRef) ? string(object.spec.prometheus.caConfigMapRef.name) : '') + ' ' + (has(object.spec.prometheus.tokenAudience) ? string(object.spec.prometheus.tokenAudience) : '') : ''
-    - name: oldPrometheusTokenTo
-      expression: >-
-        oldObject == null ? '' : (
-        request.resource.resource == 'pgtoolboxconsoles' && has(oldObject.spec.prometheus) && has(oldObject.spec.prometheus.projectedToken) && oldObject.spec.prometheus.projectedToken ?
-          string(oldObject.spec.prometheus.url) + ' ' + (has(oldObject.spec.prometheus.caConfigMapRef) ? string(oldObject.spec.prometheus.caConfigMapRef.name) : '') + ' ' + (has(oldObject.spec.prometheus.tokenAudience) ? string(oldObject.spec.prometheus.tokenAudience) : '') : ''
-        )
     - name: consoleServiceAccount
       expression: >-
         object.metadata.name.contains('console') ? object.metadata.name : object.metadata.name + '-console'
-    - name: pgadminAudienceKept
-      expression: >-
-        request.resource.resource == 'pgadmins' && (
-        oldObject != null &&
-        has(object.spec.auth.oauth2) == has(oldObject.spec.auth.oauth2) &&
-        has(object.spec.auth.openshiftOAuthProxy) == has(oldObject.spec.auth.openshiftOAuthProxy) &&
-        (!has(object.spec.auth.oauth2) || (
-          object.spec.auth.oauth2.issuerURL == oldObject.spec.auth.oauth2.issuerURL &&
-          object.spec.auth.oauth2.clientID == oldObject.spec.auth.oauth2.clientID &&
-          object.spec.auth.oauth2.clientSecretRef == oldObject.spec.auth.oauth2.clientSecretRef &&
-          object.spec.auth.oauth2.requiredClaims == oldObject.spec.auth.oauth2.requiredClaims &&
-          (has(object.spec.auth.oauth2.usernameClaim) ? object.spec.auth.oauth2.usernameClaim : '') == (has(oldObject.spec.auth.oauth2.usernameClaim) ? oldObject.spec.auth.oauth2.usernameClaim : '') &&
-          (has(object.spec.auth.oauth2.scopes) ? object.spec.auth.oauth2.scopes : []) == (has(oldObject.spec.auth.oauth2.scopes) ? oldObject.spec.auth.oauth2.scopes : []))) &&
-        (!has(object.spec.auth.openshiftOAuthProxy) || (
-          has(object.spec.auth.openshiftOAuthProxy.image) == has(oldObject.spec.auth.openshiftOAuthProxy.image) &&
-          (!has(object.spec.auth.openshiftOAuthProxy.image) || object.spec.auth.openshiftOAuthProxy.image == oldObject.spec.auth.openshiftOAuthProxy.image) &&
-          duration(has(object.spec.auth.openshiftOAuthProxy.sessionMaxAge) ? string(object.spec.auth.openshiftOAuthProxy.sessionMaxAge) : '1h') <= duration(has(oldObject.spec.auth.openshiftOAuthProxy.sessionMaxAge) ? string(oldObject.spec.auth.openshiftOAuthProxy.sessionMaxAge) : '1h'))) &&
-        (has(object.spec.admins) ? object.spec.admins : []) == (has(oldObject.spec.admins) ? oldObject.spec.admins : [])
-        )
-    - name: credentialKinds
-      expression: >-
-        request.resource.resource != 'pgadmins' ? [] : (
-        ((!has(object.spec.credentials) || !has(object.spec.credentials.application) || object.spec.credentials.application) ? ['application'] : []) +
-        ((has(object.spec.credentials) && has(object.spec.credentials.superuser) && object.spec.credentials.superuser) ? ['superuser'] : []) +
-        ((!has(object.spec.credentials) || !has(object.spec.credentials.databaseRoles) || object.spec.credentials.databaseRoles) ? ['databaseRoles'] : [])
-        )
-    - name: credentialSources
-      expression: >-
-        request.resource.resource != 'pgadmins' ? [] : (
-        (has(object.spec.clusterRefs) ? object.spec.clusterRefs.map(r, string(r.name)) : []) +
-        (has(object.spec.clusterSelector) ? ['selector'] : [])
-        )
-    - name: oldCredentialKinds
-      expression: >-
-        oldObject == null || request.resource.resource != 'pgadmins' ? [] : (
-        ((!has(oldObject.spec.credentials) || !has(oldObject.spec.credentials.application) || oldObject.spec.credentials.application) ? ['application'] : []) +
-        ((has(oldObject.spec.credentials) && has(oldObject.spec.credentials.superuser) && oldObject.spec.credentials.superuser) ? ['superuser'] : []) +
-        ((!has(oldObject.spec.credentials) || !has(oldObject.spec.credentials.databaseRoles) || oldObject.spec.credentials.databaseRoles) ? ['databaseRoles'] : [])
-        )
-    - name: oldCredentialSources
-      expression: >-
-        oldObject == null || request.resource.resource != 'pgadmins' ? [] : (
-        (has(oldObject.spec.clusterRefs) ? oldObject.spec.clusterRefs.map(r, string(r.name)) : []) +
-        (has(oldObject.spec.clusterSelector) ? ['selector'] : [])
-        )
     - name: exposureType
       expression: >-
         request.resource.resource == 'evidenceagents' || !has(object.spec.exposure) || !has(object.spec.exposure.type) ? 'clusterIP' : string(object.spec.exposure.type)
-    - name: oldExposureType
-      expression: >-
-        oldObject == null ? '' : request.resource.resource == 'evidenceagents' || !has(oldObject.spec.exposure) || !has(oldObject.spec.exposure.type) ? 'clusterIP' : string(oldObject.spec.exposure.type)
-    - name: exposureAnnotationsKept
-      expression: >-
-        variables.exposureType == 'clusterIP' || (
-        (!has(object.spec.exposure.annotations) || object.spec.exposure.annotations.all(k,
-          !(k.contains('snippet') ||
-        k.startsWith('nginx.ingress.kubernetes.io/') && (k in ['nginx.ingress.kubernetes.io/enable-global-auth', 'nginx.ingress.kubernetes.io/satisfy', 'nginx.ingress.kubernetes.io/proxy-ssl-secret', 'nginx.ingress.kubernetes.io/server-alias', 'nginx.ingress.kubernetes.io/permanent-redirect', 'nginx.ingress.kubernetes.io/temporal-redirect', 'nginx.ingress.kubernetes.io/app-root', 'nginx.ingress.kubernetes.io/default-backend', 'nginx.ingress.kubernetes.io/custom-http-errors', 'nginx.ingress.kubernetes.io/whitelist-source-range', 'nginx.ingress.kubernetes.io/allowlist-source-range', 'nginx.ingress.kubernetes.io/denylist-source-range', 'nginx.ingress.kubernetes.io/enable-cors'] || k.startsWith('nginx.ingress.kubernetes.io/auth-') || k.startsWith('nginx.ingress.kubernetes.io/mirror-') || k.startsWith('nginx.ingress.kubernetes.io/canary') || k.startsWith('nginx.ingress.kubernetes.io/cors-') || k.startsWith('nginx.ingress.kubernetes.io/proxy-redirect-')) ||
-        k.startsWith('alb.ingress.kubernetes.io/') && (k in ['alb.ingress.kubernetes.io/scheme', 'alb.ingress.kubernetes.io/group.name', 'alb.ingress.kubernetes.io/group.order', 'alb.ingress.kubernetes.io/inbound-cidrs', 'alb.ingress.kubernetes.io/security-groups', 'alb.ingress.kubernetes.io/listen-ports'] || k.startsWith('alb.ingress.kubernetes.io/actions.') || k.startsWith('alb.ingress.kubernetes.io/conditions.') || k.startsWith('alb.ingress.kubernetes.io/auth-')) ||
-        k.startsWith('haproxy-ingress.github.io/') && (k in ['haproxy-ingress.github.io/allowlist-source-range', 'haproxy-ingress.github.io/whitelist-source-range', 'haproxy-ingress.github.io/denylist-source-range', 'haproxy-ingress.github.io/redirect-from', 'haproxy-ingress.github.io/redirect-to', 'haproxy-ingress.github.io/app-root'] || k.startsWith('haproxy-ingress.github.io/config-') || k.startsWith('haproxy-ingress.github.io/auth-') || k.startsWith('haproxy-ingress.github.io/cors-')) ||
-        k.startsWith('haproxy.org/') && (k in ['haproxy.org/allow-list', 'haproxy.org/whitelist', 'haproxy.org/deny-list', 'haproxy.org/blacklist', 'haproxy.org/request-redirect', 'haproxy.org/route-acl'] || k.startsWith('haproxy.org/auth-') || k.startsWith('haproxy.org/cors-')) ||
-        k.startsWith('haproxy.router.openshift.io/') && (k in ['haproxy.router.openshift.io/ip_whitelist', 'haproxy.router.openshift.io/ip_allowlist']) ||
-        k.startsWith('traefik.ingress.kubernetes.io/') && (k in ['traefik.ingress.kubernetes.io/router.middlewares', 'traefik.ingress.kubernetes.io/router.entrypoints']) ||
-        k.startsWith('konghq.com/') && (k in ['konghq.com/plugins', 'konghq.com/host-aliases'])) ||
-          (variables.oldExposureType == variables.exposureType && has(oldObject.spec.exposure.annotations) &&
-           k in oldObject.spec.exposure.annotations && oldObject.spec.exposure.annotations[k] == object.spec.exposure.annotations[k]))) &&
-        (!has(object.spec.metadataPropagation) || object.spec.metadataPropagation.all(r,
-          !(r.target in ['All', 'Exposure', 'Service']) || !has(r.annotations) || r.annotations.all(k,
-            !(k.contains('snippet') ||
-        k.startsWith('nginx.ingress.kubernetes.io/') && (k in ['nginx.ingress.kubernetes.io/enable-global-auth', 'nginx.ingress.kubernetes.io/satisfy', 'nginx.ingress.kubernetes.io/proxy-ssl-secret', 'nginx.ingress.kubernetes.io/server-alias', 'nginx.ingress.kubernetes.io/permanent-redirect', 'nginx.ingress.kubernetes.io/temporal-redirect', 'nginx.ingress.kubernetes.io/app-root', 'nginx.ingress.kubernetes.io/default-backend', 'nginx.ingress.kubernetes.io/custom-http-errors', 'nginx.ingress.kubernetes.io/whitelist-source-range', 'nginx.ingress.kubernetes.io/allowlist-source-range', 'nginx.ingress.kubernetes.io/denylist-source-range', 'nginx.ingress.kubernetes.io/enable-cors'] || k.startsWith('nginx.ingress.kubernetes.io/auth-') || k.startsWith('nginx.ingress.kubernetes.io/mirror-') || k.startsWith('nginx.ingress.kubernetes.io/canary') || k.startsWith('nginx.ingress.kubernetes.io/cors-') || k.startsWith('nginx.ingress.kubernetes.io/proxy-redirect-')) ||
-        k.startsWith('alb.ingress.kubernetes.io/') && (k in ['alb.ingress.kubernetes.io/scheme', 'alb.ingress.kubernetes.io/group.name', 'alb.ingress.kubernetes.io/group.order', 'alb.ingress.kubernetes.io/inbound-cidrs', 'alb.ingress.kubernetes.io/security-groups', 'alb.ingress.kubernetes.io/listen-ports'] || k.startsWith('alb.ingress.kubernetes.io/actions.') || k.startsWith('alb.ingress.kubernetes.io/conditions.') || k.startsWith('alb.ingress.kubernetes.io/auth-')) ||
-        k.startsWith('haproxy-ingress.github.io/') && (k in ['haproxy-ingress.github.io/allowlist-source-range', 'haproxy-ingress.github.io/whitelist-source-range', 'haproxy-ingress.github.io/denylist-source-range', 'haproxy-ingress.github.io/redirect-from', 'haproxy-ingress.github.io/redirect-to', 'haproxy-ingress.github.io/app-root'] || k.startsWith('haproxy-ingress.github.io/config-') || k.startsWith('haproxy-ingress.github.io/auth-') || k.startsWith('haproxy-ingress.github.io/cors-')) ||
-        k.startsWith('haproxy.org/') && (k in ['haproxy.org/allow-list', 'haproxy.org/whitelist', 'haproxy.org/deny-list', 'haproxy.org/blacklist', 'haproxy.org/request-redirect', 'haproxy.org/route-acl'] || k.startsWith('haproxy.org/auth-') || k.startsWith('haproxy.org/cors-')) ||
-        k.startsWith('haproxy.router.openshift.io/') && (k in ['haproxy.router.openshift.io/ip_whitelist', 'haproxy.router.openshift.io/ip_allowlist']) ||
-        k.startsWith('traefik.ingress.kubernetes.io/') && (k in ['traefik.ingress.kubernetes.io/router.middlewares', 'traefik.ingress.kubernetes.io/router.entrypoints']) ||
-        k.startsWith('konghq.com/') && (k in ['konghq.com/plugins', 'konghq.com/host-aliases'])) ||
-            (variables.oldExposureType == variables.exposureType && has(oldObject.spec.metadataPropagation) &&
-             oldObject.spec.metadataPropagation.exists(o, (o.target == 'All' || o.target == r.target) && has(o.annotations) &&
-               k in o.annotations && o.annotations[k] == r.annotations[k])))))
-        )
   validations:
     - expression: >-
         request.resource.resource == 'pgtoolboxconsoles' ||
@@ -183,52 +74,36 @@ spec:
         request.userInfo.groups.exists(g, g in variables.identityGroups)
       message: spec.workloadIdentity may be set only by the users and groups the platform team listed in the operator chart (operator.admissionPolicy.workloadIdentity)
       reason: Forbidden
-    # An authorizer check costs most of an expression's CEL runtime budget
-    # (about two fit), so the rule is two validations: a change that adds
-    # more than two Secret references needs get on every Secret of the
-    # namespace (one check), and one that adds one or two is checked name
-    # by name (get on the namespace's Secrets covers those names too).
     - expression: >-
-        variables.newSecretRefs.size() <= 2 ||
+        !variables.specChanged || (variables.secretRefs.size() <= 2 ?
+        variables.secretRefs.all(n, authorizer.group('').resource('secrets').namespace(object.metadata.namespace).name(n).check('get').allowed()) :
+        authorizer.group('').resource('secrets').namespace(object.metadata.namespace).check('get').allowed())
+      message: a PgToolBoxConsole, a PgAdmin or an EvidenceAgent requires get on every Secret it references, on create and on any change of its spec; one that references more than two requires get on every Secret of the namespace
+      reason: Forbidden
+    - expression: >-
+        request.resource.resource != 'pgadmins' || !variables.specChanged ||
+        !(has(object.spec.configDatabase) ||
+        (((has(object.spec.clusterRefs) && object.spec.clusterRefs.size() > 0) || has(object.spec.clusterSelector)) &&
+        (!has(object.spec.credentials) ||
+        !has(object.spec.credentials.application) || object.spec.credentials.application ||
+        !has(object.spec.credentials.databaseRoles) || object.spec.credentials.databaseRoles ||
+        (has(object.spec.credentials.superuser) && object.spec.credentials.superuser)))) ||
         authorizer.group('').resource('secrets').namespace(object.metadata.namespace).check('get').allowed()
-      message: editing a PgToolBoxConsole, a PgAdmin or an EvidenceAgent requires get on every Secret it references; a change that adds more than two Secret references at once requires get on every Secret of the namespace (a kept reference whose destination changed counts as added)
+      message: a PgAdmin that offers the credentials of Clusters of its namespace (spec.credentials with clusterRefs or clusterSelector) or keeps its settings on one (spec.configDatabase) requires get on the Secrets of the namespace, on create and on any change of its spec
       reason: Forbidden
     - expression: >-
-        variables.newSecretRefs.size() == 0 || variables.newSecretRefs.size() > 2 ||
-        variables.newSecretRefs.all(r,
-        authorizer.group('').resource('secrets').namespace(object.metadata.namespace).name(r.n).check('get').allowed())
-      message: editing a PgToolBoxConsole, a PgAdmin or an EvidenceAgent requires get on every Secret it references (a Secret reference you may not read is refused, whichever field names it, and a kept reference whose destination changed is checked again)
-      reason: Forbidden
-    # The projected Prometheus token is the console ServiceAccount's own
-    # token: sending it to a new URL (or trusting a new CA, or another
-    # audience) takes what minting it takes.
-    - expression: >-
-        variables.prometheusTokenTo == '' ||
-        (oldObject != null && variables.prometheusTokenTo == variables.oldPrometheusTokenTo) ||
+        request.resource.resource != 'pgtoolboxconsoles' || !variables.specChanged ||
+        !(has(object.spec.prometheus) && has(object.spec.prometheus.projectedToken) && object.spec.prometheus.projectedToken) ||
         authorizer.group('').resource('serviceaccounts').subresource('token').namespace(object.metadata.namespace).name(variables.consoleServiceAccount).check('create').allowed()
-      message: a PgToolBoxConsole that sends its projected ServiceAccount token to Prometheus (spec.prometheus.projectedToken) requires create on serviceaccounts/token for the console's ServiceAccount; changing the URL, the CA ConfigMap or the audience is checked again
+      message: a PgToolBoxConsole that sends its projected ServiceAccount token to Prometheus (spec.prometheus.projectedToken) requires create on serviceaccounts/token for the console's ServiceAccount, on create and on any change of its spec
       reason: Forbidden
     - expression: >-
-        request.resource.resource != 'pgadmins' ||
-        ((variables.credentialKinds.size() == 0 || variables.credentialSources.size() == 0) && !has(object.spec.configDatabase)) ||
-        (oldObject != null &&
-        variables.credentialKinds.all(k, k in variables.oldCredentialKinds) &&
-        variables.credentialSources.all(s, s in variables.oldCredentialSources) &&
-        (!has(object.spec.clusterSelector) || (has(oldObject.spec.clusterSelector) && object.spec.clusterSelector == oldObject.spec.clusterSelector)) &&
-        (!has(object.spec.configDatabase) || (has(oldObject.spec.configDatabase) && object.spec.configDatabase == oldObject.spec.configDatabase)) &&
-        variables.pgadminAudienceKept) ||
-        authorizer.group('').resource('secrets').namespace(object.metadata.namespace).check('get').allowed()
-      message: a PgAdmin that offers the credentials of Clusters of its namespace (spec.credentials) or keeps its settings on one (spec.configDatabase, whose login role pgAdmin holds) requires get on the Secrets of the namespace, since whoever opens pgAdmin holds them; adding a credential kind or a Cluster, changing who may sign in (spec.auth, spec.admins) or raising the OpenShift proxy's sessionMaxAge is checked again
-      reason: Forbidden
-    # An ingress controller reads some annotations as configuration
-    # (pgtoolbox.admission.exposureDenyList): the operator would write them
-    # on the Ingress, Route, HTTPRoute or Service for an editor who may not
-    # create the exposure object. Adding or changing one takes create on
-    # that kind in the namespace.
-    - expression: >-
-        variables.exposureAnnotationsKept ||
+        !variables.specChanged || variables.exposureType == 'clusterIP' ||
+        !((has(object.spec.exposure.annotations) && object.spec.exposure.annotations.size() > 0) ||
+        (has(object.spec.metadataPropagation) && object.spec.metadataPropagation.exists(r,
+        r.target in ['All', 'Exposure', 'Service'] && has(r.annotations) && r.annotations.size() > 0))) ||
         authorizer.group(variables.exposureType == 'route' ? 'route.openshift.io' : variables.exposureType == 'gateway' ? 'gateway.networking.k8s.io' : 'networking.k8s.io').resource(variables.exposureType == 'route' ? 'routes' : variables.exposureType == 'gateway' ? 'httproutes' : 'ingresses').namespace(object.metadata.namespace).check('create').allowed()
-      message: an exposure annotation that an ingress controller reads as configuration (a snippet, authentication, a source range, a redirect, a canary, an extra host, a load-balancer scheme or group, mirroring, a middleware or plugin; see the security documentation), on the exposure object or the Service, requires create on the exposure kind (ingresses, routes or httproutes) in the namespace; adding or changing one, or changing the exposure type, is checked again
+      message: annotations on the exposure object or the Service (spec.exposure.annotations, metadataPropagation for All, Exposure or Service) require create on the exposure kind (ingresses, routes or httproutes) in the namespace, on create and on any change of its spec
       reason: Forbidden
 
 

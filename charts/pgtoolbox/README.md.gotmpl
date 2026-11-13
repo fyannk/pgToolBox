@@ -69,10 +69,13 @@ Two optional pieces, **both off by default**:
   may set `spec.image` on a `PgAdmin` or `EvidenceAgent` (the operator's default image
   is used otherwise), and only `workloadIdentity.allowedUsers` and `allowedGroups` may
   add or change `spec.workloadIdentity` on an `EvidenceAgent` (it lends the agent a
-  cloud role). A third rule: creating or editing a `PgToolBoxConsole` or `PgAdmin` requires `get`
-  on every Secret it references (checked with the API server's authorizer, as the
-  requesting user; on update only references that are new or changed), so nobody can have
-  the operator mount a Secret they cannot read. `validationActions` selects Deny, Warn and/or Audit.
+  cloud role). Further rules, checked with the API server's authorizer as the requesting
+  user on create and on any change of the spec: `get` on every Secret a `PgToolBoxConsole`,
+  `PgAdmin` or `EvidenceAgent` references (on every Secret of the namespace when it
+  references more than two), so nobody can have the operator mount a Secret they cannot
+  read; `get` on the namespace's Secrets for a `PgAdmin` that offers Cluster credentials;
+  `create` on `serviceaccounts/token` for a console's projected Prometheus token; `create`
+  on the exposure kind for exposure or Service annotations. `validationActions` selects Deny, Warn and/or Audit.
 
 ### The three user ClusterRoles
 

@@ -1,6 +1,6 @@
 # The restore-drill delete guard (config/admission): a
 # ValidatingAdmissionPolicy that holds a console's ServiceAccount bound to the
-# drills ClusterRole to deleting its own sealed drills, under its own prefix:
+# drills ClusterRole to deleting its own sealed drills:
 # rendered by default (true, also in a plain `helm template`), when the API is
 # served (auto), or never (false).
 suite: the restore-drill delete guard
@@ -13,19 +13,19 @@ tests:
   - it: renders by default, without discovery (plain helm template)
     set: {operator.enabled: true}
     asserts:
-      - hasDocuments: {count: 4}
+      - hasDocuments: {count: 2}
 
   - it: auto renders nothing where the API server serves no v1 policies
     set: {operator.enabled: true, operator.restoreDrillGuard.enabled: auto}
     asserts:
       - hasDocuments: {count: 0}
 
-  - it: renders both policies and their bindings where the API is served
+  - it: renders the policy and its binding where the API is served
     set: {operator.enabled: true, operator.restoreDrillGuard.enabled: auto}
     capabilities:
       apiVersions: [admissionregistration.k8s.io/v1/ValidatingAdmissionPolicy]
     asserts:
-      - hasDocuments: {count: 4}
+      - hasDocuments: {count: 2}
       - documentIndex: 0
         isKind: {of: ValidatingAdmissionPolicy}
       - documentIndex: 0
@@ -38,17 +38,14 @@ tests:
         isKind: {of: ValidatingAdmissionPolicyBinding}
       - documentIndex: 1
         equal: {path: spec.validationActions, value: [Deny]}
-      - documentIndex: 2
-        equal: {path: metadata.name, value: pgtoolbox-console-restore-drill-prefix}
-      - documentIndex: 2
-        equal: {path: spec.paramKind, value: {apiVersion: pgtoolbox.fyannk.dev/v1alpha1, kind: PgToolBoxConsole}}
-      - documentIndex: 3
-        equal: {path: spec.paramRef.parameterNotFoundAction, value: Allow}
+      # Parameterless: a missing parameter must never mean "allow".
+      - documentIndex: 0
+        notExists: {path: spec.paramKind}
 
   - it: renders it without discovery when asked
     set: {operator.enabled: true, operator.restoreDrillGuard.enabled: true}
     asserts:
-      - hasDocuments: {count: 4}
+      - hasDocuments: {count: 2}
 
   - it: renders nothing when turned off
     set: {operator.enabled: true, operator.restoreDrillGuard.enabled: false}

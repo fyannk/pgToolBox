@@ -54,24 +54,11 @@ warning naming what is missing at start:
 {{- end }}
 {{- $hops := .Values.console.trustedProxyHops }}
 {{- if kindIs "invalid" $hops }}{{ $hops = ternary 0 1 (eq .Values.console.exposure.type "none") }}{{ end }}
-{{- if and $hops (not .Values.console.trustedProxyCIDRs) (not (include "pgtools.console.trustsEveryPeer" .)) }}
+{{- if and $hops (not .Values.console.trustedProxyCIDRs) }}
 
-X-Forwarded-For is IGNORED: no trusted proxy is named (console.trustedProxyCIDRs),
-{{- if .Values.console.networkPolicy.ingress.extraFrom }}
-and console.networkPolicy.ingress.extraFrom admits peers that are not the router,
-which could reach the console directly and forge it.
-{{- else if and .Values.console.networkPolicy.enabled (ne .Values.console.exposure.type "none") }}
-and this is OpenShift, whose project template adds NetworkPolicies (allow-from-same-namespace)
-that let other Pods reach the console directly and forge it: the chart cannot see them,
-so it trusts no peer behind its own NetworkPolicy.
-{{- else }}
-and without console.networkPolicy any Pod could reach the console directly and
-forge it.
-{{- end }}
-Every client then shares the proxy's address: no per-address sign-in budget
-applies, only the per-flow, per-token and per-replica bounds.
-List the router's or ingress controller's addresses in console.trustedProxyCIDRs
-{{- if not (or .Values.console.networkPolicy.ingress.extraFrom .Values.console.networkPolicy.enabled) }}, or enable console.networkPolicy{{ end }}.
+X-Forwarded-For is IGNORED: no trusted proxy is named (console.trustedProxyCIDRs).
+Every client shares the proxy's address, in the per-address sign-in budget and
+in the audit log. Set console.trustedProxyCIDRs to your ingress controller's addresses.
 {{- end }}
 {{- if eq .Values.console.exposure.type "none" }}
 

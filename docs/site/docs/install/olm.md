@@ -37,11 +37,12 @@ the checks the operator chart applies by default:
 
 - only the listed users and groups may set `spec.image` on a `PgAdmin` or an
   `EvidenceAgent`, or `spec.workloadIdentity` on an `EvidenceAgent`;
-- whoever creates or edits a `PgToolBoxConsole`, a `PgAdmin` or an `EvidenceAgent`
-  must be able to `get` every Secret it references (again when the place a kept
-  Secret is sent changes);
-- whoever makes a `PgAdmin` offer the credentials of Clusters of its namespace must
-  be able to `get` the namespace's Secrets;
+- whoever creates a `PgToolBoxConsole`, a `PgAdmin` or an `EvidenceAgent`, or
+  changes its spec, must be able to `get` every Secret it references;
+- whoever creates or changes a `PgAdmin` that offers the credentials of Clusters of
+  its namespace must be able to `get` the namespace's Secrets;
+- a projected Prometheus token, and exposure or Service annotations, take the
+  right to mint that token or to create the exposure object;
 - the [restore-drill delete guard](../console/restore-drills.md#the-delete-guard).
 
 Without them, grant `create`/`update` on `pgtoolboxconsoles`, `pgadmins` and

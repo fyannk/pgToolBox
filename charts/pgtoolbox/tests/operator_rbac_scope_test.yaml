@@ -60,13 +60,10 @@ tests:
       operator.config.watchNamespaces: [team-a]
     template: templates/operator/clusterrole-cluster-scoped.yaml
     asserts:
-      # The one core-group rule is the cluster-scoped Nodes list; Secrets,
-      # PVCs and ServiceAccounts stay in the per-namespace RoleBindings
-      # (hack/validate-packaging.sh checks the full rule set).
-      - equal:
-          path: rules[0]
-          value: {apiGroups: [""], resources: [nodes], verbs: [list]}
-      - notExists: {path: "rules[1:][?(@.apiGroups[0]=='')]"}
+      # No core-group rule: Secrets, PVCs and ServiceAccounts stay in the
+      # per-namespace RoleBindings (hack/validate-packaging.sh checks the
+      # full rule set).
+      - notExists: {path: "rules[?(@.apiGroups[0]=='')]"}
       - notExists: {path: "rules[?(@.apiGroups[0]=='apps')]"}
       # No bind cluster-wide: with create clusterrolebindings it would let the
       # operator's token bind pgtoolbox-console-restore-drills to itself in

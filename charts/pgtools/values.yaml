@@ -255,28 +255,11 @@ console:
   # them: the ingress controller or router Pods, the nodes for a host-network
   # router. The console reads `X-Forwarded-For` only from a peer inside one,
   # so that a Pod calling the Service directly cannot name a new address on
-  # every request and escape the per-address sign-in budgets. Empty: every
-  # peer when `networkPolicy.enabled`, an exposure is set,
-  # `networkPolicy.ingress.extraFrom` is empty (the policy then admits only
-  # the router namespace) and the cluster is not OpenShift (no Route API, no
-  # `route` exposure: its project template adds `allow-from-same-namespace`);
-  # otherwise none, and the header is ignored: every client then shares the
-  # proxy's address, so no per-address budget applies, only the per-flow,
-  # per-token and per-replica bounds (the console warns at start, NOTES at
-  # install). NetworkPolicies add up and the chart cannot see the others: one
-  # that admits more Pods to the console port (an `allow-same-namespace`)
-  # lets them forge the header under the any-peer trust. List the proxies
-  # here where such a policy exists, and on OpenShift.
+  # every request and escape the per-address sign-in budgets. Empty: the
+  # header is ignored, and every client shares the proxy's address in the
+  # per-address sign-in budget and in the audit log (the console warns at
+  # start, NOTES at install). Set it to your ingress controller's addresses.
   trustedProxyCIDRs: []
-  # -- Platform the chart renders for: `auto` (detect OpenShift from the API
-  # server: `route.openshift.io/v1`), `kubernetes` or `openshift`. `openshift`
-  # keeps the console from trusting `X-Forwarded-For` from every peer (see
-  # `trustedProxyCIDRs`). Set it with a client-side `helm template` or
-  # `helm install --dry-run=client`, which have no API server to ask: the chart
-  # then sees no Route API even for OpenShift, unless you pass
-  # `--api-versions route.openshift.io/v1`. A `route` exposure always counts as
-  # OpenShift.
-  platform: auto
   # tls.secretName: serve HTTPS on `port` from a kubernetes.io/tls Secret that is
   # mounted as files (the console reads no Secret through the API). Point the edge
   # at it with the usual backend-protocol setting of your controller.
@@ -845,9 +828,7 @@ console:
     extraEgress: []
     ingress:
       # -- Extra ingress peers (monitoring, a test client), as raw NetworkPolicy
-      # `from` items, on the console port. They are not the router: with any,
-      # no peer is trusted with `X-Forwarded-For` unless `trustedProxyCIDRs`
-      # names the proxies.
+      # `from` items, on the console port.
       extraFrom: []
       # -- Peers allowed to scrape `/metrics`, as raw NetworkPolicy `from` items
       # (for example the monitoring namespace). Empty: no ingress on the
@@ -1536,9 +1517,6 @@ pgadmin:
   # range and refuses a fixed one. `0`: none. An explicit value always wins. A
   # client-side `helm template` for OpenShift with another provider needs
   # `--api-versions security.openshift.io/v1` or `fsGroup: 0`.
-  # `console.platform: openshift` does not set this: it drives one thing only,
-  # the console's trust of `X-Forwarded-For` (see `console.platform`), and
-  # changes no NetworkPolicy and no pgAdmin security context.
   fsGroup: null
   # -- Resource requests and limits of the pgadmin container (the operator's
   # defaults); the small sidecars have their own fixed ones.

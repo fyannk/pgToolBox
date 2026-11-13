@@ -256,18 +256,9 @@ spec:
             {{- if $hops }}
             - name: TRUSTED_PROXY_HOPS
               value: {{ $hops | quote }}
-            {{- /* The proxies' addresses; with none listed, every peer only
-            when the chart's NetworkPolicy admits nothing but the router: no
-            extraFrom (its peers are not the proxies, and a broad one would
-            let any Pod forge the header), and not on OpenShift (its project
-            template admits the namespace's Pods). The chart cannot see the
-            other NetworkPolicies of the namespace, which add up: see
-            values.yaml and pgtools.console.trustsEveryPeer. */}}
-            {{- $cidrs := $c.trustedProxyCIDRs }}
-            {{- if include "pgtools.console.trustsEveryPeer" . }}
-            {{- $cidrs = list "0.0.0.0/0" "::/0" }}
-            {{- end }}
-            {{- with $cidrs }}
+            {{- /* Without the proxies' addresses the console ignores the
+            header: every client shares the proxy's address. */}}
+            {{- with $c.trustedProxyCIDRs }}
             - name: TRUSTED_PROXY_CIDRS
               value: {{ join "," . | quote }}
             {{- end }}

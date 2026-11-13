@@ -15,8 +15,6 @@
 package console
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"net/netip"
 	"slices"
@@ -28,7 +26,6 @@ import (
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/intstr"
 
 	pgtoolboxv1alpha1 "github.com/fyannk/pgToolBox/api/v1alpha1"
@@ -38,36 +35,6 @@ import (
 // routers, host-network ones included (OVN-Kubernetes matches host-network
 // traffic from the routers to this label).
 const openShiftIngressPolicyGroup = "policy-group.network.openshift.io/ingress"
-
-// openShiftLegacyIngressLabel and its value label the same router
-// namespaces the older way; the OpenShift project template's
-// allow-from-openshift-ingress policy selects them by it.
-const (
-	openShiftLegacyIngressLabel = "network.openshift.io/policy-group"
-	openShiftLegacyIngressValue = "ingress"
-)
-
-// anyPeer is TRUSTED_PROXY_CIDRS when the NetworkPolicy admits only the
-// proxies: every peer that reaches the port is one.
-var anyPeer = []string{"0.0.0.0/0", "::/0"}
-
-// annotationTrustsEveryPeer marks the Pod template of a workload whose
-// any-peer trust the operator granted from its NetworkPolicy: the policy
-// is withdrawn only once no console Pod carries it. The same
-// TRUSTED_PROXY_CIDRS written in trustedProxy.cidrs is the user's own
-// trust and holds the policy back from nothing.
-const annotationTrustsEveryPeer = pgtoolboxv1alpha1.ReservedKeyPrefix + "trusts-every-peer"
-
-// annotationTrustedBlocks sits beside annotationTrustsEveryPeer when the
-// policy has ipBlock peers: the hash of the blocks (trustedBlocksHash) a
-// console Pod's address showed not to be the Pod network when the grant
-// was made. While no console Pod has an address (the only one is
-// replaced, the workload scales from zero), a template that carries the
-// grant for the same blocks keeps it: the Pod network does not change, so
-// the earlier check still holds, and dropping the grant would roll the
-// Pod that is coming up, which a single-replica StatefulSet would do
-// forever. With no such template (creation), the blocks are not trusted.
-const annotationTrustedBlocks = pgtoolboxv1alpha1.ReservedKeyPrefix + "trusted-ipblocks"
 
 // The narrowest ipBlock that still counts as broad is one bit wider than
 // these: a /7 (IPv4) or a /31 (IPv6). With at most 16 peers of at most a
@@ -107,33 +74,6 @@ var sharedNamespaceKeys = []string{
 	"pod-security.kubernetes.io/",
 	"security.openshift.io/",
 	"openshift.io/run-level",
-}
-
-// confinement is what the reconciler found, beyond the spec, that keeps
-// the exposure's NetworkPolicy from confining the console port; the zero
-// value is nothing.
-type confinement struct {
-	// Broad names a networkPolicy.from peer that the live Pods show to be
-	// broad (an ipBlock that holds a console Pod's address), "" when none.
-	Broad string
-	// Bypass names another NetworkPolicy that admits more (policyBypass),
-	// "" when none.
-	Bypass string
-	// Unverified says why the peers could not be checked, or are not in
-	// force yet, "" when they were: no console Pod has an address while an
-	// ipBlock peer needs one, more console Pods than could be listed, or a
-	// widened networkPolicy.from held back until no Pod trusts every peer.
-	Unverified string
-	// Note says what was not checked without withholding the trust (the
-	// Nodes' podCIDRs, when the operator may not list them), "" when
-	// nothing: it goes into the condition message only.
-	Note string
-}
-
-// clear: nothing found keeps the policy from confining the console port
-// (a Note is not a finding).
-func (f confinement) clear() bool {
-	return f.Broad == "" && f.Bypass == "" && f.Unverified == ""
 }
 
 // exposurePolicyName is the console's ingress NetworkPolicy.
@@ -194,8 +134,9 @@ func routerPeer() networkingv1.NetworkPolicyPeer {
 // console's namespace), and an ipBlock wider than /8 (IPv4) or /32 (IPv6),
 // holding a whole private IPv4 range (10/8, 172.16/12, 192.168/16,
 // 100.64/10: where Pod networks are cut from), or inside fc00::/7 and
-// wider than a /64. An ipBlock holding a console Pod's own address is
-// found by the reconciler (podNetworkBlock).
+// wider than a /64. The check reads the spec only: an ipBlock that is
+// the Pod network, or another NetworkPolicy that admits more (policies add
+// up), is not seen.
 func broadPeer(peers []networkingv1.NetworkPolicyPeer) string {
 	for i, peer := range peers {
 		switch {
@@ -272,307 +213,19 @@ func broadBlock(block *networkingv1.IPBlock) string {
 	return ""
 }
 
-// podNetworkBlock names the first ipBlock peer that admits the address of
-// a console Pod (its except entries aside), "" when none: such a block
-// admits the Pod network, every Pod of the cluster, not the proxies. With
-// an ipBlock peer and no console Pod address to check it against (the
-// first Pod is Pending, the workload scales from zero), unverified says
-// so: until a Pod has an address the block may be the Pod network, so no
-// peer is trusted (fail closed; the Pod's address arrives on a watched
-// Pod update).
-func podNetworkBlock(peers []networkingv1.NetworkPolicyPeer, pods []corev1.Pod) (broad, unverified string) {
-	var addrs []netip.Addr
-	var names []string
-	for p := range pods {
-		for _, ip := range pods[p].Status.PodIPs {
-			if addr, err := netip.ParseAddr(ip.IP); err == nil {
-				addrs, names = append(addrs, addr), append(names, pods[p].Name)
-			}
-		}
-	}
-	for i, peer := range peers {
-		if peer.IPBlock == nil {
-			continue
-		}
-		block, err := netip.ParsePrefix(peer.IPBlock.CIDR)
-		if err != nil {
-			continue // broadPeer reports it
-		}
-		if len(addrs) == 0 {
-			if unverified == "" {
-				unverified = fmt.Sprintf(noPodAddress+", so ipBlock %s (peer %d) cannot be told apart from the Pod network: no peer is trusted until one has", peer.IPBlock.CIDR, i)
-			}
-			continue
-		}
-		for a, addr := range addrs {
-			if block.Contains(addr) && !excepted(peer.IPBlock.Except, addr) {
-				return fmt.Sprintf("peer %d has ipBlock %s, which holds the address of console Pod %s: it admits the Pod network", i, peer.IPBlock.CIDR, names[a]), ""
-			}
-		}
-	}
-	return "", unverified
-}
-
-// noPodAddress is podNetworkBlock's unverified when no console Pod has an
-// address: the one case an earlier check may stand in for
-// (trustedBlocksHash).
-const noPodAddress = "no console Pod has an address yet"
-
-// nodePodCIDRs are a Node's spec.podCIDRs.
-type nodePodCIDRs struct {
-	Name  string
-	CIDRs []netip.Prefix
-}
-
-// nodeNetworkBlock names the first ipBlock peer that overlaps a Node's
-// podCIDR, "" when none: such a block admits the Pods of that node,
-// wherever the console Pods run (podNetworkBlock sees only their own
-// addresses). An except entry that holds the whole podCIDR excepts it.
-// CNIs that do not allocate from spec.podCIDRs (Calico, Cilium's cluster
-// pool) leave it empty: the console Pods' own addresses are then the only
-// check.
-func nodeNetworkBlock(peers []networkingv1.NetworkPolicyPeer, nodes []nodePodCIDRs) string {
-	for i, peer := range peers {
-		if peer.IPBlock == nil {
-			continue
-		}
-		block, err := netip.ParsePrefix(peer.IPBlock.CIDR)
-		if err != nil {
-			continue // broadPeer reports it
-		}
-		block = block.Masked()
-		for _, node := range nodes {
-			for _, cidr := range node.CIDRs {
-				if block.Overlaps(cidr) && !exceptedPrefix(peer.IPBlock.Except, cidr) {
-					return fmt.Sprintf("peer %d has ipBlock %s, which overlaps the Pod range %s of Node %s: it admits the Pods of that node", i, peer.IPBlock.CIDR, cidr, node.Name)
-				}
-			}
-		}
-	}
-	return ""
-}
-
-// nodeCoherenceNote says that the Node check is not meaningful, "" when
-// nothing shows that: a console Pod's address lies outside every podCIDR
-// of its own Node of that address family. A CNI that allocates Pod
-// addresses itself (Calico IPAM, Cilium's cluster pool) while
-// kube-controller-manager still fills spec.podCIDRs leaves ranges there
-// that are not the Pod network, so a block that misses them proves
-// nothing; the console Pods' own addresses are then the only check. A Pod
-// whose Node has no podCIDRs, or none of that family, shows nothing (the
-// coverage note counts those Nodes). The Pods are taken by name, so the
-// note names the same Pod from one pass to the next. It is a note, not a
-// finding: the trust is not withheld for it (a Node range that overlaps a
-// block still makes it broad: false alarms are the safe side).
-func nodeCoherenceNote(pods []corev1.Pod, nodes []nodePodCIDRs) string {
-	ranges := make(map[string][]netip.Prefix, len(nodes))
-	for _, node := range nodes {
-		ranges[node.Name] = node.CIDRs
-	}
-	sorted := slices.Clone(pods)
-	slices.SortFunc(sorted, func(a, b corev1.Pod) int { return strings.Compare(a.Name, b.Name) })
-	for p := range sorted {
-		pod := &sorted[p]
-		cidrs, ok := ranges[pod.Spec.NodeName]
-		if !ok || pod.Spec.HostNetwork {
-			continue
-		}
-		for _, ip := range pod.Status.PodIPs {
-			addr, err := netip.ParseAddr(ip.IP)
-			if err != nil {
-				continue
-			}
-			sameFamily := false
-			inside := slices.ContainsFunc(cidrs, func(cidr netip.Prefix) bool {
-				if cidr.Addr().Is4() != addr.Is4() {
-					return false
-				}
-				sameFamily = true
-				return cidr.Contains(addr)
-			})
-			if sameFamily && !inside {
-				return fmt.Sprintf("the Node check is not meaningful: console Pod %s has address %s, outside the podCIDRs of its Node %s (the CNI does not allocate from spec.podCIDRs), so the Node ranges prove nothing here: an ipBlock peer that covers none of them may still admit the cluster's Pods (a peer that covers one is still reported broad)", pod.Name, addr, pod.Spec.NodeName)
-			}
-		}
-	}
-	return ""
-}
-
-// joinNotes joins the notes that are set.
-func joinNotes(notes ...string) string {
-	return strings.Join(slices.DeleteFunc(notes, func(n string) bool { return n == "" }), "; ")
-}
-
-// exceptedPrefix: one of except holds the whole of cidr.
-func exceptedPrefix(except []string, cidr netip.Prefix) bool {
-	return slices.ContainsFunc(except, func(entry string) bool {
-		prefix, err := netip.ParsePrefix(entry)
-		return err == nil && prefix.Bits() <= cidr.Bits() && prefix.Masked().Contains(cidr.Addr())
-	})
-}
-
-// trustedBlocksHash identifies the ipBlock peers of peers (CIDR and except
-// entries, in any order), "" when there are none.
-func trustedBlocksHash(peers []networkingv1.NetworkPolicyPeer) string {
-	var blocks []string
-	for _, peer := range peers {
-		if peer.IPBlock == nil {
-			continue
-		}
-		except := slices.Clone(peer.IPBlock.Except)
-		slices.Sort(except)
-		blocks = append(blocks, peer.IPBlock.CIDR+" except "+strings.Join(except, ","))
-	}
-	if len(blocks) == 0 {
-		return ""
-	}
-	slices.Sort(blocks)
-	sum := sha256.Sum256([]byte(strings.Join(blocks, "\n")))
-	return hex.EncodeToString(sum[:16])
-}
-
-// peersWiden: the policy with peers would admit a source that the one
-// with live does not (a peer live does not cover: coveredBy).
-func peersWiden(peers, live []networkingv1.NetworkPolicyPeer) bool {
-	return slices.ContainsFunc(peers, func(peer networkingv1.NetworkPolicyPeer) bool { return !coveredBy(peer, live) })
-}
-
-func excepted(except []string, addr netip.Addr) bool {
-	return slices.ContainsFunc(except, func(cidr string) bool {
-		prefix, err := netip.ParsePrefix(cidr)
-		return err == nil && prefix.Contains(addr)
-	})
-}
-
-// policyBypass names the first other NetworkPolicy of the namespace that
-// admits, to the console port of a Pod labelled as one of podLabels (the
-// template's, and each live console Pod's: pod-template-hash and the
-// StatefulSet's labels included), a peer the exposure's own policy does
-// not cover, "" when none. NetworkPolicies add up: any one of them that
-// admits a peer lets it in. A peer is covered when coveredBy says so;
-// any other, narrower or not, turns the trust off (false alarms are the
-// safe side). own is the exposure policy's name, skipped.
-func policyBypass(policies []networkingv1.NetworkPolicy, own string, podLabels []map[string]string, ours []networkingv1.NetworkPolicyPeer) string {
-	for i := range policies {
-		np := &policies[i]
-		if np.Name == own || !appliesToIngress(np) {
-			continue
-		}
-		if selector, err := metav1.LabelSelectorAsSelector(&np.Spec.PodSelector); err == nil && !slices.ContainsFunc(podLabels, func(l map[string]string) bool {
-			return selector.Matches(labels.Set(l))
-		}) {
-			continue
-		}
-		for _, rule := range np.Spec.Ingress {
-			if !portsAdmitHTTP(rule.Ports) {
-				continue
-			}
-			if len(rule.From) == 0 {
-				return "NetworkPolicy " + np.Name + " admits every source to the console port"
-			}
-			for _, peer := range rule.From {
-				if !coveredBy(peer, ours) {
-					return "NetworkPolicy " + np.Name + " admits a peer the exposure does not list to the console port"
-				}
-			}
-		}
-	}
-	return ""
-}
-
-// coveredBy: every source peer admits, one of ours admits too. It is one
-// of ours exactly, or it lies inside one of our namespace-only peers that
-// has only matchLabels: its namespaceSelector carries every one of those
-// labels (more labels or expressions narrow it further), whatever its
-// podSelector (some Pods of those namespaces). An ipBlock is covered only
-// by itself.
-func coveredBy(peer networkingv1.NetworkPolicyPeer, ours []networkingv1.NetworkPolicyPeer) bool {
-	return slices.ContainsFunc(ours, func(p networkingv1.NetworkPolicyPeer) bool {
-		if equality.Semantic.DeepEqual(p, peer) {
-			return true
-		}
-		if p.IPBlock != nil || p.PodSelector != nil || p.NamespaceSelector == nil ||
-			len(p.NamespaceSelector.MatchLabels) == 0 || len(p.NamespaceSelector.MatchExpressions) > 0 ||
-			peer.IPBlock != nil || peer.NamespaceSelector == nil {
-			return false
-		}
-		for k, v := range p.NamespaceSelector.MatchLabels {
-			if got, ok := peer.NamespaceSelector.MatchLabels[k]; !ok || got != v {
-				return false
-			}
-		}
-		return true
-	})
-}
-
-// legacyRouterPeer is the OpenShift router namespaces by their older label:
-// for a Route, a policy that admits them (the project template's
-// allow-from-openshift-ingress) admits nothing routerPeer does not.
-func legacyRouterPeer() networkingv1.NetworkPolicyPeer {
-	return networkingv1.NetworkPolicyPeer{NamespaceSelector: &metav1.LabelSelector{
-		MatchLabels: map[string]string{openShiftLegacyIngressLabel: openShiftLegacyIngressValue},
-	}}
-}
-
-// appliesToIngress: no policyTypes means Ingress (and Egress when there
-// are egress rules).
-func appliesToIngress(np *networkingv1.NetworkPolicy) bool {
-	return len(np.Spec.PolicyTypes) == 0 || slices.Contains(np.Spec.PolicyTypes, networkingv1.PolicyTypeIngress)
-}
-
-// portsAdmitHTTP: a rule without ports admits every port; else one of its
-// ports is the console's (by name, number or range), over TCP.
-func portsAdmitHTTP(ports []networkingv1.NetworkPolicyPort) bool {
-	if len(ports) == 0 {
-		return true
-	}
-	for _, port := range ports {
-		if port.Protocol != nil && *port.Protocol != corev1.ProtocolTCP {
-			continue
-		}
-		switch {
-		case port.Port == nil:
-			return true
-		case port.Port.Type == intstr.String:
-			if port.Port.StrVal == "http" {
-				return true
-			}
-		case port.Port.IntVal == httpPort:
-			return true
-		case port.EndPort != nil && port.Port.IntVal <= httpPort && httpPort <= *port.EndPort:
-			return true
-		}
-	}
-	return false
-}
-
-// trustsAllPeers: pod believes X-Forwarded-For from any peer its
-// NetworkPolicy admits, on the operator's grant (the template annotation;
-// trustedProxy.cidrs of 0.0.0.0/0,::/0 is the user's own choice and needs
-// no policy kept for it).
-func trustsAllPeers(pod *corev1.Pod) bool {
-	return pod.Annotations[annotationTrustsEveryPeer] == "true"
-}
-
 // proxyTrust is what the console believes of X-Forwarded-For.
 type proxyTrust struct {
 	Hops  int32
 	CIDRs []string
-	// EveryPeer: CIDRs is anyPeer on the operator's grant, because the
-	// NetworkPolicy admits only the proxies (not trustedProxy.cidrs).
-	EveryPeer bool
 }
 
 // effectiveProxyTrust follows the exposure that is published, not the
 // one requested: no Route without the Route API, nothing at all while the
 // hostname is refused. Hops default to one in front of a published
-// exposure. The trusted peers are the spec's CIDRs; without them, every
-// peer when the NetworkPolicy admits only the proxies (no peer of it is
-// broad, by the spec or by the live Pods, and no other NetworkPolicy
-// admits more: found is the zero confinement),
-// and none otherwise (the console then ignores the header, whatever the
-// hops).
-func effectiveProxyTrust(c *pgtoolboxv1alpha1.PgToolBoxConsole, exposed bool, found confinement) proxyTrust {
+// exposure. The trusted peers are trustedProxy.cidrs only: without them
+// the console ignores the header, whatever the hops, and takes the TCP
+// peer (the proxy's address) as the client's.
+func effectiveProxyTrust(c *pgtoolboxv1alpha1.PgToolBoxConsole, exposed bool) proxyTrust {
 	var trust proxyTrust
 	if exposed {
 		trust.Hops = 1
@@ -584,7 +237,7 @@ func effectiveProxyTrust(c *pgtoolboxv1alpha1.PgToolBoxConsole, exposed bool, fo
 	if trust.Hops <= 0 {
 		return proxyTrust{}
 	}
-	if spec != nil && len(spec.CIDRs) > 0 {
+	if spec != nil {
 		for _, cidr := range spec.CIDRs {
 			// CEL refused what is not a CIDR; an entry that still does
 			// not parse is never trusted.
@@ -592,11 +245,6 @@ func effectiveProxyTrust(c *pgtoolboxv1alpha1.PgToolBoxConsole, exposed bool, fo
 				trust.CIDRs = append(trust.CIDRs, prefix.Masked().String())
 			}
 		}
-		return trust
-	}
-	if peers := exposurePolicyPeers(c, exposed); peers != nil && broadPeer(peers) == "" && found.clear() {
-		trust.CIDRs = append(trust.CIDRs, anyPeer...)
-		trust.EveryPeer = true
 	}
 	return trust
 }
@@ -642,56 +290,29 @@ func buildExposureNetworkPolicy(c *pgtoolboxv1alpha1.PgToolBoxConsole, exposed b
 }
 
 // exposureConfinedFact is the advisory ExposureConfined, nil when nothing
-// is published (the condition is then removed). found is what the
-// reconciler saw of the live Pods and the other NetworkPolicies.
-func exposureConfinedFact(c *pgtoolboxv1alpha1.PgToolBoxConsole, exposed bool, found confinement) *conditionFact {
-	fact := exposureConfinedFindings(c, exposed, found)
-	if fact != nil && found.Note != "" {
-		fact.Message += "; " + found.Note
-	}
-	return fact
-}
-
-// exposureConfinedFindings is exposureConfinedFact without the note.
-func exposureConfinedFindings(c *pgtoolboxv1alpha1.PgToolBoxConsole, exposed bool, found confinement) *conditionFact {
+// is published (the condition is then removed).
+func exposureConfinedFact(c *pgtoolboxv1alpha1.PgToolBoxConsole, exposed bool) *conditionFact {
 	if !exposed {
 		return nil
 	}
-	trust := effectiveProxyTrust(c, exposed, found)
+	trust := effectiveProxyTrust(c, exposed)
 	believed := "X-Forwarded-For is ignored (trustedProxy.hops is 0)"
 	switch {
 	case trust.Hops > 0 && len(trust.CIDRs) == 0:
-		believed = "X-Forwarded-For is ignored: no trusted peer (set trustedProxy.cidrs, or networkPolicy.from); every client shares the proxy's address, so no per-address sign-in budget applies (only the per-flow, per-token and per-replica bounds)"
+		believed = "X-Forwarded-For is ignored: trustedProxy.cidrs is not set, so every client shares the proxy's address (sign-in budgets and the audit log see the proxy); set it to the ingress controller's addresses"
 	case trust.Hops > 0:
 		believed = "X-Forwarded-For is read " + strconv.Itoa(int(trust.Hops)) + " hop(s) deep from peers in " + strings.Join(trust.CIDRs, ",")
 	}
-	peers := exposurePolicyPeers(c, exposed)
-	if peers != nil {
-		broad := broadPeer(peers)
-		if broad == "" {
-			broad = found.Broad
-		}
-		if broad != "" {
+	if peers := exposurePolicyPeers(c, exposed); peers != nil {
+		if broad := broadPeer(peers); broad != "" {
 			return &conditionFact{
 				Status: metav1.ConditionFalse, Reason: pgtoolboxv1alpha1.ReasonExposurePeersBroad,
 				Message: "NetworkPolicy " + exposurePolicyName(c) + ": networkPolicy.from " + broad + "; " + believed,
 			}
 		}
-		if found.Bypass != "" {
-			return &conditionFact{
-				Status: metav1.ConditionFalse, Reason: pgtoolboxv1alpha1.ReasonExposurePolicyBypassed,
-				Message: found.Bypass + " (NetworkPolicies add up): NetworkPolicy " + exposurePolicyName(c) + " does not confine it; " + believed,
-			}
-		}
-		if found.Unverified != "" {
-			return &conditionFact{
-				Status: metav1.ConditionFalse, Reason: pgtoolboxv1alpha1.ReasonExposureTrustUnverified,
-				Message: "NetworkPolicy " + exposurePolicyName(c) + ": " + found.Unverified + "; " + believed,
-			}
-		}
 		return &conditionFact{
 			Status: metav1.ConditionTrue, Reason: pgtoolboxv1alpha1.ReasonAsExpected,
-			Message: "NetworkPolicy " + exposurePolicyName(c) + " admits only the exposure's peers to the console port, and no other NetworkPolicy admits more (the CNI must enforce them); " + believed,
+			Message: "NetworkPolicy " + exposurePolicyName(c) + " admits only the exposure's peers to the console port (the CNI must enforce it, and other NetworkPolicies of the namespace add up); " + believed,
 		}
 	}
 	why := "networkPolicy.enabled is false"
@@ -706,8 +327,8 @@ func exposureConfinedFindings(c *pgtoolboxv1alpha1.PgToolBoxConsole, exposed boo
 
 // setExposureConfined records the advisory ExposureConfined, or removes
 // it when nothing is published.
-func setExposureConfined(console *pgtoolboxv1alpha1.PgToolBoxConsole, exposed bool, found confinement) {
-	fact := exposureConfinedFact(console, exposed, found)
+func setExposureConfined(console *pgtoolboxv1alpha1.PgToolBoxConsole, exposed bool) {
+	fact := exposureConfinedFact(console, exposed)
 	if fact == nil {
 		meta.RemoveStatusCondition(&console.Status.Conditions, pgtoolboxv1alpha1.ConditionExposureConfined)
 		return

@@ -266,28 +266,37 @@ repository must be on `--console-image-repositories` (chart
 
 ## Trusted proxies and the ingress NetworkPolicy
 
-The console reads `X-Forwarded-For` only from a peer it trusts
+The console reads `X-Forwarded-For` only from a peer in
+`spec.exposure.trustedProxy.cidrs`
 ([client address](../console/authentication.md#sessions)), so that a
 Pod calling the Service directly cannot pose as a new client on every request.
+**Without `trustedProxy.cidrs` the header is ignored**, whatever the
+NetworkPolicy admits: the console takes the TCP peer, the ingress controller's
+or router's address, as the client's. Every user behind it then shares that
+address in the per-address sign-in budget and in the audit log's `client_ip`.
+Set `spec.exposure.trustedProxy.cidrs` to your ingress controller's addresses
+(the router or controller Pods, the nodes for a host-network router) to keep
+per-client budgets and audit addresses.
+
 The operator follows the exposure it **publishes**, not the one requested: a
 Route without the Route API, an HTTPRoute without the Gateway API, or a hostname
 refused by `EXPOSURE_ALLOWED_HOST_SUFFIXES` puts nothing in front, so nothing is
 trusted.
 
-| `spec.exposure` | NetworkPolicy `<name>-ingress` | `TRUSTED_PROXY_HOPS` / `TRUSTED_PROXY_CIDRS` | `ExposureConfined` |
-|---|---|---|---|
-| `clusterIP` | none | none | absent |
-| `route` (published) | on by default: the console port admits namespaces labelled `policy-group.network.openshift.io/ingress` (the OpenShift routers, host-network ones included), plus `from` | `1` / `0.0.0.0/0,::/0` | `True` |
-| `ingress`, `gateway` with `networkPolicy.from` | the console port admits only `from` | `1` / `0.0.0.0/0,::/0` | `True` |
-| a peer of `from` admits (nearly) everyone | rendered as written | `1` / none: the header is ignored | `False`, `ExposurePeersBroad` |
-| the API server refuses the rendered policy (its schema, or an admission policy or webhook that denies it) | applied before the exposure: the previous one stays, and no exposure is published or changed | unchanged (the workload is not rolled) | `ConfigurationValid=False` and `ExposureConfined=False`, `ExposurePolicyInvalid`, retried every five minutes |
-| another NetworkPolicy admits more to the console port | rendered | `1` / none | `False`, `ExposurePolicyBypassed` |
-| an `ipBlock` peer and no console Pod address yet, never verified (creation, or blocks no earlier Pod address checked), or more than 250 console Pods | rendered | `1` / none until a Pod address is known | `False`, `ExposureTrustUnverified` |
-| an `ipBlock` peer, the only Pod replaced or scaled from zero after an earlier Pod address verified the same blocks | rendered | unchanged: `1` / `0.0.0.0/0,::/0` (the workload is not rolled) | `True` |
-| `from` widens while a Pod trusts every peer | the previous one stays until the rollout without the grant is through, then widens | `1` / none during that rollout | `False`, `ExposureTrustUnverified` |
-| `ingress`, `gateway` without `from` | none: the controller's namespace differs per installation, so no default is safe | `1` / none: the header is ignored | `False`, `ExposureOpen` |
-| `networkPolicy.enabled: false` | none | `1` / none | `False`, `ExposureOpen` |
-| the policy goes (exposure or `networkPolicy` turned off) while a Pod may still trust every peer | kept until the rollout without the grant is through and no Pod carries it | `1` / none | `False`, `ExposurePolicyKept`, naming a Pod stuck terminating |
+| `spec.exposure` | NetworkPolicy `<name>-ingress` | `ExposureConfined` |
+|---|---|---|
+| `clusterIP` | none | absent |
+| `route` (published) | on by default: the console port admits namespaces labelled `policy-group.network.openshift.io/ingress` (the OpenShift routers, host-network ones included), plus `from` | `True` |
+| `ingress`, `gateway` with `networkPolicy.from` | the console port admits only `from` | `True` |
+| a peer of `from` admits (nearly) everyone | rendered as written | `False`, `ExposurePeersBroad` |
+| the API server refuses the rendered policy (its schema, or an admission policy or webhook that denies it) | applied before the exposure: the previous one stays, and no exposure is published or changed | `ConfigurationValid=False` and `ExposureConfined=False`, `ExposurePolicyInvalid`, retried every five minutes |
+| `ingress`, `gateway` without `from` | none: the controller's namespace differs per installation, so no default is safe | `False`, `ExposureOpen` |
+| `networkPolicy.enabled: false` | none | `False`, `ExposureOpen` |
+
+`TRUSTED_PROXY_HOPS` is `1` on every published exposure (`trustedProxy.hops`,
+0 to 8, counts the proxies that append to the header: 2 for a load balancer in
+front of the router), and `TRUSTED_PROXY_CIDRS` is `trustedProxy.cidrs`, absent
+when they are not set.
 
 - `spec.exposure.networkPolicy.from` lists the router, ingress controller or
   gateway Pods (NetworkPolicy peers, at most 16). For the community
@@ -298,6 +307,8 @@ trusted.
     exposure:
       type: ingress
       hostname: console.team-a.example.com
+      trustedProxy:
+        cidrs: [10.244.0.0/16]   # the ingress-nginx Pods' addresses
       networkPolicy:
         from:
           - namespaceSelector:
@@ -308,10 +319,7 @@ trusted.
                 app.kubernetes.io/name: ingress-nginx
   ```
 
-  Without `from` an Ingress or a Gateway has no policy and the console ignores
-  `X-Forwarded-For`: every user behind the controller shares its address, so the
-  console charges no per-address sign-in budget and only its per-replica bounds
-  apply. `enabled: true` without `from` is refused for ingress and
+  `enabled: true` without `from` is refused for ingress and
   gateway. Each peer needs a `podSelector`, a `namespaceSelector` or an
   `ipBlock` (alone in its peer, a CIDR whose `except` entries lie inside it);
   selectors take at most 16 labels and 16 expressions, label keys and values
@@ -320,144 +328,50 @@ trusted.
   server would refuse in the policy; what it still refuses (a label-key prefix
   longer than 253 characters) stalls the console with `ExposurePolicyInvalid`
   instead of failing every reconcile.
-- **Every peer admitted is trusted to write `X-Forwarded-For`**, and so can
-  choose the address its requests are charged to. List the proxies only, or
-  name them in `trustedProxy.cidrs`, which then is the trust whatever the
-  policy admits. A peer that admits (nearly) everyone turns the any-peer
-  trust off and reports `ExposurePeersBroad`. The rule: a selector is broad
-  when it pins no label value (no `matchLabels` and no `In` expression; only
-  `Exists`, `NotIn`, `DoesNotExist`, or nothing), since a key alone is on
-  nearly everything (`kubernetes.io/metadata.name` is on every namespace).
-  Broad are a `namespaceSelector` that is, or that pins only labels many
-  namespaces share (`pod-security.kubernetes.io/*`, `security.openshift.io/*`,
-  `openshift.io/run-level`: `pod-security.kubernetes.io/enforce: restricted`
-  is on most namespaces), a `podSelector` that is with no
-  `namespaceSelector`, and an `ipBlock` wider than `/8` (IPv4) or `/32`
+- A peer that admits (nearly) everyone reports `ExposurePeersBroad`. The rule:
+  a selector is broad when it pins no label value (no `matchLabels` and no `In`
+  expression; only `Exists`, `NotIn`, `DoesNotExist`, or nothing), since a key
+  alone is on nearly everything (`kubernetes.io/metadata.name` is on every
+  namespace). Broad are a `namespaceSelector` that is, or that pins only labels
+  many namespaces share (`pod-security.kubernetes.io/*`,
+  `security.openshift.io/*`, `openshift.io/run-level`), a `podSelector` that is
+  with no `namespaceSelector`, and an `ipBlock` wider than `/8` (IPv4) or `/32`
   (IPv6), holding a whole private IPv4 range (`10.0.0.0/8`, `172.16.0.0/12`,
-  `192.168.0.0/16`, `100.64.0.0/10`, where Pod networks are cut from), a
-  unique-local IPv6 block (inside `fc00::/7`) wider than `/64` (kind's
-  `fd00:10:244::/56`, a `/48`), holding a console Pod's own address, or
-  overlapping a Node's `spec.podCIDRs` (the Pods of that node: the operator
-  lists the Nodes, uncached, 100 a page and at most 10,000, one lookup at a
-  time for every console, and keeps what it read for a minute; CNIs that do
-  not allocate from `spec.podCIDRs`, such as Calico or Cilium's cluster pool,
-  leave it empty, and the console Pods' own addresses are then the only check:
-  the `ExposureConfined` message says that the Node check could not run, or
-  how many Nodes had no range; Calico IPAM or Cilium's cluster pool with
-  kube-controller-manager still filling `spec.podCIDRs` leaves ranges there
-  that are not the Pod network, and when a console Pod's address is outside
-  its own Node's range the message says the Node check is not meaningful: the
-  Node ranges prove nothing then, as a peer that covers none of them may still
-  admit the cluster's Pods, though a peer that covers one is still reported
-  `ExposurePeersBroad`).
-  One lookup runs for at most ten seconds; one that stops keeps the pages it
-  read and the next attempt resumes from them. An installation that does not grant the
-  operator `list` on `nodes` skips that check and says so in the
-  `ExposureConfined` message. The console-Pod check needs a Pod address: at creation, while no
-  console Pod has one, an `ipBlock` peer is not trusted
-  (`ExposureTrustUnverified`), and the trust comes with the Pod's address
-  (one more rollout), never before it. The template then records which
-  blocks were verified (the Pod annotation
-  `pgtoolbox.fyannk.dev/trusted-ipblocks`, a hash), so that when the only Pod
-  is replaced, or the workload scales from zero, the new Pod keeps the trust
-  while it has no address (the Pod network does not change) instead of
-  rolling again; changing the blocks (narrowing included) needs a new check,
-  and so a Pod address. With at most 16 peers of at most a
-  `/8` each, blocks together never cover every address either. `except`
-  entries are not counted: a false alarm is the safe side. Labels that a
-  namespace owner may set on their own namespace (a tenant label of Capsule
-  or Rancher, say) cannot be told from an installer's: pinning one is the
-  user's responsibility; `kubernetes.io/metadata.name` is set by the API
-  server and is the safe choice.
-- **Widening waits for the trust to go.** When `from` would admit a source
-  the policy in force does not (a peer added or swapped, a block, a
-  namespace instead of some of its Pods) while a console Pod may still trust
-  every peer (the template carries the grant, its controller has not seen
-  the latest template, or a Pod, terminating ones included, carries it),
-  the operator keeps the policy in force, rolls the workload without the
-  grant (`ExposureTrustUnverified`), and widens the policy once that is
-  through; the trust is then granted again if the new peers allow it.
-  Narrowing applies at once. A Pod stuck terminating with the grant (a lost
-  node, a stuck finalizer) holds the widening until it is gone: the message
-  names it and when its deletion was asked, so it can be force-deleted, and
-  the operator looks again every five minutes besides watching it.
-- **NetworkPolicies add up.** Another policy of the namespace that selects the
-  console Pods and admits, to the console port, a peer `from` does not list
-  (an `allow-same-namespace` policy, an allow-all) lets that peer in whatever
-  this one says. The operator lists the namespace's NetworkPolicies (at most
-  250; more counts as unverifiable) and matches them against the template's
-  labels and every live console Pod's (`pod-template-hash`, the StatefulSet's
-  Pod name included); when one does, it trusts no peer and reports
-  `ExposurePolicyBypassed` with its name. A foreign peer counts as the
-  exposure's when it is written exactly as one of `from`, or lies inside one
-  of its namespace-only peers (its `namespaceSelector` carries every label of
-  that peer, whatever its `podSelector`). For a Route, the routers' older
-  namespace label `network.openshift.io/policy-group: ingress` counts as the
-  routers', so the OpenShift project template's `allow-from-openshift-ingress`
-  is no bypass. The operator caches only its own policies, so it looks again
-  every five minutes while it trusts every peer or another policy bypasses
-  its own: a policy added, or removed, in between is seen within that time.
-- **On OpenShift**, the default project template also creates
-  `allow-same-namespace`, which really admits every Pod of the namespace to
-  the console port: the any-peer trust is then off (`ExposurePolicyBypassed`)
-  and stays off. Name the routers in `trustedProxy.cidrs` (the router Pods'
-  addresses, or the nodes' for host-network routers) to keep per-client
-  budgets there.
-- The operator sees only `networking.k8s.io/v1` NetworkPolicies:
-  `AdminNetworkPolicy`, `BaselineAdminNetworkPolicy` and CNI-specific kinds
-  (Calico, Cilium) that admit more to the console port are not seen, and the
-  any-peer trust stays on. Where they exist, set `trustedProxy.cidrs`.
+  `192.168.0.0/16`, `100.64.0.0/10`, where Pod networks are cut from), or a
+  unique-local IPv6 block (inside `fc00::/7`) wider than `/64`. The check reads
+  the spec only: an `ipBlock` that is the Pod network, and the namespace's
+  other NetworkPolicies (they add up: an `allow-same-namespace` lets the
+  namespace's Pods in whatever this one says), are not checked. Labels that a
+  namespace owner may set on their own namespace cannot be told from an
+  installer's: pinning one is the user's responsibility;
+  `kubernetes.io/metadata.name` is set by the API server and is the safe
+  choice.
 - **A Route turns the policy on**, and with it cuts every in-cluster client of
   the Service's `http` port that is not a router: a debug Pod, an in-cluster
   MCP or AI client, a synthetic probe calling `/`. Add them to `from`; on a
-  Route `from` adds to the routers, it never replaces them. They are then
-  trusted to write `X-Forwarded-For` as well; name the routers in
-  `trustedProxy.cidrs` when that matters. `kubectl port-forward` goes through
-  the kubelet and is not affected.
+  Route `from` adds to the routers, it never replaces them. `kubectl
+  port-forward` goes through the kubelet and is not affected.
 - The probe port (health and `/metrics`) stays open to any source: kubelets and
   Prometheus reach it, and it never reads `X-Forwarded-For`. Egress is not
   policed by this policy.
-- `spec.exposure.trustedProxy.hops` (0 to 8, default 1 when published) counts
-  the proxies that append to the header: 2 for a load balancer in front of the
-  router. `trustedProxy.cidrs` names them by address instead of trusting every
-  admitted peer, and is the way to keep per-client budgets without the policy
-  (an Ingress whose controller's addresses you know).
 - A NetworkPolicy is a boundary only where the CNI enforces it, and the
   operator cannot observe that: `ExposureConfined=True` says what is declared,
-  not what the network does. On a CNI that does not enforce policies (kindnet,
-  flannel alone), any Pod can write `X-Forwarded-For` under the any-peer trust:
-  set `trustedProxy.cidrs`, or `trustedProxy.hops: 0`.
-- When the policy goes (the exposure or `networkPolicy` changes), the operator
-  first rolls the workload to the narrower trust and deletes the policy only
-  once the rollout is complete (every replica updated and available, no other
-  left) and no console Pod, terminating ones included, still carries its
-  any-peer grant (the Pod annotation `pgtoolbox.fyannk.dev/trusts-every-peer`;
-  `trustedProxy.cidrs` of `0.0.0.0/0,::/0` is your own trust and does not hold
-  the policy back);
-  until then it keeps the policy and says so (`ExposureConfined=False`,
-  `ExposurePolicyKept`, present while the policy is kept even with nothing
-  published; a Pod stuck terminating is named), and the workload and its Pods
-  are watched, so it looks again as the rollout progresses.
-- While the console is stalled on `HostnameNotAllowed` (checked before
-  anything else that stalls, the image included) the operator withdraws
-  the exposure but leaves the workload and this policy as they were, so a stale
-  `0.0.0.0/0` trust is never left without its policy; `ExposureConfined` then
-  says so (`False`, `ExposurePolicyKept`), and is removed only when the console
-  has no ingress policy.
+  not what the network does.
+- When the policy is no longer rendered (the exposure or `networkPolicy`
+  turned off), the operator deletes it. While the console is stalled on
+  `HostnameNotAllowed` (checked before anything else that stalls, the image
+  included) the operator withdraws the exposure but leaves the workload and
+  this policy as they were; `ExposureConfined` is removed (nothing is
+  published).
 - The advisory `ExposureConfined` never enters `Ready`; its message says which
   peers the console believes.
-- Sign-in budgets follow the trust. With CIDRs (rows with `0.0.0.0/0,::/0` or
-  `trustedProxy.cidrs`) each client keeps its own: ten OAuth callbacks and twenty
-  pasted tokens a minute per address, under per-replica bounds sized to protect
-  the API server and the IdP (100 code exchanges and 100 reviews of unknown
-  tokens a second). With hops and no CIDRs (`ExposureOpen`, `ExposurePeersBroad`,
-  `ExposurePolicyBypassed`), or with no hops
-  behind a public URL (a clusterIP exposure behind an Ingress of your own),
-  every client may have the proxy's address, so the console charges no
-  per-address budget: callbacks are single-use and share the per-replica bounds,
-  pasted tokens have a budget per token and the same bounds, and the audit log
-  names the proxy instead of the client. A flood from one sender then refuses
-  new sign-ins only above those bounds
+- Sign-in budgets follow the trust. With `trustedProxy.cidrs` each client keeps
+  its own: ten OAuth callbacks and twenty pasted tokens a minute per address,
+  under per-replica bounds sized to protect the API server and the IdP. Without
+  them, or with no hops behind a public URL (a clusterIP exposure behind an
+  Ingress of your own), every client has the proxy's address, so the console
+  charges no per-address budget, only the per-replica bounds apply, and the
+  audit log names the proxy instead of the client
   ([rate limits](../console/authentication.md#sessions)).
 
 ## Not in the custom resource
