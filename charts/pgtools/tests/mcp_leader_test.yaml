@@ -10,6 +10,7 @@ templates:
   - templates/console/deployment.yaml
   - templates/console/service.yaml
   - templates/console/networkpolicy.yaml
+  - templates/console/monitors.yaml
 release:
   name: pgc
   namespace: team-a
@@ -104,6 +105,15 @@ tests:
       console.networkPolicy.apiServer.addresses: [10.96.0.1]
     asserts:
       - notExists: {path: 'spec.podSelector.matchLabels["app.kubernetes.io/component"]'}
+
+  - it: scrapes the MCP Pod with the console's through the PodMonitor
+    template: templates/console/monitors.yaml
+    set: {console.mcp.enabled: true, console.publicURL: "https://pgc.example.org", console.metrics.podMonitor.enabled: true}
+    documentSelector: {path: kind, value: PodMonitor}
+    asserts:
+      - equal:
+          path: spec.selector.matchLabels
+          value: {app.kubernetes.io/name: pgtoolbox-console, app.kubernetes.io/instance: pgc}
 
   - it: grants get and update on the Lease by name, no create, nothing on Pods
     template: templates/console/mcp.yaml
