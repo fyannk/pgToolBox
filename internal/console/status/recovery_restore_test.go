@@ -313,7 +313,7 @@ func TestBackupSummaryWithTheSweepOff(t *testing.T) {
 		health   viewmodel.Health
 		attested bool
 	}{
-		{"sweep off", true, viewmodel.HealthOK, true},
+		{"sweep off", true, viewmodel.HealthInfo, true},
 		{"primary not read", false, viewmodel.HealthUnknown, false},
 	} {
 		a := svc.backupSummary(&gathered{cluster: cluster, sweepOff: c.off}, now).Archiving

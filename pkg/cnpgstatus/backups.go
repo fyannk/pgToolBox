@@ -416,7 +416,8 @@ func ArchivingOf(c *cnpgv1.Cluster, primary *ArchiverLive, primaryMasked, notChe
 			reading.Class = ClassUnknown
 			reading.Reason = ArchivingReasonPrimaryUnread
 			if notChecked {
-				reading.Class = ClassOK
+				// Info, not ok: CloudNativePG's word, weaker than a checked reading.
+				reading.Class = ClassInfo
 				reading.Message = "ContinuousArchiving is True" + since(condition.LastTransitionTime.Time) +
 					" per the Cluster status, not checked on the instance: the instance status sweep is switched off"
 				break

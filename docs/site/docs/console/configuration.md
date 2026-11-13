@@ -115,7 +115,7 @@ The other states of an instance's status read, each with its reason:
 With the sweep switched off (`disabled`), the WAL-archiving fact is the Cluster's
 `ContinuousArchiving` condition as CloudNativePG reports it, attributed to
 "Cluster.status.conditions[ContinuousArchiving] (not checked on the instance)": a
-`True` condition reads ok, but no backlog or failed segment on the primary is
+`True` condition reads info (not ok: it is not checked), and no backlog or failed segment on the primary is
 seen, and the recovery window still treats the archiver as unread. A sweep that
 runs but has not read the primary (failed or stale) leaves archiving unknown.
 

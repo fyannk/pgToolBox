@@ -236,10 +236,10 @@ func TestArchivingUnreadPrimaryIsNotOK(t *testing.T) {
 		t.Errorf("ArchivingOf(masked) = %+v", masked)
 	}
 	// The instance sweep switched off (owner decision 3, 2026-11-13): the
-	// condition as CloudNativePG reports it, ok, attributed and still
+	// condition as CloudNativePG reports it, info, attributed and still
 	// PrimaryUnread; a False condition stays critical.
 	off := ArchivingOf(c, nil, false, true)
-	if off.Class != ClassOK || off.Reason != ArchivingReasonPrimaryUnread || !strings.Contains(off.Message, "per the Cluster status, not checked on the instance") {
+	if off.Class != ClassInfo || off.Reason != ArchivingReasonPrimaryUnread || !strings.Contains(off.Message, "per the Cluster status, not checked on the instance") {
 		t.Errorf("ArchivingOf(sweep off) = %+v", off)
 	}
 	failing := clusterWith(nil, cond(ConditionContinuousArchiving, "False", "ContinuousArchivingFailing"))
