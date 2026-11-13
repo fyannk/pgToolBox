@@ -20,14 +20,13 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
-	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
-	discoveryv1 "k8s.io/api/discovery/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	coordinationv1 "k8s.io/api/coordination/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/kubernetes/fake"
 
 	"github.com/fyannk/pgToolBox/internal/console/auth"
 )
@@ -127,137 +126,52 @@ func TestHookRefusesOffTheLeader(t *testing.T) {
 	}
 }
 
-// sliceAPI is EndpointSlices with the API server's optimistic concurrency.
-type sliceAPI struct {
-	mu        sync.Mutex
-	slices    map[string]*discoveryv1.EndpointSlice
-	rv        int
-	updates   int
-	conflicts int
-}
+// countingGrants is a grant index that counts its loads.
+type countingGrants struct{ loads atomic.Int32 }
 
-var endpointSlices = schema.GroupResource{Group: "discovery.k8s.io", Resource: "endpointslices"}
+func (g *countingGrants) LoadGrants(context.Context) error { g.loads.Add(1); return nil }
+func (g *countingGrants) DropGrants()                      {}
 
-func newSliceAPI(names ...string) *sliceAPI {
-	a := &sliceAPI{slices: map[string]*discoveryv1.EndpointSlice{}}
-	for _, name := range names {
-		family := discoveryv1.AddressTypeIPv4
-		if name == "console-mcp-ipv6" {
-			family = discoveryv1.AddressTypeIPv6
-		}
-		a.rv++
-		a.slices[name] = &discoveryv1.EndpointSlice{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: name, Namespace: "team-a", ResourceVersion: strconv.Itoa(a.rv),
-				Labels: map[string]string{discoveryv1.LabelServiceName: "console-mcp", discoveryv1.LabelManagedBy: ManagedBy},
-			},
-			AddressType: family,
-		}
-	}
-	return a
-}
-
-func (a *sliceAPI) Get(_ context.Context, name string, _ metav1.GetOptions) (*discoveryv1.EndpointSlice, error) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	s, ok := a.slices[name]
-	if !ok {
-		return nil, apierrors.NewNotFound(endpointSlices, name)
-	}
-	return s.DeepCopy(), nil
-}
-
-func (a *sliceAPI) Update(_ context.Context, s *discoveryv1.EndpointSlice, _ metav1.UpdateOptions) (*discoveryv1.EndpointSlice, error) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	cur, ok := a.slices[s.Name]
-	switch {
-	case !ok:
-		return nil, apierrors.NewNotFound(endpointSlices, s.Name)
-	case a.conflicts > 0 || s.ResourceVersion != cur.ResourceVersion:
-		if a.conflicts > 0 {
-			a.conflicts--
-			a.rv++
-			cur.ResourceVersion = strconv.Itoa(a.rv)
-		}
-		return nil, apierrors.NewConflict(endpointSlices, s.Name, errors.New("stale"))
-	}
-	a.rv++
-	a.updates++
-	s = s.DeepCopy()
-	s.ResourceVersion = strconv.Itoa(a.rv)
-	a.slices[s.Name] = s
-	return s.DeepCopy(), nil
-}
-
-func (a *sliceAPI) addresses(name string) []string {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	var out []string
-	for _, e := range a.slices[name].Endpoints {
-		out = append(out, e.Addresses...)
-	}
-	return out
-}
-
-func testPublisher(api *sliceAPI, ip string) *publisher {
-	return newPublisher(Options{
-		Slices: api, Lease: "console-mcp", SliceNames: []string{"console-mcp-ipv4", "console-mcp-ipv6"}, PodIP: ip, Port: 3000,
-	}.withDefaults())
-}
-
-func TestPublisherWritesItsFamilyPinsLabelsAndIsIdempotent(t *testing.T) {
-	api := newSliceAPI("console-mcp-ipv4", "console-mcp-ipv6")
-	// Someone relabelled the slice and pointed it elsewhere.
-	api.slices["console-mcp-ipv4"].Labels[discoveryv1.LabelServiceName] = "kube-dns"
-	api.slices["console-mcp-ipv4"].Endpoints = []discoveryv1.Endpoint{{Addresses: []string{"10.0.0.99"}}}
-	api.conflicts = 1 // a hand-over racing the first write
-	p := testPublisher(api, "10.0.0.1")
-	p.publish(t.Context())
-	s := api.slices["console-mcp-ipv4"]
-	if got := api.addresses("console-mcp-ipv4"); len(got) != 1 || got[0] != "10.0.0.1" {
-		t.Fatalf("ipv4 addresses = %v", got)
-	}
-	if s.Labels[discoveryv1.LabelServiceName] != "console-mcp" || s.Labels[discoveryv1.LabelManagedBy] != ManagedBy ||
-		len(s.Ports) != 1 || *s.Ports[0].Port != 3000 || *s.Ports[0].Name != "http" {
-		t.Fatalf("slice not pinned: %+v", s)
-	}
-	if got := api.addresses("console-mcp-ipv6"); len(got) != 0 {
-		t.Fatalf("the other family's slice was written: %v", got)
-	}
-	updates := api.updates
-	p.publish(t.Context())
-	if api.updates != updates {
-		t.Fatal("a slice already published was written again")
-	}
-	if p.failing {
-		t.Fatal("a conflict retried was taken for a failure")
-	}
-}
-
-func TestPublisherClearsOnlyItsOwnAddress(t *testing.T) {
-	api := newSliceAPI("console-mcp-ipv4")
-	a := testPublisher(api, "10.0.0.1")
-	a.publish(t.Context())
-	b := testPublisher(api, "10.0.0.2")
-	b.publish(t.Context()) // the next leader took the slice over
-	a.clear(t.Context())   // the old one leaves late
-	if got := api.addresses("console-mcp-ipv4"); len(got) != 1 || got[0] != "10.0.0.2" {
-		t.Fatalf("addresses = %v, want the new leader's", got)
-	}
-	b.clear(t.Context())
-	if got := api.addresses("console-mcp-ipv4"); len(got) != 0 {
-		t.Fatalf("addresses = %v after the leader cleared", got)
-	}
-}
-
-func TestPublisherIPv6(t *testing.T) {
-	api := newSliceAPI("console-mcp-ipv4", "console-mcp-ipv6")
-	testPublisher(api, "fd00::1").publish(t.Context())
-	if got := api.addresses("console-mcp-ipv6"); len(got) != 1 || got[0] != "fd00::1" {
-		t.Fatalf("ipv6 addresses = %v", got)
-	}
-	if got := api.addresses("console-mcp-ipv4"); len(got) != 0 {
-		t.Fatalf("ipv4 addresses = %v", got)
+// MCP_CANDIDATE=false: on a Lease nobody holds, a candidate leads at
+// once; a replica that is no candidate never leads, never loads the
+// index and never writes the Lease.
+func TestNotCandidateNeverLeads(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		notCandidate bool
+	}{{"candidate", false}, {"not a candidate", true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			cs := fake.NewClientset(&coordinationv1.Lease{ObjectMeta: metav1.ObjectMeta{Name: "console-mcp", Namespace: "team-a"}})
+			grants := &countingGrants{}
+			l := New(Options{
+				Leases: cs.CoordinationV1().Leases("team-a"), Grants: grants, Namespace: "team-a", Lease: "console-mcp",
+				Identity: "console-0_abc", NotCandidate: tc.notCandidate, RetryPeriod: 10 * time.Millisecond,
+			})
+			ctx, cancel := context.WithTimeout(t.Context(), 300*time.Millisecond)
+			defer cancel()
+			done := make(chan struct{})
+			go func() { _ = l.Run(ctx); close(done) }()
+			deadline := time.Now().Add(250 * time.Millisecond)
+			for !l.Leading() && time.Now().Before(deadline) {
+				time.Sleep(5 * time.Millisecond)
+			}
+			leading := l.Leading()
+			cancel()
+			<-done
+			if leading == tc.notCandidate {
+				t.Fatalf("leading = %v", leading)
+			}
+			if !tc.notCandidate {
+				return
+			}
+			if grants.loads.Load() != 0 {
+				t.Fatal("a replica that is no candidate loaded the grant index")
+			}
+			for _, a := range cs.Actions() {
+				if a.GetVerb() != "get" && a.GetVerb() != "list" && a.GetVerb() != "watch" {
+					t.Fatalf("a replica that is no candidate wrote: %v", a)
+				}
+			}
+		})
 	}
 }

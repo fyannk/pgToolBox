@@ -41,9 +41,8 @@ refuses the `PgToolBoxConsole`.
 | `MCP_OAUTH_ACCESS_TTL` | `1h` | The lifetime of an access token the console issues to an MCP client, from 10s to 1h. The client renews it with its refresh token. |
 | `MCP_OAUTH_CLIENT_METADATA_DOCUMENTS` | `false` | Accept [client ID metadata documents](#client-registration): an HTTPS URL as `client_id`, which the console fetches. Off by default, since it makes the console reach out to the Internet. |
 | `MCP_OAUTH_CLIENT_METADATA_HOSTS` | empty | With metadata documents on, fetch them only from these hosts (a comma-separated list of DNS names, for example `claude.ai,chatgpt.com`). Empty: any public address. |
-| `MCP_LEASE` | empty | Set by the install, not by hand. The `coordination.k8s.io` Lease (in the console's namespace) whose holder alone serves the MCP paths (`/mcp`, `/oauth`, `/api/v1/session/grants`) and writes the grants; the other replicas answer them `503` with `Retry-After: 2`. It also names the Service those paths are sent to. Requires `MCP_ENABLED`, `MCP_ENDPOINT_SLICES` and `POD_IP`. Empty: every replica serves MCP. |
-| `MCP_ENDPOINT_SLICES` | empty | Set by the install. The one or two EndpointSlices (one per address family, comma-separated) of that Service, which the leader points at its Pod. |
-| `POD_IP` | empty | Set by the install (downward API). The Pod's address the leader writes into its EndpointSlice. |
+| `MCP_LEASE` | empty | Set by the install, not by hand. The `coordination.k8s.io` Lease (in the console's namespace) whose holder alone serves the MCP paths (`/mcp`, `/oauth`, `/api/v1/session/grants`) and writes the grants; the other replicas answer them `503` with `Retry-After: 2`. Requires `MCP_ENABLED`. Empty: every replica serves MCP. |
+| `MCP_CANDIDATE` | `true` | Set by the install. `false`: this replica runs MCP but never takes the Lease, so it never serves the MCP paths (always `503`) and never writes the grants; the team chart sets it on its main replicas, beside its one MCP Pod. Requires `MCP_LEASE`. |
 
 The chart and the `PgToolBoxConsole` set the tuning variables too. Each is rendered
 only while the endpoint is on and only when set; left empty, the console's

@@ -19,14 +19,12 @@ package mcpleader_test
 import (
 	"context"
 	"os"
-	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
-	discoveryv1 "k8s.io/api/discovery/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
@@ -44,13 +42,11 @@ type replica struct {
 	done   chan struct{}
 }
 
-func startReplica(t *testing.T, cs kubernetes.Interface, name, ip string) *replica {
+func startReplica(t *testing.T, cs kubernetes.Interface, name string) *replica {
 	t.Helper()
 	store := sharedstate.New(sharedstate.Options{Client: cs.CoreV1().ConfigMaps(ns), Name: "console-state"})
 	l := mcpleader.New(mcpleader.Options{
-		Leases: cs.CoordinationV1().Leases(ns), Slices: cs.DiscoveryV1().EndpointSlices(ns), Grants: store,
-		Namespace: ns, Lease: "console-mcp", SliceNames: []string{"console-mcp-ipv4"}, PodIP: ip, Port: 3000,
-		Identity: name,
+		Leases: cs.CoordinationV1().Leases(ns), Grants: store, Namespace: ns, Lease: "console-mcp", Identity: name,
 	})
 	store.SetLeader(l.Leading)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -73,10 +69,9 @@ func waitFor(t *testing.T, what string, within time.Duration, cond func() bool) 
 	return time.Since(start)
 }
 
-// Two replicas on a real API server: A leads, publishes its address and
-// records a grant; A stops (a graceful hand-over) and B leads within
-// about the election's retry period, the slice names B alone, and B holds
-// A's grant.
+// Two replicas on a real API server: A leads and records a grant; A
+// stops (a graceful hand-over) and B leads within about the election's
+// retry period, the Lease names B, and B holds A's grant.
 func TestHandOverOnEnvtest(t *testing.T) {
 	if os.Getenv("KUBEBUILDER_ASSETS") == "" {
 		t.Skip("KUBEBUILDER_ASSETS unset; run through make test-envtest-console-mcpleader")
@@ -102,29 +97,20 @@ func TestHandOverOnEnvtest(t *testing.T) {
 	must(err)
 	_, err = cs.CoreV1().ConfigMaps(ns).Create(ctx, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "console-state"}}, metav1.CreateOptions{})
 	must(err)
-	_, err = cs.DiscoveryV1().EndpointSlices(ns).Create(ctx, &discoveryv1.EndpointSlice{
-		ObjectMeta: metav1.ObjectMeta{Name: "console-mcp-ipv4", Labels: map[string]string{
-			discoveryv1.LabelServiceName: "console-mcp", discoveryv1.LabelManagedBy: mcpleader.ManagedBy,
-		}},
-		AddressType: discoveryv1.AddressTypeIPv4,
-	}, metav1.CreateOptions{})
-	must(err)
-	addresses := func() []string {
-		s, err := cs.DiscoveryV1().EndpointSlices(ns).Get(ctx, "console-mcp-ipv4", metav1.GetOptions{})
-		if err != nil {
-			return nil
+	holder := func() string {
+		l, err := cs.CoordinationV1().Leases(ns).Get(ctx, "console-mcp", metav1.GetOptions{})
+		if err != nil || l.Spec.HolderIdentity == nil {
+			return ""
 		}
-		var out []string
-		for _, e := range s.Endpoints {
-			out = append(out, e.Addresses...)
-		}
-		return out
+		return *l.Spec.HolderIdentity
 	}
 
-	a := startReplica(t, cs, "console-a", "10.0.0.1")
+	a := startReplica(t, cs, "console-a")
 	waitFor(t, "A to lead", 20*time.Second, a.leader.Leading)
-	waitFor(t, "the slice to name A", 5*time.Second, func() bool { return slices.Equal(addresses(), []string{"10.0.0.1"}) })
-	b := startReplica(t, cs, "console-b", "10.0.0.2")
+	if holder() != "console-a" {
+		t.Fatalf("the Lease names %q, want console-a", holder())
+	}
+	b := startReplica(t, cs, "console-b")
 
 	id := "grant-" + strings.Repeat("ab", 16)
 	now := time.Now().UTC()
@@ -141,7 +127,9 @@ func TestHandOverOnEnvtest(t *testing.T) {
 	<-a.done
 	took := waitFor(t, "B to lead", 10*time.Second, b.leader.Leading)
 	t.Logf("hand-over took %s", took)
-	waitFor(t, "the slice to name B", 5*time.Second, func() bool { return slices.Equal(addresses(), []string{"10.0.0.2"}) })
+	if holder() != "console-b" {
+		t.Fatalf("the Lease names %q, want console-b", holder())
+	}
 	if a.leader.Leading() {
 		t.Fatal("A still serves")
 	}

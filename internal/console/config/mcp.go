@@ -15,7 +15,6 @@
 package config
 
 import (
-	"net/netip"
 	"regexp"
 	"slices"
 	"strconv"
@@ -54,14 +53,13 @@ const (
 	EnvMCPOAuthClientMetadataHosts = "MCP_OAUTH_CLIENT_METADATA_HOSTS"
 	// EnvMCPLease names the coordination.k8s.io Lease, in the console's
 	// namespace, whose holder alone serves MCP and writes the grant index;
-	// it is also the name of the selector-less Service the exposure sends
-	// the MCP paths to. Set by the install; empty: every replica serves.
+	// the install sends the MCP paths to it. Set by the install; empty:
+	// every replica serves.
 	EnvMCPLease = "MCP_LEASE"
-	// EnvMCPEndpointSlices names that Service's EndpointSlices (one per
-	// address family, comma-separated), which the leader points at its Pod.
-	EnvMCPEndpointSlices = "MCP_ENDPOINT_SLICES"
-	// EnvPodIP is the Pod's IP (downward API), written into the slice.
-	EnvPodIP = "POD_IP"
+	// EnvMCPCandidate=false keeps this replica out of that election (the
+	// team chart's main replicas, beside its one MCP Pod): it never serves
+	// MCP. Default true.
+	EnvMCPCandidate = "MCP_CANDIDATE"
 )
 
 // MCP configures the MCP endpoint.
@@ -77,11 +75,10 @@ type MCP struct {
 	// ClientMetadataHosts are the only hosts CIMD documents are fetched
 	// from; empty: any public address.
 	ClientMetadataHosts []string
-	// Lease, EndpointSlices and PodIP elect the replica that serves MCP
-	// (MCP_LEASE); all empty when every replica serves.
-	Lease          string
-	EndpointSlices []string
-	PodIP          string
+	// Lease elects the replica that serves MCP (MCP_LEASE); empty when
+	// every replica serves. Candidate is MCP_CANDIDATE.
+	Lease     string
+	Candidate bool
 }
 
 func mcpConfig(lookup Lookup, fail func(name, constraint string)) MCP {
@@ -102,44 +99,22 @@ func mcpConfig(lookup Lookup, fail func(name, constraint string)) MCP {
 	return m
 }
 
-// leader reads MCP_LEASE and, with it, the slices and the Pod IP.
+// leader reads MCP_LEASE and MCP_CANDIDATE.
 func (m *MCP) leader(lookup Lookup, fail func(name, constraint string)) {
 	lease, _ := lookup(EnvMCPLease)
-	names, _ := lookup(EnvMCPEndpointSlices)
-	if lease == "" {
-		if names != "" {
-			fail(EnvMCPEndpointSlices, "requires "+EnvMCPLease)
-		}
-		return
-	}
+	m.Candidate = boolVar(lookup, EnvMCPCandidate, true, fail)
 	switch {
+	case lease == "":
+		if !m.Candidate {
+			fail(EnvMCPCandidate, "requires "+EnvMCPLease)
+		}
+		m.Candidate = false
 	case !m.Enabled:
 		fail(EnvMCPLease, "requires "+EnvMCPEnabled+"=true")
-		return
 	case len(validation.IsDNS1123Subdomain(lease)) != 0:
 		fail(EnvMCPLease, "must be a Lease name")
-		return
-	}
-	var list []string
-	for part := range strings.SplitSeq(names, ",") {
-		switch name := strings.TrimSpace(part); {
-		case name == "", slices.Contains(list, name):
-		case len(validation.IsDNS1123Subdomain(name)) != 0:
-			fail(EnvMCPEndpointSlices, "must be a comma-separated list of EndpointSlice names")
-			return
-		default:
-			list = append(list, name)
-		}
-	}
-	ip, _ := lookup(EnvPodIP)
-	addr, err := netip.ParseAddr(ip)
-	switch {
-	case len(list) == 0 || len(list) > 2:
-		fail(EnvMCPEndpointSlices, "must name one or two EndpointSlices with "+EnvMCPLease)
-	case err != nil || addr.Zone() != "":
-		fail(EnvPodIP, "must be the Pod's IP address with "+EnvMCPLease)
 	default:
-		m.Lease, m.EndpointSlices, m.PodIP = lease, list, addr.String()
+		m.Lease = lease
 	}
 }
 
@@ -155,7 +130,9 @@ func (m MCP) info(into map[string]string) {
 	into[EnvMCPOAuthClientMetadata] = strconv.FormatBool(m.ClientMetadataDocuments)
 	into[EnvMCPOAuthClientMetadataHosts] = strings.Join(m.ClientMetadataHosts, ",")
 	into[EnvMCPLease] = m.Lease
-	into[EnvMCPEndpointSlices] = strings.Join(m.EndpointSlices, ",")
+	if m.Lease != "" {
+		into[EnvMCPCandidate] = strconv.FormatBool(m.Candidate)
+	}
 }
 
 // hostList reads a comma-separated list of DNS names (lower-cased, no

@@ -17,10 +17,7 @@ package server
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
-	"net"
-	"strconv"
 	"time"
 
 	"k8s.io/client-go/kubernetes"
@@ -136,18 +133,9 @@ func newMCPLeader(o AppOptions, c kubernetes.Interface, index GrantIndex) (*mcpl
 	if o.Auth.Namespace == "" {
 		return nil, errors.New("MCP_LEASE needs the console's namespace (POD_NAMESPACE)")
 	}
-	_, raw, err := net.SplitHostPort(o.ListenAddr)
-	if err != nil {
-		return nil, fmt.Errorf("MCP_LEASE: the listen address %q: %w", o.ListenAddr, err)
-	}
-	port, err := strconv.ParseUint(raw, 10, 16)
-	if err != nil || port == 0 {
-		return nil, fmt.Errorf("MCP_LEASE: the listen address %q has no port", o.ListenAddr)
-	}
 	l := mcpleader.New(mcpleader.Options{
-		Leases: c.CoordinationV1().Leases(o.Auth.Namespace), Slices: c.DiscoveryV1().EndpointSlices(o.Auth.Namespace),
-		Grants: g, Namespace: o.Auth.Namespace, Lease: o.MCP.Lease, SliceNames: o.MCP.EndpointSlices,
-		PodIP: o.MCP.PodIP, Port: int32(port), Identity: leader.CandidateIdentity(),
+		Leases: c.CoordinationV1().Leases(o.Auth.Namespace), Grants: g, Namespace: o.Auth.Namespace,
+		Lease: o.MCP.Lease, NotCandidate: o.MCP.NotCandidate, Identity: leader.CandidateIdentity(),
 		Logger: o.Log.With(slog.String("component", "mcp-leader")),
 	})
 	g.SetLeader(l.Leading)
