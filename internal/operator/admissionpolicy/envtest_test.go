@@ -34,6 +34,8 @@ import (
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
+	"sigs.k8s.io/controller-runtime/pkg/webhook"
+	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 	"sigs.k8s.io/yaml"
 
 	pgtoolboxv1alpha1 "github.com/fyannk/pgToolBox/api/v1alpha1"
@@ -109,10 +111,90 @@ func TestEnvtestAdmissionPolicy(t *testing.T) {
 	}
 	cases := loadCases(t)
 	policy, binding := renderPolicy(t, cases)
+	runEnvtestCases(t, cases, envtest.WebhookInstallOptions{}, func(_ *envtest.Environment, root client.Client) {
+		for _, object := range []client.Object{policy, binding} {
+			if err := root.Create(t.Context(), object); err != nil {
+				t.Fatalf("create %T: %v", object, err)
+			}
+		}
+	})
+}
 
+// TestEnvtestAdmissionWebhook runs the same cases against the webhook the
+// operator serves for OLM, installed as the CSV's webhookdefinitions declare
+// it, its reviews answered by the API server's authorizer.
+func TestEnvtestAdmissionWebhook(t *testing.T) {
+	if os.Getenv("KUBEBUILDER_ASSETS") == "" {
+		t.Skip("KUBEBUILDER_ASSETS is not set (make test-envtest-admissionpolicy)")
+	}
+	cases := loadCases(t)
+	hooks := envtest.WebhookInstallOptions{ValidatingWebhooks: []*admissionregistrationv1.ValidatingWebhookConfiguration{csvWebhooks(t)}}
+	runEnvtestCases(t, cases, hooks, func(env *envtest.Environment, root client.Client) {
+		o := env.WebhookInstallOptions
+		server := webhook.NewServer(webhook.Options{Host: o.LocalServingHost, Port: o.LocalServingPort, CertDir: o.LocalServingCertDir})
+		v := &Validator{
+			ImageGroups:   []string{"system:masters"},
+			IdentityUsers: cases.Values.WorkloadIdentity.AllowedUsers, IdentityGroups: cases.Values.WorkloadIdentity.AllowedGroups,
+			Authorize: SubjectAccessReviews(root),
+		}
+		server.Register(ResourcesPath, &admission.Webhook{Handler: Handler(v.CustomResource)})
+		server.Register(ClusterDeletePath, &admission.Webhook{Handler: Handler(v.ClusterDelete)})
+		ctx, cancel := context.WithCancel(context.Background())
+		t.Cleanup(cancel)
+		go func() { _ = server.Start(ctx) }()
+	})
+}
+
+// csvWebhooks is the OLM CSV's webhookdefinitions as the
+// ValidatingWebhookConfiguration OLM makes of them (the service path
+// relative, as envtest joins it to its own URL).
+func csvWebhooks(t *testing.T) *admissionregistrationv1.ValidatingWebhookConfiguration {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "deploy", "olm", "bundle", "manifests", "pgtoolbox.clusterserviceversion.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var csv struct {
+		Spec struct {
+			Webhookdefinitions []struct {
+				Type                    string                                       `json:"type"`
+				GenerateName            string                                       `json:"generateName"`
+				WebhookPath             string                                       `json:"webhookPath"`
+				Rules                   []admissionregistrationv1.RuleWithOperations `json:"rules"`
+				FailurePolicy           *admissionregistrationv1.FailurePolicyType   `json:"failurePolicy"`
+				SideEffects             *admissionregistrationv1.SideEffectClass     `json:"sideEffects"`
+				TimeoutSeconds          *int32                                       `json:"timeoutSeconds"`
+				AdmissionReviewVersions []string                                     `json:"admissionReviewVersions"`
+			} `json:"webhookdefinitions"`
+		} `json:"spec"`
+	}
+	if err := yaml.Unmarshal(raw, &csv); err != nil {
+		t.Fatal(err)
+	}
+	config := &admissionregistrationv1.ValidatingWebhookConfiguration{ObjectMeta: metav1.ObjectMeta{Name: "pgtoolbox"}}
+	for _, d := range csv.Spec.Webhookdefinitions {
+		path := strings.TrimPrefix(d.WebhookPath, "/")
+		config.Webhooks = append(config.Webhooks, admissionregistrationv1.ValidatingWebhook{
+			Name: d.GenerateName, Rules: d.Rules, FailurePolicy: d.FailurePolicy, SideEffects: d.SideEffects,
+			TimeoutSeconds: d.TimeoutSeconds, AdmissionReviewVersions: d.AdmissionReviewVersions,
+			ClientConfig: admissionregistrationv1.WebhookClientConfig{Service: &admissionregistrationv1.ServiceReference{Path: &path}},
+		})
+	}
+	if len(config.Webhooks) != 2 {
+		t.Fatalf("the CSV declares %d webhooks, want the two of internal/operator/admissionpolicy", len(config.Webhooks))
+	}
+	return config
+}
+
+// runEnvtestCases starts an API server with the CRDs and hooks, gives each
+// requester its rights, lets install put the admission rules in place, and
+// runs every case.
+func runEnvtestCases(t *testing.T, cases policyCases, hooks envtest.WebhookInstallOptions, install func(*envtest.Environment, client.Client)) {
+	t.Helper()
 	env := &envtest.Environment{
 		CRDDirectoryPaths:     []string{filepath.Join("..", "..", "..", "config", "crd", "bases")},
 		ErrorIfCRDPathMissing: true,
+		WebhookInstallOptions: hooks,
 	}
 	admin, err := env.Start()
 	if err != nil {
@@ -165,13 +247,15 @@ func TestEnvtestAdmissionPolicy(t *testing.T) {
 				Subjects:   []rbacv1.Subject{{Kind: rbacv1.UserKind, APIGroup: rbacv1.GroupName, Name: name}},
 			})
 	}
-	for _, object := range append(objects, policy, binding) {
+	for _, object := range objects {
 		if err := root.Create(t.Context(), object); err != nil {
 			t.Fatalf("create %T: %v", object, err)
 		}
 	}
-	// The policy takes effect once the API server has compiled it and its
-	// binding: wait until a stranger is refused, so no case races it.
+	install(env, root)
+	// The rules take effect once the API server has compiled the policy and
+	// its binding, or reaches the webhook: wait until a stranger is refused,
+	// so no case races it.
 	probe := func() *unstructured.Unstructured {
 		u := &unstructured.Unstructured{}
 		u.SetAPIVersion(pgtoolboxv1alpha1.GroupVersion.String())
@@ -191,7 +275,7 @@ func TestEnvtestAdmissionPolicy(t *testing.T) {
 			_ = root.Delete(t.Context(), probe())
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("the admission policy never took effect; last create error: %v", err)
+			t.Fatalf("the admission rules never took effect; last create error: %v", err)
 		}
 		time.Sleep(500 * time.Millisecond)
 	}

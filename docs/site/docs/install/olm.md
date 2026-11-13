@@ -17,7 +17,7 @@ The OLM bundle installs **the operator only**. The console is installed from the
 | Owned CRDs | `pgadmins`, `pgadminaccesses`, `evidenceagents`, `pgtoolboxconsoles` and `pgaccessrequests` (all `.pgtoolbox.fyannk.dev`, `v1alpha1`) |
 | Suggested namespace | `pgtoolbox`, labelled Pod Security `restricted` (enforce, audit, warn) |
 | Also ships | the `pgtoolbox-console-viewer`, `pgtoolbox-console-operator`, `pgtoolbox-console-approver` and metrics-reader ClusterRoles, a PodDisruptionBudget |
-| Does not ship | the admission policies (OLM cannot install them): [apply them yourself](#admission-policies) |
+| Admission | the operator chart's rules, as a validating webhook the operator serves (OLM issues its certificate): [admission rules](#admission-rules) |
 
 The bundle image is `ghcr.io/fyannk/pgtoolbox-bundle:<version>` and
 the file-based catalog image `ghcr.io/fyannk/pgtoolbox-catalog:<version>`.
@@ -29,42 +29,47 @@ The CSV lists every image the operator can run in `relatedImages`, so
 `oc mirror` and `oc adm catalog mirror` mirror them for a disconnected cluster.
 Check the list against the [images the operator uses](../operator/images.md).
 
-## Admission policies
+## Admission rules
 
-:::warning The bundle carries no admission policy
-OLM cannot install a `ValidatingAdmissionPolicy`, so an OLM install has **none** of
-the checks the operator chart applies by default:
+OLM installs enforce the same rules as the operator chart's
+`ValidatingAdmissionPolicies`, through a validating webhook the operator serves
+(`--admission-webhook`, set by the CSV). A bundle cannot ship a
+`ValidatingAdmissionPolicy`, so the CSV declares two webhooks instead, and OLM
+issues, mounts and rotates their serving certificate:
 
-- only the listed users and groups may set `spec.image` on a `PgAdmin` or an
-  `EvidenceAgent`, or `spec.workloadIdentity` on an `EvidenceAgent`;
-- whoever creates a `PgToolBoxConsole`, a `PgAdmin` or an `EvidenceAgent`, or
-  changes its spec, must be able to `get` every Secret it references;
-- whoever creates or changes a `PgAdmin` that offers the credentials of Clusters of
-  its namespace must be able to `get` the namespace's Secrets;
-- a projected Prometheus token, and exposure or Service annotations, take the
-  right to mint that token or to create the exposure object;
-- the [restore-drill delete guard](../console/restore-drills.md#the-delete-guard).
+- `vresources.pgtoolbox.fyannk.dev`, on create and update of `PgToolBoxConsoles`,
+  `PgAdmins` and `EvidenceAgents`: only the listed users and groups may set
+  `spec.image` (on a `PgAdmin` or an `EvidenceAgent`) or `spec.workloadIdentity`;
+  creating one or changing its spec takes `get` on every Secret it references
+  (on every Secret of the namespace past two), a `PgAdmin` offering Cluster
+  credentials takes `get` on the namespace's Secrets, a projected Prometheus token
+  or exposure annotations take the right to mint the token or to create the
+  exposure object (see [security](../security.md#secret-references-need-get));
+- `vclusterdelete.pgtoolbox.fyannk.dev`, on delete of CNPG `Clusters`: the
+  [restore-drill delete guard](../console/restore-drills.md#the-delete-guard).
 
-Without them, grant `create`/`update` on `pgtoolboxconsoles`, `pgadmins` and
-`evidenceagents` only to people you would trust with every Secret of their
-namespace. (OLM's own `-edit` role, aggregated to `edit`, grants exactly that, so on
-OLM every `edit` user of a namespace is such a person.)
+Both ask the API server, with a `SubjectAccessReview`, what the requesting user
+may do, as the policies' authorizer checks do, with a 5-second timeout. The
+resources webhook fails closed (`failurePolicy: Fail`); the delete guard fails
+open (`failurePolicy: Ignore`, see below). The allow-lists come from the
+operator's configuration (`ADMISSION_IMAGE_OVERRIDE_USERS`, `_GROUPS`,
+`ADMISSION_WORKLOAD_IDENTITY_USERS`, `_GROUPS`; default: the group
+`system:masters`), set through the `Subscription`'s `spec.config.env` or the
+[operator ConfigMap](../operator/index.md#configuration).
+
+:::warning While the operator is down
+With no operator replica ready, creating or updating the three pgToolBox kinds is
+refused until it is back. The delete guard fails open instead: OLM's webhook
+definitions take no `matchConditions`, so it is called for **every** `Cluster`
+delete in the namespaces of the install, and failing closed would block those of
+people too. While no replica answers, a ServiceAccount holding the drills role can
+delete a `Cluster` that is not a drill's target. The bundle runs two replicas and a
+PodDisruptionBudget, and every replica serves the webhook.
 :::
 
-Apply them yourself, once per cluster, after the operator. Either from the chart
-(set `operator.admissionPolicy.imageOverride` and `workloadIdentity` to your
-allow-lists):
-
-```bash
-helm template pgtoolbox charts/pgtoolbox --set operator.enabled=true \
-  --show-only templates/operator/admissionpolicy.yaml \
-  --show-only templates/operator/restoredrill-guard.yaml \
-  --set operator.restoreDrillGuard.enabled=true | kubectl apply -f -
-```
-
-or from the kustomize copies, rendered from the chart's defaults (allow-lists:
-the group `system:masters`): `kubectl apply -f config/components/admission/admission_policy.yaml`
-and `kubectl apply -k config/admission`. See [security](../security.md#secret-references-need-get).
+Do not also apply the chart's policies (`config/components/admission`,
+`config/admission`) on an OLM install: one install runs the policies or the
+webhook, never both.
 
 ## Who can open pgAdmin
 

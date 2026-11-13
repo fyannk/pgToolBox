@@ -128,7 +128,9 @@ addresses.
   `create` on the console's `serviceaccounts/token`; any annotation on the
   exposure object or the Service of an exposed object needs `create` on the
   exposure kind. A kustomize component (`config/components/admission`) ships the same
-  policies; the OLM bundle has none, as its page says. On OpenShift, pgAdmin's
+  policies; OLM installs enforce the same rules through a validating webhook the
+  operator serves (`--admission-webhook`, set by the CSV; OLM issues its
+  certificate), proved equal to the policies by one shared table of cases. On OpenShift, pgAdmin's
   OAuth proxy sessions last one hour.
 - **Recovery evidence follows `recovery_target_timeline 'latest'`** as PostgreSQL
   resolves it, in both formats: a missing middle history file, or an unreadable

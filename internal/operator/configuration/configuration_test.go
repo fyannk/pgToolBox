@@ -17,6 +17,7 @@ package configuration
 import (
 	"context"
 	"errors"
+	"maps"
 	"slices"
 	"strings"
 	"testing"
@@ -213,6 +214,37 @@ func TestExposureAllowedHostSuffixes(t *testing.T) {
 			}
 			if got := loaded.Config.ExposureAllowedHostSuffixes; !slices.Equal(got, tc.want) {
 				t.Fatalf("suffixes = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestAdmissionAllowLists(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		values map[string]string
+		want   [4]string // image users, image groups, identity users, identity groups
+	}{
+		{"defaults: system:masters only", nil, [4]string{"", "system:masters", "", "system:masters"}},
+		{"set from the environment", map[string]string{
+			"ADMISSION_IMAGE_OVERRIDE_USERS": "bob, alice", "ADMISSION_WORKLOAD_IDENTITY_GROUPS": "platform-team,system:masters",
+		}, [4]string{"alice,bob", "system:masters", "", "platform-team,system:masters"}},
+		{"an empty value empties the list", map[string]string{"ADMISSION_IMAGE_OVERRIDE_GROUPS": ""}, [4]string{"", "", "", "system:masters"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			values := map[string]string{"OPERATOR_IMAGE": "op:1"}
+			maps.Copy(values, tc.values)
+			loaded, err := Load(context.Background(), newReader(t), env(values), objects)
+			if err != nil {
+				t.Fatal(err)
+			}
+			c := loaded.Config
+			got := [4]string{
+				strings.Join(c.AdmissionImageUsers, ","), strings.Join(c.AdmissionImageGroups, ","),
+				strings.Join(c.AdmissionIdentityUsers, ","), strings.Join(c.AdmissionIdentityGroups, ","),
+			}
+			if got != tc.want {
+				t.Fatalf("allow-lists = %q, want %q", got, tc.want)
 			}
 		})
 	}

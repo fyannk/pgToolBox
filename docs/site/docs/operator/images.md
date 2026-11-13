@@ -56,8 +56,9 @@ default either, the reason is `ImageRequired`.
 
 ### The admission policy
 
-`operator.admissionPolicy.enabled` (on by default in the chart; kustomize and OLM do not
-apply it, see [security](../security.md)) renders a `ValidatingAdmissionPolicy` (CEL, no
+`operator.admissionPolicy.enabled` (on by default in the chart; kustomize opts in, OLM
+serves the same rules as a [webhook](../install/olm.md#admission-rules), see
+[security](../security.md)) renders a `ValidatingAdmissionPolicy` (CEL, no
 webhook) under which only the listed users and groups
 may set `spec.image` on a `PgAdmin` or an `EvidenceAgent`. Everyone else uses the
 operator's default. It adds the requester's identity, which the allow-list cannot

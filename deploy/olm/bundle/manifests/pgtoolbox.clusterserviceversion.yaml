@@ -576,6 +576,9 @@ spec:
                 - --operator-image=ghcr.io/fyannk/pgtoolbox-operator:0.1.0
                 - --default-evidence-agent-image=ghcr.io/fyannk/pgtoolbox-evidence-agent:0.1.0
                 - --default-console-image=ghcr.io/fyannk/pgtoolbox-console:0.1.0
+                # The webhook of webhookdefinitions: the bundle cannot ship the
+                # chart's ValidatingAdmissionPolicies.
+                - --admission-webhook
                 env:
                 # The operator's own namespace: where it reads its ConfigMap and Secret.
                 - name: POD_NAMESPACE
@@ -588,6 +591,9 @@ spec:
                   protocol: TCP
                 - containerPort: 8081
                   name: probes
+                  protocol: TCP
+                - containerPort: 9443
+                  name: webhook
                   protocol: TCP
                 securityContext:
                   allowPrivilegeEscalation: false
@@ -614,6 +620,46 @@ spec:
                   limits:
                     cpu: 500m
                     memory: 256Mi
+  # The operator chart's two ValidatingAdmissionPolicies (Secret references,
+  # image and workload-identity allow-lists; the restore-drill delete guard),
+  # which a bundle cannot ship, as webhooks the operator serves
+  # (--admission-webhook, internal/operator/admissionpolicy). OLM issues,
+  # mounts and rotates the serving certificate. OLM's webhook definitions
+  # take no matchConditions: the guard sees every Cluster delete and admits
+  # at once what is not a ServiceAccount's.
+  webhookdefinitions:
+  - type: ValidatingAdmissionWebhook
+    generateName: vresources.pgtoolbox.fyannk.dev
+    deploymentName: pgtoolbox
+    containerPort: 443
+    targetPort: 9443
+    webhookPath: /validate-pgtoolbox-resources
+    admissionReviewVersions: [v1]
+    sideEffects: None
+    failurePolicy: Fail
+    timeoutSeconds: 5
+    rules:
+    - apiGroups: [pgtoolbox.fyannk.dev]
+      apiVersions: [v1alpha1]
+      operations: [CREATE, UPDATE]
+      resources: [pgadmins, evidenceagents, pgtoolboxconsoles]
+  - type: ValidatingAdmissionWebhook
+    generateName: vclusterdelete.pgtoolbox.fyannk.dev
+    deploymentName: pgtoolbox
+    containerPort: 443
+    targetPort: 9443
+    webhookPath: /validate-cnpg-cluster-delete
+    admissionReviewVersions: [v1]
+    sideEffects: None
+    # Ignore, not the policy's Fail: unscoped, a closed guard would refuse
+    # every Cluster delete in the install's namespaces while the operator is down.
+    failurePolicy: Ignore
+    timeoutSeconds: 5
+    rules:
+    - apiGroups: [postgresql.cnpg.io]
+      apiVersions: ["*"]
+      operations: [DELETE]
+      resources: [clusters]
   relatedImages:
   - name: manager
     image: ghcr.io/fyannk/pgtoolbox-operator:0.1.0

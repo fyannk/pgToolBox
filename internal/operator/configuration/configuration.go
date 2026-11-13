@@ -90,6 +90,11 @@ type Config struct {
 	// UpgradeBackupsKept is how many pre-upgrade settings backups stay on
 	// the settings volume.
 	UpgradeBackupsKept int
+	// Admission* are the allow-lists of the admission webhook
+	// (--admission-webhook): who may set spec.image and
+	// spec.workloadIdentity, as the chart's operator.admissionPolicy.
+	AdmissionImageUsers, AdmissionImageGroups       []string
+	AdmissionIdentityUsers, AdmissionIdentityGroups []string
 }
 
 // Defaults returns the configuration before any overlay.
@@ -104,6 +109,8 @@ func Defaults() Config {
 		RenewDeadline:           20 * time.Second,
 		RetryPeriod:             5 * time.Second,
 		UpgradeBackupsKept:      3,
+		AdmissionImageGroups:    []string{"system:masters"},
+		AdmissionIdentityGroups: []string{"system:masters"},
 	}
 }
 
@@ -170,6 +177,18 @@ var fields = []field{
 		"UPGRADE_BACKUPS_KEPT", intSetter(func(c *Config) *int { return &c.UpgradeBackupsKept }),
 		func(c *Config) string { return strconv.Itoa(c.UpgradeBackupsKept) },
 	},
+	listField("ADMISSION_IMAGE_OVERRIDE_USERS", func(c *Config) *[]string { return &c.AdmissionImageUsers }),
+	listField("ADMISSION_IMAGE_OVERRIDE_GROUPS", func(c *Config) *[]string { return &c.AdmissionImageGroups }),
+	listField("ADMISSION_WORKLOAD_IDENTITY_USERS", func(c *Config) *[]string { return &c.AdmissionIdentityUsers }),
+	listField("ADMISSION_WORKLOAD_IDENTITY_GROUPS", func(c *Config) *[]string { return &c.AdmissionIdentityGroups }),
+}
+
+// listField binds a comma list.
+func listField(key string, list func(*Config) *[]string) field {
+	return field{
+		key, func(c *Config, v string) error { *list(c) = splitList(v); return nil },
+		func(c *Config) string { return strings.Join(*list(c), ",") },
+	}
 }
 
 // Source names where a key's effective value came from.

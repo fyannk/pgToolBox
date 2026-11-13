@@ -300,7 +300,18 @@ pods = {
     "kustomize": manager_pod(kust_docs, "kustomize"),
     "OLM": csv["spec"]["install"]["spec"]["deployments"][0]["spec"]["template"]["spec"],
 }
+# The admission webhook (--admission-webhook and its port) is OLM's alone: the
+# bundle cannot ship the ValidatingAdmissionPolicies Helm and kustomize do, and
+# one install never runs both. Checked here, then left out of the comparison.
+WEBHOOK_ARG, WEBHOOK_PORT = "--admission-webhook", {"containerPort": 9443, "name": "webhook", "protocol": "TCP"}
 if all(pods.values()):
+    for label, pod in pods.items():
+        c = pod["containers"][0]
+        has = (WEBHOOK_ARG in c.get("args", []), WEBHOOK_PORT in c.get("ports", []))
+        if has != ((True, True) if label == "OLM" else (False, False)):
+            problems.append(f"{label}: the admission webhook flag and port (OLM only), found {has}")
+        c["args"] = [a for a in c.get("args", []) if a != WEBHOOK_ARG]
+        c["ports"] = [p for p in c.get("ports", []) if p != WEBHOOK_PORT]
     ref = pods["Helm"]
     refc = ref["containers"][0]
     for label in ("kustomize", "OLM"):
@@ -320,6 +331,17 @@ if all(pods.values()):
         problems.append(f"manager image flags: kustomize {kust_img} != Helm {helm_img} (config/manager/manager.yaml)")
     if pods["OLM"]["containers"][0].get("args") != refc.get("args"):
         problems.append("manager args: OLM CSV and Helm differ (image flags included)")
+
+# The CSV's webhooks match what the two policies match.
+for path, path_name in (("config/components/admission/admission_policy.yaml", "/validate-pgtoolbox-resources"),
+                        ("config/admission/restore_drill_guard.yaml", "/validate-cnpg-cluster-delete")):
+    policy = next(d for d in yaml.safe_load_all(open(path)) if d and d["kind"] == "ValidatingAdmissionPolicy")
+    hooks = [w for w in csv["spec"].get("webhookdefinitions", []) if w.get("webhookPath") == path_name]
+    if len(hooks) != 1 or hooks[0]["rules"] != policy["spec"]["matchConstraints"]["resourceRules"]:
+        problems.append(f"OLM webhook {path_name}: rules differ from {path}'s matchConstraints")
+    # The delete guard fails open on OLM: it cannot be scoped to the drills role.
+    elif hooks[0].get("failurePolicy") != ("Ignore" if path_name == "/validate-cnpg-cluster-delete" else policy["spec"]["failurePolicy"]):
+        problems.append(f"OLM webhook {path_name}: unexpected failurePolicy (resources: the policy's; delete guard: Ignore)")
 
 rules = {
     "kustomize (config/rbac/role.yaml)": load("config/rbac/role.yaml")["rules"],
@@ -476,8 +498,8 @@ for doc in helm_vap:
 if any(d["kind"] in ("ValidatingAdmissionPolicy", "ValidatingAdmissionPolicyBinding") and d["metadata"]["name"].endswith("image-override") for d in kust_docs):
     problems.append("kustomize config/default applies the operator chart's admission policy: it is the opt-in component config/components/admission")
 olm_doc = pathlib.Path("docs/site/docs/install/olm.md").read_text()
-if "config/components/admission" not in olm_doc or "templates/operator/admissionpolicy.yaml" not in olm_doc:
-    problems.append("docs/site/docs/install/olm.md must say the admission policies are not in the bundle and how to apply them")
+if "--admission-webhook" not in olm_doc or "never both" not in olm_doc:
+    problems.append("docs/site/docs/install/olm.md must say the bundle enforces the admission rules through the operator's webhook (--admission-webhook), and never with the policies as well")
 guard_policy = next((d for d in guard_src if d["kind"] == "ValidatingAdmissionPolicy"), None)
 drills_rules = load("config/rbac/pgtoolbox_console_restore_drills_clusterrole.yaml")["rules"]
 marker = {"apiGroups": ["pgtoolbox.fyannk.dev"], "resources": ["restoredrills"], "verbs": ["teardown"]}
@@ -1369,4 +1391,4 @@ if [ "${fail}" -ne 0 ]; then
   echo "packaging is inconsistent"
   exit 1
 fi
-echo "packaging is consistent: Helm, kustomize and OLM agree on CRDs, RBAC, deployment, versions and images (the operator, charts/pgtoolbox); Helm and kustomize agree on the admission policies (config/admission, the opt-in config/components/admission), which the OLM bundle does not carry; Helm and kustomize agree on the console (charts/pgtools)"
+echo "packaging is consistent: Helm, kustomize and OLM agree on CRDs, RBAC, deployment, versions and images (the operator, charts/pgtoolbox); Helm and kustomize agree on the admission policies (config/admission, the opt-in config/components/admission), which the OLM bundle carries as webhooks the operator serves; Helm and kustomize agree on the console (charts/pgtools)"

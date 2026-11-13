@@ -127,6 +127,8 @@ redacted).
 | `RECONCILIATION_TIMEOUT` | `operator.config.reconciliationTimeout` | `2m` | Bounds one reconcile. |
 | `LEADER_ELECTION_LEASE_DURATION`, `_RENEW_DEADLINE`, `_RETRY_PERIOD` | | `30s`, `20s`, `5s` | |
 | `UPGRADE_BACKUPS_KEPT` | `operator.config.upgradeBackupsKept` | `3` | [Pre-upgrade backups](pgadmin.md#upgrades) kept per `PgAdmin`. |
+| `ADMISSION_IMAGE_OVERRIDE_USERS`, `_GROUPS` | (the chart's policy: `operator.admissionPolicy.imageOverride`) | empty, `system:masters` | Who may set `spec.image`, for the [admission webhook](../install/olm.md#admission-rules) only (`--admission-webhook`). |
+| `ADMISSION_WORKLOAD_IDENTITY_USERS`, `_GROUPS` | (the chart's policy: `operator.admissionPolicy.workloadIdentity`) | empty, `system:masters` | Who may set `spec.workloadIdentity`, for the admission webhook only. |
 
 Command-line flags: `--metrics-bind-address` (`:8080`), `--metrics-cert-dir`,
 `--health-probe-bind-address` (`:8081`: `/healthz` is liveness, the process
@@ -143,7 +145,11 @@ hangs or crawls, about 55 seconds in), `--leader-elect` (default true),
 `--default-console-image` (`CONSOLE_IMAGE`; the chart passes `console.image`),
 `--console-image-repositories` (`CONSOLE_IMAGE_REPOSITORIES`, chart
 `operator.console.imageRepositories`) and `--pgadmin-image-repositories` (the last
-overrides `PGADMIN_IMAGE_REPOSITORIES`; see [images](images.md)).
+overrides `PGADMIN_IMAGE_REPOSITORIES`; see [images](images.md)), and
+`--admission-webhook` (default false; the OLM bundle sets it): serve the operator
+chart's admission rules as a validating webhook on port 9443, with the certificate
+in `/tmp/k8s-webhook-server/serving-certs` (see [OLM](../install/olm.md#admission-rules)).
+The chart and kustomize leave it off and ship the policies instead.
 
 ### Namespaces dropped from the watch
 
@@ -265,7 +271,8 @@ decision, never the product's.
   addresses move (upgrades, scaling), set `apiServer.mode: any`, or the
   operator loses the API server until the next `helm upgrade`.
 - `operator.admissionPolicy.enabled` (default `true`; kustomize opts in with
-  `config/components/admission`, OLM cannot ship it):
+  `config/components/admission`; OLM serves the same rules as a
+  [webhook](../install/olm.md#admission-rules)):
   a `ValidatingAdmissionPolicy` (CEL, no webhook). Its rules: only `imageOverride.allowedUsers`
   and `allowedGroups` (default group `system:masters`) may set `spec.image` on a
   `PgAdmin` or `EvidenceAgent`, everyone else getting the operator's default

@@ -12,12 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package admissionpolicy holds only tests: envtest proofs of the
-// ValidatingAdmissionPolicies the Helm charts ship. Each test renders a
-// chart with helm template and evaluates the policy and its binding on a
-// real API server, with requests made as different users: the operator
-// chart's policy (envtest_test.go, running the cases of testdata/cases.yaml)
-// and the restore-drill delete guards (drillguard_envtest_test.go).
+// Package admissionpolicy is the operator chart's ValidatingAdmissionPolicies
+// as a validating webhook (webhook.go), which the operator serves with
+// --admission-webhook for installs that cannot ship the policies (OLM), and
+// the proofs of both. testdata/cases.yaml is run against the Go rules
+// (webhook_test.go), and on a real API server, with requests made as
+// different users, against the operator chart's policy rendered with helm
+// template and against the webhook installed as the OLM CSV declares it
+// (envtest_test.go); drillguard_envtest_test.go proves the restore-drill
+// delete guards.
 // coverage_test.go needs no API server: it walks the API types and fails
 // when a Secret reference is missing from the operator chart's Secret rule.
 // The policies themselves are chart content; run the envtests with make
