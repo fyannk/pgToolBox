@@ -35,6 +35,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -44,6 +45,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
+
+	"github.com/fyannk/pgToolBox/internal/console/mcpleader"
 )
 
 // The identity provider of the SSO scenarios: dex, pinned by digest in
@@ -320,6 +323,25 @@ func exposeConsole(t *testing.T, c console) (httpPort, probePort int) {
 	return httpPort, probePort
 }
 
+// leaderRoute is the hosts key of a console's MCP leader: requests to
+// host on mcpleader.Paths are sent to that address.
+func leaderRoute(host string) string { return "mcp " + host }
+
+// exposeMCPLeader opens the console's leader-only Service (<fullname>-mcp,
+// backed by the slice the MCP leader writes) on a NodePort.
+func exposeMCPLeader(t *testing.T, c console) int {
+	t.Helper()
+	svc, err := clientset.CoreV1().Services(c.Namespace).Get(ctx(), c.fullname()+"-mcp", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("the MCP leader Service of %s: %v", c.Release, err)
+	}
+	svc.Spec.Type = corev1.ServiceTypeNodePort
+	if svc, err = clientset.CoreV1().Services(c.Namespace).Update(ctx(), svc, metav1.UpdateOptions{}); err != nil {
+		t.Fatalf("expose the MCP leader of %s: %v", c.Release, err)
+	}
+	return int(svc.Spec.Ports[0].NodePort)
+}
+
 // browser is a browser-less HTTP client: it follows redirects, keeps cookies, and
 // dials the cluster addresses the test names (a console's public host, dex's
 // issuer IP) at the node's NodePorts. Dex is verified against the e2e CA.
@@ -359,6 +381,16 @@ func (b *browser) build(noKeepAlive bool) *http.Client {
 			// connections well before the server does.
 			IdleConnTimeout: 30 * time.Second,
 			TLSClientConfig: &tls.Config{RootCAs: b.roots, MinVersion: tls.VersionTLS12},
+			// The MCP paths go to the leader's Service, as the chart's
+			// exposure sends them: plain HTTP, so a proxy hop keeps the
+			// request as it is.
+			Proxy: func(r *http.Request) (*url.URL, error) {
+				to, ok := b.hosts[leaderRoute(hostPort(r.URL.Host))]
+				if ok && r.URL.Scheme == "http" && slices.ContainsFunc(mcpleader.Paths, func(p mcpleader.Path) bool { return p.Match(r.URL.Path) }) {
+					return &url.URL{Scheme: "http", Host: to}, nil
+				}
+				return nil, nil
+			},
 			DialContext: func(c context.Context, network, addr string) (net.Conn, error) {
 				if to, ok := b.hosts[addr]; ok {
 					addr = to
