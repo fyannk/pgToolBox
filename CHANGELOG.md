@@ -13,11 +13,11 @@ The first public release: a console, an optional operator and an evidence agent
 for [CloudNativePG](https://cloudnative-pg.io) 1.30 and later, on Kubernetes and
 OpenShift.
 
-**Known limitation:** with NetworkPolicy enabled and no trusted proxy addresses set, the
-console trusts `X-Forwarded-For` from the peers its policy admits. On a network plugin that
-does not enforce NetworkPolicy, set `console.trustedProxyCIDRs` (or
-`spec.exposure.trustedProxy.cidrs`): otherwise any pod can fake the client address seen by
-the per-address sign-in limits and the audit log (identity is not affected).
+**Behind a proxy, name it:** the console reads `X-Forwarded-For` only from the addresses in
+`console.trustedProxyCIDRs` (or `spec.exposure.trustedProxy.cidrs`). Without them it uses
+the TCP peer, so on a default exposure every client has the ingress controller's address in
+the per-address sign-in limits and the audit log. Set them to your ingress controller's
+addresses.
 
 ### Added
 
@@ -119,10 +119,15 @@ the per-address sign-in limits and the audit log (identity is not affected).
   are checked. On a CloudNativePG minor whose phase table was not verified, a
   healthy phase reads as a warning. Restore-drill pruning keeps the newest pass
   of a recreated Cluster.
-- **Admission policy**: an EvidenceAgent's `allowedSecrets` needs `get` on those
-  Secrets; a kept Secret reference whose destination changes is checked again;
-  a PgAdmin that offers Cluster credentials needs `get` on the namespace's
-  Secrets. A kustomize component (`config/components/admission`) ships the same
+- **Admission policy**: on create and on any change of its spec, a
+  PgToolBoxConsole, PgAdmin or EvidenceAgent needs `get` on every Secret it
+  references (an EvidenceAgent's `allowedSecrets` included), or on every Secret
+  of the namespace past two references; metadata-only updates are not checked.
+  A PgAdmin that offers same-namespace Cluster credentials or `configDatabase`
+  needs `get` on the namespace's Secrets; `spec.prometheus.projectedToken` needs
+  `create` on the console's `serviceaccounts/token`; any annotation on the
+  exposure object or the Service of an exposed object needs `create` on the
+  exposure kind. A kustomize component (`config/components/admission`) ships the same
   policies; the OLM bundle has none, as its page says. On OpenShift, pgAdmin's
   OAuth proxy sessions last one hour.
 - **Recovery evidence follows `recovery_target_timeline 'latest'`** as PostgreSQL
@@ -133,7 +138,8 @@ the per-address sign-in limits and the audit log (identity is not affected).
   whose timeline evidence is not healthy.
 - **Client addresses behind a proxy**: `X-Forwarded-For` is read only from peers
   in `TRUSTED_PROXY_CIDRS`; hops without CIDRs ignore it, so a pod in the cluster
-  cannot forge its address. `spec.exposure.trustedProxy` sets hops and CIDRs, and
+  cannot forge its address; neither the operator nor the chart trusts a peer you
+  did not name. `spec.exposure.trustedProxy` sets hops and CIDRs, and
   an exposed console gets an ingress NetworkPolicy (by default behind a Route,
   with `spec.exposure.networkPolicy.from` behind an Ingress or Gateway), reported
   by the advisory `ExposureConfined` condition. MCP bearer reviews share the
@@ -146,27 +152,19 @@ the per-address sign-in limits and the audit log (identity is not affected).
   burst 40) instead of per shared address. The docs say what stays open after an
   access request expires (the console's caches, the pgAdmin session, open
   connections) and that the four-eyes check covers only the console's path.
-- **Exposure trust is confined, or withdrawn.** A PgToolBoxConsole trusts every
-  peer's `X-Forwarded-For` only while no other NetworkPolicy or broad `from` peer
-  reopens its port (new reasons `ExposurePolicyBypassed`, `ExposurePeersBroad`),
-  and keeps its ingress policy until the rollout to a narrower trust completes.
-  `networkPolicy.from` peers are checked by CEL and, on a Route, add to the
+- **Exposure confinement.** `ExposureConfined=False` with `ExposurePeersBroad`
+  says a `from` peer admits (nearly) everyone. `networkPolicy.from` peers are checked by CEL and, on a Route, add to the
   OpenShift routers; the sample names ingress-nginx. The `pgtools` chart's
   policies admit host-network routers by their policy-group label. `PgAdmin`
   `spec.auth.openshiftOAuthProxy.sessionMaxAge` (5m to 12h, default 1h) sets the
   pgAdmin session lifetime.
-  The operator probes an optional API that is not installed once at start-up, not once per watched namespace; a watched namespace whose administrator narrows the operator's Role is left out of the watch instead of turning optional features off for every namespace. The start-up steps share one 40 s budget and the manager's discovery requests time out after 10 s, so a slow or hung API server fails the start with a named error before the liveness kill. A paused console whose hostname is allowed again no longer reports `ExposurePolicyKept` "while stalled".
+  The operator probes an optional API that is not installed once at start-up, not once per watched namespace; a watched namespace whose administrator narrows the operator's Role is left out of the watch instead of turning optional features off for every namespace. The start-up steps share one 40 s budget and the manager's discovery requests time out after 10 s, so a slow or hung API server fails the start with a named error before the liveness kill.
   A namespace whose Role grants or refuses an optional API (Routes, HTTPRoutes, Poolers, Databases, DatabaseRoles, ObjectStore, Stanza, Archive) turns that feature on or off in that namespace only; it no longer drops other namespaces from the watch, or itself. New gauges `pgtoolbox_watch_namespaces_dropped` and `pgtoolbox_optional_api_refused_namespaces`. The manager and the controller setups run under the 40 s start-up budget.
   With `watchNamespaces`, a namespace whose Role refuses any namespaced permission of the manager role (Deployments, watch on Clusters, ...) is left out at start, logged and counted in `pgtoolbox_watch_namespaces_dropped`, instead of stopping the operator for every namespace. A granted namespace that refuses DatabaseRoles or Poolers says so, and no status message names another tenant's namespace.
   A watched namespace left out at start marks its PgAdmins, consoles and evidence agents Ready=Unknown (`NamespaceNotWatched`) with a Warning Event where it may still write them; new alert `PgToolBoxOperatorNamespacesDropped` (`operator.metrics.prometheusRule`); `pgtoolbox_watch_namespaces_dropped` gains a `reason` label. One namespace's slow or failing permission review no longer fails the start, and `resource/*` is no RBAC wildcard. A Route or Gateway CRD removed at run time no longer fails every reconcile.
   The per-namespace permission review retries lost connections and transient errors; a namespace it cannot review (`review-failed`) or whose review is too large (`review-too-large`) is left out until the next start. The dropped-namespace report runs on the elected leader only, with one Event per transition. The start-up permission reviews are read as JSON and capped at 256 KiB each whatever path prefix the API server URL has, so sixteen hostile reviews in flight stay under a 64 MiB heap budget (18–45 MiB measured), and the `PgToolBoxOperatorNamespacesDropped` alert says what to do for each reason. A Route or HTTPRoute published before an admin narrowed the operator's Role is no longer seen: delete it by hand.
-- **Admission policy, sign-in settings.** Changing the sign-in settings (`spec.auth`,
-  `spec.admins`) of a PgAdmin that offers Cluster credentials needs `get` on the
-  namespace's Secrets; CA ConfigMaps, the SMTP TLS mode and an EvidenceAgent's
-  Cluster, ObjectStore and pgBackRest endpoint count as part of a Secret's
-  destination; pointing `spec.prometheus.projectedToken` at a new URL needs
-  `create` on the console's `serviceaccounts/token`. `spec.prometheus.tokenAudience`
-  gives that token a dedicated audience.
+- **Prometheus token audience.** `spec.prometheus.tokenAudience` gives the
+  projected token a dedicated audience.
 - **Recovery evidence follows the timeline ancestry.** Barman Cloud no longer
   shows a sibling timeline as covered by a default restore: a sibling path is off
   target with "needs targetTLI N", which the recovery panel and restore check
@@ -284,48 +282,20 @@ the per-address sign-in limits and the audit log (identity is not affected).
   A grant is written to the shared state before its first token is issued (503 `temporarily_unavailable` if that write fails), and a code from a signed-out session buys nothing, so a done **Disconnect all** also covers grants issued on a replica cut off from the API server.
   Disconnection reads are coalesced; only a 403 or 404 changes what a replica serves, so a throttled or timed-out read answers 503 without making the replica fail. A malformed grant id is refused without a read.
   The two 503s of a disconnection (not confirmed for every replica, or not recorded) have their own problem types and texts, and the signed-out page says when assistants may still be connected.
-- **Exposure trust.** The pgtools chart trusts every peer only when
-  `networkPolicy.ingress.extraFrom` is empty. `networkPolicy.from` selectors are
-  validated by the CRD, and a policy the API server refuses stalls with
-  `ExposurePolicyInvalid`. More broad peers are detected (selectors pinning no
-  value, wide, private-range or Pod-network ipBlocks), other policies are matched
-  against live Pod labels and rechecked while they bypass ours, OpenShift's
-  allow-from-openshift-ingress is not a bypass, and the operator's own any-peer
-  trust is marked on the Pod template. That trust is granted only once verified:
-  an ipBlock peer waits for a console Pod address, a truncated Pod list grants
-  none (`ExposureTrustUnverified`), and a widened `from` waits until no Pod trusts
-  every peer. Unique-local IPv6 blocks wider than /64 and namespace selectors
-  pinning only shared labels are broad; a refused NetworkPolicy stalls before
-  anything is exposed (it is applied first). On OpenShift the pgtools chart trusts no
-  peer unless `console.trustedProxyCIDRs` is set, and `console.platform`
-  (`auto`, `kubernetes`, `openshift`) makes that hold under offline `helm
-  template`. A single-replica console with an ipBlock peer no longer restarts in
-  a loop: the verified blocks are kept while no Pod has an address. An ipBlock
-  overlapping a Node's podCIDR is broad (the operator gains `list` on Nodes); an
-  admission policy or webhook that denies the console's NetworkPolicy stalls with
-  `ExposurePolicyInvalid` (on `ExposureConfined` too); a Pod
-  stuck terminating that holds an exposure change is named
-  (`ExposurePolicyKept`).
-  A widened `networkPolicy.from` is held even when the cache still shows an older
-  policy or workload; the Node podCIDR check runs one lookup at a time, lists 100
-  Nodes a page and says when Nodes have no `spec.podCIDRs`; a `HostnameNotAllowed`
-  stall reports `ExposurePolicyKept` while the console's ingress policy remains.
+- **Exposure NetworkPolicy.** `networkPolicy.from` selectors are validated by the
+  CRD; broad peers are detected (selectors pinning no value or only shared
+  namespace labels, wide, private-range or unique-local ipBlocks wider than /64);
+  a NetworkPolicy the API server refuses, by its schema or an admission policy or
+  webhook, stalls with `ExposurePolicyInvalid` (on `ExposureConfined` too) before
+  anything is exposed (it is applied first).
   A console whose hostname and image are both outside the allow-lists withdraws
-  its Ingress, Route or HTTPRoute (the hostname is checked first) and names both;
-  `ExposureConfined` says when the Node podCIDR check is not meaningful (a console
-  Pod outside its Node's podCIDRs); the Node lookup runs within 10 s and resumes.
+  its Ingress, Route or HTTPRoute (the hostname is checked first) and names both.
   PgAdmin, like the console, checks its hostname first and withdraws a published Ingress or Route under a disallowed name; both kinds report `ExposureReady=False` (`HostnameNotAllowed`) with an empty `status.url`. Operator start-up steps have a 20 s deadline, below the liveness kill, and a 401 from an optional-API probe fails the start.
   A paused PgAdmin or PgToolBoxConsole withdraws a refused hostname; `ExposureReady` no longer keeps `HostnameNotAllowed` once the hostname is fixed while another stall holds; the refusal names the chart value `operator.exposure.allowedHostSuffixes`. Start-up steps fail at their deadline, naming the step, against an API server that never answers, and watched namespaces are probed sixteen at a time.
-- **Admission.** A PgAdmin with `configDatabase` needs `get` on the
-  namespace's Secrets and its database must start with `pgadmin_` (CloudNativePG
-  adopts and resets an existing role); raising `sessionMaxAge` counts as widening
-  the audience; exposure annotations an ingress controller runs as configuration
-  (snippets, `auth-*`, mirroring, middlewares, plugins, other hosts, source
-  ranges, redirects, canaries, CORS, load-balancer scheme, group and entry point,
-  for ingress-nginx, AWS Load Balancer Controller, HAProxy, the OpenShift router,
-  Traefik and Kong) need `create` on the exposure kind, on the Service as well as
-  the exposure; the list is documented in security.md and kept equal by a test.
-  The restore-drill delete guard also holds ServiceAccounts of other namespaces,
+- **Admission.** A PgAdmin's `configDatabase` must start with `pgadmin_`
+  (CloudNativePG adopts and resets an existing role). The restore-drill delete
+  guard is one parameterless policy (sealed drills only); the console checks a
+  drill's prefix itself. The guard also holds ServiceAccounts of other namespaces,
   the operator's included, unless they hold `*` on restore drills cluster-wide.
 - **Release pipeline hardening.** `wait-ci` names the exact dispatch
   commands and the checklist says to run `make release-preflight` before pushing a

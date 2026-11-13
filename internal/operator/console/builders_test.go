@@ -251,9 +251,9 @@ func TestMCPEnv(t *testing.T) {
 }
 
 // TestTrustedProxy: a console behind a published Route, Ingress or
-// Gateway reads one X-Forwarded-For hop, from the peers the console's
-// NetworkPolicy admits or from trustedProxy.cidrs; with neither, no peer
-// is trusted and the console ignores the header. A requested exposure
+// Gateway reads one X-Forwarded-For hop, from trustedProxy.cidrs only:
+// without them no peer is trusted, whatever the NetworkPolicy admits, and
+// the console ignores the header. A requested exposure
 // that is not published (the Route API is missing, the hostname is
 // refused) trusts nothing: nothing is in front.
 func TestTrustedProxy(t *testing.T) {
@@ -267,17 +267,15 @@ func TestTrustedProxy(t *testing.T) {
 		exposed     bool
 		trusted     *pgtoolboxv1alpha1.PgToolBoxConsoleTrustedProxySpec
 		policy      *pgtoolboxv1alpha1.PgToolBoxConsoleExposurePolicySpec
-		bypass      string
-		broad       string
 		hops, cidrs string
 	}{
 		{name: "clusterIP", typ: pgtoolboxv1alpha1.ExposureTypeClusterIP},
 		{name: "unset type", typ: ""},
-		{name: "route behind its policy", typ: pgtoolboxv1alpha1.ExposureTypeRoute, exposed: true, hops: "1", cidrs: "0.0.0.0/0,::/0"},
+		{name: "route behind its policy: no trusted peer", typ: pgtoolboxv1alpha1.ExposureTypeRoute, exposed: true, hops: "1"},
 		{name: "route not published (no Route API, or a refused hostname)", typ: pgtoolboxv1alpha1.ExposureTypeRoute},
 		{name: "route with its policy turned off", typ: pgtoolboxv1alpha1.ExposureTypeRoute, exposed: true, policy: &pgtoolboxv1alpha1.PgToolBoxConsoleExposurePolicySpec{Enabled: new(false)}, hops: "1"},
 		{name: "ingress without from: no trusted peer", typ: pgtoolboxv1alpha1.ExposureTypeIngress, exposed: true, hops: "1"},
-		{name: "ingress behind its policy", typ: pgtoolboxv1alpha1.ExposureTypeIngress, exposed: true, policy: &pgtoolboxv1alpha1.PgToolBoxConsoleExposurePolicySpec{From: ingressFrom}, hops: "1", cidrs: "0.0.0.0/0,::/0"},
+		{name: "ingress behind its policy: no trusted peer", typ: pgtoolboxv1alpha1.ExposureTypeIngress, exposed: true, policy: &pgtoolboxv1alpha1.PgToolBoxConsoleExposurePolicySpec{From: ingressFrom}, hops: "1"},
 		{
 			name: "gateway with its proxies named", typ: pgtoolboxv1alpha1.ExposureTypeGateway, exposed: true,
 			trusted: &pgtoolboxv1alpha1.PgToolBoxConsoleTrustedProxySpec{Hops: new(int32(2)), CIDRs: []string{"10.128.3.4/14", "fd00::1/128"}},
@@ -292,26 +290,10 @@ func TestTrustedProxy(t *testing.T) {
 			hops:    "1", cidrs: "10.1.0.0/16",
 		},
 		{
-			name: "another NetworkPolicy admits more peers: none trusted", typ: pgtoolboxv1alpha1.ExposureTypeIngress, exposed: true,
-			policy: &pgtoolboxv1alpha1.PgToolBoxConsoleExposurePolicySpec{From: ingressFrom}, bypass: "NetworkPolicy allow-same-namespace admits every source", hops: "1",
-		},
-		{
-			name: "a peer of every namespace: none trusted", typ: pgtoolboxv1alpha1.ExposureTypeIngress, exposed: true,
-			policy: &pgtoolboxv1alpha1.PgToolBoxConsoleExposurePolicySpec{From: []pgtoolboxv1alpha1.PgToolBoxConsolePolicyPeer{{NamespaceSelector: &pgtoolboxv1alpha1.PgToolBoxConsoleLabelSelector{}}}}, hops: "1",
-		},
-		{
-			name: "a peer of every address on a Route: none trusted", typ: pgtoolboxv1alpha1.ExposureTypeRoute, exposed: true,
-			policy: &pgtoolboxv1alpha1.PgToolBoxConsoleExposurePolicySpec{From: []pgtoolboxv1alpha1.PgToolBoxConsolePolicyPeer{{IPBlock: &pgtoolboxv1alpha1.PgToolBoxConsoleIPBlock{CIDR: "::/0"}}}}, hops: "1",
-		},
-		{
-			name: "explicit cidrs stand whatever else admits the port", typ: pgtoolboxv1alpha1.ExposureTypeIngress, exposed: true,
-			trusted: &pgtoolboxv1alpha1.PgToolBoxConsoleTrustedProxySpec{CIDRs: []string{"10.1.0.0/16"}}, bypass: "NetworkPolicy x admits every source",
-			hops: "1", cidrs: "10.1.0.0/16",
-		},
-		{
-			name: "an ipBlock that holds a console Pod's address: none trusted", typ: pgtoolboxv1alpha1.ExposureTypeIngress, exposed: true,
-			policy: &pgtoolboxv1alpha1.PgToolBoxConsoleExposurePolicySpec{From: []pgtoolboxv1alpha1.PgToolBoxConsolePolicyPeer{{IPBlock: &pgtoolboxv1alpha1.PgToolBoxConsoleIPBlock{CIDR: "10.244.0.0/16"}}}},
-			broad:  "peer 0 has ipBlock 10.244.0.0/16, which holds the address of console Pod p", hops: "1",
+			name: "explicit cidrs, with a broad peer", typ: pgtoolboxv1alpha1.ExposureTypeIngress, exposed: true,
+			trusted: &pgtoolboxv1alpha1.PgToolBoxConsoleTrustedProxySpec{CIDRs: []string{"10.1.0.0/16"}},
+			policy:  &pgtoolboxv1alpha1.PgToolBoxConsoleExposurePolicySpec{From: []pgtoolboxv1alpha1.PgToolBoxConsolePolicyPeer{{NamespaceSelector: &pgtoolboxv1alpha1.PgToolBoxConsoleLabelSelector{}}}},
+			hops:    "1", cidrs: "10.1.0.0/16",
 		},
 		{name: "hops 0 ignores the header", typ: pgtoolboxv1alpha1.ExposureTypeRoute, exposed: true, trusted: &pgtoolboxv1alpha1.PgToolBoxConsoleTrustedProxySpec{Hops: new(int32(0))}},
 		{
@@ -326,7 +308,7 @@ func TestTrustedProxy(t *testing.T) {
 			c.Spec.Exposure.ExposureSpec = pgtoolboxv1alpha1.ExposureSpec{Type: tc.typ, Hostname: "console.example"}
 			c.Spec.Exposure.TrustedProxy, c.Spec.Exposure.NetworkPolicy = tc.trusted, tc.policy
 			got := map[string]string{}
-			for _, e := range consoleEnv(c, deploymentInputs{Exposed: tc.exposed, Confinement: confinement{Bypass: tc.bypass, Broad: tc.broad}}) {
+			for _, e := range consoleEnv(c, deploymentInputs{Exposed: tc.exposed}) {
 				if strings.HasPrefix(e.Name, "TRUSTED_PROXY_") {
 					if _, dup := got[e.Name]; dup {
 						t.Fatalf("%s rendered twice", e.Name)
@@ -336,51 +318,6 @@ func TestTrustedProxy(t *testing.T) {
 			}
 			if got["TRUSTED_PROXY_HOPS"] != tc.hops || got["TRUSTED_PROXY_CIDRS"] != tc.cidrs {
 				t.Errorf("TRUSTED_PROXY_HOPS=%q TRUSTED_PROXY_CIDRS=%q, want %q %q", got["TRUSTED_PROXY_HOPS"], got["TRUSTED_PROXY_CIDRS"], tc.hops, tc.cidrs)
-			}
-			// The policy and the trust agree: every peer is trusted only
-			// where the policy admits nothing but the exposure's.
-			if tc.cidrs == "0.0.0.0/0,::/0" && buildExposureNetworkPolicy(c, tc.exposed) == nil {
-				t.Error("every peer is trusted, but no NetworkPolicy confines who reaches the port")
-			}
-		})
-	}
-}
-
-// TestEveryPeerGrant: the Pod template carries the any-peer grant only
-// when the operator made it from its NetworkPolicy; trustedProxy.cidrs of
-// 0.0.0.0/0,::/0 is the user's own trust, never mistaken for the grant
-// (the policy would then never be withdrawn).
-func TestEveryPeerGrant(t *testing.T) {
-	t.Parallel()
-	cases := []struct {
-		name    string
-		mutate  func(*pgtoolboxv1alpha1.PgToolBoxConsole)
-		in      deploymentInputs
-		granted bool
-	}{
-		{name: "route behind its policy", in: deploymentInputs{Exposed: true}, granted: true},
-		{name: "route, another policy admits more", in: deploymentInputs{Exposed: true, Confinement: confinement{Bypass: "x"}}},
-		{name: "route not published"},
-		{
-			name: "the user's own any-peer cidrs, no policy", in: deploymentInputs{Exposed: true},
-			mutate: func(c *pgtoolboxv1alpha1.PgToolBoxConsole) {
-				c.Spec.Exposure.NetworkPolicy = &pgtoolboxv1alpha1.PgToolBoxConsoleExposurePolicySpec{Enabled: new(false)}
-				c.Spec.Exposure.TrustedProxy = &pgtoolboxv1alpha1.PgToolBoxConsoleTrustedProxySpec{CIDRs: []string{"0.0.0.0/0", "::/0"}}
-			},
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			c := &pgtoolboxv1alpha1.PgToolBoxConsole{ObjectMeta: metav1.ObjectMeta{Name: "console", Namespace: "team-a"}}
-			c.Spec.Exposure.ExposureSpec = pgtoolboxv1alpha1.ExposureSpec{Type: pgtoolboxv1alpha1.ExposureTypeRoute, Hostname: "console.example"}
-			if tc.mutate != nil {
-				tc.mutate(c)
-			}
-			template := podTemplate(c, tc.in)
-			pod := &corev1.Pod{ObjectMeta: template.ObjectMeta, Spec: template.Spec}
-			if got := trustsAllPeers(pod); got != tc.granted {
-				t.Errorf("trustsAllPeers = %v, want %v (annotations %v)", got, tc.granted, template.Annotations)
 			}
 		})
 	}

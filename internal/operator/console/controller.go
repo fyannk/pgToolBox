@@ -39,10 +39,6 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
-	"net/netip"
-	"slices"
-	"strings"
-	"sync"
 	"time"
 
 	routev1 "github.com/openshift/api/route/v1"
@@ -53,7 +49,6 @@ import (
 	policyv1 "k8s.io/api/policy/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -77,9 +72,7 @@ import (
 // all verbs the operator holds (it creates that Lease itself, owned by the
 // PgToolBoxConsole; it never reads, lists or watches the others). A console needs
 // no cluster-scoped grant: it asks its access questions with the user's own
-// token. The Nodes are listed (uncached, bounded) for their podCIDRs only,
-// against which an ipBlock peer of the exposure's NetworkPolicy is
-// checked; without that grant the check is skipped and said so. The
+// token. The
 // Clusters and their server CA Secrets are read
 // for the instance CA mirror (instanceca.go): only ca.crt is copied, into
 // a ConfigMap the console mounts.
@@ -93,7 +86,6 @@ import (
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
-// +kubebuilder:rbac:groups="",resources=nodes,verbs=list
 // +kubebuilder:rbac:groups=policy,resources=poddisruptionbudgets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=roles;rolebindings,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles,verbs=get;list;watch;create
@@ -142,10 +134,6 @@ type Reconciler struct {
 	Features            Features
 	// Random fills the generated session key; crypto/rand by default.
 	Random func(max *big.Int) (*big.Int, error)
-	// Now is the clock of the Node podCIDR memo; time.Now by default.
-	Now func() time.Time
-
-	nodes nodeCIDRMemo
 }
 
 func (r *Reconciler) applier() reconcile.Applier {
@@ -175,9 +163,8 @@ func (r *Reconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.
 		err := r.checkHostname(ctx, console, imageProblem)
 		return ctrl.Result{}, r.publish(ctx, console, original, conditions.Outcome{Err: err, Paused: true})
 	}
-	loop := &loopState{}
-	err := r.reconcile(ctx, console, loop)
-	result := ctrl.Result{RequeueAfter: loop.requeueAfter}
+	err := r.reconcile(ctx, console)
+	var result ctrl.Result
 	var stalled *reconcile.StallError
 	if errors.As(err, &stalled) {
 		// A stall on something the caches do not hold: look again later
@@ -197,35 +184,10 @@ func resultFor(result ctrl.Result, err error) (ctrl.Result, error) {
 	return result, nil
 }
 
-// loopState is what one reconcile asks of the next beyond its status: a
-// look again after a while, for what no watch reports.
-type loopState struct {
-	requeueAfter time.Duration
-}
-
-// after asks for a look again within d (the sooner of the asks wins).
-func (l *loopState) after(d time.Duration) {
-	if l.requeueAfter == 0 || d < l.requeueAfter {
-		l.requeueAfter = d
-	}
-}
-
-// policyRecheck is how often a console whose trust depends on the
-// namespace's other NetworkPolicies (it trusts every peer of its own, or
-// another one admits more) looks at them again: the operator caches only
-// its own (every informer is label-filtered), so a policy someone adds, or
-// removes, is seen by this look, not by a watch.
+// policyRecheck is how often a console stalled on an ingress
+// NetworkPolicy the API server refused (an admission policy may change)
+// tries it again.
 const policyRecheck = 5 * time.Minute
-
-// networkPolicyListLimit bounds the uncached list of the namespace's
-// NetworkPolicies; more than that, and the trust is not granted.
-const networkPolicyListLimit = 250
-
-// podListLimit bounds the uncached lists of a console's Pods (far more
-// than any console runs: a list that returns more, or a continue token,
-// counts as Pods that could not be checked, which grants no trust and
-// withdraws no policy).
-const podListLimit = networkPolicyListLimit
 
 // roleMissingRetry is how often a console stalled on a missing shipped
 // ClusterRole looks for it again.
@@ -244,7 +206,7 @@ var stallRetries = map[pgtoolboxv1alpha1.Reason]time.Duration{
 }
 
 //nolint:gocyclo,cyclop,funlen // the console's children, in dependency order.
-func (r *Reconciler) reconcile(ctx context.Context, console *pgtoolboxv1alpha1.PgToolBoxConsole, loop *loopState) error {
+func (r *Reconciler) reconcile(ctx context.Context, console *pgtoolboxv1alpha1.PgToolBoxConsole) error {
 	image := specs.ResolveImage(console.Spec.Image, r.DefaultImage)
 	imageReason, imageProblem := r.imageProblem(console)
 	if err := r.checkHostname(ctx, console, imageProblem); err != nil {
@@ -348,62 +310,26 @@ func (r *Reconciler) reconcile(ctx context.Context, console *pgtoolboxv1alpha1.P
 	} else if err := r.deleteIfOwned(ctx, console, &policyv1.PodDisruptionBudget{}, console.WorkloadName()); err != nil {
 		return err
 	}
-	// The ingress policy before the exposure it confines and the workload
-	// that trusts every peer it admits: a policy the API server refuses
-	// stalls with nothing new published. Its removal only once no Pod of
-	// the workload trusts them any more (withdrawExposurePolicy), and its
-	// widening likewise (heldWidening).
-	policy := buildExposureNetworkPolicy(console, r.exposureUsable(console))
-	var found confinement
-	if policy != nil {
-		held, stuck, err := r.heldWidening(ctx, console, policy)
-		if err != nil {
-			return err
-		}
-		if stuck {
-			// A Pod stuck terminating may never go (a lost node): its
-			// deletion is watched, and looked for again meanwhile.
-			loop.after(policyRecheck)
-		}
-		if held != "" {
-			found.Unverified = held
-		} else {
-			if err := applier.Apply(ctx, policy); err != nil {
-				if policyRefused(err) {
-					return r.exposurePolicyRefused(console, policy.Name, err)
-				}
-				return r.notOwned(console, err)
+	// The ingress policy before the exposure it confines: a policy the API
+	// server refuses stalls with nothing new published.
+	if policy := buildExposureNetworkPolicy(console, r.exposureUsable(console)); policy != nil {
+		if err := applier.Apply(ctx, policy); err != nil {
+			if policyRefused(err) {
+				return r.exposurePolicyRefused(console, policy.Name, err)
 			}
-			if found, err = r.exposureConfinement(ctx, console, policy.Spec.Ingress[0].From); err != nil {
-				return err
-			}
+			return r.notOwned(console, err)
 		}
+	} else if err := r.deleteIfOwned(ctx, console, &networkingv1.NetworkPolicy{}, exposurePolicyName(console)); err != nil {
+		return err
 	}
 	exposed, err := r.applyExposure(ctx, console)
 	if err != nil {
 		return err
 	}
-	setExposureConfined(console, exposed, found)
-	in := deploymentInputs{Image: image, OpenShift: r.Features.OpenShift, Exposed: exposed, Confinement: found}
-	if trust := effectiveProxyTrust(console, exposed, found); trust.EveryPeer || found.Bypass != "" {
-		loop.after(policyRecheck)
-	}
-
-	facts, err := r.reconcileWorkload(ctx, console, in)
-	if err != nil {
+	setExposureConfined(console, exposed)
+	in := deploymentInputs{Image: image, OpenShift: r.Features.OpenShift, Exposed: exposed}
+	if err := r.reconcileWorkload(ctx, console, in); err != nil {
 		return err
-	}
-	if policy == nil {
-		kept, stuck, err := r.withdrawExposurePolicy(ctx, console, facts)
-		if err != nil {
-			return err
-		}
-		if kept != "" {
-			setCondition(console, pgtoolboxv1alpha1.ConditionExposureConfined, metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonExposurePolicyKept, kept)
-		}
-		if stuck {
-			loop.after(policyRecheck)
-		}
 	}
 	r.observeExposure(ctx, console)
 	console.Status.URL = consoleURL(console)
@@ -418,279 +344,29 @@ func (r *Reconciler) reconcile(ctx context.Context, console *pgtoolboxv1alpha1.P
 // Deployment, or a switch of history.persistent), is deleted once the new
 // workload has a replica available: until then both serve, behind the
 // same Service, each on its own volumes.
-//
-// It returns the workload's facts, nil while a StatefulSet is being
-// replaced (nothing was applied).
-func (r *Reconciler) reconcileWorkload(ctx context.Context, console *pgtoolboxv1alpha1.PgToolBoxConsole, in deploymentInputs) (*workloadFacts, error) {
+func (r *Reconciler) reconcileWorkload(ctx context.Context, console *pgtoolboxv1alpha1.PgToolBoxConsole, in deploymentInputs) error {
 	desired := buildWorkload(console, in)
 	if set, ok := desired.(*appsv1.StatefulSet); ok {
 		replacing, err := r.replaceOnClaimChange(ctx, console, set)
 		if err != nil || replacing {
-			return nil, err
+			return err
 		}
 	}
 	if err := r.applier().Apply(ctx, desired); err != nil {
-		return nil, r.notOwned(console, err)
+		return r.notOwned(console, err)
 	}
 	facts := workloadFactsOf(desired)
 	if err := r.observeWorkload(ctx, console, facts); err != nil {
-		return nil, err
+		return err
 	}
 	if facts.Available < 1 {
-		return &facts, nil
+		return nil
 	}
 	var previous client.Object = &appsv1.StatefulSet{}
 	if facts.Kind == "StatefulSet" {
 		previous = &appsv1.Deployment{}
 	}
-	return &facts, r.deleteIfOwned(ctx, console, previous, console.WorkloadName())
-}
-
-// exposureConfinement looks at what the spec does not say: the console
-// Pods (read uncached, as for the policy's withdrawal) for an ipBlock that
-// holds their addresses, and the namespace's NetworkPolicies, read
-// uncached (the operator's informer holds only its own) and bounded: more
-// than networkPolicyListLimit, and the rest could not be checked, which
-// counts as a bypass. ours are the peers of the exposure's policy; for a
-// Route the routers' older namespace label counts as theirs.
-func (r *Reconciler) exposureConfinement(ctx context.Context, console *pgtoolboxv1alpha1.PgToolBoxConsole, ours []networkingv1.NetworkPolicyPeer) (confinement, error) {
-	pods, complete, err := r.consolePods(ctx, console)
-	if err != nil {
-		return confinement{}, err
-	}
-	if !complete {
-		return confinement{Unverified: fmt.Sprintf("more than %d console Pods: their addresses and labels could not all be checked", podListLimit)}, nil
-	}
-	var found confinement
-	found.Broad, found.Unverified = podNetworkBlock(ours, pods)
-	if found.Broad == "" && strings.HasPrefix(found.Unverified, noPodAddress) {
-		verified, err := r.verifiedEarlier(ctx, console, ours)
-		if err != nil {
-			return confinement{}, err
-		}
-		if verified {
-			found.Unverified = ""
-		}
-	}
-	if found.Broad == "" && slices.ContainsFunc(ours, func(p networkingv1.NetworkPolicyPeer) bool { return p.IPBlock != nil }) {
-		nodes, note, err := r.nodePodCIDRs(ctx)
-		if err != nil {
-			return confinement{}, err
-		}
-		found.Broad, found.Note = nodeNetworkBlock(ours, nodes), note
-		if incoherent := nodeCoherenceNote(pods, nodes); incoherent != "" {
-			found.Note = joinNotes(found.Note, incoherent)
-		}
-	}
-	var policies networkingv1.NetworkPolicyList
-	if err := r.APIReader.List(ctx, &policies, client.InNamespace(console.Namespace), client.Limit(networkPolicyListLimit)); err != nil {
-		return confinement{}, fmt.Errorf("list the NetworkPolicies of namespace %s: %w", console.Namespace, err)
-	}
-	if policies.Continue != "" || len(policies.Items) > networkPolicyListLimit {
-		found.Bypass = fmt.Sprintf("more than %d NetworkPolicies in the namespace: the others could not be checked", networkPolicyListLimit)
-		return found, nil
-	}
-	podLabels := []map[string]string{objectMeta(console, "", pgtoolboxv1alpha1.PropagationTargetPod).Labels}
-	for i := range pods {
-		podLabels = append(podLabels, pods[i].Labels)
-	}
-	if console.Spec.Exposure.TypeOrDefault() == pgtoolboxv1alpha1.ExposureTypeRoute {
-		ours = append(slices.Clip(ours), legacyRouterPeer())
-	}
-	found.Bypass = policyBypass(policies.Items, exposurePolicyName(console), podLabels, ours)
-	return found, nil
-}
-
-// withdrawExposurePolicy deletes the console's ingress NetworkPolicy once
-// it confines no Pod that trusts every peer: the workload's rollout is
-// complete (facts: the controller saw the generation, every replica is
-// updated and available, a StatefulSet's revisions agree) and no console
-// Pod, terminating ones included, still carries the operator's any-peer
-// grant (annotationTrustsEveryPeer). Until then the policy stays, and kept
-// says why (a Pod stuck terminating is named, and stuck says one is: it is
-// looked for again besides its watched deletion); the workload's status
-// and its Pods are watched, so their next change brings the next look.
-func (r *Reconciler) withdrawExposurePolicy(ctx context.Context, console *pgtoolboxv1alpha1.PgToolBoxConsole, facts *workloadFacts) (kept string, stuck bool, err error) {
-	name := exposurePolicyName(console)
-	existing := &networkingv1.NetworkPolicy{}
-	if err := r.Client.Get(ctx, client.ObjectKey{Namespace: console.Namespace, Name: name}, existing); err != nil {
-		return "", false, client.IgnoreNotFound(err)
-	}
-	if !metav1.IsControlledBy(existing, console) {
-		return "", false, nil
-	}
-	kept = "NetworkPolicy " + name + " is no longer rendered and is kept until no console Pod trusts every peer it admits"
-	if facts == nil || !facts.rolloutComplete() {
-		return kept + " (the rollout without the grant is not through)", false, nil
-	}
-	pods, complete, err := r.consolePods(ctx, console)
-	if err != nil {
-		return "", false, err
-	}
-	if !complete {
-		// Pods that could not all be listed may trust every peer: the
-		// policy stays.
-		return kept + fmt.Sprintf(" (more than %d console Pods: they could not all be checked)", podListLimit), false, nil
-	}
-	if slices.ContainsFunc(pods, func(pod corev1.Pod) bool { return trustsAllPeers(&pod) }) {
-		if blockers := stuckGrantPods(pods); blockers != "" {
-			return kept + " (" + blockers + ")", true, nil
-		}
-		return kept + " (a console Pod still carries the grant)", false, nil
-	}
-	return "", false, r.deleteIfOwned(ctx, console, &networkingv1.NetworkPolicy{}, name)
-}
-
-// stuckGrantPods names the console Pods that are terminating and still
-// carry the operator's any-peer grant, with when their deletion was asked,
-// "" when none: one whose node is lost, or whose finalizer is stuck, holds
-// the policy until someone force-deletes it.
-func stuckGrantPods(pods []corev1.Pod) string {
-	var named []string
-	for i := range pods {
-		pod := &pods[i]
-		if pod.DeletionTimestamp.IsZero() || !trustsAllPeers(pod) {
-			continue
-		}
-		named = append(named, fmt.Sprintf("Pod %s, terminating since %s", pod.Name, pod.DeletionTimestamp.UTC().Format(time.RFC3339)))
-	}
-	if len(named) == 0 {
-		return ""
-	}
-	return "still trusting every peer: " + strings.Join(named, "; ") + "; it holds this until it is gone (force-delete it if its node is lost)"
-}
-
-// consolePods lists the console's Pods past the cache (a Pod the informer
-// has not delivered yet still counts), bounded by podListLimit; complete
-// is false when there were more.
-func (r *Reconciler) consolePods(ctx context.Context, console *pgtoolboxv1alpha1.PgToolBoxConsole) (pods []corev1.Pod, complete bool, err error) {
-	var list corev1.PodList
-	if err := r.APIReader.List(ctx, &list, client.InNamespace(console.Namespace), client.MatchingLabels(selectorLabels(console)), client.Limit(podListLimit)); err != nil {
-		return nil, false, fmt.Errorf("list console Pods: %w", err)
-	}
-	return list.Items, list.Continue == "" && len(list.Items) <= podListLimit, nil
-}
-
-// heldWidening says why policy is not applied yet, "" when it may be: it
-// would admit a source the console's live ingress NetworkPolicy does not
-// (peersWiden) while a console Pod may still trust every peer on the
-// operator's grant (everyPeerTrustInForce). The workload is then rendered
-// without the grant; once its rollout is through and no Pod carries it,
-// the wider policy is applied (the workload's status and its Pods are
-// watched, so their changes bring the next look). A narrowing change is
-// applied at once.
-//
-// The policy in force is read past the cache, whichever way the cache
-// lags: its informer and the workload's are not ordered, so the cache may
-// show the narrower policy this operator replaced (no widening is left) or
-// an older, wider one that equals policy while the API server already
-// holds the narrower one applied last (a widening the cache cannot show).
-// One uncached GET per pass of a console with an ingress policy. stuck: a
-// Pod stuck terminating holds it (named in the message).
-func (r *Reconciler) heldWidening(ctx context.Context, console *pgtoolboxv1alpha1.PgToolBoxConsole, policy *networkingv1.NetworkPolicy) (held string, stuck bool, err error) {
-	live := &networkingv1.NetworkPolicy{}
-	if err := r.APIReader.Get(ctx, client.ObjectKeyFromObject(policy), live); err != nil {
-		return "", false, client.IgnoreNotFound(err)
-	}
-	if !metav1.IsControlledBy(live, console) {
-		return "", false, nil // the apply reports it as not owned
-	}
-	var livePeers []networkingv1.NetworkPolicyPeer
-	if len(live.Spec.Ingress) > 0 {
-		livePeers = live.Spec.Ingress[0].From
-	}
-	if !peersWiden(policy.Spec.Ingress[0].From, livePeers) {
-		return "", false, nil
-	}
-	trusted, blockers, err := r.everyPeerTrustInForce(ctx, console)
-	if err != nil || !trusted {
-		return "", false, err
-	}
-	held = "networkPolicy.from admits more than the policy in force, which is kept until no console Pod trusts every peer any more (a rollout without the grant), then widened"
-	if blockers != "" {
-		return held + "; " + blockers, true, nil
-	}
-	return held, false, nil
-}
-
-// everyPeerTrustInForce: a console Pod may believe X-Forwarded-For from
-// every peer on the operator's grant. A workload of the console carries
-// the grant in its template, or its controller has not seen its latest
-// template yet (a Pod may still be created from an older one), or a
-// console Pod, terminating ones included, carries it; Pods that could not
-// all be listed count as one that does. blockers names the Pods stuck
-// terminating that carry it (stuckGrantPods).
-//
-// The workloads are read past the cache: the template this operator
-// applied a moment ago may carry the grant before its informer delivers
-// it. It runs only on a confirmed widening, so the two GETs are rare.
-func (r *Reconciler) everyPeerTrustInForce(ctx context.Context, console *pgtoolboxv1alpha1.PgToolBoxConsole) (trusted bool, blockers string, err error) {
-	key := client.ObjectKey{Namespace: console.Namespace, Name: console.WorkloadName()}
-	for _, workload := range []client.Object{&appsv1.Deployment{}, &appsv1.StatefulSet{}} {
-		if err := r.APIReader.Get(ctx, key, workload); err != nil {
-			if apierrors.IsNotFound(err) {
-				continue
-			}
-			return false, "", fmt.Errorf("read the console workload: %w", err)
-		}
-		if !metav1.IsControlledBy(workload, console) {
-			continue
-		}
-		template, observed := workloadTemplate(workload)
-		if template.Annotations[annotationTrustsEveryPeer] == "true" || observed < workload.GetGeneration() {
-			return true, "", nil
-		}
-	}
-	pods, complete, err := r.consolePods(ctx, console)
-	if err != nil {
-		return false, "", err
-	}
-	if !complete {
-		return true, "", nil
-	}
-	return slices.ContainsFunc(pods, func(pod corev1.Pod) bool { return trustsAllPeers(&pod) }), stuckGrantPods(pods), nil
-}
-
-// workloadTemplate is a Deployment's or a StatefulSet's Pod template and
-// observed generation.
-func workloadTemplate(workload client.Object) (*corev1.PodTemplateSpec, int64) {
-	switch w := workload.(type) {
-	case *appsv1.Deployment:
-		return &w.Spec.Template, w.Status.ObservedGeneration
-	case *appsv1.StatefulSet:
-		return &w.Spec.Template, w.Status.ObservedGeneration
-	}
-	return &corev1.PodTemplateSpec{}, 0
-}
-
-// verifiedEarlier: while no console Pod has an address, the ipBlock peers
-// of ours were verified by an earlier one. A workload of the console, read
-// past the cache (the template this operator applied last), carries the
-// any-peer grant for the same blocks (annotationTrustedBlocks): a Pod
-// address showed then that they are not the Pod network, which does not
-// change. Without one (creation, or other blocks) they are not trusted.
-func (r *Reconciler) verifiedEarlier(ctx context.Context, console *pgtoolboxv1alpha1.PgToolBoxConsole, ours []networkingv1.NetworkPolicyPeer) (bool, error) {
-	blocks := trustedBlocksHash(ours)
-	if blocks == "" {
-		return false, nil
-	}
-	key := client.ObjectKey{Namespace: console.Namespace, Name: console.WorkloadName()}
-	for _, workload := range []client.Object{&appsv1.StatefulSet{}, &appsv1.Deployment{}} {
-		if err := r.APIReader.Get(ctx, key, workload); err != nil {
-			if apierrors.IsNotFound(err) {
-				continue
-			}
-			return false, fmt.Errorf("read the console workload: %w", err)
-		}
-		if !metav1.IsControlledBy(workload, console) {
-			continue
-		}
-		template, _ := workloadTemplate(workload)
-		if template.Annotations[annotationTrustsEveryPeer] == "true" && template.Annotations[annotationTrustedBlocks] == blocks {
-			return true, nil
-		}
-	}
-	return false, nil
+	return r.deleteIfOwned(ctx, console, previous, console.WorkloadName())
 }
 
 // replaceOnClaimChange deletes the console's StatefulSet, orphaning its
@@ -765,10 +441,8 @@ func (r *Reconciler) imageProblem(console *pgtoolboxv1alpha1.PgToolBoxConsole) (
 // (the image checks included), and while the console is paused too:
 // withdraw what this console published, then stall, so that nothing stays
 // published under a name the installer did not allow, whatever else is
-// wrong. The workload and the ingress policy stay as they were (a template
-// that trusts every peer is never left without its policy):
-// ExposureConfined says the policy is kept, and goes only when there is
-// none. ExposureReady and status.url say that nothing is published any
+// wrong. The workload and the ingress policy stay as they were;
+// ExposureConfined goes (nothing is published). ExposureReady and status.url say that nothing is published any
 // more. An allowed hostname clears a HostnameNotAllowed that conditions
 // still say (exposure.ClearHostnameRefusal). imageProblem is named in the
 // same message.
@@ -776,15 +450,12 @@ func (r *Reconciler) checkHostname(ctx context.Context, console *pgtoolboxv1alph
 	message := exposure.HostnameRefusal(console.Spec.Exposure.ExposureSpec, r.AllowedHostSuffixes, imageProblem)
 	if message == "" {
 		exposure.ClearHostnameRefusal(&console.Status.Conditions, console.Generation)
-		clearPolicyKeptOnStall(console)
 		return nil
 	}
 	if err := r.withdrawExposure(ctx, console); err != nil {
 		return err
 	}
-	if err := r.policyKeptOnStall(ctx, console); err != nil {
-		return err
-	}
+	setExposureConfined(console, false)
 	console.Status.URL = ""
 	setCondition(console, pgtoolboxv1alpha1.ConditionExposureReady, metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonHostnameNotAllowed,
 		exposure.WithdrawnMessage)
@@ -955,52 +626,6 @@ func (r *Reconciler) exposurePolicyRefused(console *pgtoolboxv1alpha1.PgToolBoxC
 	return r.invalid(console, pgtoolboxv1alpha1.ReasonExposurePolicyInvalid, message)
 }
 
-// policyKeptOnStall records ExposureConfined while the console is
-// stalled with its exposure withdrawn: ExposurePolicyKept when the
-// console's own ingress NetworkPolicy remains (read past the cache: one
-// applied a moment ago counts), else no condition (nothing is published,
-// nothing confines).
-func (r *Reconciler) policyKeptOnStall(ctx context.Context, console *pgtoolboxv1alpha1.PgToolBoxConsole) error {
-	name := exposurePolicyName(console)
-	policy := &networkingv1.NetworkPolicy{}
-	if err := r.APIReader.Get(ctx, client.ObjectKey{Namespace: console.Namespace, Name: name}, policy); err != nil {
-		if !apierrors.IsNotFound(err) {
-			return fmt.Errorf("read the console's ingress NetworkPolicy: %w", err)
-		}
-		setExposureConfined(console, false, confinement{})
-		return nil
-	}
-	if !metav1.IsControlledBy(policy, console) {
-		setExposureConfined(console, false, confinement{})
-		return nil
-	}
-	setCondition(console, pgtoolboxv1alpha1.ConditionExposureConfined, metav1.ConditionFalse, pgtoolboxv1alpha1.ReasonExposurePolicyKept,
-		policyKeptOnStallMessage(name))
-	return nil
-}
-
-// policyKeptOnStallMessage is ExposureConfined's message while the console
-// is stalled with its exposure withdrawn (policyKeptOnStall).
-func policyKeptOnStallMessage(name string) string {
-	return "NetworkPolicy " + name + " is kept while the console is stalled with its exposure withdrawn: the workload keeps its last template, which may still trust every peer the policy admits"
-}
-
-// clearPolicyKeptOnStall turns ExposureConfined back to Unknown (reason
-// Reconciling) when it still says what policyKeptOnStall said and the
-// hostname is now allowed: a paused console, which goes no further than
-// the hostname check, must not keep saying it is stalled with its exposure
-// withdrawn once that no longer holds (exposure.ClearHostnameRefusal does
-// the same for ExposureReady and ConfigurationValid). The next loop that
-// gets to the exposure says what holds; any other ExposureConfined is left
-// as it is, so a no-op loop writes nothing.
-func clearPolicyKeptOnStall(console *pgtoolboxv1alpha1.PgToolBoxConsole) {
-	c := meta.FindStatusCondition(console.Status.Conditions, pgtoolboxv1alpha1.ConditionExposureConfined)
-	if c != nil && c.Reason == pgtoolboxv1alpha1.ReasonExposurePolicyKept.String() && c.Message == policyKeptOnStallMessage(exposurePolicyName(console)) {
-		setCondition(console, pgtoolboxv1alpha1.ConditionExposureConfined, metav1.ConditionUnknown, pgtoolboxv1alpha1.ReasonReconciling,
-			exposure.HostnameAllowedMessage)
-	}
-}
-
 // withdrawExposure deletes every exposure object this console owns.
 func (r *Reconciler) withdrawExposure(ctx context.Context, console *pgtoolboxv1alpha1.PgToolBoxConsole) error {
 	name := console.WorkloadName()
@@ -1067,17 +692,6 @@ type workloadFacts struct {
 	// Failure and Stuck are a Deployment's ReplicaFailure and
 	// Progressing=False messages; a StatefulSet reports neither.
 	Failure, Stuck string
-	// RevisionsDiffer: a StatefulSet's current and update revisions are
-	// not the same yet (a Pod deleted mid-rollout comes back at the old
-	// one).
-	RevisionsDiffer bool
-}
-
-// rolloutComplete: the controller saw the latest generation, and every
-// desired replica, and no other, is updated and available.
-func (w workloadFacts) rolloutComplete() bool {
-	return w.Kind != "" && !w.RevisionsDiffer && w.ObservedGeneration >= w.Generation &&
-		w.Replicas == w.Desired && w.Updated == w.Desired && w.Available >= w.Desired
 }
 
 func workloadFactsOf(object client.Object) workloadFacts {
@@ -1100,7 +714,6 @@ func workloadFactsOf(object client.Object) workloadFacts {
 		return workloadFacts{
 			Kind: "StatefulSet", Name: w.Name, Generation: w.Generation, ObservedGeneration: w.Status.ObservedGeneration,
 			Desired: ptrValue(w.Spec.Replicas, 1), Replicas: w.Status.Replicas, Updated: w.Status.UpdatedReplicas, Available: w.Status.AvailableReplicas,
-			RevisionsDiffer: w.Status.UpdateRevision != "" && w.Status.CurrentRevision != w.Status.UpdateRevision,
 		}
 	}
 	return workloadFacts{}
@@ -1186,194 +799,4 @@ func unavailableWhy(result discovery.Result) string {
 		return "not probed"
 	}
 	return result.Reason
-}
-
-// Node podCIDR lookups: an uncached list of the Nodes, in pages of
-// nodeListPage, at most nodeListPages of them (a larger cluster is said
-// not to be checked), kept for nodeCIDRTTL and shared by every console:
-// a Node's podCIDRs never change once set, and a new Node is seen within
-// that time.
-//
-// The pages are full Nodes: a metadata-only list has no spec, and the
-// controller-runtime reader decodes a typed list whole. Pages of 100 keep
-// what one page holds in memory to about a hundred Node objects (their
-// status lists images and can run to tens of kilobytes each), and only
-// the names and podCIDRs outlive the page.
-//
-// One lookup runs for at most nodeLookupBudget, a third of the reconcile
-// timeout, so that the reads after it still have time; a lookup that
-// stops keeps the pages it read (nodeScan) and the next resumes from
-// them, so a cluster too large for one pass is still read whole over a
-// few (each retry comes with the reconcile error's backoff).
-const (
-	nodeListPage     = 100
-	nodeListPages    = 100
-	nodeCIDRTTL      = time.Minute
-	nodeLookupBudget = reconciliationTimeout / 3
-	// nodeScanMaxAge drops a stopped scan nobody resumed: its continue
-	// token would have expired by then (the API server compacts every
-	// five minutes by default), and a fresh one is cheaper than a 410.
-	nodeScanMaxAge = 5 * time.Minute
-)
-
-// nodeCIDRMemo is the last successful Node podCIDR lookup, the one under
-// way, and what a stopped one had read. The mutex guards the fields only:
-// it is never held across a List.
-type nodeCIDRMemo struct {
-	mu    sync.Mutex
-	at    time.Time
-	nodes []nodePodCIDRs
-	note  string
-	// inflight is closed when the lookup under way ends, nil when none is.
-	inflight chan struct{}
-	// scan is what the last lookup that stopped had read, the zero value
-	// when none did.
-	scan nodeScan
-}
-
-// nodeScan is a Node podCIDR list part read: the Nodes with podCIDRs of
-// the pages read so far, how many Nodes and pages those were, and the
-// continue token of the next page. A continue token reads the snapshot
-// the first page was read at, so pages read by successive lookups add up
-// to one list; a token the API server no longer serves (410 Expired)
-// starts the list over.
-type nodeScan struct {
-	started       time.Time
-	token         string
-	nodes         []nodePodCIDRs
-	listed, pages int
-}
-
-// nodePodCIDRs returns the Nodes' spec.podCIDRs. When the operator may not
-// list Nodes (an installation without the grant), or there are more than
-// it lists, or no Node has spec.podCIDRs (a CNI that allocates Pod
-// addresses itself), note says that they were not checked and the console
-// Pods' own addresses stay the only check; any other error is returned.
-//
-// One lookup runs at a time; the other callers wait for it, each on its
-// own context, and take its result. When it fails (its caller's context
-// ended, its budget ran out, or the API server erred) no result is kept,
-// only the pages it read, and a waiter whose context is still live runs
-// the next lookup itself, from where this one stopped.
-func (r *Reconciler) nodePodCIDRs(ctx context.Context) (nodes []nodePodCIDRs, note string, err error) {
-	now := time.Now
-	if r.Now != nil {
-		now = r.Now
-	}
-	for {
-		r.nodes.mu.Lock()
-		if !r.nodes.at.IsZero() && now().Sub(r.nodes.at) < nodeCIDRTTL {
-			nodes, note = r.nodes.nodes, r.nodes.note
-			r.nodes.mu.Unlock()
-			return nodes, note, nil
-		}
-		if wait := r.nodes.inflight; wait != nil {
-			r.nodes.mu.Unlock()
-			select {
-			case <-wait:
-				continue
-			case <-ctx.Done():
-				return nil, "", fmt.Errorf("wait for the Node podCIDR lookup: %w", ctx.Err())
-			}
-		}
-		r.nodes.inflight = make(chan struct{})
-		scan := r.nodes.scan
-		r.nodes.scan = nodeScan{}
-		r.nodes.mu.Unlock()
-		if scan.started.IsZero() || now().Sub(scan.started) > nodeScanMaxAge {
-			scan = nodeScan{started: now()}
-		}
-		scan.nodes = slices.Clone(scan.nodes)
-		return r.leadNodeLookup(ctx, now, scan)
-	}
-}
-
-// leadNodeLookup runs the lookup nodePodCIDRs made inflight, from scan,
-// within nodeLookupBudget; it keeps a successful result, or the pages a
-// failed one read, and releases the waiters on every path (a panic
-// included, which keeps nothing).
-func (r *Reconciler) leadNodeLookup(ctx context.Context, now func() time.Time, scan nodeScan) (nodes []nodePodCIDRs, note string, err error) {
-	returned := false
-	defer func() {
-		r.nodes.mu.Lock()
-		defer r.nodes.mu.Unlock()
-		switch {
-		case returned && err == nil:
-			r.nodes.at, r.nodes.nodes, r.nodes.note = now(), nodes, note
-		case returned:
-			r.nodes.scan = scan
-		}
-		close(r.nodes.inflight)
-		r.nodes.inflight = nil
-	}()
-	lookup, cancel := context.WithTimeout(ctx, nodeLookupBudget)
-	defer cancel()
-	nodes, note, err = r.listNodePodCIDRs(lookup, &scan)
-	returned = true
-	if err != nil {
-		if lookup.Err() != nil && ctx.Err() == nil {
-			err = fmt.Errorf("the Node podCIDR lookup did not finish within %s (%d Nodes listed so far; the next attempt resumes where it stopped): %w",
-				nodeLookupBudget, scan.listed, err)
-		}
-		return nil, "", err
-	}
-	return nodes, note, nil
-}
-
-// listNodePodCIDRs reads the Nodes' podCIDRs from where scan stopped,
-// recording each page in it as it is read.
-func (r *Reconciler) listNodePodCIDRs(ctx context.Context, scan *nodeScan) ([]nodePodCIDRs, string, error) {
-	restarted := false
-	for scan.pages < nodeListPages {
-		var list corev1.NodeList
-		options := []client.ListOption{client.Limit(nodeListPage)}
-		if scan.token != "" {
-			options = append(options, client.Continue(scan.token))
-		}
-		if err := r.APIReader.List(ctx, &list, options...); err != nil {
-			switch {
-			case apierrors.IsForbidden(err):
-				return nil, "the Nodes' podCIDRs were not checked against the ipBlock peers (the operator may not list Nodes): only the console Pods' own addresses were", nil
-			case scan.token != "" && !restarted && (apierrors.IsResourceExpired(err) || apierrors.IsGone(err)):
-				// The snapshot is gone: the list starts over, once.
-				*scan = nodeScan{started: scan.started}
-				restarted = true
-				continue
-			}
-			return nil, "", fmt.Errorf("list the Nodes for their podCIDRs: %w", err)
-		}
-		scan.pages++
-		scan.listed += len(list.Items)
-		for i := range list.Items {
-			node := nodePodCIDRs{Name: list.Items[i].Name}
-			for _, cidr := range list.Items[i].Spec.PodCIDRs {
-				if prefix, err := netip.ParsePrefix(cidr); err == nil {
-					node.CIDRs = append(node.CIDRs, prefix.Masked())
-				}
-			}
-			if len(node.CIDRs) > 0 {
-				scan.nodes = append(scan.nodes, node)
-			}
-		}
-		if scan.token = list.Continue; scan.token == "" {
-			return scan.nodes, nodeCoverageNote(scan.listed, len(scan.nodes)), nil
-		}
-	}
-	return nil, fmt.Sprintf("the Nodes' podCIDRs were not checked against the ipBlock peers (more than %d Nodes): only the console Pods' own addresses were", nodeListPage*nodeListPages), nil
-}
-
-// nodeCoverageNote says which of the listed Nodes could not be checked
-// for want of spec.podCIDRs, "" when every one could (or none is listed):
-// a CNI that allocates Pod addresses itself (Calico, Cilium's cluster
-// pool) leaves it empty on every Node, so an empty list of ranges is a
-// check that could not run, not one that passed.
-func nodeCoverageNote(listed, withCIDRs int) string {
-	switch {
-	case listed == 0 || withCIDRs == listed:
-		return ""
-	case withCIDRs == 0:
-		return fmt.Sprintf("the Node check could not run: none of the %d Nodes has spec.podCIDRs (the CNI allocates Pod addresses itself), so only the console Pods' own addresses were checked against the ipBlock peers", listed)
-	default:
-		return fmt.Sprintf("%d of the %d Nodes have no spec.podCIDRs: their Pod ranges were not checked against the ipBlock peers", listed-withCIDRs, listed)
-	}
 }

@@ -43,17 +43,12 @@ compares the chart, the kustomize bases and the OLM bundle field by field):
   `exposure.networkPolicy.from` naming the controller's Pods (for the community
   ingress-nginx: `namespaceSelector` `kubernetes.io/metadata.name: ingress-nginx`
   and `podSelector` `app.kubernetes.io/name: ingress-nginx`, as in
-  `config/samples/pgtoolboxconsole.yaml`). Without it the console ignores
-  `X-Forwarded-For` and every user behind the controller shares one sign-in
-  budget; with it, only those peers reach the console port and are believed
+  `config/samples/pgtoolboxconsole.yaml`): only those peers then reach the
+  console port. Name the controller's addresses too, in
+  `exposure.trustedProxy.cidrs` (`console.trustedProxyCIDRs` with the chart):
+  without them the console ignores `X-Forwarded-For`, so every user behind the
+  controller shares its address in the sign-in budget and the audit log
   ([trusted proxies](../operator/console.md#trusted-proxies-and-the-ingress-networkpolicy)).
-  With the chart alone, set `console.trustedProxyCIDRs` (or
-  `console.networkPolicy.enabled` without `ingress.extraFrom`, off
-  OpenShift) instead. On OpenShift, set the routers' addresses in
-  `trustedProxy.cidrs` (`console.trustedProxyCIDRs`): the default project
-  template's `allow-same-namespace` policy admits every Pod of the namespace
-  to the console port, which turns the operator's any-peer trust off, and the
-  chart, which cannot see that policy, never grants it there.
 - **People need RoleBindings.** Nobody sees a Cluster until RBAC says so
   ([the two ClusterRoles](../console/authorization.md#the-two-clusterroles)).
 - The console needs no cluster-scoped object: an admin of the team's namespace

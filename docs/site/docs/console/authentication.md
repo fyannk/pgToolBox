@@ -232,9 +232,9 @@ also need the `X-PgToolBox-Request: 1` header.
   the header is ignored**: any Pod that reaches the console's port directly
   could otherwise name a new address on every request, escape every
   per-address budget, drain the shared review bound for everyone and forge
-  `client_ip` in the audit trail. `0.0.0.0/0,::/0` trusts every peer and is
-  safe only where a NetworkPolicy admits nothing but the proxies; the operator
-  and the chart write it only then. With hops but no CIDRs the console knows
+  `client_ip` in the audit trail. Neither the operator nor the chart trusts a
+  peer you did not name: set `trustedProxy.cidrs` (`console.trustedProxyCIDRs`)
+  to your ingress controller's addresses. With hops but no CIDRs the console knows
   the address is shared and drops the per-address budgets (above). With hops 0
   and a `PUBLIC_URL` that is not loopback it cannot know either (a clusterIP
   exposure behind an Ingress of your own, a load balancer that rewrites the

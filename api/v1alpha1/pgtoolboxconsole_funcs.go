@@ -36,10 +36,7 @@ var pgToolBoxConsoleReasons = []Reason{
 	ReasonInstanceCABundleFull,
 	ReasonExposureOpen,
 	ReasonExposurePeersBroad,
-	ReasonExposurePolicyBypassed,
 	ReasonExposurePolicyInvalid,
-	ReasonExposurePolicyKept,
-	ReasonExposureTrustUnverified,
 }
 
 func init() {

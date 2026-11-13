@@ -18,11 +18,11 @@ spec:
     hostname: console.team-a.example.com
     # Who may reach the console port: the ingress controller's Pods (here the
     # community ingress-nginx in its usual namespace; adjust both selectors to
-    # yours). The operator then renders the console-ingress NetworkPolicy and
-    # trusts X-Forwarded-For from these peers only, so each client keeps its own
-    # sign-in budget. Without from, nothing confines the port and the header is
-    # ignored: every user behind the controller shares one address and one
-    # budget (ExposureConfined=False, ExposureOpen).
+    # yours). The operator then renders the console-ingress NetworkPolicy
+    # (ExposureConfined=True); without from, nothing confines the port
+    # (ExposureConfined=False, ExposureOpen). X-Forwarded-For is read only from
+    # the addresses in trustedProxy.cidrs: without them every user behind the
+    # controller shares its address and one sign-in budget.
     networkPolicy:
       from:
         - namespaceSelector:

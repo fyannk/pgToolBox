@@ -560,8 +560,7 @@ spec:
                       gateway exposure only once from names the controller's namespace;
                       ExposureConfined says which. Never rendered for clusterIP. Every
                       in-cluster client of the Service's http port (a debug Pod, an
-                      in-cluster MCP client) is then refused unless from lists it, and is
-                      trusted with X-Forwarded-For once listed.
+                      in-cluster MCP client) is then refused unless from lists it.
                     properties:
                       enabled:
                         description: |-
@@ -828,18 +827,16 @@ spec:
                       TRUSTED_PROXY_CIDRS). The console reads the header only from a peer
                       it trusts, so the per-address sign-in budgets and the audit trail's
                       client_ip follow each client. Omitted: one hop when an exposure
-                      object is published; trusted peers per networkPolicy.
+                      object is published, and no trusted peer: the header is ignored.
                     properties:
                       cidrs:
                         description: |-
                           The proxies' own addresses, as the console sees them (the router or
                           ingress controller Pods; the nodes for a host-network router). The
-                          header is read only from a peer inside one. Omitted: with the
-                          NetworkPolicy rendered, any peer it admits (every other Pod is
-                          refused by the network); without it, none, and the header is
-                          ignored: every client behind the proxy then shares its address, and
-                          no per-address sign-in budget applies (only the per-flow, per-token
-                          and per-replica bounds).
+                          header is read only from a peer inside one. Omitted: none, and the
+                          header is ignored: every client behind the proxy then shares the
+                          proxy's address, in the per-address sign-in budget and in the audit
+                          trail's client_ip. Set it to the ingress controller's addresses.
                         items:
                           maxLength: 49
                           type: string

@@ -346,22 +346,3 @@ else every watched namespace. Fails on a namespace the console does not watch.
 {{- $watched | toJson }}
 {{- end }}
 {{- end }}
-
-{{/*
-"true" when the console trusts X-Forwarded-For from every peer without named
-proxies: console.trustedProxyCIDRs is empty, an exposure is set, the chart's
-NetworkPolicy is enabled and admits only the router (no extraFrom), and the
-cluster is not OpenShift (console.platform is not "openshift", no Route API
-seen by an "auto" platform, no route exposure). NetworkPolicies add
-up and the chart cannot see the others: OpenShift's project template adds
-allow-from-same-namespace, which would let any Pod of the namespace forge the
-header, so there the proxies must be named. "" otherwise.
-*/}}
-{{- define "pgtools.console.trustsEveryPeer" -}}
-{{- $c := .Values.console }}
-{{- $platform := default "auto" $c.platform }}
-{{- $openShift := or (eq $platform "openshift") (eq $c.exposure.type "route") (and (eq $platform "auto") (.Capabilities.APIVersions.Has "route.openshift.io/v1")) }}
-{{- if and (not $c.trustedProxyCIDRs) $c.networkPolicy.enabled (ne $c.exposure.type "none") (not $c.networkPolicy.ingress.extraFrom) (not $openShift) -}}
-true
-{{- end }}
-{{- end }}
