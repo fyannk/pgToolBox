@@ -93,7 +93,8 @@ EndpointSlice.
 **With the operator** (`PgToolBoxConsole`), every replica is a candidate. The
 operator follows the Lease and labels its holder's Pod
 `pgtoolbox.fyannk.dev/mcp-leader: "true"`, taking the label off the others
-(and off every Pod when nobody holds the Lease or it expired); the Service
+(and off every Pod when nobody holds the Lease; a crashed holder's Pod is not
+Ready, so the Service skips it until the next holder takes the label); the Service
 `<console>-mcp` selects the console's Pods with that label. A hand-over takes
 about 2 seconds when the holder stops, about 17 when it crashes, plus the
 moment the operator takes to move the label; while the operator is down the
@@ -108,7 +109,9 @@ the console's replicas). The console's replicas run MCP with
 `MCP_CANDIDATE=false`: they never take the Lease. A crash of the MCP Pod costs
 the time Kubernetes takes to start another, tens of seconds; the loss of its
 node about 5 minutes (until the node is declared lost). The chart's
-NetworkPolicies select the MCP Pod with the console's.
+NetworkPolicies select the MCP Pod with the console's. Its history is in memory: the MCP tools
+that read history (and the timeline behind them) see only what that Pod
+collected since it started, and lose it at each restart.
 
 Both installs grant the console `get` and `update` on that one Lease by name:
 no `create`, nothing on Pods. With the chart's `console.rbac.create: false`,
