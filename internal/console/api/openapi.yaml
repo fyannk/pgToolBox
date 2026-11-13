@@ -4005,7 +4005,7 @@ components:
           type: boolean
         postgresUnread:
           $ref: "#/components/schemas/PostgresUnread"
-          description: "Set when the instance manager answered without reaching PostgreSQL (fenced or restarting): PostgreSQL's fields are then not read, never false or zero."
+          description: "Set when the instance manager answered without reaching PostgreSQL (fenced, restarting or rewinding): PostgreSQL's fields are then not read, never false or zero."
         provenance:
           $ref: "#/components/schemas/Provenance"
         readyWalFiles:
@@ -5356,7 +5356,7 @@ components:
       additionalProperties: false
       properties:
         error:
-          description: The error the instance manager hit and masked (mightBeUnavailableMaskedError), bounded.
+          description: The error the instance manager hit and masked (mightBeUnavailableMaskedError), bounded, or pg_rewind is running.
           type: string
         instance:
           type: string

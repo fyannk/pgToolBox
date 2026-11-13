@@ -115,6 +115,25 @@ Whoever can create that token holds `pgtoolbox-console-operator` rights in the w
 namespaces, so leave it off until you need it, or create the binding by hand and
 delete it afterwards.
 
+#### A local test with a ServiceAccount token
+
+To script against a console reached with `kubectl port-forward`, sign in once with
+the form and keep the session cookie. The form wants the console's own origin
+(`http://localhost:8080` here; the public URL when one is set), and
+`/api` reads only the session cookie: by design it ignores an `Authorization:
+Bearer` header and answers 401 (only `/mcp` takes a bearer).
+
+```bash
+kubectl -n team-a port-forward svc/console 8080:80 &   # the command the chart's NOTES print
+TOKEN=$(kubectl -n team-a create token <serviceaccount> --duration=1h)
+curl -s -c jar -o /dev/null -w '%{http_code}\n' -H 'Origin: http://localhost:8080' \
+  --data-urlencode "token=${TOKEN}" http://localhost:8080/auth/token   # 302
+curl -s -b jar http://localhost:8080/api/v1/clusters
+```
+
+The ServiceAccount sees what its RBAC allows, like a person. Unsafe API methods
+also need the `X-PgToolBox-Request: 1` header.
+
 ## Sessions
 
 - The session cookie holds the person's token **sealed** with AES-256-GCM under

@@ -17,7 +17,8 @@ the cluster (a `PgToolBoxConsole` or `PgAdmin` kept converged, new Clusters pick
 
 The commands below name the chart version being shipped (`make validate-packaging` fails when
 they differ from `Chart.yaml`; replace it with the version you install). The chart version equals the product version (a `vX.Y.Z` tag publishes chart
-`X.Y.Z`). [Verify the chart's signature](../release.md#verify) before the first
+`X.Y.Z`). A release candidate is a prerelease chart version: name it in full
+with `--version` (for example `0.1.0-rc.2`), since Helm skips prereleases otherwise. [Verify the chart's signature](../release.md#verify) before the first
 install. Both charts carry the same version. `values.yaml` is the annotated
 reference and `values.schema.json` is strict: an unknown key under `console`
 (pgtools) or anywhere in pgtoolbox is an error.
@@ -28,7 +29,7 @@ Install each console as its own release **in the team's namespace**:
 
 ```bash
 helm install console oci://ghcr.io/fyannk/charts/pgtools \
-  --version <X.Y.Z> --namespace team-a \
+  --version 0.1.0 --namespace team-a \
   --set console.auth.provider=token
 ```
 
@@ -42,7 +43,10 @@ owns, list them; the chart creates a Role and RoleBinding in each:
 The chart ships no CRD and, by default, nothing cluster-scoped. Then create the
 [CA bundle](../console/configuration.md#console-installed-by-the-pgtools-chart)
 (and keep it current: CloudNativePG renews its CAs every 90 days) and
-[bind users](../console/authorization.md#the-two-clusterroles).
+[bind users](../console/authorization.md#the-two-clusterroles). Until the CA
+bundle ConfigMap exists, every instance reads "not verifiable"; the console picks
+it up when it appears, without a restart, so it may be created before or after
+the install.
 
 Key values (the full list is in the chart's `values.yaml`):
 

@@ -228,8 +228,10 @@ cmd_check() {
 }
 
 # changelog_heading VERSION -> the '## [VERSION]...' line, empty when absent.
+# awk reads to the end: an early exit would close the pipe on file_at, whose
+# SIGPIPE (141) fails the pipeline under pipefail.
 changelog_heading() {
-  file_at CHANGELOG.md | awk -v v="$1" 'index($0, "## [" v "]") == 1 { print; exit }'
+  file_at CHANGELOG.md | awk -v v="$1" '!found && index($0, "## [" v "]") == 1 { print; found = 1 }'
 }
 
 # A release is cut from main: the tagged commit must be reachable from it.

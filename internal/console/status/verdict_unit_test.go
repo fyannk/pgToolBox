@@ -222,8 +222,8 @@ func TestStatusReadCountsAMaskedReportApart(t *testing.T) {
 		detail    string
 	}{
 		{"all read", map[string]sweep.Instance{"db-1": ok, "db-2": ok, "db-3": ok}, viewmodel.HealthOK, "3 of 3 instances read"},
-		{"masked primary", map[string]sweep.Instance{"db-1": masked, "db-2": ok, "db-3": ok}, viewmodel.HealthWarning, "2 of 3 instances read, 1 answered without PostgreSQL (fenced or restarting)"},
-		{"masked and unanswered", map[string]sweep.Instance{"db-1": masked, "db-2": failed, "db-3": ok}, viewmodel.HealthUnknown, "1 of 3 instances read, 1 answered without PostgreSQL (fenced or restarting)"},
+		{"masked primary", map[string]sweep.Instance{"db-1": masked, "db-2": ok, "db-3": ok}, viewmodel.HealthWarning, "2 of 3 instances read, 1 answered without PostgreSQL (fenced, restarting or rewinding)"},
+		{"masked and unanswered", map[string]sweep.Instance{"db-1": masked, "db-2": failed, "db-3": ok}, viewmodel.HealthUnknown, "1 of 3 instances read, 1 answered without PostgreSQL (fenced, restarting or rewinding)"},
 	} {
 		g := &gathered{hasSweep: true, swept: sweep.Snapshot{SweptAt: now, Interval: 30 * time.Second, Instances: c.instances}}
 		got := svc.statusReadContributor(g, now)

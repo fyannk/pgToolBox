@@ -1641,15 +1641,15 @@
   "rp_segment_repository_ahead_of_live": "The repository’s newest timeline, {timeline}, is ahead of timeline {live}, the one the current primary writes: another cluster may archive into this repository, and a default restore follows timeline {timeline}, so a time past the fork may restore that cluster’s data.",
   "rp_reason_kept_too_old": "the last good recovery paths are more than three refresh intervals (at least an hour) older than the latest scan and are no longer shown; check the evidence agent’s logs for why reading its recovery paths fails, and that the object store answers",
   "rp_reason_kept_repository_changed": "the repository’s identity changed since the last good recovery paths were read: they describe another repository and are no longer shown; check the evidence agent’s logs and that its object store configuration still names this cluster’s repository",
-  "postgres_unread": "PostgreSQL not read: the instance manager answered without reaching it (fenced or restarting): {error}",
-  "postgres_unread_short": "PostgreSQL not read (fenced or restarting)",
+  "postgres_unread": "PostgreSQL not read: the instance manager answered without reaching it (fenced, restarting or rewinding): {error}",
+  "postgres_unread_short": "PostgreSQL not read (fenced, restarting or rewinding)",
   "pg_not_read": "not read",
   "replay_paused_label": "Replay paused",
   "wal_receiver_label": "WAL receiver",
   "archiving_wal_label": "Archives WAL",
   "ready_wal_files_label": "WAL files waiting to be archived",
   "might_be_unavailable_label": "Manager says PostgreSQL may be down",
-  "replication_primary_unread": "The primary {instance} was not read: its instance manager answered without reaching PostgreSQL (fenced or restarting): {error}. Its WAL senders and slots are not known.",
+  "replication_primary_unread": "The primary {instance} was not read: its instance manager answered without reaching PostgreSQL (fenced, restarting or rewinding): {error}. Its WAL senders and slots are not known.",
   "standbys_unread": "Not read: the primary's instance manager answered without reaching PostgreSQL.",
   "slots_unread": "Not read: the primary's instance manager answered without reaching PostgreSQL."
 }

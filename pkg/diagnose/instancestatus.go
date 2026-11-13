@@ -99,7 +99,7 @@ func (r statusReadings) unjudged() string {
 		parts = append(parts, "instances the sweep could not read: "+strings.Join(r.failing, ", "))
 	}
 	if len(r.masked) > 0 {
-		parts = append(parts, "instances whose manager answered without reading PostgreSQL (fenced or restarting): "+strings.Join(r.masked, ", "))
+		parts = append(parts, "instances whose manager answered without reading PostgreSQL (fenced, restarting or rewinding): "+strings.Join(r.masked, ", "))
 	}
 	return strings.Join(parts, "; ")
 }

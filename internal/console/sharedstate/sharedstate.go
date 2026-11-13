@@ -2377,10 +2377,10 @@ func (s *Store) readFresh(ctx context.Context, asked time.Time, p watchProgress)
 // takeFresh takes in a freshness read made while the watch is open
 // (watchOnce): whether to end the watch, with the error that ends it.
 //
-//   - Missing or forbidden: the mode says so at once, and every grant is
-//     refused (a watch opened before the permission was withdrawn would
-//     otherwise go on serving them until the API server closes it, up to
-//     an hour later).
+//   - Missing or forbidden: the watch ends as of the read's sending, the
+//     mode says so at once, and every grant is refused (a watch opened
+//     before the permission was withdrawn would otherwise go on serving
+//     them until the API server closes it, up to an hour later).
 //   - Any other failure: the failing mode, its staleGrace running from
 //     when the read was sent (the API server has not answered since), and
 //     the watch is opened again: a watch that is not checked is not one to
@@ -2393,13 +2393,11 @@ func (s *Store) readFresh(ctx context.Context, asked time.Time, p watchProgress)
 //     for the next read's check.
 func (s *Store) takeFresh(r freshRead, p watchProgress, behind *string) (bool, error) {
 	if r.err != nil {
+		s.locked(func() { s.watching, s.unwatchedAt = false, r.asked })
 		if apierrors.IsNotFound(r.err) || apierrors.IsForbidden(r.err) {
 			return true, s.failed(r.err)
 		}
-		s.locked(func() {
-			s.watching, s.unwatchedAt = false, r.asked
-			s.setModeLocked(modeFailing, "the API server did not answer a read of the ConfigMap")
-		})
+		s.locked(func() { s.setModeLocked(modeFailing, "the API server did not answer a read of the ConfigMap") })
 		return true, fmt.Errorf("freshness read of ConfigMap %s: %w", s.opts.Name, r.err)
 	}
 	ahead := p.ahead(r.cm.ResourceVersion)

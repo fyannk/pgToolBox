@@ -320,7 +320,7 @@ func pluginMaxParallel(g *gathered) *int {
 // primary's archiver, worded for a primary whose manager answered
 // without reaching PostgreSQL (masked) when it is one.
 func archivingOf(g *gathered) cnpgstatus.ArchivingReading {
-	return cnpgstatus.ArchivingOf(g.cluster, primaryArchiver(g), primaryMasked(g))
+	return cnpgstatus.ArchivingOf(g.cluster, primaryArchiver(g), primaryMasked(g), g.sweepOff)
 }
 
 // primaryMasked reports a current primary whose last report is masked
@@ -397,7 +397,11 @@ func (s *Service) archivingProvenance(g *gathered, now time.Time) viewmodel.Prov
 		}
 		return p
 	}
-	return s.provenance(g.key.Namespace, cache.SourceClusters, viewmodel.OriginOperator, "Cluster.status.conditions[ContinuousArchiving]", now)
+	source := "Cluster.status.conditions[ContinuousArchiving]"
+	if g.sweepOff {
+		source += " (not checked on the instance)"
+	}
+	return s.provenance(g.key.Namespace, cache.SourceClusters, viewmodel.OriginOperator, source, now)
 }
 
 // statusReadContributor turns the sweep into one roll-up item: every
@@ -447,7 +451,7 @@ func (s *Service) statusReadContributor(g *gathered, now time.Time) viewmodel.Co
 	}
 	c.Detail = fmt.Sprintf("%d of %d instances read", read, total)
 	if masked > 0 {
-		c.Detail += fmt.Sprintf(", %d answered without PostgreSQL (fenced or restarting)", masked)
+		c.Detail += fmt.Sprintf(", %d answered without PostgreSQL (fenced, restarting or rewinding)", masked)
 	}
 	switch {
 	case total == 0 && hibernated:

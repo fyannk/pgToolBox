@@ -21,6 +21,7 @@ import (
 	"time"
 
 	cnpgv1 "github.com/cloudnative-pg/api/pkg/api/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/fyannk/pgToolBox/internal/console/evidence"
 	"github.com/fyannk/pgToolBox/internal/console/sweep"
@@ -292,5 +293,33 @@ func TestBackupSummaryCitesLastArchivedWAL(t *testing.T) {
 	g.cluster.Status.CurrentPrimary = ""
 	if a := svc.backupSummary(g, now).Archiving; a.LastArchivedAt != nil {
 		t.Errorf("an unread primary reports a last archived time: %+v", a)
+	}
+}
+
+// TestBackupSummaryWithTheSweepOff (owner decision 3, 2026-11-13): with
+// INSTANCE_STATUS_ENABLED=false the archiving line is the Cluster's
+// ContinuousArchiving as CloudNativePG reports it, attributed to the
+// Cluster status and not checked on the instance; a sweep that runs but
+// did not read the primary stays unknown.
+func TestBackupSummaryWithTheSweepOff(t *testing.T) {
+	cluster := &cnpgv1.Cluster{Status: cnpgv1.ClusterStatus{CurrentPrimary: "orders-1", Conditions: []metav1.Condition{
+		{Type: cnpgstatus.ConditionContinuousArchiving, Status: metav1.ConditionTrue, Reason: "ContinuousArchivingSuccess"},
+	}}}
+	cluster.Spec.Plugins = []cnpgv1.PluginConfiguration{{Name: cnpgstatus.BarmanCloudPlugin}}
+	svc := newScreenService(t)
+	for _, c := range []struct {
+		name     string
+		off      bool
+		health   viewmodel.Health
+		attested bool
+	}{
+		{"sweep off", true, viewmodel.HealthInfo, true},
+		{"primary not read", false, viewmodel.HealthUnknown, false},
+	} {
+		a := svc.backupSummary(&gathered{cluster: cluster, sweepOff: c.off}, now).Archiving
+		attested := strings.HasSuffix(a.Provenance.Source, "(not checked on the instance)")
+		if a.Health != c.health || a.Provenance.Origin != viewmodel.OriginOperator || attested != c.attested || a.LiveArchiving != nil {
+			t.Errorf("%s: archiving %+v", c.name, a)
+		}
 	}
 }
