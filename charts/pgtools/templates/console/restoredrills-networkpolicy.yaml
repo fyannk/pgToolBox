@@ -44,7 +44,7 @@ spec:
               kubernetes.io/metadata.name: {{ $.Release.Namespace | quote }}
           podSelector:
             matchLabels:
-              {{- include "pgtools.console.selectorLabels" $ | nindent 14 }}
+              {{- include "pgtools.console.instanceLabels" $ | nindent 14 }}
       ports:
         - {port: {{ $instance.statusPort }}, protocol: TCP}
         - {port: {{ $instance.metricsPort }}, protocol: TCP}

@@ -404,10 +404,74 @@ func exposureTarget(c *pgtoolboxv1alpha1.PgToolBoxConsole) exposure.Target {
 		}
 		maps.Copy(meta.Annotations, extra)
 	}
-	return exposure.Target{
+	t := exposure.Target{
 		Meta: meta, Service: c.WorkloadName(), PortName: "http", Port: servicePort, StreamTimeout: streamTimeout,
 		StickyCookie: stickyCookie,
 	}
+	if c.MCPEnabled() {
+		t.Extra = mcpPaths(c)
+	}
+	return t
+}
+
+// mcpPaths are the paths sent to the MCP leader's Service: the console's
+// mcpleader.Paths, which TestMCPPathsMatchTheConsole holds this to (the
+// operator does not import the console).
+func mcpPaths(c *pgtoolboxv1alpha1.PgToolBoxConsole) []exposure.PathBackend {
+	service := c.MCPLeaseName()
+	return []exposure.PathBackend{
+		{Name: "mcp", Path: "/mcp", Service: service},
+		{Name: "oauth", Path: "/oauth", Service: service},
+		{Name: "grants", Path: "/api/v1/session/grants", Service: service},
+		{Name: "logout", Path: "/logout", Exact: true, Service: service},
+	}
+}
+
+// buildMCPLeader is what sends the MCP paths to the one replica that
+// serves them: the Service selecting the console Pod the operator labels
+// as the holder of the Lease (mcpleader.go), and that Lease, created
+// empty (the replicas write it, the operator never does).
+func buildMCPLeader(c *pgtoolboxv1alpha1.PgToolBoxConsole) (*corev1.Service, *coordinationv1.Lease) {
+	name := c.MCPLeaseName()
+	selector := selectorLabels(c)
+	selector[pgtoolboxv1alpha1.LabelMCPLeader] = pgtoolboxv1alpha1.MCPLeaderLabelValue
+	svc := &corev1.Service{
+		TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "Service"},
+		ObjectMeta: objectMeta(c, name, pgtoolboxv1alpha1.PropagationTargetService),
+		Spec: corev1.ServiceSpec{
+			Type:     corev1.ServiceTypeClusterIP,
+			Selector: selector,
+			Ports: []corev1.ServicePort{{
+				Name: "http", Port: servicePort, TargetPort: intstr.FromString("http"), Protocol: corev1.ProtocolTCP,
+			}},
+		},
+	}
+	specs.SetHash(svc, specs.Hash(svc.Spec))
+	return svc, &coordinationv1.Lease{
+		TypeMeta:   metav1.TypeMeta{APIVersion: "coordination.k8s.io/v1", Kind: "Lease"},
+		ObjectMeta: objectMeta(c, name, pgtoolboxv1alpha1.PropagationTargetAll),
+	}
+}
+
+// buildMCPLeaderRBAC lets the console's replicas elect the MCP leader:
+// get and update on that one Lease, by name; no create (the operator
+// creates it), nothing on Pods (the operator labels them).
+func buildMCPLeaderRBAC(c *pgtoolboxv1alpha1.PgToolBoxConsole) (*rbacv1.Role, *rbacv1.RoleBinding) {
+	name := c.MCPLeaseName()
+	role := &rbacv1.Role{
+		TypeMeta:   metav1.TypeMeta{APIVersion: "rbac.authorization.k8s.io/v1", Kind: "Role"},
+		ObjectMeta: objectMeta(c, name, pgtoolboxv1alpha1.PropagationTargetAll),
+		Rules: []rbacv1.PolicyRule{
+			{APIGroups: []string{coordinationv1.GroupName}, Resources: []string{"leases"}, ResourceNames: []string{name}, Verbs: []string{"get", "update"}},
+		},
+	}
+	binding := &rbacv1.RoleBinding{
+		TypeMeta:   metav1.TypeMeta{APIVersion: "rbac.authorization.k8s.io/v1", Kind: "RoleBinding"},
+		ObjectMeta: objectMeta(c, name, pgtoolboxv1alpha1.PropagationTargetAll),
+		RoleRef:    rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "Role", Name: name},
+		Subjects:   []rbacv1.Subject{{Kind: rbacv1.ServiceAccountKind, Name: c.WorkloadName(), Namespace: c.Namespace}},
+	}
+	return role, binding
 }
 
 // deploymentInputs is what the Deployment depends on beyond the PgToolBoxConsole.
@@ -934,7 +998,8 @@ func mcpEnv(c *pgtoolboxv1alpha1.PgToolBoxConsole) []corev1.EnvVar {
 	if len(m.OAuthClientMetadataHosts) > 0 {
 		envs = append(envs, env("MCP_OAUTH_CLIENT_METADATA_HOSTS", strings.Join(m.OAuthClientMetadataHosts, ",")))
 	}
-	return envs
+	// One replica serves MCP: the holder of this Lease (buildMCPLeader).
+	return append(envs, env("MCP_LEASE", c.MCPLeaseName()))
 }
 
 // tracingEnv renders spec.tracing as the OpenTelemetry SDK's variables

@@ -76,12 +76,18 @@ it already says "console", else "<release>-console".
 {{/*
 Selector labels of the console pods. The name differs from the operator's
 ("pgtoolbox") so the two charts, installed in the same namespace, never
-select each other's pods.
+select each other's pods. The MCP Pod (mcp.yaml, rendered with mcpPod set)
+is component console-mcp: the console's Service and Deployment never select
+it; instanceLabels select both, for the NetworkPolicies.
 */}}
-{{- define "pgtools.console.selectorLabels" -}}
+{{- define "pgtools.console.instanceLabels" -}}
 app.kubernetes.io/name: pgtoolbox-console
 app.kubernetes.io/instance: {{ .Release.Name }}
-app.kubernetes.io/component: console
+{{- end -}}
+
+{{- define "pgtools.console.selectorLabels" -}}
+{{ include "pgtools.console.instanceLabels" . }}
+app.kubernetes.io/component: {{ ternary "console-mcp" "console" (hasKey . "mcpPod") }}
 {{- end -}}
 
 {{- define "pgtools.console.labels" -}}
@@ -132,6 +138,21 @@ StatefulSet whose replicas each have their own history volume.
 {{/* The Lease whose holder delivers the daily digests. */}}
 {{- define "pgtools.console.digestLease" -}}
 {{- include "pgtools.console.fullname" . }}-digest
+{{- end -}}
+
+{{/* With MCP on: the Lease whose holder alone serves MCP, and the name of the
+     MCP Deployment and of the Service the MCP paths are sent to. */}}
+{{- define "pgtools.console.mcpLeader" -}}
+{{- include "pgtools.console.fullname" . }}-mcp
+{{- end -}}
+
+{{/* The paths the exposure sends to the MCP leader: mcpleader.Paths
+     (internal/console/mcpleader), held equal by chart_parity_test.go. */}}
+{{- define "pgtools.console.mcpPaths" -}}
+- {name: mcp, path: /mcp, prefix: true}
+- {name: oauth, path: /oauth, prefix: true}
+- {name: grants, path: /api/v1/session/grants, prefix: true}
+- {name: logout, path: /logout, prefix: false}
 {{- end -}}
 
 {{/* Names of the revocation ConfigMap and the generated session-key Secret. */}}

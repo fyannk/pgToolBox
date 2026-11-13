@@ -21,7 +21,7 @@ tests:
       - failedTemplate:
           errorPattern: "console.networkPolicy.apiServer.mode=addresses has no API server address to allow.*console.networkPolicy.apiServer.lookup=true"
 
-  - it: selects the console pods and isolates both directions
+  - it: selects the console pods, the MCP Pod too, and isolates both directions
     set:
       console.networkPolicy.enabled: true
       console.networkPolicy.apiServer.addresses: [10.96.0.1]
@@ -33,7 +33,6 @@ tests:
           value:
             app.kubernetes.io/name: pgtoolbox-console
             app.kubernetes.io/instance: pgc
-            app.kubernetes.io/component: console
 
   - it: admits no ingress at all when nothing is exposed and no peer is given (an empty `from` would admit everyone)
     set:

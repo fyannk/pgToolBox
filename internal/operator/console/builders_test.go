@@ -184,6 +184,8 @@ func TestMCPEnv(t *testing.T) {
 			OAuthClientMetadataHosts:     []string{"claude.ai", "chatgpt.com"},
 		}
 	}
+	// With the endpoint on, one replica serves it: the Lease closes the list.
+	leader := func(envs ...string) []string { return append(envs, "MCP_LEASE=console-mcp") }
 	cases := map[string]struct {
 		mcp  *pgtoolboxv1alpha1.PgToolBoxConsoleMCPSpec
 		want []string
@@ -193,32 +195,32 @@ func TestMCPEnv(t *testing.T) {
 		"knobs without the endpoint": {mcp: knobs(false)},
 		"enabled, console defaults": {
 			mcp:  &pgtoolboxv1alpha1.PgToolBoxConsoleMCPSpec{Enabled: true},
-			want: []string{"MCP_ENABLED=true"},
+			want: leader("MCP_ENABLED=true"),
 		},
 		"write tools": {
 			mcp:  &pgtoolboxv1alpha1.PgToolBoxConsoleMCPSpec{Enabled: true, WriteTools: true},
-			want: []string{"MCP_ENABLED=true", "MCP_WRITE_TOOLS=true"},
+			want: leader("MCP_ENABLED=true", "MCP_WRITE_TOOLS=true"),
 		},
 		"every knob": {
 			mcp: knobs(true),
-			want: []string{
+			want: leader(
 				"MCP_ENABLED=true",
 				"MCP_MAX_RESULT_BYTES=1048576",
 				"MCP_CALL_TIMEOUT=45s",
 				"MCP_OAUTH_ACCESS_TTL=15m",
 				"MCP_OAUTH_CLIENT_METADATA_DOCUMENTS=true",
 				"MCP_OAUTH_CLIENT_METADATA_HOSTS=claude.ai,chatgpt.com",
-			},
+			),
 		},
 		"metadata documents from any public address": {
 			mcp:  &pgtoolboxv1alpha1.PgToolBoxConsoleMCPSpec{Enabled: true, OAuthClientMetadataDocuments: true},
-			want: []string{"MCP_ENABLED=true", "MCP_OAUTH_CLIENT_METADATA_DOCUMENTS=true"},
+			want: leader("MCP_ENABLED=true", "MCP_OAUTH_CLIENT_METADATA_DOCUMENTS=true"),
 		},
 		"metadata hosts without the documents switch": {
 			mcp: &pgtoolboxv1alpha1.PgToolBoxConsoleMCPSpec{
 				Enabled: true, OAuthClientMetadataHosts: []string{"claude.ai"},
 			},
-			want: []string{"MCP_ENABLED=true", "MCP_OAUTH_CLIENT_METADATA_HOSTS=claude.ai"},
+			want: leader("MCP_ENABLED=true", "MCP_OAUTH_CLIENT_METADATA_HOSTS=claude.ai"),
 		},
 		"metadata documents without the endpoint": {
 			mcp: &pgtoolboxv1alpha1.PgToolBoxConsoleMCPSpec{OAuthClientMetadataDocuments: true},
@@ -227,13 +229,13 @@ func TestMCPEnv(t *testing.T) {
 			mcp: &pgtoolboxv1alpha1.PgToolBoxConsoleMCPSpec{
 				Enabled: true, OAuthAccessTTL: &metav1.Duration{Duration: time.Hour},
 			},
-			want: []string{"MCP_ENABLED=true", "MCP_OAUTH_ACCESS_TTL=1h"},
+			want: leader("MCP_ENABLED=true", "MCP_OAUTH_ACCESS_TTL=1h"),
 		},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			c := &pgtoolboxv1alpha1.PgToolBoxConsole{}
+			c := &pgtoolboxv1alpha1.PgToolBoxConsole{ObjectMeta: metav1.ObjectMeta{Name: "console"}}
 			c.Spec.MCP = tc.mcp
 			envs := mcpEnv(c)
 			got := make([]string, 0, len(envs))

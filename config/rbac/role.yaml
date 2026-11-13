@@ -37,6 +37,7 @@ rules:
   verbs:
   - get
   - list
+  - patch
   - watch
 - apiGroups:
   - apps
@@ -92,7 +93,9 @@ rules:
   verbs:
   - create
   - get
+  - list
   - update
+  - watch
 - apiGroups:
   - discovery.k8s.io
   resourceNames:

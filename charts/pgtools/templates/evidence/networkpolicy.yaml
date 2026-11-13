@@ -33,7 +33,7 @@ spec:
     - from:
         - podSelector:
             matchLabels:
-              {{- include "pgtools.console.selectorLabels" . | nindent 14 }}
+              {{- include "pgtools.console.instanceLabels" . | nindent 14 }}
       ports:
         - {port: 8443, protocol: TCP}
   egress:

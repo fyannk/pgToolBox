@@ -25,9 +25,10 @@ metadata:
   labels:
     {{- include "pgtools.console.labels" . | nindent 4 }}
 spec:
+  # The console's Pods and, with MCP on, the MCP Pod.
   podSelector:
     matchLabels:
-      {{- include "pgtools.console.selectorLabels" . | nindent 6 }}
+      {{- include "pgtools.console.instanceLabels" . | nindent 6 }}
   policyTypes: [Ingress, Egress]
   {{- /* An ingress rule without `from` admits every source, so with no peer at
   all the rule is omitted and Ingress stays denied. */}}
