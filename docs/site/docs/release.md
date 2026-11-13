@@ -45,7 +45,7 @@ flowchart LR
 | Helm chart, the team tools | `oci://ghcr.io/fyannk/charts/pgtools`, version `X.Y.Z` | `cosign verify`, `gh attestation verify` on the chart reference |
 | Installer manifests | `install-operator.yaml`, `install-console.yaml` on the release page | `SHA256SUMS` + `SHA256SUMS.sigstore.json` |
 
-The release workflow verifies each signature and attestation as it makes them; once the packages are in their final state, `verify-release.yml` repeats the check as an anonymous user would (pull by tag with no credentials, `cosign verify`, `gh attestation verify`, `helm pull`), and does so again every week against the latest stable release.
+The release workflow verifies each signature and attestation as it makes them; `verify-release.yml` then repeats the check as an anonymous user would (pull by tag with no credentials, `cosign verify`, `gh attestation verify`, `helm pull`).
 
 Images are multi-architecture (`linux/amd64`, `linux/arm64`) with BuildKit's SBOM and
 `mode=max` provenance, OCI labels (title, source, version, revision, created,
@@ -81,8 +81,8 @@ then `go get github.com/fyannk/pgToolBox/pkg/evidence@vX.Y.Z`.
 `make release-preflight TAG=vX.Y.Z` (or `-rc.N`) answers what the release workflow will ask, before
 anything is pushed: a dated CHANGELOG section, an annotated tag, and `ci-ok` and
 `security-gate` green **on the tagged commit**. Check runs must exist on that commit;
-a commit merged with the Actions token starts none, and `automerge.yml` dispatches
-them only on its 30-minute schedule, while `wait-ci` gives up after about two minutes
+a commit merged with the Actions token starts none: dispatch `ci.yml` and
+`security.yml` on `main` by hand first, since `wait-ci` gives up after about two minutes
 of empty polls. Checklist before pushing a tag:
 
 1. Date the CHANGELOG heading (`## [X.Y.Z] - YYYY-MM-DD`) in the commit you are going
@@ -128,8 +128,9 @@ and `mode=max` provenance, which describe the build and are trustworthy once you
 have verified the image digest they are attached to.
 
 ```bash
-# cosign v3 or newer (v3.1.4 is the version the workflow signs with and the one
-# this is tested against; v2 is not supported), and the GitHub CLI for the attestation.
+# cosign v3.1 or newer (the workflow signs with v3.1.4; v2 is not supported):
+# https://docs.sigstore.dev/cosign/system_config/installation/
+# and the GitHub CLI for the attestation.
 IMAGE=ghcr.io/fyannk/pgtoolbox-console
 DIGEST=sha256:...   # from digests.txt on the release page, or: docker buildx imagetools inspect $IMAGE:X.Y.Z
 
@@ -139,7 +140,9 @@ cosign verify \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   "$IMAGE@$DIGEST"
 
-# The build provenance: which commit and workflow run built this digest.
+# The build provenance: which commit and workflow run built this digest. It prints
+# nothing when stdout is not a terminal: read the exit code (0 = verified), or add
+# --format json to get the verified attestation.
 gh attestation verify "oci://$IMAGE@$DIGEST" --repo fyannk/pgToolBox
 
 # BuildKit's SBOM and provenance, read from the image index.

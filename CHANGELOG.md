@@ -88,8 +88,8 @@ the per-address sign-in limits and the audit log (identity is not affected).
   link to the commit log (the compare view, or the history for the first release),
   not the log pasted in; the OLM bundle and catalog
   images are scanned on every pull request and push, not first in the release; the
-  release rehearsal pins the bundle and catalog on every run; after the prune, and
-  weekly, `verify-release.yml` pulls every image and both charts with no
+  release rehearsal pins the bundle and catalog on every run; after the release,
+  `verify-release.yml` pulls every image and both charts with no
   credentials and verifies signatures and attestations. A failed candidate is
   superseded by the next one (`-rc.N+1`), never moved. The images are not claimed
   to be bit-for-bit reproducible. The catalog image builds opm and
@@ -103,9 +103,8 @@ the per-address sign-in limits and the audit log (identity is not affected).
   CHANGELOG, the annotated tag and green `ci-ok` and `security-gate` on the tagged
   commit before the tag is pushed. A nested-module release is never marked latest, a
   release candidate never is either, and the product's stable release is. The
-  signature and attestation check of each image is retried, `npm ci` and `pnpm
-  install` in the image build are retried, and the anonymous verification still runs
-  when the prune fails. The envtest suites run on Kubernetes 1.35 and 1.36 in the
+  signature and attestation check of each image is retried, and `npm ci` and `pnpm
+  install` in the image build are retried. The envtest suites run on Kubernetes 1.35 and 1.36 in the
   nightly and dispatched runs (1.34 on every change). Dependabot proposes the
   Playwright npm packages as one group, and the e2e image moves with them.
 - **The restore check without an evidence agent** reads the primary's last
@@ -331,10 +330,7 @@ the per-address sign-in limits and the audit log (identity is not affected).
   the exposure; the list is documented in security.md and kept equal by a test.
   The restore-drill delete guard also holds ServiceAccounts of other namespaces,
   the operator's included, unless they hold `*` on restore drills cluster-wide.
-- **Release pipeline hardening.** GHCR pruning is opt-in (repository variable
-  `PRUNE_GHCR`) so a release cannot turn red after it is public; the 30-minute net
-  now dispatches `ci.yml` and `security.yml` independently (the dead
-  `pull_request: closed` trigger is gone); `wait-ci` names the exact dispatch
+- **Release pipeline hardening.** `wait-ci` names the exact dispatch
   commands and the checklist says to run `make release-preflight` before pushing a
   tag; npm installs of the docs site and the Headlamp plugin run with
   `ignore-scripts` and a minimum release age; the actions allow-list for the
@@ -364,15 +360,14 @@ the per-address sign-in limits and the audit log (identity is not affected).
   console closes them.
   `check` requires a real `YYYY-MM-DD` date, `wait-ci` names a failing API call,
   the draft release is no longer created with `--latest`, `make doctor` reads
-  govulncheck's own version, `hack/check-action-pins.sh` keeps the documented
-  allowed-actions list (now with `jdx/mise-action`) in step with the pins, the
+  govulncheck's own version, the repository settings enforce SHA pinning and the allowed-actions list, the
   watchNamespaces e2e also runs on chart changes, and cache pruning retires mise
   caches of an old `mise.toml`.
   Built with Go 1.27.4 (GO-2026-6859, an HTTP/1 server crash in `net/http`).
   `check-toolchain.sh` ties the Dockerfiles' `golang` and `node` images to `mise.toml`, and Dependabot leaves them to the toolchain bump; `release-preflight` checks that the tag points at the SHA. The restore-drill guard is on by default and rendered by plain `helm template`; the kustomize install passes the default images by digest.
   CI path filters run the e2e and gate jobs for `internal/backupresolve`, `hack/lib` and the gate scripts, and turn every job on for a path they do not map. `check-toolchain.sh` requires equal `golang`/`node` digests across Dockerfiles; `release-preflight` accepts any revision; `make doctor` checks promtool and helm-unittest. Chart NOTES warn when the restore-drill guard is not enforced.
   The allowed-actions list names each action `owner/repo@*`: an exact-SHA list would refuse every Dependabot bump once `allowed_actions` is `selected`, and the SHA pins are enforced by the full-length-SHA setting.
-  `make test-hack` and the file checks of `check-repo` (toolchain pins, the allowed-actions list) run in `lint-files`, so workflow, settings-doc and `hack/` changes are checked; the cache prune removes `buildkit-blob-*` caches unused for 3 days and keeps the cache under 6 GiB; `release.sh check` and `preflight` read the CHANGELOG and charts from the tagged commit, and a dispatched release must run from the tag it publishes.
+  `make test-hack` and the file checks of `check-repo` (toolchain pins) run in `lint-files`, so workflow, settings-doc and `hack/` changes are checked; the cache prune removes `buildkit-blob-*` caches unused for 3 days and keeps the cache under 6 GiB; `release.sh check` and `preflight` read the CHANGELOG and charts from the tagged commit, and a dispatched release must run from the tag it publishes.
   The Actions cache is pruned after every CI and Security run on main (this repository's only), with a 4 GiB budget, and buildkit layers are exported by the nightly run only; `make verify-manifests` stops when the local helm major differs from `mise.toml`; a `Chart.yaml` change runs the file and hack-script checks; the restore-drill guard NOTES name Kubernetes 1.34.
   Release candidates (`v0.1.0-rc.1`) no longer carry a `v` in the image, chart and notes version: one resolver, `release.sh resolve`, feeds the workflow and every script, and the dry run rehearses it.
   The console embeds its documentation as one deterministic gzip archive (`data/bundle.gz`), budgeted at 1 MiB compressed and 4 MiB decompressed; the generator names the limit a site build breaks.

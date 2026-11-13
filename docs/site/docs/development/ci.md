@@ -40,18 +40,18 @@ in `images`, and the e2e jobs load that archive instead of building their own.
 | `pages.yml` | when `security.yml` finishes on `main`, nightly at 04:47 UTC, by hand, after a release (building the tag) | Builds the documentation, renders the Security page, deploys both to GitHub Pages. The release's dispatch builds the documentation of the tag; the scheduled and `security.yml`-triggered builds build `main`, so the site shows the tag's documentation only until the next of those. The Security page always shows the newest security run on `main`. |
 | `release.yml` | tag `v*` or `pkg/evidence/v*`; by hand for an existing tag | The release. It checks out and runs nothing but the tagged commit, and restores no cache. |
 | `release-dry-run.yml` | a pull request touching the release files; weekly on Sunday, or by hand with a tag to rehearse | The release's build as a dry run (also on a change under `charts/` or `hack/common.mk`), plus a release-candidate rehearsal of the tag resolver, pinning and packaging (placeholder digests; it fails if `release.sh resolve v0.1.0-rc.1` does not give version `0.1.0-rc.1`, if the charts are not named `...-0.1.0-rc.1.tgz` or the notes find no section): nothing pushed or signed, no write permission. |
-| `verify-release.yml` | called by `release.yml` after the prune; weekly on Monday; by hand | Pulls every image and both charts of a published release by tag **with no registry credentials** and verifies each signature and attestation by digest (`hack/release.sh verify-published`). The weekly run looks at the latest stable release and does nothing until one exists. |
+| `verify-release.yml` | called by `release.yml`; by hand | Pulls every image and both charts of a published release by tag **with no registry credentials** and verifies each signature and attestation by digest (`hack/release.sh verify-published`). |
 | `matrix.yml` | nightly at 01:41 UTC, by hand | The end-to-end scenarios on Kubernetes 1.34 and 1.36 × CloudNativePG 1.30.1, plus CloudNativePG `main` (non-blocking): one job per Kubernetes × CloudNativePG × scenario, all at once, on the images built once for the run. |
 | `image-watch.yml` | nightly at 04:23 UTC | Scans the latest published images and keeps one tracking issue for fixable criticals. |
 | `cache-prune.yml` | after every CI and Security run on `main`, daily at 03:17 UTC, by hand (`dry_run`) | Deletes the Actions caches of pull requests that are not open, all but the newest of each logical cache (a key without its hash, date and `-pN`), the mise entries of a ref beyond the newest 32 (`MISE_KEEP`) or whose `mise.toml` hash is not the newest one's, every `buildkit-blob-*` cache (each is its own family) not accessed for 3 days (`BLOB_DAYS`) and, only if what is left exceeds 4 GiB (`BUDGET_MB`), the blobs first (least recently used first), then rebuildable build caches (`hack/prune-caches.sh`); the only job with `actions: write` besides the dispatchers. |
-| `automerge.yml` | Dependabot pull requests; every 30 minutes | Arms auto-merge for patch and minor updates. A second job, on the 30-minute schedule (`actions: write`), dispatches each of `ci.yml` and `security.yml` on `main` that has no run for its head commit (a merge made with the Actions token starts none). |
+| `automerge.yml` | Dependabot pull requests | Arms auto-merge for patch and minor updates. |
 
 ## What `ci.yml` runs
 
 | Job | Make target | Gate |
 |---|---|---|
 | `lint` | `lint` | golangci-lint on both modules (build-tagged e2e and envtest code included), gofumpt/gci, `go vet`, and the repository checks (`hack/check-*.sh`: headers, read-only boundary, dependency closure, layering, documented settings, and `check-repo-files`, which `lint-files` also runs) |
-| `lint-files` | `lint-workflows lint-docker lint-shell check-repo-files test-hack` | actionlint, zizmor, hadolint, shellcheck; the file-reading half of `check-repo` (toolchain pins against `mise.toml`, the allowed-actions list against the workflows' pins), so a change to a workflow, `repository-settings.md` or a Dockerfile is checked without the Go jobs; and the tests of `hack/` (release logic, `changed-paths.sh`, `check-toolchain.sh`, the security report). A change under `hack/` turns it on, as does any change to the workflows or a Dockerfile |
+| `lint-files` | `lint-workflows lint-docker lint-shell check-repo-files test-hack` | actionlint, zizmor, hadolint, shellcheck; the file-reading half of `check-repo` (toolchain pins against `mise.toml`), so a change to a workflow, `repository-settings.md` or a Dockerfile is checked without the Go jobs; and the tests of `hack/` (release logic, `changed-paths.sh`, `check-toolchain.sh`, the security report). A change under `hack/` turns it on, as does any change to the workflows or a Dockerfile |
 | `generated` | `verify-generated` | deepcopy code, CRDs, RBAC and their Helm/OLM copies, OpenAPI and fixtures, the check and API references and the insight pack regenerate to the committed files. `make verify-manifests` (CRD and RBAC copies only, no helm) is a quick local subset of it, so it is in neither `make check` nor a CI job of its own |
 | `test`, `race-fuzz` | `build test`; `test-race` and `test-fuzz`, one job each | unit tests; the race detector; every fuzz target for a few seconds |
 | `envtest` | `test-envtest` and the operator suites | CRD CEL rules, reconcilers and the operator binary on a real API server |
@@ -213,7 +213,7 @@ sequenceDiagram
   R->>G: anonymous HEAD of every pushed digest: any private package leaves the release a draft
   R->>G: move latest (stable releases only)
   R->>H: publish the release
-  R->>R: dispatch pages.yml on main (docs_ref = the tag), prune untagged GHCR versions
+  R->>R: dispatch pages.yml on main (docs_ref = the tag)
   R->>G: verify-release.yml: pull by tag with no credentials, cosign verify, gh attestation verify, helm pull
 ```
 
@@ -282,11 +282,9 @@ contains and how to verify it is on [Release and verification](../release.md).
 - **Check runs must exist on the tagged commit.** `wait-ci` needs `ci-ok` and
   `security-gate` to be green on the commit the tag points at. A merge made with the
   Actions token (auto-merged Dependabot pull requests) starts no push run, so that
-  commit would have none. `automerge.yml` therefore dispatches `ci.yml` (every job
-  family: a dispatch fails open in `hack/changed-paths.sh`) and `security.yml` on `main`
-  after such a merge, and every 30 minutes for any `main` commit that still has no
-  `ci.yml` run. The run lands on the head of `main` when it starts, so it covers a
-  commit only while `main` has not moved past it; tag the commit the checks ran on.
+  commit would have none: dispatch `ci.yml` and `security.yml` on `main` by hand
+  (Actions, Run workflow) and tag the commit the checks ran on (a dispatch runs on
+  the head of `main` when it starts).
   `wait-ci` still stops after a few polls on a commit with no run at all, with the
   command to use (dispatch both workflows on `main`). When a check ran several times,
   the newest run counts.
@@ -296,29 +294,10 @@ contains and how to verify it is on [Release and verification](../release.md).
   section for a final tag, an annotated tag if it exists, and `ci-ok` and
   `security-gate` successful on the commit (the tag's, else `HEAD`). If it fails,
   nothing was pushed that needs undoing.
-- **Pruning is off by default.** The `prune` job runs only when the repository
-  variable `PRUNE_GHCR` is `true` (`PRUNE_GHCR_DRY_RUN=true` logs without deleting).
-  A deletion cannot be undone and `verify` runs after it: a signature or attestation
-  linked to its image only through the OCI `subject` field could be taken for an
-  orphan. Enable it after a release has verified cleanly with it off, and read one
-  dry-run log first. The action never touches tagged versions here
-  (`delete-ghost-images` stays off).
-- **A failed prune does not hide the verification.** `verify` runs whenever the release
-  job succeeded. `prune` deletes package versions, which needs *admin* rights on a
-  package owned by a user account (the Actions token's `packages: write` is enough
-  only for packages linked to the repository with Actions access: see
-  [repository settings](repository-settings.md#packages)); when it fails, the
-  untagged versions stay until someone prunes them by hand.
 - **Charts carry the source annotation.** `helm push` stamps
   `org.opencontainers.image.source` on the OCI artifact from the first entry of
   `sources` in `Chart.yaml` (the repository); `hack/test-release.sh` fails if that
   entry changes, since Helm 3 has no `--annotations` flag on `push`.
 
-After the prune, `verify-release.yml` pulls the release the way a user does, without
-credentials (`hack/release.sh verify-published vX.Y.Z`); the same check runs weekly
-against the latest stable release.
-
-When enabled (see above), a `prune` job deletes the untagged versions the pushes leave in GHCR
-(`delete-untagged` with `validate`, so a manifest that a tagged index, a signature
-or an attestation references is kept). It never enables ghost-image deletion: that
-mode can delete tagged release versions.
+`verify-release.yml` pulls the release the way a user does, without
+credentials (`hack/release.sh verify-published vX.Y.Z`).

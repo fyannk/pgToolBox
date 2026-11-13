@@ -43,7 +43,7 @@ what the design guarantees and, as plainly, what it does not.
 |---|---|---|---|
 | **Console ServiceAccount** | The CloudNativePG kinds, pods, services, PVCs, events, PDBs, leases, jobs, `pgadmins`, `evidenceagents`, `objectstores` in the watched namespaces; `pods/log` unless withheld; one ConfigMap by name | Nothing. It asks the API server with SelfSubjectAccessReviews sent with the reader's own token, which need no grant | Read a Secret; use `impersonate`; read outside its namespaces; write |
 | **A person through the console** | What their own RBAC lets them `get` | Back up, reload, restart, promote, **with their token** | Anything the API server denies them |
-| **Operator** | Its watched namespaces' CRs and what they reference. Its cache holds Secret *metadata* only for user Secrets, but its RBAC grants Secret `get`, `list`, `watch`, `create`, `update`, `patch` and `delete`: in every namespace with kustomize, OLM and the Helm chart left at its default, and only in the namespaces of `operator.config.watchNamespaces` when the Helm chart sets it (RoleBindings, which also carry `bind` on the three console ClusterRoles; cluster-wide it keeps TokenReview, SubjectAccessReview, `list` on Nodes (to compare an exposure's ipBlocks with their podCIDRs), `list` on SecurityContextConstraints and the evidence agent's ClusterRole and ClusterRoleBinding, with no `bind`, `escalate` or `impersonate`; in its own namespace, its Lease and `get` on its `pgtoolbox-operator-config` ConfigMap and Secret) | The children of `PgAdmin` and `EvidenceAgent`; their status | Hold a database password |
+| **Operator** | Its watched namespaces' CRs and what they reference; Secret *metadata* only in its cache, but its RBAC grants Secret verbs, RoleBindings (with `bind` on the three console ClusterRoles) and workload rules in every namespace by default, or only in `operator.config.watchNamespaces` with the Helm chart. Cluster-wide it keeps TokenReview, SubjectAccessReview, `list` on Nodes and SecurityContextConstraints and the evidence agent's ClusterRole and binding, with no `bind`, `escalate` or `impersonate`. See [the limitation below](#known-limitations) | The children of `PgAdmin` and `EvidenceAgent`; their status | Hold a database password |
 | **Evidence agent ServiceAccount** | The object store: with the operator, through credential files mounted in its own Pod; in team mode, through the Secrets its values list, read with a name-scoped Role | Nothing in the store | With the operator, anything on the API server except creating TokenReviews and SubjectAccessReviews; in team mode, anything but its Cluster, ObjectStore and listed Secrets |
 | **pgAdmin Pod** | Offered Secrets and `<cluster>-ca`, through a name-scoped Role | Its own volumes | Read any other Secret |
 
@@ -82,37 +82,23 @@ what the design guarantees and, as plainly, what it does not.
   Ingress or Gateway that names its controller) and only then trusts every
   admitted peer ([details](operator/console.md#trusted-proxies-and-the-ingress-networkpolicy)).
 
-- **What an unauthenticated flood still costs.** The per-replica bounds
-  protect the API server and the identity provider, and are kept apart from
-  what a genuine sign-in needs once it has proved something, so junk cannot
-  starve people below these rates (per replica):
-  - junk OAuth callbacks: a refused code exchange each, at most 100 a second
-    to the IdP, and no SelfSubjectReview (that is charged only after a
-    successful exchange). Above 100 a second new OAuth sign-ins are refused
-    while the flood lasts;
-  - junk pasted tokens and unknown MCP bearers: a SelfSubjectReview each that
-    the API server refuses, at most 100 a second. Above that, new token
-    sign-ins and new raw bearers are refused; an MCP client whose token the
-    replica accepted before re-reviews from a bucket of its own;
-  - junk `/mcp/oauth/token` requests, and codes or refresh tokens the console
-    sealed but that no longer buy anything (expired, another client's, a
-    failed PKCE check, a revoked person or grant, a spent code replayed): a
-    form parse and a decryption each; they never reach the bucket connected
-    clients refresh from, so holding a token once is not a way to starve
-    them; past 20 a second they get `429` and no audit line. A live grant
-    spends a bucket of its own (6 at once, 12 a minute), then its person's
-    (12 at once, 24 a minute), before the shared one, so neither one grant
-    refreshing in a loop nor one person's grants nor a handful of identities
-    can starve the others; a replayed refresh token is refused before any of
-    them;
-  - `/mcp/oauth/register`: up to 10 a second sealed and audited; above that,
-    new registrations wait. Registered clients are unaffected.
+- **What an unauthenticated flood still costs.** Per-replica bounds protect the
+  API server and the identity provider, and are kept apart from what a genuine
+  sign-in needs, so junk cannot starve people below them:
+  - junk OAuth callbacks and junk pasted tokens or unknown MCP bearers: at most
+    100 a second each reach the identity provider or the API server; above that,
+    new sign-ins are refused while the flood lasts;
+  - junk `/mcp/oauth/token` requests and dead codes or refresh tokens: a form
+    parse and a decryption each; they never reach the bucket connected clients
+    refresh from, and past 20 a second get `429` and no audit line. A live grant
+    spends a bucket of its own, then its person's, before the shared one, so one
+    grant or one person cannot starve the others;
+  - `/mcp/oauth/register`: up to 10 a second; above that, new registrations wait.
 
-  Open sessions, connected MCP clients and issued grants keep working in every
-  case. Each refusal is counted in
-  `pgtoolbox_console_throttled_requests_total{bucket}`; alert on a sustained
-  rate (see [metrics](console/metrics.md#throttled-requests)) and name the
-  proxies so per-address budgets stop a single sender first.
+  Open sessions, connected MCP clients and issued grants keep working. Each
+  refusal is counted in `pgtoolbox_console_throttled_requests_total{bucket}`;
+  alert on a sustained rate (see [metrics](console/metrics.md#throttled-requests))
+  and name the proxies so per-address budgets stop a single sender first.
 
 ## Writes: token passthrough, never impersonation
 
@@ -347,13 +333,13 @@ in view.
 | **Who may write `evidenceagents/status` in a namespace can receive that namespace's evidence token.** The console calls an agent only when the operator's field manager wrote `status.endpoint` and `status.caBundle`, but a writer can name itself after the operator. | Read access to the backup metadata of that same namespace's agents only: each namespace has its own token audience. | Grant `update`/`patch` on `evidenceagents/status` to the operator only. Details on [the evidence agent](evidence-agent.md#trust). |
 | **Sign-out does not revoke the token** at the identity provider or OpenShift's OAuth server. | A copied token works until it expires. | Short token lifetimes at the IdP; the console's [revocation list](console/authentication.md#revoking-sessions) ends *console* sessions. |
 | **The console caches a positive identity for 30 s and a positive SAR for 10 s.** | A revoked person may keep seeing views for up to that long; writes stop at once. | None needed; stated for incident response. |
-| **An expired or revoked access request does not end access already open.** Deleting the RoleBinding stops new authorizations only. | Up to the console's caches above (10 s per SAR, 30 s per identity) in the console; in pgAdmin on OpenShift, whose oauth-proxy checks access at sign-in only, for the session lifetime: **1 h by default, up to `auth.openshiftOAuthProxy.sessionMaxAge`**; and as long as they last, pgAdmin's open database connections and websockets. | For an incident, delete the PgAdmin's `<name>-pgadmin-proxy-cookie` Secret and then its Pod (this ends every pgAdmin session of it), and terminate the user's backends in PostgreSQL ([access requests](console/access-requests.md#lifecycle)). |
+| **An expired or revoked access request does not end access already open.** Deleting the RoleBinding stops new authorizations only. | The console's caches above (10 s per SAR, 30 s per identity); in pgAdmin on OpenShift, whose oauth-proxy checks access at sign-in only, the session lifetime (**1 h by default**, `auth.openshiftOAuthProxy.sessionMaxAge`) and as long as open database connections last. | For an incident, delete the PgAdmin's `<name>-pgadmin-proxy-cookie` Secret and then its Pod, and terminate the user's backends in PostgreSQL ([access requests](console/access-requests.md#lifecycle)). |
 | **The four-eyes check covers the console's approval path only.** Approvers hold `create rolebindings` and `bind` on both roles. | An approver can bind `pgtoolbox-console-operator` to themselves directly with `kubectl`, with no request and no second person; the operator does not see such a binding. | Grant `pgtoolbox-console-approver` only to people trusted with the namespace's access; watch RoleBindings to the two roles in the API server's audit log. |
 | **`/metrics` on the console's probe port is plain HTTP when the console has no certificate.** | A scraper's token crosses the pod network in clear text. | Set `console.tls.secretName`: the probe port, `/metrics` included, is then HTTPS with the console's certificate ([metrics](console/metrics.md)). |
 | **The OpenShift sign-in using the ServiceAccount's projected token as client secret is not yet verified on a live cluster.** | If OpenShift rejects it, sign-in fails with `invalid_client`. | Use a long-lived token Secret ([checklist](console/openshift.md#manual-checklist), step 5). |
 | **The pgAdmin container's root filesystem is writable.** | An attacker with code execution in the container can write to its filesystem. | Restricted Pod Security, no capabilities, optional NetworkPolicy; read-only is an image change on the roadmap. |
 | **Shared pgAdmin servers carry one identity per role.** | PostgreSQL's logs cannot name the person behind a shared server. | The Kubernetes API audit log names who opened pgAdmin on OpenShift; per-person roles are a roadmap item. |
-| **The operator's ServiceAccount is effectively cluster-admin**, unless the Helm chart sets `watchNamespaces`. Its ClusterRole holds Secret, ServiceAccount, Deployment, Role and RoleBinding verbs and `bind` on the three console ClusterRoles in every namespace, because it creates the Secrets, accounts and Roles of the workloads it runs. With `watchNamespaces` those rules hold only in the listed namespaces: there it can read and write every Secret, run a Pod as any ServiceAccount and bind the console roles, which amounts to a namespace administrator; cluster-wide it keeps only the review, Nodes and SCC reads and the evidence agent's ClusterRole and binding, and RBAC escalation prevention lets it grant others nothing it does not hold cluster-wide (no `bind`, `escalate` or `impersonate` there). | Whoever obtains its token (a compromised operator, or anyone who can exec into its Pod, edit its Deployment or read a token of its ServiceAccount) can read every Secret, and run a Deployment as any ServiceAccount, in every namespace it holds those rules in: every namespace by default, so treat it as cluster-admin; the listed ones with `watchNamespaces`. A Pod it runs is checked only by the namespace's Pod Security admission: in a watched namespace that does not enforce `restricted`, it can run a privileged Pod (host namespaces, host paths), which reaches the Node. The token cannot delete CNPG Clusters *itself*: binding `pgtoolbox-console-restore-drills` to its own ServiceAccount, or to any ServiceAccount, leaves it held by the [delete guard](console/restore-drills.md#the-delete-guard) to sealed drills, and it cannot grant itself every verb (`*`) on `restoredrills`, which is what the guard calls an administrator (escalation prevention). It can still have Clusters deleted by others: the guard matches ServiceAccounts only, so the drills role bound to a User or a Group grants an unguarded `delete clusters`, and a Pod run as a ServiceAccount of the namespace that already holds that right deletes through it. | Run the operator in a namespace of its own where only cluster administrators hold any right; restrict `pods/exec`, Deployment edits and `serviceaccounts/token` there. Enforce Pod Security `restricted` on every namespace it watches (everything it renders complies). Watch the API server's audit log for RoleBindings to `pgtoolbox-console-restore-drills` whose subject is not a ServiceAccount. With the Helm chart, set `operator.config.watchNamespaces` to confine the Secret, ServiceAccount, workload and RBAC rules to the listed namespaces (a RoleBinding each); kustomize and OLM always bind them cluster-wide. One operator per cluster is the supported layout. |
+| **The operator's ServiceAccount is effectively cluster-admin**, unless the Helm chart sets `watchNamespaces`. It creates the Secrets, accounts, Roles and workloads it runs, so it holds those verbs and `bind` on the three console ClusterRoles in every namespace it watches (with `watchNamespaces`, a namespace administrator in the listed ones; cluster-wide only the review, Nodes and SCC reads and the evidence agent's ClusterRole). RBAC escalation prevention stops it granting others anything it does not hold. | Whoever obtains its token (a compromised operator, or anyone who can exec into its Pod, edit its Deployment or read a token of its ServiceAccount) can read every Secret and run a Deployment as any ServiceAccount in those namespaces. A Pod it runs is checked only by the namespace's Pod Security admission: where that is not `restricted`, it can run a privileged Pod and reach the Node. It cannot delete CNPG Clusters itself (the [delete guard](console/restore-drills.md#the-delete-guard) limits `pgtoolbox-console-restore-drills` to sealed drills for ServiceAccounts) but the drills role bound to a User or a Group grants an unguarded `delete clusters`. | Run the operator in a namespace of its own where only cluster administrators hold any right; restrict `pods/exec`, Deployment edits and `serviceaccounts/token` there. Enforce Pod Security `restricted` on every namespace it watches. Watch the audit log for RoleBindings to `pgtoolbox-console-restore-drills` whose subject is not a ServiceAccount. With the Helm chart set `operator.config.watchNamespaces`; kustomize and OLM bind cluster-wide. One operator per cluster is the supported layout. |
 | **`pgtoolbox-console-operator` is effectively database-superuser.** `patch clusters` covers the whole `Cluster` spec (`enableSuperuserAccess`, `managed.roles`, `postgresql.parameters`). | Its holder, and the grantee of an `operator` access request, can become the superuser of the namespace's Clusters. | Grant and approve it as you would the `postgres` password ([authorization](console/authorization.md#the-two-clusterroles)). |
 
 ## Network

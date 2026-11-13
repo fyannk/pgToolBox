@@ -69,9 +69,6 @@ classify() {
     deploy/olm/*) mark go; mark charts ;;
     charts/* | hack/rules/* | hack/validate-packaging.sh | hack/sync-manifests.sh | hack/scorecard.sh | hack/chart-gates.sh | hack/chart-values-coverage.py) mark charts ;;
     Dockerfile | .dockerignore) mark docker ;;
-    # check-action-pins compares this page's allowed-actions list with the
-    # workflows, so a change to it runs lint-files (the `workflows` family).
-    docs/site/docs/development/repository-settings.md) mark docs; mark workflows ;;
     docs/site/* | *.md | .codespellrc | lychee.toml) mark docs ;;
     # The docs site copies the console tour's screenshots from these baselines
     # at build time (docs/site/scripts/copy-screens.mjs): the site, so `make

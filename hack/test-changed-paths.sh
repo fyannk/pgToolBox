@@ -61,12 +61,11 @@ want PROJECT ${all}
 want some/new/file.txt ${all}
 want docs/site/docs/index.md docs
 want .github/workflows/release.yml workflows
-# check-repo-files (action pins, toolchain pins) and test-hack run in lint-files,
+# check-repo-files (toolchain pins) and test-hack run in lint-files,
 # the `workflows` and `docker` families; every input of those must turn one on.
 want .github/workflows/security.yml workflows
 want .github/dependabot.yml workflows
-want docs/site/docs/development/repository-settings.md docs workflows
-want hack/check-action-pins.sh docker go
+want docs/site/docs/development/repository-settings.md docs
 want hack/test-release.sh docker go
 want hack/lib/net.sh charts console docker evidence go operator
 want hack/security_report_test.py workflows

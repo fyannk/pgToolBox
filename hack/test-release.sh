@@ -498,14 +498,6 @@ grep -q 'head_repository.full_name == github.repository' .github/workflows/cache
 ! grep -E '^ +CACHE_TO_' .github/workflows/ci.yml | grep -q workflow_dispatch || fail "ci.yml writes buildkit blobs on a dispatch; only the nightly run may"
 echo "ok: prune-caches"
 
-# ---- check-action-pins: the doc's allow-list must equal the pins in use.
-./hack/check-action-pins.sh >/dev/null || fail "check-action-pins fails on the committed doc"
-sed '/jdx\/mise-action@/d' docs/site/docs/development/repository-settings.md > "${work}/settings-missing.md"
-expect 1 'jdx/mise-action' -- ./hack/check-action-pins.sh "${work}/settings-missing.md"
-# An entry naming a SHA would allow only that SHA: the list must say @*.
-sed 's#`jdx/mise-action@\*`#`jdx/mise-action@0123456789abcdef0123456789abcdef01234567`#' docs/site/docs/development/repository-settings.md > "${work}/settings-sha.md"
-expect 1 'jdx/mise-action' -- ./hack/check-action-pins.sh "${work}/settings-sha.md"
-
 # ---- retry: the bounded loop the workflow's verify step shares with
 # verify-published; a command that never succeeds fails after VERIFY_ATTEMPTS.
 export VERIFY_SLEEP=0 VERIFY_ATTEMPTS=2
@@ -544,7 +536,6 @@ for d in docs/site headlamp; do
   grep -q '^ignore-scripts=true' "${root}/${d}/.npmrc" || fail "${d}/.npmrc must set ignore-scripts=true (install scripts of npm dependencies)"
 done
 grep -q 'docs/site/.npmrc' "${root}/Dockerfile" || fail "Dockerfile: docs-site must copy .npmrc before npm ci"
-grep -q "vars.PRUNE_GHCR == 'true'" "${root}/.github/workflows/release.yml" || fail "release.yml: prune must stay opt-in (PRUNE_GHCR)"
 if grep -rn "release.md.*When a release fails" "${root}/.github/workflows"; then fail "workflows point at release.md for 'When a release fails'; it lives in development/ci.md"; fi
 echo "ok: chart sources, Dockerfile retries"
 

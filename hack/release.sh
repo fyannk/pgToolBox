@@ -278,13 +278,8 @@ cmd_check_module() {
 # when a check ran more than once (a re-run, a dispatch) the newest run counts:
 # the highest check-run id of that name.
 #
-# Green is not enough: see full_tier_state, which also demands a full-tier run
-# (dispatch or schedule) of both workflows on the tagged commit.
-#
-# A commit that carries no check run at all was merged by a token whose events
-# start no workflow (the automerge token): waiting 60 minutes would not change
-# that, so after CI_WAIT_EMPTY_ATTEMPTS polls (default 4) it fails with the
-# command that fixes it.
+# Green is not enough: see full_tier_state. A commit with no check run at all
+# (merged by the automerge token) fails after CI_WAIT_EMPTY_ATTEMPTS polls (4).
 cmd_wait_ci() {
   local sha="${1:?usage: release.sh wait-ci SHA}"
   command -v gh >/dev/null || die "gh is not on PATH"
@@ -296,7 +291,7 @@ cmd_wait_ci() {
     if [[ -z "${runs}" ]]; then
       empty=$((empty + 1))
       if ((empty >= empty_limit)); then
-        die "no check run exists for ${sha} (merged with a token that starts no workflow, or the 30-minute net has not run yet): run \`gh workflow run ci.yml --ref main\` and \`gh workflow run security.yml --ref main\`, wait for green, and run \`make release-preflight TAG=<tag>\` BEFORE pushing the tag"
+        die "no check run exists for ${sha} (merged with a token that starts no workflow): run \`gh workflow run ci.yml --ref main\` and \`gh workflow run security.yml --ref main\`, wait for green, and run \`make release-preflight TAG=<tag>\` BEFORE pushing the tag"
       fi
     else
       empty=0
@@ -627,16 +622,13 @@ cmd_sums() {
 }
 
 # ------------------------------------------------------------ check-public ---
-# Before a release becomes visible: every digest the workflow pushed must be
-# pullable with no credentials. A new GHCR package is private until its owner
-# makes it public, and a release that points at private packages is a release
-# nobody can install. FILES are digests.txt and chart-digests.txt style lists
-# (`host/owner/name[/sub]@sha256:...`, one per line).
+# Every pushed digest must be pullable with no credentials before the release
+# is published (a new GHCR package is private until its owner makes it public).
+# FILEs list `host/owner/name[/sub]@sha256:...`, one per line.
 cmd_check_public() {
   [[ $# -gt 0 ]] || die "usage: release.sh check-public FILE..."
   command -v curl >/dev/null || die "curl is not on PATH"
-  # A package flipped to public while the run waits turns it green: poll every
-  # CHECK_PUBLIC_SLEEP seconds (60) up to CHECK_PUBLIC_ATTEMPTS times (20).
+  # Poll: a package made public while the run waits turns it green.
   local attempts="${CHECK_PUBLIC_ATTEMPTS:-20}" attempt pkg
   local -a private=() unavailable=()
   for attempt in $(seq 1 "${attempts}"); do
@@ -647,8 +639,6 @@ cmd_check_public() {
       ((attempt < attempts)) && sleep "${CHECK_PUBLIC_SLEEP:-60}"
       continue
     fi
-    # One annotation per wait, naming the settings page of every private package:
-    # a maintainer who only sees the run page needs no log reading to act.
     {
       printf '::notice title=Make these GHCR packages public::'
       for pkg in "${private[@]}"; do
@@ -656,13 +646,7 @@ cmd_check_public() {
       done
       echo
     }
-    if ((attempt < attempts)); then
-      echo "waiting for visibility changes (${attempt}/${attempts}); set each package to public here:"
-      for pkg in "${private[@]}"; do
-        echo "  https://github.com/users/${repo%%/*}/packages/container/${pkg//\//%2F}/settings"
-      done
-      sleep "${CHECK_PUBLIC_SLEEP:-60}"
-    fi
+    ((attempt < attempts)) && sleep "${CHECK_PUBLIC_SLEEP:-60}"
   done
   {
     if ((${#private[@]} > 0)); then
@@ -680,9 +664,7 @@ cmd_check_public() {
 }
 
 # check_public_once FILE...: one anonymous pull of every digest; fills the
-# caller's `private` array with the packages that answered 401/403/404 and its
-# `unavailable` array with those the registry failed to answer (5xx, timeout),
-# returns 1 when either is not empty.
+# caller's `private` (401/403/404) and `unavailable` (5xx, timeout) arrays.
 check_public_once() {
   local ref name digest path token status accept
   private=() unavailable=()
