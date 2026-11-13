@@ -439,6 +439,9 @@ type gathered struct {
 	store        *unstructured.Unstructured
 	swept        sweep.Snapshot
 	hasSweep     bool
+	// sweepOff: the instance status sweep is switched off
+	// (INSTANCE_STATUS_ENABLED=false), not failing or stale.
+	sweepOff bool
 	// readyRings are the sweep's readyWalFiles samples of the archiving
 	// instance, of every instance reporting an archive failure, and of
 	// every instance that reported itself primary in a sweep kept (a
@@ -612,7 +615,9 @@ func (s *Service) gather(ctx context.Context, key cache.ClusterKey, withEvents b
 	if withEvents && g.readable[cache.SourceEvents] {
 		g.events = s.clusterEvents(ctx, reader, g)
 	}
-	if sw := s.sweeper(); sw != nil {
+	sw := s.sweeper()
+	g.sweepOff = sw == nil || sw.State().State == viewmodel.SourceDisabled
+	if sw != nil {
 		g.swept, g.hasSweep = sw.Snapshot(g.sweepKey())
 		g.readyRings, g.lsnRings, g.archivedRings, g.timelineRings = readyRings(sw, g)
 		if s.opts.Trends != nil {

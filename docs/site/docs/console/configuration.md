@@ -112,8 +112,15 @@ The other states of an instance's status read, each with its reason:
 | `notRunning` | The Pod has no IP yet or is being deleted. |
 | `disabled` | `INSTANCE_STATUS_ENABLED=false`. |
 
-A read can be `ok` and still not read PostgreSQL. While an instance is fenced or
-restarting, CloudNativePG's instance manager answers `/pg/status` without
+With the sweep switched off (`disabled`), the WAL-archiving fact is the Cluster's
+`ContinuousArchiving` condition as CloudNativePG reports it, attributed to
+"Cluster.status.conditions[ContinuousArchiving] (not checked on the instance)": a
+`True` condition reads ok, but no backlog or failed segment on the primary is
+seen, and the recovery window still treats the archiver as unread. A sweep that
+runs but has not read the primary (failed or stale) leaves archiving unknown.
+
+A read can be `ok` and still not read PostgreSQL. While an instance is fenced,
+restarting or rewinding, CloudNativePG's instance manager answers `/pg/status` without
 reaching PostgreSQL and says so (`mightBeUnavailable`, with the error it hit).
 Such a report is shown as "PostgreSQL not read", with that error: its positions,
 timeline, pending restart, replay pause, WAL receiver, archiver, walsenders and
@@ -123,8 +130,9 @@ replica's receiver, were not read; the topology places no replica against the
 primary's walsenders; the diagnostics on those fields, the failover rehearsal and
 the archiving fact (`PrimaryUnread`, "answered without reading PostgreSQL") do not
 judge it. Only the manager's own flags (`mightBeUnavailable`, a rewind in
-progress, its version) and the primary role it reads from the data directory
-stand.
+progress, its version) stand, and the primary role it re-reads from the data
+directory when it masked an error; during a rewind (shown as "pg_rewind is
+running") the primary role is not read either.
 
 The sweep runs every `INSTANCE_STATUS_INTERVAL` (30 s), each read bounded by
 `INSTANCE_STATUS_TIMEOUT` (5 s, shorter than the interval), at most

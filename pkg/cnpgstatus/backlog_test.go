@@ -230,10 +230,22 @@ func TestArchivingUnreadPrimaryIsNotOK(t *testing.T) {
 	// A masked primary (fenced or restarting: its manager answered without
 	// reaching PostgreSQL) is the same reading, worded as such, never as a
 	// read that did not happen (round 17, DBA).
-	masked := ArchivingOf(c, nil, true)
+	masked := ArchivingOf(c, nil, true, false)
 	if masked.Class != got.Class || masked.Reason != got.Reason || !strings.Contains(masked.Message, "answered without reading PostgreSQL") ||
 		strings.Contains(masked.Message, "was not read") {
 		t.Errorf("ArchivingOf(masked) = %+v", masked)
+	}
+	// The instance sweep switched off (owner decision 3, 2026-11-13): the
+	// condition as CloudNativePG reports it, ok, attributed and still
+	// PrimaryUnread; a False condition stays critical.
+	off := ArchivingOf(c, nil, false, true)
+	if off.Class != ClassOK || off.Reason != ArchivingReasonPrimaryUnread || !strings.Contains(off.Message, "per the Cluster status, not checked on the instance") {
+		t.Errorf("ArchivingOf(sweep off) = %+v", off)
+	}
+	failing := clusterWith(nil, cond(ConditionContinuousArchiving, "False", "ContinuousArchivingFailing"))
+	failing.Spec.Plugins = c.Spec.Plugins
+	if got := ArchivingOf(failing, nil, false, true); got.Class != ClassCritical {
+		t.Errorf("ArchivingOf(sweep off, False) = %+v, want critical", got)
 	}
 	// Hibernated: no primary runs, and the reading says so. It is
 	// inactive, as the Cluster is (round 8, DBA): unknown would outrank

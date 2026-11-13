@@ -315,15 +315,19 @@ type ArchivingReading struct {
 // WAL completes a segment within it, and a segment the archiver does
 // not take is a .ready file, so the stall shows as the backlog.
 func Archiving(c *cnpgv1.Cluster, primary *ArchiverLive) ArchivingReading {
-	return ArchivingOf(c, primary, false)
+	return ArchivingOf(c, primary, false, false)
 }
 
-// ArchivingOf is Archiving, told whether a primary given as nil was
-// masked: its instance manager answered /pg/status without reaching
-// PostgreSQL (fenced or restarting, instancestatus.Reading.Masked). The
-// reading is the same, PrimaryUnread with condition True; only the words
-// differ, so that a DBA does not look for a sweep that failed.
-func ArchivingOf(c *cnpgv1.Cluster, primary *ArchiverLive, primaryMasked bool) ArchivingReading {
+// ArchivingOf is Archiving, told why a primary given as nil was not
+// read. primaryMasked: its instance manager answered /pg/status without
+// reaching PostgreSQL (fenced, restarting or rewinding,
+// instancestatus.Reading.Masked); the reading is the same, PrimaryUnread
+// with condition True, worded so that a DBA does not look for a sweep
+// that failed. notChecked: the console reads no instance
+// (INSTANCE_STATUS_ENABLED=false), so a condition True is shown as
+// CloudNativePG reports it, ok, still PrimaryUnread so that nothing
+// downstream takes it for a checked reading.
+func ArchivingOf(c *cnpgv1.Cluster, primary *ArchiverLive, primaryMasked, notChecked bool) ArchivingReading {
 	if c == nil {
 		return ArchivingReading{Class: ClassUnknown, Reason: ArchivingReasonNoCluster}
 	}
@@ -411,6 +415,12 @@ func ArchivingOf(c *cnpgv1.Cluster, primary *ArchiverLive, primaryMasked bool) A
 			// True says nothing about WAL reaching the repository now.
 			reading.Class = ClassUnknown
 			reading.Reason = ArchivingReasonPrimaryUnread
+			if notChecked {
+				reading.Class = ClassOK
+				reading.Message = "ContinuousArchiving is True" + since(condition.LastTransitionTime.Time) +
+					" per the Cluster status, not checked on the instance: the instance status sweep is switched off"
+				break
+			}
 			unread := "the primary's archiver was not read"
 			if primaryMasked {
 				unread = "the primary's instance manager answered without reading PostgreSQL (fenced, restarting or rewinding)"
