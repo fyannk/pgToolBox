@@ -350,20 +350,7 @@ jobs:
           set -euo pipefail
           make ui-install
           cd ui
-          # The browser's system packages come from the Ubuntu archives, whose
-          # DNS has failed on hosted runners for over an hour at a time, and
-          # a degraded mirror (not only DNS) makes apt spend ten minutes timing
-          # out. So the install with system packages is bounded (180 s) and any
-          # failure or timeout falls back to Chromium alone, on the image's own
-          # libraries: the gate below still runs real Chromium and fails if one
-          # is really missing.
-          if getent hosts azure.archive.ubuntu.com >/dev/null \
-            && timeout 180 pnpm exec playwright install --with-deps chromium; then
-            :
-          else
-            echo "::warning::playwright install --with-deps chromium failed, timed out or the Ubuntu archive does not resolve; installing Chromium without its system packages"
-            pnpm exec playwright install chromium
-          fi
+          timeout 300 pnpm exec playwright install --with-deps chromium
       # Generated drift (`pnpm generate:check`), lint, types, unused code,
       # tokens, unit tests, stories with axe, build and size budgets.
       - name: Gate
