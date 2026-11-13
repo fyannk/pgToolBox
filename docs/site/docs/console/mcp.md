@@ -237,88 +237,46 @@ replica within about a second (the grant index is in the shared state
 ConfigMap, `STATE_CONFIGMAP`, see [sessions](authentication.md)): the
 disconnection is written to the ConfigMap before the console answers.
 
-What **Disconnect all** guarantees: a grant's first token is issued only once
-the grant is written to the ConfigMap (a token request whose write fails
-answers `503 temporarily_unavailable`, and the client starts the connection
-again), so the ConfigMap holds every grant an assistant can use. **Disconnect
-all**, and a disconnection of a grant the replica does not know, first read the
-ConfigMap as the API server holds it now, then revoke every grant of yours it
-shows and write the revocations. A `204` (or, for one grant, a `404`) therefore
-means that every grant of yours recorded before your request, on any replica,
-even one cut off from the API server since, is revoked in the ConfigMap; each
-replica refuses it once its watch delivers the write (about a second); a
-replica whose watch stopped delivering catches up, or refuses every grant,
-within the bounds [above](#what-a-console-grant-is). A connection
+A grant's first token is issued only once the grant is recorded in the shared
+state (a token request whose write fails answers `503
+temporarily_unavailable`, and the client starts the connection again).
+**Disconnect all**, and a disconnection of a grant the replica does not know,
+first read the shared state as the API server holds it now, then revoke every
+grant of yours it shows. A `204` (or, for one grant, a `404`) therefore means
+that every grant of yours recorded before your request is revoked; each replica
+refuses it once its watch delivers the write (about a second). A connection
 completed after your request was answered is not covered: disconnect it again.
-Concurrent reads are coalesced: one in flight per replica, one waiting.
 
-There are two `503` answers, both with `Retry-After`, each with its own
-problem `type`:
+Two `503` answers carry `Retry-After` and a problem `type`:
 
 - `urn:pgtoolbox:disconnection-unrecorded`: the replica that answered revoked
   the grants it knows, but the API server did not take the write. That replica
-  refuses them at once and keeps writing them with its next writes; the others
-  may accept them until one lands. The page says the assistants are
-  disconnected on the replica that answered, and to retry.
+  refuses them at once; the others may accept them until the write lands.
 - `urn:pgtoolbox:disconnection-unconfirmed`: the replica could not read the
-  ConfigMap (the API server refused, throttled or did not answer the read).
-  Nothing may be disconnected: a grant recorded on another replica is not known here. The
-  page says your assistants may still be connected and to retry; it never says
-  they are disconnected. A `503` of any other layer is shown the same way. A
-  failed or throttled read does not put the replica in the failing mode; only
-  a `403` or a `404` of the API server changes what the replica serves.
+  shared state, so nothing is known to be disconnected. The page says your
+  assistants may still be connected and to retry; it never says they are
+  disconnected.
 
-On either `503` the Assistants page closes the dialog, keeps the assistant
-listed as "not confirmed for every replica yet" with a **Retry** button, and
-offers **Disconnect all** as long as one is pending, even with a single
-assistant. **Retry** sends the disconnection again without asking you to type
-the name a second time: you already confirmed it. A retry that answers `404`
-means the ConfigMap holds nothing of it left to revoke: the page reports the
-assistant disconnected. The pending rows exist only in the open page: after a
-reload, the replica that answered no longer lists a grant it revoked, so it
-disappears from the list although the other replicas may still accept it until
-its write lands. **Disconnect all**, from any replica, is the safe check: it is
-answered done only as described above. When the card, the pending row or
-**Disconnect all** that you used is gone after the answer, focus moves to the
-note that says what happened.
-
+On either, the Assistants page keeps the assistant listed as "not confirmed for
+every replica yet" with a **Retry** button (no need to type the name again), and
+offers **Disconnect all**, which is the safe check: it is answered done only as
+described above. A retry that answers `404` means nothing is left to revoke.
 When the `503` persists, check that the console's ServiceAccount may `get`,
-`watch` and `update` the shared state ConfigMap (`kubectl auth can-i get
-configmap/<console>-state --as system:serviceaccount:<namespace>:<service account>`)
-and that the API server is reachable from the console pods; the console logs
-the shared state's mode changes (`shared state`).
+`watch` and `update` the state ConfigMap and that the API server is reachable
+from the console pods; the console logs the shared state's mode changes
+(`shared state`).
 
-With MCP OAuth on, `/readyz` waits for the first read of the ConfigMap (or for
-the API server to answer that it is missing or may not be read), so a pod that
-just started takes no traffic before it. Once answered, `/readyz` does not go
-back to failing for the shared state: a later API server failure refuses grants
-(`503`) as above, rather than taking every replica out of the Service at once.
-A replica that loses the API server after that stays Ready and takes requests;
-its disconnections are then `503` unconfirmed. While the ConfigMap does
-not exist (deleted, or not created yet), a disconnection is answered done, and
-logged: every replica refuses every grant until the ConfigMap exists, and the
-replica that answered writes the disconnection into it at its next read of the
-ConfigMap, within two seconds of its return (a missing ConfigMap is read every
-one to two seconds while a replica holds a disconnection or a sign-out not
-written yet, and for two minutes after it went missing; otherwise about every
-ten seconds). A disconnection that reads the ConfigMap back first writes into
-it at once. Meanwhile another replica that reads the new ConfigMap
-first and recorded the grant less than eight minutes earlier may serve it for
-those seconds. A restart of the replica that answered before then loses the
-disconnection (that other replica then keeps the grant). A ConfigMap the
-console may not read or write is not answered done: the API server checks a
-watch's permission only when it opens, so a replica whose watch opened before
-the permission was withdrawn still serves grants until its next freshness read
-([above](#what-a-console-grant-is)) is refused, and the answer stays `503`,
-**Disconnect all** with nothing to revoke included, whatever the replica read
-before; once the console may read and write it again, the replica serves
-grants again. A sign-out with **disconnect my assistants** goes
-on whatever the outcome; when the disconnection is not confirmed, the
-signed-out page says your assistants may still be connected and to use
-**Disconnect all** (and the console log says so). Without the
-shared state the index is in each replica's memory: a restart disconnects every
-assistant, and with more than one replica each refuses the grants of the
-others. Run one replica, or set `STATE_CONFIGMAP`.
+With MCP OAuth on, `/readyz` waits for the first read of the ConfigMap; a later
+API server failure refuses grants (`503`) rather than taking every replica out of
+the Service. While the ConfigMap does not exist, a disconnection is answered
+done and logged: every replica refuses every grant until it exists, and the
+replica that answered writes the disconnection into it at its next read. A
+ConfigMap the console may not read or write is not answered done (`503`). A
+sign-out with **disconnect my assistants** goes on whatever the outcome; when the
+disconnection is not confirmed, the signed-out page says so. Without the shared
+state the index is in each replica's memory: a restart disconnects every
+assistant, and with more than one replica each refuses the grants of the others.
+Run one replica, or set `STATE_CONFIGMAP`.
 
 The [revocation list](authentication.md#revoking-sessions) applies to grants:
 
