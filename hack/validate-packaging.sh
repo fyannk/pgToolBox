@@ -497,8 +497,8 @@ for doc in helm_vap:
 if any(d["kind"] in ("ValidatingAdmissionPolicy", "ValidatingAdmissionPolicyBinding") and d["metadata"]["name"].endswith("image-override") for d in kust_docs):
     problems.append("kustomize config/default applies the operator chart's admission policy: it is the opt-in component config/components/admission")
 olm_doc = pathlib.Path("docs/site/docs/install/olm.md").read_text()
-if "config/components/admission" not in olm_doc or "templates/operator/admissionpolicy.yaml" not in olm_doc:
-    problems.append("docs/site/docs/install/olm.md must say the admission policies are not in the bundle and how to apply them")
+if "--admission-webhook" not in olm_doc or "never both" not in olm_doc:
+    problems.append("docs/site/docs/install/olm.md must say the bundle enforces the admission rules through the operator's webhook (--admission-webhook), and never with the policies as well")
 guard_policy = next((d for d in guard_src if d["kind"] == "ValidatingAdmissionPolicy"), None)
 drills_rules = load("config/rbac/pgtoolbox_console_restore_drills_clusterrole.yaml")["rules"]
 marker = {"apiGroups": ["pgtoolbox.fyannk.dev"], "resources": ["restoredrills"], "verbs": ["teardown"]}
