@@ -74,6 +74,7 @@ DOCS_BUNDLE_VERSION = $(shell sed -n 's/^version: *//p' charts/pgtoolbox/Chart.y
 .PHONY: docs-build
 docs-build: ## Build the documentation site (typecheck, the llms plugin and script tests, Mermaid parse, screenshots copy, build; fails on a broken link). Writes docs/site/build.
 	cd docs/site && npm ci --ignore-scripts && npm run typecheck && npm test && npm run check:mermaid && npm run build
+	test -s docs/site/build/img/screens/overview-healthy-dark-1440.png || { echo 'docs-build: the tour screenshots were not copied' >&2; exit 1; }
 
 .PHONY: docs-bundle
 docs-bundle: docs-build ## Write the console's embedded documentation bundle (a gzip archive of the Markdown pages and BM25 index; git-ignored) from the built site.
