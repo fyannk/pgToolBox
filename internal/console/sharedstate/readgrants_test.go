@@ -332,7 +332,7 @@ func TestAForbiddenRequestWhileWatchingIsFailing(t *testing.T) {
 	clock := &testClock{now: t0}
 	api := newAPIServer()
 	g := &gatedGets{apiServer: api}
-	s := freshStore(g, clock, time.Hour, 20*time.Millisecond, 10*time.Millisecond)
+	s := freshStore(g, clock, time.Hour, time.Hour, 10*time.Millisecond) // no freshness read: ReadGrants alone meets the 403
 	run(t, s)
 	eventually(t, "live", func() bool { return modeOf(s) == modeLive && s.GrantsUsable() })
 	forbidden := error(apierrors.NewForbidden(configMaps, "console-state", errors.New("no")))
