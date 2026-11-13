@@ -41,7 +41,7 @@ refuses the `PgToolBoxConsole`.
 | `MCP_OAUTH_ACCESS_TTL` | `1h` | The lifetime of an access token the console issues to an MCP client, from 10s to 1h. The client renews it with its refresh token. |
 | `MCP_OAUTH_CLIENT_METADATA_DOCUMENTS` | `false` | Accept [client ID metadata documents](#client-registration): an HTTPS URL as `client_id`, which the console fetches. Off by default, since it makes the console reach out to the Internet. |
 | `MCP_OAUTH_CLIENT_METADATA_HOSTS` | empty | With metadata documents on, fetch them only from these hosts (a comma-separated list of DNS names, for example `claude.ai,chatgpt.com`). Empty: any public address. |
-| `MCP_LEASE` | empty | Set by the install, not by hand. The `coordination.k8s.io` Lease (in the console's namespace) whose holder alone serves the MCP paths (`/mcp`, `/oauth`, `/api/v1/session/grants`) and writes the grants; the other replicas answer them `503` with `Retry-After: 2`. Requires `MCP_ENABLED`. Empty: every replica serves MCP. |
+| `MCP_LEASE` | empty | Set by the install, not by hand. The `coordination.k8s.io` Lease (in the console's namespace) whose holder alone serves the MCP paths (`/mcp`, `/oauth`, `/api/v1/session/grants`) and writes the grants; the other replicas answer them `503` with `Retry-After: 2`. Required with `MCP_ENABLED`. |
 | `MCP_CANDIDATE` | `true` | Set by the install. `false`: this replica runs MCP but never takes the Lease, so it never serves the MCP paths (always `503`) and never writes the grants; the team chart sets it on its main replicas, beside its one MCP Pod. Requires `MCP_LEASE`. |
 
 The chart and the `PgToolBoxConsole` set the tuning variables too. Each is rendered
@@ -127,8 +127,15 @@ kubectl -n team-a port-forward svc/<fullname>-mcp 8080:80
 A `PgToolBoxConsole` of type `clusterIP` has the same Service
 `<console>-mcp`, which follows the holder.
 
+The election runs with one replica too (a rolling update overlaps two Pods).
+The leader holds the grant index in its memory and writes it to the shared
+state ConfigMap (`STATE_CONFIGMAP`); the replica taking over loads it before
+it serves. Without `STATE_CONFIGMAP` nothing is loaded: a hand-over, like a
+restart, disconnects every assistant. With the endpoint off there is no
+election, and none of these objects or paths is rendered.
+
 The transport is MCP Streamable HTTP in its stateless form: every request is
-authenticated on its own, any replica answers, and no session is kept. A
+authenticated on its own, and no session is kept. A
 request carries one JSON-RPC message: batches are refused with `400`.
 
 ## Authentication
@@ -211,45 +218,22 @@ like the screens, and an assistant never holds more rights than its person.
 | Access token | Sealed with a key derived from the console's session key for this purpose only (the same on every replica): the grant ID, the client, the scope, the person, the grant's identity provider token, one hour at most and never past that token's expiry. It opens only on a console holding the session key. |
 | Refresh token | Sealed, rotated at every use; a refresh token used twice revokes the grant (one of the two holders is not the client). Refreshing renews the grant's identity provider token when it is about to expire (OIDC refresh, with the grant's own refresh token); a grant whose identity provider sign-in cannot be renewed ends with it. |
 | Lifetime | The session's maximum age (`AUTH_MAX_AGE`) from the approval, whatever the refreshes. |
-| Bounds | 16 grants per person and 1600 per console in the index, counting the revoked ones it still remembers (10 minutes after their revocation, or until they would have ended); past either the console refuses new connections rather than forget a revocation. 16 spent codes and consent answers per person, 1600 per console, each remembered until it expires (about 2 and 3.5 minutes). Past 80 % of either total (1280), a person holding 4 entries or more, or at least the mean share of the people the table holds, is refused new work (the token request answers `invalid_grant`, "too many connected assistants"; a sign-in or a confirmation, "retry in a minute"); a newcomer is admitted while the table has room. Whatever order they arrive in, N identities (N ≥ 80) hold at most 1280 + 4 × (N − 80) places of a table (plus, in the index, one revocation placeholder each): a hundred identities each taking all they may hold at most 1360 codes and 1460 grants, and the places left go to newcomers. Filling a table takes 160 identities (128 for the index). A confirmation of a write tool is one entry whatever steps it records (the page's answer, then its approval and the operation's run are marks on that entry, which no bound refuses), so a person may have 4 confirmations in flight past 80 % and a confirmation admitted at its first step is never refused at a later one. Two writes are not new work and only the hard bounds above refuse them: a refresh re-recording a grant another replica admitted, and a person's first standing revocation placeholder (a replayed code's). Each replica decides from what it holds and the index stays a union, so the replicas agree (admissions on several replicas within the second a write takes to arrive can each take a place). Below 80 % everyone may reach their own bound; past it, legitimate people who already hold 4 connections or 4 sign-ins in progress wait for one to end. The totals are sized for a hundred people at their own bound, and the full index takes about 605 KiB of the shared state ConfigMap's 768 KiB budget (client names are cut to 128 bytes once JSON-escaped). |
+| Bounds | 16 grants per person and 1600 per console in the index, counting the revoked ones it still remembers (10 minutes after their revocation, or until they would have ended); past either the console refuses new connections rather than forget a revocation. 16 spent codes and consent answers per person, 1600 per console, each remembered until it expires (about 2 and 3.5 minutes). Past 80 % of either total (1280), a person holding 4 entries or more, or at least the mean share of the people the table holds, is refused new work (the token request answers `invalid_grant`, "too many connected assistants"; a sign-in or a confirmation, "retry in a minute"); a newcomer is admitted while the table has room. Whatever order they arrive in, N identities (N ≥ 80) hold at most 1280 + 4 × (N − 80) places of a table (plus, in the index, one revocation placeholder each): a hundred identities each taking all they may hold at most 1360 codes and 1460 grants, and the places left go to newcomers. Filling a table takes 160 identities (128 for the index). A confirmation of a write tool is one entry whatever steps it records (the page's answer, then its approval and the operation's run are marks on that entry, which no bound refuses), so a person may have 4 confirmations in flight past 80 % and a confirmation admitted at its first step is never refused at a later one. A person's first standing revocation placeholder (a replayed code's) is not new work: only the hard bounds above refuse it. The MCP leader alone decides, from the index it holds. Below 80 % everyone may reach their own bound; past it, legitimate people who already hold 4 connections or 4 sign-ins in progress wait for one to end. The totals are sized for a hundred people at their own bound, and the full index takes about 605 KiB of the shared state ConfigMap's 768 KiB budget (client names are cut to 128 bytes once JSON-escaped). |
 
 On every call the console checks, in order: the token opens and has not
-expired; it was issued for this endpoint; the grant index is usable; the index
-holds the grant and it is not revoked; the revocation list does not name it;
-and the API server still accepts the identity provider's token for the same
-person. A grant the index does not hold is refused, never trusted on the token
-alone: only for 30 seconds after a token was issued, while the index of
-another replica catches up, is a shared index's silence accepted. While the
-index cannot be trusted (the shared state ConfigMap unreachable for more than
-30 seconds, its watch refused or broken for more than 30 seconds, so that the
-replica would not see a revocation written by another, or a grants document the
-console cannot read) every grant is refused with `503` and no new one is issued.
-The 30 seconds run from the moment the watch ended, whatever happens next: the
-read that reopens it has 10 seconds to answer, and one that does not is a
-failure, not a wait. A watch the API server closes and that opens again at once
-is routine and logs nothing. While its watch is open, each replica also reads
-the ConfigMap's metadata every 15 to 19 seconds, counted from when the previous
-read was sent (one `GET` per replica, a few hundred bytes; the ConfigMap
-itself, a few KiB on a small install and under 1 MiB at most, is read only when
-the metadata shows a version the watch has not delivered): the API server
-checks a watch's permission only when it opens, and a watch can fall behind
-while staying open. A read refused (`403`, `404`) refuses grants at once; a
-read that fails otherwise or takes more than 10 seconds is the failing mode
-above, its 30 seconds counted from when the read was sent, the watch ending
-while it is unanswered included; a read showing a ConfigMap newer than the
-watch delivered applies it at once, and the watch is opened again if it is
-still behind at the next read. So a revocation, or a permission withdrawn,
-reaches every replica serving grants within about 20 seconds, 50 if the API
-server stops answering. A watch that stays open but delivers nothing new, no
-event and no bookmark at a newer version (the API server sends one about once
-a minute, at the same version while nothing changes), is also reopened after
-10 minutes.
-A write that lands does not end that state on its own: only an open watch does. A `STATE_CONFIGMAP` that is
-missing, or that the console's ServiceAccount may not use, refuses grants the
-same way, and the console says so at start with what it needs: the ConfigMap
-in its namespace and a Role with `get`, `watch` and `update` on it by name (the
-chart renders both unless `console.rbac.create` is false, and its notes then
-give the commands).
+expired; it was issued for this endpoint; this replica leads and has loaded the
+grant index; the index holds the grant and it is not revoked; the revocation
+list does not name it; and the API server still accepts the identity provider's
+token for the same person. A grant the index does not hold is refused, never
+trusted on the token alone. A grants document the console cannot read, or of a
+format newer than it reads, refuses every grant with `503` and no new one is
+issued. While the API server does not answer, the leader keeps serving the
+grants it holds and writes what changed once it answers again; a grant it
+issues meanwhile cannot be recorded, so its code exchange answers `503`. A
+`STATE_CONFIGMAP` that is missing, or that the console's ServiceAccount may not
+use, is said at start with what it needs: the ConfigMap in its namespace and a
+Role with `get`, `watch` and `update` on it by name (the chart renders both
+unless `console.rbac.create` is false, and its notes then give the commands).
 
 ### The identity provider sign-in of a grant
 
@@ -292,51 +276,44 @@ The **Assistants** page (`/assistants`, in the user menu) lists your grants
 (application name, marked unverified, scope, when you approved it, its last use
 to within about five minutes, when it ends) and disconnects one, or all:
 `GET /api/v1/session/grants`, `DELETE /api/v1/session/grants/{id}`,
-`DELETE /api/v1/session/grants`. A disconnected grant is refused by every
-replica within about a second (the grant index is in the shared state
-ConfigMap, `STATE_CONFIGMAP`, see [sessions](authentication.md)): the
-disconnection is written to the ConfigMap before the console answers.
+`DELETE /api/v1/session/grants`. A disconnected grant is refused at once: the
+MCP leader holds the index, and writes the disconnection to the shared state
+ConfigMap (`STATE_CONFIGMAP`, see [sessions](authentication.md)) before it
+answers, so that a replica taking over refuses it too.
 
 A grant's first token is issued only once the grant is recorded in the shared
 state (a token request whose write fails answers `503
 temporarily_unavailable`, and the client starts the connection again).
-**Disconnect all**, and a disconnection of a grant the replica does not know,
-first read the shared state as the API server holds it now, then revoke every
-grant of yours it shows. A `204` (or, for one grant, a `404`) therefore means
-that every grant of yours recorded before your request is revoked; each replica
-refuses it once its watch delivers the write (about a second). A connection
-completed after your request was answered is not covered: disconnect it again.
+**Disconnect all** revokes every grant of yours the leader holds. A `204` (or,
+for one grant, a `404`) therefore means that every grant of yours recorded
+before your request is revoked. A connection completed after your request was
+answered is not covered: disconnect it again.
 
-Two `503` answers carry `Retry-After` and a problem `type`:
+Two `503` answers carry `Retry-After`:
 
-- `urn:pgtoolbox:disconnection-unrecorded`: the replica that answered revoked
-  the grants it knows, but the API server did not take the write. That replica
-  refuses them at once; the others may accept them until the write lands.
-- `urn:pgtoolbox:disconnection-unconfirmed`: the replica could not read the
-  shared state, so nothing is known to be disconnected. The page says your
-  assistants may still be connected and to retry; it never says they are
-  disconnected.
+- of problem type `urn:pgtoolbox:disconnection-unrecorded`: the leader revoked
+  the grants, but the API server did not take the write. The leader refuses
+  them at once; a replica taking over before the write lands would not.
+- without that type: the replica that answered does not serve MCP (a hand-over
+  is under way, about 2 seconds after a leader stops, about 17 after it
+  crashes).
 
-On either, the Assistants page keeps the assistant listed as "not confirmed for
-every replica yet" with a **Retry** button (no need to type the name again), and
-offers **Disconnect all**, which is the safe check: it is answered done only as
-described above. A retry that answers `404` means nothing is left to revoke.
-When the `503` persists, check that the console's ServiceAccount may `get`,
-`watch` and `update` the state ConfigMap and that the API server is reachable
-from the console pods; the console logs the shared state's mode changes
-(`shared state`).
+On either, the Assistants page keeps the assistant listed as "not confirmed
+yet" with a **Retry** button (no need to type the name again). A retry that
+answers `404` means nothing is left to revoke. When the `503` persists, check
+that a replica holds the Lease `<console>-mcp`, that the console's
+ServiceAccount may `get`, `watch` and `update` the state ConfigMap and that the
+API server is reachable from the console pods; the console logs the shared
+state's mode changes (`shared state`).
 
-With MCP OAuth on, `/readyz` waits for the first read of the ConfigMap; a later
-API server failure refuses grants (`503`) rather than taking every replica out of
-the Service. While the ConfigMap does not exist, a disconnection is answered
-done and logged: every replica refuses every grant until it exists, and the
-replica that answered writes the disconnection into it at its next read. A
-ConfigMap the console may not read or write is not answered done (`503`). A
-sign-out with **disconnect my assistants** goes on whatever the outcome; when the
-disconnection is not confirmed, the signed-out page says so. Without the shared
-state the index is in each replica's memory: a restart disconnects every
-assistant, and with more than one replica each refuses the grants of the others.
-Run one replica, or set `STATE_CONFIGMAP`.
+With MCP OAuth on, `/readyz` waits for the first read of the ConfigMap. While
+the ConfigMap does not exist, a disconnection is answered done and logged: the
+leader refuses the grant, and writes the disconnection into the ConfigMap once
+it exists; a hand-over before then loses it. A ConfigMap the console may not
+read or write is not answered done (`503`). A sign-out with **disconnect my
+assistants** goes on whatever the outcome; when the disconnection is not
+confirmed (on a replica that does not serve MCP, among others), the signed-out
+page says so.
 
 The [revocation list](authentication.md#revoking-sessions) applies to grants:
 
@@ -428,14 +405,15 @@ server, not an identity provider, and MCP clients read RFC 8414 metadata.
 
 ### Replicas and replays
 
-The grant index and the redeemed codes are shared between replicas through
-the shared state ConfigMap, written within about a second of a change. A code
-or a refresh token presented to two replicas within that second can be
-accepted by both. Using a code takes the PKCE verifier as well, which only the
-client holds; and the two holders then share one refresh generation, so the
-first refresh of either makes the other's refresh a reuse, which revokes the
-grant. The alternative, a write to the API server before every token answer,
-would put the API server on the path of every refresh.
+The MCP leader alone redeems codes and refresh tokens, and writes the grant
+index and the redeemed codes to the shared state ConfigMap within about a
+second of a change. A code or a refresh token presented once to the leader and
+again to the replica taking over from it within that second can be accepted by
+both. Using a code takes the PKCE verifier as well, which only the client
+holds; and the two holders then share one refresh generation, so the first
+refresh of either makes the other's refresh a reuse, which revokes the grant.
+The alternative, a write to the API server before every token answer, would put
+the API server on the path of every refresh.
 
 When the table of redeemed codes is full, a code exchange answers `503
 temporarily_unavailable` and spends nothing: the client may retry the same
@@ -614,9 +592,8 @@ state, and good for **two minutes**. The answer is spent in the shared index
 before anything runs, so a replayed answer is refused (`409`, *already used*).
 With `STATE_CONFIGMAP` the spend is written to the ConfigMap (an update under
 the API server's optimistic concurrency) before the operation runs, so a
-replay sent to another replica is refused too, even before that replica's
-watch has delivered the write; without it, the spend is in the replica's
-memory (run one replica). When the spend cannot be recorded (the ConfigMap is
+replay sent to the replica taking over from the MCP leader is refused too;
+without it, the spend is in the leader's memory. When the spend cannot be recorded (the ConfigMap is
 not writable or keeps conflicting, or too many confirmations are pending), the
 tool refuses with `503` and does nothing. The page's answer and its approval
 or refusal are written the same way.
@@ -629,9 +606,8 @@ What each kind of confirmation guarantees:
 | URL | `restart`, `promote` | opens the console's page `/mcp/confirm`, signed in to the console **in their own browser**, checks what asked (a console grant: its client's declared name and the callback host its consent sent the code to; or a raw API-server token), when, and for `promote` the primary now and after, types the Cluster (or instance) name, approves | that the person approved. The page needs the person's browser session (an MCP client holds no such cookie), posts only from the console's own origin (the CSRF rules), is bound to the person the tool asked for, and takes one answer. The tool runs only once the page recorded the approval. |
 
 After approving on the page, the person returns to the client and continues;
-the client calls the tool again. With several replicas, an answer reaches the
-other replicas in about a second: a call that arrives before is asked again
-(at most three times), then refused.
+the client calls the tool again. A call that arrives before the page recorded
+an answer is asked again (at most three times), then refused.
 
 A client that cannot ask is **refused**, and nothing is done: without form
 elicitation for `backup` and `reload`, without **URL** elicitation for

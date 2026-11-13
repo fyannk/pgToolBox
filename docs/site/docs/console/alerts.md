@@ -117,20 +117,3 @@ revoked the grant the first redemption bought, as the OAuth rules require. A sto
 code is possible; so is a client that retried a token request after a timeout.
 Check the `mcp.token` audit lines for the client and the person, and ask them to
 reconnect.
-
-### PgToolBoxConsoleMCPGrantsRefused
-
-Severity `warning`. One console replica has not been reading and watching its
-shared state ConfigMap (`STATE_CONFIGMAP`) for more than 30 seconds: its mode
-(the alert's `mode` label) is `failing` (the API server refuses or does not
-answer its reads, writes or watch), `missing` (the ConfigMap does not exist) or
-`forbidden` (its ServiceAccount may not use it). Past 30 seconds such a replica
-refuses every MCP token and sign-in with `503`, rather than serve a grant
-another replica revoked. The other replicas keep serving.
-
-`missing` and `forbidden` are set-up problems: the console log says, once, what
-to create (the ConfigMap, or the Role with `get`, `watch` and `update` on it by
-name). `failing` is the API server: look for `429` or `503` answers to the
-console's ServiceAccount (API Priority and Fairness shedding long-running
-requests refuses the watch first) and at the API server's own health. The
-replica returns to `live` by itself once its watch opens again.
