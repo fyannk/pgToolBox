@@ -69,6 +69,61 @@ fragment (plain `http` only on `localhost`, `127.0.0.1` or `[::1]`, a console on
 your own computer). Otherwise it logs a warning at start and the endpoint
 accepts [raw API-server tokens](#raw-api-server-tokens-break-glass) only.
 
+### One Pod serves MCP
+
+With the endpoint on, one Pod alone serves MCP and writes the grants: the
+holder of the Lease `<console>-mcp`, as CloudNativePG's `-rw` Service follows
+the primary. The exposure sends these paths to the Service `<console>-mcp` and
+everything else to the console's own Service:
+
+| Path | Match |
+|---|---|
+| `/mcp` | prefix (with `/mcp/confirm`) |
+| `/oauth` | prefix (`/oauth/authorize`, `/oauth/token`, `/oauth/register`) |
+| `/api/v1/session/grants` | prefix (the Assistants page) |
+| `/logout` | exact |
+
+An Ingress gets four more paths, an HTTPRoute one more rule (with the same
+stream timeout), and an OpenShift Route, which has one path, four more Routes:
+`<console>-mcp-mcp`, `-oauth`, `-grants` and `-logout`. A Pod that does not
+hold the Lease answers those paths `503` with `Retry-After: 2`; a sign-out
+there works but does not disconnect assistants. No component writes an
+EndpointSlice.
+
+**With the operator** (`PgToolBoxConsole`), every replica is a candidate. The
+operator follows the Lease and labels its holder's Pod
+`pgtoolbox.fyannk.dev/mcp-leader: "true"`, taking the label off the others
+(and off every Pod when nobody holds the Lease or it expired); the Service
+`<console>-mcp` selects the console's Pods with that label. A hand-over takes
+about 2 seconds when the holder stops, about 17 when it crashes, plus the
+moment the operator takes to move the label; while the operator is down the
+label stays where it was, and a former holder answers `503` until it moves.
+
+**With the team chart** (`pgtools`, no operator), MCP runs in a Deployment of
+its own, `<fullname>-mcp`: one replica (rolled with a surge, so an old and a
+new Pod overlap and the Lease keeps a single writer), the console's image,
+configuration and security context, `app.kubernetes.io/component:
+console-mcp`, with in-memory history and no digest delivery (both stay with
+the console's replicas). The console's replicas run MCP with
+`MCP_CANDIDATE=false`: they never take the Lease. A crash of the MCP Pod costs
+the time Kubernetes takes to start another, tens of seconds; the loss of its
+node about 5 minutes (until the node is declared lost). The chart's
+NetworkPolicies select the MCP Pod with the console's.
+
+Both installs grant the console `get` and `update` on that one Lease by name:
+no `create`, nothing on Pods. With the chart's `console.rbac.create: false`,
+grant them yourself, or the MCP Pod never leads and MCP answers `503`.
+
+Without an exposure (the chart's `console.exposure.type: none`), port-forward
+the MCP paths to the MCP Service:
+
+```sh
+kubectl -n team-a port-forward svc/<fullname>-mcp 8080:80
+```
+
+A `PgToolBoxConsole` of type `clusterIP` has the same Service
+`<console>-mcp`, which follows the holder.
+
 The transport is MCP Streamable HTTP in its stateless form: every request is
 authenticated on its own, any replica answers, and no session is kept. A
 request carries one JSON-RPC message: batches are refused with `400`.

@@ -66,6 +66,7 @@ Key values (the full list is in the chart's `values.yaml`):
 | `console.operations.enabled` | `true` | `false` makes the [write endpoints](../operations.md) refuse. |
 | `console.image.digest`, `global.imageRegistry` | empty in git; the published chart carries the released digests | A digest wins over the tag. [The published chart is digest-pinned](../release.md#the-charts-digest-pinned-images-and-their-own-signatures); air-gapped installs prefix a mirror. |
 | `console.logs.streamEnabled`, `console.logs.matchMaxAge` | `true`, `6h` | The diagnostics log matcher (`LOG_STREAM_ENABLED`, `LOG_MATCH_MAX_AGE`); forced off without `console.rbac.podLogs`. |
+| `console.mcp.enabled` | `false` | The [MCP endpoint](../console/mcp.md). It adds a one-replica Deployment `<fullname>-mcp`, the only Pod that serves MCP, with its Service, Lease and Role; the exposure sends the MCP paths there. A crash of that Pod costs tens of seconds of MCP, the loss of its node about 5 minutes ([one Pod serves MCP](../console/mcp.md#one-pod-serves-mcp)). |
 
 ## The operator
 
@@ -82,7 +83,10 @@ The CRDs carry `helm.sh/resource-policy: keep`: uninstalling the release does no
 delete every `PgToolBoxConsole`, `PgAdmin` and `EvidenceAgent` in the cluster. Operator
 values are explained on [the operator page](../operator/index.md); `image.digest`
 and `operator.console.image.digest` pin the operator and the console it runs for a
-`PgToolBoxConsole`.
+`PgToolBoxConsole`. With a `PgToolBoxConsole`'s MCP on, every console replica is a
+candidate and the operator labels the one serving MCP: a hand-over takes about
+2 seconds when that replica stops, about 17 when it crashes, plus the
+operator's reaction ([one Pod serves MCP](../console/mcp.md#one-pod-serves-mcp)).
 
 ## Upgrade and uninstall
 

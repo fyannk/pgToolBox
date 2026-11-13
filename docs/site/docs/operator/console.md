@@ -76,6 +76,14 @@ it (`<name>`, or `<name>-console` when the name does not already say console):
   RoleBinding letting the console `get` and `update` that one Lease and `create`
   leases (RBAC cannot scope a create by name; the console creates only that one,
   should it be deleted);
+- with `mcp.enabled`, [the MCP leader's](../console/mcp.md#one-pod-serves-mcp)
+  Lease `<name>-mcp` (**created once**, then written by the replicas), the
+  Service `<name>-mcp` selecting the console Pod labelled
+  `pgtoolbox.fyannk.dev/mcp-leader: "true"`, which the operator sets on the
+  Lease holder's Pod alone, the MCP paths of the exposure (four Routes on
+  OpenShift), and a Role and RoleBinding letting the console `get` and
+  `update` that Lease by name; with MCP off the Service, the Routes, the grant
+  and the label go, the Lease stays until the `PgToolBoxConsole` goes;
 - the lifecycle ConfigMap (below);
 - unless `spec.instanceCABundleRef` is set, the instance CA bundle
   `<name>-instance-ca` (below);
@@ -192,10 +200,13 @@ has the `bind` verb on those three names only. So a `PgToolBoxConsole` reads exa
 RBAC allows (a SelfSubjectAccessReview sent with the reader's token). If an installation lacks one it needs,
 the console stalls with `ConsoleRoleMissing` and looks again every two minutes.
 
-The Roles it writes (the revocation list, the state ConfigMap, the digest Lease)
-grant only verbs the operator holds itself, as RBAC escalation prevention
-requires: hence its `get`, `create` and `update` on leases, which it uses only to
-create each delivering console's Lease.
+The Roles it writes (the revocation list, the state ConfigMap, the digest and
+MCP Leases) grant only verbs the operator holds itself, as RBAC escalation
+prevention requires: hence its `get`, `create` and `update` on leases, which it
+uses only to create each console's Leases. It also `list`s and `watch`es Leases
+(its cache holds only those it created) to follow the MCP Lease's holder, and
+`patch`es Pods to move the MCP leader label: only on the console's own Pods,
+only that label.
 
 ## The lifecycle table
 
