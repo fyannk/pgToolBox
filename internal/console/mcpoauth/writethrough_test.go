@@ -19,29 +19,18 @@ import (
 	"errors"
 	"net/http"
 	"sync"
-	"sync/atomic"
 	"testing"
 
 	"github.com/fyannk/pgToolBox/internal/console/auth"
 	"github.com/fyannk/pgToolBox/internal/console/sharedstate"
 )
 
-// scripted is an index whose shared-state reads and grant writes answer
-// as the test says, counting them.
+// scripted is an index whose grant writes answer as the test says.
 type scripted struct {
 	*sharedstate.Store
 	mu        sync.Mutex
-	readErr   error
 	writeErr  error
-	reads     atomic.Int32
 	grantsSet []string
-}
-
-func (s *scripted) ReadGrants(context.Context) error {
-	s.reads.Add(1)
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.readErr
 }
 
 func (s *scripted) WriteGrant(_ context.Context, id string) error {
@@ -57,8 +46,8 @@ func (s *scripted) WriteGrant(_ context.Context, id string) error {
 // A grant's first token is issued only once the grant is written to the
 // shared state (round 22, Go P2-1, security): a token request whose write
 // fails is 503 temporarily_unavailable, no token, and the grant is revoked
-// on the replica that recorded it, so it can never be written unrevoked
-// later and served past a Disconnect all answered done elsewhere.
+// here, so that it can never be written unrevoked later; every grant an
+// assistant holds is in the ConfigMap the next leader loads.
 func TestNoTokenBeforeTheGrantIsWritten(t *testing.T) {
 	c := &clock{now: t0}
 	f := newSessions(t, c, secretA)
@@ -101,59 +90,35 @@ func TestACodeOfASignedOutSessionBuysNothing(t *testing.T) {
 	}
 }
 
-// The two 503s of a disconnection are told apart (round 22, DBA): a read
-// of the shared state that fails is ErrNotConfirmed, whether or not this
-// replica revoked anything; a write that fails after a good read is
-// ErrNotRecorded.
-func TestADisconnectionTellsAReadFromAWriteFailure(t *testing.T) {
+// A disconnection whose write fails is ErrNotRecorded, and the grant is
+// refused here at once all the same.
+func TestADisconnectionWhoseWriteFailsIsNotRecorded(t *testing.T) {
 	ctx := context.Background()
 	c := &clock{now: t0}
 	f := newSessions(t, c, secretA)
-	store := &scripted{Store: memoryStore(c)}
-	r := newReplica(t, f, store, c, nil)
-
-	store.readErr = sharedstate.ErrNotRecorded
-	if n, err := r.s.DisconnectAll(ctx, auth.Client{}, "alice"); n != 0 || !errors.Is(err, ErrNotConfirmed) || errors.Is(err, ErrNotRecorded) {
-		t.Errorf("nothing known here, read failed: %d, %v; want ErrNotConfirmed only", n, err)
-	}
-	if err := r.s.RevokeGrant(ctx, auth.Client{}, "alice", unknownGrant); !errors.Is(err, ErrNotConfirmed) {
-		t.Errorf("an unknown grant, read failed: %v, want ErrNotConfirmed", err)
-	}
-	store.readErr = nil
+	u := &unrecorded{Store: memoryStore(c), pending: map[string]bool{}}
+	r := newReplica(t, f, u, c, nil)
 	_, tok := r.connect(t)
-	store.readErr = sharedstate.ErrNotRecorded
-	if n, err := r.s.DisconnectAll(ctx, auth.Client{}, "alice"); n != 1 || !errors.Is(err, ErrNotConfirmed) {
-		t.Errorf("one known here, read failed: %d, %v; want 1 and ErrNotConfirmed", n, err)
+	u.setFail(true)
+	if n, err := r.s.DisconnectAll(ctx, auth.Client{}, "alice"); n != 1 || !errors.Is(err, ErrNotRecorded) {
+		t.Errorf("write failed: %d, %v; want 1 and ErrNotRecorded", n, err)
 	}
 	if _, err := r.authenticate(tok.Access); !errors.Is(err, auth.ErrBearerRevoked) {
-		t.Errorf("the grant this replica knew is not revoked here: %v", err)
+		t.Errorf("the grant is not refused at once: %v", err)
 	}
-
-	store.readErr = nil
-	u := &unrecorded{Store: memoryStore(c), pending: map[string]bool{}}
-	r = newReplica(t, f, u, c, nil)
-	_, _ = r.connect(t)
-	u.setFail(true)
-	if _, err := r.s.DisconnectAll(ctx, auth.Client{}, "alice"); !errors.Is(err, ErrNotRecorded) || errors.Is(err, ErrNotConfirmed) {
-		t.Errorf("read fine, write failed: %v; want ErrNotRecorded only", err)
+	if n, err := r.s.DisconnectAll(ctx, auth.Client{}, "nobody"); n != 0 || err != nil {
+		t.Errorf("nothing to disconnect: %d, %v; want 0 and nil", n, err)
 	}
 }
 
-// An ID that is no grant reference reads nothing (round 22, k8s P2-1):
-// it is ErrNoSuchGrant before any read of the shared state.
-func TestAMalformedGrantIDReadsNothing(t *testing.T) {
+// An ID that is no grant reference, or a grant the leader's index does not
+// hold, is ErrNoSuchGrant: the index is the authority.
+func TestAnUnknownGrantIsNoSuchGrant(t *testing.T) {
 	ctx := context.Background()
-	c := &clock{now: t0}
-	f := newSessions(t, c, secretA)
-	store := &scripted{Store: memoryStore(c)}
-	r := newReplica(t, f, store, c, nil)
-
-	for _, bad := range []string{"grant-x", "x", "", "grant-0123456789ABCDEF0123456789ABCDEF"} {
+	_, _, r := setup(t)
+	for _, bad := range []string{"grant-x", "x", "", "grant-0123456789ABCDEF0123456789ABCDEF", unknownGrant} {
 		if err := r.s.RevokeGrant(ctx, auth.Client{}, "alice", bad); !errors.Is(err, ErrNoSuchGrant) {
 			t.Errorf("RevokeGrant(%q) = %v, want ErrNoSuchGrant", bad, err)
 		}
-	}
-	if n := store.reads.Load(); n != 0 {
-		t.Fatalf("malformed IDs made %d reads", n)
 	}
 }

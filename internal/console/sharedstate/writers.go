@@ -206,7 +206,6 @@ func (s *Store) stampLocked(cm *corev1.ConfigMap) {
 // returned it): this replica's own heartbeat.
 func (s *Store) wroteLocked(updated *corev1.ConfigMap) {
 	s.ownBeat, s.ownSince = updated.Annotations[writerAnnotation(formatVersion)], s.opts.Now()
-	s.landedLocked(updated.Data[KeyGrants])
 }
 
 // takingOverLocked reports whether the document raw of key is a newer

@@ -212,12 +212,7 @@ Without `HISTORY_PATH` nothing is written and a restart starts empty.
 written by the console itself (with the digest Lease, the only writes it makes
 with its own identity besides the opt-in drill teardown: `get`, `watch` and
 `update` on that name only). Every replica watches it and merges what the
-others wrote, and reads its metadata again every 15 to 19 seconds while
-watching (one `GET` per replica of a few hundred bytes; the whole ConfigMap
-only when the watch has not delivered the version it shows), to see a
-permission withdrawn or a watch that fell behind ([MCP grants](mcp.md)). A
-disconnection of an MCP grant reads the whole ConfigMap once more before it
-answers:
+others wrote:
 
 | Key | What it holds |
 |---|---|
@@ -272,19 +267,14 @@ delete the document's key from the ConfigMap; what it held is lost (for
 `grants.json`, every assistant connects again). A document of no version (`{}`)
 is read as empty and rewritten.
 
-MCP grants are merged against what each replica last read, not added up: a
-grant the ConfigMap no longer holds was pruned, reset or deleted by another
-replica, and is dropped. So a replica cut off from the API server while a grant
-was revoked, and the revocation pruned 10 minutes later, does not bring the
-grant back when it reconnects, nor does one that missed a take-over. A grant a
-replica recorded itself is kept while its own write is on the way, for at most 8
-minutes; a revocation it made is kept until the ConfigMap holds it, however
-long that takes, past its own expiry too. A replica cut
-off longer than that loses the grants it recorded meanwhile (their assistants
-connect again), and it refuses every grant from 30 seconds into the outage
-anyway. A ConfigMap deleted and recreated (a new UID) resets the grants, but
-every replica writes the revocations it knows into the new one, so a grant
-still recorded on another replica does not come back unrevoked.
+MCP grants (`grants.json`) are held by the [MCP leader](mcp.md#one-pod-serves-mcp)
+alone. It reads the document when it takes the Lease, replacing whatever it
+held, so a grant revoked and pruned meanwhile does not come back; it then
+merges only a late write of the replica it took over from, and drops its grants
+when it steps down. The other replicas write `grants.json` exactly as they read
+it. A revocation the leader made holds at once and is kept until the ConfigMap
+holds it; a ConfigMap deleted and recreated gets the leader's grants and
+revocations with its next write.
 
 A ConfigMap older than the one a replica last merged (a watch event still
 queued) is not merged. Should the API server's revision go back (an etcd
@@ -292,7 +282,7 @@ restore that did not bump it), two reads in a row older than what a replica
 merged are taken as the ConfigMap, logged once: the replicas then read and write
 again. A write still conflicting after five re-reads counts as a failure
 (`pgtoolbox_console_shared_state_write_exhausted_total`): the replica is in the
-failing mode, and refuses MCP grants 30 seconds later, until a write lands.
+failing mode until a write lands.
 A replica in the failing mode retries a write about a second later and then
 with backoff (up to a minute apart), with nothing of its own pending too, so a
 failed write leaves it failing only while the API server keeps refusing. A

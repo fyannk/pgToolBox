@@ -21,6 +21,18 @@ import (
 	"time"
 )
 
+// led adds the MCP leader's settings, which MCP on requires.
+func led(env map[string]string) map[string]string {
+	env[EnvMCPLease] = "console-mcp"
+	return env
+}
+
+// ledMCP is want with the settings led adds.
+func ledMCP(want MCP) MCP {
+	want.Lease, want.Candidate = "console-mcp", true
+	return want
+}
+
 func TestMCP(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -30,11 +42,11 @@ func TestMCP(t *testing.T) {
 		wantVar string
 	}{
 		{"off by default", nil, MCP{MaxResultBytes: 256 << 10, CallTimeout: 20 * time.Second, AccessTTL: time.Hour}, ""},
-		{"on", map[string]string{EnvMCPEnabled: "true"}, MCP{Enabled: true, MaxResultBytes: 256 << 10, CallTimeout: 20 * time.Second, AccessTTL: time.Hour}, ""},
+		{"on", led(map[string]string{EnvMCPEnabled: "true"}), ledMCP(MCP{Enabled: true, MaxResultBytes: 256 << 10, CallTimeout: 20 * time.Second, AccessTTL: time.Hour}), ""},
 		{
 			"write tools reserved, on with the endpoint",
-			map[string]string{EnvMCPEnabled: "true", EnvMCPWriteTools: "true", EnvMCPMaxResultBytes: "65536", EnvMCPCallTimeout: "5s"},
-			MCP{Enabled: true, WriteTools: true, MaxResultBytes: 64 << 10, CallTimeout: 5 * time.Second, AccessTTL: time.Hour},
+			led(map[string]string{EnvMCPEnabled: "true", EnvMCPWriteTools: "true", EnvMCPMaxResultBytes: "65536", EnvMCPCallTimeout: "5s"}),
+			ledMCP(MCP{Enabled: true, WriteTools: true, MaxResultBytes: 64 << 10, CallTimeout: 5 * time.Second, AccessTTL: time.Hour}),
 			"",
 		},
 		{"write tools without the endpoint", map[string]string{EnvMCPWriteTools: "true"}, MCP{}, EnvMCPWriteTools},
@@ -45,8 +57,8 @@ func TestMCP(t *testing.T) {
 		{"timeout too short", map[string]string{EnvMCPCallTimeout: "100ms"}, MCP{}, EnvMCPCallTimeout},
 		{
 			"oauth settings",
-			map[string]string{EnvMCPEnabled: "true", EnvMCPOAuthAccessTTL: "20s", EnvMCPOAuthClientMetadata: "true"},
-			MCP{Enabled: true, MaxResultBytes: 256 << 10, CallTimeout: 20 * time.Second, AccessTTL: 20 * time.Second, ClientMetadataDocuments: true},
+			led(map[string]string{EnvMCPEnabled: "true", EnvMCPOAuthAccessTTL: "20s", EnvMCPOAuthClientMetadata: "true"}),
+			ledMCP(MCP{Enabled: true, MaxResultBytes: 256 << 10, CallTimeout: 20 * time.Second, AccessTTL: 20 * time.Second, ClientMetadataDocuments: true}),
 			"",
 		},
 		{"access ttl too short", map[string]string{EnvMCPOAuthAccessTTL: "1s"}, MCP{}, EnvMCPOAuthAccessTTL},
@@ -54,11 +66,11 @@ func TestMCP(t *testing.T) {
 		{"bad metadata switch", map[string]string{EnvMCPOAuthClientMetadata: "yes"}, MCP{}, EnvMCPOAuthClientMetadata},
 		{
 			"metadata hosts",
-			map[string]string{EnvMCPEnabled: "true", EnvMCPOAuthClientMetadata: "true", EnvMCPOAuthClientMetadataHosts: " Claude.AI, chatgpt.com,claude.ai,"},
-			MCP{
+			led(map[string]string{EnvMCPEnabled: "true", EnvMCPOAuthClientMetadata: "true", EnvMCPOAuthClientMetadataHosts: " Claude.AI, chatgpt.com,claude.ai,"}),
+			ledMCP(MCP{
 				Enabled: true, MaxResultBytes: 256 << 10, CallTimeout: 20 * time.Second, AccessTTL: time.Hour, ClientMetadataDocuments: true,
 				ClientMetadataHosts: []string{"claude.ai", "chatgpt.com"},
-			},
+			}),
 			"",
 		},
 		{"bad metadata host", map[string]string{EnvMCPOAuthClientMetadataHosts: "https://claude.ai"}, MCP{}, EnvMCPOAuthClientMetadataHosts},
@@ -76,7 +88,7 @@ func TestMCP(t *testing.T) {
 		},
 		{"leader without the endpoint", map[string]string{EnvMCPLease: "console-mcp"}, MCP{}, EnvMCPLease},
 		{"bad lease", map[string]string{EnvMCPEnabled: "true", EnvMCPLease: "Console_MCP"}, MCP{}, EnvMCPLease},
-		{"no candidate without a lease", map[string]string{EnvMCPEnabled: "true", EnvMCPCandidate: "false"}, MCP{}, EnvMCPCandidate},
+		{"on without a lease", map[string]string{EnvMCPEnabled: "true"}, MCP{}, EnvMCPLease},
 		{"bad candidate switch", map[string]string{EnvMCPEnabled: "true", EnvMCPLease: "console-mcp", EnvMCPCandidate: "no"}, MCP{}, EnvMCPCandidate},
 	}
 	for _, c := range cases {

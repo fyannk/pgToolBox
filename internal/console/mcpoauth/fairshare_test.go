@@ -17,30 +17,30 @@ package mcpoauth
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"testing"
-	"time"
+
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes/fake"
 
 	"github.com/fyannk/pgToolBox/internal/console/sharedstate"
 )
 
-// crowd fills store past four fifths of its grants, a hundred people
-// holding thirteen each (the mean), and gives key four grants: key is
-// then past the fair share of new work. The grants are recorded Rotated,
-// which the fair share does not refuse.
-func crowd(t *testing.T, store *sharedstate.Store, key string, at time.Time) {
+// crowded is the leader's index loaded from a ConfigMap past four
+// fifths of its grants, a hundred people holding thirteen each (the
+// mean), key holding four: key is then past the fair share of new work.
+// A load is not new work: nothing refuses what the ConfigMap holds.
+func crowded(t *testing.T, c *clock, key string) *sharedstate.Store {
 	t.Helper()
+	at := c.Now().Unix()
+	grants := map[string]map[string]any{}
 	n := 0
 	add := func(user string) {
 		n++
-		err := store.AddGrant(sharedstate.Grant{
-			ID: fmt.Sprintf("grant-%032x", 1<<40+n), UserHash: user, Client: "other", Scope: "mcp:read",
-			Created: at, LastUsed: at, Expiry: at.Add(time.Hour), Rotated: true,
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
+		grants[fmt.Sprintf("grant-%032x", 1<<40+n)] = map[string]any{"u": user, "c": "other", "s": "mcp:read", "t": at, "l": at, "e": at + 3600}
 	}
 	for p := range 100 {
 		sum := sha256.Sum256([]byte(fmt.Sprint("crowd", p)))
@@ -51,31 +51,23 @@ func crowd(t *testing.T, store *sharedstate.Store, key string, at time.Time) {
 	for range 4 {
 		add(key)
 	}
-}
-
-// Work that is not new is not refused by the fair share (round-11
-// review): a refresh landing on a replica that has not seen its grant
-// rotate re-records it there, and a legitimate holder past the fair
-// share is not disconnected; a new grant of the same person is still
-// refused.
-func TestARefreshReRecordingAGrantIsNotRefusedByTheFairShare(t *testing.T) {
-	c := &clock{now: t0}
-	f := newSessions(t, c, secretA)
-	a := newReplica(t, f, memoryStore(c), c, nil)
-	sb := memoryStore(c)
-	b := newReplica(t, f, sharedView{sb}, c, nil)
-	id, tok := a.connect(t)
-	crowd(t, sb, b.s.userKey("alice"), c.Now())
-
-	c.Add(replicationGrace / 2)
-	if w, _, _ := b.token(t, refreshForm(id, tok.Refresh)); w.Code != http.StatusOK {
-		t.Fatalf("a refresh re-recording a grant past the fair share: %d %s", w.Code, w.Body)
+	raw, err := json.Marshal(map[string]any{"version": 2, "grants": grants, "codes": map[string]any{}})
+	if err != nil {
+		t.Fatal(err)
 	}
-	// New work is still refused: a code exchange on B.
-	q := b.consent(t, authorizeQuery(b.clientID(t), loopback), "approve")
-	if w, _, e := b.token(t, codeForm(q.Get("client_id"), q.Get("code"))); w.Code != http.StatusBadRequest || e != "invalid_grant" {
-		t.Errorf("a new grant past the fair share: %d %s", w.Code, w.Body)
+	cs := fake.NewClientset(&corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: "console-state", Namespace: "team-a", ResourceVersion: "1"},
+		Data:       map[string]string{sharedstate.KeyGrants: string(raw)},
+	})
+	store := sharedstate.New(sharedstate.Options{Client: cs.CoreV1().ConfigMaps("team-a"), Name: "console-state", Now: c.Now})
+	store.SetLeader(func() bool { return true })
+	if err := store.LoadGrants(t.Context()); err != nil {
+		t.Fatal(err)
 	}
+	if !store.GrantsUsable() {
+		t.Fatal("the crowded index is not usable")
+	}
+	return store
 }
 
 // A replayed code's revocation is recorded even when its person is past
@@ -84,13 +76,13 @@ func TestARefreshReRecordingAGrantIsNotRefusedByTheFairShare(t *testing.T) {
 func TestAReplayedCodesRevocationIsRecordedPastTheFairShare(t *testing.T) {
 	c := &clock{now: t0}
 	f := newSessions(t, c, secretA)
-	store := memoryStore(c)
+	key := newReplica(t, f, memoryStore(c), c, nil).s.userKey("alice")
+	store := crowded(t, c, key)
 	r := newReplica(t, f, store, c, nil)
 	cid := r.clientID(t)
-	crowd(t, store, r.s.userKey("alice"), c.Now())
 	code := r.consent(t, authorizeQuery(cid, loopback), "approve").Get("code")
-	// The first redemption spends the code; its grant is refused here (new
-	// work past the fair share), as it could have been recorded elsewhere.
+	// The first redemption spends the code; its grant is refused (new
+	// work past the fair share).
 	if w, _, e := r.token(t, codeForm(cid, code)); w.Code != http.StatusBadRequest || e != "invalid_grant" {
 		t.Fatalf("first redemption: %d %s", w.Code, w.Body)
 	}

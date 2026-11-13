@@ -100,7 +100,7 @@ type Options struct {
 	// authenticates every request with its bearer. nil serves none.
 	MCP Mounter
 	// MCPGate refuses the MCP leader's paths on a replica that does not
-	// lead (mcpleader.Leader.Gate); nil when every replica serves MCP.
+	// lead (mcpleader.Leader.Gate); nil with MCP off.
 	MCPGate func(http.Handler) http.Handler
 	// Tracing wraps the main listener in a server span per request;
 	// nil: no spans, no wrapper.

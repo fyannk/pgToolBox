@@ -28,7 +28,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/watch"
 )
 
 // hangGet: Get blocks (an API server that queues the read in its flow
@@ -45,90 +44,6 @@ func (h *hangGet) Get(ctx context.Context, name string, o metav1.GetOptions) (*c
 		return nil, ctx.Err()
 	}
 	return h.watchControl.Get(ctx, name, o)
-}
-
-// grantOnTwoReplicas sets up b, a replica that records a grant on api
-// (revoke has it revoke the grant later).
-func grantOnTwoReplicas(t *testing.T, api *apiServer, clock *testClock) (b *Store, id string) {
-	t.Helper()
-	b = loaded(t, api, clock)
-	id = grantID(9)
-	if err := b.AddGrant(Grant{ID: id, UserHash: uh("alice"), Client: "c", Created: t0, Expiry: t0.Add(time.Hour)}); err != nil {
-		t.Fatal(err)
-	}
-	flushed(t, b)
-	return b, id
-}
-
-func revoke(t *testing.T, b *Store, clock *testClock, id string) {
-	t.Helper()
-	b.RevokeGrant(id, uh("alice"), clock.Now(), t0.Add(time.Hour))
-	if err := b.WriteRevocations(t.Context(), id); err != nil {
-		t.Fatal(err)
-	}
-}
-
-// The watch ends (closed by the API server, or a lost connection found
-// by its ping) and the read that reopens it does not answer: the replica
-// serves grants for staleGrace from the end of the watch, then refuses
-// them, so a revocation another replica wrote is not served past it
-// (round 19, Go P2-1 = security P2-1; the reviewers' probes
-// TestR19LiveAfterTheWatchEnds and TestR19ClosedWatchThenHungGetStaysLive,
-// which saw the revoked grant usable 2 and 10 minutes on).
-func TestAnEndedWatchStartsTheGrace(t *testing.T) {
-	clock := &testClock{now: t0}
-	api := newAPIServer()
-	b, id := grantOnTwoReplicas(t, api, clock)
-	wc := &watchControl{apiServer: api}
-	h := &hangGet{watchControl: wc}
-	a := controlled(h, clock, 10*time.Millisecond)
-	run(t, a)
-	eventually(t, "a live", func() bool { return modeOf(a) == modeLive && wc.count() == 1 })
-	eventually(t, "a knows the grant", func() bool { _, ok := a.Grant(id); return ok })
-
-	h.hang.Store(true)
-	wc.mu.Lock()
-	wc.last.Stop()
-	wc.mu.Unlock()
-	eventually(t, "a not watching", func() bool { a.mu.Lock(); defer a.mu.Unlock(); return !a.watching })
-	revoke(t, b, clock, id)
-	// A watch being reopened: still usable within staleGrace.
-	clock.Add(staleGrace - time.Second)
-	if !a.GrantsUsable() {
-		t.Fatalf("a: mode %s, grants refused %s after the watch ended, want usable within staleGrace", modeOf(a), staleGrace-time.Second)
-	}
-	clock.Add(time.Second)
-	for i := range 4 {
-		if a.GrantsUsable() && !a.GrantRevoked(id) {
-			t.Fatalf("a: mode %s, the revoked grant usable %s after the watch ended", modeOf(a), staleGrace+time.Duration(i)*time.Minute)
-		}
-		clock.Add(time.Minute)
-		time.Sleep(20 * time.Millisecond)
-	}
-}
-
-// A replica live with no watch that then fails (the hung read gives up,
-// or answers 503) runs the failing mode's staleGrace from the end of the
-// watch, not from the failure: the time spent reopening it counts.
-func TestAFailureAfterTheWatchEndedKeepsItsStart(t *testing.T) {
-	clock := &testClock{now: t0}
-	s := newStore(newAPIServer(), clock, nil)
-	s.mu.Lock()
-	s.watchOpenedLocked()
-	s.watching, s.unwatchedAt = false, t0
-	s.mu.Unlock()
-	clock.Add(20 * time.Second)
-	_ = s.failed(apierrors.NewServiceUnavailable("overloaded"))
-	if m := modeOf(s); m != modeFailing {
-		t.Fatalf("mode %s, want failing", m)
-	}
-	if s.since != t0 {
-		t.Errorf("failing since %s, want %s (the end of the watch)", s.since, t0)
-	}
-	clock.Add(staleGrace - 20*time.Second)
-	if s.GrantsUsable() {
-		t.Errorf("grants usable %s after the watch ended", staleGrace)
-	}
 }
 
 // The read that reopens a watch has writeTimeout to answer: one that
@@ -158,54 +73,8 @@ func TestAHungReadEndsAsAFailure(t *testing.T) {
 	}
 }
 
-// deafWatch opens watches the API server never feeds once deaf is set.
-type deafWatch struct {
-	*apiServer
-	deaf  atomic.Bool
-	opens atomic.Int32
-}
-
-func (d *deafWatch) Watch(ctx context.Context, o metav1.ListOptions) (watch.Interface, error) {
-	d.opens.Add(1)
-	if !o.AllowWatchBookmarks {
-		return nil, errors.New("the watch asks for no bookmarks")
-	}
-	if d.deaf.Load() {
-		return watch.NewRaceFreeFake(), nil
-	}
-	return d.apiServer.Watch(ctx, o)
-}
-
-// An open watch that delivers nothing, not even a bookmark, for
-// WatchIdle is opened again, with a read: a revocation written elsewhere
-// is seen, rather than missed for as long as the API server keeps the
-// deaf watch open (round 19, security P3-1; the reviewer's probe
-// TestR19DeafWatchStaysLive).
-func TestADeafWatchIsReopened(t *testing.T) {
-	clock := &testClock{now: t0}
-	api := newAPIServer()
-	b, id := grantOnTwoReplicas(t, api, clock)
-	d := &deafWatch{apiServer: api}
-	d.deaf.Store(true)
-	a := New(Options{
-		Client: d, Name: "console-state", Now: clock.Now, Logger: slog.New(slog.DiscardHandler),
-		Debounce: 5 * time.Millisecond, UrgentDebounce: time.Millisecond,
-		Backoff:   func(int) time.Duration { return 10 * time.Millisecond },
-		WatchIdle: 100 * time.Millisecond,
-	})
-	run(t, a)
-	eventually(t, "a live", func() bool { return modeOf(a) == modeLive })
-	eventually(t, "a knows the grant", func() bool { _, ok := a.Grant(id); return ok })
-	revoke(t, b, clock, id)
-	eventually(t, "a sees the revocation through a deaf watch", func() bool { return a.GrantRevoked(id) })
-	if d.opens.Load() < 2 {
-		t.Errorf("%d watches opened, want the deaf one reopened", d.opens.Load())
-	}
-}
-
 // A watch the API server closes and that reopens at once is a routine
-// rotation: no "unreachable" line in the log, and grants served
-// throughout.
+// rotation: no "unreachable" line in the log.
 func TestAWatchRotationIsQuiet(t *testing.T) {
 	clock := &testClock{now: t0}
 	api := newAPIServer()
@@ -229,9 +98,6 @@ func TestAWatchRotationIsQuiet(t *testing.T) {
 			defer a.mu.Unlock()
 			return a.watching && wc.count() == n
 		})
-		if !a.GrantsUsable() {
-			t.Fatalf("grants refused after a routine rotation")
-		}
 	}
 	mu.Lock()
 	defer mu.Unlock()

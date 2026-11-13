@@ -109,9 +109,9 @@ type MCPOptions struct {
 	// only when set (MCP_OAUTH_CLIENT_METADATA_HOSTS).
 	ClientMetadataDocuments bool
 	ClientMetadataHosts     []string
-	// Lease elects the one replica that serves MCP (MCP_LEASE); an empty
-	// Lease lets every replica serve it. NotCandidate keeps this replica
-	// out of the election (MCP_CANDIDATE=false).
+	// Lease elects the one replica that serves MCP (MCP_LEASE), required
+	// with Enabled. NotCandidate keeps this replica out of the election
+	// (MCP_CANDIDATE=false).
 	Lease        string
 	NotCandidate bool
 	// Docs is the embedded documentation; nil serves no docs tools.
@@ -214,10 +214,8 @@ func RunApp(ctx context.Context, o AppOptions) error {
 		// One index for the grants and the write tools' confirmations:
 		// both spend single-use values every replica must see.
 		index = grantIndex(o)
-		if o.MCP.Lease != "" {
-			if mcpLeader, err = newMCPLeader(o, console, index); err != nil {
-				return err
-			}
+		if mcpLeader, err = newMCPLeader(o, console, index); err != nil {
+			return err
 		}
 		if oauthServer, err = newOAuthServer(o, authHandler, mcpLeader, index); err != nil {
 			return err

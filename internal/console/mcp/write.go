@@ -96,7 +96,7 @@ const (
 	confirmTTL = 2 * time.Minute
 	// maxURLRounds bounds how often a URL confirmation is asked again
 	// while the page has not recorded an answer (the person came back
-	// before approving, or another replica has not read it yet).
+	// before approving).
 	maxURLRounds = 3
 	// protocolMultiRoundTrip is the first protocol version whose clients
 	// answer input requests (SEP-2322).

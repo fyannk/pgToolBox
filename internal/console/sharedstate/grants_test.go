@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -314,42 +315,44 @@ func TestAnUnreadableDocumentIsNeverOverwritten(t *testing.T) {
 	}
 }
 
+// GrantsUsable is "leading, loaded, readable": the leader's index is the
+// authority whatever the ConfigMap's mode, so a failure of the API server
+// refuses new grants and disconnections (their writes), never the grants
+// held.
 func TestGrantsUsable(t *testing.T) {
 	clock := &testClock{now: t0}
 	if !New(Options{Now: clock.Now}).GrantsUsable() {
-		t.Error("a store of this replica's memory is the only authority: usable")
+		t.Error("a store with no election owns its index: usable")
 	}
 	var none *Store
 	if none.GrantsUsable() {
 		t.Error("no store: unusable")
 	}
-	s := newStore(newAPIServer(), clock, nil)
+	api := newAPIServer()
+	var lead atomic.Bool
+	s := newStore(api, clock, nil)
+	s.SetLeader(lead.Load)
+	if err := s.LoadGrants(t.Context()); err != nil {
+		t.Fatal(err)
+	}
 	if s.GrantsUsable() {
-		t.Error("a shared store not read yet is usable")
+		t.Error("usable on a replica that does not lead")
 	}
-	s.mu.Lock()
-	s.watchOpenedLocked()
-	s.mu.Unlock()
+	lead.Store(true)
 	if !s.GrantsUsable() {
-		t.Error("a live store is unusable")
+		t.Error("the loaded leader is unusable")
 	}
-	s.mu.Lock()
-	s.setModeLocked(modeFailing, "x")
-	s.mu.Unlock()
-	if !s.GrantsUsable() {
-		t.Error("a moment's failure disconnects every assistant")
-	}
-	clock.Add(staleGrace)
-	if s.GrantsUsable() {
-		t.Error("a lasting failure keeps grants usable")
-	}
-	for _, m := range []mode{modeMissing, modeForbidden} {
+	for _, m := range []mode{modeFailing, modeMissing, modeForbidden, modePending} {
 		s.mu.Lock()
 		s.setModeLocked(m, "")
 		s.mu.Unlock()
-		if s.GrantsUsable() {
-			t.Errorf("%s: usable", m)
+		if !s.GrantsUsable() {
+			t.Errorf("%s: the leader refuses the grants it holds", m)
 		}
+	}
+	s.DropGrants()
+	if s.GrantsUsable() {
+		t.Error("usable once dropped, before the next load")
 	}
 }
 

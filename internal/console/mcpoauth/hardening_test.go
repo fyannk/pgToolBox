@@ -18,6 +18,7 @@ package mcpoauth
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -27,6 +28,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -42,19 +44,11 @@ import (
 	"github.com/fyannk/pgToolBox/internal/console/sharedstate"
 )
 
-// sharedView is a replica's own index that says it is shared (as one over
-// STATE_CONFIGMAP does), without the ConfigMap: what another replica wrote
-// has not reached it yet.
-type sharedView struct{ *sharedstate.Store }
-
-func (sharedView) GrantsShared() bool { return true }
-
-// unusable is an index that cannot be trusted (failing for too long, a
-// document it cannot read).
+// unusable is an index that cannot be trusted (not leading, not loaded,
+// a document it cannot read).
 type unusable struct{ *sharedstate.Store }
 
 func (unusable) GrantsUsable() bool { return false }
-func (unusable) GrantsShared() bool { return true }
 
 func eventually(t *testing.T, what string, cond func() bool) {
 	t.Helper()
@@ -67,36 +61,48 @@ func eventually(t *testing.T, what string, cond func() bool) {
 	}
 }
 
-// sharedStores are two replicas' indexes over one ConfigMap of a fake API
-// server, each running its watch.
-func sharedStores(t *testing.T, c *clock) (*sharedstate.Store, *sharedstate.Store) {
+// leaderStores are two replicas' indexes over one ConfigMap of a fake
+// API server, each running its watch, under one MCP election: leading
+// says which leads. Neither has loaded the grants yet (LoadGrants).
+// spent counts the single-use values the ConfigMap holds.
+func leaderStores(t *testing.T, c *clock, leading *atomic.Int32) (a, b *sharedstate.Store, spent func() int) {
 	t.Helper()
 	cs := fake.NewClientset(&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "console-state", Namespace: "team-a", ResourceVersion: "1"}})
 	optimisticConcurrency(cs)
-	start := func() *sharedstate.Store {
+	start := func(me int32) *sharedstate.Store {
 		s := sharedstate.New(sharedstate.Options{
 			Client: cs.CoreV1().ConfigMaps("team-a"), Name: "console-state", Now: c.Now,
 			Debounce: 5 * time.Millisecond, UrgentDebounce: time.Millisecond,
 			Backoff: func(int) time.Duration { return 5 * time.Millisecond },
 		})
+		s.SetLeader(func() bool { return leading.Load() == me })
 		ctx, cancel := context.WithCancel(t.Context())
 		done := make(chan struct{})
 		go func() { _ = s.Run(ctx); close(done) }()
 		t.Cleanup(func() { cancel(); <-done })
 		return s
 	}
-	a, b := start(), start()
-	eventually(t, "both indexes reading", func() bool { return a.GrantsUsable() && b.GrantsUsable() })
-	return a, b
+	a, b = start(1), start(2)
+	eventually(t, "both reading", func() bool { return a.MarksKnown() && b.MarksKnown() })
+	spent = func() int {
+		cm, err := cs.CoreV1().ConfigMaps("team-a").Get(t.Context(), "console-state", metav1.GetOptions{})
+		var doc struct {
+			Codes map[string]json.RawMessage `json:"codes"`
+		}
+		if err != nil || json.Unmarshal([]byte(cm.Data[sharedstate.KeyGrants]), &doc) != nil {
+			return 0
+		}
+		return len(doc.Codes)
+	}
+	return a, b, spent
 }
 
 // optimisticConcurrency gives cs's ConfigMaps the API server's optimistic
 // concurrency: the fake stores no resourceVersion and applies updates as
 // they come, so two replicas' writes would replace each other, a lost
 // update no API server allows (each write is a merge of the one it
-// replaces), and the replicas' indexes, merged three ways, would lose the
-// overwritten grant. Each stored version gets the next integer, and an
-// update carrying another one conflicts.
+// replaces). Each stored version gets the next integer, and an update
+// carrying another one conflicts.
 func optimisticConcurrency(cs *fake.Clientset) {
 	var mu sync.Mutex
 	next := 1
@@ -138,51 +144,61 @@ func grantOfCode(t *testing.T, r *replica, code string) string {
 	return ac.ID
 }
 
-// two replicas, two indexes, one ConfigMap.
-func TestRevokedGrantRefusedOnBothReplicas(t *testing.T) {
+// A failover: the next leader loads what the first wrote, so a grant it
+// revoked stays refused there and a standing one serves on, its refresh
+// included; the replica that lost the Lease refuses everything.
+func TestTheNextLeaderRefusesWhatTheFirstRevoked(t *testing.T) {
 	c := &clock{now: t0}
 	f := newSessions(t, c, secretA)
-	sa, sb := sharedStores(t, c)
+	var leading atomic.Int32
+	leading.Store(1)
+	sa, sb, spent := leaderStores(t, c, &leading)
+	if err := sa.LoadGrants(t.Context()); err != nil {
+		t.Fatal(err)
+	}
 	a := newReplica(t, f, sa, c, nil)
 	b := newReplica(t, f, sb, c, nil)
-	id, tok := a.connect(t)
-	pa, err := a.authenticate(tok.Access)
+	id, kept := a.connect(t)
+	_, revoked := a.connect(t)
+	pr, err := a.authenticate(revoked.Access)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// B accepts it at once (the replication grace), then because its index
-	// holds it.
-	if _, err := b.authenticate(tok.Access); err != nil {
-		t.Fatalf("replica B refuses a grant of replica A: %v", err)
+	if err := a.s.RevokeGrant(context.Background(), auth.Client{}, "alice", pr.SessionID); err != nil {
+		t.Fatal(err)
 	}
-	eventually(t, "B to learn the grant", func() bool { _, ok := sb.Grant(pa.SessionID); return ok })
-
-	// A code A redeemed cannot be redeemed on B once B has read the write
-	// that spent it (the same write records the grant it bought).
+	// A code A redeemed is spent for the next leader too, once its batch
+	// is written (about a second).
 	code := a.consent(t, authorizeQuery(id, loopback), "approve").Get("code")
+	before := spent()
 	if w, _, _ := a.token(t, codeForm(id, code)); w.Code != http.StatusOK {
 		t.Fatal(w.Body)
 	}
-	second := grantOfCode(t, a, code)
-	eventually(t, "B to learn the second grant", func() bool { _, ok := sb.Grant(second); return ok })
-	if w, _, e := b.token(t, codeForm(id, code)); w.Code != http.StatusBadRequest || e != "invalid_grant" {
-		t.Errorf("code replayed on B: %d %s", w.Code, w.Body)
-	}
-	// That replay revoked the second grant on both.
-	eventually(t, "A to learn the replay's revocation", func() bool { return sa.GrantRevoked(second) })
+	third := grantOfCode(t, a, code)
+	eventually(t, "the code's spend written", func() bool { return spent() > before })
 
-	if err := b.s.RevokeGrant(context.Background(), auth.Client{}, "alice", pa.SessionID); err != nil {
+	leading.Store(2)
+	sa.DropGrants()
+	if _, err := a.authenticate(kept.Access); err == nil || errors.Is(err, auth.ErrBearerRevoked) {
+		t.Errorf("the replica that lost the Lease: %v, want a failure to decide", err)
+	}
+	if err := sb.LoadGrants(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	eventually(t, "A to refuse the grant B revoked", func() bool {
-		_, err := a.authenticate(tok.Access)
-		return errors.Is(err, auth.ErrBearerRevoked)
-	})
-	if _, err := b.authenticate(tok.Access); !errors.Is(err, auth.ErrBearerRevoked) {
-		t.Errorf("replica B: %v", err)
+	if _, err := b.authenticate(revoked.Access); !errors.Is(err, auth.ErrBearerRevoked) {
+		t.Errorf("the next leader accepts a grant the first revoked: %v", err)
 	}
-	if w, _, _ := a.token(t, refreshForm(id, tok.Refresh)); w.Code != http.StatusBadRequest {
-		t.Errorf("refresh on A after B's revocation: %d", w.Code)
+	if _, err := b.authenticate(kept.Access); err != nil {
+		t.Errorf("the next leader refuses a standing grant: %v", err)
+	}
+	if w, _, _ := b.token(t, refreshForm(id, kept.Refresh)); w.Code != http.StatusOK {
+		t.Errorf("refresh on the next leader: %d %s", w.Code, w.Body)
+	}
+	if w, _, e := b.token(t, codeForm(id, code)); w.Code != http.StatusBadRequest || e != "invalid_grant" {
+		t.Errorf("code replayed on the next leader: %d %s", w.Code, w.Body)
+	}
+	if !sb.GrantRevoked(third) {
+		t.Error("the replay did not revoke the grant the code bought")
 	}
 }
 
@@ -210,42 +226,19 @@ func TestARestartForgetsNoRevocation(t *testing.T) {
 	}
 }
 
-// on a shared index, a token whose grant has not replicated yet is
-// accepted for replicationGrace after it was issued, then refused.
-func TestReplicationGrace(t *testing.T) {
+// a token whose grant the index does not hold is refused at once, its
+// refresh too: no replication grace.
+func TestAGrantTheIndexDoesNotHoldIsRefused(t *testing.T) {
 	c := &clock{now: t0}
 	f := newSessions(t, c, secretA)
 	a := newReplica(t, f, memoryStore(c), c, nil)
-	b := newReplica(t, f, sharedView{memoryStore(c)}, c, nil)
+	b := newReplica(t, f, memoryStore(c), c, nil)
 	id, tok := a.connect(t)
-	if _, err := b.authenticate(tok.Access); err != nil {
-		t.Fatalf("within the grace: %v", err)
+	if _, err := b.authenticate(tok.Access); !errors.Is(err, auth.ErrBearerRevoked) {
+		t.Errorf("an index trusted a grant it does not hold: %v", err)
 	}
-	// A refresh on B within the grace records the grant there.
-	c.Add(replicationGrace / 2)
-	w, next, _ := b.token(t, refreshForm(id, tok.Refresh))
-	if w.Code != http.StatusOK {
-		t.Fatalf("refresh within the grace: %d %s", w.Code, w.Body)
-	}
-	c.Add(replicationGrace)
-	if _, err := b.authenticate(next.Access); err != nil {
-		t.Errorf("a grant B recorded: %v", err)
-	}
-
-	// A grant B never hears of is refused once the grace is over.
-	_, other := a.connect(t)
-	c.Add(replicationGrace + time.Second)
-	if _, err := b.authenticate(other.Access); !errors.Is(err, auth.ErrBearerRevoked) {
-		t.Errorf("past the grace: %v", err)
-	}
-	if w, _, _ := b.token(t, refreshForm(id, other.Refresh)); w.Code != http.StatusBadRequest {
-		t.Errorf("refresh past the grace: %d", w.Code)
-	}
-	// An unshared index has no grace at all.
-	solo := newReplica(t, f, memoryStore(c), c, nil)
-	_, fresh := a.connect(t)
-	if _, err := solo.authenticate(fresh.Access); !errors.Is(err, auth.ErrBearerRevoked) {
-		t.Errorf("an unshared index trusted a grant it does not hold: %v", err)
+	if w, _, _ := b.token(t, refreshForm(id, tok.Refresh)); w.Code != http.StatusBadRequest {
+		t.Errorf("refresh of a grant the index does not hold: %d", w.Code)
 	}
 }
 

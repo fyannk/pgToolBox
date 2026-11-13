@@ -206,3 +206,115 @@ func TestAMemoryIndexUnderTheLeader(t *testing.T) {
 		t.Fatal("usable while not leading")
 	}
 }
+
+// WriteGrant puts a grant recorded by the leader in the ConfigMap before
+// its first token: nil once it is there, ErrNotRecorded when it cannot be
+// written.
+func TestWriteGrant(t *testing.T) {
+	api := newAPIServer()
+	var lead atomic.Bool
+	lead.Store(true)
+	s := leaderStore(t, api, &lead)
+	if err := s.LoadGrants(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	g := testGrant(4, "alice", t0)
+	if err := s.AddGrant(g); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.WriteGrant(t.Context(), g.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := storedGrants(t, api).Grants[g.ID]; !ok {
+		t.Fatal("WriteGrant returned nil; the ConfigMap does not hold the grant")
+	}
+	if err := s.WriteGrant(t.Context(), g.ID); err != nil {
+		t.Errorf("again: %v, want nil (held already)", err)
+	}
+	if err := s.WriteGrant(t.Context(), grantID(5)); !errors.Is(err, ErrNotRecorded) {
+		t.Errorf("a grant not recorded here: %v, want ErrNotRecorded", err)
+	}
+	g6 := testGrant(6, "alice", t0)
+	if err := s.AddGrant(g6); err != nil {
+		t.Fatal(err)
+	}
+	api.set(func(x *apiServer) { x.forbidden = true })
+	if err := s.WriteGrant(t.Context(), g6.ID); !errors.Is(err, ErrNotRecorded) {
+		t.Errorf("forbidden: %v, want ErrNotRecorded", err)
+	}
+	if err := New(Options{}).WriteGrant(t.Context(), g6.ID); err != nil {
+		t.Errorf("one replica: %v, want nil", err)
+	}
+}
+
+// A revocation on the leader is refused at once, whatever the ConfigMap
+// does: its write failing (ErrNotRecorded) keeps it, a retry lists it
+// again (UnwrittenRevocationsOf), and a grant the index does not know is
+// refused too (no replication grace).
+func TestALeaderRevocationHoldsAtOnce(t *testing.T) {
+	api := newAPIServer()
+	var lead atomic.Bool
+	lead.Store(true)
+	s := leaderStore(t, api, &lead)
+	if err := s.LoadGrants(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	g := testGrant(1, "alice", t0)
+	if err := s.AddGrant(g); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.WriteGrant(t.Context(), g.ID); err != nil {
+		t.Fatal(err)
+	}
+	api.set(func(x *apiServer) { x.forbidden = true })
+	s.RevokeGrant(g.ID, g.UserHash, t0, g.Expiry)
+	if !s.GrantRevoked(g.ID) || !s.GrantsUsable() {
+		t.Fatalf("revoked %v, usable %v: the leader's index refuses the grant at once", s.GrantRevoked(g.ID), s.GrantsUsable())
+	}
+	if err := s.WriteRevocations(t.Context(), g.ID); !errors.Is(err, ErrNotRecorded) {
+		t.Fatalf("WriteRevocations while forbidden = %v, want ErrNotRecorded", err)
+	}
+	if got := s.UnwrittenRevocationsOf(g.UserHash); len(got) != 1 || got[0] != g.ID {
+		t.Fatalf("UnwrittenRevocationsOf = %v, want the revocation to write again", got)
+	}
+	api.set(func(x *apiServer) { x.forbidden = false })
+	if err := s.WriteRevocations(t.Context(), g.ID); err != nil {
+		t.Fatalf("the retry: %v", err)
+	}
+	if got := s.UnwrittenRevocationsOf(g.UserHash); len(got) != 0 {
+		t.Fatalf("UnwrittenRevocationsOf after the write = %v", got)
+	}
+	if e := storedGrants(t, api).Grants[g.ID]; e.Revoked == 0 {
+		t.Fatal("the revocation is not in the ConfigMap")
+	}
+	if _, ok := s.Grant(grantID(2)); ok {
+		t.Fatal("a grant never recorded is known")
+	}
+	if err := s.WriteRevocations(t.Context()); err != nil {
+		t.Errorf("no IDs: %v, want nil (nothing to write)", err)
+	}
+}
+
+// A failed load never replaces a loaded index: the leader stays loaded
+// with what it held, and an unreadable document refuses grants.
+func TestAFailedLoadKeepsNothingStale(t *testing.T) {
+	api := newAPIServer()
+	api.cm.Data = map[string]string{KeyGrants: grantsJSON(t, map[string]grantEntry{grantID(2): standingEntry("bob")})}
+	var lead atomic.Bool
+	lead.Store(true)
+	s := leaderStore(t, api, &lead)
+	if err := s.LoadGrants(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	api.set(func(x *apiServer) {
+		cm := x.cm.DeepCopy()
+		cm.Data[KeyGrants] = "{not json"
+		x.bumpLocked(cm)
+	})
+	if err := s.LoadGrants(t.Context()); !errors.Is(err, ErrNotRecorded) {
+		t.Fatalf("LoadGrants of an unreadable document = %v, want ErrNotRecorded", err)
+	}
+	if s.GrantsUsable() {
+		t.Fatal("grants usable over an unreadable grants document")
+	}
+}

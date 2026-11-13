@@ -24,7 +24,6 @@ import (
 	"slices"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -51,20 +50,20 @@ import (
 // log and the revocation list) and opens nothing; a grant's tokens are
 // sealed and held by its client.
 //
-// The index is authoritative: a grant it does not know is refused once
-// the replication grace of its newest token has passed (mcpoauth), so an
-// entry may be dropped once nothing could be refused by it any more: at
-// its expiry, or RevokedKeep after its revocation.
+// One writer: the replica holding the MCP Lease (SetLeader). It loads the
+// document when it starts leading (LoadGrants: the tables replaced, never
+// a union with what it held before), and every other replica writes the
+// document back exactly as it read it. The index is authoritative: a
+// grant it does not know is refused (mcpoauth), so an entry may be dropped
+// once nothing could be refused by it any more: at its expiry, or
+// RevokedKeep after its revocation.
 //
-// Merge rule, the same on every replica: for one ID the earliest
-// creation, the latest use, the highest generation and the earliest
-// revocation win (a revocation is never undone); a grant the document no
-// longer holds is dropped, unless this replica recorded it moments ago or
-// holds a revocation of it not written yet (mergeGrantsLocked says why).
-// Codes are a union, latest expiry, and the union of their marks. Every valid entry another replica wrote is merged,
-// however many there are: none is dropped for being one too many. A
-// document this replica cannot read (another format version, or not
-// JSON) is never overwritten, and grants are refused while it is so.
+// What the watch delivers once loaded (a late write of the previous
+// leader) is merged: for one ID the earliest creation, the latest use,
+// the highest generation and the earliest revocation win (a revocation is
+// never undone); codes are a union, latest expiry, and the union of their
+// marks. A document this replica cannot read (another format version, or
+// not JSON) is never overwritten, and grants are refused while it is so.
 const KeyGrants = "grants.json"
 
 // Bounds of the grant index: a person may connect a few assistants on a
@@ -82,15 +81,11 @@ const KeyGrants = "grants.json"
 // placeholder each (below): a hundred identities hold at most 1,360 codes
 // and 1,460 grants, filling the codes table takes 160 identities and the
 // grants table 128, so the last places go to newcomers.
-// Each replica decides from what it holds and the merge stays a union, so
-// replicas converge as before (concurrent admissions on several replicas,
-// within the second a write takes to arrive, can each take a place).
 // Identities minted without bound can still fill a table four entries
-// each: that is what the per-person bounds cannot tell apart. Two writes
-// that are not new work are exempt from the fair share (only the hard
-// bounds apply): re-recording a grant another replica admitted (a refresh
-// of a grant this replica has not seen rotate), and a person's first
-// standing revocation placeholder (a replayed code's). Encoded, a grant
+// each: that is what the per-person bounds cannot tell apart. A person's
+// first standing revocation placeholder (a replayed code's) is not new
+// work, and exempt from the fair share (only the hard bounds apply).
+// Encoded, a grant
 // entry is at most about 300 bytes (a client name costs at most 128 bytes
 // once JSON-escaped, the scope 32) and a code about 90, so a full index
 // takes about 605 KiB of the 768 KiB budget, which the other documents
@@ -108,21 +103,10 @@ const (
 	lateDivisor   = 4
 	maxClientName = 128
 	maxScope      = 32
-	// RevokedKeep is how long a revoked entry outlives its revocation: far
-	// longer than the replication grace during which a replica accepts a
-	// grant it does not know yet (mcpoauth), so that no replica can accept
-	// a revoked grant's token for want of the entry.
+	// RevokedKeep is how long a revoked entry outlives its revocation, so
+	// that its refusal says "revoked" rather than "not known" for a while
+	// (both refuse); a replayed code's placeholder ends then too.
 	RevokedKeep = 10 * time.Minute
-	// localKeep is how long a grant this replica recorded is kept while
-	// no document read from the ConfigMap holds it (mergeGrantsLocked):
-	// RevokedKeep less a margin for clock skew between replicas (the
-	// console assumes at most 30 s) and the write and watch delays.
-	localKeep = RevokedKeep - 2*time.Minute
-	// staleGrace is how long grants stay usable while the ConfigMap cannot
-	// be written or read: a moment's API server trouble does not
-	// disconnect every assistant, a lasting one refuses grants (a
-	// revocation taken elsewhere might not be seen).
-	staleGrace = 30 * time.Second
 )
 
 // Errors of the grant index.
@@ -155,11 +139,6 @@ type Grant struct {
 	Generation int
 	// Revoked is zero while the grant stands.
 	Revoked time.Time
-	// Rotated (AddGrant only, never stored) marks a grant another replica
-	// admitted and rotated, which this one has not seen yet: the refresh
-	// token is the proof it was admitted, the union already holds it, so
-	// recording it here is not new work and only the hard bounds apply.
-	Rotated bool
 }
 
 // grantEntry is a Grant on the wire.
@@ -327,41 +306,19 @@ func TruncateClientName(name string) string {
 }
 
 // GrantsUsable reports whether the index can be trusted to refuse what was
-// revoked: a store of this replica's memory always (it is the only
-// authority), a shared one while it reads and writes the ConfigMap (or
-// failed to for less than staleGrace) and can read its grants document.
-// Live with no watch open (one being reopened) counts as failing from the
-// instant the last watch ended (unwatchedAt): a read that hangs while it
-// is reopened does not keep revocations made elsewhere unseen past
-// staleGrace.
+// revoked: this replica leads MCP, has loaded the grants (LoadGrants) and
+// can read the grants document. It is the only writer of the index, so
+// its memory is the authority, whatever the ConfigMap's mode: a write
+// that cannot be made refuses the grant or the disconnection it carries
+// (WriteGrant, WriteRevocations), never the grants already held.
 func (s *Store) GrantsUsable() bool {
 	if s == nil {
 		return false
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if !s.ownsGrantsLocked() {
-		return false
-	}
-	if !s.Enabled() {
-		return true
-	}
-	if s.foreign[KeyGrants] {
-		return false
-	}
-	switch s.mode {
-	case modeLive:
-		return s.watching || !s.unwatchedAt.IsZero() && s.opts.Now().Sub(s.unwatchedAt) < staleGrace
-	case modeFailing:
-		return s.opts.Now().Sub(s.since) < staleGrace
-	case modeDisabled, modePending, modeMissing, modeForbidden:
-	}
-	return false
+	return s.ownsGrantsLocked() && !s.foreign[KeyGrants]
 }
-
-// GrantsShared reports whether the index is shared with other replicas
-// (a grant created elsewhere reaches this one about a second later).
-func (s *Store) GrantsShared() bool { return s.Enabled() }
 
 // countLocked counts the entries of user, in all, and the people holding
 // any, whatever their state.
@@ -430,8 +387,7 @@ func (b tableBound) overFairShare(mine, total, people int) bool {
 // AddGrant records a new grant, or merges one the index has. A new one is
 // refused over the per-user or the total bound, or past the fair share of
 // a nearly full index (overFairShare) (ErrTooManyGrants), counting every
-// entry. A Rotated one (another replica admitted it) is refused only over
-// the hard bounds.
+// entry.
 func (s *Store) AddGrant(g Grant) error {
 	if s == nil || !validGrantID(g.ID) {
 		return errors.New("not a grant")
@@ -455,11 +411,10 @@ func (s *Store) AddGrant(g Grant) error {
 	}
 	s.pruneGrantsLocked(s.opts.Now().Unix())
 	mine, total, people := s.countLocked(e.User)
-	if grantsBound.full(mine, total) || (!g.Rotated && grantsBound.overFairShare(mine, total, people)) {
+	if grantsBound.overFairShare(mine, total, people) {
 		return ErrTooManyGrants
 	}
 	s.grants[g.ID] = e
-	s.recordedLocked(g.ID)
 	s.changedLocked(true)
 	return nil
 }
@@ -501,10 +456,10 @@ func (s *Store) GrantsOf(userHash string) []Grant {
 	return out
 }
 
-// RevokeGrant marks a grant revoked; every replica refuses it from the
-// next write (about a second). It reports whether the grant was standing.
-// A grant the index does not know (a code replayed before the grant it
-// bought reached this replica) is recorded revoked under userHash until
+// RevokeGrant marks a grant revoked, refused at once. It reports whether
+// the grant was standing. A grant the index does not know (a code
+// replayed while its first redemption runs) is recorded revoked under
+// userHash until
 // until. A placeholder is refused at the hard bounds; past the fair share
 // it is admitted while the person holds no other standing placeholder (a
 // revocation must be recorded, and a person cannot climb past the fair
@@ -533,10 +488,6 @@ func (s *Store) RevokeGrant(id, userHash string, at, until time.Time) bool {
 	}
 	e.Revoked = at.Unix()
 	s.grants[id] = e
-	if !ok {
-		s.recordedLocked(id)
-	}
-	s.revokedLocked(id)
 	s.changedLocked(true)
 	return ok
 }
@@ -555,7 +506,6 @@ func (s *Store) RevokeGrantsOf(userHash string, at time.Time) []string {
 		if e.User == userHash && e.Revoked == 0 && e.Expiry > now {
 			e.Revoked = at.Unix()
 			s.grants[id] = e
-			s.revokedLocked(id)
 			ids = append(ids, id)
 		}
 	}
@@ -569,36 +519,16 @@ func (s *Store) RevokeGrantsOf(userHash string, at time.Time) []string {
 // WriteRevocations writes the revocations of ids, made on this replica
 // (RevokeGrant, RevokeGrantsOf), through to the ConfigMap, as SpendCode
 // writes a spend: nil once a document the API server holds records each
-// of them revoked (this write, or another replica's that holds them
-// already), ErrNotRecorded when that cannot be done within writeTimeout.
-// The local revocations stay either way: they only refuse more, and the
+// of them revoked, ErrNotRecorded when that cannot be done within
+// writeTimeout. The local revocations stay either way: they refuse the
+// grants at once on this replica, the only one that serves them, and the
 // next batch writes them. Without a ConfigMap (one replica) there is
-// nothing to write.
-//
-// No ids is nil only while this replica's view of the grants document is
-// current (currentLocked): live with its watch open, the document read and
-// readable; or the ConfigMap known missing (every replica's watch delivers
-// the deletion, and every grant is refused). Anywhere else its "nothing to
-// revoke" is no answer (ErrNotRecorded), not a disconnection done: a
-// replica that has not read the document knows none of the grants recorded
-// elsewhere; one whose watch ended (failing, or live while it reopens it)
-// or that may no longer read the ConfigMap (forbidden: round 20, security
-// P2-1) knows only what it read before, and a grant recorded since on
-// another replica is served there until it expires (round 21, security
-// P2-1). ReadGrants is the fresh read that makes such an answer.
+// nothing to write, and no ids is nothing to write either.
 func (s *Store) WriteRevocations(ctx context.Context, ids ...string) error {
 	if s == nil {
 		return ErrNotRecorded
 	}
-	if !s.Enabled() {
-		return nil
-	}
-	if len(ids) == 0 {
-		var current bool
-		s.locked(func() { current = s.currentLocked() })
-		if !current {
-			return ErrNotRecorded
-		}
+	if !s.Enabled() || len(ids) == 0 {
 		return nil
 	}
 	revokedIn := func(cm *corev1.ConfigMap) bool {
@@ -653,139 +583,6 @@ func (s *Store) WriteRevocations(ctx context.Context, ids ...string) error {
 	return nil
 }
 
-// currentLocked reports whether the grant index is what the other replicas
-// see now, give or take the watch's delivery: the ConfigMap known missing,
-// or the mode live with the watch open and the grants document read and
-// readable. A base kept through a failing or forbidden mode, or while the
-// watch is reopened, is what the ConfigMap held, not what it holds.
-func (s *Store) currentLocked() bool {
-	return s.mode == modeMissing || s.mode == modeLive && s.watching && s.base != nil && !s.foreign[KeyGrants]
-}
-
-// ReadGrants reads the ConfigMap now (a quorum Get, writeTimeout to
-// answer) and merges it, so that a revocation made next covers every grant
-// recorded so far on any replica, the ones this replica's watch has not
-// delivered yet included (it lags by up to a second, more on a loaded API
-// server). nil once the index holds the document as the API server
-// answered it (or the ConfigMap is known missing: every grant is refused),
-// ErrNotRecorded when the read fails, is refused, or shows a grants
-// document this console does not read. Without a ConfigMap (one replica)
-// the index is the only one, and nil.
-//
-// Any signed-in person reaches it (Disconnect all, the disconnection of a
-// grant this replica does not know), so (round 22, k8s P2-1, Go P2-2):
-//
-//   - Reads are coalesced (readGroup): a caller is answered by the read
-//     in flight only when that one was sent after it arrived, else by the
-//     next one, which every caller arriving meanwhile shares; never more
-//     than two at once, one sent.
-//   - Only an answer that says so changes the mode: missing (404) or
-//     forbidden (403). A throttled (429), failed or timed out read is
-//     ErrNotRecorded and leaves the mode as it is.
-//   - The read is merged as a watch event is (mergeLocked): an answer
-//     the watch overtook is not merged.
-//   - A read that finds the ConfigMap while it was known missing (it was
-//     recreated) leaves the missing mode for pending: a revocation is
-//     then written to it, not answered done as held.
-func (s *Store) ReadGrants(ctx context.Context) error {
-	if s == nil {
-		return ErrNotRecorded
-	}
-	if !s.Enabled() {
-		return nil
-	}
-	return s.grantReads.do(ctx, s.readGrants)
-}
-
-// readGrants is one read of ReadGrants.
-func (s *Store) readGrants(ctx context.Context) error {
-	getCtx, cancel := context.WithTimeout(ctx, writeTimeout)
-	defer cancel()
-	cm, err := s.opts.Client.Get(getCtx, s.opts.Name, metav1.GetOptions{})
-	if err != nil {
-		return s.grantsReadFailed(err)
-	}
-	var unreadable bool
-	s.locked(func() {
-		s.mergeLocked(cm)
-		s.known = true
-		if s.mode == modeMissing {
-			s.setModeLocked(modePending, "")
-			s.rewatchLocked()
-		}
-		unreadable = s.foreign[KeyGrants] || s.base == nil
-	})
-	if unreadable {
-		return ErrNotRecorded
-	}
-	return nil
-}
-
-// grantsReadFailed is a failed read of ReadGrants: a 404 is the missing
-// mode and nil (every replica refuses every grant), a 403 the forbidden
-// mode; anything else (a 429, a 5xx, a timeout, a client-side limiter
-// that gave up, a cancellation) is ErrNotRecorded and no mode.
-func (s *Store) grantsReadFailed(err error) error {
-	if apierrors.IsNotFound(err) || apierrors.IsForbidden(err) {
-		if apierrors.IsNotFound(s.failed(err)) {
-			return nil
-		}
-	}
-	return fmt.Errorf("%w: reading ConfigMap %s: %w", ErrNotRecorded, s.opts.Name, err)
-}
-
-// readGroup coalesces reads of the ConfigMap that answer a question asked
-// at an instant (ReadGrants: what does the ConfigMap hold now?). A read
-// answers the callers that arrived before it was sent: the first caller
-// sends one; a caller arriving while it is in flight waits for the next,
-// which every caller arriving meanwhile shares and which is sent once the
-// first is answered. A read runs on the context of the caller that
-// started its chain without its cancellation (each read is bounded by
-// writeTimeout): a caller that gives up does not fail the others.
-type readGroup struct {
-	mu             sync.Mutex
-	inflight, next *readCall
-}
-
-type readCall struct {
-	done chan struct{}
-	err  error
-}
-
-func (g *readGroup) do(ctx context.Context, read func(context.Context) error) error {
-	g.mu.Lock()
-	var c *readCall
-	switch {
-	case g.inflight == nil:
-		c = &readCall{done: make(chan struct{})}
-		g.inflight = c
-		go g.run(context.WithoutCancel(ctx), c, read)
-	case g.next == nil:
-		c = &readCall{done: make(chan struct{})}
-		g.next = c
-	default:
-		c = g.next
-	}
-	g.mu.Unlock()
-	select {
-	case <-c.done:
-		return c.err
-	case <-ctx.Done():
-		return fmt.Errorf("%w: %w", ErrNotRecorded, ctx.Err())
-	}
-}
-
-func (g *readGroup) run(ctx context.Context, c *readCall, read func(context.Context) error) {
-	for c != nil {
-		c.err = read(ctx)
-		close(c.done)
-		g.mu.Lock()
-		c, g.next = g.next, nil
-		g.inflight = c
-		g.mu.Unlock()
-	}
-}
-
 // WriteGrant writes the grant id, recorded on this replica (AddGrant),
 // through to the ConfigMap, as SpendCode writes a spend: nil once a
 // document the API server holds records it (this write, or another
@@ -794,11 +591,9 @@ func (g *readGroup) run(ctx context.Context, c *readCall, read func(context.Cont
 // caller revokes it). Without a ConfigMap (one replica) there is nothing
 // to write.
 //
-// A grant's first token is issued only once it is written (round 22, Go
-// P2-1, security): every grant an assistant holds is then in the
-// ConfigMap, and a read of it (ReadGrants) shows every grant a
-// disconnection must revoke, whatever replica recorded it, even one cut
-// off from the API server since.
+// A grant's first token is issued only once it is written: every grant
+// an assistant holds is then in the ConfigMap, which the next leader
+// loads (LoadGrants).
 func (s *Store) WriteGrant(ctx context.Context, id string) error {
 	if s == nil {
 		return ErrNotRecorded
@@ -851,18 +646,22 @@ func (s *Store) WriteGrant(ctx context.Context, id string) error {
 // reading the ConfigMap.
 func ValidGrantID(id string) bool { return validGrantID(id) }
 
-// UnwrittenRevocationsOf returns the IDs of userHash's grants revoked on
-// this replica that no document read or written holds revoked yet: what a
-// retried disconnection writes again.
+// UnwrittenRevocationsOf returns the IDs of userHash's grants revoked
+// here that the ConfigMap, as last read or written, does not hold
+// revoked: what a retried disconnection writes again.
 func (s *Store) UnwrittenRevocationsOf(userHash string) []string {
-	if s == nil {
+	if !s.Enabled() {
 		return nil
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	var doc grantsDoc
+	if s.base != nil {
+		_ = json.Unmarshal([]byte(s.base.Data[KeyGrants]), &doc)
+	}
 	var ids []string
-	for id := range s.unwritten {
-		if e, ok := s.grants[id]; ok && e.User == userHash && e.Revoked > 0 {
+	for id, e := range s.grants {
+		if e.User == userHash && e.Revoked > 0 && doc.Grants[id].Revoked == 0 {
 			ids = append(ids, id)
 		}
 	}
@@ -913,9 +712,10 @@ const (
 )
 
 // AdvanceGrant moves a grant's refresh generation from from to from+1. An
-// index behind from (another replica rotated it, and its write has not
-// arrived) moves to from+1 too: the sealed refresh token is the proof
-// that generation was issued. An index past from is a replay.
+// index behind from (the previous leader's advance was in a batch it did
+// not write before losing the Lease) moves to from+1 too: the sealed
+// refresh token is the proof that generation was issued. An index past
+// from is a replay.
 func (s *Store) AdvanceGrant(id string, from int, at time.Time) Advance {
 	if s == nil {
 		return Unknown
@@ -964,21 +764,18 @@ func (s *Store) UseCode(code, userHash string, until time.Time) error {
 }
 
 // ErrNotRecorded is a read or write of the ConfigMap that could not be
-// made: SpendCode, MarkCode, WriteGrant and WriteRevocations unable to
-// write, ReadGrants unable to read. For a spend, nothing was recorded,
+// made: LoadGrants unable to read, SpendCode, MarkCode, WriteGrant and
+// WriteRevocations unable to write. For a spend, nothing was recorded,
 // and the caller must not act on the value.
 var ErrNotRecorded = errors.New("the shared state could not be read or written")
 
 // ErrNoConfigMap is WriteRevocations while the ConfigMap does not exist
-// (it was deleted, or never created): there is nothing to write to, and
-// every replica refuses every grant meanwhile (GrantsUsable, each
-// replica's watch delivering the deletion). The revocations stay on this
-// replica and are written at its next read of the ConfigMap, which a
-// missing one gets every one to two seconds (Run, missingPoll), so within
-// about two seconds of its return (recreatedLocked); meanwhile another
-// replica that read it first may serve a grant it recorded itself. A
-// restart of this replica before then loses them.
-var ErrNoConfigMap = errors.New("the shared state ConfigMap does not exist: every replica refuses every grant until it does")
+// (it was deleted, or never created): there is nothing to write to. The
+// revocations hold on this replica, the only one serving the grants, and
+// are written once the ConfigMap is back (missingPoll); a leader taking
+// over meanwhile loads no grant (LoadGrants fails, or reads the new,
+// empty document) and so refuses them all.
+var ErrNoConfigMap = errors.New("the shared state ConfigMap does not exist: the revocation holds on the MCP leader until it does")
 
 // SpendCode is UseCode written through: the spend is in the ConfigMap,
 // under the API server's optimistic concurrency, before it returns nil.
@@ -1272,47 +1069,10 @@ func (s *Store) CodeUsed(code string) bool {
 }
 
 // mergeGrantsLocked folds the grants document raw (empty when the key is
-// missing) into the local index.
-//
-// Grants are merged three ways, not as a union: a grant the document does
-// not hold is dropped here, unless this replica recorded it itself less
-// than localKeep ago and has read no document holding it since (it is
-// waiting for its own write). Codes stay a union.
-//
-// Why. Every write is an update at the resourceVersion of the document it
-// merged, so an entry leaves the document only when a replica drops it on
-// purpose: pruned (expired, or RevokedKeep after its revocation), reset by
-// a take-over, or the key deleted. A union lets a replica that missed the
-// drop write the entry back, and a revoked grant pruned while a replica
-// was cut off from the API server came back unrevoked from it. Under
-// this rule:
-//   - a grant this replica read in a document and that the document no
-//     longer holds was dropped elsewhere: dropped here too;
-//   - a grant recorded here that no document has held yet is known
-//     elsewhere only through a write of this replica that landed after it
-//     was recorded, or (a revocation placeholder of a replayed code)
-//     through the code's spend, written through within the same request:
-//     a revocation of it elsewhere is no older than its recording here,
-//     and its prune comes RevokedKeep later on the pruning replica's
-//     clock. localKeep is RevokedKeep less a margin for the replicas'
-//     clocks and the write delays, so a grant kept by this exception
-//     never outlives a pruned revocation of it; past localKeep it is
-//     dropped, and its assistant connects again (only a replica cut off
-//     from the ConfigMap that long gets there, and it refuses grants
-//     after staleGrace anyway);
-//   - a replica that never read the document (its first read, the
-//     ConfigMap recreated, a take-over it missed) holds only grants it
-//     read in an older document (dropped) or recorded (the exception);
-//   - a revocation made here is neither dropped by this rule nor pruned
-//     before a document read or written holds it (unwritten), so a
-//     revocation made while cut off is not lost when its RevokedKeep ends
-//     before it reached the ConfigMap. Keeping a revoked entry longer only
-//     refuses more.
-//
-// The replication grace of mcpoauth (a grant not known yet is accepted
-// within 30 s of its newest token) is unchanged: a grant dropped here was
-// revoked, expired or reset long before, or recorded localKeep ago by a
-// replica that has refused grants since.
+// missing) into the local index: LoadGrants replaces the index with it,
+// the watch then merges what a late write of the previous leader adds
+// (mergeGrant: a revocation is never undone, and an entry the leader
+// pruned comes back only while not gone, to be pruned again).
 func (s *Store) mergeGrantsLocked(raw string) {
 	var doc grantsDoc
 	switch {
@@ -1328,9 +1088,7 @@ func (s *Store) mergeGrantsLocked(raw string) {
 		// document: a merge of the same document again (a conflict of the
 		// take-over's own write with a replica of this version that left
 		// it alone) must not erase what was recorded since, a spend being
-		// written through among it. Every replica of this version drops
-		// the grants it holds on finding the reset document (the rule
-		// below), including one that never saw the newer one.
+		// written through among it.
 		if sum := sha256.Sum256([]byte(raw)); hex.EncodeToString(sum[:]) != s.grantsReset {
 			s.grantsReset = hex.EncodeToString(sum[:])
 			s.dropGrantsLocked()
@@ -1343,24 +1101,14 @@ func (s *Store) mergeGrantsLocked(raw string) {
 		s.foreign[KeyGrants] = true
 		s.grantsUnreadable = true
 	default:
-		now := s.opts.Now()
-		held := make(map[string]bool, len(doc.Grants))
 		for id, e := range doc.Grants {
 			if !validGrantEntry(id, e) {
 				continue
 			}
-			held[id] = true
-			s.heldLocked(id, e)
 			if prev, ok := s.grants[id]; ok {
 				e = mergeGrant(prev, e)
 			}
 			s.grants[id] = e
-		}
-		for id := range s.grants {
-			if at, mine := s.recorded[id]; held[id] || s.unwritten[id] || (mine && now.Sub(at) < localKeep) {
-				continue
-			}
-			s.dropGrantLocked(id)
 		}
 		for h, c := range doc.Codes {
 			if !isHex32(h) || !isHex32(c.User) {
@@ -1377,53 +1125,13 @@ func (s *Store) mergeGrantsLocked(raw string) {
 	}
 }
 
-// landedLocked records that the grants document raw, this replica's own
-// write, landed: what it holds of the grants and revocations recorded
-// here is now in the ConfigMap, under the merge rule's first case
-// (mergeGrantsLocked). Parsed only while something recorded here waits.
-func (s *Store) landedLocked(raw string) {
-	if len(s.recorded) == 0 && len(s.unwritten) == 0 {
-		return
-	}
-	var doc grantsDoc
-	if json.Unmarshal([]byte(raw), &doc) != nil {
-		return
-	}
-	for id, e := range doc.Grants {
-		s.heldLocked(id, e)
-	}
-}
-
-// heldLocked records that a document read or written holds entry e of
-// grant id.
-func (s *Store) heldLocked(id string, e grantEntry) {
-	delete(s.recorded, id)
-	if e.Revoked > 0 {
-		delete(s.unwritten, id)
-	}
-}
-
-// recreatedLocked handles a ConfigMap deleted and recreated: the empty
-// document resets the index (mergeGrantsLocked), but a grant recorded
-// here within localKeep, or on another replica, survives the reset, and a
-// revocation of it that an older document held would not. Every
-// revocation this replica knows is made unwritten again, so it is kept
-// and written to the new ConfigMap: a reset of the index never undoes a
-// revocation (keeping one longer only refuses more).
-func (s *Store) recreatedLocked() {
-	for id, e := range s.grants {
-		if e.Revoked > 0 {
-			s.revokedLocked(id)
-		}
-	}
-}
-
 // SetLeader makes grants.json the MCP leader's (MCP_LEASE): leading
 // reports whether this replica leads. Until it has loaded the grants
 // (LoadGrants), and once it no longer leads, the replica refuses grants
 // (GrantsUsable), refuses to write them through, and writes grants.json
-// back exactly as it read it. Called before Run; without it every replica
-// writes its own index (the merge rules below).
+// back exactly as it read it. Called before Run whenever MCP is on;
+// without it (MCP off, where nothing records a grant) the store owns the
+// index alone.
 func (s *Store) SetLeader(leading func() bool) {
 	if s != nil {
 		s.leading = leading
@@ -1431,7 +1139,7 @@ func (s *Store) SetLeader(leading func() bool) {
 }
 
 // ownsGrantsLocked reports whether this replica writes its grant index:
-// always without an MCP leader, else once loaded and while it leads.
+// once loaded and while it leads (always without SetLeader).
 func (s *Store) ownsGrantsLocked() bool {
 	return s.leading == nil || s.grantsLoaded && s.leading()
 }
@@ -1502,45 +1210,12 @@ func (s *Store) DropGrants() {
 }
 
 // dropGrantsLocked forgets every grant of the index.
-func (s *Store) dropGrantsLocked() {
-	s.grants, s.recorded, s.unwritten = map[string]grantEntry{}, map[string]time.Time{}, map[string]bool{}
-}
-
-// dropGrantLocked forgets one grant.
-func (s *Store) dropGrantLocked(id string) {
-	delete(s.grants, id)
-	delete(s.recorded, id)
-	delete(s.unwritten, id)
-}
-
-// recordedLocked notes a grant recorded on this replica, for the merge
-// rule (mergeGrantsLocked).
-func (s *Store) recordedLocked(id string) {
-	if s.Enabled() {
-		s.recorded[id] = s.opts.Now()
-	}
-}
-
-// revokedLocked notes a revocation made on this replica: not pruned
-// before a document read holds it.
-func (s *Store) revokedLocked(id string) {
-	if s.Enabled() {
-		s.unwritten[id] = true
-	}
-}
+func (s *Store) dropGrantsLocked() { s.grants = map[string]grantEntry{} }
 
 func (s *Store) pruneGrantsLocked(now int64) {
 	for id, e := range s.grants {
-		// A revocation no document read or written holds yet is kept,
-		// past its expiry and its RevokedKeep too, until one does:
-		// pruned, it would be lost, and its grant written back, or left
-		// standing, by a replica that never saw it (a code-replay
-		// placeholder recorded on a replica cut off from the ConfigMap
-		// expires RevokedKeep after the replay). It is an entry of the
-		// table, under its bounds, and the first write that lands
-		// releases it (landedLocked).
-		if e.gone(now) && !s.unwritten[id] {
-			s.dropGrantLocked(id)
+		if e.gone(now) {
+			delete(s.grants, id)
 		}
 	}
 	for h, c := range s.codes {

@@ -69,7 +69,7 @@ func modeOf(s *Store) mode {
 
 // A caller that gave up (the client closed the connection) before its
 // spend was written is no failure of the API server: the replica stays
-// live, and a staleGrace later still serves grants (round 17, Go P2).
+// live (round 17, Go P2).
 func TestACancelledSpendLeavesTheReplicaLive(t *testing.T) {
 	clock := &testClock{now: t0}
 	api := newAPIServer()
@@ -89,9 +89,8 @@ func TestACancelledSpendLeavesTheReplicaLive(t *testing.T) {
 		t.Error("a spend never written left its reservation")
 	}
 	flushed(t, a)
-	clock.Add(staleGrace + time.Second)
-	if !a.GrantsUsable() {
-		t.Errorf("grants refused on a healthy replica because one caller cancelled: mode %s", modeOf(a))
+	if m := modeOf(a); m != modeLive {
+		t.Errorf("mode %s on a healthy replica because one caller cancelled, want live", m)
 	}
 }
 
@@ -110,9 +109,8 @@ func TestACancelledSpendStrandsNoReplica(t *testing.T) {
 	cancel()
 	_ = a.SpendCode(ctx, "nonce-z", uh("mallory"), t0.Add(time.Minute))
 	time.Sleep(50 * time.Millisecond)
-	clock.Add(staleGrace + time.Second)
-	if !a.GrantsUsable() {
-		t.Errorf("one cancelled request makes the replica refuse every MCP grant: mode %s", modeOf(a))
+	if m := modeOf(a); m != modeLive {
+		t.Errorf("one cancelled request leaves the replica %s, want live", m)
 	}
 }
 
@@ -190,8 +188,8 @@ func TestAStartedWriteThroughOutlivesItsCaller(t *testing.T) {
 // Every write path that fails, conflicting maxAttempts times or refused
 // by an API server under load, leaves the failing mode with the next
 // batch, although its change was rolled back and nothing is pending
-// (round 17, Go and security P2: the replica stayed failing, refusing
-// every grant past staleGrace, until an unrelated write).
+// (round 17, Go and security P2: the replica stayed failing until an
+// unrelated write).
 func TestEveryFailedWriteRecoversWithTheNextBatch(t *testing.T) {
 	paths := map[string]struct {
 		setup func(t *testing.T, s *Store)
@@ -260,10 +258,6 @@ func TestEveryFailedWriteRecoversWithTheNextBatch(t *testing.T) {
 				if m := modeOf(s); m != modeLive {
 					t.Errorf("after the next batch: mode %s, want live", m)
 				}
-				clock.Add(staleGrace + time.Second)
-				if !s.GrantsUsable() {
-					t.Error("grants refused once the API server takes writes again")
-				}
 			})
 		}
 	}
@@ -297,10 +291,6 @@ func TestAnExhaustedWriteStrandsNoIdleReplica(t *testing.T) {
 		eventually(t, "a merges b's write", func() bool { _, ok := a.Grant(want); return ok })
 	}
 	eventually(t, "a live again", func() bool { return modeOf(a) == modeLive })
-	clock.Add(staleGrace + time.Second)
-	if !a.GrantsUsable() {
-		t.Errorf("a healthy replica refuses every MCP grant after one exhausted write (mode %s)", modeOf(a))
-	}
 }
 
 // startedUp reports whether a running replica has nothing left to write:
@@ -336,10 +326,10 @@ func TestANewerMergeEndsARunOfOlderGets(t *testing.T) {
 	}
 }
 
-// A revocation made while the ConfigMap is missing is ErrNoConfigMap
-// (every replica refuses every grant meanwhile), one while it is not
-// writable ErrNotRecorded; the first is written within about a second of
-// the ConfigMap's return, with no routine batch to wait for.
+// A revocation made while the ConfigMap is missing is ErrNoConfigMap (it
+// holds on the MCP leader meanwhile), one while it is not writable
+// ErrNotRecorded; the first is written within about a second of the
+// ConfigMap's return, with no routine batch to wait for.
 func TestRevocationsWhileTheConfigMapIsGone(t *testing.T) {
 	clock := &testClock{now: t0}
 	api := newAPIServer()
@@ -375,14 +365,14 @@ func TestRevocationsWhileTheConfigMapIsGone(t *testing.T) {
 	api.cm = nil
 	api.mu.Unlock()
 	eventually(t, "missing", func() bool { return modeOf(a) == modeMissing })
-	if a.GrantsUsable() {
-		t.Error("grants usable while the ConfigMap is missing")
+	if !a.GrantRevoked(grantID(1)) {
+		t.Error("the revocation does not hold while the ConfigMap is missing")
 	}
 	if err := a.WriteRevocations(t.Context(), grantID(1)); !errors.Is(err, ErrNoConfigMap) {
 		t.Errorf("missing: %v, want ErrNoConfigMap", err)
 	}
-	// The merge of the new ConfigMap itself makes the write urgent, not
-	// a flag left from the revocation.
+	// The return of the ConfigMap makes the write urgent (the watch
+	// opening), not a flag left from the revocation.
 	a.mu.Lock()
 	a.urgent = false
 	a.mu.Unlock()

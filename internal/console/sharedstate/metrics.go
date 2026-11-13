@@ -32,7 +32,7 @@ var (
 	}, []string{"mode"})
 	sharedModeSince = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "pgtoolbox_console_shared_state_mode_since_timestamp_seconds",
-		Help: "When (Unix seconds) the state ConfigMap's mode last changed (pgtoolbox_console_shared_state_mode). A replica failing is live again once its watch of the ConfigMap is open and a read or write lands (a write alone does not end it); alert on time() minus this while the mode is not live (and ignoring(mode) the mode series): past 30 s of failing the replica refuses every MCP grant.",
+		Help: "When (Unix seconds) the state ConfigMap's mode last changed (pgtoolbox_console_shared_state_mode). A replica failing is live again once its watch of the ConfigMap is open and a read or write lands (a write alone does not end it); alert on time() minus this while the mode is not live (and ignoring(mode) the mode series).",
 	})
 	sharedBytes = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "pgtoolbox_console_shared_state_bytes",
@@ -52,7 +52,7 @@ var (
 	}, []string{"document"})
 	sharedExhausted = prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "pgtoolbox_console_shared_state_write_exhausted_total",
-		Help: "Writes of the state ConfigMap that still conflicted after 5 re-reads: the replica then counts as failing (MCP grants usable for 30 s more). Rising steadily: the ConfigMap is rewritten faster than this replica can merge, or its resourceVersion went back (an etcd restore).",
+		Help: "Writes of the state ConfigMap that still conflicted after 5 re-reads: the replica then counts as failing. Rising steadily: the ConfigMap is rewritten faster than this replica can merge, or its resourceVersion went back (an etcd restore).",
 	})
 	signOutsHeld = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "pgtoolbox_console_shared_state_signouts",

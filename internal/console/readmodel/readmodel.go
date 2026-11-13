@@ -27,10 +27,8 @@ import (
 	"path/filepath"
 	"time"
 
-	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/metadata"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -167,15 +165,8 @@ func New(cfg config.Console, restConfig *rest.Config, logger *slog.Logger, id Id
 		if id.Namespace == "" {
 			return nil, fmt.Errorf("%s needs the console's namespace (POD_NAMESPACE)", config.EnvStateConfigMap)
 		}
-		// The freshness read is of the metadata (the same get on the same
-		// name), the whole state only when the watch missed a version.
-		meta, err := metadata.NewForConfig(restConfig)
-		if err != nil {
-			return nil, fmt.Errorf("kubernetes metadata client: %w", err)
-		}
 		shared = sharedstate.New(sharedstate.Options{
 			Client: clientset.CoreV1().ConfigMaps(id.Namespace), Name: cfg.StateConfigMap,
-			Meta:            meta.Resource(corev1.SchemeGroupVersion.WithResource("configmaps")).Namespace(id.Namespace),
 			Live:            func(ctx context.Context) (map[string]bool, bool) { return svcRef.LiveUIDs(ctx) },
 			DigestRetention: cfg.Digest.Retention,
 			Logger:          logger.With(slog.String("component", "shared-state")),

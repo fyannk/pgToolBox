@@ -129,9 +129,9 @@ export type ConnectedAssistantsViewProps = {
 const notRecorded = (error: unknown): boolean => error instanceof ApiError && error.unavailable;
 
 /**
- * Go's two 503s of a disconnection (internal/console/api/assistant.go): "unrecorded" is
- * revoked on the replica that answered, its write for the others retrying; anything else
- * (the shared state could not be read, or another layer's 503) confirms nothing.
+ * Go's 503s of a disconnection: "unrecorded" (internal/console/api/assistant.go) is revoked
+ * on the MCP leader, its write for a next leader retrying; anything else (a replica that does
+ * not serve MCP, internal/console/mcpleader, or another layer's 503) confirms nothing.
  */
 const UNRECORDED = "urn:pgtoolbox:disconnection-unrecorded";
 const revokedHere = (error: unknown): boolean => error instanceof ApiError && error.problem?.type === UNRECORDED;

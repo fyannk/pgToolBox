@@ -178,10 +178,10 @@ func (s *Server) redeemCode(r *http.Request) (tokenResponse, grantBase, *tokenFa
 	switch err := s.o.Store.UseCode(c.Nonce, key, time.Unix(c.Expiry, 0).Add(clockSkew)); {
 	case errors.Is(err, sharedstate.ErrSpent):
 		// A code redeemed twice: whatever it bought is revoked too (RFC
-		// 6749 §4.1.2), on every replica: one that has not recorded the
-		// grant yet (a concurrent first redemption elsewhere) gets a
-		// revoked placeholder its record merges into, which the fair
-		// share does not refuse (sharedstate.Store.RevokeGrant).
+		// 6749 §4.1.2). A grant not recorded yet (the first redemption
+		// still running) gets a revoked placeholder its record merges
+		// into, which the fair share does not refuse
+		// (sharedstate.Store.RevokeGrant).
 		s.o.Store.RevokeGrant(c.ID, key, now, now.Add(sharedstate.RevokedKeep))
 		return tokenResponse{}, c.grantBase, &tokenFailure{http.StatusBadRequest, "invalid_grant", "the code was already used; the grant it bought is revoked", "replayed"}
 	case err != nil:
@@ -204,17 +204,15 @@ func (s *Server) redeemCode(r *http.Request) (tokenResponse, grantBase, *tokenFa
 	if err != nil {
 		return tokenResponse{}, c.grantBase, &tokenFailure{http.StatusInternalServerError, "server_error", "the grant could not be recorded", "error"}
 	}
-	// Written through before the first token (round 22, Go P2-1,
-	// security): every grant an assistant holds is then in the shared
-	// state, so a disconnection on any replica, which reads it, revokes
-	// it, even when this replica is cut off from the API server since.
-	// One that cannot be written is revoked here and buys no token; the
+	// Written through before the first token: every grant an assistant
+	// holds is then in the shared state, which the next leader loads. One
+	// that cannot be written is revoked here and buys no token; the
 	// client signs in again.
 	if err := s.o.Store.WriteGrant(r.Context(), c.ID); err != nil {
 		s.o.Store.RevokeGrant(c.ID, key, now, expiry)
 		return tokenResponse{}, c.grantBase, &tokenFailure{
 			http.StatusServiceUnavailable, "temporarily_unavailable",
-			"the grant could not be recorded for every console replica; start the connection again", "unrecorded",
+			"the grant could not be recorded in the shared state; start the connection again", "unrecorded",
 		}
 	}
 	if s.o.Store.GrantRevoked(c.ID) {
@@ -265,8 +263,8 @@ func unavailable() *tokenFailure {
 }
 
 // redeemRefresh is the refresh_token grant: the token opens, is
-// unexpired, of this client, of a grant the index holds (or one rotated
-// within the replication grace) and has not revoked, not behind the
+// unexpired, of this client, of a grant the index holds and has not
+// revoked, not behind the
 // grant's generation (a second use revokes the grant), and its IdP token
 // is renewed when it is about to expire.
 func (s *Server) redeemRefresh(r *http.Request) (tokenResponse, grantBase, *tokenFailure) {
@@ -299,7 +297,7 @@ func (s *Server) redeemRefresh(r *http.Request) (tokenResponse, grantBase, *toke
 	default:
 		g, known := s.o.Store.Grant(rt.ID)
 		switch {
-		case !known && !s.withinGrace(rt.TokenIssued, now):
+		case !known:
 			refusal = &tokenFailure{http.StatusBadRequest, "invalid_grant", "the grant is not known to this console (revoked, or lost); connect the application again", "revoked"}
 		case known && g.Generation > rt.Generation:
 			// A refresh token behind its grant's generation was rotated
@@ -330,17 +328,9 @@ func (s *Server) redeemRefresh(r *http.Request) (tokenResponse, grantBase, *toke
 	case sharedstate.Revoked:
 		return tokenResponse{}, rt.grantBase, &tokenFailure{http.StatusBadRequest, "invalid_grant", "the grant is revoked", "revoked"}
 	case sharedstate.Unknown:
-		// Rotated on another replica moments ago: record it here, at the
-		// generation this refresh moves it to. Not new work (the replica
-		// that issued the token admitted it): the fair share does not
-		// apply, so a legitimate holder is not disconnected by it.
-		err := s.o.Store.AddGrant(sharedstate.Grant{
-			ID: rt.ID, UserHash: key, Client: rt.Name, Scope: rt.Scope, Created: time.Unix(rt.IssuedAt, 0),
-			LastUsed: now, Expiry: time.Unix(rt.Expiry, 0), Generation: rt.Generation + 1, Rotated: true,
-		})
-		if err != nil {
-			return tokenResponse{}, rt.grantBase, invalidGrant("the grant could not be recorded: " + err.Error())
-		}
+		// Gone from the index since the check above (pruned, or the index
+		// dropped on losing the Lease).
+		return tokenResponse{}, rt.grantBase, &tokenFailure{http.StatusBadRequest, "invalid_grant", "the grant is not known to this console (revoked, or lost); connect the application again", "revoked"}
 	}
 	resp, failure := s.issue(rt.grantBase, up, rt.Expiry, rt.Generation+1, now)
 	return resp, rt.grantBase, failure
@@ -388,13 +378,13 @@ func (s *Server) issue(g grantBase, up upstream, grantExpiry int64, generation i
 	}
 	exp = min(exp, grantExpiry)
 	access, err := s.seal(accessPrefix, purposeAccess, accessToken{
-		grantBase: g, Upstream: upstream{Provider: up.Provider, Token: up.Token, Expiry: up.Expiry}, Expiry: exp, TokenIssued: now.Unix(),
+		grantBase: g, Upstream: upstream{Provider: up.Provider, Token: up.Token, Expiry: up.Expiry}, Expiry: exp,
 	})
 	if err != nil {
 		return tokenResponse{}, &tokenFailure{http.StatusInternalServerError, "server_error", "the token could not be sealed", "error"}
 	}
 	refresh, err := s.seal(refreshPrefix, purposeRefresh, refreshToken{
-		grantBase: g, Upstream: up, Expiry: grantExpiry, Generation: generation, TokenIssued: now.Unix(),
+		grantBase: g, Upstream: up, Expiry: grantExpiry, Generation: generation,
 	})
 	if err != nil {
 		return tokenResponse{}, &tokenFailure{http.StatusInternalServerError, "server_error", "the token could not be sealed", "error"}

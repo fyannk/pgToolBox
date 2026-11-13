@@ -112,28 +112,3 @@ tests:
               summary: "A quarter of the results of logs are cut to fit the response cap in team-a"
               description: "Over a quarter of the successful logs results were truncated over the last 30 minutes. The assistant reads a partial answer."
               runbook_url: "https://github.com/fyannk/pgToolBox/blob/main/docs/site/docs/console/alerts.md#pgtoolboxconsolemcpresultstruncated"
-  - name: a replica whose shared state is failing for more than 30 seconds is reported, a live one is not
-    interval: 1m
-    input_series:
-      # pod-a: failing since t = 60 s; pod-b: live since t = 0.
-      - series: 'pgtoolbox_console_shared_state_mode{namespace="team-a",pod="pod-a",mode="failing"}'
-        values: '1x10'
-      - series: 'pgtoolbox_console_shared_state_mode_since_timestamp_seconds{namespace="team-a",pod="pod-a"}'
-        values: '60x10'
-      - series: 'pgtoolbox_console_shared_state_mode{namespace="team-a",pod="pod-b",mode="live"}'
-        values: '1x10'
-      - series: 'pgtoolbox_console_shared_state_mode_since_timestamp_seconds{namespace="team-a",pod="pod-b"}'
-        values: '0x10'
-    alert_rule_test:
-      # 30 s of failing: within the grace, grants still served.
-      - eval_time: 90s
-        alertname: PgToolBoxConsoleMCPGrantsRefused
-        exp_alerts: []
-      - eval_time: 4m
-        alertname: PgToolBoxConsoleMCPGrantsRefused
-        exp_alerts:
-          - exp_labels: {severity: warning, namespace: team-a, pod: pod-a, mode: failing}
-            exp_annotations:
-              summary: "A console replica in team-a refuses every MCP grant: its shared state is failing"
-              description: "The replica pod-a has not read and watched its shared state ConfigMap (mode failing) for more than 30 seconds, so it refuses every MCP token and sign-in rather than miss a revocation made on another replica."
-              runbook_url: "https://github.com/fyannk/pgToolBox/blob/main/docs/site/docs/console/alerts.md#pgtoolboxconsolemcpgrantsrefused"

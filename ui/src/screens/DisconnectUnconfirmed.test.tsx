@@ -1,8 +1,8 @@
-// A disconnection answered 503 because the replica could not read the shared
-// state (internal/console/api/assistant.go, ProblemDisconnectionUnconfirmed):
-// nothing may be disconnected, so the page never says "disconnected on the
-// replica that answered" nor "it keeps retrying" (round 22, DBA). A 503 of
-// any other layer (no problem type) is read the same way: it confirms nothing.
+// A disconnection answered 503 by a replica that does not serve MCP
+// (internal/console/mcpleader, Gate: a problem without a type): nothing may
+// be disconnected, so the page never says "disconnected on the replica that
+// answered" nor "it keeps retrying" (round 22, DBA). A 503 of any other layer
+// is read the same way: it confirms nothing.
 //
 // Its own file: the frame of one test file holds only a few dialog openings
 // before later renders stall.
@@ -19,8 +19,7 @@ const unconfirmed = () =>
     {
       title: "Service Unavailable",
       status: 503,
-      type: "urn:pgtoolbox:disconnection-unconfirmed",
-      detail: "could not read the shared state; retry",
+      detail: "this console replica does not serve MCP right now; retry",
     },
     "r",
   );

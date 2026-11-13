@@ -162,10 +162,10 @@ func TestADisconnectionNotRecordedIsA503(t *testing.T) {
 	}
 }
 
-// The two 503s of a disconnection carry their own problem type and
-// detail (round 22, DBA): a read that failed never says the replica
-// revoked anything, nor that the API server refused a write.
-func TestTheTwo503sOfADisconnectionDiffer(t *testing.T) {
+// A disconnection whose write did not take is a 503 of its own problem
+// type, not the plain 503 of a replica that does not serve MCP (round 22,
+// DBA).
+func TestAnUnrecordedDisconnectionIsItsOwn503(t *testing.T) {
 	alice := &auth.Principal{User: authz.User{Name: "alice"}}
 	for _, tc := range []struct {
 		err          error
@@ -173,7 +173,6 @@ func TestTheTwo503sOfADisconnectionDiffer(t *testing.T) {
 		mustNotSayIt string
 	}{
 		{ErrNotRecorded, ProblemDisconnectionUnrecorded, "did not take its write", "could not read"},
-		{ErrNotConfirmed, ProblemDisconnectionUnconfirmed, "could not read the shared state", "did not take"},
 	} {
 		g := &fakeGrants{unrecorded: true, failWith: tc.err}
 		h, _ := New(Deps{Source: FixtureSource{}, Authz: FixtureAuthorizer{}, Grants: g, Assistant: fakeSetup{}})

@@ -59,20 +59,17 @@
 // (SelfSubjectReview) and the SubjectAccessReview filtering applies
 // unchanged.
 //
-// Shared state. The grant index, revocations, refresh generations and
-// redeemed codes live in the console's state ConfigMap
-// (internal/console/sharedstate, grants.json), which every replica reads.
+// Shared state. One replica serves MCP and this server: the holder of
+// the MCP Lease (internal/console/mcpleader), the only writer of the
+// grant index, revocations, refresh generations and redeemed codes in the
+// console's state ConfigMap (internal/console/sharedstate, grants.json).
 // The index is authoritative: a token whose grant it does not hold is
-// refused once replicationGrace has passed since the token was issued
-// (the time its creation takes to reach the other replicas), and every
-// grant is refused while the index cannot be trusted (the ConfigMap not
-// read, or unwritable for more than a moment). A revocation reaches
-// every replica within about a second; a code is refused on the replica
-// that redeemed it at once and on the others once they have read that
-// write (about a second): the residual window needs the code and its PKCE
-// verifier both, so a stolen code alone is useless. Without the ConfigMap
-// the index is this replica's memory: a restart disconnects every
-// assistant, and a second replica refuses the first one's grants.
+// refused, and every grant is refused while the index cannot be trusted
+// (this replica not leading, or not loaded yet). A grant is written
+// before its first token and a revocation before its answer, so the next
+// leader, which loads the ConfigMap, holds both. Without the ConfigMap
+// the index is the leader's memory: a restart or a failover disconnects
+// every assistant.
 package mcpoauth
 
 import (
@@ -117,10 +114,6 @@ const tokenPrefix = "pgc_"
 // Lifetimes and budgets.
 const (
 	DefaultAccessTTL = time.Hour
-	// replicationGrace is how long after a token was issued a replica
-	// accepts it while the index does not hold its grant yet: the urgent
-	// write takes about a second, a conflict or two a few more.
-	replicationGrace = 30 * time.Second
 	// pendingTTL bounds a grant's IdP round trip from Approve.
 	pendingTTL = 10 * time.Minute
 	// codeTTL bounds an authorization code (RFC 6749 §4.1.2 recommends at
@@ -231,13 +224,8 @@ type GrantStore interface {
 	RevokeGrantsOf(userHash string, at time.Time) []string
 	// WriteRevocations writes the revocations of ids made on this replica
 	// through to the shared state (sharedstate.ErrNotRecorded when it
-	// cannot, and for no ids on a replica that has not read the shared
-	// index yet); UnwrittenRevocationsOf lists those not written yet.
+	// cannot); UnwrittenRevocationsOf lists those not written yet.
 	WriteRevocations(ctx context.Context, ids ...string) error
-	// ReadGrants reads the shared index afresh (sharedstate.ErrNotRecorded
-	// when it cannot), so that a revocation made next covers the grants
-	// recorded elsewhere that this replica has not seen yet.
-	ReadGrants(ctx context.Context) error
 	// WriteGrant writes a grant recorded here (AddGrant) through to the
 	// shared state (sharedstate.ErrNotRecorded when it cannot): its
 	// first token is issued only then.
@@ -248,7 +236,6 @@ type GrantStore interface {
 	AdvanceGrant(id string, from int, at time.Time) sharedstate.Advance
 	UseCode(code, userHash string, until time.Time) error
 	GrantsUsable() bool
-	GrantsShared() bool
 }
 
 // Options configure a Server.
@@ -384,13 +371,6 @@ func (s *Server) userKey(user string) string {
 		return keys[0]
 	}
 	return ""
-}
-
-// withinGrace reports whether a token issued at issued may still be
-// waiting for its grant to reach this replica's index.
-func (s *Server) withinGrace(issued int64, now time.Time) bool {
-	return s.o.Store.GrantsShared() && issued > 0 && now.Unix() < issued+int64(replicationGrace/time.Second) &&
-		issued <= now.Add(replicationGrace).Unix()
 }
 
 // Register mounts the routes MCP clients call without a cookie (metadata,

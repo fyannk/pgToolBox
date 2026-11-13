@@ -82,7 +82,7 @@ func grantIndex(o AppOptions) GrantIndex {
 		return o.Grants
 	}
 	o.Log.Info("MCP grants and confirmations are kept in this replica's memory (STATE_CONFIGMAP is not set): " +
-		"a restart disconnects every assistant, and with more than one replica each refuses the others' grants")
+		"a restart of the MCP leader, or a failover, disconnects every assistant")
 	return sharedstate.New(sharedstate.Options{Logger: o.Log})
 }
 
@@ -91,12 +91,8 @@ func grantIndex(o AppOptions) GrantIndex {
 // A public URL that cannot be an issuer turns it off (nil, no error): the
 // MCP endpoint then accepts raw API-server tokens only.
 func newOAuthServer(o AppOptions, h *auth.Handler, l *mcpleader.Leader, store mcpoauth.GrantStore) (*mcpoauth.Server, error) {
-	var sessions mcpoauth.SessionSource = h
-	if l != nil {
-		sessions = leaderSessions{Handler: h, l: l}
-	}
 	s, err := mcpoauth.New(mcpoauth.Options{
-		Sessions: sessions, Store: store, PublicURL: o.Auth.PublicURL, TrustedProxy: o.Auth.TrustedProxy,
+		Sessions: leaderSessions{Handler: h, l: l}, Store: store, PublicURL: o.Auth.PublicURL, TrustedProxy: o.Auth.TrustedProxy,
 		WriteTools: o.MCP.WriteTools, AccessTTL: o.MCP.AccessTTL, ClientMetadataDocuments: o.MCP.ClientMetadataDocuments,
 		ClientMetadataHosts: o.MCP.ClientMetadataHosts, Log: o.Log,
 	})
@@ -174,10 +170,7 @@ func (g grantManager) Grants(ctx context.Context, user string) []api.GrantInfo {
 
 func (g grantManager) DisconnectAll(ctx context.Context, c auth.Client, user string) (int, error) {
 	n, err := g.s.DisconnectAll(ctx, c, user)
-	switch {
-	case errors.Is(err, mcpoauth.ErrNotConfirmed):
-		return n, api.ErrNotConfirmed
-	case errors.Is(err, mcpoauth.ErrNotRecorded):
+	if errors.Is(err, mcpoauth.ErrNotRecorded) {
 		return n, api.ErrNotRecorded
 	}
 	return n, err
@@ -188,8 +181,6 @@ func (g grantManager) RevokeGrant(ctx context.Context, c auth.Client, user, id s
 	switch {
 	case errors.Is(err, mcpoauth.ErrNoSuchGrant):
 		return api.ErrNoSuchGrant
-	case errors.Is(err, mcpoauth.ErrNotConfirmed):
-		return api.ErrNotConfirmed
 	case errors.Is(err, mcpoauth.ErrNotRecorded):
 		return api.ErrNotRecorded
 	}
