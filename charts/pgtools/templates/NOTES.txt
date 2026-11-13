@@ -25,8 +25,9 @@ still delete any Cluster of the drill namespace. Add Deny to validationActions.
 {{- if .Values.console.instanceStatus.caBundleConfigMap }}
 
 The console verifies each instance's /pg/status against a CA bundle YOU supply.
-Until the ConfigMap exists every Cluster reads "not verifiable". Create it from
-the Clusters' server CAs (only ca.crt; never ca.key):
+Until the ConfigMap exists every instance reads "not verifiable"; the console
+picks it up when it appears, without a restart. Create it from the Clusters'
+server CAs (only ca.crt; never ca.key):
 
   for c in $(kubectl -n <ns> get clusters.postgresql.cnpg.io -o name | cut -d/ -f2); do
     kubectl -n <ns> get secret "$c-ca" -o jsonpath='{.data.ca\.crt}' | base64 -d
