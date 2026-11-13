@@ -21,7 +21,7 @@ export interface LiveStatus {
   pendingRestart?: boolean;
   pendingRestartForDecrease?: boolean;
   pgRewindRunning?: boolean;
-  /** Set when the instance manager answered without reaching PostgreSQL (fenced or restarting): PostgreSQL's fields are then not read, never false or zero. */
+  /** Set when the instance manager answered without reaching PostgreSQL (fenced, restarting or rewinding): PostgreSQL's fields are then not read, never false or zero. */
   postgresUnread?: PostgresUnread;
   provenance: Provenance;
   readyWalFiles?: number;

@@ -99,7 +99,7 @@ export const ServerError: Story = {
 };
 
 const maskedError = "FATAL: the database system is shutting down (SQLSTATE 57P03)";
-/** A report whose instance manager answered without reaching PostgreSQL (fenced or restarting). */
+/** A report whose instance manager answered without reaching PostgreSQL (fenced, restarting or rewinding). */
 function masked(name: string, isPrimary: boolean): InstanceRow {
   const base = (instances.items ?? [])[0] as InstanceRow;
   return {
@@ -131,11 +131,11 @@ const maskedData = { ...instances, items: [masked("billing-1", true), masked("bi
 export const MaskedPrimary: Story = {
   args: { data: maskedData },
   play: async ({ canvas, canvasElement }) => {
-    await expect(canvas.getAllByText("PostgreSQL not read (fenced or restarting)")).toHaveLength(2);
+    await expect(canvas.getAllByText("PostgreSQL not read (fenced, restarting or rewinding)")).toHaveLength(2);
     await userEvent.click(canvas.getByRole("button", { name: "billing-1" }));
     const dialog = await within(canvasElement.ownerDocument.body).findByRole("dialog", { name: "billing-1" });
     await expect(
-      within(dialog).getByText(/answered without reaching it \(fenced or restarting\): FATAL/),
+      within(dialog).getByText(/answered without reaching it \(fenced, restarting or rewinding\): FATAL/),
     ).toBeVisible();
     await expect(within(dialog).getAllByText("not read").length).toBeGreaterThanOrEqual(7);
     await expect(within(dialog).getByText("Archives WAL")).toBeVisible();

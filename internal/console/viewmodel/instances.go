@@ -123,6 +123,8 @@ type StatusRead struct {
 
 // LiveStatus is one instance's /pg/status self-report.
 type LiveStatus struct {
+	// IsPrimary is not read while PgRewindRunning: CloudNativePG returns
+	// before reading it (probes.go v1.30.1:64-69).
 	IsPrimary   bool   `json:"isPrimary"`
 	TimelineID  *int   `json:"timelineId,omitempty"`
 	SystemID    string `json:"systemId,omitempty"`
@@ -151,23 +153,23 @@ type LiveStatus struct {
 	ManagerUpgrading   bool      `json:"instanceManagerUpgrading,omitempty"`
 	Standbys           []Standby `json:"standbys,omitempty" doc:"The primary's streaming_replica walsenders only."`
 	// PostgresUnread is set when the instance manager answered without
-	// reaching PostgreSQL (fenced or restarting): every field PostgreSQL
+	// reaching PostgreSQL (fenced, restarting or rewinding): every field PostgreSQL
 	// fills (positions, timeline, system id, the flags but
 	// mightBeUnavailable, pgRewindRunning and the manager's own, the
 	// archiver's, the walsenders) is then absent because it was not
 	// read, never because it is false or zero.
-	PostgresUnread *PostgresUnread `json:"postgresUnread,omitempty" doc:"Set when the instance manager answered without reaching PostgreSQL (fenced or restarting): PostgreSQL's fields are then not read, never false or zero."`
+	PostgresUnread *PostgresUnread `json:"postgresUnread,omitempty" doc:"Set when the instance manager answered without reaching PostgreSQL (fenced, restarting or rewinding): PostgreSQL's fields are then not read, never false or zero."`
 	Provenance     Provenance      `json:"provenance"`
 }
 
 // PostgresUnread is an instance report the instance manager answered
 // without reaching PostgreSQL: CloudNativePG's
 // mightBeUnavailableMaskedError, while fencing or a restart sets
-// mightBeUnavailable.
+// mightBeUnavailable, or "pg_rewind is running" during a rewind.
 type PostgresUnread struct {
 	Instance string `json:"instance"`
 	// Error is the error the manager hit and masked, bounded.
-	Error string `json:"error" untrusted:"true" doc:"The error the instance manager hit and masked (mightBeUnavailableMaskedError), bounded."`
+	Error string `json:"error" untrusted:"true" doc:"The error the instance manager hit and masked (mightBeUnavailableMaskedError), bounded, or pg_rewind is running."`
 }
 
 // Standby is one walsender row the primary reports. SentLSN is

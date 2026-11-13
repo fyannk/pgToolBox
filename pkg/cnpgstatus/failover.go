@@ -418,7 +418,7 @@ func qualifyReplica(inst RehearsalInstance, fenced bool, primaryNode, primaryLSN
 		r.read, r.selfPrimary = false, true
 		r.c.Reason = "it reports itself primary"
 	case !r.read && inst.Fresh && inst.Reading != nil:
-		r.c.Reason = "its instance manager answered without reading PostgreSQL (fenced or restarting)"
+		r.c.Reason = "its instance manager answered without reading PostgreSQL (fenced, restarting or rewinding)"
 	case !r.read:
 		r.c.Reason = "its status could not be read by the console"
 	case r.fenced:

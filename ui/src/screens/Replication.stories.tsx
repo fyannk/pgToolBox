@@ -148,7 +148,7 @@ export const MaskedReplica: Story = {
   },
   play: async ({ canvasElement }) => {
     const cell = canvasElement.querySelector("[data-postgres-unread]") as HTMLElement;
-    await expect(cell).toHaveTextContent("PostgreSQL not read (fenced or restarting)");
+    await expect(cell).toHaveTextContent("PostgreSQL not read (fenced, restarting or rewinding)");
   },
 };
 export const MaskedReplicaDark = dark(MaskedReplica);

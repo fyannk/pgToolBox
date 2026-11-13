@@ -333,7 +333,7 @@ not say that WAL reaches the repository now. One missed read does not flip it
 row or a restarted pod is unread. A hibernated Cluster reads `inactive`
 (`Hibernated`): nothing is going wrong, but nothing confirms that every segment
 written before hibernation was archived. An instance whose manager answered
-without reaching PostgreSQL (fenced or restarting) counts as not read.
+without reaching PostgreSQL (fenced, restarting or rewinding) counts as not read.
 
 A replica cluster's archiver is its designated primary, a standby that archives
 with `archive_mode=always`. CloudNativePG counts `.ready` files only on a

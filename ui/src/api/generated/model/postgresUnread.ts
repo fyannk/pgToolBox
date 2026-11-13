@@ -7,7 +7,7 @@
  */
 
 export interface PostgresUnread {
-  /** The error the instance manager hit and masked (mightBeUnavailableMaskedError), bounded. */
+  /** The error the instance manager hit and masked (mightBeUnavailableMaskedError), bounded, or pg_rewind is running. */
   error: string;
   instance: string;
 }

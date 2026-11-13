@@ -172,3 +172,24 @@ func TestReadingOK(t *testing.T) {
 		}
 	}
 }
+
+// TestPostgresUnreadRewind: a rewind masks no error, so the note names
+// the rewind instead of an empty error.
+func TestPostgresUnreadRewind(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		r    instancestatus.Reading
+		want string
+	}{
+		{"masked error", instancestatus.Reading{MightBeUnavailableMaskedError: maskedError}, maskedError},
+		{"rewind", instancestatus.Reading{IsPgRewindRunning: true}, "pg_rewind is running"},
+	} {
+		got := postgresUnread("db-1", sweep.Instance{State: viewmodel.StatusReadOK, Reading: &c.r})
+		if got == nil || got.Error != c.want {
+			t.Errorf("%s: %+v, want error %q", c.name, got, c.want)
+		}
+	}
+	if got := postgresUnread("db-1", sweep.Instance{Reading: &instancestatus.Reading{IsPrimary: true}}); got != nil {
+		t.Errorf("read instance: %+v, want nil", got)
+	}
+}

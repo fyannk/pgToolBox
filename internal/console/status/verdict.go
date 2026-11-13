@@ -447,7 +447,7 @@ func (s *Service) statusReadContributor(g *gathered, now time.Time) viewmodel.Co
 	}
 	c.Detail = fmt.Sprintf("%d of %d instances read", read, total)
 	if masked > 0 {
-		c.Detail += fmt.Sprintf(", %d answered without PostgreSQL (fenced or restarting)", masked)
+		c.Detail += fmt.Sprintf(", %d answered without PostgreSQL (fenced, restarting or rewinding)", masked)
 	}
 	switch {
 	case total == 0 && hibernated:

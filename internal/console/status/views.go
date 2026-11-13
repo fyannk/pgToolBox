@@ -704,7 +704,7 @@ func (s *Service) instanceRows(g *gathered, withSeries bool) []viewmodel.Instanc
 			Pod:  s.podView(g, pod, now),
 		}
 		row.StatusRead, row.Live = s.statusRead(g, pod.Name, primaryLSN)
-		if row.Live != nil && row.StatusRead.State == viewmodel.StatusReadOK {
+		if row.Live != nil && row.StatusRead.State == viewmodel.StatusReadOK && !row.Live.PgRewindRunning {
 			row.Role.Live = viewmodel.RoleReplica
 			if row.Live.IsPrimary {
 				row.Role.Live = viewmodel.RolePrimary
@@ -819,10 +819,13 @@ func liveStatus(name string, inst sweep.Instance, primaryLSN string, archiver bo
 	r := inst.Reading
 	observed := r.ObservedAt
 	if r.Masked() {
-		// The manager answered without reaching PostgreSQL (fenced or
-		// restarting): only its own flags and isPrimary, re-read from the
-		// data directory, are facts. PostgreSQL's fields are not served,
-		// so none reads as false or zero (round 17, PG/CNPG P3).
+		// The manager answered without reaching PostgreSQL (fenced,
+		// restarting or rewinding): only its own flags are facts, and
+		// isPrimary when an error was masked (GetStatus re-reads it only
+		// then, probes.go v1.30.1:50-69). PostgreSQL's fields are not
+		// served, so none reads as false or zero (round 17, PG/CNPG P3);
+		// during a rewind isPrimary and managerUpgrading are unread zeros
+		// too, and the UI shows them as not read.
 		live := &viewmodel.LiveStatus{
 			IsPrimary: r.IsPrimary, MightBeUnavailable: r.MightBeUnavailable, PgRewindRunning: r.IsPgRewindRunning,
 			ManagerVersion: r.InstanceManagerVersion, ManagerUpgrading: r.IsInstanceManagerUpgrading,
@@ -871,7 +874,11 @@ func postgresUnread(name string, inst sweep.Instance) *viewmodel.PostgresUnread 
 	if inst.Reading == nil || !inst.Reading.Masked() {
 		return nil
 	}
-	return &viewmodel.PostgresUnread{Instance: name, Error: bound(inst.Reading.MightBeUnavailableMaskedError)}
+	msg := inst.Reading.MightBeUnavailableMaskedError
+	if msg == "" {
+		msg = "pg_rewind is running"
+	}
+	return &viewmodel.PostgresUnread{Instance: name, Error: bound(msg)}
 }
 
 // instanceHealth reads one row: a waiting container or an unready pod is

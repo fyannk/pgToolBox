@@ -413,7 +413,7 @@ func ArchivingOf(c *cnpgv1.Cluster, primary *ArchiverLive, primaryMasked bool) A
 			reading.Reason = ArchivingReasonPrimaryUnread
 			unread := "the primary's archiver was not read"
 			if primaryMasked {
-				unread = "the primary's instance manager answered without reading PostgreSQL (fenced or restarting)"
+				unread = "the primary's instance manager answered without reading PostgreSQL (fenced, restarting or rewinding)"
 			}
 			reading.Message = "ContinuousArchiving is True" + since(condition.LastTransitionTime.Time) +
 				", but " + unread + ": whether WAL reaches the repository now is not confirmed"

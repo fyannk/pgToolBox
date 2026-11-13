@@ -24,7 +24,7 @@ function NotRead() {
   return <span className="text-muted italic">{m.pg_not_read()}</span>;
 }
 
-/** The masked state of a report: the manager answered without reaching PostgreSQL (fenced or restarting). */
+/** The masked state of a report: the manager answered without reaching PostgreSQL (fenced, restarting or rewinding). */
 function PostgresUnreadNote({ live }: { live: InstanceRow["live"] }) {
   if (!live?.postgresUnread) return null;
   return (
@@ -189,7 +189,7 @@ function LiveFacts({ l }: { l: NonNullable<InstanceRow["live"]> }) {
     <>
       <PostgresUnreadNote live={l} />
       <Facts>
-        <Fact label={m.live_is_primary()}>{l.isPrimary ? m.yes() : m.no()}</Fact>
+        <Fact label={m.live_is_primary()}>{l.pgRewindRunning ? <NotRead /> : l.isPrimary ? m.yes() : m.no()}</Fact>
         <Fact label={m.might_be_unavailable_label()}>{l.mightBeUnavailable ? m.yes() : m.no()}</Fact>
         <Fact label={m.timeline()}>{pg(<Reported value={l.timelineId} />)}</Fact>
         <Fact label={m.current_lsn()}>{pg(<Reported value={l.currentLsn} />)}</Fact>
