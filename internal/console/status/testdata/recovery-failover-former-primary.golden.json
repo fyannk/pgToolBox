@@ -31,8 +31,8 @@
       "from": "2026-10-28T07:55:00Z",
       "to": "2026-10-29T07:40:00Z",
       "kind": "unknown",
-      "text": "The WAL up to here on timeline 1 was archived by a former primary, which had WAL waiting in every reading the console kept before the switch: WAL that waited on it, or never left it, may hold commits older than this end's arrival time, so a restore this recent may stop short.",
-      "code": "recovery.segment.formerArchiverBacklog",
+      "text": "The WAL up to here on timeline 1 was archived by a former primary, and the console kept no reading of that timeline's archiver that bounds this end: WAL that waited on it, or never left it, may hold commits older than this end's arrival time, so a restore this recent may stop short.",
+      "code": "recovery.segment.formerArchiverUnknown",
       "params": {
         "timeline": "1"
       }

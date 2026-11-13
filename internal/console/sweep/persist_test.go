@@ -104,13 +104,6 @@ func TestSnapshotRestoresSinceReadingAndRings(t *testing.T) {
 		t.Fatalf("reading = %+v, want the last good report restored", inst.Reading)
 	}
 	for _, sr := range s.Series(key, "orders-2") {
-		if sr.Key == SeriesCurrentLSN {
-			// The primary's position (0/3000000) is kept and restored.
-			if len(sr.Points) != 4 || sr.Points[0].Value == nil || *sr.Points[0].Value != 0x3000000 || sr.Points[2].Value != nil {
-				t.Fatalf("position points = %+v", sr.Points)
-			}
-			continue
-		}
 		if sr.Key != SeriesReadyWALFiles {
 			continue
 		}

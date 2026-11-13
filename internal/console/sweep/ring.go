@@ -66,11 +66,6 @@ func (r *ring) points() []viewmodel.Point {
 const (
 	SeriesLagBytes      = "lagBytes"
 	SeriesReadyWALFiles = "readyWalFiles"
-	// SeriesCurrentLSN is a primary's pg_current_wal_lsn() in bytes at
-	// each sweep (nil for a standby, a failed read, or a position past
-	// 2^53, which a float64 does not hold exactly). The recovery facts
-	// read it beside readyWalFiles; it is not a sparkline.
-	SeriesCurrentLSN = "currentLsn"
 	// SeriesLastArchivedAt is a primary's pg_stat_archiver
 	// last_archived_time at each sweep, in Unix milliseconds on the
 	// instance's own clock (nil for a standby, a failed read, or none
@@ -95,7 +90,7 @@ const (
 const ArchivedNone = -1
 
 var seriesUnits = map[string]string{
-	SeriesLagBytes: "bytes", SeriesReadyWALFiles: "files", SeriesCurrentLSN: "bytes", SeriesLastArchivedAt: "ms", SeriesTimeline: "",
+	SeriesLagBytes: "bytes", SeriesReadyWALFiles: "files", SeriesLastArchivedAt: "ms", SeriesTimeline: "",
 }
 
 // walFileTimeline is the timeline a WAL file name (24 hex digits) is on;
@@ -110,9 +105,6 @@ func walFileTimeline(name string) (uint32, bool) {
 	}
 	return uint32(tl), true
 }
-
-// maxExactLSN is the largest position a float64 holds exactly.
-const maxExactLSN = 1 << 53
 
 // parseLSN reads PostgreSQL's "X/Y" LSN text.
 func parseLSN(s string) (uint64, bool) { return cnpgstatus.ParseLSN(s) }

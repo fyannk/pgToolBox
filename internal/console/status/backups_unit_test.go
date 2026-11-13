@@ -260,11 +260,12 @@ func TestBackupRecencyReadsPlausibleTimes(t *testing.T) {
 	}
 	owner := &metav1.OwnerReference{APIVersion: "postgresql.cnpg.io/v1", Kind: "Cluster", Name: "reborn", UID: uid}
 	stamp := now.Add(-10 * time.Minute)
-	// An instance clock 15 min behind (round 21, PG P3-B, CNPG P3-1): the
-	// operator started the Backup a second after its creation, the
-	// instance stopped it and stamped it Completed on its own clock.
+	// An instance clock 20 min behind: the operator started the Backup a
+	// second after its creation, the instance stopped it and stamped it
+	// Completed on its own clock, more than BackupClockSkew before the
+	// creation.
 	opStarted := now.Add(-30*time.Minute + time.Second)
-	skewedStop, skewedStamp := now.Add(-20*time.Minute-15*time.Minute), now.Add(-20*time.Minute-15*time.Minute+3*time.Second)
+	skewedStop, skewedStamp := now.Add(-20*time.Minute-20*time.Minute), now.Add(-20*time.Minute-20*time.Minute+3*time.Second)
 	created30 := now.Add(-30 * time.Minute)
 	for _, tt := range []struct {
 		name          string
@@ -280,17 +281,17 @@ func TestBackupRecencyReadsPlausibleTimes(t *testing.T) {
 		{"no plausible stop: CloudNativePG's completion stamp", time.Time{}, time.Unix(0, 0), &stamp, nil, &stamp, backupStampSource},
 		{"a plausible stop", time.Time{}, now.Add(-20 * time.Minute), &stamp, &opStarted, new(now.Add(-20 * time.Minute)), "Backup.status"},
 		{"an instance clock behind: neither its stop nor its stamp, its creation", time.Time{}, skewedStop, &skewedStamp, &opStarted, &created30, backupCreatedSource},
-		// Round 22, CNPG P3-1: an honest instance stops at -1m, the
-		// operator, 4.5 min ahead of the console and more than
-		// backupClockSkew ahead of the instance, stamped its start in the
-		// console's future. ClockBehind cannot tell which clock is off:
-		// timed by the operator's stamp the backup "completed <1m ago"
-		// after it really did; its creation is before the end.
-		{"an operator clock ahead: its creation, not the operator's future start", now.Add(-4 * time.Minute), now.Add(-time.Minute), new(now.Add(-time.Minute + 3*time.Second)), new(now.Add(4*time.Minute + 30*time.Second)), new(now.Add(-4 * time.Minute)), backupCreatedSource},
+		// An honest instance stops at -1m while the operator, 4.5 min
+		// ahead, stamped its start in the console's future: the times are
+		// checked against the creation only, and the stop is true.
+		{"an operator clock ahead: the instance's stop", now.Add(-4 * time.Minute), now.Add(-time.Minute), new(now.Add(-time.Minute + 3*time.Second)), new(now.Add(4*time.Minute + 30*time.Second)), new(now.Add(-time.Minute)), "Backup.status"},
 		// An operator 2 min behind the API server started it before its
-		// creation, and the instance runs 20 min behind: the earlier, the
-		// operator's start stamp.
-		{"an operator start before the creation: the operator's start", time.Time{}, now.Add(-50 * time.Minute), new(now.Add(-50*time.Minute + 3*time.Second)), new(now.Add(-32 * time.Minute)), new(now.Add(-32 * time.Minute)), backupSkewSource},
+		// creation, and the instance runs 20 min behind: its creation.
+		{"an operator start before the creation, an instance behind: its creation", time.Time{}, now.Add(-50 * time.Minute), new(now.Add(-50*time.Minute + 3*time.Second)), new(now.Add(-32 * time.Minute)), &created30, backupCreatedSource},
+		// A status restored with the object (Velero): every time is older
+		// than the creation, so none is plausible and it is not counted,
+		// never timed at its restore.
+		{"a restored status: not counted", time.Time{}, now.Add(-72 * time.Hour), new(now.Add(-72*time.Hour + 3*time.Second)), new(now.Add(-73 * time.Hour)), nil, "Backup.status"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			created := tt.created
@@ -334,9 +335,9 @@ func TestBackupRecencyReadsPlausibleTimes(t *testing.T) {
 			}
 			if detail := backupDetail(got.Summary.BackupRecency, now); (tt.wantSource == backupStampSource) != strings.Contains(detail, "CloudNativePG's completion stamp") {
 				t.Errorf("detail %q does not attribute the time to its source", detail)
-			} else if skewed := tt.wantSource == backupSkewSource || tt.wantSource == backupCreatedSource; skewed != strings.Contains(detail, "not plausible") ||
-				skewed != strings.Contains(detail, "the instance's and the operator's clocks disagree") {
-				t.Errorf("detail %q does not say the skewed times are not plausible, without blaming one clock", detail)
+			} else if skewed := tt.wantSource == backupCreatedSource; skewed != strings.Contains(detail, "not plausible") ||
+				skewed != strings.Contains(detail, "the instance's clock and the API server's disagree") {
+				t.Errorf("detail %q does not say the skewed times are not plausible", detail)
 			}
 			facts, ok := svc.ClusterFacts(context.Background(), cache.ClusterKey{Namespace: "team-a", Name: "reborn"})
 			if !ok || len(facts.Backups) != 1 {
@@ -346,7 +347,7 @@ func TestBackupRecencyReadsPlausibleTimes(t *testing.T) {
 			// The timeline places a Backup at its end: one whose times are
 			// skewed has none and is observed by the console.
 			wantStop := tt.wantCompleted
-			if tt.wantSource == backupSkewSource || tt.wantSource == backupCreatedSource {
+			if tt.wantSource == backupCreatedSource {
 				wantStop = nil
 			}
 			switch {

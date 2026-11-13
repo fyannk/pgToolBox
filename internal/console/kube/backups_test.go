@@ -226,11 +226,10 @@ func TestConvertBackupReadsAnEpochStopAsUnknown(t *testing.T) {
 // testNow is the test converters' clock: after every fixture's times.
 var testNow = time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
 
-// TestConvertBackupDropsTimesOfAnInstanceClockBehind (round 21, PG P3-B,
-// CNPG P3-1): the converter reads CloudNativePG's stamps too, so tool
-// times 10 min before the operator's start stamp are an instance clock
-// running behind and are dropped, never read as an Imported old backup;
-// an honest instance's times are kept.
+// TestConvertBackupDropsTimesOfAnInstanceClockBehind: tool times more
+// than BackupClockSkew before the Backup's creation are an instance clock
+// running behind (or a restored status) and are dropped; an honest
+// instance's times are kept.
 func TestConvertBackupDropsTimesOfAnInstanceClockBehind(t *testing.T) {
 	t.Parallel()
 	c := newTestClient(t)

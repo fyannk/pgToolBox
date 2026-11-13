@@ -276,7 +276,8 @@ func (s *Sweeper) restoreLocked(cs *clusterState, target Target, at time.Time) {
 		cs.snap.Instances[pi.Name] = inst
 	}
 	for _, pr := range p.Rings {
-		if !same[pr.Instance] || len(pr.At) != len(pr.Values) || len(pr.At) != len(pr.Has) {
+		_, known := seriesUnits[pr.Series]
+		if !known || !same[pr.Instance] || len(pr.At) != len(pr.Values) || len(pr.At) != len(pr.Has) {
 			continue
 		}
 		r := &ring{}

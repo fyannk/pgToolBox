@@ -71,7 +71,7 @@ func TestFormerPrimaryBacklogBoundsTheParentTail(t *testing.T) {
 		},
 		{
 			name: "the former primary had WAL waiting in every reading", timeline: 1, former: formerArchiver{read: tl1},
-			code: "recovery.segment.formerArchiverBacklog", from: receipt.Add(-failureLookback),
+			code: "recovery.segment.formerArchiverUnknown", from: receipt.Add(-failureLookback),
 			not: []time.Duration{20 * time.Minute, time.Hour},
 		},
 		{
@@ -80,19 +80,12 @@ func TestFormerPrimaryBacklogBoundsTheParentTail(t *testing.T) {
 			not: []time.Duration{20 * time.Minute, time.Hour, 2 * time.Hour}, covered: []time.Duration{3 * time.Hour},
 		},
 		{
-			name: "a bound from the former primary's positions", timeline: 1,
-			former: formerArchiver{read: tl1, bounds: []archivedBound{{readAt: receipt.Add(-time.Hour), before: receipt.Add(-90 * time.Minute), timeline: 1}}},
-			code:   "recovery.segment.formerArchiverBound", from: receipt.Add(-90 * time.Minute),
-			not: []time.Duration{20 * time.Minute, time.Hour}, covered: []time.Duration{2 * time.Hour},
-		},
-		{
 			// Round 9, P2: the primary of timeline 2 read quiet; it says
 			// nothing of timeline 1's archiver.
 			name: "readings of another timeline's archiver are no evidence", timeline: 1,
 			former: formerArchiver{
-				read:   map[uint64]bool{2: true},
-				quiet:  []quietSweep{{at: receipt.Add(time.Hour), by: receipt.Add(time.Hour + time.Second), timeline: 2}},
-				bounds: []archivedBound{{readAt: receipt.Add(time.Hour), before: receipt.Add(30 * time.Minute), timeline: 2}},
+				read:  map[uint64]bool{2: true},
+				quiet: []quietSweep{{at: receipt.Add(time.Hour), by: receipt.Add(time.Hour + time.Second), timeline: 2}},
 			},
 			code: "recovery.segment.formerArchiverUnknown", from: receipt.Add(-failureLookback),
 			not: []time.Duration{2 * time.Minute, 20 * time.Minute, time.Hour},
@@ -106,15 +99,9 @@ func TestFormerPrimaryBacklogBoundsTheParentTail(t *testing.T) {
 			not: []time.Duration{2 * time.Minute, 20 * time.Minute, time.Hour},
 		},
 		{
-			name: "an inverted bound is unknown", timeline: 1,
-			former: formerArchiver{read: tl1, bounds: []archivedBound{{readAt: receipt.Add(time.Hour), before: receipt.Add(10 * time.Minute), timeline: 1}}},
-			code:   "recovery.segment.formerArchiverUnknown", from: receipt.Add(-failureLookback),
-			not: []time.Duration{2 * time.Minute, 20 * time.Minute},
-		},
-		{
 			name: "a quiet read that returned after the scan does not count", timeline: 1,
 			former: formerArchiver{read: tl1, quiet: []quietSweep{{at: now.Add(-10 * time.Second), by: now.Add(time.Second), timeline: 1}}},
-			code:   "recovery.segment.formerArchiverBacklog", from: receipt.Add(-failureLookback),
+			code:   "recovery.segment.formerArchiverUnknown", from: receipt.Add(-failureLookback),
 			not: []time.Duration{20 * time.Minute, time.Hour},
 		},
 		{
@@ -127,8 +114,7 @@ func TestFormerPrimaryBacklogBoundsTheParentTail(t *testing.T) {
 			facts.former = tc.former
 			ev := timelineFixture{paths: []evidence.RecoveryPath{parentTailPath(tc.timeline)}}.evidence()
 			tl := svc.recoveryTimeline(ev, viewmodel.BackupSummary{}, nil, facts)
-			band := edgeBand(tl, "recovery.segment.formerArchiverUnknown", "recovery.segment.formerArchiverBacklog",
-				"recovery.segment.formerArchiverSince", "recovery.segment.formerArchiverBound")
+			band := edgeBand(tl, "recovery.segment.formerArchiverUnknown", "recovery.segment.formerArchiverSince")
 			switch {
 			case tc.code == "" && band != nil:
 				t.Fatalf("a former-primary band on the current timeline: %+v", band)
@@ -175,16 +161,16 @@ func TestFormerArchiverOfReadsOnlyThePreviousTerm(t *testing.T) {
 			"db-3": {{At: promoted.Add(-time.Minute)}, point(promoted.Add(time.Minute), 2)},
 		},
 	}
-	f := formerArchiverOf(g, promotedAt(g), defaultArchiveTimeout, 30*time.Second)
-	read, quiet, _ := f.on(1)
+	f := formerArchiverOf(g, promotedAt(g), 30*time.Second)
+	read, quiet := f.on(1)
 	if !read || len(quiet) != 1 || !quiet[0].at.Equal(promoted.Add(-2*time.Hour)) || !quiet[0].by.Equal(promoted.Add(-2*time.Hour+30*time.Second)) {
 		t.Fatalf("former archiver %+v, want db-1's quiet sweep 3 h ago on timeline 1, read by one interval later", f)
 	}
-	if read, _, _ := f.on(2); read || len(f.quiet) != 1 {
+	if read, _ := f.on(2); read || len(f.quiet) != 1 {
 		t.Fatalf("readings after the promotion or without a timeline count: %+v", f)
 	}
 	c.Status.CurrentPrimaryTimestamp = ""
-	if f := formerArchiverOf(g, promotedAt(g), defaultArchiveTimeout, 30*time.Second); len(f.read) != 0 {
+	if f := formerArchiverOf(g, promotedAt(g), 30*time.Second); len(f.read) != 0 {
 		t.Fatalf("an unknown promotion time read a former archiver: %+v", f)
 	}
 }
@@ -210,21 +196,6 @@ func TestRingReadTimes(t *testing.T) {
 	f.quiet = quietSweeps(ring, time.Time{}, time.Time{}, 30*time.Second)
 	if q := f.quietBy(&scan); q == nil || !q.at.Equal(scan.Add(-10*time.Second)) {
 		t.Fatalf("a read that returned before the scan: %+v", q)
-	}
-
-	read := now.Add(-30 * time.Second)
-	r, ready, lsns := busyPrimary(read, 3)
-	zone := time.FixedZone("elsewhere", 3600)
-	for i := range lsns {
-		lsns[i].At = lsns[i].At.In(zone)
-	}
-	g := &gathered{
-		cluster:    inTreeCluster(),
-		swept:      sweep.Snapshot{SweptAt: now, Interval: 30 * time.Second, Instances: map[string]sweep.Instance{"db-2": {State: viewmodel.StatusReadOK, Reading: &r}}},
-		readyRings: map[string][]viewmodel.Point{"db-2": ready},
-	}
-	if b := archivedBounds(g, "db-2", lsns, time.Time{}, time.Time{}, defaultArchiveTimeout, 30*time.Second); len(b) == 0 {
-		t.Fatal("rings at the same instants in another location are not matched")
 	}
 }
 

@@ -234,13 +234,9 @@ type VersionInfo struct {
 	Confidence VersionConfidence `json:"confidence" enum:"reported,image,inferred,unknown"`
 	// DetectedBy names the method, such as "instanceManagerVersion",
 	// "bootstrapControllerImage", "featureProbe".
-	DetectedBy string `json:"detectedBy,omitempty" doc:"Which source established the version."`
-	// UpgradeInFlight names the instance-manager versions and the
-	// operator's cnpg.io/operatorVersion annotation when they disagree:
-	// an operator upgrade not yet rolled to every instance.
-	UpgradeInFlight string `json:"upgradeInFlight,omitempty" doc:"Instance managers and the operator's Pod annotation disagree: an upgrade in progress."`
-	PostgresMajor   *int   `json:"postgresMajor,omitempty" doc:"Reported PostgreSQL major version."`
-	Image           string `json:"image,omitempty" doc:"status.image."`
+	DetectedBy    string `json:"detectedBy,omitempty" doc:"Which source established the version."`
+	PostgresMajor *int   `json:"postgresMajor,omitempty" doc:"Reported PostgreSQL major version."`
+	Image         string `json:"image,omitempty" doc:"status.image."`
 	// Components are the versions in play, each placed in the lifecycle
 	// table, in reading order: Kubernetes, CloudNativePG, the plugin,
 	// PostgreSQL. A component the console has not observed is absent.

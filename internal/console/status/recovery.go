@@ -31,7 +31,6 @@ import (
 	"github.com/fyannk/pgToolBox/internal/console/evidence"
 	"github.com/fyannk/pgToolBox/internal/console/viewmodel"
 	"github.com/fyannk/pgToolBox/pkg/cnpgstatus"
-	"github.com/fyannk/pgToolBox/pkg/cnpgstatus/instancestatus"
 	"github.com/fyannk/pgToolBox/pkg/cnpgstatus/observe"
 	evidencev1alpha1 "github.com/fyannk/pgToolBox/pkg/evidence/v1alpha1"
 )
@@ -144,11 +143,6 @@ type recoveryFacts struct {
 	// proves nothing (a slow archiver can hold them for long), and a
 	// failed read is no reading.
 	quiet []quietSweep
-	// bounds are, for the sweeps that read the current primary with
-	// .ready files waiting, the time before which every commit was
-	// archived by then (archivedBounds); empty when the WAL positions or
-	// the segment size are not known.
-	bounds []archivedBound
 	// former is what the sweeps kept of the instances that were primary
 	// before the current one was promoted: their archiver wrote the WAL
 	// of the older timelines, so a restore point near the end of WAL on
@@ -167,121 +161,46 @@ type recoveryFacts struct {
 	// waiting on a former primary before it rejoins (and does not start it
 	// otherwise), so such an instance no longer holds unarchived WAL.
 	rejoined map[string]bool
-	// backupEnds are this Cluster's CNPG Backups, whatever their method
-	// or phase, as backupsSince counts them (backupEndsOf). pgBackRest
-	// expires only at the end of a backup, so those that ended since the
-	// evidence was read bound what expire may have removed since
-	// (backupsSince). backupsUnread: the Backups were not listed, so that
-	// count is not known.
-	backupEnds    []backupEnd
+	// backupEnds are when this Cluster's CNPG Backups, whatever their
+	// method or phase, ended or began, as backupsSince counts them
+	// (backupEndsOf); nil for one that could have ended at any time.
+	// pgBackRest expires at the end of a backup, so one that ended or
+	// began since the evidence was read may have removed what it lists.
+	// backupsUnread: the Backups were not listed, so that count is not
+	// known.
+	backupEnds    []*time.Time
 	backupsUnread bool
 }
 
-// backupEnd is one Backup as the purge band counts it.
-type backupEnd struct {
-	// at is when it ended: for a Completed Backup the later of its stop
-	// time and CloudNativePG's completion stamp; for one in progress
-	// when it began. nil for a Backup completed with neither, which
-	// could have ended at any time.
-	at *time.Time
-	// from is the earliest known instant of a Completed Backup's tool run
-	// (its start, else its stop) and done its completion stamp
-	// (status.reconciliationTerminatedAt): pgBackRest's expire at the end
-	// of that run had returned by done. nil when not known, or the
-	// Backup is not Completed.
-	from, done *time.Time
-}
-
-// backupsSince is how many of the Cluster's Backups ended after read
-// (less scanSlack, for the clocks of the instance and the agent); false
-// when the Backups were not listed. A backup taken outside CloudNativePG
-// (a pgbackrest command run by hand) has no Backup object and is not
-// counted.
+// backupsSince is how many of the Cluster's Backups ended or began after
+// read, less scanSlack and backupClockSkew (the clocks of the instance,
+// the operator and the agent); false when the Backups were not listed. A
+// backup taken outside CloudNativePG (a pgbackrest command run by hand)
+// has no Backup object and is not counted.
 func (f recoveryFacts) backupsSince(read time.Time) (int, bool) {
 	if f.backupsUnread {
 		return 0, false
 	}
 	n := 0
-	for _, b := range f.backupEnds {
-		if b.since(read) {
+	for _, at := range f.backupEnds {
+		if at == nil || at.After(read.Add(-scanSlack-backupClockSkew)) {
 			n++
 		}
 	}
 	return n, true
 }
 
-// since says that b may have ended after read (less scanSlack).
-func (b backupEnd) since(read time.Time) bool {
-	return b.at == nil || b.at.After(read.Add(-scanSlack))
-}
-
-// expiredBy is the latest instant by which the expire of every Backup
-// counted since read (backupsSince) has run: the latest completion stamp
-// among them, or now when one of them has none (in progress, or no
-// stamp). pgBackRest expires at the end of a backup, before the Backup
-// is marked Completed.
-func (f recoveryFacts) expiredBy(read time.Time) time.Time {
-	var by time.Time
-	for _, b := range f.backupEnds {
-		if !b.since(read) {
-			continue
-		}
-		if b.done == nil {
-			return f.now
-		}
-		if b.done.After(by) {
-			by = *b.done
-		}
-	}
-	if by.IsZero() || by.After(f.now) {
-		return f.now
-	}
-	return by
-}
-
-// expireStampAt is the completion stamp of the Completed Backup whose
-// tool run holds end (from at or before end, its stamp at or after it),
-// the latest when several do: the instant by which the expire pgBackRest
-// ran at end had returned. False when no Backup with a stamp holds it (a
-// backup run outside CloudNativePG, or one with no stamp).
-func (f recoveryFacts) expireStampAt(end time.Time) (time.Time, bool) {
-	var at time.Time
-	found := false
-	for _, b := range f.backupEnds {
-		if b.from == nil || b.done == nil || b.from.After(end) || b.done.Before(end) {
-			continue
-		}
-		if !found || b.done.After(at) {
-			at, found = *b.done, true
-		}
-	}
-	return at, found
-}
-
 // backupEndsOf are g's Backups' ends (recoveryFacts backupEnds) at now,
-// read through cnpgstatus.BackupTimesOf: a plugin's unset stop time,
-// which CloudNativePG stamps 1970-01-01, a stop in the future, or one
-// before the start or, alone, the object's creation, is no stop time.
-//
+// read through cnpgstatus.BackupTimesOf, which drops an impossible time.
 // A Completed Backup counts at the later of its stop time and
 // CloudNativePG's completion stamp (status.reconciliationTerminatedAt,
 // written by SetAsCompleted once the tool returned, pgBackRest's expire
-// included): one stamped before the read ran its expire before it too; with neither, as one that could have ended at any
-// time. A Backup restored
-// with its status (Velero) or migrated keeps its coherent old times
-// (observe.BackupTimes Imported) and counts then, not since the object
-// appeared, which held a whole-window band on a healthy cluster.
-//
-// A Backup still in progress (started, running, finalizing) counts at
-// the latest known instant before its tool began: its start, else the
-// operator's (status.reconciliationStartedAt, SetAsStarted: a queued
-// Backup waits after its creation), else its
-// creation. It ends later, and pgBackRest expires at its end, seconds
-// before CloudNativePG patches the Backup Completed, so one begun after
-// the read may already have expired what the snapshot lists. One begun before the read is not counted until its
-// stop time is reported: it only widens the band once it ends. A plugin
-// backup reports no start while running (pluginFieldsAtCompletion).
-func backupEndsOf(g *gathered, now time.Time) (ends []backupEnd, unread bool) {
+// included), and with neither as one that could have ended at any time.
+// A Backup in progress counts at the latest known instant before its
+// tool began: its start, else the operator's (SetAsStarted: a queued
+// Backup waits after its creation), else its creation; a plugin backup
+// reports no start while running (pluginFieldsAtCompletion).
+func backupEndsOf(g *gathered, now time.Time) (ends []*time.Time, unread bool) {
 	if !g.listed(cache.SourceBackups) {
 		return nil, true
 	}
@@ -298,21 +217,17 @@ func backupEndsOf(g *gathered, now time.Time) (ends []backupEnd, unread bool) {
 				began = &created
 			}
 			if began != nil {
-				ends = append(ends, backupEnd{at: began})
+				ends = append(ends, began)
 			}
 		case cnpgv1.BackupPhaseCompleted:
 			end := times.Stop
 			if end == nil || times.OperatorTerminated != nil && times.OperatorTerminated.After(*end) {
 				end = times.OperatorTerminated
 			}
-			from := times.Start
-			if from == nil {
-				from = times.Stop
-			}
-			ends = append(ends, backupEnd{at: end, from: from, done: times.OperatorTerminated})
+			ends = append(ends, end)
 		default:
 			if times.Stop != nil {
-				ends = append(ends, backupEnd{at: times.Stop})
+				ends = append(ends, times.Stop)
 			}
 		}
 	}
@@ -328,19 +243,12 @@ func (f recoveryFacts) formerHolder(timeline uint64) (name string, rejoined bool
 	return name, name != "" && f.rejoined[name]
 }
 
-// archivedBound says that by the sweep at readAt every commit before
-// before was in WAL the archiver had archived. timeline is the timeline
-// the archiver was primary on at that sweep (former primaries only; 0
-// for the current primary's, which need none).
-type archivedBound struct {
-	readAt, before time.Time
-	timeline       uint64
-}
-
 // quietSweep is a sweep that read the archiver with no .ready file: at
 // is the sweep's start (the count was taken at or after it), by is when
 // the read returned (the count was taken at or before it). Every segment
-// completed by at was archived by by. timeline is as archivedBound's.
+// completed by at was archived by by. timeline is the timeline the
+// archiver was primary on at that sweep (former primaries only; 0 for the
+// current primary's, which need none).
 type quietSweep struct {
 	at, by   time.Time
 	timeline uint64
@@ -357,9 +265,8 @@ type quietSweep struct {
 // retention passed, the reading carried no timeline, or the promotion
 // time is not known) has no archiver state at the switch.
 type formerArchiver struct {
-	read   map[uint64]bool
-	quiet  []quietSweep
-	bounds []archivedBound
+	read  map[uint64]bool
+	quiet []quietSweep
 	// holders are, per timeline, the instances read as its primary.
 	holders map[uint64]map[string]bool
 }
@@ -378,21 +285,16 @@ func (f formerArchiver) holder(timeline uint64) string {
 }
 
 // on is the former archiver's readings of one timeline.
-func (f formerArchiver) on(timeline uint64) (read bool, quiet []quietSweep, bounds []archivedBound) {
+func (f formerArchiver) on(timeline uint64) (read bool, quiet []quietSweep) {
 	if timeline == 0 || !f.read[timeline] {
-		return false, nil, nil
+		return false, nil
 	}
 	for _, q := range f.quiet {
 		if q.timeline == timeline {
 			quiet = append(quiet, q)
 		}
 	}
-	for _, b := range f.bounds {
-		if b.timeline == timeline {
-			bounds = append(bounds, b)
-		}
-	}
-	return true, quiet, bounds
+	return true, quiet
 }
 
 // recoveryFactsOf reads the facts from a gathered Cluster and its
@@ -445,9 +347,8 @@ func recoveryFactsOf(g *gathered, arch viewmodel.Archiving, now time.Time) recov
 			until = live.ObservedAt
 		}
 		f.quiet = quietSweeps(g.readyRings[primary], promoted, until, f.sweepInterval)
-		f.bounds = archivedBounds(g, primary, g.lsnRings[primary], promoted, time.Time{}, f.archiveTimeout, f.sweepInterval)
 	}
-	f.former = formerArchiverOf(g, promoted, f.archiveTimeout, f.sweepInterval)
+	f.former = formerArchiverOf(g, promoted, f.sweepInterval)
 	f.promoted, f.liveTimeline, f.rejoined = promoted, liveTimelineOf(g, promoted), rejoinedSince(g, promoted)
 	var failedOn string
 	f.lastFailedWAL, failedOn = newestArchiveFailure(g)
@@ -510,119 +411,6 @@ func quietSweeps(ring []viewmodel.Point, from, until time.Time, interval time.Du
 	return out
 }
 
-// archivedBounds bound a backlog's onset on a busy primary, which may
-// never read zero .ready files. At a sweep T that read k .ready files
-// with the write position in segment S, the archiver had archived every
-// segment before S-k by T: the .ready files are the newest completed
-// segments it has not been asked to finish with (PostgreSQL archives in
-// order, and segments a parallel archiver uploaded ahead stay .ready, so
-// k only overcounts). A commit in a later segment is at most one
-// archive_timeout older than that segment's switch (archive_timeout
-// forces the switch once anything was written), and segment S-k switched
-// after any sweep T' at which the position had not reached the start of
-// S-k+1. So by T every commit before T' - archive_timeout was archived.
-// T' is the newest such sweep at or before T, both in [from, until) (the
-// instance's term as primary; until zero for no end); a failed read is
-// no T or T' (it only widens). T is when the read returned (readByOf), T'
-// the sweep's start, before the position was read: each is the
-// conservative end of its read. CloudNativePG reads the position before
-// it counts the .ready files (catalogpins TestPinLSNBeforeReadyCount),
-// so a segment completed between the two reads only raises k. Empty
-// without the position ring, the segment size, or archive_timeout.
-func archivedBounds(g *gathered, instance string, lsnRing []viewmodel.Point, from, until time.Time, archiveTimeout, interval time.Duration) []archivedBound {
-	return archivedBoundsOn(g, instance, lsnRing, nil, from, until, archiveTimeout, interval)
-}
-
-// archivedBoundsOn is archivedBounds with each sweep's timeline: when
-// timelines is not nil, a sweep without one is no T or T', T' is on T's
-// timeline, and each bound carries it.
-func archivedBoundsOn(g *gathered, instance string, lsnRing []viewmodel.Point, timelines map[int64]uint64, from, until time.Time, archiveTimeout, interval time.Duration) []archivedBound {
-	size, ok := clusterSegmentSize(g, instance)
-	if !ok || archiveTimeout <= 0 || len(lsnRing) == 0 {
-		return nil
-	}
-	inTerm := func(at time.Time) bool { return !at.Before(from) && (until.IsZero() || at.Before(until)) }
-	type sample struct {
-		at       time.Time
-		lsn      uint64
-		timeline uint64
-	}
-	// stamped is the sweep's timeline, and whether it counts: every sweep
-	// does when no timelines are given.
-	stamped := func(at time.Time) (uint64, bool) {
-		if timelines == nil {
-			return 0, true
-		}
-		tl := timelines[at.UnixNano()]
-		return tl, tl != 0
-	}
-	var positions []sample // oldest first
-	// Keyed by the instant, not time.Time (whose == compares the
-	// monotonic reading and the location too).
-	byAt := map[int64]uint64{}
-	for _, p := range lsnRing {
-		if p.Value == nil || *p.Value < 0 || !inTerm(p.At) {
-			continue
-		}
-		tl, ok := stamped(p.At)
-		if !ok {
-			continue
-		}
-		v := uint64(*p.Value)
-		positions = append(positions, sample{at: p.At, lsn: v, timeline: tl})
-		byAt[p.At.UnixNano()] = v
-	}
-	var out []archivedBound
-	for _, p := range g.readyRings[instance] {
-		if p.Value == nil || *p.Value < 1 || !inTerm(p.At) {
-			continue
-		}
-		lsn, read := byAt[p.At.UnixNano()]
-		if !read {
-			continue
-		}
-		tl, _ := stamped(p.At)
-		k := uint64(*p.Value)
-		segment := lsn / size
-		if segment+1 <= k {
-			continue
-		}
-		// The start of segment S-k+1: S-k is finished once the position
-		// reaches it.
-		start := (segment - k + 1) * size
-		for i := len(positions) - 1; i >= 0; i-- {
-			if positions[i].at.After(p.At) || positions[i].timeline != tl {
-				continue
-			}
-			if positions[i].lsn < start {
-				out = append(out, archivedBound{readAt: readByOf(p, interval), before: positions[i].at.Add(-archiveTimeout).UTC(), timeline: tl})
-				break
-			}
-		}
-	}
-	return out
-}
-
-// clusterSegmentSize is the WAL segment size, read from the instance's
-// own reading, else from any other instance read (one Cluster has one
-// segment size).
-func clusterSegmentSize(g *gathered, instance string) (uint64, bool) {
-	if size, ok := walSegmentSize(g.swept.Instances[instance].Reading); ok {
-		return size, true
-	}
-	names := make([]string, 0, len(g.swept.Instances))
-	for name := range g.swept.Instances {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	for _, name := range names {
-		if size, ok := walSegmentSize(g.swept.Instances[name].Reading); ok {
-			return size, true
-		}
-	}
-	return 0, false
-}
-
 // formerArchiverOf reads the former primaries' rings up to the
 // promotion: every instance's sweeps from before the current primary's
 // term (the current primary's own included, for a term it held earlier:
@@ -631,7 +419,7 @@ func clusterSegmentSize(g *gathered, instance string) (uint64, bool) {
 // no evidence: after several failovers only the timeline tells which
 // archiver wrote which older timeline's WAL, so a quiet sweep of the
 // primary of timeline 2 never bounds the end of timeline 1.
-func formerArchiverOf(g *gathered, promoted time.Time, archiveTimeout, interval time.Duration) formerArchiver {
+func formerArchiverOf(g *gathered, promoted time.Time, interval time.Duration) formerArchiver {
 	out := formerArchiver{read: map[uint64]bool{}, holders: map[uint64]map[string]bool{}}
 	if promoted.IsZero() {
 		return out
@@ -660,7 +448,6 @@ func formerArchiverOf(g *gathered, promoted time.Time, archiveTimeout, interval 
 				out.quiet = append(out.quiet, q)
 			}
 		}
-		out.bounds = append(out.bounds, archivedBoundsOn(g, name, g.lsnRings[name], timelines, time.Time{}, promoted, archiveTimeout, interval)...)
 	}
 	sort.Slice(out.quiet, func(i, j int) bool { return out.quiet[i].at.Before(out.quiet[j].at) })
 	return out
@@ -750,66 +537,6 @@ func timelineAt(g *gathered, instance string) map[int64]uint64 {
 		}
 	}
 	return out
-}
-
-// boundBy is the latest bound from a read that returned at or before by
-// (the scan, else now): the most recent time before which every commit
-// was in the repository when the agent read it. Nil when there is none.
-func (f recoveryFacts) boundBy(by *time.Time) *archivedBound {
-	return newestBound(f.bounds, f.now, by)
-}
-
-func newestBound(bounds []archivedBound, now time.Time, by *time.Time) *archivedBound {
-	limit := now
-	if by != nil {
-		limit = *by
-	}
-	var best *archivedBound
-	for i := range bounds {
-		b := bounds[i]
-		if b.readAt.After(limit) {
-			continue
-		}
-		if best == nil || b.before.After(best.before) {
-			best = &b
-		}
-	}
-	return best
-}
-
-// walSegmentSize is the WAL segment size a reading's current WAL file
-// name and position agree on: the one power of two from 1 MiB to 1 GiB
-// (PostgreSQL's range) for which pg_walfile_name(pg_current_wal_lsn())
-// names that file (at a segment boundary it names the one before). False
-// when the reading is missing, the name does not parse, or more than one
-// size fits (a position early in its log id), so a guess never narrows a
-// band.
-func walSegmentSize(r *instancestatus.Reading) (uint64, bool) {
-	if r == nil || len(r.CurrentWAL) != 24 {
-		return 0, false
-	}
-	lsn, ok := cnpgstatus.ParseLSN(r.CurrentLSN)
-	if !ok {
-		return 0, false
-	}
-	logID, err1 := strconv.ParseUint(r.CurrentWAL[8:16], 16, 32)
-	seg, err2 := strconv.ParseUint(r.CurrentWAL[16:24], 16, 32)
-	if err1 != nil || err2 != nil {
-		return 0, false
-	}
-	var found uint64
-	for size := uint64(1) << 20; size <= 1<<30; size <<= 1 {
-		perLog := (uint64(1) << 32) / size
-		named := logID*perLog + seg
-		if seg >= perLog || (named != lsn/size && (lsn == 0 || named != (lsn-1)/size)) {
-			continue
-		}
-		if found != 0 {
-			return 0, false
-		}
-		found = size
-	}
-	return found, found != 0
 }
 
 // quietBy is the newest quiet sweep whose read returned at or before by
@@ -1906,8 +1633,8 @@ func markEdges(out *viewmodel.RecoveryTimeline, in timelineInput, spans []interv
 // the oldest backup's span between covered and unknown every cycle. A purge within that cycle is the evidence's ordinary lag,
 // which the elapsed band (one refresh plus the age) covers in time.
 //
-// Under pgBackRest a count bounds it too, whatever the clock: each backup
-// ended since the read ran expire (sinceReadBand).
+// Under pgBackRest a Backup that ended or began since the read widens it
+// to the newest listed full, whatever the clock (sinceReadBand).
 func purgeBand(in timelineInput, spans []interval, first, last time.Time) time.Duration {
 	band := listedPurgeBand(in, spans, first, last)
 	if since, ok := sinceReadBand(in, spans, first, last); ok {
@@ -1932,34 +1659,22 @@ func purgeRead(in timelineInput) *time.Time {
 	return read
 }
 
-// sinceReadBand is the band pgBackRest's expire may already have cut by
-// the backups that ended since the read (recoveryFacts backupsSince), each
-// of which ran expire at its end; when none did, the expire the listing
-// shows pending (pendingExpireBand). False when there is none, or the
-// repository is not pgBackRest's (Barman's retention is a recovery window, which the
-// clock bounds in listedPurgeBand). Every such backup is counted as a
-// full of every archive type, the worst case.
-//
-//   - repo-retention-full=K (count): with L fulls listed and n backups
-//     since, expire kept the newest K of the L+n, so the max(0, L+n-K)
-//     oldest listed are gone with their chains; all L, the whole window,
-//     when that reaches L.
-//   - time-based: expire keeps the newest full stopped before its run
-//     minus the retention, so at or before the latest instant those
-//     backups' expires had returned by (expiredBy: their completion
-//     stamps, else now) minus it (retainedFor); a
-//     backup since the read that stopped before that may be the base,
-//     unlisted.
-//   - an archive retention below the fulls (A backups of its types):
-//     WAL is kept continuously only from the A-th newest of them, the
-//     older ones keeping only their own consistency range, so the band
-//     reaches the A-th newest of the listed and the n new ones; the whole
-//     window when n reaches A.
-//
-// The count not known (the Backups not listed) or the policy not
-// reported, any backup may have expired anything: the whole window. A
-// pgbackrest backup run outside CloudNativePG, which has no Backup
-// object, is not counted.
+// sinceReadBand is the band pgBackRest's expire may already have cut: a
+// Backup that ended or began since the read (recoveryFacts backupsSince)
+// ran, or will run, expire at its end, which keeps the newest full listed
+// with its chain while that new backup leaves the policy room for it. So
+// the band reaches the first drawn restore point at or after the newest
+// listed anchor (a full, or a backup of the archive retention's types
+// when one is set). It is the whole window when the Backups were not
+// listed, the policy is not reported, the new backups may number the
+// full or archive retention count (each is counted as a full of every
+// archive type, the worst case), or a time-based retention reaches past
+// the read. False when no Backup ended or began since, or the repository
+// is not pgBackRest's (Barman's retention is a recovery window, which
+// the clock bounds in listedPurgeBand). A pgbackrest backup run outside
+// CloudNativePG has no Backup object: the listing shows its expire may
+// still have been pending at the read (expirePending), which bands the
+// same way.
 func sinceReadBand(in timelineInput, spans []interval, first, last time.Time) (time.Duration, bool) {
 	if !in.pgBackRest {
 		return 0, false
@@ -1970,175 +1685,73 @@ func sinceReadBand(in timelineInput, spans []interval, first, last time.Time) (t
 	}
 	window := max(last.Sub(first), 0)
 	n, known := in.facts.backupsSince(*read)
-	switch {
-	case !known:
-		return window, true
-	case n == 0:
-		return pendingExpireBand(in, spans, first, window, *read)
-	case in.policy.unknown:
-		return window, true
+	types := map[string]bool{evidencev1alpha1.PGBackRestFull: true}
+	if in.policy.archive > 0 {
+		types = in.policy.archiveTypes
 	}
-	base := first
-	later := func(t time.Time) {
-		if t.After(base) {
-			base = t
-		}
-	}
-	if in.retainedFor > 0 {
-		reach := in.facts.expiredBy(*read).Add(-in.retainedFor)
-		if reach.After(*read) {
-			return window, true
-		}
-		if b, ok := newestAnchor(purgeAnchors(in, spans), &reach); ok {
-			later(b)
-		}
-	}
-	if k := in.policy.fulls; k > 0 {
-		fulls, ok := backupAnchors(in, spans, map[string]bool{evidencev1alpha1.PGBackRestFull: true})
-		gone := max(0, len(fulls)+n-k)
-		if !ok || gone >= len(fulls) {
-			return window, true
-		}
-		later(fulls[gone])
-	}
-	if a := in.policy.archive; a > 0 {
-		kept, ok := backupAnchors(in, spans, in.policy.archiveTypes)
-		from := max(0, len(kept)+n-a)
-		if !ok || from >= len(kept) {
-			return window, true
-		}
-		later(kept[from])
-	}
-	if !base.After(first) {
+	if known && (n == 0 && !expirePending(in, spans, *read) || !in.policy.unknown && in.policy.fulls == 0 && in.policy.archive == 0 && in.retainedFor <= 0) {
+		// Nothing ran expire since, or the policy expires nothing.
 		return 0, false
 	}
-	kept, ok := drawnFrom(spans, base)
+	switch {
+	case !known, in.policy.unknown,
+		in.policy.fulls > 0 && n >= in.policy.fulls,
+		in.policy.archive > 0 && n >= in.policy.archive,
+		in.retainedFor > 0 && in.facts.now.Add(-in.retainedFor).After(*read):
+		return window, true
+	}
+	anchors, ok := backupAnchors(in, spans, types)
+	if !ok || len(anchors) == 0 {
+		return window, true
+	}
+	kept, ok := drawnFrom(spans, anchors[len(anchors)-1])
 	if !ok {
 		return window, true
 	}
 	return min(max(kept.Sub(first), 0), window), true
 }
 
-// pendingExpireBand is sinceReadBand when no Backup ended since the
-// read. pgBackRest saves a backup to backup.info and
-// then expires, both before CloudNativePG reads the stop time; a scan
-// that starts in between lists the new backup with what its expire is
-// about to remove, while that Backup stopped more than scanSlack before
-// the scan's start and is not counted. Each rule below is what an expire
-// run at the newest listed backup's end removes; on a listing that
-// expire already made it removes nothing, so a snapshot read after it
-// keeps no band:
-//
-//   - repo-retention-full=K (count): more than K fulls listed (also a
-//     retention lowered since the last backup) leaves the L-K oldest
-//     with their chains;
-//   - time-based: the fulls older than the newest one stopped before
-//     the expire's run minus the retention, when that expire may not
-//     have run before the scan. The expire at the newest listed end had
-//     returned by the completion stamp of the Completed Backup whose run
-//     holds that end (expireStampAt: the plugin marks it Completed only
-//     after pgbackrest backup, auto-expire included, returned). A stamp
-//     more than scanSlack and backupClockSkew before the read says the
-//     listing already reflects that expire, which keeps no band. The
-//     stamp is on the instance's clock and the read on the agent's: an
-//     instance up to backupClockSkew behind is not ClockBehind, and
-//     skipping on scanSlack alone kept, for one scan, a full the expire
-//     removed. A later stamp times the run at the
-//     stamp, the round-20 rule: the expire ran at or before it. With no
-//     such stamp (a backup run outside CloudNativePG, or none reported),
-//     that run may be after the read, so when the newest end is within
-//     one refresh interval before the read its instant is the latest of
-//     the scan's completion, the console's fetch and that end; an
-//     older end's expire ran before the read, at that end;
-//   - an archive retention below the fulls: continuous WAL drawn from a
-//     backup older than the A-th newest of its types is cut there; the
-//     older backups' own consistency points, drawn alone, are what
-//     expire left and do not move the band.
-//
-// An unreported policy, or backups whose order is not known, is read as
-// is: no backup counted since the read says nothing ran expire.
-func pendingExpireBand(in timelineInput, spans []interval, first time.Time, window time.Duration, read time.Time) (time.Duration, bool) {
-	if in.policy.unknown {
-		return 0, false
-	}
-	base := first
-	later := func(t time.Time) {
-		if t.After(base) {
-			base = t
-		}
-	}
+// expirePending says the listing holds more than its retention keeps (an
+// expire after the listing removes the excess: more fulls than the full
+// retention, WAL drawn across the archive retention's cut), or a backup that ended
+// within one refresh interval before the read, whose expire may have run
+// after the listing under a time-based retention. Either is a backup
+// that may run expire after the read, CloudNativePG's or not.
+func expirePending(in timelineInput, spans []interval, read time.Time) bool {
 	if k := in.policy.fulls; k > 0 {
-		if fulls, ok := backupAnchors(in, spans, map[string]bool{evidencev1alpha1.PGBackRestFull: true}); ok && len(fulls) > k {
-			later(fulls[len(fulls)-k])
-		}
-	}
-	if in.retainedFor > 0 {
-		if end, ok := newestListedEnd(in, spans); ok {
-			// A stamp holding end more than scanSlack and backupClockSkew
-			// before the read means that expire had returned before the
-			// scan, across the instance's clock and the agent's; a later
-			// one times the run at the stamp.
-			stamp, stamped := in.facts.expireStampAt(end)
-			if !stamped || stamp.After(read.Add(-scanSlack-backupClockSkew)) {
-				run := end
-				if stamped {
-					run = stamp
-				}
-				if !stamped && in.refresh > 0 && !end.Before(read.Add(-in.refresh)) {
-					for _, at := range []*time.Time{in.scannedAt, in.observedAt} {
-						if at != nil && at.After(run) {
-							run = *at
-						}
-					}
-				}
-				reach := run.Add(-in.retainedFor)
-				if b, ok := newestAnchor(purgeAnchors(in, spans), &reach); ok {
-					later(b)
-				}
-			}
+		if fulls, ok := backupAnchors(in, spans, map[string]bool{evidencev1alpha1.PGBackRestFull: true}); !ok || len(fulls) > k {
+			return true
 		}
 	}
 	if a := in.policy.archive; a > 0 {
-		if kept, ok := backupAnchors(in, spans, in.policy.archiveTypes); ok && len(kept) > a {
+		// Archive retention removes the WAL before the A-th newest backup
+		// of its type: WAL still drawn across that cut is pending.
+		kept, ok := backupAnchors(in, spans, in.policy.archiveTypes)
+		if !ok {
+			return true
+		}
+		if len(kept) > a {
 			cut := kept[len(kept)-a]
 			for _, sp := range spans {
 				if sp.from.Before(cut) && sp.to.After(cut) {
-					later(cut)
-					break
+					return true
 				}
 			}
 		}
 	}
-	if !base.After(first) {
-		return 0, false
-	}
-	kept, ok := drawnFrom(spans, base)
-	if !ok {
-		return window, true
-	}
-	return min(max(kept.Sub(first), 0), window), true
-}
-
-// newestListedEnd is the newest end among the listed pgBackRest backups
-// (their item end times, else their drawn spans' lower bounds); false
-// when none is known.
-func newestListedEnd(in timelineInput, spans []interval) (time.Time, bool) {
-	var newest time.Time
-	found := false
-	seen := func(at time.Time) {
-		if !found || at.After(newest) {
-			newest, found = at, true
+	if in.retainedFor > 0 && in.refresh > 0 {
+		for _, b := range in.backups {
+			if b.EndAt != nil && !b.EndAt.UTC().Before(read.Add(-in.refresh)) {
+				return true
+			}
+		}
+		for _, sp := range spans {
+			if !sp.from.Before(read.Add(-in.refresh)) {
+				return true
+			}
 		}
 	}
-	for _, b := range in.backups {
-		if b.EndAt != nil {
-			seen(b.EndAt.UTC())
-		}
-	}
-	for _, sp := range spans {
-		seen(sp.from)
-	}
-	return newest, found
+	return false
 }
 
 // backupAnchors are the listed pgBackRest backups of types, one anchor
@@ -2449,20 +2062,12 @@ func caughtUpBefore(by *time.Time, last time.Time) bool {
 // .ready file on the primary, less one archive_timeout: nothing waited
 // then, so every segment completed by then (all commits up to one
 // archive_timeout before it) was in the repository when it was read.
-// A busy primary may never read zero: a sweep with files waiting bounds
-// the onset too, by the WAL positions (archivedBounds), and the later of
-// the two bounds is drawn. From failureLookback before the end when
-// neither exists, the sweep period is not known, or archive_timeout is
-// disabled.
+// From failureLookback before the end when there is none (a busy
+// primary may never read zero), the sweep period is not known, or
+// archive_timeout is disabled.
 func backlogEdge(out *viewmodel.RecoveryTimeline, f recoveryFacts, n int, last time.Time, scanned *time.Time) {
 	segments := strconv.Itoa(n)
 	quiet := f.quietBy(scanned)
-	if b := f.boundBy(scanned); b != nil && f.archiveTimeout > 0 && f.sweepInterval > 0 && (quiet == nil || b.before.After(quiet.at.Add(-f.archiveTimeout))) {
-		uncertain(out, b.before, last, say("recovery.segment.archiveBacklogBound",
-			segments+" WAL segments are waiting to be archived on the primary; by its reading at "+rfc3339(b.readAt)+" every commit before "+rfc3339(b.before)+" was archived: WAL archived since then may have reached the repository late, so its arrival time overstates how recent a restore can be.",
-			map[string]string{"segments": segments, "readAt": rfc3339(b.readAt), "boundAt": rfc3339(b.before)}))
-		return
-	}
 	if quiet == nil || f.archiveTimeout <= 0 || f.sweepInterval <= 0 {
 		uncertain(out, last.Add(-failureLookback), last, say("recovery.segment.archiveBacklog",
 			segments+" WAL segments are waiting to be archived on the primary, and no sweep the console keeps saw it with none waiting: segments reach the repository late, so the arrival time of the newest overstates how recent a restore can be.",
@@ -2483,48 +2088,22 @@ func backlogEdge(out *viewmodel.RecoveryTimeline, f recoveryFacts, n int, last t
 // commits older than the end's receipt by however long it waited. Only
 // the readings of the primary of that same timeline count (formerArchiver
 // on): from the newest sweep, at or before the scan, that read it with no
-// .ready file (less one archive_timeout), or the newest bound its WAL
-// positions give (archivedBounds), whichever is later; from
-// failureLookback before the end when the console kept no reading of
-// that timeline's archiver from before the promotion, none bounds it,
-// the band they give does not end before the end (no evidence for it),
-// the sweep period is not known, or archive_timeout is disabled.
+// .ready file, less one archive_timeout; from failureLookback before the
+// end when there is none, it does not end before the end, the sweep
+// period is not known, or archive_timeout is disabled.
 func formerArchiverEdge(out *viewmodel.RecoveryTimeline, f recoveryFacts, timeline uint64, end time.Time, scanned *time.Time) {
 	tl := strconv.FormatUint(timeline, 10)
-	unknown := func() {
+	read, quietOn := f.former.on(timeline)
+	quiet := newestQuiet(quietOn, f.now, scanned)
+	if !read || f.archiveTimeout <= 0 || f.sweepInterval <= 0 || quiet == nil || !end.After(quiet.at.Add(-f.archiveTimeout)) {
 		uncertain(out, end.Add(-failureLookback), end, say("recovery.segment.formerArchiverUnknown",
 			"The WAL up to here on timeline "+tl+" was archived by a former primary, and the console kept no reading of that timeline's archiver that bounds this end: WAL that waited on it, or never left it, may hold commits older than this end's arrival time, so a restore this recent may stop short.",
 			map[string]string{"timeline": tl}))
-	}
-	read, quietOn, boundsOn := f.former.on(timeline)
-	if !read || f.archiveTimeout <= 0 || f.sweepInterval <= 0 {
-		unknown()
 		return
 	}
-	quiet := newestQuiet(quietOn, f.now, scanned)
-	b := newestBound(boundsOn, f.now, scanned)
-	switch {
-	case b != nil && (quiet == nil || b.before.After(quiet.at.Add(-f.archiveTimeout))):
-		if !end.After(b.before) {
-			unknown()
-			return
-		}
-		uncertain(out, b.before, end, say("recovery.segment.formerArchiverBound",
-			"The WAL up to here on timeline "+tl+" was archived by a former primary; by its reading at "+rfc3339(b.readAt)+" every commit before "+rfc3339(b.before)+" was archived: WAL archived after that may have waited on it, or never left it, so a restore this recent may stop short.",
-			map[string]string{"timeline": tl, "readAt": rfc3339(b.readAt), "boundAt": rfc3339(b.before)}))
-	case quiet != nil:
-		if !end.After(quiet.at.Add(-f.archiveTimeout)) {
-			unknown()
-			return
-		}
-		uncertain(out, quiet.at.Add(-f.archiveTimeout), end, say("recovery.segment.formerArchiverSince",
-			"The WAL up to here on timeline "+tl+" was archived by a former primary, which last had nothing waiting at "+rfc3339(quiet.at)+": WAL archived after that may have waited on it, or never left it, so a restore this recent may stop short.",
-			map[string]string{"timeline": tl, "quietAt": rfc3339(quiet.at)}))
-	default:
-		uncertain(out, end.Add(-failureLookback), end, say("recovery.segment.formerArchiverBacklog",
-			"The WAL up to here on timeline "+tl+" was archived by a former primary, which had WAL waiting in every reading the console kept before the switch: WAL that waited on it, or never left it, may hold commits older than this end's arrival time, so a restore this recent may stop short.",
-			map[string]string{"timeline": tl}))
-	}
+	uncertain(out, quiet.at.Add(-f.archiveTimeout), end, say("recovery.segment.formerArchiverSince",
+		"The WAL up to here on timeline "+tl+" was archived by a former primary, which last had nothing waiting at "+rfc3339(quiet.at)+": WAL archived after that may have waited on it, or never left it, so a restore this recent may stop short.",
+		map[string]string{"timeline": tl, "quietAt": rfc3339(quiet.at)}))
 }
 
 // archiverUnreadEdge marks the newest edge while the primary's archiver
@@ -2542,17 +2121,6 @@ func archiverUnreadEdge(out *viewmodel.RecoveryTimeline, f recoveryFacts, last t
 		return
 	}
 	quiet := f.quietBy(scanned)
-	if b := f.boundBy(scanned); b != nil && f.archiveTimeout > 0 && f.sweepInterval > 0 && (quiet == nil || b.before.After(quiet.at.Add(-f.archiveTimeout))) {
-		uncertain(out, b.before, last, say("recovery.segment.archiverUnreadBound",
-			"The primary's archiver is not read now; by its reading at "+rfc3339(b.readAt)+" every commit before "+rfc3339(b.before)+" was archived: WAL archived after that may have waited on the primary first, so its arrival time may overstate how recent a restore can be.",
-			map[string]string{"readAt": rfc3339(b.readAt), "boundAt": rfc3339(b.before)}))
-		return
-	}
-	if (quiet == nil || f.archiveTimeout <= 0 || f.sweepInterval <= 0) && f.hibernated {
-		uncertain(out, last.Add(-failureLookback), last, say("recovery.segment.archiverHibernated",
-			"The Cluster is hibernated, and no sweep the console keeps saw its primary with nothing waiting before it slept: WAL that reached the repository may have waited on it first, so its arrival time may overstate how recent a restore can be.", nil))
-		return
-	}
 	if quiet == nil || f.archiveTimeout <= 0 || f.sweepInterval <= 0 {
 		uncertain(out, last.Add(-failureLookback), last, say("recovery.segment.archiverUnread",
 			"The primary's archiver is not read, and no sweep the console keeps saw it with nothing waiting: WAL that reached the repository may have waited on the primary first, so its arrival time may overstate how recent a restore can be.", nil))

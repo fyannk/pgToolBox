@@ -150,16 +150,12 @@ type BackupsSnapshot struct {
 	ObjectStore ObjectStoreReference
 }
 
-// backupClockSkew is how far before its Backup's creation, or after the
+// BackupClockSkew is how far before its Backup's creation, or after the
 // reader's now, a backup time may fall and still be read as true: the
-// instance's clock against the API server's and the console's.
-const backupClockSkew = 5 * time.Minute
-
-// BackupClockSkew is backupClockSkew for the readers that compare an
-// instance-written time with another clock (the console's purge band:
-// an instance up to this far behind the agent is not ClockBehind, and
-// its stamps are read as true; round 22, PG P3-A).
-const BackupClockSkew = backupClockSkew
+// instance's clock against the API server's and the console's. The
+// console's purge band uses the same allowance between an instance's
+// stamps and the evidence agent's read.
+const BackupClockSkew = 5 * time.Minute
 
 // backupTimeFloor is the earliest backup tool time read as true.
 // CloudNativePG converts a plugin's start and stop times with
@@ -191,12 +187,6 @@ type BackupStamps struct {
 type BackupTimes struct {
 	// Start and Stop are the backup tool's times.
 	Start, Stop *time.Time
-	// Imported: the tool's start and stop are coherent (start at or before
-	// stop, both after the floor) but older than the object itself, as on
-	// a Backup restored with its status (Velero) or migrated from another
-	// cluster. They are kept: the backup ended then, not since the object
-	// appeared (round 19, PG P3-B).
-	Imported bool
 	// OperatorStarted is when the operator began reconciling the Backup
 	// (SetAsStarted): at or before the tool's start, and after the
 	// object's creation while the Backup waited in the queue.
@@ -204,22 +194,16 @@ type BackupTimes struct {
 	// OperatorTerminated is CloudNativePG's completion stamp
 	// (status.reconciliationTerminatedAt: the instance manager's for a
 	// barman or plugin Backup it completed or failed, else the
-	// operator's), written when the Backup was
-	// marked completed or failed: an upper bound on its end, seconds after
-	// it, and after pgBackRest's expire at that end (round 19, CNPG P3-1;
-	// round 20, PG P3-A).
+	// operator's), written when the Backup was marked completed or
+	// failed: an upper bound on its end, seconds after it, and after
+	// pgBackRest's expire at that end.
 	OperatorTerminated *time.Time
-	// ClockBehind: outside Imported, on a Backup the operator started
-	// after its creation, a tool time or the completion stamp is more
-	// than backupClockSkew before the object's creation or the
-	// operator's start stamp. The instance's clock and the operator's
-	// (or the API server's) disagree: either the instance runs behind or
-	// the operator runs ahead, and the console cannot tell which. Every
-	// time the instance wrote (Start, Stop, OperatorTerminated) is
-	// dropped, and OperatorStarted may itself be late: such a Backup has
-	// no plausible end, never an early one, and a reader that needs one
-	// takes a time on the API server's clock (its creation, before the
-	// end; round 21, PG P3-B, CNPG P3-1; round 22, CNPG P3-1).
+	// ClockBehind: the operator started this Backup after its creation
+	// (OperatorStarted is kept) and the instance wrote a time more than
+	// BackupClockSkew before that creation, so every time the instance
+	// wrote (Start, Stop, OperatorTerminated) was dropped. Such a Backup
+	// has no plausible end, never an early one; a reader that needs one
+	// takes its creation, on the API server's clock and before the end.
 	ClockBehind bool
 }
 
@@ -227,40 +211,23 @@ type BackupTimes struct {
 // unknown (nil), at now:
 //
 //   - a time before backupTimeFloor (the plugin epoch above);
-//   - a time more than backupClockSkew after now: a plugin that sends
+//   - a time more than BackupClockSkew after now: a plugin that sends
 //     milliseconds for seconds stamps the far future, which would read as
-//     a backup that never ages (round 19, CNPG P3-1); a future time is
-//     dropped, never taken as fresh. A zero now sets no ceiling: a
-//     caller that reads only the method or the pod gets the times
-//     unchecked against a clock rather than none (round 20, Go P3-2);
-//   - a tool time more than backupClockSkew before the object's creation
-//     (created zero: not checked), unless start and stop are both
-//     reported and coherent and CloudNativePG's stamps, when present, are
-//     also that early (Imported). A Backup restored with its status
-//     (Velero) carries its old stamps; a live one's are at or after its
-//     creation, so tool times that early are an instance clock running
-//     behind (round 20, PG P3-B, CNPG P3-2);
-//   - outside Imported, on a Backup whose operator start stamp
-//     (SetAsStarted, written by the operator before the instance runs
-//     the tool) is not older than the object, a tool time or the
-//     completion stamp more than backupClockSkew before that stamp or
-//     the object's creation: the instance's clock and the operator's
-//     disagree (the instance behind or the operator ahead). The
-//     completion stamp of a barman or plugin Backup is the instance
-//     manager's, on the same clock as the tool times, so every time the
-//     instance wrote is dropped (ClockBehind; round 21, PG P3-B, CNPG
-//     P3-1). Without such a start stamp the status was restored or
-//     migrated: only the early tool times are dropped;
-//   - a stop before the start.
-//
-// CloudNativePG's stamps are written on the instance's or the operator's
-// clock as the Backup's status is patched: past the floor and the upper
-// bound, only the clock check above applies. A Completed Backup whose
-// stop time is unknown is then bounded by OperatorTerminated, else
-// counted as one that could have ended at any time, never as one that
-// ended in 1970 or before it ran.
+//     a backup that never ages; a zero now sets no ceiling (a caller
+//     that reads only the method or the pod);
+//   - a stop before the start;
+//   - the creation-skew rule: an operator start stamp more than
+//     BackupClockSkew before the object's creation is dropped, and when
+//     a tool time or the completion stamp is, all three are. A live
+//     Backup's times are at or after its creation, so earlier ones are
+//     an instance clock running behind (ClockBehind when the operator
+//     started it here) or a status restored or migrated with the object
+//     (Velero): neither says when it ended, and a Backup with no
+//     plausible end is counted as one that could have ended at any time,
+//     never as one that ended in 1970 or before it ran.
 func SaneBackupTimes(now time.Time, s BackupStamps) BackupTimes {
-	ceiling := now.Add(backupClockSkew)
+	ceiling := now.Add(BackupClockSkew)
+	early := s.Created.Add(-BackupClockSkew)
 	plausible := func(at *time.Time) *time.Time {
 		if at == nil || at.Before(backupTimeFloor) || (!now.IsZero() && at.After(ceiling)) {
 			return nil
@@ -268,45 +235,20 @@ func SaneBackupTimes(now time.Time, s BackupStamps) BackupTimes {
 		t := at.UTC()
 		return &t
 	}
-	var out BackupTimes
-	start, stop := plausible(s.Started), plausible(s.Stopped)
-	if start != nil && stop != nil && stop.Before(*start) {
-		stop = nil
+	isEarly := func(at *time.Time) bool { return at != nil && !s.Created.IsZero() && at.Before(early) }
+	out := BackupTimes{
+		Start: plausible(s.Started), Stop: plausible(s.Stopped),
+		OperatorStarted: plausible(s.ReconciliationStarted), OperatorTerminated: plausible(s.ReconciliationTerminated),
 	}
-	early := func(at *time.Time) bool {
-		return at != nil && !s.Created.IsZero() && at.Before(s.Created.Add(-backupClockSkew))
+	if out.Start != nil && out.Stop != nil && out.Stop.Before(*out.Start) {
+		out.Stop = nil
 	}
-	opStarted, opTerminated := plausible(s.ReconciliationStarted), plausible(s.ReconciliationTerminated)
-	stampsEarly := (opStarted == nil || early(opStarted)) && (opTerminated == nil || early(opTerminated))
-	if start != nil && stop != nil && early(stop) && stampsEarly {
-		out.Imported = true
-	} else {
-		// beforeStart: at is earlier than the operator's start stamp, which
-		// the operator writes before the instance runs the tool.
-		beforeStart := func(at *time.Time) bool {
-			return at != nil && at.Before(opStarted.Add(-backupClockSkew))
-		}
-		switch {
-		case opStarted != nil && !early(opStarted) &&
-			(early(start) || early(stop) || early(opTerminated) ||
-				beforeStart(start) || beforeStart(stop) || beforeStart(opTerminated)):
-			// The operator started this Backup here, and the instance
-			// wrote times before that: the instance runs behind, or the
-			// operator ahead.
-			start, stop, opTerminated = nil, nil, nil
-			out.ClockBehind = true
-		default:
-			// No live start stamp: a restored or migrated status, whose
-			// stamps are kept; an early tool time alone is dropped.
-			if early(start) {
-				start = nil
-			}
-			if early(stop) {
-				stop = nil
-			}
-		}
+	if isEarly(out.OperatorStarted) {
+		out.OperatorStarted = nil
 	}
-	out.Start, out.Stop = start, stop
-	out.OperatorStarted, out.OperatorTerminated = opStarted, opTerminated
+	if isEarly(out.Start) || isEarly(out.Stop) || isEarly(out.OperatorTerminated) {
+		out.Start, out.Stop, out.OperatorTerminated = nil, nil, nil
+		out.ClockBehind = out.OperatorStarted != nil
+	}
 	return out
 }
