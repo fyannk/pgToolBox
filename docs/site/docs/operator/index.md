@@ -164,57 +164,17 @@ fully use:
   namespace and each missing permission (`list,watch deployments.apps`).
   Restore the chart's RoleBinding, then restart the operator (`permissions`);
 - a namespace whose permission review fails with an error the API server
-  still returns after two retries (a 5xx, an early server timeout,
-  throttling, or a reset or refused connection: reset, refused, EOF, HTTP/2
-  GOAWAY), or that gets no answer in time at both attempts while a check of
-  the API server sent in the last third of the second gets no answer
-  either (a connection dead without a reset: a control-plane node lost, a
-  load balancer failing over; the cause is the connection, not the
-  namespace). The log line names
-  the namespace and the error (`review-failed`). Such a namespace is
-  reviewed again every minute. Once it has granted every permission twice
-  in a row, and the process has run at least ten minutes, the operator logs
-  why, waits up to a minute more (so the two replicas do not stop together)
-  and exits to be restarted, and the restart watches it. The alert below is
-  the signal meanwhile;
+  still returns after two retries (a 5xx, a server timeout, throttling, or a
+  reset or refused connection: reset, refused, EOF, HTTP/2 GOAWAY), or that
+  gets no answer within 6 seconds at both attempts. The log line names the
+  namespace and the error (`review-failed`);
 - a namespace whose permission review answers more than 256 KiB: its
   RoleBindings grant the operator far more rules than its manager role (one
-  Role bound many times). The log line names the namespace and the size
-  seen (`responseSize`: the declared Content-Length, or the bytes read,
-  counted up to 8 MiB past the limit, for at most a second and never past
-  the attempt's 6 seconds, and never kept: "at least" when the count stopped)
-  (`review-too-large`);
-- a namespace whose permission review gets no answer within 6 seconds, at
-  both attempts (about 12 seconds for the namespace), while the API server
-  answers a check sent in the last third of the second attempt (a review of a cluster-wide
-  permission, which no namespace's bindings can slow down). A server or
-  gateway timeout (a 504) that arrives after more than half of an attempt
-  counts as no answer in time. Most likely the same cause, tens of
-  thousands of bindings that the API server takes longer than that to
-  answer for (it builds the whole response before its first byte, so the
-  size limit never sees it), or else an API server overloaded at that
-  moment. The log line names the namespace (`review-too-slow`).
+  Role bound many times). The log line names the namespace
+  (`review-too-large`).
 
-A namespace too large or too slow is never reviewed again in the
-background, and one of `review-failed` whose background review turns too
-large or too slow leaves the background review and moves to that reason in
-the gauge and the alert. Remove the extra bindings (or wait for the API
-server), then restart the operator: any later start reviews it again. This
-is so that whoever administers a namespace cannot make the operator restart
-through its RoleBindings: they decide whether its review is too large or too
-slow, and could make it fail at start and pass later at will. A restart to
-watch a namespace follows only a review that failed with an API server
-error, a reset or refused connection, or a connection that answered nothing
-at all, which RoleBindings do not cause; it happens at
-most once per process, and never before the process has run ten minutes.
-
-The restart to watch a namespace is intentional, not a crash: the operator
-logs `restarting to watch` with the namespaces, then exits with code 0 and
-the reason as its termination message, so `kubectl describe pod` shows the
-last state `Completed` (exit code 0) where a crash shows `Error`. kubelet
-restarts it as usual. Because it runs at least ten minutes first, kubelet's
-restart back-off is reset each time, and a namespace that passes and fails
-its review in turn restarts nothing.
+A namespace left out is reviewed again only at the next start: fix the cause
+(the API server, or the extra bindings), then restart the operator.
 
 Two changes made while the operator runs are read only at its next start,
 like a namespace deleted and recreated: the RBAC of a watched namespace, and
@@ -273,22 +233,11 @@ namespaces keep it, and it is watched only where it can be listed. Refused in
 every namespace, it is off everywhere. A change of RBAC is read at the next
 start.
 
-A Route or HTTPRoute published before its API was refused in the namespace
-is not forgotten. The operator looks it up past the cache at every
-reconciliation and deletes it when it is no longer wanted. When it cannot (the
-Route is the requested exposure, or its read or deletion is refused),
-`ExposureReady` keeps its reason but its message says that a Route or HTTPRoute
-published before may remain and must be deleted by hand. It never says the
-exposure is gone. On a `PgToolBoxConsole` that publishes nothing else,
-`ExposureConfined` is then `False` (`ExposureOpen`) for one found still there,
-and `Unknown` (`ExposureOpen`) for one the operator may not read either: it may
-be gone. A refused read is reported only when one may have been published:
-the spec requests that kind, or `status.publishedExposureKinds` records that
-the operator published one and has not seen it gone since. A `PgAdmin` or
-console that was only ever `clusterIP` or Ingress gets no such sentence. An
-API served at start that answers "no such kind" later (an aggregated API
-restarting) fails the reconciliation, which is retried; restart the operator
-after removing the Route or Gateway API.
+If an administrator narrows the operator's Role after a Route or HTTPRoute was
+published, the operator no longer sees it: delete the leftover Route or
+HTTPRoute (or Ingress) by hand. An API served at start that answers "no such
+kind" later (an aggregated API restarting) fails the reconciliation, which is
+retried; restart the operator after removing the Route or Gateway API.
 
 If no listed namespace is left, the operator does not start; nor does
 it when the API server refuses its credentials (401) at start, which is retried
