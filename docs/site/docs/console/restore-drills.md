@@ -303,9 +303,9 @@ Consequences to weigh before you turn drills on:
 A ValidatingAdmissionPolicy holds a console's ServiceAccount, on the API server,
 to what the console itself checks: it may delete a `clusters.postgresql.cnpg.io`
 only when the Cluster carries this console's `drill-owner` label, a
-`restore-drill-of` label and a drill seal annotation, and its name starts with
-the console's drill prefix (`spec.restoreDrills.prefix`, default `drill-`).
-Anybody else is not concerned: a ServiceAccount without the drills role, a
+`restore-drill-of` label and a drill seal annotation (the pgtools chart's
+policy also checks the drill prefix; the console itself checks the prefix and
+the seal's signature). Anybody else is not concerned: a ServiceAccount without the drills role, a
 person, and an administrator of the Cluster's namespace.
 
 - **Operator** (`pgtoolbox` chart): rendered with the operator by default
@@ -313,7 +313,7 @@ person, and an administrator of the Cluster's namespace.
   or a kustomize `helmCharts` render, because those carry no API discovery and
   the policy API is served on every supported Kubernetes (1.34+). `auto`
   renders it only where discovery lists the API; `false` leaves restore drills
-  to RBAC alone. Two policies: the label and seal
+  to RBAC alone. The label and seal
   check applies to any ServiceAccount bound to the shipped
   `pgtoolbox-console-restore-drills` ClusterRole in the Cluster's namespace,
   whatever its name and whichever namespace it belongs to (the role carries a
@@ -333,10 +333,7 @@ person, and an administrator of the Cluster's namespace.
   so neither a console nor the operator becomes an administrator. The guard
   matches ServiceAccounts only: the drills role bound to a User or a Group is
   not held to drills (see [the operator's limits](../security.md#known-limitations)).
-  The prefix check
-  reads the namespace's PgToolBoxConsoles as parameters and applies to each
-  console's exact ServiceAccount. The second fails open (no console, or the CRD
-  gone), the first never does.
+  The policy takes no parameter, so it never fails open.
 - **kustomize**: `config/default` includes `config/admission`, so
   `kubectl apply -k config/default` applies the guard too.
 - **OLM**: a bundle cannot carry an admission policy. A cluster admin applies it

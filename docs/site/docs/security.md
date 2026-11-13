@@ -122,18 +122,17 @@ operator therefore:
 
 - offers the **application user and applied `DatabaseRole`s only**, with privileged
   credentials behind an explicit `credentials.superuser: true`, and (admission
-  policy) lets only someone who may `get` the namespace's Secrets ask for them,
-  widen who may sign in (`spec.auth` but its display name, `spec.admins`), raise
-  the OpenShift proxy's `sessionMaxAge`, or put the settings database on a Cluster
-  of the namespace (`configDatabase`);
+  policy) lets only someone who may `get` the namespace's Secrets create a
+  `PgAdmin` that offers them or puts the settings database on a Cluster of the
+  namespace (`configDatabase`), or change anything in its spec (who may sign
+  in, `spec.admins`, the OpenShift proxy's `sessionMaxAge` included);
 - gates opening it by identity (`requiredClaims` on Kubernetes,
   `connect pgadmins/<name>` on OpenShift, a verb that neither `view` nor `edit`
   carries, even where OLM aggregates `get` on its CRDs into `view`), and makes
   `pgtoolbox-console-operator` the only user role that grants that verb (besides the
   namespace `admin`), and bounds the OpenShift oauth-proxy's session (it reviews
   `connect` at sign-in only) to the session lifetime, 1 h by default, up to
-  `auth.openshiftOAuthProxy.sessionMaxAge`; raising it is checked like widening
-  who may sign in (below);
+  `auth.openshiftOAuthProxy.sessionMaxAge` (a spec change, checked as below);
 - with `configDatabase`, creates a login role on that Cluster, whose password the
   pgAdmin Pod holds: setting it is checked like offering credentials, and its
   name must start with `pgadmin_`, because CloudNativePG adopts a role of that
@@ -150,54 +149,34 @@ Details: [PgAdmin](operator/pgadmin.md).
 `spec.exposure.annotations`, and the annotations of `metadataPropagation` rules
 whose target is `All` or `Exposure`, land on the Ingress, Route or HTTPRoute the
 operator writes; rules whose target is `All` or `Service` land on the Service it
-routes to, where Kong and HAProxy read some of the same keys. Some annotations
+routes to, where Kong and HAProxy read some of the same keys. Many annotations
 are configuration an ingress controller runs: written by the operator, they
 would let an editor who may not create an Ingress inject proxy configuration,
 claim a host outside `EXPOSURE_ALLOWED_HOST_SUFFIXES` (the operator checks only
 `spec.exposure.hostname`), open the console to other networks, or send pgAdmin's
-and the console's traffic, cookies included, to a server they run. The admission
-policy (on by default) therefore requires **`create` on the exposure kind**
-(`ingresses`, `routes` or `httproutes` in the namespace) to add or change one of
-these keys, or to switch an object carrying one from `clusterIP` to an exposure.
-In the table, `name*` is every key that starts with `name`:
+and the console's traffic, cookies included, to a server they run. Which keys do
+that depends on the controller and its configuration, so the admission policy
+(on by default) does not try to list them: **an exposed object that carries any
+such annotation requires `create` on the exposure kind** (`ingresses`, `routes`
+or `httproutes` in the namespace), on create and on any change of its spec. An
+update that leaves the spec as it was (the operator's own metadata writes) is not
+checked. A `clusterIP` object renders no exposure object and is not concerned
+until it is exposed.
 
-| Prefix | Keys | Controller | What they change |
-|---|---|---|---|
-| (any) | `*snippet*` | every controller with snippets | raw proxy configuration |
-| `nginx.ingress.kubernetes.io/` | `auth-*`, `mirror-*`, `canary*`, `cors-*`, `proxy-redirect-*`, `enable-global-auth`, `satisfy`, `proxy-ssl-secret`, `server-alias`, `permanent-redirect`, `temporal-redirect`, `app-root`, `default-backend`, `custom-http-errors`, `whitelist-source-range`, `allowlist-source-range`, `denylist-source-range`, `enable-cors` | ingress-nginx | authentication, extra hosts, source ranges, redirects, another backend, traffic split, cross-origin access |
-| `alb.ingress.kubernetes.io/` | `actions.*`, `conditions.*`, `auth-*`, `scheme`, `group.name`, `group.order`, `inbound-cidrs`, `security-groups`, `listen-ports` | AWS Load Balancer Controller | internet-facing scheme, a shared load balancer, source ranges, routing actions, authentication |
-| `haproxy-ingress.github.io/` | `config-*`, `auth-*`, `cors-*`, `allowlist-source-range`, `whitelist-source-range`, `denylist-source-range`, `redirect-from`, `redirect-to`, `app-root` | haproxy-ingress | raw configuration, authentication, source ranges, redirects |
-| `haproxy.org/` | `auth-*`, `cors-*`, `allow-list`, `whitelist`, `deny-list`, `blacklist`, `request-redirect`, `route-acl` | HAProxy Kubernetes Ingress | authentication, source ranges, redirects, routing |
-| `haproxy.router.openshift.io/` | `ip_whitelist`, `ip_allowlist` | OpenShift router | source ranges |
-| `traefik.ingress.kubernetes.io/` | `router.middlewares`, `router.entrypoints` | Traefik | middlewares, which entry point (network) serves it |
-| `konghq.com/` | `plugins`, `host-aliases` | Kong | plugins, extra hosts |
-
-A kept annotation with the same value, on a rule reaching the same objects and
-an object exposed the same way, is not checked again. The policy therefore gates
-only keys that are added or changed: it does not remove or lower a restriction
-that is already there, and it does not make one up. A restriction an administrator
-relies on (`inbound-cidrs`, a source range, `scheme`) belongs in the ingress
-controller or platform configuration (a default or a locked annotation set), not in
-an annotation an editor with write access to the CR may later drop. Keys that tune how a
-request reaches the workload's own Service are not checked: timeouts, body size,
-affinity, `rewrite-target`, `use-regex`, `upstream-vhost`, `backend-protocol`
-(they can break the route, not move it). The Service the operator renders is
-always `ClusterIP` (written with server-side apply), so the cloud load-balancer
-keys (`service.beta.kubernetes.io/*`) do nothing on it. Choosing the exposure is
-not gated: `spec.exposure.type`, the hostname (under
+Choosing the exposure is not gated: `spec.exposure.type`, the hostname (under
 `EXPOSURE_ALLOWED_HOST_SUFFIXES`), `ingressClassName` and the Gateway `parentRef`
 (which the Gateway's `allowedRoutes` accepts or not) are what an editor is
 allowed to set; restrict the classes and Gateways a namespace may use where the
-platform provides them.
+platform provides them. A restriction an administrator relies on (a source
+range, an internal scheme) belongs in the ingress controller or platform
+configuration, not in an annotation an editor who may create Ingresses can
+drop. The Service the operator renders is always `ClusterIP`, so the cloud
+load-balancer keys (`service.beta.kubernetes.io/*`) do nothing on it.
 
-**Limits:** this is a deny-list of known keys, not every controller's. A
-controller run with a custom annotation prefix (ingress-nginx
-`--annotations-prefix`, for example) reads keys this list does not name. A
-`clusterIP` object renders no exposure, so its Service annotations are not
-checked; an Ingress someone else creates for that Service makes its controller
-read them. Where the policy is off the operator writes what the spec says. Grant
-`pgadmins` and `pgtoolboxconsoles` writes only to people you would let create
-the Ingress.
+**Limits:** an Ingress someone else creates for the Service of a `clusterIP`
+object makes its controller read the Service annotations. Where the policy is
+off the operator writes what the spec says: grant `pgadmins` and
+`pgtoolboxconsoles` writes only to people you would let create the Ingress.
 
 ## Secret references need `get`
 
@@ -211,12 +190,13 @@ spec says (an SMTP host, a webhook URL, an identity provider). RBAC on the custo
 resource alone would therefore let anyone who may edit a `PgToolBoxConsole` read
 any Secret of the namespace by pointing the console at a server they run.
 
-**Editing a `PgToolBoxConsole`, a `PgAdmin` or an `EvidenceAgent` requires `get` on
-every Secret it references.** The rule is part of the operator chart's
-`ValidatingAdmissionPolicy` (on by default), which asks the API server's authorizer, as the
-requesting user, whether that user may `get` each named Secret, and refuses the
-request otherwise (reason `Forbidden`, message "editing a PgToolBoxConsole, a PgAdmin
-or an EvidenceAgent requires get on every Secret it references").
+**Creating a `PgToolBoxConsole`, a `PgAdmin` or an `EvidenceAgent`, or changing its
+spec, requires `get` on every Secret it references.** The rule is part of the
+operator chart's `ValidatingAdmissionPolicy` (on by default), which asks the API
+server's authorizer, as the requesting user, whether that user may `get` each
+named Secret, and refuses the request otherwise (reason `Forbidden`, message "a
+PgToolBoxConsole, a PgAdmin or an EvidenceAgent requires get on every Secret it
+references").
 
 - **It is on by default** in the operator chart (`operator.admissionPolicy.enabled`;
   `validationActions` selects `Deny`, `Warn` and/or `Audit`, `Deny` alone enforces).
@@ -229,37 +209,18 @@ or an EvidenceAgent requires get on every Secret it references").
   OLM: render it from the chart and apply it yourself (see [OLM](install/olm.md#admission-policies)):
   `helm template pgtoolbox charts/pgtoolbox --set operator.enabled=true --show-only templates/operator/admissionpolicy.yaml | kubectl apply -f -`,
   or apply the same trust rule as above.
-- **On update, only new or changed references are checked.** The operator's own
-  writes (finalizers) and edits that leave the references alone keep working on
-  objects that exist already, and a Secret already referenced at a field, and
-  sent to the same place, is no new disclosure. Moving a Secret to another field,
-  or renaming it, is a change. Objects created before the policy was turned on
-  keep what they reference until they are edited to reference something else:
-  review them when you enable it.
-- **The policy pairs a reference with where it is sent.** Keeping a reference and
-  changing its destination is a new reference, checked again. The destination is
-  every field that decides where the Secret goes and whom it is trusted with:
-  `auth.oidc.issuerURL` and `auth.oidc.caConfigMapRef` for both OIDC client
-  secrets, `auth.openshift.caConfigMapRef` for the OpenShift client secret,
-  `prometheus.url` and `prometheus.caConfigMapRef` for `prometheus.tokenSecretRef`,
-  `digest.delivery.smtp.address` and `tls` for the SMTP password,
-  `tracing.endpoint` for `tracing.headersSecretRef`, `auth.oauth2.issuerURL` for
-  the PgAdmin client secret, and the image's `repository` for its `pullSecrets`.
-  For an `EvidenceAgent`'s `allowedSecrets` it is `clusterRef`, `objectStoreRef`,
-  `allowInsecureEndpoint` and `pgbackrest.repository`, `endpoint` and
-  `endpointCA`. The other references name no destination in the spec: the digest
-  webhooks keep their URL inside the Secret, the seal keys and the Ingress
-  certificate are sent nowhere. A test classifies every field beside a reference
-  as a destination or not, with a reason, and fails on a new one.
-  **Limit:** what the policy compares is the fields, not what they lead to.
-  Editing the CA ConfigMap itself, the `ObjectStore`, `Stanza` or `Archive` an
-  agent reads, a DNS record or a proxy is not seen; so do not let people who may
-  not read a Secret edit those objects.
-- **More than two new references at once** need `get` on every Secret of the
-  namespace. An authorizer check costs most of a CEL expression's runtime
-  budget, so the policy checks one or two added references name by name, and a
-  larger change with one namespace-wide check. Somebody who may read only some
-  Secrets adds them two at a time.
+- **Any change of the spec re-checks every reference.** Changing where a Secret
+  is sent (an issuer, a URL, a mail server, a registry, the Cluster or endpoint an
+  agent reads) is a spec change like any other, so whoever makes it must be able
+  to read every Secret the object references. An update that leaves the spec as
+  it was (the operator's own metadata writes, finalizers, labels) is not checked.
+  Objects created before the policy was turned on keep what they reference until
+  their spec is next edited: review them when you enable it.
+- **More than two references** need `get` on every Secret of the namespace. An
+  authorizer check costs 350,000 of a CEL expression's 1,000,000 runtime budget,
+  so the policy checks one or two references name by name, and an object that
+  references more with one namespace-wide check (three by name exceed the budget
+  and fail the request).
 - **What is covered**: every Secret reference in the three kinds. On a
   `PgToolBoxConsole`: `auth.oidc.clientSecretRef`,
   `auth.oidc.grantClient.clientSecretRef`, `auth.openshift.clientSecretRef`,
@@ -271,7 +232,7 @@ or an EvidenceAgent requires get on every Secret it references").
   editor consents to the agent reading; it means something only from somebody who
   may read those Secrets. A test walks the API types (typed references, core/v1
   Secret types, map values, and string fields named after Secrets) and fails when
-  a new Secret reference is missing from the policy or has no stated destination.
+  a new Secret reference is missing from the policy.
 - **What is not covered on an `EvidenceAgent`.** `pgbackrest.endpointCA` is a CA
   bundle the agent only trusts, and the agent reads it only if `spec.allowedSecrets`
   lists it too. `image.pullSecrets` goes to the kubelet for `spec.image`, which only
@@ -290,35 +251,32 @@ superuser with `superuser: true`). Their Secrets are named by the CloudNativePG
 Cluster, not by the `PgAdmin`, so the policy cannot list them by name. It asks
 instead whether the requesting user may `get` Secrets in the namespace (any
 name): a Role with `get` on a few named Secrets does not qualify. The rule
-applies when a `PgAdmin` is created with a credential kind on and a Cluster of
-its namespace (`clusterRefs` or `clusterSelector`), and on an update that turns a
-kind on, adds a Cluster or changes the selector. Narrowing, and edits that leave
-the offer alone, are not checked. Without it, a custom role with `create pgadmins`
-and `connect pgadmins` but no `get secrets` could ask for `superuser: true` and
-open pgAdmin with the superuser's password. `crossNamespaceClusterRefs` are
-outside the rule: the `PgAdminAccess` grant of the target namespace, created by
-its owner, decides them (privileged credentials only with `allowPrivileged`).
-Changing who may sign in to such a `PgAdmin` is checked the same way, since it
-hands the same credentials to other people: any change to `spec.auth` (the
-issuer, client, required claims, username claim and scopes of `oauth2`, a switch
-between `oauth2` and `openshiftOAuthProxy`, the proxy's image) or to
-`spec.admins`. Only `auth.oauth2.displayName`, a button label, is left out; a
-test fails when a new `PgAdmin` field is not classified. A `PgAdmin` that offers
-no credentials is not concerned.
+applies to a `PgAdmin` with a credential kind on and a Cluster of its namespace
+(`clusterRefs` or `clusterSelector`), or with `spec.configDatabase` (the
+operator creates a login role on that Cluster and hands its password to the
+pgAdmin Pod), on create and on any change of its spec: who may sign in
+(`spec.auth`, `spec.admins`) and the OpenShift proxy's `sessionMaxAge` are spec
+like the rest. Without it, a custom role with `create pgadmins` and `connect
+pgadmins` but no `get secrets` could ask for `superuser: true` and open pgAdmin
+with the superuser's password. `crossNamespaceClusterRefs` are outside the rule:
+the `PgAdminAccess` grant of the target namespace, created by its owner, decides
+them (privileged credentials only with `allowPrivileged`). A `PgAdmin` that
+offers no credentials is not concerned.
 Message: "a PgAdmin that offers the credentials of Clusters of its namespace
-(spec.credentials) requires get on the Secrets of the namespace".
+(spec.credentials with clusterRefs or clusterSelector) or keeps its settings on
+one (spec.configDatabase) requires get on the Secrets of the namespace".
 
 **A `PgToolBoxConsole` that projects its ServiceAccount token to Prometheus
 requires `create` on that ServiceAccount's token.** `spec.prometheus.projectedToken`
 sends the console ServiceAccount's own token to `spec.prometheus.url`; with the
 default audience (the API server's, which OpenShift's thanos-querier expects),
 whoever runs that URL can use it against the API server for up to an hour. So
-setting it, or changing the `url`, `caConfigMapRef` or `tokenAudience` it goes
-with, requires `create` on `serviceaccounts/token` for the console's
-ServiceAccount (the console's name, or `<name>-console` when the name does not
-contain `console`): the power to mint the same token. Reading Secrets does not
-qualify. Set `spec.prometheus.tokenAudience` when your Prometheus front accepts
-a dedicated audience: the token is then useless against the API server.
+creating such a console, or changing its spec, requires `create` on
+`serviceaccounts/token` for the console's ServiceAccount (the console's name, or
+`<name>-console` when the name does not contain `console`): the power to mint
+the same token. Reading Secrets does not qualify. Set
+`spec.prometheus.tokenAudience` when your Prometheus front accepts a dedicated
+audience: the token is then useless against the API server.
 Message: "a PgToolBoxConsole that sends its projected ServiceAccount token to
 Prometheus (spec.prometheus.projectedToken) requires create on
 serviceaccounts/token for the console's ServiceAccount".

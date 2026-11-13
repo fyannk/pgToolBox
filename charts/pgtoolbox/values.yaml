@@ -258,11 +258,11 @@ operator:
   # object-store credentials or database credentials) may be set only by the
   # users and groups of imageOverride; everyone else uses the operator's default
   # image. spec.workloadIdentity on an EvidenceAgent, only by those of
-  # workloadIdentity. Editing a PgToolBoxConsole or a PgAdmin requires `get` on every
-  # Secret it references (SMTP password, webhook URLs, OIDC client secret,
-  # Prometheus token, pull and TLS Secrets), asked of the API server's
-  # authorizer as the requesting user; on update only references that are new
-  # or changed are checked. Without it the Secret rule has no other
+  # workloadIdentity. Creating a PgToolBoxConsole, a PgAdmin or an EvidenceAgent,
+  # or changing its spec, requires `get` on every Secret it references (SMTP
+  # password, webhook URLs, OIDC client secret, Prometheus token, pull and TLS
+  # Secrets, allowedSecrets), asked of the API server's authorizer as the
+  # requesting user. Without it the Secret rule has no other
   # enforcement: whoever may edit a PgToolBoxConsole or a PgAdmin could have
   # the operator mount any Secret of the namespace into a workload that sends
   # it where the spec says. On by default (admissionregistration.k8s.io/v1,
