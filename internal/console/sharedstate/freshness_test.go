@@ -280,3 +280,38 @@ func TestGraceTimesKeepTheMonotonicReading(t *testing.T) {
 		t.Errorf("State().Since = %v, want UTC", st.Since)
 	}
 }
+
+// A freshness read that fails ends the watch as of its sending before
+// the mode changes: a 403 is the forbidden mode at once, not the failing
+// one a refusal on a live watch gets, which would keep the grants usable
+// for staleGrace.
+func TestAFailedFreshnessReadEndsTheWatchFirst(t *testing.T) {
+	for name, tc := range map[string]struct {
+		err  error
+		mode mode
+	}{
+		"forbidden": {apierrors.NewForbidden(configMaps, "console-state", errors.New("no")), modeForbidden},
+		"missing":   {apierrors.NewNotFound(configMaps, "console-state"), modeMissing},
+		"internal":  {apierrors.NewInternalError(errors.New("no")), modeFailing},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := New(Options{Client: newAPIServer(), Name: "console-state"})
+			s.mu.Lock()
+			s.watchOpenedLocked()
+			s.mu.Unlock()
+			asked, behind := time.Now(), ""
+			if end, _ := s.takeFresh(freshRead{err: tc.err, asked: asked}, watchProgress{seen: "1", object: "1"}, &behind); !end {
+				t.Fatal("the watch goes on after a failed freshness read")
+			}
+			s.mu.Lock()
+			watching, unwatched, m := s.watching, s.unwatchedAt, s.mode
+			s.mu.Unlock()
+			if watching || !unwatched.Equal(asked) || m != tc.mode {
+				t.Errorf("watching %v, unwatchedAt %v, mode %s; want ended at %v, mode %s", watching, unwatched, m, asked, tc.mode)
+			}
+			if tc.mode != modeFailing && s.GrantsUsable() {
+				t.Error("grants usable after the freshness read was refused")
+			}
+		})
+	}
+}
