@@ -304,89 +304,50 @@ later than the sweep that read it (an instance clock running ahead) is read as
 the sweep's time.
 
 **The backlog threshold** is 3 waiting segments, or one more than the archiver's
-parallelism when that is larger: the in-tree `wal.maxParallel`, or the
-barman-cloud plugin's `ObjectStore` `spec.configuration.wal.maxParallel` (read
-with the `ObjectStore` the console already reads for the reported window). The
-archiver is the one CloudNativePG uses: the first enabled plugin with
-`isWALArchiver: true`, else the in-tree `barmanObjectStore`, else the first
-backup plugin. A barman-cloud entry listed for backups only, beside a pgBackRest
-plugin that archives WAL, does not lend its `maxParallel` to pgBackRest. A
-serial archiver that keeps up shows zero or one `.ready` file (two on a switch
-caught mid-copy), but a parallel one does not: the in-tree archiver and the
-barman-cloud plugin upload up to `maxParallel` segments at once and leave the ones
-uploaded ahead as `.ready` until PostgreSQL asks for them, and pgBackRest's
-asynchronous `archive-push` does the same. A busy, healthy primary routinely
-shows a handful. So one reading proves nothing, and a **backlog** counts only
-when the sweep sees the count at or above the threshold on two consecutive
-sweeps (a failed read is skipped). When the console cannot know the parallelism
-(a pgBackRest plugin, or the barman-cloud plugin when its `ObjectStore` is not
-readable) it needs three sweeps, over which the count never shrinks and ends
-larger than it began. A backlog turns the WAL archiving contributor to a warning
-(`ArchiveBacklog`), even while `ContinuousArchiving` is `True`: a hung or slow
-`archive_command` fails nothing. A count at the threshold that the sweeps kept
-are too few to judge (a console that just started, before its second or third
-sweep) is `unknown` (`ArchiveBacklogUnconfirmed`), never `ok`, and the recovery
-screens read it as a backlog until enough sweeps can tell.
+parallelism when that is larger (`wal.maxParallel` of the in-tree archiver or of
+the barman-cloud plugin's `ObjectStore`). The archiver is the one CloudNativePG
+uses: the first enabled plugin with `isWALArchiver: true`, else the in-tree
+`barmanObjectStore`, else the first backup plugin. A parallel archiver leaves
+the segments it uploaded ahead as `.ready` files, so a busy, healthy primary
+routinely shows a handful and one reading proves nothing: a **backlog** counts
+only when the count is at or above the threshold on two consecutive sweeps (a
+failed read is skipped). When the parallelism is unknown (a pgBackRest plugin,
+or an unreadable `ObjectStore`) it needs three sweeps over which the count
+never shrinks and ends larger than it began. A backlog turns the WAL archiving
+contributor to a warning (`ArchiveBacklog`) even while `ContinuousArchiving` is
+`True`. Too few sweeps to judge (a console that just started) is `unknown`
+(`ArchiveBacklogUnconfirmed`), never `ok`, and the recovery screens read it as a
+backlog. On an idle primary a hung archiver holds a steady count: under unknown
+parallelism a count at the threshold over three sweeps that did not grow is also
+a backlog when the archiver archived nothing over them (`last_archived_time` not
+after the oldest sweep's, or none). Only the sweeps of the primary's current
+term count (`status.currentPrimaryTimestamp`). The diagnostics findings
+`cnpg-wal-archive-backlog` and `cnpg-instance-archive-backlog` fire later, at 32
+segments, so a screen with the finding never shows archiving as healthy.
 
 With `ContinuousArchiving` `True` but the archiving instance not read, archiving
 is `unknown` (`PrimaryUnread`), with the time the condition last changed: the
-condition is written only when an `archive_command`'s outcome changes, so on its
-own it does not say that WAL reaches the repository now. One missed read (a
-timeout, a slow answer) does not flip it: the same pod's reading from the sweep
-before stands, with its own time as provenance, so the bar does not flicker. A
-second miss in a row, or a restarted pod (a new UID has no last reading), is
-unread. A hibernated Cluster
-reads `inactive` (`Hibernated`), as the Cluster does: no instance runs, and
-nothing confirms that every segment written before hibernation reached the
-repository, but nothing is going wrong either. The instance self-reports
-contributor is `inactive` too (no pod to read), so the overview and fleet
-headline of a hibernated Cluster reads `inactive`, not `unknown`. An instance
-whose manager answered without reaching PostgreSQL (fenced or restarting) is not
-counted as read there: the contributor says "n of m instances read, k answered
-without PostgreSQL" and warns. A replica cluster's
-archiver is its designated primary, a standby (`isPrimary` false) that archives
-with `archive_mode=always`; CloudNativePG counts `.ready` files only on a primary
-(`pkg/management/postgres/probes.go` v1.30.1), so its `/pg/status` carries no
-`readyWalFiles`. The console records no sample for it (nor for any standby) and
-reads archiving as `unknown` (`ArchiveBacklogNotReported`), never `ok`: a
-backlog cannot be seen there; replica clusters' archiving stays `unknown` until a
-lag bound is read from the exporter's metrics (a later feature). Outside a
-replica cluster the same reading is a primary mid-promotion, and the message
-says so. The API serves an instance's `archivingWal` only for the instance that
-archives, `status.currentPrimary`: the instance manager refuses to archive on
-any other pod (a switchover's target primary, a pod that still reports itself
-primary), and a replica cluster's other standbys report `isArchivingWAL` true,
-but their archiver does nothing. The `cnpg-wal-files-waiting` check judges fresh primary
-readings only, and says so instead of clearing when there is none. A standby's zeros, including those of a pod that
-was a designated primary before a replica-cluster promotion, are never read as a
-quiet sweep or as an archiver that caught up.
-The diagnostics findings on the same count (`cnpg-wal-archive-backlog`,
-`cnpg-instance-archive-backlog`) fire much later, at 32 segments, so a screen
-with the finding never shows archiving as healthy. A stalled archiver shows up in
-the count: with `archive_timeout` set, written WAL completes a segment within
-it, and a segment the archiver does not take is a `.ready` file. On an idle
-primary that writes little, a hung archiver holds a steady count rather than a
-growing one, so under unknown parallelism a count at the threshold over three
-sweeps that did not grow is also a backlog when the archiver archived nothing
-over them: its `last_archived_time` (pg_stat_archiver) is not after the one it
-reported at the oldest of those sweeps (both on the instance's clock, which the
-sweep keeps per reading), or it reports none. When that oldest sweep read the
-archiver with nothing archived yet, any archive since is progress (its first).
-Only the sweeps of the primary's current term count (from
-`status.currentPrimaryTimestamp`): an instance promoted again never joins the
-readings of its earlier term to this one. When the sweep did not keep that
-earlier time (a console restored from an older snapshot), it is compared with
-the oldest sweep's time plus one sweep interval, so a clock skew within one
-interval neither hides a stall nor invents progress. The message then says the
-archiver is stalled and since when. A healthy parallel archiver archives a
-segment each time PostgreSQL asks for one, so its time moves.
+condition changes only when an `archive_command`'s outcome changes, so it does
+not say that WAL reaches the repository now. One missed read does not flip it
+(the same pod's previous reading stands, with its own time); a second miss in a
+row or a restarted pod is unread. A hibernated Cluster reads `inactive`
+(`Hibernated`): nothing is going wrong, but nothing confirms that every segment
+written before hibernation was archived. An instance whose manager answered
+without reaching PostgreSQL (fenced or restarting) counts as not read.
+
+A replica cluster's archiver is its designated primary, a standby that archives
+with `archive_mode=always`. CloudNativePG counts `.ready` files only on a
+primary, so the console reads its archiving as `unknown`
+(`ArchiveBacklogNotReported`), never `ok`; outside a replica cluster the same
+reading is a primary mid-promotion. The API serves `archivingWal` only for
+`status.currentPrimary`, the one instance that archives. The
+`cnpg-wal-files-waiting` check judges fresh primary readings only, and says so
+instead of clearing when there is none.
 
 The last archived time is when PostgreSQL archived a segment, not the newest
 commit in it, so even "may well be possible" is an `unknown` answer: an evidence
-agent is what can place the time. When the archiver was not read, the span says
-the time is not known. Failing archiving also adds a caveat that names the last
-archived time. The sweep counts as stale after three sweep intervals, the same
-rule as the "Instance self-reports" contributor.
+agent is what can place the time. A sweep counts as stale after three sweep
+intervals, as for the "Instance self-reports" contributor.
 
 ### Can I restore to…?
 
@@ -427,300 +388,140 @@ segments, so the bar and the answer always agree:
   `archive_timeout` periods (at least 15 minutes; one hour when `archive_timeout`
   is 0): segment names cannot place the target;
 - the oldest restore point, within the agent's refresh interval plus the age of
-  its last scan: a retention purge may have removed that backup since. When the
-  recovery paths are the last good ones kept stale, the age is that of the scan
-  they come from, not the fresher snapshot's. The age runs from the earlier of
-  the agent's scan time and the console's fetch time, so an agent clock ahead of
-  the console's does not shorten it, and the band never reaches past the
-  newest restore point. The age runs from the scan's start (`started_at`):
-  the backups were listed during the scan, not when it completed. A purge drops
-  a whole backup, with the WAL only it needs, and during a long wait several
-  can go: a recovery window's start moves with the clock. pgBackRest expires a
-  full backup together with every differential and incremental backup taken
-  against it, so there only full backups count as retention anchors, and the
-  oldest full's whole chain goes at once; a full marked `backup-error` (page
-  checksum errors) is still one, as `expire` counts it. In a Barman Cloud repository every
-  listed backup that did not fail is an anchor, including one with no recovery
-  path. Once a scan was missed, the band reaches past the newest anchor before
-  the oldest anchor's own span plus the age plus one refresh interval, up to
-  the first restore point drawn from it or a newer backup: those backups are
-  still in the repository, and every time before is unknown until the
-  repository is read again. When that reach passes the scan's start, the band
-  is the whole window: the base may then be a backup taken since, which the
-  snapshot does not list. A scan is missed when its age passes the longer of
-  the refresh interval and the last scan's duration, plus that duration, the
-  console's one-minute poll and one minute (two refresh intervals when the
-  snapshot gives no scan start), whatever the window's length. Within a normal refresh cycle the band does
-  not extend, so the oldest backup's span does not flip between covered and
-  unknown each time the next scan is a little late. Retention never removes the
-  newest backup, so within a normal cycle the band also stops at the newest
-  backup's first restore point, and a single backup has none. Past a missed
-  scan a single backup's band is the whole window, and so is it when the newest
-  listed backup was older at the read than the listed span: retention may have
-  stopped (pgBackRest expires only at a backup's end), so the listed backups
-  may all be obsolete and a backup taken since the base. A pgBackRest time-based
-  full retention (`repo-retention-full-type=time`) bounds the band from the
-  clock instead: to the newest full at or before the retention before the
-  latest `expire` of a backup since the scan (the latest completion stamp of
-  those backups, or now while one is still running or has no stamp), or the
-  whole window once that passes the scan. Under pgBackRest a count bounds
-  it too, in or out of a refresh cycle: `expire` runs at the end of every
-  backup, so the console counts the Cluster's `Backup` objects that ended since
-  the scan's start (each counted as a full, the worst case; a completed one at
-  the later of its stop time and CloudNativePG's completion stamp, since the
-  pgBackRest plugin marks it completed only once `pgbackrest backup` and its
-  `expire` returned), and those still in
-  progress that began after it (by their start, else when the operator started
-  them, `status.reconciliationStartedAt`, since a queued backup waits after its
-  creation, else their creation: a plugin backup reports no start until it
-  completes), since `expire` runs seconds before CloudNativePG marks the
-  `Backup` completed. A stop time CloudNativePG could not have meant
-  (1970-01-01, which a plugin that leaves it unset gets, a time more than five
-  minutes in the future, which a plugin sending milliseconds gets, or one
-  before the backup's start or, alone, its creation) is read as no stop time.
-  Such a completed backup is then timed by CloudNativePG's completion stamp
-  (`status.reconciliationTerminatedAt`, seconds after the backup ended,
-  written by the instance manager for a barman or plugin backup it completed
-  or failed, else by the operator): one stamped before the scan ended before
-  it. With no stamp either, it is counted as one that could have ended at any
-  time. A `Backup` restored with
-  its status (Velero) or migrated from another cluster carries start and stop
-  times older than the object itself; when they are coherent, and its
-  CloudNativePG stamps are as old (or absent), they are kept, and the backup
-  counts when it ended, not as one ended since. Tool times that old on a
-  `Backup` stamped at or after its creation are an instance clock running
-  behind, and are read as no times. So is a start, stop or completion stamp
-  more than five minutes before `status.reconciliationStartedAt`, which the
-  operator writes before the instance runs the backup: the instance's clock
-  and the operator's disagree (the instance behind or the operator ahead; the
-  console cannot tell which). The instance manager writes the tool times and
-  the completion stamp on the same clock, so once one of them is that early
-  all three are dropped and the backup counts as one that could have ended
-  at any time, never as one that ended before the scan. The Overview times it by
-  the earlier of its creation and the operator's start stamp, and says its
-  stop time and completion stamp are not plausible because the clocks
-  disagree. With
-  `repo-retention-full=K` (type `count`), L fulls listed and n backups since,
-  the oldest L + n − K listed fulls may be gone with their chains, and the band
-  runs to the first restore point of the next one; the whole window when that is
-  every listed full. An archive retention that keeps fewer backups than the
-  fulls (`repo-retention-archive`, or the default from `repo-retention-diff`
-  with `repo-retention-archive-type=diff`) keeps WAL continuously only from the
-  A-th newest backup of its type (older ones keep only their own consistency
-  range): the band runs to the first restore point of the A-th newest of the
-  listed and the n new ones, and is the whole window once n reaches A. With no
-  backup since the scan, the listing can still show an `expire` about to run: a
-  scan that starts between a backup's save and its `expire` (that backup's
-  `Backup` stopped earlier than the scan's start) lists more than K fulls, WAL
-  drawn continuously from before the A-th newest backup of its type, or, under a
-  time-based retention, fulls older than the newest one stopped before that
-  `expire`'s run minus the retention. When a completed `Backup` whose run holds
-  the newest listed end carries a completion stamp, its `expire` had returned
-  by that stamp. The stamp is on the instance's clock and the scan's start on
-  the agent's, and an instance up to five minutes behind is not flagged, so
-  only a stamp more than six minutes before the scan's start (a minute for
-  the scan, five for the clocks) says the listing already shows what that
-  `expire` left: it keeps no band. A later stamp times that `expire` at the
-  stamp, and fulls older than the stamp minus the retention may be gone. A
-  healthy daily schedule therefore keeps a band only in the scans that start
-  within about six minutes of a completion stamp: the band may then hold the
-  oldest full until the next scan, never all day. A full that `expire`
-  removed is never shown, also when the instance runs 1 to 5 minutes behind
-  the agent, below the five-minute flag.
-  With no such stamp (a backup run outside CloudNativePG) the run may be after
-  the scan read the listing, so when the newest listed backup ended within one
-  refresh interval before the scan, the run is taken as the latest of the
-  scan's completion, the console's fetch and that end; an older backup's
-  `expire` ran at its end, before the scan. The band then runs past what that
-  `expire` removes; a lowered retention looks the same until the next backup. A
-  listing `expire` already made has none. When the `Backup` objects were not read, or the snapshot does not report
-  the retention, any backup since the scan may have expired anything: the whole
-  window once one may have ended. A `pgbackrest backup` run by hand, which
-  creates no `Backup` object, is not counted;
+  its last scan (from the scan's start, on the earlier of the agent's and the
+  console's clock): a retention purge may have removed that backup since, with
+  the WAL only it needs. The band is the span of the retention anchors that may
+  have gone, up to the first restore point of the next one, and the whole
+  window when that is every listed backup or a scan was missed for longer than
+  a refresh cycle and a scan's duration. What counts as an anchor and how many
+  may have gone depends on the format:
+  - Barman Cloud: every listed backup that did not fail is an anchor;
+  - pgBackRest: only fulls are anchors (`expire` drops a full with its chain; a
+    full marked `backup-error` still counts). Under `repo-retention-full=K`
+    (type `count`) with L fulls listed and n backups since, the oldest
+    L + n − K may be gone; under `repo-retention-full-type=time` the band is
+    bounded by the clock from the latest `expire`; an archive retention below
+    the fulls (`repo-retention-archive`) bounds it by the A-th newest backup of
+    its type. The backups since the scan are counted from the Cluster's
+    `Backup` objects, each as a full (the worst case), timed by their stop time
+    or CloudNativePG's completion stamp (`status.reconciliationTerminatedAt`);
+    times a clock skew makes implausible are read as absent, and the backup
+    then counts as one that could have ended at any time. A `pgbackrest backup`
+    run by hand creates no `Backup` object and is not counted.
+  - With no stamp (a backup run outside CloudNativePG) a backup that ended
+    within one refresh interval before the scan may have its `expire` after the
+    listing. When the `Backup` objects were not read, or the snapshot reports no
+    retention, any backup since the scan may have expired anything: the whole
+    window once one may have ended.
+  Within a normal refresh cycle the band does not extend, and retention never
+  removes the newest backup, so the band stops at its first restore point;
 - after a WAL archiving failure an instance reported (`lastFailedWALTime`, the
   newest over every instance read, so a former primary's failure survives a
   failover) in the day before the latest point, the day before the failure: WAL
   that arrives after an outage carries older commits than its arrival time. The
-  band is dropped once the archiver has caught up before the latest point: its
-  `last_archived_time` is after its `last_failed_time` (PostgreSQL archives in
-  order, so the failed segment is in the repository) and every sweep from one
-  before the latest point to now saw fewer `.ready` files than the threshold.
-  A transient error (an object store's 503, retried) then leaves no trace on the
-  bar. While the archiver has not caught up, or caught up only after the newest
-  segment reached the repository, the band stays;
-- while a backlog persists on the primary (above), from the newest sweep, at or
-  before the agent's scan, that read **no** `.ready` file on the primary since
-  it became primary, less one `archive_timeout`, with the count and that time:
-  nothing waited then, so every segment completed by then was in the repository
-  when the agent read it, while segments archived since may have reached it
-  late. A reading of one or two files proves nothing (a slow archiver can hold
-  them for long), and a failed read is no reading, so a run of failed reads
-  widens the band, never narrows it. A busy primary may never read zero, so a
-  sweep with files waiting bounds the start too, from the primary's WAL
-  positions the sweep keeps: at a sweep with *k* `.ready` files and the write
-  position in segment *S*, every segment before *S−k* was archived; segment
-  *S−k* switched after the newest earlier sweep whose position had not reached
-  the start of *S−k+1*, and a commit in it is at most one `archive_timeout`
-  older than its switch. The band then starts one `archive_timeout` before
-  that earlier sweep, when that is later than the quiet-sweep bound. The WAL
-  segment size comes from the primary's own report (its current WAL file name
-  against its position); when that does not settle a single size, this bound is
-  not used. When no sweep the console keeps (`RING_RETENTION`, one hour by
-  default; a console that just started keeps none) gives either bound, the
-  sweep period is not known, or `archive_timeout` is 0, the band is the day
-  before the latest point. The window is then a warning, never healthy;
-- while the primary's archiver is not read (archiving `PrimaryUnread`, or the
-  Cluster hibernated): the same band, from the newest sweep that read it with
-  nothing waiting or the WAL-position bound above, else the day before the
-  latest point. Nothing says how long
-  the newest archived WAL waited on the primary, so the window is a warning and
-  every answer carries the caveat "the primary's archiver was not read". A
-  hibernated Cluster's window is `unknown` instead, and its band and caveat say
-  the Cluster is hibernated: it writes no WAL and runs no archiver, so there is
-  nothing to act on, but nothing confirms that the WAL written before it reached
-  the repository; it stays `unknown`, not amber, for as long as it sleeps;
-- at an end of the archived WAL on a timeline older than the newest one, the
-  repository's or the one the current primary writes (after a failover: the
-  parent timeline's tail, or a hole before the switch). Right after a failover
-  the repository lags: until the new timeline's history file is archived and
-  the agent reads the repository again, every path targets the parent
-  timeline, so the live timeline (the current primary's current WAL file, else
-  its sweeps since the promotion) counts too, and the time after the newest
-  point says that the repository held no WAL of that timeline when it was last
-  read (or, once its history file is archived, no WAL segment of it yet). The
-  window is then a warning (`liveTimelineNotArchived`), not healthy: wait for
-  the next evidence refresh, or run `pg_switch_wal()` on the new primary to
-  archive its first segment. When the primary was not read (fenced or
-  unreachable: the sweep has no reading of it, whatever the archiving
-  condition says), the warning (`liveTimelineNotArchivedPrimaryUnread`) gives no
-  such advice.
-
-  When archiving is failing (`ContinuousArchiving` False, or the primary's last
-  attempt failed with WAL waiting) and no readable instance reports the failure,
-  the window is a warning that says so (`archivingFailing`), ranked before the
-  lag: the repository lacks the new timeline because archiving fails, and
-  switching WAL would not help. The primary's last good reading stands through
-  one missed read for this as for the archiving fact, so a single missed read
-  keeps the recent-failure reason.
-
-  With the primary unread, nothing archives that could change the condition: the
-  warning (`archivingFailedPrimaryUnread`) says the last archive attempt the
-  Cluster reports failed, with the condition's age (`False since ...`), not that
-  archiving is failing now.
-
-  A hibernated Cluster says it is hibernated instead (`unknown`): no instance
-  runs to switch WAL on. With ContinuousArchiving False it adds that the last
-  attempt failed, with its time, at warning (`archivingFailedHibernated`): that
-  WAL may be only on the Cluster's volumes. A reported window says the same.
-
-  When the live timeline is not known, an end that reached the repository
-  before the promotion counts the same way. That WAL
-  was archived by a former primary, whose backlog the current primary's
-  readings do not show, and a crash can lose its `.ready` tail. Only the
-  readings of that timeline's own primary count: each sweep records the
-  timeline a primary writes (the timeline of its current WAL file, which,
-  unlike `timelineId`, does not lag a promotion), so after two failovers the
-  quiet sweeps of the second timeline's primary never bound the end of the
-  first. The band starts at the newest sweep that read that timeline's primary
-  with nothing waiting (less one `archive_timeout`) or at its WAL-position
-  bound, both from before the promotion (`status.currentPrimaryTimestamp`);
-  when the sweeps kept no reading of it (its pod is gone, the rings' retention
-  passed, the reading named no timeline), only readings with WAL waiting, or
-  readings that come after that end and so say nothing of it, the day before
-  that end;
+  band is dropped once the archiver has caught up before the latest point
+  (`last_archived_time` after `last_failed_time` and every sweep since saw fewer
+  `.ready` files than the threshold), so a retried 503 leaves no trace;
+- while a backlog persists on the primary, from the newest sweep at or before
+  the agent's scan that read no `.ready` file since it became primary, less one
+  `archive_timeout`: nothing waited then, so every segment completed by then was
+  in the repository when the agent read it. A reading of one or two files proves
+  nothing, and a failed read is no reading. A busy primary may never read zero,
+  so a sweep with *k* files waiting bounds the start too, from the primary's WAL
+  positions the sweep keeps (segment *S−k* switched after the newest earlier
+  sweep whose position had not reached *S−k+1*; the WAL segment size comes from
+  the primary's own report, and this bound is not used when it settles no single
+  size). When no kept sweep (`RING_RETENTION`, one hour by default) gives either
+  bound, the sweep period is unknown, or `archive_timeout` is 0, the band is the
+  day before the latest point. The window is then a warning, never healthy;
+- while the primary's archiver is not read (`PrimaryUnread`, or hibernated): the
+  same band, from the newest sweep that read it with nothing waiting, else the
+  day before the latest point. The window is a warning and every answer carries
+  the caveat "the primary's archiver was not read". A hibernated Cluster's window
+  is `unknown` instead, for as long as it sleeps: nothing confirms that the WAL
+  written before it reached the repository, but nothing is going wrong;
+- at an end of the archived WAL on a timeline older than the newest one (after a
+  failover: the parent timeline's tail, or a hole before the switch). Until the
+  new timeline's history file is archived and the agent reads the repository
+  again, every path targets the parent timeline, so the live timeline (the
+  current primary's current WAL file, else its sweeps since the promotion) counts
+  too, and the time after the newest point says that the repository held no WAL
+  of that timeline when it was last read. The window is a warning
+  (`liveTimelineNotArchived`): wait for the next evidence refresh, or run
+  `pg_switch_wal()` on the new primary. With the primary unread
+  (`liveTimelineNotArchivedPrimaryUnread`) the warning gives no such advice.
+  When archiving is failing and no readable instance reports the failure, the
+  warning says so instead (`archivingFailing`: switching WAL would not help);
+  with the primary unread (`archivingFailedPrimaryUnread`) it says the last
+  attempt the Cluster reports failed, with the condition's age. A hibernated
+  Cluster says so (`unknown`); with `ContinuousArchiving` False it adds that the
+  last attempt failed, at warning (`archivingFailedHibernated`). When the live
+  timeline is not known, an end that reached the repository before the promotion
+  counts the same way: the band starts at the newest sweep that read that
+  timeline's own primary with nothing waiting (or its WAL-position bound), from
+  before the promotion, else the day before that end;
 - when the repository's newest timeline is ahead of the one the current primary
   writes (`repositoryAheadOfLive`): another cluster may archive into this
   repository (a cluster restored by point-in-time recovery, or a promoted
-  replica cluster, with CloudNativePG's empty-archive check skipped), and a
-  default restore follows the newer timeline, so a time past the fork may
-  restore that cluster's data. The fork is not placed: from the newest end of a
-  base backup on the live line, else from the oldest restore point, to the
-  newest, the bar is `unknown`. A backup is on the live line when it is on the
-  live timeline, or when the agent evaluated a path from it toward the live
-  timeline, which it does only along valid history that does not branch before
-  the backup's end; a backup on a lower-numbered sibling timeline (another
-  cluster's line) does not count. A pgBackRest repository publishes one path
-  per backup, toward the newest timeline, so there only a backup on the live
-  timeline counts. The window is a
-  warning that asks to check that no other cluster's backup configuration
+  replica cluster), and a default restore follows the newer timeline. The fork
+  is not placed: from the newest end of a base backup on the live line, else
+  from the oldest restore point, to the newest, the bar is `unknown`. The window
+  is a warning that asks to check that no other cluster's backup configuration
   names this repository;
-- every "by then" claim of a sweep (nothing waited, every commit before a time
-  was archived) is dated when its read returned, and every "not yet" claim (the
-  write position had not reached a segment) when the sweep started, so a read
-  that straddles the agent's scan never narrows a band;
-- while the archiver reports no `.ready` count (`ArchiveBacklogNotReported`: a
-  replica cluster's designated primary, or a primary mid-promotion that still
-  reads as a standby): the day before the latest point, with its own reason and
-  caveat, since no sweep can show that nothing waited on it;
+- every "by then" claim of a sweep is dated when its read returned, and every
+  "not yet" claim when the sweep started, so a read that straddles the agent's
+  scan never narrows a band;
+- while the archiver reports no `.ready` count (`ArchiveBacklogNotReported`): the
+  day before the latest point, with its own reason and caveat;
 - a recovery path that reaches its frontier but that the evidence agent rates
   below healthy (a pgBackRest WAL segment size not proven across a log id or a
-  timeline switch, or a path capped because the agent's coverage roll-up says
-  something no path carries, such as a stanza split) is drawn as `unknown` with
-  the agent's reason, never as covered; a healthy path still covers what it
-  reaches. The window is then a warning. A roll-up that is not healthy because
-  of another backup (an old backup stopped at a gap, one unknown path) is
-  listed as a reason of the window and greys out nothing.
+  timeline switch, or a coverage roll-up that says something no path carries,
+  such as a stanza split) is drawn as `unknown` with the agent's reason, never
+  as covered. The window is then a warning. A roll-up that is not healthy
+  because of another backup is listed as a reason of the window and greys out
+  nothing.
 
 Inside the end-of-archived-WAL edge, the last `archive_timeout` plus an
 allowance for the archiver's latency (one sweep interval, at least one minute)
 before the latest point (the whole edge when `archive_timeout` is 0) is drawn
 as **end of the archived WAL** (`walEnd`, a warning band): the last commit can
 be one `archive_timeout` before its segment switched, and the segment reached
-the repository some time after the switch. The latest
-point is when the last segment *reached* the repository, not its last commit, so
-the bar labels it **WAL received until**, and names apart the **newest covered
-target** (`newestCoveredTarget`): the end of the newest covered span once every
-edge above is drawn, the newest instant the check answers `covered`. It is
-structurally covered, not restore-tested (only a passed restore drill tests a
-restore), and it is left out when only a path not rated healthy reaches the
-newest end (a healthy path that ends there too names it). A `covered`
-answer adds that a restore that names no timeline follows the default
-`recovery_target_timeline 'latest'`. A
-`recovery_target_time` after that commit makes PostgreSQL stop with "recovery
-ended before configured recovery target was reached". To restore everything the
-repository holds, restore to the end of WAL (no recovery target) instead. The
-band assumes a commit near the end of the WAL: a stretch of WAL with no commit
-record (an anti-wraparound `VACUUM` on a quiet database) can push the last
-commit further back than the band, and a `recovery_target_time` inside it then
-fails the same way. This is a known limit; restoring to the end of WAL is not
-affected.
+the repository some time after. The latest point is when the last segment
+*reached* the repository, not its last commit, so the bar labels it **WAL
+received until**, and names apart the **newest covered target**
+(`newestCoveredTarget`): the end of the newest covered span once every edge
+above is drawn, the newest instant the check answers `covered`. It is
+structurally covered, not restore-tested, and is left out when only a path not
+rated healthy reaches the newest end. A `covered` answer adds that a restore
+that names no timeline follows `recovery_target_timeline 'latest'`. A
+`recovery_target_time` after the last commit makes PostgreSQL stop with
+"recovery ended before configured recovery target was reached": to restore
+everything the repository holds, restore to the end of WAL (no recovery
+target). A stretch of WAL with no commit record (an anti-wraparound `VACUUM` on
+a quiet database) can push the last commit further back than the band; this is
+a known limit.
 
 After the latest point the answer is never `notCovered`. Missing WAL confirmed
 after the newest path is a `gap`. Otherwise the answer is `unknown`: a fresh and
-complete frontier is a fact about the agent's scan, not about now. WAL written
-just after the frontier may have sat in a segment that was not archived yet
-when the agent read the repository (`archive_timeout`), and it may have arrived
-since. The answer then says the time was "not in the repository when it was
-last read" and names the scan time; while archiving fails it says that time's
-WAL "is likely not in the repository", and with a backlog that it "is likely
-still only on the primary". A time later than now gets the answer for
-now. After a path that stops at unknown evidence, from stale evidence, when a
-collection was cut, or on the reported basis (whose end is the last base backup),
-it is also `unknown`.
+complete frontier is a fact about the agent's scan, not about now, and the
+answer says the time was "not in the repository when it was last read" with the
+scan time (while archiving fails, "likely not in the repository"; with a
+backlog, "likely still only on the primary"). A time later than now gets the
+answer for now. After a path that stops at unknown evidence, from stale
+evidence, when a collection was cut, or on the reported basis, it is also
+`unknown`.
 
-On the reported basis, a window that comes from the evidence agent's own
-`recovery_window` (pgBackRest without recovery paths) is named as the agent's,
-not the operator's. Every sentence of the timeline, the answer and its caveats
-carries a stable code and its values, so the console says it in the reader's
-language, with Go's English kept for a code the interface does not know yet.
-The timeline's reasons are sent as such phrases too, one per part. The evidence
-agent writes its own reasons in English: the console recognises the agent's
-timeline reasons ("timeline N needs an explicit targetTLI", "a default restore
-stops on timeline N", a history file missing or unreadable) and says them in the
-reader's language; any other reason of the agent's is shown as written. When the
-evidence names a timeline history file as missing or unreadable (one such file
-can withhold every restore point), the restore check names it, for example
-`00000005.history`. Stale evidence is never shown as healthy. When reading
-the paths fails, the last good ones are kept and marked stale. They are judged
-against the fresh snapshot beside them: when its timeline evidence is no longer
-established (after a failover, say), no kept path is coverage, and its coverage
-and timeline reasons replace the old ones. Paths of another repository are never
-kept, and kept paths more than three of the agent's refresh intervals (at least
-an hour) older than its latest scan are dropped; either drop is said
-(`keptRepositoryChanged`, `keptTooOld`), with what to check: the evidence
-agent's logs and the object store. A fresh coverage roll-up that is not healthy
-is not explained by the kept paths, even when it reads the same as the one they
-were read with (the agent's roll-up names no path, so a new gap in the newest
-backup's range reads like an older backup's): a kept path rated healthy is then
-at most a warning, never drawn covered, even when an older kept path is as
-degraded as the roll-up.
+Every sentence of the timeline, the answer and its caveats carries a stable code
+and its values, so the console says it in the reader's language; the evidence
+agent's own reasons are shown as written, except its timeline reasons, which the
+console recognises. When the evidence names a timeline history file as missing
+or unreadable, the restore check names it (for example `00000005.history`).
+Stale evidence is never shown as healthy: when reading the paths fails, the last
+good ones are kept and marked stale, and judged against the fresh snapshot
+beside them. When its timeline evidence is no longer established (after a
+failover, say), no kept path is coverage. Paths of another repository are never
+kept, and kept paths more than three refresh intervals (at least an hour) older
+than the latest scan are dropped; either drop is said (`keptRepositoryChanged`,
+`keptTooOld`). A fresh coverage roll-up that is not healthy is not explained by
+the kept paths: a kept path rated healthy is then at most a warning, never drawn
+covered.
