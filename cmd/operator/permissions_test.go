@@ -86,6 +86,8 @@ func TestRequiredPermissions(t *testing.T) {
 		"pgtoolbox.fyannk.dev/pgadmins":            "get,list,patch,update,watch",
 		"pgtoolbox.fyannk.dev/pgadmins/status":     "get,patch,update",
 		"pgtoolbox.fyannk.dev/pgadmins/finalizers": "update",
+		// The MCP leader's slices, created once per console.
+		"discovery.k8s.io/endpointslices": "create,get,update",
 	}
 	for key, verbs := range want {
 		if got[key] != verbs {
@@ -93,11 +95,11 @@ func TestRequiredPermissions(t *testing.T) {
 		}
 	}
 	// Not asked: cluster-scoped (nodes, clusterroles), optional (poolers,
-	// routes and their custom-host subresource), named objects only
-	// (endpointslices/kubernetes) and kinds the cluster does not serve.
+	// routes and their custom-host subresource) and kinds the cluster does
+	// not serve.
 	for _, key := range []string{
 		"/nodes", "rbac.authorization.k8s.io/clusterroles", "postgresql.cnpg.io/poolers",
-		"route.openshift.io/routes", "route.openshift.io/routes/custom-host", "discovery.k8s.io/endpointslices",
+		"route.openshift.io/routes", "route.openshift.io/routes/custom-host",
 		"apps/statefulsets", "batch/jobs",
 	} {
 		if verbs, asked := got[key]; asked {

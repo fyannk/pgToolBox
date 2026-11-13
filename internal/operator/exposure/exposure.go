@@ -61,6 +61,21 @@ type Target struct {
 	// Ingress, the router's cookie on a Route. A Gateway API HTTPRoute has
 	// no standard field for it. Explicit annotations in Meta win.
 	StickyCookie string
+	// Extra paths go to other Services of the same port: more paths of
+	// the Ingress, one more rule of the HTTPRoute, one more Route each
+	// (ExtraRoutes).
+	Extra []PathBackend
+}
+
+// PathBackend sends a path to a Service.
+type PathBackend struct {
+	// Name is the suffix of the path's own Route: <Service>-<Name>.
+	Name string
+	// Path matches itself and what is below it, or only itself when Exact
+	// (a Route matches by prefix only).
+	Path    string
+	Exact   bool
+	Service string
 }
 
 // meta is the object's metadata with the builder's default annotations
@@ -117,6 +132,21 @@ func Route(spec *pgtoolboxv1alpha1.ExposureSpec, t Target) *routev1.Route {
 	return route
 }
 
+// ExtraRoutes builds one Route per extra path of t, <Service>-<Name>: a
+// Route has one path and one Service.
+func ExtraRoutes(spec *pgtoolboxv1alpha1.ExposureSpec, t Target) []*routev1.Route {
+	routes := make([]*routev1.Route, 0, len(t.Extra))
+	for _, e := range t.Extra {
+		one := t
+		one.Meta.Name, one.Service, one.Extra = e.Service+"-"+e.Name, e.Service, nil
+		route := Route(spec, one)
+		route.Spec.Path = e.Path
+		specs.SetHash(route, specs.Hash(route.Spec))
+		routes = append(routes, route)
+	}
+	return routes
+}
+
 // Ingress builds the Ingress of spec for t.
 func Ingress(spec *pgtoolboxv1alpha1.ExposureSpec, t Target) *networkingv1.Ingress {
 	pathType := networkingv1.PathTypePrefix
@@ -140,20 +170,27 @@ func Ingress(spec *pgtoolboxv1alpha1.ExposureSpec, t Target) *networkingv1.Ingre
 			annotations["nginx.ingress.kubernetes.io/session-cookie-secure"] = "true"
 		}
 	}
+	backend := func(service string) networkingv1.IngressBackend {
+		return networkingv1.IngressBackend{Service: &networkingv1.IngressServiceBackend{
+			Name: service, Port: networkingv1.ServiceBackendPort{Name: t.PortName},
+		}}
+	}
+	paths := make([]networkingv1.HTTPIngressPath, 0, len(t.Extra)+1)
+	for _, e := range t.Extra {
+		pathType := networkingv1.PathTypePrefix
+		if e.Exact {
+			pathType = networkingv1.PathTypeExact
+		}
+		paths = append(paths, networkingv1.HTTPIngressPath{Path: e.Path, PathType: &pathType, Backend: backend(e.Service)})
+	}
+	paths = append(paths, networkingv1.HTTPIngressPath{Path: "/", PathType: &pathType, Backend: backend(t.Service)})
 	ingress := &networkingv1.Ingress{
 		TypeMeta:   metav1.TypeMeta{APIVersion: "networking.k8s.io/v1", Kind: "Ingress"},
 		ObjectMeta: t.meta(annotations),
 		Spec: networkingv1.IngressSpec{
 			Rules: []networkingv1.IngressRule{{
-				Host: spec.Hostname,
-				IngressRuleValue: networkingv1.IngressRuleValue{HTTP: &networkingv1.HTTPIngressRuleValue{
-					Paths: []networkingv1.HTTPIngressPath{{
-						Path: "/", PathType: &pathType,
-						Backend: networkingv1.IngressBackend{Service: &networkingv1.IngressServiceBackend{
-							Name: t.Service, Port: networkingv1.ServiceBackendPort{Name: t.PortName},
-						}},
-					}},
-				}},
+				Host:             spec.Hostname,
+				IngressRuleValue: networkingv1.IngressRuleValue{HTTP: &networkingv1.HTTPIngressRuleValue{Paths: paths}},
 			}},
 		},
 	}
@@ -182,24 +219,42 @@ func HTTPRoute(spec *pgtoolboxv1alpha1.ExposureSpec, t Target) *gatewayv1.HTTPRo
 		parent.SectionName = new(gatewayv1.SectionName(section))
 	}
 	port := gatewayv1.PortNumber(t.Port)
-	rule := gatewayv1.HTTPRouteRule{
-		BackendRefs: []gatewayv1.HTTPBackendRef{{BackendRef: gatewayv1.BackendRef{
-			BackendObjectReference: gatewayv1.BackendObjectReference{
-				Name: gatewayv1.ObjectName(t.Service), Port: &port,
-			},
-		}}},
+	rule := func(service string, matches []gatewayv1.HTTPRouteMatch) gatewayv1.HTTPRouteRule {
+		r := gatewayv1.HTTPRouteRule{
+			Matches: matches,
+			BackendRefs: []gatewayv1.HTTPBackendRef{{BackendRef: gatewayv1.BackendRef{
+				BackendObjectReference: gatewayv1.BackendObjectReference{
+					Name: gatewayv1.ObjectName(service), Port: &port,
+				},
+			}}},
+		}
+		if t.StreamTimeout > 0 {
+			timeout := gatewayv1.Duration(seconds(t.StreamTimeout) + "s")
+			r.Timeouts = &gatewayv1.HTTPRouteTimeouts{Request: &timeout}
+		}
+		return r
 	}
-	if t.StreamTimeout > 0 {
-		timeout := gatewayv1.Duration(seconds(t.StreamTimeout) + "s")
-		rule.Timeouts = &gatewayv1.HTTPRouteTimeouts{Request: &timeout}
+	// One rule for the extra paths: they share their Service.
+	var rules []gatewayv1.HTTPRouteRule
+	if len(t.Extra) > 0 {
+		matches := make([]gatewayv1.HTTPRouteMatch, 0, len(t.Extra))
+		for _, e := range t.Extra {
+			match := gatewayv1.PathMatchPathPrefix
+			if e.Exact {
+				match = gatewayv1.PathMatchExact
+			}
+			matches = append(matches, gatewayv1.HTTPRouteMatch{Path: &gatewayv1.HTTPPathMatch{Type: &match, Value: new(e.Path)}})
+		}
+		rules = append(rules, rule(t.Extra[0].Service, matches))
 	}
+	rules = append(rules, rule(t.Service, nil))
 	route := &gatewayv1.HTTPRoute{
 		TypeMeta:   metav1.TypeMeta{APIVersion: "gateway.networking.k8s.io/v1", Kind: "HTTPRoute"},
 		ObjectMeta: t.meta(nil),
 		Spec: gatewayv1.HTTPRouteSpec{
 			CommonRouteSpec: gatewayv1.CommonRouteSpec{ParentRefs: []gatewayv1.ParentReference{parent}},
 			Hostnames:       []gatewayv1.Hostname{gatewayv1.Hostname(spec.Hostname)},
-			Rules:           []gatewayv1.HTTPRouteRule{rule},
+			Rules:           rules,
 		},
 	}
 	specs.SetHash(route, specs.Hash(route.Spec))

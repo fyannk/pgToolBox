@@ -95,6 +95,14 @@ rules:
   - update
 - apiGroups:
   - discovery.k8s.io
+  resources:
+  - endpointslices
+  verbs:
+  - create
+  - get
+  - update
+- apiGroups:
+  - discovery.k8s.io
   resourceNames:
   - kubernetes
   resources:

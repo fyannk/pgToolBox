@@ -389,8 +389,9 @@ else:
         verbs = [v for v in r.get("verbs", []) if not (v in NAMESPACED_GRANT_VERBS and set(res) <= {"clusterroles", "roles"})]
         if res and verbs:
             expected.append({**r, "resources": res, "verbs": verbs})
-        elif r.get("apiGroups") == ["discovery.k8s.io"] and r.get("resources") == ["endpointslices"]:
+        elif r.get("apiGroups") == ["discovery.k8s.io"] and r.get("resources") == ["endpointslices"] and r.get("resourceNames") == ["kubernetes"]:
             expected.append(r)  # one named object in the default namespace: needs the cluster-wide grant
+            # (the unnamed rule is the MCP leader's slices, in the watched namespaces only)
     if norm_rules(expected) != norm_rules(scoped_cluster[0]["rules"]):
         problems.append("charts/pgtoolbox clusterrole-cluster-scoped.yaml differs from the cluster-scoped rules of the manager role")
     for r in scoped_cluster[0]["rules"]:

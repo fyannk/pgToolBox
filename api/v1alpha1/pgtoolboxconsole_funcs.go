@@ -100,6 +100,10 @@ const HistoryClaimTemplateName = "history"
 // DigestLeaseName is the Lease whose holder delivers the daily digests.
 func (c *PgToolBoxConsole) DigestLeaseName() string { return c.WorkloadName() + "-digest" }
 
+// MCPLeaseName is the Lease whose holder alone serves MCP, and the name of
+// the selector-less Service the exposure sends the MCP paths to.
+func (c *PgToolBoxConsole) MCPLeaseName() string { return c.WorkloadName() + "-mcp" }
+
 // DigestDelivered reports whether a digest delivery channel is configured.
 func (c *PgToolBoxConsole) DigestDelivered() bool { return c.Spec.Digest.Delivery != nil }
 

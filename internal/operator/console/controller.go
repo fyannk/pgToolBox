@@ -39,6 +39,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"slices"
 	"time"
 
 	routev1 "github.com/openshift/api/route/v1"
@@ -82,6 +83,7 @@ import (
 // +kubebuilder:rbac:groups=pgtoolbox.fyannk.dev,resources=pgtoolboxconsoles/finalizers,verbs=update
 // +kubebuilder:rbac:groups=apps,resources=deployments;statefulsets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=coordination.k8s.io,resources=leases,verbs=get;create;update
+// +kubebuilder:rbac:groups=discovery.k8s.io,resources=endpointslices,verbs=get;create;update
 // +kubebuilder:rbac:groups="",resources=services;serviceaccounts;persistentvolumeclaims,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch
@@ -254,6 +256,11 @@ func (r *Reconciler) reconcile(ctx context.Context, console *pgtoolboxv1alpha1.P
 		role, binding = buildDigestLeaseRBAC(console)
 		objects = append(objects, role, binding)
 	}
+	mcpService, mcpCreated := buildMCPLeader(console)
+	if console.MCPEnabled() {
+		role, binding = buildMCPLeaderRBAC(console)
+		objects = append(objects, mcpService, role, binding)
+	}
 	for _, object := range objects {
 		if err := applier.Apply(ctx, object); err != nil {
 			return r.notOwned(console, err)
@@ -281,6 +288,24 @@ func (r *Reconciler) reconcile(ctx context.Context, console *pgtoolboxv1alpha1.P
 		}
 		if err := r.deleteIfOwned(ctx, console, &rbacv1.Role{}, console.DigestLeaseName()); err != nil {
 			return err
+		}
+	}
+	if console.MCPEnabled() {
+		if err := r.createLease(ctx, mcpCreated[0]); err != nil {
+			return err
+		}
+		for _, slice := range mcpCreated[1:] {
+			if err := r.createOnce(ctx, slice); err != nil {
+				return r.notOwned(console, err)
+			}
+		}
+	} else {
+		// The Lease and the slices stay (they go with the PgToolBoxConsole);
+		// without the Service and the grant nothing reaches or writes them.
+		for _, object := range []client.Object{&corev1.Service{}, &rbacv1.RoleBinding{}, &rbacv1.Role{}} {
+			if err := r.deleteIfOwned(ctx, console, object, console.MCPLeaseName()); err != nil {
+				return err
+			}
 		}
 	}
 	if policy := buildDrillNetworkPolicy(console); policy != nil {
@@ -568,13 +593,24 @@ func (r *Reconciler) applyExposure(ctx context.Context, console *pgtoolboxv1alph
 		return false, err
 	}
 	if r.Features.In(console.Namespace).Routes.Usable() {
+		// The console's Route, then one per MCP path (none with MCP off).
+		routes := []*routev1.Route{}
 		if kind == pgtoolboxv1alpha1.ExposureTypeRoute {
-			if err := applier.Apply(ctx, exposure.Route(spec, target)); err != nil {
-				return false, r.notOwned(console, err)
+			routes = append([]*routev1.Route{exposure.Route(spec, target)}, exposure.ExtraRoutes(spec, target)...)
+		}
+		names := []string{console.WorkloadName()}
+		for _, p := range mcpPaths(console) {
+			names = append(names, p.Service+"-"+p.Name)
+		}
+		for _, name := range names {
+			if i := slices.IndexFunc(routes, func(route *routev1.Route) bool { return route.Name == name }); i >= 0 {
+				if err := applier.Apply(ctx, routes[i]); err != nil {
+					return false, r.notOwned(console, err)
+				}
+				exposed = true
+			} else if err := r.deleteIfOwned(ctx, console, &routev1.Route{}, name); err != nil {
+				return false, err
 			}
-			exposed = true
-		} else if err := r.deleteIfOwned(ctx, console, &routev1.Route{}, console.WorkloadName()); err != nil {
-			return false, err
 		}
 	}
 	if r.Features.In(console.Namespace).Gateways.Usable() {
