@@ -50,23 +50,6 @@ func metricsOptions(bindAddress, certDir string) metricsserver.Options {
 	}
 }
 
-// droppedGauge is pgtoolbox_watch_namespaces_dropped{reason}: set at start,
-// then changed only by the background review (reReviewFailed), when a
-// namespace of review-failed leaves it for a content cause. The zero value
-// does nothing (a start with nothing registered).
-type droppedGauge struct {
-	vec *prometheus.GaugeVec
-}
-
-// move counts one namespace under to instead of from.
-func (g droppedGauge) move(from, to dropCause) {
-	if g.vec == nil || from == to {
-		return
-	}
-	g.vec.WithLabelValues(string(from)).Dec()
-	g.vec.WithLabelValues(string(to)).Inc()
-}
-
 // registerWatchMetrics registers the start-up's watch decisions on
 // registry:
 //
@@ -77,23 +60,20 @@ func (g droppedGauge) move(from, to dropCause) {
 //     in them); permissions, it lacks there another namespaced permission
 //     of its manager role (a narrower Role bound in its place: an informer
 //     refused there would never sync); review-failed, its permissions
-//     there could not be reviewed (an API server error or a lost
-//     connection, after the retries; reviewed again in the background);
-//     review-too-large, its permission review answered more than
-//     managerrole.ReviewResponseLimit; review-too-slow, it got no answer
-//     in time at every attempt (neither reviewed again before the next
-//     start). An optional API refused never leaves a namespace out. Fixed
-//     for the life of the process, but for a review-failed namespace whose
-//     background review turns too large or too slow: it moves to that
-//     reason (the returned droppedGauge).
+//     there could not be reviewed (an API server error, no answer in time
+//     or a lost connection, after the retries); review-too-large, its
+//     permission review answered more than managerrole.ReviewResponseLimit.
+//     An optional API refused never leaves a namespace out. Fixed for the
+//     life of the process: a namespace left out is reviewed again at the
+//     next start.
 //   - pgtoolbox_optional_api_refused_namespaces{group,kind}: per optional
 //     kind, the watched namespaces where it is refused while others allow
 //     it; the feature is off in those namespaces only. A series is
 //     exported for every optional kind (0 when none refuses it).
-func registerWatchMetrics(registry prometheus.Registerer, dropped map[dropCause]int, kinds []optionalKind) (droppedGauge, error) {
+func registerWatchMetrics(registry prometheus.Registerer, dropped map[dropCause]int, kinds []optionalKind) error {
 	droppedVec := prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "pgtoolbox_watch_namespaces_dropped",
-		Help: "Watched namespaces left out at start, per reason: clusters-unlistable (CloudNativePG Clusters may not be listed there: deleted, or not bound), permissions (another permission of the manager role is missing there), review-failed (the permission review there failed with an API server error; reviewed again every minute), review-too-large (the permission review there answered too much), review-too-slow (the permission review there got no answer in time; it and review-too-large are reviewed again at the next start only).",
+		Help: "Watched namespaces left out at start, per reason: clusters-unlistable (CloudNativePG Clusters may not be listed there: deleted, or not bound), permissions (another permission of the manager role is missing there), review-failed (the permission review there failed: an API server error or no answer in time), review-too-large (the permission review there answered too much). Each is reviewed again at the next start.",
 	}, []string{"reason"})
 	for _, cause := range dropCauses {
 		droppedVec.WithLabelValues(string(cause)).Set(float64(dropped[cause]))
@@ -107,10 +87,10 @@ func registerWatchMetrics(registry prometheus.Registerer, dropped map[dropCause]
 		refused.WithLabelValues(gvk.Group, gvk.Kind).Set(float64(len(kind.Result.RefusedIn)))
 	}
 	if err := registry.Register(droppedVec); err != nil {
-		return droppedGauge{}, fmt.Errorf("register pgtoolbox_watch_namespaces_dropped: %w", err)
+		return fmt.Errorf("register pgtoolbox_watch_namespaces_dropped: %w", err)
 	}
 	if err := registry.Register(refused); err != nil {
-		return droppedGauge{}, fmt.Errorf("register pgtoolbox_optional_api_refused_namespaces: %w", err)
+		return fmt.Errorf("register pgtoolbox_optional_api_refused_namespaces: %w", err)
 	}
-	return droppedGauge{droppedVec}, nil
+	return nil
 }

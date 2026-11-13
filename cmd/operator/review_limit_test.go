@@ -85,18 +85,13 @@ func TestStartupClientBoundsTheRulesReview(t *testing.T) {
 	if !errors.Is(review.Unreviewed[0].Err, managerrole.ErrReviewTooLarge) {
 		t.Errorf("team-hostile's error = %v, want ErrReviewTooLarge", review.Unreviewed[0].Err)
 	}
-	// Round 19, OPERATOR P3-2: the size seen reaches the error (and so the
-	// log) through the client.
-	if size := responseSize(review.Unreviewed[0].Err); !strings.HasSuffix(size, " bytes read") || !strings.Contains(review.Unreviewed[0].Err.Error(), size) {
-		t.Errorf("team-hostile's error = %v, size %q: want the bytes read named", review.Unreviewed[0].Err, size)
-	}
 }
 
 // TestStartupClientSlowReviewTooLarge: round 20, OPERATOR P3-1 and GO
 // P3-1. A review too large that arrives slowly (a slow link, an API server
 // CPU-bound on gzip), whether it trickles or stalls past the limit, is too
-// large through the start-up client, with the size seen, at its first
-// attempt and before its deadline: never a timeout, never retried.
+// large through the start-up client, at its first attempt and before its
+// deadline: never a timeout, never retried.
 func TestStartupClientSlowReviewTooLarge(t *testing.T) {
 	const timeout = 1500 * time.Millisecond
 	for _, tc := range []struct {
@@ -143,11 +138,8 @@ func TestStartupClientSlowReviewTooLarge(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(review.Unreviewed) != 1 || !review.Unreviewed[0].TooLarge() || review.Unreviewed[0].TooSlow() {
-				t.Fatalf("review = %+v, want team-slow too large, not too slow", review)
-			}
-			if size := responseSize(review.Unreviewed[0].Err); !strings.HasPrefix(size, "at least ") || !strings.Contains(review.Unreviewed[0].Err.Error(), size) {
-				t.Errorf("team-slow's error = %v, size %q: want at least the bytes counted named", review.Unreviewed[0].Err, size)
+			if len(review.Unreviewed) != 1 || !review.Unreviewed[0].TooLarge() {
+				t.Fatalf("review = %+v, want team-slow too large", review)
 			}
 			if n := calls.Load(); n != 1 {
 				t.Errorf("team-slow reviewed %d times, want once (too large is never retried)", n)

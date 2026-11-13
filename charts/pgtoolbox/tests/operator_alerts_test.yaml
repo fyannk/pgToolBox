@@ -25,10 +25,9 @@ tests:
       - equal: {path: "spec.groups[0].rules[0].expr", value: "max by (namespace, reason) (pgtoolbox_watch_namespaces_dropped) > 0"}
       - matchRegex: {path: "spec.groups[0].rules[0].labels.severity", pattern: "^(info|warning|critical)$"}
       - matchRegex: {path: "spec.groups[0].rules[0].annotations.runbook_url", pattern: "operator/index.md#namespaces-dropped-from-the-watch$"}
-  - it: words the dropped-namespace description by reason, restarting itself only for a failed review
+  - it: words the dropped-namespace description by reason, a restart for each review failure
     set: {operator.metrics.prometheusRule.enabled: true}
     asserts:
-      - matchRegex: {path: "spec.groups[0].rules[0].annotations.description", pattern: 'eq \$labels.reason "review-failed" \}\}[^{]*restarts on its own'}
+      - matchRegex: {path: "spec.groups[0].rules[0].annotations.description", pattern: 'eq \$labels.reason "review-failed" \}\}[^{]*then restart the operator; only a start reviews it again'}
       - matchRegex: {path: "spec.groups[0].rules[0].annotations.description", pattern: 'eq \$labels.reason "review-too-large" \}\}[^{]*then restart the operator; only a start reviews it again'}
-      - matchRegex: {path: "spec.groups[0].rules[0].annotations.description", pattern: 'eq \$labels.reason "review-too-slow" \}\}[^{]*then restart the operator; only a start reviews it again'}
       - notMatchRegex: {path: "spec.groups[0].rules[0].annotations.description", pattern: '\{\{ end \}\}.+'}

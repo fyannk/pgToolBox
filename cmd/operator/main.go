@@ -19,12 +19,10 @@ package main
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"os"
 	"strings"
-	"time"
 
 	cnpgv1 "github.com/cloudnative-pg/api/pkg/api/v1"
 	routev1 "github.com/openshift/api/route/v1"
@@ -48,8 +46,6 @@ var (
 	setupLog             = ctrl.Log.WithName("setup")
 	operatorVersion      = "development"
 	defaultOperatorImage = ""
-	// processStarted is when the process started (reReviewPolicy.started).
-	processStarted = time.Now()
 )
 
 func init() {
@@ -98,16 +94,13 @@ func main() {
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 
-	// restart stops the manager like a signal, with errRestartToWatch as
-	// the cause: the operator then exits 0 and kubelet restarts it (a
-	// namespace left out at start can now be watched, reReviewFailed).
-	ctx, restart := context.WithCancelCause(ctrl.SetupSignalHandler())
+	ctx := ctrl.SetupSignalHandler()
 	// One budget for the whole start-up, up to the manager's start (the
 	// liveness probe is served from then on): startupBudgetTotal.
 	budget := newStartupBudget(startupStepTimeout, startupBudgetTotal)
 	// The PgAdmin configuration and optional-API probes come first: they
 	// shape the cache and the manager's lease timings.
-	pgAdminPrepared, err := preparePgAdmin(ctx, budget, operatorImage, configMapName, secretName, restart)
+	pgAdminPrepared, err := preparePgAdmin(ctx, budget, operatorImage, configMapName, secretName)
 	if err != nil {
 		setupLog.Error(err, "unable to prepare the PgAdmin controller")
 		os.Exit(1)
@@ -159,9 +152,6 @@ func main() {
 	if err := mgr.Start(ctx); err != nil {
 		setupLog.Error(err, "problem running manager", "hint", cacheSyncHint(err, pgAdminPrepared.Config.WatchNamespaces))
 		os.Exit(1)
-	}
-	if cause := context.Cause(ctx); errors.Is(cause, errRestartToWatch) {
-		exitToWatch(cause)
 	}
 }
 
@@ -231,16 +221,4 @@ func buildManager(ctx context.Context, budget *startupBudget, newManager func() 
 		kinds = append(kinds, objects)
 	}
 	return mgr, kinds, nil
-}
-
-// exitToWatch ends the process to restart it with a namespace watched
-// (reReviewFailed): an intentional exit, not a crash, so it exits 0 (the
-// container's last state reads Completed, exit code 0, where a crash
-// reads Error) and leaves cause as the termination message (kubectl
-// describe pod shows it); kubelet restarts the container all the same.
-func exitToWatch(cause error) {
-	setupLog.Info("manager stopped to restart and watch a namespace left out at start (intentional, not a crash)", "reason", cause.Error())
-	// Best effort: the file exists only in a container.
-	_ = os.WriteFile(terminationLog, []byte(cause.Error()+"\n"), 0o600)
-	os.Exit(0)
 }
