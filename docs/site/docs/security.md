@@ -204,12 +204,11 @@ references").
   It is the only check of this rule: where the policy is off, grant
   `create`/`update` on `pgtoolboxconsoles`, `pgadmins` and `evidenceagents` only to
   people you would trust with every Secret of the namespace.
-- **kustomize applies it only when you opt in, and the OLM bundle cannot ship it.**
+- **kustomize applies it only when you opt in; OLM enforces it through a webhook.**
   kustomize: add the component `config/components/admission` (the chart's policy
   with its default allow-lists, see [kustomize](install/kustomize.md#the-admission-policy)).
-  OLM: render it from the chart and apply it yourself (see [OLM](install/olm.md#admission-policies)):
-  `helm template pgtoolbox charts/pgtoolbox --set operator.enabled=true --show-only templates/operator/admissionpolicy.yaml | kubectl apply -f -`,
-  or apply the same trust rule as above.
+  OLM: the bundle cannot ship the policy, so the operator serves the same rules
+  as a validating webhook OLM certifies (see [OLM](install/olm.md#admission-rules)).
 - **Any change of the spec re-checks every reference.** Changing where a Secret
   is sent (an issuer, a URL, a mail server, a registry, the Cluster or endpoint an
   agent reads) is a spec change like any other, so whoever makes it must be able

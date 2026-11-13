@@ -336,9 +336,9 @@ person, and an administrator of the Cluster's namespace.
   The policy takes no parameter, so it never fails open.
 - **kustomize**: `config/default` includes `config/admission`, so
   `kubectl apply -k config/default` applies the guard too.
-- **OLM**: a bundle cannot carry an admission policy. A cluster admin applies it
-  with `kubectl apply -k config/admission` (or the file
-  `config/admission/restore_drill_guard.yaml` of the release).
+- **OLM**: a bundle cannot carry an admission policy, so the operator enforces
+  the same guard as a validating webhook (see [OLM](../install/olm.md#admission-rules)),
+  called for every `Cluster` delete: OLM's webhooks take no `matchConditions`.
 - **pgtools chart**: it is cluster-scoped, which a namespace admin cannot
   install, so it is **opt-in**: a cluster admin sets
   `console.restoreDrills.admissionPolicy.create: true` (or applies the rendered
