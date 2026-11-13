@@ -41,9 +41,14 @@ test-envtest-console-pgadmin: ## The console's per-person DatabaseRole writer on
 	KUBEBUILDER_ASSETS="$$($(SETUP_ENVTEST) use $(ENVTEST_K8S_VERSION_CONSOLE) -p path)" \
 		go test -tags envtest -count=1 -run '^TestPersonalDatabaseRoleOnEnvtest$$' ./internal/console/ops/
 
+.PHONY: test-envtest-console-mcpleader
+test-envtest-console-mcpleader: ## The MCP leader's hand-over on envtest (two replicas: Lease, EndpointSlice, grant index).
+	KUBEBUILDER_ASSETS="$$($(SETUP_ENVTEST) use $(ENVTEST_K8S_VERSION_CONSOLE) -p path)" \
+		go test -tags envtest -count=1 -run '^TestHandOverOnEnvtest$$' ./internal/console/mcpleader/
+
 # `make test-console-core` (Makefile) runs the write-path envtests with the
 # informer-cache ones.
-test-console-core: test-envtest-console-ops test-envtest-console-pgadmin
+test-console-core: test-envtest-console-ops test-envtest-console-pgadmin test-envtest-console-mcpleader
 
 # RBAC and SubjectAccessReview semantics on a real API server, no kind. The
 # kind scenarios (SSO against dex, the cluster list a DBA may see, the honest

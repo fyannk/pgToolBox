@@ -22,11 +22,8 @@ package readmodel
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"fmt"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"time"
 
@@ -343,7 +340,7 @@ func New(cfg config.Console, restConfig *rest.Config, logger *slog.Logger, id Id
 			if cfg.Digest.Lease != "" && cfg.Digest.Delivers() {
 				elector = leader.New(leader.Options{
 					Client: clientset.CoordinationV1().Leases(id.Namespace), Namespace: id.Namespace, Name: cfg.Digest.Lease,
-					Identity: candidateIdentity(), Lead: dg.Lead,
+					Identity: leader.CandidateIdentity(), Lead: dg.Lead,
 					Logger: logger.With(slog.String("component", "digest-leader")),
 				})
 				rm.DigestLeader = elector
@@ -351,20 +348,6 @@ func New(cfg config.Console, restConfig *rest.Config, logger *slog.Logger, id Id
 		}
 	}
 	return rm, nil
-}
-
-// candidateIdentity is this process's name in the digest election: the
-// pod name (the host name in a pod) and a random suffix, so that a pod
-// restarted under the same name is a new candidate and waits for its old
-// self's Lease to lapse instead of renewing it.
-func candidateIdentity() string {
-	host, err := os.Hostname()
-	if err != nil || host == "" {
-		host = "pgtoolbox-console"
-	}
-	suffix := make([]byte, 6)
-	_, _ = rand.Read(suffix)
-	return host + "_" + hex.EncodeToString(suffix)
 }
 
 // newSnapshots builds the state snapshots of the in-memory stores, each

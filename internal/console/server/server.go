@@ -99,6 +99,9 @@ type Options struct {
 	// the CSRF check and the session middleware: it reads no cookie and
 	// authenticates every request with its bearer. nil serves none.
 	MCP Mounter
+	// MCPGate refuses the MCP leader's paths on a replica that does not
+	// lead (mcpleader.Leader.Gate); nil when every replica serves MCP.
+	MCPGate func(http.Handler) http.Handler
 	// Tracing wraps the main listener in a server span per request;
 	// nil: no spans, no wrapper.
 	Tracing *tracing.Tracing
@@ -211,6 +214,9 @@ func buildHandler(o Options) http.Handler {
 		o.MCP.Register(outer)
 		outer.Handle("/", h)
 		h = outer
+	}
+	if o.MCPGate != nil {
+		h = o.MCPGate(h)
 	}
 	// The live streams last a session: a span of hours tells nothing.
 	return o.Tracing.Handler(securityHeaders(writeDeadline(h)), func(r *http.Request) bool {
