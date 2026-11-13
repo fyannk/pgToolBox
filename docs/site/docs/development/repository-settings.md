@@ -121,7 +121,7 @@ Settings, Actions, General:
   GitHub" (covers `actions/*` and `github/codeql-action/*`) and paste the list
   below into "Allow specified actions and reusable workflows". With "Require actions
   to be pinned to a full-length commit SHA" on, every `uses:` is already compliant.
-  The list is generated from the workflows and the local actions under `.github/actions`, and `make check-repo` fails when it differs. It names each action with `@*`: an entry that names a SHA allows only that SHA, so an exact list would refuse every Dependabot bump, while the SHA pins themselves are enforced by the setting above. Regenerate it only when a workflow starts using a new action:
+  It names each action with `@*`: an entry that names a SHA allows only that SHA, so an exact list would refuse every Dependabot bump, while the SHA pins themselves are enforced by the setting above. These two settings are the only enforcement of pinning and of the allow-list; extend the list when a workflow starts using a new action:
 
   ```bash
   grep -rhoE 'uses: [^./][^ ]+@[0-9a-f]{40}' .github/workflows .github/actions | sed -E 's/uses: //; s/@[0-9a-f]{40}$/@*/' | sort -u | grep -vE '^(actions|github)/'
@@ -130,7 +130,6 @@ Settings, Actions, General:
   Allow-list:
 
   - `anchore/sbom-action/download-syft@*`
-  - `dataaxiom/ghcr-cleanup-action@*`
   - `dependabot/fetch-metadata@*`
   - `docker/build-push-action@*`
   - `docker/login-action@*`
@@ -155,13 +154,6 @@ prints each package's settings URL and keeps polling (every minute, for about 20
 minutes), so making them public while the run waits turns it green. After that it
 fails naming the packages and leaves the release a draft: make them public, then use
 **Re-run failed jobs** on the run.
-
-Pruning (`release.yml`, job `prune`) is opt-in: set the repository variable
-`PRUNE_GHCR` to `true` (Settings, Secrets and variables, Actions, Variables) once a
-release has verified without it. It deletes untagged versions with the Actions
-token. On a package owned by a user account that token may lack the right to delete
-versions: give the repository **Admin** on each package (Package settings, Manage
-Actions access), or prune by hand. A failed prune does not stop `verify`.
 
 ## Repository topics and release immutability
 

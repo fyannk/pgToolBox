@@ -81,8 +81,8 @@ then `go get github.com/fyannk/pgToolBox/pkg/evidence@vX.Y.Z`.
 `make release-preflight TAG=vX.Y.Z` (or `-rc.N`) answers what the release workflow will ask, before
 anything is pushed: a dated CHANGELOG section, an annotated tag, and `ci-ok` and
 `security-gate` green **on the tagged commit**. Check runs must exist on that commit;
-a commit merged with the Actions token starts none, and `automerge.yml` dispatches
-them only on its 30-minute schedule, while `wait-ci` gives up after about two minutes
+a commit merged with the Actions token starts none: dispatch `ci.yml` and
+`security.yml` on `main` by hand first, since `wait-ci` gives up after about two minutes
 of empty polls. Checklist before pushing a tag:
 
 1. Date the CHANGELOG heading (`## [X.Y.Z] - YYYY-MM-DD`) in the commit you are going

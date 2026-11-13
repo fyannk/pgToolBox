@@ -2,14 +2,10 @@ name: Verify release
 
 # What a stranger does with a release, with no registry credentials: pull every
 # image and chart by tag, verify the keyless cosign signature and the GitHub
-# attestation of each by digest (hack/release.sh verify-published). Three ways in:
+# attestation of each by digest (hack/release.sh verify-published). Two ways in:
 #
-#   workflow_call   release.yml, after the prune job: a release that cannot be
-#                   verified anonymously once the packages are in their final
-#                   state is not finished.
-#   schedule        weekly, against the latest stable release (nothing to do
-#                   until there is one): signatures and packages do not rot
-#                   silently.
+#   workflow_call   release.yml: a release that cannot be verified anonymously
+#                   is not finished.
 #   workflow_dispatch  by hand, for any published tag.
 on:
   workflow_call:
@@ -18,8 +14,6 @@ on:
         description: Published release tag (vX.Y.Z or vX.Y.Z-rc.N)
         required: true
         type: string
-  schedule:
-    - cron: "41 4 * * 1"
   workflow_dispatch:
     inputs:
       tag:

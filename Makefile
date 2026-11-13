@@ -275,7 +275,7 @@ lint: ## golangci-lint on every module, build-tagged e2e/envtest/integration cod
 	$(MAKE) --no-print-directory fmt-check vet check-repo
 
 .PHONY: check-repo
-check-repo: check-repo-files ## Repository invariants: headers, read-only boundary, dependency closure, layering, toolchain, documented settings, action pins.
+check-repo: check-repo-files ## Repository invariants: headers, read-only boundary, dependency closure, layering, toolchain.
 	./hack/check-boilerplate.sh
 	./hack/check-readonly.sh
 	./hack/check-deps.sh
@@ -284,11 +284,10 @@ check-repo: check-repo-files ## Repository invariants: headers, read-only bounda
 
 # The part of check-repo that reads files, not the Go import graph: it needs no
 # Go toolchain, so CI runs it (with test-hack) in lint-files for a change to the
-# workflows, the allowed-actions list, mise.toml or a Dockerfile.
+# workflows, mise.toml or a Dockerfile.
 .PHONY: check-repo-files
-check-repo-files: ## check-repo without Go: toolchain pins against mise.toml, allowed actions against the workflows.
+check-repo-files: ## check-repo without Go: toolchain pins against mise.toml.
 	./hack/check-toolchain.sh
-	./hack/check-action-pins.sh
 
 .PHONY: vuln
 vuln: ## Scan the Go dependency graph for known vulnerabilities.

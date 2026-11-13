@@ -29,7 +29,7 @@ name: Release
 # No cache is read or written here: a release is built from the tagged commit
 # alone. The digest and release-file artifacts expire after 7 days: past that, a
 # failed run cannot be finished, and the next release candidate (rc.N+1)
-# supersedes it. After the optional prune, verify-release.yml pulls everything with no
+# supersedes it. verify-release.yml then pulls everything with no
 # credentials and verifies it.
 on:
   push:
@@ -719,53 +719,13 @@ jobs:
           set -euo pipefail
           gh workflow run pages.yml --repo "${REPO}" --ref main -f "docs_ref=refs/tags/${TAG}"
 
-  # Each push orphans the untagged manifests a retag replaced. Prune only what no
-  # tagged index, signature or attestation references.
-  #
-  # Opt-in: set the repository variable PRUNE_GHCR to "true". It is off by
-  # default because a prune cannot be undone and verify runs after it: a
-  # signature or attestation that is linked to its image only through the OCI
-  # `subject` field (a referrer, not a tag) could be taken for an orphan by the
-  # action, and the release would turn red after it is public. Enable it once
-  # a release has verified cleanly with it off, and look at one run's log
-  # first (dry-run: set PRUNE_GHCR_DRY_RUN to "true").
-  prune:
-    name: Prune untagged ${{ matrix.package }}
-    needs: [prepare, release]
-    if: vars.PRUNE_GHCR == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      packages: write # delete untagged package versions
-    strategy:
-      fail-fast: false
-      matrix:
-        package:
-          - pgtoolbox-operator
-          - pgtoolbox-console
-          - pgtoolbox-evidence-agent
-          - pgtoolbox-bundle
-          - pgtoolbox-catalog
-    steps:
-      # Do not enable delete-ghost-images: it can delete tagged release versions.
-      - name: Prune orphaned GHCR manifests
-        uses: dataaxiom/ghcr-cleanup-action@d52806a0dc70b430571a37da1fde39733ffd640f # v1.2.2
-        with:
-          package: ${{ matrix.package }}
-          delete-untagged: true
-          validate: true
-          dry-run: ${{ vars.PRUNE_GHCR_DRY_RUN == 'true' }}
-
   # The release as a stranger sees it, once the packages are in their final
-  # state (pruned): pull by tag with no credentials, verify the signature and
-  # the attestation of every image and chart. The same workflow runs weekly
-  # against the latest stable release.
+  # state: pull by tag with no credentials, verify the signature and
+  # the attestation of every image and chart.
   verify:
     name: Verify the published release anonymously
-    needs: [prepare, release, prune]
-    # always(): a skipped (the default) or failed prune (it needs package admin
-    # rights on a user-owned package) must not skip the verification of a release that was published.
-    if: always() && needs.release.result == 'success' && needs.prepare.outputs.kind == 'product'
+    needs: [prepare, release]
+    if: needs.release.result == 'success' && needs.prepare.outputs.kind == 'product'
     permissions:
       contents: read # check out the repository, read the release list
     uses: ./.github/workflows/verify-release.yml

@@ -15,25 +15,15 @@ name: Dependabot auto-merge
 # and the sender of the event are Dependabot, so a person's push to the branch
 # never runs it with a write token.
 #
-# Second job, `dispatch-main-checks`: a merge made by auto-merge carries the
-# Actions token's identity, and GitHub starts no push or pull_request run for
-# an event that token causes (workflow_dispatch is the documented exception).
-# So the merge commit would have no ci-ok and no security-gate check run and
-# `release.sh wait-ci` would refuse a tag on it. The same token causes no
-# `pull_request: closed` run either (observed: no run after auto-merges), so
-# there is no closed trigger; the 30-minute schedule is the only mechanism.
-# Every 30 minutes the job dispatches ci.yml (every family: a dispatch fails
-# open in hack/changed-paths.sh) and security.yml on main when either has no
-# run for the head of main yet. A tag pushed sooner than that must wait or
-# dispatch both by hand (docs/site/docs/release.md).
+# A merge made by auto-merge carries the Actions token, and GitHub starts no push
+# run for it: dispatch ci.yml and security.yml on main by hand before tagging
+# (docs/site/docs/release.md).
 on:
   pull_request:
     types:
       - opened
       - reopened
       - synchronize
-  schedule:
-    - cron: "*/30 * * * *"
 
 permissions: {}
 
@@ -48,7 +38,6 @@ jobs:
     # still Dependabot even when a person pushed the commit that fired the
     # event, and this job holds a write token.
     if: >-
-      github.event_name == 'pull_request' &&
       github.event.pull_request.user.login == 'dependabot[bot]' &&
       github.event.sender.login == 'dependabot[bot]' &&
       github.event.pull_request.base.ref == 'main'
@@ -91,33 +80,3 @@ jobs:
         run: |
           set -euo pipefail
           echo "::notice::${NAMES} has update-type '${UPDATE_TYPE}', which is outside the auto-merge allowlist. Left for manual review."
-
-  dispatch-main-checks:
-    name: Run the checks on main
-    # The schedule only: a merge by a person starts its own push run, and a
-    # merge by the Actions token starts no closed-event run to hook into.
-    if: github.event_name == 'schedule'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      actions: write # list the runs of main's head and dispatch two workflows
-    env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      GH_REPO: ${{ github.repository }}
-      MERGE_SHA: ${{ github.sha }}
-    steps:
-      - name: Dispatch the workflow that has no run for the commit
-        run: |
-          set -euo pipefail
-          # Any event counts: a push run, a dispatch, the nightly. Each of the
-          # two workflows is checked on its own: a commit with a ci.yml run but
-          # no security.yml run would still lack security-gate.
-          for wf in ci.yml security.yml; do
-            existing="$(gh run list --workflow "${wf}" --commit "${MERGE_SHA}" --json databaseId --jq 'length')"
-            if [[ "${existing}" != "0" ]]; then
-              echo "${wf} already ran for ${MERGE_SHA}; nothing to dispatch"
-              continue
-            fi
-            echo "no ${wf} run for ${MERGE_SHA}; dispatching it on main"
-            gh workflow run "${wf}" --ref main
-          done
