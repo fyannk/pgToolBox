@@ -68,8 +68,9 @@ named: the operator would sort it first, and what it does then is not guessed.
 
 Ranking fenced instances last, skipping the election when every instance is
 fenced, and checking the failover quorum a second time just before the
-promotion are CloudNativePG **1.30.1** behaviour, the release the console
-requires; the rehearsal follows it.
+promotion are CloudNativePG **1.30.1** behaviour; the rehearsal follows it and
+needs 1.30.1 or later. On 1.30.0, which checks the quorum only when the failover
+starts and may rank a fenced instance first, its answer may not match.
 
 ## Distance behind
 

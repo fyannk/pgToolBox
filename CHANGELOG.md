@@ -10,7 +10,7 @@ the notes before upgrading.
 ## [0.1.0] - 2026-11-12
 
 The first public release: a console, an optional operator and an evidence agent
-for [CloudNativePG](https://cloudnative-pg.io) 1.30.1 and later, on Kubernetes and
+for [CloudNativePG](https://cloudnative-pg.io) 1.30 and later, on Kubernetes and
 OpenShift.
 
 **Behind a proxy, name it:** the console reads `X-Forwarded-For` only from the addresses in
@@ -205,7 +205,7 @@ addresses.
   With `INSTANCE_STATUS_ENABLED=false`, WAL archiving shows the Cluster's `ContinuousArchiving` condition, attributed to the Cluster status and "not checked on the instance", instead of unknown on every Cluster; a sweep that failed or is stale still leaves it unknown.
   A Backup stop time left unset by a plugin (stamped 1970) is read as unknown, in the purge band and the restore drill. The pgBackRest purge band also covers Backups in progress begun after the read. "Instance self-reports" counts a fenced or restarting instance apart, the failover rehearsal names a masked replica that reports itself primary, and Instances shows "not reported" instead of 0 for an absent ready-WAL count.
   Backup times are read through one plausibility rule: a time before 2000, in the future (beyond five minutes of clock skew) or earlier than the Backup's creation is not a time anywhere (the Overview's last backup, the timeline, the backups screen, the restore drill and the purge band). A Completed Backup counts at the later of its stop and CloudNativePG's completion stamp (`reconciliationTerminatedAt`), which is named as the source when it decides; a queued Backup counts from the operator's start; a failed Backup is timed by the latest of when CloudNativePG marked it failed, the operator's start and its creation. On an instance whose clock runs behind, the Overview times the Backup by its creation and says the instance's and the API server's clocks disagree.
-  The pgBackRest purge band follows one rule: a CloudNativePG `Backup` that began or ended since the scan (allowing the refresh slack and five minutes of clock skew), or whose times are not known, may have run an `expire`, and the band reaches the newest full (the newest backup of the archive retention's type when one is set), or the whole window when retention may drop every listed one. For a scan or two after each backup the band is wider than strictly needed.
+  The pgBackRest purge band follows one rule: a CloudNativePG `Backup` that began or ended since the scan (allowing the refresh slack and five minutes of clock skew), or whose times are not known, may have run an `expire`, as may a backup run outside CloudNativePG when the listing holds more fulls than the retention keeps, WAL across the archive retention's cut, or (time-based retention) a backup ended within one refresh interval before the scan; the band reaches the newest full (the newest backup of the archive retention's type when one is set), or the whole window when retention may drop every listed one. For a scan or two after each backup the band is wider than strictly needed.
 - **An archive backlog is not "healthy".** Archiving shows Warning
   `ArchiveBacklog` once segments keep waiting across sweeps (the threshold follows
   CloudNativePG's WAL archiver, `isWALArchiver`, and its ObjectStore's
@@ -215,7 +215,8 @@ addresses.
   separate newest covered target (not restore-tested). The window is never healthy,
   and no target reads covered, while the primary's archiver is unread, the Cluster
   is hibernated, or the agent rates a frontier path below healthy; archiving with an
-  unread primary or a hibernated Cluster is unknown, not ok. A replica cluster's designated primary, which reports no WAL
+  unread primary, a hibernated Cluster or too few sweeps after a restart is
+  unknown, not ok. A replica cluster's designated primary, which reports no WAL
   waiting, reads unknown (`ArchiveBacklogNotReported`), never ok; a backlog that
   holds at the threshold while nothing is archived is flagged even when the
   archiver's parallelism is unknown; one missed read of the primary does not flicker the bar, the
@@ -226,7 +227,7 @@ addresses.
   band advising "restore to end of WAL". Phase and condition caps cover undetected
   or unverified CloudNativePG minors and say why; recovery and timeline reasons
   are translated. The failover rehearsal applies CloudNativePG 1.30.1's election
-  rules.
+  rules (on 1.30.0, which ranks a fenced instance differently, it may not match).
   The stall rule compares the instance's clock with itself; `archivingWal` is served
   only for the archiving instance; `cnpg-wal-files-waiting` judges only primary
   readings and says why when there is none; the not-reported message is worded by

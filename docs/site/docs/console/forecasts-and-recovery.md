@@ -315,8 +315,9 @@ failed read is skipped). When the parallelism is unknown (a pgBackRest plugin,
 or an unreadable `ObjectStore`) it needs three sweeps over which the count
 never shrinks and ends larger than it began. A backlog turns the WAL archiving
 contributor to a warning (`ArchiveBacklog`) even while `ContinuousArchiving` is
-`True`. Fewer sweeps than the rule needs (a console that just started) show no
-backlog yet; the WAL-end band still covers the newest edge. On an idle primary a hung archiver holds a steady count: under unknown
+`True`. Too few sweeps to judge (a console that just started) is `unknown`
+(`ArchiveBacklogUnconfirmed`), never `ok`, and the recovery screens read it as a
+backlog. On an idle primary a hung archiver holds a steady count: under unknown
 parallelism a count at the threshold over three sweeps that did not grow is also
 a backlog when the archiver archived nothing over them (`last_archived_time` not
 after the oldest sweep's, or none). Only the sweeps of the primary's current
@@ -407,7 +408,11 @@ segments, so the bar and the answer always agree:
     2000, in the future, or earlier than the object's creation) or absent (a
     restored status) count as a backup that could have ended at any time. When
     the `Backup` objects were not read, the whole window. A `pgbackrest backup`
-    run by hand creates no `Backup` object and is not counted.
+    run by hand creates no `Backup` object; the listing bands the same way when
+    it shows an `expire` may still have been pending at the scan: more fulls
+    than `repo-retention-full`, WAL drawn across the archive retention's cut,
+    or, under a time-based retention, a backup that ended within one refresh
+    interval before the scan.
   Within a normal refresh cycle the band does not extend, and retention never
   removes the newest backup, so the band stops at its first restore point;
 - after a WAL archiving failure an instance reported (`lastFailedWALTime`, the
