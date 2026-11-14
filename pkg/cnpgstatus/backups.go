@@ -185,10 +185,11 @@ func Backups(c *cnpgv1.Cluster) BackupConfig {
 	return config
 }
 
-// walArchivingConfigured reports whether some component archives WAL:
-// the in-tree Barman object store or an archiver plugin.
-func walArchivingConfigured(c *cnpgv1.Cluster, backups BackupConfig) bool {
-	return backups.PluginBased || (c.Spec.Backup != nil && c.Spec.Backup.BarmanObjectStore != nil)
+// walArchivingConfigured reports whether some component archives WAL,
+// by the instance manager's own rule (WALArchiver).
+func walArchivingConfigured(c *cnpgv1.Cluster) bool {
+	a := WALArchiver(c)
+	return a.InTree || a.Plugin != ""
 }
 
 // ArchiverLive is the primary's archiver as its /pg/status reports it
@@ -331,7 +332,6 @@ func ArchivingOf(c *cnpgv1.Cluster, primary *ArchiverLive, primaryMasked, notChe
 	if c == nil {
 		return ArchivingReading{Class: ClassUnknown, Reason: ArchivingReasonNoCluster}
 	}
-	backups := Backups(c)
 	condition := meta.FindStatusCondition(c.Status.Conditions, ConditionContinuousArchiving)
 	if c.Annotations[AnnotationSkipWalArchiving] == valueEnabled {
 		return ArchivingReading{
@@ -339,6 +339,16 @@ func ArchivingOf(c *cnpgv1.Cluster, primary *ArchiverLive, primaryMasked, notChe
 			Reason:  ArchivingReasonSkipped,
 			Message: "cnpg.io/skipWalArchiving is enabled: PostgreSQL does not archive WAL",
 		}
+	}
+	// Before the condition: with no archiver, CloudNativePG's
+	// archive_command returns success without copying anything
+	// (pkg/management/postgres/archiver/archiver.go v1.30.1:179-186) and
+	// the instance manager then writes ContinuousArchiving True
+	// (internal/cmd/manager/walarchive/cmd.go v1.30.1:78), so True there
+	// means nothing reaches a repository. A False condition still
+	// reads below: a failure is never played down.
+	if !walArchivingConfigured(c) && (condition == nil || condition.Status != statusFalse) {
+		return ArchivingReading{Class: ClassInfo, Reason: ArchivingReasonNotConfigured, Message: "no WAL archiver is configured"}
 	}
 	b := ArchiveBacklogOf(c, primary)
 	backlog := b.Behind()
@@ -376,9 +386,6 @@ func ArchivingOf(c *cnpgv1.Cluster, primary *ArchiverLive, primaryMasked, notChe
 		return reading
 	}
 	if condition == nil {
-		if !walArchivingConfigured(c, backups) {
-			return ArchivingReading{Class: ClassInfo, Reason: ArchivingReasonNotConfigured, Message: "no WAL archiver is configured"}
-		}
 		if primary != nil && primary.IsArchivingWAL {
 			if notReported {
 				return notReportedReading(ArchivingReading{})

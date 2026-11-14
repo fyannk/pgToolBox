@@ -7,7 +7,7 @@ resources are `v1alpha1`, a field can change between minor releases; every such
 change is announced here. Pin an exact image tag, or better a digest, and read
 the notes before upgrading.
 
-## [0.1.0] - 2026-11-12
+## [0.1.0] - 2026-11-14
 
 The first public release: a console, an optional operator and an evidence agent
 for [CloudNativePG](https://cloudnative-pg.io) 1.30 and later, on Kubernetes and
