@@ -284,6 +284,14 @@ func TestArchiving(t *testing.T) {
 	}{
 		{"nil cluster", nil, nil, ClassUnknown, "NoCluster"},
 		{"not configured", clusterWith(nil), nil, ClassInfo, "NotConfigured"},
+		// CloudNativePG writes ContinuousArchiving True when its
+		// archive_command skips an unconfigured archiver.
+		{"not configured, condition True, live archiving", clusterWith(nil, ok), &ArchiverLive{IsArchivingWAL: true}, ClassInfo, "NotConfigured"},
+		{"WAL archiver plugin that is no backup plugin", func() *cnpgv1.Cluster {
+			c := clusterWith(nil, ok)
+			c.Spec.Plugins = []cnpgv1.PluginConfiguration{{Name: "example.com/wal-only", IsWALArchiver: new(true)}}
+			return c
+		}(), &ArchiverLive{IsArchivingWAL: true}, ClassOK, "ContinuousArchivingSuccess"},
 		{"configured, no condition", plugin(nil), nil, ClassUnknown, "NoCondition"},
 		{"configured, no condition, live archiving", plugin(nil), &ArchiverLive{IsArchivingWAL: true}, ClassOK, "LiveArchiving"},
 		{"ok from the condition alone is not confirmed", plugin(nil, ok), nil, ClassUnknown, ArchivingReasonPrimaryUnread},
