@@ -562,7 +562,7 @@
   "receiver_active": "active",
   "receiver_inactive": "not active",
   "receivers_none": "No replica reported its receiver.",
-  "refresh_failed": "{what} could not be refreshed; this is the last reading.",
+  "refresh_failed": "{what} could not be refreshed; this is the last reading, as of {age}.",
   "replay_lsn": "Replay LSN",
   "replay_paused": "replay paused",
   "repo_absent": "absent",

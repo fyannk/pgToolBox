@@ -393,7 +393,7 @@ function Step({ title, children }: { title: string; children: ReactNode }) {
   );
 }
 
-type TextQuery = Pick<UseQueryResult<string, unknown>, "data" | "error" | "isPending" | "refetch">;
+type TextQuery = Pick<UseQueryResult<string, unknown>, "data" | "dataUpdatedAt" | "error" | "isPending" | "refetch">;
 
 /** The prompt pack of one client, where Go says it reads it: download it, or open it and copy it. */
 function PackStep({ pack, query }: { pack: PromptPackSetup; query: TextQuery }) {
