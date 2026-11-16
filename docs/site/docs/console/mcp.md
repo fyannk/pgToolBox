@@ -87,8 +87,10 @@ An Ingress gets four more paths, an HTTPRoute one more rule (with the same
 stream timeout), and an OpenShift Route, which has one path, four more Routes:
 `<console>-mcp-mcp`, `-oauth`, `-grants` and `-logout`. A Pod that does not
 hold the Lease answers those paths `503` with `Retry-After: 2`; a sign-out
-there works but does not disconnect assistants. No component writes an
-EndpointSlice.
+there works but does not disconnect assistants. While no Pod serves MCP (a
+crashed holder, or the team chart's MCP Pod not Ready), these paths, `/logout`
+included, get the ingress or router's own `503`, without `Retry-After`: sign
+out again a moment later. No component writes an EndpointSlice.
 
 **With the operator** (`PgToolBoxConsole`), every replica is a candidate. The
 operator follows the Lease and labels its holder's Pod
@@ -96,7 +98,9 @@ operator follows the Lease and labels its holder's Pod
 (and off every Pod when nobody holds the Lease; a crashed holder's Pod is not
 Ready, so the Service skips it until the next holder takes the label); the Service
 `<console>-mcp` selects the console's Pods with that label. A hand-over takes
-about 2 seconds when the holder stops, about 17 when it crashes, plus the
+about 5 seconds when the holder stops (its `SHUTDOWN_DELAY`, 3 seconds by
+default, and the drain before it releases the Lease, then up to 2 seconds for
+the next to take it and load the grants), about 17 when it crashes, plus the
 moment the operator takes to move the label; while the operator is down the
 label stays where it was, and a former holder answers `503` until it moves.
 
@@ -227,7 +231,8 @@ list does not name it; and the API server still accepts the identity provider's
 token for the same person. A grant the index does not hold is refused, never
 trusted on the token alone. A grants document the console cannot read, or of a
 format newer than it reads, refuses every grant with `503` and no new one is
-issued. While the API server does not answer, the leader keeps serving the
+issued; the console logs the repair at `ERROR` (delete the key `grants.json` of
+the state ConfigMap to reset it; every assistant then connects again). While the API server does not answer, the leader keeps serving the
 grants it holds and writes what changed once it answers again; a grant it
 issues meanwhile cannot be recorded, so its code exchange answers `503`. A
 `STATE_CONFIGMAP` that is missing, or that the console's ServiceAccount may not
@@ -295,8 +300,9 @@ Two `503` answers carry `Retry-After`:
   the grants, but the API server did not take the write. The leader refuses
   them at once; a replica taking over before the write lands would not.
 - without that type: the replica that answered does not serve MCP (a hand-over
-  is under way, about 2 seconds after a leader stops, about 17 after it
-  crashes).
+  is under way, about 5 seconds after a leader stops, about 17 after it
+  crashes). In that gap most answers come from the ingress or router, which
+  has no Pod to send them to: a `503` without `Retry-After`.
 
 On either, the Assistants page keeps the assistant listed as "not confirmed
 yet" with a **Retry** button (no need to type the name again). A retry that
