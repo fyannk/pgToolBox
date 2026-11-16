@@ -124,7 +124,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -trimpat
 # workflow (docker/metadata-action) sets title and description per image, the
 # same words as below, and adds revision and created; a local build has no
 # commit to claim.
-FROM gcr.io/distroless/static-debian13:nonroot@sha256:25ac8f0c3b2334a9eb05452266bd4697864a8c8ef0ef71e5e6480d7f92868329 AS operator
+FROM gcr.io/distroless/static-debian13:nonroot@sha256:aafe993665bf6200db38a02c11a9351e782a84b6a45e7f33b6695638c88e3931 AS operator
 ARG VERSION=development
 LABEL org.opencontainers.image.title="pgToolBox operator" \
       org.opencontainers.image.description="Kubernetes operator that deploys the pgToolBox access stack for CloudNativePG clusters" \
@@ -138,7 +138,7 @@ USER 65532:65532
 ENTRYPOINT ["/manager"]
 
 # The console: Go API and the embedded SPA, one per team namespace.
-FROM gcr.io/distroless/static-debian13:nonroot@sha256:25ac8f0c3b2334a9eb05452266bd4697864a8c8ef0ef71e5e6480d7f92868329 AS console
+FROM gcr.io/distroless/static-debian13:nonroot@sha256:aafe993665bf6200db38a02c11a9351e782a84b6a45e7f33b6695638c88e3931 AS console
 ARG VERSION=development
 LABEL org.opencontainers.image.title="pgToolBox console" \
       org.opencontainers.image.description="Operational console for one CloudNativePG cluster" \
@@ -158,7 +158,7 @@ ENTRYPOINT ["/console"]
 
 # The evidence agent: standalone, or as the agent an
 # EvidenceAgent (or the pgtools chart) runs.
-FROM gcr.io/distroless/static-debian13:nonroot@sha256:25ac8f0c3b2334a9eb05452266bd4697864a8c8ef0ef71e5e6480d7f92868329 AS evidence-agent
+FROM gcr.io/distroless/static-debian13:nonroot@sha256:aafe993665bf6200db38a02c11a9351e782a84b6a45e7f33b6695638c88e3931 AS evidence-agent
 ARG VERSION=development
 LABEL org.opencontainers.image.title="pgToolBox evidence agent" \
       org.opencontainers.image.description="Read-only viewer and evidence producer for a PostgreSQL backup repository" \
