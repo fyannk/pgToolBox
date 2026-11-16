@@ -131,6 +131,68 @@ func TestLabelMCPLeader(t *testing.T) {
 	}
 }
 
+// TestMCPLeaderLabelledWhileStalled: a new Lease holder gets the label
+// even when a later step of the loop stalls (a missing shipped ClusterRole,
+// a refused hostname); a paused console is left untouched (issue #82).
+func TestMCPLeaderLabelledWhileStalled(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name    string
+		paused  bool
+		allowed []string // the hostname allow-list; nil allows the console's
+		stall   pgtoolboxv1alpha1.Reason
+		want    []string
+	}{
+		{name: "ClusterRole missing", stall: pgtoolboxv1alpha1.ReasonConsoleRoleMissing, want: []string{"console-b"}},
+		{name: "hostname refused", allowed: []string{"apps.example.com"}, stall: pgtoolboxv1alpha1.ReasonHostnameNotAllowed, want: []string{"console-b"}},
+		{name: "paused", paused: true, want: []string{"console-a"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var annotations map[string]string
+			if tc.paused {
+				annotations = map[string]string{pgtoolboxv1alpha1.AnnotationReconcile: pgtoolboxv1alpha1.ReconcileSkip}
+			}
+			r, cl, c, _, _ := hostnameHarness(t, annotations, nil)
+			r.AllowedHostSuffixes = tc.allowed
+			c.Spec.MCP = &pgtoolboxv1alpha1.PgToolBoxConsoleMCPSpec{Enabled: true}
+			if err := cl.Update(t.Context(), c); err != nil {
+				t.Fatal(err)
+			}
+			// console-a held the Lease; console-b holds it now.
+			for _, name := range []string{"console-a", "console-b"} {
+				pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: c.Namespace, Labels: selectorLabels(c)}}
+				if name == "console-a" {
+					pod.Labels[pgtoolboxv1alpha1.LabelMCPLeader] = pgtoolboxv1alpha1.MCPLeaderLabelValue
+				}
+				if err := cl.Create(t.Context(), pod); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := cl.Create(t.Context(), mcpLease("console-b_00ff", time.Now())); err != nil {
+				t.Fatal(err)
+			}
+			got := reconcileConsole(t, r, cl, c)
+			if !tc.paused {
+				expectConsoleCondition(t, got, pgtoolboxv1alpha1.ConditionStalled, metav1.ConditionTrue, tc.stall)
+			}
+			var pods corev1.PodList
+			if err := cl.List(t.Context(), &pods); err != nil {
+				t.Fatal(err)
+			}
+			var labelled []string
+			for _, pod := range pods.Items {
+				if pod.Labels[pgtoolboxv1alpha1.LabelMCPLeader] == pgtoolboxv1alpha1.MCPLeaderLabelValue {
+					labelled = append(labelled, pod.Name)
+				}
+			}
+			if !slices.Equal(labelled, tc.want) {
+				t.Errorf("labelled %v, want %v", labelled, tc.want)
+			}
+		})
+	}
+}
+
 func TestLeaseHolderChanged(t *testing.T) {
 	now := time.Now()
 	p := leaseHolderChanged()
