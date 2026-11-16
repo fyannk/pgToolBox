@@ -127,6 +127,10 @@ export type ListClustersQueryResult = NonNullable<Awaited<ReturnType<typeof list
 export type ListClustersQueryError = ErrorModel
 
 
+/**
+ * Every Cluster of the watched namespaces that the API server lets you get (one SelfSubjectAccessReview per Cluster, cached 10 s).
+ * @summary Clusters you may see
+ */
 export function useListClusters<TData = Awaited<ReturnType<typeof listClusters>>, TError = ErrorModel>(
   options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listClusters>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
@@ -137,6 +141,10 @@ export function useListClusters<TData = Awaited<ReturnType<typeof listClusters>>
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * Every Cluster of the watched namespaces that the API server lets you get (one SelfSubjectAccessReview per Cluster, cached 10 s).
+ * @summary Clusters you may see
+ */
 export function useListClusters<TData = Awaited<ReturnType<typeof listClusters>>, TError = ErrorModel>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listClusters>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
@@ -147,14 +155,18 @@ export function useListClusters<TData = Awaited<ReturnType<typeof listClusters>>
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * Every Cluster of the watched namespaces that the API server lets you get (one SelfSubjectAccessReview per Cluster, cached 10 s).
+ * @summary Clusters you may see
+ */
 export function useListClusters<TData = Awaited<ReturnType<typeof listClusters>>, TError = ErrorModel>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listClusters>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
+ * Every Cluster of the watched namespaces that the API server lets you get (one SelfSubjectAccessReview per Cluster, cached 10 s).
  * @summary Clusters you may see
  */
-
 export function useListClusters<TData = Awaited<ReturnType<typeof listClusters>>, TError = ErrorModel>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listClusters>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
@@ -235,6 +247,10 @@ export type CompareClustersQueryResult = NonNullable<Awaited<ReturnType<typeof c
 export type CompareClustersQueryError = ErrorModel
 
 
+/**
+ * Versions, instances, parameters, resources, storage, backup configuration and topology of two Clusters, with the rows that differ marked. You must be allowed to get both (one SelfSubjectAccessReview each); either refusal answers 403 whether the Cluster exists or not.
+ * @summary Two Clusters side by side
+ */
 export function useCompareClusters<TData = Awaited<ReturnType<typeof compareClusters>>, TError = ErrorModel>(
  params: CompareClustersParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof compareClusters>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
@@ -245,6 +261,10 @@ export function useCompareClusters<TData = Awaited<ReturnType<typeof compareClus
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * Versions, instances, parameters, resources, storage, backup configuration and topology of two Clusters, with the rows that differ marked. You must be allowed to get both (one SelfSubjectAccessReview each); either refusal answers 403 whether the Cluster exists or not.
+ * @summary Two Clusters side by side
+ */
 export function useCompareClusters<TData = Awaited<ReturnType<typeof compareClusters>>, TError = ErrorModel>(
  params: CompareClustersParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof compareClusters>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
@@ -255,14 +275,18 @@ export function useCompareClusters<TData = Awaited<ReturnType<typeof compareClus
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * Versions, instances, parameters, resources, storage, backup configuration and topology of two Clusters, with the rows that differ marked. You must be allowed to get both (one SelfSubjectAccessReview each); either refusal answers 403 whether the Cluster exists or not.
+ * @summary Two Clusters side by side
+ */
 export function useCompareClusters<TData = Awaited<ReturnType<typeof compareClusters>>, TError = ErrorModel>(
  params: CompareClustersParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof compareClusters>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
+ * Versions, instances, parameters, resources, storage, backup configuration and topology of two Clusters, with the rows that differ marked. You must be allowed to get both (one SelfSubjectAccessReview each); either refusal answers 403 whether the Cluster exists or not.
  * @summary Two Clusters side by side
  */
-
 export function useCompareClusters<TData = Awaited<ReturnType<typeof compareClusters>>, TError = ErrorModel>(
  params: CompareClustersParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof compareClusters>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
@@ -336,6 +360,10 @@ export type GetFleetStatementsQueryResult = NonNullable<Awaited<ReturnType<typeo
 export type GetFleetStatementsQueryError = ErrorModel
 
 
+/**
+ * The costliest statements and the regressions of every Cluster you may get, with each Cluster's coverage: whether it runs the pack and whether a regression comparison can be made yet.
+ * @summary Query insight across your Clusters
+ */
 export function useGetFleetStatements<TData = Awaited<ReturnType<typeof getFleetStatements>>, TError = ErrorModel>(
   options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getFleetStatements>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
@@ -346,6 +374,10 @@ export function useGetFleetStatements<TData = Awaited<ReturnType<typeof getFleet
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * The costliest statements and the regressions of every Cluster you may get, with each Cluster's coverage: whether it runs the pack and whether a regression comparison can be made yet.
+ * @summary Query insight across your Clusters
+ */
 export function useGetFleetStatements<TData = Awaited<ReturnType<typeof getFleetStatements>>, TError = ErrorModel>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getFleetStatements>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
@@ -356,14 +388,18 @@ export function useGetFleetStatements<TData = Awaited<ReturnType<typeof getFleet
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * The costliest statements and the regressions of every Cluster you may get, with each Cluster's coverage: whether it runs the pack and whether a regression comparison can be made yet.
+ * @summary Query insight across your Clusters
+ */
 export function useGetFleetStatements<TData = Awaited<ReturnType<typeof getFleetStatements>>, TError = ErrorModel>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getFleetStatements>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
+ * The costliest statements and the regressions of every Cluster you may get, with each Cluster's coverage: whether it runs the pack and whether a regression comparison can be made yet.
  * @summary Query insight across your Clusters
  */
-
 export function useGetFleetStatements<TData = Awaited<ReturnType<typeof getFleetStatements>>, TError = ErrorModel>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getFleetStatements>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
@@ -441,6 +477,10 @@ export type GetClusterQueryResult = NonNullable<Awaited<ReturnType<typeof getClu
 export type GetClusterQueryError = ErrorModel
 
 
+/**
+ * The roll-up verdict with its contributors, the primary election, instance cards, conditions, recent warnings and the sources and blind spots the view rests on, with your capabilities.
+ * @summary A Cluster's overview
+ */
 export function useGetCluster<TData = Awaited<ReturnType<typeof getCluster>>, TError = ErrorModel>(
  namespace: string,
     name: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getCluster>>, TError, TData>> & Pick<
@@ -452,6 +492,10 @@ export function useGetCluster<TData = Awaited<ReturnType<typeof getCluster>>, TE
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * The roll-up verdict with its contributors, the primary election, instance cards, conditions, recent warnings and the sources and blind spots the view rests on, with your capabilities.
+ * @summary A Cluster's overview
+ */
 export function useGetCluster<TData = Awaited<ReturnType<typeof getCluster>>, TError = ErrorModel>(
  namespace: string,
     name: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getCluster>>, TError, TData>> & Pick<
@@ -463,15 +507,19 @@ export function useGetCluster<TData = Awaited<ReturnType<typeof getCluster>>, TE
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * The roll-up verdict with its contributors, the primary election, instance cards, conditions, recent warnings and the sources and blind spots the view rests on, with your capabilities.
+ * @summary A Cluster's overview
+ */
 export function useGetCluster<TData = Awaited<ReturnType<typeof getCluster>>, TError = ErrorModel>(
  namespace: string,
     name: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getCluster>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
+ * The roll-up verdict with its contributors, the primary election, instance cards, conditions, recent warnings and the sources and blind spots the view rests on, with your capabilities.
  * @summary A Cluster's overview
  */
-
 export function useGetCluster<TData = Awaited<ReturnType<typeof getCluster>>, TError = ErrorModel>(
  namespace: string,
     name: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getCluster>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
@@ -550,6 +598,10 @@ export type GetBackupsQueryResult = NonNullable<Awaited<ReturnType<typeof getBac
 export type GetBackupsQueryError = ErrorModel
 
 
+/**
+ * Backup method, Backup objects, schedules, archiving, the recovery window and its timeline (gaps and failed backups marked), and the repository evidence cross-check.
+ * @summary A Cluster's backups
+ */
 export function useGetBackups<TData = Awaited<ReturnType<typeof getBackups>>, TError = ErrorModel>(
  namespace: string,
     name: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getBackups>>, TError, TData>> & Pick<
@@ -561,6 +613,10 @@ export function useGetBackups<TData = Awaited<ReturnType<typeof getBackups>>, TE
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * Backup method, Backup objects, schedules, archiving, the recovery window and its timeline (gaps and failed backups marked), and the repository evidence cross-check.
+ * @summary A Cluster's backups
+ */
 export function useGetBackups<TData = Awaited<ReturnType<typeof getBackups>>, TError = ErrorModel>(
  namespace: string,
     name: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getBackups>>, TError, TData>> & Pick<
@@ -572,15 +628,19 @@ export function useGetBackups<TData = Awaited<ReturnType<typeof getBackups>>, TE
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * Backup method, Backup objects, schedules, archiving, the recovery window and its timeline (gaps and failed backups marked), and the repository evidence cross-check.
+ * @summary A Cluster's backups
+ */
 export function useGetBackups<TData = Awaited<ReturnType<typeof getBackups>>, TError = ErrorModel>(
  namespace: string,
     name: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getBackups>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
+ * Backup method, Backup objects, schedules, archiving, the recovery window and its timeline (gaps and failed backups marked), and the repository evidence cross-check.
  * @summary A Cluster's backups
  */
-
 export function useGetBackups<TData = Awaited<ReturnType<typeof getBackups>>, TError = ErrorModel>(
  namespace: string,
     name: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getBackups>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
@@ -670,6 +730,10 @@ export type GetRestoreCheckQueryResult = NonNullable<Awaited<ReturnType<typeof g
 export type GetRestoreCheckQueryError = ErrorModel
 
 
+/**
+ * Reads the answer off the recovery timeline of the backups view: covered (structurally: a base backup and contiguous archived WAL span the time, judged from segment names), notCovered, gap, reported (only the operator's unverified window covers it) or unknown, with the caveats the answer does not prove. It never runs a restore.
+ * @summary Can this Cluster be restored to a time?
+ */
 export function useGetRestoreCheck<TData = Awaited<ReturnType<typeof getRestoreCheck>>, TError = ErrorModel>(
  namespace: string,
     name: string,
@@ -682,6 +746,10 @@ export function useGetRestoreCheck<TData = Awaited<ReturnType<typeof getRestoreC
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * Reads the answer off the recovery timeline of the backups view: covered (structurally: a base backup and contiguous archived WAL span the time, judged from segment names), notCovered, gap, reported (only the operator's unverified window covers it) or unknown, with the caveats the answer does not prove. It never runs a restore.
+ * @summary Can this Cluster be restored to a time?
+ */
 export function useGetRestoreCheck<TData = Awaited<ReturnType<typeof getRestoreCheck>>, TError = ErrorModel>(
  namespace: string,
     name: string,
@@ -694,6 +762,10 @@ export function useGetRestoreCheck<TData = Awaited<ReturnType<typeof getRestoreC
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * Reads the answer off the recovery timeline of the backups view: covered (structurally: a base backup and contiguous archived WAL span the time, judged from segment names), notCovered, gap, reported (only the operator's unverified window covers it) or unknown, with the caveats the answer does not prove. It never runs a restore.
+ * @summary Can this Cluster be restored to a time?
+ */
 export function useGetRestoreCheck<TData = Awaited<ReturnType<typeof getRestoreCheck>>, TError = ErrorModel>(
  namespace: string,
     name: string,
@@ -701,9 +773,9 @@ export function useGetRestoreCheck<TData = Awaited<ReturnType<typeof getRestoreC
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
+ * Reads the answer off the recovery timeline of the backups view: covered (structurally: a base backup and contiguous archived WAL span the time, judged from segment names), notCovered, gap, reported (only the operator's unverified window covers it) or unknown, with the caveats the answer does not prove. It never runs a restore.
  * @summary Can this Cluster be restored to a time?
  */
-
 export function useGetRestoreCheck<TData = Awaited<ReturnType<typeof getRestoreCheck>>, TError = ErrorModel>(
  namespace: string,
     name: string,
@@ -783,6 +855,10 @@ export type GetDiagnosticsQueryResult = NonNullable<Awaited<ReturnType<typeof ge
 export type GetDiagnosticsQueryError = ErrorModel
 
 
+/**
+ * The latest background diagnostics run: incidents, findings and the checks that could not run.
+ * @summary A Cluster's diagnostics
+ */
 export function useGetDiagnostics<TData = Awaited<ReturnType<typeof getDiagnostics>>, TError = ErrorModel>(
  namespace: string,
     name: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDiagnostics>>, TError, TData>> & Pick<
@@ -794,6 +870,10 @@ export function useGetDiagnostics<TData = Awaited<ReturnType<typeof getDiagnosti
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * The latest background diagnostics run: incidents, findings and the checks that could not run.
+ * @summary A Cluster's diagnostics
+ */
 export function useGetDiagnostics<TData = Awaited<ReturnType<typeof getDiagnostics>>, TError = ErrorModel>(
  namespace: string,
     name: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDiagnostics>>, TError, TData>> & Pick<
@@ -805,15 +885,19 @@ export function useGetDiagnostics<TData = Awaited<ReturnType<typeof getDiagnosti
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * The latest background diagnostics run: incidents, findings and the checks that could not run.
+ * @summary A Cluster's diagnostics
+ */
 export function useGetDiagnostics<TData = Awaited<ReturnType<typeof getDiagnostics>>, TError = ErrorModel>(
  namespace: string,
     name: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDiagnostics>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
+ * The latest background diagnostics run: incidents, findings and the checks that could not run.
  * @summary A Cluster's diagnostics
  */
-
 export function useGetDiagnostics<TData = Awaited<ReturnType<typeof getDiagnostics>>, TError = ErrorModel>(
  namespace: string,
     name: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDiagnostics>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
@@ -892,6 +976,10 @@ export type ListEventsQueryResult = NonNullable<Awaited<ReturnType<typeof listEv
 export type ListEventsQueryError = ErrorModel
 
 
+/**
+ * Events about the Cluster and its child objects, newest first, bounded by age and count.
+ * @summary A Cluster's events
+ */
 export function useListEvents<TData = Awaited<ReturnType<typeof listEvents>>, TError = ErrorModel>(
  namespace: string,
     name: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listEvents>>, TError, TData>> & Pick<
@@ -903,6 +991,10 @@ export function useListEvents<TData = Awaited<ReturnType<typeof listEvents>>, TE
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * Events about the Cluster and its child objects, newest first, bounded by age and count.
+ * @summary A Cluster's events
+ */
 export function useListEvents<TData = Awaited<ReturnType<typeof listEvents>>, TError = ErrorModel>(
  namespace: string,
     name: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listEvents>>, TError, TData>> & Pick<
@@ -914,15 +1006,19 @@ export function useListEvents<TData = Awaited<ReturnType<typeof listEvents>>, TE
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * Events about the Cluster and its child objects, newest first, bounded by age and count.
+ * @summary A Cluster's events
+ */
 export function useListEvents<TData = Awaited<ReturnType<typeof listEvents>>, TError = ErrorModel>(
  namespace: string,
     name: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listEvents>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
+ * Events about the Cluster and its child objects, newest first, bounded by age and count.
  * @summary A Cluster's events
  */
-
 export function useListEvents<TData = Awaited<ReturnType<typeof listEvents>>, TError = ErrorModel>(
  namespace: string,
     name: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listEvents>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
@@ -1001,6 +1097,10 @@ export type ListHistoryQueryResult = NonNullable<Awaited<ReturnType<typeof listH
 export type ListHistoryQueryError = ErrorModel
 
 
+/**
+ * Revisions of the Cluster and its declarative children the console observed, newest first.
+ * @summary A Cluster's history
+ */
 export function useListHistory<TData = Awaited<ReturnType<typeof listHistory>>, TError = ErrorModel>(
  namespace: string,
     name: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listHistory>>, TError, TData>> & Pick<
@@ -1012,6 +1112,10 @@ export function useListHistory<TData = Awaited<ReturnType<typeof listHistory>>, 
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * Revisions of the Cluster and its declarative children the console observed, newest first.
+ * @summary A Cluster's history
+ */
 export function useListHistory<TData = Awaited<ReturnType<typeof listHistory>>, TError = ErrorModel>(
  namespace: string,
     name: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listHistory>>, TError, TData>> & Pick<
@@ -1023,15 +1127,19 @@ export function useListHistory<TData = Awaited<ReturnType<typeof listHistory>>, 
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * Revisions of the Cluster and its declarative children the console observed, newest first.
+ * @summary A Cluster's history
+ */
 export function useListHistory<TData = Awaited<ReturnType<typeof listHistory>>, TError = ErrorModel>(
  namespace: string,
     name: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listHistory>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
+ * Revisions of the Cluster and its declarative children the console observed, newest first.
  * @summary A Cluster's history
  */
-
 export function useListHistory<TData = Awaited<ReturnType<typeof listHistory>>, TError = ErrorModel>(
  namespace: string,
     name: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listHistory>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
@@ -1114,6 +1222,10 @@ export type GetRevisionQueryResult = NonNullable<Awaited<ReturnType<typeof getRe
 export type GetRevisionQueryError = ErrorModel
 
 
+/**
+ * The definition at the revision, the base it is compared with and the structural diff.
+ * @summary One revision with its diff
+ */
 export function useGetRevision<TData = Awaited<ReturnType<typeof getRevision>>, TError = ErrorModel>(
  namespace: string,
     name: string,
@@ -1126,6 +1238,10 @@ export function useGetRevision<TData = Awaited<ReturnType<typeof getRevision>>, 
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * The definition at the revision, the base it is compared with and the structural diff.
+ * @summary One revision with its diff
+ */
 export function useGetRevision<TData = Awaited<ReturnType<typeof getRevision>>, TError = ErrorModel>(
  namespace: string,
     name: string,
@@ -1138,6 +1254,10 @@ export function useGetRevision<TData = Awaited<ReturnType<typeof getRevision>>, 
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * The definition at the revision, the base it is compared with and the structural diff.
+ * @summary One revision with its diff
+ */
 export function useGetRevision<TData = Awaited<ReturnType<typeof getRevision>>, TError = ErrorModel>(
  namespace: string,
     name: string,
@@ -1145,9 +1265,9 @@ export function useGetRevision<TData = Awaited<ReturnType<typeof getRevision>>, 
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
+ * The definition at the revision, the base it is compared with and the structural diff.
  * @summary One revision with its diff
  */
-
 export function useGetRevision<TData = Awaited<ReturnType<typeof getRevision>>, TError = ErrorModel>(
  namespace: string,
     name: string,
@@ -1227,6 +1347,10 @@ export type GetInsightQueryResult = NonNullable<Awaited<ReturnType<typeof getIns
 export type GetInsightQueryError = ErrorModel
 
 
+/**
+ * Whether the Cluster runs the insight pack, and what it reports: wraparound and vacuum, query insight from pg_stat_statements (no statement text), index hygiene, connections and the lock graph, with the console's own derivations labelled as such.
+ * @summary A Cluster's insight pack
+ */
 export function useGetInsight<TData = Awaited<ReturnType<typeof getInsight>>, TError = ErrorModel>(
  namespace: string,
     name: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getInsight>>, TError, TData>> & Pick<
@@ -1238,6 +1362,10 @@ export function useGetInsight<TData = Awaited<ReturnType<typeof getInsight>>, TE
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * Whether the Cluster runs the insight pack, and what it reports: wraparound and vacuum, query insight from pg_stat_statements (no statement text), index hygiene, connections and the lock graph, with the console's own derivations labelled as such.
+ * @summary A Cluster's insight pack
+ */
 export function useGetInsight<TData = Awaited<ReturnType<typeof getInsight>>, TError = ErrorModel>(
  namespace: string,
     name: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getInsight>>, TError, TData>> & Pick<
@@ -1249,15 +1377,19 @@ export function useGetInsight<TData = Awaited<ReturnType<typeof getInsight>>, TE
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * Whether the Cluster runs the insight pack, and what it reports: wraparound and vacuum, query insight from pg_stat_statements (no statement text), index hygiene, connections and the lock graph, with the console's own derivations labelled as such.
+ * @summary A Cluster's insight pack
+ */
 export function useGetInsight<TData = Awaited<ReturnType<typeof getInsight>>, TError = ErrorModel>(
  namespace: string,
     name: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getInsight>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
+ * Whether the Cluster runs the insight pack, and what it reports: wraparound and vacuum, query insight from pg_stat_statements (no statement text), index hygiene, connections and the lock graph, with the console's own derivations labelled as such.
  * @summary A Cluster's insight pack
  */
-
 export function useGetInsight<TData = Awaited<ReturnType<typeof getInsight>>, TError = ErrorModel>(
  namespace: string,
     name: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getInsight>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
@@ -1347,6 +1479,10 @@ export type GetInsightBlockingQueryResult = NonNullable<Awaited<ReturnType<typeo
 export type GetInsightBlockingQueryError = ErrorModel
 
 
+/**
+ * Backends waiting on a lock and the backends they wait for, per instance, root blockers first. With refresh, the primary's exporter is read again first. Nothing here ends a backend: the pgAdmin links do.
+ * @summary A Cluster's lock graph
+ */
 export function useGetInsightBlocking<TData = Awaited<ReturnType<typeof getInsightBlocking>>, TError = ErrorModel>(
  namespace: string,
     name: string,
@@ -1359,6 +1495,10 @@ export function useGetInsightBlocking<TData = Awaited<ReturnType<typeof getInsig
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * Backends waiting on a lock and the backends they wait for, per instance, root blockers first. With refresh, the primary's exporter is read again first. Nothing here ends a backend: the pgAdmin links do.
+ * @summary A Cluster's lock graph
+ */
 export function useGetInsightBlocking<TData = Awaited<ReturnType<typeof getInsightBlocking>>, TError = ErrorModel>(
  namespace: string,
     name: string,
@@ -1371,6 +1511,10 @@ export function useGetInsightBlocking<TData = Awaited<ReturnType<typeof getInsig
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * Backends waiting on a lock and the backends they wait for, per instance, root blockers first. With refresh, the primary's exporter is read again first. Nothing here ends a backend: the pgAdmin links do.
+ * @summary A Cluster's lock graph
+ */
 export function useGetInsightBlocking<TData = Awaited<ReturnType<typeof getInsightBlocking>>, TError = ErrorModel>(
  namespace: string,
     name: string,
@@ -1378,9 +1522,9 @@ export function useGetInsightBlocking<TData = Awaited<ReturnType<typeof getInsig
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
+ * Backends waiting on a lock and the backends they wait for, per instance, root blockers first. With refresh, the primary's exporter is read again first. Nothing here ends a backend: the pgAdmin links do.
  * @summary A Cluster's lock graph
  */
-
 export function useGetInsightBlocking<TData = Awaited<ReturnType<typeof getInsightBlocking>>, TError = ErrorModel>(
  namespace: string,
     name: string,
@@ -1460,6 +1604,10 @@ export type ListInstancesQueryResult = NonNullable<Awaited<ReturnType<typeof lis
 export type ListInstancesQueryError = ErrorModel
 
 
+/**
+ * One row per member pod and per instance the operator reports without one; an instance whose status could not be read is an error row.
+ * @summary A Cluster's instances
+ */
 export function useListInstances<TData = Awaited<ReturnType<typeof listInstances>>, TError = ErrorModel>(
  namespace: string,
     name: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listInstances>>, TError, TData>> & Pick<
@@ -1471,6 +1619,10 @@ export function useListInstances<TData = Awaited<ReturnType<typeof listInstances
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * One row per member pod and per instance the operator reports without one; an instance whose status could not be read is an error row.
+ * @summary A Cluster's instances
+ */
 export function useListInstances<TData = Awaited<ReturnType<typeof listInstances>>, TError = ErrorModel>(
  namespace: string,
     name: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listInstances>>, TError, TData>> & Pick<
@@ -1482,15 +1634,19 @@ export function useListInstances<TData = Awaited<ReturnType<typeof listInstances
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * One row per member pod and per instance the operator reports without one; an instance whose status could not be read is an error row.
+ * @summary A Cluster's instances
+ */
 export function useListInstances<TData = Awaited<ReturnType<typeof listInstances>>, TError = ErrorModel>(
  namespace: string,
     name: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listInstances>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
+ * One row per member pod and per instance the operator reports without one; an instance whose status could not be read is an error row.
  * @summary A Cluster's instances
  */
-
 export function useListInstances<TData = Awaited<ReturnType<typeof listInstances>>, TError = ErrorModel>(
  namespace: string,
     name: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listInstances>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
@@ -1569,6 +1725,10 @@ export type GetMetricsQueryResult = NonNullable<Awaited<ReturnType<typeof getMet
 export type GetMetricsQueryError = ErrorModel
 
 
+/**
+ * The latest exporter instants as tiles and the short retained series; the monitoring link-out when configured.
+ * @summary A Cluster's metrics
+ */
 export function useGetMetrics<TData = Awaited<ReturnType<typeof getMetrics>>, TError = ErrorModel>(
  namespace: string,
     name: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMetrics>>, TError, TData>> & Pick<
@@ -1580,6 +1740,10 @@ export function useGetMetrics<TData = Awaited<ReturnType<typeof getMetrics>>, TE
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * The latest exporter instants as tiles and the short retained series; the monitoring link-out when configured.
+ * @summary A Cluster's metrics
+ */
 export function useGetMetrics<TData = Awaited<ReturnType<typeof getMetrics>>, TError = ErrorModel>(
  namespace: string,
     name: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMetrics>>, TError, TData>> & Pick<
@@ -1591,15 +1755,19 @@ export function useGetMetrics<TData = Awaited<ReturnType<typeof getMetrics>>, TE
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * The latest exporter instants as tiles and the short retained series; the monitoring link-out when configured.
+ * @summary A Cluster's metrics
+ */
 export function useGetMetrics<TData = Awaited<ReturnType<typeof getMetrics>>, TError = ErrorModel>(
  namespace: string,
     name: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMetrics>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
+ * The latest exporter instants as tiles and the short retained series; the monitoring link-out when configured.
  * @summary A Cluster's metrics
  */
-
 export function useGetMetrics<TData = Awaited<ReturnType<typeof getMetrics>>, TError = ErrorModel>(
  namespace: string,
     name: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMetrics>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
@@ -1678,6 +1846,10 @@ export type GetObjectsQueryResult = NonNullable<Awaited<ReturnType<typeof getObj
 export type GetObjectsQueryError = ErrorModel
 
 
+/**
+ * Databases, DatabaseRoles, managed roles, tablespaces, publications, subscriptions, poolers and the image catalog.
+ * @summary A Cluster's declarative objects
+ */
 export function useGetObjects<TData = Awaited<ReturnType<typeof getObjects>>, TError = ErrorModel>(
  namespace: string,
     name: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getObjects>>, TError, TData>> & Pick<
@@ -1689,6 +1861,10 @@ export function useGetObjects<TData = Awaited<ReturnType<typeof getObjects>>, TE
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * Databases, DatabaseRoles, managed roles, tablespaces, publications, subscriptions, poolers and the image catalog.
+ * @summary A Cluster's declarative objects
+ */
 export function useGetObjects<TData = Awaited<ReturnType<typeof getObjects>>, TError = ErrorModel>(
  namespace: string,
     name: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getObjects>>, TError, TData>> & Pick<
@@ -1700,15 +1876,19 @@ export function useGetObjects<TData = Awaited<ReturnType<typeof getObjects>>, TE
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * Databases, DatabaseRoles, managed roles, tablespaces, publications, subscriptions, poolers and the image catalog.
+ * @summary A Cluster's declarative objects
+ */
 export function useGetObjects<TData = Awaited<ReturnType<typeof getObjects>>, TError = ErrorModel>(
  namespace: string,
     name: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getObjects>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
+ * Databases, DatabaseRoles, managed roles, tablespaces, publications, subscriptions, poolers and the image catalog.
  * @summary A Cluster's declarative objects
  */
-
 export function useGetObjects<TData = Awaited<ReturnType<typeof getObjects>>, TError = ErrorModel>(
  namespace: string,
     name: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getObjects>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
@@ -1787,6 +1967,10 @@ export type GetReplicationQueryResult = NonNullable<Awaited<ReturnType<typeof ge
 export type GetReplicationQueryError = ErrorModel
 
 
+/**
+ * Primary election, synchronous configuration and the set PostgreSQL applied (FailoverQuorum), the primary's walsenders, each replica's receiver and the replication slots, with the blind spots of /pg/status.
+ * @summary A Cluster's replication
+ */
 export function useGetReplication<TData = Awaited<ReturnType<typeof getReplication>>, TError = ErrorModel>(
  namespace: string,
     name: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getReplication>>, TError, TData>> & Pick<
@@ -1798,6 +1982,10 @@ export function useGetReplication<TData = Awaited<ReturnType<typeof getReplicati
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * Primary election, synchronous configuration and the set PostgreSQL applied (FailoverQuorum), the primary's walsenders, each replica's receiver and the replication slots, with the blind spots of /pg/status.
+ * @summary A Cluster's replication
+ */
 export function useGetReplication<TData = Awaited<ReturnType<typeof getReplication>>, TError = ErrorModel>(
  namespace: string,
     name: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getReplication>>, TError, TData>> & Pick<
@@ -1809,15 +1997,19 @@ export function useGetReplication<TData = Awaited<ReturnType<typeof getReplicati
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * Primary election, synchronous configuration and the set PostgreSQL applied (FailoverQuorum), the primary's walsenders, each replica's receiver and the replication slots, with the blind spots of /pg/status.
+ * @summary A Cluster's replication
+ */
 export function useGetReplication<TData = Awaited<ReturnType<typeof getReplication>>, TError = ErrorModel>(
  namespace: string,
     name: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getReplication>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
+ * Primary election, synchronous configuration and the set PostgreSQL applied (FailoverQuorum), the primary's walsenders, each replica's receiver and the replication slots, with the blind spots of /pg/status.
  * @summary A Cluster's replication
  */
-
 export function useGetReplication<TData = Awaited<ReturnType<typeof getReplication>>, TError = ErrorModel>(
  namespace: string,
     name: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getReplication>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
@@ -1896,6 +2088,10 @@ export type GetStorageQueryResult = NonNullable<Awaited<ReturnType<typeof getSto
 export type GetStorageQueryError = ErrorModel
 
 
+/**
+ * Declared volumes, PVCs with the operator's PVC group, volume usage where an instance reports it, and the forecast of when each volume fills.
+ * @summary A Cluster's storage
+ */
 export function useGetStorage<TData = Awaited<ReturnType<typeof getStorage>>, TError = ErrorModel>(
  namespace: string,
     name: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getStorage>>, TError, TData>> & Pick<
@@ -1907,6 +2103,10 @@ export function useGetStorage<TData = Awaited<ReturnType<typeof getStorage>>, TE
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * Declared volumes, PVCs with the operator's PVC group, volume usage where an instance reports it, and the forecast of when each volume fills.
+ * @summary A Cluster's storage
+ */
 export function useGetStorage<TData = Awaited<ReturnType<typeof getStorage>>, TError = ErrorModel>(
  namespace: string,
     name: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getStorage>>, TError, TData>> & Pick<
@@ -1918,15 +2118,19 @@ export function useGetStorage<TData = Awaited<ReturnType<typeof getStorage>>, TE
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * Declared volumes, PVCs with the operator's PVC group, volume usage where an instance reports it, and the forecast of when each volume fills.
+ * @summary A Cluster's storage
+ */
 export function useGetStorage<TData = Awaited<ReturnType<typeof getStorage>>, TError = ErrorModel>(
  namespace: string,
     name: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getStorage>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
+ * Declared volumes, PVCs with the operator's PVC group, volume usage where an instance reports it, and the forecast of when each volume fills.
  * @summary A Cluster's storage
  */
-
 export function useGetStorage<TData = Awaited<ReturnType<typeof getStorage>>, TError = ErrorModel>(
  namespace: string,
     name: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getStorage>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
@@ -2016,6 +2220,10 @@ export type GetTimelineQueryResult = NonNullable<Awaited<ReturnType<typeof getTi
 export type GetTimelineQueryError = ErrorModel
 
 
+/**
+ * One time axis of what the console observed and what Kubernetes reported: phase and primary changes, restarts, backup results, findings appearing and clearing, spec revisions, Events, and the console's own gaps. Every entry says where it comes from and whether its time was observed or reported.
+ * @summary A Cluster's incident timeline
+ */
 export function useGetTimeline<TData = Awaited<ReturnType<typeof getTimeline>>, TError = ErrorModel>(
  namespace: string,
     name: string,
@@ -2028,6 +2236,10 @@ export function useGetTimeline<TData = Awaited<ReturnType<typeof getTimeline>>, 
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * One time axis of what the console observed and what Kubernetes reported: phase and primary changes, restarts, backup results, findings appearing and clearing, spec revisions, Events, and the console's own gaps. Every entry says where it comes from and whether its time was observed or reported.
+ * @summary A Cluster's incident timeline
+ */
 export function useGetTimeline<TData = Awaited<ReturnType<typeof getTimeline>>, TError = ErrorModel>(
  namespace: string,
     name: string,
@@ -2040,6 +2252,10 @@ export function useGetTimeline<TData = Awaited<ReturnType<typeof getTimeline>>, 
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * One time axis of what the console observed and what Kubernetes reported: phase and primary changes, restarts, backup results, findings appearing and clearing, spec revisions, Events, and the console's own gaps. Every entry says where it comes from and whether its time was observed or reported.
+ * @summary A Cluster's incident timeline
+ */
 export function useGetTimeline<TData = Awaited<ReturnType<typeof getTimeline>>, TError = ErrorModel>(
  namespace: string,
     name: string,
@@ -2047,9 +2263,9 @@ export function useGetTimeline<TData = Awaited<ReturnType<typeof getTimeline>>, 
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
+ * One time axis of what the console observed and what Kubernetes reported: phase and primary changes, restarts, backup results, findings appearing and clearing, spec revisions, Events, and the console's own gaps. Every entry says where it comes from and whether its time was observed or reported.
  * @summary A Cluster's incident timeline
  */
-
 export function useGetTimeline<TData = Awaited<ReturnType<typeof getTimeline>>, TError = ErrorModel>(
  namespace: string,
     name: string,
@@ -2140,6 +2356,10 @@ export type GetTopologyQueryResult = NonNullable<Awaited<ReturnType<typeof getTo
 export type GetTopologyQueryError = ErrorModel
 
 
+/**
+ * The wiring diagram with its geometry computed by the console: draw it as given. The frames named in fold are drawn folded, each as one summary box, and the drawing is laid out again around them.
+ * @summary A Cluster's wiring diagram
+ */
 export function useGetTopology<TData = Awaited<ReturnType<typeof getTopology>>, TError = ErrorModel>(
  namespace: string,
     name: string,
@@ -2152,6 +2372,10 @@ export function useGetTopology<TData = Awaited<ReturnType<typeof getTopology>>, 
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * The wiring diagram with its geometry computed by the console: draw it as given. The frames named in fold are drawn folded, each as one summary box, and the drawing is laid out again around them.
+ * @summary A Cluster's wiring diagram
+ */
 export function useGetTopology<TData = Awaited<ReturnType<typeof getTopology>>, TError = ErrorModel>(
  namespace: string,
     name: string,
@@ -2164,6 +2388,10 @@ export function useGetTopology<TData = Awaited<ReturnType<typeof getTopology>>, 
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * The wiring diagram with its geometry computed by the console: draw it as given. The frames named in fold are drawn folded, each as one summary box, and the drawing is laid out again around them.
+ * @summary A Cluster's wiring diagram
+ */
 export function useGetTopology<TData = Awaited<ReturnType<typeof getTopology>>, TError = ErrorModel>(
  namespace: string,
     name: string,
@@ -2171,9 +2399,9 @@ export function useGetTopology<TData = Awaited<ReturnType<typeof getTopology>>, 
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
+ * The wiring diagram with its geometry computed by the console: draw it as given. The frames named in fold are drawn folded, each as one summary box, and the drawing is laid out again around them.
  * @summary A Cluster's wiring diagram
  */
-
 export function useGetTopology<TData = Awaited<ReturnType<typeof getTopology>>, TError = ErrorModel>(
  namespace: string,
     name: string,
@@ -2253,6 +2481,10 @@ export type GetTriageQueryResult = NonNullable<Awaited<ReturnType<typeof getTria
 export type GetTriageQueryError = ErrorModel
 
 
+/**
+ * Playbooks walked against the latest diagnostics run.
+ * @summary A Cluster's triage
+ */
 export function useGetTriage<TData = Awaited<ReturnType<typeof getTriage>>, TError = ErrorModel>(
  namespace: string,
     name: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getTriage>>, TError, TData>> & Pick<
@@ -2264,6 +2496,10 @@ export function useGetTriage<TData = Awaited<ReturnType<typeof getTriage>>, TErr
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * Playbooks walked against the latest diagnostics run.
+ * @summary A Cluster's triage
+ */
 export function useGetTriage<TData = Awaited<ReturnType<typeof getTriage>>, TError = ErrorModel>(
  namespace: string,
     name: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getTriage>>, TError, TData>> & Pick<
@@ -2275,15 +2511,19 @@ export function useGetTriage<TData = Awaited<ReturnType<typeof getTriage>>, TErr
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * Playbooks walked against the latest diagnostics run.
+ * @summary A Cluster's triage
+ */
 export function useGetTriage<TData = Awaited<ReturnType<typeof getTriage>>, TError = ErrorModel>(
  namespace: string,
     name: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getTriage>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
+ * Playbooks walked against the latest diagnostics run.
  * @summary A Cluster's triage
  */
-
 export function useGetTriage<TData = Awaited<ReturnType<typeof getTriage>>, TError = ErrorModel>(
  namespace: string,
     name: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getTriage>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}

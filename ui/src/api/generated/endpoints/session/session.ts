@@ -109,6 +109,10 @@ export type GetSessionQueryResult = NonNullable<Awaited<ReturnType<typeof getSes
 export type GetSessionQueryError = ErrorModel
 
 
+/**
+ * Who the API server says you are and when the session ends. On a reauth stream event, calling this renews a refreshable session.
+ * @summary The signed-in session
+ */
 export function useGetSession<TData = Awaited<ReturnType<typeof getSession>>, TError = ErrorModel>(
   options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getSession>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
@@ -119,6 +123,10 @@ export function useGetSession<TData = Awaited<ReturnType<typeof getSession>>, TE
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * Who the API server says you are and when the session ends. On a reauth stream event, calling this renews a refreshable session.
+ * @summary The signed-in session
+ */
 export function useGetSession<TData = Awaited<ReturnType<typeof getSession>>, TError = ErrorModel>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getSession>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
@@ -129,14 +137,18 @@ export function useGetSession<TData = Awaited<ReturnType<typeof getSession>>, TE
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * Who the API server says you are and when the session ends. On a reauth stream event, calling this renews a refreshable session.
+ * @summary The signed-in session
+ */
 export function useGetSession<TData = Awaited<ReturnType<typeof getSession>>, TError = ErrorModel>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getSession>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
+ * Who the API server says you are and when the session ends. On a reauth stream event, calling this renews a refreshable session.
  * @summary The signed-in session
  */
-
 export function useGetSession<TData = Awaited<ReturnType<typeof getSession>>, TError = ErrorModel>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getSession>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
@@ -216,6 +228,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
 
     /**
+ * Revokes all your grants on this console: their tokens are refused at once. Each is recorded as mcp.revoke. Your browser session is untouched (sign out with the disconnect option to end both). 503 (with Retry-After), retry: of type urn:pgtoolbox:disconnection-unrecorded when the revocations could not be written to the shared state (the grants are refused, but a replica taking over MCP would not know it yet); without the type, from a replica that does not serve MCP.
  * @summary Disconnect every assistant
  */
 export const useRevokeAllGrants = <TError = ErrorModel,
@@ -284,6 +297,10 @@ export type ListGrantsQueryResult = NonNullable<Awaited<ReturnType<typeof listGr
 export type ListGrantsQueryError = ErrorModel
 
 
+/**
+ * The MCP clients you approved on this console (console grants), newest first. Each acts as you; revoke one to disconnect it.
+ * @summary Your connected assistants
+ */
 export function useListGrants<TData = Awaited<ReturnType<typeof listGrants>>, TError = ErrorModel>(
   options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listGrants>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
@@ -294,6 +311,10 @@ export function useListGrants<TData = Awaited<ReturnType<typeof listGrants>>, TE
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * The MCP clients you approved on this console (console grants), newest first. Each acts as you; revoke one to disconnect it.
+ * @summary Your connected assistants
+ */
 export function useListGrants<TData = Awaited<ReturnType<typeof listGrants>>, TError = ErrorModel>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listGrants>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
@@ -304,14 +325,18 @@ export function useListGrants<TData = Awaited<ReturnType<typeof listGrants>>, TE
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * The MCP clients you approved on this console (console grants), newest first. Each acts as you; revoke one to disconnect it.
+ * @summary Your connected assistants
+ */
 export function useListGrants<TData = Awaited<ReturnType<typeof listGrants>>, TError = ErrorModel>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listGrants>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
+ * The MCP clients you approved on this console (console grants), newest first. Each acts as you; revoke one to disconnect it.
  * @summary Your connected assistants
  */
-
 export function useListGrants<TData = Awaited<ReturnType<typeof listGrants>>, TError = ErrorModel>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listGrants>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
@@ -391,6 +416,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
     export type RevokeGrantMutationVariables = {id: string}
 
     /**
+ * Revokes one of your grants: its tokens are refused at once. Recorded as mcp.revoke. 503 (with Retry-After), retry: of type urn:pgtoolbox:disconnection-unrecorded when the revocation could not be written to the shared state (the grant is refused, but a replica taking over MCP would not know it yet); without the type, from a replica that does not serve MCP.
  * @summary Disconnect an assistant
  */
 export const useRevokeGrant = <TError = ErrorModel,
@@ -459,6 +485,10 @@ export type GetVocabularyQueryResult = NonNullable<Awaited<ReturnType<typeof get
 export type GetVocabularyQueryError = ErrorModel
 
 
+/**
+ * Static: the health roll-up order (sort by index), the health of each source state, the cluster-relative sections a link may name.
+ * @summary The vocabulary the UI draws by
+ */
 export function useGetVocabulary<TData = Awaited<ReturnType<typeof getVocabulary>>, TError = ErrorModel>(
   options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getVocabulary>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
@@ -469,6 +499,10 @@ export function useGetVocabulary<TData = Awaited<ReturnType<typeof getVocabulary
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * Static: the health roll-up order (sort by index), the health of each source state, the cluster-relative sections a link may name.
+ * @summary The vocabulary the UI draws by
+ */
 export function useGetVocabulary<TData = Awaited<ReturnType<typeof getVocabulary>>, TError = ErrorModel>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getVocabulary>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
@@ -479,14 +513,18 @@ export function useGetVocabulary<TData = Awaited<ReturnType<typeof getVocabulary
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * Static: the health roll-up order (sort by index), the health of each source state, the cluster-relative sections a link may name.
+ * @summary The vocabulary the UI draws by
+ */
 export function useGetVocabulary<TData = Awaited<ReturnType<typeof getVocabulary>>, TError = ErrorModel>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getVocabulary>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
+ * Static: the health roll-up order (sort by index), the health of each source state, the cluster-relative sections a link may name.
  * @summary The vocabulary the UI draws by
  */
-
 export function useGetVocabulary<TData = Awaited<ReturnType<typeof getVocabulary>>, TError = ErrorModel>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getVocabulary>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient

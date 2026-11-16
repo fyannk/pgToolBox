@@ -107,6 +107,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
     export type CreateDatabaseRoleMutationVariables = {namespace: string;name: string;data: CreateDatabaseRoleBody}
 
     /**
+ * Creates, as you, a CloudNativePG DatabaseRole for one person on this Cluster, with a password CloudNativePG generates (CloudNativePG 1.31 or later; 501 before) into a Secret the console never reads. Every PgAdmin that registers the Cluster adds it as a personal, non-shared server of pgAdminUser at its next registration. Needs create on databaseroles.postgresql.cnpg.io in the namespace (the pgtoolbox-console-operator role). 409: a DatabaseRole of that name exists. Requires the X-PgToolBox-Request: 1 header and a same-origin request.
  * @summary Create a personal database role
  */
 export const useCreateDatabaseRole = <TError = ErrorModel,

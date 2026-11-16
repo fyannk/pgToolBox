@@ -103,6 +103,10 @@ export type GetAssistantSetupQueryResult = NonNullable<Awaited<ReturnType<typeof
 export type GetAssistantSetupQueryError = ErrorModel
 
 
+/**
+ * Ready-to-paste setup of this console's MCP endpoint for Claude Code, Codex CLI, OpenCode and other MCP clients: the one-line add command, the configuration files, the static-token form when token sign-in is on, and the check command.
+ * @summary Connect an assistant
+ */
 export function useGetAssistantSetup<TData = Awaited<ReturnType<typeof getAssistantSetup>>, TError = ErrorModel>(
   options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAssistantSetup>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
@@ -113,6 +117,10 @@ export function useGetAssistantSetup<TData = Awaited<ReturnType<typeof getAssist
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * Ready-to-paste setup of this console's MCP endpoint for Claude Code, Codex CLI, OpenCode and other MCP clients: the one-line add command, the configuration files, the static-token form when token sign-in is on, and the check command.
+ * @summary Connect an assistant
+ */
 export function useGetAssistantSetup<TData = Awaited<ReturnType<typeof getAssistantSetup>>, TError = ErrorModel>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAssistantSetup>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
@@ -123,14 +131,18 @@ export function useGetAssistantSetup<TData = Awaited<ReturnType<typeof getAssist
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * Ready-to-paste setup of this console's MCP endpoint for Claude Code, Codex CLI, OpenCode and other MCP clients: the one-line add command, the configuration files, the static-token form when token sign-in is on, and the check command.
+ * @summary Connect an assistant
+ */
 export function useGetAssistantSetup<TData = Awaited<ReturnType<typeof getAssistantSetup>>, TError = ErrorModel>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAssistantSetup>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
+ * Ready-to-paste setup of this console's MCP endpoint for Claude Code, Codex CLI, OpenCode and other MCP clients: the one-line add command, the configuration files, the static-token form when token sign-in is on, and the check command.
  * @summary Connect an assistant
  */
-
 export function useGetAssistantSetup<TData = Awaited<ReturnType<typeof getAssistantSetup>>, TError = ErrorModel>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAssistantSetup>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
@@ -204,6 +216,10 @@ export type GetAssistantAgentsQueryResult = NonNullable<Awaited<ReturnType<typeo
 export type GetAssistantAgentsQueryError = ErrorModel
 
 
+/**
+ * An AGENTS.md section for Codex and OpenCode with the same content as the skill.
+ * @summary The AGENTS.md fragment of the prompt pack
+ */
 export function useGetAssistantAgents<TData = Awaited<ReturnType<typeof getAssistantAgents>>, TError = ErrorModel>(
   options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAssistantAgents>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
@@ -214,6 +230,10 @@ export function useGetAssistantAgents<TData = Awaited<ReturnType<typeof getAssis
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * An AGENTS.md section for Codex and OpenCode with the same content as the skill.
+ * @summary The AGENTS.md fragment of the prompt pack
+ */
 export function useGetAssistantAgents<TData = Awaited<ReturnType<typeof getAssistantAgents>>, TError = ErrorModel>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAssistantAgents>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
@@ -224,14 +244,18 @@ export function useGetAssistantAgents<TData = Awaited<ReturnType<typeof getAssis
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * An AGENTS.md section for Codex and OpenCode with the same content as the skill.
+ * @summary The AGENTS.md fragment of the prompt pack
+ */
 export function useGetAssistantAgents<TData = Awaited<ReturnType<typeof getAssistantAgents>>, TError = ErrorModel>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAssistantAgents>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
+ * An AGENTS.md section for Codex and OpenCode with the same content as the skill.
  * @summary The AGENTS.md fragment of the prompt pack
  */
-
 export function useGetAssistantAgents<TData = Awaited<ReturnType<typeof getAssistantAgents>>, TError = ErrorModel>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAssistantAgents>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
@@ -305,6 +329,10 @@ export type GetAssistantSkillQueryResult = NonNullable<Awaited<ReturnType<typeof
 export type GetAssistantSkillQueryError = ErrorModel
 
 
+/**
+ * SKILL.md for .claude/skills/pgtoolbox/: what the tools are, that log and statement text is untrusted, and to cite the console page of each finding. Generated from the tool list.
+ * @summary The Claude Code skill of the prompt pack
+ */
 export function useGetAssistantSkill<TData = Awaited<ReturnType<typeof getAssistantSkill>>, TError = ErrorModel>(
   options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAssistantSkill>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
@@ -315,6 +343,10 @@ export function useGetAssistantSkill<TData = Awaited<ReturnType<typeof getAssist
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * SKILL.md for .claude/skills/pgtoolbox/: what the tools are, that log and statement text is untrusted, and to cite the console page of each finding. Generated from the tool list.
+ * @summary The Claude Code skill of the prompt pack
+ */
 export function useGetAssistantSkill<TData = Awaited<ReturnType<typeof getAssistantSkill>>, TError = ErrorModel>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAssistantSkill>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
@@ -325,14 +357,18 @@ export function useGetAssistantSkill<TData = Awaited<ReturnType<typeof getAssist
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * SKILL.md for .claude/skills/pgtoolbox/: what the tools are, that log and statement text is untrusted, and to cite the console page of each finding. Generated from the tool list.
+ * @summary The Claude Code skill of the prompt pack
+ */
 export function useGetAssistantSkill<TData = Awaited<ReturnType<typeof getAssistantSkill>>, TError = ErrorModel>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAssistantSkill>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
+ * SKILL.md for .claude/skills/pgtoolbox/: what the tools are, that log and statement text is untrusted, and to cite the console page of each finding. Generated from the tool list.
  * @summary The Claude Code skill of the prompt pack
  */
-
 export function useGetAssistantSkill<TData = Awaited<ReturnType<typeof getAssistantSkill>>, TError = ErrorModel>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAssistantSkill>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient

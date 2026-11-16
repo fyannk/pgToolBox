@@ -103,6 +103,10 @@ export type GetAdminQueryResult = NonNullable<Awaited<ReturnType<typeof getAdmin
 export type GetAdminQueryError = ErrorModel
 
 
+/**
+ * Per watched namespace, the PgAdmin and EvidenceAgent objects you may list there; the console's own health if you may list pods in its namespace.
+ * @summary PgAdmins, EvidenceAgents and console health
+ */
 export function useGetAdmin<TData = Awaited<ReturnType<typeof getAdmin>>, TError = ErrorModel>(
   options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAdmin>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
@@ -113,6 +117,10 @@ export function useGetAdmin<TData = Awaited<ReturnType<typeof getAdmin>>, TError
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * Per watched namespace, the PgAdmin and EvidenceAgent objects you may list there; the console's own health if you may list pods in its namespace.
+ * @summary PgAdmins, EvidenceAgents and console health
+ */
 export function useGetAdmin<TData = Awaited<ReturnType<typeof getAdmin>>, TError = ErrorModel>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAdmin>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
@@ -123,14 +131,18 @@ export function useGetAdmin<TData = Awaited<ReturnType<typeof getAdmin>>, TError
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * Per watched namespace, the PgAdmin and EvidenceAgent objects you may list there; the console's own health if you may list pods in its namespace.
+ * @summary PgAdmins, EvidenceAgents and console health
+ */
 export function useGetAdmin<TData = Awaited<ReturnType<typeof getAdmin>>, TError = ErrorModel>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAdmin>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
+ * Per watched namespace, the PgAdmin and EvidenceAgent objects you may list there; the console's own health if you may list pods in its namespace.
  * @summary PgAdmins, EvidenceAgents and console health
  */
-
 export function useGetAdmin<TData = Awaited<ReturnType<typeof getAdmin>>, TError = ErrorModel>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAdmin>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient

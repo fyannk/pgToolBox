@@ -104,6 +104,10 @@ export type ListDigestsQueryResult = NonNullable<Awaited<ReturnType<typeof listD
 export type ListDigestsQueryError = ErrorModel
 
 
+/**
+ * The console's daily summaries, newest first, each counted over the Clusters you may get.
+ * @summary Daily digests
+ */
 export function useListDigests<TData = Awaited<ReturnType<typeof listDigests>>, TError = ErrorModel>(
   options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDigests>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
@@ -114,6 +118,10 @@ export function useListDigests<TData = Awaited<ReturnType<typeof listDigests>>, 
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * The console's daily summaries, newest first, each counted over the Clusters you may get.
+ * @summary Daily digests
+ */
 export function useListDigests<TData = Awaited<ReturnType<typeof listDigests>>, TError = ErrorModel>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDigests>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
@@ -124,14 +132,18 @@ export function useListDigests<TData = Awaited<ReturnType<typeof listDigests>>, 
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * The console's daily summaries, newest first, each counted over the Clusters you may get.
+ * @summary Daily digests
+ */
 export function useListDigests<TData = Awaited<ReturnType<typeof listDigests>>, TError = ErrorModel>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDigests>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
+ * The console's daily summaries, newest first, each counted over the Clusters you may get.
  * @summary Daily digests
  */
-
 export function useListDigests<TData = Awaited<ReturnType<typeof listDigests>>, TError = ErrorModel>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDigests>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
@@ -205,6 +217,10 @@ export type GetDigestQueryResult = NonNullable<Awaited<ReturnType<typeof getDige
 export type GetDigestQueryError = ErrorModel
 
 
+/**
+ * One digest with, per Cluster you may get, what happened in its 24 hours. Its URL is the link the delivered message carries.
+ * @summary One daily digest
+ */
 export function useGetDigest<TData = Awaited<ReturnType<typeof getDigest>>, TError = ErrorModel>(
  id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDigest>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
@@ -215,6 +231,10 @@ export function useGetDigest<TData = Awaited<ReturnType<typeof getDigest>>, TErr
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * One digest with, per Cluster you may get, what happened in its 24 hours. Its URL is the link the delivered message carries.
+ * @summary One daily digest
+ */
 export function useGetDigest<TData = Awaited<ReturnType<typeof getDigest>>, TError = ErrorModel>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDigest>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
@@ -225,14 +245,18 @@ export function useGetDigest<TData = Awaited<ReturnType<typeof getDigest>>, TErr
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * One digest with, per Cluster you may get, what happened in its 24 hours. Its URL is the link the delivered message carries.
+ * @summary One daily digest
+ */
 export function useGetDigest<TData = Awaited<ReturnType<typeof getDigest>>, TError = ErrorModel>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDigest>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
+ * One digest with, per Cluster you may get, what happened in its 24 hours. Its URL is the link the delivered message carries.
  * @summary One daily digest
  */
-
 export function useGetDigest<TData = Awaited<ReturnType<typeof getDigest>>, TError = ErrorModel>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getDigest>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient

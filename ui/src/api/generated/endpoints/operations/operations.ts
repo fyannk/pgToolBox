@@ -114,6 +114,10 @@ export type ListOperationsQueryResult = NonNullable<Awaited<ReturnType<typeof li
 export type ListOperationsQueryError = ErrorModel
 
 
+/**
+ * The operations offered to you here, each with the API server's answer for its verbs, the preconditions not met now, the typed confirmation it needs and, for promote, the replica roster with eligibility; and the operations this console replica issued.
+ * @summary What you may do with a Cluster
+ */
 export function useListOperations<TData = Awaited<ReturnType<typeof listOperations>>, TError = ErrorModel>(
  namespace: string,
     name: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listOperations>>, TError, TData>> & Pick<
@@ -125,6 +129,10 @@ export function useListOperations<TData = Awaited<ReturnType<typeof listOperatio
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * The operations offered to you here, each with the API server's answer for its verbs, the preconditions not met now, the typed confirmation it needs and, for promote, the replica roster with eligibility; and the operations this console replica issued.
+ * @summary What you may do with a Cluster
+ */
 export function useListOperations<TData = Awaited<ReturnType<typeof listOperations>>, TError = ErrorModel>(
  namespace: string,
     name: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listOperations>>, TError, TData>> & Pick<
@@ -136,15 +144,19 @@ export function useListOperations<TData = Awaited<ReturnType<typeof listOperatio
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * The operations offered to you here, each with the API server's answer for its verbs, the preconditions not met now, the typed confirmation it needs and, for promote, the replica roster with eligibility; and the operations this console replica issued.
+ * @summary What you may do with a Cluster
+ */
 export function useListOperations<TData = Awaited<ReturnType<typeof listOperations>>, TError = ErrorModel>(
  namespace: string,
     name: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listOperations>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
+ * The operations offered to you here, each with the API server's answer for its verbs, the preconditions not met now, the typed confirmation it needs and, for promote, the replica roster with eligibility; and the operations this console replica issued.
  * @summary What you may do with a Cluster
  */
-
 export function useListOperations<TData = Awaited<ReturnType<typeof listOperations>>, TError = ErrorModel>(
  namespace: string,
     name: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listOperations>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
@@ -242,6 +254,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
     export type RequestOperationMutationVariables = {namespace: string;name: string;data: OperationRequest}
 
     /**
+ * Pessimistic: the console re-checks the preconditions against a live read, then writes as you (your own token; the API server authorizes and audits the write under your name). 202 means the API server accepted the write, not that the operator acted: follow GET /api/v1/operations/{operationId}. 409: a precondition is not met or the Cluster changed since it was read; 422: the confirmation does not match. Requires the X-PgToolBox-Request: 1 header and a same-origin request.
  * @summary Request an operation
  */
 export const useRequestOperation = <TError = ErrorModel,
@@ -310,6 +323,10 @@ export type GetOperationQueryResult = NonNullable<Awaited<ReturnType<typeof getO
 export type GetOperationQueryError = ErrorModel
 
 
+/**
+ * The operation's phase ladder, each step attributed to the field that showed it, resolved by any console replica from the Cluster's current state. timedOut means no outcome was reported before the deadline, not that it failed; notObservable means CloudNativePG reports no outcome for this operation at all (reload).
+ * @summary Track an operation
+ */
 export function useGetOperation<TData = Awaited<ReturnType<typeof getOperation>>, TError = ErrorModel>(
  id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getOperation>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
@@ -320,6 +337,10 @@ export function useGetOperation<TData = Awaited<ReturnType<typeof getOperation>>
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * The operation's phase ladder, each step attributed to the field that showed it, resolved by any console replica from the Cluster's current state. timedOut means no outcome was reported before the deadline, not that it failed; notObservable means CloudNativePG reports no outcome for this operation at all (reload).
+ * @summary Track an operation
+ */
 export function useGetOperation<TData = Awaited<ReturnType<typeof getOperation>>, TError = ErrorModel>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getOperation>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
@@ -330,14 +351,18 @@ export function useGetOperation<TData = Awaited<ReturnType<typeof getOperation>>
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * The operation's phase ladder, each step attributed to the field that showed it, resolved by any console replica from the Cluster's current state. timedOut means no outcome was reported before the deadline, not that it failed; notObservable means CloudNativePG reports no outcome for this operation at all (reload).
+ * @summary Track an operation
+ */
 export function useGetOperation<TData = Awaited<ReturnType<typeof getOperation>>, TError = ErrorModel>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getOperation>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
+ * The operation's phase ladder, each step attributed to the field that showed it, resolved by any console replica from the Cluster's current state. timedOut means no outcome was reported before the deadline, not that it failed; notObservable means CloudNativePG reports no outcome for this operation at all (reload).
  * @summary Track an operation
  */
-
 export function useGetOperation<TData = Awaited<ReturnType<typeof getOperation>>, TError = ErrorModel>(
  id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getOperation>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
