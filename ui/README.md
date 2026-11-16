@@ -110,6 +110,7 @@ Locally keep `--maxWorkers=2` for Vitest and `--workers=2` for Playwright.
 `make ui-build` writes `ui/dist/`: `index.html`, `assets/*` (content-hashed),
 and `.br`/`.gz` siblings for text assets ≥ 1 KiB. `go:embed` cannot reach
 outside its package, so `internal/console/uiassets` embeds a copy:
+
 1. the console image's `ui` stage builds `ui/dist` and the Go stage copies it
    into `internal/console/uiassets/dist/` before `go build`; only a committed
    `.gitkeep` lives there, so `go build`/`go test` work without Node

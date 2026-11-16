@@ -118,6 +118,10 @@ export type ListAccessRequestsQueryResult = NonNullable<Awaited<ReturnType<typeo
 export type ListAccessRequestsQueryError = ErrorModel
 
 
+/**
+ * Per watched namespace: every PgAccessRequest when the API server lets you list them, otherwise the ones naming you (your user, your ServiceAccount, a group you are in); with what you may do (request, approve or deny, revoke), each decided by a SelfSubjectAccessReview. An approval binds pgtoolbox-console-viewer or pgtoolbox-console-operator for every Cluster of the namespace. Refetch on the stream's clusters invalidation.
+ * @summary Access requests you may see
+ */
 export function useListAccessRequests<TData = Awaited<ReturnType<typeof listAccessRequests>>, TError = ErrorModel>(
  params: undefined |  ListAccessRequestsParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAccessRequests>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
@@ -128,6 +132,10 @@ export function useListAccessRequests<TData = Awaited<ReturnType<typeof listAcce
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * Per watched namespace: every PgAccessRequest when the API server lets you list them, otherwise the ones naming you (your user, your ServiceAccount, a group you are in); with what you may do (request, approve or deny, revoke), each decided by a SelfSubjectAccessReview. An approval binds pgtoolbox-console-viewer or pgtoolbox-console-operator for every Cluster of the namespace. Refetch on the stream's clusters invalidation.
+ * @summary Access requests you may see
+ */
 export function useListAccessRequests<TData = Awaited<ReturnType<typeof listAccessRequests>>, TError = ErrorModel>(
  params?: ListAccessRequestsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAccessRequests>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
@@ -138,14 +146,18 @@ export function useListAccessRequests<TData = Awaited<ReturnType<typeof listAcce
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * Per watched namespace: every PgAccessRequest when the API server lets you list them, otherwise the ones naming you (your user, your ServiceAccount, a group you are in); with what you may do (request, approve or deny, revoke), each decided by a SelfSubjectAccessReview. An approval binds pgtoolbox-console-viewer or pgtoolbox-console-operator for every Cluster of the namespace. Refetch on the stream's clusters invalidation.
+ * @summary Access requests you may see
+ */
 export function useListAccessRequests<TData = Awaited<ReturnType<typeof listAccessRequests>>, TError = ErrorModel>(
  params?: ListAccessRequestsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAccessRequests>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
+ * Per watched namespace: every PgAccessRequest when the API server lets you list them, otherwise the ones naming you (your user, your ServiceAccount, a group you are in); with what you may do (request, approve or deny, revoke), each decided by a SelfSubjectAccessReview. An approval binds pgtoolbox-console-viewer or pgtoolbox-console-operator for every Cluster of the namespace. Refetch on the stream's clusters invalidation.
  * @summary Access requests you may see
  */
-
 export function useListAccessRequests<TData = Awaited<ReturnType<typeof listAccessRequests>>, TError = ErrorModel>(
  params?: ListAccessRequestsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAccessRequests>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
@@ -240,6 +252,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
     export type CreateAccessRequestMutationVariables = {namespace: string;data: AccessRequestCreate}
 
     /**
+ * Creates a PgAccessRequest with your own token (you need create pgaccessrequests in the namespace; pgtoolbox-console-viewer grants it). The subject defaults to you. 422: the request is malformed (an expiry in the past, a system: subject, a ServiceAccount of another namespace). Requires the X-PgToolBox-Request: 1 header and a same-origin request.
  * @summary Request access
  */
 export const useCreateAccessRequest = <TError = ErrorModel,
@@ -312,6 +325,10 @@ export type GetAccessRequestQueryResult = NonNullable<Awaited<ReturnType<typeof 
 export type GetAccessRequestQueryError = ErrorModel
 
 
+/**
+ * Shown when the API server lets you get it or when it names you; 403 otherwise, whether it exists or not.
+ * @summary One access request
+ */
 export function useGetAccessRequest<TData = Awaited<ReturnType<typeof getAccessRequest>>, TError = ErrorModel>(
  namespace: string,
     name: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAccessRequest>>, TError, TData>> & Pick<
@@ -323,6 +340,10 @@ export function useGetAccessRequest<TData = Awaited<ReturnType<typeof getAccessR
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * Shown when the API server lets you get it or when it names you; 403 otherwise, whether it exists or not.
+ * @summary One access request
+ */
 export function useGetAccessRequest<TData = Awaited<ReturnType<typeof getAccessRequest>>, TError = ErrorModel>(
  namespace: string,
     name: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAccessRequest>>, TError, TData>> & Pick<
@@ -334,15 +355,19 @@ export function useGetAccessRequest<TData = Awaited<ReturnType<typeof getAccessR
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * Shown when the API server lets you get it or when it names you; 403 otherwise, whether it exists or not.
+ * @summary One access request
+ */
 export function useGetAccessRequest<TData = Awaited<ReturnType<typeof getAccessRequest>>, TError = ErrorModel>(
  namespace: string,
     name: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAccessRequest>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
+ * Shown when the API server lets you get it or when it names you; 403 otherwise, whether it exists or not.
  * @summary One access request
  */
-
 export function useGetAccessRequest<TData = Awaited<ReturnType<typeof getAccessRequest>>, TError = ErrorModel>(
  namespace: string,
     name: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAccessRequest>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
@@ -440,6 +465,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
     export type ApproveAccessRequestMutationVariables = {namespace: string;name: string;data: AccessDecision}
 
     /**
+ * Pessimistic, as you: the console creates the RoleBinding the request resolves to (the API server refuses it unless you may bind the ClusterRole or hold its every rule: its escalation check), then records you in status.decidedBy with an update locked to the version it read. You need create rolebindings and update pgaccessrequests/status in the namespace (pgtoolbox-console-approver grants both, with bind on the two console roles). 403: you may not, or the request names you (nobody approves their own request). 409: the request is no longer Pending, has expired, or changed since it was read. Requires the X-PgToolBox-Request: 1 header and a same-origin request.
  * @summary Approve an access request
  */
 export const useApproveAccessRequest = <TError = ErrorModel,
@@ -531,6 +557,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
     export type DenyAccessRequestMutationVariables = {namespace: string;name: string;data: AccessDecision}
 
     /**
+ * Records the refusal and your note (required) in status, as you. Needs the same rights as approving. 409: the request is no longer Pending. 422: no note. Requires the X-PgToolBox-Request: 1 header and a same-origin request.
  * @summary Deny an access request
  */
 export const useDenyAccessRequest = <TError = ErrorModel,
@@ -622,6 +649,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
     export type RevokeAccessRequestMutationVariables = {namespace: string;name: string;data: AccessDecision}
 
     /**
+ * Records the revocation in status, as you (update pgaccessrequests/status); the operator then deletes the RoleBinding, which the request's condition reports. 409: the request is not Approved. Requires the X-PgToolBox-Request: 1 header and a same-origin request.
  * @summary Revoke an approved request
  */
 export const useRevokeAccessRequest = <TError = ErrorModel,

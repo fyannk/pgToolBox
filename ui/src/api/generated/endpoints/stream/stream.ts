@@ -103,6 +103,10 @@ export type StreamQueryResult = NonNullable<Awaited<ReturnType<typeof stream>>>
 export type StreamQueryError = ErrorModel
 
 
+/**
+ * Server-sent events: hello on connect (refetch everything), invalidate {topic, namespace, name} (refetch that), resync (refetch everything), reauth {expiresAt, refreshable} before the session ends (call GET /api/v1/session). A comment line every 15 s; no byte for 35 s means the stream is dead. While it is down, poll every 2 s backing off to 10 s. The stream closes when the session ends.
+ * @summary Live updates
+ */
 export function useStream<TData = Awaited<ReturnType<typeof stream>>, TError = ErrorModel>(
   options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof stream>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
@@ -113,6 +117,10 @@ export function useStream<TData = Awaited<ReturnType<typeof stream>>, TError = E
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * Server-sent events: hello on connect (refetch everything), invalidate {topic, namespace, name} (refetch that), resync (refetch everything), reauth {expiresAt, refreshable} before the session ends (call GET /api/v1/session). A comment line every 15 s; no byte for 35 s means the stream is dead. While it is down, poll every 2 s backing off to 10 s. The stream closes when the session ends.
+ * @summary Live updates
+ */
 export function useStream<TData = Awaited<ReturnType<typeof stream>>, TError = ErrorModel>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof stream>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
@@ -123,14 +131,18 @@ export function useStream<TData = Awaited<ReturnType<typeof stream>>, TError = E
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * Server-sent events: hello on connect (refetch everything), invalidate {topic, namespace, name} (refetch that), resync (refetch everything), reauth {expiresAt, refreshable} before the session ends (call GET /api/v1/session). A comment line every 15 s; no byte for 35 s means the stream is dead. While it is down, poll every 2 s backing off to 10 s. The stream closes when the session ends.
+ * @summary Live updates
+ */
 export function useStream<TData = Awaited<ReturnType<typeof stream>>, TError = ErrorModel>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof stream>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
+ * Server-sent events: hello on connect (refetch everything), invalidate {topic, namespace, name} (refetch that), resync (refetch everything), reauth {expiresAt, refreshable} before the session ends (call GET /api/v1/session). A comment line every 15 s; no byte for 35 s means the stream is dead. While it is down, poll every 2 s backing off to 10 s. The stream closes when the session ends.
  * @summary Live updates
  */
-
 export function useStream<TData = Awaited<ReturnType<typeof stream>>, TError = ErrorModel>(
   options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof stream>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient

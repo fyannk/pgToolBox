@@ -125,6 +125,10 @@ export type GetLogTailQueryResult = NonNullable<Awaited<ReturnType<typeof getLog
 export type GetLogTailQueryError = ErrorModel
 
 
+/**
+ * Read once from the API server with the console's ServiceAccount after asking whether you may get pods/log; bounded in lines and bytes. 501 when the console is configured without log access.
+ * @summary The tail of an instance's log
+ */
 export function useGetLogTail<TData = Awaited<ReturnType<typeof getLogTail>>, TError = ErrorModel>(
  namespace: string,
     name: string,
@@ -138,6 +142,10 @@ export function useGetLogTail<TData = Awaited<ReturnType<typeof getLogTail>>, TE
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * Read once from the API server with the console's ServiceAccount after asking whether you may get pods/log; bounded in lines and bytes. 501 when the console is configured without log access.
+ * @summary The tail of an instance's log
+ */
 export function useGetLogTail<TData = Awaited<ReturnType<typeof getLogTail>>, TError = ErrorModel>(
  namespace: string,
     name: string,
@@ -151,6 +159,10 @@ export function useGetLogTail<TData = Awaited<ReturnType<typeof getLogTail>>, TE
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * Read once from the API server with the console's ServiceAccount after asking whether you may get pods/log; bounded in lines and bytes. 501 when the console is configured without log access.
+ * @summary The tail of an instance's log
+ */
 export function useGetLogTail<TData = Awaited<ReturnType<typeof getLogTail>>, TError = ErrorModel>(
  namespace: string,
     name: string,
@@ -159,9 +171,9 @@ export function useGetLogTail<TData = Awaited<ReturnType<typeof getLogTail>>, TE
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
+ * Read once from the API server with the console's ServiceAccount after asking whether you may get pods/log; bounded in lines and bytes. 501 when the console is configured without log access.
  * @summary The tail of an instance's log
  */
-
 export function useGetLogTail<TData = Awaited<ReturnType<typeof getLogTail>>, TError = ErrorModel>(
  namespace: string,
     name: string,
@@ -257,6 +269,10 @@ export type StreamLogsQueryResult = NonNullable<Awaited<ReturnType<typeof stream
 export type StreamLogsQueryError = ErrorModel
 
 
+/**
+ * Server-sent events: line {at, text}, end {reason}; gap {at, reason} is reserved for lines known to be missed (draw a marker, never join across it). Starts with the last 100 lines. A comment line every 15 s. The stream ends when the session ends or is revoked, when your pods/log access is withdrawn (checked every 30 s), after an hour, or when the container stops. A refusal (403, 501, 404) is sent as a single end event with the reason.
+ * @summary Follow an instance's log
+ */
 export function useStreamLogs<TData = Awaited<ReturnType<typeof streamLogs>>, TError = ErrorModel>(
  namespace: string,
     name: string,
@@ -270,6 +286,10 @@ export function useStreamLogs<TData = Awaited<ReturnType<typeof streamLogs>>, TE
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * Server-sent events: line {at, text}, end {reason}; gap {at, reason} is reserved for lines known to be missed (draw a marker, never join across it). Starts with the last 100 lines. A comment line every 15 s. The stream ends when the session ends or is revoked, when your pods/log access is withdrawn (checked every 30 s), after an hour, or when the container stops. A refusal (403, 501, 404) is sent as a single end event with the reason.
+ * @summary Follow an instance's log
+ */
 export function useStreamLogs<TData = Awaited<ReturnType<typeof streamLogs>>, TError = ErrorModel>(
  namespace: string,
     name: string,
@@ -283,6 +303,10 @@ export function useStreamLogs<TData = Awaited<ReturnType<typeof streamLogs>>, TE
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * Server-sent events: line {at, text}, end {reason}; gap {at, reason} is reserved for lines known to be missed (draw a marker, never join across it). Starts with the last 100 lines. A comment line every 15 s. The stream ends when the session ends or is revoked, when your pods/log access is withdrawn (checked every 30 s), after an hour, or when the container stops. A refusal (403, 501, 404) is sent as a single end event with the reason.
+ * @summary Follow an instance's log
+ */
 export function useStreamLogs<TData = Awaited<ReturnType<typeof streamLogs>>, TError = ErrorModel>(
  namespace: string,
     name: string,
@@ -291,9 +315,9 @@ export function useStreamLogs<TData = Awaited<ReturnType<typeof streamLogs>>, TE
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
+ * Server-sent events: line {at, text}, end {reason}; gap {at, reason} is reserved for lines known to be missed (draw a marker, never join across it). Starts with the last 100 lines. A comment line every 15 s. The stream ends when the session ends or is revoked, when your pods/log access is withdrawn (checked every 30 s), after an hour, or when the container stops. A refusal (403, 501, 404) is sent as a single end event with the reason.
  * @summary Follow an instance's log
  */
-
 export function useStreamLogs<TData = Awaited<ReturnType<typeof streamLogs>>, TError = ErrorModel>(
  namespace: string,
     name: string,
