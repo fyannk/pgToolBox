@@ -85,15 +85,18 @@ func unread(states []viewmodel.SourceState, source string) []viewmodel.SourceSta
 func intPtr(v int) *int { return &v }
 
 // instanceProvenance is a self-report's provenance: when it was read and
-// whether the last read failed.
-func instanceProvenance(inst sweep.Instance, field string) viewmodel.Provenance {
+// whether the last read failed or the sweep itself is stale (sweepStale).
+func instanceProvenance(inst sweep.Instance, field string, stale bool) viewmodel.Provenance {
 	p := viewmodel.Provenance{Origin: viewmodel.OriginInstance, Source: field}
 	if inst.Reading != nil {
 		at := inst.Reading.ObservedAt.UTC()
 		p.ObservedAt = &at
 	}
-	if inst.State != viewmodel.StatusReadOK {
+	switch {
+	case inst.State != viewmodel.StatusReadOK:
 		p.Stale, p.StaleReason = true, inst.Reason
+	case stale:
+		p.Stale, p.StaleReason = true, sweepStaleReason
 	}
 	return p
 }
@@ -159,6 +162,7 @@ func (s *Service) Replication(ctx context.Context, namespace, name string) (view
 		}
 	}
 
+	stale := sweepStale(g, now)
 	primaryName, primary, hasPrimary := primaryInstance(g)
 	primaryLSN := ""
 	if hasPrimary {
@@ -181,7 +185,7 @@ func (s *Service) Replication(ctx context.Context, namespace, name string) (view
 				Name: bound(sb.ApplicationName), State: sb.State, SyncState: sb.SyncState, SyncPriority: sb.SyncPriority,
 				Synchronous: syncState.Synchronous, SentLSN: sb.SentLSN, WriteLSN: sb.WriteLSN, FlushLSN: sb.FlushLSN, ReplayLSN: sb.ReplayLSN,
 				WriteLag: sb.WriteLag, FlushLag: sb.FlushLag, ReplayLag: sb.ReplayLag,
-				Health: health(state.Class), Provenance: instanceProvenance(primary, "/pg/status replicationInfo of "+primaryName),
+				Health: health(state.Class), Provenance: instanceProvenance(primary, "/pg/status replicationInfo of "+primaryName, stale),
 			}
 			if primary.State == viewmodel.StatusReadOK {
 				if lag, ok := sweep.LagBytes(primaryLSN, sb.ReplayLSN); ok {
@@ -200,7 +204,7 @@ func (s *Service) Replication(ctx context.Context, namespace, name string) (view
 			}
 			out.Slots = append(out.Slots, viewmodel.SlotRow{
 				Instance: primaryName, Name: bound(slot.Name), Type: slot.Type, Database: bound(slot.Database), Plugin: bound(slot.Plugin),
-				WALStatus: slot.WALStatus, Active: slot.Active, Health: h, Provenance: instanceProvenance(primary, "/pg/status replicationSlotsInfo"),
+				WALStatus: slot.WALStatus, Active: slot.Active, Health: h, Provenance: instanceProvenance(primary, "/pg/status replicationSlotsInfo", stale),
 			})
 		}
 	}
@@ -208,11 +212,11 @@ func (s *Service) Replication(ctx context.Context, namespace, name string) (view
 		if pod.Name == primaryName || pod.Name == g.cluster.Status.CurrentPrimary {
 			continue
 		}
-		read, live := s.statusRead(g, pod.Name, primaryLSN)
+		read, live := s.statusRead(g, pod.Name, primaryLSN, now)
 		row := viewmodel.ReceiverRow{Name: pod.Name, StatusRead: read, Health: viewmodel.HealthUnknown}
 		inst, swept := g.swept.Instances[pod.Name]
 		if swept {
-			row.Provenance = instanceProvenance(inst, "/pg/status")
+			row.Provenance = instanceProvenance(inst, "/pg/status", stale)
 		} else {
 			row.Provenance = viewmodel.Provenance{Origin: viewmodel.OriginInstance, Source: "/pg/status"}
 		}

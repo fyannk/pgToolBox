@@ -96,7 +96,7 @@ func (s *Service) failover(g *gathered, now time.Time) viewmodel.FailoverRehears
 			Provenance: viewmodel.Provenance{Origin: viewmodel.OriginInstance, Source: "/pg/status"},
 		}
 		if inst, ok := g.swept.Instances[c.Name]; ok {
-			row.Provenance = instanceProvenance(inst, "/pg/status")
+			row.Provenance = instanceProvenance(inst, "/pg/status", sweepStale(g, now))
 		}
 		out.Ranking = append(out.Ranking, row)
 	}

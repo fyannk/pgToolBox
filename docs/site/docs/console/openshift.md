@@ -23,12 +23,12 @@ helm install console oci://ghcr.io/fyannk/charts/pgtools \
 
 | Chart value | Variable | Meaning |
 |---|---|---|
-| `auth.openshift.redirectURI` | (annotation) | **Required.** The public callback URL. The chart puts it on the ServiceAccount as `serviceaccounts.openshift.io/oauth-redirecturi.console`; OpenShift redirects only to URIs the ServiceAccount lists. |
-| `auth.openshift.clientID` | `OPENSHIFT_CLIENT_ID` | Default: read from the console's own projected token, `system:serviceaccount:<ns>:<sa>`. |
-| `auth.openshift.clientSecret.existingSecret` | `OPENSHIFT_CLIENT_SECRET_FILE` | Empty means the ServiceAccount's projected token is presented as the client secret. **Not yet verified on a live OpenShift** (see the checklist, step 5). |
-| `auth.openshift.discoveryURL` | `OPENSHIFT_DISCOVERY_URL` | https only. Default: `https://openshift.default.svc/.well-known/oauth-authorization-server`. |
-| `auth.openshift.scopes` | `OPENSHIFT_SCOPES` | Default `user:info,user:check-access,user:full`. |
-| `auth.openshift.caConfigMap` | `OPENSHIFT_CA_FILE` | Default: the `openshift-service-ca.crt` ConfigMap of the namespace, projected next to the API token. |
+| `console.auth.openshift.redirectURI` | (annotation) | **Required.** The public callback URL. The chart puts it on the ServiceAccount as `serviceaccounts.openshift.io/oauth-redirecturi.console`; OpenShift redirects only to URIs the ServiceAccount lists. |
+| `console.auth.openshift.clientID` | `OPENSHIFT_CLIENT_ID` | Default: read from the console's own projected token, `system:serviceaccount:<ns>:<sa>`. |
+| `console.auth.openshift.clientSecret.existingSecret` | `OPENSHIFT_CLIENT_SECRET_FILE` | Empty means the ServiceAccount's projected token is presented as the client secret. **Not yet verified on a live OpenShift** (see the checklist, step 5). |
+| `console.auth.openshift.discoveryURL` | `OPENSHIFT_DISCOVERY_URL` | https only. Default: `https://openshift.default.svc/.well-known/oauth-authorization-server`. |
+| `console.auth.openshift.scopes` | `OPENSHIFT_SCOPES` | Default `user:info,user:check-access,user:full`. |
+| `console.auth.openshift.caConfigMap` | `OPENSHIFT_CA_FILE` | Default: the `openshift-service-ca.crt` ConfigMap of the namespace, projected next to the API token. |
 
 `PUBLIC_URL` defaults to `https://<exposure.host>`. The Route gets the HAProxy
 timeout annotation the live stream needs (`console.exposure.sse.timeout`).

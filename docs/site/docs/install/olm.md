@@ -67,6 +67,43 @@ delete a `Cluster` that is not a drill's target. The bundle runs two replicas an
 PodDisruptionBudget, and every replica serves the webhook.
 :::
 
+### Restrict the webhook port
+
+The webhook trusts the `userInfo` of the `AdmissionReview` it receives, so a Pod
+that can reach the operator's port 9443 can ask, with a forged review, what
+another user may do (no Secret content is disclosed). Only the API server needs
+that port. The bundle ships no NetworkPolicy, because no selector for the API
+server works on every network plugin and a policy that matches nothing would
+refuse every `PgToolBoxConsole`, `PgAdmin` and `EvidenceAgent` write. On
+OpenShift (OVN-Kubernetes), where the API server is host-network, add:
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: pgtoolbox-webhook
+  namespace: pgtoolbox   # the namespace of the Subscription
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: pgtoolbox
+  policyTypes: [Ingress]
+  ingress:
+  - ports:                # metrics and probes, open as without the policy
+    - {port: 8080, protocol: TCP}
+    - {port: 8081, protocol: TCP}
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          policy-group.network.openshift.io/host-network: ""
+    ports:
+    - {port: 9443, protocol: TCP}
+```
+
+On another network plugin, admit 9443 from the API server's addresses (an
+`ipBlock` of the control-plane nodes, or the plugin's own notion of the API
+server) and check that a `PgAdmin` can still be created.
+
 Do not also apply the chart's policies (`config/components/admission`,
 `config/admission`) on an OLM install: one install runs the policies or the
 webhook, never both.

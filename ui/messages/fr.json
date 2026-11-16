@@ -562,7 +562,7 @@
   "receiver_active": "actif",
   "receiver_inactive": "inactif",
   "receivers_none": "Aucun réplica n’a rapporté son récepteur.",
-  "refresh_failed": "{what} n'a pas pu être actualisé ; voici la dernière lecture.",
+  "refresh_failed": "{what} n'a pas pu être actualisé ; voici la dernière lecture ({age}).",
   "replay_lsn": "LSN rejoué",
   "replay_paused": "rejeu en pause",
   "repo_absent": "absente",

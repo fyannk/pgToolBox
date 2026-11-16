@@ -25,7 +25,9 @@ metadata:
 spec:
   selector:
     matchLabels:
-      {{- include "pgtools.console.selectorLabels" . | nindent 6 }}
+      {{- /* The console Service and, with MCP on, the -mcp Service: each selects
+      its own Pods, so no Pod is scraped twice. */}}
+      {{- include "pgtools.console.instanceLabels" . | nindent 6 }}
   endpoints:
     # The probe port: plain HTTP, or HTTPS with the console's certificate when
     # console.tls.secretName is set. The scraper's token must be allowed `get /metrics`.

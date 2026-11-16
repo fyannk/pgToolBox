@@ -208,6 +208,12 @@ var stallRetries = map[pgtoolboxv1alpha1.Reason]time.Duration{
 
 //nolint:gocyclo,cyclop,funlen // the console's children, in dependency order.
 func (r *Reconciler) reconcile(ctx context.Context, console *pgtoolboxv1alpha1.PgToolBoxConsole) error {
+	// First, ahead of every step that can stall: a new MCP Lease holder
+	// gets its route while the rest of the console waits (a paused
+	// console never reaches here, and is left as it is).
+	if err := r.labelMCPLeader(ctx, console); err != nil {
+		return err
+	}
 	image := specs.ResolveImage(console.Spec.Image, r.DefaultImage)
 	imageReason, imageProblem := r.imageProblem(console)
 	if err := r.checkHostname(ctx, console, imageProblem); err != nil {
@@ -349,9 +355,6 @@ func (r *Reconciler) reconcile(ctx context.Context, console *pgtoolboxv1alpha1.P
 	setExposureConfined(console, exposed)
 	in := deploymentInputs{Image: image, OpenShift: r.Features.OpenShift, Exposed: exposed}
 	if err := r.reconcileWorkload(ctx, console, in); err != nil {
-		return err
-	}
-	if err := r.labelMCPLeader(ctx, console); err != nil {
 		return err
 	}
 	r.observeExposure(ctx, console)

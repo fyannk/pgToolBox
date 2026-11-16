@@ -323,7 +323,9 @@
   .state-text[data-health="info"] {
     color: var(--text-muted);
   }
+  /* A stale reading loses its health colour: a stale "ok" is not green. */
   .state-text[data-stale] {
+    color: var(--text-muted);
     text-decoration: underline dashed var(--stale-border);
     text-underline-offset: 3px;
   }

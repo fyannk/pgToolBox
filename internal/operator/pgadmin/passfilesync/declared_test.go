@@ -437,14 +437,16 @@ func TestRunDeclaredFollowsRotationAndRoleApplication(t *testing.T) {
 		t.Fatal(err)
 	}
 	eventually(t, "the withdrawn password", func() bool { return !fileContains(files.PassFile(), "pw-after") })
+	// The files are written before the per-server reasons are logged: wait
+	// for the explanation, then read the whole log for a leak.
+	eventually(t, "the withdrawal explained in the log", func() bool {
+		return strings.Contains(logs.all(), "application Secret is elsewhere, not orders-app")
+	})
 	all := logs.all()
 	for _, secretValue := range []string{"pw-before", "pw-after", "pw-report"} {
 		if strings.Contains(all, secretValue) {
 			t.Fatalf("a password reached the log:\n%s", all)
 		}
-	}
-	if !strings.Contains(all, "application Secret is elsewhere, not orders-app") {
-		t.Fatalf("the withdrawal is not explained:\n%s", all)
 	}
 }
 
