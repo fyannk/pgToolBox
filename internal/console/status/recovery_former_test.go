@@ -231,10 +231,10 @@ func TestArchivingWalOnlyOnTheArchiver(t *testing.T) {
 		"dr-2": {State: viewmodel.StatusReadOK, Reading: &standby},
 	}}}
 	svc := &Service{sweep: fakeSweep{}}
-	if _, live := svc.statusRead(g, "dr-1", ""); live == nil || !live.ArchivingWAL {
+	if _, live := svc.statusRead(g, "dr-1", "", now); live == nil || !live.ArchivingWAL {
 		t.Errorf("the designated primary's archiving: %+v", live)
 	}
-	if _, live := svc.statusRead(g, "dr-2", ""); live == nil || live.ArchivingWAL {
+	if _, live := svc.statusRead(g, "dr-2", "", now); live == nil || live.ArchivingWAL {
 		t.Errorf("a standby of a replica cluster reads as archiving: %+v", live)
 	}
 	// Round 9, CNPG P3-a: mid-switchover the target primary does not
@@ -244,13 +244,13 @@ func TestArchivingWalOnlyOnTheArchiver(t *testing.T) {
 	c.Status.CurrentPrimary, c.Status.TargetPrimary = "dr-1", "dr-2"
 	stale := instancestatus.Reading{IsArchivingWAL: true, IsPrimary: true}
 	g.swept.Instances["dr-3"] = sweep.Instance{State: viewmodel.StatusReadOK, Reading: &stale}
-	if _, live := svc.statusRead(g, "dr-2", ""); live == nil || live.ArchivingWAL {
+	if _, live := svc.statusRead(g, "dr-2", "", now); live == nil || live.ArchivingWAL {
 		t.Errorf("the target primary of a switchover reads as archiving: %+v", live)
 	}
-	if _, live := svc.statusRead(g, "dr-3", ""); live == nil || live.ArchivingWAL {
+	if _, live := svc.statusRead(g, "dr-3", "", now); live == nil || live.ArchivingWAL {
 		t.Errorf("a self-reported primary that is not currentPrimary reads as archiving: %+v", live)
 	}
-	if _, live := svc.statusRead(g, "dr-1", ""); live == nil || !live.ArchivingWAL {
+	if _, live := svc.statusRead(g, "dr-1", "", now); live == nil || !live.ArchivingWAL {
 		t.Errorf("currentPrimary's archiving: %+v", live)
 	}
 }

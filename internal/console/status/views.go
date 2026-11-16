@@ -682,7 +682,7 @@ func (s *Service) instanceRows(g *gathered, withSeries bool) []viewmodel.Instanc
 			Role: viewmodel.Roles{Operator: role(g.cluster, pod.Name), Label: labelRole(pod), Live: viewmodel.RoleUnknown},
 			Pod:  s.podView(g, pod, now),
 		}
-		row.StatusRead, row.Live = s.statusRead(g, pod.Name, primaryLSN)
+		row.StatusRead, row.Live = s.statusRead(g, pod.Name, primaryLSN, now)
 		if row.Live != nil && row.StatusRead.State == viewmodel.StatusReadOK && !row.Live.PgRewindRunning {
 			row.Role.Live = viewmodel.RoleReplica
 			if row.Live.IsPrimary {
@@ -756,7 +756,7 @@ func (s *Service) podView(g *gathered, pod *corev1.Pod, now time.Time) *viewmode
 	return v
 }
 
-func (s *Service) statusRead(g *gathered, name, primaryLSN string) (viewmodel.StatusRead, *viewmodel.LiveStatus) {
+func (s *Service) statusRead(g *gathered, name, primaryLSN string, now time.Time) (viewmodel.StatusRead, *viewmodel.LiveStatus) {
 	if sw := s.sweeper(); sw == nil || sw.State().State == viewmodel.SourceDisabled {
 		reason := "the status sweep is switched off"
 		if sw != nil {
@@ -782,7 +782,7 @@ func (s *Service) statusRead(g *gathered, name, primaryLSN string) (viewmodel.St
 	if g.cluster != nil {
 		archiver = name == g.cluster.Status.CurrentPrimary
 	}
-	return read, liveStatus(name, inst, primaryLSN, archiver)
+	return read, liveStatus(name, inst, primaryLSN, archiver, sweepStale(g, now))
 }
 
 // liveStatus is an instance's own report. archiver says whether the
@@ -794,7 +794,7 @@ func (s *Service) statusRead(g *gathered, name, primaryLSN string) (viewmodel.St
 // without archiving there (pkg/management/postgres/archiver/archiver.go
 // v1.30.1:132-142), and refuses on every pod but currentPrimary
 // (:145-150): it is not served for them (CNPG P3-2, round 9 P3-a).
-func liveStatus(name string, inst sweep.Instance, primaryLSN string, archiver bool) *viewmodel.LiveStatus {
+func liveStatus(name string, inst sweep.Instance, primaryLSN string, archiver, stale bool) *viewmodel.LiveStatus {
 	r := inst.Reading
 	observed := r.ObservedAt
 	if r.Masked() {
@@ -811,8 +811,11 @@ func liveStatus(name string, inst sweep.Instance, primaryLSN string, archiver bo
 			PostgresUnread: postgresUnread(name, inst),
 			Provenance:     viewmodel.Provenance{Origin: viewmodel.OriginInstance, Source: "/pg/status", ObservedAt: &observed},
 		}
-		if inst.State != viewmodel.StatusReadOK {
+		switch {
+		case inst.State != viewmodel.StatusReadOK:
 			live.Provenance.Stale, live.Provenance.StaleReason = true, "the last read failed: "+inst.Reason
+		case stale:
+			live.Provenance.Stale, live.Provenance.StaleReason = true, sweepStaleReason
 		}
 		return live
 	}
@@ -832,8 +835,11 @@ func liveStatus(name string, inst sweep.Instance, primaryLSN string, archiver bo
 		tl := r.TimelineID
 		live.TimelineID = &tl
 	}
-	if inst.State != viewmodel.StatusReadOK {
+	switch {
+	case inst.State != viewmodel.StatusReadOK:
 		live.Provenance.Stale, live.Provenance.StaleReason = true, "the last read failed: "+inst.Reason
+	case stale:
+		live.Provenance.Stale, live.Provenance.StaleReason = true, sweepStaleReason
 	}
 	if !r.IsPrimary && inst.State == viewmodel.StatusReadOK {
 		if lag, ok := sweep.LagBytes(primaryLSN, r.ReplayLSN); ok {
