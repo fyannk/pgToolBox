@@ -7,6 +7,7 @@ templates:
   - templates/console/prometheusrule.yaml
   - templates/console/dashboard.yaml
   - templates/console/service.yaml
+  - templates/console/mcp.yaml
 release:
   name: pgc
   namespace: team-a
@@ -353,6 +354,26 @@ tests:
     set: {console.metrics.serviceMonitor.enabled: true}
     asserts:
       - equal: {path: "spec.ports[1]", value: {name: metrics, port: 3001, targetPort: probes, protocol: TCP}}
+
+  - it: exposes the metrics port on the -mcp Service only for a ServiceMonitor
+    template: templates/console/mcp.yaml
+    documentSelector: {path: kind, value: Service}
+    set: {console.mcp.enabled: true, console.publicURL: "https://console.example", console.metrics.serviceMonitor.enabled: true}
+    asserts:
+      - equal: {path: "spec.ports[1]", value: {name: metrics, port: 3001, targetPort: probes, protocol: TCP}}
+
+  - it: gives the -mcp Service no metrics port by default
+    template: templates/console/mcp.yaml
+    documentSelector: {path: kind, value: Service}
+    set: {console.mcp.enabled: true, console.publicURL: "https://console.example"}
+    asserts:
+      - lengthEqual: {path: spec.ports, count: 1}
+
+  - it: selects the console and the -mcp Service by the shared instance labels
+    template: templates/console/monitors.yaml
+    set: {console.metrics.serviceMonitor.enabled: true}
+    asserts:
+      - equal: {path: spec.selector.matchLabels, value: {app.kubernetes.io/name: pgtoolbox-console, app.kubernetes.io/instance: pgc}}
 
   - it: renders no monitors by default
     template: templates/console/monitors.yaml
