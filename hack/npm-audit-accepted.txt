@@ -11,3 +11,4 @@
 # fixed is just an unpatched one.
 #
 # Format: GHSA-xxxx-xxxx-xxxx  <one-line reason, then a re-check note>
+GHSA-fc5q-39xc-vjpf  not shipped: picomatch is a glob matcher of the build tools only (ui and headlamp: devDependencies of vite, vitest, tinyglobby, chokidar; docs/site: Docusaurus build via micromatch, anymatch, jest-worker); none of ui/dist, headlamp/dist, docs/site/build or the embedded docs bundle contains its code (grep for picomatch and its POSIX_REGEX_SOURCE table: 0 files), and every glob it compiles is written in this repository, never taken from input; picomatch <= 4.0.7 has no fixed release, delete the line once one exists.
