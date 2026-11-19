@@ -125,5 +125,6 @@ The runtime fetches nothing. Mirror the images listed in the
 (pgtools) and the operator's image values, and prefer digests
 (`console.image.digest`; `operator.console.image.digest`,
 `operator.evidenceAgent.image`, `operator.pgAdmin.image`).
-On OpenShift set `operator.oauthProxyImage` to the release payload's own
-oauth-proxy so a mirrored registry serves it.
+On OpenShift leave `operator.oauthProxyImage` empty: the operator runs the
+[cluster's own oauth-proxy](../operator/images.md#the-oauth-proxy-on-openshift),
+which the mirror already serves.

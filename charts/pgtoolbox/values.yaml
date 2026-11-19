@@ -89,8 +89,9 @@ operator:
     # published under it withdrawn. Empty: any hostname.
     allowedHostSuffixes: []
   # -- Image of the OpenShift oauth-proxy in front of pgAdmin
-  # (`OAUTH_PROXY_IMAGE`). Empty: the compiled-in default. On OpenShift, set
-  # the release payload's own image so that a mirrored registry serves it.
+  # (`OAUTH_PROXY_IMAGE`). Empty: the cluster's own (the `openshift/oauth-proxy`
+  # ImageStream of the release payload), else the compiled-in default. Set it
+  # only to force an image.
   oauthProxyImage: ""
 
   # config: the operator configuration keys (internal/operator/configuration),

@@ -88,6 +88,12 @@ Who may pass it is an OpenShift SubjectAccessReview: by default, anyone who may
 `get secrets` in the release namespace. `auth.openshift.sar` replaces that
 question (the JSON oauth-proxy's `--openshift-sar` takes), for example
 `{"namespace":"team-a","resource":"services","verb":"get"}` to admit whoever may read Services there.
+The proxy runs the cluster's own image, the one the `openshift/oauth-proxy`
+ImageStream's `v4.4` tag points at (the release payload's, patched with each
+cluster update and served by a disconnected cluster's mirror), read with `lookup`
+at install and upgrade. `helm template` and GitOps renderers have no cluster to
+read, so they render `auth.openshift.image`; `auth.openshift.useClusterImage: false`
+always does.
 There is no local password login in either mode.
 
 ## Credentials: named by you, checked live

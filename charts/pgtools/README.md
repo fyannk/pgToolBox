@@ -1054,9 +1054,10 @@ authority on what is accepted.
 | pgadmin.auth.oidc.scopes | list | `[]` | OIDC scopes. Empty: `[openid, email, profile]`. |
 | pgadmin.auth.oidc.usernameClaim | string | `"email"` | Claim used as the pgAdmin user name. |
 | pgadmin.auth.oidc.requiredClaims | object | `{}` | Claims a token must carry to sign in, each a list of accepted values: `{groups: [dba]}`. |
-| pgadmin.auth.openshift.image.repository | string | `"quay.io/openshift/origin-oauth-proxy"` | Repository of the oauth-proxy image. |
+| pgadmin.auth.openshift.useClusterImage | bool | `true` | Run the cluster's own oauth-proxy: the image the `openshift/oauth-proxy` ImageStream (tag `v4.4`) resolves to, the release payload's, which follows the cluster's updates and which a disconnected cluster's mirror serves. Read with `lookup` at install; `helm template`, a GitOps renderer or a cluster without that ImageStream gets `image` below. `false`: always `image`. |
+| pgadmin.auth.openshift.image.repository | string | `"quay.io/openshift/origin-oauth-proxy"` | Repository of the oauth-proxy image, when the cluster's own is not used (`useClusterImage`). |
 | pgadmin.auth.openshift.image.tag | string | `"4.18"` | Tag of the oauth-proxy image. |
-| pgadmin.auth.openshift.image.digest | string | `"sha256:63b0344b903162519efdb63052c1dde81aa17cfc46ba63cc87300db47f0fb5df"` | Digest of the oauth-proxy image (the 4.18 manifest list, as the operator's default). On OpenShift prefer the release payload's own image, which your registry mirrors. |
+| pgadmin.auth.openshift.image.digest | string | `"sha256:63b0344b903162519efdb63052c1dde81aa17cfc46ba63cc87300db47f0fb5df"` | Digest of the oauth-proxy image (the 4.18 manifest list, as the operator's default). |
 | pgadmin.auth.openshift.image.pullPolicy | string | `"IfNotPresent"` | Pull policy of the oauth-proxy image. |
 | pgadmin.auth.openshift.sar | string | `""` | SubjectAccessReview the proxy asks for each user, as the JSON object oauth-proxy's `--openshift-sar` takes. Empty: may `get secrets` in this namespace, since the shared servers connect with credentials read from Secrets here. |
 | pgadmin.auth.openshift.cookieSecret.existingSecret | string | `""` | Secret holding the proxy's cookie secret (key `cookie-secret`, 16, 24 or 32 bytes). Empty: generated once and kept across upgrades; set it for a GitOps tool that renders client-side. |

@@ -868,7 +868,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `image` _[ImageSpec](#imagespec)_ | The oauth-proxy image. Omitted, the operator's default. |  | Optional: \{\} <br /> |
+| `image` _[ImageSpec](#imagespec)_ | The oauth-proxy image. Omitted, the operator's default: OAUTH_PROXY_IMAGE,<br />else the cluster's own (the openshift/oauth-proxy ImageStream). |  | Optional: \{\} <br /> |
 | `sessionMaxAge` _[Duration](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.34/#duration-v1-meta)_ | How long an oauth-proxy session lasts (--cookie-expire). The proxy<br />reviews connect at sign-in only, so this bounds how long a revoked<br />person keeps pgAdmin open; when it ends the proxy signs the person in<br />again, silently while their OpenShift session lasts, but a request<br />in flight (a form being posted) can be lost. Default 1h. |  | Optional: \{\} <br /> |
 
 

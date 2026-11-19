@@ -1,0 +1,63 @@
+# The oauth-proxy runs the cluster's own image: the openshift/oauth-proxy
+# ImageStream's v4.4 tag, the release payload's, pinned by digest. Without it
+# (helm template, another cluster, the switch off) the chart's image stays.
+suite: oauth-proxy image from the cluster
+templates:
+  - templates/pgadmin/deployment.yaml
+release:
+  name: pgc
+  namespace: team-a
+kubernetesProvider:
+  scheme:
+    "image.openshift.io/v1/ImageStream": {gvr: {group: image.openshift.io, version: v1, resource: imagestreams}, namespaced: true}
+  objects:
+    - apiVersion: image.openshift.io/v1
+      kind: ImageStream
+      metadata: {name: oauth-proxy, namespace: openshift}
+      status:
+        tags:
+          - tag: latest
+            items:
+              - dockerImageReference: quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:1111111111111111111111111111111111111111111111111111111111111111
+          - tag: v4.4
+            items:
+              - dockerImageReference: quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:2222222222222222222222222222222222222222222222222222222222222222
+set:
+  pgadmin.enabled: true
+  pgadmin.auth.provider: openshift
+  pgadmin.exposure.type: route
+  pgadmin.servers:
+    - {cluster: orders, endpoint: rw, credentials: {application: {secret: orders-app}}}
+tests:
+  - it: runs the image the cluster's v4.4 tag points at
+    capabilities:
+      apiVersions: [image.openshift.io/v1]
+    asserts:
+      - equal: {path: 'spec.template.spec.containers[2].name', value: oauth-proxy}
+      - equal:
+          path: spec.template.spec.containers[2].image
+          value: quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:2222222222222222222222222222222222222222222222222222222222222222
+
+  - it: keeps the chart's image when the switch is off
+    set: {pgadmin.auth.openshift.useClusterImage: false}
+    capabilities:
+      apiVersions: [image.openshift.io/v1]
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[2].image
+          value: quay.io/openshift/origin-oauth-proxy:4.18@sha256:63b0344b903162519efdb63052c1dde81aa17cfc46ba63cc87300db47f0fb5df
+
+  - it: keeps the chart's image when the cluster serves no image API (helm template)
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[2].image
+          value: quay.io/openshift/origin-oauth-proxy:4.18@sha256:63b0344b903162519efdb63052c1dde81aa17cfc46ba63cc87300db47f0fb5df
+
+  - it: does not rewrite the cluster's image with global.imageRegistry
+    set: {global.imageRegistry: registry.example.org/mirror}
+    capabilities:
+      apiVersions: [image.openshift.io/v1]
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[2].image
+          value: quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:2222222222222222222222222222222222222222222222222222222222222222

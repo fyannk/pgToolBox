@@ -170,8 +170,8 @@ Administrator role.
 **`openshiftOAuthProxy`** (OpenShift): the proxy terminates TLS with the OpenShift
 service CA, authorizes every request with the SubjectAccessReview above and passes
 the user to pgAdmin in `X-Forwarded-User`; pgAdmin listens on loopback only, so
-the header can come from nothing but the proxy. The proxy image is
-`OAUTH_PROXY_IMAGE` unless the spec names one.
+the header can come from nothing but the proxy. The proxy image is the spec's,
+else `OAUTH_PROXY_IMAGE`, else the [cluster's own](images.md#the-oauth-proxy-on-openshift).
 
 Single sign-out is the identity provider's job.
 

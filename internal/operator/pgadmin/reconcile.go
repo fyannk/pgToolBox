@@ -156,7 +156,11 @@ func (r *Reconciler) resolve(ctx context.Context, p *pgtoolboxv1alpha1.PgAdmin) 
 			len(result.Document.Servers), offer.MaxServers))
 		result.Document.Servers = result.Document.Servers[:offer.MaxServers]
 	}
-	in, err := r.assembleInputs(p, selected, remote, result, configDB)
+	proxyDefault, err := r.oauthProxyDefault(ctx, p)
+	if err != nil {
+		return buildInputs{}, offerResult{}, remoteResolution{}, err
+	}
+	in, err := r.assembleInputs(p, selected, remote, result, configDB, proxyDefault)
 	if err != nil {
 		return buildInputs{}, offerResult{}, remoteResolution{}, err
 	}
@@ -308,7 +312,7 @@ func (r *Reconciler) unservedAPIProblems(p *pgtoolboxv1alpha1.PgAdmin, problems 
 // against the installer's allow-list), the Clusters and Poolers pgAdmin
 // connects to (NetworkPolicy), and the encoded offer with its hash.
 func (r *Reconciler) assembleInputs(p *pgtoolboxv1alpha1.PgAdmin, selected []cnpgv1.Cluster, remote remoteResolution, result offerResult,
-	configDB configDatabaseState,
+	configDB configDatabaseState, proxyDefault string,
 ) (buildInputs, error) {
 	in := buildInputs{
 		ConfigDatabase:        configDB,
@@ -317,7 +321,7 @@ func (r *Reconciler) assembleInputs(p *pgtoolboxv1alpha1.PgAdmin, selected []cnp
 		PlatformAssignsGroups: r.Features.OpenShift,
 	}
 	if proxy := p.Spec.Auth.OpenShiftOAuthProxy; proxy != nil {
-		in.ProxyImage = specs.ResolveImage(proxy.Image, r.Config.OAuthProxyImage)
+		in.ProxyImage = specs.ResolveImage(proxy.Image, proxyDefault)
 	}
 	// The image allow-list (PGADMIN_IMAGE_REPOSITORIES /
 	// --pgadmin-image-repositories), as for the EvidenceAgent: nothing is
