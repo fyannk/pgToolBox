@@ -34,7 +34,7 @@ not delete every `PgToolBoxConsole`, `PgAdmin` and `EvidenceAgent`), and the thr
 | `operator.evidenceAgent.imageRepositories` | `--evidence-agent-image-repositories` | none: the default image's repository only |
 | `operator.pgAdmin.imageRepositories` | `--pgadmin-image-repositories` | none: each image's default repository only; covers `spec.image` and the oauth-proxy image |
 | `operator.pgAdmin.image` | `PGADMIN_IMAGE` | the hardened, digest-pinned image compiled in |
-| `operator.oauthProxyImage` | `OAUTH_PROXY_IMAGE` | compiled in; set the release payload's image on OpenShift |
+| `operator.oauthProxyImage` | `OAUTH_PROXY_IMAGE` | the cluster's own (`openshift/oauth-proxy` ImageStream), else compiled in |
 | `operator.config.*` | `WATCH_NAMESPACES`, `MAX_CONCURRENT_RECONCILES`, `RECONCILIATION_TIMEOUT`, `UPGRADE_BACKUPS_KEPT` | the operator's own defaults |
 | `operator.metrics.serviceMonitor` / `podMonitor` | a metrics Service + ServiceMonitor / a PodMonitor | off |
 | `operator.metrics.readerClusterRole` / `readerSubjects` | `<release>-metrics-reader`, bound to the named scrapers only | off |

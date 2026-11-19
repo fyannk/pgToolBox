@@ -1338,14 +1338,21 @@ pgadmin:
       # `{groups: [dba]}`.
       requiredClaims: {}
     openshift:
+      # -- Run the cluster's own oauth-proxy: the image the `openshift/oauth-proxy`
+      # ImageStream (tag `v4.4`) resolves to, the release payload's, which
+      # follows the cluster's updates and which a disconnected cluster's mirror
+      # serves. Read with `lookup` at install; `helm template`, a GitOps
+      # renderer or a cluster without that ImageStream gets `image` below.
+      # `false`: always `image`.
+      useClusterImage: true
       image:
-        # -- Repository of the oauth-proxy image.
+        # -- Repository of the oauth-proxy image, when the cluster's own is
+        # not used (`useClusterImage`).
         repository: quay.io/openshift/origin-oauth-proxy
         # -- Tag of the oauth-proxy image.
         tag: "4.18"
         # -- Digest of the oauth-proxy image (the 4.18 manifest list, as the
-        # operator's default). On OpenShift prefer the release payload's own
-        # image, which your registry mirrors.
+        # operator's default).
         digest: "sha256:63b0344b903162519efdb63052c1dde81aa17cfc46ba63cc87300db47f0fb5df"
         # -- Pull policy of the oauth-proxy image.
         pullPolicy: IfNotPresent

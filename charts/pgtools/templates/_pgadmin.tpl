@@ -67,9 +67,25 @@ replaces the registry host. Call with
 {{- include "pgtools.pgadmin.imageRef" (dict "image" .Values.pgadmin.tools.image "tag" .Chart.AppVersion "root" .) -}}
 {{- end -}}
 
-{{/* The OpenShift oauth-proxy image. */}}
+{{/*
+The OpenShift oauth-proxy image: the cluster's own (the openshift/oauth-proxy
+ImageStream, tag v4.4, pinned by digest) when useClusterImage and the lookup
+finds it, else auth.openshift.image. The lookup returns nothing under helm
+template; global.imageRegistry does not rewrite the cluster's image (its
+mirror is the cluster's).
+*/}}
 {{- define "pgtools.pgadmin.proxyImage" -}}
-{{- include "pgtools.pgadmin.imageRef" (dict "image" .Values.pgadmin.auth.openshift.image "tag" "" "root" .) -}}
+{{- $cluster := "" -}}
+{{- if and .Values.pgadmin.auth.openshift.useClusterImage (.Capabilities.APIVersions.Has "image.openshift.io/v1") -}}
+{{- $stream := lookup "image.openshift.io/v1" "ImageStream" "openshift" "oauth-proxy" -}}
+{{- range (dig "status" "tags" list $stream) -}}
+{{- if and (eq (.tag | toString) "v4.4") .items -}}
+{{- $ref := (index .items 0).dockerImageReference | toString -}}
+{{- if contains "@sha256:" $ref -}}{{- $cluster = $ref -}}{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- $cluster | default (include "pgtools.pgadmin.imageRef" (dict "image" .Values.pgadmin.auth.openshift.image "tag" "" "root" .)) -}}
 {{- end -}}
 
 {{/*

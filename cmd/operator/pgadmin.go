@@ -31,6 +31,7 @@ import (
 	"time"
 
 	cnpgv1 "github.com/cloudnative-pg/api/pkg/api/v1"
+	imagev1 "github.com/openshift/api/image/v1"
 	routev1 "github.com/openshift/api/route/v1"
 	securityv1 "github.com/openshift/api/security/v1"
 	"github.com/prometheus/client_golang/prometheus"
@@ -65,6 +66,7 @@ var pgAdminImageRepositories string
 func init() {
 	utilruntime.Must(pgtoolboxv1alpha1.AddToScheme(scheme))
 	utilruntime.Must(securityv1.AddToScheme(scheme))
+	utilruntime.Must(imagev1.AddToScheme(scheme))
 	flag.StringVar(&pgAdminImageRepositories, "pgadmin-image-repositories", "",
 		"Comma-separated image repositories a PgAdmin's spec.image and oauth-proxy image may name (exact, or a prefix ending in '/'). "+
 			"Overrides PGADMIN_IMAGE_REPOSITORIES. Empty everywhere: each image's default repository only.")

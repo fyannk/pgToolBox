@@ -379,6 +379,14 @@ spec:
           - update
           - watch
         - apiGroups:
+          - image.openshift.io
+          resourceNames:
+          - oauth-proxy
+          resources:
+          - imagestreams
+          verbs:
+          - get
+        - apiGroups:
           - networking.k8s.io
           resources:
           - ingresses

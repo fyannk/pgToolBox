@@ -454,7 +454,8 @@ type SecretKeySelector struct {
 
 // PgAdminOpenShiftOAuthProxySpec configures the OpenShift oauth-proxy.
 type PgAdminOpenShiftOAuthProxySpec struct {
-	// The oauth-proxy image. Omitted, the operator's default.
+	// The oauth-proxy image. Omitted, the operator's default: OAUTH_PROXY_IMAGE,
+	// else the cluster's own (the openshift/oauth-proxy ImageStream).
 	// +optional
 	Image *ImageSpec `json:"image,omitempty"`
 

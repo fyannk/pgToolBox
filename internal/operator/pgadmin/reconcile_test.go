@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	cnpgv1 "github.com/cloudnative-pg/api/pkg/api/v1"
+	imagev1 "github.com/openshift/api/image/v1"
 	routev1 "github.com/openshift/api/route/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
@@ -52,7 +53,7 @@ func testScheme(t *testing.T) *runtime.Scheme {
 	t.Helper()
 	scheme := runtime.NewScheme()
 	for _, add := range []func(*runtime.Scheme) error{
-		clientgoscheme.AddToScheme, pgtoolboxv1alpha1.AddToScheme, cnpgv1.AddToScheme, routev1.AddToScheme, gatewayv1.Install,
+		clientgoscheme.AddToScheme, pgtoolboxv1alpha1.AddToScheme, cnpgv1.AddToScheme, routev1.AddToScheme, gatewayv1.Install, imagev1.AddToScheme,
 	} {
 		if err := add(scheme); err != nil {
 			t.Fatal(err)

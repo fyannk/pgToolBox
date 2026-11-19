@@ -182,8 +182,9 @@ spec:
                       role; not get, which the view role carries on OLM).
                     properties:
                       image:
-                        description: The oauth-proxy image. Omitted, the operator's
-                          default.
+                        description: |-
+                          The oauth-proxy image. Omitted, the operator's default: OAUTH_PROXY_IMAGE,
+                          else the cluster's own (the openshift/oauth-proxy ImageStream).
                         properties:
                           digest:
                             description: Image digest; when set it is what the Pod

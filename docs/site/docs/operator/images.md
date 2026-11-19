@@ -13,11 +13,26 @@ title: Images and allow-lists
 | Console | `ghcr.io/fyannk/pgtoolbox-console` | `console.image.*` |
 | Evidence agent | `ghcr.io/fyannk/pgtoolbox-evidence-agent` | `operator.evidenceAgent.image`, else `imageRepository` at `appVersion` |
 | pgAdmin | `ghcr.io/fyannk/pgadmin`, hardened, **pinned by digest** in the operator | `operator.pgAdmin.image` (`PGADMIN_IMAGE`) |
-| OpenShift oauth-proxy | `quay.io/openshift/origin-oauth-proxy:4.18`, pinned by digest | `operator.oauthProxyImage` (`OAUTH_PROXY_IMAGE`) |
+| OpenShift oauth-proxy | the cluster's own (see below), else `quay.io/openshift/origin-oauth-proxy:4.18`, pinned by digest | `operator.oauthProxyImage` (`OAUTH_PROXY_IMAGE`) |
 
 The operator image is also the one copied into every pgAdmin Pod by an init
 container, so the credential sidecar and the registration Jobs run the operator's
 own binary under pgAdmin's UID.
+
+### The oauth-proxy on OpenShift
+
+A `PgAdmin` that names no oauth-proxy image runs **the cluster's own**: the image
+the `openshift/oauth-proxy` ImageStream's `v4.4` tag points at. That ImageStream
+is part of the OpenShift release payload: Red Hat patches the image with each
+cluster update, the tag resolves it by digest, and a disconnected cluster's
+mirror already serves it. The operator reads it (`get` on that one ImageStream)
+at each reconcile, so a cluster update rolls the proxy to the new image.
+
+The compiled-in `quay.io/openshift/origin-oauth-proxy` (the community OKD build)
+is the fallback for a cluster without that ImageStream, or where the operator may
+not read it. `OAUTH_PROXY_IMAGE` and `spec.auth.openshiftOAuthProxy.image` win over
+both. A failed read (a timeout) fails the reconcile and keeps the running image;
+it never switches to the fallback.
 
 All images are published to `ghcr.io/fyannk` by the release workflow, signed,
 and listed in the release's `digests.txt` ([verify](../release.md)). Prefer digests everywhere in production.
@@ -72,5 +87,6 @@ naming a Secret its editor cannot read; see
 
 Set the image values to your mirror (`global.imageRegistry` prefixes the console;
 the operator values are full references). The OLM CSV's `relatedImages` lists the
-images for `oc mirror`. On OpenShift, set `operator.oauthProxyImage` to the image
-from the cluster's release payload.
+images for `oc mirror`. On OpenShift the oauth-proxy needs nothing: the
+[cluster's own](#the-oauth-proxy-on-openshift) comes from the release payload,
+which the mirror already serves.
