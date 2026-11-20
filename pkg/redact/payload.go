@@ -25,21 +25,26 @@ import (
 const Redacted = "[redacted]"
 
 // sensitiveKey matches object keys whose values are credentials.
-var sensitiveKey = regexp.MustCompile(`(?i)(token|secret|passw(or)?d|authorization|cookie|credential|api[-_]?key|private[-_]?key|bearer)`)
+var sensitiveKey = regexp.MustCompile(`(?i)(token|secret|passw(or)?d|passphrase|cipher[-_]?pass|authorization|cookie|credential|api[-_]?key|private[-_]?key|bearer)`)
 
 // credentialText matches credentials that can sit inside any string: a
 // JWT (an OIDC id_token, a ServiceAccount token), an Authorization value,
-// and a URL's user information.
+// a libpq password=… keyword (quoted or not), a SQL PASSWORD '…' clause,
+// and a URL's user information, which runs to the last @ of the URL since
+// a password may hold / and @.
 var credentialText = regexp.MustCompile(`eyJ[A-Za-z0-9_-]{2,}\.[A-Za-z0-9_-]{2,}\.[A-Za-z0-9_-]*` +
 	`|(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}` +
-	`|://[^/\s:@]+:[^/\s@]+@`)
+	`|(?i)password\s*=\s*('(?:[^'\\]|\\.)*'?|\S+)` +
+	`|(?i)\bpassword\s+'(?:[^']|'')*'?` +
+	`|://[^/\s:@]+:[^\s"]*@`)
 
 // Payload returns raw, a JSON document, with every credential removed: the
-// values of keys that name one (token, secret, password, authorization,
-// cookie, credential, api key, private key) and credential-shaped text
-// anywhere in a string (JWTs, Authorization values, user information in
-// URLs). A document that is not JSON is redacted as one string. It is the
-// boundary a payload crosses before it leaves the process in a trace.
+// values of keys that name one (token, secret, password, passphrase,
+// cipher pass, authorization, cookie, credential, api key, private key)
+// and credential-shaped text anywhere in a string (JWTs, Authorization
+// values, libpq and SQL passwords, user information in URLs). A document
+// that is not JSON is redacted as one string. It is the boundary a
+// payload crosses before it leaves the process in a trace.
 func Payload(raw []byte) []byte {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.UseNumber()

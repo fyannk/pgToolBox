@@ -482,12 +482,15 @@ func (m *Manager) newInformer(lw toolscache.ListerWatcher, obj runtime.Object, r
 }
 
 // watchError marks the source stale when an established watch drops
-// with an error; the next successful list makes it live again.
+// with an error; the informer's next successful list or watch makes it
+// live again. The reflector also hands it the errors of the list and
+// watch calls themselves, which the tracked ListerWatcher already
+// recorded against the informer.
 func (m *Manager) watchError(_ context.Context, r *toolscache.Reflector, err error) {
 	description := r.TypeDescription()
 	for _, kind := range m.kinds {
 		if kind.typeDescription() == description {
-			m.tracker.watchedOutcome(kind.Source, -1, err)
+			m.tracker.watchDropped(kind.Source, err)
 			return
 		}
 	}
