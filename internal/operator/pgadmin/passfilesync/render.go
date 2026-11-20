@@ -17,8 +17,9 @@
 // runs the operator binary, copied into the Pod by an init container, from
 // pgAdmin's image, so it runs under pgAdmin's own UID and the 0600 files it
 // writes on the memory-backed volume are readable by pgAdmin alone. It
-// reads the offer ConfigMap and exactly the Secrets the offer names through
-// the Pod's name-scoped Role (get and watch by name; it cannot list), and
+// reads the offer Secret and exactly the password Secrets the offer names
+// through the Pod's name-scoped Role (get and watch by name; it cannot
+// list), takes the Clusters' CA certificates from the offer, and
 // rewrites the files atomically on every change, so a rotated password
 // reaches libpq on the next connection without a rollout or a setup.py run.
 //
@@ -60,10 +61,10 @@ type Outcome struct {
 	Refused []string
 }
 
-// Render writes the CA files, then the service and password files, for doc
-// from the Secrets it has seen (by offer.SecretRef.Key: the name, or
-// namespace/name for a Secret of a granted namespace; absent when not
-// readable). The settings database connection, when the document has one,
+// Render writes the CA files (from doc.CAs), then the service and password
+// files, for doc from the password Secrets it has seen (by
+// offer.SecretRef.Key: the name, or namespace/name for a Secret of a
+// granted namespace; absent when not readable). The settings database connection, when the document has one,
 // is written like a server. Each
 // server is offered only when its password Secret is present at the
 // version the offer requires, names the offered role (when it names one),
@@ -82,9 +83,14 @@ func Render(files Files, doc offer.Document, secrets map[string]*corev1.Secret) 
 	cas := map[string]string{} // CA key -> PEM
 	var servers []adminsync.Server
 	for _, server := range doc.Connections() {
-		ca, why := caOf(secrets[server.CASecret().Key()])
+		raw, ok := doc.CAs[server.CAKey()]
+		if !ok {
+			refuse(server, "the offer has no CA of Cluster "+server.CAKey()+" (its CA Secret is absent or holds no certificate)")
+			continue
+		}
+		ca, why := caPEM([]byte(raw))
 		if why != "" {
-			refuse(server, "CA Secret "+server.CASecret().Key()+" "+why)
+			refuse(server, "the offered CA of Cluster "+server.CAKey()+" "+why)
 			continue
 		}
 		password, why := passwordOf(secrets[server.PasswordSecret().Key()], server)

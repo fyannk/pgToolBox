@@ -58,7 +58,7 @@ type buildInputs struct {
 	OfferHash string
 	// Owners are the pgAdmin users of the offer's personal servers.
 	Owners []string
-	// OfferSecrets are the Secrets the offer names (passwords and CAs).
+	// OfferSecrets are the password Secrets the offer names.
 	OfferSecrets []string
 	// ClientSecretVersion is the resourceVersion of the OAuth2 client
 	// Secret when it carries the reload label (a change rolls the Pod).

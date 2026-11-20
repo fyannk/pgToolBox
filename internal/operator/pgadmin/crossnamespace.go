@@ -168,15 +168,16 @@ func accessMeta(p *pgtoolboxv1alpha1.PgAdmin, grant *pgtoolboxv1alpha1.PgAdminAc
 	}
 }
 
-// grantSecretNames are the Secrets of the grant's namespace the offer names
-// for Clusters this grant allows: what its Role may read.
+// grantSecretNames are the password Secrets of the grant's namespace the
+// offer names for Clusters this grant allows: what its Role may read (never
+// a CA Secret: the offer carries the CA certificates).
 func grantSecretNames(p *pgtoolboxv1alpha1.PgAdmin, grant *pgtoolboxv1alpha1.PgAdminAccess, doc offer.Document) []string {
 	var names []string
 	for _, server := range doc.Connections() {
 		if server.Namespace != grant.Namespace || !grant.Grants(p.Namespace, p.Name, server.Cluster) {
 			continue
 		}
-		names = append(names, server.SecretName, server.CASecretName)
+		names = append(names, server.SecretName)
 	}
 	slices.Sort(names)
 	return slices.Compact(names)

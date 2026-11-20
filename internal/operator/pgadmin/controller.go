@@ -57,7 +57,8 @@ import (
 // operator grant the pgAdmin Pod its name-scoped Role (RBAC escalation
 // prevention: a Role can grant only what its writer holds); the operator
 // itself reads Secret metadata only, and the content of no Secret but its
-// own generated ones.
+// own generated ones and the Clusters' server CA Secrets (ca.crt is copied
+// into the offer, so pgAdmin's Role never names a CA Secret).
 //
 // +kubebuilder:rbac:groups=pgtoolbox.fyannk.dev,resources=pgadmins,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=pgtoolbox.fyannk.dev,resources=pgadmins/status,verbs=get;update;patch

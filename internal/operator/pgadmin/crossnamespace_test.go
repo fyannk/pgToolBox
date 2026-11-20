@@ -134,7 +134,7 @@ func TestCrossNamespaceNeedsAGrant(t *testing.T) {
 	if err := h.client.Get(context.Background(), client.ObjectKey{Namespace: remoteNamespace, Name: "pgadmin-team-pgadmin-access"}, &role); err != nil {
 		t.Fatal(err)
 	}
-	if len(role.Rules) != 1 || !slices.Equal(role.Rules[0].ResourceNames, []string{"payments-app", "payments-ca"}) ||
+	if len(role.Rules) != 1 || !slices.Equal(role.Rules[0].ResourceNames, []string{"payments-app"}) ||
 		!slices.Equal(role.Rules[0].Verbs, []string{"get", "watch"}) {
 		t.Fatalf("the grant's Role must allow get/watch on exactly the granted Cluster's offered Secrets: %+v", role.Rules)
 	}

@@ -54,7 +54,7 @@ func (c *capture) all() string {
 
 func offerSecret(t *testing.T, servers ...offer.Server) *corev1.Secret {
 	t.Helper()
-	raw, err := offer.Encode(offer.Document{Servers: servers})
+	raw, err := offer.Encode(offer.Document{Servers: servers, CAs: baseCAs()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,8 +87,8 @@ func TestRunFollowsRotationAndOfferChanges(t *testing.T) {
 	srv := server("one", "app", "one-app", "")
 	client := fake.NewClientset(
 		offerSecret(t, srv),
+		// No CA Secret: the CA comes with the offer.
 		secret("one-app", "", map[string]string{"username": "app", "password": "pw-before"}),
-		caSecret("one-ca", caPEM1),
 	)
 	files := Files{Dir: t.TempDir()}
 	logs := &capture{}
@@ -147,7 +147,6 @@ func TestRunKeepsFilesOnInvalidOffer(t *testing.T) {
 	client := fake.NewClientset(
 		offerSecret(t, srv),
 		secret("one-app", "", map[string]string{"username": "app", "password": "pw-kept"}),
-		caSecret("one-ca", caPEM1),
 	)
 	files := Files{Dir: t.TempDir()}
 	go func() {

@@ -156,6 +156,9 @@ func (r *Reconciler) resolve(ctx context.Context, p *pgtoolboxv1alpha1.PgAdmin) 
 			len(result.Document.Servers), offer.MaxServers))
 		result.Document.Servers = result.Document.Servers[:offer.MaxServers]
 	}
+	if err := r.offerCAs(ctx, p, &result.Document); err != nil {
+		return buildInputs{}, offerResult{}, remoteResolution{}, err
+	}
 	proxyDefault, err := r.oauthProxyDefault(ctx, p)
 	if err != nil {
 		return buildInputs{}, offerResult{}, remoteResolution{}, err

@@ -97,10 +97,16 @@ offered and `ConfigurationValid` is `False` (`DatabaseRoleAPIUnavailable`).
 `configDatabase` always needs the kind.
 
 **How passwords reach pgAdmin.** The operator never holds a database password. It
-writes an *offer* into a Secret only it writes: names of Secrets and roles, no
-password. A sidecar (`passfile-sync`, the operator's own binary copied into the
-Pod by an init container so it runs under pgAdmin's UID) reads exactly the offered
-Secrets and the Clusters' `<cluster>-ca` through the Pod's name-scoped Role, and
+writes an *offer* into a Secret only it writes: names of Secrets and roles and
+each Cluster's CA certificate, no password. The operator copies that certificate
+from the Cluster's server CA Secret (`spec.certificates.serverCASecret`, else
+`<cluster>-ca`), keeping only the `CERTIFICATE` blocks of `ca.crt`: CloudNativePG's
+`<cluster>-ca` also holds the CA's private key, which signs client certificates
+when the Cluster sets no `clientCASecret`, so pgAdmin's ServiceAccount is never
+granted a CA Secret. A renewed CA reaches the offer on the next reconciliation of
+the Cluster. A sidecar (`passfile-sync`, the operator's own binary copied into the
+Pod by an init container so it runs under pgAdmin's UID) reads the offer and
+exactly the offered password Secrets through the Pod's name-scoped Role, and
 rewrites a libpq service file and a `pgpass` file atomically on rotation. They live
 on a memory-backed `emptyDir` outside pgAdmin's storage directory (mode 0600, the
 files bounded to 1 MiB in total), so nothing is downloadable through pgAdmin's file
@@ -303,7 +309,8 @@ Without a grant, `ConfigurationValid` is `False` with reason **`GrantMissing`**
 naming the Cluster (a Warning Event on the transition), and the Clusters of the
 `PgAdmin`'s own namespace are still served. With a grant, the operator keeps, in
 the grant's namespace, a Role allowing `get` and `watch` on exactly the offered
-Secrets of the granted Clusters (and their CA) and a RoleBinding of that Role to the
+password Secrets of the granted Clusters (never their CA Secret: the offer carries
+the certificate) and a RoleBinding of that Role to the
 `PgAdmin`'s ServiceAccount, both owned by the grant: **deleting the
 `PgAdminAccess` revokes the access** (garbage collection deletes them), and a
 `PgAdmin` that stops naming the namespace, or is deleted, has them deleted (the

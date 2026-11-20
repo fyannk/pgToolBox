@@ -94,6 +94,8 @@ func TestParseRefuses(t *testing.T) {
 		{"bad endpoint", mutate(func(d *Document) { d.Servers[0].Endpoint = "pooler:" }), "invalid endpoint"},
 		{"bad port", mutate(func(d *Document) { d.Servers[0].Port = 0 }), "invalid port"},
 		{"newline in resource version", mutate(func(d *Document) { d.Servers[0].SecretResourceVersion = "1\n2" }), "invalid secretResourceVersion"},
+		{"bad CA key", mutate(func(d *Document) { d.CAs = map[string]string{"../evil": "x"} }), "invalid CA entry"},
+		{"empty CA", mutate(func(d *Document) { d.CAs = map[string]string{"c1": ""} }), "invalid CA entry"},
 		{"too many servers", manyRaw, "over 64"},
 		{"not JSON", "nope", "decode"},
 	}
@@ -117,7 +119,7 @@ func TestEncodeRefusesInvalid(t *testing.T) {
 
 func TestSecretNamesSortedUnique(t *testing.T) {
 	got := validDoc().SecretNames("")
-	want := []string{"c1-app", "c1-ca", "c2-app", "c2-ca", "owner-pw"}
+	want := []string{"c1-app", "c2-app", "owner-pw"} // never a CA Secret
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("SecretNames = %v, want %v", got, want)
 	}
@@ -212,13 +214,15 @@ func TestDocumentNamespacesOwnersAndSecrets(t *testing.T) {
 		t.Fatalf("owners %v", got)
 	}
 	local := doc.SecretNames("")
-	for _, want := range []string{"alice-password", "team-pgadmin-config-password", doc.Servers[0].SecretName, doc.Servers[0].CASecretName} {
+	for _, want := range []string{"alice-password", "team-pgadmin-config-password", doc.Servers[0].SecretName} {
 		if !slices.Contains(local, want) {
 			t.Fatalf("local Secrets %v lack %s", local, want)
 		}
 	}
-	if got := doc.SecretNames("team-b"); !slices.Equal(got, []string{doc.Servers[0].SecretName, doc.Servers[0].CASecretName}) &&
-		!slices.Equal(got, []string{doc.Servers[0].CASecretName, doc.Servers[0].SecretName}) {
+	if slices.Contains(local, doc.Servers[0].CASecretName) {
+		t.Fatalf("local Secrets %v name the CA Secret", local)
+	}
+	if got := doc.SecretNames("team-b"); !slices.Equal(got, []string{doc.Servers[0].SecretName}) {
 		t.Fatalf("team-b Secrets %v", got)
 	}
 	keys := map[string]bool{}

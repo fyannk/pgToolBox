@@ -31,21 +31,25 @@ func TestRenderGrantedNamespace(t *testing.T) {
 	remote.Name, remote.Namespace, remote.Service = "team-b/one rw (app)", "team-b", "pgtoolbox-team-b-one-app"
 	settings := server("two", "pgadmin_team", "settings-pw", "9")
 	settings.Name, settings.Service = "pgAdmin settings database", "pgtoolbox-config-database"
-	doc := offer.Document{Version: offer.Version, Servers: []offer.Server{server("one", "app", "one-app", ""), remote}, ConfigDatabase: &settings}
+	doc := offer.Document{
+		Version: offer.Version, Servers: []offer.Server{server("one", "app", "one-app", ""), remote}, ConfigDatabase: &settings,
+		CAs: map[string]string{"one": caPEM1, "two": caPEM2},
+	}
 
 	secrets := baseSecrets()
 	secrets["settings-pw"] = secret("settings-pw", "9", map[string]string{"username": "pgadmin_team", "password": "pw-settings"})
-	// The local Secret of the same name must not serve the other namespace.
+	// The local Secret and CA of the same name must not serve the other
+	// namespace.
 	outcome, err := Render(files, doc, secrets)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if outcome.Offered != 2 || len(outcome.Refused) != 1 || !strings.Contains(outcome.Refused[0], "team-b/one-ca") {
+	if outcome.Offered != 2 || len(outcome.Refused) != 1 || !strings.Contains(outcome.Refused[0], "team-b.one") {
 		t.Fatalf("outcome %+v: the granted server's Secrets are absent from its namespace", outcome)
 	}
 
 	secrets["team-b/one-app"] = secret("one-app", "3", map[string]string{"username": "app", "password": "pw-remote"})
-	secrets["team-b/one-ca"] = caSecret("one-ca", caPEM2)
+	doc.CAs["team-b.one"] = caPEM2
 	outcome, err = Render(files, doc, secrets)
 	if err != nil {
 		t.Fatal(err)
