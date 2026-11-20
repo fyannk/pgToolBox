@@ -7,7 +7,7 @@
  */
 
 export interface Hello {
-  /** Interval of the keep-alive comment lines. */
+  /** Interval of the heartbeat events. */
   heartbeatSeconds: number;
   /** Polling backstop: interval the backoff stops at. */
   pollMaxSeconds: number;

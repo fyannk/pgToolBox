@@ -150,6 +150,7 @@ export * from './getTopologyFoldItem.ts';
 export * from './getTopologyParams.ts';
 export * from './grantList.ts';
 export * from './grantView.ts';
+export * from './heartbeat.ts';
 export * from './hello.ts';
 export * from './hibernation.ts';
 export * from './hibernationState.ts';
