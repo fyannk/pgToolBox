@@ -15,9 +15,11 @@
 package pgbackrest
 
 import (
+	"bytes"
 	"context"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/fyannk/pgToolBox/internal/evidence/evidence"
@@ -173,6 +175,118 @@ func TestAspectsOfRealRepositories(t *testing.T) {
 				}
 			}
 			test.check(t, report, aspects)
+		})
+	}
+}
+
+// TestOneDamageMakesTheBackupUnusable breaks exactly one thing in the
+// plain repository and checks the reader's usability, the assessment's
+// reason and the roll-up: every unusable branch is a tested branch.
+func TestOneDamageMakesTheBackupUnusable(t *testing.T) {
+	t.Parallel()
+	plain := loadFixture(t, fixtureRoot, "plain")
+	info, _ := loadInfoPair(t, "plain")
+	diff := info.Backups[1]
+	backupInfo := plain.content["backup/demo/backup.info"]
+	bothInfo := func(content []byte) *fixtureRepository {
+		return plain.with("backup/demo/backup.info", content).with("backup/demo/backup.info.copy", content)
+	}
+	manifestKey := ManifestKey("demo", diff.Label)
+	bothManifests := func(content []byte) *fixtureRepository {
+		return plain.with(manifestKey, content).with(manifestKey+".copy", content)
+	}
+	diffLine := func(edit func(string) string) []byte {
+		return rewriteINI(t, backupInfo, func(body string) string {
+			lines := strings.Split(body, "\n")
+			for index, line := range lines {
+				if strings.HasPrefix(line, diff.Label+"=") {
+					lines[index] = edit(line)
+				}
+			}
+			return strings.Join(lines, "\n")
+		})
+	}
+
+	tests := []struct {
+		name       string
+		repository *fixtureRepository
+		options    func(*Options)
+		kind       BackupType
+		state      evidence.State
+		unusable   []UnusableReason
+		reason     string
+		overall    evidence.State
+	}{
+		{
+			name: "pgBackRest recorded page checksum errors",
+			repository: bothInfo(diffLine(func(line string) string {
+				return strings.Replace(line, `"backup-error":false`, `"backup-error":true`, 1)
+			})),
+			kind: BackupDifferential, state: evidence.Unhealthy, unusable: []UnusableReason{UnusableBackupError},
+			reason: "pgBackRest recorded errors (page checksums) in this backup", overall: evidence.Unhealthy,
+		},
+		{
+			name:       "neither manifest verifies",
+			repository: bothManifests(bytes.Replace(plain.content[manifestKey], []byte(`backup-type="diff"`), []byte(`backup-type="diff" `), 1)),
+			kind:       BackupDifferential, state: evidence.Unhealthy, unusable: []UnusableReason{UnusableManifestUnhealthy},
+			reason: "manifest does not verify", overall: evidence.Unhealthy,
+		},
+		{
+			name: "the manifest contradicts backup.info",
+			repository: bothManifests(rewriteINI(t, plain.content[manifestKey], func(body string) string {
+				return strings.Replace(body, "backup-timestamp-stop=1794039063", "backup-timestamp-stop=1794039064", 1)
+			})),
+			kind: BackupDifferential, state: evidence.Unhealthy, unusable: []UnusableReason{UnusableManifestUnhealthy},
+			reason: "manifest contradicts backup.info", overall: evidence.Unhealthy,
+		},
+		{
+			name:       "neither manifest can be read",
+			repository: bothManifests([]byte("not a manifest")),
+			kind:       BackupDifferential, state: evidence.Unknown, unusable: []UnusableReason{UnusableManifestUnknown},
+			reason: "manifest cannot be read", overall: evidence.Unknown,
+		},
+		{
+			name: "an older full backup beyond the manifest bound",
+			repository: bothInfo(rewriteINI(t, backupInfo, func(body string) string {
+				full := info.Backups[0]
+				_, after, _ := strings.Cut(body, "\n"+full.Label+"=")
+				line, _, _ := strings.Cut(full.Label+"="+after, "\n")
+				older := strings.Replace(strings.Replace(line, full.Label, "20200101-000000F", 1), `"backup-timestamp-start":17`, `"backup-timestamp-start":16`, 1)
+				older = strings.Replace(older, `"backup-timestamp-stop":17`, `"backup-timestamp-stop":16`, 1)
+				return strings.Replace(body, "[backup:current]\n", "[backup:current]\n"+older+"\n", 1)
+			})),
+			options: func(options *Options) { options.MaxManifests = 1 },
+			// The catalog counts older backups not read as not read, not as
+			// damage, so the roll-up stays healthy.
+			kind: BackupFull, state: evidence.Unknown, unusable: []UnusableReason{UnusableManifestNotInspected}, overall: evidence.Healthy,
+		},
+		{
+			name: "the chain is broken",
+			repository: bothInfo(rewriteINI(t, backupInfo, func(body string) string {
+				lines := strings.Split(body, "\n")
+				return strings.Join(slices.DeleteFunc(lines, func(line string) bool { return strings.HasPrefix(line, diff.Label+"=") }), "\n")
+			})),
+			kind: BackupIncremental, state: evidence.Unhealthy, unusable: []UnusableReason{UnusableChainBroken}, overall: evidence.Unhealthy,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			options := Options{Stanza: "demo", Generation: 1}
+			if test.options != nil {
+				test.options(&options)
+			}
+			report := Analyze(context.Background(), test.repository.reader(t), test.repository.objects, options)
+			backup, assessment := backupOfType(t, report, test.kind), assessmentOf(t, report, test.kind)
+			if backup.Usable || assessment.Usable || assessment.State != test.state || !reflect.DeepEqual(assessment.Unusable, test.unusable) {
+				t.Fatalf("%s: usable %v, assessment %+v", backup.Backup.Label, backup.Usable, assessment)
+			}
+			if test.reason != "" && assessment.Reason != test.reason {
+				t.Fatalf("reason %q, want %q", assessment.Reason, test.reason)
+			}
+			if aspects := report.Aspects(); aspects.Overall.State != test.overall || aspects.Catalog.State != test.overall {
+				t.Fatalf("aspects %+v", aspects)
+			}
 		})
 	}
 }

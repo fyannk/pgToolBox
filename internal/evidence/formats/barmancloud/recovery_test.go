@@ -449,6 +449,54 @@ func TestRecoveryCoverageIgnoresHistoricalGapBeforeAnchor(t *testing.T) {
 	}
 }
 
+// TestWALGapBeforeConsistencyMakesTheBackupUnusable: the backup starts at
+// segment 1 and is consistent at segment 4; only segment 3 is missing, and
+// how the gap is classified decides how unusable the path is.
+func TestWALGapBeforeConsistencyMakesTheBackupUnusable(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name   string
+		gaps   []WALGap
+		state  evidence.State
+		stop   CoverageStop
+		reason string
+	}{
+		{
+			name: "confirmed gap", gaps: []WALGap{{Timeline: 1, Start: 3, End: 3, Count: 1, Status: GapConfirmed, FirstObservedGeneration: 1, LastObservedGeneration: 2}},
+			state: evidence.Unhealthy, stop: CoverageGapLimited, reason: "confirmed required WAL gap stops coverage",
+		},
+		{
+			name: "candidate gap", gaps: []WALGap{{Timeline: 1, Start: 3, End: 3, Count: 1, Status: GapCandidate, FirstObservedGeneration: 1, LastObservedGeneration: 1}},
+			state: evidence.Warning, stop: CoverageCandidateLimited, reason: "candidate required WAL gap stops coverage",
+		},
+		{
+			name:  "unclassified discontinuity",
+			state: evidence.Unknown, stop: CoverageUnknownLimited, reason: "unclassified WAL discontinuity stops coverage",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			wal := ServerWAL{
+				Server: "alpha", State: evidence.Warning, PostgreSQLVersion: 180000, SegmentSize: 16 << 20,
+				Ranges: []WALRange{walRange(1, 1, 2), walRange(1, 4, 6)}, Gaps: test.gaps,
+			}
+			backup := recoveryBackup(time.Now().UTC(), 1, 4)
+			catalog := AnalyzeRecovery(context.Background(), &storetest.Fake{}, []Backup{backup}, WALCatalog{Servers: []ServerWAL{wal}}, nil, false, RecoveryOptions{})
+			server := catalog.Servers[0]
+			if len(server.Paths) != 1 {
+				t.Fatalf("paths = %#v", server.Paths)
+			}
+			path := server.Paths[0]
+			if path.State != test.state || path.Stop != test.stop || path.Reason != test.reason || path.FrontierPosition != 2 {
+				t.Fatalf("path = state %s stop %s reason %q frontier %d", path.State, path.Stop, path.Reason, path.FrontierPosition)
+			}
+			if server.CoverageState != test.state {
+				t.Fatalf("coverage = %s %q, want %s", server.CoverageState, server.CoverageReason, test.state)
+			}
+		})
+	}
+}
+
 func TestTimelineAndCoverageFailUnknownForMissingMalformedAndInconsistentEvidence(t *testing.T) {
 	t.Parallel()
 	backup := recoveryBackup(time.Now().UTC(), 1, 1)
