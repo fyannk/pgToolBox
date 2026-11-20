@@ -18,10 +18,12 @@ import "strings"
 
 // Cluster.status.phase is a free sentence, not an enum. The table below
 // lists every phase constant of api/v1/cluster_types.go at each
-// supported tag; all of them reach the status through
+// supported tag, and the two phases the controller registers as string
+// literals instead (internal/controller/cluster_controller.go: "Instance
+// Status Extraction Error: HTTP communication issue" and "Not enough disk
+// space"). All of them reach the status through
 // ClusterReconciler.RegisterPhase (internal/controller/cluster_status.go
-// v1.30.0:733) or the promote plugin, always with the constant, never a
-// literal.
+// v1.30.0:733) or the promote plugin.
 //
 // Colour reference: kubectl cnpg status (internal/cmd/plugin/status/status.go,
 // v1.30.0:478-484, main:524-530) paints green exactly
@@ -181,6 +183,17 @@ var phaseRows = []PhaseEntry{
 	{
 		Phase: "Invalid cluster definition", Class: ClassCritical, Kubectl: kubectlRed, Since: Minor130,
 		Source: "api/v1/cluster_types.go PhaseDefinitionInvalid (v1.30.0:766, main:777)",
+	},
+	// A literal, no constant: no ready instance answered the status
+	// endpoint, so the operator can decide nothing.
+	{
+		Phase: "Instance Status Extraction Error: HTTP communication issue", Class: ClassCritical, Kubectl: kubectlRed, Since: Minor130,
+		Source: "internal/controller/cluster_controller.go RegisterPhase literal (v1.30.0:524, v1.30.1:525)",
+	},
+	// A literal, no constant: PostgreSQL is kept down until the volume grows.
+	{
+		Phase: "Not enough disk space", Class: ClassCritical, Kubectl: kubectlRed, Since: Minor130,
+		Source: "internal/controller/cluster_controller.go RegisterPhase literal (v1.30.0:716, v1.30.1:720)",
 	},
 }
 

@@ -150,7 +150,8 @@ func TestClassifyPhase(t *testing.T) {
 // TestPhaseTableMatchesAPIModule pins the 1.30 table to the phase
 // constants of github.com/cloudnative-pg/api v1.30.0 (go.mod), at
 // compile time and by value: every constant is in the table, and the
-// table has nothing else.
+// table has nothing else but the two phases the controller registers as
+// literals (pins_test.go greps them in the operator source).
 func TestPhaseTableMatchesAPIModule(t *testing.T) {
 	constants := []string{
 		cnpgv1.PhaseSwitchover, cnpgv1.PhaseFailOver, cnpgv1.PhaseFirstPrimary,
@@ -162,6 +163,7 @@ func TestPhaseTableMatchesAPIModule(t *testing.T) {
 		cnpgv1.PhaseOnlineUpgrading, cnpgv1.PhaseApplyingConfiguration,
 		cnpgv1.PhaseReplicaClusterPromotion, cnpgv1.PhaseCannotCreateClusterObjects,
 		cnpgv1.PhaseDefinitionInvalid,
+		"Instance Status Extraction Error: HTTP communication issue", "Not enough disk space",
 	}
 	rows := PhaseTable(Minor130)
 	table := make([]string, 0, len(rows))
@@ -171,7 +173,7 @@ func TestPhaseTableMatchesAPIModule(t *testing.T) {
 	slices.Sort(constants)
 	slices.Sort(table)
 	if !slices.Equal(constants, table) {
-		t.Errorf("1.30 phase table and api v1.30.0 constants differ:\ntable: %q\napi:   %q", table, constants)
+		t.Errorf("1.30 phase table and api v1.30.0 constants (plus literals) differ:\ntable: %q\napi:   %q", table, constants)
 	}
 	if PhaseTable("1.29") != nil {
 		t.Error("1.29 is below the support floor but has a phase table")
