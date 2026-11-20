@@ -20,7 +20,7 @@ test-fuzz-operator: ## Fuzz the operator's untrusted parsers (registration repor
 # /readyz stays unready while an informer cannot list, ready once it syncs.
 .PHONY: test-envtest-manager
 test-envtest-manager: ## The operator binary on envtest: /metrics (TLS, TokenReview, SubjectAccessReview) and /readyz following the informer cache.
-	KUBEBUILDER_ASSETS="$$($(SETUP_ENVTEST) use $(ENVTEST_K8S_VERSION_CONSOLE) -p path)" \
+	$(call envtest_assets,$(ENVTEST_K8S_VERSION_CONSOLE)) \
 		go test ./cmd/operator/ -run 'Envtest' -count=1 -v
 
 # The operator confined by operator.config.watchNamespaces on kind: Ready with

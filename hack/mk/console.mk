@@ -38,12 +38,12 @@ test-envtest-console-ops: ## The console's write path (token passthrough, RBAC p
 
 .PHONY: test-envtest-console-pgadmin
 test-envtest-console-pgadmin: ## The console's per-person DatabaseRole writer on envtest (strict schema on CloudNativePG 1.30, the user's own RBAC).
-	KUBEBUILDER_ASSETS="$$($(SETUP_ENVTEST) use $(ENVTEST_K8S_VERSION_CONSOLE) -p path)" \
+	$(call envtest_assets,$(ENVTEST_K8S_VERSION_CONSOLE)) \
 		go test -tags envtest -count=1 -run '^TestPersonalDatabaseRoleOnEnvtest$$' ./internal/console/ops/
 
 .PHONY: test-envtest-console-mcpleader
 test-envtest-console-mcpleader: ## The MCP leader's hand-over on envtest (two replicas: Lease, EndpointSlice, grant index).
-	KUBEBUILDER_ASSETS="$$($(SETUP_ENVTEST) use $(ENVTEST_K8S_VERSION_CONSOLE) -p path)" \
+	$(call envtest_assets,$(ENVTEST_K8S_VERSION_CONSOLE)) \
 		go test -tags envtest -count=1 -run '^TestHandOverOnEnvtest$$' ./internal/console/mcpleader/
 
 # `make test-console-core` (Makefile) runs the write-path envtests with the
@@ -57,5 +57,5 @@ test-console-core: test-envtest-console-ops test-envtest-console-pgadmin test-en
 # the coverage table and the blind spots.
 .PHONY: test-e2e-console-authz
 test-e2e-console-authz: ## RBAC / SubjectAccessReview / SelfSubjectReview semantics of the console on envtest (no kind).
-	KUBEBUILDER_ASSETS="$$($(SETUP_ENVTEST) use $(ENVTEST_K8S_VERSION_CONSOLE) -p path)" \
+	$(call envtest_assets,$(ENVTEST_K8S_VERSION_CONSOLE)) \
 		go test -tags e2econsole -count=1 -v ./test/e2e/console/

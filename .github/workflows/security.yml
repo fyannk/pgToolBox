@@ -536,7 +536,9 @@ jobs:
   # when a scanner broke.
   security-gate:
     name: security-gate
-    if: always() && !cancelled()
+    # always(), not !cancelled(): a skipped required check counts as passed,
+    # so a cancelled run must end here as a failure, like ci-ok.
+    if: always()
     needs: [codeql, govulncheck, osv-scanner, npm-audit, images, published-images, gitleaks, gosec, zizmor, kube-linter]
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -549,6 +551,14 @@ jobs:
       REPO: ${{ github.repository }}
       NEEDS: ${{ toJSON(needs) }}
     steps:
+      - name: No scanner was cancelled
+        run: |
+          set -euo pipefail
+          bad="$(jq -r 'to_entries[] | select(.value.result == "cancelled") | .key' <<<"${NEEDS}")"
+          if [[ -n "${bad}" ]]; then
+            echo "::error::These scanners were cancelled: ${bad}"
+            exit 1
+          fi
       - name: Check out the repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
