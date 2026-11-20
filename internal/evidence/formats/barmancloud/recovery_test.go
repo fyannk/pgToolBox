@@ -19,8 +19,11 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/base64"
+	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"slices"
 	"strings"
@@ -92,7 +95,7 @@ func TestTimelineHistoryReaderSupportsEveryBarmanCloudCodec(t *testing.T) {
 	for compression, encode := range encoders {
 		t.Run(compression, func(t *testing.T) {
 			t.Parallel()
-			reader, closer, err := historyReader(bytes.NewReader(encode(t)), compression)
+			reader, closer, err := historyReader(encode(t), compression)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -105,6 +108,56 @@ func TestTimelineHistoryReaderSupportsEveryBarmanCloudCodec(t *testing.T) {
 			}
 		})
 	}
+}
+
+// pythonXZHistory is lzma.compress of a one-line history, as Barman's
+// Python lzma writes it: one block, LZMA2 dictionary property 22 (8 MiB).
+const pythonXZHistory = "fd377a585a000004e6d6b4460200210116000000742fe5a30100283109302f33303030303030096e6f207265636f7665727920746172676574207370656369666965640a00000000fa589f6fbee1751c000141290353568b1fb6f37d010000000004595a"
+
+// hugeDictionaryXZHistory is pythonXZHistory with the dictionary property
+// set to 40 (4 GiB) and the block header CRC32 fixed: 100 bytes that made
+// ulikunitz/xz allocate 4 GiB before decoding a byte.
+const hugeDictionaryXZHistory = "fd377a585a000004e6d6b4460200210128000000e6a011b30100283109302f33303030303030096e6f207265636f7665727920746172676574207370656369666965640a00000000fa589f6fbee1751c000141290353568b1fb6f37d010000000004595a"
+
+func TestXZHistoryDictionaryIsBounded(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name, stream string
+		accepted     bool
+	}{
+		{name: "python lzma default preset", stream: pythonXZHistory, accepted: true},
+		{name: "4 GiB dictionary", stream: hugeDictionaryXZHistory},
+		{name: "12 MiB dictionary", stream: strings.Replace(pythonXZHistory, "0200210116000000742fe5a3", "0200210117000000"+xzHeaderCRC(t, "0200210117000000"), 1)},
+		{name: "truncated", stream: pythonXZHistory[:60]},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			compressed, err := hex.DecodeString(test.stream)
+			if err != nil {
+				t.Fatal(err)
+			}
+			reader := &storetest.Fake{OpenFunc: func(context.Context, store.OpenRequest) (io.ReadCloser, error) {
+				return io.NopCloser(bytes.NewReader(compressed)), nil
+			}}
+			data, err := readHistory(context.Background(), reader, HistoryObject{Key: "alpha/wals/00000002.history.xz", Compression: "xz"})
+			switch {
+			case test.accepted && (err != nil || !strings.HasPrefix(string(data), "1\t0/3000000\t")):
+				t.Fatalf("readHistory() = %q, %v", data, err)
+			case !test.accepted && (err == nil || !strings.Contains(err.Error(), "unsupported history compression")):
+				t.Fatalf("readHistory() error = %v, want an unsupported history compression refusal", err)
+			}
+		})
+	}
+}
+
+// xzHeaderCRC returns the little-endian CRC32 of a hex block header body.
+func xzHeaderCRC(t *testing.T, body string) string {
+	t.Helper()
+	raw, err := hex.DecodeString(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return hex.EncodeToString(binary.LittleEndian.AppendUint32(nil, crc32.ChecksumIEEE(raw)))
 }
 
 func TestTimelineHistoryBoundsFailUnknown(t *testing.T) {

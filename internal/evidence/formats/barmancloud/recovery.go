@@ -432,7 +432,7 @@ func readHistory(ctx context.Context, reader store.Reader, object HistoryObject)
 	if err != nil || int64(len(compressed)) > MaxHistoryObjectBytes {
 		return nil, errors.New("history object exceeds limit")
 	}
-	readerValue, closeValue, err := historyReader(bytes.NewReader(compressed), object.Compression)
+	readerValue, closeValue, err := historyReader(compressed, object.Compression)
 	if err != nil {
 		return nil, err
 	}
@@ -446,7 +446,8 @@ func readHistory(ctx context.Context, reader store.Reader, object HistoryObject)
 	return data, nil
 }
 
-func historyReader(source io.Reader, compression string) (io.Reader, io.Closer, error) {
+func historyReader(compressed []byte, compression string) (io.Reader, io.Closer, error) {
+	source := bytes.NewReader(compressed)
 	switch compression {
 	case "none":
 		return source, nil, nil
@@ -460,7 +461,10 @@ func historyReader(source io.Reader, compression string) (io.Reader, io.Closer, 
 	case "lz4":
 		return lz4.NewReader(source), nil, nil
 	case "xz":
-		reader, err := xz.NewReader(source)
+		if !xzDictionariesWithin(compressed) {
+			return nil, nil, errors.New("unsupported history compression: xz dictionary exceeds limit")
+		}
+		reader, err := xz.ReaderConfig{SingleStream: true}.NewReader(source)
 		return reader, nil, err
 	case "zstd":
 		reader, err := zstd.NewReader(source, zstd.WithDecoderMaxMemory(uint64(MaxHistoryDecompressedBytes*4)))
@@ -472,6 +476,89 @@ func historyReader(source io.Reader, compression string) (io.Reader, io.Closer, 
 	default:
 		return nil, nil, errors.New("unsupported history compression")
 	}
+}
+
+// xzMaxDictionary bounds the LZMA2 dictionary an xz history may declare.
+// ulikunitz/xz allocates the declared dictionary (up to 4 GiB) when it reads
+// a block header, before decoding a byte, and ReaderConfig.DictCap is a floor,
+// not a ceiling. 8 MiB is the dictionary of liblzma's default preset, which
+// Barman's Python lzma writes.
+const xzMaxDictionary = 8 << 20
+
+// xzDictionariesWithin walks the blocks of the one xz stream in data the way
+// the decoder reads them (block header, LZMA2 chunks up to the end marker,
+// padding, check) and reports whether every block has a single LZMA2 filter
+// whose dictionary is at most xzMaxDictionary. Anything it cannot walk is
+// refused; the decoder is created with SingleStream so it reads nothing past
+// the walked stream.
+func xzDictionariesWithin(data []byte) bool {
+	if len(data) < 12 || !xz.ValidHeader(data[:12]) {
+		return false
+	}
+	checkSizes := map[byte]int{0x00: 0, 0x01: 4, 0x04: 8, 0x0a: 32}
+	checkSize, ok := checkSizes[data[7]&0x0f]
+	if !ok {
+		return false
+	}
+	position := 12
+	for position < len(data) && data[position] != 0x00 { // 0x00 starts the index
+		size := (int(data[position]) + 1) * 4
+		if position+size > len(data) {
+			return false
+		}
+		header := data[position+1 : position+size-4] // without the size byte and CRC32
+		flags, index := header[0], 1
+		if flags&0x03 != 0 { // more than one filter
+			return false
+		}
+		for _, present := range []bool{flags&0x40 != 0, flags&0x80 != 0} { // compressed, uncompressed size
+			for present {
+				if index >= len(header) {
+					return false
+				}
+				present = header[index]&0x80 != 0
+				index++
+			}
+		}
+		if index+3 > len(header) || header[index] != 0x21 || header[index+1] != 1 {
+			return false
+		}
+		if dictionary := header[index+2]; dictionary >= 40 || int64(2|dictionary&1)<<(dictionary/2+11) > xzMaxDictionary {
+			return false
+		}
+		if position = lzma2End(data, position+size); position < 0 {
+			return false
+		}
+		position = (position+3)&^3 + checkSize
+	}
+	return position < len(data)
+}
+
+// lzma2End returns the offset just past the end marker of the LZMA2 chunks
+// starting at position, or -1 when they do not end inside data.
+func lzma2End(data []byte, position int) int {
+	for position < len(data) {
+		switch control := data[position]; {
+		case control == 0x00:
+			return position + 1
+		case control == 0x01 || control == 0x02: // uncompressed chunk
+			if position+3 > len(data) {
+				return -1
+			}
+			position += 3 + (int(data[position+1])<<8 | int(data[position+2])) + 1
+		case control >= 0x80: // LZMA chunk, with a properties byte from 0xc0
+			if position+5 > len(data) {
+				return -1
+			}
+			position += 5 + (int(data[position+3])<<8 | int(data[position+4])) + 1
+			if control >= 0xc0 {
+				position++
+			}
+		default:
+			return -1
+		}
+	}
+	return -1
 }
 
 // lowestTimeline is the lowest timeline the WAL or a structurally usable
