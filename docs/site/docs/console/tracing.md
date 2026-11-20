@@ -108,9 +108,10 @@ site's decision; the console opens no listener for them.
   `includePayloads`, the arguments (`gen_ai.tool.call.arguments`) and the
   result (`gen_ai.tool.call.result`) are added, each capped at 16 KiB and
   redacted first: values under keys that name a credential (token, secret,
-  password, authorization, cookie, credential, API key) and credential-shaped
-  text anywhere (JWTs, `Bearer` and `Basic` values, user information in URLs)
-  are replaced with `[redacted]`. Results are what the person could read on the
+  password, passphrase, cipher pass, authorization, cookie, credential, API
+  key) and credential-shaped text anywhere (JWTs, `Bearer` and `Basic` values,
+  libpq `password=` keywords, SQL `PASSWORD '…'` clauses, user information in
+  URLs) are replaced with `[redacted]`. Results are what the person could read on the
   screens (the console reads no Secret), but they include text written by
   database users (log lines, statements, application names): turn payloads on
   for a backend you would trust with the console's screens.
