@@ -1009,12 +1009,13 @@ func existingImage(d *appsv1.Deployment) string {
 	return ""
 }
 
-// unavailableWhy is the probe's reason for an unusable optional API.
+// unavailableWhy is the probe's reason for an unusable optional API. The
+// probe runs once, when the operator starts, so the reason says so.
 func unavailableWhy(result discovery.Result) string {
 	if result.Reason == "" {
 		return "not probed"
 	}
-	return result.Reason
+	return result.Reason + " (probed when the operator started: restart it once the API is installed or allowed)"
 }
 
 // checkHostname refuses a spec.exposure.hostname outside the operator's

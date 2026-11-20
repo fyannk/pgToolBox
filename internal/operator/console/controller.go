@@ -840,9 +840,11 @@ func podFacts(ctx context.Context, reader client.Reader, console *pgtoolboxv1alp
 	return "", "", nil
 }
 
+// unavailableWhy is the probe's reason for an unusable optional API. The
+// probe runs once, when the operator starts, so the reason says so.
 func unavailableWhy(result discovery.Result) string {
 	if result.Reason == "" {
 		return "not probed"
 	}
-	return result.Reason
+	return result.Reason + " (probed when the operator started: restart it once the API is installed or allowed)"
 }
