@@ -7,9 +7,9 @@
 
 .PHONY: test-envtest-access
 test-envtest-access: manifests ## PgAccessRequest on envtest with real RBAC: the operator's controller (expiry, revocation, escalation refused) and the console's write path as viewer/operator tokens.
-	KUBEBUILDER_ASSETS="$$($(SETUP_ENVTEST) use $(ENVTEST_K8S_VERSION_API) -p path)" \
+	$(call envtest_assets,$(ENVTEST_K8S_VERSION_API)) \
 		go test -count=1 -run 'Envtest' ./internal/operator/accessrequest/
-	KUBEBUILDER_ASSETS="$$($(SETUP_ENVTEST) use $(ENVTEST_K8S_VERSION_API) -p path)" \
+	$(call envtest_assets,$(ENVTEST_K8S_VERSION_API)) \
 		go test -tags envtest -count=1 -run '^TestAccessWriterOnEnvtest$$' ./internal/console/ops/
 
 test-envtest: test-envtest-access

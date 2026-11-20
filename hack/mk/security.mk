@@ -14,7 +14,7 @@ test-fuzz: test-fuzz-audience
 
 .PHONY: test-envtest-security
 test-envtest-security: ## The agent's TokenReview/SAR with real bound tokens, and the console's status-writer check through its cache, on envtest.
-	KUBEBUILDER_ASSETS="$$($(SETUP_ENVTEST) use $(ENVTEST_K8S_VERSION_API) -p path)" \
+	$(call envtest_assets,$(ENVTEST_K8S_VERSION_API)) \
 		go test -tags envtest -count=1 -run 'OnEnvtest$$' ./internal/evidence/agent/ ./internal/console/evidence/
 
 test-envtest: test-envtest-security

@@ -38,6 +38,12 @@ SETUP_ENVTEST ?= $(call tool,setup-envtest,go run sigs.k8s.io/controller-runtime
 # console's kube layer is exercised on the newest the e2e uses.
 ENVTEST_K8S_VERSION_API ?= 1.34.1
 ENVTEST_K8S_VERSION_CONSOLE ?= 1.34.1
+
+# $(call envtest_assets,<k8s version>) prefixes a recipe's `go test`: it sets
+# KUBEBUILDER_ASSETS, or fails the recipe when setup-envtest fails or prints no
+# path (an empty path makes every envtest test skip and the job pass untested).
+envtest_assets = assets="$$($(SETUP_ENVTEST) use $(1) -p path)" && test -n "$$assets" \
+	|| { echo "setup-envtest gave no assets for Kubernetes $(1)" >&2; exit 1; }; KUBEBUILDER_ASSETS="$$assets"
 # The supported range is Kubernetes 1.34 to 1.36. PRs run the oldest; the
 # nightly run and a dispatch run 1.35.0 and 1.36.2 (ci.yml, envtest-k8s). The
 # same on a laptop: make test-envtest ENVTEST_K8S_VERSION_API=1.36.2
@@ -179,22 +185,22 @@ test-fuzz: ## Fuzz the trust-boundary parsers (FUZZ_TIME per target).
 # supported control plane.
 .PHONY: test-envtest
 test-envtest: manifests ## API-server-backed tests of the CRDs (CEL, defaulting, pruning) on envtest.
-	KUBEBUILDER_ASSETS="$$($(SETUP_ENVTEST) use $(ENVTEST_K8S_VERSION_API) -p path)" \
+	$(call envtest_assets,$(ENVTEST_K8S_VERSION_API)) \
 		go test ./api/... -run 'CEL|Schema' -count=1 -v
 
 .PHONY: test-envtest-evidenceagent
 test-envtest-evidenceagent: manifests ## The EvidenceAgent reconciler on envtest, as the generated manager ClusterRole (SSA, RBAC escalation, status).
-	KUBEBUILDER_ASSETS="$$($(SETUP_ENVTEST) use $(ENVTEST_K8S_VERSION_API) -p path)" \
+	$(call envtest_assets,$(ENVTEST_K8S_VERSION_API)) \
 		go test ./internal/operator/evidenceagent/ -run Envtest -count=1 -v
 
 .PHONY: test-envtest-admissionpolicy
 test-envtest-admissionpolicy: ## The operator chart's ValidatingAdmissionPolicy (helm template) and the OLM admission webhook evaluated on envtest as different users (needs helm; Kubernetes 1.30+ policies).
-	KUBEBUILDER_ASSETS="$$($(SETUP_ENVTEST) use $(ENVTEST_K8S_VERSION_CONSOLE) -p path)" \
+	$(call envtest_assets,$(ENVTEST_K8S_VERSION_CONSOLE)) \
 		go test ./internal/operator/admissionpolicy/ -run Envtest -count=1 -v
 
 .PHONY: test-envtest-pgtoolboxconsole
 test-envtest-pgtoolboxconsole: manifests ## The PgToolBoxConsole reconciler on envtest, as the generated manager ClusterRole (bind-only console roles, lifecycle keeper).
-	KUBEBUILDER_ASSETS="$$($(SETUP_ENVTEST) use $(ENVTEST_K8S_VERSION_API) -p path)" \
+	$(call envtest_assets,$(ENVTEST_K8S_VERSION_API)) \
 		go test ./internal/operator/console/ -run Envtest -count=1 -v
 
 .PHONY: test-fuzz-evidence-agent
@@ -625,7 +631,7 @@ ui-audit: ## pnpm audit of the SPA's runtime dependencies.
 # escalation prevention, schemas, server-side apply and the no-op reconcile.
 .PHONY: test-envtest-operator
 test-envtest-operator: manifests ## The PgAdmin reconciler and the pgtools sidecar's name-scoped Role on envtest (RBAC, SSA, no-op reconcile).
-	KUBEBUILDER_ASSETS="$$($(SETUP_ENVTEST) use $(ENVTEST_K8S_VERSION_CONSOLE) -p path)" \
+	$(call envtest_assets,$(ENVTEST_K8S_VERSION_CONSOLE)) \
 		go test ./internal/operator/pgadmin/ ./internal/operator/pgadmin/passfilesync/ -run 'Envtest' -count=1 -v
 
 .PHONY: test-e2e-pgadmin
