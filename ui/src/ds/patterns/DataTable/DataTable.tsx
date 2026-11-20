@@ -125,8 +125,15 @@ export function DataTable<T extends RowData>({
   });
   const rows = table.getRowModel().rows;
   return (
-    // biome-ignore lint/a11y/noNoninteractiveTabindex: a scrollable region must be reachable by keyboard (WCAG 2.1.1).
-    <section className="overflow-x-auto rounded-panel border border-line bg-surface" tabIndex={0} aria-label={caption}>
+    // The region scrolls both ways within a bounded height: overflow-x alone
+    // makes it the sticky header's scroll container anyway, and one that never
+    // scrolls vertically, so the header would never stick.
+    <section
+      className="max-h-[70dvh] overflow-auto rounded-panel border border-line bg-surface"
+      // biome-ignore lint/a11y/noNoninteractiveTabindex: a scrollable region must be reachable by keyboard (WCAG 2.1.1).
+      tabIndex={0}
+      aria-label={caption}
+    >
       <table className="w-full border-collapse text-label">
         <caption className="sr-only">{caption}</caption>
         <thead className="sticky top-0 bg-surface-2">

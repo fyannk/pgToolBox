@@ -20,6 +20,21 @@ function names(container: HTMLElement) {
 }
 
 describe("DataTable", () => {
+  test("the header stays visible when a long table is scrolled", async () => {
+    const many: Row[] = Array.from({ length: 200 }, (_, i) => ({ name: `row-${i}`, n: i }));
+    const screen = await renderInFrame(
+      <DataTable caption="Rows" data={many} columns={columns} getRowId={(r) => r.name} />,
+    );
+    const region = screen.getByRole("region", { name: "Rows" }).element();
+    const head = region.querySelector("thead");
+    if (!head) throw new Error("no header");
+    expect(region.scrollHeight).toBeGreaterThan(region.clientHeight);
+    region.scrollTop = region.scrollHeight;
+    await expect.poll(() => region.scrollTop).toBeGreaterThan(0);
+    const top = region.getBoundingClientRect().top + region.clientTop;
+    expect(Math.abs(head.getBoundingClientRect().top - top)).toBeLessThan(1);
+  });
+
   test("sorting is announced with aria-sort and cycles none → ascending → descending, by keyboard too", async () => {
     const screen = await renderInFrame(
       <DataTable caption="Rows" data={data} columns={columns} getRowId={(r) => r.name} />,
