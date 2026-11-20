@@ -423,9 +423,10 @@ func registerStream(a huma.API, d Deps) {
 		Summary: "Live updates", Tags: []string{"stream"},
 		Description: "Server-sent events: hello on connect (refetch everything), invalidate {topic, namespace, name} " +
 			"(refetch that), resync (refetch everything), reauth {expiresAt, refreshable} before the session ends " +
-			"(call GET /api/v1/session). A comment line every 15 s; no byte for 35 s means the stream is dead. " +
+			"(call GET /api/v1/session), heartbeat every heartbeatSeconds (15 s); no event for twice that means the stream is dead. " +
 			"While it is down, poll every 2 s backing off to 10 s. The stream closes when the session ends.",
 	}, map[string]any{
+		"heartbeat":  sse.Heartbeat{},
 		"hello":      sse.Hello{},
 		"invalidate": sse.Invalidate{},
 		"reauth":     sse.Reauth{},
@@ -490,8 +491,6 @@ func (s *sender) Event(data any) error {
 	}
 	return s.send(msg)
 }
-
-func (s *sender) Comment(text string) error { return s.send.Comment(text) }
 
 type streamCounter struct {
 	mu sync.Mutex

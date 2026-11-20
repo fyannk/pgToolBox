@@ -189,7 +189,7 @@ func TestOpenAPIHasNoThirdPartyDocsAndNoSchemaLinks(t *testing.T) {
 }
 
 // The stream over a real connection: retry hint and hello first,
-// heartbeat comments, invalidations filtered by the user's access,
+// heartbeat events, invalidations filtered by the user's access,
 // reauth before the session ends, closed at its end.
 func TestStreamOverHTTP(t *testing.T) {
 	t.Parallel()
@@ -233,7 +233,7 @@ func TestStreamOverHTTP(t *testing.T) {
 	if !strings.HasPrefix(all, "retry: 2000\nevent: hello\n") {
 		t.Fatalf("stream does not start with the retry hint and hello:\n%s", all)
 	}
-	for _, want := range []string{": heartbeat", `"name":"orders"`, "event: reauth", `"refreshable":true`} {
+	for _, want := range []string{"event: heartbeat\ndata: {\"serverTime\":", `"name":"orders"`, "event: reauth", `"refreshable":true`} {
 		if !strings.Contains(all, want) {
 			t.Errorf("stream lacks %q:\n%s", want, all)
 		}

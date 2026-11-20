@@ -300,7 +300,7 @@ func Generate() (map[string][]byte, error) {
 	stream := []StreamFixture{
 		{Event: "hello", Data: sse.Hello{ServerTime: fixtures.Now, HeartbeatSeconds: 15, PollMinSeconds: 2, PollMaxSeconds: 10}},
 		{Event: "invalidate", Data: sse.Invalidate{Topic: sse.TopicCluster, Namespace: "team-a", Name: "billing"}},
-		{Comment: "heartbeat"},
+		{Event: "heartbeat", Data: sse.Heartbeat{ServerTime: fixtures.Now}},
 		{Event: "invalidate", Data: sse.Invalidate{Topic: sse.TopicClusters}},
 		{Event: "reauth", Data: sse.Reauth{ExpiresAt: fixtures.Now.Add(5 * time.Minute), Refreshable: true}},
 		{Event: "resync", Data: sse.Resync{Reason: "events were dropped for this client"}},

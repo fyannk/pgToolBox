@@ -2666,11 +2666,21 @@ components:
         - createdAt
         - expiresAt
       type: object
+    Heartbeat:
+      additionalProperties: false
+      properties:
+        serverTime:
+          description: Server clock when the heartbeat was sent (UTC).
+          format: date-time
+          type: string
+      required:
+        - serverTime
+      type: object
     Hello:
       additionalProperties: false
       properties:
         heartbeatSeconds:
-          description: Interval of the keep-alive comment lines.
+          description: Interval of the heartbeat events.
           format: int64
           type: integer
         pollMaxSeconds:
@@ -10702,7 +10712,7 @@ paths:
         - session
   /api/v1/stream:
     get:
-      description: "Server-sent events: hello on connect (refetch everything), invalidate {topic, namespace, name} (refetch that), resync (refetch everything), reauth {expiresAt, refreshable} before the session ends (call GET /api/v1/session). A comment line every 15 s; no byte for 35 s means the stream is dead. While it is down, poll every 2 s backing off to 10 s. The stream closes when the session ends."
+      description: "Server-sent events: hello on connect (refetch everything), invalidate {topic, namespace, name} (refetch that), resync (refetch everything), reauth {expiresAt, refreshable} before the session ends (call GET /api/v1/session), heartbeat every heartbeatSeconds (15 s); no event for twice that means the stream is dead. While it is down, poll every 2 s backing off to 10 s. The stream closes when the session ends."
       operationId: stream
       responses:
         "200":
@@ -10712,6 +10722,26 @@ paths:
                 description: Each oneOf object in the array represents one possible Server Sent Events (SSE) message, serialized as UTF-8 text according to the SSE specification.
                 items:
                   oneOf:
+                    - properties:
+                        data:
+                          $ref: "#/components/schemas/Heartbeat"
+                        event:
+                          const: heartbeat
+                          description: The event name.
+                          type: string
+                        id:
+                          description: The event ID.
+                          oneOf:
+                            - type: integer
+                            - type: string
+                        retry:
+                          description: The retry time in milliseconds.
+                          type: integer
+                      required:
+                        - data
+                        - event
+                      title: Event heartbeat
+                      type: object
                     - properties:
                         data:
                           $ref: "#/components/schemas/Hello"
