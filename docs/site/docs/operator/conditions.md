@@ -56,7 +56,7 @@ A pass is *converged* only when nothing failed and every aspect is `True`.
 - **`Stalled`** is abnormal-true: `True`, with the stall's reason, only when the
   operator cannot make progress without a change of input (and `Progressing` is
   then `False`). A stall is not retried with backoff; a watched change resolves it.
-- **Paused** (`reconcile: skip`): `Progressing=False` and `Ready=Unknown`, both
+- **Paused** (`reconcile: skip`, ignored on a `PgAccessRequest`): `Progressing=False` and `Ready=Unknown`, both
   `ReconciliationPaused`; a paused `PgAdmin` or `PgToolBoxConsole` whose hostname
   is refused also says `Stalled=True` (`HostnameNotAllowed`), with `Progressing`
   carrying that reason.

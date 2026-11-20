@@ -90,10 +90,10 @@ func (r *Reconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.
 	}
 	original := access.DeepCopy()
 	initializeConditions(access)
+	// No pause: the reconcile=skip annotation is ignored here, because a
+	// request's author could otherwise set it and keep an expired or
+	// self-approved grant alive.
 	loop := &loopState{}
-	if access.Annotations[pgtoolboxv1alpha1.AnnotationReconcile] == pgtoolboxv1alpha1.ReconcileSkip {
-		return ctrl.Result{}, r.publish(ctx, access, original, loop, conditions.Outcome{Paused: true})
-	}
 	result, err := r.reconcile(ctx, access, loop)
 	return result, r.publish(ctx, access, original, loop, conditions.Outcome{Err: err, Converged: err == nil})
 }

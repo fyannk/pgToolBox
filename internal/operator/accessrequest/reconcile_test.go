@@ -239,17 +239,22 @@ func TestReconcileNamedClusterMissingIsReportedNotRefused(t *testing.T) {
 	}
 }
 
-func TestReconcilePausedObservesNothing(t *testing.T) {
+// TestReconcileIgnoresPause: the reconcile=skip annotation, which the
+// request's author can set, never keeps an expired grant alive.
+func TestReconcileIgnoresPause(t *testing.T) {
 	r := request(pgtoolboxv1alpha1.AccessPhaseApproved, expiresAt(testNow.Add(-time.Hour)), func(r *pgtoolboxv1alpha1.PgAccessRequest) {
 		r.Annotations = map[string]string{pgtoolboxv1alpha1.AnnotationReconcile: pgtoolboxv1alpha1.ReconcileSkip}
 	})
 	binding := granted(r, testNow.Add(-2*time.Hour))
 	s := newFakeSuite(t, testNow, r, &binding)
 	_, got := s.reconcile(t, r)
-	if got.Status.Phase != pgtoolboxv1alpha1.AccessPhaseApproved {
-		t.Fatalf("a paused request moved to %s", got.Status.Phase)
+	if got.Status.Phase != pgtoolboxv1alpha1.AccessPhaseExpired {
+		t.Fatalf("a paused, expired request stayed %s", got.Status.Phase)
 	}
-	if c := condition(t, got, pgtoolboxv1alpha1.ConditionReady); c.Reason != pgtoolboxv1alpha1.ReasonReconciliationPaused.String() {
+	if err := s.client.Get(context.Background(), client.ObjectKeyFromObject(&binding), &rbacv1.RoleBinding{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("RoleBinding of a paused, expired request still there: %v", err)
+	}
+	if c := condition(t, got, pgtoolboxv1alpha1.ConditionReady); c.Reason == pgtoolboxv1alpha1.ReasonReconciliationPaused.String() {
 		t.Fatalf("Ready = %+v", c)
 	}
 }
