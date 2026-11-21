@@ -233,8 +233,8 @@ func TestRecentMergesAndCaps(t *testing.T) {
 	if v.Recent[1].Kind != viewmodel.OperationReload || v.Recent[1].RecordedIn != viewmodel.RecordReplica {
 		t.Errorf("second = %s in %q, want the newer remembered reload", v.Recent[1].Kind, v.Recent[1].RecordedIn)
 	}
-	if len(v.RecentGaps) != 1 || !strings.HasPrefix(v.RecentGaps[0], "1 older entries are not listed") {
-		t.Errorf("gaps = %v, want the one entry the cap cut counted", v.RecentGaps)
+	if len(v.RecentGaps) != 0 || len(v.RecentNotShown) != 1 || !strings.HasPrefix(v.RecentNotShown[0], "1 older entries are not shown") {
+		t.Errorf("gaps = %v, not shown %v, want the one entry the cap cut counted, not as a gap", v.RecentGaps, v.RecentNotShown)
 	}
 }
 
@@ -247,7 +247,7 @@ func TestRecentDrillsFromTheRecord(t *testing.T) {
 	// A drill of an earlier Cluster of the same name is not this one's.
 	store.Put(drills.Record{Drill: drills.Key{Namespace: "drills", Name: "orders-drill-0"}, Source: src, SourceUID: "old", StartedAt: now.Add(-48 * time.Hour), Result: viewmodel.DrillPassed})
 	svc := New(Options{Now: func() time.Time { return now }, Drills: &DrillOptions{Records: store}})
-	entries, gaps := svc.recentOf(ClusterState{Cluster: c, BackupsListed: true, Observed: watching}, nil)
+	entries, gaps, _ := svc.recentOf(ClusterState{Cluster: c, BackupsListed: true, Observed: watching}, nil)
 	if len(entries) != 1 || entries[0].id.Created != "orders-drill-1" || entries[0].id.CreatedNamespace != "drills" || entries[0].in != viewmodel.RecordCluster {
 		t.Fatalf("entries = %+v, want the drill of this Cluster", entries)
 	}
@@ -329,13 +329,13 @@ func TestRecentListsEveryBackup(t *testing.T) {
 		{
 			name:   "a scheduled Backup, by CloudNativePG's label, followed through the judge",
 			backup: scheduled,
-			listed: true, from: "(created by ScheduledBackup daily: metadata.labels[cnpg.io/scheduled-backup])", accepted: created,
+			listed: true, from: "(labelled as created by ScheduledBackup daily: metadata.labels[cnpg.io/scheduled-backup])", accepted: created,
 			phase: viewmodel.OpPhaseSettled,
 		},
 		{
 			name:   "a scheduled Backup, by its owner reference",
 			backup: owned,
-			listed: true, from: "(created by ScheduledBackup nightly: metadata.ownerReferences)", accepted: created,
+			listed: true, from: "(labelled as created by ScheduledBackup nightly: metadata.ownerReferences)", accepted: created,
 			phase: viewmodel.OpPhaseAccepted,
 		},
 		{name: "a Backup of another Cluster is not listed", backup: other},
@@ -424,7 +424,7 @@ func TestRecentPrimaryChanges(t *testing.T) {
 		{
 			name:     "a timeline whose bounds dropped events is a gap",
 			observed: opstate.Observed{Enabled: true, Persistent: true, Evicted: true, Since: now.Add(-time.Hour)},
-			gap:      "the timeline's bounds dropped older events",
+			gap:      "primary changes of this Cluster before " + now.Add(-time.Hour).Format(time.RFC3339) + " are not listed: the timeline's bounds dropped its older events",
 		},
 		{
 			name: "no timeline is a gap, never silence",
@@ -450,7 +450,7 @@ func TestRecentPrimaryChanges(t *testing.T) {
 				if op.Kind != viewmodel.OperationPrimaryChange {
 					continue
 				}
-				if op.Phase != viewmodel.OpPhaseSettled || len(op.Steps) != 1 || op.RecordedFrom == "" {
+				if op.Phase != viewmodel.OpPhaseSettled || op.Health != viewmodel.HealthInfo || len(op.Steps) != 1 || op.RecordedFrom == "" {
 					t.Errorf("primary change = %+v, want one settled, attributed step", op)
 				}
 				if _, err := ParseID(op.OperationID); err == nil {
@@ -481,22 +481,41 @@ func TestRecentPrimaryChanges(t *testing.T) {
 	}
 }
 
-// Scheduled Backups cannot push everything else out silently: the cap
-// keeps the newest and counts what it cut.
+// Scheduled Backups cannot push everything else out: at most the newest
+// maxScheduledBackups are listed, the rest counted, and the overall cap
+// keeps its own count; neither is a gap.
 func TestRecentCapCountsWhatItCut(t *testing.T) {
 	c := cluster()
 	c.Annotations = map[string]string{ops.RestartAnnotation: now.Add(-48 * time.Hour).Format(time.RFC3339)}
-	backups := make([]*cnpgv1.Backup, 0, 25)
-	for i := range 25 {
-		b := backupCR("orders-hourly-"+strconv.Itoa(i), now.Add(-time.Duration(i)*time.Hour), nil)
+	backups := make([]*cnpgv1.Backup, 0, 30)
+	for i := range 30 {
+		// Oldest first, so the cut cannot rely on the input's order.
+		b := backupCR("orders-hourly-"+strconv.Itoa(i), now.Add(-time.Duration(30-i)*time.Hour), nil)
 		b.Labels = map[string]string{scheduledBackupLabel: "hourly"}
 		backups = append(backups, b)
 	}
-	v := recentOf(t, ClusterState{Cluster: c, Pods: pods(), Backups: backups, BackupsListed: true, Observed: watching})
-	if len(v.Recent) != 20 {
-		t.Fatalf("Recent has %d entries, want the default cap of 20", len(v.Recent))
+	observed := watching
+	observed.PrimaryChanges = []opstate.PrimaryChange{{From: "orders-1", To: "orders-2", At: now.Add(-72 * time.Hour), Cause: "failover"}}
+	st := ClusterState{Cluster: c, Pods: pods(), Backups: backups, BackupsListed: true, Observed: observed}
+	v := recentOf(t, st)
+	kinds := make([]viewmodel.OperationKind, 0, len(v.Recent))
+	for _, op := range v.Recent {
+		kinds = append(kinds, op.Kind)
 	}
-	if len(v.RecentGaps) != 1 || v.RecentGaps[0] != "6 older entries are not listed: the list keeps the newest 20" {
-		t.Errorf("gaps = %v, want the 5 Backups and the restart the cap cut counted", v.RecentGaps)
+	want := "backup,backup,backup,backup,backup,restart,primaryChange"
+	if got := strings.Join(kindStrings(kinds), ","); got != want {
+		t.Errorf("Recent = %s, want %s", got, want)
+	}
+	if len(v.Recent) > 0 && v.Recent[0].Created != "orders-hourly-29" {
+		t.Errorf("first = %s, want the newest scheduled Backup", v.Recent[0].Created)
+	}
+	if len(v.RecentGaps) != 0 || len(v.RecentNotShown) != 1 || v.RecentNotShown[0] != "25 older scheduled backups are not shown: the list keeps the newest 5" {
+		t.Errorf("gaps %v, not shown %v; want the 25 scheduled Backups counted, no gap", v.RecentGaps, v.RecentNotShown)
+	}
+
+	svc := New(Options{Now: func() time.Time { return now }, RecentPerCluster: 4})
+	entries, _, notShown := svc.recentOf(st, nil)
+	if len(entries) != 4 || len(notShown) != 2 || notShown[1] != "3 older entries are not shown: the list keeps the newest 4" {
+		t.Errorf("%d entries, not shown %v; want 4 and both counts", len(entries), notShown)
 	}
 }

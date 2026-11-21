@@ -110,7 +110,7 @@ test("operations: an observed primary change is labelled and not followed; a clu
   const data = { ...operationsOperator, recent: [change, cluster] };
   const screen = await renderInFrame(<OperationsView data={data} actor="v" onRequest={vi.fn()} />);
   await expect.element(screen.getByText("primary changed from orders-1 to orders-2")).toBeVisible();
-  expect(screen.getByRole("button", { name: "Follow" }).all()).toHaveLength(1);
+  expect(screen.getByRole("button", { name: /^Follow / }).all()).toHaveLength(1);
   expect(screen.container.querySelector('li[data-recorded-in="timeline"] button')).toBeNull();
   await expect.element(screen.getByText(`Source: ${cluster.recordedFrom}`)).toBeVisible();
 });

@@ -4724,6 +4724,13 @@ components:
           type:
             - array
             - "null"
+        recentNotShown:
+          description: How many older entries Recent does not show, in words (its bounds, not a gap).
+          items:
+            type: string
+          type:
+            - array
+            - "null"
         recentScope:
           description: What Recent covers, in words.
           type: string

@@ -31,7 +31,7 @@ import (
 
 // recentScope is what Recent covers, in words.
 const recentScope = "rebuilt from what the Cluster's objects record, so every console replica shows the same list: " +
-	"every Backup of the Cluster (on-demand from any client, or created by a ScheduledBackup, each attributed), " +
+	"every Backup of the Cluster (on-demand from any client, and the newest 5 labelled as created by a ScheduledBackup, each attributed), " +
 	"the latest restart and reload annotations (set by any client) and the console's restore-drill record; " +
 	"plus the primary changes (switchovers and failovers) this console observed, which it cannot tell apart from a promote " +
 	"unless this replica issued it. The API server's audit log is the complete record, and names who asked."
@@ -47,6 +47,11 @@ const markerSkew = time.Minute
 // backupOwnerReference (the owner reference is set only for "self").
 const scheduledBackupLabel = "cnpg.io/scheduled-backup"
 
+// maxScheduledBackups bounds the scheduled Backups Recent lists: an
+// hourly schedule would otherwise push every other operation out of the
+// list within a day (and leaves thousands of Backup objects a year).
+const maxScheduledBackups = 5
+
 // recentEntry is one recent operation and where it was found; change is
 // set for a primary change the timeline observed (listed as recorded,
 // never followed).
@@ -59,11 +64,12 @@ type recentEntry struct {
 
 // fromCluster rebuilds the recent operations of st from its objects (the
 // read model, so every replica derives the same list) and from this
-// console's timeline, and names what it could not read.
-func (s *Service) fromCluster(st ClusterState) (out []recentEntry, gaps []string) {
+// console's timeline, names what it could not read, and counts the
+// scheduled Backups past maxScheduledBackups it left out.
+func (s *Service) fromCluster(st ClusterState) (out []recentEntry, gaps []string, scheduledCut int) {
 	c := st.Cluster
 	if c == nil {
-		return nil, nil
+		return nil, nil, 0
 	}
 	ns, name := c.Namespace, c.Name
 	add := func(id ID, from string) {
@@ -91,7 +97,22 @@ func (s *Service) fromCluster(st ClusterState) (out []recentEntry, gaps []string
 	if !st.BackupsListed {
 		gaps = append(gaps, "the console cannot read Backups in "+ns+" now: backups are not listed")
 	}
-	for _, b := range st.Backups {
+	backups := slices.Clone(st.Backups)
+	slices.SortStableFunc(backups, func(a, b *cnpgv1.Backup) int {
+		return b.CreationTimestamp.Compare(a.CreationTimestamp.Time)
+	})
+	scheduled := 0
+	for _, b := range backups {
+		if b.Spec.Cluster.Name != name {
+			continue
+		}
+		if sb, _ := scheduledBy(b); sb != "" {
+			// Newest first: past the bound, only counted, never built.
+			if scheduled++; scheduled > maxScheduledBackups {
+				scheduledCut++
+				continue
+			}
+		}
 		if id, from, ok := backupEntry(b, ns, name); ok {
 			add(id, from)
 		}
@@ -114,7 +135,24 @@ func (s *Service) fromCluster(st ClusterState) (out []recentEntry, gaps []string
 	if gap != "" {
 		gaps = append(gaps, gap)
 	}
-	return out, gaps
+	return out, gaps, scheduledCut
+}
+
+// scheduledBy is the ScheduledBackup a Backup says created it, and where
+// it says so: its owner reference, else CloudNativePG's label (set
+// whatever the schedule's backupOwnerReference). Any client that creates
+// Backups can set either, so it is what the Backup is labelled with, not
+// proof.
+func scheduledBy(b *cnpgv1.Backup) (name, field string) {
+	for _, o := range b.OwnerReferences {
+		if o.Kind == "ScheduledBackup" && strings.HasPrefix(o.APIVersion, cnpgv1.SchemeGroupVersion.Group+"/") {
+			return o.Name, "metadata.ownerReferences"
+		}
+	}
+	if sb := b.Labels[scheduledBackupLabel]; sb != "" {
+		return sb, "metadata.labels[" + scheduledBackupLabel + "]"
+	}
+	return "", ""
 }
 
 // backupEntry is the recent entry of one Backup of the Cluster, with its
@@ -136,13 +174,8 @@ func backupEntry(b *cnpgv1.Backup, ns, cluster string) (ID, string, bool) {
 			return id, "Backup " + b.Name + " metadata.annotations[" + ops.AnnotationRequestedAt + "]", true
 		}
 	}
-	for _, o := range b.OwnerReferences {
-		if o.Kind == "ScheduledBackup" && strings.HasPrefix(o.APIVersion, cnpgv1.SchemeGroupVersion.Group+"/") {
-			return id, "Backup " + b.Name + " (created by ScheduledBackup " + o.Name + ": metadata.ownerReferences)", true
-		}
-	}
-	if sb := b.Labels[scheduledBackupLabel]; sb != "" {
-		return id, "Backup " + b.Name + " (created by ScheduledBackup " + sb + ": metadata.labels[" + scheduledBackupLabel + "])", true
+	if sb, field := scheduledBy(b); sb != "" {
+		return id, "Backup " + b.Name + " (labelled as created by ScheduledBackup " + sb + ": " + field + ")", true
 	}
 	return id, "Backup " + b.Name + " (on-demand, any client: metadata.creationTimestamp)", true
 }
@@ -159,10 +192,12 @@ func observedChanges(o opstate.Observed, ns, cluster string) ([]recentEntry, str
 		since = o.Since.UTC().Format(time.RFC3339)
 	}
 	switch {
+	case o.Evicted && o.Since.IsZero():
+		gap = "older primary changes of this Cluster are not listed: the timeline's bounds dropped its older events"
+	case o.Evicted:
+		gap = "primary changes of this Cluster before " + since + " are not listed: the timeline's bounds dropped its older events"
 	case !o.Persistent:
 		gap = "primary changes before " + since + " are not listed: this console's timeline is not kept across restarts here, and each replica keeps its own"
-	case o.Evicted:
-		gap = "primary changes before " + since + " are not listed: the timeline's bounds dropped older events"
 	}
 	out := make([]recentEntry, 0, len(o.PrimaryChanges))
 	for i := range o.PrimaryChanges {
@@ -217,15 +252,21 @@ func changeOperation(e recentEntry, st ClusterState) viewmodel.Operation {
 	if st.Cluster != nil {
 		op.Target.UID = string(st.Cluster.UID)
 	}
-	op.Health = viewmodel.OperationHealth(op.Phase, false)
+	// An observation, not an outcome the console followed: info, never
+	// the ok a settled operation reads as.
+	op.Health = viewmodel.HealthInfo
 	return op
 }
 
 // recent merges what the cluster records and the console observed with
 // what only this replica remembers, newest first, at most
-// RecentPerCluster, and says how many older entries the cap cut.
-func (s *Service) recentOf(st ClusterState, mine []record) ([]recentEntry, []string) {
-	out, gaps := s.fromCluster(st)
+// RecentPerCluster, and says how many older entries it does not show
+// (notShown: a cap, not a gap).
+func (s *Service) recentOf(st ClusterState, mine []record) (_ []recentEntry, gaps, notShown []string) {
+	out, gaps, scheduledCut := s.fromCluster(st)
+	if scheduledCut > 0 {
+		notShown = append(notShown, strconv.Itoa(scheduledCut)+" older scheduled backups are not shown: the list keeps the newest "+strconv.Itoa(maxScheduledBackups))
+	}
 	seen := make(map[string]bool, len(out))
 	for _, e := range out {
 		seen[e.id.Encode()] = true
@@ -257,9 +298,9 @@ func (s *Service) recentOf(st ClusterState, mine []record) ([]recentEntry, []str
 	})
 	if cut := len(out) - s.opts.RecentPerCluster; cut > 0 {
 		out = out[:s.opts.RecentPerCluster]
-		gaps = append(gaps, strconv.Itoa(cut)+" older entries are not listed: the list keeps the newest "+strconv.Itoa(s.opts.RecentPerCluster))
+		notShown = append(notShown, strconv.Itoa(cut)+" older entries are not shown: the list keeps the newest "+strconv.Itoa(s.opts.RecentPerCluster))
 	}
-	return out, gaps
+	return out, gaps, notShown
 }
 
 // matchingChange is the index in out of the observed primary change a

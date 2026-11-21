@@ -232,6 +232,11 @@ export function OperationsView({ data, actor, onRequest }: Props) {
             {m.ops_recent_gap({ gap })}
           </p>
         ))}
+        {(data.recentNotShown ?? []).map((note) => (
+          <p key={note} className="text-caption text-muted">
+            {note}
+          </p>
+        ))}
         {recent.length === 0 ? (
           <p className="text-label text-muted">{m.ops_recent_none()}</p>
         ) : (
@@ -243,11 +248,8 @@ export function OperationsView({ data, actor, onRequest }: Props) {
                 <li key={op.operationId} className="flex flex-wrap items-center gap-2" data-recorded-in={op.recordedIn}>
                   <span className="font-semibold">{observed ? m.ops_recent_primary_change() : op.kind}</span>
                   {op.instance && <code className="font-code">{op.instance}</code>}
-                  {observed ? (
-                    <span className="text-muted">{op.steps?.[0]?.text}</span>
-                  ) : (
-                    <StatusChip health={operationHealth(op)} label={phaseWord(op.phase)} size="sm" />
-                  )}
+                  <StatusChip health={operationHealth(op)} label={phaseWord(op.phase)} size="sm" />
+                  {observed && <span className="min-w-0 break-words text-muted">{op.steps?.[0]?.text}</span>}
                   {op.acceptedAt && <Time iso={op.acceptedAt} className="text-muted" />}
                   {op.recordedIn === "replica" && (
                     <span className="text-caption text-muted" title={op.recordedFrom}>
@@ -263,6 +265,9 @@ export function OperationsView({ data, actor, onRequest }: Props) {
                     <button
                       type="button"
                       onClick={() => trackedOperations.track(op.operationId)}
+                      aria-label={m.ops_track_named({
+                        operation: [op.kind, op.created ?? op.instance].filter(Boolean).join(" "),
+                      })}
                       className="rounded-control border border-line px-2 py-0.5 text-caption hover:bg-surface-2"
                     >
                       {m.ops_track()}

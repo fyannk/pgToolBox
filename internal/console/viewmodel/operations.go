@@ -83,6 +83,9 @@ type Operations struct {
 	// RecentGaps name what Recent may miss now (a source the console
 	// cannot read here), in words; empty when nothing is known missing.
 	RecentGaps []string `json:"recentGaps,omitempty" doc:"What Recent may miss now, in words (a source the console cannot read here)."`
+	// RecentNotShown counts the older entries Recent's bounds left out,
+	// in words: a cap on what is shown, not a source the console missed.
+	RecentNotShown []string `json:"recentNotShown,omitempty" doc:"How many older entries Recent does not show, in words (its bounds, not a gap)."`
 	// Revision is the Cluster as these offers read it. It is not served:
 	// an MCP confirmation seals it, and the operation is refused when the
 	// Cluster it writes to is no longer the one the person confirmed on.

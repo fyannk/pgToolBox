@@ -64,9 +64,12 @@ type Observed struct {
 	Enabled bool
 	// Persistent reports that the timeline survives restarts.
 	Persistent bool
-	// Evicted reports that the timeline's bounds dropped older events.
+	// Evicted reports that the timeline's bounds dropped older events of
+	// this Cluster.
 	Evicted bool
-	// Since is the oldest event the timeline retains; zero when empty.
+	// Since is when what the timeline retains of this Cluster starts: its
+	// oldest retained event when Evicted, else the journal's oldest (the
+	// start of observation); zero when unknown.
 	Since time.Time
 	// PrimaryChanges are the changes of status.currentPrimary of this
 	// Cluster incarnation, newest first.

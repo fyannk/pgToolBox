@@ -468,6 +468,7 @@
   "ops_target_ineligible": "not eligible",
   "ops_target_lag": "{lag} behind",
   "ops_track": "Follow",
+  "ops_track_named": "Follow {operation}",
   "ops_undecided": "The API server could not be asked whether you may: not offered until it answers.",
   "ops_you": "you (as signed in)",
   "origin_console": "console inference",

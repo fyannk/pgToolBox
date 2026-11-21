@@ -63,6 +63,18 @@ func TestOperationStateObservedPrimary(t *testing.T) {
 		}
 	}
 
+	// Eviction is per Cluster: a busy Cluster's Since is its own oldest
+	// retained event, not the journal's.
+	busy := timeline.New(timeline.Limits{PerCluster: 2}, staticClock(now))
+	busy.Record(timeline.Event{Kind: timeline.KindConsole, Action: timeline.ActionStarted, At: now.Add(-4 * time.Hour), Timing: timeline.TimingObserved})
+	for i, at := range []time.Duration{3 * time.Hour, 2 * time.Hour, time.Hour} {
+		busy.Record(timeline.Event{Key: "b" + string(rune('0'+i)), Kind: timeline.KindPhase, Action: timeline.ActionChanged, At: now.Add(-at), Timing: timeline.TimingObserved, Namespace: "team-a", Cluster: "orders", ClusterUID: string(ordersUID), From: "a", To: "b"})
+	}
+	svc.opts.Timeline = busy
+	if st, err = svc.OperationState(context.Background(), "team-a", "orders"); err != nil || !st.Observed.Evicted || !st.Observed.Since.Equal(now.Add(-2*time.Hour)) {
+		t.Errorf("busy Cluster: evicted %v since %s, %v; want evicted since its oldest retained event", st.Observed.Evicted, st.Observed.Since, err)
+	}
+
 	svc.opts.Timeline = nil
 	if st, err = svc.OperationState(context.Background(), "team-a", "orders"); err != nil || st.Observed.Enabled {
 		t.Errorf("without a timeline: observed %+v, %v; want it said disabled", st.Observed, err)
