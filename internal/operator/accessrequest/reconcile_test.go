@@ -327,3 +327,33 @@ func TestReconcileTimedOutStillPublishesStatus(t *testing.T) {
 		t.Fatalf("Ready = %+v", ready)
 	}
 }
+
+// A request kept Terminating by a foreign finalizer must not keep its
+// grant: the garbage collector waits for the owner, so the operator
+// deletes the RoleBinding itself.
+func TestReconcileDeletionWithAForeignFinalizerRevokesTheGrant(t *testing.T) {
+	r := request(pgtoolboxv1alpha1.AccessPhaseApproved, expiresAt(testNow.Add(time.Hour)), func(r *pgtoolboxv1alpha1.PgAccessRequest) {
+		r.Finalizers = []string{"example.com/keep"}
+	})
+	binding := granted(r, testNow.Add(-time.Hour))
+	s := newFakeSuite(t, testNow, r, &binding)
+	if err := s.client.Delete(context.Background(), r.DeepCopy()); err != nil {
+		t.Fatal(err)
+	}
+	terminating := &pgtoolboxv1alpha1.PgAccessRequest{}
+	if err := s.client.Get(context.Background(), client.ObjectKeyFromObject(r), terminating); err != nil || terminating.DeletionTimestamp.IsZero() {
+		t.Fatalf("request not Terminating: %v %+v", err, terminating.ObjectMeta)
+	}
+	s.reconcile(t, r)
+	err := s.client.Get(context.Background(), client.ObjectKeyFromObject(&binding), &rbacv1.RoleBinding{})
+	if !apierrors.IsNotFound(err) {
+		t.Fatalf("RoleBinding outlived the request's deletion: %v", err)
+	}
+	if evs := strings.Join(s.events(), "\n"); !strings.Contains(evs, "RoleBindingDeleted") {
+		t.Fatalf("events %q lack RoleBindingDeleted", evs)
+	}
+	s.reconcile(t, r)
+	if again := s.events(); len(again) != 0 {
+		t.Fatalf("a second loop emitted %v", again)
+	}
+}
