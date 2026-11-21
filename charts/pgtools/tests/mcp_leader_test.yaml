@@ -48,6 +48,36 @@ tests:
           content: {name: MCP_CANDIDATE, value: "false"}
       - notExists: {path: spec.template.spec.affinity}
 
+  - it: lets the MCP Pod leave a lost node after 30 seconds
+    template: templates/console/mcp.yaml
+    set: {console.mcp.enabled: true, console.publicURL: "https://pgc.example.org"}
+    documentSelector: {path: kind, value: Deployment}
+    asserts:
+      - equal:
+          path: spec.template.spec.tolerations
+          value:
+            - {key: node.kubernetes.io/not-ready, operator: Exists, effect: NoExecute, tolerationSeconds: 30}
+            - {key: node.kubernetes.io/unreachable, operator: Exists, effect: NoExecute, tolerationSeconds: 30}
+
+  - it: keeps the tolerations of the values on the MCP Pod, before its own
+    template: templates/console/mcp.yaml
+    set:
+      console.mcp.enabled: true
+      console.publicURL: "https://pgc.example.org"
+      console.tolerations: [{key: dedicated, operator: Equal, value: dba, effect: NoSchedule}]
+    documentSelector: {path: kind, value: Deployment}
+    asserts:
+      - lengthEqual: {path: spec.template.spec.tolerations, count: 3}
+      - equal:
+          path: spec.template.spec.tolerations[0]
+          value: {key: dedicated, operator: Equal, value: dba, effect: NoSchedule}
+
+  - it: leaves the console's own replicas to the default eviction
+    template: templates/console/deployment.yaml
+    set: {console.mcp.enabled: true, console.publicURL: "https://pgc.example.org"}
+    asserts:
+      - notExists: {path: spec.template.spec.tolerations}
+
   - it: keeps the console's own replicas out of the election
     template: templates/console/deployment.yaml
     set: {console.mcp.enabled: true, console.publicURL: "https://pgc.example.org"}

@@ -58,6 +58,13 @@ Severities follow the Prometheus Operator convention (`info`, `warning`,
 A ratio alert has a floor on the request rate, so a quiet console does not page
 for one failed call.
 
+These rules read the MCP Pod's own series, so none fires while that Pod is
+down: one MCP Pod that crash-loops or stays Pending leaves no series and no
+alert. Its availability is left to the cluster's Deployment alerts, for example
+kube-state-metrics' `kube_deployment_status_replicas_available{deployment=~".*-mcp"} == 0`
+(kube-prometheus' `KubeDeploymentReplicasMismatch`); with the operator, the
+console's `WorkloadReady` condition also reports it.
+
 ### PgToolBoxConsoleMCPHighErrorRatio
 
 Severity `warning`. More than 10% of the tool calls of a namespace ended in

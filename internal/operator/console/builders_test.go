@@ -144,34 +144,46 @@ func TestWorkloadGolden(t *testing.T) {
 			}
 			in := tc.in
 			in.Image = image
-			got, err := yaml.Marshal(buildWorkload(console, in))
-			if err != nil {
-				t.Fatal(err)
-			}
-			path := filepath.Join("testdata", "workload-"+name+".golden.yaml")
-			if *updateGolden {
-				if err := os.MkdirAll("testdata", 0o750); err != nil {
-					t.Fatal(err)
-				}
-				if err := os.WriteFile(path, got, 0o600); err != nil {
-					t.Fatal(err)
-				}
-				return
-			}
-			want, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatalf("%v (run with -update to create it)", err)
-			}
-			if !bytes.Equal(got, want) {
-				t.Errorf("%s differs from the golden file (run with -update to accept)", path)
+			golden(t, "workload-"+name, buildWorkload(console, in))
+			if console.MCPEnabled() {
+				// The MCP Deployment beside it.
+				golden(t, "workload-"+name+"-mcp", buildMCPDeployment(console, in))
 			}
 		})
 	}
 }
 
+// golden compares object, as YAML, with testdata/<name>.golden.yaml, or
+// rewrites that file with -update.
+func golden(t *testing.T, name string, object any) {
+	t.Helper()
+	got, err := yaml.Marshal(object)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join("testdata", name+".golden.yaml")
+	if *updateGolden {
+		if err := os.MkdirAll("testdata", 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, got, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	want, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("%v (run with -update to create it)", err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Errorf("%s differs from the golden file (run with -update to accept)", path)
+	}
+}
+
 // TestMCPEnv pins spec.mcp's rendering: nothing while the endpoint is off
 // (whatever else is set, like the chart), and each tuning knob only when
-// set, so the console's own default applies otherwise.
+// set, so the console's own default applies otherwise. The MCP Pod is the
+// one candidate for the Lease; the console's replicas say they are not.
 func TestMCPEnv(t *testing.T) {
 	t.Parallel()
 	knobs := func(enabled bool) *pgtoolboxv1alpha1.PgToolBoxConsoleMCPSpec {
@@ -184,7 +196,8 @@ func TestMCPEnv(t *testing.T) {
 			OAuthClientMetadataHosts:     []string{"claude.ai", "chatgpt.com"},
 		}
 	}
-	// With the endpoint on, one replica serves it: the Lease closes the list.
+	// With the endpoint on, one Pod serves it: the Lease closes the MCP
+	// Pod's list.
 	leader := func(envs ...string) []string { return append(envs, "MCP_LEASE=console-mcp") }
 	cases := map[string]struct {
 		mcp  *pgtoolboxv1alpha1.PgToolBoxConsoleMCPSpec
@@ -237,16 +250,26 @@ func TestMCPEnv(t *testing.T) {
 			t.Parallel()
 			c := &pgtoolboxv1alpha1.PgToolBoxConsole{ObjectMeta: metav1.ObjectMeta{Name: "console"}}
 			c.Spec.MCP = tc.mcp
-			envs := mcpEnv(c)
-			got := make([]string, 0, len(envs))
-			for _, e := range envs {
-				if e.ValueFrom != nil {
-					t.Fatalf("%s is rendered from a reference", e.Name)
+			render := func(mcpPod bool) []string {
+				envs := mcpEnv(c, mcpPod)
+				got := make([]string, 0, len(envs))
+				for _, e := range envs {
+					if e.ValueFrom != nil {
+						t.Fatalf("%s is rendered from a reference", e.Name)
+					}
+					got = append(got, e.Name+"="+e.Value)
 				}
-				got = append(got, e.Name+"="+e.Value)
+				return got
 			}
-			if !slices.Equal(got, tc.want) {
-				t.Errorf("env %q, want %q", got, tc.want)
+			if got := render(true); !slices.Equal(got, tc.want) {
+				t.Errorf("the MCP Pod's env %q, want %q", got, tc.want)
+			}
+			replicas := tc.want
+			if len(replicas) > 0 {
+				replicas = append(slices.Clone(replicas), "MCP_CANDIDATE=false")
+			}
+			if got := render(false); !slices.Equal(got, replicas) {
+				t.Errorf("the replicas' env %q, want %q", got, replicas)
 			}
 		})
 	}
