@@ -7,7 +7,7 @@
  */
 
 /**
- * Where this recent operation was found: on the cluster's objects (every replica lists it) or only in this console replica's memory.
+ * Where this recent operation was found: on the cluster's objects (every replica lists it), only in this console replica's memory, or in this console's timeline of what it observed (a primary change).
  */
 export type OperationRecordedIn = typeof OperationRecordedIn[keyof typeof OperationRecordedIn];
 
@@ -15,4 +15,5 @@ export type OperationRecordedIn = typeof OperationRecordedIn[keyof typeof Operat
 export const OperationRecordedIn = {
   cluster: 'cluster',
   replica: 'replica',
+  timeline: 'timeline',
 } as const;

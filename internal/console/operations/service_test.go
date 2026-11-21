@@ -265,7 +265,7 @@ func TestOffers(t *testing.T) {
 			if r := o.Targets[0].Readiness; len(r) != 1 || r[0].Key != viewmodel.ReadinessStreaming || r[0].Health != viewmodel.HealthUnknown {
 				t.Errorf("the target's readiness is not the read model's: %+v", r)
 			}
-		case viewmodel.OperationRestart, viewmodel.OperationRestoreDrill:
+		case viewmodel.OperationRestart, viewmodel.OperationRestoreDrill, viewmodel.OperationPrimaryChange:
 			// Not what this test is about.
 		}
 	}

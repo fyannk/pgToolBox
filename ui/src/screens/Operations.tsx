@@ -207,7 +207,7 @@ export function OfferCard({
   );
 }
 
-/** The operations screen: what the reader may do here and why not, and the recent operations the Cluster records (or only this replica remembers, marked). */
+/** The operations screen: what the reader may do here and why not, and the recent operations: what the Cluster's objects record (each with its source), the primary changes this console observed, and what only this replica remembers (both marked). */
 export function OperationsView({ data, actor, onRequest }: Props) {
   const offers = data.offers ?? [];
   const recent = data.recent ?? [];
@@ -236,26 +236,46 @@ export function OperationsView({ data, actor, onRequest }: Props) {
           <p className="text-label text-muted">{m.ops_recent_none()}</p>
         ) : (
           <ul className="flex flex-col gap-2 text-label">
-            {recent.map((op) => (
-              <li key={op.operationId} className="flex flex-wrap items-center gap-2">
-                <span className="font-semibold">{op.kind}</span>
-                {op.instance && <code className="font-code">{op.instance}</code>}
-                <StatusChip health={operationHealth(op)} label={phaseWord(op.phase)} size="sm" />
-                {op.acceptedAt && <Time iso={op.acceptedAt} className="text-muted" />}
-                {op.recordedIn === "replica" && (
-                  <span className="text-caption text-muted" title={op.recordedFrom}>
-                    {m.ops_recent_replica_only()}
-                  </span>
-                )}
-                <button
-                  type="button"
-                  onClick={() => trackedOperations.track(op.operationId)}
-                  className="rounded-control border border-line px-2 py-0.5 text-caption hover:bg-surface-2"
-                >
-                  {m.ops_track()}
-                </button>
-              </li>
-            ))}
+            {recent.map((op) => {
+              // A primary change is observed, not requested: there is nothing to follow.
+              const observed = op.kind === "primaryChange";
+              return (
+                <li key={op.operationId} className="flex flex-wrap items-center gap-2" data-recorded-in={op.recordedIn}>
+                  <span className="font-semibold">{observed ? m.ops_recent_primary_change() : op.kind}</span>
+                  {op.instance && <code className="font-code">{op.instance}</code>}
+                  {observed ? (
+                    <span className="text-muted">{op.steps?.[0]?.text}</span>
+                  ) : (
+                    <StatusChip health={operationHealth(op)} label={phaseWord(op.phase)} size="sm" />
+                  )}
+                  {op.acceptedAt && <Time iso={op.acceptedAt} className="text-muted" />}
+                  {op.recordedIn === "replica" && (
+                    <span className="text-caption text-muted" title={op.recordedFrom}>
+                      {m.ops_recent_replica_only()}
+                    </span>
+                  )}
+                  {op.recordedIn === "timeline" && (
+                    <span className="text-caption text-muted" title={op.recordedFrom}>
+                      {m.ops_recent_observed()}
+                    </span>
+                  )}
+                  {!observed && (
+                    <button
+                      type="button"
+                      onClick={() => trackedOperations.track(op.operationId)}
+                      className="rounded-control border border-line px-2 py-0.5 text-caption hover:bg-surface-2"
+                    >
+                      {m.ops_track()}
+                    </button>
+                  )}
+                  {op.recordedIn === "cluster" && op.recordedFrom && (
+                    <span className="w-full text-caption text-muted">
+                      {m.ops_recent_source({ source: op.recordedFrom })}
+                    </span>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         )}
       </Panel>

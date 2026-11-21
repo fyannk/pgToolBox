@@ -50,6 +50,45 @@ type ClusterState struct {
 	BackupsListed bool
 	Minor         cnpgstatus.Minor
 	Instances     []InstanceState
+	// Observed is what this console's timeline saw of the Cluster's
+	// primary.
+	Observed Observed
+}
+
+// Observed is what this console's timeline retains of one Cluster's
+// primary changes. It is this console's observation, not a record the
+// Cluster keeps: another replica, or this one after a restart without a
+// persistent timeline, saw a different stretch.
+type Observed struct {
+	// Enabled is false when the console keeps no timeline.
+	Enabled bool
+	// Persistent reports that the timeline survives restarts.
+	Persistent bool
+	// Evicted reports that the timeline's bounds dropped older events.
+	Evicted bool
+	// Since is the oldest event the timeline retains; zero when empty.
+	Since time.Time
+	// PrimaryChanges are the changes of status.currentPrimary of this
+	// Cluster incarnation, newest first.
+	PrimaryChanges []PrimaryChange
+}
+
+// PrimaryChange is one observed change of status.currentPrimary.
+type PrimaryChange struct {
+	From, To string
+	// At is the operator's status.currentPrimaryTimestamp when Reported,
+	// else when the console observed the change.
+	At       time.Time
+	Reported bool
+	// Cause is "failover" or "switchover" when the console saw the phase
+	// that announced it, empty when it saw neither; Uncertain when the
+	// cause is a guess (both seen, or the change fell between two
+	// observations).
+	Cause     string
+	Uncertain bool
+	// Since is set when the change happened while the console was not
+	// looking: some time between Since and At.
+	Since time.Time
 }
 
 // PgBackRestTarget is the newest backup of an evidence agent's recovery
