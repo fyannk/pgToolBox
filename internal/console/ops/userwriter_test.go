@@ -22,6 +22,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	cnpgv1 "github.com/cloudnative-pg/api/pkg/api/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -48,12 +49,16 @@ func TestPinnedPatches(t *testing.T) {
 
 func TestBackupObject(t *testing.T) {
 	t.Parallel()
-	b := BackupObject("team-a", "orders", "ondemand-", "plugin", "barman-cloud.cloudnative-pg.io")
+	at := time.Date(2026, 10, 29, 12, 0, 0, 999, time.FixedZone("CET", 3600))
+	b := BackupObject("team-a", "orders", "ondemand-", "plugin", "barman-cloud.cloudnative-pg.io", at)
+	if got := b.Annotations[AnnotationRequestedAt]; got != "2026-10-29T11:00:00Z" || len(b.Annotations) != 1 {
+		t.Errorf("annotations = %v, want only %s at the acceptance instant in UTC", b.Annotations, AnnotationRequestedAt)
+	}
 	if b.Namespace != "team-a" || b.GenerateName != "ondemand-" || b.Name != "" || b.Spec.Cluster.Name != "orders" ||
 		b.Spec.Method != cnpgv1.BackupMethodPlugin || b.Spec.PluginConfiguration == nil || b.Spec.PluginConfiguration.Name != "barman-cloud.cloudnative-pg.io" {
 		t.Errorf("plugin backup = %+v", b)
 	}
-	if b := BackupObject("team-a", "orders", "x-", "", ""); b.Spec.Method != "" || b.Spec.PluginConfiguration != nil {
+	if b := BackupObject("team-a", "orders", "x-", "", "", at); b.Spec.Method != "" || b.Spec.PluginConfiguration != nil {
 		t.Errorf("default backup = %+v", b.Spec)
 	}
 }

@@ -201,7 +201,7 @@ export function OfferCard({
   );
 }
 
-/** The operations screen: what the reader may do here and why not, and the operations this console replica issued. */
+/** The operations screen: what the reader may do here and why not, and the recent operations the Cluster records (or only this replica remembers, marked). */
 export function OperationsView({ data, actor, onRequest }: Props) {
   const offers = data.offers ?? [];
   const recent = data.recent ?? [];
@@ -221,6 +221,11 @@ export function OperationsView({ data, actor, onRequest }: Props) {
       </Panel>
       <Panel title={m.ops_recent()}>
         <p className="text-caption text-muted">{data.recentScope}</p>
+        {(data.recentGaps ?? []).map((gap) => (
+          <p key={gap} role="note" className="text-caption text-health-unknown-fg">
+            {m.ops_recent_gap({ gap })}
+          </p>
+        ))}
         {recent.length === 0 ? (
           <p className="text-label text-muted">{m.ops_recent_none()}</p>
         ) : (
@@ -231,6 +236,11 @@ export function OperationsView({ data, actor, onRequest }: Props) {
                 {op.instance && <code className="font-code">{op.instance}</code>}
                 <StatusChip health={operationHealth(op)} label={phaseWord(op.phase)} size="sm" />
                 {op.acceptedAt && <Time iso={op.acceptedAt} className="text-muted" />}
+                {op.recordedIn === "replica" && (
+                  <span className="text-caption text-muted" title={op.recordedFrom}>
+                    {m.ops_recent_replica_only()}
+                  </span>
+                )}
                 <button
                   type="button"
                   onClick={() => trackedOperations.track(op.operationId)}

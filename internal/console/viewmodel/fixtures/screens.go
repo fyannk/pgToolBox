@@ -510,9 +510,17 @@ func Operations() viewmodel.Operations {
 				},
 			},
 		},
-		Recent:      []viewmodel.Operation{Operation()},
-		RecentScope: "operations issued through this console replica since it started; the API server's audit log is the complete record",
+		Recent:      []viewmodel.Operation{recentBackup()},
+		RecentScope: "rebuilt from what the Cluster's objects record, so every console replica shows the same list: Backups a console marked (pgtoolbox.fyannk.dev/requested-at), the latest restart and reload annotations (set by any client) and the console's restore-drill record. A promote leaves no marker the console can tell from a failover: only the replica that issued it lists it, until it restarts. The API server's audit log is the complete record, and names who asked.",
 	}
+}
+
+// recentBackup is Operation as Recent lists it: found on its Backup.
+func recentBackup() viewmodel.Operation {
+	op := Operation()
+	op.RecordedIn = viewmodel.RecordCluster
+	op.RecordedFrom = "Backup " + op.Created + " metadata.annotations[pgtoolbox.fyannk.dev/requested-at]"
+	return op
 }
 
 // Operation is a tracked on-demand backup that is running.

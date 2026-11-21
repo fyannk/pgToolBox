@@ -15,6 +15,11 @@ export interface Operations {
   offers: OperationOffer[] | null;
   /** @nullable */
   recent: Operation[] | null;
+  /**
+     * What Recent may miss now, in words (a source the console cannot read here).
+     * @nullable
+     */
+  recentGaps?: string[] | null;
   /** What Recent covers, in words. */
   recentScope: string;
   ref: ClusterRef;

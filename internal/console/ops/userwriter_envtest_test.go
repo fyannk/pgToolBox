@@ -130,7 +130,7 @@ func TestUserWriterOnEnvtest(t *testing.T) {
 		if !errors.As(err, &we) || we.Status != http.StatusForbidden {
 			t.Fatalf("viewer restart: %v", err)
 		}
-		if _, _, err := w.CreateBackup(as(appTeam), BackupObject("team-a", "orders", "ondemand-", "plugin", "barman-cloud.cloudnative-pg.io")); !errors.As(err, &we) || we.Status != http.StatusForbidden {
+		if _, _, err := w.CreateBackup(as(appTeam), BackupObject("team-a", "orders", "ondemand-", "plugin", "barman-cloud.cloudnative-pg.io", time.Now())); !errors.As(err, &we) || we.Status != http.StatusForbidden {
 			t.Fatalf("viewer backup: %v", err)
 		}
 	})
@@ -144,7 +144,7 @@ func TestUserWriterOnEnvtest(t *testing.T) {
 		if _, err := w.AnnotateCluster(as(dba), "team-a", "orders", RestartAnnotation, "2026-10-29T12:00:00Z", current.ResourceVersion); err != nil {
 			t.Fatal(err)
 		}
-		name, _, err := w.CreateBackup(as(dba), BackupObject("team-a", "orders", "ondemand-20261029120000-", "plugin", "barman-cloud.cloudnative-pg.io"))
+		name, _, err := w.CreateBackup(as(dba), BackupObject("team-a", "orders", "ondemand-20261029120000-", "plugin", "barman-cloud.cloudnative-pg.io", time.Now()))
 		if err != nil || name == "" {
 			t.Fatalf("backup: %q %v", name, err)
 		}

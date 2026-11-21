@@ -1,14 +1,21 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, fn, userEvent, waitFor, within } from "storybook/test";
-import { operationBadConfirmation, operationRefused, operationsOperator, operationsViewer } from "../../mocks/fixtures";
+import {
+  operationBadConfirmation,
+  operationRefused,
+  operationRunning,
+  operationsOperator,
+  operationsViewer,
+} from "../../mocks/fixtures";
 import { handlersFor } from "../../mocks/handlers";
 import { ApiError } from "../api/fetcher";
 import { compact, dark, darkCompact } from "../testing/variants";
 import { OperationsScreen, OperationsView } from "./Operations";
 
 /**
- * What the reader may do on this Cluster, why not when not, and the
- * operations this console replica issued. Every action goes through a typed
+ * What the reader may do on this Cluster, why not when not, and its recent
+ * operations, rebuilt from the Cluster's objects (or only remembered by this
+ * replica, which is said). Every action goes through a typed
  * confirmation and is followed by an OperationTracker; nothing is shown as
  * done before the operator says so.
  */
@@ -94,6 +101,29 @@ export const BadConfirmation: Story = {
     await waitFor(() => expect(within(dialog).getByRole("alert")).toHaveTextContent("req-10"));
   },
 };
+/** Recent, honestly: a promote only this replica remembers is marked, and an unreadable source is named, never a silent gap. */
+const recentReplica = {
+  ...operationRunning,
+  operationId: "promote-from-memory",
+  kind: "promote" as const,
+  instance: "orders-2",
+  recordedIn: "replica" as const,
+  recordedFrom: "this console replica's memory, since it started",
+};
+export const RecentReplicaAndGaps: Story = {
+  args: {
+    data: {
+      ...operationsOperator,
+      recent: [recentReplica, ...(operationsOperator.recent ?? [])],
+      recentGaps: ["the console cannot read Backups in team-a now: on-demand backups are not listed"],
+    },
+  },
+  play: async ({ canvas }) => {
+    await expect(canvas.getAllByText("only this console replica remembers it")).toHaveLength(1);
+    await expect(canvas.getByRole("note")).toHaveTextContent(/cannot read Backups/);
+  },
+};
+export const RecentReplicaAndGapsDark = dark(RecentReplicaAndGaps);
 export const Empty: Story = { args: { data: { ...operationsOperator, offers: [], recent: [] } } };
 const screen = { render: () => <OperationsScreen namespace="team-a" cluster="orders" /> };
 export const Loading: Story = { ...screen, parameters: { msw: handlersFor("loading") } };

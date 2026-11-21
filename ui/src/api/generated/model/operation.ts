@@ -9,6 +9,7 @@ import type { ClusterRef } from './clusterRef.ts';
 import type { OperationHealth } from './operationHealth.ts';
 import type { OperationKind } from './operationKind.ts';
 import type { OperationPhase } from './operationPhase.ts';
+import type { OperationRecordedIn } from './operationRecordedIn.ts';
 import type { OperationStep } from './operationStep.ts';
 
 export interface Operation {
@@ -24,6 +25,10 @@ export interface Operation {
   kind: OperationKind;
   operationId: string;
   phase: OperationPhase;
+  /** The marker this recent operation was rebuilt from, in words. */
+  recordedFrom?: string;
+  /** Where this recent operation was found: on the cluster's objects (every replica lists it) or only in this console replica's memory. */
+  recordedIn?: OperationRecordedIn;
   /** @nullable */
   steps: OperationStep[] | null;
   target: ClusterRef;
