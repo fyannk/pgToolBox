@@ -122,7 +122,9 @@ func (h *hub) publish(key ClusterKey) {
 // generation is the stamp of the latest change to the Cluster or to its
 // whole namespace; 0 when neither ever changed. Stamps never repeat, so
 // equal generations mean nothing was published in between. The map
-// keeps one entry per key ever published, bounded like Subscription's.
+// keeps one entry per Cluster name ever published (about 100 B each) and
+// is never pruned: dropping a deleted key could make an earlier stamp
+// look current.
 func (h *hub) generation(key ClusterKey) uint64 {
 	h.genMu.Lock()
 	defer h.genMu.Unlock()
