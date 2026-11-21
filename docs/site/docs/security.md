@@ -28,10 +28,11 @@ what the design guarantees and, as plainly, what it does not.
    name. A stale cache can never grant a write.
 4. **No cluster-scoped console, no Secret verb.** A console's reach is bounded by the
    namespaces its Roles name. Its ServiceAccount cannot read a Secret and cannot
-   impersonate. It writes only its own objects, by name: the state ConfigMap
-   (`<console>-state`, `update`: the sign-outs and "since" times its replicas
-   share) and, when the features are on, the Leases that elect its MCP leader
-   and its digest sender (the digest Lease may also be created). The revocation
+   impersonate. It updates only its own objects, by name: the state ConfigMap
+   (`<console>-state`: the sign-outs and "since" times its replicas share)
+   and, when the features are on, the Leases that elect its MCP leader and
+   its digest sender. With the digest on it may also create Leases in its
+   namespace: the API server cannot restrict `create` to a name. The revocation
    ConfigMap it only reads: a sign-out written there goes with the person's
    token. The one other opt-in write is the
    [restore drill](console/restore-drills.md#which-clusters-the-console-deletes)
