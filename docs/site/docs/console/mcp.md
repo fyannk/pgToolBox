@@ -102,7 +102,10 @@ delivery (both stay with the console's replicas). The Service `<console>-mcp`
 selects that Pod alone. The console's replicas run MCP with
 `MCP_CANDIDATE=false`: they never take the Lease. A crash of the MCP Pod costs
 the time Kubernetes takes to start another, tens of seconds; the loss of its
-node about 5 minutes (until the node is declared lost). Each install's
+node about a minute: the node controller's grace before it marks the node not
+ready or unreachable, then 30 seconds, which the MCP Pod tolerates on
+`node.kubernetes.io/not-ready` and `node.kubernetes.io/unreachable` instead of
+the default 300 (the chart adds them after `console.tolerations`). Each install's
 NetworkPolicies select the MCP Pod with the console's; with the operator,
 `WorkloadReady` reports the MCP Deployment once the console's replicas are
 ready. Its history is in memory: the MCP tools

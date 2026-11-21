@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   annotations:
-    pgtoolbox.fyannk.dev/spec-hash: b7a367843b14a5eb
+    pgtoolbox.fyannk.dev/spec-hash: 8686bfe45e2e6ba3
   labels:
     app.kubernetes.io/component: console-mcp
     app.kubernetes.io/instance: console
@@ -183,6 +183,15 @@ spec:
         seccompProfile:
           type: RuntimeDefault
       serviceAccountName: console
+      tolerations:
+      - effect: NoExecute
+        key: node.kubernetes.io/not-ready
+        operator: Exists
+        tolerationSeconds: 30
+      - effect: NoExecute
+        key: node.kubernetes.io/unreachable
+        operator: Exists
+        tolerationSeconds: 30
       volumes:
       - emptyDir: {}
         name: tmp

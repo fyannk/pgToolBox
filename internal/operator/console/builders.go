@@ -563,6 +563,12 @@ func surgeStrategy() appsv1.DeploymentStrategy {
 	}}
 }
 
+// mcpNodeLossTolerance is how long the MCP Pod stays bound to a node that
+// is not ready or unreachable before it is evicted and started elsewhere
+// (the API server's default is 300 seconds): the one MCP Pod has no peer
+// to take over meanwhile.
+const mcpNodeLossTolerance = 30
+
 // buildMCPDeployment renders the MCP Deployment, as the chart's mcp.yaml
 // does: one replica named <console>-mcp, rolled with a surge (an old and a
 // new Pod overlap, and the MCP Lease keeps a single writer), the console's
@@ -663,6 +669,16 @@ func podTemplate(c *pgtoolboxv1alpha1.PgToolBoxConsole, in deploymentInputs) cor
 				},
 			}},
 		}}
+	}
+	if in.MCPPod {
+		// A lost node costs about a minute (the node controller's grace,
+		// then these 30 seconds) instead of five.
+		for _, taint := range []string{corev1.TaintNodeNotReady, corev1.TaintNodeUnreachable} {
+			podSpec.Tolerations = append(podSpec.Tolerations, corev1.Toleration{
+				Key: taint, Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoExecute,
+				TolerationSeconds: new(int64(mcpNodeLossTolerance)),
+			})
+		}
 	}
 	return corev1.PodTemplateSpec{
 		ObjectMeta: metav1.ObjectMeta{Labels: podMeta.Labels, Annotations: podMeta.Annotations},
