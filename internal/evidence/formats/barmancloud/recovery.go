@@ -522,19 +522,20 @@ func decodeXZ(data []byte) ([]byte, error) {
 		}
 		header := data[position+1 : position+size-4] // without the size byte and CRC32
 		flags, index := header[0], 1
-		if flags&0x03 != 0 { // more than one filter
+		if flags&0x3f != 0 { // more than one filter, or reserved bits
 			return nil, errXZRefused
 		}
-		for _, present := range []bool{flags&0x40 != 0, flags&0x80 != 0} { // compressed, uncompressed size
-			for present {
-				if index >= len(header) {
+		var declared [2]*uint64 // compressed, uncompressed size, when the header gives them
+		for field, present := range []bool{flags&0x40 != 0, flags&0x80 != 0} {
+			if present {
+				value, n := binary.Uvarint(header[index:])
+				if n <= 0 {
 					return nil, errXZRefused
 				}
-				present = header[index]&0x80 != 0
-				index++
+				declared[field], index = &value, index+n
 			}
 		}
-		if index+3 > len(header) || header[index] != 0x21 || header[index+1] != 1 {
+		if index+3 > len(header) || header[index] != 0x21 || header[index+1] != 1 || !allZero(header[index+3:]) {
 			return nil, errXZRefused
 		}
 		if dictionary := header[index+2]; dictionary >= 40 || int64(2|dictionary&1)<<(dictionary/2+11) > xzMaxDictionary {
@@ -560,6 +561,9 @@ func decodeXZ(data []byte) ([]byte, error) {
 		blockStart := position
 		position = (end+3)&^3 + checkSize
 		if err != nil || source.Len() != 0 || position > len(data) || !bytes.Equal(data[position-checkSize:position], xzCheck(checkType, block)) {
+			return nil, errXZRefused
+		}
+		if (declared[0] != nil && *declared[0] != uint64(end-start)) || (declared[1] != nil && *declared[1] != uint64(len(block))) { //nolint:gosec // non-negative and bounded
 			return nil, errXZRefused
 		}
 		records = []uint64{uint64(end - blockStart + checkSize), uint64(len(block))} //nolint:gosec // non-negative, bounded by the 256 KiB object and the decoded cap

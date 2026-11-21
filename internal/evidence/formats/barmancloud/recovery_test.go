@@ -142,6 +142,11 @@ func TestXZHistoryDictionaryIsBounded(t *testing.T) {
 		{name: "index record altered", stream: strings.Replace(pythonXZHistory, "000141290353", "000142290353", 1)},
 		{name: "footer flags differ from the header", stream: strings.Replace(pythonXZHistory, "010000000004595a", "010000000001595a", 1)},
 		{name: "data after the footer", stream: pythonXZHistory + "00000000"},
+		{name: "block header sizes declared", stream: xzWithBlockHeader(t, "02c02d2921011600"), accepted: true},
+		{name: "block header declares another compressed size", stream: xzWithBlockHeader(t, "02c02e2921011600")},
+		{name: "block header declares another uncompressed size", stream: xzWithBlockHeader(t, "02c02d2a21011600")},
+		{name: "block header reserved flag", stream: xzWithBlockHeader(t, "0204210116000000")},
+		{name: "block header padding not zero", stream: xzWithBlockHeader(t, "0200210116000001")},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -237,6 +242,13 @@ func buildXZHistory(tb testing.TB, checkType byte, hidden *byte) []byte {
 	footer := append(binary.LittleEndian.AppendUint32(nil, uint32(len(index)/4-1)), flags...)
 	stream = append(append(stream, index...), binary.LittleEndian.AppendUint32(nil, crc32.ChecksumIEEE(footer))...)
 	return append(append(stream, footer...), 'Y', 'Z')
+}
+
+// xzWithBlockHeader is pythonXZHistory with its 12-byte block header replaced
+// by the given 8-byte body and its CRC32.
+func xzWithBlockHeader(t *testing.T, body string) string {
+	t.Helper()
+	return strings.Replace(pythonXZHistory, "0200210116000000742fe5a3", body+xzHeaderCRC(t, body), 1)
 }
 
 // xzHeaderCRC returns the little-endian CRC32 of a hex block header body.
