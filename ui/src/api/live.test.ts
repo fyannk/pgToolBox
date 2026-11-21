@@ -86,6 +86,9 @@ test(
     await vi.advanceTimersByTimeAsync(1);
     expect(liveStore.get().status).toBe("down");
     expect(first.closed).toBe(true);
+    // Reopened after the same backoff as a closed stream, not at once.
+    expect(FakeSource.all).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(2_000);
     expect(FakeSource.all).toHaveLength(2);
   }),
 );
@@ -110,10 +113,80 @@ test(
     await vi.advanceTimersByTimeAsync(10_000);
     expect(liveStore.get().status).toBe("down");
     expect(first.closed).toBe(true);
+    expect(FakeSource.all).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(2_000);
     expect(FakeSource.all).toHaveLength(2);
-    // The new stream answering brings the state back.
+    // Headers alone are not a working stream; its hello brings the state back.
     src().emit("open");
+    expect(liveStore.get().status).toBe("down");
+    src().emit("hello", HELLO);
     expect(liveStore.get().status).toBe("live");
+  }),
+);
+
+const HELLO = { serverTime: "2026-11-20T00:00:00Z", heartbeatSeconds: 15, pollMinSeconds: 2, pollMaxSeconds: 10 };
+
+/** Closes the current stream for good, as the browser does on a 401 or a 5xx. */
+function failHard(s: FakeSource) {
+  s.close();
+  s.emit("error");
+}
+
+test(
+  "a stream closed for good is retried after 2, 4, 8, 16, 30, 30 s; a hello resets the backoff",
+  withFakeStream(async (src) => {
+    const cases = [2_000, 4_000, 8_000, 16_000, 30_000, 30_000];
+    for (const [i, delay] of cases.entries()) {
+      failHard(src());
+      expect(liveStore.get().status, `attempt ${i + 1}`).toBe("down");
+      await vi.advanceTimersByTimeAsync(delay - 1);
+      expect(FakeSource.all, `attempt ${i + 1} before ${delay} ms`).toHaveLength(i + 1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(FakeSource.all, `attempt ${i + 1} at ${delay} ms`).toHaveLength(i + 2);
+    }
+    // An open without a hello does not reset it ...
+    src().emit("open");
+    failHard(src());
+    await vi.advanceTimersByTimeAsync(29_999);
+    expect(FakeSource.all).toHaveLength(cases.length + 1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(FakeSource.all).toHaveLength(cases.length + 2);
+    // ... a hello does: the next failure retries after 2 s again.
+    src().emit("open");
+    src().emit("hello", HELLO);
+    expect(liveStore.get().status).toBe("live");
+    failHard(src());
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(FakeSource.all).toHaveLength(cases.length + 3);
+  }),
+);
+
+test(
+  "an error the browser recovers from by itself (not closed) schedules no retry of its own",
+  withFakeStream(async (src) => {
+    src().emit("hello", HELLO);
+    src().emit("error");
+    expect(liveStore.get().status).toBe("down");
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(FakeSource.all).toHaveLength(1);
+    src().emit("hello", HELLO);
+    expect(liveStore.get().status).toBe("live");
+  }),
+);
+
+test(
+  "a resync refetches everything after the batching window",
+  withFakeStream(async (src) => {
+    src().emit("hello", HELLO);
+    const spy = vi.spyOn(QueryClient.prototype, "invalidateQueries");
+    try {
+      src().emit("resync", { reason: "watch restarted" });
+      expect(spy).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(INVALIDATION_WINDOW_MS);
+      expect(spy).toHaveBeenCalledWith(undefined, { cancelRefetch: false });
+    } finally {
+      spy.mockRestore();
+    }
   }),
 );
 
