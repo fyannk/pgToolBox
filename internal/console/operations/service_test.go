@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -352,5 +353,32 @@ func TestAuditOrigin(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestRecentRecordsANewClusterPastTheCap(t *testing.T) {
+	var log bytes.Buffer
+	c := cluster()
+	svc := service(ClusterState{Cluster: c, Pods: pods()}, &fakeWriter{c: c, pods: pods()}, &log)
+	for i := range maxClustersRecorded {
+		svc.remember(ID{Kind: viewmodel.OperationReload, Namespace: "team-b", Cluster: fmt.Sprintf("c%03d", i), AcceptedAt: now.Unix() - int64(maxClustersRecorded-i)})
+	}
+	if _, err := svc.Request(context.Background(), principal(), "team-a", "orders", viewmodel.OperationRequest{Kind: viewmodel.OperationReload, Confirmation: "orders"}); err != nil {
+		t.Fatal(err)
+	}
+	v, err := svc.Offers(context.Background(), principal(), authz.Capabilities{View: true}, "team-a", "orders")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(v.Recent) != 1 || v.Recent[0].Kind != viewmodel.OperationReload {
+		t.Fatalf("Recent = %+v, want the reload of the 257th Cluster", v.Recent)
+	}
+	svc.mu.Lock()
+	defer svc.mu.Unlock()
+	if len(svc.recent) != maxClustersRecorded {
+		t.Errorf("%d Clusters recorded, want %d", len(svc.recent), maxClustersRecorded)
+	}
+	if _, ok := svc.recent["team-b/c000"]; ok {
+		t.Error("the Cluster with the oldest operation was kept")
 	}
 }
