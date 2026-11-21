@@ -35,8 +35,8 @@ var sensitiveKey = regexp.MustCompile(`(?i)(token|secret|passw(or)?d|passphrase|
 // URL since a password may hold / and @.
 var credentialText = regexp.MustCompile(`eyJ[A-Za-z0-9_-]{2,}\.[A-Za-z0-9_-]{2,}\.[A-Za-z0-9_-]*` +
 	`|(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}` +
-	`|(?i)password\s*=\s*('(?:[^'\\]|\\.)*'?|\S+)` +
-	`|(?i)\bpassword\s+(?:E'(?:[^'\\]|''|\\.)*'?|(?:U&)?'(?:[^']|'')*'?)` +
+	`|(?i)password\s*=\s*('(?:[^'\\]|\\[\s\S])*'?|\S+)` +
+	`|(?i)\bpassword\s+(?:E'(?:[^'\\]|''|\\[\s\S])*'?|(?:U&)?'(?:[^']|'')*'?)` +
 	`|://[^/\s:@]+:[^\s"]*@`)
 
 // Payload returns raw, a JSON document, with every credential removed: the

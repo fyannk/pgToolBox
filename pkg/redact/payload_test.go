@@ -40,6 +40,8 @@ func TestPayload(t *testing.T) {
 		{"not JSON is one string", `token=` + jwt, `"token=[redacted]"`},
 		{"a SQL password clause", `["ALTER ROLE app PASSWORD 'pa''55' VALID UNTIL 'infinity'"]`, `["ALTER ROLE app [redacted] VALID UNTIL 'infinity'"]`},
 		{"a SQL password escape string", `["ALTER ROLE app PASSWORD E'pa\\'5''5' LOGIN"]`, `["ALTER ROLE app [redacted] LOGIN"]`},
+		{"a SQL password escape string with a backslash-newline", `["ALTER ROLE app PASSWORD E'ab\\\ncdSECRET' LOGIN"]`, `["ALTER ROLE app [redacted] LOGIN"]`},
+		{"a libpq password with a backslash-newline", `["password='ab\\\ncdSECRET' host=db"]`, `["[redacted] host=db"]`},
 		{"a lower-case SQL password escape string", `["alter role app password e'pa55' login"]`, `["alter role app [redacted] login"]`},
 		{"a SQL password Unicode string", `["ALTER ROLE app PASSWORD U&'pa\\0035''5' LOGIN"]`, `["ALTER ROLE app [redacted] LOGIN"]`},
 		{"a libpq password keyword", `["host=db password=pa55 user=app"]`, `["host=db [redacted] user=app"]`},
