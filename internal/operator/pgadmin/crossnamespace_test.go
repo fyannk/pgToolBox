@@ -149,7 +149,7 @@ func TestCrossNamespaceNeedsAGrant(t *testing.T) {
 	if len(binding.Subjects) != 1 || binding.Subjects[0] != (rbacv1.Subject{Kind: "ServiceAccount", Name: "team-pgadmin", Namespace: testNamespace}) {
 		t.Fatalf("the RoleBinding names the PgAdmin's ServiceAccount: %+v", binding.Subjects)
 	}
-	if requests := byAccessLabels(context.Background(), &binding); len(requests) != 1 || requests[0].NamespacedName != team {
+	if requests := h.r.byAccessLabels(context.Background(), &binding); len(requests) != 1 || requests[0].NamespacedName != team {
 		t.Fatalf("the access RoleBinding maps to %v", requests)
 	}
 	if requests := h.r.forCluster(context.Background(), remoteCluster("payments")); !slices.ContainsFunc(requests, func(r ctrlreconcile.Request) bool { return r.NamespacedName == team }) {
@@ -363,8 +363,8 @@ func (g goneReader) Get(ctx context.Context, key client.ObjectKey, obj client.Ob
 }
 
 // TestForGrantSkipsUnwatchedPgAdmin: with WATCH_NAMESPACES set, a grant
-// naming a PgAdmin in a namespace the operator does not watch maps to no
-// request (the cache could not serve it, and the loop would fail for
+// (or its Role or RoleBinding, through their labels) naming a PgAdmin in a
+// namespace the operator does not watch maps to no request (the cache could not serve it, and the loop would fail for
 // ever); one naming a watched PgAdmin, or any PgAdmin without the list,
 // maps to it.
 func TestForGrantSkipsUnwatchedPgAdmin(t *testing.T) {
@@ -390,13 +390,21 @@ func TestForGrantSkipsUnwatchedPgAdmin(t *testing.T) {
 			cfg := configuration.Defaults()
 			cfg.WatchNamespaces = tc.watched
 			r := &Reconciler{Config: cfg}
-			requests := r.forGrant(context.Background(), grant)
-			got := make([]types.NamespacedName, 0, len(requests))
-			for _, request := range requests {
-				got = append(got, request.NamespacedName)
-			}
-			if !slices.Equal(got, tc.want) {
-				t.Errorf("forGrant = %v, want %v", got, tc.want)
+			binding := &rbacv1.RoleBinding{ObjectMeta: metav1.ObjectMeta{
+				Namespace: remoteNamespace, Name: "pgadmin-team-pgadmin-access",
+				Labels: map[string]string{pgtoolboxv1alpha1.PgAdminNamespaceLabelKey: testNamespace, pgtoolboxv1alpha1.PgAdminLabelKey: "team"},
+			}}
+			for mapper, requests := range map[string][]ctrlreconcile.Request{
+				"forGrant":       r.forGrant(context.Background(), grant),
+				"byAccessLabels": r.byAccessLabels(context.Background(), binding),
+			} {
+				got := make([]types.NamespacedName, 0, len(requests))
+				for _, request := range requests {
+					got = append(got, request.NamespacedName)
+				}
+				if !slices.Equal(got, tc.want) {
+					t.Errorf("%s = %v, want %v", mapper, got, tc.want)
+				}
 			}
 		})
 	}

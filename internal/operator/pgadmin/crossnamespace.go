@@ -78,7 +78,7 @@ func (r *Reconciler) resolveRemote(ctx context.Context, p *pgtoolboxv1alpha1.PgA
 			out.Invalid = append(out.Invalid, fmt.Sprintf("crossNamespaceClusterRefs %s/%s is in this PgAdmin's own namespace: name it in clusterRefs", ref.Namespace, ref.Name))
 			continue
 		}
-		if watched := r.Config.WatchNamespaces; len(watched) > 0 && !slices.Contains(watched, ref.Namespace) {
+		if !r.watches(ref.Namespace) {
 			out.Invalid = append(out.Invalid, fmt.Sprintf("crossNamespaceClusterRefs %s/%s: the operator does not watch namespace %s (WATCH_NAMESPACES)",
 				ref.Namespace, ref.Name, ref.Namespace))
 			continue
@@ -332,21 +332,29 @@ func (r *Reconciler) forGrant(_ context.Context, obj client.Object) []ctrlreconc
 	if !ok {
 		return nil
 	}
-	if watched := r.Config.WatchNamespaces; len(watched) > 0 && !slices.Contains(watched, grant.Spec.PgAdmin.Namespace) {
+	if !r.watches(grant.Spec.PgAdmin.Namespace) {
 		return nil
 	}
 	return []ctrlreconcile.Request{{NamespacedName: types.NamespacedName{Namespace: grant.Spec.PgAdmin.Namespace, Name: grant.Spec.PgAdmin.Name}}}
 }
 
 // byAccessLabels maps a grant's Role or RoleBinding to the PgAdmin it
-// serves (its labels carry the PgAdmin's namespace and name).
-func byAccessLabels(_ context.Context, obj client.Object) []ctrlreconcile.Request {
+// serves (its labels carry the PgAdmin's namespace and name), unless that
+// namespace is not watched, as forGrant.
+func (r *Reconciler) byAccessLabels(_ context.Context, obj client.Object) []ctrlreconcile.Request {
 	labels := obj.GetLabels()
 	namespace, name := labels[pgtoolboxv1alpha1.PgAdminNamespaceLabelKey], labels[pgtoolboxv1alpha1.PgAdminLabelKey]
-	if namespace == "" || name == "" {
+	if namespace == "" || name == "" || !r.watches(namespace) {
 		return nil
 	}
 	return []ctrlreconcile.Request{{NamespacedName: types.NamespacedName{Namespace: namespace, Name: name}}}
+}
+
+// watches reports whether the operator's cache serves namespace
+// (WATCH_NAMESPACES empty means every namespace).
+func (r *Reconciler) watches(namespace string) bool {
+	watched := r.Config.WatchNamespaces
+	return len(watched) == 0 || slices.Contains(watched, namespace)
 }
 
 // forRemoteNamespace maps an object of a namespace to every PgAdmin of

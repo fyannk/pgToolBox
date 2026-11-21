@@ -306,8 +306,8 @@ func (r *Reconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager) err
 		// Cross-namespace grants and what they produce in the grant's
 		// namespace (owned by the grant, labelled with this PgAdmin).
 		Watches(&pgtoolboxv1alpha1.PgAdminAccess{}, handler.EnqueueRequestsFromMapFunc(r.forGrant)).
-		Watches(&rbacv1.Role{}, handler.EnqueueRequestsFromMapFunc(byAccessLabels)).
-		Watches(&rbacv1.RoleBinding{}, handler.EnqueueRequestsFromMapFunc(byAccessLabels)).
+		Watches(&rbacv1.Role{}, handler.EnqueueRequestsFromMapFunc(r.byAccessLabels)).
+		Watches(&rbacv1.RoleBinding{}, handler.EnqueueRequestsFromMapFunc(r.byAccessLabels)).
 		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.forClientSecret), builder.OnlyMetadata).
 		WithOptions(controller.Options{
 			MaxConcurrentReconciles: r.Config.MaxConcurrentReconciles,
