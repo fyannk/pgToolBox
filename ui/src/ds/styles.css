@@ -339,8 +339,10 @@
     --s-bg: var(--surface-2);
     display: inline-grid;
     place-items: center;
-    min-width: 1.25rem;
+    /* A glyph, a space and two digits: the slots of a column line up. */
+    min-width: calc(4ch + 6px);
     height: 1.25rem;
+    white-space: nowrap;
     padding: 0 2px;
     border: 1px solid var(--s);
     border-radius: 2px;
