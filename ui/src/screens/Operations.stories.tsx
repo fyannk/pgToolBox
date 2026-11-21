@@ -135,7 +135,7 @@ const recentScheduled = {
   created: "orders-daily-20261030070000",
   recordedIn: "cluster" as const,
   recordedFrom:
-    "Backup orders-daily-20261030070000 (created by ScheduledBackup orders-daily: metadata.labels[cnpg.io/scheduled-backup])",
+    "Backup orders-daily-20261030070000 (labelled as created by ScheduledBackup orders-daily: metadata.labels[cnpg.io/scheduled-backup])",
 };
 const recentPrimaryChange = {
   ...operationRunning,
@@ -143,7 +143,7 @@ const recentPrimaryChange = {
   kind: "primaryChange" as const,
   instance: "orders-2",
   phase: "settled" as const,
-  health: "ok" as const,
+  health: "info" as const,
   steps: [
     {
       phase: "settled" as const,
@@ -160,15 +160,20 @@ export const RecentEveryOrigin: Story = {
     data: {
       ...operationsOperator,
       recent: [recentPrimaryChange, recentScheduled, ...(operationsOperator.recent ?? [])],
-      recentGaps: ["3 older entries are not listed: the list keeps the newest 20"],
+      recentNotShown: ["25 older scheduled backups are not shown: the list keeps the newest 5"],
     },
   },
   play: async ({ canvas }) => {
     await expect(canvas.getByText("primary change")).toBeVisible();
     await expect(canvas.getByText("observed by this console, not necessarily requested")).toBeVisible();
-    await expect(canvas.getByText(/created by ScheduledBackup orders-daily/)).toBeVisible();
-    await expect(canvas.getAllByRole("button", { name: "Follow" })).toHaveLength(2);
-    await expect(canvas.getByRole("note")).toHaveTextContent(/3 older entries are not listed/);
+    await expect(canvas.getByText(/labelled as created by ScheduledBackup orders-daily/)).toBeVisible();
+    await expect(canvas.getAllByRole("button", { name: /^Follow / })).toHaveLength(2);
+    await expect(canvas.getByRole("button", { name: "Follow backup orders-daily-20261030070000" })).toBeVisible();
+    // The bound is said plainly, not as something the console may be missing.
+    await expect(
+      canvas.getByText("25 older scheduled backups are not shown: the list keeps the newest 5"),
+    ).toBeVisible();
+    await expect(canvas.queryByRole("note")).toBeNull();
   },
 };
 export const RecentEveryOriginDark = dark(RecentEveryOrigin);

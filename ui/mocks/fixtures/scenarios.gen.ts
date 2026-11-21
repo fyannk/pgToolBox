@@ -10519,7 +10519,7 @@ export const listOperationsBilling = {
     }
   ],
   "recent": [],
-  "recentScope": "rebuilt from what the Cluster's objects record, so every console replica shows the same list: every Backup of the Cluster (on-demand from any client, or created by a ScheduledBackup, each attributed), the latest restart and reload annotations (set by any client) and the console's restore-drill record; plus the primary changes (switchovers and failovers) this console observed, which it cannot tell apart from a promote unless this replica issued it. The API server's audit log is the complete record, and names who asked."
+  "recentScope": "rebuilt from what the Cluster's objects record, so every console replica shows the same list: every Backup of the Cluster (on-demand from any client, and the newest 5 labelled as created by a ScheduledBackup, each attributed), the latest restart and reload annotations (set by any client) and the console's restore-drill record; plus the primary changes (switchovers and failovers) this console observed, which it cannot tell apart from a promote unless this replica issued it. The API server's audit log is the complete record, and names who asked."
 } satisfies Operations;
 
 /** GET /api/v1/namespaces/team-a/clusters/orders/operations → 200: operator: every offer allowed, promote roster */
@@ -10771,7 +10771,7 @@ export const listOperationsOrders = {
       "recordedFrom": "Backup ondemand-20261029115500-x7k2p metadata.annotations[pgtoolbox.fyannk.dev/requested-at]"
     }
   ],
-  "recentScope": "rebuilt from what the Cluster's objects record, so every console replica shows the same list: every Backup of the Cluster (on-demand from any client, or created by a ScheduledBackup, each attributed), the latest restart and reload annotations (set by any client) and the console's restore-drill record; plus the primary changes (switchovers and failovers) this console observed, which it cannot tell apart from a promote unless this replica issued it. The API server's audit log is the complete record, and names who asked."
+  "recentScope": "rebuilt from what the Cluster's objects record, so every console replica shows the same list: every Backup of the Cluster (on-demand from any client, and the newest 5 labelled as created by a ScheduledBackup, each attributed), the latest restart and reload annotations (set by any client) and the console's restore-drill record; plus the primary changes (switchovers and failovers) this console observed, which it cannot tell apart from a promote unless this replica issued it. The API server's audit log is the complete record, and names who asked."
 } satisfies Operations;
 
 /** POST /api/v1/namespaces/team-a/clusters/orders/operations → 202: 202: a backup accepted */

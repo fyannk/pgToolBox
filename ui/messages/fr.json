@@ -468,6 +468,7 @@
   "ops_target_ineligible": "non éligible",
   "ops_target_lag": "{lag} de retard",
   "ops_track": "Suivre",
+  "ops_track_named": "Suivre {operation}",
   "ops_undecided": "L’API server n’a pas pu être interrogé : non proposé tant qu’il ne répond pas.",
   "ops_you": "vous (tel que connecté)",
   "origin_console": "déduction de la console",

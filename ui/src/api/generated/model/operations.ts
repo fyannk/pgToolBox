@@ -20,6 +20,11 @@ export interface Operations {
      * @nullable
      */
   recentGaps?: string[] | null;
+  /**
+     * How many older entries Recent does not show, in words (its bounds, not a gap).
+     * @nullable
+     */
+  recentNotShown?: string[] | null;
   /** What Recent covers, in words. */
   recentScope: string;
   ref: ClusterRef;

@@ -386,10 +386,22 @@ func (s *Service) observedPrimary(key cache.ClusterKey, uid string) opstate.Obse
 	if j == nil {
 		return opstate.Observed{}
 	}
-	res := j.Query(timeline.Query{Namespace: key.Namespace, Cluster: key.Name, Kinds: map[timeline.Kind]bool{timeline.KindPrimary: true}})
-	out := opstate.Observed{Enabled: true, Persistent: j.Persistent(), Evicted: res.Evicted, Since: res.Oldest}
+	res := j.Query(timeline.Query{Namespace: key.Namespace, Cluster: key.Name})
+	// Eviction is per Cluster: a busy Cluster lost more than the journal's
+	// oldest event says, so its own scope decides, from its oldest
+	// retained event.
+	out := opstate.Observed{Enabled: true, Persistent: j.Persistent(), Evicted: j.ScopeEvicted(key.Namespace, key.Name), Since: res.Oldest}
+	if out.Evicted {
+		out.Since = time.Time{}
+	}
 	for _, e := range res.Events {
-		if e.Cluster != key.Name || e.Action == timeline.ActionFirstObserved || (e.ClusterUID != "" && e.ClusterUID != uid) {
+		if e.Namespace != key.Namespace || e.Cluster != key.Name {
+			continue
+		}
+		if out.Evicted && (out.Since.IsZero() || e.At.Before(out.Since)) {
+			out.Since = e.At
+		}
+		if e.Kind != timeline.KindPrimary || e.Action == timeline.ActionFirstObserved || (e.ClusterUID != "" && e.ClusterUID != uid) {
 			continue
 		}
 		c := opstate.PrimaryChange{From: e.From, To: e.To, At: e.At, Reported: e.Timing == timeline.TimingReported, Uncertain: e.Uncertain}

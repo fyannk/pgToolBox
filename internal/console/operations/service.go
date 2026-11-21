@@ -249,8 +249,8 @@ func (s *Service) Offers(ctx context.Context, p *auth.Principal, caps authz.Capa
 	s.mu.Lock()
 	recs := slices.Clone(s.recent[namespace+"/"+name])
 	s.mu.Unlock()
-	entries, gaps := s.recentOf(st, recs)
-	out.RecentGaps = gaps
+	entries, gaps, notShown := s.recentOf(st, recs)
+	out.RecentGaps, out.RecentNotShown = gaps, notShown
 	for _, e := range entries {
 		// Who asked is the API server's audit log's to say: Recent lists
 		// what was done, not by whom, to every viewer of the Cluster.
