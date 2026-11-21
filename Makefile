@@ -567,10 +567,10 @@ sync-crds: ## Vendor the CNPG CRDs per supported minor into test/crds/cnpg-<mino
 
 .PHONY: test-envtest-console
 test-envtest-console: ## The console's informer cache on envtest, once per vendored CNPG minor (RBAC-starved user, probes, re-probe rebuild).
-	set -e; assets="$$($(SETUP_ENVTEST) use $(ENVTEST_K8S_VERSION_CONSOLE) -p path)"; \
+	set -e; \
 	for crds in test/crds/cnpg-*; do \
 		echo "== $$crds"; \
-		KUBEBUILDER_ASSETS="$$assets" CNPG_CRDS="$$PWD/$$crds" go test -tags envtest -count=1 ./internal/console/cache/; \
+		$(call envtest_assets,$(ENVTEST_K8S_VERSION_CONSOLE)) CNPG_CRDS="$$PWD/$$crds" go test -tags envtest -count=1 ./internal/console/cache/; \
 	done
 
 .PHONY: test-fuzz-console

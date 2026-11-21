@@ -20,6 +20,8 @@ test-fuzz-console-operations: ## Fuzz the console parsers (operation handles, ev
 	$(call fuzz,./internal/console/evidence,FuzzDecodeAPIError)
 	$(call fuzz,./internal/console/evidence,FuzzDecodePGBackRestBackupPage)
 	$(call fuzz,./internal/console/evidence,FuzzDecodePGBackRestRecoveryPage)
+	$(call fuzz,./internal/console/evidence,FuzzDecodeRecoveryPage)
+	$(call fuzz,./internal/console/podlogs,FuzzScan)
 
 test-fuzz: test-fuzz-console-operations
 
@@ -30,10 +32,10 @@ test-console-backend: ## The console backend's unit tests (view models, read mod
 
 .PHONY: test-envtest-console-ops
 test-envtest-console-ops: ## The console's write path (token passthrough, RBAC per verb, promote lock, CNPG schema) on envtest, once per vendored CNPG minor.
-	set -e; assets="$$($(SETUP_ENVTEST) use $(ENVTEST_K8S_VERSION_CONSOLE) -p path)"; \
+	set -e; \
 	for crds in test/crds/cnpg-*; do \
 		echo "== $$crds"; \
-		KUBEBUILDER_ASSETS="$$assets" CNPG_CRDS="$$PWD/$$crds" go test -tags envtest -count=1 -run '^TestUserWriterOnEnvtest$$' ./internal/console/ops/; \
+		$(call envtest_assets,$(ENVTEST_K8S_VERSION_CONSOLE)) CNPG_CRDS="$$PWD/$$crds" go test -tags envtest -count=1 -run '^TestUserWriterOnEnvtest$$' ./internal/console/ops/; \
 	done
 
 .PHONY: test-envtest-console-pgadmin

@@ -192,7 +192,7 @@ jobs:
       - name: Install the pinned tools
         uses: ./.github/actions/toolchain
         with:
-          tools: go
+          tools: go helm
           go-cache: "true"
       # Dated knowledge (the CNPG verified-release list) fails the build once
       # its review date passes, but only on main and the nightly run: a pull
