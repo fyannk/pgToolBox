@@ -141,6 +141,10 @@ type SessionChecker interface {
 // open (a few tabs).
 const maxStreamsPerSession = 8
 
+// refusedStreamRetry is the reconnection delay (milliseconds) sent with
+// the refusal of a stream over maxStreamsPerSession.
+const refusedStreamRetry = 60_000
+
 // Config is the Huma configuration: OpenAPI 3.1, JSON only (the default
 // format, with the cluster list's memoized rows copied: jsonFormat), no docs page
 // (it would load scripts from a CDN, which the CSP forbids), no $schema
@@ -437,7 +441,11 @@ func registerStream(a huma.API, d Deps) {
 			return
 		}
 		if !d.streams.inc(p.SessionID) {
-			_ = send.Data(sse.Resync{Reason: "too many open streams for this session"})
+			// The response ends normally, so EventSource reconnects by
+			// itself after its retry delay (about 3 s by default) and each
+			// round refetches everything: a long retry leaves the SPA's
+			// watchdog and its backoff to decide when to try again.
+			_ = send(humasse.Message{Data: sse.Resync{Reason: "too many open streams for this session"}, Retry: refusedStreamRetry})
 			return
 		}
 		defer d.streams.dec(p.SessionID)
