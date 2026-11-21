@@ -138,27 +138,31 @@ func TestTrackerTransitions(t *testing.T) {
 
 // TestTrackerRecoversAfterAWatchErrorHandlerCall: the reflector hands a
 // failed list to both the tracked ListerWatcher and the watch error
-// handler; the next successful list, or watch in watch-list mode, makes
-// the source live again.
+// handler (Manager.watchError); the next successful list, or watch in
+// watch-list mode, makes the source live again.
 func TestTrackerRecoversAfterAWatchErrorHandlerCall(t *testing.T) {
 	ctx := context.Background()
 	for _, call := range []string{"list", "watch"} {
 		t.Run(call, func(t *testing.T) {
 			tr := newTracker(time.Now)
 			tr.set("a", SourcePods, viewmodel.SourceLive, "")
+			m := &Manager{tracker: tr, kinds: Kinds(nil, false)}
 			var fail error
-			lw := trackedListWatch{
-				inner: &toolscache.ListWatch{
-					ListWithContextFunc: func(context.Context, metav1.ListOptions) (runtime.Object, error) {
-						return &corev1.PodList{}, fail
-					},
-					WatchFuncWithContext: func(context.Context, metav1.ListOptions) (watch.Interface, error) {
-						return watch.NewFake(), fail
-					},
+			inner := &toolscache.ListWatch{
+				ListWithContextFunc: func(context.Context, metav1.ListOptions) (runtime.Object, error) {
+					return &corev1.PodList{}, fail
 				},
+				WatchFuncWithContext: func(context.Context, metav1.ListOptions) (watch.Interface, error) {
+					return watch.NewFake(), fail
+				},
+			}
+			lw := trackedListWatch{
+				inner:   inner,
 				outcome: func(err error) { tr.watchedOutcome(SourcePods, 1, err) },
 				source:  SourcePods,
 			}
+			// The handler finds the source by the reflector's type.
+			r := toolscache.NewReflector(inner, &corev1.Pod{}, toolscache.NewStore(toolscache.MetaNamespaceKeyFunc), 0)
 			run := func() error {
 				if call == "list" {
 					_, err := lw.ListWithContext(ctx, metav1.ListOptions{})
@@ -169,7 +173,7 @@ func TestTrackerRecoversAfterAWatchErrorHandlerCall(t *testing.T) {
 			}
 
 			fail = errors.New("connection refused")
-			tr.watchDropped(SourcePods, run())
+			m.watchError(ctx, r, run())
 			if got, _ := tr.get("a", SourcePods); got.State != viewmodel.SourceStale {
 				t.Fatalf("after a failed %s: %+v, want stale", call, got)
 			}
@@ -181,7 +185,7 @@ func TestTrackerRecoversAfterAWatchErrorHandlerCall(t *testing.T) {
 				t.Errorf("after a successful %s: %+v, want live", call, got)
 			}
 
-			tr.watchDropped(SourcePods, errors.New("watch closed"))
+			m.watchError(ctx, r, errors.New("watch closed"))
 			if got, _ := tr.get("a", SourcePods); got.State != viewmodel.SourceStale {
 				t.Errorf("an established watch dropped: %+v, want stale", got)
 			}
