@@ -228,7 +228,7 @@ func (s *Service) Offers(ctx context.Context, p *auth.Principal, caps authz.Capa
 				}
 				bl := blockers(cnpgstatus.PromotePreconditions(c, st.Pods, inst.Name))
 				offer.Targets = append(offer.Targets, viewmodel.PromoteTarget{
-					Name: inst.Name, Eligible: len(bl) == 0, Blockers: bl, Health: inst.Health, LagBytes: inst.LagBytes,
+					Name: inst.Name, Eligible: len(bl) == 0, Blockers: bl, Health: inst.Health, LagBytes: inst.LagBytes, Readiness: inst.Readiness,
 				})
 			}
 			if len(offer.Targets) == 0 {

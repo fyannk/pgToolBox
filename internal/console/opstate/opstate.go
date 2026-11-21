@@ -34,6 +34,8 @@ type InstanceState struct {
 	Name     string
 	Health   viewmodel.Health
 	LagBytes *int64
+	// Readiness are the promote-readiness facts of a replica.
+	Readiness []viewmodel.ReadinessFact
 }
 
 // ClusterState is the informer cache's view of a Cluster, for the offers

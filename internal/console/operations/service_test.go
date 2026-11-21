@@ -234,7 +234,9 @@ func TestOffers(t *testing.T) {
 	c := cluster()
 	c.Annotations = map[string]string{"cnpg.io/fencedInstances": `["orders-3"]`}
 	st := ClusterState{Cluster: c, Pods: pods(), Instances: []InstanceState{
-		{Name: "orders-1", Health: viewmodel.HealthOK}, {Name: "orders-2", Health: viewmodel.HealthOK}, {Name: "orders-3", Health: viewmodel.HealthInactive},
+		{Name: "orders-1", Health: viewmodel.HealthOK},
+		{Name: "orders-2", Health: viewmodel.HealthOK, Readiness: []viewmodel.ReadinessFact{{Key: viewmodel.ReadinessStreaming, Health: viewmodel.HealthUnknown, Text: "not read"}}},
+		{Name: "orders-3", Health: viewmodel.HealthInactive},
 	}}
 	var log bytes.Buffer
 	svc := service(st, &fakeWriter{c: c}, &log)
@@ -259,6 +261,9 @@ func TestOffers(t *testing.T) {
 			}
 			if !o.Targets[0].Eligible || o.Targets[1].Eligible {
 				t.Errorf("targets %+v", o.Targets)
+			}
+			if r := o.Targets[0].Readiness; len(r) != 1 || r[0].Key != viewmodel.ReadinessStreaming || r[0].Health != viewmodel.HealthUnknown {
+				t.Errorf("the target's readiness is not the read model's: %+v", r)
 			}
 		case viewmodel.OperationRestart, viewmodel.OperationRestoreDrill:
 			// Not what this test is about.
