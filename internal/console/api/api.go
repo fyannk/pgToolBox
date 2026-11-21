@@ -244,6 +244,10 @@ type (
 	eventsOutput      struct{ Body viewmodel.EventList }
 	diagnosticsOutput struct{ Body viewmodel.Diagnostics }
 	triageOutput      struct{ Body viewmodel.Triage }
+	summaryOutput     struct {
+		ContentType string `header:"Content-Type"`
+		Body        []byte
+	}
 )
 
 // Operation IDs, also the fixture file names.
@@ -255,6 +259,7 @@ const (
 	OpListEvents      = "listEvents"
 	OpGetDiagnostics  = "getDiagnostics"
 	OpGetTriage       = "getTriage"
+	OpGetSummary      = "getClusterSummary"
 	OpStream          = "stream"
 	clusterPathPrefix = "/api/" + Version + "/namespaces/{namespace}/clusters/{name}"
 )
@@ -312,6 +317,25 @@ func Register(a huma.API, d Deps) {
 			return nil, err
 		}
 		return &overviewOutput{Body: v}, nil
+	})
+
+	huma.Register(a, huma.Operation{
+		OperationID: OpGetSummary, Method: http.MethodGet, Path: clusterPathPrefix + "/summary",
+		Summary: "A Cluster's incident summary", Tags: []string{"clusters"},
+		Description: "The verdict, each finding of the latest diagnostics run with its source and age, the sources that are not live, " +
+			"the console page of the Cluster and the time it was rendered, as Markdown for an incident channel, in the words of the overview. " +
+			"Every value from the cluster is redacted and escaped so it cannot open a link or a mention. Same authorization as the overview.",
+		Errors: append([]int{http.StatusNotFound}, problemCodes...),
+		Responses: map[string]*huma.Response{"200": {
+			Description: "Markdown",
+			Content:     map[string]*huma.MediaType{"text/markdown": {Schema: &huma.Schema{Type: "string"}}},
+		}},
+	}, func(ctx context.Context, in *ClusterPath) (*summaryOutput, error) {
+		md, err := r.ClusterSummary(ctx, in.Namespace, in.Name)
+		if err != nil {
+			return nil, err
+		}
+		return &summaryOutput{ContentType: "text/markdown; charset=utf-8", Body: []byte(md)}, nil
 	})
 
 	registerCluster(a, d, OpListInstances, "/instances", "A Cluster's instances",

@@ -104,6 +104,22 @@ warnings. When the phase is not healthy, the overview also explains
 [why the operator is waiting](index.md#why-the-operator-waits). The last
 panels list the sources the page rests on and what you may do here.
 
+**Copy as Markdown**, under the verdict, puts an incident summary on the
+clipboard for an incident channel. The summary holds the Cluster and its
+namespace, the verdict and the contributors that are not ok, each finding of
+the latest diagnostics run (severity, check, its sentence, who made the claim
+and how long it has been reported), the sources that are not live, the
+console page of the Cluster, and the UTC time it was rendered. The console
+renders it (`GET /api/v1/namespaces/{namespace}/clusters/{name}/summary`, the
+same authorization as the overview), so the words are the screen's. Diagnostics
+that have not run or could not be read are stated as such, never as "no
+finding". Every value that comes from the cluster (names, operator and
+Kubernetes messages, finding text) is redacted, kept on one line and escaped,
+so it cannot open a link, a mention such as `@here`, or a new list item in the
+channel. Mentions and `http://` are broken with an invisible word joiner. If
+the browser refuses the clipboard, the summary is shown selected so you can
+copy it by hand.
+
 The CloudNativePG version in the header comes from one detector, which the
 diagnostics use as well. It tries these sources in order: the
 `instanceManagerVersion` the instances report, the operator's

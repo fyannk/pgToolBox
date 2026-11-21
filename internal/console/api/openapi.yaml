@@ -10290,6 +10290,79 @@ paths:
       summary: A Cluster's storage
       tags:
         - clusters
+  /api/v1/namespaces/{namespace}/clusters/{name}/summary:
+    get:
+      description: The verdict, each finding of the latest diagnostics run with its source and age, the sources that are not live, the console page of the Cluster and the time it was rendered, as Markdown for an incident channel, in the words of the overview. Every value from the cluster is redacted and escaped so it cannot open a link or a mention. Same authorization as the overview.
+      operationId: getClusterSummary
+      parameters:
+        - description: Namespace of the Cluster (one of the console's watched namespaces).
+          in: path
+          name: namespace
+          required: true
+          schema:
+            description: Namespace of the Cluster (one of the console's watched namespaces).
+            maxLength: 63
+            pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+            type: string
+        - description: Name of the Cluster.
+          in: path
+          name: name
+          required: true
+          schema:
+            description: Name of the Cluster.
+            maxLength: 253
+            pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+            type: string
+      responses:
+        "200":
+          content:
+            text/markdown:
+              schema:
+                type: string
+          description: Markdown
+          headers:
+            Content-Type:
+              schema:
+                type: string
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Unauthorized
+        "403":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Forbidden
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Not Found
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Internal Server Error
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Service Unavailable
+      summary: A Cluster's incident summary
+      tags:
+        - clusters
   /api/v1/namespaces/{namespace}/clusters/{name}/timeline:
     get:
       description: "One time axis of what the console observed and what Kubernetes reported: phase and primary changes, restarts, backup results, findings appearing and clearing, spec revisions, Events, and the console's own gaps. Every entry says where it comes from and whether its time was observed or reported."
