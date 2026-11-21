@@ -95,7 +95,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.
 	// self-approved grant alive.
 	loop := &loopState{}
 	result, err := r.reconcile(ctx, access, loop)
-	return result, r.publish(ctx, access, original, loop, conditions.Outcome{Err: err, Converged: err == nil})
+	return reconcile.Result(result, r.publish(ctx, access, original, loop, conditions.Outcome{Err: err, Converged: err == nil}))
 }
 
 // loopState collects the Events of operator actions, emitted once the

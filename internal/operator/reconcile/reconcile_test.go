@@ -204,3 +204,34 @@ func TestStatusContext(t *testing.T) {
 		t.Fatal("cancel does not end the status context")
 	}
 }
+
+// TestResult: a failing reconcile returns its error alone, never a
+// RequeueAfter beside it (controller-runtime would warn on every failure
+// and ignore the result anyway); a successful one keeps its look again.
+func TestResult(t *testing.T) {
+	t.Parallel()
+	later := ctrlreconcile.Result{RequeueAfter: 5 * time.Minute}
+	boom := errors.New("boom")
+	for _, tc := range []struct {
+		name       string
+		result     ctrlreconcile.Result
+		err        error
+		wantResult ctrlreconcile.Result
+	}{
+		{"error drops the requeue", later, boom, ctrlreconcile.Result{}},
+		{"error with an empty result", ctrlreconcile.Result{}, boom, ctrlreconcile.Result{}},
+		{"success keeps the requeue", later, nil, later},
+		{"success with an empty result", ctrlreconcile.Result{}, nil, ctrlreconcile.Result{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			result, err := Result(tc.result, tc.err)
+			if !errors.Is(err, tc.err) || (tc.err == nil) != (err == nil) {
+				t.Errorf("err = %v, want %v", err, tc.err)
+			}
+			if result != tc.wantResult {
+				t.Errorf("result = %+v, want %+v", result, tc.wantResult)
+			}
+		})
+	}
+}
