@@ -170,6 +170,32 @@ The finding alerts carry the finding's severity mapped to the Prometheus
 Operator's: `critical` alerts as `critical`, `high` as `warning`, `warning` as
 `info`; a `note` does not alert.
 
+**Alongside CloudNativePG's alerts.** Some checks see what CloudNativePG's own
+alerts (the `cluster` chart's `CNPGCluster*` rules) also see, such as a lost
+replica or a stalled archive, so one incident can raise both. The finding
+alerts page anyway and leave pairing them to Alertmanager. They carry the
+same two keys CloudNativePG's alerts do: `namespace` (the Cluster's, not the
+console's) and `cnpg_cluster`. An inhibit rule then keeps one page per
+Cluster:
+
+```yaml
+inhibit_rules:
+  # While CloudNativePG pages on a Cluster, hold the console's finding
+  # pages of the same or lower severity for that Cluster.
+  - source_matchers: [alertname =~ "CNPGCluster.*", severity = "critical"]
+    target_matchers: [alertname =~ "PgToolBoxFinding(Critical|High|Warning)"]
+    equal: [namespace, cnpg_cluster]
+  - source_matchers: [alertname =~ "CNPGCluster.*", severity = "warning"]
+    target_matchers: [alertname =~ "PgToolBoxFinding(High|Warning)"]
+    equal: [namespace, cnpg_cluster]
+```
+
+Or group on `[namespace, cnpg_cluster]` to receive both in one notification.
+A ruler that enforces the rule's own namespace (OpenShift user-workload
+monitoring) overwrites `namespace` with the console's. The pairing still holds
+for a console that runs in its Clusters' namespace, which is what the team
+chart deploys.
+
 ### PgToolBoxFindingCritical
 
 Severity `critical`. A check reports a critical finding (PostgreSQL not serving
