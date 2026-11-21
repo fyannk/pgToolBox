@@ -236,6 +236,7 @@ export * from './operationKind.ts';
 export * from './operationOffer.ts';
 export * from './operationOfferKind.ts';
 export * from './operationPhase.ts';
+export * from './operationRecordedIn.ts';
 export * from './operationRequest.ts';
 export * from './operationRequestKind.ts';
 export * from './operations.ts';

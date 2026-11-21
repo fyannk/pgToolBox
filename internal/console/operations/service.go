@@ -68,7 +68,8 @@ type Options struct {
 	IsNotFound func(error) bool
 	Now        func() time.Time
 	Logger     *slog.Logger
-	// RecentPerCluster bounds this replica's record per Cluster.
+	// RecentPerCluster bounds Recent, and this replica's record, per
+	// Cluster.
 	RecentPerCluster int
 	// Drills enables the restore-drill operation; nil leaves it out.
 	Drills *DrillOptions
@@ -78,7 +79,9 @@ type Options struct {
 type Service struct {
 	opts Options
 	mu   sync.Mutex
-	// recent is this replica's record of the operations it issued.
+	// recent is this replica's record of the operations it issued: what
+	// Recent lists beyond the cluster's own markers (a promote, or an
+	// operation the informers have not shown yet).
 	recent map[string][]record
 }
 
@@ -198,7 +201,7 @@ func (s *Service) Offers(ctx context.Context, p *auth.Principal, caps authz.Capa
 	out := viewmodel.Operations{
 		Ref: viewmodel.ClusterRef{Namespace: namespace, Name: name, UID: string(c.UID)}, GeneratedAt: s.opts.Now().UTC(),
 		Offers: []viewmodel.OperationOffer{}, Recent: []viewmodel.Operation{},
-		RecentScope: "operations issued through this console replica since it started; the API server's audit log is the complete record",
+		RecentScope: recentScope,
 		Revision:    RevisionOf(c),
 	}
 	allowed := map[viewmodel.OperationKind]bool{
@@ -245,10 +248,14 @@ func (s *Service) Offers(ctx context.Context, p *auth.Principal, caps authz.Capa
 	s.mu.Lock()
 	recs := slices.Clone(s.recent[namespace+"/"+name])
 	s.mu.Unlock()
-	for i := len(recs) - 1; i >= 0; i-- {
+	entries, gaps := s.recentOf(st, recs)
+	out.RecentGaps = gaps
+	for _, e := range entries {
 		// Who asked is the API server's audit log's to say: Recent lists
 		// what was done, not by whom, to every viewer of the Cluster.
-		out.Recent = append(out.Recent, s.track(recs[i].id, st))
+		op := s.track(e.id, st)
+		op.RecordedIn, op.RecordedFrom = e.in, e.from
+		out.Recent = append(out.Recent, op)
 	}
 	return out, nil
 }
@@ -306,7 +313,7 @@ func (s *Service) write(ctx context.Context, id *ID, req viewmodel.OperationRequ
 		if bl := cnpgstatus.BackupPreconditions(c, method); len(bl) > 0 {
 			return out, refuse(bl)
 		}
-		created, gen, err := w.CreateBackup(ctx, ops.BackupObject(id.Namespace, id.Cluster, "ondemand-"+now.Format("20060102150405")+"-", method, plugin))
+		created, gen, err := w.CreateBackup(ctx, ops.BackupObject(id.Namespace, id.Cluster, "ondemand-"+now.Format("20060102150405")+"-", method, plugin, now))
 		if err != nil {
 			return out, err
 		}

@@ -16,7 +16,7 @@ impersonation ([security model](security.md#writes-token-passthrough-never-imper
 
 | Operation | What the console writes | The person needs | Outcome observable? |
 |---|---|---|---|
-| **Backup** | One `Backup` named `ondemand-<timestamp>-…` with the Cluster's own method (barman-cloud plugin, `barmanObjectStore` or `volumeSnapshot`) | `create backups` in the namespace | Yes: the `Backup` object's phase |
+| **Backup** | One `Backup` named `ondemand-<timestamp>-…` with the Cluster's own method (barman-cloud plugin, `barmanObjectStore` or `volumeSnapshot`) and the annotation `pgtoolbox.fyannk.dev/requested-at` | `create backups` in the namespace | Yes: the `Backup` object's phase |
 | **Reload configuration** | The annotation `cnpg.io/reloadedAt` on the Cluster | `patch clusters/<name>` | No: CloudNativePG reports no outcome for a reload (the console says so) |
 | **Restart** | The annotation `kubectl.kubernetes.io/restartedAt` on the Cluster: instances roll, replicas first, then the primary | `patch clusters/<name>` | Yes |
 | **Promote (switchover)** | A status patch on the Cluster setting `targetPrimary` to the chosen replica | `patch clusters/<name>/status` | Yes |
@@ -63,9 +63,29 @@ duration.
 state, on **any** console replica: the id encodes what to look for. It reports a
 phase ladder with each step attributed to the field that showed it. `timedOut`
 means no outcome was reported before the deadline (an hour for a backup, 30 minutes
-for a restart, 2 minutes for a promote), not that it failed. The offers list also
-shows the operations *this replica* issued, since it started; that is a
-convenience, not a record. **The API server's audit log is the complete record.**
+for a restart, 2 minutes for a promote), not that it failed.
+
+### Recent operations
+
+The offers list ends with the Cluster's **recent operations**, newest first (at
+most 20). They are rebuilt from what the Cluster's objects record, read from the
+console's informer cache, so every replica shows the same list, and so does one
+that just restarted:
+
+| Operation | Found from | Notes |
+|---|---|---|
+| Backup | Backups of the Cluster carrying the annotation `pgtoolbox.fyannk.dev/requested-at` (the instant the console accepted the request, RFC 3339 UTC), which the console sets on the Backups it creates | Scheduled Backups and Backups created by hand carry no marker and are not listed. Anyone who may create a Backup can set the annotation: it says a console asked, not who |
+| Restart, reload | The Cluster's `kubectl.kubernetes.io/restartedAt` and `cnpg.io/reloadedAt` annotations | Only the latest of each, and whoever set it (the console or `kubectl cnpg`) |
+| Restore drill | The console's [restore-drill record](console/restore-drills.md) of the Cluster, which every replica rebuilds from the drill Cluster's sealed annotation | When the record is not kept across restarts (no persistent history, no state ConfigMap), drills finished before the replica started are missing, and the list says so |
+| Promote | Only the memory of the replica that issued it | `status.targetPrimary` is also set by a failover, so it is not a marker; a promote disappears from the list when that replica restarts |
+
+Each entry says where it was found (`recordedIn`: `cluster` or `replica`, and
+`recordedFrom`, the marker, in words); an entry only one replica remembers is
+marked on the screen. When the console cannot read a source here (Backups it may
+not list in the namespace, a failed read), `recentGaps` names it and the screen
+shows it: an unreadable source is never shown as "nothing happened". The list
+says what was done, never by whom. **The API server's audit log is the complete
+record.**
 
 ## Switching it off
 

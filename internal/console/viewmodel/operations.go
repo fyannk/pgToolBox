@@ -47,18 +47,33 @@ const (
 	OpPhaseNotObservable OperationPhase = "notObservable"
 )
 
+// OperationRecord says where a recent operation was found.
+type OperationRecord string
+
+// Where a recent operation was found: on the cluster's objects (every
+// console replica, and one restarted since, lists it), or only in the
+// memory of the replica that issued it.
+const (
+	RecordCluster OperationRecord = "cluster"
+	RecordReplica OperationRecord = "replica"
+)
+
 // Operations is the /operations screen of one Cluster: what the caller
-// may do here, why something cannot be done now, and the recent
-// operations this console replica issued.
+// may do here, why something cannot be done now, and its recent
+// operations.
 type Operations struct {
 	Ref         ClusterRef       `json:"ref"`
 	GeneratedAt time.Time        `json:"generatedAt"`
 	Offers      []OperationOffer `json:"offers"`
-	// Recent are the operations issued through this console replica,
-	// newest first. It is not the cluster's audit trail (the API
-	// server's audit log is): another replica or kubectl is not listed.
+	// Recent are the Cluster's recent operations, newest first, rebuilt
+	// from the markers its objects carry, plus those only this replica
+	// remembers (Operation.RecordedIn says which). It is not the
+	// cluster's audit trail (the API server's audit log is).
 	Recent      []Operation `json:"recent"`
 	RecentScope string      `json:"recentScope" doc:"What Recent covers, in words."`
+	// RecentGaps name what Recent may miss now (a source the console
+	// cannot read here), in words; empty when nothing is known missing.
+	RecentGaps []string `json:"recentGaps,omitempty" doc:"What Recent may miss now, in words (a source the console cannot read here)."`
 	// Revision is the Cluster as these offers read it. It is not served:
 	// an MCP confirmation seals it, and the operation is refused when the
 	// Cluster it writes to is no longer the one the person confirmed on.
@@ -186,6 +201,11 @@ type Operation struct {
 	// Blocked reports the operator waits for something (a supervised
 	// primary update waits for user action).
 	Blocked bool `json:"blocked,omitempty"`
+	// RecordedIn and RecordedFrom say where a recent operation was found
+	// (Operations.Recent only): on the cluster's objects, and which
+	// marker, or only in this replica's memory.
+	RecordedIn   OperationRecord `json:"recordedIn,omitempty" enum:"cluster,replica" doc:"Where this recent operation was found: on the cluster's objects (every replica lists it) or only in this console replica's memory."`
+	RecordedFrom string          `json:"recordedFrom,omitempty" doc:"The marker this recent operation was rebuilt from, in words."`
 	// Actor is reserved and not filled: who asked is the API server's
 	// audit log's to say, and user names are not shown to every viewer
 	// of a Cluster.

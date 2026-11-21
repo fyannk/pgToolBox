@@ -75,6 +75,19 @@ test("operations: promote cannot be confirmed before an instance is chosen", asy
   expect(onRequest).not.toHaveBeenCalled();
 });
 
+test("operations: a recent operation only this replica remembers is marked, and gaps are named", async () => {
+  const [cluster] = operationsOperator.recent ?? [];
+  if (!cluster) throw new Error("fixture has no recent operation");
+  const data = {
+    ...operationsOperator,
+    recent: [{ ...cluster, operationId: "mem", recordedIn: "replica" as const }, cluster],
+    recentGaps: ["Backups unreadable"],
+  };
+  const screen = await renderInFrame(<OperationsView data={data} actor="v" onRequest={vi.fn()} />);
+  expect(screen.getByText("only this console replica remembers it").all()).toHaveLength(1);
+  await expect.element(screen.getByRole("note")).toHaveTextContent("May be missing: Backups unreadable");
+});
+
 test("admin: a pgAdmin address that is not https is not a link", async () => {
   const ns = (admin.namespaces ?? [])[0];
   if (!ns) throw new Error("fixture has no namespace");

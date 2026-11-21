@@ -39,11 +39,15 @@ type InstanceState struct {
 // ClusterState is the informer cache's view of a Cluster, for the offers
 // and the trackers (never for the precondition check of a write).
 type ClusterState struct {
-	Cluster   *cnpgv1.Cluster
-	Pods      []corev1.Pod
-	Backups   []*cnpgv1.Backup
-	Minor     cnpgstatus.Minor
-	Instances []InstanceState
+	Cluster *cnpgv1.Cluster
+	Pods    []corev1.Pod
+	Backups []*cnpgv1.Backup
+	// BackupsListed reports that Backups was read: false when the console
+	// cannot read Backups in the namespace or the read failed, so an
+	// empty Backups is not taken for "none".
+	BackupsListed bool
+	Minor         cnpgstatus.Minor
+	Instances     []InstanceState
 }
 
 // PgBackRestTarget is the newest backup of an evidence agent's recovery

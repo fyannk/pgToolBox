@@ -4507,6 +4507,15 @@ components:
             - timedOut
             - notObservable
           type: string
+        recordedFrom:
+          description: The marker this recent operation was rebuilt from, in words.
+          type: string
+        recordedIn:
+          description: "Where this recent operation was found: on the cluster's objects (every replica lists it) or only in this console replica's memory."
+          enum:
+            - cluster
+            - replica
+          type: string
         steps:
           items:
             $ref: "#/components/schemas/OperationStep"
@@ -4702,6 +4711,13 @@ components:
         recent:
           items:
             $ref: "#/components/schemas/Operation"
+          type:
+            - array
+            - "null"
+        recentGaps:
+          description: What Recent may miss now, in words (a source the console cannot read here).
+          items:
+            type: string
           type:
             - array
             - "null"
