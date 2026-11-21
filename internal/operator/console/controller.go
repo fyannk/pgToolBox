@@ -172,17 +172,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.
 		// rather than wait for a watch.
 		result.RequeueAfter = stallRetries[stalled.Reason]
 	}
-	return resultFor(result, r.publish(ctx, console, original, conditions.Outcome{Err: err, Converged: err == nil}))
-}
-
-// resultFor is what Reconcile returns: with an error, the error alone
-// (controller-runtime backs off, and warns of a result returned beside an
-// error); else the result.
-func resultFor(result ctrl.Result, err error) (ctrl.Result, error) {
-	if err != nil {
-		return ctrl.Result{}, err
-	}
-	return result, nil
+	return reconcile.Result(result, r.publish(ctx, console, original, conditions.Outcome{Err: err, Converged: err == nil}))
 }
 
 // policyRecheck is how often a console stalled on an ingress
@@ -697,7 +687,7 @@ func (r *Reconciler) observeExposure(ctx context.Context, console *pgtoolboxv1al
 	case pgtoolboxv1alpha1.ExposureTypeClusterIP:
 	case pgtoolboxv1alpha1.ExposureTypeRoute:
 		if !r.Features.In(console.Namespace).Routes.Usable() {
-			fact = exposure.Fact{Status: metav1.ConditionFalse, Reason: pgtoolboxv1alpha1.ReasonRouteAPIUnavailable, Message: "the Route API is unavailable: " + unavailableWhy(r.Features.In(console.Namespace).Routes)}
+			fact = exposure.Fact{Status: metav1.ConditionFalse, Reason: pgtoolboxv1alpha1.ReasonRouteAPIUnavailable, Message: "the Route API is unavailable: " + r.Features.In(console.Namespace).Routes.Why()}
 			break
 		}
 		var route routev1.Route
@@ -715,7 +705,7 @@ func (r *Reconciler) observeExposure(ctx context.Context, console *pgtoolboxv1al
 		}
 	case pgtoolboxv1alpha1.ExposureTypeGateway:
 		if !r.Features.In(console.Namespace).Gateways.Usable() {
-			fact = exposure.Fact{Status: metav1.ConditionFalse, Reason: pgtoolboxv1alpha1.ReasonGatewayAPIUnavailable, Message: "the Gateway API is unavailable: " + unavailableWhy(r.Features.In(console.Namespace).Gateways)}
+			fact = exposure.Fact{Status: metav1.ConditionFalse, Reason: pgtoolboxv1alpha1.ReasonGatewayAPIUnavailable, Message: "the Gateway API is unavailable: " + r.Features.In(console.Namespace).Gateways.Why()}
 			break
 		}
 		var route gatewayv1.HTTPRoute
@@ -838,13 +828,4 @@ func podFacts(ctx context.Context, reader client.Reader, console *pgtoolboxv1alp
 		}
 	}
 	return "", "", nil
-}
-
-// unavailableWhy is the probe's reason for an unusable optional API. The
-// probe runs once, when the operator starts, so the reason says so.
-func unavailableWhy(result discovery.Result) string {
-	if result.Reason == "" {
-		return "not probed"
-	}
-	return result.Reason + " (probed when the operator started: restart it once the API is installed or allowed)"
 }

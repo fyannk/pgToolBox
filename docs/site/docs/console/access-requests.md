@@ -107,7 +107,9 @@ stateDiagram-v2
 `Denied`, `Expired` and `Revoked` are terminal: the operator deletes any
 RoleBinding the request still controls and reports `AccessDenied`,
 `AccessExpired` or `AccessRevoked`. Deleting the request, in any phase, deletes
-its RoleBinding through the garbage collector (the binding's owner reference).
+its RoleBinding: the operator deletes it as soon as the deletion is requested
+(a finalizer on the request does not keep the grant), and the garbage collector
+(the binding's owner reference) would otherwise.
 
 - **Approve**: the console creates `RoleBinding pgaccess-<request>` (subject →
   ClusterRole, owned by the request) and then records `status.decidedBy` (your
@@ -144,8 +146,8 @@ its RoleBinding through the garbage collector (the binding's owner reference).
   `kubectl create rolebinding`, no request involved, and the operator never sees
   it. Treat `pgtoolbox-console-approver` as the right to grant yourself access,
   and audit RoleBindings to the two roles at the API server.
-- **Deleting the request** deletes its RoleBinding (owner reference, garbage
-  collector).
+- **Deleting the request** deletes its RoleBinding, at once, even while a
+  finalizer keeps the request Terminating.
 
 A request is immutable once made, and its status only moves forward
 (`Pending → Approved | Denied | Expired`, `Approved → Revoked | Expired`): the

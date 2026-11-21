@@ -128,7 +128,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.
 		return ctrl.Result{}, r.publish(ctx, agent, original, conditions.Outcome{Paused: true})
 	}
 	result, err := r.reconcile(ctx, agent)
-	return result, r.publish(ctx, agent, original, conditions.Outcome{Err: err, Converged: err == nil})
+	return reconcile.Result(result, r.publish(ctx, agent, original, conditions.Outcome{Err: err, Converged: err == nil}))
 }
 
 func (r *Reconciler) reconcile(ctx context.Context, agent *pgtoolboxv1alpha1.EvidenceAgent) (ctrl.Result, error) {

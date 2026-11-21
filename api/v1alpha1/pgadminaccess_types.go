@@ -72,9 +72,10 @@ type PgAdminReference struct {
 
 // PgAdminAccess is a grant, in the namespace of the Clusters it names: the
 // PgAdmin it names, in another namespace, may register those Clusters and
-// read their offered credentials. Creating one is the decision of whoever
-// may read this namespace's Secrets; who may create PgAdminAccess objects
-// here is therefore an RBAC decision of the namespace owner. Like the
+// read their offered credentials. Creating one should be the decision of
+// whoever may read this namespace's Secrets (nothing enforces it); who may
+// create PgAdminAccess objects here is therefore an RBAC decision of the
+// namespace owner. Like the
 // Gateway API's ReferenceGrant it has no status: the PgAdmin reports
 // whether it is granted (ConfigurationValid, GrantMissing). Deleting it
 // revokes the access (the Role and RoleBinding it owns are garbage

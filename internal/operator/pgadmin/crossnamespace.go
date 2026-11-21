@@ -324,10 +324,15 @@ func (r *Reconciler) deleteStaleAccess(ctx context.Context, obj client.Object, k
 	return nil
 }
 
-// forGrant maps a PgAdminAccess to the PgAdmin it names.
-func forGrant(_ context.Context, obj client.Object) []ctrlreconcile.Request {
+// forGrant maps a PgAdminAccess to the PgAdmin it names, unless that
+// PgAdmin is in a namespace the operator does not watch (WATCH_NAMESPACES):
+// the cache cannot serve it, and the request would fail at every retry.
+func (r *Reconciler) forGrant(_ context.Context, obj client.Object) []ctrlreconcile.Request {
 	grant, ok := obj.(*pgtoolboxv1alpha1.PgAdminAccess)
 	if !ok {
+		return nil
+	}
+	if watched := r.Config.WatchNamespaces; len(watched) > 0 && !slices.Contains(watched, grant.Spec.PgAdmin.Namespace) {
 		return nil
 	}
 	return []ctrlreconcile.Request{{NamespacedName: types.NamespacedName{Namespace: grant.Spec.PgAdmin.Namespace, Name: grant.Spec.PgAdmin.Name}}}

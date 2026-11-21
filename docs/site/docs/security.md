@@ -266,8 +266,11 @@ like the rest. Without it, a custom role with `create pgadmins` and `connect
 pgadmins` but no `get secrets` could ask for `superuser: true` and open pgAdmin
 with the superuser's password. `crossNamespaceClusterRefs` are outside the rule:
 the `PgAdminAccess` grant of the target namespace, created by its owner, decides
-them (privileged credentials only with `allowPrivileged`). A `PgAdmin` that
-offers no credentials is not concerned.
+them (privileged credentials only with `allowPrivileged`). Grant `create
+pgadminaccesses` only to subjects that may already `get secrets` in the
+namespace: the grant makes the operator write a Role that lets another
+namespace's pgAdmin read those Clusters' credentials (the superuser's with
+`allowPrivileged`). A `PgAdmin` that offers no credentials is not concerned.
 Message: "a PgAdmin that offers the credentials of Clusters of its namespace
 (spec.credentials with clusterRefs or clusterSelector) or keeps its settings on
 one (spec.configDatabase) requires get on the Secrets of the namespace".

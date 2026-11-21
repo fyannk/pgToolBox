@@ -71,6 +71,16 @@ func NextLoop(format string, args ...any) error {
 	return fmt.Errorf("%s: %w", fmt.Sprintf(format, args...), ErrNextLoop)
 }
 
+// Result is what a Reconcile returns: with an error, the error alone
+// (controller-runtime backs off, and ignores and warns of a result
+// returned beside an error); else the result.
+func Result(result ctrlreconcile.Result, err error) (ctrlreconcile.Result, error) {
+	if err != nil {
+		return ctrlreconcile.Result{}, err
+	}
+	return result, nil
+}
+
 // ErrStalled marks a loop that stopped on a problem only a change of
 // input fixes (a missing referenced object, a foreign object under a
 // generated name): Stalled=True, Progressing=False, and no error returned
