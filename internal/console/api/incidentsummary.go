@@ -312,15 +312,15 @@ var (
 	)
 )
 
-// mdClean is the boundary every quoted value crosses: credentials
-// removed, every line break, control and format character (bidi
-// overrides, zero-width characters) folded into one space, bounded, and
-// mentions and bare-URL autolinks broken by a word joiner.
+// mdClean is the boundary every quoted value crosses: every line break,
+// control and format character (bidi overrides, zero-width characters)
+// folded into one space, then credentials removed (after the folding, so
+// a no-break or zero-width character inside a credential cannot hide it
+// from redaction), then bounded, and mentions and bare-URL autolinks
+// broken by a word joiner.
 func mdClean(s string) string {
-	s = redact.Text(s)
 	var b strings.Builder
 	space := false
-	n := 0
 	for _, r := range s {
 		switch {
 		case r == utf8.RuneError, unicode.Is(unicode.Cf, r):
@@ -329,18 +329,17 @@ func mdClean(s string) string {
 			space = b.Len() > 0
 			continue
 		}
-		if n == maxSummaryText {
-			b.WriteString("…")
-			break
-		}
 		if space {
 			b.WriteByte(' ')
 			space = false
 		}
 		b.WriteRune(r)
-		n++
 	}
-	out := strings.ReplaceAll(b.String(), "@", "@"+wordJoiner)
+	out := redact.Text(b.String())
+	if runes := []rune(out); len(runes) > maxSummaryText {
+		out = string(runes[:maxSummaryText]) + "…"
+	}
+	out = strings.ReplaceAll(out, "@", "@"+wordJoiner)
 	return autolinkStart.ReplaceAllStringFunc(out, func(m string) string {
 		return m[:len(m)-1] + wordJoiner + m[len(m)-1:]
 	})

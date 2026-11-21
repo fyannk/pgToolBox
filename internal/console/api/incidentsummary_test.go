@@ -197,6 +197,21 @@ func TestMdText(t *testing.T) {
 	}
 }
 
+// A no-break or zero-width character inside a credential does not hide it
+// from redaction: the value is folded before it is redacted.
+func TestMdTextRedactsAfterFolding(t *testing.T) {
+	t.Parallel()
+	for _, in := range []string{
+		"pass\u200bword=hunter2",
+		"password=\u00a0hunter2",
+		"PASSWORD\u2060 'hunter2'",
+	} {
+		if got := mdText(in); strings.Contains(got, "hunter2") {
+			t.Errorf("mdText(%q) = %q: the credential got through", in, got)
+		}
+	}
+}
+
 func TestMdCode(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct{ in, want string }{
