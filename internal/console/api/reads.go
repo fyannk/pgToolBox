@@ -17,6 +17,7 @@ package api
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"strconv"
 	"time"
 
@@ -98,6 +99,26 @@ func (r *Reads) ClusterOverview(ctx context.Context, namespace, name string) (Cl
 	}
 	links, unread := pgAdminLinks(ctx, d, p, namespace, name)
 	return ClusterOverviewView{ClusterOverview: ov, Capabilities: caps, PgAdmins: links, PgAdminsUnread: unread}, nil
+}
+
+// ClusterSummary is GET .../summary: the overview and the diagnostics
+// run rendered as Markdown (RenderIncidentSummary). Diagnostics that
+// cannot be read are said so in the text rather than failing it.
+func (r *Reads) ClusterSummary(ctx context.Context, namespace, name string) (string, error) {
+	d := r.d
+	ov, err := readCluster(ctx, d, namespace, name, func(ctx context.Context, s Source, ns, n string) (viewmodel.ClusterOverview, error) {
+		return s.ClusterOverview(ctx, ns, n)
+	})
+	if err != nil {
+		return "", err
+	}
+	s := IncidentSummary{Overview: ov, ConsoleURL: clusterPageURL(d.origin(ctx), namespace, name), Now: d.now()}
+	if diag, err := d.Source.Diagnostics(ctx, namespace, name); err == nil {
+		s.Diagnostics = &diag
+	} else if log := d.Log; log != nil {
+		log.WarnContext(ctx, "the incident summary could not read the diagnostics", slog.String("error", err.Error()))
+	}
+	return RenderIncidentSummary(s), nil
 }
 
 // readCluster authorizes the caller on one Cluster, then reads it: the

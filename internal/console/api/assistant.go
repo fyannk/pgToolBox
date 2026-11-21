@@ -197,6 +197,18 @@ func requestFrom(ctx context.Context) *http.Request {
 	return r
 }
 
+// origin is the console's origin: PUBLIC_URL when configured, else the
+// one the request was made to.
+func (d Deps) origin(ctx context.Context) string {
+	if d.PublicURL != "" {
+		return d.PublicURL
+	}
+	if r := requestFrom(ctx); r != nil {
+		return auth.ExpectedOrigin(r, "")
+	}
+	return ""
+}
+
 // clientOf is the calling client for the audit record.
 func clientOf(ctx context.Context, d Deps) auth.Client {
 	r := requestFrom(ctx)
@@ -295,15 +307,7 @@ func registerAssistant(a huma.API, d Deps) {
 		return nil, nil
 	})
 
-	origin := func(ctx context.Context) string {
-		if d.PublicURL != "" {
-			return d.PublicURL
-		}
-		if r := requestFrom(ctx); r != nil {
-			return auth.ExpectedOrigin(r, "")
-		}
-		return ""
-	}
+	origin := d.origin
 	huma.Register(a, huma.Operation{
 		OperationID: OpGetAssistantSetup, Method: http.MethodGet, Path: "/api/" + Version + "/assistant-setup",
 		Summary: "Connect an assistant", Tags: []string{"assistant"},
