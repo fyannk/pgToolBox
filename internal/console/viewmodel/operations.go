@@ -29,6 +29,11 @@ const (
 	// OperationRestoreDrill restores the latest backup into a throwaway
 	// Cluster, checks it and deletes it.
 	OperationRestoreDrill OperationKind = "restoreDrill"
+	// OperationPrimaryChange is a change of the primary the console
+	// observed (Operations.Recent only): a switchover or a failover,
+	// requested by anyone or by no one. It is never offered, requested or
+	// followed.
+	OperationPrimaryChange OperationKind = "primaryChange"
 )
 
 // OperationPhase is a tracker step. notObservable is a
@@ -47,18 +52,40 @@ const (
 	OpPhaseNotObservable OperationPhase = "notObservable"
 )
 
+// OperationRecord says where a recent operation was found.
+type OperationRecord string
+
+// Where a recent operation was found: on the cluster's objects (every
+// console replica, and one restarted since, lists it), only in the
+// memory of the replica that issued it, or in this console's timeline
+// of what it observed (a primary change).
+const (
+	RecordCluster  OperationRecord = "cluster"
+	RecordReplica  OperationRecord = "replica"
+	RecordTimeline OperationRecord = "timeline"
+)
+
 // Operations is the /operations screen of one Cluster: what the caller
-// may do here, why something cannot be done now, and the recent
-// operations this console replica issued.
+// may do here, why something cannot be done now, and its recent
+// operations.
 type Operations struct {
 	Ref         ClusterRef       `json:"ref"`
 	GeneratedAt time.Time        `json:"generatedAt"`
 	Offers      []OperationOffer `json:"offers"`
-	// Recent are the operations issued through this console replica,
-	// newest first. It is not the cluster's audit trail (the API
-	// server's audit log is): another replica or kubectl is not listed.
+	// Recent are the Cluster's recent operations, newest first, rebuilt
+	// from its objects (every Backup, the restart and reload markers, the
+	// drill record), plus the primary changes this console observed and
+	// those only this replica remembers (Operation.RecordedIn says
+	// which). It is not the cluster's audit trail (the API server's audit
+	// log is).
 	Recent      []Operation `json:"recent"`
 	RecentScope string      `json:"recentScope" doc:"What Recent covers, in words."`
+	// RecentGaps name what Recent may miss now (a source the console
+	// cannot read here), in words; empty when nothing is known missing.
+	RecentGaps []string `json:"recentGaps,omitempty" doc:"What Recent may miss now, in words (a source the console cannot read here)."`
+	// RecentNotShown counts the older entries Recent's bounds left out,
+	// in words: a cap on what is shown, not a source the console missed.
+	RecentNotShown []string `json:"recentNotShown,omitempty" doc:"How many older entries Recent does not show, in words (its bounds, not a gap)."`
 	// Revision is the Cluster as these offers read it. It is not served:
 	// an MCP confirmation seals it, and the operation is refused when the
 	// Cluster it writes to is no longer the one the person confirmed on.
@@ -133,6 +160,32 @@ type PromoteTarget struct {
 	Health   Health             `json:"health" enum:"ok,progressing,warning,critical,inactive,unknown,info"`
 	// LagBytes is the instance's replay lag behind the primary, when read.
 	LagBytes *int64 `json:"lagBytes,omitempty"`
+	// Readiness are the facts a person weighs before confirming a
+	// switchover to this instance, each with its own source and age. It
+	// is not a score and decides nothing: Blockers are what refuses.
+	// Optional so that clients built before it existed keep compiling.
+	Readiness []ReadinessFact `json:"readiness,omitempty" doc:"Pod readiness, streaming, replay lag, synchronous state and fencing of the target, each attributed and aged; not a score."`
+}
+
+// ReadinessKey names one promote-readiness fact. The set is closed.
+type ReadinessKey string
+
+// The readiness facts, in the order they are served.
+const (
+	ReadinessPod       ReadinessKey = "pod"
+	ReadinessStreaming ReadinessKey = "streaming"
+	ReadinessReplayLag ReadinessKey = "replayLag"
+	ReadinessSyncState ReadinessKey = "syncState"
+	ReadinessFencing   ReadinessKey = "fencing"
+)
+
+// ReadinessFact is one fact about a promote target. Health is unknown
+// when the fact was not read, never ok by default.
+type ReadinessFact struct {
+	Key        ReadinessKey `json:"key" enum:"pod,streaming,replayLag,syncState,fencing"`
+	Health     Health       `json:"health" enum:"ok,progressing,warning,critical,inactive,unknown,info"`
+	Text       string       `json:"text" doc:"The fact in words, such as streaming from the primary or not read."`
+	Provenance Provenance   `json:"provenance"`
 }
 
 // OperationRequest is the body of POST .../operations.
@@ -163,8 +216,10 @@ type OperationAccepted struct {
 
 // Operation is one tracked operation.
 type Operation struct {
-	OperationID string        `json:"operationId"`
-	Kind        OperationKind `json:"kind" enum:"backup,reload,restart,promote,restoreDrill"`
+	// OperationID is the handle GET /api/v1/operations/{id} resolves;
+	// a primaryChange's identifies the entry only and is not followed.
+	OperationID string        `json:"operationId" doc:"Opaque handle for GET /api/v1/operations/{id}; a primaryChange's only identifies the entry (it is observed, not followed)."`
+	Kind        OperationKind `json:"kind" enum:"backup,reload,restart,promote,restoreDrill,primaryChange"`
 	Target      ClusterRef    `json:"target"`
 	Instance    string        `json:"instance,omitempty"`
 	Created     string        `json:"created,omitempty"`
@@ -186,6 +241,12 @@ type Operation struct {
 	// Blocked reports the operator waits for something (a supervised
 	// primary update waits for user action).
 	Blocked bool `json:"blocked,omitempty"`
+	// RecordedIn and RecordedFrom say where a recent operation was found
+	// (Operations.Recent only): on the cluster's objects, and which
+	// marker, only in this replica's memory, or in this console's
+	// timeline.
+	RecordedIn   OperationRecord `json:"recordedIn,omitempty" enum:"cluster,replica,timeline" doc:"Where this recent operation was found: on the cluster's objects (every replica lists it), only in this console replica's memory, or in this console's timeline of what it observed (a primary change)."`
+	RecordedFrom string          `json:"recordedFrom,omitempty" doc:"The marker this recent operation was rebuilt from, in words."`
 	// Actor is reserved and not filled: who asked is the API server's
 	// audit log's to say, and user names are not shown to every viewer
 	// of a Cluster.

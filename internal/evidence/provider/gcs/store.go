@@ -188,12 +188,13 @@ func (s *Store) List(ctx context.Context, request store.ListRequest) (store.Page
 }
 
 // Open implements store.Reader. The body yields at most request.MaxBytes,
-// and closing it ends the request.
+// all of it within request.Timeout(request timeout), and closing it ends the
+// request.
 func (s *Store) Open(ctx context.Context, request store.OpenRequest) (io.ReadCloser, error) {
 	if err := request.Validate(); err != nil || strings.HasPrefix(request.Key, "/") {
 		return nil, store.ErrInvalidRequest
 	}
-	ctx, cancel := context.WithTimeout(ctx, s.timeout)
+	ctx, cancel := context.WithTimeout(ctx, request.Timeout(s.timeout))
 	reader, err := s.client.Bucket(s.bucket).Object(s.prefix + request.Key).NewReader(ctx)
 	if err != nil {
 		// Categorized before cancel: after it, ctx.Err() would turn every

@@ -117,7 +117,7 @@ func Expected(kind viewmodel.OperationKind, r viewmodel.ClusterRevision) viewmod
 		out.Generation, out.Phase, out.CurrentPrimary = r.Generation, r.Phase, r.CurrentPrimary
 	case viewmodel.OperationPromote:
 		out.CurrentPrimary = r.CurrentPrimary
-	case viewmodel.OperationBackup, viewmodel.OperationReload, viewmodel.OperationRestoreDrill:
+	case viewmodel.OperationBackup, viewmodel.OperationReload, viewmodel.OperationRestoreDrill, viewmodel.OperationPrimaryChange:
 	}
 	return out
 }

@@ -27,8 +27,14 @@ what the design guarantees and, as plainly, what it does not.
    person's own token, so the API server authorizes, admits and audits it under their
    name. A stale cache can never grant a write.
 4. **No cluster-scoped console, no Secret verb.** A console's reach is bounded by the
-   namespaces its Roles name. Its ServiceAccount cannot read a Secret, cannot write,
-   and cannot impersonate. The one opt-in exception is the
+   namespaces its Roles name. Its ServiceAccount cannot read a Secret and cannot
+   impersonate. It updates only its own objects, by name: the state ConfigMap
+   (`<console>-state`: the sign-outs and "since" times its replicas share)
+   and, when the features are on, the Leases that elect its MCP leader and
+   its digest sender. With the digest on it may also create Leases in its
+   namespace: the API server cannot restrict `create` to a name. The revocation
+   ConfigMap it only reads: a sign-out written there goes with the person's
+   token. The one other opt-in write is the
    [restore drill](console/restore-drills.md#which-clusters-the-console-deletes)
    teardown: `delete clusters` in the drill namespace, used only on Clusters this
    console sealed. On Kubernetes 1.30+ an admission policy enforces that on the
@@ -43,9 +49,9 @@ what the design guarantees and, as plainly, what it does not.
 |---|---|---|---|
 | **Console ServiceAccount** | The CloudNativePG kinds, pods, services, PVCs, events, PDBs, leases, jobs, `pgadmins`, `evidenceagents`, `objectstores` in the watched namespaces; `pods/log` unless withheld; one ConfigMap by name | Nothing. It asks the API server with SelfSubjectAccessReviews sent with the reader's own token, which need no grant | Read a Secret; use `impersonate`; read outside its namespaces; write |
 | **A person through the console** | What their own RBAC lets them `get` | Back up, reload, restart, promote, **with their token** | Anything the API server denies them |
-| **Operator** | Its watched namespaces' CRs and what they reference; Secret *metadata* only in its cache, but its RBAC grants Secret verbs, RoleBindings (with `bind` on the three console ClusterRoles) and workload rules in every namespace by default, or only in `operator.config.watchNamespaces` with the Helm chart. Cluster-wide it keeps TokenReview, SubjectAccessReview, SecurityContextConstraints and the evidence agent's ClusterRole and binding, with no `bind`, `escalate` or `impersonate`. See [the limitation below](#known-limitations) | The children of `PgAdmin`, `EvidenceAgent` and `PgToolBoxConsole`; their status; with a console's MCP on, the label `pgtoolbox.fyannk.dev/mcp-leader` on that console's Pods (`patch pods`, and `list`/`watch` on its Leases to follow the MCP Lease's holder; the label alone is written) | Hold a database password |
+| **Operator** | Its watched namespaces' CRs and what they reference; Secret *metadata* only in its cache, but its RBAC grants Secret verbs, RoleBindings (with `bind` on the three console ClusterRoles) and workload rules in every namespace by default, or only in `operator.config.watchNamespaces` with the Helm chart. Cluster-wide it keeps TokenReview, SubjectAccessReview, SecurityContextConstraints and the evidence agent's ClusterRole and binding, with no `bind`, `escalate` or `impersonate`. See [the limitation below](#known-limitations) | The children of `PgAdmin`, `EvidenceAgent` and `PgToolBoxConsole`; their status. It writes nothing on Pods (`get`, `list` and `watch` only) | Hold a database password |
 | **Evidence agent ServiceAccount** | The object store: with the operator, through credential files mounted in its own Pod; in team mode, through the Secrets its values list, read with a name-scoped Role | Nothing in the store | With the operator, anything on the API server except creating TokenReviews and SubjectAccessReviews; in team mode, anything but its Cluster, ObjectStore and listed Secrets |
-| **pgAdmin Pod** | Offered Secrets and `<cluster>-ca`, through a name-scoped Role | Its own volumes | Read any other Secret |
+| **pgAdmin Pod** | Its offer Secret and the offered password Secrets, through a name-scoped Role; the Clusters' CA certificates come in the offer, copied by the operator | Its own volumes | Read any other Secret, including a Cluster's CA Secret (`<cluster>-ca` holds the CA's private key) |
 
 ## Boundaries and their checks
 
@@ -260,8 +266,11 @@ like the rest. Without it, a custom role with `create pgadmins` and `connect
 pgadmins` but no `get secrets` could ask for `superuser: true` and open pgAdmin
 with the superuser's password. `crossNamespaceClusterRefs` are outside the rule:
 the `PgAdminAccess` grant of the target namespace, created by its owner, decides
-them (privileged credentials only with `allowPrivileged`). A `PgAdmin` that
-offers no credentials is not concerned.
+them (privileged credentials only with `allowPrivileged`). Grant `create
+pgadminaccesses` only to subjects that may already `get secrets` in the
+namespace: the grant makes the operator write a Role that lets another
+namespace's pgAdmin read those Clusters' credentials (the superuser's with
+`allowPrivileged`). A `PgAdmin` that offers no credentials is not concerned.
 Message: "a PgAdmin that offers the credentials of Clusters of its namespace
 (spec.credentials with clusterRefs or clusterSelector) or keeps its settings on
 one (spec.configDatabase) requires get on the Secrets of the namespace".
@@ -293,6 +302,7 @@ in view.
 | **The console caches a positive identity for 30 s and a positive SAR for 10 s.** | A revoked person may keep seeing views for up to that long; writes stop at once. | None needed; stated for incident response. |
 | **An expired or revoked access request does not end access already open.** Deleting the RoleBinding stops new authorizations only. | The console's caches above (10 s per SAR, 30 s per identity); in pgAdmin on OpenShift, whose oauth-proxy checks access at sign-in only, the session lifetime (**1 h by default**, `auth.openshiftOAuthProxy.sessionMaxAge`) and as long as open database connections last. | For an incident, delete the PgAdmin's `<name>-pgadmin-proxy-cookie` Secret and then its Pod, and terminate the user's backends in PostgreSQL ([access requests](console/access-requests.md#lifecycle)). |
 | **The four-eyes check covers the console's approval path only.** Approvers hold `create rolebindings` and `bind` on both roles. | An approver can bind `pgtoolbox-console-operator` to themselves directly with `kubectl`, with no request and no second person; the operator does not see such a binding. | Grant `pgtoolbox-console-approver` only to people trusted with the namespace's access; watch RoleBindings to the two roles in the API server's audit log. |
+| **Anyone with `edit` in the console's namespace controls the console.** | They can read its session key and edit its revocation and state ConfigMaps, for example to un-revoke a session. | Keep the console in a namespace where only its administrators hold rights. |
 | **`/metrics` on the console's probe port is plain HTTP when the console has no certificate.** | A scraper's token crosses the pod network in clear text. | Set `console.tls.secretName`: the probe port, `/metrics` included, is then HTTPS with the console's certificate ([metrics](console/metrics.md)). |
 | **The OpenShift sign-in using the ServiceAccount's projected token as client secret is not yet verified on a live cluster.** | If OpenShift rejects it, sign-in fails with `invalid_client`. | Use a long-lived token Secret ([checklist](console/openshift.md#manual-checklist), step 5). |
 | **The pgAdmin container's root filesystem is writable.** | An attacker with code execution in the container can write to its filesystem. | Restricted Pod Security, no capabilities, optional NetworkPolicy; read-only is an image change on the roadmap. |

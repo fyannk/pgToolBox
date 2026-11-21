@@ -87,14 +87,25 @@ func PromotePatch(instance, timestamp, resourceVersion string) []byte {
 	return out
 }
 
+// AnnotationRequestedAt marks a Backup a console requested, with the
+// instant it accepted the request (RFC 3339, UTC): what lets every
+// console replica, and one restarted since, list it among the Cluster's
+// recent operations. It is API surface (extend, never rename). It is not
+// proof of who asked: anyone who may create a Backup can set it; the API
+// server's audit log names who did.
+const AnnotationRequestedAt = "pgtoolbox.fyannk.dev/requested-at"
+
 // BackupObject is the on-demand Backup: a server-generated name, the
-// Cluster, and the method the Cluster can actually take (an empty method
+// Cluster, the method the Cluster can actually take (an empty method
 // is the CRD default barmanObjectStore, which fails on a plugin-only
-// Cluster).
-func BackupObject(namespace, cluster, generateName, method, plugin string) *cnpgv1.Backup {
+// Cluster) and the console's marker (AnnotationRequestedAt).
+func BackupObject(namespace, cluster, generateName, method, plugin string, requestedAt time.Time) *cnpgv1.Backup {
 	b := &cnpgv1.Backup{
-		ObjectMeta: metav1.ObjectMeta{Namespace: namespace, GenerateName: generateName},
-		Spec:       cnpgv1.BackupSpec{Cluster: cnpgv1.LocalObjectReference{Name: cluster}, Method: cnpgv1.BackupMethod(method)},
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: namespace, GenerateName: generateName,
+			Annotations: map[string]string{AnnotationRequestedAt: requestedAt.UTC().Format(time.RFC3339)},
+		},
+		Spec: cnpgv1.BackupSpec{Cluster: cnpgv1.LocalObjectReference{Name: cluster}, Method: cnpgv1.BackupMethod(method)},
 	}
 	if plugin != "" {
 		b.Spec.PluginConfiguration = &cnpgv1.BackupPluginConfiguration{Name: plugin}

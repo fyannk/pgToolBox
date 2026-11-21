@@ -2149,6 +2149,127 @@ export function useGetStorage<TData = Awaited<ReturnType<typeof getStorage>>, TE
 
 
 
+export const getGetClusterSummaryUrl = (namespace: string,
+    name: string,) => {
+
+
+
+
+  return `/api/v1/namespaces/${namespace}/clusters/${name}/summary`
+}
+
+/**
+ * The verdict, each finding of the latest diagnostics run with its source and age, the sources that are not live, the console page of the Cluster and the time it was rendered, as Markdown for an incident channel, in the words of the overview. Every value from the cluster is redacted and escaped so it cannot open a link or a mention. Same authorization as the overview.
+ * @summary A Cluster's incident summary
+ */
+export const getClusterSummary = async (namespace: string,
+    name: string, options?: Parameters<typeof apiFetch>[1]): Promise<string> => {
+
+  return apiFetch<string>(getGetClusterSummaryUrl(namespace,name),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetClusterSummaryQueryKey = (namespace: string,
+    name: string,) => {
+    return [
+    `/api/v1/namespaces/${namespace}/clusters/${name}/summary`
+    ] as const;
+    }
+
+
+export const getGetClusterSummaryQueryOptions = <TData = Awaited<ReturnType<typeof getClusterSummary>>, TError = ErrorModel>(namespace: string,
+    name: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getClusterSummary>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetClusterSummaryQueryKey(namespace,name);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getClusterSummary>>> = ({ signal }) => getClusterSummary(namespace,name, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: namespace !== null && namespace !== undefined && name !== null && name !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getClusterSummary>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetClusterSummaryQueryResult = NonNullable<Awaited<ReturnType<typeof getClusterSummary>>>
+export type GetClusterSummaryQueryError = ErrorModel
+
+
+/**
+ * The verdict, each finding of the latest diagnostics run with its source and age, the sources that are not live, the console page of the Cluster and the time it was rendered, as Markdown for an incident channel, in the words of the overview. Every value from the cluster is redacted and escaped so it cannot open a link or a mention. Same authorization as the overview.
+ * @summary A Cluster's incident summary
+ */
+export function useGetClusterSummary<TData = Awaited<ReturnType<typeof getClusterSummary>>, TError = ErrorModel>(
+ namespace: string,
+    name: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getClusterSummary>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getClusterSummary>>,
+          TError,
+          Awaited<ReturnType<typeof getClusterSummary>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * The verdict, each finding of the latest diagnostics run with its source and age, the sources that are not live, the console page of the Cluster and the time it was rendered, as Markdown for an incident channel, in the words of the overview. Every value from the cluster is redacted and escaped so it cannot open a link or a mention. Same authorization as the overview.
+ * @summary A Cluster's incident summary
+ */
+export function useGetClusterSummary<TData = Awaited<ReturnType<typeof getClusterSummary>>, TError = ErrorModel>(
+ namespace: string,
+    name: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getClusterSummary>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getClusterSummary>>,
+          TError,
+          Awaited<ReturnType<typeof getClusterSummary>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * The verdict, each finding of the latest diagnostics run with its source and age, the sources that are not live, the console page of the Cluster and the time it was rendered, as Markdown for an incident channel, in the words of the overview. Every value from the cluster is redacted and escaped so it cannot open a link or a mention. Same authorization as the overview.
+ * @summary A Cluster's incident summary
+ */
+export function useGetClusterSummary<TData = Awaited<ReturnType<typeof getClusterSummary>>, TError = ErrorModel>(
+ namespace: string,
+    name: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getClusterSummary>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * The verdict, each finding of the latest diagnostics run with its source and age, the sources that are not live, the console page of the Cluster and the time it was rendered, as Markdown for an incident channel, in the words of the overview. Every value from the cluster is redacted and escaped so it cannot open a link or a mention. Same authorization as the overview.
+ * @summary A Cluster's incident summary
+ */
+export function useGetClusterSummary<TData = Awaited<ReturnType<typeof getClusterSummary>>, TError = ErrorModel>(
+ namespace: string,
+    name: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getClusterSummary>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetClusterSummaryQueryOptions(namespace,name,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
 export const getGetTimelineUrl = (namespace: string,
     name: string,
     params?: GetTimelineParams,) => {

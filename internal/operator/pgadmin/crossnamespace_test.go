@@ -31,6 +31,7 @@ import (
 	ctrlreconcile "sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	pgtoolboxv1alpha1 "github.com/fyannk/pgToolBox/api/v1alpha1"
+	"github.com/fyannk/pgToolBox/internal/operator/configuration"
 	"github.com/fyannk/pgToolBox/internal/operator/pgadmin/offer"
 )
 
@@ -134,7 +135,7 @@ func TestCrossNamespaceNeedsAGrant(t *testing.T) {
 	if err := h.client.Get(context.Background(), client.ObjectKey{Namespace: remoteNamespace, Name: "pgadmin-team-pgadmin-access"}, &role); err != nil {
 		t.Fatal(err)
 	}
-	if len(role.Rules) != 1 || !slices.Equal(role.Rules[0].ResourceNames, []string{"payments-app", "payments-ca"}) ||
+	if len(role.Rules) != 1 || !slices.Equal(role.Rules[0].ResourceNames, []string{"payments-app"}) ||
 		!slices.Equal(role.Rules[0].Verbs, []string{"get", "watch"}) {
 		t.Fatalf("the grant's Role must allow get/watch on exactly the granted Cluster's offered Secrets: %+v", role.Rules)
 	}
@@ -148,7 +149,7 @@ func TestCrossNamespaceNeedsAGrant(t *testing.T) {
 	if len(binding.Subjects) != 1 || binding.Subjects[0] != (rbacv1.Subject{Kind: "ServiceAccount", Name: "team-pgadmin", Namespace: testNamespace}) {
 		t.Fatalf("the RoleBinding names the PgAdmin's ServiceAccount: %+v", binding.Subjects)
 	}
-	if requests := byAccessLabels(context.Background(), &binding); len(requests) != 1 || requests[0].NamespacedName != team {
+	if requests := h.r.byAccessLabels(context.Background(), &binding); len(requests) != 1 || requests[0].NamespacedName != team {
 		t.Fatalf("the access RoleBinding maps to %v", requests)
 	}
 	if requests := h.r.forCluster(context.Background(), remoteCluster("payments")); !slices.ContainsFunc(requests, func(r ctrlreconcile.Request) bool { return r.NamespacedName == team }) {
@@ -359,4 +360,52 @@ func (g goneReader) Get(ctx context.Context, key client.ObjectKey, obj client.Ob
 		return apierrors.NewNotFound(pgtoolboxv1alpha1.GroupVersion.WithResource("pgadmins").GroupResource(), key.Name)
 	}
 	return g.Reader.Get(ctx, key, obj, opts...)
+}
+
+// TestForGrantSkipsUnwatchedPgAdmin: with WATCH_NAMESPACES set, a grant
+// (or its Role or RoleBinding, through their labels) naming a PgAdmin in a
+// namespace the operator does not watch maps to no request (the cache could not serve it, and the loop would fail for
+// ever); one naming a watched PgAdmin, or any PgAdmin without the list,
+// maps to it.
+func TestForGrantSkipsUnwatchedPgAdmin(t *testing.T) {
+	t.Parallel()
+	grant := &pgtoolboxv1alpha1.PgAdminAccess{
+		ObjectMeta: metav1.ObjectMeta{Namespace: remoteNamespace, Name: "pgadmin-team"},
+		Spec: pgtoolboxv1alpha1.PgAdminAccessSpec{
+			PgAdmin: pgtoolboxv1alpha1.PgAdminReference{Namespace: testNamespace, Name: "team"},
+		},
+	}
+	team := types.NamespacedName{Namespace: testNamespace, Name: "team"}
+	for _, tc := range []struct {
+		name    string
+		watched []string
+		want    []types.NamespacedName
+	}{
+		{"every namespace watched", nil, []types.NamespacedName{team}},
+		{"the PgAdmin's namespace watched", []string{remoteNamespace, testNamespace}, []types.NamespacedName{team}},
+		{"the PgAdmin's namespace not watched", []string{remoteNamespace}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := configuration.Defaults()
+			cfg.WatchNamespaces = tc.watched
+			r := &Reconciler{Config: cfg}
+			binding := &rbacv1.RoleBinding{ObjectMeta: metav1.ObjectMeta{
+				Namespace: remoteNamespace, Name: "pgadmin-team-pgadmin-access",
+				Labels: map[string]string{pgtoolboxv1alpha1.PgAdminNamespaceLabelKey: testNamespace, pgtoolboxv1alpha1.PgAdminLabelKey: "team"},
+			}}
+			for mapper, requests := range map[string][]ctrlreconcile.Request{
+				"forGrant":       r.forGrant(context.Background(), grant),
+				"byAccessLabels": r.byAccessLabels(context.Background(), binding),
+			} {
+				got := make([]types.NamespacedName, 0, len(requests))
+				for _, request := range requests {
+					got = append(got, request.NamespacedName)
+				}
+				if !slices.Equal(got, tc.want) {
+					t.Errorf("%s = %v, want %v", mapper, got, tc.want)
+				}
+			}
+		})
+	}
 }

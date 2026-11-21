@@ -57,8 +57,7 @@ func TestLoadValidAgentProfile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.RuntimeMode != RuntimeAgent || !cfg.RuntimeMode.Produces() || cfg.ListenAddr != ":8443" || cfg.TrustedUserHeader != "" ||
-		cfg.AllowDownload || cfg.Credentials.Mode != CredentialStaticFiles {
+	if cfg.RuntimeMode != RuntimeAgent || cfg.ListenAddr != ":8443" || cfg.Credentials.Mode != CredentialStaticFiles {
 		t.Fatalf("agent config = %#v", cfg)
 	}
 	if cfg.AgentName != "orders" || cfg.AgentNamespace != "database-team" || cfg.ProducerEpoch != 4 ||
@@ -69,9 +68,6 @@ func TestLoadValidAgentProfile(t *testing.T) {
 	environment["LISTEN_ADDR"] = "0.0.0.0:9443"
 	if cfg, err = Load(mapEnvironment(environment)); err != nil || cfg.ListenAddr != "0.0.0.0:9443" {
 		t.Fatalf("LISTEN_ADDR override = %q, %v", cfg.ListenAddr, err)
-	}
-	if RuntimeStandalone.Produces() {
-		t.Fatal("Produces() misclassifies a mode")
 	}
 }
 
@@ -84,7 +80,7 @@ func TestLoadRejectsInvalidAgentProfiles(t *testing.T) {
 		variable string
 	}{
 		{name: "trusted header", changes: map[string]string{"TRUSTED_USER_HEADER": "X-Forwarded-User"}, variable: "TRUSTED_USER_HEADER"},
-		{name: "download", changes: map[string]string{"ALLOW_DOWNLOAD": "true"}, variable: "ALLOW_DOWNLOAD"},
+		{name: "removed standalone mode", changes: map[string]string{"RUNTIME_MODE": "standalone"}, variable: "RUNTIME_MODE"},
 		{name: "listen address", changes: map[string]string{"LISTEN_ADDR": "8443"}, variable: "LISTEN_ADDR"},
 		{name: "missing cert", remove: []string{"TLS_CERT_FILE"}, variable: "TLS_CERT_FILE"},
 		{name: "relative key", changes: map[string]string{"TLS_KEY_FILE": "tls.key"}, variable: "TLS_KEY_FILE"},
@@ -138,15 +134,23 @@ func TestLoadAgentDefersRepositoryErrors(t *testing.T) {
 	}
 }
 
-func TestLoadStandaloneRejectsAgentVariables(t *testing.T) {
-	base := map[string]string{"REPOSITORY_FORMAT": "barman-cloud", "PROVIDER": "s3", "DESTINATION_PATH": "s3://backups/prefix", "AWS_REGION": "eu-west-1"}
-	for _, variable := range agentVariables {
-		environment := cloneMap(base)
-		environment[variable] = "1"
-		_, err := Load(mapEnvironment(environment))
-		var configErr *Error
-		if !errors.As(err, &configErr) || configErr.Variable != variable {
-			t.Fatalf("standalone mode accepted %s: %v", variable, err)
-		}
+// An empty RUNTIME_MODE is the agent: the same profile loads the same
+// configuration, and a repository-only environment (what the removed
+// standalone viewer read) is refused for want of the agent's identity.
+func TestLoadEmptyRuntimeModeIsAgent(t *testing.T) {
+	accessPath, secretPath := agentCredentialFiles(t)
+	environment := validAgentEnvironment(accessPath, secretPath)
+	explicit, err := Load(mapEnvironment(environment))
+	if err != nil {
+		t.Fatal(err)
+	}
+	delete(environment, "RUNTIME_MODE")
+	implicit, err := Load(mapEnvironment(environment))
+	if err != nil || !reflect.DeepEqual(implicit, explicit) {
+		t.Fatalf("Load() without RUNTIME_MODE = %#v, %v; want %#v", implicit, err, explicit)
+	}
+	viewer := map[string]string{"REPOSITORY_FORMAT": "barman-cloud", "PROVIDER": "s3", "DESTINATION_PATH": "s3://backups/prefix", "AWS_REGION": "eu-west-1", "BARMAN_SERVER_NAMES": "orders"}
+	if _, err := Load(mapEnvironment(viewer)); !IsError(err) {
+		t.Fatalf("Load() of a viewer environment = %v, want a configuration error", err)
 	}
 }

@@ -18,6 +18,7 @@ import { VerdictBanner } from "../ds/patterns/VerdictBanner/VerdictBanner";
 import { Time } from "../ds/time";
 import { m } from "../paraglide/messages.js";
 import { AccessPanel } from "./Access";
+import { CopySummary } from "./CopySummary";
 import { FailoverSummary } from "./Failover";
 import { Fact, Facts, Panel } from "./Panel";
 import { PersonalServerFor } from "./PersonalServer";
@@ -374,6 +375,7 @@ export function OverviewView({ data, wiring }: { data: ClusterOverviewView; wiri
         </p>
       )}
       <VerdictBanner verdict={data.verdict} title={m.verdict_title()} params={params} />
+      {data.present && <CopySummary namespace={params.namespace} cluster={params.cluster} />}
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-label">
         <span>
           {m.col_phase()}:{" "}
@@ -485,7 +487,12 @@ export function OverviewScreen({ namespace, cluster }: { namespace: string; clus
   const query = useGetCluster(namespace, cluster);
   return (
     <QueryState query={query} what={m.nav_overview()}>
-      {(data) => <OverviewView data={data} wiring={<TopologyPanel namespace={namespace} cluster={cluster} />} />}
+      {(data) => (
+        <OverviewView
+          data={data}
+          wiring={<TopologyPanel key={`${namespace}/${cluster}`} namespace={namespace} cluster={cluster} />}
+        />
+      )}
     </QueryState>
   );
 }

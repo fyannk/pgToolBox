@@ -257,8 +257,8 @@ func TestReconcileToReady(t *testing.T) {
 	if len(role.Rules) != 1 || role.Rules[0].Resources[0] != "secrets" || !slices.Equal(role.Rules[0].Verbs, []string{"get", "watch"}) {
 		t.Fatalf("the Role must be one get/watch rule on Secrets: %+v", role.Rules)
 	}
-	if names := role.Rules[0].ResourceNames; !slices.Equal(names, []string{"billing-app", "billing-ca", "orders-app", "orders-ca", "reporting-pw", "team-pgadmin-offer"}) {
-		t.Fatalf("the Role grants %v: exactly the offer, the offered Secrets and CAs, no privileged one", names)
+	if names := role.Rules[0].ResourceNames; !slices.Equal(names, []string{"billing-app", "orders-app", "reporting-pw", "team-pgadmin-offer"}) {
+		t.Fatalf("the Role grants %v: exactly the offer and the offered password Secrets, no CA and no privileged one", names)
 	}
 	var bootstrap corev1.Secret
 	if err := h.client.Get(context.Background(), client.ObjectKey{Namespace: testNamespace, Name: "team-pgadmin-bootstrap"}, &bootstrap); err != nil {
@@ -337,18 +337,26 @@ func TestReconcileToReady(t *testing.T) {
 	}
 }
 
-func TestReconcileNeverReadsASecretItDoesNotOwn(t *testing.T) {
+// TestReconcileReadsOnlyTheCAOfSecretsItDoesNotOwn: the reconciler reads
+// the content of no Secret it does not own but the Clusters' server CA
+// Secrets, and of those it copies the certificate into the offer, never
+// ca.key.
+func TestReconcileReadsOnlyTheCAOfSecretsItDoesNotOwn(t *testing.T) {
 	p := oauth2PgAdmin()
 	objs := baseObjects(p)
+	ca := testCertificatePEM(t)
 	for _, name := range []string{"orders-app", "billing-app", "reporting-pw", "orders-ca", "billing-ca"} {
 		objs = append(objs, &corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: testNamespace},
-			Data:       map[string][]byte{"password": []byte("pw-" + name)},
+			Data: map[string][]byte{
+				"password": []byte("pw-" + name), "ca.crt": []byte(ca),
+				"ca.key": []byte("-----BEGIN EC PRIVATE KEY-----\nSIGNING-KEY\n-----END EC PRIVATE KEY-----\n"),
+			},
 		})
 	}
 	var typedSecretReads []string
 	h := newHarness(t, &interceptor.Funcs{Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
-		if _, ok := obj.(*corev1.Secret); ok {
+		if _, ok := obj.(*corev1.Secret); ok && key.Name != "team-pgadmin-offer" {
 			typedSecretReads = append(typedSecretReads, key.Name)
 		}
 		return c.Get(ctx, key, obj, opts...)
@@ -356,8 +364,18 @@ func TestReconcileNeverReadsASecretItDoesNotOwn(t *testing.T) {
 	if err := h.reconcile("team"); err != nil {
 		t.Fatal(err)
 	}
-	if len(typedSecretReads) != 0 {
-		t.Fatalf("the reconciler read Secret content: %v (only metadata reads are allowed)", typedSecretReads)
+	slices.Sort(typedSecretReads)
+	if !slices.Equal(slices.Compact(typedSecretReads), []string{"billing-ca", "orders-ca"}) {
+		t.Fatalf("the reconciler read Secret content: %v (only the server CA Secrets are allowed)", typedSecretReads)
+	}
+	doc := h.offerDocument()
+	if doc.CAs["orders"] != ca || doc.CAs["billing"] != ca {
+		t.Fatalf("offered CAs %v", doc.CAs)
+	}
+	for key, pem := range doc.CAs {
+		if strings.Contains(pem, "PRIVATE KEY") || strings.Contains(pem, "pw-") {
+			t.Fatalf("the offered CA of %s carries more than the certificate: %q", key, pem)
+		}
 	}
 }
 

@@ -187,6 +187,17 @@ if not related:
     problems.append("CSV has no relatedImages")
 elif manager not in related:
     problems.append(f"manager image {manager} is not in relatedImages")
+# The operator runs the pgAdmin and oauth-proxy defaults of
+# internal/operator/configuration unless told otherwise, and the CSV does not
+# tell it: a mirror must carry exactly those images.
+configuration = pathlib.Path("internal/operator/configuration/configuration.go").read_text()
+by_name = {r["name"]: r["image"] for r in csv["spec"].get("relatedImages", [])}
+for name, var in (("pgadmin", "DefaultPgAdminImage"), ("oauth-proxy", "DefaultOAuthProxyImage")):
+    match = re.search(rf'^var {var} = "([^"]+)"', configuration, re.M)
+    if match is None:
+        problems.append(f"{var} not found in internal/operator/configuration/configuration.go")
+    elif by_name.get(name) != match.group(1):
+        problems.append(f"CSV relatedImages {name} is {by_name.get(name)}, the operator's default is {match.group(1)}")
 
 # 10. The images this repository publishes are named by Helm values, the
 #     kustomize overlay, the CSV (annotation, deployment, args, relatedImages)

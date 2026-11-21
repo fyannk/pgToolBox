@@ -15,7 +15,6 @@
 package inventory
 
 import (
-	"container/heap"
 	"context"
 	"errors"
 	"fmt"
@@ -62,13 +61,12 @@ type ScannerOptions struct {
 	RefreshInterval       time.Duration
 	MaxObjects            int
 	PageSize              int
-	RecentLimit           int
 	Now                   Clock
 	Logger                *slog.Logger
 	AnalyzeBarmanCatalog  bool
 	BarmanRecoveryOptions barmancloud.RecoveryOptions
-	// PGBackRest, with a pgBackRest format, analyses stanzas after each
-	// complete listing; nil only inventories them.
+	// PGBackRest, with a pgBackRest format, analyses its one stanza after
+	// each complete listing; nil only inventories the repository.
 	PGBackRest *PGBackRestOptions
 	// Redactor scrubs configured secret values and credential-shaped text
 	// from provider root causes before they are logged. Nil still applies
@@ -87,7 +85,6 @@ type Scanner struct {
 	refreshInterval       time.Duration
 	maxObjects            int
 	pageSize              int
-	recentLimit           int
 	now                   Clock
 	logger                *slog.Logger
 	analyzeBarmanCatalog  bool
@@ -103,7 +100,7 @@ type Scanner struct {
 func NewScanner(options ScannerOptions) (*Scanner, error) {
 	if options.Store == nil || options.Format == nil || options.Cache == nil || options.Readiness == nil || options.Logger == nil ||
 		options.RefreshInterval <= 0 || options.MaxObjects < 1 || options.PageSize < 1 || options.PageSize > store.MaxPageObjects ||
-		options.RecentLimit < 1 || options.RecentLimit > MaxRecentObjects || len(options.ConfiguredScopes) > MaxScopes {
+		len(options.ConfiguredScopes) > MaxScopes || (options.PGBackRest != nil && options.PGBackRest.Stanza == "") {
 		return nil, errors.New("invalid inventory scanner options")
 	}
 	now := options.Now
@@ -113,7 +110,7 @@ func NewScanner(options ScannerOptions) (*Scanner, error) {
 	return &Scanner{
 		store: options.Store, format: options.Format, configuredScopes: slices.Clone(options.ConfiguredScopes),
 		cache: options.Cache, readiness: options.Readiness, refreshInterval: options.RefreshInterval,
-		maxObjects: options.MaxObjects, pageSize: options.PageSize, recentLimit: options.RecentLimit, now: now,
+		maxObjects: options.MaxObjects, pageSize: options.PageSize, now: now,
 		logger:                options.Logger,
 		analyzeBarmanCatalog:  options.AnalyzeBarmanCatalog,
 		barmanRecoveryOptions: options.BarmanRecoveryOptions,
@@ -259,7 +256,7 @@ func (s *Scanner) scan(ctx context.Context, generation uint64, started time.Time
 		return Snapshot{}, err
 	}
 	descriptor := s.format.Descriptor()
-	builder, err := newBuilder(descriptor, matcher.InitialScopes(), s.recentLimit, s.analyzeBarmanCatalog)
+	builder, err := newBuilder(descriptor, matcher.InitialScopes(), s.analyzeBarmanCatalog)
 	if err != nil {
 		return Snapshot{}, err
 	}
@@ -324,7 +321,7 @@ func (s *Scanner) scan(ctx context.Context, generation uint64, started time.Time
 		if err := ctx.Err(); err != nil {
 			return Snapshot{}, err
 		}
-		applyPGBackRestEvidence(&snapshot, builder.pgbackrest.truncated)
+		applyPGBackRestEvidence(&snapshot)
 	}
 	return snapshot, nil
 }
@@ -396,19 +393,17 @@ type builder struct {
 	storedBytes    int64
 	unscoped       int64
 	scopes         map[string]*Scope
-	recent         recentHeap
-	recentLimit    int
 	catalogObjects []store.Object
 	barmanWAL      *barmancloud.WALCollector
 	pgbackrest     *pgbackrestBuilder
 }
 
-func newBuilder(descriptor repository.Descriptor, initialScopes []string, recentLimit int, analyzeBarman bool) (*builder, error) {
+func newBuilder(descriptor repository.Descriptor, initialScopes []string, analyzeBarman bool) (*builder, error) {
 	if len(initialScopes) > MaxScopes {
 		return nil, &scanError{kind: fault.SafetyLimit}
 	}
 	builderValue := &builder{
-		descriptor: descriptor, scopes: make(map[string]*Scope, len(initialScopes)), recentLimit: recentLimit,
+		descriptor: descriptor, scopes: make(map[string]*Scope, len(initialScopes)),
 	}
 	if analyzeBarman && descriptor.ID == "barman-cloud" {
 		builderValue.barmanWAL = barmancloud.NewWALCollector()
@@ -422,7 +417,6 @@ func newBuilder(descriptor repository.Descriptor, initialScopes []string, recent
 		}
 		builderValue.scopes[name] = &Scope{Name: name}
 	}
-	heap.Init(&builderValue.recent)
 	return builderValue, nil
 }
 
@@ -455,7 +449,6 @@ func (b *builder) add(object store.Object, match repository.ScopeMatch, matched 
 	} else {
 		b.unscoped++
 	}
-	b.addRecent(RecentObject{Key: object.Key, Scope: scopeName, Size: object.Size, LastModified: object.LastModified.UTC()})
 	if matched {
 		_, _, ok := barmanBackupObject(object.Key)
 		if ok {
@@ -469,7 +462,7 @@ func (b *builder) add(object store.Object, match repository.ScopeMatch, matched 
 		b.barmanWAL.Add(object)
 	}
 	if matched && b.pgbackrest != nil {
-		b.pgbackrest.add(object, scopeName)
+		b.pgbackrest.add(object)
 	}
 	return nil
 }
@@ -614,17 +607,6 @@ func invalidScopeName(name string) bool {
 		strings.ContainsAny(name, "/\\") || strings.IndexFunc(name, unicode.IsControl) >= 0
 }
 
-func (b *builder) addRecent(object RecentObject) {
-	if len(b.recent) < b.recentLimit {
-		heap.Push(&b.recent, object)
-		return
-	}
-	if moreRecent(object, b.recent[0]) {
-		b.recent[0] = object
-		heap.Fix(&b.recent, 0)
-	}
-}
-
 func (b *builder) complete(generation uint64, started, completed time.Time) Snapshot {
 	envelope := evidence.InitialSnapshot(b.descriptor.ID, b.descriptor.ScopeKind, b.descriptor.Capabilities)
 	envelope.Generation = generation
@@ -639,37 +621,12 @@ func (b *builder) complete(generation uint64, started, completed time.Time) Snap
 		scopes = append(scopes, *scopeValue)
 	}
 	sort.Slice(scopes, func(i, j int) bool { return scopes[i].Name < scopes[j].Name })
-	recent := make([]RecentObject, len(b.recent))
-	copy(recent, b.recent)
-	sort.Slice(recent, func(i, j int) bool { return moreRecent(recent[i], recent[j]) })
 	return Snapshot{
 		Evidence: envelope, RefreshGeneration: generation, LastRefreshAt: completed, LastAttemptAt: started,
 		PagesExamined: b.pagesExamined, ObjectsExamined: b.objectCount,
 		TotalsKnown: true, ObjectCount: b.objectCount, StoredBytes: b.storedBytes,
-		UnscopedObjectCount: b.unscoped, Scopes: scopes, RecentObjects: recent,
+		UnscopedObjectCount: b.unscoped, Scopes: scopes,
 	}
-}
-
-type recentHeap []RecentObject
-
-func (h recentHeap) Len() int { return len(h) }
-func (h recentHeap) Less(i, j int) bool {
-	return moreRecent(h[j], h[i])
-}
-func (h recentHeap) Swap(i, j int)   { h[i], h[j] = h[j], h[i] }
-func (h *recentHeap) Push(value any) { *h = append(*h, value.(RecentObject)) }
-func (h *recentHeap) Pop() any {
-	old := *h
-	last := old[len(old)-1]
-	*h = old[:len(old)-1]
-	return last
-}
-
-func moreRecent(left, right RecentObject) bool {
-	if !left.LastModified.Equal(right.LastModified) {
-		return left.LastModified.After(right.LastModified)
-	}
-	return left.Key < right.Key
 }
 
 // scanError carries a stable category and, optionally, the internal cause it

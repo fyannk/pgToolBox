@@ -255,6 +255,13 @@ func (Format) AnalyzeCatalog(ctx context.Context, reader store.Reader, objects [
 	return Analyze(ctx, reader, objects)
 }
 
+// readBackup reads and classifies one listed backup.info. A failure to
+// fetch it does not fail the scan: a listing that completes while one
+// backup.info cannot be fetched is still a complete scan, and that backup is
+// published as Unknown ("backup metadata could not be read") for this
+// generation; the next refresh reads it again. Only a failed scan (a listing
+// error, a safety limit, a rejected projection) keeps the previous snapshot,
+// marked stale.
 func readBackup(ctx context.Context, reader store.Reader, key, server, id string) Backup {
 	// One byte over the limit, so an oversized backup.info is rejected
 	// rather than truncated by the adapter's MaxBytes cut.

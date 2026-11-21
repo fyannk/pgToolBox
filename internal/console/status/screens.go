@@ -31,6 +31,7 @@ import (
 	pgtoolboxv1alpha1 "github.com/fyannk/pgToolBox/api/v1alpha1"
 	"github.com/fyannk/pgToolBox/internal/console/cache"
 	"github.com/fyannk/pgToolBox/internal/console/opstate"
+	"github.com/fyannk/pgToolBox/internal/console/timeline"
 	"github.com/fyannk/pgToolBox/internal/console/viewmodel"
 	"github.com/fyannk/pgToolBox/pkg/cnpgstatus/metrics"
 )
@@ -358,16 +359,59 @@ func (s *Service) OperationState(ctx context.Context, namespace, name string) (o
 	if err != nil {
 		return opstate.ClusterState{}, err
 	}
-	st := opstate.ClusterState{Cluster: g.cluster.DeepCopy(), Backups: g.backups, Minor: g.minor}
+	st := opstate.ClusterState{Cluster: g.cluster.DeepCopy(), Backups: g.backups, BackupsListed: g.listed(cache.SourceBackups), Minor: g.minor}
 	for _, p := range g.pods {
 		st.Pods = append(st.Pods, *p.DeepCopy())
 	}
+	now := s.now().UTC()
 	for _, r := range s.instanceRows(g, false) {
 		inst := opstate.InstanceState{Name: r.Name, Health: r.Health}
 		if r.Live != nil {
 			inst.LagBytes = r.Live.LagBytes
 		}
+		if r.Name != g.cluster.Status.CurrentPrimary {
+			inst.Readiness = s.promoteReadiness(g, r, now)
+		}
 		st.Instances = append(st.Instances, inst)
 	}
+	st.Observed = s.observedPrimary(g.key, string(g.cluster.UID))
 	return st, nil
+}
+
+// observedPrimary is what the timeline retains of the Cluster's primary
+// changes: the changes of this incarnation, not its first observation
+// (which is no change).
+func (s *Service) observedPrimary(key cache.ClusterKey, uid string) opstate.Observed {
+	j := s.opts.Timeline
+	if j == nil {
+		return opstate.Observed{}
+	}
+	res := j.Query(timeline.Query{Namespace: key.Namespace, Cluster: key.Name})
+	// Eviction is per Cluster: a busy Cluster lost more than the journal's
+	// oldest event says, so its own scope decides, from its oldest
+	// retained event.
+	out := opstate.Observed{Enabled: true, Persistent: j.Persistent(), Evicted: j.ScopeEvicted(key.Namespace, key.Name), Since: res.Oldest}
+	if out.Evicted {
+		out.Since = time.Time{}
+	}
+	for _, e := range res.Events {
+		if e.Namespace != key.Namespace || e.Cluster != key.Name {
+			continue
+		}
+		if out.Evicted && (out.Since.IsZero() || e.At.Before(out.Since)) {
+			out.Since = e.At
+		}
+		if e.Kind != timeline.KindPrimary || e.Action == timeline.ActionFirstObserved || (e.ClusterUID != "" && e.ClusterUID != uid) {
+			continue
+		}
+		c := opstate.PrimaryChange{From: e.From, To: e.To, At: e.At, Reported: e.Timing == timeline.TimingReported, Uncertain: e.Uncertain}
+		if e.Action == timeline.ActionFailover || e.Action == timeline.ActionSwitchover {
+			c.Cause = e.Action
+		}
+		if e.AfterGap {
+			c.Since = e.Since
+		}
+		out.PrimaryChanges = append(out.PrimaryChanges, c)
+	}
+	return out
 }

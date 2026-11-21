@@ -36,8 +36,9 @@ const configLocalDir = "pgtoolbox-config"
 
 // prepareConfigDatabase makes the settings database reachable for setup.py
 // the way it is for pgAdmin: the credential files of that one connection,
-// written from its Secrets (get by name, through the Pod's name-scoped
-// Role) by the passfile-sync renderer, and CONFIG_DATABASE_URI, which
+// written from its password Secret (get by name, through the Pod's
+// name-scoped Role) and the CA the offer carries by the passfile-sync
+// renderer, and CONFIG_DATABASE_URI, which
 // carries no password.
 func (o *Options) prepareConfigDatabase(ctx context.Context, doc offer.Document) error {
 	server := doc.ConfigDatabase
@@ -53,18 +54,18 @@ func (o *Options) prepareConfigDatabase(ctx context.Context, doc offer.Document)
 		return errors.New("--config-database-uri contains a quote, a backslash or a control character")
 	}
 	secrets := map[string]*corev1.Secret{}
-	for _, ref := range []offer.SecretRef{server.PasswordSecret(), server.CASecret()} {
-		secret, err := o.Secrets(ctx, ref.Namespace, ref.Name)
-		switch {
-		case apierrors.IsNotFound(err) || apierrors.IsForbidden(err):
-			continue // Render refuses the connection and says which.
-		case err != nil:
-			return fmt.Errorf("read Secret %s: %w", ref.Key(), err)
-		}
+	ref := server.PasswordSecret()
+	secret, err := o.Secrets(ctx, ref.Namespace, ref.Name)
+	switch {
+	case apierrors.IsNotFound(err) || apierrors.IsForbidden(err):
+		// Render refuses the connection and says why.
+	case err != nil:
+		return fmt.Errorf("read Secret %s: %w", ref.Key(), err)
+	default:
 		secrets[ref.Key()] = secret
 	}
 	files := passfilesync.Files{Dir: o.CredentialsDir}
-	outcome, err := passfilesync.Render(files, offer.Document{Version: offer.Version, ConfigDatabase: server}, secrets)
+	outcome, err := passfilesync.Render(files, offer.Document{Version: offer.Version, ConfigDatabase: server, CAs: doc.CAs}, secrets)
 	if err != nil {
 		return fmt.Errorf("write the settings database credentials: %w", err)
 	}

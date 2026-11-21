@@ -34,6 +34,7 @@ want hack/scorecard.sh charts
 want hack/chart-gates.sh charts
 want hack/chart-values-coverage.py charts
 want test/e2e/console/run.sh console docker go
+want cmd/pgtoolbox/testdata/old.yaml docker go
 want test/e2e/scope/run.sh charts docker go operator
 # check-repo and check-toolchain run in the go family's lint job.
 want Dockerfile docker go

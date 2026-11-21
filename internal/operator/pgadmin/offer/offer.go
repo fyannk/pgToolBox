@@ -17,8 +17,12 @@
 // turns it into the libpq service and password files) and the registration
 // Job (which turns it into pgAdmin's shared servers). The reconciler writes
 // it into a Secret only the operator writes (no password in it: names of
-// Secrets and roles), so editing ConfigMaps in the namespace cannot steer
-// the sidecar or the registration.
+// Secrets and roles, and the Clusters' CA certificates), so editing
+// ConfigMaps in the namespace cannot steer the sidecar or the registration.
+// The CA certificates are in the document because pgAdmin must never read
+// a CA Secret: CloudNativePG's <cluster>-ca also holds the CA's private
+// key, which signs client certificates when the Cluster names no
+// clientCASecret.
 //
 // Both readers still treat the document as untrusted input: whoever may
 // update Secrets in the namespace can rewrite it. What such an edit can do
@@ -67,6 +71,11 @@ type Document struct {
 	// the credential files like a server, the registration never
 	// registers it.
 	ConfigDatabase *Server `json:"configDatabase,omitempty"`
+	// CAs maps Server.CAKey to the Cluster's server CA certificates (PEM,
+	// CERTIFICATE blocks only), which the operator copies from the
+	// Cluster's CA Secret. A Cluster whose CA could not be read has none,
+	// and its servers are not offered.
+	CAs map[string]string `json:"cas,omitempty"`
 }
 
 // Server is one offered connection.
@@ -90,9 +99,10 @@ type Server struct {
 	// that may be offered: the one CloudNativePG recorded applying to a
 	// DatabaseRole.
 	SecretResourceVersion string `json:"secretResourceVersion,omitempty"`
-	// CASecretName holds the Cluster's server CA (key "ca.crt" only).
+	// CASecretName holds the Cluster's server CA: the operator copies its
+	// certificates into Document.CAs; pgAdmin never reads it.
 	CASecretName string `json:"caSecretName"`
-	// Namespace is the namespace of the Cluster and of both Secrets when
+	// Namespace is the namespace of the Cluster and of its Secrets when
 	// it is not the PgAdmin's own (a Cluster a PgAdminAccess grants).
 	Namespace string `json:"namespace,omitempty"`
 	// Owner is the pgAdmin user a personal server belongs to; empty for a
@@ -128,11 +138,6 @@ func (s Server) PasswordSecret() SecretRef {
 	return SecretRef{Namespace: s.Namespace, Name: s.SecretName}
 }
 
-// CASecret is the server's CA Secret.
-func (s Server) CASecret() SecretRef {
-	return SecretRef{Namespace: s.Namespace, Name: s.CASecretName}
-}
-
 // Connections returns the servers, then the settings database connection
 // when there is one: everything the credential files carry.
 func (d Document) Connections() []Server {
@@ -154,6 +159,8 @@ var (
 	roleName = regexp.MustCompile(`^[^\x00-\x1f\x7f]{1,63}$`)
 	// ownerName: a pgAdmin username as spec.admins accepts it.
 	ownerName = regexp.MustCompile(`^[^-\s'"\\\x00-\x1f\x7f][^\s'"\\\x00-\x1f\x7f]*$`)
+	// caKey: a Server.CAKey, [namespace.]cluster.
+	caKey = regexp.MustCompile(`^([a-z0-9]([-a-z0-9]*[a-z0-9])?\.)?[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
 	// displayName: pgAdmin's server name, printable.
 	displayName = regexp.MustCompile(`^[^\x00-\x1f\x7f]{1,200}$`)
 )
@@ -238,6 +245,11 @@ func (d Document) Validate() error {
 		}
 		services[s.Service], names[s.Name] = true, true
 	}
+	for key, ca := range d.CAs {
+		if !caKey.MatchString(key) || len(key) > 317 || ca == "" {
+			problems = append(problems, fmt.Errorf("invalid CA entry %q", key))
+		}
+	}
 	return errors.Join(problems...)
 }
 
@@ -253,9 +265,9 @@ func CABundleFile(dir string) string {
 	return path.Join(dir, "ca", "bundle.crt")
 }
 
-// SecretNames returns every Secret of namespace the document names
-// (passwords and CAs; "" is the PgAdmin's own namespace), sorted and
-// unique: exactly what the sidecar's Role there may read.
+// SecretNames returns every password Secret of namespace the document
+// names ("" is the PgAdmin's own namespace), sorted and unique: exactly
+// what the sidecar's Role there may read. CA Secrets are never among them.
 func (d Document) SecretNames(namespace string) []string {
 	seen := map[string]bool{}
 	var out []string
@@ -263,28 +275,24 @@ func (d Document) SecretNames(namespace string) []string {
 		if s.Namespace != namespace {
 			continue
 		}
-		for _, name := range []string{s.SecretName, s.CASecretName} {
-			if !seen[name] {
-				seen[name] = true
-				out = append(out, name)
-			}
+		if !seen[s.SecretName] {
+			seen[s.SecretName] = true
+			out = append(out, s.SecretName)
 		}
 	}
 	slices.Sort(out)
 	return out
 }
 
-// SecretRefs returns every Secret the document names, in every namespace,
-// sorted and unique: what the sidecar watches.
+// SecretRefs returns every password Secret the document names, in every
+// namespace, sorted and unique: what the sidecar watches.
 func (d Document) SecretRefs() []SecretRef {
 	seen := map[SecretRef]bool{}
 	var out []SecretRef
 	for _, s := range d.Connections() {
-		for _, ref := range []SecretRef{s.PasswordSecret(), s.CASecret()} {
-			if !seen[ref] {
-				seen[ref] = true
-				out = append(out, ref)
-			}
+		if ref := s.PasswordSecret(); !seen[ref] {
+			seen[ref] = true
+			out = append(out, ref)
 		}
 	}
 	slices.SortFunc(out, func(a, b SecretRef) int { return strings.Compare(a.Key(), b.Key()) })

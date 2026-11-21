@@ -2,7 +2,7 @@
 {{- $e := .Values.console.exposure }}
 {{- $name := include "pgtools.console.fullname" . }}
 {{- $sticky := $e.sticky | default dict }}
-{{- /* With MCP on, the MCP paths go to the leader's Service (mcp-leader.yaml). */}}
+{{- /* With MCP on, the MCP paths go to the MCP Pod's Service (mcp.yaml). */}}
 {{- $mcp := include "pgtools.console.mcpLeader" . }}
 {{- $mcpPaths := list }}
 {{- if .Values.console.mcp.enabled }}

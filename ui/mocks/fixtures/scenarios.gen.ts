@@ -10376,7 +10376,59 @@ export const listOperationsBilling = {
           "name": "orders-2",
           "eligible": true,
           "health": "ok",
-          "lagBytes": 0
+          "lagBytes": 0,
+          "readiness": [
+            {
+              "key": "pod",
+              "health": "ok",
+              "text": "Ready",
+              "provenance": {
+                "origin": "kubernetes",
+                "source": "Pod.status.conditions[Ready]",
+                "observedAt": "2026-10-29T11:59:58Z"
+              }
+            },
+            {
+              "key": "streaming",
+              "health": "ok",
+              "text": "streaming from the primary",
+              "provenance": {
+                "origin": "instance",
+                "source": "/pg/status walReceiverActive, replayPaused",
+                "observedAt": "2026-10-29T11:59:52Z"
+              }
+            },
+            {
+              "key": "replayLag",
+              "health": "ok",
+              "text": "replayed up to the primary's position as last read",
+              "provenance": {
+                "origin": "instance",
+                "source": "/pg/status replayLsn against the primary's currentLsn",
+                "observedAt": "2026-10-29T11:59:52Z"
+              }
+            },
+            {
+              "key": "syncState",
+              "health": "ok",
+              "text": "quorum: quorum-based synchronous candidate",
+              "provenance": {
+                "origin": "instance",
+                "source": "/pg/status replicationInfo of orders-1",
+                "observedAt": "2026-10-29T11:59:52Z"
+              }
+            },
+            {
+              "key": "fencing",
+              "health": "ok",
+              "text": "not fenced",
+              "provenance": {
+                "origin": "kubernetes",
+                "source": "Cluster.metadata.annotations[cnpg.io/fencedInstances]",
+                "observedAt": "2026-10-29T11:59:58Z"
+              }
+            }
+          ]
         },
         {
           "name": "orders-3",
@@ -10388,7 +10440,59 @@ export const listOperationsBilling = {
               "source": "Cluster.metadata.annotations[cnpg.io/fencedInstances]"
             }
           ],
-          "health": "unknown"
+          "health": "unknown",
+          "readiness": [
+            {
+              "key": "pod",
+              "health": "warning",
+              "text": "not Ready",
+              "provenance": {
+                "origin": "kubernetes",
+                "source": "Pod.status.conditions[Ready]",
+                "observedAt": "2026-10-29T11:59:58Z"
+              }
+            },
+            {
+              "key": "streaming",
+              "health": "unknown",
+              "text": "not read: the instance manager answered without reaching PostgreSQL",
+              "provenance": {
+                "origin": "instance",
+                "source": "/pg/status walReceiverActive, replayPaused",
+                "observedAt": "2026-10-29T11:59:52Z"
+              }
+            },
+            {
+              "key": "replayLag",
+              "health": "unknown",
+              "text": "not read: the instance manager answered without reaching PostgreSQL",
+              "provenance": {
+                "origin": "instance",
+                "source": "/pg/status replayLsn against the primary's currentLsn",
+                "observedAt": "2026-10-29T11:59:52Z"
+              }
+            },
+            {
+              "key": "syncState",
+              "health": "warning",
+              "text": "the primary reports no walsender for it",
+              "provenance": {
+                "origin": "instance",
+                "source": "/pg/status replicationInfo of orders-1",
+                "observedAt": "2026-10-29T11:59:52Z"
+              }
+            },
+            {
+              "key": "fencing",
+              "health": "critical",
+              "text": "fenced: CloudNativePG would not promote it",
+              "provenance": {
+                "origin": "kubernetes",
+                "source": "Cluster.metadata.annotations[cnpg.io/fencedInstances]",
+                "observedAt": "2026-10-29T11:59:58Z"
+              }
+            }
+          ]
         }
       ]
     },
@@ -10415,7 +10519,7 @@ export const listOperationsBilling = {
     }
   ],
   "recent": [],
-  "recentScope": "operations issued through this console replica since it started; the API server's audit log is the complete record"
+  "recentScope": "rebuilt from what the Cluster's objects record, so every console replica shows the same list: every Backup of the Cluster (on-demand from any client, and the newest 5 labelled as created by a ScheduledBackup, each attributed), the latest restart and reload annotations (set by any client) and the console's restore-drill record; plus the primary changes (switchovers and failovers) this console observed, which it cannot tell apart from a promote unless this replica issued it. The API server's audit log is the complete record, and names who asked."
 } satisfies Operations;
 
 /** GET /api/v1/namespaces/team-a/clusters/orders/operations → 200: operator: every offer allowed, promote roster */
@@ -10487,7 +10591,59 @@ export const listOperationsOrders = {
           "name": "orders-2",
           "eligible": true,
           "health": "ok",
-          "lagBytes": 0
+          "lagBytes": 0,
+          "readiness": [
+            {
+              "key": "pod",
+              "health": "ok",
+              "text": "Ready",
+              "provenance": {
+                "origin": "kubernetes",
+                "source": "Pod.status.conditions[Ready]",
+                "observedAt": "2026-10-29T11:59:58Z"
+              }
+            },
+            {
+              "key": "streaming",
+              "health": "ok",
+              "text": "streaming from the primary",
+              "provenance": {
+                "origin": "instance",
+                "source": "/pg/status walReceiverActive, replayPaused",
+                "observedAt": "2026-10-29T11:59:52Z"
+              }
+            },
+            {
+              "key": "replayLag",
+              "health": "ok",
+              "text": "replayed up to the primary's position as last read",
+              "provenance": {
+                "origin": "instance",
+                "source": "/pg/status replayLsn against the primary's currentLsn",
+                "observedAt": "2026-10-29T11:59:52Z"
+              }
+            },
+            {
+              "key": "syncState",
+              "health": "ok",
+              "text": "quorum: quorum-based synchronous candidate",
+              "provenance": {
+                "origin": "instance",
+                "source": "/pg/status replicationInfo of orders-1",
+                "observedAt": "2026-10-29T11:59:52Z"
+              }
+            },
+            {
+              "key": "fencing",
+              "health": "ok",
+              "text": "not fenced",
+              "provenance": {
+                "origin": "kubernetes",
+                "source": "Cluster.metadata.annotations[cnpg.io/fencedInstances]",
+                "observedAt": "2026-10-29T11:59:58Z"
+              }
+            }
+          ]
         },
         {
           "name": "orders-3",
@@ -10499,7 +10655,59 @@ export const listOperationsOrders = {
               "source": "Cluster.metadata.annotations[cnpg.io/fencedInstances]"
             }
           ],
-          "health": "unknown"
+          "health": "unknown",
+          "readiness": [
+            {
+              "key": "pod",
+              "health": "warning",
+              "text": "not Ready",
+              "provenance": {
+                "origin": "kubernetes",
+                "source": "Pod.status.conditions[Ready]",
+                "observedAt": "2026-10-29T11:59:58Z"
+              }
+            },
+            {
+              "key": "streaming",
+              "health": "unknown",
+              "text": "not read: the instance manager answered without reaching PostgreSQL",
+              "provenance": {
+                "origin": "instance",
+                "source": "/pg/status walReceiverActive, replayPaused",
+                "observedAt": "2026-10-29T11:59:52Z"
+              }
+            },
+            {
+              "key": "replayLag",
+              "health": "unknown",
+              "text": "not read: the instance manager answered without reaching PostgreSQL",
+              "provenance": {
+                "origin": "instance",
+                "source": "/pg/status replayLsn against the primary's currentLsn",
+                "observedAt": "2026-10-29T11:59:52Z"
+              }
+            },
+            {
+              "key": "syncState",
+              "health": "warning",
+              "text": "the primary reports no walsender for it",
+              "provenance": {
+                "origin": "instance",
+                "source": "/pg/status replicationInfo of orders-1",
+                "observedAt": "2026-10-29T11:59:52Z"
+              }
+            },
+            {
+              "key": "fencing",
+              "health": "critical",
+              "text": "fenced: CloudNativePG would not promote it",
+              "provenance": {
+                "origin": "kubernetes",
+                "source": "Cluster.metadata.annotations[cnpg.io/fencedInstances]",
+                "observedAt": "2026-10-29T11:59:58Z"
+              }
+            }
+          ]
         }
       ]
     },
@@ -10558,10 +10766,12 @@ export const listOperationsOrders = {
         }
       ],
       "acceptedAt": "2026-10-29T11:55:00Z",
-      "deadline": "2026-10-29T12:25:00Z"
+      "deadline": "2026-10-29T12:25:00Z",
+      "recordedIn": "cluster",
+      "recordedFrom": "Backup ondemand-20261029115500-x7k2p metadata.annotations[pgtoolbox.fyannk.dev/requested-at]"
     }
   ],
-  "recentScope": "operations issued through this console replica since it started; the API server's audit log is the complete record"
+  "recentScope": "rebuilt from what the Cluster's objects record, so every console replica shows the same list: every Backup of the Cluster (on-demand from any client, and the newest 5 labelled as created by a ScheduledBackup, each attributed), the latest restart and reload annotations (set by any client) and the console's restore-drill record; plus the primary changes (switchovers and failovers) this console observed, which it cannot tell apart from a promote unless this replica issued it. The API server's audit log is the complete record, and names who asked."
 } satisfies Operations;
 
 /** POST /api/v1/namespaces/team-a/clusters/orders/operations → 202: 202: a backup accepted */

@@ -141,6 +141,10 @@ type SessionChecker interface {
 // open (a few tabs).
 const maxStreamsPerSession = 8
 
+// refusedStreamRetry is the reconnection delay (milliseconds) sent with
+// the refusal of a stream over maxStreamsPerSession.
+const refusedStreamRetry = 60_000
+
 // Config is the Huma configuration: OpenAPI 3.1, JSON only (the default
 // format, with the cluster list's memoized rows copied: jsonFormat), no docs page
 // (it would load scripts from a CDN, which the CSP forbids), no $schema
@@ -240,6 +244,10 @@ type (
 	eventsOutput      struct{ Body viewmodel.EventList }
 	diagnosticsOutput struct{ Body viewmodel.Diagnostics }
 	triageOutput      struct{ Body viewmodel.Triage }
+	summaryOutput     struct {
+		ContentType string `header:"Content-Type"`
+		Body        []byte
+	}
 )
 
 // Operation IDs, also the fixture file names.
@@ -251,6 +259,7 @@ const (
 	OpListEvents      = "listEvents"
 	OpGetDiagnostics  = "getDiagnostics"
 	OpGetTriage       = "getTriage"
+	OpGetSummary      = "getClusterSummary"
 	OpStream          = "stream"
 	clusterPathPrefix = "/api/" + Version + "/namespaces/{namespace}/clusters/{name}"
 )
@@ -308,6 +317,25 @@ func Register(a huma.API, d Deps) {
 			return nil, err
 		}
 		return &overviewOutput{Body: v}, nil
+	})
+
+	huma.Register(a, huma.Operation{
+		OperationID: OpGetSummary, Method: http.MethodGet, Path: clusterPathPrefix + "/summary",
+		Summary: "A Cluster's incident summary", Tags: []string{"clusters"},
+		Description: "The verdict, each finding of the latest diagnostics run with its source and age, the sources that are not live, " +
+			"the console page of the Cluster and the time it was rendered, as Markdown for an incident channel, in the words of the overview. " +
+			"Every value from the cluster is redacted and escaped so it cannot open a link or a mention. Same authorization as the overview.",
+		Errors: append([]int{http.StatusNotFound}, problemCodes...),
+		Responses: map[string]*huma.Response{"200": {
+			Description: "Markdown",
+			Content:     map[string]*huma.MediaType{"text/markdown": {Schema: &huma.Schema{Type: "string"}}},
+		}},
+	}, func(ctx context.Context, in *ClusterPath) (*summaryOutput, error) {
+		md, err := r.ClusterSummary(ctx, in.Namespace, in.Name)
+		if err != nil {
+			return nil, err
+		}
+		return &summaryOutput{ContentType: "text/markdown; charset=utf-8", Body: []byte(md)}, nil
 	})
 
 	registerCluster(a, d, OpListInstances, "/instances", "A Cluster's instances",
@@ -423,9 +451,10 @@ func registerStream(a huma.API, d Deps) {
 		Summary: "Live updates", Tags: []string{"stream"},
 		Description: "Server-sent events: hello on connect (refetch everything), invalidate {topic, namespace, name} " +
 			"(refetch that), resync (refetch everything), reauth {expiresAt, refreshable} before the session ends " +
-			"(call GET /api/v1/session). A comment line every 15 s; no byte for 35 s means the stream is dead. " +
+			"(call GET /api/v1/session), heartbeat every heartbeatSeconds (15 s); no event for twice that means the stream is dead. " +
 			"While it is down, poll every 2 s backing off to 10 s. The stream closes when the session ends.",
 	}, map[string]any{
+		"heartbeat":  sse.Heartbeat{},
 		"hello":      sse.Hello{},
 		"invalidate": sse.Invalidate{},
 		"reauth":     sse.Reauth{},
@@ -436,7 +465,11 @@ func registerStream(a huma.API, d Deps) {
 			return
 		}
 		if !d.streams.inc(p.SessionID) {
-			_ = send.Data(sse.Resync{Reason: "too many open streams for this session"})
+			// The response ends normally, so EventSource reconnects by
+			// itself after its retry delay (about 3 s by default) and each
+			// round refetches everything: a long retry leaves the SPA's
+			// watchdog and its backoff to decide when to try again.
+			_ = send(humasse.Message{Data: sse.Resync{Reason: "too many open streams for this session"}, Retry: refusedStreamRetry})
 			return
 		}
 		defer d.streams.dec(p.SessionID)
@@ -490,8 +523,6 @@ func (s *sender) Event(data any) error {
 	}
 	return s.send(msg)
 }
-
-func (s *sender) Comment(text string) error { return s.send.Comment(text) }
 
 type streamCounter struct {
 	mu sync.Mutex

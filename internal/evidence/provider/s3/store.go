@@ -312,12 +312,13 @@ func (s *Store) List(ctx context.Context, request store.ListRequest) (store.Page
 }
 
 // Open implements store.Reader. The body yields at most request.MaxBytes,
-// and closing it ends the request.
+// all of it within request.Timeout(request timeout), and closing it ends the
+// request.
 func (s *Store) Open(ctx context.Context, request store.OpenRequest) (io.ReadCloser, error) {
 	if err := request.Validate(); err != nil || strings.HasPrefix(request.Key, "/") {
 		return nil, store.ErrInvalidRequest
 	}
-	requestCtx, cancel := context.WithTimeout(ctx, s.requestTimeout)
+	requestCtx, cancel := context.WithTimeout(ctx, request.Timeout(s.requestTimeout))
 	input := &awss3.GetObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(s.rootPrefix + request.Key)}
 	if s.sseC != nil {
 		input.SSECustomerAlgorithm, input.SSECustomerKey, input.SSECustomerKeyMD5 = aws.String(s.sseC.algorithm), aws.String(s.sseC.key), aws.String(s.sseC.keyMD5)

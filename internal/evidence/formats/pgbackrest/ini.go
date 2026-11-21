@@ -39,7 +39,8 @@ const (
 	// hashed for its checksum, streamed: only the [backup], [backup:db] and
 	// [metadata] sections are kept, so the parser's memory does not depend on
 	// this bound (a few MiB for a manifest at it, against the agent's default
-	// 512Mi limit). What the bound costs is read time.
+	// 512Mi limit). What the bound costs is read time, once: a manifest the
+	// listing shows unchanged is reused from the last scan.
 	MaxManifestBytes int64 = 256 << 20
 	// MaxINILineBytes bounds one line of an info file or manifest.
 	MaxINILineBytes = 256 * 1024

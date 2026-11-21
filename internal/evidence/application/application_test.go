@@ -21,13 +21,13 @@ import (
 	"errors"
 	"io"
 	"log/slog"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -45,246 +45,66 @@ func fakeReaderFactory(context.Context, config.Config, *redact.Redactor) (store.
 	return &storetest.Fake{}, nil
 }
 
-func TestServeStopsGracefullyWhenContextIsCanceled(t *testing.T) {
-	t.Parallel()
-	cfg, err := config.Load(func(key string) string {
-		return map[string]string{
-			"REPOSITORY_FORMAT": "barman-cloud",
-			"PROVIDER":          "s3",
-			"DESTINATION_PATH":  "s3://backups/prefix",
-			"AWS_REGION":        "eu-west-1",
-		}[key]
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	app, err := newWithFactory(context.Background(), cfg, slog.New(slog.DiscardHandler), fakeReaderFactory)
-	if err != nil {
-		t.Fatal(err)
-	}
-	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan error, 1)
-	go func() { done <- app.Serve(ctx, listener) }()
-
-	response, err := http.DefaultClient.Do(getRequest(t, "http://"+listener.Addr().String()+"/healthz"))
-	if err != nil {
-		cancel()
-		t.Fatal(err)
-	}
-	_ = response.Body.Close()
-	cancel()
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("Serve() error = %v", err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("Serve() did not stop after cancellation")
-	}
-}
-
-func TestApplicationNeverRendersOrLogsConfiguredSecrets(t *testing.T) {
-	t.Parallel()
+// The agent never serves or logs the store credentials, nor the bucket and
+// prefix the destination fingerprint hashes.
+func TestAgentNeverServesOrLogsConfiguredSecrets(t *testing.T) {
 	directory := t.TempDir()
+	_, certFile, keyFile := writeServingPair(t, directory)
 	accessCanary := "access-canary-never-cross-boundary"
 	secretCanary := "secret-canary-never-cross-boundary"
-	accessPath := filepath.Join(directory, "access")
-	secretPath := filepath.Join(directory, "secret")
+	accessPath := filepath.Join(directory, "access-canary")
+	secretPath := filepath.Join(directory, "secret-canary")
 	if err := os.WriteFile(accessPath, []byte(accessCanary), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(secretPath, []byte(secretCanary), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := config.Load(func(key string) string {
-		return map[string]string{
-			"REPOSITORY_FORMAT":          "barman-cloud",
-			"PROVIDER":                   "s3",
-			"DESTINATION_PATH":           "s3://topology-canary/private-prefix",
-			"AWS_REGION":                 "eu-west-1",
-			"AWS_ACCESS_KEY_ID_FILE":     accessPath,
-			"AWS_SECRET_ACCESS_KEY_FILE": secretPath,
-		}[key]
+	cfg := agentTestConfig(t, directory, certFile, keyFile, map[string]string{
+		"DESTINATION_PATH": "s3://topology-canary/private-prefix", "BARMAN_SERVER_NAMES": "orders",
+		"AWS_ACCESS_KEY_ID_FILE": accessPath, "AWS_SECRET_ACCESS_KEY_FILE": secretPath,
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	logs := &bytes.Buffer{}
-	app, err := newWithFactory(context.Background(), cfg, slog.New(slog.NewJSONHandler(logs, nil)), fakeReaderFactory)
-	if err != nil {
-		t.Fatal(err)
-	}
-	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan error, 1)
-	go func() { done <- app.Serve(ctx, listener) }()
-
-	response, err := http.DefaultClient.Do(getRequest(t, "http://"+listener.Addr().String()+"/"))
-	if err != nil {
-		cancel()
-		t.Fatal(err)
-	}
-	body, err := io.ReadAll(response.Body)
-	_ = response.Body.Close()
-	if err != nil {
-		cancel()
-		t.Fatal(err)
-	}
-	cancel()
-	if err := <-done; err != nil {
-		t.Fatal(err)
-	}
-	output := string(body) + logs.String()
-	for _, forbidden := range []string{accessCanary, secretCanary, accessPath, secretPath, "topology-canary", "private-prefix"} {
-		if strings.Contains(output, forbidden) {
-			t.Fatalf("application boundary disclosed %q", forbidden)
-		}
-	}
-}
-
-func TestServeDrainsInflightRequestOnCancellation(t *testing.T) {
-	t.Parallel()
-	cfg, err := config.Load(func(key string) string {
-		return map[string]string{
-			"REPOSITORY_FORMAT": "barman-cloud", "PROVIDER": "s3", "DESTINATION_PATH": "s3://backups/prefix", "AWS_REGION": "eu-west-1",
-		}[key]
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	app, err := newWithFactory(context.Background(), cfg, slog.New(slog.DiscardHandler), fakeReaderFactory)
-	if err != nil {
-		t.Fatal(err)
-	}
-	started := make(chan struct{})
-	release := make(chan struct{})
-	app.server.Handler = http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
-		close(started)
-		<-release
-		writer.WriteHeader(http.StatusNoContent)
-	})
-	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	serveDone := make(chan error, 1)
-	go func() { serveDone <- app.Serve(ctx, listener) }()
-	requestDone := make(chan error, 1)
-	go func() {
-		response, requestErr := http.DefaultClient.Do(getRequest(t, "http://"+listener.Addr().String()+"/"))
-		if requestErr == nil {
-			_ = response.Body.Close()
-		}
-		requestDone <- requestErr
-	}()
-	<-started
-	cancel()
-	select {
-	case err := <-serveDone:
-		t.Fatalf("Serve returned before the in-flight request drained: %v", err)
-	case <-time.After(50 * time.Millisecond):
-	}
-	close(release)
-	if err := <-requestDone; err != nil {
-		t.Fatalf("in-flight request failed during drain: %v", err)
-	}
-	if err := <-serveDone; err != nil {
-		t.Fatalf("Serve() error = %v", err)
-	}
-}
-
-func TestBrowserUsesCompletedCacheAndPerformsNoStoreCalls(t *testing.T) {
-	t.Parallel()
-	cfg, err := config.Load(func(key string) string {
-		return map[string]string{
-			"REPOSITORY_FORMAT": "barman-cloud", "PROVIDER": "s3", "DESTINATION_PATH": "s3://backups/prefix", "AWS_REGION": "eu-west-1",
-		}[key]
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var listCalls atomic.Int64
+	var logsMu sync.Mutex
+	buffer := &bytes.Buffer{}
+	logs := &lockedWriter{mu: &logsMu, writer: buffer}
 	factory := func(context.Context, config.Config, *redact.Redactor) (store.Reader, error) {
 		return &storetest.Fake{ListFunc: func(context.Context, store.ListRequest) (store.Page, error) {
-			listCalls.Add(1)
-			return store.Page{Objects: []store.Object{{Key: "alpha/base/20260727/backup.info", Size: 21}}}, nil
+			return store.Page{Objects: []store.Object{{Key: "orders/base/20260727T000000/backup.info", Size: 21}}}, nil
 		}}, nil
 	}
-	app, err := newWithFactory(context.Background(), cfg, slog.New(slog.DiscardHandler), factory)
-	if err != nil {
-		t.Fatal(err)
-	}
-	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
+	app, err := newWithFactoryVersion(context.Background(), cfg, slog.New(slog.NewJSONHandler(logs, nil)), factory, "1.2.3", WithReviewer(&apiServerStub{}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan error, 1)
-	go func() { done <- app.Serve(ctx, listener) }()
-	baseURL := "http://" + listener.Addr().String()
+	done := make(chan struct{})
+	go func() {
+		app.worker.Run(ctx)
+		close(done)
+	}()
+	defer func() { cancel(); <-done }()
+	var snapshot evidencev1alpha1.RepositoryEvidenceSnapshot
+	served := ""
 	deadline := time.Now().Add(2 * time.Second)
 	for {
-		response, requestErr := http.DefaultClient.Do(getRequest(t, baseURL+"/readyz"))
-		if requestErr == nil {
-			_ = response.Body.Close()
-			if response.StatusCode == http.StatusOK {
-				break
-			}
+		response := agentHandlerRequest(app.agentHandler, evidencev1alpha1.SnapshotPath)
+		if response.Code == http.StatusOK && json.Unmarshal(response.Body.Bytes(), &snapshot) == nil && snapshot.EvidenceGeneration > 0 {
+			served = response.Body.String()
+			break
 		}
 		if time.Now().After(deadline) {
-			cancel()
-			t.Fatal("background inventory never became ready")
+			t.Fatalf("no evidence published: %s", response.Body.String())
 		}
 		time.Sleep(time.Millisecond)
 	}
-	for {
-		response, requestErr := http.DefaultClient.Do(getRequest(t, baseURL+"/"))
-		if requestErr == nil {
-			body, readErr := io.ReadAll(response.Body)
-			_ = response.Body.Close()
-			if readErr == nil && strings.Contains(string(body), "alpha") {
-				break
-			}
+	served += agentHandlerRequest(app.agentHandler, evidencev1alpha1.BackupsPath+"?revision="+strconv.FormatUint(snapshot.Revision, 10)).Body.String()
+	logsMu.Lock()
+	output := served + buffer.String()
+	logsMu.Unlock()
+	for _, forbidden := range []string{accessCanary, secretCanary, accessPath, secretPath, "topology-canary", "private-prefix"} {
+		if strings.Contains(output, forbidden) {
+			t.Fatalf("agent boundary disclosed %q", forbidden)
 		}
-		if time.Now().After(deadline) {
-			cancel()
-			t.Fatal("completed inventory never reached the cache")
-		}
-		time.Sleep(time.Millisecond)
-	}
-	before := listCalls.Load()
-	for _, path := range []string{"/", "/", "/wals", "/wals?class=gap"} {
-		response, requestErr := http.DefaultClient.Do(getRequest(t, baseURL+path))
-		if requestErr != nil {
-			cancel()
-			t.Fatal(requestErr)
-		}
-		body, readErr := io.ReadAll(response.Body)
-		_ = response.Body.Close()
-		if readErr != nil {
-			cancel()
-			t.Fatal(readErr)
-		}
-		if !strings.Contains(string(body), "<dd>1</dd>") || (path == "/" && !strings.Contains(string(body), "alpha")) || (path != "/" && !strings.Contains(string(body), "Barman WAL evidence")) {
-			cancel()
-			t.Fatalf("cached inventory missing: %s", body)
-		}
-	}
-	if after := listCalls.Load(); after != before {
-		cancel()
-		t.Fatalf("browser requests performed store calls: before=%d after=%d", before, after)
-	}
-	cancel()
-	if err := <-done; err != nil {
-		t.Fatal(err)
 	}
 }
 
@@ -311,8 +131,8 @@ func TestAgentRuntimePublishesScannerEvidenceWithoutRequestStoreCalls(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if app.server != nil || app.agentHandler == nil {
-		t.Fatalf("agent surfaces = server:%v evidence:%v", app.server != nil, app.agentHandler != nil)
+	if app.agentHandler == nil {
+		t.Fatal("the agent exposes no evidence handler")
 	}
 	scanner, ok := app.worker.(*inventory.Scanner)
 	if !ok {
@@ -576,15 +396,4 @@ func TestAgentRejectedPublicationServesPreviousDataStale(t *testing.T) {
 		t.Fatalf("rejected publication served = revision %d->%d generation %d->%d stale=%v state=%s failure=%v",
 			good.Revision, stale.Revision, good.EvidenceGeneration, stale.EvidenceGeneration, stale.Stale, stale.State, stale.Inventory.LastFailureCategory)
 	}
-}
-
-// getRequest builds a GET bound to the test's context, so a request still in
-// flight when the test ends is cancelled with it.
-func getRequest(t testing.TB, url string) *http.Request {
-	t.Helper()
-	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, url, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return request
 }

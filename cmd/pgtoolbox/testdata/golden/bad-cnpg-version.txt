@@ -1,0 +1,4 @@
+exit: 2
+--- stdout
+--- stderr
+pgtoolbox preview: --cnpg-version "latest" is not a version such as 1.30

@@ -203,8 +203,8 @@ func TestAgentRuntimeServesBoundTokenClientsOverHTTPS(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if app.server != nil || app.agentHandler == nil {
-		t.Fatal("agent mode must expose only the HTTPS evidence handler")
+	if app.agentHandler == nil {
+		t.Fatal("the agent exposes no evidence handler")
 	}
 	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {

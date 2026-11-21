@@ -119,9 +119,15 @@ function timelineFor(q: URLSearchParams) {
 function streamHandler(up: boolean) {
   if (!up) return http.get("*/api/v1/stream", () => new HttpResponse(null, { status: 503 }));
   const hello = streamEvents.find((e) => e.event === "hello");
-  return sse<{ message: string; hello: unknown }>("*/api/v1/stream", ({ client }) => {
+  return sse<{ message: string; hello: unknown; heartbeat: unknown }>("*/api/v1/stream", ({ client, finalize }) => {
     // The server's opening event; the fixtures do not change, so nothing is invalidated.
     if (hello && "data" in hello) client.send({ event: "hello", data: hello.data });
+    // The heartbeat keeps the client's watchdog from declaring the stream dead.
+    const beat = setInterval(
+      () => client.send({ event: "heartbeat", data: { serverTime: new Date().toISOString() } }),
+      15_000,
+    );
+    finalize(() => clearInterval(beat));
   });
 }
 

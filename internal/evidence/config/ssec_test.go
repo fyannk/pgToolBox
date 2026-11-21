@@ -101,11 +101,10 @@ func TestLoadSSECustomerKeyFile(t *testing.T) {
 	}
 
 	// Only S3 has SSE-C.
-	gcs := map[string]string{
-		"RUNTIME_MODE": "", "REPOSITORY_FORMAT": "barman-cloud", "PROVIDER": "gcs", "DESTINATION_PATH": "gs://backups/team-a",
-		"BARMAN_SERVER_NAMES": "orders", "S3_SSE_CUSTOMER_KEY_FILE": keyPath,
-	}
-	if _, err := Load(mapEnvironment(gcs)); !errors.As(err, &configErr) || configErr.Variable != "S3_SSE_CUSTOMER_KEY_FILE" {
+	gcs := agentProviderEnvironment(t, "gcs", "gs://backups/team-a", map[string]string{
+		"STORE_CREDENTIAL_MODE": "ambient", "S3_SSE_CUSTOMER_KEY_FILE": keyPath,
+	})
+	if err := loadOutcome(gcs); !errors.As(err, &configErr) || configErr.Variable != "S3_SSE_CUSTOMER_KEY_FILE" {
 		t.Fatalf("SSE-C on GCS = %v", err)
 	}
 	// A self-resolving agent takes it from the configuration only.

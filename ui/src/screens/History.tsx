@@ -400,7 +400,10 @@ export function HistoryScreen({ namespace, cluster, search, onSearch }: Params &
           panel: (
             <div className="flex flex-col gap-3">
               <RangeControls search={search} onSearch={onSearch} onChoose={setChosenAt} />
+              {/* Keyed per Cluster: the previous answer is kept across a filter
+                  change, never across Clusters (another Cluster's events under this heading). */}
               <TimelineQuery
+                key={`${namespace}/${cluster}`}
                 anchor={anchor}
                 namespace={namespace}
                 cluster={cluster}

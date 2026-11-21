@@ -82,7 +82,9 @@ say is on [Conditions](conditions.md).
   `PgToolBoxConsole`: a `spec.exposure.hostname` outside
   `EXPOSURE_ALLOWED_HOST_SUFFIXES` withdraws the Route, Ingress or HTTPRoute
   (`Stalled=True`, `HostnameNotAllowed`), so a pause never keeps a refused name
-  published.
+  published. A `PgAccessRequest` ignores the annotation: whoever may create a
+  request could set it, and a paused request would never expire nor lose its
+  RoleBinding.
 - **Ownership.** If an object the operator must create already exists under the
   generated name and is controlled by someone else, it stops with
   `ConfigurationValid=False` (`ResourceNotOwned`) instead of taking it over.

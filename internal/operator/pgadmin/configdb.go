@@ -183,10 +183,10 @@ func (r *Reconciler) reconcileConfigDatabase(ctx context.Context, p *pgtoolboxv1
 	switch {
 	case !r.Features.In(p.Namespace).Databases.Usable():
 		return state, stall(pgtoolboxv1alpha1.ReasonDatabaseAPIUnavailable,
-			"spec.configDatabase needs the CloudNativePG Database API: %s", unavailableWhy(r.Features.In(p.Namespace).Databases))
+			"spec.configDatabase needs the CloudNativePG Database API: %s", r.Features.In(p.Namespace).Databases.Why())
 	case !r.Features.In(p.Namespace).DatabaseRoles.Usable():
 		return state, stall(pgtoolboxv1alpha1.ReasonDatabaseRoleAPIUnavailable,
-			"spec.configDatabase needs the CloudNativePG DatabaseRole API: %s", unavailableWhy(r.Features.In(p.Namespace).DatabaseRoles))
+			"spec.configDatabase needs the CloudNativePG DatabaseRole API: %s", r.Features.In(p.Namespace).DatabaseRoles.Why())
 	}
 	var cluster cnpgv1.Cluster
 	if err := r.Client.Get(ctx, client.ObjectKey{Namespace: p.Namespace, Name: spec.ClusterRef.Name}, &cluster); err != nil {

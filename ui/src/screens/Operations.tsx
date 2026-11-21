@@ -10,6 +10,7 @@ import { StatusChip } from "../ds/patterns/StatusChip/StatusChip";
 import { formatSeconds, Time } from "../ds/time";
 import { m } from "../paraglide/messages.js";
 import { Fact, Facts, Panel } from "./Panel";
+import { PromoteReadiness } from "./PromoteReadiness";
 import { QueryState } from "./QueryState";
 
 type Props = {
@@ -128,6 +129,7 @@ export function OfferCard({
   const usable = offer.allowed && !offer.undecided && blockers.length === 0;
   const promote = offer.kind === "promote";
   const confirmWord = promote ? target : offer.confirmation;
+  const chosen = promote ? offer.targets?.find((t) => t.name === target) : undefined;
   return (
     <li className="flex flex-col gap-2 rounded-panel border border-line p-3" data-offer={offer.kind}>
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -192,7 +194,11 @@ export function OfferCard({
           {promote && (
             <>
               <TargetPicker offer={offer} value={target} onChange={setTarget} />
-              {!target && <p className="text-caption text-muted">{m.ops_choose_first()}</p>}
+              {chosen ? (
+                <PromoteReadiness target={chosen} />
+              ) : (
+                <p className="text-caption text-muted">{m.ops_choose_first()}</p>
+              )}
             </>
           )}
         </ConfirmDialog>
@@ -201,7 +207,7 @@ export function OfferCard({
   );
 }
 
-/** The operations screen: what the reader may do here and why not, and the operations this console replica issued. */
+/** The operations screen: what the reader may do here and why not, and the recent operations: what the Cluster's objects record (each with its source), the primary changes this console observed, and what only this replica remembers (both marked). */
 export function OperationsView({ data, actor, onRequest }: Props) {
   const offers = data.offers ?? [];
   const recent = data.recent ?? [];
@@ -221,25 +227,60 @@ export function OperationsView({ data, actor, onRequest }: Props) {
       </Panel>
       <Panel title={m.ops_recent()}>
         <p className="text-caption text-muted">{data.recentScope}</p>
+        {(data.recentGaps ?? []).map((gap) => (
+          <p key={gap} role="note" className="text-caption text-health-unknown-fg">
+            {m.ops_recent_gap({ gap })}
+          </p>
+        ))}
+        {(data.recentNotShown ?? []).map((note) => (
+          <p key={note} className="text-caption text-muted">
+            {note}
+          </p>
+        ))}
         {recent.length === 0 ? (
           <p className="text-label text-muted">{m.ops_recent_none()}</p>
         ) : (
           <ul className="flex flex-col gap-2 text-label">
-            {recent.map((op) => (
-              <li key={op.operationId} className="flex flex-wrap items-center gap-2">
-                <span className="font-semibold">{op.kind}</span>
-                {op.instance && <code className="font-code">{op.instance}</code>}
-                <StatusChip health={operationHealth(op)} label={phaseWord(op.phase)} size="sm" />
-                {op.acceptedAt && <Time iso={op.acceptedAt} className="text-muted" />}
-                <button
-                  type="button"
-                  onClick={() => trackedOperations.track(op.operationId)}
-                  className="rounded-control border border-line px-2 py-0.5 text-caption hover:bg-surface-2"
-                >
-                  {m.ops_track()}
-                </button>
-              </li>
-            ))}
+            {recent.map((op) => {
+              // A primary change is observed, not requested: there is nothing to follow.
+              const observed = op.kind === "primaryChange";
+              return (
+                <li key={op.operationId} className="flex flex-wrap items-center gap-2" data-recorded-in={op.recordedIn}>
+                  <span className="font-semibold">{observed ? m.ops_recent_primary_change() : op.kind}</span>
+                  {op.instance && <code className="font-code">{op.instance}</code>}
+                  <StatusChip health={operationHealth(op)} label={phaseWord(op.phase)} size="sm" />
+                  {observed && <span className="min-w-0 break-words text-muted">{op.steps?.[0]?.text}</span>}
+                  {op.acceptedAt && <Time iso={op.acceptedAt} className="text-muted" />}
+                  {op.recordedIn === "replica" && (
+                    <span className="text-caption text-muted" title={op.recordedFrom}>
+                      {m.ops_recent_replica_only()}
+                    </span>
+                  )}
+                  {op.recordedIn === "timeline" && (
+                    <span className="text-caption text-muted" title={op.recordedFrom}>
+                      {m.ops_recent_observed()}
+                    </span>
+                  )}
+                  {!observed && (
+                    <button
+                      type="button"
+                      onClick={() => trackedOperations.track(op.operationId)}
+                      aria-label={m.ops_track_named({
+                        operation: [op.kind, op.created ?? op.instance].filter(Boolean).join(" "),
+                      })}
+                      className="rounded-control border border-line px-2 py-0.5 text-caption hover:bg-surface-2"
+                    >
+                      {m.ops_track()}
+                    </button>
+                  )}
+                  {op.recordedIn === "cluster" && op.recordedFrom && (
+                    <span className="w-full text-caption text-muted">
+                      {m.ops_recent_source({ source: op.recordedFrom })}
+                    </span>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         )}
       </Panel>

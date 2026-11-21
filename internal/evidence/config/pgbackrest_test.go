@@ -55,7 +55,7 @@ func TestLoadPGBackRestAgent(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if cfg.RepositoryFormat != FormatPGBackRest || cfg.PGBackRestStanza != "orders" || cfg.PGBackRestArchiveStanza != "orders" || cfg.PGBackRestRepository != 1 || !cfg.PGBackRestCipher.Empty() || len(cfg.PGBackRestStanzas) != 0 || len(cfg.BarmanServerNames) != 0 {
+		if cfg.RepositoryFormat != FormatPGBackRest || cfg.PGBackRestStanza != "orders" || cfg.PGBackRestArchiveStanza != "orders" || cfg.PGBackRestRepository != 1 || !cfg.PGBackRestCipher.Empty() || len(cfg.BarmanServerNames) != 0 {
 			t.Fatalf("pgBackRest agent config = %#v", cfg)
 		}
 		// DESTINATION_PATH is the repository root: bucket + repo-path.
@@ -178,7 +178,7 @@ func TestLoadPGBackRestRefusals(t *testing.T) {
 		{name: "repository zero", base: pgBackRestAgentEnvironment, changes: map[string]string{"PGBACKREST_REPOSITORY": "0"}, variable: "PGBACKREST_REPOSITORY"},
 		{name: "repository 257", base: pgBackRestAgentEnvironment, changes: map[string]string{"PGBACKREST_REPOSITORY": "257"}, variable: "PGBACKREST_REPOSITORY"},
 		{name: "repository not a number", base: pgBackRestAgentEnvironment, changes: map[string]string{"PGBACKREST_REPOSITORY": "repo1"}, variable: "PGBACKREST_REPOSITORY"},
-		{name: "viewer list in an agent", base: pgBackRestAgentEnvironment, changes: map[string]string{"PGBACKREST_STANZAS": "orders"}, variable: "PGBACKREST_STANZAS"},
+		{name: "the removed viewer's list", base: pgBackRestAgentEnvironment, changes: map[string]string{"PGBACKREST_STANZAS": "orders"}, variable: "PGBACKREST_STANZAS"},
 		{name: "retention full zero", base: pgBackRestAgentEnvironment, changes: map[string]string{"PGBACKREST_RETENTION_FULL": "0"}, variable: "PGBACKREST_RETENTION_FULL"},
 		{name: "retention full above pgBackRest's bound", base: pgBackRestAgentEnvironment, changes: map[string]string{"PGBACKREST_RETENTION_FULL": "10000000"}, variable: "PGBACKREST_RETENTION_FULL"},
 		{name: "retention diff not a number", base: pgBackRestAgentEnvironment, changes: map[string]string{"PGBACKREST_RETENTION_DIFF": "two"}, variable: "PGBACKREST_RETENTION_DIFF"},
@@ -186,15 +186,12 @@ func TestLoadPGBackRestRefusals(t *testing.T) {
 		{name: "retention full type days", base: pgBackRestAgentEnvironment, changes: map[string]string{"PGBACKREST_RETENTION_FULL_TYPE": "days"}, variable: "PGBACKREST_RETENTION_FULL_TYPE"},
 		{name: "retention archive type log", base: pgBackRestAgentEnvironment, changes: map[string]string{"PGBACKREST_RETENTION_ARCHIVE_TYPE": "log"}, variable: "PGBACKREST_RETENTION_ARCHIVE_TYPE"},
 		{name: "retention with Barman", base: barmanAgentEnvironment, changes: map[string]string{"PGBACKREST_RETENTION_FULL": "2"}, variable: "PGBACKREST_RETENTION_FULL"},
-		{name: "viewer refuses a retention", base: pgBackRestViewerEnvironment, changes: map[string]string{"PGBACKREST_RETENTION_FULL_TYPE": "count"}, variable: "PGBACKREST_RETENTION_FULL_TYPE"},
 		{name: "self-resolving agent refuses a retention", base: func(*testing.T) map[string]string { return teamAgentEnvironment() }, changes: map[string]string{"PGBACKREST_RETENTION_FULL": "2"}, variable: "PGBACKREST_RETENTION_FULL"},
 		{name: "Barman server in pgBackRest", base: pgBackRestAgentEnvironment, changes: map[string]string{"BARMAN_SERVER_NAMES": "orders"}, variable: "BARMAN_SERVER_NAMES"},
 		{name: "cipher file unreadable", base: pgBackRestAgentEnvironment, changes: map[string]string{"PGBACKREST_CIPHER_PASS_FILE": unreadable}, variable: "PGBACKREST_CIPHER_PASS_FILE"},
 		{name: "stanza with Barman", base: barmanAgentEnvironment, changes: map[string]string{"PGBACKREST_STANZA": "orders"}, variable: "PGBACKREST_STANZA"},
 		{name: "archive stanza with Barman", base: barmanAgentEnvironment, changes: map[string]string{"PGBACKREST_ARCHIVE_STANZA": "orders"}, variable: "PGBACKREST_ARCHIVE_STANZA"},
 		{name: "repository with Barman", base: barmanAgentEnvironment, changes: map[string]string{"PGBACKREST_REPOSITORY": "1"}, variable: "PGBACKREST_REPOSITORY"},
-		{name: "viewer refuses the agent stanza", base: pgBackRestViewerEnvironment, changes: map[string]string{"PGBACKREST_STANZA": "orders"}, variable: "PGBACKREST_STANZA"},
-		{name: "viewer refuses the repository number", base: pgBackRestViewerEnvironment, changes: map[string]string{"PGBACKREST_REPOSITORY": "1"}, variable: "PGBACKREST_REPOSITORY"},
 		{name: "self-resolving agent refuses a stanza", base: func(*testing.T) map[string]string { return teamAgentEnvironment() }, changes: map[string]string{"PGBACKREST_STANZA": "orders"}, variable: "PGBACKREST_STANZA"},
 		{name: "self-resolving agent refuses an archive stanza", base: func(*testing.T) map[string]string { return teamAgentEnvironment() }, changes: map[string]string{"PGBACKREST_ARCHIVE_STANZA": "orders"}, variable: "PGBACKREST_ARCHIVE_STANZA"},
 		{name: "self-resolving agent refuses a repository number", base: func(*testing.T) map[string]string { return teamAgentEnvironment() }, changes: map[string]string{"PGBACKREST_REPOSITORY": "2"}, variable: "PGBACKREST_REPOSITORY"},
@@ -220,34 +217,14 @@ func TestLoadPGBackRestRefusals(t *testing.T) {
 	}
 }
 
-func TestLoadPGBackRestViewerKeepsTheList(t *testing.T) {
-	environment := pgBackRestViewerEnvironment(t)
-	environment["PGBACKREST_STANZAS"] = "orders, billing"
-	environment["PGBACKREST_CIPHER_PASS_FILE"] = writeCipher(t, "viewer-canary")
-	cfg, err := loadExact(environment)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(cfg.PGBackRestStanzas, []string{"billing", "orders"}) || cfg.PGBackRestStanza != "" || cfg.PGBackRestCipher.Empty() || cfg.ScopePrefixes() != nil {
-		t.Fatalf("viewer config = %#v", cfg)
-	}
-}
-
 func barmanAgentEnvironment(t *testing.T) map[string]string {
 	t.Helper()
 	accessPath, secretPath := agentCredentialFiles(t)
 	return validAgentEnvironment(accessPath, secretPath)
 }
 
-func pgBackRestViewerEnvironment(*testing.T) map[string]string {
-	return map[string]string{
-		"REPOSITORY_FORMAT": "pgbackrest", "PROVIDER": "gcs", "DESTINATION_PATH": "gs://backups/pgbr",
-	}
-}
-
-// TestPGBackRestScope covers both ways a producing mode names its stanza:
-// PGBACKREST_STANZA, and the single-entry list a self-resolved repository
-// sets in ApplyResolved.
+// TestPGBackRestScope covers how the agent names its stanza:
+// PGBACKREST_STANZA and PGBACKREST_ARCHIVE_STANZA.
 func TestPGBackRestScope(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -258,8 +235,6 @@ func TestPGBackRestScope(t *testing.T) {
 	}{
 		{"agent, one stanza", Config{RuntimeMode: RuntimeAgent, RepositoryFormat: FormatPGBackRest, PGBackRestStanza: "orders"}, "orders", "orders", []string{"archive/orders/", "backup/orders/"}},
 		{"agent, split", Config{RuntimeMode: RuntimeAgent, RepositoryFormat: FormatPGBackRest, PGBackRestStanza: "orders", PGBackRestArchiveStanza: "orders-wal"}, "orders", "orders-wal", []string{"archive/orders-wal/", "backup/orders/"}},
-		{"self-resolved list of one", Config{RuntimeMode: RuntimeAgent, RepositoryFormat: FormatPGBackRest, PGBackRestStanzas: []string{"orders"}}, "orders", "orders", []string{"archive/orders/", "backup/orders/"}},
-		{"viewer list", Config{RuntimeMode: RuntimeStandalone, RepositoryFormat: FormatPGBackRest, PGBackRestStanzas: []string{"orders"}}, "", "", nil},
 		{"agent without a stanza", Config{RuntimeMode: RuntimeAgent, RepositoryFormat: FormatPGBackRest}, "", "", nil},
 	}
 	for _, test := range tests {

@@ -1,0 +1,4 @@
+exit: 2
+--- stdout
+--- stderr
+pgtoolbox preview: testdata/scalar.yaml: document 1 is not a Kubernetes object (a mapping with apiVersion and kind)

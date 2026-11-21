@@ -40,36 +40,24 @@ import (
 )
 
 const (
-	defaultListenAddr             = ":3000"
-	defaultTrustedUserHeader      = "X-Forwarded-User"
 	defaultCatalogRefreshInterval = 5 * time.Minute
 	defaultStoreRequestTimeout    = 10 * time.Second
 	defaultScanConcurrency        = 4
 	defaultMaxObjectsPerScan      = 1_000_000
-	defaultWALPageSize            = 200
 	maxSecretFileBytes            = 64 * 1024
 	maxConfigFileBytes            = 1024 * 1024
 	maxConfiguredScopes           = 1_000
 )
 
-// RuntimeMode selects one explicit process surface.
+// RuntimeMode names the process surface (RUNTIME_MODE). The agent is the
+// only one; an empty RUNTIME_MODE selects it.
 type RuntimeMode string
 
-const (
-	// RuntimeStandalone serves the viewer's own web UI; it is the default.
-	RuntimeStandalone RuntimeMode = ""
-	// RuntimeAgent is the long-running in-cluster HTTPS producer of
-	// evidence/v1alpha1, deployed by an EvidenceAgent or the team chart:
-	// bound-token (TokenReview + SubjectAccessReview) or shared-token
-	// authentication.
-	RuntimeAgent RuntimeMode = "agent"
-)
-
-// Produces reports whether the mode publishes the evidence contract rather
-// than serving the standalone viewer UI.
-func (m RuntimeMode) Produces() bool {
-	return m == RuntimeAgent
-}
+// RuntimeAgent is the long-running in-cluster HTTPS producer of
+// evidence/v1alpha1, deployed by an EvidenceAgent or the team chart:
+// bound-token (TokenReview + SubjectAccessReview) or shared-token
+// authentication.
+const RuntimeAgent RuntimeMode = "agent"
 
 const (
 	defaultAgentListenAddr = ":8443"
@@ -260,9 +248,6 @@ type Config struct {
 	EndpointCABundle  []byte
 
 	BarmanServerNames []string
-	// PGBackRestStanzas is the viewer's (standalone) list; the producing
-	// modes read one stanza instead.
-	PGBackRestStanzas []string
 	// PGBackRestCipher is the repository passphrase (repo-cipher-pass) read
 	// from PGBACKREST_CIPHER_PASS_FILE. It opens the info files only; never
 	// logged or served.
@@ -281,9 +266,7 @@ type Config struct {
 	// nil when none of the variables is set.
 	PGBackRestRetention *PGBackRestRetention
 
-	ListenAddr        string
-	TrustedUserHeader string
-	AllowDownload     bool
+	ListenAddr string
 
 	CNPGClusterNamespace string
 	CNPGClusterUID       string
@@ -340,7 +323,6 @@ type Config struct {
 	StoreRequestTimeout    time.Duration
 	ScanConcurrency        int
 	MaxObjectsPerScan      int
-	WALPageSize            int
 
 	ExpectedRetentionPolicy   string
 	ExpectedMinimumRedundancy *int
@@ -352,8 +334,7 @@ type Config struct {
 	// ENDPOINT_CA_FILE, AWS_REGION, or the S3 credential variables. The
 	// agent then starts without a store and publishes unknown evidence with
 	// this redacted error instead of exiting, so the console reads why the
-	// repository is unreadable rather than a crash-looping Pod. Load still
-	// returns every error in standalone mode.
+	// repository is unreadable rather than a crash-looping Pod.
 	RepositoryError error
 }
 
@@ -416,17 +397,10 @@ func load(getenv func(string) string, lookupEnv func(string) (string, bool)) (Co
 		StoreRequestTimeout:    defaultStoreRequestTimeout,
 		ScanConcurrency:        defaultScanConcurrency,
 		MaxObjectsPerScan:      defaultMaxObjectsPerScan,
-		WALPageSize:            defaultWALPageSize,
-	}
-	switch runtimeMode {
-	case RuntimeStandalone:
-		cfg.ListenAddr = defaultListenAddr
-		cfg.TrustedUserHeader = defaultTrustedUserHeader
-	case RuntimeAgent:
-		cfg.ListenAddr = defaultAgentListenAddr
+		ListenAddr:             defaultAgentListenAddr,
 	}
 
-	selfResolving := runtimeMode == RuntimeAgent && AgentResolve(getenv("AGENT_RESOLVE")) == AgentResolveCluster
+	selfResolving := AgentResolve(getenv("AGENT_RESOLVE")) == AgentResolveCluster
 	if err := loadRepositoryShape(&cfg, selfResolving, getenv); err != nil {
 		return Config{}, err
 	}
@@ -492,11 +466,11 @@ func loadRepositoryShape(cfg *Config, selfResolving bool, getenv func(string) st
 	return nil
 }
 
-// deferRepositoryError defers a repository-coordinate error in a mode
-// that produces evidence (see Config.RepositoryError): the first one is
-// kept and nil returned. Every other error is returned unchanged.
+// deferRepositoryError defers a repository-coordinate error (see
+// Config.RepositoryError): the first one is kept and nil returned. Every
+// other error is returned unchanged.
 func deferRepositoryError(cfg *Config, err error) error {
-	if err == nil || !cfg.RuntimeMode.Produces() || !IsError(err) {
+	if err == nil || !IsError(err) {
 		return err
 	}
 	if cfg.RepositoryError == nil {
@@ -505,47 +479,21 @@ func deferRepositoryError(cfg *Config, err error) error {
 	return nil
 }
 
-// loadListener reads the HTTP listener per mode: the agent has no trusted
-// user header, the standalone viewer may set or clear one.
+// loadListener reads the HTTP listener. The agent authenticates its
+// callers itself, so a trusted user header is refused.
 func loadListener(cfg *Config, getenv func(string) string, lookupEnv func(string) (string, bool)) error {
-	switch cfg.RuntimeMode {
-	case RuntimeAgent:
-		if _, present := lookupEnv("TRUSTED_USER_HEADER"); present {
-			return configError("TRUSTED_USER_HEADER", "does not apply to agent")
-		}
-		if raw := getenv("LISTEN_ADDR"); raw != "" {
-			cfg.ListenAddr = raw
-		}
-		if err := validateListenAddr(cfg.ListenAddr); err != nil {
-			return err
-		}
-	default:
-		if raw := getenv("LISTEN_ADDR"); raw != "" {
-			cfg.ListenAddr = raw
-		}
-		if err := validateListenAddr(cfg.ListenAddr); err != nil {
-			return err
-		}
-		if raw, present := lookupEnv("TRUSTED_USER_HEADER"); present {
-			cfg.TrustedUserHeader = raw
-		}
-		if cfg.TrustedUserHeader != "" && !validHeaderName(cfg.TrustedUserHeader) {
-			return configError("TRUSTED_USER_HEADER", "must be an HTTP field name or empty")
-		}
+	if _, present := lookupEnv("TRUSTED_USER_HEADER"); present {
+		return configError("TRUSTED_USER_HEADER", "does not apply to agent")
 	}
-	return nil
+	if raw := getenv("LISTEN_ADDR"); raw != "" {
+		cfg.ListenAddr = raw
+	}
+	return validateListenAddr(cfg.ListenAddr)
 }
 
-// loadLimits reads the download switch (never on where evidence is
-// produced) and the bounded tunables of the scan.
+// loadLimits reads the bounded tunables of the scan.
 func loadLimits(cfg *Config, getenv func(string) string) error {
 	var err error
-	if cfg.AllowDownload, err = parseBool(getenv("ALLOW_DOWNLOAD"), false, "ALLOW_DOWNLOAD"); err != nil {
-		return err
-	}
-	if cfg.RuntimeMode.Produces() && cfg.AllowDownload {
-		return configError("ALLOW_DOWNLOAD", "must be false in "+string(cfg.RuntimeMode))
-	}
 	if cfg.CatalogRefreshInterval, err = parseDuration(getenv("CATALOG_REFRESH_INTERVAL"), defaultCatalogRefreshInterval, 30*time.Second, 24*time.Hour, "CATALOG_REFRESH_INTERVAL"); err != nil {
 		return err
 	}
@@ -556,9 +504,6 @@ func loadLimits(cfg *Config, getenv func(string) string) error {
 		return err
 	}
 	if cfg.MaxObjectsPerScan, err = parseInt(getenv("MAX_OBJECTS_PER_SCAN"), defaultMaxObjectsPerScan, 1_000, 10_000_000, "MAX_OBJECTS_PER_SCAN"); err != nil {
-		return err
-	}
-	if cfg.WALPageSize, err = parseInt(getenv("WAL_PAGE_SIZE"), defaultWALPageSize, 1, 1_000, "WAL_PAGE_SIZE"); err != nil {
 		return err
 	}
 	return nil
@@ -621,23 +566,7 @@ func loadDestination(cfg *Config, provider Provider, getenv func(string) string)
 	return nil
 }
 
-// agentVariables apply only to RUNTIME_MODE=agent.
-var agentVariables = []string{
-	"TLS_CERT_FILE", "TLS_KEY_FILE", "AGENT_NAME", "AGENT_NAMESPACE", "PRODUCER_EPOCH",
-	"AGENT_AUTH", "AGENT_TOKEN_FILE", "AGENT_PLAIN_HTTP", "AGENT_RESOLVE", "AGENT_ALLOWED_SECRETS",
-	"AGENT_ALLOW_INSECURE_ENDPOINT", "AGENT_WORKLOAD_IDENTITY", "AGENT_PGBACKREST_REPOSITORY",
-	"AGENT_PGBACKREST_ENDPOINT_CA_SECRET", "AGENT_PGBACKREST_ENDPOINT_CA_KEY", "AGENT_PGBACKREST_ENDPOINT",
-}
-
 func loadRuntimeConfig(cfg *Config, getenv func(string) string) error {
-	if cfg.RuntimeMode == RuntimeStandalone {
-		for _, variable := range append([]string{"CNPG_CLUSTER_NAMESPACE", "CNPG_CLUSTER_UID", "CNPG_CLUSTER_NAME", "STORE_CREDENTIAL_MODE"}, agentVariables...) {
-			if getenv(variable) != "" {
-				return configError(variable, "requires agent")
-			}
-		}
-		return nil
-	}
 	mode := string(cfg.RuntimeMode)
 	// Both renderings set it (the AWS SDK reads it); the S3 adapter disables
 	// instance metadata in the agent regardless, so a Pod that turns it back
@@ -1078,7 +1007,7 @@ func applyResolvedPgBackRest(cfg *Config, resolved ResolvedRepository) error {
 		archive = stanzas[0]
 	}
 	cfg.RepositoryFormat, cfg.BarmanServerNames = FormatPGBackRest, nil
-	cfg.PGBackRestStanza, cfg.PGBackRestStanzas = stanzas[0], nil
+	cfg.PGBackRestStanza = stanzas[0]
 	cfg.PGBackRestArchiveStanza, cfg.PGBackRestRepository = archive, resolved.Repository
 	if len(resolved.CipherPass) > 0 {
 		cfg.PGBackRestCipher = Secret{value: bytes.Clone(resolved.CipherPass)}
@@ -1238,21 +1167,13 @@ func loadFormatConfig(cfg *Config, getenv func(string) string) error {
 	return nil
 }
 
-// loadPGBackRestScope: the viewer reads the stanzas PGBACKREST_STANZAS
-// lists (all when empty); a producing mode reads exactly one,
+// loadPGBackRestScope: the agent reads exactly one stanza,
 // PGBACKREST_STANZA, with its WAL under PGBACKREST_ARCHIVE_STANZA when set.
+// PGBACKREST_STANZAS, the removed viewer's list, is refused rather than
+// ignored.
 func loadPGBackRestScope(cfg *Config, stanzas []string, getenv func(string) string) error {
-	if !cfg.RuntimeMode.Produces() {
-		for _, variable := range append([]string{"PGBACKREST_STANZA", "PGBACKREST_ARCHIVE_STANZA", "PGBACKREST_REPOSITORY"}, pgbackrestRetentionVariables...) {
-			if getenv(variable) != "" {
-				return configError(variable, "requires agent; the viewer reads PGBACKREST_STANZAS")
-			}
-		}
-		cfg.PGBackRestStanzas = stanzas
-		return nil
-	}
 	if len(stanzas) > 0 {
-		return configError("PGBACKREST_STANZAS", "applies to the viewer only; an agent reads one PGBACKREST_STANZA")
+		return configError("PGBACKREST_STANZAS", "is not supported; an agent reads one PGBACKREST_STANZA")
 	}
 	stanza := getenv("PGBACKREST_STANZA")
 	if stanza == "" {
@@ -1365,16 +1286,11 @@ func (c Config) ScopeName() string {
 	return ""
 }
 
-// PGBackRestScope is the stanza a producing mode reads and its archive
-// stanza: PGBackRestStanza (PGBACKREST_STANZA), or the single entry of
-// PGBackRestStanzas a self-resolved configuration sets; the archive stanza
-// is PGBackRestArchiveStanza, the stanza when that is empty. Both are empty
-// when the configuration names no single stanza (the viewer's list).
+// PGBackRestScope is the stanza the agent reads (PGBackRestStanza,
+// PGBACKREST_STANZA) and its archive stanza: PGBackRestArchiveStanza, the
+// stanza when that is empty. Both are empty when no stanza is configured.
 func (c Config) PGBackRestScope() (stanza, archive string) {
 	stanza = c.PGBackRestStanza
-	if stanza == "" && c.RuntimeMode.Produces() && len(c.PGBackRestStanzas) == 1 {
-		stanza = c.PGBackRestStanzas[0]
-	}
 	if stanza == "" {
 		return "", ""
 	}
@@ -1493,56 +1409,46 @@ func loadS3Credentials(cfg *Config, getenv func(string) string) error {
 	if err := resolveS3Region(cfg, explicitRegion); err != nil {
 		return err
 	}
-	if cfg.RuntimeMode.Produces() {
-		mode := CredentialMode(getenv("STORE_CREDENTIAL_MODE"))
-		switch mode {
-		case CredentialStaticFiles:
-			// AWS_ROLE_ARN and AWS_WEB_IDENTITY_TOKEN_FILE, which the IRSA
-			// webhook may inject, are ignored: the files are the credential.
-			if accessPath == "" {
-				return configError("STORE_CREDENTIAL_MODE", "static-files requires the static credential files")
-			}
-		case CredentialAWSWebIdentity:
-			if accessPath != "" || secretPath != "" || tokenPath != "" {
-				return configError("STORE_CREDENTIAL_MODE", "aws-web-identity cannot use static credential files")
-			}
-			webIdentityPath := getenv("AWS_WEB_IDENTITY_TOKEN_FILE")
-			roleARN := getenv("AWS_ROLE_ARN")
-			if !validAbsolutePath(webIdentityPath) {
-				return configError("AWS_WEB_IDENTITY_TOKEN_FILE", "must be an absolute clean path")
-			}
-			if !validAWSRoleARN(roleARN) {
-				return configError("AWS_ROLE_ARN", "must be a bounded AWS role ARN")
-			}
-			if explicitRegion == "" {
-				return configError("AWS_REGION", "required with aws-web-identity")
-			}
-			cfg.Credentials.Mode = CredentialAWSWebIdentity
-			cfg.Credentials.AWSWebIdentityTokenFile = webIdentityPath
-			cfg.Credentials.AWSRoleARN = roleARN
-			return nil
-		case CredentialAmbient:
-			// The agent's workload identity (s3Credentials.inheritFromIAMRole):
-			// what the identity webhook injects, IRSA or EKS Pod Identity,
-			// and nothing else (no instance metadata). Only an agent may use
-			// it.
-			if cfg.RuntimeMode != RuntimeAgent {
-				return configError("STORE_CREDENTIAL_MODE", "must be static-files or aws-web-identity")
-			}
-			if accessPath != "" || secretPath != "" || tokenPath != "" {
-				return configError("STORE_CREDENTIAL_MODE", "ambient cannot use static credential files")
-			}
-			return applyAWSWorkloadIdentity(cfg, awsWorkloadIdentity{
-				roleARN: getenv("AWS_ROLE_ARN"), tokenFile: getenv("AWS_WEB_IDENTITY_TOKEN_FILE"),
-				containerURI: getenv("AWS_CONTAINER_CREDENTIALS_FULL_URI"), containerTokenFile: getenv("AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE"),
-			})
-		default:
-			return configError("STORE_CREDENTIAL_MODE", "must be static-files, aws-web-identity or (agent) ambient")
+	mode := CredentialMode(getenv("STORE_CREDENTIAL_MODE"))
+	switch mode {
+	case CredentialStaticFiles:
+		// AWS_ROLE_ARN and AWS_WEB_IDENTITY_TOKEN_FILE, which the IRSA
+		// webhook may inject, are ignored: the files are the credential.
+		if accessPath == "" {
+			return configError("STORE_CREDENTIAL_MODE", "static-files requires the static credential files")
 		}
-	}
-	if accessPath == "" {
-		cfg.Credentials.Mode = CredentialAmbient
+	case CredentialAWSWebIdentity:
+		if accessPath != "" || secretPath != "" || tokenPath != "" {
+			return configError("STORE_CREDENTIAL_MODE", "aws-web-identity cannot use static credential files")
+		}
+		webIdentityPath := getenv("AWS_WEB_IDENTITY_TOKEN_FILE")
+		roleARN := getenv("AWS_ROLE_ARN")
+		if !validAbsolutePath(webIdentityPath) {
+			return configError("AWS_WEB_IDENTITY_TOKEN_FILE", "must be an absolute clean path")
+		}
+		if !validAWSRoleARN(roleARN) {
+			return configError("AWS_ROLE_ARN", "must be a bounded AWS role ARN")
+		}
+		if explicitRegion == "" {
+			return configError("AWS_REGION", "required with aws-web-identity")
+		}
+		cfg.Credentials.Mode = CredentialAWSWebIdentity
+		cfg.Credentials.AWSWebIdentityTokenFile = webIdentityPath
+		cfg.Credentials.AWSRoleARN = roleARN
 		return nil
+	case CredentialAmbient:
+		// The agent's workload identity (s3Credentials.inheritFromIAMRole):
+		// what the identity webhook injects, IRSA or EKS Pod Identity,
+		// and nothing else (no instance metadata).
+		if accessPath != "" || secretPath != "" || tokenPath != "" {
+			return configError("STORE_CREDENTIAL_MODE", "ambient cannot use static credential files")
+		}
+		return applyAWSWorkloadIdentity(cfg, awsWorkloadIdentity{
+			roleARN: getenv("AWS_ROLE_ARN"), tokenFile: getenv("AWS_WEB_IDENTITY_TOKEN_FILE"),
+			containerURI: getenv("AWS_CONTAINER_CREDENTIALS_FULL_URI"), containerTokenFile: getenv("AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE"),
+		})
+	default:
+		return configError("STORE_CREDENTIAL_MODE", "must be static-files, aws-web-identity or ambient")
 	}
 	access, err := readBoundedFile("AWS_ACCESS_KEY_ID_FILE", accessPath, maxSecretFileBytes, true)
 	if err != nil {
@@ -1600,8 +1506,8 @@ func resolveS3Region(cfg *Config, explicit string) error {
 
 func parseRuntimeMode(raw string) (RuntimeMode, error) {
 	switch RuntimeMode(raw) {
-	case RuntimeStandalone, RuntimeAgent:
-		return RuntimeMode(raw), nil
+	case "", RuntimeAgent:
+		return RuntimeAgent, nil
 	default:
 		return "", configError("RUNTIME_MODE", "must be agent or empty")
 	}
@@ -1615,11 +1521,11 @@ func loadAzureCredentials(cfg *Config, getenv func(string) string) error {
 	if len(account) > 256 || containsControl(account) {
 		return configError("AZURE_STORAGE_ACCOUNT", "must be at most 256 characters without control characters")
 	}
-	if cfg.RuntimeMode.Produces() && account == "" {
+	if account == "" {
 		// The account is part of the repository identity the agent publishes.
 		return configError("AZURE_STORAGE_ACCOUNT", "required in "+string(cfg.RuntimeMode))
 	}
-	if err := checkCredentialMode(cfg, getenv, map[CredentialMode]bool{
+	if err := checkCredentialMode(getenv, map[CredentialMode]bool{
 		CredentialConnectionFile: connectionPath != "", CredentialAccountKeyFile: keyPath != "",
 		CredentialSASTokenFile: sasPath != "", CredentialAmbient: connectionPath == "" && keyPath == "" && sasPath == "",
 	}); err != nil {
@@ -1677,11 +1583,8 @@ func loadAzureCredentials(cfg *Config, getenv func(string) string) error {
 // (STORE_CREDENTIAL_MODE), and it must be the one the configured files
 // select (selected maps each mode of the provider to whether the variables
 // select it), so an omitted file never silently falls back to ambient
-// credentials. The standalone viewer infers the mode.
-func checkCredentialMode(cfg *Config, getenv func(string) string, selected map[CredentialMode]bool) error {
-	if !cfg.RuntimeMode.Produces() {
-		return nil
-	}
+// credentials.
+func checkCredentialMode(getenv func(string) string, selected map[CredentialMode]bool) error {
 	mode := CredentialMode(getenv("STORE_CREDENTIAL_MODE"))
 	if _, known := selected[mode]; !known {
 		names := make([]string, 0, len(selected))
@@ -1699,7 +1602,7 @@ func checkCredentialMode(cfg *Config, getenv func(string) string, selected map[C
 
 func loadGCSCredentials(cfg *Config, getenv func(string) string) error {
 	path := getenv("GOOGLE_APPLICATION_CREDENTIALS")
-	if err := checkCredentialMode(cfg, getenv, map[CredentialMode]bool{CredentialJSONFile: path != "", CredentialAmbient: path == ""}); err != nil {
+	if err := checkCredentialMode(getenv, map[CredentialMode]bool{CredentialJSONFile: path != "", CredentialAmbient: path == ""}); err != nil {
 		return err
 	}
 	if path == "" {
@@ -1876,18 +1779,6 @@ func validateListenAddr(raw string) error {
 		return configError("LISTEN_ADDR", "port must be between 1 and 65535")
 	}
 	return nil
-}
-
-func validHeaderName(value string) bool {
-	if value == "" {
-		return false
-	}
-	for _, r := range value {
-		if r > unicode.MaxASCII || !(unicode.IsLetter(r) || unicode.IsDigit(r) || strings.ContainsRune("!#$%&'*+-.^_`|~", r)) {
-			return false
-		}
-	}
-	return true
 }
 
 func parseNames(variable, raw string) ([]string, error) {

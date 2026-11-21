@@ -49,7 +49,8 @@ const (
 	AnnotationSpecHash = "pgtoolbox.fyannk.dev/spec-hash"
 
 	// AnnotationReconcile=ReconcileSkip on a CR pauses its reconciliation;
-	// the controller still publishes status (ReconciliationPaused).
+	// the controller still publishes status (ReconciliationPaused). A
+	// PgAccessRequest ignores it: its author could set it.
 	AnnotationReconcile = "pgtoolbox.fyannk.dev/reconcile"
 	ReconcileSkip       = "skip"
 )

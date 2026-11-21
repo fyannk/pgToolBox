@@ -15,8 +15,10 @@
 package store
 
 import (
+	"math"
 	"reflect"
 	"testing"
+	"time"
 )
 
 func TestReaderSurface(t *testing.T) {
@@ -29,6 +31,22 @@ func TestReaderSurface(t *testing.T) {
 	for index, name := range want {
 		if got := reader.Method(index).Name; got != name {
 			t.Fatalf("Reader method %d = %s, want %s", index, got, name)
+		}
+	}
+}
+
+func TestOpenRequestTimeoutScalesWithMaxBytes(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		maxBytes int64
+		want     time.Duration
+	}{
+		{maxBytes: 64, want: 10 * time.Second},
+		{maxBytes: 256<<20 + 1, want: 266 * time.Second},
+		{maxBytes: math.MaxInt64, want: 10*time.Second + time.Hour},
+	} {
+		if got := (OpenRequest{Key: "k", MaxBytes: test.maxBytes}).Timeout(10 * time.Second); got != test.want {
+			t.Errorf("Timeout(MaxBytes %d) = %s, want %s", test.maxBytes, got, test.want)
 		}
 	}
 }

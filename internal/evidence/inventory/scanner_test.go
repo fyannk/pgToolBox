@@ -57,7 +57,7 @@ func TestScannerPaginatesAndPublishesCompleteInventory(t *testing.T) {
 			return store.Page{}, nil
 		}
 	}}
-	scanner, cache, _ := newTestScanner(t, reader, 10, 2, 2, func() time.Time { return now })
+	scanner, cache, _ := newTestScanner(t, reader, 10, 2, func() time.Time { return now })
 
 	if err := scanner.Refresh(context.Background()); err != nil {
 		t.Fatal(err)
@@ -76,9 +76,6 @@ func TestScannerPaginatesAndPublishesCompleteInventory(t *testing.T) {
 	if scope.Name != "alpha" || !scope.Recognized || scope.ObjectCount != 2 || scope.StoredBytes != 30 {
 		t.Fatalf("scope = %#v", scope)
 	}
-	if len(snapshot.RecentObjects) != 2 || snapshot.RecentObjects[0].Key != "unrelated/object" || snapshot.RecentObjects[1].Key != "alpha/wals/000000010000000000000001" {
-		t.Fatalf("recent objects = %#v", snapshot.RecentObjects)
-	}
 	if snapshot.Evidence.Completeness != evidence.Complete || snapshot.Evidence.State != evidence.Unknown || snapshot.Evidence.Reason != "backup semantics not evaluated" {
 		t.Fatalf("overall evidence was overstated: %#v", snapshot.Evidence)
 	}
@@ -89,7 +86,7 @@ func TestScannerPaginatesAndPublishesCompleteInventory(t *testing.T) {
 func TestScannerTreatsEmptyDestinationAsCompleteAndReady(t *testing.T) {
 	t.Parallel()
 	reader := &storetest.Fake{}
-	scanner, cache, ready := newTestScanner(t, reader, 10, 10, 2, time.Now)
+	scanner, cache, ready := newTestScanner(t, reader, 10, 10, time.Now)
 	if category := scanner.Probe(context.Background()); category != fault.Unknown {
 		t.Fatalf("Probe() category = %s", category)
 	}
@@ -114,7 +111,7 @@ func TestScannerRetainsCompleteSnapshotAsStaleAfterRefreshFailure(t *testing.T) 
 		}
 		return store.Page{Objects: []store.Object{{Key: "alpha/base/backup.info", Size: 42}}}, nil
 	}}
-	scanner, cache, _ := newTestScanner(t, reader, 10, 10, 2, time.Now)
+	scanner, cache, _ := newTestScanner(t, reader, 10, 10, time.Now)
 	if err := scanner.Refresh(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +135,7 @@ func TestScannerFailureBeforeFirstCompleteScanKeepsTotalsUnknown(t *testing.T) {
 	reader := &storetest.Fake{ListFunc: func(context.Context, store.ListRequest) (store.Page, error) {
 		return store.Page{}, categorizedError{category: fault.Authentication}
 	}}
-	scanner, cache, _ := newTestScanner(t, reader, 10, 10, 2, time.Now)
+	scanner, cache, _ := newTestScanner(t, reader, 10, 10, time.Now)
 	if err := scanner.Refresh(context.Background()); err == nil {
 		t.Fatal("Refresh() error = nil")
 	}
@@ -157,7 +154,7 @@ func TestScannerSafetyCeilingFailsUnknownWithoutPublishingPartialTotals(t *testi
 		}
 		return store.Page{Objects: objects, NextCursor: "more"}, nil
 	}}
-	scanner, cache, _ := newTestScanner(t, reader, 3, 3, 2, time.Now)
+	scanner, cache, _ := newTestScanner(t, reader, 3, 3, time.Now)
 	if err := scanner.Refresh(context.Background()); fault.Categorize(err) != fault.SafetyLimit {
 		t.Fatalf("Refresh() error = %v", err)
 	}
@@ -174,7 +171,7 @@ func TestScannerCancellationDoesNotReplaceCachedGeneration(t *testing.T) {
 		<-ctx.Done()
 		return store.Page{}, ctx.Err()
 	}}
-	scanner, cache, _ := newTestScanner(t, reader, 10, 10, 2, time.Now)
+	scanner, cache, _ := newTestScanner(t, reader, 10, 10, time.Now)
 	before := cache.Load()
 	if err := scanner.Refresh(ctx); !errors.Is(err, context.Canceled) {
 		t.Fatalf("Refresh() error = %v", err)
@@ -197,7 +194,7 @@ func TestScannerPublishesOnlyAfterEveryPageCompletes(t *testing.T) {
 		<-releaseSecondPage
 		return store.Page{Objects: []store.Object{{Key: "alpha/base/two", Size: 1}}}, nil
 	}}
-	scanner, cache, _ := newTestScanner(t, reader, 10, 1, 2, time.Now)
+	scanner, cache, _ := newTestScanner(t, reader, 10, 1, time.Now)
 	done := make(chan error, 1)
 	go func() { done <- scanner.Refresh(context.Background()) }()
 	<-secondPageStarted
@@ -220,7 +217,7 @@ func TestScannerConcurrentReadersObserveValidSnapshots(t *testing.T) {
 		generation := scan.Add(1)
 		return store.Page{Objects: []store.Object{{Key: "alpha/base/object", Size: generation}}}, nil
 	}}
-	scanner, cache, _ := newTestScanner(t, reader, 100, 100, 2, time.Now)
+	scanner, cache, _ := newTestScanner(t, reader, 100, 100, time.Now)
 	var readers sync.WaitGroup
 	stop := make(chan struct{})
 	for range 8 {
@@ -254,7 +251,7 @@ func TestScannerWrongFormatObjectsNeverBecomeHealthyCatalogEvidence(t *testing.T
 	reader := &storetest.Fake{ListFunc: func(context.Context, store.ListRequest) (store.Page, error) {
 		return store.Page{Objects: []store.Object{{Key: "backup/demo/backup.info", Size: 10}}}, nil
 	}}
-	scanner, cache, _ := newTestScanner(t, reader, 10, 10, 2, time.Now)
+	scanner, cache, _ := newTestScanner(t, reader, 10, 10, time.Now)
 	if err := scanner.Refresh(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -282,7 +279,7 @@ func TestScannerPublishesBarmanCatalogOnlyAfterArtifactConfirmation(t *testing.T
 			return store.Object{Key: "alpha/base/20260727/data.tar.gz", Size: 4096}, nil
 		},
 	}
-	scanner, cache, _ := newTestScanner(t, reader, 10, 10, 2, time.Now)
+	scanner, cache, _ := newTestScanner(t, reader, 10, 10, time.Now)
 	scanner.analyzeBarmanCatalog = true
 	if err := scanner.Refresh(context.Background()); err != nil {
 		t.Fatal(err)
@@ -319,7 +316,7 @@ func TestScannerConfinesBarmanAnalysisToConfiguredServer(t *testing.T) {
 			return store.Object{Key: key, Size: 4096}, nil
 		},
 	}
-	scanner, cache, _ := newTestScanner(t, reader, 10, 10, 2, time.Now)
+	scanner, cache, _ := newTestScanner(t, reader, 10, 10, time.Now)
 	scanner.configuredScopes = []string{"alpha"}
 	scanner.analyzeBarmanCatalog = true
 	if err := scanner.Refresh(context.Background()); err != nil {
@@ -361,7 +358,7 @@ func TestScannerIncompleteRefreshNeitherConfirmsNorClearsBarmanGap(t *testing.T)
 			return store.Object{Key: key, Size: 4096}, nil
 		},
 	}
-	scanner, cache, _ := newTestScanner(t, reader, 20, 20, 10, time.Now)
+	scanner, cache, _ := newTestScanner(t, reader, 20, 20, time.Now)
 	scanner.analyzeBarmanCatalog = true
 	if err := scanner.Refresh(context.Background()); err != nil {
 		t.Fatal(err)
@@ -422,7 +419,7 @@ func TestScannerPublishesBarmanTimelineAndObservedRecoveryCoverage(t *testing.T)
 			return store.Object{Key: key, Size: 4096}, nil
 		},
 	}
-	scanner, cache, _ := newTestScanner(t, reader, 20, 20, 10, func() time.Time { return now })
+	scanner, cache, _ := newTestScanner(t, reader, 20, 20, func() time.Time { return now })
 	scanner.analyzeBarmanCatalog = true
 	if err := scanner.Refresh(context.Background()); err != nil {
 		t.Fatal(err)
@@ -457,7 +454,7 @@ func TestScannerPublishesDespiteAControlCharacterKeyUnderWALs(t *testing.T) {
 			return store.Object{Key: key, Size: 4096}, nil
 		},
 	}
-	scanner, cache, _ := newTestScanner(t, reader, 20, 20, 10, func() time.Time { return now })
+	scanner, cache, _ := newTestScanner(t, reader, 20, 20, func() time.Time { return now })
 	scanner.analyzeBarmanCatalog = true
 	if err := scanner.Refresh(context.Background()); err != nil {
 		t.Fatal(err)
@@ -515,7 +512,7 @@ func TestScannerUsesFormatOwnedSyntheticScopeGrammar(t *testing.T) {
 	ready := readiness.New(true, time.Hour, time.Now)
 	scanner, err := NewScanner(ScannerOptions{
 		Store: reader, Format: format, Cache: cache, Readiness: ready,
-		RefreshInterval: time.Hour, MaxObjects: 10, PageSize: 10, RecentLimit: 2,
+		RefreshInterval: time.Hour, MaxObjects: 10, PageSize: 10,
 		Now: time.Now, Logger: slog.New(slog.DiscardHandler),
 	})
 	if err != nil {
@@ -530,7 +527,7 @@ func TestScannerUsesFormatOwnedSyntheticScopeGrammar(t *testing.T) {
 	}
 }
 
-func newTestScanner(t *testing.T, reader store.Reader, maxObjects, pageSize, recentLimit int, now Clock) (*Scanner, *Cache, *readiness.ProbeState) {
+func newTestScanner(t *testing.T, reader store.Reader, maxObjects, pageSize int, now Clock) (*Scanner, *Cache, *readiness.ProbeState) {
 	t.Helper()
 	format := barmancloud.New()
 	cache, err := NewCache(Initial(format.Descriptor()))
@@ -541,7 +538,7 @@ func newTestScanner(t *testing.T, reader store.Reader, maxObjects, pageSize, rec
 	scanner, err := NewScanner(ScannerOptions{
 		Store: reader, Format: format, Cache: cache, Readiness: ready,
 		RefreshInterval: time.Hour, MaxObjects: maxObjects, PageSize: pageSize,
-		RecentLimit: recentLimit, Now: now, Logger: slog.New(slog.DiscardHandler),
+		Now: now, Logger: slog.New(slog.DiscardHandler),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -626,7 +623,7 @@ func TestScannerPublishesStaleIncompatibleWhenPublicationIsRejected(t *testing.T
 	var logs strings.Builder
 	scanner, err := NewScanner(ScannerOptions{
 		Store: reader, Format: format, Cache: cache, Readiness: readiness.New(true, time.Hour, func() time.Time { return now }),
-		RefreshInterval: time.Hour, MaxObjects: 10, PageSize: 10, RecentLimit: 2,
+		RefreshInterval: time.Hour, MaxObjects: 10, PageSize: 10,
 		Now: func() time.Time { return now }, Logger: slog.New(slog.NewTextHandler(&logs, nil)),
 	})
 	if err != nil {
@@ -677,7 +674,7 @@ func TestScannerLogsRedactedRootCauseOncePerCycle(t *testing.T) {
 	var logs strings.Builder
 	scanner, err := NewScanner(ScannerOptions{
 		Store: reader, Format: format, Cache: cache, Readiness: readiness.New(true, time.Hour, time.Now),
-		RefreshInterval: time.Hour, MaxObjects: 10, PageSize: 10, RecentLimit: 2, Now: time.Now,
+		RefreshInterval: time.Hour, MaxObjects: 10, PageSize: 10, Now: time.Now,
 		Logger: slog.New(slog.NewJSONHandler(&logs, nil)), Redactor: redact.New([]byte(secret)),
 	})
 	if err != nil {
@@ -714,7 +711,7 @@ func TestScannerLogsSuccessfulRefresh(t *testing.T) {
 	var logs strings.Builder
 	scanner, err := NewScanner(ScannerOptions{
 		Store: reader, Format: format, Cache: cache, Readiness: readiness.New(true, time.Hour, func() time.Time { return now }),
-		RefreshInterval: time.Hour, MaxObjects: 10, PageSize: 10, RecentLimit: 2, Now: func() time.Time { return now },
+		RefreshInterval: time.Hour, MaxObjects: 10, PageSize: 10, Now: func() time.Time { return now },
 		Logger: slog.New(slog.NewJSONHandler(&logs, nil)),
 	})
 	if err != nil {
@@ -758,7 +755,7 @@ func TestScannerDeduplicatesServiceCausesByStableKey(t *testing.T) {
 	var logs strings.Builder
 	scanner, err := NewScanner(ScannerOptions{
 		Store: reader, Format: format, Cache: cache, Readiness: readiness.New(true, time.Hour, time.Now),
-		RefreshInterval: time.Hour, MaxObjects: 10, PageSize: 10, RecentLimit: 2, Now: time.Now,
+		RefreshInterval: time.Hour, MaxObjects: 10, PageSize: 10, Now: time.Now,
 		Logger: slog.New(slog.NewJSONHandler(&logs, nil)),
 	})
 	if err != nil {

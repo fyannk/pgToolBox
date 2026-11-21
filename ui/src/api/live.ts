@@ -1,6 +1,7 @@
 // Live updates: one EventSource on /api/v1/stream (internal/console/api).
 //
 //   hello      {serverTime, heartbeatSeconds, pollMinSeconds, pollMaxSeconds}
+//   heartbeat  {serverTime}                          → every heartbeatSeconds: the stream is alive
 //   invalidate {topic: clusters}                     → refetch the views across Clusters and
 //                                                      every open view of any Cluster
 //   invalidate {topic: cluster, namespace, name}     → refetch everything about that Cluster
@@ -10,7 +11,9 @@
 //
 // While the stream is down every query polls instead (the backstop),
 // from the server's pollMinSeconds doubling up to pollMaxSeconds,
-// and the shell says so.
+// and the shell says so. A stream that delivers no event for twice the
+// heartbeat interval (half-open, or a first open that never answers) is
+// down: it is closed and reopened with the same backoff as a closed stream.
 
 import type { QueryClient } from "@tanstack/react-query";
 import { useSyncExternalStore } from "react";
@@ -18,8 +21,10 @@ import { getGetSessionQueryKey } from "./generated/endpoints/session/session";
 import type { Hello, Invalidate, Reauth } from "./generated/model";
 
 const STREAM_URL = "/api/v1/stream";
+/** The server's heartbeat until its hello says otherwise (sse.DefaultHeartbeat). */
+const DEFAULT_HEARTBEAT_MS = 15_000;
 
-/** connecting: first attempt, not yet known; live: stream open; down: polling. */
+/** connecting: first attempt, not yet known (bounded by the watchdog); live: hello received; down: polling. */
 export type LiveState = {
   status: "connecting" | "live" | "down";
   downSince: number | null;
@@ -224,6 +229,8 @@ function parse<T>(ev: Event): T | null {
 export function startLive(client: QueryClient): () => void {
   let es: EventSource | null = null;
   let retry: ReturnType<typeof setTimeout> | undefined;
+  let watchdog: ReturnType<typeof setTimeout> | undefined;
+  let heartbeatMs = DEFAULT_HEARTBEAT_MS;
   let attempts = 0;
   let stopped = false;
   const batch = batchInvalidations(client);
@@ -235,37 +242,69 @@ export function startLive(client: QueryClient): () => void {
     void client.invalidateQueries();
   };
 
+  // A stream closed for good is reopened after a bounded backoff (2 s doubling
+  // to 30 s); only a hello, proof of a working stream, resets it.
+  const reopen = () => {
+    es = null;
+    clearTimeout(watchdog);
+    attempts += 1;
+    retry = setTimeout(open, Math.min(30_000, 1_000 * 2 ** attempts));
+  };
+
+  // Any event re-arms it; twice the heartbeat with nothing is a dead stream.
+  const arm = () => {
+    clearTimeout(watchdog);
+    watchdog = setTimeout(() => {
+      down();
+      es?.close();
+      reopen();
+    }, 2 * heartbeatMs);
+  };
+
   const open = () => {
     if (stopped) return;
-    es = new EventSource(STREAM_URL);
-    es.addEventListener("open", () => {
+    const src = new EventSource(STREAM_URL);
+    es = src;
+    arm();
+    const on = (type: string, fn: (ev: Event) => void) =>
+      src.addEventListener(type, (ev) => {
+        arm();
+        fn(ev);
+      });
+    // Headers alone prove nothing (a buffering proxy sends them): the hello
+    // is the first event of a working stream, and only it makes the stream live.
+    on("hello", (ev) => {
+      const h = parse<Hello>(ev);
+      if (!h) return;
       attempts = 0;
       const wasDown = state.status === "down";
-      set({ status: "live", downSince: null });
+      set({
+        status: "live",
+        downSince: null,
+        pollMinMs: h.pollMinSeconds * 1000,
+        pollMaxMs: h.pollMaxSeconds * 1000,
+      });
       // Whatever changed while the stream was down was not announced.
       if (wasDown) void client.invalidateQueries();
+      if (h.heartbeatSeconds > 0) {
+        heartbeatMs = h.heartbeatSeconds * 1000;
+        arm();
+      }
     });
-    es.addEventListener("hello", (ev) => {
-      const h = parse<Hello>(ev);
-      if (h) set({ pollMinMs: h.pollMinSeconds * 1000, pollMaxMs: h.pollMaxSeconds * 1000 });
-    });
-    es.addEventListener("invalidate", (ev) => {
+    on("heartbeat", () => {});
+    on("invalidate", (ev) => {
       batch.add(parse<Invalidate>(ev));
     });
-    es.addEventListener("resync", () => batch.add(null));
-    es.addEventListener("reauth", (ev) => {
+    on("resync", () => batch.add(null));
+    on("reauth", (ev) => {
       const r = parse<Reauth>(ev);
       set({ reauth: r });
       // A refreshable session renews when the session endpoint is read.
       if (r?.refreshable) void client.invalidateQueries({ queryKey: getGetSessionQueryKey() });
     });
-    es.addEventListener("error", () => {
+    src.addEventListener("error", () => {
       down();
-      if (es && es.readyState === EventSource.CLOSED) {
-        es = null;
-        attempts += 1;
-        retry = setTimeout(open, Math.min(30_000, 1_000 * 2 ** attempts));
-      }
+      if (es && es.readyState === EventSource.CLOSED) reopen();
     });
   };
 
@@ -274,6 +313,7 @@ export function startLive(client: QueryClient): () => void {
   return () => {
     stopped = true;
     clearTimeout(retry);
+    clearTimeout(watchdog);
     batch.stop();
     es?.close();
   };

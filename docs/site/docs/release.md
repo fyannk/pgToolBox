@@ -43,6 +43,7 @@ flowchart LR
 | OLM catalog | `ghcr.io/fyannk/pgtoolbox-catalog:X.Y.Z` | `cosign verify`, `gh attestation verify` |
 | Helm chart, the operator | `oci://ghcr.io/fyannk/charts/pgtoolbox`, version `X.Y.Z` | `cosign verify`, `gh attestation verify` on the chart reference |
 | Helm chart, the team tools | `oci://ghcr.io/fyannk/charts/pgtools`, version `X.Y.Z` | `cosign verify`, `gh attestation verify` on the chart reference |
+| CLI (`pgtoolbox preview`) | `pgtoolbox-cli_X.Y.Z_<os>_<arch>.tar.gz` (linux, darwin; amd64, arm64) on the release page, and `/pgtoolbox` in the console image | `SHA256SUMS` + `SHA256SUMS.sigstore.json`, `gh attestation verify` |
 | Installer manifests | `install-operator.yaml`, `install-console.yaml` on the release page | `SHA256SUMS` + `SHA256SUMS.sigstore.json` |
 
 The release workflow verifies each signature and attestation as it makes them; `verify-release.yml` then repeats the check as an anonymous user would (pull by tag with no credentials, `cosign verify`, `gh attestation verify`, `helm pull`).
@@ -54,7 +55,7 @@ version as their tag; `latest` is moved only for a release that is not a
 pre-release (a version with a `-` part such as `0.2.0-rc.1` is one: the GitHub
 release is marked pre-release and no floating tag moves), never from `main`, and
 only after the pushed digests passed the scan. The release page attaches the two
-charts, the two installer manifests (their images pinned by digest), one SPDX SBOM
+charts, the CLI tarballs, the two installer manifests (their images pinned by digest), one SPDX SBOM
 per image and platform (`sbom-<image>-amd64.spdx.json`, `-arm64`), `digests.txt` and `chart-digests.txt` (every reference with its digest), `SHA256SUMS` (a
 checksum of every other attached file) and `SHA256SUMS.sigstore.json` (its keyless
 signature); its notes are the matching `CHANGELOG.md` section followed by a link to the
@@ -205,7 +206,8 @@ sha256sum --check --ignore-missing SHA256SUMS      # macOS: shasum -a 256 -c
 
 The first command proves the checksum file was signed by the release workflow, the
 second that the files you downloaded are the ones it lists. Run both before applying
-a manifest; `--ignore-missing` lets you download only the files you need.
+a manifest; `--ignore-missing` lets you download only the files you need. A CLI
+tarball also verifies on its own: `gh attestation verify <file> --repo fyannk/pgToolBox`.
 
 ### What this proves, and what it does not
 

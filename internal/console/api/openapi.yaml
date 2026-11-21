@@ -2666,11 +2666,21 @@ components:
         - createdAt
         - expiresAt
       type: object
+    Heartbeat:
+      additionalProperties: false
+      properties:
+        serverTime:
+          description: Server clock when the heartbeat was sent (UTC).
+          format: date-time
+          type: string
+      required:
+        - serverTime
+      type: object
     Hello:
       additionalProperties: false
       properties:
         heartbeatSeconds:
-          description: Interval of the keep-alive comment lines.
+          description: Interval of the heartbeat events.
           format: int64
           type: integer
         pollMaxSeconds:
@@ -4484,8 +4494,10 @@ components:
             - restart
             - promote
             - restoreDrill
+            - primaryChange
           type: string
         operationId:
+          description: Opaque handle for GET /api/v1/operations/{id}; a primaryChange's only identifies the entry (it is observed, not followed).
           type: string
         phase:
           enum:
@@ -4496,6 +4508,16 @@ components:
             - failed
             - timedOut
             - notObservable
+          type: string
+        recordedFrom:
+          description: The marker this recent operation was rebuilt from, in words.
+          type: string
+        recordedIn:
+          description: "Where this recent operation was found: on the cluster's objects (every replica lists it), only in this console replica's memory, or in this console's timeline of what it observed (a primary change)."
+          enum:
+            - cluster
+            - replica
+            - timeline
           type: string
         steps:
           items:
@@ -4692,6 +4714,20 @@ components:
         recent:
           items:
             $ref: "#/components/schemas/Operation"
+          type:
+            - array
+            - "null"
+        recentGaps:
+          description: What Recent may miss now, in words (a source the console cannot read here).
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        recentNotShown:
+          description: How many older entries Recent does not show, in words (its bounds, not a gap).
+          items:
+            type: string
           type:
             - array
             - "null"
@@ -5560,6 +5596,13 @@ components:
           type: integer
         name:
           type: string
+        readiness:
+          description: Pod readiness, streaming, replay lag, synchronous state and fencing of the target, each attributed and aged; not a score.
+          items:
+            $ref: "#/components/schemas/ReadinessFact"
+          type:
+            - array
+            - "null"
       required:
         - name
         - eligible
@@ -5652,6 +5695,38 @@ components:
           type: string
       required:
         - health
+        - provenance
+      type: object
+    ReadinessFact:
+      additionalProperties: false
+      properties:
+        health:
+          enum:
+            - ok
+            - progressing
+            - warning
+            - critical
+            - inactive
+            - unknown
+            - info
+          type: string
+        key:
+          enum:
+            - pod
+            - streaming
+            - replayLag
+            - syncState
+            - fencing
+          type: string
+        provenance:
+          $ref: "#/components/schemas/Provenance"
+        text:
+          description: The fact in words, such as streaming from the primary or not read.
+          type: string
+      required:
+        - key
+        - health
+        - text
         - provenance
       type: object
     Reauth:
@@ -9604,7 +9679,7 @@ paths:
         - logs
   /api/v1/namespaces/{namespace}/clusters/{name}/instances/{pod}/logs/stream:
     get:
-      description: "Server-sent events: line {at, text}, end {reason}; gap {at, reason} is reserved for lines known to be missed (draw a marker, never join across it). Starts with the last 100 lines. A comment line every 15 s. The stream ends when the session ends or is revoked, when your pods/log access is withdrawn (checked every 30 s), after an hour, or when the container stops. A refusal (403, 501, 404) is sent as a single end event with the reason."
+      description: "Server-sent events: line {at, text}, end {reason}; gap {at, reason} is reserved for lines known to be missed (draw a marker, never join across it); heartbeat {serverTime} every 15 s, so a client can tell a quiet log from a dead stream. Starts with the last 100 lines. The stream ends when the session ends or is revoked, when your pods/log access is withdrawn (checked every 30 s), after an hour, or when the container stops. A refusal (403, 501, 404) is sent as a single end event with the reason."
       operationId: streamLogs
       parameters:
         - description: Namespace of the Cluster (one of the console's watched namespaces).
@@ -9690,6 +9765,26 @@ paths:
                         - data
                         - event
                       title: Event gap
+                      type: object
+                    - properties:
+                        data:
+                          $ref: "#/components/schemas/Heartbeat"
+                        event:
+                          const: heartbeat
+                          description: The event name.
+                          type: string
+                        id:
+                          description: The event ID.
+                          oneOf:
+                            - type: integer
+                            - type: string
+                        retry:
+                          description: The retry time in milliseconds.
+                          type: integer
+                      required:
+                        - data
+                        - event
+                      title: Event heartbeat
                       type: object
                     - properties:
                         data:
@@ -10205,6 +10300,79 @@ paths:
       summary: A Cluster's storage
       tags:
         - clusters
+  /api/v1/namespaces/{namespace}/clusters/{name}/summary:
+    get:
+      description: The verdict, each finding of the latest diagnostics run with its source and age, the sources that are not live, the console page of the Cluster and the time it was rendered, as Markdown for an incident channel, in the words of the overview. Every value from the cluster is redacted and escaped so it cannot open a link or a mention. Same authorization as the overview.
+      operationId: getClusterSummary
+      parameters:
+        - description: Namespace of the Cluster (one of the console's watched namespaces).
+          in: path
+          name: namespace
+          required: true
+          schema:
+            description: Namespace of the Cluster (one of the console's watched namespaces).
+            maxLength: 63
+            pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+            type: string
+        - description: Name of the Cluster.
+          in: path
+          name: name
+          required: true
+          schema:
+            description: Name of the Cluster.
+            maxLength: 253
+            pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+            type: string
+      responses:
+        "200":
+          content:
+            text/markdown:
+              schema:
+                type: string
+          description: Markdown
+          headers:
+            Content-Type:
+              schema:
+                type: string
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Unauthorized
+        "403":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Forbidden
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Not Found
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Internal Server Error
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Service Unavailable
+      summary: A Cluster's incident summary
+      tags:
+        - clusters
   /api/v1/namespaces/{namespace}/clusters/{name}/timeline:
     get:
       description: "One time axis of what the console observed and what Kubernetes reported: phase and primary changes, restarts, backup results, findings appearing and clearing, spec revisions, Events, and the console's own gaps. Every entry says where it comes from and whether its time was observed or reported."
@@ -10702,7 +10870,7 @@ paths:
         - session
   /api/v1/stream:
     get:
-      description: "Server-sent events: hello on connect (refetch everything), invalidate {topic, namespace, name} (refetch that), resync (refetch everything), reauth {expiresAt, refreshable} before the session ends (call GET /api/v1/session). A comment line every 15 s; no byte for 35 s means the stream is dead. While it is down, poll every 2 s backing off to 10 s. The stream closes when the session ends."
+      description: "Server-sent events: hello on connect (refetch everything), invalidate {topic, namespace, name} (refetch that), resync (refetch everything), reauth {expiresAt, refreshable} before the session ends (call GET /api/v1/session), heartbeat every heartbeatSeconds (15 s); no event for twice that means the stream is dead. While it is down, poll every 2 s backing off to 10 s. The stream closes when the session ends."
       operationId: stream
       responses:
         "200":
@@ -10712,6 +10880,26 @@ paths:
                 description: Each oneOf object in the array represents one possible Server Sent Events (SSE) message, serialized as UTF-8 text according to the SSE specification.
                 items:
                   oneOf:
+                    - properties:
+                        data:
+                          $ref: "#/components/schemas/Heartbeat"
+                        event:
+                          const: heartbeat
+                          description: The event name.
+                          type: string
+                        id:
+                          description: The event ID.
+                          oneOf:
+                            - type: integer
+                            - type: string
+                        retry:
+                          description: The retry time in milliseconds.
+                          type: integer
+                      required:
+                        - data
+                        - event
+                      title: Event heartbeat
+                      type: object
                     - properties:
                         data:
                           $ref: "#/components/schemas/Hello"

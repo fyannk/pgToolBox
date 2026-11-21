@@ -7,13 +7,14 @@ import type {
   Metrics,
   Operation,
   OperationAccepted,
+  PromoteTarget,
   RecoverySegment,
   RecoveryTimeline,
   RestoreCheck,
   Storage,
   VolumeForecast,
 } from "../../src/api/generated/model";
-import { backups, metrics, storageForecasts } from "./index";
+import { backups, metrics, operationsOperator, storageForecasts } from "./index";
 
 const NOW = "2026-10-29T12:00:00Z";
 export const NOW_MS = Date.parse(NOW);
@@ -692,3 +693,69 @@ export const recoveryKeptRepositoryChanged = {
     },
   ],
 } satisfies RecoveryTimeline;
+
+// Promote targets the API fixture does not cover (it serves a ready and a
+// fenced replica): a lagging one and one the console could not read. The
+// texts and verdicts are those Go (status.promoteReadiness) produces.
+const promoteOffer = operationsOperator.offers?.find((o) => o.kind === "promote");
+const readyTarget = promoteOffer?.targets?.find((t) => t.eligible);
+if (!readyTarget?.readiness) throw new Error("listOperations.orders.json has no ready promote target");
+export const promoteTargetReady = readyTarget satisfies PromoteTarget;
+const fencedTarget = promoteOffer?.targets?.find((t) => !t.eligible);
+if (!fencedTarget) throw new Error("listOperations.orders.json has no fenced promote target");
+export const promoteTargetFenced = fencedTarget satisfies PromoteTarget;
+const factOf = (key: string) => {
+  const f = readyTarget.readiness?.find((r) => r.key === key);
+  if (!f) throw new Error(`no ${key} fact in the ready target`);
+  return f;
+};
+const stale = (key: string) => ({
+  ...factOf(key).provenance,
+  observedAt: "2026-10-29T11:54:00Z",
+  stale: true,
+  staleReason: "not reachable: timed out",
+});
+export const promoteTargetLagging = {
+  name: "orders-3",
+  eligible: true,
+  health: "warning",
+  lagBytes: 48 << 20,
+  readiness: [
+    factOf("pod"),
+    { ...factOf("streaming"), health: "warning", text: "not streaming: no active WAL receiver" },
+    {
+      ...factOf("replayLag"),
+      health: "info",
+      text: "48.0 MiB behind the primary; the switchover waits for it to replay",
+    },
+    { ...factOf("syncState"), health: "info", text: "async: asynchronous standby" },
+    factOf("fencing"),
+  ],
+} satisfies PromoteTarget;
+export const promoteTargetUnknown = {
+  name: "orders-3",
+  eligible: true,
+  health: "unknown",
+  readiness: [
+    factOf("pod"),
+    {
+      ...factOf("streaming"),
+      health: "unknown",
+      text: "not read: not reachable: timed out",
+      provenance: stale("streaming"),
+    },
+    {
+      ...factOf("replayLag"),
+      health: "unknown",
+      text: "not read: not reachable: timed out",
+      provenance: stale("replayLag"),
+    },
+    {
+      ...factOf("syncState"),
+      health: "unknown",
+      text: "not read: the primary's walsenders were not read now",
+      provenance: stale("syncState"),
+    },
+    factOf("fencing"),
+  ],
+} satisfies PromoteTarget;

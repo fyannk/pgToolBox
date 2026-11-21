@@ -1,0 +1,15 @@
+# Workflow commands planted in manifest strings must not reach a line start.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: orders
+  namespace: team-a
+spec:
+  instances: 3
+  imageName: ghcr.io/cloudnative-pg/postgresql:17.6
+  primaryUpdateMethod: "restart\n::error title=x::planted"
+  postgresql:
+    parameters:
+      max_connections: "100"
+      work_mem: "8MB\n::stop-commands::token ::error::sep\e[2K"
+      "app.x\n::warning::name": "1"

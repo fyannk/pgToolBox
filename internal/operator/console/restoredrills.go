@@ -112,7 +112,8 @@ func buildDrillNetworkPolicy(c *pgtoolboxv1alpha1.PgToolBoxConsole) *networkingv
 				{
 					From: []networkingv1.NetworkPolicyPeer{{
 						NamespaceSelector: inNamespace(c.Namespace),
-						PodSelector:       &metav1.LabelSelector{MatchLabels: selectorLabels(c)},
+						// The console's replicas and the MCP Pod.
+						PodSelector: &metav1.LabelSelector{MatchLabels: instanceLabels(c)},
 					}},
 					Ports: []networkingv1.NetworkPolicyPort{drillTCP(instanceStatusPort), drillTCP(instanceMetricsPort)},
 				},

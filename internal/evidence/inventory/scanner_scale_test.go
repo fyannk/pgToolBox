@@ -67,7 +67,7 @@ func TestScannerMillionObjectSnapshotIsBounded(t *testing.T) {
 	}()
 
 	reader := millionObjectReader()
-	scanner, cache, _ := newTestScanner(t, reader, scaleObjectCount, store.MaxPageObjects, MaxRecentObjects, time.Now)
+	scanner, cache, _ := newTestScanner(t, reader, scaleObjectCount, store.MaxPageObjects, time.Now)
 	scanner.analyzeBarmanCatalog = true
 	started := time.Now()
 	err := scanner.Refresh(context.Background())
@@ -78,8 +78,8 @@ func TestScannerMillionObjectSnapshotIsBounded(t *testing.T) {
 		t.Fatal(err)
 	}
 	snapshot := cache.Load()
-	if snapshot.ObjectCount != scaleObjectCount || snapshot.PagesExamined != scaleObjectCount/store.MaxPageObjects || len(snapshot.RecentObjects) != MaxRecentObjects || len(snapshot.Scopes) != 1 {
-		t.Fatalf("million-object snapshot was not compact: objects=%d pages=%d recent=%d scopes=%d", snapshot.ObjectCount, snapshot.PagesExamined, len(snapshot.RecentObjects), len(snapshot.Scopes))
+	if snapshot.ObjectCount != scaleObjectCount || snapshot.PagesExamined != scaleObjectCount/store.MaxPageObjects || len(snapshot.Scopes) != 1 {
+		t.Fatalf("million-object snapshot was not compact: objects=%d pages=%d scopes=%d", snapshot.ObjectCount, snapshot.PagesExamined, len(snapshot.Scopes))
 	}
 	if len(snapshot.BarmanWAL.Servers) != 1 || snapshot.BarmanWAL.Servers[0].Counts.Segments != scaleObjectCount-2 || len(snapshot.BarmanWAL.Servers[0].Ranges) != 1 || snapshot.BarmanWAL.Servers[0].State != evidence.Healthy {
 		t.Fatalf("million-WAL continuity was not compact: %#v", snapshot.BarmanWAL)
@@ -93,7 +93,7 @@ func TestScannerMillionObjectSnapshotIsBounded(t *testing.T) {
 	if rss := peakRSS.Load(); rss > podMemoryLimit {
 		t.Fatalf("process peak RSS %d bytes exceeds %d-byte pod memory limit", rss, podMemoryLimit)
 	}
-	t.Logf("scale objects=%d pages=%d duration=%s baseline_heap=%d peak_heap=%d heap_delta=%d peak_rss=%d retained_scopes=%d retained_recent=%d wal_segments=%d wal_ranges=%d", scaleObjectCount, snapshot.PagesExamined, duration, baseline.Alloc, peak.Load(), peakDelta, peakRSS.Load(), len(snapshot.Scopes), len(snapshot.RecentObjects), snapshot.BarmanWAL.Servers[0].Counts.Segments, len(snapshot.BarmanWAL.Servers[0].Ranges))
+	t.Logf("scale objects=%d pages=%d duration=%s baseline_heap=%d peak_heap=%d heap_delta=%d peak_rss=%d retained_scopes=%d wal_segments=%d wal_ranges=%d", scaleObjectCount, snapshot.PagesExamined, duration, baseline.Alloc, peak.Load(), peakDelta, peakRSS.Load(), len(snapshot.Scopes), snapshot.BarmanWAL.Servers[0].Counts.Segments, len(snapshot.BarmanWAL.Servers[0].Ranges))
 }
 
 func currentRSSBytes() uint64 {

@@ -75,6 +75,46 @@ test("operations: promote cannot be confirmed before an instance is chosen", asy
   expect(onRequest).not.toHaveBeenCalled();
 });
 
+test("operations: a recent operation only this replica remembers is marked, and gaps are named", async () => {
+  const [cluster] = operationsOperator.recent ?? [];
+  if (!cluster) throw new Error("fixture has no recent operation");
+  const data = {
+    ...operationsOperator,
+    recent: [{ ...cluster, operationId: "mem", recordedIn: "replica" as const }, cluster],
+    recentGaps: ["Backups unreadable"],
+  };
+  const screen = await renderInFrame(<OperationsView data={data} actor="v" onRequest={vi.fn()} />);
+  expect(screen.getByText("only this console replica remembers it").all()).toHaveLength(1);
+  await expect.element(screen.getByRole("note")).toHaveTextContent("May be missing: Backups unreadable");
+});
+
+test("operations: an observed primary change is labelled and not followed; a cluster entry names its source", async () => {
+  const [cluster] = operationsOperator.recent ?? [];
+  if (!cluster) throw new Error("fixture has no recent operation");
+  const change = {
+    ...cluster,
+    operationId: "change",
+    kind: "primaryChange" as const,
+    instance: "orders-2",
+    recordedIn: "timeline" as const,
+    recordedFrom: "this console's timeline",
+    steps: [
+      {
+        phase: "settled" as const,
+        at: cluster.acceptedAt,
+        source: "s",
+        text: "primary changed from orders-1 to orders-2",
+      },
+    ],
+  };
+  const data = { ...operationsOperator, recent: [change, cluster] };
+  const screen = await renderInFrame(<OperationsView data={data} actor="v" onRequest={vi.fn()} />);
+  await expect.element(screen.getByText("primary changed from orders-1 to orders-2")).toBeVisible();
+  expect(screen.getByRole("button", { name: /^Follow / }).all()).toHaveLength(1);
+  expect(screen.container.querySelector('li[data-recorded-in="timeline"] button')).toBeNull();
+  await expect.element(screen.getByText(`Source: ${cluster.recordedFrom}`)).toBeVisible();
+});
+
 test("admin: a pgAdmin address that is not https is not a link", async () => {
   const ns = (admin.namespaces ?? [])[0];
   if (!ns) throw new Error("fixture has no namespace");

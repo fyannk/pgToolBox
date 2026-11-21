@@ -85,6 +85,11 @@ func (s *spySource) Instances(ctx context.Context, ns, name string) (viewmodel.I
 	return s.FixtureSource.Instances(ctx, ns, name)
 }
 
+func (s *spySource) Diagnostics(ctx context.Context, ns, name string) (viewmodel.Diagnostics, error) {
+	s.record("diagnostics " + ns + "/" + name)
+	return s.FixtureSource.Diagnostics(ctx, ns, name)
+}
+
 func call(t *testing.T, h http.Handler, p *auth.Principal, path string) *httptest.ResponseRecorder {
 	t.Helper()
 	ctx := context.Background()
@@ -115,6 +120,11 @@ func TestAuthorizationComesBeforeTheReadModel(t *testing.T) {
 		// the API is no oracle for names.
 		{"denied and absent", FixtureAuthorizer{Denied: map[authz.ObjectRef]bool{ghost: true}}, "/api/v1/namespaces/team-a/clusters/ghost", http.StatusForbidden, 0},
 		{"allowed and absent", FixtureAuthorizer{}, "/api/v1/namespaces/team-a/clusters/ghost", http.StatusNotFound, 1},
+		// The incident summary reads the overview and the diagnostics, after the same review.
+		{"summary allowed", FixtureAuthorizer{}, "/api/v1/namespaces/team-a/clusters/billing/summary", http.StatusOK, 2},
+		{"summary denied", FixtureAuthorizer{Denied: map[authz.ObjectRef]bool{billing: true}}, "/api/v1/namespaces/team-a/clusters/billing/summary", http.StatusForbidden, 0},
+		{"summary undecided", FixtureAuthorizer{Unchecked: map[authz.ObjectRef]bool{billing: true}}, "/api/v1/namespaces/team-a/clusters/billing/summary", http.StatusServiceUnavailable, 0},
+		{"summary absent", FixtureAuthorizer{}, "/api/v1/namespaces/team-a/clusters/ghost/summary", http.StatusNotFound, 1},
 		{"invalid namespace", FixtureAuthorizer{}, "/api/v1/namespaces/Team_A/clusters/billing", http.StatusUnprocessableEntity, 0},
 		{"overlong name", FixtureAuthorizer{}, "/api/v1/namespaces/team-a/clusters/" + strings.Repeat("a", 254), http.StatusUnprocessableEntity, 0},
 	}
@@ -189,7 +199,7 @@ func TestOpenAPIHasNoThirdPartyDocsAndNoSchemaLinks(t *testing.T) {
 }
 
 // The stream over a real connection: retry hint and hello first,
-// heartbeat comments, invalidations filtered by the user's access,
+// heartbeat events, invalidations filtered by the user's access,
 // reauth before the session ends, closed at its end.
 func TestStreamOverHTTP(t *testing.T) {
 	t.Parallel()
@@ -233,7 +243,7 @@ func TestStreamOverHTTP(t *testing.T) {
 	if !strings.HasPrefix(all, "retry: 2000\nevent: hello\n") {
 		t.Fatalf("stream does not start with the retry hint and hello:\n%s", all)
 	}
-	for _, want := range []string{": heartbeat", `"name":"orders"`, "event: reauth", `"refreshable":true`} {
+	for _, want := range []string{"event: heartbeat\ndata: {\"serverTime\":", `"name":"orders"`, "event: reauth", `"refreshable":true`} {
 		if !strings.Contains(all, want) {
 			t.Errorf("stream lacks %q:\n%s", want, all)
 		}

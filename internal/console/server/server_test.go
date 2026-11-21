@@ -390,8 +390,7 @@ func TestGracefulShutdownCancelsWhatOutlivesTheDrain(t *testing.T) {
 
 type nopSender struct{}
 
-func (nopSender) Event(any) error      { return nil }
-func (nopSender) Comment(string) error { return nil }
+func (nopSender) Event(any) error { return nil }
 
 func TestSupervisorRestartsAndReportsCore(t *testing.T) {
 	t.Parallel()

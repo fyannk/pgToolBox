@@ -227,6 +227,7 @@ func fixtureCases() []fixtureCase {
 		{"getDigest.json", OpGetDigest, base + "/digests/" + fixtures.DigestID, "one digest with billing's failover and orders' revision", FixtureAuthorizer{}, "", ""},
 		{"getDigest.notFound.json", OpGetDigest, base + "/digests/20250101T0700Z", "404: left the retention", FixtureAuthorizer{}, "", ""},
 		{"getMetrics.orders.json", OpGetMetrics, cl + "orders/metrics", "tiles with an unreported instance, a chart with a gap", FixtureAuthorizer{}, "", ""},
+		// billing has no topology fixture: the failing-over baseline pins the wiring panel's error state.
 		{"getTopology.orders.json", OpGetTopology, cl + "orders/topology", "the wiring diagram with geometry", FixtureAuthorizer{}, "", ""},
 		{"getLogTail.orders.json", OpGetLogTail, cl + "orders/instances/orders-1/logs?container=postgres", "two lines", FixtureAuthorizer{}, "", ""},
 		{"getLogTail.forbidden.json", OpGetLogTail, cl + "orders/instances/orders-1/logs", "403: the user may not get pods/log", FixtureAuthorizer{DeniedLogs: true}, "", ""},
@@ -300,7 +301,7 @@ func Generate() (map[string][]byte, error) {
 	stream := []StreamFixture{
 		{Event: "hello", Data: sse.Hello{ServerTime: fixtures.Now, HeartbeatSeconds: 15, PollMinSeconds: 2, PollMaxSeconds: 10}},
 		{Event: "invalidate", Data: sse.Invalidate{Topic: sse.TopicCluster, Namespace: "team-a", Name: "billing"}},
-		{Comment: "heartbeat"},
+		{Event: "heartbeat", Data: sse.Heartbeat{ServerTime: fixtures.Now}},
 		{Event: "invalidate", Data: sse.Invalidate{Topic: sse.TopicClusters}},
 		{Event: "reauth", Data: sse.Reauth{ExpiresAt: fixtures.Now.Add(5 * time.Minute), Refreshable: true}},
 		{Event: "resync", Data: sse.Resync{Reason: "events were dropped for this client"}},

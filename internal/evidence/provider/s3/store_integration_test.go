@@ -21,8 +21,6 @@ import (
 	"context"
 	"io"
 	"log/slog"
-	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"os"
 	"strings"
@@ -35,13 +33,14 @@ import (
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 
 	"github.com/fyannk/pgToolBox/internal/evidence/evidence"
+	"github.com/fyannk/pgToolBox/internal/evidence/evidenceapi"
 	"github.com/fyannk/pgToolBox/internal/evidence/fault"
 	"github.com/fyannk/pgToolBox/internal/evidence/formats/barmancloud"
 	"github.com/fyannk/pgToolBox/internal/evidence/inventory"
 	"github.com/fyannk/pgToolBox/internal/evidence/provider/providertest"
 	"github.com/fyannk/pgToolBox/internal/evidence/readiness"
 	"github.com/fyannk/pgToolBox/internal/evidence/store"
-	"github.com/fyannk/pgToolBox/internal/evidence/web"
+	evidencev1alpha1 "github.com/fyannk/pgToolBox/pkg/evidence/v1alpha1"
 )
 
 func TestS3MinIOJourney(t *testing.T) {
@@ -75,7 +74,7 @@ func TestS3MinIOJourney(t *testing.T) {
 	probe := readiness.New(true, time.Minute, time.Now)
 	scanner, err := inventory.NewScanner(inventory.ScannerOptions{
 		Store: adapter, Format: format, Cache: cache, Readiness: probe,
-		RefreshInterval: time.Minute, MaxObjects: 1000, PageSize: 2, RecentLimit: 20,
+		RefreshInterval: time.Minute, MaxObjects: 1000, PageSize: 2,
 		AnalyzeBarmanCatalog: true,
 		Now:                  time.Now, Logger: slog.New(slog.DiscardHandler),
 	})
@@ -92,14 +91,8 @@ func TestS3MinIOJourney(t *testing.T) {
 	if !snapshot.TotalsKnown || snapshot.ObjectCount < 11 || snapshot.PagesExamined < 2 || len(snapshot.Scopes) != 1 || snapshot.Scopes[0].Name != "alpha" || !snapshot.Scopes[0].Recognized {
 		t.Fatalf("MinIO inventory = %#v", snapshot)
 	}
-	foundGeneratedWAL := false
-	for _, recent := range snapshot.RecentObjects {
-		if strings.Contains(recent.Key, "/wals/") && strings.HasSuffix(recent.Key, "000000010000000000000001") {
-			foundGeneratedWAL = true
-		}
-	}
-	if !foundGeneratedWAL {
-		t.Fatalf("Barman-generated WAL was not inventoried: %#v", snapshot.RecentObjects)
+	if len(snapshot.BarmanWAL.Servers) != 1 || snapshot.BarmanWAL.Servers[0].Counts.Segments < 1 {
+		t.Fatalf("Barman-generated WAL was not inventoried: %#v", snapshot.BarmanWAL)
 	}
 	wantStates := map[string]evidence.State{
 		"started": evidence.Warning, "failed": evidence.Unhealthy,
@@ -141,24 +134,29 @@ func TestS3MinIOJourney(t *testing.T) {
 	if err != nil || closeErr != nil || !bytes.Contains(content, []byte("backup_label=")) {
 		t.Fatalf("bounded Open content = %q, read error = %v, close error = %v", content, err, closeErr)
 	}
-	handler, err := web.New(web.Options{
-		Logger: slog.New(slog.DiscardHandler), Provider: "s3",
-		Format: format.Descriptor(), Inventory: cache.Load, Readiness: probe.Result,
-		RequestID: func() string { return "s3-proof" }, Now: time.Now,
-	})
-	if err != nil {
-		t.Fatal(err)
+	served := providertest.ServeAgentEvidence(t, snapshot, evidenceapi.Options{
+		ProducerVersion: "s3-proof", ClusterNamespace: "database-team", ClusterUID: "2f12b7d1-7e8d-4c37-a68f-233efc5f3191",
+		Repository: evidencev1alpha1.RepositoryFingerprintInput{
+			Provider: evidencev1alpha1.ProviderS3, Endpoint: endpoint.String(), Bucket: bucket, Prefix: "repository",
+			Format: evidencev1alpha1.FormatBarmanCloud, ScopeKind: evidencev1alpha1.ScopeKindBarmanServer, ScopeName: "alpha",
+		},
+	}, probe)
+	var backups evidencev1alpha1.BarmanBackupPage
+	served.Page(evidencev1alpha1.BackupsPath, &backups)
+	servedStates := map[string]evidence.State{}
+	for _, backup := range backups.Items {
+		servedStates[backup.BackupID] = backup.State
 	}
-	response := httptest.NewRecorder()
-	handler.Routes().ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", http.NoBody))
-	if response.Code != http.StatusOK {
-		t.Fatalf("render status = %d", response.Code)
-	}
-	body := response.Body.String()
-	for _, expected := range []string{healthyID, "started", "failed", "malformed", "missing-artifact", "missing-info", ">healthy<", ">warning<", ">unhealthy<", ">unknown<", "A structurally usable backup"} {
-		if !strings.Contains(body, expected) {
-			t.Fatalf("rendered catalog does not contain %q: %s", expected, body)
+	for id, want := range map[string]evidence.State{
+		healthyID: evidence.Healthy, "started": evidence.Warning, "failed": evidence.Unhealthy,
+		"malformed": evidence.Unknown, "missing-artifact": evidence.Unhealthy, "missing-info": evidence.Unknown,
+	} {
+		if got, ok := servedStates[id]; !ok || got != want {
+			t.Fatalf("served backup %s = %q (present %v), want %s", id, got, ok, want)
 		}
+	}
+	if summary := served.Snapshot.Details.BarmanCloud; summary == nil || summary.StructurallyUsableBackups == nil || *summary.StructurallyUsableBackups != 1 {
+		t.Fatalf("served snapshot: %s", served.SnapshotBody)
 	}
 	viewerConfig, err := awsconfig.LoadDefaultConfig(ctx,
 		awsconfig.WithRegion("us-east-1"),

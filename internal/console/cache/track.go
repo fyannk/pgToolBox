@@ -81,23 +81,11 @@ func (t *tracker) watchedOutcome(source string, informer int, err error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if err != nil {
-		if apierrors.IsResourceExpired(err) || apierrors.IsGone(err) {
-			// A relist is the normal answer to an expired resource version,
-			// not a lost source.
-			return
-		}
-		if t.failing[source] == nil {
-			t.failing[source] = map[int]bool{}
-		}
-		t.failing[source][informer] = true
-		reason := "watch lost: " + redact.Safe(err)
-		if apierrors.IsForbidden(err) {
-			reason = "the console ServiceAccount is no longer allowed to watch this source"
-		}
-		for key, state := range t.states {
-			if key.source == source && (state.State == viewmodel.SourceLive || state.State == viewmodel.SourceStale) {
-				t.setLocked(key, viewmodel.SourceStale, reason)
+		if t.staleLocked(source, err) {
+			if t.failing[source] == nil {
+				t.failing[source] = map[int]bool{}
 			}
+			t.failing[source][informer] = true
 		}
 		return
 	}
@@ -110,6 +98,34 @@ func (t *tracker) watchedOutcome(source string, informer int, err error) {
 			t.setLocked(key, viewmodel.SourceLive, "")
 		}
 	}
+}
+
+// watchDropped makes source stale when an established watch of it drops.
+// It records no failing informer: the informer's next list or watch call
+// reports through watchedOutcome, and its success makes the source live.
+func (t *tracker) watchDropped(source string, err error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.staleLocked(source, err)
+}
+
+// staleLocked makes every live or stale namespace of source stale for
+// err, and reports whether err is a fault (an expired resource version is
+// not: a relist is its normal answer).
+func (t *tracker) staleLocked(source string, err error) bool {
+	if apierrors.IsResourceExpired(err) || apierrors.IsGone(err) {
+		return false
+	}
+	reason := "watch lost: " + redact.Safe(err)
+	if apierrors.IsForbidden(err) {
+		reason = "the console ServiceAccount is no longer allowed to watch this source"
+	}
+	for key, state := range t.states {
+		if key.source == source && (state.State == viewmodel.SourceLive || state.State == viewmodel.SourceStale) {
+			t.setLocked(key, viewmodel.SourceStale, reason)
+		}
+	}
+	return true
 }
 
 func (t *tracker) get(namespace, source string) (viewmodel.SourceState, bool) {
@@ -160,10 +176,11 @@ func (lw trackedListWatch) ListWithContext(ctx context.Context, options metav1.L
 func (lw trackedListWatch) WatchWithContext(ctx context.Context, options metav1.ListOptions) (watch.Interface, error) {
 	w, err := lw.inner.WatchWithContext(ctx, options)
 	if ctx.Err() == nil {
-		informerCalls.WithLabelValues(lw.source, "watch", outcomeLabel(err)).Inc()
-	}
-	if err != nil && ctx.Err() == nil {
+		// A watch the API server accepts counts as a success too: in
+		// watch-list mode (WatchListClient) the reflector lists through
+		// Watch and never calls List, so only this clears a fault.
 		lw.outcome(err)
+		informerCalls.WithLabelValues(lw.source, "watch", outcomeLabel(err)).Inc()
 	}
 	return w, err
 }

@@ -19,8 +19,11 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/base64"
+	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"slices"
 	"strings"
@@ -31,6 +34,7 @@ import (
 	"github.com/klauspost/compress/zstd"
 	"github.com/pierrec/lz4/v4"
 	"github.com/ulikunitz/xz"
+	"github.com/ulikunitz/xz/lzma"
 
 	"github.com/fyannk/pgToolBox/internal/evidence/evidence"
 	"github.com/fyannk/pgToolBox/internal/evidence/store"
@@ -92,7 +96,7 @@ func TestTimelineHistoryReaderSupportsEveryBarmanCloudCodec(t *testing.T) {
 	for compression, encode := range encoders {
 		t.Run(compression, func(t *testing.T) {
 			t.Parallel()
-			reader, closer, err := historyReader(bytes.NewReader(encode(t)), compression)
+			reader, closer, err := historyReader(encode(t), compression)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -105,6 +109,156 @@ func TestTimelineHistoryReaderSupportsEveryBarmanCloudCodec(t *testing.T) {
 			}
 		})
 	}
+}
+
+// pythonXZHistory is lzma.compress of a one-line history, as Barman's
+// Python lzma writes it: one block, LZMA2 dictionary property 22 (8 MiB).
+const pythonXZHistory = "fd377a585a000004e6d6b4460200210116000000742fe5a30100283109302f33303030303030096e6f207265636f7665727920746172676574207370656369666965640a00000000fa589f6fbee1751c000141290353568b1fb6f37d010000000004595a"
+
+// hugeDictionaryXZHistory is pythonXZHistory with the dictionary property
+// set to 40 (4 GiB) and the block header CRC32 fixed: 100 bytes that made
+// ulikunitz/xz allocate 4 GiB before decoding a byte.
+const hugeDictionaryXZHistory = "fd377a585a000004e6d6b4460200210128000000e6a011b30100283109302f33303030303030096e6f207265636f7665727920746172676574207370656369666965640a00000000fa589f6fbee1751c000141290353568b1fb6f37d010000000004595a"
+
+func TestXZHistoryDictionaryIsBounded(t *testing.T) {
+	t.Parallel()
+	block := pythonXZHistory[24:strings.Index(pythonXZHistory, "0001412903")] // header to check
+	for _, test := range []struct {
+		name, stream string
+		accepted     bool
+	}{
+		{name: "python lzma default preset", stream: pythonXZHistory, accepted: true},
+		{name: "4 GiB dictionary", stream: hugeDictionaryXZHistory},
+		{name: "12 MiB dictionary", stream: strings.Replace(pythonXZHistory, "0200210116000000742fe5a3", "0200210117000000"+xzHeaderCRC(t, "0200210117000000"), 1)},
+		{name: "truncated", stream: pythonXZHistory[:60]},
+		{name: "two blocks", stream: strings.Replace(pythonXZHistory, "0001412903", block+"0001412903", 1)},
+		{name: "4 GiB block header hidden in a chunk's slack", stream: hex.EncodeToString(hiddenBlockXZHistory(t, 40))},
+		{name: "written with check CRC32", stream: hex.EncodeToString(buildXZHistory(t, 0x01, nil)), accepted: true},
+		{name: "written with check SHA-256", stream: hex.EncodeToString(buildXZHistory(t, 0x0a, nil)), accepted: true},
+		// Nothing would verify the content; Barman always writes a check.
+		{name: "written without a check", stream: hex.EncodeToString(buildXZHistory(t, 0x00, nil))},
+		// liblzma refuses these at restore time, so the history is not usable.
+		{name: "index truncated", stream: pythonXZHistory[:len(pythonXZHistory)-28]},
+		{name: "index record altered", stream: strings.Replace(pythonXZHistory, "000141290353", "000142290353", 1)},
+		{name: "footer flags differ from the header", stream: strings.Replace(pythonXZHistory, "010000000004595a", "010000000001595a", 1)},
+		{name: "data after the footer", stream: pythonXZHistory + "00000000"},
+		{name: "block header sizes declared", stream: xzWithBlockHeader(t, "02c02d2921011600"), accepted: true},
+		{name: "block header declares another compressed size", stream: xzWithBlockHeader(t, "02c02e2921011600")},
+		{name: "block header declares another uncompressed size", stream: xzWithBlockHeader(t, "02c02d2a21011600")},
+		{name: "block header reserved flag", stream: xzWithBlockHeader(t, "0204210116000000")},
+		{name: "block header padding not zero", stream: xzWithBlockHeader(t, "0200210116000001")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			compressed, err := hex.DecodeString(test.stream)
+			if err != nil {
+				t.Fatal(err)
+			}
+			reader := &storetest.Fake{OpenFunc: func(context.Context, store.OpenRequest) (io.ReadCloser, error) {
+				return io.NopCloser(bytes.NewReader(compressed)), nil
+			}}
+			data, err := readHistory(context.Background(), reader, HistoryObject{Key: "alpha/wals/00000002.history.xz", Compression: "xz"})
+			switch {
+			case test.accepted && (err != nil || !strings.HasPrefix(string(data), "1\t0/3000000\t")):
+				t.Fatalf("readHistory() = %q, %v", data, err)
+			case !test.accepted && (err == nil || !strings.Contains(err.Error(), "unsupported history compression")):
+				t.Fatalf("readHistory() error = %v, want an unsupported history compression refusal", err)
+			}
+		})
+	}
+}
+
+// hiddenBlockXZHistory is an xz stream (check CRC32) of one walked block whose
+// LZMA chunk declares more compressed bytes than its data uses. The unused
+// bytes hold an end marker, padding and a second block header with the given
+// dictionary property: a decoder that reads the next chunk header where the
+// chunk's data stopped, as ulikunitz/xz does, parses the hidden header. The
+// check, index and footer are those of the decoded history, so only the
+// walk can refuse it.
+func hiddenBlockXZHistory(tb testing.TB, dictionary byte) []byte {
+	tb.Helper()
+	return buildXZHistory(tb, 0x01, &dictionary)
+}
+
+// buildXZHistory writes a one-block xz history with the given check type; with
+// hidden set, the block hides a second block header (see hiddenBlockXZHistory).
+func buildXZHistory(tb testing.TB, checkType byte, hidden *byte) []byte {
+	tb.Helper()
+	plain := bytes.Repeat([]byte("1\t0/3000000\tno recovery target specified\n"), 20)
+	var lzma2 bytes.Buffer
+	writer, err := lzma.Writer2Config{DictCap: lzma.MinDictCap}.NewWriter2(&lzma2)
+	if err != nil {
+		tb.Fatal(err)
+	}
+	if _, err := writer.Write(plain); err != nil {
+		tb.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		tb.Fatal(err)
+	}
+	chunk := lzma2.Bytes()
+	if chunk[0] < 0xe0 {
+		tb.Fatalf("first LZMA2 chunk control %#x, want a compressed chunk with a dictionary reset", chunk[0])
+	}
+	compressed := int(chunk[3])<<8 | int(chunk[4]) + 1
+	blockHeader := func(dictionary byte) []byte {
+		body := []byte{0x02, 0x00, 0x21, 0x01, dictionary, 0, 0, 0}
+		return binary.LittleEndian.AppendUint32(body, crc32.ChecksumIEEE(body))
+	}
+	flags := []byte{0x00, checkType}
+	stream := append([]byte{0xfd, '7', 'z', 'X', 'Z', 0x00}, flags...)
+	stream = binary.LittleEndian.AppendUint32(stream, crc32.ChecksumIEEE(flags))
+	stream = append(stream, blockHeader(22)...)
+	if hidden == nil {
+		stream = append(stream, chunk...)
+	} else {
+		stream = append(stream, chunk[:6+compressed]...)
+		slackStart := len(stream)
+		stream = append(stream, 0x00) // the hidden end marker
+		for len(stream)%4 != 0 {
+			stream = append(stream, 0x00)
+		}
+		stream = append(stream, blockHeader(*hidden)...)
+		declared := compressed - 1 + len(stream) - slackStart
+		stream[24+3], stream[24+4] = byte(declared>>8), byte(declared)
+		stream = append(stream, 0x00) // the walked end marker
+	}
+	unpadded := len(stream) - 12
+	for len(stream)%4 != 0 {
+		stream = append(stream, 0x00)
+	}
+	check := xzCheck(checkType, plain)
+	if checkType == 0x00 {
+		check = nil
+	}
+	stream = append(stream, check...)
+	index := []byte{0x00, 0x01}
+	index = binary.AppendUvarint(index, uint64(unpadded+len(check)))
+	index = binary.AppendUvarint(index, uint64(len(plain)))
+	for len(index)%4 != 0 {
+		index = append(index, 0x00)
+	}
+	index = binary.LittleEndian.AppendUint32(index, crc32.ChecksumIEEE(index))
+	footer := append(binary.LittleEndian.AppendUint32(nil, uint32(len(index)/4-1)), flags...)
+	stream = append(append(stream, index...), binary.LittleEndian.AppendUint32(nil, crc32.ChecksumIEEE(footer))...)
+	return append(append(stream, footer...), 'Y', 'Z')
+}
+
+// xzWithBlockHeader is pythonXZHistory with its 12-byte block header replaced
+// by the given 8-byte body and its CRC32.
+func xzWithBlockHeader(t *testing.T, body string) string {
+	t.Helper()
+	return strings.Replace(pythonXZHistory, "0200210116000000742fe5a3", body+xzHeaderCRC(t, body), 1)
+}
+
+// xzHeaderCRC returns the little-endian CRC32 of a hex block header body.
+func xzHeaderCRC(t *testing.T, body string) string {
+	t.Helper()
+	raw, err := hex.DecodeString(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return hex.EncodeToString(binary.LittleEndian.AppendUint32(nil, crc32.ChecksumIEEE(raw)))
 }
 
 func TestTimelineHistoryBoundsFailUnknown(t *testing.T) {
@@ -393,6 +547,54 @@ func TestRecoveryCoverageIgnoresHistoricalGapBeforeAnchor(t *testing.T) {
 	path := catalog.Servers[0].Paths[0]
 	if path.State != evidence.Healthy || path.FrontierPosition != 5 {
 		t.Fatalf("historical gap invalidated path: %#v", path)
+	}
+}
+
+// TestWALGapBeforeConsistencyMakesTheBackupUnusable: the backup starts at
+// segment 1 and is consistent at segment 4; only segment 3 is missing, and
+// how the gap is classified decides how unusable the path is.
+func TestWALGapBeforeConsistencyMakesTheBackupUnusable(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name   string
+		gaps   []WALGap
+		state  evidence.State
+		stop   CoverageStop
+		reason string
+	}{
+		{
+			name: "confirmed gap", gaps: []WALGap{{Timeline: 1, Start: 3, End: 3, Count: 1, Status: GapConfirmed, FirstObservedGeneration: 1, LastObservedGeneration: 2}},
+			state: evidence.Unhealthy, stop: CoverageGapLimited, reason: "confirmed required WAL gap stops coverage",
+		},
+		{
+			name: "candidate gap", gaps: []WALGap{{Timeline: 1, Start: 3, End: 3, Count: 1, Status: GapCandidate, FirstObservedGeneration: 1, LastObservedGeneration: 1}},
+			state: evidence.Warning, stop: CoverageCandidateLimited, reason: "candidate required WAL gap stops coverage",
+		},
+		{
+			name:  "unclassified discontinuity",
+			state: evidence.Unknown, stop: CoverageUnknownLimited, reason: "unclassified WAL discontinuity stops coverage",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			wal := ServerWAL{
+				Server: "alpha", State: evidence.Warning, PostgreSQLVersion: 180000, SegmentSize: 16 << 20,
+				Ranges: []WALRange{walRange(1, 1, 2), walRange(1, 4, 6)}, Gaps: test.gaps,
+			}
+			backup := recoveryBackup(time.Now().UTC(), 1, 4)
+			catalog := AnalyzeRecovery(context.Background(), &storetest.Fake{}, []Backup{backup}, WALCatalog{Servers: []ServerWAL{wal}}, nil, false, RecoveryOptions{})
+			server := catalog.Servers[0]
+			if len(server.Paths) != 1 {
+				t.Fatalf("paths = %#v", server.Paths)
+			}
+			path := server.Paths[0]
+			if path.State != test.state || path.Stop != test.stop || path.Reason != test.reason || path.FrontierPosition != 2 {
+				t.Fatalf("path = state %s stop %s reason %q frontier %d", path.State, path.Stop, path.Reason, path.FrontierPosition)
+			}
+			if server.CoverageState != test.state {
+				t.Fatalf("coverage = %s %q, want %s", server.CoverageState, server.CoverageReason, test.state)
+			}
+		})
 	}
 }
 

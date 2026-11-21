@@ -212,12 +212,13 @@ func (s *Store) List(ctx context.Context, request store.ListRequest) (store.Page
 }
 
 // Open implements store.Reader. The body yields at most request.MaxBytes,
-// and closing it ends the request.
+// all of it within request.Timeout(request timeout), and closing it ends the
+// request.
 func (s *Store) Open(ctx context.Context, request store.OpenRequest) (io.ReadCloser, error) {
 	if err := request.Validate(); err != nil || strings.HasPrefix(request.Key, "/") {
 		return nil, store.ErrInvalidRequest
 	}
-	ctx, cancel := context.WithTimeout(ctx, s.timeout)
+	ctx, cancel := context.WithTimeout(ctx, request.Timeout(s.timeout))
 	response, err := s.client.DownloadStream(ctx, s.container, s.prefix+request.Key, nil)
 	if err != nil {
 		// Classified before cancel: a cancelled context would make every

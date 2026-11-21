@@ -292,7 +292,6 @@ spec:
           verbs:
           - get
           - list
-          - patch
           - watch
         - apiGroups:
           - apps
@@ -348,9 +347,7 @@ spec:
           verbs:
           - create
           - get
-          - list
           - update
-          - watch
         - apiGroups:
           - discovery.k8s.io
           resourceNames:
@@ -676,6 +673,8 @@ spec:
     image: ghcr.io/fyannk/pgtoolbox-operator:0.1.0
   - name: pgadmin
     image: ghcr.io/fyannk/pgadmin:9.18-hardened@sha256:96576df8aba0d0057248644d6d5ad398869e42bcf3fcfba2c0f7c13d151ea17c
+  - name: oauth-proxy
+    image: quay.io/openshift/origin-oauth-proxy:4.18@sha256:63b0344b903162519efdb63052c1dde81aa17cfc46ba63cc87300db47f0fb5df
   - name: evidence-agent
     image: ghcr.io/fyannk/pgtoolbox-evidence-agent:0.1.0
   - name: console
