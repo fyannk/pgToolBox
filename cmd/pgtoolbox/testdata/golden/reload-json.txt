@@ -1,0 +1,47 @@
+exit: 0
+--- stdout
+{
+  "cnpgVersion": "1.30",
+  "clusters": [
+    {
+      "namespace": "team-a",
+      "name": "billing",
+      "change": "unchanged",
+      "disruptive": false
+    },
+    {
+      "namespace": "team-a",
+      "name": "orders",
+      "change": "changed",
+      "disruptive": false,
+      "preview": {
+        "effect": "reload",
+        "parameters": [
+          {
+            "name": "work_mem",
+            "before": "4MB",
+            "after": "8MB",
+            "effect": "reload",
+            "context": "reload"
+          }
+        ],
+        "fields": [],
+        "strategy": "unsupervised",
+        "method": "restart",
+        "primary": "reload",
+        "steps": [
+          {
+            "role": "all",
+            "instances": [],
+            "action": "reload"
+          }
+        ],
+        "postgresMajor": 17,
+        "verified": true
+      }
+    }
+  ],
+  "ignored": 4,
+  "disruptive": false
+}
+--- stderr

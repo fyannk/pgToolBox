@@ -53,6 +53,8 @@ classify() {
     # the backup-repository resolver: everything that exercises them runs.
     internal/backupresolve/*) mark go; mark operator; mark evidence ;;
     internal/operator/* | cmd/operator/*) mark go; mark operator ;;
+    # The offline CLI (pgtoolbox preview) and its golden manifests.
+    cmd/pgtoolbox/*) mark go ;;
     # The console's own kind scenario.
     test/e2e/console/*) mark go; mark console ;;
     test/e2e/*) mark go; mark operator ;;

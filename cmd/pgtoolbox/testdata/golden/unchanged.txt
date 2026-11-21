@@ -1,0 +1,12 @@
+exit: 0
+--- stdout
+Cluster team-a/billing: unchanged
+  Unchanged — the spec and annotations the preview reads are the same.
+
+Cluster team-a/orders: unchanged
+  Unchanged — the spec and annotations the preview reads are the same.
+
+4 document(s) that are not CloudNativePG Clusters were ignored.
+
+Not disruptive: at most a configuration reload or a start.
+--- stderr

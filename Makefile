@@ -102,12 +102,18 @@ vet: ## Run go vet on every module.
 
 ##@ Build
 
+.PHONY: build-pgtoolbox
+build-pgtoolbox: ## Build the offline pgtoolbox CLI (pgtoolbox preview) into bin/.
+	mkdir -p bin
+	CGO_ENABLED=0 go build -trimpath -ldflags "$(VERSION_LDFLAGS)" -o bin/pgtoolbox ./cmd/pgtoolbox
+
 .PHONY: build
 build: ## Build every binary into bin/.
 	mkdir -p bin
 	CGO_ENABLED=0 go build -trimpath -ldflags "$(OPERATOR_LDFLAGS)" -o bin/operator ./cmd/operator
 	CGO_ENABLED=0 go build -trimpath -ldflags "$(VERSION_LDFLAGS)" -o bin/console ./cmd/console
 	CGO_ENABLED=0 go build -trimpath -ldflags "$(VERSION_LDFLAGS)" -o bin/evidence-agent ./cmd/evidence-agent
+	CGO_ENABLED=0 go build -trimpath -ldflags "$(VERSION_LDFLAGS)" -o bin/pgtoolbox ./cmd/pgtoolbox
 	cd $(EVIDENCE_MODULE) && go build ./...
 
 .PHONY: clean
