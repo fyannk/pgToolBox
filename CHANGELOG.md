@@ -7,6 +7,16 @@ resources are `v1alpha1`, a field can change between minor releases; every such
 change is announced here. Pin an exact image tag, or better a digest, and read
 the notes before upgrading.
 
+## [Unreleased]
+
+### Added
+
+- **The `pgtoolbox` command-line tool** (`pgtoolbox preview`, the offline change
+  preview for CI) is shipped with every release: static `linux` and `darwin`
+  binaries for `amd64` and `arm64` as `pgtoolbox-cli_<version>_<os>_<arch>.tar.gz`
+  on the release page (listed in the signed `SHA256SUMS`, attested), and at
+  `/pgtoolbox` in the console image.
+
 ## [0.1.0] - 2026-11-14
 
 The first public release: a console, an optional operator and an evidence agent

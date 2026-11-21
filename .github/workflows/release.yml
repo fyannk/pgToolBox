@@ -9,7 +9,9 @@ name: Release
 #                        (GitHub build provenance, BuildKit SLSA provenance and
 #                        SBOM); then a GitHub release with notes from the
 #                        CHANGELOG, the charts, the installer manifests, the
-#                        SBOMs and a signed SHA256SUMS. A tag with a
+#                        SBOMs, the pgtoolbox CLI tarballs (linux and darwin,
+#                        amd64 and arm64, attested) and a signed SHA256SUMS
+#                        that lists them. A tag with a
 #                        pre-release part (v0.2.0-rc.1) makes a pre-release and
 #                        never moves `latest`.
 #   pkg/evidence/vX.Y.Z  the nested evidence module: module path, semver,
@@ -308,7 +310,7 @@ jobs:
       - name: Install the pinned tools
         uses: ./.github/actions/toolchain
         with:
-          tools: helm kubectl
+          tools: go helm kubectl
           mise-cache: "false"
       - name: Set up Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
@@ -477,6 +479,14 @@ jobs:
           subject-name: ghcr.io/${{ github.repository_owner }}/charts/pgtools
           subject-digest: ${{ steps.charts.outputs.pgtools }}
           push-to-registry: true
+      # The pgtoolbox CLI: static binaries for linux and darwin, attested here
+      # and listed in the signed SHA256SUMS below.
+      - name: Build the CLI tarballs
+        run: ./hack/release.sh build-cli "${VERSION}"
+      - name: Attest the CLI tarballs (GitHub)
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/release/pgtoolbox-cli_*.tar.gz
       # One SPDX SBOM per image and platform, taken from the registry by digest.
       - name: SBOMs
         env:
@@ -606,6 +616,8 @@ jobs:
             while read -r ref; do echo "- \`${ref}\`"; done < dist/release/digests.txt
             echo
             while read -r ref; do echo "- chart \`${ref}\`"; done < dist/release/chart-digests.txt
+            echo
+            echo "The \`pgtoolbox\` CLI (\`preview\`) for linux and darwin on amd64 and arm64 is attached as \`pgtoolbox-cli_*.tar.gz\`, listed in the signed \`SHA256SUMS\` and attested; it is also at \`/pgtoolbox\` in the console image."
           } > notes.md
       # A draft first: the release becomes visible only when every file is
       # attached, so a failed upload never leaves a half-published release.
@@ -624,7 +636,7 @@ jobs:
             flags+=(--prerelease --latest=false)
           fi
           gh release create "${TAG}" "${flags[@]}" \
-            dist/release/pgtoolbox-*.tgz dist/release/pgtools-*.tgz \
+            dist/release/pgtoolbox-*.tgz dist/release/pgtools-*.tgz dist/release/pgtoolbox-cli_*.tar.gz \
             dist/release/install-*.yaml dist/release/sbom-*.spdx.json \
             dist/release/digests.txt dist/release/chart-digests.txt dist/release/SHA256SUMS dist/release/SHA256SUMS.sigstore.json
       # A release that points at packages nobody can pull is not a release.

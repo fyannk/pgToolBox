@@ -14,11 +14,31 @@ parameter the operator refuses. It is the same computation as the console's
 contacts a cluster, so a pull request can be gated on it before anything is
 merged or synced.
 
-## Build it
+## Get it
 
-The release ships images and charts, not standalone binaries, so build the
-command from a checkout of the repository (`go install …@version` does not work:
-the root module has a `replace` for its nested evidence module):
+Each release attaches the command as a static binary for `linux` and `darwin`, on
+`amd64` and `arm64`: `pgtoolbox-cli_<version>_<os>_<arch>.tar.gz`. Download the
+tarball with `SHA256SUMS` and `SHA256SUMS.sigstore.json`, and check them before
+you run it (the [release page](../release.md) explains the signature):
+
+```sh
+V=X.Y.Z; OS=linux; ARCH=amd64          # the release, and the platform of the runner
+BASE="https://github.com/fyannk/pgToolBox/releases/download/v${V}"
+F="pgtoolbox-cli_${V}_${OS}_${ARCH}.tar.gz"
+curl -fsSLO "${BASE}/${F}" -O "${BASE}/SHA256SUMS" -O "${BASE}/SHA256SUMS.sigstore.json"
+cosign verify-blob --bundle SHA256SUMS.sigstore.json \
+  --certificate-identity-regexp '^https://github.com/fyannk/pgToolBox/\.github/workflows/release\.yml@refs/tags/v' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com SHA256SUMS
+sha256sum --check --ignore-missing SHA256SUMS      # macOS: shasum -a 256 -c
+tar -xzf "${F}" && ./pgtoolbox-cli_${V}_${OS}_${ARCH}/pgtoolbox version
+```
+
+The console image carries the same binary, so where an image is easier than a
+download: `docker run --rm --entrypoint /pgtoolbox ghcr.io/fyannk/pgtoolbox-console:X.Y.Z preview ...`
+(mount the manifests with `-v`), or `kubectl exec <console pod> -- /pgtoolbox preview ...`.
+
+To build it from a checkout instead (`go install …@version` does not work: the
+root module has a `replace` for its nested evidence module):
 
 ```sh
 make build-pgtoolbox        # bin/pgtoolbox
@@ -132,23 +152,25 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/checkout@v4   # pin to a commit SHA
-        with:
-          repository: fyannk/pgToolBox
-          ref: main                    # placeholder: pin a commit SHA (see below)
-          path: .pgtoolbox
-          persist-credentials: false
-      - uses: actions/setup-go@v5   # pin to a commit SHA
-        with:
-          go-version-file: .pgtoolbox/go.mod
-      - run: cd .pgtoolbox && CGO_ENABLED=0 go build -o "${RUNNER_TEMP}/pgtoolbox" ./cmd/pgtoolbox
+      - name: Install pgtoolbox from the release, checksum verified
+        env:
+          PGTOOLBOX_VERSION: "X.Y.Z"   # placeholder: the release you reviewed
+        run: |
+          set -euo pipefail
+          base="https://github.com/fyannk/pgToolBox/releases/download/v${PGTOOLBOX_VERSION}"
+          file="pgtoolbox-cli_${PGTOOLBOX_VERSION}_linux_amd64.tar.gz"
+          cd "${RUNNER_TEMP}"
+          curl -fsSLO "${base}/${file}" -O "${base}/SHA256SUMS"
+          grep " ${file}\$" SHA256SUMS | sha256sum --check --strict -
+          tar -xzf "${file}"
+          echo "${RUNNER_TEMP}/${file%.tar.gz}" >> "${GITHUB_PATH}"
       - name: Preview the Cluster changes
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
         run: |
           git show "${BASE}:clusters/production.yaml" > old.yaml
           set +e
-          "${RUNNER_TEMP}/pgtoolbox" preview --cnpg-version 1.30 old.yaml clusters/production.yaml
+          pgtoolbox preview --cnpg-version 1.30 old.yaml clusters/production.yaml
           code=$?
           set -e
           case "${code}" in
@@ -158,9 +180,15 @@ jobs:
           esac
 ```
 
-`ref: main` is a placeholder. No release carries the command yet, so pin the
-commit SHA you reviewed, and pin a release tag once one ships `pgtoolbox
-preview`. Tracking `main` means the rules can change under your gate.
+The checksum check above proves the download is the file the release lists. To
+prove the list itself came from the release workflow, also run the `cosign
+verify-blob` of [Get it](#get-it) (install cosign with
+`sigstore/cosign-installer`, pinned to a commit SHA). Pin the version: a binary
+fetched from a moving ref could change the rules under your gate.
+
+If no release carries the command yet, build it from a commit you reviewed
+(`make build-pgtoolbox` in a checkout of that commit, pinned by SHA) instead of the
+download step.
 
 For a GitOps repository rendered by Kustomize or Helm, preview the rendered
 output: `kustomize build overlays/prod | pgtoolbox preview old.yaml -`.
