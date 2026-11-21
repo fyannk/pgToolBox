@@ -49,6 +49,8 @@ func (s *Service) readinessPod(g *gathered, r viewmodel.InstanceRow, now time.Ti
 	f.Provenance = r.Pod.Provenance
 	f.Provenance.Source = "Pod.status.conditions[Ready]"
 	switch {
+	case f.Provenance.Stale:
+		f.Health, f.Text = viewmodel.HealthUnknown, notReadNow(f.Provenance)
 	case r.Pod.Deleting:
 		f.Health, f.Text = viewmodel.HealthProgressing, "the Pod is being deleted"
 	case !r.Pod.Ready && r.Pod.Waiting != "":
@@ -59,6 +61,15 @@ func (s *Service) readinessPod(g *gathered, r viewmodel.InstanceRow, now time.Ti
 		f.Health, f.Text = viewmodel.HealthOK, "Ready"
 	}
 	return f
+}
+
+// notReadNow is the text of a fact whose source is stale: its last
+// reading is not a current one, so it is not judged.
+func notReadNow(p viewmodel.Provenance) string {
+	if p.StaleReason != "" {
+		return "not read now: " + p.StaleReason
+	}
+	return "not read now: its source is stale"
 }
 
 // instanceRead is the provenance of the instance's own report and
@@ -156,6 +167,8 @@ func (s *Service) readinessFencing(g *gathered, r viewmodel.InstanceRow, now tim
 		Provenance: s.provenance(g.key.Namespace, cache.SourceClusters, viewmodel.OriginKubernetes, "Cluster.metadata.annotations["+cnpgstatus.AnnotationFencedInstances+"]", now),
 	}
 	switch {
+	case f.Provenance.Stale:
+		f.Health, f.Text = viewmodel.HealthUnknown, notReadNow(f.Provenance)
 	case cnpgstatus.Fencing(g.cluster).State == cnpgstatus.FencingUnreadable:
 		f.Health, f.Text = viewmodel.HealthUnknown, "the fencing annotation could not be read"
 	case r.Fenced:

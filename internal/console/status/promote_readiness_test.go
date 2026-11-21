@@ -16,6 +16,7 @@ package status
 
 import (
 	"context"
+	"maps"
 	"testing"
 	"time"
 
@@ -92,6 +93,7 @@ func TestPromoteReadinessNeverOkUnread(t *testing.T) {
 		swept   map[string]sweep.Instance
 		sweptAt time.Time
 		ann     map[string]string
+		states  map[string]viewmodel.SourceState
 		row     viewmodel.InstanceRow
 		want    []want
 	}{
@@ -181,6 +183,18 @@ func TestPromoteReadinessNeverOkUnread(t *testing.T) {
 			want:  []want{{viewmodel.ReadinessPod, viewmodel.HealthCritical}, {viewmodel.ReadinessFencing, viewmodel.HealthCritical}},
 		},
 		{
+			// A broken watch keeps the last Pod and Cluster in the cache:
+			// what they say is not a current reading.
+			name:   "Pod and Cluster watches stale",
+			swept:  map[string]sweep.Instance{"db-1": primaryOK},
+			states: map[string]viewmodel.SourceState{cache.SourceClusters: {Source: cache.SourceClusters, State: viewmodel.SourceStale, Reason: "cluster watch lost"}},
+			row: viewmodel.InstanceRow{
+				Name: "db-2", StatusRead: okRead,
+				Pod: &viewmodel.PodView{Ready: true, Provenance: viewmodel.Provenance{Stale: true, StaleReason: "pod watch lost"}},
+			},
+			want: []want{{viewmodel.ReadinessPod, viewmodel.HealthUnknown}, {viewmodel.ReadinessFencing, viewmodel.HealthUnknown}},
+		},
+		{
 			name:  "fencing annotation unreadable",
 			swept: map[string]sweep.Instance{"db-1": primaryOK},
 			ann:   map[string]string{"cnpg.io/fencedInstances": `not json`},
@@ -195,6 +209,7 @@ func TestPromoteReadinessNeverOkUnread(t *testing.T) {
 				at = now.Add(-5 * time.Second)
 			}
 			fc := &fakeCache{namespaces: []string{"team-a"}, states: map[string]viewmodel.SourceState{}}
+			maps.Copy(fc.states, tt.states)
 			svc := New(Options{Cache: fc, Now: func() time.Time { return now }})
 			g := &gathered{
 				key: cache.ClusterKey{Namespace: "team-a", Name: "db"}, cluster: cluster(tt.ann), hasSweep: true,
