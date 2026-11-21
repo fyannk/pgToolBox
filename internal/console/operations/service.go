@@ -253,9 +253,7 @@ func (s *Service) Offers(ctx context.Context, p *auth.Principal, caps authz.Capa
 	for _, e := range entries {
 		// Who asked is the API server's audit log's to say: Recent lists
 		// what was done, not by whom, to every viewer of the Cluster.
-		op := s.track(e.id, st)
-		op.RecordedIn, op.RecordedFrom = e.in, e.from
-		out.Recent = append(out.Recent, op)
+		out.Recent = append(out.Recent, asRecorded(s.track(e.id, st), e, s.opts.Now().UTC()))
 	}
 	return out, nil
 }

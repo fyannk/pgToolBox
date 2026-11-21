@@ -26,9 +26,15 @@ import (
 
 // recentScope is what Recent covers, in words.
 const recentScope = "rebuilt from what the Cluster's objects record, so every console replica shows the same list: " +
-	"Backups a console marked (" + ops.AnnotationRequestedAt + "), the latest restart and reload annotations (set by any client) " +
+	"Backups carrying the " + ops.AnnotationRequestedAt + " annotation (a console sets it; so may any client that may create a Backup), the latest restart and reload annotations (set by any client) " +
 	"and the console's restore-drill record. A promote leaves no marker the console can tell from a failover: " +
 	"only the replica that issued it lists it, until it restarts. The API server's audit log is the complete record, and names who asked."
+
+// markerSkew is how far a marker's time may lie from the clock it is
+// checked against: past it, the marker is not the console's (a console
+// writes its acceptance instant, which is now, into a create or patch
+// that lands within it).
+const markerSkew = time.Minute
 
 // recentEntry is one recent operation and where it was found.
 type recentEntry struct {
@@ -60,7 +66,9 @@ func (s *Service) fromCluster(st ClusterState) (out []recentEntry, gaps []string
 			continue
 		}
 		at, err := time.Parse(time.RFC3339Nano, v)
-		if err != nil {
+		if err != nil || at.After(s.opts.Now().Add(markerSkew)) {
+			// A marker dated in the future would sort first and never
+			// time out: it is not an operation's acceptance instant.
 			continue
 		}
 		add(ID{Kind: kind, Namespace: ns, Cluster: name, Marker: v, AcceptedAt: at.Unix()},
@@ -75,7 +83,10 @@ func (s *Service) fromCluster(st ClusterState) (out []recentEntry, gaps []string
 			continue
 		}
 		at, err := time.Parse(time.RFC3339, v)
-		if err != nil {
+		created := b.CreationTimestamp.Time
+		if err != nil || created.IsZero() || at.Sub(created).Abs() > markerSkew {
+			// The console writes the annotation in the create itself: a
+			// time far from the Backup's creation is not its request.
 			continue
 		}
 		add(ID{Kind: viewmodel.OperationBackup, Namespace: ns, Cluster: name, Created: b.Name, AcceptedAt: at.Unix()},
@@ -121,4 +132,29 @@ func (s *Service) recentOf(st ClusterState, mine []record) ([]recentEntry, []str
 		out = out[:s.opts.RecentPerCluster]
 	}
 	return out, gaps
+}
+
+// asRecorded marks op as found on the cluster: its request step is
+// attributed to the marker, not to this console, and a restart or reload
+// past its deadline is closed instead of judged on the Cluster's live
+// state (a months-old restartedAt would read as "2 of 3 restarted"
+// during any later rollout).
+func asRecorded(op viewmodel.Operation, e recentEntry, now time.Time) viewmodel.Operation {
+	op.RecordedIn, op.RecordedFrom = e.in, e.from
+	if e.in != viewmodel.RecordCluster {
+		return op
+	}
+	if len(op.Steps) > 0 {
+		op.Steps[0].Source = e.from
+	}
+	marker := e.id.Kind == viewmodel.OperationRestart || e.id.Kind == viewmodel.OperationReload
+	if marker && now.After(op.Deadline) && len(op.Steps) >= 2 {
+		op.Steps = append(op.Steps[:2:2], viewmodel.OperationStep{
+			Phase: viewmodel.OpPhaseNotObservable, At: op.Deadline, Source: e.from,
+			Text: "recorded on the Cluster at " + op.AcceptedAt.Format(time.RFC3339) + "; not followed after its deadline",
+		})
+		op.Phase, op.Blocked = viewmodel.OpPhaseNotObservable, false
+		op.Health = viewmodel.OperationHealth(op.Phase, false)
+	}
+	return op
 }

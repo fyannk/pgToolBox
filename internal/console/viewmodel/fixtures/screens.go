@@ -511,7 +511,7 @@ func Operations() viewmodel.Operations {
 			},
 		},
 		Recent:      []viewmodel.Operation{recentBackup()},
-		RecentScope: "rebuilt from what the Cluster's objects record, so every console replica shows the same list: Backups a console marked (pgtoolbox.fyannk.dev/requested-at), the latest restart and reload annotations (set by any client) and the console's restore-drill record. A promote leaves no marker the console can tell from a failover: only the replica that issued it lists it, until it restarts. The API server's audit log is the complete record, and names who asked.",
+		RecentScope: "rebuilt from what the Cluster's objects record, so every console replica shows the same list: Backups carrying the pgtoolbox.fyannk.dev/requested-at annotation (a console sets it; so may any client that may create a Backup), the latest restart and reload annotations (set by any client) and the console's restore-drill record. A promote leaves no marker the console can tell from a failover: only the replica that issued it lists it, until it restarts. The API server's audit log is the complete record, and names who asked.",
 	}
 }
 

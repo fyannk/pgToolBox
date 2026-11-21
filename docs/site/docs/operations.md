@@ -97,8 +97,8 @@ that just restarted:
 
 | Operation | Found from | Notes |
 |---|---|---|
-| Backup | Backups of the Cluster carrying the annotation `pgtoolbox.fyannk.dev/requested-at` (the instant the console accepted the request, RFC 3339 UTC), which the console sets on the Backups it creates | Scheduled Backups and Backups created by hand carry no marker and are not listed. Anyone who may create a Backup can set the annotation: it says a console asked, not who |
-| Restart, reload | The Cluster's `kubectl.kubernetes.io/restartedAt` and `cnpg.io/reloadedAt` annotations | Only the latest of each, and whoever set it (the console or `kubectl cnpg`) |
+| Backup | Backups of the Cluster carrying the annotation `pgtoolbox.fyannk.dev/requested-at` (the instant the console accepted the request, RFC 3339 UTC), which the console sets on the Backups it creates | Scheduled Backups and Backups created by hand carry no marker and are not listed. Anyone who may create a Backup can set the annotation, so it does not prove a console asked; one more than a minute away from the Backup's `creationTimestamp` is ignored |
+| Restart, reload | The Cluster's `kubectl.kubernetes.io/restartedAt` and `cnpg.io/reloadedAt` annotations | Only the latest of each, and whoever set it (the console or `kubectl cnpg`). A value dated in the future is ignored; past the operation's deadline the entry is closed as not followed (`notObservable`) instead of being judged on the Cluster's current rollout |
 | Restore drill | The console's [restore-drill record](console/restore-drills.md) of the Cluster, which every replica rebuilds from the drill Cluster's sealed annotation | When the record is not kept across restarts (no persistent history, no state ConfigMap), drills finished before the replica started are missing, and the list says so |
 | Promote | Only the memory of the replica that issued it | `status.targetPrimary` is also set by a failover, so it is not a marker; a promote disappears from the list when that replica restarts |
 

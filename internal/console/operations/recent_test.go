@@ -30,9 +30,10 @@ import (
 	"github.com/fyannk/pgToolBox/internal/console/viewmodel"
 )
 
-func backupCR(name string, annotations map[string]string) *cnpgv1.Backup {
+// backupCR is a Backup created at created.
+func backupCR(name string, created time.Time, annotations map[string]string) *cnpgv1.Backup {
 	return &cnpgv1.Backup{
-		ObjectMeta: metav1.ObjectMeta{Namespace: "team-a", Name: name, Annotations: annotations},
+		ObjectMeta: metav1.ObjectMeta{Namespace: "team-a", Name: name, Annotations: annotations, CreationTimestamp: metav1.NewTime(created)},
 		Spec:       cnpgv1.BackupSpec{Cluster: cnpgv1.LocalObjectReference{Name: "orders"}},
 	}
 }
@@ -72,6 +73,7 @@ func TestRecentSurvivesARestart(t *testing.T) {
 	// the Cluster with the annotation the restart set.
 	b := w.backups[0].DeepCopy()
 	b.Name = b.GenerateName + "abcde"
+	b.CreationTimestamp = metav1.NewTime(now.Add(time.Second))
 	held := c.DeepCopy()
 	key, value, _ := strings.Cut(w.patches[0], "=")
 	held.Annotations = map[string]string{key: value}
@@ -112,13 +114,13 @@ func TestRecentFromMarkers(t *testing.T) {
 				ops.RestartAnnotation: at(time.Hour),
 				ops.ReloadAnnotation:  now.Add(-time.Minute).Format(ops.CNPGTimestamp),
 			},
-			backups: []*cnpgv1.Backup{backupCR("ondemand-1", map[string]string{ops.AnnotationRequestedAt: at(time.Second)})},
+			backups: []*cnpgv1.Backup{backupCR("ondemand-1", now.Add(-time.Second), map[string]string{ops.AnnotationRequestedAt: at(time.Second)})},
 			listed:  true,
 			want:    []viewmodel.OperationKind{viewmodel.OperationBackup, viewmodel.OperationReload, viewmodel.OperationRestart},
 		},
 		{
 			name:    "a Backup the console did not mark is not an operation it lists",
-			backups: []*cnpgv1.Backup{backupCR("orders-daily-1", map[string]string{"cnpg.io/scheduled-backup": "daily"}), backupCR("by-hand", nil)},
+			backups: []*cnpgv1.Backup{backupCR("orders-daily-1", now, map[string]string{"cnpg.io/scheduled-backup": "daily"}), backupCR("by-hand", now, nil)},
 			listed:  true,
 		},
 		{
@@ -127,8 +129,22 @@ func TestRecentFromMarkers(t *testing.T) {
 				ops.RestartAnnotation: "yesterday",
 				ops.ReloadAnnotation:  now.Format(time.RFC3339Nano) + strings.Repeat("0", 64),
 			},
-			backups: []*cnpgv1.Backup{backupCR("ondemand-2", map[string]string{ops.AnnotationRequestedAt: "now"})},
+			backups: []*cnpgv1.Backup{backupCR("ondemand-2", now, map[string]string{ops.AnnotationRequestedAt: "now"})},
 			listed:  true,
+		},
+		{
+			name: "a requested-at far from the Backup's creation is not its request",
+			backups: []*cnpgv1.Backup{
+				backupCR("forged", now.Add(-time.Hour), map[string]string{ops.AnnotationRequestedAt: "2099-01-01T00:00:00Z"}),
+				backupCR("backdated", now, map[string]string{ops.AnnotationRequestedAt: at(time.Hour)}),
+				backupCR("no-creation", time.Time{}, map[string]string{ops.AnnotationRequestedAt: at(0)}),
+			},
+			listed: true,
+		},
+		{
+			name:        "a restart or reload marker dated in the future is skipped",
+			annotations: map[string]string{ops.RestartAnnotation: "2099-01-01T00:00:00Z", ops.ReloadAnnotation: now.Add(2 * time.Minute).Format(ops.CNPGTimestamp)},
+			listed:      true,
 		},
 		{
 			name:    "Backups the console cannot read are a gap, never silence",
@@ -235,5 +251,40 @@ func TestRecentDrillsFromTheRecord(t *testing.T) {
 	}
 	if len(gaps) != 1 || !strings.Contains(gaps[0], "restore drills") {
 		t.Errorf("gaps = %v, want the in-memory drill record named", gaps)
+	}
+}
+
+// A restart found on the Cluster past its deadline is closed, not judged
+// on the live state: a months-old restartedAt during a later switchover
+// is not an unfinished restart. Its request is the marker's, not the
+// console's, to attribute.
+func TestRecentFromTheClusterIsClosedPastItsDeadline(t *testing.T) {
+	tests := []struct {
+		name  string
+		age   time.Duration
+		phase string
+		want  viewmodel.OperationPhase
+	}{
+		{"an old marker during a switchover", 90 * 24 * time.Hour, "Switchover in progress", viewmodel.OpPhaseNotObservable},
+		{"an old marker on a healthy Cluster", 90 * 24 * time.Hour, "Cluster in healthy state", viewmodel.OpPhaseNotObservable},
+		{"a marker within its deadline is still followed", time.Minute, "Switchover in progress", viewmodel.OpPhaseActing},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			c := cluster()
+			c.Annotations = map[string]string{ops.RestartAnnotation: now.Add(-tc.age).Format(time.RFC3339)}
+			c.Status.Phase = tc.phase
+			v := recentOf(t, ClusterState{Cluster: c, Pods: pods(), BackupsListed: true})
+			if len(v.Recent) != 1 {
+				t.Fatalf("Recent = %+v", v.Recent)
+			}
+			op := v.Recent[0]
+			if op.Phase != tc.want {
+				t.Errorf("phase = %s, want %s (steps %+v)", op.Phase, tc.want, op.Steps)
+			}
+			if src := op.Steps[0].Source; src != op.RecordedFrom || src == "console" {
+				t.Errorf("request step attributed to %q, want the marker %q", src, op.RecordedFrom)
+			}
+		})
 	}
 }
