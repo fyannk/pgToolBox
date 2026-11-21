@@ -16,6 +16,10 @@ from the code.
 Anyone who may see the Cluster (`get clusters`) may see its diagnostics; the
 engine adds no second permission.
 
+The findings of each Cluster's latest run are also exported on `/metrics` and
+the `pgtools` chart ships alerts over them: see [findings alerts](../console/alerts.md#findings).
+Those series are read with the scraper's `/metrics` permission, not per Cluster.
+
 ## How a run happens
 
 The pipeline below shows what starts a run, what it reads and where its result
