@@ -10,8 +10,9 @@ contacts a cluster.
 
 Exit codes:
   0  nothing disruptive: at most a configuration reload or a start
-  1  disruptive: a restart, rollout, shutdown, major upgrade, a removed Cluster,
-     a parameter the operator refuses, or a change whose effect is unknown
+  1  disruptive: a restart, rollout, shutdown, major upgrade, fewer instances,
+     a removed Cluster, a parameter the operator refuses, or a change whose
+     effect is unknown
   2  invalid arguments or manifests
 
 Options:

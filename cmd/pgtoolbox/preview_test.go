@@ -49,6 +49,9 @@ func TestPreviewGolden(t *testing.T) {
 		{"unknown-field", []string{"--cnpg-version", "1.30", td("old.yaml"), td("new-unknown.yaml")}, "", exitDisruptive},
 		{"renamed", []string{"--cnpg-version", "1.30", td("old.yaml"), td("new-renamed.yaml")}, "", exitDisruptive},
 		{"renamed-json", []string{"--output", "json", td("old.yaml"), td("new-renamed.yaml")}, "", exitDisruptive},
+		{"scale-down", []string{"--cnpg-version", "1.30", td("old.yaml"), td("new-scaledown.yaml")}, "", exitDisruptive},
+		{"scale-down-json", []string{"--output", "json", "--cnpg-version", "1.30", td("old.yaml"), td("new-scaledown.yaml")}, "", exitDisruptive},
+		{"injection", []string{"--cnpg-version", "1.30", td("old.yaml"), td("new-injection.yaml")}, "", exitDisruptive},
 		{"stdin-old", []string{"--cnpg-version", "1.30", "-", td("new-reload.yaml")}, "old.yaml", exitOK},
 		{"cnpg-unsupported-minor", []string{"--cnpg-version", "1.40", td("old.yaml"), td("new-reload.yaml")}, "", exitOK},
 		{"invalid-yaml", []string{td("old.yaml"), td("invalid.yaml")}, "", exitInvalid},
@@ -122,6 +125,41 @@ func TestPreviewJSONDecodes(t *testing.T) {
 	}
 	if billing := rep.Clusters[0]; billing.Disruptive || billing.Change != changeUnchanged || billing.Preview != nil {
 		t.Fatalf("billing %+v", billing)
+	}
+}
+
+// TestNoPlantedLine checks that no manifest string starts a line of its
+// own in the text report (a CI workflow command such as ::stop-commands::).
+func TestNoPlantedLine(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	run([]string{"preview", "testdata/old.yaml", "testdata/new-injection.yaml"}, nil, &stdout, &stderr)
+	if !strings.Contains(stdout.String(), "work_mem") {
+		t.Fatalf("no report: %s", stderr.String())
+	}
+	for _, line := range strings.FieldsFunc(stdout.String(), func(r rune) bool { return r == '\n' || r == '\r' || r == '\u2028' || r == '\u2029' }) {
+		if strings.HasPrefix(strings.TrimSpace(line), "::") {
+			t.Errorf("a manifest string starts a line: %q", line)
+		}
+	}
+	if strings.ContainsRune(stdout.String(), '\x1b') {
+		t.Error("an escape sequence reached the report")
+	}
+}
+
+func TestClean(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"8MB", "8MB"},
+		{"é ünïcode", "é ünïcode"},
+		{"a\n::error::x", `a\u000a::error::x`},
+		{"a\r\tb", `a\u000d\u0009b`},
+		{"a\x1b[2Kb", `a\u001b[2Kb`},
+		{"a\u0085b", `a\u0085b`},
+		{"a\u2028b\u2029c", `a\u2028b\u2029c`},
+	}
+	for _, tc := range cases {
+		if got := clean(tc.in); got != tc.want {
+			t.Errorf("clean(%q) = %q, want %q", tc.in, got, tc.want)
+		}
 	}
 }
 

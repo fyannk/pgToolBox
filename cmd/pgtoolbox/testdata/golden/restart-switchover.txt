@@ -20,5 +20,5 @@ Cluster team-a/orders: changed
 
 4 document(s) that are not CloudNativePG Clusters were ignored.
 
-Disruptive: at least one Cluster restarts, rolls out, shuts down, is upgraded or removed, carries a refused parameter, or has an unknown effect.
+Disruptive: at least one Cluster restarts, rolls out, shuts down, is upgraded, loses instances or is removed, carries a refused parameter, or has an unknown effect.
 --- stderr
