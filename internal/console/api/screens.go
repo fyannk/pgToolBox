@@ -28,6 +28,7 @@ import (
 	"github.com/fyannk/pgToolBox/internal/console/auth"
 	"github.com/fyannk/pgToolBox/internal/console/authz"
 	"github.com/fyannk/pgToolBox/internal/console/operations"
+	"github.com/fyannk/pgToolBox/internal/console/sse"
 	"github.com/fyannk/pgToolBox/internal/console/viewmodel"
 )
 
@@ -442,14 +443,16 @@ func registerLogs(a huma.API, d Deps, r *Reads) {
 		OperationID: OpStreamLogs, Method: http.MethodGet, Path: clusterPathPrefix + "/instances/{pod}/logs/stream",
 		Summary: "Follow an instance's log", Tags: []string{"logs"},
 		Description: "Server-sent events: line {at, text}, end {reason}; gap {at, reason} is reserved for lines known to be missed " +
-			"(draw a marker, never join across it). Starts with the last 100 lines. A comment line every 15 s. The stream ends " +
+			"(draw a marker, never join across it); heartbeat {serverTime} every 15 s, so a client can tell a quiet log from a " +
+			"dead stream. Starts with the last 100 lines. The stream ends " +
 			"when the session ends or is revoked, when your pods/log access is withdrawn (checked every 30 s), after an hour, " +
 			"or when the container stops. A refusal (403, 501, 404) is sent as a single end event with the reason.",
 		Errors: append([]int{http.StatusNotFound, http.StatusNotImplemented}, problemCodes...),
 	}, map[string]any{
-		"line": viewmodel.LogStreamLine{},
-		"gap":  viewmodel.LogStreamGap{},
-		"end":  viewmodel.LogStreamEnd{},
+		"line":      viewmodel.LogStreamLine{},
+		"gap":       viewmodel.LogStreamGap{},
+		"end":       viewmodel.LogStreamEnd{},
+		"heartbeat": sse.Heartbeat{},
 	}, func(ctx context.Context, in *PodPath, send humasse.Sender) {
 		out := &lockedSender{send: send}
 		if err := authorizeLogs(ctx, d, in); err != nil {
@@ -494,7 +497,9 @@ func registerLogs(a huma.API, d Deps, r *Reads) {
 	})
 }
 
-// Log-stream liveness: a heartbeat comment, and the session and the
+// Log-stream liveness: a heartbeat event (EventSource never surfaces an
+// SSE comment, so the client could not tell a half-open stream from a
+// quiet log), and the session and the
 // pods/log grant re-checked (variables for the tests only).
 var (
 	logHeartbeat = 15 * time.Second
@@ -511,7 +516,7 @@ func keepAlive(ctx context.Context, d Deps, p *auth.Principal, in *PodPath, out 
 		case <-ctx.Done():
 			return
 		case <-beat.C:
-			if out.comment("heartbeat") != nil {
+			if out.data(sse.Heartbeat{ServerTime: d.now()}) != nil {
 				endWith("the client went away")
 				return
 			}
@@ -539,12 +544,6 @@ func (s *lockedSender) data(v any) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.send.Data(v)
-}
-
-func (s *lockedSender) comment(text string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.send.Comment(text)
 }
 
 func logError(err error) error {

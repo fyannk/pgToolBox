@@ -485,7 +485,12 @@ export function OverviewScreen({ namespace, cluster }: { namespace: string; clus
   const query = useGetCluster(namespace, cluster);
   return (
     <QueryState query={query} what={m.nav_overview()}>
-      {(data) => <OverviewView data={data} wiring={<TopologyPanel namespace={namespace} cluster={cluster} />} />}
+      {(data) => (
+        <OverviewView
+          data={data}
+          wiring={<TopologyPanel key={`${namespace}/${cluster}`} namespace={namespace} cluster={cluster} />}
+        />
+      )}
     </QueryState>
   );
 }

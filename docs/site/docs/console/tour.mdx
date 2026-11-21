@@ -38,7 +38,11 @@ export function Screen({name, alt, height}) {
 
 These are the console's own screens. They are the UI's screenshot test
 baselines, rendered at 1440 px from the API's fixtures: two Clusters in
-`team-a`, `orders` healthy and `billing` failing over. The images follow the
+`team-a`, `orders` healthy and `billing` failing over. Each screen's fixture
+carries its own edge cases: `orders` is healthy in its overall verdict, while
+its other screens show states such as a fenced replica or a WAL gap on
+purpose, and `billing` has no wiring fixture, so its overview shows the
+wiring panel's error state. The images follow the
 site's light or dark theme. The site build copies them from the UI's baselines
 (`docs/site/scripts/copy-screens.mjs`, run by `npm run build`) instead of
 keeping its own copies, and fails on a missing one, so what you see here is

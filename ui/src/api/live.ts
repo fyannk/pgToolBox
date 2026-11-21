@@ -13,7 +13,7 @@
 // from the server's pollMinSeconds doubling up to pollMaxSeconds,
 // and the shell says so. A stream that delivers no event for twice the
 // heartbeat interval (half-open, or a first open that never answers) is
-// down: it is closed and reopened.
+// down: it is closed and reopened with the same backoff as a closed stream.
 
 import type { QueryClient } from "@tanstack/react-query";
 import { useSyncExternalStore } from "react";
@@ -24,7 +24,7 @@ const STREAM_URL = "/api/v1/stream";
 /** The server's heartbeat until its hello says otherwise (sse.DefaultHeartbeat). */
 const DEFAULT_HEARTBEAT_MS = 15_000;
 
-/** connecting: first attempt, not yet known (bounded by the watchdog); live: stream open; down: polling. */
+/** connecting: first attempt, not yet known (bounded by the watchdog); live: hello received; down: polling. */
 export type LiveState = {
   status: "connecting" | "live" | "down";
   downSince: number | null;
@@ -242,14 +242,22 @@ export function startLive(client: QueryClient): () => void {
     void client.invalidateQueries();
   };
 
+  // A stream closed for good is reopened after a bounded backoff (2 s doubling
+  // to 30 s); only a hello, proof of a working stream, resets it.
+  const reopen = () => {
+    es = null;
+    clearTimeout(watchdog);
+    attempts += 1;
+    retry = setTimeout(open, Math.min(30_000, 1_000 * 2 ** attempts));
+  };
+
   // Any event re-arms it; twice the heartbeat with nothing is a dead stream.
   const arm = () => {
     clearTimeout(watchdog);
     watchdog = setTimeout(() => {
       down();
       es?.close();
-      es = null;
-      open();
+      reopen();
     }, 2 * heartbeatMs);
   };
 
@@ -263,17 +271,21 @@ export function startLive(client: QueryClient): () => void {
         arm();
         fn(ev);
       });
-    on("open", () => {
-      attempts = 0;
-      const wasDown = state.status === "down";
-      set({ status: "live", downSince: null });
-      // Whatever changed while the stream was down was not announced.
-      if (wasDown) void client.invalidateQueries();
-    });
+    // Headers alone prove nothing (a buffering proxy sends them): the hello
+    // is the first event of a working stream, and only it makes the stream live.
     on("hello", (ev) => {
       const h = parse<Hello>(ev);
       if (!h) return;
-      set({ pollMinMs: h.pollMinSeconds * 1000, pollMaxMs: h.pollMaxSeconds * 1000 });
+      attempts = 0;
+      const wasDown = state.status === "down";
+      set({
+        status: "live",
+        downSince: null,
+        pollMinMs: h.pollMinSeconds * 1000,
+        pollMaxMs: h.pollMaxSeconds * 1000,
+      });
+      // Whatever changed while the stream was down was not announced.
+      if (wasDown) void client.invalidateQueries();
       if (h.heartbeatSeconds > 0) {
         heartbeatMs = h.heartbeatSeconds * 1000;
         arm();
@@ -292,12 +304,7 @@ export function startLive(client: QueryClient): () => void {
     });
     src.addEventListener("error", () => {
       down();
-      if (es && es.readyState === EventSource.CLOSED) {
-        es = null;
-        clearTimeout(watchdog);
-        attempts += 1;
-        retry = setTimeout(open, Math.min(30_000, 1_000 * 2 ** attempts));
-      }
+      if (es && es.readyState === EventSource.CLOSED) reopen();
     });
   };
 

@@ -9614,7 +9614,7 @@ paths:
         - logs
   /api/v1/namespaces/{namespace}/clusters/{name}/instances/{pod}/logs/stream:
     get:
-      description: "Server-sent events: line {at, text}, end {reason}; gap {at, reason} is reserved for lines known to be missed (draw a marker, never join across it). Starts with the last 100 lines. A comment line every 15 s. The stream ends when the session ends or is revoked, when your pods/log access is withdrawn (checked every 30 s), after an hour, or when the container stops. A refusal (403, 501, 404) is sent as a single end event with the reason."
+      description: "Server-sent events: line {at, text}, end {reason}; gap {at, reason} is reserved for lines known to be missed (draw a marker, never join across it); heartbeat {serverTime} every 15 s, so a client can tell a quiet log from a dead stream. Starts with the last 100 lines. The stream ends when the session ends or is revoked, when your pods/log access is withdrawn (checked every 30 s), after an hour, or when the container stops. A refusal (403, 501, 404) is sent as a single end event with the reason."
       operationId: streamLogs
       parameters:
         - description: Namespace of the Cluster (one of the console's watched namespaces).
@@ -9700,6 +9700,26 @@ paths:
                         - data
                         - event
                       title: Event gap
+                      type: object
+                    - properties:
+                        data:
+                          $ref: "#/components/schemas/Heartbeat"
+                        event:
+                          const: heartbeat
+                          description: The event name.
+                          type: string
+                        id:
+                          description: The event ID.
+                          oneOf:
+                            - type: integer
+                            - type: string
+                        retry:
+                          description: The retry time in milliseconds.
+                          type: integer
+                      required:
+                        - data
+                        - event
+                      title: Event heartbeat
                       type: object
                     - properties:
                         data:

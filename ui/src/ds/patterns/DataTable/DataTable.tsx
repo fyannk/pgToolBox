@@ -127,9 +127,11 @@ export function DataTable<T extends RowData>({
   return (
     // The region scrolls both ways within a bounded height: overflow-x alone
     // makes it the sticky header's scroll container anyway, and one that never
-    // scrolls vertically, so the header would never stick.
+    // scrolls vertically, so the header would never stick. Its scroll padding
+    // is the header row's height (h-row, both densities), so a row focused by
+    // keyboard is never scrolled under the sticky header (WCAG 2.4.11).
     <section
-      className="max-h-[70dvh] overflow-auto rounded-panel border border-line bg-surface"
+      className="max-h-[70dvh] scroll-pt-row overflow-auto rounded-panel border border-line bg-surface"
       // biome-ignore lint/a11y/noNoninteractiveTabindex: a scrollable region must be reachable by keyboard (WCAG 2.1.1).
       tabIndex={0}
       aria-label={caption}
