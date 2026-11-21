@@ -17,6 +17,7 @@ package pgbackrest
 import (
 	"context"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -63,24 +64,34 @@ func TestUnchangedManifestIsNotReadAgain(t *testing.T) {
 		reread     []string
 		state      evidence.State
 		used       FileSource
+		previous   func(Report) Report
 	}{
 		"unchanged": {repository: tagged.without(), state: first.Backups[0].Manifest.State},
 		"no ETag":   {repository: untagged, reread: []string{"*"}, state: first.Backups[0].Manifest.State},
+		// A manifest decrypted under another cipher-pass is read again.
+		"other cipher-pass": {repository: tagged.without(), reread: []string{key, key + ".copy"}, state: first.Backups[0].Manifest.State, previous: func(report Report) Report {
+			report.Backups = slices.Clone(report.Backups)
+			report.Backups[0].Manifest.decryption[0] ^= 0xff
+			return report
+		}},
 		// The pair is read again; the rewritten main no longer verifies, so
 		// the .copy is used, as pgBackRest does.
 		"rewritten": {repository: changed, reread: []string{key, key + ".copy"}, state: evidence.Healthy, used: SourceCopy},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			second := Analyze(context.Background(), test.repository.reader(t), test.repository.objects, Options{Stanza: "demo", Generation: 2, Previous: &first})
+			previous := first
+			if test.previous != nil {
+				previous = test.previous(first)
+			}
+			second := Analyze(context.Background(), test.repository.reader(t), test.repository.objects, Options{Stanza: "demo", Generation: 2, Previous: &previous})
 			opened := manifestsOpened(test.repository)
-			switch {
-			case len(test.reread) == 0 && len(opened) != 0:
-				t.Errorf("read %v again, want no manifest read", opened)
-			case len(test.reread) == 1 && test.reread[0] == "*" && len(opened) == 0:
-				t.Error("read no manifest, want every manifest read")
-			case len(test.reread) == 1 && test.reread[0] != "*" && !reflect.DeepEqual(opened, test.reread):
-				t.Errorf("read %v again, want %v", opened, test.reread)
+			want := test.reread
+			if len(want) == 1 && want[0] == "*" {
+				want = manifestsOpened(tagged)
+			}
+			if !reflect.DeepEqual(opened, want) {
+				t.Errorf("read %v again, want %v", opened, want)
 			}
 			if got := second.Backups[0].Manifest.State; got != test.state {
 				t.Errorf("manifest state %s, want %s", got, test.state)

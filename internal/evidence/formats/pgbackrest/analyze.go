@@ -16,6 +16,7 @@ package pgbackrest
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"math"
@@ -170,8 +171,9 @@ type ManifestCheck struct {
 	// manifest and listed keep what was parsed and the listing it was read
 	// under, so the next scan reuses a manifest whose objects did not change
 	// instead of reading it again.
-	manifest *Manifest
-	listed   [2]store.Object
+	manifest   *Manifest
+	listed     [2]store.Object
+	decryption [sha256.Size]byte
 }
 
 // BackupReport is one backup with its chain, manifest and WAL evidence.
@@ -630,7 +632,7 @@ chains:
 	for _, index := range queue {
 		key := ManifestKey(options.Stanza, reports[index].Backup.Label)
 		objects := [2]store.Object{listed[key], listed[key+".copy"]}
-		if check, ok := previous[reports[index].Backup.Label]; ok && unchangedObjects(check.listed, objects) {
+		if check, ok := previous[reports[index].Backup.Label]; ok && unchangedObjects(check.listed, objects) && check.decryption == decryptionOf(info) {
 			reports[index].Manifest = evaluateManifest(check.manifest, check.Pair, objects, info, reports[index].Backup, findings)
 			continue
 		}
@@ -712,10 +714,20 @@ func unchangedObjects(before, now [2]store.Object) bool {
 	return true
 }
 
+// decryptionOf identifies how backup.info says manifests are decrypted, so a
+// manifest decrypted under another cipher-pass is read again. Only a hash is
+// kept: the cipher-pass itself is not copied.
+func decryptionOf(info *BackupInfo) [sha256.Size]byte {
+	if info == nil || !info.Encrypted {
+		return sha256.Sum256(nil)
+	}
+	return sha256.Sum256(append([]byte("encrypted\x00"), info.cipherPass...))
+}
+
 // evaluateManifest judges a manifest read now or reused from the last scan
 // against the current backup.info.
 func evaluateManifest(manifest *Manifest, pair PairCheck, objects [2]store.Object, info *BackupInfo, backup Backup, findings *findingSet) ManifestCheck {
-	check := ManifestCheck{Inspected: true, Pair: pair, manifest: manifest, listed: objects}
+	check := ManifestCheck{Inspected: true, Pair: pair, manifest: manifest, listed: objects, decryption: decryptionOf(info)}
 	if !pair.Main.Present && !pair.Copy.Present {
 		findings.add(FindingManifestMissing, SeverityError, backup.Label, "neither backup.manifest nor its .copy is listed")
 		check.State, check.Reason = evidence.Unhealthy, "manifest is missing"
