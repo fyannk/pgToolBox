@@ -362,10 +362,14 @@ func (s *Service) OperationState(ctx context.Context, namespace, name string) (o
 	for _, p := range g.pods {
 		st.Pods = append(st.Pods, *p.DeepCopy())
 	}
+	now := s.now().UTC()
 	for _, r := range s.instanceRows(g, false) {
 		inst := opstate.InstanceState{Name: r.Name, Health: r.Health}
 		if r.Live != nil {
 			inst.LagBytes = r.Live.LagBytes
+		}
+		if r.Name != g.cluster.Status.CurrentPrimary {
+			inst.Readiness = s.promoteReadiness(g, r, now)
 		}
 		st.Instances = append(st.Instances, inst)
 	}

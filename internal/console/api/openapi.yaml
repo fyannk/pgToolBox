@@ -5586,6 +5586,13 @@ components:
           type: integer
         name:
           type: string
+        readiness:
+          description: Pod readiness, streaming, replay lag, synchronous state and fencing of the target, each attributed and aged; not a score.
+          items:
+            $ref: "#/components/schemas/ReadinessFact"
+          type:
+            - array
+            - "null"
       required:
         - name
         - eligible
@@ -5678,6 +5685,38 @@ components:
           type: string
       required:
         - health
+        - provenance
+      type: object
+    ReadinessFact:
+      additionalProperties: false
+      properties:
+        health:
+          enum:
+            - ok
+            - progressing
+            - warning
+            - critical
+            - inactive
+            - unknown
+            - info
+          type: string
+        key:
+          enum:
+            - pod
+            - streaming
+            - replayLag
+            - syncState
+            - fencing
+          type: string
+        provenance:
+          $ref: "#/components/schemas/Provenance"
+        text:
+          description: The fact in words, such as streaming from the primary or not read.
+          type: string
+      required:
+        - key
+        - health
+        - text
         - provenance
       type: object
     Reauth:

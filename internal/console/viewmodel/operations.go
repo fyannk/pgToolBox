@@ -148,6 +148,32 @@ type PromoteTarget struct {
 	Health   Health             `json:"health" enum:"ok,progressing,warning,critical,inactive,unknown,info"`
 	// LagBytes is the instance's replay lag behind the primary, when read.
 	LagBytes *int64 `json:"lagBytes,omitempty"`
+	// Readiness are the facts a person weighs before confirming a
+	// switchover to this instance, each with its own source and age. It
+	// is not a score and decides nothing: Blockers are what refuses.
+	// Optional so that clients built before it existed keep compiling.
+	Readiness []ReadinessFact `json:"readiness,omitempty" doc:"Pod readiness, streaming, replay lag, synchronous state and fencing of the target, each attributed and aged; not a score."`
+}
+
+// ReadinessKey names one promote-readiness fact. The set is closed.
+type ReadinessKey string
+
+// The readiness facts, in the order they are served.
+const (
+	ReadinessPod       ReadinessKey = "pod"
+	ReadinessStreaming ReadinessKey = "streaming"
+	ReadinessReplayLag ReadinessKey = "replayLag"
+	ReadinessSyncState ReadinessKey = "syncState"
+	ReadinessFencing   ReadinessKey = "fencing"
+)
+
+// ReadinessFact is one fact about a promote target. Health is unknown
+// when the fact was not read, never ok by default.
+type ReadinessFact struct {
+	Key        ReadinessKey `json:"key" enum:"pod,streaming,replayLag,syncState,fencing"`
+	Health     Health       `json:"health" enum:"ok,progressing,warning,critical,inactive,unknown,info"`
+	Text       string       `json:"text" doc:"The fact in words, such as streaming from the primary or not read."`
+	Provenance Provenance   `json:"provenance"`
 }
 
 // OperationRequest is the body of POST .../operations.

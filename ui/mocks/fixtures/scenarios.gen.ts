@@ -10376,7 +10376,59 @@ export const listOperationsBilling = {
           "name": "orders-2",
           "eligible": true,
           "health": "ok",
-          "lagBytes": 0
+          "lagBytes": 0,
+          "readiness": [
+            {
+              "key": "pod",
+              "health": "ok",
+              "text": "Ready",
+              "provenance": {
+                "origin": "kubernetes",
+                "source": "Pod.status.conditions[Ready]",
+                "observedAt": "2026-10-29T11:59:58Z"
+              }
+            },
+            {
+              "key": "streaming",
+              "health": "ok",
+              "text": "streaming from the primary",
+              "provenance": {
+                "origin": "instance",
+                "source": "/pg/status walReceiverActive, replayPaused",
+                "observedAt": "2026-10-29T11:59:52Z"
+              }
+            },
+            {
+              "key": "replayLag",
+              "health": "ok",
+              "text": "replayed up to the primary's position as last read",
+              "provenance": {
+                "origin": "instance",
+                "source": "/pg/status replayLsn against the primary's currentLsn",
+                "observedAt": "2026-10-29T11:59:52Z"
+              }
+            },
+            {
+              "key": "syncState",
+              "health": "ok",
+              "text": "quorum: quorum-based synchronous candidate",
+              "provenance": {
+                "origin": "instance",
+                "source": "/pg/status replicationInfo of orders-1",
+                "observedAt": "2026-10-29T11:59:52Z"
+              }
+            },
+            {
+              "key": "fencing",
+              "health": "ok",
+              "text": "not fenced",
+              "provenance": {
+                "origin": "kubernetes",
+                "source": "Cluster.metadata.annotations[cnpg.io/fencedInstances]",
+                "observedAt": "2026-10-29T11:59:58Z"
+              }
+            }
+          ]
         },
         {
           "name": "orders-3",
@@ -10388,7 +10440,59 @@ export const listOperationsBilling = {
               "source": "Cluster.metadata.annotations[cnpg.io/fencedInstances]"
             }
           ],
-          "health": "unknown"
+          "health": "unknown",
+          "readiness": [
+            {
+              "key": "pod",
+              "health": "warning",
+              "text": "not Ready",
+              "provenance": {
+                "origin": "kubernetes",
+                "source": "Pod.status.conditions[Ready]",
+                "observedAt": "2026-10-29T11:59:58Z"
+              }
+            },
+            {
+              "key": "streaming",
+              "health": "unknown",
+              "text": "not read: the instance manager answered without reaching PostgreSQL",
+              "provenance": {
+                "origin": "instance",
+                "source": "/pg/status walReceiverActive, replayPaused",
+                "observedAt": "2026-10-29T11:59:52Z"
+              }
+            },
+            {
+              "key": "replayLag",
+              "health": "unknown",
+              "text": "not read: the instance manager answered without reaching PostgreSQL",
+              "provenance": {
+                "origin": "instance",
+                "source": "/pg/status replayLsn against the primary's currentLsn",
+                "observedAt": "2026-10-29T11:59:52Z"
+              }
+            },
+            {
+              "key": "syncState",
+              "health": "warning",
+              "text": "the primary reports no walsender for it",
+              "provenance": {
+                "origin": "instance",
+                "source": "/pg/status replicationInfo of orders-1",
+                "observedAt": "2026-10-29T11:59:52Z"
+              }
+            },
+            {
+              "key": "fencing",
+              "health": "critical",
+              "text": "fenced: CloudNativePG would not promote it",
+              "provenance": {
+                "origin": "kubernetes",
+                "source": "Cluster.metadata.annotations[cnpg.io/fencedInstances]",
+                "observedAt": "2026-10-29T11:59:58Z"
+              }
+            }
+          ]
         }
       ]
     },
@@ -10487,7 +10591,59 @@ export const listOperationsOrders = {
           "name": "orders-2",
           "eligible": true,
           "health": "ok",
-          "lagBytes": 0
+          "lagBytes": 0,
+          "readiness": [
+            {
+              "key": "pod",
+              "health": "ok",
+              "text": "Ready",
+              "provenance": {
+                "origin": "kubernetes",
+                "source": "Pod.status.conditions[Ready]",
+                "observedAt": "2026-10-29T11:59:58Z"
+              }
+            },
+            {
+              "key": "streaming",
+              "health": "ok",
+              "text": "streaming from the primary",
+              "provenance": {
+                "origin": "instance",
+                "source": "/pg/status walReceiverActive, replayPaused",
+                "observedAt": "2026-10-29T11:59:52Z"
+              }
+            },
+            {
+              "key": "replayLag",
+              "health": "ok",
+              "text": "replayed up to the primary's position as last read",
+              "provenance": {
+                "origin": "instance",
+                "source": "/pg/status replayLsn against the primary's currentLsn",
+                "observedAt": "2026-10-29T11:59:52Z"
+              }
+            },
+            {
+              "key": "syncState",
+              "health": "ok",
+              "text": "quorum: quorum-based synchronous candidate",
+              "provenance": {
+                "origin": "instance",
+                "source": "/pg/status replicationInfo of orders-1",
+                "observedAt": "2026-10-29T11:59:52Z"
+              }
+            },
+            {
+              "key": "fencing",
+              "health": "ok",
+              "text": "not fenced",
+              "provenance": {
+                "origin": "kubernetes",
+                "source": "Cluster.metadata.annotations[cnpg.io/fencedInstances]",
+                "observedAt": "2026-10-29T11:59:58Z"
+              }
+            }
+          ]
         },
         {
           "name": "orders-3",
@@ -10499,7 +10655,59 @@ export const listOperationsOrders = {
               "source": "Cluster.metadata.annotations[cnpg.io/fencedInstances]"
             }
           ],
-          "health": "unknown"
+          "health": "unknown",
+          "readiness": [
+            {
+              "key": "pod",
+              "health": "warning",
+              "text": "not Ready",
+              "provenance": {
+                "origin": "kubernetes",
+                "source": "Pod.status.conditions[Ready]",
+                "observedAt": "2026-10-29T11:59:58Z"
+              }
+            },
+            {
+              "key": "streaming",
+              "health": "unknown",
+              "text": "not read: the instance manager answered without reaching PostgreSQL",
+              "provenance": {
+                "origin": "instance",
+                "source": "/pg/status walReceiverActive, replayPaused",
+                "observedAt": "2026-10-29T11:59:52Z"
+              }
+            },
+            {
+              "key": "replayLag",
+              "health": "unknown",
+              "text": "not read: the instance manager answered without reaching PostgreSQL",
+              "provenance": {
+                "origin": "instance",
+                "source": "/pg/status replayLsn against the primary's currentLsn",
+                "observedAt": "2026-10-29T11:59:52Z"
+              }
+            },
+            {
+              "key": "syncState",
+              "health": "warning",
+              "text": "the primary reports no walsender for it",
+              "provenance": {
+                "origin": "instance",
+                "source": "/pg/status replicationInfo of orders-1",
+                "observedAt": "2026-10-29T11:59:52Z"
+              }
+            },
+            {
+              "key": "fencing",
+              "health": "critical",
+              "text": "fenced: CloudNativePG would not promote it",
+              "provenance": {
+                "origin": "kubernetes",
+                "source": "Cluster.metadata.annotations[cnpg.io/fencedInstances]",
+                "observedAt": "2026-10-29T11:59:58Z"
+              }
+            }
+          ]
         }
       ]
     },

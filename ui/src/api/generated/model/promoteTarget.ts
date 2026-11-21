@@ -7,6 +7,7 @@
  */
 import type { OperationBlocker } from './operationBlocker.ts';
 import type { PromoteTargetHealth } from './promoteTargetHealth.ts';
+import type { ReadinessFact } from './readinessFact.ts';
 
 export interface PromoteTarget {
   /** @nullable */
@@ -15,4 +16,9 @@ export interface PromoteTarget {
   health: PromoteTargetHealth;
   lagBytes?: number;
   name: string;
+  /**
+     * Pod readiness, streaming, replay lag, synchronous state and fencing of the target, each attributed and aged; not a score.
+     * @nullable
+     */
+  readiness?: ReadinessFact[] | null;
 }

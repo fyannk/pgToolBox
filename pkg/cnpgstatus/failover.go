@@ -481,7 +481,7 @@ func promotionText(out Rehearsal, in RehearsalInput, first RehearsalCandidate) s
 		case out.BehindBytes != nil && *out.BehindBytes == 0:
 			parts = append(parts, "with no WAL missing at the last sweep ("+why+", so not guaranteed)")
 		case out.BehindBytes != nil:
-			parts = append(parts, fmt.Sprintf("losing up to %s of WAL it had not received (%s)", byteWords(*out.BehindBytes), why))
+			parts = append(parts, fmt.Sprintf("losing up to %s of WAL it had not received (%s)", ByteWords(*out.BehindBytes), why))
 		default:
 			parts = append(parts, "losing the WAL it had not received, an amount not known ("+why+")")
 		}
@@ -731,8 +731,8 @@ func rehearsalQuorum(in RehearsalInput) *RehearsalQuorum {
 	return q
 }
 
-// byteWords renders a byte count for the sentence, IEC.
-func byteWords(b int64) string {
+// ByteWords renders a byte count for a sentence, IEC.
+func ByteWords(b int64) string {
 	switch {
 	case b < 1024:
 		return fmt.Sprintf("%d bytes", b)

@@ -61,6 +61,8 @@ export const ConfirmPromote: Story = {
       .getAllByRole("radio")
       .find((r) => !(r as HTMLInputElement).disabled) as HTMLInputElement;
     await userEvent.click(eligible);
+    // The chosen target's readiness is read before the name is typed.
+    await expect(within(dialog).getByRole("heading", { name: `Readiness of ${eligible.value}` })).toBeVisible();
     await userEvent.type(within(dialog).getByLabelText(/To confirm, type/), eligible.value);
     await userEvent.click(within(dialog).getByRole("button", { name: "Request" }));
     await expect(args.onRequest).toHaveBeenCalledWith({
