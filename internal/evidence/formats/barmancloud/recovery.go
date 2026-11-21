@@ -485,7 +485,7 @@ func historyReader(compressed []byte, compression string) (io.Reader, io.Closer,
 // lzma writes.
 const xzMaxDictionary = 8 << 20
 
-var errXZRefused = errors.New("unsupported history compression: xz stream not walkable, more than one block, dictionary exceeds limit or check mismatch")
+var errXZRefused = errors.New("unsupported history compression: xz stream not walkable, more than one block, no check, dictionary exceeds limit, check mismatch or index mismatch")
 
 // decodeXZ decodes the one xz stream in data, of at most one block, as
 // liblzma (Barman's Python lzma) and ulikunitz/xz write a history: one
@@ -498,18 +498,22 @@ var errXZRefused = errors.New("unsupported history compression: xz stream not wa
 // 4 GiB), and it resumes after an LZMA chunk where the chunk's data stopped
 // rather than at its declared end, so it can parse a block header the walk
 // never saw. A decoder that stops before the walked end marker, or a check
-// that differs, is refused. The index is not read.
+// that differs, is refused. A stream without a check (type None) is refused:
+// nothing would verify what is parsed, and Barman always writes one. The index
+// and the footer must describe exactly the walked block, as liblzma requires
+// to decompress the file at restore time, and nothing may follow the footer.
 func decodeXZ(data []byte) ([]byte, error) {
 	if len(data) < 12 || !xz.ValidHeader(data[:12]) {
 		return nil, errXZRefused
 	}
-	checkSizes := map[byte]int{0x00: 0, 0x01: 4, 0x04: 8, 0x0a: 32}
+	checkSizes := map[byte]int{0x01: 4, 0x04: 8, 0x0a: 32} // no check (0x00) is refused
 	checkType := data[7] & 0x0f
 	checkSize, ok := checkSizes[checkType]
 	if !ok {
 		return nil, errXZRefused
 	}
 	var decoded []byte
+	var records []uint64 // unpadded size, uncompressed size of the block
 	position := 12
 	if position < len(data) && data[position] != 0x00 { // 0x00 starts the index
 		size := (int(data[position]) + 1) * 4
@@ -550,15 +554,51 @@ func decodeXZ(data []byte) ([]byte, error) {
 		if decoded = append(decoded, block...); int64(len(decoded)) > MaxHistoryDecompressedBytes {
 			return decoded, nil // readHistory refuses it by size
 		}
+		if (end+3)&^3 > len(data) || !allZero(data[end:(end+3)&^3]) {
+			return nil, errXZRefused
+		}
+		blockStart := position
 		position = (end+3)&^3 + checkSize
 		if err != nil || source.Len() != 0 || position > len(data) || !bytes.Equal(data[position-checkSize:position], xzCheck(checkType, block)) {
 			return nil, errXZRefused
 		}
+		records = []uint64{uint64(end - blockStart + checkSize), uint64(len(block))} //nolint:gosec // non-negative, bounded by the 256 KiB object and the decoded cap
 	}
-	if position >= len(data) || data[position] != 0x00 { // a second block, or no index
+	if !xzIndexAndFooter(data, position, records) { // a second block, no index, or a tail that does not match
 		return nil, errXZRefused
 	}
 	return decoded, nil
+}
+
+// xzIndexAndFooter reports whether data[position:] is exactly an xz index
+// listing the given block (unpadded and uncompressed size, or no block when
+// empty) followed by the stream footer matching the stream header.
+func xzIndexAndFooter(data []byte, position int, records []uint64) bool {
+	want := []byte{0x00, 0x00} // the indicator, then the number of records (0 or 1)
+	if len(records) != 0 {
+		want[1] = 0x01
+	}
+	for _, value := range records {
+		want = binary.AppendUvarint(want, value)
+	}
+	for len(want)%4 != 0 {
+		want = append(want, 0x00)
+	}
+	want = binary.LittleEndian.AppendUint32(want, crc32.ChecksumIEEE(want))
+	footer := binary.LittleEndian.AppendUint32(nil, uint32(len(want)/4-1)) //nolint:gosec // an index of at most two records is a few bytes
+	footer = append(footer, data[6:8]...)                                  // the stream flags, as in the header
+	footer = append(binary.LittleEndian.AppendUint32(nil, crc32.ChecksumIEEE(footer)), footer...)
+	want = append(append(want, footer...), 'Y', 'Z')
+	return bytes.Equal(data[position:], want)
+}
+
+func allZero(data []byte) bool {
+	for _, value := range data {
+		if value != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // xzCheck is the xz check of the given type over a block's decoded bytes,
@@ -569,11 +609,9 @@ func xzCheck(checkType byte, block []byte) []byte {
 		return binary.LittleEndian.AppendUint32(nil, crc32.ChecksumIEEE(block))
 	case 0x04:
 		return binary.LittleEndian.AppendUint64(nil, crc64.Checksum(block, crc64.MakeTable(crc64.ECMA)))
-	case 0x0a:
+	default: // 0x0a, SHA-256: decodeXZ admits no other type
 		sum := sha256.Sum256(block)
 		return sum[:]
-	default:
-		return []byte{}
 	}
 }
 
