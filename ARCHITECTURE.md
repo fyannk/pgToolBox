@@ -51,7 +51,7 @@ console the `pgtools` chart installs. `config/` (kustomize) and `deploy/olm/`
 |---|---|---|
 | `cmd/console` | `pgtoolbox-console` | The console. Validates its whole environment before listening; shuts down cleanly on SIGTERM. |
 | `cmd/operator` | `pgtoolbox-operator` (binary `/manager`) | The four controllers, plus subcommands the pgAdmin Pod and Jobs run from this same binary: `install`, `passfile-sync`, `pgadmin-register`, `pgadmin-backup`. |
-| `cmd/evidence-agent` | `pgtoolbox-evidence-agent` (binary `/evidence-agent`) | The evidence agent. Modes: standalone (a read-only viewer UI); `RUNTIME_MODE=agent` (deployed by the operator, HTTPS with bound-token authentication); `RUNTIME_MODE=agent` with `AGENT_RESOLVE=cluster` (team mode: it finds its repository from the Cluster itself and checks a shared token). |
+| `cmd/evidence-agent` | `pgtoolbox-evidence-agent` (binary `/evidence-agent`) | The evidence agent, `RUNTIME_MODE=agent` (the only mode; also when empty). Deployed by the operator (HTTPS with bound-token authentication), or run with `AGENT_RESOLVE=cluster` (team mode: it finds its repository from the Cluster itself and checks a shared token). |
 | `internal/console/api/gen` | dev tool | Writes `openapi.yaml` and the API's example fixtures (`make openapi`). |
 | `pkg/evidence/cmd/evidence-artifacts` | dev tool | Writes the evidence JSON Schemas and wire examples (`make generate-evidence-artifacts`). |
 | `hack/readonlycheck` | dev tool | The console's write boundary, checked on the typed syntax tree (`make check-repo`). |

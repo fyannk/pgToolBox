@@ -87,6 +87,8 @@ run_profile() {
     docker logs "$name" >&2
     return 1
   fi
+  # The synthetic store cannot be read: live, but not ready.
+  test "$(status "http://127.0.0.1:$port/readyz")" = "503"
 
   test "$(docker inspect --format '{{.HostConfig.ReadonlyRootfs}}' "$name")" = "true"
   test "$(docker inspect --format '{{.Config.User}}' "$name")" = "$uid:$gid"

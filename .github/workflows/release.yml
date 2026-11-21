@@ -194,7 +194,7 @@ jobs:
             description: Operational console for one CloudNativePG cluster
           - image: evidence-agent
             title: pgToolBox evidence agent
-            description: Read-only viewer and evidence producer for a PostgreSQL backup repository
+            description: Read-only evidence producer for a PostgreSQL backup repository
     env:
       IMAGE_REF: ghcr.io/${{ github.repository_owner }}/pgtoolbox-${{ matrix.image }}
     steps:
