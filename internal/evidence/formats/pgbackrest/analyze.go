@@ -167,6 +167,11 @@ type ManifestCheck struct {
 	Reason    string
 	Pair      PairCheck
 	Mismatch  string
+	// manifest and listed keep what was parsed and the listing it was read
+	// under, so the next scan reuses a manifest whose objects did not change
+	// instead of reading it again.
+	manifest *Manifest
+	listed   [2]store.Object
 }
 
 // BackupReport is one backup with its chain, manifest and WAL evidence.
@@ -621,8 +626,14 @@ chains:
 	counter := &countingReader{Reader: reader}
 	var spent int64
 	byteCapped := false
+	previous := previousManifests(options.Previous)
 	for _, index := range queue {
 		key := ManifestKey(options.Stanza, reports[index].Backup.Label)
+		objects := [2]store.Object{listed[key], listed[key+".copy"]}
+		if check, ok := previous[reports[index].Backup.Label]; ok && unchangedObjects(check.listed, objects) {
+			reports[index].Manifest = evaluateManifest(check.manifest, check.Pair, objects, info, reports[index].Backup, findings)
+			continue
+		}
 		listedSize := max(listed[key].Size, 0) + max(listed[key+".copy"].Size, 0)
 		if spent+listedSize > byteBudget || spent >= byteBudget {
 			byteCapped = true
@@ -668,8 +679,43 @@ func (b *countingBody) Read(buffer []byte) (int, error) {
 }
 
 func checkManifest(ctx context.Context, reader store.Reader, listed map[string]store.Object, stanza string, info *BackupInfo, backup Backup, findings *findingSet) ManifestCheck {
+	key := ManifestKey(stanza, backup.Label)
 	manifest, pair := LoadManifest(ctx, reader, listed, stanza, backup.Label, info)
-	check := ManifestCheck{Inspected: true, Pair: pair}
+	return evaluateManifest(manifest, pair, [2]store.Object{listed[key], listed[key+".copy"]}, info, backup, findings)
+}
+
+// previousManifests indexes the manifests the last scan parsed, by label.
+// Only a parsed manifest is reused: a failed read is tried again.
+func previousManifests(previous *Report) map[string]ManifestCheck {
+	if previous == nil {
+		return nil
+	}
+	checks := make(map[string]ManifestCheck)
+	for _, backup := range previous.Backups {
+		if backup.Manifest.manifest != nil {
+			checks[backup.Backup.Label] = backup.Manifest
+		}
+	}
+	return checks
+}
+
+// unchangedObjects reports whether the manifest and its .copy are listed as
+// they were when they were read: same presence, size, modification time and
+// ETag. A store that gives no ETag for a listed file never reuses it.
+func unchangedObjects(before, now [2]store.Object) bool {
+	for index := range before {
+		was, is := before[index], now[index]
+		if was.Key != is.Key || was.Size != is.Size || was.ETag != is.ETag || !was.LastModified.Equal(is.LastModified) || (is.Key != "" && is.ETag == "") {
+			return false
+		}
+	}
+	return true
+}
+
+// evaluateManifest judges a manifest read now or reused from the last scan
+// against the current backup.info.
+func evaluateManifest(manifest *Manifest, pair PairCheck, objects [2]store.Object, info *BackupInfo, backup Backup, findings *findingSet) ManifestCheck {
+	check := ManifestCheck{Inspected: true, Pair: pair, manifest: manifest, listed: objects}
 	if !pair.Main.Present && !pair.Copy.Present {
 		findings.add(FindingManifestMissing, SeverityError, backup.Label, "neither backup.manifest nor its .copy is listed")
 		check.State, check.Reason = evidence.Unhealthy, "manifest is missing"
