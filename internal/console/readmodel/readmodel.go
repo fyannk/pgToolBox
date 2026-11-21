@@ -307,6 +307,7 @@ func New(cfg config.Console, restConfig *rest.Config, logger *slog.Logger, id Id
 		diagOpts.Shared = shared
 	}
 	runner := diag.New(svc, manager, diagOpts)
+	diag.ExportMetrics(runner)
 	svc.SetDiagnostics(runner)
 
 	rm := &ReadModel{
