@@ -252,7 +252,6 @@ pgbackrest-fixtures: ## Regenerate the pgBackRest 2.60.0 fixtures in Docker and 
 .PHONY: test-container
 test-container: docker-build-console docker-build-evidence ## Restricted-runtime profile of the console and evidence images (Docker).
 	./hack/console/test-container.sh $(CONSOLE_IMG)
-	./hack/evidence/test-container.sh $(EVIDENCE_IMG)
 	./hack/evidence/test-agent-container.sh $(EVIDENCE_IMG)
 
 .PHONY: test-multiarch

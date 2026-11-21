@@ -23,7 +23,7 @@
 #     the image cannot run under the profile);
 #   - the image carries no shell (docker run --entrypoint /bin/sh fails).
 # The console and the evidence agent have behavioural tests on top
-# (hack/console/test-container.sh, hack/evidence/test-container.sh); this is
+# (hack/console/test-container.sh, hack/evidence/test-agent-container.sh); this is
 # the floor under every image, the operator included.
 set -euo pipefail
 

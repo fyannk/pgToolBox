@@ -156,12 +156,11 @@ USER 65532:65532
 EXPOSE 3000
 ENTRYPOINT ["/console"]
 
-# The evidence agent: standalone, or as the agent an
-# EvidenceAgent (or the pgtools chart) runs.
+# The evidence agent an EvidenceAgent (or the pgtools chart) runs.
 FROM gcr.io/distroless/static-debian13:nonroot@sha256:aafe993665bf6200db38a02c11a9351e782a84b6a45e7f33b6695638c88e3931 AS evidence-agent
 ARG VERSION=development
 LABEL org.opencontainers.image.title="pgToolBox evidence agent" \
-      org.opencontainers.image.description="Read-only viewer and evidence producer for a PostgreSQL backup repository" \
+      org.opencontainers.image.description="Read-only evidence producer for a PostgreSQL backup repository" \
       org.opencontainers.image.source="https://github.com/fyannk/pgToolBox" \
       org.opencontainers.image.documentation="https://fyannk.github.io/pgToolBox/" \
       org.opencontainers.image.licenses="Apache-2.0" \
@@ -169,5 +168,5 @@ LABEL org.opencontainers.image.title="pgToolBox evidence agent" \
 COPY --from=builder /workspace/evidence-agent /evidence-agent
 COPY LICENSE /licenses/evidence-agent/LICENSE
 USER 65532:65532
-EXPOSE 3000
+EXPOSE 8443
 ENTRYPOINT ["/evidence-agent"]

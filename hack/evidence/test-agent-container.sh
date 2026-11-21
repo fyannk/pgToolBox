@@ -3,12 +3,15 @@
 # pgtools chart's team mode runs it: shared-token authentication over plain HTTP
 # inside one namespace, credentials as read-only files, no network but the
 # published port. Two profiles: an arbitrary non-root UID, and a UID in group 0
-# (what OpenShift's restricted SCC assigns).
+# (what OpenShift's restricted SCC assigns). The first profile also checks the
+# image's filesystem: the binary and its licence, and no source, package
+# manager or shell.
 set -eu
 
 image=${1:-evidence-agent:dev}
 test_prefix="evidence-${EVIDENCE_RUN_ID:-local}-agent-$$"
 work=$(mktemp -d)
+filesystem_archive="$work/filesystem.tar"
 containers=""
 
 cleanup() {
@@ -107,6 +110,16 @@ run_profile() {
   if docker logs "$name" 2>&1 | grep -F -e "$token" -e synthetic-secret-key -e synthetic-access-key; then
     echo "agent log disclosed a secret" >&2
     return 1
+  fi
+
+  if [ "$profile" = ordinary ]; then
+    docker export "$name" > "$filesystem_archive"
+    if tar -tf "$filesystem_archive" | grep -E '(^|/)(src|go)/.+|(^|/)(apk|apt|apt-get|dpkg|rpm|yum|dnf)$|(^|/)bin/(ba)?sh$'; then
+      echo "runtime image contains source, a package manager, or a shell" >&2
+      return 1
+    fi
+    tar -tf "$filesystem_archive" | grep -qx 'evidence-agent'
+    tar -tf "$filesystem_archive" | grep -qx 'licenses/evidence-agent/LICENSE'
   fi
 
   docker stop --signal TERM --time 10 "$name" >/dev/null

@@ -27,14 +27,15 @@ import (
 	"github.com/fyannk/pgToolBox/internal/evidence/store"
 )
 
-// MaxPGBackRestStanzas caps the stanzas the viewer analyses in one scan;
+// MaxPGBackRestStanzas caps the stanzas analysed in one scan without a
+// configured Stanza;
 // past it the snapshot is unknown rather than partial.
 const MaxPGBackRestStanzas = 64
 
 // PGBackRestOptions turns on the pgBackRest analysis. With a Stanza the
 // scanner analyses that stanza only (the agent: its backups under
 // backup/<Stanza>/ and its WAL under archive/<ArchiveStanza>/); without one
-// it analyses every stanza it lists (the viewer).
+// it analyses every stanza it lists.
 type PGBackRestOptions struct {
 	Stanza        string
 	ArchiveStanza string
@@ -97,8 +98,8 @@ func (b *pgbackrestBuilder) collector(stanza, archiveStanza string) *pgbackrest.
 }
 
 // add folds one matched object in. The agent's single collector sees every
-// object and keeps its two stanza directories; the viewer opens a collector
-// the first time a stanza appears.
+// object and keeps its two stanza directories; without a Stanza a collector
+// opens the first time a stanza appears.
 func (b *pgbackrestBuilder) add(object store.Object, scope string) {
 	if b.options.Stanza != "" {
 		b.collectors[b.options.Stanza].Add(object)

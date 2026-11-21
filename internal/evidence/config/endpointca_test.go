@@ -58,20 +58,19 @@ func TestEndpointCAForAzure(t *testing.T) {
 	if err := os.WriteFile(path, bundle, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	azure := map[string]string{
-		"REPOSITORY_FORMAT": "barman-cloud", "PROVIDER": "azure", "DESTINATION_PATH": "azure://backups/team-a",
-		"ENDPOINT_URL": "https://azurite.storage.svc:10000", "BARMAN_SERVER_NAMES": "orders", "ENDPOINT_CA_FILE": path,
-	}
+	azure := agentProviderEnvironment(t, "azure", "azure://backups/team-a", map[string]string{
+		"ENDPOINT_URL": "https://azurite.storage.svc:10000", "ENDPOINT_CA_FILE": path,
+		"AZURE_STORAGE_ACCOUNT": "devstoreaccount1", "STORE_CREDENTIAL_MODE": "ambient",
+	})
 	cfg, err := Load(mapEnvironment(azure))
-	if err != nil || !bytes.Equal(cfg.EndpointCABundle, bundle) {
-		t.Fatalf("Azure endpoint CA = %v", err)
+	if err != nil || cfg.RepositoryError != nil || !bytes.Equal(cfg.EndpointCABundle, bundle) {
+		t.Fatalf("Azure endpoint CA = %v, deferred %v", err, cfg.RepositoryError)
 	}
-	gcs := map[string]string{
-		"REPOSITORY_FORMAT": "barman-cloud", "PROVIDER": "gcs", "DESTINATION_PATH": "gs://backups/team-a",
-		"BARMAN_SERVER_NAMES": "orders", "ENDPOINT_CA_FILE": path,
-	}
+	gcs := agentProviderEnvironment(t, "gcs", "gs://backups/team-a", map[string]string{
+		"ENDPOINT_CA_FILE": path, "STORE_CREDENTIAL_MODE": "ambient",
+	})
 	var configErr *Error
-	if _, err := Load(mapEnvironment(gcs)); !errors.As(err, &configErr) || configErr.Variable != "ENDPOINT_CA_FILE" {
+	if err := loadOutcome(gcs); !errors.As(err, &configErr) || configErr.Variable != "ENDPOINT_CA_FILE" {
 		t.Fatalf("GCS endpoint CA = %v", err)
 	}
 

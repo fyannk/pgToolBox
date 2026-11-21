@@ -15,10 +15,76 @@
 package providertest
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
+	"io"
 	"os"
+	"slices"
+	"sort"
+	"strings"
 	"testing"
+	"time"
+
+	"github.com/fyannk/pgToolBox/internal/evidence/evidence"
+	"github.com/fyannk/pgToolBox/internal/evidence/fault"
+	"github.com/fyannk/pgToolBox/internal/evidence/store"
+	"github.com/fyannk/pgToolBox/internal/evidence/store/storetest"
 )
+
+type notFound struct{}
+
+func (notFound) Error() string            { return "object not found" }
+func (notFound) Category() fault.Category { return fault.NotFound }
+
+var errNotFound error = notFound{}
+
+// memoryStore serves objects from memory in one sorted page per prefix.
+func memoryStore(objects []FixtureObject) store.Reader {
+	data := map[string][]byte{}
+	for _, object := range objects {
+		data[object.Key] = object.Data
+	}
+	modified := time.Date(2026, 7, 27, 0, 0, 0, 0, time.UTC)
+	stat := func(key string) (store.Object, error) {
+		content, ok := data[key]
+		if !ok {
+			return store.Object{}, errNotFound
+		}
+		return store.Object{Key: key, Size: int64(len(content)), LastModified: modified, ETag: "etag"}, nil
+	}
+	return &storetest.Fake{
+		ListFunc: func(_ context.Context, request store.ListRequest) (store.Page, error) {
+			page := store.Page{}
+			for key := range data {
+				if strings.HasPrefix(key, request.Prefix) {
+					object, _ := stat(key)
+					page.Objects = append(page.Objects, object)
+				}
+			}
+			sort.Slice(page.Objects, func(i, j int) bool { return page.Objects[i].Key < page.Objects[j].Key })
+			return page, nil
+		},
+		OpenFunc: func(_ context.Context, request store.OpenRequest) (io.ReadCloser, error) {
+			content, ok := data[request.Key]
+			if !ok {
+				return nil, errNotFound
+			}
+			return io.NopCloser(bytes.NewReader(content)), nil
+		},
+		StatFunc: func(_ context.Context, key string) (store.Object, error) { return stat(key) },
+	}
+}
+
+// The journey runs hermetically too: the provider integration tests add
+// only the provider under it.
+func TestBarmanCatalogJourneyInMemory(t *testing.T) {
+	t.Parallel()
+	result := BarmanCatalogJourney(t, memoryStore(BarmanFixture(t)))
+	if !slices.Equal(result.ServedStates, []evidence.State{evidence.Healthy, evidence.Warning, evidence.Unhealthy, evidence.Unknown}) {
+		t.Fatalf("served states = %v", result.ServedStates)
+	}
+}
 
 func TestBarmanFixtureManifestMatchesJourneyProfile(t *testing.T) {
 	t.Parallel()

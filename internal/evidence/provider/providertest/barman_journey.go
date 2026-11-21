@@ -21,23 +21,21 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
 	"sort"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/fyannk/pgToolBox/internal/evidence/evidence"
+	"github.com/fyannk/pgToolBox/internal/evidence/evidenceapi"
 	"github.com/fyannk/pgToolBox/internal/evidence/fault"
 	"github.com/fyannk/pgToolBox/internal/evidence/formats/barmancloud"
 	"github.com/fyannk/pgToolBox/internal/evidence/inventory"
 	"github.com/fyannk/pgToolBox/internal/evidence/readiness"
 	"github.com/fyannk/pgToolBox/internal/evidence/store"
-	"github.com/fyannk/pgToolBox/internal/evidence/web"
+	evidencev1alpha1 "github.com/fyannk/pgToolBox/pkg/evidence/v1alpha1"
 )
 
 // FixtureProfile names the fixture set; it is recorded in every JourneyResult.
@@ -75,7 +73,7 @@ type JourneyResult struct {
 	BackupStates     []StateCount          `json:"backup_states"`
 	Capabilities     []Capability          `json:"capabilities"`
 	Recovery         RecoveryResult        `json:"recovery"`
-	RenderedStates   []evidence.State      `json:"rendered_states"`
+	ServedStates     []evidence.State      `json:"served_states"`
 }
 
 // RecoveryResult summarizes the recovery evidence of a JourneyResult.
@@ -123,8 +121,8 @@ func BarmanFixture(t *testing.T) []FixtureObject {
 }
 
 // BarmanCatalogJourney probes and scans reader, which must hold BarmanFixture,
-// checks the catalog, WAL and recovery evidence and the rendered page, and
-// returns the normalized result. It fails t on any mismatch.
+// checks the catalog, WAL and recovery evidence and what the agent serves
+// of it, and returns the normalized result. It fails t on any mismatch.
 func BarmanCatalogJourney(t *testing.T, reader store.Reader) JourneyResult {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -190,25 +188,14 @@ func BarmanCatalogJourney(t *testing.T, reader store.Reader) JourneyResult {
 		t.Fatalf("Barman recovery evidence = %#v", recovery)
 	}
 
-	handler, err := web.New(web.Options{
-		Logger: slog.New(slog.DiscardHandler), Provider: "normalized-provider",
-		Format: format.Descriptor(), Inventory: cache.Load, Readiness: probe.Result,
-		RequestID: func() string { return "provider-parity-proof" }, Now: time.Now,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	response := httptest.NewRecorder()
-	handler.Routes().ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", nil))
-	body := response.Body.String()
-	if response.Code != http.StatusOK {
-		t.Fatalf("render status = %d", response.Code)
-	}
-	for _, expected := range []string{"started", "failed", "malformed", "missing-artifact", "missing-info", ">healthy<", ">warning<", ">unhealthy<", ">unknown<", "A structurally usable backup", "Observed recovery coverage", "Archive receipt is not transaction time"} {
-		if !strings.Contains(body, expected) {
-			t.Fatalf("rendered catalog does not contain %q", expected)
-		}
-	}
+	served := ServeAgentEvidence(t, snapshot, evidenceapi.Options{
+		ProducerVersion: "journey", ClusterNamespace: "database-team", ClusterUID: "2f12b7d1-7e8d-4c37-a68f-233efc5f3191",
+		Repository: evidencev1alpha1.RepositoryFingerprintInput{
+			Provider: evidencev1alpha1.ProviderS3, Bucket: "barman-proof", Prefix: "repository",
+			Format: evidencev1alpha1.FormatBarmanCloud, ScopeKind: evidencev1alpha1.ScopeKindBarmanServer, ScopeName: "alpha",
+		},
+	}, probe)
+	servedStates := assertServedBarmanEvidence(t, served)
 
 	result := JourneyResult{
 		FixtureProfile: FixtureProfile, RepositoryFormat: snapshot.Evidence.RepositoryFormat,
@@ -227,7 +214,7 @@ func BarmanCatalogJourney(t *testing.T, reader store.Reader) JourneyResult {
 			PathStates:      []StateCount{{State: recovery.Paths[0].State, Count: 1}},
 			RetentionStates: []StateCount{{State: recovery.Retention.State, Count: 1}},
 		},
-		RenderedStates: []evidence.State{evidence.Healthy, evidence.Warning, evidence.Unhealthy, evidence.Unknown},
+		ServedStates: servedStates,
 	}
 	for _, scope := range snapshot.Scopes {
 		result.Scopes = append(result.Scopes, scope.Name)
@@ -237,6 +224,62 @@ func BarmanCatalogJourney(t *testing.T, reader store.Reader) JourneyResult {
 	}
 	sort.Strings(result.Scopes)
 	return result
+}
+
+// assertServedBarmanEvidence checks that the agent's snapshot and
+// collections carry the fixture's catalog, WAL and recovery facts, and
+// returns the backup states served, in normative order.
+func assertServedBarmanEvidence(t *testing.T, served AgentEvidence) []evidence.State {
+	t.Helper()
+	snapshot := served.Snapshot
+	summary := snapshot.Details.BarmanCloud
+	if snapshot.Completeness != evidence.Complete || snapshot.State != evidence.Unknown || snapshot.Stale ||
+		snapshot.Identity.Repository.Scope.Name != "alpha" || summary == nil {
+		t.Fatalf("served snapshot: %s", served.SnapshotBody)
+	}
+	wantCounts := evidencev1alpha1.StateCounts{Healthy: 1, Warning: 1, Unhealthy: 2, Unknown: 2}
+	if summary.BackupStates == nil || *summary.BackupStates != wantCounts || summary.BackupItems == nil || *summary.BackupItems != 6 ||
+		summary.StructurallyUsableBackups == nil || *summary.StructurallyUsableBackups != 1 {
+		t.Fatalf("served backup summary: %s", served.SnapshotBody)
+	}
+	if summary.WAL.State != evidence.Healthy || summary.Timeline.State != evidence.Healthy || summary.Coverage.State != evidence.Unknown ||
+		summary.Retention.State != evidence.Healthy || summary.RecoveryPathItems == nil || *summary.RecoveryPathItems != 1 ||
+		summary.LatestArchiveReceiptAt == nil {
+		t.Fatalf("served WAL and recovery summary: %s", served.SnapshotBody)
+	}
+
+	var backups evidencev1alpha1.BarmanBackupPage
+	served.Page(evidencev1alpha1.BackupsPath, &backups)
+	wantNamedStates := map[string]evidence.State{
+		"started": evidence.Warning, "failed": evidence.Unhealthy,
+		"malformed": evidence.Unknown, "missing-artifact": evidence.Unhealthy,
+		"missing-info": evidence.Unknown,
+	}
+	seen := map[evidence.State]bool{}
+	for _, backup := range backups.Items {
+		seen[backup.State] = true
+		if want, exists := wantNamedStates[backup.BackupID]; exists {
+			if backup.State != want {
+				t.Fatalf("served backup %s state = %s, want %s", backup.BackupID, backup.State, want)
+			}
+			delete(wantNamedStates, backup.BackupID)
+		}
+	}
+	if len(backups.Items) != 6 || len(wantNamedStates) != 0 {
+		t.Fatalf("served backups = %d, missing %v", len(backups.Items), wantNamedStates)
+	}
+	var paths evidencev1alpha1.BarmanRecoveryPathPage
+	served.Page(evidencev1alpha1.RecoveryPathsPath, &paths)
+	if len(paths.Items) != 1 || paths.Items[0].State != evidence.Unknown {
+		t.Fatalf("served recovery paths = %+v", paths.Items)
+	}
+	states := []evidence.State{}
+	for _, state := range []evidence.State{evidence.Healthy, evidence.Warning, evidence.Unhealthy, evidence.Unknown} {
+		if seen[state] {
+			states = append(states, state)
+		}
+	}
+	return states
 }
 
 // WriteJourneyResult writes result as JSON to the file named by

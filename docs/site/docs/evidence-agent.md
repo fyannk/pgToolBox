@@ -12,11 +12,12 @@ what is actually there. The console shows the
 operator's claim and the repository's evidence side by side, and names the
 disagreements.
 
-The agent is the `pgtoolbox-evidence-agent` image run in its `agent` mode. You declare
+The agent is the `pgtoolbox-evidence-agent` image; `agent` is its only runtime mode
+(`RUNTIME_MODE=agent`, also when the variable is empty). You declare
 it with an [`EvidenceAgent`](operator/evidenceagent.md); the operator creates the
 Deployment. Without the operator, the `pgtools` chart deploys it for the Clusters
-its values list ([team mode](#team-mode-without-the-operator)). The same binary
-also has a standalone mode (a read-only viewer UI); pgToolBox does not deploy it.
+its values list ([team mode](#team-mode-without-the-operator)). It serves no web UI
+of its own: the console renders what it publishes.
 
 ## What it reports
 
