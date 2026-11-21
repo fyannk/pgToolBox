@@ -305,7 +305,7 @@ func (r *Reconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager) err
 		Watches(&cnpgv1.Cluster{}, handler.EnqueueRequestsFromMapFunc(r.forCluster)).
 		// Cross-namespace grants and what they produce in the grant's
 		// namespace (owned by the grant, labelled with this PgAdmin).
-		Watches(&pgtoolboxv1alpha1.PgAdminAccess{}, handler.EnqueueRequestsFromMapFunc(forGrant)).
+		Watches(&pgtoolboxv1alpha1.PgAdminAccess{}, handler.EnqueueRequestsFromMapFunc(r.forGrant)).
 		Watches(&rbacv1.Role{}, handler.EnqueueRequestsFromMapFunc(byAccessLabels)).
 		Watches(&rbacv1.RoleBinding{}, handler.EnqueueRequestsFromMapFunc(byAccessLabels)).
 		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.forClientSecret), builder.OnlyMetadata).
