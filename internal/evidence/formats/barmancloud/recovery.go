@@ -485,11 +485,13 @@ func historyReader(compressed []byte, compression string) (io.Reader, io.Closer,
 // lzma writes.
 const xzMaxDictionary = 8 << 20
 
-var errXZRefused = errors.New("unsupported history compression: xz stream not walkable, dictionary exceeds limit or check mismatch")
+var errXZRefused = errors.New("unsupported history compression: xz stream not walkable, more than one block, dictionary exceeds limit or check mismatch")
 
-// decodeXZ decodes the one xz stream in data block by block: it walks each
+// decodeXZ decodes the one xz stream in data, of at most one block, as
+// liblzma (Barman's Python lzma) and ulikunitz/xz write a history: one
+// dictionary is allocated per block, so more blocks are refused. It walks the
 // block (header, LZMA2 chunks up to the end marker, padding, check), refuses
-// a block that is not a single LZMA2 filter with a dictionary of at most
+// it unless it is a single LZMA2 filter with a dictionary of at most
 // xzMaxDictionary, and decodes exactly the walked LZMA2 bytes as raw LZMA2
 // with a dictionary of xzMaxDictionary. ulikunitz/xz's own reader is not
 // used: it allocates whatever dictionary a block header declares (up to
@@ -509,7 +511,7 @@ func decodeXZ(data []byte) ([]byte, error) {
 	}
 	var decoded []byte
 	position := 12
-	for position < len(data) && data[position] != 0x00 { // 0x00 starts the index
+	if position < len(data) && data[position] != 0x00 { // 0x00 starts the index
 		size := (int(data[position]) + 1) * 4
 		if position+size > len(data) || crc32.ChecksumIEEE(data[position:position+size-4]) != binary.LittleEndian.Uint32(data[position+size-4:]) {
 			return nil, errXZRefused
@@ -553,7 +555,7 @@ func decodeXZ(data []byte) ([]byte, error) {
 			return nil, errXZRefused
 		}
 	}
-	if position >= len(data) {
+	if position >= len(data) || data[position] != 0x00 { // a second block, or no index
 		return nil, errXZRefused
 	}
 	return decoded, nil

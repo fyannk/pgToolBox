@@ -122,6 +122,7 @@ const hugeDictionaryXZHistory = "fd377a585a000004e6d6b4460200210128000000e6a011b
 
 func TestXZHistoryDictionaryIsBounded(t *testing.T) {
 	t.Parallel()
+	block := pythonXZHistory[24:strings.Index(pythonXZHistory, "0001412903")] // header to check
 	for _, test := range []struct {
 		name, stream string
 		accepted     bool
@@ -130,6 +131,7 @@ func TestXZHistoryDictionaryIsBounded(t *testing.T) {
 		{name: "4 GiB dictionary", stream: hugeDictionaryXZHistory},
 		{name: "12 MiB dictionary", stream: strings.Replace(pythonXZHistory, "0200210116000000742fe5a3", "0200210117000000"+xzHeaderCRC(t, "0200210117000000"), 1)},
 		{name: "truncated", stream: pythonXZHistory[:60]},
+		{name: "two blocks", stream: strings.Replace(pythonXZHistory, "0001412903", block+"0001412903", 1)},
 		{name: "4 GiB block header hidden in a chunk's slack", stream: hex.EncodeToString(hiddenBlockXZHistory(t, 40))},
 	} {
 		t.Run(test.name, func(t *testing.T) {
