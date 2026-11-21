@@ -248,7 +248,7 @@ func clusterCredentials(
 		// granted namespace whose Role refuses them): say so rather than
 		// offer silently fewer servers. The reason names that namespace
 		// alone.
-		refuse("", "DatabaseRoles not offered: "+unavailableWhy(rolesHere))
+		refuse("", "DatabaseRoles not offered: "+rolesHere.Why())
 	}
 	if spec.Credentials.OffersDatabaseRoles() && rolesHere.Usable() {
 		privileges := newRolePrivileges(cluster, roles)
@@ -326,7 +326,7 @@ func endpointHost(cluster *cnpgv1.Cluster, endpoint pgtoolboxv1alpha1.Endpoint, 
 		return "", 0, fmt.Sprintf("endpoint %q is not rw, ro, r or pooler:<name>", endpoint)
 	}
 	if !poolersAPI.Usable() {
-		return "", 0, fmt.Sprintf("endpoint %s: the Pooler API is not available: %s", endpoint, unavailableWhy(poolersAPI))
+		return "", 0, fmt.Sprintf("endpoint %s: the Pooler API is not available: %s", endpoint, poolersAPI.Why())
 	}
 	for i := range poolers {
 		if poolers[i].Name == name && poolers[i].Namespace == namespace {

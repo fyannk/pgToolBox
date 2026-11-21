@@ -687,7 +687,7 @@ func (r *Reconciler) observeExposure(ctx context.Context, console *pgtoolboxv1al
 	case pgtoolboxv1alpha1.ExposureTypeClusterIP:
 	case pgtoolboxv1alpha1.ExposureTypeRoute:
 		if !r.Features.In(console.Namespace).Routes.Usable() {
-			fact = exposure.Fact{Status: metav1.ConditionFalse, Reason: pgtoolboxv1alpha1.ReasonRouteAPIUnavailable, Message: "the Route API is unavailable: " + unavailableWhy(r.Features.In(console.Namespace).Routes)}
+			fact = exposure.Fact{Status: metav1.ConditionFalse, Reason: pgtoolboxv1alpha1.ReasonRouteAPIUnavailable, Message: "the Route API is unavailable: " + r.Features.In(console.Namespace).Routes.Why()}
 			break
 		}
 		var route routev1.Route
@@ -705,7 +705,7 @@ func (r *Reconciler) observeExposure(ctx context.Context, console *pgtoolboxv1al
 		}
 	case pgtoolboxv1alpha1.ExposureTypeGateway:
 		if !r.Features.In(console.Namespace).Gateways.Usable() {
-			fact = exposure.Fact{Status: metav1.ConditionFalse, Reason: pgtoolboxv1alpha1.ReasonGatewayAPIUnavailable, Message: "the Gateway API is unavailable: " + unavailableWhy(r.Features.In(console.Namespace).Gateways)}
+			fact = exposure.Fact{Status: metav1.ConditionFalse, Reason: pgtoolboxv1alpha1.ReasonGatewayAPIUnavailable, Message: "the Gateway API is unavailable: " + r.Features.In(console.Namespace).Gateways.Why()}
 			break
 		}
 		var route gatewayv1.HTTPRoute
@@ -828,13 +828,4 @@ func podFacts(ctx context.Context, reader client.Reader, console *pgtoolboxv1alp
 		}
 	}
 	return "", "", nil
-}
-
-// unavailableWhy is the probe's reason for an unusable optional API. The
-// probe runs once, when the operator starts, so the reason says so.
-func unavailableWhy(result discovery.Result) string {
-	if result.Reason == "" {
-		return "not probed"
-	}
-	return result.Reason + " (probed when the operator started: restart it once the API is installed or allowed)"
 }
