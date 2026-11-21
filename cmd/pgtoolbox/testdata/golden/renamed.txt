@@ -1,0 +1,15 @@
+exit: 1
+--- stdout
+Cluster team-a/billing: removed
+  Removed — deleting the Cluster deletes its instances.
+
+Cluster team-a/invoices: added
+  Added — a new Cluster: no running instance is touched.
+
+Cluster team-a/orders: unchanged
+  Unchanged — the spec and annotations the preview reads are the same.
+
+4 document(s) that are not CloudNativePG Clusters were ignored.
+
+Disruptive: at least one Cluster restarts, rolls out, shuts down, is upgraded or removed, carries a refused parameter, or has an unknown effect.
+--- stderr

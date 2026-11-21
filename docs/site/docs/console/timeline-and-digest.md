@@ -110,8 +110,9 @@ cannot be read from the image, or the operator version is outside the tables, th
 preview is marked **unverified**. A stored revision holds the spec only, so the
 order is given by role, not by instance name.
 
-The computation is a pure function (`pkg/cnpgstatus/preview`). The same code can
-preview a proposed spec.
+The computation is a pure function (`pkg/cnpgstatus/preview`). The same code
+previews a proposed spec offline, in a CI or GitOps pipeline:
+[`pgtoolbox preview`](../guides/preview-in-ci.md).
 
 ## Daily digest
 

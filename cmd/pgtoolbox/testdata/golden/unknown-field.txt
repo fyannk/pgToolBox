@@ -1,0 +1,18 @@
+exit: 1
+--- stdout
+Cluster team-a/billing: unchanged
+  Unchanged — the spec and annotations the preview reads are the same.
+
+Cluster team-a/orders: changed
+  Unknown — 1 change(s) could not be classified: their effect is unknown. None of the classified changes restarts anything, but a restart cannot be ruled out.
+  Primary update strategy: unsupervised (the operator updates the primary on its own)
+  Primary update method: restart
+  What happens to the primary: cannot be said: a change could not be classified
+  PostgreSQL major: 17
+  Other fields:
+    spec.somethingNew: Unknown — not in the tables
+
+4 document(s) that are not CloudNativePG Clusters were ignored.
+
+Disruptive: at least one Cluster restarts, rolls out, shuts down, is upgraded or removed, carries a refused parameter, or has an unknown effect.
+--- stderr

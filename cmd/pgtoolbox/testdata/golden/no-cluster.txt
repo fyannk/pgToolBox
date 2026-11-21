@@ -1,0 +1,4 @@
+exit: 2
+--- stdout
+--- stderr
+pgtoolbox preview: neither testdata/not-clusters.yaml nor testdata/not-clusters.yaml holds a CloudNativePG Cluster (apiVersion postgresql.cnpg.io/v1, kind Cluster)

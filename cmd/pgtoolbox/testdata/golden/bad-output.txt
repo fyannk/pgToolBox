@@ -1,0 +1,4 @@
+exit: 2
+--- stdout
+--- stderr
+pgtoolbox preview: --output is text or json, not "yaml"

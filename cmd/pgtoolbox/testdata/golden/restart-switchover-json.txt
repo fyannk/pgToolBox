@@ -1,0 +1,58 @@
+exit: 1
+--- stdout
+{
+  "cnpgVersion": "1.30",
+  "clusters": [
+    {
+      "namespace": "team-a",
+      "name": "billing",
+      "change": "unchanged",
+      "disruptive": false
+    },
+    {
+      "namespace": "team-a",
+      "name": "orders",
+      "change": "changed",
+      "disruptive": true,
+      "preview": {
+        "effect": "restart",
+        "parameters": [
+          {
+            "name": "max_connections",
+            "before": "100",
+            "after": "200",
+            "effect": "restart",
+            "context": "postmaster"
+          }
+        ],
+        "fields": [
+          {
+            "path": "spec.primaryUpdateMethod",
+            "effect": "none",
+            "reason": "operatorOnly"
+          }
+        ],
+        "strategy": "unsupervised",
+        "method": "switchover",
+        "primary": "switchover",
+        "steps": [
+          {
+            "role": "replicas",
+            "instances": [],
+            "action": "recreate"
+          },
+          {
+            "role": "primary",
+            "instances": [],
+            "action": "switchover"
+          }
+        ],
+        "postgresMajor": 17,
+        "verified": true
+      }
+    }
+  ],
+  "ignored": 4,
+  "disruptive": true
+}
+--- stderr

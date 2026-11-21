@@ -1,0 +1,37 @@
+# The definitions in force: two Clusters and objects that are not Clusters.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: team-a
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: orders
+  namespace: team-a
+spec:
+  instances: 3
+  imageName: ghcr.io/cloudnative-pg/postgresql:17.6
+  postgresql:
+    parameters:
+      max_connections: "100"
+      work_mem: 4MB
+      listen_addresses: "0.0.0.0"
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: billing
+  namespace: team-a
+spec:
+  instances: 2
+  imageName: ghcr.io/cloudnative-pg/postgresql:17.6
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: orders-extra
+  namespace: team-a
+spec:
+  ports:
+    - port: 5432

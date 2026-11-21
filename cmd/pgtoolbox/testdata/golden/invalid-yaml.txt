@@ -1,0 +1,4 @@
+exit: 2
+--- stdout
+--- stderr
+pgtoolbox preview: testdata/invalid.yaml: document 1 is not valid YAML: yaml: line 5: did not find expected ',' or ']'

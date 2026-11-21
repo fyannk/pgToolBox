@@ -1,0 +1,4 @@
+exit: 2
+--- stdout
+--- stderr
+pgtoolbox preview: testdata/duplicate.yaml: Cluster team-a/orders appears twice
