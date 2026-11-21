@@ -20,8 +20,12 @@ import (
 	"compress/bzip2"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"hash/crc32"
+	"hash/crc64"
 	"io"
 	"math"
 	"slices"
@@ -35,6 +39,7 @@ import (
 	"github.com/klauspost/compress/zstd"
 	"github.com/pierrec/lz4/v4"
 	"github.com/ulikunitz/xz"
+	"github.com/ulikunitz/xz/lzma"
 
 	"github.com/fyannk/pgToolBox/internal/evidence/evidence"
 	pgtimeline "github.com/fyannk/pgToolBox/internal/evidence/formats/timeline"
@@ -461,11 +466,8 @@ func historyReader(compressed []byte, compression string) (io.Reader, io.Closer,
 	case "lz4":
 		return lz4.NewReader(source), nil, nil
 	case "xz":
-		if !xzDictionariesWithin(compressed) {
-			return nil, nil, errors.New("unsupported history compression: xz dictionary exceeds limit")
-		}
-		reader, err := xz.ReaderConfig{SingleStream: true}.NewReader(source)
-		return reader, nil, err
+		data, err := decodeXZ(compressed)
+		return bytes.NewReader(data), nil, err
 	case "zstd":
 		reader, err := zstd.NewReader(source, zstd.WithDecoderMaxMemory(uint64(MaxHistoryDecompressedBytes*4)))
 		if err != nil {
@@ -479,59 +481,98 @@ func historyReader(compressed []byte, compression string) (io.Reader, io.Closer,
 }
 
 // xzMaxDictionary bounds the LZMA2 dictionary an xz history may declare.
-// ulikunitz/xz allocates the declared dictionary (up to 4 GiB) when it reads
-// a block header, before decoding a byte, and ReaderConfig.DictCap is a floor,
-// not a ceiling. 8 MiB is the dictionary of liblzma's default preset, which
-// Barman's Python lzma writes.
+// 8 MiB is the dictionary of liblzma's default preset, which Barman's Python
+// lzma writes.
 const xzMaxDictionary = 8 << 20
 
-// xzDictionariesWithin walks the blocks of the one xz stream in data the way
-// the decoder reads them (block header, LZMA2 chunks up to the end marker,
-// padding, check) and reports whether every block has a single LZMA2 filter
-// whose dictionary is at most xzMaxDictionary. Anything it cannot walk is
-// refused; the decoder is created with SingleStream so it reads nothing past
-// the walked stream.
-func xzDictionariesWithin(data []byte) bool {
+var errXZRefused = errors.New("unsupported history compression: xz stream not walkable, dictionary exceeds limit or check mismatch")
+
+// decodeXZ decodes the one xz stream in data block by block: it walks each
+// block (header, LZMA2 chunks up to the end marker, padding, check), refuses
+// a block that is not a single LZMA2 filter with a dictionary of at most
+// xzMaxDictionary, and decodes exactly the walked LZMA2 bytes as raw LZMA2
+// with a dictionary of xzMaxDictionary. ulikunitz/xz's own reader is not
+// used: it allocates whatever dictionary a block header declares (up to
+// 4 GiB), and it resumes after an LZMA chunk where the chunk's data stopped
+// rather than at its declared end, so it can parse a block header the walk
+// never saw. A decoder that stops before the walked end marker, or a check
+// that differs, is refused. The index is not read.
+func decodeXZ(data []byte) ([]byte, error) {
 	if len(data) < 12 || !xz.ValidHeader(data[:12]) {
-		return false
+		return nil, errXZRefused
 	}
 	checkSizes := map[byte]int{0x00: 0, 0x01: 4, 0x04: 8, 0x0a: 32}
-	checkSize, ok := checkSizes[data[7]&0x0f]
+	checkType := data[7] & 0x0f
+	checkSize, ok := checkSizes[checkType]
 	if !ok {
-		return false
+		return nil, errXZRefused
 	}
+	var decoded []byte
 	position := 12
 	for position < len(data) && data[position] != 0x00 { // 0x00 starts the index
 		size := (int(data[position]) + 1) * 4
-		if position+size > len(data) {
-			return false
+		if position+size > len(data) || crc32.ChecksumIEEE(data[position:position+size-4]) != binary.LittleEndian.Uint32(data[position+size-4:]) {
+			return nil, errXZRefused
 		}
 		header := data[position+1 : position+size-4] // without the size byte and CRC32
 		flags, index := header[0], 1
 		if flags&0x03 != 0 { // more than one filter
-			return false
+			return nil, errXZRefused
 		}
 		for _, present := range []bool{flags&0x40 != 0, flags&0x80 != 0} { // compressed, uncompressed size
 			for present {
 				if index >= len(header) {
-					return false
+					return nil, errXZRefused
 				}
 				present = header[index]&0x80 != 0
 				index++
 			}
 		}
 		if index+3 > len(header) || header[index] != 0x21 || header[index+1] != 1 {
-			return false
+			return nil, errXZRefused
 		}
 		if dictionary := header[index+2]; dictionary >= 40 || int64(2|dictionary&1)<<(dictionary/2+11) > xzMaxDictionary {
-			return false
+			return nil, errXZRefused
 		}
-		if position = lzma2End(data, position+size); position < 0 {
-			return false
+		start := position + size
+		end := lzma2End(data, start)
+		if end < 0 {
+			return nil, errXZRefused
 		}
-		position = (position+3)&^3 + checkSize
+		source := bytes.NewReader(data[start:end])
+		reader, err := lzma.Reader2Config{DictCap: xzMaxDictionary}.NewReader2(source)
+		if err != nil {
+			return nil, errXZRefused
+		}
+		block, err := io.ReadAll(io.LimitReader(reader, MaxHistoryDecompressedBytes+1-int64(len(decoded))))
+		if decoded = append(decoded, block...); int64(len(decoded)) > MaxHistoryDecompressedBytes {
+			return decoded, nil // readHistory refuses it by size
+		}
+		position = (end+3)&^3 + checkSize
+		if err != nil || source.Len() != 0 || position > len(data) || !bytes.Equal(data[position-checkSize:position], xzCheck(checkType, block)) {
+			return nil, errXZRefused
+		}
 	}
-	return position < len(data)
+	if position >= len(data) {
+		return nil, errXZRefused
+	}
+	return decoded, nil
+}
+
+// xzCheck is the xz check of the given type over a block's decoded bytes,
+// as the stream stores it.
+func xzCheck(checkType byte, block []byte) []byte {
+	switch checkType {
+	case 0x01:
+		return binary.LittleEndian.AppendUint32(nil, crc32.ChecksumIEEE(block))
+	case 0x04:
+		return binary.LittleEndian.AppendUint64(nil, crc64.Checksum(block, crc64.MakeTable(crc64.ECMA)))
+	case 0x0a:
+		sum := sha256.Sum256(block)
+		return sum[:]
+	default:
+		return []byte{}
+	}
 }
 
 // lzma2End returns the offset just past the end marker of the LZMA2 chunks

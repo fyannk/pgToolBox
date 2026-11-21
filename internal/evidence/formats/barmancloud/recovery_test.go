@@ -34,6 +34,7 @@ import (
 	"github.com/klauspost/compress/zstd"
 	"github.com/pierrec/lz4/v4"
 	"github.com/ulikunitz/xz"
+	"github.com/ulikunitz/xz/lzma"
 
 	"github.com/fyannk/pgToolBox/internal/evidence/evidence"
 	"github.com/fyannk/pgToolBox/internal/evidence/store"
@@ -129,6 +130,7 @@ func TestXZHistoryDictionaryIsBounded(t *testing.T) {
 		{name: "4 GiB dictionary", stream: hugeDictionaryXZHistory},
 		{name: "12 MiB dictionary", stream: strings.Replace(pythonXZHistory, "0200210116000000742fe5a3", "0200210117000000"+xzHeaderCRC(t, "0200210117000000"), 1)},
 		{name: "truncated", stream: pythonXZHistory[:60]},
+		{name: "4 GiB block header hidden in a chunk's slack", stream: hex.EncodeToString(hiddenBlockXZHistory(t, 40))},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -148,6 +150,51 @@ func TestXZHistoryDictionaryIsBounded(t *testing.T) {
 			}
 		})
 	}
+}
+
+// hiddenBlockXZHistory is an xz stream (check None) of one walked block whose
+// LZMA chunk declares more compressed bytes than its data uses. The unused
+// bytes hold an end marker, padding and a second block header with the given
+// dictionary property: a decoder that reads the next chunk header where the
+// chunk's data stopped, as ulikunitz/xz does, parses the hidden header.
+func hiddenBlockXZHistory(tb testing.TB, dictionary byte) []byte {
+	tb.Helper()
+	var lzma2 bytes.Buffer
+	writer, err := lzma.Writer2Config{DictCap: lzma.MinDictCap}.NewWriter2(&lzma2)
+	if err != nil {
+		tb.Fatal(err)
+	}
+	if _, err := writer.Write(bytes.Repeat([]byte("1\t0/3000000\tno recovery target specified\n"), 20)); err != nil {
+		tb.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		tb.Fatal(err)
+	}
+	chunk := lzma2.Bytes()
+	if chunk[0] < 0xe0 {
+		tb.Fatalf("first LZMA2 chunk control %#x, want a compressed chunk with a dictionary reset", chunk[0])
+	}
+	compressed := int(chunk[3])<<8 | int(chunk[4]) + 1
+	blockHeader := func(dictionary byte) []byte {
+		body := []byte{0x02, 0x00, 0x21, 0x01, dictionary, 0, 0, 0}
+		return binary.LittleEndian.AppendUint32(body, crc32.ChecksumIEEE(body))
+	}
+	stream := append([]byte{0xfd, '7', 'z', 'X', 'Z', 0x00, 0x00, 0x00}, binary.LittleEndian.AppendUint32(nil, crc32.ChecksumIEEE([]byte{0, 0}))...)
+	stream = append(stream, blockHeader(22)...)
+	stream = append(stream, chunk[:6+compressed]...)
+	slackStart := len(stream)
+	stream = append(stream, 0x00) // the hidden end marker
+	for len(stream)%4 != 0 {
+		stream = append(stream, 0x00)
+	}
+	stream = append(stream, blockHeader(dictionary)...) // no check bytes: check None
+	declared := compressed - 1 + len(stream) - slackStart
+	stream[24+3], stream[24+4] = byte(declared>>8), byte(declared)
+	stream = append(stream, 0x00) // the walked end marker
+	for len(stream)%4 != 0 {
+		stream = append(stream, 0x00)
+	}
+	return append(stream, 0x00, 0x00, 0x00, 0x00) // where the index starts; it is not read
 }
 
 // xzHeaderCRC returns the little-endian CRC32 of a hex block header body.

@@ -109,6 +109,7 @@ func FuzzXZHistoryDictionary(f *testing.F) {
 		}
 		f.Add(raw)
 	}
+	f.Add(hiddenBlockXZHistory(f, 40))
 
 	f.Fuzz(func(t *testing.T, data []byte) {
 		var before, after runtime.MemStats
