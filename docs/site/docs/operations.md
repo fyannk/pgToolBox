@@ -57,6 +57,29 @@ has them (or whether the console could not ask: "could not check"), the
 preconditions not currently met, the consequence in one sentence and the expected
 duration.
 
+### Readiness of a promote target
+
+Once a replica is chosen in the promote dialog, and before its name is typed, the
+dialog shows that replica's readiness. These are facts, each with its verdict word,
+source and age; they are not a score and they do not decide anything:
+
+| Fact | Read from | What it says |
+|---|---|---|
+| Pod | `Pod.status.conditions[Ready]` | Ready, not Ready (with the waiting reason), being deleted, or no Pod |
+| Streaming | the replica's `/pg/status` (`walReceiverActive`, `replayPaused`) | streaming from the primary; not streaming (no active WAL receiver); replay paused |
+| Replay lag | the replica's `replayLsn` against the primary's `currentLsn`, both as last read | caught up, or how far behind. There is no threshold: the switchover waits for the replica to replay, so lag makes it longer |
+| Synchronous state | the primary's `/pg/status` `replicationInfo` | `sync`, `quorum`, `potential` or `async`, or "the primary reports no walsender for it" |
+| Fencing | `Cluster.metadata.annotations[cnpg.io/fencedInstances]` | fenced, not fenced, or the annotation could not be read |
+
+A fact the console did not read now is **unknown**, never ready: the replica's or
+the primary's status endpoint did not answer, its instance manager answered without
+reaching PostgreSQL (fenced, restarting, rewinding), or the status sweep has not
+completed for three intervals. The age and the reason are shown beside it.
+
+Lagging, asynchronous or not streaming does not stop the request: CloudNativePG
+accepts a switchover to such a replica. Only the preconditions above do; the
+replicas they rule out cannot be chosen, and their reasons are listed under them.
+
 ## Following an operation
 
 `GET /api/v1/operations/{id}` resolves an operation, from the Cluster's current

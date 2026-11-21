@@ -10,6 +10,7 @@ import { StatusChip } from "../ds/patterns/StatusChip/StatusChip";
 import { formatSeconds, Time } from "../ds/time";
 import { m } from "../paraglide/messages.js";
 import { Fact, Facts, Panel } from "./Panel";
+import { PromoteReadiness } from "./PromoteReadiness";
 import { QueryState } from "./QueryState";
 
 type Props = {
@@ -128,6 +129,7 @@ export function OfferCard({
   const usable = offer.allowed && !offer.undecided && blockers.length === 0;
   const promote = offer.kind === "promote";
   const confirmWord = promote ? target : offer.confirmation;
+  const chosen = promote ? offer.targets?.find((t) => t.name === target) : undefined;
   return (
     <li className="flex flex-col gap-2 rounded-panel border border-line p-3" data-offer={offer.kind}>
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -192,7 +194,11 @@ export function OfferCard({
           {promote && (
             <>
               <TargetPicker offer={offer} value={target} onChange={setTarget} />
-              {!target && <p className="text-caption text-muted">{m.ops_choose_first()}</p>}
+              {chosen ? (
+                <PromoteReadiness target={chosen} />
+              ) : (
+                <p className="text-caption text-muted">{m.ops_choose_first()}</p>
+              )}
             </>
           )}
         </ConfirmDialog>
