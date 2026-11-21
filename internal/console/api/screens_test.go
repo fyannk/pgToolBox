@@ -312,7 +312,8 @@ func TestLogStreamEndsWithTheSession(t *testing.T) { //nolint:paralleltest // it
 		if !strings.Contains(body, "event: end") || !strings.Contains(body, `"text":"one"`) {
 			t.Errorf("%s: body %s", name, body)
 		}
-		if name == "revoked" && !strings.Contains(body, ": heartbeat") {
+		// A named event, not a comment: EventSource surfaces only events.
+		if name == "revoked" && !strings.Contains(body, "event: heartbeat\ndata: {\"serverTime\":") {
 			t.Errorf("no heartbeat: %s", body)
 		}
 	}

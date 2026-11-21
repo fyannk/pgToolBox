@@ -78,3 +78,41 @@ test("a broken stream is marked as a gap and reopened, then given up after repea
   ).toHaveLength(1);
   expect(FakeSource.all.length).toBeLessThanOrEqual(5);
 });
+
+test("heartbeats keep a quiet stream live; 30 s of silence is a break: a gap, then a reopen (#123)", async () => {
+  vi.useFakeTimers();
+  vi.stubGlobal("EventSource", FakeSource);
+  const screen = await renderInFrame(<Probe path="/s" />);
+  const first = FakeSource.all[0];
+  if (!first) throw new Error("no source");
+  first.onopen?.();
+  first.emit("line", { text: "a" });
+  for (let i = 0; i < 4; i++) {
+    await vi.advanceTimersByTimeAsync(15_000);
+    first.emit("heartbeat", { serverTime: "2026-10-29T12:00:00Z" });
+  }
+  expect(screen.getByRole("status").element().textContent).toBe("live||a");
+  expect(first.closed).toBe(false);
+  expect(FakeSource.all).toHaveLength(1);
+
+  // A half-open stream: nothing more arrives.
+  await vi.advanceTimersByTimeAsync(29_999);
+  expect(first.closed).toBe(false);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(first.closed).toBe(true);
+  expect(screen.getByRole("status").element().textContent).toMatch(/^down\|\|a,\[gap:the stream was interrupted/);
+  await vi.advanceTimersByTimeAsync(2_000);
+  expect(FakeSource.all).toHaveLength(2);
+});
+
+test("a stream that opens but never delivers an event gives up like one that fails to open", async () => {
+  vi.useFakeTimers();
+  vi.stubGlobal("EventSource", FakeSource);
+  const screen = await renderInFrame(<Probe path="/s" />);
+  for (let i = 0; i < 5; i++) {
+    FakeSource.all[i]?.onopen?.();
+    await vi.advanceTimersByTimeAsync(30_000 + 10_000);
+  }
+  expect(screen.getByRole("status").element().textContent).toContain("ended|the stream could not be reopened");
+  expect(FakeSource.all).toHaveLength(5);
+});

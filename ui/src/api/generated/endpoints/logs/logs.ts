@@ -213,7 +213,7 @@ export const getStreamLogsUrl = (namespace: string,
 }
 
 /**
- * Server-sent events: line {at, text}, end {reason}; gap {at, reason} is reserved for lines known to be missed (draw a marker, never join across it). Starts with the last 100 lines. A comment line every 15 s. The stream ends when the session ends or is revoked, when your pods/log access is withdrawn (checked every 30 s), after an hour, or when the container stops. A refusal (403, 501, 404) is sent as a single end event with the reason.
+ * Server-sent events: line {at, text}, end {reason}; gap {at, reason} is reserved for lines known to be missed (draw a marker, never join across it); heartbeat {serverTime} every 15 s, so a client can tell a quiet log from a dead stream. Starts with the last 100 lines. The stream ends when the session ends or is revoked, when your pods/log access is withdrawn (checked every 30 s), after an hour, or when the container stops. A refusal (403, 501, 404) is sent as a single end event with the reason.
  * @summary Follow an instance's log
  */
 export const streamLogs = async (namespace: string,
@@ -270,7 +270,7 @@ export type StreamLogsQueryError = ErrorModel
 
 
 /**
- * Server-sent events: line {at, text}, end {reason}; gap {at, reason} is reserved for lines known to be missed (draw a marker, never join across it). Starts with the last 100 lines. A comment line every 15 s. The stream ends when the session ends or is revoked, when your pods/log access is withdrawn (checked every 30 s), after an hour, or when the container stops. A refusal (403, 501, 404) is sent as a single end event with the reason.
+ * Server-sent events: line {at, text}, end {reason}; gap {at, reason} is reserved for lines known to be missed (draw a marker, never join across it); heartbeat {serverTime} every 15 s, so a client can tell a quiet log from a dead stream. Starts with the last 100 lines. The stream ends when the session ends or is revoked, when your pods/log access is withdrawn (checked every 30 s), after an hour, or when the container stops. A refusal (403, 501, 404) is sent as a single end event with the reason.
  * @summary Follow an instance's log
  */
 export function useStreamLogs<TData = Awaited<ReturnType<typeof streamLogs>>, TError = ErrorModel>(
@@ -287,7 +287,7 @@ export function useStreamLogs<TData = Awaited<ReturnType<typeof streamLogs>>, TE
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
- * Server-sent events: line {at, text}, end {reason}; gap {at, reason} is reserved for lines known to be missed (draw a marker, never join across it). Starts with the last 100 lines. A comment line every 15 s. The stream ends when the session ends or is revoked, when your pods/log access is withdrawn (checked every 30 s), after an hour, or when the container stops. A refusal (403, 501, 404) is sent as a single end event with the reason.
+ * Server-sent events: line {at, text}, end {reason}; gap {at, reason} is reserved for lines known to be missed (draw a marker, never join across it); heartbeat {serverTime} every 15 s, so a client can tell a quiet log from a dead stream. Starts with the last 100 lines. The stream ends when the session ends or is revoked, when your pods/log access is withdrawn (checked every 30 s), after an hour, or when the container stops. A refusal (403, 501, 404) is sent as a single end event with the reason.
  * @summary Follow an instance's log
  */
 export function useStreamLogs<TData = Awaited<ReturnType<typeof streamLogs>>, TError = ErrorModel>(
@@ -304,7 +304,7 @@ export function useStreamLogs<TData = Awaited<ReturnType<typeof streamLogs>>, TE
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
- * Server-sent events: line {at, text}, end {reason}; gap {at, reason} is reserved for lines known to be missed (draw a marker, never join across it). Starts with the last 100 lines. A comment line every 15 s. The stream ends when the session ends or is revoked, when your pods/log access is withdrawn (checked every 30 s), after an hour, or when the container stops. A refusal (403, 501, 404) is sent as a single end event with the reason.
+ * Server-sent events: line {at, text}, end {reason}; gap {at, reason} is reserved for lines known to be missed (draw a marker, never join across it); heartbeat {serverTime} every 15 s, so a client can tell a quiet log from a dead stream. Starts with the last 100 lines. The stream ends when the session ends or is revoked, when your pods/log access is withdrawn (checked every 30 s), after an hour, or when the container stops. A refusal (403, 501, 404) is sent as a single end event with the reason.
  * @summary Follow an instance's log
  */
 export function useStreamLogs<TData = Awaited<ReturnType<typeof streamLogs>>, TError = ErrorModel>(
@@ -315,7 +315,7 @@ export function useStreamLogs<TData = Awaited<ReturnType<typeof streamLogs>>, TE
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
- * Server-sent events: line {at, text}, end {reason}; gap {at, reason} is reserved for lines known to be missed (draw a marker, never join across it). Starts with the last 100 lines. A comment line every 15 s. The stream ends when the session ends or is revoked, when your pods/log access is withdrawn (checked every 30 s), after an hour, or when the container stops. A refusal (403, 501, 404) is sent as a single end event with the reason.
+ * Server-sent events: line {at, text}, end {reason}; gap {at, reason} is reserved for lines known to be missed (draw a marker, never join across it); heartbeat {serverTime} every 15 s, so a client can tell a quiet log from a dead stream. Starts with the last 100 lines. The stream ends when the session ends or is revoked, when your pods/log access is withdrawn (checked every 30 s), after an hour, or when the container stops. A refusal (403, 501, 404) is sent as a single end event with the reason.
  * @summary Follow an instance's log
  */
 export function useStreamLogs<TData = Awaited<ReturnType<typeof streamLogs>>, TError = ErrorModel>(
