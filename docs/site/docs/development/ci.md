@@ -189,11 +189,10 @@ The default pgAdmin and oauth-proxy images are on that list too: their digests l
 `DefaultPgAdminImage` and `DefaultOAuthProxyImage` in
 `internal/operator/configuration/configuration.go`, and no bot reads a Go variable.
 Bump them on toolchain day, and bump the copies with them: `charts/pgtools/values.yaml`
-(`pgadmin.image`, `pgadmin.auth.openshift.image`) and the `pgadmin` entry of
-`relatedImages` in the OLM CSV. `make validate-packaging` and the chart parity test
-(`internal/operator/pgadmin/chart_parity_test.go`) fail until the chart values equal the
-Go defaults. The CSV `relatedImages` entry is not compared with the Go default, so
-nothing fails if it is forgotten: check it by hand.
+(`pgadmin.image`, `pgadmin.auth.openshift.image`) and the `pgadmin` and `oauth-proxy`
+entries of `relatedImages` in the OLM CSV, which a disconnected mirror copies. The chart
+parity test (`internal/operator/pgadmin/chart_parity_test.go`) fails until the chart
+values equal the Go defaults, and `make validate-packaging` until the CSV entries do.
 
 ## The release
 
