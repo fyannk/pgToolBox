@@ -20,6 +20,8 @@ test-fuzz-console-operations: ## Fuzz the console parsers (operation handles, ev
 	$(call fuzz,./internal/console/evidence,FuzzDecodeAPIError)
 	$(call fuzz,./internal/console/evidence,FuzzDecodePGBackRestBackupPage)
 	$(call fuzz,./internal/console/evidence,FuzzDecodePGBackRestRecoveryPage)
+	$(call fuzz,./internal/console/evidence,FuzzDecodeRecoveryPage)
+	$(call fuzz,./internal/console/podlogs,FuzzScan)
 
 test-fuzz: test-fuzz-console-operations
 
