@@ -105,6 +105,12 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -trimpat
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -trimpath \
     -ldflags "-s -w -X main.version=${VERSION}" \
     -o /workspace/evidence-agent ./cmd/evidence-agent
+# The offline CLI (pgtoolbox preview), shipped in the console image too so that
+# `kubectl exec ... -- /pgtoolbox preview` and `docker run --entrypoint
+# /pgtoolbox` work without a download.
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -trimpath \
+    -ldflags "-s -w -X main.version=${VERSION}" \
+    -o /workspace/pgtoolbox ./cmd/pgtoolbox
 # The SPA last, so a UI change rebuilds the console binary only. go:embed
 # cannot reach outside its package: internal/console/uiassets embeds dist/.
 COPY --from=ui /ui/dist internal/console/uiassets/dist
@@ -147,6 +153,7 @@ LABEL org.opencontainers.image.title="pgToolBox console" \
       org.opencontainers.image.licenses="Apache-2.0" \
       org.opencontainers.image.version="${VERSION}"
 COPY --from=builder /workspace/console /console
+COPY --from=builder /workspace/pgtoolbox /pgtoolbox
 COPY LICENSE /licenses/console/LICENSE
 # The front-end assets are embedded in the binary above, so the licence of the
 # library they bundle (MIT, which asks for its text to travel with copies)

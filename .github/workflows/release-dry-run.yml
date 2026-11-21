@@ -112,5 +112,11 @@ jobs:
             test -f "dist/release/${chart}-${core}-rc.1.tgz" \
               || { echo "dist/release/${chart}-${core}-rc.1.tgz was not produced" >&2; ls dist/release >&2; exit 1; }
           done
+          for os_arch in linux_amd64 linux_arm64 darwin_amd64 darwin_arm64; do
+            test -f "dist/release/pgtoolbox-cli_${core}-rc.1_${os_arch}.tar.gz" \
+              || { echo "the ${os_arch} CLI tarball was not produced" >&2; ls dist/release >&2; exit 1; }
+          done
+          grep -q " pgtoolbox-cli_${core}-rc.1_linux_amd64.tar.gz\$" dist/release/SHA256SUMS \
+            || { echo "SHA256SUMS does not list the CLI tarballs" >&2; exit 1; }
           ./hack/release.sh notes "${core}-rc.1" | head -n 3 | grep -q . \
             || { echo "release.sh notes finds no section for ${core}-rc.1" >&2; exit 1; }

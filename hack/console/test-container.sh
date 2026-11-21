@@ -32,6 +32,11 @@ YAML
 chmod 0755 "$dir"
 chmod 0644 "$dir/session-key" "$dir/kubeconfig"
 
+# The offline CLI shipped beside the console runs under the same restrictions.
+cli=$(docker run --rm --user 12345:12345 --read-only --cap-drop ALL --security-opt no-new-privileges \
+  --entrypoint /pgtoolbox "$image" version) || { echo "/pgtoolbox does not run in the console image" >&2; exit 1; }
+[ -n "$cli" ] || { echo "/pgtoolbox printed no version" >&2; exit 1; }
+
 docker run -d --name "$name" \
   --user 12345:12345 \
   --read-only \
