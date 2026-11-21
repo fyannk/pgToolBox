@@ -104,7 +104,9 @@ from the Cluster's server CA Secret (`spec.certificates.serverCASecret`, else
 `<cluster>-ca` also holds the CA's private key, which signs client certificates
 when the Cluster sets no `clientCASecret`, so pgAdmin's ServiceAccount is never
 granted a CA Secret. A renewed CA reaches the offer on the next reconciliation of
-the Cluster. A sidecar (`passfile-sync`, the operator's own binary copied into the
+the Cluster. The CAs of one offer are bounded to 128 KiB in all, so large bundles
+cannot stop every server from being offered: past that, in the order of the
+servers, a Cluster is left out and its servers are refused with that reason. A sidecar (`passfile-sync`, the operator's own binary copied into the
 Pod by an init container so it runs under pgAdmin's UID) reads the offer and
 exactly the offered password Secrets through the Pod's name-scoped Role, and
 rewrites a libpq service file and a `pgpass` file atomically on rotation. They live

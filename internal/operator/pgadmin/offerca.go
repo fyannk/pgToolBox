@@ -39,10 +39,13 @@ import (
 // reads no CA Secret. CloudNativePG records the CA Secret's version in the
 // Cluster's status, so a renewed CA reaches the offer through the Cluster
 // watch. A CA Secret that is absent, holds no certificate or is too large
-// leaves its Cluster out (the sidecar refuses its servers and says why);
-// any other failed read fails the loop.
+// leaves its Cluster out (the sidecar refuses its servers and says why),
+// and so does a CA that would take the CAs past caBudget, so that large
+// bundles cannot push the whole document past offer.MaxDocumentBytes and
+// stop every server from being offered; any other failed read fails the
+// loop.
 func (r *Reconciler) offerCAs(ctx context.Context, p *pgtoolboxv1alpha1.PgAdmin, doc *offer.Document) error {
-	seen := map[string]bool{}
+	seen, total := map[string]bool{}, 0
 	for _, server := range doc.Connections() {
 		key := server.CAKey()
 		if seen[key] {
@@ -58,7 +61,8 @@ func (r *Reconciler) offerCAs(ctx context.Context, p *pgtoolboxv1alpha1.PgAdmin,
 		case err != nil:
 			return fmt.Errorf("read the server CA Secret %s/%s: %w", namespace, server.CASecretName, err)
 		}
-		if ca := certificatesPEM(secret.Data["ca.crt"]); ca != "" && len(ca) <= passfilesync.MaxSecretBytes {
+		if ca := certificatesPEM(secret.Data["ca.crt"]); ca != "" && len(ca) <= passfilesync.MaxSecretBytes && total+len(ca) <= caBudget {
+			total += len(ca)
 			if doc.CAs == nil {
 				doc.CAs = map[string]string{}
 			}
@@ -67,6 +71,11 @@ func (r *Reconciler) offerCAs(ctx context.Context, p *pgtoolboxv1alpha1.PgAdmin,
 	}
 	return nil
 }
+
+// caBudget bounds the CA bytes of one offer: half the document, which
+// leaves the rest for the servers (offer.MaxServers of them) and for the
+// JSON escaping of the PEM line breaks.
+const caBudget = offer.MaxDocumentBytes / 2
 
 // certificatesPEM re-encodes the CERTIFICATE blocks of raw that parse as
 // X.509 certificates, in order; whatever else raw carries is dropped.

@@ -85,7 +85,7 @@ func Render(files Files, doc offer.Document, secrets map[string]*corev1.Secret) 
 	for _, server := range doc.Connections() {
 		raw, ok := doc.CAs[server.CAKey()]
 		if !ok {
-			refuse(server, "the offer has no CA of Cluster "+server.CAKey()+" (its CA Secret is absent or holds no certificate)")
+			refuse(server, "the offer has no CA of Cluster "+server.CAKey()+" (its CA Secret is absent, holds no certificate, or is too large for the offer)")
 			continue
 		}
 		ca, why := caPEM([]byte(raw))

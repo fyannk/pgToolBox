@@ -23,7 +23,9 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"errors"
+	"maps"
 	"math/big"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -107,6 +109,25 @@ func TestOfferCAs(t *testing.T) {
 		if strings.Contains(crt, "signing key") {
 			t.Fatal("ca.key reached the offer")
 		}
+	}
+
+	// Large bundles stop at the budget: the Clusters past it are left
+	// out, the document stays encodable, and the choice follows the
+	// servers' order.
+	bundle := strings.Repeat(ca, caBudget/len(ca)/3+1)
+	var large offer.Document
+	names := []string{"a", "b", "c", "d", "e"}
+	secrets := make([]client.Object, 0, len(names))
+	for _, name := range names {
+		large.Servers = append(large.Servers, offer.Server{Cluster: name, CASecretName: name + "-ca"})
+		secrets = append(secrets, caSecret("team-a", name+"-ca", bundle))
+	}
+	r.APIReader = fake.NewClientBuilder().WithObjects(secrets...).Build()
+	if err := r.offerCAs(context.Background(), p, &large); err != nil {
+		t.Fatal(err)
+	}
+	if got := slices.Sorted(maps.Keys(large.CAs)); !slices.Equal(got, []string{"a", "b"}) {
+		t.Fatalf("CAs for %v, want a and b only (c would pass the budget)", got)
 	}
 
 	failing := fake.NewClientBuilder().WithInterceptorFuncs(interceptor.Funcs{Get: func(context.Context, client.WithWatch, client.ObjectKey, client.Object, ...client.GetOption) error {
