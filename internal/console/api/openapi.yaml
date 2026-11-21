@@ -4494,8 +4494,10 @@ components:
             - restart
             - promote
             - restoreDrill
+            - primaryChange
           type: string
         operationId:
+          description: Opaque handle for GET /api/v1/operations/{id}; a primaryChange's only identifies the entry (it is observed, not followed).
           type: string
         phase:
           enum:
@@ -4511,10 +4513,11 @@ components:
           description: The marker this recent operation was rebuilt from, in words.
           type: string
         recordedIn:
-          description: "Where this recent operation was found: on the cluster's objects (every replica lists it) or only in this console replica's memory."
+          description: "Where this recent operation was found: on the cluster's objects (every replica lists it), only in this console replica's memory, or in this console's timeline of what it observed (a primary change)."
           enum:
             - cluster
             - replica
+            - timeline
           type: string
         steps:
           items:

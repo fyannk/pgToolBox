@@ -90,25 +90,36 @@ for a restart, 2 minutes for a promote), not that it failed.
 
 ### Recent operations
 
-The offers list ends with the Cluster's **recent operations**, newest first (at
-most 20). They are rebuilt from what the Cluster's objects record, read from the
-console's informer cache, so every replica shows the same list, and so does one
-that just restarted:
+The offers list ends with the Cluster's **recent operations**, newest first:
+every operation the Cluster went through that the console can see, not only
+the ones a console started. Most are rebuilt from what the Cluster's objects
+record, read from the console's informer cache, so every replica shows the same
+list, and so does one that just restarted:
 
 | Operation | Found from | Notes |
 |---|---|---|
-| Backup | Backups of the Cluster carrying the annotation `pgtoolbox.fyannk.dev/requested-at` (the instant the console accepted the request, RFC 3339 UTC), which the console sets on the Backups it creates | Scheduled Backups and Backups created by hand carry no marker and are not listed. Anyone who may create a Backup can set the annotation, so it does not prove a console asked; one more than a minute away from the Backup's `creationTimestamp` is ignored |
+| Backup | Every Backup of the Cluster (`spec.cluster.name`) | Each says where it came from: the console's annotation `pgtoolbox.fyannk.dev/requested-at` (the instant the console accepted the request, RFC 3339 UTC; it is then listed under the same id the request returned), the ScheduledBackup that created it (its owner reference, or CloudNativePG's `cnpg.io/scheduled-backup` label, which is set whatever the schedule's `backupOwnerReference`), or "on-demand, any client". Anyone who may create a Backup can set the annotation, so it does not prove a console asked; one more than a minute away from the Backup's `creationTimestamp` is ignored and the Backup is listed at its creation time. Each is followed by the same tracker as a backup the console requested |
 | Restart, reload | The Cluster's `kubectl.kubernetes.io/restartedAt` and `cnpg.io/reloadedAt` annotations | Only the latest of each, and whoever set it (the console or `kubectl cnpg`). A value dated in the future is ignored; past the operation's deadline the entry is closed as not followed (`notObservable`) instead of being judged on the Cluster's current rollout |
 | Restore drill | The console's [restore-drill record](console/restore-drills.md) of the Cluster, which every replica rebuilds from the drill Cluster's sealed annotation | When the record is not kept across restarts (no persistent history, no state ConfigMap), drills finished before the replica started are missing, and the list says so |
-| Promote | Only the memory of the replica that issued it | `status.targetPrimary` is also set by a failover, so it is not a marker; a promote disappears from the list when that replica restarts |
+| Primary change | This console's [timeline](console/timeline-and-digest.md): each change of `status.currentPrimary` it observed, at the operator's `currentPrimaryTimestamp` when it reports one | Listed as `primaryChange`, already settled, and not followed. It says what the console saw: a failover or a switchover when it saw the phase that announced it, "a switchover or a failover" when it did not, and the window when it happened while the console was not looking. A switchover leaves no marker the console can tell from a failover, so who asked is not known; when this replica issued the promote, the two are one entry (the promote, followed, its source naming the observed change) |
+| Promote | The memory of the replica that issued it | `status.targetPrimary` is also set by a failover, so it is not a marker; the entry disappears when that replica restarts, and the observed primary change stays |
 
-Each entry says where it was found (`recordedIn`: `cluster` or `replica`, and
-`recordedFrom`, the marker, in words); an entry only one replica remembers is
-marked on the screen. When the console cannot read a source here (Backups it may
-not list in the namespace, a failed read), `recentGaps` names it and the screen
-shows it: an unreadable source is never shown as "nothing happened". The list
-says what was done, never by whom. **The API server's audit log is the complete
-record.**
+The timeline is this console's observation, not a record the Cluster keeps:
+with `HISTORY_ENABLED=false` primary changes are not listed; without a
+persistent history (`HISTORY_PATH`, chart value `history.persistent`) the timeline starts again at every
+restart and each replica keeps its own; when the timeline's bounds dropped
+older events, older changes are missing. Each of these is said in the list.
+
+Each entry says where it was found (`recordedIn`: `cluster`, `timeline` or
+`replica`, and `recordedFrom`, the source, in words); the screen shows the
+source of each entry found on the Cluster's objects, and marks an observed
+primary change and an entry only one replica remembers. The list keeps the
+newest 20 entries; when more exist (a busy schedule of Backups), it says how
+many older ones it cut. When the console cannot read a source here (Backups it
+may not list in the namespace, a failed read), `recentGaps` names it and the
+screen shows it: an unreadable source is never shown as "nothing happened". The
+list says what was done, never by whom. **The API server's audit log is the
+complete record.**
 
 ## Switching it off
 

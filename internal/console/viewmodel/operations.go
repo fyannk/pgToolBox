@@ -29,6 +29,11 @@ const (
 	// OperationRestoreDrill restores the latest backup into a throwaway
 	// Cluster, checks it and deletes it.
 	OperationRestoreDrill OperationKind = "restoreDrill"
+	// OperationPrimaryChange is a change of the primary the console
+	// observed (Operations.Recent only): a switchover or a failover,
+	// requested by anyone or by no one. It is never offered, requested or
+	// followed.
+	OperationPrimaryChange OperationKind = "primaryChange"
 )
 
 // OperationPhase is a tracker step. notObservable is a
@@ -51,11 +56,13 @@ const (
 type OperationRecord string
 
 // Where a recent operation was found: on the cluster's objects (every
-// console replica, and one restarted since, lists it), or only in the
-// memory of the replica that issued it.
+// console replica, and one restarted since, lists it), only in the
+// memory of the replica that issued it, or in this console's timeline
+// of what it observed (a primary change).
 const (
-	RecordCluster OperationRecord = "cluster"
-	RecordReplica OperationRecord = "replica"
+	RecordCluster  OperationRecord = "cluster"
+	RecordReplica  OperationRecord = "replica"
+	RecordTimeline OperationRecord = "timeline"
 )
 
 // Operations is the /operations screen of one Cluster: what the caller
@@ -66,9 +73,11 @@ type Operations struct {
 	GeneratedAt time.Time        `json:"generatedAt"`
 	Offers      []OperationOffer `json:"offers"`
 	// Recent are the Cluster's recent operations, newest first, rebuilt
-	// from the markers its objects carry, plus those only this replica
-	// remembers (Operation.RecordedIn says which). It is not the
-	// cluster's audit trail (the API server's audit log is).
+	// from its objects (every Backup, the restart and reload markers, the
+	// drill record), plus the primary changes this console observed and
+	// those only this replica remembers (Operation.RecordedIn says
+	// which). It is not the cluster's audit trail (the API server's audit
+	// log is).
 	Recent      []Operation `json:"recent"`
 	RecentScope string      `json:"recentScope" doc:"What Recent covers, in words."`
 	// RecentGaps name what Recent may miss now (a source the console
@@ -204,8 +213,10 @@ type OperationAccepted struct {
 
 // Operation is one tracked operation.
 type Operation struct {
-	OperationID string        `json:"operationId"`
-	Kind        OperationKind `json:"kind" enum:"backup,reload,restart,promote,restoreDrill"`
+	// OperationID is the handle GET /api/v1/operations/{id} resolves;
+	// a primaryChange's identifies the entry only and is not followed.
+	OperationID string        `json:"operationId" doc:"Opaque handle for GET /api/v1/operations/{id}; a primaryChange's only identifies the entry (it is observed, not followed)."`
+	Kind        OperationKind `json:"kind" enum:"backup,reload,restart,promote,restoreDrill,primaryChange"`
 	Target      ClusterRef    `json:"target"`
 	Instance    string        `json:"instance,omitempty"`
 	Created     string        `json:"created,omitempty"`
@@ -229,8 +240,9 @@ type Operation struct {
 	Blocked bool `json:"blocked,omitempty"`
 	// RecordedIn and RecordedFrom say where a recent operation was found
 	// (Operations.Recent only): on the cluster's objects, and which
-	// marker, or only in this replica's memory.
-	RecordedIn   OperationRecord `json:"recordedIn,omitempty" enum:"cluster,replica" doc:"Where this recent operation was found: on the cluster's objects (every replica lists it) or only in this console replica's memory."`
+	// marker, only in this replica's memory, or in this console's
+	// timeline.
+	RecordedIn   OperationRecord `json:"recordedIn,omitempty" enum:"cluster,replica,timeline" doc:"Where this recent operation was found: on the cluster's objects (every replica lists it), only in this console replica's memory, or in this console's timeline of what it observed (a primary change)."`
 	RecordedFrom string          `json:"recordedFrom,omitempty" doc:"The marker this recent operation was rebuilt from, in words."`
 	// Actor is reserved and not filled: who asked is the API server's
 	// audit log's to say, and user names are not shown to every viewer

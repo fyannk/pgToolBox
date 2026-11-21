@@ -252,8 +252,8 @@ func (FixtureOperator) Request(_ context.Context, _ *auth.Principal, ns, name st
 		id.Created = op.Created
 	case viewmodel.OperationRestoreDrill:
 		id.Created, id.CreatedNamespace = "drill-"+name+"-"+fixtures.Now.Format("0601021504"), ns
-	case viewmodel.OperationRestart, viewmodel.OperationReload, viewmodel.OperationPromote:
-		// These act on existing objects: nothing is created.
+	case viewmodel.OperationRestart, viewmodel.OperationReload, viewmodel.OperationPromote, viewmodel.OperationPrimaryChange:
+		// These act on existing objects (or are never requested): nothing is created.
 	}
 	return viewmodel.OperationAccepted{
 		OperationID: id.Encode(), Kind: req.Kind, Target: ref, AcceptedAt: fixtures.Now, ObservedGeneration: 3, Created: id.Created,

@@ -14,8 +14,9 @@ import { OperationsScreen, OperationsView } from "./Operations";
 
 /**
  * What the reader may do on this Cluster, why not when not, and its recent
- * operations, rebuilt from the Cluster's objects (or only remembered by this
- * replica, which is said). Every action goes through a typed
+ * operations, rebuilt from the Cluster's objects (every Backup, its source
+ * named), the primary changes this console observed, and what only this
+ * replica remembers (both said). Every action goes through a typed
  * confirmation and is followed by an OperationTracker; nothing is shown as
  * done before the operator says so.
  */
@@ -126,6 +127,51 @@ export const RecentReplicaAndGaps: Story = {
   },
 };
 export const RecentReplicaAndGapsDark = dark(RecentReplicaAndGaps);
+/** Recent lists every operation the Cluster went through: a scheduled Backup with its ScheduledBackup named, and a primary change this console observed (no Follow: it is not an operation the console follows). */
+const recentScheduled = {
+  ...operationRunning,
+  operationId: "scheduled-backup",
+  kind: "backup" as const,
+  created: "orders-daily-20261030070000",
+  recordedIn: "cluster" as const,
+  recordedFrom:
+    "Backup orders-daily-20261030070000 (created by ScheduledBackup orders-daily: metadata.labels[cnpg.io/scheduled-backup])",
+};
+const recentPrimaryChange = {
+  ...operationRunning,
+  operationId: "primary-change",
+  kind: "primaryChange" as const,
+  instance: "orders-2",
+  phase: "settled" as const,
+  health: "ok" as const,
+  steps: [
+    {
+      phase: "settled" as const,
+      at: operationRunning.acceptedAt,
+      source: "Cluster.status.currentPrimaryTimestamp",
+      text: "primary changed from orders-1 to orders-2 (failover)",
+    },
+  ],
+  recordedIn: "timeline" as const,
+  recordedFrom: "this console's timeline (Cluster.status.currentPrimary, observed)",
+};
+export const RecentEveryOrigin: Story = {
+  args: {
+    data: {
+      ...operationsOperator,
+      recent: [recentPrimaryChange, recentScheduled, ...(operationsOperator.recent ?? [])],
+      recentGaps: ["3 older entries are not listed: the list keeps the newest 20"],
+    },
+  },
+  play: async ({ canvas }) => {
+    await expect(canvas.getByText("primary change")).toBeVisible();
+    await expect(canvas.getByText("observed by this console, not necessarily requested")).toBeVisible();
+    await expect(canvas.getByText(/created by ScheduledBackup orders-daily/)).toBeVisible();
+    await expect(canvas.getAllByRole("button", { name: "Follow" })).toHaveLength(2);
+    await expect(canvas.getByRole("note")).toHaveTextContent(/3 older entries are not listed/);
+  },
+};
+export const RecentEveryOriginDark = dark(RecentEveryOrigin);
 export const Empty: Story = { args: { data: { ...operationsOperator, offers: [], recent: [] } } };
 const screen = { render: () => <OperationsScreen namespace="team-a" cluster="orders" /> };
 export const Loading: Story = { ...screen, parameters: { msw: handlersFor("loading") } };

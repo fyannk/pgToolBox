@@ -237,8 +237,9 @@ func (s *Service) Offers(ctx context.Context, p *auth.Principal, caps authz.Capa
 			if len(offer.Targets) == 0 {
 				offer.Blockers = append(offer.Blockers, viewmodel.OperationBlocker{Reason: "NoReplica", Text: "the Cluster has no replica to promote", Source: "Cluster.status.instanceNames"})
 			}
-		case viewmodel.OperationRestoreDrill:
-			// Not offered from this list: a drill has its own offer.
+		case viewmodel.OperationRestoreDrill, viewmodel.OperationPrimaryChange:
+			// Not offered from this list: a drill has its own offer, and
+			// a primary change is observed, never requested.
 		}
 		out.Offers = append(out.Offers, offer)
 	}
@@ -253,6 +254,10 @@ func (s *Service) Offers(ctx context.Context, p *auth.Principal, caps authz.Capa
 	for _, e := range entries {
 		// Who asked is the API server's audit log's to say: Recent lists
 		// what was done, not by whom, to every viewer of the Cluster.
+		if e.change != nil {
+			out.Recent = append(out.Recent, changeOperation(e, st))
+			continue
+		}
 		out.Recent = append(out.Recent, asRecorded(s.track(e.id, st), e, s.opts.Now().UTC()))
 	}
 	return out, nil

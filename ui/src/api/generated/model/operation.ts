@@ -23,11 +23,12 @@ export interface Operation {
   health?: OperationHealth;
   instance?: string;
   kind: OperationKind;
+  /** Opaque handle for GET /api/v1/operations/{id}; a primaryChange's only identifies the entry (it is observed, not followed). */
   operationId: string;
   phase: OperationPhase;
   /** The marker this recent operation was rebuilt from, in words. */
   recordedFrom?: string;
-  /** Where this recent operation was found: on the cluster's objects (every replica lists it) or only in this console replica's memory. */
+  /** Where this recent operation was found: on the cluster's objects (every replica lists it), only in this console replica's memory, or in this console's timeline of what it observed (a primary change). */
   recordedIn?: OperationRecordedIn;
   /** @nullable */
   steps: OperationStep[] | null;
