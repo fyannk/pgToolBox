@@ -136,26 +136,34 @@ func (f *Follower) Run(ctx context.Context) error {
 }
 
 func (f *Follower) reconcile(ctx context.Context) {
-	want := map[Key]bool{}
+	// The UIDs are read before the lock: Observations waits on it for
+	// every diagnostics render.
+	want := map[Key]string{}
 	for _, k := range f.opts.Roster.Keys(ctx) {
-		want[k] = true
+		want[k] = f.opts.Roster.UID(ctx, k)
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	for k, c := range f.set {
-		if !want[k] {
+		if _, ok := want[k]; !ok {
 			c.cancel()
 			<-c.done
 			delete(f.set, k)
 		}
 	}
 	f.expirePendingLocked()
-	for k := range want {
-		if _, ok := f.set[k]; ok {
-			continue
+	for k, uid := range want {
+		if c, ok := f.set[k]; ok {
+			// A Cluster recreated under the same name is another Cluster:
+			// its predecessor's observations do not describe it.
+			if uid == "" || uid == c.uid {
+				continue
+			}
+			c.cancel()
+			<-c.done
+			delete(f.set, k)
 		}
 		matcher := logstream.NewMatcher(f.opts.Rules, f.opts.MaxAge, f.opts.Now)
-		uid := f.opts.Roster.UID(ctx, k)
 		f.restoreLocked(k, uid, matcher)
 		key := k
 		members := func() []logstream.Member { return f.opts.Roster.Members(ctx, key) }

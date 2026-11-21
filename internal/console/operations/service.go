@@ -84,7 +84,8 @@ type Service struct {
 
 type record struct{ id ID }
 
-// maxClustersRecorded bounds the record's keys.
+// maxClustersRecorded bounds the record's keys; past it the Cluster
+// with the oldest latest operation is forgotten.
 const maxClustersRecorded = 256
 
 // New returns the service.
@@ -378,7 +379,7 @@ func (s *Service) remember(id ID) {
 	defer s.mu.Unlock()
 	key := id.Namespace + "/" + id.Cluster
 	if _, ok := s.recent[key]; !ok && len(s.recent) >= maxClustersRecorded {
-		return
+		s.evictOldestLocked()
 	}
 	recs := s.recent[key]
 	recs = append(recs, record{id: id})
@@ -386,6 +387,21 @@ func (s *Service) remember(id ID) {
 		recs = recs[len(recs)-s.opts.RecentPerCluster:]
 	}
 	s.recent[key] = recs
+}
+
+// evictOldestLocked forgets the Cluster whose latest operation is the
+// oldest (ties by key), so that a new Cluster is recorded once the
+// record is full.
+func (s *Service) evictOldestLocked() {
+	var oldest string
+	var at int64
+	for k, recs := range s.recent {
+		last := recs[len(recs)-1].id.AcceptedAt
+		if oldest == "" || last < at || (last == at && k < oldest) {
+			oldest, at = k, last
+		}
+	}
+	delete(s.recent, oldest)
 }
 
 // Lookup resolves a handle against the read model.

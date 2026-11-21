@@ -29,13 +29,14 @@ var sensitiveKey = regexp.MustCompile(`(?i)(token|secret|passw(or)?d|passphrase|
 
 // credentialText matches credentials that can sit inside any string: a
 // JWT (an OIDC id_token, a ServiceAccount token), an Authorization value,
-// a libpq password=… keyword (quoted or not), a SQL PASSWORD '…' clause,
-// and a URL's user information, which runs to the last @ of the URL since
-// a password may hold / and @.
+// a libpq password=… keyword (quoted or not), a SQL PASSWORD clause with
+// a standard ('…'), escape (E'…', backslash escapes) or Unicode (U&'…')
+// string, and a URL's user information, which runs to the last @ of the
+// URL since a password may hold / and @.
 var credentialText = regexp.MustCompile(`eyJ[A-Za-z0-9_-]{2,}\.[A-Za-z0-9_-]{2,}\.[A-Za-z0-9_-]*` +
 	`|(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}` +
-	`|(?i)password\s*=\s*('(?:[^'\\]|\\.)*'?|\S+)` +
-	`|(?i)\bpassword\s+'(?:[^']|'')*'?` +
+	`|(?i)password\s*=\s*('(?:[^'\\]|\\[\s\S])*'?|\S+)` +
+	`|(?i)\bpassword\s+(?:E'(?:[^'\\]|''|\\[\s\S])*'?|(?:U&)?'(?:[^']|'')*'?)` +
 	`|://[^/\s:@]+:[^\s"]*@`)
 
 // Payload returns raw, a JSON document, with every credential removed: the

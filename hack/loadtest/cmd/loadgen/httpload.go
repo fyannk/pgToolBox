@@ -446,7 +446,7 @@ func (r *sseResult) print(w io.Writer, streams int, elapsed time.Duration) {
 
 // runStream holds one stream open until ctx ends, reconnecting when it drops
 // (the SPA's own behaviour: it polls while the stream is down). A stream that
-// is silent for 40 s is dead: the server sends a heartbeat comment every 15 s.
+// is silent for 40 s is dead: the server sends a heartbeat event every 15 s.
 func runStream(ctx context.Context, s *session, base string, res *sseResult) {
 	backoff := 500 * time.Millisecond
 	for attempt := 0; ctx.Err() == nil; attempt++ {
@@ -510,7 +510,11 @@ func readStream(ctx context.Context, s *session, base string, res *sseResult) er
 		res.bytes.Add(int64(len(line)) + 1)
 		if t, ok := strings.CutPrefix(line, "event:"); ok {
 			t = strings.TrimSpace(t)
-			res.events.Add(1)
+			// A heartbeat keeps the stream open and carries no change:
+			// counted by type, not in the event rate.
+			if t != "heartbeat" {
+				res.events.Add(1)
+			}
 			res.count(t)
 			if first {
 				first = false
