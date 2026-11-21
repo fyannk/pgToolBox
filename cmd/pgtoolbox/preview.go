@@ -40,7 +40,7 @@ const (
 	// removed; at most a reload or a start.
 	exitOK = 0
 	// exitDisruptive: at least one Cluster restarts, rolls out, shuts
-	// down, has a major upgrade, is removed, carries a parameter the
+	// down, has a major upgrade, loses instances, is removed, carries a parameter the
 	// operator refuses, or has a change whose effect is unknown.
 	exitDisruptive = 1
 	// exitInvalid: the arguments or the manifests could not be read.
@@ -76,6 +76,28 @@ type clusterReport struct {
 	// Change is changed, unchanged, added or removed.
 	// Preview is set for a changed Cluster.
 	Preview *preview.Preview `json:"preview,omitempty"`
+	// FewerInstances is set when spec.instances decreases: replicas are
+	// removed and fewer remain to fail over to.
+	FewerInstances *instanceChange `json:"fewerInstances,omitempty"`
+}
+
+type instanceChange struct {
+	Before int `json:"before"`
+	After  int `json:"after"`
+}
+
+// instances is spec.instances, 1 (the CRD default) when absent or not a
+// number (the preview reports such a field on its own).
+func instances(raw []byte) int {
+	var c struct {
+		Spec struct {
+			Instances *int `json:"instances"`
+		} `json:"spec"`
+	}
+	if json.Unmarshal(raw, &c) != nil || c.Spec.Instances == nil {
+		return 1
+	}
+	return *c.Spec.Instances
 }
 
 const previewUsage = `Usage: pgtoolbox preview [--output text|json] [--cnpg-version 1.30] [--postgres-major N] OLD.yaml NEW.yaml
@@ -87,8 +109,9 @@ contacts a cluster.
 
 Exit codes:
   0  nothing disruptive: at most a configuration reload or a start
-  1  disruptive: a restart, rollout, shutdown, major upgrade, a removed Cluster,
-     a parameter the operator refuses, or a change whose effect is unknown
+  1  disruptive: a restart, rollout, shutdown, major upgrade, fewer instances,
+     a removed Cluster, a parameter the operator refuses, or a change whose
+     effect is unknown
   2  invalid arguments or manifests
 
 Options:
@@ -114,7 +137,7 @@ func runPreview(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return exitInvalid
 	}
 	fail := func(format string, a ...any) int {
-		_, _ = fmt.Fprintf(stderr, "pgtoolbox preview: "+format+"\n", a...)
+		_, _ = fmt.Fprintf(stderr, "pgtoolbox preview: %s\n", clean(fmt.Sprintf(format, a...)))
 		return exitInvalid
 	}
 	if *output != "text" && *output != "json" {
@@ -289,6 +312,12 @@ func compare(before, after map[key][]byte, in preview.Input) (report, error) {
 				break
 			}
 			c.Preview, c.Disruptive = &p, disruptive(p)
+			// The preview classifies a scale as touching no running
+			// instance; for a gate, losing replicas is disruptive.
+			if nb, na := instances(b), instances(a); na < nb {
+				c.FewerInstances = &instanceChange{Before: nb, After: na}
+				c.Disruptive = true
+			}
 		}
 		rep.Disruptive = rep.Disruptive || c.Disruptive
 		rep.Clusters = append(rep.Clusters, c)

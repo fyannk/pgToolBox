@@ -167,7 +167,19 @@ func TestCompute(t *testing.T) {
 			verified:    true,
 		},
 		{
-			name:        "ssl_ecdh_curve is fixed on 1.30 and free on 1.31",
+			// Removed from FixedConfigurationParameters in v1.30.1 (#11308).
+			name:        "ssl_ecdh_curve is free on 1.30",
+			before:      base,
+			after:       merge(base, pg(map[string]string{"ssl_ecdh_curve": "prime256v1"})),
+			minor:       cnpgstatus.Minor130,
+			effect:      EffectReload,
+			primary:     PrimaryReload,
+			firstStep:   "all",
+			paramEffect: map[string]Effect{"ssl_ecdh_curve": EffectReload},
+			verified:    true,
+		},
+		{
+			name:        "ssl_ecdh_curve is free on 1.31",
 			before:      base,
 			after:       merge(base, pg(map[string]string{"ssl_ecdh_curve": "prime256v1"})),
 			minor:       cnpgstatus.Minor131,

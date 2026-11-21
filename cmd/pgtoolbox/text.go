@@ -19,6 +19,7 @@ import (
 	"io"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/fyannk/pgToolBox/pkg/cnpgstatus/preview"
 )
@@ -118,7 +119,7 @@ func writeText(w io.Writer, rep report) {
 		if i > 0 {
 			b.WriteString("\n")
 		}
-		fmt.Fprintf(&b, "Cluster %s: %s\n", key{c.Namespace, c.Name}, c.Change)
+		fmt.Fprintf(&b, "Cluster %s: %s\n", clean(key{c.Namespace, c.Name}.String()), c.Change)
 		switch c.Change {
 		case changeRemoved:
 			b.WriteString("  Removed — deleting the Cluster deletes its instances.\n")
@@ -127,14 +128,17 @@ func writeText(w io.Writer, rep report) {
 		case changeAdded:
 			b.WriteString("  Added — a new Cluster: no running instance is touched.\n")
 		default:
-			writePreview(&b, *c.Preview, rep.CNPGVersion)
+			writePreview(&b, cleanPreview(*c.Preview), rep.CNPGVersion)
+			if f := c.FewerInstances; f != nil {
+				fmt.Fprintf(&b, "  Fewer instances — %d → %d: replicas are removed and fewer remain to fail over to.\n", f.Before, f.After)
+			}
 		}
 	}
 	if rep.Ignored > 0 {
 		fmt.Fprintf(&b, "\n%d document(s) that are not CloudNativePG Clusters were ignored.\n", rep.Ignored)
 	}
 	if rep.Disruptive {
-		b.WriteString("\nDisruptive: at least one Cluster restarts, rolls out, shuts down, is upgraded or removed, carries a refused parameter, or has an unknown effect.\n")
+		b.WriteString("\nDisruptive: at least one Cluster restarts, rolls out, shuts down, is upgraded, loses instances or is removed, carries a refused parameter, or has an unknown effect.\n")
 	} else {
 		b.WriteString("\nNot disruptive: at most a configuration reload or a start.\n")
 	}
@@ -228,4 +232,53 @@ func value(v string) string {
 		return "unset"
 	}
 	return v
+}
+
+// clean escapes the control characters of a manifest-sourced string (C0,
+// C1 and so ESC, and the Unicode line and paragraph separators), so a
+// manifest cannot start a line of its own in a CI log (a workflow command
+// such as "::stop-commands::") or move the terminal cursor.
+func clean(s string) string {
+	if !strings.ContainsFunc(s, unsafeRune) {
+		return s
+	}
+	var b strings.Builder
+	for _, r := range s {
+		if unsafeRune(r) {
+			fmt.Fprintf(&b, "\\u%04x", r)
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
+func unsafeRune(r rune) bool {
+	return unicode.IsControl(r) || r == '\u2028' || r == '\u2029'
+}
+
+// cleanPreview is p with every manifest-sourced string cleaned.
+func cleanPreview(p preview.Preview) preview.Preview {
+	p.Strategy, p.Method = clean(p.Strategy), clean(p.Method)
+	params := make([]preview.ParameterChange, len(p.Parameters))
+	for i, c := range p.Parameters {
+		c.Name, c.Before, c.After = clean(c.Name), clean(c.Before), clean(c.After)
+		params[i] = c
+	}
+	fields := make([]preview.FieldChange, len(p.Fields))
+	for i, f := range p.Fields {
+		f.Path = clean(f.Path)
+		fields[i] = f
+	}
+	steps := make([]preview.Step, len(p.Steps))
+	for i, s := range p.Steps {
+		names := make([]string, len(s.Instances))
+		for j, n := range s.Instances {
+			names[j] = clean(n)
+		}
+		s.Instances = names
+		steps[i] = s
+	}
+	p.Parameters, p.Fields, p.Steps = params, fields, steps
+	return p
 }
