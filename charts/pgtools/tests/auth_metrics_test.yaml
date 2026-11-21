@@ -319,6 +319,7 @@ tests:
 
   - it: renders the MCP alerts as a PrometheusRule, each with a severity and a runbook
     template: templates/console/prometheusrule.yaml
+    documentIndex: 0
     set: {console.metrics.prometheusRule.enabled: true, console.metrics.prometheusRule.labels: {release: prom}}
     asserts:
       - isKind: {of: PrometheusRule}
@@ -329,6 +330,20 @@ tests:
       - equal: {path: "spec.groups[1].rules[1].alert", value: PgToolBoxConsoleMCPOAuthCodeReplayed}
       - matchRegex: {path: "spec.groups[0].rules[0].annotations.runbook_url", pattern: "console/alerts.md#pgtoolboxconsolemcphigherrorratio$"}
       - matchRegex: {path: "spec.groups[0].rules[0].labels.severity", pattern: "^(info|warning|critical)$"}
+
+  - it: renders the findings alerts as a second PrometheusRule beside the MCP one
+    template: templates/console/prometheusrule.yaml
+    documentIndex: 1
+    set: {console.metrics.prometheusRule.enabled: true, console.metrics.prometheusRule.labels: {release: prom}}
+    asserts:
+      - isKind: {of: PrometheusRule}
+      - equal: {path: metadata.name, value: pgc-console-findings}
+      - equal: {path: metadata.labels.release, value: prom}
+      - equal: {path: "spec.groups[0].name", value: pgtoolbox-console-findings}
+      - equal: {path: "spec.groups[0].rules[0].alert", value: PgToolBoxFindingCritical}
+      - equal: {path: "spec.groups[0].rules[0].labels.severity", value: critical}
+      - equal: {path: "spec.groups[0].rules[3].alert", value: PgToolBoxFindingChecksUnavailable}
+      - matchRegex: {path: "spec.groups[0].rules[0].annotations.runbook_url", pattern: "console/alerts.md#pgtoolboxfindingcritical$"}
 
   - it: renders the MCP dashboard for the Grafana sidecar
     template: templates/console/dashboard.yaml

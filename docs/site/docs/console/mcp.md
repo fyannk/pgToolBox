@@ -709,7 +709,7 @@ not the value). The confirmation link is never logged.
   The same outcomes are counted in `pgtoolbox_console_mcp_calls_total{tool,outcome}`,
   with `pgtoolbox_console_mcp_call_duration_seconds{tool}`, and each call can be
   [traced](tracing.md) as an OpenTelemetry `execute_tool` span. A Grafana dashboard
-  and alerts over them ship with the chart ([MCP alerts](alerts.md)).
+  and alerts over them ship with the chart ([MCP alerts](alerts.md#mcp-alerts)).
 - **No new rights.** The endpoint holds no credential of its own: the console's
   ServiceAccount is not used for any tool read beyond what the screens already
   use, and it never impersonates.

@@ -1,0 +1,131 @@
+# promtool test rules hack/rules/findings.rules.test.yaml  (make rules-test)
+rule_files:
+  - ../../charts/pgtools/files/alerts/findings.rules.yaml
+evaluation_interval: 1m
+tests:
+  - name: a critical finding on either replica fires once per check after 5 minutes
+    interval: 1m
+    input_series:
+      - series: 'pgtoolbox_finding{namespace="team-a",pod="pgc-0",cluster_namespace="team-a",cluster="orders",check="image-pull",severity="critical"}'
+        values: '1x20'
+      - series: 'pgtoolbox_finding{namespace="team-a",pod="pgc-1",cluster_namespace="team-a",cluster="orders",check="image-pull",severity="critical"}'
+        values: '_ _ 1x18'
+      # A note never alerts.
+      - series: 'pgtoolbox_finding{namespace="team-a",pod="pgc-0",cluster_namespace="team-a",cluster="orders",check="cnpg-eol",severity="note"}'
+        values: '1x20'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: PgToolBoxFindingCritical
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: PgToolBoxFindingCritical
+        exp_alerts:
+          - exp_labels: {severity: critical, cluster_namespace: team-a, cluster: orders, check: image-pull}
+            exp_annotations:
+              summary: "image-pull reports a critical finding on the Cluster team-a/orders"
+              description: "The console's diagnostics found damage being done now (PostgreSQL not serving or refusing writes, data unusable or being lost, recovery impossible). The Cluster's diagnostics page in the console has the evidence and the next steps."
+              runbook_url: "https://github.com/fyannk/pgToolBox/blob/main/docs/site/docs/console/alerts.md#pgtoolboxfindingcritical"
+      - eval_time: 10m
+        alertname: PgToolBoxFindingHigh
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: PgToolBoxFindingWarning
+        exp_alerts: []
+  - name: a finding that clears resolves its alert
+    interval: 1m
+    input_series:
+      # Active for 20 minutes, then the series goes (the finding cleared).
+      - series: 'pgtoolbox_finding{namespace="team-a",pod="pgc-0",cluster_namespace="team-a",cluster="orders",check="wal-archiving",severity="high"}'
+        values: '1x20'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: PgToolBoxFindingHigh
+        exp_alerts: []
+      - eval_time: 18m
+        alertname: PgToolBoxFindingHigh
+        exp_alerts:
+          - exp_labels: {severity: warning, cluster_namespace: team-a, cluster: orders, check: wal-archiving}
+            exp_annotations:
+              summary: "wal-archiving reports a high finding on the Cluster team-a/orders"
+              description: "The console's diagnostics found a protection or a redundancy gone (archiving, backups, a replica able to take over) while PostgreSQL still serves. The Cluster's diagnostics page in the console has the evidence and the next steps."
+              runbook_url: "https://github.com/fyannk/pgToolBox/blob/main/docs/site/docs/console/alerts.md#pgtoolboxfindinghigh"
+      - eval_time: 30m
+        alertname: PgToolBoxFindingHigh
+        exp_alerts: []
+  - name: a warning held for an hour is reported as info
+    interval: 1m
+    input_series:
+      - series: 'pgtoolbox_finding{namespace="team-a",pod="pgc-0",cluster_namespace="team-a",cluster="orders",check="connection-saturation",severity="warning"}'
+        values: '1x90'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: PgToolBoxFindingWarning
+        exp_alerts: []
+      - eval_time: 70m
+        alertname: PgToolBoxFindingWarning
+        exp_alerts:
+          - exp_labels: {severity: info, cluster_namespace: team-a, cluster: orders, check: connection-saturation}
+            exp_annotations:
+              summary: "connection-saturation reports a warning on the Cluster team-a/orders"
+              description: "The console's diagnostics found something an operator should look at, for an hour. The Cluster's diagnostics page in the console has the evidence and the next steps."
+              runbook_url: "https://github.com/fyannk/pgToolBox/blob/main/docs/site/docs/console/alerts.md#pgtoolboxfindingwarning"
+  - name: checks that cannot run alert, switched-off sources do not
+    interval: 1m
+    input_series:
+      - series: 'pgtoolbox_finding_checks{namespace="team-a",pod="pgc-0",cluster_namespace="team-a",cluster="orders",outcome="unavailable"}'
+        values: '3x40'
+      - series: 'pgtoolbox_finding_checks{namespace="team-a",pod="pgc-0",cluster_namespace="team-a",cluster="billing",outcome="unavailable"}'
+        values: '0x40'
+      - series: 'pgtoolbox_finding_checks{namespace="team-a",pod="pgc-0",cluster_namespace="team-a",cluster="billing",outcome="off"}'
+        values: '5x40'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: PgToolBoxFindingChecksUnavailable
+        exp_alerts: []
+      - eval_time: 35m
+        alertname: PgToolBoxFindingChecksUnavailable
+        exp_alerts:
+          - exp_labels: {severity: warning, cluster_namespace: team-a, cluster: orders}
+            exp_annotations:
+              summary: "3 diagnostics checks cannot run on the Cluster team-a/orders"
+              description: "Their input is absent, forbidden or stale, so no finding from them is not a clear result. Checks whose source is switched off are not counted. The Cluster's diagnostics page lists each check that could not run and why."
+              runbook_url: "https://github.com/fyannk/pgToolBox/blob/main/docs/site/docs/console/alerts.md#pgtoolboxfindingchecksunavailable"
+  - name: a failing run alerts after 15 minutes
+    interval: 1m
+    input_series:
+      - series: 'pgtoolbox_finding_run_failed{namespace="team-a",pod="pgc-0",cluster_namespace="team-a",cluster="orders"}'
+        values: '0 0 1x30'
+      - series: 'pgtoolbox_finding_run_failed{namespace="team-a",pod="pgc-0",cluster_namespace="team-a",cluster="billing"}'
+        values: '0x32'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: PgToolBoxFindingRunFailed
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: PgToolBoxFindingRunFailed
+        exp_alerts:
+          - exp_labels: {severity: warning, cluster_namespace: team-a, cluster: orders}
+            exp_annotations:
+              summary: "The diagnostics run of the Cluster team-a/orders fails"
+              description: "Every run for 15 minutes failed, so the Cluster has no finding at all, whatever its state. The console's log has the error (\"diagnostics run panicked\")."
+              runbook_url: "https://github.com/fyannk/pgToolBox/blob/main/docs/site/docs/console/alerts.md#pgtoolboxfindingrunfailed"
+  - name: a replica whose runs stopped an hour ago alerts, one that runs does not
+    interval: 1m
+    input_series:
+      # pgc-0 runs every minute; pgc-1 last ran at time 0 and never again.
+      - series: 'pgtoolbox_finding_run_timestamp_seconds{namespace="team-a",pod="pgc-0",cluster_namespace="team-a",cluster="orders"}'
+        values: '0+60x80'
+      - series: 'pgtoolbox_finding_run_timestamp_seconds{namespace="team-a",pod="pgc-1",cluster_namespace="team-a",cluster="orders"}'
+        values: '0x80'
+    alert_rule_test:
+      - eval_time: 50m
+        alertname: PgToolBoxFindingRunsStale
+        exp_alerts: []
+      - eval_time: 70m
+        alertname: PgToolBoxFindingRunsStale
+        exp_alerts:
+          - exp_labels: {severity: warning, namespace: team-a, pod: pgc-1, cluster_namespace: team-a, cluster: orders}
+            exp_annotations:
+              summary: "The diagnostics of the Cluster team-a/orders on pgc-1 are over an hour old"
+              description: "No diagnostics run for an hour (the safety cadence, DIAGNOSTICS_INTERVAL, is at most 30 minutes): the findings this replica exports and shows describe the past."
+              runbook_url: "https://github.com/fyannk/pgToolBox/blob/main/docs/site/docs/console/alerts.md#pgtoolboxfindingrunsstale"

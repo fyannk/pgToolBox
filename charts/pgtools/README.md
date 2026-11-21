@@ -987,7 +987,7 @@ authority on what is accepted.
 | console.metrics.tls.insecureSkipVerify | bool | `false` | Skip certificate verification, an explicit opt-in for a self-signed certificate. The bearer token still decides who may read. |
 | console.metrics.serviceMonitor | object | `{"enabled":false,"interval":"30s","labels":{}}` | Create a ServiceMonitor: `enabled`, scrape `interval` and extra `labels`. |
 | console.metrics.podMonitor | object | `{"enabled":false,"interval":"30s","labels":{}}` | Create a PodMonitor: `enabled`, scrape `interval` and extra `labels`. |
-| console.metrics.prometheusRule | object | `{"enabled":false,"labels":{}}` | Create a PrometheusRule with the MCP and MCP OAuth alerts (`files/alerts/mcp.rules.yaml`): `enabled` and extra `labels` (for the Prometheus `ruleSelector`). |
+| console.metrics.prometheusRule | object | `{"enabled":false,"labels":{}}` | Create two PrometheusRules: the MCP and MCP OAuth alerts (`files/alerts/mcp.rules.yaml`) and the diagnostics findings alerts (`files/alerts/findings.rules.yaml`): `enabled` and extra `labels` (for the Prometheus `ruleSelector`). |
 | console.metrics.grafanaDashboard | object | `{"enabled":false,"labels":{}}` | Create a ConfigMap with the "MCP / AI assistants" Grafana dashboard (`files/dashboards/mcp.json`): `enabled` and extra `labels`. The dashboard sidecar's label `grafana_dashboard: "1"` is always set. |
 | console.podDisruptionBudget.enabled | bool | `true` | Render a PodDisruptionBudget. It is rendered only with more than one replica. |
 | console.podDisruptionBudget.minAvailable | int | `1` | `minAvailable` of the PodDisruptionBudget. |

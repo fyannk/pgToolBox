@@ -866,9 +866,10 @@ console:
     serviceMonitor: {enabled: false, interval: 30s, labels: {}}
     # -- Create a PodMonitor: `enabled`, scrape `interval` and extra `labels`.
     podMonitor: {enabled: false, interval: 30s, labels: {}}
-    # -- Create a PrometheusRule with the MCP and MCP OAuth alerts
-    # (`files/alerts/mcp.rules.yaml`): `enabled` and extra `labels` (for the
-    # Prometheus `ruleSelector`).
+    # -- Create two PrometheusRules: the MCP and MCP OAuth alerts
+    # (`files/alerts/mcp.rules.yaml`) and the diagnostics findings alerts
+    # (`files/alerts/findings.rules.yaml`): `enabled` and extra `labels` (for
+    # the Prometheus `ruleSelector`).
     prometheusRule: {enabled: false, labels: {}}
     # -- Create a ConfigMap with the "MCP / AI assistants" Grafana dashboard
     # (`files/dashboards/mcp.json`): `enabled` and extra `labels`. The dashboard

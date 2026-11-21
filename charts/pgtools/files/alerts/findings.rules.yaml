@@ -1,0 +1,69 @@
+# Alerts on the console's diagnostics findings (docs/site/docs/console/alerts.md#findings).
+# Plain Prometheus rule groups: the chart wraps them in a PrometheusRule
+# (console.metrics.prometheusRule.enabled) and `make rules-test` runs
+# hack/rules/findings.rules.test.yaml against this file with promtool.
+#
+# pgtoolbox_finding is 1 while a check reports a finding on a Cluster, by the
+# finding's severity (note, warning, high, critical); the alert's own severity
+# follows the Prometheus Operator convention: critical stays critical, high is
+# a warning, warning is info, a note does not alert. Every console replica (and
+# the MCP Pod) runs the diagnostics, so the finding alerts take the max across
+# them. The finding series are absent when a check could not run: the
+# unavailable, failed and stale alerts say when that silence is blindness.
+groups:
+  - name: pgtoolbox-console-findings
+    rules:
+      - alert: PgToolBoxFindingCritical
+        expr: max by (cluster_namespace, cluster, check) (pgtoolbox_finding{severity="critical"}) > 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.check }} reports a critical finding on the Cluster {{ $labels.cluster_namespace }}/{{ $labels.cluster }}"
+          description: "The console's diagnostics found damage being done now (PostgreSQL not serving or refusing writes, data unusable or being lost, recovery impossible). The Cluster's diagnostics page in the console has the evidence and the next steps."
+          runbook_url: "https://github.com/fyannk/pgToolBox/blob/main/docs/site/docs/console/alerts.md#pgtoolboxfindingcritical"
+      - alert: PgToolBoxFindingHigh
+        expr: max by (cluster_namespace, cluster, check) (pgtoolbox_finding{severity="high"}) > 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.check }} reports a high finding on the Cluster {{ $labels.cluster_namespace }}/{{ $labels.cluster }}"
+          description: "The console's diagnostics found a protection or a redundancy gone (archiving, backups, a replica able to take over) while PostgreSQL still serves. The Cluster's diagnostics page in the console has the evidence and the next steps."
+          runbook_url: "https://github.com/fyannk/pgToolBox/blob/main/docs/site/docs/console/alerts.md#pgtoolboxfindinghigh"
+      - alert: PgToolBoxFindingWarning
+        expr: max by (cluster_namespace, cluster, check) (pgtoolbox_finding{severity="warning"}) > 0
+        for: 1h
+        labels:
+          severity: info
+        annotations:
+          summary: "{{ $labels.check }} reports a warning on the Cluster {{ $labels.cluster_namespace }}/{{ $labels.cluster }}"
+          description: "The console's diagnostics found something an operator should look at, for an hour. The Cluster's diagnostics page in the console has the evidence and the next steps."
+          runbook_url: "https://github.com/fyannk/pgToolBox/blob/main/docs/site/docs/console/alerts.md#pgtoolboxfindingwarning"
+      - alert: PgToolBoxFindingChecksUnavailable
+        expr: max by (cluster_namespace, cluster) (pgtoolbox_finding_checks{outcome="unavailable"}) > 0
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $value }} diagnostics checks cannot run on the Cluster {{ $labels.cluster_namespace }}/{{ $labels.cluster }}"
+          description: "Their input is absent, forbidden or stale, so no finding from them is not a clear result. Checks whose source is switched off are not counted. The Cluster's diagnostics page lists each check that could not run and why."
+          runbook_url: "https://github.com/fyannk/pgToolBox/blob/main/docs/site/docs/console/alerts.md#pgtoolboxfindingchecksunavailable"
+      - alert: PgToolBoxFindingRunFailed
+        expr: max by (cluster_namespace, cluster) (pgtoolbox_finding_run_failed) > 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "The diagnostics run of the Cluster {{ $labels.cluster_namespace }}/{{ $labels.cluster }} fails"
+          description: "Every run for 15 minutes failed, so the Cluster has no finding at all, whatever its state. The console's log has the error (\"diagnostics run panicked\")."
+          runbook_url: "https://github.com/fyannk/pgToolBox/blob/main/docs/site/docs/console/alerts.md#pgtoolboxfindingrunfailed"
+      - alert: PgToolBoxFindingRunsStale
+        expr: time() - pgtoolbox_finding_run_timestamp_seconds > 3600
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "The diagnostics of the Cluster {{ $labels.cluster_namespace }}/{{ $labels.cluster }} on {{ $labels.pod }} are over an hour old"
+          description: "No diagnostics run for an hour (the safety cadence, DIAGNOSTICS_INTERVAL, is at most 30 minutes): the findings this replica exports and shows describe the past."
+          runbook_url: "https://github.com/fyannk/pgToolBox/blob/main/docs/site/docs/console/alerts.md#pgtoolboxfindingrunsstale"
