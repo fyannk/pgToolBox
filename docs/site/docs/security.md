@@ -27,8 +27,13 @@ what the design guarantees and, as plainly, what it does not.
    person's own token, so the API server authorizes, admits and audits it under their
    name. A stale cache can never grant a write.
 4. **No cluster-scoped console, no Secret verb.** A console's reach is bounded by the
-   namespaces its Roles name. Its ServiceAccount cannot read a Secret, cannot write,
-   and cannot impersonate. The one opt-in exception is the
+   namespaces its Roles name. Its ServiceAccount cannot read a Secret and cannot
+   impersonate. It writes only its own objects, by name: the state ConfigMap
+   (`<console>-state`, `update`: the sign-outs and "since" times its replicas
+   share) and, when the features are on, the Leases that elect its MCP leader
+   and its digest sender (the digest Lease may also be created). The revocation
+   ConfigMap it only reads: a sign-out written there goes with the person's
+   token. The one other opt-in write is the
    [restore drill](console/restore-drills.md#which-clusters-the-console-deletes)
    teardown: `delete clusters` in the drill namespace, used only on Clusters this
    console sealed. On Kubernetes 1.30+ an admission policy enforces that on the
@@ -293,6 +298,7 @@ in view.
 | **The console caches a positive identity for 30 s and a positive SAR for 10 s.** | A revoked person may keep seeing views for up to that long; writes stop at once. | None needed; stated for incident response. |
 | **An expired or revoked access request does not end access already open.** Deleting the RoleBinding stops new authorizations only. | The console's caches above (10 s per SAR, 30 s per identity); in pgAdmin on OpenShift, whose oauth-proxy checks access at sign-in only, the session lifetime (**1 h by default**, `auth.openshiftOAuthProxy.sessionMaxAge`) and as long as open database connections last. | For an incident, delete the PgAdmin's `<name>-pgadmin-proxy-cookie` Secret and then its Pod, and terminate the user's backends in PostgreSQL ([access requests](console/access-requests.md#lifecycle)). |
 | **The four-eyes check covers the console's approval path only.** Approvers hold `create rolebindings` and `bind` on both roles. | An approver can bind `pgtoolbox-console-operator` to themselves directly with `kubectl`, with no request and no second person; the operator does not see such a binding. | Grant `pgtoolbox-console-approver` only to people trusted with the namespace's access; watch RoleBindings to the two roles in the API server's audit log. |
+| **Anyone with `edit` in the console's namespace controls the console.** | They can read its session key and edit its revocation and state ConfigMaps, for example to un-revoke a session. | Keep the console in a namespace where only its administrators hold rights. |
 | **`/metrics` on the console's probe port is plain HTTP when the console has no certificate.** | A scraper's token crosses the pod network in clear text. | Set `console.tls.secretName`: the probe port, `/metrics` included, is then HTTPS with the console's certificate ([metrics](console/metrics.md)). |
 | **The OpenShift sign-in using the ServiceAccount's projected token as client secret is not yet verified on a live cluster.** | If OpenShift rejects it, sign-in fails with `invalid_client`. | Use a long-lived token Secret ([checklist](console/openshift.md#manual-checklist), step 5). |
 | **The pgAdmin container's root filesystem is writable.** | An attacker with code execution in the container can write to its filesystem. | Restricted Pod Security, no capabilities, optional NetworkPolicy; read-only is an image change on the roadmap. |
