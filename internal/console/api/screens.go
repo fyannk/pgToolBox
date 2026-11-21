@@ -511,6 +511,13 @@ func keepAlive(ctx context.Context, d Deps, p *auth.Principal, in *PodPath, out 
 	defer beat.Stop()
 	check := time.NewTicker(logRecheck)
 	defer check.Stop()
+	// One heartbeat at once: the client counts the stream live from its
+	// first event, and a quiet log would otherwise send none for a whole
+	// interval.
+	if out.data(sse.Heartbeat{ServerTime: d.now()}) != nil {
+		endWith("the client went away")
+		return
+	}
 	for {
 		select {
 		case <-ctx.Done():
