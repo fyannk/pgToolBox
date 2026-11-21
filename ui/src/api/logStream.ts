@@ -68,6 +68,7 @@ export function useLogStream(path: string | null): Stream {
       arm();
       backoff = 2_000;
       failures = 0;
+      setS((prev) => (prev.state === "live" ? prev : { ...prev, state: "live" }));
     };
     const fail = () => {
       clearTimeout(watchdog);
@@ -92,10 +93,9 @@ export function useLogStream(path: string | null): Stream {
     const open = () => {
       es = new EventSource(path);
       arm();
-      es.onopen = () => {
-        arm();
-        setS((prev) => ({ ...prev, state: "live" }));
-      };
+      // Headers alone prove nothing (a proxy may hold the body back): the
+      // stream is live from its first event, a heartbeat at the latest.
+      es.onopen = arm;
       es.addEventListener("line", (ev) => {
         alive();
         const d = parse<{ at?: string; text: string }>(ev);

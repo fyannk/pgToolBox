@@ -111,6 +111,8 @@ test("a stream that opens but never delivers an event gives up like one that fai
   const screen = await renderInFrame(<Probe path="/s" />);
   for (let i = 0; i < 5; i++) {
     FakeSource.all[i]?.onopen?.();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(screen.getByRole("status").element().textContent).not.toMatch(/^live/);
     await vi.advanceTimersByTimeAsync(30_000 + 10_000);
   }
   expect(screen.getByRole("status").element().textContent).toContain("ended|the stream could not be reopened");
