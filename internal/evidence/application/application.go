@@ -157,13 +157,12 @@ func newWithFactoryVersion(ctx context.Context, cfg config.Config, logger *slog.
 				Retention: pgbackrestRetention(cfg.PGBackRestRetention),
 			}
 		}
-		recentLimit := min(cfg.WALPageSize, inventory.MaxRecentObjects)
 		worker, err = inventory.NewScanner(inventory.ScannerOptions{
 			Store: reader, Format: format, ConfiguredScopes: configuredScopes,
 			Cache: scannerCache, Readiness: probeState, RefreshInterval: cfg.CatalogRefreshInterval,
 			MaxObjects: cfg.MaxObjectsPerScan, PageSize: store.MaxPageObjects, AnalyzeBarmanCatalog: cfg.RepositoryFormat == config.FormatBarmanCloud,
 			BarmanRecoveryOptions: barmancloud.RecoveryOptions{ExpectedRetentionPolicy: cfg.ExpectedRetentionPolicy, ExpectedMinimumRedundancy: cfg.ExpectedMinimumRedundancy},
-			RecentLimit:           recentLimit, Now: time.Now, Logger: logger,
+			Now:                   time.Now, Logger: logger,
 			Redactor: redactor, PGBackRest: pgbackrestOptions,
 		})
 		if err != nil {

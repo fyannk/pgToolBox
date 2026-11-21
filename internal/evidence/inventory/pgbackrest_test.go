@@ -38,7 +38,7 @@ func scanPGBackRest(t *testing.T, reader store.Reader, configured []string, opti
 	scanner, err := NewScanner(ScannerOptions{
 		Store: reader, Format: format, ConfiguredScopes: configured, Cache: cache,
 		Readiness:       readiness.New(true, time.Hour, time.Now),
-		RefreshInterval: time.Hour, MaxObjects: 100_000, PageSize: 7, RecentLimit: 5,
+		RefreshInterval: time.Hour, MaxObjects: 100_000, PageSize: 7,
 		Now: time.Now, Logger: slog.New(slog.DiscardHandler), PGBackRest: options,
 	})
 	if err != nil {
@@ -116,20 +116,6 @@ func TestScannerAnalysesPGBackRestStanzas(t *testing.T) {
 			configured: []string{"demo"}, options: agent(nil), state: evidence.Healthy, reports: 1,
 		},
 		{
-			name: "viewer, every stanza", repository: pgbackrestfixture.Merge(plain, renamed(t, pgbackrestfixture.Load(t, "format6"), "other")),
-			options: &PGBackRestOptions{Passphrase: []byte(pgbackrestfixture.Passphrase)}, state: evidence.Unknown, reports: 2,
-			check: func(t *testing.T, snapshot Snapshot) {
-				if snapshot.PGBackRest[0].Stanza != "demo" || snapshot.PGBackRest[1].Stanza != "other" {
-					t.Fatalf("stanzas %s, %s", snapshot.PGBackRest[0].Stanza, snapshot.PGBackRest[1].Stanza)
-				}
-				for _, capability := range snapshot.Evidence.Capabilities {
-					if capability.ID == evidence.CatalogListing && capability.Reason[:6] != "other:" {
-						t.Fatalf("the worst stanza is not named: %+v", capability)
-					}
-				}
-			},
-		},
-		{
 			name: "no analysis without options", repository: plain, configured: []string{"demo"},
 			state: evidence.Unknown, reports: 0,
 		},
@@ -148,6 +134,23 @@ func TestScannerAnalysesPGBackRestStanzas(t *testing.T) {
 	}
 }
 
+// The analysis reads one named stanza: options without a Stanza are refused.
+func TestScannerRefusesPGBackRestWithoutAStanza(t *testing.T) {
+	t.Parallel()
+	format := pgbackrest.New()
+	cache, err := NewCache(Initial(format.Descriptor()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewScanner(ScannerOptions{
+		Store: pgbackrestfixture.Load(t, "plain").Reader(t), Format: format, Cache: cache,
+		Readiness: readiness.New(true, time.Hour, time.Now), RefreshInterval: time.Hour, MaxObjects: 10, PageSize: 7,
+		Logger: slog.New(slog.DiscardHandler), PGBackRest: &PGBackRestOptions{},
+	}); err == nil {
+		t.Fatal("NewScanner accepted pgBackRest options without a stanza")
+	}
+}
+
 func TestPGBackRestSnapshotCloneAndValidate(t *testing.T) {
 	t.Parallel()
 	snapshot := scanPGBackRest(t, pgbackrestfixture.Load(t, "plain").Reader(t), []string{"demo"}, &PGBackRestOptions{Stanza: "demo"})
@@ -160,19 +163,6 @@ func TestPGBackRestSnapshotCloneAndValidate(t *testing.T) {
 	unsorted.PGBackRest = append(unsorted.PGBackRest, unsorted.PGBackRest[0])
 	if unsorted.Validate() == nil {
 		t.Fatal("duplicate stanza reports validated")
-	}
-}
-
-func TestPGBackRestViewerStanzaCeiling(t *testing.T) {
-	t.Parallel()
-	objects := make([]store.Object, 0, MaxPGBackRestStanzas+1)
-	for index := range MaxPGBackRestStanzas + 1 {
-		objects = append(objects, store.Object{Key: "backup/s" + string(rune('A'+index/26)) + string(rune('a'+index%26)) + "/backup.info", Size: 1})
-	}
-	repository := &pgbackrestfixture.Repository{Objects: objects, Content: map[string][]byte{}}
-	snapshot := scanPGBackRest(t, repository.Reader(t), nil, &PGBackRestOptions{})
-	if snapshot.Evidence.State != evidence.Unknown || len(snapshot.PGBackRest) != 0 || snapshot.Evidence.Reason != "too many pgBackRest stanzas to analyse" {
-		t.Fatalf("state %s (%s), %d reports", snapshot.Evidence.State, snapshot.Evidence.Reason, len(snapshot.PGBackRest))
 	}
 }
 

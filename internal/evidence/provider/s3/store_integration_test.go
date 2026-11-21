@@ -74,7 +74,7 @@ func TestS3MinIOJourney(t *testing.T) {
 	probe := readiness.New(true, time.Minute, time.Now)
 	scanner, err := inventory.NewScanner(inventory.ScannerOptions{
 		Store: adapter, Format: format, Cache: cache, Readiness: probe,
-		RefreshInterval: time.Minute, MaxObjects: 1000, PageSize: 2, RecentLimit: 20,
+		RefreshInterval: time.Minute, MaxObjects: 1000, PageSize: 2,
 		AnalyzeBarmanCatalog: true,
 		Now:                  time.Now, Logger: slog.New(slog.DiscardHandler),
 	})
@@ -91,14 +91,8 @@ func TestS3MinIOJourney(t *testing.T) {
 	if !snapshot.TotalsKnown || snapshot.ObjectCount < 11 || snapshot.PagesExamined < 2 || len(snapshot.Scopes) != 1 || snapshot.Scopes[0].Name != "alpha" || !snapshot.Scopes[0].Recognized {
 		t.Fatalf("MinIO inventory = %#v", snapshot)
 	}
-	foundGeneratedWAL := false
-	for _, recent := range snapshot.RecentObjects {
-		if strings.Contains(recent.Key, "/wals/") && strings.HasSuffix(recent.Key, "000000010000000000000001") {
-			foundGeneratedWAL = true
-		}
-	}
-	if !foundGeneratedWAL {
-		t.Fatalf("Barman-generated WAL was not inventoried: %#v", snapshot.RecentObjects)
+	if len(snapshot.BarmanWAL.Servers) != 1 || snapshot.BarmanWAL.Servers[0].Counts.Segments < 1 {
+		t.Fatalf("Barman-generated WAL was not inventoried: %#v", snapshot.BarmanWAL)
 	}
 	wantStates := map[string]evidence.State{
 		"started": evidence.Warning, "failed": evidence.Unhealthy,

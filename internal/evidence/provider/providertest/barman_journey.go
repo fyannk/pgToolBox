@@ -136,8 +136,8 @@ func BarmanCatalogJourney(t *testing.T, reader store.Reader) JourneyResult {
 	scanner, err := inventory.NewScanner(inventory.ScannerOptions{
 		Store: reader, Format: format, Cache: cache, Readiness: probe,
 		RefreshInterval: time.Minute, MaxObjects: 1000, PageSize: store.MaxPageObjects,
-		RecentLimit: 20, AnalyzeBarmanCatalog: true,
-		Now: time.Now, Logger: slog.New(slog.DiscardHandler),
+		AnalyzeBarmanCatalog: true,
+		Now:                  time.Now, Logger: slog.New(slog.DiscardHandler),
 	})
 	if err != nil {
 		t.Fatal(err)

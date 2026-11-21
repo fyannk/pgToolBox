@@ -44,7 +44,6 @@ const (
 	defaultStoreRequestTimeout    = 10 * time.Second
 	defaultScanConcurrency        = 4
 	defaultMaxObjectsPerScan      = 1_000_000
-	defaultWALPageSize            = 200
 	maxSecretFileBytes            = 64 * 1024
 	maxConfigFileBytes            = 1024 * 1024
 	maxConfiguredScopes           = 1_000
@@ -324,7 +323,6 @@ type Config struct {
 	StoreRequestTimeout    time.Duration
 	ScanConcurrency        int
 	MaxObjectsPerScan      int
-	WALPageSize            int
 
 	ExpectedRetentionPolicy   string
 	ExpectedMinimumRedundancy *int
@@ -399,7 +397,6 @@ func load(getenv func(string) string, lookupEnv func(string) (string, bool)) (Co
 		StoreRequestTimeout:    defaultStoreRequestTimeout,
 		ScanConcurrency:        defaultScanConcurrency,
 		MaxObjectsPerScan:      defaultMaxObjectsPerScan,
-		WALPageSize:            defaultWALPageSize,
 		ListenAddr:             defaultAgentListenAddr,
 	}
 
@@ -507,9 +504,6 @@ func loadLimits(cfg *Config, getenv func(string) string) error {
 		return err
 	}
 	if cfg.MaxObjectsPerScan, err = parseInt(getenv("MAX_OBJECTS_PER_SCAN"), defaultMaxObjectsPerScan, 1_000, 10_000_000, "MAX_OBJECTS_PER_SCAN"); err != nil {
-		return err
-	}
-	if cfg.WALPageSize, err = parseInt(getenv("WAL_PAGE_SIZE"), defaultWALPageSize, 1, 1_000, "WAL_PAGE_SIZE"); err != nil {
 		return err
 	}
 	return nil

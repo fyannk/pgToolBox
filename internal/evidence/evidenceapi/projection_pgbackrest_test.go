@@ -69,7 +69,7 @@ func scanFixtureWith(t testing.TB, repository *pgbackrestfixture.Repository, pas
 	scanner, err := inventory.NewScanner(inventory.ScannerOptions{
 		Store: repository.Reader(t), Format: format, ConfiguredScopes: []string{pgbackrestfixture.Stanza}, Cache: cache,
 		Readiness: readiness.New(true, time.Hour, clock), RefreshInterval: time.Hour, MaxObjects: 100_000, PageSize: 50,
-		RecentLimit: 5, Now: clock, Logger: slog.New(slog.DiscardHandler),
+		Now: clock, Logger: slog.New(slog.DiscardHandler),
 		PGBackRest: &inventory.PGBackRestOptions{Stanza: pgbackrestfixture.Stanza, ArchiveStanza: pgbackrestfixture.Stanza, Passphrase: passphrase, Retention: retention},
 	})
 	if err != nil {

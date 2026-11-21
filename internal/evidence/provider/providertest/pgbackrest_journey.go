@@ -97,7 +97,7 @@ func PGBackRestJourney(t *testing.T, reader store.Reader, passphrase []byte) PGB
 	probe := readiness.New(true, time.Minute, time.Now)
 	scanner, err := inventory.NewScanner(inventory.ScannerOptions{
 		Store: reader, Format: format, ConfiguredScopes: []string{"demo"}, Cache: cache, Readiness: probe,
-		RefreshInterval: time.Minute, MaxObjects: 100_000, PageSize: 7, RecentLimit: 20,
+		RefreshInterval: time.Minute, MaxObjects: 100_000, PageSize: 7,
 		Now: time.Now, Logger: slog.New(slog.DiscardHandler),
 		PGBackRest: &inventory.PGBackRestOptions{Stanza: "demo", ArchiveStanza: "demo", Passphrase: passphrase},
 	})

@@ -18,7 +18,6 @@ import (
 	"context"
 	"errors"
 	"slices"
-	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -27,15 +26,9 @@ import (
 	"github.com/fyannk/pgToolBox/internal/evidence/store"
 )
 
-// MaxPGBackRestStanzas caps the stanzas analysed in one scan without a
-// configured Stanza;
-// past it the snapshot is unknown rather than partial.
-const MaxPGBackRestStanzas = 64
-
-// PGBackRestOptions turns on the pgBackRest analysis. With a Stanza the
-// scanner analyses that stanza only (the agent: its backups under
-// backup/<Stanza>/ and its WAL under archive/<ArchiveStanza>/); without one
-// it analyses every stanza it lists.
+// PGBackRestOptions turns on the pgBackRest analysis of one stanza: its
+// backups under backup/<Stanza>/ and its WAL under archive/<ArchiveStanza>/
+// (Stanza when empty). Stanza is required.
 type PGBackRestOptions struct {
 	Stanza        string
 	ArchiveStanza string
@@ -62,100 +55,63 @@ func clonePGBackRestOptions(options *PGBackRestOptions) *PGBackRestOptions {
 	return &clone
 }
 
-// pgbackrestBuilder streams the listing into one collector per stanza.
+// pgbackrestBuilder streams the listing into the stanza's collector.
 type pgbackrestBuilder struct {
 	options    PGBackRestOptions
 	previous   map[string]pgbackrest.Report
 	generation uint64
-	collectors map[string]*pgbackrest.Collector
-	truncated  bool
+	collector  *pgbackrest.Collector
 }
 
 func newPGBackRestBuilder(options PGBackRestOptions, previous []pgbackrest.Report, generation uint64) *pgbackrestBuilder {
 	builder := &pgbackrestBuilder{
 		options: options, generation: generation,
-		previous:   make(map[string]pgbackrest.Report, len(previous)),
-		collectors: make(map[string]*pgbackrest.Collector),
+		previous: make(map[string]pgbackrest.Report, len(previous)),
 	}
 	for _, report := range previous {
 		builder.previous[report.Stanza] = report
 	}
-	if options.Stanza != "" {
-		builder.collectors[options.Stanza] = builder.collector(options.Stanza, options.ArchiveStanza)
+	collectorOptions := pgbackrest.Options{
+		Stanza: options.Stanza, ArchiveStanza: options.ArchiveStanza, Passphrase: options.Passphrase,
+		MaxManifests: options.MaxManifests, Generation: generation,
 	}
+	if report, ok := builder.previous[options.Stanza]; ok {
+		collectorOptions.Previous = &report
+	}
+	builder.collector = pgbackrest.NewCollector(collectorOptions)
 	return builder
 }
 
-func (b *pgbackrestBuilder) collector(stanza, archiveStanza string) *pgbackrest.Collector {
-	options := pgbackrest.Options{
-		Stanza: stanza, ArchiveStanza: archiveStanza, Passphrase: b.options.Passphrase,
-		MaxManifests: b.options.MaxManifests, Generation: b.generation,
-	}
-	if previous, ok := b.previous[stanza]; ok {
-		options.Previous = &previous
-	}
-	return pgbackrest.NewCollector(options)
+// add folds one listed object into the stanza's collector, which keeps its
+// two stanza directories.
+func (b *pgbackrestBuilder) add(object store.Object) {
+	b.collector.Add(object)
 }
 
-// add folds one matched object in. The agent's single collector sees every
-// object and keeps its two stanza directories; without a Stanza a collector
-// opens the first time a stanza appears.
-func (b *pgbackrestBuilder) add(object store.Object, scope string) {
-	if b.options.Stanza != "" {
-		b.collectors[b.options.Stanza].Add(object)
-		return
-	}
-	if scope == "" {
-		return
-	}
-	collector, ok := b.collectors[scope]
-	if !ok {
-		if len(b.collectors) >= MaxPGBackRestStanzas {
-			b.truncated = true
-			return
-		}
-		collector = b.collector(scope, "")
-		b.collectors[scope] = collector
-	}
-	collector.Add(object)
-}
-
-// analyze reads every collected stanza and returns their reports sorted by
-// stanza. A split archive stanza gets its StanzaSplit finding here, and
-// each stanza its comparison with the configured retention.
+// analyze reads the stanza and returns its report. A split archive stanza
+// gets its StanzaSplit finding here, and the stanza its comparison with the
+// configured retention.
 func (b *pgbackrestBuilder) analyze(ctx context.Context, reader store.Reader) []pgbackrest.Report {
-	if b.truncated {
+	report := b.collector.Analyze(ctx, reader)
+	if ctx.Err() != nil {
 		return nil
 	}
-	stanzas := make([]string, 0, len(b.collectors))
-	for stanza := range b.collectors {
-		stanzas = append(stanzas, stanza)
+	if report.ArchiveStanza != report.Stanza {
+		report.AddFinding(pgbackrest.StanzaSplitFinding(report.Stanza, report.ArchiveStanza))
 	}
-	slices.Sort(stanzas)
-	reports := make([]pgbackrest.Report, 0, len(stanzas))
-	for _, stanza := range stanzas {
-		if ctx.Err() != nil {
-			return nil
+	if b.options.Retention != nil {
+		var previous *pgbackrest.Report
+		if value, ok := b.previous[report.Stanza]; ok {
+			previous = &value
 		}
-		report := b.collectors[stanza].Analyze(ctx, reader)
-		if report.ArchiveStanza != report.Stanza {
-			report.AddFinding(pgbackrest.StanzaSplitFinding(report.Stanza, report.ArchiveStanza))
-		}
-		if b.options.Retention != nil {
-			var previous *pgbackrest.Report
-			if value, ok := b.previous[stanza]; ok {
-				previous = &value
-			}
-			report.ApplyRetention(*b.options.Retention, previous)
-		}
-		reports = append(reports, report)
+		report.ApplyRetention(*b.options.Retention, previous)
 	}
-	return reports
+	return []pgbackrest.Report{report}
 }
 
 func validatePGBackRestReports(reports []pgbackrest.Report) error {
-	if len(reports) > MaxPGBackRestStanzas {
-		return errors.New("inventory snapshot exceeds the pgBackRest stanza limit")
+	if len(reports) > 1 {
+		return errors.New("inventory snapshot holds more than one pgBackRest stanza")
 	}
 	for index, report := range reports {
 		if report.Stanza == "" || (index > 0 && reports[index-1].Stanza >= report.Stanza) {
@@ -166,8 +122,8 @@ func validatePGBackRestReports(reports []pgbackrest.Report) error {
 }
 
 // applyPGBackRestEvidence sets the capabilities and the snapshot state from
-// the reports' aspects, the most conservative stanza winning each.
-func applyPGBackRestEvidence(snapshot *Snapshot, truncated bool) {
+// the stanza report's aspects.
+func applyPGBackRestEvidence(snapshot *Snapshot) {
 	type slot struct {
 		id     evidence.CapabilityID
 		aspect func(pgbackrest.Aspects) pgbackrest.Aspect
@@ -188,36 +144,15 @@ func applyPGBackRestEvidence(snapshot *Snapshot, truncated bool) {
 	}
 	for _, slot := range slots {
 		state, reason := evidence.Unknown, "no pgBackRest stanza observed"
-		switch {
-		case truncated:
-			reason = "too many pgBackRest stanzas to analyse"
-		case len(aspects) == 1:
+		if len(aspects) == 1 {
 			aspect := slot.aspect(aspects[0])
 			state, reason = aspect.State, aspect.Reason
-		case len(aspects) > 1:
-			state = evidence.Healthy
-			for _, value := range aspects {
-				state = pgbackrest.Conservative(state, slot.aspect(value).State)
-			}
-			reason = "evaluated across " + strconv.Itoa(len(aspects)) + " stanzas"
-			if state != evidence.Healthy {
-				index := slices.IndexFunc(aspects, func(value pgbackrest.Aspects) bool { return slot.aspect(value).State == state })
-				reason = snapshot.PGBackRest[index].Stanza + ": " + slot.aspect(aspects[index]).Reason
-			}
 		}
 		setCapabilityState(snapshot, slot.id, state, boundReason(reason))
 	}
 	state, reason := evidence.Unknown, "no pgBackRest stanza observed"
-	switch {
-	case truncated:
-		reason = "too many pgBackRest stanzas to analyse"
-	case len(aspects) > 0:
-		state = evidence.Healthy
-		for _, value := range aspects {
-			state = pgbackrest.Conservative(state, value.Overall.State)
-		}
-		index := slices.IndexFunc(aspects, func(value pgbackrest.Aspects) bool { return value.Overall.State == state })
-		reason = aspects[index].Overall.Reason
+	if len(aspects) == 1 {
+		state, reason = aspects[0].Overall.State, aspects[0].Overall.Reason
 	}
 	snapshot.Evidence.State, snapshot.Evidence.Reason = state, reason
 }

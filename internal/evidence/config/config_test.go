@@ -75,7 +75,7 @@ func TestLoadValidMatrix(t *testing.T) {
 				if cfg.Credentials.Mode != CredentialStaticFiles || cfg.ListenAddr != ":8443" {
 					t.Fatalf("defaults not applied: %#v", cfg)
 				}
-				if cfg.MaxObjectsPerScan != 1_000_000 || cfg.WALPageSize != 200 {
+				if cfg.MaxObjectsPerScan != 1_000_000 {
 					t.Fatalf("safety defaults not frozen: %#v", cfg)
 				}
 				if cfg.DestinationBucket != "backups" || cfg.DestinationPrefix != "cluster-a" {
@@ -103,11 +103,11 @@ func TestLoadValidMatrix(t *testing.T) {
 			environment: agentRepositoryEnvironment(t, map[string]string{
 				"REPOSITORY_FORMAT": "pgbackrest", "PROVIDER": "gcs", "STORE_CREDENTIAL_MODE": "ambient",
 				"DESTINATION_PATH": "gs://backups/repository", "PGBACKREST_STANZA": "demo", "CATALOG_REFRESH_INTERVAL": "10m",
-				"STORE_REQUEST_TIMEOUT": "20s", "SCAN_CONCURRENCY": "8", "WAL_PAGE_SIZE": "50",
+				"STORE_REQUEST_TIMEOUT": "20s", "SCAN_CONCURRENCY": "8",
 			}),
 			assert: func(t *testing.T, cfg Config) {
 				t.Helper()
-				if cfg.CatalogRefreshInterval != 10*time.Minute || cfg.StoreRequestTimeout != 20*time.Second || cfg.ScanConcurrency != 8 || cfg.WALPageSize != 50 {
+				if cfg.CatalogRefreshInterval != 10*time.Minute || cfg.StoreRequestTimeout != 20*time.Second || cfg.ScanConcurrency != 8 {
 					t.Fatalf("configured values not applied: %#v", cfg)
 				}
 			},
