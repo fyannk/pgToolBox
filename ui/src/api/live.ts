@@ -112,6 +112,7 @@ export const INVALIDATION_SCOPES = {
   "/api/v1/namespaces/{namespace}/clusters/{name}/operations": "cluster",
   "/api/v1/namespaces/{namespace}/clusters/{name}/replication": "cluster",
   "/api/v1/namespaces/{namespace}/clusters/{name}/storage": "cluster",
+  "/api/v1/namespaces/{namespace}/clusters/{name}/summary": "cluster",
   "/api/v1/namespaces/{namespace}/clusters/{name}/timeline": "cluster",
   "/api/v1/namespaces/{namespace}/clusters/{name}/topology": "cluster",
   "/api/v1/namespaces/{namespace}/clusters/{name}/triage": "cluster",

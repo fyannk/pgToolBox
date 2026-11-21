@@ -123,7 +123,7 @@ The text report goes to stdout. Errors go to stderr.
 (the preview itself classifies a scale as touching no running instance). `preview` is present only
 for a `changed` Cluster, and it is the console's change preview object: `effect`
 is `none`, `reload`, `start`, `restart`, `rollout`, `shutdown`, `majorUpgrade` or
-`unknown` (with `atLeast`, the worst effect that was classified). A refused
+`unknown` (then the `atLeast` field holds the worst effect that was classified). A refused
 parameter has `"effect": "refused"`.
 
 To fail only on refused parameters and let a restart through with a review:

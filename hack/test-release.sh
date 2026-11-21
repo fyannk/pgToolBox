@@ -192,6 +192,15 @@ case "$1" in
     n="$(cat "${GH_STUB_COUNT}" 2>/dev/null || echo 0)"
     echo $((n + 1)) > "${GH_STUB_COUNT}"
     ((n >= ${GH_STUB_FAILS:-0})) || exit 1 ;;
+  release)
+    # release download --dir D: one CLI tarball per platform and the
+    # SHA256SUMS over them (cosign, which checks its bundle, is a stub too).
+    [[ -z "${GH_STUB_NO_CLI:-}" ]] || exit 1
+    dir="$(sed -n 's/.*--dir \([^ ]*\).*/\1/p' <<<"$*")"
+    for p in linux_amd64 linux_arm64 darwin_amd64 darwin_arm64; do
+      echo "${p}" > "${dir}/pgtoolbox-cli_0.1.0_${p}.tar.gz"
+    done
+    (cd "${dir}" && sha256sum pgtoolbox-cli_* > SHA256SUMS && touch SHA256SUMS.sigstore.json) ;;
   *) exit 1 ;;
 esac
 STUB
@@ -326,6 +335,7 @@ rm -f "${GH_STUB_COUNT}"
 GH_STUB_FAILS=99 expect 1 'does not verify' -- ./hack/release.sh verify-published v0.1.0
 COSIGN_STUB_FAIL=1 expect 1 'does not verify' -- ./hack/release.sh verify-published v0.1.0
 DOCKER_STUB_FAIL=1 expect 1 'cannot be pulled anonymously' -- ./hack/release.sh verify-published v0.1.0
+GH_STUB_NO_CLI=1 expect 1 'CLI tarballs of v0.1.0 are missing' -- ./hack/release.sh verify-published v0.1.0
 expect 1 'must be semantic' -- ./hack/release.sh verify-published 0.1.0
 unset GH_STUB_COUNT VERIFY_SLEEP VERIFY_ATTEMPTS
 
