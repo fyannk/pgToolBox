@@ -13,10 +13,10 @@
 // limitations under the License.
 
 // Command evidence-agent is the backup-evidence agent. It reads one backup
-// repository and serves what it finds: standalone, as a read-only viewer
-// UI; as the in-cluster agent an EvidenceAgent deploys (RUNTIME_MODE=agent:
-// evidence/v1alpha1 over HTTPS with bound-token authentication); or as the
-// pgtools chart's team agent (RUNTIME_MODE=agent with AGENT_RESOLVE=cluster:
+// repository and serves what it finds as evidence/v1alpha1: as the
+// in-cluster agent an EvidenceAgent deploys (RUNTIME_MODE=agent, HTTPS with
+// bound-token authentication), or as the pgtools chart's team agent
+// (RUNTIME_MODE=agent with AGENT_RESOLVE=cluster:
 // it resolves its own repository from the Cluster and authenticates the
 // console by a shared token).
 package main
@@ -98,7 +98,7 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	if cfg.RuntimeMode == config.RuntimeAgent && cfg.AgentResolve == config.AgentResolveCluster {
+	if cfg.AgentResolve == config.AgentResolveCluster {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithCancel(ctx)
 		defer cancel()
@@ -114,26 +114,17 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	if cfg.RuntimeMode == config.RuntimeAgent {
-		logger.Info("agent application listening",
-			slog.String("runtime_mode", string(cfg.RuntimeMode)),
-			slog.String("version", releaseVersion(version)),
-			slog.String("listen_addr", cfg.ListenAddr),
-			slog.String("agent", cfg.AgentNamespace+"/"+cfg.AgentName),
-			slog.Uint64("producer_epoch", cfg.ProducerEpoch),
-			slog.String("auth", string(cfg.AgentAuth)),
-			slog.Bool("plain_http", cfg.AgentPlainHTTP),
-			slog.Bool("self_resolving", cfg.AgentResolve == config.AgentResolveCluster),
-		)
-		return app.ServeAgent(ctx, listener)
-	}
-	logger.Info("application listening",
+	logger.Info("agent application listening",
+		slog.String("runtime_mode", string(cfg.RuntimeMode)),
 		slog.String("version", releaseVersion(version)),
 		slog.String("listen_addr", cfg.ListenAddr),
-		slog.String("provider", string(cfg.Provider)),
-		slog.String("repository_format", string(cfg.RepositoryFormat)),
+		slog.String("agent", cfg.AgentNamespace+"/"+cfg.AgentName),
+		slog.Uint64("producer_epoch", cfg.ProducerEpoch),
+		slog.String("auth", string(cfg.AgentAuth)),
+		slog.Bool("plain_http", cfg.AgentPlainHTTP),
+		slog.Bool("self_resolving", cfg.AgentResolve == config.AgentResolveCluster),
 	)
-	return app.Serve(ctx, listener)
+	return app.ServeAgent(ctx, listener)
 }
 
 // selfResolve resolves the team agent's repository from its Cluster and

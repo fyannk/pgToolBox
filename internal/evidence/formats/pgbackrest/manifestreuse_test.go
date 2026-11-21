@@ -68,6 +68,9 @@ func TestUnchangedManifestIsNotReadAgain(t *testing.T) {
 	}{
 		"unchanged": {repository: tagged.without(), state: first.Backups[0].Manifest.State},
 		"no ETag":   {repository: untagged, reread: []string{"*"}, state: first.Backups[0].Manifest.State},
+		// The inventory cache hands the next scan a CloneReport copy; the
+		// clone keeps what reuse needs.
+		"through the cache clone": {repository: tagged.without(), state: first.Backups[0].Manifest.State, previous: CloneReport},
 		// A manifest decrypted under another cipher-pass is read again.
 		"other cipher-pass": {repository: tagged.without(), reread: []string{key, key + ".copy"}, state: first.Backups[0].Manifest.State, previous: func(report Report) Report {
 			report.Backups = slices.Clone(report.Backups)

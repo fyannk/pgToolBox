@@ -28,28 +28,54 @@ import (
 	evidencev1alpha1 "github.com/fyannk/pgToolBox/pkg/evidence/v1alpha1"
 )
 
+// loadOutcome is the configuration error Load returns or, for a
+// repository coordinate, defers to Config.RepositoryError.
+func loadOutcome(environment map[string]string) error {
+	cfg, err := Load(mapEnvironment(environment))
+	if err == nil {
+		err = cfg.RepositoryError
+	}
+	return err
+}
+
+// agentRepositoryEnvironment is the agent profile with only its identity:
+// the repository variables (format, provider, destination, scope and
+// credentials) are those of repository.
+func agentRepositoryEnvironment(t *testing.T, repository map[string]string) map[string]string {
+	t.Helper()
+	environment := agentProviderEnvironment(t, "", "", nil)
+	for _, variable := range []string{"REPOSITORY_FORMAT", "PROVIDER", "DESTINATION_PATH", "BARMAN_SERVER_NAMES"} {
+		delete(environment, variable)
+	}
+	for key, value := range repository {
+		environment[key] = value
+	}
+	return environment
+}
+
 func TestLoadValidMatrix(t *testing.T) {
 	t.Parallel()
+	accessPath, secretPath := agentCredentialFiles(t)
 	tests := []struct {
 		name        string
 		environment map[string]string
 		assert      func(*testing.T, Config)
 	}{
 		{
-			name: "barman on s3 with deterministic scopes",
-			environment: map[string]string{
-				"REPOSITORY_FORMAT": "barman-cloud", "PROVIDER": "s3",
-				"DESTINATION_PATH": "s3://backups/cluster-a", "BARMAN_SERVER_NAMES": "zeta, alpha,zeta", "AWS_REGION": "eu-west-1",
-			},
+			name: "barman on s3 with a deduplicated scope",
+			environment: agentRepositoryEnvironment(t, map[string]string{
+				"REPOSITORY_FORMAT": "barman-cloud", "PROVIDER": "s3", "DESTINATION_PATH": "s3://backups/cluster-a", "BARMAN_SERVER_NAMES": "alpha, alpha",
+				"AWS_REGION": "eu-west-1", "STORE_CREDENTIAL_MODE": "static-files", "AWS_ACCESS_KEY_ID_FILE": accessPath, "AWS_SECRET_ACCESS_KEY_FILE": secretPath,
+			}),
 			assert: func(t *testing.T, cfg Config) {
 				t.Helper()
-				if !reflect.DeepEqual(cfg.BarmanServerNames, []string{"alpha", "zeta"}) {
+				if !reflect.DeepEqual(cfg.BarmanServerNames, []string{"alpha"}) {
 					t.Fatalf("server names = %v", cfg.BarmanServerNames)
 				}
-				if cfg.Credentials.Mode != CredentialAmbient || cfg.ListenAddr != ":3000" || cfg.TrustedUserHeader != "X-Forwarded-User" {
+				if cfg.Credentials.Mode != CredentialStaticFiles || cfg.ListenAddr != ":8443" {
 					t.Fatalf("defaults not applied: %#v", cfg)
 				}
-				if cfg.MaxObjectsPerScan != 1_000_000 || cfg.WALPageSize != 200 {
+				if cfg.MaxObjectsPerScan != 1_000_000 {
 					t.Fatalf("safety defaults not frozen: %#v", cfg)
 				}
 				if cfg.DestinationBucket != "backups" || cfg.DestinationPrefix != "cluster-a" {
@@ -59,10 +85,11 @@ func TestLoadValidMatrix(t *testing.T) {
 		},
 		{
 			name: "S3 destination prefix is decoded once by the shared parser",
-			environment: map[string]string{
-				"REPOSITORY_FORMAT": "barman-cloud", "PROVIDER": "s3",
+			environment: agentRepositoryEnvironment(t, map[string]string{
+				"REPOSITORY_FORMAT": "barman-cloud", "PROVIDER": "s3", "BARMAN_SERVER_NAMES": "alpha",
 				"DESTINATION_PATH": "s3://backups/team%20a/cluster%2Fb/", "ENDPOINT_URL": "https://minio.example.test",
-			},
+				"STORE_CREDENTIAL_MODE": "static-files", "AWS_ACCESS_KEY_ID_FILE": accessPath, "AWS_SECRET_ACCESS_KEY_FILE": secretPath,
+			}),
 			assert: func(t *testing.T, cfg Config) {
 				t.Helper()
 				bucket, prefix, err := evidencev1alpha1.ParseS3Destination("s3://backups/team%20a/cluster%2Fb/")
@@ -73,24 +100,24 @@ func TestLoadValidMatrix(t *testing.T) {
 		},
 		{
 			name: "pgBackRest on GCS",
-			environment: map[string]string{
-				"REPOSITORY_FORMAT": "pgbackrest", "PROVIDER": "gcs",
-				"DESTINATION_PATH": "gs://backups/repository", "PGBACKREST_STANZAS": "demo",
-				"ALLOW_DOWNLOAD": "true", "CATALOG_REFRESH_INTERVAL": "10m",
-				"STORE_REQUEST_TIMEOUT": "20s", "SCAN_CONCURRENCY": "8", "WAL_PAGE_SIZE": "50",
-			},
+			environment: agentRepositoryEnvironment(t, map[string]string{
+				"REPOSITORY_FORMAT": "pgbackrest", "PROVIDER": "gcs", "STORE_CREDENTIAL_MODE": "ambient",
+				"DESTINATION_PATH": "gs://backups/repository", "PGBACKREST_STANZA": "demo", "CATALOG_REFRESH_INTERVAL": "10m",
+				"STORE_REQUEST_TIMEOUT": "20s", "SCAN_CONCURRENCY": "8",
+			}),
 			assert: func(t *testing.T, cfg Config) {
 				t.Helper()
-				if !cfg.AllowDownload || cfg.CatalogRefreshInterval != 10*time.Minute || cfg.StoreRequestTimeout != 20*time.Second || cfg.ScanConcurrency != 8 {
+				if cfg.CatalogRefreshInterval != 10*time.Minute || cfg.StoreRequestTimeout != 20*time.Second || cfg.ScanConcurrency != 8 {
 					t.Fatalf("configured values not applied: %#v", cfg)
 				}
 			},
 		},
 		{
 			name: "Azure workload identity",
-			environment: map[string]string{
+			environment: agentRepositoryEnvironment(t, map[string]string{
 				"REPOSITORY_FORMAT": "barman-cloud", "PROVIDER": "azure", "DESTINATION_PATH": "azure://container/prefix",
-			},
+				"BARMAN_SERVER_NAMES": "alpha", "AZURE_STORAGE_ACCOUNT": "demo", "STORE_CREDENTIAL_MODE": "ambient",
+			}),
 			assert: func(t *testing.T, cfg Config) {
 				t.Helper()
 				if cfg.Credentials.Mode != CredentialAmbient {
@@ -103,8 +130,8 @@ func TestLoadValidMatrix(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			cfg, err := Load(mapEnvironment(test.environment))
-			if err != nil {
-				t.Fatalf("Load() error = %v", err)
+			if err != nil || cfg.RepositoryError != nil {
+				t.Fatalf("Load() error = %v, deferred %v", err, cfg.RepositoryError)
 			}
 			test.assert(t, cfg)
 		})
@@ -113,11 +140,10 @@ func TestLoadValidMatrix(t *testing.T) {
 
 func TestLoadInvalidMatrix(t *testing.T) {
 	t.Parallel()
-	base := map[string]string{
-		"REPOSITORY_FORMAT": "barman-cloud",
-		"PROVIDER":          "s3",
-		"DESTINATION_PATH":  "s3://backups/prefix",
-	}
+	base := agentRepositoryEnvironment(t, map[string]string{
+		"REPOSITORY_FORMAT": "barman-cloud", "PROVIDER": "s3", "DESTINATION_PATH": "s3://backups/prefix",
+		"BARMAN_SERVER_NAMES": "alpha", "AWS_REGION": "eu-west-1", "STORE_CREDENTIAL_MODE": "ambient",
+	})
 	tests := []struct {
 		name     string
 		changes  map[string]string
@@ -142,7 +168,6 @@ func TestLoadInvalidMatrix(t *testing.T) {
 		{name: "endpoint path", changes: map[string]string{"ENDPOINT_URL": "https://example.test/api"}, contains: "ENDPOINT_URL"},
 		{name: "bad listen", changes: map[string]string{"LISTEN_ADDR": "3000"}, contains: "LISTEN_ADDR"},
 		{name: "bad trusted header", changes: map[string]string{"TRUSTED_USER_HEADER": "bad header"}, contains: "TRUSTED_USER_HEADER"},
-		{name: "bad bool", changes: map[string]string{"ALLOW_DOWNLOAD": "yes"}, contains: "ALLOW_DOWNLOAD"},
 		{name: "short refresh", changes: map[string]string{"CATALOG_REFRESH_INTERVAL": "1s"}, contains: "CATALOG_REFRESH_INTERVAL"},
 		{name: "large concurrency", changes: map[string]string{"SCAN_CONCURRENCY": "65"}, contains: "SCAN_CONCURRENCY"},
 		{name: "small object ceiling", changes: map[string]string{"MAX_OBJECTS_PER_SCAN": "10"}, contains: "MAX_OBJECTS_PER_SCAN"},
@@ -153,13 +178,15 @@ func TestLoadInvalidMatrix(t *testing.T) {
 		{name: "Azure connection string conflict", changes: map[string]string{
 			"PROVIDER": "azure", "DESTINATION_PATH": "azure://container/prefix",
 			"AZURE_STORAGE_CONNECTION_STRING_FILE": "/not/read", "AZURE_STORAGE_ACCOUNT": "demo",
+			"STORE_CREDENTIAL_MODE": "connection-string-file",
 		}, contains: "AZURE_STORAGE_CONNECTION_STRING_FILE"},
 		{name: "Azure key and SAS conflict", changes: map[string]string{
 			"PROVIDER": "azure", "DESTINATION_PATH": "azure://container/prefix", "AZURE_STORAGE_ACCOUNT": "demo",
 			"AZURE_STORAGE_ACCOUNT_KEY_FILE": "/not/read", "AZURE_STORAGE_SAS_TOKEN_FILE": "/also-not-read",
+			"STORE_CREDENTIAL_MODE": "account-key-file",
 		}, contains: "AZURE_STORAGE_ACCOUNT_KEY_FILE"},
 		{name: "barman scope with pgBackRest", changes: map[string]string{
-			"REPOSITORY_FORMAT": "pgbackrest", "BARMAN_SERVER_NAMES": "demo",
+			"REPOSITORY_FORMAT": "pgbackrest", "BARMAN_SERVER_NAMES": "demo", "PGBACKREST_STANZA": "demo",
 		}, contains: "BARMAN_SERVER_NAMES"},
 	}
 	for _, test := range tests {
@@ -169,7 +196,7 @@ func TestLoadInvalidMatrix(t *testing.T) {
 			for key, value := range test.changes {
 				environment[key] = value
 			}
-			_, err := Load(mapEnvironment(environment))
+			err := loadOutcome(environment)
 			if err == nil || !IsError(err) {
 				t.Fatalf("Load() error = %v, want redacted config error", err)
 			}
@@ -191,10 +218,10 @@ func TestLoadRejectsMoreThanScannerScopeLimit(t *testing.T) {
 	for index := range names {
 		names[index] = fmt.Sprintf("scope-%04d", index)
 	}
-	_, err := Load(mapEnvironment(map[string]string{
+	_, err := Load(mapEnvironment(agentRepositoryEnvironment(t, map[string]string{
 		"REPOSITORY_FORMAT": "barman-cloud", "PROVIDER": "s3", "DESTINATION_PATH": "s3://backups/prefix",
-		"BARMAN_SERVER_NAMES": strings.Join(names, ","),
-	}))
+		"BARMAN_SERVER_NAMES": strings.Join(names, ","), "AWS_REGION": "eu-west-1", "STORE_CREDENTIAL_MODE": "ambient",
+	})))
 	if err == nil || !strings.Contains(err.Error(), "BARMAN_SERVER_NAMES") {
 		t.Fatalf("Load() error = %v", err)
 	}
@@ -213,11 +240,12 @@ func TestLoadFileCredentialsAndRedaction(t *testing.T) {
 	}
 	accessCanary := "AKIA-CANARY-NEVER-LOG"
 	secretCanary := "secret-canary-never-log"
-	environment := map[string]string{
+	environment := agentRepositoryEnvironment(t, map[string]string{
 		"REPOSITORY_FORMAT": "barman-cloud", "PROVIDER": "s3", "DESTINATION_PATH": "s3://backups/prefix", "AWS_REGION": "eu-west-1",
+		"BARMAN_SERVER_NAMES": "alpha", "STORE_CREDENTIAL_MODE": "static-files",
 		"AWS_ACCESS_KEY_ID_FILE":     write("access", accessCanary+"\n"),
 		"AWS_SECRET_ACCESS_KEY_FILE": write("secret", secretCanary+"\n"),
-	}
+	})
 	cfg, err := Load(mapEnvironment(environment))
 	if err != nil {
 		t.Fatal(err)
@@ -256,42 +284,47 @@ func TestLoadProviderCredentialModes(t *testing.T) {
 	}{
 		{
 			name: "Azure workload identity with account endpoint",
-			environment: map[string]string{
+			environment: agentRepositoryEnvironment(t, map[string]string{
 				"REPOSITORY_FORMAT": "barman-cloud", "PROVIDER": "azure", "DESTINATION_PATH": "azure://container/prefix", "AZURE_STORAGE_ACCOUNT": "demo",
-			},
+				"BARMAN_SERVER_NAMES": "alpha", "STORE_CREDENTIAL_MODE": "ambient",
+			}),
 			wantMode: CredentialAmbient,
 		},
 		{
 			name: "Azure connection string file takes its exclusive mode",
-			environment: map[string]string{
+			environment: agentRepositoryEnvironment(t, map[string]string{
 				"REPOSITORY_FORMAT": "barman-cloud", "PROVIDER": "azure", "DESTINATION_PATH": "azure://container/prefix",
+				"BARMAN_SERVER_NAMES": "alpha", "AZURE_STORAGE_ACCOUNT": "demo", "STORE_CREDENTIAL_MODE": "connection-string-file",
 				"AZURE_STORAGE_CONNECTION_STRING_FILE": write("connection", "AccountName=demo;AccountKey=azure-canary"),
-			},
+			}),
 			wantMode: CredentialConnectionFile,
 		},
 		{
 			name: "Azure account key file",
-			environment: map[string]string{
+			environment: agentRepositoryEnvironment(t, map[string]string{
 				"REPOSITORY_FORMAT": "barman-cloud", "PROVIDER": "azure", "DESTINATION_PATH": "azure://container/prefix",
+				"BARMAN_SERVER_NAMES": "alpha", "STORE_CREDENTIAL_MODE": "account-key-file",
 				"AZURE_STORAGE_ACCOUNT": "demo", "AZURE_STORAGE_ACCOUNT_KEY_FILE": write("azure-key", "azure-key-canary"),
-			},
+			}),
 			wantMode: CredentialAccountKeyFile,
 		},
 		{
 			name: "Azure SAS token file",
-			environment: map[string]string{
+			environment: agentRepositoryEnvironment(t, map[string]string{
 				"REPOSITORY_FORMAT": "barman-cloud", "PROVIDER": "azure", "DESTINATION_PATH": "azure://container/prefix",
+				"BARMAN_SERVER_NAMES": "alpha", "STORE_CREDENTIAL_MODE": "sas-token-file",
 				"AZURE_STORAGE_ACCOUNT": "demo", "AZURE_STORAGE_SAS_TOKEN_FILE": write("azure-sas", "sig=azure-sas-canary"),
-			},
+			}),
 			wantMode: CredentialSASTokenFile,
 		},
 		{
 			name: "GCS JSON file",
-			environment: map[string]string{
+			environment: agentRepositoryEnvironment(t, map[string]string{
 				"REPOSITORY_FORMAT": "pgbackrest", "PROVIDER": "gcs", "DESTINATION_PATH": "gs://bucket/prefix",
+				"PGBACKREST_STANZA": "demo", "STORE_CREDENTIAL_MODE": "json-file",
 				"GOOGLE_APPLICATION_CREDENTIALS": write("gcs.json", `{"type":"service_account","private_key":"gcs-canary"}`),
 				"PGBACKREST_CIPHER_PASS_FILE":    write("pgbackrest-cipher", "cipher-canary"),
-			},
+			}),
 			wantMode: CredentialJSONFile,
 		},
 	}
@@ -299,8 +332,8 @@ func TestLoadProviderCredentialModes(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			cfg, err := Load(mapEnvironment(test.environment))
-			if err != nil {
-				t.Fatal(err)
+			if err != nil || cfg.RepositoryError != nil {
+				t.Fatalf("Load() = %v, deferred %v", err, cfg.RepositoryError)
 			}
 			if cfg.Credentials.Mode != test.wantMode {
 				t.Fatalf("credential mode = %s, want %s", cfg.Credentials.Mode, test.wantMode)
@@ -324,9 +357,9 @@ func TestLoadMalformedSecretNeverReturnsContentOrPath(t *testing.T) {
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, err := Load(mapEnvironment(map[string]string{
+	err := loadOutcome(agentRepositoryEnvironment(t, map[string]string{
 		"REPOSITORY_FORMAT": "pgbackrest", "PROVIDER": "gcs", "DESTINATION_PATH": "gs://backups/prefix",
-		"GOOGLE_APPLICATION_CREDENTIALS": path,
+		"PGBACKREST_STANZA": "demo", "STORE_CREDENTIAL_MODE": "json-file", "GOOGLE_APPLICATION_CREDENTIALS": path,
 	}))
 	if err == nil {
 		t.Fatal("Load() error = nil")
@@ -336,21 +369,18 @@ func TestLoadMalformedSecretNeverReturnsContentOrPath(t *testing.T) {
 	}
 }
 
-func TestLoadExplicitlyEmptyTrustedHeader(t *testing.T) {
+// The agent authenticates its callers itself: even an empty
+// TRUSTED_USER_HEADER is a stale viewer setting and refused.
+func TestLoadRefusesAnEmptyTrustedHeader(t *testing.T) {
 	t.Parallel()
-	environment := map[string]string{
-		"REPOSITORY_FORMAT": "barman-cloud", "PROVIDER": "s3", "DESTINATION_PATH": "s3://backups/prefix",
-		"TRUSTED_USER_HEADER": "", "AWS_REGION": "eu-west-1",
-	}
-	cfg, err := load(mapEnvironment(environment), func(key string) (string, bool) {
+	environment := agentProviderEnvironment(t, "gcs", "gs://backups/prefix", map[string]string{"STORE_CREDENTIAL_MODE": "ambient", "TRUSTED_USER_HEADER": ""})
+	_, err := load(mapEnvironment(environment), func(key string) (string, bool) {
 		value, ok := environment[key]
 		return value, ok
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.TrustedUserHeader != "" {
-		t.Fatalf("TrustedUserHeader = %q", cfg.TrustedUserHeader)
+	var configErr *Error
+	if !errors.As(err, &configErr) || configErr.Variable != "TRUSTED_USER_HEADER" {
+		t.Fatalf("Load() = %v, want an error naming TRUSTED_USER_HEADER", err)
 	}
 }
 
@@ -369,7 +399,7 @@ func TestLoadAgentCredentialProfiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.RuntimeMode != RuntimeAgent || cfg.TrustedUserHeader != "" || cfg.AllowDownload || cfg.Credentials.Mode != CredentialStaticFiles {
+	if cfg.RuntimeMode != RuntimeAgent || cfg.Credentials.Mode != CredentialStaticFiles {
 		t.Fatalf("static agent config = %#v", cfg)
 	}
 	if cfg.CNPGClusterNamespace != "database-team" || cfg.CNPGClusterUID != "2f12b7d1-7e8d-4c37-a68f-233efc5f3191" || cfg.CNPGClusterName != "orders" || !reflect.DeepEqual(cfg.BarmanServerNames, []string{"orders"}) {
@@ -416,7 +446,6 @@ func TestLoadRejectsInvalidAgentRepositoryProfiles(t *testing.T) {
 		{name: "missing namespace", remove: []string{"CNPG_CLUSTER_NAMESPACE"}, variable: "CNPG_CLUSTER_NAMESPACE"},
 		{name: "missing UID", remove: []string{"CNPG_CLUSTER_UID"}, variable: "CNPG_CLUSTER_UID"},
 		{name: "trusted header", changes: map[string]string{"TRUSTED_USER_HEADER": "X-Forwarded-User"}, variable: "TRUSTED_USER_HEADER"},
-		{name: "download", changes: map[string]string{"ALLOW_DOWNLOAD": "true"}, variable: "ALLOW_DOWNLOAD"},
 		{name: "missing credential mode", remove: []string{"STORE_CREDENTIAL_MODE"}, variable: "STORE_CREDENTIAL_MODE"},
 		{name: "ambient credential mode", changes: map[string]string{"STORE_CREDENTIAL_MODE": "ambient"}, variable: "STORE_CREDENTIAL_MODE"},
 		{name: "static mode without files", remove: []string{"AWS_ACCESS_KEY_ID_FILE", "AWS_SECRET_ACCESS_KEY_FILE"}, variable: "STORE_CREDENTIAL_MODE"},
@@ -454,9 +483,9 @@ func TestLoadRejectsInvalidAgentRepositoryProfiles(t *testing.T) {
 	}
 }
 
-// In agent mode a repository-coordinate error must not stop the process;
-// standalone mode keeps failing at startup.
-func TestLoadDefersRepositoryErrorsOnlyInAgentMode(t *testing.T) {
+// A repository-coordinate error must not stop the agent: it is deferred
+// and published as unknown evidence.
+func TestLoadDefersRepositoryErrors(t *testing.T) {
 	t.Parallel()
 	directory := t.TempDir()
 	accessPath := filepath.Join(directory, "access")
@@ -500,33 +529,6 @@ func TestLoadDefersRepositoryErrorsOnlyInAgentMode(t *testing.T) {
 			if cfg.AgentName == "" || cfg.CNPGClusterUID == "" || len(cfg.BarmanServerNames) != 1 {
 				t.Fatal("process-level agent identity must still load")
 			}
-
-			standalone := map[string]string{"REPOSITORY_FORMAT": "barman-cloud", "PROVIDER": "s3", "DESTINATION_PATH": "s3://backups/prefix", "AWS_REGION": "eu-west-1"}
-			for _, key := range test.remove {
-				delete(standalone, key)
-			}
-			for key, value := range test.changes {
-				standalone[key] = value
-			}
-			if _, err := Load(mapEnvironment(standalone)); !errors.As(err, &configErr) || configErr.Variable != test.variable {
-				t.Fatalf("standalone Load() = %v; want %s", err, test.variable)
-			}
-		})
-	}
-}
-
-func TestLoadStandaloneRejectsAgentOnlyConfiguration(t *testing.T) {
-	base := map[string]string{
-		"REPOSITORY_FORMAT": "barman-cloud", "PROVIDER": "s3", "DESTINATION_PATH": "s3://backups/prefix",
-	}
-	for _, variable := range []string{"CNPG_CLUSTER_NAMESPACE", "CNPG_CLUSTER_UID", "CNPG_CLUSTER_NAME", "STORE_CREDENTIAL_MODE"} {
-		t.Run(variable, func(t *testing.T) {
-			environment := cloneMap(base)
-			environment[variable] = "agent-only-canary"
-			_, err := Load(mapEnvironment(environment))
-			if err == nil || !strings.Contains(err.Error(), variable) || strings.Contains(err.Error(), "agent-only-canary") {
-				t.Fatalf("Load() error = %v", err)
-			}
 		})
 	}
 }
@@ -556,7 +558,6 @@ func TestLoadResolvesS3SigningRegion(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	standalone := map[string]string{"REPOSITORY_FORMAT": "barman-cloud", "PROVIDER": "s3", "DESTINATION_PATH": "s3://backups/prefix"}
 	agent := validAgentEnvironment(accessPath, secretPath)
 	delete(agent, "AWS_REGION")
 	tests := []struct {
@@ -565,10 +566,7 @@ func TestLoadResolvesS3SigningRegion(t *testing.T) {
 		changes map[string]string
 		region  string
 	}{
-		{name: "standalone explicit region", base: standalone, changes: map[string]string{"AWS_REGION": "eu-west-3"}, region: "eu-west-3"},
-		{name: "standalone compatible endpoint defaults", base: standalone, changes: map[string]string{"ENDPOINT_URL": "https://minio.example.test"}, region: "us-east-1"},
-		{name: "explicit region wins over endpoint default", base: standalone, changes: map[string]string{"ENDPOINT_URL": "https://s3.eu-west-1.amazonaws.com", "AWS_REGION": "eu-west-1"}, region: "eu-west-1"},
-		{name: "standalone AWS without region", base: standalone},
+		{name: "explicit region wins over endpoint default", base: agent, changes: map[string]string{"ENDPOINT_URL": "https://s3.eu-west-1.amazonaws.com", "AWS_REGION": "eu-west-1"}, region: "eu-west-1"},
 		{name: "agent static files on AWS without region", base: agent},
 		{name: "agent static files with compatible endpoint", base: agent, changes: map[string]string{"ENDPOINT_URL": "http://minio.minio.svc:9000"}, region: "us-east-1"},
 		{name: "agent static files with explicit region", base: agent, changes: map[string]string{"AWS_REGION": "ap-southeast-2"}, region: "ap-southeast-2"},

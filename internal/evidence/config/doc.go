@@ -17,7 +17,8 @@
 // the whole configuration before the agent opens a listener, so a bad
 // setting stops the start instead of surfacing later.
 //
-// It covers the runtime mode (RUNTIME_MODE: standalone or agent), the repository and its format, the object-store provider (S3,
+// It covers the runtime mode (RUNTIME_MODE: agent, the only one, also when
+// empty), the repository and its format, the object-store provider (S3,
 // Azure Blob, GCS) and how its credentials are read (Secret files or
 // workload identity), the agent's listener and authentication, and the
 // scan limits. In team mode (RUNTIME_MODE=agent with AGENT_RESOLVE=cluster)

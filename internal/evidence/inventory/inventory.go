@@ -28,15 +28,12 @@ import (
 	"github.com/fyannk/pgToolBox/internal/evidence/formats/barmancloud"
 	"github.com/fyannk/pgToolBox/internal/evidence/formats/pgbackrest"
 	"github.com/fyannk/pgToolBox/internal/evidence/repository"
-	"github.com/fyannk/pgToolBox/internal/evidence/store"
 )
 
 // Bounds on what one inventory snapshot may hold.
 const (
 	// MaxScopes caps the scopes (Barman servers, pgBackRest stanzas) tracked.
 	MaxScopes = 1_000
-	// MaxRecentObjects caps the list of most recently modified objects.
-	MaxRecentObjects = 200
 	// MaxCatalogObjects caps the Barman backup metadata objects collected per
 	// scan; past it the scan fails with a safety limit.
 	MaxCatalogObjects = 10_000
@@ -50,14 +47,6 @@ type Scope struct {
 	Recognized  bool
 	ObjectCount int64
 	StoredBytes int64
-}
-
-// RecentObject is one of the most recently modified objects of a scan.
-type RecentObject struct {
-	Key          string
-	Scope        string
-	Size         int64
-	LastModified time.Time
 }
 
 // Snapshot separates totals from attempt diagnostics so incomplete evidence
@@ -75,7 +64,6 @@ type Snapshot struct {
 	StoredBytes         int64
 	UnscopedObjectCount int64
 	Scopes              []Scope
-	RecentObjects       []RecentObject
 	BarmanCatalog       barmancloud.Catalog
 	BarmanWAL           barmancloud.WALCatalog
 	BarmanRecovery      barmancloud.RecoveryCatalog
@@ -99,7 +87,7 @@ func (s Snapshot) Validate() error {
 	if err := s.Evidence.Validate(); err != nil {
 		return err
 	}
-	if len(s.Scopes) > MaxScopes || len(s.RecentObjects) > MaxRecentObjects || len(s.BarmanCatalog.Backups) > MaxCatalogObjects {
+	if len(s.Scopes) > MaxScopes || len(s.BarmanCatalog.Backups) > MaxCatalogObjects {
 		return errors.New("inventory snapshot exceeds a safety limit")
 	}
 	if err := s.BarmanWAL.Validate(); err != nil {
@@ -120,7 +108,7 @@ func (s Snapshot) Validate() error {
 	if (!s.LastRefreshAt.IsZero() && s.LastRefreshAt.Location() != time.UTC) || (!s.LastAttemptAt.IsZero() && s.LastAttemptAt.Location() != time.UTC) || (!s.LastAttemptAt.IsZero() && !s.LastRefreshAt.IsZero() && s.LastRefreshAt.Before(s.LastAttemptAt)) {
 		return errors.New("inventory snapshot contains invalid refresh timestamps")
 	}
-	if !s.TotalsKnown && (s.ObjectCount != 0 || s.StoredBytes != 0 || s.UnscopedObjectCount != 0 || len(s.Scopes) != 0 || len(s.RecentObjects) != 0) {
+	if !s.TotalsKnown && (s.ObjectCount != 0 || s.StoredBytes != 0 || s.UnscopedObjectCount != 0 || len(s.Scopes) != 0) {
 		return errors.New("unknown totals contain partial inventory")
 	}
 	if s.TotalsKnown && s.Evidence.Completeness != evidence.Complete {
@@ -143,14 +131,6 @@ func (s Snapshot) Validate() error {
 	}
 	if s.TotalsKnown && (scopedObjects > s.ObjectCount || s.UnscopedObjectCount != s.ObjectCount-scopedObjects || scopedBytes > s.StoredBytes) {
 		return errors.New("scope inventory does not reconcile with totals")
-	}
-	for _, object := range s.RecentObjects {
-		if object.Key == "" || len(object.Key) > store.MaxKeyBytes || object.Size < 0 {
-			return errors.New("invalid recent object")
-		}
-	}
-	if s.TotalsKnown && int64(len(s.RecentObjects)) > s.ObjectCount {
-		return errors.New("recent inventory exceeds object total")
 	}
 	return nil
 }
@@ -203,7 +183,6 @@ func (c *Cache) Publish(snapshot Snapshot) error {
 func clone(snapshot Snapshot) Snapshot {
 	snapshot.Evidence.Capabilities = slices.Clone(snapshot.Evidence.Capabilities)
 	snapshot.Scopes = slices.Clone(snapshot.Scopes)
-	snapshot.RecentObjects = slices.Clone(snapshot.RecentObjects)
 	snapshot.BarmanCatalog.Backups = slices.Clone(snapshot.BarmanCatalog.Backups)
 	snapshot.BarmanWAL = barmancloud.CloneWALCatalog(snapshot.BarmanWAL)
 	snapshot.BarmanRecovery = barmancloud.CloneRecoveryCatalog(snapshot.BarmanRecovery)

@@ -20,7 +20,7 @@
     "backup_states",
     "capabilities",
     "recovery",
-    "rendered_states"
+    "served_states"
   ],
   "excluded_provider_facts": ["provider", "etag", "generation_timestamp", "fixture_object_size", "dynamic_backup_id"]
 }

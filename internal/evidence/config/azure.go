@@ -31,7 +31,7 @@ import (
 // names a value.
 func checkConnectionString(variable string, value []byte, account string, endpoint *url.URL) error {
 	if account == "" {
-		// Standalone without AZURE_STORAGE_ACCOUNT: the connection string
+		// No account named: the connection string
 		// is the only statement of the target.
 		return nil
 	}

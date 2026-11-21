@@ -118,7 +118,8 @@ What the two install paths hand the agent, for people who render it themselves:
 | The plugin's retention | resolved | resolved | `PGBACKREST_RETENTION_FULL`, `_FULL_TYPE`, `_DIFF`, `_ARCHIVE`, `_ARCHIVE_TYPE` |
 | Credentials | Secret keys as files | read through the API from the listed Secrets | `S3_*_FILE`, as for barman-cloud |
 
-`PGBACKREST_STANZAS` (plural) is the viewer's, not the agent's.
+`PGBACKREST_STANZAS` (plural) belonged to the removed standalone viewer; the agent
+refuses it.
 
 ## TLS
 

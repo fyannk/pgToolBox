@@ -44,31 +44,18 @@ import (
 	"github.com/fyannk/pgToolBox/internal/evidence/readiness"
 	"github.com/fyannk/pgToolBox/internal/evidence/redact"
 	"github.com/fyannk/pgToolBox/internal/evidence/store"
-	"github.com/fyannk/pgToolBox/internal/evidence/web"
 	evidencev1alpha1 "github.com/fyannk/pgToolBox/pkg/evidence/v1alpha1"
 )
 
-const (
-	readHeaderTimeout = 5 * time.Second
-	readTimeout       = 15 * time.Second
-	writeTimeout      = 30 * time.Second
-	idleTimeout       = 60 * time.Second
-	shutdownTimeout   = 15 * time.Second
-	maxHeaderBytes    = 16 * 1024
-)
-
-// App is one assembled evidence process: the store reader, the inventory
-// scanner and the surface its runtime mode serves (the viewer UI or the
-// agent's HTTPS API).
+// App is one assembled evidence agent: the store reader, the inventory
+// scanner and the evidence/v1alpha1 API it serves.
 type App struct {
-	server       *http.Server
 	agentHandler http.Handler
 	certificates *agent.CertificateReloader
 	// plainHTTP serves the agent without TLS (AGENT_PLAIN_HTTP).
-	plainHTTP   bool
-	runtimeMode config.RuntimeMode
-	readiness   *readiness.ProbeState
-	worker      interface{ Run(context.Context) }
+	plainHTTP bool
+	readiness *readiness.ProbeState
+	worker    interface{ Run(context.Context) }
 }
 
 // readerFactory builds the provider reader. The redactor lets an adapter that
@@ -82,22 +69,17 @@ type options struct {
 	reviewer agent.Reviewer
 }
 
-// WithReviewer supplies the TokenReview/SubjectAccessReview client of the
-// agent runtime mode; without it, agent mode uses the in-cluster API server.
+// WithReviewer supplies the agent's TokenReview/SubjectAccessReview client;
+// without it, the agent uses the in-cluster API server.
 func WithReviewer(reviewer agent.Reviewer) Option {
 	return func(o *options) { o.reviewer = reviewer }
 }
 
-// New assembles the process for cfg's runtime mode without starting it.
-// producerVersion is reported in the published evidence. In agent mode an
-// invalid repository configuration is published as unknown evidence
-// instead of failing.
+// New assembles the agent without starting it. producerVersion is reported
+// in the published evidence. An invalid repository configuration is
+// published as unknown evidence instead of failing.
 func New(ctx context.Context, cfg config.Config, logger *slog.Logger, producerVersion string, opts ...Option) (*App, error) {
 	return newWithFactoryVersion(ctx, cfg, logger, defaultReaderFactory, producerVersion, opts...)
-}
-
-func newWithFactory(ctx context.Context, cfg config.Config, logger *slog.Logger, factory readerFactory) (*App, error) {
-	return newWithFactoryVersion(ctx, cfg, logger, factory, "test")
 }
 
 func newWithFactoryVersion(ctx context.Context, cfg config.Config, logger *slog.Logger, factory readerFactory, producerVersion string, opts ...Option) (*App, error) {
@@ -124,16 +106,13 @@ func newWithFactoryVersion(ctx context.Context, cfg config.Config, logger *slog.
 	if err != nil {
 		return nil, err
 	}
-	if cfg.RuntimeMode.Produces() && cfg.ScopeName() == "" {
+	if cfg.ScopeName() == "" {
 		return nil, errors.New("invalid agent evidence configuration")
 	}
 	probeState := readiness.New(true, 2*cfg.CatalogRefreshInterval+cfg.StoreRequestTimeout, time.Now)
 	redactor := redact.New(cfg.SecretValues()...)
 	var reader store.Reader
 	if cfg.RepositoryError != nil {
-		if !cfg.RuntimeMode.Produces() {
-			return nil, cfg.RepositoryError
-		}
 		// The agent serves the evidence API without a store: the published
 		// evidence says why it is unknown instead of the Pod crash-looping.
 		now := time.Now().UTC()
@@ -149,48 +128,41 @@ func newWithFactoryVersion(ctx context.Context, cfg config.Config, logger *slog.
 			return nil, err
 		}
 	}
-	if cfg.RuntimeMode.Produces() && reader != nil {
+	if reader != nil {
 		reader, err = newScopeConfinedReader(reader, cfg.ScopePrefixes())
 		if err != nil {
 			return nil, err
 		}
 	}
-	scannerCache := inventory.SnapshotCache(cache)
-	app := &App{runtimeMode: cfg.RuntimeMode, readiness: probeState}
-	if cfg.RuntimeMode == config.RuntimeAgent {
-		engine, engineErr := newEvidenceEngine(cfg, producerVersion, cache.Load())
-		if engineErr != nil {
-			return nil, engineErr
-		}
-		handler, certificates, agentErr := newAgentTransport(ctx, cfg, engine, probeState, settings.reviewer, logger)
-		if agentErr != nil {
-			return nil, agentErr
-		}
-		app.agentHandler, app.certificates, app.plainHTTP = handler, certificates, cfg.AgentPlainHTTP
-		scannerCache = &evidencePublishingCache{cache: cache, engine: engine}
+	engine, err := newEvidenceEngine(cfg, producerVersion, cache.Load())
+	if err != nil {
+		return nil, err
 	}
+	handler, certificates, err := newAgentTransport(ctx, cfg, engine, probeState, settings.reviewer, logger)
+	if err != nil {
+		return nil, err
+	}
+	app := &App{agentHandler: handler, certificates: certificates, plainHTTP: cfg.AgentPlainHTTP, readiness: probeState}
+	scannerCache := &evidencePublishingCache{cache: cache, engine: engine}
 	var worker interface{ Run(context.Context) }
 	if reader != nil {
 		configuredScopes := cfg.BarmanServerNames
 		var pgbackrestOptions *inventory.PGBackRestOptions
 		if cfg.RepositoryFormat == config.FormatPGBackRest {
-			configuredScopes = cfg.PGBackRestStanzas
-			pgbackrestOptions = &inventory.PGBackRestOptions{Passphrase: cfg.PGBackRestCipher.Bytes()}
-			if cfg.RuntimeMode.Produces() {
-				stanza, archive := cfg.PGBackRestScope()
-				configuredScopes = slices.Compact([]string{stanza, archive})
-				slices.Sort(configuredScopes)
-				pgbackrestOptions.Stanza, pgbackrestOptions.ArchiveStanza = stanza, archive
-				pgbackrestOptions.Retention = pgbackrestRetention(cfg.PGBackRestRetention)
+			stanza, archive := cfg.PGBackRestScope()
+			configuredScopes = slices.Compact([]string{stanza, archive})
+			slices.Sort(configuredScopes)
+			pgbackrestOptions = &inventory.PGBackRestOptions{
+				Passphrase: cfg.PGBackRestCipher.Bytes(), Stanza: stanza, ArchiveStanza: archive,
+				Retention: pgbackrestRetention(cfg.PGBackRestRetention),
 			}
 		}
-		recentLimit := min(cfg.WALPageSize, inventory.MaxRecentObjects)
 		worker, err = inventory.NewScanner(inventory.ScannerOptions{
 			Store: reader, Format: format, ConfiguredScopes: configuredScopes,
 			Cache: scannerCache, Readiness: probeState, RefreshInterval: cfg.CatalogRefreshInterval,
 			MaxObjects: cfg.MaxObjectsPerScan, PageSize: store.MaxPageObjects, AnalyzeBarmanCatalog: cfg.RepositoryFormat == config.FormatBarmanCloud,
 			BarmanRecoveryOptions: barmancloud.RecoveryOptions{ExpectedRetentionPolicy: cfg.ExpectedRetentionPolicy, ExpectedMinimumRedundancy: cfg.ExpectedMinimumRedundancy},
-			RecentLimit:           recentLimit, Now: time.Now, Logger: logger,
+			Now:                   time.Now, Logger: logger,
 			Redactor: redactor, PGBackRest: pgbackrestOptions,
 		})
 		if err != nil {
@@ -198,26 +170,6 @@ func newWithFactoryVersion(ctx context.Context, cfg config.Config, logger *slog.
 		}
 	}
 	app.worker = worker
-	if cfg.RuntimeMode.Produces() {
-		return app, nil
-	}
-	handler, err := web.New(web.Options{
-		Logger: logger, Provider: string(cfg.Provider), Format: descriptor,
-		Inventory: cache.Load,
-		Readiness: probeState.Result, TrustedUserHeader: cfg.TrustedUserHeader,
-		WALPageSize: cfg.WALPageSize,
-	})
-	if err != nil {
-		return nil, err
-	}
-	app.server = &http.Server{
-		Handler:           handler.Routes(),
-		ReadHeaderTimeout: readHeaderTimeout,
-		ReadTimeout:       readTimeout,
-		WriteTimeout:      writeTimeout,
-		IdleTimeout:       idleTimeout,
-		MaxHeaderBytes:    maxHeaderBytes,
-	}
 	return app, nil
 }
 
@@ -308,7 +260,7 @@ func (r *prefixConfinedReader) Stat(ctx context.Context, request store.StatReque
 const unresolvedDestinationBucket = "? unresolved destination ?"
 
 func newEvidenceEngine(cfg config.Config, producerVersion string, initial inventory.Snapshot) (*evidenceapi.Engine, error) {
-	if !cfg.RuntimeMode.Produces() || cfg.ScopeName() == "" || (cfg.Destination == nil && cfg.RepositoryError == nil) {
+	if cfg.ScopeName() == "" || (cfg.Destination == nil && cfg.RepositoryError == nil) {
 		return nil, errors.New("invalid agent evidence configuration")
 	}
 	bucket, account := cfg.DestinationBucket, cfg.Credentials.AzureAccount
@@ -349,20 +301,10 @@ func newEvidenceEngine(cfg config.Config, producerVersion string, initial invent
 	})
 }
 
-// Serve blocks until the listener fails or ctx requests graceful shutdown.
-func (a *App) Serve(ctx context.Context, listener net.Listener) error {
-	if a.runtimeMode != config.RuntimeStandalone || a.server == nil || listener == nil {
-		return errors.New("standalone application runtime is unavailable")
-	}
-	return a.serveRuntime(ctx, func(runtimeCtx context.Context) error {
-		return a.serveHTTP(runtimeCtx, listener)
-	})
-}
-
 // ServeAgent runs the scanner and the evidence/v1alpha1 listener (HTTPS, or
 // plain HTTP with AGENT_PLAIN_HTTP) until ctx is canceled.
 func (a *App) ServeAgent(ctx context.Context, listener net.Listener) error {
-	if a.runtimeMode != config.RuntimeAgent || a.agentHandler == nil || (a.certificates == nil) != a.plainHTTP || listener == nil {
+	if a.agentHandler == nil || (a.certificates == nil) != a.plainHTTP || listener == nil {
 		return errors.New("agent application runtime is unavailable")
 	}
 	return a.serveRuntime(ctx, func(runtimeCtx context.Context) error {
@@ -439,34 +381,6 @@ func (a *App) serveRuntime(ctx context.Context, serve func(context.Context) erro
 	return serve(runtimeCtx)
 }
 
-func (a *App) serveHTTP(ctx context.Context, listener net.Listener) error {
-	a.server.BaseContext = func(net.Listener) context.Context { return ctx }
-	serveErrors := make(chan error, 1)
-	go func() {
-		serveErrors <- a.server.Serve(listener)
-	}()
-
-	select {
-	case err := <-serveErrors:
-		if errors.Is(err, http.ErrServerClosed) {
-			return nil
-		}
-		return err
-	case <-ctx.Done():
-		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), shutdownTimeout)
-		defer cancel()
-		if err := a.server.Shutdown(shutdownCtx); err != nil {
-			_ = a.server.Close()
-			return err
-		}
-		err := <-serveErrors
-		if errors.Is(err, http.ErrServerClosed) {
-			return nil
-		}
-		return err
-	}
-}
-
 func defaultReaderFactory(ctx context.Context, cfg config.Config, redactor *redact.Redactor) (store.Reader, error) {
 	switch cfg.Provider {
 	case config.ProviderS3:
@@ -478,7 +392,7 @@ func defaultReaderFactory(ctx context.Context, cfg config.Config, redactor *reda
 			RoleARN: cfg.Credentials.AWSRoleARN, RequestTimeout: cfg.StoreRequestTimeout,
 			ContainerCredentialsURI:         cfg.Credentials.AWSContainerCredentialsURI,
 			ContainerAuthorizationTokenFile: cfg.Credentials.AWSContainerAuthorizationTokenFile,
-			DisableInstanceMetadata:         cfg.RuntimeMode == config.RuntimeAgent,
+			DisableInstanceMetadata:         true,
 			KeySource:                       cfg.Credentials.AWSKeySource, CredentialsLoaded: redactor.Add,
 			SSECustomerKey: cfg.Credentials.S3SSECustomerKey.Bytes(),
 		})
@@ -487,7 +401,7 @@ func defaultReaderFactory(ctx context.Context, cfg config.Config, redactor *reda
 		if cfg.Endpoint != nil {
 			endpoint = cfg.Endpoint.String()
 		}
-		return azurestore.New(ctx, azurestore.Options{Container: cfg.DestinationBucket, Prefix: cfg.DestinationPrefix, Account: cfg.Credentials.AzureAccount, Endpoint: endpoint, ConnectionString: string(cfg.Credentials.AzureConnectionString.Bytes()), AccountKey: cfg.Credentials.AzureAccountKey.Bytes(), SASToken: cfg.Credentials.AzureSASToken.Bytes(), CABundle: cfg.EndpointCABundle, RequestTimeout: cfg.StoreRequestTimeout, WorkloadIdentityOnly: cfg.RuntimeMode == config.RuntimeAgent})
+		return azurestore.New(ctx, azurestore.Options{Container: cfg.DestinationBucket, Prefix: cfg.DestinationPrefix, Account: cfg.Credentials.AzureAccount, Endpoint: endpoint, ConnectionString: string(cfg.Credentials.AzureConnectionString.Bytes()), AccountKey: cfg.Credentials.AzureAccountKey.Bytes(), SASToken: cfg.Credentials.AzureSASToken.Bytes(), CABundle: cfg.EndpointCABundle, RequestTimeout: cfg.StoreRequestTimeout, WorkloadIdentityOnly: true})
 	case config.ProviderGCS:
 		return gcsstore.New(ctx, gcsstore.Options{Bucket: cfg.DestinationBucket, Prefix: cfg.DestinationPrefix, CredentialsJSON: cfg.Credentials.GoogleCredentialsJSON.Bytes(), RequestTimeout: cfg.StoreRequestTimeout})
 	default:

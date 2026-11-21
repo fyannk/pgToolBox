@@ -580,7 +580,6 @@ jobs:
         if: matrix.image == 'evidence-agent'
         run: |
           set -euo pipefail
-          ./hack/evidence/test-container.sh "${IMAGE}"
           ./hack/evidence/test-agent-container.sh "${IMAGE}"
       - name: Hand the image to the e2e scenarios
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
