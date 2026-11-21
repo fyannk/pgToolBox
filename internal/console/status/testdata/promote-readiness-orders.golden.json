@@ -1,0 +1,106 @@
+{
+  "orders-2": [
+    {
+      "key": "pod",
+      "health": "ok",
+      "text": "Ready",
+      "provenance": {
+        "origin": "kubernetes",
+        "source": "Pod.status.conditions[Ready]",
+        "observedAt": "2026-10-29T12:00:00Z"
+      }
+    },
+    {
+      "key": "streaming",
+      "health": "warning",
+      "text": "not streaming: no active WAL receiver",
+      "provenance": {
+        "origin": "instance",
+        "source": "/pg/status walReceiverActive, replayPaused",
+        "observedAt": "2026-10-29T11:59:52Z"
+      }
+    },
+    {
+      "key": "replayLag",
+      "health": "ok",
+      "text": "replayed up to the primary's position as last read",
+      "provenance": {
+        "origin": "instance",
+        "source": "/pg/status replayLsn against the primary's currentLsn",
+        "observedAt": "2026-10-29T11:59:52Z"
+      }
+    },
+    {
+      "key": "syncState",
+      "health": "ok",
+      "text": "quorum: quorum-based synchronous candidate",
+      "provenance": {
+        "origin": "instance",
+        "source": "/pg/status replicationInfo of orders-1",
+        "observedAt": "2026-10-29T11:59:52Z"
+      }
+    },
+    {
+      "key": "fencing",
+      "health": "ok",
+      "text": "not fenced",
+      "provenance": {
+        "origin": "kubernetes",
+        "source": "Cluster.metadata.annotations[cnpg.io/fencedInstances]",
+        "observedAt": "2026-10-29T12:00:00Z"
+      }
+    }
+  ],
+  "orders-3": [
+    {
+      "key": "pod",
+      "health": "ok",
+      "text": "Ready",
+      "provenance": {
+        "origin": "kubernetes",
+        "source": "Pod.status.conditions[Ready]",
+        "observedAt": "2026-10-29T12:00:00Z"
+      }
+    },
+    {
+      "key": "streaming",
+      "health": "warning",
+      "text": "not streaming: no active WAL receiver",
+      "provenance": {
+        "origin": "instance",
+        "source": "/pg/status walReceiverActive, replayPaused",
+        "observedAt": "2026-10-29T11:59:52Z"
+      }
+    },
+    {
+      "key": "replayLag",
+      "health": "info",
+      "text": "16.0 KiB behind the primary; the switchover waits for it to replay",
+      "provenance": {
+        "origin": "instance",
+        "source": "/pg/status replayLsn against the primary's currentLsn",
+        "observedAt": "2026-10-29T11:59:52Z"
+      }
+    },
+    {
+      "key": "syncState",
+      "health": "info",
+      "text": "async: asynchronous standby",
+      "provenance": {
+        "origin": "instance",
+        "source": "/pg/status replicationInfo of orders-1",
+        "observedAt": "2026-10-29T11:59:52Z"
+      }
+    },
+    {
+      "key": "fencing",
+      "health": "ok",
+      "text": "not fenced",
+      "provenance": {
+        "origin": "kubernetes",
+        "source": "Cluster.metadata.annotations[cnpg.io/fencedInstances]",
+        "observedAt": "2026-10-29T12:00:00Z"
+      }
+    }
+  ]
+}

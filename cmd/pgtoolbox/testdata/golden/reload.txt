@@ -1,0 +1,21 @@
+exit: 0
+--- stdout
+Cluster team-a/billing: unchanged
+  Unchanged — the spec and annotations the preview reads are the same.
+
+Cluster team-a/orders: changed
+  Reload — PostgreSQL reloads its configuration on every instance; no instance restarts.
+  Primary update strategy: unsupervised (the operator updates the primary on its own)
+  Primary update method: restart
+  What happens to the primary: configuration reloaded
+  PostgreSQL major: 17
+  Order of the update:
+    1. All instances: configuration reloaded
+    A manifest holds the spec only: instance names are the Cluster's at the time of the update, so the order is given by role.
+  PostgreSQL parameters:
+    work_mem: 4MB → 8MB — Reload, reload (sighup)
+
+4 document(s) that are not CloudNativePG Clusters were ignored.
+
+Not disruptive: at most a configuration reload or a start.
+--- stderr

@@ -193,11 +193,16 @@ func TestEnvtestCrossNamespaceGrant(t *testing.T) {
 	if c := condition(got, "ConfigurationValid"); c.Status != metav1.ConditionTrue {
 		t.Fatalf("ConfigurationValid %+v", c)
 	}
-	if !e.can(t, "get", remoteNamespace, "payments-app") || !e.can(t, "watch", remoteNamespace, "payments-ca") {
+	if !e.can(t, "get", remoteNamespace, "payments-app") || !e.can(t, "watch", remoteNamespace, "payments-app") {
 		t.Fatal("the grant must let the pgAdmin ServiceAccount get and watch the granted Cluster's offered Secrets")
 	}
 	for _, denied := range [][3]string{
-		{"get", remoteNamespace, "payments-superuser"}, {"list", remoteNamespace, ""}, {"get", remoteNamespace, "other"},
+		// The CA Secret holds ca.key: the offer carries its certificate.
+		{"get", remoteNamespace, "payments-ca"},
+		{"watch", remoteNamespace, "payments-ca"},
+		{"get", remoteNamespace, "payments-superuser"},
+		{"list", remoteNamespace, ""},
+		{"get", remoteNamespace, "other"},
 	} {
 		if e.can(t, denied[0], denied[1], denied[2]) {
 			t.Fatalf("the grant allows %v", denied)

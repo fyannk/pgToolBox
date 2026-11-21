@@ -1,0 +1,24 @@
+exit: 1
+--- stdout
+Cluster team-a/billing: removed
+  Removed — deleting the Cluster deletes its instances.
+
+Cluster team-a/orders: changed
+  Unknown, at least a reload — 1 change(s) could not be classified: their effect is unknown. What is known already does this; the unclassified change(s) may do more.
+  Primary update strategy: unsupervised (the operator updates the primary on its own)
+  Primary update method: restart\u000a::error title=x::planted
+  What happens to the primary: cannot be said: a change could not be classified
+  PostgreSQL major: 17
+  Order of the update (at least):
+    1. All instances: configuration reloaded
+    A manifest holds the spec only: instance names are the Cluster's at the time of the update, so the order is given by role.
+  PostgreSQL parameters:
+    app.x\u000a::warning::name: unset → 1 — Unknown, —
+    work_mem: 4MB → 8MB\u000a::stop-commands::token\u2028::error::sep\u001b[2K — Reload, reload (sighup)
+  Other fields:
+    spec.primaryUpdateMethod: No restart — read by the operator only
+
+2 document(s) that are not CloudNativePG Clusters were ignored.
+
+Disruptive: at least one Cluster restarts, rolls out, shuts down, is upgraded, loses instances or is removed, carries a refused parameter, or has an unknown effect.
+--- stderr

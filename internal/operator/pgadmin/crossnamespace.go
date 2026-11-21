@@ -78,7 +78,7 @@ func (r *Reconciler) resolveRemote(ctx context.Context, p *pgtoolboxv1alpha1.PgA
 			out.Invalid = append(out.Invalid, fmt.Sprintf("crossNamespaceClusterRefs %s/%s is in this PgAdmin's own namespace: name it in clusterRefs", ref.Namespace, ref.Name))
 			continue
 		}
-		if watched := r.Config.WatchNamespaces; len(watched) > 0 && !slices.Contains(watched, ref.Namespace) {
+		if !r.watches(ref.Namespace) {
 			out.Invalid = append(out.Invalid, fmt.Sprintf("crossNamespaceClusterRefs %s/%s: the operator does not watch namespace %s (WATCH_NAMESPACES)",
 				ref.Namespace, ref.Name, ref.Namespace))
 			continue
@@ -168,15 +168,16 @@ func accessMeta(p *pgtoolboxv1alpha1.PgAdmin, grant *pgtoolboxv1alpha1.PgAdminAc
 	}
 }
 
-// grantSecretNames are the Secrets of the grant's namespace the offer names
-// for Clusters this grant allows: what its Role may read.
+// grantSecretNames are the password Secrets of the grant's namespace the
+// offer names for Clusters this grant allows: what its Role may read (never
+// a CA Secret: the offer carries the CA certificates).
 func grantSecretNames(p *pgtoolboxv1alpha1.PgAdmin, grant *pgtoolboxv1alpha1.PgAdminAccess, doc offer.Document) []string {
 	var names []string
 	for _, server := range doc.Connections() {
 		if server.Namespace != grant.Namespace || !grant.Grants(p.Namespace, p.Name, server.Cluster) {
 			continue
 		}
-		names = append(names, server.SecretName, server.CASecretName)
+		names = append(names, server.SecretName)
 	}
 	slices.Sort(names)
 	return slices.Compact(names)
@@ -323,24 +324,37 @@ func (r *Reconciler) deleteStaleAccess(ctx context.Context, obj client.Object, k
 	return nil
 }
 
-// forGrant maps a PgAdminAccess to the PgAdmin it names.
-func forGrant(_ context.Context, obj client.Object) []ctrlreconcile.Request {
+// forGrant maps a PgAdminAccess to the PgAdmin it names, unless that
+// PgAdmin is in a namespace the operator does not watch (WATCH_NAMESPACES):
+// the cache cannot serve it, and the request would fail at every retry.
+func (r *Reconciler) forGrant(_ context.Context, obj client.Object) []ctrlreconcile.Request {
 	grant, ok := obj.(*pgtoolboxv1alpha1.PgAdminAccess)
 	if !ok {
+		return nil
+	}
+	if !r.watches(grant.Spec.PgAdmin.Namespace) {
 		return nil
 	}
 	return []ctrlreconcile.Request{{NamespacedName: types.NamespacedName{Namespace: grant.Spec.PgAdmin.Namespace, Name: grant.Spec.PgAdmin.Name}}}
 }
 
 // byAccessLabels maps a grant's Role or RoleBinding to the PgAdmin it
-// serves (its labels carry the PgAdmin's namespace and name).
-func byAccessLabels(_ context.Context, obj client.Object) []ctrlreconcile.Request {
+// serves (its labels carry the PgAdmin's namespace and name), unless that
+// namespace is not watched, as forGrant.
+func (r *Reconciler) byAccessLabels(_ context.Context, obj client.Object) []ctrlreconcile.Request {
 	labels := obj.GetLabels()
 	namespace, name := labels[pgtoolboxv1alpha1.PgAdminNamespaceLabelKey], labels[pgtoolboxv1alpha1.PgAdminLabelKey]
-	if namespace == "" || name == "" {
+	if namespace == "" || name == "" || !r.watches(namespace) {
 		return nil
 	}
 	return []ctrlreconcile.Request{{NamespacedName: types.NamespacedName{Namespace: namespace, Name: name}}}
+}
+
+// watches reports whether the operator's cache serves namespace
+// (WATCH_NAMESPACES empty means every namespace).
+func (r *Reconciler) watches(namespace string) bool {
+	watched := r.Config.WatchNamespaces
+	return len(watched) == 0 || slices.Contains(watched, namespace)
 }
 
 // forRemoteNamespace maps an object of a namespace to every PgAdmin of

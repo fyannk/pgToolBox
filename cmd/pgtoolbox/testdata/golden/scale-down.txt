@@ -1,0 +1,19 @@
+exit: 1
+--- stdout
+Cluster team-a/billing: unchanged
+  Unchanged — the spec and annotations the preview reads are the same.
+
+Cluster team-a/orders: changed
+  No restart — nothing restarts and no configuration is reloaded.
+  Primary update strategy: unsupervised (the operator updates the primary on its own)
+  Primary update method: restart
+  What happens to the primary: nothing
+  PostgreSQL major: 17
+  Other fields:
+    spec.instances: No restart — number of instances
+  Fewer instances — 3 → 1: replicas are removed and fewer remain to fail over to.
+
+4 document(s) that are not CloudNativePG Clusters were ignored.
+
+Disruptive: at least one Cluster restarts, rolls out, shuts down, is upgraded, loses instances or is removed, carries a refused parameter, or has an unknown effect.
+--- stderr

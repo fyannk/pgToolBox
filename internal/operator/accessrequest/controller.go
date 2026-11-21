@@ -86,16 +86,19 @@ func (r *Reconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 	if !access.DeletionTimestamp.IsZero() {
-		return ctrl.Result{}, nil
+		// A request kept Terminating by a finalizer (its author may set one)
+		// would keep its RoleBinding past expiresAt: the garbage collector
+		// waits for the owner to go. The grant goes now.
+		return ctrl.Result{}, r.revokeOnDeletion(ctx, access)
 	}
 	original := access.DeepCopy()
 	initializeConditions(access)
+	// No pause: the reconcile=skip annotation is ignored here, because a
+	// request's author could otherwise set it and keep an expired or
+	// self-approved grant alive.
 	loop := &loopState{}
-	if access.Annotations[pgtoolboxv1alpha1.AnnotationReconcile] == pgtoolboxv1alpha1.ReconcileSkip {
-		return ctrl.Result{}, r.publish(ctx, access, original, loop, conditions.Outcome{Paused: true})
-	}
 	result, err := r.reconcile(ctx, access, loop)
-	return result, r.publish(ctx, access, original, loop, conditions.Outcome{Err: err, Converged: err == nil})
+	return reconcile.Result(result, r.publish(ctx, access, original, loop, conditions.Outcome{Err: err, Converged: err == nil}))
 }
 
 // loopState collects the Events of operator actions, emitted once the
@@ -159,6 +162,25 @@ func (r *Reconciler) reconcile(ctx context.Context, access *pgtoolboxv1alpha1.Pg
 	// A timer for the next fact that changes without an event (expiry,
 	// the end of an orphan's grace), not a poll.
 	return ctrl.Result{RequeueAfter: max(time.Second, d.RequeueAt.Sub(now))}, nil
+}
+
+// revokeOnDeletion deletes the RoleBindings of a request being deleted.
+// Status is not published: the object is going.
+func (r *Reconciler) revokeOnDeletion(ctx context.Context, access *pgtoolboxv1alpha1.PgAccessRequest) error {
+	bindings, err := r.bindings(ctx, access)
+	if err != nil {
+		return err
+	}
+	for _, binding := range bindings {
+		if err := r.deleteBinding(ctx, access, binding); err != nil {
+			return err
+		}
+		r.event(access, pendingEvent{
+			corev1.EventTypeNormal, pgtoolboxv1alpha1.ReasonRoleBindingDeleted,
+			fmt.Sprintf("RoleBinding %s deleted: the request is being deleted", binding.Name),
+		})
+	}
+	return nil
 }
 
 // checkCluster sets ConfigurationValid: a request naming a Cluster that

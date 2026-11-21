@@ -156,6 +156,9 @@ func (r *Reconciler) resolve(ctx context.Context, p *pgtoolboxv1alpha1.PgAdmin) 
 			len(result.Document.Servers), offer.MaxServers))
 		result.Document.Servers = result.Document.Servers[:offer.MaxServers]
 	}
+	if err := r.offerCAs(ctx, p, &result.Document); err != nil {
+		return buildInputs{}, offerResult{}, remoteResolution{}, err
+	}
 	proxyDefault, err := r.oauthProxyDefault(ctx, p)
 	if err != nil {
 		return buildInputs{}, offerResult{}, remoteResolution{}, err
@@ -294,16 +297,16 @@ func (r *Reconciler) unservedAPIProblems(p *pgtoolboxv1alpha1.PgAdmin, problems 
 	if p.Spec.Credentials.OffersDatabaseRoles() && !r.Features.In(p.Namespace).DatabaseRoles.Usable() {
 		if r.Features.In(p.Namespace).DatabaseRoles.State == discovery.Forbidden {
 			problems.add(pgtoolboxv1alpha1.ReasonDatabaseRoleAPIUnavailable, "spec.credentials offers DatabaseRoles, but the DatabaseRole API is unavailable: "+
-				unavailableWhy(r.Features.In(p.Namespace).DatabaseRoles))
+				r.Features.In(p.Namespace).DatabaseRoles.Why())
 		} else {
-			notes = append(notes, "no DatabaseRole offered: "+unavailableWhy(r.Features.In(p.Namespace).DatabaseRoles))
+			notes = append(notes, "no DatabaseRole offered: "+r.Features.In(p.Namespace).DatabaseRoles.Why())
 		}
 	}
 	if !r.Features.In(p.Namespace).Poolers.Usable() && slices.ContainsFunc(p.Spec.EndpointsOrDefault(), func(e pgtoolboxv1alpha1.Endpoint) bool {
 		_, isPooler := e.PoolerName()
 		return isPooler
 	}) {
-		problems.add(pgtoolboxv1alpha1.ReasonPoolerAPIUnavailable, "spec.endpoints names a pooler, but the Pooler API is unavailable: "+unavailableWhy(r.Features.In(p.Namespace).Poolers))
+		problems.add(pgtoolboxv1alpha1.ReasonPoolerAPIUnavailable, "spec.endpoints names a pooler, but the Pooler API is unavailable: "+r.Features.In(p.Namespace).Poolers.Why())
 	}
 	return notes
 }
@@ -644,7 +647,7 @@ func (r *Reconciler) reconcileExposure(ctx context.Context, p *pgtoolboxv1alpha1
 		// The default fact above.
 	case pgtoolboxv1alpha1.ExposureTypeRoute:
 		if !r.Features.In(p.Namespace).Routes.Usable() {
-			fact = exposureFact{Status: metav1.ConditionFalse, Reason: pgtoolboxv1alpha1.ReasonRouteAPIUnavailable, Message: "the Route API is unavailable: " + unavailableWhy(r.Features.In(p.Namespace).Routes)}
+			fact = exposureFact{Status: metav1.ConditionFalse, Reason: pgtoolboxv1alpha1.ReasonRouteAPIUnavailable, Message: "the Route API is unavailable: " + r.Features.In(p.Namespace).Routes.Why()}
 			break
 		}
 		var route routev1.Route
@@ -662,7 +665,7 @@ func (r *Reconciler) reconcileExposure(ctx context.Context, p *pgtoolboxv1alpha1
 		}
 	case pgtoolboxv1alpha1.ExposureTypeGateway:
 		if !r.Features.In(p.Namespace).Gateways.Usable() {
-			fact = exposureFact{Status: metav1.ConditionFalse, Reason: pgtoolboxv1alpha1.ReasonGatewayAPIUnavailable, Message: "the Gateway API is unavailable: " + unavailableWhy(r.Features.In(p.Namespace).Gateways)}
+			fact = exposureFact{Status: metav1.ConditionFalse, Reason: pgtoolboxv1alpha1.ReasonGatewayAPIUnavailable, Message: "the Gateway API is unavailable: " + r.Features.In(p.Namespace).Gateways.Why()}
 			break
 		}
 		var route gatewayv1.HTTPRoute
@@ -1004,14 +1007,6 @@ func existingImage(d *appsv1.Deployment) string {
 		}
 	}
 	return ""
-}
-
-// unavailableWhy is the probe's reason for an unusable optional API.
-func unavailableWhy(result discovery.Result) string {
-	if result.Reason == "" {
-		return "not probed"
-	}
-	return result.Reason
 }
 
 // checkHostname refuses a spec.exposure.hostname outside the operator's

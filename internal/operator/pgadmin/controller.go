@@ -57,7 +57,8 @@ import (
 // operator grant the pgAdmin Pod its name-scoped Role (RBAC escalation
 // prevention: a Role can grant only what its writer holds); the operator
 // itself reads Secret metadata only, and the content of no Secret but its
-// own generated ones.
+// own generated ones and the Clusters' server CA Secrets (ca.crt is copied
+// into the offer, so pgAdmin's Role never names a CA Secret).
 //
 // +kubebuilder:rbac:groups=pgtoolbox.fyannk.dev,resources=pgadmins,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=pgtoolbox.fyannk.dev,resources=pgadmins/status,verbs=get;update;patch
@@ -304,9 +305,9 @@ func (r *Reconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager) err
 		Watches(&cnpgv1.Cluster{}, handler.EnqueueRequestsFromMapFunc(r.forCluster)).
 		// Cross-namespace grants and what they produce in the grant's
 		// namespace (owned by the grant, labelled with this PgAdmin).
-		Watches(&pgtoolboxv1alpha1.PgAdminAccess{}, handler.EnqueueRequestsFromMapFunc(forGrant)).
-		Watches(&rbacv1.Role{}, handler.EnqueueRequestsFromMapFunc(byAccessLabels)).
-		Watches(&rbacv1.RoleBinding{}, handler.EnqueueRequestsFromMapFunc(byAccessLabels)).
+		Watches(&pgtoolboxv1alpha1.PgAdminAccess{}, handler.EnqueueRequestsFromMapFunc(r.forGrant)).
+		Watches(&rbacv1.Role{}, handler.EnqueueRequestsFromMapFunc(r.byAccessLabels)).
+		Watches(&rbacv1.RoleBinding{}, handler.EnqueueRequestsFromMapFunc(r.byAccessLabels)).
 		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.forClientSecret), builder.OnlyMetadata).
 		WithOptions(controller.Options{
 			MaxConcurrentReconciles: r.Config.MaxConcurrentReconciles,

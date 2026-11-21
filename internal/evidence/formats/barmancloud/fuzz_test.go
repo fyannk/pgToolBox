@@ -15,7 +15,10 @@
 package barmancloud
 
 import (
+	"encoding/hex"
+	"io"
 	"reflect"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -92,6 +95,32 @@ func FuzzParseTimelineHistory(f *testing.F) {
 			if index > 0 && (edges[index-1].Parent >= edge.Parent || edges[index-1].SwitchLSN >= edge.SwitchLSN) {
 				t.Fatal("accepted timeline history retained unordered edges")
 			}
+		}
+	})
+}
+
+// FuzzXZHistoryDictionary asserts that an xz history the reader accepts is
+// decoded within a bounded allocation, whatever its block headers declare.
+func FuzzXZHistoryDictionary(f *testing.F) {
+	for _, seed := range []string{pythonXZHistory, hugeDictionaryXZHistory} {
+		raw, err := hex.DecodeString(seed)
+		if err != nil {
+			f.Fatal(err)
+		}
+		f.Add(raw)
+	}
+	f.Add(hiddenBlockXZHistory(f, 40))
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		var before, after runtime.MemStats
+		runtime.ReadMemStats(&before)
+		reader, _, err := historyReader(data, "xz")
+		if err == nil {
+			_, _ = io.Copy(io.Discard, io.LimitReader(reader, MaxHistoryDecompressedBytes+1))
+		}
+		runtime.ReadMemStats(&after)
+		if allocated := after.TotalAlloc - before.TotalAlloc; allocated > 4*xzMaxDictionary {
+			t.Fatalf("decoding an xz history allocated %d bytes", allocated)
 		}
 	})
 }

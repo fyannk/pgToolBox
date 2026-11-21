@@ -188,7 +188,6 @@ func (c *capture) Event(data any) error {
 	}
 	return nil
 }
-func (c *capture) Comment(string) error { return nil }
 
 func TestInvalidationsBridge(t *testing.T) {
 	t.Parallel()

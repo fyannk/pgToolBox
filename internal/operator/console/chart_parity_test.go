@@ -365,6 +365,25 @@ func TestDeploymentMatchesTheChart(t *testing.T) {
 			},
 		},
 		{
+			// The MCP Pod keeps neither: in-memory history, no delivery.
+			name: "the MCP endpoint beside persistent history and digest delivery",
+			sets: []string{
+				"console.mcp.enabled=true", "console.publicURL=https://console.example",
+				"console.history.persistent=true", "console.digest.hour=6",
+				"console.digest.delivery.webhook.existingSecret=digest-webhook", "console.digest.delivery.timeout=20s",
+			},
+			mutate: func(c *pgtoolboxv1alpha1.PgToolBoxConsole) {
+				c.Spec.PublicURL = "https://console.example"
+				c.Spec.MCP = &pgtoolboxv1alpha1.PgToolBoxConsoleMCPSpec{Enabled: true}
+				c.Spec.History.Persistent = new(true)
+				c.Spec.Digest.Hour = new(int32(6))
+				c.Spec.Digest.Delivery = &pgtoolboxv1alpha1.PgToolBoxConsoleDigestDeliverySpec{
+					WebhookSecretRef: &pgtoolboxv1alpha1.SecretKeyReference{Name: "digest-webhook", Key: "url"},
+					Timeout:          &metav1.Duration{Duration: 20 * time.Second},
+				}
+			},
+		},
+		{
 			name: "tracing with every setting",
 			sets: []string{
 				"console.tracing.endpoint=https://api.smith.langchain.com/otel", "console.tracing.serviceName=pgtoolbox-console-team-a",
@@ -420,45 +439,81 @@ func TestDeploymentMatchesTheChart(t *testing.T) {
 			if tc.mutate != nil {
 				tc.mutate(console)
 			}
-			var chartPod, ourPod *corev1.PodTemplateSpec
+			var in deploymentInputs
 			if console.HistoryPersistent() {
 				chart := chartObject[appsv1.StatefulSet](t, docs, "StatefulSet/console")
-				ours := buildStatefulSet(console, deploymentInputs{Image: specs.ResolveImage(nil, chart.Spec.Template.Spec.Containers[0].Image), Exposed: exposed(console)})
+				in = deploymentInputs{Image: specs.ResolveImage(nil, chart.Spec.Template.Spec.Containers[0].Image), Exposed: exposed(console)}
+				ours := buildStatefulSet(console, in)
 				compareStatefulSets(t, ours, chart)
-				chartPod, ourPod = &chart.Spec.Template, &ours.Spec.Template
+				comparePods(t, "", &ours.Spec.Template, &chart.Spec.Template)
 			} else {
 				chart := chartObject[appsv1.Deployment](t, docs, "Deployment/console")
-				ours := buildDeployment(console, deploymentInputs{Image: specs.ResolveImage(nil, chart.Spec.Template.Spec.Containers[0].Image), Exposed: exposed(console)})
-				if got, want := ours.Spec.Strategy, chart.Spec.Strategy; got.Type != want.Type ||
-					got.RollingUpdate.MaxSurge.String() != want.RollingUpdate.MaxSurge.String() ||
-					got.RollingUpdate.MaxUnavailable.String() != want.RollingUpdate.MaxUnavailable.String() {
-					t.Errorf("strategy %+v, chart %+v", got, want)
+				in = deploymentInputs{Image: specs.ResolveImage(nil, chart.Spec.Template.Spec.Containers[0].Image), Exposed: exposed(console)}
+				ours := buildDeployment(console, in)
+				compareStrategies(t, "", ours.Spec.Strategy, chart.Spec.Strategy)
+				comparePods(t, "", &ours.Spec.Template, &chart.Spec.Template)
+			}
+			if console.MCPEnabled() {
+				// The MCP Deployment, field by field as the console's.
+				chart := chartObject[appsv1.Deployment](t, docs, "Deployment/console-mcp")
+				ours := buildMCPDeployment(console, in)
+				if ours.Name != chart.Name || *ours.Spec.Replicas != *chart.Spec.Replicas {
+					t.Errorf("MCP Deployment %s of %d replicas, chart %s of %d", ours.Name, *ours.Spec.Replicas, chart.Name, *chart.Spec.Replicas)
 				}
-				chartPod, ourPod = &chart.Spec.Template, &ours.Spec.Template
-			}
-
-			chartEnv, chartMounts, chartVolumes := containerFacts(&chartPod.Spec)
-			// The chart's replicas leave MCP to its MCP Deployment; the
-			// operator's campaign, and it labels the holder.
-			chartEnv = slices.DeleteFunc(chartEnv, func(e string) bool { return e == "MCP_CANDIDATE=false" })
-			ourEnv, ourMounts, ourVolumes := containerFacts(&ourPod.Spec)
-			if !slices.Equal(ourEnv, chartEnv) {
-				t.Errorf("env\n got %v\nwant %v (the chart's)", ourEnv, chartEnv)
-			}
-			slices.SortFunc(chartMounts, func(a, b mountFact) int { return cmpString(a.Path+a.SubPath, b.Path+b.SubPath) })
-			slices.SortFunc(ourMounts, func(a, b mountFact) int { return cmpString(a.Path+a.SubPath, b.Path+b.SubPath) })
-			if !slices.Equal(ourMounts, chartMounts) {
-				t.Errorf("mounts\n got %v\nwant %v (the chart's)", ourMounts, chartMounts)
-			}
-			slices.Sort(chartVolumes)
-			slices.Sort(ourVolumes)
-			if !slices.Equal(ourVolumes, chartVolumes) {
-				t.Errorf("volumes\n got %v\nwant %v (the chart's)", ourVolumes, chartVolumes)
-			}
-			if got, want := ourPod.Spec.Containers[0].Ports, chartPod.Spec.Containers[0].Ports; len(got) != len(want) {
-				t.Errorf("ports %v, chart %v", got, want)
+				compareStrategies(t, "MCP ", ours.Spec.Strategy, chart.Spec.Strategy)
+				comparePods(t, "MCP ", &ours.Spec.Template, &chart.Spec.Template)
 			}
 		})
+	}
+}
+
+// compareStrategies holds a Deployment's roll to the chart's.
+func compareStrategies(t *testing.T, what string, got, want appsv1.DeploymentStrategy) {
+	t.Helper()
+	if got.Type != want.Type ||
+		got.RollingUpdate.MaxSurge.String() != want.RollingUpdate.MaxSurge.String() ||
+		got.RollingUpdate.MaxUnavailable.String() != want.RollingUpdate.MaxUnavailable.String() {
+		t.Errorf("%sstrategy %+v, chart %+v", what, got, want)
+	}
+}
+
+// comparePods holds a Pod template to the chart's: its component, the
+// container's env, mounts and ports, the volumes, the ServiceAccount,
+// whether it spreads over nodes, and its tolerations.
+func comparePods(t *testing.T, what string, ours, chart *corev1.PodTemplateSpec) {
+	t.Helper()
+	if got, want := ours.Labels[componentLabel], chart.Labels[componentLabel]; got != want {
+		t.Errorf("%sPod component %q, chart %q", what, got, want)
+	}
+	chartEnv, chartMounts, chartVolumes := containerFacts(&chart.Spec)
+	ourEnv, ourMounts, ourVolumes := containerFacts(&ours.Spec)
+	if !slices.Equal(ourEnv, chartEnv) {
+		t.Errorf("%senv\n got %v\nwant %v (the chart's)", what, ourEnv, chartEnv)
+	}
+	slices.SortFunc(chartMounts, func(a, b mountFact) int { return cmpString(a.Path+a.SubPath, b.Path+b.SubPath) })
+	slices.SortFunc(ourMounts, func(a, b mountFact) int { return cmpString(a.Path+a.SubPath, b.Path+b.SubPath) })
+	if !slices.Equal(ourMounts, chartMounts) {
+		t.Errorf("%smounts\n got %v\nwant %v (the chart's)", what, ourMounts, chartMounts)
+	}
+	slices.Sort(chartVolumes)
+	slices.Sort(ourVolumes)
+	if !slices.Equal(ourVolumes, chartVolumes) {
+		t.Errorf("%svolumes\n got %v\nwant %v (the chart's)", what, ourVolumes, chartVolumes)
+	}
+	if got, want := ours.Spec.Containers[0].Ports, chart.Spec.Containers[0].Ports; len(got) != len(want) {
+		t.Errorf("%sports %v, chart %v", what, got, want)
+	}
+	// Both ServiceAccounts are named after the console (fullnameOverride).
+	if ours.Spec.ServiceAccountName != chart.Spec.ServiceAccountName {
+		t.Errorf("%sServiceAccount %s, chart %s", what, ours.Spec.ServiceAccountName, chart.Spec.ServiceAccountName)
+	}
+	if (ours.Spec.Affinity == nil) != (chart.Spec.Affinity == nil) {
+		t.Errorf("%saffinity %+v, chart %+v", what, ours.Spec.Affinity, chart.Spec.Affinity)
+	}
+	if !slices.EqualFunc(ours.Spec.Tolerations, chart.Spec.Tolerations, func(a, b corev1.Toleration) bool {
+		return a.Key == b.Key && a.Operator == b.Operator && a.Effect == b.Effect && ptrValue(a.TolerationSeconds, -1) == ptrValue(b.TolerationSeconds, -1)
+	}) {
+		t.Errorf("%stolerations %+v, chart %+v", what, ours.Spec.Tolerations, chart.Spec.Tolerations)
 	}
 }
 
@@ -504,11 +559,11 @@ func TestDigestLeaseRoleMatchesTheChart(t *testing.T) {
 }
 
 // TestMCPLeaderMatchesTheChart: with MCP on, the operator and the chart
-// render the same Lease, Role and Service port for the MCP leader and send
-// the same paths to that Service, those of mcpleader.Paths, through each
-// kind of exposure. The Services differ in what they select: the
-// operator's the console Pod it labels as the holder, the chart's its MCP
-// Deployment's Pod.
+// render one shape: the same Lease, Role and Service port, a Service that
+// selects the MCP Deployment's Pod alone (component console-mcp, which the
+// console's own Service and workload never select), and the same paths
+// sent to that Service, those of mcpleader.Paths, through each kind of
+// exposure. TestDeploymentMatchesTheChart compares the MCP Pods.
 func TestMCPLeaderMatchesTheChart(t *testing.T) {
 	console := &pgtoolboxv1alpha1.PgToolBoxConsole{ObjectMeta: metav1.ObjectMeta{Name: "console", Namespace: "team-a", UID: "u"}}
 	console.Spec.MCP = &pgtoolboxv1alpha1.PgToolBoxConsoleMCPSpec{Enabled: true}
@@ -540,12 +595,32 @@ func TestMCPLeaderMatchesTheChart(t *testing.T) {
 	if !slices.Equal(chartService.Spec.Ports, service.Spec.Ports) {
 		t.Errorf("MCP Service ports %+v, chart %+v", service.Spec.Ports, chartService.Spec.Ports)
 	}
-	if service.Spec.Selector[pgtoolboxv1alpha1.LabelMCPLeader] != pgtoolboxv1alpha1.MCPLeaderLabelValue {
-		t.Errorf("the operator's MCP Service selects %v: want the holder's label", service.Spec.Selector)
-	}
 	chartObject[coordinationv1.Lease](t, docs, "Lease/"+lease.Name)
-	if mcpDeployment := chartObject[appsv1.Deployment](t, docs, "Deployment/console-mcp"); !maps.Equal(mcpDeployment.Spec.Selector.MatchLabels, chartService.Spec.Selector) {
-		t.Errorf("the chart's MCP Service selects %v, its MCP Deployment's Pods are %v", chartService.Spec.Selector, mcpDeployment.Spec.Selector.MatchLabels)
+	// Each MCP Service selects its MCP Deployment's Pods, and those alone:
+	// the console's Service and workload select the other component.
+	chartMCP := chartObject[appsv1.Deployment](t, docs, "Deployment/console-mcp")
+	chartConsole := chartObject[appsv1.Deployment](t, docs, "Deployment/console")
+	chartConsoleService := chartObject[corev1.Service](t, docs, "Service/console")
+	ourMCP := buildMCPDeployment(console, deploymentInputs{Image: specs.ResolveImage(nil, "registry.example/pgtoolbox-console:1.2.0")})
+	ourConsole := buildDeployment(console, deploymentInputs{Image: specs.ResolveImage(nil, "registry.example/pgtoolbox-console:1.2.0")})
+	for _, install := range []struct {
+		who                         string
+		mcpService, consoleSelector map[string]string
+		mcpPods, consolePods        map[string]string
+	}{
+		{"operator", service.Spec.Selector, buildService(console).Spec.Selector, ourMCP.Spec.Selector.MatchLabels, ourConsole.Spec.Selector.MatchLabels},
+		{"chart", chartService.Spec.Selector, chartConsoleService.Spec.Selector, chartMCP.Spec.Selector.MatchLabels, chartConsole.Spec.Selector.MatchLabels},
+	} {
+		if !maps.Equal(install.mcpService, install.mcpPods) {
+			t.Errorf("the %s's MCP Service selects %v, its MCP Deployment's Pods are %v", install.who, install.mcpService, install.mcpPods)
+		}
+		if install.mcpService[componentLabel] != componentMCP || install.consoleSelector[componentLabel] != componentConsole ||
+			install.consolePods[componentLabel] != componentConsole {
+			t.Errorf("the %s's components: MCP Service %v, console Service %v, console Pods %v", install.who, install.mcpService, install.consoleSelector, install.consolePods)
+		}
+	}
+	if ourMCP.Spec.Template.Labels[componentLabel] != componentMCP || chartMCP.Spec.Template.Labels[componentLabel] != componentMCP {
+		t.Errorf("MCP Pod components %q, chart %q", ourMCP.Spec.Template.Labels[componentLabel], chartMCP.Spec.Template.Labels[componentLabel])
 	}
 
 	// The paths each exposure sends to the MCP Service.

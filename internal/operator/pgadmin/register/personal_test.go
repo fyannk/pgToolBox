@@ -177,28 +177,28 @@ func TestRegisterOpensTheConfigDatabase(t *testing.T) {
 	f := &treeSetup{users: "[]", trees: map[string]string{}, loaded: map[string][]byte{}, authsOf: map[string]string{}}
 	settings := server(configServerName, "pgadmin_team", "")
 	settings.Service, settings.SecretName, settings.SecretResourceVersion = "pgtoolbox-config-database", "team-pgadmin-config-password", "81"
-	o := personalOptions(t, f, offer.Document{Servers: []offer.Server{server("one rw (app)", "app", "")}, ConfigDatabase: &settings})
+	o := personalOptions(t, f, offer.Document{
+		Servers: []offer.Server{server("one rw (app)", "app", "")}, ConfigDatabase: &settings,
+		CAs: map[string]string{"one": testCA},
+	})
 	o.SettingsDB = filepath.Join(o.TempDir, "absent.db") // never waited for
 	o.ConfigDatabaseURI = "postgresql://pgadmin_team@one-rw.team.svc:5432/pgadmin_team?sslmode=verify-full"
 	o.CredentialsDir = filepath.Join(o.TempDir, "credentials")
 	var asked []string
 	o.Secrets = func(_ context.Context, namespace, name string) (*corev1.Secret, error) {
 		asked = append(asked, namespace+"/"+name)
-		switch name {
-		case "team-pgadmin-config-password":
+		if name == "team-pgadmin-config-password" {
 			secret := &corev1.Secret{Data: map[string][]byte{"username": []byte("pgadmin_team"), "password": []byte("generated")}}
 			secret.ResourceVersion = "81"
 			return secret, nil
-		case "one-ca":
-			return &corev1.Secret{Data: map[string][]byte{"ca.crt": []byte(testCA), "ca.key": []byte("never copied")}}, nil
 		}
 		return nil, apierrors.NewNotFound(schema.GroupResource{Resource: "secrets"}, name)
 	}
 	if _, err := Register(context.Background(), o); err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(asked, []string{"/team-pgadmin-config-password", "/one-ca"}) {
-		t.Fatalf("only the settings database's Secrets are read: %v", asked)
+	if !slices.Equal(asked, []string{"/team-pgadmin-config-password"}) {
+		t.Fatalf("only the settings database's password Secret is read (its CA comes with the offer): %v", asked)
 	}
 	local, err := os.ReadFile(filepath.Join(o.TempDir, configLocalDir, "config_local.py"))
 	if err != nil {
@@ -213,7 +213,7 @@ func TestRegisterOpensTheConfigDatabase(t *testing.T) {
 	}
 	// setup.py's environment: the config_local.py directory first, the
 	// credential files.
-	doc := offer.Document{ConfigDatabase: &settings}
+	doc := offer.Document{ConfigDatabase: &settings, CAs: map[string]string{"one": testCA}}
 	o.defaults()
 	o.Env = nil
 	if err := o.prepareConfigDatabase(context.Background(), doc); err != nil {

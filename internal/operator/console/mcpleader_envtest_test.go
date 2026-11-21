@@ -16,25 +16,27 @@ package console
 
 import (
 	"context"
+	"maps"
 	"slices"
 	"testing"
-	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
 	authorizationv1 "k8s.io/api/authorization/v1"
 	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	pgtoolboxv1alpha1 "github.com/fyannk/pgToolBox/api/v1alpha1"
 )
 
 // TestMCPLeaderOnEnvtest: with MCP on, the operator (holding only its
-// generated ClusterRole) creates the MCP Lease and the Service selecting
-// the holder's label, and grants the console get and update on that Lease
-// by name and nothing on Pods; it labels the Pod the Lease names, moves the
-// label when the holder changes, and takes it off with MCP off.
+// generated ClusterRole, which grants nothing on Pods but reading them)
+// creates the MCP Lease, the one-replica MCP Deployment, the only
+// candidate for that Lease, and the Service selecting its Pod alone, and
+// grants the console get and update on that Lease by name and nothing on
+// Pods; the console's own replicas never campaign. With MCP off the
+// Deployment, the Service and the grant go.
 func TestMCPLeaderOnEnvtest(t *testing.T) {
 	s := newEnvtestSuite(t)
 	ctx := context.Background()
@@ -50,14 +52,33 @@ func TestMCPLeaderOnEnvtest(t *testing.T) {
 	s.get(ctx, t, name, &coordinationv1.Lease{})
 	service := &corev1.Service{}
 	s.get(ctx, t, name, service)
-	if service.Spec.Selector[pgtoolboxv1alpha1.LabelMCPLeader] != pgtoolboxv1alpha1.MCPLeaderLabelValue {
-		t.Fatalf("the MCP Service selects %v: want the holder's label", service.Spec.Selector)
+	mcp := &appsv1.Deployment{}
+	s.get(ctx, t, name, mcp)
+	if *mcp.Spec.Replicas != 1 || !maps.Equal(mcp.Spec.Selector.MatchLabels, service.Spec.Selector) ||
+		service.Spec.Selector[componentLabel] != componentMCP {
+		t.Fatalf("MCP Deployment of %d replicas selecting %v, its Service selects %v", *mcp.Spec.Replicas, mcp.Spec.Selector.MatchLabels, service.Spec.Selector)
+	}
+	candidate := func(envs []corev1.EnvVar) string {
+		for _, e := range envs {
+			if e.Name == "MCP_CANDIDATE" {
+				return e.Value
+			}
+		}
+		return "unset"
+	}
+	if got := candidate(mcp.Spec.Template.Spec.Containers[0].Env); got != "unset" {
+		t.Errorf("the MCP Pod's MCP_CANDIDATE=%s, want it unset (a candidate)", got)
+	}
+	replicas := &appsv1.StatefulSet{}
+	s.get(ctx, t, console.WorkloadName(), replicas)
+	if got := candidate(replicas.Spec.Template.Spec.Containers[0].Env); got != "false" {
+		t.Errorf("the console's replicas have MCP_CANDIDATE=%s, want false", got)
 	}
 
-	allowed := func(verb, group, resource, name string) bool {
+	allowed := func(user, verb, group, resource, name string) bool {
 		t.Helper()
 		review := &authorizationv1.SubjectAccessReview{Spec: authorizationv1.SubjectAccessReviewSpec{
-			User:   "system:serviceaccount:" + suiteNamespace + ":" + console.WorkloadName(),
+			User:   user,
 			Groups: []string{"system:serviceaccounts", "system:serviceaccounts:" + suiteNamespace, "system:authenticated"},
 			ResourceAttributes: &authorizationv1.ResourceAttributes{
 				Namespace: suiteNamespace, Verb: verb, Group: group, Resource: resource, Name: name,
@@ -66,77 +87,45 @@ func TestMCPLeaderOnEnvtest(t *testing.T) {
 		must(t, s.admin.Create(ctx, review))
 		return review.Status.Allowed
 	}
+	consoleUser := "system:serviceaccount:" + suiteNamespace + ":" + console.WorkloadName()
 	for _, tc := range []struct {
-		verb, group, resource, name string
-		want                        bool
+		user, verb, group, resource, name string
+		want                              bool
 	}{
-		{"get", "coordination.k8s.io", "leases", name, true},
-		{"update", "coordination.k8s.io", "leases", name, true},
-		{"update", "coordination.k8s.io", "leases", "another", false},
-		{"create", "coordination.k8s.io", "leases", "", false},
-		{"delete", "coordination.k8s.io", "leases", name, false},
-		{"patch", "", "pods", "console-a", false},
-		{"update", "", "pods", "console-a", false},
-		{"create", "discovery.k8s.io", "endpointslices", "", false},
+		{consoleUser, "get", "coordination.k8s.io", "leases", name, true},
+		{consoleUser, "update", "coordination.k8s.io", "leases", name, true},
+		{consoleUser, "update", "coordination.k8s.io", "leases", "another", false},
+		{consoleUser, "create", "coordination.k8s.io", "leases", "", false},
+		{consoleUser, "delete", "coordination.k8s.io", "leases", name, false},
+		{consoleUser, "patch", "", "pods", "console-a", false},
+		{consoleUser, "update", "", "pods", "console-a", false},
+		{consoleUser, "create", "discovery.k8s.io", "endpointslices", "", false},
+		// The operator labels no Pod and follows no Lease.
+		{operatorUser, "patch", "", "pods", "console-a", false},
+		{operatorUser, "update", "", "pods", "console-a", false},
+		{operatorUser, "watch", "coordination.k8s.io", "leases", "", false},
+		{operatorUser, "list", "coordination.k8s.io", "leases", "", false},
 	} {
-		if got := allowed(tc.verb, tc.group, tc.resource, tc.name); got != tc.want {
-			t.Errorf("the console may %s %s.%s %q: %v, want %v", tc.verb, tc.resource, tc.group, tc.name, got, tc.want)
+		if got := allowed(tc.user, tc.verb, tc.group, tc.resource, tc.name); got != tc.want {
+			t.Errorf("%s may %s %s.%s %q: %v, want %v", tc.user, tc.verb, tc.resource, tc.group, tc.name, got, tc.want)
 		}
 	}
 
-	// Two console Pods, as the Deployment would make them.
-	for _, pod := range []string{"console-a", "console-b"} {
-		must(t, s.admin.Create(ctx, &corev1.Pod{
-			ObjectMeta: metav1.ObjectMeta{Name: pod, Namespace: suiteNamespace, Labels: selectorLabels(console)},
-			Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "console", Image: "registry.example/pgtoolbox-console:1.2.0"}}},
-		}))
-	}
-	labelled := func() []string {
-		t.Helper()
-		var pods corev1.PodList
-		must(t, s.admin.List(ctx, &pods, client.InNamespace(suiteNamespace),
-			client.MatchingLabels{pgtoolboxv1alpha1.LabelMCPLeader: pgtoolboxv1alpha1.MCPLeaderLabelValue}))
-		names := make([]string, 0, len(pods.Items))
-		for _, pod := range pods.Items {
-			names = append(names, pod.Name)
-		}
-		return names
-	}
-	// The console takes the Lease, as its elector does.
-	consoleClient := s.asConsole(t, console)
-	hold := func(pod string) {
-		t.Helper()
-		lease := &coordinationv1.Lease{}
-		must(t, consoleClient.Get(ctx, client.ObjectKey{Namespace: suiteNamespace, Name: name}, lease))
-		lease.Spec = coordinationv1.LeaseSpec{
-			HolderIdentity: new(pod + "_0a1b2c3d4e5f"), LeaseDurationSeconds: new(int32(15)),
-			AcquireTime: &metav1.MicroTime{Time: time.Now()}, RenewTime: &metav1.MicroTime{Time: time.Now()},
-		}
-		must(t, consoleClient.Update(ctx, lease))
-	}
-	hold("console-a")
-	s.reconcile(ctx, t, "console")
-	if got := labelled(); !slices.Equal(got, []string{"console-a"}) {
-		t.Fatalf("labelled %v, want console-a", got)
-	}
-	hold("console-b")
-	s.reconcile(ctx, t, "console")
-	if got := labelled(); !slices.Equal(got, []string{"console-b"}) {
-		t.Fatalf("labelled %v after the hand-over, want console-b", got)
-	}
-
-	// MCP off: no Service, no grant, no label; the Lease goes with the console.
+	// MCP off: no MCP Pod, no Service, no grant; the Lease goes with the console.
 	console = s.console(ctx, t, "console")
 	console.Spec.MCP.Enabled = false
 	must(t, s.admin.Update(ctx, console))
 	s.reconcile(ctx, t, "console")
+	s.absent(ctx, t, name, &appsv1.Deployment{})
 	s.absent(ctx, t, name, &corev1.Service{})
 	s.absent(ctx, t, name, &rbacv1.Role{})
 	s.absent(ctx, t, name, &rbacv1.RoleBinding{})
-	if got := labelled(); len(got) != 0 {
-		t.Errorf("labelled %v with MCP off", got)
-	}
-	if allowed("update", "coordination.k8s.io", "leases", name) {
+	if allowed(consoleUser, "update", "coordination.k8s.io", "leases", name) {
 		t.Error("the console may still update the MCP Lease with MCP off")
+	}
+	replicas = &appsv1.StatefulSet{}
+	s.get(ctx, t, console.WorkloadName(), replicas)
+	if slices.ContainsFunc(replicas.Spec.Template.Spec.Containers[0].Env, func(e corev1.EnvVar) bool { return e.Name == "MCP_LEASE" }) {
+		t.Error("the console's replicas still name the MCP Lease with MCP off")
 	}
 }

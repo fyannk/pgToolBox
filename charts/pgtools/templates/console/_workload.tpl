@@ -915,9 +915,24 @@ spec:
       nodeSelector:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with $c.tolerations }}
+      {{- if or $c.tolerations $mcpPod }}
       tolerations:
+        {{- with $c.tolerations }}
         {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- if $mcpPod }}
+        # The one MCP Pod leaves a node that is not ready or unreachable
+        # after 30 seconds, not the default 300: a lost node costs about a
+        # minute.
+        - key: node.kubernetes.io/not-ready
+          operator: Exists
+          effect: NoExecute
+          tolerationSeconds: 30
+        - key: node.kubernetes.io/unreachable
+          operator: Exists
+          effect: NoExecute
+          tolerationSeconds: 30
+        {{- end }}
       {{- end }}
       {{- if $c.affinity }}
       affinity:

@@ -171,8 +171,8 @@ func TestConfigDatabaseLifecycle(t *testing.T) {
 		t.Fatal("several replicas need a sticky Service")
 	}
 	credentials := h.credentialsRoleNames("team")
-	if !slices.Contains(credentials, "team-pgadmin-config-password") || !slices.Contains(credentials, "billing-ca") {
-		t.Fatalf("the Pod's Role must allow the settings database's password and CA: %v", credentials)
+	if !slices.Contains(credentials, "team-pgadmin-config-password") || slices.Contains(credentials, "billing-ca") {
+		t.Fatalf("the Pod's Role must allow the settings database's password and not its CA Secret: %v", credentials)
 	}
 
 	// pgAdmin runs and registers once: spec.replicas follow.

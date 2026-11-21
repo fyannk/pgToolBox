@@ -19,15 +19,176 @@ import {
   INVALIDATION_WINDOW_MS,
   invalidates,
   type LiveState,
+  liveStore,
   scopeOf,
+  startLive,
 } from "./live";
 
 const base: LiveState = { status: "down", downSince: 0, pollMinMs: 2_000, pollMaxMs: 10_000, reauth: null };
 
-test("no polling while live or still connecting", () => {
+test("no polling while live or still connecting (connecting is bounded: see the watchdog tests)", () => {
   expect(backstopInterval({ ...base, status: "live", downSince: null })).toBe(false);
   expect(backstopInterval({ ...base, status: "connecting", downSince: null })).toBe(false);
 });
+
+/** An EventSource that delivers only what the test emits. */
+class FakeSource {
+  static readonly CLOSED = 2;
+  static all: FakeSource[] = [];
+  readyState = 0;
+  closed = false;
+  private handlers = new Map<string, ((ev: Event) => void)[]>();
+  constructor(readonly url: string) {
+    FakeSource.all.push(this);
+  }
+  addEventListener(type: string, h: (ev: Event) => void) {
+    this.handlers.set(type, [...(this.handlers.get(type) ?? []), h]);
+  }
+  emit(type: string, data?: unknown) {
+    const ev = data === undefined ? new Event(type) : new MessageEvent(type, { data: JSON.stringify(data) });
+    for (const h of this.handlers.get(type) ?? []) h(ev);
+  }
+  close() {
+    this.closed = true;
+    this.readyState = FakeSource.CLOSED;
+  }
+}
+
+function withFakeStream(run: (src: () => FakeSource) => Promise<void>) {
+  return async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("EventSource", FakeSource);
+    const client = new QueryClient();
+    const stop = startLive(client);
+    try {
+      await run(() => {
+        const s = FakeSource.all.at(-1);
+        if (!s) throw new Error("no stream opened");
+        return s;
+      });
+    } finally {
+      stop();
+      client.clear();
+      FakeSource.all = [];
+      vi.unstubAllGlobals();
+      vi.useRealTimers();
+    }
+  };
+}
+
+test(
+  "a first open that never answers is down after twice the default heartbeat, and is reopened",
+  withFakeStream(async (src) => {
+    const first = src();
+    expect(liveStore.get().status).toBe("connecting");
+    await vi.advanceTimersByTimeAsync(29_999);
+    expect(liveStore.get().status).toBe("connecting");
+    await vi.advanceTimersByTimeAsync(1);
+    expect(liveStore.get().status).toBe("down");
+    expect(first.closed).toBe(true);
+    // Reopened after the same backoff as a closed stream, not at once.
+    expect(FakeSource.all).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(FakeSource.all).toHaveLength(2);
+  }),
+);
+
+test(
+  "heartbeats keep the stream live; silence for twice the hello's interval marks it down and reopens it",
+  withFakeStream(async (src) => {
+    const first = src();
+    first.emit("open");
+    first.emit("hello", {
+      serverTime: "2026-11-20T00:00:00Z",
+      heartbeatSeconds: 5,
+      pollMinSeconds: 2,
+      pollMaxSeconds: 10,
+    });
+    for (let i = 0; i < 5; i++) {
+      await vi.advanceTimersByTimeAsync(9_000);
+      first.emit("heartbeat", { serverTime: "2026-11-20T00:00:00Z" });
+    }
+    expect(liveStore.get().status).toBe("live");
+    expect(FakeSource.all).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(liveStore.get().status).toBe("down");
+    expect(first.closed).toBe(true);
+    expect(FakeSource.all).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(FakeSource.all).toHaveLength(2);
+    // Headers alone are not a working stream; its hello brings the state back.
+    src().emit("open");
+    expect(liveStore.get().status).toBe("down");
+    src().emit("hello", HELLO);
+    expect(liveStore.get().status).toBe("live");
+  }),
+);
+
+const HELLO = { serverTime: "2026-11-20T00:00:00Z", heartbeatSeconds: 15, pollMinSeconds: 2, pollMaxSeconds: 10 };
+
+/** Closes the current stream for good, as the browser does on a 401 or a 5xx. */
+function failHard(s: FakeSource) {
+  s.close();
+  s.emit("error");
+}
+
+test(
+  "a stream closed for good is retried after 2, 4, 8, 16, 30, 30 s; a hello resets the backoff",
+  withFakeStream(async (src) => {
+    const cases = [2_000, 4_000, 8_000, 16_000, 30_000, 30_000];
+    for (const [i, delay] of cases.entries()) {
+      failHard(src());
+      expect(liveStore.get().status, `attempt ${i + 1}`).toBe("down");
+      await vi.advanceTimersByTimeAsync(delay - 1);
+      expect(FakeSource.all, `attempt ${i + 1} before ${delay} ms`).toHaveLength(i + 1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(FakeSource.all, `attempt ${i + 1} at ${delay} ms`).toHaveLength(i + 2);
+    }
+    // An open without a hello does not reset it ...
+    src().emit("open");
+    failHard(src());
+    await vi.advanceTimersByTimeAsync(29_999);
+    expect(FakeSource.all).toHaveLength(cases.length + 1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(FakeSource.all).toHaveLength(cases.length + 2);
+    // ... a hello does: the next failure retries after 2 s again.
+    src().emit("open");
+    src().emit("hello", HELLO);
+    expect(liveStore.get().status).toBe("live");
+    failHard(src());
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(FakeSource.all).toHaveLength(cases.length + 3);
+  }),
+);
+
+test(
+  "an error the browser recovers from by itself (not closed) schedules no retry of its own",
+  withFakeStream(async (src) => {
+    src().emit("hello", HELLO);
+    src().emit("error");
+    expect(liveStore.get().status).toBe("down");
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(FakeSource.all).toHaveLength(1);
+    src().emit("hello", HELLO);
+    expect(liveStore.get().status).toBe("live");
+  }),
+);
+
+test(
+  "a resync refetches everything after the batching window",
+  withFakeStream(async (src) => {
+    src().emit("hello", HELLO);
+    const spy = vi.spyOn(QueryClient.prototype, "invalidateQueries");
+    try {
+      src().emit("resync", { reason: "watch restarted" });
+      expect(spy).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(INVALIDATION_WINDOW_MS);
+      expect(spy).toHaveBeenCalledWith(undefined, { cancelRefetch: false });
+    } finally {
+      spy.mockRestore();
+    }
+  }),
+);
 
 test("the backstop doubles from the server's minimum to its maximum while the stream stays down", () => {
   expect(backstopInterval(base, 500)).toBe(2_000);

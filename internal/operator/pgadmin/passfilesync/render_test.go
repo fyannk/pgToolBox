@@ -59,9 +59,12 @@ func baseSecrets() map[string]*corev1.Secret {
 		"one-app":  secret("one-app", "5", map[string]string{"username": "app", "password": "pw-one"}),
 		"two-app":  secret("two-app", "6", map[string]string{"username": "app", "password": "pw-two"}),
 		"owner-pw": secret("owner-pw", "42", map[string]string{"username": "owner", "password": "pw-owner"}),
-		"one-ca":   caSecret("one-ca", caPEM1),
-		"two-ca":   caSecret("two-ca", caPEM2),
 	}
+}
+
+// baseCAs are the CAs the operator copied into the offer, by CA key.
+func baseCAs() map[string]string {
+	return map[string]string{"one": caPEM1, "two": caPEM2}
 }
 
 func read(t *testing.T, path string) string {
@@ -79,7 +82,7 @@ func TestRenderWritesRestrictedFiles(t *testing.T) {
 		server("one", "app", "one-app", ""),
 		server("two", "app", "two-app", ""),
 		server("two", "owner", "owner-pw", "42"),
-	}}
+	}, CAs: baseCAs()}
 	outcome, err := Render(files, doc, baseSecrets())
 	if err != nil {
 		t.Fatal(err)
@@ -133,24 +136,25 @@ func TestRenderRefusals(t *testing.T) {
 		name    string
 		server  offer.Server
 		secrets func(map[string]*corev1.Secret)
+		cas     func(map[string]string)
 		want    string
 	}{
-		{"absent secret", server("one", "app", "missing", ""), nil, "absent or not readable"},
-		{"wrong resource version", server("two", "owner", "owner-pw", "41"), nil, "not at the version"},
+		{"absent secret", server("one", "app", "missing", ""), nil, nil, "absent or not readable"},
+		{"wrong resource version", server("two", "owner", "owner-pw", "41"), nil, nil, "not at the version"},
 		{"username mismatch", server("one", "app", "one-app", ""), func(s map[string]*corev1.Secret) {
 			s["one-app"].Data["username"] = []byte("postgres")
-		}, "names another role"},
+		}, nil, "names another role"},
 		{"empty password", server("one", "app", "one-app", ""), func(s map[string]*corev1.Secret) {
 			s["one-app"].Data["password"] = nil
-		}, "has no password"},
-		{"missing CA", server("one", "app", "one-app", ""), func(s map[string]*corev1.Secret) {
-			delete(s["one-ca"].Data, "ca.crt")
-		}, "has no ca.crt"},
-		{"CA secret absent", server("one", "app", "one-app", ""), func(s map[string]*corev1.Secret) {
-			delete(s, "one-ca")
-		}, "CA Secret one-ca is absent"},
-		{"non-PEM CA", server("one", "app", "one-app", ""), func(s map[string]*corev1.Secret) {
-			s["one-ca"].Data["ca.crt"] = []byte("garbage")
+		}, nil, "has no password"},
+		{"CA not offered", server("one", "app", "one-app", ""), nil, func(c map[string]string) {
+			delete(c, "one")
+		}, "the offer has no CA of Cluster one"},
+		{"CA Secret alone does not serve", server("one", "app", "one-app", ""), func(s map[string]*corev1.Secret) {
+			s["one-ca"] = caSecret("one-ca", caPEM2)
+		}, func(c map[string]string) { delete(c, "one") }, "the offer has no CA of Cluster one"},
+		{"non-PEM CA", server("one", "app", "one-app", ""), nil, func(c map[string]string) {
+			c["one"] = "garbage"
 		}, "not PEM"},
 	}
 	for _, tc := range cases {
@@ -160,7 +164,11 @@ func TestRenderRefusals(t *testing.T) {
 			if tc.secrets != nil {
 				tc.secrets(secrets)
 			}
-			outcome, err := Render(files, offer.Document{Version: offer.Version, Servers: []offer.Server{tc.server}}, secrets)
+			cas := baseCAs()
+			if tc.cas != nil {
+				tc.cas(cas)
+			}
+			outcome, err := Render(files, offer.Document{Version: offer.Version, Servers: []offer.Server{tc.server}, CAs: cas}, secrets)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -186,11 +194,11 @@ func TestRenderRemovesCAOfDroppedCluster(t *testing.T) {
 	files := Files{Dir: t.TempDir()}
 	both := offer.Document{Version: offer.Version, Servers: []offer.Server{
 		server("one", "app", "one-app", ""), server("two", "app", "two-app", ""),
-	}}
+	}, CAs: baseCAs()}
 	if _, err := Render(files, both, baseSecrets()); err != nil {
 		t.Fatal(err)
 	}
-	only := offer.Document{Version: offer.Version, Servers: []offer.Server{server("one", "app", "one-app", "")}}
+	only := offer.Document{Version: offer.Version, Servers: []offer.Server{server("one", "app", "one-app", "")}, CAs: baseCAs()}
 	if _, err := Render(files, only, baseSecrets()); err != nil {
 		t.Fatal(err)
 	}
@@ -220,7 +228,7 @@ func TestRenderRefusesOversizedSecret(t *testing.T) {
 	files := Files{Dir: t.TempDir()}
 	secrets := baseSecrets()
 	secrets["one-app"].Data["padding"] = []byte(strings.Repeat("x", MaxSecretBytes))
-	outcome, err := Render(files, offer.Document{Version: offer.Version, Servers: []offer.Server{server("one", "app", "one-app", "")}}, secrets)
+	outcome, err := Render(files, offer.Document{Version: offer.Version, Servers: []offer.Server{server("one", "app", "one-app", "")}, CAs: baseCAs()}, secrets)
 	if err != nil {
 		t.Fatal(err)
 	}

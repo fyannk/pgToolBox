@@ -15,11 +15,10 @@
 package providertest
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"log/slog"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
@@ -32,7 +31,6 @@ import (
 	"github.com/fyannk/pgToolBox/internal/evidence/inventory"
 	"github.com/fyannk/pgToolBox/internal/evidence/readiness"
 	"github.com/fyannk/pgToolBox/internal/evidence/store"
-	"github.com/fyannk/pgToolBox/internal/evidence/web"
 	evidencev1alpha1 "github.com/fyannk/pgToolBox/pkg/evidence/v1alpha1"
 )
 
@@ -83,9 +81,9 @@ type PGBackRestJourneyResult struct {
 }
 
 // PGBackRestJourney scans reader (rooted at a repository the generator
-// wrote) as the agent does for stanza demo, checks the evidence, its
-// wire projection and the rendered page, and returns the normalized
-// result. Repository keys must be root-relative: backup/demo/...,
+// wrote) as the agent does for stanza demo, checks the evidence and what
+// the agent serves of it, and returns the normalized result. Repository
+// keys must be root-relative: backup/demo/...,
 // archive/demo/... It fails t on any mismatch.
 func PGBackRestJourney(t *testing.T, reader store.Reader, passphrase []byte) PGBackRestJourneyResult {
 	t.Helper()
@@ -99,7 +97,7 @@ func PGBackRestJourney(t *testing.T, reader store.Reader, passphrase []byte) PGB
 	probe := readiness.New(true, time.Minute, time.Now)
 	scanner, err := inventory.NewScanner(inventory.ScannerOptions{
 		Store: reader, Format: format, ConfiguredScopes: []string{"demo"}, Cache: cache, Readiness: probe,
-		RefreshInterval: time.Minute, MaxObjects: 100_000, PageSize: 7, RecentLimit: 20,
+		RefreshInterval: time.Minute, MaxObjects: 100_000, PageSize: 7,
 		Now: time.Now, Logger: slog.New(slog.DiscardHandler),
 		PGBackRest: &inventory.PGBackRestOptions{Stanza: "demo", ArchiveStanza: "demo", Passphrase: passphrase},
 	})
@@ -131,34 +129,30 @@ func PGBackRestJourney(t *testing.T, reader store.Reader, passphrase []byte) PGB
 		}
 	}
 
-	publication, err := evidenceapi.Project(snapshot, evidenceapi.Options{
-		ProducerVersion: "journey", ProducerInstance: "0123456789abcdef0123456789abcdef",
-		ClusterNamespace: "database-team", ClusterUID: "2f12b7d1-7e8d-4c37-a68f-233efc5f3191",
+	served := ServeAgentEvidence(t, snapshot, evidenceapi.Options{
+		ProducerVersion: "journey", ClusterNamespace: "database-team", ClusterUID: "2f12b7d1-7e8d-4c37-a68f-233efc5f3191",
 		Repository: evidencev1alpha1.RepositoryFingerprintInput{
 			Provider: evidencev1alpha1.ProviderS3, Bucket: "pgbr-proof", Prefix: PGBackRestRepositoryPrefix,
 			Format: evidencev1alpha1.FormatPGBackRest, ScopeKind: evidencev1alpha1.ScopeKindStanza, ScopeName: "demo",
 		},
-	})
-	if err != nil || publication.PGBackRest == nil || len(publication.PGBackRest.Backups) != 3 {
-		t.Fatalf("evidence projection: %v", err)
+	}, probe)
+	summary := served.Snapshot.Details.PGBackRest
+	if served.Snapshot.State != evidence.Healthy || summary == nil || summary.Stanza != "demo" || summary.Encrypted == nil || *summary.Encrypted != report.Encrypted ||
+		summary.BackupItems == nil || *summary.BackupItems != 3 {
+		t.Fatalf("served snapshot: %s", served.SnapshotBody)
 	}
-
-	handler, err := web.New(web.Options{
-		Logger: slog.New(slog.DiscardHandler), Provider: "normalized-provider",
-		Format: format.Descriptor(), Inventory: cache.Load, Readiness: probe.Result,
-		RequestID: func() string { return "pgbackrest-provider-proof" }, Now: time.Now,
-	})
-	if err != nil {
-		t.Fatal(err)
+	var backups evidencev1alpha1.PGBackRestBackupPage
+	backupsBody := served.Page(evidencev1alpha1.BackupsPath, &backups)
+	if len(backups.Items) != 3 {
+		t.Fatalf("served backups: %s", backupsBody)
 	}
-	response := httptest.NewRecorder()
-	handler.Routes().ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", nil))
-	body := response.Body.String()
-	if response.Code != http.StatusOK || !strings.Contains(body, "<h3>Stanza demo</h3>") || !strings.Contains(body, "provider-repo") {
-		t.Fatalf("render status = %d", response.Code)
+	for _, backup := range backups.Items {
+		if backup.Stanza != "demo" || !backup.Usable || backup.CNPGBackupName == nil || !strings.Contains(*backup.CNPGBackupName, "provider-repo") {
+			t.Fatalf("served backup: %+v", backup)
+		}
 	}
-	if len(passphrase) > 0 && strings.Contains(body, string(passphrase)) {
-		t.Fatal("the rendered page shows the passphrase")
+	if len(passphrase) > 0 && (bytes.Contains(served.SnapshotBody, passphrase) || bytes.Contains(backupsBody, passphrase)) {
+		t.Fatal("the served evidence shows the passphrase")
 	}
 
 	result := PGBackRestJourneyResult{

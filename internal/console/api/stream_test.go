@@ -146,3 +146,49 @@ func TestStreamUndecidedAndSessionEnd(t *testing.T) {
 		})
 	}
 }
+
+// A stream over the session's limit is refused with a resync and a long
+// retry: the response ends normally, and without the retry EventSource
+// would reconnect within seconds and refetch everything at every round.
+func TestStreamOverTheLimitAsksForALongRetry(t *testing.T) {
+	t.Parallel()
+	p := FixturePrincipal()
+	p.Expiry = time.Now().Add(time.Hour)
+	h, _ := New(Deps{Authz: FixtureAuthorizer{}, Source: FixtureSource{}, Broker: sse.NewBroker(), Heartbeat: time.Hour})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h.ServeHTTP(w, r.WithContext(auth.WithPrincipal(r.Context(), p)))
+	}))
+	defer srv.Close()
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	u, _ := url.JoinPath(srv.URL, "/api/v1/stream")
+	open := func() *http.Response {
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return resp
+	}
+	for range maxStreamsPerSession {
+		resp := open()
+		defer func() { _ = resp.Body.Close() }()
+		// The first line proves the handler counted this stream.
+		if !bufio.NewScanner(resp.Body).Scan() {
+			t.Fatal("a stream under the limit sent nothing")
+		}
+	}
+	resp := open()
+	defer func() { _ = resp.Body.Close() }()
+	var lines []string
+	for sc := bufio.NewScanner(resp.Body); sc.Scan(); {
+		lines = append(lines, sc.Text())
+	}
+	stream := strings.Join(lines, "\n")
+	if name, data := lastEvent(stream); name != "resync" || !strings.Contains(data, "too many open streams") {
+		t.Errorf("last event %q %s, want the refusal resync:\n%s", name, data, stream)
+	}
+	if !strings.Contains(stream, fmt.Sprintf("retry: %d", refusedStreamRetry)) {
+		t.Errorf("the refusal carries no long retry:\n%s", stream)
+	}
+}

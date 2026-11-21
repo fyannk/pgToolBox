@@ -1,14 +1,22 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, fn, userEvent, waitFor, within } from "storybook/test";
-import { operationBadConfirmation, operationRefused, operationsOperator, operationsViewer } from "../../mocks/fixtures";
+import {
+  operationBadConfirmation,
+  operationRefused,
+  operationRunning,
+  operationsOperator,
+  operationsViewer,
+} from "../../mocks/fixtures";
 import { handlersFor } from "../../mocks/handlers";
 import { ApiError } from "../api/fetcher";
 import { compact, dark, darkCompact } from "../testing/variants";
 import { OperationsScreen, OperationsView } from "./Operations";
 
 /**
- * What the reader may do on this Cluster, why not when not, and the
- * operations this console replica issued. Every action goes through a typed
+ * What the reader may do on this Cluster, why not when not, and its recent
+ * operations, rebuilt from the Cluster's objects (every Backup, its source
+ * named), the primary changes this console observed, and what only this
+ * replica remembers (both said). Every action goes through a typed
  * confirmation and is followed by an OperationTracker; nothing is shown as
  * done before the operator says so.
  */
@@ -54,6 +62,8 @@ export const ConfirmPromote: Story = {
       .getAllByRole("radio")
       .find((r) => !(r as HTMLInputElement).disabled) as HTMLInputElement;
     await userEvent.click(eligible);
+    // The chosen target's readiness is read before the name is typed.
+    await expect(within(dialog).getByRole("heading", { name: `Readiness of ${eligible.value}` })).toBeVisible();
     await userEvent.type(within(dialog).getByLabelText(/To confirm, type/), eligible.value);
     await userEvent.click(within(dialog).getByRole("button", { name: "Request" }));
     await expect(args.onRequest).toHaveBeenCalledWith({
@@ -94,6 +104,79 @@ export const BadConfirmation: Story = {
     await waitFor(() => expect(within(dialog).getByRole("alert")).toHaveTextContent("req-10"));
   },
 };
+/** Recent, honestly: a promote only this replica remembers is marked, and an unreadable source is named, never a silent gap. */
+const recentReplica = {
+  ...operationRunning,
+  operationId: "promote-from-memory",
+  kind: "promote" as const,
+  instance: "orders-2",
+  recordedIn: "replica" as const,
+  recordedFrom: "this console replica's memory, since it started",
+};
+export const RecentReplicaAndGaps: Story = {
+  args: {
+    data: {
+      ...operationsOperator,
+      recent: [recentReplica, ...(operationsOperator.recent ?? [])],
+      recentGaps: ["the console cannot read Backups in team-a now: on-demand backups are not listed"],
+    },
+  },
+  play: async ({ canvas }) => {
+    await expect(canvas.getAllByText("only this console replica remembers it")).toHaveLength(1);
+    await expect(canvas.getByRole("note")).toHaveTextContent(/cannot read Backups/);
+  },
+};
+export const RecentReplicaAndGapsDark = dark(RecentReplicaAndGaps);
+/** Recent lists every operation the Cluster went through: a scheduled Backup with its ScheduledBackup named, and a primary change this console observed (no Follow: it is not an operation the console follows). */
+const recentScheduled = {
+  ...operationRunning,
+  operationId: "scheduled-backup",
+  kind: "backup" as const,
+  created: "orders-daily-20261030070000",
+  recordedIn: "cluster" as const,
+  recordedFrom:
+    "Backup orders-daily-20261030070000 (labelled as created by ScheduledBackup orders-daily: metadata.labels[cnpg.io/scheduled-backup])",
+};
+const recentPrimaryChange = {
+  ...operationRunning,
+  operationId: "primary-change",
+  kind: "primaryChange" as const,
+  instance: "orders-2",
+  phase: "settled" as const,
+  health: "info" as const,
+  steps: [
+    {
+      phase: "settled" as const,
+      at: operationRunning.acceptedAt,
+      source: "Cluster.status.currentPrimaryTimestamp",
+      text: "primary changed from orders-1 to orders-2 (failover)",
+    },
+  ],
+  recordedIn: "timeline" as const,
+  recordedFrom: "this console's timeline (Cluster.status.currentPrimary, observed)",
+};
+export const RecentEveryOrigin: Story = {
+  args: {
+    data: {
+      ...operationsOperator,
+      recent: [recentPrimaryChange, recentScheduled, ...(operationsOperator.recent ?? [])],
+      recentNotShown: ["25 older scheduled backups are not shown: the list keeps the newest 5"],
+    },
+  },
+  play: async ({ canvas }) => {
+    await expect(canvas.getByText("primary change")).toBeVisible();
+    await expect(canvas.getByText("observed by this console, not necessarily requested")).toBeVisible();
+    await expect(canvas.getByText(/labelled as created by ScheduledBackup orders-daily/)).toBeVisible();
+    await expect(canvas.getAllByRole("button", { name: /^Follow / })).toHaveLength(2);
+    await expect(canvas.getByRole("button", { name: "Follow backup orders-daily-20261030070000" })).toBeVisible();
+    // The bound is said plainly, not as something the console may be missing.
+    await expect(
+      canvas.getByText("25 older scheduled backups are not shown: the list keeps the newest 5"),
+    ).toBeVisible();
+    await expect(canvas.queryByRole("note")).toBeNull();
+  },
+};
+export const RecentEveryOriginDark = dark(RecentEveryOrigin);
 export const Empty: Story = { args: { data: { ...operationsOperator, offers: [], recent: [] } } };
 const screen = { render: () => <OperationsScreen namespace="team-a" cluster="orders" /> };
 export const Loading: Story = { ...screen, parameters: { msw: handlersFor("loading") } };

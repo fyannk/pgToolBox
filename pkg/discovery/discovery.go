@@ -70,6 +70,16 @@ type Result struct {
 // asks In(its namespace).Usable() instead.
 func (r Result) Usable() bool { return r.State == Available }
 
+// Why is the reason of an unusable result as a condition message says it:
+// the probe runs once, when the operator starts, so the reason says so and
+// what to do about it; "not probed" for a zero Result.
+func (r Result) Why() string {
+	if r.Reason == "" {
+		return "not probed"
+	}
+	return r.Reason + " (probed when the operator started: restart it once the API is installed or allowed)"
+}
+
 // In is the outcome in one namespace, whose reason names that namespace
 // alone: Forbidden where the kind is refused there while other namespaces
 // allow it; Forbidden, reworded for that namespace, where every namespace

@@ -17,6 +17,7 @@ package gcs
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -85,5 +86,56 @@ func TestOpenKeepsTheFailureCategory(t *testing.T) {
 	_, err = reader.Open(context.Background(), store.OpenRequest{Key: "missing", MaxBytes: 64})
 	if errors.Is(err, context.Canceled) || fault.Categorize(err) != fault.NotFound {
 		t.Fatalf("Open = %v (category %s), want not found", err, fault.Categorize(err))
+	}
+}
+
+// TestOpenBodyDeadlineScalesWithMaxBytes: the request timeout does not cut a
+// large body read on a slow link, and a stalled body still ends.
+func TestOpenBodyDeadlineScalesWithMaxBytes(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name     string
+		maxBytes int64
+		chunks   int
+		wantErr  bool
+	}{
+		{name: "slow body within the size allowance", maxBytes: 2 * store.MinOpenBytesPerSecond, chunks: 6},
+		{name: "stalled small body ends at the request timeout", maxBytes: 64, chunks: 1_000, wantErr: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				writer.Header().Set("Content-Type", "application/octet-stream")
+				writer.WriteHeader(http.StatusOK)
+				writer.(http.Flusher).Flush()
+				for range test.chunks {
+					select {
+					case <-request.Context().Done():
+						return
+					case <-time.After(50 * time.Millisecond):
+					}
+					_, _ = writer.Write([]byte("x"))
+					writer.(http.Flusher).Flush()
+				}
+			}))
+			t.Cleanup(server.Close)
+			adapter, err := New(context.Background(), Options{Bucket: "bucket", Endpoint: server.URL + "/storage/v1/", RequestTimeout: 100 * time.Millisecond})
+			if err != nil {
+				t.Fatal(err)
+			}
+			started := time.Now()
+			body, err := adapter.Open(context.Background(), store.OpenRequest{Key: "manifest", MaxBytes: test.maxBytes})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer body.Close()
+			content, err := io.ReadAll(body)
+			if (err != nil) != test.wantErr || (!test.wantErr && len(content) != test.chunks) {
+				t.Fatalf("read %d bytes, error %v; want %d bytes, error %v", len(content), err, test.chunks, test.wantErr)
+			}
+			if elapsed := time.Since(started); elapsed > 2*time.Second {
+				t.Fatalf("read took %s", elapsed)
+			}
+		})
 	}
 }

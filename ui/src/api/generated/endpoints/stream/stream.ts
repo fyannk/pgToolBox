@@ -56,7 +56,7 @@ export const getStreamUrl = () => {
 }
 
 /**
- * Server-sent events: hello on connect (refetch everything), invalidate {topic, namespace, name} (refetch that), resync (refetch everything), reauth {expiresAt, refreshable} before the session ends (call GET /api/v1/session). A comment line every 15 s; no byte for 35 s means the stream is dead. While it is down, poll every 2 s backing off to 10 s. The stream closes when the session ends.
+ * Server-sent events: hello on connect (refetch everything), invalidate {topic, namespace, name} (refetch that), resync (refetch everything), reauth {expiresAt, refreshable} before the session ends (call GET /api/v1/session), heartbeat every heartbeatSeconds (15 s); no event for twice that means the stream is dead. While it is down, poll every 2 s backing off to 10 s. The stream closes when the session ends.
  * @summary Live updates
  */
 export const stream = async ( options?: Parameters<typeof apiFetch>[1]): Promise<Stream200Item[]> => {
@@ -104,7 +104,7 @@ export type StreamQueryError = ErrorModel
 
 
 /**
- * Server-sent events: hello on connect (refetch everything), invalidate {topic, namespace, name} (refetch that), resync (refetch everything), reauth {expiresAt, refreshable} before the session ends (call GET /api/v1/session). A comment line every 15 s; no byte for 35 s means the stream is dead. While it is down, poll every 2 s backing off to 10 s. The stream closes when the session ends.
+ * Server-sent events: hello on connect (refetch everything), invalidate {topic, namespace, name} (refetch that), resync (refetch everything), reauth {expiresAt, refreshable} before the session ends (call GET /api/v1/session), heartbeat every heartbeatSeconds (15 s); no event for twice that means the stream is dead. While it is down, poll every 2 s backing off to 10 s. The stream closes when the session ends.
  * @summary Live updates
  */
 export function useStream<TData = Awaited<ReturnType<typeof stream>>, TError = ErrorModel>(
@@ -118,7 +118,7 @@ export function useStream<TData = Awaited<ReturnType<typeof stream>>, TError = E
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
- * Server-sent events: hello on connect (refetch everything), invalidate {topic, namespace, name} (refetch that), resync (refetch everything), reauth {expiresAt, refreshable} before the session ends (call GET /api/v1/session). A comment line every 15 s; no byte for 35 s means the stream is dead. While it is down, poll every 2 s backing off to 10 s. The stream closes when the session ends.
+ * Server-sent events: hello on connect (refetch everything), invalidate {topic, namespace, name} (refetch that), resync (refetch everything), reauth {expiresAt, refreshable} before the session ends (call GET /api/v1/session), heartbeat every heartbeatSeconds (15 s); no event for twice that means the stream is dead. While it is down, poll every 2 s backing off to 10 s. The stream closes when the session ends.
  * @summary Live updates
  */
 export function useStream<TData = Awaited<ReturnType<typeof stream>>, TError = ErrorModel>(
@@ -132,7 +132,7 @@ export function useStream<TData = Awaited<ReturnType<typeof stream>>, TError = E
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
- * Server-sent events: hello on connect (refetch everything), invalidate {topic, namespace, name} (refetch that), resync (refetch everything), reauth {expiresAt, refreshable} before the session ends (call GET /api/v1/session). A comment line every 15 s; no byte for 35 s means the stream is dead. While it is down, poll every 2 s backing off to 10 s. The stream closes when the session ends.
+ * Server-sent events: hello on connect (refetch everything), invalidate {topic, namespace, name} (refetch that), resync (refetch everything), reauth {expiresAt, refreshable} before the session ends (call GET /api/v1/session), heartbeat every heartbeatSeconds (15 s); no event for twice that means the stream is dead. While it is down, poll every 2 s backing off to 10 s. The stream closes when the session ends.
  * @summary Live updates
  */
 export function useStream<TData = Awaited<ReturnType<typeof stream>>, TError = ErrorModel>(
@@ -140,7 +140,7 @@ export function useStream<TData = Awaited<ReturnType<typeof stream>>, TError = E
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
- * Server-sent events: hello on connect (refetch everything), invalidate {topic, namespace, name} (refetch that), resync (refetch everything), reauth {expiresAt, refreshable} before the session ends (call GET /api/v1/session). A comment line every 15 s; no byte for 35 s means the stream is dead. While it is down, poll every 2 s backing off to 10 s. The stream closes when the session ends.
+ * Server-sent events: hello on connect (refetch everything), invalidate {topic, namespace, name} (refetch that), resync (refetch everything), reauth {expiresAt, refreshable} before the session ends (call GET /api/v1/session), heartbeat every heartbeatSeconds (15 s); no event for twice that means the stream is dead. While it is down, poll every 2 s backing off to 10 s. The stream closes when the session ends.
  * @summary Live updates
  */
 export function useStream<TData = Awaited<ReturnType<typeof stream>>, TError = ErrorModel>(

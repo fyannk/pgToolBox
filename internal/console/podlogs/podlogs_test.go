@@ -186,7 +186,6 @@ func FuzzScan(f *testing.F) {
 			if len(l.Text) > MaxLineBytes+len(" … (line cut)") {
 				t.Fatalf("line of %d bytes", len(l.Text))
 			}
-			_ = utf8.ValidString(l.Text)
 			return nil
 		})
 		if n > strings.Count(body, "\n")+1 {

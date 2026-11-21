@@ -16,7 +16,7 @@ impersonation ([security model](security.md#writes-token-passthrough-never-imper
 
 | Operation | What the console writes | The person needs | Outcome observable? |
 |---|---|---|---|
-| **Backup** | One `Backup` named `ondemand-<timestamp>-…` with the Cluster's own method (barman-cloud plugin, `barmanObjectStore` or `volumeSnapshot`) | `create backups` in the namespace | Yes: the `Backup` object's phase |
+| **Backup** | One `Backup` named `ondemand-<timestamp>-…` with the Cluster's own method (barman-cloud plugin, `barmanObjectStore` or `volumeSnapshot`) and the annotation `pgtoolbox.fyannk.dev/requested-at` | `create backups` in the namespace | Yes: the `Backup` object's phase |
 | **Reload configuration** | The annotation `cnpg.io/reloadedAt` on the Cluster | `patch clusters/<name>` | No: CloudNativePG reports no outcome for a reload (the console says so) |
 | **Restart** | The annotation `kubectl.kubernetes.io/restartedAt` on the Cluster: instances roll, replicas first, then the primary | `patch clusters/<name>` | Yes |
 | **Promote (switchover)** | A status patch on the Cluster setting `targetPrimary` to the chosen replica | `patch clusters/<name>/status` | Yes |
@@ -57,15 +57,71 @@ has them (or whether the console could not ask: "could not check"), the
 preconditions not currently met, the consequence in one sentence and the expected
 duration.
 
+### Readiness of a promote target
+
+Once a replica is chosen in the promote dialog, and before its name is typed, the
+dialog shows that replica's readiness. These are facts, each with its verdict word,
+source and age; they are not a score and they do not decide anything:
+
+| Fact | Read from | What it says |
+|---|---|---|
+| Pod | `Pod.status.conditions[Ready]` | Ready, not Ready (with the waiting reason), being deleted, or no Pod |
+| Streaming | the replica's `/pg/status` (`walReceiverActive`, `replayPaused`) | streaming from the primary; not streaming (no active WAL receiver); replay paused |
+| Replay lag | the replica's `replayLsn` against the primary's `currentLsn`, both as last read | caught up, or how far behind. There is no threshold: the switchover waits for the replica to replay, so lag makes it longer |
+| Synchronous state | the primary's `/pg/status` `replicationInfo` | `sync`, `quorum`, `potential` or `async`, or "the primary reports no walsender for it" |
+| Fencing | `Cluster.metadata.annotations[cnpg.io/fencedInstances]` | fenced, not fenced, or the annotation could not be read |
+
+A fact the console did not read now is **unknown**, never ready: the replica's or
+the primary's status endpoint did not answer, its instance manager answered without
+reaching PostgreSQL (fenced, restarting, rewinding), or the status sweep has not
+completed for three intervals. The age and the reason are shown beside it.
+
+Lagging, asynchronous or not streaming does not stop the request: CloudNativePG
+accepts a switchover to such a replica. Only the preconditions above do; the
+replicas they rule out cannot be chosen, and their reasons are listed under them.
+
 ## Following an operation
 
 `GET /api/v1/operations/{id}` resolves an operation, from the Cluster's current
 state, on **any** console replica: the id encodes what to look for. It reports a
 phase ladder with each step attributed to the field that showed it. `timedOut`
 means no outcome was reported before the deadline (an hour for a backup, 30 minutes
-for a restart, 2 minutes for a promote), not that it failed. The offers list also
-shows the operations *this replica* issued, since it started; that is a
-convenience, not a record. **The API server's audit log is the complete record.**
+for a restart, 2 minutes for a promote), not that it failed.
+
+### Recent operations
+
+The offers list ends with the Cluster's **recent operations**, newest first:
+every operation the Cluster went through that the console can see, not only
+the ones a console started. Most are rebuilt from what the Cluster's objects
+record, read from the console's informer cache, so every replica shows the same
+list, and so does one that just restarted:
+
+| Operation | Found from | Notes |
+|---|---|---|
+| Backup | Every Backup of the Cluster (`spec.cluster.name`), except that only the newest 5 scheduled ones are listed | Each says where it came from: the console's annotation `pgtoolbox.fyannk.dev/requested-at` (the instant the console accepted the request, RFC 3339 UTC; it is then listed under the same id the request returned), the ScheduledBackup it is labelled as created by (its owner reference, or CloudNativePG's `cnpg.io/scheduled-backup` label, which is set whatever the schedule's `backupOwnerReference`; any client that creates Backups can set either), or "on-demand, any client". Anyone who may create a Backup can set the annotation, so it does not prove a console asked; one more than a minute away from the Backup's `creationTimestamp` is ignored and the Backup is listed at its creation time. Each is followed by the same tracker as a backup the console requested |
+| Restart, reload | The Cluster's `kubectl.kubernetes.io/restartedAt` and `cnpg.io/reloadedAt` annotations | Only the latest of each, and whoever set it (the console or `kubectl cnpg`). A value dated in the future is ignored; past the operation's deadline the entry is closed as not followed (`notObservable`) instead of being judged on the Cluster's current rollout |
+| Restore drill | The console's [restore-drill record](console/restore-drills.md) of the Cluster, which every replica rebuilds from the drill Cluster's sealed annotation | When the record is not kept across restarts (no persistent history, no state ConfigMap), drills finished before the replica started are missing, and the list says so |
+| Primary change | This console's [timeline](console/timeline-and-digest.md): each change of `status.currentPrimary` it observed, at the operator's `currentPrimaryTimestamp` when it reports one | Listed as `primaryChange`, already settled, with the health `info` (an observation, not an outcome the console followed), and not followed. It says what the console saw: a failover or a switchover when it saw the phase that announced it, "a switchover or a failover" when it did not, and the window when it happened while the console was not looking. A switchover leaves no marker the console can tell from a failover, so who asked is not known; when this replica issued the promote, the two are one entry (the promote, followed, its source naming the observed change) |
+| Promote | The memory of the replica that issued it | `status.targetPrimary` is also set by a failover, so it is not a marker; the entry disappears when that replica restarts, and the observed primary change stays |
+
+The timeline is this console's observation, not a record the Cluster keeps:
+with `HISTORY_ENABLED=false` primary changes are not listed; without a
+persistent history (`HISTORY_PATH`, chart value `history.persistent`) the timeline starts again at every
+restart and each replica keeps its own; when the timeline's bounds dropped
+this Cluster's older events (they are bounded per Cluster), older changes are
+missing, from its oldest retained event. Each of these is said in the list.
+
+Each entry says where it was found (`recordedIn`: `cluster`, `timeline` or
+`replica`, and `recordedFrom`, the source, in words); the screen shows the
+source of each entry found on the Cluster's objects, and marks an observed
+primary change and an entry only one replica remembers. The list keeps the
+newest 5 scheduled Backups and the newest 20 entries overall, so an hourly
+schedule cannot push restarts or primary changes out; `recentNotShown` says how
+many older ones each bound left out (a bound, not a gap). When the console cannot read a source here (Backups it
+may not list in the namespace, a failed read), `recentGaps` names it and the
+screen shows it: an unreadable source is never shown as "nothing happened". The
+list says what was done, never by whom. **The API server's audit log is the
+complete record.**
 
 ## Switching it off
 

@@ -311,13 +311,18 @@ func (r logRoster) Keys(ctx context.Context) []logfollow.Key {
 	return out
 }
 
-// UID is the Cluster's UID, empty when the cache does not hold it.
+// UID is the Cluster's UID, empty when the cache does not hold it. It
+// reads the Cluster alone: the follower asks it of every Cluster on each
+// pass.
 func (r logRoster) UID(ctx context.Context, key logfollow.Key) string {
-	g, err := r.s.gather(ctx, cache.ClusterKey{Namespace: key.Namespace, Name: key.Name}, false)
-	if err != nil || g.cluster == nil {
+	if !r.s.cache.Readable(key.Namespace, cache.SourceClusters) {
 		return ""
 	}
-	return string(g.cluster.UID)
+	cluster := &cnpgv1.Cluster{}
+	if err := r.s.cache.Reader().Get(ctx, types.NamespacedName{Namespace: key.Namespace, Name: key.Name}, cluster); err != nil {
+		return ""
+	}
+	return string(cluster.UID)
 }
 
 // Members are the running containers of the member pods: a terminated

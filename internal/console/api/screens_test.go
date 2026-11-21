@@ -312,8 +312,37 @@ func TestLogStreamEndsWithTheSession(t *testing.T) { //nolint:paralleltest // it
 		if !strings.Contains(body, "event: end") || !strings.Contains(body, `"text":"one"`) {
 			t.Errorf("%s: body %s", name, body)
 		}
-		if name == "revoked" && !strings.Contains(body, ": heartbeat") {
+		// A named event, not a comment: EventSource surfaces only events.
+		if name == "revoked" && !strings.Contains(body, "event: heartbeat\ndata: {\"serverTime\":") {
 			t.Errorf("no heartbeat: %s", body)
 		}
+	}
+}
+
+type quietLogs struct{ FixtureLogs }
+
+func (quietLogs) Follow(ctx context.Context, _, _, _ string, _ LogOptions, _ func(any) error) error {
+	<-ctx.Done()
+	return nil
+}
+
+// A follow of a log that writes nothing still sends an event at once, so
+// the viewer shows it live without waiting a heartbeat interval.
+func TestQuietLogStreamSendsAHeartbeatAtOnce(t *testing.T) { //nolint:paralleltest // it changes the package's liveness intervals
+	logHeartbeat, logRecheck = time.Hour, 50*time.Millisecond
+	defer func() { logHeartbeat, logRecheck = 15*time.Second, 30*time.Second }()
+	deps := Deps{Sessions: revokedSessions{}, Source: FixtureSource{}, Authz: FixtureAuthorizer{}, Logs: quietLogs{}, Features: FixtureFeatures}
+	h, _ := New(deps)
+	p := FixturePrincipal()
+	p.Expiry = time.Now().Add(time.Hour)
+	ctx, cancel := context.WithTimeout(auth.WithPrincipal(context.Background(), p), 5*time.Second)
+	defer cancel()
+	r := httptest.NewRequestWithContext(ctx, http.MethodGet, "/api/v1/namespaces/team-a/clusters/orders/instances/orders-1/logs/stream", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	body := w.Body.String()
+	beat, end := strings.Index(body, "event: heartbeat"), strings.Index(body, "event: end")
+	if beat < 0 || end < 0 || beat > end {
+		t.Errorf("want a heartbeat before the session check ends the stream: %s", body)
 	}
 }

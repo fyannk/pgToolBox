@@ -45,11 +45,15 @@ export function SeverityChip({ severity, className }: { severity: string; classN
   );
 }
 
+/** A count slot's glyph: the severity's, or a dash for checks that could not run. */
+const SLOT_GLYPH: Record<string, string> = { ...GLYPH, unrun: "–" };
+
 /**
  * FindingSquares — a diagnostics run as five fixed count slots: critical,
- * high, warning, note, and checks that could not run. An empty slot keeps its
- * place so a column of them lines up; a run that has not happened is one grey
- * dash.
+ * high, warning, note, and checks that could not run, each with its glyph
+ * beside the count so the severity is never colour alone. An empty slot keeps
+ * its place so a column of them lines up; a run that has not happened is one
+ * grey dash.
  */
 export function FindingSquares({ counts }: { counts: FindingCounts }) {
   if (!counts.runAt)
@@ -82,7 +86,7 @@ export function FindingSquares({ counts }: { counts: FindingCounts }) {
       {slots.map(([sev, n, t]) =>
         n > 0 ? (
           <span key={sev} className="sev-sq num" data-sev={sev} title={t}>
-            {n}
+            {SLOT_GLYPH[sev]} {n}
           </span>
         ) : (
           <span key={sev} className="sev-sq" data-sev="empty" />

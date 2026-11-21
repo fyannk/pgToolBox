@@ -620,3 +620,28 @@ func TestProbeManyNamespacesIsBounded(t *testing.T) {
 		})
 	}
 }
+
+// TestResultWhy: every reconciler's condition message for an unusable
+// optional API says the probe ran at start and what to do about it.
+func TestResultWhy(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name   string
+		result Result
+		want   string
+	}{
+		{"zero result", Result{}, "not probed"},
+		{
+			name:   "refused",
+			result: Result{State: Forbidden, Reason: "not allowed to list Route.route.openshift.io in team-a"},
+			want:   "not allowed to list Route.route.openshift.io in team-a (probed when the operator started: restart it once the API is installed or allowed)",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := tc.result.Why(); got != tc.want {
+				t.Errorf("Why() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

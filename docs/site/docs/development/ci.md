@@ -185,6 +185,15 @@ workflows (`hack/check-toolchain.sh` fails if it differs from `mise.toml`), the
 pinned images and versions in `hack/e2e-*.sh`, and the major updates Dependabot
 opened. Pin only versions that have been published for at least two weeks.
 
+The default pgAdmin and oauth-proxy images are on that list too: their digests live in
+`DefaultPgAdminImage` and `DefaultOAuthProxyImage` in
+`internal/operator/configuration/configuration.go`, and no bot reads a Go variable.
+Bump them on toolchain day, and bump the copies with them: `charts/pgtools/values.yaml`
+(`pgadmin.image`, `pgadmin.auth.openshift.image`) and the `pgadmin` and `oauth-proxy`
+entries of `relatedImages` in the OLM CSV, which a disconnected mirror copies. The chart
+parity test (`internal/operator/pgadmin/chart_parity_test.go`) fails until the chart
+values equal the Go defaults, and `make validate-packaging` until the CSV entries do.
+
 ## The release
 
 A release is an annotated tag on a commit of `main`, pushed by the maintainer. `v*` and `pkg/evidence/v*` tags are protected by a ruleset (they cannot be moved or deleted), and `release.yml` runs its first job in the `release` environment, which admits only those tags and waits for the maintainer's approval: nothing is built or pushed before that approval, and a dispatch from a branch never starts. Every image's signature and provenance are verified in the workflow, with the commands the release page gives users, before anything points at them.

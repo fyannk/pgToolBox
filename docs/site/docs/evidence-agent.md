@@ -12,11 +12,12 @@ what is actually there. The console shows the
 operator's claim and the repository's evidence side by side, and names the
 disagreements.
 
-The agent is the `pgtoolbox-evidence-agent` image run in its `agent` mode. You declare
+The agent is the `pgtoolbox-evidence-agent` image; `agent` is its only runtime mode
+(`RUNTIME_MODE=agent`, also when the variable is empty). You declare
 it with an [`EvidenceAgent`](operator/evidenceagent.md); the operator creates the
 Deployment. Without the operator, the `pgtools` chart deploys it for the Clusters
-its values list ([team mode](#team-mode-without-the-operator)). The same binary
-also has a standalone mode (a read-only viewer UI); pgToolBox does not deploy it.
+its values list ([team mode](#team-mode-without-the-operator)). It serves no web UI
+of its own: the console renders what it publishes.
 
 ## What it reports
 
@@ -229,8 +230,12 @@ sequenceDiagram
   only listed `backup.info` files and timeline history files and stats the backup
   objects it found. A Barman data artifact smaller than any archive of its kind
   (1024 bytes for a `.tar`, 18 for a `.tar.gz`: an empty upload) makes its backup
-  unusable; the size says nothing more about the content. A scan that fails
-  leaves the previous publication in place.
+  unusable; the size says nothing more about the content. A listing that
+  completes while one `backup.info` cannot be fetched is still a complete scan:
+  that backup is published as unknown ("backup metadata could not be read") for
+  this generation, and the next refresh reads it again. Only a failed scan (a
+  listing error, a safety limit, a rejected projection) keeps the previous
+  publication, marked stale.
 - **The console reads one publication.** Every page request names the snapshot's
   `revision`; a page from another revision means the agent published in the
   meantime, and the console starts again from the snapshot, once. Any other

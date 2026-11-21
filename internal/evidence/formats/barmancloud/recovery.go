@@ -20,8 +20,12 @@ import (
 	"compress/bzip2"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"hash/crc32"
+	"hash/crc64"
 	"io"
 	"math"
 	"slices"
@@ -35,6 +39,7 @@ import (
 	"github.com/klauspost/compress/zstd"
 	"github.com/pierrec/lz4/v4"
 	"github.com/ulikunitz/xz"
+	"github.com/ulikunitz/xz/lzma"
 
 	"github.com/fyannk/pgToolBox/internal/evidence/evidence"
 	pgtimeline "github.com/fyannk/pgToolBox/internal/evidence/formats/timeline"
@@ -432,7 +437,7 @@ func readHistory(ctx context.Context, reader store.Reader, object HistoryObject)
 	if err != nil || int64(len(compressed)) > MaxHistoryObjectBytes {
 		return nil, errors.New("history object exceeds limit")
 	}
-	readerValue, closeValue, err := historyReader(bytes.NewReader(compressed), object.Compression)
+	readerValue, closeValue, err := historyReader(compressed, object.Compression)
 	if err != nil {
 		return nil, err
 	}
@@ -446,7 +451,8 @@ func readHistory(ctx context.Context, reader store.Reader, object HistoryObject)
 	return data, nil
 }
 
-func historyReader(source io.Reader, compression string) (io.Reader, io.Closer, error) {
+func historyReader(compressed []byte, compression string) (io.Reader, io.Closer, error) {
+	source := bytes.NewReader(compressed)
 	switch compression {
 	case "none":
 		return source, nil, nil
@@ -460,8 +466,8 @@ func historyReader(source io.Reader, compression string) (io.Reader, io.Closer, 
 	case "lz4":
 		return lz4.NewReader(source), nil, nil
 	case "xz":
-		reader, err := xz.NewReader(source)
-		return reader, nil, err
+		data, err := decodeXZ(compressed)
+		return bytes.NewReader(data), nil, err
 	case "zstd":
 		reader, err := zstd.NewReader(source, zstd.WithDecoderMaxMemory(uint64(MaxHistoryDecompressedBytes*4)))
 		if err != nil {
@@ -472,6 +478,172 @@ func historyReader(source io.Reader, compression string) (io.Reader, io.Closer, 
 	default:
 		return nil, nil, errors.New("unsupported history compression")
 	}
+}
+
+// xzMaxDictionary bounds the LZMA2 dictionary an xz history may declare.
+// 8 MiB is the dictionary of liblzma's default preset, which Barman's Python
+// lzma writes.
+const xzMaxDictionary = 8 << 20
+
+var errXZRefused = errors.New("unsupported history compression: xz stream not walkable, more than one block, no check, dictionary exceeds limit, check mismatch or index mismatch")
+
+// decodeXZ decodes the one xz stream in data, of at most one block, as
+// liblzma (Barman's Python lzma) and ulikunitz/xz write a history: one
+// dictionary is allocated per block, so more blocks are refused. It walks the
+// block (header, LZMA2 chunks up to the end marker, padding, check), refuses
+// it unless it is a single LZMA2 filter with a dictionary of at most
+// xzMaxDictionary, and decodes exactly the walked LZMA2 bytes as raw LZMA2
+// with a dictionary of xzMaxDictionary. ulikunitz/xz's own reader is not
+// used: it allocates whatever dictionary a block header declares (up to
+// 4 GiB), and it resumes after an LZMA chunk where the chunk's data stopped
+// rather than at its declared end, so it can parse a block header the walk
+// never saw. A decoder that stops before the walked end marker, or a check
+// that differs, is refused. A stream without a check (type None) is refused:
+// nothing would verify what is parsed, and Barman always writes one. The index
+// and the footer must describe exactly the walked block, as liblzma requires
+// to decompress the file at restore time, and nothing may follow the footer.
+func decodeXZ(data []byte) ([]byte, error) {
+	if len(data) < 12 || !xz.ValidHeader(data[:12]) {
+		return nil, errXZRefused
+	}
+	checkSizes := map[byte]int{0x01: 4, 0x04: 8, 0x0a: 32} // no check (0x00) is refused
+	checkType := data[7] & 0x0f
+	checkSize, ok := checkSizes[checkType]
+	if !ok {
+		return nil, errXZRefused
+	}
+	var decoded []byte
+	var records []uint64 // unpadded size, uncompressed size of the block
+	position := 12
+	if position < len(data) && data[position] != 0x00 { // 0x00 starts the index
+		size := (int(data[position]) + 1) * 4
+		if position+size > len(data) || crc32.ChecksumIEEE(data[position:position+size-4]) != binary.LittleEndian.Uint32(data[position+size-4:]) {
+			return nil, errXZRefused
+		}
+		header := data[position+1 : position+size-4] // without the size byte and CRC32
+		flags, index := header[0], 1
+		if flags&0x3f != 0 { // more than one filter, or reserved bits
+			return nil, errXZRefused
+		}
+		var declared [2]*uint64 // compressed, uncompressed size, when the header gives them
+		for field, present := range []bool{flags&0x40 != 0, flags&0x80 != 0} {
+			if present {
+				value, n := binary.Uvarint(header[index:])
+				if n <= 0 {
+					return nil, errXZRefused
+				}
+				declared[field], index = &value, index+n
+			}
+		}
+		if index+3 > len(header) || header[index] != 0x21 || header[index+1] != 1 || !allZero(header[index+3:]) {
+			return nil, errXZRefused
+		}
+		if dictionary := header[index+2]; dictionary >= 40 || int64(2|dictionary&1)<<(dictionary/2+11) > xzMaxDictionary {
+			return nil, errXZRefused
+		}
+		start := position + size
+		end := lzma2End(data, start)
+		if end < 0 {
+			return nil, errXZRefused
+		}
+		source := bytes.NewReader(data[start:end])
+		reader, err := lzma.Reader2Config{DictCap: xzMaxDictionary}.NewReader2(source)
+		if err != nil {
+			return nil, errXZRefused
+		}
+		block, err := io.ReadAll(io.LimitReader(reader, MaxHistoryDecompressedBytes+1-int64(len(decoded))))
+		if decoded = append(decoded, block...); int64(len(decoded)) > MaxHistoryDecompressedBytes {
+			return decoded, nil // readHistory refuses it by size
+		}
+		if (end+3)&^3 > len(data) || !allZero(data[end:(end+3)&^3]) {
+			return nil, errXZRefused
+		}
+		blockStart := position
+		position = (end+3)&^3 + checkSize
+		if err != nil || source.Len() != 0 || position > len(data) || !bytes.Equal(data[position-checkSize:position], xzCheck(checkType, block)) {
+			return nil, errXZRefused
+		}
+		if (declared[0] != nil && *declared[0] != uint64(end-start)) || (declared[1] != nil && *declared[1] != uint64(len(block))) { //nolint:gosec // non-negative and bounded
+			return nil, errXZRefused
+		}
+		records = []uint64{uint64(end - blockStart + checkSize), uint64(len(block))} //nolint:gosec // non-negative, bounded by the 256 KiB object and the decoded cap
+	}
+	if !xzIndexAndFooter(data, position, records) { // a second block, no index, or a tail that does not match
+		return nil, errXZRefused
+	}
+	return decoded, nil
+}
+
+// xzIndexAndFooter reports whether data[position:] is exactly an xz index
+// listing the given block (unpadded and uncompressed size, or no block when
+// empty) followed by the stream footer matching the stream header.
+func xzIndexAndFooter(data []byte, position int, records []uint64) bool {
+	want := []byte{0x00, 0x00} // the indicator, then the number of records (0 or 1)
+	if len(records) != 0 {
+		want[1] = 0x01
+	}
+	for _, value := range records {
+		want = binary.AppendUvarint(want, value)
+	}
+	for len(want)%4 != 0 {
+		want = append(want, 0x00)
+	}
+	want = binary.LittleEndian.AppendUint32(want, crc32.ChecksumIEEE(want))
+	footer := binary.LittleEndian.AppendUint32(nil, uint32(len(want)/4-1)) //nolint:gosec // an index of at most two records is a few bytes
+	footer = append(footer, data[6:8]...)                                  // the stream flags, as in the header
+	footer = append(binary.LittleEndian.AppendUint32(nil, crc32.ChecksumIEEE(footer)), footer...)
+	want = append(append(want, footer...), 'Y', 'Z')
+	return bytes.Equal(data[position:], want)
+}
+
+func allZero(data []byte) bool {
+	for _, value := range data {
+		if value != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// xzCheck is the xz check of the given type over a block's decoded bytes,
+// as the stream stores it.
+func xzCheck(checkType byte, block []byte) []byte {
+	switch checkType {
+	case 0x01:
+		return binary.LittleEndian.AppendUint32(nil, crc32.ChecksumIEEE(block))
+	case 0x04:
+		return binary.LittleEndian.AppendUint64(nil, crc64.Checksum(block, crc64.MakeTable(crc64.ECMA)))
+	default: // 0x0a, SHA-256: decodeXZ admits no other type
+		sum := sha256.Sum256(block)
+		return sum[:]
+	}
+}
+
+// lzma2End returns the offset just past the end marker of the LZMA2 chunks
+// starting at position, or -1 when they do not end inside data.
+func lzma2End(data []byte, position int) int {
+	for position < len(data) {
+		switch control := data[position]; {
+		case control == 0x00:
+			return position + 1
+		case control == 0x01 || control == 0x02: // uncompressed chunk
+			if position+3 > len(data) {
+				return -1
+			}
+			position += 3 + (int(data[position+1])<<8 | int(data[position+2])) + 1
+		case control >= 0x80: // LZMA chunk, with a properties byte from 0xc0
+			if position+5 > len(data) {
+				return -1
+			}
+			position += 5 + (int(data[position+3])<<8 | int(data[position+4])) + 1
+			if control >= 0xc0 {
+				position++
+			}
+		default:
+			return -1
+		}
+	}
+	return -1
 }
 
 // lowestTimeline is the lowest timeline the WAL or a structurally usable

@@ -105,6 +105,12 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -trimpat
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -trimpath \
     -ldflags "-s -w -X main.version=${VERSION}" \
     -o /workspace/evidence-agent ./cmd/evidence-agent
+# The offline CLI (pgtoolbox preview), shipped in the console image too so that
+# `kubectl exec ... -- /pgtoolbox preview` and `docker run --entrypoint
+# /pgtoolbox` work without a download.
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -trimpath \
+    -ldflags "-s -w -X main.version=${VERSION}" \
+    -o /workspace/pgtoolbox ./cmd/pgtoolbox
 # The SPA last, so a UI change rebuilds the console binary only. go:embed
 # cannot reach outside its package: internal/console/uiassets embeds dist/.
 COPY --from=ui /ui/dist internal/console/uiassets/dist
@@ -147,6 +153,7 @@ LABEL org.opencontainers.image.title="pgToolBox console" \
       org.opencontainers.image.licenses="Apache-2.0" \
       org.opencontainers.image.version="${VERSION}"
 COPY --from=builder /workspace/console /console
+COPY --from=builder /workspace/pgtoolbox /pgtoolbox
 COPY LICENSE /licenses/console/LICENSE
 # The front-end assets are embedded in the binary above, so the licence of the
 # library they bundle (MIT, which asks for its text to travel with copies)
@@ -156,12 +163,11 @@ USER 65532:65532
 EXPOSE 3000
 ENTRYPOINT ["/console"]
 
-# The evidence agent: standalone, or as the agent an
-# EvidenceAgent (or the pgtools chart) runs.
+# The evidence agent an EvidenceAgent (or the pgtools chart) runs.
 FROM gcr.io/distroless/static-debian13:nonroot@sha256:aafe993665bf6200db38a02c11a9351e782a84b6a45e7f33b6695638c88e3931 AS evidence-agent
 ARG VERSION=development
 LABEL org.opencontainers.image.title="pgToolBox evidence agent" \
-      org.opencontainers.image.description="Read-only viewer and evidence producer for a PostgreSQL backup repository" \
+      org.opencontainers.image.description="Read-only evidence producer for a PostgreSQL backup repository" \
       org.opencontainers.image.source="https://github.com/fyannk/pgToolBox" \
       org.opencontainers.image.documentation="https://fyannk.github.io/pgToolBox/" \
       org.opencontainers.image.licenses="Apache-2.0" \
@@ -169,5 +175,5 @@ LABEL org.opencontainers.image.title="pgToolBox evidence agent" \
 COPY --from=builder /workspace/evidence-agent /evidence-agent
 COPY LICENSE /licenses/evidence-agent/LICENSE
 USER 65532:65532
-EXPOSE 3000
+EXPOSE 8443
 ENTRYPOINT ["/evidence-agent"]

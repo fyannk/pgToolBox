@@ -1,0 +1,19 @@
+exit: 1
+--- stdout
+Cluster team-a/billing: unchanged
+  Unchanged — the spec and annotations the preview reads are the same.
+
+Cluster team-a/orders: changed
+  No restart — nothing restarts and no configuration is reloaded.
+  Refused — the operator refuses 1 parameter(s) below: the spec cannot carry this change.
+  Primary update strategy: unsupervised (the operator updates the primary on its own)
+  Primary update method: restart
+  What happens to the primary: nothing
+  PostgreSQL major: 17
+  PostgreSQL parameters:
+    listen_addresses: unset → 0.0.0.0 — Refused, refused by the operator
+
+4 document(s) that are not CloudNativePG Clusters were ignored.
+
+Disruptive: at least one Cluster restarts, rolls out, shuts down, is upgraded, loses instances or is removed, carries a refused parameter, or has an unknown effect.
+--- stderr

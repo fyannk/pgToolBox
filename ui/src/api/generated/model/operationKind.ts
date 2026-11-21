@@ -15,4 +15,5 @@ export const OperationKind = {
   restart: 'restart',
   promote: 'promote',
   restoreDrill: 'restoreDrill',
+  primaryChange: 'primaryChange',
 } as const;

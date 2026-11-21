@@ -16,9 +16,9 @@
 // serves MCP and writes the grant index (MCP_LEASE), as CloudNativePG's
 // -rw Service points at the primary: the candidates elect a leader on a
 // Lease (internal/console/leader), and the install routes the MCP paths
-// (Paths) to it: the operator labels the holder's Pod, which its -mcp
-// Service selects; the team chart runs the one candidate as its own
-// Deployment. Any other replica answers those paths 503 with Retry-After
+// (Paths) to it: both installs (the operator's PgToolBoxConsole and the
+// team chart) run the one candidate as a Deployment of its own, which
+// their -mcp Service selects. Any other replica answers those paths 503 with Retry-After
 // (Gate): no proxying. A replica that is no candidate (MCP_CANDIDATE=false)
 // never leads.
 //

@@ -149,15 +149,11 @@ func (r *Reconciler) composePgBackRest(ctx context.Context, located *backupresol
 }
 
 // unavailable is the Problem of an optional API the start-time probe
-// turned off.
+// turned off; the message says the probe ran when the operator started.
 func unavailable(probe discovery.Result, api string) *backupresolve.Problem {
-	why := probe.Reason
-	if why == "" {
-		why = "not probed"
-	}
 	return &backupresolve.Problem{
 		Reason:  pgtoolboxv1alpha1.ReasonObjectStoreAPIUnavailable,
-		Message: fmt.Sprintf("%s is unavailable to the operator (%s)", api, why),
+		Message: fmt.Sprintf("%s is unavailable to the operator: %s", api, probe.Why()),
 	}
 }
 

@@ -53,7 +53,6 @@ func (r *recorder) Event(data any) error {
 	}
 	return r.add(fmt.Sprintf("%T", data))
 }
-func (r *recorder) Comment(string) error { return r.add(":") }
 
 // resyncReasons are the reasons of the resync events written so far.
 func (r *recorder) resyncReasons() []string {
@@ -100,7 +99,7 @@ func TestHelloHeartbeatAndInvalidate(t *testing.T) {
 	rec := newRecorder()
 	cancel, done := run(t, b, rec, Options{Heartbeat: 20 * time.Millisecond})
 	rec.waitFor(t, "sse.Hello")
-	rec.waitFor(t, ":")
+	rec.waitFor(t, "sse.Heartbeat")
 	b.Publish(Invalidate{Topic: TopicCluster, Namespace: "a", Name: "x"})
 	rec.waitFor(t, "sse.Invalidate")
 	if got := rec.snapshot()[0]; got != "sse.Hello" {
@@ -230,7 +229,7 @@ func TestRecheckEndsStream(t *testing.T) {
 		defer mu.Unlock()
 		return valid
 	}})
-	rec.waitFor(t, ":")
+	rec.waitFor(t, "sse.Heartbeat")
 	mu.Lock()
 	valid = false
 	mu.Unlock()
@@ -416,16 +415,12 @@ type orderSender struct {
 func (s *orderSender) Event(data any) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if ev, ok := data.(Invalidate); ok {
+	switch ev := data.(type) {
+	case Invalidate:
 		s.items = append(s.items, ev.Name)
+	case Heartbeat:
+		s.items = append(s.items, ":")
 	}
-	return nil
-}
-
-func (s *orderSender) Comment(string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.items = append(s.items, ":")
 	return nil
 }
 

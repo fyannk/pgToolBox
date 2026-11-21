@@ -1,0 +1,27 @@
+exit: 1
+--- stdout
+{
+  "clusters": [
+    {
+      "namespace": "team-a",
+      "name": "billing",
+      "change": "removed",
+      "disruptive": true
+    },
+    {
+      "namespace": "team-a",
+      "name": "invoices",
+      "change": "added",
+      "disruptive": false
+    },
+    {
+      "namespace": "team-a",
+      "name": "orders",
+      "change": "unchanged",
+      "disruptive": false
+    }
+  ],
+  "ignored": 4,
+  "disruptive": true
+}
+--- stderr

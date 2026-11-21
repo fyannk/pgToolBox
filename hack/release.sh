@@ -62,6 +62,11 @@
 #                               pull every image and chart of the release by tag,
 #                               cosign verify and gh attestation verify each by
 #                               digest (retried: attestations lag the push)
+#   release.sh build-cli VERSION
+#                               build the pgtoolbox CLI (cmd/pgtoolbox) static for
+#                               linux and darwin on amd64 and arm64 into OUT_DIR as
+#                               pgtoolbox-cli_VERSION_OS_ARCH.tar.gz (the binary and
+#                               LICENSE, reproducible: sorted, fixed mtime and owner)
 #   release.sh sums             write SHA256SUMS over the release files in OUT_DIR
 #   release.sh dry-run          build everything a release builds without pushing,
 #                               signing or attesting; print the digests
@@ -610,6 +615,30 @@ cmd_install_manifests() {
   done
 }
 
+# ------------------------------------------------------------- build-cli ---
+# The CLI is a static binary per platform, not an image: CGO off, -trimpath,
+# the version from the one resolver. The workflow attests the tarballs and
+# signs SHA256SUMS, which lists them. GOWORK=off as in the Dockerfile.
+cli_platforms=(linux/amd64 linux/arm64 darwin/amd64 darwin/arm64)
+cmd_build_cli() {
+  local version="${1:?usage: release.sh build-cli VERSION}" platform goos goarch name stage
+  command -v go >/dev/null || die "go is not on PATH"
+  mkdir -p "${out_dir}"
+  stage="$(mktemp -d)"
+  for platform in "${cli_platforms[@]}"; do
+    goos="${platform%/*}" goarch="${platform#*/}"
+    name="pgtoolbox-cli_${version}_${goos}_${goarch}"
+    mkdir -p "${stage}/${name}"
+    CGO_ENABLED=0 GOWORK=off GOOS="${goos}" GOARCH="${goarch}" go build -trimpath \
+      -ldflags "-s -w -X main.version=${version}" -o "${stage}/${name}/pgtoolbox" ./cmd/pgtoolbox
+    cp LICENSE "${stage}/${name}/LICENSE"
+    tar -C "${stage}" --sort=name --mtime='UTC 1970-01-01' --owner=0 --group=0 --numeric-owner \
+      -cf - "${name}" | gzip -n > "${out_dir}/${name}.tar.gz"
+    echo "built ${out_dir}/${name}.tar.gz"
+  done
+  rm -rf "${stage}"
+}
+
 # ----------------------------------------------------------------- sums ---
 # One checksum file over everything a release attaches except itself, so a
 # download can be checked without a registry. The workflow signs it keyless
@@ -617,7 +646,7 @@ cmd_install_manifests() {
 cmd_sums() {
   cd "${out_dir}"
   local -a names
-  mapfile -t names < <(ls -1 pgtoolbox-*.tgz pgtools-*.tgz install-*.yaml sbom-*.spdx.json digests.txt chart-digests.txt 2>/dev/null | LC_ALL=C sort)
+  mapfile -t names < <(ls -1 pgtoolbox-*.tgz pgtools-*.tgz pgtoolbox-cli_*.tar.gz install-*.yaml sbom-*.spdx.json digests.txt chart-digests.txt 2>/dev/null | LC_ALL=C sort)
   [[ ${#names[@]} -gt 0 ]] || die "nothing to checksum in ${out_dir}"
   sha256sum "${names[@]}" > SHA256SUMS
   echo "SHA256SUMS lists ${#names[@]} files"
@@ -808,6 +837,26 @@ cmd_verify_published() {
       status=1
     fi
   done
+  # The CLI tarballs, as a user downloads them: SHA256SUMS signed keyless,
+  # every tarball matching it and attested.
+  mkdir -p "${work}/cli"
+  if gh release download "${tag}" --repo "${repo}" --dir "${work}/cli" --pattern 'SHA256SUMS*' --pattern 'pgtoolbox-cli_*.tar.gz' \
+    && retry cosign verify-blob "${work}/cli/SHA256SUMS" --bundle "${work}/cli/SHA256SUMS.sigstore.json" \
+      --certificate-identity-regexp "${identity}" --certificate-oidc-issuer "${issuer}" \
+    && (cd "${work}/cli" && grep ' pgtoolbox-cli_' SHA256SUMS | sha256sum --check --strict -) \
+    && [[ "$(find "${work}/cli" -name 'pgtoolbox-cli_*.tar.gz' | wc -l)" -eq "${#cli_platforms[@]}" ]]; then
+    for out in "${work}"/cli/pgtoolbox-cli_*.tar.gz; do
+      if retry gh attestation verify "${out}" --repo "${repo}" --signer-workflow "${repo}/.github/workflows/release.yml"; then
+        echo "ok: ${out##*/}"
+      else
+        echo "::error::${out##*/} does not verify"
+        status=1
+      fi
+    done
+  else
+    echo "::error::the CLI tarballs of ${tag} are missing or do not match their signed SHA256SUMS"
+    status=1
+  fi
   rm -rf "${work}"
   return "${status}"
 }
@@ -885,6 +934,7 @@ cmd_dry_run() {
   else
     echo "kubectl is not on PATH: install manifests not rendered"
   fi
+  cmd_build_cli "${version}"
   cmd_sums
   echo "--- digests"
   cat "${out_dir}/digests.txt"
@@ -907,6 +957,7 @@ case "${1:-}" in
   notes) shift; cmd_notes "$@" ;;
   commits-link) shift; cmd_commits_link "$@" ;;
   commits) shift; cmd_commits "$@" ;;
+  build-cli) shift; cmd_build_cli "$@" ;;
   sums) shift; cmd_sums "$@" ;;
   check-public) shift; cmd_check_public "$@" ;;
   scan-digests) shift; cmd_scan_digests "$@" ;;

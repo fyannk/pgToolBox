@@ -1,0 +1,24 @@
+exit: 2
+--- stdout
+--- stderr
+Usage: pgtoolbox preview [--output text|json] [--cnpg-version 1.30] [--postgres-major N] OLD.yaml NEW.yaml
+
+Reads two versions of CloudNativePG Cluster manifests (one file each, "-" for
+stdin; multi-document YAML; Clusters matched by namespace and name; other
+documents ignored) and says what applying NEW over OLD sets in motion. It never
+contacts a cluster.
+
+Exit codes:
+  0  nothing disruptive: at most a configuration reload or a start
+  1  disruptive: a restart, rollout, shutdown, major upgrade, fewer instances,
+     a removed Cluster, a parameter the operator refuses, or a change whose
+     effect is unknown
+  2  invalid arguments or manifests
+
+Options:
+  -cnpg-version string
+    	the CloudNativePG operator version (1.30, 1.31); without it the preview is unverified
+  -output string
+    	text or json (default "text")
+  -postgres-major int
+    	the PostgreSQL major, when the image tag and the status do not say it

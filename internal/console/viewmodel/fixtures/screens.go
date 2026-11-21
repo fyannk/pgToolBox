@@ -494,8 +494,8 @@ func Operations() viewmodel.Operations {
 				Consequence: "Clients of the primary are disconnected; the old primary becomes a replica.", ExpectedDuration: "under a minute",
 				Allowed: true, Requires: []string{"patch clusters/status"}, Blockers: []viewmodel.OperationBlocker{}, Confirmation: "the target instance name", Observable: true,
 				Targets: []viewmodel.PromoteTarget{
-					{Name: "orders-2", Eligible: true, Health: viewmodel.HealthOK, LagBytes: new(int64(0))},
-					{Name: "orders-3", Eligible: false, Health: viewmodel.HealthUnknown, Blockers: []viewmodel.OperationBlocker{{Reason: "TargetFenced", Text: "orders-3 is fenced", Source: "Cluster.metadata.annotations[cnpg.io/fencedInstances]"}}},
+					{Name: "orders-2", Eligible: true, Health: viewmodel.HealthOK, LagBytes: new(int64(0)), Readiness: ReadyReadiness()},
+					{Name: "orders-3", Eligible: false, Health: viewmodel.HealthUnknown, Blockers: []viewmodel.OperationBlocker{{Reason: "TargetFenced", Text: "orders-3 is fenced", Source: "Cluster.metadata.annotations[cnpg.io/fencedInstances]"}}, Readiness: FencedReadiness()},
 				},
 			},
 			{
@@ -510,8 +510,55 @@ func Operations() viewmodel.Operations {
 				},
 			},
 		},
-		Recent:      []viewmodel.Operation{Operation()},
-		RecentScope: "operations issued through this console replica since it started; the API server's audit log is the complete record",
+		Recent:      []viewmodel.Operation{recentBackup()},
+		RecentScope: "rebuilt from what the Cluster's objects record, so every console replica shows the same list: every Backup of the Cluster (on-demand from any client, and the newest 5 labelled as created by a ScheduledBackup, each attributed), the latest restart and reload annotations (set by any client) and the console's restore-drill record; plus the primary changes (switchovers and failovers) this console observed, which it cannot tell apart from a promote unless this replica issued it. The API server's audit log is the complete record, and names who asked.",
+	}
+}
+
+// recentBackup is Operation as Recent lists it: found on its Backup.
+func recentBackup() viewmodel.Operation {
+	op := Operation()
+	op.RecordedIn = viewmodel.RecordCluster
+	op.RecordedFrom = "Backup " + op.Created + " metadata.annotations[pgtoolbox.fyannk.dev/requested-at]"
+	return op
+}
+
+func readProv(source string) viewmodel.Provenance {
+	return viewmodel.Provenance{Origin: viewmodel.OriginInstance, Source: source, ObservedAt: ago(8 * time.Second)}
+}
+
+func fact(key viewmodel.ReadinessKey, h viewmodel.Health, text string, p viewmodel.Provenance) viewmodel.ReadinessFact {
+	return viewmodel.ReadinessFact{Key: key, Health: h, Text: text, Provenance: p}
+}
+
+const (
+	srcStreaming = "/pg/status walReceiverActive, replayPaused"
+	srcLag       = "/pg/status replayLsn against the primary's currentLsn"
+	srcSync      = "/pg/status replicationInfo of orders-1"
+	srcFencing   = "Cluster.metadata.annotations[cnpg.io/fencedInstances]"
+	srcPodReady  = "Pod.status.conditions[Ready]"
+)
+
+// ReadyReadiness is a streaming, caught-up, synchronous replica.
+func ReadyReadiness() []viewmodel.ReadinessFact {
+	return []viewmodel.ReadinessFact{
+		fact(viewmodel.ReadinessPod, viewmodel.HealthOK, "Ready", kubeProv(srcPodReady)),
+		fact(viewmodel.ReadinessStreaming, viewmodel.HealthOK, "streaming from the primary", readProv(srcStreaming)),
+		fact(viewmodel.ReadinessReplayLag, viewmodel.HealthOK, "replayed up to the primary's position as last read", readProv(srcLag)),
+		fact(viewmodel.ReadinessSyncState, viewmodel.HealthOK, "quorum: quorum-based synchronous candidate", readProv(srcSync)),
+		fact(viewmodel.ReadinessFencing, viewmodel.HealthOK, "not fenced", kubeProv(srcFencing)),
+	}
+}
+
+// FencedReadiness is a fenced replica: its manager answers without
+// reaching PostgreSQL.
+func FencedReadiness() []viewmodel.ReadinessFact {
+	return []viewmodel.ReadinessFact{
+		fact(viewmodel.ReadinessPod, viewmodel.HealthWarning, "not Ready", kubeProv(srcPodReady)),
+		fact(viewmodel.ReadinessStreaming, viewmodel.HealthUnknown, "not read: the instance manager answered without reaching PostgreSQL", readProv(srcStreaming)),
+		fact(viewmodel.ReadinessReplayLag, viewmodel.HealthUnknown, "not read: the instance manager answered without reaching PostgreSQL", readProv(srcLag)),
+		fact(viewmodel.ReadinessSyncState, viewmodel.HealthWarning, "the primary reports no walsender for it", readProv(srcSync)),
+		fact(viewmodel.ReadinessFencing, viewmodel.HealthCritical, "fenced: CloudNativePG would not promote it", kubeProv(srcFencing)),
 	}
 }
 

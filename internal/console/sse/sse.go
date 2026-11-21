@@ -14,7 +14,8 @@
 
 // Package sse is the console's live-update stream: a broker that fans invalidations out to subscribers, and the loop
 // that writes one subscriber's stream with the edge settings it
-// needs (15 s heartbeat comments so idle proxies keep the connection,
+// needs (a heartbeat event every 15 s, so idle proxies keep the connection
+// and the client can tell a silent stream from a dead one,
 // a reauth event before the session ends, a last resync and the stream
 // closed when it ends).
 //
@@ -44,8 +45,10 @@
 //     GET /api/v1/session: a refreshable session is renewed by that call
 //     and its expiresAt moves; otherwise warn and offer to sign in again.
 //     The stream itself closes at expiresAt, after a last resync.
-//   - A comment line arrives at least every 15 s. No byte for 35 s means
-//     the stream is dead even if the socket looks open.
+//   - heartbeat {serverTime}: sent every heartbeatSeconds (15 s). EventSource never
+//     surfaces a comment line, so the keep-alive is a named event: no event
+//     for twice that interval means the stream is dead even if the socket
+//     looks open; close it and reconnect.
 //   - While the stream is down, poll the active queries every 2 s,
 //     backing off to 10 s, and show "live updates paused". EventSource
 //     reconnects by itself (the server sends retry: 2000). A 401 from any
@@ -76,7 +79,7 @@ const (
 // Hello is the first event of every stream.
 type Hello struct {
 	ServerTime       time.Time `json:"serverTime" doc:"Server clock when the stream opened (UTC)."`
-	HeartbeatSeconds int       `json:"heartbeatSeconds" doc:"Interval of the keep-alive comment lines."`
+	HeartbeatSeconds int       `json:"heartbeatSeconds" doc:"Interval of the heartbeat events."`
 	PollMinSeconds   int       `json:"pollMinSeconds" doc:"Polling backstop: first interval while the stream is down."`
 	PollMaxSeconds   int       `json:"pollMaxSeconds" doc:"Polling backstop: interval the backoff stops at."`
 }
@@ -92,6 +95,11 @@ type Invalidate struct {
 type Reauth struct {
 	ExpiresAt   time.Time `json:"expiresAt" doc:"When the session ends unless renewed (UTC)."`
 	Refreshable bool      `json:"refreshable" doc:"Whether GET /api/v1/session can renew it without a new sign-in."`
+}
+
+// Heartbeat keeps the stream alive and tells the client it still is.
+type Heartbeat struct {
+	ServerTime time.Time `json:"serverTime" doc:"Server clock when the heartbeat was sent (UTC)."`
 }
 
 // Resync tells the client it missed events.
@@ -199,10 +207,9 @@ func (b *Broker) Clients() int {
 }
 
 // Sender writes one stream. Event writes a named event whose name derives
-// from the type of data; Comment writes a comment line.
+// from the type of data.
 type Sender interface {
 	Event(data any) error
-	Comment(text string) error
 }
 
 // Options of one stream.
@@ -297,7 +304,7 @@ func Run(ctx context.Context, sub *Subscription, send Sender, o Options) error {
 			if err := u.tick(send); err != nil {
 				return err
 			}
-			if err := send.Comment("heartbeat"); err != nil {
+			if err := send.Event(Heartbeat{ServerTime: now().UTC()}); err != nil {
 				return err
 			}
 		case c := <-checked:

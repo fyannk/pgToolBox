@@ -284,7 +284,7 @@ func TestApplyResolvedPgBackRest(t *testing.T) {
 	if cfg.PGBackRestRetention == nil || *cfg.PGBackRestRetention != *resolved.Retention || cfg.PGBackRestRetention == resolved.Retention {
 		t.Fatalf("resolved retention = %+v", cfg.PGBackRestRetention)
 	}
-	if cfg.RepositoryError != nil || cfg.RepositoryFormat != FormatPGBackRest || cfg.PGBackRestStanza != "orders" || len(cfg.PGBackRestStanzas) != 0 || len(cfg.BarmanServerNames) != 0 ||
+	if cfg.RepositoryError != nil || cfg.RepositoryFormat != FormatPGBackRest || cfg.PGBackRestStanza != "orders" || len(cfg.BarmanServerNames) != 0 ||
 		cfg.PGBackRestArchiveStanza != "orders-wal" || cfg.PGBackRestRepository != 2 || string(cfg.PGBackRestCipher.value) != "synthetic-canary" ||
 		cfg.DestinationBucket != "backups" || cfg.DestinationPrefix != "orders" || cfg.Credentials.AWSKeySource == nil {
 		t.Fatalf("resolved config = %#v", cfg)

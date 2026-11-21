@@ -163,8 +163,9 @@ checked, so it is announced this way instead of being dropped silently),
 `reauth` (the session is about to end). A stream that ends with its session (its
 expiry, a token the API server no longer accepts, a revocation) sends a last
 `resync` with the reason `session expired` or `session ended`: the refetch meets
-the 401 that leads to sign-in. A comment line every 15 s keeps idle
-proxies from closing the stream.
+the 401 that leads to sign-in. A `heartbeat` event every 15 s keeps idle
+proxies from closing the stream; the browser treats twice that interval
+without any event as a dead stream and reconnects.
 
 ### The SPA: `uiassets`, `server`
 

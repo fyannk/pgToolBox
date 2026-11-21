@@ -7,9 +7,6 @@ name: Published image watch
 # and closes once a new release has cleared it. Editing an issue sends no
 # notification, so a finding that persists for a week costs one email, not
 # seven.
-#
-# Before the first stable release there is no `latest` image; the job says so
-# and does nothing.
 on:
   schedule:
     - cron: "23 4 * * *"
@@ -60,10 +57,8 @@ jobs:
           set -euo pipefail
           title="Published image ${NAME} has fixable critical vulnerabilities"
 
-          if ! digest="$(docker buildx imagetools inspect "${IMAGE}" --format '{{json .Manifest.Digest}}' 2>/dev/null | tr -d '"')" || [[ -z "${digest}" ]]; then
-            echo "No published ${IMAGE} yet; nothing to watch."
-            exit 0
-          fi
+          digest="$(docker buildx imagetools inspect "${IMAGE}" --format '{{json .Manifest.Digest}}' | tr -d '"')"
+          [[ -n "${digest}" ]] || { echo "empty digest for ${IMAGE}" >&2; exit 1; }
 
           grype -q -o json "registry:${IMAGE%:latest}@${digest}" > scan.json
           findings="$(jq -r '[.matches[]

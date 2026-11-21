@@ -396,11 +396,11 @@ func TestResolveOfferRemoteNamespaceRefusesAPIs(t *testing.T) {
 			t.Errorf("the PgAdmin's own Cluster says its DatabaseRoles are refused: %+v", row)
 		}
 	}
-	wantRow := "DatabaseRoles not offered: not allowed to list DatabaseRole.postgresql.cnpg.io in team-b (other watched namespaces allow it)"
+	wantRow := "DatabaseRoles not offered: not allowed to list DatabaseRole.postgresql.cnpg.io in team-b (other watched namespaces allow it) (probed when the operator started: restart it once the API is installed or allowed)"
 	if !slices.Contains(remoteRows, wantRow) {
 		t.Errorf("team-b rows %q, want %q", remoteRows, wantRow)
 	}
-	wantProblem := "endpoint pooler:orders-pooler: the Pooler API is not available: not allowed to list Pooler.postgresql.cnpg.io in team-b (other watched namespaces allow it)"
+	wantProblem := "endpoint pooler:orders-pooler: the Pooler API is not available: not allowed to list Pooler.postgresql.cnpg.io in team-b (other watched namespaces allow it) (probed when the operator started: restart it once the API is installed or allowed)"
 	if !slices.Contains(result.Problems, wantProblem) {
 		t.Errorf("problems %q, want %q", result.Problems, wantProblem)
 	}

@@ -38,6 +38,12 @@ SETUP_ENVTEST ?= $(call tool,setup-envtest,go run sigs.k8s.io/controller-runtime
 # console's kube layer is exercised on the newest the e2e uses.
 ENVTEST_K8S_VERSION_API ?= 1.34.1
 ENVTEST_K8S_VERSION_CONSOLE ?= 1.34.1
+
+# $(call envtest_assets,<k8s version>) prefixes a recipe's `go test`: it sets
+# KUBEBUILDER_ASSETS, or fails the recipe when setup-envtest fails or prints no
+# path (an empty path makes every envtest test skip and the job pass untested).
+envtest_assets = assets="$$($(SETUP_ENVTEST) use $(1) -p path)" && test -n "$$assets" \
+	|| { echo "setup-envtest gave no assets for Kubernetes $(1)" >&2; exit 1; }; KUBEBUILDER_ASSETS="$$assets"
 # The supported range is Kubernetes 1.34 to 1.36. PRs run the oldest; the
 # nightly run and a dispatch run 1.35.0 and 1.36.2 (ci.yml, envtest-k8s). The
 # same on a laptop: make test-envtest ENVTEST_K8S_VERSION_API=1.36.2
@@ -96,12 +102,18 @@ vet: ## Run go vet on every module.
 
 ##@ Build
 
+.PHONY: build-pgtoolbox
+build-pgtoolbox: ## Build the offline pgtoolbox CLI (pgtoolbox preview) into bin/.
+	mkdir -p bin
+	CGO_ENABLED=0 go build -trimpath -ldflags "$(VERSION_LDFLAGS)" -o bin/pgtoolbox ./cmd/pgtoolbox
+
 .PHONY: build
 build: ## Build every binary into bin/.
 	mkdir -p bin
 	CGO_ENABLED=0 go build -trimpath -ldflags "$(OPERATOR_LDFLAGS)" -o bin/operator ./cmd/operator
 	CGO_ENABLED=0 go build -trimpath -ldflags "$(VERSION_LDFLAGS)" -o bin/console ./cmd/console
 	CGO_ENABLED=0 go build -trimpath -ldflags "$(VERSION_LDFLAGS)" -o bin/evidence-agent ./cmd/evidence-agent
+	CGO_ENABLED=0 go build -trimpath -ldflags "$(VERSION_LDFLAGS)" -o bin/pgtoolbox ./cmd/pgtoolbox
 	cd $(EVIDENCE_MODULE) && go build ./...
 
 .PHONY: clean
@@ -147,6 +159,7 @@ test-fuzz: ## Fuzz the trust-boundary parsers (FUZZ_TIME per target).
 	$(call fuzz,./internal/console/mcpauth,FuzzGuardSeesTheMessageTheSDKReads)
 	$(call fuzz,./pkg/redact,FuzzSafe)
 	$(call fuzz,./pkg/redact,FuzzPayload)
+	$(call fuzz,./pkg/redact,FuzzTextCredential)
 	$(call fuzz,./pkg/cnpgstatus/insight,FuzzParse)
 	$(call fuzz,./pkg/cnpgstatus/pgconf,FuzzParse)
 	$(call fuzz,./pkg/cnpgstatus/scrape,FuzzParseCatalog)
@@ -157,6 +170,7 @@ test-fuzz: ## Fuzz the trust-boundary parsers (FUZZ_TIME per target).
 	$(call fuzz,./internal/console/status,FuzzHistoryFileIn)
 	$(call fuzz,./internal/evidence/formats/barmancloud,FuzzParseBackupInfo)
 	$(call fuzz,./internal/evidence/formats/barmancloud,FuzzParseTimelineHistory)
+	$(call fuzz,./internal/evidence/formats/barmancloud,FuzzXZHistoryDictionary)
 	$(call fuzz,./internal/evidence/formats/barmancloud,FuzzParseWALName)
 	$(call fuzz,./internal/evidence/formats/pgbackrest,FuzzParseINI)
 	$(call fuzz,./internal/evidence/formats/pgbackrest,FuzzDecrypt)
@@ -179,22 +193,22 @@ test-fuzz: ## Fuzz the trust-boundary parsers (FUZZ_TIME per target).
 # supported control plane.
 .PHONY: test-envtest
 test-envtest: manifests ## API-server-backed tests of the CRDs (CEL, defaulting, pruning) on envtest.
-	KUBEBUILDER_ASSETS="$$($(SETUP_ENVTEST) use $(ENVTEST_K8S_VERSION_API) -p path)" \
+	$(call envtest_assets,$(ENVTEST_K8S_VERSION_API)) \
 		go test ./api/... -run 'CEL|Schema' -count=1 -v
 
 .PHONY: test-envtest-evidenceagent
 test-envtest-evidenceagent: manifests ## The EvidenceAgent reconciler on envtest, as the generated manager ClusterRole (SSA, RBAC escalation, status).
-	KUBEBUILDER_ASSETS="$$($(SETUP_ENVTEST) use $(ENVTEST_K8S_VERSION_API) -p path)" \
+	$(call envtest_assets,$(ENVTEST_K8S_VERSION_API)) \
 		go test ./internal/operator/evidenceagent/ -run Envtest -count=1 -v
 
 .PHONY: test-envtest-admissionpolicy
 test-envtest-admissionpolicy: ## The operator chart's ValidatingAdmissionPolicy (helm template) and the OLM admission webhook evaluated on envtest as different users (needs helm; Kubernetes 1.30+ policies).
-	KUBEBUILDER_ASSETS="$$($(SETUP_ENVTEST) use $(ENVTEST_K8S_VERSION_CONSOLE) -p path)" \
+	$(call envtest_assets,$(ENVTEST_K8S_VERSION_CONSOLE)) \
 		go test ./internal/operator/admissionpolicy/ -run Envtest -count=1 -v
 
 .PHONY: test-envtest-pgtoolboxconsole
 test-envtest-pgtoolboxconsole: manifests ## The PgToolBoxConsole reconciler on envtest, as the generated manager ClusterRole (bind-only console roles, lifecycle keeper).
-	KUBEBUILDER_ASSETS="$$($(SETUP_ENVTEST) use $(ENVTEST_K8S_VERSION_API) -p path)" \
+	$(call envtest_assets,$(ENVTEST_K8S_VERSION_API)) \
 		go test ./internal/operator/console/ -run Envtest -count=1 -v
 
 .PHONY: test-fuzz-evidence-agent
@@ -246,7 +260,6 @@ pgbackrest-fixtures: ## Regenerate the pgBackRest 2.60.0 fixtures in Docker and 
 .PHONY: test-container
 test-container: docker-build-console docker-build-evidence ## Restricted-runtime profile of the console and evidence images (Docker).
 	./hack/console/test-container.sh $(CONSOLE_IMG)
-	./hack/evidence/test-container.sh $(EVIDENCE_IMG)
 	./hack/evidence/test-agent-container.sh $(EVIDENCE_IMG)
 
 .PHONY: test-multiarch
@@ -319,10 +332,10 @@ insight-pack: ## Regenerate deploy/insight-pack/insight-pack.yaml from the chart
 	UPDATE_INSIGHT_PACK=1 go test -count=1 -run TestPlainManifestIsCurrent ./pkg/cnpgstatus/insight/
 
 .PHONY: rules-test
-rules-test: ## promtool: check the MCP and operator alert rules and run their unit tests (hack/rules/).
+rules-test: ## promtool: check the MCP, findings and operator alert rules and run their unit tests (hack/rules/).
 	@command -v promtool >/dev/null || { echo "promtool is not on PATH (it ships in the Prometheus release archive)" >&2; exit 2; }
-	promtool check rules charts/pgtools/files/alerts/mcp.rules.yaml charts/pgtoolbox/files/alerts/operator.rules.yaml
-	promtool test rules hack/rules/mcp.rules.test.yaml hack/rules/operator.rules.test.yaml
+	promtool check rules charts/pgtools/files/alerts/mcp.rules.yaml charts/pgtools/files/alerts/findings.rules.yaml charts/pgtoolbox/files/alerts/operator.rules.yaml
+	promtool test rules hack/rules/mcp.rules.test.yaml hack/rules/findings.rules.test.yaml hack/rules/operator.rules.test.yaml
 
 .PHONY: dashboards-check
 dashboards-check: ## The Grafana dashboard JSON parses and every panel has a title and a query.
@@ -561,10 +574,10 @@ sync-crds: ## Vendor the CNPG CRDs per supported minor into test/crds/cnpg-<mino
 
 .PHONY: test-envtest-console
 test-envtest-console: ## The console's informer cache on envtest, once per vendored CNPG minor (RBAC-starved user, probes, re-probe rebuild).
-	set -e; assets="$$($(SETUP_ENVTEST) use $(ENVTEST_K8S_VERSION_CONSOLE) -p path)"; \
+	set -e; \
 	for crds in test/crds/cnpg-*; do \
 		echo "== $$crds"; \
-		KUBEBUILDER_ASSETS="$$assets" CNPG_CRDS="$$PWD/$$crds" go test -tags envtest -count=1 ./internal/console/cache/; \
+		$(call envtest_assets,$(ENVTEST_K8S_VERSION_CONSOLE)) CNPG_CRDS="$$PWD/$$crds" go test -tags envtest -count=1 ./internal/console/cache/; \
 	done
 
 .PHONY: test-fuzz-console
@@ -625,7 +638,7 @@ ui-audit: ## pnpm audit of the SPA's runtime dependencies.
 # escalation prevention, schemas, server-side apply and the no-op reconcile.
 .PHONY: test-envtest-operator
 test-envtest-operator: manifests ## The PgAdmin reconciler and the pgtools sidecar's name-scoped Role on envtest (RBAC, SSA, no-op reconcile).
-	KUBEBUILDER_ASSETS="$$($(SETUP_ENVTEST) use $(ENVTEST_K8S_VERSION_CONSOLE) -p path)" \
+	$(call envtest_assets,$(ENVTEST_K8S_VERSION_CONSOLE)) \
 		go test ./internal/operator/pgadmin/ ./internal/operator/pgadmin/passfilesync/ -run 'Envtest' -count=1 -v
 
 .PHONY: test-e2e-pgadmin

@@ -250,6 +250,70 @@ func TestS3ContractOpenIsBoundedAndCloseCancelsRequest(t *testing.T) {
 	}
 }
 
+// TestS3ContractOpenBodyDeadlineScalesWithMaxBytes: the request timeout does
+// not cut a large body read on a slow link, and a stalled body still ends.
+func TestS3ContractOpenBodyDeadlineScalesWithMaxBytes(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name     string
+		maxBytes int64
+		chunks   int
+		wantErr  error
+	}{
+		{name: "slow body within the size allowance", maxBytes: 2 * store.MinOpenBytesPerSecond, chunks: 6},
+		{name: "stalled small body ends at the request timeout", maxBytes: 64, chunks: 1_000, wantErr: context.DeadlineExceeded},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			api := &fakeAPI{get: func(ctx context.Context, _ *awss3.GetObjectInput) (*awss3.GetObjectOutput, error) {
+				return &awss3.GetObjectOutput{Body: &slowBody{ctx: ctx, chunks: test.chunks, interval: 50 * time.Millisecond}}, nil
+			}}
+			options := testOptions("")
+			options.RequestTimeout = 100 * time.Millisecond
+			adapter, err := newWithAPI(api, options, testCursorKey)
+			if err != nil {
+				t.Fatal(err)
+			}
+			started := time.Now()
+			body, err := adapter.Open(context.Background(), store.OpenRequest{Key: "manifest", MaxBytes: test.maxBytes})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer body.Close()
+			content, err := io.ReadAll(body)
+			if !errors.Is(err, test.wantErr) || (test.wantErr == nil && len(content) != test.chunks) {
+				t.Fatalf("read %d bytes, error %v; want %d bytes, error %v", len(content), err, test.chunks, test.wantErr)
+			}
+			if elapsed := time.Since(started); elapsed > 2*time.Second {
+				t.Fatalf("read took %s", elapsed)
+			}
+		})
+	}
+}
+
+// slowBody yields one byte per interval and fails once its request context
+// ends, as the SDK's response body does.
+type slowBody struct {
+	ctx      context.Context
+	chunks   int
+	interval time.Duration
+}
+
+func (b *slowBody) Read(p []byte) (int, error) {
+	if b.chunks == 0 {
+		return 0, io.EOF
+	}
+	select {
+	case <-b.ctx.Done():
+		return 0, b.ctx.Err()
+	case <-time.After(b.interval):
+	}
+	b.chunks--
+	return copy(p, "x"), nil
+}
+
+func (*slowBody) Close() error { return nil }
+
 func TestS3ContractStatReturnsOnlyAllowlistedMetadata(t *testing.T) {
 	t.Parallel()
 	modified := time.Date(2026, 7, 27, 12, 0, 0, 0, time.FixedZone("offset", 7200))

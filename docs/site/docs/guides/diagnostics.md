@@ -16,6 +16,10 @@ from the code.
 Anyone who may see the Cluster (`get clusters`) may see its diagnostics; the
 engine adds no second permission.
 
+The findings of each Cluster's latest run are also exported on `/metrics` and
+the `pgtools` chart ships alerts over them: see [findings alerts](../console/alerts.md#findings).
+Those series are read with the scraper's `/metrics` permission, not per Cluster.
+
 ## How a run happens
 
 The pipeline below shows what starts a run, what it reads and where its result
@@ -217,6 +221,9 @@ catalog's tests fail once that date passes, naming what to go and read.
 
 The Cluster phase is a free sentence, and a later CloudNativePG minor can keep a
 string while changing what it means. The phase table is verified at the 1.30.0 tag.
+Besides the phase constants it holds the two phases the operator writes as literals,
+`Not enough disk space` and `Instance Status Extraction Error: HTTP communication issue`,
+both critical.
 On any other minor the console detects (the planned 1.31, read at upstream main; a
 newer one; 1.29), a phase the table reads as healthy is shown as a warning with the
 reason "phase table not verified for CNPG 1.x", on the phase chip and in the

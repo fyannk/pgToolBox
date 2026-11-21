@@ -26,7 +26,8 @@
 // /pg/status) remains the fact once the change is applied, and this
 // package says so rather than claiming it.
 //
-// The rules were read from CloudNativePG v1.30.0
+// The rules were read from CloudNativePG v1.30.0, the fixed parameters
+// re-read at v1.30.1
 // (internal/controller/cluster_upgrade.go: rolloutRequiredInstances,
 // updatePrimaryPod, isPodNeedingRollout and its checkers;
 // pkg/postgres/configuration.go: FixedConfigurationParameters;
@@ -297,7 +298,7 @@ func Compute(in Input) (Preview, error) {
 	p.Strategy = specString(after.Spec, "primaryUpdateStrategy", "unsupervised")
 	p.Method = specString(after.Spec, "primaryUpdateMethod", "restart")
 
-	decrease := p.parameters(&before, &after, in.CNPGMinor)
+	decrease := p.parameters(&before, &after)
 	p.fields(&before, &after)
 	p.annotations(&before, &after)
 	// known is every classified change; operational leaves out fencing
@@ -373,17 +374,12 @@ func specString(spec map[string]json.RawMessage, key, def string) string {
 	return def
 }
 
-// fixed returns the operator's class of a parameter it manages, for the
-// given operator minor: CloudNativePG's FixedConfigurationParameters at
-// v1.30.0, less ssl_ecdh_curve on main (planned
-// 1.31).
-func fixed(name string, minor cnpgstatus.Minor) string {
-	if name == "ssl_ecdh_curve" {
-		if minor == cnpgstatus.Minor131 {
-			return ""
-		}
-		return ContextFixed
-	}
+// fixed returns the operator's class of a parameter it manages:
+// CloudNativePG's FixedConfigurationParameters at v1.30.1 (the supported
+// floor). ssl_ecdh_curve was removed from that list in v1.30.1
+// (cloudnative-pg#11308, a backport also on main), so it is a free
+// parameter on every supported minor.
+func fixed(name string) string {
 	return fixedParameters[name]
 }
 
@@ -415,7 +411,7 @@ var fixedParameters = map[string]string{
 
 // parameters classifies the changed postgresql.parameters and reports
 // whether a hot-standby-sensitive parameter decreased.
-func (p *Preview) parameters(before, after *cluster, minor cnpgstatus.Minor) bool {
+func (p *Preview) parameters(before, after *cluster) bool {
 	b, a := params(before), params(after)
 	names := map[string]bool{}
 	for k := range b {
@@ -434,7 +430,7 @@ func (p *Preview) parameters(before, after *cluster, minor cnpgstatus.Minor) boo
 	decrease := false
 	for _, name := range sorted {
 		c := ParameterChange{Name: name, Before: b[name], After: a[name]}
-		if class := fixed(strings.ToLower(name), minor); class != "" {
+		if class := fixed(strings.ToLower(name)); class != "" {
 			c.Effect, c.Context = EffectRefused, class
 		} else {
 			c.Effect, c.Context = guc(name, p.PostgresMajor)

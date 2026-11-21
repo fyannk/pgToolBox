@@ -82,6 +82,17 @@ func (r OpenRequest) Validate() error {
 	return nil
 }
 
+// MinOpenBytesPerSecond is the slowest body transfer an Open waits for.
+const MinOpenBytesPerSecond = 1 << 20
+
+// Timeout bounds one Open from the request to the last body byte: the
+// adapter's request timeout plus a second per MinOpenBytesPerSecond of
+// MaxBytes (at most an hour), so a large object on an ordinary link is read
+// whole while a stalled transfer still ends.
+func (r OpenRequest) Timeout(requestTimeout time.Duration) time.Duration {
+	return requestTimeout + time.Duration(min(r.MaxBytes/MinOpenBytesPerSecond, 3600))*time.Second
+}
+
 // StatRequest asks for one object's metadata.
 type StatRequest struct {
 	Key string

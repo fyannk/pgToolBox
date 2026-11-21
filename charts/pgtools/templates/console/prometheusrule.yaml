@@ -11,4 +11,17 @@ metadata:
     {{- end }}
 spec:
   {{- (.Files.Get "files/alerts/mcp.rules.yaml" | fromYaml) | toYaml | nindent 2 }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "pgtools.console.fullname" . }}-findings
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "pgtools.console.labels" . | nindent 4 }}
+    {{- with .Values.console.metrics.prometheusRule.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  {{- (.Files.Get "files/alerts/findings.rules.yaml" | fromYaml) | toYaml | nindent 2 }}
 {{- end }}

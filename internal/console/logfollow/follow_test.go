@@ -107,3 +107,74 @@ func TestFollowerTracksTheClusters(t *testing.T) {
 		t.Errorf("opened %v", op.seen)
 	}
 }
+
+// lineOpener writes the next of its lines on each open.
+type lineOpener struct {
+	mu    sync.Mutex
+	lines []string
+	opens int
+}
+
+func (o *lineOpener) FollowLogs(ctx context.Context, _, _, _ string) (io.ReadCloser, error) {
+	o.mu.Lock()
+	line := o.lines[min(o.opens, len(o.lines)-1)]
+	o.opens++
+	o.mu.Unlock()
+	r, w := io.Pipe()
+	go func() {
+		_, _ = w.Write([]byte(line + "\n"))
+		<-ctx.Done()
+		_ = w.Close()
+	}()
+	return r, nil
+}
+
+func TestFollowerRestartsARecreatedCluster(t *testing.T) {
+	k := Key{"team-a", "orders"}
+	ro := &roster{keys: []Key{k}, uids: map[Key]string{k: "uid-old"}}
+	op := &lineOpener{lines: []string{"PANIC: could not locate a valid checkpoint record", "FATAL: the database system is starting up"}}
+	rules := []logstream.Rule{
+		{ID: "checkpoint", Contains: []string{"could not locate a valid checkpoint"}},
+		{ID: "starting", Contains: []string{"the database system is starting up"}},
+	}
+	f := New(Options{Roster: ro, Opener: op, Rules: rules, Every: time.Hour})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer func() { cancel(); f.stopAll() }()
+
+	waitFor := func(rule string) {
+		t.Helper()
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			if obs := f.Observations(k.Namespace, k.Name); obs != nil {
+				if o := obs.Observations(); len(o) == 1 && o[0].RuleID == rule {
+					return
+				}
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("never observed only %q", rule)
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+
+	f.reconcile(ctx)
+	waitFor("checkpoint")
+	f.reconcile(ctx) // same UID: the runner and its observations stay
+	waitFor("checkpoint")
+
+	ro.mu.Lock()
+	ro.uids[k] = "uid-new"
+	ro.mu.Unlock()
+	f.reconcile(ctx)
+	waitFor("starting")
+
+	got := f.Export()
+	if len(got.Clusters) != 1 || got.Clusters[0].UID != "uid-new" {
+		t.Fatalf("Export = %+v, want one Cluster under uid-new", got)
+	}
+	for _, o := range got.Clusters[0].Observations {
+		if o.RuleID == "checkpoint" {
+			t.Errorf("the recreated Cluster kept its predecessor's observation %+v", o)
+		}
+	}
+}
