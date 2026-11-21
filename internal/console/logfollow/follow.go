@@ -151,11 +151,18 @@ func (f *Follower) reconcile(ctx context.Context) {
 	}
 	f.expirePendingLocked()
 	for k := range want {
-		if _, ok := f.set[k]; ok {
-			continue
+		uid := f.opts.Roster.UID(ctx, k)
+		if c, ok := f.set[k]; ok {
+			// A Cluster recreated under the same name is another Cluster:
+			// its predecessor's observations do not describe it.
+			if uid == "" || uid == c.uid {
+				continue
+			}
+			c.cancel()
+			<-c.done
+			delete(f.set, k)
 		}
 		matcher := logstream.NewMatcher(f.opts.Rules, f.opts.MaxAge, f.opts.Now)
-		uid := f.opts.Roster.UID(ctx, k)
 		f.restoreLocked(k, uid, matcher)
 		key := k
 		members := func() []logstream.Member { return f.opts.Roster.Members(ctx, key) }
