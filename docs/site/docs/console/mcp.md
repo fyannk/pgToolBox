@@ -87,33 +87,25 @@ An Ingress gets four more paths, an HTTPRoute one more rule (with the same
 stream timeout), and an OpenShift Route, which has one path, four more Routes:
 `<console>-mcp-mcp`, `-oauth`, `-grants` and `-logout`. A Pod that does not
 hold the Lease answers those paths `503` with `Retry-After: 2`; a sign-out
-there works but does not disconnect assistants. While no Pod serves MCP (a
-crashed holder, or the team chart's MCP Pod not Ready), these paths, `/logout`
+there works but does not disconnect assistants. While no Pod serves MCP (the
+MCP Pod crashed or not Ready), these paths, `/logout`
 included, get the ingress or router's own `503`, without `Retry-After`: sign
 out again a moment later. No component writes an EndpointSlice.
 
-**With the operator** (`PgToolBoxConsole`), every replica is a candidate. The
-operator follows the Lease and labels its holder's Pod
-`pgtoolbox.fyannk.dev/mcp-leader: "true"`, taking the label off the others
-(and off every Pod when nobody holds the Lease; a crashed holder's Pod is not
-Ready, so the Service skips it until the next holder takes the label); the Service
-`<console>-mcp` selects the console's Pods with that label. A hand-over takes
-about 5 seconds when the holder stops (its `SHUTDOWN_DELAY`, 3 seconds by
-default, and the drain before it releases the Lease, then up to 2 seconds for
-the next to take it and load the grants), about 17 when it crashes, plus the
-moment the operator takes to move the label; while the operator is down the
-label stays where it was, and a former holder answers `503` until it moves.
-
-**With the team chart** (`pgtools`, no operator), MCP runs in a Deployment of
-its own, `<fullname>-mcp`: one replica (rolled with a surge, so an old and a
-new Pod overlap and the Lease keeps a single writer), the console's image,
-configuration and security context, `app.kubernetes.io/component:
-console-mcp`, with in-memory history and no digest delivery (both stay with
-the console's replicas). The console's replicas run MCP with
+Both installs, the operator (`PgToolBoxConsole`) and the team chart
+(`pgtools`), run MCP the same way: in a Deployment of its own, `<console>-mcp`
+(`<fullname>-mcp` with the chart), of one replica (rolled with a surge, so an
+old and a new Pod overlap and the Lease keeps a single writer), with the
+console's image, configuration and security context,
+`app.kubernetes.io/component: console-mcp`, in-memory history and no digest
+delivery (both stay with the console's replicas). The Service `<console>-mcp`
+selects that Pod alone. The console's replicas run MCP with
 `MCP_CANDIDATE=false`: they never take the Lease. A crash of the MCP Pod costs
 the time Kubernetes takes to start another, tens of seconds; the loss of its
-node about 5 minutes (until the node is declared lost). The chart's
-NetworkPolicies select the MCP Pod with the console's. Its history is in memory: the MCP tools
+node about 5 minutes (until the node is declared lost). Each install's
+NetworkPolicies select the MCP Pod with the console's; with the operator,
+`WorkloadReady` reports the MCP Deployment once the console's replicas are
+ready. Its history is in memory: the MCP tools
 that read history (and the timeline behind them) see only what that Pod
 collected since it started, and lose it at each restart.
 
@@ -129,11 +121,11 @@ kubectl -n team-a port-forward svc/<fullname>-mcp 8080:80
 ```
 
 A `PgToolBoxConsole` of type `clusterIP` has the same Service
-`<console>-mcp`, which follows the holder.
+`<console>-mcp`, which selects the MCP Pod.
 
-The election runs with one replica too (a rolling update overlaps two Pods).
+The election runs with the one MCP Pod too (a rolling update overlaps two).
 The leader holds the grant index in its memory and writes it to the shared
-state ConfigMap (`STATE_CONFIGMAP`); the replica taking over loads it before
+state ConfigMap (`STATE_CONFIGMAP`); the Pod taking over loads it before
 it serves. Without `STATE_CONFIGMAP` nothing is loaded: a hand-over, like a
 restart, disconnects every assistant. With the endpoint off there is no
 election, and none of these objects or paths is rendered.

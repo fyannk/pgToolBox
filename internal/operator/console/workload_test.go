@@ -74,7 +74,7 @@ func TestObserveWorkloadCountsAgainstTheDesiredReplicas(t *testing.T) {
 			c.Name, c.Namespace, c.Generation = "c", "ns", 1
 			w := ready
 			tc.mutate(&w)
-			if err := r.observeWorkload(context.Background(), c, w); err != nil {
+			if err := r.observeWorkload(context.Background(), c, w, selectorLabels(c)); err != nil {
 				t.Fatal(err)
 			}
 			got := meta.FindStatusCondition(c.Status.Conditions, pgtoolboxv1alpha1.ConditionWorkloadReady)

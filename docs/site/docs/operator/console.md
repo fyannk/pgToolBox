@@ -76,14 +76,18 @@ it (`<name>`, or `<name>-console` when the name does not already say console):
   RoleBinding letting the console `get` and `update` that one Lease and `create`
   leases (RBAC cannot scope a create by name; the console creates only that one,
   should it be deleted);
-- with `mcp.enabled`, [the MCP leader's](../console/mcp.md#one-pod-serves-mcp)
-  Lease `<name>-mcp` (**created once**, then written by the replicas), the
-  Service `<name>-mcp` selecting the console Pod labelled
-  `pgtoolbox.fyannk.dev/mcp-leader: "true"`, which the operator sets on the
-  Lease holder's Pod alone, the MCP paths of the exposure (four Routes on
-  OpenShift), and a Role and RoleBinding letting the console `get` and
-  `update` that Lease by name; with MCP off the Service, the Routes, the grant
-  and the label go, the Lease stays until the `PgToolBoxConsole` goes;
+- with `mcp.enabled`, [the MCP Pod](../console/mcp.md#one-pod-serves-mcp), as
+  the team chart renders it: the Deployment `<name>-mcp` of one replica
+  (component `console-mcp`, in-memory history, no digest delivery), the only
+  candidate for the Lease `<name>-mcp` (**created once**, then written by that
+  Pod), the Service `<name>-mcp` selecting that Pod alone, the MCP paths of
+  the exposure (four Routes on OpenShift), and a Role and RoleBinding letting
+  the console `get` and `update` that Lease by name; the console's replicas
+  get `MCP_CANDIDATE=false`. With MCP off the Deployment, the Service, the
+  Routes and the grant go, the Lease stays until the `PgToolBoxConsole` goes.
+  Operators before this one labelled the Lease holder's Pod
+  `pgtoolbox.fyannk.dev/mcp-leader: "true"`; nothing sets or reads that label
+  any more, and a Pod that still carries it is not selected;
 - the lifecycle ConfigMap (below);
 - unless `spec.instanceCABundleRef` is set, the instance CA bundle
   `<name>-instance-ca` (below);
@@ -203,10 +207,8 @@ the console stalls with `ConsoleRoleMissing` and looks again every two minutes.
 The Roles it writes (the revocation list, the state ConfigMap, the digest and
 MCP Leases) grant only verbs the operator holds itself, as RBAC escalation
 prevention requires: hence its `get`, `create` and `update` on leases, which it
-uses only to create each console's Leases. It also `list`s and `watch`es Leases
-(its cache holds only those it created) to follow the MCP Lease's holder, and
-`patch`es Pods to move the MCP leader label: only on the console's own Pods,
-only that label.
+uses only to create each console's Leases. It neither lists nor watches Leases,
+and it writes nothing on Pods: it only reads them, for `WorkloadReady`.
 
 ## The lifecycle table
 

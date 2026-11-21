@@ -95,18 +95,37 @@ const (
 	// different hash means the StatefulSet is replaced (its Pods kept).
 	claimTemplateHashAnnotation = "pgtoolbox.fyannk.dev/claim-template-hash"
 
+	componentLabel   = "app.kubernetes.io/component"
 	componentConsole = "console"
+	// componentMCP is the MCP Pod's component, as the chart's: the
+	// console's Service, PodDisruptionBudget and workload never select it.
+	componentMCP = "console-mcp"
 )
 
-// selectorLabels select the console's Pods. The PgToolBoxConsole label is in it, so
-// a chart release of the same name in the namespace never selects them.
-func selectorLabels(c *pgtoolboxv1alpha1.PgToolBoxConsole) map[string]string {
+// instanceLabels select every Pod of the console: its replicas and, with
+// MCP on, the MCP Pod (the NetworkPolicies select both, as the chart's).
+// The PgToolBoxConsole label is in it, so a chart release of the same name
+// in the namespace never selects them.
+func instanceLabels(c *pgtoolboxv1alpha1.PgToolBoxConsole) map[string]string {
 	return map[string]string{
 		"app.kubernetes.io/name":                "pgtoolbox-console",
 		"app.kubernetes.io/instance":            c.Name,
-		"app.kubernetes.io/component":           componentConsole,
 		pgtoolboxv1alpha1.LabelPgToolBoxConsole: c.Name,
 	}
+}
+
+// selectorLabels select the console's replicas.
+func selectorLabels(c *pgtoolboxv1alpha1.PgToolBoxConsole) map[string]string {
+	labels := instanceLabels(c)
+	labels[componentLabel] = componentConsole
+	return labels
+}
+
+// mcpSelectorLabels select the MCP Pod.
+func mcpSelectorLabels(c *pgtoolboxv1alpha1.PgToolBoxConsole) map[string]string {
+	labels := instanceLabels(c)
+	labels[componentLabel] = componentMCP
+	return labels
 }
 
 // identityLabels are the operator's labels on every generated object; they
@@ -130,6 +149,14 @@ func objectMeta(c *pgtoolboxv1alpha1.PgToolBoxConsole, name string, target pgtoo
 		Annotations:     annotations,
 		OwnerReferences: []metav1.OwnerReference{ownerReference(c)},
 	}
+}
+
+// mcpObjectMeta is objectMeta for the MCP objects (its Deployment, Service,
+// Lease and grant), of component console-mcp as the chart labels them.
+func mcpObjectMeta(c *pgtoolboxv1alpha1.PgToolBoxConsole, name string, target pgtoolboxv1alpha1.PropagationTarget) metav1.ObjectMeta {
+	meta := objectMeta(c, name, target)
+	meta.Labels[componentLabel] = componentMCP
+	return meta
 }
 
 func ownerReference(c *pgtoolboxv1alpha1.PgToolBoxConsole) metav1.OwnerReference {
@@ -427,20 +454,19 @@ func mcpPaths(c *pgtoolboxv1alpha1.PgToolBoxConsole) []exposure.PathBackend {
 	}
 }
 
-// buildMCPLeader is what sends the MCP paths to the one replica that
-// serves them: the Service selecting the console Pod the operator labels
-// as the holder of the Lease (mcpleader.go), and that Lease, created
-// empty (the replicas write it, the operator never does).
+// buildMCPLeader is what sends the MCP paths to the one Pod that serves
+// them: the Service selecting the MCP Deployment's Pod (buildMCPDeployment),
+// and the Lease that keeps a single writer while an old and a new MCP Pod
+// overlap in a roll, created empty (the MCP Pod writes it, the operator
+// never does).
 func buildMCPLeader(c *pgtoolboxv1alpha1.PgToolBoxConsole) (*corev1.Service, *coordinationv1.Lease) {
 	name := c.MCPLeaseName()
-	selector := selectorLabels(c)
-	selector[pgtoolboxv1alpha1.LabelMCPLeader] = pgtoolboxv1alpha1.MCPLeaderLabelValue
 	svc := &corev1.Service{
 		TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "Service"},
-		ObjectMeta: objectMeta(c, name, pgtoolboxv1alpha1.PropagationTargetService),
+		ObjectMeta: mcpObjectMeta(c, name, pgtoolboxv1alpha1.PropagationTargetService),
 		Spec: corev1.ServiceSpec{
 			Type:     corev1.ServiceTypeClusterIP,
-			Selector: selector,
+			Selector: mcpSelectorLabels(c),
 			Ports: []corev1.ServicePort{{
 				Name: "http", Port: servicePort, TargetPort: intstr.FromString("http"), Protocol: corev1.ProtocolTCP,
 			}},
@@ -449,25 +475,25 @@ func buildMCPLeader(c *pgtoolboxv1alpha1.PgToolBoxConsole) (*corev1.Service, *co
 	specs.SetHash(svc, specs.Hash(svc.Spec))
 	return svc, &coordinationv1.Lease{
 		TypeMeta:   metav1.TypeMeta{APIVersion: "coordination.k8s.io/v1", Kind: "Lease"},
-		ObjectMeta: objectMeta(c, name, pgtoolboxv1alpha1.PropagationTargetAll),
+		ObjectMeta: mcpObjectMeta(c, name, pgtoolboxv1alpha1.PropagationTargetAll),
 	}
 }
 
-// buildMCPLeaderRBAC lets the console's replicas elect the MCP leader:
-// get and update on that one Lease, by name; no create (the operator
-// creates it), nothing on Pods (the operator labels them).
+// buildMCPLeaderRBAC lets the MCP Pod take the MCP Lease: get and update
+// on that one Lease, by name; no create (the operator creates it),
+// nothing on Pods.
 func buildMCPLeaderRBAC(c *pgtoolboxv1alpha1.PgToolBoxConsole) (*rbacv1.Role, *rbacv1.RoleBinding) {
 	name := c.MCPLeaseName()
 	role := &rbacv1.Role{
 		TypeMeta:   metav1.TypeMeta{APIVersion: "rbac.authorization.k8s.io/v1", Kind: "Role"},
-		ObjectMeta: objectMeta(c, name, pgtoolboxv1alpha1.PropagationTargetAll),
+		ObjectMeta: mcpObjectMeta(c, name, pgtoolboxv1alpha1.PropagationTargetAll),
 		Rules: []rbacv1.PolicyRule{
 			{APIGroups: []string{coordinationv1.GroupName}, Resources: []string{"leases"}, ResourceNames: []string{name}, Verbs: []string{"get", "update"}},
 		},
 	}
 	binding := &rbacv1.RoleBinding{
 		TypeMeta:   metav1.TypeMeta{APIVersion: "rbac.authorization.k8s.io/v1", Kind: "RoleBinding"},
-		ObjectMeta: objectMeta(c, name, pgtoolboxv1alpha1.PropagationTargetAll),
+		ObjectMeta: mcpObjectMeta(c, name, pgtoolboxv1alpha1.PropagationTargetAll),
 		RoleRef:    rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "Role", Name: name},
 		Subjects:   []rbacv1.Subject{{Kind: rbacv1.ServiceAccountKind, Name: c.WorkloadName(), Namespace: c.Namespace}},
 	}
@@ -483,6 +509,9 @@ type deploymentInputs struct {
 	// the console in this reconcile (not merely requested: the Route and
 	// Gateway APIs may be unavailable).
 	Exposed bool
+	// MCPPod: the MCP Deployment's Pod (buildMCPDeployment), not one of
+	// the console's replicas.
+	MCPPod bool
 }
 
 // env is one environment variable, in the chart's order.
@@ -519,10 +548,42 @@ func buildDeployment(c *pgtoolboxv1alpha1.PgToolBoxConsole, in deploymentInputs)
 		Spec: appsv1.DeploymentSpec{
 			Replicas: new(c.EffectiveReplicas()),
 			Selector: &metav1.LabelSelector{MatchLabels: selectorLabels(c)},
-			Strategy: appsv1.DeploymentStrategy{Type: appsv1.RollingUpdateDeploymentStrategyType, RollingUpdate: &appsv1.RollingUpdateDeployment{
-				MaxSurge: new(intstr.FromInt32(1)), MaxUnavailable: new(intstr.FromInt32(0)),
-			}},
+			Strategy: surgeStrategy(),
 			Template: podTemplate(c, in),
+		},
+	}
+	specs.SetHash(deployment, specs.Hash(deployment.Spec))
+	return deployment
+}
+
+// surgeStrategy rolls a new Pod in before an old one goes.
+func surgeStrategy() appsv1.DeploymentStrategy {
+	return appsv1.DeploymentStrategy{Type: appsv1.RollingUpdateDeploymentStrategyType, RollingUpdate: &appsv1.RollingUpdateDeployment{
+		MaxSurge: new(intstr.FromInt32(1)), MaxUnavailable: new(intstr.FromInt32(0)),
+	}}
+}
+
+// buildMCPDeployment renders the MCP Deployment, as the chart's mcp.yaml
+// does: one replica named <console>-mcp, rolled with a surge (an old and a
+// new Pod overlap, and the MCP Lease keeps a single writer), the console's
+// image, configuration and security context, the only candidate for the
+// Lease. Its history is in memory and it delivers no digest: both need the
+// persistent history of the console's replicas. The console is deep-copied
+// with those settings, so the Pod is the console's own template.
+func buildMCPDeployment(c *pgtoolboxv1alpha1.PgToolBoxConsole, in deploymentInputs) *appsv1.Deployment {
+	mcp := c.DeepCopy()
+	mcp.Spec.Replicas = new(int32(1))
+	mcp.Spec.History.Persistent = new(false)
+	mcp.Spec.Digest.Delivery = nil
+	in.MCPPod = true
+	deployment := &appsv1.Deployment{
+		TypeMeta:   metav1.TypeMeta{APIVersion: "apps/v1", Kind: "Deployment"},
+		ObjectMeta: mcpObjectMeta(c, c.MCPLeaseName(), pgtoolboxv1alpha1.PropagationTargetWorkload),
+		Spec: appsv1.DeploymentSpec{
+			Replicas: new(int32(1)),
+			Selector: &metav1.LabelSelector{MatchLabels: mcpSelectorLabels(c)},
+			Strategy: surgeStrategy(),
+			Template: podTemplate(mcp, in),
 		},
 	}
 	specs.SetHash(deployment, specs.Hash(deployment.Spec))
@@ -572,6 +633,9 @@ func podTemplate(c *pgtoolboxv1alpha1.PgToolBoxConsole, in deploymentInputs) cor
 	container := consoleContainer(c, in, consoleEnv(c, in), mounts)
 	replicas := c.EffectiveReplicas()
 	podMeta := objectMeta(c, "", pgtoolboxv1alpha1.PropagationTargetPod)
+	if in.MCPPod {
+		podMeta = mcpObjectMeta(c, "", pgtoolboxv1alpha1.PropagationTargetPod)
+	}
 	podSpec := corev1.PodSpec{
 		ServiceAccountName: c.WorkloadName(),
 		// Only the console container gets an API token, as a projected
@@ -690,7 +754,7 @@ func consoleEnv(c *pgtoolboxv1alpha1.PgToolBoxConsole, in deploymentInputs) []co
 		envs = append(envs, env("OPERATIONS_ENABLED", "false"))
 	}
 	envs = append(envs, restoreDrillEnv(c)...)
-	envs = append(envs, mcpEnv(c)...)
+	envs = append(envs, mcpEnv(c, in.MCPPod)...)
 	envs = append(envs, tracingEnv(c)...)
 	if c.Spec.MonitoringURL != "" {
 		envs = append(envs, env("MONITORING_URL", c.Spec.MonitoringURL))
@@ -973,8 +1037,9 @@ func digestEnv(c *pgtoolboxv1alpha1.PgToolBoxConsole) []corev1.EnvVar {
 
 // mcpEnv renders spec.mcp: nothing while the endpoint is off, and each
 // tuning knob only when set (the console's default applies otherwise),
-// exactly as the pgtools chart renders console.mcp.
-func mcpEnv(c *pgtoolboxv1alpha1.PgToolBoxConsole) []corev1.EnvVar {
+// exactly as the pgtools chart renders console.mcp. The console's replicas
+// never campaign for the Lease: mcpPod is the one candidate.
+func mcpEnv(c *pgtoolboxv1alpha1.PgToolBoxConsole, mcpPod bool) []corev1.EnvVar {
 	if !c.MCPEnabled() {
 		return nil
 	}
@@ -998,8 +1063,13 @@ func mcpEnv(c *pgtoolboxv1alpha1.PgToolBoxConsole) []corev1.EnvVar {
 	if len(m.OAuthClientMetadataHosts) > 0 {
 		envs = append(envs, env("MCP_OAUTH_CLIENT_METADATA_HOSTS", strings.Join(m.OAuthClientMetadataHosts, ",")))
 	}
-	// One replica serves MCP: the holder of this Lease (buildMCPLeader).
-	return append(envs, env("MCP_LEASE", c.MCPLeaseName()))
+	// One Pod serves MCP, the holder of this Lease: the MCP Deployment's
+	// (buildMCPDeployment).
+	envs = append(envs, env("MCP_LEASE", c.MCPLeaseName()))
+	if !mcpPod {
+		envs = append(envs, env("MCP_CANDIDATE", "false"))
+	}
+	return envs
 }
 
 // tracingEnv renders spec.tracing as the OpenTelemetry SDK's variables

@@ -48,9 +48,11 @@ func init() {
 // operator generates for it.
 const LabelPgToolBoxConsole = "pgtoolbox.fyannk.dev/console"
 
-// LabelMCPLeader=MCPLeaderLabelValue marks the console Pod that holds the
-// MCP Lease, the one the -mcp Service selects. The operator sets it on
-// that Pod and removes it from the others.
+// LabelMCPLeader and MCPLeaderLabelValue are reserved: label keys are
+// frozen API surface, so this one is never reused for another meaning.
+// Older operators set it on the console Pod holding the MCP Lease; MCP now
+// runs in a Deployment of its own (<console>-mcp), nothing sets the label
+// and nothing reads it, on Pods that may still carry it after an upgrade.
 const (
 	LabelMCPLeader      = "pgtoolbox.fyannk.dev/mcp-leader"
 	MCPLeaderLabelValue = "true"

@@ -83,10 +83,10 @@ The CRDs carry `helm.sh/resource-policy: keep`: uninstalling the release does no
 delete every `PgToolBoxConsole`, `PgAdmin` and `EvidenceAgent` in the cluster. Operator
 values are explained on [the operator page](../operator/index.md); `image.digest`
 and `operator.console.image.digest` pin the operator and the console it runs for a
-`PgToolBoxConsole`. With a `PgToolBoxConsole`'s MCP on, every console replica is a
-candidate and the operator labels the one serving MCP: a hand-over takes about
-2 seconds when that replica stops, about 17 when it crashes, plus the
-operator's reaction ([one Pod serves MCP](../console/mcp.md#one-pod-serves-mcp)).
+`PgToolBoxConsole`. With a `PgToolBoxConsole`'s MCP on, the operator runs MCP as the
+team chart does, in a one-replica Deployment `<console>-mcp` of its own: a crash
+of that Pod costs tens of seconds
+([one Pod serves MCP](../console/mcp.md#one-pod-serves-mcp)).
 
 ## Upgrade and uninstall
 

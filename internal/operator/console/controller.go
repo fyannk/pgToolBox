@@ -30,7 +30,9 @@
 // With persistent history (the default) the console is a StatefulSet with
 // one history volume per replica; without, a Deployment. Switching from one
 // to the other, the operator deletes the old workload once the new one has
-// a replica available, so the console stays reachable.
+// a replica available, so the console stays reachable. With MCP on, one
+// more Deployment of one replica, <name>-mcp, serves MCP, as the chart's
+// does.
 package console
 
 import (
@@ -82,11 +84,11 @@ import (
 // +kubebuilder:rbac:groups=pgtoolbox.fyannk.dev,resources=pgtoolboxconsoles/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=pgtoolbox.fyannk.dev,resources=pgtoolboxconsoles/finalizers,verbs=update
 // +kubebuilder:rbac:groups=apps,resources=deployments;statefulsets,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=coordination.k8s.io,resources=leases,verbs=get;list;watch;create;update
+// +kubebuilder:rbac:groups=coordination.k8s.io,resources=leases,verbs=get;create;update
 // +kubebuilder:rbac:groups="",resources=services;serviceaccounts;persistentvolumeclaims,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch
-// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;patch
+// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 // +kubebuilder:rbac:groups=policy,resources=poddisruptionbudgets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=roles;rolebindings,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles,verbs=get;list;watch;create
@@ -198,12 +200,6 @@ var stallRetries = map[pgtoolboxv1alpha1.Reason]time.Duration{
 
 //nolint:gocyclo,cyclop,funlen // the console's children, in dependency order.
 func (r *Reconciler) reconcile(ctx context.Context, console *pgtoolboxv1alpha1.PgToolBoxConsole) error {
-	// First, ahead of every step that can stall: a new MCP Lease holder
-	// gets its route while the rest of the console waits (a paused
-	// console never reaches here, and is left as it is).
-	if err := r.labelMCPLeader(ctx, console); err != nil {
-		return err
-	}
 	image := specs.ResolveImage(console.Spec.Image, r.DefaultImage)
 	imageReason, imageProblem := r.imageProblem(console)
 	if err := r.checkHostname(ctx, console, imageProblem); err != nil {
@@ -291,9 +287,9 @@ func (r *Reconciler) reconcile(ctx context.Context, console *pgtoolboxv1alpha1.P
 		}
 	} else {
 		// The Lease stays, as the digest's does (it goes with the
-		// PgToolBoxConsole); without the Service and the grant nothing
-		// reaches or takes it.
-		for _, object := range []client.Object{&corev1.Service{}, &rbacv1.RoleBinding{}, &rbacv1.Role{}} {
+		// PgToolBoxConsole); without the MCP Pod, its Service and the grant
+		// nothing reaches or takes it.
+		for _, object := range []client.Object{&appsv1.Deployment{}, &corev1.Service{}, &rbacv1.RoleBinding{}, &rbacv1.Role{}} {
 			if err := r.deleteIfOwned(ctx, console, object, console.MCPLeaseName()); err != nil {
 				return err
 			}
@@ -355,7 +351,9 @@ func (r *Reconciler) reconcile(ctx context.Context, console *pgtoolboxv1alpha1.P
 }
 
 // reconcileWorkload applies the console's workload (a StatefulSet with
-// persistent history, else a Deployment) and records WorkloadReady. The
+// persistent history, else a Deployment) and, with MCP on, the MCP
+// Deployment, and records WorkloadReady: the console's replicas first,
+// then the MCP Pod, the one that serves MCP. The
 // other kind, when this console owns one (an older operator's persistent
 // Deployment, or a switch of history.persistent), is deleted once the new
 // workload has a replica available: until then both serve, behind the
@@ -372,7 +370,17 @@ func (r *Reconciler) reconcileWorkload(ctx context.Context, console *pgtoolboxv1
 		return r.notOwned(console, err)
 	}
 	facts := workloadFactsOf(desired)
-	if err := r.observeWorkload(ctx, console, facts); err != nil {
+	observed, selector := facts, selectorLabels(console)
+	if console.MCPEnabled() {
+		mcp := buildMCPDeployment(console, in)
+		if err := r.applier().Apply(ctx, mcp); err != nil {
+			return r.notOwned(console, err)
+		}
+		if mcpFacts := workloadFactsOf(mcp); facts.ready() && !mcpFacts.ready() {
+			observed, selector = mcpFacts, mcpSelectorLabels(console)
+		}
+	}
+	if err := r.observeWorkload(ctx, console, observed, selector); err != nil {
 		return err
 	}
 	if facts.Available < 1 {
@@ -755,13 +763,18 @@ func workloadFactsOf(object client.Object) workloadFacts {
 	return workloadFacts{}
 }
 
+// ready: every desired replica is updated and available, and no
+// ReplicaFailure: a quota that refuses the second Pod is not a ready
+// console of two.
+func (w workloadFacts) ready() bool {
+	return w.Failure == "" && w.ObservedGeneration >= w.Generation && w.Desired >= 1 &&
+		w.Replicas == w.Desired && w.Updated == w.Desired && w.Available >= w.Desired
+}
+
 // observeWorkload sets WorkloadReady from the live workload and, when it
-// is not ready, the blocking fact of its Pods. Ready means every desired
-// replica is updated and available, and no ReplicaFailure: a quota that
-// refuses the second Pod is not a ready console of two.
-func (r *Reconciler) observeWorkload(ctx context.Context, console *pgtoolboxv1alpha1.PgToolBoxConsole, w workloadFacts) error {
-	if w.Failure == "" && w.ObservedGeneration >= w.Generation && w.Desired >= 1 &&
-		w.Replicas == w.Desired && w.Updated == w.Desired && w.Available >= w.Desired {
+// is not ready, the blocking fact of its Pods (those selector selects).
+func (r *Reconciler) observeWorkload(ctx context.Context, console *pgtoolboxv1alpha1.PgToolBoxConsole, w workloadFacts, selector map[string]string) error {
+	if w.ready() {
 		setCondition(console, pgtoolboxv1alpha1.ConditionWorkloadReady, metav1.ConditionTrue, pgtoolboxv1alpha1.ReasonAsExpected,
 			fmt.Sprintf("%s %s: %d of %d replicas available", w.Kind, w.Name, w.Available, w.Desired))
 		return nil
@@ -774,7 +787,7 @@ func (r *Reconciler) observeWorkload(ctx context.Context, console *pgtoolboxv1al
 	case w.Stuck != "":
 		reason, message = pgtoolboxv1alpha1.ReasonRolloutStuck, w.Stuck
 	}
-	podReason, podMessage, err := podFacts(ctx, r.APIReader, console)
+	podReason, podMessage, err := podFacts(ctx, r.APIReader, console.Namespace, selector)
 	if err != nil {
 		return err
 	}
@@ -795,9 +808,9 @@ func ptrValue[T any](value *T, fallback T) T {
 // podFacts copies a console Pod's blocking fact into a reason: the
 // scheduler's Unschedulable, an image pull failure, a crash loop, a missing
 // Secret key.
-func podFacts(ctx context.Context, reader client.Reader, console *pgtoolboxv1alpha1.PgToolBoxConsole) (pgtoolboxv1alpha1.Reason, string, error) {
+func podFacts(ctx context.Context, reader client.Reader, namespace string, selector map[string]string) (pgtoolboxv1alpha1.Reason, string, error) {
 	var pods corev1.PodList
-	if err := reader.List(ctx, &pods, client.InNamespace(console.Namespace), client.MatchingLabels(selectorLabels(console))); err != nil {
+	if err := reader.List(ctx, &pods, client.InNamespace(namespace), client.MatchingLabels(selector)); err != nil {
 		return "", "", fmt.Errorf("list console Pods: %w", err)
 	}
 	for i := range pods.Items {
