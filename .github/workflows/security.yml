@@ -318,20 +318,13 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      # `latest` exists only after a stable release. Before the first one the
-      # honest result is "not run", marked optional so the gate does not fail on
-      # what cannot exist yet.
       - name: Scan the latest published image by digest
         run: |
           set -euo pipefail
           mkdir -p results
           target="published-${NAME}"
-          if ! digest="$(docker buildx imagetools inspect "${REF}" --format '{{json .Manifest.Digest}}' 2>/dev/null | tr -d '"')" || [[ -z "${digest}" ]]; then
-            python3 hack/security_report.py unrun --scanner grype --target "${target}" --optional \
-              --reason "the latest image could not be read: no stable release is published yet, or its package is not public" \
-              --output "results/grype-${target}.envelope.json"
-            exit 0
-          fi
+          digest="$(docker buildx imagetools inspect "${REF}" --format '{{json .Manifest.Digest}}' | tr -d '"')"
+          [[ -n "${digest}" ]] || { echo "empty digest for ${REF}" >&2; exit 1; }
           grype "registry:${REF%:latest}@${digest}" -o "json=results/grype-${target}.json"
           python3 hack/security_report.py normalize --scanner grype --kind grype \
             --input "results/grype-${target}.json" --target "${target}" --tool-mise aqua:anchore/grype \
