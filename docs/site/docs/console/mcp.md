@@ -105,7 +105,9 @@ the time Kubernetes takes to start another, tens of seconds; the loss of its
 node about a minute: the node controller's grace before it marks the node not
 ready or unreachable, then 30 seconds, which the MCP Pod tolerates on
 `node.kubernetes.io/not-ready` and `node.kubernetes.io/unreachable` instead of
-the default 300 (the chart adds them after `console.tolerations`). Each install's
+the default 300 (the chart adds them after `console.tolerations`). A drain or a
+node upgrade evicts the one MCP Pod like a crash: tens of seconds without MCP
+(no PodDisruptionBudget, which would block the drain). Each install's
 NetworkPolicies select the MCP Pod with the console's; with the operator,
 `WorkloadReady` reports the MCP Deployment once the console's replicas are
 ready. Its history is in memory: the MCP tools
@@ -294,15 +296,16 @@ Two `503` answers carry `Retry-After`:
 - of problem type `urn:pgtoolbox:disconnection-unrecorded`: the leader revoked
   the grants, but the API server did not take the write. The leader refuses
   them at once; a replica taking over before the write lands would not.
-- without that type: the replica that answered does not serve MCP (a hand-over
-  is under way, about 5 seconds after a leader stops, about 17 after it
-  crashes). In that gap most answers come from the ingress or router, which
-  has no Pod to send them to: a `503` without `Retry-After`.
+- without that type: the Pod that answered does not serve MCP (a new MCP Pod
+  is taking over the Lease, a few seconds after the old one stops). While no
+  MCP Pod is Ready (a crash, a drain: tens of seconds) the answers come from
+  the ingress or router, which has no Pod to send them to: a `503` without
+  `Retry-After`.
 
 On either, the Assistants page keeps the assistant listed as "not confirmed
 yet" with a **Retry** button (no need to type the name again). A retry that
 answers `404` means nothing is left to revoke. When the `503` persists, check
-that a replica holds the Lease `<console>-mcp`, that the console's
+that the MCP Pod is Ready and holds the Lease `<console>-mcp`, that the console's
 ServiceAccount may `get`, `watch` and `update` the state ConfigMap and that the
 API server is reachable from the console pods; the console logs the shared
 state's mode changes (`shared state`).
