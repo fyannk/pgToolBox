@@ -357,3 +357,40 @@ func TestReconcileDeletionWithAForeignFinalizerRevokesTheGrant(t *testing.T) {
 		t.Fatalf("a second loop emitted %v", again)
 	}
 }
+
+// A cache that still lists a RoleBinding already deleted must not repeat
+// its deletion Event (#181): the delete answers NotFound, which deletes
+// nothing, so the second loop of the Terminating request records nothing.
+func TestReconcileDeletionFromAStaleCacheRecordsTheDeletionOnce(t *testing.T) {
+	r := request(pgtoolboxv1alpha1.AccessPhaseApproved, expiresAt(testNow.Add(time.Hour)), func(r *pgtoolboxv1alpha1.PgAccessRequest) {
+		r.Finalizers = []string{"example.com/keep"}
+	})
+	binding := granted(r, testNow.Add(-time.Hour))
+	c := fake.NewClientBuilder().WithScheme(testScheme(t)).
+		WithStatusSubresource(&pgtoolboxv1alpha1.PgAccessRequest{}).
+		WithObjects(r.DeepCopy(), binding.DeepCopy()).
+		WithInterceptorFuncs(interceptor.Funcs{
+			List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+				if err := c.List(ctx, list, opts...); err != nil {
+					return err
+				}
+				if l, ok := list.(*rbacv1.RoleBindingList); ok && len(l.Items) == 0 {
+					l.Items = append(l.Items, *binding.DeepCopy()) // the stale cache
+				}
+				return nil
+			},
+		}).Build()
+	recorder := events.NewFakeRecorder(32)
+	s := &fakeSuite{client: c, recorder: recorder, reconciler: &Reconciler{Client: c, Recorder: recorder, Now: func() time.Time { return testNow }}}
+	if err := c.Delete(context.Background(), r.DeepCopy()); err != nil {
+		t.Fatal(err)
+	}
+	s.reconcile(t, r)
+	if evs := strings.Join(s.events(), "\n"); strings.Count(evs, "RoleBindingDeleted") != 1 {
+		t.Fatalf("first loop: events %q, want one RoleBindingDeleted", evs)
+	}
+	s.reconcile(t, r)
+	if again := s.events(); len(again) != 0 {
+		t.Fatalf("a loop over the stale cache emitted %v", again)
+	}
+}
