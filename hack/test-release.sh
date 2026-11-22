@@ -149,6 +149,16 @@ grep -q 'compare/v0.0.1...v0.1.0' <<<"${out}" && ! grep -q "feat:" <<<"${out}" |
 out="$(link v0.0.1)"
 grep -q 'commits/v0.0.1' <<<"${out}" || fail "commits-link of the first tag: ${out}"
 
+# newest-stable: only the highest stable tag moves latest (#104).
+newest() { (cd "${crepo}" && ./hack/release.sh newest-stable "$1"); }
+[[ "$(newest v0.1.0)" == true ]] || fail "v0.1.0 is the newest stable tag"
+[[ "$(newest v0.1.1)" == true ]] || fail "a new patch above every tag is newest"
+[[ "$(newest v0.0.2)" == false ]] || fail "a patch on an older line must not move latest"
+[[ "$(newest v0.0.1)" == false ]] || fail "an older tag is not newest"
+[[ "$(newest v0.10.0)" == true ]] || fail "v0.10.0 sorts above v0.1.0 (sort -V)"
+[[ "$(newest v0.2.0-rc.1)" == false ]] || fail "a candidate is never newest stable"
+echo "ok: newest-stable"
+
 # ---- check-public and scan-digests: stubs first on PATH.
 stubs="${work}/stubs"
 mkdir -p "${stubs}"
