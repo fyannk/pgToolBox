@@ -5,7 +5,7 @@
 # @playwright/test in package.json, by digest (Dependabot proposes the bumps; a
 # bump re-renders the baselines: make ui-e2e-update). pnpm is the version
 # mise.toml pins, from its release, checked by sha256 (hack/check-toolchain.sh).
-FROM mcr.microsoft.com/playwright:v1.65.0-noble@sha256:9beb546099e11f52d62e505537914870e01a67e0e6b00ae41da4775324e73dbe
+FROM mcr.microsoft.com/playwright:v1.65.1-noble@sha256:1507cbfc550a63a6b7396791ca4f00df17beb56342d2447b3f106c306f525579
 ADD --checksum=sha256:565ff81174a14f6f7bd5d84c1b17e51031a80230d370a1fe24be5d16bd02a825 https://github.com/pnpm/pnpm/releases/download/v12.16.1/pnpm-linux-x64.tar.gz /tmp/pnpm.tar.gz
 RUN mkdir /opt/pnpm && tar -xzf /tmp/pnpm.tar.gz -C /opt/pnpm && rm /tmp/pnpm.tar.gz \
     && ln -s /opt/pnpm/pnpm /usr/local/bin/pnpm && pnpm --version
