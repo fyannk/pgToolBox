@@ -109,10 +109,9 @@ type Server struct {
 	// DatabaseRole say. KindSecret and KindNone need both.
 	Database string `json:"database,omitempty"`
 	User     string `json:"user,omitempty"`
-	// CASecret holds the Cluster's server CA (key ca.crt). Empty, without
-	// CAConfigMap, is CloudNativePG's default, <cluster>-ca: a name the
-	// values do not state, deprecated (DerivedCASecret). The sidecar checks
-	// it against the Cluster.
+	// CASecret holds the Cluster's server CA (key ca.crt), checked against
+	// the Cluster. With neither it nor CAConfigMap no Secret is guessed:
+	// CloudNativePG's <cluster>-ca also holds ca.key.
 	CASecret string `json:"caSecret,omitempty"`
 	// CAConfigMap holds the Cluster's server CA (key ca.crt only), mounted
 	// into the sidecar (CAConfigMapFile) instead of read through the API.
@@ -326,24 +325,6 @@ func (s Server) DisplayName() string {
 	return fmt.Sprintf("%s %s (%s)", s.Cluster, s.Endpoint, who)
 }
 
-// CASecretName is the Secret the server's CA is read from; "" when it
-// comes from a ConfigMap.
-func (s Server) CASecretName() string {
-	if s.CAConfigMap != "" {
-		return ""
-	}
-	if s.CASecret != "" {
-		return s.CASecret
-	}
-	return s.Cluster + "-ca"
-}
-
-// DerivedCASecret reports whether the server's CA Secret is the derived
-// <cluster>-ca default rather than a name the values state.
-func (s Server) DerivedCASecret() bool {
-	return s.CASecret == "" && s.CAConfigMap == ""
-}
-
 // CAConfigMapFile is where a caConfigMap's CA is mounted under dir,
 // <dir>/<configmap>/ca.crt: the layout of the chart's projected volume.
 func CAConfigMapFile(dir, configMap string) string {
@@ -404,7 +385,7 @@ func (d Document) Names() Names {
 	}
 	for _, s := range d.Servers {
 		add(&n.Clusters, s.Cluster)
-		add(&n.Secrets, s.CASecretName())
+		add(&n.Secrets, s.CASecret)
 		add(&n.Secrets, s.Credentials.Secret)
 		add(&n.DatabaseRoles, s.Credentials.Role)
 		if pooler, ok := s.PoolerName(); ok {

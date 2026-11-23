@@ -27,7 +27,7 @@ tests:
   - it: renders nothing with servers declared but pgadmin.enabled false
     set:
       pgadmin.servers:
-        - {cluster: orders, endpoint: rw, credentials: {application: {secret: orders-app}}}
+        - {cluster: orders, endpoint: rw, caConfigMap: orders-ca-crt, credentials: {application: {secret: orders-app}}}
     asserts:
       - hasDocuments: {count: 0}
 
@@ -43,7 +43,7 @@ tests:
     set:
       pgadmin.enabled: true
       pgadmin.servers:
-        - {cluster: orders, endpoint: rw, credentials: {secret: orders-owner}}
+        - {cluster: orders, endpoint: rw, caConfigMap: orders-ca-crt, credentials: {secret: orders-owner}}
     asserts:
       - failedTemplate: {}
 
@@ -51,7 +51,7 @@ tests:
     set:
       pgadmin.enabled: true
       pgadmin.servers:
-        - {cluster: orders, endpoint: rw, user: alice, credentials: none}
+        - {cluster: orders, endpoint: rw, caConfigMap: orders-ca-crt, user: alice, credentials: none}
     asserts:
       - failedTemplate: {}
 
@@ -69,7 +69,7 @@ tests:
     set:
       pgadmin.enabled: true
       pgadmin.servers:
-        - {cluster: orders, endpoint: rw, credentials: application}
+        - {cluster: orders, endpoint: rw, caConfigMap: orders-ca-crt, credentials: application}
     asserts:
       - failedTemplate: {}
 
@@ -77,7 +77,7 @@ tests:
     set:
       pgadmin.enabled: true
       pgadmin.servers:
-        - {cluster: orders, endpoint: primary, credentials: {application: {secret: orders-app}}}
+        - {cluster: orders, endpoint: primary, caConfigMap: orders-ca-crt, credentials: {application: {secret: orders-app}}}
     asserts:
       - failedTemplate: {}
 
@@ -90,8 +90,8 @@ tests:
     set:
       pgadmin.enabled: true
       pgadmin.servers:
-        - {cluster: orders, endpoint: rw, credentials: {application: {secret: orders-app}}}
-        - {cluster: orders, endpoint: rw, credentials: {application: {secret: orders-app2}}}
+        - {cluster: orders, endpoint: rw, caConfigMap: orders-ca-crt, credentials: {application: {secret: orders-app}}}
+        - {cluster: orders, endpoint: rw, caConfigMap: orders-ca-crt, credentials: {application: {secret: orders-app2}}}
     template: templates/pgadmin/deployment.yaml
     asserts:
       - failedTemplate:

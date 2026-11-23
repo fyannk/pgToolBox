@@ -25,10 +25,10 @@ import (
 // chartRendering is what the chart's ConfigMap carries for a pgadmin.servers
 // list: the servers as written, wrapped with the version.
 const chartRendering = `{"version":1,"servers":[
- {"cluster":"orders","endpoint":"rw","credentials":{"application":{"secret":"orders-app"}}},
- {"cluster":"orders","endpoint":"ro","credentials":{"databaseRole":{"name":"orders-reporting","secret":"orders-reporting-password"}}},
- {"cluster":"orders","endpoint":"pooler:orders-pool","credentials":{"superuser":{"secret":"orders-superuser"}}},
- {"cluster":"billing","endpoint":"rw","database":"billing","user":"billing_owner","credentials":{"secret":"billing-owner"}},
+ {"cluster":"orders","endpoint":"rw","caConfigMap":"orders-ca-crt","credentials":{"application":{"secret":"orders-app"}}},
+ {"cluster":"orders","endpoint":"ro","caConfigMap":"orders-ca-crt","credentials":{"databaseRole":{"name":"orders-reporting","secret":"orders-reporting-password"}}},
+ {"cluster":"orders","endpoint":"pooler:orders-pool","caConfigMap":"orders-ca-crt","credentials":{"superuser":{"secret":"orders-superuser"}}},
+ {"cluster":"billing","endpoint":"rw","caConfigMap":"billing-ca-crt","database":"billing","user":"billing_owner","credentials":{"secret":"billing-owner"}},
  {"cluster":"legacy","endpoint":"rw","database":"app","user":"alice","caSecret":"legacy-server-ca","credentials":"none"}
 ]}`
 
@@ -53,8 +53,7 @@ func TestParseTheChartRendering(t *testing.T) {
 		DatabaseRoles: []string{"orders-reporting"},
 		Poolers:       []string{"orders-pool"},
 		Secrets: []string{
-			"billing-ca", "billing-owner", "legacy-server-ca", "orders-app", "orders-ca",
-			"orders-reporting-password", "orders-superuser",
+			"billing-owner", "legacy-server-ca", "orders-app", "orders-reporting-password", "orders-superuser",
 		},
 	}
 	if !reflect.DeepEqual(names, want) {
@@ -77,17 +76,17 @@ func TestServerDerivations(t *testing.T) {
 		t.Fatal(err)
 	}
 	cases := []struct{ name, host, ca, service string }{
-		{"orders rw (application)", "orders-rw.team.svc", "orders-ca", "pgtoolbox-orders-rw-application"},
-		{"orders ro (orders-reporting)", "orders-ro.team.svc", "orders-ca", "pgtoolbox-orders-ro-orders-reporting"},
-		{"orders pooler:orders-pool (superuser)", "orders-pool.team.svc", "orders-ca", "pgtoolbox-orders-pooler-orders-pool-superuser"},
-		{"billing rw (billing_owner)", "billing-rw.team.svc", "billing-ca", "pgtoolbox-billing-rw-billing-owner"},
+		{"orders rw (application)", "orders-rw.team.svc", "", "pgtoolbox-orders-rw-application"},
+		{"orders ro (orders-reporting)", "orders-ro.team.svc", "", "pgtoolbox-orders-ro-orders-reporting"},
+		{"orders pooler:orders-pool (superuser)", "orders-pool.team.svc", "", "pgtoolbox-orders-pooler-orders-pool-superuser"},
+		{"billing rw (billing_owner)", "billing-rw.team.svc", "", "pgtoolbox-billing-rw-billing-owner"},
 		{"legacy rw (alice)", "legacy-rw.team.svc", "legacy-server-ca", "pgtoolbox-legacy-rw-alice"},
 	}
 	services := doc.Services()
 	for i, tc := range cases {
 		s := doc.Servers[i]
-		if s.DisplayName() != tc.name || s.Host("team") != tc.host || s.CASecretName() != tc.ca || services[i] != tc.service {
-			t.Errorf("server %d: %q %q %q %q, want %+v", i, s.DisplayName(), s.Host("team"), s.CASecretName(), services[i], tc)
+		if s.DisplayName() != tc.name || s.Host("team") != tc.host || s.CASecret != tc.ca || services[i] != tc.service {
+			t.Errorf("server %d: %q %q %q %q, want %+v", i, s.DisplayName(), s.Host("team"), s.CASecret, services[i], tc)
 		}
 	}
 	named := Server{Name: "Orders (prod)", Cluster: "orders", Endpoint: "rw"}
@@ -153,8 +152,8 @@ func TestParseRefusals(t *testing.T) {
 
 // TestCASources: where each server's CA comes from, and what the Role
 // must grant for it. A caConfigMap names no Secret at all (the point of
-// it: CloudNativePG's <cluster>-ca also holds the signing key); only the
-// derived default is reported as such.
+// it: CloudNativePG's <cluster>-ca also holds the signing key), and a server
+// with neither field gets no guessed one.
 func TestCASources(t *testing.T) {
 	doc, err := Parse([]byte(`{"version":1,"servers":[
 	 {"cluster":"orders","endpoint":"rw","caConfigMap":"orders-ca-crt","credentials":{"application":{"secret":"orders-app"}}},
@@ -166,24 +165,12 @@ func TestCASources(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cases := []struct {
-		caSecret string
-		derived  bool
-	}{
-		{"", false}, {"", false}, {"billing-server-ca", false}, {"legacy-ca", true}, {"", false},
-	}
-	for i, tc := range cases {
-		s := doc.Servers[i]
-		if s.CASecretName() != tc.caSecret || s.DerivedCASecret() != tc.derived {
-			t.Errorf("server %d: CA Secret %q derived %v, want %+v", i, s.CASecretName(), s.DerivedCASecret(), tc)
-		}
-	}
 	if got, want := doc.CAConfigMaps(), []string{"a-bundle", "orders-ca-crt"}; !slices.Equal(got, want) {
 		t.Errorf("CAConfigMaps %v, want %v", got, want)
 	}
-	want := []string{"billing-app", "billing-server-ca", "legacy-ca", "orders-app", "shared-app"}
+	want := []string{"billing-app", "billing-server-ca", "orders-app", "shared-app"}
 	if got := doc.Names().Secrets; !slices.Equal(got, want) {
-		t.Errorf("Names().Secrets %v, want %v: no CA Secret for a caConfigMap", got, want)
+		t.Errorf("Names().Secrets %v, want %v: only the CA Secret the list names", got, want)
 	}
 	if got := CAConfigMapFile("/run/pgtoolbox/ca", "orders-ca-crt"); got != "/run/pgtoolbox/ca/orders-ca-crt/ca.crt" {
 		t.Errorf("CAConfigMapFile %s", got)
@@ -215,9 +202,9 @@ func FuzzParseDeclared(f *testing.F) {
 				t.Fatalf("server %+v not covered by Names %+v", s, names)
 			}
 			switch {
-			case s.CAConfigMap != "" && (s.CASecret != "" || s.CASecretName() != "" || !slices.Contains(doc.CAConfigMaps(), s.CAConfigMap)):
+			case s.CAConfigMap != "" && (s.CASecret != "" || !slices.Contains(doc.CAConfigMaps(), s.CAConfigMap)):
 				t.Fatalf("server %+v: a caConfigMap names a CA Secret, or is not mounted", s)
-			case s.CAConfigMap == "" && !slices.Contains(names.Secrets, s.CASecretName()):
+			case s.CASecret != "" && !slices.Contains(names.Secrets, s.CASecret):
 				t.Fatalf("server %+v: CA Secret not covered by Names %+v", s, names)
 			}
 			if strings.ContainsAny(s.Host("ns"), "/:@ \n") {

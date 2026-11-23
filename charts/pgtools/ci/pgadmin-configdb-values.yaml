@@ -14,5 +14,6 @@ pgadmin:
   servers:
     - cluster: orders
       endpoint: rw
+      caConfigMap: orders-ca-crt
       credentials:
         application: {secret: orders-app}

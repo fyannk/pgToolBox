@@ -27,7 +27,7 @@ set:
   pgadmin.auth.provider: openshift
   pgadmin.exposure.type: route
   pgadmin.servers:
-    - {cluster: orders, endpoint: rw, credentials: {application: {secret: orders-app}}}
+    - {cluster: orders, endpoint: rw, caConfigMap: orders-ca-crt, credentials: {application: {secret: orders-app}}}
 tests:
   - it: runs the image the cluster's v4.4 tag points at
     capabilities:

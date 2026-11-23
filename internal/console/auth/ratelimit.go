@@ -93,15 +93,19 @@ func (l *RateLimiter) take(key string) bool {
 	if !ok {
 		if len(l.buckets) >= l.max {
 			// Forget full buckets first; when every key is mid-burst the
-			// table is reset rather than grown: an address spray cannot
-			// buy memory, only a fresh burst per address.
+			// least recently used one goes. Clearing the table instead
+			// would hand a throttled client a fresh burst for the price of
+			// an address spray; evicting by age keeps the buckets in use.
+			var oldest string
 			for k, v := range l.buckets {
 				if v.tokens+now.Sub(v.last).Seconds()*l.rate >= l.burst {
 					delete(l.buckets, k)
+				} else if oldest == "" || v.last.Before(l.buckets[oldest].last) {
+					oldest = k
 				}
 			}
 			if len(l.buckets) >= l.max {
-				clear(l.buckets)
+				delete(l.buckets, oldest)
 			}
 		}
 		b = &bucket{tokens: l.burst, last: now}

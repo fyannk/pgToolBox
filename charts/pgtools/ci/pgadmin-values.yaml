@@ -24,14 +24,17 @@ pgadmin:
   servers:
     - cluster: orders
       endpoint: rw
+      caConfigMap: orders-ca-crt
       credentials:
         application: {secret: orders-app}
     - cluster: orders
       endpoint: ro
+      caConfigMap: orders-ca-crt
       credentials:
         databaseRole: {name: orders-reporting, secret: orders-reporting-password}
     - cluster: orders
       endpoint: pooler:orders-pool
+      caConfigMap: orders-ca-crt
       credentials:
         superuser: {secret: orders-superuser}
     - cluster: billing

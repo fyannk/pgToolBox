@@ -132,7 +132,9 @@ func TestOpenBodyDeadlineScalesWithMaxBytes(t *testing.T) {
 				for range test.chunks {
 					select {
 					case <-request.Context().Done():
-						return
+						// A plain return can end the body cleanly before the
+						// client sees its own deadline.
+						panic(http.ErrAbortHandler)
 					case <-time.After(50 * time.Millisecond):
 					}
 					_, _ = writer.Write([]byte("x"))

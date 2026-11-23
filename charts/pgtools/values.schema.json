@@ -2521,7 +2521,7 @@
                 "pattern": "^[^\\x00-\\x1f\\x7f]{1,63}$"
               },
               "caSecret": {
-                "description": "Secret holding the Cluster's server CA (ca.crt). Without it or caConfigMap: the derived <cluster>-ca, deprecated.",
+                "description": "Secret holding the Cluster's server CA (ca.crt). Every server names it or caConfigMap; there is no default.",
                 "type": "string",
                 "pattern": "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$",
                 "maxLength": 253

@@ -17,8 +17,8 @@ set:
     clientID: pgadmin
     clientSecret: {existingSecret: pgadmin-oidc}
   pgadmin.servers:
-    - {cluster: orders, endpoint: rw, credentials: {application: {secret: orders-app}}}
-    - {cluster: orders, endpoint: "pooler:orders-pool", credentials: {application: {secret: orders-app}}, name: pooled}
+    - {cluster: orders, endpoint: rw, caConfigMap: orders-ca-crt, credentials: {application: {secret: orders-app}}}
+    - {cluster: orders, endpoint: "pooler:orders-pool", caConfigMap: orders-ca-crt, credentials: {application: {secret: orders-app}}, name: pooled}
 tests:
   - it: renders no NetworkPolicy by default
     template: templates/pgadmin/networkpolicy.yaml
