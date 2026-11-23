@@ -14,7 +14,7 @@ theirs.
 
 1. Read `.claude/council/README.md` (the rules every reviewer holds to,
    and the shape of your answer), then your checklist,
-   `.claude/council/security.md`.
+   `.claude/council/security-review.md`.
 2. Look only at the target you were given (a diff, files, a package, or
    your area across the project) and what you need to follow it.
 3. Check what you can (a fuzz seed, an `httptest` request, a rendered
