@@ -649,7 +649,10 @@ jobs:
       # newest: it moves neither latest nor the Latest badge.
       - name: Decide whether this release is the newest stable
         id: newest
-        run: echo "newest=$(./hack/release.sh newest-stable "${TAG}")" >> "${GITHUB_OUTPUT}"
+        run: |
+          set -euo pipefail
+          newest="$(./hack/release.sh newest-stable "${TAG}")"
+          echo "newest=${newest}" >> "${GITHUB_OUTPUT}"
       # latest is a promise that this is the newest stable release, that it
       # passed the scan and that its packages are public. It moves last, after
       # the visibility check, and points at the digest that was signed, so
