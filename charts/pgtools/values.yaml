@@ -1192,10 +1192,8 @@ evidence:
 #   | Backup before an upgrade     | a Job                              | an init container, local copy                 |
 #
 # Its whole authority is a Role granting get and watch on exactly the
-# Clusters, DatabaseRoles, Poolers and Secrets named below (resourceNames),
-# plus, until the next minor, the derived <cluster>-ca of a server that names
-# neither caSecret nor caConfigMap: no list, no other Secret of the namespace,
-# nothing cluster-scoped.
+# Clusters, DatabaseRoles, Poolers and Secrets named below (resourceNames):
+# no list, no other Secret of the namespace, nothing cluster-scoped.
 # ==========================================================================
 pgadmin:
   # -- Install pgAdmin without the operator: one pgAdmin for the team, with the
@@ -1256,12 +1254,9 @@ pgadmin:
   #                of one Cluster names the same one. Preferred.
   #   caSecret     a Secret with the server CA (ca.crt), checked against
   #                spec.certificates.serverCASecret. Exclusive with caConfigMap.
-  #                DEPRECATED default: with neither, the chart derives
-  #                "<cluster>-ca" and grants the sidecar get and watch on it,
-  #                a Secret these values do not name, which CloudNativePG fills
-  #                with ca.key, the CA's signing key, too (the sidecar copies
-  #                only ca.crt). NOTES names each one; the next minor release
-  #                requires caSecret or caConfigMap on every server.
+  #                The CA Secret CloudNativePG makes also holds ca.key, the CA's
+  #                signing key: naming it lets the Pod read that key.
+  #                One of the two is REQUIRED; there is no default.
   #   credentials  REQUIRED, there is no default. Exactly one of:
   #     application: {secret: <cluster>-app}     the Cluster's application owner;
   #                  the Secret must be the one CloudNativePG made for this
@@ -1279,11 +1274,10 @@ pgadmin:
   # server is still listed, pgAdmin asks for the password, and the sidecar logs
   # the server's name and why (names only, never a value).
   # -- Shared servers every pgAdmin user sees, in the "PgToolBox" group. Each
-  # entry takes `cluster`, `endpoint` and `credentials` (required), and
-  # optionally `name`, `database`, `user`, and `caConfigMap` or `caSecret` (one
-  # of them will be required in the next minor: the derived `<cluster>-ca`
-  # default is deprecated); see the README. A credential source that does not
-  # match the live Cluster is never used.
+  # entry takes `cluster`, `endpoint`, `credentials` and `caConfigMap` or
+  # `caSecret` (required), and optionally `name`, `database` and `user`; see the
+  # README. A credential source that does not match the live Cluster is never
+  # used.
   servers: []
   # - cluster: orders
   #   endpoint: rw

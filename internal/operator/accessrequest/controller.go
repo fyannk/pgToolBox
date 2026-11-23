@@ -142,8 +142,12 @@ func (r *Reconciler) reconcile(ctx context.Context, access *pgtoolboxv1alpha1.Pg
 		access.Status.Phase = d.Phase
 	}
 	for _, binding := range d.Delete {
-		if err := r.deleteBinding(ctx, access, binding); err != nil {
+		deleted, err := r.deleteBinding(ctx, access, binding)
+		if err != nil {
 			return ctrl.Result{}, err
+		}
+		if !deleted {
+			continue
 		}
 		// The deletion happened whatever the status write does next: its
 		// Event is not deferred, and the next loop finds nothing to delete.
@@ -172,8 +176,12 @@ func (r *Reconciler) revokeOnDeletion(ctx context.Context, access *pgtoolboxv1al
 		return err
 	}
 	for _, binding := range bindings {
-		if err := r.deleteBinding(ctx, access, binding); err != nil {
+		deleted, err := r.deleteBinding(ctx, access, binding)
+		if err != nil {
 			return err
+		}
+		if !deleted {
+			continue
 		}
 		r.event(access, pendingEvent{
 			corev1.EventTypeNormal, pgtoolboxv1alpha1.ReasonRoleBindingDeleted,
@@ -230,12 +238,18 @@ func (r *Reconciler) bindings(ctx context.Context, access *pgtoolboxv1alpha1.PgA
 // deleteBinding deletes one RoleBinding the request controls, preconditioned
 // on its UID so a binding recreated under the same name in between is not
 // the one deleted.
-func (r *Reconciler) deleteBinding(ctx context.Context, access *pgtoolboxv1alpha1.PgAccessRequest, binding rbacv1.RoleBinding) error {
+// It reports whether this call deleted it: false, with no error, when the
+// binding was already gone (a cache that still lists it), so that the
+// caller records the deletion once, not once per loop.
+func (r *Reconciler) deleteBinding(ctx context.Context, access *pgtoolboxv1alpha1.PgAccessRequest, binding rbacv1.RoleBinding) (bool, error) {
 	uid := binding.UID
 	err := r.Client.Delete(ctx, &rbacv1.RoleBinding{ObjectMeta: metav1.ObjectMeta{Namespace: access.Namespace, Name: binding.Name}},
 		client.Preconditions{UID: &uid})
-	if err == nil || apierrors.IsNotFound(err) {
-		return nil
+	if err == nil {
+		return true, nil
+	}
+	if apierrors.IsNotFound(err) {
+		return false, nil
 	}
 	if r.APIReader != nil {
 		// The API server may have applied the delete and still answered an
@@ -243,10 +257,11 @@ func (r *Reconciler) deleteBinding(ctx context.Context, access *pgtoolboxv1alpha
 		var live rbacv1.RoleBinding
 		readErr := r.APIReader.Get(ctx, client.ObjectKey{Namespace: access.Namespace, Name: binding.Name}, &live)
 		if apierrors.IsNotFound(readErr) || (readErr == nil && live.UID != uid) {
-			return nil
+			// Most likely this delete, answered with an error.
+			return true, nil
 		}
 	}
-	return fmt.Errorf("delete RoleBinding %s: %w", binding.Name, err)
+	return false, fmt.Errorf("delete RoleBinding %s: %w", binding.Name, err)
 }
 
 // Decision is what the RBAC of the namespace must become for a request:

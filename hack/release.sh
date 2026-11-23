@@ -68,6 +68,10 @@
 #                               pgtoolbox-cli_VERSION_OS_ARCH.tar.gz (the binary and
 #                               LICENSE, reproducible: sorted, fixed mtime and owner)
 #   release.sh sums             write SHA256SUMS over the release files in OUT_DIR
+#   release.sh newest-stable TAG
+#                               print true when TAG is the highest stable vX.Y.Z tag
+#                               (sort -V), false otherwise: a patch on an older line
+#                               moves neither latest nor the Latest badge
 #   release.sh dry-run          build everything a release builds without pushing,
 #                               signing or attesting; print the digests
 #
@@ -580,6 +584,15 @@ cmd_commits_link() {
   fi
 }
 
+# newest-stable: whether TAG may become latest. Stable tags only (no "-"):
+# releasing v0.1.5 after v0.2.0 must leave latest on v0.2.0.
+cmd_newest_stable() {
+  local tag="${1:?usage: release.sh newest-stable TAG}" highest
+  [[ "${tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo false; return; }
+  highest="$({ git tag -l 'v[0-9]*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$'; echo "${tag}"; } | sort -V | tail -n 1)"
+  if [[ "${highest}" == "${tag}" ]]; then echo true; else echo false; fi
+}
+
 # --------------------------------------------------------- manifests ---
 # package-charts: pin a copy of each chart to the digests just pushed, check
 # the rendering, package it. The tarballs land in OUT_DIR for `helm push`.
@@ -959,6 +972,7 @@ case "${1:-}" in
   commits) shift; cmd_commits "$@" ;;
   build-cli) shift; cmd_build_cli "$@" ;;
   sums) shift; cmd_sums "$@" ;;
+  newest-stable) shift; cmd_newest_stable "$@" ;;
   check-public) shift; cmd_check_public "$@" ;;
   scan-digests) shift; cmd_scan_digests "$@" ;;
   verify-published) shift; cmd_verify_published "$@" ;;

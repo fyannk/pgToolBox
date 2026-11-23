@@ -60,9 +60,9 @@ tests:
         exposure: {type: route, host: pgadmin.apps.example.com}
         networkPolicy: {enabled: true, apiServer: {mode: any}}
         servers:
-          - {cluster: orders, endpoint: rw, credentials: {application: {secret: orders-app}}}
-          - {cluster: orders, endpoint: "pooler:orders-pool", name: pooled, credentials: {superuser: {secret: orders-superuser}}}
-          - {cluster: orders, endpoint: ro, credentials: {databaseRole: {name: orders-reporting, secret: orders-reporting-password}}}
+          - {cluster: orders, endpoint: rw, caConfigMap: orders-ca-crt, credentials: {application: {secret: orders-app}}}
+          - {cluster: orders, endpoint: "pooler:orders-pool", caConfigMap: orders-ca-crt, name: pooled, credentials: {superuser: {secret: orders-superuser}}}
+          - {cluster: orders, endpoint: ro, caConfigMap: orders-ca-crt, credentials: {databaseRole: {name: orders-reporting, secret: orders-reporting-password}}}
     asserts:
       - notMatchRegex: {path: kind, pattern: "^(ClusterRole|ClusterRoleBinding|CustomResourceDefinition|Namespace|ValidatingAdmissionPolicy|ValidatingAdmissionPolicyBinding|ValidatingWebhookConfiguration|MutatingWebhookConfiguration|PriorityClass|StorageClass|IngressClass|PersistentVolume)$"}
 
@@ -112,7 +112,7 @@ tests:
           provider: openshift
         exposure: {type: route, host: pgadmin.apps.example.com}
         servers:
-          - {cluster: orders, endpoint: rw, credentials: {application: {secret: orders-app}}}
+          - {cluster: orders, endpoint: rw, caConfigMap: orders-ca-crt, credentials: {application: {secret: orders-app}}}
     asserts:
       - notMatchRegex: {path: kind, pattern: "^(ClusterRole|ClusterRoleBinding|ClusterIssuer|CustomResourceDefinition|Namespace|ValidatingAdmissionPolicy|ValidatingAdmissionPolicyBinding|ValidatingWebhookConfiguration|MutatingWebhookConfiguration|PriorityClass|StorageClass|IngressClass|PersistentVolume)$"}
 

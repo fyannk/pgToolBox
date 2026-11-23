@@ -243,6 +243,9 @@ wait_for "the immediate Backup completes" 600 backup_completed
 log "as ${ADMIN}: helm install charts/pgtools (console, an evidence agent, pgAdmin)"
 split_ref() { printf '%s' "${1%:*}"; }
 tag_of() { printf '%s' "${1##*:}"; }
+# pgAdmin's server CA: ca.crt only, never the CA's key.
+as_admin get secret ledger-ca -o jsonpath='{.data.ca\.crt}' | base64 -d >"${work}/ledger-ca.crt"
+as_admin create configmap ledger-ca-crt --from-file=ca.crt="${work}/ledger-ca.crt"
 cat >"${work}/values.yaml" <<YAML
 console:
   replicas: 2
@@ -279,6 +282,7 @@ pgadmin:
   servers:
     - cluster: ledger
       endpoint: rw
+      caConfigMap: ledger-ca-crt
       credentials:
         application: {secret: ledger-app}
 YAML

@@ -16,7 +16,7 @@ set:
     clientID: pgadmin
     clientSecret: {existingSecret: pgadmin-oidc}
   pgadmin.servers:
-    - {cluster: orders, endpoint: rw, credentials: {application: {secret: orders-app}}}
+    - {cluster: orders, endpoint: rw, caConfigMap: orders-ca-crt, credentials: {application: {secret: orders-app}}}
 tests:
   - it: runs one replica with Recreate (SQLite on a ReadWriteOnce volume)
     asserts:
@@ -28,16 +28,16 @@ tests:
     asserts:
       - equal:
           path: spec.template.metadata.annotations["checksum/servers"]
-          value: a4ad095479a695de1c09b1965500dd378f3bf4bf5b08b28765a66f85841686b0
+          value: 4dd659ef981bd6e8ba43648890360c34e938e50d707725d7d089e463b44f5d6b
 
   - it: changes the checksum when the list changes, so the Pod rolls
     set:
       pgadmin.servers:
-        - {cluster: orders, endpoint: ro, credentials: {application: {secret: orders-app}}}
+        - {cluster: orders, endpoint: ro, caConfigMap: orders-ca-crt, credentials: {application: {secret: orders-app}}}
     asserts:
       - notEqual:
           path: spec.template.metadata.annotations["checksum/servers"]
-          value: a4ad095479a695de1c09b1965500dd378f3bf4bf5b08b28765a66f85841686b0
+          value: 4dd659ef981bd6e8ba43648890360c34e938e50d707725d7d089e463b44f5d6b
 
   - it: is restricted everywhere, with no fixed UID and no automounted token
     asserts:
@@ -110,7 +110,7 @@ tests:
       - equal: {path: 'spec.template.spec.containers[1].name', value: passfile-sync}
       - equal:
           path: spec.template.spec.containers[1].command
-          value: [/opt/pgtoolbox/bin/manager, passfile-sync, --declared, /run/pgtoolbox/servers/servers.json, --dir, /run/pgadmin/credentials, --withheld, /run/pgtoolbox/withheld/withheld.json]
+          value: [/opt/pgtoolbox/bin/manager, passfile-sync, --declared, /run/pgtoolbox/servers/servers.json, --dir, /run/pgadmin/credentials, --withheld, /run/pgtoolbox/withheld/withheld.json, --ca-dir, /run/pgtoolbox/ca]
       - contains:
           path: spec.template.spec.containers[1].volumeMounts
           content: {name: kube-api-access, mountPath: /var/run/secrets/kubernetes.io/serviceaccount, readOnly: true}
@@ -119,6 +119,9 @@ tests:
           content: {name: kube-api-access, mountPath: /var/run/secrets/kubernetes.io/serviceaccount, readOnly: true}
 
   - it: mounts no CA ConfigMap when no server names one
+    set:
+      pgadmin.servers:
+        - {cluster: orders, endpoint: rw, caSecret: orders-ca, credentials: {application: {secret: orders-app}}}
     asserts:
       - notContains:
           path: spec.template.spec.containers[1].command
@@ -172,7 +175,7 @@ tests:
     set:
       pgadmin.servers:
         - {cluster: orders, endpoint: rw, caConfigMap: orders-ca-crt, credentials: {application: {secret: orders-app}}}
-        - {cluster: orders, endpoint: ro, credentials: {application: {secret: orders-app}}}
+        - {cluster: orders, endpoint: ro, caSecret: orders-ca, credentials: {application: {secret: orders-app}}}
     asserts:
       - failedTemplate:
           errorMessage: "pgadmin.servers[1]: every server of Cluster orders must name the same caConfigMap"

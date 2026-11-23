@@ -645,11 +645,20 @@ jobs:
       # packages public, then "Re-run failed jobs" on this run.
       - name: Check that every digest is publicly pullable
         run: ./hack/release.sh check-public dist/release/digests.txt dist/release/chart-digests.txt
-      # latest is a promise that this is a stable release that passed the scan
-      # and whose packages are public. It moves last, after the visibility check,
-      # and points at the digest that was signed, so nothing new needs signing.
-      - name: Move latest (stable releases only)
-        if: needs.prepare.outputs.prerelease != 'true'
+      # A patch on an older line (v0.1.5 after v0.2.0) is stable but not the
+      # newest: it moves neither latest nor the Latest badge.
+      - name: Decide whether this release is the newest stable
+        id: newest
+        run: |
+          set -euo pipefail
+          newest="$(./hack/release.sh newest-stable "${TAG}")"
+          echo "newest=${newest}" >> "${GITHUB_OUTPUT}"
+      # latest is a promise that this is the newest stable release, that it
+      # passed the scan and that its packages are public. It moves last, after
+      # the visibility check, and points at the digest that was signed, so
+      # nothing new needs signing.
+      - name: Move latest (newest stable release only)
+        if: steps.newest.outputs.newest == 'true'
         run: |
           set -euo pipefail
           while read -r ref; do
@@ -660,9 +669,11 @@ jobs:
             docker buildx imagetools create --tag "${name}:latest" "${ref}"
           done < dist/release/digests.txt
       - name: Publish the release
+        env:
+          NEWEST: ${{ steps.newest.outputs.newest }}
         run: |
           set -euo pipefail
-          if [[ "${PRERELEASE}" == "true" ]]; then
+          if [[ "${PRERELEASE}" == "true" || "${NEWEST}" != "true" ]]; then
             gh release edit "${TAG}" --draft=false --latest=false
           else
             gh release edit "${TAG}" --draft=false --latest

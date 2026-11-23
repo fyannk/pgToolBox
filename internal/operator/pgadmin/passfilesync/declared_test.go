@@ -119,15 +119,15 @@ func TestResolveEachKind(t *testing.T) {
 		withheld bool
 	}{
 		{
-			name: "application", server: declared.Server{Cluster: "orders", Endpoint: "rw", Credentials: app("orders-app")},
+			name: "application", server: declared.Server{Cluster: "orders", Endpoint: "rw", CASecret: "orders-ca", Credentials: app("orders-app")},
 			user: "shop_owner", db: "shop", password: "pw-app",
 		},
 		{
-			name: "application through a pooler", server: declared.Server{Cluster: "orders", Endpoint: "pooler:orders-pool", Credentials: app("orders-app")},
+			name: "application through a pooler", server: declared.Server{Cluster: "orders", Endpoint: "pooler:orders-pool", CASecret: "orders-ca", Credentials: app("orders-app")},
 			user: "shop_owner", db: "shop", password: "pw-app",
 		},
 		{
-			name: "application with initdb.secret", server: declared.Server{Cluster: "orders", Endpoint: "rw", Credentials: app("mine")},
+			name: "application with initdb.secret", server: declared.Server{Cluster: "orders", Endpoint: "rw", CASecret: "orders-ca", Credentials: app("mine")},
 			mutate: func(l *Live) {
 				l.Clusters["orders"].Spec.Bootstrap.InitDB.Secret = &cnpgv1.LocalObjectReference{Name: "mine"}
 				l.Secrets["mine"] = secret("mine", "3", map[string]string{"username": "shop_owner", "password": "pw-mine"})
@@ -135,88 +135,88 @@ func TestResolveEachKind(t *testing.T) {
 			user: "shop_owner", db: "shop", password: "pw-mine",
 		},
 		{
-			name: "application Secret not the Cluster's", server: declared.Server{Cluster: "orders", Endpoint: "rw", Credentials: app("billing-owner")},
+			name: "application Secret not the Cluster's", server: declared.Server{Cluster: "orders", Endpoint: "rw", CASecret: "orders-ca", Credentials: app("billing-owner")},
 			user: "shop_owner", db: "shop", reason: "the Cluster's application Secret is orders-app, not billing-owner",
 		},
 		{
-			name: "application recreated with initdb.secret", server: declared.Server{Cluster: "orders", Endpoint: "rw", Credentials: app("orders-app")},
+			name: "application recreated with initdb.secret", server: declared.Server{Cluster: "orders", Endpoint: "rw", CASecret: "orders-ca", Credentials: app("orders-app")},
 			mutate: func(l *Live) {
 				l.Clusters["orders"].Spec.Bootstrap.InitDB.Secret = &cnpgv1.LocalObjectReference{Name: "mine"}
 			},
 			user: "shop_owner", db: "shop", reason: "application Secret is mine, not orders-app",
 		},
 		{
-			name: "application with another declared user", server: declared.Server{Cluster: "orders", Endpoint: "rw", User: "alice", Credentials: app("orders-app")},
+			name: "application with another declared user", server: declared.Server{Cluster: "orders", Endpoint: "rw", CASecret: "orders-ca", User: "alice", Credentials: app("orders-app")},
 			user: "alice", db: "shop", reason: "names another role than alice",
 		},
 		{
-			name: "superuser disabled", server: declared.Server{Cluster: "orders", Endpoint: "rw", Credentials: declared.Credentials{Kind: declared.KindSuperuser, Secret: "orders-superuser"}},
+			name: "superuser disabled", server: declared.Server{Cluster: "orders", Endpoint: "rw", CASecret: "orders-ca", Credentials: declared.Credentials{Kind: declared.KindSuperuser, Secret: "orders-superuser"}},
 			user: "postgres", db: "postgres", reason: "does not enable superuser access",
 		},
 		{
-			name: "superuser enabled", server: declared.Server{Cluster: "orders", Endpoint: "rw", Credentials: declared.Credentials{Kind: declared.KindSuperuser, Secret: "orders-superuser"}},
+			name: "superuser enabled", server: declared.Server{Cluster: "orders", Endpoint: "rw", CASecret: "orders-ca", Credentials: declared.Credentials{Kind: declared.KindSuperuser, Secret: "orders-superuser"}},
 			mutate: func(l *Live) { l.Clusters["orders"].Spec.EnableSuperuserAccess = &enabled },
 			user:   "postgres", db: "postgres", password: "pw-root",
 		},
 		{
-			name: "superuser Secret not the Cluster's", server: declared.Server{Cluster: "orders", Endpoint: "rw", Credentials: declared.Credentials{Kind: declared.KindSuperuser, Secret: "orders-app"}},
+			name: "superuser Secret not the Cluster's", server: declared.Server{Cluster: "orders", Endpoint: "rw", CASecret: "orders-ca", Credentials: declared.Credentials{Kind: declared.KindSuperuser, Secret: "orders-app"}},
 			mutate: func(l *Live) { l.Clusters["orders"].Spec.EnableSuperuserAccess = &enabled },
 			user:   "postgres", db: "postgres", reason: "superuser Secret is orders-superuser, not orders-app",
 		},
 		{
-			name: "databaseRole", server: declared.Server{Cluster: "orders", Endpoint: "ro", Credentials: declared.Credentials{Kind: declared.KindDatabaseRole, Role: "orders-reporting", Secret: "reporting-pw"}},
+			name: "databaseRole", server: declared.Server{Cluster: "orders", Endpoint: "ro", CASecret: "orders-ca", Credentials: declared.Credentials{Kind: declared.KindDatabaseRole, Role: "orders-reporting", Secret: "reporting-pw"}},
 			user: "reporting", db: "postgres", password: "pw-report",
 		},
 		{
-			name: "databaseRole not applied", server: declared.Server{Cluster: "orders", Endpoint: "ro", Credentials: declared.Credentials{Kind: declared.KindDatabaseRole, Role: "orders-reporting", Secret: "reporting-pw"}},
+			name: "databaseRole not applied", server: declared.Server{Cluster: "orders", Endpoint: "ro", CASecret: "orders-ca", Credentials: declared.Credentials{Kind: declared.KindDatabaseRole, Role: "orders-reporting", Secret: "reporting-pw"}},
 			mutate: func(l *Live) { l.DatabaseRoles["orders-reporting"].Status.Applied = nil },
 			user:   "reporting", db: "postgres", reason: "not applied by CloudNativePG yet",
 		},
 		{
-			name: "databaseRole at an older generation", server: declared.Server{Cluster: "orders", Endpoint: "ro", Credentials: declared.Credentials{Kind: declared.KindDatabaseRole, Role: "orders-reporting", Secret: "reporting-pw"}},
+			name: "databaseRole at an older generation", server: declared.Server{Cluster: "orders", Endpoint: "ro", CASecret: "orders-ca", Credentials: declared.Credentials{Kind: declared.KindDatabaseRole, Role: "orders-reporting", Secret: "reporting-pw"}},
 			mutate: func(l *Live) { l.DatabaseRoles["orders-reporting"].Generation = 2 },
 			user:   "reporting", db: "postgres", reason: "current generation",
 		},
 		{
-			name: "databaseRole Secret newer than applied", server: declared.Server{Cluster: "orders", Endpoint: "ro", Credentials: declared.Credentials{Kind: declared.KindDatabaseRole, Role: "orders-reporting", Secret: "reporting-pw"}},
+			name: "databaseRole Secret newer than applied", server: declared.Server{Cluster: "orders", Endpoint: "ro", CASecret: "orders-ca", Credentials: declared.Credentials{Kind: declared.KindDatabaseRole, Role: "orders-reporting", Secret: "reporting-pw"}},
 			mutate: func(l *Live) { l.Secrets["reporting-pw"].ResourceVersion = "43" },
 			user:   "reporting", db: "postgres", reason: "not at the version CloudNativePG applied",
 		},
 		{
-			name: "databaseRole names another Secret", server: declared.Server{Cluster: "orders", Endpoint: "ro", Credentials: declared.Credentials{Kind: declared.KindDatabaseRole, Role: "orders-reporting", Secret: "orders-app"}},
+			name: "databaseRole names another Secret", server: declared.Server{Cluster: "orders", Endpoint: "ro", CASecret: "orders-ca", Credentials: declared.Credentials{Kind: declared.KindDatabaseRole, Role: "orders-reporting", Secret: "orders-app"}},
 			user: "reporting", db: "postgres", reason: "password Secret is reporting-pw, not orders-app",
 		},
 		{
-			name: "databaseRole of another Cluster", server: declared.Server{Cluster: "orders", Endpoint: "ro", Credentials: declared.Credentials{Kind: declared.KindDatabaseRole, Role: "orders-reporting", Secret: "reporting-pw"}},
+			name: "databaseRole of another Cluster", server: declared.Server{Cluster: "orders", Endpoint: "ro", CASecret: "orders-ca", Credentials: declared.Credentials{Kind: declared.KindDatabaseRole, Role: "orders-reporting", Secret: "reporting-pw"}},
 			mutate: func(l *Live) { l.DatabaseRoles["orders-reporting"].Spec.ClusterRef.Name = "billing" },
 			reason: "belongs to Cluster billing", noSection: true,
 		},
 		{
-			name: "databaseRole absent, user unknown", server: declared.Server{Cluster: "orders", Endpoint: "ro", Credentials: declared.Credentials{Kind: declared.KindDatabaseRole, Role: "gone", Secret: "reporting-pw"}},
+			name: "databaseRole absent, user unknown", server: declared.Server{Cluster: "orders", Endpoint: "ro", CASecret: "orders-ca", Credentials: declared.Credentials{Kind: declared.KindDatabaseRole, Role: "gone", Secret: "reporting-pw"}},
 			db: "postgres", reason: "DatabaseRole gone is absent", noSection: true,
 		},
 		{
-			name: "databaseRole absent, user declared", server: declared.Server{Cluster: "orders", Endpoint: "ro", User: "reporting", Credentials: declared.Credentials{Kind: declared.KindDatabaseRole, Role: "gone", Secret: "reporting-pw"}},
+			name: "databaseRole absent, user declared", server: declared.Server{Cluster: "orders", Endpoint: "ro", CASecret: "orders-ca", User: "reporting", Credentials: declared.Credentials{Kind: declared.KindDatabaseRole, Role: "gone", Secret: "reporting-pw"}},
 			user: "reporting", db: "postgres", reason: "DatabaseRole gone is absent",
 		},
 		{
-			name: "a Secret you manage", server: declared.Server{Cluster: "orders", Endpoint: "rw", User: "billing_owner", Database: "billing", Credentials: declared.Credentials{Kind: declared.KindSecret, Secret: "billing-owner"}},
+			name: "a Secret you manage", server: declared.Server{Cluster: "orders", Endpoint: "rw", CASecret: "orders-ca", User: "billing_owner", Database: "billing", Credentials: declared.Credentials{Kind: declared.KindSecret, Secret: "billing-owner"}},
 			user: "billing_owner", db: "billing", password: "pw-billing",
 		},
 		{
-			name: "a pgpass Secret you manage", server: declared.Server{Cluster: "orders", Endpoint: "rw", User: "billing_owner", Database: "billing", Credentials: declared.Credentials{Kind: declared.KindSecret, Secret: "pgpass-only"}},
+			name: "a pgpass Secret you manage", server: declared.Server{Cluster: "orders", Endpoint: "rw", CASecret: "orders-ca", User: "billing_owner", Database: "billing", Credentials: declared.Credentials{Kind: declared.KindSecret, Secret: "pgpass-only"}},
 			user: "billing_owner", db: "billing", password: "pw:pgpass",
 		},
 		{
-			name: "a Secret naming another user", server: declared.Server{Cluster: "orders", Endpoint: "rw", User: "alice", Database: "billing", Credentials: declared.Credentials{Kind: declared.KindSecret, Secret: "billing-owner"}},
+			name: "a Secret naming another user", server: declared.Server{Cluster: "orders", Endpoint: "rw", CASecret: "orders-ca", User: "alice", Database: "billing", Credentials: declared.Credentials{Kind: declared.KindSecret, Secret: "billing-owner"}},
 			user: "alice", db: "billing", reason: "names another role than alice",
 		},
 		{
-			name: "a missing Secret", server: declared.Server{Cluster: "orders", Endpoint: "rw", User: "alice", Database: "app", Credentials: declared.Credentials{Kind: declared.KindSecret, Secret: "nope"}},
+			name: "a missing Secret", server: declared.Server{Cluster: "orders", Endpoint: "rw", CASecret: "orders-ca", User: "alice", Database: "app", Credentials: declared.Credentials{Kind: declared.KindSecret, Secret: "nope"}},
 			user: "alice", db: "app", reason: "Secret nope is absent or not readable",
 		},
 		{
-			name: "none", server: declared.Server{Cluster: "orders", Endpoint: "rw", User: "alice", Database: "app", Credentials: declared.Credentials{Kind: declared.KindNone}},
+			name: "none", server: declared.Server{Cluster: "orders", Endpoint: "rw", CASecret: "orders-ca", User: "alice", Database: "app", Credentials: declared.Credentials{Kind: declared.KindNone}},
 			user: "alice", db: "app",
 		},
 		{
@@ -224,37 +224,37 @@ func TestResolveEachKind(t *testing.T) {
 			user: "alice", db: "app", reason: "Cluster legacy is absent", noSection: true,
 		},
 		{
-			name: "Pooler of another Cluster", server: declared.Server{Cluster: "orders", Endpoint: "pooler:orders-pool", Credentials: app("orders-app")},
+			name: "Pooler of another Cluster", server: declared.Server{Cluster: "orders", Endpoint: "pooler:orders-pool", CASecret: "orders-ca", Credentials: app("orders-app")},
 			mutate: func(l *Live) { l.Poolers["orders-pool"].Spec.Cluster.Name = "billing" },
 			reason: "Pooler orders-pool belongs to Cluster billing", noSection: true,
 		},
 		{
-			name: "Pooler absent", server: declared.Server{Cluster: "orders", Endpoint: "pooler:nope", Credentials: app("orders-app")},
+			name: "Pooler absent", server: declared.Server{Cluster: "orders", Endpoint: "pooler:nope", CASecret: "orders-ca", Credentials: app("orders-app")},
 			reason: "Pooler nope is absent", noSection: true,
 		},
 		{
-			name: "CA Secret not the Cluster's", server: declared.Server{Cluster: "orders", Endpoint: "rw", Credentials: app("orders-app")},
+			name: "CA Secret not the Cluster's", server: declared.Server{Cluster: "orders", Endpoint: "rw", CASecret: "orders-ca", Credentials: app("orders-app")},
 			mutate: func(l *Live) {
 				l.Clusters["orders"].Spec.Certificates = &cnpgv1.CertificatesConfiguration{ServerCASecret: "my-ca"}
 			},
 			reason: "server CA is in Secret my-ca, not orders-ca", noSection: true,
 		},
 		{
-			name: "ro on a one-instance Cluster", server: declared.Server{Cluster: "orders", Endpoint: "ro", Credentials: app("orders-app")},
+			name: "ro on a one-instance Cluster", server: declared.Server{Cluster: "orders", Endpoint: "ro", CASecret: "orders-ca", Credentials: app("orders-app")},
 			mutate: func(l *Live) { l.Clusters["orders"].Spec.Instances = 1 },
 			reason: "no replica: the Cluster has one instance", noSection: true, withheld: true,
 		},
 		{
-			name: "ro on a two-instance Cluster", server: declared.Server{Cluster: "orders", Endpoint: "ro", Credentials: app("orders-app")},
+			name: "ro on a two-instance Cluster", server: declared.Server{Cluster: "orders", Endpoint: "ro", CASecret: "orders-ca", Credentials: app("orders-app")},
 			user: "shop_owner", db: "shop", password: "pw-app",
 		},
 		{
-			name: "r on a one-instance Cluster", server: declared.Server{Cluster: "orders", Endpoint: "r", Credentials: app("orders-app")},
+			name: "r on a one-instance Cluster", server: declared.Server{Cluster: "orders", Endpoint: "r", CASecret: "orders-ca", Credentials: app("orders-app")},
 			mutate: func(l *Live) { l.Clusters["orders"].Spec.Instances = 1 },
 			user:   "shop_owner", db: "shop", password: "pw-app",
 		},
 		{
-			name: "r Service disabled", server: declared.Server{Cluster: "orders", Endpoint: "r", Credentials: app("orders-app")},
+			name: "r Service disabled", server: declared.Server{Cluster: "orders", Endpoint: "r", CASecret: "orders-ca", Credentials: app("orders-app")},
 			mutate: func(l *Live) {
 				l.Clusters["orders"].Spec.Managed = &cnpgv1.ManagedConfiguration{Services: &cnpgv1.ManagedServices{
 					DisabledDefaultServices: []cnpgv1.ServiceSelectorType{cnpgv1.ServiceSelectorTypeR},
@@ -267,7 +267,12 @@ func TestResolveEachKind(t *testing.T) {
 			reason: "Cluster gone is absent", noSection: true,
 		},
 		{
-			name: "CA Secret absent", server: declared.Server{Cluster: "orders", Endpoint: "rw", Credentials: app("orders-app")},
+			// <cluster>-ca is readable, and not read: it holds ca.key.
+			name: "no CA source named", server: declared.Server{Cluster: "orders", Endpoint: "rw", Credentials: app("orders-app")},
+			reason: "no server CA is named (set caConfigMap)", noSection: true,
+		},
+		{
+			name: "CA Secret absent", server: declared.Server{Cluster: "orders", Endpoint: "rw", CASecret: "orders-ca", Credentials: app("orders-app")},
 			mutate: func(l *Live) { delete(l.Secrets, "orders-ca") },
 			reason: "CA Secret orders-ca is absent", noSection: true,
 		},
@@ -339,9 +344,9 @@ func TestResolveEachKind(t *testing.T) {
 // leaves its Secret.
 func TestRenderDeclaredFiles(t *testing.T) {
 	doc := declared.Document{Version: 1, Servers: []declared.Server{
-		{Cluster: "orders", Endpoint: "rw", Credentials: app("orders-app")},
-		{Cluster: "orders", Endpoint: "ro", User: "alice", Database: "app", Credentials: declared.Credentials{Kind: declared.KindNone}},
-		{Cluster: "orders", Endpoint: "r", Credentials: declared.Credentials{Kind: declared.KindDatabaseRole, Role: "orders-reporting", Secret: "reporting-pw"}},
+		{Cluster: "orders", Endpoint: "rw", CASecret: "orders-ca", Credentials: app("orders-app")},
+		{Cluster: "orders", Endpoint: "ro", CASecret: "orders-ca", User: "alice", Database: "app", Credentials: declared.Credentials{Kind: declared.KindNone}},
+		{Cluster: "orders", Endpoint: "r", CASecret: "orders-ca", Credentials: declared.Credentials{Kind: declared.KindDatabaseRole, Role: "orders-reporting", Secret: "reporting-pw"}},
 		{Cluster: "legacy", Endpoint: "rw", User: "bob", Database: "app", Credentials: declared.Credentials{Kind: declared.KindNone}},
 	}}
 	live := liveState()
@@ -395,8 +400,8 @@ func TestRunDeclaredFollowsRotationAndRoleApplication(t *testing.T) {
 		secret("reporting-pw", "42", map[string]string{"username": "reporting", "password": "pw-report"}),
 	)
 	doc := declared.Document{Version: 1, Servers: []declared.Server{
-		{Cluster: "orders", Endpoint: "rw", Credentials: app("orders-app")},
-		{Cluster: "orders", Endpoint: "ro", Credentials: declared.Credentials{Kind: declared.KindDatabaseRole, Role: "orders-reporting", Secret: "reporting-pw"}},
+		{Cluster: "orders", Endpoint: "rw", CASecret: "orders-ca", Credentials: app("orders-app")},
+		{Cluster: "orders", Endpoint: "ro", CASecret: "orders-ca", Credentials: declared.Credentials{Kind: declared.KindDatabaseRole, Role: "orders-reporting", Secret: "reporting-pw"}},
 	}}
 	files := Files{Dir: t.TempDir()}
 	logs := &capture{}
@@ -468,8 +473,8 @@ func TestRunDeclaredWithholdsROUntilAReplica(t *testing.T) {
 		secret("orders-app", "5", map[string]string{"username": "shop_owner", "password": "pw-app"}),
 	)
 	doc := declared.Document{Version: 1, Servers: []declared.Server{
-		{Cluster: "orders", Endpoint: "rw", Credentials: app("orders-app")},
-		{Cluster: "orders", Endpoint: "ro", Credentials: app("orders-app")},
+		{Cluster: "orders", Endpoint: "rw", CASecret: "orders-ca", Credentials: app("orders-app")},
+		{Cluster: "orders", Endpoint: "ro", CASecret: "orders-ca", Credentials: app("orders-app")},
 	}}
 	files := Files{Dir: t.TempDir()}
 	withheldFile := filepath.Join(t.TempDir(), declared.WithheldFileName)
