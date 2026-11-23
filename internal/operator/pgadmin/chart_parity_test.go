@@ -53,7 +53,7 @@ pgadmin:
       clientSecret: {existingSecret: pgadmin-oidc}
       requiredClaims: {groups: [dba]}
   servers:
-    - {cluster: orders, endpoint: rw, credentials: {application: {secret: orders-app}}}
+    - {cluster: orders, endpoint: rw, caSecret: orders-ca, credentials: {application: {secret: orders-app}}}
 `
 
 const chartOpenShiftValues = `
@@ -64,7 +64,7 @@ pgadmin:
   auth: {provider: openshift}
   exposure: {type: route, host: pgadmin.apps.example.com}
   servers:
-    - {cluster: orders, endpoint: rw, credentials: {application: {secret: orders-app}}}
+    - {cluster: orders, endpoint: rw, caSecret: orders-ca, credentials: {application: {secret: orders-app}}}
 `
 
 // renderPgAdminChart runs helm template on the pgtools chart with values;
@@ -218,7 +218,7 @@ func TestChartPgAdminCAConfigMapKeepsTheOperatorShape(t *testing.T) {
 	p.Spec.Auth.OAuth2.RequiredClaims = map[string]pgtoolboxv1alpha1.ClaimValues{"groups": {"dba"}}
 	in := testInputs(p, false)
 	want := buildDeployment(p, in)
-	values := strings.Replace(chartOIDCValues, "{cluster: orders, endpoint: rw,", "{cluster: orders, endpoint: rw, caConfigMap: orders-ca-crt,", 1)
+	values := strings.Replace(chartOIDCValues, "{cluster: orders, endpoint: rw, caSecret: orders-ca,", "{cluster: orders, endpoint: rw, caConfigMap: orders-ca-crt,", 1)
 	got := chartObject[appsv1.Deployment](t, renderPgAdminChart(t, values), "Deployment/chart-pgadmin")
 	comparePods(t, got, want, in, false)
 

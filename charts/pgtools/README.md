@@ -670,19 +670,23 @@ pgadmin:
   servers:
     - cluster: orders
       endpoint: rw                      # rw | ro | r | pooler:<name>
+      caConfigMap: orders-ca-crt
       credentials:
         application: {secret: orders-app}
     - cluster: orders
       endpoint: ro
+      caConfigMap: orders-ca-crt
       credentials:
         databaseRole: {name: orders-reporting, secret: orders-reporting-password}
     - cluster: billing
       endpoint: rw
+      caConfigMap: billing-ca-crt
       database: billing
       user: billing_owner
       credentials: {secret: billing-owner}   # yours: basic-auth, or a pgpass key
     - cluster: legacy
       endpoint: rw
+      caConfigMap: legacy-ca-crt
       database: app
       user: alice
       credentials: none                       # pgAdmin asks for the password
@@ -719,8 +723,7 @@ topology view shows an `ro` Service with no replica behind it.
 
 The Pod's Role grants `get` and `watch` on exactly the Clusters, DatabaseRoles,
 Poolers and Secrets `pgadmin.servers` names, by `resourceNames`: each server's
-credential Secret and, unless it names a `caConfigMap`, its CA Secret. No
-`list`, no other Secret of the namespace, nothing cluster-scoped. The sidecar
+credential Secret and its `caSecret`, when it names one. No `list`, no other Secret of the namespace, nothing cluster-scoped. The sidecar
 watches each object by name (a field selector on `metadata.name`, which the API
 server authorizes against `resourceNames`), so a rotated password reaches
 pgAdmin within seconds.
@@ -734,19 +737,15 @@ which a server takes from one of:
 |---|---|---|
 | `caConfigMap: <name>` (preferred) | a ConfigMap holding only `ca.crt`, mounted into `passfile-sync` (projected, optional); the Role names no CA Secret | no: the Pod may not read the CA Secret, `verify-full` decides |
 | `caSecret: <name>` | that Secret's `ca.crt`, by `get` and `watch` | yes: it must be `spec.certificates.serverCASecret`, else `<cluster>-ca` |
-| neither (**deprecated**) | the derived `<cluster>-ca`, by `get` and `watch` | yes |
 
-The two fields are exclusive (the schema refuses both on one server), and every
+Every server names exactly one (the chart refuses neither or both), and every
 server of one Cluster names the same `caConfigMap`: the Pod keeps one CA file per
 Cluster.
 
-The derived default goes against "the sidecar reads only the Secrets named in
-values": `<cluster>-ca` is not named, and the Secret CloudNativePG generates under
-that name also holds `ca.key`, the CA's signing key. The sidecar copies only
-`ca.crt`, but the Role lets the Pod read the key. This minor keeps the default
-and `helm install`/`upgrade` prints a NOTES warning naming each Secret granted
-that way; **the next minor requires `caSecret` or `caConfigMap` on every
-server.** To move to a ConfigMap:
+There is no default: the Secret CloudNativePG generates, `<cluster>-ca`, also
+holds `ca.key`, the CA's signing key, which can sign client certificates. The
+chart never grants it unless you name it in `caSecret`; then the sidecar copies
+only `ca.crt`, but the Role lets the Pod read the key. To make a ConfigMap:
 
 ```bash
 kubectl -n <ns> get secret <cluster>-ca -o jsonpath='{.data.ca\.crt}' | base64 -d > ca.crt
@@ -773,7 +772,7 @@ operator's own rules (`internal/operator/cnpgcred`):
   generation, with that Secret at the version it applied.
 - `secret` and `none`: nothing to check against; `user` and `database` are
   required.
-- `caSecret` (or the derived `<cluster>-ca`) must be the Cluster's server CA
+- `caSecret` must be the Cluster's server CA
   (`spec.certificates.serverCASecret`, else `<cluster>-ca`); a `caConfigMap` is
   not checked; a Pooler endpoint must belong to the Cluster.
 
@@ -1043,7 +1042,7 @@ authority on what is accepted.
 | pgadmin.tools.image.digest | string | `""` | Digest of the tools image. Written by the release; empty in the source tree. |
 | pgadmin.tools.image.pullPolicy | string | `"IfNotPresent"` | Pull policy of the tools image. |
 | pgadmin.imagePullSecrets | list | `[]` | Pull Secrets for the image, as `[{name: regcred}]`. |
-| pgadmin.servers | list | `[]` | Shared servers every pgAdmin user sees, in the "PgToolBox" group. Each entry takes `cluster`, `endpoint` and `credentials` (required), and optionally `name`, `database`, `user`, and `caConfigMap` or `caSecret` (one of them will be required in the next minor: the derived `<cluster>-ca` default is deprecated); see the README. A credential source that does not match the live Cluster is never used. |
+| pgadmin.servers | list | `[]` | Shared servers every pgAdmin user sees, in the "PgToolBox" group. Each entry takes `cluster`, `endpoint`, `credentials` and `caConfigMap` or `caSecret` (required), and optionally `name`, `database` and `user`; see the README. A credential source that does not match the live Cluster is never used. |
 | pgadmin.admins | list | `[]` | pgAdmin administrators, as pgAdmin names them (the OIDC username claim, or the OpenShift user name). Everyone else signs in as a plain user. |
 | pgadmin.auth.provider | string | `"oidc"` | How people sign in; there is no local password login. `oidc`: pgAdmin's own OAuth2 client against your identity provider. `openshift`: an oauth-proxy in front of pgAdmin (OpenShift only). |
 | pgadmin.auth.oidc.issuerURL | string | `""` | Issuer URL of the OIDC provider. |

@@ -171,8 +171,8 @@ derive it (internal/operator/pgadmin/declared.Server.DisplayName).
 The declared server list the ConfigMap carries, checked here as far as a
 template can (the schema checks each entry's shape; the Pod's tools parse the
 list again strictly): every entry names its credential source, secret and none
-name a user and a database, names are unique, a server names caSecret or
-caConfigMap but not both, and every server of one Cluster names the same
+name a user and a database, names are unique, a server names caConfigMap
+or caSecret, exactly one (never a guessed <cluster>-ca: it holds ca.key), and every server of one Cluster names the same
 caConfigMap (the Pod keeps one CA file per Cluster).
 */}}
 {{- define "pgtools.pgadmin.servers" -}}
@@ -184,6 +184,9 @@ caConfigMap (the Pod keeps one CA file per Cluster).
 {{- end -}}
 {{- if and $s.caSecret $s.caConfigMap -}}
 {{- fail (printf "pgadmin.servers[%d]: caSecret and caConfigMap are exclusive: name one" $i) -}}
+{{- end -}}
+{{- if not (or $s.caSecret $s.caConfigMap) -}}
+{{- fail (printf "pgadmin.servers[%d]: set caConfigMap to a ConfigMap holding only the server CA (ca.crt) of Cluster %s; there is no default, because the Secret %s-ca also holds the CA's private key. To make it: kubectl -n %s get secret %s-ca -o jsonpath='{.data.ca\\.crt}' | base64 -d > ca.crt && kubectl -n %s create configmap %s-ca-crt --from-file=ca.crt=ca.crt" $i $s.cluster $s.cluster $.Release.Namespace $s.cluster $.Release.Namespace $s.cluster) -}}
 {{- end -}}
 {{- $ca := $s.caConfigMap | default "" -}}
 {{- if and (hasKey $caOf $s.cluster) (ne (get $caOf $s.cluster) $ca) -}}
@@ -206,9 +209,8 @@ caConfigMap (the Pod keeps one CA file per Cluster).
 {{/*
 The objects the declared list names, each kind sorted and unique, as JSON
 {clusters, databaseRoles, poolers, secrets}: exactly what the Pod's Role grants
-by name (declared.Document.Names). The CA Secret of a server is caSecret, else
-none with caConfigMap (mounted, not read through the API), else the derived
-<cluster>-ca (deprecated; NOTES names each one).
+by name (declared.Document.Names). The CA Secret of a server is caSecret, named
+in values; a caConfigMap is mounted, not read through the API.
 */}}
 {{- define "pgtools.pgadmin.names" -}}
 {{- $clusters := list -}}
@@ -217,8 +219,8 @@ none with caConfigMap (mounted, not read through the API), else the derived
 {{- $secrets := list -}}
 {{- range $s := .Values.pgadmin.servers -}}
 {{- $clusters = append $clusters $s.cluster -}}
-{{- if not $s.caConfigMap -}}
-{{- $secrets = append $secrets ($s.caSecret | default (printf "%s-ca" $s.cluster)) -}}
+{{- if $s.caSecret -}}
+{{- $secrets = append $secrets $s.caSecret -}}
 {{- end -}}
 {{- if kindIs "map" $s.credentials -}}
 {{- range $kind, $ref := $s.credentials -}}
@@ -256,21 +258,6 @@ The caConfigMaps the declared list names, sorted and unique, as a JSON array
 
 {{/* Where passfile-sync finds the caConfigMaps (declared.CAConfigMapFile). */}}
 {{- define "pgtools.pgadmin.caDir" -}}/run/pgtoolbox/ca{{- end -}}
-
-{{/*
-The CA Secrets the Role grants only because a server sets neither caSecret
-nor caConfigMap: the derived <cluster>-ca, deprecated (values do not name it,
-and CloudNativePG's own <cluster>-ca also holds ca.key). Sorted, unique, JSON.
-*/}}
-{{- define "pgtools.pgadmin.derivedCASecrets" -}}
-{{- $out := list -}}
-{{- range $s := .Values.pgadmin.servers -}}
-{{- if not (or $s.caSecret $s.caConfigMap) -}}
-{{- $out = append $out (printf "%s-ca" $s.cluster) -}}
-{{- end -}}
-{{- end -}}
-{{- $out | uniq | sortAlpha | toJson -}}
-{{- end -}}
 
 {{/* Names of the generated Secrets. */}}
 {{- define "pgtools.pgadmin.bootstrapSecret" -}}

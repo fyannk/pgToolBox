@@ -17,7 +17,7 @@ set:
     clientID: pgadmin
     clientSecret: {existingSecret: pgadmin-oidc}
   pgadmin.servers:
-    - {cluster: orders, endpoint: rw, credentials: {application: {secret: orders-app}}}
+    - {cluster: orders, endpoint: rw, caConfigMap: orders-ca-crt, credentials: {application: {secret: orders-app}}}
 tests:
   - it: without it, SQLite on a PVC and the pre-upgrade backup
     asserts:
@@ -158,7 +158,7 @@ tests:
           path: rules
           value:
             - {apiGroups: [postgresql.cnpg.io], resources: [clusters], resourceNames: [orders], verbs: [get, watch]}
-            - {apiGroups: [""], resources: [secrets], resourceNames: [orders-app, orders-ca], verbs: [get, watch]}
+            - {apiGroups: [""], resources: [secrets], resourceNames: [orders-app], verbs: [get, watch]}
 
   - it: still one replica with Recreate
     set:

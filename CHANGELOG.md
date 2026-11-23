@@ -17,6 +17,15 @@ the notes before upgrading.
   on the release page (listed in the signed `SHA256SUMS`, attested), and at
   `/pgtoolbox` in the console image.
 
+### Changed
+
+- **`pgtools` chart: every entry of `pgadmin.servers` must name `caConfigMap` or
+  `caSecret`.** The deprecated default, the derived `<cluster>-ca` Secret, is gone:
+  it also holds `ca.key`, which can sign client certificates, and pgAdmin's Role let
+  its Pod read it. An install or upgrade whose servers name neither is refused with
+  the commands that make a ConfigMap holding only `ca.crt`; a `caSecret` you name
+  works as before ([#114](https://github.com/fyannk/pgToolBox/issues/114)).
+
 ## [0.1.0] - 2026-11-14
 
 The first public release: a console, an optional operator and an evidence agent

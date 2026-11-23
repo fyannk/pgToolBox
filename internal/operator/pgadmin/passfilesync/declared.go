@@ -165,13 +165,17 @@ func resolve(c *Connection, s declared.Server, live Live) {
 // resolveCASecret takes the CA from the server's CA Secret, once checked
 // to be the Cluster's; false (NoSection set) when it cannot.
 func resolveCASecret(c *Connection, s declared.Server, cluster *cnpgv1.Cluster, live Live) bool {
-	if want := cnpgcred.CASecretName(cluster); want != s.CASecretName() {
-		c.NoSection = "the Cluster's server CA is in Secret " + want + ", not " + s.CASecretName() + " (set caSecret)"
+	if s.CASecret == "" {
+		c.NoSection = "no server CA is named (set caConfigMap)"
 		return false
 	}
-	ca, why := caOf(live.Secrets[s.CASecretName()])
+	if want := cnpgcred.CASecretName(cluster); want != s.CASecret {
+		c.NoSection = "the Cluster's server CA is in Secret " + want + ", not " + s.CASecret + " (set caSecret)"
+		return false
+	}
+	ca, why := caOf(live.Secrets[s.CASecret])
 	if why != "" {
-		c.NoSection = "CA Secret " + s.CASecretName() + " " + why
+		c.NoSection = "CA Secret " + s.CASecret + " " + why
 		return false
 	}
 	c.CA = ca

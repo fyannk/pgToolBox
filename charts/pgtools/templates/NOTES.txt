@@ -117,30 +117,8 @@ What this gives up next to the operator's PgAdmin:
 
   kubectl -n {{ .Release.Namespace }} logs deploy/{{ $pga }} -c passfile-sync
 
-{{- $derived := include "pgtools.pgadmin.derivedCASecrets" . | fromJsonArray }}
 
-pgAdmin reads only the Secrets named in pgadmin.servers{{ if $derived }}, and the derived CA Secrets
-below{{ end }} (Role {{ $pga }}-credentials, get and watch by name).
-{{- if $derived }}
-{{- $example := index $derived 0 }}
-
-DEPRECATED: a server without caSecret or caConfigMap gets its CA from <cluster>-ca, a Secret
-pgadmin.servers does not name. The Role grants get and watch on:
-{{- range $derived }}
-  - {{ . }}
-{{- end }}
-CloudNativePG's own <cluster>-ca Secret also holds ca.key, the CA's signing key: the sidecar
-copies only ca.crt, but the Role lets the Pod read the key. The next minor release requires
-caSecret or caConfigMap on every server. Prefer caConfigMap, a ConfigMap holding only ca.crt:
-the Role then names no CA Secret for those servers. For {{ $example }}:
-
-  kubectl -n {{ .Release.Namespace }} get secret {{ $example }} -o jsonpath='{.data.ca\.crt}' | base64 -d > ca.crt
-  kubectl -n {{ .Release.Namespace }} create configmap {{ $example }}-crt --from-file=ca.crt=ca.crt
-
-and set caConfigMap: {{ $example }}-crt on every server of Cluster {{ trimSuffix "-ca" $example }}.
-CloudNativePG renews its self-signed CAs (every 90 days by default): keep the copy current
-(trust-manager, or one long-lived serverCASecret).
-{{- end }}
+pgAdmin reads only the Secrets named in pgadmin.servers (Role {{ $pga }}-credentials, get and watch by name).
 {{- if eq .Values.pgadmin.exposure.type "none" }}
 
 Not exposed. Reach it with:  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ $pga }} 8080:80

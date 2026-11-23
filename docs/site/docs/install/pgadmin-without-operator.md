@@ -108,8 +108,8 @@ There is no local password login in either mode.
 | `secret: S` | nothing to check against | `user` and `database` required |
 | `none` | no Secret: pgAdmin asks | `user` and `database` required |
 
-A server's CA Secret (`caSecret`, or the derived `<cluster>-ca`) must also be the
-Cluster's server CA, and a Pooler endpoint must belong to the Cluster.
+A server's `caSecret`, when it names one, must also be the Cluster's server CA,
+and a Pooler endpoint must belong to the Cluster.
 
 ## The server CA
 
@@ -123,16 +123,14 @@ server takes it from one of:
   follows it without a restart. Until the ConfigMap exists the server has no
   service section and the sidecar's log says so.
 - `caSecret: <name>`: a Secret the sidecar reads by name, checked against the
-  Cluster's `spec.certificates.serverCASecret`.
-- Neither (**deprecated**): the chart derives `<cluster>-ca` and grants the
-  sidecar `get` and `watch` on it. That Secret is not named in your values, and
-  the one CloudNativePG generates also holds `ca.key`, the CA's signing key: the
-  sidecar copies only `ca.crt`, but its Role could read the key. `helm install`
-  and `helm upgrade` print a warning naming each such Secret. The next minor
-  release requires `caSecret` or `caConfigMap` on every server.
+  Cluster's `spec.certificates.serverCASecret`, else `<cluster>-ca`. The Secret
+  CloudNativePG generates also holds `ca.key`, the CA's signing key, which can
+  sign client certificates: the sidecar copies only `ca.crt`, but naming that
+  Secret lets the Pod read the key.
 
-The two fields are exclusive, and all the servers of one Cluster name the same
-`caConfigMap`. To make the ConfigMap from CloudNativePG's CA:
+There is no default: a server that names neither, or both, is refused when the
+chart renders, so no CA Secret is read unless you name it. All the servers of one
+Cluster name the same `caConfigMap`. To make the ConfigMap from CloudNativePG's CA:
 
 ```bash
 kubectl -n team-a get secret orders-ca -o jsonpath='{.data.ca\.crt}' | base64 -d > ca.crt
@@ -162,10 +160,8 @@ clusters, `enableSuperuserAccess`).
 ## What pgAdmin may read
 
 The Pod's ServiceAccount has one Role: `get` and `watch` on exactly the Clusters,
-DatabaseRoles, Poolers and Secrets `pgadmin.servers` names, by `resourceNames`
-(and, until the next minor, the derived `<cluster>-ca` of a server that names
-neither `caSecret` nor `caConfigMap`). A `caConfigMap` is mounted, not read
-through the API. The Pod cannot list Secrets or read any other Secret of the
+DatabaseRoles, Poolers and Secrets `pgadmin.servers` names, by `resourceNames`.
+A `caConfigMap` is mounted, not read through the API. The Pod cannot list Secrets or read any other Secret of the
 namespace, and it holds nothing cluster-scoped. Only the `passfile-sync` and
 proxy containers mount a token.
 

@@ -45,7 +45,7 @@ import (
 func TestEnvtestDeclaredSidecarUnderNameScopedRole(t *testing.T) {
 	ctx := t.Context()
 	list := declared.Document{Version: 1, Servers: []declared.Server{
-		{Cluster: "orders", Endpoint: "rw", Credentials: app("orders-app")},
+		{Cluster: "orders", Endpoint: "rw", CASecret: "orders-ca", Credentials: app("orders-app")},
 	}}
 	admin, clientset, dynamicClient := sidecarEnvtest(t, list)
 
