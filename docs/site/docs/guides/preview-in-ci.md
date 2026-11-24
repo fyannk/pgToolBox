@@ -33,6 +33,9 @@ sha256sum --check --ignore-missing SHA256SUMS      # macOS: shasum -a 256 -c
 tar -xzf "${F}" && ./pgtoolbox-cli_${V}_${OS}_${ARCH}/pgtoolbox version
 ```
 
+The `darwin` binaries are neither signed nor notarized by Apple: macOS may refuse
+one downloaded with a browser; `curl` sets no quarantine mark.
+
 The console image carries the same binary, so where an image is easier than a
 download: `docker run --rm --entrypoint /pgtoolbox ghcr.io/fyannk/pgtoolbox-console:X.Y.Z preview ...`
 (mount the manifests with `-v`), or `kubectl exec <console pod> -- /pgtoolbox preview ...`.
