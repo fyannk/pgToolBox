@@ -230,6 +230,12 @@ func (s *Service) Offers(ctx context.Context, p *auth.Principal, caps authz.Capa
 					continue
 				}
 				bl := blockers(cnpgstatus.PromotePreconditions(c, st.Pods, inst.Name))
+				for i := range bl {
+					// Still blocked: what was not read is not known to be there.
+					if !st.PodsListed && bl[i].Reason == cnpgstatus.BlockerTargetNotInstance {
+						bl[i].Text = "Pods could not be read"
+					}
+				}
 				offer.Targets = append(offer.Targets, viewmodel.PromoteTarget{
 					Name: inst.Name, Eligible: len(bl) == 0, Blockers: bl, Health: inst.Health, LagBytes: inst.LagBytes, Readiness: inst.Readiness,
 				})

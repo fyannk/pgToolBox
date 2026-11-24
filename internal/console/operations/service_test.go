@@ -271,6 +271,31 @@ func TestOffers(t *testing.T) {
 	}
 }
 
+// With the Pods unread every target stays blocked, for that reason and
+// not as "not an instance Pod".
+func TestOffersPodsNotRead(t *testing.T) {
+	for _, listed := range []bool{false, true} {
+		var log bytes.Buffer
+		c := cluster()
+		svc := service(ClusterState{Cluster: c, PodsListed: listed, Instances: []InstanceState{{Name: "orders-2"}}}, &fakeWriter{c: c}, &log)
+		v, err := svc.Offers(context.Background(), principal(), authz.Capabilities{View: true, Promote: true}, "team-a", "orders")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, o := range v.Offers {
+			if o.Kind != viewmodel.OperationPromote {
+				continue
+			}
+			if len(o.Targets) != 1 || o.Targets[0].Eligible || len(o.Targets[0].Blockers) != 1 {
+				t.Fatalf("targets %+v", o.Targets)
+			}
+			if unread := o.Targets[0].Blockers[0].Text == "Pods could not be read"; unread == listed {
+				t.Errorf("listed %v: blocker %+v", listed, o.Targets[0].Blockers[0])
+			}
+		}
+	}
+}
+
 func TestLookup(t *testing.T) {
 	c := cluster()
 	accepted := now.Add(-time.Minute)

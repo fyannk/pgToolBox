@@ -376,8 +376,8 @@ func instanceBox(g *gathered, r viewmodel.InstanceRow, standbys map[string]viewm
 // the restart count only when there is one to report.
 func podCondition(r viewmodel.InstanceRow) string {
 	if r.Pod == nil {
-		if r.StatusRead.Reason == podsNotRead {
-			return podsNotRead
+		if r.StatusRead.State != viewmodel.StatusReadNotRunning {
+			return r.StatusRead.Reason
 		}
 		return "no pod"
 	}

@@ -426,11 +426,25 @@ func TestInstancesPodsNotRead(t *testing.T) {
 				t.Fatalf("%d rows, want the 3 reported instances", len(list.Items))
 			}
 			for _, r := range list.Items {
-				if r.Health != viewmodel.HealthUnknown || r.StatusRead.State != viewmodel.StatusReadPending || r.StatusRead.Reason != "not read: Pods" {
+				if r.Health != viewmodel.HealthUnknown || r.StatusRead.State != viewmodel.StatusReadPending || r.StatusRead.Reason != podsNotRead {
 					t.Errorf("%s: health %s, read %+v", r.Name, r.Health, r.StatusRead)
 				}
 			}
 		})
+	}
+}
+
+// A Pod missing from a stale cache may exist: it is unknown, not "no pod".
+func TestInstanceRowsStalePods(t *testing.T) {
+	svc := newService(context.Background(), t, map[string]viewmodel.SourceState{cache.SourcePods: {Source: cache.SourcePods, State: viewmodel.SourceStale, Reason: "pod watch lost"}})
+	rows := svc.instanceRows(&gathered{
+		key:      cache.ClusterKey{Namespace: "team-a", Name: "orders"},
+		cluster:  &cnpgv1.Cluster{Status: cnpgv1.ClusterStatus{InstanceNames: []string{"orders-1"}}},
+		readable: map[string]bool{cache.SourcePods: true},
+	}, false)
+	if len(rows) != 1 || rows[0].Health != viewmodel.HealthUnknown || rows[0].StatusRead.State != viewmodel.StatusReadPending ||
+		!strings.Contains(rows[0].StatusRead.Reason, "pod watch lost") {
+		t.Errorf("rows %+v", rows)
 	}
 }
 

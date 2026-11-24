@@ -38,6 +38,11 @@ function roleWord(r: string) {
   return r === "primary" ? m.role_primary() : r === "replica" ? m.role_replica() : m.role_unknown();
 }
 
+/** No Pod seen: absent only when the Pods were read, else why they were not. */
+function noPod(r: InstanceRow) {
+  return r.statusRead.state === "notRunning" ? m.pod_absent() : (r.statusRead.reason ?? m.read_pending());
+}
+
 function columns(open: (name: string, opener: HTMLElement) => void): Columns<InstanceRow> {
   return col.columns([
     col.accessor("name", {
@@ -83,7 +88,7 @@ function columns(open: (name: string, opener: HTMLElement) => void): Columns<Ins
       header: () => m.col_pod(),
       cell: (c) => {
         const p = c.row.original.pod;
-        if (!p) return <span className="text-muted">{m.pod_absent()}</span>;
+        if (!p) return <span className="text-muted">{noPod(c.row.original)}</span>;
         return (
           <span className="text-label">
             {p.ready ? m.ready_yes() : m.ready_no()} · <Reported value={p.phase} />
@@ -170,7 +175,7 @@ function InstanceDetail({ row }: { row: InstanceRow }) {
             <Provenance provenance={p.provenance} />
           </>
         ) : (
-          <p className="text-label text-muted">{m.pod_absent()}</p>
+          <p className="text-label text-muted">{noPod(row)}</p>
         )}
       </Panel>
       <Panel title={m.detail_live()}>
