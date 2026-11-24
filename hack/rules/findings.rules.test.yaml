@@ -114,9 +114,9 @@ tests:
     interval: 1m
     input_series:
       # pgc-0 runs every minute; pgc-1 last ran at time 0 and never again.
-      - series: 'pgtoolbox_finding_run_timestamp_seconds{namespace="team-a",pod="pgc-0",cluster_namespace="team-a",cluster="orders"}'
+      - series: 'pgtoolbox_finding_run_timestamp_seconds{namespace="team-a",instance="pgc-0:9090",cluster_namespace="team-a",cluster="orders"}'
         values: '0+60x80'
-      - series: 'pgtoolbox_finding_run_timestamp_seconds{namespace="team-a",pod="pgc-1",cluster_namespace="team-a",cluster="orders"}'
+      - series: 'pgtoolbox_finding_run_timestamp_seconds{namespace="team-a",instance="pgc-1:9090",cluster_namespace="team-a",cluster="orders"}'
         values: '0x80'
     alert_rule_test:
       - eval_time: 50m
@@ -125,8 +125,8 @@ tests:
       - eval_time: 70m
         alertname: PgToolBoxFindingRunsStale
         exp_alerts:
-          - exp_labels: {severity: warning, namespace: team-a, pod: pgc-1, cluster_namespace: team-a, cluster: orders}
+          - exp_labels: {severity: warning, namespace: team-a, instance: "pgc-1:9090", cluster_namespace: team-a, cluster: orders}
             exp_annotations:
-              summary: "The diagnostics of the Cluster team-a/orders on pgc-1 are over an hour old"
+              summary: "The diagnostics of the Cluster team-a/orders on pgc-1:9090 are over an hour old"
               description: "No diagnostics run for an hour (the safety cadence, DIAGNOSTICS_INTERVAL, is at most 30 minutes): the findings this replica exports and shows describe the past."
               runbook_url: "https://github.com/fyannk/pgToolBox/blob/main/docs/site/docs/console/alerts.md#pgtoolboxfindingrunsstale"
