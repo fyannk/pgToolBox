@@ -167,22 +167,25 @@ func TestDisruptive(t *testing.T) {
 	cases := []struct {
 		effect preview.Effect
 		params []preview.ParameterChange
+		fields []preview.FieldChange
 		want   bool
 	}{
-		{preview.EffectNone, nil, false},
-		{preview.EffectReload, nil, false},
-		{preview.EffectStart, nil, false},
-		{preview.EffectRestart, nil, true},
-		{preview.EffectRollout, nil, true},
-		{preview.EffectShutdown, nil, true},
-		{preview.EffectMajorUpgrade, nil, true},
-		{preview.EffectUnknown, nil, true},
+		{preview.EffectNone, nil, nil, false},
+		{preview.EffectReload, nil, nil, false},
+		{preview.EffectStart, nil, nil, false},
+		{preview.EffectRestart, nil, nil, true},
+		{preview.EffectRollout, nil, nil, true},
+		{preview.EffectShutdown, nil, nil, true},
+		{preview.EffectMajorUpgrade, nil, nil, true},
+		{preview.EffectUnknown, nil, nil, true},
 		// A refused parameter leaves the ordered effect at none.
-		{preview.EffectNone, []preview.ParameterChange{{Name: "listen_addresses", Effect: preview.EffectRefused}}, true},
-		{preview.EffectReload, []preview.ParameterChange{{Name: "work_mem", Effect: preview.EffectReload}}, false},
+		{preview.EffectNone, []preview.ParameterChange{{Name: "listen_addresses", Effect: preview.EffectRefused}}, nil, true},
+		{preview.EffectReload, []preview.ParameterChange{{Name: "work_mem", Effect: preview.EffectReload}}, nil, false},
+		// Nor does a refused field.
+		{preview.EffectNone, nil, []preview.FieldChange{{Path: "spec.storage", Effect: preview.EffectRefused}}, true},
 	}
 	for _, tc := range cases {
-		if got := disruptive(preview.Preview{Effect: tc.effect, Parameters: tc.params}); got != tc.want {
+		if got := disruptive(preview.Preview{Effect: tc.effect, Parameters: tc.params, Fields: tc.fields}); got != tc.want {
 			t.Errorf("disruptive(%s, %v) = %v, want %v", tc.effect, tc.params, got, tc.want)
 		}
 	}

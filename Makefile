@@ -155,6 +155,7 @@ test-fuzz: ## Fuzz the trust-boundary parsers (FUZZ_TIME per target).
 	$(call fuzz,./internal/operator/pgadmin/offer,FuzzParseOffer)
 	$(call fuzz,./internal/operator/pgadmin/declared,FuzzParseDeclared)
 	$(call fuzz,./cmd/pgtoolbox,FuzzReadClusters)
+	$(call fuzz,./pkg/cnpgstatus/preview,FuzzStorageEffect)
 	$(call fuzz,./internal/operator/configuration,FuzzLoadEnvironment)
 	$(call fuzz,./internal/console/mcpoauth,FuzzRegistration)
 	$(call fuzz,./internal/console/mcpauth,FuzzGuardSeesTheMessageTheSDKReads)

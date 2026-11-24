@@ -659,14 +659,21 @@ func (p *Preview) postgresql(before, after json.RawMessage) {
 // Pods ("pod has missing PVCs"); a size change of an existing one is a
 // PVC expansion, and a smaller or removed one is refused.
 func (p *Preview) volumes(key string, before, after json.RawMessage) {
-	added, refused := false, false
+	added, refused, unknown := false, false, false
+	check := func(before, after json.RawMessage) {
+		effect := storageEffect(before, after)
+		refused = refused || effect == EffectRefused
+		unknown = unknown || effect == EffectUnknown
+	}
 	switch key {
 	case "storage":
-		refused = refusedStorage(before, after)
+		check(before, after)
 	case "walStorage":
 		added = absent(before)
 		// validateWalStorageChange: "cannot be disabled once configured".
-		refused = !added && (absent(after) || refusedStorage(before, after))
+		if refused = absent(after); !refused {
+			check(before, after)
+		}
 	case "tablespaces":
 		var b, a []struct {
 			Name    string          `json:"name"`
@@ -680,11 +687,9 @@ func (p *Preview) volumes(key string, before, after json.RawMessage) {
 		}
 		for _, t := range a {
 			kept[t.Name] = true
-			if storage, ok := old[t.Name]; !ok {
-				added = true
-			} else if refusedStorage(storage, t.Storage) {
-				refused = true
-			}
+			storage, ok := old[t.Name]
+			added = added || !ok
+			check(storage, t.Storage)
 		}
 		for name := range old {
 			// validateTablespacesChange: none can be deleted once created.
@@ -695,6 +700,9 @@ func (p *Preview) volumes(key string, before, after json.RawMessage) {
 	if added {
 		change.Effect, change.Reason = EffectRollout, ReasonNewVolume
 	}
+	if unknown {
+		change.Effect, change.Reason = EffectUnknown, ReasonVolumeResize
+	}
 	if refused {
 		change.Effect, change.Reason = EffectRefused, ReasonVolumeResize
 	}
@@ -703,27 +711,35 @@ func (p *Preview) volumes(key string, before, after json.RawMessage) {
 
 func absent(raw json.RawMessage) bool { return len(raw) == 0 || string(raw) == "null" }
 
-// refusedStorage reports whether the operator's webhook refuses the
-// change of an existing volume's StorageConfiguration
+// storageEffect is EffectRefused when the operator's webhook refuses the
+// StorageConfiguration of a volume, new or changed
 // (internal/webhook/v1/cluster_webhook.go v1.30.1:1712-1737
 // validateStorageConfigurationSize and 1805-1835
 // validateStorageConfigurationChange, the same at v1.30.0 and v1.30.2):
 // a smaller size, a size that does not parse, or no size at all. A size
-// the webhook cannot read before the change is not compared.
-func refusedStorage(before, after json.RawMessage) bool {
+// the webhook cannot read before the change is not compared; one this
+// package does not compare is EffectUnknown.
+func storageEffect(before, after json.RawMessage) Effect {
 	var b, a storage
 	if json.Unmarshal(before, &b) != nil && !absent(before) {
-		return false
+		return EffectNone
 	}
 	if json.Unmarshal(after, &a) != nil && !absent(after) {
-		return false
+		return EffectNone
 	}
-	newSize := a.size()
-	if newSize == nil || (a.Size == "" && newSize.IsZero()) {
-		return true
+	newSize, newOK := a.size()
+	oldSize, oldOK := b.size()
+	switch {
+	case !newOK:
+		return EffectUnknown
+	case newSize == nil || (a.Size == "" && newSize.IsZero()):
+		return EffectRefused
+	case !oldOK:
+		return EffectUnknown
+	case oldSize != nil && oldSize.Cmp(*newSize) > 0:
+		return EffectRefused
 	}
-	oldSize := b.size()
-	return oldSize != nil && oldSize.Cmp(*newSize) > 0
+	return EffectNone
 }
 
 // storage is the part of a StorageConfiguration its size comes from.
@@ -731,28 +747,42 @@ type storage struct {
 	Size     string `json:"size"`
 	Template *struct {
 		Resources struct {
-			Requests map[string]resource.Quantity `json:"requests"`
+			// Raw: decoding a Quantity parses it, which is unbounded work.
+			Requests map[string]json.RawMessage `json:"requests"`
 		} `json:"resources"`
 	} `json:"pvcTemplate"`
 }
 
 // size is GetSizeOrNil (api/v1/cluster_funcs.go v1.30.1:375-394): the
 // size, else the PVC template's storage request; nil when it cannot be
-// read.
-func (s storage) size() *resource.Quantity {
-	if s.Size != "" {
-		q, err := resource.ParseQuantity(s.Size)
-		if err != nil {
-			return nil
+// read. It is not ok when parsing the size could be unbounded work.
+func (s storage) size() (q *resource.Quantity, ok bool) {
+	text := s.Size
+	if text == "" {
+		if s.Template == nil {
+			return nil, true
 		}
-		return &q
+		raw := s.Template.Resources.Requests["storage"]
+		if absent(raw) {
+			return &resource.Quantity{}, true
+		}
+		if json.Unmarshal(raw, &text) != nil {
+			text = string(raw)
+		}
 	}
-	if s.Template == nil {
-		return nil
+	// A quantity is computed to its full magnitude: a longer exponent is
+	// megabytes of digits.
+	if len(text) > 64 || longExponent.MatchString(text) {
+		return nil, false
 	}
-	q := s.Template.Resources.Requests["storage"]
-	return &q
+	parsed, err := resource.ParseQuantity(text)
+	if err != nil {
+		return nil, true
+	}
+	return &parsed, true
 }
+
+var longExponent = regexp.MustCompile(`[eE][+-]?[0-9]{4,}$`)
 
 // image is a rolling update, or a major upgrade when the major moves.
 func (p *Preview) image(key string, before, after *cluster) {
