@@ -239,7 +239,7 @@ func (r *Reconciler) bindings(ctx context.Context, access *pgtoolboxv1alpha1.PgA
 // on its UID so a binding recreated under the same name in between is not
 // the one deleted.
 // It reports whether this call deleted it: false, with no error, when the
-// binding was already gone (a cache that still lists it), so that the
+// binding was already gone or recreated (a cache that still lists it), so the
 // caller records the deletion once, not once per loop.
 func (r *Reconciler) deleteBinding(ctx context.Context, access *pgtoolboxv1alpha1.PgAccessRequest, binding rbacv1.RoleBinding) (bool, error) {
 	uid := binding.UID
@@ -248,7 +248,9 @@ func (r *Reconciler) deleteBinding(ctx context.Context, access *pgtoolboxv1alpha
 	if err == nil {
 		return true, nil
 	}
-	if apierrors.IsNotFound(err) {
+	if apierrors.IsNotFound(err) || apierrors.IsConflict(err) {
+		// Conflict: the name now holds another binding, which the cache
+		// will deliver under its own UID.
 		return false, nil
 	}
 	if r.APIReader != nil {

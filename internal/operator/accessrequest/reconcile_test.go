@@ -202,6 +202,32 @@ func TestReconcileDeleteAppliedDespiteAnErrorStillSaysSo(t *testing.T) {
 	}
 }
 
+// TestReconcileDeleteConflictRecordsNothing: a UID conflict (the binding was
+// recreated and the cache is stale) proves this delete did nothing.
+func TestReconcileDeleteConflictRecordsNothing(t *testing.T) {
+	r := request(pgtoolboxv1alpha1.AccessPhaseApproved, expiresAt(testNow))
+	binding := granted(r, testNow.Add(-time.Hour))
+	live := binding.DeepCopy()
+	live.UID = "recreated"
+	stored := fake.NewClientBuilder().WithScheme(testScheme(t)).WithObjects(live).Build()
+	c := fake.NewClientBuilder().WithScheme(testScheme(t)).
+		WithStatusSubresource(&pgtoolboxv1alpha1.PgAccessRequest{}).
+		WithObjects(r.DeepCopy(), binding.DeepCopy()).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Delete: func(context.Context, client.WithWatch, client.Object, ...client.DeleteOption) error {
+				return apierrors.NewConflict(rbacv1.Resource("rolebindings"), binding.Name, errors.New("uid mismatch"))
+			},
+		}).Build()
+	recorder := events.NewFakeRecorder(32)
+	reconciler := &Reconciler{Client: c, APIReader: stored, Recorder: recorder, Now: func() time.Time { return testNow }}
+	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(r)}); err != nil {
+		t.Fatal(err)
+	}
+	if evs := strings.Join((&fakeSuite{recorder: recorder}).events(), "\n"); strings.Contains(evs, "RoleBindingDeleted") {
+		t.Fatalf("events %q", evs)
+	}
+}
+
 func TestReconcileNeverTouchesABindingItDoesNotControl(t *testing.T) {
 	r := request(pgtoolboxv1alpha1.AccessPhaseRevoked, func(r *pgtoolboxv1alpha1.PgAccessRequest) {
 		r.Status.RevokedBy, r.Status.RevokedAt = "oidc:bob@corp.example", &metav1.Time{Time: testNow}
