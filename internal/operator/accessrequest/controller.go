@@ -248,19 +248,19 @@ func (r *Reconciler) deleteBinding(ctx context.Context, access *pgtoolboxv1alpha
 	if err == nil {
 		return true, nil
 	}
-	if apierrors.IsNotFound(err) || apierrors.IsConflict(err) {
-		// Conflict: the name now holds another binding, which the cache
-		// will deliver under its own UID.
+	if apierrors.IsNotFound(err) {
 		return false, nil
 	}
 	if r.APIReader != nil {
 		// The API server may have applied the delete and still answered an
-		// error: what the binding is now settles it.
+		// error, and a conflict is not always the UID's: what the binding is
+		// now settles it.
 		var live rbacv1.RoleBinding
 		readErr := r.APIReader.Get(ctx, client.ObjectKey{Namespace: access.Namespace, Name: binding.Name}, &live)
 		if apierrors.IsNotFound(readErr) || (readErr == nil && live.UID != uid) {
-			// Most likely this delete, answered with an error.
-			return true, nil
+			// Most likely this delete, answered with an error; a conflict
+			// answers that nothing was deleted.
+			return !apierrors.IsConflict(err), nil
 		}
 	}
 	return false, fmt.Errorf("delete RoleBinding %s: %w", binding.Name, err)

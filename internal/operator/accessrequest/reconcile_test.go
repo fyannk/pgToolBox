@@ -228,6 +228,29 @@ func TestReconcileDeleteConflictRecordsNothing(t *testing.T) {
 	}
 }
 
+// A conflict on the binding that is still there deleted nothing: the grant
+// still stands, so the reconcile fails and is retried.
+func TestReconcileDeleteConflictOnTheSameBindingFails(t *testing.T) {
+	r := request(pgtoolboxv1alpha1.AccessPhaseApproved, expiresAt(testNow))
+	binding := granted(r, testNow.Add(-time.Hour))
+	c := fake.NewClientBuilder().WithScheme(testScheme(t)).
+		WithStatusSubresource(&pgtoolboxv1alpha1.PgAccessRequest{}).
+		WithObjects(r.DeepCopy(), binding.DeepCopy()).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Delete: func(context.Context, client.WithWatch, client.Object, ...client.DeleteOption) error {
+				return apierrors.NewConflict(rbacv1.Resource("rolebindings"), binding.Name, errors.New("try again"))
+			},
+		}).Build()
+	recorder := events.NewFakeRecorder(32)
+	reconciler := &Reconciler{Client: c, APIReader: c, Recorder: recorder, Now: func() time.Time { return testNow }}
+	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(r)}); !apierrors.IsConflict(err) {
+		t.Fatalf("err = %v, want the conflict", err)
+	}
+	if evs := strings.Join((&fakeSuite{recorder: recorder}).events(), "\n"); strings.Contains(evs, "RoleBindingDeleted") {
+		t.Fatalf("events %q", evs)
+	}
+}
+
 func TestReconcileNeverTouchesABindingItDoesNotControl(t *testing.T) {
 	r := request(pgtoolboxv1alpha1.AccessPhaseRevoked, func(r *pgtoolboxv1alpha1.PgAccessRequest) {
 		r.Status.RevokedBy, r.Status.RevokedAt = "oidc:bob@corp.example", &metav1.Time{Time: testNow}
