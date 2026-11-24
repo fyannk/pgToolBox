@@ -34,6 +34,7 @@ import (
 
 	pgtoolboxv1alpha1 "github.com/fyannk/pgToolBox/api/v1alpha1"
 	"github.com/fyannk/pgToolBox/internal/console/cache"
+	"github.com/fyannk/pgToolBox/internal/console/logfollow"
 	"github.com/fyannk/pgToolBox/internal/console/viewmodel"
 )
 
@@ -402,5 +403,55 @@ func TestKeysListFailureLogsTransitionsOnly(t *testing.T) {
 	svc.Keys(ctx)
 	if got := count("listing Clusters failed"); got != 2 {
 		t.Fatalf("a second failure logged %d failures in all, want 2:\n%s", got, logs.String())
+	}
+}
+
+// Pods that could not be listed (RBAC, or a failed read) leave the
+// instances the operator reports unknown: never "no pod exists".
+func TestInstancesPodsNotRead(t *testing.T) {
+	ctx := context.Background()
+	for name, svc := range map[string]*Service{
+		"not readable": newService(ctx, t, map[string]viewmodel.SourceState{cache.SourcePods: {Source: cache.SourcePods, State: viewmodel.SourceUnavailable, Reason: "forbidden"}}),
+		"failed read": failingService(t, &failing{list: func(l client.ObjectList) bool {
+			_, ok := l.(*corev1.PodList)
+			return ok
+		}}),
+	} {
+		t.Run(name, func(t *testing.T) {
+			list, err := svc.Instances(ctx, "team-a", "orders")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(list.Items) != 3 {
+				t.Fatalf("%d rows, want the 3 reported instances", len(list.Items))
+			}
+			for _, r := range list.Items {
+				if r.Health != viewmodel.HealthUnknown || r.StatusRead.State != viewmodel.StatusReadPending || r.StatusRead.Reason != "not read: Pods" {
+					t.Errorf("%s: health %s, read %+v", r.Name, r.Health, r.StatusRead)
+				}
+			}
+		})
+	}
+}
+
+// logRoster.UID is empty while the Clusters cannot be read (the follower
+// then keeps its runners), else the Cluster's UID.
+func TestLogRosterUID(t *testing.T) {
+	ctx := context.Background()
+	unreadable := map[string]viewmodel.SourceState{cache.SourceClusters: {Source: cache.SourceClusters, State: viewmodel.SourceUnavailable, Reason: "forbidden"}}
+	for _, tt := range []struct {
+		name, cluster, want string
+		states              map[string]viewmodel.SourceState
+	}{
+		{"present", "orders", string(ordersUID), nil},
+		{"absent", "nope", "", nil},
+		{"source not readable", "orders", "", unreadable},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got := newService(ctx, t, tt.states).LogRoster().UID(ctx, logfollow.Key{Namespace: "team-a", Name: tt.cluster})
+			if got != tt.want {
+				t.Errorf("UID = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }

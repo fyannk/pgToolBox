@@ -162,6 +162,22 @@ func TestFollowerRestartsARecreatedCluster(t *testing.T) {
 	f.reconcile(ctx) // same UID: the runner and its observations stay
 	waitFor("checkpoint")
 
+	// UID unknown (a cache outage): the runner and its observations stay.
+	ro.mu.Lock()
+	ro.uids[k] = ""
+	ro.mu.Unlock()
+	f.reconcile(ctx)
+	op.mu.Lock()
+	opens := op.opens
+	op.mu.Unlock()
+	if opens != 1 {
+		t.Fatalf("%d log opens after an unknown UID, want 1: the runner was restarted", opens)
+	}
+	waitFor("checkpoint")
+	if got := f.Export(); len(got.Clusters) != 1 || got.Clusters[0].UID != "uid-old" {
+		t.Fatalf("Export = %+v, want the Cluster still under uid-old", got)
+	}
+
 	ro.mu.Lock()
 	ro.uids[k] = "uid-new"
 	ro.mu.Unlock()
