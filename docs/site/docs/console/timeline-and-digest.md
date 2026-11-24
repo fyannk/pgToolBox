@@ -97,7 +97,10 @@ in motion**, read from the definition before and after:
   - certificates are reloaded;
   - hibernation on shuts every instance down, and hibernation off starts them all;
   - fencing stops PostgreSQL on the listed instances, and lifting it starts them;
-  - scaling touches no running instance.
+  - scaling touches no running instance;
+  - a smaller `storage`, `walStorage` or tablespace, a size of theirs that does
+    not parse or is missing, and removing `walStorage` or a tablespace are
+    **refused** by CloudNativePG's webhook; a larger volume restarts nothing.
 - Who restarts, and in what order: the replica Pods are recreated on their
   volumes, then the primary. It restarts in place, is switched over to the most
   advanced replica, or waits for you (`supervised`), according to

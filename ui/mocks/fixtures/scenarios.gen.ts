@@ -10391,7 +10391,7 @@ export const listOperationsBilling = {
             {
               "key": "streaming",
               "health": "ok",
-              "text": "streaming from the primary",
+              "text": "a WAL receiver is running",
               "provenance": {
                 "origin": "instance",
                 "source": "/pg/status walReceiverActive, replayPaused",
@@ -10606,7 +10606,7 @@ export const listOperationsOrders = {
             {
               "key": "streaming",
               "health": "ok",
-              "text": "streaming from the primary",
+              "text": "a WAL receiver is running",
               "provenance": {
                 "origin": "instance",
                 "source": "/pg/status walReceiverActive, replayPaused",

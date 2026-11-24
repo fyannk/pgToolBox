@@ -146,7 +146,7 @@ type PreviewParameter struct {
 // PreviewField is one changed spec field outside the parameters.
 type PreviewField struct {
 	Path   string `json:"path"`
-	Effect string `json:"effect" enum:"none,reload,start,restart,rollout,shutdown,majorUpgrade,unknown"`
+	Effect string `json:"effect" enum:"none,reload,start,restart,rollout,shutdown,majorUpgrade,refused,unknown"`
 	Reason string `json:"reason" enum:"image,majorVersion,podTemplate,newVolume,volumeResize,scale,restartAnnotation,hibernation,fencing,sharedPreloadLibraries,managedExtension,certificates,hba,synchronous,replicaRole,operatorOnly,unknownField"`
 }
 

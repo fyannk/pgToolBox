@@ -539,11 +539,11 @@ const (
 	srcPodReady  = "Pod.status.conditions[Ready]"
 )
 
-// ReadyReadiness is a streaming, caught-up, synchronous replica.
+// ReadyReadiness is a receiving, caught-up, synchronous replica.
 func ReadyReadiness() []viewmodel.ReadinessFact {
 	return []viewmodel.ReadinessFact{
 		fact(viewmodel.ReadinessPod, viewmodel.HealthOK, "Ready", kubeProv(srcPodReady)),
-		fact(viewmodel.ReadinessStreaming, viewmodel.HealthOK, "streaming from the primary", readProv(srcStreaming)),
+		fact(viewmodel.ReadinessStreaming, viewmodel.HealthOK, "a WAL receiver is running", readProv(srcStreaming)),
 		fact(viewmodel.ReadinessReplayLag, viewmodel.HealthOK, "replayed up to the primary's position as last read", readProv(srcLag)),
 		fact(viewmodel.ReadinessSyncState, viewmodel.HealthOK, "quorum: quorum-based synchronous candidate", readProv(srcSync)),
 		fact(viewmodel.ReadinessFencing, viewmodel.HealthOK, "not fenced", kubeProv(srcFencing)),

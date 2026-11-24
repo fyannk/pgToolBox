@@ -57,6 +57,7 @@ func TestPodCondition(t *testing.T) {
 		want string
 	}{
 		{viewmodel.InstanceRow{}, "no pod"},
+		{viewmodel.InstanceRow{StatusRead: viewmodel.StatusRead{Reason: podsNotRead}}, "not read: Pods"},
 		{viewmodel.InstanceRow{Pod: &viewmodel.PodView{Phase: "Running", Ready: true}}, "Running · ready"},
 		{viewmodel.InstanceRow{Pod: &viewmodel.PodView{Phase: "Running"}, Fenced: true}, "Running · not ready · fenced"},
 		{viewmodel.InstanceRow{Pod: &viewmodel.PodView{Phase: "Running", Waiting: "CrashLoopBackOff", Restarts: 4}}, "CrashLoopBackOff · 4 restarts"},

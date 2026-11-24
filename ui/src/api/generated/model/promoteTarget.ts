@@ -17,7 +17,7 @@ export interface PromoteTarget {
   lagBytes?: number;
   name: string;
   /**
-     * Pod readiness, streaming, replay lag, synchronous state and fencing of the target, each attributed and aged; not a score.
+     * Pod readiness, WAL receiver, replay lag, synchronous state and fencing of the target, each attributed and aged; not a score.
      * @nullable
      */
   readiness?: ReadinessFact[] | null;

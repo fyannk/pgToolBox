@@ -8,7 +8,7 @@ title: Previewing a Cluster change in CI
 `pgtoolbox preview` reads two versions of your CloudNativePG Cluster manifests,
 the one in force and the one proposed, and says what applying the second sets in
 motion: a reload, a restart, a rolling update, a switchover, a shutdown, or a
-parameter the operator refuses. It is the same computation as the console's
+parameter or volume change the operator refuses. It is the same computation as the console's
 [change preview](../console/timeline-and-digest.md#change-preview)
 (`pkg/cnpgstatus/preview`), worded the same way. It works offline and never
 contacts a cluster, so a pull request can be gated on it before anything is
@@ -80,7 +80,7 @@ A manifest holds the spec only, so the order of the update is given by role
 | Code | Meaning |
 |---|---|
 | `0` | Nothing disruptive: at most a configuration reload or a start. |
-| `1` | Disruptive: at least one Cluster restarts, rolls out, shuts down, runs a major upgrade, has fewer instances (`spec.instances` decreases: replicas are removed and fewer remain to fail over to) or is removed; or carries a parameter the operator refuses; or has a change whose effect is **unknown**. An unknown effect counts as disruptive because a restart cannot be ruled out. |
+| `1` | Disruptive: at least one Cluster restarts, rolls out, shuts down, runs a major upgrade, has fewer instances (`spec.instances` decreases: replicas are removed and fewer remain to fail over to) or is removed; or carries a parameter or a volume change the operator refuses; or has a change whose effect is **unknown**. An unknown effect counts as disruptive because a restart cannot be ruled out. |
 | `2` | Invalid input: a bad flag, an unreadable file, invalid YAML, a document that is not a Kubernetes object, a Cluster without a name or listed twice, or no Cluster in either file. Nothing is printed on stdout. |
 
 The text report goes to stdout. Errors go to stderr.
@@ -127,13 +127,13 @@ The text report goes to stdout. Errors go to stderr.
 for a `changed` Cluster, and it is the console's change preview object: `effect`
 is `none`, `reload`, `start`, `restart`, `rollout`, `shutdown`, `majorUpgrade` or
 `unknown` (then the `atLeast` field holds the worst effect that was classified). A refused
-parameter has `"effect": "refused"`.
+parameter, or a refused volume change in `fields`, has `"effect": "refused"`.
 
-To fail only on refused parameters and let a restart through with a review:
+To fail only on refused changes and let a restart through with a review:
 
 ```sh
 pgtoolbox preview --output json --cnpg-version 1.30 old.yaml new.yaml > preview.json || true
-jq -e '[.clusters[].preview.parameters[]? | select(.effect == "refused")] | length == 0' preview.json
+jq -e '[.clusters[].preview | (.parameters[]?, .fields[]?) | select(.effect == "refused")] | length == 0' preview.json
 ```
 
 ## In a pipeline

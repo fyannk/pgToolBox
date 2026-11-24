@@ -222,6 +222,14 @@ func TestCompute(t *testing.T) {
 			verified:     true,
 		},
 		{
+			name:   "a smaller volume is refused, and restarts nothing",
+			before: merge(base, map[string]any{"storage": map[string]any{"size": "10Gi"}}),
+			after:  merge(base, map[string]any{"storage": map[string]any{"size": "5Gi"}}),
+			minor:  cnpgstatus.Minor130, effect: EffectNone, primary: PrimaryNone,
+			fieldReasons: []string{ReasonVolumeResize},
+			verified:     true,
+		},
+		{
 			name:         "hibernation on shuts everything down",
 			before:       base,
 			after:        base,
@@ -666,5 +674,58 @@ func TestComputeRejectsBadInput(t *testing.T) {
 	}
 	if _, err := Compute(Input{After: []byte("{")}); err == nil {
 		t.Fatal("a malformed definition must be refused")
+	}
+}
+
+// TestVolumeRefused: the volume changes CloudNativePG's webhook refuses
+// (validateStorageConfigurationSize, validateStorageConfigurationChange,
+// validateWalStorageChange, validateTablespacesChange), and the ones it
+// admits.
+func TestVolumeRefused(t *testing.T) {
+	template := func(size string) string {
+		return `{"pvcTemplate":{"resources":{"requests":{"storage":"` + size + `"}}}}`
+	}
+	ts := func(name, storage string) string { return `{"name":"` + name + `","storage":` + storage + `}` }
+	size := func(s string) string { return `{"size":"` + s + `"}` }
+	for _, tt := range []struct {
+		name, key, before, after string
+		want                     Effect
+	}{
+		{"grow", "storage", size("10Gi"), size("20Gi"), EffectNone},
+		{"shrink", "storage", size("10Gi"), size("9Gi"), EffectRefused},
+		{"same quantity, other unit", "storage", size("1Gi"), size("1024Mi"), EffectNone},
+		{"smaller number, larger quantity", "storage", size("900Mi"), size("1Gi"), EffectNone},
+		{"larger number, smaller quantity", "storage", size("1Gi"), size("1000Mi"), EffectRefused},
+		{"decimal below binary", "storage", size("10Gi"), size("10G"), EffectRefused},
+		{"size not parsable", "storage", size("10Gi"), size("lots"), EffectRefused},
+		{"old size not parsable", "storage", size("lots"), size("1Gi"), EffectNone},
+		{"size removed", "storage", size("10Gi"), `{"storageClass":"fast"}`, EffectRefused},
+		{"storage removed", "storage", size("10Gi"), `null`, EffectRefused},
+		{"size moved to the PVC template", "storage", size("10Gi"), template("10Gi"), EffectNone},
+		{"PVC template shrink", "storage", template("10Gi"), template("5Gi"), EffectRefused},
+		{"PVC template without a request", "storage", size("10Gi"), `{"pvcTemplate":{}}`, EffectRefused},
+		{"size wins over the template", "storage", size("10Gi"), `{"size":"20Gi","pvcTemplate":{"resources":{"requests":{"storage":"1Gi"}}}}`, EffectNone},
+		{"not a StorageConfiguration", "storage", size("10Gi"), `{"size":5}`, EffectNone},
+		{"storage class only", "storage", size("10Gi"), `{"size":"10Gi","storageClass":"fast"}`, EffectNone},
+		{"WAL volume added", "walStorage", `null`, size("5Gi"), EffectRollout},
+		{"WAL volume grow", "walStorage", size("5Gi"), size("6Gi"), EffectNone},
+		{"WAL volume shrink", "walStorage", size("5Gi"), size("4Gi"), EffectRefused},
+		{"WAL volume removed", "walStorage", size("5Gi"), `null`, EffectRefused},
+		{"tablespace grow, matched by name", "tablespaces", `[` + ts("a", size("9Gi")) + `,` + ts("b", size("1Gi")) + `]`, `[` + ts("b", size("2Gi")) + `,` + ts("a", size("9Gi")) + `]`, EffectNone},
+		{"tablespace shrink", "tablespaces", `[` + ts("a", size("9Gi")) + `]`, `[` + ts("a", size("8Gi")) + `]`, EffectRefused},
+		{"tablespace shrink beside a new one", "tablespaces", `[` + ts("a", size("9Gi")) + `]`, `[` + ts("a", size("8Gi")) + `,` + ts("b", size("1Gi")) + `]`, EffectRefused},
+		{"tablespace removed", "tablespaces", `[` + ts("a", size("9Gi")) + `,` + ts("b", size("1Gi")) + `]`, `[` + ts("a", size("9Gi")) + `]`, EffectRefused},
+		{"tablespaces removed", "tablespaces", `[` + ts("a", size("9Gi")) + `]`, `null`, EffectRefused},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			spec := func(v string) []byte { return []byte(`{"spec":{"` + tt.key + `":` + v + `}}`) }
+			p, err := Compute(Input{Before: spec(tt.before), After: spec(tt.after), CNPGMinor: cnpgstatus.Minor130})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(p.Fields) != 1 || p.Fields[0].Effect != tt.want {
+				t.Errorf("fields %+v, want one %s", p.Fields, tt.want)
+			}
+		})
 	}
 }

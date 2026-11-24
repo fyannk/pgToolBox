@@ -73,7 +73,7 @@ type InstanceRow struct {
 	Name   string   `json:"name" doc:"Instance (pod) name."`
 	Health Health   `json:"health" enum:"ok,progressing,warning,critical,inactive,unknown,info"`
 	Role   Roles    `json:"role"`
-	Pod    *PodView `json:"pod,omitempty" doc:"Absent for an instance the operator reports without a pod."`
+	Pod    *PodView `json:"pod,omitempty" doc:"Absent for an instance the operator reports without a pod, or when the Pods were not read (statusRead says which)."`
 	// StatusRead is the last /pg/status outcome with its reason.
 	StatusRead StatusRead `json:"statusRead"`
 	// Live is the last good /pg/status reading; it may be older than

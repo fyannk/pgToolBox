@@ -25,7 +25,7 @@ type Story = StoryObj<typeof meta>;
 
 export const Ready: Story = {
   play: async ({ canvas }) => {
-    await expect(canvas.getByText("streaming from the primary")).toBeVisible();
+    await expect(canvas.getByText("a WAL receiver is running")).toBeVisible();
   },
 };
 export const ReadyDark = dark(Ready);

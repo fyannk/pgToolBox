@@ -65,8 +65,8 @@ source and age; they are not a score and they do not decide anything:
 
 | Fact | Read from | What it says |
 |---|---|---|
-| Pod | `Pod.status.conditions[Ready]` | Ready, not Ready (with the waiting reason), being deleted, or no Pod |
-| Streaming | the replica's `/pg/status` (`walReceiverActive`, `replayPaused`) | streaming from the primary; not streaming (no active WAL receiver); replay paused |
+| Pod | `Pod.status.conditions[Ready]` | Ready, not Ready (with the waiting reason), being deleted, no Pod, or unknown ("not read: Pods") when the console could not list the Pods |
+| WAL receiver | the replica's `/pg/status` (`walReceiverActive`, `replayPaused`) | a WAL receiver is running (in any state: CloudNativePG counts the rows of `pg_stat_wal_receiver`, so this is not proof of streaming); not streaming (no active WAL receiver); replay paused |
 | Replay lag | the replica's `replayLsn` against the primary's `currentLsn`, both as last read | caught up, or how far behind. There is no threshold: the switchover waits for the replica to replay, so lag makes it longer |
 | Synchronous state | the primary's `/pg/status` `replicationInfo` | `sync`, `quorum`, `potential` or `async`, or "the primary reports no walsender for it" |
 | Fencing | `Cluster.metadata.annotations[cnpg.io/fencedInstances]` | fenced, not fenced, or the annotation could not be read |
